@@ -6,7 +6,7 @@
  * Falls back to raw REST API with GITHUB_TOKEN env var.
  */
 
-import { execSync } from "node:child_process";
+import { execSync, spawnSync } from "node:child_process";
 
 // ─── Auth detection ───────────────────────────────────────────────────────────
 
@@ -14,12 +14,11 @@ let _useGhCli: boolean | null = null;
 
 function hasGhCli(): boolean {
 	if (_useGhCli !== null) return _useGhCli;
-	try {
-		execSync("gh auth status", { encoding: "utf8", stdio: ["pipe", "pipe", "pipe"] });
-		_useGhCli = true;
-	} catch {
-		_useGhCli = false;
-	}
+	const result = spawnSync("gh", ["auth", "token"], {
+		encoding: "utf8",
+		stdio: ["pipe", "pipe", "pipe"],
+	});
+	_useGhCli = result.status === 0 && !!result.stdout?.trim();
 	return _useGhCli;
 }
 
@@ -120,11 +119,6 @@ export async function ghApi<T = unknown>(
 	return fetchApi<T>(endpoint, method, options.params, options.body, token);
 }
 
-function shellEscape(s: string): string {
-	// Single-quote wrapping, escaping any existing single quotes
-	return "'" + s.replace(/'/g, "'\\''") + "'";
-}
-
 function ghCliApi<T>(
 	endpoint: string,
 	method: string,
@@ -132,39 +126,41 @@ function ghCliApi<T>(
 	body?: Record<string, unknown>,
 	cwd?: string,
 ): T {
-	const parts = ["gh", "api", shellEscape(endpoint), "--method", method];
+	const args = ["api", endpoint, "--method", method];
 
 	if (params) {
 		for (const [key, val] of Object.entries(params)) {
 			if (val === undefined) continue;
 			if (Array.isArray(val)) {
 				for (const v of val) {
-					parts.push("-f", shellEscape(`${key}[]=${v}`));
+					args.push("-f", `${key}[]=${v}`);
 				}
 			} else {
-				parts.push("-f", shellEscape(`${key}=${String(val)}`));
+				args.push("-f", `${key}=${String(val)}`);
 			}
 		}
 	}
 
 	if (body) {
-		parts.push("--input", "-");
+		args.push("--input", "-");
 	}
 
-	try {
-		const result = execSync(parts.join(" "), {
-			cwd: cwd ?? process.cwd(),
-			encoding: "utf8",
-			stdio: ["pipe", "pipe", "pipe"],
-			input: body ? JSON.stringify(body) : undefined,
-		});
-		if (!result.trim()) return {} as T;
-		return JSON.parse(result) as T;
-	} catch (e: unknown) {
-		const err = e as { stderr?: string; stdout?: string; message?: string };
-		const msg = err.stderr?.trim() || err.stdout?.trim() || err.message || String(e);
-		throw new Error(`gh api error: ${msg}`);
+	const result = spawnSync("gh", args, {
+		cwd: cwd ?? process.cwd(),
+		encoding: "utf8",
+		stdio: ["pipe", "pipe", "pipe"],
+		input: body ? JSON.stringify(body) : undefined,
+	});
+
+	const stdout = result.stdout?.trim() ?? "";
+	const stderr = result.stderr?.trim() ?? "";
+
+	if (result.status !== 0) {
+		throw new Error(`gh api error: ${stderr || stdout || result.error?.message || `exit code ${result.status}`}`);
 	}
+
+	if (!stdout) return {} as T;
+	return JSON.parse(stdout) as T;
 }
 
 async function fetchApi<T>(

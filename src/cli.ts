@@ -6,9 +6,16 @@ import {
   createAgentSession,
   InteractiveMode,
 } from '@mariozechner/pi-coding-agent'
+import { join } from 'node:path'
 import { agentDir, sessionsDir, authFilePath } from './app-paths.js'
 import { buildResourceLoader, initResources } from './resource-loader.js'
+import { ensureManagedTools } from './tool-bootstrap.js'
 import { loadStoredEnvKeys, runWizardIfNeeded } from './wizard.js'
+
+// Pi's tool bootstrap can mis-detect already-installed fd/rg on some systems
+// because spawnSync(..., ["--version"]) returns EPERM despite a zero exit code.
+// Provision local managed binaries first so Pi sees them without probing PATH.
+ensureManagedTools(join(agentDir, 'bin'))
 
 const authStorage = AuthStorage.create(authFilePath)
 loadStoredEnvKeys(authStorage)
