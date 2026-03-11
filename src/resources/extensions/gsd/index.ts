@@ -63,6 +63,14 @@ export default function (pi: ExtensionAPI) {
   registerGSDCommand(pi);
   registerWorktreeCommand(pi);
 
+  // ── /exit — kill the process immediately ──────────────────────────────
+  pi.registerCommand("exit", {
+    description: "Exit GSD immediately",
+    handler: async (_ctx) => {
+      process.exit(0);
+    },
+  });
+
   // ── Dynamic-cwd bash tool with default timeout ────────────────────────
   // The built-in bash tool captures cwd at startup. This replacement uses
   // a spawnHook to read process.cwd() dynamically so that process.chdir()
