@@ -22,7 +22,7 @@ import type {
   ExtensionAPI,
   ExtensionContext,
 } from "@mariozechner/pi-coding-agent";
-import { createBashTool } from "@mariozechner/pi-coding-agent";
+import { createBashTool, createWriteTool, createReadTool, createEditTool } from "@mariozechner/pi-coding-agent";
 
 import { registerGSDCommand } from "./commands.js";
 import { registerWorktreeCommand, getWorktreeOriginalCwd, getActiveWorktreeName } from "./worktree-command.js";
@@ -101,6 +101,59 @@ export default function (pi: ExtensionAPI) {
     },
   };
   pi.registerTool(dynamicBash as any);
+
+  // ── Dynamic-cwd file tools (write, read, edit) ────────────────────────
+  // The built-in file tools capture cwd at startup. When process.chdir()
+  // moves us into a worktree, relative paths still resolve against the
+  // original launch directory. These replacements delegate to freshly-
+  // created tools on each call so that process.cwd() is read dynamically.
+  const baseWrite = createWriteTool(process.cwd());
+  const dynamicWrite = {
+    ...baseWrite,
+    execute: async (
+      toolCallId: string,
+      params: { path: string; content: string },
+      signal?: AbortSignal,
+      onUpdate?: any,
+      ctx?: any,
+    ) => {
+      const fresh = createWriteTool(process.cwd());
+      return fresh.execute(toolCallId, params, signal, onUpdate, ctx);
+    },
+  };
+  pi.registerTool(dynamicWrite as any);
+
+  const baseRead = createReadTool(process.cwd());
+  const dynamicRead = {
+    ...baseRead,
+    execute: async (
+      toolCallId: string,
+      params: { path: string; offset?: number; limit?: number },
+      signal?: AbortSignal,
+      onUpdate?: any,
+      ctx?: any,
+    ) => {
+      const fresh = createReadTool(process.cwd());
+      return fresh.execute(toolCallId, params, signal, onUpdate, ctx);
+    },
+  };
+  pi.registerTool(dynamicRead as any);
+
+  const baseEdit = createEditTool(process.cwd());
+  const dynamicEdit = {
+    ...baseEdit,
+    execute: async (
+      toolCallId: string,
+      params: { path: string; oldText: string; newText: string },
+      signal?: AbortSignal,
+      onUpdate?: any,
+      ctx?: any,
+    ) => {
+      const fresh = createEditTool(process.cwd());
+      return fresh.execute(toolCallId, params, signal, onUpdate, ctx);
+    },
+  };
+  pi.registerTool(dynamicEdit as any);
 
   // ── session_start: render branded GSD header + remote channel status ──
   pi.on("session_start", async (_event, ctx) => {
