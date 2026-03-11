@@ -6,19 +6,44 @@
  * Falls back to raw REST API with GITHUB_TOKEN env var.
  */
 
-import { execSync, spawnSync } from "node:child_process";
+import { execSync, spawnSync, type SpawnSyncReturns } from "node:child_process";
 
 // ─── Auth detection ───────────────────────────────────────────────────────────
 
 let _useGhCli: boolean | null = null;
 
-function hasGhCli(): boolean {
-	if (_useGhCli !== null) return _useGhCli;
-	const result = spawnSync("gh", ["auth", "token"], {
+let ghSpawnImpl = (args: string[], input?: string, cwd?: string): SpawnSyncReturns<string> =>
+	spawnSync("gh", args, {
+		cwd,
 		encoding: "utf8",
 		stdio: ["pipe", "pipe", "pipe"],
+		input,
 	});
-	_useGhCli = result.status === 0 && !!result.stdout?.trim();
+
+function ghSpawn(args: string[], input?: string, cwd?: string): SpawnSyncReturns<string> {
+	return ghSpawnImpl(args, input, cwd);
+}
+
+export function resetGhCliDetectionForTests(): void {
+	_useGhCli = null;
+	ghSpawnImpl = (args: string[], input?: string, cwd?: string): SpawnSyncReturns<string> =>
+		spawnSync("gh", args, {
+			cwd,
+			encoding: "utf8",
+			stdio: ["pipe", "pipe", "pipe"],
+			input,
+		});
+}
+
+export function setGhSpawnForTests(fn: (args: string[], input?: string, cwd?: string) => SpawnSyncReturns<string>): void {
+	ghSpawnImpl = fn;
+	_useGhCli = null;
+}
+
+export function hasGhCli(): boolean {
+	if (_useGhCli !== null) return _useGhCli;
+	const result = ghSpawn(["auth", "token"]);
+	_useGhCli = result.status === 0 && !result.error && !!result.stdout?.trim();
 	return _useGhCli;
 }
 
@@ -145,12 +170,7 @@ function ghCliApi<T>(
 		args.push("--input", "-");
 	}
 
-	const result = spawnSync("gh", args, {
-		cwd: cwd ?? process.cwd(),
-		encoding: "utf8",
-		stdio: ["pipe", "pipe", "pipe"],
-		input: body ? JSON.stringify(body) : undefined,
-	});
+	const result = ghSpawn(args, body ? JSON.stringify(body) : undefined, cwd ?? process.cwd());
 
 	const stdout = result.stdout?.trim() ?? "";
 	const stderr = result.stderr?.trim() ?? "";

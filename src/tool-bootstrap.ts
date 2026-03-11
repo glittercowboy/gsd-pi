@@ -1,4 +1,4 @@
-import { copyFileSync, existsSync, lstatSync, mkdirSync, rmSync, symlinkSync } from "node:fs";
+import { chmodSync, copyFileSync, existsSync, lstatSync, mkdirSync, rmSync, symlinkSync } from "node:fs";
 import { delimiter, join } from "node:path";
 
 type ManagedTool = "fd" | "rg";
@@ -65,6 +65,7 @@ function provisionTool(targetDir: string, tool: ManagedTool, sourcePath: string)
   } catch {
     rmSync(targetPath, { force: true });
     copyFileSync(sourcePath, targetPath);
+    chmodSync(targetPath, 0o755);
   }
 
   return targetPath;
