@@ -36,7 +36,6 @@ import {
   clearUnitRuntimeRecord,
   formatExecuteTaskRecoveryStatus,
   inspectExecuteTaskDurability,
-  recordUnitProgress,
   readUnitRuntimeRecord,
   writeUnitRuntimeRecord,
 } from "./unit-runtime.js";
@@ -984,6 +983,17 @@ async function dispatchNextUnit(
     const runtime = readUnitRuntimeRecord(basePath, unitType, unitId);
     if (!runtime) return;
     if (Date.now() - runtime.lastProgressAt < idleTimeoutMs) return;
+
+    // Before triggering recovery, check if the agent is actually producing
+    // work on disk.  `git status --porcelain` is cheap and catches any
+    // staged/unstaged/untracked changes the agent made since lastProgressAt.
+    if (detectWorkingTreeActivity(basePath)) {
+      writeUnitRuntimeRecord(basePath, unitType, unitId, currentUnit.startedAt, {
+        lastProgressAt: Date.now(),
+        lastProgressKind: "filesystem-activity",
+      });
+      return;
+    }
 
     if (currentUnit) {
       const modelId = ctx.model?.id ?? "unknown";
@@ -2134,6 +2144,25 @@ export function skipExecuteTask(
   }
 
   return true;
+}
+
+/**
+ * Detect whether the agent is producing work on disk by checking git for
+ * any working-tree changes (staged, unstaged, or untracked). Returns true
+ * if there are uncommitted changes — meaning the agent is actively working,
+ * even though it hasn't signaled progress through runtime records.
+ */
+function detectWorkingTreeActivity(cwd: string): boolean {
+  try {
+    const out = execSync("git status --porcelain", {
+      cwd,
+      stdio: ["pipe", "pipe", "pipe"],
+      timeout: 5000,
+    });
+    return out.toString().trim().length > 0;
+  } catch {
+    return false;
+  }
 }
 
 /**
