@@ -72,5 +72,48 @@ if (extensionsResult.errors.length > 0) {
   }
 }
 
+// Restore scoped models from settings on startup.
+// The upstream InteractiveMode reads enabledModels from settings when /scoped-models is opened,
+// but doesn't apply them to the session at startup — so Ctrl+P cycles all models instead of
+// just the saved selection until the user re-runs /scoped-models.
+const enabledModelPatterns = settingsManager.getEnabledModels()
+if (enabledModelPatterns && enabledModelPatterns.length > 0) {
+  const availableModels = modelRegistry.getAvailable()
+  const scopedModels: Array<{ model: (typeof availableModels)[number] }> = []
+  const seen = new Set<string>()
+
+  for (const pattern of enabledModelPatterns) {
+    // Patterns are "provider/modelId" exact strings saved by /scoped-models
+    const slashIdx = pattern.indexOf('/')
+    if (slashIdx !== -1) {
+      const provider = pattern.substring(0, slashIdx)
+      const modelId = pattern.substring(slashIdx + 1)
+      const model = availableModels.find((m) => m.provider === provider && m.id === modelId)
+      if (model) {
+        const key = `${model.provider}/${model.id}`
+        if (!seen.has(key)) {
+          seen.add(key)
+          scopedModels.push({ model })
+        }
+      }
+    } else {
+      // Fallback: match by model id alone
+      const model = availableModels.find((m) => m.id === pattern)
+      if (model) {
+        const key = `${model.provider}/${model.id}`
+        if (!seen.has(key)) {
+          seen.add(key)
+          scopedModels.push({ model })
+        }
+      }
+    }
+  }
+
+  // Only apply if we resolved some models and it's a genuine subset
+  if (scopedModels.length > 0 && scopedModels.length < availableModels.length) {
+    session.setScopedModels(scopedModels)
+  }
+}
+
 const interactiveMode = new InteractiveMode(session)
 await interactiveMode.run()
