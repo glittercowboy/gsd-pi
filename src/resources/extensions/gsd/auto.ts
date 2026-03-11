@@ -64,6 +64,7 @@ import {
   getSliceBranchName,
   switchToMain,
   mergeSliceToMain,
+  getCurrentBranch,
 } from "./worktree.ts";
 import { truncateToWidth, visibleWidth } from "@mariozechner/pi-tui";
 import { makeUI, GLYPH, INDENT } from "../shared/ui.js";
@@ -101,6 +102,26 @@ let originalModelId: string | null = null;
 let unitTimeoutHandle: ReturnType<typeof setTimeout> | null = null;
 let wrapupWarningHandle: ReturnType<typeof setTimeout> | null = null;
 let idleWatchdogHandle: ReturnType<typeof setInterval> | null = null;
+
+/** Format token counts for compact display */
+function formatWidgetTokens(count: number): string {
+  if (count < 1000) return count.toString();
+  if (count < 10000) return `${(count / 1000).toFixed(1)}k`;
+  if (count < 1000000) return `${Math.round(count / 1000)}k`;
+  if (count < 10000000) return `${(count / 1000000).toFixed(1)}M`;
+  return `${Math.round(count / 1000000)}M`;
+}
+
+/**
+ * Footer factory that renders zero lines — hides the built-in footer entirely.
+ * All footer info (pwd, branch, tokens, cost, model) is shown inside the
+ * progress widget instead, so there's no gap or redundancy.
+ */
+const hideFooter = () => ({
+  render(_width: number): string[] { return []; },
+  invalidate() {},
+  dispose() {},
+});
 
 /** Dashboard data for the overlay */
 export interface AutoDashboardData {
@@ -192,6 +213,7 @@ export async function stopAuto(ctx?: ExtensionContext, pi?: ExtensionAPI): Promi
   pendingCrashRecovery = null;
   ctx?.ui.setStatus("gsd-auto", undefined);
   ctx?.ui.setWidget("gsd-progress", undefined);
+  ctx?.ui.setFooter(undefined);
 
   // Restore the user's original model
   if (pi && ctx && originalModelId) {
@@ -219,6 +241,7 @@ export async function pauseAuto(ctx?: ExtensionContext, _pi?: ExtensionAPI): Pro
   // — all needed for resume and dashboard display
   ctx?.ui.setStatus("gsd-auto", "paused");
   ctx?.ui.setWidget("gsd-progress", undefined);
+  ctx?.ui.setFooter(undefined);
   const resumeCmd = stepMode ? "/gsd next" : "/gsd auto";
   ctx?.ui.notify(
     `${stepMode ? "Step" : "Auto"}-mode paused (Escape). Type to interact, or ${resumeCmd} to resume.`,
@@ -248,6 +271,7 @@ export async function startAuto(
     // Re-initialize metrics in case ledger was lost during pause
     if (!getLedger()) initMetrics(base);
     ctx.ui.setStatus("gsd-auto", stepMode ? "next" : "auto");
+    ctx.ui.setFooter(hideFooter);
     ctx.ui.notify(stepMode ? "Step-mode resumed." : "Auto-mode resumed.", "info");
     // Rebuild disk state before resuming — user interaction during pause may have changed files
     try { await rebuildState(base); } catch { /* non-fatal */ }
@@ -352,6 +376,7 @@ export async function startAuto(
   }
 
   ctx.ui.setStatus("gsd-auto", stepMode ? "next" : "auto");
+  ctx.ui.setFooter(hideFooter);
   const modeLabel = stepMode ? "Step-mode" : "Auto-mode";
   const pendingCount = state.registry.filter(m => m.status !== 'complete').length;
   const scopeMsg = pendingCount > 1
@@ -594,7 +619,18 @@ function updateProgressWidget(
   const slice = state.activeSlice;
   const task = state.activeTask;
   const next = peekNext(unitType, state);
-  const preferredModel = resolveModelForUnit(unitType);
+
+  // Cache git branch at widget creation time (not per render)
+  let cachedBranch: string | null = null;
+  try { cachedBranch = getCurrentBranch(basePath); } catch { /* not in git repo */ }
+
+  // Cache pwd with ~ substitution
+  let widgetPwd = process.cwd();
+  const widgetHome = process.env.HOME || process.env.USERPROFILE;
+  if (widgetHome && widgetPwd.startsWith(widgetHome)) {
+    widgetPwd = `~${widgetPwd.slice(widgetHome.length)}`;
+  }
+  if (cachedBranch) widgetPwd = `${widgetPwd} (${cachedBranch})`;
 
   ctx.ui.setWidget("gsd-progress", (tui, theme) => {
     let pulseBright = true;
@@ -677,8 +713,63 @@ function updateProgressWidget(
           ));
         }
 
+        // ── Footer info (pwd, tokens, cost, context, model) ──────────────
+        lines.push("");
+        lines.push(truncateToWidth(theme.fg("dim", `${pad}${widgetPwd}`), width, theme.fg("dim", "…")));
+
+        // Token stats from current unit session + cumulative cost from metrics
+        {
+          let totalInput = 0, totalOutput = 0;
+          let totalCacheRead = 0, totalCacheWrite = 0;
+          if (cmdCtx) {
+            for (const entry of cmdCtx.sessionManager.getEntries()) {
+              if (entry.type === "message" && (entry as any).message?.role === "assistant") {
+                const u = (entry as any).message.usage;
+                if (u) {
+                  totalInput += u.input || 0;
+                  totalOutput += u.output || 0;
+                  totalCacheRead += u.cacheRead || 0;
+                  totalCacheWrite += u.cacheWrite || 0;
+                }
+              }
+            }
+          }
+          const mLedger = getLedger();
+          const autoTotals = mLedger ? getProjectTotals(mLedger.units) : null;
+          const cumulativeCost = autoTotals?.cost ?? 0;
+
+          const cxUsage = cmdCtx?.getContextUsage?.();
+          const cxWindow = cxUsage?.contextWindow ?? cmdCtx?.model?.contextWindow ?? 0;
+          const cxPctVal = cxUsage?.percent ?? 0;
+          const cxPct = cxUsage?.percent !== null ? cxPctVal.toFixed(1) : "?";
+
+          const sp: string[] = [];
+          if (totalInput) sp.push(`↑${formatWidgetTokens(totalInput)}`);
+          if (totalOutput) sp.push(`↓${formatWidgetTokens(totalOutput)}`);
+          if (totalCacheRead) sp.push(`R${formatWidgetTokens(totalCacheRead)}`);
+          if (totalCacheWrite) sp.push(`W${formatWidgetTokens(totalCacheWrite)}`);
+          if (cumulativeCost) sp.push(`$${cumulativeCost.toFixed(3)}`);
+
+          const cxDisplay = cxPct === "?"
+            ? `?/${formatWidgetTokens(cxWindow)}`
+            : `${cxPct}%/${formatWidgetTokens(cxWindow)}`;
+          if (cxPctVal > 90) {
+            sp.push(theme.fg("error", cxDisplay));
+          } else if (cxPctVal > 70) {
+            sp.push(theme.fg("warning", cxDisplay));
+          } else {
+            sp.push(cxDisplay);
+          }
+
+          const sLeft = sp.map(p => p.includes("\x1b[") ? p : theme.fg("dim", p))
+            .join(theme.fg("dim", " "));
+
+          const modelId = cmdCtx?.model?.id ?? "";
+          const sRight = modelId ? theme.fg("dim", modelId) : "";
+          lines.push(rightAlign(`${pad}${sLeft}`, sRight, width));
+        }
+
         const hintParts: string[] = [];
-        if (preferredModel) hintParts.push(preferredModel);
         hintParts.push("esc pause");
         hintParts.push("Ctrl+Alt+G dashboard");
         lines.push(...ui.hints(hintParts));
