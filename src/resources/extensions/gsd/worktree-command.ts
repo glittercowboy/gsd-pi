@@ -24,9 +24,9 @@ import {
   worktreeBranchName,
   worktreePath,
 } from "./worktree-manager.js";
-import { existsSync, realpathSync } from "node:fs";
+import { existsSync, realpathSync, readFileSync, utimesSync } from "node:fs";
 import { execSync } from "node:child_process";
-import { join } from "node:path";
+import { join, resolve, dirname } from "node:path";
 
 /**
  * Tracks the original project root so we can switch back.
@@ -37,6 +37,40 @@ let originalCwd: string | null = null;
 /** Get the original project root if currently in a worktree, or null. */
 export function getWorktreeOriginalCwd(): string | null {
   return originalCwd;
+}
+
+/**
+ * Nudge pi's FooterDataProvider to re-read the git branch.
+ *
+ * The footer caches the branch and watches a single .git dir for changes.
+ * After process.chdir() into a worktree (or back), the watcher is stale.
+ * We touch the HEAD file in the git dir that the watcher is monitoring —
+ * this triggers the fs.watch callback, which clears cachedBranch and fires
+ * a render. The next getGitBranch() call uses the new process.cwd().
+ */
+function nudgeGitBranchCache(previousCwd: string): void {
+  try {
+    const gitPath = join(previousCwd, ".git");
+    if (!existsSync(gitPath)) return;
+
+    let headPath: string;
+    const content = readFileSync(gitPath, "utf8").trim();
+    if (content.startsWith("gitdir: ")) {
+      // Worktree — .git is a file pointing to the real gitdir
+      const gitDir = resolve(previousCwd, content.slice(8));
+      headPath = join(gitDir, "HEAD");
+    } else {
+      // Normal repo — .git is a directory
+      headPath = join(previousCwd, ".git", "HEAD");
+    }
+
+    if (existsSync(headPath)) {
+      const now = new Date();
+      utimesSync(headPath, now, now);
+    }
+  } catch {
+    // Best-effort — branch display may be stale
+  }
 }
 
 /** Get the name of the active worktree, or null if not in one. */
@@ -231,7 +265,9 @@ async function handleCreate(
     // Track original cwd before switching
     if (!originalCwd) originalCwd = basePath;
 
+    const prevCwd = process.cwd();
     process.chdir(info.path);
+    nudgeGitBranchCache(prevCwd);
 
     const commitNote = commitMsg ? `\n  Auto-committed on previous branch before switching.` : "";
     ctx.ui.notify(
@@ -275,7 +311,9 @@ async function handleSwitch(
     // Track original cwd before switching
     if (!originalCwd) originalCwd = basePath;
 
+    const prevCwd = process.cwd();
     process.chdir(wtPath);
+    nudgeGitBranchCache(prevCwd);
 
     const commitNote = commitMsg ? `\n  Auto-committed on previous branch before switching.` : "";
     ctx.ui.notify(
@@ -306,7 +344,9 @@ async function handleReturn(ctx: ExtensionCommandContext): Promise<void> {
   const returnTo = originalCwd;
   originalCwd = null;
 
+  const prevCwd = process.cwd();
   process.chdir(returnTo);
+  nudgeGitBranchCache(prevCwd);
 
   const commitNote = commitMsg ? `\n  Auto-committed on worktree branch before returning.` : "";
   ctx.ui.notify(
