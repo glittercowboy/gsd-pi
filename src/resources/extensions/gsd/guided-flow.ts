@@ -486,6 +486,15 @@ export async function showSmartEntry(
   const state = await deriveState(basePath);
 
   if (!state.activeMilestone) {
+    // Guard: if a discuss session is already in flight, don't re-inject the prompt.
+    // Both /gsd and /gsd auto reach this branch when no milestone exists yet.
+    // Without this guard, every subsequent /gsd call overwrites pendingAutoStart
+    // and fires another dispatchWorkflow, resetting the conversation mid-interview.
+    if (pendingAutoStart) {
+      ctx.ui.notify("Discussion already in progress — answer the question above to continue.", "info");
+      return;
+    }
+
     const milestoneIds = findMilestoneIds(basePath);
     const nextId = `M${String(milestoneIds.length + 1).padStart(3, "0")}`;
     const isFirst = milestoneIds.length === 0;
