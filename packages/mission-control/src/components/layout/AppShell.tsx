@@ -28,6 +28,7 @@ import { useChatMode } from "@/hooks/useChatMode";
 import { usePreview } from "@/hooks/usePreview";
 import { useCommandPalette } from "@/hooks/useCommandPalette";
 import { usePanelFocus } from "@/hooks/usePanelFocus";
+import { useSettings } from "@/hooks/useSettings";
 import { CommandPalette } from "@/components/command-palette/CommandPalette";
 import { readSession, writeSession } from "@/server/session-persistence-api";
 import type { MissionControlSession } from "@/server/session-persistence-api";
@@ -41,6 +42,12 @@ export function AppShell() {
   const { state, status } = usePlanningState();
   const { mode, continueHere, dismiss } = useSessionFlow(state, status);
 
+  // Load settings to get budget_ceiling for cost tracking
+  const { settings } = useSettings();
+  const budgetCeiling = typeof settings?.merged?.budget_ceiling === "number"
+    ? settings.merged.budget_ceiling
+    : null;
+
   const {
     sessions,
     activeSessionId,
@@ -53,7 +60,12 @@ export function AppShell() {
     sendMessage,
     permissionPrompt,
     respondToPermission,
-  } = useSessionManager("ws://localhost:4001");
+    isAutoMode,
+    isCrashed,
+    costState,
+    interrupt,
+    resetCrash,
+  } = useSessionManager("ws://localhost:4001", { budgetCeiling });
 
   const { activeView, setActiveView } = useSidebarNav();
 
@@ -172,6 +184,11 @@ export function AppShell() {
           onTogglePreview={() => setPreviewOpen(!previewOpen)}
           previewOpen={previewOpen}
           headingRef={headingRef}
+          isAutoMode={isAutoMode}
+          isCrashed={isCrashed}
+          costState={costState}
+          onInterrupt={interrupt}
+          onDismissCrash={resetCrash}
         />
         {/* Preview panel — absolute inset-0 with left offset to preserve Chat column 1 */}
         {previewOpen && (

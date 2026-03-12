@@ -213,7 +213,7 @@ Plans:
 | 11. Documentation Integrity (GAP) | 4/4 | Complete   | 2026-03-12 | 2026-03-12 |
 | 11.1 Pre-v2.0 Stabilization (INSERTED) | 3/4 | Complete    | 2026-03-12 | — |
 | 12. GSD 2 Compatibility Pass | 6/7 | Complete    | 2026-03-12 | — |
-| 13. Session Streaming Hardening | 4/6 | In Progress|  | — |
+| 13. Session Streaming Hardening | 5/6 | In Progress|  | — |
 | 14. Slice Integration | v2.0 | 0/TBD | Not started | — |
 | 15. Tauri Shell | v2.0 | 0/TBD | Not started | — |
 | 16. OAuth + Keychain | v2.0 | 0/TBD | Not started | — |

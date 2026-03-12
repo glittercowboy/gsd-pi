@@ -4,7 +4,7 @@
  * Renders one full-width view component based on the active ViewType.
  * Replaces TabLayout's tab-switching mechanism.
  */
-import { ChatView } from "@/components/views/ChatView";
+import { ChatViewConnected as ChatView } from "@/components/views/ChatView";
 import { MilestoneView } from "@/components/views/MilestoneView";
 import { HistoryView } from "@/components/views/HistoryView";
 import { SettingsView } from "@/components/views/SettingsView";
@@ -14,6 +14,7 @@ import type { ViewType } from "@/lib/view-types";
 import type { PlanningState } from "@/server/types";
 import type { ChatMessage, ReviewResults } from "@/server/chat-types";
 import type { SessionTab } from "@/hooks/useSessionManager";
+import type { CostState } from "@/hooks/useCostTracker";
 import type React from "react";
 
 interface SingleColumnViewProps {
@@ -44,6 +45,12 @@ interface SingleColumnViewProps {
    * Ref is typed HTMLHeadingElement for usePanelFocus compatibility; attached to main via cast.
    */
   headingRef?: React.RefObject<HTMLHeadingElement | null>;
+  /** Phase 13 props — wired from useSessionManager via AppShell */
+  isAutoMode?: boolean;
+  isCrashed?: boolean;
+  costState?: CostState;
+  onInterrupt?: () => void;
+  onDismissCrash?: () => void;
 }
 
 export function SingleColumnView({
@@ -65,6 +72,11 @@ export function SingleColumnView({
   onTogglePreview,
   previewOpen,
   headingRef,
+  isAutoMode,
+  isCrashed,
+  costState,
+  onInterrupt,
+  onDismissCrash,
 }: SingleColumnViewProps) {
   return (
     // tabIndex={-1} enables programmatic focus after Ctrl+1-5 panel switch (KEYS-06)
@@ -89,6 +101,11 @@ export function SingleColumnView({
           discussOverlay={discussOverlay}
           onTogglePreview={onTogglePreview}
           previewOpen={previewOpen}
+          isAutoMode={isAutoMode}
+          isCrashed={isCrashed}
+          costState={costState}
+          onInterrupt={onInterrupt}
+          onDismissCrash={onDismissCrash}
         />
       )}
       {activeView.kind === "milestone" && (

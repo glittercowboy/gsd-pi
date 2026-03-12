@@ -24,7 +24,7 @@ Requirements for the Native Desktop milestone. Each maps to roadmap phases 12–
 - [x] **STREAM-03**: Process lifecycle — clean spawn with correct working directory, graceful shutdown (interrupt → wait → kill), crash recovery (reconnect option, preserve history, attempt restart), orphan prevention (registry kills all processes on app close)
 - [x] **STREAM-04**: WebSocket reconnect uses exponential backoff (1s → 2s → 4s → 8s → 30s max)
 - [x] **STREAM-05**: On reconnect, full state re-derived from `.gsd/` files — no reliance on in-memory state; stale state detected via `STATE.md` modified time
-- [ ] **STREAM-06**: Cost/token display — running cost badge in chat header, per-slice total on slice card, milestone total in milestone header; budget ceiling warning at 80% (amber) and 95% (red)
+- [x] **STREAM-06**: Cost/token display — running cost badge in chat header, per-slice total on slice card, milestone total in milestone header; budget ceiling warning at 80% (amber) and 95% (red)
 - [x] **STREAM-07**: Auto mode indicators — persistent EXECUTING badge in chat header; phase announcements update active slice card in real time; Escape key sends interrupt signal to `gsd` process
 
 ### Slice Integration (SLICE)
@@ -136,7 +136,7 @@ Deferred to future release.
 | STREAM-03 | Phase 13 | Complete |
 | STREAM-04 | Phase 13 | Complete |
 | STREAM-05 | Phase 13 | Complete |
-| STREAM-06 | Phase 13 | Pending |
+| STREAM-06 | Phase 13 | Complete |
 | STREAM-07 | Phase 13 | Complete |
 | SLICE-01 | Phase 14 | Pending |
 | SLICE-02 | Phase 14 | Pending |

@@ -3,10 +3,25 @@ gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: Native Desktop
 status: in_progress
+last_updated: "2026-03-12T20:38:42.179Z"
+last_activity: "2026-03-12 — Plan 13-05 complete: applyGSD2Event, isAutoMode/isCrashed/interrupt in useSessionManager, EXECUTING badge, phase_transition + tool_use cards"
+progress:
+  total_phases: 10
+  completed_phases: 1
+  total_plans: 17
+  completed_plans: 15
+  percent: 88
+---
+
+---
+gsd_state_version: 1.0
+milestone: v2.0
+milestone_name: Native Desktop
+status: in_progress
 last_updated: "2026-03-12T20:37:06.472Z"
 last_activity: "2026-03-12 — Plan 13-03 complete: isReconnect helper, refresh-on-reconnect in usePlanningState, ChatView crash banner"
 progress:
-  total_phases: 10
+  [█████████░] 88%
   completed_phases: 1
   total_plans: 17
   completed_plans: 14
@@ -163,6 +178,8 @@ Progress: [████████░░] 82% (14/17 plans complete)
 - [Phase 13]: isReconnect(attemptBeforeConnect) extracted as pure helper for testability — mirrors calculateBackoffDelay/shouldProcessMessage pattern
 - [Phase 13]: wsRef pattern in usePlanningState — ref to ReconnectingWebSocketResult so onReconnect always calls latest send() without stale closure
 - [Phase 13]: applyGSD2Event is a pure exported helper tested without React; interrupt() sends WebSocket message not direct processManager call
+- [Phase 13]: computeCostState uses float rounding (Math.round * 1e10) to prevent threshold failures at exact 80% boundary
+- [Phase 13]: ChatView accepts costState as a pure render prop — useCostTracker wired in plan 13-05 via useSessionManager
 
 ### Blockers/Concerns
 

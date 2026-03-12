@@ -149,6 +149,17 @@ const server = Bun.serve({
 
 console.log(`Mission Control running at ${server.url}`);
 
+// Orphan prevention: kill all gsd processes when the Bun server shuts down
+const cleanup = async () => {
+  console.log("[server] Shutting down — killing all gsd processes...");
+  await pipeline.sessionManager.killAll();
+  server.stop(true);
+  process.exit(0);
+};
+
+process.on("SIGTERM", cleanup);
+process.on("SIGINT", cleanup);
+
 /** Add CORS headers to API responses (defensive — same-origin in practice). */
 function addCorsHeaders(response: Response): Response {
   response.headers.set("Access-Control-Allow-Origin", "http://localhost:4000");

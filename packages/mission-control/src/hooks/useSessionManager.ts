@@ -15,6 +15,7 @@ import { classifyPiSdkEvent } from "../server/ndjson-parser";
 import { useCostTracker } from "./useCostTracker";
 import type { ChatMessage, ChatResponse, StreamEvent, PermissionPromptEvent, SessionMetadata, GSD2StreamEvent } from "../server/chat-types";
 import type { SlashCommand } from "../lib/slash-commands";
+import type { CostState } from "./useCostTracker";
 
 // -- Types --
 
@@ -51,6 +52,10 @@ export interface UseSessionManagerResult {
   isCrashed: boolean;
   /** Send SIGINT to the active session's process */
   interrupt: () => void;
+  /** Dismiss crash banner — clears isCrashed state */
+  resetCrash: () => void;
+  /** Current accumulated cost state from useCostTracker */
+  costState: CostState;
 }
 
 // -- Pure functions (exported for testing) --
@@ -330,7 +335,7 @@ export function useSessionManager(
   const [permissionPrompt, setPermissionPrompt] = useState<PermissionPromptEvent | null>(null);
   const [isAutoMode, setIsAutoMode] = useState(false);
   const [isCrashed, setIsCrashed] = useState(false);
-  const { addCostEvent } = useCostTracker(options.budgetCeiling ?? null);
+  const { addCostEvent, costState } = useCostTracker(options.budgetCeiling ?? null);
 
   // Keep isAutoMode in a ref for use inside the message handler (avoid stale closure)
   const isAutoModeRef = useRef(isAutoMode);
@@ -629,6 +634,11 @@ export function useSessionManager(
     send(JSON.stringify({ type: "session_interrupt", sessionId }));
   }, [send]);
 
+  // resetCrash: clears crash banner state
+  const resetCrash = useCallback(() => {
+    setIsCrashed(false);
+  }, []);
+
   return {
     sessions,
     activeSessionId,
@@ -644,5 +654,7 @@ export function useSessionManager(
     isAutoMode,
     isCrashed,
     interrupt,
+    resetCrash,
+    costState,
   };
 }
