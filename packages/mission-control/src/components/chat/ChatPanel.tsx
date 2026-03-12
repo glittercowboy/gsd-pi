@@ -10,6 +10,8 @@
 import { useEffect, useRef } from "react";
 import type React from "react";
 import { ChatMessage } from "./ChatMessage";
+import { PhaseTransitionCard } from "./PhaseTransitionCard";
+import { ToolUseCard } from "./ToolUseCard";
 import { ChatInput } from "./ChatInput";
 import { cn } from "@/lib/utils";
 import type { ChatMessage as ChatMessageType } from "../../server/chat-types";
@@ -45,9 +47,15 @@ export function ChatPanelView({
           </div>
         ) : (
           <div className="flex flex-col">
-            {messages.map((msg) => (
-              <ChatMessage key={msg.id} message={msg} />
-            ))}
+            {messages.map((msg) => {
+              if (msg.role === "phase_transition") {
+                return <PhaseTransitionCard key={msg.id} phase={msg.phaseTransition?.phase ?? msg.content} />;
+              }
+              if (msg.role === "tool_use") {
+                return <ToolUseCard key={msg.id} toolName={msg.toolName ?? msg.content} toolInput={msg.toolInput} done={msg.toolDone ?? false} />;
+              }
+              return <ChatMessage key={msg.id} message={msg} />;
+            })}
           </div>
         )}
       </div>

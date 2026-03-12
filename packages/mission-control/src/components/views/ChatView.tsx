@@ -139,6 +139,18 @@ export function ChatView({
             onCreate={onCreateClick ?? (() => {})}
             onRename={onRenameSession}
           />
+          {/* EXECUTING badge — shown when auto mode is active */}
+          {isAutoMode && (
+            <span
+              className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 inline-flex items-center gap-1 rounded px-2 py-0.5 font-display text-xs uppercase tracking-wider"
+              style={{ backgroundColor: "#F59E0B", color: "#0F1419" }}
+              role="status"
+              aria-label="Auto mode executing"
+            >
+              <span className="h-1.5 w-1.5 rounded-full bg-current animate-pulse" />
+              EXECUTING
+            </span>
+          )}
           {/* Preview toggle button — absolute far right of session tabs row */}
           {onTogglePreview && (
             <button
@@ -158,7 +170,21 @@ export function ChatView({
       )}
       {/* Preview toggle bar — shown only when no session tabs but preview is wired */}
       {!hasMultipleSessions && onTogglePreview && (
-        <div className="flex items-center justify-end border-b border-navy-600 bg-navy-900/50 px-2 py-1">
+        <div className="flex items-center justify-between border-b border-navy-600 bg-navy-900/50 px-2 py-1">
+          {/* EXECUTING badge (no-sessions variant) */}
+          {isAutoMode ? (
+            <span
+              className="inline-flex items-center gap-1 rounded px-2 py-0.5 font-display text-xs uppercase tracking-wider"
+              style={{ backgroundColor: "#F59E0B", color: "#0F1419" }}
+              role="status"
+              aria-label="Auto mode executing"
+            >
+              <span className="h-1.5 w-1.5 rounded-full bg-current animate-pulse" />
+              EXECUTING
+            </span>
+          ) : (
+            <span />
+          )}
           <button
             type="button"
             onClick={onTogglePreview}
@@ -171,6 +197,20 @@ export function ChatView({
           >
             <Monitor className="h-4 w-4" />
           </button>
+        </div>
+      )}
+      {/* EXECUTING badge — shown when no sessions and no preview toggle */}
+      {!hasMultipleSessions && !onTogglePreview && isAutoMode && (
+        <div className="flex items-center border-b border-navy-600 bg-navy-900/50 px-2 py-1">
+          <span
+            className="inline-flex items-center gap-1 rounded px-2 py-0.5 font-display text-xs uppercase tracking-wider"
+            style={{ backgroundColor: "#F59E0B", color: "#0F1419" }}
+            role="status"
+            aria-label="Auto mode executing"
+          >
+            <span className="h-1.5 w-1.5 rounded-full bg-current animate-pulse" />
+            EXECUTING
+          </span>
         </div>
       )}
 
@@ -348,6 +388,19 @@ export function ChatViewConnected(props: ChatViewProps) {
   const [localCrashed, setLocalCrashed] = useState(false);
   const isCrashed = props.isCrashed ?? localCrashed;
   const [budgetWarningDismissed, setBudgetWarningDismissed] = useState(false);
+
+  // Escape key handler — interrupt auto mode
+  useEffect(() => {
+    if (!props.isAutoMode) return;
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && props.onInterrupt) {
+        e.preventDefault();
+        props.onInterrupt();
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [props.isAutoMode, props.onInterrupt]);
 
   const handleAssetUploaded = useCallback((asset: AssetItem) => {
     setPendingAttachment(asset);
