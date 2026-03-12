@@ -11,12 +11,12 @@ beforeAll(async () => {
   // test-dir/
   //   regular-dir/
   //   gsd-project/
-  //     .planning/
+  //     .gsd/
   //   .hidden-dir/
   //   node_modules/
   //   file.txt
   await mkdir(join(TEST_DIR, "regular-dir"), { recursive: true });
-  await mkdir(join(TEST_DIR, "gsd-project", ".planning"), { recursive: true });
+  await mkdir(join(TEST_DIR, "gsd-project", ".gsd"), { recursive: true });
   await mkdir(join(TEST_DIR, ".hidden-dir"), { recursive: true });
   await mkdir(join(TEST_DIR, "node_modules"), { recursive: true });
   await writeFile(join(TEST_DIR, "file.txt"), "hello");
@@ -73,7 +73,7 @@ describe("listDirectory", () => {
     expect(noise.length).toBe(0);
   });
 
-  it("detects GSD projects (directories with .planning/)", async () => {
+  it("detects GSD projects (directories with .gsd/)", async () => {
     const entries = await listDirectory(TEST_DIR);
     const gsdEntry = entries.find((e) => e.name === "gsd-project");
     expect(gsdEntry).toBeDefined();
@@ -101,7 +101,7 @@ describe("listDirectory", () => {
 });
 
 describe("detectProject", () => {
-  it("returns isGsdProject: true for directories with .planning/", async () => {
+  it("returns isGsdProject: true for directories with .gsd/", async () => {
     const result = await detectProject(join(TEST_DIR, "gsd-project"));
     expect(result.isGsdProject).toBe(true);
     expect(result.path).not.toContain("\\");
