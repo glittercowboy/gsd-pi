@@ -3,6 +3,7 @@
 ## Milestones
 
 - ✅ **v1.0 MVP** — Phases 1–11 (shipped 2026-03-12)
+- 🚧 **v2.0 Native Desktop** — Phases 12–20 (in progress)
 
 ## Phases
 
@@ -27,22 +28,158 @@
 
 </details>
 
+### 🚧 v2.0 Native Desktop (In Progress)
+
+**Milestone Goal:** Wrap Mission Control in a Tauri 2 native app, migrate all GSD v1 conventions to GSD 2 (`.gsd/`, `gsd` CLI, Pi SDK streaming), add OAuth + keychain, a Builder mode for non-technical users, and ship signed installers for macOS and Windows.
+
+- [ ] **Phase 12: GSD 2 Compatibility Pass** — Migrate file watcher, state schema, child process, and command syntax to GSD 2 conventions
+- [ ] **Phase 13: Session Streaming Hardening** — Pi SDK event parser, resilient stream, process lifecycle, reconnect, cost/token display, auto mode indicators
+- [ ] **Phase 14: Slice Integration** — Milestones view renders slices with four states (Planned/In Progress/Needs Review/Complete) and state-appropriate actions
+- [ ] **Phase 15: Tauri Shell** — Tauri 2 native shell, Bun process management, dependency check, window state, IPC commands, build pipeline
+- [ ] **Phase 16: OAuth + Keychain** — First-launch provider picker, OAuth for Claude Max + GitHub Copilot, API key flow, keychain storage, token refresh
+- [ ] **Phase 17: Permission Model** — Trust dialog replaces skip-permissions toggle, hard boundary enforcement, advanced permission toggles
+- [ ] **Phase 18: Builder Mode** — Interface mode toggle, vocabulary layer, Builder intent classifier, adapted discuss/slice cards, phase gate intercept
+- [ ] **Phase 19: Project Workspace** — Managed workspace path, project home screen, project cards, multi-session tabs, archiving
+- [ ] **Phase 20: Installer + Distribution** — GitHub Actions CI pipeline, code signing, auto-update, landing page
+
+## Phase Details
+
+### Phase 12: GSD 2 Compatibility Pass
+**Goal**: The dashboard reads, derives, and operates entirely from GSD 2 conventions — `.gsd/` directory, new file schema, `gsd` binary, and updated command syntax — with zero references to v1 `.planning/` paths or `claude-code` process names
+**Depends on**: Phase 11 (v1.0 complete)
+**Requirements**: COMPAT-01, COMPAT-02, COMPAT-03, COMPAT-04, COMPAT-05, COMPAT-06, COMPAT-07
+**Success Criteria** (what must be TRUE):
+  1. Opening a GSD 2 project populates the milestone, slices, and task views from `.gsd/` with no manual path configuration
+  2. All command autocomplete entries show GSD 2 syntax (`/gsd`, `/gsd auto`, `/gsd stop`, etc.) — no v1 `/gsd:` entries appear anywhere in the UI
+  3. Opening a project that has `.planning/` but no `.gsd/` shows a migration banner; clicking "Run migration" sends `/gsd migrate` to the active session
+  4. Settings shows per-phase model selection, budget ceiling, and skill_discovery toggle — v1 fields are absent
+  5. The spawned child process is `gsd`, verifiable in Activity Monitor or Task Manager
+**Plans**: TBD
+
+### Phase 13: Session Streaming Hardening
+**Goal**: The Pi SDK stream is fully parsed, resilient to malformed input, and surfaces cost/token data and auto mode phase transitions to the user in real time — with WebSocket reconnect and process lifecycle handled cleanly
+**Depends on**: Phase 12
+**Requirements**: STREAM-01, STREAM-02, STREAM-03, STREAM-04, STREAM-05, STREAM-06, STREAM-07
+**Success Criteria** (what must be TRUE):
+  1. A running `gsd` session streams tool use, text, thinking, phase transitions, cost updates, and auto mode announcements as distinct event types in the chat panel
+  2. Injecting a malformed NDJSON chunk does not crash the stream — the chunk is skipped and subsequent events continue rendering normally
+  3. Closing and reopening the browser tab within 30 seconds reconnects via exponential backoff and shows state fully reconstructed from `.gsd/` files
+  4. Chat header shows a running cost badge; slice cards show per-slice totals; milestone header shows total; budget warnings appear at 80% (amber) and 95% (red)
+  5. While in auto mode an EXECUTING badge is pinned in the chat header; pressing Escape sends an interrupt signal to the `gsd` process
+**Plans**: TBD
+
+### Phase 14: Slice Integration
+**Goal**: The Milestones view renders slices as first-class citizens with four distinct states — Planned, In Progress, Needs Review, Complete — each with context-appropriate actions that drive the GSD 2 workflow
+**Depends on**: Phase 12
+**Requirements**: SLICE-01, SLICE-02, SLICE-03, SLICE-04, SLICE-05, SLICE-06, SLICE-07
+**Success Criteria** (what must be TRUE):
+  1. Slices appear as an accordion inside their milestone card with no separate nav item; the actively executing slice auto-expands when streaming starts
+  2. A Planned slice shows task count, cost estimate, branch, and dependency status; "Start this slice" is disabled while dependencies are incomplete
+  3. An In Progress slice shows a task progress bar, running cost, and a "Steer" action that injects direction without stopping auto mode; the card pulses amber
+  4. A Needs Review slice presents an interactive UAT checklist; "Merge to main" is locked until all items are checked; the completed checklist is written to `.gsd/S{N}-UAT-RESULTS.md`
+  5. A Complete slice shows merge commit info, total cost, and links to view the squash diff and UAT results
+**Plans**: TBD
+
+### Phase 15: Tauri Shell
+**Goal**: Mission Control runs as a native desktop app — Bun server managed by Tauri, window state persisted, IPC commands wired, and a dependency screen shown on first launch if `bun` or `gsd` is missing
+**Depends on**: Phase 12
+**Requirements**: TAURI-01, TAURI-02, TAURI-03, TAURI-04, TAURI-05, TAURI-06
+**Success Criteria** (what must be TRUE):
+  1. `tauri:dev` opens a native window serving the Mission Control UI — no separate terminal step required from the user
+  2. Closing the native window kills the Bun server cleanly — no orphaned processes remain in Activity Monitor or Task Manager
+  3. Launching the app without `bun` or `gsd` installed shows a pre-dashboard screen with plain-language install instructions before the main UI loads
+  4. Reopening the app after moving and resizing the window restores the previous size and position
+  5. `tauri:build` produces a `.dmg` on macOS and `.msi`/`.exe` on Windows that install and launch without errors
+**Plans**: TBD
+
+### Phase 16: OAuth + Keychain
+**Goal**: Users authenticate with their preferred AI provider through a guided first-launch picker; tokens are stored in the OS keychain and silently refreshed on subsequent launches
+**Depends on**: Phase 15
+**Requirements**: AUTH-01, AUTH-02, AUTH-03, AUTH-04, AUTH-05, AUTH-06
+**Success Criteria** (what must be TRUE):
+  1. First launch with no stored provider shows the four-option picker; completing the flow dismisses the picker and loads the main UI
+  2. Selecting Claude Max or GitHub Copilot opens the OS browser for OAuth; after authorizing, the app intercepts the `gsd://oauth/callback` redirect and stores tokens in the OS keychain
+  3. Selecting OpenRouter or API Key shows a masked input; after saving, the token is in the OS keychain and `~/.gsd/auth.json` is written in GSD 2 format
+  4. Relaunching the app skips the picker entirely; a token within 5 minutes of expiry is refreshed silently without user interaction
+  5. Settings "Provider" section shows active provider, connection status, last-refreshed timestamp, and a "Change provider" action that clears keychain and re-shows the picker
+**Plans**: TBD
+
+### Phase 17: Permission Model
+**Goal**: Build permissions are expressed as plain-language toggles in a trust dialog rather than a raw skip-permissions toggle; the Bun process layer enforces hard project boundaries and surfaces violations to the user
+**Depends on**: Phase 15
+**Requirements**: PERM-01, PERM-02, PERM-03, PERM-04
+**Success Criteria** (what must be TRUE):
+  1. The Settings panel has no "Skip permissions" toggle — its former location shows "Manage build permissions →" which opens a trust dialog
+  2. Opening a new project triggers the trust dialog once; after user confirmation a `.gsd/.mission-control-trust` flag is written and the dialog never re-appears for that project
+  3. A file operation outside the project directory is blocked by the Bun process layer and surfaces as a `BOUNDARY_VIOLATION` event visible in the UI
+  4. Advanced permission settings show plain-language toggles for package install, shell/build commands, git commits, and git push (all off by default) plus an "ask before each operation" debug mode with a visible warning
+**Plans**: TBD
+
+### Phase 18: Builder Mode
+**Goal**: Non-technical users can operate Mission Control through a vocabulary and routing layer that hides GSD terminology, slash commands, and technical metrics — while the underlying GSD 2 engine runs unchanged
+**Depends on**: Phase 13, Phase 14, Phase 16, Phase 17
+**Requirements**: BUILDER-01, BUILDER-02, BUILDER-03, BUILDER-04, BUILDER-05, BUILDER-06, BUILDER-07
+**Success Criteria** (what must be TRUE):
+  1. Switching to Builder mode in Settings immediately relabels the UI (milestone → version, slice → feature, task → step) without restarting the session
+  2. In Builder mode the chat input shows "What do you want to build or change?", slash command autocomplete is hidden, and the command palette shortcut is not shown
+  3. Sending a natural language message in Builder mode shows a routing badge; the user can override the routing decision before it executes
+  4. Discuss cards in Builder mode use plain-language labels and "Question N of N" progress with no GSD terminology; the decision log appears as "Your decisions so far"
+  5. Slice cards in Builder mode show state labels (Ready to build / Building now / Ready for your review / Done) and action labels (See what will be built / Build this feature / Give direction / Ship it)
+**Plans**: TBD
+
+### Phase 19: Project Workspace
+**Goal**: Users have a managed project home screen — a grid of project cards, multi-session tabs, and an auto-created workspace path for Builder users — so Mission Control feels like an app that owns its projects rather than a file-picker tool
+**Depends on**: Phase 18
+**Requirements**: WORKSPACE-01, WORKSPACE-02, WORKSPACE-03, WORKSPACE-04, WORKSPACE-05
+**Success Criteria** (what must be TRUE):
+  1. With no project open the app shows a project home screen grid; in Builder mode the empty state shows a brief-taking input; in Developer mode it shows an "Open Folder" button
+  2. Each project card shows name, last active timestamp, active milestone, progress bar, and a Resume button; the `···` menu offers Archive, Open in Finder/Explorer, and Remove from list
+  3. Archiving a project removes it from the main grid; restoring it returns it; no files are deleted at any point
+  4. With two or more projects open a tab bar appears — each tab shows project name and an amber dot when executing; switching tabs swaps the active `gsd` process and WebSocket
+  5. In Builder mode, creating a new project auto-creates a directory under `~/GSD Projects/`, runs `git init`, and runs `gsd` setup — no file picker is shown
+**Plans**: TBD
+
+### Phase 20: Installer + Distribution
+**Goal**: Mission Control ships as a signed, auto-updating native installer for macOS and Windows with a public landing page — reproducible via GitHub Actions CI from a single `release/*` push
+**Depends on**: Phase 15, Phase 19
+**Requirements**: DIST-01, DIST-02, DIST-03, DIST-04
+**Success Criteria** (what must be TRUE):
+  1. Pushing to a `release/*` branch produces signed `.dmg`, `.msi`/`.exe`, and `.AppImage`/`.deb` artifacts attached to a draft GitHub Release
+  2. Installing the `.dmg` on macOS and the `.msi` on Windows completes without security warnings; the installed app launches and reaches the project home screen
+  3. With a newer version available the app checks on launch, downloads in the background, and shows an "Update ready" notification in the sidebar footer — no re-download required to apply
+  4. The landing page loads, shows download buttons linking to the latest GitHub Release artifacts, and is readable on a mobile browser
+**Plans**: TBD
+
+---
+
 ## Progress
 
-| Phase                                     | Milestone | Plans Complete | Status   | Completed  |
-| ----------------------------------------- | --------- | -------------- | -------- | ---------- |
-| 1. Monorepo + Bun Server Bootstrap        | v1.0      | 2/2            | Complete |            |
-| 2. File-to-State Pipeline                 | v1.0      | 3/3            | Complete |            |
-| 3. Panel Shell + Design System            | v1.0      | 3/3            | Complete | 2026-03-10 |
-| 3.1 Layout Rewrite (INSERTED)             | v1.0      | 2/2            | Complete | 2026-03-10 |
-| 4. Sidebar + Milestone View               | v1.0      | 2/2            | Complete | 2026-03-10 |
-| 5. Slice Detail + Active Task             | v1.0      | 2/2            | Complete | 2026-03-10 |
-| 6. Chat Panel + Claude Code Integration   | v1.0      | 3/3            | Complete | 2026-03-10 |
-| 6.1 Native File System (INSERTED)         | v1.0      | 2/2            | Complete | 2026-03-10 |
-| 6.2 Live Streaming + Native OS (INSERTED) | v1.0      | 4/4            | Complete | 2026-03-11 |
-| 6.3 New Capabilities (INSERTED)           | v1.0      | 8/8            | Complete | 2026-03-11 |
-| 7. Session Flow + Animation               | v1.0      | 4/4            | Complete |            |
-| 8. Discuss + Review Modes                 | v1.0      | 4/4            | Complete | 2026-03-11 |
-| 9. Live Preview                           | v1.0      | 4/4            | Complete |            |
-| 10. Keyboard Shortcuts + Accessibility    | v1.0      | 3/3            | Complete | 2026-03-12 |
-| 11. Documentation Integrity (GAP)         | v1.0      | 2/2            | Complete | 2026-03-12 |
+**Execution Order:**
+12 → 13 / 14 / 15 (parallel after 12) → 16 / 17 (after 15) → 18 (after 13, 14, 16, 17) → 19 (after 18) → 20 (after 15, 19)
+
+| Phase | Milestone | Plans Complete | Status | Completed |
+|-------|-----------|----------------|--------|-----------|
+| 1. Monorepo + Bun Server Bootstrap | v1.0 | 2/2 | Complete | — |
+| 2. File-to-State Pipeline | v1.0 | 3/3 | Complete | — |
+| 3. Panel Shell + Design System | v1.0 | 3/3 | Complete | 2026-03-10 |
+| 3.1 Layout Rewrite (INSERTED) | v1.0 | 2/2 | Complete | 2026-03-10 |
+| 4. Sidebar + Milestone View | v1.0 | 2/2 | Complete | 2026-03-10 |
+| 5. Slice Detail + Active Task | v1.0 | 2/2 | Complete | 2026-03-10 |
+| 6. Chat Panel + Claude Code Integration | v1.0 | 3/3 | Complete | 2026-03-10 |
+| 6.1 Native File System (INSERTED) | v1.0 | 2/2 | Complete | 2026-03-10 |
+| 6.2 Live Streaming + Native OS (INSERTED) | v1.0 | 4/4 | Complete | 2026-03-11 |
+| 6.3 New Capabilities (INSERTED) | v1.0 | 8/8 | Complete | 2026-03-11 |
+| 7. Session Flow + Animation | v1.0 | 4/4 | Complete | — |
+| 8. Discuss + Review Modes | v1.0 | 4/4 | Complete | 2026-03-11 |
+| 9. Live Preview | v1.0 | 4/4 | Complete | — |
+| 10. Keyboard Shortcuts + Accessibility | v1.0 | 3/3 | Complete | 2026-03-12 |
+| 11. Documentation Integrity (GAP) | v1.0 | 2/2 | Complete | 2026-03-12 |
+| 12. GSD 2 Compatibility Pass | v2.0 | 0/TBD | Not started | — |
+| 13. Session Streaming Hardening | v2.0 | 0/TBD | Not started | — |
+| 14. Slice Integration | v2.0 | 0/TBD | Not started | — |
+| 15. Tauri Shell | v2.0 | 0/TBD | Not started | — |
+| 16. OAuth + Keychain | v2.0 | 0/TBD | Not started | — |
+| 17. Permission Model | v2.0 | 0/TBD | Not started | — |
+| 18. Builder Mode | v2.0 | 0/TBD | Not started | — |
+| 19. Project Workspace | v2.0 | 0/TBD | Not started | — |
+| 20. Installer + Distribution | v2.0 | 0/TBD | Not started | — |

@@ -40,16 +40,31 @@ A developer types a natural language message in Mission Control's chat, it route
 - ✓ Full empty/loading/error state design for every panel — v1.0
 - ✓ Keyboard shortcuts and accessibility (44px touch targets, heading hierarchy, command palette) — v1.0
 
+## Current Milestone: v2.0 Native Desktop
+
+**Goal:** Wrap Mission Control in a Tauri 2 native app, migrate all GSD v1 conventions to GSD 2 (`.gsd/`, `gsd` CLI, Pi SDK streaming), add OAuth + keychain, a Builder mode for non-technical users, and ship signed installers for macOS and Windows.
+
+**Target features:**
+- GSD 2 compatibility pass (`.gsd/` watcher, new state schema, `gsd` process, command syntax)
+- Pi SDK stream parser hardening (structured events, cost tracking, auto mode indicators)
+- Slice integration in Milestones view (4 states: Planned / In Progress / Needs Review / Complete)
+- Tauri 2 native shell (Bun process management, IPC commands, window state)
+- OAuth + OS keychain (Claude Max, GitHub Copilot, OpenRouter, API Key)
+- Permission model + trust dialog (replaces raw skip-permissions toggle)
+- Builder mode (vocabulary + routing layer for non-technical users)
+- Project workspace management (managed workspace, project home screen, multi-session tabs)
+- Signed installer + distribution (GitHub Actions CI, auto-update, landing page)
+
 ### Active
 
-<!-- Next milestone: v1.1 — TBD -->
+<!-- v2.0 requirements — see REQUIREMENTS.md -->
 
 ### Out of Scope
 
-- D3 force graph for boundary maps — V2 complexity, text lists sufficient for V1
-- Multi-agent lane view — requires GSD 2.0 parallel agent visibility
-- Real-time diff viewer — V2 feature
-- Snapshot/replay timeline — V2 feature
+- D3 force graph for boundary maps — deferred to v3
+- Multi-agent lane view — requires GSD 2.0 parallel agent visibility, deferred
+- Real-time diff viewer — deferred to v3
+- Snapshot/replay timeline — deferred to v3
 - Team presence layer — requires shared server or sync protocol design
 - Prompt library — V2 community feature
 - Visual project analytics — V2 metrics
@@ -95,4 +110,4 @@ A developer types a natural language message in Mission Control's chat, it route
 | File-based state only | All state derivable from `.planning/` files. No in-memory state that can drift. Process restart = full reconstruction. | ✓ Good — restarts are clean, no ghost state issues |
 
 ---
-*Last updated: 2026-03-12 after v1.0 milestone*
+*Last updated: 2026-03-12 after v2.0 milestone start — ported to GSD 2 fork (gsd-build/gsd-2, branch feat/mission-control-m2)*
