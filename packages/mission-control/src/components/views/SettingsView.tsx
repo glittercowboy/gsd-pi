@@ -3,7 +3,7 @@
  *
  * Uses useSettings hook. Changes require explicit Apply button.
  * Two-tier config: global vs project with override indicators.
- * Discovers real Claude Code config (skills, commands, agents, plugins).
+ * Discovers real GSD 2 config (skills, commands, agents, plugins).
  */
 import { useState, useCallback } from "react";
 import {
@@ -150,6 +150,13 @@ function SelectRow({
   );
 }
 
+/** Model options available in GSD 2 per-phase selects. */
+const GSD2_MODEL_OPTIONS = [
+  "claude-sonnet-4-6",
+  "claude-opus-4-6",
+  "claude-haiku-4-5-20251001",
+];
+
 /** Pill badge for items like skills, commands. */
 function ItemPill({ label, variant = "default" }: { label: string; variant?: "default" | "active" | "plugin" }) {
   const colors = {
@@ -234,35 +241,57 @@ export function SettingsView() {
 
       {/* Scrollable sections */}
       <div className="flex-1 overflow-y-auto">
-        {/* 1. Claude Code Options */}
+        {/* 1. AI Model Settings */}
         <Section
-          title="Claude Code Options"
+          title="AI Model Settings"
           icon={<Shield className="h-4 w-4 text-cyan-accent" />}
           open={openSections.claude ?? false}
           onToggle={() => toggleSection("claude")}
         >
-          <ToggleRow
-            label="Skip permissions"
-            checked={getSetting("skip_permissions", true) as boolean}
-            onChange={(val) => handleUpdate("skip_permissions", val)}
-            overridden={isOverridden("skip_permissions")}
+          <SelectRow
+            label="Research model"
+            value={getSetting("research_model", "claude-sonnet-4-6") as string}
+            options={GSD2_MODEL_OPTIONS}
+            onChange={(val) => handleUpdate("research_model", val)}
+            overridden={isOverridden("research_model")}
           />
           <SelectRow
-            label="Model"
-            value={getSetting("model", "claude-sonnet-4-6") as string}
-            options={[
-              "claude-sonnet-4-6",
-              "claude-opus-4-6",
-              "claude-haiku-4-5-20251001",
-            ]}
-            onChange={(val) => handleUpdate("model", val)}
-            overridden={isOverridden("model")}
+            label="Planning model"
+            value={getSetting("planning_model", "claude-sonnet-4-6") as string}
+            options={GSD2_MODEL_OPTIONS}
+            onChange={(val) => handleUpdate("planning_model", val)}
+            overridden={isOverridden("planning_model")}
           />
-          <TextAreaRow
-            label="Allowed tools"
-            value={getSetting("allowed_tools", "") as string}
-            onChange={(val) => handleUpdate("allowed_tools", val)}
-            placeholder="Bash, Read, Write, Edit..."
+          <SelectRow
+            label="Execution model"
+            value={getSetting("execution_model", "claude-sonnet-4-6") as string}
+            options={GSD2_MODEL_OPTIONS}
+            onChange={(val) => handleUpdate("execution_model", val)}
+            overridden={isOverridden("execution_model")}
+          />
+          <SelectRow
+            label="Completion model"
+            value={getSetting("completion_model", "claude-sonnet-4-6") as string}
+            options={GSD2_MODEL_OPTIONS}
+            onChange={(val) => handleUpdate("completion_model", val)}
+            overridden={isOverridden("completion_model")}
+          />
+          <div className="flex items-center gap-2">
+            <label className="text-sm text-slate-400 flex-1">Budget ceiling ($)</label>
+            <input
+              type="number"
+              value={getSetting("budget_ceiling", "") as string | number}
+              onChange={(e) => handleUpdate("budget_ceiling", e.target.value === "" ? "" : Number(e.target.value))}
+              placeholder="e.g. 50"
+              className="w-24 rounded-md bg-navy-800 border border-navy-600 px-3 py-1.5 text-sm text-slate-300 focus:outline-none focus:border-cyan-accent"
+            />
+          </div>
+          <SelectRow
+            label="Skill discovery"
+            value={getSetting("skill_discovery", "auto") as string}
+            options={["auto", "suggest", "off"]}
+            onChange={(val) => handleUpdate("skill_discovery", val)}
+            overridden={isOverridden("skill_discovery")}
           />
         </Section>
 
