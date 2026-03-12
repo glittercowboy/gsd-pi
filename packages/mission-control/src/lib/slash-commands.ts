@@ -2,7 +2,7 @@
  * Slash command registry with prefix filtering.
  *
  * Three sources:
- * 1. GSD workflow commands (/gsd:*)
+ * 1. GSD 2 workflow commands (/gsd subcommands)
  * 2. Native Claude Code commands (/help, /clear, etc.)
  * 3. User custom commands from ~/.claude/commands/ and .claude/commands/
  *
@@ -17,28 +17,15 @@ export interface SlashCommand {
 }
 
 export const GSD_COMMANDS: SlashCommand[] = [
-  { command: "/gsd:new-project", description: "Full initialization", args: "[--auto]", source: "gsd" },
-  { command: "/gsd:discuss-phase", description: "Capture decisions before planning", args: "[N] [--auto]", source: "gsd" },
-  { command: "/gsd:plan-phase", description: "Research + plan + verify", args: "[N] [--auto]", source: "gsd" },
-  { command: "/gsd:execute-phase", description: "Execute all plans in waves", args: "<N>", source: "gsd" },
-  { command: "/gsd:verify-work", description: "Manual acceptance testing", args: "[N]", source: "gsd" },
-  { command: "/gsd:progress", description: "Where am I? What's next?", args: "", source: "gsd" },
-  { command: "/gsd:help", description: "Show all commands", args: "", source: "gsd" },
-  { command: "/gsd:quick", description: "Ad-hoc task with guarantees", args: "[--full] [--discuss]", source: "gsd" },
-  { command: "/gsd:pause-work", description: "Create handoff", args: "", source: "gsd" },
-  { command: "/gsd:resume-work", description: "Restore session", args: "", source: "gsd" },
-  { command: "/gsd:settings", description: "Configure workflow", args: "", source: "gsd" },
-  { command: "/gsd:debug", description: "Systematic debugging", args: "[desc]", source: "gsd" },
-  { command: "/gsd:health", description: "Validate .planning/ integrity", args: "[--repair]", source: "gsd" },
-  { command: "/gsd:add-phase", description: "Append phase to roadmap", args: "", source: "gsd" },
-  { command: "/gsd:insert-phase", description: "Insert urgent work", args: "[N]", source: "gsd" },
-  { command: "/gsd:complete-milestone", description: "Archive milestone, tag release", args: "", source: "gsd" },
-  { command: "/gsd:new-milestone", description: "Start next version", args: "[name]", source: "gsd" },
-  { command: "/gsd:map-codebase", description: "Analyze existing codebase", args: "", source: "gsd" },
-  { command: "/gsd:audit-milestone", description: "Verify milestone done criteria", args: "", source: "gsd" },
-  { command: "/gsd:add-todo", description: "Capture idea for later", args: "[desc]", source: "gsd" },
-  { command: "/gsd:check-todos", description: "List pending todos", args: "", source: "gsd" },
-  { command: "/gsd:update", description: "Update GSD", args: "", source: "gsd" },
+  { command: "/gsd", description: "Guided mode — reads project state, shows what's next", args: "", source: "gsd" },
+  { command: "/gsd auto", description: "Autonomous mode — research, plan, execute, commit, repeat", args: "", source: "gsd" },
+  { command: "/gsd stop", description: "Stop auto mode gracefully", args: "", source: "gsd" },
+  { command: "/gsd discuss", description: "Discuss architecture and decisions", args: "", source: "gsd" },
+  { command: "/gsd status", description: "Progress dashboard", args: "", source: "gsd" },
+  { command: "/gsd queue", description: "Queue future milestones", args: "", source: "gsd" },
+  { command: "/gsd prefs", description: "Model selection, timeouts, budget ceiling", args: "", source: "gsd" },
+  { command: "/gsd migrate", description: "Migrate v1 .planning/ directory to .gsd/ format", args: "", source: "gsd" },
+  { command: "/gsd doctor", description: "Validate .gsd/ integrity, find and fix issues", args: "", source: "gsd" },
 ];
 
 export const CLAUDE_CODE_COMMANDS: SlashCommand[] = [
