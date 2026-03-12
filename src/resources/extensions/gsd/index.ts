@@ -25,6 +25,7 @@ import type {
 import { createBashTool, createWriteTool, createReadTool, createEditTool } from "@mariozechner/pi-coding-agent";
 
 import { registerGSDCommand } from "./commands.js";
+import { registerExitCommand } from "./exit-command.js";
 import { registerWorktreeCommand, getWorktreeOriginalCwd, getActiveWorktreeName } from "./worktree-command.js";
 import { saveFile, formatContinue, loadFile, parseContinue, parseSummary } from "./files.js";
 import { loadPrompt } from "./prompt-loader.js";
@@ -63,14 +64,7 @@ const GSD_LOGO_LINES = [
 export default function (pi: ExtensionAPI) {
   registerGSDCommand(pi);
   registerWorktreeCommand(pi);
-
-  // ── /exit — kill the process immediately ──────────────────────────────
-  pi.registerCommand("exit", {
-    description: "Exit GSD immediately",
-    handler: async (_ctx) => {
-      process.exit(0);
-    },
-  });
+  registerExitCommand(pi);
 
   // ── Dynamic-cwd bash tool with default timeout ────────────────────────
   // The built-in bash tool captures cwd at startup. This replacement uses

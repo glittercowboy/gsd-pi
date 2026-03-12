@@ -6,6 +6,9 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+- `/exit` now requests the normal session shutdown path instead of calling `process.exit(0)`, so terminal cleanup still runs before GSD exits
+
 ## [2.5.0] - 2026-03-12
 
 ### Added

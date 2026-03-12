@@ -218,7 +218,7 @@ On first run, GSD launches a branded setup wizard that walks you through LLM pro
 | `/gsd doctor` | Validate `.gsd/` integrity, find and fix issues |
 | `/worktree` (`/wt`) | Git worktree lifecycle — create, switch, merge, remove |
 | `/voice` | Toggle real-time speech-to-text (macOS only) |
-| `/exit` | Kill GSD process immediately |
+| `/exit` | Exit GSD gracefully |
 | `/clear` | Start a new session (alias for `/new`) |
 | `Ctrl+Alt+G` | Toggle dashboard overlay |
 | `Ctrl+Alt+V` | Toggle voice transcription |
