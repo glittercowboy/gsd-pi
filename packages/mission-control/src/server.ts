@@ -16,7 +16,7 @@ const repoRoot = resolve(import.meta.dir, "../../..");
 
 // Start file-to-state pipeline with WebSocket server (before server so fetch can reference it)
 const pipeline = await startPipeline({
-  planningDir: resolve(repoRoot, ".planning"),
+  planningDir: resolve(repoRoot, ".gsd"),
   wsPort: 4001,
 });
 console.log("File-to-state pipeline running. WebSocket on :4001");
@@ -106,15 +106,15 @@ const server = Bun.serve({
           );
         }
 
-        // Always pass .planning/ path — pipeline derives repoRoot as parent.
-        // If .planning/ doesn't exist yet, buildFullState returns empty/default state.
-        const planningDir = resolve(projectPath, ".planning");
+        // Always pass .gsd/ path — pipeline derives repoRoot as parent.
+        // If .gsd/ doesn't exist yet, buildFullState returns empty/default state.
+        const planningDir = resolve(projectPath, ".gsd");
         let hasPlanningDir = false;
         try {
           await access(planningDir);
           hasPlanningDir = true;
         } catch {
-          // No .planning/ yet — new project
+          // No .gsd/ yet — new project
         }
 
         await pipeline.switchProject(planningDir);

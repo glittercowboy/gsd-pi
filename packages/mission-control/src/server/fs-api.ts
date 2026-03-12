@@ -85,10 +85,10 @@ export async function listDirectory(
     let isGsdProject = false;
     if (isDir) {
       try {
-        await access(join(resolvedPath, name, ".planning"));
+        await access(join(resolvedPath, name, ".gsd"));
         isGsdProject = true;
       } catch {
-        // No .planning directory
+        // No .gsd directory
       }
     }
 
@@ -120,7 +120,7 @@ export async function detectProject(
   const resolved = resolve(dirPath);
   let isGsdProject = false;
   try {
-    await access(join(resolved, ".planning"));
+    await access(join(resolved, ".gsd"));
     isGsdProject = true;
   } catch {
     // Not a GSD project

@@ -10,7 +10,7 @@ export interface FileSystemEntry {
   path: string;
   /** Whether this entry is a directory */
   isDirectory: boolean;
-  /** Whether this directory contains .planning/ (is a GSD project) */
+  /** Whether this directory contains .gsd/ (is a GSD project) */
   isGsdProject: boolean;
 }
 
@@ -21,6 +21,6 @@ export interface RecentProject {
   name: string;
   /** Unix timestamp of last open */
   lastOpened: number;
-  /** Whether the project has .planning/ */
+  /** Whether the project has .gsd/ */
   isGsdProject: boolean;
 }

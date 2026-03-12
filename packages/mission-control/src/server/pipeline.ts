@@ -69,7 +69,7 @@ export async function startPipeline(
   // Detected dev server port — closure variable, per-project, reset on switchProject (Pitfall 3)
   let previewPort: number | null = null;
 
-  // Resolve repo root from planningDir (one level up from .planning)
+  // Resolve repo root from planningDir (one level up from .gsd)
   let repoRoot = resolve(planningDir, "..");
 
   // Discover custom slash commands from ~/.claude/commands/ and .claude/commands/

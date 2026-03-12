@@ -1,5 +1,5 @@
 /**
- * Debounced recursive file watcher for .planning/ directory.
+ * Debounced recursive file watcher for .gsd/ directory.
  * Uses Bun/Node fs.watch with recursive: true and configurable debounce.
  */
 import { watch, type FSWatcher } from "node:fs";
@@ -14,7 +14,7 @@ import type { WatcherOptions } from "./types";
  * - Files ending in ~ (editor backups)
  * - Files ending in .swp (vim swap files)
  * - .mission-control-session.json (session file)
- * - Dotfiles not under .planning path
+ * - Dotfiles not under .gsd path
  */
 export function createFileWatcher(options: WatcherOptions): { close: () => void } {
   const { planningDir, debounceMs = 50, onChange } = options;
@@ -39,9 +39,9 @@ export function createFileWatcher(options: WatcherOptions): { close: () => void 
         // Filter out session file
         if (normalized === ".mission-control-session.json") return;
 
-        // Filter out dotfiles that are not under .planning path
+        // Filter out dotfiles that are not under .gsd path
         const firstSegment = normalized.split("/")[0];
-        if (firstSegment.startsWith(".") && !firstSegment.startsWith(".planning")) return;
+        if (firstSegment.startsWith(".") && !firstSegment.startsWith(".gsd")) return;
 
         pending.add(normalized);
 
