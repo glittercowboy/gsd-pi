@@ -39,7 +39,7 @@ import {
   readUnitRuntimeRecord,
   writeUnitRuntimeRecord,
 } from "./unit-runtime.js";
-import { resolveAutoSupervisorConfig, resolveModelForUnit, resolveSkillDiscoveryMode, loadEffectiveGSDPreferences } from "./preferences.js";
+import { resolveAutoSupervisorConfig, resolveModelForUnit, resolveSkillDiscoveryMode, loadEffectiveGSDPreferences, getConfiguredMainBranch } from "./preferences.js";
 import type { GSDPreferences } from "./preferences.js";
 import {
   validatePlanBoundary,
@@ -359,7 +359,8 @@ export async function startAuto(
   try {
     execSync("git rev-parse --git-dir", { cwd: base, stdio: "pipe" });
   } catch {
-    execSync("git init", { cwd: base, stdio: "pipe" });
+    const mainBranch = getConfiguredMainBranch(base);
+    execSync(`git init -b ${mainBranch}`, { cwd: base, stdio: "pipe" });
   }
 
   // Ensure .gitignore has baseline patterns

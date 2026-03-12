@@ -51,6 +51,7 @@ export interface GSDPreferences {
   uat_dispatch?: boolean;
   budget_ceiling?: number;
   remote_questions?: RemoteQuestionsConfig;
+  main_branch?: string;
 }
 
 export interface LoadedGSDPreferences {
@@ -69,6 +70,22 @@ export function getLegacyGlobalGSDPreferencesPath(): string {
 
 export function getProjectGSDPreferencesPath(): string {
   return PROJECT_PREFERENCES_PATH;
+}
+
+/**
+ * Get the configured main branch from preferences.
+ * Checks project preferences first, then global, then defaults to "main".
+ */
+export function getConfiguredMainBranch(basePath: string): string {
+  const prefs = loadProjectGSDPreferences();
+  if (prefs?.preferences?.main_branch) {
+    return prefs.preferences.main_branch;
+  }
+  const globalPrefs = loadGlobalGSDPreferences();
+  if (globalPrefs?.preferences?.main_branch) {
+    return globalPrefs.preferences.main_branch;
+  }
+  return "main";
 }
 
 export function loadGlobalGSDPreferences(): LoadedGSDPreferences | null {

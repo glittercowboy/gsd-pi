@@ -127,6 +127,7 @@ custom_instructions: []
 models: {}
 skill_discovery: {}
 auto_supervisor: {}
+main_branch: ""
 ---
 
 # GSD Skill Preferences
@@ -145,6 +146,7 @@ See \`~/.gsd/agent/extensions/gsd/docs/preferences-reference.md\` for full field
 - \`models\`: Model preferences for specific task types
 - \`skill_discovery\`: Automatic skill detection preferences
 - \`auto_supervisor\`: Supervision and gating rules for autonomous modes
+- \`main_branch\`: The primary branch name for this project (e.g., "main", "master"). Used when initializing new git repos. Defaults to "main" if not specified.
 
 ## Examples
 
