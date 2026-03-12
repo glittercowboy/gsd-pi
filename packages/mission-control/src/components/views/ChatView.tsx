@@ -7,6 +7,7 @@
 import { useState, useCallback } from "react";
 import type React from "react";
 import { Monitor } from "lucide-react";
+import { MigrationBanner } from "../MigrationBanner";
 import { TaskExecuting } from "@/components/active-task/TaskExecuting";
 import { TaskWaiting } from "@/components/active-task/TaskWaiting";
 import { ChatPanel } from "@/components/chat/ChatPanel";
@@ -56,6 +57,7 @@ export function ChatView({
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [closeModalSession, setCloseModalSession] = useState<SessionTab | null>(null);
   const [pendingAttachment, setPendingAttachment] = useState<AssetItem | null>(null);
+  const [migrationDismissed, setMigrationDismissed] = useState(false);
 
   const handleAssetUploaded = useCallback((asset: AssetItem) => {
     setPendingAttachment(asset);
@@ -160,6 +162,17 @@ export function ChatView({
             <Monitor className="h-4 w-4" />
           </button>
         </div>
+      )}
+
+      {/* Migration banner — shown when v1 project (.planning/) detected without .gsd/ */}
+      {planningState?.needsMigration && !migrationDismissed && (
+        <MigrationBanner
+          onRunMigration={() => {
+            handleChatSend("/gsd migrate");
+            setMigrationDismissed(true);
+          }}
+          onDismiss={() => setMigrationDismissed(true)}
+        />
       )}
 
       {/* Compact task status at top */}
