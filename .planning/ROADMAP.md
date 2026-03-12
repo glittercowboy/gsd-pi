@@ -203,7 +203,7 @@ Plans:
 | 10. Keyboard Shortcuts + Accessibility | v1.0 | 3/3 | Complete | 2026-03-12 |
 | 11. Documentation Integrity (GAP) | 4/4 | Complete   | 2026-03-12 | 2026-03-12 |
 | 11.1 Pre-v2.0 Stabilization (INSERTED) | 3/4 | Complete    | 2026-03-12 | — |
-| 12. GSD 2 Compatibility Pass | 2/6 | In Progress|  | — |
+| 12. GSD 2 Compatibility Pass | 3/6 | In Progress|  | — |
 | 13. Session Streaming Hardening | v2.0 | 0/TBD | Not started | — |
 | 14. Slice Integration | v2.0 | 0/TBD | Not started | — |
 | 15. Tauri Shell | v2.0 | 0/TBD | Not started | — |

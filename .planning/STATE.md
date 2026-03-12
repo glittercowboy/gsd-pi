@@ -3,13 +3,13 @@ gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: Native Desktop
 status: in_progress
-last_updated: "2026-03-12T18:26:18.630Z"
+last_updated: "2026-03-12T18:35:42.456Z"
 last_activity: "2026-03-12 — Plan 11.1-02 complete: wired guard, reconcile interval pause, MAX_SESSIONS consolidated, validateConfigState added"
 progress:
   total_phases: 10
   completed_phases: 1
   total_plans: 10
-  completed_plans: 6
+  completed_plans: 7
 ---
 
 ---
@@ -89,6 +89,8 @@ Progress: [██████████] 100% (v2.0 phase 11.1)
 - [Phase 12]: v1 types (ProjectState, PhaseState, ConfigState) kept as deprecated stubs to prevent UI component breakage; to be removed in Phases 13-14
 - [Phase 12]: pipeline.ts skip_permissions hardcoded to true, worktree_enabled to false — config.json is gone in GSD2; TODO Phase 13
 - [Phase 12]: parseGSD2State splits on newline-triple-dash to find all YAML blocks and uses the LAST one with valid GSD2 fields
+- [Phase 12-03]: --resume flag removed entirely; Phase 13 will implement gsd session continuity
+- [Phase 12-03]: planningDir variable name preserved throughout — only the string value changed from .planning to .gsd
 
 ### Blockers/Concerns
 
