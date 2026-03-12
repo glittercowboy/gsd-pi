@@ -60,6 +60,8 @@ const DEFAULT_CONFIG_STATE: ConfigState = {
   brave_search: false,
   mode: "balanced",
   granularity: "fine",
+  skip_permissions: true,
+  worktree_enabled: false,
 };
 
 // -- File reading helpers --

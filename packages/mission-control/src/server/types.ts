@@ -113,7 +113,14 @@ export interface ConfigState {
   brave_search: boolean;
   mode: string;
   granularity: string;
+  worktree_enabled?: boolean;
+  skip_permissions?: boolean;
 }
+
+export const DEFAULT_CONFIG_STATE: Partial<ConfigState> = {
+  skip_permissions: true,
+  worktree_enabled: false,
+};
 
 // -- Requirement State (from REQUIREMENTS.md) --
 

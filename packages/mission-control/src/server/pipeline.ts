@@ -19,7 +19,7 @@ import { parseStreamForModeEvents } from "./mode-interceptor";
 import type { PlanningState } from "./types";
 import type { WsServer, SessionAction } from "./ws-server";
 import type { ChatResponse, StreamEvent } from "./chat-types";
-import type { SessionState } from "./session-manager";
+import type { SessionState, IProcessManager } from "./session-manager";
 import type { ServerWebSocket } from "bun";
 
 export interface PipelineOptions {
@@ -27,6 +27,11 @@ export interface PipelineOptions {
   wsPort: number;
   /** Reconciliation interval in ms. Defaults to 5000. */
   reconcileMs?: number;
+  /**
+   * Optional process factory for testing — receives cwd and config-derived options.
+   * When omitted, defaults to real ClaudeProcessManager with config options applied.
+   */
+  processFactory?: (cwd: string, opts?: { skipPermissions?: boolean }) => IProcessManager;
 }
 
 export interface PipelineHandle {
@@ -57,7 +62,7 @@ export interface PipelineHandle {
 export async function startPipeline(
   options: PipelineOptions
 ): Promise<PipelineHandle> {
-  const { planningDir: initialPlanningDir, wsPort, reconcileMs = 5000 } = options;
+  const { planningDir: initialPlanningDir, wsPort, reconcileMs = 5000, processFactory: injectedProcessFactory } = options;
 
   let planningDir = initialPlanningDir;
 
@@ -77,8 +82,13 @@ export async function startPipeline(
   // 1. Build initial state
   let currentState: PlanningState = await buildFullState(planningDir);
 
-  // 2. Create session manager and restore persisted sessions
-  const sessionManager = new SessionManager(planningDir);
+  // 2. Create session manager with config-bridge processFactory and restore persisted sessions
+  const skipPermissions = currentState.config.skip_permissions !== false;
+  const configuredProcessFactory = injectedProcessFactory
+    ? (cwd: string) => injectedProcessFactory(cwd, { skipPermissions })
+    : (cwd: string) => new ClaudeProcessManager(cwd, { skipPermissions });
+  const sessionManager = new SessionManager(planningDir, { processFactory: configuredProcessFactory });
+  sessionManager.setWorktreeEnabled(currentState.config.worktree_enabled === true);
   await sessionManager.restoreMetadata(repoRoot);
 
   // Ensure at least one default session exists
@@ -381,6 +391,15 @@ export async function startPipeline(
 
         // Rebuild state from new planning dir
         currentState = await buildFullState(planningDir);
+
+        // Re-apply config bridge for new project
+        const newSkipPermissions = currentState.config.skip_permissions !== false;
+        const newConfiguredFactory = injectedProcessFactory
+          ? (cwd: string) => injectedProcessFactory(cwd, { skipPermissions: newSkipPermissions })
+          : (cwd: string) => new ClaudeProcessManager(cwd, { skipPermissions: newSkipPermissions });
+        // Update the SessionManager's processFactory for new sessions
+        (sessionManager as any)["processFactory"] = newConfiguredFactory;
+        sessionManager.setWorktreeEnabled(currentState.config.worktree_enabled === true);
 
         // Create fresh default session in new project
         const newSession = sessionManager.createSession(repoRoot);
