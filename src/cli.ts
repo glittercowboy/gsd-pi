@@ -111,6 +111,20 @@ if (modelsJsonError) {
   console.error('[gsd] Custom provider models were not loaded. Built-in models are still available.')
 }
 
+// Auto-apply provider base URL overrides from environment variables.
+// Matches the convention used by Claude Code, Aider, and the Anthropic SDK itself.
+const ENV_OVERRIDES: Array<[string, string, string]> = [
+  ['anthropic', 'ANTHROPIC_BASE_URL', 'ANTHROPIC_API_KEY'],
+  ['openai',    'OPENAI_BASE_URL',    'OPENAI_API_KEY'],
+]
+for (const [provider, baseUrlEnv, apiKeyEnv] of ENV_OVERRIDES) {
+  const baseUrl = process.env[baseUrlEnv]
+  const apiKey  = process.env[apiKeyEnv]
+  if (baseUrl || apiKey) {
+    modelRegistry.registerProvider(provider, { ...(baseUrl && { baseUrl }), ...(apiKey && { apiKey }) })
+  }
+}
+
 const settingsManager = SettingsManager.create(agentDir)
 
 // Validate configured model on startup — catches stale settings from prior installs
