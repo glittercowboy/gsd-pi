@@ -42,7 +42,7 @@ export function deriveSessionMode(
   // Connected but no project data — onboarding
   if (
     state === null ||
-    (state.phases.length === 0 && state.roadmap.phases.length === 0)
+    (state.slices.length === 0 && (state.roadmap === null || state.roadmap.slices.length === 0))
   ) {
     return "onboarding";
   }
@@ -84,7 +84,7 @@ export function useSessionFlow(
   // Fetch continue-here data once when we have state
   useEffect(() => {
     if (wsStatus !== "connected" || state === null || fetchedRef.current) return;
-    if (state.phases.length === 0 && state.roadmap.phases.length === 0) return;
+    if (state.slices.length === 0 && (state.roadmap === null || state.roadmap.slices.length === 0)) return;
 
     fetchedRef.current = true;
 
