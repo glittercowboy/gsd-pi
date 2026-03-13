@@ -3,10 +3,25 @@ gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: Native Desktop
 status: in_progress
+last_updated: "2026-03-13T07:22:40.769Z"
+last_activity: "2026-03-13 — Plan 13-06 complete: AppShell wired with isAutoMode/isCrashed/costState/onInterrupt/onDismissCrash; server.ts SIGTERM/SIGINT → killAll(); 578 tests pass; live verification deferred pending GSD 2 CLI install"
+progress:
+  total_phases: 10
+  completed_phases: 2
+  total_plans: 18
+  completed_plans: 17
+  percent: 94
+---
+
+---
+gsd_state_version: 1.0
+milestone: v2.0
+milestone_name: Native Desktop
+status: in_progress
 last_updated: "2026-03-13T07:03:54.105Z"
 last_activity: "2026-03-12 — Plan 13-05 complete: applyGSD2Event, isAutoMode/isCrashed/interrupt in useSessionManager, EXECUTING badge, phase_transition + tool_use cards"
 progress:
-  total_phases: 10
+  [█████████░] 94%
   completed_phases: 2
   total_plans: 17
   completed_plans: 16
@@ -112,11 +127,11 @@ See: .planning/PROJECT.md (updated 2026-03-12)
 ## Current Position
 
 Phase: 13 of 20 (Session Streaming Hardening) — COMPLETE
-Plan: 6 of 6 (plan 06 complete — AppShell full wiring, killAll orphan prevention, human verification approved)
+Plan: 7 of 7 (plan 07 complete — session_interrupt routing gap closed, Escape→SIGINT path verified)
 Status: Phase 13 complete — ready for Phase 14
-Last activity: 2026-03-13 — Plan 13-06 complete: AppShell wired with isAutoMode/isCrashed/costState/onInterrupt/onDismissCrash; server.ts SIGTERM/SIGINT → killAll(); 578 tests pass; live verification deferred pending GSD 2 CLI install
+Last activity: 2026-03-13 — Plan 13-07 complete: session_interrupt added to SessionAction union, routed in ws-server.ts, handled in pipeline.ts; STREAM-03 and STREAM-07 fully satisfied; 580 tests pass
 
-Progress: [█████████░] 94% (16/17 plans complete)
+Progress: [█████████░] 94% (17/18 plans complete)
 
 ## Milestone Archive
 
@@ -181,6 +196,8 @@ Progress: [█████████░] 94% (16/17 plans complete)
 - [Phase 13]: computeCostState uses float rounding (Math.round * 1e10) to prevent threshold failures at exact 80% boundary
 - [Phase 13]: ChatView accepts costState as a pure render prop — useCostTracker wired in plan 13-05 via useSessionManager
 - [Phase 13]: Live GSD 2 session verification deferred — all 578 automated tests pass; manual SC-1 through SC-5 will be validated when GSD 2 CLI is installed
+- [Phase 13]: session_interrupt is fire-and-forget: no publishSessionUpdate needed, interrupt causes no metadata change
+- [Phase 13]: TypeScript discriminant narrowing on action.type correctly resolves action.sessionId inside session_interrupt case without casting
 
 ### Blockers/Concerns
 
