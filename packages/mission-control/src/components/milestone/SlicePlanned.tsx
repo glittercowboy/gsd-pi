@@ -41,7 +41,7 @@ export function SlicePlanned({ slice, onAction }: SlicePlannedProps) {
             <span key={dep.id}>
               {i > 0 && ", "}
               <span className={dep.complete ? "text-[#22C55E]" : "text-slate-500"}>
-                {dep.id} {dep.name} {dep.complete ? "\u2713" : "\u00b7"}
+                {dep.id} {dep.name} {dep.complete ? "✓" : "·"}
               </span>
             </span>
           ))}
