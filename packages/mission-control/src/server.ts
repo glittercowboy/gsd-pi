@@ -12,6 +12,7 @@ import { handleAssetsRequest } from "./server/assets-api";
 import { handleSessionStatusRequest } from "./server/session-status-api";
 import { handleProxyRequest } from "./server/proxy-api";
 import { handleUatResultsRequest } from "./server/uat-results-api";
+import { handleGsdFileRequest } from "./server/gsd-file-api";
 
 const repoRoot = resolve(import.meta.dir, "../../..");
 
@@ -80,6 +81,12 @@ const server = Bun.serve({
     // Route /api/uat-results to UAT results handler
     if (pathname === "/api/uat-results") {
       const response = await handleUatResultsRequest(req, url, pipeline.getPlanningDir());
+      if (response) return addCorsHeaders(response);
+    }
+
+    // Route /api/gsd-file to inline read handler
+    if (pathname === "/api/gsd-file") {
+      const response = await handleGsdFileRequest(req, url, pipeline.getPlanningDir(), repoRoot);
       if (response) return addCorsHeaders(response);
     }
 
