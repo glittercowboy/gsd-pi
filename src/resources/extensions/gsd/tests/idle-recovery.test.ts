@@ -161,11 +161,28 @@ function cleanup(base: string): void {
 }
 
 {
-  console.log("\n=== writeBlockerPlaceholder: unknown type → null ===");
+  console.log("\n=== writeBlockerPlaceholder: execute-task writes summary placeholder ===");
   const base = createFixtureBase();
   try {
     const result = writeBlockerPlaceholder("execute-task", "M001/S01/T01", base, "test");
-    assertEq(result, null, "execute-task has no single artifact path, returns null");
+    assert(result !== null, "execute-task should return a diagnostic string (has a known artifact path)");
+    assert(typeof result === "string", "execute-task result should be a string");
+    // The placeholder file should have been written
+    const summaryPath = join(base, ".gsd", "milestones", "M001", "slices", "S01", "tasks", "T01-SUMMARY.md");
+    assert(existsSync(summaryPath), "execute-task should write a summary placeholder file");
+    const content = readFileSync(summaryPath, "utf-8");
+    assert(content.includes("BLOCKER"), "placeholder should contain BLOCKER heading");
+  } finally {
+    cleanup(base);
+  }
+}
+
+{
+  console.log("\n=== writeBlockerPlaceholder: truly unknown type → null ===");
+  const base = createFixtureBase();
+  try {
+    const result = writeBlockerPlaceholder("nonexistent-unit-type", "M001/S01/T01", base, "test");
+    assertEq(result, null, "unknown unit type returns null");
   } finally {
     cleanup(base);
   }

@@ -14,7 +14,6 @@ const bundledExtensionsDir = join(resourcesDir, 'extensions')
  *
  * - extensions/ → ~/.gsd/agent/extensions/   (always overwrite — ensures updates ship on next launch)
  * - agents/     → ~/.gsd/agent/agents/        (always overwrite)
- * - AGENTS.md   → ~/.gsd/agent/AGENTS.md      (always overwrite)
  * - GSD-WORKFLOW.md is read directly from bundled path via GSD_WORKFLOW_PATH env var
  *
  * Always-overwrite ensures `npm update -g @glittercowboy/gsd` takes effect immediately.

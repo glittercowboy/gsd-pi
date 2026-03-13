@@ -9,7 +9,8 @@
  */
 
 import { execSync } from "node:child_process";
-import { sep } from "node:path";
+import { existsSync, readFileSync } from "node:fs";
+import { join, sep } from "node:path";
 
 import {
   detectWorktreeName,
@@ -26,6 +27,7 @@ export interface GitPreferences {
   snapshots?: boolean;
   pre_merge_check?: boolean | string;
   commit_type?: string;
+  main_branch?: string;
 }
 
 export interface CommitOptions {
@@ -47,6 +49,9 @@ export interface PreMergeCheckResult {
 }
 
 // ─── Constants ─────────────────────────────────────────────────────────────
+
+/** Regex for validating branch names — alphanumeric, _, -, /, and . */
+export const VALID_BRANCH_NAME = /^[a-zA-Z0-9_\-\/.]+$/;
 
 /**
  * GSD runtime paths that should be excluded from smart staging.
@@ -183,6 +188,12 @@ export class GitServiceImpl {
    * In the main tree: origin/HEAD symbolic-ref → main/master fallback → current branch.
    */
   getMainBranch(): string {
+    // Explicit preference takes priority over auto-detection
+    const configured = this.prefs.main_branch;
+    if (configured && VALID_BRANCH_NAME.test(configured)) {
+      return configured;
+    }
+
     const wtName = detectWorktreeName(this.basePath);
     if (wtName) {
       const wtBranch = `worktree/${wtName}`;
@@ -347,8 +358,77 @@ export class GitServiceImpl {
    * Stub: to be implemented in T03.
    */
   runPreMergeCheck(): PreMergeCheckResult {
-    // TODO(S05/T03): implement pre-merge check
-    return { passed: true, skipped: true };
+    const pref = this.prefs.pre_merge_check;
+
+    // Explicitly disabled
+    if (pref === false) {
+      return { passed: true, skipped: true };
+    }
+
+    let command: string | null = null;
+
+    // Custom string command (not "auto")
+    if (typeof pref === "string" && pref !== "auto" && pref.trim() !== "") {
+      command = pref.trim();
+    }
+
+    // Auto-detect (true, "auto", or undefined)
+    if (command === null) {
+      command = this.detectTestRunner();
+    }
+
+    if (command === null) {
+      return { passed: true, command: "none", error: "no test runner detected" };
+    }
+
+    // Execute the command
+    try {
+      execSync(command, {
+        cwd: this.basePath,
+        timeout: 300_000,
+        stdio: ["ignore", "pipe", "pipe"],
+        encoding: "utf-8",
+      });
+      return { passed: true, command };
+    } catch (err) {
+      const stderr = err instanceof Error && "stderr" in err
+        ? String((err as { stderr: unknown }).stderr).slice(0, 2000)
+        : String(err).slice(0, 2000);
+      return { passed: false, command, error: stderr };
+    }
+  }
+
+  /**
+   * Detect a test/build runner from project files in basePath.
+   * Returns the command string or null if nothing detected.
+   */
+  private detectTestRunner(): string | null {
+    const pkgPath = join(this.basePath, "package.json");
+    if (existsSync(pkgPath)) {
+      try {
+        const pkg = JSON.parse(readFileSync(pkgPath, "utf-8"));
+        if (pkg?.scripts?.test) return "npm test";
+        if (pkg?.scripts?.build) return "npm run build";
+      } catch { /* invalid JSON — skip */ }
+    }
+
+    if (existsSync(join(this.basePath, "Cargo.toml"))) {
+      return "cargo test";
+    }
+
+    const makefilePath = join(this.basePath, "Makefile");
+    if (existsSync(makefilePath)) {
+      try {
+        const content = readFileSync(makefilePath, "utf-8");
+        if (/^test\s*:/m.test(content)) return "make test";
+      } catch { /* skip */ }
+    }
+
+    if (existsSync(join(this.basePath, "pyproject.toml"))) {
+      return "python -m pytest";
+    }
+
+    return null;
   }
 
   // ─── Merge ─────────────────────────────────────────────────────────────
@@ -460,6 +540,18 @@ export class GitServiceImpl {
         `Working tree has been reset to a clean state. ` +
         `Resolve manually: git checkout ${mainBranch} && git merge --squash ${branch}\n` +
         `Original error: ${msg}`,
+      );
+    }
+
+    // Run pre-merge check (tests, build) before committing
+    const checkResult = this.runPreMergeCheck();
+    if (!checkResult.passed && !checkResult.skipped) {
+      // Undo the squash merge — nothing committed yet, reset staging area
+      this.git(["reset", "--hard", "HEAD"]);
+      const cmdInfo = checkResult.command ? ` (command: ${checkResult.command})` : "";
+      const errInfo = checkResult.error ? `\n${checkResult.error}` : "";
+      throw new Error(
+        `Pre-merge check failed${cmdInfo}. Merge aborted.${errInfo}`,
       );
     }
 

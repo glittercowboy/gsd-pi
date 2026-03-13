@@ -2,12 +2,12 @@
 
 ## Active Work
 
-- **Milestone:** none — M003 complete, no active milestone
+- **Milestone:** none — M004 complete, no active milestone
 - **Phase:** idle
 
 ## Last Completed
 
-- **Milestone:** M003 — Custom Model Provider Support
-- **Slices:** S01 (onboarding/auth), S02 (validation/fallback), S03 (documentation) — all done
-- **Branch:** `gsd/M003/S03` (last slice branch)
+- **Milestone:** M004 — Test Suite Repair and Code Quality
+- **Slices:** S01 (fix all failing tests) — done
+- **Branch:** `gsd/M004/S01`
 - **Completed:** 2026-03-12
