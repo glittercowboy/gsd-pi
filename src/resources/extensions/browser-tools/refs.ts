@@ -124,7 +124,7 @@ export async function buildRefSnapshot(
 					sib = sib.previousElementSibling;
 				}
 				// Check if the parent itself is a heading (unlikely but possible)
-				const parent = current.parentElement;
+				const parent: Element | null = current.parentElement;
 				if (parent && (headingTags.has(parent.tagName) || parent.getAttribute("role") === "heading")) {
 					return (parent.textContent || "").trim().replace(/\s+/g, " ").slice(0, 80);
 				}

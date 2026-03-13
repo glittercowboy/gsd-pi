@@ -3,8 +3,10 @@
   "compilerOptions": {
     "noEmit": true,
     "allowImportingTsExtensions": true,
+    "allowJs": true,
+    "checkJs": false,
     "rootDir": "."
   },
-  "include": ["src/resources/extensions/gsd"],
+  "include": ["src/resources/extensions"],
   "exclude": []
 }

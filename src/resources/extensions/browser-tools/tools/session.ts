@@ -379,7 +379,7 @@ export function registerSessionTools(pi: ExtensionAPI, deps: ToolDeps): void {
 							console: consoleLogs.length,
 							network: networkLogs.length,
 							dialog: dialogLogs.length,
-							actions: timeline.count,
+							actions: timeline.retained,
 							pages: pages.length,
 						},
 						elapsedMs: Date.now() - startedAt,
