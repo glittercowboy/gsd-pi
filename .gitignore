@@ -1,6 +1,8 @@
 
 # ── GSD (user project artifacts — never commit) ──
 .gsd/
+.claude/
+*.tgz
 .DS_Store
 Thumbs.db
 *.swp

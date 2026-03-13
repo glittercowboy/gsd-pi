@@ -1,4 +1,4 @@
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { tmpdir } from "node:os";
 import { execSync } from "node:child_process";
@@ -1592,6 +1592,58 @@ async function main(): Promise<void> {
     // Set milestone but no metadata file exists
     svc.setMilestoneId("M001");
     assertEq(svc.getMainBranch(), "main", "backward compat: no metadata file → falls back to main");
+
+    rmSync(repo, { recursive: true, force: true });
+  }
+
+  // ─── untrackRuntimeFiles: removes tracked runtime files from index ───
+
+  console.log("\n=== untrackRuntimeFiles ===");
+
+  {
+    const { untrackRuntimeFiles } = await import("../gitignore.ts");
+    const repo = mkdtempSync(join(tmpdir(), "gsd-untrack-"));
+    run("git init -b main", repo);
+    run("git config user.email test@test.com", repo);
+    run("git config user.name Test", repo);
+
+    // Create and track runtime files (simulates pre-.gitignore state)
+    mkdirSync(join(repo, ".gsd", "activity"), { recursive: true });
+    mkdirSync(join(repo, ".gsd", "runtime"), { recursive: true });
+    writeFileSync(join(repo, ".gsd", "completed-units.json"), '["u1"]');
+    writeFileSync(join(repo, ".gsd", "metrics.json"), '{}');
+    writeFileSync(join(repo, ".gsd", "STATE.md"), "# State");
+    writeFileSync(join(repo, ".gsd", "activity", "log.jsonl"), "{}");
+    writeFileSync(join(repo, ".gsd", "runtime", "data.json"), "{}");
+    writeFileSync(join(repo, "src.ts"), "code");
+    run("git add -A", repo);
+    run("git commit -m init", repo);
+
+    // Precondition: runtime files are tracked
+    const trackedBefore = run("git ls-files .gsd/", repo);
+    assert(trackedBefore.includes("completed-units.json"), "untrack: precondition — completed-units tracked");
+    assert(trackedBefore.includes("metrics.json"), "untrack: precondition — metrics tracked");
+
+    // Run untrackRuntimeFiles
+    untrackRuntimeFiles(repo);
+
+    // Runtime files should be removed from the index
+    const trackedAfter = run("git ls-files .gsd/", repo);
+    assertEq(trackedAfter, "", "untrack: all runtime files removed from index");
+
+    // Non-runtime files remain tracked
+    const srcTracked = run("git ls-files src.ts", repo);
+    assert(srcTracked.includes("src.ts"), "untrack: non-runtime files remain tracked");
+
+    // Files still exist on disk
+    assert(existsSync(join(repo, ".gsd", "completed-units.json")),
+      "untrack: completed-units.json still on disk");
+    assert(existsSync(join(repo, ".gsd", "metrics.json")),
+      "untrack: metrics.json still on disk");
+
+    // Idempotent — running again doesn't error
+    untrackRuntimeFiles(repo);
+    assert(true, "untrack: second call is idempotent (no error)");
 
     rmSync(repo, { recursive: true, force: true });
   }

@@ -32,6 +32,6 @@ Then research the codebase and relevant technologies. Narrate key findings and s
 
 **Research is advisory, not auto-binding.** Surface candidate requirements clearly instead of silently expanding scope.
 
-**You MUST write the file `{{outputAbsPath}}` before finishing.**
+**You MUST write the file `{{outputPath}}` before finishing.**
 
 When done, say: "Milestone {{milestoneId}} researched."

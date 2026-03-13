@@ -226,7 +226,6 @@ async function main(): Promise<void> {
   const milestoneId = 'M001';
   const sliceId = 'S01';
   const uatPath = '.gsd/milestones/M001/slices/S01/S01-UAT.md';
-  const uatResultAbsPath = '/tmp/gsd-test/S01-UAT-RESULT.md';
   const uatResultPath = '.gsd/milestones/M001/slices/S01/S01-UAT-RESULT.md';
   const uatType = 'artifact-driven';
   const inlinedContext = '<!-- no context -->';
@@ -238,7 +237,6 @@ async function main(): Promise<void> {
       milestoneId,
       sliceId,
       uatPath,
-      uatResultAbsPath,
       uatResultPath,
       uatType,
       inlinedContext,
@@ -261,8 +259,8 @@ async function main(): Promise<void> {
     `prompt contains sliceId value "${sliceId}" after substitution`,
   );
   assert(
-    promptResult?.includes(uatResultAbsPath) ?? false,
-    `prompt contains uatResultAbsPath value after substitution`,
+    promptResult?.includes(uatResultPath) ?? false,
+    `prompt contains uatResultPath value after substitution`,
   );
   assert(
     !/\{\{[^}]+\}\}/.test(promptResult ?? ''),

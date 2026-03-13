@@ -46,8 +46,8 @@ If the user wants to keep going, keep asking. Stop when they say wrap up.
 Once the user is ready to wrap up:
 
 1. Read the slice context template at `~/.gsd/agent/extensions/gsd/templates/slice-context.md`
-2. `mkdir -p {{sliceDirAbsPath}}`
-3. Write `{{contextAbsPath}}` — use the template structure, filling in:
+2. `mkdir -p {{sliceDirPath}}`
+3. Write `{{contextPath}}` — use the template structure, filling in:
    - **Goal** — one sentence: what this slice delivers
    - **Why this Slice** — why now, what it unblocks
    - **Scope / In Scope** — what was confirmed in scope during the interview
@@ -55,5 +55,5 @@ Once the user is ready to wrap up:
    - **Constraints** — anything the user flagged as a hard constraint
    - **Integration Points** — what this slice consumes and produces
    - **Open Questions** — anything still unresolved, with current thinking
-4. Commit: `git -C {{projectRoot}} add {{contextAbsPath}} && git -C {{projectRoot}} commit -m "docs({{milestoneId}}/{{sliceId}}): slice context from discuss"`
+4. Commit: `git -C {{projectRoot}} add {{contextPath}} && git -C {{projectRoot}} commit -m "docs({{milestoneId}}/{{sliceId}}): slice context from discuss"`
 5. Say exactly: `"{{sliceId}} context written."` — nothing else.

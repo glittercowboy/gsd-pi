@@ -21,7 +21,7 @@ import {
 import { join } from "node:path";
 import { readFileSync, existsSync, mkdirSync, readdirSync, rmSync } from "node:fs";
 import { execSync, execFileSync } from "node:child_process";
-import { ensureGitignore, ensurePreferences } from "./gitignore.js";
+import { ensureGitignore, ensurePreferences, untrackRuntimeFiles } from "./gitignore.js";
 import { loadEffectiveGSDPreferences } from "./preferences.js";
 import { showConfirm } from "../shared/confirm-ui.js";
 
@@ -87,13 +87,13 @@ function dispatchWorkflow(pi: ExtensionAPI, note: string, customType = "gsd-run"
  * Build the discuss-and-plan prompt for a new milestone.
  * Used by all three "new milestone" paths (first ever, no active, all complete).
  */
-function buildDiscussPrompt(nextId: string, preamble: string, basePath: string): string {
-  const milestoneDirAbs = join(basePath, ".gsd", "milestones", nextId);
+function buildDiscussPrompt(nextId: string, preamble: string, _basePath: string): string {
+  const milestoneRel = `.gsd/milestones/${nextId}`;
   return loadPrompt("discuss", {
     milestoneId: nextId,
     preamble,
-    contextAbsPath: join(milestoneDirAbs, `${nextId}-CONTEXT.md`),
-    roadmapAbsPath: join(milestoneDirAbs, `${nextId}-ROADMAP.md`),
+    contextPath: `${milestoneRel}/${nextId}-CONTEXT.md`,
+    roadmapPath: `${milestoneRel}/${nextId}-ROADMAP.md`,
   });
 }
 
@@ -345,16 +345,16 @@ async function buildDiscussSlicePrompt(
     ? `## Inlined Context (preloaded — do not re-read these files)\n\n${inlined.join("\n\n---\n\n")}`
     : `## Inlined Context\n\n_(no context files found yet — go in blind and ask broad questions)_`;
 
-  const sliceDirAbsPath = join(base, ".gsd", "milestones", mid, "slices", sid);
-  const contextAbsPath = join(sliceDirAbsPath, `${sid}-CONTEXT.md`);
+  const sliceDirPath = `.gsd/milestones/${mid}/slices/${sid}`;
+  const sliceContextPath = `${sliceDirPath}/${sid}-CONTEXT.md`;
 
   return loadPrompt("guided-discuss-slice", {
     milestoneId: mid,
     sliceId: sid,
     sliceTitle: sTitle,
     inlinedContext,
-    sliceDirAbsPath,
-    contextAbsPath,
+    sliceDirPath,
+    contextPath: sliceContextPath,
     projectRoot: base,
   });
 }
@@ -457,6 +457,7 @@ export async function showSmartEntry(
 
   // ── Ensure .gitignore has baseline patterns ──────────────────────────
   ensureGitignore(basePath);
+  untrackRuntimeFiles(basePath);
 
   // ── No GSD project OR no milestone → Create first/next milestone ────
   if (!existsSync(join(basePath, ".gsd"))) {

@@ -48,14 +48,14 @@ import {
   validateCompleteBoundary,
   formatValidationIssues,
 } from "./observability-validator.js";
-import { ensureGitignore } from "./gitignore.js";
+import { ensureGitignore, untrackRuntimeFiles } from "./gitignore.js";
 import { runGSDDoctor, rebuildState } from "./doctor.js";
 import { snapshotSkills, clearSkillSnapshot } from "./skill-discovery.js";
 import {
   initMetrics, resetMetrics, snapshotUnitMetrics, getLedger,
   getProjectTotals, formatCost, formatTokenCount,
 } from "./metrics.js";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { readdirSync, readFileSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { execSync, execFileSync } from "node:child_process";
 import {
@@ -385,6 +385,7 @@ export async function startAuto(
 
   // Ensure .gitignore has baseline patterns
   ensureGitignore(base);
+  untrackRuntimeFiles(base);
 
   // Bootstrap .gsd/ if it doesn't exist
   const gsdDir = join(base, ".gsd");
@@ -1714,13 +1715,11 @@ async function buildResearchMilestonePrompt(mid: string, midTitle: string, base:
   const inlinedContext = `## Inlined Context (preloaded — do not re-read these files)\n\n${inlined.join("\n\n---\n\n")}`;
 
   const outputRelPath = relMilestoneFile(base, mid, "RESEARCH");
-  const outputAbsPath = resolveMilestoneFile(base, mid, "RESEARCH") ?? join(base, outputRelPath);
   return loadPrompt("research-milestone", {
     milestoneId: mid, milestoneTitle: midTitle,
     milestonePath: relMilestonePath(base, mid),
     contextPath: contextRel,
     outputPath: outputRelPath,
-    outputAbsPath,
     inlinedContext,
     ...buildSkillDiscoveryVars(),
   });
@@ -1748,7 +1747,6 @@ async function buildPlanMilestonePrompt(mid: string, midTitle: string, base: str
   const inlinedContext = `## Inlined Context (preloaded — do not re-read these files)\n\n${inlined.join("\n\n---\n\n")}`;
 
   const outputRelPath = relMilestoneFile(base, mid, "ROADMAP");
-  const outputAbsPath = resolveMilestoneFile(base, mid, "ROADMAP") ?? join(base, outputRelPath);
   const secretsOutputPath = relMilestoneFile(base, mid, "SECRETS");
   return loadPrompt("plan-milestone", {
     milestoneId: mid, milestoneTitle: midTitle,
@@ -1756,7 +1754,6 @@ async function buildPlanMilestonePrompt(mid: string, midTitle: string, base: str
     contextPath: contextRel,
     researchPath: researchRel,
     outputPath: outputRelPath,
-    outputAbsPath,
     secretsOutputPath,
     inlinedContext,
   });
@@ -1788,7 +1785,6 @@ async function buildResearchSlicePrompt(
   const inlinedContext = `## Inlined Context (preloaded — do not re-read these files)\n\n${inlined.join("\n\n---\n\n")}`;
 
   const outputRelPath = relSliceFile(base, mid, sid, "RESEARCH");
-  const outputAbsPath = resolveSliceFile(base, mid, sid, "RESEARCH") ?? join(base, outputRelPath);
   return loadPrompt("research-slice", {
     milestoneId: mid, sliceId: sid, sliceTitle: sTitle,
     slicePath: relSlicePath(base, mid, sid),
@@ -1796,7 +1792,6 @@ async function buildResearchSlicePrompt(
     contextPath: contextRel,
     milestoneResearchPath: milestoneResearchRel,
     outputPath: outputRelPath,
-    outputAbsPath,
     inlinedContext,
     dependencySummaries: depContent,
     ...buildSkillDiscoveryVars(),
@@ -1825,16 +1820,12 @@ async function buildPlanSlicePrompt(
   const inlinedContext = `## Inlined Context (preloaded — do not re-read these files)\n\n${inlined.join("\n\n---\n\n")}`;
 
   const outputRelPath = relSliceFile(base, mid, sid, "PLAN");
-  const outputAbsPath = resolveSliceFile(base, mid, sid, "PLAN") ?? join(base, outputRelPath);
-  const sliceAbsPath = resolveSlicePath(base, mid, sid) ?? join(base, relSlicePath(base, mid, sid));
   return loadPrompt("plan-slice", {
     milestoneId: mid, sliceId: sid, sliceTitle: sTitle,
     slicePath: relSlicePath(base, mid, sid),
-    sliceAbsPath,
     roadmapPath: roadmapRel,
     researchPath: researchRel,
     outputPath: outputRelPath,
-    outputAbsPath,
     inlinedContext,
     dependencySummaries: depContent,
   });
@@ -1885,8 +1876,7 @@ async function buildExecuteTaskPrompt(
 
   const carryForwardSection = await buildCarryForwardSection(priorSummaries, base);
 
-  const sliceDirAbs = resolveSlicePath(base, mid, sid) ?? join(base, relSlicePath(base, mid, sid));
-  const taskSummaryAbsPath = join(sliceDirAbs, "tasks", `${tid}-SUMMARY.md`);
+  const taskSummaryPath = `${relSlicePath(base, mid, sid)}/tasks/${tid}-SUMMARY.md`;
 
   return loadPrompt("execute-task", {
     milestoneId: mid, sliceId: sid, sliceTitle: sTitle, taskId: tid, taskTitle: tTitle,
@@ -1898,7 +1888,7 @@ async function buildExecuteTaskPrompt(
     carryForwardSection,
     resumeSection,
     priorTaskLines: priorLines,
-    taskSummaryAbsPath,
+    taskSummaryPath,
   });
 }
 
@@ -1934,17 +1924,17 @@ async function buildCompleteSlicePrompt(
 
   const inlinedContext = `## Inlined Context (preloaded — do not re-read these files)\n\n${inlined.join("\n\n---\n\n")}`;
 
-  const sliceDirAbs = resolveSlicePath(base, mid, sid) ?? join(base, relSlicePath(base, mid, sid));
-  const sliceSummaryAbsPath = join(sliceDirAbs, `${sid}-SUMMARY.md`);
-  const sliceUatAbsPath = join(sliceDirAbs, `${sid}-UAT.md`);
+  const sliceRel = relSlicePath(base, mid, sid);
+  const sliceSummaryPath = `${sliceRel}/${sid}-SUMMARY.md`;
+  const sliceUatPath = `${sliceRel}/${sid}-UAT.md`;
 
   return loadPrompt("complete-slice", {
     milestoneId: mid, sliceId: sid, sliceTitle: sTitle,
-    slicePath: relSlicePath(base, mid, sid),
+    slicePath: sliceRel,
     roadmapPath: roadmapRel,
     inlinedContext,
-    sliceSummaryAbsPath,
-    sliceUatAbsPath,
+    sliceSummaryPath,
+    sliceUatPath,
   });
 }
 
@@ -1983,15 +1973,14 @@ async function buildCompleteMilestonePrompt(
 
   const inlinedContext = `## Inlined Context (preloaded — do not re-read these files)\n\n${inlined.join("\n\n---\n\n")}`;
 
-  const milestoneDirAbs = resolveMilestonePath(base, mid) ?? join(base, relMilestonePath(base, mid));
-  const milestoneSummaryAbsPath = join(milestoneDirAbs, `${mid}-SUMMARY.md`);
+  const milestoneSummaryPath = `${relMilestonePath(base, mid)}/${mid}-SUMMARY.md`;
 
   return loadPrompt("complete-milestone", {
     milestoneId: mid,
     milestoneTitle: midTitle,
     roadmapPath: roadmapRel,
     inlinedContext,
-    milestoneSummaryAbsPath,
+    milestoneSummaryPath,
   });
 }
 
@@ -2034,8 +2023,7 @@ async function buildReplanSlicePrompt(
 
   const inlinedContext = `## Inlined Context (preloaded — do not re-read these files)\n\n${inlined.join("\n\n---\n\n")}`;
 
-  const sliceDirAbs = resolveSlicePath(base, mid, sid) ?? join(base, relSlicePath(base, mid, sid));
-  const replanAbsPath = join(sliceDirAbs, `${sid}-REPLAN.md`);
+  const replanPath = `${relSlicePath(base, mid, sid)}/${sid}-REPLAN.md`;
 
   return loadPrompt("replan-slice", {
     milestoneId: mid,
@@ -2045,7 +2033,7 @@ async function buildReplanSlicePrompt(
     planPath: slicePlanRel,
     blockerTaskId,
     inlinedContext,
-    replanAbsPath,
+    replanPath,
   });
 }
 
@@ -2163,8 +2151,6 @@ async function buildRunUatPrompt(
 
   const inlinedContext = `## Inlined Context (preloaded — do not re-read these files)\n\n${inlined.join("\n\n---\n\n")}`;
 
-  const sliceDirAbs = resolveSlicePath(base, mid, sliceId) ?? join(base, relSlicePath(base, mid, sliceId));
-  const uatResultAbsPath = join(sliceDirAbs, `${sliceId}-UAT-RESULT.md`);
   const uatResultPath = relSliceFile(base, mid, sliceId, "UAT-RESULT");
   const uatType = extractUatType(uatContent) ?? "human-experience";
 
@@ -2172,7 +2158,6 @@ async function buildRunUatPrompt(
     milestoneId: mid,
     sliceId,
     uatPath,
-    uatResultAbsPath,
     uatResultPath,
     uatType,
     inlinedContext,
@@ -2199,9 +2184,7 @@ async function buildReassessRoadmapPrompt(
 
   const inlinedContext = `## Inlined Context (preloaded — do not re-read these files)\n\n${inlined.join("\n\n---\n\n")}`;
 
-  const assessmentRel = relSliceFile(base, mid, completedSliceId, "ASSESSMENT");
-  const sliceDirAbs = resolveSlicePath(base, mid, completedSliceId) ?? join(base, relSlicePath(base, mid, completedSliceId));
-  const assessmentAbsPath = join(sliceDirAbs, `${completedSliceId}-ASSESSMENT.md`);
+  const assessmentPath = relSliceFile(base, mid, completedSliceId, "ASSESSMENT");
 
   return loadPrompt("reassess-roadmap", {
     milestoneId: mid,
@@ -2209,8 +2192,7 @@ async function buildReassessRoadmapPrompt(
     completedSliceId,
     roadmapPath: roadmapRel,
     completedSliceSummaryPath: summaryRel,
-    assessmentPath: assessmentRel,
-    assessmentAbsPath,
+    assessmentPath,
     inlinedContext,
   });
 }
@@ -2832,7 +2814,7 @@ function verifyExpectedArtifact(unitType: string, unitId: string, base: string):
 export function writeBlockerPlaceholder(unitType: string, unitId: string, base: string, reason: string): string | null {
   const absPath = resolveExpectedArtifactPath(unitType, unitId, base);
   if (!absPath) return null;
-  const dir = absPath.substring(0, absPath.lastIndexOf("/"));
+  const dir = dirname(absPath);
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
   const content = [
     `# BLOCKER — auto-mode recovery failed`,

@@ -37,7 +37,7 @@ Then:
    - a matching task plan file with description, steps, must-haves, verification, inputs, and expected output
    - Observability Impact section **only if the task touches runtime boundaries, async flows, or error paths** — omit it otherwise
 6. Write `{{outputPath}}`
-7. Write individual task plans in `{{sliceAbsPath}}/tasks/`: `T01-PLAN.md`, `T02-PLAN.md`, etc.
+7. Write individual task plans in `{{slicePath}}/tasks/`: `T01-PLAN.md`, `T02-PLAN.md`, etc.
 8. **Self-audit the plan.** Walk through each check — if any fail, fix the plan files before moving on:
     - **Completion semantics:** If every task were completed exactly as written, the slice goal/demo should actually be true.
     - **Requirement coverage:** Every must-have in the slice maps to at least one task. No must-have is orphaned. If `REQUIREMENTS.md` exists, every Active requirement this slice owns maps to at least one task.
@@ -52,6 +52,6 @@ Then:
 
 The slice directory and tasks/ subdirectory already exist. Do NOT mkdir. You are on the slice branch; all work stays here.
 
-**You MUST write the file `{{outputAbsPath}}` before finishing.**
+**You MUST write the file `{{outputPath}}` before finishing.**
 
 When done, say: "Slice {{sliceId}} planned."

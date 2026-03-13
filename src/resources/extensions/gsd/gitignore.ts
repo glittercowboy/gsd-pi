@@ -8,6 +8,7 @@
 
 import { join } from "node:path";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { execSync } from "node:child_process";
 
 /**
  * Patterns that are always correct regardless of project type.
@@ -104,6 +105,32 @@ export function ensureGitignore(basePath: string): boolean {
   writeFileSync(gitignorePath, existing + prefix + block, "utf-8");
 
   return true;
+}
+
+/**
+ * Remove BASELINE_PATTERNS runtime paths from the git index if they are
+ * currently tracked. This fixes repos that started tracking these files
+ * before the .gitignore rule was added — git continues tracking files
+ * already in the index even after .gitignore is updated.
+ *
+ * Only removes from the index (`--cached`), never from disk. Idempotent.
+ */
+export function untrackRuntimeFiles(basePath: string): void {
+  // The GSD runtime paths are the first 7 entries in BASELINE_PATTERNS
+  const runtimePaths = BASELINE_PATTERNS.slice(0, 7);
+
+  for (const pattern of runtimePaths) {
+    // Use -r for directory patterns (trailing slash), strip the slash for the command
+    const target = pattern.endsWith("/") ? pattern.slice(0, -1) : pattern;
+    try {
+      execSync(`git rm -r --cached ${target}`, {
+        cwd: basePath,
+        stdio: ["ignore", "ignore", "ignore"],
+      });
+    } catch {
+      // File not tracked or doesn't exist — expected, ignore
+    }
+  }
 }
 
 /**

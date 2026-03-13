@@ -404,12 +404,13 @@ console.log('\n=== prompt: replan-slice contains preserve-completed-tasks instru
     slicePath: '.gsd/milestones/M001/slices/S01',
     planPath: '.gsd/milestones/M001/slices/S01/S01-PLAN.md',
     blockerTaskId: 'T01',
+    replanPath: '.gsd/milestones/M001/slices/S01/S01-REPLAN.md',
     inlinedContext: '',
   });
 
   assert(prompt.includes('Do NOT renumber or remove completed tasks'), 'prompt contains preserve-completed-tasks instruction');
   assert(prompt.includes('[x]'), 'prompt mentions [x] checkmarks');
-  assert(prompt.includes('replanAbsPath') || prompt.includes('REPLAN'), 'prompt references replan output path');
+  assert(prompt.includes('REPLAN'), 'prompt references replan output path');
   assert(prompt.includes('blocker_discovered'), 'prompt mentions blocker_discovered');
 }
 

@@ -824,10 +824,12 @@ export class InteractiveMode {
 
 		// Try parent directories (package manager stores directory paths)
 		let current = p;
-		while (current.includes("/")) {
-			current = current.substring(0, current.lastIndexOf("/"));
-			const parent = metadata.get(current);
-			if (parent) return parent;
+		let parent = path.dirname(current);
+		while (parent !== current) {
+			const meta = metadata.get(parent);
+			if (meta) return meta;
+			current = parent;
+			parent = path.dirname(current);
 		}
 
 		return undefined;

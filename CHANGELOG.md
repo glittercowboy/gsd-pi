@@ -6,6 +6,35 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [2.8.2] - 2026-03-13
+
+### Fixed
+- Path operations use `node:path` stdlib instead of hardcoded forward slashes, fixing cross-platform compatibility
+- Prompts use relative paths to prevent Windows drive letter mangling
+- Runtime files already in the git index are untracked to prevent merge conflicts
+- HTTP_PROXY and HTTPS_PROXY environment variables respected for all outbound requests
+- Windows NUL redirects sanitized to /dev/null in Git Bash environments
+
+### Changed
+- `.claude/` and `.gsd/` directories untracked from repo, `*.tgz` gitignored
+
+## [2.8.1] - 2026-03-13
+
+### Added
+- Discussion depth verification and context write-gate for richer milestone discussions
+- TTSR + blob/artifact storage (ported from oh-my-pi)
+- Skip/discard escape hatches in no-roadmap wizard
+- Configurable `merge_strategy` preference for slice completion
+
+### Fixed
+- `fsevents` bumped to ~2.3.3 for Node 25 compatibility; added as optional dep for Linux installs
+- Observability warnings injected into agent prompt for enforcement
+- Auto-detect headless environment for Playwright browser launch
+- UAT artifact verified before marking complete-slice done
+- Prior slices must complete on main before next slice dispatches
+- smartStage fallback bypasses runtime exclusions when `.gsd/` is gitignored
+- `/exit` uses graceful shutdown instead of hard kill
+
 ## [2.8.0] - 2026-03-13
 
 ### Added
@@ -295,7 +324,9 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Changed
 - License updated to MIT
 
-[Unreleased]: https://github.com/gsd-build/gsd-2/compare/v2.8.0...HEAD
+[Unreleased]: https://github.com/gsd-build/gsd-2/compare/v2.8.2...HEAD
+[2.8.2]: https://github.com/gsd-build/gsd-2/compare/v2.8.1...v2.8.2
+[2.8.1]: https://github.com/gsd-build/gsd-2/compare/v2.8.0...v2.8.1
 [2.8.0]: https://github.com/gsd-build/gsd-2/compare/v2.7.1...v2.8.0
 [2.7.1]: https://github.com/gsd-build/gsd-2/compare/v2.7.0...v2.7.1
 [2.7.0]: https://github.com/gsd-build/gsd-2/compare/v2.6.0...v2.7.0

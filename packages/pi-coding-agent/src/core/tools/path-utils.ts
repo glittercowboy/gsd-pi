@@ -48,11 +48,23 @@ export function expandPath(filePath: string): string {
 }
 
 /**
+ * On Windows, convert MSYS/MinGW-style paths (/c/Users/...) to native
+ * drive letter paths (C:\Users\...). LLMs often produce these when given
+ * Windows paths in prompts.
+ */
+function normalizeMsysPath(p: string): string {
+	if (process.platform === "win32" && /^\/[a-zA-Z]\//.test(p)) {
+		return `${p[1]!.toUpperCase()}:\\${p.slice(3).replace(/\//g, "\\")}`;
+	}
+	return p;
+}
+
+/**
  * Resolve a path relative to the given cwd.
- * Handles ~ expansion and absolute paths.
+ * Handles ~ expansion, MSYS-style paths on Windows, and absolute paths.
  */
 export function resolveToCwd(filePath: string, cwd: string): string {
-	const expanded = expandPath(filePath);
+	const expanded = normalizeMsysPath(expandPath(filePath));
 	if (isAbsolute(expanded)) {
 		return expanded;
 	}

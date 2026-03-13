@@ -76,6 +76,6 @@ If this milestone requires any external API keys or secrets:
 
 If this milestone does not require any external API keys or secrets, skip this step entirely — do not create an empty manifest.
 
-**You MUST write the file `{{outputAbsPath}}` before finishing.**
+**You MUST write the file `{{outputPath}}` before finishing.**
 
 When done, say: "Milestone {{milestoneId}} planned."

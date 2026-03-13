@@ -54,7 +54,7 @@ async function main(): Promise<void> {
     const testVars = {
       milestoneId: "M099",
       completedSliceId: "S03",
-      assessmentAbsPath: ".gsd/milestones/M099/slices/S03/S03-ASSESSMENT.md",
+      assessmentPath: ".gsd/milestones/M099/slices/S03/S03-ASSESSMENT.md",
       roadmapPath: ".gsd/milestones/M099/M099-ROADMAP.md",
       inlinedContext: "--- test inlined context block ---",
     };
@@ -75,14 +75,14 @@ async function main(): Promise<void> {
     // Verify all test variables were substituted into the output
     assert(result.includes("M099"), "prompt contains milestoneId 'M099'");
     assert(result.includes("S03"), "prompt contains completedSliceId 'S03'");
-    assert(result.includes(".gsd/milestones/M099/slices/S03/S03-ASSESSMENT.md"), "prompt contains assessmentAbsPath");
+    assert(result.includes(".gsd/milestones/M099/slices/S03/S03-ASSESSMENT.md"), "prompt contains assessmentPath");
     assert(result.includes(".gsd/milestones/M099/M099-ROADMAP.md"), "prompt contains roadmapPath");
     assert(result.includes("--- test inlined context block ---"), "prompt contains inlinedContext");
 
     // Verify no un-substituted variables remain
     assert(!result.includes("{{milestoneId}}"), "no un-substituted {{milestoneId}}");
     assert(!result.includes("{{completedSliceId}}"), "no un-substituted {{completedSliceId}}");
-    assert(!result.includes("{{assessmentAbsPath}}"), "no un-substituted {{assessmentAbsPath}}");
+    assert(!result.includes("{{assessmentPath}}"), "no un-substituted {{assessmentPath}}");
     assert(!result.includes("{{roadmapPath}}"), "no un-substituted {{roadmapPath}}");
     assert(!result.includes("{{inlinedContext}}"), "no un-substituted {{inlinedContext}}");
   }
@@ -93,7 +93,7 @@ async function main(): Promise<void> {
     const prompt = loadPromptFromWorktree("reassess-roadmap", {
       milestoneId: "M001",
       completedSliceId: "S01",
-      assessmentAbsPath: ".gsd/milestones/M001/slices/S01/S01-ASSESSMENT.md",
+      assessmentPath: ".gsd/milestones/M001/slices/S01/S01-ASSESSMENT.md",
       roadmapPath: ".gsd/milestones/M001/M001-ROADMAP.md",
       inlinedContext: "context",
     });
@@ -132,7 +132,7 @@ async function main(): Promise<void> {
     const prompt = loadPromptFromWorktree("reassess-roadmap", {
       milestoneId: "M001",
       completedSliceId: "S01",
-      assessmentAbsPath: ".gsd/milestones/M001/slices/S01/S01-ASSESSMENT.md",
+      assessmentPath: ".gsd/milestones/M001/slices/S01/S01-ASSESSMENT.md",
       roadmapPath: ".gsd/milestones/M001/M001-ROADMAP.md",
       inlinedContext: "context",
     });

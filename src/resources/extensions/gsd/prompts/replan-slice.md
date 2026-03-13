@@ -20,7 +20,7 @@ All relevant context has been preloaded below — the roadmap, current slice pla
 
 1. Read the blocker task summary carefully. Understand exactly what was discovered and why it blocks the current plan.
 2. Analyze the remaining `[ ]` tasks in the slice plan. Determine which are still valid, which need modification, and which should be replaced.
-3. Write `{{replanAbsPath}}` documenting:
+3. Write `{{replanPath}}` documenting:
    - What blocker was discovered and in which task
    - What changed in the plan and why
    - Which incomplete tasks were modified, added, or removed
@@ -34,6 +34,6 @@ All relevant context has been preloaded below — the roadmap, current slice pla
 6. Do not commit manually — the system auto-commits your changes after this unit completes.
 7. Update `.gsd/STATE.md`
 
-**You MUST write `{{replanAbsPath}}` and the updated slice plan before finishing.**
+**You MUST write `{{replanPath}}` and the updated slice plan before finishing.**
 
 When done, say: "Slice {{sliceId}} replanned."

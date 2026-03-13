@@ -23,6 +23,6 @@ Then research what this slice needs. Narrate key findings and surprises as you g
 
 The slice directory already exists at `{{slicePath}}/`. Do NOT mkdir — just write the file.
 
-**You MUST write the file `{{outputAbsPath}}` before finishing.**
+**You MUST write the file `{{outputPath}}` before finishing.**
 
 When done, say: "Slice {{sliceId}} researched."

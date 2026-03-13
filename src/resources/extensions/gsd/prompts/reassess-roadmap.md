@@ -34,15 +34,15 @@ If all criteria have at least one remaining owning slice, the coverage check pas
 
 **If the roadmap is still good:**
 
-Write `{{assessmentAbsPath}}` with a brief confirmation that roadmap coverage still holds after {{completedSliceId}}. If requirements exist, explicitly note whether requirement coverage remains sound.
+Write `{{assessmentPath}}` with a brief confirmation that roadmap coverage still holds after {{completedSliceId}}. If requirements exist, explicitly note whether requirement coverage remains sound.
 
 **If changes are needed:**
 
 1. Rewrite the remaining (unchecked) slices in `{{roadmapPath}}`. Keep completed slices exactly as they are (`[x]`). Update the boundary map for changed slices. Update the proof strategy if risks changed. Update requirement coverage if ownership or scope changed.
-2. Write `{{assessmentAbsPath}}` explaining what changed and why — keep it brief and concrete.
+2. Write `{{assessmentPath}}` explaining what changed and why — keep it brief and concrete.
 3. If `.gsd/REQUIREMENTS.md` exists and requirement ownership or status changed, update it.
 4. Commit: `docs({{milestoneId}}): reassess roadmap after {{completedSliceId}}`
 
-**You MUST write the file `{{assessmentAbsPath}}` before finishing.**
+**You MUST write the file `{{assessmentPath}}` before finishing.**
 
 When done, say: "Roadmap reassessed."
