@@ -188,6 +188,48 @@ describe("Session WebSocket Routing", () => {
     }
   });
 
+  test("session_interrupt action dispatches to onSessionAction", async () => {
+    const srv = createServer();
+    try {
+      const ws = await connect();
+      ws.send(JSON.stringify({ type: "session_interrupt", sessionId: "sess-xyz" }));
+      await new Promise((r) => setTimeout(r, 100));
+      expect(sessionActionCalls.length).toBe(1);
+      expect(sessionActionCalls[0].type).toBe("session_interrupt");
+      expect(sessionActionCalls[0].sessionId).toBe("sess-xyz");
+      ws.close();
+    } finally {
+      srv.stop();
+    }
+  });
+
+  test("session_interrupt without handler does not throw", async () => {
+    // Create server WITHOUT onSessionAction option
+    const noActionPort = nextPort();
+    const noActionServer = createWsServer({
+      port: noActionPort,
+      getFullState: makePlanningState,
+      onChatMessage: () => {},
+    });
+    try {
+      const ws = new WebSocket(`ws://localhost:${noActionPort}`);
+      await new Promise<void>((resolve, reject) => {
+        ws.onopen = () => resolve();
+        ws.onerror = (e) => reject(e);
+      });
+      // Wait for initial full state
+      await new Promise<void>((resolve) => {
+        ws.onmessage = () => resolve();
+      });
+      ws.send(JSON.stringify({ type: "session_interrupt", sessionId: "sess-xyz" }));
+      await new Promise((r) => setTimeout(r, 100));
+      // No assertion — test passes if no exception is thrown
+      ws.close();
+    } finally {
+      noActionServer.stop();
+    }
+  });
+
   test("publishSessionUpdate broadcasts to chat topic", async () => {
     const srv = createServer();
     try {

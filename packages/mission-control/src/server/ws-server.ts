@@ -14,7 +14,8 @@ export type SessionAction =
   | { type: "session_create"; forkFromSessionId?: string }
   | { type: "session_close"; sessionId: string; closeAction?: "merge" | "keep" | "delete" }
   | { type: "session_rename"; sessionId: string; name: string }
-  | { type: "session_list" };
+  | { type: "session_list" }
+  | { type: "session_interrupt"; sessionId: string };
 
 export interface WsServerOptions {
   port: number;
@@ -117,7 +118,8 @@ export function createWsServer(options: WsServerOptions): WsServer {
             (parsed.type === "session_create" ||
               parsed.type === "session_close" ||
               parsed.type === "session_rename" ||
-              parsed.type === "session_list")
+              parsed.type === "session_list" ||
+              parsed.type === "session_interrupt")
           ) {
             console.log(`[ws-server] Session action: ${parsed.type}`);
             onSessionAction(parsed as SessionAction, ws);
