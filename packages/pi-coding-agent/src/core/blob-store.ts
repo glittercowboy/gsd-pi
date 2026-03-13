@@ -19,7 +19,9 @@ export interface BlobPutResult {
 }
 
 export class BlobStore {
-	constructor(readonly dir: string) {
+	readonly dir: string;
+	constructor(dir: string) {
+		this.dir = dir;
 		mkdirSync(dir, { recursive: true });
 	}
 
