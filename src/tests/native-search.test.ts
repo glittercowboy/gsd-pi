@@ -72,6 +72,14 @@ test("before_provider_request injects web_search for claude models", async () =>
   const pi = createMockPI();
   registerNativeSearchHooks(pi);
 
+  // Confirm Anthropic provider via model_select before request
+  await pi.fire("model_select", {
+    type: "model_select",
+    model: { provider: "anthropic", name: "claude-sonnet-4-6" },
+    previousModel: undefined,
+    source: "set",
+  });
+
   const payload: Record<string, unknown> = {
     model: "claude-sonnet-4-6-20250514",
     tools: [{ name: "bash", type: "custom" }],
@@ -109,9 +117,47 @@ test("before_provider_request does NOT inject for non-claude models", async () =
   assert.equal(tools.length, 1, "Should not add tools to non-claude payload");
 });
 
+test("before_provider_request does NOT inject for claude model on non-Anthropic provider", async () => {
+  const pi = createMockPI();
+  registerNativeSearchHooks(pi);
+
+  // GitHub Copilot (or Bedrock, etc.) serving a claude model
+  await pi.fire("model_select", {
+    type: "model_select",
+    model: { provider: "copilot", name: "claude-sonnet-4-6" },
+    previousModel: undefined,
+    source: "set",
+  });
+
+  const payload: Record<string, unknown> = {
+    model: "claude-sonnet-4-6-20250514",
+    tools: [{ name: "bash", type: "custom" }],
+  };
+
+  const result = await pi.fire("before_provider_request", {
+    type: "before_provider_request",
+    payload,
+  });
+
+  assert.equal(result, undefined, "Should not modify payload for non-Anthropic provider");
+  const tools = payload.tools as any[];
+  assert.equal(tools.length, 1, "Should not inject web_search for non-Anthropic provider");
+  assert.ok(
+    !tools.some((t: any) => t.type === "web_search_20250305"),
+    "web_search_20250305 must NOT be present for non-Anthropic providers"
+  );
+});
+
 test("before_provider_request does not double-inject", async () => {
   const pi = createMockPI();
   registerNativeSearchHooks(pi);
+
+  await pi.fire("model_select", {
+    type: "model_select",
+    model: { provider: "anthropic", name: "claude-opus-4-6" },
+    previousModel: undefined,
+    source: "set",
+  });
 
   const payload: Record<string, unknown> = {
     model: "claude-opus-4-6-20250514",
@@ -131,6 +177,13 @@ test("before_provider_request does not double-inject", async () => {
 test("before_provider_request creates tools array if missing", async () => {
   const pi = createMockPI();
   registerNativeSearchHooks(pi);
+
+  await pi.fire("model_select", {
+    type: "model_select",
+    model: { provider: "anthropic", name: "claude-haiku-4-5" },
+    previousModel: undefined,
+    source: "set",
+  });
 
   const payload: Record<string, unknown> = {
     model: "claude-haiku-4-5-20251001",
@@ -342,6 +395,13 @@ test("before_provider_request removes Brave tools from payload when no BRAVE_API
     const pi = createMockPI();
     registerNativeSearchHooks(pi);
 
+    await pi.fire("model_select", {
+      type: "model_select",
+      model: { provider: "anthropic", name: "claude-sonnet-4-6" },
+      previousModel: undefined,
+      source: "set",
+    });
+
     const payload: Record<string, unknown> = {
       model: "claude-sonnet-4-6-20250514",
       tools: [
@@ -378,6 +438,13 @@ test("before_provider_request keeps Brave tools in payload when BRAVE_API_KEY se
   try {
     const pi = createMockPI();
     registerNativeSearchHooks(pi);
+
+    await pi.fire("model_select", {
+      type: "model_select",
+      model: { provider: "anthropic", name: "claude-sonnet-4-6" },
+      previousModel: undefined,
+      source: "set",
+    });
 
     const payload: Record<string, unknown> = {
       model: "claude-sonnet-4-6-20250514",

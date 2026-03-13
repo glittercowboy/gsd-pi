@@ -99,12 +99,11 @@ export function registerNativeSearchHooks(pi: NativeSearchPI): { getIsAnthropic:
     const payload = event.payload as Record<string, unknown>;
     if (!payload) return;
 
-    // Detect Anthropic by model name prefix (works even before model_select fires)
-    const model = payload.model as string | undefined;
-    if (!model || !model.startsWith("claude")) return;
-
-    // Keep provider tracking in sync
-    isAnthropicProvider = true;
+    // Only inject native web search for confirmed Anthropic provider.
+    // model_select sets isAnthropicProvider via the provider field.
+    // Model name prefix is NOT sufficient — other providers (GitHub Copilot,
+    // AWS Bedrock, etc.) serve claude-* models through non-Anthropic APIs.
+    if (!isAnthropicProvider) return;
 
     // Strip thinking blocks from history to avoid signature validation errors
     // caused by the SDK dropping server_tool_use/web_search_tool_result blocks.
