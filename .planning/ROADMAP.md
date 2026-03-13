@@ -231,7 +231,7 @@ Plans:
 | 12. GSD 2 Compatibility Pass | 6/7 | Complete    | 2026-03-12 | — |
 | 13. Session Streaming Hardening | 7/7 | Complete    | 2026-03-13 | — |
 | 14. Slice Integration | 6/6 | Complete    | 2026-03-13 | — |
-| 15. Tauri Shell | 3/5 | In Progress|  | — |
+| 15. Tauri Shell | 4/5 | In Progress|  | — |
 | 16. OAuth + Keychain | v2.0 | 0/TBD | Not started | — |
 | 17. Permission Model | v2.0 | 0/TBD | Not started | — |
 | 18. Builder Mode | v2.0 | 0/TBD | Not started | — |

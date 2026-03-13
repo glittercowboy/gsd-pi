@@ -43,7 +43,7 @@ Requirements for the Native Desktop milestone. Each maps to roadmap phases 12–
 - [x] **TAURI-02**: Rust backend spawns Bun server on app start, stores handle, kills cleanly on window close, emits event to frontend on Bun crash
 - [x] **TAURI-03**: Dependency check on startup — `bun` and `gsd` presence verified; if missing, pre-dashboard dependency screen shown with plain-language install instructions
 - [x] **TAURI-04**: Window state restored (size/position) via `window-state` plugin; OS native title bar (frameless: false)
-- [ ] **TAURI-05**: Tauri IPC commands implemented — `open_folder_dialog`, `get_credential`, `set_credential`, `delete_credential`, `open_external`, `get_platform`, `restart_bun`
+- [x] **TAURI-05**: Tauri IPC commands implemented — `open_folder_dialog`, `get_credential`, `set_credential`, `delete_credential`, `open_external`, `get_platform`, `restart_bun`
 - [ ] **TAURI-06**: Build pipeline — `tauri:dev` and `tauri:build` scripts; dev starts Bun then opens native window
 
 ### OAuth + Keychain (AUTH)
@@ -149,7 +149,7 @@ Deferred to future release.
 | TAURI-02 | Phase 15 | Complete |
 | TAURI-03 | Phase 15 | Complete |
 | TAURI-04 | Phase 15 | Complete |
-| TAURI-05 | Phase 15 | Pending |
+| TAURI-05 | Phase 15 | Complete |
 | TAURI-06 | Phase 15 | Pending |
 | AUTH-01 | Phase 16 | Pending |
 | AUTH-02 | Phase 16 | Pending |

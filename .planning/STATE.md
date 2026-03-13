@@ -3,10 +3,25 @@ gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: Native Desktop
 status: in_progress
+last_updated: "2026-03-13T11:21:19.321Z"
+last_activity: "2026-03-13 — Plan 15-03 complete: dep_screen.html with GSD design system colors and window.__TAURI__.invoke retry; dep_check.rs with check_dependency() (which/where) and run_startup_checks() navigating to asset://localhost/dep_screen.html; retry_dep_check IPC registered"
+progress:
+  total_phases: 10
+  completed_phases: 3
+  total_plans: 29
+  completed_plans: 27
+  percent: 93
+---
+
+---
+gsd_state_version: 1.0
+milestone: v2.0
+milestone_name: Native Desktop
+status: in_progress
 last_updated: "2026-03-13T11:12:37.565Z"
 last_activity: "2026-03-13 — Plan 15-02 complete: bun_manager.rs full lifecycle (BunState, spawn_bun_server, watch_bun_process, kill_bun_server, restart_bun); lib.rs wired with .manage(bun_state) and on_window_event Destroyed handler"
 progress:
-  total_phases: 10
+  [█████████░] 93%
   completed_phases: 3
   total_plans: 29
   completed_plans: 26
@@ -261,12 +276,12 @@ See: .planning/PROJECT.md (updated 2026-03-12)
 
 ## Current Position
 
-Phase: 15 of 20 (Tauri Shell) — In Progress (plans 15-01, 15-02, 15-03 done)
-Plan: 3 of 5 complete (plan 03 done — dep_check.rs platform-aware checks, dep_screen.html, retry_dep_check IPC)
-Status: Phase 15 plans 01, 02, 03 complete — plan 15-04 (commands) next
-Last activity: 2026-03-13 — Plan 15-03 complete: dep_screen.html with GSD design system colors and window.__TAURI__.invoke retry; dep_check.rs with check_dependency() (which/where) and run_startup_checks() navigating to asset://localhost/dep_screen.html; retry_dep_check IPC registered
+Phase: 15 of 20 (Tauri Shell) — In Progress (plans 15-01, 15-02, 15-03, 15-04 done)
+Plan: 4 of 5 complete (plan 04 done — all 7 IPC commands + retry_dep_check + StateFlags::ALL window persistence)
+Status: Phase 15 plans 01, 02, 03, 04 complete — plan 15-05 (system integration) next
+Last activity: 2026-03-13 — Plan 15-04 complete: commands.rs all 7 IPC commands (folder dialog, keychain get/set/delete, open_external, get_platform, restart_bun, retry_dep_check); lib.rs StateFlags::ALL for window state persistence
 
-Progress: [█████████░] 90% (26/29 plans complete)
+Progress: [█████████░] 93% (27/29 plans complete)
 
 ## Milestone Archive
 
@@ -354,6 +369,7 @@ Progress: [█████████░] 90% (26/29 plans complete)
 - [Phase 15]: WindowEvent::Destroyed used for Bun kill cleanup (not CloseRequested) — fires after window gone, cannot be cancelled
 - [Phase 15]: dep_screen.html served via asset://localhost/ (Tauri asset protocol) — Bun server may not be running when deps are missing
 - [Phase 15]: window.__TAURI__.invoke used in dep_screen.html (no CDN import) — Tauri injects this global automatically into the webview
+- [Phase 15]: blocking_pick_folder() used for open_folder_dialog — cleaner than channel-bridged callback; StateFlags::ALL added for full window state persistence
 
 ### Blockers/Concerns
 
