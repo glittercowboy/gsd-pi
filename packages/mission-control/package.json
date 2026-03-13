@@ -9,6 +9,7 @@
   "dependencies": {
     "@fontsource/jetbrains-mono": "^5.2.8",
     "@fontsource/share-tech-mono": "^5.2.7",
+    "@tauri-apps/api": "^2.10.1",
     "bun-plugin-tailwind": "^0.1.2",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
