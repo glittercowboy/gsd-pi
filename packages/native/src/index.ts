@@ -8,6 +8,7 @@
  * - glob: gitignore-respecting filesystem discovery with scan caching
  * - highlight: syntect-based syntax highlighting
  * - html: HTML to Markdown conversion
+ * - text: ANSI-aware text measurement and slicing
  */
 
 export {
@@ -58,3 +59,14 @@ export type {
 
 export { htmlToMarkdown } from "./html/index.js";
 export type { HtmlToMarkdownOptions } from "./html/index.js";
+
+export {
+  wrapTextWithAnsi,
+  truncateToWidth,
+  sliceWithWidth,
+  extractSegments,
+  sanitizeText,
+  visibleWidth,
+  EllipsisKind,
+} from "./text/index.js";
+export type { SliceResult, ExtractSegmentsResult } from "./text/index.js";

@@ -8,7 +8,7 @@
   "scripts": {
     "build:native": "node ../../native/scripts/build.js",
     "build:native:dev": "node ../../native/scripts/build.js --dev",
-    "test": "node --test src/__tests__/grep.test.mjs src/__tests__/ps.test.mjs src/__tests__/glob.test.mjs src/__tests__/clipboard.test.mjs src/__tests__/highlight.test.mjs src/__tests__/html.test.mjs"
+    "test": "node --test src/__tests__/grep.test.mjs src/__tests__/ps.test.mjs src/__tests__/glob.test.mjs src/__tests__/clipboard.test.mjs src/__tests__/highlight.test.mjs src/__tests__/html.test.mjs src/__tests__/text.test.mjs"
   },
   "exports": {
     ".": {
@@ -19,6 +19,7 @@
       "types": "./src/grep/index.ts",
       "import": "./src/grep/index.ts"
     },
+<<<<<<< HEAD
     "./ps": {
       "types": "./src/ps/index.ts",
       "import": "./src/ps/index.ts"
@@ -38,6 +39,10 @@
     "./html": {
       "types": "./src/html/index.ts",
       "import": "./src/html/index.ts"
+    },
+    "./text": {
+      "types": "./src/text/index.ts",
+      "import": "./src/text/index.ts"
     }
   },
   "files": [

@@ -61,4 +61,29 @@ export const native = loadNative() as {
   astGrep: (options: unknown) => unknown;
   astEdit: (options: unknown) => unknown;
   htmlToMarkdown: (html: string, options: unknown) => unknown;
+  wrapTextWithAnsi: (text: string, width: number, tabWidth?: number) => string[];
+  truncateToWidth: (
+    text: string,
+    maxWidth: number,
+    ellipsisKind: number,
+    pad: boolean,
+    tabWidth?: number,
+  ) => string;
+  sliceWithWidth: (
+    line: string,
+    startCol: number,
+    length: number,
+    strict: boolean,
+    tabWidth?: number,
+  ) => unknown;
+  extractSegments: (
+    line: string,
+    beforeEnd: number,
+    afterStart: number,
+    afterLen: number,
+    strictAfter: boolean,
+    tabWidth?: number,
+  ) => unknown;
+  sanitizeText: (text: string) => string;
+  visibleWidth: (text: string, tabWidth?: number) => number;
 };

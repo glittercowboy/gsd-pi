@@ -18,3 +18,4 @@ mod highlight;
 mod html;
 mod ps;
 mod task;
+mod text;
