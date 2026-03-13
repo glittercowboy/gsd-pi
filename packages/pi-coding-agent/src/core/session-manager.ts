@@ -15,7 +15,7 @@ import {
 } from "fs";
 import { readdir, readFile, stat } from "fs/promises";
 import { join, resolve } from "path";
-import { getAgentDir as getDefaultAgentDir, getSessionsDir } from "../config.js";
+import { getAgentDir as getDefaultAgentDir, getBlobsDir, getSessionsDir } from "../config.js";
 import {
 	type BashExecutionMessage,
 	type CustomMessage,
@@ -23,6 +23,11 @@ import {
 	createCompactionSummaryMessage,
 	createCustomMessage,
 } from "./messages.js";
+import { BlobStore, externalizeImageData, isBlobRef, resolveImageData } from "./blob-store.js";
+
+const BLOB_EXTERNALIZE_THRESHOLD = 1024; // 1KB minimum to externalize
+const MAX_PERSIST_CHARS = 500_000;
+const TRUNCATION_NOTICE = "\n\n[Session persistence truncated large content]";
 
 export const CURRENT_SESSION_VERSION = 3;
 
@@ -426,6 +431,112 @@ function getDefaultSessionDir(cwd: string): string {
 	return sessionDir;
 }
 
+function isImageBlock(value: unknown): value is { type: "image"; data: string; mimeType?: string } {
+	return (
+		typeof value === "object" &&
+		value !== null &&
+		"type" in value &&
+		(value as { type?: string }).type === "image" &&
+		"data" in value &&
+		typeof (value as { data?: string }).data === "string"
+	);
+}
+
+function truncateString(s: string, maxLength: number): string {
+	if (s.length <= maxLength) return s;
+	// Avoid splitting surrogate pairs
+	if (maxLength > 0 && s.charCodeAt(maxLength - 1) >= 0xd800 && s.charCodeAt(maxLength - 1) <= 0xdbff) {
+		return s.slice(0, maxLength - 1);
+	}
+	return s.slice(0, maxLength);
+}
+
+/**
+ * Prepare an entry for JSONL persistence: externalize large images to blob store,
+ * truncate oversized strings, strip transient fields.
+ */
+function prepareForPersistence(obj: unknown, blobStore: BlobStore, key?: string): unknown {
+	if (obj === null || obj === undefined) return obj;
+
+	if (typeof obj === "string") {
+		if (obj.length > MAX_PERSIST_CHARS) {
+			// Cryptographic signatures must be preserved exactly or cleared entirely
+			if (key === "thinkingSignature" || key === "thoughtSignature" || key === "textSignature") {
+				return "";
+			}
+			const limit = Math.max(0, MAX_PERSIST_CHARS - TRUNCATION_NOTICE.length);
+			return `${truncateString(obj, limit)}${TRUNCATION_NOTICE}`;
+		}
+		return obj;
+	}
+
+	if (Array.isArray(obj)) {
+		let changed = false;
+		const result = obj.map((item) => {
+			// Externalize oversized images to blob store
+			if (key === "content" && isImageBlock(item)) {
+				if (!isBlobRef(item.data) && item.data.length >= BLOB_EXTERNALIZE_THRESHOLD) {
+					changed = true;
+					const blobRef = externalizeImageData(blobStore, item.data);
+					return { ...item, data: blobRef };
+				}
+			}
+			const newItem = prepareForPersistence(item, blobStore, key);
+			if (newItem !== item) changed = true;
+			return newItem;
+		});
+		return changed ? result : obj;
+	}
+
+	if (typeof obj === "object") {
+		let changed = false;
+		const result: Record<string, unknown> = {};
+		for (const [k, v] of Object.entries(obj as Record<string, unknown>)) {
+			// Strip transient properties
+			if (k === "partialJson" || k === "jsonlEvents") {
+				changed = true;
+				continue;
+			}
+			const newV = prepareForPersistence(v, blobStore, k);
+			result[k] = newV;
+			if (newV !== v) changed = true;
+		}
+		// Update lineCount if content was truncated (for FileMentionFile)
+		if (changed && "lineCount" in result && "content" in result && typeof result.content === "string") {
+			result.lineCount = (result.content as string).split("\n").length;
+		}
+		return changed ? result : obj;
+	}
+
+	return obj;
+}
+
+/**
+ * Resolve blob references in loaded entries, replacing `blob:sha256:<hash>` data
+ * fields with actual base64 content. Mutates entries in place.
+ */
+function resolveBlobRefsInEntries(entries: FileEntry[], blobStore: BlobStore): void {
+	for (const entry of entries) {
+		if (entry.type === "session") continue;
+
+		let contentArray: unknown[] | undefined;
+		if (entry.type === "message") {
+			const content = ((entry as SessionMessageEntry).message as { content?: unknown }).content;
+			if (Array.isArray(content)) contentArray = content;
+		} else if (entry.type === "custom_message" && Array.isArray((entry as any).content)) {
+			contentArray = (entry as any).content;
+		}
+
+		if (!contentArray) continue;
+
+		for (const block of contentArray) {
+			if (isImageBlock(block) && isBlobRef(block.data)) {
+				(block as { data: string }).data = resolveImageData(blobStore, block.data);
+			}
+		}
+	}
+}
+
 /** Exported for testing */
 export function loadEntriesFromFile(filePath: string): FileEntry[] {
 	if (!existsSync(filePath)) return [];
@@ -669,6 +780,7 @@ export class SessionManager {
 	private flushed: boolean = false;
 	private fileEntries: FileEntry[] = [];
 	private byId: Map<string, SessionEntry> = new Map();
+	private blobStore: BlobStore;
 	private labelsById: Map<string, string> = new Map();
 	private leafId: string | null = null;
 
@@ -676,6 +788,7 @@ export class SessionManager {
 		this.cwd = cwd;
 		this.sessionDir = sessionDir;
 		this.persist = persist;
+		this.blobStore = new BlobStore(getBlobsDir());
 		if (persist && sessionDir && !existsSync(sessionDir)) {
 			mkdirSync(sessionDir, { recursive: true });
 		}
@@ -712,6 +825,7 @@ export class SessionManager {
 			}
 
 			this._buildIndex();
+			resolveBlobRefsInEntries(this.fileEntries, this.blobStore);
 			this.flushed = true;
 		} else {
 			const explicitPath = this.sessionFile;
@@ -800,11 +914,13 @@ export class SessionManager {
 
 		if (!this.flushed) {
 			for (const e of this.fileEntries) {
-				appendFileSync(this.sessionFile, `${JSON.stringify(e)}\n`);
+				const prepared = prepareForPersistence(e, this.blobStore) as FileEntry;
+				appendFileSync(this.sessionFile, `${JSON.stringify(prepared)}\n`);
 			}
 			this.flushed = true;
 		} else {
-			appendFileSync(this.sessionFile, `${JSON.stringify(entry)}\n`);
+			const prepared = prepareForPersistence(entry, this.blobStore) as FileEntry;
+			appendFileSync(this.sessionFile, `${JSON.stringify(prepared)}\n`);
 		}
 	}
 

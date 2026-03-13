@@ -235,6 +235,11 @@ export function getSessionsDir(): string {
 	return join(getAgentDir(), "sessions");
 }
 
+/** Get path to content-addressed blob store directory */
+export function getBlobsDir(): string {
+	return join(getAgentDir(), "blobs");
+}
+
 /** Get path to debug log file */
 export function getDebugLogPath(): string {
 	return join(getAgentDir(), `${APP_NAME}-debug.log`);
