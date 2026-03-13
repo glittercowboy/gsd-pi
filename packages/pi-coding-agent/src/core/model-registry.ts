@@ -517,16 +517,18 @@ export class ModelRegistry {
 
 	/**
 	 * Get API key for a model.
+	 * @param sessionId - Optional session ID for sticky credential selection
 	 */
-	async getApiKey(model: Model<Api>): Promise<string | undefined> {
-		return this.authStorage.getApiKey(model.provider);
+	async getApiKey(model: Model<Api>, sessionId?: string): Promise<string | undefined> {
+		return this.authStorage.getApiKey(model.provider, sessionId);
 	}
 
 	/**
 	 * Get API key for a provider.
+	 * @param sessionId - Optional session ID for sticky credential selection
 	 */
-	async getApiKeyForProvider(provider: string): Promise<string | undefined> {
-		return this.authStorage.getApiKey(provider);
+	async getApiKeyForProvider(provider: string, sessionId?: string): Promise<string | undefined> {
+		return this.authStorage.getApiKey(provider, sessionId);
 	}
 
 	/**

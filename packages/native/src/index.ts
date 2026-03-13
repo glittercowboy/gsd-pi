@@ -94,6 +94,18 @@ export type { NativeImageHandle } from "./image/index.js";
 export { ttsrCompileRules, ttsrCheckBuffer, ttsrFreeRules } from "./ttsr/index.js";
 export type { TtsrHandle, TtsrRuleInput } from "./ttsr/index.js";
 export {
+  parseJson,
+  parsePartialJson,
+  parseStreamingJson,
+} from "./json-parse/index.js";
+export {
+  processStreamChunk,
+  stripAnsiNative,
+  sanitizeBinaryOutputNative,
+} from "./stream-process/index.js";
+export type { StreamState, StreamChunkResult } from "./stream-process/index.js";
+
+export {
   parseFrontmatter,
   extractSection as nativeExtractSection,
   extractAllSections,

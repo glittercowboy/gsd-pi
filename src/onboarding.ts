@@ -38,18 +38,6 @@ type PicoModule = {
 
 const TOOL_KEYS: ToolKeyConfig[] = [
   {
-    provider: 'brave',
-    envVar: 'BRAVE_API_KEY',
-    label: 'Brave Search',
-    hint: 'web search + search_and_read tools',
-  },
-  {
-    provider: 'brave_answers',
-    envVar: 'BRAVE_ANSWERS_KEY',
-    label: 'Brave Answers',
-    hint: 'AI-summarised search answers',
-  },
-  {
     provider: 'context7',
     envVar: 'CONTEXT7_API_KEY',
     label: 'Context7',
@@ -207,6 +195,18 @@ export async function runOnboarding(authStorage: AuthStorage): Promise<void> {
     p.log.info('You can configure your LLM provider later with /login inside GSD.')
   }
 
+  // ── Web Search Provider ──────────────────────────────────────────────────
+  let searchConfigured: string | null = null
+  try {
+    searchConfigured = await runWebSearchStep(p, pc, authStorage, llmConfigured)
+  } catch (err) {
+    if (isCancelError(p, err)) {
+      p.cancel('Setup cancelled.')
+      return
+    }
+    p.log.warn(`Web search setup failed: ${err instanceof Error ? err.message : String(err)}`)
+  }
+
   // ── Tool API Keys ─────────────────────────────────────────────────────────
   let toolKeyCount = 0
   try {
@@ -234,6 +234,12 @@ export async function runOnboarding(authStorage: AuthStorage): Promise<void> {
     summaryLines.push(`${pc.yellow('↷')} LLM provider: skipped — use /login inside GSD`)
   }
 
+  if (searchConfigured) {
+    summaryLines.push(`${pc.green('✓')} Web search: ${searchConfigured}`)
+  } else {
+    summaryLines.push(`${pc.dim('↷')} Web search: not configured — use /search-provider inside GSD`)
+  }
+
   if (toolKeyCount > 0) {
     summaryLines.push(`${pc.green('✓')} ${toolKeyCount} tool key${toolKeyCount > 1 ? 's' : ''} saved`)
   } else {
@@ -251,49 +257,61 @@ async function runLlmStep(p: ClackModule, pc: PicoModule, authStorage: AuthStora
   const oauthProviders = authStorage.getOAuthProviders()
   const oauthMap = new Map(oauthProviders.map(op => [op.id, op]))
 
-  const choice = await p.select({
-    message: 'Choose your LLM provider',
-    options: [
-      { value: 'anthropic-oauth', label: 'Anthropic — Claude (OAuth login)', hint: 'recommended' },
-      { value: 'anthropic-api-key', label: 'Anthropic — Claude (API key)' },
-      { value: 'openai-api-key', label: 'OpenAI (API key)' },
-      { value: 'github-copilot-oauth', label: 'GitHub Copilot (OAuth login)' },
-      { value: 'openai-codex-oauth', label: 'ChatGPT Plus/Pro — Codex (OAuth login)' },
-      { value: 'google-gemini-cli-oauth', label: 'Google Gemini CLI (OAuth login)' },
-      { value: 'google-antigravity-oauth', label: 'Antigravity — Gemini 3, Claude, GPT-OSS (OAuth login)' },
-      { value: 'other-api-key', label: 'Other provider (API key)' },
-      { value: 'skip', label: 'Skip for now', hint: 'use /login inside GSD later' },
-    ],
+  // Check if already authenticated
+  const existingAuth = LLM_PROVIDER_IDS.find(id => authStorage.hasAuth(id))
+
+  // ── Step 1: How do you want to authenticate? ─────────────────────────────
+  type AuthOption = { value: string; label: string; hint?: string }
+  const authOptions: AuthOption[] = []
+
+  if (existingAuth) {
+    authOptions.push({ value: 'keep', label: `Keep current (${existingAuth})`, hint: 'already configured' })
+  }
+
+  authOptions.push(
+    { value: 'browser', label: 'Sign in with your browser', hint: 'recommended — same login as claude.ai / ChatGPT' },
+    { value: 'api-key', label: 'Paste an API key', hint: 'from your provider dashboard' },
+    { value: 'skip', label: 'Skip for now', hint: 'use /login inside GSD later' },
+  )
+
+  const method = await p.select({
+    message: existingAuth ? `LLM provider: ${existingAuth} — change it?` : 'How do you want to sign in?',
+    options: authOptions,
   })
 
-  if (p.isCancel(choice) || choice === 'skip') return false
+  if (p.isCancel(method) || method === 'skip') return false
+  if (method === 'keep') return true
 
-  // ── OAuth flows ───────────────────────────────────────────────────────────
-  if (choice === 'anthropic-oauth') {
-    return await runOAuthFlow(p, pc, authStorage, 'anthropic', oauthMap)
-  }
-  if (choice === 'github-copilot-oauth') {
-    return await runOAuthFlow(p, pc, authStorage, 'github-copilot', oauthMap)
-  }
-  if (choice === 'openai-codex-oauth') {
-    return await runOAuthFlow(p, pc, authStorage, 'openai-codex', oauthMap)
-  }
-  if (choice === 'google-gemini-cli-oauth') {
-    return await runOAuthFlow(p, pc, authStorage, 'google-gemini-cli', oauthMap)
-  }
-  if (choice === 'google-antigravity-oauth') {
-    return await runOAuthFlow(p, pc, authStorage, 'google-antigravity', oauthMap)
+  // ── Step 2: Which provider? ──────────────────────────────────────────────
+  if (method === 'browser') {
+    const provider = await p.select({
+      message: 'Choose provider',
+      options: [
+        { value: 'anthropic', label: 'Anthropic (Claude)', hint: 'recommended' },
+        { value: 'github-copilot', label: 'GitHub Copilot' },
+        { value: 'openai-codex', label: 'ChatGPT Plus/Pro (Codex)' },
+        { value: 'google-gemini-cli', label: 'Google Gemini CLI' },
+        { value: 'google-antigravity', label: 'Antigravity (Gemini 3, Claude, GPT-OSS)' },
+      ],
+    })
+    if (p.isCancel(provider)) return false
+    return await runOAuthFlow(p, pc, authStorage, provider as string, oauthMap)
   }
 
-  // ── API key flows ─────────────────────────────────────────────────────────
-  if (choice === 'anthropic-api-key') {
-    return await runApiKeyFlow(p, pc, authStorage, 'anthropic', 'Anthropic')
-  }
-  if (choice === 'openai-api-key') {
-    return await runApiKeyFlow(p, pc, authStorage, 'openai', 'OpenAI')
-  }
-  if (choice === 'other-api-key') {
-    return await runOtherProviderFlow(p, pc, authStorage)
+  if (method === 'api-key') {
+    const provider = await p.select({
+      message: 'Choose provider',
+      options: [
+        { value: 'anthropic', label: 'Anthropic (Claude)' },
+        { value: 'openai', label: 'OpenAI' },
+        ...OTHER_PROVIDERS.map(op => ({ value: op.value, label: op.label })),
+      ],
+    })
+    if (p.isCancel(provider)) return false
+    const label = provider === 'anthropic' ? 'Anthropic'
+      : provider === 'openai' ? 'OpenAI'
+      : OTHER_PROVIDERS.find(op => op.value === provider)?.label ?? String(provider)
+    return await runApiKeyFlow(p, pc, authStorage, provider as string, label)
   }
 
   return false
@@ -399,24 +417,85 @@ async function runApiKeyFlow(
   return true
 }
 
-// ─── "Other Provider" Sub-Flow ────────────────────────────────────────────────
+// ─── Web Search Provider Step ─────────────────────────────────────────────────
 
-async function runOtherProviderFlow(
+async function runWebSearchStep(
   p: ClackModule,
   pc: PicoModule,
   authStorage: AuthStorage,
-): Promise<boolean> {
-  const provider = await p.select({
-    message: 'Select provider',
-    options: OTHER_PROVIDERS.map(op => ({
-      value: op.value,
-      label: op.label,
-    })),
+  isAnthropicAuth: boolean,
+): Promise<string | null> {
+  // Check which LLM provider was configured
+  const authed = authStorage.list().filter(id => LLM_PROVIDER_IDS.includes(id))
+  const isAnthropic = isAnthropicAuth && authed.includes('anthropic')
+
+  // Check if web search is already configured
+  const hasBrave = !!process.env.BRAVE_API_KEY || authStorage.has('brave')
+  const hasTavily = !!process.env.TAVILY_API_KEY || authStorage.has('tavily')
+  const existingSearch = hasBrave ? 'Brave Search' : hasTavily ? 'Tavily' : null
+
+  // Build options based on what's available
+  type SearchOption = { value: string; label: string; hint?: string }
+  const options: SearchOption[] = []
+
+  if (existingSearch) {
+    options.push({ value: 'keep', label: `Keep current (${existingSearch})`, hint: 'already configured' })
+  }
+
+  if (isAnthropic) {
+    options.push({
+      value: 'anthropic-native',
+      label: 'Anthropic built-in web search',
+      hint: 'no API key needed — already included with Claude',
+    })
+  }
+
+  options.push(
+    { value: 'brave', label: 'Brave Search', hint: 'requires API key — brave.com/search/api' },
+    { value: 'tavily', label: 'Tavily', hint: 'requires API key — tavily.com' },
+    { value: 'skip', label: 'Skip for now', hint: 'use /search-provider inside GSD later' },
+  )
+
+  const choice = await p.select({
+    message: 'How do you want to search the web?',
+    options,
   })
 
-  if (p.isCancel(provider)) return false
-  const label = OTHER_PROVIDERS.find(op => op.value === provider)?.label ?? String(provider)
-  return runApiKeyFlow(p, pc, authStorage, provider as string, label)
+  if (p.isCancel(choice) || choice === 'skip') return null
+  if (choice === 'keep') return existingSearch
+
+  if (choice === 'anthropic-native') {
+    p.log.success(`Web search: ${pc.green('Anthropic built-in')} — works out of the box`)
+    return 'Anthropic built-in'
+  }
+
+  if (choice === 'brave') {
+    const key = await p.password({
+      message: `Paste your Brave Search API key ${pc.dim('(brave.com/search/api)')}:`,
+      mask: '●',
+    })
+    if (p.isCancel(key) || !(key as string)?.trim()) return null
+    const trimmed = (key as string).trim()
+    authStorage.set('brave', { type: 'api_key', key: trimmed })
+    process.env.BRAVE_API_KEY = trimmed
+    p.log.success(`Web search: ${pc.green('Brave Search')} configured`)
+    return 'Brave Search'
+  }
+
+  if (choice === 'tavily') {
+    const key = await p.password({
+      message: `Paste your Tavily API key ${pc.dim('(tavily.com)')}:`,
+      mask: '●',
+    })
+    if (p.isCancel(key) || !(key as string)?.trim()) return null
+    const trimmed = (key as string).trim()
+    authStorage.set('tavily', { type: 'api_key', key: trimmed })
+    process.env.TAVILY_API_KEY = trimmed
+    p.log.success(`Web search: ${pc.green('Tavily')} configured`)
+    return 'Tavily'
+  }
+
+  return null
 }
 
 // ─── Tool API Keys Step ───────────────────────────────────────────────────────

@@ -202,12 +202,14 @@ export {
 export { BlobStore, isBlobRef, parseBlobRef, externalizeImageData, resolveImageData } from "./core/blob-store.js";
 export { ArtifactManager } from "./core/artifact-manager.js";
 export {
+	type AsyncSettings,
 	type CompactionSettings,
 	type ImageSettings,
 	type MemorySettings,
 	type PackageSource,
 	type RetrySettings,
 	SettingsManager,
+	type TaskIsolationSettings,
 } from "./core/settings-manager.js";
 // Skills
 export {
@@ -221,6 +223,7 @@ export {
 } from "./core/skills.js";
 // Tools
 export {
+	type BashInterceptorRule,
 	type BashOperations,
 	type BashSpawnContext,
 	type BashSpawnHook,
@@ -228,6 +231,10 @@ export {
 	type BashToolInput,
 	type BashToolOptions,
 	bashTool,
+	checkBashInterception,
+	type CompiledInterceptor,
+	compileInterceptor,
+	DEFAULT_BASH_INTERCEPTOR_RULES,
 	codingTools,
 	DEFAULT_MAX_BYTES,
 	DEFAULT_MAX_LINES,

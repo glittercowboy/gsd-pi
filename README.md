@@ -417,6 +417,8 @@ Anthropic, OpenAI, Google (Gemini), OpenRouter, GitHub Copilot, Amazon Bedrock, 
 
 If you have a **Claude Max**, **Codex**, or **GitHub Copilot** subscription, you can use those directly — Pi handles the OAuth flow. No API key needed.
 
+> **Note:** Using OAuth tokens from subscription plans (e.g. Claude Max) outside their native applications may not be explicitly permitted by the provider's Terms of Service. GSD supports API key authentication for all providers as an alternative. Use at your own discretion.
+
 ### OpenRouter
 
 [OpenRouter](https://openrouter.ai) gives you access to hundreds of models through a single API key. Use it to run GSD with Llama, DeepSeek, Qwen, or anything else OpenRouter supports.

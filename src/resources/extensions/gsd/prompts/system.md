@@ -127,8 +127,9 @@ Use the lightest sufficient tool first.
 - Broad unfamiliar subsystem mapping -> `subagent` with `scout`
 - Library, package, or framework truth -> `resolve_library` then `get_library_docs`
 - Current external facts -> `search-the-web` + `fetch_page`, or `search_and_read` for one-call extraction
-- Long-running commands (servers, watchers, builds) -> `bg_shell` with `start` + `wait_for_ready`
+- Long-running processes (servers, watchers, persistent daemons) -> `bg_shell` with `start` + `wait_for_ready`
 - Background process status -> `bg_shell` with `digest` (not `output`). Token budget: `digest` (~30 tokens) < `highlights` (~100) < `output` (~2000).
+- One-shot commands where you want the result delivered back (builds, tests, installs) -> `async_bash`; result is pushed to you automatically when the command exits.
 - Secrets -> `secure_env_collect`
 
 ### Ask vs infer
@@ -161,7 +162,9 @@ Fix the root cause, not symptoms. When applying a temporary mitigation, label it
 
 ### Background processes
 
-Use `bg_shell` for anything long-running. Set `type:'server'` + `ready_port` for dev servers, `group:'name'` for related processes. Use `wait_for_ready` instead of polling. Use `digest` for status checks, `highlights` for significant output, `output` only when debugging. Use `send_and_wait` for interactive CLIs. Kill processes when done.
+Use `bg_shell` for persistent processes — servers, watchers, anything that keeps running. Set `type:'server'` + `ready_port` for dev servers, `group:'name'` for related processes. Use `wait_for_ready` instead of polling. Use `digest` for status checks, `highlights` for significant output, `output` only when debugging. Use `send_and_wait` for interactive CLIs. Kill processes when done.
+
+Use `async_bash` for one-shot commands (builds, tests, installs) where you want the output delivered back automatically. Result arrives as a follow-up message when the command exits — no polling needed. Use `await_job` to explicitly wait for a specific job, `cancel_job` to stop one, `/jobs` to see what's running.
 
 ### Web behavior
 

@@ -1,6 +1,6 @@
 {
   "name": "gsd-pi",
-  "version": "2.10.2",
+  "version": "2.10.5",
   "description": "GSD — Get Shit Done coding agent",
   "license": "MIT",
   "repository": {
@@ -54,7 +54,8 @@
     "pi:install-global": "node scripts/install-pi-global.js",
     "pi:uninstall-global": "node scripts/uninstall-pi-global.js",
     "sync-pkg-version": "node scripts/sync-pkg-version.cjs",
-    "prepublishOnly": "npm run sync-pkg-version && npm run build"
+    "sync-platform-versions": "node native/scripts/sync-platform-versions.cjs",
+    "prepublishOnly": "npm run sync-pkg-version && npm run sync-platform-versions && git diff --exit-code || (echo 'ERROR: version sync changed files — commit them before publishing' && exit 1) && npm run build"
   },
   "dependencies": {
     "@clack/prompts": "^1.1.0",
@@ -81,6 +82,11 @@
     "typescript": "^5.4.0"
   },
   "optionalDependencies": {
+    "@gsd-build/engine-darwin-arm64": ">=2.10.2",
+    "@gsd-build/engine-darwin-x64": ">=2.10.2",
+    "@gsd-build/engine-linux-x64-gnu": ">=2.10.2",
+    "@gsd-build/engine-linux-arm64-gnu": ">=2.10.2",
+    "@gsd-build/engine-win32-x64-msvc": ">=2.10.2",
     "fsevents": "~2.3.3"
   },
   "overrides": {

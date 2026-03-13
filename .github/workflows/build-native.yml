@@ -1,0 +1,181 @@
+name: Build Native Binaries
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: "Publish platform packages to npm"
+        required: false
+        default: "false"
+        type: choice
+        options:
+          - "false"
+          - "true"
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14
+            target: aarch64-apple-darwin
+            platform: darwin-arm64
+          - os: macos-14
+            target: x86_64-apple-darwin
+            platform: darwin-x64
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            platform: linux-x64-gnu
+          - os: ubuntu-latest
+            target: aarch64-unknown-linux-gnu
+            platform: linux-arm64-gnu
+            cross: true
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            platform: win32-x64-msvc
+
+    runs-on: ${{ matrix.os }}
+    name: Build ${{ matrix.platform }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cache Rust build artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: native-${{ matrix.platform }}
+          workspaces: |
+            native -> target
+
+      - name: Install cross-compilation tools (Linux ARM64)
+        if: matrix.cross
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
+
+      - name: Build native addon
+        working-directory: native/crates/engine
+        env:
+          # CARGO_ENCODED_RUSTFLAGS overrides target-specific rustflags in
+          # .cargo/config.toml, which sets -C target-cpu=native for dev builds.
+          # CI must produce portable binaries.
+          CARGO_ENCODED_RUSTFLAGS: ""
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: ${{ matrix.cross && 'aarch64-linux-gnu-gcc' || '' }}
+        run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Prepare artifact (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          mkdir -p artifacts
+          cp native/target/${{ matrix.target }}/release/libgsd_engine.dylib artifacts/gsd_engine.node 2>/dev/null || \
+          cp native/target/${{ matrix.target }}/release/libgsd_engine.so artifacts/gsd_engine.node 2>/dev/null || \
+          { echo "::error::No library found for ${{ matrix.platform }}"; exit 1; }
+          ls -la artifacts/
+
+      - name: Prepare artifact (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          mkdir artifacts
+          copy native\target\${{ matrix.target }}\release\gsd_engine.dll artifacts\gsd_engine.node
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-${{ matrix.platform }}
+          path: artifacts/gsd_engine.node
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v') || github.event.inputs.publish == 'true'
+    runs-on: ubuntu-latest
+    name: Publish platform packages
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Copy binaries to platform packages
+        run: |
+          for platform in darwin-arm64 darwin-x64 linux-x64-gnu linux-arm64-gnu win32-x64-msvc; do
+            cp "artifacts/native-${platform}/gsd_engine.node" "native/npm/${platform}/gsd_engine.node"
+            echo "Copied binary for ${platform}"
+            ls -la "native/npm/${platform}/"
+          done
+
+      - name: Sync platform package versions
+        run: node native/scripts/sync-platform-versions.cjs
+
+      - name: Publish platform packages
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          for platform in darwin-arm64 darwin-x64 linux-x64-gnu linux-arm64-gnu win32-x64-msvc; do
+            echo "Publishing @gsd-build/engine-${platform}..."
+            cd "native/npm/${platform}"
+            OUTPUT=$(npm publish --access public 2>&1) && echo "$OUTPUT" || {
+              if echo "$OUTPUT" | grep -q "cannot publish over the previously published"; then
+                echo "Already published, skipping"
+              else
+                echo "::error::Failed to publish ${platform}: $OUTPUT"
+                exit 1
+              fi
+            }
+            cd "$GITHUB_WORKSPACE"
+          done
+
+      - name: Wait for npm registry propagation
+        run: sleep 30
+
+      - name: Verify platform packages are published
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          echo "Verifying platform packages at version ${VERSION}..."
+          FAILED=0
+          for platform in darwin-arm64 darwin-x64 linux-x64-gnu linux-arm64-gnu win32-x64-msvc; do
+            PKG="@gsd-build/engine-${platform}"
+            PUBLISHED=$(npm view "${PKG}@${VERSION}" version 2>/dev/null || echo "")
+            if [ "${PUBLISHED}" = "${VERSION}" ]; then
+              echo "  ✓ ${PKG}@${VERSION}"
+            else
+              echo "::error::${PKG}@${VERSION} not found on npm (got: '${PUBLISHED}')"
+              FAILED=1
+            fi
+          done
+          if [ "${FAILED}" = "1" ]; then
+            echo "::error::One or more platform packages are missing from npm. Aborting main package publish to prevent broken installs."
+            exit 1
+          fi
+          echo "All platform packages verified."
+
+      - name: Publish main package
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          # Skip prepublishOnly (build already done upstream) — just publish the tarball
+          OUTPUT=$(npm publish --ignore-scripts 2>&1) && echo "$OUTPUT" || {
+            if echo "$OUTPUT" | grep -q "cannot publish over the previously published\|You cannot publish over"; then
+              echo "Already published, skipping"
+            else
+              echo "$OUTPUT"
+              exit 1
+            fi
+          }

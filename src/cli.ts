@@ -74,6 +74,7 @@ function parseCliArgs(argv: string[]): CliFlags {
       process.stdout.write('  --help, -h               Print this help and exit\n')
       process.stdout.write('\nSubcommands:\n')
       process.stdout.write('  config                   Re-run the setup wizard\n')
+      process.stdout.write('  update                   Update GSD to the latest version\n')
       process.exit(0)
     } else if (!arg.startsWith('--') && !arg.startsWith('-')) {
       flags.messages.push(arg)
@@ -89,6 +90,13 @@ const isPrintMode = cliFlags.print || cliFlags.mode !== undefined
 if (cliFlags.messages[0] === 'config') {
   const authStorage = AuthStorage.create(authFilePath)
   await runOnboarding(authStorage)
+  process.exit(0)
+}
+
+// `gsd update` — update to the latest version via npm
+if (cliFlags.messages[0] === 'update') {
+  const { runUpdate } = await import('./update-cmd.js')
+  await runUpdate()
   process.exit(0)
 }
 

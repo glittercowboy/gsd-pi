@@ -13,6 +13,7 @@
  */
 
 import { spawn } from "node:child_process";
+import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -23,6 +24,14 @@ import { type ExtensionAPI, getMarkdownTheme } from "@gsd/pi-coding-agent";
 import { Container, Markdown, Spacer, Text } from "@gsd/pi-tui";
 import { Type } from "@sinclair/typebox";
 import { type AgentConfig, type AgentScope, discoverAgents } from "./agents.js";
+import {
+	type IsolationEnvironment,
+	type IsolationMode,
+	type MergeResult,
+	createIsolation,
+	mergeDeltaPatches,
+	readIsolationMode,
+} from "./isolation.js";
 
 const MAX_PARALLEL_TASKS = 8;
 const MAX_CONCURRENCY = 4;
@@ -409,6 +418,15 @@ const SubagentParams = Type.Object({
 		Type.Boolean({ description: "Prompt before running project-local agents. Default: false.", default: false }),
 	),
 	cwd: Type.Optional(Type.String({ description: "Working directory for the agent process (single mode)" })),
+	isolated: Type.Optional(
+		Type.Boolean({
+			description:
+				"Run the subagent in an isolated filesystem (git worktree). " +
+				"Changes are captured as patches and merged back. " +
+				"Only available when taskIsolation.mode is configured in settings.",
+			default: false,
+		}),
+	),
 });
 
 export default function (pi: ExtensionAPI) {
@@ -453,6 +471,10 @@ export default function (pi: ExtensionAPI) {
 			const discovery = discoverAgents(ctx.cwd, agentScope);
 			const agents = discovery.agents;
 			const confirmProjectAgents = params.confirmProjectAgents ?? false;
+
+			// Resolve isolation mode
+			const isolationMode = readIsolationMode();
+			const useIsolation = Boolean(params.isolated) && isolationMode !== "none";
 
 			const hasChain = (params.chain?.length ?? 0) > 0;
 			const hasTasks = (params.tasks?.length ?? 0) > 0;
@@ -668,31 +690,60 @@ export default function (pi: ExtensionAPI) {
 			}
 
 			if (params.agent && params.task) {
-				const result = await runSingleAgent(
-					ctx.cwd,
-					agents,
-					params.agent,
-					params.task,
-					params.cwd,
-					undefined,
-					signal,
-					onUpdate,
-					makeDetails("single"),
-				);
-				const isError = result.exitCode !== 0 || result.stopReason === "error" || result.stopReason === "aborted";
-				if (isError) {
-					const errorMsg =
-						result.errorMessage || result.stderr || getFinalOutput(result.messages) || "(no output)";
+				let isolation: IsolationEnvironment | null = null;
+				let mergeResult: MergeResult | undefined;
+				try {
+					const effectiveCwd = params.cwd ?? ctx.cwd;
+
+					if (useIsolation) {
+						const taskId = crypto.randomUUID();
+						isolation = await createIsolation(effectiveCwd, taskId, isolationMode);
+					}
+
+					const result = await runSingleAgent(
+						ctx.cwd,
+						agents,
+						params.agent,
+						params.task,
+						isolation ? isolation.workDir : params.cwd,
+						undefined,
+						signal,
+						onUpdate,
+						makeDetails("single"),
+					);
+
+					// Capture and merge delta if isolated
+					if (isolation) {
+						const patches = await isolation.captureDelta();
+						if (patches.length > 0) {
+							mergeResult = await mergeDeltaPatches(effectiveCwd, patches);
+						}
+					}
+
+					const isError = result.exitCode !== 0 || result.stopReason === "error" || result.stopReason === "aborted";
+					if (isError) {
+						const errorMsg =
+							result.errorMessage || result.stderr || getFinalOutput(result.messages) || "(no output)";
+						return {
+							content: [{ type: "text", text: `Agent ${result.stopReason || "failed"}: ${errorMsg}` }],
+							details: makeDetails("single")([result]),
+							isError: true,
+						};
+					}
+
+					let outputText = getFinalOutput(result.messages) || "(no output)";
+					if (mergeResult && !mergeResult.success) {
+						outputText += `\n\n⚠ Patch merge failed: ${mergeResult.error || "unknown error"}`;
+					}
 					return {
-						content: [{ type: "text", text: `Agent ${result.stopReason || "failed"}: ${errorMsg}` }],
+						content: [{ type: "text", text: outputText }],
 						details: makeDetails("single")([result]),
-						isError: true,
 					};
+				} finally {
+					if (isolation) {
+						await isolation.cleanup();
+					}
 				}
-				return {
-					content: [{ type: "text", text: getFinalOutput(result.messages) || "(no output)" }],
-					details: makeDetails("single")([result]),
-				};
 			}
 
 			const available = agents.map((a) => `${a.name} (${a.source})`).join(", ") || "none";

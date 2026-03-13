@@ -7,6 +7,7 @@ import type { AgentTool } from "@gsd/pi-agent-core";
 import { type Static, Type } from "@sinclair/typebox";
 import { spawn } from "child_process";
 import { getShellConfig, getShellEnv, killProcessTree, sanitizeCommand } from "../../utils/shell.js";
+import { type BashInterceptorRule, compileInterceptor, DEFAULT_BASH_INTERCEPTOR_RULES } from "./bash-interceptor.js";
 import { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, formatSize, type TruncationResult, truncateTail } from "./truncate.js";
 import type { ArtifactManager } from "../artifact-manager.js";
 
@@ -191,6 +192,13 @@ export interface BashToolOptions {
 	spawnHook?: BashSpawnHook;
 	/** Session-scoped artifact storage. When provided, spills to artifact files instead of temp files. */
 	artifactManager?: ArtifactManager;
+	/** Bash interceptor configuration — blocks commands that duplicate dedicated tools */
+	interceptor?: {
+		enabled: boolean;
+		rules?: BashInterceptorRule[];
+	};
+	/** Tool names available in the session, used by the interceptor to check if replacement tools exist */
+	availableToolNames?: string[] | (() => string[]);
 }
 
 export function createBashTool(cwd: string, options?: BashToolOptions): AgentTool<typeof bashSchema> {
@@ -198,6 +206,12 @@ export function createBashTool(cwd: string, options?: BashToolOptions): AgentToo
 	const commandPrefix = options?.commandPrefix;
 	const spawnHook = options?.spawnHook;
 	const artifactManager = options?.artifactManager;
+
+	// Pre-compile interceptor rules once at construction time
+	const interceptorInstance =
+		options?.interceptor?.enabled
+			? compileInterceptor(options.interceptor.rules ?? DEFAULT_BASH_INTERCEPTOR_RULES)
+			: null;
 
 	return {
 		name: "bash",
@@ -210,6 +224,21 @@ export function createBashTool(cwd: string, options?: BashToolOptions): AgentToo
 			signal?: AbortSignal,
 			onUpdate?,
 		) => {
+			// Check bash interceptor — block commands that duplicate dedicated tools
+			if (interceptorInstance) {
+				const toolNames =
+					typeof options!.availableToolNames === "function"
+						? options!.availableToolNames()
+						: options!.availableToolNames ?? [];
+				const interception = interceptorInstance.check(command, toolNames);
+				if (interception.block) {
+					return {
+						content: [{ type: "text" as const, text: interception.message ?? "Command blocked by interceptor" }],
+						details: undefined,
+					};
+				}
+			}
+
 			// Apply command prefix if configured (e.g., "shopt -s expand_aliases" for alias support)
 			const resolvedCommand = sanitizeCommand(commandPrefix ? `${commandPrefix}\n${command}` : command);
 			const spawnContext = resolveSpawnContext(resolvedCommand, cwd, spawnHook);

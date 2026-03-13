@@ -2,7 +2,10 @@
  * Native addon loader.
  *
  * Locates and loads the compiled Rust N-API addon (`.node` file).
- * Tries platform-tagged release builds first, then falls back to dev builds.
+ * Resolution order:
+ *   1. @gsd-build/engine-{platform} npm optional dependency (production install)
+ *   2. native/addon/gsd_engine.{platform}.node (local release build)
+ *   3. native/addon/gsd_engine.dev.node (local debug build)
  */
 
 import { createRequire } from "node:module";
@@ -15,28 +18,55 @@ const require = createRequire(import.meta.url);
 const addonDir = path.resolve(__dirname, "..", "..", "..", "native", "addon");
 const platformTag = `${process.platform}-${process.arch}`;
 
-const candidates = [
-  path.join(addonDir, `gsd_engine.${platformTag}.node`),
-  path.join(addonDir, "gsd_engine.dev.node"),
-];
+/** Map Node.js platform/arch to the npm package suffix */
+const platformPackageMap: Record<string, string> = {
+  "darwin-arm64": "darwin-arm64",
+  "darwin-x64": "darwin-x64",
+  "linux-x64": "linux-x64-gnu",
+  "linux-arm64": "linux-arm64-gnu",
+  "win32-x64": "win32-x64-msvc",
+};
 
 function loadNative(): Record<string, unknown> {
   const errors: string[] = [];
 
-  for (const candidate of candidates) {
+  // 1. Try the platform-specific npm optional dependency
+  const packageSuffix = platformPackageMap[platformTag];
+  if (packageSuffix) {
     try {
-      return require(candidate) as Record<string, unknown>;
+      return require(`@gsd-build/engine-${packageSuffix}`) as Record<string, unknown>;
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      errors.push(`${candidate}: ${message}`);
+      errors.push(`@gsd-build/engine-${packageSuffix}: ${message}`);
     }
   }
 
+  // 2. Try local release build (native/addon/gsd_engine.{platform}.node)
+  const releasePath = path.join(addonDir, `gsd_engine.${platformTag}.node`);
+  try {
+    return require(releasePath) as Record<string, unknown>;
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    errors.push(`${releasePath}: ${message}`);
+  }
+
+  // 3. Try local dev build (native/addon/gsd_engine.dev.node)
+  const devPath = path.join(addonDir, "gsd_engine.dev.node");
+  try {
+    return require(devPath) as Record<string, unknown>;
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    errors.push(`${devPath}: ${message}`);
+  }
+
   const details = errors.map((e) => `  - ${e}`).join("\n");
+  const supportedPlatforms = Object.keys(platformPackageMap);
   throw new Error(
     `Failed to load gsd_engine native addon for ${platformTag}.\n\n` +
       `Tried:\n${details}\n\n` +
-      `Build with: npm run build:native -w @gsd/native`,
+      `Supported platforms: ${supportedPlatforms.join(", ")}\n` +
+      `If your platform is listed, try reinstalling: npm i -g gsd-pi\n` +
+      `Otherwise, please open an issue: https://github.com/gsd-build/gsd-2/issues`,
   );
 }
 
@@ -94,9 +124,15 @@ export const native = loadNative() as {
   ttsrCompileRules: (rules: unknown[]) => number;
   ttsrCheckBuffer: (handle: number, buffer: string) => string[];
   ttsrFreeRules: (handle: number) => void;
+  processStreamChunk: (chunk: Buffer, state?: unknown) => unknown;
+  stripAnsiNative: (text: string) => string;
+  sanitizeBinaryOutputNative: (text: string) => string;
   parseFrontmatter: (content: string) => unknown;
   extractSection: (content: string, heading: string, level?: number) => unknown;
   extractAllSections: (content: string, level?: number) => string;
   batchParseGsdFiles: (directory: string) => unknown;
   parseRoadmapFile: (content: string) => unknown;
+  parseJson: (text: string) => unknown;
+  parsePartialJson: (text: string) => unknown;
+  parseStreamingJson: (text: string) => unknown;
 };

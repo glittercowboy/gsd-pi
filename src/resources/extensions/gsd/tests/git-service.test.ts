@@ -953,6 +953,42 @@ async function main(): Promise<void> {
     rmSync(repo, { recursive: true, force: true });
   }
 
+  // ─── mergeSliceToMain: auto-resolve .gsd/ planning artifact conflicts ──
+
+  console.log("\n=== mergeSliceToMain: auto-resolve .gsd/ planning conflicts ===");
+
+  {
+    const repo = initBranchTestRepo();
+    const svc = new GitServiceImpl(repo);
+
+    // Create a .gsd/ planning artifact on main (simulates reassess-roadmap)
+    createFile(repo, ".gsd/DECISIONS.md", "# Decisions\n\n- D001: Original decision\n");
+    run("git add -A", repo);
+    run("git commit -m 'add decisions on main'", repo);
+
+    // Create slice branch and modify the same .gsd/ file differently
+    svc.ensureSliceBranch("M001", "S01");
+    createFile(repo, ".gsd/DECISIONS.md", "# Decisions\n\n- D001: Original decision\n- D002: New decision from slice\n");
+    createFile(repo, "src/feature.ts", "export const x = 1;");
+    run("git add -A", repo);
+    run("git commit -m 'slice work with .gsd/ changes'", repo);
+
+    // Back on main, modify the same .gsd/ file to create a conflict
+    svc.switchToMain();
+    createFile(repo, ".gsd/DECISIONS.md", "# Decisions\n\n- D001: Updated decision on main\n");
+    run("git add -A", repo);
+    run("git commit -m 'update decisions on main'", repo);
+
+    // Merge should auto-resolve .gsd/ conflicts by taking theirs (slice branch)
+    const result = svc.mergeSliceToMain("M001", "S01", "Feature with .gsd/ conflicts");
+    assertEq(result.deletedBranch, true, ".gsd/ conflict auto-resolved: branch deleted");
+
+    // Verify the merge succeeded and src file is present
+    assert(existsSync(join(repo, "src/feature.ts")), ".gsd/ conflict auto-resolved: src file merged");
+
+    rmSync(repo, { recursive: true, force: true });
+  }
+
   // ═══════════════════════════════════════════════════════════════════════
   // S05: Enhanced features — merge guards, snapshots, auto-push, rich commits
   // ═══════════════════════════════════════════════════════════════════════

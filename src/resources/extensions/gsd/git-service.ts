@@ -673,10 +673,11 @@ export class GitServiceImpl {
     try {
       this.git(mergeArgs);
     } catch (mergeError) {
-      // Check if conflicts are limited to runtime files we can auto-resolve (#189)
+      // Check if conflicts can be auto-resolved (#189, #218)
       const conflicted = this.git(["diff", "--name-only", "--diff-filter=U"], { allowFailure: true });
       if (conflicted) {
         const conflictedFiles = conflicted.split("\n").filter(Boolean);
+        const allGsd = conflictedFiles.every(f => f.startsWith(".gsd/"));
         const allRuntime = conflictedFiles.every(f =>
           RUNTIME_EXCLUSION_PATHS.some(excl => f.startsWith(excl.replace(/\/$/, ""))),
         );
@@ -688,12 +689,21 @@ export class GitServiceImpl {
           }
           this.git(["add", "-A"], { allowFailure: true });
           // Don't throw — let the merge proceed
+        } else if (allGsd) {
+          // Non-runtime .gsd/ conflicts (DECISIONS.md, REQUIREMENTS.md, ROADMAP.md, etc.):
+          // The slice branch has the authoritative .gsd/ state since the LLM just finished
+          // updating these artifacts during complete-slice. Take theirs (the slice branch).
+          for (const f of conflictedFiles) {
+            this.git(["checkout", "--theirs", "--", f], { allowFailure: true });
+          }
+          this.git(["add", "-A"], { allowFailure: true });
+          // Don't throw — let the merge proceed
         } else {
-          // Non-runtime conflicts: reset and throw as before
+          // Non-.gsd/ conflicts: reset and throw as before
           this.git(["reset", "--hard", "HEAD"], { allowFailure: true });
           const msg = mergeError instanceof Error ? mergeError.message : String(mergeError);
           throw new Error(
-            `${strategy === "merge" ? "Merge" : "Squash-merge"} of "${branch}" into "${mainBranch}" failed with conflicts. ` +
+            `${strategy === "merge" ? "Merge" : "Squash-merge"} of "${branch}" into "${mainBranch}" failed with conflicts in non-.gsd/ files. ` +
             `Working tree has been reset to a clean state. ` +
             `Resolve manually: git checkout ${mainBranch} && git merge ${strategy === "merge" ? "--no-ff" : "--squash"} ${branch}\n` +
             `Original error: ${msg}`,

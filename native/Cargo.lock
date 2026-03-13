@@ -544,6 +544,7 @@ dependencies = [
  "napi-build",
  "napi-derive",
  "regex",
+ "serde_json",
  "similar",
  "smallvec",
  "syntect",

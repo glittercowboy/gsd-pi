@@ -2,6 +2,9 @@
  * Credential storage for API keys and OAuth tokens.
  * Handles loading, saving, and refreshing credentials from auth.json.
  *
+ * Supports multiple credentials per provider with round-robin selection,
+ * session-sticky hashing, and automatic rate-limit fallback.
+ *
  * Uses file locking to prevent race conditions when multiple pi instances
  * try to refresh tokens simultaneously.
  */
@@ -30,7 +33,11 @@ export type OAuthCredential = {
 
 export type AuthCredential = ApiKeyCredential | OAuthCredential;
 
-export type AuthStorageData = Record<string, AuthCredential>;
+/**
+ * On-disk format: each provider maps to a single credential or an array of credentials.
+ * Single credentials are normalized to arrays at load time for internal use.
+ */
+export type AuthStorageData = Record<string, AuthCredential | AuthCredential[]>;
 
 type LockResult<T> = {
 	result: T;
@@ -178,8 +185,49 @@ export class InMemoryAuthStorageBackend implements AuthStorageBackend {
 	}
 }
 
+// ============================================================================
+// Backoff durations for different error types (milliseconds)
+// ============================================================================
+
+const BACKOFF_RATE_LIMIT_MS = 30_000; // 30s for rate limit / 429
+const BACKOFF_QUOTA_EXHAUSTED_MS = 30 * 60_000; // 30min for quota exhausted
+const BACKOFF_SERVER_ERROR_MS = 20_000; // 20s for 5xx server errors
+const BACKOFF_DEFAULT_MS = 60_000; // 60s fallback
+
+export type UsageLimitErrorType = "rate_limit" | "quota_exhausted" | "server_error" | "unknown";
+
+/**
+ * Get backoff duration for an error type.
+ */
+function getBackoffDuration(errorType: UsageLimitErrorType): number {
+	switch (errorType) {
+		case "rate_limit":
+			return BACKOFF_RATE_LIMIT_MS;
+		case "quota_exhausted":
+			return BACKOFF_QUOTA_EXHAUSTED_MS;
+		case "server_error":
+			return BACKOFF_SERVER_ERROR_MS;
+		default:
+			return BACKOFF_DEFAULT_MS;
+	}
+}
+
+/**
+ * Simple string hash for session-sticky credential selection.
+ * Returns a positive integer.
+ */
+function hashString(str: string): number {
+	let hash = 0;
+	for (let i = 0; i < str.length; i++) {
+		const char = str.charCodeAt(i);
+		hash = ((hash << 5) - hash + char) | 0;
+	}
+	return Math.abs(hash);
+}
+
 /**
  * Credential storage backed by a JSON file.
+ * Supports multiple credentials per provider with round-robin rotation and rate-limit fallback.
  */
 export class AuthStorage {
 	private data: AuthStorageData = {};
@@ -187,6 +235,18 @@ export class AuthStorage {
 	private fallbackResolver?: (provider: string) => string | undefined;
 	private loadError: Error | null = null;
 	private errors: Error[] = [];
+
+	/**
+	 * Round-robin index per provider. Incremented on each call to getApiKey
+	 * when no sessionId is provided.
+	 */
+	private providerRoundRobinIndex: Map<string, number> = new Map();
+
+	/**
+	 * Backoff tracking per provider per credential index.
+	 * Map<provider, Map<credentialIndex, backoffExpiresAt>>
+	 */
+	private credentialBackoff: Map<string, Map<number, number>> = new Map();
 
 	private constructor(private storage: AuthStorageBackend) {
 		this.reload();
@@ -242,6 +302,17 @@ export class AuthStorage {
 	}
 
 	/**
+	 * Normalize a storage entry to an array of credentials.
+	 * Handles both single credential (backward compat) and array formats.
+	 */
+	getCredentialsForProvider(provider: string): AuthCredential[] {
+		const entry = this.data[provider];
+		if (!entry) return [];
+		if (Array.isArray(entry)) return entry;
+		return [entry];
+	}
+
+	/**
 	 * Reload credentials from storage.
 	 */
 	reload(): void {
@@ -259,7 +330,7 @@ export class AuthStorage {
 		}
 	}
 
-	private persistProviderChange(provider: string, credential: AuthCredential | undefined): void {
+	private persistProviderChange(provider: string, credential: AuthCredential | AuthCredential[] | undefined): void {
 		if (this.loadError) {
 			return;
 		}
@@ -281,25 +352,52 @@ export class AuthStorage {
 	}
 
 	/**
-	 * Get credential for a provider.
+	 * Get the first credential for a provider (backward-compatible).
 	 */
 	get(provider: string): AuthCredential | undefined {
-		return this.data[provider] ?? undefined;
+		const creds = this.getCredentialsForProvider(provider);
+		return creds[0] ?? undefined;
 	}
 
 	/**
-	 * Set credential for a provider.
+	 * Set credential for a provider. For API key credentials, appends to
+	 * existing credentials (accumulation on duplicate login). For OAuth,
+	 * replaces (only one OAuth token per provider makes sense).
 	 */
 	set(provider: string, credential: AuthCredential): void {
-		this.data[provider] = credential;
-		this.persistProviderChange(provider, credential);
+		if (credential.type === "api_key") {
+			const existing = this.getCredentialsForProvider(provider);
+			// Deduplicate: don't add if same key already exists
+			const isDuplicate = existing.some(
+				(c) => c.type === "api_key" && c.key === credential.key,
+			);
+			if (isDuplicate) return;
+
+			const updated = [...existing, credential];
+			this.data[provider] = updated.length === 1 ? updated[0] : updated;
+			this.persistProviderChange(provider, updated.length === 1 ? updated[0] : updated);
+		} else {
+			// OAuth: replace any existing OAuth credential, keep API keys
+			const existing = this.getCredentialsForProvider(provider);
+			const apiKeys = existing.filter((c) => c.type === "api_key");
+			if (apiKeys.length === 0) {
+				this.data[provider] = credential;
+				this.persistProviderChange(provider, credential);
+			} else {
+				const updated = [...apiKeys, credential];
+				this.data[provider] = updated;
+				this.persistProviderChange(provider, updated);
+			}
+		}
 	}
 
 	/**
-	 * Remove credential for a provider.
+	 * Remove all credentials for a provider.
 	 */
 	remove(provider: string): void {
 		delete this.data[provider];
+		this.providerRoundRobinIndex.delete(provider);
+		this.credentialBackoff.delete(provider);
 		this.persistProviderChange(provider, undefined);
 	}
 
@@ -331,9 +429,19 @@ export class AuthStorage {
 
 	/**
 	 * Get all credentials (for passing to getOAuthApiKey).
+	 * Returns normalized format where each provider has a single credential
+	 * (the first one) for backward compatibility with OAuth refresh.
+	 *
+	 * NOTE: For providers with multiple API keys, only the first credential is
+	 * returned. This is intentional — callers use this for OAuth refresh only,
+	 * which is always single-credential. Do not use for API key enumeration.
 	 */
-	getAll(): AuthStorageData {
-		return { ...this.data };
+	getAll(): Record<string, AuthCredential> {
+		const result: Record<string, AuthCredential> = {};
+		for (const [provider, entry] of Object.entries(this.data)) {
+			result[provider] = Array.isArray(entry) ? entry[0] : entry;
+		}
+		return result;
 	}
 
 	drainErrors(): Error[] {
@@ -363,6 +471,108 @@ export class AuthStorage {
 	}
 
 	/**
+	 * Check if a credential index is currently backed off.
+	 */
+	private isCredentialBackedOff(provider: string, index: number): boolean {
+		const providerBackoff = this.credentialBackoff.get(provider);
+		if (!providerBackoff) return false;
+		const expiresAt = providerBackoff.get(index);
+		if (expiresAt === undefined) return false;
+		if (Date.now() >= expiresAt) {
+			providerBackoff.delete(index);
+			return false;
+		}
+		return true;
+	}
+
+	/**
+	 * Select the best credential index for a provider.
+	 * - If sessionId is provided, uses session-sticky hashing as the starting point.
+	 * - Otherwise, uses round-robin as the starting point.
+	 * - Skips credentials that are currently backed off.
+	 * - Returns -1 if all credentials are backed off.
+	 */
+	private selectCredentialIndex(provider: string, credentials: AuthCredential[], sessionId?: string): number {
+		if (credentials.length === 0) return -1;
+		if (credentials.length === 1) {
+			return this.isCredentialBackedOff(provider, 0) ? -1 : 0;
+		}
+
+		let startIndex: number;
+		if (sessionId) {
+			startIndex = hashString(sessionId) % credentials.length;
+		} else {
+			const current = this.providerRoundRobinIndex.get(provider) ?? 0;
+			startIndex = current % credentials.length;
+			this.providerRoundRobinIndex.set(provider, current + 1);
+		}
+
+		// Try starting from the preferred index, wrapping around
+		for (let offset = 0; offset < credentials.length; offset++) {
+			const index = (startIndex + offset) % credentials.length;
+			if (!this.isCredentialBackedOff(provider, index)) {
+				return index;
+			}
+		}
+
+		// All credentials are backed off
+		return -1;
+	}
+
+	/**
+	 * Mark a credential as rate-limited. Finds the credential that was most
+	 * recently used for this provider+session and backs it off.
+	 *
+	 * @returns true if another credential is available (caller should retry),
+	 *          false if all credentials for this provider are backed off.
+	 */
+	markUsageLimitReached(
+		provider: string,
+		sessionId?: string,
+		options?: { errorType?: UsageLimitErrorType },
+	): boolean {
+		const credentials = this.getCredentialsForProvider(provider);
+		if (credentials.length === 0) return false;
+
+		const errorType = options?.errorType ?? "rate_limit";
+		const backoffMs = getBackoffDuration(errorType);
+
+		// Determine which credential was just used (same logic as selectCredentialIndex
+		// but without incrementing round-robin)
+		let usedIndex: number;
+		if (credentials.length === 1) {
+			usedIndex = 0;
+		} else if (sessionId) {
+			usedIndex = hashString(sessionId) % credentials.length;
+		} else {
+			// Round-robin was already incremented in getApiKey, so the last-used
+			// index is (current - 1). Note: in a concurrent scenario where another
+			// getApiKey call fires between the original request and this backoff call,
+			// we may back off the wrong credential index. This is acceptable because:
+			// (a) pi runs single-threaded event loop, (b) backing off the wrong key
+			// is safe — it self-heals when the backoff expires.
+			const current = this.providerRoundRobinIndex.get(provider) ?? 0;
+			usedIndex = ((current - 1) % credentials.length + credentials.length) % credentials.length;
+		}
+
+		// Set backoff for this credential
+		let providerBackoff = this.credentialBackoff.get(provider);
+		if (!providerBackoff) {
+			providerBackoff = new Map();
+			this.credentialBackoff.set(provider, providerBackoff);
+		}
+		providerBackoff.set(usedIndex, Date.now() + backoffMs);
+
+		// Check if any credential is still available
+		for (let i = 0; i < credentials.length; i++) {
+			if (!this.isCredentialBackedOff(provider, i)) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	/**
 	 * Refresh OAuth token with backend locking to prevent race conditions.
 	 * Multiple pi instances may try to refresh simultaneously when tokens expire.
 	 */
@@ -379,8 +589,10 @@ export class AuthStorage {
 			this.data = currentData;
 			this.loadError = null;
 
-			const cred = currentData[providerId];
-			if (cred?.type !== "oauth") {
+			// Find the OAuth credential for this provider
+			const creds = this.getCredentialsForProvider(providerId);
+			const cred = creds.find((c) => c.type === "oauth");
+			if (!cred || cred.type !== "oauth") {
 				return { result: null };
 			}
 
@@ -390,8 +602,9 @@ export class AuthStorage {
 
 			const oauthCreds: Record<string, OAuthCredentials> = {};
 			for (const [key, value] of Object.entries(currentData)) {
-				if (value.type === "oauth") {
-					oauthCreds[key] = value;
+				const first = Array.isArray(value) ? value.find((c) => c.type === "oauth") : value;
+				if (first?.type === "oauth") {
+					oauthCreds[key] = first;
 				}
 			}
 
@@ -400,9 +613,20 @@ export class AuthStorage {
 				return { result: null };
 			}
 
+			// Update the OAuth credential in-place within the array
+			const existingEntry = currentData[providerId];
+			const newOAuthCred: OAuthCredential = { type: "oauth", ...refreshed.newCredentials };
+			let updatedEntry: AuthCredential | AuthCredential[];
+
+			if (Array.isArray(existingEntry)) {
+				updatedEntry = existingEntry.map((c) => (c.type === "oauth" ? newOAuthCred : c));
+			} else {
+				updatedEntry = newOAuthCred;
+			}
+
 			const merged: AuthStorageData = {
 				...currentData,
-				[providerId]: { type: "oauth", ...refreshed.newCredentials },
+				[providerId]: updatedEntry,
 			};
 			this.data = merged;
 			this.loadError = null;
@@ -413,63 +637,69 @@ export class AuthStorage {
 	}
 
 	/**
+	 * Resolve an API key from a single credential.
+	 */
+	private async resolveCredentialApiKey(
+		providerId: string,
+		cred: AuthCredential,
+	): Promise<string | undefined> {
+		if (cred.type === "api_key") {
+			return resolveConfigValue(cred.key);
+		}
+
+		if (cred.type === "oauth") {
+			const provider = getOAuthProvider(providerId);
+			if (!provider) return undefined;
+
+			const needsRefresh = Date.now() >= cred.expires;
+			if (needsRefresh) {
+				try {
+					const result = await this.refreshOAuthTokenWithLock(providerId);
+					if (result) return result.apiKey;
+				} catch (error) {
+					this.recordError(error);
+					this.reload();
+					const updatedCreds = this.getCredentialsForProvider(providerId);
+					const updatedOAuth = updatedCreds.find((c) => c.type === "oauth");
+					if (updatedOAuth?.type === "oauth" && Date.now() < updatedOAuth.expires) {
+						return provider.getApiKey(updatedOAuth);
+					}
+					return undefined;
+				}
+			} else {
+				return provider.getApiKey(cred);
+			}
+		}
+
+		return undefined;
+	}
+
+	/**
 	 * Get API key for a provider.
 	 * Priority:
 	 * 1. Runtime override (CLI --api-key)
-	 * 2. API key from auth.json
-	 * 3. OAuth token from auth.json (auto-refreshed with locking)
-	 * 4. Environment variable
-	 * 5. Fallback resolver (models.json custom providers)
+	 * 2. Credential(s) from auth.json (with round-robin / session-sticky selection)
+	 * 3. Environment variable
+	 * 4. Fallback resolver (models.json custom providers)
+	 *
+	 * @param providerId - The provider to get an API key for
+	 * @param sessionId - Optional session ID for sticky credential selection
 	 */
-	async getApiKey(providerId: string): Promise<string | undefined> {
+	async getApiKey(providerId: string, sessionId?: string): Promise<string | undefined> {
 		// Runtime override takes highest priority
 		const runtimeKey = this.runtimeOverrides.get(providerId);
 		if (runtimeKey) {
 			return runtimeKey;
 		}
 
-		const cred = this.data[providerId];
+		const credentials = this.getCredentialsForProvider(providerId);
 
-		if (cred?.type === "api_key") {
-			return resolveConfigValue(cred.key);
-		}
-
-		if (cred?.type === "oauth") {
-			const provider = getOAuthProvider(providerId);
-			if (!provider) {
-				// Unknown OAuth provider, can't get API key
-				return undefined;
+		if (credentials.length > 0) {
+			const index = this.selectCredentialIndex(providerId, credentials, sessionId);
+			if (index >= 0) {
+				return this.resolveCredentialApiKey(providerId, credentials[index]);
 			}
-
-			// Check if token needs refresh
-			const needsRefresh = Date.now() >= cred.expires;
-
-			if (needsRefresh) {
-				// Use locked refresh to prevent race conditions
-				try {
-					const result = await this.refreshOAuthTokenWithLock(providerId);
-					if (result) {
-						return result.apiKey;
-					}
-				} catch (error) {
-					this.recordError(error);
-					// Refresh failed - re-read file to check if another instance succeeded
-					this.reload();
-					const updatedCred = this.data[providerId];
-
-					if (updatedCred?.type === "oauth" && Date.now() < updatedCred.expires) {
-						// Another instance refreshed successfully, use those credentials
-						return provider.getApiKey(updatedCred);
-					}
-
-					// Refresh truly failed - return undefined so model discovery skips this provider
-					// User can /login to re-authenticate (credentials preserved for retry)
-					return undefined;
-				}
-			} else {
-				// Token not expired, use current access token
-				return provider.getApiKey(cred);
-			}
+			// All credentials backed off - fall through to env/fallback
 		}
 
 		// Fall back to environment variable

@@ -9,6 +9,14 @@ export {
 	createBashTool,
 } from "./bash.js";
 export {
+	type BashInterceptorRule,
+	checkBashInterception,
+	type CompiledInterceptor,
+	compileInterceptor,
+	DEFAULT_BASH_INTERCEPTOR_RULES,
+	type InterceptionResult,
+} from "./bash-interceptor.js";
+export {
 	createEditTool,
 	type EditOperations,
 	type EditToolDetails,

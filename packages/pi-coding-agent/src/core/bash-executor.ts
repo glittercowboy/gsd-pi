@@ -11,8 +11,8 @@ import { createWriteStream, type WriteStream } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type ChildProcess, spawn } from "child_process";
-import stripAnsi from "strip-ansi";
-import { getShellConfig, getShellEnv, killProcessTree, sanitizeBinaryOutput, sanitizeCommand } from "../utils/shell.js";
+import { processStreamChunk, type StreamState } from "@gsd/native";
+import { getShellConfig, getShellEnv, killProcessTree, sanitizeCommand } from "../utils/shell.js";
 import type { BashOperations } from "./tools/bash.js";
 import { DEFAULT_MAX_BYTES, truncateTail } from "./tools/truncate.js";
 
@@ -99,13 +99,15 @@ export function executeBash(command: string, options?: BashExecutorOptions): Pro
 			options.signal.addEventListener("abort", abortHandler, { once: true });
 		}
 
-		const decoder = new TextDecoder();
+		let streamState: StreamState | undefined;
 
 		const handleData = (data: Buffer) => {
 			totalBytes += data.length;
 
-			// Sanitize once at the source: strip ANSI, replace binary garbage, normalize newlines
-			const text = sanitizeBinaryOutput(stripAnsi(decoder.decode(data, { stream: true }))).replace(/\r/g, "");
+			// Single-pass native processing: UTF-8 decode + ANSI strip + binary sanitize + CR removal
+			const result = processStreamChunk(data, streamState);
+			streamState = result.state;
+			const text = result.text;
 
 			// Start writing to temp file if exceeds threshold
 			if (totalBytes > DEFAULT_MAX_BYTES && !tempFilePath) {
@@ -198,13 +200,15 @@ export async function executeBashWithOperations(
 	let tempFileStream: WriteStream | undefined;
 	let totalBytes = 0;
 
-	const decoder = new TextDecoder();
+	let streamState2: StreamState | undefined;
 
 	const onData = (data: Buffer) => {
 		totalBytes += data.length;
 
-		// Sanitize: strip ANSI, replace binary garbage, normalize newlines
-		const text = sanitizeBinaryOutput(stripAnsi(decoder.decode(data, { stream: true }))).replace(/\r/g, "");
+		// Single-pass native processing: UTF-8 decode + ANSI strip + binary sanitize + CR removal
+		const result = processStreamChunk(data, streamState2);
+		streamState2 = result.state;
+		const text = result.text;
 
 		// Start writing to temp file if exceeds threshold
 		if (totalBytes > DEFAULT_MAX_BYTES && !tempFilePath) {

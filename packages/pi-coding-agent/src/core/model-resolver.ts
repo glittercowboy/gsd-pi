@@ -214,6 +214,18 @@ export async function resolveModelScope(patterns: string[], modelRegistry: Model
 	const scopedModels: ScopedModel[] = [];
 
 	for (const pattern of patterns) {
+		// Try exact match first (handles model IDs containing glob chars like [1m])
+		const exactResult = parseModelPattern(pattern, availableModels);
+		if (exactResult.model) {
+			if (exactResult.warning) {
+				console.warn(chalk.yellow(`Warning: ${exactResult.warning}`));
+			}
+			if (!scopedModels.find((sm) => modelsAreEqual(sm.model, exactResult.model!))) {
+				scopedModels.push({ model: exactResult.model, thinkingLevel: exactResult.thinkingLevel });
+			}
+			continue;
+		}
+
 		// Check if pattern contains glob characters
 		if (pattern.includes("*") || pattern.includes("?") || pattern.includes("[")) {
 			// Extract optional thinking level suffix (e.g., "provider/*:high")
