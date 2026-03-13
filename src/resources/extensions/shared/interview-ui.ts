@@ -235,7 +235,7 @@ export async function showInterviewRound(
 		}
 
 		function saveEditorToState() {
-			states[currentIdx].notes = getEditor().getText().trim();
+			states[currentIdx].notes = getEditor().getExpandedText().trim();
 		}
 
 		function loadStateToEditor() {

@@ -64,9 +64,20 @@ export default function (pi: ExtensionAPI) {
   registerGSDCommand(pi);
   registerWorktreeCommand(pi);
 
-  // ── /exit — kill the process immediately ──────────────────────────────
+  // ── /exit — graceful exit (cleanup auto-mode, save state) ──────────────
   pi.registerCommand("exit", {
-    description: "Exit GSD immediately",
+    description: "Exit GSD gracefully (saves auto-mode state)",
+    handler: async (_ctx) => {
+      // Gracefully stop auto-mode if running (saves activity log, clears locks)
+      const { stopAuto } = await import("./auto.js");
+      await stopAuto(_ctx, pi);
+      process.exit(0);
+    },
+  });
+
+  // ── /kill — immediate exit (bypass cleanup) ─────────────────────────────
+  pi.registerCommand("kill", {
+    description: "Exit GSD immediately (no cleanup)",
     handler: async (_ctx) => {
       process.exit(0);
     },

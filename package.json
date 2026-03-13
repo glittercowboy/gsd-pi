@@ -1,6 +1,6 @@
 {
   "name": "gsd-pi",
-  "version": "2.7.0",
+  "version": "2.8.0",
   "description": "GSD — Get Shit Done coding agent",
   "license": "MIT",
   "repository": {
@@ -44,6 +44,7 @@
     "build": "npm run build:pi && tsc && npm run copy-themes",
     "copy-themes": "node -e \"const{mkdirSync,cpSync}=require('fs');const{resolve}=require('path');const src=resolve(__dirname,'packages/pi-coding-agent/dist/modes/interactive/theme');mkdirSync('pkg/dist/modes/interactive/theme',{recursive:true});cpSync(src,'pkg/dist/modes/interactive/theme',{recursive:true})\"",
     "test": "node --import ./src/resources/extensions/gsd/tests/resolve-ts.mjs --experimental-strip-types --test src/resources/extensions/gsd/tests/*.test.ts src/resources/extensions/gsd/tests/*.test.mjs src/tests/*.test.ts",
+    "test:browser-tools": "node --test src/resources/extensions/browser-tools/tests/browser-tools-unit.test.cjs src/resources/extensions/browser-tools/tests/browser-tools-integration.test.mjs",
     "dev": "tsc --watch",
     "postinstall": "node scripts/postinstall.js",
     "pi:install-global": "node scripts/install-pi-global.js",
@@ -53,13 +54,25 @@
   },
   "dependencies": {
     "@clack/prompts": "^1.1.0",
+    "@gsd/pi-agent-core": "*",
+    "@gsd/pi-ai": "*",
+    "@gsd/pi-coding-agent": "*",
+    "@gsd/pi-tui": "*",
     "picocolors": "^1.1.1",
     "picomatch": "^4.0.3",
-    "playwright": "^1.58.2"
+    "playwright": "^1.58.2",
+    "sharp": "^0.34.5"
   },
+  "bundleDependencies": [
+    "@gsd/pi-agent-core",
+    "@gsd/pi-ai",
+    "@gsd/pi-coding-agent",
+    "@gsd/pi-tui"
+  ],
   "devDependencies": {
     "@types/node": "^22.0.0",
     "@types/picomatch": "^4.0.2",
+    "jiti": "^2.6.1",
     "typescript": "^5.4.0"
   },
   "overrides": {

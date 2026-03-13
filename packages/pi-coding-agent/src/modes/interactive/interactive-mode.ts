@@ -176,7 +176,7 @@ export class InteractiveMode {
 	private pendingTools = new Map<string, ToolExecutionComponent>();
 
 	// Tool output expansion state
-	private toolOutputExpanded = false;
+	private toolOutputExpanded = true;
 
 	// Thinking block visibility state
 	private hideThinkingBlock = false;

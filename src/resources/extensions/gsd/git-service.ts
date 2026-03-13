@@ -487,6 +487,9 @@ export class GitServiceImpl {
       commitType, milestoneId, sliceId, sliceTitle, mainBranch, branch,
     );
 
+    // Pull latest main before merging to avoid conflicts from remote changes
+    this.git(["pull", "--rebase", "origin", mainBranch], { allowFailure: true });
+
     // Squash merge — abort cleanly on conflict so the working tree is never
     // left in a half-merged state (see: merge-bug-fix).
     try {
