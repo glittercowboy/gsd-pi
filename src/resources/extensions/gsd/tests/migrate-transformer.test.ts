@@ -317,7 +317,7 @@ function makeResearch(fileName: string, content: string): PlanningResearch {
   assertEq(doneSlice?.tasks[0]?.summary?.duration, '2h', 'completion: summary duration from frontmatter');
   assertEq(doneSlice?.tasks[0]?.summary?.provides, ['feature-01'], 'completion: summary provides from frontmatter');
   assertEq(doneSlice?.tasks[0]?.summary?.keyFiles, ['file-01.ts'], 'completion: summary keyFiles from frontmatter');
-  assert(doneSlice?.tasks[0]?.summary?.whatHappened?.includes('Summary body'), 'completion: summary whatHappened from body');
+  assert(doneSlice?.tasks[0]?.summary?.whatHappened?.includes('Summary body') ?? false, 'completion: summary whatHappened from body');
   assert(doneSlice?.summary !== null, 'completion: done slice has slice summary');
   assert(activeSlice?.summary === null, 'completion: active slice has null summary');
   assertEq(doneSlice?.tasks[0]?.estimate, '2h', 'completion: task estimate from summary duration');

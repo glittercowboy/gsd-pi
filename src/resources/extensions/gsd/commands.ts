@@ -415,7 +415,7 @@ async function handlePrefsWizard(
   await saveFile(path, content);
   await ctx.waitForIdle();
   await ctx.reload();
-  ctx.ui.notify(`Saved ${scope} preferences to ${path}`, "success");
+  ctx.ui.notify(`Saved ${scope} preferences to ${path}`, "info");
 }
 
 /** Wrap a YAML value in double quotes if it contains special characters. */

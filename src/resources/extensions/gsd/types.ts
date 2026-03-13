@@ -176,6 +176,7 @@ export interface GSDState {
   blockers: string[];
   nextAction: string;
   activeBranch?: string;
+  activeWorkspace?: string;
   registry: MilestoneRegistryEntry[];
   requirements?: RequirementCounts;
   progress?: {

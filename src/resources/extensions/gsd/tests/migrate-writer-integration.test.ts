@@ -234,18 +234,18 @@ async function main(): Promise<void> {
       assertEq(state.activeSlice!.id, 'S02', 'incomplete: deriveState activeSlice is S02');
       assert(state.activeTask !== null, 'incomplete: deriveState has activeTask');
       assertEq(state.activeTask!.id, 'T03', 'incomplete: deriveState activeTask is T03');
-      assert(state.progress.slices !== undefined, 'incomplete: deriveState has slices progress');
-      assertEq(state.progress.slices!.done, 1, 'incomplete: deriveState slices done count');
-      assertEq(state.progress.slices!.total, 2, 'incomplete: deriveState slices total count');
-      assert(state.progress.tasks !== undefined, 'incomplete: deriveState has tasks progress');
+      assert(state.progress!.slices !== undefined, 'incomplete: deriveState has slices progress');
+      assertEq(state.progress!.slices!.done, 1, 'incomplete: deriveState slices done count');
+      assertEq(state.progress!.slices!.total, 2, 'incomplete: deriveState slices total count');
+      assert(state.progress!.tasks !== undefined, 'incomplete: deriveState has tasks progress');
       // S02 has 1 task, 0 done (only active slice tasks counted)
-      assertEq(state.progress.tasks!.done, 0, 'incomplete: deriveState tasks done (in active slice)');
-      assertEq(state.progress.tasks!.total, 1, 'incomplete: deriveState tasks total (in active slice)');
+      assertEq(state.progress!.tasks!.done, 0, 'incomplete: deriveState tasks done (in active slice)');
+      assertEq(state.progress!.tasks!.total, 1, 'incomplete: deriveState tasks total (in active slice)');
       // Requirements
-      assertEq(state.requirements.active, 1, 'incomplete: deriveState requirements active');
-      assertEq(state.requirements.validated, 1, 'incomplete: deriveState requirements validated');
-      assertEq(state.requirements.deferred, 1, 'incomplete: deriveState requirements deferred');
-      assertEq(state.requirements.outOfScope, 1, 'incomplete: deriveState requirements outOfScope');
+      assertEq(state.requirements!.active, 1, 'incomplete: deriveState requirements active');
+      assertEq(state.requirements!.validated, 1, 'incomplete: deriveState requirements validated');
+      assertEq(state.requirements!.deferred, 1, 'incomplete: deriveState requirements deferred');
+      assertEq(state.requirements!.outOfScope, 1, 'incomplete: deriveState requirements outOfScope');
 
       // (f) generatePreview
       console.log('  --- generatePreview ---');

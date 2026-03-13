@@ -354,8 +354,8 @@ async function main(): Promise<void> {
       assert(state.phase !== undefined, 'pipeline: deriveState returns phase');
       assert(state.activeMilestone !== null, 'pipeline: deriveState has activeMilestone');
       assertEq(state.activeMilestone!.id, 'M001', 'pipeline: deriveState activeMilestone is M001');
-      assert(state.progress.slices !== undefined, 'pipeline: deriveState has slices progress');
-      assert(state.progress.tasks !== undefined, 'pipeline: deriveState has tasks progress');
+      assert(state.progress!.slices !== undefined, 'pipeline: deriveState has slices progress');
+      assert(state.progress!.tasks !== undefined, 'pipeline: deriveState has tasks progress');
 
     } finally {
       rmSync(base, { recursive: true, force: true });

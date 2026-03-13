@@ -127,7 +127,7 @@ export default function (pi: ExtensionAPI) {
         ...params,
         timeout: params.timeout ?? DEFAULT_BASH_TIMEOUT_SECS,
       };
-      return baseBash.execute(toolCallId, paramsWithTimeout, signal, onUpdate, ctx);
+      return (baseBash as any).execute(toolCallId, paramsWithTimeout, signal, onUpdate, ctx);
     },
   };
   pi.registerTool(dynamicBash as any);
@@ -148,7 +148,7 @@ export default function (pi: ExtensionAPI) {
       ctx?: any,
     ) => {
       const fresh = createWriteTool(process.cwd());
-      return fresh.execute(toolCallId, params, signal, onUpdate, ctx);
+      return (fresh as any).execute(toolCallId, params, signal, onUpdate, ctx);
     },
   };
   pi.registerTool(dynamicWrite as any);
@@ -164,7 +164,7 @@ export default function (pi: ExtensionAPI) {
       ctx?: any,
     ) => {
       const fresh = createReadTool(process.cwd());
-      return fresh.execute(toolCallId, params, signal, onUpdate, ctx);
+      return (fresh as any).execute(toolCallId, params, signal, onUpdate, ctx);
     },
   };
   pi.registerTool(dynamicRead as any);
@@ -180,7 +180,7 @@ export default function (pi: ExtensionAPI) {
       ctx?: any,
     ) => {
       const fresh = createEditTool(process.cwd());
-      return fresh.execute(toolCallId, params, signal, onUpdate, ctx);
+      return (fresh as any).execute(toolCallId, params, signal, onUpdate, ctx);
     },
   };
   pi.registerTool(dynamicEdit as any);
@@ -339,7 +339,7 @@ export default function (pi: ExtensionAPI) {
         "errorMessage" in lastMsg && lastMsg.errorMessage
           ? `: ${lastMsg.errorMessage}`
           : "";
-      ctx.log(`Auto-mode paused due to provider error${errorDetail}`);
+      (ctx as any).log(`Auto-mode paused due to provider error${errorDetail}`);
       await pauseAuto(ctx, pi);
       return;
     }

@@ -625,7 +625,7 @@ function validatePreferences(preferences: GSDPreferences): {
       }
       const validatedRule: GSDSkillRule = { when };
       for (const action of SKILL_ACTIONS) {
-        const values = normalizeStringList((rule as Record<string, unknown>)[action]);
+        const values = normalizeStringList((rule as unknown as Record<string, unknown>)[action]);
         if (values.length > 0) {
           validatedRule[action as keyof GSDSkillRule] = values as never;
         }

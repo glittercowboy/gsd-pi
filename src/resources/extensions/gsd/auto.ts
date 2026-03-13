@@ -1034,6 +1034,14 @@ async function dispatchNextUnit(
     return;
   }
 
+  // Guard: mid/midTitle must be defined strings from this point onward.
+  // The !mid check above returns early if mid is falsy; midTitle comes from
+  // the same object so it should always be present when mid is.
+  if (!midTitle) {
+    await stopAuto(ctx, pi);
+    return;
+  }
+
   // ── General merge guard: merge completed slice branches before advancing ──
   // If we're on a gsd/MID/SID branch and that slice is done (roadmap [x]),
   // merge to main before dispatching the next unit. This handles:
@@ -1104,6 +1112,17 @@ async function dispatchNextUnit(
         }
       }
     }
+  }
+
+  // After merge, mid/midTitle may have been re-derived and could be undefined
+  if (!mid || !midTitle) {
+    if (currentUnit) {
+      const modelId = ctx.model?.id ?? "unknown";
+      snapshotUnitMetrics(ctx, currentUnit.type, currentUnit.id, currentUnit.startedAt, modelId);
+      saveActivityLog(ctx, basePath, currentUnit.type, currentUnit.id);
+    }
+    await stopAuto(ctx, pi);
+    return;
   }
 
   // Determine next unit
@@ -1540,9 +1559,9 @@ async function dispatchNextUnit(
   // soft timeout; only idle/stalled tasks pause early.
   clearUnitTimeout();
   const supervisor = resolveAutoSupervisorConfig();
-  const softTimeoutMs = supervisor.soft_timeout_minutes * 60 * 1000;
-  const idleTimeoutMs = supervisor.idle_timeout_minutes * 60 * 1000;
-  const hardTimeoutMs = supervisor.hard_timeout_minutes * 60 * 1000;
+  const softTimeoutMs = (supervisor.soft_timeout_minutes ?? 0) * 60 * 1000;
+  const idleTimeoutMs = (supervisor.idle_timeout_minutes ?? 0) * 60 * 1000;
+  const hardTimeoutMs = (supervisor.hard_timeout_minutes ?? 0) * 60 * 1000;
 
   wrapupWarningHandle = setTimeout(() => {
     wrapupWarningHandle = null;
