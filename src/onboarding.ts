@@ -257,17 +257,30 @@ async function runLlmStep(p: ClackModule, pc: PicoModule, authStorage: AuthStora
   const oauthProviders = authStorage.getOAuthProviders()
   const oauthMap = new Map(oauthProviders.map(op => [op.id, op]))
 
+  // Check if already authenticated
+  const existingAuth = LLM_PROVIDER_IDS.find(id => authStorage.hasAuth(id))
+
   // ── Step 1: How do you want to authenticate? ─────────────────────────────
+  type AuthOption = { value: string; label: string; hint?: string }
+  const authOptions: AuthOption[] = []
+
+  if (existingAuth) {
+    authOptions.push({ value: 'keep', label: `Keep current (${existingAuth})`, hint: 'already configured' })
+  }
+
+  authOptions.push(
+    { value: 'browser', label: 'Sign in with your browser', hint: 'recommended — same login as claude.ai / ChatGPT' },
+    { value: 'api-key', label: 'Paste an API key', hint: 'from your provider dashboard' },
+    { value: 'skip', label: 'Skip for now', hint: 'use /login inside GSD later' },
+  )
+
   const method = await p.select({
-    message: 'How do you want to sign in?',
-    options: [
-      { value: 'browser', label: 'Sign in with your browser', hint: 'recommended — same login as claude.ai / ChatGPT' },
-      { value: 'api-key', label: 'Paste an API key', hint: 'from your provider dashboard' },
-      { value: 'skip', label: 'Skip for now', hint: 'use /login inside GSD later' },
-    ],
+    message: existingAuth ? `LLM provider: ${existingAuth} — change it?` : 'How do you want to sign in?',
+    options: authOptions,
   })
 
   if (p.isCancel(method) || method === 'skip') return false
+  if (method === 'keep') return true
 
   // ── Step 2: Which provider? ──────────────────────────────────────────────
   if (method === 'browser') {
@@ -416,9 +429,18 @@ async function runWebSearchStep(
   const authed = authStorage.list().filter(id => LLM_PROVIDER_IDS.includes(id))
   const isAnthropic = isAnthropicAuth && authed.includes('anthropic')
 
+  // Check if web search is already configured
+  const hasBrave = !!process.env.BRAVE_API_KEY || authStorage.has('brave')
+  const hasTavily = !!process.env.TAVILY_API_KEY || authStorage.has('tavily')
+  const existingSearch = hasBrave ? 'Brave Search' : hasTavily ? 'Tavily' : null
+
   // Build options based on what's available
   type SearchOption = { value: string; label: string; hint?: string }
   const options: SearchOption[] = []
+
+  if (existingSearch) {
+    options.push({ value: 'keep', label: `Keep current (${existingSearch})`, hint: 'already configured' })
+  }
 
   if (isAnthropic) {
     options.push({
@@ -440,6 +462,7 @@ async function runWebSearchStep(
   })
 
   if (p.isCancel(choice) || choice === 'skip') return null
+  if (choice === 'keep') return existingSearch
 
   if (choice === 'anthropic-native') {
     p.log.success(`Web search: ${pc.green('Anthropic built-in')} — works out of the box`)
