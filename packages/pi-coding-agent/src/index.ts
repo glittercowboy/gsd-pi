@@ -144,6 +144,23 @@ export {
 export type { ReadonlyFooterDataProvider } from "./core/footer-data-provider.js";
 export { convertToLlm } from "./core/messages.js";
 export { ModelRegistry } from "./core/model-registry.js";
+// Model roles and role-based resolution
+export {
+	type ModelRole,
+	MODEL_ROLES,
+	MODEL_ROLE_IDS,
+	isModelRole,
+	isRoleAlias,
+	extractRoleFromAlias,
+} from "./core/model-roles.js";
+export {
+	expandRoleAlias,
+	findSmolModel,
+	findSlowModel,
+	resolveModelRoleValue,
+	resolveModelOverride,
+	type ResolvedRoleModel,
+} from "./core/model-resolver.js";
 export type {
 	PackageManager,
 	PathMetadata,

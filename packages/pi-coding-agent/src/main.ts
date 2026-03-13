@@ -605,6 +605,15 @@ export async function main(args: string[]) {
 	const authStorage = AuthStorage.create();
 	const modelRegistry = new ModelRegistry(authStorage, getModelsPath());
 
+	// Apply model role overrides from CLI flags (in-memory only, not persisted)
+	const roleOverrides: Record<string, string> = {};
+	if (firstPass.smol) roleOverrides.smol = firstPass.smol;
+	if (firstPass.slow) roleOverrides.slow = firstPass.slow;
+	if (firstPass.plan) roleOverrides.plan = firstPass.plan;
+	if (Object.keys(roleOverrides).length > 0) {
+		settingsManager.overrideModelRoles(roleOverrides);
+	}
+
 	const resourceLoader = new DefaultResourceLoader({
 		cwd,
 		agentDir,

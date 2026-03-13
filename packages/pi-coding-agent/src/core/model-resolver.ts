@@ -9,6 +9,8 @@ import { minimatch } from "minimatch";
 import { isValidThinkingLevel } from "../cli/args.js";
 import { DEFAULT_THINKING_LEVEL } from "./defaults.js";
 import type { ModelRegistry } from "./model-registry.js";
+import { type ModelRole, extractRoleFromAlias, isRoleAlias } from "./model-roles.js";
+import type { SettingsManager } from "./settings-manager.js";
 
 /** Default model IDs for each known provider */
 export const defaultModelPerProvider: Record<KnownProvider, string> = {
@@ -591,4 +593,154 @@ export async function restoreModelFromSession(
 
 	// No models available
 	return { model: undefined, fallbackMessage: undefined };
+}
+
+// ---------------------------------------------------------------------------
+// Model Role Resolution
+// ---------------------------------------------------------------------------
+
+export interface ResolvedRoleModel {
+	model: Model<Api>;
+	thinkingLevel?: ThinkingLevel;
+}
+
+/**
+ * Expand a role alias (e.g., "pi/smol") to a concrete model value.
+ * Returns the configured model string for the role, or undefined if no mapping exists.
+ */
+export function expandRoleAlias(value: string, settings: SettingsManager): string | undefined {
+	const role = extractRoleFromAlias(value);
+	if (!role) return undefined;
+	return settings.getModelRole(role);
+}
+
+/** Fallback patterns for auto-discovering models by role when no explicit mapping is configured. */
+const PRIORITY_CHAINS: Record<string, string[]> = {
+	smol: ["haiku-4-5", "haiku", "flash", "mini"],
+	slow: ["opus-4.6", "gpt-5.4", "pro"],
+};
+
+/**
+ * Find a model matching one of the fuzzy priority patterns for a role.
+ * Patterns are matched as substrings against available model IDs (case-insensitive).
+ */
+function findModelByPriorityChain(
+	role: "smol" | "slow",
+	availableModels: Model<Api>[],
+): Model<Api> | undefined {
+	const patterns = PRIORITY_CHAINS[role];
+	if (!patterns) return undefined;
+
+	for (const pattern of patterns) {
+		const lower = pattern.toLowerCase();
+		const match = availableModels.find((m) => m.id.toLowerCase().includes(lower));
+		if (match) return match;
+	}
+	return undefined;
+}
+
+/**
+ * Find the "smol" model from available models using priority chain fallback.
+ */
+export function findSmolModel(availableModels: Model<Api>[]): Model<Api> | undefined {
+	return findModelByPriorityChain("smol", availableModels);
+}
+
+/**
+ * Find the "slow" model from available models using priority chain fallback.
+ */
+export function findSlowModel(availableModels: Model<Api>[]): Model<Api> | undefined {
+	return findModelByPriorityChain("slow", availableModels);
+}
+
+/**
+ * Resolve a model role value to a concrete model.
+ *
+ * Resolution order:
+ * 1. If the value is a role alias ("pi/smol"), look up the role mapping in settings
+ * 2. Try to match the value (or resolved alias) against available models
+ * 3. For "smol" and "slow" roles with no explicit mapping, use priority chain fallback
+ *
+ * @param value - Model pattern, role alias ("pi/smol"), or concrete model ID
+ * @param settings - Settings manager for role lookups
+ * @param modelRegistry - Model registry for available models
+ * @returns Resolved model and optional thinking level, or undefined
+ */
+export function resolveModelRoleValue(
+	value: string,
+	settings: SettingsManager,
+	modelRegistry: ModelRegistry,
+): ResolvedRoleModel | undefined {
+	const availableModels = modelRegistry.getAvailable();
+
+	// Check if it's a role alias
+	let effectiveValue = value;
+	const role = extractRoleFromAlias(value);
+	if (role) {
+		const configured = settings.getModelRole(role);
+		if (configured) {
+			effectiveValue = configured;
+		} else {
+			// No explicit mapping — use fallback discovery for smol/slow
+			if (role === "smol") {
+				const model = findSmolModel(availableModels);
+				return model ? { model } : undefined;
+			}
+			if (role === "slow") {
+				const model = findSlowModel(availableModels);
+				return model ? { model } : undefined;
+			}
+			// For other roles without a mapping, fall back to default model
+			return undefined;
+		}
+	}
+
+	// Parse and resolve the effective value as a model pattern
+	const { model, thinkingLevel } = parseModelPattern(effectiveValue, availableModels);
+	if (model) {
+		return { model, thinkingLevel };
+	}
+
+	return undefined;
+}
+
+/**
+ * Resolve a model override for subagent spawning.
+ *
+ * Handles:
+ * - Role aliases ("pi/smol", "pi/slow")
+ * - Regular model patterns with optional thinking level ("sonnet:high")
+ * - Comma-separated lists (first match wins)
+ *
+ * @param patterns - Model pattern string or array
+ * @param settings - Settings manager for role lookups
+ * @param modelRegistry - Model registry for available models
+ * @returns Resolved model and optional thinking level, or undefined
+ */
+export function resolveModelOverride(
+	patterns: string | string[],
+	settings: SettingsManager,
+	modelRegistry: ModelRegistry,
+): ResolvedRoleModel | undefined {
+	const patternList = typeof patterns === "string" ? patterns.split(",").map((s) => s.trim()) : patterns;
+
+	for (const pattern of patternList) {
+		if (!pattern) continue;
+
+		// Try role alias resolution first
+		if (isRoleAlias(pattern)) {
+			const result = resolveModelRoleValue(pattern, settings, modelRegistry);
+			if (result) return result;
+			continue;
+		}
+
+		// Regular model pattern resolution
+		const availableModels = modelRegistry.getAvailable();
+		const { model, thinkingLevel } = parseModelPattern(pattern, availableModels);
+		if (model) {
+			return { model, thinkingLevel };
+		}
+	}
+
+	return undefined;
 }

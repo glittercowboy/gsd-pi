@@ -17,9 +17,16 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import type { AgentToolResult } from "@gsd/pi-agent-core";
-import type { Message } from "@gsd/pi-ai";
+import type { Api, Message, Model } from "@gsd/pi-ai";
 import { StringEnum } from "@gsd/pi-ai";
-import { type ExtensionAPI, getMarkdownTheme } from "@gsd/pi-coding-agent";
+import {
+	type ExtensionAPI,
+	getMarkdownTheme,
+	isRoleAlias,
+	extractRoleFromAlias,
+	findSmolModel,
+	findSlowModel,
+} from "@gsd/pi-coding-agent";
 import { Container, Markdown, Spacer, Text } from "@gsd/pi-tui";
 import { Type } from "@sinclair/typebox";
 import { type AgentConfig, type AgentScope, discoverAgents } from "./agents.js";
@@ -213,6 +220,31 @@ function writePromptToTempFile(agentName: string, prompt: string): { dir: string
 	const filePath = path.join(tmpDir, `prompt-${safeName}.md`);
 	fs.writeFileSync(filePath, prompt, { encoding: "utf-8", mode: 0o600 });
 	return { dir: tmpDir, filePath };
+}
+
+/**
+ * Resolve a "pi/<role>" model alias to a concrete model ID.
+ * Falls back to priority chain discovery for smol/slow roles.
+ */
+function resolveAgentModelAlias(modelValue: string | undefined, availableModels: Model<Api>[]): string | undefined {
+	if (!modelValue || !isRoleAlias(modelValue)) return modelValue;
+
+	const role = extractRoleFromAlias(modelValue);
+	if (!role) return modelValue;
+
+	let resolved: Model<Api> | undefined;
+	if (role === "smol") {
+		resolved = findSmolModel(availableModels);
+	} else if (role === "slow") {
+		resolved = findSlowModel(availableModels);
+	}
+
+	if (resolved) {
+		return `${resolved.provider}/${resolved.id}`;
+	}
+
+	// No suitable model found for this role — return undefined so the subprocess picks its own default
+	return undefined;
 }
 
 type OnUpdateCallback = (partial: AgentToolResult<SubagentDetails>) => void;
@@ -451,8 +483,14 @@ export default function (pi: ExtensionAPI) {
 		async execute(_toolCallId, params, signal, onUpdate, ctx) {
 			const agentScope: AgentScope = params.agentScope ?? "both";
 			const discovery = discoverAgents(ctx.cwd, agentScope);
-			const agents = discovery.agents;
 			const confirmProjectAgents = params.confirmProjectAgents ?? false;
+
+			// Resolve "pi/<role>" model aliases in agent configs to concrete model IDs
+			const availableModels = ctx.modelRegistry.getAvailable();
+			const agents: AgentConfig[] = discovery.agents.map((agent) => {
+				const resolvedModel = resolveAgentModelAlias(agent.model, availableModels);
+				return resolvedModel !== agent.model ? { ...agent, model: resolvedModel } : agent;
+			});
 
 			const hasChain = (params.chain?.length ?? 0) > 0;
 			const hasTasks = (params.tasks?.length ?? 0) > 0;

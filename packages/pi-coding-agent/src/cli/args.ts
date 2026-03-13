@@ -16,6 +16,9 @@ export interface Args {
 	systemPrompt?: string;
 	appendSystemPrompt?: string;
 	thinking?: ThinkingLevel;
+	smol?: string;
+	slow?: string;
+	plan?: string;
 	continue?: boolean;
 	resume?: boolean;
 	help?: boolean;
@@ -108,6 +111,12 @@ export function parseArgs(args: string[], extensionFlags?: Map<string, { type: "
 				}
 			}
 			result.tools = validTools;
+		} else if (arg === "--smol" && i + 1 < args.length) {
+			result.smol = args[++i];
+		} else if (arg === "--slow" && i + 1 < args.length) {
+			result.slow = args[++i];
+		} else if (arg === "--plan" && i + 1 < args.length) {
+			result.plan = args[++i];
 		} else if (arg === "--thinking" && i + 1 < args.length) {
 			const level = args[++i];
 			if (isValidThinkingLevel(level)) {
@@ -208,6 +217,9 @@ ${chalk.bold("Options:")}
   --no-tools                     Disable all built-in tools
   --tools <tools>                Comma-separated list of tools to enable (default: read,bash,edit,write)
                                  Available: read, bash, edit, write, grep, find, ls
+  --smol <pattern>               Override the "smol" model role (fast/cheap model)
+  --slow <pattern>               Override the "slow" model role (large reasoning model)
+  --plan <pattern>               Override the "plan" model role (planning model)
   --thinking <level>             Set thinking level: off, minimal, low, medium, high, xhigh
   --extension, -e <path>         Load an extension file (can be used multiple times)
   --no-extensions, -ne           Disable extension discovery (explicit -e paths still work)

@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import { dirname, join } from "path";
 import lockfile from "proper-lockfile";
 import { CONFIG_DIR_NAME, getAgentDir } from "../config.js";
+import type { ModelRole } from "./model-roles.js";
 
 export interface CompactionSettings {
 	enabled?: boolean; // default: true
@@ -93,6 +94,7 @@ export interface Settings {
 	autocompleteMaxVisible?: number; // Max visible items in autocomplete dropdown (default: 5)
 	showHardwareCursor?: boolean; // Show terminal cursor while still positioning it for IME
 	markdown?: MarkdownSettings;
+	modelRoles?: Partial<Record<ModelRole, string>>;
 }
 
 /** Deep merge settings: project/overrides take precedence, nested objects merge recursively */
@@ -226,6 +228,7 @@ export class SettingsManager {
 	private globalSettings: Settings;
 	private projectSettings: Settings;
 	private settings: Settings;
+	private modelRoleOverrides: Partial<Record<ModelRole, string>> = {};
 	private modifiedFields = new Set<keyof Settings>(); // Track global fields modified during session
 	private modifiedNestedFields = new Map<keyof Settings, Set<string>>(); // Track global nested field modifications
 	private modifiedProjectFields = new Set<keyof Settings>(); // Track project fields modified during session
@@ -938,5 +941,34 @@ export class SettingsManager {
 
 	getCodeBlockIndent(): string {
 		return this.settings.markdown?.codeBlockIndent ?? "  ";
+	}
+
+	/** Get the model for a role. Checks: in-memory overrides -> settings.modelRoles -> undefined */
+	getModelRole(role: ModelRole): string | undefined {
+		return this.modelRoleOverrides[role] ?? this.settings.modelRoles?.[role];
+	}
+
+	/** Persist a model role mapping to settings.json */
+	setModelRole(role: ModelRole, value: string): void {
+		if (!this.globalSettings.modelRoles) {
+			this.globalSettings.modelRoles = {};
+		}
+		this.globalSettings.modelRoles[role] = value;
+		this.markModified("modelRoles", role);
+		this.save();
+	}
+
+	/** Apply in-memory-only model role overrides (e.g., from CLI flags). Not persisted. */
+	overrideModelRoles(overrides: Partial<Record<ModelRole, string>>): void {
+		for (const [role, value] of Object.entries(overrides)) {
+			if (value !== undefined) {
+				this.modelRoleOverrides[role as ModelRole] = value;
+			}
+		}
+	}
+
+	/** Get all configured model roles (merged: overrides + settings) */
+	getModelRoles(): Partial<Record<ModelRole, string>> {
+		return { ...this.settings.modelRoles, ...this.modelRoleOverrides };
 	}
 }
