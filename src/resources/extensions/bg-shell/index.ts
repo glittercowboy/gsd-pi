@@ -88,7 +88,7 @@ type ProcessStatus =
 	| "exited"
 	| "crashed";
 
-type ProcessType = "server" | "build" | "test" | "watcher" | "generic";
+type ProcessType = "server" | "build" | "test" | "watcher" | "generic" | "shell";
 
 interface ProcessEvent {
 	type:
@@ -164,6 +164,8 @@ interface BgProcess {
 	lastErrorCount: number;
 	/** Last warning count snapshot for diff detection */
 	lastWarningCount: number;
+	/** Command history for shell-type sessions */
+	commandHistory: string[];
 	/** Dedup tracker: hash → count of repeated lines */
 	lineDedup: Map<string, number>;
 	/** Total raw lines (before dedup) for token savings calc */
@@ -583,7 +585,9 @@ function startProcess(opts: StartOptions): BgProcess {
 	const env = { ...process.env, ...(opts.env || {}) };
 
 	const { shell, args: shellArgs } = getShellConfig();
-	const proc = spawn(shell, [...shellArgs, sanitizeCommand(opts.command)], {
+	// Shell sessions default to the user's shell if no command specified
+	const command = processType === "shell" && !opts.command ? shell : opts.command;
+	const proc = spawn(shell, [...shellArgs, sanitizeCommand(command)], {
 		cwd: opts.cwd,
 		stdio: ["pipe", "pipe", "pipe"],
 		env,
@@ -592,8 +596,8 @@ function startProcess(opts: StartOptions): BgProcess {
 
 	const bg: BgProcess = {
 		id,
-		label: opts.label || opts.command.slice(0, 60),
-		command: opts.command,
+		label: opts.label || command.slice(0, 60),
+		command,
 		cwd: opts.cwd,
 		startedAt: Date.now(),
 		proc,
@@ -615,14 +619,15 @@ function startProcess(opts: StartOptions): BgProcess {
 		group: opts.group || null,
 		lastErrorCount: 0,
 		lastWarningCount: 0,
+		commandHistory: [],
 		lineDedup: new Map(),
 		totalRawLines: 0,
 		envKeys: Object.keys(opts.env || {}),
 		restartCount: 0,
 		startConfig: {
-			command: opts.command,
+			command,
 			cwd: opts.cwd,
-			label: opts.label || opts.command.slice(0, 60),
+			label: opts.label || command.slice(0, 60),
 			processType,
 			readyPattern: opts.readyPattern || null,
 			readyPort: opts.readyPort || null,
@@ -630,7 +635,7 @@ function startProcess(opts: StartOptions): BgProcess {
 		},
 	};
 
-	addEvent(bg, { type: "started", detail: `Process started: ${opts.command.slice(0, 100)}` });
+	addEvent(bg, { type: "started", detail: `Process started: ${command.slice(0, 100)}` });
 
 	proc.stdout?.on("data", (chunk: Buffer) => {
 		const lines = chunk.toString().split("\n");
@@ -685,6 +690,15 @@ function startProcess(opts: StartOptions): BgProcess {
 	// Port probing for server-type processes
 	if (bg.readyPort) {
 		startPortProbing(bg, bg.readyPort);
+	}
+
+	// Shell sessions are ready immediately after spawn
+	if (bg.processType === "shell") {
+		setTimeout(() => {
+			if (bg.alive && bg.status === "starting") {
+				transitionToReady(bg, "Shell session initialized");
+			}
+		}, 200);
 	}
 
 	processes.set(id, bg);
@@ -1011,8 +1025,11 @@ function formatTimeAgo(timestamp: number): string {
 function pruneDeadProcesses(): void {
 	const now = Date.now();
 	for (const [id, bg] of processes) {
-		if (!bg.alive && now - bg.startedAt > DEAD_PROCESS_TTL) {
-			processes.delete(id);
+		if (!bg.alive) {
+			const ttl = bg.processType === "shell" ? DEAD_PROCESS_TTL * 6 : DEAD_PROCESS_TTL;
+			if (now - bg.startedAt > ttl) {
+				processes.delete(id);
+			}
 		}
 	}
 }
@@ -1191,6 +1208,7 @@ export default function (pi: ExtensionAPI) {
 			"Use 'restart' to kill and relaunch with the same config — preserves restart count.",
 			"Background processes are auto-classified (server/build/test/watcher) based on the command.",
 			"Process crashes and errors are automatically surfaced as alerts at the start of your next turn — you don't need to poll.",
+			"To create a persistent shell session: bg_shell start with type:'shell'. The session stays alive for interactive use with 'send', 'send_and_wait', or 'run'.",
 		],
 
 		parameters: Type.Object({
@@ -1239,7 +1257,7 @@ export default function (pi: ExtensionAPI) {
 				Type.Number({ description: "Timeout in milliseconds (for wait_for_ready, send_and_wait). Default: 30000" }),
 			),
 			type: Type.Optional(
-				StringEnum(["server", "build", "test", "watcher", "generic"] as const),
+				StringEnum(["server", "build", "test", "watcher", "generic", "shell"] as const),
 			),
 			ready_pattern: Type.Optional(
 				Type.String({ description: "Regex pattern that indicates the process is ready (for start)" }),
