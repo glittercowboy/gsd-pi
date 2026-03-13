@@ -47,4 +47,9 @@ export const native = loadNative() as {
   listDescendants: (pid: number) => number[];
   processGroupId: (pid: number) => number | null;
   killProcessGroup: (pgid: number, signal: number) => boolean;
+  glob: (
+    options: unknown,
+    onMatch?: ((match: unknown) => void) | undefined | null,
+  ) => Promise<unknown>;
+  invalidateFsScanCache: (path?: string) => void;
 };

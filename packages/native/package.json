@@ -1,14 +1,14 @@
 {
   "name": "@gsd/native",
   "version": "0.1.0",
-  "description": "Native Rust bindings for GSD \u2014 high-performance grep via N-API",
+  "description": "Native Rust bindings for GSD — high-performance grep, glob, and process management via N-API",
   "type": "module",
   "main": "./src/index.ts",
   "types": "./src/index.ts",
   "scripts": {
     "build:native": "node ../../native/scripts/build.js",
     "build:native:dev": "node ../../native/scripts/build.js --dev",
-    "test": "node --test src/__tests__/grep.test.mjs src/__tests__/ps.test.mjs"
+    "test": "node --test src/__tests__/grep.test.mjs src/__tests__/ps.test.mjs src/__tests__/glob.test.mjs"
   },
   "exports": {
     ".": {
@@ -22,6 +22,10 @@
     "./ps": {
       "types": "./src/ps/index.ts",
       "import": "./src/ps/index.ts"
+    },
+    "./glob": {
+      "types": "./src/glob/index.ts",
+      "import": "./src/glob/index.ts"
     }
   },
   "files": [

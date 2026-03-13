@@ -8,5 +8,9 @@
 
 #![allow(clippy::needless_pass_by_value)]
 
+mod fs_cache;
+mod glob;
+mod glob_util;
 mod grep;
 mod ps;
+mod task;
