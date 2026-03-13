@@ -164,8 +164,8 @@ function cleanup(base: string): void {
   console.log("\n=== writeBlockerPlaceholder: unknown type → null ===");
   const base = createFixtureBase();
   try {
-    const result = writeBlockerPlaceholder("execute-task", "M001/S01/T01", base, "test");
-    assertEq(result, null, "execute-task has no single artifact path, returns null");
+    const result = writeBlockerPlaceholder("unknown-type", "M001/S01", base, "test");
+    assertEq(result, null, "unknown type returns null");
   } finally {
     cleanup(base);
   }
