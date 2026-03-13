@@ -34,6 +34,8 @@
   },
   "scripts": {
     "mc:dev": "bun run --cwd packages/mission-control dev",
+    "tauri:dev": "tauri dev",
+    "tauri:build": "tauri build",
     "build": "tsc && npm run copy-themes",
     "copy-themes": "node -e \"const{mkdirSync,cpSync}=require('fs');const{resolve}=require('path');const src=resolve(__dirname,'node_modules/@mariozechner/pi-coding-agent/dist/modes/interactive/theme');mkdirSync('pkg/dist/modes/interactive/theme',{recursive:true});cpSync(src,'pkg/dist/modes/interactive/theme',{recursive:true})\"",
     "test": "node --import ./src/resources/extensions/gsd/tests/resolve-ts.mjs --experimental-strip-types --test 'src/resources/extensions/gsd/tests/*.test.ts' 'src/resources/extensions/gsd/tests/*.test.mjs' 'src/tests/*.test.ts'",

@@ -3,7 +3,8 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "bun --hot src/server.ts"
+    "dev": "bun --hot src/server.ts",
+    "build": "bun build src/frontend.tsx --outdir public/dist --target browser"
   },
   "dependencies": {
     "@fontsource/jetbrains-mono": "^5.2.8",
