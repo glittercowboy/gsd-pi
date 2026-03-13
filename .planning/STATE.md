@@ -3,11 +3,26 @@ gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: Native Desktop
 status: in_progress
+last_updated: "2026-03-13T18:28:35.222Z"
+last_activity: "2026-03-13 — Plan 16-03 complete: ProviderPickerScreen (2x2 grid), OAuthConnectFlow (amber spinner), ApiKeyForm (masked input + Eye toggle); App.tsx auth guard wired; 691 tests pass"
+progress:
+  total_phases: 10
+  completed_phases: 5
+  total_plans: 33
+  completed_plans: 32
+  percent: 97
+---
+
+---
+gsd_state_version: 1.0
+milestone: v2.0
+milestone_name: Native Desktop
+status: in_progress
 last_updated: "2026-03-13T18:19:06Z"
 last_activity: "2026-03-13 — Plan 16-03 complete: ProviderPickerScreen (2x2 card grid, OAuth/API-key flow), OAuthConnectFlow (amber spinner, 5-min timeout), ApiKeyForm (masked input + Eye toggle); App.tsx wired with useAuthGuard + useTokenRefresh; 691 tests pass"
 stopped_at: "Completed 16-03-PLAN.md"
 progress:
-  total_phases: 10
+  [██████████] 97%
   completed_phases: 4
   total_plans: 33
   completed_plans: 31
@@ -326,12 +341,12 @@ See: .planning/PROJECT.md (updated 2026-03-12)
 
 ## Current Position
 
-Phase: 16 of 20 (OAuth + Keychain) — IN PROGRESS (plan 03 of 4 done)
-Plan: 3 of 4 complete (plans 01-03 done — Rust OAuth backend, TS hooks, Provider Picker UI)
-Status: Plan 16-03 complete. Auth UI components built and wired into App.tsx. Plan 16-04 (e2e verification) remaining.
-Last activity: 2026-03-13 — Plan 16-03 complete: ProviderPickerScreen (2x2 grid), OAuthConnectFlow (amber spinner), ApiKeyForm (masked input + Eye toggle); App.tsx auth guard wired; 691 tests pass
+Phase: 16 of 20 (OAuth + Keychain) — AWAITING HUMAN VERIFICATION (all 4 plans complete, SC-1..SC-4 pending)
+Plan: 4 of 4 complete (plans 01-04 done — Rust OAuth backend, TS hooks, Provider Picker UI, Settings Provider section + tests)
+Status: Plan 16-04 code complete. Awaiting human verification checkpoint SC-1 through SC-4 (tauri:dev manual testing).
+Last activity: 2026-03-13 — Plan 16-04 complete: SettingsView Provider section (active provider, status dot, change flow), auth.test.ts (7 tests), 698 tests pass
 
-Progress: [█████████░] 94% (31/33 plans complete)
+Progress: [██████████] 97% (32/33 plans complete)
 
 ## Milestone Archive
 
@@ -435,6 +450,8 @@ Progress: [█████████░] 94% (31/33 plans complete)
 - [Phase 16-oauth-keychain]: pkce_verifier_{state} keychain key scoped by state to handle concurrent OAuth flows
 - [Phase 16]: Inline styles used for auth screen components — keeps GSD design tokens explicit, avoids Tailwind purging rgba values
 - [Phase 16]: OAuthConnectFlow CSS keyframes injected via style tag — self-contained component, no separate CSS file needed
+- [Phase 16-oauth-keychain]: Provider section inserted as FIRST section in SettingsView — critical config always visible before model settings
+- [Phase 16-oauth-keychain]: Inline confirmation guard (setConfirmChange state) before changeProvider() + window.location.reload() — no modal needed
 
 ### Blockers/Concerns
 

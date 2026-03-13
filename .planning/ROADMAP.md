@@ -37,7 +37,7 @@
 - [x] **Phase 13: Session Streaming Hardening** — Pi SDK event parser, resilient stream, process lifecycle, reconnect, cost/token display, auto mode indicators (gap closure in progress) (completed 2026-03-13)
 - [x] **Phase 14: Slice Integration** — Milestones view renders slices with four states (Planned/In Progress/Needs Review/Complete) and state-appropriate actions (completed 2026-03-13)
 - [x] **Phase 15: Tauri Shell** — Tauri 2 native shell, Bun process management, dependency check, window state, IPC commands, build pipeline (completed 2026-03-13)
-- [ ] **Phase 16: OAuth + Keychain** — First-launch provider picker, OAuth for Claude Max + GitHub Copilot, API key flow, keychain storage, token refresh
+- [x] **Phase 16: OAuth + Keychain** — First-launch provider picker, OAuth for Claude Max + GitHub Copilot, API key flow, keychain storage, token refresh (completed 2026-03-13)
 - [ ] **Phase 17: Permission Model** — Trust dialog replaces skip-permissions toggle, hard boundary enforcement, advanced permission toggles
 - [ ] **Phase 18: Builder Mode** — Interface mode toggle, vocabulary layer, Builder intent classifier, adapted discuss/slice cards, phase gate intercept
 - [ ] **Phase 19: Project Workspace** — Managed workspace path, project home screen, project cards, multi-session tabs, archiving
@@ -232,7 +232,7 @@ Plans:
 | 13. Session Streaming Hardening | 7/7 | Complete    | 2026-03-13 | — |
 | 14. Slice Integration | 6/6 | Complete    | 2026-03-13 | — |
 | 15. Tauri Shell | 5/5 | Complete   | 2026-03-13 | — |
-| 16. OAuth + Keychain | 3/4 | In Progress|  | — |
+| 16. OAuth + Keychain | 4/4 | Complete   | 2026-03-13 | — |
 | 17. Permission Model | v2.0 | 0/TBD | Not started | — |
 | 18. Builder Mode | v2.0 | 0/TBD | Not started | — |
 | 19. Project Workspace | v2.0 | 0/TBD | Not started | — |

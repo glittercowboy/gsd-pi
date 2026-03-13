@@ -51,9 +51,9 @@ Requirements for the Native Desktop milestone. Each maps to roadmap phases 12–
 - [x] **AUTH-01**: First-launch provider picker screen — four options (Claude Max/Anthropic, GitHub Copilot, OpenRouter, API Key); shown only if `gsd-mission-control/active_provider` absent from keychain
 - [x] **AUTH-02**: OAuth flow for Claude Max + GitHub Copilot — `open_external(authUrl)`, intercept `gsd://oauth/callback`, PKCE exchange in Rust
 - [x] **AUTH-03**: Tokens stored in OS keychain (`anthropic_access_token`, `anthropic_refresh_token`, `active_provider`); `~/.gsd/auth.json` written in GSD 2 format
-- [ ] **AUTH-04**: API key flow for OpenRouter + direct keys — masked input with provider dropdown, stored in keychain as `{provider}_api_key`, writes `~/.gsd/auth.json`
+- [x] **AUTH-04**: API key flow for OpenRouter + direct keys — masked input with provider dropdown, stored in keychain as `{provider}_api_key`, writes `~/.gsd/auth.json`
 - [x] **AUTH-05**: Token refresh on app start — check expiry, refresh silently if within 5 min; re-auth prompt on refresh failure
-- [ ] **AUTH-06**: Settings "Provider" section — active provider display, connection status, last-refreshed timestamp, "Change provider" clears keychain and re-shows picker
+- [x] **AUTH-06**: Settings "Provider" section — active provider display, connection status, last-refreshed timestamp, "Change provider" clears keychain and re-shows picker
 
 ### Permission Model (PERM)
 
@@ -154,9 +154,9 @@ Deferred to future release.
 | AUTH-01 | Phase 16 | Complete |
 | AUTH-02 | Phase 16 | Complete |
 | AUTH-03 | Phase 16 | Complete |
-| AUTH-04 | Phase 16 | Pending |
+| AUTH-04 | Phase 16 | Complete |
 | AUTH-05 | Phase 16 | Complete |
-| AUTH-06 | Phase 16 | Pending |
+| AUTH-06 | Phase 16 | Complete |
 | PERM-01 | Phase 17 | Pending |
 | PERM-02 | Phase 17 | Pending |
 | PERM-03 | Phase 17 | Pending |
