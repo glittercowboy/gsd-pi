@@ -68,6 +68,7 @@ import {
   mergeSliceToMain,
 } from "./worktree.ts";
 import { GitServiceImpl } from "./git-service.ts";
+import { getPriorSliceCompletionBlocker } from "./dispatch-guard.ts";
 import type { GitPreferences } from "./git-service.ts";
 import { truncateToWidth, visibleWidth } from "@gsd/pi-tui";
 import { makeUI, GLYPH, INDENT } from "../shared/ui.js";
@@ -1252,6 +1253,13 @@ async function dispatchNextUnit(
       ctx.ui.notify(`Unexpected phase: ${state.phase}. Stopping auto-mode.`, "warning");
       return;
     }
+  }
+
+  const priorSliceBlocker = getPriorSliceCompletionBlocker(basePath, getMainBranch(basePath), unitType, unitId);
+  if (priorSliceBlocker) {
+    await stopAuto(ctx, pi);
+    ctx.ui.notify(priorSliceBlocker, "error");
+    return;
   }
 
   await emitObservabilityWarnings(ctx, unitType, unitId);

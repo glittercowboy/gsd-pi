@@ -1,14 +1,14 @@
-// GSD Extension — File Parsing and I/O
+// GSD Extension - File Parsing and I/O
 // Parsers for roadmap, plan, summary, and continue files.
 // Used by state derivation and the status widget.
-// Pure functions, zero Pi dependencies — uses only Node built-ins.
+// Pure functions, zero Pi dependencies - uses only Node built-ins.
 
 import { promises as fs, readdirSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { milestonesDir, resolveMilestoneFile, relMilestoneFile } from './paths.js';
 
 import type {
-  Roadmap, RoadmapSliceEntry, BoundaryMapEntry, RiskLevel,
+  Roadmap, BoundaryMapEntry,
   SlicePlan, TaskPlanEntry,
   Summary, SummaryFrontmatter, SummaryRequires, FileModified,
   Continue, ContinueFrontmatter, ContinueStatus,
@@ -18,6 +18,7 @@ import type {
 } from './types.ts';
 
 import { checkExistingEnvKeys } from '../get-secrets-from-user.ts';
+import { parseRoadmapSlices } from './roadmap-slices.ts';
 
 // ─── Helpers ───────────────────────────────────────────────────────────────
 
@@ -199,40 +200,8 @@ export function parseRoadmap(content: string): Roadmap {
     })();
   const successCriteria = scSection ? parseBullets(scSection) : [];
 
-  // Slices
-  const slicesSection = extractSection(content, 'Slices');
-  const slices: RoadmapSliceEntry[] = [];
-
-  if (slicesSection) {
-    const checkboxItems = slicesSection.split('\n');
-    let currentSlice: RoadmapSliceEntry | null = null;
-
-    for (const line of checkboxItems) {
-      const cbMatch = line.match(/^-\s+\[([ xX])\]\s+\*\*(\w+):\s+(.+?)\*\*\s*(.*)/);
-      if (cbMatch) {
-        if (currentSlice) slices.push(currentSlice);
-
-        const done = cbMatch[1].toLowerCase() === 'x';
-        const id = cbMatch[2];
-        const sliceTitle = cbMatch[3];
-        const rest = cbMatch[4];
-
-        const riskMatch = rest.match(/`risk:(\w+)`/);
-        const risk = (riskMatch ? riskMatch[1] : 'low') as RiskLevel;
-
-        const depsMatch = rest.match(/`depends:\[([^\]]*)\]`/);
-        const depends = depsMatch && depsMatch[1].trim()
-          ? depsMatch[1].split(',').map(s => s.trim())
-          : [];
-
-        currentSlice = { id, title: sliceTitle, risk, depends, done, demo: '' };
-      } else if (currentSlice && line.trim().startsWith('>')) {
-        const demoText = line.trim().replace(/^>\s*/, '').replace(/^After this:\s*/i, '');
-        currentSlice.demo = demoText;
-      }
-    }
-    if (currentSlice) slices.push(currentSlice);
-  }
+  // Slices  
+  const slices = parseRoadmapSlices(content);
 
   // Boundary map
   const boundaryMap: BoundaryMapEntry[] = [];
@@ -657,7 +626,7 @@ export function parseTaskPlanMustHaves(content: string): Array<{ text: string; c
         checked: cbMatch[1].toLowerCase() === 'x',
       };
     }
-    // No checkbox — treat as unchecked with full line as text
+    // No checkbox - treat as unchecked with full line as text
     return { text: line.trim(), checked: false };
   });
 }
@@ -732,7 +701,7 @@ export type UatType = 'artifact-driven' | 'live-runtime' | 'human-experience' | 
 /**
  * Extract the UAT type from a UAT file's raw content.
  *
- * UAT files have no YAML frontmatter — pass raw file content directly.
+ * UAT files have no YAML frontmatter - pass raw file content directly.
  * Classification is leading-keyword-only: e.g. `mixed (artifact-driven + live-runtime)` → `'mixed'`.
  *
  * Returns `undefined` when:
@@ -811,7 +780,7 @@ export async function inlinePriorMilestoneSummary(mid: string, base: string): Pr
  * with the current environment (.env + process.env).
  *
  * Returns `null` when no manifest file exists (path resolution failure or
- * file not on disk) — callers can distinguish "no manifest" from "empty manifest".
+ * file not on disk) - callers can distinguish "no manifest" from "empty manifest".
  */
 export async function getManifestStatus(
   base: string, milestoneId: string,
