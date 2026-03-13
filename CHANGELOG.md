@@ -6,6 +6,22 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [2.8.0] - 2026-03-13
+
+### Added
+- Browser tools: `browser_analyze_form` and `browser_fill_form` — form field inventory and intelligent filling by label/name/placeholder
+- Browser tools: `browser_find_best` — scored element candidates for semantic intents
+- Browser tools: `browser_act` — execute common browser micro-tasks in one call
+- Browser tools: 108 unit and integration tests covering all new components
+
+### Changed
+- Browser tools: decomposed 5000-line monolithic `index.ts` into focused modules (state, capture, settle, lifecycle, refs, utils) with 11 categorized tool files
+- Browser tools: consolidated state capture reduces evaluate round-trips per action
+- Browser tools: zero-mutation settle short-circuit for faster page interaction
+- Browser tools: conditional body text capture — low-signal tools skip it for smaller token payloads
+- Browser tools: screenshot resizing uses `sharp` instead of canvas evaluate calls
+- Browser tools: screenshots opt-in on navigate (no longer sent by default)
+
 ## [2.7.1] - 2026-03-13
 
 ### Added
@@ -279,7 +295,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Changed
 - License updated to MIT
 
-[Unreleased]: https://github.com/gsd-build/gsd-2/compare/v2.7.1...HEAD
+[Unreleased]: https://github.com/gsd-build/gsd-2/compare/v2.8.0...HEAD
+[2.8.0]: https://github.com/gsd-build/gsd-2/compare/v2.7.1...v2.8.0
 [2.7.1]: https://github.com/gsd-build/gsd-2/compare/v2.7.0...v2.7.1
 [2.7.0]: https://github.com/gsd-build/gsd-2/compare/v2.6.0...v2.7.0
 [2.6.0]: https://github.com/gsd-build/gsd-2/compare/v2.5.1...v2.6.0

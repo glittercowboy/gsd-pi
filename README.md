@@ -335,7 +335,7 @@ GSD ships with 13 extensions, all loaded automatically:
 | Extension | What it provides |
 |-----------|-----------------|
 | **GSD** | Core workflow engine, auto mode, commands, dashboard |
-| **Browser Tools** | Playwright-based browser for UI verification |
+| **Browser Tools** | Playwright-based browser with form intelligence, intent-ranked element finding, and semantic actions |
 | **Search the Web** | Brave Search, Tavily, or Jina page extraction |
 | **Google Search** | Gemini-powered web search with AI-synthesized answers |
 | **Context7** | Up-to-date library/framework documentation |
