@@ -116,7 +116,7 @@ Plans:
   3. An In Progress slice shows a task progress bar, running cost, and a "Steer" action that injects direction without stopping auto mode; the card pulses amber
   4. A Needs Review slice presents an interactive UAT checklist; "Merge to main" is locked until all items are checked; the completed checklist is written to `.gsd/S{N}-UAT-RESULTS.md`
   5. A Complete slice shows merge commit info, total cost, and links to view the squash diff and UAT results
-**Plans**: 5 plans
+**Plans**: 6 plans
 
 Plans:
 - [ ] 14-01-PLAN.md — Wave 1 (TDD): GSD2 data layer parsers — parseRoadmap, parsePlan, parseUat, extend buildFullState (SLICE-01 through SLICE-07)
@@ -124,6 +124,7 @@ Plans:
 - [ ] 14-03-PLAN.md — Wave 2: Planned + InProgress slice cards + SliceRow dispatcher (SLICE-02, SLICE-03)
 - [ ] 14-04-PLAN.md — Wave 3: NeedsReview + Complete cards + UAT write + SliceAction wiring (SLICE-04, SLICE-05, SLICE-06)
 - [ ] 14-05-PLAN.md — Wave 4: Integration test + human verification (all SLICE-*)
+- [ ] 14-06-PLAN.md — Wave 5 (gap closure): InlineReadPanel + /api/gsd-file — view_plan/view_task/view_diff/view_uat_results wired (SLICE-02, SLICE-03, SLICE-05)
 
 ### Phase 15: Tauri Shell
 **Goal**: Mission Control runs as a native desktop app — Bun server managed by Tauri, window state persisted, IPC commands wired, and a dependency screen shown on first launch if `bun` or `gsd` is missing
