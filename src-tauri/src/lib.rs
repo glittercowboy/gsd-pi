@@ -3,7 +3,7 @@ mod commands;
 mod dep_check;
 
 use bun_manager::BunState;
-use tauri_plugin_window_state::Builder as WindowStateBuilder;
+use tauri_plugin_window_state::{Builder as WindowStateBuilder, StateFlags};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -11,7 +11,11 @@ pub fn run() {
 
     tauri::Builder::default()
         .manage(bun_state)
-        .plugin(WindowStateBuilder::default().build())
+        .plugin(
+            WindowStateBuilder::default()
+                .with_state_flags(StateFlags::ALL)
+                .build()
+        )
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_opener::init())
