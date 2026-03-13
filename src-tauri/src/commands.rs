@@ -1,4 +1,4 @@
-use tauri::AppHandle;
+use tauri::{AppHandle, State};
 use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_opener::OpenerExt;
 
@@ -139,9 +139,13 @@ pub async fn get_active_provider() -> Option<String> {
 }
 
 /// Begin an OAuth flow for the given provider.
-/// Generates PKCE + state, persists verifier, opens browser, returns URLs.
+/// Generates PKCE + state, stores verifier in managed memory, opens browser, returns URLs.
 #[tauri::command]
-pub async fn start_oauth(app: AppHandle, provider: String) -> Option<StartOAuthResult> {
+pub async fn start_oauth(
+    app: AppHandle,
+    pkce_store: State<'_, crate::PkceStore>,
+    provider: String,
+) -> Result<StartOAuthResult, String> {
     let pkce = crate::oauth::generate_pkce();
 
     // 16-byte hex-encoded random state
@@ -149,56 +153,44 @@ pub async fn start_oauth(app: AppHandle, provider: String) -> Option<StartOAuthR
     rand::RngCore::fill_bytes(&mut rand::thread_rng(), &mut state_bytes);
     let state: String = state_bytes.iter().map(|b| format!("{b:02x}")).collect();
 
-    // Persist verifier keyed by state
-    let verifier_key = format!("pkce_verifier_{state}");
-    let entry = keyring::Entry::new(KEYCHAIN_SERVICE, &verifier_key).ok()?;
-    if let Err(e) = entry.set_password(&pkce.code_verifier) {
-        eprintln!("[commands] start_oauth: failed to store verifier: {e}");
-        return None;
+    // Store verifier in managed in-memory map (no keychain write needed for nonces)
+    {
+        let mut store = pkce_store.0.lock().map_err(|e| format!("pkce_store lock error: {e}"))?;
+        store.insert(state.clone(), pkce.code_verifier.clone());
     }
 
     let auth_url = match provider.as_str() {
         "anthropic" => crate::oauth::anthropic_auth_url(&pkce, &state),
         "github-copilot" => crate::oauth::github_copilot_auth_url(&pkce, &state),
         other => {
-            eprintln!("[commands] start_oauth: unknown provider '{other}'");
-            return None;
+            return Err(format!("unknown provider '{other}'"));
         }
     };
 
     // Open in system browser (best-effort)
     let _ = app.opener().open_url(&auth_url, None::<String>);
 
-    Some(StartOAuthResult { auth_url, state })
+    Ok(StartOAuthResult { auth_url, state })
 }
 
 /// Complete an OAuth flow: exchange code, store tokens, write auth.json.
 #[tauri::command]
-pub async fn complete_oauth(provider: String, code: String, state: String) -> bool {
-    let verifier_key = format!("pkce_verifier_{state}");
-
+pub async fn complete_oauth(
+    pkce_store: State<'_, crate::PkceStore>,
+    provider: String,
+    code: String,
+    state: String,
+) -> Result<bool, String> {
     let verifier = {
-        let entry = match keyring::Entry::new(KEYCHAIN_SERVICE, &verifier_key) {
-            Ok(e) => e,
-            Err(e) => {
-                eprintln!("[commands] complete_oauth: keyring entry error: {e}");
-                return false;
-            }
-        };
-        match entry.get_password() {
-            Ok(v) => v,
-            Err(e) => {
-                eprintln!("[commands] complete_oauth: missing verifier: {e}");
-                return false;
-            }
-        }
+        let mut store = pkce_store.0.lock().map_err(|e| format!("pkce_store lock error: {e}"))?;
+        store.remove(&state).ok_or_else(|| format!("no verifier for state '{state}'"))?
     };
 
     let token_resp = match crate::oauth::exchange_code(&provider, &code, &verifier).await {
         Ok(t) => t,
         Err(e) => {
             eprintln!("[commands] complete_oauth: exchange_code failed: {e}");
-            return false;
+            return Ok(false);
         }
     };
 
@@ -250,12 +242,7 @@ pub async fn complete_oauth(provider: String, code: String, state: String) -> bo
         eprintln!("[commands] complete_oauth: write_auth_json failed: {e}");
     }
 
-    // Clean up verifier
-    if let Ok(e) = keyring::Entry::new(KEYCHAIN_SERVICE, &verifier_key) {
-        let _ = e.delete_credential();
-    }
-
-    true
+    Ok(true)
 }
 
 /// Save a static API key for a provider (no OAuth flow needed).

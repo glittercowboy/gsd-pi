@@ -5,14 +5,20 @@ mod oauth;
 
 use bun_manager::BunState;
 use tauri::{Emitter, Manager};
+
+/// In-memory store for PKCE verifiers keyed by OAuth state token.
+/// Avoids writing short-lived nonces to the OS keychain.
+pub struct PkceStore(pub std::sync::Mutex<std::collections::HashMap<String, String>>);
 use tauri_plugin_window_state::{Builder as WindowStateBuilder, StateFlags};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let bun_state = BunState::new();
+    let pkce_store = PkceStore(std::sync::Mutex::new(std::collections::HashMap::new()));
 
     tauri::Builder::default()
         .manage(bun_state)
+        .manage(pkce_store)
         .plugin(
             WindowStateBuilder::default()
                 .with_state_flags(StateFlags::all())
