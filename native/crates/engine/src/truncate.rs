@@ -73,8 +73,7 @@ pub fn truncate_tail(text: String, max_bytes: u32) -> TruncateResult {
     let kept_lines = count_lines(kept);
 
     TruncateResult {
-        // SAFETY: we split at a newline boundary, which is valid UTF-8
-        text: unsafe { std::str::from_utf8_unchecked(kept) }.to_owned(),
+        text: std::str::from_utf8(kept).expect("split at newline boundary preserves UTF-8").to_owned(),
         truncated: true,
         original_lines,
         kept_lines,
@@ -125,7 +124,7 @@ pub fn truncate_head(text: String, max_bytes: u32) -> TruncateResult {
     let kept_lines = count_lines(kept);
 
     TruncateResult {
-        text: unsafe { std::str::from_utf8_unchecked(kept) }.to_owned(),
+        text: std::str::from_utf8(kept).expect("split at newline boundary preserves UTF-8").to_owned(),
         truncated: true,
         original_lines,
         kept_lines,
@@ -159,10 +158,12 @@ pub fn truncate_output(
 
     match mode_str {
         "head" => {
+            let total_bytes = text.len();
             let r = truncate_head(text, max_bytes);
+            let removed = total_bytes - r.text.len();
             let msg = format!(
                 "Kept last {} of {} lines ({} bytes truncated from start)",
-                r.kept_lines, r.original_lines, max_bytes
+                r.kept_lines, r.original_lines, removed
             );
             TruncateOutputResult {
                 text: r.text,
@@ -195,10 +196,12 @@ pub fn truncate_output(
         }
         _ => {
             // "tail" — keep the beginning
+            let total_bytes = text.len();
             let r = truncate_tail(text, max_bytes);
+            let removed = total_bytes - r.text.len();
             let msg = format!(
                 "Kept first {} of {} lines ({} bytes truncated from end)",
-                r.kept_lines, r.original_lines, max_bytes
+                r.kept_lines, r.original_lines, removed
             );
             TruncateOutputResult {
                 text: r.text,
