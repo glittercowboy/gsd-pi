@@ -11,7 +11,7 @@ The model registry must stay current with available models, pricing, and capabil
 ## Current State
 
 - **M001 complete:** Model registry fetches from models.dev with 12h cache, fallback to bundled snapshot, local overrides preserved
-- **M002 S01 complete:** Build/test infrastructure repaired — `npm run build && npm test` workflow works
+- **M002 S01-S02 complete:** Build/test infrastructure repaired; production-like scenario tests prove real ModelRegistry startup behavior
 - Models loaded at runtime from models.dev API or bundled snapshot (2311KB, 102 providers)
 - Legacy `packages/pi-ai/src/models.generated.ts` deleted
 - Users can override/add models via `~/.gsd/agent/models.json`
@@ -35,6 +35,6 @@ See `.gsd/REQUIREMENTS.md` for the explicit capability contract, requirement sta
   - [x] S03: Build-time snapshot + cleanup
 - [ ] M002: Model Registry Hardening and Real-Scenario Verification — In Progress
   - [x] S01: Build/Test Infrastructure Repair
-  - [ ] S02: Production-Like Scenario Testing
+  - [x] S02: Production-Like Scenario Testing
   - [ ] S03: Live models.dev Verification
 - [ ] M003: Upstream Reconciliation and PR Preparation — Queued

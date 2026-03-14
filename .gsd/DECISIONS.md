@@ -26,3 +26,4 @@
 | D018 | M002 | impl | Test isolation | Use tmpdir() instead of homedir() for registry tests | Prevents test pollution of actual ~/.gsd/agent/ config and cache | No |
 | D019 | M002 | impl | Live test scope | Live models.dev verification in main suite | User explicitly chose this tradeoff for upstream compatibility checking | No |
 | D020 | M002 | impl | Slice ordering | Build repair first, then scenario tests, then live verification | Build failures block all downstream verification; live tests depend on working infrastructure | No |
+| D021 | M002/S02 | impl | Registry cache path injection | Optional cachePath parameter in ModelRegistry constructor | Enables production-like scenario tests with tmpdir() isolation without mocking or mutating user directories | No |

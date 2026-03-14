@@ -83,13 +83,13 @@ This file is the explicit capability and coverage contract for the project.
 
 ### R008 - Registry behavior must be proven through production-like startup scenarios
 - Class: quality-attribute
-- Status: active
+- Status: validated
 - Description: Model registry behavior is verified using production-like filesystem and startup scenarios covering fresh state, cache hit, stale cache, version change, snapshot fallback, offline behavior, and models.json overrides
 - Why it matters: Contract-level unit tests alone do not prove the real startup path behaves correctly
 - Source: user
-- Primary owning slice: M002
+- Primary owning slice: M002/S02
 - Supporting slices: none
-- Validation: Pending - scenario-driven tests exercise the real startup path under representative conditions
+- Validation: S02 - Nine scenario tests pass with tmpdir isolation covering all lifecycle scenarios
 - Notes: Prefer temporary home/cache/models.json setups over deep mocks where practical
 
 ### R009 - Live models.dev verification in main suite
@@ -114,6 +114,28 @@ This file is the explicit capability and coverage contract for the project.
 - Validation: Pending - review findings resolved and revised code proven by the stronger verification path
 - Notes: Scope includes adjacent infrastructure only when necessary to harden the registry path
 
+### R011 - Reconcile milestone work with current upstream mainline
+- Class: operability
+- Status: active
+- Description: Local milestone work is reconciled with the current `gsd-build/gsd-2` upstream `main` branch without regressing the intended behavior delivered by M001 and completed M002 work
+- Why it matters: The registry work must be upstreamable against the real current codebase, not only correct on a stale local branch
+- Source: user
+- Primary owning slice: M003
+- Supporting slices: none
+- Validation: Pending - reconciled branch proves M001/M002 behavior still holds after integrating current upstream main
+- Notes: Includes conflict resolution and bounded proactive alignment to upstream conventions where materially beneficial
+
+### R012 - Leave reconciled work in verified PR-ready state
+- Class: operability
+- Status: active
+- Description: After upstream reconciliation, the branch is buildable, testable, reviewable, and locally ready to become a pull request without additional restructuring
+- Why it matters: A successful merge is not enough if the resulting branch is noisy, unverified, or difficult to review upstream
+- Source: user
+- Primary owning slice: M003
+- Supporting slices: none
+- Validation: Pending - relevant verification workflows pass and the reconciled diff is coherent for review
+- Notes: Does not include opening the GitHub pull request itself
+
 ## Validated
 
 - R001 — Fetch model registry from models.dev (S01: contract-level unit tests)
@@ -123,6 +145,7 @@ This file is the explicit capability and coverage contract for the project.
 - R005 — Preserve local models.json override capability (S02: implementation + code review)
 - R006 — Remove models.generated.ts and generation script (S03: file deleted, no source references)
 - R007 — Registry path build/test workflow must be trustworthy (M002/S01: npm run build && npm test succeed)
+- R008 — Registry behavior proven through production-like scenarios (M002/S02: 9 scenario tests with tmpdir isolation)
 
 ## Deferred
 
@@ -143,13 +166,15 @@ This file is the explicit capability and coverage contract for the project.
 | R005 | core-capability | validated | M001/S02 | none | S02 implementation + code review |
 | R006 | operability | validated | M001/S03 | none | S03 file deletion + grep verification |
 | R007 | operability | validated | M002/S01 | none | S01 build + test workflow |
-| R008 | quality-attribute | active | M002 | none | Pending |
+| R008 | quality-attribute | validated | M002/S02 | none | S02 9 scenario tests |
 | R009 | quality-attribute | active | M002 | none | Pending |
 | R010 | operability | active | M002 | none | Pending |
+| R011 | operability | active | M003 | none | Pending |
+| R012 | operability | active | M003 | none | Pending |
 
 ## Coverage Summary
 
-- Active requirements: 3
-- Mapped to slices: 10
-- Validated: 7
+- Active requirements: 4
+- Mapped to slices: 12
+- Validated: 8
 - Unmapped active requirements: 0

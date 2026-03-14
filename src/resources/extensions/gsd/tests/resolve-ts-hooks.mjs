@@ -8,8 +8,9 @@
 export function resolve(specifier, context, nextResolve) {
   const parentURL = context.parentURL || '';
   const isFromNodeModules = parentURL.includes('/node_modules/');
+  const isFromDist = parentURL.includes('/dist/');
 
-  if (!isFromNodeModules && !specifier.startsWith('node:')) {
+  if (!isFromNodeModules && !isFromDist && !specifier.startsWith('node:')) {
     // Rewrite .js → .ts
     if (specifier.endsWith('.js')) {
       const tsSpecifier = specifier.replace(/\.js$/, '.ts');

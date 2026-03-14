@@ -176,12 +176,8 @@ export async function getModelsDev(options?: {
   
   if (!forceRefresh && isCacheValid(cache, ttlMs, version)) {
     // Cache hit - return cached data
-<<<<<<< HEAD
-    return cache.data;
-=======
     // Safe to use non-null assertion: isCacheValid guarantees cache is non-null
     return cache!.data;
->>>>>>> gsd/M002/S01
   }
   
   // Cache miss or expired - try fetch

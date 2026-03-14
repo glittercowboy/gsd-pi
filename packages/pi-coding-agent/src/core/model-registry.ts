@@ -230,13 +230,16 @@ export class ModelRegistry {
 	private loadError: string | undefined = undefined;
 	authStorage: AuthStorage;
 	private modelsJsonPath: string | undefined;
+	private cachePath?: string;
 
 	constructor(
 		authStorage: AuthStorage,
 		modelsJsonPath?: string,
+		cachePath?: string,
 	) {
 		this.authStorage = authStorage;
 		this.modelsJsonPath = modelsJsonPath ?? join(getAgentDir(), "models.json");
+		this.cachePath = cachePath;
 
 		// Set up fallback resolver for custom provider API keys
 		this.authStorage.setFallbackResolver((provider) => {
@@ -313,7 +316,7 @@ export class ModelRegistry {
 		modelOverrides: Map<string, Map<string, ModelOverride>>,
 	): Model<Api>[] {
 		// Try cached models.dev data first (sync)
-		const cache = getCachedModelsDev();
+		const cache = getCachedModelsDev(this.cachePath);
 		if (cache) {
 			// Cache hit - use models.dev data with overrides applied
 			return this.applyOverridesToModels(mapToModelRegistry(cache.data), overrides, modelOverrides);
