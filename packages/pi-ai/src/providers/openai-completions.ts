@@ -357,11 +357,14 @@ function createClient(
 		Object.assign(headers, optionsHeaders);
 	}
 
+	const isZai = model.provider === "zai" || model.baseUrl.includes("api.z.ai");
+
 	return new OpenAI({
 		apiKey,
 		baseURL: model.baseUrl,
 		dangerouslyAllowBrowser: true,
 		defaultHeaders: headers,
+		...(isZai && { timeout: 100_000, maxRetries: 4 }),
 	});
 }
 
