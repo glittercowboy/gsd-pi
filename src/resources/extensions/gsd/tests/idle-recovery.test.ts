@@ -1,10 +1,12 @@
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { execSync } from "node:child_process";
 import {
   resolveExpectedArtifactPath,
   writeBlockerPlaceholder,
   skipExecuteTask,
+  verifyExpectedArtifact,
 } from "../auto.ts";
 
 let passed = 0;
@@ -291,6 +293,102 @@ function cleanup(base: string): void {
     assert(planContent.includes("- [x] **T01.1:"), "T01.1 should be checked (regex chars escaped)");
   } finally {
     cleanup(base);
+  }
+}
+
+// ═══ verifyExpectedArtifact: fix-merge ═══════════════════════════════════════
+
+function initGitRepo(): string {
+  const dir = mkdtempSync(join(tmpdir(), "gsd-fix-merge-test-"));
+  execSync("git init -b main", { cwd: dir, stdio: "ignore" });
+  execSync("git config user.name 'Pi Test'", { cwd: dir, stdio: "ignore" });
+  execSync("git config user.email 'pi@example.com'", { cwd: dir, stdio: "ignore" });
+  writeFileSync(join(dir, ".gitkeep"), "");
+  execSync("git add -A", { cwd: dir, stdio: "ignore" });
+  execSync("git commit -m 'init'", { cwd: dir, stdio: "ignore" });
+  return dir;
+}
+
+{
+  console.log("\n=== verifyExpectedArtifact: fix-merge — clean repo → true ===");
+  const repo = initGitRepo();
+  try {
+    const result = verifyExpectedArtifact("fix-merge", "M001/S01", repo);
+    assert(result === true, "clean repo: fix-merge should return true (no conflicts, no merge state)");
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+}
+
+{
+  console.log("\n=== verifyExpectedArtifact: fix-merge — SQUASH_MSG present → false ===");
+  const repo = initGitRepo();
+  try {
+    // Simulate a squash merge that was resolved+staged but not yet committed:
+    // git creates .git/SQUASH_MSG during `git merge --squash` and removes it
+    // after `git commit` finalizes the squash.
+    const gitDir = execSync("git rev-parse --absolute-git-dir", { cwd: repo }).toString().trim();
+    writeFileSync(join(gitDir, "SQUASH_MSG"), "squash merge commit message template\n");
+
+    const result = verifyExpectedArtifact("fix-merge", "M001/S01", repo);
+    assert(result === false, "SQUASH_MSG present: fix-merge should return false (squash not yet committed)");
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+}
+
+{
+  console.log("\n=== verifyExpectedArtifact: fix-merge — MERGE_HEAD present → false ===");
+  const repo = initGitRepo();
+  try {
+    // Simulate an in-progress regular merge: MERGE_HEAD holds the commit being merged.
+    const gitDir = execSync("git rev-parse --absolute-git-dir", { cwd: repo }).toString().trim();
+    const headSha = execSync("git rev-parse HEAD", { cwd: repo }).toString().trim();
+    writeFileSync(join(gitDir, "MERGE_HEAD"), headSha + "\n");
+
+    const result = verifyExpectedArtifact("fix-merge", "M001/S01", repo);
+    assert(result === false, "MERGE_HEAD present: fix-merge should return false (regular merge not committed)");
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+}
+
+{
+  console.log("\n=== verifyExpectedArtifact: fix-merge — unmerged entries (DU conflict) → false ===");
+  const repo = initGitRepo();
+  try {
+    // Create a real conflict that produces a DU (delete/modify) unmerged entry.
+    // Base: file.txt exists
+    writeFileSync(join(repo, "file.txt"), "base content\n");
+    execSync("git add file.txt", { cwd: repo, stdio: "ignore" });
+    execSync("git commit -m 'base'", { cwd: repo, stdio: "ignore" });
+
+    // Feature branch: modify file.txt
+    execSync("git checkout -b feature", { cwd: repo, stdio: "ignore" });
+    writeFileSync(join(repo, "file.txt"), "modified on feature\n");
+    execSync("git add file.txt", { cwd: repo, stdio: "ignore" });
+    execSync("git commit -m 'feature modifies file'", { cwd: repo, stdio: "ignore" });
+
+    // Main branch: delete file.txt (produces DU when merging feature → delete/modify conflict)
+    execSync("git checkout main", { cwd: repo, stdio: "ignore" });
+    execSync("git rm file.txt", { cwd: repo, stdio: "ignore" });
+    execSync("git commit -m 'main deletes file'", { cwd: repo, stdio: "ignore" });
+
+    // Merge feature into main — this produces a DU conflict
+    try {
+      execSync("git merge feature", { cwd: repo, stdio: "pipe" });
+    } catch {
+      // expected — merge fails with conflict
+    }
+
+    // Verify we actually have a DU conflict in porcelain output
+    const porcelain = execSync("git status --porcelain", { cwd: repo }).toString();
+    assert(porcelain.includes("DU "), "precondition: DU conflict entry in porcelain output");
+
+    const result = verifyExpectedArtifact("fix-merge", "M001/S01", repo);
+    assert(result === false, "DU conflict: fix-merge should return false (unmerged entries present)");
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
   }
 }
 

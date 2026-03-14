@@ -1090,9 +1090,11 @@ async function dispatchNextUnit(
           } catch (error) {
             const message = error instanceof Error ? error.message : String(error);
 
-            // Check if we have actual merge conflicts to resolve
-            const status = runGit(basePath, ["status", "--porcelain"], { allowFailure: true });
-            const hasConflicts = status && (status.includes("UU ") || status.includes("AA ") || status.includes("UD "));
+            // Check if we have actual merge conflicts to resolve.
+            // Use --diff-filter=U to detect all unmerged entries (UU, AA, UD, DU, etc.)
+            // rather than parsing a fixed subset of porcelain status codes.
+            const unmergedOutput = runGit(basePath, ["diff", "--name-only", "--diff-filter=U"], { allowFailure: true });
+            const hasConflicts = unmergedOutput && unmergedOutput.trim().length > 0;
 
             if (hasConflicts) {
               // Instead of stopping auto-mode, dispatch a fix-merge session
@@ -1101,14 +1103,8 @@ async function dispatchNextUnit(
                 "warning",
               );
 
-              // Get the conflicted files for the prompt
-              const conflictedFiles: string[] = [];
-              const statusLines = status.split("\n");
-              for (const line of statusLines) {
-                if (line.includes("UU ") || line.includes("AA ") || line.includes("UD ")) {
-                  conflictedFiles.push(line.substring(3).trim());
-                }
-              }
+              // Get the conflicted files from the diff output
+              const conflictedFiles = unmergedOutput.split("\n").map(f => f.trim()).filter(f => f.length > 0);
 
               // Build fix-merge prompt
               const targetBranch = getMainBranch(basePath);
@@ -2923,25 +2919,35 @@ export function resolveExpectedArtifactPath(unitType: string, unitId: string, ba
  * the summary allowed the unit to be marked complete when the LLM
  * skipped writing the UAT file (see #176).
  */
-function verifyExpectedArtifact(unitType: string, unitId: string, base: string): boolean {
-  const absPath = resolveExpectedArtifactPath(unitType, unitId, base);
-  if (!absPath) return true;
-  if (!existsSync(absPath)) return false;
-
-  // fix-merge must have completed the merge (no conflicts, no MERGE_HEAD)
+export function verifyExpectedArtifact(unitType: string, unitId: string, base: string): boolean {
+  // fix-merge verification does not rely on an artifact path, so it must be
+  // checked before the generic !absPath early-return that would skip it.
   if (unitType === "fix-merge") {
-    const status = runGit(base, ["status", "--porcelain"], { allowFailure: true });
-    // Check for conflict markers
-    if (status && (status.includes("UU ") || status.includes("AA ") || status.includes("UD "))) {
+    // Use --diff-filter=U to catch all unmerged entries (UU, AA, UD, DU, and
+    // any other conflict codes), not just the subset checked by porcelain parsing.
+    const unmerged = runGit(base, ["diff", "--name-only", "--diff-filter=U"], { allowFailure: true });
+    if (unmerged && unmerged.trim().length > 0) {
       return false;
     }
-    // Check for ongoing merge state
+    // For regular merges: MERGE_HEAD is present until the merge commit is made.
     const mergeHead = runGit(base, ["rev-parse", "--verify", "MERGE_HEAD"], { allowFailure: true });
-    if (mergeHead) {
+    if (mergeHead && mergeHead.trim().length > 0) {
+      return false;
+    }
+    // For squash merges: MERGE_HEAD is never set, but git creates SQUASH_MSG
+    // until the squash commit is finalized.  If SQUASH_MSG still exists the
+    // agent has resolved and staged the conflicts but has not yet committed —
+    // the fix-merge is not complete.
+    const gitDir = runGit(base, ["rev-parse", "--absolute-git-dir"], { allowFailure: true });
+    if (gitDir && existsSync(join(gitDir.trim(), "SQUASH_MSG"))) {
       return false;
     }
     return true;
   }
+
+  const absPath = resolveExpectedArtifactPath(unitType, unitId, base);
+  if (!absPath) return true;
+  if (!existsSync(absPath)) return false;
 
   // execute-task must also have its checkbox marked [x] in the slice plan
   if (unitType === "execute-task") {
