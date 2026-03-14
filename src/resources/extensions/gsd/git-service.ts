@@ -151,6 +151,13 @@ export function writeIntegrationBranch(basePath: string, milestoneId: string, br
 
 // ─── Git Helper ────────────────────────────────────────────────────────────
 
+/** Env overlay that suppresses all interactive git credential prompts. */
+const GIT_NO_PROMPT_ENV = {
+  ...process.env,
+  GIT_TERMINAL_PROMPT: "0",
+  GIT_ASKPASS: "",
+};
+
 /**
  * Run a git command in the given directory.
  * Returns trimmed stdout. Throws on non-zero exit unless allowFailure is set.
@@ -162,6 +169,7 @@ export function runGit(basePath: string, args: string[], options: { allowFailure
       cwd: basePath,
       stdio: [options.input != null ? "pipe" : "ignore", "pipe", "pipe"],
       encoding: "utf-8",
+      env: GIT_NO_PROMPT_ENV,
       ...(options.input != null ? { input: options.input } : {}),
     }).trim();
   } catch (error) {
@@ -649,18 +657,6 @@ export class GitServiceImpl {
       this.git(["commit", "-m", "chore: untrack .gsd/ runtime files before merge"], { allowFailure: true });
     }
 
-    // Also untrack runtime files from the slice branch to prevent
-    // modify/delete conflicts during squash-merge (#218)
-    this.git(["checkout", branch]);
-    for (const exclusion of RUNTIME_EXCLUSION_PATHS) {
-      this.git(["rm", "--cached", "-r", "--ignore-unmatch", exclusion], { allowFailure: true });
-    }
-    const branchUntrackDiff = this.git(["diff", "--cached", "--stat"], { allowFailure: true });
-    if (branchUntrackDiff?.trim()) {
-      this.git(["commit", "-m", "chore: untrack .gsd/ runtime files before merge"], { allowFailure: true });
-    }
-    this.git(["checkout", mainBranch]);
-
     // Merge slice branch — strategy is configurable via git.merge_strategy
     // preference. Default: "squash" (preserves existing behavior).
     // "merge" uses --no-ff which is more resilient to conflicts from
@@ -722,9 +718,22 @@ export class GitServiceImpl {
       }
     }
 
-    // Squash merge needs a separate commit; --no-ff merge already committed
+    // Strip runtime files from the merge result before committing (#302).
+    // This replaces the old approach of checking out the slice branch to
+    // untrack runtime files pre-merge, which failed when the working tree
+    // had uncommitted .gsd/ changes that blocked the checkout.
+    for (const exclusion of RUNTIME_EXCLUSION_PATHS) {
+      this.git(["rm", "--cached", "-r", "--ignore-unmatch", exclusion], { allowFailure: true });
+    }
+
     if (strategy === "squash") {
       this.git(["commit", "-F", "-"], { input: message });
+    } else {
+      // --no-ff already committed; amend to include runtime file removal
+      const runtimeDiff = this.git(["diff", "--cached", "--stat"], { allowFailure: true });
+      if (runtimeDiff?.trim()) {
+        this.git(["commit", "--amend", "--no-edit"]);
+      }
     }
 
     // Delete the merged branch

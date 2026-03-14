@@ -78,7 +78,7 @@ function getExtensionKey(entryPath: string, extensionsDir: string): string {
  *
  * - extensions/ → ~/.gsd/agent/extensions/   (always overwrite — ensures updates ship on next launch)
  * - agents/     → ~/.gsd/agent/agents/        (always overwrite)
- * - AGENTS.md   → ~/.gsd/agent/AGENTS.md      (always overwrite)
+ * - skills/     → ~/.gsd/agent/skills/        (always overwrite)
  * - GSD-WORKFLOW.md is read directly from bundled path via GSD_WORKFLOW_PATH env var
  *
  * Always-overwrite ensures `npm update -g @glittercowboy/gsd` takes effect immediately.
@@ -106,13 +106,6 @@ export function initResources(agentDir: string): void {
   const srcSkills = join(resourcesDir, 'skills')
   if (existsSync(srcSkills)) {
     cpSync(srcSkills, destSkills, { recursive: true, force: true })
-  }
-
-  // Sync AGENTS.md
-  const srcAgentsMd = join(resourcesDir, 'AGENTS.md')
-  const destAgentsMd = join(agentDir, 'AGENTS.md')
-  if (existsSync(srcAgentsMd)) {
-    writeFileSync(destAgentsMd, readFileSync(srcAgentsMd))
   }
 }
 
