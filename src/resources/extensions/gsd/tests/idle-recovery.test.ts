@@ -7,6 +7,7 @@ import {
   writeBlockerPlaceholder,
   skipExecuteTask,
   verifyExpectedArtifact,
+  buildLoopRemediationSteps,
 } from "../auto.ts";
 
 let passed = 0;
@@ -487,6 +488,102 @@ const ROADMAP_COMPLETE = `# M001: Test Milestone
     assert(result === true, "missing roadmap file should be lenient and return true");
   } finally {
     cleanup(base);
+  }
+}
+
+// ═══ buildLoopRemediationSteps ═══════════════════════════════════════════════
+
+{
+  console.log("\n=== buildLoopRemediationSteps: execute-task returns concrete steps ===");
+  const base = mkdtempSync(join(tmpdir(), "gsd-loop-remediation-test-"));
+  try {
+    mkdirSync(join(base, ".gsd", "milestones", "M002", "slices", "S03", "tasks"), { recursive: true });
+    const result = buildLoopRemediationSteps("execute-task", "M002/S03/T01", base);
+    assert(result !== null, "should return remediation steps");
+    assert(result!.includes("T01-SUMMARY.md"), "steps mention the summary file");
+    assert(result!.includes("S03-PLAN.md"), "steps mention the slice plan");
+    assert(result!.includes("T01"), "steps mention the task ID");
+    assert(result!.includes("gsd doctor"), "steps include gsd doctor command");
+    assert(result!.includes("- [x]"), "steps show correct checkbox syntax");
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+}
+
+{
+  console.log("\n=== buildLoopRemediationSteps: plan-slice returns concrete steps ===");
+  const base = mkdtempSync(join(tmpdir(), "gsd-loop-remediation-test-"));
+  try {
+    mkdirSync(join(base, ".gsd", "milestones", "M001", "slices", "S01"), { recursive: true });
+    const result = buildLoopRemediationSteps("plan-slice", "M001/S01", base);
+    assert(result !== null, "should return remediation steps for plan-slice");
+    assert(result!.includes("S01-PLAN.md"), "steps mention the slice plan file");
+    assert(result!.includes("gsd doctor"), "steps include gsd doctor command");
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+}
+
+{
+  console.log("\n=== buildLoopRemediationSteps: research-slice returns concrete steps ===");
+  const base = mkdtempSync(join(tmpdir(), "gsd-loop-remediation-test-"));
+  try {
+    mkdirSync(join(base, ".gsd", "milestones", "M001", "slices", "S01"), { recursive: true });
+    const result = buildLoopRemediationSteps("research-slice", "M001/S01", base);
+    assert(result !== null, "should return remediation steps for research-slice");
+    assert(result!.includes("S01-RESEARCH.md"), "steps mention the slice research file");
+    assert(result!.includes("gsd doctor"), "steps include gsd doctor command");
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+}
+
+{
+  console.log("\n=== buildLoopRemediationSteps: unknown type returns null ===");
+  const base = mkdtempSync(join(tmpdir(), "gsd-loop-remediation-test-"));
+  try {
+    const result = buildLoopRemediationSteps("unknown-type", "M001/S01", base);
+    assertEq(result, null, "unknown type returns null");
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+}
+
+{
+  console.log("\n=== skipExecuteTask: loop-recovery writes blocker when both summary and checkbox missing ===");
+  const base = mkdtempSync(join(tmpdir(), "gsd-loop-recovery-test-"));
+  try {
+    mkdirSync(join(base, ".gsd", "milestones", "M002", "slices", "S03", "tasks"), { recursive: true });
+    const planPath = join(base, ".gsd", "milestones", "M002", "slices", "S03", "S03-PLAN.md");
+    writeFileSync(planPath, [
+      "# S03: Harden guided session",
+      "",
+      "## Tasks",
+      "",
+      "- [ ] **T01: Harden contract usage** `est:30m`",
+      "  Harden guided session contract usage in desktop flow.",
+    ].join("\n"), "utf-8");
+
+    const result = skipExecuteTask(
+      base, "M002", "S03", "T01",
+      { summaryExists: false, taskChecked: false },
+      "loop-recovery", 3,
+    );
+
+    assert(result === true, "loop-recovery should succeed");
+
+    // Blocker summary written
+    const summaryPath = join(base, ".gsd", "milestones", "M002", "slices", "S03", "tasks", "T01-SUMMARY.md");
+    assert(existsSync(summaryPath), "blocker summary should be written");
+    const summaryContent = readFileSync(summaryPath, "utf-8");
+    assert(summaryContent.includes("BLOCKER"), "summary should be a blocker placeholder");
+    assert(summaryContent.includes("loop-recovery"), "summary should mention the recovery reason");
+
+    // Checkbox marked
+    const planContent = readFileSync(planPath, "utf-8");
+    assert(planContent.includes("- [x] **T01:"), "T01 checkbox should be marked [x] after loop-recovery");
+  } finally {
+    rmSync(base, { recursive: true, force: true });
   }
 }
 

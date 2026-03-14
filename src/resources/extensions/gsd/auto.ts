@@ -1498,22 +1498,47 @@ async function dispatchNextUnit(
     }
     saveActivityLog(ctx, basePath, unitType, unitId);
 
+    // Final reconciliation pass for execute-task: write any missing durable
+    // artifacts (summary placeholder + [x] checkbox) so the pipeline can
+    // advance instead of stopping. This is the last resort before halting.
+    if (unitType === "execute-task") {
+      const [mid, sid, tid] = unitId.split("/");
+      if (mid && sid && tid) {
+        const status = await inspectExecuteTaskDurability(basePath, unitId);
+        if (status) {
+          const reconciled = skipExecuteTask(basePath, mid, sid, tid, status, "loop-recovery", prevCount);
+          if (reconciled) {
+            ctx.ui.notify(
+              `Loop recovery: ${unitId} reconciled after ${prevCount + 1} dispatches — blocker artifacts written, pipeline advancing.\n   Review ${status.summaryPath} and replace the placeholder with real work.`,
+              "warning",
+            );
+            unitDispatchCount.delete(dispatchKey);
+            await new Promise(r => setImmediate(r));
+            await dispatchNextUnit(ctx, pi);
+            return;
+          }
+        }
+      }
+    }
+
     const expected = diagnoseExpectedArtifact(unitType, unitId, basePath);
+    const remediation = buildLoopRemediationSteps(unitType, unitId, basePath);
     await stopAuto(ctx, pi);
     ctx.ui.notify(
-      `Loop detected: ${unitType} ${unitId} dispatched ${prevCount + 1} times total. Expected artifact not found.${expected ? `\n   Expected: ${expected}` : ""}\n   Check branch state and .gsd/ artifacts.`,
+      `Loop detected: ${unitType} ${unitId} dispatched ${prevCount + 1} times total. Expected artifact not found.${expected ? `\n   Expected: ${expected}` : ""}${remediation ? `\n\n   Remediation steps:\n${remediation}` : "\n   Check branch state and .gsd/ artifacts."}`,
       "error",
     );
     return;
   }
   unitDispatchCount.set(dispatchKey, prevCount + 1);
   if (prevCount > 0) {
-    // Self-repair: if summary exists but checkbox not marked, fix it and re-derive
+    // Adaptive self-repair: each retry attempts a different remediation step.
     if (unitType === "execute-task") {
       const status = await inspectExecuteTaskDurability(basePath, unitId);
-      if (status?.summaryExists && !status.taskChecked) {
-        const [mid, sid, tid] = unitId.split("/");
-        if (mid && sid && tid) {
+      const [mid, sid, tid] = unitId.split("/");
+      if (status && mid && sid && tid) {
+        if (status.summaryExists && !status.taskChecked) {
+          // Retry 1+: summary exists but checkbox not marked — mark [x] and advance.
           const repaired = skipExecuteTask(basePath, mid, sid, tid, status, "self-repair", 0);
           if (repaired) {
             ctx.ui.notify(
@@ -1524,6 +1549,17 @@ async function dispatchNextUnit(
             await new Promise(r => setImmediate(r));
             await dispatchNextUnit(ctx, pi);
             return;
+          }
+        } else if (prevCount >= 2 && !status.summaryExists) {
+          // Retry 2+: summary still missing after two full attempts — write a
+          // stub summary with a BLOCKER note so the agent can re-examine it.
+          const repaired = skipExecuteTask(basePath, mid, sid, tid, status, "stub-recovery", prevCount);
+          if (repaired) {
+            ctx.ui.notify(
+              `Stub recovery (attempt ${prevCount + 1}/${MAX_UNIT_DISPATCHES}): ${unitId} summary placeholder written. Retrying with recovery context.`,
+              "warning",
+            );
+            // Do NOT clear dispatchKey — count the next attempt normally.
           }
         }
       }
@@ -3177,4 +3213,52 @@ function diagnoseExpectedArtifact(unitType: string, unitId: string, base: string
     default:
       return null;
   }
+}
+
+/**
+ * Build concrete, manual remediation steps for a loop-detected unit failure.
+ * These are shown when automatic reconciliation is not possible.
+ */
+export function buildLoopRemediationSteps(unitType: string, unitId: string, base: string): string | null {
+  const parts = unitId.split("/");
+  const mid = parts[0];
+  const sid = parts[1];
+  const tid = parts[2];
+  switch (unitType) {
+    case "execute-task": {
+      if (!mid || !sid || !tid) break;
+      const planRel = relSliceFile(base, mid, sid, "PLAN");
+      const summaryRel = relTaskFile(base, mid, sid, tid, "SUMMARY");
+      return [
+        `   1. Write ${summaryRel} (even a partial summary is sufficient to unblock the pipeline)`,
+        `   2. Mark ${tid} [x] in ${planRel}: change "- [ ] **${tid}:**" → "- [x] **${tid}:**"`,
+        `   3. Run \`gsd doctor\` to reconcile .gsd/ state`,
+        `   4. Resume auto-mode — it will pick up from the next task`,
+      ].join("\n");
+    }
+    case "plan-slice":
+    case "research-slice": {
+      if (!mid || !sid) break;
+      const artifactRel = unitType === "plan-slice"
+        ? relSliceFile(base, mid, sid, "PLAN")
+        : relSliceFile(base, mid, sid, "RESEARCH");
+      return [
+        `   1. Write ${artifactRel} manually (or with the LLM in interactive mode)`,
+        `   2. Run \`gsd doctor\` to reconcile .gsd/ state`,
+        `   3. Resume auto-mode`,
+      ].join("\n");
+    }
+    case "complete-slice": {
+      if (!mid || !sid) break;
+      return [
+        `   1. Write the slice summary and UAT file for ${sid} in ${relSlicePath(base, mid, sid)}`,
+        `   2. Mark ${sid} [x] in ${relMilestoneFile(base, mid, "ROADMAP")}`,
+        `   3. Run \`gsd doctor\` to reconcile .gsd/ state`,
+        `   4. Resume auto-mode`,
+      ].join("\n");
+    }
+    default:
+      break;
+  }
+  return null;
 }
