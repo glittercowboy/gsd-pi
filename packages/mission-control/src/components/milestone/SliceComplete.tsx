@@ -6,6 +6,7 @@ interface SliceCompleteProps {
   commitCount: number;        // from gitBranchCommits
   lastCommitMessage: string;  // from lastCommitMessage
   onAction: (action: SliceAction) => void;
+  builderMode?: boolean;
 }
 
 export function SliceComplete({
@@ -14,6 +15,7 @@ export function SliceComplete({
   commitCount,
   lastCommitMessage,
   onAction,
+  builderMode,
 }: SliceCompleteProps) {
   const truncatedMessage =
     lastCommitMessage.length > 72
@@ -29,7 +31,7 @@ export function SliceComplete({
           <span className="font-mono text-sm text-slate-300">{slice.name}</span>
         </div>
         <span className="text-xs font-mono text-[#22C55E] uppercase tracking-wider">
-          ✓ COMPLETE
+          {builderMode ? 'Done' : '✓ COMPLETE'}
         </span>
       </div>
 

@@ -10,6 +10,7 @@ interface SliceInProgressProps {
   runningCost: number;         // from GSD2State.projectState.cost
   commitCount: number;         // from GSD2State.gitBranchCommits
   onAction: (action: SliceAction) => void;
+  builderMode?: boolean;
 }
 
 export function SliceInProgress({
@@ -20,6 +21,7 @@ export function SliceInProgress({
   runningCost,
   commitCount,
   onAction,
+  builderMode,
 }: SliceInProgressProps) {
   const [steerOpen, setSteerOpen] = useState(false);
   const [steerText, setSteerText] = useState("");
@@ -39,7 +41,7 @@ export function SliceInProgress({
         <span className="font-mono text-sm text-[#5BC8F0] font-bold">{slice.id}</span>
         <span className="font-mono text-sm text-slate-200 flex-1 ml-3">{slice.name}</span>
         <span className="text-xs font-mono text-[#F59E0B] uppercase tracking-wider">
-          ● EXECUTING
+          {builderMode ? 'Building now' : '● EXECUTING'}
         </span>
       </div>
 
@@ -83,7 +85,7 @@ export function SliceInProgress({
           onClick={() => setSteerOpen(true)}
           className="px-3 py-1.5 text-xs font-mono border border-[#1E2D3D] rounded text-slate-300 hover:bg-[#1A2332]"
         >
-          Steer
+          {builderMode ? 'Give direction' : 'Steer'}
         </button>
       </div>
 

@@ -6,6 +6,7 @@ interface SliceNeedsReviewProps {
   uatItems: GSD2UatItem[];           // from GSD2State.uatFile.items (active slice only)
   onItemToggle: (itemId: string, checked: boolean) => void;
   onAction: (action: SliceAction) => void;
+  builderMode?: boolean;
 }
 
 export function SliceNeedsReview({
@@ -13,6 +14,7 @@ export function SliceNeedsReview({
   uatItems,
   onItemToggle,
   onAction,
+  builderMode,
 }: SliceNeedsReviewProps) {
   const [checkedItems, setCheckedItems] = useState<Map<string, boolean>>(
     () => new Map(uatItems.map((i) => [i.id, i.checked]))
@@ -48,7 +50,7 @@ export function SliceNeedsReview({
           <span className="font-mono text-sm text-slate-300">{slice.name}</span>
         </div>
         <span className="text-xs font-mono text-[#F59E0B] uppercase tracking-wider">
-          &#x26A0; NEEDS YOUR REVIEW
+          {builderMode ? 'Ready for your review' : '⚠ NEEDS YOUR REVIEW'}
         </span>
       </div>
 
@@ -112,7 +114,7 @@ export function SliceNeedsReview({
               : "opacity-40 cursor-not-allowed bg-[#1A2332] text-slate-500 px-3 py-1.5 text-xs font-mono rounded"
           }
         >
-          Merge to main
+          {builderMode ? 'Ship it' : 'Merge to main'}
         </button>
       </div>
     </div>

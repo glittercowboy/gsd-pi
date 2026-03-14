@@ -9,30 +9,30 @@ import type { GSD2SliceInfo, GSD2UatItem, SliceAction, SliceStatus } from "@/ser
 // ---------------------------------------------------------------------------
 // StatusBadge inline helper
 // ---------------------------------------------------------------------------
-function StatusBadge({ status }: { status: SliceStatus }) {
+function StatusBadge({ status, builderMode }: { status: SliceStatus; builderMode?: boolean }) {
   switch (status) {
     case "planned":
       return (
         <span className="text-xs font-mono text-slate-400 uppercase tracking-wider">
-          PLANNED
+          {builderMode ? 'Ready to build' : 'PLANNED'}
         </span>
       );
     case "in_progress":
       return (
         <span className="text-xs font-mono text-[#F59E0B] uppercase tracking-wider">
-          ● EXECUTING
+          {builderMode ? 'Building now' : '● EXECUTING'}
         </span>
       );
     case "needs_review":
       return (
         <span className="text-xs font-mono text-[#F59E0B] uppercase tracking-wider">
-          &#x26A0; NEEDS YOUR REVIEW
+          {builderMode ? 'Ready for your review' : '⚠ NEEDS YOUR REVIEW'}
         </span>
       );
     case "complete":
       return (
         <span className="text-xs font-mono text-[#22C55E] uppercase tracking-wider">
-          &#x2713; COMPLETE
+          {builderMode ? 'Done' : '✓ COMPLETE'}
         </span>
       );
     default:
@@ -60,6 +60,8 @@ interface SliceRowProps {
   lastCommitMessage?: string;
   // Action dispatcher
   onAction: (action: SliceAction) => void;
+  // Builder mode flag
+  builderMode?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -78,6 +80,7 @@ export function SliceRow({
   onUatItemToggle,
   lastCommitMessage = "",
   onAction,
+  builderMode,
 }: SliceRowProps) {
   return (
     <div data-testid={`slice-row-${slice.id}`}>
@@ -91,7 +94,7 @@ export function SliceRow({
           <span className="font-mono text-sm text-slate-300">{slice.name}</span>
         </div>
         <div className="flex items-center gap-2">
-          <StatusBadge status={slice.status} />
+          <StatusBadge status={slice.status} builderMode={builderMode} />
           <ChevronDown
             className={cn("h-4 w-4 text-slate-500 transition-transform", isOpen && "rotate-180")}
           />
@@ -102,7 +105,7 @@ export function SliceRow({
       {isOpen && (
         <div className="px-4 py-3">
           {slice.status === "planned" && (
-            <SlicePlanned slice={slice} onAction={onAction} />
+            <SlicePlanned slice={slice} onAction={onAction} builderMode={builderMode} />
           )}
           {slice.status === "in_progress" && (
             <SliceInProgress
@@ -113,6 +116,7 @@ export function SliceRow({
               runningCost={runningCost}
               commitCount={commitCount}
               onAction={onAction}
+              builderMode={builderMode}
             />
           )}
           {slice.status === "needs_review" && (
@@ -121,6 +125,7 @@ export function SliceRow({
               uatItems={uatItems ?? []}
               onItemToggle={onUatItemToggle ?? (() => {})}
               onAction={onAction}
+              builderMode={builderMode}
             />
           )}
           {slice.status === "complete" && (
@@ -130,6 +135,7 @@ export function SliceRow({
               commitCount={commitCount}
               lastCommitMessage={lastCommitMessage}
               onAction={onAction}
+              builderMode={builderMode}
             />
           )}
         </div>

@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { cn } from "@/lib/utils";
 import { SliceRow } from "@/components/milestone/SliceRow";
+import { useBuilderMode } from "@/hooks/useBuilderMode";
 import type { GSD2SliceInfo, GSD2State, SliceAction } from "@/server/types";
 
 interface SliceAccordionProps {
@@ -15,6 +16,7 @@ interface SliceAccordionProps {
 }
 
 export function SliceAccordion({ slices, activeSliceId, isAutoMode, gsd2State, onAction, onUatItemToggle }: SliceAccordionProps) {
+  const { builderMode } = useBuilderMode();
   const [openSliceIds, setOpenSliceIds] = useState<Set<string>>(
     () => new Set(activeSliceId ? [activeSliceId] : [])
   );
@@ -73,6 +75,7 @@ export function SliceAccordion({ slices, activeSliceId, isAutoMode, gsd2State, o
               commitCount={commitCount}
               lastCommitMessage={lastCommitMessage}
               onAction={onAction}
+              builderMode={builderMode}
             />
           </div>
         );

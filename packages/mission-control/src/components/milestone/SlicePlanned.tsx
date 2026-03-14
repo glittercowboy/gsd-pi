@@ -3,9 +3,10 @@ import type { GSD2SliceInfo, SliceAction } from "@/server/types";
 interface SlicePlannedProps {
   slice: GSD2SliceInfo;
   onAction: (action: SliceAction) => void;
+  builderMode?: boolean;
 }
 
-export function SlicePlanned({ slice, onAction }: SlicePlannedProps) {
+export function SlicePlanned({ slice, onAction, builderMode }: SlicePlannedProps) {
   const canStart = slice.dependencies.every((dep) => dep.complete);
 
   return (
@@ -17,7 +18,7 @@ export function SlicePlanned({ slice, onAction }: SlicePlannedProps) {
       <div className="flex items-center justify-between">
         <span className="font-mono text-sm text-[#5BC8F0] font-bold">{slice.id}</span>
         <span className="font-mono text-sm text-slate-200 flex-1 ml-3">{slice.name}</span>
-        <span className="text-xs font-mono text-slate-400 uppercase tracking-wider">PLANNED</span>
+        <span className="text-xs font-mono text-slate-400 uppercase tracking-wider">{builderMode ? 'Ready to build' : 'PLANNED'}</span>
       </div>
 
       {/* Divider */}
@@ -55,7 +56,7 @@ export function SlicePlanned({ slice, onAction }: SlicePlannedProps) {
           onClick={() => onAction({ type: "view_plan", sliceId: slice.id })}
           className="px-3 py-1.5 text-xs font-mono border border-[#1E2D3D] rounded text-slate-300 hover:bg-[#1A2332]"
         >
-          Review plan
+          {builderMode ? 'See what will be built' : 'Review plan'}
         </button>
         <button
           type="button"
@@ -71,7 +72,7 @@ export function SlicePlanned({ slice, onAction }: SlicePlannedProps) {
               : "px-3 py-1.5 text-xs font-mono rounded opacity-40 cursor-not-allowed bg-[#1A2332] text-slate-500"
           }
         >
-          Start this slice
+          {builderMode ? 'Build this feature' : 'Start this slice'}
         </button>
       </div>
     </div>
