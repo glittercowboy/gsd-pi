@@ -80,7 +80,7 @@ function findInstallDir() {
   // Check preferred dirs first, then all PATH dirs
   for (const candidate of [...preferred, ...pathDirs]) {
     try {
-      if (fs.existsSync(candidate) && canWrite(candidate)) {
+      if (canWrite(candidate)) {
         return candidate;
       }
     } catch (e) {
