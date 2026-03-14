@@ -21,6 +21,34 @@ import type {
 	StreamFn,
 } from "./types.js";
 
+const ZERO_USAGE = {
+	input: 0,
+	output: 0,
+	cacheRead: 0,
+	cacheWrite: 0,
+	totalTokens: 0,
+	cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+} as const;
+
+/**
+ * Build an AssistantMessage for an unhandled error caught outside runLoop.
+ * Uses the model from config so the message satisfies the full interface.
+ */
+function createErrorMessage(error: unknown, config: AgentLoopConfig): AssistantMessage {
+	const msg = error instanceof Error ? error.message : String(error);
+	return {
+		role: "assistant",
+		content: [{ type: "text", text: msg }],
+		api: config.model.api,
+		provider: config.model.provider,
+		model: config.model.id,
+		usage: ZERO_USAGE,
+		stopReason: "error",
+		errorMessage: msg,
+		timestamp: Date.now(),
+	};
+}
+
 /**
  * Start an agent loop with a new prompt message.
  * The prompt is added to the context and events are emitted for it.
@@ -48,7 +76,16 @@ export function agentLoop(
 			stream.push({ type: "message_end", message: prompt });
 		}
 
-		await runLoop(currentContext, newMessages, config, signal, stream, streamFn);
+		try {
+			await runLoop(currentContext, newMessages, config, signal, stream, streamFn);
+		} catch (error) {
+			const errMsg = createErrorMessage(error, config);
+			stream.push({ type: "message_start", message: errMsg });
+			stream.push({ type: "message_end", message: errMsg });
+			stream.push({ type: "turn_end", message: errMsg, toolResults: [] });
+			stream.push({ type: "agent_end", messages: [...newMessages, errMsg] });
+			stream.end([...newMessages, errMsg]);
+		}
 	})();
 
 	return stream;
@@ -85,7 +122,16 @@ export function agentLoopContinue(
 		stream.push({ type: "agent_start" });
 		stream.push({ type: "turn_start" });
 
-		await runLoop(currentContext, newMessages, config, signal, stream, streamFn);
+		try {
+			await runLoop(currentContext, newMessages, config, signal, stream, streamFn);
+		} catch (error) {
+			const errMsg = createErrorMessage(error, config);
+			stream.push({ type: "message_start", message: errMsg });
+			stream.push({ type: "message_end", message: errMsg });
+			stream.push({ type: "turn_end", message: errMsg, toolResults: [] });
+			stream.push({ type: "agent_end", messages: [...newMessages, errMsg] });
+			stream.end([...newMessages, errMsg]);
+		}
 	})();
 
 	return stream;
@@ -138,7 +184,36 @@ async function runLoop(
 			}
 
 			// Stream assistant response
-			const message = await streamAssistantResponse(currentContext, config, signal, stream, streamFn);
+			let message: AssistantMessage;
+			try {
+				message = await streamAssistantResponse(currentContext, config, signal, stream, streamFn);
+			} catch (error) {
+				// Critical failure before stream started (e.g. getApiKey threw, credentials in
+				// backoff, network unavailable). Convert to a graceful error message so the
+				// agent loop can end cleanly instead of crashing with an unhandled rejection.
+				const errorText = error instanceof Error ? error.message : String(error);
+				message = {
+					role: "assistant",
+					content: [],
+					api: config.model.api,
+					provider: config.model.provider,
+					model: config.model.id,
+					usage: {
+						input: 0,
+						output: 0,
+						cacheRead: 0,
+						cacheWrite: 0,
+						totalTokens: 0,
+						cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+					},
+					stopReason: signal?.aborted ? "aborted" : "error",
+					errorMessage: errorText,
+					timestamp: Date.now(),
+				};
+				stream.push({ type: "message_start", message: { ...message } });
+				stream.push({ type: "message_end", message });
+				currentContext.messages.push(message);
+			}
 			newMessages.push(message);
 
 			if (message.stopReason === "error" || message.stopReason === "aborted") {

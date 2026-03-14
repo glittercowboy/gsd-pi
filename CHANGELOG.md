@@ -6,6 +6,9 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+- Fixed residual `gsd auto` branch-switch failure: `git checkout -- .gsd/` only reverts *tracked* runtime files; a new `discardUntrackedRuntimeFiles` step (`git clean -fdx`) now also removes untracked runtime files (e.g. `STATE.md`) that would otherwise trigger "The following untracked working tree files would be overwritten by checkout" when the target branch still has them committed
+
 ## [2.10.8] - 2026-03-14
 
 ### Fixed

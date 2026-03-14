@@ -286,12 +286,12 @@ export async function showSecretsSummary(
 
 	const existingSet = new Set(existingKeys);
 
-	await (ctx.ui.custom as Function)((tui: any, theme: Theme, _kb: any, done: () => void) => {
+	await ctx.ui.custom((tui: any, theme: Theme, _kb: any, done: (r: null) => void) => {
 		let cachedLines: string[] | undefined;
 
 		function handleInput(_data: string) {
-			// Any key dismisses
-			done();
+			// Any key dismisses — pass null to satisfy the typed done() callback
+			done(null);
 		}
 
 		function render(width: number): string[] {

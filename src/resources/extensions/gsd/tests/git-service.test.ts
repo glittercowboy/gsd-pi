@@ -709,6 +709,103 @@ async function main(): Promise<void> {
     rmSync(repo, { recursive: true, force: true });
   }
 
+  // ─── ensureSliceBranch: tracked STATE.md + dirty (regression: "local changes overwritten") ─
+  //
+  // Reproduces: "error: Your local changes to the following files would be overwritten
+  // by checkout: .gsd/STATE.md" that occurred in gsd auto when STATE.md was historically
+  // committed to the repo (before it was added to .gitignore).
+
+  console.log("\n=== ensureSliceBranch: tracked STATE.md + dirty (checkout conflict regression) ===");
+
+  {
+    const repo = initBranchTestRepo();
+    const svc = new GitServiceImpl(repo);
+
+    // Simulate historical state: STATE.md was committed before gitignore was configured
+    createFile(repo, ".gsd/STATE.md", "# State v1");
+    run("git add -f .gsd/STATE.md", repo);
+    run("git commit -m 'add state (pre-gitignore)'", repo);
+
+    // STATE.md gets modified during runtime (dirty)
+    createFile(repo, ".gsd/STATE.md", "# State v2 (modified at runtime)");
+
+    // ensureSliceBranch must not fail with "local changes would be overwritten"
+    svc.ensureSliceBranch("M001", "S01");
+    assertEq(svc.getCurrentBranch(), "gsd/M001/S01", "checked out slice branch despite tracked+dirty STATE.md");
+
+    rmSync(repo, { recursive: true, force: true });
+  }
+
+  // ─── ensureSliceBranch: untracked STATE.md blocks checkout (regression: cleanup-commit edge case) ─
+  //
+  // Reproduces: "The following untracked working tree files would be overwritten by checkout:
+  // .gsd/STATE.md" when the smartStage cleanup commit removes STATE.md from the current
+  // branch's HEAD but the target branch was already created from the old HEAD (so it still
+  // has STATE.md tracked). Without discardUntrackedRuntimeFiles(), the untracked STATE.md
+  // on disk would block the checkout.
+
+  console.log("\n=== ensureSliceBranch: untracked runtime files blocked by target branch (cleanup-commit edge case) ===");
+
+  {
+    const repo = initBranchTestRepo();
+
+    // Simulate: STATE.md is tracked in main's HEAD (historical state)
+    createFile(repo, ".gsd/STATE.md", "# State original");
+    run("git add -f .gsd/STATE.md", repo);
+    run("git commit -m 'initial with tracked STATE.md'", repo);
+
+    // Simulate what smartStage one-time cleanup does: remove STATE.md from index and commit.
+    // This leaves STATE.md on disk but removes it from main's HEAD.
+    run("git rm --cached .gsd/STATE.md", repo);
+    run("git commit -m 'chore: untrack runtime files'", repo);
+
+    // STATE.md exists on disk (modified) but is now untracked in main's HEAD
+    createFile(repo, ".gsd/STATE.md", "# State modified after cleanup");
+
+    // Create slice branch — this is what ensureSliceBranch does internally but we
+    // simulate a GitServiceImpl that has already done the cleanup commit.
+    // The slice branch is created from the OLD HEAD (before cleanup commit) so it HAS
+    // STATE.md tracked. Without discardUntrackedRuntimeFiles(), the checkout would fail.
+    run("git branch gsd/M001/S01 HEAD~1", repo); // branch from HEAD~1 = the commit that had STATE.md
+
+    // Now use GitServiceImpl to switch to the already-existing slice branch
+    const svc = new GitServiceImpl(repo);
+
+    // ensureSliceBranch must succeed despite the untracked STATE.md on disk
+    // conflicting with the tracked STATE.md in the target branch
+    svc.ensureSliceBranch("M001", "S01");
+    assertEq(svc.getCurrentBranch(), "gsd/M001/S01", "checked out slice branch (untracked runtime file removed before checkout)");
+
+    rmSync(repo, { recursive: true, force: true });
+  }
+
+  // ─── switchToMain: tracked STATE.md + dirty (regression) ─────────────
+
+  console.log("\n=== switchToMain: tracked STATE.md + dirty (checkout conflict regression) ===");
+
+  {
+    const repo = initBranchTestRepo();
+    const svc = new GitServiceImpl(repo);
+
+    // Track STATE.md on main (historical pre-gitignore state)
+    createFile(repo, ".gsd/STATE.md", "# State on main");
+    run("git add -f .gsd/STATE.md", repo);
+    run("git commit -m 'add state (pre-gitignore)'", repo);
+
+    // Create slice branch (inherits STATE.md from main)
+    svc.ensureSliceBranch("M001", "S01");
+    assertEq(svc.getCurrentBranch(), "gsd/M001/S01", "on slice branch before switchToMain");
+
+    // Modify STATE.md on slice branch (runtime update)
+    createFile(repo, ".gsd/STATE.md", "# State updated on slice branch");
+
+    // switchToMain must not fail with "local changes would be overwritten"
+    svc.switchToMain();
+    assertEq(svc.getCurrentBranch(), svc.getMainBranch(), "back on main after switchToMain despite tracked+dirty STATE.md");
+
+    rmSync(repo, { recursive: true, force: true });
+  }
+
   // ─── switchToMain ─────────────────────────────────────────────────────
 
   console.log("\n=== switchToMain ===");

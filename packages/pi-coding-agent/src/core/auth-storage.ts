@@ -471,6 +471,20 @@ export class AuthStorage {
 	}
 
 	/**
+	 * Returns true when the provider has credentials configured but all of them
+	 * are currently in a backoff window (e.g. rate-limited or quota exhausted).
+	 * Returns false when there are no credentials or at least one is available.
+	 */
+	areAllCredentialsBackedOff(provider: string): boolean {
+		const credentials = this.getCredentialsForProvider(provider);
+		if (credentials.length === 0) return false;
+		for (let i = 0; i < credentials.length; i++) {
+			if (!this.isCredentialBackedOff(provider, i)) return false;
+		}
+		return true;
+	}
+
+	/**
 	 * Check if a credential index is currently backed off.
 	 */
 	private isCredentialBackedOff(provider: string, index: number): boolean {
@@ -535,6 +549,14 @@ export class AuthStorage {
 		if (credentials.length === 0) return false;
 
 		const errorType = options?.errorType ?? "rate_limit";
+
+		// For unknown/transport errors (e.g. connection reset, "terminated"),
+		// don't back off the only credential — it would make getApiKey() return
+		// undefined and surface a misleading "Authentication failed" message.
+		if (errorType === "unknown" && credentials.length === 1) {
+			return false;
+		}
+
 		const backoffMs = getBackoffDuration(errorType);
 
 		// Determine which credential was just used (same logic as selectCredentialIndex

@@ -2316,9 +2316,14 @@ export class AgentSession {
 
 		// Try credential fallback before counting against retry budget.
 		// If another credential is available, switch to it and retry immediately.
+		// Only attempt credential rotation for errors that indicate a credential-level
+		// problem (rate limit, quota exhaustion, server error). Transport failures
+		// ("unknown") like connection resets are not credential-specific — rotating
+		// won't help and backing off the only credential causes "Authentication failed".
 		if (this.model && message.errorMessage) {
 			const errorType = this._classifyErrorType(message.errorMessage);
-			const hasAlternate = this._modelRegistry.authStorage.markUsageLimitReached(
+			const isCredentialError = errorType !== "unknown";
+			const hasAlternate = isCredentialError && this._modelRegistry.authStorage.markUsageLimitReached(
 				this.model.provider,
 				this.sessionId,
 				{ errorType },
@@ -2347,6 +2352,22 @@ export class AgentSession {
 				}, 0);
 
 				return true;
+			}
+
+			// All credentials are backed off. For quota-exhausted errors the backoff is very
+			// long (30+ min), so retrying immediately is futile and will only produce
+			// confusing secondary errors (e.g. "Authentication failed"). Give up now and
+			// surface the original quota error to the user.
+			if (errorType === "quota_exhausted") {
+				this._emit({
+					type: "auto_retry_end",
+					success: false,
+					attempt: this._retryAttempt,
+					finalError: message.errorMessage,
+				});
+				this._retryAttempt = 0;
+				this._resolveRetry();
+				return false;
 			}
 		}
 

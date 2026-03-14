@@ -506,14 +506,18 @@ export async function startAuto(
     const manifestStatus = await getManifestStatus(base, mid);
     if (manifestStatus && manifestStatus.pending.length > 0) {
       const result = await collectSecretsFromManifest(base, mid, ctx);
-      ctx.ui.notify(
-        `Secrets collected: ${result.applied.length} applied, ${result.skipped.length} skipped, ${result.existingSkipped.length} already set.`,
-        "info",
-      );
+      if (result && result.applied && result.skipped && result.existingSkipped) {
+        ctx.ui.notify(
+          `Secrets collected: ${result.applied.length} applied, ${result.skipped.length} skipped, ${result.existingSkipped.length} already set.`,
+          "info",
+        );
+      } else {
+        ctx.ui.notify("Secrets collection skipped.", "info");
+      }
     }
   } catch (err) {
     ctx.ui.notify(
-      `Secrets collection error: ${err instanceof Error ? err.message : String(err)}`,
+      `Secrets collection error: ${err instanceof Error ? err.message : String(err)}. Continuing with next task.`,
       "warning",
     );
   }
@@ -1304,14 +1308,18 @@ async function dispatchNextUnit(
       const manifestStatus = await getManifestStatus(basePath, mid);
       if (manifestStatus && manifestStatus.pending.length > 0) {
         const result = await collectSecretsFromManifest(basePath, mid, ctx);
-        ctx.ui.notify(
-          `Secrets collected: ${result.applied.length} applied, ${result.skipped.length} skipped, ${result.existingSkipped.length} already set.`,
-          "info",
-        );
+        if (result && result.applied && result.skipped && result.existingSkipped) {
+          ctx.ui.notify(
+            `Secrets collected: ${result.applied.length} applied, ${result.skipped.length} skipped, ${result.existingSkipped.length} already set.`,
+            "info",
+          );
+        } else {
+          ctx.ui.notify("Secrets collection skipped.", "info");
+        }
       }
     } catch (err) {
       ctx.ui.notify(
-        `Secrets collection error: ${err instanceof Error ? err.message : String(err)}`,
+        `Secrets collection error: ${err instanceof Error ? err.message : String(err)}. Continuing with next task.`,
         "warning",
       );
     }
