@@ -2,7 +2,7 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync, existsSync } from "node:
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
-import { deriveState } from "../state.js";
+import { deriveState, invalidateStateCache } from "../state.js";
 import { resolveMilestoneFile, clearPathCache } from "../paths.js";
 
 let passed = 0;
@@ -41,6 +41,7 @@ const contextPath = join(gsd, "milestones", "M001", "M001-CONTEXT.md");
 writeFileSync(contextPath, "# M001: Full Context\n\nDeep discussion output.\n");
 
 clearPathCache();
+invalidateStateCache();
 const state2 = await deriveState(tmpBase);
 assert(
   state2.phase === "pre-planning",
@@ -67,6 +68,7 @@ assert(
 
 // Step 4: After cleanup, state is still pre-planning (CONTEXT.md exists)
 clearPathCache();
+invalidateStateCache();
 const state3 = await deriveState(tmpBase);
 assert(
   state3.phase === "pre-planning",
