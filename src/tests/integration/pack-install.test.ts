@@ -20,6 +20,10 @@ import { createGunzip } from "node:zlib";
 
 const projectRoot = process.cwd();
 
+if (!existsSync(join(projectRoot, "dist"))) {
+  throw new Error("dist/ not found — run: npm run build");
+}
+
 function packTarball(): string {
   const out = execFileSync("npm", ["pack", "--json"], {
     cwd: projectRoot,
@@ -99,9 +103,8 @@ test("tarball installs and gsd binary resolves", async () => {
   try {
     // Install from tarball into a temp prefix
     execFileSync("npm", ["install", "--prefix", tmp, tarballPath, "--no-save"], {
-      encoding: "utf-8",
       env: { ...process.env, PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1" },
-      stdio: ["ignore", "pipe", "pipe"],
+      stdio: "ignore",
     });
 
     // Verify the gsd bin exists in the installed package
