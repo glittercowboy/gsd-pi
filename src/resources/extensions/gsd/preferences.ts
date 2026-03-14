@@ -515,6 +515,32 @@ export function resolveModelForUnit(unitType: string): string | undefined {
  * - Legacy: `planning: claude-opus-4-6`
  * - Extended: `planning: { model: claude-opus-4-6, fallbacks: [glm-5, minimax-m2.5] }`
  */
+export function resolveModelFromRegistry(
+  modelId: string,
+  availableModels: any[],
+  currentProvider?: string,
+): { model: any | undefined; isAmbiguous: boolean; matchedProviders: string[] } {
+  const slashIdx = modelId.indexOf("/");
+  if (slashIdx !== -1) {
+    const provider = modelId.substring(0, slashIdx);
+    const id = modelId.substring(slashIdx + 1);
+    const model = availableModels.find(
+      (m) => m.provider.toLowerCase() === provider.toLowerCase() && m.id.toLowerCase() === id.toLowerCase(),
+    );
+    return { model, isAmbiguous: false, matchedProviders: model ? [model.provider] : [] };
+  }
+
+  const exactProviderMatch = availableModels.find((m) => m.id === modelId && m.provider === currentProvider);
+  const allMatches = availableModels.filter((m) => m.id === modelId);
+  const anyMatch = allMatches[0];
+
+  const model = exactProviderMatch ?? anyMatch;
+  const matchedProviders = allMatches.map((m) => m.provider);
+  const isAmbiguous = matchedProviders.length > 1 && !exactProviderMatch;
+
+  return { model, isAmbiguous, matchedProviders };
+}
+
 /**
  * Determines the next fallback model to try when the current model fails.
  * If the current model is not in the configured list, returns the primary model.

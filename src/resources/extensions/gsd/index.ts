@@ -41,6 +41,7 @@ import {
   resolveAllSkillReferences,
   resolveModelWithFallbacksForUnit,
   getNextFallbackModel,
+  resolveModelFromRegistry,
 } from "./preferences.js";
 import { hasSkillSnapshot, detectNewSkills, formatSkillsXml } from "./skill-discovery.js";
 import {
@@ -351,22 +352,7 @@ export default function (pi: ExtensionAPI) {
           const nextModelId = getNextFallbackModel(currentModelId, modelConfig);
 
           if (nextModelId) {
-            let modelToSet;
-            const slashIdx = nextModelId.indexOf("/");
-            if (slashIdx !== -1) {
-              const provider = nextModelId.substring(0, slashIdx);
-              const id = nextModelId.substring(slashIdx + 1);
-              modelToSet = availableModels.find(
-                m => m.provider.toLowerCase() === provider.toLowerCase()
-                  && m.id.toLowerCase() === id.toLowerCase()
-              );
-            } else {
-              const currentProvider = ctx.model?.provider;
-              const exactProviderMatch = availableModels.find(
-                m => m.id === nextModelId && m.provider === currentProvider
-              );
-              modelToSet = exactProviderMatch ?? availableModels.find(m => m.id === nextModelId);
-            }
+            const { model: modelToSet } = resolveModelFromRegistry(nextModelId, availableModels, ctx.model?.provider);
 
             if (modelToSet) {
               const ok = await pi.setModel(modelToSet, { persist: false });

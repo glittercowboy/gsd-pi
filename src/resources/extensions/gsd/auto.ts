@@ -40,7 +40,7 @@ import {
   readUnitRuntimeRecord,
   writeUnitRuntimeRecord,
 } from "./unit-runtime.js";
-import { resolveAutoSupervisorConfig, resolveModelForUnit, resolveModelWithFallbacksForUnit, resolveSkillDiscoveryMode, loadEffectiveGSDPreferences } from "./preferences.js";
+import { resolveAutoSupervisorConfig, resolveModelForUnit, resolveModelWithFallbacksForUnit, resolveSkillDiscoveryMode, loadEffectiveGSDPreferences, resolveModelFromRegistry } from "./preferences.js";
 import type { GSDPreferences } from "./preferences.js";
 import {
   validatePlanBoundary,
@@ -1940,39 +1940,16 @@ async function dispatchNextUnit(
     let modelSet = false;
 
     for (const modelId of modelsToTry) {
-      // Support "provider/model" format for explicit provider targeting
-      const slashIdx = modelId.indexOf("/");
-      let model;
-      if (slashIdx !== -1) {
-        const provider = modelId.substring(0, slashIdx);
-        const id = modelId.substring(slashIdx + 1);
-        model = availableModels.find(
-          m => m.provider.toLowerCase() === provider.toLowerCase()
-            && m.id.toLowerCase() === id.toLowerCase(),
-        );
-      } else {
-        // For bare IDs, prefer the current session's provider, then first available match
-        const currentProvider = ctx.model?.provider;
-        const exactProviderMatch = availableModels.find(
-          m => m.id === modelId && m.provider === currentProvider,
-        );
-        const anyMatch = availableModels.find(m => m.id === modelId);
-        model = exactProviderMatch ?? anyMatch;
+      const { model, isAmbiguous, matchedProviders } = resolveModelFromRegistry(modelId, availableModels, ctx.model?.provider);
 
-        // Warn if the ID is ambiguous across providers
-        if (anyMatch && !exactProviderMatch) {
-          const providers = availableModels
-            .filter(m => m.id === modelId)
-            .map(m => m.provider);
-          if (providers.length > 1) {
-            ctx.ui.notify(
-              `Model ID "${modelId}" exists in multiple providers (${providers.join(", ")}). ` +
-              `Resolved to ${anyMatch.provider}. Use "provider/model" format for explicit targeting.`,
-              "warning",
-            );
-          }
-        }
+      if (isAmbiguous && model) {
+        ctx.ui.notify(
+          `Model ID "${modelId}" exists in multiple providers (${matchedProviders.join(", ")}). ` +
+          `Resolved to ${model.provider}. Use "provider/model" format for explicit targeting.`,
+          "warning",
+        );
       }
+
       if (!model) {
         ctx.ui.notify(`Model ${modelId} not found in available models, trying fallback.`, "warning");
         continue;
