@@ -16,6 +16,7 @@ import { discoverCustomCommands } from "./discover-commands";
 import { setCustomCommands } from "../lib/slash-commands";
 import { createSwitchGuard } from "./switch-guard";
 import { parseStreamForModeEvents } from "./mode-interceptor";
+import { detectBoundaryViolation } from "./boundary-enforcer";
 import type { PlanningState } from "./types";
 import type { WsServer, SessionAction } from "./ws-server";
 import type { ChatResponse, StreamEvent } from "./chat-types";
@@ -139,6 +140,25 @@ export async function startPipeline(
         ev.event?.delta?.type === "text_delta" &&
         ev.event.delta.text
       ) {
+        // Boundary enforcement: block out-of-project file access (PERM-03)
+        // Check raw text before mode tag stripping to catch all path references
+        const rawText = ev.event.delta.text;
+        const violation = detectBoundaryViolation(rawText, repoRoot);
+        if (violation.violated && violation.path) {
+          console.warn(`[pipeline] BOUNDARY_VIOLATION: session ${session.id} accessed ${violation.path} — interrupting`);
+          // BLOCK: interrupt the active gsd process to prevent further file operations
+          session.processManager.interrupt();
+          // Then notify the frontend
+          wsServer.publishChat({
+            type: "boundary_violation",
+            path: violation.path,
+            sessionId: session.id,
+            timestamp: Date.now(),
+          });
+          // Do not forward the offending delta to the client
+          return;
+        }
+
         const { events, stripped, remainder } = parseStreamForModeEvents(
           ev.event.delta.text,
           modeBuffer

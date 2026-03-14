@@ -65,6 +65,8 @@ export function AppShell() {
     costState,
     interrupt,
     resetCrash,
+    boundaryViolation,
+    dismissBoundaryViolation,
   } = useSessionManager("ws://localhost:4001", { budgetCeiling });
 
   const { activeView, setActiveView } = useSidebarNav();
@@ -153,7 +155,45 @@ export function AppShell() {
 
   // Dashboard (with optional ResumeCard overlay)
   return (
-    <div className="flex h-screen bg-navy-base">
+    <div className="flex flex-col h-screen bg-navy-base">
+      {/* Boundary violation banner — shown when AI attempted out-of-project file access (PERM-03) */}
+      {boundaryViolation && (
+        <div
+          role="alert"
+          style={{
+            background: "#EF4444",
+            color: "#fff",
+            padding: "10px 16px",
+            fontSize: "13px",
+            fontFamily: "JetBrains Mono, monospace",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: "8px",
+            flexShrink: 0,
+          }}
+        >
+          <span>
+            The AI attempted to access a file outside your project:{" "}
+            <code>{boundaryViolation.path}</code>. The operation was blocked.
+          </span>
+          <button
+            type="button"
+            onClick={dismissBoundaryViolation}
+            style={{
+              background: "transparent",
+              border: "none",
+              color: "#fff",
+              cursor: "pointer",
+              fontFamily: "inherit",
+              fontSize: "12px",
+            }}
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
+      <div className="flex flex-1 min-h-0">
       <Sidebar
         collapsed={sidebarCollapsed}
         onToggle={() => setSidebarCollapsed((prev) => !prev)}
@@ -238,6 +278,7 @@ export function AppShell() {
           sendMessage(cmd);
         }}
       />
+      </div>
     </div>
   );
 }

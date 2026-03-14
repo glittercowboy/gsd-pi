@@ -56,6 +56,10 @@ export interface UseSessionManagerResult {
   resetCrash: () => void;
   /** Current accumulated cost state from useCostTracker */
   costState: CostState;
+  /** Last boundary violation detected — null when dismissed or no violation */
+  boundaryViolation: { path: string } | null;
+  /** Dismiss the boundary violation banner */
+  dismissBoundaryViolation: () => void;
 }
 
 // -- Pure functions (exported for testing) --
@@ -335,6 +339,7 @@ export function useSessionManager(
   const [permissionPrompt, setPermissionPrompt] = useState<PermissionPromptEvent | null>(null);
   const [isAutoMode, setIsAutoMode] = useState(false);
   const [isCrashed, setIsCrashed] = useState(false);
+  const [boundaryViolation, setBoundaryViolation] = useState<{ path: string } | null>(null);
   const { addCostEvent, costState } = useCostTracker(options.budgetCeiling ?? null);
 
   // Keep isAutoMode in a ref for use inside the message handler (avoid stale closure)
@@ -517,6 +522,13 @@ export function useSessionManager(
       setProcessingBySession(updated.processingBySession);
       return;
     }
+
+    // Handle boundary violation — AI tried to access a file outside the project (PERM-03)
+    if (msgType === "boundary_violation") {
+      const path = (msg.path as string) ?? "(unknown path)";
+      setBoundaryViolation({ path });
+      return;
+    }
   }, [applyState]);
 
   const { send } = useReconnectingWebSocket(wsUrl, {
@@ -639,6 +651,11 @@ export function useSessionManager(
     setIsCrashed(false);
   }, []);
 
+  // dismissBoundaryViolation: clears boundary violation banner
+  const dismissBoundaryViolation = useCallback(() => {
+    setBoundaryViolation(null);
+  }, []);
+
   return {
     sessions,
     activeSessionId,
@@ -656,5 +673,7 @@ export function useSessionManager(
     interrupt,
     resetCrash,
     costState,
+    boundaryViolation,
+    dismissBoundaryViolation,
   };
 }
