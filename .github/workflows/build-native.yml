@@ -200,10 +200,19 @@ jobs:
       - name: Post-publish smoke test
         run: |
           VERSION=$(node -p "require('./package.json').version")
-          sleep 15
           TMPDIR=$(mktemp -d)
           cd "$TMPDIR"
           npm init -y
-          npm install "gsd-pi@${VERSION}"
-          npx gsd --version
-          echo "Published package is functional"
+          # Retry npm install with backoff — npm registry propagation can take 30-90s
+          for attempt in 1 2 3 4 5; do
+            echo "Smoke test attempt ${attempt}/5..."
+            if npm install "gsd-pi@${VERSION}" 2>/dev/null; then
+              npx gsd --version
+              echo "Published package is functional"
+              exit 0
+            fi
+            echo "npm install failed, waiting before retry..."
+            sleep 30
+          done
+          echo "::error::Smoke test failed after 5 attempts — gsd-pi@${VERSION} not installable from npm"
+          exit 1
