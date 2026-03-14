@@ -11,7 +11,7 @@
 
 The original GSD went viral as a prompt framework for Claude Code. It worked, but it was fighting the tool — injecting prompts through slash commands, hoping the LLM would follow instructions, with no actual control over context windows, sessions, or execution.
 
-This version is different. GSD is now a standalone CLI built on the [Pi SDK](https://github.com/badlogic/pi-mono), which gives it direct TypeScript access to the agent harness itself. That means GSD can actually *do* what v1 could only *ask* the LLM to do: clear context between tasks, inject exactly the right files at dispatch time, manage git branches, track cost and tokens, detect stuck loops, recover from crashes, and auto-advance through an entire milestone without human intervention.
+This version is different. GSD is now a standalone CLI built on the [Pi SDK](https://github.com/badlogic/pi-mono), which gives it direct TypeScript access to the agent harness itself. That means GSD can actually _do_ what v1 could only _ask_ the LLM to do: clear context between tasks, inject exactly the right files at dispatch time, manage git branches, track cost and tokens, detect stuck loops, recover from crashes, and auto-advance through an entire milestone without human intervention.
 
 One command. Walk away. Come back to a built project with clean git history.
 
@@ -30,21 +30,21 @@ The original GSD was a collection of markdown prompts installed into `~/.claude/
 - **No crash recovery.** If the session died mid-task, you started over.
 - **No observability.** No cost tracking, no progress dashboard, no stuck detection.
 
-GSD v2 solves all of these because it's not a prompt framework anymore — it's a TypeScript application that *controls* the agent session.
+GSD v2 solves all of these because it's not a prompt framework anymore — it's a TypeScript application that _controls_ the agent session.
 
-| | v1 (Prompt Framework) | v2 (Agent Application) |
-|---|---|---|
-| Runtime | Claude Code slash commands | Standalone CLI via Pi SDK |
-| Context management | Hope the LLM doesn't fill up | Fresh session per task, programmatic |
-| Auto mode | LLM self-loop | State machine reading `.gsd/` files |
-| Crash recovery | None | Lock files + session forensics |
-| Git strategy | LLM writes git commands | Programmatic branch-per-slice, squash merge |
-| Cost tracking | None | Per-unit token/cost ledger with dashboard |
-| Stuck detection | None | Retry once, then stop with diagnostics |
-| Timeout supervision | None | Soft/idle/hard timeouts with recovery steering |
-| Context injection | "Read this file" | Pre-inlined into dispatch prompt |
-| Roadmap reassessment | Manual | Automatic after each slice completes |
-| Skill discovery | None | Auto-detect and install relevant skills during research |
+|                      | v1 (Prompt Framework)        | v2 (Agent Application)                                  |
+| -------------------- | ---------------------------- | ------------------------------------------------------- |
+| Runtime              | Claude Code slash commands   | Standalone CLI via Pi SDK                               |
+| Context management   | Hope the LLM doesn't fill up | Fresh session per task, programmatic                    |
+| Auto mode            | LLM self-loop                | State machine reading `.gsd/` files                     |
+| Crash recovery       | None                         | Lock files + session forensics                          |
+| Git strategy         | LLM writes git commands      | Programmatic branch-per-slice, squash merge             |
+| Cost tracking        | None                         | Per-unit token/cost ledger with dashboard               |
+| Stuck detection      | None                         | Retry once, then stop with diagnostics                  |
+| Timeout supervision  | None                         | Soft/idle/hard timeouts with recovery steering          |
+| Context injection    | "Read this file"             | Pre-inlined into dispatch prompt                        |
+| Roadmap reassessment | Manual                       | Automatic after each slice completes                    |
+| Skill discovery      | None                         | Auto-detect and install relevant skills during research |
 
 ### Migrating from v1
 
@@ -61,6 +61,7 @@ If you have projects with `.planning` directories from the original Get Shit Don
 ```
 
 The migration tool:
+
 - Parses your old `PROJECT.md`, `ROADMAP.md`, `REQUIREMENTS.md`, phase directories, plans, summaries, and research
 - Maps phases → slices, plans → tasks, milestones → milestones
 - Preserves completion state (`[x]` phases stay done, summaries carry over)
@@ -110,7 +111,7 @@ Auto mode is a state machine driven by files on disk. It reads `.gsd/STATE.md`, 
 
 2. **Context pre-loading** — The dispatch prompt includes inlined task plans, slice plans, prior task summaries, dependency summaries, roadmap excerpts, and decisions register. The LLM starts with everything it needs instead of spending tool calls reading files.
 
-3. **Git branch-per-slice** — Each slice gets its own branch (`gsd/M001/S01`). Tasks commit atomically on the branch. When the slice completes, it's squash-merged to main as one clean commit.
+3. **Git branch-per-slice** — Each slice gets its own branch (`gsd/M001/S01`). Tasks commit atomically on the branch. When the slice completes, it's squash-merged to main (or whichever branch you started from) as one clean commit.
 
 4. **Crash recovery** — A lock file tracks the current unit. If the session dies, the next `/gsd auto` reads the surviving session file, synthesizes a recovery briefing from every tool call that made it to disk, and resumes with full context.
 
@@ -183,12 +184,14 @@ GSD opens an interactive agent session. From there, you have two ways to work:
 The real workflow: run auto mode in one terminal, steer from another.
 
 **Terminal 1 — let it build**
+
 ```bash
 gsd
 /gsd auto
 ```
 
 **Terminal 2 — steer while it works**
+
 ```bash
 gsd
 /gsd discuss    # talk through architecture decisions
@@ -204,28 +207,28 @@ On first run, GSD launches a branded setup wizard that walks you through LLM pro
 
 ### Commands
 
-| Command | What it does |
-|---------|-------------|
-| `/gsd` | Step mode — executes one unit at a time, pauses between each |
-| `/gsd next` | Explicit step mode (same as bare `/gsd`) |
-| `/gsd auto` | Autonomous mode — researches, plans, executes, commits, repeats |
-| `/gsd stop` | Stop auto mode gracefully |
-| `/gsd discuss` | Discuss architecture and decisions (works alongside auto mode) |
-| `/gsd status` | Progress dashboard |
-| `/gsd queue` | Queue future milestones (safe during auto mode) |
-| `/gsd prefs` | Model selection, timeouts, budget ceiling |
-| `/gsd migrate` | Migrate a v1 `.planning` directory to `.gsd` format |
-| `/gsd doctor` | Validate `.gsd/` integrity, find and fix issues |
-| `/worktree` (`/wt`) | Git worktree lifecycle — create, switch, merge, remove |
-| `/voice` | Toggle real-time speech-to-text (macOS only) |
-| `/exit` | Graceful shutdown — saves session state before exiting |
-| `/kill` | Kill GSD process immediately |
-| `/clear` | Start a new session (alias for `/new`) |
-| `Ctrl+Alt+G` | Toggle dashboard overlay |
-| `Ctrl+Alt+V` | Toggle voice transcription |
-| `Ctrl+Alt+B` | Show background shell processes |
-| `gsd config` | Re-run the setup wizard (LLM provider + tool keys) |
-| `gsd --continue` (`-c`) | Resume the most recent session for the current directory |
+| Command                 | What it does                                                    |
+| ----------------------- | --------------------------------------------------------------- |
+| `/gsd`                  | Step mode — executes one unit at a time, pauses between each    |
+| `/gsd next`             | Explicit step mode (same as bare `/gsd`)                        |
+| `/gsd auto`             | Autonomous mode — researches, plans, executes, commits, repeats |
+| `/gsd stop`             | Stop auto mode gracefully                                       |
+| `/gsd discuss`          | Discuss architecture and decisions (works alongside auto mode)  |
+| `/gsd status`           | Progress dashboard                                              |
+| `/gsd queue`            | Queue future milestones (safe during auto mode)                 |
+| `/gsd prefs`            | Model selection, timeouts, budget ceiling                       |
+| `/gsd migrate`          | Migrate a v1 `.planning` directory to `.gsd` format             |
+| `/gsd doctor`           | Validate `.gsd/` integrity, find and fix issues                 |
+| `/worktree` (`/wt`)     | Git worktree lifecycle — create, switch, merge, remove          |
+| `/voice`                | Toggle real-time speech-to-text (macOS only)                    |
+| `/exit`                 | Graceful shutdown — saves session state before exiting          |
+| `/kill`                 | Kill GSD process immediately                                    |
+| `/clear`                | Start a new session (alias for `/new`)                          |
+| `Ctrl+Alt+G`            | Toggle dashboard overlay                                        |
+| `Ctrl+Alt+V`            | Toggle voice transcription                                      |
+| `Ctrl+Alt+B`            | Show background shell processes                                 |
+| `gsd config`            | Re-run the setup wizard (LLM provider + tool keys)              |
+| `gsd --continue` (`-c`) | Resume the most recent session for the current directory        |
 
 ---
 
@@ -235,18 +238,18 @@ On first run, GSD launches a branded setup wizard that walks you through LLM pro
 
 Every dispatch is carefully constructed. The LLM never wastes tool calls on orientation.
 
-| Artifact | Purpose |
-|----------|---------|
-| `PROJECT.md` | Living doc — what the project is right now |
-| `DECISIONS.md` | Append-only register of architectural decisions |
-| `STATE.md` | Quick-glance dashboard — always read first |
-| `M001-ROADMAP.md` | Milestone plan with slice checkboxes, risk levels, dependencies |
-| `M001-CONTEXT.md` | User decisions from the discuss phase |
-| `M001-RESEARCH.md` | Codebase and ecosystem research |
-| `S01-PLAN.md` | Slice task decomposition with must-haves |
-| `T01-PLAN.md` | Individual task plan with verification criteria |
-| `T01-SUMMARY.md` | What happened — YAML frontmatter + narrative |
-| `S01-UAT.md` | Human test script derived from slice outcomes |
+| Artifact           | Purpose                                                         |
+| ------------------ | --------------------------------------------------------------- |
+| `PROJECT.md`       | Living doc — what the project is right now                      |
+| `DECISIONS.md`     | Append-only register of architectural decisions                 |
+| `STATE.md`         | Quick-glance dashboard — always read first                      |
+| `M001-ROADMAP.md`  | Milestone plan with slice checkboxes, risk levels, dependencies |
+| `M001-CONTEXT.md`  | User decisions from the discuss phase                           |
+| `M001-RESEARCH.md` | Codebase and ecosystem research                                 |
+| `S01-PLAN.md`      | Slice task decomposition with must-haves                        |
+| `T01-PLAN.md`      | Individual task plan with verification criteria                 |
+| `T01-SUMMARY.md`   | What happened — YAML frontmatter + narrative                    |
+| `S01-UAT.md`       | Human test script derived from slice outcomes                   |
 
 ### Git Strategy
 
@@ -265,7 +268,7 @@ gsd/M001/S01 (deleted after merge):
   feat(S01/T01): core types and interfaces
 ```
 
-One commit per slice on main. Squash commits are the permanent record — branches are deleted after merge. Git bisect works. Individual slices are revertable.
+One commit per slice on main (or whichever branch you started from). Squash commits are the permanent record — branches are deleted after merge. Git bisect works. Individual slices are revertable.
 
 ### Verification
 
@@ -318,46 +321,46 @@ budget_ceiling: 50.00
 
 **Key settings:**
 
-| Setting | What it controls |
-|---------|-----------------|
-| `models.*` | Per-phase model selection — string for a single model, or `{model, fallbacks}` for automatic failover |
-| `skill_discovery` | `auto` / `suggest` / `off` — how GSD finds and applies skills |
-| `auto_supervisor.*` | Timeout thresholds for auto mode supervision |
-| `budget_ceiling` | USD ceiling — auto mode pauses when reached |
-| `uat_dispatch` | Enable automatic UAT runs after slice completion |
-| `always_use_skills` | Skills to always load when relevant |
-| `skill_rules` | Situational rules for skill routing |
+| Setting             | What it controls                                                                                      |
+| ------------------- | ----------------------------------------------------------------------------------------------------- |
+| `models.*`          | Per-phase model selection — string for a single model, or `{model, fallbacks}` for automatic failover |
+| `skill_discovery`   | `auto` / `suggest` / `off` — how GSD finds and applies skills                                         |
+| `auto_supervisor.*` | Timeout thresholds for auto mode supervision                                                          |
+| `budget_ceiling`    | USD ceiling — auto mode pauses when reached                                                           |
+| `uat_dispatch`      | Enable automatic UAT runs after slice completion                                                      |
+| `always_use_skills` | Skills to always load when relevant                                                                   |
+| `skill_rules`       | Situational rules for skill routing                                                                   |
 
 ### Bundled Tools
 
 GSD ships with 14 extensions, all loaded automatically:
 
-| Extension | What it provides |
-|-----------|-----------------|
-| **GSD** | Core workflow engine, auto mode, commands, dashboard |
-| **Browser Tools** | Playwright-based browser with form intelligence, intent-ranked element finding, and semantic actions |
-| **Search the Web** | Brave Search, Tavily, or Jina page extraction |
-| **Google Search** | Gemini-powered web search with AI-synthesized answers |
-| **Context7** | Up-to-date library/framework documentation |
-| **Background Shell** | Long-running process management with readiness detection |
-| **Subagent** | Delegated tasks with isolated context windows |
-| **Mac Tools** | macOS native app automation via Accessibility APIs |
-| **MCPorter** | Lazy on-demand MCP server integration |
-| **Voice** | Real-time speech-to-text transcription (macOS) |
-| **Slash Commands** | Custom command creation |
-| **LSP** | Language Server Protocol integration — diagnostics, go-to-definition, references, hover, symbols, rename, code actions |
-| **Ask User Questions** | Structured user input with single/multi-select |
-| **Secure Env Collect** | Masked secret collection without manual .env editing |
+| Extension              | What it provides                                                                                                       |
+| ---------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| **GSD**                | Core workflow engine, auto mode, commands, dashboard                                                                   |
+| **Browser Tools**      | Playwright-based browser with form intelligence, intent-ranked element finding, and semantic actions                   |
+| **Search the Web**     | Brave Search, Tavily, or Jina page extraction                                                                          |
+| **Google Search**      | Gemini-powered web search with AI-synthesized answers                                                                  |
+| **Context7**           | Up-to-date library/framework documentation                                                                             |
+| **Background Shell**   | Long-running process management with readiness detection                                                               |
+| **Subagent**           | Delegated tasks with isolated context windows                                                                          |
+| **Mac Tools**          | macOS native app automation via Accessibility APIs                                                                     |
+| **MCPorter**           | Lazy on-demand MCP server integration                                                                                  |
+| **Voice**              | Real-time speech-to-text transcription (macOS)                                                                         |
+| **Slash Commands**     | Custom command creation                                                                                                |
+| **LSP**                | Language Server Protocol integration — diagnostics, go-to-definition, references, hover, symbols, rename, code actions |
+| **Ask User Questions** | Structured user input with single/multi-select                                                                         |
+| **Secure Env Collect** | Masked secret collection without manual .env editing                                                                   |
 
 ### Bundled Agents
 
 Three specialized subagents for delegated work:
 
-| Agent | Role |
-|-------|------|
-| **Scout** | Fast codebase recon — returns compressed context for handoff |
-| **Researcher** | Web research — finds and synthesizes current information |
-| **Worker** | General-purpose execution in an isolated context window |
+| Agent          | Role                                                         |
+| -------------- | ------------------------------------------------------------ |
+| **Scout**      | Fast codebase recon — returns compressed context for handoff |
+| **Researcher** | Web research — finds and synthesizes current information     |
+| **Worker**     | General-purpose execution in an isolated context window      |
 
 ---
 
@@ -397,6 +400,7 @@ gsd (CLI binary)
 - **Git** — initialized automatically if missing
 
 Optional:
+
 - Brave Search API key (web research)
 - Tavily API key (web research — alternative to Brave)
 - Google Gemini API key (web research via Gemini Search grounding)
