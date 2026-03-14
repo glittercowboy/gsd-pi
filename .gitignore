@@ -17,7 +17,8 @@ Thumbs.db
 node_modules/
 .next/
 /dist/
-!/pkg/dist/
+!/pkg/dist/modes/
+!/pkg/dist/core/export-html/
 build/
 __pycache__/
 *.pyc
@@ -26,6 +27,7 @@ venv/
 target/
 vendor/
 !packages/pi-coding-agent/src/core/export-html/vendor/
+!pkg/dist/core/export-html/vendor/
 *.log
 coverage/
 .cache/
@@ -37,6 +39,8 @@ packages/*/node_modules/
 
 # ── GSD baseline (auto-generated) ──
 dist/
+!/pkg/dist/modes/
+!/pkg/dist/core/export-html/
 .bg_shell
 .gsd*.tgz
 .artifacts/
