@@ -186,7 +186,7 @@ export function writeIntegrationBranch(basePath: string, milestoneId: string, br
   // commit, the metadata would be lost on the first branch switch.
   try {
     runGit(basePath, ["add", "--force", metaFile]);
-    runGit(basePath, ["commit", "-F", "-"], {
+    runGit(basePath, ["commit", "--no-verify", "-F", "-"], {
       input: `chore(${milestoneId}): record integration branch`,
     });
   } catch {
@@ -291,7 +291,7 @@ export class GitServiceImpl {
         if (result && result.includes("rm '")) cleaned = true;
       }
       if (cleaned) {
-        this.git(["commit", "-F", "-"], { input: "chore: untrack .gsd/ runtime files from git index" });
+        this.git(["commit", "--no-verify", "-F", "-"], { input: "chore: untrack .gsd/ runtime files from git index" });
       }
       this._runtimeFilesCleanedUp = true;
     }
@@ -343,7 +343,7 @@ export class GitServiceImpl {
     if (!staged && !opts.allowEmpty) return null;
 
     this.git(
-      ["commit", "-F", "-", ...(opts.allowEmpty ? ["--allow-empty"] : [])],
+      ["commit", "--no-verify", "-F", "-", ...(opts.allowEmpty ? ["--allow-empty"] : [])],
       { input: opts.message },
     );
     return opts.message;
@@ -367,7 +367,7 @@ export class GitServiceImpl {
     if (!staged) return null;
 
     const message = `chore(${unitId}): auto-commit after ${unitType}`;
-    this.git(["commit", "-F", "-"], { input: message });
+    this.git(["commit", "--no-verify", "-F", "-"], { input: message });
     return message;
   }
 
@@ -743,7 +743,7 @@ export class GitServiceImpl {
     }
     const untrackDiff = this.git(["diff", "--cached", "--stat"], { allowFailure: true });
     if (untrackDiff && untrackDiff.trim()) {
-      this.git(["commit", "-m", "chore: untrack .gsd/ runtime files before merge"], { allowFailure: true });
+      this.git(["commit", "--no-verify", "-m", "chore: untrack .gsd/ runtime files before merge"], { allowFailure: true });
     }
 
     // Merge slice branch — strategy is configurable via git.merge_strategy
@@ -843,7 +843,7 @@ export class GitServiceImpl {
       // This happens when the only changes in the slice were runtime artifacts.
       const stagedDiff = this.git(["diff", "--cached", "--stat"], { allowFailure: true });
       if (stagedDiff?.trim()) {
-        this.git(["commit", "-F", "-"], { input: message });
+        this.git(["commit", "--no-verify", "-F", "-"], { input: message });
       } else {
         // Nothing to commit — clean up the squash-merge state
         this.git(["reset", "HEAD"], { allowFailure: true });
@@ -852,7 +852,7 @@ export class GitServiceImpl {
       // --no-ff already committed; amend to include runtime file removal
       const runtimeDiff = this.git(["diff", "--cached", "--stat"], { allowFailure: true });
       if (runtimeDiff?.trim()) {
-        this.git(["commit", "--amend", "--no-edit"]);
+        this.git(["commit", "--amend", "--no-edit", "--no-verify"]);
       }
     }
 
