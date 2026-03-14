@@ -18,7 +18,7 @@ import type {
 
 import { deriveState } from "./state.js";
 import type { GSDState } from "./types.js";
-import { loadFile, parseContinue, parsePlan, parseRoadmap, parseSummary, extractUatType, inlinePriorMilestoneSummary, getManifestStatus } from "./files.js";
+import { loadFile, parseContinue, parsePlan, parseRoadmap, parseSummary, extractUatType, inlinePriorMilestoneSummary, getManifestStatus, loadActiveOverrides, formatOverridesSection, resolveAllOverrides } from "./files.js";
 export { inlinePriorMilestoneSummary };
 import type { UatType } from "./files.js";
 import { collectSecretsFromManifest } from "../get-secrets-from-user.js";
@@ -952,6 +952,7 @@ function unitVerb(unitType: string): string {
     case "execute-task": return "executing";
     case "complete-slice": return "completing";
     case "replan-slice": return "replanning";
+    case "rewrite-docs": return "rewriting";
     case "reassess-roadmap": return "reassessing";
     case "run-uat": return "running UAT";
     case "fix-merge": return "resolving conflicts";
@@ -968,6 +969,7 @@ function unitPhaseLabel(unitType: string): string {
     case "execute-task": return "EXECUTE";
     case "complete-slice": return "COMPLETE";
     case "replan-slice": return "REPLAN";
+    case "rewrite-docs": return "REWRITE";
     case "reassess-roadmap": return "REASSESS";
     case "run-uat": return "UAT";
     case "fix-merge": return "MERGE-FIX";
@@ -985,6 +987,7 @@ function peekNext(unitType: string, state: GSDState): string {
     case "execute-task": return `continue ${sid}`;
     case "complete-slice": return "reassess roadmap";
     case "replan-slice": return `re-execute ${sid}`;
+    case "rewrite-docs": return "continue execution";
     case "reassess-roadmap": return "advance to next slice";
     case "run-uat": return "reassess roadmap";
     case "fix-merge": return "continue merge";
@@ -1563,6 +1566,17 @@ async function dispatchNextUnit(
 
   await runSecretsGate();
 
+  // ── Override rewrite gate — dispatch rewrite-docs before normal units ──
+  const pendingOverrides = await loadActiveOverrides(basePath);
+  if (pendingOverrides.length > 0) {
+    unitType = "rewrite-docs";
+    const sid = state.activeSlice?.id ?? "global";
+    unitId = `${mid}/${sid}`;
+    prompt = await buildRewriteDocsPrompt(mid, midTitle!, state.activeSlice, basePath, pendingOverrides);
+
+    // Skip the normal phase-dispatch below — go straight to sending the prompt
+  } else {
+
   const needsRunUat = await checkNeedsRunUat(basePath, mid, state, prefs);
   // Flag: for human/mixed UAT, pause auto-mode after the prompt is sent so the user
   // can perform the UAT manually. On next resume, result file will exist → skip.
@@ -1700,6 +1714,8 @@ async function dispatchNextUnit(
       return;
     }
   }
+
+  } // end override-else
 
   const priorSliceBlocker = getPriorSliceCompletionBlocker(basePath, getMainBranch(basePath), unitType, unitId);
   if (priorSliceBlocker) {
@@ -2317,7 +2333,10 @@ async function buildResearchSlicePrompt(
 
   const depContent = await inlineDependencySummaries(mid, sid, base);
 
-  const inlinedContext = `## Inlined Context (preloaded — do not re-read these files)\n\n${inlined.join("\n\n---\n\n")}`;
+  const activeOverrides = await loadActiveOverrides(base);
+  const overridesInline = formatOverridesSection(activeOverrides);
+  const inlinedParts = overridesInline ? [overridesInline, ...inlined] : inlined;
+  const inlinedContext = `## Inlined Context (preloaded — do not re-read these files)\n\n${inlinedParts.join("\n\n---\n\n")}`;
 
   const outputRelPath = relSliceFile(base, mid, sid, "RESEARCH");
   return loadPrompt("research-slice", {
@@ -2352,7 +2371,10 @@ async function buildPlanSlicePrompt(
 
   const depContent = await inlineDependencySummaries(mid, sid, base);
 
-  const inlinedContext = `## Inlined Context (preloaded — do not re-read these files)\n\n${inlined.join("\n\n---\n\n")}`;
+  const planActiveOverrides = await loadActiveOverrides(base);
+  const planOverridesInline = formatOverridesSection(planActiveOverrides);
+  const planInlinedParts = planOverridesInline ? [planOverridesInline, ...inlined] : inlined;
+  const inlinedContext = `## Inlined Context (preloaded — do not re-read these files)\n\n${planInlinedParts.join("\n\n---\n\n")}`;
 
   const outputRelPath = relSliceFile(base, mid, sid, "PLAN");
   return loadPrompt("plan-slice", {
@@ -2413,6 +2435,9 @@ async function buildExecuteTaskPrompt(
 
   const taskSummaryPath = `${relSlicePath(base, mid, sid)}/tasks/${tid}-SUMMARY.md`;
 
+  const activeOverrides = await loadActiveOverrides(base);
+  const overridesSection = formatOverridesSection(activeOverrides);
+
   return loadPrompt("execute-task", {
     milestoneId: mid, sliceId: sid, sliceTitle: sTitle, taskId: tid, taskTitle: tTitle,
     planPath: relSliceFile(base, mid, sid, "PLAN"),
@@ -2422,6 +2447,7 @@ async function buildExecuteTaskPrompt(
     slicePlanExcerpt,
     carryForwardSection,
     resumeSection,
+    overridesSection,
     priorTaskLines: priorLines,
     taskSummaryPath,
   });
@@ -2457,7 +2483,10 @@ async function buildCompleteSlicePrompt(
     }
   }
 
-  const inlinedContext = `## Inlined Context (preloaded — do not re-read these files)\n\n${inlined.join("\n\n---\n\n")}`;
+  const completeActiveOverrides = await loadActiveOverrides(base);
+  const completeOverridesInline = formatOverridesSection(completeActiveOverrides);
+  const completeInlinedParts = completeOverridesInline ? [completeOverridesInline, ...inlined] : inlined;
+  const inlinedContext = `## Inlined Context (preloaded — do not re-read these files)\n\n${completeInlinedParts.join("\n\n---\n\n")}`;
 
   const sliceRel = relSlicePath(base, mid, sid);
   const sliceSummaryPath = `${sliceRel}/${sid}-SUMMARY.md`;
@@ -2556,7 +2585,10 @@ async function buildReplanSlicePrompt(
   const decisionsInline = await inlineGsdRootFile(base, "decisions.md", "Decisions");
   if (decisionsInline) inlined.push(decisionsInline);
 
-  const inlinedContext = `## Inlined Context (preloaded — do not re-read these files)\n\n${inlined.join("\n\n---\n\n")}`;
+  const replanActiveOverrides = await loadActiveOverrides(base);
+  const replanOverridesInline = formatOverridesSection(replanActiveOverrides);
+  const replanInlinedParts = replanOverridesInline ? [replanOverridesInline, ...inlined] : inlined;
+  const inlinedContext = `## Inlined Context (preloaded — do not re-read these files)\n\n${replanInlinedParts.join("\n\n---\n\n")}`;
 
   const replanPath = `${relSlicePath(base, mid, sid)}/${sid}-REPLAN.md`;
 
@@ -2569,6 +2601,96 @@ async function buildReplanSlicePrompt(
     blockerTaskId,
     inlinedContext,
     replanPath,
+  });
+}
+
+// ─── Rewrite-Docs Prompt ──────────────────────────────────────────────────────
+
+async function buildRewriteDocsPrompt(
+  mid: string, midTitle: string,
+  activeSlice: { id: string; title: string } | null,
+  base: string,
+  overrides: import("./files.js").Override[],
+): Promise<string> {
+  const sid = activeSlice?.id;
+  const sTitle = activeSlice?.title ?? "";
+
+  // Build list of documents to review
+  const docList: string[] = [];
+
+  // Active slice plan and incomplete task plans
+  if (sid) {
+    const slicePlanPath = resolveSliceFile(base, mid, sid, "PLAN");
+    const slicePlanRel = relSliceFile(base, mid, sid, "PLAN");
+    if (slicePlanPath) {
+      docList.push(`- Slice plan: \`${slicePlanRel}\``);
+
+      // Find incomplete task plans
+      const tDir = resolveTasksDir(base, mid, sid);
+      if (tDir) {
+        const planContent = await loadFile(slicePlanPath);
+        if (planContent) {
+          const plan = parsePlan(planContent);
+          for (const task of plan.tasks) {
+            if (!task.done) {
+              const taskPlanPath = resolveTaskFile(base, mid, sid, task.id, "PLAN");
+              if (taskPlanPath) {
+                docList.push(`- Task plan: \`${relTaskFile(base, mid, sid, task.id, "PLAN")}\``);
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  // Root-level documents
+  const decisionsPath = resolveGsdRootFile(base, "DECISIONS");
+  if (existsSync(decisionsPath)) {
+    docList.push(`- Decisions: \`${relGsdRootFile("DECISIONS")}\``);
+  }
+  const requirementsPath = resolveGsdRootFile(base, "REQUIREMENTS");
+  if (existsSync(requirementsPath)) {
+    docList.push(`- Requirements: \`${relGsdRootFile("REQUIREMENTS")}\``);
+  }
+  const projectPath = resolveGsdRootFile(base, "PROJECT");
+  if (existsSync(projectPath)) {
+    docList.push(`- Project: \`${relGsdRootFile("PROJECT")}\``);
+  }
+
+  // Milestone context (read-only reference)
+  const contextPath = resolveMilestoneFile(base, mid, "CONTEXT");
+  const contextRel = relMilestoneFile(base, mid, "CONTEXT");
+  if (contextPath) {
+    docList.push(`- Milestone context (reference only): \`${contextRel}\``);
+  }
+
+  // Roadmap
+  const roadmapPath = resolveMilestoneFile(base, mid, "ROADMAP");
+  const roadmapRel = relMilestoneFile(base, mid, "ROADMAP");
+  if (roadmapPath) {
+    docList.push(`- Roadmap: \`${roadmapRel}\``);
+  }
+
+  const overrideContent = overrides.map((o, i) => [
+    `### Override ${i + 1}`,
+    `**Change:** ${o.change}`,
+    `**Issued:** ${o.timestamp}`,
+    `**During:** ${o.appliedAt}`,
+  ].join("\n")).join("\n\n");
+
+  const documentList = docList.length > 0
+    ? docList.join("\n")
+    : "- No active plan documents found.";
+
+  return loadPrompt("rewrite-docs", {
+    milestoneId: mid,
+    milestoneTitle: midTitle,
+    sliceId: sid ?? "none",
+    sliceTitle: sTitle,
+    overrideContent,
+    documentList,
+    overridesPath: relGsdRootFile("OVERRIDES"),
   });
 }
 
@@ -2938,7 +3060,7 @@ function ensurePreconditions(
     }
   }
 
-  if (["research-slice", "plan-slice", "execute-task", "complete-slice", "replan-slice"].includes(unitType) && parts.length >= 2) {
+  if (["research-slice", "plan-slice", "execute-task", "complete-slice", "replan-slice", "rewrite-docs"].includes(unitType) && parts.length >= 2) {
     const sid = parts[1]!;
     ensureSliceBranch(base, mid, sid);
   }
@@ -3375,7 +3497,7 @@ export function verifyExpectedArtifact(unitType: string, unitId: string, base: s
   // Unit types with no verifiable artifact always pass (e.g. replan-slice).
   // For all other types, null means the parent directory is missing on disk
   // — treat as stale completion state so the key gets evicted (#313).
-  if (!absPath) return unitType === "replan-slice";
+  if (!absPath) return unitType === "replan-slice" || unitType === "rewrite-docs";
   if (!existsSync(absPath)) return false;
 
   // execute-task must also have its checkbox marked [x] in the slice plan
@@ -3471,6 +3593,8 @@ function diagnoseExpectedArtifact(unitType: string, unitId: string, base: string
       return `Slice ${sid} marked [x] in ${relMilestoneFile(base, mid!, "ROADMAP")} + summary + UAT written`;
     case "replan-slice":
       return `${relSliceFile(base, mid!, sid!, "REPLAN")} + updated ${relSliceFile(base, mid!, sid!, "PLAN")}`;
+    case "rewrite-docs":
+      return "Active overrides resolved in .gsd/OVERRIDES.md + plan documents updated";
     case "reassess-roadmap":
       return `${relSliceFile(base, mid!, sid!, "ASSESSMENT")} (roadmap reassessment)`;
     case "run-uat":

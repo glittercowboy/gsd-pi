@@ -4,6 +4,8 @@ You are executing GSD auto-mode.
 
 Start with the inlined context below. Treat the inlined task plan as the authoritative local execution contract for this unit. Use the referenced source artifacts to verify details, resolve ambiguity, and run the required checks — do not waste time reconstructing context that is already provided here.
 
+{{overridesSection}}
+
 {{resumeSection}}
 
 {{carryForwardSection}}

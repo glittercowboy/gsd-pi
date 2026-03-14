@@ -64,6 +64,7 @@ Titles live inside file content (headings, frontmatter), not in file or director
 .gsd/
   PROJECT.md          (living doc - what the project is right now)
   DECISIONS.md        (append-only register of architectural and pattern decisions)
+  OVERRIDES.md        (user-issued overrides that supersede plan content via /gsd steer)
   QUEUE.md            (append-only log of queued milestones via /gsd queue)
   STATE.md
   milestones/
@@ -115,6 +116,7 @@ Templates showing the expected format for each artifact type are in:
 - `/gsd stop` - stop auto-mode
 - `/gsd status` - progress dashboard overlay
 - `/gsd queue` - queue future milestones (safe while auto-mode is running)
+- `/gsd steer <change>` - hard-steer: register an override that supersedes plan documents and triggers a document rewrite
 - `Ctrl+Alt+G` - toggle dashboard overlay
 - `Ctrl+Alt+B` - show shell processes
 

@@ -129,6 +129,7 @@ export const GSD_ROOT_FILES = {
   QUEUE: "QUEUE.md",
   STATE: "STATE.md",
   REQUIREMENTS: "REQUIREMENTS.md",
+  OVERRIDES: "OVERRIDES.md",
 } as const;
 
 export type GSDRootFileKey = keyof typeof GSD_ROOT_FILES;
@@ -139,6 +140,7 @@ const LEGACY_GSD_ROOT_FILES: Record<GSDRootFileKey, string> = {
   QUEUE: "queue.md",
   STATE: "state.md",
   REQUIREMENTS: "requirements.md",
+  OVERRIDES: "overrides.md",
 };
 
 export function gsdRoot(basePath: string): string {
