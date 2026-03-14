@@ -166,11 +166,28 @@ jobs:
           fi
           echo "All platform packages verified."
 
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Verify dist exists
+        run: test -f dist/loader.js || { echo "::error::dist/loader.js missing after build"; exit 1; }
+
+      - name: Verify tarball contents
+        run: |
+          npm pack --dry-run 2>&1 | tee /tmp/pack-output.txt
+          grep -q "dist/loader.js" /tmp/pack-output.txt || {
+            echo "::error::dist/loader.js not in tarball"
+            exit 1
+          }
+
       - name: Publish main package
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
-          # Skip prepublishOnly (build already done upstream) — just publish the tarball
+          # --ignore-scripts: skip prepublishOnly since we built explicitly above
           OUTPUT=$(npm publish --ignore-scripts 2>&1) && echo "$OUTPUT" || {
             if echo "$OUTPUT" | grep -q "cannot publish over the previously published\|You cannot publish over"; then
               echo "Already published, skipping"
@@ -179,3 +196,14 @@ jobs:
               exit 1
             fi
           }
+
+      - name: Post-publish smoke test
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          sleep 15
+          TMPDIR=$(mktemp -d)
+          cd "$TMPDIR"
+          npm init -y
+          npm install "gsd-pi@${VERSION}"
+          npx gsd --version
+          echo "Published package is functional"
