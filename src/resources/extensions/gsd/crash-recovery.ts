@@ -73,6 +73,26 @@ export function readCrashLock(basePath: string): LockData | null {
   }
 }
 
+/**
+ * Check whether the process that wrote the lock is still running.
+ * Uses `process.kill(pid, 0)` which sends no signal but checks liveness.
+ * Returns false if the PID matches our own (recycled PID from a prior run).
+ */
+export function isLockProcessAlive(lock: LockData): boolean {
+  const pid = lock.pid;
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  if (pid === process.pid) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    // EPERM means the process exists but we lack permission — treat as alive.
+    // ESRCH means the process does not exist — treat as dead (stale lock).
+    if ((err as NodeJS.ErrnoException).code === "EPERM") return true;
+    return false;
+  }
+}
+
 /** Format crash info for display or injection into a prompt. */
 export function formatCrashInfo(lock: LockData): string {
   return [

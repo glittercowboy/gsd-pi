@@ -32,7 +32,7 @@ import {
 } from "./paths.js";
 import { saveActivityLog } from "./activity-log.js";
 import { synthesizeCrashRecovery, getDeepDiagnostic } from "./session-forensics.js";
-import { writeLock, clearLock, readCrashLock, formatCrashInfo } from "./crash-recovery.js";
+import { writeLock, clearLock, readCrashLock, formatCrashInfo, isLockProcessAlive } from "./crash-recovery.js";
 import {
   clearUnitRuntimeRecord,
   formatExecuteTaskRecoveryStatus,
@@ -164,6 +164,32 @@ let unitTimeoutHandle: ReturnType<typeof setTimeout> | null = null;
 let wrapupWarningHandle: ReturnType<typeof setTimeout> | null = null;
 let idleWatchdogHandle: ReturnType<typeof setInterval> | null = null;
 
+/** SIGTERM handler registered while auto-mode is active — cleared on stop/pause. */
+let _sigtermHandler: (() => void) | null = null;
+
+/**
+ * Register a SIGTERM handler that clears the lock file and exits cleanly.
+ * Captures the active base path at registration time so the handler
+ * always references the correct path even if the module variable changes.
+ * Removes any previously registered handler before installing the new one.
+ */
+function registerSigtermHandler(currentBasePath: string): void {
+  if (_sigtermHandler) process.off("SIGTERM", _sigtermHandler);
+  _sigtermHandler = () => {
+    clearLock(currentBasePath);
+    process.exit(0);
+  };
+  process.on("SIGTERM", _sigtermHandler);
+}
+
+/** Deregister the SIGTERM handler (called on stop/pause). */
+function deregisterSigtermHandler(): void {
+  if (_sigtermHandler) {
+    process.off("SIGTERM", _sigtermHandler);
+    _sigtermHandler = null;
+  }
+}
+
 /** Format token counts for compact display */
 function formatWidgetTokens(count: number): string {
   if (count < 1000) return count.toString();
@@ -251,7 +277,8 @@ export async function stopAuto(ctx?: ExtensionContext, pi?: ExtensionAPI): Promi
   if (basePath) clearLock(basePath);
   clearSkillSnapshot();
 
-  // Show final cost summary before resetting
+  // Remove SIGTERM handler registered at auto-mode start
+  deregisterSigtermHandler();
   const ledger = getLedger();
   if (ledger && ledger.units.length > 0) {
     const totals = getProjectTotals(ledger.units);
@@ -303,6 +330,10 @@ export async function pauseAuto(ctx?: ExtensionContext, _pi?: ExtensionAPI): Pro
   if (!active) return;
   clearUnitTimeout();
   if (basePath) clearLock(basePath);
+
+  // Remove SIGTERM handler registered at auto-mode start
+  deregisterSigtermHandler();
+
   active = false;
   paused = true;
   // Preserve: unitDispatchCount, currentUnit, basePath, verbose, cmdCtx,
@@ -479,6 +510,10 @@ export async function startAuto(
     if (!getLedger()) initMetrics(base);
     // Ensure milestone ID is set on git service for integration branch resolution
     if (currentMilestoneId) setActiveMilestoneId(base, currentMilestoneId);
+
+    // Re-register SIGTERM handler for the resumed session
+    registerSigtermHandler(base);
+
     ctx.ui.setStatus("gsd-auto", stepMode ? "next" : "auto");
     ctx.ui.setFooter(hideFooter);
     ctx.ui.notify(stepMode ? "Step-mode resumed." : "Auto-mode resumed.", "info");
@@ -525,8 +560,16 @@ export async function startAuto(
   // Check for crash from previous session
   const crashLock = readCrashLock(base);
   if (crashLock) {
-    // Synthesize a rich recovery briefing from the surviving pi session file
-    // (pi writes entries incrementally, so it contains every tool call up to the crash)
+    if (isLockProcessAlive(crashLock)) {
+      // The lock belongs to a process that is still running — not a crash.
+      // Warn the user and abort to avoid two concurrent auto-mode sessions.
+      ctx.ui.notify(
+        `Another auto-mode session (PID ${crashLock.pid}) appears to be running.\nStop it with \`kill ${crashLock.pid}\` before starting a new session.`,
+        "error",
+      );
+      return;
+    }
+    // Stale lock from a dead process — synthesize crash recovery context.
     const activityDir = join(gsdRoot(base), "activity");
     const recovery = synthesizeCrashRecovery(
       base, crashLock.unitType, crashLock.unitId,
@@ -585,6 +628,9 @@ export async function startAuto(
   currentMilestoneId = state.activeMilestone?.id ?? null;
   originalModelId = ctx.model?.id ?? null;
   originalModelProvider = ctx.model?.provider ?? null;
+
+  // Register a SIGTERM handler so `kill <pid>` cleans up the lock and exits.
+  registerSigtermHandler(base);
 
   // Capture the integration branch — records the branch the user was on when
   // auto-mode started. Slice branches will merge back to this branch instead
