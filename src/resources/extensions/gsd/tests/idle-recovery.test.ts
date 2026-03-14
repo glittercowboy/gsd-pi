@@ -392,6 +392,73 @@ function initGitRepo(): string {
   }
 }
 
+{
+  console.log("\n=== verifyExpectedArtifact: fix-merge — unmerged entries (UU conflict) → false ===");
+  const repo = initGitRepo();
+  try {
+    // Create a UU (both modified) conflict.
+    writeFileSync(join(repo, "file.txt"), "base content\n");
+    execSync("git add file.txt", { cwd: repo, stdio: "ignore" });
+    execSync("git commit -m 'base'", { cwd: repo, stdio: "ignore" });
+
+    execSync("git checkout -b feature", { cwd: repo, stdio: "ignore" });
+    writeFileSync(join(repo, "file.txt"), "modified on feature\n");
+    execSync("git add file.txt", { cwd: repo, stdio: "ignore" });
+    execSync("git commit -m 'feature modifies file'", { cwd: repo, stdio: "ignore" });
+
+    execSync("git checkout main", { cwd: repo, stdio: "ignore" });
+    writeFileSync(join(repo, "file.txt"), "modified on main\n");
+    execSync("git add file.txt", { cwd: repo, stdio: "ignore" });
+    execSync("git commit -m 'main modifies file'", { cwd: repo, stdio: "ignore" });
+
+    try {
+      execSync("git merge feature", { cwd: repo, stdio: "pipe" });
+    } catch {}
+
+    const porcelain = execSync("git status --porcelain", { cwd: repo }).toString();
+    assert(porcelain.includes("UU "), "precondition: UU conflict entry in porcelain output");
+
+    const result = verifyExpectedArtifact("fix-merge", "M001/S01", repo);
+    assert(result === false, "UU conflict: fix-merge should return false (unmerged entries present)");
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+}
+
+{
+  console.log("\n=== verifyExpectedArtifact: fix-merge — unmerged entries (AA conflict) → false ===");
+  const repo = initGitRepo();
+  try {
+    // Create a base commit so `main` exists and branches share a history
+    writeFileSync(join(repo, "base.txt"), "base\n");
+    execSync("git add base.txt", { cwd: repo, stdio: "ignore" });
+    execSync("git commit -m 'base'", { cwd: repo, stdio: "ignore" });
+
+    // Create an AA (both added) conflict.
+    execSync("git checkout -b feature", { cwd: repo, stdio: "ignore" });
+    writeFileSync(join(repo, "new.txt"), "added on feature\n");
+    execSync("git add new.txt", { cwd: repo, stdio: "ignore" });
+    execSync("git commit -m 'feature adds file'", { cwd: repo, stdio: "ignore" });
+
+    execSync("git checkout main", { cwd: repo, stdio: "ignore" });
+    writeFileSync(join(repo, "new.txt"), "added on main\n");
+    execSync("git add new.txt", { cwd: repo, stdio: "ignore" });
+    execSync("git commit -m 'main adds file'", { cwd: repo, stdio: "ignore" });
+
+    try {
+      execSync("git merge feature", { cwd: repo, stdio: "pipe" });
+    } catch {}
+
+    const porcelain = execSync("git status --porcelain", { cwd: repo }).toString();
+    assert(porcelain.includes("AA "), "precondition: AA conflict entry in porcelain output");
+
+    const result = verifyExpectedArtifact("fix-merge", "M001/S01", repo);
+    assert(result === false, "AA conflict: fix-merge should return false (unmerged entries present)");
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+}
+
 // ═════════════════════════════════════════════════════════════════════════════
 // Results
 // ═════════════════════════════════════════════════════════════════════════════
