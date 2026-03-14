@@ -71,11 +71,9 @@ function getArchiveFormat(osKey) {
 // ---------------------------------------------------------------------------
 function findInstallDir() {
   const home = os.homedir();
-  const preferred = [
-    path.join(home, '.local', 'bin'),
-    '/usr/local/bin',
-    '/usr/bin',
-  ];
+  const preferred = process.platform !== 'win32'
+    ? [path.join(home, '.local', 'bin'), '/usr/local/bin', '/usr/bin']
+    : [path.join(home, 'AppData', 'Local', 'Programs', 'gh')];
 
   const pathDirs = (process.env.PATH || '').split(path.delimiter).filter(Boolean);
 
@@ -255,7 +253,7 @@ function compareVersions(a, b) {
 
 function getInstalledVersion() {
   try {
-    const result = execSync('gh --version', { encoding: 'utf-8', timeout: 5000 });
+    const result = execFileSync('gh', ['--version'], { encoding: 'utf-8', timeout: 5000 });
     // Expected: "gh version 2.87.0 (2025-02-18)"
     const match = result.match(/gh version (\d+\.\d+\.\d+)/);
     return match ? match[1] : null;
@@ -282,7 +280,7 @@ async function extractBinary(archivePath, osKey) {
   const extractDir = fs.mkdtempSync(path.join(path.dirname(archivePath), '_gh_extract_'));
   const binaryName = osKey === 'windows' ? 'gh.exe' : 'gh';
 
-  if (osKey === 'linux') {
+  if (process.platform === 'linux') {
     // Extract tar.gz
     await tar.x({
       file: archivePath,
@@ -294,9 +292,11 @@ async function extractBinary(archivePath, osKey) {
     execFileSync('unzip', ['-q', archivePath, '-d', extractDir], { stdio: 'pipe' });
   } else if (process.platform === 'win32') {
     // Windows: use PowerShell's built-in Expand-Archive (no external tools required)
+    const escapedArchive = archivePath.replace(/'/g, "''");
+    const escapedDest = extractDir.replace(/'/g, "''");
     execFileSync('powershell.exe', [
       '-NoProfile', '-Command',
-      `Expand-Archive -LiteralPath '${archivePath}' -DestinationPath '${extractDir}' -Force`,
+      `Expand-Archive -LiteralPath '${escapedArchive}' -DestinationPath '${escapedDest}' -Force`,
     ], { stdio: 'pipe' });
   } else {
     throw new Error(`Unsupported platform for ZIP extraction: ${process.platform}`);
@@ -338,7 +338,8 @@ async function main() {
   // 1. Check if gh is already installed
   let ghWhich = null;
   try {
-    ghWhich = execSync('which gh', { encoding: 'utf-8', timeout: 5000 }).trim();
+    const whichCmd = process.platform === 'win32' ? 'where' : 'which';
+    ghWhich = execFileSync(whichCmd, ['gh'], { encoding: 'utf-8', timeout: 5000 }).trim().split(/\r?\n/)[0];
   } catch {
     // gh not found
   }
@@ -495,7 +496,7 @@ async function main() {
   // Verify installation
   console.log('\n🧪 Verifying installation...');
   try {
-    const result = execSync(`"${installPath}" --version`, { encoding: 'utf-8', timeout: 5000 });
+    const result = execFileSync(installPath, ['--version'], { encoding: 'utf-8', timeout: 5000 });
     console.log(`  ${result.trim()}`);
   } catch (e) {
     console.log(`⚠️  Could not verify installation: ${e.message}`);
@@ -506,7 +507,12 @@ async function main() {
   if (!pathDirs.includes(installDir)) {
     console.log(`\n⚠️  ${installDir} is not in your PATH.`);
     console.log('  Add it to your shell profile:');
-    console.log(`  export PATH="${installDir}:$PATH"  (add to ~/.bashrc or ~/.zshrc)`);
+    if (process.platform === 'win32') {
+      console.log(`  Add ${installDir} to your Windows PATH via System Properties or:`);
+      console.log(`  $env:PATH += ";${installDir}"`);
+    } else {
+      console.log(`  export PATH="${installDir}:$PATH"  (add to ~/.bashrc or ~/.zshrc)`);
+    }
   }
 }
 

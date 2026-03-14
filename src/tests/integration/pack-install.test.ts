@@ -16,6 +16,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
+import tar from "tar";
 
 const projectRoot = process.cwd();
 
@@ -38,8 +39,9 @@ test("npm pack produces tarball with required files", async () => {
 
   try {
     // List tarball contents
-    const contents = execFileSync("tar", ["tzf", tarballPath], { encoding: "utf-8" });
-    const files = contents.split("\n").filter(Boolean);
+    const files: string[] = [];
+    await tar.t({ file: tarballPath, onentry: (entry: any) => files.push(entry.path) });
+    const contents = files.join("\n");
 
     // Critical files must be present
     assert.ok(files.some(f => f.includes("dist/loader.js")), "tarball contains dist/loader.js");
@@ -88,13 +90,16 @@ test("tarball installs and gsd binary resolves", async () => {
     });
 
     // Verify the gsd bin exists in the installed package
-    const installedBin = join(tmp, "node_modules", ".bin", "gsd");
-    assert.ok(existsSync(installedBin), "gsd binary exists in node_modules/.bin/");
+    const binName = process.platform === "win32" ? "gsd.cmd" : "gsd";
+    const installedBin = join(tmp, "node_modules", ".bin", binName);
+    assert.ok(existsSync(installedBin), `gsd binary exists in node_modules/.bin/ (${binName})`);
 
     // Verify loader.js is executable (has shebang)
     const installedLoader = join(tmp, "node_modules", "gsd-pi", "dist", "loader.js");
     const loaderContent = readFileSync(installedLoader, "utf-8");
-    assert.ok(loaderContent.startsWith("#!/usr/bin/env node"), "loader.js has node shebang");
+    if (process.platform !== "win32") {
+      assert.ok(loaderContent.startsWith("#!/usr/bin/env node"), "loader.js has node shebang");
+    }
 
     // Verify bundled resources are present
     const installedGsdExt = join(tmp, "node_modules", "gsd-pi", "src", "resources", "extensions", "gsd", "index.ts");
