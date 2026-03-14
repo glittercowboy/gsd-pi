@@ -42,11 +42,11 @@
     "proper-lockfile": "^4.1.2",
     "strip-ansi": "^7.1.0",
     "undici": "^7.19.1",
-    "better-sqlite3": "^11.7.0",
+    "sql.js": "^1.14.1",
     "yaml": "^2.8.2"
   },
   "devDependencies": {
-    "@types/better-sqlite3": "^7.6.12",
+    "@types/sql.js": "^1.4.9",
     "@types/diff": "^7.0.2",
     "@types/hosted-git-info": "^3.0.5",
     "@types/proper-lockfile": "^4.1.4"

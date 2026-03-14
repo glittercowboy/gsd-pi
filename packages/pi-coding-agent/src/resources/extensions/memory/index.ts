@@ -37,9 +37,9 @@ function getDbPath(): string {
 
 let storageInstance: MemoryStorage | null = null;
 
-function getStorage(): MemoryStorage {
+async function getStorage(): Promise<MemoryStorage> {
 	if (!storageInstance) {
-		storageInstance = new MemoryStorage(getDbPath());
+		storageInstance = await MemoryStorage.create(getDbPath());
 	}
 	return storageInstance;
 }
@@ -125,7 +125,7 @@ export default function memoryExtension(api: ExtensionAPI): void {
 
 		// Fire and forget
 		runStartup(
-			getStorage(),
+			await getStorage(),
 			{
 				sessionsDir,
 				memoryDir,
@@ -203,7 +203,7 @@ export default function memoryExtension(api: ExtensionAPI): void {
 						"Delete all extracted memories for this project?",
 					);
 					if (confirmed) {
-						getStorage().clearForCwd(ctx.cwd);
+						(await getStorage()).clearForCwd(ctx.cwd);
 						if (existsSync(projectMemoryDir)) {
 							rmSync(projectMemoryDir, { recursive: true, force: true });
 						}
@@ -218,7 +218,7 @@ export default function memoryExtension(api: ExtensionAPI): void {
 						"Re-extract all memories from session history? This may take a while.",
 					);
 					if (confirmed) {
-						getStorage().resetAllForCwd(ctx.cwd);
+						(await getStorage()).resetAllForCwd(ctx.cwd);
 						if (existsSync(projectMemoryDir)) {
 							rmSync(projectMemoryDir, { recursive: true, force: true });
 						}
@@ -231,7 +231,7 @@ export default function memoryExtension(api: ExtensionAPI): void {
 				}
 
 				case "stats": {
-					const stats = getStorage().getStats();
+					const stats = (await getStorage()).getStats();
 					const statsText = [
 						"Memory Pipeline Statistics:",
 						`  Total sessions tracked: ${stats.totalThreads}`,
