@@ -343,18 +343,20 @@ export class GitServiceImpl {
   // ─── Branch Queries ────────────────────────────────────────────────────
 
   /**
-   * Get the "main" (integration) branch for this repo.
+   * Get the integration branch for this repo — the branch that slice
+   * branches are created from and merged back into.
+   *
+   * This is often `main` or `master`, but not necessarily. When a user
+   * starts GSD on a feature branch like `f-123-new-thing`, that branch
+   * is recorded as the integration target, and all slice branches merge
+   * back into it — not the repo's default branch. The name "main branch"
+   * in variable names is historical; think of it as "integration branch".
    *
    * Resolution order:
    * 1. Explicit `main_branch` preference (user override, highest priority)
    * 2. Milestone integration branch from metadata file (recorded at milestone start)
    * 3. Worktree base branch (worktree/<name>)
    * 4. origin/HEAD symbolic-ref → main/master fallback → current branch
-   *
-   * The integration branch (step 2) is what makes feature-branch workflows
-   * work correctly: when a user starts GSD on `f-123-new-thing`, that branch
-   * is recorded as the integration target, and all slice branches merge back
-   * to it instead of the repo's default branch.
    */
   getMainBranch(): string {
     // Explicit preference takes priority (double-check validity as defense-in-depth)
@@ -434,8 +436,8 @@ export class GitServiceImpl {
    * Ensure the slice branch exists and is checked out.
    *
    * Creates the branch from the current working branch if it's not a slice
-   * branch (preserves planning artifacts). Falls back to main when on another
-   * slice branch (avoids chaining slice branches).
+   * branch (preserves planning artifacts). Falls back to the integration
+   * branch when on another slice branch (avoids chaining slice branches).
    *
    * Auto-commits dirty state via smart staging before checkout so runtime
    * files are never accidentally committed during branch switches.
@@ -470,7 +472,7 @@ export class GitServiceImpl {
       }
 
       // Branch from current when it's a normal working branch (not a slice).
-      // If already on a slice branch, fall back to main to avoid chaining.
+      // If already on a slice branch, fall back to the integration branch to avoid chaining.
       const mainBranch = this.getMainBranch();
       const base = SLICE_BRANCH_RE.test(current) ? mainBranch : current;
       this.git(["branch", branch, base]);
@@ -501,7 +503,7 @@ export class GitServiceImpl {
   }
 
   /**
-   * Switch to main, auto-committing dirty state via smart staging first.
+   * Switch to the integration branch, auto-committing dirty state via smart staging first.
    */
   switchToMain(): void {
     const mainBranch = this.getMainBranch();
@@ -623,18 +625,21 @@ export class GitServiceImpl {
   }
 
   /**
-   * Squash-merge a slice branch into main and delete it.
+   * Squash-merge a slice branch into the integration branch and delete it.
+   *
+   * The integration branch is resolved by getMainBranch() — this may be
+   * `main`, a feature branch, or a worktree branch depending on context.
    *
    * Flow: snapshot branch HEAD → squash merge → rich commit via stdin →
    * auto-push (if enabled) → delete branch.
    *
-   * Must be called from the main branch. Uses `inferCommitType(sliceTitle)`
+   * Must be called from the integration branch. Uses `inferCommitType(sliceTitle)`
    * for the conventional commit type instead of hardcoding `feat`.
    *
    * Throws when:
-   * - Not currently on the main branch
+   * - Not currently on the integration branch
    * - The slice branch does not exist
-   * - The slice branch has no commits ahead of main
+   * - The slice branch has no commits ahead of the integration branch
    */
   mergeSliceToMain(milestoneId: string, sliceId: string, sliceTitle: string): MergeSliceResult {
     const mainBranch = this.getMainBranch();

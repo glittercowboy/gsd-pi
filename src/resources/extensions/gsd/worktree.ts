@@ -12,7 +12,7 @@
  * Flow:
  *   1. ensureSliceBranch() — create + checkout slice branch
  *   2. agent does work, commits
- *   3. mergeSliceToMain() — checkout main, squash-merge, delete branch
+ *   3. mergeSliceToMain() — checkout integration branch, squash-merge, delete slice branch
  */
 
 import { sep } from "node:path";
@@ -161,16 +161,16 @@ export function autoCommitCurrentBranch(
 }
 
 /**
- * Switch to main, auto-committing any dirty files on the current branch first.
+ * Switch to the integration branch, auto-committing any dirty files on the current branch first.
  */
 export function switchToMain(basePath: string): void {
   getService(basePath).switchToMain();
 }
 
 /**
- * Squash-merge a completed slice branch to main.
- * Expects to already be on main (call switchToMain first).
- * Deletes the branch after merge.
+ * Squash-merge a completed slice branch into the integration branch.
+ * Expects to already be on the integration branch (call switchToMain first).
+ * Deletes the slice branch after merge.
  */
 export function mergeSliceToMain(
   basePath: string, milestoneId: string, sliceId: string, sliceTitle: string,
