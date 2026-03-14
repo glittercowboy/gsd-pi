@@ -11,6 +11,7 @@
 import { describe, it, expect } from "bun:test";
 import { BUILDER_VOCAB, DEVELOPER_VOCAB } from "../src/lib/builder-vocab";
 import { InterfaceModeContext } from "../src/context/InterfaceModeContext";
+import { classifyIntent } from "../src/server/classify-intent-api";
 
 describe("builder-vocab", () => {
   it("BUILDER_VOCAB maps milestone → Version", () => {
@@ -78,8 +79,8 @@ describe("SettingsView static analysis", () => {
   });
 });
 
-describe("classifyIntent stub", () => {
-  it("MISSING — classifyIntent stub (TODO Plan 18-02)", () => {
-    expect(true).toBe(true); // Stub — Plan 18-02 will fill this
+describe("classifyIntent import", () => {
+  it("classifyIntent is a function (Plan 18-02)", () => {
+    expect(typeof classifyIntent).toBe("function");
   });
 });

@@ -14,6 +14,7 @@ import { handleProxyRequest } from "./server/proxy-api";
 import { handleUatResultsRequest } from "./server/uat-results-api";
 import { handleGsdFileRequest } from "./server/gsd-file-api";
 import { isTrusted, writeTrustFlag } from "./server/trust-api";
+import { handleClassifyIntentRequest } from "./server/classify-intent-api";
 
 const repoRoot = resolve(import.meta.dir, "../../..");
 
@@ -160,6 +161,12 @@ const server = Bun.serve({
       return addCorsHeaders(
         Response.json({ trusted, gsdDir })
       );
+    }
+
+    // POST /api/classify-intent — classify Builder mode message intent (BUILDER-04)
+    if (pathname === "/api/classify-intent") {
+      const response = await handleClassifyIntentRequest(req);
+      return addCorsHeaders(response);
     }
 
     // POST /api/trust — write trust flag for a project (PERM-02)
