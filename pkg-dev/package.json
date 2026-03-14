@@ -1,0 +1,8 @@
+{
+  "name": "@glittercowboy/gsd-dev",
+  "version": "0.0.0",
+  "piConfig": {
+    "name": "gsd",
+    "configDir": ".gsd-dev"
+  }
+}

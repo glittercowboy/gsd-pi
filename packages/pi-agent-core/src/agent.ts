@@ -102,7 +102,7 @@ export interface AgentOptions {
 export class Agent {
 	private _state: AgentState = {
 		systemPrompt: "",
-		model: getModel("google", "gemini-2.5-flash-lite-preview-06-17"),
+		model: getModel("google", "gemini-2.5-flash-lite-preview-06-17")!,
 		thinkingLevel: "off",
 		tools: [],
 		messages: [],

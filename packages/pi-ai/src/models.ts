@@ -1,6 +1,18 @@
+import { SNAPSHOT } from "./models-dev-snapshot.js";
+import { mapToModelRegistry } from "./models-dev-mapper.js";
 import type { Api, KnownProvider, Model, Usage } from "./types.js";
 
 const modelRegistry: Map<string, Map<string, Model<Api>>> = new Map();
+
+// Initialize registry from models.dev snapshot on module load
+const mapped = mapToModelRegistry(SNAPSHOT);
+for (const [provider, models] of Object.entries(mapped)) {
+	const providerModels = new Map<string, Model<Api>>();
+	for (const [id, model] of Object.entries(models)) {
+		providerModels.set(id, model as Model<Api>);
+	}
+	modelRegistry.set(provider, providerModels);
+}
 
 export function getModel<TProvider extends KnownProvider>(
 	provider: TProvider,

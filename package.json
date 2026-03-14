@@ -17,12 +17,14 @@
   ],
   "bin": {
     "gsd": "dist/loader.js",
-    "gsd-cli": "dist/loader.js"
+    "gsd-cli": "dist/loader.js",
+    "gsd-dev": "dist/loader-dev.js"
   },
   "files": [
     "dist",
     "packages",
     "pkg",
+    "pkg-dev",
     "src/resources",
     "scripts/postinstall.js",
     "scripts/link-workspace-packages.cjs",

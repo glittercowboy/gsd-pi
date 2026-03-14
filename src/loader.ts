@@ -14,8 +14,11 @@ import { renderLogo } from './logo.js'
 const pkgDir = resolve(dirname(fileURLToPath(import.meta.url)), '..', 'pkg')
 
 // MUST be set before any dynamic import of pi SDK fires — this is what config.js
-// reads to determine APP_NAME and CONFIG_DIR_NAME
-process.env.PI_PACKAGE_DIR = pkgDir
+// reads to determine APP_NAME and CONFIG_DIR_NAME.
+// Only set if not already set (e.g., by loader-dev.ts for gsd-dev)
+if (!process.env.PI_PACKAGE_DIR) {
+	process.env.PI_PACKAGE_DIR = pkgDir
+}
 process.env.PI_SKIP_VERSION_CHECK = '1'  // GSD runs its own update check in cli.ts — suppress pi's
 process.title = 'gsd'
 
