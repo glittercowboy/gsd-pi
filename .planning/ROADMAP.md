@@ -238,7 +238,7 @@ Plans:
 | 14. Slice Integration | 6/6 | Complete    | 2026-03-13 | — |
 | 15. Tauri Shell | 5/5 | Complete   | 2026-03-13 | — |
 | 16. OAuth + Keychain | 4/4 | Complete    | 2026-03-14 | — |
-| 17. Permission Model | 1/3 | In Progress|  | — |
+| 17. Permission Model | 2/3 | In Progress|  | — |
 | 18. Builder Mode | v2.0 | 0/TBD | Not started | — |
 | 19. Project Workspace | v2.0 | 0/TBD | Not started | — |
 | 20. Installer + Distribution | v2.0 | 0/TBD | Not started | — |
