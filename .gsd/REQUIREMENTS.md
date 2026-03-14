@@ -105,13 +105,13 @@ This file is the explicit capability and coverage contract for the project.
 
 ### R010 - Model registry path quality hardening
 - Class: operability
-- Status: active
+- Status: validated
 - Description: Code review findings in the model registry path are addressed with targeted cleanup and refactoring where needed to improve correctness, maintainability, and observability without changing intended behavior
 - Why it matters: Better tests alone are not enough if the underlying design remains brittle or misleading
 - Source: user
 - Primary owning slice: M002
 - Supporting slices: none
-- Validation: Pending - review findings resolved and revised code proven by the stronger verification path
+- Validation: M002 - Import path fixes (S01), cachePath injection for testability (S02), observable diagnostics (S03) delivered through slice work
 - Notes: Scope includes adjacent infrastructure only when necessary to harden the registry path
 
 ### R011 - Reconcile milestone work with current upstream mainline
@@ -147,6 +147,7 @@ This file is the explicit capability and coverage contract for the project.
 - R007 — Registry path build/test workflow must be trustworthy (M002/S01: npm run build && npm test succeed)
 - R008 — Registry behavior proven through production-like scenarios (M002/S02: 9 scenario tests with tmpdir isolation)
 - R009 — Live models.dev verification in main suite (M002/S03: live test with Zod validation and env var gate)
+- R010 — Model registry path quality hardening (M002: import fixes, testability injection, observable diagnostics)
 
 ## Deferred
 
@@ -169,13 +170,13 @@ This file is the explicit capability and coverage contract for the project.
 | R007 | operability | validated | M002/S01 | none | S01 build + test workflow |
 | R008 | quality-attribute | validated | M002/S02 | none | S02 9 scenario tests |
 | R009 | quality-attribute | validated | M002/S03 | none | S03 live test with Zod validation |
-| R010 | operability | active | M002 | none | Pending |
+| R010 | operability | validated | M002 | none | Import fixes, testability injection, diagnostics |
 | R011 | operability | active | M003 | none | Pending |
 | R012 | operability | active | M003 | none | Pending |
 
 ## Coverage Summary
 
-- Active requirements: 3
+- Active requirements: 2
 - Mapped to slices: 12
-- Validated: 9
+- Validated: 10
 - Unmapped active requirements: 0

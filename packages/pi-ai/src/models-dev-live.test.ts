@@ -19,7 +19,7 @@ function shouldRunLiveTest(): boolean {
 }
 
 describe("models-dev live verification", () => {
-  it("fetches from production models.dev API and validates mapper output", async () => {
+  it("fetches from production models.dev API and validates mapper output", { timeout: TIMEOUT_MS + 5000 }, async () => {
     // Skip if env var disables live test
     if (!shouldRunLiveTest()) {
       console.log("  ⊹ Skipped: LIVE_MODELS_DEV_TEST env var is set to 'false' or '0'");
@@ -64,5 +64,5 @@ describe("models-dev live verification", () => {
     console.log(
       `  ⊹ Mapper output: ${models.length} models from ${uniqueProviders.size} providers`
     );
-  }, TIMEOUT_MS + 5000); // Add buffer for test runner overhead
+  });
 });
