@@ -197,17 +197,42 @@ jobs:
           VERSION=$(node -p "require('./package.json').version")
           TMPDIR=$(mktemp -d)
           cd "$TMPDIR"
-          npm init -y
-          # Retry npm install with backoff — npm registry propagation can take 30-90s
-          for attempt in 1 2 3 4 5; do
-            echo "Smoke test attempt ${attempt}/5..."
-            if npm install "gsd-pi@${VERSION}" 2>/dev/null; then
-              npx gsd --version
-              echo "Published package is functional"
+          npm init -y > /dev/null 2>&1
+
+          # Wait for npm registry to show the new version (metadata propagation)
+          echo "Waiting for gsd-pi@${VERSION} to appear on npm..."
+          for attempt in $(seq 1 20); do
+            PUBLISHED=$(npm view "gsd-pi@${VERSION}" version 2>/dev/null || echo "")
+            if [ "${PUBLISHED}" = "${VERSION}" ]; then
+              echo "  ✓ Version ${VERSION} visible on npm (attempt ${attempt})"
+              break
+            fi
+            if [ "$attempt" = "20" ]; then
+              echo "::warning::gsd-pi@${VERSION} not visible on npm after 5 minutes — skipping smoke test"
               exit 0
             fi
-            echo "npm install failed, waiting before retry..."
-            sleep 30
+            sleep 15
           done
-          echo "::error::Smoke test failed after 5 attempts — gsd-pi@${VERSION} not installable from npm"
+
+          # Now install and verify
+          echo "Installing gsd-pi@${VERSION}..."
+          for attempt in 1 2 3; do
+            if npm install "gsd-pi@${VERSION}" 2>&1 | tee /tmp/install-output.txt; then
+              echo "  ✓ Install succeeded"
+              # Run version check via node directly (npx may resolve wrong binary)
+              ACTUAL=$(node node_modules/gsd-pi/dist/loader.js --version 2>&1 || echo "FAILED")
+              if [ "$ACTUAL" = "$VERSION" ]; then
+                echo "  ✓ gsd --version = ${VERSION}"
+                echo "Published package is functional"
+                exit 0
+              else
+                echo "::error::Version mismatch: expected ${VERSION}, got ${ACTUAL}"
+                exit 1
+              fi
+            fi
+            echo "Install attempt ${attempt}/3 failed, retrying in 15s..."
+            cat /tmp/install-output.txt
+            sleep 15
+          done
+          echo "::error::Smoke test failed — gsd-pi@${VERSION} not installable"
           exit 1
