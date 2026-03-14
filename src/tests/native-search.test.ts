@@ -4,6 +4,7 @@ import {
   registerNativeSearchHooks,
   stripThinkingFromHistory,
   BRAVE_TOOL_NAMES,
+  CUSTOM_SEARCH_TOOL_NAMES,
   type NativeSearchPI,
 } from "../resources/extensions/search-the-web/native-search.ts";
 
@@ -22,7 +23,7 @@ interface MockHandler {
 
 function createMockPI() {
   const handlers: MockHandler[] = [];
-  let activeTools = ["search-the-web", "search_and_read", "fetch_page", "bash", "read"];
+  let activeTools = ["search-the-web", "search_and_read", "google_search", "fetch_page", "bash", "read"];
   const notifications: Array<{ message: string; level: string }> = [];
 
   const mockCtx = {
@@ -96,6 +97,34 @@ test("before_provider_request injects web_search for claude models", async () =>
   );
   assert.ok(hasNative, "Should inject web_search_20250305 tool");
   assert.equal((tools as any[]).length, 2, "Should have original + injected tool");
+});
+
+test("before_provider_request injects web_search for claude models even without model_select", async () => {
+  const pi = createMockPI();
+  registerNativeSearchHooks(pi);
+
+  // NO model_select fired — simulates session restore where modelsAreEqual suppresses the event
+  const payload: Record<string, unknown> = {
+    model: "claude-opus-4-6",
+    tools: [
+      { name: "bash", type: "custom" },
+      { name: "search-the-web", type: "function" },
+      { name: "google_search", type: "function" },
+    ],
+  };
+
+  const result = await pi.fire("before_provider_request", {
+    type: "before_provider_request",
+    payload,
+  });
+
+  const tools = ((result as any)?.tools ?? payload.tools) as any[];
+  const names = tools.map((t: any) => t.name ?? t.type);
+
+  assert.ok(names.includes("web_search"), "Should inject native web_search based on model name");
+  assert.ok(!names.includes("search-the-web"), "Should remove search-the-web");
+  assert.ok(!names.includes("google_search"), "Should remove google_search");
+  assert.ok(names.includes("bash"), "Should keep non-search tools");
 });
 
 test("before_provider_request does NOT inject for non-claude models", async () => {
@@ -230,6 +259,7 @@ test("model_select disables Brave tools when Anthropic + no BRAVE_API_KEY", asyn
     const active = pi.getActiveTools();
     assert.ok(!active.includes("search-the-web"), "search-the-web should be disabled");
     assert.ok(!active.includes("search_and_read"), "search_and_read should be disabled");
+    assert.ok(!active.includes("google_search"), "google_search should be disabled");
     assert.ok(active.includes("fetch_page"), "fetch_page should remain active");
     assert.ok(active.includes("bash"), "Other tools should remain active");
   } finally {
@@ -238,7 +268,7 @@ test("model_select disables Brave tools when Anthropic + no BRAVE_API_KEY", asyn
   }
 });
 
-test("model_select keeps Brave tools when BRAVE_API_KEY is set", async () => {
+test("model_select disables all custom search tools when Anthropic even with BRAVE_API_KEY", async () => {
   const originalKey = process.env.BRAVE_API_KEY;
   process.env.BRAVE_API_KEY = "test-key";
 
@@ -254,8 +284,10 @@ test("model_select keeps Brave tools when BRAVE_API_KEY is set", async () => {
     });
 
     const active = pi.getActiveTools();
-    assert.ok(active.includes("search-the-web"), "search-the-web should stay active");
-    assert.ok(active.includes("search_and_read"), "search_and_read should stay active");
+    assert.ok(!active.includes("search-the-web"), "search-the-web should be disabled for Anthropic");
+    assert.ok(!active.includes("search_and_read"), "search_and_read should be disabled for Anthropic");
+    assert.ok(!active.includes("google_search"), "google_search should be disabled for Anthropic");
+    assert.ok(active.includes("fetch_page"), "fetch_page should remain active");
   } finally {
     if (originalKey) process.env.BRAVE_API_KEY = originalKey;
     else delete process.env.BRAVE_API_KEY;
@@ -292,6 +324,7 @@ test("model_select re-enables Brave tools when switching away from Anthropic", a
     active = pi.getActiveTools();
     assert.ok(active.includes("search-the-web"), "search-the-web should be re-enabled");
     assert.ok(active.includes("search_and_read"), "search_and_read should be re-enabled");
+    assert.ok(active.includes("google_search"), "google_search should be re-enabled");
   } finally {
     if (originalKey) process.env.BRAVE_API_KEY = originalKey;
     else delete process.env.BRAVE_API_KEY;
@@ -387,6 +420,10 @@ test("BRAVE_TOOL_NAMES contains expected tool names", () => {
   assert.deepEqual(BRAVE_TOOL_NAMES, ["search-the-web", "search_and_read"]);
 });
 
+test("CUSTOM_SEARCH_TOOL_NAMES contains all custom search tools", () => {
+  assert.deepEqual(CUSTOM_SEARCH_TOOL_NAMES, ["search-the-web", "search_and_read", "google_search"]);
+});
+
 test("before_provider_request removes Brave tools from payload when no BRAVE_API_KEY", async () => {
   const originalKey = process.env.BRAVE_API_KEY;
   delete process.env.BRAVE_API_KEY;
@@ -408,6 +445,7 @@ test("before_provider_request removes Brave tools from payload when no BRAVE_API
         { name: "bash", type: "function" },
         { name: "search-the-web", type: "function" },
         { name: "search_and_read", type: "function" },
+        { name: "google_search", type: "function" },
         { name: "fetch_page", type: "function" },
       ],
     };
@@ -422,6 +460,7 @@ test("before_provider_request removes Brave tools from payload when no BRAVE_API
 
     assert.ok(!names.includes("search-the-web"), "search-the-web should be removed from payload");
     assert.ok(!names.includes("search_and_read"), "search_and_read should be removed from payload");
+    assert.ok(!names.includes("google_search"), "google_search should be removed from payload");
     assert.ok(names.includes("bash"), "bash should remain");
     assert.ok(names.includes("fetch_page"), "fetch_page should remain");
     assert.ok(names.includes("web_search"), "native web_search should be injected");
@@ -431,7 +470,7 @@ test("before_provider_request removes Brave tools from payload when no BRAVE_API
   }
 });
 
-test("before_provider_request keeps Brave tools in payload when BRAVE_API_KEY set", async () => {
+test("before_provider_request removes all custom search tools from payload even with BRAVE_API_KEY", async () => {
   const originalKey = process.env.BRAVE_API_KEY;
   process.env.BRAVE_API_KEY = "test-key";
 
@@ -451,6 +490,8 @@ test("before_provider_request keeps Brave tools in payload when BRAVE_API_KEY se
       tools: [
         { name: "search-the-web", type: "function" },
         { name: "search_and_read", type: "function" },
+        { name: "google_search", type: "function" },
+        { name: "fetch_page", type: "function" },
       ],
     };
 
@@ -462,9 +503,11 @@ test("before_provider_request keeps Brave tools in payload when BRAVE_API_KEY se
     const tools = ((result as any)?.tools ?? payload.tools) as any[];
     const names = tools.map((t: any) => t.name);
 
-    assert.ok(names.includes("search-the-web"), "search-the-web should remain with Brave key");
-    assert.ok(names.includes("search_and_read"), "search_and_read should remain with Brave key");
-    assert.ok(names.includes("web_search"), "native web_search should also be injected");
+    assert.ok(!names.includes("search-the-web"), "search-the-web should be removed for Anthropic");
+    assert.ok(!names.includes("search_and_read"), "search_and_read should be removed for Anthropic");
+    assert.ok(!names.includes("google_search"), "google_search should be removed for Anthropic");
+    assert.ok(names.includes("fetch_page"), "fetch_page should remain");
+    assert.ok(names.includes("web_search"), "native web_search should be injected");
   } finally {
     if (originalKey) process.env.BRAVE_API_KEY = originalKey;
     else delete process.env.BRAVE_API_KEY;
@@ -526,6 +569,10 @@ test("model_select re-enable does not duplicate Brave tools across toggle cycles
     assert.equal(
       active.filter((t) => t === "search_and_read").length, 1,
       "search_and_read exactly once (no duplicates)"
+    );
+    assert.equal(
+      active.filter((t) => t === "google_search").length, 1,
+      "google_search exactly once (no duplicates)"
     );
   } finally {
     if (originalKey) process.env.BRAVE_API_KEY = originalKey;

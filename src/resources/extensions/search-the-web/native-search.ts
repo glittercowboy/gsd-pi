@@ -8,6 +8,9 @@
 /** Tool names for the Brave-backed custom search tools */
 export const BRAVE_TOOL_NAMES = ["search-the-web", "search_and_read"];
 
+/** All custom search tool names that should be disabled when native search is active */
+export const CUSTOM_SEARCH_TOOL_NAMES = ["search-the-web", "search_and_read", "google_search"];
+
 /** Thinking block types that require signature validation by the API */
 const THINKING_TYPES = new Set(["thinking", "redacted_thinking"]);
 
@@ -57,27 +60,30 @@ export function stripThinkingFromHistory(
  */
 export function registerNativeSearchHooks(pi: NativeSearchPI): { getIsAnthropic: () => boolean } {
   let isAnthropicProvider = false;
+  let modelSelectFired = false;
 
   // Track provider changes via model selection — also handles diagnostics
   // since model_select fires AFTER session_start and knows the provider.
   pi.on("model_select", async (event: any, ctx: any) => {
+    modelSelectFired = true;
     const wasAnthropic = isAnthropicProvider;
     isAnthropicProvider = event.model.provider === "anthropic";
 
     const hasBrave = !!process.env.BRAVE_API_KEY;
 
-    // When Anthropic + no Brave key: disable custom search tools (they'd fail)
-    if (isAnthropicProvider && !hasBrave) {
+    // When Anthropic: disable all custom search tools — native web_search is
+    // server-side and more reliable. Custom tools cause confusion and failures.
+    if (isAnthropicProvider) {
       const active = pi.getActiveTools();
       pi.setActiveTools(
-        active.filter((t: string) => !BRAVE_TOOL_NAMES.includes(t))
+        active.filter((t: string) => !CUSTOM_SEARCH_TOOL_NAMES.includes(t))
       );
-    } else if (!isAnthropicProvider && wasAnthropic && !hasBrave) {
-      // Switching away from Anthropic without Brave — re-enable so the user
-      // sees the "missing key" error rather than tools silently vanishing.
-      // Only add tools not already active to avoid duplicates on repeated toggles.
+    } else if (!isAnthropicProvider && wasAnthropic) {
+      // Switching away from Anthropic — re-enable custom search tools (they
+      // were disabled while native search was active). If keys are missing,
+      // user sees the error rather than tools silently vanishing.
       const active = pi.getActiveTools();
-      const toAdd = BRAVE_TOOL_NAMES.filter((t) => !active.includes(t));
+      const toAdd = CUSTOM_SEARCH_TOOL_NAMES.filter((t) => !active.includes(t));
       if (toAdd.length > 0) {
         pi.setActiveTools([...active, ...toAdd]);
       }
@@ -99,11 +105,17 @@ export function registerNativeSearchHooks(pi: NativeSearchPI): { getIsAnthropic:
     const payload = event.payload as Record<string, unknown>;
     if (!payload) return;
 
-    // Only inject native web search for confirmed Anthropic provider.
-    // model_select sets isAnthropicProvider via the provider field.
-    // Model name prefix is NOT sufficient — other providers (GitHub Copilot,
-    // AWS Bedrock, etc.) serve claude-* models through non-Anthropic APIs.
-    if (!isAnthropicProvider) return;
+    // Detect Anthropic provider. Prefer the model_select flag when available,
+    // but fall back to checking the model name in the payload. model_select
+    // may not fire when the session restores with the same model already set
+    // (modelsAreEqual guard in the SDK suppresses the event). When model_select
+    // HAS fired and said "not Anthropic" (e.g. Copilot serving claude-*),
+    // respect that — don't override with model name heuristic.
+    const modelName = typeof payload.model === "string" ? payload.model : "";
+    const isAnthropic = modelSelectFired
+      ? isAnthropicProvider
+      : modelName.startsWith("claude-");
+    if (!isAnthropic) return;
 
     // Strip thinking blocks from history to avoid signature validation errors
     // caused by the SDK dropping server_tool_use/web_search_tool_result blocks.
@@ -119,16 +131,13 @@ export function registerNativeSearchHooks(pi: NativeSearchPI): { getIsAnthropic:
     // Don't double-inject if already present
     if (tools.some((t) => t.type === "web_search_20250305")) return;
 
-    // When no Brave key, remove Brave-based search tool definitions from the
-    // payload so Claude doesn't see (and try to call) broken tools.
-    // This is more reliable than setActiveTools since model_select may not fire.
-    const hasBrave = !!process.env.BRAVE_API_KEY;
-    if (!hasBrave) {
-      tools = tools.filter(
-        (t) => !BRAVE_TOOL_NAMES.includes(t.name as string)
-      );
-      payload.tools = tools;
-    }
+    // Always remove custom search tool definitions from Anthropic requests.
+    // Native web_search is server-side and more reliable — keeping both confuses
+    // the model and causes it to pick custom tools which can fail with network errors.
+    tools = tools.filter(
+      (t) => !CUSTOM_SEARCH_TOOL_NAMES.includes(t.name as string)
+    );
+    payload.tools = tools;
 
     tools.push({
       type: "web_search_20250305",
