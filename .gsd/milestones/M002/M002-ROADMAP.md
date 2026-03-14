@@ -48,7 +48,7 @@ This milestone is complete only when all are true:
 
 ## Slices
 
-- [ ] **S01: Build/Test Infrastructure Repair** `risk:high` `depends:[]`
+- [x] **S01: Build/Test Infrastructure Repair** `risk:high` `depends:[]`
   > After this: `npm run build` and `npm test` succeed in `@gsd/pi-ai`, enabling all downstream registry-path verification work.
 
 - [ ] **S02: Production-Like Scenario Testing** `risk:high` `depends:[S01]`

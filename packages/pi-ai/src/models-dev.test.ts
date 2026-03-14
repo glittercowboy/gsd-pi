@@ -10,8 +10,13 @@ import {
   fetchModelsDev,
   getModelsDev,
   refreshModelsDev,
+<<<<<<< HEAD
 } from "./models-dev.ts";
 import type { CacheEntry } from "./models-dev.ts";
+=======
+} from "./models-dev.js";
+import type { CacheEntry } from "./models-dev.js";
+>>>>>>> gsd/M002/S01
 
 const SAMPLE_DATA = {
   "anthropic": {

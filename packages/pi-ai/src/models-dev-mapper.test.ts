@@ -1,7 +1,12 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+<<<<<<< HEAD
 import { mapToModelRegistry, parseModelsDevData } from "./models-dev-mapper.ts";
 import { ModelsDevData, ModelsDevProvider, ModelsDevModel } from "./models-dev-types.ts";
+=======
+import { mapToModelRegistry, parseModelsDevData } from "./models-dev-mapper.js";
+import { ModelsDevData, ModelsDevProvider, ModelsDevModel } from "./models-dev-types.js";
+>>>>>>> gsd/M002/S01
 
 /**
  * Sample models.dev response data for testing.
