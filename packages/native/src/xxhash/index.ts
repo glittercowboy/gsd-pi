@@ -20,6 +20,11 @@ function rotl32(v: number, n: number): number {
   return ((v << n) | (v >>> (32 - n))) >>> 0;
 }
 
+/** Single xxHash32 lane accumulation step (processes one 32-bit word). */
+function accumulate(v: number, lane: number): number {
+  return Math.imul(rotl32((v + Math.imul(lane, PRIME32_2)) >>> 0, 13), PRIME32_1) >>> 0;
+}
+
 function xxHash32JS(input: string, seed: number): number {
   const data = Buffer.from(input, "utf-8");
   const len = data.length;
@@ -33,10 +38,10 @@ function xxHash32JS(input: string, seed: number): number {
     let v4 = (seed - PRIME32_1) >>> 0;
 
     while (i <= len - 16) {
-      v1 = Math.imul(rotl32((v1 + Math.imul(data.readUInt32LE(i), PRIME32_2)) >>> 0, 13), PRIME32_1) >>> 0; i += 4;
-      v2 = Math.imul(rotl32((v2 + Math.imul(data.readUInt32LE(i), PRIME32_2)) >>> 0, 13), PRIME32_1) >>> 0; i += 4;
-      v3 = Math.imul(rotl32((v3 + Math.imul(data.readUInt32LE(i), PRIME32_2)) >>> 0, 13), PRIME32_1) >>> 0; i += 4;
-      v4 = Math.imul(rotl32((v4 + Math.imul(data.readUInt32LE(i), PRIME32_2)) >>> 0, 13), PRIME32_1) >>> 0; i += 4;
+      v1 = accumulate(v1, data.readUInt32LE(i)); i += 4;
+      v2 = accumulate(v2, data.readUInt32LE(i)); i += 4;
+      v3 = accumulate(v3, data.readUInt32LE(i)); i += 4;
+      v4 = accumulate(v4, data.readUInt32LE(i)); i += 4;
     }
 
     h32 = (rotl32(v1, 1) + rotl32(v2, 7) + rotl32(v3, 12) + rotl32(v4, 18)) >>> 0;

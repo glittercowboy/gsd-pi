@@ -567,7 +567,10 @@ const ROADMAP_COMPLETE = `# M001: Test Milestone
     const result = skipExecuteTask(
       base, "M002", "S03", "T01",
       { summaryExists: false, taskChecked: false },
-      "loop-recovery", 3,
+      "loop-recovery",
+      // 3 == MAX_UNIT_DISPATCHES: represents the prevCount when the final
+      // reconciliation path runs (loop detected, reconciling before halting).
+      3,
     );
 
     assert(result === true, "loop-recovery should succeed");

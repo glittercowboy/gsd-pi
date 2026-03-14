@@ -135,6 +135,8 @@ let gitService: GitServiceImpl | null = null;
 /** Track total dispatches per unit to detect stuck loops (catches A→B→A→B patterns) */
 const unitDispatchCount = new Map<string, number>();
 const MAX_UNIT_DISPATCHES = 3;
+/** Retry index at which a stub summary placeholder is written when the summary is still absent. */
+const STUB_RECOVERY_THRESHOLD = 2;
 
 /** Tracks recovery attempt count per unit for backoff and diagnostics. */
 const unitRecoveryCount = new Map<string, number>();
@@ -1550,8 +1552,8 @@ async function dispatchNextUnit(
             await dispatchNextUnit(ctx, pi);
             return;
           }
-        } else if (prevCount >= 2 && !status.summaryExists) {
-          // Retry 2+: summary still missing after two full attempts — write a
+        } else if (prevCount >= STUB_RECOVERY_THRESHOLD && !status.summaryExists) {
+          // Retry STUB_RECOVERY_THRESHOLD+: summary still missing after multiple attempts — write a
           // stub summary with a BLOCKER note so the agent can re-examine it.
           const repaired = skipExecuteTask(basePath, mid, sid, tid, status, "stub-recovery", prevCount);
           if (repaired) {
