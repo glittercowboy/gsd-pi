@@ -322,6 +322,14 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 				const model = agent.state.model;
 				const isOAuth = model && modelRegistry.isUsingOAuth(model);
 				if (isOAuth) {
+					// If credentials exist but are all in a backoff window (quota / rate-limit),
+					// surface a specific message instead of the misleading "Authentication failed".
+					if (modelRegistry.authStorage.areAllCredentialsBackedOff(resolvedProvider)) {
+						throw new Error(
+							`Rate limit in effect for "${resolvedProvider}". ` +
+								`Please wait before retrying or switch to a different model.`,
+						);
+					}
 					throw new Error(
 						`Authentication failed for "${resolvedProvider}". ` +
 							`Credentials may have expired or network is unavailable. ` +

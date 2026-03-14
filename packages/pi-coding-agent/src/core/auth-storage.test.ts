@@ -178,6 +178,44 @@ describe("AuthStorage — rate-limit backoff", () => {
 	});
 });
 
+// ─── areAllCredentialsBackedOff ───────────────────────────────────────────────
+
+describe("AuthStorage — areAllCredentialsBackedOff", () => {
+	it("returns false when no credentials are configured", () => {
+		const storage = inMemory({});
+		assert.equal(storage.areAllCredentialsBackedOff("anthropic"), false);
+	});
+
+	it("returns false when credentials exist and none are backed off", async () => {
+		const storage = inMemory({ anthropic: makeKey("sk-abc") });
+		assert.equal(storage.areAllCredentialsBackedOff("anthropic"), false);
+	});
+
+	it("returns true when the single credential is backed off", async () => {
+		const storage = inMemory({ anthropic: makeKey("sk-only") });
+		await storage.getApiKey("anthropic");
+		storage.markUsageLimitReached("anthropic");
+		assert.equal(storage.areAllCredentialsBackedOff("anthropic"), true);
+	});
+
+	it("returns false when at least one credential is still available", async () => {
+		const storage = inMemory({ anthropic: [makeKey("sk-1"), makeKey("sk-2")] });
+		await storage.getApiKey("anthropic"); // uses index 0
+		storage.markUsageLimitReached("anthropic"); // backs off index 0
+		// index 1 is still available
+		assert.equal(storage.areAllCredentialsBackedOff("anthropic"), false);
+	});
+
+	it("returns true when all credentials are backed off", async () => {
+		const storage = inMemory({ anthropic: [makeKey("sk-1"), makeKey("sk-2")] });
+		await storage.getApiKey("anthropic"); // uses index 0
+		storage.markUsageLimitReached("anthropic"); // backs off index 0
+		await storage.getApiKey("anthropic"); // uses index 1
+		storage.markUsageLimitReached("anthropic"); // backs off index 1
+		assert.equal(storage.areAllCredentialsBackedOff("anthropic"), true);
+	});
+});
+
 // ─── getAll truncation ────────────────────────────────────────────────────────
 
 describe("AuthStorage — getAll()", () => {

@@ -2348,6 +2348,22 @@ export class AgentSession {
 
 				return true;
 			}
+
+			// All credentials are backed off. For quota-exhausted errors the backoff is very
+			// long (30+ min), so retrying immediately is futile and will only produce
+			// confusing secondary errors (e.g. "Authentication failed"). Give up now and
+			// surface the original quota error to the user.
+			if (errorType === "quota_exhausted") {
+				this._emit({
+					type: "auto_retry_end",
+					success: false,
+					attempt: this._retryAttempt,
+					finalError: message.errorMessage,
+				});
+				this._retryAttempt = 0;
+				this._resolveRetry();
+				return false;
+			}
 		}
 
 		this._retryAttempt++;

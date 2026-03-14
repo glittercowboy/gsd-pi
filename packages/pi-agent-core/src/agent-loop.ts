@@ -138,7 +138,36 @@ async function runLoop(
 			}
 
 			// Stream assistant response
-			const message = await streamAssistantResponse(currentContext, config, signal, stream, streamFn);
+			let message: AssistantMessage;
+			try {
+				message = await streamAssistantResponse(currentContext, config, signal, stream, streamFn);
+			} catch (error) {
+				// Critical failure before stream started (e.g. getApiKey threw, credentials in
+				// backoff, network unavailable). Convert to a graceful error message so the
+				// agent loop can end cleanly instead of crashing with an unhandled rejection.
+				const errorText = error instanceof Error ? error.message : String(error);
+				message = {
+					role: "assistant",
+					content: [],
+					api: config.model.api,
+					provider: config.model.provider,
+					model: config.model.id,
+					usage: {
+						input: 0,
+						output: 0,
+						cacheRead: 0,
+						cacheWrite: 0,
+						totalTokens: 0,
+						cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+					},
+					stopReason: signal?.aborted ? "aborted" : "error",
+					errorMessage: errorText,
+					timestamp: Date.now(),
+				};
+				stream.push({ type: "message_start", message: { ...message } });
+				stream.push({ type: "message_end", message });
+				currentContext.messages.push(message);
+			}
 			newMessages.push(message);
 
 			if (message.stopReason === "error" || message.stopReason === "aborted") {
