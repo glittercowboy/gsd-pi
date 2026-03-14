@@ -26,6 +26,7 @@ venv/
 target/
 vendor/
 !packages/pi-coding-agent/src/core/export-html/vendor/
+!pkg/dist/core/export-html/vendor/
 *.log
 coverage/
 .cache/
@@ -37,6 +38,7 @@ packages/*/node_modules/
 
 # ── GSD baseline (auto-generated) ──
 dist/
+!/pkg/dist/
 .bg_shell
 .gsd*.tgz
 .artifacts/
