@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: Native Desktop
 status: in_progress
-stopped_at: Completed 19-03-PLAN.md
-last_updated: "2026-03-14T15:11:04.623Z"
+stopped_at: Completed 19-04-PLAN.md — Phase 19 Project Workspace fully complete
+last_updated: "2026-03-14T15:26:04.558Z"
 last_activity: "2026-03-14 — Plan 19-01 complete: 4 RED test stub files created (workspace-api, project-archiving, project-home-screen, project-tab-bar); 747 passing tests unaffected; WORKSPACE-01..05 test coverage established"
 progress:
   total_phases: 10
   completed_phases: 7
   total_plans: 45
-  completed_plans: 42
+  completed_plans: 43
   percent: 91
 ---
 
@@ -466,7 +466,7 @@ Phase: 19 of 20 (Project Workspace) — In Progress (1 of 5 plans done)
 Plan: 1 of 5 complete (plan 01 done — 4 Nyquist Wave 0 RED test stubs created)
 Status: Phase 19 in progress. Next: Phase 19-02 workspace-api implementation.
 Last activity: 2026-03-14 — Plan 19-01 complete: 4 RED test stub files created (workspace-api, project-archiving, project-home-screen, project-tab-bar); 747 passing tests unaffected; WORKSPACE-01..05 test coverage established
-Stopped at: Completed 19-03-PLAN.md
+Stopped at: Completed 19-04-PLAN.md — Phase 19 Project Workspace fully complete
 
 Progress: [█████████░] 89% (40/45 plans complete)
 
@@ -596,6 +596,8 @@ Progress: [█████████░] 89% (40/45 plans complete)
 - [Phase 19]: ProjectHomeScreen optional projects prop for test/SSR compatibility — skips fetch when prop provided
 - [Phase 19]: ProjectCardMenu absolute-positioned inline div, no library — per workspace research anti-pattern guidance
 - [Phase 19]: Tauri reveal_path wrapped in dynamic import + catch — silently no-ops outside Tauri context
+- [Phase 19]: ProjectTabBar uses openProjects prop (not projects) to match test contract from 19-01 RED stubs; default export to match test import style
+- [Phase 19]: goHome state cleared by dismiss() — selecting a project from home correctly exits home mode
 
 ### Blockers/Concerns
 

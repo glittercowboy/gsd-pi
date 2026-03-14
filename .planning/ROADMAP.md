@@ -253,5 +253,5 @@ Plans:
 | 16. OAuth + Keychain | 4/4 | Complete    | 2026-03-14 | — |
 | 17. Permission Model | 3/3 | Complete    | 2026-03-14 | — |
 | 18. Builder Mode | 4/4 | Complete    | 2026-03-14 | — |
-| 19. Project Workspace | 3/5 | In Progress|  | — |
+| 19. Project Workspace | 4/5 | In Progress|  | — |
 | 20. Installer + Distribution | v2.0 | 0/TBD | Not started | — |
