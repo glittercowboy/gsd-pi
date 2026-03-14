@@ -16,7 +16,7 @@ import type {
   ExtensionCommandContext,
 } from "@gsd/pi-coding-agent";
 
-import { deriveState } from "./state.js";
+import { deriveState, invalidateStateCache } from "./state.js";
 import type { GSDState } from "./types.js";
 import { loadFile, parseContinue, parsePlan, parseRoadmap, parseSummary, extractUatType, inlinePriorMilestoneSummary, getManifestStatus } from "./files.js";
 export { inlinePriorMilestoneSummary };
@@ -574,6 +574,7 @@ export async function startAuto(
     } catch { /* non-fatal */ }
     // Self-heal: clear stale runtime records where artifacts already exist
     await selfHealRuntimeRecords(base, ctx);
+    invalidateStateCache();
     await dispatchNextUnit(ctx, pi);
     return;
   }
@@ -762,6 +763,10 @@ export async function handleAgentEnd(
 
   // Unit completed — clear its timeout
   clearUnitTimeout();
+
+  // Invalidate deriveState() cache — the unit just completed and may have
+  // written planning files (task summaries, roadmap checkboxes, etc.)
+  invalidateStateCache();
 
   // Small delay to let files settle (git commits, file writes)
   await new Promise(r => setTimeout(r, 500));
@@ -1332,6 +1337,7 @@ async function dispatchNextUnit(
           }
         }
         // Re-derive state from the now-merged working tree
+        invalidateStateCache();
         state = await deriveState(basePath);
         mid = state.activeMilestone?.id;
         midTitle = state.activeMilestone?.title;
@@ -1396,6 +1402,7 @@ async function dispatchNextUnit(
               "info",
             );
             // Re-derive state from main so downstream logic sees merged state
+            invalidateStateCache();
             state = await deriveState(basePath);
             mid = state.activeMilestone?.id;
             midTitle = state.activeMilestone?.title;
