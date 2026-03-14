@@ -60,6 +60,7 @@
     "pi:uninstall-global": "node scripts/uninstall-pi-global.js",
     "sync-pkg-version": "node scripts/sync-pkg-version.cjs",
     "sync-platform-versions": "node native/scripts/sync-platform-versions.cjs",
+    "generate-snapshot": "node scripts/generate-snapshot.mjs",
     "validate-pack": "bash scripts/validate-pack.sh",
     "prepublishOnly": "npm run sync-pkg-version && npm run sync-platform-versions && git diff --exit-code || (echo 'ERROR: version sync changed files — commit them before publishing' && exit 1) && npm run build && npm run validate-pack"
   },
