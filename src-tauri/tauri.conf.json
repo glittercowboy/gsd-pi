@@ -35,7 +35,24 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
-    "resources": ["dep_screen.html"]
+    "resources": ["dep_screen.html"],
+    "macOS": {
+      "signingIdentity": null,
+      "minimumSystemVersion": "10.15"
+    },
+    "windows": {
+      "certificateThumbprint": null,
+      "digestAlgorithm": "sha256",
+      "timestampUrl": ""
+    },
+    "linux": {
+      "deb": {
+        "depends": []
+      },
+      "appimage": {
+        "bundleMediaFramework": false
+      }
+    }
   },
   "plugins": {
     "protocol": {
