@@ -317,42 +317,62 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 			if (!resolvedProvider) {
 				throw new Error("No model selected");
 			}
-			const key = await modelRegistry.getApiKeyForProvider(resolvedProvider);
-			if (!key) {
-				// Check if credentials exist but are temporarily backed off
-				// (e.g., after a 429 quota exhaustion). Provide a specific error
-				// so the retry handler knows this is transient, not a permanent
-				// auth failure.
+
+			// Retry key resolution with backoff to handle transient network failures
+			// (e.g., OAuth token refresh failing due to brief connectivity loss).
+			const maxAttempts = 3;
+			const baseDelayMs = 2000;
+			for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+				const key = await modelRegistry.getApiKeyForProvider(resolvedProvider);
+				if (key) return key;
+
+				// On the last attempt, fall through to error handling below
+				if (attempt >= maxAttempts) break;
+
+				// Only retry if credentials exist (network issue) — no point retrying
+				// when there are genuinely no credentials configured.
 				const hasAuth = modelRegistry.authStorage.hasAuth(resolvedProvider);
-				if (hasAuth) {
-					throw new Error(
-						`All credentials for "${resolvedProvider}" are temporarily backed off due to rate limiting. ` +
-							`The request will be retried automatically when backoff expires.`,
-					);
-				}
 				const model = agent.state.model;
 				const isOAuth = model && modelRegistry.isUsingOAuth(model);
-				if (isOAuth) {
-					// If credentials exist but are all in a backoff window (quota / rate-limit),
-					// surface a specific message instead of the misleading "Authentication failed".
-					if (modelRegistry.authStorage.areAllCredentialsBackedOff(resolvedProvider)) {
-						throw new Error(
-							`Rate limit in effect for "${resolvedProvider}". ` +
-								`Please wait before retrying or switch to a different model.`,
-						);
-					}
+				if (!hasAuth && !isOAuth) break;
+
+				// Wait with exponential backoff before retrying
+				await new Promise(resolve => setTimeout(resolve, baseDelayMs * attempt));
+			}
+
+			// All retries exhausted — throw descriptive error
+			// Check if credentials exist but are temporarily backed off
+			// (e.g., after a 429 quota exhaustion). Provide a specific error
+			// so the retry handler knows this is transient, not a permanent
+			// auth failure.
+			const hasAuth = modelRegistry.authStorage.hasAuth(resolvedProvider);
+			if (hasAuth) {
+				throw new Error(
+					`All credentials for "${resolvedProvider}" are temporarily backed off due to rate limiting. ` +
+						`The request will be retried automatically when backoff expires.`,
+				);
+			}
+			const model = agent.state.model;
+			const isOAuth = model && modelRegistry.isUsingOAuth(model);
+			if (isOAuth) {
+				// If credentials exist but are all in a backoff window (quota / rate-limit),
+				// surface a specific message instead of the misleading "Authentication failed".
+				if (modelRegistry.authStorage.areAllCredentialsBackedOff(resolvedProvider)) {
 					throw new Error(
-						`Authentication failed for "${resolvedProvider}". ` +
-							`Credentials may have expired or network is unavailable. ` +
-							`Run '/login ${resolvedProvider}' to re-authenticate.`,
+						`Rate limit in effect for "${resolvedProvider}". ` +
+							`Please wait before retrying or switch to a different model.`,
 					);
 				}
 				throw new Error(
-					`No API key found for "${resolvedProvider}". ` +
-						`Set an API key environment variable or run '/login ${resolvedProvider}'.`,
+					`Authentication failed for "${resolvedProvider}". ` +
+						`Credentials may have expired or network is unavailable. ` +
+						`Run '/login ${resolvedProvider}' to re-authenticate.`,
 				);
 			}
-			return key;
+			throw new Error(
+				`No API key found for "${resolvedProvider}". ` +
+					`Set an API key environment variable or run '/login ${resolvedProvider}'.`,
+			);
 		},
 	});
 
