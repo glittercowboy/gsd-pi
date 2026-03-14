@@ -903,7 +903,11 @@ export class TUI extends Container {
 			if (clear) buffer += "\x1b[3J\x1b[2J\x1b[H"; // Clear scrollback, screen, and home
 			for (let i = 0; i < newLines.length; i++) {
 				if (i > 0) buffer += "\r\n";
-				buffer += newLines[i];
+				let line = newLines[i];
+				if (!isImageLine(line) && visibleWidth(line) > width) {
+					line = truncateToWidth(line, width);
+				}
+				buffer += line;
 			}
 			buffer += "\x1b[?2026l"; // End synchronized output
 			this.terminal.write(buffer);

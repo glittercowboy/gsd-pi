@@ -1,7 +1,7 @@
 import { marked, type Token } from "marked";
 import { isImageLine } from "../terminal-image.js";
 import type { Component } from "../tui.js";
-import { applyBackgroundToLine, visibleWidth, wrapTextWithAnsi } from "../utils.js";
+import { applyBackgroundToLine, truncateToWidth, visibleWidth, wrapTextWithAnsi } from "../utils.js";
 
 /**
  * Default text styling for markdown content.
@@ -130,7 +130,16 @@ export class Markdown implements Component {
 			if (isImageLine(line)) {
 				wrappedLines.push(line);
 			} else {
-				wrappedLines.push(...wrapTextWithAnsi(line, contentWidth));
+				const wrapped = wrapTextWithAnsi(line, contentWidth);
+				for (const wl of wrapped) {
+					// Safety net: silently truncate lines that still exceed contentWidth.
+					// This handles edge cases like code blocks with very long whitespace
+					// sequences or tokens that wrapTextWithAnsi cannot split further.
+					// No ellipsis is used (empty string) to avoid visual noise in code output;
+					// the truncation is intentional and matches the terminal-width safety
+					// behavior expected from all TUI components.
+					wrappedLines.push(visibleWidth(wl) > contentWidth ? truncateToWidth(wl, contentWidth, "") : wl);
+				}
 			}
 		}
 
