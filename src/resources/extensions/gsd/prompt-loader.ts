@@ -82,9 +82,11 @@ export function loadTemplate(name: string): string {
 }
 
 /**
- * Load a template and wrap it with a labeled header for inlining into prompts.
+ * Load a template and wrap it with a labeled footer for inlining into prompts.
+ * The template body is emitted first so that any YAML frontmatter (---) remains
+ * at the first non-whitespace line of the template content.
  */
 export function inlineTemplate(name: string, label: string): string {
   const content = loadTemplate(name);
-  return `### Output Template: ${label}\nSource: \`templates/${name}.md\`\n\n${content}`;
+  return `${content}\n\n### Output Template: ${label}\nSource: \`templates/${name}.md\``;
 }
