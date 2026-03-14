@@ -12,6 +12,15 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Fallback `--backend=local` for offline faster-whisper on CPU
 - Venv-aware Python detection (`~/.gsd/voice-venv/bin/python3`)
 
+### Fixed
+- Bypass pre-commit hooks (`--no-verify`) on GSD infrastructure commits (auto-commits, slice merges, runtime file cleanup) to prevent lint-staged "empty commit" errors in projects with prettier/eslint hooks (#385)
+- Improve Cloud Code Assist 404 error with actionable model guidance — names the unavailable model and suggests using the `google` provider with `GOOGLE_API_KEY` (#384)
+- Prevent auto-mode hang when dispatch chain breaks after all slice tasks complete — added dispatch gap watchdog and error boundary (#381)
+- CI smoke test waits for npm registry propagation and surfaces errors (#383)
+- Packaging verification path portability fix (#378)
+- Resources loaded from `dist/` to prevent branch-drift in npm-link setups (#314)
+- Always use native Anthropic web search when available (#374)
+
 ## [2.10.12] - 2026-03-14
 
 ### Fixed
