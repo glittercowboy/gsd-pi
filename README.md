@@ -322,15 +322,16 @@ unique_milestone_ids: true
 
 **Key settings:**
 
-| Setting             | What it controls                                                                                      |
-| ------------------- | ----------------------------------------------------------------------------------------------------- |
-| `models.*`          | Per-phase model selection — string for a single model, or `{model, fallbacks}` for automatic failover |
-| `skill_discovery`   | `auto` / `suggest` / `off` — how GSD finds and applies skills                                         |
-| `auto_supervisor.*` | Timeout thresholds for auto mode supervision                                                          |
-| `budget_ceiling`    | USD ceiling — auto mode pauses when reached                                                           |
-| `uat_dispatch`      | Enable automatic UAT runs after slice completion                                                      |
-| `always_use_skills` | Skills to always load when relevant                                                                   |
-| `skill_rules`       | Situational rules for skill routing                                                                   |
+| Setting                | What it controls                                                                                      |
+| ---------------------- | ----------------------------------------------------------------------------------------------------- |
+| `models.*`             | Per-phase model selection — string for a single model, or `{model, fallbacks}` for automatic failover |
+| `skill_discovery`      | `auto` / `suggest` / `off` — how GSD finds and applies skills                                         |
+| `auto_supervisor.*`    | Timeout thresholds for auto mode supervision                                                          |
+| `budget_ceiling`       | USD ceiling — auto mode pauses when reached                                                           |
+| `uat_dispatch`         | Enable automatic UAT runs after slice completion                                                      |
+| `always_use_skills`    | Skills to always load when relevant                                                                   |
+| `skill_rules`          | Situational rules for skill routing                                                                   |
+| `unique_milestone_ids` | Uses unique milestone names to avoid clashes when working in teams of people                          |
 
 ### Bundled Tools
 
@@ -362,6 +363,48 @@ Three specialized subagents for delegated work:
 | **Scout**      | Fast codebase recon — returns compressed context for handoff |
 | **Researcher** | Web research — finds and synthesizes current information     |
 | **Worker**     | General-purpose execution in an isolated context window      |
+
+---
+
+## Working in teams
+
+The best practice for working in teams is to ensure unique milestone names across all branches (by using `unique_milestone_ids`) and checking in the right `.gsd/` artifacts to share valueable context between teammates.
+
+### Suggested .gitignore setup
+```bash
+# ── GSD: Runtime / Ephemeral (per-developer, per-session) ──────────────────
+# Crash detection sentinel — PID lock, written per auto-mode session
+.gsd/auto.lock
+# Auto-mode dispatch tracker — prevents re-running completed units
+.gsd/completed-units.json
+# Derived state cache — regenerated from plan/roadmap files on disk
+.gsd/STATE.md
+# Per-developer token/cost accumulator
+.gsd/metrics.json
+# Raw JSONL session dumps — crash recovery forensics, auto-pruned
+.gsd/activity/
+# Unit execution records — dispatch phase, timeouts, recovery tracking
+.gsd/runtime/
+# Git worktree working copies
+.gsd/worktrees/
+# Session-specific interrupted-work markers
+.gsd/milestones/**/continue.md
+.gsd/milestones/**/*-CONTINUE.md
+```
+
+### Unique Milestone Names
+
+Create or amend your `.gsd/preferences.md` file within the repo to include `unique_milestone_ids: true` e.g.
+```markdown
+---
+version: 1
+unique_milestone_ids: true
+---
+```
+
+With the above `.gitignore` set up, the `.gsd/preferences.md` file is checked into the repo ensuring all teammates use unique milestone names to avoid collisions.
+
+Milestone names will now be generated with a 6 char random string appended e.g. instead of `M001` you'll get something like `M001-ush8s3`
 
 ---
 
