@@ -1,13 +1,6 @@
 
-# ── GSD (runtime artifacts; keep durable project docs trackable) ──
-.gsd/*
-!.gsd/PROJECT.md
-!.gsd/REQUIREMENTS.md
-!.gsd/DECISIONS.md
-!.gsd/QUEUE.md
-!.gsd/STATE.md
-!.gsd/milestones/
-!.gsd/milestones/**
+# ── GSD (user project artifacts — never commit) ──
+.gsd/
 .claude/
 *.tgz
 .DS_Store
@@ -57,14 +50,7 @@ TODOS.md
 .planning/
 
 # ── GSD baseline (auto-generated) ──
-.gsd/*
-!.gsd/PROJECT.md
-!.gsd/REQUIREMENTS.md
-!.gsd/DECISIONS.md
-!.gsd/QUEUE.md
-!.gsd/STATE.md
-!.gsd/milestones/
-!.gsd/milestones/**
+.gsd/
 
 # ── GSD baseline (auto-generated) ──
 .gsd/activity/
@@ -72,6 +58,7 @@ TODOS.md
 .gsd/worktrees/
 .gsd/auto.lock
 .gsd/metrics.json
+.gsd/STATE.md
 
 # ── GSD baseline (auto-generated) ──
 .gsd/completed-units.json
