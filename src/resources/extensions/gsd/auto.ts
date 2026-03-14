@@ -435,7 +435,8 @@ async function mergeOrphanedSliceBranches(
       );
     } catch (error) {
       if (error instanceof MergeConflictError) {
-        // Reset the incomplete merge so auto-mode can still start cleanly.
+        // Abort and reset the incomplete merge so auto-mode can still start cleanly.
+        runGit(base, ["merge", "--abort"], { allowFailure: true });
         runGit(base, ["reset", "--hard", "HEAD"], { allowFailure: true });
         ctx.ui.notify(
           `Orphaned branch ${branch} has merge conflicts — resolve manually and restart.\nConflicts in: ${error.conflictedFiles.join(", ")}`,
@@ -450,7 +451,6 @@ async function mergeOrphanedSliceBranches(
         `Failed to merge orphaned branch ${branch}: ${message}`,
         "warning",
       );
-    }
   }
 }
 
