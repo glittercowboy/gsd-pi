@@ -37,7 +37,7 @@ import { githubCopilotOAuthProvider } from "./github-copilot.js";
 import { antigravityOAuthProvider } from "./google-antigravity.js";
 import { geminiCliOAuthProvider } from "./google-gemini-cli.js";
 import { openaiCodexOAuthProvider } from "./openai-codex.js";
-import type { OAuthCredentials, OAuthProviderId, OAuthProviderInfo, OAuthProviderInterface } from "./types.js";
+import type { OAuthCredentials, OAuthProviderId, OAuthProviderInterface } from "./types.js";
 
 const BUILT_IN_OAUTH_PROVIDERS: OAuthProviderInterface[] = [
 	anthropicOAuthProvider,
@@ -97,35 +97,9 @@ export function getOAuthProviders(): OAuthProviderInterface[] {
 	return Array.from(oauthProviderRegistry.values());
 }
 
-/**
- * @deprecated Use getOAuthProviders() which returns OAuthProviderInterface[]
- */
-export function getOAuthProviderInfoList(): OAuthProviderInfo[] {
-	return getOAuthProviders().map((p) => ({
-		id: p.id,
-		name: p.name,
-		available: true,
-	}));
-}
-
 // ============================================================================
 // High-level API (uses provider registry)
 // ============================================================================
-
-/**
- * Refresh token for any OAuth provider.
- * @deprecated Use getOAuthProvider(id).refreshToken() instead
- */
-export async function refreshOAuthToken(
-	providerId: OAuthProviderId,
-	credentials: OAuthCredentials,
-): Promise<OAuthCredentials> {
-	const provider = getOAuthProvider(providerId);
-	if (!provider) {
-		throw new Error(`Unknown OAuth provider: ${providerId}`);
-	}
-	return provider.refreshToken(credentials);
-}
 
 /**
  * Get API key for a provider from OAuth credentials.
