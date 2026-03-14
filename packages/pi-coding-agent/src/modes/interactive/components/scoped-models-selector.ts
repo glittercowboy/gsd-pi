@@ -169,7 +169,7 @@ export class ScopedModelsSelectorComponent extends Container implements Focusabl
 		const enabledCount = this.enabledIds?.length ?? this.allIds.length;
 		const allEnabled = this.enabledIds === null;
 		const countText = allEnabled ? "all enabled" : `${enabledCount}/${this.allIds.length} enabled`;
-		const parts = ["Enter toggle", "^A all", "^X clear", "^P provider", "Alt+↑↓ reorder", "^S save", countText];
+		const parts = ["Enter toggle", "^A all", "^X clear", "^P provider", `${process.platform === "darwin" ? "⌥↑↓" : "Alt+↑↓"} reorder`, "^S save", countText];
 		return this.isDirty
 			? theme.fg("dim", `  ${parts.join(" · ")} `) + theme.fg("warning", "(unsaved)")
 			: theme.fg("dim", `  ${parts.join(" · ")}`);

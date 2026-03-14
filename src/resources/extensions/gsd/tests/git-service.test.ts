@@ -1429,17 +1429,32 @@ async function main(): Promise<void> {
     rmSync(repo, { recursive: true, force: true });
   }
 
-  // ─── writeIntegrationBranch: idempotent — doesn't overwrite ───────────
+  // ─── writeIntegrationBranch: updates when branch changes (#300) ──────
 
-  console.log("\n=== Integration branch: idempotent write ===");
+  console.log("\n=== Integration branch: updates on branch change ===");
 
   {
     const repo = initBranchTestRepo();
 
     writeIntegrationBranch(repo, "M001", "f-123-first");
-    writeIntegrationBranch(repo, "M001", "f-456-second"); // should NOT overwrite
+    writeIntegrationBranch(repo, "M001", "f-456-second"); // updates to new branch (#300)
 
-    assertEq(readIntegrationBranch(repo, "M001"), "f-123-first", "second write does not overwrite existing integration branch");
+    assertEq(readIntegrationBranch(repo, "M001"), "f-456-second", "second write updates integration branch to new value");
+
+    rmSync(repo, { recursive: true, force: true });
+  }
+
+  // ─── writeIntegrationBranch: same branch is idempotent ─────────────────
+
+  console.log("\n=== Integration branch: same branch is idempotent ===");
+
+  {
+    const repo = initBranchTestRepo();
+
+    writeIntegrationBranch(repo, "M001", "f-123-first");
+    writeIntegrationBranch(repo, "M001", "f-123-first"); // same branch — no-op
+
+    assertEq(readIntegrationBranch(repo, "M001"), "f-123-first", "same branch write is idempotent");
 
     rmSync(repo, { recursive: true, force: true });
   }

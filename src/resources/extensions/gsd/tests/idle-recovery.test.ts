@@ -1,10 +1,12 @@
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { execSync } from "node:child_process";
 import {
   resolveExpectedArtifactPath,
   writeBlockerPlaceholder,
   skipExecuteTask,
+  verifyExpectedArtifact,
 } from "../auto.ts";
 
 let passed = 0;
@@ -290,6 +292,119 @@ function cleanup(base: string): void {
     const planContent = readFileSync(planPath, "utf-8");
     assert(planContent.includes("- [x] **T01.1:"), "T01.1 should be checked (regex chars escaped)");
   } finally {
+    cleanup(base);
+  }
+}
+
+// ═══ verifyExpectedArtifact: fix-merge ════════════════════════════════════════
+
+/** Create a real git repo for fix-merge tests */
+function createGitBase(): string {
+  const base = mkdtempSync(join(tmpdir(), "gsd-fixmerge-test-"));
+  execSync("git init -b main", { cwd: base, stdio: "ignore" });
+  execSync("git config user.email test@test.com", { cwd: base, stdio: "ignore" });
+  execSync("git config user.name Test", { cwd: base, stdio: "ignore" });
+  writeFileSync(join(base, "README.md"), "init\n", "utf-8");
+  execSync("git add -A && git commit -m init", { cwd: base, stdio: "ignore" });
+  // Create .gsd structure for the fixture
+  mkdirSync(join(base, ".gsd", "milestones", "M001", "slices", "S01", "tasks"), { recursive: true });
+  return base;
+}
+
+{
+  console.log("\n=== verifyExpectedArtifact: fix-merge — clean repo returns true ===");
+  const base = createGitBase();
+  try {
+    const result = verifyExpectedArtifact("fix-merge", "M001/S01", base);
+    assert(result === true, "clean repo should verify as true");
+  } finally {
+    cleanup(base);
+  }
+}
+
+{
+  console.log("\n=== verifyExpectedArtifact: fix-merge — MERGE_HEAD present returns false ===");
+  const base = createGitBase();
+  try {
+    writeFileSync(join(base, ".git", "MERGE_HEAD"), "abc123\n", "utf-8");
+    const result = verifyExpectedArtifact("fix-merge", "M001/S01", base);
+    assert(result === false, "MERGE_HEAD present should return false");
+  } finally {
+    cleanup(base);
+  }
+}
+
+{
+  console.log("\n=== verifyExpectedArtifact: fix-merge — SQUASH_MSG present returns false ===");
+  const base = createGitBase();
+  try {
+    writeFileSync(join(base, ".git", "SQUASH_MSG"), "squash msg\n", "utf-8");
+    const result = verifyExpectedArtifact("fix-merge", "M001/S01", base);
+    assert(result === false, "SQUASH_MSG present should return false");
+  } finally {
+    cleanup(base);
+  }
+}
+
+{
+  console.log("\n=== verifyExpectedArtifact: fix-merge — real UU conflict returns false ===");
+  const base = createGitBase();
+  try {
+    // Create a conflict: modify same file on two branches
+    writeFileSync(join(base, "conflict.txt"), "main content\n", "utf-8");
+    execSync("git add -A && git commit -m 'main change'", { cwd: base, stdio: "ignore" });
+    execSync("git checkout -b feature", { cwd: base, stdio: "ignore" });
+    writeFileSync(join(base, "conflict.txt"), "feature content\n", "utf-8");
+    execSync("git add -A && git commit -m 'feature change'", { cwd: base, stdio: "ignore" });
+    execSync("git checkout main", { cwd: base, stdio: "ignore" });
+    writeFileSync(join(base, "conflict.txt"), "different main content\n", "utf-8");
+    execSync("git add -A && git commit -m 'diverge'", { cwd: base, stdio: "ignore" });
+    try { execSync("git merge feature", { cwd: base, stdio: "ignore" }); } catch { /* expected conflict */ }
+    const result = verifyExpectedArtifact("fix-merge", "M001/S01", base);
+    assert(result === false, "UU conflict should return false");
+  } finally {
+    execSync("git reset --hard HEAD", { cwd: base, stdio: "ignore" });
+    cleanup(base);
+  }
+}
+
+{
+  console.log("\n=== verifyExpectedArtifact: fix-merge — real DU conflict returns false ===");
+  const base = createGitBase();
+  try {
+    writeFileSync(join(base, "deleted.txt"), "content\n", "utf-8");
+    execSync("git add -A && git commit -m 'add file'", { cwd: base, stdio: "ignore" });
+    execSync("git checkout -b feature2", { cwd: base, stdio: "ignore" });
+    writeFileSync(join(base, "deleted.txt"), "modified on feature\n", "utf-8");
+    execSync("git add -A && git commit -m 'modify on feature'", { cwd: base, stdio: "ignore" });
+    execSync("git checkout main", { cwd: base, stdio: "ignore" });
+    execSync("git rm deleted.txt", { cwd: base, stdio: "ignore" });
+    execSync("git commit -m 'delete on main'", { cwd: base, stdio: "ignore" });
+    try { execSync("git merge feature2", { cwd: base, stdio: "ignore" }); } catch { /* expected conflict */ }
+    const result = verifyExpectedArtifact("fix-merge", "M001/S01", base);
+    assert(result === false, "DU conflict should return false");
+  } finally {
+    execSync("git reset --hard HEAD", { cwd: base, stdio: "ignore" });
+    cleanup(base);
+  }
+}
+
+{
+  console.log("\n=== verifyExpectedArtifact: fix-merge — real AA conflict returns false ===");
+  const base = createGitBase();
+  try {
+    execSync("git checkout -b branch-a", { cwd: base, stdio: "ignore" });
+    writeFileSync(join(base, "both.txt"), "branch-a content\n", "utf-8");
+    execSync("git add -A && git commit -m 'add on branch-a'", { cwd: base, stdio: "ignore" });
+    execSync("git checkout main", { cwd: base, stdio: "ignore" });
+    execSync("git checkout -b branch-b", { cwd: base, stdio: "ignore" });
+    writeFileSync(join(base, "both.txt"), "branch-b content\n", "utf-8");
+    execSync("git add -A && git commit -m 'add on branch-b'", { cwd: base, stdio: "ignore" });
+    try { execSync("git merge branch-a", { cwd: base, stdio: "ignore" }); } catch { /* expected conflict */ }
+    const result = verifyExpectedArtifact("fix-merge", "M001/S01", base);
+    assert(result === false, "AA conflict should return false");
+  } finally {
+    execSync("git reset --hard HEAD", { cwd: base, stdio: "ignore" });
     cleanup(base);
   }
 }

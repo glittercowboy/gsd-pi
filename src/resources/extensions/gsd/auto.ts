@@ -56,7 +56,7 @@ import {
   getProjectTotals, formatCost, formatTokenCount,
 } from "./metrics.js";
 import { dirname, join } from "node:path";
-import { readdirSync, readFileSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { readdirSync, readFileSync, existsSync, mkdirSync, writeFileSync, unlinkSync } from "node:fs";
 import { execSync, execFileSync } from "node:child_process";
 import {
   autoCommitCurrentBranch,
@@ -64,12 +64,13 @@ import {
   ensureSliceBranch,
   getCurrentBranch,
   getMainBranch,
+  MergeConflictError,
   parseSliceBranch,
   setActiveMilestoneId,
   switchToMain,
   mergeSliceToMain,
 } from "./worktree.ts";
-import { GitServiceImpl } from "./git-service.ts";
+import { GitServiceImpl, runGit } from "./git-service.ts";
 import { getPriorSliceCompletionBlocker } from "./dispatch-guard.ts";
 import type { GitPreferences } from "./git-service.ts";
 import { truncateToWidth, visibleWidth } from "@gsd/pi-tui";
@@ -696,6 +697,7 @@ function unitVerb(unitType: string): string {
     case "replan-slice": return "replanning";
     case "reassess-roadmap": return "reassessing";
     case "run-uat": return "running UAT";
+    case "fix-merge": return "resolving conflicts";
     default: return unitType;
   }
 }
@@ -711,6 +713,7 @@ function unitPhaseLabel(unitType: string): string {
     case "replan-slice": return "REPLAN";
     case "reassess-roadmap": return "REASSESS";
     case "run-uat": return "UAT";
+    case "fix-merge": return "MERGE-FIX";
     default: return unitType.toUpperCase();
   }
 }
@@ -727,6 +730,7 @@ function peekNext(unitType: string, state: GSDState): string {
     case "replan-slice": return `re-execute ${sid}`;
     case "reassess-roadmap": return "advance to next slice";
     case "run-uat": return "reassess roadmap";
+    case "fix-merge": return "continue merge";
     default: return "";
   }
 }
@@ -907,7 +911,7 @@ function updateProgressWidget(
 
         const hintParts: string[] = [];
         hintParts.push("esc pause");
-        hintParts.push("Ctrl+Alt+G dashboard");
+        hintParts.push(process.platform === "darwin" ? "⌃⌥G dashboard" : "Ctrl+Alt+G dashboard");
         lines.push(...ui.hints(hintParts));
 
         lines.push(...ui.bar());
@@ -1042,6 +1046,60 @@ async function dispatchNextUnit(
     return;
   }
 
+  // ── Mid-merge safety check: detect leftover state from a prior fix-merge session ──
+  // If MERGE_HEAD or SQUASH_MSG exists, a fix-merge session ran previously.
+  // Check whether it succeeded (no unmerged entries → finalize) or failed (still conflicted → reset + stop).
+  {
+    const mergeHeadPath = join(basePath, ".git", "MERGE_HEAD");
+    const squashMsgPath = join(basePath, ".git", "SQUASH_MSG");
+    const hasMergeHead = existsSync(mergeHeadPath);
+    const hasSquashMsg = existsSync(squashMsgPath);
+    if (hasMergeHead || hasSquashMsg) {
+      const unmerged = runGit(basePath, ["diff", "--name-only", "--diff-filter=U"], { allowFailure: true });
+      if (!unmerged || !unmerged.trim()) {
+        // fix-merge succeeded — finalize the commit if needed (squash or normal merge)
+        if (hasMergeHead || hasSquashMsg) {
+          try {
+            runGit(basePath, ["commit", "--no-edit"], { allowFailure: false });
+            const mode = hasMergeHead ? "merge" : "squash commit";
+            ctx.ui.notify(`Fix-merge session succeeded — finalized ${mode}.`, "info");
+          } catch {
+            // Commit may already exist; non-fatal
+          }
+        }
+        // Re-derive state from the now-merged working tree
+        state = await deriveState(basePath);
+        mid = state.activeMilestone?.id;
+        midTitle = state.activeMilestone?.title;
+      } else {
+        // fix-merge failed — still has unresolved conflicts, abort merge/squash, reset and stop
+        if (hasMergeHead) {
+          // Properly abort an in-progress merge so MERGE_HEAD and related metadata are cleared
+          runGit(basePath, ["merge", "--abort"], { allowFailure: true });
+        } else if (hasSquashMsg) {
+          // Squash-in-progress without MERGE_HEAD: remove stale squash metadata
+          try {
+            unlinkSync(squashMsgPath);
+          } catch {
+            // Best-effort cleanup; ignore failures
+          }
+        }
+        runGit(basePath, ["reset", "--hard", "HEAD"], { allowFailure: true });
+        ctx.ui.notify(
+          "Fix-merge session failed to resolve all conflicts. Working tree reset. Fix conflicts manually and restart.",
+          "error",
+        );
+        if (currentUnit) {
+          const modelId = ctx.model?.id ?? "unknown";
+          snapshotUnitMetrics(ctx, currentUnit.type, currentUnit.id, currentUnit.startedAt, modelId);
+          saveActivityLog(ctx, basePath, currentUnit.type, currentUnit.id);
+        }
+        await stopAuto(ctx, pi);
+        return;
+      }
+    }
+  }
+
   // ── General merge guard: merge completed slice branches before advancing ──
   // If we're on a gsd/MID/SID branch and that slice is done (roadmap [x]),
   // merge to main before dispatching the next unit. This handles:
@@ -1078,15 +1136,58 @@ async function dispatchNextUnit(
             mid = state.activeMilestone?.id;
             midTitle = state.activeMilestone?.title;
           } catch (error) {
-            const message = error instanceof Error ? error.message : String(error);
+            // MergeConflictError: dispatch a fix-merge session to resolve conflicts
+            if (error instanceof MergeConflictError) {
+              const fixMergeUnitId = `${parsedBranch.milestoneId}/${parsedBranch.sliceId}`;
+              const fixMergePrompt = buildFixMergePrompt(error);
+              ctx.ui.notify(
+                `Merge conflict in ${error.conflictedFiles.length} file(s) — dispatching fix-merge session.`,
+                "warning",
+              );
 
-            // Safety net: if mergeSliceToMain failed to clean up (or the error
-            // came from switchToMain), ensure the working tree isn't left in a
-            // conflicted/dirty merge state. Without this, state derivation reads
-            // conflict-marker-filled files, produces a corrupt phase, and
-            // dispatch loops forever (see: merge-bug-fix).
+              // Close out the previously active unit before overwriting currentUnit.
+              if (currentUnit) {
+                const modelId = ctx.model?.id ?? "unknown";
+                snapshotUnitMetrics(
+                  ctx,
+                  currentUnit.type,
+                  currentUnit.id,
+                  currentUnit.startedAt,
+                  modelId,
+                );
+                saveActivityLog(ctx, basePath, currentUnit.type, currentUnit.id);
+              }
+
+              // Dispatch fix-merge as the next unit (early-dispatch-and-return)
+              const fixMergeUnitType = "fix-merge";
+              currentUnit = { type: fixMergeUnitType, id: fixMergeUnitId, startedAt: Date.now() };
+              writeUnitRuntimeRecord(basePath, fixMergeUnitType, fixMergeUnitId, currentUnit.startedAt, {
+                phase: "dispatched",
+                wrapupWarningSent: false,
+                timeoutAt: null,
+                lastProgressAt: currentUnit.startedAt,
+                progressCount: 0,
+                lastProgressKind: "dispatch",
+              });
+              updateProgressWidget(ctx, fixMergeUnitType, fixMergeUnitId, state);
+              const result = await cmdCtx!.newSession();
+              if (result.cancelled) {
+                runGit(basePath, ["reset", "--hard", "HEAD"], { allowFailure: true });
+                await stopAuto(ctx, pi);
+                return;
+              }
+              const sessionFile = ctx.sessionManager.getSessionFile();
+              writeLock(basePath, fixMergeUnitType, fixMergeUnitId, completedUnits.length, sessionFile);
+              pi.sendMessage(
+                { customType: "gsd-auto", content: fixMergePrompt, display: verbose },
+                { triggerTurn: true },
+              );
+              return;
+            }
+
+            // Non-conflict errors: reset and stop
+            const message = error instanceof Error ? error.message : String(error);
             try {
-              const { runGit } = await import("./git-service.ts");
               const status = runGit(basePath, ["status", "--porcelain"], { allowFailure: true });
               if (status && (status.includes("UU ") || status.includes("AA ") || status.includes("UD "))) {
                 runGit(basePath, ["reset", "--hard", "HEAD"], { allowFailure: true });
@@ -1175,6 +1276,31 @@ async function dispatchNextUnit(
       return;
     }
   }
+
+  // ── Secrets re-check gate — runs before every dispatch, not just at startAuto ──
+  // plan-milestone writes the milestone SECRETS file (e.g., M001-SECRETS.md) during its unit. By the time we
+  // reach the next dispatchNextUnit call the manifest exists but hasn't been
+  // presented to the user yet. Without this re-check the model would proceed
+  // into plan-slice / execute-task with no real credentials and mock everything.
+  const runSecretsGate = async () => {
+    try {
+      const manifestStatus = await getManifestStatus(basePath, mid);
+      if (manifestStatus && manifestStatus.pending.length > 0) {
+        const result = await collectSecretsFromManifest(basePath, mid, ctx);
+        ctx.ui.notify(
+          `Secrets collected: ${result.applied.length} applied, ${result.skipped.length} skipped, ${result.existingSkipped.length} already set.`,
+          "info",
+        );
+      }
+    } catch (err) {
+      ctx.ui.notify(
+        `Secrets collection error: ${err instanceof Error ? err.message : String(err)}`,
+        "warning",
+      );
+    }
+  };
+
+  await runSecretsGate();
 
   const needsRunUat = await checkNeedsRunUat(basePath, mid, state, prefs);
   // Flag: for human/mixed UAT, pause auto-mode after the prompt is sent so the user
@@ -2276,6 +2402,45 @@ async function buildReassessRoadmapPrompt(
   });
 }
 
+/**
+ * Build a prompt for the fix-merge LLM session that resolves merge conflicts.
+ */
+function buildFixMergePrompt(err: MergeConflictError): string {
+  const strategyLabel = err.strategy === "merge" ? "merge --no-ff" : "squash merge";
+  const fileList = err.conflictedFiles.map(f => `  - \`${f}\``).join("\n");
+
+  return [
+    `# Fix Merge Conflicts`,
+    ``,
+    `A ${strategyLabel} of branch \`${err.branch}\` into \`${err.mainBranch}\` produced conflicts in the following files:`,
+    ``,
+    fileList,
+    ``,
+    `## Instructions`,
+    ``,
+    `1. Read each conflicted file listed above`,
+    `2. Resolve all conflict markers (\`<<<<<<<\`, \`=======\`, \`>>>>>>>\`) by choosing the correct content`,
+    `3. Stage the resolved files with \`git add <file>\``,
+    `4. Commit the resolution:`,
+    err.strategy === "squash"
+      ? `   - This is a squash merge, so run: \`git commit --no-edit\` (the squash message is already prepared)`
+      : `   - This is a --no-ff merge, so run: \`git commit --no-edit\` (the merge message is already prepared)`,
+    ``,
+    `## Rules`,
+    ``,
+    `- Do NOT run \`git merge --abort\` or \`git reset\``,
+    `- Do NOT modify any files other than the conflicted ones listed above`,
+    `- Preserve the intent of both sides of the conflict — prefer the slice branch changes when the intent is unclear`,
+    ``,
+    `## Verification`,
+    ``,
+    `After committing, verify:`,
+    `1. \`git diff --name-only --diff-filter=U\` returns empty (no unmerged files)`,
+    `2. The conflicted files no longer contain any \`<<<<<<<\`, \`=======\`, or \`>>>>>>>\` markers`,
+    `3. \`git status\` shows a clean working tree`,
+  ].join("\n");
+}
+
 function extractSliceExecutionExcerpt(content: string | null, relPath: string): string {
   if (!content) {
     return [
@@ -2850,6 +3015,8 @@ export function resolveExpectedArtifactPath(unitType: string, unitId: string, ba
       const dir = resolveMilestonePath(base, mid);
       return dir ? join(dir, buildMilestoneFileName(mid, "SUMMARY")) : null;
     }
+    case "fix-merge":
+      return null;
     default:
       return null;
   }
@@ -2864,9 +3031,21 @@ export function resolveExpectedArtifactPath(unitType: string, unitId: string, ba
  * the summary allowed the unit to be marked complete when the LLM
  * skipped writing the UAT file (see #176).
  */
-function verifyExpectedArtifact(unitType: string, unitId: string, base: string): boolean {
+export function verifyExpectedArtifact(unitType: string, unitId: string, base: string): boolean {
+  // fix-merge has no file artifact — verify by checking git state
+  if (unitType === "fix-merge") {
+    const unmerged = runGit(base, ["diff", "--name-only", "--diff-filter=U"], { allowFailure: true });
+    if (unmerged && unmerged.trim()) return false;
+    if (existsSync(join(base, ".git", "MERGE_HEAD"))) return false;
+    if (existsSync(join(base, ".git", "SQUASH_MSG"))) return false;
+    return true;
+  }
+
   const absPath = resolveExpectedArtifactPath(unitType, unitId, base);
-  if (!absPath) return true;
+  // Unit types with no verifiable artifact always pass (e.g. replan-slice).
+  // For all other types, null means the parent directory is missing on disk
+  // — treat as stale completion state so the key gets evicted (#313).
+  if (!absPath) return unitType === "replan-slice";
   if (!existsSync(absPath)) return false;
 
   // execute-task must also have its checkbox marked [x] in the slice plan
@@ -2953,6 +3132,8 @@ function diagnoseExpectedArtifact(unitType: string, unitId: string, base: string
       return `${relSliceFile(base, mid!, sid!, "UAT-RESULT")} (UAT result)`;
     case "complete-milestone":
       return `${relMilestoneFile(base, mid!, "SUMMARY")} (milestone summary)`;
+    case "fix-merge":
+      return "Clean working tree with no unmerged files, no MERGE_HEAD, no SQUASH_MSG (merge conflict resolution)";
     default:
       return null;
   }

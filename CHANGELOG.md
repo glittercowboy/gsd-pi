@@ -6,6 +6,32 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [2.10.8] - 2026-03-14
+
+### Fixed
+- Publish verification checks `dist/loader.js` is non-empty (`-s`) and uses `--ignore-scripts` on `npm pack --dry-run` to match actual publish behaviour (#298)
+
+## [2.10.7] - 2026-03-14
+
+### Added
+- GitHub Workflows skill with CI workflow template and `ci_monitor` tool (#294)
+- Auto-resolve merge conflicts via LLM-powered fix-merge session
+- Auto-update integration branch when user starts auto-mode from a different branch (#300)
+
+### Changed
+- Secrets manifest is re-checked before every dispatch, not just at auto mode start
+- Replaced TS parameter properties with explicit fields for Node strip-types compatibility
+- Hardened CI publish pipeline to prevent broken releases (#304)
+
+### Fixed
+- Unresolvable artifact paths now correctly treated as stale completion state, preventing OOM crashes (#313)
+- Eliminated branch checkout during slice merge that caused STATE.md conflicts (#307)
+- Removed infinite delivery retry loop for background job completions (#301)
+- Display ⌥ instead of Alt for keybindings on macOS (#299)
+
+### Removed
+- Deprecated legacy dead code from OAuth module
+
 ## [2.10.6] - 2026-03-13
 
 ### Added
@@ -432,7 +458,11 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Changed
 - License updated to MIT
 
-[Unreleased]: https://github.com/gsd-build/gsd-2/compare/v2.10.4...HEAD
+[Unreleased]: https://github.com/gsd-build/gsd-2/compare/v2.10.8...HEAD
+[2.10.8]: https://github.com/gsd-build/gsd-2/compare/v2.10.7...v2.10.8
+[2.10.7]: https://github.com/gsd-build/gsd-2/compare/v2.10.6...v2.10.7
+[2.10.6]: https://github.com/gsd-build/gsd-2/compare/v2.10.5...v2.10.6
+[2.10.5]: https://github.com/gsd-build/gsd-2/compare/v2.10.4...v2.10.5
 [2.10.4]: https://github.com/gsd-build/gsd-2/compare/v2.10.2...v2.10.4
 [2.10.2]: https://github.com/gsd-build/gsd-2/compare/v2.10.1...v2.10.2
 [2.10.1]: https://github.com/gsd-build/gsd-2/compare/v2.10.0...v2.10.1

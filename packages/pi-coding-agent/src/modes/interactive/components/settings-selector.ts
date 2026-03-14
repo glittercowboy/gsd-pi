@@ -163,7 +163,7 @@ export class SettingsSelectorComponent extends Container {
 				id: "follow-up-mode",
 				label: "Follow-up mode",
 				description:
-					"Alt+Enter queues follow-up messages until agent stops. 'one-at-a-time': deliver one, wait for response. 'all': deliver all at once.",
+					`${process.platform === "darwin" ? "⌥Enter" : "Alt+Enter"} queues follow-up messages until agent stops. 'one-at-a-time': deliver one, wait for response. 'all': deliver all at once.`,
 				currentValue: config.followUpMode,
 				values: ["one-at-a-time", "all"],
 			},

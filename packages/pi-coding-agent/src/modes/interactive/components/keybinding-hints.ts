@@ -6,13 +6,25 @@ import { type EditorAction, getEditorKeybindings, type KeyId } from "@gsd/pi-tui
 import type { AppAction, KeybindingsManager } from "../../../core/keybindings.js";
 import { theme } from "../theme/theme.js";
 
+const isMac = process.platform === "darwin";
+
+/**
+ * Convert a key identifier to a platform-appropriate display string.
+ * On macOS, "alt+" is shown as "⌥" (Option key symbol).
+ */
+export function formatKeyForDisplay(key: string): string {
+	if (!isMac) return key;
+	return key.replace(/\balt\+/gi, "⌥");
+}
+
 /**
  * Format keys array as display string (e.g., ["ctrl+c", "escape"] -> "ctrl+c/escape").
+ * Applies platform-specific formatting (e.g., alt -> ⌥ on macOS).
  */
 function formatKeys(keys: KeyId[]): string {
 	if (keys.length === 0) return "";
-	if (keys.length === 1) return keys[0]!;
-	return keys.join("/");
+	if (keys.length === 1) return formatKeyForDisplay(keys[0]!);
+	return keys.map(formatKeyForDisplay).join("/");
 }
 
 /**

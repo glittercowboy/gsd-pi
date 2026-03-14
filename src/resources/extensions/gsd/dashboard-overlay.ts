@@ -3,7 +3,7 @@
  *
  * Full-screen overlay showing auto-mode progress: milestone/slice/task
  * breakdown, current unit, completed units, timing, and activity log.
- * Toggled with Ctrl+Alt+G or opened from /gsd status.
+ * Toggled with Ctrl+Alt+G (⌃⌥G on macOS) or opened from /gsd status.
  */
 
 import type { Theme } from "@gsd/pi-coding-agent";

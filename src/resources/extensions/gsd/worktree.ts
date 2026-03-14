@@ -22,6 +22,7 @@ import { loadEffectiveGSDPreferences } from "./preferences.ts";
 
 // Re-export MergeSliceResult from the canonical source (D014 — type-only re-export)
 export type { MergeSliceResult } from "./git-service.ts";
+export { MergeConflictError } from "./git-service.ts";
 
 // ─── Lazy GitServiceImpl Cache ─────────────────────────────────────────────
 

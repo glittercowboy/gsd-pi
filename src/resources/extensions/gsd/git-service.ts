@@ -44,6 +44,35 @@ export interface MergeSliceResult {
   deletedBranch: boolean;
 }
 
+/**
+ * Thrown when a slice merge hits code conflicts in non-.gsd files.
+ * The working tree is left in a conflicted state (no reset) so the
+ * caller can dispatch a fix-merge session to resolve it.
+ */
+export class MergeConflictError extends Error {
+  readonly conflictedFiles: string[];
+  readonly strategy: "squash" | "merge";
+  readonly branch: string;
+  readonly mainBranch: string;
+
+  constructor(
+    conflictedFiles: string[],
+    strategy: "squash" | "merge",
+    branch: string,
+    mainBranch: string,
+  ) {
+    super(
+      `${strategy === "merge" ? "Merge" : "Squash-merge"} of "${branch}" into "${mainBranch}" ` +
+      `failed with conflicts in ${conflictedFiles.length} non-.gsd file(s): ${conflictedFiles.join(", ")}`,
+    );
+    this.name = "MergeConflictError";
+    this.conflictedFiles = conflictedFiles;
+    this.strategy = strategy;
+    this.branch = branch;
+    this.mainBranch = mainBranch;
+  }
+}
+
 export interface PreMergeCheckResult {
   passed: boolean;
   skipped?: boolean;
@@ -101,24 +130,25 @@ export function readIntegrationBranch(basePath: string, milestoneId: string): st
 /**
  * Persist the integration branch for a milestone.
  *
- * Called once when auto-mode starts on a milestone. Records the branch
- * the user was on at that point, so that slice branches merge back to it
- * instead of the repo's default branch.
+ * Called when auto-mode starts on a milestone. Records the branch the user
+ * was on at that point, so that slice branches merge back to it instead of
+ * the repo's default branch. Idempotent when the branch matches; updates
+ * the record when the user starts from a different branch.
  *
  * The file is committed immediately so it survives branch switches — the
  * pre-switch auto-commit excludes `.gsd/` to avoid merge conflicts, and
  * uncommitted `.gsd/` files are discarded during checkout.
- *
- * Skips writing if an integration branch is already recorded (idempotent
- * across restarts) or if the current branch is already a GSD slice branch.
  */
 export function writeIntegrationBranch(basePath: string, milestoneId: string, branch: string): void {
   // Don't record slice branches as the integration target
   if (SLICE_BRANCH_RE.test(branch)) return;
-  // Don't overwrite an existing integration branch
-  if (readIntegrationBranch(basePath, milestoneId) !== null) return;
   // Validate
   if (!VALID_BRANCH_NAME.test(branch)) return;
+  // Skip if already recorded with the same branch (idempotent across restarts).
+  // If recorded with a different branch, update it — the user started auto-mode
+  // from a new branch and expects slices to merge back there (#300).
+  const existingBranch = readIntegrationBranch(basePath, milestoneId);
+  if (existingBranch === branch) return;
 
   const metaFile = milestoneMetaPath(basePath, milestoneId);
   mkdirSync(join(basePath, ".gsd", "milestones", milestoneId), { recursive: true });
@@ -151,6 +181,13 @@ export function writeIntegrationBranch(basePath: string, milestoneId: string, br
 
 // ─── Git Helper ────────────────────────────────────────────────────────────
 
+/** Env overlay that suppresses all interactive git credential prompts. */
+const GIT_NO_PROMPT_ENV = {
+  ...process.env,
+  GIT_TERMINAL_PROMPT: "0",
+  GIT_ASKPASS: "",
+};
+
 /**
  * Run a git command in the given directory.
  * Returns trimmed stdout. Throws on non-zero exit unless allowFailure is set.
@@ -162,6 +199,7 @@ export function runGit(basePath: string, args: string[], options: { allowFailure
       cwd: basePath,
       stdio: [options.input != null ? "pipe" : "ignore", "pipe", "pipe"],
       encoding: "utf-8",
+      env: GIT_NO_PROMPT_ENV,
       ...(options.input != null ? { input: options.input } : {}),
     }).trim();
   } catch (error) {
@@ -649,18 +687,6 @@ export class GitServiceImpl {
       this.git(["commit", "-m", "chore: untrack .gsd/ runtime files before merge"], { allowFailure: true });
     }
 
-    // Also untrack runtime files from the slice branch to prevent
-    // modify/delete conflicts during squash-merge (#218)
-    this.git(["checkout", branch]);
-    for (const exclusion of RUNTIME_EXCLUSION_PATHS) {
-      this.git(["rm", "--cached", "-r", "--ignore-unmatch", exclusion], { allowFailure: true });
-    }
-    const branchUntrackDiff = this.git(["diff", "--cached", "--stat"], { allowFailure: true });
-    if (branchUntrackDiff?.trim()) {
-      this.git(["commit", "-m", "chore: untrack .gsd/ runtime files before merge"], { allowFailure: true });
-    }
-    this.git(["checkout", mainBranch]);
-
     // Merge slice branch — strategy is configurable via git.merge_strategy
     // preference. Default: "squash" (preserves existing behavior).
     // "merge" uses --no-ff which is more resilient to conflicts from
@@ -677,37 +703,60 @@ export class GitServiceImpl {
       const conflicted = this.git(["diff", "--name-only", "--diff-filter=U"], { allowFailure: true });
       if (conflicted) {
         const conflictedFiles = conflicted.split("\n").filter(Boolean);
-        const allGsd = conflictedFiles.every(f => f.startsWith(".gsd/"));
-        const allRuntime = conflictedFiles.every(f =>
-          RUNTIME_EXCLUSION_PATHS.some(excl => f.startsWith(excl.replace(/\/$/, ""))),
+        const isRuntimeConflict = (f: string) =>
+          RUNTIME_EXCLUSION_PATHS.some(excl => f.startsWith(excl.replace(/\/$/, "")));
+
+        const runtimeConflicts = conflictedFiles.filter(isRuntimeConflict);
+        const gsdConflicts = conflictedFiles.filter(f => f.startsWith(".gsd/") && !isRuntimeConflict(f));
+        const otherConflicts = conflictedFiles.filter(
+          f => !isRuntimeConflict(f) && !f.startsWith(".gsd/"),
         );
-        if (allRuntime) {
-          // Runtime-only conflicts: take ours and remove from index
-          for (const f of conflictedFiles) {
+
+        let resolvedAny = false;
+
+        if (runtimeConflicts.length > 0) {
+          // Runtime conflicts: take theirs and remove from index
+          for (const f of runtimeConflicts) {
             this.git(["checkout", "--theirs", "--", f], { allowFailure: true });
             this.git(["rm", "--cached", "--ignore-unmatch", f], { allowFailure: true });
           }
-          this.git(["add", "-A"], { allowFailure: true });
-          // Don't throw — let the merge proceed
-        } else if (allGsd) {
+          resolvedAny = true;
+        }
+
+        if (gsdConflicts.length > 0) {
           // Non-runtime .gsd/ conflicts (DECISIONS.md, REQUIREMENTS.md, ROADMAP.md, etc.):
           // The slice branch has the authoritative .gsd/ state since the LLM just finished
           // updating these artifacts during complete-slice. Take theirs (the slice branch).
-          for (const f of conflictedFiles) {
+          for (const f of gsdConflicts) {
             this.git(["checkout", "--theirs", "--", f], { allowFailure: true });
           }
+          resolvedAny = true;
+        }
+
+        if (resolvedAny) {
           this.git(["add", "-A"], { allowFailure: true });
-          // Don't throw — let the merge proceed
+
+          // Re-check remaining conflicts after auto-resolving runtime and .gsd/ files
+          const remaining = this.git(["diff", "--name-only", "--diff-filter=U"], {
+            allowFailure: true,
+          });
+          if (remaining) {
+            const remainingFiles = remaining
+              .split("\n")
+              .filter(Boolean)
+              .filter(f => !isRuntimeConflict(f) && !f.startsWith(".gsd/"));
+
+            if (remainingFiles.length > 0) {
+              // Non-runtime, non-.gsd/ conflicts: leave working tree in conflicted state and throw
+              // MergeConflictError so the caller can dispatch a fix-merge session.
+              throw new MergeConflictError(remainingFiles, strategy, branch, mainBranch);
+            }
+          }
+          // No remaining non-runtime, non-.gsd/ conflicts — let the merge proceed
         } else {
-          // Non-.gsd/ conflicts: reset and throw as before
-          this.git(["reset", "--hard", "HEAD"], { allowFailure: true });
-          const msg = mergeError instanceof Error ? mergeError.message : String(mergeError);
-          throw new Error(
-            `${strategy === "merge" ? "Merge" : "Squash-merge"} of "${branch}" into "${mainBranch}" failed with conflicts in non-.gsd/ files. ` +
-            `Working tree has been reset to a clean state. ` +
-            `Resolve manually: git checkout ${mainBranch} && git merge ${strategy === "merge" ? "--no-ff" : "--squash"} ${branch}\n` +
-            `Original error: ${msg}`,
-          );
+          // No runtime or .gsd/ conflicts to auto-resolve; throw with original conflicted files
+          // so the caller can dispatch a fix-merge session.
+          throw new MergeConflictError(otherConflicts.length ? otherConflicts : conflictedFiles, strategy, branch, mainBranch);
         }
       } else {
         // No conflicted files detected but merge still failed — reset and throw
@@ -722,9 +771,22 @@ export class GitServiceImpl {
       }
     }
 
-    // Squash merge needs a separate commit; --no-ff merge already committed
+    // Strip runtime files from the merge result before committing (#302).
+    // This replaces the old approach of checking out the slice branch to
+    // untrack runtime files pre-merge, which failed when the working tree
+    // had uncommitted .gsd/ changes that blocked the checkout.
+    for (const exclusion of RUNTIME_EXCLUSION_PATHS) {
+      this.git(["rm", "--cached", "-r", "--ignore-unmatch", exclusion], { allowFailure: true });
+    }
+
     if (strategy === "squash") {
       this.git(["commit", "-F", "-"], { input: message });
+    } else {
+      // --no-ff already committed; amend to include runtime file removal
+      const runtimeDiff = this.git(["diff", "--cached", "--stat"], { allowFailure: true });
+      if (runtimeDiff?.trim()) {
+        this.git(["commit", "--amend", "--no-edit"]);
+      }
     }
 
     // Delete the merged branch

@@ -22,9 +22,7 @@ export type {
 	OAuthCredentials,
 	OAuthLoginCallbacks,
 	OAuthPrompt,
-	OAuthProvider,
 	OAuthProviderId,
-	OAuthProviderInfo,
 	OAuthProviderInterface,
 } from "./utils/oauth/types.js";
 export * from "./utils/overflow.js";

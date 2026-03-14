@@ -31,18 +31,10 @@ export interface JobManagerOptions {
 	onJobComplete?: (job: Job) => void;
 }
 
-// ── Delivery Retry ─────────────────────────────────────────────────────────
-
-const DELIVERY_BASE_MS = 500;
-const DELIVERY_MAX_MS = 30_000;
-const DELIVERY_JITTER_MS = 200;
-
 // ── Manager ────────────────────────────────────────────────────────────────
 
 export class AsyncJobManager {
 	private jobs = new Map<string, Job>();
-	private deliveryTimers = new Map<string, ReturnType<typeof setTimeout>>();
-	private acknowledgedJobs = new Set<string>();
 	private evictionTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
 	private maxRunning: number;
@@ -157,28 +149,16 @@ export class AsyncJobManager {
 	}
 
 	/**
-	 * Mark jobs as acknowledged so delivery retries stop.
+	 * No-op. Retained for API compatibility with await_job tool.
 	 */
-	acknowledgeDeliveries(jobIds: string[]): void {
-		for (const id of jobIds) {
-			this.acknowledgedJobs.add(id);
-			const timer = this.deliveryTimers.get(id);
-			if (timer) {
-				clearTimeout(timer);
-				this.deliveryTimers.delete(id);
-			}
-		}
+	acknowledgeDeliveries(_jobIds: string[]): void {
+		// Delivery is fire-once; no retries to cancel.
 	}
 
 	/**
 	 * Cleanup all timers and resources.
 	 */
 	shutdown(): void {
-		for (const timer of this.deliveryTimers.values()) {
-			clearTimeout(timer);
-		}
-		this.deliveryTimers.clear();
-
 		for (const timer of this.evictionTimers.values()) {
 			clearTimeout(timer);
 		}
@@ -195,26 +175,9 @@ export class AsyncJobManager {
 
 	// ── Private ────────────────────────────────────────────────────────────
 
-	private deliverResult(job: Job, attempt = 0): void {
-		if (this.acknowledgedJobs.has(job.id)) return;
+	private deliverResult(job: Job): void {
 		if (!this.onJobComplete) return;
-
 		this.onJobComplete(job);
-
-		// Schedule retry with exponential backoff + jitter
-		const delay = Math.min(
-			DELIVERY_BASE_MS * Math.pow(2, attempt) + Math.random() * DELIVERY_JITTER_MS,
-			DELIVERY_MAX_MS,
-		);
-
-		const timer = setTimeout(() => {
-			this.deliveryTimers.delete(job.id);
-			if (!this.acknowledgedJobs.has(job.id)) {
-				this.deliverResult(job, attempt + 1);
-			}
-		}, delay);
-
-		this.deliveryTimers.set(job.id, timer);
 	}
 
 	private scheduleEviction(id: string): void {
@@ -224,7 +187,6 @@ export class AsyncJobManager {
 		const timer = setTimeout(() => {
 			this.evictionTimers.delete(id);
 			this.jobs.delete(id);
-			this.acknowledgedJobs.delete(id);
 		}, this.evictionMs);
 
 		this.evictionTimers.set(id, timer);
@@ -244,7 +206,6 @@ export class AsyncJobManager {
 			if (timer) clearTimeout(timer);
 			this.evictionTimers.delete(oldest.id);
 			this.jobs.delete(oldest.id);
-			this.acknowledgedJobs.delete(oldest.id);
 		}
 	}
 }

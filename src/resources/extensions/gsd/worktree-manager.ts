@@ -46,12 +46,20 @@ export interface WorktreeDiffSummary {
 
 // ─── Git Helpers ───────────────────────────────────────────────────────────
 
+/** Env overlay that suppresses all interactive git credential prompts. */
+const GIT_NO_PROMPT_ENV = {
+  ...process.env,
+  GIT_TERMINAL_PROMPT: "0",
+  GIT_ASKPASS: "",
+};
+
 function runGit(cwd: string, args: string[], opts: { allowFailure?: boolean } = {}): string {
   try {
     return execSync(`git ${args.join(" ")}`, {
       cwd,
       stdio: ["ignore", "pipe", "pipe"],
       encoding: "utf-8",
+      env: GIT_NO_PROMPT_ENV,
     }).trim();
   } catch (error) {
     if (opts.allowFailure) return "";
