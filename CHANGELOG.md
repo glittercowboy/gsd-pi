@@ -6,14 +6,37 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [2.11.0] - 2026-03-14
+
+### Added
+- Cross-provider fallback when rate or quota limits are hit (#125)
+- Custom OpenAI-compatible endpoint option in onboarding wizard (#335)
+- Model provider selection in preferences (#350)
+- Auto-mode fallback model rotation on network errors (#386)
+- Native libgit2-backed git read operations for dispatch hotpath (#388)
+
+### Changed
+- Replace hardcoded extension list with dynamic discovery in loader
+- Deduplicate transitive dependency summaries in prompt builders
+- Reduce dispatch gap timeout from 30s to 5s
+- Memoize `deriveState()` per dispatch cycle
+- Wire native batch parser into `deriveState()` hotpath (#389)
+- Add session-scoped directory listing cache and content-hash-keyed parse cache for path resolution
+- Optimize discovery and interactive hot paths
+
 ### Fixed
-- Bypass pre-commit hooks (`--no-verify`) on GSD infrastructure commits (auto-commits, slice merges, runtime file cleanup) to prevent lint-staged "empty commit" errors in projects with prettier/eslint hooks (#385)
-- Improve Cloud Code Assist 404 error with actionable model guidance — names the unavailable model and suggests using the `google` provider with `GOOGLE_API_KEY` (#384)
-- Prevent auto-mode hang when dispatch chain breaks after all slice tasks complete — added dispatch gap watchdog and error boundary (#381)
-- CI smoke test waits for npm registry propagation and surfaces errors (#383)
-- Packaging verification path portability fix (#378)
-- Resources loaded from `dist/` to prevent branch-drift in npm-link setups (#314)
+- Resolve OpenRouter model IDs in auto-mode and show active model per phase
+- Suppress git-svn noise causing confusing errors on affected systems (#404)
+- Include export-html templates in pkg/ shim (#370, #395)
+- Increase timeout for z.ai provider to handle slow API spikes (#379, #396)
+- Prevent login dialog from leaving dangling promises that freeze the UI (#280, #390)
+- Improve Cloud Code Assist 404 error with actionable model guidance (#384)
+- Prevent auto-mode hang when dispatch chain breaks after slice tasks complete (#381, #382)
+- Fix packaging verification and path portability (#378)
+- Read resources from dist/ to prevent branch-drift in npm-link setups (#314)
 - Always use native Anthropic web search when available (#374)
+- CI smoke test — wait for registry propagation, show errors (#383)
+- Bypass pre-commit hooks on GSD infrastructure commits to prevent lint-staged empty commit errors (#385)
 
 ## [2.10.12] - 2026-03-14
 
@@ -536,7 +559,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Changed
 - License updated to MIT
 
-[Unreleased]: https://github.com/gsd-build/gsd-2/compare/v2.10.12...HEAD
+[Unreleased]: https://github.com/gsd-build/gsd-2/compare/v2.11.0...HEAD
+[2.11.0]: https://github.com/gsd-build/gsd-2/compare/v2.10.12...v2.11.0
 [2.10.12]: https://github.com/gsd-build/gsd-2/compare/v2.10.11...v2.10.12
 [2.10.11]: https://github.com/gsd-build/gsd-2/compare/v2.10.10...v2.10.11
 [2.10.10]: https://github.com/gsd-build/gsd-2/compare/v2.10.9...v2.10.10
