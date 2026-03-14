@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: Native Desktop
 status: in_progress
-stopped_at: Completed 18-03-PLAN.md
-last_updated: "2026-03-14T12:02:32.270Z"
-last_activity: "2026-03-14 — Plan 18-01 complete: Builder mode foundation — InterfaceModeContext, BUILDER_VOCAB, SettingsView toggle, ChatInput builderMode prop, cost badge hidden; BUILDER-01/02/03 satisfied; 739 tests pass"
+stopped_at: Completed 18-04-PLAN.md — Phase 18 Builder Mode fully complete
+last_updated: "2026-03-14T12:25:28.038Z"
+last_activity: "2026-03-14 — Plan 18-04 complete: human verification approved SC-1..SC-5 — all 7 BUILDER requirements satisfied; Phase 18 Builder Mode fully complete; 748 tests pass"
 progress:
   total_phases: 10
-  completed_phases: 6
+  completed_phases: 7
   total_plans: 40
-  completed_plans: 38
-  percent: 93
+  completed_plans: 40
+  percent: 100
 ---
 
 ---
@@ -431,13 +431,13 @@ See: .planning/PROJECT.md (updated 2026-03-12)
 
 ## Current Position
 
-Phase: 18 of 20 (Builder Mode) — In Progress (1 of 4 plans done)
-Plan: 1 of 4 complete (plan 01 done — InterfaceModeContext, vocab maps, Settings toggle, ChatInput control, cost badge suppression)
-Status: Phase 18 in progress. Next: Phase 18-02 (classifyIntent).
-Last activity: 2026-03-14 — Plan 18-01 complete: Builder mode foundation — InterfaceModeContext, BUILDER_VOCAB, SettingsView toggle, ChatInput builderMode prop, cost badge hidden; BUILDER-01/02/03 satisfied; 739 tests pass
-Stopped at: Completed 18-03-PLAN.md
+Phase: 18 of 20 (Builder Mode) — Complete (4 of 4 plans done)
+Plan: 4 of 4 complete (plan 04 done — human verification SC-1..SC-5 approved)
+Status: Phase 18 complete. Next: Phase 19 Project Workspace.
+Last activity: 2026-03-14 — Plan 18-04 complete: human verification approved SC-1..SC-5 — all 7 BUILDER requirements satisfied; Phase 18 Builder Mode fully complete; 748 tests pass
+Stopped at: Completed 18-04-PLAN.md — Phase 18 Builder Mode fully complete
 
-Progress: [█████████░] 90% (36/40 plans complete)
+Progress: [██████████] 100% (40/40 plans complete)
 
 ## Milestone Archive
 
@@ -557,6 +557,7 @@ Progress: [█████████░] 90% (36/40 plans complete)
 - [Phase 18-builder-mode]: _setAuthOverride test helper in classify-intent-api.ts mirrors _setGlobalDir pattern from settings-api.ts
 - [Phase 18-builder-mode]: RoutingBadge and PhaseGateCard rendered in SingleColumnView chat wrapper — collocated with chat UI, avoids z-index conflicts
 - [Phase 18]: All slice card Builder vocab changes prop-conditional via inline ternaries — no component duplication; SliceAccordion and useChatMode read useBuilderMode() internally and thread builderMode down
+- [Phase 18]: Human verification is the sole output of plan 18-04 — SC-1 through SC-5 approved; all 7 BUILDER requirements satisfied
 
 ### Blockers/Concerns
 
