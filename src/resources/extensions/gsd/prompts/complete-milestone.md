@@ -7,7 +7,7 @@ All relevant context has been preloaded below — the roadmap, all slice summari
 {{inlinedContext}}
 
 Then:
-1. Read the milestone-summary template at `~/.gsd/agent/extensions/gsd/templates/milestone-summary.md`
+1. Use the **Milestone Summary** output template from the inlined context above
 2. If a `GSD Skill Preferences` block is present in system context, use it to decide which skills to load and follow during completion, without relaxing required verification or artifact rules
 3. Verify each **success criterion** from the milestone definition in `{{roadmapPath}}`. For each criterion, confirm it was met with specific evidence from slice summaries, test results, or observable behavior. List any criterion that was NOT met.
 4. Verify the milestone's **definition of done** — all slices are `[x]`, all slice summaries exist, and any cross-slice integration points work correctly.

@@ -19,7 +19,9 @@ import { readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const promptsDir = join(dirname(fileURLToPath(import.meta.url)), "prompts");
+const __extensionDir = dirname(fileURLToPath(import.meta.url));
+const promptsDir = join(__extensionDir, "prompts");
+const templatesDir = join(__extensionDir, "templates");
 
 // Cache templates on first read — a running session uses the template versions
 // that were on disk when it first loaded them, immune to later overwrites.
@@ -62,4 +64,29 @@ export function loadPrompt(name: string, vars: Record<string, string> = {}): str
   }
 
   return content.trim();
+}
+
+/**
+ * Load a raw template file from the templates/ directory.
+ * Cached with a `tpl:` prefix to avoid collisions with prompt cache keys.
+ */
+export function loadTemplate(name: string): string {
+  const cacheKey = `tpl:${name}`;
+  let content = templateCache.get(cacheKey);
+  if (content === undefined) {
+    const path = join(templatesDir, `${name}.md`);
+    content = readFileSync(path, "utf-8");
+    templateCache.set(cacheKey, content);
+  }
+  return content.trim();
+}
+
+/**
+ * Load a template and wrap it with a labeled footer for inlining into prompts.
+ * The template body is emitted first so that any YAML frontmatter (---) remains
+ * at the first non-whitespace line of the template content.
+ */
+export function inlineTemplate(name: string, label: string): string {
+  const content = loadTemplate(name);
+  return `${content}\n\n### Output Template: ${label}\nSource: \`templates/${name}.md\``;
 }

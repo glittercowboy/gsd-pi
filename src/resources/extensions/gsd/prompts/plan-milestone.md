@@ -9,14 +9,13 @@ All relevant context has been preloaded below — start working immediately with
 Narrate your decomposition reasoning — why you're grouping work this way, what risks are driving the order, what verification strategy you're choosing and why.
 
 Then:
-1. Read the template at `~/.gsd/agent/extensions/gsd/templates/roadmap.md`
-2. Read `.gsd/REQUIREMENTS.md` if it exists. Treat **Active** requirements as the capability contract for planning. If it does not exist, continue in legacy compatibility mode but explicitly note that requirement coverage is operating without a contract.
-3. If a `GSD Skill Preferences` block is present in system context, use it to decide which skills to load and follow during planning, without overriding required roadmap formatting
-4. Create the roadmap: decompose into demoable vertical slices — as many as the work genuinely needs, no more. A simple feature might be 1 slice. Don't decompose for decomposition's sake.
-5. Order by risk (high-risk first)
-6. Write `{{outputPath}}` with checkboxes, risk, depends, demo sentences, proof strategy, verification classes, milestone definition of done, **requirement coverage**, and a boundary map. Write success criteria as observable truths, not implementation tasks. If the milestone crosses multiple runtime boundaries, include an explicit final integration slice that proves the assembled system works end-to-end in a real environment
-7. If planning produced structural decisions (e.g. slice ordering rationale, technology choices, scope exclusions), append them to `.gsd/DECISIONS.md` (read the template at `~/.gsd/agent/extensions/gsd/templates/decisions.md` if the file doesn't exist yet)
-8. Update `.gsd/STATE.md`
+1. Use the **Roadmap** output template from the inlined context above
+2. If a `GSD Skill Preferences` block is present in system context, use it to decide which skills to load and follow during planning, without overriding required roadmap formatting
+3. Create the roadmap: decompose into demoable vertical slices — as many as the work genuinely needs, no more. A simple feature might be 1 slice. Don't decompose for decomposition's sake.
+4. Order by risk (high-risk first)
+5. Write `{{outputPath}}` with checkboxes, risk, depends, demo sentences, proof strategy, verification classes, milestone definition of done, **requirement coverage**, and a boundary map. Write success criteria as observable truths, not implementation tasks. If the milestone crosses multiple runtime boundaries, include an explicit final integration slice that proves the assembled system works end-to-end in a real environment
+6. If planning produced structural decisions (e.g. slice ordering rationale, technology choices, scope exclusions), append them to `.gsd/DECISIONS.md` (use the **Decisions** output template from the inlined context above if the file doesn't exist yet)
+7. Update `.gsd/STATE.md`
 
 ## Requirement Mapping Rules
 
@@ -49,9 +48,7 @@ Apply these when decomposing and ordering slices:
 
 If the roadmap has only one slice, also write the slice plan and task plans inline during this unit — don't leave them for a separate planning session.
 
-1. Read the templates:
-   - `~/.gsd/agent/extensions/gsd/templates/plan.md`
-   - `~/.gsd/agent/extensions/gsd/templates/task-plan.md`
+1. Use the **Slice Plan** and **Task Plan** output templates from the inlined context above
 2. `mkdir -p {{milestonePath}}/slices/S01/tasks`
 3. Write the S01 plan file at `{{milestonePath}}/slices/S01/S01-PLAN.md`
 4. Write individual task plans at `{{milestonePath}}/slices/S01/tasks/T01-PLAN.md`, etc.
@@ -65,7 +62,7 @@ After writing the roadmap, analyze the slices and their boundary maps for extern
 
 If this milestone requires any external API keys or secrets:
 
-1. Read the template at `~/.gsd/agent/extensions/gsd/templates/secrets-manifest.md` for the expected format
+1. Use the **Secrets Manifest** output template from the inlined context above for the expected format
 2. Write `{{secretsOutputPath}}` listing every predicted secret as an H3 section with:
    - **Service** — the external service name
    - **Dashboard** — direct URL to the console/dashboard page where the key is created (not a generic homepage)

@@ -18,9 +18,7 @@ Narrate your decomposition reasoning — why you're grouping work this way, what
 
 Then:
 0. If `REQUIREMENTS.md` was preloaded above, identify which Active requirements the roadmap says this slice owns or supports. These are the requirements this plan must deliver — every owned requirement needs at least one task that directly advances it, and verification must prove the requirement is met.
-1. Read the templates:
-   - `~/.gsd/agent/extensions/gsd/templates/plan.md`
-   - `~/.gsd/agent/extensions/gsd/templates/task-plan.md`
+1. Use the **Slice Plan** and **Task Plan** output templates from the inlined context above
 2. If a `GSD Skill Preferences` block is present in system context, use it to decide which skills to load and follow during planning, without overriding required plan formatting
 3. Define slice-level verification — the objective stopping condition for this slice:
    - For non-trivial slices: plan actual test files with real assertions. Name the files.

@@ -9,9 +9,7 @@ All relevant context has been preloaded below — the slice plan, all task summa
 **Match effort to complexity.** A simple slice with 1-2 tasks needs a brief summary and lightweight verification. A complex slice with 5 tasks across multiple subsystems needs thorough verification and a detailed summary. Scale the work below accordingly.
 
 Then:
-1. Read the templates:
-   - `~/.gsd/agent/extensions/gsd/templates/slice-summary.md`
-   - `~/.gsd/agent/extensions/gsd/templates/uat.md`
+1. Use the **Slice Summary** and **UAT** output templates from the inlined context above
 2. If a `GSD Skill Preferences` block is present in system context, use it to decide which skills to load and follow during completion, without relaxing required verification or artifact rules
 3. Run all slice-level verification checks defined in the slice plan. All must pass before marking the slice done. If any fail, fix them first.
 4. If the slice plan includes observability/diagnostic surfaces, confirm they work. Skip this for simple slices that don't have observability sections.

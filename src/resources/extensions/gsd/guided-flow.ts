@@ -9,7 +9,7 @@
 import type { ExtensionAPI, ExtensionContext, ExtensionCommandContext } from "@gsd/pi-coding-agent";
 import { showNextAction } from "../shared/next-action-ui.js";
 import { loadFile, parseRoadmap } from "./files.js";
-import { loadPrompt } from "./prompt-loader.js";
+import { loadPrompt, inlineTemplate } from "./prompt-loader.js";
 import { deriveState } from "./state.js";
 import { startAuto } from "./auto.js";
 import { readCrashLock, clearLock, formatCrashInfo } from "./crash-recovery.js";
@@ -97,11 +97,19 @@ function dispatchWorkflow(pi: ExtensionAPI, note: string, customType = "gsd-run"
  */
 function buildDiscussPrompt(nextId: string, preamble: string, _basePath: string): string {
   const milestoneRel = `.gsd/milestones/${nextId}`;
+  const inlinedTemplates = [
+    inlineTemplate("project", "Project"),
+    inlineTemplate("requirements", "Requirements"),
+    inlineTemplate("context", "Context"),
+    inlineTemplate("roadmap", "Roadmap"),
+    inlineTemplate("decisions", "Decisions"),
+  ].join("\n\n---\n\n");
   return loadPrompt("discuss", {
     milestoneId: nextId,
     preamble,
     contextPath: `${milestoneRel}/${nextId}-CONTEXT.md`,
     roadmapPath: `${milestoneRel}/${nextId}-ROADMAP.md`,
+    inlinedTemplates,
   });
 }
 
@@ -234,11 +242,13 @@ export async function showQueue(
   ].join(" ");
 
   // ── Dispatch the queue prompt ───────────────────────────────────────
+  const queueInlinedTemplates = inlineTemplate("context", "Context");
   const prompt = loadPrompt("queue", {
     preamble,
     nextId,
     nextIdPlus1,
     existingMilestonesContext: existingContext,
+    inlinedTemplates: queueInlinedTemplates,
   });
 
   pi.sendMessage(
@@ -415,6 +425,7 @@ async function buildDiscussSlicePrompt(
   const sliceDirPath = `.gsd/milestones/${mid}/slices/${sid}`;
   const sliceContextPath = `${sliceDirPath}/${sid}-CONTEXT.md`;
 
+  const inlinedTemplates = inlineTemplate("slice-context", "Slice Context");
   return loadPrompt("guided-discuss-slice", {
     milestoneId: mid,
     sliceId: sid,
@@ -423,6 +434,7 @@ async function buildDiscussSlicePrompt(
     sliceDirPath,
     contextPath: sliceContextPath,
     projectRoot: base,
+    inlinedTemplates,
   });
 }
 
@@ -683,8 +695,9 @@ export async function showSmartEntry(
     });
 
     if (choice === "discuss_draft") {
+      const discussMilestoneTemplates = inlineTemplate("context", "Context");
       const basePrompt = loadPrompt("guided-discuss-milestone", {
-        milestoneId, milestoneTitle,
+        milestoneId, milestoneTitle, inlinedTemplates: discussMilestoneTemplates,
       });
       const seed = draftContent
         ? `${basePrompt}\n\n## Prior Discussion (Draft Seed)\n\n${draftContent}`
@@ -692,9 +705,10 @@ export async function showSmartEntry(
       pendingAutoStart = { ctx, pi, basePath, milestoneId, step: stepMode };
       dispatchWorkflow(pi, seed, "gsd-discuss");
     } else if (choice === "discuss_fresh") {
+      const discussMilestoneTemplates = inlineTemplate("context", "Context");
       pendingAutoStart = { ctx, pi, basePath, milestoneId, step: stepMode };
       dispatchWorkflow(pi, loadPrompt("guided-discuss-milestone", {
-        milestoneId, milestoneTitle,
+        milestoneId, milestoneTitle, inlinedTemplates: discussMilestoneTemplates,
       }), "gsd-discuss");
     } else if (choice === "skip_milestone") {
       const milestoneIds = findMilestoneIds(basePath);
@@ -753,13 +767,20 @@ export async function showSmartEntry(
       });
 
       if (choice === "plan") {
+        const planMilestoneTemplates = [
+          inlineTemplate("roadmap", "Roadmap"),
+          inlineTemplate("plan", "Slice Plan"),
+          inlineTemplate("task-plan", "Task Plan"),
+          inlineTemplate("secrets-manifest", "Secrets Manifest"),
+        ].join("\n\n---\n\n");
         const secretsOutputPath = relMilestoneFile(basePath, milestoneId, "SECRETS");
         dispatchWorkflow(pi, loadPrompt("guided-plan-milestone", {
-          milestoneId, milestoneTitle, secretsOutputPath,
+          milestoneId, milestoneTitle, secretsOutputPath, inlinedTemplates: planMilestoneTemplates,
         }));
       } else if (choice === "discuss") {
+        const discussMilestoneTemplates = inlineTemplate("context", "Context");
         dispatchWorkflow(pi, loadPrompt("guided-discuss-milestone", {
-          milestoneId, milestoneTitle,
+          milestoneId, milestoneTitle, inlinedTemplates: discussMilestoneTemplates,
         }));
       } else if (choice === "skip_milestone") {
         const milestoneIds = findMilestoneIds(basePath);
@@ -866,14 +887,19 @@ export async function showSmartEntry(
     });
 
     if (choice === "plan") {
+      const planSliceTemplates = [
+        inlineTemplate("plan", "Slice Plan"),
+        inlineTemplate("task-plan", "Task Plan"),
+      ].join("\n\n---\n\n");
       dispatchWorkflow(pi, loadPrompt("guided-plan-slice", {
-        milestoneId, sliceId, sliceTitle,
+        milestoneId, sliceId, sliceTitle, inlinedTemplates: planSliceTemplates,
       }));
     } else if (choice === "discuss") {
       dispatchWorkflow(pi, await buildDiscussSlicePrompt(milestoneId, sliceId, sliceTitle, basePath));
     } else if (choice === "research") {
+      const researchTemplates = inlineTemplate("research", "Research");
       dispatchWorkflow(pi, loadPrompt("guided-research-slice", {
-        milestoneId, sliceId, sliceTitle,
+        milestoneId, sliceId, sliceTitle, inlinedTemplates: researchTemplates,
       }));
     } else if (choice === "status") {
       const { fireStatusViaCommand } = await import("./commands.js");
@@ -904,8 +930,12 @@ export async function showSmartEntry(
     });
 
     if (choice === "complete") {
+      const completeSliceTemplates = [
+        inlineTemplate("slice-summary", "Slice Summary"),
+        inlineTemplate("uat", "UAT"),
+      ].join("\n\n---\n\n");
       dispatchWorkflow(pi, loadPrompt("guided-complete-slice", {
-        milestoneId, sliceId, sliceTitle,
+        milestoneId, sliceId, sliceTitle, inlinedTemplates: completeSliceTemplates,
       }));
     } else if (choice === "status") {
       const { fireStatusViaCommand } = await import("./commands.js");
@@ -965,8 +995,9 @@ export async function showSmartEntry(
           milestoneId, sliceId,
         }));
       } else {
+        const executeTaskTemplates = inlineTemplate("task-summary", "Task Summary");
         dispatchWorkflow(pi, loadPrompt("guided-execute-task", {
-          milestoneId, sliceId, taskId, taskTitle,
+          milestoneId, sliceId, taskId, taskTitle, inlinedTemplates: executeTaskTemplates,
         }));
       }
     } else if (choice === "status") {
