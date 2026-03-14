@@ -409,6 +409,87 @@ function createGitBase(): string {
   }
 }
 
+// ═══ verifyExpectedArtifact: complete-slice roadmap check ════════════════════
+// Regression for #indefinite-hang: complete-slice must verify roadmap [x] or
+// the idempotency skip loops forever after a crash that wrote SUMMARY+UAT but
+// did not mark the roadmap done.
+
+const ROADMAP_INCOMPLETE = `# M001: Test Milestone
+
+## Slices
+
+- [ ] **S01: Test Slice** \`risk:low\`
+> After this: something works
+`;
+
+const ROADMAP_COMPLETE = `# M001: Test Milestone
+
+## Slices
+
+- [x] **S01: Test Slice** \`risk:low\`
+> After this: something works
+`;
+
+{
+  console.log("\n=== verifyExpectedArtifact: complete-slice — all artifacts present + roadmap marked [x] returns true ===");
+  const base = createFixtureBase();
+  try {
+    const sliceDir = join(base, ".gsd", "milestones", "M001", "slices", "S01");
+    writeFileSync(join(sliceDir, "S01-SUMMARY.md"), "# Summary\n", "utf-8");
+    writeFileSync(join(sliceDir, "S01-UAT.md"), "# UAT\n", "utf-8");
+    writeFileSync(join(base, ".gsd", "milestones", "M001", "M001-ROADMAP.md"), ROADMAP_COMPLETE, "utf-8");
+    const result = verifyExpectedArtifact("complete-slice", "M001/S01", base);
+    assert(result === true, "SUMMARY + UAT + roadmap [x] should verify as true");
+  } finally {
+    cleanup(base);
+  }
+}
+
+{
+  console.log("\n=== verifyExpectedArtifact: complete-slice — SUMMARY + UAT present but roadmap NOT marked [x] returns false ===");
+  const base = createFixtureBase();
+  try {
+    const sliceDir = join(base, ".gsd", "milestones", "M001", "slices", "S01");
+    writeFileSync(join(sliceDir, "S01-SUMMARY.md"), "# Summary\n", "utf-8");
+    writeFileSync(join(sliceDir, "S01-UAT.md"), "# UAT\n", "utf-8");
+    writeFileSync(join(base, ".gsd", "milestones", "M001", "M001-ROADMAP.md"), ROADMAP_INCOMPLETE, "utf-8");
+    const result = verifyExpectedArtifact("complete-slice", "M001/S01", base);
+    assert(result === false, "roadmap not marked [x] should return false (crash recovery scenario)");
+  } finally {
+    cleanup(base);
+  }
+}
+
+{
+  console.log("\n=== verifyExpectedArtifact: complete-slice — SUMMARY present but UAT missing returns false ===");
+  const base = createFixtureBase();
+  try {
+    const sliceDir = join(base, ".gsd", "milestones", "M001", "slices", "S01");
+    writeFileSync(join(sliceDir, "S01-SUMMARY.md"), "# Summary\n", "utf-8");
+    // no UAT file
+    writeFileSync(join(base, ".gsd", "milestones", "M001", "M001-ROADMAP.md"), ROADMAP_COMPLETE, "utf-8");
+    const result = verifyExpectedArtifact("complete-slice", "M001/S01", base);
+    assert(result === false, "missing UAT should return false");
+  } finally {
+    cleanup(base);
+  }
+}
+
+{
+  console.log("\n=== verifyExpectedArtifact: complete-slice — no roadmap file present is lenient (returns true) ===");
+  const base = createFixtureBase();
+  try {
+    const sliceDir = join(base, ".gsd", "milestones", "M001", "slices", "S01");
+    writeFileSync(join(sliceDir, "S01-SUMMARY.md"), "# Summary\n", "utf-8");
+    writeFileSync(join(sliceDir, "S01-UAT.md"), "# UAT\n", "utf-8");
+    // no roadmap file
+    const result = verifyExpectedArtifact("complete-slice", "M001/S01", base);
+    assert(result === true, "missing roadmap file should be lenient and return true");
+  } finally {
+    cleanup(base);
+  }
+}
+
 // ═════════════════════════════════════════════════════════════════════════════
 // Results
 // ═════════════════════════════════════════════════════════════════════════════

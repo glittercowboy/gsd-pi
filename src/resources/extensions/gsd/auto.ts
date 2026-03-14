@@ -3065,7 +3065,11 @@ export function verifyExpectedArtifact(unitType: string, unitId: string, base: s
     }
   }
 
-  // complete-slice must also produce a UAT file
+  // complete-slice must also produce a UAT file AND mark the slice [x] in the roadmap.
+  // Without the roadmap check, a crash after writing SUMMARY+UAT but before updating
+  // the roadmap causes an infinite skip loop: the idempotency key says "done" but the
+  // state machine keeps returning the same complete-slice unit (roadmap still shows
+  // the slice incomplete), so dispatchNextUnit recurses forever.
   if (unitType === "complete-slice") {
     const parts = unitId.split("/");
     const mid = parts[0];
@@ -3075,6 +3079,17 @@ export function verifyExpectedArtifact(unitType: string, unitId: string, base: s
       if (dir) {
         const uatPath = join(dir, buildSliceFileName(sid, "UAT"));
         if (!existsSync(uatPath)) return false;
+      }
+      // Verify the roadmap has the slice marked [x]. If not, the completion
+      // record is stale — the unit must re-run to update the roadmap.
+      const roadmapFile = resolveMilestoneFile(base, mid, "ROADMAP");
+      if (roadmapFile && existsSync(roadmapFile)) {
+        try {
+          const roadmapContent = readFileSync(roadmapFile, "utf-8");
+          const roadmap = parseRoadmap(roadmapContent);
+          const slice = roadmap.slices.find(s => s.id === sid);
+          if (slice && !slice.done) return false;
+        } catch { /* corrupt roadmap — be lenient and treat as verified */ }
       }
     }
   }
