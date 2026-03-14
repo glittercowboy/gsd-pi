@@ -25,12 +25,11 @@ if (!existsSync(join(projectRoot, "dist"))) {
 }
 
 function packTarball(): string {
-  const out = execFileSync("npm", ["pack", "--json"], {
-    cwd: projectRoot,
-    encoding: "utf-8",
-    stdio: ["ignore", "pipe", "ignore"],
-  });
-  return join(projectRoot, JSON.parse(out)[0].filename);
+  const pkg = JSON.parse(readFileSync(join(projectRoot, "package.json"), "utf-8"));
+  const safeName = pkg.name.replace(/^@[^/]+\//, "").replace(/\//g, "-");
+  const tarball = `${safeName}-${pkg.version}.tgz`;
+  execFileSync("npm", ["pack"], { cwd: projectRoot, stdio: "ignore" });
+  return join(projectRoot, tarball);
 }
 
 /** List file paths inside a .tgz using Node built-ins only (no tar CLI or npm package). */

@@ -388,7 +388,7 @@ def _find_gh_cli() -> str:
     """
     gh_path = shutil.which("gh")
     if not gh_path:
-        typer.echo("ERROR: gh CLI not found. Install via: uv run .claude/skills/gh/scripts/setup_gh.py", err=True)
+        typer.echo("ERROR: gh CLI not found. Install gh via your system package manager (brew/winget/apt).", err=True)
         raise typer.Exit(1)
     return gh_path
 

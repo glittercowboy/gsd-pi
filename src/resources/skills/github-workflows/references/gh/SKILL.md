@@ -20,31 +20,16 @@ Ensures the GitHub CLI (`gh`) is available and provides correct usage patterns f
 
 ## Installation
 
-If `gh` is not installed, run the setup script:
+`gh` is assumed to be already installed via the system package manager:
+
+- **macOS**: `brew install gh`
+- **Windows**: `winget install GitHub.cli`
+- **Linux (Debian/Ubuntu)**: `apt install gh`
+
+For CI monitoring operations (watching workflow runs, checking statuses, waiting for jobs), use `ci_monitor.cjs`:
 
 ```bash
-# Python version
-uv run src/resources/skills/github-workflows/references/gh/scripts/setup_gh.py
-
-# Node.js version
-node src/resources/skills/github-workflows/references/gh/scripts/setup_gh.cjs
-```
-
-The script:
-
-1. Checks if `gh` is already installed via `shutil.which`
-2. Detects platform (Linux, macOS, Windows) and architecture
-3. Fetches the latest release from `https://github.com/cli/cli/releases/latest`
-4. Downloads the correct archive with SHA256 verification from checksums file
-5. Extracts and installs the binary to a writable PATH directory
-6. Uses `GITHUB_TOKEN` for authenticated requests; falls back to anonymous if auth fails (401/403)
-
-**CLI options:**
-
-```text
---force     Reinstall even if already at latest version
---dry-run   Show what would happen without installing
---bin-dir   Override install directory (default: auto-detect from PATH)
+node src/resources/skills/github-workflows/references/gh/scripts/ci_monitor.cjs
 ```
 
 ---
