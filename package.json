@@ -25,6 +25,7 @@
     "pkg",
     "src/resources",
     "scripts/postinstall.js",
+    "scripts/link-workspace-packages.cjs",
     "package.json",
     "README.md"
   ],
@@ -52,7 +53,7 @@
     "build:native": "node native/scripts/build.js",
     "build:native:dev": "node native/scripts/build.js --dev",
     "dev": "tsc --watch",
-    "postinstall": "node scripts/postinstall.js",
+    "postinstall": "node scripts/link-workspace-packages.cjs && node scripts/postinstall.js",
     "pi:install-global": "node scripts/install-pi-global.js",
     "pi:uninstall-global": "node scripts/uninstall-pi-global.js",
     "sync-pkg-version": "node scripts/sync-pkg-version.cjs",
@@ -67,13 +68,7 @@
     "playwright": "^1.58.2",
     "sharp": "^0.34.5"
   },
-  "bundleDependencies": [
-    "@gsd/native",
-    "@gsd/pi-agent-core",
-    "@gsd/pi-ai",
-    "@gsd/pi-coding-agent",
-    "@gsd/pi-tui"
-  ],
+  "bundleDependencies": [],
   "devDependencies": {
     "@types/node": "^22.0.0",
     "@types/picomatch": "^4.0.2",

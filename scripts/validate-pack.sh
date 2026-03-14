@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # validate-pack.sh — Verify the npm tarball is installable before publishing.
 #
-# Catches the class of bugs where bundleDependencies silently fail,
-# workspace cross-references leak into the published package, or
-# any dependency can't be resolved from the npm registry.
+# Packs the tarball, checks critical files exist, then does a real npm install
+# from the tarball in an isolated directory. If install fails, the package is
+# broken and must not be published.
 #
 # Usage: npm run validate-pack (or bash scripts/validate-pack.sh)
 # Exit 0 = safe to publish, Exit 1 = broken package.
@@ -36,7 +36,9 @@ for required in \
   "package/packages/pi-coding-agent/dist/index.js" \
   "package/packages/pi-ai/dist/index.js" \
   "package/packages/pi-agent-core/dist/index.js" \
-  "package/packages/pi-tui/dist/index.js"; do
+  "package/packages/pi-tui/dist/index.js" \
+  "package/scripts/link-workspace-packages.cjs" \
+  "package/scripts/postinstall.js"; do
   if ! tar tzf "$TARBALL" | grep -q "^${required}$"; then
     echo "    MISSING: $required"
     MISSING=1
@@ -48,48 +50,7 @@ if [ "$MISSING" = "1" ]; then
 fi
 echo "    Critical files present."
 
-# --- Check 2: No @gsd/* in dependencies (only in bundleDependencies) ---
-echo "==> Checking for leaked @gsd/* dependencies..."
-LEAKED=$(tar xzf "$TARBALL" -O package/package.json | node -e "
-  let data = '';
-  process.stdin.on('data', c => data += c);
-  process.stdin.on('end', () => {
-    const pkg = JSON.parse(data);
-    const deps = Object.keys(pkg.dependencies || {}).filter(d => d.startsWith('@gsd/'));
-    if (deps.length) {
-      console.log(deps.join(', '));
-      process.exit(1);
-    }
-  });
-" 2>&1) || {
-  echo "ERROR: @gsd/* packages found in dependencies — they must only be in bundleDependencies"
-  echo "    Found: $LEAKED"
-  exit 1
-}
-echo "    No leaked @gsd/* dependencies."
-
-# --- Check 3: Workspace packages' package.json files have no @gsd/* deps ---
-echo "==> Checking bundled workspace packages for @gsd/* cross-deps..."
-CROSS_LEAKED=$(tar xzf "$TARBALL" -O package/node_modules/@gsd/pi-coding-agent/package.json 2>/dev/null | node -e "
-  let data = '';
-  process.stdin.on('data', c => data += c);
-  process.stdin.on('end', () => {
-    const pkg = JSON.parse(data);
-    const deps = Object.keys(pkg.dependencies || {}).filter(d => d.startsWith('@gsd/'));
-    if (deps.length) {
-      console.log(deps.join(', '));
-      process.exit(1);
-    }
-  });
-" 2>&1) || {
-  echo "ERROR: Bundled workspace packages still have @gsd/* cross-dependencies"
-  echo "    Found in pi-coding-agent: $CROSS_LEAKED"
-  echo "    Remove @gsd/* from packages/*/package.json dependencies."
-  exit 1
-}
-echo "    No @gsd/* cross-dependencies in bundled packages."
-
-# --- Check 4: Install test — the real proof ---
+# --- Check 2: Install test — the real proof ---
 echo "==> Testing install in isolated directory..."
 cd "$INSTALL_DIR"
 npm init -y > /dev/null 2>&1
@@ -99,9 +60,26 @@ if npm install "$TARBALL" 2>&1; then
 else
   echo ""
   echo "ERROR: npm install of tarball failed. This package would break for users."
-  echo "Check that all dependencies resolve and bundleDependencies are correct."
+  echo "Check that all dependencies resolve and workspace linking works."
   exit 1
 fi
+
+# --- Check 3: Verify workspace packages are linked ---
+echo "==> Verifying workspace package resolution..."
+LINK_FAILED=0
+for ws_pkg in native pi-agent-core pi-ai pi-coding-agent pi-tui; do
+  PKG_DIR="node_modules/gsd-pi/node_modules/@gsd/${ws_pkg}"
+  if [ ! -d "$PKG_DIR" ] && [ ! -L "$PKG_DIR" ]; then
+    echo "    NOT FOUND: @gsd/${ws_pkg}"
+    LINK_FAILED=1
+  fi
+done
+if [ "$LINK_FAILED" = "1" ]; then
+  echo "ERROR: Workspace packages not linked after install."
+  echo "    Check scripts/link-workspace-packages.cjs and postinstall."
+  exit 1
+fi
+echo "    All workspace packages resolved."
 
 echo ""
 echo "Package is installable. Safe to publish."
