@@ -452,6 +452,9 @@ export const streamAnthropic: StreamFunction<"anthropic-messages", AnthropicOpti
 			for (const block of output.content) delete (block as any).index;
 			output.stopReason = options?.signal?.aborted ? "aborted" : "error";
 			output.errorMessage = error instanceof Error ? error.message : JSON.stringify(error);
+			if (model.provider === "alibaba-coding-plan") {
+				output.errorMessage = `[alibaba-coding-plan] ${output.errorMessage}`;
+			}
 			if (error instanceof Anthropic.APIError && error.headers) {
 				const retryAfterMs = extractRetryAfterMs(error.headers, error.message);
 				if (retryAfterMs !== undefined) {

@@ -64,44 +64,35 @@ export const streamOpenAICompletions: StreamFunction<"openai-completions", OpenA
 ): AssistantMessageEventStream => {
 	const stream = new AssistantMessageEventStream();
 
-	// Check if this is a zai provider that may return network_error
-	const isZai = model.provider === "zai" || model.baseUrl?.includes("api.z.ai");
-
 	(async () => {
-		let retryCount = 0;
-		let shouldRetry = true;
+		const output: AssistantMessage = {
+			role: "assistant",
+			content: [],
+			api: model.api,
+			provider: model.provider,
+			model: model.id,
+			usage: {
+				input: 0,
+				output: 0,
+				cacheRead: 0,
+				cacheWrite: 0,
+				totalTokens: 0,
+				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+			},
+			stopReason: "stop",
+			timestamp: Date.now(),
+		};
 
-		while (shouldRetry) {
-			shouldRetry = false;
-
-			const output: AssistantMessage = {
-				role: "assistant",
-				content: [],
-				api: model.api,
-				provider: model.provider,
-				model: model.id,
-				usage: {
-					input: 0,
-					output: 0,
-					cacheRead: 0,
-					cacheWrite: 0,
-					totalTokens: 0,
-					cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-				},
-				stopReason: "stop",
-				timestamp: Date.now(),
-			};
-
-			try {
-				const apiKey = options?.apiKey || getEnvApiKey(model.provider) || "";
-				const client = createClient(model, context, apiKey, options?.headers);
-				let params = buildParams(model, context, options);
-				const nextParams = await options?.onPayload?.(params, model);
-				if (nextParams !== undefined) {
-					params = nextParams as OpenAI.Chat.Completions.ChatCompletionCreateParamsStreaming;
-				}
-				const openaiStream = await client.chat.completions.create(params, { signal: options?.signal });
-				stream.push({ type: "start", partial: output });
+		try {
+			const apiKey = options?.apiKey || getEnvApiKey(model.provider) || "";
+			const client = createClient(model, context, apiKey, options?.headers);
+			let params = buildParams(model, context, options);
+			const nextParams = await options?.onPayload?.(params, model);
+			if (nextParams !== undefined) {
+				params = nextParams as OpenAI.Chat.Completions.ChatCompletionCreateParamsStreaming;
+			}
+			const openaiStream = await client.chat.completions.create(params, { signal: options?.signal });
+			stream.push({ type: "start", partial: output });
 
 			let currentBlock: TextContent | ThinkingContent | (ToolCall & { partialArgs?: string }) | null = null;
 			const blocks = output.content;
@@ -294,15 +285,6 @@ export const streamOpenAICompletions: StreamFunction<"openai-completions", OpenA
 				throw new Error("Request was aborted");
 			}
 
-			// Check for network_error from zai provider - retry indefinitely
-			if (output.stopReason === "error" && isZai) {
-				retryCount++;
-				shouldRetry = true;
-				// Small delay before retry to avoid hammering the API
-				await new Promise((resolve) => setTimeout(resolve, 1000));
-				continue;
-			}
-
 			if (output.stopReason === "aborted" || output.stopReason === "error") {
 				throw new Error("An unknown error occurred");
 			}
@@ -310,34 +292,14 @@ export const streamOpenAICompletions: StreamFunction<"openai-completions", OpenA
 			stream.push({ type: "done", reason: output.stopReason, message: output });
 			stream.end();
 		} catch (error) {
-			// Check if this is a network-related error that should be retried for zai
-			const errorMessage = error instanceof Error ? error.message : JSON.stringify(error);
-			const isNetworkError =
-				errorMessage.includes("network") ||
-				errorMessage.includes("ECONNRESET") ||
-				errorMessage.includes("ETIMEDOUT") ||
-				errorMessage.includes("ENOTFOUND") ||
-				errorMessage.includes("ECONNREFUSED") ||
-				errorMessage.includes("fetch failed");
-
-			if (isZai && isNetworkError && !options?.signal?.aborted) {
-				retryCount++;
-				shouldRetry = true;
-				// Exponential backoff: 1s, 2s, 4s, 8s... max 30s
-				const delay = Math.min(1000 * Math.pow(2, Math.min(retryCount - 1, 5)), 30000);
-				await new Promise((resolve) => setTimeout(resolve, delay));
-				continue;
-			}
-
 			for (const block of output.content) delete (block as any).index;
 			output.stopReason = options?.signal?.aborted ? "aborted" : "error";
-			output.errorMessage = errorMessage;
+			output.errorMessage = error instanceof Error ? error.message : JSON.stringify(error);
 			// Some providers via OpenRouter give additional information in this field.
 			const rawMetadata = (error as any)?.error?.metadata?.raw;
 			if (rawMetadata) output.errorMessage += `\n${rawMetadata}`;
 			stream.push({ type: "error", reason: output.stopReason, error: output });
 			stream.end();
-		}
 		}
 	})();
 
@@ -770,9 +732,10 @@ function mapStopReason(reason: ChatCompletionChunk.Choice["finish_reason"]): Sto
 			return "toolUse";
 		case "content_filter":
 			return "error";
-		default:
-			// Handle non-standard finish reasons from alternative providers (e.g., "network_error" from zai)
-			return "error";
+		default: {
+			const _exhaustive: never = reason;
+			throw new Error(`Unhandled stop reason: ${_exhaustive}`);
+		}
 	}
 }
 
