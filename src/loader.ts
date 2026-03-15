@@ -1,7 +1,52 @@
 #!/usr/bin/env node
+// GSD Startup Loader
+// Copyright (c) 2026 Jeremy McSpadden <jeremy@fluxlabs.net>
 import { fileURLToPath } from 'url'
 import { dirname, resolve, join, delimiter } from 'path'
 import { existsSync, readFileSync, readdirSync, mkdirSync, symlinkSync } from 'fs'
+
+// Fast-path: handle --version/-v and --help/-h before importing any heavy
+// dependencies. This avoids loading the entire pi-coding-agent barrel import
+// (~1s) just to print a version string.
+const gsdRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
+const args = process.argv.slice(2)
+const firstArg = args[0]
+
+if (firstArg === '--version' || firstArg === '-v') {
+  try {
+    const pkg = JSON.parse(readFileSync(join(gsdRoot, 'package.json'), 'utf-8'))
+    process.stdout.write((pkg.version || '0.0.0') + '\n')
+  } catch {
+    process.stdout.write('0.0.0\n')
+  }
+  process.exit(0)
+}
+
+if (firstArg === '--help' || firstArg === '-h') {
+  let version = '0.0.0'
+  try {
+    const pkg = JSON.parse(readFileSync(join(gsdRoot, 'package.json'), 'utf-8'))
+    version = pkg.version || version
+  } catch { /* ignore */ }
+  process.stdout.write(`GSD v${version} — Get Shit Done\n\n`)
+  process.stdout.write('Usage: gsd [options] [message...]\n\n')
+  process.stdout.write('Options:\n')
+  process.stdout.write('  --mode <text|json|rpc>   Output mode (default: interactive)\n')
+  process.stdout.write('  --print, -p              Single-shot print mode\n')
+  process.stdout.write('  --continue, -c           Resume the most recent session\n')
+  process.stdout.write('  --model <id>             Override model (e.g. claude-opus-4-6)\n')
+  process.stdout.write('  --no-session             Disable session persistence\n')
+  process.stdout.write('  --extension <path>       Load additional extension\n')
+  process.stdout.write('  --tools <a,b,c>          Restrict available tools\n')
+  process.stdout.write('  --list-models [search]   List available models and exit\n')
+  process.stdout.write('  --version, -v            Print version and exit\n')
+  process.stdout.write('  --help, -h               Print this help and exit\n')
+  process.stdout.write('\nSubcommands:\n')
+  process.stdout.write('  config                   Re-run the setup wizard\n')
+  process.stdout.write('  update                   Update GSD to the latest version\n')
+  process.exit(0)
+}
+
 import { agentDir, appRoot } from './app-paths.js'
 import { serializeBundledExtensionPaths } from './bundled-extension-paths.js'
 import { renderLogo } from './logo.js'
@@ -46,7 +91,6 @@ process.env.GSD_CODING_AGENT_DIR = agentDir
 // Without this, extensions (e.g. browser-tools) can't resolve dependencies like
 // `playwright` because jiti resolves modules from pi-coding-agent's location, not gsd's.
 // Prepending gsd's node_modules to NODE_PATH fixes this for all extensions.
-const gsdRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const gsdNodeModules = join(gsdRoot, 'node_modules')
 process.env.NODE_PATH = [gsdNodeModules, process.env.NODE_PATH]
   .filter(Boolean)
@@ -72,9 +116,8 @@ process.env.GSD_BIN_PATH = process.argv[1]
 // GSD_WORKFLOW_PATH — absolute path to bundled GSD-WORKFLOW.md, used by patched gsd extension
 // when dispatching workflow prompts. Prefers dist/resources/ (stable, set at build time)
 // over src/resources/ (live working tree) — see resource-loader.ts for rationale.
-const loaderPackageRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
-const distRes = join(loaderPackageRoot, 'dist', 'resources')
-const srcRes = join(loaderPackageRoot, 'src', 'resources')
+const distRes = join(gsdRoot, 'dist', 'resources')
+const srcRes = join(gsdRoot, 'src', 'resources')
 const resourcesDir = existsSync(distRes) ? distRes : srcRes
 process.env.GSD_WORKFLOW_PATH = join(resourcesDir, 'GSD-WORKFLOW.md')
 
@@ -116,8 +159,11 @@ process.env.GSD_BUNDLED_EXTENSION_PATHS = serializeBundledExtensionPaths(discove
 // Respect HTTP_PROXY / HTTPS_PROXY / NO_PROXY env vars for all outbound requests.
 // pi-coding-agent's cli.ts sets this, but GSD bypasses that entry point — so we
 // must set it here before any SDK clients are created.
-import { EnvHttpProxyAgent, setGlobalDispatcher } from 'undici'
-setGlobalDispatcher(new EnvHttpProxyAgent())
+// Lazy-load undici (~200ms) only when proxy env vars are actually set.
+if (process.env.HTTP_PROXY || process.env.HTTPS_PROXY || process.env.http_proxy || process.env.https_proxy) {
+  const { EnvHttpProxyAgent, setGlobalDispatcher } = await import('undici')
+  setGlobalDispatcher(new EnvHttpProxyAgent())
+}
 
 // Ensure workspace packages are linked before importing cli.js (which imports @gsd/*).
 // npm postinstall handles this normally, but npx --ignore-scripts skips postinstall.

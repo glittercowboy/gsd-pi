@@ -1,9 +1,20 @@
-import {
-	type GenerateContentConfig,
-	type GenerateContentParameters,
+// Lazy-loaded: Google GenAI SDK (~186ms) is imported on first use, not at startup.
+// This avoids penalizing users who don't use Google models.
+import type {
+	GenerateContentConfig,
+	GenerateContentParameters,
 	GoogleGenAI,
-	type ThinkingConfig,
+	ThinkingConfig,
 } from "@google/genai";
+
+let _GoogleGenAIClass: typeof GoogleGenAI | undefined;
+async function getGoogleGenAIClass(): Promise<typeof GoogleGenAI> {
+	if (!_GoogleGenAIClass) {
+		const mod = await import("@google/genai");
+		_GoogleGenAIClass = mod.GoogleGenAI;
+	}
+	return _GoogleGenAIClass;
+}
 import { getEnvApiKey } from "../env-api-keys.js";
 import { calculateCost } from "../models.js";
 import type {
@@ -73,7 +84,7 @@ export const streamGoogle: StreamFunction<"google-generative-ai", GoogleOptions>
 
 		try {
 			const apiKey = options?.apiKey || getEnvApiKey(model.provider) || "";
-			const client = createClient(model, apiKey, options?.headers);
+			const client = await createClient(model, apiKey, options?.headers);
 			let params = buildParams(model, context, options);
 			const nextParams = await options?.onPayload?.(params, model);
 			if (nextParams !== undefined) {
@@ -308,11 +319,11 @@ export const streamSimpleGoogle: StreamFunction<"google-generative-ai", SimpleSt
 	} satisfies GoogleOptions);
 };
 
-function createClient(
+async function createClient(
 	model: Model<"google-generative-ai">,
 	apiKey?: string,
 	optionsHeaders?: Record<string, string>,
-): GoogleGenAI {
+): Promise<GoogleGenAI> {
 	const httpOptions: { baseUrl?: string; apiVersion?: string; headers?: Record<string, string> } = {};
 	if (model.baseUrl) {
 		httpOptions.baseUrl = model.baseUrl;
@@ -322,7 +333,8 @@ function createClient(
 		httpOptions.headers = { ...model.headers, ...optionsHeaders };
 	}
 
-	return new GoogleGenAI({
+	const GoogleGenAIClass = await getGoogleGenAIClass();
+	return new GoogleGenAIClass({
 		apiKey,
 		httpOptions: Object.keys(httpOptions).length > 0 ? httpOptions : undefined,
 	});

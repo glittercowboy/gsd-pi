@@ -126,21 +126,29 @@ export function getNewerManagedResourceVersion(agentDir: string, currentVersion:
 /**
  * Syncs all bundled resources to agentDir (~/.gsd/agent/) on every launch.
  *
- * - extensions/ → ~/.gsd/agent/extensions/   (always overwrite — ensures updates ship on next launch)
- * - agents/     → ~/.gsd/agent/agents/        (always overwrite)
- * - skills/     → ~/.gsd/agent/skills/        (always overwrite)
+ * - extensions/ → ~/.gsd/agent/extensions/   (overwrite when version changes)
+ * - agents/     → ~/.gsd/agent/agents/        (overwrite when version changes)
+ * - skills/     → ~/.gsd/agent/skills/        (overwrite when version changes)
  * - GSD-WORKFLOW.md is read directly from bundled path via GSD_WORKFLOW_PATH env var
  *
- * Always-overwrite ensures `npm update -g @glittercowboy/gsd` takes effect immediately.
- * User customizations should go in ~/.gsd/agent/extensions/ subdirs with unique names,
- * not by editing the gsd-managed files.
+ * Skips the copy when the managed-resources.json version matches the current
+ * GSD version, avoiding ~128ms of synchronous cpSync on every startup.
+ * After `npm update -g @glittercowboy/gsd`, versions will differ and the
+ * copy runs once to land the new resources.
  *
  * Inspectable: `ls ~/.gsd/agent/extensions/`
  */
 export function initResources(agentDir: string): void {
   mkdirSync(agentDir, { recursive: true })
 
-  // Sync extensions — always overwrite so updates land on next launch
+  // Skip resource sync when versions match — saves ~128ms of cpSync per launch
+  const currentVersion = getBundledGsdVersion()
+  const managedVersion = readManagedResourceVersion(agentDir)
+  if (managedVersion && managedVersion === currentVersion) {
+    return
+  }
+
+  // Sync extensions — overwrite so updates land on next launch
   const destExtensions = join(agentDir, 'extensions')
   cpSync(bundledExtensionsDir, destExtensions, { recursive: true, force: true })
 
@@ -151,7 +159,7 @@ export function initResources(agentDir: string): void {
     cpSync(srcAgents, destAgents, { recursive: true, force: true })
   }
 
-  // Sync skills — always overwrite so updates land on next launch
+  // Sync skills — overwrite so updates land on next launch
   const destSkills = join(agentDir, 'skills')
   const srcSkills = join(resourcesDir, 'skills')
   if (existsSync(srcSkills)) {
