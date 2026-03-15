@@ -48,15 +48,15 @@ interface MetricCardProps {
 function MetricCard({ label, value, subtext, icon }: MetricCardProps) {
   return (
     <div className="rounded-md border border-border bg-card p-4">
-      <div className="flex items-start justify-between">
-        <div>
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
           <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
             {label}
           </p>
-          <p className="mt-1 text-2xl font-semibold tracking-tight">{value}</p>
-          {subtext && <p className="mt-0.5 text-xs text-muted-foreground">{subtext}</p>}
+          <p className="mt-1 truncate text-2xl font-semibold tracking-tight">{value}</p>
+          {subtext && <p className="mt-0.5 truncate text-xs text-muted-foreground">{subtext}</p>}
         </div>
-        <div className="rounded-md bg-accent p-2 text-muted-foreground">{icon}</div>
+        <div className="shrink-0 rounded-md bg-accent p-2 text-muted-foreground">{icon}</div>
       </div>
     </div>
   )
@@ -244,14 +244,14 @@ export function Dashboard() {
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
           <div className="rounded-md border border-border bg-card p-4" data-testid="dashboard-current-unit">
             <div className="flex items-start justify-between gap-3">
-              <div>
+              <div className="min-w-0">
                 <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Current Unit</p>
                 <p className="mt-1 truncate text-lg font-semibold tracking-tight">{currentUnitLabel}</p>
                 <p className="mt-0.5 text-xs text-muted-foreground" data-testid="dashboard-current-unit-freshness">
                   Auto freshness: {currentUnitFreshness}
                 </p>
               </div>
-              <div className="rounded-md bg-accent p-2 text-muted-foreground">
+              <div className="shrink-0 rounded-md bg-accent p-2 text-muted-foreground">
                 <Activity className="h-5 w-5" />
               </div>
             </div>
