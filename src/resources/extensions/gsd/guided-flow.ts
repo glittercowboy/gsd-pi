@@ -467,6 +467,62 @@ export async function showDiscuss(
   const mid = state.activeMilestone.id;
   const milestoneTitle = state.activeMilestone.title;
 
+  // Special case: milestone is in needs-discussion phase (has CONTEXT-DRAFT.md but no roadmap yet).
+  // Route to the draft discussion flow instead of erroring — the discussion IS how the roadmap gets created.
+  if (state.phase === "needs-discussion") {
+    const draftFile = resolveMilestoneFile(basePath, mid, "CONTEXT-DRAFT");
+    const draftContent = draftFile ? await loadFile(draftFile) : null;
+
+    const choice = await showNextAction(ctx as any, {
+      title: `GSD — ${mid}: ${milestoneTitle}`,
+      summary: ["This milestone has a draft context from a prior discussion.", "It needs a dedicated discussion before auto-planning can begin."],
+      actions: [
+        {
+          id: "discuss_draft",
+          label: "Discuss from draft",
+          description: "Continue where the prior discussion left off — seed material is loaded automatically.",
+          recommended: true,
+        },
+        {
+          id: "discuss_fresh",
+          label: "Start fresh discussion",
+          description: "Discard the draft and start a new discussion from scratch.",
+        },
+        {
+          id: "skip_milestone",
+          label: "Skip — create new milestone",
+          description: "Leave this milestone as-is and start something new.",
+        },
+      ],
+      notYetMessage: "Run /gsd discuss when ready to discuss this milestone.",
+    });
+
+    if (choice === "discuss_draft") {
+      const discussMilestoneTemplates = inlineTemplate("context", "Context");
+      const basePrompt = loadPrompt("guided-discuss-milestone", {
+        milestoneId: mid, milestoneTitle, inlinedTemplates: discussMilestoneTemplates,
+      });
+      const seed = draftContent
+        ? `${basePrompt}\n\n## Prior Discussion (Draft Seed)\n\n${draftContent}`
+        : basePrompt;
+      pendingAutoStart = { ctx, pi, basePath, milestoneId: mid, step: false };
+      dispatchWorkflow(pi, seed, "gsd-discuss");
+    } else if (choice === "discuss_fresh") {
+      const discussMilestoneTemplates = inlineTemplate("context", "Context");
+      pendingAutoStart = { ctx, pi, basePath, milestoneId: mid, step: false };
+      dispatchWorkflow(pi, loadPrompt("guided-discuss-milestone", {
+        milestoneId: mid, milestoneTitle, inlinedTemplates: discussMilestoneTemplates,
+      }), "gsd-discuss");
+    } else if (choice === "skip_milestone") {
+      const milestoneIds = findMilestoneIds(basePath);
+      const uniqueMilestoneIds = !!loadEffectiveGSDPreferences()?.preferences?.unique_milestone_ids;
+      const nextId = nextMilestoneId(milestoneIds, uniqueMilestoneIds);
+      pendingAutoStart = { ctx, pi, basePath, milestoneId: nextId, step: false };
+      dispatchWorkflow(pi, buildDiscussPrompt(nextId, `New milestone ${nextId}.`, basePath));
+    }
+    return;
+  }
+
   // Guard: no roadmap yet
   const roadmapFile = resolveMilestoneFile(basePath, mid, "ROADMAP");
   const roadmapContent = roadmapFile ? await loadFile(roadmapFile) : null;
