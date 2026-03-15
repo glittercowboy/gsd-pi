@@ -70,7 +70,7 @@ import {
 } from "./metrics.js";
 import { dirname, join } from "node:path";
 import { sep as pathSep } from "node:path";
-import { readdirSync, readFileSync, existsSync, mkdirSync, writeFileSync, unlinkSync } from "node:fs";
+import { readdirSync, readFileSync, existsSync, mkdirSync, writeFileSync, unlinkSync, renameSync, statSync } from "node:fs";
 import { execSync, execFileSync } from "node:child_process";
 import {
   autoCommitCurrentBranch,
@@ -117,7 +117,10 @@ function persistCompletedKey(base: string, key: string): void {
   } catch { /* corrupt file — start fresh */ }
   if (!keys.includes(key)) {
     keys.push(key);
-    writeFileSync(file, JSON.stringify(keys), "utf-8");
+    // Atomic write: tmp file + rename prevents partial writes on crash
+    const tmpFile = file + ".tmp";
+    writeFileSync(tmpFile, JSON.stringify(keys), "utf-8");
+    renameSync(tmpFile, file);
   }
 }
 
@@ -355,6 +358,8 @@ export async function stopAuto(ctx?: ExtensionContext, pi?: ExtensionAPI): Promi
   clearUnitTimeout();
   if (basePath) clearLock(basePath);
   clearSkillSnapshot();
+  _dispatching = false;
+  _skipDepth = 0;
 
   // Remove SIGTERM handler registered at auto-mode start
   deregisterSigtermHandler();
@@ -463,17 +468,35 @@ async function selfHealRuntimeRecords(base: string, ctx: ExtensionContext): Prom
     const { listUnitRuntimeRecords } = await import("./unit-runtime.js");
     const records = listUnitRuntimeRecords(base);
     let healed = 0;
+    const STALE_THRESHOLD_MS = 60 * 60 * 1000; // 1 hour
+    const now = Date.now();
     for (const record of records) {
       const { unitType, unitId } = record;
       const artifactPath = resolveExpectedArtifactPath(unitType, unitId, base);
+
+      // Case 1: Artifact exists — unit completed but closeout didn't finish
       if (artifactPath && existsSync(artifactPath)) {
-        // Artifact exists — unit completed but closeout didn't finish.
+        clearUnitRuntimeRecord(base, unitType, unitId);
+        // Also persist completion key if missing
+        const key = `${unitType}/${unitId}`;
+        if (!completedKeySet.has(key)) {
+          persistCompletedKey(base, key);
+          completedKeySet.add(key);
+        }
+        healed++;
+        continue;
+      }
+
+      // Case 2: No artifact but record is stale (dispatched > 1h ago, process crashed)
+      const age = now - (record.startedAt ?? 0);
+      if (record.phase === "dispatched" && age > STALE_THRESHOLD_MS) {
         clearUnitRuntimeRecord(base, unitType, unitId);
         healed++;
+        continue;
       }
     }
     if (healed > 0) {
-      ctx.ui.notify(`Self-heal: cleared ${healed} stale runtime record(s) with completed artifacts.`, "info");
+      ctx.ui.notify(`Self-heal: cleared ${healed} stale runtime record(s).`, "info");
     }
   } catch {
     // Non-fatal — self-heal should never block auto-mode start
@@ -754,6 +777,43 @@ export async function startAuto(
 
   // Self-heal: clear stale runtime records where artifacts already exist
   await selfHealRuntimeRecords(base, ctx);
+
+  // Self-heal: remove stale .git/index.lock from prior crash.
+  // A stale lock file blocks all git operations (commit, merge, checkout).
+  // Only remove if older than 60 seconds (not from a concurrent process).
+  try {
+    const gitLockFile = join(base, ".git", "index.lock");
+    if (existsSync(gitLockFile)) {
+      const lockAge = Date.now() - statSync(gitLockFile).mtimeMs;
+      if (lockAge > 60_000) {
+        unlinkSync(gitLockFile);
+        ctx.ui.notify("Removed stale .git/index.lock from prior crash.", "info");
+      }
+    }
+  } catch { /* non-fatal */ }
+
+  // Pre-flight: validate milestone queue for multi-milestone runs.
+  // Warn about issues that will cause auto-mode to pause or block.
+  try {
+    const msDir = join(base, ".gsd", "milestones");
+    if (existsSync(msDir)) {
+      const milestoneIds = readdirSync(msDir, { withFileTypes: true })
+        .filter(d => d.isDirectory() && /^M\d{3}/.test(d.name))
+        .map(d => d.name.match(/^(M\d{3})/)?.[1] ?? d.name);
+      if (milestoneIds.length > 1) {
+        const issues: string[] = [];
+        for (const id of milestoneIds) {
+          const draft = resolveMilestoneFile(base, id, "CONTEXT-DRAFT");
+          if (draft) issues.push(`${id}: has CONTEXT-DRAFT.md (will pause for discussion)`);
+        }
+        if (issues.length > 0) {
+          ctx.ui.notify(`Pre-flight: ${milestoneIds.length} milestones queued.\n${issues.map(i => `  ⚠ ${i}`).join("\n")}`, "warning");
+        } else {
+          ctx.ui.notify(`Pre-flight: ${milestoneIds.length} milestones queued. All have full context.`, "info");
+        }
+      }
+    }
+  } catch { /* non-fatal — pre-flight should never block auto-mode */ }
 
   // Dispatch the first unit
   await dispatchNextUnit(ctx, pi);
@@ -1434,6 +1494,16 @@ function getRoadmapSlicesSync(): { done: number; total: number; activeSliceTasks
 
 // ─── Core Loop ────────────────────────────────────────────────────────────────
 
+/** Tracks recursive skip depth to prevent TUI freeze on cascading completed-unit skips */
+let _skipDepth = 0;
+const MAX_SKIP_DEPTH = 20;
+
+/** Reentrancy guard for dispatchNextUnit itself (not just handleAgentEnd).
+ *  Prevents concurrent dispatch from watchdog timers, step wizard, and direct calls
+ *  that bypass the _handlingAgentEnd guard. Recursive calls (from skip paths) are
+ *  allowed via _skipDepth > 0. */
+let _dispatching = false;
+
 async function dispatchNextUnit(
   ctx: ExtensionContext,
   pi: ExtensionAPI,
@@ -1443,6 +1513,22 @@ async function dispatchNextUnit(
       ctx.ui.notify("Auto-mode dispatch failed: no command context. Run /gsd auto to restart.", "error");
     }
     return;
+  }
+
+  // Reentrancy guard: allow recursive calls from skip paths (_skipDepth > 0)
+  // but block concurrent external calls (watchdog, step wizard, etc.)
+  if (_dispatching && _skipDepth === 0) {
+    return; // Another dispatch is in progress — bail silently
+  }
+  _dispatching = true;
+
+  // Recursion depth guard: when many units are skipped in sequence (e.g., after
+  // crash recovery with 10+ completed units), recursive dispatchNextUnit calls
+  // can freeze the TUI or overflow the stack. Yield generously after MAX_SKIP_DEPTH.
+  if (_skipDepth > MAX_SKIP_DEPTH) {
+    _skipDepth = 0;
+    ctx.ui.notify(`Skipped ${MAX_SKIP_DEPTH}+ completed units. Yielding to UI before continuing.`, "info");
+    await new Promise(r => setTimeout(r, 200));
   }
 
   // Clear stale directory listing cache so deriveState sees fresh disk state (#431)
@@ -1837,10 +1923,10 @@ async function dispatchNextUnit(
         `Skipping ${unitType} ${unitId} — already completed in a prior session. Advancing.`,
         "info",
       );
-      // Yield to the event loop before re-dispatching to avoid tight recursion
-      // when many units are already completed (e.g., after crash recovery).
-      await new Promise(r => setImmediate(r));
+      _skipDepth++;
+      await new Promise(r => setTimeout(r, 50));
       await dispatchNextUnit(ctx, pi);
+      _skipDepth = Math.max(0, _skipDepth - 1);
       return;
     } else {
       // Stale completion record — artifact missing. Remove and re-run.
@@ -1851,6 +1937,26 @@ async function dispatchNextUnit(
         "warning",
       );
     }
+  }
+
+  // Fallback: if the idempotency key is missing but the expected artifact already
+  // exists on disk, the task completed in a prior session without persisting the key.
+  // Persist it now and skip re-dispatch. This prevents infinite loops where a task
+  // completes successfully but the completion key was never written (e.g., completed
+  // on the first attempt before hitting the retry-threshold persistence logic).
+  if (verifyExpectedArtifact(unitType, unitId, basePath)) {
+    persistCompletedKey(basePath, idempotencyKey);
+    completedKeySet.add(idempotencyKey);
+    invalidateStateCache();
+    ctx.ui.notify(
+      `Skipping ${unitType} ${unitId} — artifact exists but completion key was missing. Repaired and advancing.`,
+      "info",
+    );
+    _skipDepth++;
+    await new Promise(r => setTimeout(r, 50));
+    await dispatchNextUnit(ctx, pi);
+    _skipDepth = Math.max(0, _skipDepth - 1);
+    return;
   }
 
   // Stuck detection — tracks total dispatches per unit (not just consecutive repeats).
@@ -1938,6 +2044,29 @@ async function dispatchNextUnit(
       await new Promise(r => setImmediate(r));
       await dispatchNextUnit(ctx, pi);
       return;
+    }
+
+    // Last resort for complete-milestone: generate stub summary to unblock pipeline.
+    // All slices are done (otherwise we wouldn't be in completing-milestone phase),
+    // but the LLM failed to write the summary N times. A stub lets the pipeline advance.
+    if (unitType === "complete-milestone") {
+      try {
+        const mPath = resolveMilestonePath(basePath, unitId);
+        if (mPath) {
+          const stubPath = join(mPath, `${unitId}-SUMMARY.md`);
+          if (!existsSync(stubPath)) {
+            writeFileSync(stubPath, `# ${unitId} Summary\n\nAuto-generated stub — milestone tasks completed but summary generation failed after ${prevCount + 1} attempts.\nReview and replace this stub with a proper summary.\n`);
+            ctx.ui.notify(`Generated stub summary for ${unitId} to unblock pipeline. Review later.`, "warning");
+            persistCompletedKey(basePath, dispatchKey);
+            completedKeySet.add(dispatchKey);
+            unitDispatchCount.delete(dispatchKey);
+            invalidateStateCache();
+            await new Promise(r => setImmediate(r));
+            await dispatchNextUnit(ctx, pi);
+            return;
+          }
+        }
+      } catch { /* non-fatal — fall through to normal stop */ }
     }
 
     const expected = diagnoseExpectedArtifact(unitType, unitId, basePath);
