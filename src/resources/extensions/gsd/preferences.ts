@@ -15,6 +15,29 @@ const GLOBAL_PREFERENCES_PATH_UPPERCASE = join(homedir(), ".gsd", "PREFERENCES.m
 const PROJECT_PREFERENCES_PATH_UPPERCASE = join(process.cwd(), ".gsd", "PREFERENCES.md");
 const SKILL_ACTIONS = new Set(["use", "prefer", "avoid"]);
 
+/** All recognized top-level keys in GSDPreferences. Used to detect typos / stale config. */
+const KNOWN_PREFERENCE_KEYS = new Set<string>([
+  "version",
+  "always_use_skills",
+  "prefer_skills",
+  "avoid_skills",
+  "skill_rules",
+  "custom_instructions",
+  "models",
+  "skill_discovery",
+  "auto_supervisor",
+  "uat_dispatch",
+  "unique_milestone_ids",
+  "budget_ceiling",
+  "budget_enforcement",
+  "context_pause_threshold",
+  "notifications",
+  "remote_questions",
+  "git",
+  "post_unit_hooks",
+  "pre_dispatch_hooks",
+]);
+
 export interface GSDSkillRule {
   when: string;
   use?: string[];
@@ -105,6 +128,8 @@ export interface LoadedGSDPreferences {
   path: string;
   scope: "global" | "project";
   preferences: GSDPreferences;
+  /** Validation warnings (unknown keys, type mismatches, deprecations). Empty when preferences are clean. */
+  warnings?: string[];
 }
 
 export function getGlobalGSDPreferencesPath(): string {
@@ -138,10 +163,16 @@ export function loadEffectiveGSDPreferences(): LoadedGSDPreferences | null {
   if (!globalPreferences) return projectPreferences;
   if (!projectPreferences) return globalPreferences;
 
+  const mergedWarnings = [
+    ...(globalPreferences.warnings ?? []),
+    ...(projectPreferences.warnings ?? []),
+  ];
+
   return {
     path: projectPreferences.path,
     scope: "project",
     preferences: mergePreferences(globalPreferences.preferences, projectPreferences.preferences),
+    ...(mergedWarnings.length > 0 ? { warnings: mergedWarnings } : {}),
   };
 }
 
@@ -367,10 +398,14 @@ function loadPreferencesFile(path: string, scope: "global" | "project"): LoadedG
   const preferences = parsePreferencesMarkdown(raw);
   if (!preferences) return null;
 
+  const validation = validatePreferences(preferences);
+  const allWarnings = [...validation.warnings, ...validation.errors];
+
   return {
     path,
     scope,
-    preferences,
+    preferences: validation.preferences,
+    ...(allWarnings.length > 0 ? { warnings: allWarnings } : {}),
   };
 }
 
@@ -633,6 +668,11 @@ function mergePreferences(base: GSDPreferences, override: GSDPreferences): GSDPr
     uat_dispatch: override.uat_dispatch ?? base.uat_dispatch,
     unique_milestone_ids: override.unique_milestone_ids ?? base.unique_milestone_ids,
     budget_ceiling: override.budget_ceiling ?? base.budget_ceiling,
+    budget_enforcement: override.budget_enforcement ?? base.budget_enforcement,
+    context_pause_threshold: override.context_pause_threshold ?? base.context_pause_threshold,
+    notifications: (base.notifications || override.notifications)
+      ? { ...(base.notifications ?? {}), ...(override.notifications ?? {}) }
+      : undefined,
     remote_questions: override.remote_questions
       ? { ...(base.remote_questions ?? {}), ...override.remote_questions }
       : base.remote_questions,
@@ -652,6 +692,13 @@ export function validatePreferences(preferences: GSDPreferences): {
   const errors: string[] = [];
   const warnings: string[] = [];
   const validated: GSDPreferences = {};
+
+  // ─── Unknown Key Detection ──────────────────────────────────────────
+  for (const key of Object.keys(preferences)) {
+    if (!KNOWN_PREFERENCE_KEYS.has(key)) {
+      warnings.push(`unknown preference key "${key}" — ignored`);
+    }
+  }
 
   if (preferences.version !== undefined) {
     if (preferences.version === 1) {
@@ -727,6 +774,64 @@ export function validatePreferences(preferences: GSDPreferences): {
       validated.budget_ceiling = Number(raw);
     } else {
       errors.push("budget_ceiling must be a finite number");
+    }
+  }
+
+  // ─── Budget Enforcement ──────────────────────────────────────────────
+  if (preferences.budget_enforcement !== undefined) {
+    const validModes = new Set(["warn", "pause", "halt"]);
+    if (typeof preferences.budget_enforcement === "string" && validModes.has(preferences.budget_enforcement)) {
+      validated.budget_enforcement = preferences.budget_enforcement;
+    } else {
+      errors.push(`budget_enforcement must be one of: warn, pause, halt`);
+    }
+  }
+
+  // ─── Context Pause Threshold ────────────────────────────────────────
+  if (preferences.context_pause_threshold !== undefined) {
+    const raw = preferences.context_pause_threshold;
+    if (typeof raw === "number" && Number.isFinite(raw)) {
+      validated.context_pause_threshold = raw;
+    } else if (typeof raw === "string" && Number.isFinite(Number(raw))) {
+      validated.context_pause_threshold = Number(raw);
+    } else {
+      errors.push("context_pause_threshold must be a finite number");
+    }
+  }
+
+  // ─── Models ─────────────────────────────────────────────────────────
+  if (preferences.models !== undefined) {
+    if (preferences.models && typeof preferences.models === "object") {
+      validated.models = preferences.models;
+    } else {
+      errors.push("models must be an object");
+    }
+  }
+
+  // ─── Auto Supervisor ────────────────────────────────────────────────
+  if (preferences.auto_supervisor !== undefined) {
+    if (preferences.auto_supervisor && typeof preferences.auto_supervisor === "object") {
+      validated.auto_supervisor = preferences.auto_supervisor;
+    } else {
+      errors.push("auto_supervisor must be an object");
+    }
+  }
+
+  // ─── Notifications ──────────────────────────────────────────────────
+  if (preferences.notifications !== undefined) {
+    if (preferences.notifications && typeof preferences.notifications === "object") {
+      validated.notifications = preferences.notifications;
+    } else {
+      errors.push("notifications must be an object");
+    }
+  }
+
+  // ─── Remote Questions ───────────────────────────────────────────────
+  if (preferences.remote_questions !== undefined) {
+    if (preferences.remote_questions && typeof preferences.remote_questions === "object") {
+      validated.remote_questions = preferences.remote_questions;
+    } else {
+      errors.push("remote_questions must be an object");
     }
   }
 
