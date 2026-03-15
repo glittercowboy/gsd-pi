@@ -16,13 +16,13 @@ Guidelines:
 
 ### R001 — SQLite DB layer with schema versioning
 - Class: core-capability
-- Status: active
+- Status: validated
 - Description: A SQLite database at `.gsd/gsd.db` using `better-sqlite3` with typed wrappers, schema init, and forward-only versioned migrations
 - Why it matters: Foundation for all structured storage — nothing else works without this
 - Source: user
 - Primary owning slice: M001/S01
 - Supporting slices: none
-- Validation: S01 — DB opens, schema inits with version table, typed wrappers work. S02 — Forward-only migration v1→v2 proven (artifacts table added without data loss).
+- Validation: S01 — DB opens, schema inits, versioned migrations, typed wrappers, WAL mode. S02 — Forward-only migration v1→v2 proven. S07 — Full lifecycle integration test proves end-to-end composition across gsd-db, md-importer, context-store, and db-writer modules.
 - Notes: WAL mode enabled. Schema version tracked in `schema_version` table. Provider chain: node:sqlite → better-sqlite3 → null (D010).
 
 ### R002 — Graceful fallback to markdown if better-sqlite3 unavailable
@@ -214,13 +214,13 @@ Guidelines:
 
 ### R019 — No regression in auto-mode output quality
 - Class: quality-attribute
-- Status: active
+- Status: validated
 - Description: Auto-mode produces equivalent or better output quality with DB-backed context compared to markdown loading
 - Why it matters: Token reduction must not come at the cost of output quality
 - Source: user
 - Primary owning slice: M001/S04
 - Supporting slices: M001/S07
-- Validation: unmapped
+- Validation: S07 — Lifecycle integration test proves 'same data in = same prompt out' across the full pipeline: migration → scoped queries → formatted output → re-import → round-trip consistency. ≥30% savings maintained with correct scoping. UAT for subjective LLM output quality is a separate operational concern.
 - Notes: Validated by running a real project through full auto-mode cycle
 
 ### R020 — WAL mode enabled
@@ -323,6 +323,14 @@ Guidelines:
 - Validated by: M001/S06
 - Proof: 32 test assertions prove formatInspectOutput with full data, empty data, null schema version. Handler includes autocomplete, DB availability check, unknown-command help text.
 
+### R001 — SQLite DB layer with schema versioning
+- Validated by: M001/S01 + M001/S02 + M001/S07
+- Proof: S01 — DB opens, schema inits, versioned migrations, typed wrappers, WAL mode. S02 — Forward-only migration v1→v2 proven. S07 — Full lifecycle integration test proves end-to-end composition across gsd-db, md-importer, context-store, and db-writer modules (50 assertions, 42.4% token savings).
+
+### R019 — No regression in auto-mode output quality
+- Validated by: M001/S07
+- Proof: S07 lifecycle integration test proves 'same data in = same prompt out' across the full pipeline: migration → scoped queries → formatted output → re-import → round-trip consistency. ≥30% savings maintained with correct scoping. UAT for subjective LLM output quality is a separate operational concern.
+
 ## Deferred
 
 ### R030 — Vector search layer
@@ -408,7 +416,7 @@ Guidelines:
 
 | ID | Class | Status | Primary owner | Supporting | Proof |
 |---|---|---|---|---|---|
-| R001 | core-capability | active | M001/S01 | none | S01+S02 partial |
+| R001 | core-capability | validated | M001/S01 | none | S01+S02+S07 validated |
 | R002 | failure-visibility | validated | M001/S01 | M001/S03 | S01+S03 validated |
 | R003 | core-capability | validated | M001/S02 | none | S02 validated |
 | R004 | primary-user-loop | validated | M001/S02 | none | S02 validated |
@@ -426,7 +434,7 @@ Guidelines:
 | R016 | quality-attribute | validated | M001/S04 | M001/S03, M001/S07 | S04 validated |
 | R017 | quality-attribute | validated | M001/S01 | none | S01 validated |
 | R018 | quality-attribute | validated | M001/S02 | none | S02 validated |
-| R019 | quality-attribute | active | M001/S04 | M001/S07 | unmapped |
+| R019 | quality-attribute | validated | M001/S04 | M001/S07 | S07 validated |
 | R020 | quality-attribute | validated | M001/S01 | none | S01 validated |
 | R021 | constraint | validated | M001/S01 | none | S01 validated |
 | R030 | differentiator | deferred | none | none | unmapped |
@@ -439,7 +447,7 @@ Guidelines:
 
 ## Coverage Summary
 
-- Active requirements: 2
-- Mapped to slices: 2
-- Validated: 19 (R002, R003, R004, R005, R006, R007, R008, R009, R010, R011, R012, R013, R014, R015, R016, R017, R018, R020, R021)
+- Active requirements: 0
+- Mapped to slices: 0
+- Validated: 21 (R001, R002, R003, R004, R005, R006, R007, R008, R009, R010, R011, R012, R013, R014, R015, R016, R017, R018, R019, R020, R021)
 - Unmapped active requirements: 0

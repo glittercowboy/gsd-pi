@@ -51,3 +51,9 @@ Update REQUIREMENTS.md to move R001 and R019 from "active" to "validated" with p
 ## Expected Output
 
 - `.gsd/REQUIREMENTS.md` — R001 and R019 validated, all counts updated
+
+## Observability Impact
+
+- **No runtime signals change**: This task is a documentation-only update to `.gsd/REQUIREMENTS.md`. No code, logs, metrics, or error paths are modified.
+- **Inspection**: Verify via `grep "Status: active" .gsd/REQUIREMENTS.md` — should return 0 matches in the Active section. `grep -c "^### R" .gsd/REQUIREMENTS.md` in the Validated section should return 21.
+- **Failure state**: If a future task incorrectly references R001 or R019 as "active", the traceability table and coverage summary in REQUIREMENTS.md are the authoritative sources to check.

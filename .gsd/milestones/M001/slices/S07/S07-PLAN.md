@@ -43,7 +43,7 @@
   - Verify: `npm run test:unit -- --test-name-pattern "integration-lifecycle|integration-edge"` — all pass, ≥60 assertions total
   - Done when: Both test files pass with ≥60 combined assertions proving full lifecycle composition and all 3 edge cases
 
-- [ ] **T02: Validate R001 + R019 and update REQUIREMENTS.md** `est:10m`
+- [x] **T02: Validate R001 + R019 and update REQUIREMENTS.md** `est:10m`
   - Why: R001 is fully proven by S01+S02+S07 but still marked "active". R019 needs the lifecycle integration test as its validation proof. Both need status bumps and proof summaries in REQUIREMENTS.md. Also update the traceability table and coverage summary.
   - Files: `.gsd/REQUIREMENTS.md`
   - Do:
