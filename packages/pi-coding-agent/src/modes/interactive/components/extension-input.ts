@@ -33,7 +33,7 @@ export class ExtensionInputComponent extends Container implements Focusable {
 
 	constructor(
 		title: string,
-		_placeholder: string | undefined,
+		placeholder: string | undefined,
 		onSubmit: (value: string) => void,
 		onCancel: () => void,
 		opts?: ExtensionInputOptions,
@@ -61,6 +61,9 @@ export class ExtensionInputComponent extends Container implements Focusable {
 		}
 
 		this.input = new Input();
+		if (placeholder) {
+			this.input.placeholder = placeholder;
+		}
 		this.addChild(this.input);
 		this.addChild(new Spacer(1));
 		this.addChild(new Text(`${keyHint("selectConfirm", "submit")}  ${keyHint("selectCancel", "cancel")}`, 1, 0));

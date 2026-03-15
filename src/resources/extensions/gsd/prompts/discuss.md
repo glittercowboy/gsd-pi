@@ -227,6 +227,27 @@ For each remaining milestone **one at a time, in sequence**, use `ask_user_quest
 
 Each context file (full or draft) should be rich enough that a future agent encountering it fresh — with no memory of this conversation — can understand the intent, constraints, dependencies, what this milestone unlocks, and what "done" looks like.
 
+#### Milestone Gate Tracking (MANDATORY for multi-milestone)
+
+After EVERY Phase 3 gate decision, immediately write or update `.gsd/DISCUSSION-MANIFEST.json` with the cumulative state. This file is mechanically validated by the system before auto-mode starts — if gates are incomplete, auto-mode will NOT start.
+
+```json
+{
+  "primary": "M001",
+  "milestones": {
+    "M001": { "gate": "discussed", "context": "full" },
+    "M002": { "gate": "discussed", "context": "full" },
+    "M003": { "gate": "queued",    "context": "none" }
+  },
+  "total": 3,
+  "gates_completed": 3
+}
+```
+
+Write this file AFTER each gate decision, not just at the end. Update `gates_completed` incrementally. The system reads this file and BLOCKS auto-start if `gates_completed < total`.
+
+For single-milestone projects, do NOT write this file — it is only for multi-milestone discussions.
+
 #### Phase 4: Finalize
 
 7. Update `.gsd/STATE.md`

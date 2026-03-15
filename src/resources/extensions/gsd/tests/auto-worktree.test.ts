@@ -53,7 +53,7 @@ async function main(): Promise<void> {
     mkdirSync(msDir, { recursive: true });
     writeFileSync(join(msDir, "CONTEXT.md"), "# M003 Context\n");
     run("git add .", tempDir);
-    run("git commit -m 'add milestone'", tempDir);
+    run("git commit -m \"add milestone\"", tempDir);
 
     console.log("\n=== auto-worktree lifecycle ===");
 

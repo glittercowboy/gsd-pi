@@ -23,6 +23,7 @@ const BASELINE_PATTERNS = [
   ".gsd/metrics.json",
   ".gsd/completed-units.json",
   ".gsd/STATE.md",
+  ".gsd/DISCUSSION-MANIFEST.json",
 
   // ── OS junk ──
   ".DS_Store",

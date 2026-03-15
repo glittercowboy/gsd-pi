@@ -113,6 +113,7 @@ const isPrintMode = cliFlags.print || cliFlags.mode !== undefined
 // `gsd config` — replay the setup wizard and exit
 if (cliFlags.messages[0] === 'config') {
   const authStorage = AuthStorage.create(authFilePath)
+  loadStoredEnvKeys(authStorage)
   await runOnboarding(authStorage)
   process.exit(0)
 }

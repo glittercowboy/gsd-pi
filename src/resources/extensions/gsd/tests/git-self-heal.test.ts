@@ -24,10 +24,11 @@ import {
 function makeTempRepo(): string {
   const dir = mkdtempSync(join(tmpdir(), "gsd-self-heal-"));
   execSync("git init", { cwd: dir, stdio: "pipe" });
-  execSync("git config user.email 'test@test.com'", { cwd: dir, stdio: "pipe" });
-  execSync("git config user.name 'Test'", { cwd: dir, stdio: "pipe" });
+  execSync("git config user.email \"test@test.com\"", { cwd: dir, stdio: "pipe" });
+  execSync("git config user.name \"Test\"", { cwd: dir, stdio: "pipe" });
   writeFileSync(join(dir, "README.md"), "# init\n");
-  execSync("git add -A && git commit -m 'init'", { cwd: dir, stdio: "pipe" });
+  execSync("git add -A && git commit -m \"init\"", { cwd: dir, stdio: "pipe" });
+  execSync("git branch -M main", { cwd: dir, stdio: "pipe" });
   return dir;
 }
 
@@ -50,10 +51,10 @@ console.log("── abortAndReset ──");
     // Create a conflicting branch
     execSync("git checkout -b feature", { cwd: dir, stdio: "pipe" });
     writeFileSync(join(dir, "file.txt"), "feature content\n");
-    execSync("git add -A && git commit -m 'feature'", { cwd: dir, stdio: "pipe" });
-    execSync("git checkout master 2>/dev/null || git checkout main", { cwd: dir, stdio: "pipe" });
+    execSync("git add -A && git commit -m \"feature\"", { cwd: dir, stdio: "pipe" });
+    execSync("git checkout main", { cwd: dir, stdio: "pipe" });
     writeFileSync(join(dir, "file.txt"), "main content\n");
-    execSync("git add -A && git commit -m 'main change'", { cwd: dir, stdio: "pipe" });
+    execSync("git add -A && git commit -m \"main change\"", { cwd: dir, stdio: "pipe" });
 
     // Create a merge conflict → MERGE_HEAD will exist
     try {
@@ -135,10 +136,10 @@ console.log("── withMergeHeal ──");
     // Set up a real merge conflict
     execSync("git checkout -b conflict-branch", { cwd: dir, stdio: "pipe" });
     writeFileSync(join(dir, "conflict.txt"), "branch A\n");
-    execSync("git add -A && git commit -m 'branch A'", { cwd: dir, stdio: "pipe" });
-    execSync("git checkout master 2>/dev/null || git checkout main", { cwd: dir, stdio: "pipe" });
+    execSync("git add -A && git commit -m \"branch A\"", { cwd: dir, stdio: "pipe" });
+    execSync("git checkout main", { cwd: dir, stdio: "pipe" });
     writeFileSync(join(dir, "conflict.txt"), "branch B\n");
-    execSync("git add -A && git commit -m 'branch B'", { cwd: dir, stdio: "pipe" });
+    execSync("git add -A && git commit -m \"branch B\"", { cwd: dir, stdio: "pipe" });
 
     let callCount = 0;
     try {
@@ -169,7 +170,7 @@ console.log("── recoverCheckout ──");
   try {
     // Create a branch to checkout to
     execSync("git checkout -b target-branch", { cwd: dir, stdio: "pipe" });
-    execSync("git checkout master 2>/dev/null || git checkout main", { cwd: dir, stdio: "pipe" });
+    execSync("git checkout main", { cwd: dir, stdio: "pipe" });
 
     // Dirty the index
     writeFileSync(join(dir, "README.md"), "dirty changes\n");

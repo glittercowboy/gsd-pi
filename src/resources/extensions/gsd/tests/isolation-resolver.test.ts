@@ -58,7 +58,7 @@ async function main(): Promise<void> {
       run("git checkout -b gsd/M001/S01", dir);
       writeFileSync(join(dir, "slice.md"), "# S01\n");
       run("git add .", dir);
-      run("git commit -m 'slice work'", dir);
+      run("git commit -m \"slice work\"", dir);
       run("git checkout main", dir);
 
       const result = shouldUseWorktreeIsolation(dir);
@@ -77,7 +77,7 @@ async function main(): Promise<void> {
       run("git checkout -b gsd/M001/S01", dir);
       writeFileSync(join(dir, "slice.md"), "# S01\n");
       run("git add .", dir);
-      run("git commit -m 'slice work'", dir);
+      run("git commit -m \"slice work\"", dir);
       run("git checkout main", dir);
 
       const result = shouldUseWorktreeIsolation(dir, { isolation: "worktree" });

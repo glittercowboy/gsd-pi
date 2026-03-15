@@ -17,7 +17,7 @@
 
 import { existsSync, mkdirSync, realpathSync } from "node:fs";
 import { execSync } from "node:child_process";
-import { join, resolve } from "node:path";
+import { join, resolve, sep } from "node:path";
 
 // ─── Types ─────────────────────────────────────────────────────────────────
 
@@ -213,7 +213,11 @@ export function listWorktrees(basePath: string): WorktreeInfo[] {
 
     const entryPath = wtLine.replace("worktree ", "");
     const branch = branchLine.replace("branch refs/heads/", "");
-    const branchWorktreeName = branch.startsWith("worktree/") ? branch.slice("worktree/".length) : null;
+    const branchWorktreeName = branch.startsWith("worktree/")
+      ? branch.slice("worktree/".length)
+      : branch.startsWith("milestone/")
+        ? branch.slice("milestone/".length)
+        : null;
     const entryVariants = [resolve(entryPath)];
     if (existsSync(entryPath)) {
       entryVariants.push(realpathSync(entryPath));
@@ -272,7 +276,7 @@ export function removeWorktree(
   // If we're inside the worktree, move out first — git can't remove an in-use directory
   const cwd = process.cwd();
   const resolvedCwd = existsSync(cwd) ? realpathSync(cwd) : cwd;
-  if (resolvedCwd === resolvedWtPath || resolvedCwd.startsWith(resolvedWtPath + "/")) {
+  if (resolvedCwd === resolvedWtPath || resolvedCwd.startsWith(resolvedWtPath + sep)) {
     process.chdir(basePath);
   }
 

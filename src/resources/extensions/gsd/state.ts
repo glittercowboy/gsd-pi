@@ -470,7 +470,7 @@ async function _deriveStateImpl(basePath: string): Promise<GSDState> {
   };
   const activeTaskEntry = slicePlan.tasks.find(t => !t.done);
 
-  if (!activeTaskEntry) {
+  if (!activeTaskEntry && slicePlan.tasks.length > 0) {
     // All tasks done but slice not marked complete
     return {
       activeMilestone,
@@ -480,6 +480,27 @@ async function _deriveStateImpl(basePath: string): Promise<GSDState> {
       recentDecisions: [],
       blockers: [],
       nextAction: `All tasks done in ${activeSlice.id}. Write slice summary and complete slice.`,
+      activeBranch: activeBranch ?? undefined,
+      registry,
+      requirements,
+      progress: {
+        milestones: milestoneProgress,
+        slices: sliceProgress,
+        tasks: taskProgress,
+      },
+    };
+  }
+
+  // Empty plan — no tasks defined yet, stay in planning phase
+  if (!activeTaskEntry) {
+    return {
+      activeMilestone,
+      activeSlice,
+      activeTask: null,
+      phase: 'planning',
+      recentDecisions: [],
+      blockers: [],
+      nextAction: `Slice ${activeSlice.id} has a plan file but no tasks. Add tasks to the plan.`,
       activeBranch: activeBranch ?? undefined,
       registry,
       requirements,

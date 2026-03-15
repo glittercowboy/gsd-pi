@@ -492,7 +492,7 @@ function parseFrontmatterBlock(frontmatter: string): GSDPreferences {
   return root as GSDPreferences;
 }
 
-function parseScalar(value: string): string | number | boolean {
+function parseScalar(value: string): unknown {
   // Strip inline YAML comments: " # comment" (# preceded by whitespace).
   // Quoted strings are returned as-is (the comment is inside quotes).
   const quoteMatch = value.match(/^(['"])(.*)(\1)$/);
@@ -501,13 +501,17 @@ function parseScalar(value: string): string | number | boolean {
   const stripped = value.replace(/\s+#.*$/, "");
   if (stripped === "true") return true;
   if (stripped === "false") return false;
+  // Recognize empty array/object literals (with or without surrounding quotes)
+  const unquoted = stripped.replace(/^['\"]|['\"]$/g, "");
+  if (unquoted === "[]") return [];
+  if (unquoted === "{}") return {};
   if (/^-?\d+$/.test(stripped)) {
     const n = Number(stripped);
     // Keep large integers (e.g. Discord channel IDs) as strings to avoid precision loss
     if (Number.isSafeInteger(n)) return n;
     return stripped;
   }
-  return stripped.replace(/^['\"]|['\"]$/g, "");
+  return unquoted;
 }
 
 /**

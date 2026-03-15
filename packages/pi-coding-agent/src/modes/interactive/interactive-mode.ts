@@ -998,9 +998,20 @@ export class InteractiveMode {
 		if (showDiagnostics) {
 			const skillDiagnostics = skillsResult.diagnostics;
 			if (skillDiagnostics.length > 0) {
-				const warningLines = this.formatDiagnostics(skillDiagnostics, metadata);
-				this.chatContainer.addChild(new Text(`${theme.fg("warning", "[Skill conflicts]")}\n${warningLines}`, 0, 0));
-				this.chatContainer.addChild(new Spacer(1));
+				const collisionDiags = skillDiagnostics.filter(d => d.type === "collision");
+				const issueDiags = skillDiagnostics.filter(d => d.type !== "collision");
+
+				if (collisionDiags.length > 0) {
+					const collisionLines = this.formatDiagnostics(collisionDiags, metadata);
+					this.chatContainer.addChild(new Text(`${theme.fg("warning", "[Skill conflicts]")}\n${collisionLines}`, 0, 0));
+					this.chatContainer.addChild(new Spacer(1));
+				}
+
+				if (issueDiags.length > 0) {
+					const issueLines = this.formatDiagnostics(issueDiags, metadata);
+					this.chatContainer.addChild(new Text(`${theme.fg("warning", "[Skill issues]")}\n${issueLines}`, 0, 0));
+					this.chatContainer.addChild(new Spacer(1));
+				}
 			}
 
 			const promptDiagnostics = promptsResult.diagnostics;

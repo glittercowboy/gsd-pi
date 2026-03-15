@@ -1,6 +1,6 @@
 import { execSync } from "node:child_process";
 import { existsSync, mkdirSync } from "node:fs";
-import { join } from "node:path";
+import { join, sep } from "node:path";
 
 import { loadFile, parsePlan, parseRoadmap, parseSummary, saveFile, parseTaskPlanMustHaves, countMustHavesMentionedInSummary } from "./files.js";
 import { resolveMilestoneFile, resolveMilestonePath, resolveSliceFile, resolveSlicePath, resolveTaskFile, resolveTaskFiles, resolveTasksDir, milestonesDir, gsdRoot, relMilestoneFile, relSliceFile, relTaskFile, relSlicePath, relGsdRootFile, resolveGsdRootFile } from "./paths.js";
@@ -511,7 +511,7 @@ async function checkGitHealth(
         if (shouldFix("orphaned_auto_worktree")) {
           // Never remove a worktree matching current working directory
           const cwd = process.cwd();
-          if (wt.path === cwd || cwd.startsWith(wt.path + "/")) {
+          if (wt.path === cwd || cwd.startsWith(wt.path + sep)) {
             fixesApplied.push(`skipped removing worktree at ${wt.path} (is cwd)`);
           } else {
             try {
@@ -527,7 +527,9 @@ async function checkGitHealth(
 
     // ── Stale milestone branches ─────────────────────────────────────────
     try {
-      const branchOutput = execSync("git branch --list 'milestone/*'", { cwd: basePath, stdio: "pipe" }).toString().trim();
+      // Use unquoted glob — single quotes are not interpreted by cmd.exe on Windows,
+      // causing the pattern to match literally instead of as a glob.
+      const branchOutput = execSync("git branch --list milestone/*", { cwd: basePath, stdio: "pipe" }).toString().trim();
       if (branchOutput) {
         const branches = branchOutput.split("\n").map(b => b.trim().replace(/^\*\s*/, "")).filter(Boolean);
         const worktreeBranches = new Set(milestoneWorktrees.map(wt => wt.branch));

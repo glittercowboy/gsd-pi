@@ -5,7 +5,8 @@
  */
 
 import type { ExtensionAPI, ExtensionCommandContext } from "@gsd/pi-coding-agent";
-import { existsSync, readFileSync } from "node:fs";
+import { AuthStorage } from "@gsd/pi-coding-agent";
+import { existsSync, readFileSync, mkdirSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { deriveState } from "./state.js";
@@ -53,10 +54,10 @@ function dispatchDoctorHeal(pi: ExtensionAPI, scope: string | undefined, reportT
 
 export function registerGSDCommand(pi: ExtensionAPI): void {
   pi.registerCommand("gsd", {
-    description: "GSD — Get Shit Done: /gsd next|auto|stop|status|queue|prefs|hooks|doctor|migrate|remote",
+    description: "GSD — Get Shit Done: /gsd next|auto|stop|status|queue|prefs|config|hooks|doctor|migrate|remote",
 
     getArgumentCompletions: (prefix: string) => {
-      const subcommands = ["next", "auto", "stop", "status", "queue", "discuss", "prefs", "hooks", "doctor", "migrate", "remote"];
+      const subcommands = ["next", "auto", "stop", "status", "queue", "discuss", "prefs", "config", "hooks", "doctor", "migrate", "remote"];
       const parts = prefix.trim().split(/\s+/);
 
       if (parts.length <= 1) {
@@ -151,6 +152,11 @@ export function registerGSDCommand(pi: ExtensionAPI): void {
         return;
       }
 
+      if (trimmed === "config") {
+        await handleConfig(ctx);
+        return;
+      }
+
       if (trimmed === "hooks") {
         const { formatHookStatus } = await import("./post-unit-hooks.js");
         ctx.ui.notify(formatHookStatus(), "info");
@@ -174,7 +180,7 @@ export function registerGSDCommand(pi: ExtensionAPI): void {
       }
 
       ctx.ui.notify(
-        `Unknown: /gsd ${trimmed}. Use /gsd, /gsd next, /gsd auto, /gsd stop, /gsd status, /gsd queue, /gsd discuss, /gsd prefs [global|project|status|wizard|setup], /gsd hooks, /gsd doctor [audit|fix|heal] [M###/S##], /gsd migrate <path>, or /gsd remote [slack|discord|status|disconnect].`,
+        `Unknown: /gsd ${trimmed}. Use /gsd, /gsd next, /gsd auto, /gsd stop, /gsd status, /gsd queue, /gsd discuss, /gsd prefs, /gsd config, /gsd hooks, /gsd doctor [audit|fix|heal] [M###/S##], /gsd migrate <path>, or /gsd remote [slack|discord|status|disconnect].`,
         "warning",
       );
     },
@@ -215,20 +221,16 @@ export async function fireStatusViaCommand(
 async function handlePrefs(args: string, ctx: ExtensionCommandContext): Promise<void> {
   const trimmed = args.trim();
 
-  if (trimmed === "" || trimmed === "global") {
+  if (trimmed === "" || trimmed === "global" || trimmed === "wizard" || trimmed === "setup"
+    || trimmed === "wizard global" || trimmed === "setup global") {
     await ensurePreferencesFile(getGlobalGSDPreferencesPath(), ctx, "global");
+    await handlePrefsWizard(ctx, "global");
     return;
   }
 
-  if (trimmed === "project") {
+  if (trimmed === "project" || trimmed === "wizard project" || trimmed === "setup project") {
     await ensurePreferencesFile(getProjectGSDPreferencesPath(), ctx, "project");
-    return;
-  }
-
-  if (trimmed === "wizard" || trimmed === "setup" || trimmed === "wizard global" || trimmed === "setup global"
-    || trimmed === "wizard project" || trimmed === "setup project") {
-    const scope = trimmed.includes("project") ? "project" : "global";
-    await handlePrefsWizard(ctx, scope);
+    await handlePrefsWizard(ctx, "project");
     return;
   }
 
@@ -319,22 +321,41 @@ async function handlePrefsWizard(
   const modelPhases = ["research", "planning", "execution", "completion"] as const;
   const models: Record<string, string> = (prefs.models as Record<string, string>) ?? {};
 
-  for (const phase of modelPhases) {
-    const current = models[phase] ?? "";
-    const input = await ctx.ui.input(
-      `Model for ${phase} phase${current ? ` (current: ${current})` : ""}:`,
-      current || "e.g. claude-sonnet-4-20250514",
-    );
-    if (input !== null && input !== undefined) {
-      const val = input.trim();
-      if (val) {
-        models[phase] = val;
-      } else if (current) {
-        // User cleared it — remove
-        delete models[phase];
+  const availableModels = ctx.modelRegistry.getAvailable();
+  if (availableModels.length > 0) {
+    const modelOptions = availableModels.map(m => `${m.id} · ${m.provider}`);
+    modelOptions.push("(keep current)", "(clear)");
+
+    for (const phase of modelPhases) {
+      const current = models[phase] ?? "";
+      const title = `Model for ${phase} phase${current ? ` (current: ${current})` : ""}:`;
+      const choice = await ctx.ui.select(title, modelOptions);
+
+      if (choice && choice !== "(keep current)") {
+        if (choice === "(clear)") {
+          delete models[phase];
+        } else {
+          models[phase] = choice.split(" · ")[0];
+        }
       }
     }
-    // null/undefined = Escape/skip — keep existing value
+  } else {
+    // No authenticated models available — fall back to text input
+    for (const phase of modelPhases) {
+      const current = models[phase] ?? "";
+      const input = await ctx.ui.input(
+        `Model for ${phase} phase${current ? ` (current: ${current})` : ""}:`,
+        current || "e.g. claude-sonnet-4-20250514",
+      );
+      if (input !== null && input !== undefined) {
+        const val = input.trim();
+        if (val) {
+          models[phase] = val;
+        } else if (current) {
+          delete models[phase];
+        }
+      }
+    }
   }
   if (Object.keys(models).length > 0) {
     prefs.models = models;
@@ -452,8 +473,7 @@ function serializePreferencesToFrontmatter(prefs: Record<string, unknown>): stri
 
     if (Array.isArray(value)) {
       if (value.length === 0) {
-        lines.push(`${prefix}${key}: []`);
-        return;
+        return; // Omit empty arrays — avoids parse/serialize cycle bug with "[]" strings
       }
       lines.push(`${prefix}${key}:`);
       for (const item of value) {
@@ -484,8 +504,7 @@ function serializePreferencesToFrontmatter(prefs: Record<string, unknown>): stri
     if (typeof value === "object") {
       const entries = Object.entries(value as Record<string, unknown>);
       if (entries.length === 0) {
-        lines.push(`${prefix}${key}: {}`);
-        return;
+        return; // Omit empty objects — avoids parse/serialize cycle bug with "{}" strings
       }
       lines.push(`${prefix}${key}:`);
       for (const [k, v] of entries) {
@@ -521,6 +540,74 @@ function serializePreferencesToFrontmatter(prefs: Record<string, unknown>): stri
   return lines.join("\n") + "\n";
 }
 
+// ─── Tool Config Wizard ───────────────────────────────────────────────────────
+
+const TOOL_KEYS = [
+  { id: "tavily",   env: "TAVILY_API_KEY",   label: "Tavily Search",     hint: "tavily.com/app/api-keys" },
+  { id: "brave",    env: "BRAVE_API_KEY",     label: "Brave Search",      hint: "brave.com/search/api" },
+  { id: "context7", env: "CONTEXT7_API_KEY",  label: "Context7 Docs",     hint: "context7.com/dashboard" },
+  { id: "jina",     env: "JINA_API_KEY",      label: "Jina Page Extract", hint: "jina.ai/api" },
+  { id: "groq",     env: "GROQ_API_KEY",      label: "Groq Voice",        hint: "console.groq.com" },
+] as const;
+
+function getConfigAuthStorage(): InstanceType<typeof AuthStorage> {
+  const authPath = join(process.env.HOME ?? "", ".gsd", "agent", "auth.json");
+  mkdirSync(dirname(authPath), { recursive: true });
+  return AuthStorage.create(authPath);
+}
+
+async function handleConfig(ctx: ExtensionCommandContext): Promise<void> {
+  const auth = getConfigAuthStorage();
+
+  // Show current status
+  const statusLines = ["GSD Tool Configuration\n"];
+  for (const tool of TOOL_KEYS) {
+    const hasKey = !!process.env[tool.env] || !!(auth.get(tool.id) as { key?: string })?.key;
+    statusLines.push(`  ${hasKey ? "✓" : "✗"} ${tool.label}${hasKey ? "" : ` — get key at ${tool.hint}`}`);
+  }
+  ctx.ui.notify(statusLines.join("\n"), "info");
+
+  // Ask which tools to configure
+  const options = TOOL_KEYS.map(t => {
+    const hasKey = !!process.env[t.env] || !!(auth.get(t.id) as { key?: string })?.key;
+    return `${t.label} ${hasKey ? "(configured ✓)" : "(not set)"}`;
+  });
+  options.push("(done)");
+
+  let changed = false;
+  while (true) {
+    const choice = await ctx.ui.select("Configure which tool? Press Escape when done.", options);
+    if (!choice || choice === "(done)") break;
+
+    const toolIdx = TOOL_KEYS.findIndex(t => choice.startsWith(t.label));
+    if (toolIdx === -1) break;
+
+    const tool = TOOL_KEYS[toolIdx];
+    const input = await ctx.ui.input(
+      `API key for ${tool.label} (${tool.hint}):`,
+      "paste your key here",
+    );
+
+    if (input !== null && input !== undefined) {
+      const key = input.trim();
+      if (key) {
+        auth.set(tool.id, { type: "api_key", key });
+        process.env[tool.env] = key;
+        ctx.ui.notify(`${tool.label} key saved and activated.`, "info");
+        // Update option label
+        options[toolIdx] = `${tool.label} (configured ✓)`;
+        changed = true;
+      }
+    }
+  }
+
+  if (changed) {
+    await ctx.waitForIdle();
+    await ctx.reload();
+    ctx.ui.notify("Configuration saved. Extensions reloaded with new keys.", "info");
+  }
+}
+
 async function ensurePreferencesFile(
   path: string,
   ctx: ExtensionCommandContext,
@@ -538,7 +625,4 @@ async function ensurePreferencesFile(
     ctx.ui.notify(`Using existing ${scope} GSD skill preferences at ${path}`, "info");
   }
 
-  await ctx.waitForIdle();
-  await ctx.reload();
-  ctx.ui.notify(`Edit ${path} to update ${scope} GSD skill preferences.`, "info");
 }
