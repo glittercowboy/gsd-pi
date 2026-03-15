@@ -56,7 +56,7 @@ This milestone is complete only when all are true:
   > After this: A browser user can type or click daily-use built-ins like `/model`, `/thinking`, `/resume`, `/fork`, `/compact`, `/login`, and `/logout` and see real execution, a real browser surface, or a clear rejection instead of model fallthrough.
 - [x] **S02: Browser-native session and settings parity surfaces** `risk:high` `depends:[S01]`
   > After this: Current-project session browsing/resume/fork/name flows, settings/auth management, and the remaining visible shell affordances have real browser surfaces aligned with TUI semantics rather than inert UI.
-- [ ] **S03: Live freshness and recovery diagnostics** `risk:medium` `depends:[S01,S02]`
+- [x] **S03: Live freshness and recovery diagnostics** `risk:medium` `depends:[S01,S02]`
   > After this: During live work, dashboard/sidebar/roadmap/status/recovery panels update through targeted live state and show actionable validation, doctor, and interrupted-run diagnostics without manual refresh loops.
 - [ ] **S04: Final assembled browser hardening proof** `risk:low` `depends:[S02,S03]`
   > After this: The real `gsd --web` entrypoint is exercised through command parity, refresh/reopen, interrupted-run recovery, and daily-use browser workflows with passing integration/runtime/browser proof.

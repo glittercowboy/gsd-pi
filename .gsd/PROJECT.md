@@ -17,8 +17,8 @@ A user can run `gsd --web`, complete setup, and do the full GSD workflow in a sn
 - The workspace store now drives real dashboard, roadmap, files, activity, terminal, focused-panel prompt handling, workflow controls, continuity, and recovery surfaces instead of mock data.
 - M001 is complete: assembled route/runtime/browser proof is green, the preserved skin is wired to live state/actions, and the milestone-close live browser acceptance bar has been cleared.
 - `launchWebMode` now keeps the parent launcher thin by skipping in-memory extension reload in the short-lived parent process, which materially reduced `gsd --web` startup time.
-- M002 is in progress, and S01-S02 are complete: browser slash commands now dispatch safely in web mode, current-project session browse/resume/rename flows have a dedicated browser contract, daily-use settings/auth controls extend beyond model/thinking, the sidebar Git affordance opens a real repo summary, and title/widget/editor shell signals now render in-browser.
-- The next slice is S03: keep the new parity surfaces fresh during live work and add browser-visible recovery diagnostics without thickening `/api/boot`.
+- M002 is in progress, and S01-S03 are complete: browser slash commands now dispatch safely in web mode, current-project session browse/resume/rename flows have a dedicated browser contract, live dashboard/sidebar/roadmap/status surfaces refresh from targeted browser state instead of broad `/api/boot` polling, and the browser now exposes an on-demand recovery diagnostics surface with authoritative retry/resume/auth controls.
+- The next slice is S04: run the final assembled `gsd --web` hardening proof for refresh/reopen/interrupted-run scenarios and re-validate the daily-use browser workflow end to end.
 
 ## Architecture / Key Patterns
 
@@ -37,4 +37,4 @@ See `.gsd/REQUIREMENTS.md` for the explicit capability contract, requirement sta
 ## Milestone Sequence
 
 - [x] M001: Web mode foundation — Browser-first `gsd --web` is real, integrated, and verified end-to-end.
-- [ ] M002: Web parity and hardening — Close remaining TUI parity gaps, harden continuity/recovery/observability, and finish the browser-first flow for reliable daily use. (S01-S02 complete; S03 next)
+- [ ] M002: Web parity and hardening — Close remaining TUI parity gaps, harden continuity/recovery/observability, and finish the browser-first flow for reliable daily use. (S01-S03 complete; S04 next)
