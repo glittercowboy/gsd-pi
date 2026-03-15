@@ -46,6 +46,12 @@ Both tests use real module imports (no mocks) with file-backed DBs and temp dire
 - [ ] Edge test: fallback mode — _resetProvider disables DB, queries degrade, re-open restores
 - [ ] ≥60 combined assertions across both files
 
+## Observability Impact
+
+- **New signals**: Two test files produce assertion count summaries (`Results: N passed, M failed`) to stdout. Migration stderr logs (`gsd-migrate: imported ...`) confirm import behavior during test runs.
+- **Inspection**: Run `npm run test:unit -- --test-name-pattern "integration-lifecycle|integration-edge"` to observe full pipeline diagnostics. Each assertion failure prints the expected vs actual values.
+- **Failure state**: Test failures produce non-zero exit codes. Failed assertions include the module boundary that broke (e.g., "scoped decisions count" vs "format output size") for rapid triage.
+
 ## Verification
 
 - `npm run test:unit -- --test-name-pattern "integration-lifecycle"` — passes

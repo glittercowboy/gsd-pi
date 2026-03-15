@@ -33,7 +33,7 @@
 
 ## Tasks
 
-- [ ] **T01: Full lifecycle integration test + edge case tests** `est:25m`
+- [x] **T01: Full lifecycle integration test + edge case tests** `est:25m`
   - Why: No existing test crosses more than 2 module boundaries. This proves the full composition: markdown on disk → migrateFromMarkdown → DB queries with scoping → token savings math → re-import after content changes → structured tool write-back → DB consistency. Also covers 3 edge cases that have only per-module coverage.
   - Files: `src/resources/extensions/gsd/tests/integration-lifecycle.test.ts`, `src/resources/extensions/gsd/tests/integration-edge.test.ts`
   - Do:
@@ -54,6 +54,14 @@
     5. Update coverage summary: Active requirements → 0, Validated → 21.
   - Verify: `grep -c "status: active" .gsd/REQUIREMENTS.md` in the Active section headers — should be 0 active requirements remaining. Validated count = 21.
   - Done when: R001 and R019 both show validated status with proof summaries, traceability table updated, coverage summary shows 0 active / 21 validated
+
+## Observability / Diagnostics
+
+- **Test output**: Both integration tests use `createTestContext()` which prints `FAIL: <message>` to stderr for each failed assertion and a final `Results: N passed, M failed` summary. Non-zero exit code on any failure.
+- **Migration logging**: `migrateFromMarkdown` writes `gsd-migrate: imported N decisions, N requirements, N artifacts` to stderr — visible in test output for debugging import issues.
+- **DB writer errors**: `saveDecisionToDb` writes `gsd-db: saveDecisionToDb failed: <message>` to stderr on failure.
+- **Failure visibility**: All assertions include descriptive messages that identify which module boundary failed (e.g., "M001 decisions: expected 8, got N"). Test runner surfaces these in CI logs.
+- **No secrets or PII**: Test fixtures use synthetic data only. No redaction needed.
 
 ## Files Likely Touched
 
