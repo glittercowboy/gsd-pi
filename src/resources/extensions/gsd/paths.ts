@@ -28,8 +28,10 @@ const mainWorktreeCache = new Map<string, string>();
  * `basePath` points to the worktree root. `.gsd/` must resolve relative
  * to the **main** worktree so all worktrees share a single `.gsd/` state.
  *
- * Uses `git rev-parse --show-toplevel` from the git common dir to find
- * the main worktree root. Falls back to basePath on error.
+ * Detects a linked worktree by comparing `git rev-parse --git-common-dir`
+ * vs `--git-dir`; when they differ the main root is inferred as the parent
+ * directory of `--git-common-dir` (e.g. `/repo/.git` → `/repo`).
+ * Falls back to basePath on error or when not in a git repo.
  */
 export function resolveMainWorktreeRoot(basePath: string): string {
   const cached = mainWorktreeCache.get(basePath);

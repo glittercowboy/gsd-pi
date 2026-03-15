@@ -28,6 +28,7 @@ import { createBashTool, createWriteTool, createReadTool, createEditTool, isTool
 import { registerGSDCommand } from "./commands.js";
 import { registerExitCommand } from "./exit-command.js";
 import { registerWorktreeCommand, getWorktreeOriginalCwd, getActiveWorktreeName } from "./worktree-command.js";
+import { getAutoWorktreeOriginalBase } from "./auto-worktree.js";
 import { saveFile, formatContinue, loadFile, parseContinue, parseSummary } from "./files.js";
 import { loadPrompt } from "./prompt-loader.js";
 import { deriveState } from "./state.js";
@@ -139,6 +140,25 @@ export default function (pi: ExtensionAPI) {
   // moves us into a worktree, relative paths still resolve against the
   // original launch directory. These replacements delegate to freshly-
   // created tools on each call so that process.cwd() is read dynamically.
+  //
+  // Auto-worktree path fix: When running inside an auto-mode worktree
+  // (e.g. .gsd/worktrees/M001/), relative `.gsd/…` paths resolve against
+  // the worktree root instead of the project root.  We rewrite those paths
+  // to absolute so writes land in the same location that gsdRoot() reads
+  // from (the main worktree's .gsd/ directory).  Non-.gsd paths (code
+  // files) remain relative to process.cwd() so they still land in the
+  // worktree's working tree on the correct branch.
+  function rewriteGsdPath(filePath: string): string {
+    // Only rewrite when inside an auto-worktree (process.chdir was called).
+    const autoBase = getAutoWorktreeOriginalBase();
+    if (!autoBase) return filePath;
+    // Rewrite relative .gsd/… paths to absolute against the project root.
+    if (filePath === ".gsd" || filePath.startsWith(".gsd/")) {
+      return join(autoBase, filePath);
+    }
+    return filePath;
+  }
+
   const baseWrite = createWriteTool(process.cwd());
   const dynamicWrite = {
     ...baseWrite,
@@ -150,7 +170,7 @@ export default function (pi: ExtensionAPI) {
       ctx?: any,
     ) => {
       const fresh = createWriteTool(process.cwd());
-      return (fresh as any).execute(toolCallId, params, signal, onUpdate, ctx);
+      return (fresh as any).execute(toolCallId, { ...params, path: rewriteGsdPath(params.path) }, signal, onUpdate, ctx);
     },
   };
   pi.registerTool(dynamicWrite as any);
@@ -166,7 +186,7 @@ export default function (pi: ExtensionAPI) {
       ctx?: any,
     ) => {
       const fresh = createReadTool(process.cwd());
-      return (fresh as any).execute(toolCallId, params, signal, onUpdate, ctx);
+      return (fresh as any).execute(toolCallId, { ...params, path: rewriteGsdPath(params.path) }, signal, onUpdate, ctx);
     },
   };
   pi.registerTool(dynamicRead as any);
@@ -182,7 +202,7 @@ export default function (pi: ExtensionAPI) {
       ctx?: any,
     ) => {
       const fresh = createEditTool(process.cwd());
-      return (fresh as any).execute(toolCallId, params, signal, onUpdate, ctx);
+      return (fresh as any).execute(toolCallId, { ...params, path: rewriteGsdPath(params.path) }, signal, onUpdate, ctx);
     },
   };
   pi.registerTool(dynamicEdit as any);
