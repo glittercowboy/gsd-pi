@@ -1,8 +1,8 @@
 # GSD State
 
-**Active Milestone:** {{milestoneId}} — {{milestoneTitle}}
-**Active Slice:** {{sliceId}} — {{sliceTitle}}
-**Active Task:** {{taskId}} — {{taskTitle}}
+**Active Milestone:** {{milestoneId}}: {{milestoneTitle}}
+**Active Slice:** {{sliceId}}: {{sliceTitle}}
+**Active Task:** {{taskId}}: {{taskTitle}}
 **Phase:** {{phase}}
 **Slice Branch:** {{activeBranch}}
 **Active Workspace:** {{activeWorkspace}}

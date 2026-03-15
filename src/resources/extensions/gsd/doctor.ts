@@ -22,7 +22,8 @@ export type DoctorIssueCode =
   | "task_done_must_haves_not_verified"
   | "active_requirement_missing_owner"
   | "blocked_requirement_missing_reason"
-  | "blocker_discovered_no_replan";
+  | "blocker_discovered_no_replan"
+  | "delimiter_in_title";
 
 export interface DoctorIssue {
   severity: DoctorSeverity;
@@ -91,15 +92,43 @@ function validatePreferenceShape(preferences: GSDPreferences): string[] {
   return issues;
 }
 
+/**
+ * Characters that are used as delimiters in GSD state management documents
+ * and should not appear in milestone or slice titles.
+ *
+ * - "—" (em dash, U+2014): used as a display separator in STATE.md and other docs.
+ *   A title containing "—" makes the separator ambiguous, corrupting state display
+ *   and confusing the LLM agent that reads and writes these files.
+ * - "–" (en dash, U+2013): visually similar to em dash; same ambiguity risk.
+ * - "/" (forward slash, U+002F): used as the path separator in unit IDs (M001/S01)
+ *   and git branch names (gsd/M001/S01). A slash in a title can break path resolution.
+ */
+const TITLE_DELIMITER_RE = /[\u2014\u2013\/]/; // em dash, en dash, forward slash
+
+/**
+ * Check whether a milestone or slice title contains characters that conflict
+ * with GSD's state document delimiter conventions.
+ * Returns a human-readable description of the problem, or null if the title is safe.
+ */
+export function validateTitle(title: string): string | null {
+  if (TITLE_DELIMITER_RE.test(title)) {
+    const found: string[] = [];
+    if (/[\u2014\u2013]/.test(title)) found.push("em/en dash (\u2014 or \u2013)");
+    if (/\//.test(title)) found.push("forward slash (/)");
+    return `title contains ${found.join(" and ")}, which conflict with GSD state document delimiters`;
+  }
+  return null;
+}
+
 function buildStateMarkdown(state: Awaited<ReturnType<typeof deriveState>>): string {
   const lines: string[] = [];
   lines.push("# GSD State", "");
 
   const activeMilestone = state.activeMilestone
-    ? `${state.activeMilestone.id} — ${state.activeMilestone.title}`
+    ? `${state.activeMilestone.id}: ${state.activeMilestone.title}`
     : "None";
   const activeSlice = state.activeSlice
-    ? `${state.activeSlice.id} — ${state.activeSlice.title}`
+    ? `${state.activeSlice.id}: ${state.activeSlice.title}`
     : "None";
 
   lines.push(`**Active Milestone:** ${activeMilestone}`);
@@ -477,6 +506,20 @@ export async function runGSDDoctor(basePath: string, options?: { fix?: boolean; 
     const milestonePath = resolveMilestonePath(basePath, milestoneId);
     if (!milestonePath) continue;
 
+    // Validate milestone title for delimiter characters that break state documents.
+    const milestoneTitleIssue = validateTitle(milestone.title);
+    if (milestoneTitleIssue) {
+      issues.push({
+        severity: "warning",
+        code: "delimiter_in_title",
+        scope: "milestone",
+        unitId: milestoneId,
+        message: `Milestone ${milestoneId} ${milestoneTitleIssue}. Rename the milestone to remove these characters to prevent state corruption.`,
+        file: relMilestoneFile(basePath, milestoneId, "ROADMAP"),
+        fixable: false,
+      });
+    }
+
     const roadmapPath = resolveMilestoneFile(basePath, milestoneId, "ROADMAP");
     const roadmapContent = roadmapPath ? await loadFile(roadmapPath) : null;
     if (!roadmapContent) continue;
@@ -485,6 +528,20 @@ export async function runGSDDoctor(basePath: string, options?: { fix?: boolean; 
     for (const slice of roadmap.slices) {
       const unitId = `${milestoneId}/${slice.id}`;
       if (options?.scope && !matchesScope(unitId, options.scope) && options.scope !== milestoneId) continue;
+
+      // Validate slice title for delimiter characters.
+      const sliceTitleIssue = validateTitle(slice.title);
+      if (sliceTitleIssue) {
+        issues.push({
+          severity: "warning",
+          code: "delimiter_in_title",
+          scope: "slice",
+          unitId,
+          message: `Slice ${unitId} ${sliceTitleIssue}. Rename the slice to remove these characters to prevent state corruption.`,
+          file: relMilestoneFile(basePath, milestoneId, "ROADMAP"),
+          fixable: false,
+        });
+      }
 
       const slicePath = resolveSlicePath(basePath, milestoneId, slice.id);
       if (!slicePath) continue;
