@@ -460,6 +460,36 @@ test("status bar consumes statusTexts from store", () => {
     source.includes("statusTexts"),
     "status-bar.tsx must reference statusTexts for extension status display",
   );
+  assert.ok(
+    source.includes("titleOverride"),
+    "status-bar.tsx must reference titleOverride so the shell title override is visible outside the header",
+  );
+});
+
+test("browser shell renders title overrides, widgets, and editor prefills from store-backed state", () => {
+  const storePath = resolve(import.meta.dirname, "../../web/lib/gsd-workspace-store.tsx");
+  const appShellPath = resolve(import.meta.dirname, "../../web/components/gsd/app-shell.tsx");
+  const statusBarPath = resolve(import.meta.dirname, "../../web/components/gsd/status-bar.tsx");
+  const terminalPath = resolve(import.meta.dirname, "../../web/components/gsd/terminal.tsx");
+
+  const storeSource = readFileSync(storePath, "utf-8");
+  const appShellSource = readFileSync(appShellPath, "utf-8");
+  const statusBarSource = readFileSync(statusBarPath, "utf-8");
+  const terminalSource = readFileSync(terminalPath, "utf-8");
+
+  assert.match(appShellSource, /data-testid="workspace-title-override"/, "app-shell.tsx must render an inspectable title-override marker in the header");
+  assert.match(appShellSource, /document\.title = titleOverride \?/, "app-shell.tsx must project the override into browser chrome");
+  assert.match(statusBarSource, /data-testid="status-bar-title-override"/, "status-bar.tsx must keep the active title override browser-visible in the shell footer");
+
+  assert.match(terminalSource, /terminal-widgets-above-editor/, "terminal.tsx must render above-editor widgets with a stable marker");
+  assert.match(terminalSource, /terminal-widgets-below-editor/, "terminal.tsx must render below-editor widgets with a stable marker");
+  assert.match(terminalSource, /data-testid="terminal-widget"/, "terminal.tsx must render inspectable widget entries");
+  assert.match(terminalSource, /MAX_VISIBLE_WIDGET_LINES = 6/, "terminal.tsx must bound widget rendering so extension widgets cannot grow without limit");
+  assert.match(terminalSource, /widget\.placement \?\? "aboveEditor"/, "terminal.tsx must preserve the existing default above-editor placement semantics");
+
+  assert.match(storeSource, /consumeEditorTextBuffer = \(\): string \| null =>/, "gsd-workspace-store.tsx must expose a consume-once editor prefill action");
+  assert.match(terminalSource, /consumeEditorTextBuffer/, "terminal.tsx must consume editor prefill state instead of replaying it forever");
+  assert.match(terminalSource, /setInput\(workspace\.editorTextBuffer\)/, "terminal.tsx must visibly prefill the command input from editorTextBuffer");
 });
 
 test("dual terminal consumes activeToolExecution from store", () => {
@@ -470,4 +500,28 @@ test("dual terminal consumes activeToolExecution from store", () => {
     source.includes("activeToolExecution"),
     "dual-terminal.tsx must reference activeToolExecution for tool execution display",
   );
+});
+
+test("sidebar Git affordance opens a real git-summary surface with visible repo/not-repo/error states", () => {
+  const contractPath = resolve(import.meta.dirname, "../../web/lib/command-surface-contract.ts");
+  const storePath = resolve(import.meta.dirname, "../../web/lib/gsd-workspace-store.tsx");
+  const surfacePath = resolve(import.meta.dirname, "../../web/components/gsd/command-surface.tsx");
+  const sidebarPath = resolve(import.meta.dirname, "../../web/components/gsd/sidebar.tsx");
+
+  const contractSource = readFileSync(contractPath, "utf-8");
+  const storeSource = readFileSync(storePath, "utf-8");
+  const surfaceSource = readFileSync(surfacePath, "utf-8");
+  const sidebarSource = readFileSync(sidebarPath, "utf-8");
+
+  assert.match(contractSource, /gitSummary:/, "command-surface-contract.ts must retain git-summary state on the shared surface");
+  assert.match(contractSource, /load_git_summary/, "command-surface-contract.ts must model git-summary loading as an explicit action");
+
+  assert.match(storeSource, /loadGitSummary/, "gsd-workspace-store.tsx must expose loadGitSummary so the Git surface is not inert");
+  assert.match(storeSource, /\/api\/git/, "gsd-workspace-store.tsx must fetch the current-project git route for the Git surface");
+
+  assert.match(surfaceSource, /data-testid="command-surface-git-summary"/, "command-surface.tsx must render a git-summary panel");
+  assert.match(surfaceSource, /data-testid="command-surface-git-not-repo"/, "command-surface.tsx must keep not-a-repo state browser-visible");
+  assert.match(surfaceSource, /data-testid="command-surface-git-error"/, "command-surface.tsx must keep git load errors browser-visible");
+  assert.match(sidebarSource, /data-testid="sidebar-git-button"/, "sidebar.tsx must expose the Git affordance by a stable test id");
+  assert.match(sidebarSource, /openCommandSurface\("git", \{ source: "sidebar" \}\)/, "sidebar.tsx must open the shared git surface when the Git button is clicked");
 });

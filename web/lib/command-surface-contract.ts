@@ -1,14 +1,40 @@
 import type { BrowserSlashCommandDispatchResult, BrowserSlashCommandSurface } from "./browser-slash-command-dispatch"
+import type { GitSummaryResponse } from "./git-summary-contract"
+import type {
+  SessionBrowserNameFilter,
+  SessionBrowserSession,
+  SessionBrowserSortMode,
+} from "./session-browser-contract"
 
 export const COMMAND_SURFACE_THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh"] as const
 
 export type CommandSurfaceThinkingLevel = (typeof COMMAND_SURFACE_THINKING_LEVELS)[number]
-export type CommandSurfaceSection = "model" | "thinking" | "auth" | "resume" | "fork" | "session" | "compact"
+export type CommandSurfaceSection =
+  | "model"
+  | "thinking"
+  | "queue"
+  | "compaction"
+  | "retry"
+  | "auth"
+  | "git"
+  | "resume"
+  | "name"
+  | "fork"
+  | "session"
+  | "compact"
 export type CommandSurfaceSource = "slash" | "sidebar" | "surface"
 export type CommandSurfacePendingAction =
   | "loading_models"
   | "set_model"
   | "set_thinking_level"
+  | "set_steering_mode"
+  | "set_follow_up_mode"
+  | "set_auto_compaction"
+  | "set_auto_retry"
+  | "abort_retry"
+  | "load_git_summary"
+  | "load_session_browser"
+  | "rename_session"
   | "save_api_key"
   | "start_provider_flow"
   | "submit_provider_flow_input"
@@ -66,12 +92,56 @@ export interface CommandSurfaceResumableSession {
   isActive: boolean
 }
 
+export interface CommandSurfaceSessionBrowserState {
+  scope: "current_project" | null
+  projectCwd: string | null
+  projectSessionsDir: string | null
+  activeSessionPath: string | null
+  query: string
+  sortMode: SessionBrowserSortMode
+  nameFilter: SessionBrowserNameFilter
+  totalSessions: number
+  returnedSessions: number
+  sessions: SessionBrowserSession[]
+  loaded: boolean
+  error: string | null
+}
+
+export interface CommandSurfaceSessionMutationState {
+  pending: boolean
+  sessionPath: string | null
+  result: string | null
+  error: string | null
+}
+
+export interface CommandSurfaceSettingMutationState {
+  pending: boolean
+  result: string | null
+  error: string | null
+}
+
+export interface CommandSurfaceSettingsMutationState {
+  steeringMode: CommandSurfaceSettingMutationState
+  followUpMode: CommandSurfaceSettingMutationState
+  autoCompaction: CommandSurfaceSettingMutationState
+  autoRetry: CommandSurfaceSettingMutationState
+  abortRetry: CommandSurfaceSettingMutationState
+}
+
+export interface CommandSurfaceGitSummaryState {
+  pending: boolean
+  loaded: boolean
+  result: GitSummaryResponse | null
+  error: string | null
+}
+
 export type CommandSurfaceTarget =
   | { kind: "settings"; section: CommandSurfaceSection }
   | { kind: "model"; provider?: string; modelId?: string; query?: string }
   | { kind: "thinking"; level: CommandSurfaceThinkingLevel }
   | { kind: "auth"; providerId?: string; intent: "login" | "logout" | "manage" }
   | { kind: "resume"; sessionPath?: string }
+  | { kind: "name"; sessionPath?: string; name: string }
   | { kind: "fork"; entryId?: string }
   | { kind: "session"; outputPath?: string }
   | { kind: "compact"; customInstructions: string }
@@ -90,6 +160,11 @@ export interface WorkspaceCommandSurfaceState {
   forkMessages: CommandSurfaceForkMessage[]
   sessionStats: CommandSurfaceSessionStats | null
   lastCompaction: CommandSurfaceCompactionResult | null
+  gitSummary: CommandSurfaceGitSummaryState
+  sessionBrowser: CommandSurfaceSessionBrowserState
+  resumeRequest: CommandSurfaceSessionMutationState
+  renameRequest: CommandSurfaceSessionMutationState
+  settingsRequests: CommandSurfaceSettingsMutationState
 }
 
 export interface CommandSurfaceOpenContext {
@@ -98,6 +173,10 @@ export interface CommandSurfaceOpenContext {
   currentThinkingLevel?: string | null
   preferredProviderId?: string | null
   resumableSessions?: CommandSurfaceResumableSession[]
+  currentSessionPath?: string | null
+  currentSessionName?: string | null
+  projectCwd?: string | null
+  projectSessionsDir?: string | null
 }
 
 export interface CommandSurfaceOpenRequest extends CommandSurfaceOpenContext {
@@ -116,9 +195,20 @@ export interface CommandSurfaceActionResult {
   forkMessages?: CommandSurfaceForkMessage[]
   sessionStats?: CommandSurfaceSessionStats | null
   lastCompaction?: CommandSurfaceCompactionResult | null
+  gitSummary?: CommandSurfaceGitSummaryState
+  sessionBrowser?: CommandSurfaceSessionBrowserState
 }
 
 const AUTH_SURFACE_COMMANDS = new Set<BrowserSlashCommandSurface>(["settings", "login", "logout"])
+const SETTINGS_MUTATION_ACTION_TO_REQUEST: Partial<
+  Record<CommandSurfacePendingAction, keyof CommandSurfaceSettingsMutationState>
+> = {
+  set_steering_mode: "steeringMode",
+  set_follow_up_mode: "followUpMode",
+  set_auto_compaction: "autoCompaction",
+  set_auto_retry: "autoRetry",
+  abort_retry: "abortRetry",
+}
 
 function matchingSessionPath(
   sessions: CommandSurfaceResumableSession[] | undefined,
@@ -142,6 +232,73 @@ function matchingSessionPath(
   })?.path
 }
 
+function createInitialCommandSurfaceSessionBrowserState(
+  overrides: Partial<CommandSurfaceSessionBrowserState> = {},
+): CommandSurfaceSessionBrowserState {
+  return {
+    scope: null,
+    projectCwd: null,
+    projectSessionsDir: null,
+    activeSessionPath: null,
+    query: "",
+    sortMode: "threaded",
+    nameFilter: "all",
+    totalSessions: 0,
+    returnedSessions: 0,
+    sessions: [],
+    loaded: false,
+    error: null,
+    ...overrides,
+  }
+}
+
+function createInitialCommandSurfaceSessionMutationState(): CommandSurfaceSessionMutationState {
+  return {
+    pending: false,
+    sessionPath: null,
+    result: null,
+    error: null,
+  }
+}
+
+function createInitialCommandSurfaceSettingMutationState(): CommandSurfaceSettingMutationState {
+  return {
+    pending: false,
+    result: null,
+    error: null,
+  }
+}
+
+function createInitialCommandSurfaceSettingsMutationState(): CommandSurfaceSettingsMutationState {
+  return {
+    steeringMode: createInitialCommandSurfaceSettingMutationState(),
+    followUpMode: createInitialCommandSurfaceSettingMutationState(),
+    autoCompaction: createInitialCommandSurfaceSettingMutationState(),
+    autoRetry: createInitialCommandSurfaceSettingMutationState(),
+    abortRetry: createInitialCommandSurfaceSettingMutationState(),
+  }
+}
+
+function createInitialCommandSurfaceGitSummaryState(): CommandSurfaceGitSummaryState {
+  return {
+    pending: false,
+    loaded: false,
+    result: null,
+    error: null,
+  }
+}
+
+function buildInitialSessionBrowserState(request: CommandSurfaceOpenRequest): CommandSurfaceSessionBrowserState {
+  const initialQuery = request.surface === "resume" ? request.args?.trim() ?? "" : ""
+  return createInitialCommandSurfaceSessionBrowserState({
+    activeSessionPath: request.currentSessionPath ?? null,
+    projectCwd: request.projectCwd ?? null,
+    projectSessionsDir: request.projectSessionsDir ?? null,
+    query: initialQuery,
+    sortMode: initialQuery ? "relevance" : "threaded",
+  })
+}
+
 export function isCommandSurfaceThinkingLevel(value: string | null | undefined): value is CommandSurfaceThinkingLevel {
   return COMMAND_SURFACE_THINKING_LEVELS.includes((value ?? "") as CommandSurfaceThinkingLevel)
 }
@@ -161,6 +318,11 @@ export function createInitialCommandSurfaceState(): WorkspaceCommandSurfaceState
     forkMessages: [],
     sessionStats: null,
     lastCompaction: null,
+    gitSummary: createInitialCommandSurfaceGitSummaryState(),
+    sessionBrowser: createInitialCommandSurfaceSessionBrowserState(),
+    resumeRequest: createInitialCommandSurfaceSessionMutationState(),
+    renameRequest: createInitialCommandSurfaceSessionMutationState(),
+    settingsRequests: createInitialCommandSurfaceSettingsMutationState(),
   }
 }
 
@@ -172,11 +334,15 @@ export function commandSurfaceSectionForRequest(request: CommandSurfaceOpenReque
       return "thinking"
     case "settings":
       return request.onboardingLocked ? "auth" : "model"
+    case "git":
+      return "git"
     case "login":
     case "logout":
       return "auth"
     case "resume":
       return "resume"
+    case "name":
+      return "name"
     case "fork":
       return "fork"
     case "session":
@@ -234,6 +400,15 @@ function buildResumeTarget(request: CommandSurfaceOpenRequest): CommandSurfaceTa
   }
 }
 
+function buildNameTarget(request: CommandSurfaceOpenRequest): CommandSurfaceTarget {
+  const providedName = request.args?.trim()
+  return {
+    kind: "name",
+    sessionPath: request.currentSessionPath ?? undefined,
+    name: providedName !== undefined && providedName.length > 0 ? providedName : request.currentSessionName?.trim() ?? "",
+  }
+}
+
 function buildForkTarget(request: CommandSurfaceOpenRequest): CommandSurfaceTarget {
   const entryId = request.args?.trim() || undefined
   return {
@@ -285,6 +460,10 @@ export function buildCommandSurfaceTarget(request: CommandSurfaceOpenRequest): C
     return buildResumeTarget(request)
   }
 
+  if (request.surface === "name") {
+    return buildNameTarget(request)
+  }
+
   if (request.surface === "fork") {
     return buildForkTarget(request)
   }
@@ -319,6 +498,11 @@ export function openCommandSurfaceState(
     sessionStats: null,
     forkMessages: [],
     lastCompaction: null,
+    gitSummary: createInitialCommandSurfaceGitSummaryState(),
+    sessionBrowser: buildInitialSessionBrowserState(request),
+    resumeRequest: createInitialCommandSurfaceSessionMutationState(),
+    renameRequest: createInitialCommandSurfaceSessionMutationState(),
+    settingsRequests: createInitialCommandSurfaceSettingsMutationState(),
   }
 }
 
@@ -342,11 +526,19 @@ export function setCommandSurfaceSection(
     ...context,
   }
 
+  const currentSessionPath =
+    current.selectedTarget?.kind === "resume" || current.selectedTarget?.kind === "name"
+      ? current.selectedTarget.sessionPath
+      : undefined
+  const currentDraftName = current.selectedTarget?.kind === "name" ? current.selectedTarget.name : undefined
+
   let selectedTarget: CommandSurfaceTarget | null = current.selectedTarget
   if (section === "model") {
     selectedTarget = buildModelTarget(request)
   } else if (section === "thinking") {
     selectedTarget = buildThinkingTarget(request)
+  } else if (section === "queue" || section === "compaction" || section === "retry" || section === "git") {
+    selectedTarget = buildSettingsTarget(section)
   } else if (section === "auth") {
     selectedTarget = buildAuthTarget({
       ...request,
@@ -358,7 +550,13 @@ export function setCommandSurfaceSection(
             : "settings",
     })
   } else if (section === "resume") {
-    selectedTarget = buildResumeTarget(request)
+    selectedTarget = { kind: "resume", sessionPath: currentSessionPath ?? buildResumeTarget(request).sessionPath }
+  } else if (section === "name") {
+    selectedTarget = {
+      kind: "name",
+      sessionPath: currentSessionPath ?? request.currentSessionPath ?? undefined,
+      name: currentDraftName ?? request.currentSessionName?.trim() ?? "",
+    }
   } else if (section === "fork") {
     selectedTarget = buildForkTarget(request)
   } else if (section === "session") {
@@ -374,17 +572,99 @@ export function setCommandSurfaceSection(
   }
 }
 
+export function selectCommandSurfaceStateTarget(
+  current: WorkspaceCommandSurfaceState,
+  target: CommandSurfaceTarget,
+): WorkspaceCommandSurfaceState {
+  const nextSection =
+    target.kind === "settings"
+      ? target.section
+      : target.kind === "model"
+        ? "model"
+        : target.kind === "thinking"
+          ? "thinking"
+          : target.kind === "auth"
+            ? "auth"
+            : target.kind === "resume"
+              ? "resume"
+              : target.kind === "name"
+                ? "name"
+                : target.kind === "fork"
+                  ? "fork"
+                  : target.kind === "session"
+                    ? "session"
+                    : "compact"
+
+  return {
+    ...current,
+    section: nextSection,
+    selectedTarget: target,
+    lastError: null,
+    lastResult: null,
+  }
+}
+
 export function setCommandSurfacePending(
   current: WorkspaceCommandSurfaceState,
   action: CommandSurfacePendingAction,
   selectedTarget: CommandSurfaceTarget | null = current.selectedTarget,
 ): WorkspaceCommandSurfaceState {
+  const nextResumeRequest =
+    action === "switch_session"
+      ? {
+          pending: true,
+          sessionPath: selectedTarget?.kind === "resume" ? selectedTarget.sessionPath ?? null : null,
+          result: null,
+          error: null,
+        }
+      : current.resumeRequest
+
+  const nextRenameRequest =
+    action === "rename_session"
+      ? {
+          pending: true,
+          sessionPath: selectedTarget?.kind === "name" ? selectedTarget.sessionPath ?? null : null,
+          result: null,
+          error: null,
+        }
+      : current.renameRequest
+
+  const settingsRequestKey = SETTINGS_MUTATION_ACTION_TO_REQUEST[action]
+  const nextSettingsRequests = settingsRequestKey
+    ? {
+        ...current.settingsRequests,
+        [settingsRequestKey]: {
+          pending: true,
+          result: null,
+          error: null,
+        },
+      }
+    : current.settingsRequests
+
   return {
     ...current,
     pendingAction: action,
     selectedTarget,
     lastError: null,
     lastResult: null,
+    gitSummary:
+      action === "load_git_summary"
+        ? {
+            ...current.gitSummary,
+            pending: true,
+            error: null,
+          }
+        : current.gitSummary,
+    sessionBrowser:
+      action === "load_session_browser"
+        ? {
+            ...current.sessionBrowser,
+            error: null,
+          }
+        : current.sessionBrowser,
+    resumeRequest: nextResumeRequest,
+    renameRequest: nextRenameRequest,
+    settingsRequests: nextSettingsRequests,
   }
 }
 
@@ -392,14 +672,59 @@ export function applyCommandSurfaceActionResult(
   current: WorkspaceCommandSurfaceState,
   result: CommandSurfaceActionResult,
 ): WorkspaceCommandSurfaceState {
+  const nextSelectedTarget = result.selectedTarget === undefined ? current.selectedTarget : result.selectedTarget
+  const resumeSessionPath =
+    (nextSelectedTarget?.kind === "resume" ? nextSelectedTarget.sessionPath : undefined) ?? current.resumeRequest.sessionPath
+  const renameSessionPath =
+    (nextSelectedTarget?.kind === "name" ? nextSelectedTarget.sessionPath : undefined) ?? current.renameRequest.sessionPath
+  const settingsRequestKey = SETTINGS_MUTATION_ACTION_TO_REQUEST[result.action]
+  const nextSettingsRequests = settingsRequestKey
+    ? {
+        ...current.settingsRequests,
+        [settingsRequestKey]: {
+          pending: false,
+          result: result.success ? result.message : null,
+          error: result.success ? null : result.message,
+        },
+      }
+    : current.settingsRequests
+
   return {
     ...current,
     pendingAction: null,
-    selectedTarget: result.selectedTarget === undefined ? current.selectedTarget : result.selectedTarget,
+    selectedTarget: nextSelectedTarget,
     availableModels: result.availableModels ?? current.availableModels,
     forkMessages: result.forkMessages ?? current.forkMessages,
     sessionStats: result.sessionStats === undefined ? current.sessionStats : result.sessionStats,
     lastCompaction: result.lastCompaction === undefined ? current.lastCompaction : result.lastCompaction,
+    gitSummary:
+      result.gitSummary === undefined
+        ? current.gitSummary
+        : {
+            ...result.gitSummary,
+            pending: false,
+            loaded: result.gitSummary.loaded || result.success,
+          },
+    sessionBrowser: result.sessionBrowser ?? current.sessionBrowser,
+    resumeRequest:
+      result.action === "switch_session"
+        ? {
+            pending: false,
+            sessionPath: resumeSessionPath ?? null,
+            result: result.success ? result.message : null,
+            error: result.success ? null : result.message,
+          }
+        : current.resumeRequest,
+    renameRequest:
+      result.action === "rename_session"
+        ? {
+            pending: false,
+            sessionPath: renameSessionPath ?? null,
+            result: result.success ? result.message : null,
+            error: result.success ? null : result.message,
+          }
+        : current.renameRequest,
+    settingsRequests: nextSettingsRequests,
     lastError: result.success ? null : result.message,
     lastResult: result.success ? result.message : null,
   }

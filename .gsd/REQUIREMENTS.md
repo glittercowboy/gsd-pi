@@ -23,7 +23,7 @@ Guidelines:
 - Primary owning slice: M002/S01
 - Supporting slices: M002/S02, M002/S03, M002/S04
 - Validation: mapped
-- Notes: S01 proved safe browser slash-command dispatch plus RPC-backed/browser-surface outcomes for the daily-use built-ins in scope; S02-S04 still need to finish broader parity, freshness, and assembled runtime hardening before this requirement can validate.
+- Notes: S01 proved safe browser slash-command dispatch plus RPC-backed/browser-surface outcomes for the daily-use built-ins in scope. S02 added current-project session browse/resume/rename parity, daily-use settings/auth controls, a real Git sidebar surface, and browser-visible title/widget/editor shell state. S03-S04 still need live freshness, recovery diagnostics, and assembled runtime proof before this requirement can validate.
 
 ## Validated
 

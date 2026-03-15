@@ -19,17 +19,28 @@ import {
   closeCommandSurfaceState,
   createInitialCommandSurfaceState,
   openCommandSurfaceState,
+  selectCommandSurfaceStateTarget,
   setCommandSurfacePending,
   setCommandSurfaceSection,
   type CommandSurfaceCompactionResult,
   type CommandSurfaceForkMessage,
+  type CommandSurfaceGitSummaryState,
   type CommandSurfaceModelOption,
   type CommandSurfaceSection,
+  type CommandSurfaceSessionBrowserState,
   type CommandSurfaceSessionStats,
   type CommandSurfaceTarget,
   type CommandSurfaceThinkingLevel,
   type WorkspaceCommandSurfaceState,
 } from "./command-surface-contract"
+import { isGitSummaryResponse, type GitSummaryResponse } from "./git-summary-contract"
+import type {
+  SessionBrowserNameFilter,
+  SessionBrowserResponse,
+  SessionBrowserSession,
+  SessionBrowserSortMode,
+  SessionManageResponse,
+} from "./session-browser-contract"
 
 export type WorkspaceStatus = "idle" | "loading" | "ready" | "error"
 export type WorkspaceConnectionState =
@@ -68,6 +79,9 @@ export interface WorkspaceSessionState {
   sessionId: string
   sessionName?: string
   autoCompactionEnabled: boolean
+  autoRetryEnabled: boolean
+  retryInProgress: boolean
+  retryAttempt: number
   messageCount: number
   pendingMessageCount: number
 }
@@ -419,7 +433,9 @@ const IMPLEMENTED_BROWSER_COMMAND_SURFACES = new Set<BrowserSlashCommandSurface>
   "settings",
   "model",
   "thinking",
+  "git",
   "resume",
+  "name",
   "fork",
   "compact",
   "login",
@@ -607,9 +623,108 @@ function cloneBootWithBridge(
   bridge: BridgeRuntimeSnapshot,
 ): WorkspaceBootPayload | null {
   if (!boot) return null
-  return {
+  const nextBoot = {
     ...boot,
     bridge,
+  }
+
+  return {
+    ...nextBoot,
+    resumableSessions: overlayLiveBridgeSessionState(nextBoot.resumableSessions, nextBoot),
+  }
+}
+
+function patchBootSessionState(
+  boot: WorkspaceBootPayload | null,
+  patch: Partial<WorkspaceSessionState>,
+): WorkspaceBootPayload | null {
+  if (!boot?.bridge.sessionState) return boot
+
+  return cloneBootWithBridge(boot, {
+    ...boot.bridge,
+    sessionState: {
+      ...boot.bridge.sessionState,
+      ...patch,
+    },
+  })
+}
+
+function patchBootSessionName(
+  boot: WorkspaceBootPayload | null,
+  sessionPath: string,
+  name: string,
+): WorkspaceBootPayload | null {
+  if (!boot) return null
+
+  const isActiveSession = getLiveActiveSessionPath(boot) === sessionPath
+  const nextBridge =
+    isActiveSession && boot.bridge.sessionState
+      ? {
+          ...boot.bridge,
+          sessionState: {
+            ...boot.bridge.sessionState,
+            sessionName: name,
+          },
+        }
+      : boot.bridge
+
+  const nextBoot = {
+    ...boot,
+    bridge: nextBridge,
+  }
+
+  return {
+    ...nextBoot,
+    resumableSessions: overlayLiveBridgeSessionState(
+      nextBoot.resumableSessions.map((session) =>
+        session.path === sessionPath
+          ? {
+              ...session,
+              name,
+            }
+          : session,
+      ),
+      nextBoot,
+    ),
+  }
+}
+
+function patchBootActiveSession(
+  boot: WorkspaceBootPayload | null,
+  sessionPath: string,
+  sessionName?: string,
+): WorkspaceBootPayload | null {
+  if (!boot) return null
+
+  const selectedSession = boot.resumableSessions.find((session) => session.path === sessionPath)
+  const nextBridge = {
+    ...boot.bridge,
+    activeSessionFile: sessionPath,
+    activeSessionId: selectedSession?.id ?? boot.bridge.activeSessionId,
+    sessionState: boot.bridge.sessionState
+      ? {
+          ...boot.bridge.sessionState,
+          sessionFile: sessionPath,
+          sessionId: selectedSession?.id ?? boot.bridge.sessionState.sessionId,
+          sessionName: sessionName ?? selectedSession?.name ?? boot.bridge.sessionState.sessionName,
+        }
+      : boot.bridge.sessionState,
+  }
+
+  const nextBoot = {
+    ...boot,
+    bridge: nextBridge,
+  }
+
+  return {
+    ...nextBoot,
+    resumableSessions: overlayLiveBridgeSessionState(
+      nextBoot.resumableSessions.map((session) => ({
+        ...session,
+        isActive: session.path === sessionPath,
+      })),
+      nextBoot,
+    ),
   }
 }
 
@@ -936,6 +1051,126 @@ function normalizeCompactionResult(payload: unknown): CommandSurfaceCompactionRe
   }
 }
 
+function normalizeGitSummaryPayload(payload: unknown): GitSummaryResponse | null {
+  return isGitSummaryResponse(payload) ? payload : null
+}
+
+function normalizeGitSummaryError(
+  current: CommandSurfaceGitSummaryState,
+  message: string,
+): CommandSurfaceGitSummaryState {
+  return {
+    ...current,
+    pending: false,
+    loaded: false,
+    error: message,
+  }
+}
+
+function normalizeSessionBrowserPayload(payload: unknown): CommandSurfaceSessionBrowserState | null {
+  if (!payload || typeof payload !== "object") return null
+
+  const response = payload as Partial<SessionBrowserResponse>
+  const project = response.project
+  const query = response.query
+  if (!project || !query || !Array.isArray(response.sessions)) return null
+  if (project.scope !== "current_project") return null
+  if (typeof project.cwd !== "string" || typeof project.sessionsDir !== "string") return null
+  if (typeof query.query !== "string" || typeof query.sortMode !== "string" || typeof query.nameFilter !== "string") return null
+
+  const sessions = response.sessions.filter((session): session is SessionBrowserSession => {
+    return (
+      typeof session?.id === "string" &&
+      typeof session?.path === "string" &&
+      typeof session?.cwd === "string" &&
+      typeof session?.createdAt === "string" &&
+      typeof session?.modifiedAt === "string" &&
+      typeof session?.messageCount === "number" &&
+      typeof session?.firstMessage === "string" &&
+      typeof session?.isActive === "boolean" &&
+      typeof session?.depth === "number" &&
+      typeof session?.isLastInThread === "boolean" &&
+      Array.isArray(session?.ancestorHasNextSibling)
+    )
+  })
+
+  return {
+    scope: project.scope,
+    projectCwd: project.cwd,
+    projectSessionsDir: project.sessionsDir,
+    activeSessionPath: typeof project.activeSessionPath === "string" ? project.activeSessionPath : null,
+    query: query.query,
+    sortMode: query.sortMode as SessionBrowserSortMode,
+    nameFilter: query.nameFilter as SessionBrowserNameFilter,
+    totalSessions: Number(response.totalSessions ?? sessions.length),
+    returnedSessions: Number(response.returnedSessions ?? sessions.length),
+    sessions,
+    loaded: true,
+    error: null,
+  }
+}
+
+function getLiveActiveSessionPath(boot: WorkspaceBootPayload | null): string | null {
+  return boot?.bridge.activeSessionFile ?? boot?.bridge.sessionState?.sessionFile ?? null
+}
+
+function getLiveActiveSessionName(boot: WorkspaceBootPayload | null): string | undefined {
+  const value = boot?.bridge.sessionState?.sessionName?.trim()
+  return value ? value : undefined
+}
+
+function overlayLiveBridgeSessionState<T extends { path: string; isActive: boolean; name?: string }>(
+  sessions: T[],
+  boot: WorkspaceBootPayload | null,
+): T[] {
+  const activeSessionPath = getLiveActiveSessionPath(boot)
+  const activeSessionName = getLiveActiveSessionName(boot)
+
+  return sessions.map((session) => {
+    const isActive = activeSessionPath ? session.path === activeSessionPath : session.isActive
+    return {
+      ...session,
+      isActive,
+      ...(isActive && activeSessionName ? { name: activeSessionName } : {}),
+    }
+  })
+}
+
+function syncSessionBrowserStateWithBridge(
+  sessionBrowser: CommandSurfaceSessionBrowserState,
+  boot: WorkspaceBootPayload | null,
+): CommandSurfaceSessionBrowserState {
+  return {
+    ...sessionBrowser,
+    activeSessionPath: getLiveActiveSessionPath(boot),
+    sessions: overlayLiveBridgeSessionState(sessionBrowser.sessions, boot),
+  }
+}
+
+function patchSessionBrowserSession(
+  sessionBrowser: CommandSurfaceSessionBrowserState,
+  sessionPath: string,
+  patch: Partial<Pick<SessionBrowserSession, "name" | "isActive">>,
+): CommandSurfaceSessionBrowserState {
+  return {
+    ...sessionBrowser,
+    activeSessionPath: patch.isActive ? sessionPath : sessionBrowser.activeSessionPath,
+    sessions: sessionBrowser.sessions.map((session) =>
+      session.path === sessionPath
+        ? {
+            ...session,
+            ...patch,
+          }
+        : patch.isActive
+          ? {
+              ...session,
+              isActive: false,
+            }
+          : session,
+    ),
+  }
+}
+
 function describeSessionPath(sessionPath: string, boot: WorkspaceBootPayload | null): string {
   const knownSession = boot?.resumableSessions.find((session) => session.path === sessionPath)
   if (knownSession?.name?.trim()) return knownSession.name.trim()
@@ -1193,6 +1428,14 @@ class GSDWorkspaceStore {
     this.patchState({ terminalLines: replacement })
   }
 
+  consumeEditorTextBuffer = (): string | null => {
+    const next = this.state.editorTextBuffer
+    if (next !== null) {
+      this.patchState({ editorTextBuffer: null })
+    }
+    return next
+  }
+
   openCommandSurface = (
     surface: BrowserSlashCommandSurface,
     options: { source?: "slash" | "sidebar" | "surface"; args?: string; selectedTarget?: CommandSurfaceTarget | null } = {},
@@ -1213,6 +1456,10 @@ class GSDWorkspaceStore {
           name: session.name,
           isActive: session.isActive,
         })),
+        currentSessionPath: this.state.boot?.bridge.activeSessionFile ?? this.state.boot?.bridge.sessionState?.sessionFile ?? null,
+        currentSessionName: this.state.boot?.bridge.sessionState?.sessionName ?? null,
+        projectCwd: this.state.boot?.project.cwd ?? null,
+        projectSessionsDir: this.state.boot?.project.sessionsDir ?? null,
       }),
     })
   }
@@ -1236,37 +1483,357 @@ class GSDWorkspaceStore {
           name: session.name,
           isActive: session.isActive,
         })),
+        currentSessionPath: this.state.boot?.bridge.activeSessionFile ?? this.state.boot?.bridge.sessionState?.sessionFile ?? null,
+        currentSessionName: this.state.boot?.bridge.sessionState?.sessionName ?? null,
+        projectCwd: this.state.boot?.project.cwd ?? null,
+        projectSessionsDir: this.state.boot?.project.sessionsDir ?? null,
       }),
     })
   }
 
   selectCommandSurfaceTarget = (target: CommandSurfaceTarget): void => {
-    const nextSection =
-      target.kind === "settings"
-        ? target.section
-        : target.kind === "model"
-          ? "model"
-          : target.kind === "thinking"
-            ? "thinking"
-            : target.kind === "auth"
-              ? "auth"
-              : target.kind === "resume"
-                ? "resume"
-                : target.kind === "fork"
-                  ? "fork"
-                  : target.kind === "session"
-                    ? "session"
-                    : "compact"
+    this.patchState({
+      commandSurface: selectCommandSurfaceStateTarget(this.state.commandSurface, target),
+    })
+  }
 
+  loadGitSummary = async (): Promise<GitSummaryResponse | null> => {
+    const requestedGitSummary: CommandSurfaceGitSummaryState = {
+      ...this.state.commandSurface.gitSummary,
+      pending: true,
+      error: null,
+    }
+
+    this.patchState({
+      commandSurface: setCommandSurfacePending(
+        {
+          ...this.state.commandSurface,
+          gitSummary: requestedGitSummary,
+        },
+        "load_git_summary",
+      ),
+    })
+
+    try {
+      const response = await fetch("/api/git", {
+        method: "GET",
+        cache: "no-store",
+        headers: {
+          Accept: "application/json",
+        },
+      })
+
+      const payload = await response.json().catch(() => null)
+      const normalizedGitSummary = normalizeGitSummaryPayload(payload)
+      if (!response.ok || !normalizedGitSummary) {
+        const message =
+          payload && typeof payload === "object" && "error" in payload && typeof payload.error === "string"
+            ? payload.error
+            : `Current-project git summary failed with ${response.status}`
+        const failedGitSummary = normalizeGitSummaryError(requestedGitSummary, message)
+        this.patchState({
+          commandSurface: applyCommandSurfaceActionResult(
+            {
+              ...this.state.commandSurface,
+              gitSummary: failedGitSummary,
+            },
+            {
+              action: "load_git_summary",
+              success: false,
+              message,
+              gitSummary: failedGitSummary,
+            },
+          ),
+        })
+        return null
+      }
+
+      const gitSummary: CommandSurfaceGitSummaryState = {
+        pending: false,
+        loaded: true,
+        result: normalizedGitSummary,
+        error: null,
+      }
+
+      this.patchState({
+        commandSurface: applyCommandSurfaceActionResult(this.state.commandSurface, {
+          action: "load_git_summary",
+          success: true,
+          message: "",
+          gitSummary,
+        }),
+      })
+
+      return normalizedGitSummary
+    } catch (error) {
+      const message = normalizeClientError(error)
+      const failedGitSummary = normalizeGitSummaryError(requestedGitSummary, message)
+      this.patchState({
+        commandSurface: applyCommandSurfaceActionResult(
+          {
+            ...this.state.commandSurface,
+            gitSummary: failedGitSummary,
+          },
+          {
+            action: "load_git_summary",
+            success: false,
+            message,
+            gitSummary: failedGitSummary,
+          },
+        ),
+      })
+      return null
+    }
+  }
+
+  updateSessionBrowserState = (
+    patch: Partial<Pick<CommandSurfaceSessionBrowserState, "query" | "sortMode" | "nameFilter">>,
+  ): void => {
     this.patchState({
       commandSurface: {
         ...this.state.commandSurface,
-        section: nextSection,
-        selectedTarget: target,
+        sessionBrowser: {
+          ...this.state.commandSurface.sessionBrowser,
+          ...patch,
+          error: null,
+        },
         lastError: null,
         lastResult: null,
       },
     })
+  }
+
+  loadSessionBrowser = async (
+    overrides: Partial<Pick<CommandSurfaceSessionBrowserState, "query" | "sortMode" | "nameFilter">> = {},
+  ): Promise<CommandSurfaceSessionBrowserState | null> => {
+    const requestedSessionBrowser = {
+      ...this.state.commandSurface.sessionBrowser,
+      ...overrides,
+      error: null,
+    }
+
+    this.patchState({
+      commandSurface: setCommandSurfacePending(
+        {
+          ...this.state.commandSurface,
+          sessionBrowser: requestedSessionBrowser,
+        },
+        "load_session_browser",
+      ),
+    })
+
+    const params = new URLSearchParams()
+    if (requestedSessionBrowser.query.trim()) {
+      params.set("query", requestedSessionBrowser.query.trim())
+    }
+    params.set("sortMode", requestedSessionBrowser.sortMode)
+    params.set("nameFilter", requestedSessionBrowser.nameFilter)
+
+    try {
+      const response = await fetch(`/api/session/browser?${params.toString()}`, {
+        method: "GET",
+        cache: "no-store",
+        headers: {
+          Accept: "application/json",
+        },
+      })
+
+      const payload = await response.json().catch(() => null)
+      const normalizedSessionBrowser = normalizeSessionBrowserPayload(payload)
+      if (!response.ok || !normalizedSessionBrowser) {
+        const message =
+          payload && typeof payload === "object" && "error" in payload && typeof payload.error === "string"
+            ? payload.error
+            : `Current-project session browser failed with ${response.status}`
+        const failedSessionBrowser = {
+          ...requestedSessionBrowser,
+          error: message,
+        }
+        this.patchState({
+          commandSurface: applyCommandSurfaceActionResult(
+            {
+              ...this.state.commandSurface,
+              sessionBrowser: failedSessionBrowser,
+            },
+            {
+              action: "load_session_browser",
+              success: false,
+              message,
+              sessionBrowser: failedSessionBrowser,
+            },
+          ),
+        })
+        return null
+      }
+
+      const sessionBrowser = syncSessionBrowserStateWithBridge(normalizedSessionBrowser, this.state.boot)
+      const currentTarget = this.state.commandSurface.selectedTarget
+      const defaultResumePath = sessionBrowser.sessions.find((session) => !session.isActive)?.path ?? sessionBrowser.sessions[0]?.path
+      const defaultRenameSession =
+        sessionBrowser.sessions.find((session) => session.path === sessionBrowser.activeSessionPath) ?? sessionBrowser.sessions[0]
+
+      let selectedTarget = currentTarget
+      if (currentTarget?.kind === "resume" || this.state.commandSurface.section === "resume") {
+        const visiblePath =
+          currentTarget?.kind === "resume" && currentTarget.sessionPath && sessionBrowser.sessions.some((session) => session.path === currentTarget.sessionPath)
+            ? currentTarget.sessionPath
+            : defaultResumePath
+        selectedTarget = { kind: "resume", sessionPath: visiblePath }
+      } else if (currentTarget?.kind === "name" || this.state.commandSurface.section === "name") {
+        const visibleSession =
+          currentTarget?.kind === "name" && currentTarget.sessionPath
+            ? sessionBrowser.sessions.find((session) => session.path === currentTarget.sessionPath) ?? defaultRenameSession
+            : defaultRenameSession
+        selectedTarget = {
+          kind: "name",
+          sessionPath: visibleSession?.path,
+          name:
+            currentTarget?.kind === "name" && currentTarget.sessionPath === visibleSession?.path
+              ? currentTarget.name
+              : visibleSession?.name ?? "",
+        }
+      }
+
+      this.patchState({
+        commandSurface: applyCommandSurfaceActionResult(
+          {
+            ...this.state.commandSurface,
+            sessionBrowser,
+          },
+          {
+            action: "load_session_browser",
+            success: true,
+            message: "",
+            selectedTarget,
+            sessionBrowser,
+          },
+        ),
+      })
+
+      return sessionBrowser
+    } catch (error) {
+      const message = normalizeClientError(error)
+      const failedSessionBrowser = {
+        ...requestedSessionBrowser,
+        error: message,
+      }
+      this.patchState({
+        commandSurface: applyCommandSurfaceActionResult(
+          {
+            ...this.state.commandSurface,
+            sessionBrowser: failedSessionBrowser,
+          },
+          {
+            action: "load_session_browser",
+            success: false,
+            message,
+            sessionBrowser: failedSessionBrowser,
+          },
+        ),
+      })
+      return null
+    }
+  }
+
+  renameSessionFromSurface = async (sessionPath: string, name?: string): Promise<SessionManageResponse | null> => {
+    const currentTarget = this.state.commandSurface.selectedTarget
+    const requestedName = name ?? (currentTarget?.kind === "name" ? currentTarget.name : "")
+    const trimmedName = requestedName.trim()
+    const selectedTarget: CommandSurfaceTarget = { kind: "name", sessionPath, name: requestedName }
+
+    if (!trimmedName) {
+      this.patchState({
+        commandSurface: applyCommandSurfaceActionResult(this.state.commandSurface, {
+          action: "rename_session",
+          success: false,
+          message: "Session name cannot be empty",
+          selectedTarget,
+        }),
+      })
+      return null
+    }
+
+    this.patchState({
+      commandSurface: setCommandSurfacePending(this.state.commandSurface, "rename_session", selectedTarget),
+    })
+
+    try {
+      const response = await fetch("/api/session/manage", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/json",
+        },
+        body: JSON.stringify({
+          action: "rename",
+          sessionPath,
+          name: trimmedName,
+        }),
+      })
+
+      const payload = await response.json().catch(() => null)
+      if (!response.ok || !payload || typeof payload !== "object" || payload.success !== true) {
+        const message =
+          payload && typeof payload === "object" && "error" in payload && typeof payload.error === "string"
+            ? payload.error
+            : `Session rename failed with ${response.status}`
+        this.patchState({
+          commandSurface: applyCommandSurfaceActionResult(this.state.commandSurface, {
+            action: "rename_session",
+            success: false,
+            message,
+            selectedTarget,
+          }),
+        })
+        return null
+      }
+
+      const result = payload as SessionManageResponse & { success: true }
+      const nextBoot = patchBootSessionName(this.state.boot, result.sessionPath, result.name)
+      const nextSessionBrowser = syncSessionBrowserStateWithBridge(
+        patchSessionBrowserSession(this.state.commandSurface.sessionBrowser, result.sessionPath, {
+          name: result.name,
+          ...(result.isActiveSession ? { isActive: true } : {}),
+        }),
+        nextBoot,
+      )
+      const nextSelectedTarget: CommandSurfaceTarget = {
+        kind: "name",
+        sessionPath: result.sessionPath,
+        name: result.name,
+      }
+
+      this.patchState({
+        ...(nextBoot ? { boot: nextBoot } : {}),
+        commandSurface: applyCommandSurfaceActionResult(
+          {
+            ...this.state.commandSurface,
+            sessionBrowser: nextSessionBrowser,
+          },
+          {
+            action: "rename_session",
+            success: true,
+            message: `Session name set: ${result.name}`,
+            selectedTarget: nextSelectedTarget,
+            sessionBrowser: nextSessionBrowser,
+          },
+        ),
+      })
+
+      void this.refreshBoot({ soft: true })
+      return result
+    } catch (error) {
+      const message = normalizeClientError(error)
+      this.patchState({
+        commandSurface: applyCommandSurfaceActionResult(this.state.commandSurface, {
+          action: "rename_session",
+          success: false,
+          message,
+          selectedTarget,
+        }),
+      })
+      return null
+    }
   }
 
   loadAvailableModels = async (): Promise<CommandSurfaceModelOption[]> => {
@@ -1413,6 +1980,198 @@ class GSDWorkspaceStore {
     return response
   }
 
+  setSteeringModeFromSurface = async (
+    mode: WorkspaceSessionState["steeringMode"],
+  ): Promise<WorkspaceCommandResponse | null> => {
+    const selectedTarget = this.state.commandSurface.selectedTarget
+    this.patchState({
+      commandSurface: setCommandSurfacePending(this.state.commandSurface, "set_steering_mode", selectedTarget),
+    })
+
+    const response = await this.sendCommand(
+      { type: "set_steering_mode", mode },
+      { appendInputLine: false, appendResponseLine: false },
+    )
+
+    if (!response || response.success === false) {
+      const message = response?.error ?? this.state.lastClientError ?? "Unknown error"
+      this.patchState({
+        commandSurface: applyCommandSurfaceActionResult(this.state.commandSurface, {
+          action: "set_steering_mode",
+          success: false,
+          message,
+          selectedTarget,
+        }),
+      })
+      return response
+    }
+
+    const nextBoot = patchBootSessionState(this.state.boot, { steeringMode: mode })
+    this.patchState({
+      ...(nextBoot ? { boot: nextBoot } : {}),
+      commandSurface: applyCommandSurfaceActionResult(this.state.commandSurface, {
+        action: "set_steering_mode",
+        success: true,
+        message: `Steering mode set to ${mode}`,
+        selectedTarget,
+      }),
+    })
+
+    return response
+  }
+
+  setFollowUpModeFromSurface = async (
+    mode: WorkspaceSessionState["followUpMode"],
+  ): Promise<WorkspaceCommandResponse | null> => {
+    const selectedTarget = this.state.commandSurface.selectedTarget
+    this.patchState({
+      commandSurface: setCommandSurfacePending(this.state.commandSurface, "set_follow_up_mode", selectedTarget),
+    })
+
+    const response = await this.sendCommand(
+      { type: "set_follow_up_mode", mode },
+      { appendInputLine: false, appendResponseLine: false },
+    )
+
+    if (!response || response.success === false) {
+      const message = response?.error ?? this.state.lastClientError ?? "Unknown error"
+      this.patchState({
+        commandSurface: applyCommandSurfaceActionResult(this.state.commandSurface, {
+          action: "set_follow_up_mode",
+          success: false,
+          message,
+          selectedTarget,
+        }),
+      })
+      return response
+    }
+
+    const nextBoot = patchBootSessionState(this.state.boot, { followUpMode: mode })
+    this.patchState({
+      ...(nextBoot ? { boot: nextBoot } : {}),
+      commandSurface: applyCommandSurfaceActionResult(this.state.commandSurface, {
+        action: "set_follow_up_mode",
+        success: true,
+        message: `Follow-up mode set to ${mode}`,
+        selectedTarget,
+      }),
+    })
+
+    return response
+  }
+
+  setAutoCompactionFromSurface = async (enabled: boolean): Promise<WorkspaceCommandResponse | null> => {
+    const selectedTarget = this.state.commandSurface.selectedTarget
+    this.patchState({
+      commandSurface: setCommandSurfacePending(this.state.commandSurface, "set_auto_compaction", selectedTarget),
+    })
+
+    const response = await this.sendCommand(
+      { type: "set_auto_compaction", enabled },
+      { appendInputLine: false, appendResponseLine: false },
+    )
+
+    if (!response || response.success === false) {
+      const message = response?.error ?? this.state.lastClientError ?? "Unknown error"
+      this.patchState({
+        commandSurface: applyCommandSurfaceActionResult(this.state.commandSurface, {
+          action: "set_auto_compaction",
+          success: false,
+          message,
+          selectedTarget,
+        }),
+      })
+      return response
+    }
+
+    const nextBoot = patchBootSessionState(this.state.boot, { autoCompactionEnabled: enabled })
+    this.patchState({
+      ...(nextBoot ? { boot: nextBoot } : {}),
+      commandSurface: applyCommandSurfaceActionResult(this.state.commandSurface, {
+        action: "set_auto_compaction",
+        success: true,
+        message: `Auto-compaction ${enabled ? "enabled" : "disabled"}`,
+        selectedTarget,
+      }),
+    })
+
+    return response
+  }
+
+  setAutoRetryFromSurface = async (enabled: boolean): Promise<WorkspaceCommandResponse | null> => {
+    const selectedTarget = this.state.commandSurface.selectedTarget
+    this.patchState({
+      commandSurface: setCommandSurfacePending(this.state.commandSurface, "set_auto_retry", selectedTarget),
+    })
+
+    const response = await this.sendCommand(
+      { type: "set_auto_retry", enabled },
+      { appendInputLine: false, appendResponseLine: false },
+    )
+
+    if (!response || response.success === false) {
+      const message = response?.error ?? this.state.lastClientError ?? "Unknown error"
+      this.patchState({
+        commandSurface: applyCommandSurfaceActionResult(this.state.commandSurface, {
+          action: "set_auto_retry",
+          success: false,
+          message,
+          selectedTarget,
+        }),
+      })
+      return response
+    }
+
+    const nextBoot = patchBootSessionState(this.state.boot, { autoRetryEnabled: enabled })
+    this.patchState({
+      ...(nextBoot ? { boot: nextBoot } : {}),
+      commandSurface: applyCommandSurfaceActionResult(this.state.commandSurface, {
+        action: "set_auto_retry",
+        success: true,
+        message: `Auto-retry ${enabled ? "enabled" : "disabled"}`,
+        selectedTarget,
+      }),
+    })
+
+    return response
+  }
+
+  abortRetryFromSurface = async (): Promise<WorkspaceCommandResponse | null> => {
+    const selectedTarget = this.state.commandSurface.selectedTarget
+    this.patchState({
+      commandSurface: setCommandSurfacePending(this.state.commandSurface, "abort_retry", selectedTarget),
+    })
+
+    const response = await this.sendCommand(
+      { type: "abort_retry" },
+      { appendInputLine: false, appendResponseLine: false },
+    )
+
+    if (!response || response.success === false) {
+      const message = response?.error ?? this.state.lastClientError ?? "Unknown error"
+      this.patchState({
+        commandSurface: applyCommandSurfaceActionResult(this.state.commandSurface, {
+          action: "abort_retry",
+          success: false,
+          message,
+          selectedTarget,
+        }),
+      })
+      return response
+    }
+
+    this.patchState({
+      commandSurface: applyCommandSurfaceActionResult(this.state.commandSurface, {
+        action: "abort_retry",
+        success: true,
+        message: "Retry cancellation requested. Live retry state will update when the bridge confirms the abort.",
+        selectedTarget,
+      }),
+    })
+
+    return response
+  }
+
   switchSessionFromSurface = async (sessionPath: string): Promise<WorkspaceCommandResponse | null> => {
     const selectedTarget: CommandSurfaceTarget = { kind: "resume", sessionPath }
     this.patchState({
@@ -1449,17 +2208,36 @@ class GSDWorkspaceStore {
       return response
     }
 
-    await this.refreshBoot({ soft: true })
+    const nextSessionName =
+      this.state.commandSurface.sessionBrowser.sessions.find((session) => session.path === sessionPath)?.name ??
+      this.state.boot?.resumableSessions.find((session) => session.path === sessionPath)?.name
+    const nextBoot = patchBootActiveSession(this.state.boot, sessionPath, nextSessionName)
+    const nextSessionBrowser = syncSessionBrowserStateWithBridge(
+      patchSessionBrowserSession(this.state.commandSurface.sessionBrowser, sessionPath, {
+        isActive: true,
+        ...(nextSessionName ? { name: nextSessionName } : {}),
+      }),
+      nextBoot,
+    )
 
     this.patchState({
-      commandSurface: applyCommandSurfaceActionResult(this.state.commandSurface, {
-        action: "switch_session",
-        success: true,
-        message: `Switched to ${describeSessionPath(sessionPath, this.state.boot)}`,
-        selectedTarget,
-      }),
+      ...(nextBoot ? { boot: nextBoot } : {}),
+      commandSurface: applyCommandSurfaceActionResult(
+        {
+          ...this.state.commandSurface,
+          sessionBrowser: nextSessionBrowser,
+        },
+        {
+          action: "switch_session",
+          success: true,
+          message: `Switched to ${describeSessionPath(sessionPath, nextBoot ?? this.state.boot)}`,
+          selectedTarget,
+          sessionBrowser: nextSessionBrowser,
+        },
+      ),
     })
 
+    await this.refreshBoot({ soft: true })
     return response
   }
 
@@ -2103,7 +2881,8 @@ class GSDWorkspaceStore {
           throw new Error(`Boot request failed with ${response.status}`)
         }
 
-        const boot = (await response.json()) as WorkspaceBootPayload
+        const bootPayload = (await response.json()) as WorkspaceBootPayload
+        const boot = cloneBootWithBridge(bootPayload, bootPayload.bridge) ?? bootPayload
         this.lastBridgeDigest = null
         this.lastBridgeDigest = [boot.bridge.phase, boot.bridge.activeSessionId, boot.bridge.lastError?.at, boot.bridge.lastError?.message].join("::")
         this.patchState({
@@ -2680,7 +3459,8 @@ class GSDWorkspaceStore {
         break
       case "setTitle":
         if (event.method === "setTitle") {
-          this.patchState({ titleOverride: event.title })
+          const nextTitle = event.title.trim()
+          this.patchState({ titleOverride: nextTitle ? nextTitle : null })
         }
         break
       case "set_editor_text":
@@ -2774,15 +3554,25 @@ export function useGSDWorkspaceActions(): Pick<
   | "sendCommand"
   | "submitInput"
   | "clearTerminalLines"
+  | "consumeEditorTextBuffer"
   | "refreshBoot"
   | "refreshOnboarding"
   | "openCommandSurface"
   | "closeCommandSurface"
   | "setCommandSurfaceSection"
   | "selectCommandSurfaceTarget"
+  | "loadGitSummary"
+  | "updateSessionBrowserState"
+  | "loadSessionBrowser"
+  | "renameSessionFromSurface"
   | "loadAvailableModels"
   | "applyModelSelection"
   | "applyThinkingLevel"
+  | "setSteeringModeFromSurface"
+  | "setFollowUpModeFromSurface"
+  | "setAutoCompactionFromSurface"
+  | "setAutoRetryFromSurface"
+  | "abortRetryFromSurface"
   | "switchSessionFromSurface"
   | "loadSessionStats"
   | "exportSessionFromSurface"
@@ -2809,15 +3599,25 @@ export function useGSDWorkspaceActions(): Pick<
     sendCommand: store.sendCommand,
     submitInput: store.submitInput,
     clearTerminalLines: store.clearTerminalLines,
+    consumeEditorTextBuffer: store.consumeEditorTextBuffer,
     refreshBoot: store.refreshBoot,
     refreshOnboarding: store.refreshOnboarding,
     openCommandSurface: store.openCommandSurface,
     closeCommandSurface: store.closeCommandSurface,
     setCommandSurfaceSection: store.setCommandSurfaceSection,
     selectCommandSurfaceTarget: store.selectCommandSurfaceTarget,
+    loadGitSummary: store.loadGitSummary,
+    updateSessionBrowserState: store.updateSessionBrowserState,
+    loadSessionBrowser: store.loadSessionBrowser,
+    renameSessionFromSurface: store.renameSessionFromSurface,
     loadAvailableModels: store.loadAvailableModels,
     applyModelSelection: store.applyModelSelection,
     applyThinkingLevel: store.applyThinkingLevel,
+    setSteeringModeFromSurface: store.setSteeringModeFromSurface,
+    setFollowUpModeFromSurface: store.setFollowUpModeFromSurface,
+    setAutoCompactionFromSurface: store.setAutoCompactionFromSurface,
+    setAutoRetryFromSurface: store.setAutoRetryFromSurface,
+    abortRetryFromSurface: store.abortRetryFromSurface,
     switchSessionFromSurface: store.switchSessionFromSurface,
     loadSessionStats: store.loadSessionStats,
     exportSessionFromSurface: store.exportSessionFromSurface,

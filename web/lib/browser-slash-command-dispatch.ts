@@ -4,7 +4,9 @@ export type BrowserSlashCommandSurface =
   | "settings"
   | "model"
   | "thinking"
+  | "git"
   | "resume"
+  | "name"
   | "fork"
   | "compact"
   | "login"
@@ -71,7 +73,9 @@ const SURFACE_COMMANDS = new Map<string, BrowserSlashCommandSurface>([
   ["settings", "settings"],
   ["model", "model"],
   ["thinking", "thinking"],
+  ["git", "git"],
   ["resume", "resume"],
+  ["name", "name"],
   ["fork", "fork"],
   ["compact", "compact"],
   ["login", "login"],

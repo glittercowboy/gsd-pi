@@ -24,7 +24,7 @@ const EXPECTED_BUILTIN_OUTCOMES = new Map<string, "rpc" | "surface" | "reject">(
   ["export", "surface"],
   ["share", "reject"],
   ["copy", "reject"],
-  ["name", "reject"],
+  ["name", "surface"],
   ["session", "surface"],
   ["changelog", "reject"],
   ["hotkeys", "reject"],
@@ -196,6 +196,10 @@ test("session-oriented slash surfaces open the correct sections and carry action
     currentModel: { provider: "openai", modelId: "gpt-5.4" },
     currentThinkingLevel: "medium",
     preferredProviderId: "openai",
+    currentSessionPath: "/tmp/sessions/active.jsonl",
+    currentSessionName: "Active session",
+    projectCwd: "/tmp/project",
+    projectSessionsDir: "/tmp/sessions",
     resumableSessions: [
       { id: "sess-active", path: "/tmp/sessions/active.jsonl", name: "Active session", isActive: true },
       { id: "sess-next", path: "/tmp/sessions/next.jsonl", name: "Next session", isActive: false },
@@ -215,6 +219,20 @@ test("session-oriented slash surfaces open the correct sections and carry action
       expectedSection: "resume",
       assertTarget(target: unknown) {
         assert.deepEqual(target, { kind: "resume", sessionPath: "/tmp/sessions/next.jsonl" })
+      },
+    },
+    {
+      input: "/name",
+      expectedSection: "name",
+      assertTarget(target: unknown) {
+        assert.deepEqual(target, { kind: "name", sessionPath: "/tmp/sessions/active.jsonl", name: "Active session" })
+      },
+    },
+    {
+      input: "/name Ship It",
+      expectedSection: "name",
+      assertTarget(target: unknown) {
+        assert.deepEqual(target, { kind: "name", sessionPath: "/tmp/sessions/active.jsonl", name: "Ship It" })
       },
     },
     {
@@ -261,6 +279,94 @@ test("session-oriented slash surfaces open the correct sections and carry action
       scenario.assertTarget(state.selectedTarget)
     })
   }
+})
+
+test("session browser surfaces seed current-project query state and rename draft state", () => {
+  const resumeState = openCommandSurfaceState(createInitialCommandSurfaceState(), {
+    surface: "resume",
+    source: "slash",
+    args: "next",
+    currentSessionPath: "/tmp/sessions/active.jsonl",
+    currentSessionName: "Active session",
+    projectCwd: "/tmp/project",
+    projectSessionsDir: "/tmp/sessions",
+    resumableSessions: [
+      { id: "sess-active", path: "/tmp/sessions/active.jsonl", name: "Active session", isActive: true },
+      { id: "sess-next", path: "/tmp/sessions/next.jsonl", name: "Next session", isActive: false },
+    ],
+  })
+
+  assert.equal(resumeState.sessionBrowser.query, "next")
+  assert.equal(resumeState.sessionBrowser.sortMode, "relevance")
+  assert.equal(resumeState.sessionBrowser.nameFilter, "all")
+  assert.equal(resumeState.sessionBrowser.projectCwd, "/tmp/project")
+  assert.equal(resumeState.resumeRequest.pending, false)
+
+  const renameState = openCommandSurfaceState(createInitialCommandSurfaceState(), {
+    surface: "name",
+    source: "slash",
+    args: "Ship It",
+    currentSessionPath: "/tmp/sessions/active.jsonl",
+    currentSessionName: "Active session",
+    projectCwd: "/tmp/project",
+    projectSessionsDir: "/tmp/sessions",
+  })
+
+  assert.equal(renameState.sessionBrowser.query, "")
+  assert.equal(renameState.sessionBrowser.sortMode, "threaded")
+  assert.equal(renameState.sessionBrowser.projectSessionsDir, "/tmp/sessions")
+  assert.deepEqual(renameState.selectedTarget, {
+    kind: "name",
+    sessionPath: "/tmp/sessions/active.jsonl",
+    name: "Ship It",
+  })
+  assert.equal(renameState.renameRequest.pending, false)
+})
+
+test("session browser action state keeps resume and rename mutations inspectable", () => {
+  const opened = openCommandSurfaceState(createInitialCommandSurfaceState(), {
+    surface: "name",
+    source: "slash",
+    currentSessionPath: "/tmp/sessions/active.jsonl",
+    currentSessionName: "Active session",
+  })
+
+  const renameTarget = { kind: "name", sessionPath: "/tmp/sessions/active.jsonl", name: "Ship It" } as const
+  const renamePending = setCommandSurfacePending(opened, "rename_session", renameTarget)
+  assert.deepEqual(renamePending.renameRequest, {
+    pending: true,
+    sessionPath: "/tmp/sessions/active.jsonl",
+    result: null,
+    error: null,
+  })
+
+  const renameFailed = applyCommandSurfaceActionResult(renamePending, {
+    action: "rename_session",
+    success: false,
+    message: "Bridge rename failed",
+    selectedTarget: renameTarget,
+  })
+  assert.equal(renameFailed.renameRequest.pending, false)
+  assert.equal(renameFailed.renameRequest.error, "Bridge rename failed")
+
+  const resumeTarget = { kind: "resume", sessionPath: "/tmp/sessions/next.jsonl" } as const
+  const resumePending = setCommandSurfacePending(renameFailed, "switch_session", resumeTarget)
+  assert.deepEqual(resumePending.resumeRequest, {
+    pending: true,
+    sessionPath: "/tmp/sessions/next.jsonl",
+    result: null,
+    error: null,
+  })
+
+  const resumed = applyCommandSurfaceActionResult(resumePending, {
+    action: "switch_session",
+    success: true,
+    message: "Switched to Next session",
+    selectedTarget: resumeTarget,
+  })
+  assert.equal(resumed.resumeRequest.pending, false)
+  assert.equal(resumed.resumeRequest.result, "Switched to Next session")
+  assert.equal(resumed.renameRequest.error, "Bridge rename failed")
 })
 
 test("deferred built-ins expose explicit rejection reasons in the browser", async (t) => {
@@ -377,18 +483,30 @@ test("surface action state keeps compaction summaries inspectable", () => {
   assert.equal(succeeded.lastCompaction?.summary, "Summary of the kept work")
 })
 
-test("dashboard session affordances use the shared slash/session action path", () => {
+test("clicked dashboard and command-surface session affordances use the shared store action path", () => {
   const dashboardPath = resolve(import.meta.dirname, "../../web/components/gsd/dashboard.tsx")
-  const source = readFileSync(dashboardPath, "utf-8")
+  const dashboardSource = readFileSync(dashboardPath, "utf-8")
+  const commandSurfacePath = resolve(import.meta.dirname, "../../web/components/gsd/command-surface.tsx")
+  const commandSurfaceSource = readFileSync(commandSurfacePath, "utf-8")
 
   assert.match(
-    source,
+    dashboardSource,
     /await submitInput\("\/new"\)/,
     "dashboard new-session control should reuse the shared slash-command submit path",
   )
   assert.match(
-    source,
+    dashboardSource,
     /await switchSessionFromSurface\(session\.path\)/,
     "dashboard session switch should reuse the shared session action path",
+  )
+  assert.match(
+    commandSurfaceSource,
+    /void switchSessionFromSurface\(selectedResumeTarget\.sessionPath\)/,
+    "command-surface resume apply button should reuse the shared session-switch store action",
+  )
+  assert.match(
+    commandSurfaceSource,
+    /void renameSessionFromSurface\(selectedNameTarget\.sessionPath, selectedNameTarget\.name\)/,
+    "command-surface rename apply button should reuse the shared session-rename store action",
   )
 })

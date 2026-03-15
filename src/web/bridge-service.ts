@@ -13,6 +13,16 @@ import type {
   RpcResponse,
   RpcSessionState,
 } from "../../packages/pi-coding-agent/src/modes/rpc/rpc-types.ts";
+import {
+  SESSION_BROWSER_SCOPE,
+  normalizeSessionBrowserQuery,
+  type RenameSessionRequest,
+  type SessionBrowserQuery,
+  type SessionBrowserResponse,
+  type SessionBrowserSession,
+  type SessionManageErrorCode,
+  type SessionManageResponse,
+} from "../../web/lib/session-browser-contract.ts";
 import { authFilePath } from "../app-paths.ts";
 import { getProjectSessionsDir } from "../project-sessions.ts";
 import {
@@ -67,6 +77,291 @@ type LocalSessionInfo = {
   modified: Date;
   messageCount: number;
 };
+
+type SessionInfo = {
+  path: string;
+  id: string;
+  cwd: string;
+  name?: string;
+  parentSessionPath?: string;
+  created: Date;
+  modified: Date;
+  messageCount: number;
+  firstMessage: string;
+  allMessagesText: string;
+};
+
+type SessionBrowserTreeNode = {
+  session: SessionInfo;
+  children: SessionBrowserTreeNode[];
+};
+
+type FlatSessionBrowserNode = {
+  session: SessionInfo;
+  depth: number;
+  isLastInThread: boolean;
+  ancestorHasNextSibling: boolean[];
+};
+
+type ParsedSessionSearchQuery = {
+  mode: "tokens" | "regex";
+  tokens: Array<{ kind: "fuzzy" | "phrase"; value: string }>;
+  regex: RegExp | null;
+  error?: string;
+};
+
+function fuzzyMatch(query: string, text: string): { matches: boolean; score: number } {
+  const queryLower = query.toLowerCase();
+  const textLower = text.toLowerCase();
+
+  const matchQuery = (normalizedQuery: string): { matches: boolean; score: number } => {
+    if (normalizedQuery.length === 0) {
+      return { matches: true, score: 0 };
+    }
+
+    if (normalizedQuery.length > textLower.length) {
+      return { matches: false, score: 0 };
+    }
+
+    let queryIndex = 0;
+    let score = 0;
+    let lastMatchIndex = -1;
+    let consecutiveMatches = 0;
+
+    for (let index = 0; index < textLower.length && queryIndex < normalizedQuery.length; index++) {
+      if (textLower[index] !== normalizedQuery[queryIndex]) continue;
+
+      const isWordBoundary = index === 0 || /[\s\-_./:]/.test(textLower[index - 1]!);
+      if (lastMatchIndex === index - 1) {
+        consecutiveMatches++;
+        score -= consecutiveMatches * 5;
+      } else {
+        consecutiveMatches = 0;
+        if (lastMatchIndex >= 0) {
+          score += (index - lastMatchIndex - 1) * 2;
+        }
+      }
+
+      if (isWordBoundary) {
+        score -= 10;
+      }
+
+      score += index * 0.1;
+      lastMatchIndex = index;
+      queryIndex++;
+    }
+
+    if (queryIndex < normalizedQuery.length) {
+      return { matches: false, score: 0 };
+    }
+
+    return { matches: true, score };
+  };
+
+  const primaryMatch = matchQuery(queryLower);
+  if (primaryMatch.matches) {
+    return primaryMatch;
+  }
+
+  const alphaNumericMatch = queryLower.match(/^(?<letters>[a-z]+)(?<digits>[0-9]+)$/);
+  const numericAlphaMatch = queryLower.match(/^(?<digits>[0-9]+)(?<letters>[a-z]+)$/);
+  const swappedQuery = alphaNumericMatch
+    ? `${alphaNumericMatch.groups?.digits ?? ""}${alphaNumericMatch.groups?.letters ?? ""}`
+    : numericAlphaMatch
+      ? `${numericAlphaMatch.groups?.letters ?? ""}${numericAlphaMatch.groups?.digits ?? ""}`
+      : "";
+
+  if (!swappedQuery) {
+    return primaryMatch;
+  }
+
+  const swappedMatch = matchQuery(swappedQuery);
+  if (!swappedMatch.matches) {
+    return primaryMatch;
+  }
+
+  return { matches: true, score: swappedMatch.score + 5 };
+}
+
+function normalizeWhitespaceLower(text: string): string {
+  return text.toLowerCase().replace(/\s+/g, " ").trim();
+}
+
+function getSessionSearchText(session: SessionInfo): string {
+  return `${session.id} ${session.name ?? ""} ${session.allMessagesText} ${session.cwd}`;
+}
+
+function hasSessionName(session: SessionInfo): boolean {
+  return Boolean(session.name?.trim());
+}
+
+function parseSessionSearchQuery(query: string): ParsedSessionSearchQuery {
+  const trimmed = query.trim();
+  if (!trimmed) {
+    return { mode: "tokens", tokens: [], regex: null };
+  }
+
+  if (trimmed.startsWith("re:")) {
+    const pattern = trimmed.slice(3).trim();
+    if (!pattern) {
+      return { mode: "regex", tokens: [], regex: null, error: "Empty regex" };
+    }
+
+    try {
+      return { mode: "regex", tokens: [], regex: new RegExp(pattern, "i") };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return { mode: "regex", tokens: [], regex: null, error: message };
+    }
+  }
+
+  const tokens: Array<{ kind: "fuzzy" | "phrase"; value: string }> = [];
+  let buffer = "";
+  let inQuote = false;
+  let hadUnclosedQuote = false;
+
+  const flush = (kind: "fuzzy" | "phrase") => {
+    const value = buffer.trim();
+    buffer = "";
+    if (!value) return;
+    tokens.push({ kind, value });
+  };
+
+  for (let index = 0; index < trimmed.length; index++) {
+    const character = trimmed[index];
+    if (!character) continue;
+
+    if (character === '"') {
+      if (inQuote) {
+        flush("phrase");
+        inQuote = false;
+      } else {
+        flush("fuzzy");
+        inQuote = true;
+      }
+      continue;
+    }
+
+    if (!inQuote && /\s/.test(character)) {
+      flush("fuzzy");
+      continue;
+    }
+
+    buffer += character;
+  }
+
+  if (inQuote) {
+    hadUnclosedQuote = true;
+  }
+
+  if (hadUnclosedQuote) {
+    return {
+      mode: "tokens",
+      tokens: trimmed
+        .split(/\s+/)
+        .map((value) => value.trim())
+        .filter((value) => value.length > 0)
+        .map((value) => ({ kind: "fuzzy" as const, value })),
+      regex: null,
+    };
+  }
+
+  flush(inQuote ? "phrase" : "fuzzy");
+  return { mode: "tokens", tokens, regex: null };
+}
+
+function matchSessionSearch(session: SessionInfo, parsed: ParsedSessionSearchQuery): { matches: boolean; score: number } {
+  const text = getSessionSearchText(session);
+
+  if (parsed.mode === "regex") {
+    if (!parsed.regex) {
+      return { matches: false, score: 0 };
+    }
+
+    const index = text.search(parsed.regex);
+    if (index < 0) {
+      return { matches: false, score: 0 };
+    }
+
+    return { matches: true, score: index * 0.1 };
+  }
+
+  if (parsed.tokens.length === 0) {
+    return { matches: true, score: 0 };
+  }
+
+  let totalScore = 0;
+  let normalizedText: string | null = null;
+
+  for (const token of parsed.tokens) {
+    if (token.kind === "phrase") {
+      if (normalizedText === null) {
+        normalizedText = normalizeWhitespaceLower(text);
+      }
+      const phrase = normalizeWhitespaceLower(token.value);
+      if (!phrase) continue;
+      const index = normalizedText.indexOf(phrase);
+      if (index < 0) {
+        return { matches: false, score: 0 };
+      }
+      totalScore += index * 0.1;
+      continue;
+    }
+
+    const fuzzy = fuzzyMatch(token.value, text);
+    if (!fuzzy.matches) {
+      return { matches: false, score: 0 };
+    }
+    totalScore += fuzzy.score;
+  }
+
+  return { matches: true, score: totalScore };
+}
+
+function filterAndSortSessions(
+  sessions: SessionInfo[],
+  query: string,
+  sortMode: ReturnType<typeof normalizeSessionBrowserQuery>["sortMode"],
+  nameFilter: ReturnType<typeof normalizeSessionBrowserQuery>["nameFilter"],
+): SessionInfo[] {
+  const nameFiltered = nameFilter === "all" ? sessions : sessions.filter((session) => hasSessionName(session));
+  const trimmed = query.trim();
+  if (!trimmed) {
+    return nameFiltered;
+  }
+
+  const parsed = parseSessionSearchQuery(query);
+  if (parsed.error) {
+    return [];
+  }
+
+  if (sortMode === "recent") {
+    const filtered: SessionInfo[] = [];
+    for (const session of nameFiltered) {
+      const result = matchSessionSearch(session, parsed);
+      if (result.matches) {
+        filtered.push(session);
+      }
+    }
+    return filtered;
+  }
+
+  const scored: Array<{ session: SessionInfo; score: number }> = [];
+  for (const session of nameFiltered) {
+    const result = matchSessionSearch(session, parsed);
+    if (!result.matches) continue;
+    scored.push({ session, score: result.score });
+  }
+
+  scored.sort((left, right) => {
+    if (left.score !== right.score) {
+      return left.score - right.score;
+    }
+    return right.session.modified.getTime() - left.session.modified.getTime();
+  });
+
+  return scored.map((entry) => entry.session);
+}
 
 export interface AutoDashboardData {
   active: boolean;
@@ -236,6 +531,107 @@ const defaultBridgeServiceDeps: BridgeServiceDeps = {
 let bridgeServiceOverrides: Partial<BridgeServiceDeps> | null = null;
 let projectBridgeSingleton: { key: string; service: BridgeService } | null = null;
 const workspaceIndexCache = new Map<string, WorkspaceIndexCacheEntry>();
+
+async function loadSessionBrowserSessionsViaChildProcess(config: BridgeRuntimeConfig): Promise<SessionInfo[]> {
+  const deps = getBridgeDeps();
+  const sessionManagerModulePath = join(config.packageRoot, "packages", "pi-coding-agent", "dist", "core", "session-manager.js");
+  const checkExists = deps.existsSync ?? existsSync;
+  if (!checkExists(sessionManagerModulePath)) {
+    throw new Error(`session manager module not found; checked=${sessionManagerModulePath}`);
+  }
+
+  const script = [
+    'const { pathToFileURL } = await import("node:url");',
+    'const mod = await import(pathToFileURL(process.env.GSD_SESSION_MANAGER_MODULE).href);',
+    'const sessions = await mod.SessionManager.list(process.env.GSD_SESSION_BROWSER_CWD, process.env.GSD_SESSION_BROWSER_DIR);',
+    'process.stdout.write(JSON.stringify(sessions.map((session) => ({ ...session, created: session.created.toISOString(), modified: session.modified.toISOString() }))));',
+  ].join(" ");
+
+  return await new Promise<SessionInfo[]>((resolveResult, reject) => {
+    execFile(
+      deps.execPath ?? process.execPath,
+      ["--input-type=module", "--eval", script],
+      {
+        cwd: config.packageRoot,
+        env: {
+          ...(deps.env ?? process.env),
+          GSD_SESSION_MANAGER_MODULE: sessionManagerModulePath,
+          GSD_SESSION_BROWSER_CWD: config.projectCwd,
+          GSD_SESSION_BROWSER_DIR: config.projectSessionsDir,
+        },
+        maxBuffer: 1024 * 1024,
+      },
+      (error, stdout, stderr) => {
+        if (error) {
+          reject(new Error(`session list subprocess failed: ${stderr || error.message}`));
+          return;
+        }
+
+        try {
+          const parsed = JSON.parse(stdout) as Array<Omit<SessionInfo, "created" | "modified"> & { created: string; modified: string }>;
+          resolveResult(
+            parsed.map((session) => ({
+              ...session,
+              created: new Date(session.created),
+              modified: new Date(session.modified),
+            })),
+          );
+        } catch (parseError) {
+          reject(
+            new Error(
+              `session list subprocess returned invalid JSON: ${parseError instanceof Error ? parseError.message : String(parseError)}`,
+            ),
+          );
+        }
+      },
+    );
+  });
+}
+
+async function appendSessionInfoViaChildProcess(
+  config: BridgeRuntimeConfig,
+  sessionPath: string,
+  name: string,
+): Promise<void> {
+  const deps = getBridgeDeps();
+  const sessionManagerModulePath = join(config.packageRoot, "packages", "pi-coding-agent", "dist", "core", "session-manager.js");
+  const checkExists = deps.existsSync ?? existsSync;
+  if (!checkExists(sessionManagerModulePath)) {
+    throw new Error(`session manager module not found; checked=${sessionManagerModulePath}`);
+  }
+
+  const script = [
+    'const { pathToFileURL } = await import("node:url");',
+    'const mod = await import(pathToFileURL(process.env.GSD_SESSION_MANAGER_MODULE).href);',
+    'const manager = mod.SessionManager.open(process.env.GSD_TARGET_SESSION_PATH, process.env.GSD_SESSION_BROWSER_DIR);',
+    'manager.appendSessionInfo(process.env.GSD_TARGET_SESSION_NAME);',
+  ].join(" ");
+
+  await new Promise<void>((resolveResult, reject) => {
+    execFile(
+      deps.execPath ?? process.execPath,
+      ["--input-type=module", "--eval", script],
+      {
+        cwd: config.packageRoot,
+        env: {
+          ...(deps.env ?? process.env),
+          GSD_SESSION_MANAGER_MODULE: sessionManagerModulePath,
+          GSD_SESSION_BROWSER_DIR: config.projectSessionsDir,
+          GSD_TARGET_SESSION_PATH: sessionPath,
+          GSD_TARGET_SESSION_NAME: name,
+        },
+        maxBuffer: 1024 * 1024,
+      },
+      (error, _stdout, stderr) => {
+        if (error) {
+          reject(new Error(`session rename subprocess failed: ${stderr || error.message}`));
+          return;
+        }
+        resolveResult();
+      },
+    );
+  });
+}
 
 function nowIso(): string {
   return new Date().toISOString();
@@ -919,10 +1315,18 @@ export class BridgeService {
     if (
       typeof event === "object" &&
       event !== null &&
-      "type" in event &&
-      (event as { type?: string }).type === "agent_end"
+      "type" in event
     ) {
-      void this.queueStateRefresh();
+      const eventType = (event as { type?: string }).type;
+      if (
+        eventType === "agent_end" ||
+        eventType === "auto_retry_start" ||
+        eventType === "auto_retry_end" ||
+        eventType === "auto_compaction_start" ||
+        eventType === "auto_compaction_end"
+      ) {
+        void this.queueStateRefresh();
+      }
     }
   }
 
@@ -1000,6 +1404,257 @@ function toBootResumableSession(session: LocalSessionInfo, activeSessionFile: st
     messageCount: session.messageCount,
     isActive: Boolean(activeSessionFile && session.path === activeSessionFile),
   };
+}
+
+function buildSessionBrowserTree(sessions: SessionInfo[]): SessionBrowserTreeNode[] {
+  const byPath = new Map<string, SessionBrowserTreeNode>();
+
+  for (const session of sessions) {
+    byPath.set(session.path, { session, children: [] });
+  }
+
+  const roots: SessionBrowserTreeNode[] = [];
+
+  for (const session of sessions) {
+    const node = byPath.get(session.path);
+    if (!node) continue;
+
+    const parentPath = session.parentSessionPath;
+    if (parentPath && byPath.has(parentPath)) {
+      byPath.get(parentPath)!.children.push(node);
+      continue;
+    }
+
+    roots.push(node);
+  }
+
+  const sortNodes = (nodes: SessionBrowserTreeNode[]): void => {
+    nodes.sort((a, b) => b.session.modified.getTime() - a.session.modified.getTime());
+    for (const node of nodes) {
+      sortNodes(node.children);
+    }
+  };
+
+  sortNodes(roots);
+  return roots;
+}
+
+function flattenSessionBrowserTree(roots: SessionBrowserTreeNode[]): FlatSessionBrowserNode[] {
+  const result: FlatSessionBrowserNode[] = [];
+
+  const walk = (
+    node: SessionBrowserTreeNode,
+    depth: number,
+    ancestorHasNextSibling: boolean[],
+    isLastInThread: boolean,
+  ): void => {
+    result.push({
+      session: node.session,
+      depth,
+      isLastInThread,
+      ancestorHasNextSibling,
+    });
+
+    for (let index = 0; index < node.children.length; index++) {
+      const child = node.children[index];
+      if (!child) continue;
+      const childIsLast = index === node.children.length - 1;
+      const continues = depth > 0 ? !isLastInThread : false;
+      walk(child, depth + 1, [...ancestorHasNextSibling, continues], childIsLast);
+    }
+  };
+
+  for (let index = 0; index < roots.length; index++) {
+    const root = roots[index];
+    if (!root) continue;
+    walk(root, 0, [], index === roots.length - 1);
+  }
+
+  return result;
+}
+
+function toSessionBrowserSession(
+  node: FlatSessionBrowserNode,
+  activeSessionFile: string | null,
+): SessionBrowserSession {
+  const { session } = node;
+  const isActive = Boolean(activeSessionFile && resolve(session.path) === resolve(activeSessionFile));
+  return {
+    id: session.id,
+    path: session.path,
+    cwd: session.cwd,
+    name: session.name,
+    createdAt: session.created.toISOString(),
+    modifiedAt: session.modified.toISOString(),
+    messageCount: session.messageCount,
+    parentSessionPath: session.parentSessionPath,
+    firstMessage: session.firstMessage,
+    isActive,
+    depth: node.depth,
+    isLastInThread: node.isLastInThread,
+    ancestorHasNextSibling: [...node.ancestorHasNextSibling],
+  };
+}
+
+function buildFlatSessionBrowserNodes(
+  sessions: SessionInfo[],
+  query: ReturnType<typeof normalizeSessionBrowserQuery>,
+): FlatSessionBrowserNode[] {
+  if (query.sortMode === "threaded" && !query.query) {
+    const filteredSessions = query.nameFilter === "named" ? sessions.filter((session) => hasSessionName(session)) : sessions;
+    return flattenSessionBrowserTree(buildSessionBrowserTree(filteredSessions));
+  }
+
+  return filterAndSortSessions(sessions, query.query, query.sortMode, query.nameFilter).map((session) => ({
+    session,
+    depth: 0,
+    isLastInThread: true,
+    ancestorHasNextSibling: [],
+  }));
+}
+
+function findCurrentProjectSession(sessions: SessionInfo[], sessionPath: string): SessionInfo | undefined {
+  const normalizedPath = resolve(sessionPath);
+  return sessions.find((session) => resolve(session.path) === normalizedPath);
+}
+
+function buildSessionManageError(
+  code: SessionManageErrorCode,
+  error: string,
+  details: Partial<SessionManageResponse> = {},
+): SessionManageResponse {
+  return {
+    success: false,
+    action: "rename",
+    scope: SESSION_BROWSER_SCOPE,
+    code,
+    error,
+    ...details,
+  };
+}
+
+export async function collectSessionBrowserPayload(query: SessionBrowserQuery = {}): Promise<SessionBrowserResponse> {
+  const deps = getBridgeDeps();
+  const env = deps.env ?? process.env;
+  const config = resolveBridgeRuntimeConfig(env);
+  const bridge = getProjectBridgeService();
+
+  try {
+    await bridge.ensureStarted();
+  } catch {
+    // Session browsing can still fall back to the current project session directory.
+  }
+
+  const bridgeSnapshot = bridge.getSnapshot();
+  const sessions = await loadSessionBrowserSessionsViaChildProcess(config);
+  const normalizedQuery = normalizeSessionBrowserQuery(query);
+  const browserSessions = buildFlatSessionBrowserNodes(sessions, normalizedQuery).map((node) =>
+    toSessionBrowserSession(node, bridgeSnapshot.activeSessionFile),
+  );
+
+  return {
+    project: {
+      scope: SESSION_BROWSER_SCOPE,
+      cwd: config.projectCwd,
+      sessionsDir: config.projectSessionsDir,
+      activeSessionPath: bridgeSnapshot.activeSessionFile,
+    },
+    query: normalizedQuery,
+    totalSessions: sessions.length,
+    returnedSessions: browserSessions.length,
+    sessions: browserSessions,
+  };
+}
+
+export async function renameSessionInCurrentProject(request: RenameSessionRequest): Promise<SessionManageResponse> {
+  const deps = getBridgeDeps();
+  const env = deps.env ?? process.env;
+  const config = resolveBridgeRuntimeConfig(env);
+  const nextName = request.name.trim();
+
+  if (!nextName) {
+    return buildSessionManageError("invalid_request", "Session name cannot be empty", {
+      sessionPath: request.sessionPath,
+      name: request.name,
+    });
+  }
+
+  const sessions = await loadSessionBrowserSessionsViaChildProcess(config);
+  const targetSession = findCurrentProjectSession(sessions, request.sessionPath);
+  if (!targetSession) {
+    return buildSessionManageError("not_found", "Session is not available in the current project browser", {
+      sessionPath: request.sessionPath,
+      name: nextName,
+    });
+  }
+
+  const bridge = getProjectBridgeService();
+  try {
+    await bridge.ensureStarted();
+  } catch (error) {
+    return buildSessionManageError("rename_failed", sanitizeErrorMessage(error), {
+      sessionPath: targetSession.path,
+      name: nextName,
+    });
+  }
+
+  const activeSessionFile = bridge.getSnapshot().activeSessionFile;
+  const isActiveSession = Boolean(activeSessionFile && resolve(activeSessionFile) === resolve(targetSession.path));
+
+  if (isActiveSession) {
+    const response = await sendBridgeInput({ type: "set_session_name", name: nextName });
+    if (response === null) {
+      return buildSessionManageError("rename_failed", "Active session rename did not return a response", {
+        sessionPath: targetSession.path,
+        name: nextName,
+        isActiveSession: true,
+        mutation: "rpc",
+      });
+    }
+
+    if (!response.success) {
+      return buildSessionManageError(
+        response.code === "onboarding_locked" ? "onboarding_locked" : "rename_failed",
+        response.error,
+        {
+          sessionPath: targetSession.path,
+          name: nextName,
+          isActiveSession: true,
+          mutation: "rpc",
+        },
+      );
+    }
+
+    return {
+      success: true,
+      action: "rename",
+      scope: SESSION_BROWSER_SCOPE,
+      sessionPath: targetSession.path,
+      name: nextName,
+      isActiveSession: true,
+      mutation: "rpc",
+    };
+  }
+
+  try {
+    await appendSessionInfoViaChildProcess(config, targetSession.path, nextName);
+    return {
+      success: true,
+      action: "rename",
+      scope: SESSION_BROWSER_SCOPE,
+      sessionPath: targetSession.path,
+      name: nextName,
+      isActiveSession: false,
+      mutation: "session_file",
+    };
+  } catch (error) {
+    return buildSessionManageError("rename_failed", sanitizeErrorMessage(error), {
+      sessionPath: targetSession.path,
+      name: nextName,
+      isActiveSession: false,
+      mutation: "session_file",
+    });
+  }
 }
 
 async function resolveBootOnboardingState(deps: BridgeServiceDeps, env: NodeJS.ProcessEnv): Promise<OnboardingState> {

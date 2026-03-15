@@ -72,6 +72,7 @@ function WorkspaceChrome() {
   const projectPath = workspace.boot?.project.cwd
   const projectLabel = getProjectDisplayName(projectPath)
   const sessionLabel = getSessionLabelFromBridge(workspace.boot?.bridge)
+  const titleOverride = workspace.titleOverride?.trim() || null
   const scopeLabel = getCurrentScopeLabel(workspace.boot?.workspace)
   const runtimeLabel = workspace.boot?.auto.active
     ? workspace.boot.auto.paused
@@ -106,6 +107,11 @@ function WorkspaceChrome() {
     }
   }, [activeView, projectPath])
 
+  useEffect(() => {
+    if (typeof document === "undefined") return
+    document.title = titleOverride ? `${titleOverride} · GSD 2` : `${projectLabel} · GSD 2`
+  }, [projectLabel, titleOverride])
+
   const handleViewChange = useCallback((view: string) => {
     setActiveView(view)
   }, [])
@@ -123,7 +129,18 @@ function WorkspaceChrome() {
             <span className="font-semibold tracking-tight">GSD 2</span>
           </div>
           <div className="min-w-0">
-            <div className="text-xs text-muted-foreground">{projectLabel}</div>
+            <div className="flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
+              <span className="truncate">{projectLabel}</span>
+              {titleOverride && (
+                <span
+                  className="inline-flex max-w-[24rem] items-center rounded-full border border-foreground/15 bg-accent/60 px-2 py-0.5 text-[10px] font-medium text-foreground"
+                  data-testid="workspace-title-override"
+                  title={titleOverride}
+                >
+                  {titleOverride}
+                </span>
+              )}
+            </div>
             <div
               className="truncate font-mono text-[11px] text-muted-foreground/80"
               data-testid="workspace-project-cwd"

@@ -164,6 +164,9 @@ function fakeSessionState(sessionId: string, sessionPath: string) {
     steeringMode: "all",
     followUpMode: "all",
     autoCompactionEnabled: false,
+    autoRetryEnabled: false,
+    retryInProgress: false,
+    retryAttempt: 0,
     messageCount: 0,
     pendingMessageCount: 0,
   };
@@ -573,6 +576,201 @@ test("assembled lifecycle: boot → onboard → prompt → streaming text → to
   }
 });
 
+test("assembled settings controls keep retry visibility and daily-use mutations authoritative", async () => {
+  const fixture = makeWorkspaceFixture();
+  const sessionPath = createSessionFile(fixture.projectCwd, fixture.sessionsDir, "sess-settings", "Settings Session");
+  const bridgeCommands: any[] = [];
+  let sessionState = {
+    ...fakeSessionState("sess-settings", sessionPath),
+    retryInProgress: true,
+    retryAttempt: 2,
+  };
+
+  bridge.configureBridgeServiceForTests({
+    env: {
+      ...process.env,
+      GSD_WEB_PROJECT_CWD: fixture.projectCwd,
+      GSD_WEB_PROJECT_SESSIONS_DIR: fixture.sessionsDir,
+      GSD_WEB_PACKAGE_ROOT: repoRoot,
+    },
+    spawn(command: string, args: readonly string[], options: Record<string, unknown>) {
+      void command;
+      void args;
+      void options;
+      const child = new FakeRpcChild();
+
+      attachJsonLineReader(child.stdin, (line) => {
+        const message = JSON.parse(line) as any;
+        bridgeCommands.push(message);
+
+        if (message.type === "get_state") {
+          child.stdout.write(
+            serializeJsonLine({
+              id: message.id,
+              type: "response",
+              command: "get_state",
+              success: true,
+              data: sessionState,
+            }),
+          );
+          return;
+        }
+
+        if (message.type === "set_steering_mode") {
+          sessionState = { ...sessionState, steeringMode: message.mode };
+          child.stdout.write(
+            serializeJsonLine({
+              id: message.id,
+              type: "response",
+              command: "set_steering_mode",
+              success: true,
+            }),
+          );
+          return;
+        }
+
+        if (message.type === "set_follow_up_mode") {
+          child.stdout.write(
+            serializeJsonLine({
+              id: message.id,
+              type: "response",
+              command: "set_follow_up_mode",
+              success: false,
+              error: "follow-up mode rejected by the live session",
+            }),
+          );
+          return;
+        }
+
+        if (message.type === "set_auto_compaction") {
+          sessionState = { ...sessionState, autoCompactionEnabled: message.enabled };
+          child.stdout.write(
+            serializeJsonLine({
+              id: message.id,
+              type: "response",
+              command: "set_auto_compaction",
+              success: true,
+            }),
+          );
+          return;
+        }
+
+        if (message.type === "set_auto_retry") {
+          sessionState = { ...sessionState, autoRetryEnabled: message.enabled };
+          child.stdout.write(
+            serializeJsonLine({
+              id: message.id,
+              type: "response",
+              command: "set_auto_retry",
+              success: true,
+            }),
+          );
+          return;
+        }
+
+        if (message.type === "abort_retry") {
+          sessionState = { ...sessionState, retryInProgress: false, retryAttempt: 0 };
+          child.stdout.write(
+            serializeJsonLine({
+              id: message.id,
+              type: "response",
+              command: "abort_retry",
+              success: true,
+            }),
+          );
+          return;
+        }
+      });
+
+      return child as any;
+    },
+    indexWorkspace: async () => fakeWorkspaceIndex(),
+    getAutoDashboardData: () => fakeAutoDashboardData(),
+    getOnboardingNeeded: () => false,
+  });
+
+  try {
+    const bootResponse = await bootRoute.GET();
+    assert.equal(bootResponse.status, 200);
+    const bootPayload = (await bootResponse.json()) as any;
+    assert.equal(bootPayload.bridge.sessionState.autoRetryEnabled, false);
+    assert.equal(bootPayload.bridge.sessionState.retryInProgress, true);
+    assert.equal(bootPayload.bridge.sessionState.retryAttempt, 2);
+
+    const steeringResponse = await commandRoute.POST(
+      new Request("http://localhost/api/session/command", {
+        method: "POST",
+        body: JSON.stringify({ type: "set_steering_mode", mode: "one-at-a-time" }),
+      }),
+    );
+    assert.equal(steeringResponse.status, 200);
+    const steeringBody = (await steeringResponse.json()) as any;
+    assert.equal(steeringBody.success, true);
+
+    const followUpResponse = await commandRoute.POST(
+      new Request("http://localhost/api/session/command", {
+        method: "POST",
+        body: JSON.stringify({ type: "set_follow_up_mode", mode: "one-at-a-time" }),
+      }),
+    );
+    assert.equal(followUpResponse.status, 502);
+    const followUpBody = (await followUpResponse.json()) as any;
+    assert.equal(followUpBody.success, false);
+    assert.match(followUpBody.error, /follow-up mode rejected/i);
+
+    const autoCompactionResponse = await commandRoute.POST(
+      new Request("http://localhost/api/session/command", {
+        method: "POST",
+        body: JSON.stringify({ type: "set_auto_compaction", enabled: true }),
+      }),
+    );
+    assert.equal(autoCompactionResponse.status, 200);
+    const autoCompactionBody = (await autoCompactionResponse.json()) as any;
+    assert.equal(autoCompactionBody.success, true);
+
+    const autoRetryResponse = await commandRoute.POST(
+      new Request("http://localhost/api/session/command", {
+        method: "POST",
+        body: JSON.stringify({ type: "set_auto_retry", enabled: true }),
+      }),
+    );
+    assert.equal(autoRetryResponse.status, 200);
+    const autoRetryBody = (await autoRetryResponse.json()) as any;
+    assert.equal(autoRetryBody.success, true);
+
+    const abortRetryResponse = await commandRoute.POST(
+      new Request("http://localhost/api/session/command", {
+        method: "POST",
+        body: JSON.stringify({ type: "abort_retry" }),
+      }),
+    );
+    assert.equal(abortRetryResponse.status, 200);
+    const abortRetryBody = (await abortRetryResponse.json()) as any;
+    assert.equal(abortRetryBody.success, true);
+
+    await waitForMicrotasks();
+
+    const refreshedBootResponse = await bootRoute.GET();
+    assert.equal(refreshedBootResponse.status, 200);
+    const refreshedBootPayload = (await refreshedBootResponse.json()) as any;
+    assert.equal(refreshedBootPayload.bridge.sessionState.steeringMode, "one-at-a-time");
+    assert.equal(refreshedBootPayload.bridge.sessionState.followUpMode, "all");
+    assert.equal(refreshedBootPayload.bridge.sessionState.autoCompactionEnabled, true);
+    assert.equal(refreshedBootPayload.bridge.sessionState.autoRetryEnabled, true);
+    assert.equal(refreshedBootPayload.bridge.sessionState.retryInProgress, false);
+    assert.equal(refreshedBootPayload.bridge.sessionState.retryAttempt, 0);
+
+    assert.deepEqual(
+      bridgeCommands.filter((entry) => entry.type !== "get_state").map((entry) => entry.type),
+      ["set_steering_mode", "set_follow_up_mode", "set_auto_compaction", "set_auto_retry", "abort_retry"],
+      "settings parity must route through the live bridge instead of browser-local toggles",
+    );
+  } finally {
+    await bridge.resetBridgeServiceForTests();
+    fixture.cleanup();
+  }
+});
+
 test("assembled slash-command behavior keeps built-ins safe while preserving GSD prompt commands", async () => {
   const fixture = makeWorkspaceFixture();
   const sessionPath = createSessionFile(fixture.projectCwd, fixture.sessionsDir, "sess-slash", "Slash Session");
@@ -677,6 +875,11 @@ test("assembled slash-command behavior keeps built-ins safe while preserving GSD
     assert.equal(builtInSurface.outcome.kind, "surface");
     assert.equal(builtInSurface.outcome.surface, "model");
     assert.equal(builtInSurface.status, null);
+
+    const builtInNameSurface = await submitBrowserInput("/name Ship It");
+    assert.equal(builtInNameSurface.outcome.kind, "surface");
+    assert.equal(builtInNameSurface.outcome.surface, "name");
+    assert.equal(builtInNameSurface.status, null);
 
     const builtInReject = await submitBrowserInput("/share");
     assert.equal(builtInReject.outcome.kind, "reject");

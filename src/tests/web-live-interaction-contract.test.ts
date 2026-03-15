@@ -195,6 +195,9 @@ function fakeSessionState(sessionId: string, sessionPath: string) {
     steeringMode: "all",
     followUpMode: "all",
     autoCompactionEnabled: false,
+    autoRetryEnabled: false,
+    retryInProgress: false,
+    retryAttempt: 0,
     messageCount: 0,
     pendingMessageCount: 0,
   };
@@ -283,6 +286,21 @@ function createMinimalLiveState(): MinimalLiveState {
   };
 }
 
+function consumeEditorTextBuffer(state: MinimalLiveState): { state: MinimalLiveState; value: string | null } {
+  const value = state.editorTextBuffer;
+  if (value === null) {
+    return { state, value: null };
+  }
+
+  return {
+    value,
+    state: {
+      ...state,
+      editorTextBuffer: null,
+    },
+  };
+}
+
 /** Mirrors GSDWorkspaceStore.routeLiveInteractionEvent */
 function routeEvent(state: MinimalLiveState, event: any): MinimalLiveState {
   const s = { ...state };
@@ -307,7 +325,8 @@ function routeEvent(state: MinimalLiveState, event: any): MinimalLiveState {
           s.widgetContents[event.widgetKey] = { lines: event.widgetLines, placement: event.widgetPlacement };
         }
       } else if (method === "setTitle") {
-        s.titleOverride = event.title;
+        const nextTitle = typeof event.title === "string" ? event.title.trim() : "";
+        s.titleOverride = nextTitle.length > 0 ? nextTitle : null;
       } else if (method === "set_editor_text") {
         s.editorTextBuffer = event.text;
       }
@@ -709,6 +728,15 @@ test("(g) setStatus/setWidget/setTitle/set_editor_text fire-and-forget events up
   });
   assert.equal(state.titleOverride, "Custom Title");
 
+  // blank setTitle clears the visible override instead of leaving an empty string behind
+  state = routeEvent(state, {
+    type: "extension_ui_request",
+    id: "ff-5-clear",
+    method: "setTitle",
+    title: "   ",
+  });
+  assert.equal(state.titleOverride, null);
+
   // set_editor_text
   state = routeEvent(state, {
     type: "extension_ui_request",
@@ -717,6 +745,27 @@ test("(g) setStatus/setWidget/setTitle/set_editor_text fire-and-forget events up
     text: "prefilled editor content",
   });
   assert.equal(state.editorTextBuffer, "prefilled editor content");
+
+  // Browser terminal consumes editor text once, then clears the buffer so it doesn't replay forever
+  let consumed = consumeEditorTextBuffer(state);
+  assert.equal(consumed.value, "prefilled editor content");
+  assert.equal(consumed.state.editorTextBuffer, null);
+
+  consumed = consumeEditorTextBuffer(consumed.state);
+  assert.equal(consumed.value, null);
+  assert.equal(consumed.state.editorTextBuffer, null);
+
+  // Empty editor text is still a valid consume-once prefill because it clears the visible input
+  state = routeEvent(consumed.state, {
+    type: "extension_ui_request",
+    id: "ff-6-clear",
+    method: "set_editor_text",
+    text: "",
+  });
+  assert.equal(state.editorTextBuffer, "");
+  consumed = consumeEditorTextBuffer(state);
+  assert.equal(consumed.value, "");
+  assert.equal(consumed.state.editorTextBuffer, null);
 
   // notify does NOT queue — only produces a terminal line
   state = routeEvent(state, {

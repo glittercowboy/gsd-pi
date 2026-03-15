@@ -120,6 +120,8 @@ export function Sidebar({ activeView, onViewChange }: SidebarProps) {
           <button
             className="flex h-10 w-10 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent/50 hover:text-foreground"
             title="Git"
+            onClick={() => openCommandSurface("git", { source: "sidebar" })}
+            data-testid="sidebar-git-button"
           >
             <GitBranch className="h-5 w-5" />
           </button>

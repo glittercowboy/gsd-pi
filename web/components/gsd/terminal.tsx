@@ -17,6 +17,9 @@ interface TerminalProps {
 }
 
 type InputMode = "prompt" | "follow_up" | "steer"
+type WidgetPlacement = "aboveEditor" | "belowEditor"
+
+const MAX_VISIBLE_WIDGET_LINES = 6
 
 function getInputMode(state: ReturnType<typeof useGSDWorkspaceState>): InputMode {
   const session = state.boot?.bridge.sessionState
@@ -53,9 +56,78 @@ function inputModeLabel(mode: InputMode): string {
   }
 }
 
+function getWidgetsForPlacement(
+  widgetContents: Record<string, { lines: string[] | undefined; placement?: WidgetPlacement }>,
+  placement: WidgetPlacement,
+): Array<{ key: string; placement: WidgetPlacement; visibleLines: string[]; hiddenLineCount: number; fullText: string }> {
+  return Object.entries(widgetContents)
+    .filter(([, widget]) => {
+      const widgetPlacement = widget.placement ?? "aboveEditor"
+      return widgetPlacement === placement && Array.isArray(widget.lines) && widget.lines.length > 0
+    })
+    .sort(([leftKey], [rightKey]) => leftKey.localeCompare(rightKey))
+    .map(([key, widget]) => {
+      const lines = widget.lines ?? []
+      return {
+        key,
+        placement,
+        visibleLines: lines.slice(0, MAX_VISIBLE_WIDGET_LINES),
+        hiddenLineCount: Math.max(0, lines.length - MAX_VISIBLE_WIDGET_LINES),
+        fullText: lines.join("\n"),
+      }
+    })
+}
+
+function TerminalWidgetBand({
+  placement,
+  widgets,
+}: {
+  placement: WidgetPlacement
+  widgets: Array<{ key: string; placement: WidgetPlacement; visibleLines: string[]; hiddenLineCount: number; fullText: string }>
+}) {
+  if (widgets.length === 0) return null
+
+  return (
+    <div
+      className="border-t border-border/50 bg-card/20 px-4 py-2"
+      data-testid={placement === "aboveEditor" ? "terminal-widgets-above-editor" : "terminal-widgets-below-editor"}
+    >
+      <div className="space-y-2">
+        {widgets.map((widget) => (
+          <div
+            key={`${widget.placement}:${widget.key}`}
+            className="rounded-md border border-border/60 bg-background/40 px-3 py-2"
+            data-testid="terminal-widget"
+            data-widget-key={widget.key}
+            data-widget-placement={widget.placement}
+            title={widget.fullText}
+          >
+            <div className="mb-1 flex items-center justify-between gap-2 text-[10px] uppercase tracking-[0.2em] text-muted-foreground/80">
+              <span className="truncate">{widget.key}</span>
+              <span>{widget.placement === "aboveEditor" ? "Above editor" : "Below editor"}</span>
+            </div>
+            <div className="space-y-1 text-xs text-foreground/90">
+              {widget.visibleLines.map((line, index) => (
+                <div key={`${widget.key}:${index}`} className="whitespace-pre-wrap break-words">
+                  {line}
+                </div>
+              ))}
+              {widget.hiddenLineCount > 0 && (
+                <div className="text-[11px] text-muted-foreground" data-testid="terminal-widget-overflow">
+                  +{widget.hiddenLineCount} more line{widget.hiddenLineCount === 1 ? "" : "s"}
+                </div>
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 export function Terminal({ className }: TerminalProps) {
   const workspace = useGSDWorkspaceState()
-  const { submitInput, sendAbort, sendSteer } = useGSDWorkspaceActions()
+  const { submitInput, sendAbort, sendSteer, consumeEditorTextBuffer } = useGSDWorkspaceActions()
   const [input, setInput] = useState("")
   const [steerMode, setSteerMode] = useState(false)
   const bottomRef = useRef<HTMLDivElement>(null)
@@ -63,6 +135,8 @@ export function Terminal({ className }: TerminalProps) {
 
   const autoMode = getInputMode(workspace)
   const inputMode: InputMode = steerMode && workspace.boot?.bridge.sessionState?.isStreaming ? "steer" : autoMode
+  const widgetsAboveEditor = getWidgetsForPlacement(workspace.widgetContents, "aboveEditor")
+  const widgetsBelowEditor = getWidgetsForPlacement(workspace.widgetContents, "belowEditor")
 
   // Reset steer mode when agent stops streaming
   useEffect(() => {
@@ -70,6 +144,13 @@ export function Terminal({ className }: TerminalProps) {
       setSteerMode(false)
     }
   }, [workspace.boot?.bridge.sessionState?.isStreaming])
+
+  useEffect(() => {
+    if (workspace.editorTextBuffer === null) return
+    setInput(workspace.editorTextBuffer)
+    consumeEditorTextBuffer()
+    inputRef.current?.focus()
+  }, [consumeEditorTextBuffer, workspace.editorTextBuffer])
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" })
@@ -211,6 +292,8 @@ export function Terminal({ className }: TerminalProps) {
         <div ref={bottomRef} />
       </div>
 
+      <TerminalWidgetBand placement="aboveEditor" widgets={widgetsAboveEditor} />
+
       {/* Input area with steer toggle */}
       <form onSubmit={handleSubmit} className="flex items-center gap-2 border-t border-border/50 px-4 py-2">
         {/* Steer toggle — only visible when agent is streaming */}
@@ -238,7 +321,7 @@ export function Terminal({ className }: TerminalProps) {
         <span
           className={cn(
             "text-muted-foreground",
-            inputMode === "steer" && "text-foreground font-semibold",
+            inputMode === "steer" && "font-semibold text-foreground",
           )}
         >
           {inputModeLabel(inputMode)}
@@ -258,6 +341,8 @@ export function Terminal({ className }: TerminalProps) {
           <span className="text-xs text-muted-foreground">{workspace.commandInFlight}…</span>
         )}
       </form>
+
+      <TerminalWidgetBand placement="belowEditor" widgets={widgetsBelowEditor} />
     </div>
   )
 }

@@ -377,6 +377,9 @@ export async function runRpcMode(session: AgentSession): Promise<never> {
 					sessionId: session.sessionId,
 					sessionName: session.sessionName,
 					autoCompactionEnabled: session.autoCompactionEnabled,
+					autoRetryEnabled: session.autoRetryEnabled,
+					retryInProgress: session.isRetrying,
+					retryAttempt: session.retryAttempt,
 					messageCount: session.messages.length,
 					pendingMessageCount: session.pendingMessageCount,
 				};

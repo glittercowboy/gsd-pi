@@ -34,6 +34,7 @@ export function StatusBar() {
   const auto = workspace.boot?.auto
   const unitLabel = auto?.currentUnit?.id ?? getCurrentScopeLabel(workspace.boot?.workspace)
   const visibleError = getVisibleWorkspaceError(workspace)
+  const titleOverride = workspace.titleOverride?.trim() || null
   const statusTexts = workspace.statusTexts
   const statusTextEntries = Object.entries(statusTexts)
   const latestStatusText = statusTextEntries.length > 0 ? statusTextEntries[statusTextEntries.length - 1][1] : null
@@ -57,6 +58,12 @@ export function StatusBar() {
           <div className="hidden max-w-sm items-center gap-1.5 truncate text-destructive lg:flex" data-testid="status-bar-error">
             <AlertTriangle className="h-3 w-3 shrink-0" />
             <span className="truncate">{visibleError}</span>
+          </div>
+        )}
+        {titleOverride && (
+          <div className="hidden max-w-xs items-center gap-1.5 truncate text-foreground/80 xl:flex" data-testid="status-bar-title-override">
+            <Info className="h-3 w-3 shrink-0" />
+            <span className="truncate" title={titleOverride}>{titleOverride}</span>
           </div>
         )}
         {latestStatusText && !visibleError && (

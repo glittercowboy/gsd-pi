@@ -267,6 +267,9 @@ test("/api/boot returns current-project workspace data, resumable sessions, onbo
           steeringMode: "all",
           followUpMode: "all",
           autoCompactionEnabled: false,
+          autoRetryEnabled: false,
+          retryInProgress: false,
+          retryAttempt: 0,
           messageCount: 0,
           pendingMessageCount: 0,
         },
@@ -307,9 +310,14 @@ test("/api/boot returns current-project workspace data, resumable sessions, onbo
     assert.equal(payload.resumableSessions[0].isActive, true);
     assert.equal("firstMessage" in payload.resumableSessions[0], false);
     assert.equal("allMessagesText" in payload.resumableSessions[0], false);
+    assert.equal("parentSessionPath" in payload.resumableSessions[0], false);
+    assert.equal("depth" in payload.resumableSessions[0], false);
     assert.equal(payload.bridge.phase, "ready");
     assert.equal(payload.bridge.activeSessionId, "sess-boot");
     assert.equal(payload.bridge.sessionState.sessionId, "sess-boot");
+    assert.equal(payload.bridge.sessionState.autoRetryEnabled, false);
+    assert.equal(payload.bridge.sessionState.retryInProgress, false);
+    assert.equal(payload.bridge.sessionState.retryAttempt, 0);
     assert.equal(harness.spawnCalls, 1);
   } finally {
     await bridge.resetBridgeServiceForTests();
@@ -336,6 +344,9 @@ test("bridge service is a singleton for the project runtime and /api/session/com
           steeringMode: "all",
           followUpMode: "all",
           autoCompactionEnabled: false,
+          autoRetryEnabled: false,
+          retryInProgress: false,
+          retryAttempt: 0,
           messageCount: 0,
           pendingMessageCount: 0,
         },
@@ -411,6 +422,9 @@ test("/api/session/events streams bridge status, agent events, and extension_ui_
           steeringMode: "all",
           followUpMode: "all",
           autoCompactionEnabled: false,
+          autoRetryEnabled: false,
+          retryInProgress: false,
+          retryAttempt: 0,
           messageCount: 0,
           pendingMessageCount: 0,
         },
@@ -484,6 +498,9 @@ test("bridge command/runtime failures are inspectable and redact secret material
           steeringMode: "all",
           followUpMode: "all",
           autoCompactionEnabled: false,
+          autoRetryEnabled: false,
+          retryInProgress: false,
+          retryAttempt: 0,
           messageCount: 0,
           pendingMessageCount: 0,
         },
