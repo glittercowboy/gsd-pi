@@ -31,7 +31,7 @@ import {
   filterDoctorIssues,
 } from "./doctor.js";
 import { loadPrompt } from "./prompt-loader.js";
-import { handleMigrate } from "./migrate/command.js";
+
 import { handleRemote } from "../remote-questions/remote-command.js";
 import { handleHistory } from "./history.js";
 import { handleUndo } from "./undo.js";
@@ -249,6 +249,7 @@ export function registerGSDCommand(pi: ExtensionAPI): void {
       }
 
       if (trimmed === "migrate" || trimmed.startsWith("migrate ")) {
+        const { handleMigrate } = await import("./migrate/command.js");
         await handleMigrate(trimmed.replace(/^migrate\s*/, "").trim(), ctx, pi);
         return;
       }
