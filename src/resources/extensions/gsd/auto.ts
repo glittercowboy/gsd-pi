@@ -74,6 +74,7 @@ import { execSync, execFileSync } from "node:child_process";
 import {
   autoCommitCurrentBranch,
   captureIntegrationBranch,
+  detectWorktreeName,
   getCurrentBranch,
   getMainBranch,
   MergeConflictError,
@@ -505,7 +506,8 @@ export async function startAuto(
     if (currentMilestoneId) setActiveMilestoneId(base, currentMilestoneId);
 
     // ── Auto-worktree: re-enter worktree on resume if not already inside ──
-    if (currentMilestoneId && originalBasePath && !isInAutoWorktree(basePath)) {
+    // Skip if already inside a worktree (manual /worktree) to prevent nesting.
+    if (currentMilestoneId && originalBasePath && !isInAutoWorktree(basePath) && !detectWorktreeName(basePath)) {
       try {
         const existingWtPath = getAutoWorktreePath(originalBasePath, currentMilestoneId);
         if (existingWtPath) {
@@ -668,8 +670,10 @@ export async function startAuto(
 
   // ── Auto-worktree: create or enter worktree for the active milestone ──
   // Store the original project root before any chdir so we can restore on stop.
+  // Skip if already inside a worktree (manual /worktree or another auto-worktree)
+  // to prevent nested worktree creation.
   originalBasePath = base;
-  if (currentMilestoneId) {
+  if (currentMilestoneId && !detectWorktreeName(base)) {
     try {
       const existingWtPath = getAutoWorktreePath(base, currentMilestoneId);
       if (existingWtPath) {
