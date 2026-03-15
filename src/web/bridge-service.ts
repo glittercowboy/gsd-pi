@@ -30,6 +30,10 @@ import {
   type OnboardingLockReason,
   type OnboardingState,
 } from "./onboarding-service.ts";
+import {
+  collectAuthoritativeAutoDashboardData,
+  collectTestOnlyFallbackAutoDashboardData,
+} from "./auto-dashboard-service.ts";
 
 const DEFAULT_PACKAGE_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const RESPONSE_TIMEOUT_MS = 30_000;
@@ -480,7 +484,34 @@ export type BridgeStatusEvent = {
   bridge: BridgeRuntimeSnapshot;
 };
 
-export type BridgeEvent = AgentSessionEvent | RpcExtensionUIRequest | BridgeExtensionErrorEvent | BridgeStatusEvent;
+export type BridgeLiveStateDomain = "auto" | "workspace" | "recovery" | "resumable_sessions";
+export type BridgeLiveStateInvalidationSource = "bridge_event" | "rpc_command" | "session_manage";
+export type BridgeLiveStateInvalidationReason =
+  | "agent_end"
+  | "auto_retry_start"
+  | "auto_retry_end"
+  | "auto_compaction_start"
+  | "auto_compaction_end"
+  | "new_session"
+  | "switch_session"
+  | "fork"
+  | "set_session_name";
+
+export interface BridgeLiveStateInvalidationEvent {
+  type: "live_state_invalidation";
+  at: string;
+  reason: BridgeLiveStateInvalidationReason;
+  source: BridgeLiveStateInvalidationSource;
+  domains: BridgeLiveStateDomain[];
+  workspaceIndexCacheInvalidated: boolean;
+}
+
+export type BridgeEvent =
+  | AgentSessionEvent
+  | RpcExtensionUIRequest
+  | BridgeExtensionErrorEvent
+  | BridgeStatusEvent
+  | BridgeLiveStateInvalidationEvent;
 
 interface BridgeCliEntry {
   command: string;
@@ -524,7 +555,16 @@ const defaultBridgeServiceDeps: BridgeServiceDeps = {
   execPath: process.execPath,
   env: process.env,
   indexWorkspace: (basePath: string) => fallbackWorkspaceIndex(basePath),
-  getAutoDashboardData: () => fallbackAutoDashboardData(),
+  getAutoDashboardData: async () => {
+    const deps = getBridgeDeps();
+    const env = deps.env ?? process.env;
+    const config = resolveBridgeRuntimeConfig(env);
+    return await collectAuthoritativeAutoDashboardData(config.packageRoot, {
+      execPath: deps.execPath ?? process.execPath,
+      env,
+      existsSync: deps.existsSync ?? existsSync,
+    });
+  },
   listSessions: async (projectSessionsDir: string) => listProjectSessions(projectSessionsDir),
 };
 
@@ -891,21 +931,6 @@ function listProjectSessions(projectSessionsDir: string): LocalSessionInfo[] {
   return sessions;
 }
 
-async function fallbackAutoDashboardData(): Promise<AutoDashboardData> {
-  return {
-    active: false,
-    paused: false,
-    stepMode: false,
-    startTime: 0,
-    elapsed: 0,
-    currentUnit: null,
-    completedUnits: [],
-    basePath: "",
-    totalCost: 0,
-    totalTokens: 0,
-  };
-}
-
 async function fallbackWorkspaceIndex(basePath: string): Promise<GSDWorkspaceIndex> {
   const packageRoot = resolveBridgeRuntimeConfig().packageRoot;
   return await loadWorkspaceIndexViaChildProcess(basePath, packageRoot);
@@ -1010,6 +1035,120 @@ function sanitizeEventPayload(payload: unknown): BridgeEvent {
   return payload as BridgeEvent;
 }
 
+type BridgeLiveStateInvalidationDescriptor = {
+  reason: BridgeLiveStateInvalidationReason;
+  source: BridgeLiveStateInvalidationSource;
+  domains: BridgeLiveStateDomain[];
+  workspaceIndexCacheInvalidated?: boolean;
+};
+
+function uniqueLiveStateDomains(domains: BridgeLiveStateDomain[]): BridgeLiveStateDomain[] {
+  return [...new Set(domains)];
+}
+
+function buildLiveStateInvalidationEvent(
+  descriptor: BridgeLiveStateInvalidationDescriptor,
+): BridgeLiveStateInvalidationEvent {
+  return {
+    type: "live_state_invalidation",
+    at: nowIso(),
+    reason: descriptor.reason,
+    source: descriptor.source,
+    domains: uniqueLiveStateDomains(descriptor.domains),
+    workspaceIndexCacheInvalidated: Boolean(descriptor.workspaceIndexCacheInvalidated),
+  };
+}
+
+function createLiveStateInvalidationFromBridgeEvent(
+  event: BridgeEvent,
+): BridgeLiveStateInvalidationDescriptor | null {
+  if (typeof event !== "object" || event === null || !("type" in event)) {
+    return null;
+  }
+
+  switch (event.type) {
+    case "agent_end":
+      return {
+        reason: "agent_end",
+        source: "bridge_event",
+        domains: ["auto", "workspace", "recovery"],
+        workspaceIndexCacheInvalidated: true,
+      };
+    case "auto_retry_start":
+      return {
+        reason: "auto_retry_start",
+        source: "bridge_event",
+        domains: ["auto", "recovery"],
+      };
+    case "auto_retry_end":
+      return {
+        reason: "auto_retry_end",
+        source: "bridge_event",
+        domains: ["auto", "recovery"],
+      };
+    case "auto_compaction_start":
+      return {
+        reason: "auto_compaction_start",
+        source: "bridge_event",
+        domains: ["auto", "recovery"],
+      };
+    case "auto_compaction_end":
+      return {
+        reason: "auto_compaction_end",
+        source: "bridge_event",
+        domains: ["auto", "recovery"],
+      };
+    default:
+      return null;
+  }
+}
+
+function createLiveStateInvalidationFromCommand(
+  input: RpcCommand,
+  response: RpcResponse,
+): BridgeLiveStateInvalidationDescriptor | null {
+  if (!response.success) {
+    return null;
+  }
+
+  switch (input.type) {
+    case "new_session":
+      return response.command === "new_session" && response.data.cancelled === false
+        ? {
+            reason: "new_session",
+            source: "rpc_command",
+            domains: ["resumable_sessions", "recovery"],
+          }
+        : null;
+    case "switch_session":
+      return response.command === "switch_session" && response.data.cancelled === false
+        ? {
+            reason: "switch_session",
+            source: "rpc_command",
+            domains: ["resumable_sessions", "recovery"],
+          }
+        : null;
+    case "fork":
+      return response.command === "fork" && response.data.cancelled === false
+        ? {
+            reason: "fork",
+            source: "rpc_command",
+            domains: ["resumable_sessions", "recovery"],
+          }
+        : null;
+    case "set_session_name":
+      return response.command === "set_session_name"
+        ? {
+            reason: "set_session_name",
+            source: "rpc_command",
+            domains: ["resumable_sessions"],
+          }
+        : null;
+    default:
+      return null;
+  }
+}
+
 export class BridgeService {
   private readonly subscribers = new Set<(event: BridgeEvent) => void>();
   private readonly pendingRequests = new Map<string, PendingRpcRequest>();
@@ -1045,6 +1184,17 @@ export class BridgeService {
 
   getSnapshot(): BridgeRuntimeSnapshot {
     return structuredClone(this.snapshot);
+  }
+
+  publishLiveStateInvalidation(
+    descriptor: BridgeLiveStateInvalidationDescriptor,
+  ): BridgeLiveStateInvalidationEvent {
+    const event = buildLiveStateInvalidationEvent(descriptor);
+    if (event.workspaceIndexCacheInvalidated) {
+      invalidateWorkspaceIndexCache(this.config.projectCwd);
+    }
+    this.emit(event);
+    return event;
   }
 
   async ensureStarted(): Promise<void> {
@@ -1084,6 +1234,11 @@ export class BridgeService {
       this.applySessionState(response.data);
       this.broadcastStatus();
       return response;
+    }
+
+    const liveStateInvalidation = createLiveStateInvalidationFromCommand(input, response);
+    if (liveStateInvalidation) {
+      this.publishLiveStateInvalidation(liveStateInvalidation);
     }
 
     void this.queueStateRefresh();
@@ -1312,6 +1467,12 @@ export class BridgeService {
 
     const event = sanitizeEventPayload(parsed);
     this.emit(event);
+
+    const liveStateInvalidation = createLiveStateInvalidationFromBridgeEvent(event);
+    if (liveStateInvalidation) {
+      this.publishLiveStateInvalidation(liveStateInvalidation);
+    }
+
     if (
       typeof event === "object" &&
       event !== null &&
@@ -1638,6 +1799,11 @@ export async function renameSessionInCurrentProject(request: RenameSessionReques
 
   try {
     await appendSessionInfoViaChildProcess(config, targetSession.path, nextName);
+    bridge.publishLiveStateInvalidation({
+      reason: "set_session_name",
+      source: "session_manage",
+      domains: ["resumable_sessions"],
+    });
     return {
       success: true,
       action: "rename",
@@ -1667,6 +1833,61 @@ async function resolveBootOnboardingState(deps: BridgeServiceDeps, env: NodeJS.P
   return await collectOnboardingState();
 }
 
+export async function collectCurrentProjectOnboardingState(): Promise<OnboardingState> {
+  const deps = getBridgeDeps();
+  const env = deps.env ?? process.env;
+  return await resolveBootOnboardingState(deps, env);
+}
+
+export type BridgeSelectiveLiveStateDomain = "auto" | "workspace" | "resumable_sessions";
+
+export interface BridgeSelectiveLiveStatePayload {
+  auto?: AutoDashboardData;
+  workspace?: GSDWorkspaceIndex;
+  resumableSessions?: BootResumableSession[];
+  bridge: BridgeRuntimeSnapshot;
+}
+
+export async function collectSelectiveLiveStatePayload(
+  domains: BridgeSelectiveLiveStateDomain[] = ["auto", "workspace", "resumable_sessions"],
+): Promise<BridgeSelectiveLiveStatePayload> {
+  const deps = getBridgeDeps();
+  const env = deps.env ?? process.env;
+  const config = resolveBridgeRuntimeConfig(env);
+  const bridge = getProjectBridgeService();
+
+  try {
+    await bridge.ensureStarted();
+  } catch {
+    // Selective live state still returns the latest bridge failure snapshot for inspection.
+  }
+
+  const bridgeSnapshot = bridge.getSnapshot();
+  const uniqueDomains = [...new Set(domains)];
+  const payload: BridgeSelectiveLiveStatePayload = {
+    bridge: bridgeSnapshot,
+  };
+
+  if (uniqueDomains.includes("workspace")) {
+    payload.workspace = await loadCachedWorkspaceIndex(
+      config.projectCwd,
+      async () => await (deps.indexWorkspace ?? fallbackWorkspaceIndex)(config.projectCwd),
+    );
+  }
+
+  if (uniqueDomains.includes("auto")) {
+    const getAutoDashboardData = deps.getAutoDashboardData ?? (() => collectTestOnlyFallbackAutoDashboardData());
+    payload.auto = await Promise.resolve(getAutoDashboardData());
+  }
+
+  if (uniqueDomains.includes("resumable_sessions")) {
+    const sessions = await (deps.listSessions ?? (async (dir: string) => listProjectSessions(dir)))(config.projectSessionsDir);
+    payload.resumableSessions = sessions.map((session) => toBootResumableSession(session, bridgeSnapshot.activeSessionFile));
+  }
+
+  return payload;
+}
+
 export async function collectBootPayload(): Promise<BridgeBootPayload> {
   const deps = getBridgeDeps();
   const env = deps.env ?? process.env;
@@ -1677,8 +1898,9 @@ export async function collectBootPayload(): Promise<BridgeBootPayload> {
     config.projectCwd,
     async () => await (deps.indexWorkspace ?? fallbackWorkspaceIndex)(config.projectCwd),
   );
-  const auto = await (deps.getAutoDashboardData ?? fallbackAutoDashboardData)();
-  const onboarding = await resolveBootOnboardingState(deps, env);
+  const getAutoDashboardData = deps.getAutoDashboardData ?? (() => collectTestOnlyFallbackAutoDashboardData());
+  const autoPromise = Promise.resolve(getAutoDashboardData());
+  const onboardingPromise = resolveBootOnboardingState(deps, env);
 
   try {
     await bridge.ensureStarted();
@@ -1687,7 +1909,13 @@ export async function collectBootPayload(): Promise<BridgeBootPayload> {
   }
 
   const bridgeSnapshot = bridge.getSnapshot();
-  const sessions = await (deps.listSessions ?? (async (dir: string) => listProjectSessions(dir)))(config.projectSessionsDir);
+  const sessionsPromise = (deps.listSessions ?? (async (dir: string) => listProjectSessions(dir)))(config.projectSessionsDir);
+  const [workspace, auto, onboarding, sessions] = await Promise.all([
+    workspacePromise,
+    autoPromise,
+    onboardingPromise,
+    sessionsPromise,
+  ]);
 
   return {
     project: {
@@ -1695,7 +1923,7 @@ export async function collectBootPayload(): Promise<BridgeBootPayload> {
       sessionsDir: config.projectSessionsDir,
       packageRoot: config.packageRoot,
     },
-    workspace: await workspacePromise,
+    workspace,
     auto,
     onboarding,
     onboardingNeeded: onboarding.locked,
@@ -1715,6 +1943,12 @@ export function buildBridgeFailureResponse(commandType: string, error: unknown):
 
 export async function refreshProjectBridgeAuth(): Promise<void> {
   await getProjectBridgeService().refreshAuth();
+}
+
+export function emitProjectLiveStateInvalidation(
+  descriptor: BridgeLiveStateInvalidationDescriptor,
+): BridgeLiveStateInvalidationEvent {
+  return getProjectBridgeService().publishLiveStateInvalidation(descriptor);
 }
 
 export async function sendBridgeInput(input: BridgeInput): Promise<RpcResponse | null> {

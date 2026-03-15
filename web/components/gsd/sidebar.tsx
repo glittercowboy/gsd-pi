@@ -18,10 +18,12 @@ import {
   Columns2,
   AlertTriangle,
   Loader2,
+  LifeBuoy,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import {
   getCurrentScopeLabel,
+  getLiveWorkspaceIndex,
   getProjectDisplayName,
   getSessionLabelFromBridge,
   getVisibleWorkspaceError,
@@ -50,7 +52,7 @@ interface SidebarProps {
 
 export function Sidebar({ activeView, onViewChange }: SidebarProps) {
   const workspace = useGSDWorkspaceState()
-  const { sendCommand, openCommandSurface } = useGSDWorkspaceActions()
+  const { sendCommand, openCommandSurface, setCommandSurfaceSection } = useGSDWorkspaceActions()
   const [expandedMilestones, setExpandedMilestones] = useState<string[]>([])
   const [expandedSlices, setExpandedSlices] = useState<string[]>([])
 
@@ -63,13 +65,16 @@ export function Sidebar({ activeView, onViewChange }: SidebarProps) {
     { id: "activity", label: "Activity", icon: Activity },
   ]
 
-  const milestones = workspace.boot?.workspace.milestones ?? []
-  const activeScope = workspace.boot?.workspace.active
+  const liveWorkspace = getLiveWorkspaceIndex(workspace)
+  const milestones = liveWorkspace?.milestones ?? []
+  const activeScope = liveWorkspace?.active
   const projectLabel = getProjectDisplayName(workspace.boot?.project.cwd)
-  const currentScope = getCurrentScopeLabel(workspace.boot?.workspace)
+  const currentScope = getCurrentScopeLabel(liveWorkspace)
   const sessionLabel = getSessionLabelFromBridge(workspace.boot?.bridge)
-  const validationCount = workspace.boot?.workspace.validationIssues.length ?? 0
+  const validationCount = liveWorkspace?.validationIssues.length ?? 0
   const visibleError = getVisibleWorkspaceError(workspace)
+  const recoverySummary = workspace.live.recoverySummary
+  const workspaceFreshness = workspace.live.freshness.workspace.stale ? "stale" : workspace.live.freshness.workspace.status
 
   useEffect(() => {
     if (!activeScope?.milestoneId) return
@@ -96,6 +101,11 @@ export function Sidebar({ activeView, onViewChange }: SidebarProps) {
     setExpandedSlices((prev) =>
       prev.includes(id) ? prev.filter((entry) => entry !== id) : [...prev, id],
     )
+  }
+
+  const openRecoverySummary = () => {
+    openCommandSurface("settings", { source: "sidebar" })
+    setCommandSurfaceSection("recovery")
   }
 
   return (
@@ -155,23 +165,31 @@ export function Sidebar({ activeView, onViewChange }: SidebarProps) {
         </div>
 
         <div className="border-b border-border px-3 py-3 text-xs">
-          <div className="space-y-1.5">
+          <div className="space-y-2">
             <div>
               <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Active scope</div>
               <div className="font-mono text-[11px] text-foreground" data-testid="sidebar-current-scope">
                 {currentScope}
               </div>
+              <div className="mt-1 text-[10px] text-muted-foreground">Workspace freshness: {workspaceFreshness}</div>
             </div>
             <div>
               <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Session</div>
               <div className="truncate text-[11px] text-muted-foreground">{sessionLabel || "Waiting for live session…"}</div>
             </div>
-            {validationCount > 0 && (
-              <div className="flex items-center gap-1.5 text-amber-300">
-                <AlertTriangle className="h-3.5 w-3.5" />
-                <span>{validationCount} workspace validation issue{validationCount === 1 ? "" : "s"}</span>
-              </div>
-            )}
+            <div className={cn("flex items-center gap-1.5", validationCount > 0 ? "text-amber-300" : "text-muted-foreground")} data-testid="sidebar-validation-count">
+              <AlertTriangle className="h-3.5 w-3.5" />
+              <span>{validationCount} workspace validation issue{validationCount === 1 ? "" : "s"}</span>
+            </div>
+            <button
+              type="button"
+              onClick={openRecoverySummary}
+              className="flex w-full items-center gap-1.5 rounded border border-border/70 bg-background/60 px-2 py-1.5 text-left text-muted-foreground transition-colors hover:bg-accent"
+              data-testid="sidebar-recovery-summary-entrypoint"
+            >
+              <LifeBuoy className="h-3.5 w-3.5" />
+              <span className="truncate">{recoverySummary.label}</span>
+            </button>
             {visibleError && (
               <div
                 className="rounded border border-destructive/20 bg-destructive/10 px-2 py-1.5 text-destructive"
@@ -183,16 +201,15 @@ export function Sidebar({ activeView, onViewChange }: SidebarProps) {
           </div>
         </div>
 
-        {/* Quick Action Button */}
         {(() => {
           const wa = deriveWorkflowAction({
-            phase: workspace.boot?.workspace.active.phase ?? "pre-planning",
-            autoActive: workspace.boot?.auto.active ?? false,
-            autoPaused: workspace.boot?.auto.paused ?? false,
+            phase: liveWorkspace?.active.phase ?? "pre-planning",
+            autoActive: (workspace.live.auto ?? workspace.boot?.auto)?.active ?? false,
+            autoPaused: (workspace.live.auto ?? workspace.boot?.auto)?.paused ?? false,
             onboardingLocked: workspace.boot?.onboarding.locked ?? false,
             commandInFlight: workspace.commandInFlight,
             bootStatus: workspace.bootStatus,
-            hasMilestones: (workspace.boot?.workspace.milestones.length ?? 0) > 0,
+            hasMilestones: (liveWorkspace?.milestones.length ?? 0) > 0,
           })
           if (!wa.primary) return null
           return (

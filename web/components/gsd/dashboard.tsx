@@ -27,6 +27,9 @@ import {
   getCurrentScopeLabel,
   getCurrentBranch,
   getCurrentSlice,
+  getLiveAutoDashboard,
+  getLiveResumableSessions,
+  getLiveWorkspaceIndex,
   getModelLabel,
   type WorkspaceTerminalLine,
   type TerminalLineType,
@@ -96,11 +99,20 @@ function formatRelativeTime(isoDate: string): string {
 
 export function Dashboard() {
   const state = useGSDWorkspaceState()
-  const { sendCommand, submitInput, switchSessionFromSurface } = useGSDWorkspaceActions()
+  const {
+    sendCommand,
+    submitInput,
+    switchSessionFromSurface,
+    openCommandSurface,
+    setCommandSurfaceSection,
+  } = useGSDWorkspaceActions()
   const boot = state.boot
-  const workspace = boot?.workspace ?? null
-  const auto = boot?.auto ?? null
+  const workspace = getLiveWorkspaceIndex(state)
+  const auto = getLiveAutoDashboard(state)
   const bridge = boot?.bridge ?? null
+  const resumableSessions = getLiveResumableSessions(state)
+  const recoverySummary = state.live.recoverySummary
+  const freshness = state.live.freshness
 
   const activeToolExecution = state.activeToolExecution
   const streamingAssistantText = state.streamingAssistantText
@@ -118,8 +130,10 @@ export function Dashboard() {
   const branch = getCurrentBranch(workspace)
   const model = getModelLabel(bridge)
   const isAutoActive = auto?.active ?? false
+  const currentUnitLabel = auto?.currentUnit?.id ?? scopeLabel
+  const currentUnitFreshness = freshness.auto.stale ? "stale" : freshness.auto.status
+  const recoveryFreshness = freshness.recovery.stale ? "stale" : freshness.recovery.status
 
-  // Workflow action derivation
   const workflowAction = deriveWorkflowAction({
     phase: workspace?.active.phase ?? "pre-planning",
     autoActive: auto?.active ?? false,
@@ -142,9 +156,11 @@ export function Dashboard() {
     await submitInput("/new")
   }
 
-  const resumableSessions = boot?.resumableSessions ?? []
+  const openRecoverySummary = () => {
+    openCommandSurface("settings", { source: "surface" })
+    setCommandSurfaceSection("recovery")
+  }
 
-  // Last 6 terminal lines for recent activity
   const recentLines: WorkspaceTerminalLine[] = (state.terminalLines ?? []).slice(-6)
 
   return (
@@ -152,9 +168,7 @@ export function Dashboard() {
       <div className="flex items-center justify-between border-b border-border px-6 py-3">
         <div>
           <h1 className="text-lg font-semibold">Dashboard</h1>
-          <p className="text-sm text-muted-foreground">
-            {scopeLabel}
-          </p>
+          <p className="text-sm text-muted-foreground">{scopeLabel}</p>
         </div>
         <div className="flex items-center gap-3">
           <div className="flex items-center gap-2 rounded-md border border-border bg-card px-3 py-1.5 text-sm">
@@ -178,7 +192,6 @@ export function Dashboard() {
       </div>
 
       <div className="flex-1 overflow-y-auto p-6">
-        {/* Workflow Action Bar */}
         <div className="mb-6 flex items-center gap-3 rounded-md border border-border bg-card px-4 py-3" data-testid="dashboard-action-bar">
           {workflowAction.primary && (
             <button
@@ -228,8 +241,21 @@ export function Dashboard() {
           )}
         </div>
 
-        {/* Metrics Grid */}
-        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
+          <div className="rounded-md border border-border bg-card p-4" data-testid="dashboard-current-unit">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Current Unit</p>
+                <p className="mt-1 truncate text-lg font-semibold tracking-tight">{currentUnitLabel}</p>
+                <p className="mt-0.5 text-xs text-muted-foreground" data-testid="dashboard-current-unit-freshness">
+                  Auto freshness: {currentUnitFreshness}
+                </p>
+              </div>
+              <div className="rounded-md bg-accent p-2 text-muted-foreground">
+                <Activity className="h-5 w-5" />
+              </div>
+            </div>
+          </div>
           <MetricCard
             label="Elapsed Time"
             value={formatDuration(elapsed)}
@@ -253,8 +279,7 @@ export function Dashboard() {
           />
         </div>
 
-        <div className="mt-6 grid gap-6 lg:grid-cols-2">
-          {/* Current Slice Progress */}
+        <div className="mt-6 grid gap-6 lg:grid-cols-2 xl:grid-cols-3">
           <div className="rounded-md border border-border bg-card">
             <div className="border-b border-border px-4 py-3">
               <h2 className="text-sm font-semibold">
@@ -263,7 +288,7 @@ export function Dashboard() {
                   : "Current Slice"}
               </h2>
             </div>
-            <div className="p-4 space-y-3">
+            <div className="space-y-3 p-4">
               {currentSlice && currentSlice.tasks.length > 0 ? (
                 currentSlice.tasks.map((task) => {
                   const status = getTaskStatus(
@@ -296,7 +321,6 @@ export function Dashboard() {
             </div>
           </div>
 
-          {/* Model / Session Info */}
           <div className="rounded-md border border-border bg-card">
             <div className="border-b border-border px-4 py-3">
               <h2 className="text-sm font-semibold">Session</h2>
@@ -351,9 +375,37 @@ export function Dashboard() {
               </div>
             </div>
           </div>
+
+          <div className="rounded-md border border-border bg-card" data-testid="dashboard-recovery-summary">
+            <div className="border-b border-border px-4 py-3">
+              <h2 className="text-sm font-semibold">Recovery Summary</h2>
+            </div>
+            <div className="space-y-4 p-4">
+              <div>
+                <div className="text-sm font-medium" data-testid="dashboard-recovery-summary-state">{recoverySummary.label}</div>
+                <p className="mt-1 text-xs text-muted-foreground">{recoverySummary.detail}</p>
+              </div>
+              <div className="grid gap-2 text-xs text-muted-foreground">
+                <div data-testid="dashboard-retry-freshness">Recovery freshness: {recoveryFreshness}</div>
+                <div>Validation issues: {recoverySummary.validationCount}</div>
+                <div>
+                  Retry: {recoverySummary.retryInProgress ? `attempt ${Math.max(1, recoverySummary.retryAttempt)}` : recoverySummary.autoRetryEnabled ? "enabled" : "idle"}
+                </div>
+                <div>Compaction: {recoverySummary.isCompacting ? "active" : "idle"}</div>
+                {recoverySummary.lastError && <div className="text-destructive">Last error: {recoverySummary.lastError.message}</div>}
+              </div>
+              <button
+                type="button"
+                onClick={openRecoverySummary}
+                className="inline-flex items-center gap-2 rounded-md border border-border bg-background px-3 py-2 text-sm font-medium transition-colors hover:bg-accent"
+                data-testid="dashboard-recovery-summary-entrypoint"
+              >
+                {recoverySummary.entrypointLabel}
+              </button>
+            </div>
+          </div>
         </div>
 
-        {/* Session Picker */}
         {resumableSessions.length > 0 && (
           <div className="mt-6 rounded-md border border-border bg-card" data-testid="dashboard-session-picker">
             <div className="flex items-center justify-between border-b border-border px-4 py-3">
@@ -379,9 +431,9 @@ export function Dashboard() {
                     session.isActive && "bg-accent/20",
                   )}
                 >
-                  <div className="flex-1 min-w-0">
+                  <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2">
-                      <span className="text-sm font-medium truncate">
+                      <span className="truncate text-sm font-medium">
                         {session.name || session.id}
                       </span>
                       {session.isActive && (
@@ -414,7 +466,6 @@ export function Dashboard() {
           </div>
         )}
 
-        {/* Recent Activity */}
         <div className="mt-6 rounded-md border border-border bg-card">
           <div className="border-b border-border px-4 py-3">
             <h2 className="text-sm font-semibold">Recent Activity</h2>
@@ -432,7 +483,7 @@ export function Dashboard() {
                       activityDotColor(line.type),
                     )}
                   />
-                  <span className="text-sm truncate">{line.content}</span>
+                  <span className="truncate text-sm">{line.content}</span>
                 </div>
               ))}
             </div>

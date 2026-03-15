@@ -124,6 +124,15 @@ function fakeAutoDashboardData() {
   };
 }
 
+function writeAutoDashboardModule(root: string, payload: Record<string, unknown>): string {
+  const modulePath = join(root, "fake-auto-dashboard.mjs");
+  writeFileSync(
+    modulePath,
+    `export function getAutoDashboardData() { return ${JSON.stringify(payload)}; }\n`,
+  );
+  return modulePath;
+}
+
 function fakeWorkspaceIndex() {
   return {
     milestones: [
@@ -319,6 +328,84 @@ test("/api/boot returns current-project workspace data, resumable sessions, onbo
     assert.equal(payload.bridge.sessionState.retryInProgress, false);
     assert.equal(payload.bridge.sessionState.retryAttempt, 0);
     assert.equal(harness.spawnCalls, 1);
+  } finally {
+    await bridge.resetBridgeServiceForTests();
+    fixture.cleanup();
+  }
+});
+
+test("/api/boot uses the authoritative auto helper by default and stays snapshot-shaped", async () => {
+  const fixture = makeWorkspaceFixture();
+  const sessionPath = createSessionFile(fixture.projectCwd, fixture.sessionsDir, "sess-auto", "Authoritative Auto");
+  const authoritativeAuto = {
+    active: true,
+    paused: false,
+    stepMode: true,
+    startTime: 1_111,
+    elapsed: 2_222,
+    currentUnit: { type: "execute-task", id: "M002/S03/T01", startedAt: 3_333 },
+    completedUnits: [{ type: "plan-slice", id: "M002/S03", startedAt: 444, finishedAt: 555 }],
+    basePath: fixture.projectCwd,
+    totalCost: 12.34,
+    totalTokens: 4_242,
+  };
+  const autoModulePath = writeAutoDashboardModule(fixture.projectCwd, authoritativeAuto);
+  const harness = createHarness((command, current) => {
+    if (command.type === "get_state") {
+      current.emit({
+        id: command.id,
+        type: "response",
+        command: "get_state",
+        success: true,
+        data: {
+          sessionId: "sess-auto",
+          sessionFile: sessionPath,
+          thinkingLevel: "off",
+          isStreaming: false,
+          isCompacting: false,
+          steeringMode: "all",
+          followUpMode: "all",
+          autoCompactionEnabled: false,
+          autoRetryEnabled: false,
+          retryInProgress: false,
+          retryAttempt: 0,
+          messageCount: 0,
+          pendingMessageCount: 0,
+        },
+      });
+      return;
+    }
+
+    assert.fail(`unexpected command during authoritative auto boot: ${command.type}`);
+  });
+
+  bridge.configureBridgeServiceForTests({
+    env: {
+      ...process.env,
+      GSD_WEB_PROJECT_CWD: fixture.projectCwd,
+      GSD_WEB_PROJECT_SESSIONS_DIR: fixture.sessionsDir,
+      GSD_WEB_PACKAGE_ROOT: repoRoot,
+      GSD_WEB_TEST_AUTO_DASHBOARD_MODULE: autoModulePath,
+    },
+    spawn: harness.spawn,
+    indexWorkspace: async () => fakeWorkspaceIndex(),
+    getOnboardingNeeded: () => false,
+  });
+
+  try {
+    const response = await bootRoute.GET();
+    assert.equal(response.status, 200);
+    const payload = await response.json() as any;
+
+    assert.deepEqual(
+      Object.keys(payload).sort(),
+      ["auto", "bridge", "onboarding", "onboardingNeeded", "project", "resumableSessions", "workspace"],
+      "/api/boot must remain snapshot-shaped while auto truth becomes authoritative",
+    );
+    assert.deepEqual(payload.auto, authoritativeAuto, "default boot path should read authoritative auto dashboard data");
+    assert.notEqual(payload.auto.startTime, 0, "authoritative auto helper must replace the all-zero fallback payload");
+    assert.equal("recovery" in payload, false, "/api/boot should not grow a recovery diagnostics payload in T01");
+    assert.equal("liveState" in payload, false, "/api/boot should not expose live invalidation payloads directly");
   } finally {
     await bridge.resetBridgeServiceForTests();
     fixture.cleanup();

@@ -1,5 +1,6 @@
 import { spawn, type ChildProcess, type SpawnOptions } from 'node:child_process'
 import { existsSync } from 'node:fs'
+import { request as httpRequest } from 'node:http'
 import { createServer } from 'node:net'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -213,26 +214,59 @@ async function spawnDetachedProcess(
   })
 }
 
-async function waitForBootReady(url: string, timeoutMs = 60_000): Promise<void> {
+async function requestLocalJson(url: string, timeoutMs: number): Promise<{ statusCode: number; body: string }> {
+  return await new Promise((resolve, reject) => {
+    const request = httpRequest(
+      url,
+      {
+        method: 'GET',
+        headers: {
+          Accept: 'application/json',
+          // Keep launch readiness on the cheapest uncompressed path. The
+          // packaged host can spend noticeable time compressing the large boot
+          // snapshot, which adds avoidable startup jitter for a local health
+          // check that only needs the JSON payload itself.
+          'Accept-Encoding': 'identity',
+        },
+      },
+      (response) => {
+        const statusCode = response.statusCode ?? 0
+        let body = ''
+        response.setEncoding('utf8')
+        response.on('data', (chunk) => {
+          body += chunk
+        })
+        response.on('end', () => resolve({ statusCode, body }))
+      },
+    )
+
+    request.setTimeout(timeoutMs, () => {
+      request.destroy(new Error(`request timed out after ${timeoutMs}ms`))
+    })
+    request.once('error', reject)
+    request.end()
+  })
+}
+
+async function waitForBootReady(url: string, timeoutMs = 120_000): Promise<void> {
   const deadline = Date.now() + timeoutMs
   let lastError: string | null = null
 
   while (Date.now() < deadline) {
     try {
-      const response = await fetch(`${url}/api/boot`, {
-        method: 'GET',
-        headers: { Accept: 'application/json' },
-        signal: AbortSignal.timeout(20_000),
-      })
+      // Give the packaged host enough time to finish a cold /api/boot render
+      // under integration-suite load before declaring startup dead. The route
+      // is still polled on a bounded overall deadline below.
+      const response = await requestLocalJson(`${url}/api/boot`, 45_000)
 
-      if (response.ok) {
-        const payload = await response.json() as { bridge?: { phase?: string } }
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        const payload = JSON.parse(response.body) as { bridge?: { phase?: string } }
         if (payload.bridge?.phase === 'ready') {
           return
         }
         lastError = `boot responded but bridge phase was ${payload.bridge?.phase ?? 'unknown'}`
       } else {
-        lastError = `boot responded with ${response.status}`
+        lastError = `boot responded with ${response.statusCode}`
       }
     } catch (error) {
       lastError = error instanceof Error ? error.message : String(error)

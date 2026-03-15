@@ -502,6 +502,49 @@ test("dual terminal consumes activeToolExecution from store", () => {
   );
 });
 
+test("live browser panels consume live selectors and expose inspectable freshness markers", () => {
+  const contractPath = resolve(import.meta.dirname, "../../web/lib/command-surface-contract.ts")
+  const storePath = resolve(import.meta.dirname, "../../web/lib/gsd-workspace-store.tsx")
+  const dashboardPath = resolve(import.meta.dirname, "../../web/components/gsd/dashboard.tsx")
+  const sidebarPath = resolve(import.meta.dirname, "../../web/components/gsd/sidebar.tsx")
+  const roadmapPath = resolve(import.meta.dirname, "../../web/components/gsd/roadmap.tsx")
+  const statusBarPath = resolve(import.meta.dirname, "../../web/components/gsd/status-bar.tsx")
+
+  const contractSource = readFileSync(contractPath, "utf-8")
+  const storeSource = readFileSync(storePath, "utf-8")
+  const dashboardSource = readFileSync(dashboardPath, "utf-8")
+  const sidebarSource = readFileSync(sidebarPath, "utf-8")
+  const roadmapSource = readFileSync(roadmapPath, "utf-8")
+  const statusBarSource = readFileSync(statusBarPath, "utf-8")
+
+  assert.match(contractSource, /export interface WorkspaceRecoverySummary/, "command-surface-contract.ts must expose a shared recovery summary shape for live panels")
+  assert.match(storeSource, /live_state_invalidation/, "gsd-workspace-store.tsx must handle typed live_state_invalidation events")
+  assert.match(storeSource, /\/api\/live-state/, "gsd-workspace-store.tsx must use the narrow live-state route for targeted refreshes")
+  assert.match(storeSource, /softBootRefreshCount/, "gsd-workspace-store.tsx must expose a soft boot refresh counter for observability")
+  assert.match(storeSource, /targetedRefreshCount/, "gsd-workspace-store.tsx must expose a targeted refresh counter for observability")
+  assert.match(storeSource, /getLiveWorkspaceIndex/, "gsd-workspace-store.tsx must expose a live workspace selector")
+  assert.match(storeSource, /getLiveAutoDashboard/, "gsd-workspace-store.tsx must expose a live auto selector")
+  assert.match(storeSource, /getLiveResumableSessions/, "gsd-workspace-store.tsx must expose a live resumable-sessions selector")
+
+  assert.match(dashboardSource, /getLiveWorkspaceIndex/, "dashboard.tsx must derive roadmap state from the live workspace selector")
+  assert.match(dashboardSource, /getLiveAutoDashboard/, "dashboard.tsx must derive auto metrics from the live auto selector")
+  assert.match(dashboardSource, /getLiveResumableSessions/, "dashboard.tsx must derive session picker state from the live session selector")
+  assert.match(dashboardSource, /data-testid="dashboard-current-unit"/, "dashboard.tsx must expose a current-unit marker")
+  assert.match(dashboardSource, /data-testid="dashboard-retry-freshness"/, "dashboard.tsx must expose recovery freshness for retry\/compaction diagnostics")
+  assert.match(dashboardSource, /data-testid="dashboard-recovery-summary-entrypoint"/, "dashboard.tsx must expose a visible recovery-summary entrypoint")
+
+  assert.match(sidebarSource, /getLiveWorkspaceIndex/, "sidebar.tsx must derive explorer state from the live workspace selector")
+  assert.match(sidebarSource, /data-testid="sidebar-validation-count"/, "sidebar.tsx must expose a validation-count marker")
+  assert.match(sidebarSource, /data-testid="sidebar-recovery-summary-entrypoint"/, "sidebar.tsx must expose a recovery-summary entrypoint")
+
+  assert.match(roadmapSource, /getLiveWorkspaceIndex/, "roadmap.tsx must derive milestones from live workspace state")
+  assert.match(roadmapSource, /data-testid="roadmap-workspace-freshness"/, "roadmap.tsx must expose workspace freshness")
+
+  assert.match(statusBarSource, /getLiveWorkspaceIndex/, "status-bar.tsx must derive the unit label from live workspace state")
+  assert.match(statusBarSource, /getLiveAutoDashboard/, "status-bar.tsx must derive current-unit metrics from live auto state")
+  assert.match(statusBarSource, /data-testid="status-bar-retry-compaction"/, "status-bar.tsx must expose retry\/compaction freshness state")
+})
+
 test("sidebar Git affordance opens a real git-summary surface with visible repo/not-repo/error states", () => {
   const contractPath = resolve(import.meta.dirname, "../../web/lib/command-surface-contract.ts");
   const storePath = resolve(import.meta.dirname, "../../web/lib/gsd-workspace-store.tsx");
@@ -524,4 +567,35 @@ test("sidebar Git affordance opens a real git-summary surface with visible repo/
   assert.match(surfaceSource, /data-testid="command-surface-git-error"/, "command-surface.tsx must keep git load errors browser-visible");
   assert.match(sidebarSource, /data-testid="sidebar-git-button"/, "sidebar.tsx must expose the Git affordance by a stable test id");
   assert.match(sidebarSource, /openCommandSurface\("git", \{ source: "sidebar" \}\)/, "sidebar.tsx must open the shared git surface when the Git button is clicked");
+});
+
+test("recovery diagnostics surface stays on a dedicated route with explicit stale and action state", () => {
+  const contractPath = resolve(import.meta.dirname, "../../web/lib/command-surface-contract.ts");
+  const storePath = resolve(import.meta.dirname, "../../web/lib/gsd-workspace-store.tsx");
+  const surfacePath = resolve(import.meta.dirname, "../../web/components/gsd/command-surface.tsx");
+  const dashboardPath = resolve(import.meta.dirname, "../../web/components/gsd/dashboard.tsx");
+  const sidebarPath = resolve(import.meta.dirname, "../../web/components/gsd/sidebar.tsx");
+
+  const contractSource = readFileSync(contractPath, "utf-8");
+  const storeSource = readFileSync(storePath, "utf-8");
+  const surfaceSource = readFileSync(surfacePath, "utf-8");
+  const dashboardSource = readFileSync(dashboardPath, "utf-8");
+  const sidebarSource = readFileSync(sidebarPath, "utf-8");
+
+  assert.match(contractSource, /export interface WorkspaceRecoveryDiagnostics/, "command-surface-contract.ts must expose a typed recovery diagnostics payload");
+  assert.match(contractSource, /export interface CommandSurfaceRecoveryState/, "command-surface-contract.ts must expose explicit recovery load state");
+  assert.match(contractSource, /load_recovery_diagnostics/, "command-surface-contract.ts must model recovery loading as an explicit action");
+
+  assert.match(storeSource, /loadRecoveryDiagnostics = async/, "gsd-workspace-store.tsx must expose a recovery diagnostics loader");
+  assert.match(storeSource, /\/api\/recovery/, "gsd-workspace-store.tsx must call the dedicated recovery route");
+  assert.match(storeSource, /markRecoveryStateInvalidated/, "gsd-workspace-store.tsx must keep recovery diagnostics stale state inspectable after invalidation");
+
+  assert.match(surfaceSource, /data-testid="command-surface-recovery"/, "command-surface.tsx must render a recovery diagnostics panel");
+  assert.match(surfaceSource, /data-testid="command-surface-recovery-state"/, "command-surface.tsx must expose a recovery load-state marker");
+  assert.match(surfaceSource, /data-testid="command-surface-recovery-error"/, "command-surface.tsx must keep recovery route failures browser-visible");
+  assert.match(surfaceSource, /data-testid="command-surface-recovery-last-failure"/, "command-surface.tsx must expose structured bridge failure metadata");
+  assert.match(surfaceSource, /data-testid={`command-surface-recovery-action-\$\{action.id\}`}/, "command-surface.tsx must expose stable action wiring for recovery controls");
+
+  assert.match(dashboardSource, /setCommandSurfaceSection\("recovery"\)/, "dashboard.tsx must route the recovery entrypoint into the dedicated recovery section");
+  assert.match(sidebarSource, /setCommandSurfaceSection\("recovery"\)/, "sidebar.tsx must route the recovery entrypoint into the dedicated recovery section");
 });

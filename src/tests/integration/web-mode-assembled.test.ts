@@ -13,6 +13,7 @@ const bridge = await import("../../web/bridge-service.ts");
 const onboarding = await import("../../web/onboarding-service.ts");
 const bootRoute = await import("../../../web/app/api/boot/route.ts");
 const onboardingRoute = await import("../../../web/app/api/onboarding/route.ts");
+const recoveryRoute = await import("../../../web/app/api/recovery/route.ts");
 const commandRoute = await import("../../../web/app/api/session/command/route.ts");
 const eventsRoute = await import("../../../web/app/api/session/events/route.ts");
 const {
@@ -765,6 +766,120 @@ test("assembled settings controls keep retry visibility and daily-use mutations 
       ["set_steering_mode", "set_follow_up_mode", "set_auto_compaction", "set_auto_retry", "abort_retry"],
       "settings parity must route through the live bridge instead of browser-local toggles",
     );
+  } finally {
+    await bridge.resetBridgeServiceForTests();
+    fixture.cleanup();
+  }
+});
+
+test("assembled recovery route exposes actionable browser diagnostics without raw transcript leakage", async () => {
+  const fixture = makeWorkspaceFixture();
+  const sessionPath = createSessionFile(fixture.projectCwd, fixture.sessionsDir, "sess-recovery", "Recovery Session");
+
+  writeFileSync(
+    sessionPath,
+    [
+      JSON.stringify({ type: "session", version: 3, id: "sess-recovery", timestamp: "2026-03-14T18:00:00.000Z", cwd: fixture.projectCwd }),
+      JSON.stringify({ type: "session_info", id: "info-1", parentId: null, timestamp: "2026-03-14T18:00:01.000Z", name: "Recovery Session" }),
+      JSON.stringify({
+        type: "message",
+        message: {
+          role: "assistant",
+          content: [{ type: "toolCall", id: "tool-1", name: "bash", arguments: { command: "echo hi" } }],
+        },
+      }),
+      JSON.stringify({
+        type: "message",
+        message: {
+          role: "toolResult",
+          toolCallId: "tool-1",
+          toolName: "bash",
+          isError: true,
+          content: "authentication failed for sk-assembled-recovery-secret-0001",
+        },
+      }),
+    ].join("\n") + "\n",
+  );
+
+  bridge.configureBridgeServiceForTests({
+    env: {
+      ...process.env,
+      GSD_WEB_PROJECT_CWD: fixture.projectCwd,
+      GSD_WEB_PROJECT_SESSIONS_DIR: fixture.sessionsDir,
+      GSD_WEB_PACKAGE_ROOT: repoRoot,
+    },
+    spawn(command: string, args: readonly string[], options: Record<string, unknown>) {
+      void command;
+      void args;
+      void options;
+      const child = new FakeRpcChild();
+
+      attachJsonLineReader(child.stdin, (line) => {
+        const message = JSON.parse(line) as any;
+        if (message.type === "get_state") {
+          child.stdout.write(
+            serializeJsonLine({
+              id: message.id,
+              type: "response",
+              command: "get_state",
+              success: true,
+              data: {
+                ...fakeSessionState("sess-recovery", sessionPath),
+                autoRetryEnabled: true,
+                retryInProgress: true,
+                retryAttempt: 2,
+              },
+            }),
+          );
+        }
+      });
+
+      return child as any;
+    },
+    indexWorkspace: async () => fakeWorkspaceIndex(),
+    getAutoDashboardData: () => fakeAutoDashboardData(),
+    getOnboardingState: async () => ({
+      status: "ready",
+      locked: true,
+      lockReason: "bridge_refresh_failed",
+      required: {
+        blocking: true,
+        skippable: false,
+        satisfied: true,
+        satisfiedBy: { providerId: "anthropic", source: "auth_file" },
+        providers: [],
+      },
+      optional: {
+        blocking: false,
+        skippable: true,
+        sections: [],
+      },
+      lastValidation: null,
+      activeFlow: null,
+      bridgeAuthRefresh: {
+        phase: "failed",
+        strategy: "restart",
+        startedAt: "2026-03-15T03:31:00.000Z",
+        completedAt: "2026-03-15T03:31:05.000Z",
+        error: "Bridge refresh failed for sk-assembled-auth-secret-0002",
+      },
+    }),
+  });
+
+  try {
+    const response = await recoveryRoute.GET();
+    assert.equal(response.status, 200);
+    const payload = (await response.json()) as any;
+
+    assert.equal(payload.status, "ready");
+    assert.equal(payload.bridge.retry.inProgress, true);
+    assert.equal(payload.bridge.retry.attempt, 2);
+    assert.equal(payload.bridge.authRefresh.phase, "failed");
+    assert.ok(payload.actions.browser.some((action: { id: string }) => action.id === "refresh_diagnostics"));
+    assert.ok(payload.actions.browser.some((action: { id: string }) => action.id === "open_retry_controls"));
+    assert.ok(payload.actions.browser.some((action: { id: string }) => action.id === "open_auth_controls"));
+    assert.equal(payload.interruptedRun.detected, true);
+    assert.doesNotMatch(JSON.stringify(payload), /sk-assembled-recovery-secret-0001|sk-assembled-auth-secret-0002/);
   } finally {
     await bridge.resetBridgeServiceForTests();
     fixture.cleanup();

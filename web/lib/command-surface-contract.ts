@@ -15,6 +15,7 @@ export type CommandSurfaceSection =
   | "queue"
   | "compaction"
   | "retry"
+  | "recovery"
   | "auth"
   | "git"
   | "resume"
@@ -33,6 +34,7 @@ export type CommandSurfacePendingAction =
   | "set_auto_retry"
   | "abort_retry"
   | "load_git_summary"
+  | "load_recovery_diagnostics"
   | "load_session_browser"
   | "rename_session"
   | "save_api_key"
@@ -135,6 +137,167 @@ export interface CommandSurfaceGitSummaryState {
   error: string | null
 }
 
+export type WorkspaceRecoverySummaryTone = "healthy" | "warning" | "danger"
+export type WorkspaceRecoveryDiagnosticsStatus = "ready" | "unavailable"
+export type WorkspaceRecoveryBrowserActionId =
+  | "refresh_diagnostics"
+  | "refresh_workspace"
+  | "open_retry_controls"
+  | "open_resume_controls"
+  | "open_auth_controls"
+export type CommandSurfaceRecoveryPhase = "idle" | "loading" | "ready" | "unavailable" | "error"
+
+export interface WorkspaceRecoveryBrowserAction {
+  id: WorkspaceRecoveryBrowserActionId
+  label: string
+  detail: string
+  emphasis?: "primary" | "secondary" | "danger"
+}
+
+export interface WorkspaceRecoveryCommandSuggestion {
+  label: string
+  command: string
+}
+
+export interface WorkspaceRecoveryCodeSummary {
+  code: string
+  count: number
+  label: string
+  severity: "info" | "warning" | "error"
+}
+
+export interface WorkspaceRecoveryIssueDigest {
+  code: string
+  severity: "info" | "warning" | "error"
+  scope: string
+  message: string
+  file?: string
+  suggestion?: string
+  unitId?: string
+}
+
+export interface WorkspaceRecoveryDiagnostics {
+  status: WorkspaceRecoveryDiagnosticsStatus
+  loadedAt: string
+  project: {
+    cwd: string
+    activeScope: string | null
+    activeSessionPath: string | null
+    activeSessionId: string | null
+  }
+  summary: {
+    tone: WorkspaceRecoverySummaryTone
+    label: string
+    detail: string
+    validationCount: number
+    doctorIssueCount: number
+    lastFailurePhase: string | null
+    currentUnitId: string | null
+    retryAttempt: number
+    retryInProgress: boolean
+    compactionActive: boolean
+  }
+  bridge: {
+    phase: string
+    retry: {
+      enabled: boolean
+      inProgress: boolean
+      attempt: number
+      label: string
+    }
+    compaction: {
+      active: boolean
+      label: string
+    }
+    lastFailure: {
+      message: string
+      phase: string
+      at: string
+      commandType: string | null
+      afterSessionAttachment: boolean
+    } | null
+    authRefresh: {
+      phase: string
+      error: string | null
+      label: string
+    }
+  }
+  validation: {
+    total: number
+    bySeverity: {
+      errors: number
+      warnings: number
+      infos: number
+    }
+    codes: WorkspaceRecoveryCodeSummary[]
+    topIssues: WorkspaceRecoveryIssueDigest[]
+  }
+  doctor: {
+    scope: string | null
+    total: number
+    errors: number
+    warnings: number
+    infos: number
+    fixable: number
+    codes: Array<{ code: string; count: number }>
+    topIssues: WorkspaceRecoveryIssueDigest[]
+  }
+  interruptedRun: {
+    available: boolean
+    detected: boolean
+    label: string
+    detail: string
+    unit: {
+      type: string
+      id: string
+    } | null
+    counts: {
+      toolCalls: number
+      filesWritten: number
+      commandsRun: number
+      errors: number
+    }
+    gitChangesDetected: boolean
+    lastError: string | null
+  }
+  actions: {
+    browser: WorkspaceRecoveryBrowserAction[]
+    commands: WorkspaceRecoveryCommandSuggestion[]
+  }
+}
+
+export interface CommandSurfaceRecoveryState {
+  phase: CommandSurfaceRecoveryPhase
+  pending: boolean
+  loaded: boolean
+  stale: boolean
+  diagnostics: WorkspaceRecoveryDiagnostics | null
+  error: string | null
+  lastLoadedAt: string | null
+  lastInvalidatedAt: string | null
+  lastFailureAt: string | null
+}
+
+export interface WorkspaceRecoverySummary {
+  visible: boolean
+  tone: WorkspaceRecoverySummaryTone
+  label: string
+  detail: string
+  validationCount: number
+  retryInProgress: boolean
+  retryAttempt: number
+  autoRetryEnabled: boolean
+  isCompacting: boolean
+  currentUnitId: string | null
+  freshness: "idle" | "fresh" | "stale" | "error"
+  entrypointLabel: string
+  lastError: {
+    message: string
+    phase: string
+    at: string
+  } | null
+}
+
 export type CommandSurfaceTarget =
   | { kind: "settings"; section: CommandSurfaceSection }
   | { kind: "model"; provider?: string; modelId?: string; query?: string }
@@ -161,6 +324,7 @@ export interface WorkspaceCommandSurfaceState {
   sessionStats: CommandSurfaceSessionStats | null
   lastCompaction: CommandSurfaceCompactionResult | null
   gitSummary: CommandSurfaceGitSummaryState
+  recovery: CommandSurfaceRecoveryState
   sessionBrowser: CommandSurfaceSessionBrowserState
   resumeRequest: CommandSurfaceSessionMutationState
   renameRequest: CommandSurfaceSessionMutationState
@@ -196,6 +360,7 @@ export interface CommandSurfaceActionResult {
   sessionStats?: CommandSurfaceSessionStats | null
   lastCompaction?: CommandSurfaceCompactionResult | null
   gitSummary?: CommandSurfaceGitSummaryState
+  recovery?: CommandSurfaceRecoveryState
   sessionBrowser?: CommandSurfaceSessionBrowserState
 }
 
@@ -288,6 +453,20 @@ function createInitialCommandSurfaceGitSummaryState(): CommandSurfaceGitSummaryS
   }
 }
 
+export function createInitialCommandSurfaceRecoveryState(): CommandSurfaceRecoveryState {
+  return {
+    phase: "idle",
+    pending: false,
+    loaded: false,
+    stale: false,
+    diagnostics: null,
+    error: null,
+    lastLoadedAt: null,
+    lastInvalidatedAt: null,
+    lastFailureAt: null,
+  }
+}
+
 function buildInitialSessionBrowserState(request: CommandSurfaceOpenRequest): CommandSurfaceSessionBrowserState {
   const initialQuery = request.surface === "resume" ? request.args?.trim() ?? "" : ""
   return createInitialCommandSurfaceSessionBrowserState({
@@ -319,6 +498,7 @@ export function createInitialCommandSurfaceState(): WorkspaceCommandSurfaceState
     sessionStats: null,
     lastCompaction: null,
     gitSummary: createInitialCommandSurfaceGitSummaryState(),
+    recovery: createInitialCommandSurfaceRecoveryState(),
     sessionBrowser: createInitialCommandSurfaceSessionBrowserState(),
     resumeRequest: createInitialCommandSurfaceSessionMutationState(),
     renameRequest: createInitialCommandSurfaceSessionMutationState(),
@@ -499,6 +679,7 @@ export function openCommandSurfaceState(
     forkMessages: [],
     lastCompaction: null,
     gitSummary: createInitialCommandSurfaceGitSummaryState(),
+    recovery: createInitialCommandSurfaceRecoveryState(),
     sessionBrowser: buildInitialSessionBrowserState(request),
     resumeRequest: createInitialCommandSurfaceSessionMutationState(),
     renameRequest: createInitialCommandSurfaceSessionMutationState(),
@@ -537,7 +718,7 @@ export function setCommandSurfaceSection(
     selectedTarget = buildModelTarget(request)
   } else if (section === "thinking") {
     selectedTarget = buildThinkingTarget(request)
-  } else if (section === "queue" || section === "compaction" || section === "retry" || section === "git") {
+  } else if (section === "queue" || section === "compaction" || section === "retry" || section === "recovery" || section === "git") {
     selectedTarget = buildSettingsTarget(section)
   } else if (section === "auth") {
     selectedTarget = buildAuthTarget({
@@ -655,6 +836,15 @@ export function setCommandSurfacePending(
             error: null,
           }
         : current.gitSummary,
+    recovery:
+      action === "load_recovery_diagnostics"
+        ? {
+            ...current.recovery,
+            pending: true,
+            error: null,
+            phase: current.recovery.loaded ? current.recovery.phase : "loading",
+          }
+        : current.recovery,
     sessionBrowser:
       action === "load_session_browser"
         ? {
@@ -705,6 +895,7 @@ export function applyCommandSurfaceActionResult(
             pending: false,
             loaded: result.gitSummary.loaded || result.success,
           },
+    recovery: result.recovery ?? current.recovery,
     sessionBrowser: result.sessionBrowser ?? current.sessionBrowser,
     resumeRequest:
       result.action === "switch_session"

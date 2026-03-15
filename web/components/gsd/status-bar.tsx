@@ -1,12 +1,14 @@
 "use client"
 
-import { GitBranch, Cpu, DollarSign, Clock, Zap, AlertTriangle, Wifi, Info } from "lucide-react"
+import { GitBranch, Cpu, DollarSign, Clock, Zap, AlertTriangle, Wifi, Info, LifeBuoy } from "lucide-react"
 import {
   formatCost,
   formatDuration,
   formatTokens,
   getCurrentBranch,
   getCurrentScopeLabel,
+  getLiveAutoDashboard,
+  getLiveWorkspaceIndex,
   getModelLabel,
   getStatusPresentation,
   getVisibleWorkspaceError,
@@ -29,13 +31,15 @@ function toneClass(tone: ReturnType<typeof getStatusPresentation>["tone"]): stri
 export function StatusBar() {
   const workspace = useGSDWorkspaceState()
   const status = getStatusPresentation(workspace)
-  const branch = getCurrentBranch(workspace.boot?.workspace) ?? "project scope"
+  const liveWorkspace = getLiveWorkspaceIndex(workspace)
+  const auto = getLiveAutoDashboard(workspace)
+  const branch = getCurrentBranch(liveWorkspace) ?? "project scope"
   const model = getModelLabel(workspace.boot?.bridge)
-  const auto = workspace.boot?.auto
-  const unitLabel = auto?.currentUnit?.id ?? getCurrentScopeLabel(workspace.boot?.workspace)
+  const unitLabel = auto?.currentUnit?.id ?? getCurrentScopeLabel(liveWorkspace)
   const visibleError = getVisibleWorkspaceError(workspace)
   const titleOverride = workspace.titleOverride?.trim() || null
   const statusTexts = workspace.statusTexts
+  const recoverySummary = workspace.live.recoverySummary
   const statusTextEntries = Object.entries(statusTexts)
   const latestStatusText = statusTextEntries.length > 0 ? statusTextEntries[statusTextEntries.length - 1][1] : null
 
@@ -53,6 +57,12 @@ export function StatusBar() {
         <div className="flex items-center gap-1.5 text-muted-foreground">
           <Cpu className="h-3 w-3" />
           <span className="font-mono">{model}</span>
+        </div>
+        <div className="hidden max-w-xs items-center gap-1.5 truncate text-muted-foreground xl:flex" data-testid="status-bar-retry-compaction">
+          <LifeBuoy className="h-3 w-3 shrink-0" />
+          <span className="truncate">
+            {recoverySummary.retryInProgress ? `Retry ${Math.max(1, recoverySummary.retryAttempt)}` : recoverySummary.isCompacting ? "Compacting" : recoverySummary.freshness}
+          </span>
         </div>
         {visibleError && (
           <div className="hidden max-w-sm items-center gap-1.5 truncate text-destructive lg:flex" data-testid="status-bar-error">

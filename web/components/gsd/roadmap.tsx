@@ -2,7 +2,7 @@
 
 import { CheckCircle2, Circle, Play, AlertTriangle, ChevronRight } from "lucide-react"
 import { cn } from "@/lib/utils"
-import { useGSDWorkspaceState, type RiskLevel } from "@/lib/gsd-workspace-store"
+import { getLiveWorkspaceIndex, useGSDWorkspaceState, type RiskLevel } from "@/lib/gsd-workspace-store"
 import { getMilestoneStatus, getSliceStatus, type ItemStatus } from "@/lib/workspace-status"
 
 const StatusIcon = ({
@@ -29,7 +29,7 @@ const RiskBadge = ({ risk }: { risk: RiskLevel }) => {
         "inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-medium uppercase",
         risk === "high" && "bg-destructive/20 text-destructive",
         risk === "medium" && "bg-warning/20 text-warning",
-        risk === "low" && "bg-muted text-muted-foreground"
+        risk === "low" && "bg-muted text-muted-foreground",
       )}
     >
       {risk === "high" && <AlertTriangle className="h-2.5 w-2.5" />}
@@ -40,8 +40,10 @@ const RiskBadge = ({ risk }: { risk: RiskLevel }) => {
 
 export function Roadmap() {
   const workspace = useGSDWorkspaceState()
-  const milestones = workspace.boot?.workspace.milestones ?? []
-  const activeScope = workspace.boot?.workspace.active ?? {}
+  const liveWorkspace = getLiveWorkspaceIndex(workspace)
+  const milestones = liveWorkspace?.milestones ?? []
+  const activeScope = liveWorkspace?.active ?? {}
+  const workspaceFreshness = workspace.live.freshness.workspace.stale ? "stale" : workspace.live.freshness.workspace.status
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
@@ -49,6 +51,9 @@ export function Roadmap() {
         <h1 className="text-lg font-semibold">Roadmap</h1>
         <p className="text-sm text-muted-foreground">
           Project milestone structure with slices and dependencies
+        </p>
+        <p className="mt-1 text-xs text-muted-foreground" data-testid="roadmap-workspace-freshness">
+          Workspace freshness: {workspaceFreshness}
         </p>
       </div>
 
@@ -72,11 +77,10 @@ export function Roadmap() {
 
             return (
               <div key={milestone.id} className="rounded-md border border-border bg-card">
-                {/* Milestone Header */}
                 <div
                   className={cn(
                     "flex items-center gap-3 border-b border-border px-4 py-3",
-                    milestoneStatus === "in-progress" && "bg-accent/30"
+                    milestoneStatus === "in-progress" && "bg-accent/30",
                   )}
                 >
                   <StatusIcon status={milestoneStatus} size="large" />
@@ -97,7 +101,6 @@ export function Roadmap() {
                   </div>
                 </div>
 
-                {/* Slices */}
                 <div className="divide-y divide-border">
                   {milestone.slices.map((slice) => {
                     const sliceStatus = getSliceStatus(milestone.id, slice, activeScope)
@@ -110,7 +113,7 @@ export function Roadmap() {
                         className={cn(
                           "flex items-center gap-3 px-4 py-2.5",
                           sliceStatus === "in-progress" && "bg-accent/20",
-                          sliceStatus === "pending" && "opacity-60"
+                          sliceStatus === "pending" && "opacity-60",
                         )}
                       >
                         <div className="w-4" />

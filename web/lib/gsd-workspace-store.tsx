@@ -26,12 +26,15 @@ import {
   type CommandSurfaceForkMessage,
   type CommandSurfaceGitSummaryState,
   type CommandSurfaceModelOption,
+  type CommandSurfaceRecoveryState,
   type CommandSurfaceSection,
   type CommandSurfaceSessionBrowserState,
   type CommandSurfaceSessionStats,
   type CommandSurfaceTarget,
   type CommandSurfaceThinkingLevel,
   type WorkspaceCommandSurfaceState,
+  type WorkspaceRecoveryDiagnostics,
+  type WorkspaceRecoverySummary,
 } from "./command-surface-contract"
 import { isGitSummaryResponse, type GitSummaryResponse } from "./git-summary-contract"
 import type {
@@ -281,6 +284,63 @@ export interface BridgeStatusEvent {
   bridge: BridgeRuntimeSnapshot
 }
 
+export type LiveStateInvalidationDomain = "auto" | "workspace" | "recovery" | "resumable_sessions"
+export type LiveStateInvalidationSource = "bridge_event" | "rpc_command" | "session_manage"
+export type LiveStateInvalidationReason =
+  | "agent_end"
+  | "auto_retry_start"
+  | "auto_retry_end"
+  | "auto_compaction_start"
+  | "auto_compaction_end"
+  | "new_session"
+  | "switch_session"
+  | "fork"
+  | "set_session_name"
+
+export interface LiveStateInvalidationEvent {
+  type: "live_state_invalidation"
+  at: string
+  reason: LiveStateInvalidationReason
+  source: LiveStateInvalidationSource
+  domains: LiveStateInvalidationDomain[]
+  workspaceIndexCacheInvalidated: boolean
+}
+
+export type WorkspaceFreshnessStatus = "idle" | "fresh" | "refreshing" | "stale" | "error"
+
+export interface WorkspaceFreshnessBucket {
+  status: WorkspaceFreshnessStatus
+  stale: boolean
+  reloadCount: number
+  lastRequestedAt: string | null
+  lastSuccessAt: string | null
+  lastFailureAt: string | null
+  lastFailure: string | null
+  invalidatedAt: string | null
+  invalidationReason: LiveStateInvalidationReason | null
+  invalidationSource: LiveStateInvalidationSource | null
+}
+
+export interface WorkspaceLiveFreshnessState {
+  auto: WorkspaceFreshnessBucket
+  workspace: WorkspaceFreshnessBucket
+  recovery: WorkspaceFreshnessBucket
+  resumableSessions: WorkspaceFreshnessBucket
+  gitSummary: WorkspaceFreshnessBucket
+  sessionBrowser: WorkspaceFreshnessBucket
+  sessionStats: WorkspaceFreshnessBucket
+}
+
+export interface WorkspaceLiveState {
+  auto: AutoDashboardData | null
+  workspace: WorkspaceIndex | null
+  resumableSessions: BootResumableSession[]
+  recoverySummary: WorkspaceRecoverySummary
+  freshness: WorkspaceLiveFreshnessState
+  softBootRefreshCount: number
+  targetedRefreshCount: number
+}
+
 // Discriminated union for extension UI requests — matches the authoritative
 // RpcExtensionUIRequest from rpc-types.ts. Blocking methods queue in pendingUiRequests;
 // fire-and-forget methods update state maps directly.
@@ -339,6 +399,7 @@ export interface TurnEndEvent {
 
 export type WorkspaceEvent =
   | BridgeStatusEvent
+  | LiveStateInvalidationEvent
   | ExtensionUiRequestEvent
   | ExtensionErrorEvent
   | MessageUpdateEvent
@@ -404,6 +465,7 @@ export interface WorkspaceStoreState {
   bootStatus: WorkspaceStatus
   connectionState: WorkspaceConnectionState
   boot: WorkspaceBootPayload | null
+  live: WorkspaceLiveState
   terminalLines: WorkspaceTerminalLine[]
   lastClientError: string | null
   lastBridgeError: BridgeLastError | null
@@ -518,6 +580,11 @@ function summarizeEvent(event: WorkspaceEvent): { type: TerminalLineType; messag
   switch (event.type) {
     case "bridge_status":
       return summarizeBridgeStatus(event.bridge)
+    case "live_state_invalidation":
+      return {
+        type: "system",
+        message: `[Live] Refreshing ${Array.isArray(event.domains) ? event.domains.join(", ") : "state"} after ${String(event.reason).replaceAll("_", " ")}`,
+      }
     case "agent_start":
       return { type: "system", message: "[Agent] Run started" }
     case "agent_end":
@@ -1067,6 +1134,66 @@ function normalizeGitSummaryError(
   }
 }
 
+function normalizeRecoveryDiagnosticsPayload(payload: unknown): WorkspaceRecoveryDiagnostics | null {
+  if (!payload || typeof payload !== "object") return null
+
+  const candidate = payload as Partial<WorkspaceRecoveryDiagnostics>
+  if (candidate.status !== "ready" && candidate.status !== "unavailable") return null
+  if (typeof candidate.loadedAt !== "string") return null
+  if (!candidate.project || typeof candidate.project.cwd !== "string") return null
+  if (!candidate.summary || typeof candidate.summary.label !== "string" || typeof candidate.summary.detail !== "string") return null
+  if (!candidate.bridge || typeof candidate.bridge.phase !== "string") return null
+  if (!candidate.validation || typeof candidate.validation.total !== "number") return null
+  if (!candidate.doctor || typeof candidate.doctor.total !== "number") return null
+  if (!candidate.interruptedRun || typeof candidate.interruptedRun.available !== "boolean") return null
+  if (!candidate.actions || !Array.isArray(candidate.actions.browser) || !Array.isArray(candidate.actions.commands)) return null
+
+  return candidate as WorkspaceRecoveryDiagnostics
+}
+
+function createRecoveryStateFromDiagnostics(diagnostics: WorkspaceRecoveryDiagnostics): CommandSurfaceRecoveryState {
+  return {
+    phase: diagnostics.status === "ready" ? "ready" : "unavailable",
+    pending: false,
+    loaded: true,
+    stale: false,
+    diagnostics,
+    error: null,
+    lastLoadedAt: diagnostics.loadedAt,
+    lastInvalidatedAt: null,
+    lastFailureAt: null,
+  }
+}
+
+function markRecoveryStatePending(current: CommandSurfaceRecoveryState): CommandSurfaceRecoveryState {
+  return {
+    ...current,
+    pending: true,
+    error: null,
+    phase: current.loaded ? current.phase : "loading",
+  }
+}
+
+function markRecoveryStateInvalidated(current: CommandSurfaceRecoveryState): CommandSurfaceRecoveryState {
+  if (!current.loaded && !current.error) return current
+  return {
+    ...current,
+    stale: true,
+    lastInvalidatedAt: new Date().toISOString(),
+  }
+}
+
+function markRecoveryStateFailure(current: CommandSurfaceRecoveryState, message: string): CommandSurfaceRecoveryState {
+  return {
+    ...current,
+    phase: "error",
+    pending: false,
+    stale: true,
+    error: message,
+    lastFailureAt: new Date().toISOString(),
+  }
+}
+
 function normalizeSessionBrowserPayload(payload: unknown): CommandSurfaceSessionBrowserState | null {
   if (!payload || typeof payload !== "object") return null
 
@@ -1345,11 +1472,232 @@ export function getStatusPresentation(
   }
 }
 
+function createFreshnessBucket(): WorkspaceFreshnessBucket {
+  return {
+    status: "idle",
+    stale: false,
+    reloadCount: 0,
+    lastRequestedAt: null,
+    lastSuccessAt: null,
+    lastFailureAt: null,
+    lastFailure: null,
+    invalidatedAt: null,
+    invalidationReason: null,
+    invalidationSource: null,
+  }
+}
+
+function createInitialRecoverySummary(): WorkspaceRecoverySummary {
+  return {
+    visible: false,
+    tone: "healthy",
+    label: "Recovery summary pending",
+    detail: "Waiting for the first live workspace snapshot.",
+    validationCount: 0,
+    retryInProgress: false,
+    retryAttempt: 0,
+    autoRetryEnabled: false,
+    isCompacting: false,
+    currentUnitId: null,
+    freshness: "idle",
+    entrypointLabel: "Inspect recovery",
+    lastError: null,
+  }
+}
+
+function createInitialWorkspaceLiveFreshnessState(): WorkspaceLiveFreshnessState {
+  return {
+    auto: createFreshnessBucket(),
+    workspace: createFreshnessBucket(),
+    recovery: createFreshnessBucket(),
+    resumableSessions: createFreshnessBucket(),
+    gitSummary: createFreshnessBucket(),
+    sessionBrowser: createFreshnessBucket(),
+    sessionStats: createFreshnessBucket(),
+  }
+}
+
+function createInitialWorkspaceLiveState(): WorkspaceLiveState {
+  return {
+    auto: null,
+    workspace: null,
+    resumableSessions: [],
+    recoverySummary: createInitialRecoverySummary(),
+    freshness: createInitialWorkspaceLiveFreshnessState(),
+    softBootRefreshCount: 0,
+    targetedRefreshCount: 0,
+  }
+}
+
+function withFreshnessRequested(bucket: WorkspaceFreshnessBucket): WorkspaceFreshnessBucket {
+  return {
+    ...bucket,
+    status: "refreshing",
+    lastRequestedAt: new Date().toISOString(),
+    lastFailure: null,
+  }
+}
+
+function withFreshnessInvalidated(
+  bucket: WorkspaceFreshnessBucket,
+  reason: LiveStateInvalidationReason,
+  source: LiveStateInvalidationSource,
+): WorkspaceFreshnessBucket {
+  return {
+    ...bucket,
+    status: bucket.lastSuccessAt ? "stale" : bucket.status,
+    stale: true,
+    invalidatedAt: new Date().toISOString(),
+    invalidationReason: reason,
+    invalidationSource: source,
+  }
+}
+
+function withFreshnessSucceeded(bucket: WorkspaceFreshnessBucket): WorkspaceFreshnessBucket {
+  return {
+    ...bucket,
+    status: "fresh",
+    stale: false,
+    reloadCount: bucket.reloadCount + 1,
+    lastSuccessAt: new Date().toISOString(),
+    lastFailureAt: null,
+    lastFailure: null,
+  }
+}
+
+function withFreshnessFailed(bucket: WorkspaceFreshnessBucket, error: string): WorkspaceFreshnessBucket {
+  return {
+    ...bucket,
+    status: "error",
+    stale: true,
+    lastFailureAt: new Date().toISOString(),
+    lastFailure: error,
+  }
+}
+
+export function getLiveWorkspaceIndex(
+  state: Pick<WorkspaceStoreState, "boot" | "live">,
+): WorkspaceIndex | null {
+  return state.live.workspace ?? state.boot?.workspace ?? null
+}
+
+export function getLiveAutoDashboard(
+  state: Pick<WorkspaceStoreState, "boot" | "live">,
+): AutoDashboardData | null {
+  return state.live.auto ?? state.boot?.auto ?? null
+}
+
+export function getLiveResumableSessions(
+  state: Pick<WorkspaceStoreState, "boot" | "live">,
+): BootResumableSession[] {
+  return state.live.resumableSessions.length > 0 ? state.live.resumableSessions : state.boot?.resumableSessions ?? []
+}
+
+export function createWorkspaceRecoverySummary(state: Pick<WorkspaceStoreState, "boot" | "live">): WorkspaceRecoverySummary {
+  const bridge = state.boot?.bridge ?? null
+  const workspace = getLiveWorkspaceIndex(state)
+  const auto = getLiveAutoDashboard(state)
+  const validationCount = workspace?.validationIssues.length ?? 0
+  const retryInProgress = Boolean(bridge?.sessionState?.retryInProgress)
+  const retryAttempt = bridge?.sessionState?.retryAttempt ?? 0
+  const autoRetryEnabled = Boolean(bridge?.sessionState?.autoRetryEnabled)
+  const isCompacting = Boolean(bridge?.sessionState?.isCompacting)
+  const freshnessBucket = state.live.freshness.recovery
+  const freshness =
+    freshnessBucket.status === "error"
+      ? "error"
+      : freshnessBucket.stale
+        ? "stale"
+        : freshnessBucket.lastSuccessAt
+          ? "fresh"
+          : "idle"
+  const lastError = bridge?.lastError
+    ? {
+        message: bridge.lastError.message,
+        phase: bridge.lastError.phase,
+        at: bridge.lastError.at,
+      }
+    : null
+
+  let tone: WorkspaceRecoverySummary["tone"] = "healthy"
+  let label = "Recovery summary healthy"
+  let detail = "No retry, compaction, bridge, or validation recovery signals are active."
+
+  if (!workspace && !auto && !bridge) {
+    return createInitialRecoverySummary()
+  }
+
+  if (lastError || freshness === "error") {
+    tone = "danger"
+    label = "Recovery attention required"
+    detail = lastError?.message ?? freshnessBucket.lastFailure ?? "A targeted live refresh failed."
+  } else if (validationCount > 0) {
+    tone = "warning"
+    label = `Recovery summary: ${validationCount} validation issue${validationCount === 1 ? "" : "s"}`
+    detail = "Workspace validation surfaced issues that may need doctor or audit follow-up."
+  } else if (retryInProgress) {
+    tone = "warning"
+    label = `Recovery retry active (attempt ${Math.max(1, retryAttempt)})`
+    detail = "The live bridge is retrying the current unit after a transient failure."
+  } else if (isCompacting) {
+    tone = "warning"
+    label = "Recovery compaction active"
+    detail = "The live session is compacting context before continuing."
+  } else if (freshness === "stale") {
+    tone = "warning"
+    label = "Recovery summary stale"
+    detail = freshnessBucket.invalidationReason
+      ? `Waiting for a targeted refresh after ${freshnessBucket.invalidationReason.replaceAll("_", " ")}.`
+      : "Waiting for the next targeted refresh."
+  }
+
+  return {
+    visible: true,
+    tone,
+    label,
+    detail,
+    validationCount,
+    retryInProgress,
+    retryAttempt,
+    autoRetryEnabled,
+    isCompacting,
+    currentUnitId: auto?.currentUnit?.id ?? null,
+    freshness,
+    entrypointLabel: tone === "danger" || tone === "warning" ? "Inspect recovery" : "Review recovery",
+    lastError,
+  }
+}
+
+function applyBootToLiveState(
+  current: WorkspaceLiveState,
+  boot: WorkspaceBootPayload,
+  options: { soft?: boolean } = {},
+): WorkspaceLiveState {
+  const next: WorkspaceLiveState = {
+    ...current,
+    auto: boot.auto,
+    workspace: boot.workspace,
+    resumableSessions: boot.resumableSessions,
+    freshness: {
+      ...current.freshness,
+      auto: withFreshnessSucceeded(current.freshness.auto),
+      workspace: withFreshnessSucceeded(current.freshness.workspace),
+      recovery: withFreshnessSucceeded(current.freshness.recovery),
+      resumableSessions: withFreshnessSucceeded(current.freshness.resumableSessions),
+    },
+    softBootRefreshCount: current.softBootRefreshCount + (options.soft ? 1 : 0),
+  }
+
+  next.recoverySummary = createWorkspaceRecoverySummary({ boot, live: next })
+  return next
+}
+
 function createInitialState(): WorkspaceStoreState {
   return {
     bootStatus: "idle",
     connectionState: "idle",
     boot: null,
+    live: createInitialWorkspaceLiveState(),
     terminalLines: [createTerminalLine("system", "Preparing the live GSD workspace…")],
     lastClientError: null,
     lastBridgeError: null,
@@ -1372,7 +1720,7 @@ function createInitialState(): WorkspaceStoreState {
   }
 }
 
-class GSDWorkspaceStore {
+export class GSDWorkspaceStore {
   private state = createInitialState()
   private readonly listeners = new Set<() => void>()
   private bootPromise: Promise<void> | null = null
@@ -1440,6 +1788,7 @@ class GSDWorkspaceStore {
     surface: BrowserSlashCommandSurface,
     options: { source?: "slash" | "sidebar" | "surface"; args?: string; selectedTarget?: CommandSurfaceTarget | null } = {},
   ): void => {
+    const resumableSessions = getLiveResumableSessions(this.state)
     this.patchState({
       commandSurface: openCommandSurfaceState(this.state.commandSurface, {
         surface,
@@ -1450,7 +1799,7 @@ class GSDWorkspaceStore {
         currentModel: getCurrentModelSelection(this.state.boot?.bridge),
         currentThinkingLevel: this.state.boot?.bridge.sessionState?.thinkingLevel ?? null,
         preferredProviderId: getPreferredOnboardingProviderId(this.state.boot?.onboarding),
-        resumableSessions: this.state.boot?.resumableSessions.map((session) => ({
+        resumableSessions: resumableSessions.map((session) => ({
           id: session.id,
           path: session.path,
           name: session.name,
@@ -1471,13 +1820,14 @@ class GSDWorkspaceStore {
   }
 
   setCommandSurfaceSection = (section: CommandSurfaceSection): void => {
+    const resumableSessions = getLiveResumableSessions(this.state)
     this.patchState({
       commandSurface: setCommandSurfaceSection(this.state.commandSurface, section, {
         onboardingLocked: this.state.boot?.onboarding.locked,
         currentModel: getCurrentModelSelection(this.state.boot?.bridge),
         currentThinkingLevel: this.state.boot?.bridge.sessionState?.thinkingLevel ?? null,
         preferredProviderId: getPreferredOnboardingProviderId(this.state.boot?.onboarding),
-        resumableSessions: this.state.boot?.resumableSessions.map((session) => ({
+        resumableSessions: resumableSessions.map((session) => ({
           id: session.id,
           path: session.path,
           name: session.name,
@@ -1504,7 +1854,19 @@ class GSDWorkspaceStore {
       error: null,
     }
 
+    const requestedLive: WorkspaceLiveState = {
+      ...this.state.live,
+      freshness: {
+        ...this.state.live.freshness,
+        gitSummary: withFreshnessRequested(this.state.live.freshness.gitSummary),
+      },
+    }
+
     this.patchState({
+      live: {
+        ...requestedLive,
+        recoverySummary: createWorkspaceRecoverySummary({ boot: this.state.boot, live: requestedLive }),
+      },
       commandSurface: setCommandSurfacePending(
         {
           ...this.state.commandSurface,
@@ -1531,7 +1893,18 @@ class GSDWorkspaceStore {
             ? payload.error
             : `Current-project git summary failed with ${response.status}`
         const failedGitSummary = normalizeGitSummaryError(requestedGitSummary, message)
+        const failedLive: WorkspaceLiveState = {
+          ...this.state.live,
+          freshness: {
+            ...this.state.live.freshness,
+            gitSummary: withFreshnessFailed(this.state.live.freshness.gitSummary, message),
+          },
+        }
         this.patchState({
+          live: {
+            ...failedLive,
+            recoverySummary: createWorkspaceRecoverySummary({ boot: this.state.boot, live: failedLive }),
+          },
           commandSurface: applyCommandSurfaceActionResult(
             {
               ...this.state.commandSurface,
@@ -1555,7 +1928,19 @@ class GSDWorkspaceStore {
         error: null,
       }
 
+      const nextLive: WorkspaceLiveState = {
+        ...this.state.live,
+        freshness: {
+          ...this.state.live.freshness,
+          gitSummary: withFreshnessSucceeded(this.state.live.freshness.gitSummary),
+        },
+      }
+
       this.patchState({
+        live: {
+          ...nextLive,
+          recoverySummary: createWorkspaceRecoverySummary({ boot: this.state.boot, live: nextLive }),
+        },
         commandSurface: applyCommandSurfaceActionResult(this.state.commandSurface, {
           action: "load_git_summary",
           success: true,
@@ -1568,7 +1953,18 @@ class GSDWorkspaceStore {
     } catch (error) {
       const message = normalizeClientError(error)
       const failedGitSummary = normalizeGitSummaryError(requestedGitSummary, message)
+      const failedLive: WorkspaceLiveState = {
+        ...this.state.live,
+        freshness: {
+          ...this.state.live.freshness,
+          gitSummary: withFreshnessFailed(this.state.live.freshness.gitSummary, message),
+        },
+      }
       this.patchState({
+        live: {
+          ...failedLive,
+          recoverySummary: createWorkspaceRecoverySummary({ boot: this.state.boot, live: failedLive }),
+        },
         commandSurface: applyCommandSurfaceActionResult(
           {
             ...this.state.commandSurface,
@@ -1579,6 +1975,145 @@ class GSDWorkspaceStore {
             success: false,
             message,
             gitSummary: failedGitSummary,
+          },
+        ),
+      })
+      return null
+    }
+  }
+
+  loadRecoveryDiagnostics = async (): Promise<WorkspaceRecoveryDiagnostics | null> => {
+    const requestedRecovery = markRecoveryStatePending(this.state.commandSurface.recovery)
+    const requestedLive: WorkspaceLiveState = {
+      ...this.state.live,
+      freshness: {
+        ...this.state.live.freshness,
+        recovery: withFreshnessRequested(this.state.live.freshness.recovery),
+      },
+    }
+
+    this.patchState({
+      live: {
+        ...requestedLive,
+        recoverySummary: createWorkspaceRecoverySummary({ boot: this.state.boot, live: requestedLive }),
+      },
+      commandSurface: setCommandSurfacePending(
+        {
+          ...this.state.commandSurface,
+          recovery: requestedRecovery,
+        },
+        "load_recovery_diagnostics",
+      ),
+    })
+
+    try {
+      const response = await fetch("/api/recovery", {
+        method: "GET",
+        cache: "no-store",
+        headers: {
+          Accept: "application/json",
+        },
+      })
+
+      const payload = await response.json().catch(() => null)
+      const diagnostics = normalizeRecoveryDiagnosticsPayload(payload)
+      if (!response.ok || !diagnostics) {
+        const message =
+          payload && typeof payload === "object" && "error" in payload && typeof payload.error === "string"
+            ? payload.error
+            : `Recovery diagnostics failed with ${response.status}`
+        const failedRecovery = markRecoveryStateFailure(requestedRecovery, message)
+        const failedLive: WorkspaceLiveState = {
+          ...this.state.live,
+          freshness: {
+            ...this.state.live.freshness,
+            recovery: withFreshnessFailed(this.state.live.freshness.recovery, message),
+          },
+        }
+        this.patchState({
+          lastClientError: message,
+          live: {
+            ...failedLive,
+            recoverySummary: createWorkspaceRecoverySummary({ boot: this.state.boot, live: failedLive }),
+          },
+          commandSurface: applyCommandSurfaceActionResult(
+            {
+              ...this.state.commandSurface,
+              recovery: failedRecovery,
+            },
+            {
+              action: "load_recovery_diagnostics",
+              success: false,
+              message,
+              recovery: failedRecovery,
+            },
+          ),
+        })
+        return null
+      }
+
+      const recovery = {
+        ...createRecoveryStateFromDiagnostics(diagnostics),
+        lastInvalidatedAt: this.state.commandSurface.recovery.lastInvalidatedAt,
+      }
+      const nextLive: WorkspaceLiveState = {
+        ...this.state.live,
+        freshness: {
+          ...this.state.live.freshness,
+          recovery: withFreshnessSucceeded(this.state.live.freshness.recovery),
+        },
+      }
+
+      this.patchState({
+        lastClientError: null,
+        live: {
+          ...nextLive,
+          recoverySummary: createWorkspaceRecoverySummary({ boot: this.state.boot, live: nextLive }),
+        },
+        commandSurface: applyCommandSurfaceActionResult(
+          {
+            ...this.state.commandSurface,
+            recovery,
+          },
+          {
+            action: "load_recovery_diagnostics",
+            success: true,
+            message:
+              diagnostics.status === "ready"
+                ? "Recovery diagnostics refreshed"
+                : "Recovery diagnostics are currently unavailable",
+            recovery,
+          },
+        ),
+      })
+
+      return diagnostics
+    } catch (error) {
+      const message = normalizeClientError(error)
+      const failedRecovery = markRecoveryStateFailure(requestedRecovery, message)
+      const failedLive: WorkspaceLiveState = {
+        ...this.state.live,
+        freshness: {
+          ...this.state.live.freshness,
+          recovery: withFreshnessFailed(this.state.live.freshness.recovery, message),
+        },
+      }
+      this.patchState({
+        lastClientError: message,
+        live: {
+          ...failedLive,
+          recoverySummary: createWorkspaceRecoverySummary({ boot: this.state.boot, live: failedLive }),
+        },
+        commandSurface: applyCommandSurfaceActionResult(
+          {
+            ...this.state.commandSurface,
+            recovery: failedRecovery,
+          },
+          {
+            action: "load_recovery_diagnostics",
+            success: false,
+            message,
+            recovery: failedRecovery,
           },
         ),
       })
@@ -1612,7 +2147,19 @@ class GSDWorkspaceStore {
       error: null,
     }
 
+    const requestedLive: WorkspaceLiveState = {
+      ...this.state.live,
+      freshness: {
+        ...this.state.live.freshness,
+        sessionBrowser: withFreshnessRequested(this.state.live.freshness.sessionBrowser),
+      },
+    }
+
     this.patchState({
+      live: {
+        ...requestedLive,
+        recoverySummary: createWorkspaceRecoverySummary({ boot: this.state.boot, live: requestedLive }),
+      },
       commandSurface: setCommandSurfacePending(
         {
           ...this.state.commandSurface,
@@ -1649,7 +2196,18 @@ class GSDWorkspaceStore {
           ...requestedSessionBrowser,
           error: message,
         }
+        const failedLive: WorkspaceLiveState = {
+          ...this.state.live,
+          freshness: {
+            ...this.state.live.freshness,
+            sessionBrowser: withFreshnessFailed(this.state.live.freshness.sessionBrowser, message),
+          },
+        }
         this.patchState({
+          live: {
+            ...failedLive,
+            recoverySummary: createWorkspaceRecoverySummary({ boot: this.state.boot, live: failedLive }),
+          },
           commandSurface: applyCommandSurfaceActionResult(
             {
               ...this.state.commandSurface,
@@ -1694,7 +2252,19 @@ class GSDWorkspaceStore {
         }
       }
 
+      const nextLive: WorkspaceLiveState = {
+        ...this.state.live,
+        freshness: {
+          ...this.state.live.freshness,
+          sessionBrowser: withFreshnessSucceeded(this.state.live.freshness.sessionBrowser),
+        },
+      }
+
       this.patchState({
+        live: {
+          ...nextLive,
+          recoverySummary: createWorkspaceRecoverySummary({ boot: this.state.boot, live: nextLive }),
+        },
         commandSurface: applyCommandSurfaceActionResult(
           {
             ...this.state.commandSurface,
@@ -1717,7 +2287,18 @@ class GSDWorkspaceStore {
         ...requestedSessionBrowser,
         error: message,
       }
+      const failedLive: WorkspaceLiveState = {
+        ...this.state.live,
+        freshness: {
+          ...this.state.live.freshness,
+          sessionBrowser: withFreshnessFailed(this.state.live.freshness.sessionBrowser, message),
+        },
+      }
       this.patchState({
+        live: {
+          ...failedLive,
+          recoverySummary: createWorkspaceRecoverySummary({ boot: this.state.boot, live: failedLive }),
+        },
         commandSurface: applyCommandSurfaceActionResult(
           {
             ...this.state.commandSurface,
@@ -1802,9 +2383,27 @@ class GSDWorkspaceStore {
         sessionPath: result.sessionPath,
         name: result.name,
       }
+      const nextLiveBase: WorkspaceLiveState = {
+        ...this.state.live,
+        resumableSessions: overlayLiveBridgeSessionState(
+          getLiveResumableSessions(this.state).map((session) =>
+            session.path === result.sessionPath
+              ? {
+                  ...session,
+                  name: result.name,
+                }
+              : session,
+          ),
+          nextBoot,
+        ),
+      }
 
       this.patchState({
         ...(nextBoot ? { boot: nextBoot } : {}),
+        live: {
+          ...nextLiveBase,
+          recoverySummary: createWorkspaceRecoverySummary({ boot: nextBoot, live: nextLiveBase }),
+        },
         commandSurface: applyCommandSurfaceActionResult(
           {
             ...this.state.commandSurface,
@@ -1820,7 +2419,6 @@ class GSDWorkspaceStore {
         ),
       })
 
-      void this.refreshBoot({ soft: true })
       return result
     } catch (error) {
       const message = normalizeClientError(error)
@@ -2220,8 +2818,24 @@ class GSDWorkspaceStore {
       nextBoot,
     )
 
+    const nextLiveBase: WorkspaceLiveState = {
+      ...this.state.live,
+      resumableSessions: overlayLiveBridgeSessionState(
+        getLiveResumableSessions(this.state).map((session) => ({
+          ...session,
+          isActive: session.path === sessionPath,
+          ...(session.path === sessionPath && nextSessionName ? { name: nextSessionName } : {}),
+        })),
+        nextBoot,
+      ),
+    }
+
     this.patchState({
       ...(nextBoot ? { boot: nextBoot } : {}),
+      live: {
+        ...nextLiveBase,
+        recoverySummary: createWorkspaceRecoverySummary({ boot: nextBoot, live: nextLiveBase }),
+      },
       commandSurface: applyCommandSurfaceActionResult(
         {
           ...this.state.commandSurface,
@@ -2237,12 +2851,23 @@ class GSDWorkspaceStore {
       ),
     })
 
-    await this.refreshBoot({ soft: true })
     return response
   }
 
   loadSessionStats = async (): Promise<CommandSurfaceSessionStats | null> => {
+    const requestedLive: WorkspaceLiveState = {
+      ...this.state.live,
+      freshness: {
+        ...this.state.live.freshness,
+        sessionStats: withFreshnessRequested(this.state.live.freshness.sessionStats),
+      },
+    }
+
     this.patchState({
+      live: {
+        ...requestedLive,
+        recoverySummary: createWorkspaceRecoverySummary({ boot: this.state.boot, live: requestedLive }),
+      },
       commandSurface: setCommandSurfacePending(this.state.commandSurface, "load_session_stats"),
     })
 
@@ -2253,7 +2878,18 @@ class GSDWorkspaceStore {
 
     if (!response || response.success === false) {
       const message = response?.error ?? this.state.lastClientError ?? "Unknown error"
+      const failedLive: WorkspaceLiveState = {
+        ...this.state.live,
+        freshness: {
+          ...this.state.live.freshness,
+          sessionStats: withFreshnessFailed(this.state.live.freshness.sessionStats, message),
+        },
+      }
       this.patchState({
+        live: {
+          ...failedLive,
+          recoverySummary: createWorkspaceRecoverySummary({ boot: this.state.boot, live: failedLive }),
+        },
         commandSurface: applyCommandSurfaceActionResult(this.state.commandSurface, {
           action: "load_session_stats",
           success: false,
@@ -2266,18 +2902,42 @@ class GSDWorkspaceStore {
 
     const sessionStats = normalizeSessionStats(response.data)
     if (!sessionStats) {
+      const message = "Session details response was missing the expected fields."
+      const failedLive: WorkspaceLiveState = {
+        ...this.state.live,
+        freshness: {
+          ...this.state.live.freshness,
+          sessionStats: withFreshnessFailed(this.state.live.freshness.sessionStats, message),
+        },
+      }
       this.patchState({
+        live: {
+          ...failedLive,
+          recoverySummary: createWorkspaceRecoverySummary({ boot: this.state.boot, live: failedLive }),
+        },
         commandSurface: applyCommandSurfaceActionResult(this.state.commandSurface, {
           action: "load_session_stats",
           success: false,
-          message: "Session details response was missing the expected fields.",
+          message,
           sessionStats: null,
         }),
       })
       return null
     }
 
+    const nextLive: WorkspaceLiveState = {
+      ...this.state.live,
+      freshness: {
+        ...this.state.live.freshness,
+        sessionStats: withFreshnessSucceeded(this.state.live.freshness.sessionStats),
+      },
+    }
+
     this.patchState({
+      live: {
+        ...nextLive,
+        recoverySummary: createWorkspaceRecoverySummary({ boot: this.state.boot, live: nextLive }),
+      },
       commandSurface: applyCommandSurfaceActionResult(this.state.commandSurface, {
         action: "load_session_stats",
         success: true,
@@ -2411,8 +3071,6 @@ class GSDWorkspaceStore {
       })
       return response
     }
-
-    await this.refreshBoot({ soft: true })
 
     const sourceText =
       response.data && typeof response.data === "object" && "text" in response.data && typeof response.data.text === "string"
@@ -2804,10 +3462,7 @@ class GSDWorkspaceStore {
     switch (outcome.kind) {
       case "prompt":
       case "rpc": {
-        const response = await this.sendCommand(outcome.command, { displayInput: trimmed })
-        if (outcome.kind === "rpc" && outcome.command.type === "new_session" && response?.success !== false) {
-          await this.refreshBoot({ soft: true })
-        }
+        await this.sendCommand(outcome.command, { displayInput: trimmed })
         return outcome
       }
       case "local":
@@ -2883,11 +3538,13 @@ class GSDWorkspaceStore {
 
         const bootPayload = (await response.json()) as WorkspaceBootPayload
         const boot = cloneBootWithBridge(bootPayload, bootPayload.bridge) ?? bootPayload
+        const live = applyBootToLiveState(this.state.live, boot, { soft: softRefresh })
         this.lastBridgeDigest = null
         this.lastBridgeDigest = [boot.bridge.phase, boot.bridge.activeSessionId, boot.bridge.lastError?.at, boot.bridge.lastError?.message].join("::")
         this.patchState({
           bootStatus: "ready",
           boot,
+          live,
           connectionState: this.eventSource ? this.state.connectionState : "connecting",
           lastBridgeError: boot.bridge.lastError,
           sessionAttached: hasAttachedSession(boot.bridge),
@@ -2917,6 +3574,245 @@ class GSDWorkspaceStore {
     })
 
     await this.bootPromise
+  }
+
+  private invalidateLiveFreshness(
+    domains: LiveStateInvalidationDomain[],
+    reason: LiveStateInvalidationReason,
+    source: LiveStateInvalidationSource,
+  ): WorkspaceLiveState {
+    const nextFreshness = { ...this.state.live.freshness }
+
+    if (domains.includes("auto")) {
+      nextFreshness.auto = withFreshnessInvalidated(nextFreshness.auto, reason, source)
+    }
+    if (domains.includes("workspace")) {
+      nextFreshness.workspace = withFreshnessInvalidated(nextFreshness.workspace, reason, source)
+      nextFreshness.gitSummary = withFreshnessInvalidated(nextFreshness.gitSummary, reason, source)
+    }
+    if (domains.includes("recovery")) {
+      nextFreshness.recovery = withFreshnessInvalidated(nextFreshness.recovery, reason, source)
+      nextFreshness.sessionStats = withFreshnessInvalidated(nextFreshness.sessionStats, reason, source)
+    }
+    if (domains.includes("resumable_sessions")) {
+      nextFreshness.resumableSessions = withFreshnessInvalidated(nextFreshness.resumableSessions, reason, source)
+      nextFreshness.sessionBrowser = withFreshnessInvalidated(nextFreshness.sessionBrowser, reason, source)
+      nextFreshness.sessionStats = withFreshnessInvalidated(nextFreshness.sessionStats, reason, source)
+    }
+
+    const nextLive = {
+      ...this.state.live,
+      freshness: nextFreshness,
+    }
+    return {
+      ...nextLive,
+      recoverySummary: createWorkspaceRecoverySummary({ boot: this.state.boot, live: nextLive }),
+    }
+  }
+
+  private refreshOpenCommandSurfacesForInvalidation(event: LiveStateInvalidationEvent): void {
+    if (event.domains.includes("workspace") && this.state.commandSurface.open && this.state.commandSurface.section === "git") {
+      if (this.state.commandSurface.pendingAction !== "load_git_summary") {
+        void this.loadGitSummary()
+      }
+    }
+
+    if (event.domains.includes("recovery") && this.state.commandSurface.open && this.state.commandSurface.section === "recovery") {
+      if (this.state.commandSurface.pendingAction !== "load_recovery_diagnostics") {
+        void this.loadRecoveryDiagnostics()
+      }
+    }
+
+    if (event.domains.includes("resumable_sessions")) {
+      if (
+        this.state.commandSurface.open &&
+        (this.state.commandSurface.section === "resume" || this.state.commandSurface.section === "name") &&
+        this.state.commandSurface.pendingAction !== "load_session_browser"
+      ) {
+        void this.loadSessionBrowser()
+      }
+
+      if (this.state.commandSurface.open && this.state.commandSurface.section === "session") {
+        const activeSessionPath = this.state.boot?.bridge.activeSessionFile ?? this.state.boot?.bridge.sessionState?.sessionFile ?? null
+        this.patchState({
+          commandSurface: {
+            ...this.state.commandSurface,
+            sessionStats:
+              this.state.commandSurface.sessionStats && this.state.commandSurface.sessionStats.sessionFile === activeSessionPath
+                ? this.state.commandSurface.sessionStats
+                : null,
+          },
+        })
+        if (this.state.commandSurface.pendingAction !== "load_session_stats") {
+          void this.loadSessionStats()
+        }
+      }
+    }
+  }
+
+  private async reloadLiveState(
+    domains: LiveStateInvalidationDomain[],
+    reason: LiveStateInvalidationReason,
+    source: LiveStateInvalidationSource,
+  ): Promise<void> {
+    const requestedDomains = domains.filter((domain) => domain === "auto" || domain === "workspace" || domain === "resumable_sessions")
+
+    if (requestedDomains.length === 0) {
+      const nextLive = {
+        ...this.state.live,
+        freshness: {
+          ...this.state.live.freshness,
+          recovery: withFreshnessSucceeded(this.state.live.freshness.recovery),
+        },
+      }
+      this.patchState({
+        live: {
+          ...nextLive,
+          recoverySummary: createWorkspaceRecoverySummary({ boot: this.state.boot, live: nextLive }),
+        },
+      })
+      return
+    }
+
+    const nextFreshness = { ...this.state.live.freshness }
+    if (requestedDomains.includes("auto")) {
+      nextFreshness.auto = withFreshnessRequested(nextFreshness.auto)
+    }
+    if (requestedDomains.includes("workspace")) {
+      nextFreshness.workspace = withFreshnessRequested(nextFreshness.workspace)
+    }
+    if (requestedDomains.includes("resumable_sessions")) {
+      nextFreshness.resumableSessions = withFreshnessRequested(nextFreshness.resumableSessions)
+    }
+    nextFreshness.recovery = withFreshnessRequested(nextFreshness.recovery)
+
+    const requestedLive = {
+      ...this.state.live,
+      freshness: nextFreshness,
+      targetedRefreshCount: this.state.live.targetedRefreshCount + 1,
+    }
+    this.patchState({
+      live: {
+        ...requestedLive,
+        recoverySummary: createWorkspaceRecoverySummary({ boot: this.state.boot, live: requestedLive }),
+      },
+    })
+
+    const params = new URLSearchParams()
+    for (const domain of requestedDomains) {
+      params.append("domain", domain)
+    }
+
+    try {
+      const response = await fetch(`/api/live-state?${params.toString()}`, {
+        method: "GET",
+        cache: "no-store",
+        headers: {
+          Accept: "application/json",
+        },
+      })
+      const payload = await response.json().catch(() => null) as {
+        auto?: AutoDashboardData
+        workspace?: WorkspaceIndex
+        resumableSessions?: BootResumableSession[]
+        error?: string
+      } | null
+
+      if (!response.ok || !payload) {
+        throw new Error(payload?.error ?? `Live state request failed with ${response.status}`)
+      }
+
+      let nextBoot = this.state.boot
+      let nextLive: WorkspaceLiveState = {
+        ...this.state.live,
+        freshness: { ...this.state.live.freshness },
+      }
+
+      if (requestedDomains.includes("auto") && payload.auto) {
+        nextLive.auto = payload.auto
+        nextLive.freshness.auto = withFreshnessSucceeded(nextLive.freshness.auto)
+        nextBoot = nextBoot
+          ? {
+              ...nextBoot,
+              auto: payload.auto,
+            }
+          : nextBoot
+      }
+
+      if (requestedDomains.includes("workspace") && payload.workspace) {
+        nextLive.workspace = payload.workspace
+        nextLive.freshness.workspace = withFreshnessSucceeded(nextLive.freshness.workspace)
+        nextBoot = nextBoot
+          ? {
+              ...nextBoot,
+              workspace: payload.workspace,
+            }
+          : nextBoot
+      }
+
+      if (requestedDomains.includes("resumable_sessions") && payload.resumableSessions) {
+        const nextSessions = overlayLiveBridgeSessionState(payload.resumableSessions, nextBoot)
+        nextLive.resumableSessions = nextSessions
+        nextLive.freshness.resumableSessions = withFreshnessSucceeded(nextLive.freshness.resumableSessions)
+        nextBoot = nextBoot
+          ? {
+              ...nextBoot,
+              resumableSessions: nextSessions,
+            }
+          : nextBoot
+      }
+
+      nextLive.freshness.recovery = withFreshnessSucceeded(nextLive.freshness.recovery)
+      nextLive.recoverySummary = createWorkspaceRecoverySummary({ boot: nextBoot, live: nextLive })
+      this.patchState({
+        ...(nextBoot ? { boot: nextBoot } : {}),
+        live: nextLive,
+      })
+    } catch (error) {
+      const message = normalizeClientError(error)
+      const failedLive: WorkspaceLiveState = {
+        ...this.state.live,
+        freshness: {
+          ...this.state.live.freshness,
+          auto:
+            requestedDomains.includes("auto")
+              ? withFreshnessFailed(this.state.live.freshness.auto, message)
+              : this.state.live.freshness.auto,
+          workspace:
+            requestedDomains.includes("workspace")
+              ? withFreshnessFailed(this.state.live.freshness.workspace, message)
+              : this.state.live.freshness.workspace,
+          resumableSessions:
+            requestedDomains.includes("resumable_sessions")
+              ? withFreshnessFailed(this.state.live.freshness.resumableSessions, message)
+              : this.state.live.freshness.resumableSessions,
+          recovery: withFreshnessFailed(this.state.live.freshness.recovery, message),
+        },
+      }
+
+      this.patchState({
+        lastClientError: message,
+        live: {
+          ...failedLive,
+          recoverySummary: createWorkspaceRecoverySummary({ boot: this.state.boot, live: failedLive }),
+        },
+        terminalLines: withTerminalLine(this.state.terminalLines, createTerminalLine("error", `Live refresh failed (${reason}) — ${message}`)),
+      })
+    }
+  }
+
+  private handleLiveStateInvalidation(event: LiveStateInvalidationEvent): void {
+    this.patchState({
+      live: this.invalidateLiveFreshness(event.domains, event.reason, event.source),
+      commandSurface: event.domains.includes("recovery")
+        ? {
+            ...this.state.commandSurface,
+            recovery: markRecoveryStateInvalidated(this.state.commandSurface.recovery),
+          }
+        : this.state.commandSurface,
+    })
+    this.refreshOpenCommandSurfacesForInvalidation(event)
+    void this.reloadLiveState(event.domains, event.reason, event.source)
   }
 
   refreshOnboarding = async (): Promise<WorkspaceOnboardingState | null> => {
@@ -3387,6 +4283,10 @@ class GSDWorkspaceStore {
       return
     }
 
+    if (event.type === "live_state_invalidation") {
+      this.handleLiveStateInvalidation(event)
+    }
+
     // Route into structured live-interaction state (additive — summary lines still produced below)
     this.routeLiveInteractionEvent(event)
 
@@ -3506,10 +4406,24 @@ class GSDWorkspaceStore {
     this.lastBridgeDigest = digest
 
     const nextBoot = cloneBootWithBridge(this.state.boot, bridge)
+    const nextLiveBase: WorkspaceLiveState = {
+      ...this.state.live,
+      resumableSessions: overlayLiveBridgeSessionState(this.state.live.resumableSessions, nextBoot),
+    }
+    const nextLive = {
+      ...nextLiveBase,
+      recoverySummary: createWorkspaceRecoverySummary({ boot: nextBoot, live: nextLiveBase }),
+    }
+
     const nextPatch: Partial<WorkspaceStoreState> = {
       boot: nextBoot,
+      live: nextLive,
       lastBridgeError: bridge.lastError,
       sessionAttached: hasAttachedSession(bridge),
+      commandSurface: {
+        ...this.state.commandSurface,
+        sessionBrowser: syncSessionBrowserStateWithBridge(this.state.commandSurface.sessionBrowser, nextBoot),
+      },
     }
 
     if (shouldEmitLine) {
@@ -3562,6 +4476,7 @@ export function useGSDWorkspaceActions(): Pick<
   | "setCommandSurfaceSection"
   | "selectCommandSurfaceTarget"
   | "loadGitSummary"
+  | "loadRecoveryDiagnostics"
   | "updateSessionBrowserState"
   | "loadSessionBrowser"
   | "renameSessionFromSurface"
@@ -3607,6 +4522,7 @@ export function useGSDWorkspaceActions(): Pick<
     setCommandSurfaceSection: store.setCommandSurfaceSection,
     selectCommandSurfaceTarget: store.selectCommandSurfaceTarget,
     loadGitSummary: store.loadGitSummary,
+    loadRecoveryDiagnostics: store.loadRecoveryDiagnostics,
     updateSessionBrowserState: store.updateSessionBrowserState,
     loadSessionBrowser: store.loadSessionBrowser,
     renameSessionFromSurface: store.renameSessionFromSurface,

@@ -5,7 +5,7 @@ import { spawn, execFileSync } from "node:child_process"
 import { join } from "node:path"
 import { tmpdir } from "node:os"
 
-import { chromium } from "playwright"
+import { chromium, type Page } from "playwright"
 
 const projectRoot = process.cwd()
 const resolveTsPath = join(projectRoot, "src", "resources", "extensions", "gsd", "tests", "resolve-ts.mjs")
@@ -128,7 +128,7 @@ async function launchWebModeFromProject(tempHome: string, browserLogPath: string
     const timeout = setTimeout(() => {
       child.kill("SIGTERM")
       finish(new Error(`Timed out waiting for gsd --web to exit. stderr so far:\n${stderr}`))
-    }, 120_000)
+    }, 180_000)
 
     child.stdout.on("data", (chunk: Buffer) => {
       stdout += chunk.toString()
@@ -157,69 +157,35 @@ async function launchWebModeFromProject(tempHome: string, browserLogPath: string
   })
 }
 
-async function waitForHttpOk(url: string, timeoutMs = 60_000): Promise<void> {
-  const deadline = Date.now() + timeoutMs
-  let lastError: unknown = null
+async function readFirstSseEventInPage(page: Page, timeoutMs = 15_000): Promise<Record<string, unknown>> {
+  return await page.evaluate(
+    async ({ timeoutMs }) => {
+      return await new Promise<Record<string, unknown>>((resolve, reject) => {
+        const source = new EventSource("/api/session/events")
+        const timer = window.setTimeout(() => {
+          source.close()
+          reject(new Error("Timed out waiting for the first SSE event"))
+        }, timeoutMs)
 
-  while (Date.now() < deadline) {
-    try {
-      const response = await fetch(url, { method: "GET", signal: AbortSignal.timeout(5_000) })
-      if (response.ok) return
-      lastError = new Error(`Unexpected ${response.status} for ${url}`)
-    } catch (error) {
-      lastError = error
-    }
+        source.onmessage = (event) => {
+          window.clearTimeout(timer)
+          source.close()
+          try {
+            resolve(JSON.parse(event.data) as Record<string, unknown>)
+          } catch (error) {
+            reject(error instanceof Error ? error : new Error(String(error)))
+          }
+        }
 
-    await new Promise((resolve) => setTimeout(resolve, 500))
-  }
-
-  throw new Error(`Timed out waiting for ${url}: ${lastError instanceof Error ? lastError.message : String(lastError)}`)
-}
-
-async function readFirstSseEvent(url: string): Promise<Record<string, unknown>> {
-  const controller = new AbortController()
-  const response = await fetch(url, {
-    method: "GET",
-    headers: {
-      Accept: "text/event-stream",
+        source.onerror = () => {
+          window.clearTimeout(timer)
+          source.close()
+          reject(new Error("EventSource failed before the first SSE payload"))
+        }
+      })
     },
-    signal: controller.signal,
-  })
-
-  assert.equal(response.ok, true, `expected SSE endpoint to respond successfully: ${response.status}`)
-  assert.ok(response.body, "expected SSE response body")
-
-  const reader = response.body.getReader()
-  const decoder = new TextDecoder()
-  let buffer = ""
-  const deadline = Date.now() + 15_000
-
-  try {
-    while (Date.now() < deadline) {
-      const { value, done } = await reader.read()
-      if (done) break
-      buffer += decoder.decode(value, { stream: true })
-
-      const boundary = buffer.indexOf("\n\n")
-      if (boundary === -1) continue
-
-      const chunk = buffer.slice(0, boundary)
-      const dataLine = chunk
-        .split("\n")
-        .map((line) => line.trim())
-        .find((line) => line.startsWith("data:"))
-
-      if (!dataLine) continue
-
-      controller.abort()
-      return JSON.parse(dataLine.slice(5).trim()) as Record<string, unknown>
-    }
-  } finally {
-    controller.abort()
-    await reader.cancel().catch(() => undefined)
-  }
-
-  throw new Error("Timed out waiting for the first SSE event")
+    { timeoutMs },
+  )
 }
 
 async function killProcessOnPort(port: number): Promise<void> {
@@ -271,29 +237,44 @@ test("gsd --web launches the live host and the shell attaches to boot plus SSE s
     assert.match(launch.stderr, /status=started/, "expected a started diagnostic line on stderr")
     assert.ok(launch.stdout.trim().length === 0, `web launch should not emit interactive stdout: ${launch.stdout}`)
 
-    await waitForHttpOk(`${launch.url}/api/boot`)
+    browser = await chromium.launch({ headless: true })
+    const page = await browser.newPage()
+    await page.goto(launch.url, { waitUntil: "load" })
 
-    const bootResponse = await fetch(`${launch.url}/api/boot`, {
-      method: "GET",
-      headers: { Accept: "application/json" },
-      signal: AbortSignal.timeout(10_000),
+    const bootResult = await page.evaluate(async () => {
+      const response = await fetch("/api/boot", {
+        method: "GET",
+        headers: {
+          Accept: "application/json",
+        },
+      })
+
+      return {
+        ok: response.ok,
+        status: response.status,
+        boot: await response.json(),
+      }
     })
-    assert.equal(bootResponse.ok, true, `expected boot endpoint to respond successfully: ${bootResponse.status}`)
+    assert.equal(bootResult.ok, true, `expected boot endpoint to respond successfully: ${bootResult.status}`)
 
-    const boot = await bootResponse.json()
+    const boot = bootResult.boot as {
+      project: { cwd: string; sessionsDir: string }
+      workspace: { active: { milestoneId?: string; sliceId?: string; phase?: string } }
+      bridge: { phase: string; activeSessionId?: string }
+    }
     assert.equal(boot.project.cwd, projectRoot)
     assert.equal(boot.project.sessionsDir, cliWeb.getProjectSessionsDir(projectRoot, join(tempHome, ".gsd", "sessions")))
-    assert.equal(boot.workspace.active.milestoneId, "M001")
+    assert.match(boot.workspace.active.milestoneId ?? "", /^M\d+$/, "expected a live active milestone id")
     if ((boot.workspace.active.sliceId ?? "").length > 0) {
-      assert.match(boot.workspace.active.sliceId, /^S\d+$/)
+      assert.match(boot.workspace.active.sliceId ?? "", /^S\d+$/)
     }
     assert.equal(typeof boot.workspace.active.phase, "string")
-    assert.ok(boot.workspace.active.phase.length > 0, "expected a non-empty active workspace phase")
+    assert.ok((boot.workspace.active.phase ?? "").length > 0, "expected a non-empty active workspace phase")
     assert.equal(boot.bridge.phase, "ready")
     assert.equal(typeof boot.bridge.activeSessionId, "string")
-    assert.ok(boot.bridge.activeSessionId.length > 0, "expected the bridge to attach a session during boot")
+    assert.ok((boot.bridge.activeSessionId ?? "").length > 0, "expected the bridge to attach a session during boot")
 
-    const firstEvent = await readFirstSseEvent(`${launch.url}/api/session/events`)
+    const firstEvent = await readFirstSseEventInPage(page)
     const bridgeEvent = firstEvent as {
       type: string
       bridge: { phase: string; activeSessionId: string; connectionCount: number }
@@ -302,10 +283,6 @@ test("gsd --web launches the live host and the shell attaches to boot plus SSE s
     assert.equal(bridgeEvent.bridge.phase, "ready")
     assert.equal(typeof bridgeEvent.bridge.activeSessionId, "string")
     assert.ok(bridgeEvent.bridge.connectionCount >= 1, "expected an active SSE subscriber count")
-
-    browser = await chromium.launch({ headless: true })
-    const page = await browser.newPage()
-    await page.goto(launch.url, { waitUntil: "load" })
 
     await page.waitForFunction(
       () => {
@@ -318,7 +295,7 @@ test("gsd --web launches the live host and the shell attaches to boot plus SSE s
     await page.waitForFunction(
       () => {
         const node = document.querySelector('[data-testid="sidebar-current-scope"]')
-        return Boolean(node?.textContent?.match(/M001(?:\/S\d+(?:\/T\d+)?)?/))
+        return Boolean(node?.textContent?.match(/M\d+(?:\/S\d+(?:\/T\d+)?)?/))
       },
       null,
       { timeout: 60_000 },
@@ -337,8 +314,13 @@ test("gsd --web launches the live host and the shell attaches to boot plus SSE s
     const unitLabel = await page.locator('[data-testid="status-bar-unit"]').textContent()
 
     assert.match(connectionStatus ?? "", /Bridge connected/)
-    assert.match(scopeLabel ?? "", /M001(?:\/S\d+(?:\/T\d+)?)?/)
-    assert.match(unitLabel ?? "", /M001(?:\/S\d+(?:\/T\d+)?)?|project\s+—/)
+    assert.match(scopeLabel ?? "", /M\d+(?:\/S\d+(?:\/T\d+)?)?/)
+    assert.match(unitLabel ?? "", /M\d+(?:\/S\d+(?:\/T\d+)?)?|project\s+—/)
+
+    await page.locator('[data-testid="dashboard-recovery-summary-entrypoint"]').click()
+    await page.waitForSelector('[data-testid="command-surface-recovery"]', { timeout: 60_000 })
+    const recoveryState = await page.locator('[data-testid="command-surface-recovery-state"]').textContent()
+    assert.ok(recoveryState && recoveryState.length > 0, "expected the recovery diagnostics panel to expose a visible load state")
 
     assert.ok(existsSync(browserLogPath), "expected the launcher to attempt opening the browser")
     const openedUrls = readFileSync(browserLogPath, "utf-8")

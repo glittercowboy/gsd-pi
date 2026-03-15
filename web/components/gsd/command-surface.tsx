@@ -12,6 +12,7 @@ import {
   FileText,
   GitBranch,
   KeyRound,
+  LifeBuoy,
   LoaderCircle,
   LogIn,
   LogOut,
@@ -52,7 +53,7 @@ import {
   useGSDWorkspaceState,
 } from "@/lib/gsd-workspace-store"
 
-const SETTINGS_SURFACE_SECTIONS = ["model", "thinking", "queue", "compaction", "retry", "auth"] as const
+const SETTINGS_SURFACE_SECTIONS = ["model", "thinking", "queue", "compaction", "retry", "recovery", "auth"] as const
 const GIT_SURFACE_SECTIONS = ["git"] as const
 const SESSION_SURFACE_SECTIONS = ["resume", "name", "fork", "session", "compact"] as const
 
@@ -84,6 +85,8 @@ function sectionLabel(section: CommandSurfaceSection): string {
       return "Auto-compact"
     case "retry":
       return "Retry"
+    case "recovery":
+      return "Recovery"
     case "auth":
       return "Auth"
     case "git":
@@ -113,6 +116,8 @@ function sectionIcon(section: CommandSurfaceSection) {
       return <Archive className="h-4 w-4" />
     case "retry":
       return <RefreshCw className="h-4 w-4" />
+    case "recovery":
+      return <LifeBuoy className="h-4 w-4" />
     case "auth":
       return <ShieldCheck className="h-4 w-4" />
     case "git":
@@ -142,6 +147,8 @@ function sectionDescription(section: CommandSurfaceSection): string {
       return "Toggle persisted auto-compaction behavior and see whether the live session is compacting right now."
     case "retry":
       return "Inspect retry-enabled and retry-in-progress state directly from the bridge, then change or abort it here."
+    case "recovery":
+      return "Load structured doctor, validation, bridge, and interrupted-run diagnostics from the dedicated recovery contract without parsing transcript text."
     case "auth":
       return "Manage browser sign-in, API-key setup, and logout against the current onboarding contract."
     case "git":
@@ -230,9 +237,12 @@ export function CommandSurface() {
   const workspace = useGSDWorkspaceState()
   const {
     closeCommandSurface,
+    openCommandSurface,
+    refreshBoot,
     setCommandSurfaceSection,
     selectCommandSurfaceTarget,
     loadGitSummary,
+    loadRecoveryDiagnostics,
     updateSessionBrowserState,
     loadSessionBrowser,
     renameSessionFromSurface,
@@ -261,6 +271,7 @@ export function CommandSurface() {
   const onboarding = workspace.boot?.onboarding ?? null
   const activeFlow = onboarding?.activeFlow ?? null
   const gitSummary = commandSurface.gitSummary
+  const recovery = commandSurface.recovery
   const sessionBrowser = commandSurface.sessionBrowser
   const liveSessionState = workspace.boot?.bridge.sessionState ?? null
   const settingsRequests = commandSurface.settingsRequests
@@ -283,6 +294,23 @@ export function CommandSurface() {
     if (commandSurface.gitSummary.loaded || commandSurface.gitSummary.error) return
     void loadGitSummary()
   }, [commandSurface.open, commandSurface.section, commandSurface.pendingAction, commandSurface.gitSummary.loaded, commandSurface.gitSummary.error, loadGitSummary])
+
+  useEffect(() => {
+    if (!commandSurface.open || commandSurface.section !== "recovery") return
+    if (commandSurface.pendingAction === "load_recovery_diagnostics") return
+    if (commandSurface.recovery.pending) return
+    if (commandSurface.recovery.loaded && !commandSurface.recovery.stale && !commandSurface.recovery.error) return
+    void loadRecoveryDiagnostics()
+  }, [
+    commandSurface.open,
+    commandSurface.section,
+    commandSurface.pendingAction,
+    commandSurface.recovery.pending,
+    commandSurface.recovery.loaded,
+    commandSurface.recovery.stale,
+    commandSurface.recovery.error,
+    loadRecoveryDiagnostics,
+  ])
 
   useEffect(() => {
     if (!commandSurface.open || (commandSurface.section !== "resume" && commandSurface.section !== "name")) return
@@ -351,6 +379,8 @@ export function CommandSurface() {
   const authBusy = workspace.onboardingRequestState !== "idle"
   const modelBusy = commandSurface.pendingAction === "loading_models" || workspace.commandInFlight === "get_available_models"
   const gitSummaryBusy = commandSurface.pendingAction === "load_git_summary"
+  const recoveryBusy = commandSurface.pendingAction === "load_recovery_diagnostics" || recovery.pending
+  const recoveryDiagnostics = recovery.diagnostics
   const sessionBrowserBusy = commandSurface.pendingAction === "load_session_browser"
   const forkBusy = commandSurface.pendingAction === "load_fork_messages" || commandSurface.pendingAction === "fork_session"
   const sessionBusy = commandSurface.pendingAction === "load_session_stats" || commandSurface.pendingAction === "export_html"
@@ -363,6 +393,28 @@ export function CommandSurface() {
   const abortRetryBusy = settingsRequests.abortRetry.pending
   const selectedProviderApiKey = selectedAuthProvider ? apiKeys[selectedAuthProvider.id] ?? "" : ""
   const surfaceSections = availableSectionsForSurface(commandSurface.activeSurface)
+
+  const triggerRecoveryBrowserAction = (actionId: string) => {
+    switch (actionId) {
+      case "refresh_diagnostics":
+        void loadRecoveryDiagnostics()
+        return
+      case "refresh_workspace":
+        void refreshBoot({ soft: true })
+        return
+      case "open_retry_controls":
+        setCommandSurfaceSection("retry")
+        return
+      case "open_resume_controls":
+        openCommandSurface("resume", { source: "surface" })
+        return
+      case "open_auth_controls":
+        setCommandSurfaceSection("auth")
+        return
+      default:
+        return
+    }
+  }
 
   const renderGitSummaryCard = () => {
     const result = gitSummary.result
@@ -1194,6 +1246,254 @@ export function CommandSurface() {
                             : "No retry is currently active.")}
                     </div>
                   </div>
+                </CardContent>
+              </Card>
+            )}
+
+            {commandSurface.section === "recovery" && (
+              <Card data-testid="command-surface-recovery">
+                <CardHeader className="gap-3 border-b border-border/60 pb-4">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                      <CardTitle className="text-lg">Recovery diagnostics</CardTitle>
+                      <CardDescription>
+                        On-demand doctor, validation, bridge, and interrupted-run diagnostics for the current project.
+                      </CardDescription>
+                    </div>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => void loadRecoveryDiagnostics()}
+                      disabled={recoveryBusy}
+                      data-testid="command-surface-recovery-refresh"
+                    >
+                      <RefreshCw className={cn("h-4 w-4", recoveryBusy && "animate-spin")} />
+                      Refresh diagnostics
+                    </Button>
+                  </div>
+                </CardHeader>
+                <CardContent className="space-y-5 pt-6">
+                  <div className="text-xs text-muted-foreground" data-testid="command-surface-recovery-state">
+                    {recoveryBusy
+                      ? "Loading recovery diagnostics…"
+                      : recovery.error
+                        ? recovery.error
+                        : recoveryDiagnostics
+                          ? `${recoveryDiagnostics.summary.label}${recovery.stale ? " · stale" : ""}`
+                          : "Load the current-project recovery diagnostics contract."}
+                  </div>
+
+                  {recovery.error && (
+                    <div className="rounded-xl border border-destructive/20 bg-destructive/10 px-4 py-3 text-sm text-destructive" data-testid="command-surface-recovery-error">
+                      {recovery.error}
+                    </div>
+                  )}
+
+                  {!recoveryDiagnostics && recoveryBusy && (
+                    <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                      <LoaderCircle className="h-4 w-4 animate-spin" />
+                      Loading structured recovery diagnostics…
+                    </div>
+                  )}
+
+                  {recoveryDiagnostics?.status === "unavailable" && !recovery.error && (
+                    <div className="rounded-2xl border border-border/70 bg-background/70 p-4" data-testid="command-surface-recovery-unavailable">
+                      <div className="font-medium text-foreground">{recoveryDiagnostics.summary.label}</div>
+                      <div className="mt-2 text-sm text-muted-foreground">{recoveryDiagnostics.summary.detail}</div>
+                    </div>
+                  )}
+
+                  {recoveryDiagnostics && (
+                    <>
+                      <div className="grid gap-3 md:grid-cols-2" data-testid="command-surface-recovery-summary">
+                        <div className="rounded-2xl border border-border/70 bg-background/70 p-4">
+                          <div className="text-xs uppercase tracking-wide text-muted-foreground">Current scope</div>
+                          <div className="mt-2 font-medium text-foreground">{recoveryDiagnostics.project.activeScope ?? "project"}</div>
+                          <div className="mt-1 text-xs text-muted-foreground">
+                            {recoveryDiagnostics.summary.detail}
+                          </div>
+                        </div>
+                        <div className="rounded-2xl border border-border/70 bg-background/70 p-4">
+                          <div className="text-xs uppercase tracking-wide text-muted-foreground">Loaded</div>
+                          <div className="mt-2 font-medium text-foreground">
+                            {recovery.lastLoadedAt ? formatRelativeTime(recovery.lastLoadedAt) : "Not loaded yet"}
+                          </div>
+                          <div className="mt-1 text-xs text-muted-foreground">
+                            {recovery.stale
+                              ? `Marked stale${recovery.lastInvalidatedAt ? ` ${formatRelativeTime(recovery.lastInvalidatedAt)}` : ""}`
+                              : recoveryDiagnostics.loadedAt
+                                ? `Captured ${formatRelativeTime(recoveryDiagnostics.loadedAt)}`
+                                : "Fresh diagnostics"}
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="flex flex-wrap gap-2" data-testid="command-surface-recovery-counts">
+                        <Badge variant="outline">Validation {recoveryDiagnostics.summary.validationCount}</Badge>
+                        <Badge variant="outline">Doctor {recoveryDiagnostics.summary.doctorIssueCount}</Badge>
+                        <Badge variant={recoveryDiagnostics.summary.retryInProgress ? "default" : "outline"}>
+                          {recoveryDiagnostics.summary.retryInProgress ? `Retry ${Math.max(1, recoveryDiagnostics.summary.retryAttempt)}` : "Retry idle"}
+                        </Badge>
+                        <Badge variant={recoveryDiagnostics.summary.compactionActive ? "default" : "outline"}>
+                          {recoveryDiagnostics.summary.compactionActive ? "Compacting" : "Compaction idle"}
+                        </Badge>
+                        {recoveryDiagnostics.summary.lastFailurePhase && (
+                          <Badge variant="destructive">Phase {recoveryDiagnostics.summary.lastFailurePhase}</Badge>
+                        )}
+                      </div>
+
+                      {recoveryDiagnostics.bridge.lastFailure && (
+                        <div className="rounded-2xl border border-destructive/20 bg-destructive/10 p-4" data-testid="command-surface-recovery-last-failure">
+                          <div className="font-medium text-destructive">Last bridge failure</div>
+                          <div className="mt-2 text-sm text-destructive">{recoveryDiagnostics.bridge.lastFailure.message}</div>
+                          <div className="mt-2 flex flex-wrap gap-3 text-xs text-destructive/90">
+                            <span>Phase: {recoveryDiagnostics.bridge.lastFailure.phase}</span>
+                            {recoveryDiagnostics.bridge.lastFailure.commandType && <span>Command: {recoveryDiagnostics.bridge.lastFailure.commandType}</span>}
+                            <span>{formatRelativeTime(recoveryDiagnostics.bridge.lastFailure.at)}</span>
+                          </div>
+                        </div>
+                      )}
+
+                      <div className="grid gap-4 md:grid-cols-2">
+                        <div className="space-y-3 rounded-2xl border border-border/70 bg-background/70 p-4" data-testid="command-surface-recovery-validation">
+                          <div>
+                            <FieldTitle>Validation diagnostics</FieldTitle>
+                            <FieldDescription>
+                              {recoveryDiagnostics.validation.total > 0
+                                ? "Current-project validation issues with stable rule ids and suggestions."
+                                : "No validation issues are currently active."}
+                            </FieldDescription>
+                          </div>
+                          <div className="flex flex-wrap gap-2 text-xs text-muted-foreground">
+                            <span>Errors: {recoveryDiagnostics.validation.bySeverity.errors}</span>
+                            <span>Warnings: {recoveryDiagnostics.validation.bySeverity.warnings}</span>
+                            <span>Infos: {recoveryDiagnostics.validation.bySeverity.infos}</span>
+                          </div>
+                          {recoveryDiagnostics.validation.codes.length > 0 ? (
+                            <div className="flex flex-wrap gap-2">
+                              {recoveryDiagnostics.validation.codes.map((code) => (
+                                <Badge key={code.code} variant={code.severity === "error" ? "destructive" : "outline"}>
+                                  {code.code} · {code.count}
+                                </Badge>
+                              ))}
+                            </div>
+                          ) : (
+                            <div className="text-sm text-muted-foreground">No validation codes are currently active.</div>
+                          )}
+                          {recoveryDiagnostics.validation.topIssues.length > 0 && (
+                            <div className="space-y-2 text-sm">
+                              {recoveryDiagnostics.validation.topIssues.map((issue) => (
+                                <div key={`${issue.code}:${issue.file ?? issue.message}`} className="rounded-xl border border-border/60 px-3 py-2">
+                                  <div className="font-medium text-foreground">{issue.code}</div>
+                                  <div className="mt-1 text-muted-foreground">{issue.message}</div>
+                                  {issue.suggestion && <div className="mt-1 text-xs text-muted-foreground">Suggested: {issue.suggestion}</div>}
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+
+                        <div className="space-y-3 rounded-2xl border border-border/70 bg-background/70 p-4" data-testid="command-surface-recovery-doctor">
+                          <div>
+                            <FieldTitle>Doctor diagnostics</FieldTitle>
+                            <FieldDescription>
+                              {recoveryDiagnostics.doctor.total > 0
+                                ? `Scoped doctor findings for ${recoveryDiagnostics.doctor.scope ?? "the current project"}.`
+                                : "No doctor findings are currently active."}
+                            </FieldDescription>
+                          </div>
+                          <div className="flex flex-wrap gap-2 text-xs text-muted-foreground">
+                            <span>Errors: {recoveryDiagnostics.doctor.errors}</span>
+                            <span>Warnings: {recoveryDiagnostics.doctor.warnings}</span>
+                            <span>Infos: {recoveryDiagnostics.doctor.infos}</span>
+                            <span>Fixable: {recoveryDiagnostics.doctor.fixable}</span>
+                          </div>
+                          {recoveryDiagnostics.doctor.codes.length > 0 ? (
+                            <div className="flex flex-wrap gap-2">
+                              {recoveryDiagnostics.doctor.codes.map((code) => (
+                                <Badge key={code.code} variant="outline">
+                                  {code.code} · {code.count}
+                                </Badge>
+                              ))}
+                            </div>
+                          ) : (
+                            <div className="text-sm text-muted-foreground">No doctor codes are currently active.</div>
+                          )}
+                          {recoveryDiagnostics.doctor.topIssues.length > 0 && (
+                            <div className="space-y-2 text-sm">
+                              {recoveryDiagnostics.doctor.topIssues.map((issue) => (
+                                <div key={`${issue.code}:${issue.unitId ?? issue.message}`} className="rounded-xl border border-border/60 px-3 py-2">
+                                  <div className="font-medium text-foreground">{issue.code}</div>
+                                  <div className="mt-1 text-muted-foreground">{issue.message}</div>
+                                  {issue.unitId && <div className="mt-1 text-xs text-muted-foreground">Scope: {issue.unitId}</div>}
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="space-y-3 rounded-2xl border border-border/70 bg-background/70 p-4" data-testid="command-surface-recovery-interrupted-run">
+                        <div>
+                          <FieldTitle>Interrupted-run diagnostics</FieldTitle>
+                          <FieldDescription>{recoveryDiagnostics.interruptedRun.detail}</FieldDescription>
+                        </div>
+                        <div className="flex flex-wrap gap-2 text-xs text-muted-foreground">
+                          <span>Available: {recoveryDiagnostics.interruptedRun.available ? "yes" : "no"}</span>
+                          <span>Detected: {recoveryDiagnostics.interruptedRun.detected ? "yes" : "no"}</span>
+                          <span>Tool calls: {recoveryDiagnostics.interruptedRun.counts.toolCalls}</span>
+                          <span>Files written: {recoveryDiagnostics.interruptedRun.counts.filesWritten}</span>
+                          <span>Commands: {recoveryDiagnostics.interruptedRun.counts.commandsRun}</span>
+                          <span>Errors: {recoveryDiagnostics.interruptedRun.counts.errors}</span>
+                          <span>Git changes: {recoveryDiagnostics.interruptedRun.gitChangesDetected ? "yes" : "no"}</span>
+                        </div>
+                        {recoveryDiagnostics.interruptedRun.unit && (
+                          <div className="text-sm text-foreground">
+                            Last unit: {recoveryDiagnostics.interruptedRun.unit.type} · {recoveryDiagnostics.interruptedRun.unit.id}
+                          </div>
+                        )}
+                        {recoveryDiagnostics.interruptedRun.lastError && (
+                          <div className="text-sm text-destructive">Last forensic error: {recoveryDiagnostics.interruptedRun.lastError}</div>
+                        )}
+                      </div>
+
+                      <div className="space-y-3 rounded-2xl border border-border/70 bg-background/70 p-4" data-testid="command-surface-recovery-actions">
+                        <div>
+                          <FieldTitle>Browser actions</FieldTitle>
+                          <FieldDescription>
+                            These controls stay on the authoritative store command path instead of guessing from transcript text.
+                          </FieldDescription>
+                        </div>
+                        <div className="flex flex-wrap gap-3">
+                          {recoveryDiagnostics.actions.browser.map((action) => (
+                            <Button
+                              key={action.id}
+                              type="button"
+                              variant={action.emphasis === "danger" ? "destructive" : action.emphasis === "primary" ? "default" : "outline"}
+                              onClick={() => triggerRecoveryBrowserAction(action.id)}
+                              disabled={action.id === "refresh_diagnostics" ? recoveryBusy : false}
+                              data-testid={`command-surface-recovery-action-${action.id}`}
+                            >
+                              {action.label}
+                            </Button>
+                          ))}
+                        </div>
+                        {recoveryDiagnostics.actions.commands.length > 0 && (
+                          <div className="space-y-2">
+                            <FieldTitle>Suggested commands</FieldTitle>
+                            <div className="flex flex-wrap gap-2" data-testid="command-surface-recovery-commands">
+                              {recoveryDiagnostics.actions.commands.map((command) => (
+                                <Badge key={command.command} variant="outline" title={command.label}>
+                                  {command.command}
+                                </Badge>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    </>
+                  )}
                 </CardContent>
               </Card>
             )}
