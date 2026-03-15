@@ -231,6 +231,23 @@ Guidelines:
 
 ## Coverage Summary
 
+- Active requirements: 3
+- Mapped to concrete M001 slices: 2
+- Validated: 8
+- Unmapped active requirements: 0
+irements: 0
+/S05, M001/S07 | mapped |
+| R010 | failure-visibility | validated | M001/S06 | M001/S03, M001/S04, M001/S07 | validated |
+| R011 | core-capability | active | M002 (provisional) | none | mapped |
+| R020 | admin/support | deferred | none | none | unmapped |
+| R021 | operability | deferred | none | none | unmapped |
+| R022 | operability | deferred | none | none | unmapped |
+| R030 | anti-feature | out-of-scope | none | none | n/a |
+| R031 | anti-feature | out-of-scope | none | none | n/a |
+| R032 | constraint | out-of-scope | none | none | n/a |
+
+## Coverage Summary
+
 - Active requirements: 5
 - Mapped to concrete M001 slices: 5
 - Validated: 6

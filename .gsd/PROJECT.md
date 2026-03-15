@@ -11,15 +11,13 @@ A user can run `gsd --web`, complete setup, and do the full GSD workflow in a sn
 ## Current State
 
 - Core GSD CLI, TUI, onboarding, and RPC mode already exist in this repo.
-- `src/cli.ts` now has a real `--web` launch path that starts browser mode for the current cwd without opening the TUI.
+- `src/cli.ts` has a real `--web` launch path that starts browser mode for the current cwd without opening the TUI.
 - `src/web/bridge-service.ts` plus `web/app/api/boot|session/command|session/events` expose a live same-origin browser bridge backed by real GSD session state.
-- S02 is complete: browser onboarding uses shared auth truth, same-origin onboarding routes, server-side command gating, and bridge-auth refresh.
-- S03 is complete: the workspace store has typed live-interaction state, the terminal streams agent output with steer/abort controls, and a focused Sheet side panel handles blocking UI requests (select, confirm, input, editor) with multi-request queue support.
-- S04 is complete: dashboard, roadmap, files, and activity views show real current-project data instead of mock values.
-- S05 is complete: dashboard action bar, session picker, and sidebar quick-action button let users start/resume/stop work and switch sessions from visible UI controls backed by real store state.
-- S06 is complete: store has safety caps (transcript 100-block limit, 90s command timeout), SSE reconnect and visibility-return trigger state resync, error banner has actionable retry button, power mode has workflow controls, and active view persists across refresh via sessionStorage.
-- `web/` uses the preserved Next.js skin with real onboarding, live-interaction state, project surfaces, workflow controls, and continuity/recovery mechanisms rather than mock data.
-- The packaged `gsd --web` proof passes end-to-end in automated coverage, and the standalone host builds cleanly.
+- Browser onboarding is live: required setup blocks the workspace, credentials validate through the browser, and bridge auth refresh keeps the first prompt on the current auth view.
+- The workspace store now drives real dashboard, roadmap, files, activity, terminal, focused-panel prompt handling, workflow controls, continuity, and recovery surfaces instead of mock data.
+- S07 is complete: route-level assembled lifecycle coverage proves boot → onboard → prompt → streaming text → tool execution → blocking UI request → UI response → turn boundary through the real web routes, and full web-mode regression is green (`web-state-surfaces-contract`, 59-test contract regression, 5-test integration regression, `npm run build:web-host`).
+- `launchWebMode` now keeps the parent launcher thin by skipping in-memory extension reload in the short-lived parent process, which materially reduced `gsd --web` startup time during regression work.
+- M001 implementation is complete in automation. The remaining milestone-close step is the live manual browser UAT in `.gsd/milestones/M001/slices/S07/S07-UAT.md`.
 
 ## Architecture / Key Patterns
 
@@ -27,8 +25,8 @@ A user can run `gsd --web`, complete setup, and do the full GSD workflow in a sn
 - Pi coding agent session creation and run modes in `packages/pi-coding-agent`
 - Existing RPC transport and extension UI request/response surface
 - Existing onboarding/auth flows in `src/onboarding.ts`
-- Planned web mode should stay current-project scoped and browser-first
-- M001 preserves the existing skin and integrates it before reconsidering framework/runtime changes
+- Web mode stays current-project scoped and browser-first
+- M001 preserves the existing Next.js skin and proves it live before reconsidering framework/runtime changes
 
 ## Capability Contract
 
@@ -36,5 +34,5 @@ See `.gsd/REQUIREMENTS.md` for the explicit capability contract, requirement sta
 
 ## Milestone Sequence
 
-- [ ] M001: Web mode foundation — Launch `gsd --web`, onboard in-browser, connect the skin to a live current-project GSD session, and prove the end-to-end browser workflow. (S01-S06 complete, S07 remaining)
+- [ ] M001: Web mode foundation — All slices S01-S07 are complete and automated assembly proof is green; final live browser UAT remains before milestone close.
 - [ ] M002: Web parity and hardening — Close remaining TUI parity gaps, harden continuity/recovery/observability, and finish the browser-first flow for reliable daily use.

@@ -71,7 +71,7 @@ This milestone is complete only when all are true:
 - [x] **S06: Power mode + continuity + failure visibility** `risk:medium` `depends:[S03,S04,S05]`
   > After this: richer control surfaces stay attached across refresh/reopen, show recoverable failure states, and keep the experience snappy and fast under normal use.
 
-- [ ] **S07: End-to-end web assembly proof** `risk:high` `depends:[S01,S02,S03,S04,S05,S06]`
+- [x] **S07: End-to-end web assembly proof** `risk:high` `depends:[S01,S02,S03,S04,S05,S06]`
   > After this: `gsd --web` works end-to-end in a real project—launch, onboard, start or resume, interact with the agent, and complete the primary workflow entirely in-browser.
 
 ## Boundary Map

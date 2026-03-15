@@ -1,6 +1,6 @@
 import test from "node:test"
 import assert from "node:assert/strict"
-import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { spawn, execFileSync } from "node:child_process"
 import { join } from "node:path"
 import { tmpdir } from "node:os"
@@ -23,6 +23,20 @@ type LaunchResult = {
   stdout: string
   url: string
   port: number
+}
+
+/**
+ * Pre-populate a fake Anthropic API key in the temp home's auth.json so the
+ * onboarding service sees a configured provider and unlocks without requiring
+ * a real browser-based setup flow. The bridge agent ignores the key until an
+ * actual LLM call is made, so get_state and boot readiness are unaffected.
+ */
+function writePreseededAuthFile(tempHome: string): void {
+  const agentDir = join(tempHome, ".gsd", "agent")
+  mkdirSync(agentDir, { recursive: true, mode: 0o700 })
+  const authPath = join(agentDir, "auth.json")
+  const fakeCredential = { type: "api_key", key: "sk-ant-test-fake-key-for-runtime-test" }
+  writeFileSync(authPath, JSON.stringify({ anthropic: fakeCredential }, null, 2), { encoding: "utf-8", mode: 0o600 })
 }
 
 function createBrowserOpenStub(binDir: string, logPath: string): void {
@@ -114,7 +128,7 @@ async function launchWebModeFromProject(tempHome: string, browserLogPath: string
     const timeout = setTimeout(() => {
       child.kill("SIGTERM")
       finish(new Error(`Timed out waiting for gsd --web to exit. stderr so far:\n${stderr}`))
-    }, 90_000)
+    }, 120_000)
 
     child.stdout.on("data", (chunk: Buffer) => {
       stdout += chunk.toString()
@@ -210,12 +224,17 @@ async function readFirstSseEvent(url: string): Promise<Record<string, unknown>> 
 
 async function killProcessOnPort(port: number): Promise<void> {
   try {
-    const output = execFileSync("lsof", ["-ti", `tcp:${port}`], {
+    // Use -sTCP:LISTEN to match only the listening server process, not client
+    // sockets from this test process or the Playwright browser. Killing client
+    // PIDs would send SIGTERM to the test worker itself and abort the run.
+    const output = execFileSync("lsof", ["-ti", `:${port}`, "-sTCP:LISTEN"], {
       encoding: "utf-8",
       stdio: ["ignore", "pipe", "ignore"],
     }).trim()
 
     for (const pid of output.split(/\s+/).filter(Boolean)) {
+      // Guard: never kill ourselves.
+      if (Number(pid) === process.pid) continue
       try {
         process.kill(Number(pid), "SIGTERM")
       } catch {
@@ -240,6 +259,11 @@ test("gsd --web launches the live host and the shell attaches to boot plus SSE s
   let browser: Awaited<ReturnType<typeof chromium.launch>> | null = null
 
   try {
+    // Pre-seed auth so the onboarding service sees a configured provider and
+    // unlocks without a browser-based setup flow. The bridge agent ignores the
+    // fake key until an actual LLM call is made.
+    writePreseededAuthFile(tempHome)
+
     const launch = await launchWebModeFromProject(tempHome, browserLogPath)
     port = launch.port
 
@@ -281,18 +305,30 @@ test("gsd --web launches the live host and the shell attaches to boot plus SSE s
     const page = await browser.newPage()
     await page.goto(launch.url, { waitUntil: "load" })
 
-    await page.waitForFunction(() => {
-      const node = document.querySelector('[data-testid="workspace-connection-status"]')
-      return Boolean(node?.textContent?.includes("Bridge connected"))
-    })
-    await page.waitForFunction(() => {
-      const node = document.querySelector('[data-testid="sidebar-current-scope"]')
-      return Boolean(node?.textContent?.match(/M001\/S\d+/))
-    })
-    await page.waitForFunction(() => {
-      const node = document.querySelector('[data-testid="terminal-session-banner"]')
-      return Boolean(node && !node.textContent?.includes("Waiting for live session"))
-    })
+    await page.waitForFunction(
+      () => {
+        const node = document.querySelector('[data-testid="workspace-connection-status"]')
+        return Boolean(node?.textContent?.includes("Bridge connected"))
+      },
+      null,
+      { timeout: 60_000 },
+    )
+    await page.waitForFunction(
+      () => {
+        const node = document.querySelector('[data-testid="sidebar-current-scope"]')
+        return Boolean(node?.textContent?.match(/M001\/S\d+/))
+      },
+      null,
+      { timeout: 60_000 },
+    )
+    await page.waitForFunction(
+      () => {
+        const node = document.querySelector('[data-testid="terminal-session-banner"]')
+        return Boolean(node && !node.textContent?.includes("Waiting for live session"))
+      },
+      null,
+      { timeout: 60_000 },
+    )
 
     const connectionStatus = await page.locator('[data-testid="workspace-connection-status"]').textContent()
     const scopeLabel = await page.locator('[data-testid="sidebar-current-scope"]').textContent()

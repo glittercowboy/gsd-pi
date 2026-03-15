@@ -87,7 +87,6 @@ test('launchWebMode prefers the packaged standalone host and opens the resolved 
   writeFileSync(serverPath, 'console.log("stub")\n')
 
   let initResourcesCalled = false
-  let reloadCalled = false
   let unrefCalled = false
   let openedUrl = ''
   let stderrOutput = ''
@@ -107,11 +106,6 @@ test('launchWebMode prefers the packaged standalone host and opens the resolved 
         initResources: () => {
           initResourcesCalled = true
         },
-        buildResourceLoader: () => ({
-          reload: async () => {
-            reloadCalled = true
-          },
-        }),
         resolvePort: async () => 45123,
         execPath: '/custom/node',
         env: { TEST_ENV: '1' },
@@ -143,7 +137,6 @@ test('launchWebMode prefers the packaged standalone host and opens the resolved 
     assert.equal(status.hostPath, serverPath)
     assert.equal(status.url, 'http://127.0.0.1:45123')
     assert.equal(initResourcesCalled, true)
-    assert.equal(reloadCalled, true)
     assert.equal(unrefCalled, true)
     assert.equal(openedUrl, 'http://127.0.0.1:45123')
     assert.deepEqual(spawnInvocation, {

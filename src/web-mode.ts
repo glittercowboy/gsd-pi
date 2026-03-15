@@ -10,13 +10,8 @@ const DEFAULT_PACKAGE_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '.
 
 type WritableLike = Pick<typeof process.stderr, 'write'>
 
-type ResourceLoaderLike = {
-  reload?: () => Promise<void>
-}
-
 type ResourceBootstrapLike = {
   initResources: (agentDir: string) => void
-  buildResourceLoader: (agentDir: string) => ResourceLoaderLike
 }
 
 type SpawnedChildLike = Pick<ChildProcess, 'once' | 'unref'>
@@ -80,7 +75,6 @@ export type WebModeLaunchStatus = WebModeLaunchSuccess | WebModeLaunchFailure
 export interface WebModeDeps {
   existsSync?: (path: string) => boolean
   initResources?: (agentDir: string) => void
-  buildResourceLoader?: (agentDir: string) => ResourceLoaderLike
   resolvePort?: (host: string) => Promise<number>
   spawn?: (command: string, args: readonly string[], options: SpawnOptions) => SpawnedChildLike
   waitForBootReady?: (url: string) => Promise<void>
@@ -95,7 +89,6 @@ async function loadResourceBootstrap(): Promise<ResourceBootstrapLike> {
   const mod = await import('./resource-loader.js')
   return {
     initResources: mod.initResources,
-    buildResourceLoader: mod.buildResourceLoader,
   }
 }
 
@@ -296,17 +289,8 @@ export async function launchWebMode(
   }
 
   try {
-    const bootstrap =
-      deps.initResources && deps.buildResourceLoader
-        ? {
-            initResources: deps.initResources,
-            buildResourceLoader: deps.buildResourceLoader,
-          }
-        : await loadResourceBootstrap()
-
-    ;(deps.initResources ?? bootstrap.initResources)(options.agentDir)
-    const resourceLoader = (deps.buildResourceLoader ?? bootstrap.buildResourceLoader)(options.agentDir)
-    await resourceLoader.reload?.()
+    const bootstrap = deps.initResources ? { initResources: deps.initResources } : await loadResourceBootstrap()
+    bootstrap.initResources(options.agentDir)
   } catch (error) {
     const failure: WebModeLaunchFailure = {
       mode: 'web',
