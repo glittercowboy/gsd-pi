@@ -24,7 +24,12 @@ import { createTestContext } from "./test-helpers.ts";
 const { assertEq, assertTrue, assertMatch, report } = createTestContext();
 
 function run(cmd: string, cwd: string): string {
-  return execSync(cmd, { cwd, stdio: ["ignore", "pipe", "pipe"], encoding: "utf-8" }).trim();
+  return execSync(cmd, {
+    cwd,
+    stdio: ["ignore", "pipe", "pipe"],
+    encoding: "utf-8",
+    shell: process.platform === "win32" ? "pwsh.exe" : true,
+  }).trim();
 }
 
 function createTempRepo(): string {

@@ -24,7 +24,12 @@ import { createTestContext } from "./test-helpers.ts";
 const { assertEq, assertTrue, report } = createTestContext();
 
 function run(command: string, cwd: string): string {
-  return execSync(command, { cwd, stdio: ["ignore", "pipe", "pipe"], encoding: "utf-8" }).trim();
+  return execSync(command, {
+    cwd,
+    stdio: ["ignore", "pipe", "pipe"],
+    encoding: "utf-8",
+    shell: process.platform === "win32" ? "pwsh.exe" : true,
+  }).trim();
 }
 
 function createTempRepo(): string {
@@ -53,7 +58,7 @@ async function main(): Promise<void> {
     mkdirSync(msDir, { recursive: true });
     writeFileSync(join(msDir, "CONTEXT.md"), "# M003 Context\n");
     run("git add .", tempDir);
-    run("git commit -m 'add milestone'", tempDir);
+    run('git commit -m "add milestone"', tempDir);
 
     console.log("\n=== auto-worktree lifecycle ===");
 

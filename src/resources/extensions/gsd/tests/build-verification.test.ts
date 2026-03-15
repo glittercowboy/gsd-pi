@@ -116,7 +116,7 @@ async function main(): Promise<void> {
     try {
       // Generate output larger than 8KB
       const svc = new GitServiceImpl(dir);
-      const result = svc.runBuildCheck(`python3 -c "print('x' * 20000)" >&2; exit 1`);
+      const result = svc.runBuildCheck(`node -e "process.stderr.write('x'.repeat(20000)); process.exit(1)"`);
       assertEq(result.passed, false, 'truncated: passed is false');
       assertTrue(!!result.output, 'truncated: output is set');
       assertTrue(result.output!.length <= 8300, `truncated: output length <= 8300 (got ${result.output!.length})`);

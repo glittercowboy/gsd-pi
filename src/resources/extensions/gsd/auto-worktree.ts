@@ -8,7 +8,7 @@
 
 import { existsSync, readFileSync, realpathSync, utimesSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { execSync } from "node:child_process";
+import { execFileSync, execSync } from "node:child_process";
 import {
   createWorktree,
   removeWorktree,
@@ -36,6 +36,19 @@ import { loadEffectiveGSDPreferences } from "./preferences.js";
 /** Original project root before chdir into auto-worktree. */
 let originalBase: string | null = null;
 
+function execGit(
+  cwd: string,
+  args: string[],
+  options: { input?: string } = {},
+): string {
+  return execFileSync("git", args, {
+    cwd,
+    stdio: ["pipe", "pipe", "pipe"],
+    encoding: "utf-8",
+    input: options.input,
+  }).trim();
+}
+
 // ─── Isolation Resolver ────────────────────────────────────────────────────
 
 /**
@@ -54,11 +67,7 @@ export function shouldUseWorktreeIsolation(basePath: string, overridePrefs?: { i
 
   // Legacy detection: check for existing gsd/*/* branches (branch-per-slice pattern)
   try {
-    const output = execSync("git branch --list 'gsd/*/*'", {
-      cwd: basePath,
-      stdio: ["ignore", "pipe", "pipe"],
-      encoding: "utf-8",
-    }).trim();
+    const output = execGit(basePath, ["branch", "--list", "gsd/*/*"]);
     if (output) return false; // Legacy branch-per-slice project
   } catch {
     // If git command fails, default to worktree
@@ -113,11 +122,7 @@ function nudgeGitBranchCache(previousCwd: string): void {
 
 function getCurrentBranch(cwd: string): string {
   try {
-    return execSync("git branch --show-current", {
-      cwd,
-      stdio: ["ignore", "pipe", "pipe"],
-      encoding: "utf-8",
-    }).trim();
+    return execGit(cwd, ["branch", "--show-current"]);
   } catch {
     return "";
   }
@@ -285,10 +290,7 @@ export function mergeSliceToMilestone(
 
   let message = subject;
   try {
-    const logOutput = execSync(
-      `git log --oneline --format=%s ${milestoneBranch}..${sliceBranch}`,
-      { cwd, stdio: ["ignore", "pipe", "pipe"], encoding: "utf-8" },
-    ).trim();
+    const logOutput = execGit(cwd, ["log", "--oneline", "--format=%s", `${milestoneBranch}..${sliceBranch}`]);
 
     if (logOutput) {
       const subjects = logOutput.split("\n").filter(Boolean);
@@ -308,11 +310,8 @@ export function mergeSliceToMilestone(
   // Merge --no-ff (with self-healing retry for transient failures)
   try {
     withMergeHeal(cwd, () => {
-      execSync(`git merge --no-ff -m "${message.replace(/"/g, '\\"')}" ${sliceBranch}`, {
-        cwd,
-        stdio: ["ignore", "pipe", "pipe"],
-        encoding: "utf-8",
-      });
+      execGit(cwd, ["merge", "--no-ff", "--no-commit", sliceBranch]);
+      execGit(cwd, ["commit", "-F", "-"], { input: message });
     });
   } catch (err) {
     if (err instanceof MergeConflictError) {
@@ -330,11 +329,7 @@ export function mergeSliceToMilestone(
   // Delete slice branch
   let deletedBranch = false;
   try {
-    execSync(`git branch -d ${sliceBranch}`, {
-      cwd,
-      stdio: ["ignore", "pipe", "pipe"],
-      encoding: "utf-8",
-    });
+    execGit(cwd, ["branch", "-d", sliceBranch]);
     deletedBranch = true;
   } catch {
     // Branch deletion is best-effort
@@ -355,17 +350,10 @@ export function mergeSliceToMilestone(
  */
 function autoCommitDirtyState(cwd: string): boolean {
   try {
-    const status = execSync("git status --porcelain", {
-      cwd,
-      stdio: ["ignore", "pipe", "pipe"],
-      encoding: "utf-8",
-    }).trim();
+    const status = execGit(cwd, ["status", "--porcelain"]);
     if (!status) return false;
-    execSync('git add -A && git commit -m "chore: auto-commit before milestone merge"', {
-      cwd,
-      stdio: ["ignore", "pipe", "pipe"],
-      encoding: "utf-8",
-    });
+    execGit(cwd, ["add", "-A"]);
+    execGit(cwd, ["commit", "-F", "-"], { input: "chore: auto-commit before milestone merge" });
     return true;
   } catch {
     return false;
@@ -429,11 +417,7 @@ export function mergeMilestoneToMain(
   // 7. Squash merge (with self-healing retry for transient failures)
   try {
     withMergeHeal(originalBasePath_, () => {
-      execSync(`git merge --squash ${milestoneBranch}`, {
-        cwd: originalBasePath_,
-        stdio: ["ignore", "pipe", "pipe"],
-        encoding: "utf-8",
-      });
+      execGit(originalBasePath_, ["merge", "--squash", milestoneBranch]);
     });
   } catch (err) {
     if (err instanceof MergeConflictError) {
@@ -451,11 +435,7 @@ export function mergeMilestoneToMain(
   // 8. Commit (handle nothing-to-commit gracefully)
   let nothingToCommit = false;
   try {
-    execSync(`git commit -m ${JSON.stringify(commitMessage)}`, {
-      cwd: originalBasePath_,
-      stdio: ["ignore", "pipe", "pipe"],
-      encoding: "utf-8",
-    });
+    execGit(originalBasePath_, ["commit", "-F", "-"], { input: commitMessage });
   } catch (err: unknown) {
     // execSync errors have stdout/stderr as properties -- check those for git's message
     const errObj = err as { stdout?: string; stderr?: string; message?: string };
@@ -472,11 +452,7 @@ export function mergeMilestoneToMain(
   if (prefs.auto_push === true && !nothingToCommit) {
     const remote = prefs.remote ?? "origin";
     try {
-      execSync(`git push ${remote} ${mainBranch}`, {
-        cwd: originalBasePath_,
-        stdio: ["ignore", "pipe", "pipe"],
-        encoding: "utf-8",
-      });
+      execGit(originalBasePath_, ["push", remote, mainBranch]);
       pushed = true;
     } catch {
       // Push failure is non-fatal
@@ -492,11 +468,7 @@ export function mergeMilestoneToMain(
 
   // 11. Delete milestone branch (after worktree removal so ref is unlocked)
   try {
-    execSync(`git branch -D ${milestoneBranch}`, {
-      cwd: originalBasePath_,
-      stdio: ["ignore", "pipe", "pipe"],
-      encoding: "utf-8",
-    });
+    execGit(originalBasePath_, ["branch", "-D", milestoneBranch]);
   } catch {
     // Best-effort
   }
