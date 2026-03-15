@@ -78,6 +78,17 @@ export function getMergeToMainMode(): "milestone" | "slice" {
   return prefs?.merge_to_main ?? "milestone";
 }
 
+/**
+ * Resolve the deliver preference value.
+ * - "merge"  (default): squash-merge milestone branch to main
+ * - "branch": leave work on milestone branch, no merge
+ * - "pr":     push milestone branch and open a GitHub PR
+ */
+export function getDeliverMode(): "merge" | "branch" | "pr" {
+  const prefs = loadEffectiveGSDPreferences()?.preferences?.git;
+  return prefs?.deliver ?? "merge";
+}
+
 // ─── Git Helpers (local, mirrors worktree-command.ts pattern) ──────────────
 
 function resolveGitHeadPath(dir: string): string | null {
@@ -509,4 +520,156 @@ export function mergeMilestoneToMain(
   nudgeGitBranchCache(previousCwd);
 
   return { commitMessage, pushed };
+}
+
+// ─── Deliver Milestone as Branch (no merge) ─────────────────────────────────
+
+/**
+ * Leave the milestone branch intact without merging to main.
+ * Tears down the worktree but preserves the branch for manual merge/PR.
+ *
+ * Sequence:
+ *  1. Auto-commit dirty worktree state
+ *  2. chdir to originalBasePath
+ *  3. Remove worktree directory (keep branch)
+ *  4. Optionally push branch
+ *  5. Clear module state
+ */
+export function deliverMilestoneAsBranch(
+  originalBasePath_: string,
+  milestoneId: string,
+): { branch: string; pushed: boolean } {
+  const worktreeCwd = process.cwd();
+  const milestoneBranch = autoWorktreeBranch(milestoneId);
+
+  // 1. Auto-commit dirty state in worktree before leaving
+  autoCommitDirtyState(worktreeCwd);
+
+  // 2. chdir to original base
+  const previousCwd = process.cwd();
+  process.chdir(originalBasePath_);
+
+  // 3. Resolve preferences
+  const prefs = loadEffectiveGSDPreferences()?.preferences?.git ?? {};
+
+  // 4. Push branch if push_branches or auto_push is enabled
+  let pushed = false;
+  if (prefs.push_branches === true || prefs.auto_push === true) {
+    const remote = prefs.remote ?? "origin";
+    try {
+      execSync(`git push -u ${remote} ${milestoneBranch}`, {
+        cwd: originalBasePath_,
+        stdio: ["ignore", "pipe", "pipe"],
+        encoding: "utf-8",
+      });
+      pushed = true;
+    } catch {
+      // Push failure is non-fatal
+    }
+  }
+
+  // 5. Remove worktree directory (keep branch)
+  try {
+    removeWorktree(originalBasePath_, milestoneId, { branch: null as unknown as string, deleteBranch: false });
+  } catch {
+    // Best-effort
+  }
+
+  // 6. Clear module state
+  originalBase = null;
+  nudgeGitBranchCache(previousCwd);
+
+  return { branch: milestoneBranch, pushed };
+}
+
+// ─── Deliver Milestone as PR ────────────────────────────────────────────────
+
+/**
+ * Push the milestone branch and open a GitHub pull request via `gh`.
+ * Falls back to branch-only delivery if `gh` is unavailable.
+ *
+ * Sequence:
+ *  1. Auto-commit dirty worktree state
+ *  2. chdir to originalBasePath
+ *  3. Push milestone branch to remote
+ *  4. Create PR via `gh pr create`
+ *  5. Remove worktree directory (keep branch)
+ *  6. Clear module state
+ */
+export function deliverMilestoneAsPR(
+  originalBasePath_: string,
+  milestoneId: string,
+  roadmapContent: string,
+): { branch: string; pushed: boolean; prUrl: string | null } {
+  const worktreeCwd = process.cwd();
+  const milestoneBranch = autoWorktreeBranch(milestoneId);
+
+  // 1. Auto-commit dirty state in worktree before leaving
+  autoCommitDirtyState(worktreeCwd);
+
+  // 2. Parse roadmap for PR body
+  const roadmap = parseRoadmap(roadmapContent);
+  const completedSlices = roadmap.slices.filter(s => s.done);
+  const milestoneTitle = roadmap.title.replace(/^M\d+:\s*/, "").trim() || milestoneId;
+
+  // 3. chdir to original base
+  const previousCwd = process.cwd();
+  process.chdir(originalBasePath_);
+
+  // 4. Resolve preferences
+  const prefs = loadEffectiveGSDPreferences()?.preferences?.git ?? {};
+  const remote = prefs.remote ?? "origin";
+  const mainBranch = prefs.main_branch || "main";
+
+  // 5. Push milestone branch
+  let pushed = false;
+  try {
+    execSync(`git push -u ${remote} ${milestoneBranch}`, {
+      cwd: originalBasePath_,
+      stdio: ["ignore", "pipe", "pipe"],
+      encoding: "utf-8",
+    });
+    pushed = true;
+  } catch {
+    // Push failure is non-fatal — PR creation will also fail but we still deliver the branch
+  }
+
+  // 6. Create PR via gh
+  let prUrl: string | null = null;
+  if (pushed) {
+    const prTitle = `feat(${milestoneId}): ${milestoneTitle}`;
+    const sliceLines = completedSlices.length > 0
+      ? completedSlices.map(s => `- ${s.id}: ${s.title}`).join("\n")
+      : "- (no slices completed)";
+    const prBody = `## Summary\n\nMilestone **${milestoneId}**: ${milestoneTitle}\n\n## Completed slices\n${sliceLines}\n\nBranch: \`${milestoneBranch}\``;
+
+    try {
+      const result = execFileSync(
+        "gh",
+        ["pr", "create", "--title", prTitle, "--body", prBody, "--base", mainBranch, "--head", milestoneBranch],
+        {
+          cwd: originalBasePath_,
+          stdio: ["ignore", "pipe", "pipe"],
+          encoding: "utf-8",
+        },
+      ).trim();
+      // gh pr create outputs the PR URL on success
+      prUrl = result || null;
+    } catch {
+      // gh not installed or PR creation failed — branch is still pushed
+    }
+  }
+
+  // 7. Remove worktree directory (keep branch)
+  try {
+    removeWorktree(originalBasePath_, milestoneId, { branch: null as unknown as string, deleteBranch: false });
+  } catch {
+    // Best-effort
+  }
+
+  // 8. Clear module state
+  originalBase = null;
+  nudgeGitBranchCache(previousCwd);
+
+  return { branch: milestoneBranch, pushed, prUrl };
 }

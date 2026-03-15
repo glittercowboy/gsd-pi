@@ -925,6 +925,14 @@ export function validatePreferences(preferences: GSDPreferences): {
         errors.push("git.merge_to_main must be one of: milestone, slice");
       }
     }
+    if (g.deliver !== undefined) {
+      const validDeliver = new Set(["merge", "branch", "pr"]);
+      if (typeof g.deliver === "string" && validDeliver.has(g.deliver)) {
+        git.deliver = g.deliver as "merge" | "branch" | "pr";
+      } else {
+        errors.push("git.deliver must be one of: merge, branch, pr");
+      }
+    }
 
     if (Object.keys(git).length > 0) {
       validated.git = git as GitPreferences;

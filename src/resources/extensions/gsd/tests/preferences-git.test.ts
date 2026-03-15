@@ -72,14 +72,52 @@ async function main(): Promise<void> {
     assertEq(preferences.git?.merge_to_main, undefined, "merge_to_main: undefined — not set");
   }
 
+  console.log("\n=== git.deliver validation ===");
+
+  // Valid values
+  {
+    const { preferences, errors } = validatePreferences({ git: { deliver: "merge" } });
+    assertEq(errors.length, 0, "deliver: merge — no errors");
+    assertEq(preferences.git?.deliver, "merge", "deliver: merge — value preserved");
+  }
+  {
+    const { preferences, errors } = validatePreferences({ git: { deliver: "branch" } });
+    assertEq(errors.length, 0, "deliver: branch — no errors");
+    assertEq(preferences.git?.deliver, "branch", "deliver: branch — value preserved");
+  }
+  {
+    const { preferences, errors } = validatePreferences({ git: { deliver: "pr" } });
+    assertEq(errors.length, 0, "deliver: pr — no errors");
+    assertEq(preferences.git?.deliver, "pr", "deliver: pr — value preserved");
+  }
+
+  // Invalid values
+  {
+    const { errors } = validatePreferences({ git: { deliver: "invalid" } });
+    assertTrue(errors.length > 0, "deliver: invalid — produces error");
+    assertTrue(errors[0].includes("deliver"), "deliver: invalid — error mentions deliver");
+  }
+  {
+    const { errors } = validatePreferences({ git: { deliver: true } });
+    assertTrue(errors.length > 0, "deliver: boolean — produces error");
+  }
+
+  // Undefined passes through
+  {
+    const { preferences, errors } = validatePreferences({ git: { auto_push: true } });
+    assertEq(errors.length, 0, "deliver: undefined — no errors");
+    assertEq(preferences.git?.deliver, undefined, "deliver: undefined — not set");
+  }
+
   console.log("\n=== both fields together ===");
   {
     const { preferences, errors } = validatePreferences({
-      git: { isolation: "worktree", merge_to_main: "slice" },
+      git: { isolation: "worktree", merge_to_main: "slice", deliver: "pr" },
     });
-    assertEq(errors.length, 0, "both fields valid — no errors");
+    assertEq(errors.length, 0, "all fields valid — no errors");
     assertEq(preferences.git?.isolation, "worktree", "isolation preserved");
     assertEq(preferences.git?.merge_to_main, "slice", "merge_to_main preserved");
+    assertEq(preferences.git?.deliver, "pr", "deliver preserved");
   }
 
   report();

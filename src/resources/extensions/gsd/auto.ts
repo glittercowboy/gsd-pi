@@ -96,8 +96,11 @@ import {
   getAutoWorktreeOriginalBase,
   mergeSliceToMilestone,
   mergeMilestoneToMain,
+  deliverMilestoneAsBranch,
+  deliverMilestoneAsPR,
   shouldUseWorktreeIsolation,
   getMergeToMainMode,
+  getDeliverMode,
 } from "./auto-worktree.js";
 import type { GitPreferences } from "./git-service.js";
 import { truncateToWidth, visibleWidth } from "@gsd/pi-tui";
@@ -1812,21 +1815,44 @@ async function dispatchNextUnit(
       completedKeySet.clear();
     } catch { /* non-fatal */ }
 
-    // ── Milestone merge: squash-merge milestone branch to main before stopping ──
+    // ── Milestone delivery: merge, branch, or PR based on git.deliver preference ──
     if (currentMilestoneId && isInAutoWorktree(basePath) && originalBasePath && getMergeToMainMode() === "milestone") {
+      const deliverMode = getDeliverMode();
       try {
-        const roadmapPath = resolveMilestoneFile(originalBasePath, currentMilestoneId, "ROADMAP");
-        const roadmapContent = readFileSync(roadmapPath, "utf-8");
-        const mergeResult = mergeMilestoneToMain(originalBasePath, currentMilestoneId, roadmapContent);
-        basePath = originalBasePath;
-        gitService = new GitServiceImpl(basePath, loadEffectiveGSDPreferences()?.preferences?.git ?? {});
-        ctx.ui.notify(
-          `Milestone ${currentMilestoneId} merged to main.${mergeResult.pushed ? " Pushed to remote." : ""}`,
-          "info",
-        );
+        if (deliverMode === "branch") {
+          const result = deliverMilestoneAsBranch(originalBasePath, currentMilestoneId);
+          basePath = originalBasePath;
+          gitService = new GitServiceImpl(basePath, loadEffectiveGSDPreferences()?.preferences?.git ?? {});
+          ctx.ui.notify(
+            `Milestone ${currentMilestoneId} delivered on branch ${result.branch}.${result.pushed ? " Pushed to remote." : ""}`,
+            "info",
+          );
+        } else if (deliverMode === "pr") {
+          const roadmapPath = resolveMilestoneFile(originalBasePath, currentMilestoneId, "ROADMAP");
+          const roadmapContent = readFileSync(roadmapPath, "utf-8");
+          const result = deliverMilestoneAsPR(originalBasePath, currentMilestoneId, roadmapContent);
+          basePath = originalBasePath;
+          gitService = new GitServiceImpl(basePath, loadEffectiveGSDPreferences()?.preferences?.git ?? {});
+          const prInfo = result.prUrl ? ` PR: ${result.prUrl}` : "";
+          ctx.ui.notify(
+            `Milestone ${currentMilestoneId} delivered as PR on branch ${result.branch}.${prInfo}`,
+            "info",
+          );
+        } else {
+          // Default: "merge" — squash-merge milestone branch to main
+          const roadmapPath = resolveMilestoneFile(originalBasePath, currentMilestoneId, "ROADMAP");
+          const roadmapContent = readFileSync(roadmapPath, "utf-8");
+          const mergeResult = mergeMilestoneToMain(originalBasePath, currentMilestoneId, roadmapContent);
+          basePath = originalBasePath;
+          gitService = new GitServiceImpl(basePath, loadEffectiveGSDPreferences()?.preferences?.git ?? {});
+          ctx.ui.notify(
+            `Milestone ${currentMilestoneId} merged to main.${mergeResult.pushed ? " Pushed to remote." : ""}`,
+            "info",
+          );
+        }
       } catch (err) {
         ctx.ui.notify(
-          `Milestone merge failed: ${err instanceof Error ? err.message : String(err)}`,
+          `Milestone delivery failed: ${err instanceof Error ? err.message : String(err)}`,
           "warning",
         );
       }

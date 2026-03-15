@@ -39,6 +39,7 @@ export interface GitPreferences {
   merge_strategy?: "squash" | "merge";
   isolation?: "worktree" | "branch";
   merge_to_main?: "milestone" | "slice";
+  deliver?: "merge" | "branch" | "pr";
 }
 
 export const VALID_BRANCH_NAME = /^[a-zA-Z0-9_\-\/.]+$/;
