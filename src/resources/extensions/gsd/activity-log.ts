@@ -30,7 +30,8 @@ function scanNextSequence(activityDir: string): number {
       const match = f.match(SEQ_PREFIX_RE);
       if (match) maxSeq = Math.max(maxSeq, parseInt(match[1], 10));
     }
-  } catch {
+  } catch (e) {
+    void e; /* directory not readable — start at 1 */
     return 1;
   }
   return maxSeq + 1;
@@ -100,8 +101,9 @@ export function saveActivityLog(
     writeFileSync(filePath, content, "utf-8");
     state.nextSeq += 1;
     state.lastSnapshotKeyByUnit.set(unitKey, key);
-  } catch {
+  } catch (e) {
     // Don't let logging failures break auto-mode
+    void e;
   }
 }
 

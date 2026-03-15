@@ -22,6 +22,7 @@ import {
   nativeBranchExists,
   nativeHasChanges,
 } from "./native-git-bridge.js";
+import { GSDError, GSD_MERGE_CONFLICT } from "./errors.js";
 
 // ─── Types ─────────────────────────────────────────────────────────────────
 
@@ -48,7 +49,7 @@ export interface CommitOptions {
  * The working tree is left in a conflicted state (no reset) so the
  * caller can dispatch a fix-merge session to resolve it.
  */
-export class MergeConflictError extends Error {
+export class MergeConflictError extends GSDError {
   readonly conflictedFiles: string[];
   readonly strategy: "squash" | "merge";
   readonly branch: string;
@@ -61,6 +62,7 @@ export class MergeConflictError extends Error {
     mainBranch: string,
   ) {
     super(
+      GSD_MERGE_CONFLICT,
       `${strategy === "merge" ? "Merge" : "Squash-merge"} of "${branch}" into "${mainBranch}" ` +
       `failed with conflicts in ${conflictedFiles.length} non-.gsd file(s): ${conflictedFiles.join(", ")}`,
     );
