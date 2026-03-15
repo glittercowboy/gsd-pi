@@ -10,16 +10,20 @@ Selective context injection: the TS system becomes the context curator, using it
 
 ## Current State
 
-S01 (DB Foundation), S02 (Markdown Importers + Auto-Migration), S03 (Core Hierarchy + Full Query Layer + Prompt Rewiring), S04 (Token Measurement + State Derivation from DB), and S05 (Worktree Isolation + Merge Reconciliation) are complete. All 9 prompt builders are rewired from `inlineGsdRootFile` to scoped DB queries. Token measurement wired into all dispatch paths. deriveState() reads from DB with filesystem fallback. Worktree creation copies gsd.db; worktree merge reconciles rows via ATTACH DATABASE with conflict detection. Fixture-proven ≥30% character savings: 52.2% plan-slice, 66.3% decisions-only, 32.2% research composite. 288 tests pass, 0 failures. 17 of 21 requirements validated.
+S01–S06 complete. All 9 prompt builders rewired from `inlineGsdRootFile` to scoped DB queries. Token measurement wired into all dispatch paths. deriveState() reads from DB with filesystem fallback. Worktree creation copies gsd.db; worktree merge reconciles rows via ATTACH DATABASE with conflict detection. Three structured LLM tools (gsd_save_decision, gsd_update_requirement, gsd_save_summary) registered with DB-first write and markdown dual-write. /gsd inspect slash command provides DB state diagnostics. Fixture-proven ≥30% character savings: 52.2% plan-slice, 66.3% decisions-only, 32.2% research composite. 288 tests pass, 0 failures. 19 of 21 requirements validated.
+
+S07 (Integration Verification + Polish) is next — the final slice, which runs a full auto-mode cycle on DB-backed context and verifies all edge cases.
 
 ## Architecture / Key Patterns
 
 - **DB layer** (`gsd-db.ts`): SQLite via `better-sqlite3`, sync API, schema versioning, WAL mode
 - **Query layer** (`context-store.ts`): typed queries that return only relevant subsets for each dispatch unit type
 - **Import layer** (`md-importer.ts`): reuses existing parsers from `files.ts` to migrate markdown → DB rows
+- **Write layer** (`db-writer.ts`): DB→markdown generators and DB-first write helpers for structured tool output
 - **Dual-write**: markdown files continue to be written alongside DB for human readability and rollback
 - **Graceful fallback**: if `better-sqlite3` fails to load, system falls back to current markdown loading
-- **Structured LLM tools**: lightweight tool calls for decisions/requirements/summaries to eliminate markdown roundtrip
+- **Structured LLM tools**: gsd_save_decision, gsd_update_requirement, gsd_save_summary — write to DB, trigger markdown dual-write
+- **Diagnostics**: /gsd inspect dumps schema version, table counts, recent entries
 - Lives at `.gsd/gsd.db`, gitignored (derived local state)
 
 ## Capability Contract

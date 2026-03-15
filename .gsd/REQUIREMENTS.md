@@ -159,24 +159,24 @@ Guidelines:
 
 ### R014 — Structured LLM tools
 - Class: core-capability
-- Status: active
+- Status: validated
 - Description: Lightweight tool calls (gsd_save_decision, gsd_update_requirement, gsd_save_summary, etc.) that let the LLM write structured data directly to the DB, eliminating the markdown-then-parse roundtrip
 - Why it matters: Eliminates the most fragile part of the pipeline — regex parsing of LLM-generated markdown
 - Source: user
 - Primary owning slice: M001/S06
 - Supporting slices: none
-- Validation: unmapped
+- Validation: S06 — 35 test assertions prove all three tools register, execute with valid params, produce correct DB state, return structured results, handle DB unavailable, and regenerate markdown files. Round-trip fidelity proven via 127 assertions in db-writer tests.
 - Notes: User emphasized "lightweight — whatever is fastest." Tools write to DB and trigger dual-write to markdown.
 
 ### R015 — /gsd inspect slash command
 - Class: operability
-- Status: active
+- Status: validated
 - Description: A `/gsd inspect` command that dumps DB contents for debugging — table counts, recent entries, schema version, query results
 - Why it matters: When something goes wrong, need visibility into DB state without external tooling
 - Source: user
 - Primary owning slice: M001/S06
 - Supporting slices: none
-- Validation: unmapped
+- Validation: S06 — 32 test assertions prove inspect output formatting with full data, empty data, null schema version, and output structure. Handler wired with autocomplete, DB availability check, and unknown-command help.
 - Notes: Slash command inside pi, not a standalone CLI
 
 ### R016 — ≥30% token reduction in planning/research prompts
@@ -315,6 +315,14 @@ Guidelines:
 - Validated by: M001/S05
 - Proof: reconcileWorktreeDb ATTACHes worktree DB, merges all 3 tables via INSERT OR REPLACE, detects conflicts by comparing content columns. Wired into both deterministic and LLM merge paths. 37-assertion test suite proves merge, conflict detection, and edge cases.
 
+### R014 — Structured LLM tools
+- Validated by: M001/S06
+- Proof: 35 test assertions prove gsd_save_decision, gsd_update_requirement, gsd_save_summary register, execute, write to DB, trigger markdown dual-write, return structured results, and handle DB unavailable. 127 db-writer assertions prove round-trip fidelity for generated markdown.
+
+### R015 — /gsd inspect slash command
+- Validated by: M001/S06
+- Proof: 32 test assertions prove formatInspectOutput with full data, empty data, null schema version. Handler includes autocomplete, DB availability check, unknown-command help text.
+
 ## Deferred
 
 ### R030 — Vector search layer
@@ -413,8 +421,8 @@ Guidelines:
 | R011 | core-capability | validated | M001/S04 | none | S04 validated |
 | R012 | core-capability | validated | M001/S05 | none | S05 validated |
 | R013 | core-capability | validated | M001/S05 | none | S05 validated |
-| R014 | core-capability | active | M001/S06 | none | unmapped |
-| R015 | operability | active | M001/S06 | none | unmapped |
+| R014 | core-capability | validated | M001/S06 | none | S06 validated |
+| R015 | operability | validated | M001/S06 | none | S06 validated |
 | R016 | quality-attribute | validated | M001/S04 | M001/S03, M001/S07 | S04 validated |
 | R017 | quality-attribute | validated | M001/S01 | none | S01 validated |
 | R018 | quality-attribute | validated | M001/S02 | none | S02 validated |
@@ -431,7 +439,7 @@ Guidelines:
 
 ## Coverage Summary
 
-- Active requirements: 4
-- Mapped to slices: 4
-- Validated: 17 (R002, R003, R004, R005, R006, R007, R008, R009, R010, R011, R012, R013, R016, R017, R018, R020, R021)
+- Active requirements: 2
+- Mapped to slices: 2
+- Validated: 19 (R002, R003, R004, R005, R006, R007, R008, R009, R010, R011, R012, R013, R014, R015, R016, R017, R018, R020, R021)
 - Unmapped active requirements: 0

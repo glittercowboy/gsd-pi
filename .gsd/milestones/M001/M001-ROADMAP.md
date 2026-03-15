@@ -72,7 +72,7 @@ This milestone is complete only when all are true:
 - [x] **S05: Worktree Isolation + Merge Reconciliation** `risk:medium` `depends:[S01,S02]`
   > After this: Worktree creation copies gsd.db. Worktree merge does row-level reconciliation with conflict detection for divergent modifications.
 
-- [ ] **S06: Structured LLM Tools + /gsd inspect** `risk:medium` `depends:[S03]`
+- [x] **S06: Structured LLM Tools + /gsd inspect** `risk:medium` `depends:[S03]`
   > After this: LLM writes decisions/requirements/summaries via lightweight tool calls that write to DB and trigger markdown dual-write. /gsd inspect dumps DB state.
 
 - [ ] **S07: Integration Verification + Polish** `risk:low` `depends:[S03,S04,S05,S06]`
