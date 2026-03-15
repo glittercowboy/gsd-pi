@@ -75,7 +75,7 @@ This milestone is complete only when all are true:
 - [x] **S06: Structured LLM Tools + /gsd inspect** `risk:medium` `depends:[S03]`
   > After this: LLM writes decisions/requirements/summaries via lightweight tool calls that write to DB and trigger markdown dual-write. /gsd inspect dumps DB state.
 
-- [ ] **S07: Integration Verification + Polish** `risk:low` `depends:[S03,S04,S05,S06]`
+- [x] **S07: Integration Verification + Polish** `risk:low` `depends:[S03,S04,S05,S06]`
   > After this: Full auto-mode cycle runs entirely on DB-backed context. Token savings ≥30% confirmed on real project data. All edge cases (empty projects, partial migrations, fallback mode) verified.
 
 ## Boundary Map
