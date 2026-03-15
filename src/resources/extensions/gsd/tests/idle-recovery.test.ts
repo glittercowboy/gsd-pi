@@ -280,119 +280,6 @@ function cleanup(base: string): void {
   }
 }
 
-// ═══ verifyExpectedArtifact: fix-merge ════════════════════════════════════════
-
-/** Create a real git repo for fix-merge tests */
-function createGitBase(): string {
-  const base = mkdtempSync(join(tmpdir(), "gsd-fixmerge-test-"));
-  execSync("git init -b main", { cwd: base, stdio: "ignore" });
-  execSync("git config user.email test@test.com", { cwd: base, stdio: "ignore" });
-  execSync("git config user.name Test", { cwd: base, stdio: "ignore" });
-  writeFileSync(join(base, "README.md"), "init\n", "utf-8");
-  execSync("git add -A && git commit -m init", { cwd: base, stdio: "ignore" });
-  // Create .gsd structure for the fixture
-  mkdirSync(join(base, ".gsd", "milestones", "M001", "slices", "S01", "tasks"), { recursive: true });
-  return base;
-}
-
-{
-  console.log("\n=== verifyExpectedArtifact: fix-merge — clean repo returns true ===");
-  const base = createGitBase();
-  try {
-    const result = verifyExpectedArtifact("fix-merge", "M001/S01", base);
-    assertTrue(result === true, "clean repo should verify as true");
-  } finally {
-    cleanup(base);
-  }
-}
-
-{
-  console.log("\n=== verifyExpectedArtifact: fix-merge — MERGE_HEAD present returns false ===");
-  const base = createGitBase();
-  try {
-    writeFileSync(join(base, ".git", "MERGE_HEAD"), "abc123\n", "utf-8");
-    const result = verifyExpectedArtifact("fix-merge", "M001/S01", base);
-    assertTrue(result === false, "MERGE_HEAD present should return false");
-  } finally {
-    cleanup(base);
-  }
-}
-
-{
-  console.log("\n=== verifyExpectedArtifact: fix-merge — SQUASH_MSG present returns false ===");
-  const base = createGitBase();
-  try {
-    writeFileSync(join(base, ".git", "SQUASH_MSG"), "squash msg\n", "utf-8");
-    const result = verifyExpectedArtifact("fix-merge", "M001/S01", base);
-    assertTrue(result === false, "SQUASH_MSG present should return false");
-  } finally {
-    cleanup(base);
-  }
-}
-
-{
-  console.log("\n=== verifyExpectedArtifact: fix-merge — real UU conflict returns false ===");
-  const base = createGitBase();
-  try {
-    // Create a conflict: modify same file on two branches
-    writeFileSync(join(base, "conflict.txt"), "main content\n", "utf-8");
-    execSync('git add -A && git commit -m "main change"', { cwd: base, stdio: "ignore" });
-    execSync("git checkout -b feature", { cwd: base, stdio: "ignore" });
-    writeFileSync(join(base, "conflict.txt"), "feature content\n", "utf-8");
-    execSync('git add -A && git commit -m "feature change"', { cwd: base, stdio: "ignore" });
-    execSync("git checkout main", { cwd: base, stdio: "ignore" });
-    writeFileSync(join(base, "conflict.txt"), "different main content\n", "utf-8");
-    execSync('git add -A && git commit -m "diverge"', { cwd: base, stdio: "ignore" });
-    try { execSync("git merge feature", { cwd: base, stdio: "ignore" }); } catch { /* expected conflict */ }
-    const result = verifyExpectedArtifact("fix-merge", "M001/S01", base);
-    assertTrue(result === false, "UU conflict should return false");
-  } finally {
-    execSync("git reset --hard HEAD", { cwd: base, stdio: "ignore" });
-    cleanup(base);
-  }
-}
-
-{
-  console.log("\n=== verifyExpectedArtifact: fix-merge — real DU conflict returns false ===");
-  const base = createGitBase();
-  try {
-    writeFileSync(join(base, "deleted.txt"), "content\n", "utf-8");
-    execSync('git add -A && git commit -m "add file"', { cwd: base, stdio: "ignore" });
-    execSync("git checkout -b feature2", { cwd: base, stdio: "ignore" });
-    writeFileSync(join(base, "deleted.txt"), "modified on feature\n", "utf-8");
-    execSync('git add -A && git commit -m "modify on feature"', { cwd: base, stdio: "ignore" });
-    execSync("git checkout main", { cwd: base, stdio: "ignore" });
-    execSync("git rm deleted.txt", { cwd: base, stdio: "ignore" });
-    execSync('git commit -m "delete on main"', { cwd: base, stdio: "ignore" });
-    try { execSync("git merge feature2", { cwd: base, stdio: "ignore" }); } catch { /* expected conflict */ }
-    const result = verifyExpectedArtifact("fix-merge", "M001/S01", base);
-    assertTrue(result === false, "DU conflict should return false");
-  } finally {
-    execSync("git reset --hard HEAD", { cwd: base, stdio: "ignore" });
-    cleanup(base);
-  }
-}
-
-{
-  console.log("\n=== verifyExpectedArtifact: fix-merge — real AA conflict returns false ===");
-  const base = createGitBase();
-  try {
-    execSync("git checkout -b branch-a", { cwd: base, stdio: "ignore" });
-    writeFileSync(join(base, "both.txt"), "branch-a content\n", "utf-8");
-    execSync('git add -A && git commit -m "add on branch-a"', { cwd: base, stdio: "ignore" });
-    execSync("git checkout main", { cwd: base, stdio: "ignore" });
-    execSync("git checkout -b branch-b", { cwd: base, stdio: "ignore" });
-    writeFileSync(join(base, "both.txt"), "branch-b content\n", "utf-8");
-    execSync('git add -A && git commit -m "add on branch-b"', { cwd: base, stdio: "ignore" });
-    try { execSync("git merge branch-a", { cwd: base, stdio: "ignore" }); } catch { /* expected conflict */ }
-    const result = verifyExpectedArtifact("fix-merge", "M001/S01", base);
-    assertTrue(result === false, "AA conflict should return false");
-  } finally {
-    execSync("git reset --hard HEAD", { cwd: base, stdio: "ignore" });
-    cleanup(base);
-  }
-}
-
 // ═══ verifyExpectedArtifact: complete-slice roadmap check ════════════════════
 // Regression for #indefinite-hang: complete-slice must verify roadmap [x] or
 // the idempotency skip loops forever after a crash that wrote SUMMARY+UAT but
@@ -569,6 +456,27 @@ const ROADMAP_COMPLETE = `# M001: Test Milestone
     // Checkbox marked
     const planContent = readFileSync(planPath, "utf-8");
     assertTrue(planContent.includes("- [x] **T01:"), "T01 checkbox should be marked [x] after loop-recovery");
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+}
+
+// ═══ verifyExpectedArtifact: hook unit types ═════════════════════════════════
+
+console.log("\n=== verifyExpectedArtifact: hook types always return true ===");
+
+{
+  const base = createFixtureBase();
+  try {
+    // Hook units don't have standard artifacts — they should always pass
+    const result1 = verifyExpectedArtifact("hook/code-review", "M001/S01/T01", base);
+    assertTrue(result1, "hook/code-review should always return true");
+
+    const result2 = verifyExpectedArtifact("hook/simplify", "M001/S01/T02", base);
+    assertTrue(result2, "hook/simplify should always return true");
+
+    const result3 = verifyExpectedArtifact("hook/custom-hook", "M001/S01", base);
+    assertTrue(result3, "hook/custom-hook at slice level should return true");
   } finally {
     rmSync(base, { recursive: true, force: true });
   }

@@ -18,10 +18,10 @@ import { join } from 'path'
 // where the relative import '../../../app-paths.ts' doesn't resolve.
 const authFilePath = join(homedir(), '.gsd', 'agent', 'auth.json')
 
-export type SearchProvider = 'tavily' | 'brave'
+export type SearchProvider = 'tavily' | 'brave' | 'ollama'
 export type SearchProviderPreference = SearchProvider | 'auto'
 
-const VALID_PREFERENCES = new Set<string>(['tavily', 'brave', 'auto'])
+const VALID_PREFERENCES = new Set<string>(['tavily', 'brave', 'ollama', 'auto'])
 const PREFERENCE_KEY = 'search_provider'
 
 /** Returns the Tavily API key from the environment, or empty string if not set. */
@@ -32,6 +32,11 @@ export function getTavilyApiKey(): string {
 /** Returns the Brave API key from the environment, or empty string if not set. */
 export function getBraveApiKey(): string {
   return process.env.BRAVE_API_KEY || ''
+}
+
+/** Returns the Ollama API key from the environment, or empty string if not set. */
+export function getOllamaApiKey(): string {
+  return process.env.OLLAMA_API_KEY || ''
 }
 
 /**
@@ -78,9 +83,11 @@ export function setSearchProviderPreference(pref: SearchProviderPreference, auth
 export function resolveSearchProvider(overridePreference?: string): SearchProvider | null {
   const tavilyKey = getTavilyApiKey()
   const braveKey = getBraveApiKey()
+  const ollamaKey = getOllamaApiKey()
 
   const hasTavily = tavilyKey.length > 0
   const hasBrave = braveKey.length > 0
+  const hasOllama = ollamaKey.length > 0
 
   // Determine effective preference
   let pref: SearchProviderPreference
@@ -100,18 +107,28 @@ export function resolveSearchProvider(overridePreference?: string): SearchProvid
   if (pref === 'auto') {
     if (hasTavily) return 'tavily'
     if (hasBrave) return 'brave'
+    if (hasOllama) return 'ollama'
     return null
   }
 
   if (pref === 'tavily') {
     if (hasTavily) return 'tavily'
     if (hasBrave) return 'brave'
+    if (hasOllama) return 'ollama'
     return null
   }
 
   if (pref === 'brave') {
     if (hasBrave) return 'brave'
     if (hasTavily) return 'tavily'
+    if (hasOllama) return 'ollama'
+    return null
+  }
+
+  if (pref === 'ollama') {
+    if (hasOllama) return 'ollama'
+    if (hasTavily) return 'tavily'
+    if (hasBrave) return 'brave'
     return null
   }
 

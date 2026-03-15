@@ -27,7 +27,7 @@ import { normalizeQuery, extractDomain } from "./url-utils.js";
 import { formatLLMContext, type LLMContextSnippet, type LLMContextSource } from "./format.js";
 import type { TavilyResult, TavilySearchResponse } from "./tavily.js";
 import { publishedDateToAge } from "./tavily.js";
-import { getTavilyApiKey, resolveSearchProvider } from "./provider.js";
+import { getTavilyApiKey, getOllamaApiKey, resolveSearchProvider } from "./provider.js";
 
 // =============================================================================
 // Types
@@ -79,7 +79,7 @@ interface LLMContextDetails {
   errorKind?: string;
   error?: string;
   retryAfterMs?: number;
-  provider?: 'tavily' | 'brave';
+  provider?: 'tavily' | 'brave' | 'ollama';
 }
 
 // =============================================================================
@@ -231,6 +231,57 @@ async function executeTavilyLLMContext(
 }
 
 // =============================================================================
+// Ollama LLM Context Execution
+// =============================================================================
+
+interface OllamaWebSearchResult {
+  title: string;
+  url: string;
+  content: string;
+}
+
+interface OllamaWebSearchResponse {
+  results: OllamaWebSearchResult[];
+}
+
+/**
+ * Execute a search_and_read query against the Ollama web_search API.
+ *
+ * Uses the same web_search endpoint as tool-search, then applies
+ * budgetContent() for client-side token budgeting (similar to Tavily path).
+ */
+async function executeOllamaLLMContext(
+  params: { query: string; maxTokens: number; count: number; threshold: string },
+  signal?: AbortSignal,
+): Promise<{ cached: CachedLLMContext; latencyMs: number; rateLimit?: RateLimitInfo }> {
+  const scoreThreshold = THRESHOLD_TO_SCORE[params.threshold] ?? 0.5;
+
+  const timed = await fetchWithRetryTimed("https://ollama.com/api/web_search", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": `Bearer ${getOllamaApiKey()}`,
+    },
+    body: JSON.stringify({ query: params.query, max_results: params.count }),
+    signal,
+  }, 2);
+
+  const data: OllamaWebSearchResponse = await timed.response.json();
+
+  // Convert Ollama results to TavilyResult-compatible format for budgetContent
+  const tavilyLikeResults: TavilyResult[] = (data.results || []).map(r => ({
+    title: r.title || "(untitled)",
+    url: r.url,
+    content: r.content || "",
+    score: 1.0, // Ollama doesn't provide scores, assume all are relevant
+  }));
+
+  const cached = budgetContent(tavilyLikeResults, params.maxTokens, scoreThreshold);
+
+  return { cached, latencyMs: timed.latencyMs, rateLimit: timed.rateLimit };
+}
+
+// =============================================================================
 // Tool Registration
 // =============================================================================
 
@@ -295,7 +346,7 @@ export function registerLLMContextTool(pi: ExtensionAPI) {
       const provider = resolveSearchProvider();
       if (!provider) {
         return {
-          content: [{ type: "text", text: "search_and_read unavailable: No search API key is set. Use secure_env_collect to set TAVILY_API_KEY or BRAVE_API_KEY." }],
+          content: [{ type: "text", text: "search_and_read unavailable: No search API key is set. Use secure_env_collect to set TAVILY_API_KEY, BRAVE_API_KEY, or OLLAMA_API_KEY." }],
           isError: true,
           details: { errorKind: "auth_error", error: "No search API key set" } satisfies Partial<LLMContextDetails>,
         };
@@ -358,6 +409,14 @@ export function registerLLMContextTool(pi: ExtensionAPI) {
           result = tavilyResult.cached;
           latencyMs = tavilyResult.latencyMs;
           rateLimit = tavilyResult.rateLimit;
+        } else if (provider === "ollama") {
+          const ollamaResult = await executeOllamaLLMContext(
+            { query: params.query, maxTokens, count, threshold },
+            signal,
+          );
+          result = ollamaResult.cached;
+          latencyMs = ollamaResult.latencyMs;
+          rateLimit = ollamaResult.rateLimit;
         } else {
           // ================================================================
           // BRAVE PATH (unchanged API logic)

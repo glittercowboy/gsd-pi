@@ -4,8 +4,6 @@
  * Tests the full lifecycle of GSD operations inside a worktree:
  * - Branch namespacing (gsd/<wt>/<M>/<S> instead of gsd/<M>/<S>)
  * - getMainBranch returns worktree/<name> inside a worktree
- * - switchToMain goes to worktree/<name>, not main
- * - mergeSliceToMain merges into worktree/<name>
  * - Parallel worktrees don't conflict on branch names
  * - State derivation works correctly inside worktrees
  */
@@ -19,21 +17,15 @@ import {
   createWorktree,
   listWorktrees,
   removeWorktree,
-  worktreePath,
-  worktreeBranchName,
 } from "../worktree-manager.ts";
 
 import {
   detectWorktreeName,
-  ensureSliceBranch,
-  getActiveSliceBranch,
   getCurrentBranch,
   getMainBranch,
   getSliceBranchName,
-  isOnSliceBranch,
-  mergeSliceToMain,
-  switchToMain,
   autoCommitCurrentBranch,
+  SLICE_BRANCH_RE,
 } from "../worktree.ts";
 
 import { deriveState } from "../state.ts";
@@ -104,20 +96,19 @@ async function main(): Promise<void> {
   console.log("\n=== Worktree initial branch ===");
   assertEq(getCurrentBranch(wt.path), "worktree/alpha", "worktree starts on its own branch");
 
-  // ── ensureSliceBranch inside worktree ──────────────────────────────────────
-
-  console.log("\n=== ensureSliceBranch in worktree ===");
-  const created = ensureSliceBranch(wt.path, "M001", "S01");
-  assertTrue(created, "slice branch created");
-  assertEq(getCurrentBranch(wt.path), "gsd/alpha/M001/S01", "worktree-namespaced slice branch");
-  assertTrue(isOnSliceBranch(wt.path), "isOnSliceBranch returns true");
-  assertEq(getActiveSliceBranch(wt.path), "gsd/alpha/M001/S01", "getActiveSliceBranch returns namespaced branch");
-
   // ── Verify branch name helper ──────────────────────────────────────────────
 
   console.log("\n=== getSliceBranchName with worktree ===");
   assertEq(getSliceBranchName("M001", "S01", "alpha"), "gsd/alpha/M001/S01", "explicit worktree param");
   assertEq(getSliceBranchName("M001", "S01"), "gsd/M001/S01", "no worktree param = plain branch");
+
+  // ── Slice branch creation and detection inside worktree ────────────────────
+
+  console.log("\n=== Slice branch in worktree ===");
+  const sliceBranch = getSliceBranchName("M001", "S01", "alpha");
+  run(`git checkout -b ${sliceBranch}`, wt.path);
+  assertEq(getCurrentBranch(wt.path), "gsd/alpha/M001/S01", "worktree-namespaced slice branch");
+  assertTrue(SLICE_BRANCH_RE.test(getCurrentBranch(wt.path)), "slice branch regex matches namespaced branch");
 
   // ── Do work on slice branch, then merge to worktree branch ─────────────────
 
@@ -126,14 +117,12 @@ async function main(): Promise<void> {
   run("git add .", wt.path);
   run('git commit -m "feat: add feature"', wt.path);
 
-  // switchToMain should go to worktree/alpha, NOT main
-  switchToMain(wt.path);
-  assertEq(getCurrentBranch(wt.path), "worktree/alpha", "switchToMain goes to worktree branch, not main");
+  // Checkout worktree base branch and merge slice branch
+  run("git checkout worktree/alpha", wt.path);
+  assertEq(getCurrentBranch(wt.path), "worktree/alpha", "back on worktree branch");
 
-  // mergeSliceToMain should merge into worktree/alpha
-  const merge = mergeSliceToMain(wt.path, "M001", "S01", "First");
-  assertEq(merge.branch, "gsd/alpha/M001/S01", "merged the namespaced branch");
-  assertTrue(merge.deletedBranch, "slice branch deleted after merge");
+  run(`git merge --no-ff ${sliceBranch} -m "feat(M001/S01): First"`, wt.path);
+  run(`git branch -d ${sliceBranch}`, wt.path);
   assertEq(getCurrentBranch(wt.path), "worktree/alpha", "still on worktree branch after merge");
   assertTrue(readFileSync(join(wt.path, "feature.txt"), "utf-8").includes("new feature"), "merge brought feature to worktree branch");
 
@@ -144,35 +133,18 @@ async function main(): Promise<void> {
   // ── Second slice in same worktree ──────────────────────────────────────────
 
   console.log("\n=== Second slice in worktree ===");
-  const created2 = ensureSliceBranch(wt.path, "M001", "S02");
-  assertTrue(created2, "S02 branch created");
+  const sliceBranch2 = getSliceBranchName("M001", "S02", "alpha");
+  run(`git checkout -b ${sliceBranch2}`, wt.path);
   assertEq(getCurrentBranch(wt.path), "gsd/alpha/M001/S02", "on S02 namespaced branch");
 
   writeFileSync(join(wt.path, "feature2.txt"), "second feature\n", "utf-8");
   run("git add .", wt.path);
   run('git commit -m "feat: add feature 2"', wt.path);
 
-  switchToMain(wt.path);
-  const merge2 = mergeSliceToMain(wt.path, "M001", "S02", "Second");
-  assertEq(merge2.branch, "gsd/alpha/M001/S02", "S02 merge correct");
+  run("git checkout worktree/alpha", wt.path);
+  run(`git merge --no-ff ${sliceBranch2} -m "feat(M001/S02): Second"`, wt.path);
+  run(`git branch -d ${sliceBranch2}`, wt.path);
   assertEq(getCurrentBranch(wt.path), "worktree/alpha", "back on worktree branch");
-
-  // ── Main tree can still do its own slice work independently ────────────────
-
-  console.log("\n=== Main tree independent slice work ===");
-  assertEq(getCurrentBranch(base), "main", "main tree still on main");
-  const mainCreated = ensureSliceBranch(base, "M001", "S01");
-  assertTrue(mainCreated, "main tree can create S01 branch (no conflict with worktree)");
-  assertEq(getCurrentBranch(base), "gsd/M001/S01", "main tree on plain branch name");
-
-  writeFileSync(join(base, "main-feature.txt"), "main work\n", "utf-8");
-  run("git add .", base);
-  run('git commit -m "feat: main work"', base);
-
-  switchToMain(base);
-  assertEq(getCurrentBranch(base), "main", "main tree switchToMain goes to main");
-  const mainMerge = mergeSliceToMain(base, "M001", "S01", "First");
-  assertEq(mainMerge.branch, "gsd/M001/S01", "main tree merge uses plain branch");
 
   // ── Parallel worktrees don't conflict ──────────────────────────────────────
 
@@ -181,13 +153,13 @@ async function main(): Promise<void> {
   assertEq(getMainBranch(wt2.path), "worktree/beta", "second worktree has its own base branch");
 
   // Both worktrees can create S01 branches without conflict
-  const betaCreated = ensureSliceBranch(wt2.path, "M001", "S01");
-  assertTrue(betaCreated, "beta worktree can create S01");
+  const betaBranch = getSliceBranchName("M001", "S01", "beta");
+  run(`git checkout -b ${betaBranch}`, wt2.path);
   assertEq(getCurrentBranch(wt2.path), "gsd/beta/M001/S01", "beta has its own namespaced branch");
 
   // Alpha worktree can re-create S01 too (it was already merged+deleted earlier)
-  const alphaReCreated = ensureSliceBranch(wt.path, "M001", "S01");
-  assertTrue(alphaReCreated, "alpha worktree can re-create S01");
+  const alphaReBranch = getSliceBranchName("M001", "S01", "alpha");
+  run(`git checkout -b ${alphaReBranch}`, wt.path);
   assertEq(getCurrentBranch(wt.path), "gsd/alpha/M001/S01", "alpha re-created S01");
 
   // Both exist simultaneously
@@ -199,7 +171,7 @@ async function main(): Promise<void> {
 
   console.log("\n=== State derivation in worktree ===");
   // Switch alpha back to its base so deriveState sees milestone files
-  switchToMain(wt.path);
+  run("git checkout worktree/alpha", wt.path);
   const state = await deriveState(wt.path);
   assertTrue(state.activeMilestone !== null, "worktree has active milestone");
   assertEq(state.activeMilestone?.id, "M001", "correct milestone");
@@ -207,7 +179,8 @@ async function main(): Promise<void> {
   // ── autoCommitCurrentBranch in worktree ────────────────────────────────────
 
   console.log("\n=== autoCommitCurrentBranch in worktree ===");
-  ensureSliceBranch(wt2.path, "M001", "S01"); // re-checkout if needed
+  // Re-checkout the beta slice branch
+  run(`git checkout ${betaBranch}`, wt2.path);
   writeFileSync(join(wt2.path, "dirty.txt"), "uncommitted\n", "utf-8");
   const commitMsg = autoCommitCurrentBranch(wt2.path, "execute-task", "M001/S01/T01");
   assertTrue(commitMsg !== null, "auto-commit works in worktree");
@@ -217,8 +190,8 @@ async function main(): Promise<void> {
 
   console.log("\n=== Cleanup ===");
   // Switch worktrees back to their base branches before removal
-  switchToMain(wt.path);
-  switchToMain(wt2.path);
+  run("git checkout worktree/alpha", wt.path);
+  run("git checkout worktree/beta", wt2.path);
   removeWorktree(base, "alpha", { deleteBranch: true });
   removeWorktree(base, "beta", { deleteBranch: true });
   assertEq(listWorktrees(base).length, 0, "all worktrees removed");

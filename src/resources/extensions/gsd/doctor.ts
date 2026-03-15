@@ -1,10 +1,14 @@
+import { execSync } from "node:child_process";
 import { existsSync, mkdirSync } from "node:fs";
-import { join } from "node:path";
+import { join, sep } from "node:path";
 
 import { loadFile, parsePlan, parseRoadmap, parseSummary, saveFile, parseTaskPlanMustHaves, countMustHavesMentionedInSummary } from "./files.js";
 import { resolveMilestoneFile, resolveMilestonePath, resolveSliceFile, resolveSlicePath, resolveTaskFile, resolveTaskFiles, resolveTasksDir, milestonesDir, gsdRoot, relMilestoneFile, relSliceFile, relTaskFile, relSlicePath, relGsdRootFile, resolveGsdRootFile } from "./paths.js";
 import { deriveState, isMilestoneComplete } from "./state.js";
 import { loadEffectiveGSDPreferences, type GSDPreferences } from "./preferences.js";
+import { listWorktrees } from "./worktree-manager.js";
+import { abortAndReset } from "./git-self-heal.js";
+import { RUNTIME_EXCLUSION_PATHS } from "./git-service.js";
 
 export type DoctorSeverity = "info" | "warning" | "error";
 export type DoctorIssueCode =
@@ -22,7 +26,13 @@ export type DoctorIssueCode =
   | "task_done_must_haves_not_verified"
   | "active_requirement_missing_owner"
   | "blocked_requirement_missing_reason"
-  | "blocker_discovered_no_replan";
+  | "blocker_discovered_no_replan"
+  | "delimiter_in_title"
+  | "orphaned_auto_worktree"
+  | "stale_milestone_branch"
+  | "corrupt_merge_state"
+  | "tracked_runtime_files"
+  | "legacy_slice_branches";
 
 export interface DoctorIssue {
   severity: DoctorSeverity;
@@ -91,15 +101,43 @@ function validatePreferenceShape(preferences: GSDPreferences): string[] {
   return issues;
 }
 
+/**
+ * Characters that are used as delimiters in GSD state management documents
+ * and should not appear in milestone or slice titles.
+ *
+ * - "—" (em dash, U+2014): used as a display separator in STATE.md and other docs.
+ *   A title containing "—" makes the separator ambiguous, corrupting state display
+ *   and confusing the LLM agent that reads and writes these files.
+ * - "–" (en dash, U+2013): visually similar to em dash; same ambiguity risk.
+ * - "/" (forward slash, U+002F): used as the path separator in unit IDs (M001/S01)
+ *   and git branch names (gsd/M001/S01). A slash in a title can break path resolution.
+ */
+const TITLE_DELIMITER_RE = /[\u2014\u2013\/]/; // em dash, en dash, forward slash
+
+/**
+ * Check whether a milestone or slice title contains characters that conflict
+ * with GSD's state document delimiter conventions.
+ * Returns a human-readable description of the problem, or null if the title is safe.
+ */
+export function validateTitle(title: string): string | null {
+  if (TITLE_DELIMITER_RE.test(title)) {
+    const found: string[] = [];
+    if (/[\u2014\u2013]/.test(title)) found.push("em/en dash (\u2014 or \u2013)");
+    if (/\//.test(title)) found.push("forward slash (/)");
+    return `title contains ${found.join(" and ")}, which conflict with GSD state document delimiters`;
+  }
+  return null;
+}
+
 function buildStateMarkdown(state: Awaited<ReturnType<typeof deriveState>>): string {
   const lines: string[] = [];
   lines.push("# GSD State", "");
 
   const activeMilestone = state.activeMilestone
-    ? `${state.activeMilestone.id} — ${state.activeMilestone.title}`
+    ? `${state.activeMilestone.id}: ${state.activeMilestone.title}`
     : "None";
   const activeSlice = state.activeSlice
-    ? `${state.activeSlice.id} — ${state.activeSlice.title}`
+    ? `${state.activeSlice.id}: ${state.activeSlice.title}`
     : "None";
 
   lines.push(`**Active Milestone:** ${activeMilestone}`);
@@ -422,6 +460,213 @@ export function formatDoctorIssuesForPrompt(issues: DoctorIssue[]): string {
   }).join("\n");
 }
 
+async function checkGitHealth(
+  basePath: string,
+  issues: DoctorIssue[],
+  fixesApplied: string[],
+  shouldFix: (code: DoctorIssueCode) => boolean,
+): Promise<void> {
+  // Degrade gracefully if not a git repo
+  try {
+    execSync("git rev-parse --git-dir", { cwd: basePath, stdio: "pipe" });
+  } catch {
+    return; // Not a git repo — skip all git health checks
+  }
+
+  const gitDir = join(basePath, ".git");
+
+  // ── Orphaned auto-worktrees ──────────────────────────────────────────
+  try {
+    const worktrees = listWorktrees(basePath);
+    const milestoneWorktrees = worktrees.filter(wt => wt.branch.startsWith("milestone/"));
+
+    // Load roadmap state once for cross-referencing
+    const state = await deriveState(basePath);
+
+    for (const wt of milestoneWorktrees) {
+      // Extract milestone ID from branch name "milestone/M001" → "M001"
+      const milestoneId = wt.branch.replace(/^milestone\//, "");
+      const milestoneEntry = state.registry.find(m => m.id === milestoneId);
+
+      // Check if milestone is complete via roadmap
+      let isComplete = false;
+      if (milestoneEntry) {
+        const roadmapPath = resolveMilestoneFile(basePath, milestoneId, "ROADMAP");
+        const roadmapContent = roadmapPath ? await loadFile(roadmapPath) : null;
+        if (roadmapContent) {
+          const roadmap = parseRoadmap(roadmapContent);
+          isComplete = isMilestoneComplete(roadmap);
+        }
+      }
+
+      if (isComplete) {
+        issues.push({
+          severity: "warning",
+          code: "orphaned_auto_worktree",
+          scope: "milestone",
+          unitId: milestoneId,
+          message: `Worktree for completed milestone ${milestoneId} still exists at ${wt.path}`,
+          fixable: true,
+        });
+
+        if (shouldFix("orphaned_auto_worktree")) {
+          // Never remove a worktree matching current working directory
+          const cwd = process.cwd();
+          if (wt.path === cwd || cwd.startsWith(wt.path + sep)) {
+            fixesApplied.push(`skipped removing worktree at ${wt.path} (is cwd)`);
+          } else {
+            try {
+              execSync(`git worktree remove --force "${wt.path}"`, { cwd: basePath, stdio: "pipe" });
+              fixesApplied.push(`removed orphaned worktree ${wt.path}`);
+            } catch {
+              fixesApplied.push(`failed to remove worktree ${wt.path}`);
+            }
+          }
+        }
+      }
+    }
+
+    // ── Stale milestone branches ─────────────────────────────────────────
+    try {
+      // Use unquoted glob — single quotes are not interpreted by cmd.exe on Windows,
+      // causing the pattern to match literally instead of as a glob.
+      const branchOutput = execSync("git branch --list milestone/*", { cwd: basePath, stdio: "pipe" }).toString().trim();
+      if (branchOutput) {
+        const branches = branchOutput.split("\n").map(b => b.trim().replace(/^\*\s*/, "")).filter(Boolean);
+        const worktreeBranches = new Set(milestoneWorktrees.map(wt => wt.branch));
+
+        for (const branch of branches) {
+          // Skip branches that have a worktree (handled above)
+          if (worktreeBranches.has(branch)) continue;
+
+          const milestoneId = branch.replace(/^milestone\//, "");
+          const roadmapPath = resolveMilestoneFile(basePath, milestoneId, "ROADMAP");
+          const roadmapContent = roadmapPath ? await loadFile(roadmapPath) : null;
+          if (!roadmapContent) continue;
+
+          const roadmap = parseRoadmap(roadmapContent);
+          if (isMilestoneComplete(roadmap)) {
+            issues.push({
+              severity: "info",
+              code: "stale_milestone_branch",
+              scope: "milestone",
+              unitId: milestoneId,
+              message: `Branch ${branch} exists for completed milestone ${milestoneId}`,
+              fixable: true,
+            });
+
+            if (shouldFix("stale_milestone_branch")) {
+              try {
+                execSync(`git branch -D "${branch}"`, { cwd: basePath, stdio: "pipe" });
+                fixesApplied.push(`deleted stale branch ${branch}`);
+              } catch {
+                fixesApplied.push(`failed to delete branch ${branch}`);
+              }
+            }
+          }
+        }
+      }
+    } catch {
+      // git branch list failed — skip stale branch check
+    }
+  } catch {
+    // listWorktrees or deriveState failed — skip worktree/branch checks
+  }
+
+  // ── Corrupt merge state ────────────────────────────────────────────────
+  try {
+    const mergeStateFiles = ["MERGE_HEAD", "SQUASH_MSG"];
+    const mergeStateDirs = ["rebase-apply", "rebase-merge"];
+    const found: string[] = [];
+
+    for (const f of mergeStateFiles) {
+      if (existsSync(join(gitDir, f))) found.push(f);
+    }
+    for (const d of mergeStateDirs) {
+      if (existsSync(join(gitDir, d))) found.push(d);
+    }
+
+    if (found.length > 0) {
+      issues.push({
+        severity: "error",
+        code: "corrupt_merge_state",
+        scope: "project",
+        unitId: "project",
+        message: `Corrupt merge/rebase state detected: ${found.join(", ")}`,
+        fixable: true,
+      });
+
+      if (shouldFix("corrupt_merge_state")) {
+        const result = abortAndReset(basePath);
+        fixesApplied.push(`cleaned merge state: ${result.cleaned.join(", ")}`);
+      }
+    }
+  } catch {
+    // Can't check .git dir — skip
+  }
+
+  // ── Tracked runtime files ──────────────────────────────────────────────
+  try {
+    const trackedPaths: string[] = [];
+    for (const exclusion of RUNTIME_EXCLUSION_PATHS) {
+      try {
+        const output = execSync(`git ls-files "${exclusion}"`, { cwd: basePath, stdio: "pipe" }).toString().trim();
+        if (output) {
+          trackedPaths.push(...output.split("\n").filter(Boolean));
+        }
+      } catch {
+        // Individual ls-files can fail — continue
+      }
+    }
+
+    if (trackedPaths.length > 0) {
+      issues.push({
+        severity: "warning",
+        code: "tracked_runtime_files",
+        scope: "project",
+        unitId: "project",
+        message: `${trackedPaths.length} runtime file(s) are tracked by git: ${trackedPaths.slice(0, 5).join(", ")}${trackedPaths.length > 5 ? "..." : ""}`,
+        fixable: true,
+      });
+
+      if (shouldFix("tracked_runtime_files")) {
+        try {
+          for (const exclusion of RUNTIME_EXCLUSION_PATHS) {
+            execSync(`git rm --cached -r --ignore-unmatch "${exclusion}"`, { cwd: basePath, stdio: "pipe" });
+          }
+          fixesApplied.push(`untracked ${trackedPaths.length} runtime file(s)`);
+        } catch {
+          fixesApplied.push("failed to untrack runtime files");
+        }
+      }
+    }
+  } catch {
+    // git ls-files failed — skip
+  }
+
+  // ── Legacy slice branches ──────────────────────────────────────────────
+  try {
+    const sliceBranches = execSync('git branch --format="%(refname:short)" --list "gsd/*/*"', {
+      cwd: basePath,
+      stdio: ["ignore", "pipe", "pipe"],
+      encoding: "utf-8",
+    }).trim();
+    if (sliceBranches) {
+      const branchList = sliceBranches.split("\n").map(b => b.trim()).filter(Boolean);
+      issues.push({
+        severity: "info",
+        code: "legacy_slice_branches",
+        scope: "project",
+        unitId: "project",
+        message: `${branchList.length} legacy slice branch(es) found: ${branchList.slice(0, 3).join(", ")}${branchList.length > 3 ? "..." : ""}. These are no longer used (branchless architecture). Delete with: git branch -D ${branchList.join(" ")}`,
+        fixable: false,
+      });
+    }
+  } catch {
+    // git branch list failed — skip
+  }
+}
+
 export async function runGSDDoctor(basePath: string, options?: { fix?: boolean; scope?: string; fixLevel?: "task" | "all" }): Promise<DoctorReport> {
   const issues: DoctorIssue[] = [];
   const fixesApplied: string[] = [];
@@ -462,6 +707,9 @@ export async function runGSDDoctor(basePath: string, options?: { fix?: boolean; 
     }
   }
 
+  // Git health checks (orphaned worktrees, stale branches, corrupt merge state, tracked runtime files)
+  await checkGitHealth(basePath, issues, fixesApplied, shouldFix);
+
   const milestonesPath = milestonesDir(basePath);
   if (!existsSync(milestonesPath)) {
     return { ok: issues.every(issue => issue.severity !== "error"), basePath, issues, fixesApplied };
@@ -477,6 +725,20 @@ export async function runGSDDoctor(basePath: string, options?: { fix?: boolean; 
     const milestonePath = resolveMilestonePath(basePath, milestoneId);
     if (!milestonePath) continue;
 
+    // Validate milestone title for delimiter characters that break state documents.
+    const milestoneTitleIssue = validateTitle(milestone.title);
+    if (milestoneTitleIssue) {
+      issues.push({
+        severity: "warning",
+        code: "delimiter_in_title",
+        scope: "milestone",
+        unitId: milestoneId,
+        message: `Milestone ${milestoneId} ${milestoneTitleIssue}. Rename the milestone to remove these characters to prevent state corruption.`,
+        file: relMilestoneFile(basePath, milestoneId, "ROADMAP"),
+        fixable: false,
+      });
+    }
+
     const roadmapPath = resolveMilestoneFile(basePath, milestoneId, "ROADMAP");
     const roadmapContent = roadmapPath ? await loadFile(roadmapPath) : null;
     if (!roadmapContent) continue;
@@ -485,6 +747,20 @@ export async function runGSDDoctor(basePath: string, options?: { fix?: boolean; 
     for (const slice of roadmap.slices) {
       const unitId = `${milestoneId}/${slice.id}`;
       if (options?.scope && !matchesScope(unitId, options.scope) && options.scope !== milestoneId) continue;
+
+      // Validate slice title for delimiter characters.
+      const sliceTitleIssue = validateTitle(slice.title);
+      if (sliceTitleIssue) {
+        issues.push({
+          severity: "warning",
+          code: "delimiter_in_title",
+          scope: "slice",
+          unitId,
+          message: `Slice ${unitId} ${sliceTitleIssue}. Rename the slice to remove these characters to prevent state corruption.`,
+          file: relMilestoneFile(basePath, milestoneId, "ROADMAP"),
+          fixable: false,
+        });
+      }
 
       const slicePath = resolveSlicePath(basePath, milestoneId, slice.id);
       if (!slicePath) continue;

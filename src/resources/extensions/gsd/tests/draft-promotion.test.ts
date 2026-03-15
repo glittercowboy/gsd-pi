@@ -145,7 +145,8 @@ const guidedFlowSource = readFileSync(
 );
 
 const checkFnIdx = guidedFlowSource.indexOf("checkAutoStartAfterDiscuss");
-const checkFnChunk = guidedFlowSource.slice(checkFnIdx, checkFnIdx + 1200);
+const checkFnEnd = guidedFlowSource.indexOf("\nexport ", checkFnIdx + 1);
+const checkFnChunk = guidedFlowSource.slice(checkFnIdx, checkFnEnd > checkFnIdx ? checkFnEnd : checkFnIdx + 5000);
 
 assert(
   checkFnChunk.includes("CONTEXT-DRAFT"),

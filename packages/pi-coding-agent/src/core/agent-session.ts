@@ -67,7 +67,6 @@ import {
 	type TurnEndEvent,
 	type TurnStartEvent,
 	wrapRegisteredTools,
-	wrapToolsWithExtensions,
 } from "./extensions/index.js";
 import type { BashExecutionMessage, CustomMessage } from "./messages.js";
 import { FallbackResolver } from "./fallback-resolver.js";
@@ -304,6 +303,11 @@ export class AgentSession {
 		// (session persistence, extensions, auto-compaction, retry logic)
 		this._unsubscribeAgent = this.agent.subscribe(this._handleAgentEvent);
 
+		// Install tool hooks that await the event queue before emitting extension events.
+		// This ensures extensions always see settled state (e.g., assistant message appended)
+		// even when tools execute in parallel.
+		this._installAgentToolHooks();
+
 		this._buildRuntime({
 			activeToolNames: this._initialActiveToolNames,
 			includeAllExtensionTools: true,
@@ -475,6 +479,73 @@ export class AgentSession {
 			this._retryResolve = undefined;
 			this._retryPromise = undefined;
 		}
+	}
+
+	/**
+	 * Install beforeToolCall/afterToolCall hooks on the Agent.
+	 *
+	 * These hooks await `_agentEventQueue` before emitting extension events,
+	 * ensuring that all prior events (including `message_end` which appends
+	 * the assistant message) have fully settled. This prevents a race condition
+	 * in parallel tool execution where extension `tool_call` handlers could
+	 * see stale agent state.
+	 */
+	private _installAgentToolHooks(): void {
+		this.agent.setBeforeToolCall(async ({ toolCall, args }) => {
+			// Wait for all queued agent events to settle before emitting to extensions
+			await this._agentEventQueue;
+
+			if (!this._extensionRunner?.hasHandlers("tool_call")) return undefined;
+
+			try {
+				const callResult = await this._extensionRunner.emitToolCall({
+					type: "tool_call",
+					toolName: toolCall.name,
+					toolCallId: toolCall.id,
+					input: args as Record<string, unknown>,
+				});
+
+				if (callResult?.block) {
+					return {
+						block: true,
+						reason: callResult.reason || "Tool execution was blocked by an extension",
+					};
+				}
+			} catch (err) {
+				if (err instanceof Error) {
+					return { block: true, reason: err.message };
+				}
+				return { block: true, reason: `Extension failed, blocking execution: ${String(err)}` };
+			}
+
+			return undefined;
+		});
+
+		this.agent.setAfterToolCall(async ({ toolCall, args, result, isError }) => {
+			// Wait for all queued agent events to settle
+			await this._agentEventQueue;
+
+			if (!this._extensionRunner?.hasHandlers("tool_result")) return undefined;
+
+			const resultResult = await this._extensionRunner.emitToolResult({
+				type: "tool_result",
+				toolName: toolCall.name,
+				toolCallId: toolCall.id,
+				input: args as Record<string, unknown>,
+				content: result.content,
+				details: result.details,
+				isError,
+			});
+
+			if (resultResult) {
+				return {
+					content: resultResult.content ?? undefined,
+					details: resultResult.details ?? undefined,
+				};
+			}
+
+			return undefined;
+		});
 	}
 
 	/** Extract text content from a message */
@@ -2181,12 +2252,10 @@ export class AgentSession {
 			toolRegistry.set(tool.name, tool);
 		}
 
-		if (this._extensionRunner) {
-			const wrappedAllTools = wrapToolsWithExtensions(Array.from(toolRegistry.values()), this._extensionRunner);
-			this._toolRegistry = new Map(wrappedAllTools.map((tool) => [tool.name, tool]));
-		} else {
-			this._toolRegistry = toolRegistry;
-		}
+		// Tool interception (tool_call/tool_result extension events) is handled by
+		// beforeToolCall/afterToolCall hooks installed in _installAgentToolHooks(),
+		// which await _agentEventQueue for safe parallel execution.
+		this._toolRegistry = toolRegistry;
 
 		const nextActiveToolNames = options?.activeToolNames
 			? [...options.activeToolNames]

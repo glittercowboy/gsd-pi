@@ -3,6 +3,7 @@ import { homedir } from 'node:os'
 import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
 import { dirname, join, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { compareSemver } from './update-check.js'
 
 // Resolve resources directory — prefer dist/resources/ (stable, set at build time)
 // over src/resources/ (live working tree, changes with git branch).
@@ -17,6 +18,11 @@ const distResources = join(packageRoot, 'dist', 'resources')
 const srcResources = join(packageRoot, 'src', 'resources')
 const resourcesDir = existsSync(distResources) ? distResources : srcResources
 const bundledExtensionsDir = join(resourcesDir, 'extensions')
+const resourceVersionManifestName = 'managed-resources.json'
+
+interface ManagedResourceManifest {
+  gsdVersion: string
+}
 
 function isExtensionFile(name: string): boolean {
   return name.endsWith('.ts') || name.endsWith('.js')
@@ -82,24 +88,67 @@ function getExtensionKey(entryPath: string, extensionsDir: string): string {
   return relPath.split(/[\\/]/)[0]
 }
 
+function getManagedResourceManifestPath(agentDir: string): string {
+  return join(agentDir, resourceVersionManifestName)
+}
+
+function getBundledGsdVersion(): string {
+  try {
+    const pkg = JSON.parse(readFileSync(join(packageRoot, 'package.json'), 'utf-8'))
+    return typeof pkg?.version === 'string' ? pkg.version : '0.0.0'
+  } catch {
+    return process.env.GSD_VERSION || '0.0.0'
+  }
+}
+
+function writeManagedResourceManifest(agentDir: string): void {
+  const manifest: ManagedResourceManifest = { gsdVersion: getBundledGsdVersion() }
+  writeFileSync(getManagedResourceManifestPath(agentDir), JSON.stringify(manifest))
+}
+
+export function readManagedResourceVersion(agentDir: string): string | null {
+  try {
+    const manifest = JSON.parse(readFileSync(getManagedResourceManifestPath(agentDir), 'utf-8')) as ManagedResourceManifest
+    return typeof manifest?.gsdVersion === 'string' ? manifest.gsdVersion : null
+  } catch {
+    return null
+  }
+}
+
+export function getNewerManagedResourceVersion(agentDir: string, currentVersion: string): string | null {
+  const managedVersion = readManagedResourceVersion(agentDir)
+  if (!managedVersion) {
+    return null
+  }
+  return compareSemver(managedVersion, currentVersion) > 0 ? managedVersion : null
+}
+
 /**
  * Syncs all bundled resources to agentDir (~/.gsd/agent/) on every launch.
  *
- * - extensions/ → ~/.gsd/agent/extensions/   (always overwrite — ensures updates ship on next launch)
- * - agents/     → ~/.gsd/agent/agents/        (always overwrite)
- * - skills/     → ~/.gsd/agent/skills/        (always overwrite)
+ * - extensions/ → ~/.gsd/agent/extensions/   (overwrite when version changes)
+ * - agents/     → ~/.gsd/agent/agents/        (overwrite when version changes)
+ * - skills/     → ~/.gsd/agent/skills/        (overwrite when version changes)
  * - GSD-WORKFLOW.md is read directly from bundled path via GSD_WORKFLOW_PATH env var
  *
- * Always-overwrite ensures `npm update -g @glittercowboy/gsd` takes effect immediately.
- * User customizations should go in ~/.gsd/agent/extensions/ subdirs with unique names,
- * not by editing the gsd-managed files.
+ * Skips the copy when the managed-resources.json version matches the current
+ * GSD version, avoiding ~128ms of synchronous cpSync on every startup.
+ * After `npm update -g @glittercowboy/gsd`, versions will differ and the
+ * copy runs once to land the new resources.
  *
  * Inspectable: `ls ~/.gsd/agent/extensions/`
  */
 export function initResources(agentDir: string): void {
   mkdirSync(agentDir, { recursive: true })
 
-  // Sync extensions — always overwrite so updates land on next launch
+  // Skip resource sync when versions match — saves ~128ms of cpSync per launch
+  const currentVersion = getBundledGsdVersion()
+  const managedVersion = readManagedResourceVersion(agentDir)
+  if (managedVersion && managedVersion === currentVersion) {
+    return
+  }
+
+  // Sync extensions — overwrite so updates land on next launch
   const destExtensions = join(agentDir, 'extensions')
   cpSync(bundledExtensionsDir, destExtensions, { recursive: true, force: true })
 
@@ -110,12 +159,14 @@ export function initResources(agentDir: string): void {
     cpSync(srcAgents, destAgents, { recursive: true, force: true })
   }
 
-  // Sync skills — always overwrite so updates land on next launch
+  // Sync skills — overwrite so updates land on next launch
   const destSkills = join(agentDir, 'skills')
   const srcSkills = join(resourcesDir, 'skills')
   if (existsSync(srcSkills)) {
     cpSync(srcSkills, destSkills, { recursive: true, force: true })
   }
+
+  writeManagedResourceManifest(agentDir)
 }
 
 /**

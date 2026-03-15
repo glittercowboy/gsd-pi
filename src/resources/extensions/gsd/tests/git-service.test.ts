@@ -13,7 +13,6 @@ import {
   writeIntegrationBranch,
   type GitPreferences,
   type CommitOptions,
-  type MergeSliceResult,
   type PreMergeCheckResult,
 } from "../git-service.ts";
 import { createTestContext } from './test-helpers.ts';
@@ -195,8 +194,8 @@ async function main(): Promise<void> {
 
   assertEq(
     RUNTIME_EXCLUSION_PATHS.length,
-    7,
-    "exactly 7 runtime exclusion paths"
+    9,
+    "exactly 9 runtime exclusion paths"
   );
 
   const expectedPaths = [
@@ -207,6 +206,8 @@ async function main(): Promise<void> {
     ".gsd/metrics.json",
     ".gsd/completed-units.json",
     ".gsd/STATE.md",
+    ".gsd/gsd.db",
+    ".gsd/DISCUSSION-MANIFEST.json",
   ];
 
   assertEq(
@@ -261,10 +262,8 @@ async function main(): Promise<void> {
   // These are compile-time checks — if we got here, the types import fine
   const _prefs: GitPreferences = { auto_push: true, remote: "origin" };
   const _opts: CommitOptions = { message: "test" };
-  const _result: MergeSliceResult = { branch: "main", mergedCommitMessage: "msg", deletedBranch: false };
   assertTrue(true, "GitPreferences type exported and usable");
   assertTrue(true, "CommitOptions type exported and usable");
-  assertTrue(true, "MergeSliceResult type exported and usable");
 
   // Cleanup T01 temp dir
   rmSync(tempDir, { recursive: true, force: true });
@@ -534,7 +533,7 @@ async function main(): Promise<void> {
     return dir;
   }
 
-  // ─── getCurrentBranch / isOnSliceBranch / getActiveSliceBranch ─────────
+  // ─── getCurrentBranch ────────────────────────────────────────────────
 
   console.log("\n=== Branch queries ===");
 
@@ -542,21 +541,13 @@ async function main(): Promise<void> {
     const repo = initBranchTestRepo();
     const svc = new GitServiceImpl(repo);
 
-    // On main
     assertEq(svc.getCurrentBranch(), "main", "getCurrentBranch returns main on main branch");
-    assertEq(svc.isOnSliceBranch(), false, "isOnSliceBranch returns false on main");
-    assertEq(svc.getActiveSliceBranch(), null, "getActiveSliceBranch returns null on main");
 
-    // Create and checkout a slice branch manually
     run("git checkout -b gsd/M001/S01", repo);
     assertEq(svc.getCurrentBranch(), "gsd/M001/S01", "getCurrentBranch returns slice branch name");
-    assertEq(svc.isOnSliceBranch(), true, "isOnSliceBranch returns true on slice branch");
-    assertEq(svc.getActiveSliceBranch(), "gsd/M001/S01", "getActiveSliceBranch returns branch name on slice branch");
 
-    // Non-slice feature branch
     run("git checkout -b feature/foo", repo);
-    assertEq(svc.isOnSliceBranch(), false, "isOnSliceBranch returns false on non-slice branch");
-    assertEq(svc.getActiveSliceBranch(), null, "getActiveSliceBranch returns null on non-slice branch");
+    assertEq(svc.getCurrentBranch(), "feature/foo", "getCurrentBranch returns feature branch name");
 
     rmSync(repo, { recursive: true, force: true });
   }
@@ -591,486 +582,8 @@ async function main(): Promise<void> {
     rmSync(repo, { recursive: true, force: true });
   }
 
-  // ─── ensureSliceBranch: creates and checks out ────────────────────────
-
-  console.log("\n=== ensureSliceBranch ===");
-
-  {
-    const repo = initBranchTestRepo();
-    const svc = new GitServiceImpl(repo);
-
-    const created = svc.ensureSliceBranch("M001", "S01");
-    assertEq(created, true, "ensureSliceBranch returns true on first call (branch created)");
-    assertEq(svc.getCurrentBranch(), "gsd/M001/S01", "ensureSliceBranch checks out the slice branch");
-
-    rmSync(repo, { recursive: true, force: true });
-  }
-
-  // ─── ensureSliceBranch: idempotent ────────────────────────────────────
-
-  console.log("\n=== ensureSliceBranch: idempotent ===");
-
-  {
-    const repo = initBranchTestRepo();
-    const svc = new GitServiceImpl(repo);
-
-    svc.ensureSliceBranch("M001", "S01");
-    const secondCall = svc.ensureSliceBranch("M001", "S01");
-    assertEq(secondCall, false, "ensureSliceBranch returns false when already on the branch");
-    assertEq(svc.getCurrentBranch(), "gsd/M001/S01", "still on slice branch after idempotent call");
-
-    rmSync(repo, { recursive: true, force: true });
-  }
-
-  // ─── ensureSliceBranch: from non-main working branch inherits artifacts ──
-
-  console.log("\n=== ensureSliceBranch: from non-main inherits artifacts ===");
-
-  {
-    const repo = initBranchTestRepo();
-    const svc = new GitServiceImpl(repo);
-
-    // Create a feature branch with planning artifacts
-    run("git checkout -b developer", repo);
-    createFile(repo, ".gsd/milestones/M001/M001-ROADMAP.md", "# Roadmap");
-    run("git add -A", repo);
-    run('git commit -m "add roadmap"', repo);
-
-    // ensureSliceBranch from this non-main, non-slice branch
-    const created = svc.ensureSliceBranch("M001", "S01");
-    assertEq(created, true, "branch created from non-main working branch");
-    assertEq(svc.getCurrentBranch(), "gsd/M001/S01", "checked out to slice branch");
-
-    // The roadmap from developer branch should be present
-    const logOutput = run("git log --oneline", repo);
-    assertTrue(logOutput.includes("add roadmap"), "slice branch inherits artifacts from working branch");
-
-    rmSync(repo, { recursive: true, force: true });
-  }
-
-  // ─── ensureSliceBranch: from another slice branch falls back to main ──
-
-  console.log("\n=== ensureSliceBranch: from slice branch falls back to main ===");
-
-  {
-    const repo = initBranchTestRepo();
-    const svc = new GitServiceImpl(repo);
-
-    // Create file only on main
-    createFile(repo, "main-only.txt", "from main");
-    run("git add -A", repo);
-    run('git commit -m "main-only file"', repo);
-
-    // Create and check out S01
-    svc.ensureSliceBranch("M001", "S01");
-    // Add a file only on S01
-    createFile(repo, "s01-only.txt", "from s01");
-    run("git add -A", repo);
-    run('git commit -m "S01 work"', repo);
-
-    // Now create S02 from S01 — should fall back to main
-    const created = svc.ensureSliceBranch("M001", "S02");
-    assertEq(created, true, "S02 branch created from S01 (fell back to main)");
-    assertEq(svc.getCurrentBranch(), "gsd/M001/S02", "on S02 branch");
-
-    // S02 should NOT have the S01-only file (it branched from main)
-    const showFiles = run("git ls-files", repo);
-    assertTrue(!showFiles.includes("s01-only.txt"), "S02 does not have S01-only files (branched from main)");
-    assertTrue(showFiles.includes("main-only.txt"), "S02 has main files");
-
-    rmSync(repo, { recursive: true, force: true });
-  }
-
-  // ─── ensureSliceBranch: auto-commits dirty files via smart staging ────
-
-  console.log("\n=== ensureSliceBranch: auto-commits with smart staging ===");
-
-  {
-    const repo = initBranchTestRepo();
-    const svc = new GitServiceImpl(repo);
-
-    // Create dirty files: both real and runtime
-    createFile(repo, "src/feature.ts", "export const y = 2;");
-    createFile(repo, ".gsd/activity/session.jsonl", "session data");
-    createFile(repo, ".gsd/STATE.md", "# Current State");
-    createFile(repo, ".gsd/metrics.json", '{"tasks":1}');
-
-    // ensureSliceBranch should auto-commit before checkout
-    svc.ensureSliceBranch("M001", "S01");
-
-    // The auto-commit on main should have src/feature.ts but NOT runtime files
-    run("git checkout main", repo);
-    const showStat = run("git show --stat --format= HEAD", repo);
-    assertTrue(showStat.includes("src/feature.ts"), "auto-commit includes real files");
-    assertTrue(!showStat.includes(".gsd/activity"), "auto-commit excludes .gsd/activity/ (smart staging)");
-    assertTrue(!showStat.includes("STATE.md"), "auto-commit excludes .gsd/STATE.md (smart staging)");
-    assertTrue(!showStat.includes("metrics.json"), "auto-commit excludes .gsd/metrics.json (smart staging)");
-
-    rmSync(repo, { recursive: true, force: true });
-  }
-
-  // ─── ensureSliceBranch: tracked STATE.md + dirty (regression: "local changes overwritten") ─
-  //
-  // Reproduces: "error: Your local changes to the following files would be overwritten
-  // by checkout: .gsd/STATE.md" that occurred in gsd auto when STATE.md was historically
-  // committed to the repo (before it was added to .gitignore).
-
-  console.log("\n=== ensureSliceBranch: tracked STATE.md + dirty (checkout conflict regression) ===");
-
-  {
-    const repo = initBranchTestRepo();
-    const svc = new GitServiceImpl(repo);
-
-    // Simulate historical state: STATE.md was committed before gitignore was configured
-    createFile(repo, ".gsd/STATE.md", "# State v1");
-    run("git add -f .gsd/STATE.md", repo);
-    run('git commit -m "add state (pre-gitignore)"', repo);
-
-    // STATE.md gets modified during runtime (dirty)
-    createFile(repo, ".gsd/STATE.md", "# State v2 (modified at runtime)");
-
-    // ensureSliceBranch must not fail with "local changes would be overwritten"
-    svc.ensureSliceBranch("M001", "S01");
-    assertEq(svc.getCurrentBranch(), "gsd/M001/S01", "checked out slice branch despite tracked+dirty STATE.md");
-
-    rmSync(repo, { recursive: true, force: true });
-  }
-
-  // ─── ensureSliceBranch: untracked STATE.md blocks checkout (regression: cleanup-commit edge case) ─
-  //
-  // Reproduces: "The following untracked working tree files would be overwritten by checkout:
-  // .gsd/STATE.md" when the smartStage cleanup commit removes STATE.md from the current
-  // branch's HEAD but the target branch was already created from the old HEAD (so it still
-  // has STATE.md tracked). Without discardUntrackedRuntimeFiles(), the untracked STATE.md
-  // on disk would block the checkout.
-
-  console.log("\n=== ensureSliceBranch: untracked runtime files blocked by target branch (cleanup-commit edge case) ===");
-
-  {
-    const repo = initBranchTestRepo();
-
-    // Simulate: STATE.md is tracked in main's HEAD (historical state)
-    createFile(repo, ".gsd/STATE.md", "# State original");
-    run("git add -f .gsd/STATE.md", repo);
-    run('git commit -m "initial with tracked STATE.md"', repo);
-
-    // Simulate what smartStage one-time cleanup does: remove STATE.md from index and commit.
-    // This leaves STATE.md on disk but removes it from main's HEAD.
-    run("git rm --cached .gsd/STATE.md", repo);
-    run('git commit -m "chore: untrack runtime files"', repo);
-
-    // STATE.md exists on disk (modified) but is now untracked in main's HEAD
-    createFile(repo, ".gsd/STATE.md", "# State modified after cleanup");
-
-    // Create slice branch — this is what ensureSliceBranch does internally but we
-    // simulate a GitServiceImpl that has already done the cleanup commit.
-    // The slice branch is created from the OLD HEAD (before cleanup commit) so it HAS
-    // STATE.md tracked. Without discardUntrackedRuntimeFiles(), the checkout would fail.
-    run("git branch gsd/M001/S01 HEAD~1", repo); // branch from HEAD~1 = the commit that had STATE.md
-
-    // Now use GitServiceImpl to switch to the already-existing slice branch
-    const svc = new GitServiceImpl(repo);
-
-    // ensureSliceBranch must succeed despite the untracked STATE.md on disk
-    // conflicting with the tracked STATE.md in the target branch
-    svc.ensureSliceBranch("M001", "S01");
-    assertEq(svc.getCurrentBranch(), "gsd/M001/S01", "checked out slice branch (untracked runtime file removed before checkout)");
-
-    rmSync(repo, { recursive: true, force: true });
-  }
-
-  // ─── switchToMain: tracked STATE.md + dirty (regression) ─────────────
-
-  console.log("\n=== switchToMain: tracked STATE.md + dirty (checkout conflict regression) ===");
-
-  {
-    const repo = initBranchTestRepo();
-    const svc = new GitServiceImpl(repo);
-
-    // Track STATE.md on main (historical pre-gitignore state)
-    createFile(repo, ".gsd/STATE.md", "# State on main");
-    run("git add -f .gsd/STATE.md", repo);
-    run('git commit -m "add state (pre-gitignore)"', repo);
-
-    // Create slice branch (inherits STATE.md from main)
-    svc.ensureSliceBranch("M001", "S01");
-    assertEq(svc.getCurrentBranch(), "gsd/M001/S01", "on slice branch before switchToMain");
-
-    // Modify STATE.md on slice branch (runtime update)
-    createFile(repo, ".gsd/STATE.md", "# State updated on slice branch");
-
-    // switchToMain must not fail with "local changes would be overwritten"
-    svc.switchToMain();
-    assertEq(svc.getCurrentBranch(), svc.getMainBranch(), "back on main after switchToMain despite tracked+dirty STATE.md");
-
-    rmSync(repo, { recursive: true, force: true });
-  }
-
-  // ─── switchToMain ─────────────────────────────────────────────────────
-
-  console.log("\n=== switchToMain ===");
-
-  {
-    const repo = initBranchTestRepo();
-    const svc = new GitServiceImpl(repo);
-
-    // Switch to a slice branch first
-    svc.ensureSliceBranch("M001", "S01");
-    assertEq(svc.getCurrentBranch(), "gsd/M001/S01", "on slice branch before switchToMain");
-
-    // Create dirty files
-    createFile(repo, "src/work.ts", "work in progress");
-    createFile(repo, ".gsd/activity/log.jsonl", "activity log");
-    createFile(repo, ".gsd/runtime/state.json", '{"running":true}');
-
-    svc.switchToMain();
-    assertEq(svc.getCurrentBranch(), "main", "switchToMain switches to main");
-
-    // Verify the auto-commit on the slice branch used smart staging
-    const sliceLog = run("git log gsd/M001/S01 --oneline -1", repo);
-    assertTrue(sliceLog.includes("pre-switch"), "auto-commit message includes pre-switch");
-
-    // Check that the auto-commit on the slice branch excluded runtime files
-    const showStat = run("git log gsd/M001/S01 -1 --format= --stat", repo);
-    assertTrue(showStat.includes("src/work.ts"), "switchToMain auto-commit includes real files");
-    assertTrue(!showStat.includes(".gsd/activity"), "switchToMain auto-commit excludes .gsd/activity/");
-    assertTrue(!showStat.includes(".gsd/runtime"), "switchToMain auto-commit excludes .gsd/runtime/");
-
-    rmSync(repo, { recursive: true, force: true });
-  }
-
-  // ─── switchToMain: idempotent when already on main ─────────────────────
-
-  console.log("\n=== switchToMain: idempotent ===");
-
-  {
-    const repo = initBranchTestRepo();
-    const svc = new GitServiceImpl(repo);
-
-    assertEq(svc.getCurrentBranch(), "main", "already on main");
-    svc.switchToMain(); // Should not throw
-    assertEq(svc.getCurrentBranch(), "main", "still on main after idempotent switchToMain");
-
-    // Verify no extra commits were created
-    const logCount = run("git rev-list --count HEAD", repo);
-    assertEq(logCount, "1", "no extra commits from idempotent switchToMain");
-
-    rmSync(repo, { recursive: true, force: true });
-  }
-
-  // ─── mergeSliceToMain: full lifecycle with feat ─────────────────────────
-
-  console.log("\n=== mergeSliceToMain: full lifecycle ===");
-
-  {
-    const repo = initBranchTestRepo();
-    const svc = new GitServiceImpl(repo);
-
-    // Create and switch to slice branch
-    svc.ensureSliceBranch("M001", "S01");
-    assertEq(svc.getCurrentBranch(), "gsd/M001/S01", "on slice branch for merge test");
-
-    // Do work on the slice branch
-    createFile(repo, "src/feature.ts", "export const feature = true;");
-    svc.commit({ message: "add feature module" });
-
-    // Switch to main and merge
-    svc.switchToMain();
-    const result = svc.mergeSliceToMain("M001", "S01", "Implement user authentication");
-
-    assertEq(result.mergedCommitMessage, "feat(M001/S01): Implement user authentication", "merge commit message uses feat type");
-    assertEq(result.deletedBranch, true, "branch was deleted");
-    assertEq(result.branch, "gsd/M001/S01", "result includes branch name");
-
-    // Verify commit is on main
-    const log = run("git log --oneline -1", repo);
-    assertTrue(log.includes("feat(M001/S01): Implement user authentication"), "merge commit visible in git log");
-
-    // Verify the file is on main
-    const files = run("git ls-files", repo);
-    assertTrue(files.includes("src/feature.ts"), "merged file exists on main");
-
-    // Verify slice branch is deleted
-    const branches = run("git branch", repo);
-    assertTrue(!branches.includes("gsd/M001/S01"), "slice branch deleted after merge");
-
-    rmSync(repo, { recursive: true, force: true });
-  }
-
-  // ─── mergeSliceToMain: fix type ───────────────────────────────────────
-
-  console.log("\n=== mergeSliceToMain: fix type ===");
-
-  {
-    const repo = initBranchTestRepo();
-    const svc = new GitServiceImpl(repo);
-
-    svc.ensureSliceBranch("M001", "S02");
-    createFile(repo, "src/bugfix.ts", "// fixed");
-    svc.commit({ message: "fix the bug" });
-
-    svc.switchToMain();
-    const result = svc.mergeSliceToMain("M001", "S02", "Fix broken config");
-
-    assertTrue(result.mergedCommitMessage.startsWith("fix("), "merge commit starts with fix(");
-    assertEq(result.mergedCommitMessage, "fix(M001/S02): Fix broken config", "fix merge commit message correct");
-
-    rmSync(repo, { recursive: true, force: true });
-  }
-
-  // ─── mergeSliceToMain: docs type ──────────────────────────────────────
-
-  console.log("\n=== mergeSliceToMain: docs type ===");
-
-  {
-    const repo = initBranchTestRepo();
-    const svc = new GitServiceImpl(repo);
-
-    svc.ensureSliceBranch("M001", "S03");
-    createFile(repo, "docs/guide.md", "# Guide");
-    svc.commit({ message: "write docs" });
-
-    svc.switchToMain();
-    const result = svc.mergeSliceToMain("M001", "S03", "Docs update");
-
-    assertTrue(result.mergedCommitMessage.startsWith("docs("), "merge commit starts with docs(");
-    assertEq(result.mergedCommitMessage, "docs(M001/S03): Docs update", "docs merge commit message correct");
-
-    rmSync(repo, { recursive: true, force: true });
-  }
-
-  // ─── mergeSliceToMain: refactor type ──────────────────────────────────
-
-  console.log("\n=== mergeSliceToMain: refactor type ===");
-
-  {
-    const repo = initBranchTestRepo();
-    const svc = new GitServiceImpl(repo);
-
-    svc.ensureSliceBranch("M001", "S04");
-    createFile(repo, "src/refactored.ts", "// cleaner");
-    svc.commit({ message: "restructure modules" });
-
-    svc.switchToMain();
-    const result = svc.mergeSliceToMain("M001", "S04", "Refactor state management");
-
-    assertTrue(result.mergedCommitMessage.startsWith("refactor("), "merge commit starts with refactor(");
-    assertEq(result.mergedCommitMessage, "refactor(M001/S04): Refactor state management", "refactor merge commit message correct");
-
-    rmSync(repo, { recursive: true, force: true });
-  }
-
-  // ─── mergeSliceToMain: error — not on main ────────────────────────────
-
-  console.log("\n=== mergeSliceToMain: error cases ===");
-
-  {
-    const repo = initBranchTestRepo();
-    const svc = new GitServiceImpl(repo);
-
-    // Create a slice branch with a commit
-    svc.ensureSliceBranch("M001", "S01");
-    createFile(repo, "src/work.ts", "work");
-    svc.commit({ message: "slice work" });
-
-    // Try to merge while still on the slice branch
-    let threw = false;
-    try {
-      svc.mergeSliceToMain("M001", "S01", "Some feature");
-    } catch (e) {
-      threw = true;
-      const msg = (e as Error).message;
-      assertTrue(msg.includes("must be called from the main branch"), "error mentions main branch requirement");
-      assertTrue(msg.includes("gsd/M001/S01"), "error includes current branch name");
-    }
-    assertTrue(threw, "mergeSliceToMain throws when not on main");
-
-    rmSync(repo, { recursive: true, force: true });
-  }
-
-  // ─── mergeSliceToMain: error — branch doesn't exist ───────────────────
-
-  {
-    const repo = initBranchTestRepo();
-    const svc = new GitServiceImpl(repo);
-
-    let threw = false;
-    try {
-      svc.mergeSliceToMain("M001", "S99", "Nonexistent");
-    } catch (e) {
-      threw = true;
-      const msg = (e as Error).message;
-      assertTrue(msg.includes("does not exist"), "error mentions branch does not exist");
-      assertTrue(msg.includes("gsd/M001/S99"), "error includes missing branch name");
-    }
-    assertTrue(threw, "mergeSliceToMain throws when branch doesn't exist");
-
-    rmSync(repo, { recursive: true, force: true });
-  }
-
-  // ─── mergeSliceToMain: error — no commits ahead ───────────────────────
-
-  {
-    const repo = initBranchTestRepo();
-    const svc = new GitServiceImpl(repo);
-
-    // Create slice branch but don't add any commits
-    svc.ensureSliceBranch("M001", "S01");
-    // Switch back to main without committing anything on the slice branch
-    svc.switchToMain();
-
-    let threw = false;
-    try {
-      svc.mergeSliceToMain("M001", "S01", "Empty slice");
-    } catch (e) {
-      threw = true;
-      const msg = (e as Error).message;
-      assertTrue(msg.includes("no commits ahead"), "error mentions no commits ahead");
-      assertTrue(msg.includes("gsd/M001/S01"), "error includes branch name");
-    }
-    assertTrue(threw, "mergeSliceToMain throws when no commits ahead");
-
-    rmSync(repo, { recursive: true, force: true });
-  }
-
-  // ─── mergeSliceToMain: auto-resolve .gsd/ planning artifact conflicts ──
-
-  console.log("\n=== mergeSliceToMain: auto-resolve .gsd/ planning conflicts ===");
-
-  {
-    const repo = initBranchTestRepo();
-    const svc = new GitServiceImpl(repo);
-
-    // Create a .gsd/ planning artifact on main (simulates reassess-roadmap)
-    createFile(repo, ".gsd/DECISIONS.md", "# Decisions\n\n- D001: Original decision\n");
-    run("git add -A", repo);
-    run('git commit -m "add decisions on main"', repo);
-
-    // Create slice branch and modify the same .gsd/ file differently
-    svc.ensureSliceBranch("M001", "S01");
-    createFile(repo, ".gsd/DECISIONS.md", "# Decisions\n\n- D001: Original decision\n- D002: New decision from slice\n");
-    createFile(repo, "src/feature.ts", "export const x = 1;");
-    run("git add -A", repo);
-    run('git commit -m "slice work with .gsd/ changes"', repo);
-
-    // Back on main, modify the same .gsd/ file to create a conflict
-    svc.switchToMain();
-    createFile(repo, ".gsd/DECISIONS.md", "# Decisions\n\n- D001: Updated decision on main\n");
-    run("git add -A", repo);
-    run('git commit -m "update decisions on main"', repo);
-
-    // Merge should auto-resolve .gsd/ conflicts by taking theirs (slice branch)
-    const result = svc.mergeSliceToMain("M001", "S01", "Feature with .gsd/ conflicts");
-    assertEq(result.deletedBranch, true, ".gsd/ conflict auto-resolved: branch deleted");
-
-    // Verify the merge succeeded and src file is present
-    assertTrue(existsSync(join(repo, "src/feature.ts")), ".gsd/ conflict auto-resolved: src file merged");
-
-    rmSync(repo, { recursive: true, force: true });
-  }
-
   // ═══════════════════════════════════════════════════════════════════════
-  // S05: Enhanced features — merge guards, snapshots, auto-push, rich commits
+  // S05: Enhanced features — snapshots, pre-merge checks
   // ═══════════════════════════════════════════════════════════════════════
 
   // ─── createSnapshot: prefs enabled ─────────────────────────────────────
@@ -1081,12 +594,12 @@ async function main(): Promise<void> {
     const repo = initBranchTestRepo();
     const svc = new GitServiceImpl(repo, { snapshots: true });
 
-    // Create a slice branch with a commit
-    svc.ensureSliceBranch("M001", "S01");
+    // Create a branch with a commit
+    run("git checkout -b gsd/M001/S01", repo);
     createFile(repo, "src/snap.ts", "snapshot me");
     svc.commit({ message: "snapshot test commit" });
 
-    // Create snapshot ref for this slice branch
+    // Create snapshot ref for this branch
     svc.createSnapshot("gsd/M001/S01");
 
     // Verify ref exists under refs/gsd/snapshots/
@@ -1104,7 +617,7 @@ async function main(): Promise<void> {
     const repo = initBranchTestRepo();
     const svc = new GitServiceImpl(repo, { snapshots: false });
 
-    svc.ensureSliceBranch("M001", "S01");
+    run("git checkout -b gsd/M001/S01", repo);
     createFile(repo, "src/no-snap.ts", "no snapshot");
     svc.commit({ message: "no snapshot commit" });
 
@@ -1197,222 +710,6 @@ async function main(): Promise<void> {
 
     assertEq(result.passed, true, "runPreMergeCheck passes with custom command that exits 0");
     assertTrue(!result.skipped, "custom command is not skipped");
-
-    rmSync(repo, { recursive: true, force: true });
-  }
-
-  // ─── Rich commit message ──────────────────────────────────────────────
-
-  console.log("\n=== mergeSliceToMain: rich commit message ===");
-
-  {
-    const repo = initBranchTestRepo();
-    const svc = new GitServiceImpl(repo, { pre_merge_check: false });
-
-    svc.ensureSliceBranch("M001", "S01");
-
-    // Make 3 distinct commits on the slice branch
-    createFile(repo, "src/auth.ts", "export const auth = true;");
-    svc.commit({ message: "add auth module" });
-
-    createFile(repo, "src/login.ts", "export const login = true;");
-    svc.commit({ message: "add login page" });
-
-    createFile(repo, "src/session.ts", "export const session = true;");
-    svc.commit({ message: "add session handling" });
-
-    svc.switchToMain();
-    const result = svc.mergeSliceToMain("M001", "S01", "Implement user authentication");
-
-    // Inspect the full commit body on main
-    const commitBody = run("git log -1 --format=%B", repo);
-
-    // Rich commit should have the subject line
-    assertTrue(commitBody.includes("feat(M001/S01): Implement user authentication"),
-      "rich commit has conventional subject line");
-
-    // Rich commit body should include task list with commit subjects
-    assertTrue(commitBody.includes("add auth module"),
-      "rich commit body includes first commit subject");
-    assertTrue(commitBody.includes("add login page"),
-      "rich commit body includes second commit subject");
-    assertTrue(commitBody.includes("add session handling"),
-      "rich commit body includes third commit subject");
-
-    // Rich commit body should include Branch: line for forensics
-    assertTrue(commitBody.includes("Branch:"),
-      "rich commit body includes Branch: line");
-    assertTrue(commitBody.includes("gsd/M001/S01"),
-      "rich commit body Branch: line includes slice branch name");
-
-    rmSync(repo, { recursive: true, force: true });
-  }
-
-  // ─── Auto-push: enabled ───────────────────────────────────────────────
-
-  console.log("\n=== Auto-push: enabled ===");
-
-  {
-    // Create a bare remote repo
-    const bareDir = mkdtempSync(join(tmpdir(), "gsd-git-bare-"));
-    run("git init --bare -b main", bareDir);
-
-    // Create local repo and add the bare as remote
-    const repo = initBranchTestRepo();
-    run(`git remote add origin ${bareDir}`, repo);
-    run("git push -u origin main", repo);
-
-    const svc = new GitServiceImpl(repo, { auto_push: true, pre_merge_check: false });
-
-    svc.ensureSliceBranch("M001", "S01");
-    createFile(repo, "src/pushed.ts", "export const pushed = true;");
-    svc.commit({ message: "work to push" });
-
-    svc.switchToMain();
-    svc.mergeSliceToMain("M001", "S01", "Add pushed feature");
-
-    // Verify the remote has the merge commit
-    const remoteLog = run(`git --git-dir=${bareDir} log --oneline -1`, bareDir);
-    assertTrue(remoteLog.includes("Add pushed feature"),
-      "auto-push: remote has the merge commit when auto_push is true");
-
-    rmSync(repo, { recursive: true, force: true });
-    rmSync(bareDir, { recursive: true, force: true });
-  }
-
-  // ─── Auto-push: disabled ──────────────────────────────────────────────
-
-  console.log("\n=== Auto-push: disabled ===");
-
-  {
-    const bareDir = mkdtempSync(join(tmpdir(), "gsd-git-bare-"));
-    run("git init --bare -b main", bareDir);
-
-    const repo = initBranchTestRepo();
-    run(`git remote add origin ${bareDir}`, repo);
-    run("git push -u origin main", repo);
-
-    // auto_push explicitly false (or omitted — same behavior)
-    const svc = new GitServiceImpl(repo, { auto_push: false, pre_merge_check: false });
-
-    svc.ensureSliceBranch("M001", "S01");
-    createFile(repo, "src/not-pushed.ts", "export const notPushed = true;");
-    svc.commit({ message: "work not pushed" });
-
-    svc.switchToMain();
-    svc.mergeSliceToMain("M001", "S01", "Add unpushed feature");
-
-    // Remote should NOT have the new merge commit — still at the initial push
-    const remoteLog = run(`git --git-dir=${bareDir} log --oneline`, bareDir);
-    assertTrue(!remoteLog.includes("Add unpushed feature"),
-      "auto-push: remote does NOT have merge commit when auto_push is false");
-
-    rmSync(repo, { recursive: true, force: true });
-    rmSync(bareDir, { recursive: true, force: true });
-  }
-
-  // ─── Remote fetch before branching: with remote ────────────────────────
-
-  console.log("\n=== Remote fetch: with remote ===");
-
-  {
-    const bareDir = mkdtempSync(join(tmpdir(), "gsd-git-bare-"));
-    run("git init --bare -b main", bareDir);
-
-    const repo = initBranchTestRepo();
-    run(`git remote add origin ${bareDir}`, repo);
-    run("git push -u origin main", repo);
-
-    // Add a commit to the remote via a temporary clone
-    const cloneDir = mkdtempSync(join(tmpdir(), "gsd-git-clone-"));
-    run(`git clone ${bareDir} ${cloneDir}`, cloneDir);
-    run('git config user.name "Remote Dev"', cloneDir);
-    run('git config user.email "remote@example.com"', cloneDir);
-    createFile(cloneDir, "remote-file.txt", "from remote");
-    run("git add -A", cloneDir);
-    run('git commit -m "remote commit"', cloneDir);
-    run("git push origin main", cloneDir);
-
-    // ensureSliceBranch should fetch before creating the branch — no crash
-    const svc = new GitServiceImpl(repo);
-    let noError = true;
-    try {
-      svc.ensureSliceBranch("M001", "S01");
-    } catch {
-      noError = false;
-    }
-    assertTrue(noError, "ensureSliceBranch succeeds when remote has new commits (fetch runs)");
-
-    rmSync(repo, { recursive: true, force: true });
-    rmSync(bareDir, { recursive: true, force: true });
-    rmSync(cloneDir, { recursive: true, force: true });
-  }
-
-  // ─── Remote fetch before branching: without remote ─────────────────────
-
-  console.log("\n=== Remote fetch: without remote ===");
-
-  {
-    const repo = initBranchTestRepo();
-    // No remote configured — ensureSliceBranch should not crash
-    const svc = new GitServiceImpl(repo);
-
-    let noError = true;
-    try {
-      svc.ensureSliceBranch("M001", "S01");
-    } catch {
-      noError = false;
-    }
-    assertTrue(noError, "ensureSliceBranch succeeds when no remote is configured");
-    assertEq(svc.getCurrentBranch(), "gsd/M001/S01", "branch created even without remote");
-
-    rmSync(repo, { recursive: true, force: true });
-  }
-
-  // ─── Facade prefs: mergeSliceToMain creates snapshot when prefs set ────
-
-  console.log("\n=== Facade prefs: snapshot via merge with prefs ===");
-
-  {
-    const repo = initBranchTestRepo();
-    // Simulate facade behavior: GitServiceImpl with snapshots:true should
-    // create a snapshot ref during mergeSliceToMain
-    const svc = new GitServiceImpl(repo, { snapshots: true, pre_merge_check: false });
-
-    svc.ensureSliceBranch("M001", "S01");
-    createFile(repo, "src/facade-test.ts", "facade");
-    svc.commit({ message: "facade test commit" });
-
-    svc.switchToMain();
-    svc.mergeSliceToMain("M001", "S01", "Facade snapshot test");
-
-    // After merge, a snapshot ref should exist (created before merge)
-    const refs = run("git for-each-ref refs/gsd/snapshots/", repo);
-    assertTrue(refs.includes("refs/gsd/snapshots/"), "mergeSliceToMain creates snapshot when prefs.snapshots is true");
-    assertTrue(refs.includes("gsd/M001/S01"), "snapshot ref references the slice branch name");
-
-    rmSync(repo, { recursive: true, force: true });
-  }
-
-  // ─── Facade prefs: no snapshot when prefs omit snapshots ───────────────
-
-  console.log("\n=== Facade prefs: no snapshot when prefs omit snapshots ===");
-
-  {
-    const repo = initBranchTestRepo();
-    // Default prefs — snapshots not enabled
-    const svc = new GitServiceImpl(repo, { pre_merge_check: false });
-
-    svc.ensureSliceBranch("M001", "S01");
-    createFile(repo, "src/no-facade-snap.ts", "no facade snap");
-    svc.commit({ message: "no facade snapshot" });
-
-    svc.switchToMain();
-    svc.mergeSliceToMain("M001", "S01", "No snapshot test");
-
-    // No snapshot ref should exist
-    const refs = run("git for-each-ref refs/gsd/snapshots/", repo);
-    assertEq(refs, "", "no snapshot ref when snapshots pref is not set");
 
     rmSync(repo, { recursive: true, force: true });
   }
@@ -1624,62 +921,6 @@ async function main(): Promise<void> {
     const svc = new GitServiceImpl(repo);
     svc.setMilestoneId("M001");
     assertEq(svc.getMainBranch(), "main", "getMainBranch falls back to main when integration branch no longer exists");
-
-    rmSync(repo, { recursive: true, force: true });
-  }
-
-  // ─── End-to-end: feature branch workflow ──────────────────────────────
-
-  console.log("\n=== End-to-end: feature branch workflow ===");
-
-  {
-    const repo = initBranchTestRepo();
-
-    // Simulate: user creates feature branch and starts GSD
-    run("git checkout -b f-123-new-thing", repo);
-    createFile(repo, "setup.txt", "initial setup");
-    run("git add -A", repo);
-    run('git commit -m "initial feature setup"', repo);
-
-    // Record integration branch (this is what auto.ts does at startup)
-    writeIntegrationBranch(repo, "M001", "f-123-new-thing");
-
-    // Create GitServiceImpl with milestone set
-    const svc = new GitServiceImpl(repo);
-    svc.setMilestoneId("M001");
-
-    // Verify getMainBranch returns the feature branch, not "main"
-    assertEq(svc.getMainBranch(), "f-123-new-thing", "e2e: getMainBranch returns feature branch");
-
-    // Create slice branch — should branch from f-123-new-thing (current)
-    svc.ensureSliceBranch("M001", "S01");
-    assertEq(svc.getCurrentBranch(), "gsd/M001/S01", "e2e: slice branch created");
-
-    // The slice branch should have the feature branch's commit
-    const log = run("git log --oneline", repo);
-    assertTrue(log.includes("initial feature setup"), "e2e: slice branch inherits feature branch content");
-
-    // Do work on the slice branch
-    createFile(repo, "src/feature.ts", "export const feature = true;");
-    svc.commit({ message: "feat: add feature module" });
-
-    // switchToMain should go to feature branch
-    svc.switchToMain();
-    assertEq(svc.getCurrentBranch(), "f-123-new-thing", "e2e: switchToMain goes to feature branch, not main");
-
-    // mergeSliceToMain should merge into feature branch
-    const result = svc.mergeSliceToMain("M001", "S01", "Add feature module");
-    assertEq(result.mergedCommitMessage, "feat(M001/S01): Add feature module", "e2e: merge commit message correct");
-    assertEq(svc.getCurrentBranch(), "f-123-new-thing", "e2e: after merge, still on feature branch");
-
-    // The feature branch should have the merged work
-    const files = run("git ls-files", repo);
-    assertTrue(files.includes("src/feature.ts"), "e2e: merged file exists on feature branch");
-
-    // Main should NOT have the merged work
-    run("git checkout main", repo);
-    const mainFiles = run("git ls-files", repo);
-    assertTrue(!mainFiles.includes("src/feature.ts"), "e2e: main does NOT have merged work — it stays on the feature branch");
 
     rmSync(repo, { recursive: true, force: true });
   }

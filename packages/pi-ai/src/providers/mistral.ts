@@ -1,4 +1,6 @@
-import { Mistral } from "@mistralai/mistralai";
+// Lazy-loaded: Mistral SDK (~369ms) is imported on first use, not at startup.
+// This avoids penalizing users who don't use Mistral models.
+import type { Mistral } from "@mistralai/mistralai";
 import type { RequestOptions } from "@mistralai/mistralai/lib/sdks.js";
 import type {
 	ChatCompletionStreamRequest,
@@ -7,6 +9,15 @@ import type {
 	ContentChunk,
 	FunctionTool,
 } from "@mistralai/mistralai/models/components/index.js";
+
+let _MistralClass: typeof Mistral | undefined;
+async function getMistralClass(): Promise<typeof Mistral> {
+	if (!_MistralClass) {
+		const mod = await import("@mistralai/mistralai");
+		_MistralClass = mod.Mistral;
+	}
+	return _MistralClass;
+}
 import { getEnvApiKey } from "../env-api-keys.js";
 import { calculateCost } from "../models.js";
 import type {
@@ -61,7 +72,8 @@ export const streamMistral: StreamFunction<"mistral-conversations", MistralOptio
 			}
 
 			// Intentionally per-request: avoids shared SDK mutable state across concurrent consumers.
-			const mistral = new Mistral({
+			const MistralSDK = await getMistralClass();
+			const mistral = new MistralSDK({
 				apiKey,
 				serverURL: model.baseUrl,
 			});

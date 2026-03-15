@@ -17,7 +17,7 @@
 
 import { existsSync, mkdirSync, realpathSync } from "node:fs";
 import { execSync } from "node:child_process";
-import { join, resolve } from "node:path";
+import { join, resolve, sep } from "node:path";
 
 // ─── Types ─────────────────────────────────────────────────────────────────
 
@@ -120,15 +120,17 @@ export function worktreeBranchName(name: string): string {
 /**
  * Create a new git worktree under .gsd/worktrees/<name>/ with branch worktree/<name>.
  * The branch is created from the current HEAD of the main branch.
+ *
+ * @param opts.branch — override the default `worktree/<name>` branch name
  */
-export function createWorktree(basePath: string, name: string): WorktreeInfo {
+export function createWorktree(basePath: string, name: string, opts: { branch?: string } = {}): WorktreeInfo {
   // Validate name: alphanumeric, hyphens, underscores only
   if (!/^[a-zA-Z0-9_-]+$/.test(name)) {
     throw new Error(`Invalid worktree name "${name}". Use only letters, numbers, hyphens, and underscores.`);
   }
 
   const wtPath = worktreePath(basePath, name);
-  const branch = worktreeBranchName(name);
+  const branch = opts.branch ?? worktreeBranchName(name);
 
   if (existsSync(wtPath)) {
     throw new Error(`Worktree "${name}" already exists at ${wtPath}`);
@@ -211,7 +213,11 @@ export function listWorktrees(basePath: string): WorktreeInfo[] {
 
     const entryPath = wtLine.replace("worktree ", "");
     const branch = branchLine.replace("branch refs/heads/", "");
-    const branchWorktreeName = branch.startsWith("worktree/") ? branch.slice("worktree/".length) : null;
+    const branchWorktreeName = branch.startsWith("worktree/")
+      ? branch.slice("worktree/".length)
+      : branch.startsWith("milestone/")
+        ? branch.slice("milestone/".length)
+        : null;
     const entryVariants = [resolve(entryPath)];
     if (existsSync(entryPath)) {
       entryVariants.push(realpathSync(entryPath));
@@ -260,17 +266,17 @@ export function listWorktrees(basePath: string): WorktreeInfo[] {
 export function removeWorktree(
   basePath: string,
   name: string,
-  opts: { deleteBranch?: boolean; force?: boolean } = {},
+  opts: { deleteBranch?: boolean; force?: boolean; branch?: string } = {},
 ): void {
   const wtPath = worktreePath(basePath, name);
   const resolvedWtPath = existsSync(wtPath) ? realpathSync(wtPath) : wtPath;
-  const branch = worktreeBranchName(name);
+  const branch = opts.branch ?? worktreeBranchName(name);
   const { deleteBranch = true, force = false } = opts;
 
   // If we're inside the worktree, move out first — git can't remove an in-use directory
   const cwd = process.cwd();
   const resolvedCwd = existsSync(cwd) ? realpathSync(cwd) : cwd;
-  if (resolvedCwd === resolvedWtPath || resolvedCwd.startsWith(resolvedWtPath + "/")) {
+  if (resolvedCwd === resolvedWtPath || resolvedCwd.startsWith(resolvedWtPath + sep)) {
     process.chdir(basePath);
   }
 

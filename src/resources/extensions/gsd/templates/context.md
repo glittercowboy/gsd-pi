@@ -1,4 +1,4 @@
-# {{milestoneId}}: {{milestoneTitle}} — Context
+# {{milestoneId}}: {{milestoneTitle}}
 
 **Gathered:** {{date}}
 **Status:** Ready for planning

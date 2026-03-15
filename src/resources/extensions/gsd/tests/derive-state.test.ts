@@ -651,6 +651,41 @@ Continue from step 2.
     }
   }
 
+  // ─── Empty plan (zero tasks) stays in planning, not summarizing (#454) ──
+  console.log('\n=== empty plan → planning (not summarizing) ===');
+  {
+    const base = createFixtureBase();
+    try {
+      writeRoadmap(base, 'M001', `---
+id: M001
+title: "Test"
+---
+# M001: Test
+## Vision
+Test
+## Success Criteria
+- Done
+## Slices
+- [ ] **S01: Empty slice** \`risk:low\` \`depends:[]\`
+  > Test
+## Boundary Map
+_None_
+`);
+      writePlan(base, 'M001', 'S01', `---
+slice: S01
+---
+# S01 Plan
+## Tasks
+`);
+      const state = await deriveState(base);
+      assertEq(state.phase, 'planning', 'empty plan stays in planning');
+      assertEq(state.activeSlice?.id, 'S01', 'active slice is S01');
+      assertEq(state.activeTask, null, 'no active task');
+    } finally {
+      cleanup(base);
+    }
+  }
+
   report();
 }
 

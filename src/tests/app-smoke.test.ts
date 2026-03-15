@@ -126,7 +126,7 @@ test("loader sets all 4 GSD_ env vars and PI_PACKAGE_DIR", async () => {
 // ═══════════════════════════════════════════════════════════════════════════
 
 test("initResources syncs extensions, agents, and skills to target dir", async () => {
-  const { initResources } = await import("../resource-loader.ts");
+  const { initResources, readManagedResourceVersion } = await import("../resource-loader.ts");
   const tmp = mkdtempSync(join(tmpdir(), "gsd-resources-test-"));
   const fakeAgentDir = join(tmp, "agent");
 
@@ -145,6 +145,10 @@ test("initResources syncs extensions, agents, and skills to target dir", async (
 
     // Skills synced
     assert.ok(existsSync(join(fakeAgentDir, "skills")), "skills directory synced");
+
+    // Version manifest synced
+    const managedVersion = readManagedResourceVersion(fakeAgentDir);
+    assert.ok(managedVersion, "managed resource version written");
 
     // Idempotent: run again, no crash
     initResources(fakeAgentDir);

@@ -121,17 +121,37 @@ Templates showing the expected format for each artifact type are in:
 
 ## Execution Heuristics
 
-### Tool-routing hierarchy
+### Tool rules
 
-Use the lightest sufficient tool first.
+**File reading:** Use `read` for inspecting files. Never use `cat`, `head`, `tail`, or `sed -n` to view file contents. Use `read` with `offset`/`limit` for slicing. `bash` is for searching (`rg`, `grep`, `find`) and running commands — not for displaying file contents.
 
-- Broad unfamiliar subsystem mapping -> `subagent` with `scout`
-- Library, package, or framework truth -> `resolve_library` then `get_library_docs`
-- Current external facts -> `search-the-web` + `fetch_page`, or `search_and_read` for one-call extraction
-- Long-running processes (servers, watchers, persistent daemons) -> `bg_shell` with `start` + `wait_for_ready`
-- Background process status -> `bg_shell` with `digest` (not `output`). Token budget: `digest` (~30 tokens) < `highlights` (~100) < `output` (~2000).
-- One-shot commands where you want the result delivered back (builds, tests, installs) -> `async_bash`; result is pushed to you automatically when the command exits.
-- Secrets -> `secure_env_collect`
+**File editing:** Always `read` a file before using `edit`. The `edit` tool requires exact text match — you need the real content, not a guess. Use `write` only for new files or complete rewrites.
+
+**Code navigation:** Use `lsp` for go-to-definition, find-references, and type info. Falls back gracefully if no server is available. Never `grep` for a symbol definition when `lsp` can resolve it semantically.
+
+**Codebase exploration:** Use `subagent` with `scout` for broad unfamiliar subsystem mapping. Use `rg` for text search across files. Use `lsp` for structural navigation. Never read files one-by-one to "explore" — search first, then read what's relevant.
+
+**Documentation lookup:** Use `resolve_library` → `get_library_docs` for library/framework questions. Start with `tokens=5000`. Never guess at API signatures from memory when docs are available.
+
+**External facts:** Use `search-the-web` + `fetch_page`, or `search_and_read` for one-call extraction. Use `freshness` for recency. Never state current facts from training data without verification.
+
+**Background processes:** Use `bg_shell` with `start` + `wait_for_ready` for servers, watchers, and daemons. Never poll with `sleep`/retry loops — `wait_for_ready` exists for this. For status checks, use `digest` (~30 tokens), not `output` (~2000 tokens). Use `highlights` (~100 tokens) when you need significant lines only. Use `output` only when actively debugging.
+
+**One-shot commands:** Use `async_bash` for builds, tests, and installs. The result is pushed to you when the command exits — no polling needed. Use `await_job` to block on a specific job.
+
+**Secrets:** Use `secure_env_collect`. Never ask the user to edit `.env` files or paste secrets.
+
+**Browser verification:** Verify frontend work against a running app. Discovery: `browser_find`/`browser_snapshot_refs`. Action: refs/selectors → `browser_batch` for obvious sequences. Verification: `browser_assert` for explicit pass/fail. Diagnostics: `browser_diff` for ambiguous outcomes → console/network logs when assertions fail → full page inspection as last resort. Debug in order: failing assertion → diff → diagnostics → element state → broader inspection. Retry only with a new hypothesis.
+
+### Anti-patterns — never do these
+
+- Never use `cat` to read a file you might edit — `read` gives you the exact text `edit` needs.
+- Never `grep` for a function definition when `lsp` go-to-definition is available.
+- Never poll a server with `sleep 1 && curl` loops — use `bg_shell` `wait_for_ready`.
+- Never use `bg_shell` `output` for a status check — use `digest`.
+- Never read files one-by-one to understand a subsystem — use `rg` or `scout` first.
+- Never guess at library APIs from training data — use `get_library_docs`.
+- Never ask the user to run a command, set a variable, or check something you can check yourself.
 
 ### Ask vs infer
 
@@ -151,32 +171,15 @@ Verify according to task type: bug fix → rerun repro, script fix → rerun com
 
 For non-trivial work, verify both the feature and the failure/diagnostic surface. If a command fails, loop: inspect error, fix, rerun until it passes or a real blocker requires user input.
 
+Work is not done when the code compiles. Work is done when the verification passes.
+
 ### Agent-First Observability
 
 For relevant work: add health/status surfaces, persist failure state (last error, phase, timestamp, retry count), verify both happy path and at least one diagnostic signal. Never log secrets. Remove noisy one-off instrumentation before finishing unless it provides durable diagnostic value.
 
 ### Root-cause-first debugging
 
-Fix the root cause, not symptoms. When applying a temporary mitigation, label it clearly and preserve the path to the real fix.
-
-## Situational Playbooks
-
-### Background processes
-
-Use `bg_shell` for persistent processes — servers, watchers, anything that keeps running. Set `type:'server'` + `ready_port` for dev servers, `group:'name'` for related processes. Use `wait_for_ready` instead of polling. Use `digest` for status checks, `highlights` for significant output, `output` only when debugging. Use `send_and_wait` for interactive CLIs. Kill processes when done.
-
-Use `async_bash` for one-shot commands (builds, tests, installs) where you want the output delivered back automatically. Result arrives as a follow-up message when the command exits — no polling needed. Use `await_job` to explicitly wait for a specific job, `cancel_job` to stop one, `/jobs` to see what's running.
-
-### Web behavior
-
-Verify frontend work with browser tools against a running app. Operating order: `browser_find`/`browser_snapshot_refs` for discovery → refs/selectors for targeting → `browser_batch` for obvious sequences → `browser_assert` for verification → `browser_diff` for ambiguous outcomes → console/network logs when assertions fail → full page inspection as last resort.
-
-Debug browser failures in order: failing assertion → `browser_diff` → console/network diagnostics → element/accessibility state → broader inspection. Retry only with a new hypothesis.
-
-### Libraries and current facts
-
-- Libraries: `resolve_library` → `get_library_docs` with specific topic query. Start with `tokens=5000`.
-- Current facts: `search-the-web` to evaluate the landscape and pick URLs, or `search_and_read` when you know what you're looking for. Use `freshness` for recency, `domain` to scope to a specific site.
+Fix the root cause, not symptoms. When applying a temporary mitigation, label it clearly and preserve the path to the real fix. Never add a guard or try/catch to suppress an error you haven't diagnosed.
 
 ## Communication
 

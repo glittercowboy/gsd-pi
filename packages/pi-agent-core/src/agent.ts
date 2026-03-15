@@ -22,6 +22,10 @@ import type {
 	AgentMessage,
 	AgentState,
 	AgentTool,
+	BeforeToolCallContext,
+	BeforeToolCallResult,
+	AfterToolCallContext,
+	AfterToolCallResult,
 	StreamFn,
 	ThinkingLevel,
 } from "./types.js";
@@ -129,6 +133,8 @@ export class Agent {
 	private _thinkingBudgets?: ThinkingBudgets;
 	private _transport: Transport;
 	private _maxRetryDelayMs?: number;
+	private _beforeToolCall?: AgentLoopConfig["beforeToolCall"];
+	private _afterToolCall?: AgentLoopConfig["afterToolCall"];
 
 	constructor(opts: AgentOptions = {}) {
 		this._state = { ...this._state, ...opts.initialState };
@@ -201,6 +207,22 @@ export class Agent {
 	 */
 	set maxRetryDelayMs(value: number | undefined) {
 		this._maxRetryDelayMs = value;
+	}
+
+	/**
+	 * Install a hook called before each tool executes, after argument validation.
+	 * Return `{ block: true }` to prevent execution.
+	 */
+	setBeforeToolCall(fn: AgentLoopConfig["beforeToolCall"]): void {
+		this._beforeToolCall = fn;
+	}
+
+	/**
+	 * Install a hook called after each tool executes, before results are emitted.
+	 * Return field overrides for content/details/isError.
+	 */
+	setAfterToolCall(fn: AgentLoopConfig["afterToolCall"]): void {
+		this._afterToolCall = fn;
 	}
 
 	get state(): AgentState {
@@ -452,6 +474,8 @@ export class Agent {
 				return this.dequeueSteeringMessages();
 			},
 			getFollowUpMessages: async () => this.dequeueFollowUpMessages(),
+			beforeToolCall: this._beforeToolCall,
+			afterToolCall: this._afterToolCall,
 		};
 
 		let partial: AgentMessage | null = null;

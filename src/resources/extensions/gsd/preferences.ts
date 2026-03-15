@@ -296,6 +296,9 @@ export function renderPreferencesForSystemPrompt(preferences: GSDPreferences, re
   if (validated.errors.length > 0) {
     lines.push("- Validation: some preference values were ignored because they were invalid.");
   }
+  for (const warning of validated.warnings) {
+    lines.push(`- Deprecation: ${warning}`);
+  }
 
   preferences = validated.preferences;
 
@@ -482,16 +485,20 @@ function parseFrontmatterBlock(frontmatter: string): GSDPreferences {
   return root as GSDPreferences;
 }
 
-function parseScalar(value: string): string | number | boolean {
+function parseScalar(value: string): unknown {
   if (value === "true") return true;
   if (value === "false") return false;
+  // Recognize empty array/object literals (with or without surrounding quotes)
+  const unquoted = value.replace(/^['\"]|['\"]$/g, "");
+  if (unquoted === "[]") return [];
+  if (unquoted === "{}") return {};
   if (/^-?\d+$/.test(value)) {
     const n = Number(value);
     // Keep large integers (e.g. Discord channel IDs) as strings to avoid precision loss
     if (Number.isSafeInteger(n)) return n;
     return value;
   }
-  return value.replace(/^['\"]|['\"]$/g, "");
+  return unquoted;
 }
 
 /**
@@ -634,11 +641,13 @@ function mergePreferences(base: GSDPreferences, override: GSDPreferences): GSDPr
   };
 }
 
-function validatePreferences(preferences: GSDPreferences): {
+export function validatePreferences(preferences: GSDPreferences): {
   preferences: GSDPreferences;
   errors: string[];
+  warnings: string[];
 } {
   const errors: string[] = [];
+  const warnings: string[] = [];
   const validated: GSDPreferences = {};
 
   if (preferences.version !== undefined) {
@@ -725,7 +734,7 @@ function validatePreferences(preferences: GSDPreferences): {
     const knownUnitTypes = new Set([
       "research-milestone", "plan-milestone", "research-slice", "plan-slice",
       "execute-task", "complete-slice", "replan-slice", "reassess-roadmap",
-      "run-uat", "fix-merge", "complete-milestone",
+      "run-uat", "complete-milestone",
     ]);
     for (const hook of preferences.post_unit_hooks) {
       if (!hook || typeof hook !== "object") {
@@ -791,7 +800,7 @@ function validatePreferences(preferences: GSDPreferences): {
     const knownUnitTypes = new Set([
       "research-milestone", "plan-milestone", "research-slice", "plan-slice",
       "execute-task", "complete-slice", "replan-slice", "reassess-roadmap",
-      "run-uat", "fix-merge", "complete-milestone",
+      "run-uat", "complete-milestone",
     ]);
     const validActions = new Set(["modify", "skip", "replace"]);
     for (const hook of preferences.pre_dispatch_hooks) {
@@ -905,13 +914,21 @@ function validatePreferences(preferences: GSDPreferences): {
         errors.push("git.main_branch must be a valid branch name (alphanumeric, _, -, /, .)");
       }
     }
+    // Deprecated: isolation and merge_to_main are ignored (branchless architecture).
+    // Emit warnings so users know to remove them from preferences.
+    if (g.isolation !== undefined) {
+      warnings.push("git.isolation is deprecated — worktree isolation is now always enabled. Remove this setting.");
+    }
+    if (g.merge_to_main !== undefined) {
+      warnings.push("git.merge_to_main is deprecated — milestone-level merge is now always used. Remove this setting.");
+    }
 
     if (Object.keys(git).length > 0) {
       validated.git = git as GitPreferences;
     }
   }
 
-  return { preferences: validated, errors };
+  return { preferences: validated, errors, warnings };
 }
 
 function mergeStringLists(base?: unknown, override?: unknown): string[] | undefined {

@@ -1,18 +1,15 @@
 /**
- * GSD Slice Branch Management — Thin Facade
+ * GSD Worktree Utilities
  *
- * Simple branch-per-slice workflow. No worktrees, no registry.
- * Runtime state (metrics, activity, lock, STATE.md) is gitignored
- * so branch switches are clean.
+ * Pure utility functions for worktree name detection, legacy branch name
+ * parsing, and integration branch capture.
  *
- * All git-mutation functions delegate to GitServiceImpl from git-service.ts.
  * Pure utility functions (detectWorktreeName, getSliceBranchName, parseSliceBranch,
- * SLICE_BRANCH_RE) remain standalone.
+ * SLICE_BRANCH_RE) remain standalone for backwards compatibility.
  *
- * Flow:
- *   1. ensureSliceBranch() — create + checkout slice branch
- *   2. agent does work, commits
- *   3. mergeSliceToMain() — checkout integration branch, squash-merge, delete slice branch
+ * Branchless architecture: all work commits sequentially on the milestone branch.
+ * Pure utility functions (detectWorktreeName, getSliceBranchName, parseSliceBranch,
+ * SLICE_BRANCH_RE) remain for backwards compatibility with legacy branches.
  */
 
 import { sep } from "node:path";
@@ -20,8 +17,6 @@ import { sep } from "node:path";
 import { GitServiceImpl, writeIntegrationBranch } from "./git-service.js";
 import { loadEffectiveGSDPreferences } from "./preferences.js";
 
-// Re-export MergeSliceResult from the canonical source (D014 — type-only re-export)
-export type { MergeSliceResult } from "./git-service.js";
 export { MergeConflictError } from "./git-service.js";
 
 // ─── Lazy GitServiceImpl Cache ─────────────────────────────────────────────
@@ -141,19 +136,6 @@ export function getCurrentBranch(basePath: string): string {
 }
 
 /**
- * Ensure the slice branch exists and is checked out.
- * Creates the branch from the current branch if it's not a slice branch,
- * otherwise from main. This preserves planning artifacts (CONTEXT, ROADMAP,
- * etc.) that were committed on the working branch — which may differ from
- * the repo's default branch (e.g. `developer` vs `main`).
- * When inside a worktree, the branch is namespaced to avoid conflicts.
- * Returns true if the branch was newly created.
- */
-export function ensureSliceBranch(basePath: string, milestoneId: string, sliceId: string): boolean {
-  return getService(basePath).ensureSliceBranch(milestoneId, sliceId);
-}
-
-/**
  * Auto-commit any dirty files in the current working tree.
  * Returns the commit message used, or null if already clean.
  */
@@ -163,44 +145,4 @@ export function autoCommitCurrentBranch(
   return getService(basePath).autoCommit(unitType, unitId);
 }
 
-/**
- * Switch to the integration branch, auto-committing any dirty files on the current branch first.
- */
-export function switchToMain(basePath: string): void {
-  getService(basePath).switchToMain();
-}
 
-/**
- * Squash-merge a completed slice branch into the integration branch.
- * Expects to already be on the integration branch (call switchToMain first).
- * Deletes the slice branch after merge.
- */
-export function mergeSliceToMain(
-  basePath: string, milestoneId: string, sliceId: string, sliceTitle: string,
-): import("./git-service.ts").MergeSliceResult {
-  return getService(basePath).mergeSliceToMain(milestoneId, sliceId, sliceTitle);
-}
-
-// ─── Query Functions (delegate to GitServiceImpl) ──────────────────────────
-
-/**
- * Check if we're currently on a slice branch (not main).
- * Handles both plain (gsd/M001/S01) and worktree-namespaced (gsd/wt/M001/S01) branches.
- */
-export function isOnSliceBranch(basePath: string): boolean {
-  const current = getCurrentBranch(basePath);
-  return SLICE_BRANCH_RE.test(current);
-}
-
-/**
- * Get the active slice branch name, or null if on main.
- * Handles both plain and worktree-namespaced branch patterns.
- */
-export function getActiveSliceBranch(basePath: string): string | null {
-  try {
-    const current = getCurrentBranch(basePath);
-    return SLICE_BRANCH_RE.test(current) ? current : null;
-  } catch {
-    return null;
-  }
-}

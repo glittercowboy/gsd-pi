@@ -67,6 +67,18 @@ async function main(): Promise<void> {
     assertEq('M001-abc123: Title'.replace(TITLE_STRIP_RE, ''), 'Title', 'strips M001-abc123: Title → Title');
     assertEq('M042-z9a8b7: Dashboard'.replace(TITLE_STRIP_RE, ''), 'Dashboard', 'strips M042-z9a8b7: Dashboard');
 
+    // Em dash in title — current format (M001: Title) correctly preserves em dash in title body
+    assertEq(
+      'M001: Foundation — Build Core'.replace(TITLE_STRIP_RE, ''),
+      'Foundation — Build Core',
+      'strips M001: prefix and preserves em dash in title body',
+    );
+    assertEq(
+      'M001-abc123: Foundation — Build Core'.replace(TITLE_STRIP_RE, ''),
+      'Foundation — Build Core',
+      'strips M001-abc123: prefix and preserves em dash in title body (unique format)',
+    );
+
     // Edge case: dash-style separator (M001 — Title: Subtitle preserves colon in body)
     assertEq(
       'M001 — Unique Milestone IDs: Foo'.replace(TITLE_STRIP_RE, ''),

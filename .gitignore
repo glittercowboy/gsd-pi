@@ -1,6 +1,17 @@
 
-# ── GSD (user project artifacts — never commit) ──
-.gsd/
+# ── GSD runtime (not source artifacts — planning files are tracked) ──
+.gsd/auto.lock
+.gsd/completed-units.json
+.gsd/STATE.md
+.gsd/metrics.json
+.gsd/gsd.db
+.gsd/activity/
+.gsd/runtime/
+.gsd/worktrees/
+.gsd/DISCUSSION-MANIFEST.json
+.gsd/milestones/**/*-CONTINUE.md
+.gsd/milestones/**/continue.md
+
 .claude/
 *.tgz
 .DS_Store
@@ -48,17 +59,3 @@ AGENTS.md
 .bg-shell/
 TODOS.md
 .planning/
-
-# ── GSD baseline (auto-generated) ──
-.gsd/
-
-# ── GSD baseline (auto-generated) ──
-.gsd/activity/
-.gsd/runtime/
-.gsd/worktrees/
-.gsd/auto.lock
-.gsd/metrics.json
-.gsd/STATE.md
-
-# ── GSD baseline (auto-generated) ──
-.gsd/completed-units.json

@@ -82,7 +82,13 @@ Determine where the new milestones should go in the overall sequence. Consider d
 Once the user is satisfied, in a single pass for **each** new milestone (starting from {{nextId}}):
 
 1. `mkdir -p .gsd/milestones/<ID>/slices`
-2. Write `.gsd/milestones/<ID>/<ID>-CONTEXT.md` — use the **Context** output template below. Capture intent, scope, risks, constraints, integration points, and relevant requirements. Mark the status as "Queued — pending auto-mode execution."
+2. Write `.gsd/milestones/<ID>/<ID>-CONTEXT.md` — use the **Context** output template below. Capture intent, scope, risks, constraints, integration points, and relevant requirements. Mark the status as "Queued — pending auto-mode execution." **If this milestone depends on other milestones, add YAML frontmatter with `depends_on`:**
+   ```yaml
+   ---
+   depends_on: [M001, M002]
+   ---
+   ```
+   The auto-mode state machine reads this field to enforce execution order. Without it, milestones may execute out of order. List the exact milestone IDs (including any suffix like `-0zjrg0`) from the dependency chain discussed with the user.
 
 Then, after all milestone directories and context files are written:
 

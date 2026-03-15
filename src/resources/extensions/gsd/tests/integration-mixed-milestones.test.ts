@@ -6,7 +6,7 @@
  * Uses real filesystem and git fixtures — no mocking.
  */
 
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { execSync } from 'node:child_process';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -16,12 +16,8 @@ import { indexWorkspace } from '../workspace-index.ts';
 import { inlinePriorMilestoneSummary } from '../files.ts';
 import { getPriorSliceCompletionBlocker } from '../dispatch-guard.ts';
 import {
-  ensureSliceBranch,
-  getCurrentBranch,
   getSliceBranchName,
-  mergeSliceToMain,
   parseSliceBranch,
-  switchToMain,
 } from '../worktree.ts';
 import { clearPathCache } from '../paths.ts';
 import { createTestContext } from './test-helpers.ts';
@@ -481,84 +477,22 @@ Built the legacy feature successfully.
     }
   }
 
-  // ─── Group 6: Branch operations with new-format IDs ─────────────────
-  console.log('\n=== Group 6: Branch operations with new-format IDs ===');
+  // ─── Group 6: Branch name helpers with new-format IDs ───────────────
+  console.log('\n=== Group 6: Branch name helpers with new-format IDs ===');
   {
-    const base = createGitRepo();
-    try {
-      // Need a milestone dir and initial commit for branch ops
-      writeRoadmap(base, 'M001-abc123', `# M001-abc123: Branch Test
+    // Test getSliceBranchName with new-format ID
+    assertEq(
+      getSliceBranchName('M001-abc123', 'S01'),
+      'gsd/M001-abc123/S01',
+      'G6: getSliceBranchName returns gsd/M001-abc123/S01',
+    );
 
-**Vision:** Test branches
-
-## Slices
-- [ ] **S01: Slice One** \`risk:low\` \`depends:[]\`
-  > Branch test
-`);
-      writePlan(base, 'M001-abc123', 'S01', `# S01: Slice One
-
-**Goal:** Test
-**Demo:** Branch works
-
-## Tasks
-- [ ] **T01: Build** \`est:10m\`
-  Build it.
-`);
-      writeFileSync(join(base, 'README.md'), 'initial\n');
-      run('git add .', base);
-      run('git commit -m init', base);
-
-      // Test getSliceBranchName with new-format ID
-      assertEq(
-        getSliceBranchName('M001-abc123', 'S01'),
-        'gsd/M001-abc123/S01',
-        'G6: getSliceBranchName returns gsd/M001-abc123/S01',
-      );
-
-      // Test parseSliceBranch with new-format branch name
-      const parsed = parseSliceBranch('gsd/M001-abc123/S01');
-      assertTrue(parsed !== null, 'G6: parseSliceBranch returns non-null for new-format');
-      assertEq(parsed?.milestoneId, 'M001-abc123', 'G6: parsed milestoneId is M001-abc123');
-      assertEq(parsed?.sliceId, 'S01', 'G6: parsed sliceId is S01');
-      assertEq(parsed?.worktreeName, null, 'G6: parsed worktreeName is null (no worktree)');
-
-      // Test ensureSliceBranch creates the branch
-      const created = ensureSliceBranch(base, 'M001-abc123', 'S01');
-      assertTrue(created, 'G6: ensureSliceBranch returns true (branch created)');
-      assertEq(
-        getCurrentBranch(base),
-        'gsd/M001-abc123/S01',
-        'G6: getCurrentBranch returns gsd/M001-abc123/S01',
-      );
-
-      // Idempotent: second ensure should not create
-      const secondCreate = ensureSliceBranch(base, 'M001-abc123', 'S01');
-      assertEq(secondCreate, false, 'G6: second ensureSliceBranch returns false');
-
-      // Make a change on the slice branch, commit, then merge to main
-      writeFileSync(join(base, 'feature.txt'), 'new feature from slice\n');
-      run('git add feature.txt', base);
-      run('git commit -m "feat: slice work"', base);
-
-      // Switch to main and merge
-      switchToMain(base);
-      assertEq(getCurrentBranch(base), 'main', 'G6: back on main after switchToMain');
-
-      const merge = mergeSliceToMain(base, 'M001-abc123', 'S01', 'Slice One');
-      assertEq(merge.branch, 'gsd/M001-abc123/S01', 'G6: merge reports correct branch');
-      assertEq(getCurrentBranch(base), 'main', 'G6: still on main after merge');
-      assertTrue(merge.deletedBranch, 'G6: merge deleted the slice branch');
-
-      // Verify the merged content exists on main
-      const content = readFileSync(join(base, 'feature.txt'), 'utf-8');
-      assertTrue(content.includes('new feature from slice'), 'G6: merged content on main');
-
-      // Verify branch is gone
-      const branches = run('git branch', base);
-      assertTrue(!branches.includes('gsd/M001-abc123/S01'), 'G6: slice branch deleted after merge');
-    } finally {
-      cleanup(base);
-    }
+    // Test parseSliceBranch with new-format branch name
+    const parsed = parseSliceBranch('gsd/M001-abc123/S01');
+    assertTrue(parsed !== null, 'G6: parseSliceBranch returns non-null for new-format');
+    assertEq(parsed?.milestoneId, 'M001-abc123', 'G6: parsed milestoneId is M001-abc123');
+    assertEq(parsed?.sliceId, 'S01', 'G6: parsed sliceId is S01');
+    assertEq(parsed?.worktreeName, null, 'G6: parsed worktreeName is null (no worktree)');
   }
 
   // ─── Summary ──────────────────────────────────────────────────────────

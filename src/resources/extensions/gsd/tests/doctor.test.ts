@@ -2,7 +2,7 @@ import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync, existsSync
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
-import { formatDoctorReport, runGSDDoctor, summarizeDoctorIssues, filterDoctorIssues, selectDoctorScope } from "../doctor.js";
+import { formatDoctorReport, runGSDDoctor, summarizeDoctorIssues, filterDoctorIssues, selectDoctorScope, validateTitle } from "../doctor.js";
 import { createTestContext } from './test-helpers.ts';
 
 const { assertEq, assertTrue, report } = createTestContext();
@@ -469,6 +469,120 @@ Discovered an issue.
     );
 
     rmSync(mhBase, { recursive: true, force: true });
+  }
+
+  // ─── validateTitle: em dash and slash detection ────────────────────────
+  console.log("\n=== validateTitle: returns null for clean titles ===");
+  {
+    assertEq(validateTitle("Foundation"), null, "clean title passes");
+    assertEq(validateTitle("Build Core Systems"), null, "clean title with spaces passes");
+    assertEq(validateTitle("API v2 Integration"), null, "clean title with version passes");
+    assertEq(validateTitle(""), null, "empty title passes");
+  }
+
+  console.log("\n=== validateTitle: detects em dash ===");
+  {
+    const result = validateTitle("Foundation — Build Core");
+    assertTrue(result !== null, "detects em dash in title");
+    assertTrue(result!.includes("em/en dash"), "message mentions em/en dash");
+  }
+
+  console.log("\n=== validateTitle: detects en dash ===");
+  {
+    const result = validateTitle("Phase 1 – Phase 2");
+    assertTrue(result !== null, "detects en dash in title");
+    assertTrue(result!.includes("em/en dash"), "message mentions em/en dash for en dash");
+  }
+
+  console.log("\n=== validateTitle: detects forward slash ===");
+  {
+    const result = validateTitle("Client/Server");
+    assertTrue(result !== null, "detects forward slash in title");
+    assertTrue(result!.includes("forward slash"), "message mentions forward slash");
+  }
+
+  console.log("\n=== validateTitle: detects both em dash and slash ===");
+  {
+    const result = validateTitle("Client — Server/API");
+    assertTrue(result !== null, "detects both delimiters");
+    assertTrue(result!.includes("em/en dash"), "message mentions em/en dash");
+    assertTrue(result!.includes("forward slash"), "message mentions forward slash");
+  }
+
+  // ─── doctor detects delimiter_in_title for milestone ───────────────────
+  console.log("\n=== doctor detects em dash in milestone title ===");
+  {
+    const dtBase = mkdtempSync(join(tmpdir(), "gsd-doctor-dt-test-"));
+    const dtGsd = join(dtBase, ".gsd");
+    const dtMDir = join(dtGsd, "milestones", "M001");
+    const dtSDir = join(dtMDir, "slices", "S01");
+    const dtTDir = join(dtSDir, "tasks");
+    mkdirSync(dtTDir, { recursive: true });
+
+    // Roadmap with em dash in milestone title
+    writeFileSync(join(dtMDir, "M001-ROADMAP.md"), `# M001: Foundation — Build Core\n\n## Slices\n- [ ] **S01: Demo Slice** \`risk:low\` \`depends:[]\`\n  > After this: demo works\n`);
+    writeFileSync(join(dtSDir, "S01-PLAN.md"), `# S01: Demo Slice\n\n**Goal:** Demo\n**Demo:** Demo\n\n## Tasks\n- [ ] **T01: Implement** \`est:10m\`\n  Task.\n`);
+    writeFileSync(join(dtTDir, "T01-PLAN.md"), `# T01: Implement\n\n## Steps\n\n1. Do the thing.\n`);
+
+    const report = await runGSDDoctor(dtBase, { fix: false });
+    const dtIssues = report.issues.filter(i => i.code === "delimiter_in_title");
+    assertTrue(dtIssues.length >= 1, "detects delimiter_in_title for milestone with em dash");
+    const milestoneIssue = dtIssues.find(i => i.scope === "milestone");
+    assertTrue(milestoneIssue !== undefined, "delimiter issue has milestone scope");
+    assertEq(milestoneIssue?.severity, "warning", "delimiter issue has warning severity");
+    assertEq(milestoneIssue?.unitId, "M001", "delimiter issue unitId is M001");
+    assertTrue(milestoneIssue?.message?.includes("em/en dash") ?? false, "issue message mentions em/en dash");
+    assertEq(milestoneIssue?.fixable, false, "delimiter issue is not auto-fixable");
+
+    rmSync(dtBase, { recursive: true, force: true });
+  }
+
+  // ─── doctor detects delimiter_in_title for slice ────────────────────────
+  console.log("\n=== doctor detects em dash in slice title ===");
+  {
+    const dtBase = mkdtempSync(join(tmpdir(), "gsd-doctor-dt-slice-"));
+    const dtGsd = join(dtBase, ".gsd");
+    const dtMDir = join(dtGsd, "milestones", "M001");
+    const dtSDir = join(dtMDir, "slices", "S01");
+    const dtTDir = join(dtSDir, "tasks");
+    mkdirSync(dtTDir, { recursive: true });
+
+    // Roadmap with em dash in slice title (milestone title is clean)
+    writeFileSync(join(dtMDir, "M001-ROADMAP.md"), `# M001: Clean Milestone\n\n## Slices\n- [ ] **S01: Core — Foundation** \`risk:low\` \`depends:[]\`\n  > After this: demo works\n`);
+    writeFileSync(join(dtSDir, "S01-PLAN.md"), `# S01: Core — Foundation\n\n**Goal:** Demo\n**Demo:** Demo\n\n## Tasks\n- [ ] **T01: Implement** \`est:10m\`\n  Task.\n`);
+    writeFileSync(join(dtTDir, "T01-PLAN.md"), `# T01: Implement\n\n## Steps\n\n1. Do the thing.\n`);
+
+    const report = await runGSDDoctor(dtBase, { fix: false });
+    const dtIssues = report.issues.filter(i => i.code === "delimiter_in_title");
+    assertTrue(dtIssues.length >= 1, "detects delimiter_in_title for slice with em dash");
+    const sliceIssue = dtIssues.find(i => i.scope === "slice");
+    assertTrue(sliceIssue !== undefined, "delimiter issue has slice scope");
+    assertEq(sliceIssue?.severity, "warning", "slice delimiter issue has warning severity");
+    assertEq(sliceIssue?.unitId, "M001/S01", "slice delimiter issue unitId is M001/S01");
+
+    rmSync(dtBase, { recursive: true, force: true });
+  }
+
+  // ─── doctor does NOT flag clean titles ──────────────────────────────────
+  console.log("\n=== doctor does NOT flag milestone with clean title ===");
+  {
+    const dtBase = mkdtempSync(join(tmpdir(), "gsd-doctor-dt-clean-"));
+    const dtGsd = join(dtBase, ".gsd");
+    const dtMDir = join(dtGsd, "milestones", "M001");
+    const dtSDir = join(dtMDir, "slices", "S01");
+    const dtTDir = join(dtSDir, "tasks");
+    mkdirSync(dtTDir, { recursive: true });
+
+    // Roadmap with clean titles (no delimiters)
+    writeFileSync(join(dtMDir, "M001-ROADMAP.md"), `# M001: Foundation Build Core\n\n## Slices\n- [ ] **S01: Demo Slice** \`risk:low\` \`depends:[]\`\n  > After this: demo works\n`);
+    writeFileSync(join(dtSDir, "S01-PLAN.md"), `# S01: Demo Slice\n\n**Goal:** Demo\n**Demo:** Demo\n\n## Tasks\n- [ ] **T01: Implement** \`est:10m\`\n  Task.\n`);
+    writeFileSync(join(dtTDir, "T01-PLAN.md"), `# T01: Implement\n\n## Steps\n\n1. Do the thing.\n`);
+
+    const report = await runGSDDoctor(dtBase, { fix: false });
+    const dtIssues = report.issues.filter(i => i.code === "delimiter_in_title");
+    assertEq(dtIssues.length, 0, "no delimiter_in_title issues for clean titles");
+
+    rmSync(dtBase, { recursive: true, force: true });
   }
 
   report();

@@ -73,6 +73,7 @@ const LLM_PROVIDER_IDS = [
   'xai',
   'openrouter',
   'mistral',
+  'ollama-cloud',
   'custom-openai',
 ]
 
@@ -88,6 +89,7 @@ const OTHER_PROVIDERS = [
   { value: 'xai', label: 'xAI (Grok)' },
   { value: 'openrouter', label: 'OpenRouter' },
   { value: 'mistral', label: 'Mistral' },
+  { value: 'ollama-cloud', label: 'Ollama Cloud' },
   { value: 'custom-openai', label: 'Custom (OpenAI-compatible)' },
 ]
 
@@ -873,6 +875,7 @@ export function loadStoredEnvKeys(authStorage: AuthStorage): void {
     ['slack_bot',     'SLACK_BOT_TOKEN'],
     ['discord_bot',   'DISCORD_BOT_TOKEN'],
     ['groq',          'GROQ_API_KEY'],
+    ['ollama-cloud',  'OLLAMA_API_KEY'],
     ['custom-openai', 'CUSTOM_OPENAI_API_KEY'],
   ]
   for (const [provider, envVar] of providers) {

@@ -105,16 +105,21 @@ export function registerNativeSearchHooks(pi: NativeSearchPI): { getIsAnthropic:
     const payload = event.payload as Record<string, unknown>;
     if (!payload) return;
 
-    // Detect Anthropic provider. Prefer the model_select flag when available,
-    // but fall back to checking the model name in the payload. model_select
-    // may not fire when the session restores with the same model already set
-    // (modelsAreEqual guard in the SDK suppresses the event). When model_select
-    // HAS fired and said "not Anthropic" (e.g. Copilot serving claude-*),
-    // respect that — don't override with model name heuristic.
-    const modelName = typeof payload.model === "string" ? payload.model : "";
-    const isAnthropic = modelSelectFired
-      ? isAnthropicProvider
-      : modelName.startsWith("claude-");
+    // Detect Anthropic provider. Use the model object from the event (most
+    // reliable — comes directly from the resolved Model), then fall back to
+    // the model_select flag, then to the model name heuristic (last resort).
+    // The model name heuristic is needed for session restores where
+    // modelsAreEqual suppresses model_select AND the SDK doesn't pass model.
+    const eventModel = event.model as { provider: string } | undefined;
+    let isAnthropic: boolean;
+    if (eventModel?.provider) {
+      isAnthropic = eventModel.provider === "anthropic";
+    } else if (modelSelectFired) {
+      isAnthropic = isAnthropicProvider;
+    } else {
+      const modelName = typeof payload.model === "string" ? payload.model : "";
+      isAnthropic = modelName.startsWith("claude-");
+    }
     if (!isAnthropic) return;
 
     // Strip thinking blocks from history to avoid signature validation errors

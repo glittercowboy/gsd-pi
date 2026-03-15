@@ -14,6 +14,7 @@ const toolDescriptions: Record<string, string> = {
 	grep: "Search file contents for patterns (respects .gitignore)",
 	find: "Find files by glob pattern (respects .gitignore)",
 	ls: "List directory contents",
+	lsp: "Code intelligence via Language Server Protocol (go-to-definition, references, diagnostics, hover, rename, symbols)",
 };
 
 export interface BuildSystemPromptOptions {
@@ -131,6 +132,7 @@ export function buildSystemPrompt(options: BuildSystemPromptOptions = {}): strin
 	const hasFind = tools.includes("find");
 	const hasLs = tools.includes("ls");
 	const hasRead = tools.includes("read");
+	const hasLsp = tools.includes("lsp");
 
 	// File exploration guidelines
 	if (hasBash && !hasGrep && !hasFind && !hasLs) {
@@ -152,6 +154,13 @@ export function buildSystemPrompt(options: BuildSystemPromptOptions = {}): strin
 	// Write guideline
 	if (hasWrite) {
 		addGuideline("Use write only for new files or complete rewrites");
+	}
+
+	// LSP guideline
+	if (hasLsp) {
+		addGuideline(
+			"Use lsp for go-to-definition, find-references, hover, rename, and diagnostics when working in typed codebases. Prefer lsp over grep for semantic navigation (finding call sites, implementations, type info). Falls back gracefully if no language server is available for the file type.",
+		);
 	}
 
 	// Output guideline (only when actually writing or executing)

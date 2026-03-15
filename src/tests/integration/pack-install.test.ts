@@ -12,7 +12,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync, spawn } from "node:child_process";
-import { createReadStream, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { createReadStream, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { createGunzip } from "node:zlib";
@@ -228,4 +228,49 @@ test("gsd launches and loads extensions without errors", async () => {
     !output.includes("ERR_MODULE_NOT_FOUND"),
     "no ERR_MODULE_NOT_FOUND",
   );
+});
+
+test("gsd exits early with a clear message when synced resources are newer than the binary", async () => {
+  const fakeHome = mkdtempSync(join(tmpdir(), "gsd-version-skew-"));
+  const fakeAgentDir = join(fakeHome, ".gsd", "agent");
+  mkdirSync(fakeAgentDir, { recursive: true });
+  writeFileSync(
+    join(fakeAgentDir, "managed-resources.json"),
+    JSON.stringify({ gsdVersion: "999.0.0" }),
+  );
+
+  try {
+    const result = await new Promise<{ code: number | null; stderr: string }>((resolve) => {
+      let stderr = "";
+      const child = spawn("node", ["dist/loader.js"], {
+        cwd: projectRoot,
+        env: {
+          ...process.env,
+          HOME: fakeHome,
+          BRAVE_API_KEY: "test",
+          BRAVE_ANSWERS_KEY: "test",
+          CONTEXT7_API_KEY: "test",
+          JINA_API_KEY: "test",
+          TAVILY_API_KEY: "test",
+        },
+        stdio: ["pipe", "pipe", "pipe"],
+      });
+
+      child.stderr.on("data", (data: Buffer) => {
+        stderr += data.toString();
+      });
+
+      child.stdin.end();
+      child.on("close", (code) => {
+        resolve({ code, stderr });
+      });
+    });
+
+    assert.equal(result.code, 1, "startup exits with code 1 on version skew");
+    assert.match(result.stderr, /Version mismatch detected/, "prints a friendly skew header");
+    assert.match(result.stderr, /npm install -g gsd-pi@latest|gsd update/, "prints upgrade guidance");
+    assert.doesNotMatch(result.stderr, /\[gsd\] Extension load error/, "fails before extension loading");
+  } finally {
+    rmSync(fakeHome, { recursive: true, force: true });
+  }
 });
