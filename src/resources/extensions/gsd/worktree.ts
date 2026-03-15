@@ -1,13 +1,11 @@
 /**
- * GSD Slice Branch Management — Thin Facade
+ * GSD Worktree Utilities
  *
- * Simple branch-per-slice workflow. No worktrees, no registry.
- * Runtime state (metrics, activity, lock, STATE.md) is gitignored
- * so branch switches are clean.
+ * Pure utility functions for worktree name detection, legacy branch name
+ * parsing, and integration branch capture.
  *
- * All git-mutation functions delegate to GitServiceImpl from git-service.ts.
  * Pure utility functions (detectWorktreeName, getSliceBranchName, parseSliceBranch,
- * SLICE_BRANCH_RE) remain standalone.
+ * SLICE_BRANCH_RE) remain standalone for backwards compatibility.
  *
  * Branchless architecture: all work commits sequentially on the milestone branch.
  * Pure utility functions (detectWorktreeName, getSliceBranchName, parseSliceBranch,
@@ -147,26 +145,4 @@ export function autoCommitCurrentBranch(
   return getService(basePath).autoCommit(unitType, unitId);
 }
 
-// ─── Query Functions (delegate to GitServiceImpl) ──────────────────────────
 
-/**
- * Check if we're currently on a slice branch (not main).
- * Handles both plain (gsd/M001/S01) and worktree-namespaced (gsd/wt/M001/S01) branches.
- */
-export function isOnSliceBranch(basePath: string): boolean {
-  const current = getCurrentBranch(basePath);
-  return SLICE_BRANCH_RE.test(current);
-}
-
-/**
- * Get the active slice branch name, or null if on main.
- * Handles both plain and worktree-namespaced branch patterns.
- */
-export function getActiveSliceBranch(basePath: string): string | null {
-  try {
-    const current = getCurrentBranch(basePath);
-    return SLICE_BRANCH_RE.test(current) ? current : null;
-  } catch {
-    return null;
-  }
-}

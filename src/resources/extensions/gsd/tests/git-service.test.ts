@@ -533,7 +533,7 @@ async function main(): Promise<void> {
     return dir;
   }
 
-  // ─── getCurrentBranch / isOnSliceBranch / getActiveSliceBranch ─────────
+  // ─── getCurrentBranch ────────────────────────────────────────────────
 
   console.log("\n=== Branch queries ===");
 
@@ -541,21 +541,13 @@ async function main(): Promise<void> {
     const repo = initBranchTestRepo();
     const svc = new GitServiceImpl(repo);
 
-    // On main
     assertEq(svc.getCurrentBranch(), "main", "getCurrentBranch returns main on main branch");
-    assertEq(svc.isOnSliceBranch(), false, "isOnSliceBranch returns false on main");
-    assertEq(svc.getActiveSliceBranch(), null, "getActiveSliceBranch returns null on main");
 
-    // Create and checkout a slice branch manually
     run("git checkout -b gsd/M001/S01", repo);
     assertEq(svc.getCurrentBranch(), "gsd/M001/S01", "getCurrentBranch returns slice branch name");
-    assertEq(svc.isOnSliceBranch(), true, "isOnSliceBranch returns true on slice branch");
-    assertEq(svc.getActiveSliceBranch(), "gsd/M001/S01", "getActiveSliceBranch returns branch name on slice branch");
 
-    // Non-slice feature branch
     run("git checkout -b feature/foo", repo);
-    assertEq(svc.isOnSliceBranch(), false, "isOnSliceBranch returns false on non-slice branch");
-    assertEq(svc.getActiveSliceBranch(), null, "getActiveSliceBranch returns null on non-slice branch");
+    assertEq(svc.getCurrentBranch(), "feature/foo", "getCurrentBranch returns feature branch name");
 
     rmSync(repo, { recursive: true, force: true });
   }

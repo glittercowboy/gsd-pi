@@ -29,7 +29,7 @@ import {
   resolveGsdRootFile,
   gsdRoot,
 } from './paths.js';
-import { getActiveSliceBranch } from './worktree.js';
+
 import { milestoneIdSort, findMilestoneIds } from './guided-flow.js';
 import { nativeBatchParseGsdFiles, type BatchParsedFile } from './native-parser-bridge.js';
 
@@ -438,8 +438,6 @@ async function _deriveStateImpl(basePath: string): Promise<GSDState> {
     };
   }
 
-  const activeBranch = getActiveSliceBranch(basePath);
-
   // Check if the slice has a plan
   const planFile = resolveSliceFile(basePath, activeMilestone.id, activeSlice.id, "PLAN");
   const slicePlanContent = planFile ? await cachedLoadFile(planFile) : null;
@@ -453,7 +451,7 @@ async function _deriveStateImpl(basePath: string): Promise<GSDState> {
       recentDecisions: [],
       blockers: [],
       nextAction: `Plan slice ${activeSlice.id} (${activeSlice.title}).`,
-      activeBranch: activeBranch ?? undefined,
+
       registry,
       requirements,
       progress: {
@@ -480,7 +478,7 @@ async function _deriveStateImpl(basePath: string): Promise<GSDState> {
       recentDecisions: [],
       blockers: [],
       nextAction: `All tasks done in ${activeSlice.id}. Write slice summary and complete slice.`,
-      activeBranch: activeBranch ?? undefined,
+
       registry,
       requirements,
       progress: {
@@ -501,7 +499,7 @@ async function _deriveStateImpl(basePath: string): Promise<GSDState> {
       recentDecisions: [],
       blockers: [],
       nextAction: `Slice ${activeSlice.id} has a plan file but no tasks. Add tasks to the plan.`,
-      activeBranch: activeBranch ?? undefined,
+
       registry,
       requirements,
       progress: {
@@ -547,7 +545,7 @@ async function _deriveStateImpl(basePath: string): Promise<GSDState> {
         recentDecisions: [],
         blockers: [`Task ${blockerTaskId} discovered a blocker requiring slice replan`],
         nextAction: `Task ${blockerTaskId} reported blocker_discovered. Replan slice ${activeSlice.id} before continuing.`,
-        activeBranch: activeBranch ?? undefined,
+  
         activeWorkspace: undefined,
         registry,
         requirements,
@@ -578,7 +576,6 @@ async function _deriveStateImpl(basePath: string): Promise<GSDState> {
     nextAction: hasInterrupted
       ? `Resume interrupted work on ${activeTask.id}: ${activeTask.title} in slice ${activeSlice.id}. Read continue.md first.`
       : `Execute ${activeTask.id}: ${activeTask.title} in slice ${activeSlice.id}.`,
-    activeBranch: activeBranch ?? undefined,
     registry,
     requirements,
     progress: {

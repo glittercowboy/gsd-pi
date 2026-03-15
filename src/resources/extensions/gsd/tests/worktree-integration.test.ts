@@ -24,9 +24,8 @@ import {
   getCurrentBranch,
   getMainBranch,
   getSliceBranchName,
-  isOnSliceBranch,
-  getActiveSliceBranch,
   autoCommitCurrentBranch,
+  SLICE_BRANCH_RE,
 } from "../worktree.ts";
 
 import { deriveState } from "../state.ts";
@@ -109,8 +108,7 @@ async function main(): Promise<void> {
   const sliceBranch = getSliceBranchName("M001", "S01", "alpha");
   run(`git checkout -b ${sliceBranch}`, wt.path);
   assertEq(getCurrentBranch(wt.path), "gsd/alpha/M001/S01", "worktree-namespaced slice branch");
-  assertTrue(isOnSliceBranch(wt.path), "isOnSliceBranch returns true");
-  assertEq(getActiveSliceBranch(wt.path), "gsd/alpha/M001/S01", "getActiveSliceBranch returns namespaced branch");
+  assertTrue(SLICE_BRANCH_RE.test(getCurrentBranch(wt.path)), "slice branch regex matches namespaced branch");
 
   // ── Do work on slice branch, then merge to worktree branch ─────────────────
 

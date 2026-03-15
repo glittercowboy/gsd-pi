@@ -553,7 +553,7 @@ export async function startAuto(
     return;
   }
 
-  // Ensure git repo exists — GSD needs it for branch-per-slice
+  // Ensure git repo exists — GSD needs it for worktree isolation
   try {
     execSync("git rev-parse --git-dir", { cwd: base, stdio: "pipe" });
   } catch {

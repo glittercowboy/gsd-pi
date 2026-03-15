@@ -7,11 +7,9 @@ import {
   autoCommitCurrentBranch,
   captureIntegrationBranch,
   detectWorktreeName,
-  getActiveSliceBranch,
   getCurrentBranch,
   getMainBranch,
   getSliceBranchName,
-  isOnSliceBranch,
   parseSliceBranch,
   setActiveMilestoneId,
   SLICE_BRANCH_RE,
@@ -36,12 +34,6 @@ run("git add .", base);
 run('git commit -m "chore: init"', base);
 
 async function main(): Promise<void> {
-
-  console.log("\n=== getActiveSliceBranch on main ===");
-  assertEq(getActiveSliceBranch(base), null, "getActiveSliceBranch returns null on main");
-
-  console.log("\n=== isOnSliceBranch on main ===");
-  assertEq(isOnSliceBranch(base), false, "isOnSliceBranch returns false on main");
 
   console.log("\n=== autoCommitCurrentBranch ===");
   // Clean — should return null

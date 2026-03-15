@@ -700,7 +700,7 @@ export async function showSmartEntry(
 ): Promise<void> {
   const stepMode = options?.step;
 
-  // ── Ensure git repo exists — GSD needs it for branch-per-slice ──────
+  // ── Ensure git repo exists — GSD needs it for worktree isolation ──────
   try {
     execSync("git rev-parse --git-dir", { cwd: basePath, stdio: "pipe" });
   } catch {
