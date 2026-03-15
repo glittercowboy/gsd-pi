@@ -177,6 +177,57 @@ test("before_provider_request does NOT inject for claude model on non-Anthropic 
   );
 });
 
+// ─── Issue #444 regression: Copilot claude-* model without model_select ──────
+
+test("before_provider_request does NOT inject when event.model indicates non-Anthropic provider (no model_select)", async () => {
+  const pi = createMockPI();
+  registerNativeSearchHooks(pi);
+
+  // NO model_select fired — simulates a new session where model was set before
+  // extensions were bound. The event.model field from the SDK reveals the true provider.
+  const payload: Record<string, unknown> = {
+    model: "claude-sonnet-4-6-20250514",
+    tools: [{ name: "bash", type: "custom" }],
+  };
+
+  const result = await pi.fire("before_provider_request", {
+    type: "before_provider_request",
+    payload,
+    model: { provider: "github-copilot", id: "claude-sonnet-4-6" },
+  });
+
+  assert.equal(result, undefined, "Should not modify payload when event.model says non-Anthropic");
+  const tools = payload.tools as any[];
+  assert.equal(tools.length, 1, "Should not inject web_search for Copilot provider");
+  assert.ok(
+    !tools.some((t: any) => t.type === "web_search_20250305"),
+    "web_search_20250305 must NOT be present for Copilot"
+  );
+});
+
+test("before_provider_request DOES inject when event.model indicates Anthropic provider (no model_select)", async () => {
+  const pi = createMockPI();
+  registerNativeSearchHooks(pi);
+
+  // NO model_select fired, but event.model confirms Anthropic provider
+  const payload: Record<string, unknown> = {
+    model: "claude-sonnet-4-6-20250514",
+    tools: [{ name: "bash", type: "custom" }],
+  };
+
+  const result = await pi.fire("before_provider_request", {
+    type: "before_provider_request",
+    payload,
+    model: { provider: "anthropic", id: "claude-sonnet-4-6" },
+  });
+
+  const tools = ((result as any)?.tools ?? payload.tools) as any[];
+  assert.ok(
+    tools.some((t: any) => t.type === "web_search_20250305"),
+    "Should inject web_search when event.model confirms Anthropic"
+  );
+});
+
 test("before_provider_request does not double-inject", async () => {
   const pi = createMockPI();
   registerNativeSearchHooks(pi);

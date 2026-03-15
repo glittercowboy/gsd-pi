@@ -292,12 +292,12 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 			tools: [],
 		},
 		convertToLlm: convertToLlmWithBlockImages,
-		onPayload: async (payload, _model) => {
+		onPayload: async (payload, currentModel) => {
 			const runner = extensionRunnerRef.current;
 			if (!runner?.hasHandlers("before_provider_request")) {
 				return payload;
 			}
-			return runner.emitBeforeProviderRequest(payload);
+			return runner.emitBeforeProviderRequest(payload, currentModel);
 		},
 		sessionId: sessionManager.getSessionId(),
 		transformContext: async (messages) => {

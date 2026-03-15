@@ -712,7 +712,7 @@ export class ExtensionRunner {
 		return currentMessages;
 	}
 
-	async emitBeforeProviderRequest(payload: unknown): Promise<unknown> {
+	async emitBeforeProviderRequest(payload: unknown, model?: { provider: string; id: string }): Promise<unknown> {
 		const ctx = this.createContext();
 		let currentPayload = payload;
 
@@ -725,6 +725,7 @@ export class ExtensionRunner {
 					const event: BeforeProviderRequestEvent = {
 						type: "before_provider_request",
 						payload: currentPayload,
+						model,
 					};
 					const handlerResult = await handler(event, ctx);
 					if (handlerResult !== undefined) {
