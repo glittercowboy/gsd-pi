@@ -49,7 +49,7 @@
   - Verify: `npm run test:unit -- --test-name-pattern "db-writer"` — all assertions pass including round-trip fidelity
   - Done when: Generated DECISIONS.md and REQUIREMENTS.md parse back to identical data through `parseDecisionsTable` and `parseRequirementsSections`
 
-- [ ] **T02: Register structured LLM tools** `est:30m`
+- [x] **T02: Register structured LLM tools** `est:30m`
   - Why: This is the core R014 deliverable — 3 tools that let the LLM write structured data directly, eliminating the markdown-then-parse roundtrip.
   - Files: `src/resources/extensions/gsd/index.ts`, `src/resources/extensions/gsd/tests/gsd-tools.test.ts`
   - Do: In `index.ts`, register 3 tools via `pi.registerTool()` following the google-search pattern: (1) `gsd_save_decision` — params: scope (string), decision (string), choice (string), rationale (string), revisable (Optional string, default "Yes"), when_context (Optional string, defaults to active milestone). Execute: dynamic import db-writer.js → call `saveDecisionToDb()` → return success with new ID. (2) `gsd_update_requirement` — params: id (string, required), status (Optional string), validation (Optional string), notes (Optional string). Execute: dynamic import gsd-db.js → get existing requirement → merge updates → call `updateRequirementInDb()` → return success. (3) `gsd_save_summary` — params: milestone_id (string), slice_id (Optional string), task_id (Optional string), artifact_type (string enum: SUMMARY/RESEARCH/CONTEXT/ASSESSMENT), content (string). Execute: compute file path from IDs → call `saveArtifactToDb()` → return success. All tools check `isDbAvailable()` first and return clear error if DB not open. TypeBox schemas for all params. Tests: verify execute functions with in-memory DB.

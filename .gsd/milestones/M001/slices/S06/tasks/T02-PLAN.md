@@ -49,3 +49,10 @@ Register three tools in the GSD extension via `pi.registerTool()`: `gsd_save_dec
 
 - `src/resources/extensions/gsd/index.ts` — modified with 3 new tool registrations (~150 LOC addition)
 - `src/resources/extensions/gsd/tests/gsd-tools.test.ts` — new test file with tool execution tests
+
+## Observability Impact
+
+- **Tool result `isError: true`**: All three tools return structured error results with `details.error` field when DB is unavailable or inputs are invalid. The LLM sees the error message directly.
+- **stderr logging**: Each tool logs failures to stderr with `gsd-db:` prefix (e.g. `gsd-db: gsd_save_decision tool failed: ...`), consistent with the existing db-writer pattern.
+- **Structured details**: Every tool result includes `details.operation` (e.g. `"save_decision"`, `"update_requirement"`, `"save_summary"`) for programmatic inspection, plus `details.id` or `details.path` on success.
+- **Failure visibility**: Invalid artifact types, missing requirement IDs, and DB unavailability all produce `isError: true` results that surface in both the LLM conversation and UI rendering.
