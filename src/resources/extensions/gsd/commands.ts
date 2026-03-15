@@ -12,7 +12,7 @@ import { fileURLToPath } from "node:url";
 import { deriveState } from "./state.js";
 import { GSDDashboardOverlay } from "./dashboard-overlay.js";
 import { showQueue, showDiscuss } from "./guided-flow.js";
-import { startAuto, stopAuto, isAutoActive, isAutoPaused, isStepMode } from "./auto.js";
+import { startAuto, stopAuto, pauseAuto, isAutoActive, isAutoPaused, isStepMode } from "./auto.js";
 import {
   getGlobalGSDPreferencesPath,
   getLegacyGlobalGSDPreferencesPath,
@@ -33,6 +33,9 @@ import {
 import { loadPrompt } from "./prompt-loader.js";
 import { handleMigrate } from "./migrate/command.js";
 import { handleRemote } from "../remote-questions/remote-command.js";
+import { handleHistory } from "./history.js";
+import { handleUndo } from "./undo.js";
+import { handleExport } from "./export.js";
 
 function dispatchDoctorHeal(pi: ExtensionAPI, scope: string | undefined, reportText: string, structuredIssues: string): void {
   const workflowPath = process.env.GSD_WORKFLOW_PATH ?? join(process.env.HOME ?? "~", ".pi", "GSD-WORKFLOW.md");
@@ -54,10 +57,13 @@ function dispatchDoctorHeal(pi: ExtensionAPI, scope: string | undefined, reportT
 
 export function registerGSDCommand(pi: ExtensionAPI): void {
   pi.registerCommand("gsd", {
-    description: "GSD — Get Shit Done: /gsd next|auto|stop|status|queue|prefs|config|hooks|doctor|migrate|remote",
-
+    description: "GSD — Get Shit Done: /gsd next|auto|stop|pause|status|queue|history|undo|skip|export|cleanup|prefs|config|hooks|doctor|migrate|remote",
     getArgumentCompletions: (prefix: string) => {
-      const subcommands = ["next", "auto", "stop", "status", "queue", "discuss", "prefs", "config", "hooks", "doctor", "migrate", "remote"];
+      const subcommands = [
+        "next", "auto", "stop", "pause", "status", "queue", "discuss",
+        "history", "undo", "skip", "export", "cleanup", "prefs",
+        "config", "hooks", "doctor", "migrate", "remote",
+      ];
       const parts = prefix.trim().split(/\s+/);
 
       if (parts.length <= 1) {
@@ -85,6 +91,38 @@ export function registerGSDCommand(pi: ExtensionAPI): void {
         return ["slack", "discord", "status", "disconnect"]
           .filter((cmd) => cmd.startsWith(subPrefix))
           .map((cmd) => ({ value: `remote ${cmd}`, label: cmd }));
+      }
+
+      if (parts[0] === "next" && parts.length <= 2) {
+        const flagPrefix = parts[1] ?? "";
+        return ["--verbose", "--dry-run"]
+          .filter((f) => f.startsWith(flagPrefix))
+          .map((f) => ({ value: `next ${f}`, label: f }));
+      }
+
+      if (parts[0] === "history" && parts.length <= 2) {
+        const flagPrefix = parts[1] ?? "";
+        return ["--cost", "--phase", "--model", "10", "20", "50"]
+          .filter((f) => f.startsWith(flagPrefix))
+          .map((f) => ({ value: `history ${f}`, label: f }));
+      }
+
+      if (parts[0] === "undo" && parts.length <= 2) {
+        return [{ value: "undo --force", label: "--force" }];
+      }
+
+      if (parts[0] === "export" && parts.length <= 2) {
+        const flagPrefix = parts[1] ?? "";
+        return ["--json", "--markdown"]
+          .filter((f) => f.startsWith(flagPrefix))
+          .map((f) => ({ value: `export ${f}`, label: f }));
+      }
+
+      if (parts[0] === "cleanup" && parts.length <= 2) {
+        const subPrefix = parts[1] ?? "";
+        return ["branches", "snapshots"]
+          .filter((cmd) => cmd.startsWith(subPrefix))
+          .map((cmd) => ({ value: `cleanup ${cmd}`, label: cmd }));
       }
 
       if (parts[0] === "doctor") {
@@ -122,6 +160,10 @@ export function registerGSDCommand(pi: ExtensionAPI): void {
       }
 
       if (trimmed === "next" || trimmed.startsWith("next ")) {
+        if (trimmed.includes("--dry-run")) {
+          await handleDryRun(ctx, process.cwd());
+          return;
+        }
         const verboseMode = trimmed.includes("--verbose");
         await startAuto(ctx, pi, process.cwd(), verboseMode, { step: true });
         return;
@@ -139,6 +181,49 @@ export function registerGSDCommand(pi: ExtensionAPI): void {
           return;
         }
         await stopAuto(ctx, pi);
+        return;
+      }
+
+      if (trimmed === "pause") {
+        if (!isAutoActive()) {
+          if (isAutoPaused()) {
+            ctx.ui.notify("Auto-mode is already paused. /gsd auto to resume.", "info");
+          } else {
+            ctx.ui.notify("Auto-mode is not running.", "info");
+          }
+          return;
+        }
+        await pauseAuto(ctx, pi);
+        return;
+      }
+
+      if (trimmed === "history" || trimmed.startsWith("history ")) {
+        await handleHistory(trimmed.replace(/^history\s*/, "").trim(), ctx, process.cwd());
+        return;
+      }
+
+      if (trimmed === "undo" || trimmed.startsWith("undo ")) {
+        await handleUndo(trimmed.replace(/^undo\s*/, "").trim(), ctx, pi, process.cwd());
+        return;
+      }
+
+      if (trimmed.startsWith("skip ")) {
+        await handleSkip(trimmed.replace(/^skip\s*/, "").trim(), ctx, process.cwd());
+        return;
+      }
+
+      if (trimmed === "export" || trimmed.startsWith("export ")) {
+        await handleExport(trimmed.replace(/^export\s*/, "").trim(), ctx, process.cwd());
+        return;
+      }
+
+      if (trimmed === "cleanup branches") {
+        await handleCleanupBranches(ctx, process.cwd());
+        return;
+      }
+
+      if (trimmed === "cleanup snapshots") {
+        await handleCleanupSnapshots(ctx, process.cwd());
         return;
       }
 
@@ -180,7 +265,7 @@ export function registerGSDCommand(pi: ExtensionAPI): void {
       }
 
       ctx.ui.notify(
-        `Unknown: /gsd ${trimmed}. Use /gsd, /gsd next, /gsd auto, /gsd stop, /gsd status, /gsd queue, /gsd discuss, /gsd prefs, /gsd config, /gsd hooks, /gsd doctor [audit|fix|heal] [M###/S##], /gsd migrate <path>, or /gsd remote [slack|discord|status|disconnect].`,
+        `Unknown: /gsd ${trimmed}. Use /gsd next|auto|stop|pause|status|queue|discuss|history|undo|skip <unit>|export|cleanup|prefs|config|hooks|doctor|migrate|remote.`,
         "warning",
       );
     },
@@ -625,4 +710,222 @@ async function ensurePreferencesFile(
     ctx.ui.notify(`Using existing ${scope} GSD skill preferences at ${path}`, "info");
   }
 
+}
+
+// ─── Skip handler ─────────────────────────────────────────────────────────────
+
+async function handleSkip(unitArg: string, ctx: ExtensionCommandContext, basePath: string): Promise<void> {
+  if (!unitArg) {
+    ctx.ui.notify("Usage: /gsd skip <unit-id>  (e.g., /gsd skip execute-task/M001/S01/T03 or /gsd skip T03)", "info");
+    return;
+  }
+
+  const { existsSync: fileExists, writeFileSync: writeFile, mkdirSync: mkDir, readFileSync: readFile } = await import("node:fs");
+  const { join: pathJoin } = await import("node:path");
+
+  const completedKeysFile = pathJoin(basePath, ".gsd", "completed-units.json");
+  let keys: string[] = [];
+  try {
+    if (fileExists(completedKeysFile)) {
+      keys = JSON.parse(readFile(completedKeysFile, "utf-8"));
+    }
+  } catch { /* start fresh */ }
+
+  // Normalize: accept "execute-task/M001/S01/T03", "M001/S01/T03", or just "T03"
+  let skipKey = unitArg;
+
+  if (!skipKey.includes("execute-task") && !skipKey.includes("plan-") && !skipKey.includes("research-") && !skipKey.includes("complete-")) {
+    const state = await deriveState(basePath);
+    const mid = state.activeMilestone?.id;
+    const sid = state.activeSlice?.id;
+
+    if (unitArg.match(/^T\d+$/i) && mid && sid) {
+      skipKey = `execute-task/${mid}/${sid}/${unitArg.toUpperCase()}`;
+    } else if (unitArg.match(/^S\d+$/i) && mid) {
+      skipKey = `plan-slice/${mid}/${unitArg.toUpperCase()}`;
+    } else if (unitArg.includes("/")) {
+      skipKey = `execute-task/${unitArg}`;
+    }
+  }
+
+  if (keys.includes(skipKey)) {
+    ctx.ui.notify(`Already skipped: ${skipKey}`, "info");
+    return;
+  }
+
+  keys.push(skipKey);
+  mkDir(pathJoin(basePath, ".gsd"), { recursive: true });
+  writeFile(completedKeysFile, JSON.stringify(keys), "utf-8");
+
+  ctx.ui.notify(`Skipped: ${skipKey}. Will not be dispatched in auto-mode.`, "success");
+}
+
+// ─── Dry-run handler ──────────────────────────────────────────────────────────
+
+async function handleDryRun(ctx: ExtensionCommandContext, basePath: string): Promise<void> {
+  const state = await deriveState(basePath);
+
+  if (!state.activeMilestone) {
+    ctx.ui.notify("No active milestone — nothing to dispatch.", "info");
+    return;
+  }
+
+  const { getLedger, getProjectTotals, formatCost, formatTokenCount, loadLedgerFromDisk } = await import("./metrics.js");
+  const { loadEffectiveGSDPreferences: loadPrefs } = await import("./preferences.js");
+  const { formatDuration } = await import("./history.js");
+
+  const ledger = getLedger();
+  const units = ledger?.units ?? loadLedgerFromDisk(basePath)?.units ?? [];
+  const prefs = loadPrefs()?.preferences;
+
+  let nextType = "unknown";
+  let nextId = "unknown";
+
+  const mid = state.activeMilestone.id;
+  const midTitle = state.activeMilestone.title;
+
+  if (state.phase === "pre-planning") {
+    nextType = "research-milestone";
+    nextId = mid;
+  } else if (state.phase === "planning" && state.activeSlice) {
+    nextType = "plan-slice";
+    nextId = `${mid}/${state.activeSlice.id}`;
+  } else if (state.phase === "executing" && state.activeTask && state.activeSlice) {
+    nextType = "execute-task";
+    nextId = `${mid}/${state.activeSlice.id}/${state.activeTask.id}`;
+  } else if (state.phase === "summarizing" && state.activeSlice) {
+    nextType = "complete-slice";
+    nextId = `${mid}/${state.activeSlice.id}`;
+  } else if (state.phase === "completing-milestone") {
+    nextType = "complete-milestone";
+    nextId = mid;
+  } else {
+    nextType = state.phase;
+    nextId = mid;
+  }
+
+  const sameTypeUnits = units.filter(u => u.type === nextType);
+  const avgCost = sameTypeUnits.length > 0
+    ? sameTypeUnits.reduce((s, u) => s + u.cost, 0) / sameTypeUnits.length
+    : null;
+  const avgDuration = sameTypeUnits.length > 0
+    ? sameTypeUnits.reduce((s, u) => s + (u.finishedAt - u.startedAt), 0) / sameTypeUnits.length
+    : null;
+
+  const totals = units.length > 0 ? getProjectTotals(units) : null;
+  const budgetRemaining = prefs?.budget_ceiling && totals
+    ? prefs.budget_ceiling - totals.cost
+    : null;
+
+  const lines = [
+    `Dry-run preview:`,
+    ``,
+    `  Next unit:     ${nextType}`,
+    `  ID:            ${nextId}`,
+    `  Milestone:     ${mid}: ${midTitle}`,
+    `  Phase:         ${state.phase}`,
+    `  Est. cost:     ${avgCost !== null ? `${formatCost(avgCost)} (avg of ${sameTypeUnits.length} similar)` : "unknown (first of this type)"}`,
+    `  Est. duration: ${avgDuration !== null ? formatDuration(avgDuration) : "unknown"}`,
+    `  Spent so far:  ${totals ? formatCost(totals.cost) : "$0"}`,
+    `  Budget left:   ${budgetRemaining !== null ? formatCost(budgetRemaining) : "no ceiling set"}`,
+  ];
+
+  if (state.progress) {
+    const p = state.progress;
+    lines.push(`  Progress:      ${p.tasks?.done ?? 0}/${p.tasks?.total ?? "?"} tasks, ${p.slices?.done ?? 0}/${p.slices?.total ?? "?"} slices`);
+  }
+
+  ctx.ui.notify(lines.join("\n"), "info");
+}
+
+// ─── Branch cleanup handler ──────────────────────────────────────────────────
+
+async function handleCleanupBranches(ctx: ExtensionCommandContext, basePath: string): Promise<void> {
+  const { execFileSync } = await import("node:child_process");
+
+  let branches: string[];
+  try {
+    const output = execFileSync("git", ["branch", "--list", "gsd/*"], { cwd: basePath, timeout: 10000, encoding: "utf-8" });
+    branches = output.split("\n").map(b => b.trim().replace(/^\* /, "")).filter(Boolean);
+  } catch {
+    ctx.ui.notify("No GSD branches found.", "info");
+    return;
+  }
+
+  if (branches.length === 0) {
+    ctx.ui.notify("No GSD branches to clean up.", "info");
+    return;
+  }
+
+  let mainBranch: string;
+  try {
+    mainBranch = execFileSync("git", ["symbolic-ref", "refs/remotes/origin/HEAD", "--short"], { cwd: basePath, timeout: 5000, encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"] })
+      .trim().replace("origin/", "");
+  } catch {
+    mainBranch = "main";
+  }
+
+  let merged: string[];
+  try {
+    const output = execFileSync("git", ["branch", "--merged", mainBranch, "--list", "gsd/*"], { cwd: basePath, timeout: 10000, encoding: "utf-8" });
+    merged = output.split("\n").map(b => b.trim()).filter(Boolean);
+  } catch {
+    merged = [];
+  }
+
+  if (merged.length === 0) {
+    ctx.ui.notify(`${branches.length} GSD branches found, none are merged into ${mainBranch} yet.`, "info");
+    return;
+  }
+
+  let deleted = 0;
+  for (const branch of merged) {
+    try {
+      execFileSync("git", ["branch", "-d", branch], { cwd: basePath, timeout: 5000, stdio: "ignore" });
+      deleted++;
+    } catch { /* skip branches that can't be deleted */ }
+  }
+
+  ctx.ui.notify(`Cleaned up ${deleted} merged branches. ${branches.length - deleted} remain.`, "success");
+}
+
+// ─── Snapshot cleanup handler ─────────────────────────────────────────────────
+
+async function handleCleanupSnapshots(ctx: ExtensionCommandContext, basePath: string): Promise<void> {
+  const { execFileSync } = await import("node:child_process");
+
+  let refs: string[];
+  try {
+    const output = execFileSync("git", ["for-each-ref", "refs/gsd/snapshots/", "--format=%(refname)"], { cwd: basePath, timeout: 10000, encoding: "utf-8" });
+    refs = output.split("\n").filter(Boolean);
+  } catch {
+    ctx.ui.notify("No snapshot refs found.", "info");
+    return;
+  }
+
+  if (refs.length === 0) {
+    ctx.ui.notify("No snapshot refs to clean up.", "info");
+    return;
+  }
+
+  const byLabel = new Map<string, string[]>();
+  for (const ref of refs) {
+    const parts = ref.split("/");
+    const label = parts.slice(0, -1).join("/");
+    if (!byLabel.has(label)) byLabel.set(label, []);
+    byLabel.get(label)!.push(ref);
+  }
+
+  let pruned = 0;
+  for (const [, labelRefs] of byLabel) {
+    const sorted = labelRefs.sort();
+    for (const old of sorted.slice(0, -5)) {
+      try {
+        execFileSync("git", ["update-ref", "-d", old], { cwd: basePath, timeout: 5000, stdio: "ignore" });
+        pruned++;
+      } catch { /* skip */ }
+    }
+  }
+
+  ctx.ui.notify(`Pruned ${pruned} old snapshot refs. ${refs.length - pruned} remain.`, "success");
 }

@@ -6,6 +6,57 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [2.14.4] - 2026-03-15
+
+### Fixed
+- **Session cwd update** — `newSession()` now updates the LLM's perceived working directory to reflect `process.chdir()` into auto-worktrees. Previously the system prompt was frozen at the original project root, causing the LLM to `cd` back and write files to the wrong location. This was the root cause of complete-slice and plan-slice loops in worktree-based projects.
+
+## [2.14.3] - 2026-03-15
+
+### Fixed
+- **Copy planning artifacts into new auto-worktrees** — `createAutoWorktree` now copies `.gsd/milestones/`, `DECISIONS.md`, `REQUIREMENTS.md`, `PROJECT.md` from the source repo into the worktree. Prevents plan-slice loops in projects with pre-v2.14.0 `.gitignore`.
+
+## [2.14.2] - 2026-03-15
+
+### Fixed
+- **Dispatch reentrancy deadlock** — `_dispatching` flag was never reset after first dispatch, permanently blocking all subsequent unit dispatches. Wrapped in try/finally.
+- **`.gitignore` self-heal** — existing projects with blanket `.gsd/` ignore now auto-remove it on next auto-mode start, replacing with explicit runtime-only patterns so planning artifacts are tracked in git.
+- **Discuss depth verification** — render summary as chat text (markdown renders), use ask_user_questions for short confirmation only.
+
+## [2.14.1] - 2026-03-15
+
+### Fixed
+- **Quiet auto-mode warnings** — internal recovery machinery (dispatch gap watchdog, model fallback chain) downgraded to verbose-only. Users only see warnings when action is needed.
+- **Dispatch recovery hardening** — artifact fallback when completion key missing, TUI freeze prevention, reentrancy guard, atomic writes, stale runtime record cleanup
+
+## [2.14.0] - 2026-03-15
+
+### Added
+- **Discussion manifest** — mechanical process verification for multi-milestone context discussions
+- **Session-internal `/gsd config`** — configure GSD settings within a running session
+- **Model selection UI** — select list instead of free-text input for model preferences
+- **Startup performance** — faster GSD launch via optimized initialization
+
+### Changed
+- **Branchless worktree architecture** — eliminated slice branches entirely. All work commits sequentially on `milestone/<MID>` within auto-mode worktrees. No branch creation, switching, or merging within a worktree. ~2600 lines of merge/conflict/branch-switching code removed.
+- **`.gitignore` overhaul** — planning artifacts (`.gsd/milestones/`) are tracked in git naturally. Only runtime files are gitignored. No more force-add hacks.
+- **Multi-milestone enforcement** — `depends_on` frontmatter enforced in multi-milestone CONTEXT.md
+
+### Fixed
+- **Auto-mode loop detection failures** — artifacts on wrong branch or invisible after branch switch no longer possible (root cause eliminated by branchless architecture)
+- **Nested worktree creation** — auto-mode no longer creates worktrees inside existing manual worktrees, preventing wrong-repo state reads and "All milestones complete" false positives
+- **Dispatch recovery hardening** — artifact fallback when completion key missing, TUI freeze prevention on cascading skips, reentrancy guard, atomic writes, stale runtime record cleanup, git index.lock cleanup
+- **Hook orchestration** — finalize runtime records, add supervision, fix retry
+- **Empty slice plan stays in planning** — no longer incorrectly transitions to summarizing
+- **Prefs wizard** — launch directly from `/gsd prefs`, fix parse/serialize cycle for empty arrays
+- **Discussion routing** — `/gsd discuss` routes to draft when phase is needs-discussion
+
+### Removed
+- `ensureSliceBranch()`, `switchToMain()`, `mergeSliceToMain()`, `mergeSliceToMilestone()`
+- `shouldUseWorktreeIsolation()`, `getMergeToMainMode()`, `buildFixMergePrompt()`
+- `withMergeHeal()`, `recoverCheckout()`, `fix-merge` unit type
+- `git.isolation` and `git.merge_to_main` preferences (deprecated with warnings)
+
 ## [2.13.1] - 2026-03-15
 
 ### Fixed
@@ -607,7 +658,12 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Changed
 - License updated to MIT
 
-[Unreleased]: https://github.com/gsd-build/gsd-2/compare/v2.13.1...HEAD
+[Unreleased]: https://github.com/gsd-build/gsd-2/compare/v2.14.4...HEAD
+[2.14.4]: https://github.com/gsd-build/gsd-2/compare/v2.14.3...v2.14.4
+[2.14.3]: https://github.com/gsd-build/gsd-2/compare/v2.14.2...v2.14.3
+[2.14.2]: https://github.com/gsd-build/gsd-2/compare/v2.14.1...v2.14.2
+[2.14.1]: https://github.com/gsd-build/gsd-2/compare/v2.14.0...v2.14.1
+[2.14.0]: https://github.com/gsd-build/gsd-2/compare/v2.13.1...v2.14.0
 [2.13.1]: https://github.com/gsd-build/gsd-2/compare/v2.13.0...v2.13.1
 [2.13.0]: https://github.com/gsd-build/gsd-2/compare/v2.12.0...v2.13.0
 [2.12.0]: https://github.com/gsd-build/gsd-2/compare/v2.11.1...v2.12.0

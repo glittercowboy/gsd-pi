@@ -81,9 +81,15 @@ const autoSource = readFileSync(
   "utf-8",
 );
 
-// Check describeNextUnit has the case
-const hasDescribeCase = autoSource.includes('case "needs-discussion"');
-assert(hasDescribeCase, "auto.ts describeNextUnit should have 'needs-discussion' case");
+// describeNextUnit was extracted to auto-dashboard.ts — check there for the case
+const dashboardSource = readFileSync(
+  join(import.meta.dirname, "..", "auto-dashboard.ts"),
+  "utf-8",
+);
+
+// Check describeNextUnit has the case (in auto-dashboard.ts)
+const hasDescribeCase = dashboardSource.includes('case "needs-discussion"');
+assert(hasDescribeCase, "auto-dashboard.ts describeNextUnit should have 'needs-discussion' case");
 
 // Check dispatchNextUnit has the branch
 const hasDispatchBranch = autoSource.includes('state.phase === "needs-discussion"');

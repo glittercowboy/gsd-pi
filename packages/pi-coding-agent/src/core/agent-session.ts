@@ -1354,6 +1354,9 @@ export class AgentSession {
 		this._disconnectFromAgent();
 		await this.abort();
 		this.agent.reset();
+		// Update cwd to current process directory — auto-mode may have chdir'd
+		// into a worktree since the original session was created.
+		this._cwd = process.cwd();
 		this.sessionManager.newSession({ parentSession: options?.parentSession });
 		this.agent.sessionId = this.sessionManager.getSessionId();
 		this._steeringMessages = [];

@@ -17,17 +17,15 @@ import type {
 } from "@gsd/pi-coding-agent";
 
 import { deriveState, invalidateStateCache } from "./state.js";
-import type { GSDState } from "./types.js";
-import { loadFile, parseContinue, parsePlan, parseRoadmap, parseSummary, extractUatType, inlinePriorMilestoneSummary, getManifestStatus, clearParseCache } from "./files.js";
-export { inlinePriorMilestoneSummary };
-import type { UatType } from "./files.js";
+import type { BudgetEnforcementMode, GSDState } from "./types.js";
+import { loadFile, parseRoadmap, getManifestStatus, clearParseCache } from "./files.js";
+export { inlinePriorMilestoneSummary } from "./files.js";
 import { collectSecretsFromManifest } from "../get-secrets-from-user.js";
-import { loadPrompt, inlineTemplate } from "./prompt-loader.js";
 import {
   gsdRoot, resolveMilestoneFile, resolveSliceFile, resolveSlicePath,
-  resolveMilestonePath, resolveDir, resolveTasksDir, resolveTaskFiles, resolveTaskFile,
-  relMilestoneFile, relSliceFile, relTaskFile, relSlicePath, relMilestonePath,
-  milestonesDir, resolveGsdRootFile, relGsdRootFile,
+  resolveMilestonePath, resolveDir, resolveTasksDir, resolveTaskFile,
+  relMilestoneFile, relSliceFile, relSlicePath, relMilestonePath,
+  milestonesDir,
   buildMilestoneFileName, buildSliceFileName, buildTaskFileName,
   clearPathCache,
 } from "./paths.js";
@@ -41,7 +39,8 @@ import {
   readUnitRuntimeRecord,
   writeUnitRuntimeRecord,
 } from "./unit-runtime.js";
-import { resolveAutoSupervisorConfig, resolveModelForUnit, resolveModelWithFallbacksForUnit, resolveSkillDiscoveryMode, loadEffectiveGSDPreferences } from "./preferences.js";
+import { resolveAutoSupervisorConfig, resolveModelWithFallbacksForUnit, loadEffectiveGSDPreferences } from "./preferences.js";
+import { sendDesktopNotification } from "./notifications.js";
 import type { GSDPreferences } from "./preferences.js";
 import {
   checkPostUnitHooks,
@@ -53,7 +52,6 @@ import {
   persistHookState,
   restoreHookState,
   clearPersistedHookState,
-  formatHookStatus,
 } from "./post-unit-hooks.js";
 import {
   validatePlanBoundary,
@@ -68,12 +66,14 @@ import {
   initMetrics, resetMetrics, snapshotUnitMetrics, getLedger,
   getProjectTotals, formatCost, formatTokenCount,
 } from "./metrics.js";
-import { dirname, join } from "node:path";
-import { readdirSync, readFileSync, existsSync, mkdirSync, writeFileSync, unlinkSync } from "node:fs";
+import { join } from "node:path";
+import { sep as pathSep } from "node:path";
+import { readdirSync, readFileSync, existsSync, mkdirSync, writeFileSync, unlinkSync, statSync } from "node:fs";
 import { execSync, execFileSync } from "node:child_process";
 import {
   autoCommitCurrentBranch,
   captureIntegrationBranch,
+  detectWorktreeName,
   getCurrentBranch,
   getMainBranch,
   MergeConflictError,
@@ -92,55 +92,53 @@ import {
   getAutoWorktreeOriginalBase,
   mergeMilestoneToMain,
 } from "./auto-worktree.js";
-import type { GitPreferences } from "./git-service.js";
-import { truncateToWidth, visibleWidth } from "@gsd/pi-tui";
-import { makeUI, GLYPH, INDENT } from "../shared/ui.js";
 import { showNextAction } from "../shared/next-action-ui.js";
-
-// ─── Disk-backed completed-unit helpers ───────────────────────────────────────
-
-/** Path to the persisted completed-unit keys file. */
-function completedKeysPath(base: string): string {
-  return join(base, ".gsd", "completed-units.json");
-}
-
-/** Write a completed unit key to disk (read-modify-write append to set). */
-function persistCompletedKey(base: string, key: string): void {
-  const file = completedKeysPath(base);
-  let keys: string[] = [];
-  try {
-    if (existsSync(file)) {
-      keys = JSON.parse(readFileSync(file, "utf-8"));
-    }
-  } catch { /* corrupt file — start fresh */ }
-  if (!keys.includes(key)) {
-    keys.push(key);
-    writeFileSync(file, JSON.stringify(keys), "utf-8");
-  }
-}
-
-/** Remove a stale completed unit key from disk. */
-function removePersistedKey(base: string, key: string): void {
-  const file = completedKeysPath(base);
-  try {
-    if (existsSync(file)) {
-      let keys: string[] = JSON.parse(readFileSync(file, "utf-8"));
-      keys = keys.filter(k => k !== key);
-      writeFileSync(file, JSON.stringify(keys), "utf-8");
-    }
-  } catch { /* non-fatal */ }
-}
-
-/** Load all completed unit keys from disk into the in-memory set. */
-function loadPersistedKeys(base: string, target: Set<string>): void {
-  const file = completedKeysPath(base);
-  try {
-    if (existsSync(file)) {
-      const keys: string[] = JSON.parse(readFileSync(file, "utf-8"));
-      for (const k of keys) target.add(k);
-    }
-  } catch { /* non-fatal */ }
-}
+import {
+  resolveExpectedArtifactPath,
+  verifyExpectedArtifact,
+  writeBlockerPlaceholder,
+  diagnoseExpectedArtifact,
+  skipExecuteTask,
+  completedKeysPath,
+  persistCompletedKey,
+  removePersistedKey,
+  loadPersistedKeys,
+  selfHealRuntimeRecords,
+  buildLoopRemediationSteps,
+  reconcileMergeState,
+} from "./auto-recovery.js";
+import {
+  buildResearchMilestonePrompt,
+  buildPlanMilestonePrompt,
+  buildResearchSlicePrompt,
+  buildPlanSlicePrompt,
+  buildExecuteTaskPrompt,
+  buildCompleteSlicePrompt,
+  buildCompleteMilestonePrompt,
+  buildReplanSlicePrompt,
+  buildRunUatPrompt,
+  buildReassessRoadmapPrompt,
+  checkNeedsReassessment,
+  checkNeedsRunUat,
+} from "./auto-prompts.js";
+import {
+  type AutoDashboardData,
+  updateProgressWidget as _updateProgressWidget,
+  updateSliceProgressCache,
+  clearSliceProgressCache,
+  describeNextUnit as _describeNextUnit,
+  unitVerb,
+  unitPhaseLabel,
+  formatAutoElapsed as _formatAutoElapsed,
+  formatWidgetTokens,
+  hideFooter,
+  type WidgetStateAccessors,
+} from "./auto-dashboard.js";
+import {
+  registerSigtermHandler as _registerSigtermHandler,
+  deregisterSigtermHandler as _deregisterSigtermHandler,
+  detectWorkingTreeActivity,
+} from "./auto-supervisor.js";
 
 // ─── State ────────────────────────────────────────────────────────────────────
 
@@ -181,6 +179,7 @@ let currentUnit: { type: string; id: string; startedAt: number } | null = null;
 
 /** Track current milestone to detect transitions */
 let currentMilestoneId: string | null = null;
+let lastBudgetAlertLevel: BudgetAlertLevel = 0;
 
 /** Model the user had selected before auto-mode started */
 let originalModelId: string | null = null;
@@ -202,63 +201,43 @@ const DISPATCH_GAP_TIMEOUT_MS = 5_000; // 5 seconds
 /** SIGTERM handler registered while auto-mode is active — cleared on stop/pause. */
 let _sigtermHandler: (() => void) | null = null;
 
-/**
- * Register a SIGTERM handler that clears the lock file and exits cleanly.
- * Captures the active base path at registration time so the handler
- * always references the correct path even if the module variable changes.
- * Removes any previously registered handler before installing the new one.
- */
+type BudgetAlertLevel = 0 | 75 | 90 | 100;
+
+export function getBudgetAlertLevel(budgetPct: number): BudgetAlertLevel {
+  if (budgetPct >= 1.0) return 100;
+  if (budgetPct >= 0.90) return 90;
+  if (budgetPct >= 0.75) return 75;
+  return 0;
+}
+
+export function getNewBudgetAlertLevel(previousLevel: BudgetAlertLevel, budgetPct: number): BudgetAlertLevel | null {
+  const currentLevel = getBudgetAlertLevel(budgetPct);
+  if (currentLevel === 0 || currentLevel <= previousLevel) return null;
+  return currentLevel;
+}
+
+export function getBudgetEnforcementAction(
+  enforcement: BudgetEnforcementMode,
+  budgetPct: number,
+): "none" | "warn" | "pause" | "halt" {
+  if (budgetPct < 1.0) return "none";
+  if (enforcement === "halt") return "halt";
+  if (enforcement === "pause") return "pause";
+  return "warn";
+}
+
+/** Wrapper: register SIGTERM handler and store reference. */
 function registerSigtermHandler(currentBasePath: string): void {
-  if (_sigtermHandler) process.off("SIGTERM", _sigtermHandler);
-  _sigtermHandler = () => {
-    clearLock(currentBasePath);
-    process.exit(0);
-  };
-  process.on("SIGTERM", _sigtermHandler);
+  _sigtermHandler = _registerSigtermHandler(currentBasePath, _sigtermHandler);
 }
 
-/** Deregister the SIGTERM handler (called on stop/pause). */
+/** Wrapper: deregister SIGTERM handler and clear reference. */
 function deregisterSigtermHandler(): void {
-  if (_sigtermHandler) {
-    process.off("SIGTERM", _sigtermHandler);
-    _sigtermHandler = null;
-  }
+  _deregisterSigtermHandler(_sigtermHandler);
+  _sigtermHandler = null;
 }
 
-/** Format token counts for compact display */
-function formatWidgetTokens(count: number): string {
-  if (count < 1000) return count.toString();
-  if (count < 10000) return `${(count / 1000).toFixed(1)}k`;
-  if (count < 1000000) return `${Math.round(count / 1000)}k`;
-  if (count < 10000000) return `${(count / 1000000).toFixed(1)}M`;
-  return `${Math.round(count / 1000000)}M`;
-}
-
-/**
- * Footer factory that renders zero lines — hides the built-in footer entirely.
- * All footer info (pwd, branch, tokens, cost, model) is shown inside the
- * progress widget instead, so there's no gap or redundancy.
- */
-const hideFooter = () => ({
-  render(_width: number): string[] { return []; },
-  invalidate() {},
-  dispose() {},
-});
-
-/** Dashboard data for the overlay */
-export interface AutoDashboardData {
-  active: boolean;
-  paused: boolean;
-  stepMode: boolean;
-  startTime: number;
-  elapsed: number;
-  currentUnit: { type: string; id: string; startedAt: number } | null;
-  completedUnits: { type: string; id: string; startedAt: number; finishedAt: number }[];
-  basePath: string;
-  /** Running cost and token totals from metrics ledger */
-  totalCost: number;
-  totalTokens: number;
-}
+export { type AutoDashboardData } from "./auto-dashboard.js";
 
 export function getAutoDashboardData(): AutoDashboardData {
   const ledger = getLedger();
@@ -330,10 +309,12 @@ function startDispatchGapWatchdog(ctx: ExtensionContext, pi: ExtensionAPI): void
 
     // Auto-mode is active but no unit was dispatched — the state machine stalled.
     // Re-derive state and attempt a fresh dispatch.
-    ctx.ui.notify(
-      "Dispatch gap detected — no unit dispatched after previous unit completed. Re-evaluating state.",
-      "warning",
-    );
+    if (verbose) {
+      ctx.ui.notify(
+        "Dispatch gap detected — re-evaluating state.",
+        "info",
+      );
+    }
 
     try {
       await dispatchNextUnit(ctx, pi);
@@ -353,6 +334,8 @@ export async function stopAuto(ctx?: ExtensionContext, pi?: ExtensionAPI): Promi
   clearUnitTimeout();
   if (basePath) clearLock(basePath);
   clearSkillSnapshot();
+  _dispatching = false;
+  _skipDepth = 0;
 
   // Remove SIGTERM handler registered at auto-mode start
   deregisterSigtermHandler();
@@ -401,11 +384,12 @@ export async function stopAuto(ctx?: ExtensionContext, pi?: ExtensionAPI): Promi
   stepMode = false;
   unitDispatchCount.clear();
   unitRecoveryCount.clear();
+  lastBudgetAlertLevel = 0;
   unitLifetimeDispatches.clear();
   currentUnit = null;
   currentMilestoneId = null;
   originalBasePath = "";
-  cachedSliceProgress = null;
+  clearSliceProgressCache();
   pendingCrashRecovery = null;
   _handlingAgentEnd = false;
   ctx?.ui.setStatus("gsd-auto", undefined);
@@ -451,32 +435,6 @@ export async function pauseAuto(ctx?: ExtensionContext, _pi?: ExtensionAPI): Pro
   );
 }
 
-/**
- * Self-heal: scan runtime records in .gsd/ and clear any where the expected
- * artifact already exists on disk. This repairs incomplete closeouts from
- * prior crashes — preventing spurious re-dispatch of already-completed units.
- */
-async function selfHealRuntimeRecords(base: string, ctx: ExtensionContext): Promise<void> {
-  try {
-    const { listUnitRuntimeRecords } = await import("./unit-runtime.js");
-    const records = listUnitRuntimeRecords(base);
-    let healed = 0;
-    for (const record of records) {
-      const { unitType, unitId } = record;
-      const artifactPath = resolveExpectedArtifactPath(unitType, unitId, base);
-      if (artifactPath && existsSync(artifactPath)) {
-        // Artifact exists — unit completed but closeout didn't finish.
-        clearUnitRuntimeRecord(base, unitType, unitId);
-        healed++;
-      }
-    }
-    if (healed > 0) {
-      ctx.ui.notify(`Self-heal: cleared ${healed} stale runtime record(s) with completed artifacts.`, "info");
-    }
-  } catch {
-    // Non-fatal — self-heal should never block auto-mode start
-  }
-}
 
 export async function startAuto(
   ctx: ExtensionCommandContext,
@@ -505,7 +463,8 @@ export async function startAuto(
     if (currentMilestoneId) setActiveMilestoneId(base, currentMilestoneId);
 
     // ── Auto-worktree: re-enter worktree on resume if not already inside ──
-    if (currentMilestoneId && originalBasePath && !isInAutoWorktree(basePath)) {
+    // Skip if already inside a worktree (manual /worktree) to prevent nesting.
+    if (currentMilestoneId && originalBasePath && !isInAutoWorktree(basePath) && !detectWorktreeName(basePath) && !detectWorktreeName(originalBasePath)) {
       try {
         const existingWtPath = getAutoWorktreePath(originalBasePath, currentMilestoneId);
         if (existingWtPath) {
@@ -545,7 +504,7 @@ export async function startAuto(
       }
     } catch { /* non-fatal */ }
     // Self-heal: clear stale runtime records where artifacts already exist
-    await selfHealRuntimeRecords(base, ctx);
+    await selfHealRuntimeRecords(base, ctx, completedKeySet);
     invalidateStateCache();
     clearParseCache();
     clearPathCache();
@@ -642,6 +601,7 @@ export async function startAuto(
   basePath = base;
   unitDispatchCount.clear();
   unitRecoveryCount.clear();
+  lastBudgetAlertLevel = 0;
   unitLifetimeDispatches.clear();
   completedKeySet.clear();
   loadPersistedKeys(base, completedKeySet);
@@ -668,8 +628,22 @@ export async function startAuto(
 
   // ── Auto-worktree: create or enter worktree for the active milestone ──
   // Store the original project root before any chdir so we can restore on stop.
+  // Skip if already inside a worktree (manual /worktree or another auto-worktree)
+  // to prevent nested worktree creation.
   originalBasePath = base;
-  if (currentMilestoneId) {
+
+  const isUnderGsdWorktrees = (p: string): boolean => {
+    // Prevent creating nested auto-worktrees when running from within any
+    // `.gsd/worktrees/...` directory (including manual worktrees).
+    const marker = `${pathSep}.gsd${pathSep}worktrees${pathSep}`;
+    if (p.includes(marker)) {
+      return true;
+    }
+    const worktreesSuffix = `${pathSep}.gsd${pathSep}worktrees`;
+    return p.endsWith(worktreesSuffix);
+  };
+
+  if (currentMilestoneId && !detectWorktreeName(base) && !isUnderGsdWorktrees(base)) {
     try {
       const existingWtPath = getAutoWorktreePath(base, currentMilestoneId);
       if (existingWtPath) {
@@ -736,7 +710,44 @@ export async function startAuto(
   }
 
   // Self-heal: clear stale runtime records where artifacts already exist
-  await selfHealRuntimeRecords(base, ctx);
+  await selfHealRuntimeRecords(base, ctx, completedKeySet);
+
+  // Self-heal: remove stale .git/index.lock from prior crash.
+  // A stale lock file blocks all git operations (commit, merge, checkout).
+  // Only remove if older than 60 seconds (not from a concurrent process).
+  try {
+    const gitLockFile = join(base, ".git", "index.lock");
+    if (existsSync(gitLockFile)) {
+      const lockAge = Date.now() - statSync(gitLockFile).mtimeMs;
+      if (lockAge > 60_000) {
+        unlinkSync(gitLockFile);
+        ctx.ui.notify("Removed stale .git/index.lock from prior crash.", "info");
+      }
+    }
+  } catch { /* non-fatal */ }
+
+  // Pre-flight: validate milestone queue for multi-milestone runs.
+  // Warn about issues that will cause auto-mode to pause or block.
+  try {
+    const msDir = join(base, ".gsd", "milestones");
+    if (existsSync(msDir)) {
+      const milestoneIds = readdirSync(msDir, { withFileTypes: true })
+        .filter(d => d.isDirectory() && /^M\d{3}/.test(d.name))
+        .map(d => d.name.match(/^(M\d{3})/)?.[1] ?? d.name);
+      if (milestoneIds.length > 1) {
+        const issues: string[] = [];
+        for (const id of milestoneIds) {
+          const draft = resolveMilestoneFile(base, id, "CONTEXT-DRAFT");
+          if (draft) issues.push(`${id}: has CONTEXT-DRAFT.md (will pause for discussion)`);
+        }
+        if (issues.length > 0) {
+          ctx.ui.notify(`Pre-flight: ${milestoneIds.length} milestones queued.\n${issues.map(i => `  ⚠ ${i}`).join("\n")}`, "warning");
+        } else {
+          ctx.ui.notify(`Pre-flight: ${milestoneIds.length} milestones queued. All have full context.`, "info");
+        }
+      }
+    }
+  } catch { /* non-fatal — pre-flight should never block auto-mode */ }
 
   // Dispatch the first unit
   await dispatchNextUnit(ctx, pi);
@@ -1014,7 +1025,7 @@ async function showStepWizard(
   }
 
   // Peek at what's next by examining state
-  const nextDesc = describeNextUnit(state);
+  const nextDesc = _describeNextUnit(state);
 
   const choice = await showNextAction(cmdCtx, {
     title: `GSD — ${justFinished} complete`,
@@ -1061,358 +1072,39 @@ async function showStepWizard(
   }
 }
 
-/**
- * Describe what the next unit will be, based on current state.
- */
-export function describeNextUnit(state: GSDState): { label: string; description: string } {
-  const sid = state.activeSlice?.id;
-  const sTitle = state.activeSlice?.title;
-  const tid = state.activeTask?.id;
-  const tTitle = state.activeTask?.title;
+// describeNextUnit is imported from auto-dashboard.ts and re-exported
+export { describeNextUnit } from "./auto-dashboard.js";
 
-  switch (state.phase) {
-    case "needs-discussion":
-      return { label: "Discuss milestone draft", description: "Milestone has a draft context — needs discussion before planning." };
-    case "pre-planning":
-      return { label: "Research & plan milestone", description: "Scout the landscape and create the roadmap." };
-    case "planning":
-      return { label: `Plan ${sid}: ${sTitle}`, description: "Research and decompose into tasks." };
-    case "executing":
-      return { label: `Execute ${tid}: ${tTitle}`, description: "Run the next task in a fresh session." };
-    case "summarizing":
-      return { label: `Complete ${sid}: ${sTitle}`, description: "Write summary, UAT, and merge to main." };
-    case "replanning-slice":
-      return { label: `Replan ${sid}: ${sTitle}`, description: "Blocker found — replan the slice." };
-    case "completing-milestone":
-      return { label: "Complete milestone", description: "Write milestone summary." };
-    default:
-      return { label: "Continue", description: "Execute the next step." };
-  }
-}
-
-// ─── Progress Widget ──────────────────────────────────────────────────────
-
-function unitVerb(unitType: string): string {
-  if (unitType.startsWith("hook/")) return `hook: ${unitType.slice(5)}`;
-  switch (unitType) {
-    case "research-milestone":
-    case "research-slice": return "researching";
-    case "plan-milestone":
-    case "plan-slice": return "planning";
-    case "execute-task": return "executing";
-    case "complete-slice": return "completing";
-    case "replan-slice": return "replanning";
-    case "reassess-roadmap": return "reassessing";
-    case "run-uat": return "running UAT";
-    default: return unitType;
-  }
-}
-
-function unitPhaseLabel(unitType: string): string {
-  if (unitType.startsWith("hook/")) return "HOOK";
-  switch (unitType) {
-    case "research-milestone": return "RESEARCH";
-    case "research-slice": return "RESEARCH";
-    case "plan-milestone": return "PLAN";
-    case "plan-slice": return "PLAN";
-    case "execute-task": return "EXECUTE";
-    case "complete-slice": return "COMPLETE";
-    case "replan-slice": return "REPLAN";
-    case "reassess-roadmap": return "REASSESS";
-    case "run-uat": return "UAT";
-    default: return unitType.toUpperCase();
-  }
-}
-
-function peekNext(unitType: string, state: GSDState): string {
-  // Show active hook info in progress display
-  const activeHookState = getActiveHook();
-  if (activeHookState) {
-    return `hook: ${activeHookState.hookName} (cycle ${activeHookState.cycle})`;
-  }
-
-  const sid = state.activeSlice?.id ?? "";
-  if (unitType.startsWith("hook/")) return `continue ${sid}`;
-  switch (unitType) {
-    case "research-milestone": return "plan milestone roadmap";
-    case "plan-milestone": return "plan or execute first slice";
-    case "research-slice": return `plan ${sid}`;
-    case "plan-slice": return "execute first task";
-    case "execute-task": return `continue ${sid}`;
-    case "complete-slice": return "reassess roadmap";
-    case "replan-slice": return `re-execute ${sid}`;
-    case "reassess-roadmap": return "advance to next slice";
-    case "run-uat": return "reassess roadmap";
-    default: return "";
-  }
-}
-
-
-
-/** Right-align helper: build a line with left content and right content. */
-function rightAlign(left: string, right: string, width: number): string {
-  const leftVis = visibleWidth(left);
-  const rightVis = visibleWidth(right);
-  const gap = Math.max(1, width - leftVis - rightVis);
-  return truncateToWidth(left + " ".repeat(gap) + right, width);
-}
-
+/** Thin wrapper: delegates to auto-dashboard.ts, passing state accessors. */
 function updateProgressWidget(
   ctx: ExtensionContext,
   unitType: string,
   unitId: string,
   state: GSDState,
 ): void {
-  if (!ctx.hasUI) return;
-
-  const verb = unitVerb(unitType);
-  const phaseLabel = unitPhaseLabel(unitType);
-  const mid = state.activeMilestone;
-  const slice = state.activeSlice;
-  const task = state.activeTask;
-  const next = peekNext(unitType, state);
-
-  // Cache git branch at widget creation time (not per render)
-  let cachedBranch: string | null = null;
-  try { cachedBranch = getCurrentBranch(basePath); } catch { /* not in git repo */ }
-
-  // Cache pwd with ~ substitution
-  let widgetPwd = process.cwd();
-  const widgetHome = process.env.HOME || process.env.USERPROFILE;
-  if (widgetHome && widgetPwd.startsWith(widgetHome)) {
-    widgetPwd = `~${widgetPwd.slice(widgetHome.length)}`;
-  }
-  if (cachedBranch) widgetPwd = `${widgetPwd} (${cachedBranch})`;
-
-  ctx.ui.setWidget("gsd-progress", (tui, theme) => {
-    let pulseBright = true;
-    let cachedLines: string[] | undefined;
-    let cachedWidth: number | undefined;
-
-    const pulseTimer = setInterval(() => {
-      pulseBright = !pulseBright;
-      cachedLines = undefined;
-      tui.requestRender();
-    }, 800);
-
-    return {
-      render(width: number): string[] {
-        if (cachedLines && cachedWidth === width) return cachedLines;
-
-        const ui = makeUI(theme, width);
-        const lines: string[] = [];
-        const pad = INDENT.base;
-
-        // ── Line 1: Top bar ───────────────────────────────────────────────
-        lines.push(...ui.bar());
-
-        const dot = pulseBright
-          ? theme.fg("accent", GLYPH.statusActive)
-          : theme.fg("dim", GLYPH.statusPending);
-        const elapsed = formatAutoElapsed();
-        const modeTag = stepMode ? "NEXT" : "AUTO";
-        const headerLeft = `${pad}${dot} ${theme.fg("accent", theme.bold("GSD"))}  ${theme.fg("success", modeTag)}`;
-        const headerRight = elapsed ? theme.fg("dim", elapsed) : "";
-        lines.push(rightAlign(headerLeft, headerRight, width));
-
-        lines.push("");
-
-        if (mid) {
-          lines.push(truncateToWidth(`${pad}${theme.fg("dim", mid.title)}`, width));
-        }
-
-        if (slice && unitType !== "research-milestone" && unitType !== "plan-milestone") {
-          lines.push(truncateToWidth(
-            `${pad}${theme.fg("text", theme.bold(`${slice.id}: ${slice.title}`))}`,
-            width,
-          ));
-        }
-
-        lines.push("");
-
-        const target = task ? `${task.id}: ${task.title}` : unitId;
-        const actionLeft = `${pad}${theme.fg("accent", "▸")} ${theme.fg("accent", verb)}  ${theme.fg("text", target)}`;
-        const phaseBadge = theme.fg("dim", phaseLabel);
-        lines.push(rightAlign(actionLeft, phaseBadge, width));
-        lines.push("");
-
-        if (mid) {
-          const roadmapSlices = getRoadmapSlicesSync();
-          if (roadmapSlices) {
-            const { done, total, activeSliceTasks } = roadmapSlices;
-            const barWidth = Math.max(8, Math.min(24, Math.floor(width * 0.3)));
-            const pct = total > 0 ? done / total : 0;
-            const filled = Math.round(pct * barWidth);
-            const bar = theme.fg("success", "█".repeat(filled))
-              + theme.fg("dim", "░".repeat(barWidth - filled));
-
-            let meta = theme.fg("dim", `${done}/${total} slices`);
-
-            if (activeSliceTasks && activeSliceTasks.total > 0) {
-              meta += theme.fg("dim", `  ·  task ${activeSliceTasks.done + 1}/${activeSliceTasks.total}`);
-            }
-
-            lines.push(truncateToWidth(`${pad}${bar}  ${meta}`, width));
-          }
-        }
-
-        lines.push("");
-
-        if (next) {
-          lines.push(truncateToWidth(
-            `${pad}${theme.fg("dim", "→")} ${theme.fg("dim", `then ${next}`)}`,
-            width,
-          ));
-        }
-
-        // ── Footer info (pwd, tokens, cost, context, model) ──────────────
-        lines.push("");
-        lines.push(truncateToWidth(theme.fg("dim", `${pad}${widgetPwd}`), width, theme.fg("dim", "…")));
-
-        // Token stats from current unit session + cumulative cost from metrics
-        {
-          let totalInput = 0, totalOutput = 0;
-          let totalCacheRead = 0, totalCacheWrite = 0;
-          if (cmdCtx) {
-            for (const entry of cmdCtx.sessionManager.getEntries()) {
-              if (entry.type === "message" && (entry as any).message?.role === "assistant") {
-                const u = (entry as any).message.usage;
-                if (u) {
-                  totalInput += u.input || 0;
-                  totalOutput += u.output || 0;
-                  totalCacheRead += u.cacheRead || 0;
-                  totalCacheWrite += u.cacheWrite || 0;
-                }
-              }
-            }
-          }
-          const mLedger = getLedger();
-          const autoTotals = mLedger ? getProjectTotals(mLedger.units) : null;
-          const cumulativeCost = autoTotals?.cost ?? 0;
-
-          const cxUsage = cmdCtx?.getContextUsage?.();
-          const cxWindow = cxUsage?.contextWindow ?? cmdCtx?.model?.contextWindow ?? 0;
-          const cxPctVal = cxUsage?.percent ?? 0;
-          const cxPct = cxUsage?.percent !== null ? cxPctVal.toFixed(1) : "?";
-
-          const sp: string[] = [];
-          if (totalInput) sp.push(`↑${formatWidgetTokens(totalInput)}`);
-          if (totalOutput) sp.push(`↓${formatWidgetTokens(totalOutput)}`);
-          if (totalCacheRead) sp.push(`R${formatWidgetTokens(totalCacheRead)}`);
-          if (totalCacheWrite) sp.push(`W${formatWidgetTokens(totalCacheWrite)}`);
-          if (cumulativeCost) sp.push(`$${cumulativeCost.toFixed(3)}`);
-
-          const cxDisplay = cxPct === "?"
-            ? `?/${formatWidgetTokens(cxWindow)}`
-            : `${cxPct}%/${formatWidgetTokens(cxWindow)}`;
-          if (cxPctVal > 90) {
-            sp.push(theme.fg("error", cxDisplay));
-          } else if (cxPctVal > 70) {
-            sp.push(theme.fg("warning", cxDisplay));
-          } else {
-            sp.push(cxDisplay);
-          }
-
-          const sLeft = sp.map(p => p.includes("\x1b[") ? p : theme.fg("dim", p))
-            .join(theme.fg("dim", " "));
-
-          const modelId = cmdCtx?.model?.id ?? "";
-          const modelProvider = cmdCtx?.model?.provider ?? "";
-          const modelPhase = phaseLabel ? theme.fg("dim", `[${phaseLabel}] `) : "";
-          const modelDisplay = modelProvider && modelId
-            ? `${modelProvider}/${modelId}`
-            : modelId;
-          const sRight = modelDisplay
-            ? `${modelPhase}${theme.fg("dim", modelDisplay)}`
-            : "";
-          lines.push(rightAlign(`${pad}${sLeft}`, sRight, width));
-        }
-
-        const hintParts: string[] = [];
-        hintParts.push("esc pause");
-        hintParts.push(process.platform === "darwin" ? "⌃⌥G dashboard" : "Ctrl+Alt+G dashboard");
-        lines.push(...ui.hints(hintParts));
-
-        lines.push(...ui.bar());
-
-        cachedLines = lines;
-        cachedWidth = width;
-        return lines;
-      },
-      invalidate() {
-        cachedLines = undefined;
-        cachedWidth = undefined;
-      },
-      dispose() {
-        clearInterval(pulseTimer);
-      },
-    };
-  });
+  _updateProgressWidget(ctx, unitType, unitId, state, widgetStateAccessors);
 }
 
-/** Format elapsed time since auto-mode started */
-function formatAutoElapsed(): string {
-  if (!autoStartTime) return "";
-  const ms = Date.now() - autoStartTime;
-  const s = Math.floor(ms / 1000);
-  if (s < 60) return `${s}s`;
-  const m = Math.floor(s / 60);
-  const rs = s % 60;
-  if (m < 60) return `${m}m${rs > 0 ? ` ${rs}s` : ""}`;
-  const h = Math.floor(m / 60);
-  const rm = m % 60;
-  return `${h}h ${rm}m`;
-}
-
-/** Cached slice progress for the widget — avoid async in render */
-let cachedSliceProgress: {
-  done: number;
-  total: number;
-  milestoneId: string;
-  /** Real task progress for the active slice, if its plan file exists */
-  activeSliceTasks: { done: number; total: number } | null;
-} | null = null;
-
-function updateSliceProgressCache(base: string, mid: string, activeSid?: string): void {
-  try {
-    const roadmapFile = resolveMilestoneFile(base, mid, "ROADMAP");
-    if (!roadmapFile) return;
-    const content = readFileSync(roadmapFile, "utf-8");
-    const roadmap = parseRoadmap(content);
-
-    let activeSliceTasks: { done: number; total: number } | null = null;
-    if (activeSid) {
-      try {
-        const planFile = resolveSliceFile(base, mid, activeSid, "PLAN");
-        if (planFile && existsSync(planFile)) {
-          const planContent = readFileSync(planFile, "utf-8");
-          const plan = parsePlan(planContent);
-          activeSliceTasks = {
-            done: plan.tasks.filter(t => t.done).length,
-            total: plan.tasks.length,
-          };
-        }
-      } catch {
-        // Non-fatal — just omit task count
-      }
-    }
-
-    cachedSliceProgress = {
-      done: roadmap.slices.filter(s => s.done).length,
-      total: roadmap.slices.length,
-      milestoneId: mid,
-      activeSliceTasks,
-    };
-  } catch {
-    // Non-fatal — widget just won't show progress bar
-  }
-}
-
-function getRoadmapSlicesSync(): { done: number; total: number; activeSliceTasks: { done: number; total: number } | null } | null {
-  return cachedSliceProgress;
-}
+/** State accessors for the widget — closures over module globals. */
+const widgetStateAccessors: WidgetStateAccessors = {
+  getAutoStartTime: () => autoStartTime,
+  isStepMode: () => stepMode,
+  getCmdCtx: () => cmdCtx,
+  getBasePath: () => basePath,
+  isVerbose: () => verbose,
+};
 
 // ─── Core Loop ────────────────────────────────────────────────────────────────
+
+/** Tracks recursive skip depth to prevent TUI freeze on cascading completed-unit skips */
+let _skipDepth = 0;
+const MAX_SKIP_DEPTH = 20;
+
+/** Reentrancy guard for dispatchNextUnit itself (not just handleAgentEnd).
+ *  Prevents concurrent dispatch from watchdog timers, step wizard, and direct calls
+ *  that bypass the _handlingAgentEnd guard. Recursive calls (from skip paths) are
+ *  allowed via _skipDepth > 0. */
+let _dispatching = false;
 
 async function dispatchNextUnit(
   ctx: ExtensionContext,
@@ -1420,9 +1112,25 @@ async function dispatchNextUnit(
 ): Promise<void> {
   if (!active || !cmdCtx) {
     if (active && !cmdCtx) {
-      ctx.ui.notify("Auto-mode dispatch failed: no command context. Run /gsd auto to restart.", "error");
+      ctx.ui.notify("Auto-mode session expired. Run /gsd auto to restart.", "info");
     }
     return;
+  }
+
+  // Reentrancy guard: allow recursive calls from skip paths (_skipDepth > 0)
+  // but block concurrent external calls (watchdog, step wizard, etc.)
+  if (_dispatching && _skipDepth === 0) {
+    return; // Another dispatch is in progress — bail silently
+  }
+  _dispatching = true;
+  try {
+  // Recursion depth guard: when many units are skipped in sequence (e.g., after
+  // crash recovery with 10+ completed units), recursive dispatchNextUnit calls
+  // can freeze the TUI or overflow the stack. Yield generously after MAX_SKIP_DEPTH.
+  if (_skipDepth > MAX_SKIP_DEPTH) {
+    _skipDepth = 0;
+    ctx.ui.notify(`Skipped ${MAX_SKIP_DEPTH}+ completed units. Yielding to UI before continuing.`, "info");
+    await new Promise(r => setTimeout(r, 200));
   }
 
   // Clear stale directory listing cache so deriveState sees fresh disk state (#431)
@@ -1441,6 +1149,7 @@ async function dispatchNextUnit(
       `Milestone ${currentMilestoneId} complete. Advancing to ${mid}: ${midTitle}.`,
       "info",
     );
+    sendDesktopNotification("GSD", `Milestone ${currentMilestoneId} complete!`, "success", "milestone");
     // Reset stuck detection for new milestone
     unitDispatchCount.clear();
     unitRecoveryCount.clear();
@@ -1460,6 +1169,7 @@ async function dispatchNextUnit(
       snapshotUnitMetrics(ctx, currentUnit.type, currentUnit.id, currentUnit.startedAt, modelId);
       saveActivityLog(ctx, basePath, currentUnit.type, currentUnit.id);
     }
+    sendDesktopNotification("GSD", "All milestones complete!", "success", "milestone");
     await stopAuto(ctx, pi);
     return;
   }
@@ -1473,44 +1183,13 @@ async function dispatchNextUnit(
   }
 
   // ── Mid-merge safety check: detect leftover merge state from a prior session ──
-  // If MERGE_HEAD or SQUASH_MSG exists, check whether conflicts are resolved.
-  // If resolved: finalize the commit. If still conflicted: abort and reset.
-  {
-    const mergeHeadPath = join(basePath, ".git", "MERGE_HEAD");
-    const squashMsgPath = join(basePath, ".git", "SQUASH_MSG");
-    const hasMergeHead = existsSync(mergeHeadPath);
-    const hasSquashMsg = existsSync(squashMsgPath);
-    if (hasMergeHead || hasSquashMsg) {
-      const unmerged = runGit(basePath, ["diff", "--name-only", "--diff-filter=U"], { allowFailure: true });
-      if (!unmerged || !unmerged.trim()) {
-        // All conflicts resolved — finalize the merge/squash commit
-        try {
-          runGit(basePath, ["commit", "--no-edit"], { allowFailure: false });
-          const mode = hasMergeHead ? "merge" : "squash commit";
-          ctx.ui.notify(`Finalized leftover ${mode} from prior session.`, "info");
-        } catch {
-          // Commit may already exist; non-fatal
-        }
-      } else {
-        // Still conflicted — abort and reset
-        if (hasMergeHead) {
-          runGit(basePath, ["merge", "--abort"], { allowFailure: true });
-        } else if (hasSquashMsg) {
-          try { unlinkSync(squashMsgPath); } catch { /* best-effort */ }
-        }
-        runGit(basePath, ["reset", "--hard", "HEAD"], { allowFailure: true });
-        ctx.ui.notify(
-          "Detected leftover merge state with unresolved conflicts — cleaned up. Re-deriving state.",
-          "warning",
-        );
-      }
-      invalidateStateCache();
-      clearParseCache();
-      clearPathCache();
-      state = await deriveState(basePath);
-      mid = state.activeMilestone?.id;
-      midTitle = state.activeMilestone?.title;
-    }
+  if (reconcileMergeState(basePath, ctx)) {
+    invalidateStateCache();
+    clearParseCache();
+    clearPathCache();
+    state = await deriveState(basePath);
+    mid = state.activeMilestone?.id;
+    midTitle = state.activeMilestone?.title;
   }
 
   // After merge guard removal (branchless architecture), mid/midTitle could be undefined
@@ -1541,7 +1220,6 @@ async function dispatchNextUnit(
       if (existsSync(file)) writeFileSync(file, JSON.stringify([]), "utf-8");
       completedKeySet.clear();
     } catch { /* non-fatal */ }
-
     // ── Milestone merge: squash-merge milestone branch to main before stopping ──
     if (currentMilestoneId && isInAutoWorktree(basePath) && originalBasePath) {
       try {
@@ -1561,7 +1239,7 @@ async function dispatchNextUnit(
         );
       }
     }
-
+    sendDesktopNotification("GSD", `Milestone ${mid} complete!`, "success", "milestone");
     await stopAuto(ctx, pi);
     return;
   }
@@ -1573,7 +1251,9 @@ async function dispatchNextUnit(
       saveActivityLog(ctx, basePath, currentUnit.type, currentUnit.id);
     }
     await stopAuto(ctx, pi);
-    ctx.ui.notify(`Blocked: ${state.blockers.join(", ")}. Fix and run /gsd auto.`, "warning");
+    const blockerMsg = `Blocked: ${state.blockers.join(", ")}`;
+    ctx.ui.notify(`${blockerMsg}. Fix and run /gsd auto.`, "warning");
+    sendDesktopNotification("GSD", blockerMsg, "error", "attention");
     return;
   }
 
@@ -1581,16 +1261,58 @@ async function dispatchNextUnit(
   // Ensures the UAT file and slice summary are both on main when UAT runs.
   const prefs = loadEffectiveGSDPreferences()?.preferences;
 
-  // Budget ceiling guard — pause before starting next unit if ceiling is hit
+  // Budget ceiling guard — enforce budget with configurable action
   const budgetCeiling = prefs?.budget_ceiling;
-  if (budgetCeiling !== undefined) {
+  if (budgetCeiling !== undefined && budgetCeiling > 0) {
     const currentLedger = getLedger();
     const totalCost = currentLedger ? getProjectTotals(currentLedger.units).cost : 0;
-    if (totalCost >= budgetCeiling) {
-      ctx.ui.notify(
-        `Budget ceiling ${formatCost(budgetCeiling)} reached (spent ${formatCost(totalCost)}). Pausing auto-mode — /gsd auto to continue.`,
-        "warning",
-      );
+    const budgetPct = totalCost / budgetCeiling;
+    const budgetAlertLevel = getBudgetAlertLevel(budgetPct);
+    const newBudgetAlertLevel = getNewBudgetAlertLevel(lastBudgetAlertLevel, budgetPct);
+    const enforcement = prefs?.budget_enforcement ?? "pause";
+
+    const budgetEnforcementAction = getBudgetEnforcementAction(enforcement, budgetPct);
+
+    if (newBudgetAlertLevel === 100 && budgetEnforcementAction !== "none") {
+      const msg = `Budget ceiling ${formatCost(budgetCeiling)} reached (spent ${formatCost(totalCost)}).`;
+      lastBudgetAlertLevel = newBudgetAlertLevel;
+      if (budgetEnforcementAction === "halt") {
+        ctx.ui.notify(`${msg} Stopping auto-mode.`, "error");
+        sendDesktopNotification("GSD", msg, "error", "budget");
+        await stopAuto(ctx, pi);
+        return;
+      }
+      if (budgetEnforcementAction === "pause") {
+        ctx.ui.notify(`${msg} Pausing auto-mode — /gsd auto to override and continue.`, "warning");
+        sendDesktopNotification("GSD", msg, "warning", "budget");
+        await pauseAuto(ctx, pi);
+        return;
+      }
+      ctx.ui.notify(`${msg} Continuing (enforcement: warn).`, "warning");
+      sendDesktopNotification("GSD", msg, "warning", "budget");
+    } else if (newBudgetAlertLevel === 90) {
+      lastBudgetAlertLevel = newBudgetAlertLevel;
+      ctx.ui.notify(`Budget 90%: ${formatCost(totalCost)} / ${formatCost(budgetCeiling)}`, "warning");
+      sendDesktopNotification("GSD", `Budget 90%: ${formatCost(totalCost)} / ${formatCost(budgetCeiling)}`, "warning", "budget");
+    } else if (newBudgetAlertLevel === 75) {
+      lastBudgetAlertLevel = newBudgetAlertLevel;
+      ctx.ui.notify(`Budget 75%: ${formatCost(totalCost)} / ${formatCost(budgetCeiling)}`, "info");
+      sendDesktopNotification("GSD", `Budget 75%: ${formatCost(totalCost)} / ${formatCost(budgetCeiling)}`, "info", "budget");
+    } else if (budgetAlertLevel === 0) {
+      lastBudgetAlertLevel = 0;
+    }
+  } else {
+    lastBudgetAlertLevel = 0;
+  }
+
+  // Context window guard — pause if approaching context limits
+  const contextThreshold = prefs?.context_pause_threshold ?? 0; // 0 = disabled by default
+  if (contextThreshold > 0 && cmdCtx) {
+    const contextUsage = cmdCtx.getContextUsage();
+    if (contextUsage && contextUsage.percent >= contextThreshold) {
+      const msg = `Context window at ${contextUsage.percent}% (threshold: ${contextThreshold}%). Pausing to prevent truncated output.`;
+      ctx.ui.notify(`${msg} Run /gsd auto to continue (will start fresh session).`, "warning");
+      sendDesktopNotification("GSD", `Context ${contextUsage.percent}% — paused`, "warning", "attention");
       await pauseAuto(ctx, pi);
       return;
     }
@@ -1758,7 +1480,7 @@ async function dispatchNextUnit(
         saveActivityLog(ctx, basePath, currentUnit.type, currentUnit.id);
       }
       await stopAuto(ctx, pi);
-      ctx.ui.notify(`Unexpected phase: ${state.phase}. Stopping auto-mode.`, "warning");
+      ctx.ui.notify(`Unhandled phase "${state.phase}" — run /gsd doctor to diagnose.`, "info");
       return;
     }
   }
@@ -1804,10 +1526,10 @@ async function dispatchNextUnit(
         `Skipping ${unitType} ${unitId} — already completed in a prior session. Advancing.`,
         "info",
       );
-      // Yield to the event loop before re-dispatching to avoid tight recursion
-      // when many units are already completed (e.g., after crash recovery).
-      await new Promise(r => setImmediate(r));
+      _skipDepth++;
+      await new Promise(r => setTimeout(r, 50));
       await dispatchNextUnit(ctx, pi);
+      _skipDepth = Math.max(0, _skipDepth - 1);
       return;
     } else {
       // Stale completion record — artifact missing. Remove and re-run.
@@ -1818,6 +1540,26 @@ async function dispatchNextUnit(
         "warning",
       );
     }
+  }
+
+  // Fallback: if the idempotency key is missing but the expected artifact already
+  // exists on disk, the task completed in a prior session without persisting the key.
+  // Persist it now and skip re-dispatch. This prevents infinite loops where a task
+  // completes successfully but the completion key was never written (e.g., completed
+  // on the first attempt before hitting the retry-threshold persistence logic).
+  if (verifyExpectedArtifact(unitType, unitId, basePath)) {
+    persistCompletedKey(basePath, idempotencyKey);
+    completedKeySet.add(idempotencyKey);
+    invalidateStateCache();
+    ctx.ui.notify(
+      `Skipping ${unitType} ${unitId} — artifact exists but completion key was missing. Repaired and advancing.`,
+      "info",
+    );
+    _skipDepth++;
+    await new Promise(r => setTimeout(r, 50));
+    await dispatchNextUnit(ctx, pi);
+    _skipDepth = Math.max(0, _skipDepth - 1);
+    return;
   }
 
   // Stuck detection — tracks total dispatches per unit (not just consecutive repeats).
@@ -1907,9 +1649,33 @@ async function dispatchNextUnit(
       return;
     }
 
+    // Last resort for complete-milestone: generate stub summary to unblock pipeline.
+    // All slices are done (otherwise we wouldn't be in completing-milestone phase),
+    // but the LLM failed to write the summary N times. A stub lets the pipeline advance.
+    if (unitType === "complete-milestone") {
+      try {
+        const mPath = resolveMilestonePath(basePath, unitId);
+        if (mPath) {
+          const stubPath = join(mPath, `${unitId}-SUMMARY.md`);
+          if (!existsSync(stubPath)) {
+            writeFileSync(stubPath, `# ${unitId} Summary\n\nAuto-generated stub — milestone tasks completed but summary generation failed after ${prevCount + 1} attempts.\nReview and replace this stub with a proper summary.\n`);
+            ctx.ui.notify(`Generated stub summary for ${unitId} to unblock pipeline. Review later.`, "warning");
+            persistCompletedKey(basePath, dispatchKey);
+            completedKeySet.add(dispatchKey);
+            unitDispatchCount.delete(dispatchKey);
+            invalidateStateCache();
+            await new Promise(r => setImmediate(r));
+            await dispatchNextUnit(ctx, pi);
+            return;
+          }
+        }
+      } catch { /* non-fatal — fall through to normal stop */ }
+    }
+
     const expected = diagnoseExpectedArtifact(unitType, unitId, basePath);
     const remediation = buildLoopRemediationSteps(unitType, unitId, basePath);
     await stopAuto(ctx, pi);
+    sendDesktopNotification("GSD", `Loop detected: ${unitType} ${unitId}`, "error", "error");
     ctx.ui.notify(
       `Loop detected: ${unitType} ${unitId} dispatched ${prevCount + 1} times total. Expected artifact not found.${expected ? `\n   Expected: ${expected}` : ""}${remediation ? `\n\n   Remediation steps:\n${remediation}` : "\n   Check branch state and .gsd/ artifacts."}`,
       "error",
@@ -2035,7 +1801,7 @@ async function dispatchNextUnit(
   const result = await cmdCtx!.newSession();
   if (result.cancelled) {
     await stopAuto(ctx, pi);
-    ctx.ui.notify("New session cancelled — auto-mode stopped.", "warning");
+    ctx.ui.notify("Auto-mode stopped.", "info");
     return;
   }
 
@@ -2141,7 +1907,7 @@ async function dispatchNextUnit(
         }
       }
       if (!model) {
-        ctx.ui.notify(`Model ${modelId} not found in available models, trying fallback.`, "warning");
+        if (verbose) ctx.ui.notify(`Model ${modelId} not found, trying fallback.`, "info");
         continue;
       }
 
@@ -2157,25 +1923,14 @@ async function dispatchNextUnit(
       } else {
         const nextModel = modelsToTry[modelsToTry.indexOf(modelId) + 1];
         if (nextModel) {
-          ctx.ui.notify(
-            `Failed to set model ${modelId}, trying fallback ${nextModel}...`,
-            "warning",
-          );
+          if (verbose) ctx.ui.notify(`Failed to set model ${modelId}, trying ${nextModel}...`, "info");
         } else {
-          ctx.ui.notify(
-            `Failed to set model ${modelId} and all fallbacks exhausted. Using default model.`,
-            "warning",
-          );
+          ctx.ui.notify(`All preferred models unavailable for ${unitType}. Using default.`, "warning");
         }
       }
     }
 
-    if (!modelSet) {
-      ctx.ui.notify(
-        `Could not set any preferred model for ${unitType}. Continuing with default.`,
-        "warning",
-      );
-    }
+    // modelSet=false is already handled by the "all fallbacks exhausted" warning above
   }
 
   // Start progress-aware supervision: a soft warning, an idle watchdog, and
@@ -2288,764 +2043,9 @@ async function dispatchNextUnit(
     );
     await pauseAuto(ctx, pi);
   }
-}
-
-// ─── Skill Discovery ──────────────────────────────────────────────────────────
-
-/**
- * Build the skill discovery template variables for research prompts.
- * Returns { skillDiscoveryMode, skillDiscoveryInstructions } for template substitution.
- */
-function buildSkillDiscoveryVars(): { skillDiscoveryMode: string; skillDiscoveryInstructions: string } {
-  const mode = resolveSkillDiscoveryMode();
-
-  if (mode === "off") {
-    return {
-      skillDiscoveryMode: "off",
-      skillDiscoveryInstructions: " Skill discovery is disabled. Skip this step.",
-    };
+  } finally {
+    _dispatching = false;
   }
-
-  const autoInstall = mode === "auto";
-  const instructions = `
-   Identify the key technologies, frameworks, and services this work depends on (e.g. Stripe, Clerk, Supabase, JUCE, SwiftUI).
-   For each, check if a professional agent skill already exists:
-   - First check \`<available_skills>\` in your system prompt — a skill may already be installed.
-   - For technologies without an installed skill, run: \`npx skills find "<technology>"\`
-   - Only consider skills that are **directly relevant** to core technologies — not tangentially related.
-   - Evaluate results by install count and relevance to the actual work.${autoInstall
-    ? `
-   - Install relevant skills: \`npx skills add <owner/repo@skill> -g -y\`
-   - Record installed skills in the "Skills Discovered" section of your research output.
-   - Installed skills will automatically appear in subsequent units' system prompts — no manual steps needed.`
-    : `
-   - Note promising skills in your research output with their install commands, but do NOT install them.
-   - The user will decide which to install.`
-  }`;
-
-  return {
-    skillDiscoveryMode: mode,
-    skillDiscoveryInstructions: instructions,
-  };
-}
-
-// ─── Inline Helpers ───────────────────────────────────────────────────────────
-
-/**
- * Load a file and format it for inlining into a prompt.
- * Returns the content wrapped with a source path header, or a fallback
- * message if the file doesn't exist. This eliminates tool calls — the LLM
- * gets the content directly instead of "Read this file:".
- */
-async function inlineFile(
-  absPath: string | null, relPath: string, label: string,
-): Promise<string> {
-  const content = absPath ? await loadFile(absPath) : null;
-  if (!content) {
-    return `### ${label}\nSource: \`${relPath}\`\n\n_(not found — file does not exist yet)_`;
-  }
-  return `### ${label}\nSource: \`${relPath}\`\n\n${content.trim()}`;
-}
-
-/**
- * Load a file for inlining, returning null if it doesn't exist.
- * Use when the file is optional and should be omitted entirely if absent.
- */
-async function inlineFileOptional(
-  absPath: string | null, relPath: string, label: string,
-): Promise<string | null> {
-  const content = absPath ? await loadFile(absPath) : null;
-  if (!content) return null;
-  return `### ${label}\nSource: \`${relPath}\`\n\n${content.trim()}`;
-}
-
-/**
- * Load and inline dependency slice summaries (full content, not just paths).
- */
-async function inlineDependencySummaries(
-  mid: string, sid: string, base: string,
-): Promise<string> {
-  const roadmapFile = resolveMilestoneFile(base, mid, "ROADMAP");
-  const roadmapContent = roadmapFile ? await loadFile(roadmapFile) : null;
-  if (!roadmapContent) return "- (no dependencies)";
-
-  const roadmap = parseRoadmap(roadmapContent);
-  const sliceEntry = roadmap.slices.find(s => s.id === sid);
-  if (!sliceEntry || sliceEntry.depends.length === 0) return "- (no dependencies)";
-
-  const sections: string[] = [];
-  const seen = new Set<string>();
-  for (const dep of sliceEntry.depends) {
-    if (seen.has(dep)) continue;
-    seen.add(dep);
-    const summaryFile = resolveSliceFile(base, mid, dep, "SUMMARY");
-    const summaryContent = summaryFile ? await loadFile(summaryFile) : null;
-    const relPath = relSliceFile(base, mid, dep, "SUMMARY");
-    if (summaryContent) {
-      sections.push(`#### ${dep} Summary\nSource: \`${relPath}\`\n\n${summaryContent.trim()}`);
-    } else {
-      sections.push(`- \`${relPath}\` _(not found)_`);
-    }
-  }
-  return sections.join("\n\n");
-}
-
-/**
- * Load a well-known .gsd/ root file for optional inlining.
- * Handles the existsSync check internally.
- */
-async function inlineGsdRootFile(
-  base: string, filename: string, label: string,
-): Promise<string | null> {
-  const key = filename.replace(/\.md$/i, "").toUpperCase() as "PROJECT" | "DECISIONS" | "QUEUE" | "STATE" | "REQUIREMENTS";
-  const absPath = resolveGsdRootFile(base, key);
-  if (!existsSync(absPath)) return null;
-  return inlineFileOptional(absPath, relGsdRootFile(key), label);
-}
-
-// ─── Prompt Builders ──────────────────────────────────────────────────────────
-
-async function buildResearchMilestonePrompt(mid: string, midTitle: string, base: string): Promise<string> {
-  const contextPath = resolveMilestoneFile(base, mid, "CONTEXT");
-  const contextRel = relMilestoneFile(base, mid, "CONTEXT");
-
-  const inlined: string[] = [];
-  inlined.push(await inlineFile(contextPath, contextRel, "Milestone Context"));
-  const projectInline = await inlineGsdRootFile(base, "project.md", "Project");
-  if (projectInline) inlined.push(projectInline);
-  const requirementsInline = await inlineGsdRootFile(base, "requirements.md", "Requirements");
-  if (requirementsInline) inlined.push(requirementsInline);
-  const decisionsInline = await inlineGsdRootFile(base, "decisions.md", "Decisions");
-  if (decisionsInline) inlined.push(decisionsInline);
-  inlined.push(inlineTemplate("research", "Research"));
-
-  const inlinedContext = `## Inlined Context (preloaded — do not re-read these files)\n\n${inlined.join("\n\n---\n\n")}`;
-
-  const outputRelPath = relMilestoneFile(base, mid, "RESEARCH");
-  return loadPrompt("research-milestone", {
-    milestoneId: mid, milestoneTitle: midTitle,
-    milestonePath: relMilestonePath(base, mid),
-    contextPath: contextRel,
-    outputPath: outputRelPath,
-    inlinedContext,
-    ...buildSkillDiscoveryVars(),
-  });
-}
-
-async function buildPlanMilestonePrompt(mid: string, midTitle: string, base: string): Promise<string> {
-  const contextPath = resolveMilestoneFile(base, mid, "CONTEXT");
-  const contextRel = relMilestoneFile(base, mid, "CONTEXT");
-  const researchPath = resolveMilestoneFile(base, mid, "RESEARCH");
-  const researchRel = relMilestoneFile(base, mid, "RESEARCH");
-
-  const inlined: string[] = [];
-  inlined.push(await inlineFile(contextPath, contextRel, "Milestone Context"));
-  const researchInline = await inlineFileOptional(researchPath, researchRel, "Milestone Research");
-  if (researchInline) inlined.push(researchInline);
-  const priorSummaryInline = await inlinePriorMilestoneSummary(mid, base);
-  if (priorSummaryInline) inlined.push(priorSummaryInline);
-  const projectInline = await inlineGsdRootFile(base, "project.md", "Project");
-  if (projectInline) inlined.push(projectInline);
-  const requirementsInline = await inlineGsdRootFile(base, "requirements.md", "Requirements");
-  if (requirementsInline) inlined.push(requirementsInline);
-  const decisionsInline = await inlineGsdRootFile(base, "decisions.md", "Decisions");
-  if (decisionsInline) inlined.push(decisionsInline);
-  inlined.push(inlineTemplate("roadmap", "Roadmap"));
-  inlined.push(inlineTemplate("decisions", "Decisions"));
-  inlined.push(inlineTemplate("plan", "Slice Plan"));
-  inlined.push(inlineTemplate("task-plan", "Task Plan"));
-  inlined.push(inlineTemplate("secrets-manifest", "Secrets Manifest"));
-
-  const inlinedContext = `## Inlined Context (preloaded — do not re-read these files)\n\n${inlined.join("\n\n---\n\n")}`;
-
-  const outputRelPath = relMilestoneFile(base, mid, "ROADMAP");
-  const secretsOutputPath = relMilestoneFile(base, mid, "SECRETS");
-  return loadPrompt("plan-milestone", {
-    milestoneId: mid, milestoneTitle: midTitle,
-    milestonePath: relMilestonePath(base, mid),
-    contextPath: contextRel,
-    researchPath: researchRel,
-    outputPath: outputRelPath,
-    secretsOutputPath,
-    inlinedContext,
-  });
-}
-
-async function buildResearchSlicePrompt(
-  mid: string, _midTitle: string, sid: string, sTitle: string, base: string,
-): Promise<string> {
-  const roadmapPath = resolveMilestoneFile(base, mid, "ROADMAP");
-  const roadmapRel = relMilestoneFile(base, mid, "ROADMAP");
-  const contextPath = resolveMilestoneFile(base, mid, "CONTEXT");
-  const contextRel = relMilestoneFile(base, mid, "CONTEXT");
-  const milestoneResearchPath = resolveMilestoneFile(base, mid, "RESEARCH");
-  const milestoneResearchRel = relMilestoneFile(base, mid, "RESEARCH");
-
-  const inlined: string[] = [];
-  inlined.push(await inlineFile(roadmapPath, roadmapRel, "Milestone Roadmap"));
-  const contextInline = await inlineFileOptional(contextPath, contextRel, "Milestone Context");
-  if (contextInline) inlined.push(contextInline);
-  const researchInline = await inlineFileOptional(milestoneResearchPath, milestoneResearchRel, "Milestone Research");
-  if (researchInline) inlined.push(researchInline);
-  const decisionsInline = await inlineGsdRootFile(base, "decisions.md", "Decisions");
-  if (decisionsInline) inlined.push(decisionsInline);
-  const requirementsInline = await inlineGsdRootFile(base, "requirements.md", "Requirements");
-  if (requirementsInline) inlined.push(requirementsInline);
-  inlined.push(inlineTemplate("research", "Research"));
-
-  const depContent = await inlineDependencySummaries(mid, sid, base);
-
-  const inlinedContext = `## Inlined Context (preloaded — do not re-read these files)\n\n${inlined.join("\n\n---\n\n")}`;
-
-  const outputRelPath = relSliceFile(base, mid, sid, "RESEARCH");
-  return loadPrompt("research-slice", {
-    milestoneId: mid, sliceId: sid, sliceTitle: sTitle,
-    slicePath: relSlicePath(base, mid, sid),
-    roadmapPath: roadmapRel,
-    contextPath: contextRel,
-    milestoneResearchPath: milestoneResearchRel,
-    outputPath: outputRelPath,
-    inlinedContext,
-    dependencySummaries: depContent,
-    ...buildSkillDiscoveryVars(),
-  });
-}
-
-async function buildPlanSlicePrompt(
-  mid: string, _midTitle: string, sid: string, sTitle: string, base: string,
-): Promise<string> {
-  const roadmapPath = resolveMilestoneFile(base, mid, "ROADMAP");
-  const roadmapRel = relMilestoneFile(base, mid, "ROADMAP");
-  const researchPath = resolveSliceFile(base, mid, sid, "RESEARCH");
-  const researchRel = relSliceFile(base, mid, sid, "RESEARCH");
-
-  const inlined: string[] = [];
-  inlined.push(await inlineFile(roadmapPath, roadmapRel, "Milestone Roadmap"));
-  const researchInline = await inlineFileOptional(researchPath, researchRel, "Slice Research");
-  if (researchInline) inlined.push(researchInline);
-  const decisionsInline = await inlineGsdRootFile(base, "decisions.md", "Decisions");
-  if (decisionsInline) inlined.push(decisionsInline);
-  const requirementsInline = await inlineGsdRootFile(base, "requirements.md", "Requirements");
-  if (requirementsInline) inlined.push(requirementsInline);
-  inlined.push(inlineTemplate("plan", "Slice Plan"));
-  inlined.push(inlineTemplate("task-plan", "Task Plan"));
-
-  const depContent = await inlineDependencySummaries(mid, sid, base);
-
-  const inlinedContext = `## Inlined Context (preloaded — do not re-read these files)\n\n${inlined.join("\n\n---\n\n")}`;
-
-  const outputRelPath = relSliceFile(base, mid, sid, "PLAN");
-  return loadPrompt("plan-slice", {
-    milestoneId: mid, sliceId: sid, sliceTitle: sTitle,
-    slicePath: relSlicePath(base, mid, sid),
-    roadmapPath: roadmapRel,
-    researchPath: researchRel,
-    outputPath: outputRelPath,
-    inlinedContext,
-    dependencySummaries: depContent,
-  });
-}
-
-async function buildExecuteTaskPrompt(
-  mid: string, sid: string, sTitle: string,
-  tid: string, tTitle: string, base: string,
-): Promise<string> {
-
-  const priorSummaries = await getPriorTaskSummaryPaths(mid, sid, tid, base);
-  const priorLines = priorSummaries.length > 0
-    ? priorSummaries.map(p => `- \`${p}\``).join("\n")
-    : "- (no prior tasks)";
-
-  const taskPlanPath = resolveTaskFile(base, mid, sid, tid, "PLAN");
-  const taskPlanContent = taskPlanPath ? await loadFile(taskPlanPath) : null;
-  const taskPlanRelPath = relTaskFile(base, mid, sid, tid, "PLAN");
-  const taskPlanInline = taskPlanContent
-    ? [
-      "## Inlined Task Plan (authoritative local execution contract)",
-      `Source: \`${taskPlanRelPath}\``,
-      "",
-      taskPlanContent.trim(),
-    ].join("\n")
-    : [
-      "## Inlined Task Plan (authoritative local execution contract)",
-      `Task plan not found at dispatch time. Read \`${taskPlanRelPath}\` before executing.`,
-    ].join("\n");
-
-  const slicePlanPath = resolveSliceFile(base, mid, sid, "PLAN");
-  const slicePlanContent = slicePlanPath ? await loadFile(slicePlanPath) : null;
-  const slicePlanExcerpt = extractSliceExecutionExcerpt(slicePlanContent, relSliceFile(base, mid, sid, "PLAN"));
-
-  // Check for continue file (new naming or legacy)
-  const continueFile = resolveSliceFile(base, mid, sid, "CONTINUE");
-  const legacyContinueDir = resolveSlicePath(base, mid, sid);
-  const legacyContinuePath = legacyContinueDir ? join(legacyContinueDir, "continue.md") : null;
-  const continueContent = continueFile ? await loadFile(continueFile) : null;
-  const legacyContinueContent = !continueContent && legacyContinuePath ? await loadFile(legacyContinuePath) : null;
-  const continueRelPath = relSliceFile(base, mid, sid, "CONTINUE");
-  const resumeSection = buildResumeSection(
-    continueContent,
-    legacyContinueContent,
-    continueRelPath,
-    legacyContinuePath ? `${relSlicePath(base, mid, sid)}/continue.md` : null,
-  );
-
-  const carryForwardSection = await buildCarryForwardSection(priorSummaries, base);
-  const inlinedTemplates = [
-    inlineTemplate("task-summary", "Task Summary"),
-    inlineTemplate("decisions", "Decisions"),
-  ].join("\n\n---\n\n");
-
-  const taskSummaryPath = `${relSlicePath(base, mid, sid)}/tasks/${tid}-SUMMARY.md`;
-
-  return loadPrompt("execute-task", {
-    milestoneId: mid, sliceId: sid, sliceTitle: sTitle, taskId: tid, taskTitle: tTitle,
-    planPath: relSliceFile(base, mid, sid, "PLAN"),
-    slicePath: relSlicePath(base, mid, sid),
-    taskPlanPath: taskPlanRelPath,
-    taskPlanInline,
-    slicePlanExcerpt,
-    carryForwardSection,
-    resumeSection,
-    priorTaskLines: priorLines,
-    taskSummaryPath,
-    inlinedTemplates,
-  });
-}
-
-async function buildCompleteSlicePrompt(
-  mid: string, _midTitle: string, sid: string, sTitle: string, base: string,
-): Promise<string> {
-
-  const roadmapPath = resolveMilestoneFile(base, mid, "ROADMAP");
-  const roadmapRel = relMilestoneFile(base, mid, "ROADMAP");
-  const slicePlanPath = resolveSliceFile(base, mid, sid, "PLAN");
-  const slicePlanRel = relSliceFile(base, mid, sid, "PLAN");
-
-  const inlined: string[] = [];
-  inlined.push(await inlineFile(roadmapPath, roadmapRel, "Milestone Roadmap"));
-  inlined.push(await inlineFile(slicePlanPath, slicePlanRel, "Slice Plan"));
-  const requirementsInline = await inlineGsdRootFile(base, "requirements.md", "Requirements");
-  if (requirementsInline) inlined.push(requirementsInline);
-
-  // Inline all task summaries for this slice
-  const tDir = resolveTasksDir(base, mid, sid);
-  if (tDir) {
-    const summaryFiles = resolveTaskFiles(tDir, "SUMMARY").sort();
-    for (const file of summaryFiles) {
-      const absPath = join(tDir, file);
-      const content = await loadFile(absPath);
-      const sRel = relSlicePath(base, mid, sid);
-      const relPath = `${sRel}/tasks/${file}`;
-      if (content) {
-        inlined.push(`### Task Summary: ${file.replace(/-SUMMARY\.md$/i, "")}\nSource: \`${relPath}\`\n\n${content.trim()}`);
-      }
-    }
-  }
-  inlined.push(inlineTemplate("slice-summary", "Slice Summary"));
-  inlined.push(inlineTemplate("uat", "UAT"));
-
-  const inlinedContext = `## Inlined Context (preloaded — do not re-read these files)\n\n${inlined.join("\n\n---\n\n")}`;
-
-  const sliceRel = relSlicePath(base, mid, sid);
-  const sliceSummaryPath = `${sliceRel}/${sid}-SUMMARY.md`;
-  const sliceUatPath = `${sliceRel}/${sid}-UAT.md`;
-
-  return loadPrompt("complete-slice", {
-    milestoneId: mid, sliceId: sid, sliceTitle: sTitle,
-    slicePath: sliceRel,
-    roadmapPath: roadmapRel,
-    inlinedContext,
-    sliceSummaryPath,
-    sliceUatPath,
-  });
-}
-
-async function buildCompleteMilestonePrompt(
-  mid: string, midTitle: string, base: string,
-): Promise<string> {
-  const roadmapPath = resolveMilestoneFile(base, mid, "ROADMAP");
-  const roadmapRel = relMilestoneFile(base, mid, "ROADMAP");
-
-  const inlined: string[] = [];
-  inlined.push(await inlineFile(roadmapPath, roadmapRel, "Milestone Roadmap"));
-
-  // Inline all slice summaries (deduplicated by slice ID)
-  const roadmapContent = roadmapPath ? await loadFile(roadmapPath) : null;
-  if (roadmapContent) {
-    const roadmap = parseRoadmap(roadmapContent);
-    const seenSlices = new Set<string>();
-    for (const slice of roadmap.slices) {
-      if (seenSlices.has(slice.id)) continue;
-      seenSlices.add(slice.id);
-      const summaryPath = resolveSliceFile(base, mid, slice.id, "SUMMARY");
-      const summaryRel = relSliceFile(base, mid, slice.id, "SUMMARY");
-      inlined.push(await inlineFile(summaryPath, summaryRel, `${slice.id} Summary`));
-    }
-  }
-
-  // Inline root GSD files
-  const requirementsInline = await inlineGsdRootFile(base, "requirements.md", "Requirements");
-  if (requirementsInline) inlined.push(requirementsInline);
-  const decisionsInline = await inlineGsdRootFile(base, "decisions.md", "Decisions");
-  if (decisionsInline) inlined.push(decisionsInline);
-  const projectInline = await inlineGsdRootFile(base, "project.md", "Project");
-  if (projectInline) inlined.push(projectInline);
-  // Inline milestone context file (milestone-level, not GSD root)
-  const contextPath = resolveMilestoneFile(base, mid, "CONTEXT");
-  const contextRel = relMilestoneFile(base, mid, "CONTEXT");
-  const contextInline = await inlineFileOptional(contextPath, contextRel, "Milestone Context");
-  if (contextInline) inlined.push(contextInline);
-  inlined.push(inlineTemplate("milestone-summary", "Milestone Summary"));
-
-  const inlinedContext = `## Inlined Context (preloaded — do not re-read these files)\n\n${inlined.join("\n\n---\n\n")}`;
-
-  const milestoneSummaryPath = `${relMilestonePath(base, mid)}/${mid}-SUMMARY.md`;
-
-  return loadPrompt("complete-milestone", {
-    milestoneId: mid,
-    milestoneTitle: midTitle,
-    roadmapPath: roadmapRel,
-    inlinedContext,
-    milestoneSummaryPath,
-  });
-}
-
-// ─── Replan Slice Prompt ───────────────────────────────────────────────────────
-
-async function buildReplanSlicePrompt(
-  mid: string, midTitle: string, sid: string, sTitle: string, base: string,
-): Promise<string> {
-  const roadmapPath = resolveMilestoneFile(base, mid, "ROADMAP");
-  const roadmapRel = relMilestoneFile(base, mid, "ROADMAP");
-  const slicePlanPath = resolveSliceFile(base, mid, sid, "PLAN");
-  const slicePlanRel = relSliceFile(base, mid, sid, "PLAN");
-
-  const inlined: string[] = [];
-  inlined.push(await inlineFile(roadmapPath, roadmapRel, "Milestone Roadmap"));
-  inlined.push(await inlineFile(slicePlanPath, slicePlanRel, "Current Slice Plan"));
-
-  // Find the blocker task summary — the completed task with blocker_discovered: true
-  let blockerTaskId = "";
-  const tDir = resolveTasksDir(base, mid, sid);
-  if (tDir) {
-    const summaryFiles = resolveTaskFiles(tDir, "SUMMARY").sort();
-    for (const file of summaryFiles) {
-      const absPath = join(tDir, file);
-      const content = await loadFile(absPath);
-      if (!content) continue;
-      const summary = parseSummary(content);
-      const sRel = relSlicePath(base, mid, sid);
-      const relPath = `${sRel}/tasks/${file}`;
-      if (summary.frontmatter.blocker_discovered) {
-        blockerTaskId = summary.frontmatter.id || file.replace(/-SUMMARY\.md$/i, "");
-        inlined.push(`### Blocker Task Summary: ${blockerTaskId}\nSource: \`${relPath}\`\n\n${content.trim()}`);
-      }
-    }
-  }
-
-  // Inline decisions
-  const decisionsInline = await inlineGsdRootFile(base, "decisions.md", "Decisions");
-  if (decisionsInline) inlined.push(decisionsInline);
-
-  const inlinedContext = `## Inlined Context (preloaded — do not re-read these files)\n\n${inlined.join("\n\n---\n\n")}`;
-
-  const replanPath = `${relSlicePath(base, mid, sid)}/${sid}-REPLAN.md`;
-
-  return loadPrompt("replan-slice", {
-    milestoneId: mid,
-    sliceId: sid,
-    sliceTitle: sTitle,
-    slicePath: relSlicePath(base, mid, sid),
-    planPath: slicePlanRel,
-    blockerTaskId,
-    inlinedContext,
-    replanPath,
-  });
-}
-
-// ─── Adaptive Replanning ──────────────────────────────────────────────────────
-
-/**
- * Check if the most recently completed slice needs reassessment.
- * Returns { sliceId } if reassessment is needed, null otherwise.
- *
- * Skips reassessment when:
- * - No roadmap exists yet
- * - No slices are completed
- * - The last completed slice already has an assessment file
- * - All slices are complete (milestone done — no point reassessing)
- */
-async function checkNeedsReassessment(
-  base: string, mid: string, state: GSDState,
-): Promise<{ sliceId: string } | null> {
-  const roadmapFile = resolveMilestoneFile(base, mid, "ROADMAP");
-  const roadmapContent = roadmapFile ? await loadFile(roadmapFile) : null;
-  if (!roadmapContent) return null;
-
-  const roadmap = parseRoadmap(roadmapContent);
-  const completedSlices = roadmap.slices.filter(s => s.done);
-  const incompleteSlices = roadmap.slices.filter(s => !s.done);
-
-  // No completed slices or all slices done — skip
-  if (completedSlices.length === 0 || incompleteSlices.length === 0) return null;
-
-  // Check the last completed slice
-  const lastCompleted = completedSlices[completedSlices.length - 1];
-  const assessmentFile = resolveSliceFile(base, mid, lastCompleted.id, "ASSESSMENT");
-  const hasAssessment = !!(assessmentFile && await loadFile(assessmentFile));
-
-  if (hasAssessment) return null;
-
-  // Also need a summary to reassess against
-  const summaryFile = resolveSliceFile(base, mid, lastCompleted.id, "SUMMARY");
-  const hasSummary = !!(summaryFile && await loadFile(summaryFile));
-
-  if (!hasSummary) return null;
-
-  return { sliceId: lastCompleted.id };
-}
-
-/**
- * Check if the most recently completed slice needs a UAT run.
- * Returns { sliceId, uatType } if UAT should be dispatched, null otherwise.
- *
- * Skips when:
- * - No roadmap or no completed slices
- * - All slices are done (milestone complete path — reassessment handles it)
- * - uat_dispatch preference is not enabled
- * - No UAT file exists for the slice
- * - UAT result file already exists (idempotent — already ran)
- */
-async function checkNeedsRunUat(
-  base: string, mid: string, state: GSDState, prefs: GSDPreferences | undefined,
-): Promise<{ sliceId: string; uatType: UatType } | null> {
-  const roadmapFile = resolveMilestoneFile(base, mid, "ROADMAP");
-  const roadmapContent = roadmapFile ? await loadFile(roadmapFile) : null;
-  if (!roadmapContent) return null;
-
-  const roadmap = parseRoadmap(roadmapContent);
-  const completedSlices = roadmap.slices.filter(s => s.done);
-  const incompleteSlices = roadmap.slices.filter(s => !s.done);
-
-  // No completed slices — nothing to UAT yet
-  if (completedSlices.length === 0) return null;
-
-  // All slices done — milestone complete path, skip (reassessment handles)
-  if (incompleteSlices.length === 0) return null;
-
-  // uat_dispatch must be opted in
-  if (!prefs?.uat_dispatch) return null;
-
-  // Take the last completed slice
-  const lastCompleted = completedSlices[completedSlices.length - 1];
-  const sid = lastCompleted.id;
-
-  // UAT file must exist
-  const uatFile = resolveSliceFile(base, mid, sid, "UAT");
-  if (!uatFile) return null;
-  const uatContent = await loadFile(uatFile);
-  if (!uatContent) return null;
-
-  // If UAT result already exists, skip (idempotent)
-  const uatResultFile = resolveSliceFile(base, mid, sid, "UAT-RESULT");
-  if (uatResultFile) {
-    const hasResult = !!(await loadFile(uatResultFile));
-    if (hasResult) return null;
-  }
-
-  // Classify UAT type; unknown type → treat as human-experience (human review)
-  const uatType = extractUatType(uatContent) ?? "human-experience";
-
-  return { sliceId: sid, uatType };
-}
-
-async function buildRunUatPrompt(
-  mid: string, sliceId: string, uatPath: string, uatContent: string, base: string,
-): Promise<string> {
-  const inlined: string[] = [];
-  inlined.push(await inlineFile(resolveSliceFile(base, mid, sliceId, "UAT"), uatPath, `${sliceId} UAT`));
-
-  const summaryPath = resolveSliceFile(base, mid, sliceId, "SUMMARY");
-  const summaryRel = relSliceFile(base, mid, sliceId, "SUMMARY");
-  if (summaryPath) {
-    const summaryInline = await inlineFileOptional(summaryPath, summaryRel, `${sliceId} Summary`);
-    if (summaryInline) inlined.push(summaryInline);
-  }
-
-  const projectInline = await inlineGsdRootFile(base, "project.md", "Project");
-  if (projectInline) inlined.push(projectInline);
-
-  const inlinedContext = `## Inlined Context (preloaded — do not re-read these files)\n\n${inlined.join("\n\n---\n\n")}`;
-
-  const uatResultPath = relSliceFile(base, mid, sliceId, "UAT-RESULT");
-  const uatType = extractUatType(uatContent) ?? "human-experience";
-
-  return loadPrompt("run-uat", {
-    milestoneId: mid,
-    sliceId,
-    uatPath,
-    uatResultPath,
-    uatType,
-    inlinedContext,
-  });
-}
-
-async function buildReassessRoadmapPrompt(
-  mid: string, midTitle: string, completedSliceId: string, base: string,
-): Promise<string> {
-  const roadmapPath = resolveMilestoneFile(base, mid, "ROADMAP");
-  const roadmapRel = relMilestoneFile(base, mid, "ROADMAP");
-  const summaryPath = resolveSliceFile(base, mid, completedSliceId, "SUMMARY");
-  const summaryRel = relSliceFile(base, mid, completedSliceId, "SUMMARY");
-
-  const inlined: string[] = [];
-  inlined.push(await inlineFile(roadmapPath, roadmapRel, "Current Roadmap"));
-  inlined.push(await inlineFile(summaryPath, summaryRel, `${completedSliceId} Summary`));
-  const projectInline = await inlineGsdRootFile(base, "project.md", "Project");
-  if (projectInline) inlined.push(projectInline);
-  const requirementsInline = await inlineGsdRootFile(base, "requirements.md", "Requirements");
-  if (requirementsInline) inlined.push(requirementsInline);
-  const decisionsInline = await inlineGsdRootFile(base, "decisions.md", "Decisions");
-  if (decisionsInline) inlined.push(decisionsInline);
-
-  const inlinedContext = `## Inlined Context (preloaded — do not re-read these files)\n\n${inlined.join("\n\n---\n\n")}`;
-
-  const assessmentPath = relSliceFile(base, mid, completedSliceId, "ASSESSMENT");
-
-  return loadPrompt("reassess-roadmap", {
-    milestoneId: mid,
-    milestoneTitle: midTitle,
-    completedSliceId,
-    roadmapPath: roadmapRel,
-    completedSliceSummaryPath: summaryRel,
-    assessmentPath,
-    inlinedContext,
-  });
-}
-
-function extractSliceExecutionExcerpt(content: string | null, relPath: string): string {
-  if (!content) {
-    return [
-      "## Slice Plan Excerpt",
-      `Slice plan not found at dispatch time. Read \`${relPath}\` before running slice-level verification.`,
-    ].join("\n");
-  }
-
-  const lines = content.split("\n");
-  const goalLine = lines.find(l => l.startsWith("**Goal:**"))?.trim();
-  const demoLine = lines.find(l => l.startsWith("**Demo:**"))?.trim();
-
-  const verification = extractMarkdownSection(content, "Verification");
-  const observability = extractMarkdownSection(content, "Observability / Diagnostics");
-
-  const parts = ["## Slice Plan Excerpt", `Source: \`${relPath}\``];
-  if (goalLine) parts.push(goalLine);
-  if (demoLine) parts.push(demoLine);
-  if (verification) {
-    parts.push("", "### Slice Verification", verification.trim());
-  }
-  if (observability) {
-    parts.push("", "### Slice Observability / Diagnostics", observability.trim());
-  }
-
-  return parts.join("\n");
-}
-
-function extractMarkdownSection(content: string, heading: string): string | null {
-  const match = new RegExp(`^## ${escapeRegExp(heading)}\\s*$`, "m").exec(content);
-  if (!match) return null;
-
-  const start = match.index + match[0].length;
-  const rest = content.slice(start);
-  const nextHeading = rest.match(/^##\s+/m);
-  const end = nextHeading?.index ?? rest.length;
-  return rest.slice(0, end).trim();
-}
-
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
-function buildResumeSection(
-  continueContent: string | null,
-  legacyContinueContent: string | null,
-  continueRelPath: string,
-  legacyContinueRelPath: string | null,
-): string {
-  const resolvedContent = continueContent ?? legacyContinueContent;
-  const resolvedRelPath = continueContent ? continueRelPath : legacyContinueRelPath;
-
-  if (!resolvedContent || !resolvedRelPath) {
-    return ["## Resume State", "- No continue file present. Start from the top of the task plan."].join("\n");
-  }
-
-  const cont = parseContinue(resolvedContent);
-  const lines = [
-    "## Resume State",
-    `Source: \`${resolvedRelPath}\``,
-    `- Status: ${cont.frontmatter.status || "in_progress"}`,
-  ];
-
-  if (cont.frontmatter.step && cont.frontmatter.totalSteps) {
-    lines.push(`- Progress: step ${cont.frontmatter.step} of ${cont.frontmatter.totalSteps}`);
-  }
-  if (cont.completedWork) lines.push(`- Completed: ${oneLine(cont.completedWork)}`);
-  if (cont.remainingWork) lines.push(`- Remaining: ${oneLine(cont.remainingWork)}`);
-  if (cont.decisions) lines.push(`- Decisions: ${oneLine(cont.decisions)}`);
-  if (cont.nextAction) lines.push(`- Next action: ${oneLine(cont.nextAction)}`);
-
-  return lines.join("\n");
-}
-
-async function buildCarryForwardSection(priorSummaryPaths: string[], base: string): Promise<string> {
-  if (priorSummaryPaths.length === 0) {
-    return ["## Carry-Forward Context", "- No prior task summaries in this slice."].join("\n");
-  }
-
-  const items = await Promise.all(priorSummaryPaths.map(async (relPath) => {
-    const absPath = join(base, relPath);
-    const content = await loadFile(absPath);
-    if (!content) return `- \`${relPath}\``;
-
-    const summary = parseSummary(content);
-    const provided = summary.frontmatter.provides.slice(0, 2).join("; ");
-    const decisions = summary.frontmatter.key_decisions.slice(0, 2).join("; ");
-    const patterns = summary.frontmatter.patterns_established.slice(0, 2).join("; ");
-    const diagnostics = extractMarkdownSection(content, "Diagnostics");
-
-    const parts = [summary.title || relPath];
-    if (summary.oneLiner) parts.push(summary.oneLiner);
-    if (provided) parts.push(`provides: ${provided}`);
-    if (decisions) parts.push(`decisions: ${decisions}`);
-    if (patterns) parts.push(`patterns: ${patterns}`);
-    if (diagnostics) parts.push(`diagnostics: ${oneLine(diagnostics)}`);
-
-    return `- \`${relPath}\` — ${parts.join(" | ")}`;
-  }));
-
-  return ["## Carry-Forward Context", ...items].join("\n");
-}
-
-function oneLine(text: string): string {
-  return text.replace(/\s+/g, " ").trim();
-}
-
-async function getPriorTaskSummaryPaths(
-  mid: string, sid: string, currentTid: string, base: string,
-): Promise<string[]> {
-  const tDir = resolveTasksDir(base, mid, sid);
-  if (!tDir) return [];
-
-  const summaryFiles = resolveTaskFiles(tDir, "SUMMARY");
-  const currentNum = parseInt(currentTid.replace(/^T/, ""), 10);
-  const sRel = relSlicePath(base, mid, sid);
-
-  return summaryFiles
-    .filter(f => {
-      const num = parseInt(f.replace(/^T/, ""), 10);
-      return num < currentNum;
-    })
-    .map(f => `${sRel}/tasks/${f}`);
 }
 
 // ─── Preconditions ────────────────────────────────────────────────────────────
@@ -3386,294 +2386,11 @@ async function recoverTimedOutUnit(
   return "paused";
 }
 
-/**
- * Write skip artifacts for a stuck execute-task: a blocker task summary and
- * the [x] checkbox in the slice plan. Returns true if artifacts were written.
- */
-export function skipExecuteTask(
-  base: string, mid: string, sid: string, tid: string,
-  status: { summaryExists: boolean; taskChecked: boolean },
-  reason: string, maxAttempts: number,
-): boolean {
-  // Write a blocker task summary if missing.
-  if (!status.summaryExists) {
-    const tasksDir = resolveTasksDir(base, mid, sid);
-    const sDir = resolveSlicePath(base, mid, sid);
-    const targetDir = tasksDir ?? (sDir ? join(sDir, "tasks") : null);
-    if (!targetDir) return false;
-    if (!existsSync(targetDir)) mkdirSync(targetDir, { recursive: true });
-    const summaryPath = join(targetDir, buildTaskFileName(tid, "SUMMARY"));
-    const content = [
-      `# BLOCKER — task skipped by auto-mode recovery`,
-      ``,
-      `Task \`${tid}\` in slice \`${sid}\` (milestone \`${mid}\`) failed to complete after ${reason} recovery exhausted ${maxAttempts} attempts.`,
-      ``,
-      `This placeholder was written by auto-mode so the pipeline can advance.`,
-      `Review this task manually and replace this file with a real summary.`,
-    ].join("\n");
-    writeFileSync(summaryPath, content, "utf-8");
-  }
-
-  // Mark [x] in the slice plan if not already checked.
-  if (!status.taskChecked) {
-    const planAbs = resolveSliceFile(base, mid, sid, "PLAN");
-    if (planAbs && existsSync(planAbs)) {
-      const planContent = readFileSync(planAbs, "utf-8");
-      const escapedTid = tid.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-      const re = new RegExp(`^(- \\[) \\] (\\*\\*${escapedTid}:)`, "m");
-      if (re.test(planContent)) {
-        writeFileSync(planAbs, planContent.replace(re, "$1x] $2"), "utf-8");
-      }
-    }
-  }
-
-  return true;
-}
-
-/**
- * Detect whether the agent is producing work on disk by checking git for
- * any working-tree changes (staged, unstaged, or untracked). Returns true
- * if there are uncommitted changes — meaning the agent is actively working,
- * even though it hasn't signaled progress through runtime records.
- */
-function detectWorkingTreeActivity(cwd: string): boolean {
-  try {
-    const out = execSync("git status --porcelain", {
-      cwd,
-      stdio: ["pipe", "pipe", "pipe"],
-      timeout: 5000,
-    });
-    return out.toString().trim().length > 0;
-  } catch {
-    return false;
-  }
-}
-
-/**
- * Resolve the expected artifact for a non-execute-task unit to an absolute path.
- * Returns null for unit types that don't produce a single file (execute-task,
- * complete-slice, replan-slice).
- */
-export function resolveExpectedArtifactPath(unitType: string, unitId: string, base: string): string | null {
-  const parts = unitId.split("/");
-  const mid = parts[0]!;
-  const sid = parts[1];
-  switch (unitType) {
-    case "research-milestone": {
-      const dir = resolveMilestonePath(base, mid);
-      return dir ? join(dir, buildMilestoneFileName(mid, "RESEARCH")) : null;
-    }
-    case "plan-milestone": {
-      const dir = resolveMilestonePath(base, mid);
-      return dir ? join(dir, buildMilestoneFileName(mid, "ROADMAP")) : null;
-    }
-    case "research-slice": {
-      const dir = resolveSlicePath(base, mid, sid!);
-      return dir ? join(dir, buildSliceFileName(sid!, "RESEARCH")) : null;
-    }
-    case "plan-slice": {
-      const dir = resolveSlicePath(base, mid, sid!);
-      return dir ? join(dir, buildSliceFileName(sid!, "PLAN")) : null;
-    }
-    case "reassess-roadmap": {
-      const dir = resolveSlicePath(base, mid, sid!);
-      return dir ? join(dir, buildSliceFileName(sid!, "ASSESSMENT")) : null;
-    }
-    case "run-uat": {
-      const dir = resolveSlicePath(base, mid, sid!);
-      return dir ? join(dir, buildSliceFileName(sid!, "UAT-RESULT")) : null;
-    }
-    case "execute-task": {
-      const tid = parts[2];
-      const dir = resolveSlicePath(base, mid, sid!);
-      return dir && tid ? join(dir, "tasks", buildTaskFileName(tid, "SUMMARY")) : null;
-    }
-    case "complete-slice": {
-      const dir = resolveSlicePath(base, mid, sid!);
-      return dir ? join(dir, buildSliceFileName(sid!, "SUMMARY")) : null;
-    }
-    case "complete-milestone": {
-      const dir = resolveMilestonePath(base, mid);
-      return dir ? join(dir, buildMilestoneFileName(mid, "SUMMARY")) : null;
-    }
-    default:
-      return null;
-  }
-}
-
-/**
- * Check whether the expected artifact(s) for a unit exist on disk.
- * Returns true if all required artifacts exist, or if the unit type has no
- * single verifiable artifact (e.g., replan-slice).
- *
- * complete-slice requires both SUMMARY and UAT files — verifying only
- * the summary allowed the unit to be marked complete when the LLM
- * skipped writing the UAT file (see #176).
- */
-export function verifyExpectedArtifact(unitType: string, unitId: string, base: string): boolean {
-  // Clear stale directory listing cache so artifact checks see fresh disk state (#431)
-  clearPathCache();
-
-  // Hook units have no standard artifact — always pass. Their lifecycle
-  // is managed by the hook engine, not the artifact verification system.
-  if (unitType.startsWith("hook/")) return true;
-
-
-  const absPath = resolveExpectedArtifactPath(unitType, unitId, base);
-  // Unit types with no verifiable artifact always pass (e.g. replan-slice).
-  // For all other types, null means the parent directory is missing on disk
-  // — treat as stale completion state so the key gets evicted (#313).
-  if (!absPath) return unitType === "replan-slice";
-  if (!existsSync(absPath)) return false;
-
-  // execute-task must also have its checkbox marked [x] in the slice plan
-  if (unitType === "execute-task") {
-    const parts = unitId.split("/");
-    const mid = parts[0];
-    const sid = parts[1];
-    const tid = parts[2];
-    if (mid && sid && tid) {
-      const planAbs = resolveSliceFile(base, mid, sid, "PLAN");
-      if (planAbs && existsSync(planAbs)) {
-        const planContent = readFileSync(planAbs, "utf-8");
-        const escapedTid = tid.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-        const re = new RegExp(`^- \\[[xX]\\] \\*\\*${escapedTid}:`, "m");
-        if (!re.test(planContent)) return false;
-      }
-    }
-  }
-
-  // complete-slice must also produce a UAT file AND mark the slice [x] in the roadmap.
-  // Without the roadmap check, a crash after writing SUMMARY+UAT but before updating
-  // the roadmap causes an infinite skip loop: the idempotency key says "done" but the
-  // state machine keeps returning the same complete-slice unit (roadmap still shows
-  // the slice incomplete), so dispatchNextUnit recurses forever.
-  if (unitType === "complete-slice") {
-    const parts = unitId.split("/");
-    const mid = parts[0];
-    const sid = parts[1];
-    if (mid && sid) {
-      const dir = resolveSlicePath(base, mid, sid);
-      if (dir) {
-        const uatPath = join(dir, buildSliceFileName(sid, "UAT"));
-        if (!existsSync(uatPath)) return false;
-      }
-      // Verify the roadmap has the slice marked [x]. If not, the completion
-      // record is stale — the unit must re-run to update the roadmap.
-      const roadmapFile = resolveMilestoneFile(base, mid, "ROADMAP");
-      if (roadmapFile && existsSync(roadmapFile)) {
-        try {
-          const roadmapContent = readFileSync(roadmapFile, "utf-8");
-          const roadmap = parseRoadmap(roadmapContent);
-          const slice = roadmap.slices.find(s => s.id === sid);
-          if (slice && !slice.done) return false;
-        } catch { /* corrupt roadmap — be lenient and treat as verified */ }
-      }
-    }
-  }
-
-  return true;
-}
-
-/**
- * Write a placeholder artifact so the pipeline can advance past a stuck unit.
- * Returns the relative path written, or null if the path couldn't be resolved.
- */
-export function writeBlockerPlaceholder(unitType: string, unitId: string, base: string, reason: string): string | null {
-  const absPath = resolveExpectedArtifactPath(unitType, unitId, base);
-  if (!absPath) return null;
-  const dir = dirname(absPath);
-  if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-  const content = [
-    `# BLOCKER — auto-mode recovery failed`,
-    ``,
-    `Unit \`${unitType}\` for \`${unitId}\` failed to produce this artifact after idle recovery exhausted all retries.`,
-    ``,
-    `**Reason**: ${reason}`,
-    ``,
-    `This placeholder was written by auto-mode so the pipeline can advance.`,
-    `Review and replace this file before relying on downstream artifacts.`,
-  ].join("\n");
-  writeFileSync(absPath, content, "utf-8");
-  return diagnoseExpectedArtifact(unitType, unitId, base);
-}
-
-function diagnoseExpectedArtifact(unitType: string, unitId: string, base: string): string | null {
-  const parts = unitId.split("/");
-  const mid = parts[0];
-  const sid = parts[1];
-  switch (unitType) {
-    case "research-milestone":
-      return `${relMilestoneFile(base, mid!, "RESEARCH")} (milestone research)`;
-    case "plan-milestone":
-      return `${relMilestoneFile(base, mid!, "ROADMAP")} (milestone roadmap)`;
-    case "research-slice":
-      return `${relSliceFile(base, mid!, sid!, "RESEARCH")} (slice research)`;
-    case "plan-slice":
-      return `${relSliceFile(base, mid!, sid!, "PLAN")} (slice plan)`;
-    case "execute-task": {
-      const tid = parts[2];
-      return `Task ${tid} marked [x] in ${relSliceFile(base, mid!, sid!, "PLAN")} + summary written`;
-    }
-    case "complete-slice":
-      return `Slice ${sid} marked [x] in ${relMilestoneFile(base, mid!, "ROADMAP")} + summary + UAT written`;
-    case "replan-slice":
-      return `${relSliceFile(base, mid!, sid!, "REPLAN")} + updated ${relSliceFile(base, mid!, sid!, "PLAN")}`;
-    case "reassess-roadmap":
-      return `${relSliceFile(base, mid!, sid!, "ASSESSMENT")} (roadmap reassessment)`;
-    case "run-uat":
-      return `${relSliceFile(base, mid!, sid!, "UAT-RESULT")} (UAT result)`;
-    case "complete-milestone":
-      return `${relMilestoneFile(base, mid!, "SUMMARY")} (milestone summary)`;
-    default:
-      return null;
-  }
-}
-
-/**
- * Build concrete, manual remediation steps for a loop-detected unit failure.
- * These are shown when automatic reconciliation is not possible.
- */
-export function buildLoopRemediationSteps(unitType: string, unitId: string, base: string): string | null {
-  const parts = unitId.split("/");
-  const mid = parts[0];
-  const sid = parts[1];
-  const tid = parts[2];
-  switch (unitType) {
-    case "execute-task": {
-      if (!mid || !sid || !tid) break;
-      const planRel = relSliceFile(base, mid, sid, "PLAN");
-      const summaryRel = relTaskFile(base, mid, sid, tid, "SUMMARY");
-      return [
-        `   1. Write ${summaryRel} (even a partial summary is sufficient to unblock the pipeline)`,
-        `   2. Mark ${tid} [x] in ${planRel}: change "- [ ] **${tid}:" → "- [x] **${tid}:"`,
-        `   3. Run \`gsd doctor\` to reconcile .gsd/ state`,
-        `   4. Resume auto-mode — it will pick up from the next task`,
-      ].join("\n");
-    }
-    case "plan-slice":
-    case "research-slice": {
-      if (!mid || !sid) break;
-      const artifactRel = unitType === "plan-slice"
-        ? relSliceFile(base, mid, sid, "PLAN")
-        : relSliceFile(base, mid, sid, "RESEARCH");
-      return [
-        `   1. Write ${artifactRel} manually (or with the LLM in interactive mode)`,
-        `   2. Run \`gsd doctor\` to reconcile .gsd/ state`,
-        `   3. Resume auto-mode`,
-      ].join("\n");
-    }
-    case "complete-slice": {
-      if (!mid || !sid) break;
-      return [
-        `   1. Write the slice summary and UAT file for ${sid} in ${relSlicePath(base, mid, sid)}`,
-        `   2. Mark ${sid} [x] in ${relMilestoneFile(base, mid, "ROADMAP")}`,
-        `   3. Run \`gsd doctor\` to reconcile .gsd/ state`,
-        `   4. Resume auto-mode`,
-      ].join("\n");
-    }
-    default:
-      break;
-  }
-  return null;
-}
+// Re-export recovery functions for external consumers
+export {
+  resolveExpectedArtifactPath,
+  verifyExpectedArtifact,
+  writeBlockerPlaceholder,
+  skipExecuteTask,
+  buildLoopRemediationSteps,
+} from "./auto-recovery.js";

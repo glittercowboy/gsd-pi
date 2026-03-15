@@ -38,7 +38,7 @@ GSD v2 solves all of these because it's not a prompt framework anymore — it's 
 | Context management   | Hope the LLM doesn't fill up | Fresh session per task, programmatic                    |
 | Auto mode            | LLM self-loop                | State machine reading `.gsd/` files                     |
 | Crash recovery       | None                         | Lock files + session forensics                          |
-| Git strategy         | LLM writes git commands      | Programmatic branch-per-slice, squash merge             |
+| Git strategy         | LLM writes git commands      | Worktree isolation, sequential commits, squash merge    |
 | Cost tracking        | None                         | Per-unit token/cost ledger with dashboard               |
 | Stuck detection      | None                         | Retry once, then stop with diagnostics                  |
 | Timeout supervision  | None                         | Soft/idle/hard timeouts with recovery steering          |
@@ -111,7 +111,7 @@ Auto mode is a state machine driven by files on disk. It reads `.gsd/STATE.md`, 
 
 2. **Context pre-loading** — The dispatch prompt includes inlined task plans, slice plans, prior task summaries, dependency summaries, roadmap excerpts, and decisions register. The LLM starts with everything it needs instead of spending tool calls reading files.
 
-3. **Git branch-per-slice** — Each slice gets its own branch (`gsd/M001/S01`). Tasks commit atomically on the branch. When the slice completes, it's squash-merged to main (or whichever branch you started from) as one clean commit.
+3. **Git worktree isolation** — Each milestone runs in its own git worktree with a `milestone/<MID>` branch. All slice work commits sequentially — no branch switching, no merge conflicts. When the milestone completes, it's squash-merged to main as one clean commit.
 
 4. **Crash recovery** — A lock file tracks the current unit. If the session dies, the next `/gsd auto` reads the surviving session file, synthesizes a recovery briefing from every tool call that made it to disk, and resumes with full context.
 
@@ -268,7 +268,7 @@ gsd/M001/S01 (deleted after merge):
   feat(S01/T01): core types and interfaces
 ```
 
-One commit per slice on main (or whichever branch you started from). Squash commits are the permanent record — branches are deleted after merge. Git bisect works. Individual slices are revertable.
+One squash commit per milestone on main (or whichever branch you started from). The worktree is torn down after merge. Git bisect works. Individual milestones are revertable.
 
 ### Verification
 

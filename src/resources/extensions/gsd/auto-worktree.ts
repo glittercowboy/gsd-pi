@@ -6,7 +6,7 @@
  * manages create, enter, detect, and teardown for auto-mode worktrees.
  */
 
-import { existsSync, readFileSync, realpathSync, utimesSync } from "node:fs";
+import { existsSync, cpSync, readFileSync, realpathSync, utimesSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { execSync, execFileSync } from "node:child_process";
 import {
@@ -90,6 +90,14 @@ export function autoWorktreeBranch(milestoneId: string): string {
 export function createAutoWorktree(basePath: string, milestoneId: string): string {
   const branch = autoWorktreeBranch(milestoneId);
   const info = createWorktree(basePath, milestoneId, { branch });
+
+  // Copy .gsd/ planning artifacts from the source repo into the new worktree.
+  // Worktrees are fresh git checkouts — untracked files don't carry over.
+  // Planning artifacts may be untracked if the project's .gitignore had a
+  // blanket .gsd/ rule (pre-v2.14.0). Without this copy, auto-mode loops
+  // on plan-slice because the plan file doesn't exist in the worktree.
+  copyPlanningArtifacts(basePath, info.path);
+
   const previousCwd = process.cwd();
 
   try {
@@ -105,6 +113,36 @@ export function createAutoWorktree(basePath: string, milestoneId: string): strin
 
   nudgeGitBranchCache(previousCwd);
   return info.path;
+}
+
+/**
+ * Copy .gsd/ planning artifacts from source repo to a new worktree.
+ * Copies milestones/, DECISIONS.md, REQUIREMENTS.md, PROJECT.md, QUEUE.md.
+ * Skips runtime files (auto.lock, metrics.json, etc.) and the worktrees/ dir.
+ * Best-effort — failures are non-fatal since auto-mode can recreate artifacts.
+ */
+function copyPlanningArtifacts(srcBase: string, wtPath: string): void {
+  const srcGsd = join(srcBase, ".gsd");
+  const dstGsd = join(wtPath, ".gsd");
+  if (!existsSync(srcGsd)) return;
+
+  // Copy milestones/ directory (planning files, roadmaps, plans, research)
+  const srcMilestones = join(srcGsd, "milestones");
+  if (existsSync(srcMilestones)) {
+    try {
+      cpSync(srcMilestones, join(dstGsd, "milestones"), { recursive: true, force: true });
+    } catch { /* non-fatal */ }
+  }
+
+  // Copy top-level planning files
+  for (const file of ["DECISIONS.md", "REQUIREMENTS.md", "PROJECT.md", "QUEUE.md"]) {
+    const src = join(srcGsd, file);
+    if (existsSync(src)) {
+      try {
+        cpSync(src, join(dstGsd, file), { force: true });
+      } catch { /* non-fatal */ }
+    }
+  }
 }
 
 /**
