@@ -157,6 +157,76 @@ function cleanup(base: string): void {
   }
 }
 
+// ═══ Loop recovery: writeBlockerPlaceholder + verifyExpectedArtifact ═════════
+// These tests validate the stuck-detection recovery path added for planning
+// units (research-slice, research-milestone, plan-slice, plan-milestone).
+// After writeBlockerPlaceholder writes the file, verifyExpectedArtifact must
+// return true so dispatchNextUnit can advance the pipeline.
+
+{
+  console.log("\n=== loop recovery: research-slice placeholder satisfies verifyExpectedArtifact ===");
+  const base = createFixtureBase();
+  try {
+    const placeholder = writeBlockerPlaceholder(
+      "research-slice", "M001/S01", base,
+      "Dispatched 4 times without producing the required artifact.",
+    );
+    assertTrue(placeholder !== null, "placeholder path should be non-null");
+    const verified = verifyExpectedArtifact("research-slice", "M001/S01", base);
+    assertTrue(verified, "verifyExpectedArtifact should return true after placeholder is written");
+  } finally {
+    cleanup(base);
+  }
+}
+
+{
+  console.log("\n=== loop recovery: research-milestone placeholder satisfies verifyExpectedArtifact ===");
+  const base = createFixtureBase();
+  try {
+    const placeholder = writeBlockerPlaceholder(
+      "research-milestone", "M001", base,
+      "Dispatched 4 times without producing the required artifact.",
+    );
+    assertTrue(placeholder !== null, "placeholder path should be non-null");
+    const verified = verifyExpectedArtifact("research-milestone", "M001", base);
+    assertTrue(verified, "verifyExpectedArtifact should return true after placeholder is written");
+  } finally {
+    cleanup(base);
+  }
+}
+
+{
+  console.log("\n=== loop recovery: plan-slice placeholder satisfies verifyExpectedArtifact ===");
+  const base = createFixtureBase();
+  try {
+    const placeholder = writeBlockerPlaceholder(
+      "plan-slice", "M001/S01", base,
+      "Dispatched 4 times without producing the required artifact.",
+    );
+    assertTrue(placeholder !== null, "placeholder path should be non-null");
+    const verified = verifyExpectedArtifact("plan-slice", "M001/S01", base);
+    assertTrue(verified, "verifyExpectedArtifact should return true after placeholder is written");
+  } finally {
+    cleanup(base);
+  }
+}
+
+{
+  console.log("\n=== loop recovery: plan-milestone placeholder satisfies verifyExpectedArtifact ===");
+  const base = createFixtureBase();
+  try {
+    const placeholder = writeBlockerPlaceholder(
+      "plan-milestone", "M001", base,
+      "Dispatched 4 times without producing the required artifact.",
+    );
+    assertTrue(placeholder !== null, "placeholder path should be non-null");
+    const verified = verifyExpectedArtifact("plan-milestone", "M001", base);
+    assertTrue(verified, "verifyExpectedArtifact should return true after placeholder is written");
+  } finally {
+    cleanup(base);
+  }
+}
+
 // ═══ skipExecuteTask ═════════════════════════════════════════════════════════
 
 {
