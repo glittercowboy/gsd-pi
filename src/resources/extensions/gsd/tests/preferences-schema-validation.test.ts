@@ -155,12 +155,19 @@ async function main(): Promise<void> {
 
   console.log("\n=== existing behavior preserved ===");
 
-  // Ensure deprecated git fields still produce deprecation warnings (not unknown-key warnings)
+  // git.isolation is a valid active setting (worktree | branch) — no warnings or errors
   {
-    const { warnings } = validatePreferences({ git: { isolation: "worktree" } } as GSDPreferences);
-    assertTrue(warnings.some(w => w.includes("deprecated")), "deprecated git.isolation still warns");
+    const { warnings, errors, preferences } = validatePreferences({ git: { isolation: "worktree" } } as GSDPreferences);
     const unknownWarnings = warnings.filter(w => w.includes("unknown"));
     assertEq(unknownWarnings.length, 0, "git is a known key — no unknown-key warning");
+    assertEq(errors.length, 0, "valid git.isolation produces no errors");
+    assertEq(preferences.git?.isolation, "worktree", "git.isolation value passes through");
+  }
+
+  // git.merge_to_main is deprecated — still produces deprecation warning
+  {
+    const { warnings } = validatePreferences({ git: { merge_to_main: true } } as GSDPreferences);
+    assertTrue(warnings.some(w => w.includes("deprecated")), "deprecated git.merge_to_main still warns");
   }
 
   report();
