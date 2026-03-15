@@ -109,7 +109,7 @@ export interface GSDPreferences {
   avoid_skills?: string[];
   skill_rules?: GSDSkillRule[];
   custom_instructions?: string[];
-  models?: GSDModelConfig;
+  models?: GSDModelConfig | GSDModelConfigV2;
   skill_discovery?: SkillDiscoveryMode;
   auto_supervisor?: AutoSupervisorConfig;
   uat_dispatch?: boolean;
@@ -409,8 +409,9 @@ function loadPreferencesFile(path: string, scope: "global" | "project"): LoadedG
   };
 }
 
-function parsePreferencesMarkdown(content: string): GSDPreferences | null {
-  const match = content.match(/^---\n([\s\S]*?)\n---/);
+/** @internal Exported for testing only */
+export function parsePreferencesMarkdown(content: string): GSDPreferences | null {
+  const match = content.match(/^---\r?\n([\s\S]*?)\r?\n---/);
   if (!match) return null;
   return parseFrontmatterBlock(match[1]);
 }
@@ -427,6 +428,9 @@ function parseFrontmatterBlock(frontmatter: string): GSDPreferences {
     const indent = line.match(/^\s*/)?.[0].length ?? 0;
     const trimmed = line.trim();
 
+    // Skip comment lines (standalone YAML comments)
+    if (trimmed.startsWith("#")) continue;
+
     while (stack.length > 1 && indent <= stack[stack.length - 1].indent) {
       stack.pop();
     }
@@ -436,7 +440,8 @@ function parseFrontmatterBlock(frontmatter: string): GSDPreferences {
     if (!keyMatch) continue;
 
     const [, key, remainder] = keyMatch;
-    const valuePart = remainder.trim();
+    // Strip inline comments from the value portion
+    const valuePart = remainder.replace(/\s+#.*$/, "").trim();
 
     if (valuePart === "") {
       const nextLine = lines[i + 1] ?? "";
@@ -459,7 +464,12 @@ function parseFrontmatterBlock(frontmatter: string): GSDPreferences {
           const nextCandidateIndent = nextCandidate.match(/^\s*/)?.[0].length ?? 0;
           const nextCandidateTrimmed = nextCandidate.trim();
 
-          if (itemText.includes(":") || (nextCandidateTrimmed && nextCandidateIndent > candidateIndent)) {
+          // Treat an array item as a structured object only when:
+          //   a) It looks like a YAML key-value pair (key starts with [A-Za-z0-9_]+:), OR
+          //   b) The next line is indented deeper (nested block under this item).
+          // Bare colons (e.g. "qwen/qwen3-coder:free") are NOT key-value pairs.
+          const looksLikeKeyValue = /^[A-Za-z0-9_]+:/.test(itemText);
+          if (looksLikeKeyValue || (nextCandidateTrimmed && nextCandidateIndent > candidateIndent)) {
             const obj: Record<string, unknown> = {};
             const firstMatch = itemText.match(/^([A-Za-z0-9_]+):(.*)$/);
             if (firstMatch) {
@@ -524,17 +534,23 @@ function parseFrontmatterBlock(frontmatter: string): GSDPreferences {
 }
 
 function parseScalar(value: string): unknown {
-  if (value === "true") return true;
-  if (value === "false") return false;
+  // Strip inline YAML comments: " # comment" (# preceded by whitespace).
+  // Quoted strings are returned as-is (the comment is inside quotes).
+  const quoteMatch = value.match(/^(['"])(.*)(\1)$/);
+  if (quoteMatch) return quoteMatch[2];
+
+  const stripped = value.replace(/\s+#.*$/, "");
+  if (stripped === "true") return true;
+  if (stripped === "false") return false;
   // Recognize empty array/object literals (with or without surrounding quotes)
-  const unquoted = value.replace(/^['\"]|['\"]$/g, "");
+  const unquoted = stripped.replace(/^['\"]|['\"]$/g, "");
   if (unquoted === "[]") return [];
   if (unquoted === "{}") return {};
-  if (/^-?\d+$/.test(value)) {
-    const n = Number(value);
+  if (/^-?\d+$/.test(stripped)) {
+    const n = Number(stripped);
     // Keep large integers (e.g. Discord channel IDs) as strings to avoid precision loss
     if (Number.isSafeInteger(n)) return n;
-    return value;
+    return stripped;
   }
   return unquoted;
 }
