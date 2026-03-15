@@ -265,6 +265,16 @@ export function updateProgressWidget(
       tui.requestRender();
     }, 800);
 
+    // Refresh progress cache from disk every 5s so the widget reflects
+    // task/slice completion mid-unit. Without this, the progress bar only
+    // updates at dispatch time, appearing frozen during long-running units.
+    const progressRefreshTimer = mid ? setInterval(() => {
+      try {
+        updateSliceProgressCache(accessors.getBasePath(), mid.id, slice?.id);
+        cachedLines = undefined;
+      } catch { /* non-fatal */ }
+    }, 5_000) : null;
+
     return {
       render(width: number): string[] {
         if (cachedLines && cachedWidth === width) return cachedLines;
@@ -416,6 +426,7 @@ export function updateProgressWidget(
       },
       dispose() {
         clearInterval(pulseTimer);
+        if (progressRefreshTimer) clearInterval(progressRefreshTimer);
       },
     };
   });
