@@ -574,6 +574,7 @@ interface StartOptions {
 	type?: ProcessType;
 	readyPattern?: string;
 	readyPort?: number;
+	readyTimeout?: number;
 	group?: string;
 	env?: Record<string, string>;
 }
@@ -689,7 +690,7 @@ function startProcess(opts: StartOptions): BgProcess {
 
 	// Port probing for server-type processes
 	if (bg.readyPort) {
-		startPortProbing(bg, bg.readyPort);
+		startPortProbing(bg, bg.readyPort, opts.readyTimeout);
 	}
 
 	// Shell sessions are ready immediately after spawn
@@ -707,9 +708,17 @@ function startProcess(opts: StartOptions): BgProcess {
 
 // ── Port Probing Loop ──────────────────────────────────────────────────────
 
-function startPortProbing(bg: BgProcess, port: number): void {
+function startPortProbing(bg: BgProcess, port: number, customTimeout?: number): void {
+	const timeout = customTimeout || DEFAULT_READY_TIMEOUT;
 	const interval = setInterval(async () => {
-		if (!bg.alive || bg.status !== "starting") {
+		if (!bg.alive) {
+			clearInterval(interval);
+			const stderrLines = bg.output.filter(l => l.stream === "stderr").slice(-10).map(l => l.line);
+			const detail = `Process exited (code ${bg.exitCode}) before port ${port} opened${stderrLines.length > 0 ? ` — ${stderrLines.join("; ").slice(0, 200)}` : ""}`;
+			addEvent(bg, { type: "port_timeout", detail, data: { port, exitCode: bg.exitCode } });
+			return;
+		}
+		if (bg.status !== "starting") {
 			clearInterval(interval);
 			return;
 		}
@@ -722,8 +731,18 @@ function startPortProbing(bg: BgProcess, port: number): void {
 		}
 	}, READY_POLL_INTERVAL);
 
-	// Stop probing after timeout
-	setTimeout(() => clearInterval(interval), DEFAULT_READY_TIMEOUT);
+	// Stop probing after timeout — transition to error state so the process
+	// doesn't stay in "starting" forever (fixes #428)
+	setTimeout(() => {
+		clearInterval(interval);
+		if (bg.alive && bg.status === "starting") {
+			const stderrLines = bg.output.filter(l => l.stream === "stderr").slice(-10).map(l => l.line);
+			const detail = `Port ${port} not open after ${timeout}ms${stderrLines.length > 0 ? ` — ${stderrLines.join("; ").slice(0, 200)}` : ""}`;
+			bg.status = "error";
+			addEvent(bg, { type: "port_timeout", detail, data: { port, timeout } });
+			pushAlert(bg, `Port ${port} readiness timeout after ${timeout / 1000}s`);
+		}
+	}, timeout);
 }
 
 // ── Process Kill ───────────────────────────────────────────────────────────
@@ -864,9 +883,19 @@ async function waitForReady(bg: BgProcess, timeout: number, signal?: AbortSignal
 			return { ready: false, detail: "Cancelled" };
 		}
 		if (!bg.alive) {
+			const stderrLines = bg.output.filter(l => l.stream === "stderr").slice(-5).map(l => l.line);
+			const stderrContext = stderrLines.length > 0 ? `\nstderr:\n${stderrLines.join("\n").slice(0, 500)}` : "";
 			return {
 				ready: false,
-				detail: `Process exited before becoming ready (code ${bg.exitCode})${bg.recentErrors.length > 0 ? ` — ${bg.recentErrors.slice(-1)[0]}` : ""}`,
+				detail: `Process exited before becoming ready (code ${bg.exitCode})${bg.recentErrors.length > 0 ? ` — ${bg.recentErrors.slice(-1)[0]}` : ""}${stderrContext}`,
+			};
+		}
+		if (bg.status === "error") {
+			const stderrLines = bg.output.filter(l => l.stream === "stderr").slice(-5).map(l => l.line);
+			const stderrContext = stderrLines.length > 0 ? `\nstderr:\n${stderrLines.join("\n").slice(0, 500)}` : "";
+			return {
+				ready: false,
+				detail: `Process entered error state${bg.readyPort ? ` (port ${bg.readyPort} never opened)` : ""}${stderrContext}`,
 			};
 		}
 		if (bg.status === "ready") {
@@ -887,7 +916,9 @@ async function waitForReady(bg: BgProcess, timeout: number, signal?: AbortSignal
 		}
 	}
 
-	return { ready: false, detail: `Timed out after ${timeout}ms waiting for ready signal` };
+	const stderrLines = bg.output.filter(l => l.stream === "stderr").slice(-5).map(l => l.line);
+	const stderrContext = stderrLines.length > 0 ? `\nstderr:\n${stderrLines.join("\n").slice(0, 500)}` : "";
+	return { ready: false, detail: `Timed out after ${timeout}ms waiting for ready signal${stderrContext}` };
 }
 
 // ── Query Shell Environment ────────────────────────────────────────────────
@@ -1234,6 +1265,15 @@ export default function (pi: ExtensionAPI) {
 		cleanupAll();
 	});
 
+	// Register signal handlers to clean up bg processes on unexpected exit (fixes #428)
+	// This prevents orphan processes and helps the parent restore terminal state
+	const signalCleanup = () => {
+		cleanupAll();
+	};
+	process.on("SIGTERM", signalCleanup);
+	process.on("SIGINT", signalCleanup);
+	process.on("beforeExit", signalCleanup);
+
 	// ── Compaction Awareness: Survive Context Resets ───────────────────
 
 	/** Build a compact state summary of all alive processes for context re-injection */
@@ -1424,6 +1464,9 @@ export default function (pi: ExtensionAPI) {
 			ready_port: Type.Optional(
 				Type.Number({ description: "Port to probe for readiness (for start). When open, process is considered ready." }),
 			),
+			ready_timeout: Type.Optional(
+				Type.Number({ description: "Max milliseconds to wait for ready_port/ready_pattern before marking as error (default: 30000)" }),
+			),
 			group: Type.Optional(
 				Type.String({ description: "Group name for related processes (for start, group_status)" }),
 			),
@@ -1449,6 +1492,7 @@ export default function (pi: ExtensionAPI) {
 						type: params.type as ProcessType | undefined,
 						readyPattern: params.ready_pattern,
 						readyPort: params.ready_port,
+						readyTimeout: params.ready_timeout,
 						group: params.group,
 					});
 
