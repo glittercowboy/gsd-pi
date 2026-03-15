@@ -3,6 +3,7 @@ import { homedir } from 'node:os'
 import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
 import { dirname, join, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { compareSemver } from './update-check.js'
 
 // Resolve resources directory — prefer dist/resources/ (stable, set at build time)
 // over src/resources/ (live working tree, changes with git branch).
@@ -17,6 +18,11 @@ const distResources = join(packageRoot, 'dist', 'resources')
 const srcResources = join(packageRoot, 'src', 'resources')
 const resourcesDir = existsSync(distResources) ? distResources : srcResources
 const bundledExtensionsDir = join(resourcesDir, 'extensions')
+const resourceVersionManifestName = 'managed-resources.json'
+
+interface ManagedResourceManifest {
+  gsdVersion: string
+}
 
 function isExtensionFile(name: string): boolean {
   return name.endsWith('.ts') || name.endsWith('.js')
@@ -82,6 +88,41 @@ function getExtensionKey(entryPath: string, extensionsDir: string): string {
   return relPath.split(/[\\/]/)[0]
 }
 
+function getManagedResourceManifestPath(agentDir: string): string {
+  return join(agentDir, resourceVersionManifestName)
+}
+
+function getBundledGsdVersion(): string {
+  try {
+    const pkg = JSON.parse(readFileSync(join(packageRoot, 'package.json'), 'utf-8'))
+    return typeof pkg?.version === 'string' ? pkg.version : '0.0.0'
+  } catch {
+    return process.env.GSD_VERSION || '0.0.0'
+  }
+}
+
+function writeManagedResourceManifest(agentDir: string): void {
+  const manifest: ManagedResourceManifest = { gsdVersion: getBundledGsdVersion() }
+  writeFileSync(getManagedResourceManifestPath(agentDir), JSON.stringify(manifest))
+}
+
+export function readManagedResourceVersion(agentDir: string): string | null {
+  try {
+    const manifest = JSON.parse(readFileSync(getManagedResourceManifestPath(agentDir), 'utf-8')) as ManagedResourceManifest
+    return typeof manifest?.gsdVersion === 'string' ? manifest.gsdVersion : null
+  } catch {
+    return null
+  }
+}
+
+export function getNewerManagedResourceVersion(agentDir: string, currentVersion: string): string | null {
+  const managedVersion = readManagedResourceVersion(agentDir)
+  if (!managedVersion) {
+    return null
+  }
+  return compareSemver(managedVersion, currentVersion) > 0 ? managedVersion : null
+}
+
 /**
  * Syncs all bundled resources to agentDir (~/.gsd/agent/) on every launch.
  *
@@ -116,6 +157,8 @@ export function initResources(agentDir: string): void {
   if (existsSync(srcSkills)) {
     cpSync(srcSkills, destSkills, { recursive: true, force: true })
   }
+
+  writeManagedResourceManifest(agentDir)
 }
 
 /**

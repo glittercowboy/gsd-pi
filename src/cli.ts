@@ -12,7 +12,7 @@ import {
 import { existsSync, readdirSync, renameSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { agentDir, sessionsDir, authFilePath } from './app-paths.js'
-import { initResources, buildResourceLoader } from './resource-loader.js'
+import { initResources, buildResourceLoader, getNewerManagedResourceVersion } from './resource-loader.js'
 import { ensureManagedTools } from './tool-bootstrap.js'
 import { loadStoredEnvKeys } from './wizard.js'
 import { getPiDefaultModelAndProvider, migratePiCredentials } from './pi-migration.js'
@@ -33,6 +33,26 @@ interface CliFlags {
   appendSystemPrompt?: string
   tools?: string[]
   messages: string[]
+}
+
+function exitIfManagedResourcesAreNewer(currentAgentDir: string): void {
+  const currentVersion = process.env.GSD_VERSION || '0.0.0'
+  const managedVersion = getNewerManagedResourceVersion(currentAgentDir, currentVersion)
+  if (!managedVersion) {
+    return
+  }
+
+  const yellow = '\x1b[33m'
+  const dim = '\x1b[2m'
+  const reset = '\x1b[0m'
+  const bold = '\x1b[1m'
+
+  process.stderr.write(
+    `[gsd] ${yellow}Version mismatch detected${reset}\n` +
+    `[gsd] Synced resources are from ${bold}v${managedVersion}${reset}, but this \`gsd\` binary is ${dim}v${currentVersion}${reset}.\n` +
+    `[gsd] Run ${bold}npm install -g gsd-pi@latest${reset} or ${bold}gsd update${reset}, then try again.\n`,
+  )
+  process.exit(1)
 }
 
 function parseCliArgs(argv: string[]): CliFlags {
@@ -232,6 +252,7 @@ if (isPrintMode) {
     }
   }
 
+  exitIfManagedResourcesAreNewer(agentDir)
   initResources(agentDir)
   const resourceLoader = new DefaultResourceLoader({
     agentDir,
@@ -316,6 +337,7 @@ const sessionManager = cliFlags.continue
   ? SessionManager.continueRecent(cwd, projectSessionsDir)
   : SessionManager.create(cwd, projectSessionsDir)
 
+exitIfManagedResourcesAreNewer(agentDir)
 initResources(agentDir)
 const resourceLoader = buildResourceLoader(agentDir)
 await resourceLoader.reload()
