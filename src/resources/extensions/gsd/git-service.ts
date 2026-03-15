@@ -716,6 +716,13 @@ export class GitServiceImpl {
     const wtName = detectWorktreeName(this.basePath);
     const branch = getSliceBranchName(milestoneId, sliceId, wtName);
 
+    if (branch === mainBranch) {
+      throw new Error(
+        `Refusing to merge "${branch}" into itself — getMainBranch() resolved to a slice branch. ` +
+        `Fix the remote HEAD with: git remote set-head origin main`,
+      );
+    }
+
     if (!this.branchExists(branch)) {
       throw new Error(
         `Slice branch "${branch}" does not exist. Nothing to merge.`,

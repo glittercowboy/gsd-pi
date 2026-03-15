@@ -10,6 +10,30 @@ use git2::{Repository, StatusOptions};
 use napi::bindgen_prelude::*;
 use napi_derive::napi;
 
+fn is_gsd_slice_branch(branch: &str) -> bool {
+    let mut parts = branch.split('/');
+    if parts.next() != Some("gsd") {
+        return false;
+    }
+
+    let second = match parts.next() {
+        Some(value) => value,
+        None => return false,
+    };
+
+    let (milestone, slice) = if second.starts_with('M') {
+        (second, parts.next())
+    } else {
+        let milestone = match parts.next() {
+            Some(value) => value,
+            None => return false,
+        };
+        (milestone, parts.next())
+    };
+
+    milestone.starts_with('M') && slice.map(|value| value.starts_with('S')).unwrap_or(false)
+}
+
 /// Open a git repository at the given path.
 fn open_repo(repo_path: &str) -> Result<Repository> {
     Repository::open(repo_path).map_err(|e| {
@@ -59,7 +83,9 @@ pub fn git_main_branch(repo_path: String) -> Result<String> {
         if let Ok(resolved) = reference.resolve() {
             if let Some(name) = resolved.name() {
                 if let Some(branch) = name.strip_prefix("refs/remotes/origin/") {
-                    return Ok(branch.to_string());
+                    if !is_gsd_slice_branch(branch) {
+                        return Ok(branch.to_string());
+                    }
                 }
             }
         }

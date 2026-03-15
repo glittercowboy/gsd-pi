@@ -27,6 +27,9 @@ let nativeModule: {
 
 let loadAttempted = false;
 
+// Keep native main-branch detection independent from worktree.ts to avoid a circular import.
+const GSD_SLICE_BRANCH_RE = /^gsd\/(?:[a-zA-Z0-9_-]+\/)?M\d+(?:-[a-z0-9]{6})?\/S\d+$/;
+
 function loadNative(): typeof nativeModule {
   if (loadAttempted) return nativeModule;
   loadAttempted = true;
@@ -85,14 +88,18 @@ export function nativeGetCurrentBranch(basePath: string): string {
 export function nativeDetectMainBranch(basePath: string): string {
   const native = loadNative();
   if (native) {
-    return native.gitMainBranch(basePath);
+    const nativeBranch = native.gitMainBranch(basePath);
+    if (!GSD_SLICE_BRANCH_RE.test(nativeBranch)) {
+      return nativeBranch;
+    }
   }
 
   // Fallback: same logic as GitServiceImpl.getMainBranch() repo-level detection
   const symbolic = gitExec(basePath, ["symbolic-ref", "refs/remotes/origin/HEAD"], true);
   if (symbolic) {
     const match = symbolic.match(/refs\/remotes\/origin\/(.+)$/);
-    if (match) return match[1]!;
+    const branch = match?.[1];
+    if (branch && !GSD_SLICE_BRANCH_RE.test(branch)) return branch;
   }
 
   const mainExists = gitExec(basePath, ["show-ref", "--verify", "refs/heads/main"], true);

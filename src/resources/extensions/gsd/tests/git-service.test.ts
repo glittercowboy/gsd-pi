@@ -1033,6 +1033,30 @@ async function main(): Promise<void> {
     rmSync(repo, { recursive: true, force: true });
   }
 
+  // ─── mergeSliceToMain: error — refuses self-merge ─────────────────────
+
+  {
+    const repo = initBranchTestRepo();
+    const svc = new GitServiceImpl(repo, { main_branch: "gsd/M001/S01" });
+
+    svc.ensureSliceBranch("M001", "S01");
+    createFile(repo, "src/work.ts", "work");
+    svc.commit({ message: "slice work" });
+
+    let threw = false;
+    try {
+      svc.mergeSliceToMain("M001", "S01", "Some feature");
+    } catch (e) {
+      threw = true;
+      const msg = (e as Error).message;
+      assertTrue(msg.includes('Refusing to merge "gsd/M001/S01" into itself'), "error mentions self-merge refusal");
+      assertTrue(msg.includes("git remote set-head origin main"), "error includes remediation command");
+    }
+    assertTrue(threw, "mergeSliceToMain throws when main branch resolves to the slice branch");
+
+    rmSync(repo, { recursive: true, force: true });
+  }
+
   // ─── mergeSliceToMain: auto-resolve .gsd/ planning artifact conflicts ──
 
   console.log("\n=== mergeSliceToMain: auto-resolve .gsd/ planning conflicts ===");
@@ -1464,6 +1488,37 @@ async function main(): Promise<void> {
     assertEq(svc.getMainBranch(), "main", "getMainBranch falls back to auto-detection when main_branch not set");
 
     rmSync(repo, { recursive: true, force: true });
+  }
+
+  // ─── getMainBranch: ignores slice branch from origin/HEAD ─────────────
+
+  console.log("\n=== getMainBranch: ignores slice branch from origin/HEAD ===");
+
+  {
+    const bareDir = mkdtempSync(join(tmpdir(), "gsd-git-bare-"));
+    run("git init --bare -b main", bareDir);
+
+    const repo = initBranchTestRepo();
+    run(`git remote add origin ${bareDir}`, repo);
+    run("git push -u origin main", repo);
+
+    const svc = new GitServiceImpl(repo);
+    svc.ensureSliceBranch("M001", "S01");
+    createFile(repo, "src/slice.ts", "export const slice = true;");
+    svc.commit({ message: "slice work" });
+    run("git push -u origin gsd/M001/S01", repo);
+    svc.switchToMain();
+
+    run("git symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/gsd/M001/S01", repo);
+
+    assertEq(
+      svc.getMainBranch(),
+      "main",
+      "getMainBranch ignores origin/HEAD when it points at a slice branch",
+    );
+
+    rmSync(repo, { recursive: true, force: true });
+    rmSync(bareDir, { recursive: true, force: true });
   }
 
   // ─── getMainBranch: ignores invalid branch names ───────────────────────

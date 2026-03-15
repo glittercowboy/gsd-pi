@@ -19,6 +19,8 @@ import { existsSync, mkdirSync, realpathSync } from "node:fs";
 import { execSync } from "node:child_process";
 import { join, resolve, sep } from "node:path";
 
+const GSD_SLICE_BRANCH_RE = /^gsd\/(?:[a-zA-Z0-9_-]+\/)?M\d+(?:-[a-z0-9]{6})?\/S\d+$/;
+
 // ─── Types ─────────────────────────────────────────────────────────────────
 
 export interface WorktreeInfo {
@@ -94,7 +96,8 @@ export function getMainBranch(basePath: string): string {
   const symbolic = runGit(basePath, ["symbolic-ref", "refs/remotes/origin/HEAD"], { allowFailure: true });
   if (symbolic) {
     const match = symbolic.match(/refs\/remotes\/origin\/(.+)$/);
-    if (match) return match[1]!;
+    const branch = match?.[1];
+    if (branch && !GSD_SLICE_BRANCH_RE.test(branch)) return branch;
   }
   if (runGit(basePath, ["show-ref", "--verify", "refs/heads/main"], { allowFailure: true })) return "main";
   if (runGit(basePath, ["show-ref", "--verify", "refs/heads/master"], { allowFailure: true })) return "master";
