@@ -37,6 +37,7 @@ let pendingAutoStart: {
   basePath: string;
   milestoneId: string; // the milestone being discussed
   step?: boolean; // preserve step mode through discuss → auto transition
+  waitFor?: "context" | "roadmap"; // which artifact to wait for before starting auto
 } | null = null;
 
 /** Returns the milestoneId being discussed, or null if no discussion is active */
@@ -48,7 +49,16 @@ export function getDiscussionMilestoneId(): string | null {
 export function checkAutoStartAfterDiscuss(): boolean {
   if (!pendingAutoStart) return false;
 
-  const { ctx, pi, basePath, milestoneId, step } = pendingAutoStart;
+  const { ctx, pi, basePath, milestoneId, step, waitFor } = pendingAutoStart;
+
+  if (waitFor === "roadmap") {
+    const roadmapFile = resolveMilestoneFile(basePath, milestoneId, "ROADMAP");
+    if (!roadmapFile) return false; // no roadmap yet — keep waiting
+
+    pendingAutoStart = null;
+    startAuto(ctx, pi, basePath, false, { step }).catch(() => {});
+    return true;
+  }
 
   // Don't fire until the discuss phase has actually produced a context file
   // for the milestone being discussed. agent_end fires after every LLM turn,
@@ -815,6 +825,7 @@ export async function showSmartEntry(
           inlineTemplate("secrets-manifest", "Secrets Manifest"),
         ].join("\n\n---\n\n");
         const secretsOutputPath = relMilestoneFile(basePath, milestoneId, "SECRETS");
+        pendingAutoStart = { ctx, pi, basePath, milestoneId, step: stepMode, waitFor: "roadmap" };
         dispatchWorkflow(pi, loadPrompt("guided-plan-milestone", {
           milestoneId, milestoneTitle, secretsOutputPath, inlinedTemplates: planMilestoneTemplates,
         }));
