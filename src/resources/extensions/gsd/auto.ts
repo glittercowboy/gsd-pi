@@ -18,7 +18,7 @@ import type {
 
 import { deriveState, invalidateStateCache } from "./state.js";
 import type { BudgetEnforcementMode, GSDState } from "./types.js";
-import { loadFile, parseRoadmap, getManifestStatus, clearParseCache } from "./files.js";
+import { loadFile, parseRoadmap, getManifestStatus } from "./files.js";
 export { inlinePriorMilestoneSummary } from "./files.js";
 import { collectSecretsFromManifest } from "../get-secrets-from-user.js";
 import {
@@ -27,8 +27,8 @@ import {
   relMilestoneFile, relSliceFile, relSlicePath, relMilestonePath,
   milestonesDir,
   buildMilestoneFileName, buildSliceFileName, buildTaskFileName,
-  clearPathCache,
 } from "./paths.js";
+import { invalidateAllCaches } from "./cache.js";
 import { saveActivityLog } from "./activity-log.js";
 import { synthesizeCrashRecovery, getDeepDiagnostic } from "./session-forensics.js";
 import { writeLock, clearLock, readCrashLock, formatCrashInfo, isLockProcessAlive } from "./crash-recovery.js";
@@ -505,9 +505,7 @@ export async function startAuto(
     } catch { /* non-fatal */ }
     // Self-heal: clear stale runtime records where artifacts already exist
     await selfHealRuntimeRecords(base, ctx, completedKeySet);
-    invalidateStateCache();
-    clearParseCache();
-    clearPathCache();
+    invalidateAllCaches();
     await dispatchNextUnit(ctx, pi);
     return;
   }
@@ -776,11 +774,9 @@ export async function handleAgentEnd(
   // Unit completed — clear its timeout
   clearUnitTimeout();
 
-  // Invalidate deriveState() cache — the unit just completed and may have
+  // Invalidate all caches — the unit just completed and may have
   // written planning files (task summaries, roadmap checkboxes, etc.)
-  invalidateStateCache();
-  clearParseCache();
-  clearPathCache();
+  invalidateAllCaches();
 
   // Small delay to let files settle (git commits, file writes)
   await new Promise(r => setTimeout(r, 500));
@@ -1133,11 +1129,10 @@ async function dispatchNextUnit(
     await new Promise(r => setTimeout(r, 200));
   }
 
-  // Clear stale directory listing cache so deriveState sees fresh disk state (#431)
-  clearPathCache();
-  // Clear parsed roadmap/plan cache — doctor may have re-populated it with
+  // Clear all caches so deriveState sees fresh disk state (#431).
+  // Parse cache is also cleared — doctor may have re-populated it with
   // stale data between handleAgentEnd and this dispatch call (Path B fix).
-  clearParseCache();
+  invalidateAllCaches();
 
   let state = await deriveState(basePath);
   let mid = state.activeMilestone?.id;
@@ -1184,9 +1179,7 @@ async function dispatchNextUnit(
 
   // ── Mid-merge safety check: detect leftover merge state from a prior session ──
   if (reconcileMergeState(basePath, ctx)) {
-    invalidateStateCache();
-    clearParseCache();
-    clearPathCache();
+    invalidateAllCaches();
     state = await deriveState(basePath);
     mid = state.activeMilestone?.id;
     midTitle = state.activeMilestone?.title;
