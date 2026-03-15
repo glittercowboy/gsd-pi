@@ -57,7 +57,7 @@ This milestone is complete only when all are true:
 
 ## Slices
 
-- [ ] **S01: DB Foundation + Decisions + Requirements** `risk:high` `depends:[]`
+- [x] **S01: DB Foundation + Decisions + Requirements** `risk:high` `depends:[]`
   > After this: SQLite DB opens with schema, decisions and requirements tables populated, active_decisions and active_requirements views return correct filtered subsets. Graceful fallback tested — system works without better-sqlite3.
 
 - [ ] **S02: Markdown Importers + Auto-Migration** `risk:medium` `depends:[S01]`

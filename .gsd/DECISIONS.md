@@ -15,3 +15,5 @@
 | D007 | M001 | convention | DB inspection | /gsd inspect slash command inside pi | Slash command, not standalone CLI. Dumps table counts, recent entries, schema version. | No |
 | D008 | M001 | arch | SQLite journal mode | WAL (Write-Ahead Logging) | Faster for read-heavy workload, allows concurrent readers. Standard best practice. | No |
 | D009 | M001 | arch | Migration UX | Silent auto-migration on first run | Zero friction. Detect markdown files without gsd.db → import atomically → log one-line summary. | No |
+| D010 | M001/S01 | library | SQLite provider strategy (amends D001) | node:sqlite → better-sqlite3 → markdown (tiered fallback) | node:sqlite available on Node 22.20.0 with full sync API (DatabaseSync), zero dependencies, no native addon. better-sqlite3 retained as fallback for Node <22.5.0. Thin abstraction layer (~80 LOC) hides provider choice. | No |
+| D011 | M001/S01 | impl | Module loading in ESM context | createRequire(import.meta.url) instead of bare require() | Files loaded via --experimental-strip-types run as ESM where require() is undefined. createRequire provides CJS require in ESM. Discovered during T01 test failures. | No |

@@ -1727,7 +1727,7 @@ async function main(): Promise<void> {
     rmSync(repo, { recursive: true, force: true });
   }
 
-  // ─── untrackRuntimeFiles: removes tracked runtime files from index ───
+  // ─── untrackRuntimeFiles: removes all tracked .gsd/ files from index ───
 
   console.log("\n=== untrackRuntimeFiles ===");
 
@@ -1738,43 +1738,133 @@ async function main(): Promise<void> {
     run("git config user.email test@test.com", repo);
     run("git config user.name Test", repo);
 
-    // Create and track runtime files (simulates pre-.gitignore state)
+    // Create and track runtime + durable .gsd/ files (simulates pre-.gitignore state)
     mkdirSync(join(repo, ".gsd", "activity"), { recursive: true });
     mkdirSync(join(repo, ".gsd", "runtime"), { recursive: true });
+    mkdirSync(join(repo, ".gsd", "milestones"), { recursive: true });
     writeFileSync(join(repo, ".gsd", "completed-units.json"), '["u1"]');
     writeFileSync(join(repo, ".gsd", "metrics.json"), '{}');
     writeFileSync(join(repo, ".gsd", "STATE.md"), "# State");
+    writeFileSync(join(repo, ".gsd", "PROJECT.md"), "# Project");
     writeFileSync(join(repo, ".gsd", "activity", "log.jsonl"), "{}");
     writeFileSync(join(repo, ".gsd", "runtime", "data.json"), "{}");
     writeFileSync(join(repo, "src.ts"), "code");
     run("git add -A", repo);
     run("git commit -m init", repo);
 
-    // Precondition: runtime files are tracked
+    // Precondition: .gsd/ files are tracked
     const trackedBefore = run("git ls-files .gsd/", repo);
     assertTrue(trackedBefore.includes("completed-units.json"), "untrack: precondition — completed-units tracked");
-    assertTrue(trackedBefore.includes("metrics.json"), "untrack: precondition — metrics tracked");
+    assertTrue(trackedBefore.includes("PROJECT.md"), "untrack: precondition — PROJECT.md tracked");
 
     // Run untrackRuntimeFiles
     untrackRuntimeFiles(repo);
 
-    // Runtime files should be removed from the index
+    // ALL .gsd/ files should be removed from the index (branch-transparent)
     const trackedAfter = run("git ls-files .gsd/", repo);
-    assertEq(trackedAfter, "", "untrack: all runtime files removed from index");
+    assertEq(trackedAfter, "", "untrack: all .gsd/ files removed from index");
 
-    // Non-runtime files remain tracked
+    // Non-.gsd/ files remain tracked
     const srcTracked = run("git ls-files src.ts", repo);
-    assertTrue(srcTracked.includes("src.ts"), "untrack: non-runtime files remain tracked");
+    assertTrue(srcTracked.includes("src.ts"), "untrack: non-.gsd/ files remain tracked");
 
     // Files still exist on disk
     assertTrue(existsSync(join(repo, ".gsd", "completed-units.json")),
       "untrack: completed-units.json still on disk");
-    assertTrue(existsSync(join(repo, ".gsd", "metrics.json")),
-      "untrack: metrics.json still on disk");
+    assertTrue(existsSync(join(repo, ".gsd", "PROJECT.md")),
+      "untrack: PROJECT.md still on disk");
 
     // Idempotent — running again doesn't error
     untrackRuntimeFiles(repo);
     assertTrue(true, "untrack: second call is idempotent (no error)");
+
+    rmSync(repo, { recursive: true, force: true });
+  }
+
+  // ─── migrateGsdToUntracked: one-time migration to branch-transparent ───
+
+  console.log("\n=== migrateGsdToUntracked ===");
+
+  {
+    const { migrateGsdToUntracked } = await import("../gitignore.ts");
+    const repo = mkdtempSync(join(tmpdir(), "gsd-migrate-"));
+    run("git init -b main", repo);
+    run("git config user.email test@test.com", repo);
+    run("git config user.name Test", repo);
+
+    // Create a repo with .gsd/ files tracked (pre-migration state)
+    mkdirSync(join(repo, ".gsd", "milestones", "M001"), { recursive: true });
+    mkdirSync(join(repo, ".gsd", "runtime"), { recursive: true });
+    mkdirSync(join(repo, ".gsd", "activity"), { recursive: true });
+    writeFileSync(join(repo, ".gsd", "PROJECT.md"), "# Project");
+    writeFileSync(join(repo, ".gsd", "DECISIONS.md"), "# Decisions");
+    writeFileSync(join(repo, ".gsd", "STATE.md"), "# State");
+    writeFileSync(join(repo, ".gsd", "milestones", "M001", "M001-ROADMAP.md"), "# Roadmap");
+    writeFileSync(join(repo, ".gsd", "runtime", "data.json"), "{}");
+    writeFileSync(join(repo, ".gsd", "activity", "log.jsonl"), "{}");
+    writeFileSync(join(repo, "src.ts"), "code");
+    run("git add -A", repo);
+    run("git commit -m init", repo);
+
+    // Precondition: .gsd/ files are tracked
+    const before = run("git ls-files .gsd/", repo);
+    assertTrue(before.includes("STATE.md"), "migrate: precondition — STATE.md tracked");
+    assertTrue(before.includes("runtime/data.json"), "migrate: precondition — runtime tracked");
+    assertTrue(before.includes("PROJECT.md"), "migrate: precondition — PROJECT.md tracked");
+
+    // Run migration
+    const result = migrateGsdToUntracked(repo);
+    assertTrue(result, "migrate: returned true (migration ran)");
+
+    // After migration: only durable paths should be tracked
+    const after = run("git ls-files .gsd/", repo);
+    assertTrue(after.includes("PROJECT.md"), "migrate: PROJECT.md still tracked");
+    assertTrue(after.includes("DECISIONS.md"), "migrate: DECISIONS.md still tracked");
+    assertTrue(after.includes("milestones/"), "migrate: milestones/ still tracked");
+    assertTrue(!after.includes("STATE.md"), "migrate: STATE.md no longer tracked");
+    assertTrue(!after.includes("runtime/"), "migrate: runtime/ no longer tracked");
+    assertTrue(!after.includes("activity/"), "migrate: activity/ no longer tracked");
+
+    // Files still on disk
+    assertTrue(existsSync(join(repo, ".gsd", "STATE.md")), "migrate: STATE.md still on disk");
+    assertTrue(existsSync(join(repo, ".gsd", "runtime", "data.json")), "migrate: runtime still on disk");
+
+    // Flag file exists
+    assertTrue(existsSync(join(repo, ".gsd", "runtime", ".migrated-untracked")),
+      "migrate: flag file created");
+
+    // Idempotent — second call returns false
+    const result2 = migrateGsdToUntracked(repo);
+    assertTrue(!result2, "migrate: second call returns false (already migrated)");
+
+    // Commit was created
+    const log = run("git log --oneline", repo);
+    assertTrue(log.includes("branch-transparent"), "migrate: commit message contains 'branch-transparent'");
+
+    rmSync(repo, { recursive: true, force: true });
+  }
+
+  // ─── migrateGsdToUntracked: no-op when nothing tracked ───
+
+  console.log("\n=== migrateGsdToUntracked (no-op) ===");
+
+  {
+    const { migrateGsdToUntracked } = await import("../gitignore.ts");
+    const repo = mkdtempSync(join(tmpdir(), "gsd-migrate-noop-"));
+    run("git init -b main", repo);
+    run("git config user.email test@test.com", repo);
+    run("git config user.name Test", repo);
+    writeFileSync(join(repo, "src.ts"), "code");
+    run("git add -A", repo);
+    run("git commit -m init", repo);
+
+    // No .gsd/ files tracked
+    const result = migrateGsdToUntracked(repo);
+    assertTrue(!result, "migrate-noop: returned false (nothing to migrate)");
+
+    // Flag file still created
+    assertTrue(existsSync(join(repo, ".gsd", "runtime", ".migrated-untracked")),
+      "migrate-noop: flag file created even when nothing to migrate");
 
     rmSync(repo, { recursive: true, force: true });
   }

@@ -7,7 +7,7 @@
  */
 
 import { join } from "node:path";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { execSync } from "node:child_process";
 
 /**
@@ -15,14 +15,12 @@ import { execSync } from "node:child_process";
  * No one ever wants these tracked.
  */
 const BASELINE_PATTERNS = [
-  // ── GSD runtime (not source artifacts) ──
-  ".gsd/activity/",
-  ".gsd/runtime/",
-  ".gsd/worktrees/",
-  ".gsd/auto.lock",
-  ".gsd/metrics.json",
-  ".gsd/completed-units.json",
-  ".gsd/STATE.md",
+  // ── GSD (branch-transparent — all .gsd/ lives untracked) ──
+  ".gsd/",
+  // DB sidecar files — explicit for envs where .gsd/ paths are force-added
+  ".gsd/gsd.db",
+  ".gsd/gsd.db-wal",
+  ".gsd/gsd.db-shm",
 
   // ── OS junk ──
   ".DS_Store",
@@ -108,29 +106,127 @@ export function ensureGitignore(basePath: string): boolean {
 }
 
 /**
- * Remove BASELINE_PATTERNS runtime paths from the git index if they are
- * currently tracked. This fixes repos that started tracking these files
- * before the .gitignore rule was added — git continues tracking files
- * already in the index even after .gitignore is updated.
+ * Remove .gsd/ files from the git index if they are currently tracked.
+ * Since .gsd/ is now fully gitignored (branch-transparent), ALL .gsd/
+ * files should be untracked. This fixes repos that started tracking
+ * these files before the blanket .gitignore rule was added.
  *
  * Only removes from the index (`--cached`), never from disk. Idempotent.
  */
 export function untrackRuntimeFiles(basePath: string): void {
-  // The GSD runtime paths are the first 7 entries in BASELINE_PATTERNS
-  const runtimePaths = BASELINE_PATTERNS.slice(0, 7);
+  try {
+    execSync("git rm -r --cached .gsd/", {
+      cwd: basePath,
+      stdio: ["ignore", "ignore", "ignore"],
+    });
+  } catch {
+    // Nothing tracked under .gsd/ — expected, ignore
+  }
+}
 
-  for (const pattern of runtimePaths) {
-    // Use -r for directory patterns (trailing slash), strip the slash for the command
-    const target = pattern.endsWith("/") ? pattern.slice(0, -1) : pattern;
+/**
+ * GSD durable planning artifact paths that must be force-added back to the
+ * git index even though .gsd/ is gitignored. These are committed on the
+ * integration branch (main) so they survive squash-merges.
+ *
+ * Mirrors GSD_DURABLE_PATHS in git-service.ts.
+ */
+const MIGRATION_DURABLE_PATHS: readonly string[] = [
+  ".gsd/milestones/",
+  ".gsd/DECISIONS.md",
+  ".gsd/QUEUE.md",
+  ".gsd/PROJECT.md",
+  ".gsd/REQUIREMENTS.md",
+];
+
+/** Flag file path — presence means migration already ran. */
+const MIGRATION_FLAG = ".gsd/runtime/.migrated-untracked";
+
+/**
+ * One-time migration: make .gsd/ branch-transparent by removing all .gsd/
+ * files from the git index, then force-adding only durable planning paths.
+ *
+ * Steps:
+ * 1. Check flag file — skip if already migrated
+ * 2. Check if any .gsd/ files are in the git index
+ * 3. `git rm -r --cached .gsd/` to untrack everything
+ * 4. Force-add GSD_DURABLE_PATHS back (only existing files)
+ * 5. Commit: "chore: make .gsd/ branch-transparent (untrack from git index)"
+ * 6. Write flag file so migration doesn't run again
+ *
+ * Idempotent: no-ops if flag exists or nothing is tracked.
+ */
+export function migrateGsdToUntracked(basePath: string): boolean {
+  const flagPath = join(basePath, MIGRATION_FLAG);
+
+  // Already migrated — skip
+  if (existsSync(flagPath)) return false;
+
+  // Step 1: Check if any .gsd/ files are in the git index
+  let trackedFiles = "";
+  try {
+    trackedFiles = execSync("git ls-files --cached .gsd/", {
+      cwd: basePath,
+      stdio: ["ignore", "pipe", "ignore"],
+      encoding: "utf-8",
+    }).trim();
+  } catch {
+    // Not a git repo or no tracked files — write flag and skip
+    writeMigrationFlag(basePath, flagPath);
+    return false;
+  }
+
+  if (!trackedFiles) {
+    // Nothing tracked under .gsd/ — already clean
+    writeMigrationFlag(basePath, flagPath);
+    return false;
+  }
+
+  // Step 2: Untrack everything under .gsd/
+  try {
+    execSync("git rm -r --cached .gsd/", {
+      cwd: basePath,
+      stdio: ["ignore", "ignore", "ignore"],
+    });
+  } catch {
+    // Failed to untrack — don't commit partial state
+    return false;
+  }
+
+  // Step 3: Force-add only durable planning paths back
+  for (const durablePath of MIGRATION_DURABLE_PATHS) {
     try {
-      execSync(`git rm -r --cached ${target}`, {
+      execSync(`git add --force -- ${durablePath}`, {
         cwd: basePath,
         stdio: ["ignore", "ignore", "ignore"],
       });
     } catch {
-      // File not tracked or doesn't exist — expected, ignore
+      // Path doesn't exist or nothing to add — fine
     }
   }
+
+  // Step 4: Commit
+  try {
+    execSync(
+      'git commit --no-verify -m "chore: make .gsd/ branch-transparent (untrack from git index)"',
+      {
+        cwd: basePath,
+        stdio: ["ignore", "ignore", "ignore"],
+      },
+    );
+  } catch {
+    // Nothing to commit (all durable paths were already the same) — fine
+  }
+
+  // Step 5: Write flag file
+  writeMigrationFlag(basePath, flagPath);
+  return true;
+}
+
+function writeMigrationFlag(basePath: string, flagPath: string): void {
+  const flagDir = join(basePath, ".gsd", "runtime");
+  mkdirSync(flagDir, { recursive: true });
+  writeFileSync(flagPath, new Date().toISOString() + "\n", "utf-8");
 }
 
 /**
@@ -197,4 +293,3 @@ custom_instructions:
   writeFileSync(preferencesPath, template, "utf-8");
   return true;
 }
-

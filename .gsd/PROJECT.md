@@ -10,7 +10,7 @@ Selective context injection: the TS system becomes the context curator, using it
 
 ## Current State
 
-Not yet built. GSD currently stores all state as markdown files and loads them in full via `inlineGsdRootFile()`. The existing parsers (`parseRoadmap`, `parsePlan`, `parseSummary`, etc.) in `files.ts` handle all markdown parsing. The dispatch system in `auto.ts` builds prompts via `build*Prompt()` functions that inline entire files. State derivation in `state.ts` scans the `.gsd/` file tree on every call.
+S01 (DB Foundation + Decisions + Requirements) is complete. The SQLite abstraction layer (`gsd-db.ts`) and context store query layer (`context-store.ts`) are built, tested (88 assertions), and ready for consumption by downstream slices. Provider chain uses `node:sqlite` on Node 22+, falls back to `better-sqlite3`, then null. Schema has `decisions`, `requirements`, and `schema_version` tables with `active_decisions` and `active_requirements` views. Typed CRUD wrappers, filtered query functions, and markdown formatters are all in place. Graceful fallback ensures no crash when DB unavailable. DB sidecar files gitignored.
 
 ## Architecture / Key Patterns
 

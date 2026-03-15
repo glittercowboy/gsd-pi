@@ -22,8 +22,8 @@ Guidelines:
 - Source: user
 - Primary owning slice: M001/S01
 - Supporting slices: none
-- Validation: unmapped
-- Notes: WAL mode enabled. Schema version tracked in `schema_version` table.
+- Validation: S01 — DB opens, schema inits with version table, typed wrappers work. Forward-only migration path untested (only version 1 exists).
+- Notes: WAL mode enabled. Schema version tracked in `schema_version` table. Provider chain: node:sqlite → better-sqlite3 → null (D010).
 
 ### R002 — Graceful fallback to markdown if better-sqlite3 unavailable
 - Class: failure-visibility
@@ -33,7 +33,7 @@ Guidelines:
 - Source: user
 - Primary owning slice: M001/S01
 - Supporting slices: M001/S03
-- Validation: unmapped
+- Validation: S01 — query/format functions return empty when DB unavailable, no crash. S03 must complete prompt builder fallback.
 - Notes: Fallback is transparent — same prompt output, just without token savings
 
 ### R003 — Markdown importers for all artifact types
@@ -66,7 +66,7 @@ Guidelines:
 - Source: user
 - Primary owning slice: M001/S01
 - Supporting slices: M001/S03
-- Validation: unmapped
+- Validation: S01 — queryDecisions with milestone/scope filters verified, superseded exclusion tested. S03 must wire into prompt builders.
 - Notes: Query patterns: planning gets milestone + global + architecture scope; task execution gets slice + architecture only
 
 ### R006 — Selective context queries for requirements
@@ -77,7 +77,7 @@ Guidelines:
 - Source: user
 - Primary owning slice: M001/S01
 - Supporting slices: M001/S03
-- Validation: unmapped
+- Validation: S01 — queryRequirements with slice/status filters verified, superseded exclusion tested. S03 must wire into prompt builders.
 - Notes: Query patterns: planning gets all non-superseded; task execution gets only active mapped to current slice
 
 ### R007 — Context store query layer for all dispatch unit types
@@ -192,14 +192,14 @@ Guidelines:
 
 ### R017 — Sub-5ms query latency
 - Class: quality-attribute
-- Status: active
+- Status: validated
 - Description: All context store queries complete in <5ms on local disk
 - Why it matters: Must feel instant — no perceptible delay in prompt building
 - Source: user
 - Primary owning slice: M001/S01
 - Supporting slices: none
-- Validation: unmapped
-- Notes: SQLite on local disk with WAL mode — this should be trivially achievable
+- Validation: S01 — 50 decisions + 50 requirements queried in 0.62ms. Test assertion enforces <5ms.
+- Notes: SQLite on local disk with WAL mode. Validated by context-store.test.ts timing assertion.
 
 ### R018 — 100% migration fidelity
 - Class: quality-attribute
@@ -225,29 +225,39 @@ Guidelines:
 
 ### R020 — WAL mode enabled
 - Class: quality-attribute
-- Status: active
+- Status: validated
 - Description: SQLite database opened with WAL (Write-Ahead Logging) mode for concurrent read performance
 - Why it matters: WAL allows concurrent readers without blocking, and is faster for the read-heavy workload
 - Source: inferred
 - Primary owning slice: M001/S01
 - Supporting slices: none
-- Validation: unmapped
+- Validation: S01 — PRAGMA journal_mode returns 'wal' on file-backed DB. Test assertion in gsd-db.test.ts confirms.
 - Notes: `PRAGMA journal_mode=WAL` on database open
 
 ### R021 — Schema designed for future vector search
 - Class: constraint
-- Status: active
+- Status: validated
 - Description: Schema uses stable PKs and structures that allow a future Rust crate to add embedding virtual tables to the same gsd.db without schema conflicts
 - Why it matters: Phase 4 (vector search) must be able to bolt on without schema rewrites
 - Source: user
 - Primary owning slice: M001/S01
 - Supporting slices: none
-- Validation: unmapped
+- Validation: S01 — Decisions use auto-increment `seq` PK, requirements use stable `id` PK. Schema structure verified in tests.
 - Notes: Decisions use auto-increment `seq` as PK; requirements use stable `id` (R001, R002, ...). Both are joinable by future embedding tables.
 
 ## Validated
 
-(none yet)
+### R017 — Sub-5ms query latency
+- Validated by: M001/S01
+- Proof: 50 decisions + 50 requirements queried in 0.62ms. Test assertion in context-store.test.ts enforces <5ms.
+
+### R020 — WAL mode enabled
+- Validated by: M001/S01
+- Proof: PRAGMA journal_mode returns 'wal' on file-backed DB. Test assertion in gsd-db.test.ts confirms.
+
+### R021 — Schema designed for future vector search
+- Validated by: M001/S01
+- Proof: Decisions use auto-increment `seq` PK, requirements use stable `id` PK. Schema structure verified in gsd-db.test.ts.
 
 ## Deferred
 
@@ -334,12 +344,12 @@ Guidelines:
 
 | ID | Class | Status | Primary owner | Supporting | Proof |
 |---|---|---|---|---|---|
-| R001 | core-capability | active | M001/S01 | none | unmapped |
-| R002 | failure-visibility | active | M001/S01 | M001/S03 | unmapped |
+| R001 | core-capability | active | M001/S01 | none | S01 partial |
+| R002 | failure-visibility | active | M001/S01 | M001/S03 | S01 partial |
 | R003 | core-capability | active | M001/S02 | none | unmapped |
 | R004 | primary-user-loop | active | M001/S02 | none | unmapped |
-| R005 | core-capability | active | M001/S01 | M001/S03 | unmapped |
-| R006 | core-capability | active | M001/S01 | M001/S03 | unmapped |
+| R005 | core-capability | active | M001/S01 | M001/S03 | S01 partial |
+| R006 | core-capability | active | M001/S01 | M001/S03 | S01 partial |
 | R007 | core-capability | active | M001/S03 | none | unmapped |
 | R008 | core-capability | active | M001/S03 | none | unmapped |
 | R009 | continuity | active | M001/S03 | M001/S06 | unmapped |
@@ -350,11 +360,11 @@ Guidelines:
 | R014 | core-capability | active | M001/S06 | none | unmapped |
 | R015 | operability | active | M001/S06 | none | unmapped |
 | R016 | quality-attribute | active | M001/S04 | M001/S03, M001/S07 | unmapped |
-| R017 | quality-attribute | active | M001/S01 | none | unmapped |
+| R017 | quality-attribute | validated | M001/S01 | none | S01 validated |
 | R018 | quality-attribute | active | M001/S02 | none | unmapped |
 | R019 | quality-attribute | active | M001/S04 | M001/S07 | unmapped |
-| R020 | quality-attribute | active | M001/S01 | none | unmapped |
-| R021 | constraint | active | M001/S01 | none | unmapped |
+| R020 | quality-attribute | validated | M001/S01 | none | S01 validated |
+| R021 | constraint | validated | M001/S01 | none | S01 validated |
 | R030 | differentiator | deferred | none | none | unmapped |
 | R031 | operability | deferred | none | none | unmapped |
 | R040 | anti-feature | out-of-scope | none | none | n/a |
@@ -365,7 +375,7 @@ Guidelines:
 
 ## Coverage Summary
 
-- Active requirements: 21
-- Mapped to slices: 21
-- Validated: 0
+- Active requirements: 18
+- Mapped to slices: 18
+- Validated: 3 (R017, R020, R021)
 - Unmapped active requirements: 0
