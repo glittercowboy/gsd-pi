@@ -112,7 +112,7 @@ test('resolveSearchProvider returns null when neither key is set', async () => {
   const { resolveSearchProvider } = await import(
     '../resources/extensions/search-the-web/provider.ts'
   )
-  withEnv({ TAVILY_API_KEY: undefined, BRAVE_API_KEY: undefined }, () => {
+  withEnv({ TAVILY_API_KEY: undefined, BRAVE_API_KEY: undefined, OLLAMA_API_KEY: undefined }, () => {
     const result = resolveSearchProvider('auto')
     assert.equal(result, null)
   })
@@ -245,7 +245,7 @@ test('getBraveApiKey reads from process.env.BRAVE_API_KEY', async () => {
 // 4. Boundary contract — S01→S02 public API surface
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('provider.ts exports exactly the 5 expected functions', async () => {
+test('provider.ts exports exactly the 6 expected functions', async () => {
   const provider = await import(
     '../resources/extensions/search-the-web/provider.ts'
   )
@@ -254,6 +254,7 @@ test('provider.ts exports exactly the 5 expected functions', async () => {
     'resolveSearchProvider',
     'getTavilyApiKey',
     'getBraveApiKey',
+    'getOllamaApiKey',
     'getSearchProviderPreference',
     'setSearchProviderPreference',
   ] as const
@@ -270,6 +271,6 @@ test('provider.ts exports exactly the 5 expected functions', async () => {
   assert.deepEqual(
     actualFunctions.sort(),
     [...expectedExports].sort(),
-    'provider.ts should export exactly the 5 expected functions (no extra function exports)',
+    'provider.ts should export exactly the 6 expected functions (no extra function exports)',
   )
 })

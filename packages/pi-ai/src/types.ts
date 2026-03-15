@@ -40,7 +40,8 @@ export type KnownProvider =
 	| "opencode"
 	| "opencode-go"
 	| "kimi-coding"
-	| "alibaba-coding-plan";
+	| "alibaba-coding-plan"
+	| "ollama-cloud";
 export type Provider = KnownProvider | string;
 
 export type ThinkingLevel = "minimal" | "low" | "medium" | "high" | "xhigh";

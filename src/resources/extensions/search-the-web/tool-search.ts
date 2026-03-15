@@ -20,7 +20,7 @@ import { LRUTTLCache } from "./cache.js";
 import { fetchWithRetryTimed, fetchWithRetry, classifyError, type RateLimitInfo } from "./http.js";
 import { normalizeQuery, toDedupeKey, detectFreshness } from "./url-utils.js";
 import { formatSearchResults, type SearchResultFormatted, type FormatSearchOptions } from "./format.js";
-import { getTavilyApiKey, resolveSearchProvider } from "./provider.js";
+import { getTavilyApiKey, getOllamaApiKey, resolveSearchProvider } from "./provider.js";
 import { normalizeTavilyResult, mapFreshnessToTavily, type TavilySearchResponse } from "./tavily.js";
 
 // =============================================================================
@@ -93,7 +93,7 @@ interface SearchDetails {
   errorKind?: string;
   error?: string;
   retryAfterMs?: number;
-  provider?: 'tavily' | 'brave';
+  provider?: 'tavily' | 'brave' | 'ollama';
 }
 
 // =============================================================================
@@ -246,6 +246,57 @@ async function executeTavilySearch(
 }
 
 // =============================================================================
+// Ollama API execution
+// =============================================================================
+
+interface OllamaWebSearchResult {
+  title: string;
+  url: string;
+  content: string;
+}
+
+interface OllamaWebSearchResponse {
+  results: OllamaWebSearchResult[];
+}
+
+/**
+ * Execute a search against the Ollama web_search API.
+ * Returns a CachedSearchResult with normalized, deduplicated results.
+ */
+async function executeOllamaSearch(
+  params: { query: string; count: number },
+  signal?: AbortSignal
+): Promise<{ results: CachedSearchResult; latencyMs: number; rateLimit?: RateLimitInfo }> {
+  const timed = await fetchWithRetryTimed("https://ollama.com/api/web_search", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": `Bearer ${getOllamaApiKey()}`,
+    },
+    body: JSON.stringify({ query: params.query, max_results: params.count }),
+    signal,
+  }, 2);
+
+  const data: OllamaWebSearchResponse = await timed.response.json();
+  const normalized: SearchResultFormatted[] = (data.results || []).map(r => ({
+    title: r.title || "(untitled)",
+    url: r.url,
+    description: r.content || "",
+  }));
+  const deduplicated = deduplicateResults(normalized);
+
+  return {
+    results: {
+      results: deduplicated,
+      queryCorrected: false,
+      moreResultsAvailable: false,
+    },
+    latencyMs: timed.latencyMs,
+    rateLimit: timed.rateLimit,
+  };
+}
+
+// =============================================================================
 // Tool Registration
 // =============================================================================
 
@@ -300,7 +351,7 @@ export function registerSearchTool(pi: ExtensionAPI) {
       const provider = resolveSearchProvider();
       if (!provider) {
         return {
-          content: [{ type: "text", text: "Web search unavailable: No search API key is set. Use secure_env_collect to set TAVILY_API_KEY or BRAVE_API_KEY." }],
+          content: [{ type: "text", text: "Web search unavailable: No search API key is set. Use secure_env_collect to set TAVILY_API_KEY, BRAVE_API_KEY, or OLLAMA_API_KEY." }],
           isError: true,
           details: { errorKind: "auth_error", error: "No search API key set" } satisfies Partial<SearchDetails>,
         };
@@ -405,6 +456,14 @@ export function registerSearchTool(pi: ExtensionAPI) {
           searchResult = tavilyResult.results;
           latencyMs = tavilyResult.latencyMs;
           rateLimit = tavilyResult.rateLimit;
+        } else if (provider === "ollama") {
+          const ollamaResult = await executeOllamaSearch(
+            { query: params.query, count: 10 },
+            signal
+          );
+          searchResult = ollamaResult.results;
+          latencyMs = ollamaResult.latencyMs;
+          rateLimit = ollamaResult.rateLimit;
         } else {
           // ================================================================
           // BRAVE PATH (unchanged API logic)

@@ -17,6 +17,7 @@ import { LRUTTLCache } from "./cache.js";
 import { fetchSimple, HttpError } from "./http.js";
 import { extractDomain } from "./url-utils.js";
 import { formatPageContent, type FormatPageOptions } from "./format.js";
+import { getOllamaApiKey } from "./provider.js";
 
 // =============================================================================
 // Cache
@@ -174,6 +175,43 @@ async function fetchDirectFallback(
 }
 
 // =============================================================================
+// Ollama Web Fetch
+// =============================================================================
+
+interface OllamaWebFetchResponse {
+  title?: string;
+  content?: string;
+  links?: string[];
+}
+
+/**
+ * Fetch page content via Ollama web_fetch API.
+ * Returns content + metadata, or throws on failure.
+ */
+async function fetchViaOllama(
+  url: string,
+  signal?: AbortSignal,
+): Promise<{ content: string; title?: string }> {
+  const response = await fetchSimple("https://ollama.com/api/web_fetch", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": `Bearer ${getOllamaApiKey()}`,
+    },
+    body: JSON.stringify({ url }),
+    signal,
+    timeoutMs: 20_000,
+  });
+
+  const data: OllamaWebFetchResponse = await response.json();
+
+  const content = (data.content || "").trim();
+  const title = data.title?.trim() || undefined;
+
+  return { content, title };
+}
+
+// =============================================================================
 // Smart Truncation
 // =============================================================================
 
@@ -252,6 +290,30 @@ async function fetchOnePage(
     jinaError = err instanceof HttpError
       ? `Jina HTTP ${err.statusCode}`
       : (err as Error).message ?? String(err);
+
+    // Try Ollama web_fetch as intermediate fallback if API key is available
+    const ollamaKey = getOllamaApiKey();
+    if (ollamaKey) {
+      try {
+        const ollamaResult = await fetchViaOllama(url, options.signal);
+        if (ollamaResult.content && ollamaResult.content.length >= 50) {
+          pageContent = ollamaResult.content;
+          pageTitle = ollamaResult.title;
+          source = "direct";
+          return {
+            content: pageContent,
+            title: pageTitle,
+            source,
+            jinaError,
+            contentType,
+            originalChars: pageContent.length,
+          };
+        }
+      } catch {
+        // Ollama fetch failed too — fall through to direct
+      }
+    }
+
     source = "direct";
 
     const result = await fetchDirectFallback(url, options.signal);
