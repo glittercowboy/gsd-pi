@@ -358,6 +358,8 @@ export async function stopAuto(ctx?: ExtensionContext, pi?: ExtensionAPI): Promi
   clearUnitTimeout();
   if (basePath) clearLock(basePath);
   clearSkillSnapshot();
+  _dispatching = false;
+  _skipDepth = 0;
 
   // Remove SIGTERM handler registered at auto-mode start
   deregisterSigtermHandler();
@@ -1456,6 +1458,12 @@ function getRoadmapSlicesSync(): { done: number; total: number; activeSliceTasks
 let _skipDepth = 0;
 const MAX_SKIP_DEPTH = 20;
 
+/** Reentrancy guard for dispatchNextUnit itself (not just handleAgentEnd).
+ *  Prevents concurrent dispatch from watchdog timers, step wizard, and direct calls
+ *  that bypass the _handlingAgentEnd guard. Recursive calls (from skip paths) are
+ *  allowed via _skipDepth > 0. */
+let _dispatching = false;
+
 async function dispatchNextUnit(
   ctx: ExtensionContext,
   pi: ExtensionAPI,
@@ -1466,6 +1474,13 @@ async function dispatchNextUnit(
     }
     return;
   }
+
+  // Reentrancy guard: allow recursive calls from skip paths (_skipDepth > 0)
+  // but block concurrent external calls (watchdog, step wizard, etc.)
+  if (_dispatching && _skipDepth === 0) {
+    return; // Another dispatch is in progress — bail silently
+  }
+  _dispatching = true;
 
   // Recursion depth guard: when many units are skipped in sequence (e.g., after
   // crash recovery with 10+ completed units), recursive dispatchNextUnit calls
