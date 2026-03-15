@@ -215,6 +215,20 @@ Once the user confirms the milestone split:
 5. Write a full `CONTEXT.md` for the primary milestone (the one discussed in depth).
 6. Write a `ROADMAP.md` for **only the primary milestone** — detail-planning later milestones now is waste because the codebase will change. Include requirement coverage and a milestone definition of done.
 
+#### MANDATORY: depends_on Frontmatter in CONTEXT.md
+
+Every CONTEXT.md for a milestone that depends on other milestones MUST have YAML frontmatter with `depends_on`. The auto-mode state machine reads this field to determine execution order — without it, milestones may execute out of order or in parallel when they shouldn't.
+
+```yaml
+---
+depends_on: [M001, M002]
+---
+
+# M003: Title
+```
+
+If a milestone has no dependencies, omit the frontmatter. The dependency chain from the milestone confirmation gate MUST be reflected in each CONTEXT.md frontmatter. Do NOT rely on QUEUE.md or PROJECT.md for dependency tracking — the state machine only reads CONTEXT.md frontmatter.
+
 #### Phase 3: Sequential readiness gate for remaining milestones
 
 For each remaining milestone **one at a time, in sequence**, use `ask_user_questions` to assess readiness. Present three options:
