@@ -39,6 +39,9 @@ node --experimental-sqlite --import 'data:text/javascript,import{register}from"n
 grep -c "gsd_save_decision\|gsd_update_requirement\|gsd_save_summary" src/resources/extensions/gsd/index.ts
 grep "inspect" src/resources/extensions/gsd/commands.ts
 
+# Diagnostic: verify DB-unavailable error path returns isError:true (tested in gsd-tools.test.ts "db_unavailable" assertions)
+# Diagnostic: verify /gsd inspect stderr output when DB absent (tested in gsd-inspect.test.ts)
+
 # Full suite (no regressions)
 npm test
 ```
@@ -49,9 +52,18 @@ npm test
 - New wiring introduced: 3 `pi.registerTool` calls after line 189 in `index.ts`; `handleInspect` + `formatInspectOutput` + `InspectData` in `commands.ts` with handler dispatch + autocomplete entry
 - What remains before milestone is usable end-to-end: S07 integration verification
 
+## Observability / Diagnostics
+
+- **Runtime signals**: All 3 LLM tools write to `stderr` on failure (`gsd-db: gsd_save_decision tool failed: ...`, etc.) with structured `details` payload in the tool return object. The `isError: true` flag surfaces to the LLM immediately.
+- **DB unavailability**: Each tool returns `{ isError: true, details: { error: "db_unavailable" } }` when `isDbAvailable()` is false — LLM receives actionable message.
+- **Inspect surface**: `/gsd inspect` runs raw SQL against the live DB to show schema version, row counts for all 3 tables, and the 5 most recent decisions/requirements. Use this to verify DB writes landed.
+- **Failure visibility**: `/gsd inspect` writes to `stderr` on failure with `gsd-db: /gsd inspect failed: <message>` then shows user-facing error via `ctx.ui.notify(..., "error")`. Check stderr when inspect returns an error notification.
+- **Diagnostic command**: After any DB write, run `/gsd inspect` to confirm counts incremented and entries appear in recent lists.
+- **Redaction**: No secrets or credentials flow through these tools. DB path is filesystem-local only.
+
 ## Tasks
 
-- [ ] **T01: Register 3 LLM tools in index.ts + wire /gsd inspect in commands.ts** `est:30m`
+- [x] **T01: Register 3 LLM tools in index.ts + wire /gsd inspect in commands.ts** `est:30m`
   - Why: Core deliverable — both changes must compile together, registering tools is useless without the matching inspect command for DB visibility.
   - Files: `src/resources/extensions/gsd/index.ts`, `src/resources/extensions/gsd/commands.ts`
   - Do:

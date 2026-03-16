@@ -62,3 +62,10 @@ grep "inspect" src/resources/extensions/gsd/commands.ts
 
 - `src/resources/extensions/gsd/index.ts` — 3 additional `pi.registerTool` blocks after line 189; `Type` import added
 - `src/resources/extensions/gsd/commands.ts` — `inspect` in subcommands; `handleInspect` dispatch; `InspectData`, `formatInspectOutput`, `handleInspect` implementations appended
+
+## Observability Impact
+
+- **New stderr signals**: Each tool writes `gsd-db: <tool_name> tool failed: <message>` to stderr on execute error. `/gsd inspect` writes `gsd-db: /gsd inspect failed: <message>` on DB query failure. These are grepable from process logs.
+- **DB unavailability path**: `isDbAvailable()` returns false → all 3 tools return `{ isError: true, details: { error: "db_unavailable" } }` without touching the DB. This is the expected pre-init path.
+- **Inspect as diagnostic command**: After any DB write, `/gsd inspect` immediately verifies counts and surfaces recent entries. A future agent can run it to confirm tool calls landed.
+- **Tool return shape**: All success returns include a `details` object (`{ operation, id/path }`) alongside the text content — parseable by a supervising agent for structured confirmation.
