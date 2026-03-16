@@ -66,6 +66,7 @@ import {
 import { ensureGitignore, untrackRuntimeFiles } from "./gitignore.js";
 import { runGSDDoctor, rebuildState } from "./doctor.js";
 import { snapshotSkills, clearSkillSnapshot } from "./skill-discovery.js";
+import { captureAvailableSkills, getAndClearSkills, resetSkillTelemetry } from "./skill-telemetry.js";
 import {
   initMetrics, resetMetrics, snapshotUnitMetrics, getLedger,
   getProjectTotals, formatCost, formatTokenCount,
@@ -480,6 +481,7 @@ export async function stopAuto(ctx?: ExtensionContext, pi?: ExtensionAPI): Promi
   clearUnitTimeout();
   if (lockBase()) clearLock(lockBase());
   clearSkillSnapshot();
+  resetSkillTelemetry();
   _dispatching = false;
   _skipDepth = 0;
 
@@ -2210,6 +2212,7 @@ async function dispatchNextUnit(
     }
   }
   currentUnit = { type: unitType, id: unitId, startedAt: Date.now() };
+  captureAvailableSkills(); // Capture skill telemetry at dispatch time (#599)
   writeUnitRuntimeRecord(basePath, unitType, unitId, currentUnit.startedAt, {
     phase: "dispatched",
     wrapupWarningSent: false,
