@@ -93,10 +93,7 @@ export class GSDDashboardOverlay {
   private loading = true;
   private loadedDashboardIdentity?: string;
   private refreshInFlight: Promise<void> | null = null;
-<<<<<<< HEAD
-=======
   private disposed = false;
->>>>>>> upstream/main
 
   constructor(
     tui: { requestRender: () => void },
@@ -116,11 +113,7 @@ export class GSDDashboardOverlay {
   }
 
   private scheduleRefresh(initial = false): void {
-<<<<<<< HEAD
-    if (this.refreshInFlight) return;
-=======
     if (this.refreshInFlight || this.disposed) return;
->>>>>>> upstream/main
     this.refreshInFlight = this.refreshDashboard(initial)
       .finally(() => {
         this.refreshInFlight = null;
@@ -148,19 +141,13 @@ export class GSDDashboardOverlay {
   }
 
   private async refreshDashboard(initial = false): Promise<void> {
-<<<<<<< HEAD
-=======
     if (this.disposed) return;
->>>>>>> upstream/main
     this.dashData = getAutoDashboardData();
     const nextIdentity = this.computeDashboardIdentity(this.dashData);
 
     if (initial || nextIdentity !== this.loadedDashboardIdentity) {
       const loaded = await this.loadData();
-<<<<<<< HEAD
-=======
       if (this.disposed) return;
->>>>>>> upstream/main
       if (loaded) {
         this.loadedDashboardIdentity = nextIdentity;
       }

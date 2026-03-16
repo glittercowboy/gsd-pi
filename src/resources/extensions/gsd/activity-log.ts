@@ -8,12 +8,7 @@
  * Diagnostic extraction is handled by session-forensics.ts.
  */
 
-<<<<<<< HEAD
-import { writeFileSync, mkdirSync, readdirSync, unlinkSync, statSync } from "node:fs";
-import { existsSync } from "node:fs";
-=======
 import { writeFileSync, writeSync, mkdirSync, readdirSync, unlinkSync, statSync, openSync, closeSync, constants } from "node:fs";
->>>>>>> upstream/main
 import { createHash } from "node:crypto";
 import { join } from "node:path";
 
@@ -28,8 +23,6 @@ interface ActivityLogState {
 
 const activityLogState = new Map<string, ActivityLogState>();
 
-<<<<<<< HEAD
-=======
 /**
  * Clear accumulated activity log state (#611).
  * Call when auto-mode stops to prevent unbounded memory growth
@@ -39,23 +32,15 @@ export function clearActivityLogState(): void {
   activityLogState.clear();
 }
 
->>>>>>> upstream/main
 function scanNextSequence(activityDir: string): number {
   let maxSeq = 0;
   try {
     for (const f of readdirSync(activityDir)) {
-<<<<<<< HEAD
-      const match = f.match(/^(\d+)-/);
-      if (match) maxSeq = Math.max(maxSeq, parseInt(match[1], 10));
-    }
-  } catch {
-=======
       const match = f.match(SEQ_PREFIX_RE);
       if (match) maxSeq = Math.max(maxSeq, parseInt(match[1], 10));
     }
   } catch (e) {
     void e; /* directory not readable — start at 1 */
->>>>>>> upstream/main
     return 1;
   }
   return maxSeq + 1;
@@ -70,11 +55,6 @@ function getActivityState(activityDir: string): ActivityLogState {
   return state;
 }
 
-<<<<<<< HEAD
-function snapshotKey(unitType: string, unitId: string, content: string): string {
-  const digest = createHash("sha1").update(content).digest("hex");
-  return `${unitType}\0${unitId}\0${digest}`;
-=======
 /**
  * Build a lightweight dedup key from session entries without serializing
  * the entire content to a string (#611). Uses entry count + hash of
@@ -90,7 +70,6 @@ function snapshotKey(unitType: string, unitId: string, entries: unknown[]): stri
     hash.update(JSON.stringify(entry));
   }
   return hash.digest("hex");
->>>>>>> upstream/main
 }
 
 function nextActivityFilePath(
@@ -99,16 +78,6 @@ function nextActivityFilePath(
   unitType: string,
   safeUnitId: string,
 ): string {
-<<<<<<< HEAD
-  while (true) {
-    const seq = String(state.nextSeq).padStart(3, "0");
-    const filePath = join(activityDir, `${seq}-${unitType}-${safeUnitId}.jsonl`);
-    if (!existsSync(filePath)) {
-      return filePath;
-    }
-    state.nextSeq = scanNextSequence(activityDir);
-  }
-=======
   // Use O_CREAT | O_EXCL for atomic "create if absent" — no directory scan needed.
   for (let attempts = 0; attempts < 1000; attempts++) {
     const seq = String(state.nextSeq).padStart(3, "0");
@@ -127,7 +96,6 @@ function nextActivityFilePath(
   }
   // Fallback: should never reach here in practice
   throw new Error(`Failed to find available activity log sequence in ${activityDir}`);
->>>>>>> upstream/main
 }
 
 export function saveActivityLog(
@@ -144,19 +112,6 @@ export function saveActivityLog(
     mkdirSync(activityDir, { recursive: true });
 
     const safeUnitId = unitId.replace(/\//g, "-");
-<<<<<<< HEAD
-    const content = `${entries.map(entry => JSON.stringify(entry)).join("\n")}\n`;
-    const state = getActivityState(activityDir);
-    const unitKey = `${unitType}\0${safeUnitId}`;
-    const key = snapshotKey(unitType, safeUnitId, content);
-    if (state.lastSnapshotKeyByUnit.get(unitKey) === key) return;
-
-    const filePath = nextActivityFilePath(activityDir, state, unitType, safeUnitId);
-    writeFileSync(filePath, content, "utf-8");
-    state.nextSeq += 1;
-    state.lastSnapshotKeyByUnit.set(unitKey, key);
-  } catch {
-=======
     const state = getActivityState(activityDir);
     const unitKey = `${unitType}\0${safeUnitId}`;
     // Use lightweight fingerprint instead of serializing all entries (#611)
@@ -177,7 +132,6 @@ export function saveActivityLog(
     state.nextSeq += 1;
     state.lastSnapshotKeyByUnit.set(unitKey, key);
   } catch (e) {
->>>>>>> upstream/main
     // Don't let logging failures break auto-mode
     void e;
   }

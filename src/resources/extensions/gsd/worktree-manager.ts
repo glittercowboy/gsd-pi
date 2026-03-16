@@ -15,11 +15,6 @@
  *   4. remove()  — git worktree remove + branch cleanup
  */
 
-<<<<<<< HEAD
-import { existsSync, mkdirSync, realpathSync } from "node:fs";
-import { execSync } from "node:child_process";
-import { join, resolve } from "node:path";
-=======
 import { existsSync, mkdirSync, readFileSync, realpathSync } from "node:fs";
 import { join, resolve, sep } from "node:path";
 import {
@@ -39,7 +34,6 @@ import {
   nativeWorktreePrune,
   nativeWorktreeRemove,
 } from "./native-git-bridge.js";
->>>>>>> upstream/main
 
 // ─── Types ─────────────────────────────────────────────────────────────────
 
@@ -67,51 +61,6 @@ export interface WorktreeDiffSummary {
 }
 
 // ─── Path Helpers ──────────────────────────────────────────────────────────
-
-<<<<<<< HEAD
-/** Env overlay that suppresses interactive git credential prompts and git-svn noise. */
-const GIT_NO_PROMPT_ENV = {
-  ...process.env,
-  GIT_TERMINAL_PROMPT: "0",
-  GIT_ASKPASS: "",
-  GIT_SVN_ID: "",
-};
-
-/**
- * Strip git-svn noise from error messages.
- * Some systems have a buggy git-svn Perl module that emits warnings
- * on every git invocation. See #404.
- */
-function filterGitSvnNoise(message: string): string {
-  return message
-    .replace(/Duplicate specification "[^"]*" for option "[^"]*"\n?/g, "")
-    .replace(/Unable to determine upstream SVN information from .*\n?/g, "")
-    .replace(/Perhaps the repository is empty\. at .*git-svn.*\n?/g, "")
-    .trim();
-}
-
-function runGit(cwd: string, args: string[], opts: { allowFailure?: boolean } = {}): string {
-  try {
-    return execSync(`git ${args.join(" ")}`, {
-      cwd,
-      stdio: ["ignore", "pipe", "pipe"],
-      encoding: "utf-8",
-      env: GIT_NO_PROMPT_ENV,
-    }).trim();
-  } catch (error) {
-    if (opts.allowFailure) return "";
-    const message = error instanceof Error ? error.message : String(error);
-    throw new Error(`git ${args.join(" ")} failed in ${cwd}: ${filterGitSvnNoise(message)}`);
-  }
-=======
-function normalizePathForComparison(path: string): string {
-  const normalized = path
-    .replaceAll("\\", "/")
-    .replace(/^\/\/\?\//, "")
-    .replace(/\/+$/, "");
-  return process.platform === "win32" ? normalized.toLowerCase() : normalized;
->>>>>>> upstream/main
-}
 
 function normalizePathForComparison(path: string): string {
   const normalized = path
@@ -256,20 +205,12 @@ export function listWorktrees(basePath: string): WorktreeInfo[] {
       seenRoots.add(root.normalized);
       return true;
     });
-<<<<<<< HEAD
-  const rawList = runGit(basePath, ["worktree", "list", "--porcelain"]);
-=======
->>>>>>> upstream/main
 
   const entries = nativeWorktreeList(basePath);
 
   if (!entries.length) return [];
 
   const worktrees: WorktreeInfo[] = [];
-<<<<<<< HEAD
-  const entries = rawList.replaceAll("\r\n", "\n").split("\n\n").filter(Boolean);
-=======
->>>>>>> upstream/main
 
   for (const entry of entries) {
     if (entry.isBare) continue;
@@ -277,11 +218,6 @@ export function listWorktrees(basePath: string): WorktreeInfo[] {
     const entryPath = entry.path;
     const branch = entry.branch;
 
-<<<<<<< HEAD
-    const entryPath = wtLine.replace("worktree ", "");
-    const branch = branchLine.replace("branch refs/heads/", "");
-    const branchWorktreeName = branch.startsWith("worktree/") ? branch.slice("worktree/".length) : null;
-=======
     if (!branch) continue;
 
     const branchWorktreeName = branch.startsWith("worktree/")
@@ -290,7 +226,6 @@ export function listWorktrees(basePath: string): WorktreeInfo[] {
         ? branch.slice("milestone/".length)
         : null;
 
->>>>>>> upstream/main
     const entryVariants = [resolve(entryPath)];
     if (existsSync(entryPath)) {
       entryVariants.push(realpathSync(entryPath));

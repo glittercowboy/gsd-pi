@@ -1207,10 +1207,7 @@ export async function showSmartEntry(
       });
 
       if (choice === "plan") {
-<<<<<<< HEAD
-=======
         pendingAutoStart = { ctx, pi, basePath, milestoneId, step: stepMode };
->>>>>>> upstream/main
         const planMilestoneTemplates = [
           inlineTemplate("roadmap", "Roadmap"),
           inlineTemplate("plan", "Slice Plan"),
@@ -1379,11 +1376,7 @@ export async function showSmartEntry(
         inlineTemplate("uat", "UAT"),
       ].join("\n\n---\n\n");
       dispatchWorkflow(pi, loadPrompt("guided-complete-slice", {
-<<<<<<< HEAD
-        milestoneId, sliceId, sliceTitle, inlinedTemplates: completeSliceTemplates,
-=======
         workingDirectory: basePath, milestoneId, sliceId, sliceTitle, inlinedTemplates: completeSliceTemplates,
->>>>>>> upstream/main
       }));
     } else if (choice === "status") {
       const { fireStatusViaCommand } = await import("./commands.js");

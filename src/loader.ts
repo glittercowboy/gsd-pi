@@ -4,8 +4,6 @@
 import { fileURLToPath } from 'url'
 import { dirname, resolve, join, delimiter } from 'path'
 import { existsSync, readFileSync, readdirSync, mkdirSync, symlinkSync } from 'fs'
-<<<<<<< HEAD
-=======
 
 // Fast-path: handle --version/-v and --help/-h before importing any heavy
 // dependencies. This avoids loading the entire pi-coding-agent barrel import
@@ -35,7 +33,6 @@ if (firstArg === '--help' || firstArg === '-h') {
   process.exit(0)
 }
 
->>>>>>> upstream/main
 import { agentDir, appRoot } from './app-paths.js'
 import { serializeBundledExtensionPaths } from './bundled-extension-paths.js'
 import { renderLogo } from './logo.js'

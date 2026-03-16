@@ -116,3 +116,11 @@ Resolve the final 8 conflicted files: 5 GSD extension modules with surgical fork
 - Zero conflict markers anywhere in the repository
 - All resolved files staged with `git add`
 - Merge is ready for lockfile regeneration and build (T04)
+
+## Observability Impact
+
+- **Conflict marker scan**: `rg "^<<<<<<<|^>>>>>>>|^=======$" src/ web/ packages/ .github/` — must return empty (exit 1) after this task. Any match indicates an unresolved conflict.
+- **Unmerged file check**: `git diff --name-only --diff-filter=U` — must return empty. Any output indicates files still in conflict state.
+- **Web-mode routing**: `grep "cli-web-branch\|stopWebMode\|runWebCliBranch" src/cli.ts` — confirms fork's web-mode entry points are wired into upstream's cli.ts.
+- **Cross-platform loader**: `grep "delimiter\|serializeBundledExtensionPaths\|GSD_BUNDLED_EXTENSION_PATHS" src/loader.ts` — confirms fork's dynamic extension discovery and cross-platform NODE_PATH joining are preserved.
+- **Merge readiness**: `git status` should show "All conflicts fixed but you are still merging" — merge is staged but not committed, ready for T04 to regenerate lockfile and build.

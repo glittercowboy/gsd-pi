@@ -73,10 +73,7 @@ const LLM_PROVIDER_IDS = [
   'xai',
   'openrouter',
   'mistral',
-<<<<<<< HEAD
-=======
   'ollama-cloud',
->>>>>>> upstream/main
   'custom-openai',
 ]
 
@@ -92,10 +89,7 @@ const OTHER_PROVIDERS = [
   { value: 'xai', label: 'xAI (Grok)' },
   { value: 'openrouter', label: 'OpenRouter' },
   { value: 'mistral', label: 'Mistral' },
-<<<<<<< HEAD
-=======
   { value: 'ollama-cloud', label: 'Ollama Cloud' },
->>>>>>> upstream/main
   { value: 'custom-openai', label: 'Custom (OpenAI-compatible)' },
 ]
 
@@ -127,7 +121,7 @@ async function loadPico(): Promise<PicoModule> {
 // ─── Utilities ────────────────────────────────────────────────────────────────
 
 /** Open a URL in the system browser (best-effort, non-blocking) */
-export function openBrowser(url: string): void {
+function openBrowser(url: string): void {
   const cmd = process.platform === 'darwin' ? 'open' :
     process.platform === 'win32' ? 'start' :
       'xdg-open'
@@ -939,33 +933,3 @@ async function runDiscordChannelStep(p: ClackModule, pc: PicoModule, token: stri
   return channelName ?? null
 }
 
-<<<<<<< HEAD
-// ─── Env hydration (migrated from wizard.ts) ─────────────────────────────────
-
-/**
- * Hydrate process.env from stored auth.json credentials for optional tool keys.
- * Runs on every launch so extensions see Brave/Context7/Jina keys stored via the
- * wizard on prior launches.
- */
-export function loadStoredEnvKeys(authStorage: AuthStorage): void {
-  const providers: Array<[string, string]> = [
-    ['brave',         'BRAVE_API_KEY'],
-    ['brave_answers', 'BRAVE_ANSWERS_KEY'],
-    ['context7',      'CONTEXT7_API_KEY'],
-    ['jina',          'JINA_API_KEY'],
-    ['slack_bot',     'SLACK_BOT_TOKEN'],
-    ['discord_bot',   'DISCORD_BOT_TOKEN'],
-    ['groq',          'GROQ_API_KEY'],
-    ['custom-openai', 'CUSTOM_OPENAI_API_KEY'],
-  ]
-  for (const [provider, envVar] of providers) {
-    if (!process.env[envVar]) {
-      const cred = authStorage.get(provider)
-      if (cred?.type === 'api_key' && cred.key) {
-        process.env[envVar] = cred.key
-      }
-    }
-  }
-}
-=======
->>>>>>> upstream/main

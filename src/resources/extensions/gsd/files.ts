@@ -253,10 +253,7 @@ export function parseRoadmap(content: string): Roadmap {
 }
 
 function _parseRoadmapImpl(content: string): Roadmap {
-<<<<<<< HEAD
-=======
   const stopTimer = debugTime("parse-roadmap");
->>>>>>> upstream/main
   // Try native parser first for better performance
   const nativeResult = nativeParseRoadmap(content);
   if (nativeResult) {
@@ -414,8 +411,6 @@ export function parsePlan(content: string): SlicePlan {
 }
 
 function _parsePlanImpl(content: string): SlicePlan {
-<<<<<<< HEAD
-=======
   const stopTimer = debugTime("parse-plan");
   // Try native parser first for better performance
   const nativeResult = nativeParsePlanFile(content);
@@ -440,7 +435,6 @@ function _parsePlanImpl(content: string): SlicePlan {
     };
   }
 
->>>>>>> upstream/main
   const lines = content.split('\n');
 
   const h1 = lines.find(l => l.startsWith('# '));
@@ -526,8 +520,6 @@ export function parseSummary(content: string): Summary {
 }
 
 function _parseSummaryImpl(content: string): Summary {
-<<<<<<< HEAD
-=======
   // Try native parser first for better performance
   const nativeResult = nativeParseSummaryFile(content);
   if (nativeResult) {
@@ -558,7 +550,6 @@ function _parseSummaryImpl(content: string): Summary {
     };
   }
 
->>>>>>> upstream/main
   const [fmLines, body] = splitFrontmatter(content);
 
   const fm = fmLines ? parseFrontmatterMap(fmLines) : {};
