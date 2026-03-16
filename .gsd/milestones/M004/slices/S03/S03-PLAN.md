@@ -58,7 +58,7 @@
   - Verify: `npx tsc --noEmit` clean. `grep -n 'isDbAvailable\|openDatabase\|closeDatabase\|migrateFromMarkdown' src/resources/extensions/gsd/auto.ts` shows all 4 functions referenced.
   - Done when: DB opens on startAuto, re-imports in handleAgentEnd, closes on stopAuto, all with graceful fallback.
 
-- [ ] **T03: Port prompt-db tests and run full verification** `est:30m`
+- [x] **T03: Port prompt-db tests and run full verification** `est:30m`
   - Why: Proves the DB-aware helpers return scoped content, fall back correctly, and that scoping actually reduces content size. Also ensures all existing tests still pass.
   - Files: `src/resources/extensions/gsd/tests/prompt-db.test.ts`
   - Do: Port `prompt-db.test.ts` from `.gsd/worktrees/memory-db/src/resources/extensions/gsd/tests/prompt-db.test.ts`. The reference file (385 lines) uses `createTestContext` from `test-helpers.ts`, imports from `gsd-db.ts` and `context-store.ts`. Tests: (a) scoped decisions queries return fewer results than unscoped, (b) scoped requirements by sliceId filter correctly, (c) project query returns content from DB, (d) formatted output matches `### Label\nSource: ...\n\n<content>` wrapping pattern, (e) fallback behavior when DB unavailable returns non-null from filesystem. Adapt import paths if needed (memory-db uses `.ts` extensions in test imports). Run full test suite to verify zero regressions.

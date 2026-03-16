@@ -53,6 +53,12 @@ Port the `prompt-db.test.ts` test file from the memory-db reference worktree and
 - `src/resources/extensions/gsd/context-store.ts` — S01 output, provides query and format functions
 - T01 output (DB-aware helpers in `auto-prompts.ts`) and T02 output (lifecycle wiring in `auto.ts`) — the tests validate the helper pattern, not the wiring directly
 
+## Observability Impact
+
+- **Test coverage signal**: 52 assertions across 7 test sections validate the DB-aware helper pattern (scoped queries, formatting, wrapping, fallback, re-import). Test failure count serves as the primary regression indicator.
+- **Inspection**: Run `node --experimental-sqlite --import ./src/resources/extensions/gsd/tests/resolve-ts.mjs --experimental-strip-types --test src/resources/extensions/gsd/tests/prompt-db.test.ts` — output shows pass/fail per section with `=== prompt-db: <section> ===` headers.
+- **Failure state**: Test failures produce `FAIL: <message>` on stderr with expected vs actual values. Exit code 1 on any failure.
+
 ## Expected Output
 
 - `src/resources/extensions/gsd/tests/prompt-db.test.ts` — new test file, ~385 lines, proving DB-aware helper patterns work correctly
