@@ -35,10 +35,36 @@ assertTrue(
   "exports VisualizerTask interface",
 );
 
+// New interfaces
+assertTrue(
+  dataSrc.includes("export interface CriticalPathInfo"),
+  "exports CriticalPathInfo interface",
+);
+
+assertTrue(
+  dataSrc.includes("export interface AgentActivityInfo"),
+  "exports AgentActivityInfo interface",
+);
+
+assertTrue(
+  dataSrc.includes("export interface ChangelogEntry"),
+  "exports ChangelogEntry interface",
+);
+
+assertTrue(
+  dataSrc.includes("export interface ChangelogInfo"),
+  "exports ChangelogInfo interface",
+);
+
 // Function export
 assertTrue(
   dataSrc.includes("export async function loadVisualizerData"),
   "exports loadVisualizerData function",
+);
+
+assertTrue(
+  dataSrc.includes("export function computeCriticalPath"),
+  "exports computeCriticalPath function",
 );
 
 // Data source usage
@@ -60,6 +86,11 @@ assertTrue(
 assertTrue(
   dataSrc.includes("parsePlan"),
   "uses parsePlan for plan parsing",
+);
+
+assertTrue(
+  dataSrc.includes("parseSummary"),
+  "uses parseSummary for changelog parsing",
 );
 
 assertTrue(
@@ -113,6 +144,27 @@ assertTrue(
   "VisualizerData has units array",
 );
 
+// New data model fields
+assertTrue(
+  dataSrc.includes("criticalPath: CriticalPathInfo"),
+  "VisualizerData has criticalPath field",
+);
+
+assertTrue(
+  dataSrc.includes("remainingSliceCount: number"),
+  "VisualizerData has remainingSliceCount field",
+);
+
+assertTrue(
+  dataSrc.includes("agentActivity: AgentActivityInfo | null"),
+  "VisualizerData has agentActivity field",
+);
+
+assertTrue(
+  dataSrc.includes("changelog: ChangelogInfo"),
+  "VisualizerData has changelog field",
+);
+
 // Verify overlay source exists and imports data module
 const overlayPath = join(__dirname, "..", "visualizer-overlay.ts");
 const overlaySrc = readFileSync(overlayPath, "utf-8");
@@ -150,6 +202,21 @@ assertTrue(
 );
 
 assertTrue(
+  overlaySrc.includes("renderAgentView"),
+  "overlay delegates to renderAgentView",
+);
+
+assertTrue(
+  overlaySrc.includes("renderChangelogView"),
+  "overlay delegates to renderChangelogView",
+);
+
+assertTrue(
+  overlaySrc.includes("renderExportView"),
+  "overlay delegates to renderExportView",
+);
+
+assertTrue(
   overlaySrc.includes("handleInput"),
   "overlay has handleInput method",
 );
@@ -172,6 +239,31 @@ assertTrue(
 assertTrue(
   overlaySrc.includes("scrollOffsets"),
   "overlay tracks per-tab scroll offsets",
+);
+
+assertTrue(
+  overlaySrc.includes("filterMode"),
+  "overlay has filterMode state",
+);
+
+assertTrue(
+  overlaySrc.includes("filterText"),
+  "overlay has filterText state",
+);
+
+assertTrue(
+  overlaySrc.includes("filterField"),
+  "overlay has filterField state",
+);
+
+assertTrue(
+  overlaySrc.includes("TAB_COUNT"),
+  "overlay defines TAB_COUNT",
+);
+
+assertTrue(
+  overlaySrc.includes("7 Export"),
+  "overlay has 7 tab labels",
 );
 
 // Verify commands.ts integration

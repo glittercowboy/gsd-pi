@@ -3,7 +3,7 @@
 import type { Theme } from "@gsd/pi-coding-agent";
 import { truncateToWidth, visibleWidth } from "@gsd/pi-tui";
 import type { VisualizerData, VisualizerMilestone } from "./visualizer-data.js";
-import { formatCost, formatTokenCount } from "./metrics.js";
+import { formatCost, formatTokenCount, classifyUnitPhase } from "./metrics.js";
 
 // ─── Local Helpers ───────────────────────────────────────────────────────────
 
@@ -32,16 +32,46 @@ function joinColumns(left: string, right: string, width: number): string {
   return left + " ".repeat(width - leftW - rightW) + right;
 }
 
+function sparkline(values: number[]): string {
+  if (values.length === 0) return "";
+  const chars = "▁▂▃▄▅▆▇█";
+  const max = Math.max(...values);
+  if (max === 0) return chars[0].repeat(values.length);
+  return values.map(v => chars[Math.min(7, Math.floor((v / max) * 7))]).join("");
+}
+
 // ─── Progress View ───────────────────────────────────────────────────────────
+
+export interface ProgressFilter {
+  text: string;
+  field: "all" | "status" | "risk" | "keyword";
+}
 
 export function renderProgressView(
   data: VisualizerData,
   th: Theme,
   width: number,
+  filter?: ProgressFilter,
 ): string[] {
   const lines: string[] = [];
 
+  // Risk Heatmap
+  lines.push(...renderRiskHeatmap(data, th, width));
+  if (data.milestones.length > 0) lines.push("");
+
+  // Filter indicator
+  if (filter && filter.text) {
+    lines.push(th.fg("accent", `Filter (${filter.field}): ${filter.text}`));
+    lines.push("");
+  }
+
   for (const ms of data.milestones) {
+    // Apply filter to milestones
+    if (filter && filter.text) {
+      const matchesMs = matchesFilter(ms, filter);
+      if (!matchesMs) continue;
+    }
+
     // Milestone header line
     const statusGlyph =
       ms.status === "complete"
@@ -70,6 +100,11 @@ export function renderProgressView(
     }
 
     for (const sl of ms.slices) {
+      // Apply filter to slices
+      if (filter && filter.text) {
+        if (!matchesSliceFilter(sl, filter)) continue;
+      }
+
       // Slice line
       const slGlyph = sl.done
         ? th.fg("success", "✓")
@@ -99,6 +134,78 @@ export function renderProgressView(
       }
     }
   }
+
+  return lines;
+}
+
+function matchesFilter(ms: VisualizerMilestone, filter: ProgressFilter): boolean {
+  const text = filter.text.toLowerCase();
+  if (filter.field === "status") {
+    return ms.status.includes(text);
+  }
+  if (filter.field === "risk") {
+    return ms.slices.some(s => s.risk.toLowerCase().includes(text));
+  }
+  // "all" or "keyword"
+  if (ms.id.toLowerCase().includes(text)) return true;
+  if (ms.title.toLowerCase().includes(text)) return true;
+  if (ms.status.includes(text)) return true;
+  return ms.slices.some(s => matchesSliceFilter(s, filter));
+}
+
+function matchesSliceFilter(sl: { id: string; title: string; risk: string }, filter: ProgressFilter): boolean {
+  const text = filter.text.toLowerCase();
+  if (filter.field === "status") return true; // slices don't have named status
+  if (filter.field === "risk") return sl.risk.toLowerCase().includes(text);
+  return sl.id.toLowerCase().includes(text) ||
+    sl.title.toLowerCase().includes(text) ||
+    sl.risk.toLowerCase().includes(text);
+}
+
+// ─── Risk Heatmap ────────────────────────────────────────────────────────────
+
+function renderRiskHeatmap(data: VisualizerData, th: Theme, width: number): string[] {
+  const allSlices = data.milestones.flatMap(m => m.slices);
+  if (allSlices.length === 0) return [];
+
+  const lines: string[] = [];
+  lines.push(th.fg("accent", th.bold("Risk Heatmap")));
+  lines.push("");
+
+  for (const ms of data.milestones) {
+    if (ms.slices.length === 0) continue;
+    const blocks = ms.slices.map(s => {
+      const color = s.risk === "high" ? "error" : s.risk === "medium" ? "warning" : "success";
+      return th.fg(color, "██");
+    });
+    const row = `  ${padRight(ms.id, 6)} ${blocks.join(" ")}`;
+    lines.push(truncateToWidth(row, width));
+  }
+
+  lines.push("");
+  lines.push(
+    `  ${th.fg("success", "██")} low  ${th.fg("warning", "██")} med  ${th.fg("error", "██")} high`,
+  );
+
+  // Summary counts
+  let low = 0, med = 0, high = 0;
+  let highNotStarted = 0;
+  for (const sl of allSlices) {
+    if (sl.risk === "high") {
+      high++;
+      if (!sl.done && !sl.active) highNotStarted++;
+    } else if (sl.risk === "medium") {
+      med++;
+    } else {
+      low++;
+    }
+  }
+
+  let summary = `  Risk: ${low} low, ${med} med, ${high} high`;
+  if (highNotStarted > 0) {
+    summary += ` | ${th.fg("error", `${highNotStarted} high-risk not started`)}`;
+  }
+  lines.push(summary);
 
   return lines;
 }
@@ -148,6 +255,65 @@ export function renderDepsView(
           lines.push(
             `  ${th.fg("text", dep)} ${th.fg("accent", "──►")} ${th.fg("text", sl.id)}`,
           );
+        }
+      }
+    }
+  }
+
+  lines.push("");
+
+  // Critical Path section
+  lines.push(...renderCriticalPath(data, th, width));
+
+  return lines;
+}
+
+// ─── Critical Path ───────────────────────────────────────────────────────────
+
+function renderCriticalPath(data: VisualizerData, th: Theme, _width: number): string[] {
+  const lines: string[] = [];
+  const cp = data.criticalPath;
+
+  lines.push(th.fg("accent", th.bold("Critical Path")));
+  lines.push("");
+
+  if (cp.milestonePath.length === 0) {
+    lines.push(th.fg("dim", "  No critical path data."));
+    return lines;
+  }
+
+  // Milestone chain
+  const chain = cp.milestonePath.map(id => {
+    const ms = data.milestones.find(m => m.id === id);
+    const badge = th.fg("error", "[CRITICAL]");
+    return `${id} ${badge}`;
+  }).join(` ${th.fg("accent", "──►")} `);
+  lines.push(`  ${chain}`);
+  lines.push("");
+
+  // Non-critical milestones with slack
+  for (const ms of data.milestones) {
+    if (cp.milestonePath.includes(ms.id)) continue;
+    const slack = cp.milestoneSlack.get(ms.id) ?? 0;
+    lines.push(th.fg("dim", `  ${ms.id} (slack: ${slack})`));
+  }
+
+  // Slice-level critical path
+  if (cp.slicePath.length > 0) {
+    lines.push("");
+    lines.push(th.fg("accent", th.bold("Slice Critical Path")));
+    lines.push("");
+
+    const sliceChain = cp.slicePath.join(` ${th.fg("accent", "──►")} `);
+    lines.push(`  ${sliceChain}`);
+
+    // Bottleneck warnings
+    const activeMs = data.milestones.find(m => m.status === "active");
+    if (activeMs) {
+      for (const sid of cp.slicePath) {
+        const sl = activeMs.slices.find(s => s.id === sid);
+        if (sl && !sl.done && !sl.active) {
+          lines.push(th.fg("warning", `  ⚠ ${sid}: critical but not yet started`));
         }
       }
     }
@@ -232,12 +398,66 @@ export function renderMetricsView(
       const pctStr = `${pct.toFixed(1)}%`;
       lines.push(`  ${label} ${bar} ${costStr} ${pctStr}`);
     }
+
+    lines.push("");
+  }
+
+  // Cost Projections
+  lines.push(...renderCostProjections(data, th, width));
+
+  return lines;
+}
+
+// ─── Cost Projections ────────────────────────────────────────────────────────
+
+function renderCostProjections(data: VisualizerData, th: Theme, _width: number): string[] {
+  const lines: string[] = [];
+
+  if (!data.totals || data.bySlice.length === 0) return lines;
+
+  lines.push(th.fg("accent", th.bold("Projections")));
+  lines.push("");
+
+  // Average cost per slice
+  const sliceLevelEntries = data.bySlice.filter(s => s.sliceId.includes("/"));
+  if (sliceLevelEntries.length < 2) {
+    lines.push(th.fg("dim", "  Insufficient data for projections (need 2+ completed slices)."));
+    return lines;
+  }
+
+  const totalSliceCost = sliceLevelEntries.reduce((sum, s) => sum + s.cost, 0);
+  const avgCostPerSlice = totalSliceCost / sliceLevelEntries.length;
+  const projectedRemaining = avgCostPerSlice * data.remainingSliceCount;
+
+  lines.push(`  Avg cost/slice: ${th.fg("text", formatCost(avgCostPerSlice))}`);
+  lines.push(
+    `  Projected remaining: ${th.fg("text", formatCost(projectedRemaining))} ` +
+    `(${formatCost(avgCostPerSlice)}/slice × ${data.remainingSliceCount} remaining)`,
+  );
+
+  // Burn rate
+  if (data.totals.duration > 0) {
+    const costPerHour = data.totals.cost / (data.totals.duration / 3_600_000);
+    lines.push(`  Burn rate: ${th.fg("text", formatCost(costPerHour) + "/hr")}`);
+  }
+
+  // Sparkline of per-slice costs
+  const sliceCosts = sliceLevelEntries.map(s => s.cost);
+  if (sliceCosts.length > 0) {
+    const spark = sparkline(sliceCosts);
+    lines.push(`  Cost trend: ${spark}`);
+  }
+
+  // Budget warning: projected total > 2× current spend
+  const projectedTotal = data.totals.cost + projectedRemaining;
+  if (projectedTotal > 2 * data.totals.cost && data.remainingSliceCount > 0) {
+    lines.push(th.fg("warning", `  ⚠ Projected total ${formatCost(projectedTotal)} exceeds 2× current spend`));
   }
 
   return lines;
 }
 
-// ─── Timeline View ──────────────────────────────────────────────────────────
+// ─── Timeline View (Gantt) ──────────────────────────────────────────────────
 
 export function renderTimelineView(
   data: VisualizerData,
@@ -250,6 +470,17 @@ export function renderTimelineView(
     lines.push(th.fg("dim", "No execution history."));
     return lines;
   }
+
+  // Gantt mode for wide terminals, list mode for narrow
+  if (width >= 90) {
+    return renderGanttView(data, th, width);
+  }
+
+  return renderTimelineList(data, th, width);
+}
+
+function renderTimelineList(data: VisualizerData, th: Theme, width: number): string[] {
+  const lines: string[] = [];
 
   // Show up to 20 most recent (units are sorted by startedAt asc, show most recent)
   const recent = data.units.slice(-20).reverse();
@@ -287,6 +518,237 @@ export function renderTimelineView(
 
     const line = `  ${time}  ${glyph} ${typeLabel} ${idLabel} ${bar}  ${durStr}  ${costStr}`;
     lines.push(truncateToWidth(line, width));
+  }
+
+  return lines;
+}
+
+function renderGanttView(data: VisualizerData, th: Theme, width: number): string[] {
+  const lines: string[] = [];
+  const recent = data.units.slice(-20);
+  if (recent.length === 0) return lines;
+
+  const finishedUnits = recent.filter(u => u.finishedAt > 0);
+  if (finishedUnits.length === 0) return renderTimelineList(data, th, width);
+
+  const minStart = Math.min(...recent.map(u => u.startedAt));
+  const maxEnd = Math.max(...recent.map(u => u.finishedAt > 0 ? u.finishedAt : Date.now()));
+  const totalSpan = maxEnd - minStart;
+  if (totalSpan <= 0) return renderTimelineList(data, th, width);
+
+  const gutterWidth = 20;
+  const barArea = Math.max(10, width - gutterWidth - 25);
+
+  // Time axis labels
+  const startLabel = formatTimeLabel(minStart);
+  const endLabel = formatTimeLabel(maxEnd);
+  lines.push(
+    `${" ".repeat(gutterWidth)} ${th.fg("dim", startLabel)}` +
+    `${" ".repeat(Math.max(1, barArea - startLabel.length - endLabel.length))}` +
+    `${th.fg("dim", endLabel)}`,
+  );
+
+  // Phase tracking for separators
+  let lastPhase = "";
+
+  for (const unit of recent) {
+    const phase = classifyUnitPhase(unit.type);
+    if (phase !== lastPhase && lastPhase !== "") {
+      lines.push(th.fg("dim", "  " + "─".repeat(width - 4)));
+    }
+    lastPhase = phase;
+
+    const end = unit.finishedAt > 0 ? unit.finishedAt : Date.now();
+    const startPos = Math.round(((unit.startedAt - minStart) / totalSpan) * barArea);
+    const endPos = Math.round(((end - minStart) / totalSpan) * barArea);
+    const barLen = Math.max(1, endPos - startPos);
+
+    const phaseColor =
+      phase === "research" ? "dim" :
+      phase === "planning" ? "accent" :
+      phase === "execution" ? "success" :
+      "warning";
+
+    const barStr =
+      " ".repeat(startPos) +
+      th.fg(phaseColor, "█".repeat(barLen)) +
+      " ".repeat(Math.max(0, barArea - startPos - barLen));
+
+    const gutter = padRight(
+      truncateToWidth(`${unit.type.slice(0, 8)} ${unit.id}`, gutterWidth - 1),
+      gutterWidth,
+    );
+
+    const duration = end - unit.startedAt;
+    const durStr = formatDuration(duration);
+    const costStr = formatCost(unit.cost);
+
+    lines.push(truncateToWidth(`${gutter}${barStr} ${durStr} ${costStr}`, width));
+  }
+
+  return lines;
+}
+
+function formatTimeLabel(ts: number): string {
+  const dt = new Date(ts);
+  return `${String(dt.getHours()).padStart(2, "0")}:${String(dt.getMinutes()).padStart(2, "0")}`;
+}
+
+// ─── Agent View ──────────────────────────────────────────────────────────────
+
+export function renderAgentView(
+  data: VisualizerData,
+  th: Theme,
+  width: number,
+): string[] {
+  const lines: string[] = [];
+  const activity = data.agentActivity;
+
+  if (!activity) {
+    lines.push(th.fg("dim", "No agent activity data."));
+    return lines;
+  }
+
+  // Status line
+  const statusDot = activity.active
+    ? th.fg("success", "●")
+    : th.fg("dim", "○");
+  const statusText = activity.active ? "ACTIVE" : "IDLE";
+  const elapsedStr = activity.active ? formatDuration(activity.elapsed) : "—";
+
+  lines.push(
+    joinColumns(
+      `Status: ${statusDot} ${statusText}`,
+      `Elapsed: ${elapsedStr}`,
+      width,
+    ),
+  );
+
+  if (activity.currentUnit) {
+    lines.push(`Current: ${th.fg("accent", `${activity.currentUnit.type} ${activity.currentUnit.id}`)}`);
+  } else {
+    lines.push(th.fg("dim", "Not in auto mode"));
+  }
+
+  lines.push("");
+
+  // Progress bar
+  const completed = activity.completedUnits;
+  const total = Math.max(completed, activity.totalSlices);
+  if (total > 0) {
+    const pct = Math.min(1, completed / total);
+    const barW = Math.max(10, Math.min(30, width - 30));
+    const fillLen = Math.round(pct * barW);
+    const bar =
+      th.fg("accent", "█".repeat(fillLen)) +
+      th.fg("dim", "░".repeat(barW - fillLen));
+    lines.push(`Progress ${bar} ${completed}/${total} slices`);
+  }
+
+  // Rate and session stats
+  const rateStr = activity.completionRate > 0
+    ? `${activity.completionRate.toFixed(1)} units/hr`
+    : "—";
+  lines.push(
+    `Rate: ${th.fg("text", rateStr)}    ` +
+    `Session: ${th.fg("text", formatCost(activity.sessionCost))}  ` +
+    `${th.fg("text", formatTokenCount(activity.sessionTokens))} tokens`,
+  );
+
+  lines.push("");
+
+  // Recent completed units (last 5)
+  const recentUnits = data.units.filter(u => u.finishedAt > 0).slice(-5).reverse();
+  if (recentUnits.length > 0) {
+    lines.push(th.fg("accent", th.bold("Recent (last 5):")));
+    for (const u of recentUnits) {
+      const dt = new Date(u.startedAt);
+      const hh = String(dt.getHours()).padStart(2, "0");
+      const mm = String(dt.getMinutes()).padStart(2, "0");
+      const dur = formatDuration(u.finishedAt - u.startedAt);
+      const cost = formatCost(u.cost);
+      const typeLabel = padRight(u.type, 16);
+      lines.push(
+        truncateToWidth(
+          `  ${hh}:${mm}  ${th.fg("success", "✓")} ${typeLabel} ${padRight(u.id, 16)} ${dur}  ${cost}`,
+          width,
+        ),
+      );
+    }
+  } else {
+    lines.push(th.fg("dim", "No completed units yet."));
+  }
+
+  return lines;
+}
+
+// ─── Changelog View ──────────────────────────────────────────────────────────
+
+export function renderChangelogView(
+  data: VisualizerData,
+  th: Theme,
+  width: number,
+): string[] {
+  const lines: string[] = [];
+  const changelog = data.changelog;
+
+  if (changelog.entries.length === 0) {
+    lines.push(th.fg("dim", "No completed slices yet."));
+    return lines;
+  }
+
+  lines.push(th.fg("accent", th.bold("Changes")));
+  lines.push("");
+
+  for (const entry of changelog.entries) {
+    const header = `${entry.milestoneId}/${entry.sliceId}: ${entry.title}`;
+    lines.push(th.fg("success", header));
+
+    if (entry.oneLiner) {
+      lines.push(`  "${th.fg("text", entry.oneLiner)}"`);
+    }
+
+    if (entry.filesModified.length > 0) {
+      lines.push("  Files:");
+      for (const f of entry.filesModified) {
+        lines.push(
+          truncateToWidth(
+            `    ${th.fg("success", "✓")} ${f.path} — ${f.description}`,
+            width,
+          ),
+        );
+      }
+    }
+
+    if (entry.completedAt) {
+      lines.push(th.fg("dim", `  Completed: ${entry.completedAt}`));
+    }
+
+    lines.push("");
+  }
+
+  return lines;
+}
+
+// ─── Export View ─────────────────────────────────────────────────────────────
+
+export function renderExportView(
+  _data: VisualizerData,
+  th: Theme,
+  _width: number,
+  lastExportPath?: string,
+): string[] {
+  const lines: string[] = [];
+
+  lines.push(th.fg("accent", th.bold("Export Options")));
+  lines.push("");
+  lines.push(`  ${th.fg("accent", "[m]")}  Markdown report — full project summary with tables`);
+  lines.push(`  ${th.fg("accent", "[j]")}  JSON report — machine-readable project data`);
+  lines.push(`  ${th.fg("accent", "[s]")}  Snapshot — current view as plain text`);
+
+  if (lastExportPath) {
+    lines.push("");
+    lines.push(th.fg("dim", `Last export: ${lastExportPath}`));
   }
 
   return lines;
