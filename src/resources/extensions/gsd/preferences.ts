@@ -75,6 +75,7 @@ const KNOWN_PREFERENCE_KEYS = new Set<string>([
   "token_profile",
   "phases",
   "auto_visualize",
+  "parallel",
 ]);
 
 export interface GSDSkillRule {
@@ -171,6 +172,7 @@ export interface GSDPreferences {
   token_profile?: TokenProfile;
   phases?: PhaseSkipPreferences;
   auto_visualize?: boolean;
+  parallel?: import("./types.js").ParallelConfig;
 }
 
 export interface LoadedGSDPreferences {
@@ -767,6 +769,9 @@ function mergePreferences(base: GSDPreferences, override: GSDPreferences): GSDPr
     phases: (base.phases || override.phases)
       ? { ...(base.phases ?? {}), ...(override.phases ?? {}) }
       : undefined,
+    parallel: (base.parallel || override.parallel)
+      ? { ...(base.parallel ?? {}), ...(override.parallel ?? {}) } as import("./types.js").ParallelConfig
+      : undefined,
   };
 }
 
@@ -1152,6 +1157,51 @@ export function validatePreferences(preferences: GSDPreferences): {
     }
   }
 
+  // ─── Parallel Config ────────────────────────────────────────────────────
+  if (preferences.parallel && typeof preferences.parallel === "object") {
+    const p = preferences.parallel as unknown as Record<string, unknown>;
+    const parallel: Record<string, unknown> = {};
+
+    if (p.enabled !== undefined) {
+      if (typeof p.enabled === "boolean") parallel.enabled = p.enabled;
+      else errors.push("parallel.enabled must be a boolean");
+    }
+    if (p.max_workers !== undefined) {
+      if (typeof p.max_workers === "number" && p.max_workers >= 1 && p.max_workers <= 4) {
+        parallel.max_workers = Math.floor(p.max_workers);
+      } else {
+        errors.push("parallel.max_workers must be a number between 1 and 4");
+      }
+    }
+    if (p.budget_ceiling !== undefined) {
+      if (typeof p.budget_ceiling === "number" && p.budget_ceiling > 0) {
+        parallel.budget_ceiling = p.budget_ceiling;
+      } else {
+        errors.push("parallel.budget_ceiling must be a positive number");
+      }
+    }
+    if (p.merge_strategy !== undefined) {
+      const validStrategies = new Set(["per-slice", "per-milestone"]);
+      if (typeof p.merge_strategy === "string" && validStrategies.has(p.merge_strategy)) {
+        parallel.merge_strategy = p.merge_strategy;
+      } else {
+        errors.push("parallel.merge_strategy must be one of: per-slice, per-milestone");
+      }
+    }
+    if (p.auto_merge !== undefined) {
+      const validModes = new Set(["auto", "confirm", "manual"]);
+      if (typeof p.auto_merge === "string" && validModes.has(p.auto_merge)) {
+        parallel.auto_merge = p.auto_merge;
+      } else {
+        errors.push("parallel.auto_merge must be one of: auto, confirm, manual");
+      }
+    }
+
+    if (Object.keys(parallel).length > 0) {
+      validated.parallel = parallel as unknown as import("./types.js").ParallelConfig;
+    }
+  }
+
   // ─── Git Preferences ───────────────────────────────────────────────────
   if (preferences.git && typeof preferences.git === "object") {
     const git: Record<string, unknown> = {};
@@ -1368,4 +1418,16 @@ export function updatePreferencesModels(models: GSDModelConfigV2): void {
   }
 
   writeFileSync(prefsPath, content, "utf-8");
+}
+
+// ─── Parallel Config Resolver ──────────────────────────────────────────────
+
+export function resolveParallelConfig(prefs: GSDPreferences | undefined): import("./types.js").ParallelConfig {
+  return {
+    enabled: prefs?.parallel?.enabled ?? false,
+    max_workers: Math.max(1, Math.min(4, prefs?.parallel?.max_workers ?? 2)),
+    budget_ceiling: prefs?.parallel?.budget_ceiling,
+    merge_strategy: prefs?.parallel?.merge_strategy ?? "per-milestone",
+    auto_merge: prefs?.parallel?.auto_merge ?? "confirm",
+  };
 }

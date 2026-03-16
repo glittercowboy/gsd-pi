@@ -42,6 +42,13 @@ import { handleQuick } from "./quick.js";
 import { handleHistory } from "./history.js";
 import { handleUndo } from "./undo.js";
 import { handleExport } from "./export.js";
+import {
+  isParallelActive, getOrchestratorState, getWorkerStatuses,
+  prepareParallelStart, startParallel, stopParallel,
+  pauseWorker, resumeWorker,
+} from "./parallel-orchestrator.js";
+import { formatEligibilityReport } from "./parallel-eligibility.js";
+import { resolveParallelConfig } from "./preferences.js";
 import { nativeBranchList, nativeDetectMainBranch, nativeBranchListMerged, nativeBranchDelete, nativeForEachRef, nativeUpdateRef } from "./native-git-bridge.js";
 
 export function dispatchDoctorHeal(pi: ExtensionAPI, scope: string | undefined, reportText: string, structuredIssues: string): void {
@@ -69,13 +76,13 @@ function projectRoot(): string {
 
 export function registerGSDCommand(pi: ExtensionAPI): void {
   pi.registerCommand("gsd", {
-    description: "GSD — Get Shit Done: /gsd help|next|auto|stop|pause|status|visualize|queue|quick|capture|triage|history|undo|skip|export|cleanup|mode|prefs|config|hooks|run-hook|skill-health|doctor|forensics|migrate|remote|steer|knowledge",
+    description: "GSD — Get Shit Done: /gsd help|next|auto|stop|pause|status|visualize|queue|quick|capture|triage|history|undo|skip|export|cleanup|mode|prefs|config|hooks|run-hook|skill-health|doctor|forensics|migrate|remote|steer|knowledge|parallel",
     getArgumentCompletions: (prefix: string) => {
       const subcommands = [
         "help", "next", "auto", "stop", "pause", "status", "visualize", "queue", "quick", "discuss",
         "capture", "triage",
         "history", "undo", "skip", "export", "cleanup", "mode", "prefs",
-        "config", "hooks", "run-hook", "skill-health", "doctor", "forensics", "migrate", "remote", "steer", "inspect", "knowledge",
+        "config", "hooks", "run-hook", "skill-health", "doctor", "forensics", "migrate", "remote", "steer", "inspect", "knowledge", "parallel",
       ];
       const parts = prefix.trim().split(/\s+/);
 
@@ -97,6 +104,13 @@ export function registerGSDCommand(pi: ExtensionAPI): void {
         return ["global", "project"]
           .filter((cmd) => cmd.startsWith(subPrefix))
           .map((cmd) => ({ value: `mode ${cmd}`, label: cmd }));
+      }
+
+      if (parts[0] === "parallel" && parts.length <= 2) {
+        const subPrefix = parts[1] ?? "";
+        return ["start", "status", "stop", "pause", "resume"]
+          .filter((cmd) => cmd.startsWith(subPrefix))
+          .map((cmd) => ({ value: `parallel ${cmd}`, label: cmd }));
       }
 
       if (parts[0] === "prefs" && parts.length <= 2) {
@@ -278,6 +292,85 @@ export function registerGSDCommand(pi: ExtensionAPI): void {
 
       if (trimmed === "export" || trimmed.startsWith("export ")) {
         await handleExport(trimmed.replace(/^export\s*/, "").trim(), ctx, projectRoot());
+        return;
+      }
+
+      // ─── Parallel Orchestration ────────────────────────────────────────
+      if (trimmed.startsWith("parallel")) {
+        const parallelArgs = trimmed.slice("parallel".length).trim();
+        const [subCmd = "", ...restParts] = parallelArgs.split(/\s+/);
+        const rest = restParts.join(" ");
+
+        if (subCmd === "start" || subCmd === "") {
+          const loaded = loadEffectiveGSDPreferences();
+          const config = resolveParallelConfig(loaded?.preferences);
+          if (!config.enabled) {
+            pi.sendMessage({
+              content: "Parallel mode is not enabled. Set `parallel.enabled: true` in your preferences.",
+            });
+            return;
+          }
+          const candidates = await prepareParallelStart(projectRoot(), loaded?.preferences);
+          const report = formatEligibilityReport(candidates);
+          if (candidates.eligible.length === 0) {
+            pi.sendMessage({ content: report + "\n\nNo milestones are eligible for parallel execution." });
+            return;
+          }
+          const result = await startParallel(
+            projectRoot(),
+            candidates.eligible.map(e => e.milestoneId),
+            loaded?.preferences,
+          );
+          const lines = [`Parallel orchestration started.`, `Workers: ${result.started.join(", ")}`];
+          if (result.errors.length > 0) {
+            lines.push(`Errors: ${result.errors.map(e => `${e.mid}: ${e.error}`).join("; ")}`);
+          }
+          pi.sendMessage({ content: report + "\n\n" + lines.join("\n") });
+          return;
+        }
+
+        if (subCmd === "status") {
+          if (!isParallelActive()) {
+            pi.sendMessage({ content: "No parallel orchestration is currently active." });
+            return;
+          }
+          const workers = getWorkerStatuses();
+          const lines = ["# Parallel Workers\n"];
+          for (const w of workers) {
+            lines.push(`- **${w.milestoneId}** (${w.title}) — ${w.state} — ${w.completedUnits} units — $${w.cost.toFixed(2)}`);
+          }
+          const orchState = getOrchestratorState();
+          if (orchState) {
+            lines.push(`\nTotal cost: $${orchState.totalCost.toFixed(2)}`);
+          }
+          pi.sendMessage({ content: lines.join("\n") });
+          return;
+        }
+
+        if (subCmd === "stop") {
+          const mid = rest.trim() || undefined;
+          await stopParallel(projectRoot(), mid);
+          pi.sendMessage({ content: mid ? `Stopped worker for ${mid}.` : "All parallel workers stopped." });
+          return;
+        }
+
+        if (subCmd === "pause") {
+          const mid = rest.trim() || undefined;
+          pauseWorker(projectRoot(), mid);
+          pi.sendMessage({ content: mid ? `Paused worker for ${mid}.` : "All parallel workers paused." });
+          return;
+        }
+
+        if (subCmd === "resume") {
+          const mid = rest.trim() || undefined;
+          resumeWorker(projectRoot(), mid);
+          pi.sendMessage({ content: mid ? `Resumed worker for ${mid}.` : "All parallel workers resumed." });
+          return;
+        }
+
+        pi.sendMessage({
+          content: `Unknown parallel subcommand "${subCmd}". Usage: /gsd parallel [start|status|stop|pause|resume]`,
+        });
         return;
       }
 
