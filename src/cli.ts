@@ -174,6 +174,13 @@ if (cliFlags.messages[0] === 'sessions') {
   cliFlags._selectedSessionPath = selected.path
 }
 
+// `gsd headless` — run auto-mode without TUI
+if (cliFlags.messages[0] === 'headless') {
+  const { runHeadless, parseHeadlessArgs } = await import('./headless.js')
+  await runHeadless(parseHeadlessArgs(process.argv))
+  process.exit(0)
+}
+
 // Pi's tool bootstrap can mis-detect already-installed fd/rg on some systems
 // because spawnSync(..., ["--version"]) returns EPERM despite a zero exit code.
 // Provision local managed binaries first so Pi sees them without probing PATH.
