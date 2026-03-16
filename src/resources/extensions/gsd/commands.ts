@@ -66,13 +66,13 @@ function projectRoot(): string {
 
 export function registerGSDCommand(pi: ExtensionAPI): void {
   pi.registerCommand("gsd", {
-    description: "GSD — Get Shit Done: /gsd help|next|auto|stop|pause|status|visualize|queue|capture|triage|history|undo|skip|export|cleanup|prefs|config|hooks|run-hook|doctor|migrate|remote|steer|knowledge",
+    description: "GSD — Get Shit Done: /gsd help|next|auto|stop|pause|status|visualize|queue|capture|triage|history|undo|skip|export|cleanup|prefs|config|hooks|run-hook|skill-health|doctor|migrate|remote|steer|knowledge",
     getArgumentCompletions: (prefix: string) => {
       const subcommands = [
         "help", "next", "auto", "stop", "pause", "status", "visualize", "queue", "discuss",
         "capture", "triage",
         "history", "undo", "skip", "export", "cleanup", "prefs",
-        "config", "hooks", "run-hook", "doctor", "migrate", "remote", "steer", "inspect", "knowledge",
+        "config", "hooks", "run-hook", "skill-health", "doctor", "migrate", "remote", "steer", "inspect", "knowledge",
       ];
       const parts = prefix.trim().split(/\s+/);
 
@@ -290,6 +290,12 @@ export function registerGSDCommand(pi: ExtensionAPI): void {
       if (trimmed === "hooks") {
         const { formatHookStatus } = await import("./post-unit-hooks.js");
         ctx.ui.notify(formatHookStatus(), "info");
+        return;
+      }
+
+      // ─── Skill Health ────────────────────────────────────────────
+      if (trimmed === "skill-health" || trimmed.startsWith("skill-health ")) {
+        await handleSkillHealth(trimmed.replace(/^skill-health\s*/, "").trim(), ctx);
         return;
       }
 
@@ -627,6 +633,47 @@ async function handleInspect(ctx: ExtensionCommandContext): Promise<void> {
     process.stderr.write(`gsd-db: /gsd inspect failed: ${err instanceof Error ? err.message : String(err)}\n`);
     ctx.ui.notify("Failed to inspect GSD database. Check stderr for details.", "error");
   }
+}
+
+// ─── Skill Health ─────────────────────────────────────────────────────────────
+
+async function handleSkillHealth(args: string, ctx: ExtensionCommandContext): Promise<void> {
+  const {
+    generateSkillHealthReport,
+    formatSkillHealthReport,
+    formatSkillDetail,
+  } = await import("./skill-health.js");
+
+  const basePath = projectRoot();
+
+  // /gsd skill-health <skill-name> — detail view
+  if (args && !args.startsWith("--")) {
+    const detail = formatSkillDetail(basePath, args);
+    ctx.ui.notify(detail, "info");
+    return;
+  }
+
+  // Parse flags
+  const staleMatch = args.match(/--stale\s+(\d+)/);
+  const staleDays = staleMatch ? parseInt(staleMatch[1], 10) : undefined;
+  const decliningOnly = args.includes("--declining");
+
+  const report = generateSkillHealthReport(basePath, staleDays);
+
+  if (decliningOnly) {
+    if (report.decliningSkills.length === 0) {
+      ctx.ui.notify("No skills flagged for declining performance.", "info");
+      return;
+    }
+    const filtered = {
+      ...report,
+      skills: report.skills.filter(s => s.flagged),
+    };
+    ctx.ui.notify(formatSkillHealthReport(filtered), "info");
+    return;
+  }
+
+  ctx.ui.notify(formatSkillHealthReport(report), "info");
 }
 
 // ─── Preferences Wizard ───────────────────────────────────────────────────────

@@ -28,6 +28,7 @@ const KNOWN_PREFERENCE_KEYS = new Set<string>([
   "custom_instructions",
   "models",
   "skill_discovery",
+  "skill_staleness_days",
   "auto_supervisor",
   "uat_dispatch",
   "unique_milestone_ids",
@@ -122,6 +123,7 @@ export interface GSDPreferences {
   custom_instructions?: string[];
   models?: GSDModelConfig | GSDModelConfigV2;
   skill_discovery?: SkillDiscoveryMode;
+  skill_staleness_days?: number;  // Skills unused for N days get deprioritized (#599). 0 = disabled. Default: 60.
   auto_supervisor?: AutoSupervisorConfig;
   uat_dispatch?: boolean;
   unique_milestone_ids?: boolean;
@@ -454,6 +456,15 @@ export function resolveSkillDiscoveryMode(): SkillDiscoveryMode {
 }
 
 /**
+ * Resolve the skill staleness threshold in days.
+ * Returns 0 if disabled, default 60 if not configured.
+ */
+export function resolveSkillStalenessDays(): number {
+  const prefs = loadEffectiveGSDPreferences();
+  return prefs?.preferences.skill_staleness_days ?? 60;
+}
+
+/**
  * Resolve which model ID to use for a given auto-mode unit type.
  * Returns undefined if no model preference is set for this unit type.
  */
@@ -658,6 +669,7 @@ function mergePreferences(base: GSDPreferences, override: GSDPreferences): GSDPr
     custom_instructions: mergeStringLists(base.custom_instructions, override.custom_instructions),
     models: { ...(base.models ?? {}), ...(override.models ?? {}) },
     skill_discovery: override.skill_discovery ?? base.skill_discovery,
+    skill_staleness_days: override.skill_staleness_days ?? base.skill_staleness_days,
     auto_supervisor: { ...(base.auto_supervisor ?? {}), ...(override.auto_supervisor ?? {}) },
     uat_dispatch: override.uat_dispatch ?? base.uat_dispatch,
     unique_milestone_ids: override.unique_milestone_ids ?? base.unique_milestone_ids,
@@ -715,6 +727,15 @@ export function validatePreferences(preferences: GSDPreferences): {
       validated.skill_discovery = preferences.skill_discovery;
     } else {
       errors.push(`invalid skill_discovery value: ${preferences.skill_discovery}`);
+    }
+  }
+
+  if (preferences.skill_staleness_days !== undefined) {
+    const days = Number(preferences.skill_staleness_days);
+    if (Number.isFinite(days) && days >= 0) {
+      validated.skill_staleness_days = Math.floor(days);
+    } else {
+      errors.push(`invalid skill_staleness_days: must be a non-negative number`);
     }
   }
 
