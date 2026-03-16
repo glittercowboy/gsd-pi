@@ -9,8 +9,8 @@ test("pauseAutoForProviderError warns and pauses without requiring ctx.log", asy
 
   await pauseAutoForProviderError(
     {
-      notify(message, level) {
-        notifications.push({ message, level });
+      notify(message, level?) {
+        notifications.push({ message, level: level ?? "info" });
       },
     },
     ": terminated",

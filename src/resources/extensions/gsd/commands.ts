@@ -662,7 +662,7 @@ export function loadToolApiKeys(): void {
     const auth = AuthStorage.create(authPath);
     for (const tool of TOOL_KEYS) {
       const cred = auth.get(tool.id);
-      if (cred && "key" in cred && cred.key && !process.env[tool.env]) {
+      if (cred && cred.type === "api_key" && cred.key && !process.env[tool.env]) {
         process.env[tool.env] = cred.key;
       }
     }
