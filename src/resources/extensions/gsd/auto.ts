@@ -82,7 +82,7 @@ import {
 import { join } from "node:path";
 import { sep as pathSep } from "node:path";
 import { homedir } from "node:os";
-import { readdirSync, readFileSync, existsSync, mkdirSync, writeFileSync, unlinkSync, statSync } from "node:fs";
+import { readdirSync, readFileSync, existsSync, mkdirSync, writeFileSync, unlinkSync, statSync, cpSync } from "node:fs";
 import { nativeIsRepo, nativeInit, nativeAddPaths, nativeCommit } from "./native-git-bridge.js";
 import {
   autoCommitCurrentBranch,
@@ -145,6 +145,45 @@ import {
 } from "./auto-supervisor.js";
 import { isDbAvailable } from "./gsd-db.js";
 import { hasPendingCaptures, loadPendingCaptures, countPendingCaptures } from "./captures.js";
+
+// ─── Worktree → Project Root State Sync ───────────────────────────────────────
+// When running in an auto-worktree, dispatch state (.gsd/ metadata) diverges
+// between the worktree (where work happens) and the project root (where
+// startAutoMode reads initial state on restart). Without syncing, restarting
+// auto-mode reads stale state from the project root and re-dispatches
+// already-completed units.
+
+/**
+ * Sync dispatch-critical .gsd/ state files from worktree to project root.
+ * Only runs when inside an auto-worktree (worktreePath differs from projectRoot).
+ * Copies: STATE.md + active milestone directory (roadmap, slice plans, task summaries).
+ * Non-fatal — sync failure should never block dispatch.
+ */
+function syncStateToProjectRoot(worktreePath: string, projectRoot: string, milestoneId: string | null): void {
+  if (!worktreePath || !projectRoot || worktreePath === projectRoot) return;
+  if (!milestoneId) return;
+
+  const wtGsd = join(worktreePath, ".gsd");
+  const prGsd = join(projectRoot, ".gsd");
+
+  // 1. STATE.md — the quick-glance status used by initial deriveState()
+  try {
+    const src = join(wtGsd, "STATE.md");
+    const dst = join(prGsd, "STATE.md");
+    if (existsSync(src)) cpSync(src, dst, { force: true });
+  } catch { /* non-fatal */ }
+
+  // 2. Milestone directory — ROADMAP, slice PLANs, task summaries
+  // Copy the entire milestone .gsd subtree so deriveState reads current checkboxes
+  try {
+    const srcMilestone = join(wtGsd, "milestones", milestoneId);
+    const dstMilestone = join(prGsd, "milestones", milestoneId);
+    if (existsSync(srcMilestone)) {
+      mkdirSync(dstMilestone, { recursive: true });
+      cpSync(srcMilestone, dstMilestone, { recursive: true, force: true });
+    }
+  } catch { /* non-fatal */ }
+}
 
 // ─── State ────────────────────────────────────────────────────────────────────
 
@@ -1234,6 +1273,17 @@ export async function handleAgentEnd(
       autoCommitCurrentBranch(basePath, currentUnit.type, currentUnit.id);
     } catch {
       // Non-fatal
+    }
+
+    // ── Sync worktree state back to project root ──────────────────────────
+    // Ensures that if auto-mode restarts, deriveState(projectRoot) reads
+    // current milestone progress instead of stale pre-worktree state (#654).
+    if (originalBasePath && originalBasePath !== basePath) {
+      try {
+        syncStateToProjectRoot(basePath, originalBasePath, currentMilestoneId);
+      } catch {
+        // Non-fatal — stale state is the existing behavior, sync is an improvement
+      }
     }
 
     // ── Rewrite-docs completion: resolve overrides and reset circuit breaker ──
