@@ -5,6 +5,7 @@
 import { randomUUID } from "node:crypto";
 import type { ChannelAdapter, RemotePrompt, RemoteQuestion, RemoteAnswer } from "./types.js";
 import { resolveRemoteConfig, type ResolvedConfig } from "./config.js";
+import { DiscordAdapter } from "./discord-adapter.js";
 import { SlackAdapter } from "./slack-adapter.js";
 import { createPromptRecord, writePromptRecord, markPromptAnswered, markPromptDispatched, markPromptStatus, updatePromptRecord } from "./store.js";
 
