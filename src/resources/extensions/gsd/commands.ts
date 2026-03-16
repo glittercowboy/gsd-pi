@@ -349,7 +349,7 @@ function showHelp(ctx: ExtensionCommandContext): void {
     "",
     "VISIBILITY",
     "  /gsd status         Show progress dashboard  (Ctrl+Alt+G)",
-    "  /gsd visualize      Interactive tree visualizer with 4-tab TUI",
+    "  /gsd visualize      Interactive 7-tab TUI (progress, deps, metrics, timeline, agent, changes, export)",
     "  /gsd queue          Show queued/dispatched units and execution order",
     "  /gsd history        View execution history  [--cost] [--phase] [--model] [N]",
     "",
