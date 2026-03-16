@@ -1,4 +1,9 @@
-<svg width="433" height="600" viewBox="0 0 433 600" fill="none" xmlns="http://www.w3.org/2000/svg">
+<svg width="466" height="637" viewBox="0 0 466 637" fill="none" xmlns="http://www.w3.org/2000/svg">
+<rect x="33" y="152" width="115" height="370" fill="white" fill-opacity="0.4"/>
+<rect x="91" y="637" width="115" height="324" transform="rotate(-90 91 637)" fill="white" fill-opacity="0.4"/>
+<rect x="91" y="152" width="115" height="324" transform="rotate(-90 91 152)" fill="white" fill-opacity="0.4"/>
+<rect x="343" y="522" width="115" height="123" transform="rotate(-90 343 522)" fill="white" fill-opacity="0.4"/>
+<rect x="249" y="407" width="115" height="217" transform="rotate(-90 249 407)" fill="white" fill-opacity="0.4"/>
 <rect y="115" width="115" height="370" fill="white"/>
 <rect x="58" y="600" width="115" height="324" transform="rotate(-90 58 600)" fill="white"/>
 <rect x="58" y="115" width="115" height="324" transform="rotate(-90 58 115)" fill="white"/>
