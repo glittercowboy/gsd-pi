@@ -35,6 +35,10 @@ export interface AutoDashboardData {
   /** Running cost and token totals from metrics ledger */
   totalCost: number;
   totalTokens: number;
+  /** Projected remaining cost based on unit-type averages (undefined if insufficient data) */
+  projectedRemainingCost?: number;
+  /** Whether token profile has been auto-downgraded due to budget prediction */
+  profileDowngraded?: boolean;
 }
 
 // ─── Unit Description Helpers ─────────────────────────────────────────────────

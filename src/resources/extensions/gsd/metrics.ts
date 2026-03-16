@@ -303,6 +303,50 @@ export function formatCost(cost: number): string {
   return `$${n.toFixed(2)}`;
 }
 
+// ─── Budget Prediction ────────────────────────────────────────────────────────
+
+/**
+ * Calculate average cost per unit type from completed units.
+ * Returns a Map from unit type to average cost in USD.
+ */
+export function getAverageCostPerUnitType(units: UnitMetrics[]): Map<string, number> {
+  const sums = new Map<string, { total: number; count: number }>();
+  for (const u of units) {
+    const entry = sums.get(u.type) ?? { total: 0, count: 0 };
+    entry.total += u.cost;
+    entry.count += 1;
+    sums.set(u.type, entry);
+  }
+  const avgs = new Map<string, number>();
+  for (const [type, { total, count }] of sums) {
+    avgs.set(type, total / count);
+  }
+  return avgs;
+}
+
+/**
+ * Estimate remaining cost given average costs and remaining unit counts.
+ * @param avgCosts - Average cost per unit type
+ * @param remainingUnits - Array of unit types still to dispatch
+ * @param fallbackAvg - Fallback average if unit type not seen before
+ * @returns Estimated remaining cost in USD
+ */
+export function predictRemainingCost(
+  avgCosts: Map<string, number>,
+  remainingUnits: string[],
+  fallbackAvg?: number,
+): number {
+  // If no averages available, use overall average as fallback
+  const allAvgs = [...avgCosts.values()];
+  const overallAvg = fallbackAvg ?? (allAvgs.length > 0 ? allAvgs.reduce((a, b) => a + b, 0) / allAvgs.length : 0);
+
+  let total = 0;
+  for (const unitType of remainingUnits) {
+    total += avgCosts.get(unitType) ?? overallAvg;
+  }
+  return total;
+}
+
 /**
  * Compute a projected remaining cost based on completed slice averages.
  *

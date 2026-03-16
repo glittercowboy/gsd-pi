@@ -3,7 +3,7 @@ import { homedir } from "node:os";
 import { isAbsolute, join } from "node:path";
 import { getAgentDir } from "@gsd/pi-coding-agent";
 import type { GitPreferences } from "./git-service.js";
-import type { PostUnitHookConfig, PreDispatchHookConfig, BudgetEnforcementMode, NotificationPreferences } from "./types.js";
+import type { PostUnitHookConfig, PreDispatchHookConfig, BudgetEnforcementMode, NotificationPreferences, TokenProfile, InlineLevel, PhaseSkipPreferences } from "./types.js";
 import { VALID_BRANCH_NAME } from "./git-service.js";
 
 const GLOBAL_PREFERENCES_PATH = join(homedir(), ".gsd", "preferences.md");
@@ -36,6 +36,8 @@ const KNOWN_PREFERENCE_KEYS = new Set<string>([
   "git",
   "post_unit_hooks",
   "pre_dispatch_hooks",
+  "token_profile",
+  "phases",
 ]);
 
 export interface GSDSkillRule {
@@ -66,7 +68,9 @@ export interface GSDModelConfig {
   research?: string;
   planning?: string;
   execution?: string;
+  execution_simple?: string;
   completion?: string;
+  subagent?: string;
 }
 
 /**
@@ -77,7 +81,9 @@ export interface GSDModelConfigV2 {
   research?: string | GSDPhaseModelConfig;
   planning?: string | GSDPhaseModelConfig;
   execution?: string | GSDPhaseModelConfig;
+  execution_simple?: string | GSDPhaseModelConfig;
   completion?: string | GSDPhaseModelConfig;
+  subagent?: string | GSDPhaseModelConfig;
 }
 
 /** Normalized model selection with resolved fallbacks */
@@ -122,6 +128,8 @@ export interface GSDPreferences {
   git?: GitPreferences;
   post_unit_hooks?: PostUnitHookConfig[];
   pre_dispatch_hooks?: PreDispatchHookConfig[];
+  token_profile?: TokenProfile;
+  phases?: PhaseSkipPreferences;
 }
 
 export interface LoadedGSDPreferences {
@@ -631,11 +639,19 @@ export function resolveModelWithFallbacksForUnit(unitType: string): ResolvedMode
     case "execute-task":
       phaseConfig = m.execution;
       break;
+    case "execute-task-simple":
+      phaseConfig = m.execution_simple ?? m.execution;
+      break;
     case "complete-slice":
     case "run-uat":
       phaseConfig = m.completion;
       break;
     default:
+      // Subagent unit types (e.g., "subagent", "subagent/scout")
+      if (unitType === "subagent" || unitType.startsWith("subagent/")) {
+        phaseConfig = m.subagent;
+        break;
+      }
       return undefined;
   }
 
@@ -670,6 +686,73 @@ export function resolveAutoSupervisorConfig(): AutoSupervisorConfig {
   };
 }
 
+// ─── Token Profile Resolution ─────────────────────────────────────────────
+
+const VALID_TOKEN_PROFILES = new Set<TokenProfile>(["budget", "balanced", "quality"]);
+
+/**
+ * Resolve profile defaults for a given token profile tier.
+ * Returns a partial GSDPreferences that is used as the base layer —
+ * explicit user preferences always override these defaults.
+ */
+export function resolveProfileDefaults(profile: TokenProfile): Partial<GSDPreferences> {
+  switch (profile) {
+    case "budget":
+      return {
+        models: {
+          planning: "claude-sonnet-4-5-20250514",
+          execution: "claude-sonnet-4-5-20250514",
+          execution_simple: "claude-haiku-4-5-20250414",
+          completion: "claude-haiku-4-5-20250414",
+          subagent: "claude-haiku-4-5-20250414",
+        },
+        phases: {
+          skip_research: true,
+          skip_reassess: true,
+          skip_slice_research: true,
+        },
+      };
+    case "balanced":
+      return {
+        models: {
+          subagent: "claude-sonnet-4-5-20250514",
+        },
+        phases: {
+          skip_slice_research: true,
+        },
+      };
+    case "quality":
+      return {
+        models: {},
+        phases: {},
+      };
+  }
+}
+
+/**
+ * Resolve the effective token profile from preferences.
+ * Returns "balanced" when no profile is set (D046).
+ */
+export function resolveEffectiveProfile(): TokenProfile {
+  const prefs = loadEffectiveGSDPreferences();
+  const profile = prefs?.preferences.token_profile;
+  if (profile && VALID_TOKEN_PROFILES.has(profile)) return profile;
+  return "balanced";
+}
+
+/**
+ * Resolve the inline level from the active token profile.
+ * budget → minimal, balanced → standard, quality → full.
+ */
+export function resolveInlineLevel(): InlineLevel {
+  const profile = resolveEffectiveProfile();
+  switch (profile) {
+    case "budget": return "minimal";
+    case "balanced": return "standard";
+    case "quality": return "full";
+  }
+}
+
 function mergePreferences(base: GSDPreferences, override: GSDPreferences): GSDPreferences {
   return {
     version: override.version ?? base.version,
@@ -697,6 +780,10 @@ function mergePreferences(base: GSDPreferences, override: GSDPreferences): GSDPr
       : undefined,
     post_unit_hooks: mergePostUnitHooks(base.post_unit_hooks, override.post_unit_hooks),
     pre_dispatch_hooks: mergePreDispatchHooks(base.pre_dispatch_hooks, override.pre_dispatch_hooks),
+    token_profile: override.token_profile ?? base.token_profile,
+    phases: (base.phases || override.phases)
+      ? { ...(base.phases ?? {}), ...(override.phases ?? {}) }
+      : undefined,
   };
 }
 
@@ -800,6 +887,36 @@ export function validatePreferences(preferences: GSDPreferences): {
       validated.budget_enforcement = preferences.budget_enforcement;
     } else {
       errors.push(`budget_enforcement must be one of: warn, pause, halt`);
+    }
+  }
+
+  // ─── Token Profile ─────────────────────────────────────────────────
+  if (preferences.token_profile !== undefined) {
+    if (typeof preferences.token_profile === "string" && VALID_TOKEN_PROFILES.has(preferences.token_profile as TokenProfile)) {
+      validated.token_profile = preferences.token_profile as TokenProfile;
+    } else {
+      errors.push(`token_profile must be one of: budget, balanced, quality`);
+    }
+  }
+
+  // ─── Phase Skip Preferences ─────────────────────────────────────────
+  if (preferences.phases !== undefined) {
+    if (typeof preferences.phases === "object" && preferences.phases !== null) {
+      const validatedPhases: PhaseSkipPreferences = {};
+      const p = preferences.phases as Record<string, unknown>;
+      if (p.skip_research !== undefined) validatedPhases.skip_research = !!p.skip_research;
+      if (p.skip_reassess !== undefined) validatedPhases.skip_reassess = !!p.skip_reassess;
+      if (p.skip_slice_research !== undefined) validatedPhases.skip_slice_research = !!p.skip_slice_research;
+      // Warn on unknown phase keys
+      const knownPhaseKeys = new Set(["skip_research", "skip_reassess", "skip_slice_research"]);
+      for (const key of Object.keys(p)) {
+        if (!knownPhaseKeys.has(key)) {
+          warnings.push(`unknown phases key "${key}" — ignored`);
+        }
+      }
+      validated.phases = validatedPhases;
+    } else {
+      errors.push(`phases must be an object`);
     }
   }
 
