@@ -117,7 +117,7 @@ export interface ExtensionUIContext {
 	input(title: string, placeholder?: string, opts?: ExtensionUIDialogOptions): Promise<string | undefined>;
 
 	/** Show a notification to the user. */
-	notify(message: string, type?: "info" | "warning" | "error"): void;
+	notify(message: string, type?: "info" | "warning" | "error" | "success"): void;
 
 	/** Listen to raw terminal input (interactive mode only). Returns an unsubscribe function. */
 	onTerminalInput(handler: TerminalInputHandler): () => void;

@@ -247,6 +247,49 @@ async function main(): Promise<void> {
       assertEq(result.pushed, false, "pushed is false without discoverable prefs");
     }
 
+    // ─── Test 5: Auto-resolve .gsd/ state file conflicts (#530) ───────
+    console.log("\n=== auto-resolve .gsd/ state file conflicts ===");
+    {
+      const repo = freshRepo();
+      const wtPath = createAutoWorktree(repo, "M050");
+
+      // Add a slice with real work
+      addSliceToMilestone(repo, wtPath, "M050", "S01", "Conflict test", [
+        { file: "feature.ts", content: "export const feature = true;\n", message: "add feature" },
+      ]);
+
+      // Modify .gsd/STATE.md on the milestone branch (simulates auto-mode state updates)
+      writeFileSync(join(wtPath, ".gsd", "STATE.md"), "# State\n\n## Updated on milestone branch\n");
+      run("git add .", wtPath);
+      run('git commit -m "chore: update state on milestone branch"', wtPath);
+
+      // Now modify .gsd/STATE.md on main too (simulates divergence)
+      run("git checkout main", repo);
+      writeFileSync(join(repo, ".gsd", "STATE.md"), "# State\n\n## Updated on main\n");
+      run("git add .", repo);
+      run('git commit -m "chore: update state on main"', repo);
+
+      // Go back to worktree for the merge
+      process.chdir(wtPath);
+
+      const roadmap = makeRoadmap("M050", "Conflict resolution", [
+        { id: "S01", title: "Conflict test" },
+      ]);
+
+      // Merge should succeed despite .gsd/STATE.md conflict — auto-resolved
+      let threw = false;
+      try {
+        const result = mergeMilestoneToMain(repo, "M050", roadmap);
+        assertTrue(result.commitMessage.includes("feat(M050)"), "merge commit created despite .gsd conflict");
+      } catch (err) {
+        threw = true;
+      }
+      assertTrue(!threw, "auto-resolves .gsd/ state file conflicts without throwing");
+
+      // Feature file should be on main
+      assertTrue(existsSync(join(repo, "feature.ts")), "feature.ts merged to main");
+    }
+
   } finally {
     process.chdir(savedCwd);
     for (const d of tempDirs) {

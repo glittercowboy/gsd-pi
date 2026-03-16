@@ -91,13 +91,19 @@ Do not count the reflection step as a question round. Rounds start after reflect
 
 ## Depth Verification
 
-Before moving to the wrap-up gate, present a structured depth summary to the user via `ask_user_questions`. This is a checkpoint — show what you captured across the depth checklist dimensions, using the user's own terminology and framing.
+Before moving to the wrap-up gate, present a structured depth summary as a checkpoint.
 
-The question should summarize: what you understood them to be building, what shaped your understanding most (their emphasis, constraints, concerns), and any areas where you're least confident in your understanding. Frame it as: "Before we move to planning, here's what I captured — did I get the depth right?"
+**Print the summary as normal chat text first** — this is where the formatting renders properly. Structure the summary across the depth checklist dimensions using the user's own terminology and framing. Cover: what you understood them to be building, what shaped your understanding most (their emphasis, constraints, concerns), and any areas where you're least confident in your understanding.
 
-**Convention:** The question ID must contain `depth_verification` (e.g., `depth_verification_summary`). This naming convention enables downstream mechanical detection of this step.
+**Then** use `ask_user_questions` with a short confirmation question — NOT the summary itself. The question field is designed for single sentences, not multi-paragraph summaries.
 
-Offer two options: "Yes, you got it (Recommended)" and "Not quite — let me clarify." If they clarify, absorb the correction and re-verify.
+**Convention:** The question ID must contain `depth_verification` (e.g., `depth_verification_confirm`). This naming convention enables downstream mechanical detection of this step.
+
+Example flow:
+1. Print in chat: the full depth summary with markdown formatting (headers, bold, bullets)
+2. Call `ask_user_questions` with: header "Depth Check", question "Did I capture the depth right?", options "Yes, you got it (Recommended)" and "Not quite — let me clarify"
+
+If they clarify, absorb the correction and re-verify.
 
 ## Wrap-up Gate
 

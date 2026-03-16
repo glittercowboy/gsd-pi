@@ -33,6 +33,7 @@ async function main(): Promise<void> {
   console.log("\n=== reassess-roadmap prompt loads and substitutes ===");
   {
     const testVars = {
+      workingDirectory: "/tmp/test-project",
       milestoneId: "M099",
       completedSliceId: "S03",
       assessmentPath: ".gsd/milestones/M099/slices/S03/S03-ASSESSMENT.md",
@@ -72,6 +73,7 @@ async function main(): Promise<void> {
   console.log("\n=== reassess-roadmap contains coverage-check instruction ===");
   {
     const prompt = loadPromptFromWorktree("reassess-roadmap", {
+      workingDirectory: "/tmp/test-project",
       milestoneId: "M001",
       completedSliceId: "S01",
       assessmentPath: ".gsd/milestones/M001/slices/S01/S01-ASSESSMENT.md",
@@ -111,6 +113,7 @@ async function main(): Promise<void> {
   console.log("\n=== coverage-check requires at-least-one semantics ===");
   {
     const prompt = loadPromptFromWorktree("reassess-roadmap", {
+      workingDirectory: "/tmp/test-project",
       milestoneId: "M001",
       completedSliceId: "S01",
       assessmentPath: ".gsd/milestones/M001/slices/S01/S01-ASSESSMENT.md",

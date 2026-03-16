@@ -77,29 +77,33 @@ export function getUpdateInstruction(packageName: string): string {
  * - For Node.js (dist/): returns __dirname (the dist/ directory)
  * - For tsx (src/): returns parent directory (the package root)
  */
+let _cachedPackageDir: string | undefined;
+
 export function getPackageDir(): string {
+	if (_cachedPackageDir !== undefined) return _cachedPackageDir;
+
 	// Allow override via environment variable (useful for Nix/Guix where store paths tokenize poorly)
 	const envDir = process.env.PI_PACKAGE_DIR;
 	if (envDir) {
-		if (envDir === "~") return homedir();
-		if (envDir.startsWith("~/")) return homedir() + envDir.slice(1);
-		return envDir;
+		if (envDir === "~") return (_cachedPackageDir = homedir());
+		if (envDir.startsWith("~/")) return (_cachedPackageDir = homedir() + envDir.slice(1));
+		return (_cachedPackageDir = envDir);
 	}
 
 	if (isBunBinary) {
 		// Bun binary: process.execPath points to the compiled executable
-		return dirname(process.execPath);
+		return (_cachedPackageDir = dirname(process.execPath));
 	}
 	// Node.js: walk up from __dirname until we find package.json
 	let dir = __dirname;
 	while (dir !== dirname(dir)) {
 		if (existsSync(join(dir, "package.json"))) {
-			return dir;
+			return (_cachedPackageDir = dir);
 		}
 		dir = dirname(dir);
 	}
 	// Fallback (shouldn't happen)
-	return __dirname;
+	return (_cachedPackageDir = __dirname);
 }
 
 /**

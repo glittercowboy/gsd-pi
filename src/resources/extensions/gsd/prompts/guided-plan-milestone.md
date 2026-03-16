@@ -26,4 +26,6 @@ Plan milestone {{milestoneId}} ("{{milestoneTitle}}"). Read `.gsd/DECISIONS.md` 
 
 After writing the roadmap, analyze the slices and their boundary maps for external service dependencies (third-party APIs, SaaS platforms, cloud providers, databases requiring credentials, OAuth providers, etc.). If this milestone requires any external API keys or secrets, use the **Secrets Manifest** output template below for the expected format and write `{{secretsOutputPath}}` listing every predicted secret as an H3 section with the Service name, a direct Dashboard URL to the console page where the key is created, a Format hint showing what the key looks like, Status set to `pending`, and Destination (`dotenv`, `vercel`, or `convex`). Include numbered step-by-step guidance for obtaining each key. If this milestone does not require any external API keys or secrets, skip this step entirely — do not create an empty manifest.
 
+**You MUST update `.gsd/STATE.md`** after writing the roadmap (and secrets manifest if applicable). This is required for auto-mode to continue.
+
 {{inlinedTemplates}}

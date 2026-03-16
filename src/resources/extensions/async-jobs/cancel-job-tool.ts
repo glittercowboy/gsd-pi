@@ -16,7 +16,7 @@ export function createCancelJobTool(getManager: () => AsyncJobManager): ToolDefi
 		label: "Cancel Background Job",
 		description: "Cancel a running background job by its ID.",
 		parameters: schema,
-		async execute(_toolCallId, params) {
+		async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
 			const manager = getManager();
 			const result = manager.cancel(params.job_id);
 
@@ -28,6 +28,7 @@ export function createCancelJobTool(getManager: () => AsyncJobManager): ToolDefi
 
 			return {
 				content: [{ type: "text", text: messages[result] ?? `Unknown result: ${result}` }],
+				details: undefined,
 			};
 		},
 	};

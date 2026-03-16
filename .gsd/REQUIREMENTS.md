@@ -4,7 +4,148 @@ This file is the explicit capability and coverage contract for the project.
 
 ## Active
 
-(No active requirements — all M003 requirements validated.)
+### R045 — SQLite DB layer with tiered provider chain
+- Class: core-capability
+- Status: active
+- Description: A SQLite abstraction layer that tries `node:sqlite` (Node 22.5+), falls back to `better-sqlite3`, then to null. A thin `DbAdapter` interface normalizes API differences. Schema init creates decisions, requirements, artifacts tables plus filtered views. WAL mode on file-backed databases.
+- Why it matters: The foundation for surgical context injection. Without a queryable store, prompts must dump entire files.
+- Source: execution (memory-db port)
+- Primary owning slice: M004/S01
+- Supporting slices: none
+- Validation: unmapped
+- Notes: Port from memory-db worktree `gsd-db.ts`. Tiered provider chain proven on Node 22.20.0. `node:sqlite` returns null-prototype rows — DbAdapter normalizes via spread.
+
+### R046 — Graceful degradation when SQLite unavailable
+- Class: continuity
+- Status: active
+- Description: When no SQLite provider loads, all query functions return empty results and all prompt builders fall back to `inlineGsdRootFile` filesystem loading. No crash, no visible error.
+- Why it matters: SQLite must be optional. Users on exotic platforms or old Node versions must not be blocked.
+- Source: execution (memory-db port)
+- Primary owning slice: M004/S01
+- Supporting slices: M004/S03
+- Validation: unmapped
+- Notes: Every query function guards with `isDbAvailable()` + try/catch. Every prompt builder falls back to existing `inlineGsdRootFile`.
+
+### R047 — Auto-migration from markdown to DB on first run
+- Class: core-capability
+- Status: active
+- Description: When auto-mode starts on a project with `.gsd/` markdown files but no `gsd.db`, silently import all artifact types into a fresh DB. Idempotent — safe to re-run.
+- Why it matters: Existing projects must transparently gain DB benefits without manual migration.
+- Source: execution (memory-db port)
+- Primary owning slice: M004/S02
+- Supporting slices: M004/S01
+- Validation: unmapped
+- Notes: Port from memory-db `md-importer.ts`. Custom parsers for DECISIONS.md pipe-table format and REQUIREMENTS.md section/bullet format. Hierarchy walker for milestones → slices → tasks.
+
+### R048 — Round-trip fidelity for all artifact types
+- Class: quality-attribute
+- Status: active
+- Description: Importing markdown into DB and regenerating markdown produces field-identical output. No data loss, no format drift.
+- Why it matters: Dual-write means DB→markdown generation must be faithful. Format drift corrupts the human-readable artifacts.
+- Source: execution (memory-db port)
+- Primary owning slice: M004/S02
+- Supporting slices: M004/S06
+- Validation: unmapped
+- Notes: Port from memory-db. Custom parsers and generators must produce/consume identical formats.
+
+### R049 — Surgical prompt injection via DB queries
+- Class: core-capability
+- Status: active
+- Description: All prompt builders in `auto-prompts.ts` use scoped DB queries instead of whole-file `inlineGsdRootFile` for decisions, requirements, and project context. Decisions filtered by milestone, requirements filtered by slice ownership.
+- Why it matters: This is the core value — smaller, more relevant prompts mean better agent reasoning and fewer wasted tokens.
+- Source: user
+- Primary owning slice: M004/S03
+- Supporting slices: M004/S01, M004/S02
+- Validation: unmapped
+- Notes: Port from memory-db DB-aware helpers. Must be rewired into current `auto-prompts.ts` (not the old monolithic auto.ts). 19 `inlineGsdRootFile` calls to replace across 11 prompt builders.
+
+### R050 — Dual-write keeping markdown and DB in sync
+- Class: continuity
+- Status: active
+- Description: After each dispatch unit completes and auto-commits, re-import modified markdown files into the DB. Structured LLM tools write to DB first, then regenerate markdown. Both directions stay synchronized.
+- Why it matters: Markdown files are the human-readable source of truth. The DB is the query index. They must agree.
+- Source: execution (memory-db port)
+- Primary owning slice: M004/S03
+- Supporting slices: M004/S06
+- Validation: unmapped
+- Notes: Re-import in `handleAgentEnd` after auto-commit. DB-first write in structured tools triggers markdown generation.
+
+### R051 — Token measurement with before/after comparison
+- Class: operability
+- Status: active
+- Description: `promptCharCount` and `baselineCharCount` fields added to `UnitMetrics`. Measurement wired into all `snapshotUnitMetrics` call sites. Baseline = full markdown content. Prompt = DB-scoped content. Difference = token savings.
+- Why it matters: Proves the ≥30% savings claim with real data. Enables ongoing monitoring of prompt efficiency.
+- Source: execution (memory-db port)
+- Primary owning slice: M004/S04
+- Supporting slices: M004/S03
+- Validation: unmapped
+- Notes: Port from memory-db. Module-scoped measurement vars reset at top of `dispatchNextUnit`.
+
+### R052 — DB-first state derivation with filesystem fallback
+- Class: core-capability
+- Status: active
+- Description: `deriveState()` queries the artifacts table for file content when DB is available, replacing the batch file-parse step. File discovery still uses disk. Falls back to filesystem when DB unavailable.
+- Why it matters: Faster state derivation on large projects. Consistent with DB-first architecture.
+- Source: execution (memory-db port)
+- Primary owning slice: M004/S04
+- Supporting slices: M004/S01, M004/S02
+- Validation: unmapped
+- Notes: Port from memory-db. File discovery (which milestones/slices/tasks exist) stays on disk. Only content loading switches to DB.
+
+### R053 — Worktree DB copy on creation
+- Class: integration
+- Status: active
+- Description: When a worktree is created, copy `gsd.db` from the source project into the worktree's `.gsd/` directory. Skip WAL/SHM files. Non-fatal on failure.
+- Why it matters: Worktrees need their own DB with the project's current state. Without a copy, the worktree starts with no DB context.
+- Source: execution (memory-db port)
+- Primary owning slice: M004/S05
+- Supporting slices: M004/S01
+- Validation: unmapped
+- Notes: Port from memory-db `copyWorktreeDb`. Keep `createWorktree` synchronous — `copyFileSync` is sufficient. Guard with `isDbAvailable()`.
+
+### R054 — Worktree DB merge reconciliation
+- Class: integration
+- Status: active
+- Description: When a worktree merges back (slice or milestone), ATTACH the worktree's DB and reconcile rows: INSERT OR REPLACE in a transaction with conflict detection by content column comparison.
+- Why it matters: The worktree may have added decisions, requirements, or artifacts that the main DB doesn't have.
+- Source: execution (memory-db port)
+- Primary owning slice: M004/S05
+- Supporting slices: M004/S01
+- Validation: unmapped
+- Notes: Port from memory-db `reconcileWorktreeDb`. ATTACH/DETACH pattern with try/finally for cleanup.
+
+### R055 — Structured LLM tools for decisions/requirements/summaries
+- Class: core-capability
+- Status: active
+- Description: Three tools registered: `gsd_save_decision` (auto-assigns D-numbers, writes to DB + regenerates DECISIONS.md), `gsd_update_requirement` (verifies existence, updates DB + regenerates REQUIREMENTS.md), `gsd_save_summary` (writes artifact to DB + disk).
+- Why it matters: Eliminates the markdown-then-parse roundtrip. LLM writes structured data directly, guaranteeing parseable output.
+- Source: execution (memory-db port)
+- Primary owning slice: M004/S06
+- Supporting slices: M004/S03
+- Validation: unmapped
+- Notes: Port from memory-db. DB-first write pattern: upsert → fetch all → generate markdown → write file.
+
+### R056 — /gsd inspect command for DB diagnostics
+- Class: operability
+- Status: active
+- Description: A `/gsd inspect` slash command that dumps schema version, table row counts, and recent entries from each table.
+- Why it matters: When things go wrong, the user needs visibility into DB state without running raw SQL.
+- Source: execution (memory-db port)
+- Primary owning slice: M004/S06
+- Supporting slices: M004/S01
+- Validation: unmapped
+- Notes: Port from memory-db. Autocomplete for subcommands (decisions, requirements, artifacts, all).
+
+### R057 — ≥30% token savings on planning/research dispatches
+- Class: quality-attribute
+- Status: active
+- Description: Surgical prompt injection delivers ≥30% fewer prompt characters compared to whole-file loading, measured on mature projects with multiple milestones, decisions, and requirements.
+- Why it matters: The primary user-visible value of the entire DB architecture. If savings aren't real, the complexity isn't justified.
+- Source: user
+- Primary owning slice: M004/S07
+- Supporting slices: M004/S03, M004/S04
+- Validation: unmapped
+- Notes: Memory-db proved: 52.2% plan-slice, 66.3% decisions-only, 32.2% research composite, 42.4% lifecycle. Must re-prove against current codebase.
 
 ## Validated
 
@@ -516,11 +657,24 @@ This file is the explicit capability and coverage contract for the project.
 | R042 | core-capability | deferred | none | none | unmapped |
 | R043 | quality-attribute | deferred | none | none | unmapped |
 | R044 | anti-feature | out-of-scope | none | none | n/a |
+| R045 | core-capability | active | M004/S01 | none | unmapped |
+| R046 | continuity | active | M004/S01 | M004/S03 | unmapped |
+| R047 | core-capability | active | M004/S02 | M004/S01 | unmapped |
+| R048 | quality-attribute | active | M004/S02 | M004/S06 | unmapped |
+| R049 | core-capability | active | M004/S03 | M004/S01, M004/S02 | unmapped |
+| R050 | continuity | active | M004/S03 | M004/S06 | unmapped |
+| R051 | operability | active | M004/S04 | M004/S03 | unmapped |
+| R052 | core-capability | active | M004/S04 | M004/S01, M004/S02 | unmapped |
+| R053 | integration | active | M004/S05 | M004/S01 | unmapped |
+| R054 | integration | active | M004/S05 | M004/S01 | unmapped |
+| R055 | core-capability | active | M004/S06 | M004/S03 | unmapped |
+| R056 | operability | active | M004/S06 | M004/S01 | unmapped |
+| R057 | quality-attribute | active | M004/S07 | M004/S03, M004/S04 | unmapped |
 
 ## Coverage Summary
 
-- Active requirements: 0
-- Mapped to slices: 0
+- Active requirements: 13
+- Mapped to slices: 13
 - Validated: 35
 - Deferred: 5
 - Out of scope: 4

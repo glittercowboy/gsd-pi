@@ -1,6 +1,9 @@
-import { execSync } from "node:child_process";
+// GSD Dispatch Guard — prevents out-of-order slice dispatch
+// Copyright (c) 2026 Jeremy McSpadden <jeremy@fluxlabs.net>
+
+import { readFileSync } from "node:fs";
 import { readdirSync } from "node:fs";
-import { relMilestoneFile, milestonesDir } from "./paths.js";
+import { resolveMilestoneFile, milestonesDir } from "./paths.js";
 import { parseRoadmapSlices } from "./roadmap-slices.js";
 import { extractMilestoneSeq, milestoneIdSort } from "./guided-flow.js";
 
@@ -12,19 +15,29 @@ const SLICE_DISPATCH_TYPES = new Set([
   "complete-slice",
 ]);
 
-function readTrackedFileFromBranch(base: string, branch: string, relPath: string): string | null {
+/**
+ * Read a roadmap file from disk (working tree) rather than from a git branch.
+ *
+ * Prior implementation used `git show <branch>:<path>` which read committed
+ * state on a specific branch. This caused false-positive blockers when work
+ * was committed on a milestone/worktree branch but the integration branch
+ * (main) hadn't been updated yet — the guard would see prior slices as
+ * incomplete on main even though they were done in the working tree (#530).
+ *
+ * Reading from disk always reflects the latest state, regardless of which
+ * branch is checked out or whether changes have been committed.
+ */
+function readRoadmapFromDisk(base: string, milestoneId: string): string | null {
   try {
-    return execSync(`git show ${branch}:${relPath}`, {
-      cwd: base,
-      stdio: ["ignore", "pipe", "pipe"],
-      encoding: "utf-8",
-    }).trim();
+    const absPath = resolveMilestoneFile(base, milestoneId, "ROADMAP");
+    if (!absPath) return null;
+    return readFileSync(absPath, "utf-8").trim();
   } catch {
     return null;
   }
 }
 
-export function getPriorSliceCompletionBlocker(base: string, mainBranch: string, unitType: string, unitId: string): string | null {
+export function getPriorSliceCompletionBlocker(base: string, _mainBranch: string, unitType: string, unitId: string): string | null {
   if (!SLICE_DISPATCH_TYPES.has(unitType)) return null;
 
   const [targetMid, targetSid] = unitId.split("/");
@@ -50,17 +63,15 @@ export function getPriorSliceCompletionBlocker(base: string, mainBranch: string,
   }
 
   for (const mid of milestoneIds) {
-    const roadmapRel = relMilestoneFile(base, mid, "ROADMAP");
-    if (!roadmapRel) continue;
-
-    const roadmapContent = readTrackedFileFromBranch(base, mainBranch, roadmapRel);
+    // Read from disk (working tree) — always has the latest state
+    const roadmapContent = readRoadmapFromDisk(base, mid);
     if (!roadmapContent) continue;
 
     const slices = parseRoadmapSlices(roadmapContent);
     if (mid !== targetMid) {
       const incomplete = slices.find(slice => !slice.done);
       if (incomplete) {
-        return `Cannot dispatch ${unitType} ${unitId}: earlier slice ${mid}/${incomplete.id} is not complete on ${mainBranch}.`;
+        return `Cannot dispatch ${unitType} ${unitId}: earlier slice ${mid}/${incomplete.id} is not complete.`;
       }
       continue;
     }
@@ -70,7 +81,7 @@ export function getPriorSliceCompletionBlocker(base: string, mainBranch: string,
 
     const incomplete = slices.slice(0, targetIndex).find(slice => !slice.done);
     if (incomplete) {
-      return `Cannot dispatch ${unitType} ${unitId}: earlier slice ${targetMid}/${incomplete.id} is not complete on ${mainBranch}.`;
+      return `Cannot dispatch ${unitType} ${unitId}: earlier slice ${targetMid}/${incomplete.id} is not complete.`;
     }
   }
 

@@ -234,6 +234,19 @@ export interface HookDispatchResult {
   unitId: string;
 }
 
+// ─── Budget & Notification Types ──────────────────────────────────────────
+
+export type BudgetEnforcementMode = 'warn' | 'pause' | 'halt';
+
+export interface NotificationPreferences {
+  enabled?: boolean;           // default true
+  on_complete?: boolean;       // notify on each unit completion
+  on_error?: boolean;          // notify on errors
+  on_budget?: boolean;         // notify on budget thresholds
+  on_milestone?: boolean;      // notify when milestone finishes
+  on_attention?: boolean;      // notify when manual attention needed
+}
+
 // ─── Pre-Dispatch Hook Types ──────────────────────────────────────────────
 
 export interface PreDispatchHookConfig {

@@ -133,7 +133,7 @@ export async function runRpcMode(session: AgentSession): Promise<never> {
 				"cancelled" in r && r.cancelled ? undefined : "value" in r ? r.value : undefined,
 			),
 
-		notify(message: string, type?: "info" | "warning" | "error"): void {
+		notify(message: string, type?: "info" | "warning" | "error" | "success"): void {
 			// Fire and forget - no response needed
 			output({
 				type: "extension_ui_request",

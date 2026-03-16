@@ -360,6 +360,7 @@ console.log('\n=== deriveState: completed task with no summary file → executin
 console.log('\n=== prompt: replan-slice template loads and substitutes variables ===');
 {
   const prompt = loadPromptFromWorktree('replan-slice', {
+    workingDirectory: '/tmp/test-project',
     milestoneId: 'M001',
     sliceId: 'S01',
     sliceTitle: 'Test Slice',
@@ -378,6 +379,7 @@ console.log('\n=== prompt: replan-slice template loads and substitutes variables
 console.log('\n=== prompt: replan-slice contains preserve-completed-tasks instruction ===');
 {
   const prompt = loadPromptFromWorktree('replan-slice', {
+    workingDirectory: '/tmp/test-project',
     milestoneId: 'M001',
     sliceId: 'S01',
     sliceTitle: 'Test Slice',
@@ -424,6 +426,7 @@ console.log('\n=== dispatch: diagnoseExpectedArtifact returns REPLAN.md path ===
 console.log('\n=== display: replan-slice prompt template has correct unit header ===');
 {
   const prompt = loadPromptFromWorktree('replan-slice', {
+    workingDirectory: '/tmp/test-project',
     milestoneId: 'M001',
     sliceId: 'S01',
     sliceTitle: 'Test Slice',

@@ -124,6 +124,20 @@ jobs:
       - name: Sync platform package versions
         run: node native/scripts/sync-platform-versions.cjs
 
+      - name: Detect prerelease version
+        id: version-check
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          if echo "$VERSION" | grep -q '-next\.'; then
+            echo "is_prerelease=true" >> "$GITHUB_OUTPUT"
+            echo "tag_flag=--tag next" >> "$GITHUB_OUTPUT"
+            echo "Prerelease detected: ${VERSION} → publishing with --tag next"
+          else
+            echo "is_prerelease=false" >> "$GITHUB_OUTPUT"
+            echo "tag_flag=" >> "$GITHUB_OUTPUT"
+            echo "Stable release: ${VERSION} → publishing with --tag latest (default)"
+          fi
+
       - name: Publish platform packages
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
@@ -131,7 +145,7 @@ jobs:
           for platform in darwin-arm64 darwin-x64 linux-x64-gnu linux-arm64-gnu win32-x64-msvc; do
             echo "Publishing @gsd-build/engine-${platform}..."
             cd "native/npm/${platform}"
-            OUTPUT=$(npm publish --access public 2>&1) && echo "$OUTPUT" || {
+            OUTPUT=$(npm publish --access public ${{ steps.version-check.outputs.tag_flag }} 2>&1) && echo "$OUTPUT" || {
               if echo "$OUTPUT" | grep -q "cannot publish over the previously published"; then
                 echo "Already published, skipping"
               else
@@ -183,7 +197,7 @@ jobs:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           # --ignore-scripts: skip prepublishOnly since we built explicitly above
-          OUTPUT=$(npm publish --ignore-scripts 2>&1) && echo "$OUTPUT" || {
+          OUTPUT=$(npm publish --ignore-scripts ${{ steps.version-check.outputs.tag_flag }} 2>&1) && echo "$OUTPUT" || {
             if echo "$OUTPUT" | grep -q "cannot publish over the previously published\|You cannot publish over"; then
               echo "Already published, skipping"
             else

@@ -71,7 +71,7 @@ export function createAsyncBashTool(
 			"Check /jobs to see all running and recent background jobs.",
 		],
 		parameters: schema,
-		async execute(_toolCallId, params) {
+		async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
 			const manager = getManager();
 			const cwd = getCwd();
 			const { command, timeout, label } = params;
@@ -91,6 +91,7 @@ export function createAsyncBashTool(
 						"Use `await_job` to get results when ready, or `cancel_job` to stop.",
 					].join("\n"),
 				}],
+				details: undefined,
 			};
 		},
 	};

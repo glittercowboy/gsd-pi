@@ -31,8 +31,8 @@ import {
 } from "./worktree-manager.js";
 import { inferCommitType } from "./git-service.js";
 import type { FileLineStat } from "./worktree-manager.js";
-import { execSync } from "node:child_process";
 import { existsSync, realpathSync, readFileSync, readdirSync, rmSync, unlinkSync, utimesSync } from "node:fs";
+import { nativeMergeAbort } from "./native-git-bridge.js";
 import { join, resolve, sep } from "node:path";
 
 /**
@@ -691,7 +691,7 @@ async function handleMerge(
       if (isConflict) {
         // Abort the failed merge so the working tree is clean for LLM retry
         try {
-          execSync("git merge --abort", { cwd: basePath, stdio: "pipe" });
+          nativeMergeAbort(basePath);
         } catch { /* already clean */ }
 
         ctx.ui.notify(

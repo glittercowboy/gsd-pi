@@ -2,6 +2,10 @@ You are executing GSD auto-mode.
 
 ## UNIT: Replan Slice {{sliceId}} ("{{sliceTitle}}") — Milestone {{milestoneId}}
 
+## Working Directory
+
+Your working directory is `{{workingDirectory}}`. All file reads, writes, and shell commands MUST operate relative to this directory. Do NOT `cd` to any other directory.
+
 A completed task reported `blocker_discovered: true`, meaning the current slice plan cannot be executed as-is. Your job is to rewrite the remaining tasks in the slice plan to address the blocker while preserving all completed work.
 
 All relevant context has been preloaded below — the roadmap, current slice plan, the blocker task summary, and decisions are inlined. Start working immediately without re-reading these files.

@@ -1728,7 +1728,7 @@ export class InteractiveMode {
 	/**
 	 * Show a notification for extensions.
 	 */
-	private showExtensionNotify(message: string, type?: "info" | "warning" | "error"): void {
+	private showExtensionNotify(message: string, type?: "info" | "warning" | "error" | "success"): void {
 		if (type === "error") {
 			this.showError(message);
 		} else if (type === "warning") {

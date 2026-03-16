@@ -1,6 +1,6 @@
 {
   "name": "gsd-pi",
-  "version": "2.13.1",
+  "version": "2.16.0",
   "description": "GSD — Get Shit Done coding agent",
   "license": "MIT",
   "repository": {
@@ -61,7 +61,8 @@
     "sync-pkg-version": "node scripts/sync-pkg-version.cjs",
     "sync-platform-versions": "node native/scripts/sync-platform-versions.cjs",
     "validate-pack": "bash scripts/validate-pack.sh",
-    "prepublishOnly": "npm run sync-pkg-version && npm run sync-platform-versions && git diff --exit-code || (echo 'ERROR: version sync changed files — commit them before publishing' && exit 1) && npm run build && npm run validate-pack"
+    "typecheck:extensions": "tsc --noEmit --project tsconfig.extensions.json",
+    "prepublishOnly": "npm run sync-pkg-version && npm run sync-platform-versions && git diff --exit-code || (echo 'ERROR: version sync changed files — commit them before publishing' && exit 1) && npm run build && npm run typecheck:extensions && npm run validate-pack"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.73.0",

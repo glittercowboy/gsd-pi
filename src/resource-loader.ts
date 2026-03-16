@@ -22,6 +22,7 @@ const resourceVersionManifestName = 'managed-resources.json'
 
 interface ManagedResourceManifest {
   gsdVersion: string
+  syncedAt?: number
 }
 
 function isExtensionFile(name: string): boolean {
@@ -102,7 +103,7 @@ function getBundledGsdVersion(): string {
 }
 
 function writeManagedResourceManifest(agentDir: string): void {
-  const manifest: ManagedResourceManifest = { gsdVersion: getBundledGsdVersion() }
+  const manifest: ManagedResourceManifest = { gsdVersion: getBundledGsdVersion(), syncedAt: Date.now() }
   writeFileSync(getManagedResourceManifestPath(agentDir), JSON.stringify(manifest))
 }
 
@@ -110,6 +111,15 @@ export function readManagedResourceVersion(agentDir: string): string | null {
   try {
     const manifest = JSON.parse(readFileSync(getManagedResourceManifestPath(agentDir), 'utf-8')) as ManagedResourceManifest
     return typeof manifest?.gsdVersion === 'string' ? manifest.gsdVersion : null
+  } catch {
+    return null
+  }
+}
+
+export function readManagedResourceSyncedAt(agentDir: string): number | null {
+  try {
+    const manifest = JSON.parse(readFileSync(getManagedResourceManifestPath(agentDir), 'utf-8')) as ManagedResourceManifest
+    return typeof manifest?.syncedAt === 'number' ? manifest.syncedAt : null
   } catch {
     return null
   }

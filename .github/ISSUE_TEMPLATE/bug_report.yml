@@ -1,0 +1,107 @@
+name: Bug Report
+description: Report a bug in GSD
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a bug! Please fill out the sections below so we can reproduce and fix it.
+
+  - type: input
+    id: version
+    attributes:
+      label: GSD version
+      description: Run `gsd --version` or check `package.json`
+      placeholder: "e.g., 2.15.0"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Affected area
+      options:
+        - Auto-mode / dispatch loop
+        - TUI / terminal display
+        - Planning / roadmap
+        - Phase execution
+        - Git / worktree isolation
+        - Hook orchestration
+        - State management
+        - AI provider integration
+        - CLI / commands
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened?
+      description: A clear description of the bug.
+      placeholder: "When I run X, Y happens instead of Z."
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      description: What should have happened instead?
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      description: Minimal steps to trigger the bug.
+      placeholder: |
+        1. Run `gsd ...`
+        2. Select option ...
+        3. See error
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Error output / logs
+      description: Paste any error messages or relevant log output.
+      render: shell
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - macOS
+        - Linux
+        - Windows
+        - Other
+    validations:
+      required: true
+
+  - type: input
+    id: node-version
+    attributes:
+      label: Node.js version
+      description: Run `node --version`
+      placeholder: "e.g., v22.4.0"
+
+  - type: dropdown
+    id: ai-provider
+    attributes:
+      label: AI provider (if relevant)
+      options:
+        - Anthropic (Claude)
+        - OpenRouter
+        - OpenAI-compatible
+        - Other
+        - N/A
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: Anything else — screenshots, config snippets, related issues.

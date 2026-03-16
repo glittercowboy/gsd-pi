@@ -6,6 +6,121 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [2.16.0] - 2026-03-15
+
+### Added
+- `/gsd steer` command — hard-steer plan documents during execution without stopping the pipeline
+- Native git operations via libgit2 — ~70 fewer process spawns per dispatch cycle
+- Native performance optimizations for `deriveState`, JSONL parsing, and path resolution
+- Default model upgraded to Opus 4.6 with 1M context variant
+- PR template and bug report issue template
+
+### Fixed
+- Auto-mode continues after guided milestone planning instead of stalling at "Milestone planned"
+- Git commands no longer fail when repo path contains spaces
+- Arrow key cursor updates and Shift+Enter newline insertion in TUI
+- Tool API keys loaded from `auth.json` at session startup
+- TypeScript errors resolved across extension, test, and async-jobs files
+
+### Changed
+- Hot-path lookup caching and error resilience optimizations
+- Extension type-checking added to CI pipeline
+
+## [2.15.1] - 2026-03-15
+
+### Fixed
+- Auto-mode worktree path resolution — prompt templates now include working directory, preventing artifacts from being written to the wrong location and causing infinite re-dispatches
+- Auto-mode resource sync detection — gracefully stops when resources change mid-session instead of crashing
+- Auto-mode missing import for `resolveSkillDiscoveryMode` causing crash on startup
+- Auto-mode recovery hardened — checkbox verification falls through correctly, corrupt roadmaps fail verification instead of silently passing, atomic writes for completed-units.json, and task completion verified via artifacts not just file existence
+- Auto-mode progress widget now refreshes from disk every 5 seconds during unit execution instead of appearing frozen
+- Undo command now invalidates all caches (not just state cache), preventing stale results after undoing completed tasks
+
+### Changed
+- CI pipeline supports prerelease publishing with `--tag next` for testing before stable release
+
+### Added
+- Unit tests for auto-dashboard, auto-recovery, and crash-recovery modules (46 new tests)
+
+## [2.15.0] - 2026-03-15
+
+### Added
+- **8 new commands**: budget enforcement, notifications, and quality-of-life improvements (#441)
+- **Preferences schema validation**: detects unknown/typo'd preference keys and surfaces warnings instead of silently ignoring them (#542)
+- **Pipeline-aware prompts**: each agent phase (research, plan, execute, complete) now knows its role in the pipeline, eliminating redundant code exploration between phases (#543)
+- **Research depth calibration**: three-tier system (deep/targeted/light) so agents match effort to actual complexity (#543)
+
+### Changed
+- Auto-mode decomposed into focused modules for maintainability (#534)
+- Dispatch logic extracted from if-else chain to dispatch table (#539)
+- v1 migration code gated behind dynamic import — only loaded when needed (#541)
+- Background shell module decomposed into focused modules
+- Unified cache invalidation into single `invalidateAllCaches()` function (#545)
+
+### Fixed
+- Executor agents now receive explicit working directory, preventing writes to main repo instead of worktree (#543)
+- Merge loop and .gsd/ conflict auto-resolution in worktree model, `git.isolation` preference restored (#536)
+- Arrow keys no longer insert escape sequences as text during LLM streaming (#493)
+- YAML preferences parser hardened for OpenRouter model IDs with special characters (#488)
+- `@` file autocomplete debounced to prevent TUI freeze on large codebases (#448)
+- Auto-mode stops cleanly when dispatch gap watchdog fails (#537)
+- Synchronous I/O removed from hot paths (#540)
+- Silent catch blocks now capture error references for crash diagnostics (#546)
+- `ctx.log` error in GSD provider recovery path fixed
+- TUI resource leaks patched in loader, cancellable-loader, input, and editor components (#482)
+- Hardcoded ANSI escapes replaced with chalk for consistent terminal handling (#482)
+
+## [2.14.4] - 2026-03-15
+
+### Fixed
+- **Session cwd update** — `newSession()` now updates the LLM's perceived working directory to reflect `process.chdir()` into auto-worktrees. Previously the system prompt was frozen at the original project root, causing the LLM to `cd` back and write files to the wrong location. This was the root cause of complete-slice and plan-slice loops in worktree-based projects.
+
+## [2.14.3] - 2026-03-15
+
+### Fixed
+- **Copy planning artifacts into new auto-worktrees** — `createAutoWorktree` now copies `.gsd/milestones/`, `DECISIONS.md`, `REQUIREMENTS.md`, `PROJECT.md` from the source repo into the worktree. Prevents plan-slice loops in projects with pre-v2.14.0 `.gitignore`.
+
+## [2.14.2] - 2026-03-15
+
+### Fixed
+- **Dispatch reentrancy deadlock** — `_dispatching` flag was never reset after first dispatch, permanently blocking all subsequent unit dispatches. Wrapped in try/finally.
+- **`.gitignore` self-heal** — existing projects with blanket `.gsd/` ignore now auto-remove it on next auto-mode start, replacing with explicit runtime-only patterns so planning artifacts are tracked in git.
+- **Discuss depth verification** — render summary as chat text (markdown renders), use ask_user_questions for short confirmation only.
+
+## [2.14.1] - 2026-03-15
+
+### Fixed
+- **Quiet auto-mode warnings** — internal recovery machinery (dispatch gap watchdog, model fallback chain) downgraded to verbose-only. Users only see warnings when action is needed.
+- **Dispatch recovery hardening** — artifact fallback when completion key missing, TUI freeze prevention, reentrancy guard, atomic writes, stale runtime record cleanup
+
+## [2.14.0] - 2026-03-15
+
+### Added
+- **Discussion manifest** — mechanical process verification for multi-milestone context discussions
+- **Session-internal `/gsd config`** — configure GSD settings within a running session
+- **Model selection UI** — select list instead of free-text input for model preferences
+- **Startup performance** — faster GSD launch via optimized initialization
+
+### Changed
+- **Branchless worktree architecture** — eliminated slice branches entirely. All work commits sequentially on `milestone/<MID>` within auto-mode worktrees. No branch creation, switching, or merging within a worktree. ~2600 lines of merge/conflict/branch-switching code removed.
+- **`.gitignore` overhaul** — planning artifacts (`.gsd/milestones/`) are tracked in git naturally. Only runtime files are gitignored. No more force-add hacks.
+- **Multi-milestone enforcement** — `depends_on` frontmatter enforced in multi-milestone CONTEXT.md
+
+### Fixed
+- **Auto-mode loop detection failures** — artifacts on wrong branch or invisible after branch switch no longer possible (root cause eliminated by branchless architecture)
+- **Nested worktree creation** — auto-mode no longer creates worktrees inside existing manual worktrees, preventing wrong-repo state reads and "All milestones complete" false positives
+- **Dispatch recovery hardening** — artifact fallback when completion key missing, TUI freeze prevention on cascading skips, reentrancy guard, atomic writes, stale runtime record cleanup, git index.lock cleanup
+- **Hook orchestration** — finalize runtime records, add supervision, fix retry
+- **Empty slice plan stays in planning** — no longer incorrectly transitions to summarizing
+- **Prefs wizard** — launch directly from `/gsd prefs`, fix parse/serialize cycle for empty arrays
+- **Discussion routing** — `/gsd discuss` routes to draft when phase is needs-discussion
+
+### Removed
+- `ensureSliceBranch()`, `switchToMain()`, `mergeSliceToMain()`, `mergeSliceToMilestone()`
+- `shouldUseWorktreeIsolation()`, `getMergeToMainMode()`, `buildFixMergePrompt()`
+- `withMergeHeal()`, `recoverCheckout()`, `fix-merge` unit type
+- `git.isolation` and `git.merge_to_main` preferences (deprecated with warnings)
+
 ## [2.13.1] - 2026-03-15
 
 ### Fixed
@@ -607,7 +722,15 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Changed
 - License updated to MIT
 
-[Unreleased]: https://github.com/gsd-build/gsd-2/compare/v2.13.1...HEAD
+[Unreleased]: https://github.com/gsd-build/gsd-2/compare/v2.16.0...HEAD
+[2.16.0]: https://github.com/gsd-build/gsd-2/compare/v2.15.1...v2.16.0
+[2.15.1]: https://github.com/gsd-build/gsd-2/releases/tag/v2.15.1
+[2.15.0]: https://github.com/gsd-build/gsd-2/compare/v2.14.4...v2.15.0
+[2.14.4]: https://github.com/gsd-build/gsd-2/compare/v2.14.3...v2.14.4
+[2.14.3]: https://github.com/gsd-build/gsd-2/compare/v2.14.2...v2.14.3
+[2.14.2]: https://github.com/gsd-build/gsd-2/compare/v2.14.1...v2.14.2
+[2.14.1]: https://github.com/gsd-build/gsd-2/compare/v2.14.0...v2.14.1
+[2.14.0]: https://github.com/gsd-build/gsd-2/compare/v2.13.1...v2.14.0
 [2.13.1]: https://github.com/gsd-build/gsd-2/compare/v2.13.0...v2.13.1
 [2.13.0]: https://github.com/gsd-build/gsd-2/compare/v2.12.0...v2.13.0
 [2.12.0]: https://github.com/gsd-build/gsd-2/compare/v2.11.1...v2.12.0

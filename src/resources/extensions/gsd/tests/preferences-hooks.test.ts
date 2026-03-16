@@ -2,6 +2,7 @@
 // Copyright (c) 2026 Jeremy McSpadden <jeremy@fluxlabs.net>
 
 import { createTestContext } from "./test-helpers.ts";
+import type { PreDispatchHookConfig } from "../types.ts";
 
 const { assertEq, assertTrue, report } = createTestContext();
 
@@ -141,16 +142,16 @@ console.log("\n=== Pre-dispatch action validation ===");
 console.log("\n=== Pre-dispatch hook merging ===");
 
 {
-  const baseHooks = [
-    { name: "inject", before: ["execute-task"], action: "modify" as const, prepend: "base" },
+  const baseHooks: PreDispatchHookConfig[] = [
+    { name: "inject", before: ["execute-task"], action: "modify", prepend: "base" },
   ];
 
-  const overrideHooks = [
-    { name: "inject", before: ["execute-task"], action: "modify" as const, prepend: "override" },
-    { name: "gate", before: ["plan-slice"], action: "skip" as const },
+  const overrideHooks: PreDispatchHookConfig[] = [
+    { name: "inject", before: ["execute-task"], action: "modify", prepend: "override" },
+    { name: "gate", before: ["plan-slice"], action: "skip" },
   ];
 
-  const merged = [...baseHooks];
+  const merged: PreDispatchHookConfig[] = [...baseHooks];
   for (const hook of overrideHooks) {
     const idx = merged.findIndex(h => h.name === hook.name);
     if (idx >= 0) {

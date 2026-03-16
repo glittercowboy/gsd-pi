@@ -105,13 +105,6 @@
   - Do: {{specificImplementationStepsAndConstraints}}
   - Verify: {{testCommandOrRuntimeCheck}}
   - Done when: {{measurableAcceptanceCondition}}
-- [ ] **T03: {{taskTitle}}** `est:{{estimate}}`
-  - Why: {{whyThisTaskExists}}
-  - Files: `{{filePath}}`, `{{filePath}}`
-  - Do: {{specificImplementationStepsAndConstraints}}
-  - Verify: {{testCommandOrRuntimeCheck}}
-  - Done when: {{measurableAcceptanceCondition}}
-
 <!--
   Format rules (parsers depend on this exact structure):
   - Checkbox line: - [ ] **T01: Title** `est:30m`

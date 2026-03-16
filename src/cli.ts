@@ -17,6 +17,7 @@ import { ensureManagedTools } from './tool-bootstrap.js'
 import { loadStoredEnvKeys } from './wizard.js'
 import { getPiDefaultModelAndProvider, migratePiCredentials } from './pi-migration.js'
 import { shouldRunOnboarding, runOnboarding } from './onboarding.js'
+import chalk from 'chalk'
 import { checkForUpdates } from './update-check.js'
 
 // ---------------------------------------------------------------------------
@@ -42,15 +43,10 @@ function exitIfManagedResourcesAreNewer(currentAgentDir: string): void {
     return
   }
 
-  const yellow = '\x1b[33m'
-  const dim = '\x1b[2m'
-  const reset = '\x1b[0m'
-  const bold = '\x1b[1m'
-
   process.stderr.write(
-    `[gsd] ${yellow}Version mismatch detected${reset}\n` +
-    `[gsd] Synced resources are from ${bold}v${managedVersion}${reset}, but this \`gsd\` binary is ${dim}v${currentVersion}${reset}.\n` +
-    `[gsd] Run ${bold}npm install -g gsd-pi@latest${reset} or ${bold}gsd update${reset}, then try again.\n`,
+    `[gsd] ${chalk.yellow('Version mismatch detected')}\n` +
+    `[gsd] Synced resources are from ${chalk.bold(`v${managedVersion}`)}, but this \`gsd\` binary is ${chalk.dim(`v${currentVersion}`)}.\n` +
+    `[gsd] Run ${chalk.bold('npm install -g gsd-pi@latest')} or ${chalk.bold('gsd update')}, then try again.\n`,
   )
   process.exit(1)
 }
@@ -137,11 +133,27 @@ migratePiCredentials(authStorage)
 // Run onboarding wizard on first launch (no LLM provider configured)
 if (!isPrintMode && shouldRunOnboarding(authStorage)) {
   await runOnboarding(authStorage)
+
+  // Clean up stdin state left by @clack/prompts.
+  // readline.emitKeypressEvents() adds a permanent data listener and
+  // readline.createInterface() may leave stdin paused. Remove stale
+  // listeners and pause stdin so the TUI can start with a clean slate.
+  process.stdin.removeAllListeners('data')
+  process.stdin.removeAllListeners('keypress')
+  if (process.stdin.setRawMode) process.stdin.setRawMode(false)
+  process.stdin.pause()
 }
 
 // Non-blocking update check — runs at most once per 24h, fire-and-forget
 if (!isPrintMode) {
   checkForUpdates().catch(() => {})
+}
+
+// Warn if terminal is too narrow for readable output
+if (!isPrintMode && process.stdout.columns && process.stdout.columns < 40) {
+  process.stderr.write(
+    chalk.yellow(`[gsd] Terminal width is ${process.stdout.columns} columns (minimum recommended: 40). Output may be unreadable.\n`),
+  )
 }
 
 const modelRegistry = new ModelRegistry(authStorage)

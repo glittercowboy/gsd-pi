@@ -141,7 +141,7 @@ async function main(): Promise<void> {
     }
   }
 
-  report("auto-worktree");
+  report();
 }
 
 main();

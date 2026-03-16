@@ -204,7 +204,7 @@ export function convertMessages<T extends GoogleApiType>(model: Model<T>, contex
 			// Cloud Code Assist API requires all function responses to be in a single user turn.
 			// Check if the last content is already a user turn with function responses and merge.
 			const lastContent = contents[contents.length - 1];
-			if (lastContent?.role === "user" && lastContent.parts?.some((p) => p.functionResponse)) {
+			if (lastContent?.role === "user" && lastContent.parts?.some((p: Part) => p.functionResponse)) {
 				lastContent.parts.push(functionResponsePart);
 			} else {
 				contents.push({
@@ -227,12 +227,71 @@ export function convertMessages<T extends GoogleApiType>(model: Model<T>, contex
 }
 
 /**
+ * Sanitize a JSON Schema for Google's function declarations API.
+ * Google's API rejects `patternProperties` and `const` fields which are valid in JSON Schema.
+ *
+ * This function recursively:
+ * - Removes all `patternProperties` fields
+ * - Converts `const: "value"` to `enum: ["value"]` in anyOf/oneOf blocks
+ *
+ * This is needed for providers like `google-antigravity` when proxying Claude models,
+ * since Google Cloud Code Assist uses a restricted subset of JSON Schema.
+ */
+function sanitizeSchemaForGoogle(schema: unknown): unknown {
+	if (!schema || typeof schema !== "object") {
+		return schema;
+	}
+
+	if (Array.isArray(schema)) {
+		return schema.map((item) => sanitizeSchemaForGoogle(item));
+	}
+
+	const obj = schema as Record<string, unknown>;
+	const sanitized: Record<string, unknown> = {};
+
+	for (const [key, value] of Object.entries(obj)) {
+		// Skip patternProperties entirely
+		if (key === "patternProperties") {
+			continue;
+		}
+
+		// Convert const to enum in anyOf/oneOf blocks
+		if (key === "const" && typeof value === "string") {
+			// Only convert if we're inside anyOf/oneOf; otherwise leave as-is
+			// This will be handled by the anyOf/oneOf case below
+			sanitized.enum = [value];
+			continue;
+		}
+
+		// Recursively sanitize nested objects and arrays
+		if (key === "properties" && typeof value === "object") {
+			sanitized[key] = sanitizeSchemaForGoogle(value);
+		} else if (key === "items" && typeof value === "object") {
+			sanitized[key] = sanitizeSchemaForGoogle(value);
+		} else if (key === "anyOf" || key === "oneOf" || key === "allOf") {
+			sanitized[key] = sanitizeSchemaForGoogle(value);
+		} else if (key === "additionalProperties" && typeof value === "object") {
+			sanitized[key] = sanitizeSchemaForGoogle(value);
+		} else if (typeof value === "object" && !Array.isArray(value)) {
+			sanitized[key] = sanitizeSchemaForGoogle(value);
+		} else {
+			sanitized[key] = value;
+		}
+	}
+
+	return sanitized;
+}
+
+/**
  * Convert tools to Gemini function declarations format.
  *
  * By default uses `parametersJsonSchema` which supports full JSON Schema (including
  * anyOf, oneOf, const, etc.). Set `useParameters` to true to use the legacy `parameters`
  * field instead (OpenAPI 3.03 Schema). This is needed for Cloud Code Assist with Claude
  * models, where the API translates `parameters` into Anthropic's `input_schema`.
+ *
+ * The schema is automatically sanitized to remove fields not supported by Google's
+ * function declarations API (patternProperties, const converted to enum, etc.).
  */
 export function convertTools(
 	tools: Tool[],
@@ -244,7 +303,9 @@ export function convertTools(
 			functionDeclarations: tools.map((tool) => ({
 				name: tool.name,
 				description: tool.description,
-				...(useParameters ? { parameters: tool.parameters } : { parametersJsonSchema: tool.parameters }),
+				...(useParameters
+					? { parameters: sanitizeSchemaForGoogle(tool.parameters) }
+					: { parametersJsonSchema: sanitizeSchemaForGoogle(tool.parameters) }),
 			})),
 		},
 	];
@@ -291,10 +352,9 @@ export function mapStopReason(reason: FinishReason): StopReason {
 		case FinishReason.UNEXPECTED_TOOL_CALL:
 		case FinishReason.NO_IMAGE:
 			return "error";
-		default: {
-			const _exhaustive: never = reason;
-			throw new Error(`Unhandled stop reason: ${_exhaustive}`);
-		}
+		default:
+			// Fallback for new/unknown FinishReason values
+			return "error";
 	}
 }
 

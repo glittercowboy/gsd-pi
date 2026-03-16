@@ -347,6 +347,23 @@ function metricsPath(base: string): string {
   return join(gsdRoot(base), "metrics.json");
 }
 
+/**
+ * Load ledger from disk without initializing in-memory state.
+ * Used by history/export commands outside of auto-mode.
+ */
+export function loadLedgerFromDisk(base: string): MetricsLedger | null {
+  try {
+    const raw = readFileSync(metricsPath(base), "utf-8");
+    const parsed = JSON.parse(raw);
+    if (parsed.version === 1 && Array.isArray(parsed.units)) {
+      return parsed as MetricsLedger;
+    }
+  } catch {
+    // File doesn't exist or is corrupt
+  }
+  return null;
+}
+
 function loadLedger(base: string): MetricsLedger {
   try {
     const raw = readFileSync(metricsPath(base), "utf-8");

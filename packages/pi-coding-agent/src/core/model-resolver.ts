@@ -13,7 +13,7 @@ import type { ModelRegistry } from "./model-registry.js";
 /** Default model IDs for each known provider */
 export const defaultModelPerProvider: Record<KnownProvider, string> = {
 	"amazon-bedrock": "us.anthropic.claude-opus-4-6-v1",
-	anthropic: "claude-opus-4-6",
+	anthropic: "claude-opus-4-6[1m]",
 	openai: "gpt-5.4",
 	"azure-openai-responses": "gpt-5.2",
 	"openai-codex": "gpt-5.4",
@@ -23,7 +23,7 @@ export const defaultModelPerProvider: Record<KnownProvider, string> = {
 	"google-vertex": "gemini-3-pro-preview",
 	"github-copilot": "gpt-4o",
 	openrouter: "openai/gpt-5.1-codex",
-	"vercel-ai-gateway": "anthropic/claude-opus-4-6",
+	"vercel-ai-gateway": "anthropic/claude-opus-4-6[1m]",
 	xai: "grok-4-fast-non-reasoning",
 	groq: "openai/gpt-oss-120b",
 	cerebras: "zai-glm-4.6",

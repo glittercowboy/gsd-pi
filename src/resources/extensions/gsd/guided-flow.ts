@@ -23,7 +23,7 @@ import {
 import { randomInt } from "node:crypto";
 import { join } from "node:path";
 import { readFileSync, existsSync, mkdirSync, readdirSync, rmSync, unlinkSync } from "node:fs";
-import { execSync, execFileSync } from "node:child_process";
+import { nativeIsRepo, nativeInit, nativeAddPaths, nativeCommit } from "./native-git-bridge.js";
 import { ensureGitignore, ensurePreferences, untrackRuntimeFiles } from "./gitignore.js";
 import { loadEffectiveGSDPreferences } from "./preferences.js";
 import { showConfirm } from "../shared/confirm-ui.js";
@@ -50,9 +50,11 @@ export function checkAutoStartAfterDiscuss(): boolean {
 
   const { ctx, pi, basePath, milestoneId, step } = pendingAutoStart;
 
-  // Gate 1: Primary milestone must have CONTEXT.md
+  // Gate 1: Primary milestone must have CONTEXT.md or ROADMAP.md
+  // The "discuss" path creates CONTEXT.md; the "plan" path creates ROADMAP.md.
   const contextFile = resolveMilestoneFile(basePath, milestoneId, "CONTEXT");
-  if (!contextFile) return false; // no context yet — keep waiting
+  const roadmapFile = resolveMilestoneFile(basePath, milestoneId, "ROADMAP");
+  if (!contextFile && !roadmapFile) return false; // neither artifact yet — keep waiting
 
   // Gate 2: STATE.md must exist — written as the last step in the discuss
   // output phase. This prevents auto-start from firing during Phase 3
@@ -131,7 +133,10 @@ export function checkAutoStartAfterDiscuss(): boolean {
   try { unlinkSync(manifestPath); } catch { /* may not exist for single-milestone */ }
 
   pendingAutoStart = null;
-  startAuto(ctx, pi, basePath, false, { step }).catch(() => {});
+  startAuto(ctx, pi, basePath, false, { step }).catch((err) => {
+    ctx.ui.notify(`Auto-start failed: ${err instanceof Error ? err.message : String(err)}`, "warning");
+    if (process.env.GSD_DEBUG) console.error('[gsd] auto start error:', err);
+  });
   return true;
 }
 
@@ -701,11 +706,9 @@ export async function showSmartEntry(
   const stepMode = options?.step;
 
   // ── Ensure git repo exists — GSD needs it for worktree isolation ──────
-  try {
-    execSync("git rev-parse --git-dir", { cwd: basePath, stdio: "pipe" });
-  } catch {
+  if (!nativeIsRepo(basePath)) {
     const mainBranch = loadEffectiveGSDPreferences()?.preferences?.git?.main_branch || "main";
-    execFileSync("git", ["init", "-b", mainBranch], { cwd: basePath, stdio: "pipe" });
+    nativeInit(basePath, mainBranch);
   }
 
   // ── Ensure .gitignore has baseline patterns ──────────────────────────
@@ -721,10 +724,8 @@ export async function showSmartEntry(
     // ── Create PREFERENCES.md template ────────────────────────────────
     ensurePreferences(basePath);
     try {
-      execSync("git add -A .gsd .gitignore && git commit -m 'chore: init gsd'", {
-        cwd: basePath,
-        stdio: "pipe",
-      });
+      nativeAddPaths(basePath, [".gsd", ".gitignore"]);
+      nativeCommit(basePath, "chore: init gsd");
     } catch {
       // nothing to commit — that's fine
     }
@@ -944,6 +945,7 @@ export async function showSmartEntry(
       });
 
       if (choice === "plan") {
+        pendingAutoStart = { ctx, pi, basePath, milestoneId, step: stepMode };
         const planMilestoneTemplates = [
           inlineTemplate("roadmap", "Roadmap"),
           inlineTemplate("plan", "Slice Plan"),
@@ -1112,7 +1114,7 @@ export async function showSmartEntry(
         inlineTemplate("uat", "UAT"),
       ].join("\n\n---\n\n");
       dispatchWorkflow(pi, loadPrompt("guided-complete-slice", {
-        milestoneId, sliceId, sliceTitle, inlinedTemplates: completeSliceTemplates,
+        workingDirectory: basePath, milestoneId, sliceId, sliceTitle, inlinedTemplates: completeSliceTemplates,
       }));
     } else if (choice === "status") {
       const { fireStatusViaCommand } = await import("./commands.js");

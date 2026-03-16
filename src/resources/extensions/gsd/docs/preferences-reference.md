@@ -102,10 +102,10 @@ Setting `prefer_skills: []` does **not** disable skill discovery — it just mea
 
 - `git`: configures GSD's git behavior. All fields are optional — omit any to use defaults. Keys:
   - `auto_push`: boolean — automatically push commits to the remote after committing. Default: `false`.
-  - `push_branches`: boolean — push newly created slice branches to the remote. Default: `false`.
+  - `push_branches`: boolean — push the milestone branch to the remote after commits. Default: `false`.
   - `remote`: string — git remote name to push to. Default: `"origin"`.
   - `snapshots`: boolean — create snapshot commits (WIP saves) during long-running tasks. Default: `false`.
-  - `pre_merge_check`: boolean or `"auto"` — run pre-merge checks before merging a slice branch. `true` always runs, `false` never runs, `"auto"` runs when CI is detected. Default: `false`.
+  - `pre_merge_check`: boolean or `"auto"` — run pre-merge checks before merging a worktree back to the integration branch. `true` always runs, `false` never runs, `"auto"` runs when CI is detected. Default: `false`.
   - `commit_type`: string — override the conventional commit type prefix. Must be one of: `feat`, `fix`, `refactor`, `docs`, `test`, `chore`, `perf`, `ci`, `build`, `style`. Default: inferred from diff content.
   - `main_branch`: string — the primary branch name for new git repos (e.g., `"main"`, `"master"`, `"trunk"`). Also used by `getMainBranch()` as the preferred branch when auto-detection is ambiguous. Default: `"main"`.
 

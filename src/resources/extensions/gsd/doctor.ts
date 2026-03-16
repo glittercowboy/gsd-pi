@@ -1,4 +1,3 @@
-import { execSync } from "node:child_process";
 import { existsSync, mkdirSync } from "node:fs";
 import { join, sep } from "node:path";
 
@@ -9,6 +8,7 @@ import { loadEffectiveGSDPreferences, type GSDPreferences } from "./preferences.
 import { listWorktrees } from "./worktree-manager.js";
 import { abortAndReset } from "./git-self-heal.js";
 import { RUNTIME_EXCLUSION_PATHS } from "./git-service.js";
+import { nativeIsRepo, nativeWorktreeRemove, nativeBranchList, nativeBranchDelete, nativeLsFiles, nativeRmCached } from "./native-git-bridge.js";
 
 export type DoctorSeverity = "info" | "warning" | "error";
 export type DoctorIssueCode =
@@ -467,9 +467,7 @@ async function checkGitHealth(
   shouldFix: (code: DoctorIssueCode) => boolean,
 ): Promise<void> {
   // Degrade gracefully if not a git repo
-  try {
-    execSync("git rev-parse --git-dir", { cwd: basePath, stdio: "pipe" });
-  } catch {
+  if (!nativeIsRepo(basePath)) {
     return; // Not a git repo — skip all git health checks
   }
 
@@ -516,7 +514,7 @@ async function checkGitHealth(
             fixesApplied.push(`skipped removing worktree at ${wt.path} (is cwd)`);
           } else {
             try {
-              execSync(`git worktree remove --force "${wt.path}"`, { cwd: basePath, stdio: "pipe" });
+              nativeWorktreeRemove(basePath, wt.path, true);
               fixesApplied.push(`removed orphaned worktree ${wt.path}`);
             } catch {
               fixesApplied.push(`failed to remove worktree ${wt.path}`);
@@ -528,11 +526,8 @@ async function checkGitHealth(
 
     // ── Stale milestone branches ─────────────────────────────────────────
     try {
-      // Use unquoted glob — single quotes are not interpreted by cmd.exe on Windows,
-      // causing the pattern to match literally instead of as a glob.
-      const branchOutput = execSync("git branch --list milestone/*", { cwd: basePath, stdio: "pipe" }).toString().trim();
-      if (branchOutput) {
-        const branches = branchOutput.split("\n").map(b => b.trim().replace(/^\*\s*/, "")).filter(Boolean);
+      const branches = nativeBranchList(basePath, "milestone/*");
+      if (branches.length > 0) {
         const worktreeBranches = new Set(milestoneWorktrees.map(wt => wt.branch));
 
         for (const branch of branches) {
@@ -557,7 +552,7 @@ async function checkGitHealth(
 
             if (shouldFix("stale_milestone_branch")) {
               try {
-                execSync(`git branch -D "${branch}"`, { cwd: basePath, stdio: "pipe" });
+                nativeBranchDelete(basePath, branch, true);
                 fixesApplied.push(`deleted stale branch ${branch}`);
               } catch {
                 fixesApplied.push(`failed to delete branch ${branch}`);
@@ -610,9 +605,9 @@ async function checkGitHealth(
     const trackedPaths: string[] = [];
     for (const exclusion of RUNTIME_EXCLUSION_PATHS) {
       try {
-        const output = execSync(`git ls-files "${exclusion}"`, { cwd: basePath, stdio: "pipe" }).toString().trim();
-        if (output) {
-          trackedPaths.push(...output.split("\n").filter(Boolean));
+        const files = nativeLsFiles(basePath, exclusion);
+        if (files.length > 0) {
+          trackedPaths.push(...files);
         }
       } catch {
         // Individual ls-files can fail — continue
@@ -632,7 +627,7 @@ async function checkGitHealth(
       if (shouldFix("tracked_runtime_files")) {
         try {
           for (const exclusion of RUNTIME_EXCLUSION_PATHS) {
-            execSync(`git rm --cached -r --ignore-unmatch "${exclusion}"`, { cwd: basePath, stdio: "pipe" });
+            nativeRmCached(basePath, [exclusion]);
           }
           fixesApplied.push(`untracked ${trackedPaths.length} runtime file(s)`);
         } catch {
@@ -646,13 +641,8 @@ async function checkGitHealth(
 
   // ── Legacy slice branches ──────────────────────────────────────────────
   try {
-    const sliceBranches = execSync('git branch --format="%(refname:short)" --list "gsd/*/*"', {
-      cwd: basePath,
-      stdio: ["ignore", "pipe", "pipe"],
-      encoding: "utf-8",
-    }).trim();
-    if (sliceBranches) {
-      const branchList = sliceBranches.split("\n").map(b => b.trim()).filter(Boolean);
+    const branchList = nativeBranchList(basePath, "gsd/*/*");
+    if (branchList.length > 0) {
       issues.push({
         severity: "info",
         code: "legacy_slice_branches",

@@ -13,6 +13,7 @@
 .gsd/milestones/**/continue.md
 
 .claude/
+RELEASE-GUIDE.md
 *.tgz
 .DS_Store
 Thumbs.db

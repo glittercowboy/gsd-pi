@@ -62,7 +62,7 @@ export default function AsyncJobs(pi: ExtensionAPI) {
 							"",
 							truncatedOutput,
 						].join("\n"),
-						display: `Background job ${job.id} ${job.status}`,
+						display: true,
 					},
 					{ deliverAs: "followUp", triggerTurn: true },
 				);
@@ -92,7 +92,7 @@ export default function AsyncJobs(pi: ExtensionAPI) {
 				pi.sendMessage({
 					customType: "async_jobs_list",
 					content: "No async job manager active.",
-					display: "No jobs",
+					display: true,
 				});
 				return;
 			}
@@ -126,7 +126,7 @@ export default function AsyncJobs(pi: ExtensionAPI) {
 			pi.sendMessage({
 				customType: "async_jobs_list",
 				content: lines.join("\n"),
-				display: `${running.length} running, ${completed.length} recent`,
+				display: true,
 			});
 		},
 	});

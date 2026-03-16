@@ -4,7 +4,6 @@
 **Active Slice:** {{sliceId}}: {{sliceTitle}}
 **Active Task:** {{taskId}}: {{taskTitle}}
 **Phase:** {{phase}}
-**Active Workspace:** {{activeWorkspace}}
 **Next Action:** {{nextAction}}
 **Last Updated:** {{date}}
 **Requirements Status:** {{activeCount}} active · {{validatedCount}} validated · {{deferredCount}} deferred · {{outOfScopeCount}} out of scope

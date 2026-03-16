@@ -10,10 +10,10 @@
  * user-friendly messages suggesting `/gsd doctor`.
  */
 
-import { execSync } from "node:child_process";
 import { existsSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { MergeConflictError } from "./git-service.js";
+import { nativeMergeAbort, nativeRebaseAbort, nativeResetHard } from "./native-git-bridge.js";
 
 // Re-export for consumers
 export { MergeConflictError };
@@ -41,7 +41,7 @@ export function abortAndReset(cwd: string): AbortAndResetResult {
   // Abort in-progress merge
   if (existsSync(join(gitDir, "MERGE_HEAD"))) {
     try {
-      execSync("git merge --abort", { cwd, stdio: "pipe" });
+      nativeMergeAbort(cwd);
       cleaned.push("aborted merge");
     } catch {
       // merge --abort can fail if state is really broken; continue to reset
@@ -63,7 +63,7 @@ export function abortAndReset(cwd: string): AbortAndResetResult {
   // Abort in-progress rebase
   if (existsSync(join(gitDir, "rebase-apply")) || existsSync(join(gitDir, "rebase-merge"))) {
     try {
-      execSync("git rebase --abort", { cwd, stdio: "pipe" });
+      nativeRebaseAbort(cwd);
       cleaned.push("aborted rebase");
     } catch {
       cleaned.push("rebase abort attempted (may have failed)");
@@ -72,7 +72,7 @@ export function abortAndReset(cwd: string): AbortAndResetResult {
 
   // Always hard-reset to HEAD
   try {
-    execSync("git reset --hard HEAD", { cwd, stdio: "pipe" });
+    nativeResetHard(cwd);
     if (cleaned.length > 0) {
       cleaned.push("reset to HEAD");
     }

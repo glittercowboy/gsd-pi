@@ -3,8 +3,7 @@ import { join, dirname } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { createTestContext } from './test-helpers.ts';
-import { clearPathCache } from '../paths.ts';
-import { invalidateStateCache } from '../state.ts';
+import { invalidateAllCaches } from '../cache.ts';
 
 // loadPrompt reads from ~/.gsd/agent/extensions/gsd/prompts/ (main checkout).
 // In a worktree the file may not exist there yet, so we resolve prompts
@@ -63,6 +62,7 @@ async function main(): Promise<void> {
     let threw = false;
     try {
       result = loadPromptFromWorktree("complete-milestone", {
+        workingDirectory: "/tmp/test-project",
         milestoneId: "M001",
         milestoneTitle: "Test Milestone",
         roadmapPath: ".gsd/milestones/M001/M001-ROADMAP.md",
@@ -82,6 +82,7 @@ async function main(): Promise<void> {
   console.log("\n=== prompt variable substitution ===");
   {
     const prompt = loadPromptFromWorktree("complete-milestone", {
+      workingDirectory: "/tmp/test-project",
       milestoneId: "M001",
       milestoneTitle: "Integration Feature",
       roadmapPath: ".gsd/milestones/M001/M001-ROADMAP.md",
@@ -102,6 +103,7 @@ async function main(): Promise<void> {
   console.log("\n=== prompt content integrity ===");
   {
     const prompt = loadPromptFromWorktree("complete-milestone", {
+      workingDirectory: "/tmp/test-project",
       milestoneId: "M002",
       milestoneTitle: "Completion Workflow",
       roadmapPath: ".gsd/milestones/M002/M002-ROADMAP.md",
@@ -148,7 +150,8 @@ async function main(): Promise<void> {
   // ─── deriveState integration: completing-milestone dispatches correctly ─
   console.log("\n=== deriveState completing-milestone integration ===");
   {
-    const { deriveState, isMilestoneComplete, invalidateStateCache } = await import("../state.ts");
+    const { deriveState, isMilestoneComplete } = await import("../state.ts");
+    const { invalidateAllCaches: invalidateAllCachesDynamic } = await import("../cache.ts");
     const { parseRoadmap } = await import("../files.ts");
 
     const base = createFixtureBase();
@@ -181,8 +184,7 @@ async function main(): Promise<void> {
 
       // Now add the summary and verify it transitions to complete
       writeMilestoneSummary(base, "M001", "# M001 Summary\n\nDone.");
-      clearPathCache();
-      invalidateStateCache();
+      invalidateAllCachesDynamic();
       const stateAfter = await deriveState(base);
       assertEq(stateAfter.phase, "complete", "deriveState returns complete after summary exists");
       assertEq(stateAfter.registry[0]?.status, "complete", "registry shows complete status");

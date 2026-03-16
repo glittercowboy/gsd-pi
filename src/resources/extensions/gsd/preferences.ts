@@ -3,7 +3,7 @@ import { homedir } from "node:os";
 import { isAbsolute, join } from "node:path";
 import { getAgentDir } from "@gsd/pi-coding-agent";
 import type { GitPreferences } from "./git-service.js";
-import type { PostUnitHookConfig, PreDispatchHookConfig } from "./types.js";
+import type { PostUnitHookConfig, PreDispatchHookConfig, BudgetEnforcementMode, NotificationPreferences } from "./types.js";
 import { VALID_BRANCH_NAME } from "./git-service.js";
 
 const GLOBAL_PREFERENCES_PATH = join(homedir(), ".gsd", "preferences.md");
@@ -14,6 +14,29 @@ const PROJECT_PREFERENCES_PATH = join(process.cwd(), ".gsd", "preferences.md");
 const GLOBAL_PREFERENCES_PATH_UPPERCASE = join(homedir(), ".gsd", "PREFERENCES.md");
 const PROJECT_PREFERENCES_PATH_UPPERCASE = join(process.cwd(), ".gsd", "PREFERENCES.md");
 const SKILL_ACTIONS = new Set(["use", "prefer", "avoid"]);
+
+/** All recognized top-level keys in GSDPreferences. Used to detect typos / stale config. */
+const KNOWN_PREFERENCE_KEYS = new Set<string>([
+  "version",
+  "always_use_skills",
+  "prefer_skills",
+  "avoid_skills",
+  "skill_rules",
+  "custom_instructions",
+  "models",
+  "skill_discovery",
+  "auto_supervisor",
+  "uat_dispatch",
+  "unique_milestone_ids",
+  "budget_ceiling",
+  "budget_enforcement",
+  "context_pause_threshold",
+  "notifications",
+  "remote_questions",
+  "git",
+  "post_unit_hooks",
+  "pre_dispatch_hooks",
+]);
 
 export interface GSDSkillRule {
   when: string;
@@ -86,12 +109,15 @@ export interface GSDPreferences {
   avoid_skills?: string[];
   skill_rules?: GSDSkillRule[];
   custom_instructions?: string[];
-  models?: GSDModelConfig;
+  models?: GSDModelConfig | GSDModelConfigV2;
   skill_discovery?: SkillDiscoveryMode;
   auto_supervisor?: AutoSupervisorConfig;
   uat_dispatch?: boolean;
   unique_milestone_ids?: boolean;
   budget_ceiling?: number;
+  budget_enforcement?: BudgetEnforcementMode;
+  context_pause_threshold?: number;
+  notifications?: NotificationPreferences;
   remote_questions?: RemoteQuestionsConfig;
   git?: GitPreferences;
   post_unit_hooks?: PostUnitHookConfig[];
@@ -102,6 +128,8 @@ export interface LoadedGSDPreferences {
   path: string;
   scope: "global" | "project";
   preferences: GSDPreferences;
+  /** Validation warnings (unknown keys, type mismatches, deprecations). Empty when preferences are clean. */
+  warnings?: string[];
 }
 
 export function getGlobalGSDPreferencesPath(): string {
@@ -135,10 +163,16 @@ export function loadEffectiveGSDPreferences(): LoadedGSDPreferences | null {
   if (!globalPreferences) return projectPreferences;
   if (!projectPreferences) return globalPreferences;
 
+  const mergedWarnings = [
+    ...(globalPreferences.warnings ?? []),
+    ...(projectPreferences.warnings ?? []),
+  ];
+
   return {
     path: projectPreferences.path,
     scope: "project",
     preferences: mergePreferences(globalPreferences.preferences, projectPreferences.preferences),
+    ...(mergedWarnings.length > 0 ? { warnings: mergedWarnings } : {}),
   };
 }
 
@@ -364,15 +398,20 @@ function loadPreferencesFile(path: string, scope: "global" | "project"): LoadedG
   const preferences = parsePreferencesMarkdown(raw);
   if (!preferences) return null;
 
+  const validation = validatePreferences(preferences);
+  const allWarnings = [...validation.warnings, ...validation.errors];
+
   return {
     path,
     scope,
-    preferences,
+    preferences: validation.preferences,
+    ...(allWarnings.length > 0 ? { warnings: allWarnings } : {}),
   };
 }
 
-function parsePreferencesMarkdown(content: string): GSDPreferences | null {
-  const match = content.match(/^---\n([\s\S]*?)\n---/);
+/** @internal Exported for testing only */
+export function parsePreferencesMarkdown(content: string): GSDPreferences | null {
+  const match = content.match(/^---\r?\n([\s\S]*?)\r?\n---/);
   if (!match) return null;
   return parseFrontmatterBlock(match[1]);
 }
@@ -389,6 +428,9 @@ function parseFrontmatterBlock(frontmatter: string): GSDPreferences {
     const indent = line.match(/^\s*/)?.[0].length ?? 0;
     const trimmed = line.trim();
 
+    // Skip comment lines (standalone YAML comments)
+    if (trimmed.startsWith("#")) continue;
+
     while (stack.length > 1 && indent <= stack[stack.length - 1].indent) {
       stack.pop();
     }
@@ -398,7 +440,8 @@ function parseFrontmatterBlock(frontmatter: string): GSDPreferences {
     if (!keyMatch) continue;
 
     const [, key, remainder] = keyMatch;
-    const valuePart = remainder.trim();
+    // Strip inline comments from the value portion
+    const valuePart = remainder.replace(/\s+#.*$/, "").trim();
 
     if (valuePart === "") {
       const nextLine = lines[i + 1] ?? "";
@@ -421,7 +464,12 @@ function parseFrontmatterBlock(frontmatter: string): GSDPreferences {
           const nextCandidateIndent = nextCandidate.match(/^\s*/)?.[0].length ?? 0;
           const nextCandidateTrimmed = nextCandidate.trim();
 
-          if (itemText.includes(":") || (nextCandidateTrimmed && nextCandidateIndent > candidateIndent)) {
+          // Treat an array item as a structured object only when:
+          //   a) It looks like a YAML key-value pair (key starts with [A-Za-z0-9_]+:), OR
+          //   b) The next line is indented deeper (nested block under this item).
+          // Bare colons (e.g. "qwen/qwen3-coder:free") are NOT key-value pairs.
+          const looksLikeKeyValue = /^[A-Za-z0-9_]+:/.test(itemText);
+          if (looksLikeKeyValue || (nextCandidateTrimmed && nextCandidateIndent > candidateIndent)) {
             const obj: Record<string, unknown> = {};
             const firstMatch = itemText.match(/^([A-Za-z0-9_]+):(.*)$/);
             if (firstMatch) {
@@ -486,17 +534,23 @@ function parseFrontmatterBlock(frontmatter: string): GSDPreferences {
 }
 
 function parseScalar(value: string): unknown {
-  if (value === "true") return true;
-  if (value === "false") return false;
+  // Strip inline YAML comments: " # comment" (# preceded by whitespace).
+  // Quoted strings are returned as-is (the comment is inside quotes).
+  const quoteMatch = value.match(/^(['"])(.*)(\1)$/);
+  if (quoteMatch) return quoteMatch[2];
+
+  const stripped = value.replace(/\s+#.*$/, "");
+  if (stripped === "true") return true;
+  if (stripped === "false") return false;
   // Recognize empty array/object literals (with or without surrounding quotes)
-  const unquoted = value.replace(/^['\"]|['\"]$/g, "");
+  const unquoted = stripped.replace(/^['\"]|['\"]$/g, "");
   if (unquoted === "[]") return [];
   if (unquoted === "{}") return {};
-  if (/^-?\d+$/.test(value)) {
-    const n = Number(value);
+  if (/^-?\d+$/.test(stripped)) {
+    const n = Number(stripped);
     // Keep large integers (e.g. Discord channel IDs) as strings to avoid precision loss
     if (Number.isSafeInteger(n)) return n;
-    return value;
+    return stripped;
   }
   return unquoted;
 }
@@ -630,6 +684,11 @@ function mergePreferences(base: GSDPreferences, override: GSDPreferences): GSDPr
     uat_dispatch: override.uat_dispatch ?? base.uat_dispatch,
     unique_milestone_ids: override.unique_milestone_ids ?? base.unique_milestone_ids,
     budget_ceiling: override.budget_ceiling ?? base.budget_ceiling,
+    budget_enforcement: override.budget_enforcement ?? base.budget_enforcement,
+    context_pause_threshold: override.context_pause_threshold ?? base.context_pause_threshold,
+    notifications: (base.notifications || override.notifications)
+      ? { ...(base.notifications ?? {}), ...(override.notifications ?? {}) }
+      : undefined,
     remote_questions: override.remote_questions
       ? { ...(base.remote_questions ?? {}), ...override.remote_questions }
       : base.remote_questions,
@@ -649,6 +708,13 @@ export function validatePreferences(preferences: GSDPreferences): {
   const errors: string[] = [];
   const warnings: string[] = [];
   const validated: GSDPreferences = {};
+
+  // ─── Unknown Key Detection ──────────────────────────────────────────
+  for (const key of Object.keys(preferences)) {
+    if (!KNOWN_PREFERENCE_KEYS.has(key)) {
+      warnings.push(`unknown preference key "${key}" — ignored`);
+    }
+  }
 
   if (preferences.version !== undefined) {
     if (preferences.version === 1) {
@@ -724,6 +790,64 @@ export function validatePreferences(preferences: GSDPreferences): {
       validated.budget_ceiling = Number(raw);
     } else {
       errors.push("budget_ceiling must be a finite number");
+    }
+  }
+
+  // ─── Budget Enforcement ──────────────────────────────────────────────
+  if (preferences.budget_enforcement !== undefined) {
+    const validModes = new Set(["warn", "pause", "halt"]);
+    if (typeof preferences.budget_enforcement === "string" && validModes.has(preferences.budget_enforcement)) {
+      validated.budget_enforcement = preferences.budget_enforcement;
+    } else {
+      errors.push(`budget_enforcement must be one of: warn, pause, halt`);
+    }
+  }
+
+  // ─── Context Pause Threshold ────────────────────────────────────────
+  if (preferences.context_pause_threshold !== undefined) {
+    const raw = preferences.context_pause_threshold;
+    if (typeof raw === "number" && Number.isFinite(raw)) {
+      validated.context_pause_threshold = raw;
+    } else if (typeof raw === "string" && Number.isFinite(Number(raw))) {
+      validated.context_pause_threshold = Number(raw);
+    } else {
+      errors.push("context_pause_threshold must be a finite number");
+    }
+  }
+
+  // ─── Models ─────────────────────────────────────────────────────────
+  if (preferences.models !== undefined) {
+    if (preferences.models && typeof preferences.models === "object") {
+      validated.models = preferences.models;
+    } else {
+      errors.push("models must be an object");
+    }
+  }
+
+  // ─── Auto Supervisor ────────────────────────────────────────────────
+  if (preferences.auto_supervisor !== undefined) {
+    if (preferences.auto_supervisor && typeof preferences.auto_supervisor === "object") {
+      validated.auto_supervisor = preferences.auto_supervisor;
+    } else {
+      errors.push("auto_supervisor must be an object");
+    }
+  }
+
+  // ─── Notifications ──────────────────────────────────────────────────
+  if (preferences.notifications !== undefined) {
+    if (preferences.notifications && typeof preferences.notifications === "object") {
+      validated.notifications = preferences.notifications;
+    } else {
+      errors.push("notifications must be an object");
+    }
+  }
+
+  // ─── Remote Questions ───────────────────────────────────────────────
+  if (preferences.remote_questions !== undefined) {
+    if (preferences.remote_questions && typeof preferences.remote_questions === "object") {
+      validated.remote_questions = preferences.remote_questions;
+    } else {
+      errors.push("remote_questions must be an object");
     }
   }
 
@@ -914,11 +1038,15 @@ export function validatePreferences(preferences: GSDPreferences): {
         errors.push("git.main_branch must be a valid branch name (alphanumeric, _, -, /, .)");
       }
     }
-    // Deprecated: isolation and merge_to_main are ignored (branchless architecture).
-    // Emit warnings so users know to remove them from preferences.
     if (g.isolation !== undefined) {
-      warnings.push("git.isolation is deprecated — worktree isolation is now always enabled. Remove this setting.");
+      const validIsolation = new Set(["worktree", "branch"]);
+      if (typeof g.isolation === "string" && validIsolation.has(g.isolation)) {
+        git.isolation = g.isolation as "worktree" | "branch";
+      } else {
+        errors.push("git.isolation must be one of: worktree, branch");
+      }
     }
+    // Deprecated: merge_to_main is ignored (branchless architecture).
     if (g.merge_to_main !== undefined) {
       warnings.push("git.merge_to_main is deprecated — milestone-level merge is now always used. Remove this setting.");
     }

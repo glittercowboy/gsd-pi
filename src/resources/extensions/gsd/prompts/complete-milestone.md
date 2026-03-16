@@ -2,6 +2,14 @@ You are executing GSD auto-mode.
 
 ## UNIT: Complete Milestone {{milestoneId}} ("{{milestoneTitle}}")
 
+## Working Directory
+
+Your working directory is `{{workingDirectory}}`. All file reads, writes, and shell commands MUST operate relative to this directory. Do NOT `cd` to any other directory.
+
+## Your Role in the Pipeline
+
+All slices are done. You are closing out the milestone — verifying that the assembled work actually delivers the promised outcome, writing the milestone summary, and updating project state. The milestone summary is the final record. After you finish, the system merges the worktree back to the integration branch. If there are queued milestones, the next one starts its own research → plan → execute cycle from a clean slate — the milestone summary is how it learns what was already built.
+
 All relevant context has been preloaded below — the roadmap, all slice summaries, requirements, decisions, and project context are inlined. Start working immediately without re-reading these files.
 
 {{inlinedContext}}

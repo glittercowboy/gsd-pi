@@ -62,19 +62,24 @@ Titles live inside file content (headings, frontmatter), not in file or director
 
 ```
 .gsd/
-  PROJECT.md          (living doc - what the project is right now)
-  DECISIONS.md        (append-only register of architectural and pattern decisions)
-  QUEUE.md            (append-only log of queued milestones via /gsd queue)
+  PROJECT.md            (living doc - what the project is right now)
+  REQUIREMENTS.md       (requirement contract - tracks active/validated/deferred/out-of-scope)
+  DECISIONS.md          (append-only register of architectural and pattern decisions)
+  OVERRIDES.md          (user-issued overrides that supersede plan content via /gsd steer)
+  QUEUE.md              (append-only log of queued milestones via /gsd queue)
   STATE.md
+  runtime/              (system-managed — dispatch state, do not edit)
+  activity/             (system-managed — JSONL execution logs, do not edit)
+  worktrees/            (system-managed — auto-mode worktree checkouts, see below)
   milestones/
     M001/
-      M001-CONTEXT.md
+      M001-CONTEXT.md   (milestone brief — scope, goals, constraints. May not exist for early milestones)
       M001-RESEARCH.md
       M001-ROADMAP.md
       M001-SUMMARY.md
       slices/
         S01/
-          S01-CONTEXT.md    (optional)
+          S01-CONTEXT.md    (slice brief — optional, present when slice needed scoping discussion)
           S01-RESEARCH.md   (optional)
           S01-PLAN.md
           S01-SUMMARY.md
@@ -84,16 +89,22 @@ Titles live inside file content (headings, frontmatter), not in file or director
             T01-SUMMARY.md
 ```
 
+### Worktree Model
+
+All auto-mode work happens inside a worktree at `.gsd/worktrees/<MID>/`. This is a full git worktree on the `milestone/<MID>` branch — it has its own working copy of the project and its own `.gsd/` directory. Slices commit sequentially on this branch; there are no per-slice branches. When a milestone completes, the worktree is merged back to the integration branch.
+
+**If you are executing in auto-mode, your working directory is already set to the worktree.** Use relative paths or the path shown in the Working Directory section of your prompt. Do not navigate to any other copy of the project.
+
 ### Conventions
 
 - **PROJECT.md** is a living document describing what the project is right now - current state only, updated at slice completion when stale
+- **REQUIREMENTS.md** tracks the requirement contract — requirements move between Active, Validated, Deferred, Blocked, and Out of Scope as slices prove or invalidate them. Update at slice completion when evidence supports a status change.
 - **DECISIONS.md** is an append-only register of architectural and pattern decisions - read it during planning/research, append to it during execution when a meaningful decision is made
+- **CONTEXT.md** files (milestone or slice level) capture the brief — scope, goals, constraints, and key decisions from discussion. When present, they are the authoritative source for what a milestone or slice is trying to achieve. Read them before planning or executing.
 - **Milestones** are major project phases (M001, M002, ...)
 - **Slices** are demoable vertical increments (S01, S02, ...) ordered by risk. After each slice completes, the roadmap is reassessed before the next slice begins.
 - **Tasks** are single-context-window units of work (T01, T02, ...)
 - Checkboxes in roadmap and plan files track completion (`[ ]` → `[x]`)
-- Each slice gets its own git branch: `gsd/M001/S01` (or `gsd/<worktree>/M001/S01` when inside a worktree)
-- Slices are squash-merged to the integration branch when complete (this is the branch GSD was started from — often `main`, but could be a feature branch like `f-123-new-thing`)
 - Summaries compress prior work - read them instead of re-reading all task details
 - `STATE.md` is the quick-glance status file - keep it updated after changes
 

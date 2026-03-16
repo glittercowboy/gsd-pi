@@ -182,7 +182,7 @@ export class Editor implements Component, Focusable {
 	private undoStack = new UndoStack<EditorState>();
 	private textVersion = 0;
 	private cachedText: string | null = null;
-	private layoutCache: { width: number; textVersion: number; lines: LayoutLine[] } | null = null;
+	private layoutCache: { width: number; textVersion: number; cursorLine: number; cursorCol: number; lines: LayoutLine[] } | null = null;
 	private visualLineMapCache: { width: number; textVersion: number; lines: VisualLine[] } | null = null;
 
 	public onSubmit?: (text: string) => void;
@@ -243,12 +243,14 @@ export class Editor implements Component, Focusable {
 
 	private getLayoutLines(width: number): LayoutLine[] {
 		const cached = this.layoutCache;
-		if (cached && cached.width === width && cached.textVersion === this.textVersion) {
+		if (cached && cached.width === width && cached.textVersion === this.textVersion
+			&& cached.cursorLine === this.state.cursorLine && cached.cursorCol === this.state.cursorCol) {
 			return cached.lines;
 		}
 
 		const lines = this.layoutText(width);
-		this.layoutCache = { width, textVersion: this.textVersion, lines };
+		this.layoutCache = { width, textVersion: this.textVersion, lines,
+			cursorLine: this.state.cursorLine, cursorCol: this.state.cursorCol };
 		return lines;
 	}
 
@@ -730,8 +732,17 @@ export class Editor implements Component, Focusable {
 			return;
 		}
 
-		// Regular characters
+		// Regular characters — reject partial escape sequence remnants that can
+		// occur when event loop latency causes the StdinBuffer to split an escape
+		// sequence (e.g. \x1b flushed as ESC, then "[D" arrives as text).
 		if (data.charCodeAt(0) >= 32) {
+			if (data[0] === "[" && data.length >= 2 && data.length <= 8) {
+				const last = data[data.length - 1]!;
+				// CSI navigation remnants: [A-F (arrows/home/end), [H, [Z (shift-tab), [<n>~ (func keys)
+				if (/^[A-FHZ]$/.test(last) || last === "~") {
+					return; // Drop CSI remnant (e.g. "[D", "[C", "[5~")
+				}
+			}
 			this.insertCharacter(data);
 		}
 	}
@@ -2053,6 +2064,10 @@ https://github.com/EsotericSoftware/spine-runtimes/actions/runs/19536643416/job/
 			this.autocompleteDebounceTimer = null;
 		}
 		this.lastAutocompleteLookupPrefix = null;
+	}
+
+	public dispose(): void {
+		this.clearAutocompleteDebounce();
 	}
 
 	public isShowingAutocomplete(): boolean {

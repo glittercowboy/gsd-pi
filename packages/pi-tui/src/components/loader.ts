@@ -26,6 +26,9 @@ export class Loader extends Text {
 	}
 
 	start() {
+		if (this.intervalId) {
+			clearInterval(this.intervalId);
+		}
 		this.updateDisplay();
 		this.intervalId = setInterval(() => {
 			this.currentFrame = (this.currentFrame + 1) % this.frames.length;
@@ -38,6 +41,11 @@ export class Loader extends Text {
 			clearInterval(this.intervalId);
 			this.intervalId = null;
 		}
+	}
+
+	dispose() {
+		this.stop();
+		this.ui = null;
 	}
 
 	setMessage(message: string) {

@@ -74,27 +74,33 @@ assert(
   `executing label should include task ID, got: "${exResult.label}"`,
 );
 
-// ─── Static verification: needs-discussion in dispatchNextUnit ──────────────
+// ─── Static verification: needs-discussion in dispatch table ──────────────
 
-const autoSource = readFileSync(
-  join(import.meta.dirname, "..", "auto.ts"),
+const dashboardSource = readFileSync(
+  join(import.meta.dirname, "..", "auto-dashboard.ts"),
   "utf-8",
 );
 
-// Check describeNextUnit has the case
-const hasDescribeCase = autoSource.includes('case "needs-discussion"');
-assert(hasDescribeCase, "auto.ts describeNextUnit should have 'needs-discussion' case");
+// Check describeNextUnit has the case (in auto-dashboard.ts)
+const hasDescribeCase = dashboardSource.includes('case "needs-discussion"');
+assert(hasDescribeCase, "auto-dashboard.ts describeNextUnit should have 'needs-discussion' case");
 
-// Check dispatchNextUnit has the branch
-const hasDispatchBranch = autoSource.includes('state.phase === "needs-discussion"');
-assert(hasDispatchBranch, "auto.ts dispatchNextUnit should have 'needs-discussion' branch");
+// Dispatch logic moved to auto-dispatch.ts — verify the rule exists there
+const dispatchSource = readFileSync(
+  join(import.meta.dirname, "..", "auto-dispatch.ts"),
+  "utf-8",
+);
 
-// Check the dispatch branch calls stopAuto
-const dispatchIdx = autoSource.indexOf('state.phase === "needs-discussion"');
-const nextChunk = autoSource.slice(dispatchIdx, dispatchIdx + 600);
+// Check dispatch table has a needs-discussion rule
+const hasDispatchRule = dispatchSource.includes('"needs-discussion"');
+assert(hasDispatchRule, "auto-dispatch.ts should have 'needs-discussion' rule");
+
+// Check the rule returns a stop action
+const ruleIdx = dispatchSource.indexOf('"needs-discussion"');
+const nextChunk = dispatchSource.slice(ruleIdx, ruleIdx + 600);
 assert(
-  nextChunk.includes("stopAuto"),
-  "needs-discussion dispatch branch should call stopAuto",
+  nextChunk.includes('"stop"') || nextChunk.includes("action: \"stop\""),
+  "needs-discussion dispatch rule should return stop action",
 );
 
 // Check notification includes /gsd guidance

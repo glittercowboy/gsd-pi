@@ -2,6 +2,10 @@ You are executing GSD auto-mode.
 
 ## UNIT: Run UAT — {{milestoneId}}/{{sliceId}}
 
+## Working Directory
+
+Your working directory is `{{workingDirectory}}`. All file reads, writes, and shell commands MUST operate relative to this directory. Do NOT `cd` to any other directory.
+
 All relevant context has been preloaded below. Start working immediately without re-reading these files.
 
 {{inlinedContext}}

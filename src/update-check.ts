@@ -1,5 +1,6 @@
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs'
 import { dirname, join } from 'node:path'
+import chalk from 'chalk'
 import { appRoot } from './app-paths.js'
 
 const CACHE_FILE = join(appRoot, '.update-check')
@@ -46,14 +47,9 @@ export function writeUpdateCache(cache: UpdateCheckCache, cachePath: string = CA
 }
 
 function printUpdateBanner(current: string, latest: string): void {
-  const yellow = '\x1b[33m'
-  const dim = '\x1b[2m'
-  const reset = '\x1b[0m'
-  const bold = '\x1b[1m'
-
   process.stderr.write(
-    `  ${yellow}Update available:${reset} ${dim}v${current}${reset} → ${bold}v${latest}${reset}\n` +
-    `  ${dim}Run${reset} npm update -g gsd-pi ${dim}or${reset} /gsd:update ${dim}to upgrade${reset}\n\n`,
+    `  ${chalk.yellow('Update available:')} ${chalk.dim(`v${current}`)} → ${chalk.bold(`v${latest}`)}\n` +
+    `  ${chalk.dim('Run')} npm update -g gsd-pi ${chalk.dim('or')} /gsd:update ${chalk.dim('to upgrade')}\n\n`,
   )
 }
 

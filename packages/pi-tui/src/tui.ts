@@ -441,6 +441,15 @@ export class TUI extends Container {
 
 	stop(): void {
 		this.stopped = true;
+
+		// Dispose all overlays to stop any running timers
+		for (const entry of this.overlayStack) {
+			if ("dispose" in entry.component && typeof (entry.component as any).dispose === "function") {
+				(entry.component as any).dispose();
+			}
+		}
+		this.overlayStack = [];
+
 		// Move cursor to the end of the content to prevent overwriting/artifacts on exit
 		if (this.previousLines.length > 0) {
 			const targetRow = this.previousLines.length; // Line after the last content

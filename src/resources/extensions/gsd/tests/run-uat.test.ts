@@ -214,6 +214,7 @@ async function main(): Promise<void> {
   let promptThrew = false;
   try {
     promptResult = loadPromptFromWorktree('run-uat', {
+      workingDirectory: '/tmp/test-project',
       milestoneId,
       sliceId,
       uatPath,

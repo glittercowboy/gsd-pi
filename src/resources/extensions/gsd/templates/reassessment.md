@@ -8,8 +8,9 @@ verdict: {{no-change | modified}}
 
 ## Changes Made
 
-<!-- What changed in the roadmap as a result of this reassessment.
-     Write "No changes." if verdict is no-change. -->
+<!-- For "no-change" verdict: 1-2 sentences confirming the roadmap still holds. Keep it brief.
+     For "modified" verdict: list which slices changed (reordered, merged, split, added, removed) and why.
+     Don't restate what the slice built — the slice summary covers that. Focus on what changed in the plan. -->
 
 {{placeholder}}
 

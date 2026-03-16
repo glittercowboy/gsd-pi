@@ -2,7 +2,7 @@
 
 ## What This Is
 
-A pi coding agent extension (GSD — "Get Stuff Done") that provides structured planning, auto-mode execution, and project management for autonomous coding sessions. Includes proactive secret management, browser automation tools for UI verification, and worktree-isolated git architecture for zero-friction autonomous execution.
+A pi coding agent extension (GSD — "Get Stuff Done") that provides structured planning, auto-mode execution, and project management for autonomous coding sessions. Includes proactive secret management, browser automation tools for UI verification, worktree-isolated git architecture for zero-friction autonomous execution, and SQLite-backed surgical context injection for token-efficient prompt assembly.
 
 ## Core Value
 
@@ -21,11 +21,13 @@ The GSD extension is fully functional with:
 - Worktree-isolated git architecture: auto-worktree per milestone, --no-ff slice merges, milestone squash to main, preference-gated isolation modes, self-healing git repair, doctor git health checks, full e2e test coverage
 - Auto-worktree lifecycle: `auto-worktree.ts` module creates isolated worktrees per milestone (`milestone/<MID>` branches), wired into auto.ts startAuto/resume/stop with split-brain prevention
 - Branch-per-slice git model with squash merge to main (legacy mode, supported via `git.isolation: "branch"` preference)
+- Decomposed auto-mode: `auto-prompts.ts` (prompt builders), `auto-dispatch.ts` (unit→prompt routing), `auto-recovery.ts` (timeout/crash recovery), `auto-worktree.ts` (worktree lifecycle)
 
 ## Architecture / Key Patterns
 
 - **Extension model**: pi extensions register tools, commands, hooks via `ExtensionAPI`
 - **State machine**: `auto.ts` drives `dispatchNextUnit()` which reads disk state and dispatches fresh sessions
+- **Dispatch pipeline**: `auto-dispatch.ts` resolves phase → unit type + prompt via `resolveDispatch()`. Prompt builders live in `auto-prompts.ts`.
 - **Secrets gate**: `startAuto()` checks `getManifestStatus()` before first dispatch
 - **Disk-driven state**: `.gsd/` files are the source of truth, `STATE.md` is derived cache
 - **File parsing**: `files.ts` has markdown parsers for all GSD file types
@@ -43,3 +45,4 @@ See `.gsd/REQUIREMENTS.md` for the explicit capability contract, requirement sta
 - [x] M001: Proactive Secret Management — Front-loaded API key collection into planning so auto-mode runs uninterrupted (10 requirements validated)
 - [x] M002: Browser Tools Performance & Intelligence — Module decomposition, action pipeline optimization, sharp-based screenshots, form intelligence, intent-ranked retrieval, semantic actions, 108-test suite (12 requirements validated)
 - [x] M003: Worktree-Isolated Git Architecture — Auto-worktree per milestone, --no-ff slice merges, milestone squash to main, preferences + backwards compat, self-healing git repair, doctor health checks, full e2e test suite (13 requirements validated)
+- [ ] M004: SQLite Context Store — Surgical context injection via SQLite-backed query layer, replacing whole-file prompt dumps with scoped DB queries for ≥30% token savings

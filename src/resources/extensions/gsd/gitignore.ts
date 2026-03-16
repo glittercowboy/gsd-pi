@@ -8,7 +8,7 @@
 
 import { join } from "node:path";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { execSync } from "node:child_process";
+import { nativeRmCached } from "./native-git-bridge.js";
 
 /**
  * Patterns that are always correct regardless of project type.
@@ -87,6 +87,28 @@ export function ensureGitignore(basePath: string): boolean {
     existing = readFileSync(gitignorePath, "utf-8");
   }
 
+  // Self-heal: remove blanket ".gsd/" lines from pre-v2.14.0 projects.
+  // The blanket ignore prevented planning artifacts (.gsd/milestones/) from
+  // being tracked in git, causing artifacts to vanish in worktrees and
+  // triggering loop detection failures. Replace with explicit runtime-only
+  // ignores so planning files are tracked naturally.
+  let modified = false;
+  const lines = existing.split("\n");
+  const filteredLines = lines.filter(line => {
+    const trimmed = line.trim();
+    // Remove standalone ".gsd/" lines (blanket ignore) but keep specific
+    // .gsd/ subpath patterns like ".gsd/activity/" or ".gsd/auto.lock"
+    if (trimmed === ".gsd/" || trimmed === ".gsd") {
+      modified = true;
+      return false;
+    }
+    return true;
+  });
+  if (modified) {
+    existing = filteredLines.join("\n");
+    writeFileSync(gitignorePath, existing, "utf-8");
+  }
+
   // Parse existing lines (trimmed, ignoring comments and blanks)
   const existingLines = new Set(
     existing
@@ -98,7 +120,7 @@ export function ensureGitignore(basePath: string): boolean {
   // Find patterns not yet present
   const missing = BASELINE_PATTERNS.filter((p) => !existingLines.has(p));
 
-  if (missing.length === 0) return false;
+  if (missing.length === 0) return modified;
 
   // Build the block to append
   const block = [
@@ -130,10 +152,7 @@ export function untrackRuntimeFiles(basePath: string): void {
     // Use -r for directory patterns (trailing slash), strip the slash for the command
     const target = pattern.endsWith("/") ? pattern.slice(0, -1) : pattern;
     try {
-      execSync(`git rm -r --cached ${target}`, {
-        cwd: basePath,
-        stdio: ["ignore", "ignore", "ignore"],
-      });
+      nativeRmCached(basePath, [target]);
     } catch {
       // File not tracked or doesn't exist — expected, ignore
     }

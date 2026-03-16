@@ -5,7 +5,7 @@
 
 import { promises as fs } from 'node:fs';
 import { dirname, resolve } from 'node:path';
-import { resolveMilestoneFile, relMilestoneFile } from './paths.js';
+import { resolveMilestoneFile, relMilestoneFile, resolveGsdRootFile } from './paths.js';
 import { milestoneIdSort, findMilestoneIds } from './guided-flow.js';
 
 import type {
@@ -20,7 +20,7 @@ import type {
 
 import { checkExistingEnvKeys } from '../get-secrets-from-user.js';
 import { parseRoadmapSlices } from './roadmap-slices.js';
-import { nativeParseRoadmap, nativeExtractSection, NATIVE_UNAVAILABLE } from './native-parser-bridge.js';
+import { nativeParseRoadmap, nativeExtractSection, nativeParsePlanFile, nativeParseSummaryFile, NATIVE_UNAVAILABLE } from './native-parser-bridge.js';
 
 // ─── Parse Cache ──────────────────────────────────────────────────────────
 
@@ -354,6 +354,28 @@ export function parsePlan(content: string): SlicePlan {
 }
 
 function _parsePlanImpl(content: string): SlicePlan {
+  // Try native parser first for better performance
+  const nativeResult = nativeParsePlanFile(content);
+  if (nativeResult) {
+    return {
+      id: nativeResult.id,
+      title: nativeResult.title,
+      goal: nativeResult.goal,
+      demo: nativeResult.demo,
+      mustHaves: nativeResult.mustHaves,
+      tasks: nativeResult.tasks.map(t => ({
+        id: t.id,
+        title: t.title,
+        description: t.description,
+        done: t.done,
+        estimate: t.estimate,
+        ...(t.files.length > 0 ? { files: t.files } : {}),
+        ...(t.verify ? { verify: t.verify } : {}),
+      })),
+      filesLikelyTouched: nativeResult.filesLikelyTouched,
+    };
+  }
+
   const lines = content.split('\n');
 
   const h1 = lines.find(l => l.startsWith('# '));
@@ -436,6 +458,36 @@ export function parseSummary(content: string): Summary {
 }
 
 function _parseSummaryImpl(content: string): Summary {
+  // Try native parser first for better performance
+  const nativeResult = nativeParseSummaryFile(content);
+  if (nativeResult) {
+    const nfm = nativeResult.frontmatter;
+    return {
+      frontmatter: {
+        id: nfm.id,
+        parent: nfm.parent,
+        milestone: nfm.milestone,
+        provides: nfm.provides,
+        requires: nfm.requires,
+        affects: nfm.affects,
+        key_files: nfm.keyFiles,
+        key_decisions: nfm.keyDecisions,
+        patterns_established: nfm.patternsEstablished,
+        drill_down_paths: nfm.drillDownPaths,
+        observability_surfaces: nfm.observabilitySurfaces,
+        duration: nfm.duration,
+        verification_result: nfm.verificationResult,
+        completed_at: nfm.completedAt,
+        blocker_discovered: nfm.blockerDiscovered,
+      },
+      title: nativeResult.title,
+      oneLiner: nativeResult.oneLiner,
+      whatHappened: nativeResult.whatHappened,
+      deviations: nativeResult.deviations,
+      filesModified: nativeResult.filesModified,
+    };
+  }
+
   const [fmLines, body] = splitFrontmatter(content);
 
   const fm = fmLines ? parseFrontmatterMap(fmLines) : {};
@@ -854,4 +906,104 @@ export async function getManifestStatus(
   }
 
   return result;
+}
+
+// ─── Overrides ──────────────────────────────────────────────────────────────
+
+export interface Override {
+  timestamp: string;
+  change: string;
+  scope: "active" | "resolved";
+  appliedAt: string;
+}
+
+export async function appendOverride(basePath: string, change: string, appliedAt: string): Promise<void> {
+  const overridesPath = resolveGsdRootFile(basePath, "OVERRIDES");
+  const timestamp = new Date().toISOString();
+  const entry = [
+    `## Override: ${timestamp}`,
+    "",
+    `**Change:** ${change}`,
+    `**Scope:** active`,
+    `**Applied-at:** ${appliedAt}`,
+    "",
+    "---",
+    "",
+  ].join("\n");
+
+  const existing = await loadFile(overridesPath);
+  if (existing) {
+    await saveFile(overridesPath, existing.trimEnd() + "\n\n" + entry);
+  } else {
+    const header = [
+      "# GSD Overrides",
+      "",
+      "User-issued overrides that supersede plan document content.",
+      "",
+      "---",
+      "",
+    ].join("\n");
+    await saveFile(overridesPath, header + entry);
+  }
+}
+
+export async function loadActiveOverrides(basePath: string): Promise<Override[]> {
+  const overridesPath = resolveGsdRootFile(basePath, "OVERRIDES");
+  const content = await loadFile(overridesPath);
+  if (!content) return [];
+  return parseOverrides(content).filter(o => o.scope === "active");
+}
+
+export function parseOverrides(content: string): Override[] {
+  const overrides: Override[] = [];
+  const blocks = content.split(/^## Override: /m).slice(1);
+
+  for (const block of blocks) {
+    const lines = block.split("\n");
+    const timestamp = lines[0]?.trim() ?? "";
+    let change = "";
+    let scope: "active" | "resolved" = "active";
+    let appliedAt = "";
+
+    for (const line of lines) {
+      const changeMatch = line.match(/^\*\*Change:\*\*\s*(.+)$/);
+      if (changeMatch) change = changeMatch[1].trim();
+      const scopeMatch = line.match(/^\*\*Scope:\*\*\s*(.+)$/);
+      if (scopeMatch) scope = scopeMatch[1].trim() as "active" | "resolved";
+      const appliedMatch = line.match(/^\*\*Applied-at:\*\*\s*(.+)$/);
+      if (appliedMatch) appliedAt = appliedMatch[1].trim();
+    }
+
+    if (change) {
+      overrides.push({ timestamp, change, scope, appliedAt });
+    }
+  }
+
+  return overrides;
+}
+
+export function formatOverridesSection(overrides: Override[]): string {
+  if (overrides.length === 0) return "";
+
+  const entries = overrides.map((o, i) => [
+    `${i + 1}. **${o.change}**`,
+    `   _Issued: ${o.timestamp} during ${o.appliedAt}_`,
+  ].join("\n")).join("\n");
+
+  return [
+    "## Active Overrides (supersede plan content)",
+    "",
+    "The following overrides were issued by the user and supersede any conflicting content in plan documents below. Follow these overrides even if they contradict the inlined task plan.",
+    "",
+    entries,
+    "",
+  ].join("\n");
+}
+
+export async function resolveAllOverrides(basePath: string): Promise<void> {
+  const overridesPath = resolveGsdRootFile(basePath, "OVERRIDES");
+  const content = await loadFile(overridesPath);
+  if (!content) return;
+  const updated = content.replace(/\*\*Scope:\*\* active/g, "**Scope:** resolved");
+  await saveFile(overridesPath, updated);
 }

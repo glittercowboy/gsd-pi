@@ -112,7 +112,10 @@ export class ProcessTerminal implements Terminal {
 	 * to handle the case where the response arrives split across multiple events.
 	 */
 	private setupStdinBuffer(): void {
-		this.stdinBuffer = new StdinBuffer({ timeout: 10 });
+		// 50ms matches xterm's default escapeCodeTimeout and gives enough headroom
+		// for escape sequences that arrive split across multiple stdin data events
+		// (e.g. \x1b arriving separately from [D due to event loop latency).
+		this.stdinBuffer = new StdinBuffer({ timeout: 50 });
 
 		// Kitty protocol response pattern: \x1b[?<flags>u
 		const kittyResponsePattern = /^\x1b\[\?(\d+)u$/;

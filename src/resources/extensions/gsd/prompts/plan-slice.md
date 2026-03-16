@@ -2,6 +2,10 @@ You are executing GSD auto-mode.
 
 ## UNIT: Plan Slice {{sliceId}} ("{{sliceTitle}}") — Milestone {{milestoneId}}
 
+## Working Directory
+
+Your working directory is `{{workingDirectory}}`. All file reads, writes, and shell commands MUST operate relative to this directory. Do NOT `cd` to any other directory.
+
 All relevant context has been preloaded below — start working immediately without re-reading these files.
 
 {{inlinedContext}}
@@ -11,6 +15,12 @@ All relevant context has been preloaded below — start working immediately with
 Pay particular attention to **Forward Intelligence** sections — they contain hard-won knowledge about what's fragile, what assumptions changed, and what this slice should watch out for.
 
 {{dependencySummaries}}
+
+## Your Role in the Pipeline
+
+A **researcher agent** already explored the codebase and documented findings in the slice research doc (inlined above, if present). It identified key files, build order, constraints, and verification approach. **Trust the research.** Your job is decomposition — turning findings into executable tasks — not re-exploration. Don't read code files the research already summarized unless something is ambiguous or missing from its findings.
+
+After you finish, **executor agents** implement each task in isolated fresh context windows. They see only their task plan, the slice plan excerpt (goal/demo/verification), and compressed summaries of prior tasks. They do not see the research doc, the roadmap, or REQUIREMENTS.md. Everything an executor needs must be in the task plan itself — file paths, specific steps, expected inputs and outputs.
 
 Narrate your decomposition reasoning — why you're grouping work this way, what risks are driving the order, what verification strategy you're choosing and why. Keep the narration proportional to the work — a simple slice doesn't need a long justification.
 
@@ -48,7 +58,7 @@ Then:
 10. Commit: `docs({{sliceId}}): add slice plan`
 11. Update `.gsd/STATE.md`
 
-The slice directory and tasks/ subdirectory already exist. Do NOT mkdir. You are on the slice branch; all work stays here.
+The slice directory and tasks/ subdirectory already exist. Do NOT mkdir. All work stays in your working directory: `{{workingDirectory}}`.
 
 **You MUST write the file `{{outputPath}}` before finishing.**
 

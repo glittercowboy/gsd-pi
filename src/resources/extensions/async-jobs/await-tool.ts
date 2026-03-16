@@ -24,7 +24,7 @@ export function createAwaitTool(getManager: () => AsyncJobManager): ToolDefiniti
 		description:
 			"Wait for background jobs to complete. Provide specific job IDs or omit to wait for the next job that finishes. Returns results of completed jobs.",
 		parameters: schema,
-		async execute(_toolCallId, params) {
+		async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
 			const manager = getManager();
 			const { jobs: jobIds } = params;
 
@@ -43,6 +43,7 @@ export function createAwaitTool(getManager: () => AsyncJobManager): ToolDefiniti
 				if (notFound.length > 0 && watched.length === 0) {
 					return {
 						content: [{ type: "text", text: `No jobs found: ${notFound.join(", ")}` }],
+						details: undefined,
 					};
 				}
 			} else {
@@ -50,6 +51,7 @@ export function createAwaitTool(getManager: () => AsyncJobManager): ToolDefiniti
 				if (watched.length === 0) {
 					return {
 						content: [{ type: "text", text: "No running background jobs." }],
+						details: undefined,
 					};
 				}
 			}
@@ -59,7 +61,7 @@ export function createAwaitTool(getManager: () => AsyncJobManager): ToolDefiniti
 			if (running.length === 0) {
 				const result = formatResults(watched);
 				manager.acknowledgeDeliveries(watched.map((j) => j.id));
-				return { content: [{ type: "text", text: result }] };
+				return { content: [{ type: "text", text: result }], details: undefined };
 			}
 
 			// Wait for at least one to complete
@@ -75,7 +77,7 @@ export function createAwaitTool(getManager: () => AsyncJobManager): ToolDefiniti
 				result += `\n\n**Still running:** ${stillRunning.map((j) => `${j.id} (${j.label})`).join(", ")}`;
 			}
 
-			return { content: [{ type: "text", text: result }] };
+			return { content: [{ type: "text", text: result }], details: undefined };
 		},
 	};
 }
