@@ -1,13 +1,8 @@
 /**
- * MCP (Model Context Protocol) server for the GSD extension.
- *
- * This module provides the same MCP server functionality as src/mcp-server.ts
- * but can be loaded via jiti in the extension runtime context. It enables
- * GSD's tools to be used by external AI clients (Claude Desktop, VS Code
- * Copilot, etc.) via the MCP standard protocol over stdin/stdout.
+ * Minimal tool interface matching GSD's AgentTool shape.
+ * Avoids a direct dependency on @gsd/pi-agent-core from this compiled module.
  */
-
-interface McpTool {
+export interface McpToolDef {
   name: string
   description: string
   parameters: Record<string, unknown>
@@ -21,23 +16,38 @@ interface McpTool {
   }>
 }
 
+/**
+ * Starts a native MCP (Model Context Protocol) server over stdin/stdout.
+ *
+ * This enables GSD's tools (read, write, edit, bash, grep, glob, ls, etc.)
+ * to be used by external AI clients such as Claude Desktop, VS Code Copilot,
+ * and any MCP-compatible host.
+ *
+ * The server registers all tools from the agent session's tool registry and
+ * maps MCP tools/list and tools/call requests to GSD tool definitions and
+ * execution, respectively.
+ *
+ * All MCP SDK imports are dynamic to avoid subpath export resolution issues
+ * with TypeScript's NodeNext module resolution.
+ */
 export async function startMcpServer(options: {
-  tools: McpTool[]
+  tools: McpToolDef[]
   version?: string
 }): Promise<void> {
   const { tools, version = '0.0.0' } = options
 
-  // Dynamic imports — MCP SDK subpath exports use a "./*" wildcard pattern
-  // that cannot be statically resolved by all TypeScript configurations.
-  // @ts-ignore
+  // Dynamic imports to work around MCP SDK subpath export resolution.
+  // The @ts-ignore directives suppress TS2307 for wildcard subpath exports
+  // that NodeNext module resolution cannot statically resolve.
   const { Server } = await import('@modelcontextprotocol/sdk/server')
-  // @ts-ignore
+  // @ts-ignore — subpath export via "./*" wildcard
   const { StdioServerTransport } = await import('@modelcontextprotocol/sdk/server/stdio.js')
-  // @ts-ignore
+  // @ts-ignore — subpath export via "./*" wildcard
   const sdkTypes = await import('@modelcontextprotocol/sdk/types')
   const { ListToolsRequestSchema, CallToolRequestSchema } = sdkTypes
 
-  const toolMap = new Map<string, McpTool>()
+  // Build a lookup map for fast tool resolution on calls
+  const toolMap = new Map<string, McpToolDef>()
   for (const tool of tools) {
     toolMap.set(tool.name, tool)
   }
@@ -50,10 +60,10 @@ export async function startMcpServer(options: {
   // tools/list — return every registered GSD tool with its JSON Schema parameters
   server.setRequestHandler(ListToolsRequestSchema, async () => {
     return {
-      tools: tools.map((t: McpTool) => ({
+      tools: tools.map((t) => ({
         name: t.name,
         description: t.description,
-        inputSchema: t.parameters,
+        inputSchema: t.parameters as Record<string, unknown>,
       })),
     }
   })
@@ -73,10 +83,11 @@ export async function startMcpServer(options: {
       const result = await tool.execute(
         `mcp-${Date.now()}`,
         args ?? {},
-        undefined,
-        undefined,
+        undefined, // no AbortSignal
+        undefined, // no onUpdate callback
       )
 
+      // Convert AgentToolResult content blocks to MCP content format
       const content = result.content.map((block: any) => {
         if (block.type === 'text') {
           return { type: 'text' as const, text: block.text ?? '' }
@@ -88,6 +99,7 @@ export async function startMcpServer(options: {
             mimeType: block.mimeType ?? 'image/png',
           }
         }
+        // Fallback for any unrecognized content type
         return { type: 'text' as const, text: JSON.stringify(block) }
       })
 
@@ -101,8 +113,10 @@ export async function startMcpServer(options: {
     }
   })
 
+  // Connect to stdin/stdout transport
   const transport = new StdioServerTransport()
   await server.connect(transport)
 
+  // Log startup to stderr (stdout is reserved for MCP protocol)
   process.stderr.write(`[gsd] MCP server started (v${version})\n`)
 }

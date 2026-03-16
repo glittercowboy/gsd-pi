@@ -1,0 +1,85 @@
+{
+  "name": "gsd-vscode",
+  "displayName": "GSD - Get Shit Done",
+  "description": "VS Code integration for the GSD coding agent",
+  "publisher": "gsd-build",
+  "version": "0.1.0",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.95.0"
+  },
+  "categories": [
+    "AI",
+    "Chat"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "dist/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "gsd.start",
+        "title": "GSD: Start Agent"
+      },
+      {
+        "command": "gsd.stop",
+        "title": "GSD: Stop Agent"
+      },
+      {
+        "command": "gsd.newSession",
+        "title": "GSD: New Session"
+      },
+      {
+        "command": "gsd.sendMessage",
+        "title": "GSD: Send Message"
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "gsd",
+          "title": "GSD",
+          "icon": "$(hubot)"
+        }
+      ]
+    },
+    "views": {
+      "gsd": [
+        {
+          "type": "webview",
+          "id": "gsd-sidebar",
+          "name": "GSD Agent"
+        }
+      ]
+    },
+    "chatParticipants": [
+      {
+        "id": "gsd.agent",
+        "name": "gsd",
+        "fullName": "GSD Agent",
+        "description": "Get Shit Done coding agent",
+        "isSticky": true
+      }
+    ],
+    "configuration": {
+      "title": "GSD",
+      "properties": {
+        "gsd.binaryPath": {
+          "type": "string",
+          "default": "gsd",
+          "description": "Path to the GSD binary"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "watch": "tsc --watch",
+    "package": "vsce package"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.95.0",
+    "typescript": "^5.7.0"
+  }
+}
