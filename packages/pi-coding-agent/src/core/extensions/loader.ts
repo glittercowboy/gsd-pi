@@ -19,6 +19,7 @@ import * as _bundledPiTui from "@gsd/pi-tui";
 // These MUST be static so Bun bundles them into the compiled binary.
 // The virtualModules option then makes them available to extensions.
 import * as _bundledTypebox from "@sinclair/typebox";
+import * as _bundledYaml from "yaml";
 import { getAgentDir, isBunBinary } from "../../config.js";
 // NOTE: This import works because loader.ts exports are NOT re-exported from index.ts,
 // avoiding a circular dependency. Extensions can import from @gsd/pi-coding-agent.
@@ -46,6 +47,7 @@ const VIRTUAL_MODULES: Record<string, unknown> = {
 	"@gsd/pi-ai": _bundledPiAi,
 	"@gsd/pi-ai/oauth": _bundledPiAiOauth,
 	"@gsd/pi-coding-agent": _bundledPiCodingAgent,
+	"yaml": _bundledYaml,
 	// Aliases for external PI ecosystem packages that import from the original scope
 	"@mariozechner/pi-agent-core": _bundledPiAgentCore,
 	"@mariozechner/pi-tui": _bundledPiTui,
@@ -70,6 +72,9 @@ function getAliases(): Record<string, string> {
 	const typeboxEntry = require.resolve("@sinclair/typebox");
 	const typeboxRoot = typeboxEntry.replace(/[\\/]build[\\/]cjs[\\/]index\.js$/, "");
 
+	const yamlEntry = require.resolve("yaml");
+	const yamlRoot = yamlEntry.replace(/[\\/]dist[\\/]index\.js$/, "");
+
 	const packagesRoot = path.resolve(__dirname, "../../../../");
 	const resolveWorkspaceOrImport = (workspaceRelativePath: string, specifier: string): string => {
 		const workspacePath = path.join(packagesRoot, workspaceRelativePath);
@@ -86,6 +91,7 @@ function getAliases(): Record<string, string> {
 		"@gsd/pi-ai": resolveWorkspaceOrImport("ai/dist/index.js", "@gsd/pi-ai"),
 		"@gsd/pi-ai/oauth": resolveWorkspaceOrImport("ai/dist/oauth.js", "@gsd/pi-ai/oauth"),
 		"@sinclair/typebox": typeboxRoot,
+		"yaml": yamlRoot,
 		// Aliases for external PI ecosystem packages that import from the original scope
 		"@mariozechner/pi-coding-agent": packageIndex,
 		"@mariozechner/pi-agent-core": resolveWorkspaceOrImport("agent/dist/index.js", "@gsd/pi-agent-core"),

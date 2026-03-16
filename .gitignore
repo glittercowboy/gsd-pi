@@ -1,16 +1,6 @@
 
-# ── GSD runtime (not source artifacts — planning files are tracked) ──
-.gsd/auto.lock
-.gsd/completed-units.json
-.gsd/STATE.md
-.gsd/metrics.json
-.gsd/gsd.db
-.gsd/activity/
-.gsd/runtime/
-.gsd/worktrees/
-.gsd/DISCUSSION-MANIFEST.json
-.gsd/milestones/**/*-CONTINUE.md
-.gsd/milestones/**/continue.md
+# ── GSD project state (development-only, lives in worktree branches) ──
+.gsd/
 
 .claude/
 RELEASE-GUIDE.md

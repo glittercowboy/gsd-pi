@@ -11,6 +11,7 @@ import {
 	restoreLineEndings,
 	stripBom,
 } from "./edit-diff.js";
+import { notifyFileChanged } from "../lsp/client.js";
 import { resolveToCwd } from "./path-utils.js";
 
 const editSchema = Type.Object({
@@ -186,6 +187,8 @@ export function createEditTool(cwd: string, options?: EditToolOptions): AgentToo
 
 						const finalContent = bom + restoreLineEndings(newContent, originalEnding);
 						await ops.writeFile(absolutePath, finalContent);
+
+						try { notifyFileChanged(absolutePath); } catch { /* best-effort */ }
 
 						// Check if aborted after writing
 						if (aborted) {

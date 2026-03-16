@@ -120,6 +120,22 @@ Stops auto mode gracefully. Can be run from a different terminal.
 
 Hard-steer plan documents during execution without stopping the pipeline. Changes are picked up at the next phase boundary.
 
+### Capture
+
+```
+/gsd capture "add rate limiting to API endpoints"
+```
+
+Fire-and-forget thought capture. Captures are triaged automatically between tasks. See [Captures & Triage](./captures-triage.md).
+
+### Visualize
+
+```
+/gsd visualize
+```
+
+Open the workflow visualizer — interactive tabs for progress, dependencies, metrics, and timeline. See [Workflow Visualizer](./visualizer.md).
+
 ## Dashboard
 
 `Ctrl+Alt+G` or `/gsd status` shows real-time progress:
@@ -129,6 +145,7 @@ Hard-steer plan documents during execution without stopping the pipeline. Change
 - Per-unit cost and token breakdown
 - Cost projections
 - Completed and in-progress units
+- Pending capture count (when captures are awaiting triage)
 
 ## Phase Skipping
 
@@ -141,3 +158,7 @@ Token profiles can skip certain phases to reduce cost:
 | Reassess Roadmap | Skipped | Runs | Runs |
 
 See [Token Optimization](./token-optimization.md) for details.
+
+## Dynamic Model Routing
+
+When enabled, auto-mode automatically selects cheaper models for simple units (slice completion, UAT) and reserves expensive models for complex work (replanning, architectural tasks). See [Dynamic Model Routing](./dynamic-model-routing.md).

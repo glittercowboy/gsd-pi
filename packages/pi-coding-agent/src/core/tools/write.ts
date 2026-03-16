@@ -2,6 +2,7 @@ import type { AgentTool } from "@gsd/pi-agent-core";
 import { type Static, Type } from "@sinclair/typebox";
 import { mkdir as fsMkdir, writeFile as fsWriteFile } from "fs/promises";
 import { dirname } from "path";
+import { notifyFileChanged } from "../lsp/client.js";
 import { resolveToCwd } from "./path-utils.js";
 
 const writeSchema = Type.Object({
@@ -82,6 +83,8 @@ export function createWriteTool(cwd: string, options?: WriteToolOptions): AgentT
 
 							// Write the file
 							await ops.writeFile(absolutePath, content);
+
+							try { notifyFileChanged(absolutePath); } catch { /* best-effort */ }
 
 							// Check if aborted after writing
 							if (aborted) {

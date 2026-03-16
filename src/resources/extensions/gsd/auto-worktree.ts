@@ -7,8 +7,9 @@
  */
 
 import { existsSync, cpSync, readFileSync, realpathSync, utimesSync } from "node:fs";
-import { join, resolve } from "node:path";
-import { execSync } from "node:child_process";
+import { isAbsolute, join, resolve } from "node:path";
+import { copyWorktreeDb, reconcileWorktreeDb, isDbAvailable } from "./gsd-db.js";
+import { execSync, execFileSync } from "node:child_process";
 import {
   createWorktree,
   removeWorktree,
@@ -33,6 +34,7 @@ import {
   nativeAddPaths,
   nativeRmForce,
   nativeBranchDelete,
+  nativeBranchExists,
 } from "./native-git-bridge.js";
 
 // ─── Module State ──────────────────────────────────────────────────────────
@@ -75,6 +77,48 @@ function nudgeGitBranchCache(previousCwd: string): void {
   }
 }
 
+// ─── Worktree Post-Create Hook (#597) ────────────────────────────────────────
+
+/**
+ * Run the user-configured post-create hook script after worktree creation.
+ * The script receives SOURCE_DIR and WORKTREE_DIR as environment variables.
+ * Failure is non-fatal — returns the error message or null on success.
+ *
+ * Reads the hook path from git.worktree_post_create in preferences.
+ * Pass hookPath directly to bypass preference loading (useful for testing).
+ */
+export function runWorktreePostCreateHook(sourceDir: string, worktreeDir: string, hookPath?: string): string | null {
+  if (hookPath === undefined) {
+    const prefs = loadEffectiveGSDPreferences()?.preferences?.git;
+    hookPath = prefs?.worktree_post_create;
+  }
+  if (!hookPath) return null;
+
+  // Resolve relative paths against the source project root
+  const resolved = isAbsolute(hookPath) ? hookPath : join(sourceDir, hookPath);
+  if (!existsSync(resolved)) {
+    return `Worktree post-create hook not found: ${resolved}`;
+  }
+
+  try {
+    execSync(resolved, {
+      cwd: worktreeDir,
+      env: {
+        ...process.env,
+        SOURCE_DIR: sourceDir,
+        WORKTREE_DIR: worktreeDir,
+      },
+      stdio: ["ignore", "pipe", "pipe"],
+      encoding: "utf-8",
+      timeout: 30_000, // 30 second timeout
+    });
+    return null;
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return `Worktree post-create hook failed: ${msg}`;
+  }
+}
+
 // ─── Auto-Worktree Branch Naming ───────────────────────────────────────────
 
 export function autoWorktreeBranch(milestoneId: string): string {
@@ -93,11 +137,21 @@ export function autoWorktreeBranch(milestoneId: string): string {
 export function createAutoWorktree(basePath: string, milestoneId: string): string {
   const branch = autoWorktreeBranch(milestoneId);
 
-  // Use the integration branch recorded in META.json as the start point.
-  // This ensures the worktree branch is created from the branch the user
-  // was on when they started the milestone (e.g. f-setup-gsd-2), not main.
-  const integrationBranch = readIntegrationBranch(basePath, milestoneId) ?? undefined;
-  const info = createWorktree(basePath, milestoneId, { branch, startPoint: integrationBranch });
+  // Check if the milestone branch already exists — it survives auto-mode
+  // stop/pause and contains committed work from prior sessions. If it exists,
+  // re-attach the worktree to it WITHOUT resetting. Only create a fresh branch
+  // from the integration branch when no prior work exists.
+  const branchExists = nativeBranchExists(basePath, branch);
+
+  let info: { name: string; path: string; branch: string; exists: boolean };
+  if (branchExists) {
+    // Re-attach worktree to the existing milestone branch (preserving commits)
+    info = createWorktree(basePath, milestoneId, { branch, reuseExistingBranch: true });
+  } else {
+    // Fresh start — create branch from integration branch
+    const integrationBranch = readIntegrationBranch(basePath, milestoneId) ?? undefined;
+    info = createWorktree(basePath, milestoneId, { branch, startPoint: integrationBranch });
+  }
 
   // Copy .gsd/ planning artifacts from the source repo into the new worktree.
   // Worktrees are fresh git checkouts — untracked files don't carry over.
@@ -105,6 +159,13 @@ export function createAutoWorktree(basePath: string, milestoneId: string): strin
   // blanket .gsd/ rule (pre-v2.14.0). Without this copy, auto-mode loops
   // on plan-slice because the plan file doesn't exist in the worktree.
   copyPlanningArtifacts(basePath, info.path);
+
+  // Run user-configured post-create hook (#597) — e.g. copy .env, symlink assets
+  const hookError = runWorktreePostCreateHook(basePath, info.path);
+  if (hookError) {
+    // Non-fatal — log but don't prevent worktree usage
+    console.error(`[GSD] ${hookError}`);
+  }
 
   const previousCwd = process.cwd();
 
@@ -151,14 +212,28 @@ function copyPlanningArtifacts(srcBase: string, wtPath: string): void {
       } catch { /* non-fatal */ }
     }
   }
+
+  // Copy gsd.db if present in source
+  const srcDb = join(srcGsd, "gsd.db");
+  const destDb = join(dstGsd, "gsd.db");
+  if (existsSync(srcDb)) {
+    try {
+      copyWorktreeDb(srcDb, destDb);
+    } catch { /* non-fatal */ }
+  }
 }
 
 /**
  * Teardown an auto-worktree: chdir back to original base, then remove
  * the worktree and its branch.
  */
-export function teardownAutoWorktree(originalBasePath: string, milestoneId: string): void {
+export function teardownAutoWorktree(
+  originalBasePath: string,
+  milestoneId: string,
+  opts: { preserveBranch?: boolean } = {},
+): void {
   const branch = autoWorktreeBranch(milestoneId);
+  const { preserveBranch = false } = opts;
   const previousCwd = process.cwd();
 
   try {
@@ -171,7 +246,7 @@ export function teardownAutoWorktree(originalBasePath: string, milestoneId: stri
   }
 
   nudgeGitBranchCache(previousCwd);
-  removeWorktree(originalBasePath, milestoneId, { branch });
+  removeWorktree(originalBasePath, milestoneId, { branch, deleteBranch: !preserveBranch });
 }
 
 /**
@@ -298,6 +373,15 @@ export function mergeMilestoneToMain(
 
   // 1. Auto-commit dirty state in worktree before leaving
   autoCommitDirtyState(worktreeCwd);
+
+  // Reconcile worktree DB into main DB before leaving worktree context
+  if (isDbAvailable()) {
+    try {
+      const worktreeDbPath = join(worktreeCwd, ".gsd", "gsd.db");
+      const mainDbPath = join(originalBasePath_, ".gsd", "gsd.db");
+      reconcileWorktreeDb(mainDbPath, worktreeDbPath);
+    } catch { /* non-fatal */ }
+  }
 
   // 2. Parse roadmap for slice listing
   const roadmap = parseRoadmap(roadmapContent);

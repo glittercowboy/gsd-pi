@@ -195,6 +195,7 @@ git:
   merge_strategy: squash      # how worktree branches merge: "squash" or "merge"
   isolation: worktree         # git isolation: "worktree" or "branch"
   commit_docs: true           # commit .gsd/ artifacts to git (set false to keep local)
+  worktree_post_create: .gsd/hooks/post-worktree-create  # script to run after worktree creation
 ```
 
 | Field | Type | Default | Description |
@@ -209,6 +210,32 @@ git:
 | `merge_strategy` | string | `"squash"` | How worktree branches merge: `"squash"` (combine all commits) or `"merge"` (preserve individual commits) |
 | `isolation` | string | `"worktree"` | Auto-mode isolation: `"worktree"` (separate directory) or `"branch"` (work in project root — useful for submodule-heavy repos) |
 | `commit_docs` | boolean | `true` | Commit `.gsd/` planning artifacts to git. Set `false` to keep local-only |
+| `worktree_post_create` | string | (none) | Script to run after worktree creation. Receives `SOURCE_DIR` and `WORKTREE_DIR` env vars |
+
+#### `git.worktree_post_create`
+
+Script to run after a worktree is created (both auto-mode and manual `/worktree`). Useful for copying `.env` files, symlinking asset directories, or running setup commands that worktrees don't inherit from the main tree.
+
+```yaml
+git:
+  worktree_post_create: .gsd/hooks/post-worktree-create
+```
+
+The script receives two environment variables:
+- `SOURCE_DIR` — the original project root
+- `WORKTREE_DIR` — the newly created worktree path
+
+Example hook script (`.gsd/hooks/post-worktree-create`):
+
+```bash
+#!/bin/bash
+# Copy environment files and symlink assets into the new worktree
+cp "$SOURCE_DIR/.env" "$WORKTREE_DIR/.env"
+cp "$SOURCE_DIR/.env.local" "$WORKTREE_DIR/.env.local" 2>/dev/null || true
+ln -sf "$SOURCE_DIR/assets" "$WORKTREE_DIR/assets"
+```
+
+The path can be absolute or relative to the project root. The script runs with a 30-second timeout. Failure is non-fatal — GSD logs a warning and continues.
 
 ### `notifications`
 
@@ -334,7 +361,33 @@ custom_instructions:
   - "Prefer functional patterns over classes"
 ```
 
-For project-specific knowledge (patterns, gotchas, lessons learned), use `.gsd/KNOWLEDGE.md` instead — it's injected into every agent prompt automatically.
+For project-specific knowledge (patterns, gotchas, lessons learned), use `.gsd/KNOWLEDGE.md` instead — it's injected into every agent prompt automatically. Add entries with `/gsd knowledge rule|pattern|lesson <description>`.
+
+### `dynamic_routing`
+
+Complexity-based model routing. See [Dynamic Model Routing](./dynamic-model-routing.md).
+
+```yaml
+dynamic_routing:
+  enabled: true
+  tier_models:
+    light: claude-haiku-4-5
+    standard: claude-sonnet-4-6
+    heavy: claude-opus-4-6
+  escalate_on_failure: true
+  budget_pressure: true
+  cross_provider: true
+```
+
+### `auto_visualize`
+
+Show the workflow visualizer automatically after milestone completion:
+
+```yaml
+auto_visualize: true
+```
+
+See [Workflow Visualizer](./visualizer.md).
 
 ## Full Example
 
@@ -355,6 +408,12 @@ models:
 
 # Token optimization
 token_profile: balanced
+
+# Dynamic model routing
+dynamic_routing:
+  enabled: true
+  escalate_on_failure: true
+  budget_pressure: true
 
 # Budget
 budget_ceiling: 25.00
@@ -386,6 +445,9 @@ notifications:
   on_complete: false
   on_milestone: true
   on_attention: true
+
+# Visualizer
+auto_visualize: true
 
 # Hooks
 post_unit_hooks:

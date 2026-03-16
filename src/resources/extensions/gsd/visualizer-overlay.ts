@@ -6,9 +6,23 @@ import {
   renderDepsView,
   renderMetricsView,
   renderTimelineView,
+  renderAgentView,
+  renderChangelogView,
+  renderExportView,
+  type ProgressFilter,
 } from "./visualizer-views.js";
+import { writeExportFile } from "./export.js";
 
-const TAB_LABELS = ["1 Progress", "2 Deps", "3 Metrics", "4 Timeline"];
+const TAB_COUNT = 7;
+const TAB_LABELS = [
+  "1 Progress",
+  "2 Deps",
+  "3 Metrics",
+  "4 Timeline",
+  "5 Agent",
+  "6 Changes",
+  "7 Export",
+];
 
 export class GSDVisualizerOverlay {
   private tui: { requestRender: () => void };
@@ -16,7 +30,7 @@ export class GSDVisualizerOverlay {
   private onClose: () => void;
 
   activeTab = 0;
-  scrollOffsets: number[] = [0, 0, 0, 0];
+  scrollOffsets: number[] = new Array(TAB_COUNT).fill(0);
   loading = true;
   disposed = false;
   cachedWidth?: number;
@@ -24,6 +38,15 @@ export class GSDVisualizerOverlay {
   refreshTimer: ReturnType<typeof setInterval>;
   data: VisualizerData | null = null;
   basePath: string;
+
+  // Filter state (Progress tab)
+  filterMode = false;
+  filterText = "";
+  filterField: "all" | "status" | "risk" | "keyword" = "all";
+
+  // Export state
+  lastExportPath?: string;
+  exportStatus?: string;
 
   constructor(
     tui: { requestRender: () => void },
@@ -52,6 +75,37 @@ export class GSDVisualizerOverlay {
   }
 
   handleInput(data: string): void {
+    // Filter mode input routing
+    if (this.filterMode) {
+      if (matchesKey(data, Key.escape)) {
+        this.filterMode = false;
+        this.filterText = "";
+        this.invalidate();
+        this.tui.requestRender();
+        return;
+      }
+      if (matchesKey(data, Key.enter)) {
+        this.filterMode = false;
+        this.invalidate();
+        this.tui.requestRender();
+        return;
+      }
+      if (matchesKey(data, Key.backspace)) {
+        this.filterText = this.filterText.slice(0, -1);
+        this.invalidate();
+        this.tui.requestRender();
+        return;
+      }
+      // Append printable characters
+      if (data.length === 1 && data.charCodeAt(0) >= 32) {
+        this.filterText += data;
+        this.invalidate();
+        this.tui.requestRender();
+        return;
+      }
+      return;
+    }
+
     if (matchesKey(data, Key.escape) || matchesKey(data, Key.ctrl("c"))) {
       this.dispose();
       this.onClose();
@@ -59,17 +113,44 @@ export class GSDVisualizerOverlay {
     }
 
     if (matchesKey(data, Key.tab)) {
-      this.activeTab = (this.activeTab + 1) % 4;
+      this.activeTab = (this.activeTab + 1) % TAB_COUNT;
       this.invalidate();
       this.tui.requestRender();
       return;
     }
 
-    if (data === "1" || data === "2" || data === "3" || data === "4") {
+    if ("1234567".includes(data) && data.length === 1) {
       this.activeTab = parseInt(data, 10) - 1;
       this.invalidate();
       this.tui.requestRender();
       return;
+    }
+
+    // "/" enters filter mode on Progress tab
+    if (data === "/" && this.activeTab === 0) {
+      this.filterMode = true;
+      this.filterText = "";
+      this.invalidate();
+      this.tui.requestRender();
+      return;
+    }
+
+    // "f" cycles filter field on Progress tab (when not in filter mode)
+    if (data === "f" && this.activeTab === 0) {
+      const fields: Array<"all" | "status" | "risk" | "keyword"> = ["all", "status", "risk", "keyword"];
+      const idx = fields.indexOf(this.filterField);
+      this.filterField = fields[(idx + 1) % fields.length];
+      this.invalidate();
+      this.tui.requestRender();
+      return;
+    }
+
+    // Export tab key handling
+    if (this.activeTab === 6 && this.data) {
+      if (data === "m" || data === "j" || data === "s") {
+        this.handleExportKey(data);
+        return;
+      }
     }
 
     if (matchesKey(data, Key.down) || matchesKey(data, "j")) {
@@ -101,6 +182,62 @@ export class GSDVisualizerOverlay {
     }
   }
 
+  private handleExportKey(key: "m" | "j" | "s"): void {
+    if (!this.data) return;
+
+    const format = key === "m" ? "markdown" : key === "j" ? "json" : "snapshot";
+
+    if (format === "snapshot") {
+      // Capture current active tab's rendered lines as snapshot
+      const snapshotLines = this.renderTabContent(this.activeTab, 80);
+      const timestamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+      const { writeFileSync, mkdirSync } = require("node:fs");
+      const { join } = require("node:path");
+      const { gsdRoot } = require("./paths.js");
+      const exportDir = gsdRoot(this.basePath);
+      mkdirSync(exportDir, { recursive: true });
+      const outPath = join(exportDir, `snapshot-${timestamp}.txt`);
+      writeFileSync(outPath, snapshotLines.join("\n") + "\n", "utf-8");
+      this.lastExportPath = outPath;
+      this.exportStatus = "Snapshot saved";
+    } else {
+      const result = writeExportFile(this.basePath, format, this.data);
+      if (result) {
+        this.lastExportPath = result;
+        this.exportStatus = `${format} export saved`;
+      }
+    }
+
+    this.invalidate();
+    this.tui.requestRender();
+  }
+
+  private renderTabContent(tab: number, width: number): string[] {
+    if (!this.data) return [];
+    const th = this.theme;
+    switch (tab) {
+      case 0: {
+        const filter: ProgressFilter | undefined =
+          this.filterText ? { text: this.filterText, field: this.filterField } : undefined;
+        return renderProgressView(this.data, th, width, filter);
+      }
+      case 1:
+        return renderDepsView(this.data, th, width);
+      case 2:
+        return renderMetricsView(this.data, th, width);
+      case 3:
+        return renderTimelineView(this.data, th, width);
+      case 4:
+        return renderAgentView(this.data, th, width);
+      case 5:
+        return renderChangelogView(this.data, th, width);
+      case 6:
+        return renderExportView(this.data, th, width, this.lastExportPath);
+      default:
+        return [];
+    }
+  }
+
   render(width: number): string[] {
     if (this.cachedLines && this.cachedWidth === width) {
       return this.cachedLines;
@@ -112,13 +249,26 @@ export class GSDVisualizerOverlay {
 
     // Tab bar
     const tabs = TAB_LABELS.map((label, i) => {
-      if (i === this.activeTab) {
-        return th.fg("accent", `[${label}]`);
+      let displayLabel = label;
+      // Show filter indicator on Progress tab
+      if (i === 0 && this.filterText) {
+        displayLabel += " ✱";
       }
-      return th.fg("dim", `[${label}]`);
+      if (i === this.activeTab) {
+        return th.fg("accent", `[${displayLabel}]`);
+      }
+      return th.fg("dim", `[${displayLabel}]`);
     });
-    content.push(" " + tabs.join("  "));
+    content.push(" " + tabs.join(" "));
     content.push("");
+
+    // Filter bar (when in filter mode)
+    if (this.filterMode && this.activeTab === 0) {
+      content.push(
+        th.fg("accent", `Filter (${this.filterField}): ${this.filterText}█`),
+      );
+      content.push("");
+    }
 
     if (this.loading) {
       const loadingText = "Loading…";
@@ -126,21 +276,15 @@ export class GSDVisualizerOverlay {
       const leftPad = Math.max(0, Math.floor((innerWidth - vis) / 2));
       content.push(" ".repeat(leftPad) + loadingText);
     } else if (this.data) {
-      let viewLines: string[] = [];
-      switch (this.activeTab) {
-        case 0:
-          viewLines = renderProgressView(this.data, th, innerWidth);
-          break;
-        case 1:
-          viewLines = renderDepsView(this.data, th, innerWidth);
-          break;
-        case 2:
-          viewLines = renderMetricsView(this.data, th, innerWidth);
-          break;
-        case 3:
-          viewLines = renderTimelineView(this.data, th, innerWidth);
-          break;
+      const viewLines = this.renderTabContent(this.activeTab, innerWidth);
+
+      // Show export status message if present
+      if (this.exportStatus && this.activeTab === 6) {
+        content.push(th.fg("success", this.exportStatus));
+        content.push("");
+        this.exportStatus = undefined;
       }
+
       content.push(...viewLines);
     }
 
@@ -156,7 +300,7 @@ export class GSDVisualizerOverlay {
     const lines = this.wrapInBox(visibleContent, width);
 
     // Footer hint
-    const hint = th.fg("dim", "Tab/1-4 switch · ↑↓ scroll · g/G top/end · esc close");
+    const hint = th.fg("dim", "Tab/1-7 switch · / filter · ↑↓ scroll · g/G top/end · esc close");
     const hintVis = visibleWidth(hint);
     const hintPad = Math.max(0, Math.floor((width - hintVis) / 2));
     lines.push(" ".repeat(hintPad) + hint);

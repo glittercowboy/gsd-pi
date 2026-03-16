@@ -128,6 +128,7 @@ Templates showing the expected format for each artifact type are in:
 - `/gsd stop` - stop auto-mode
 - `/gsd status` - progress dashboard overlay
 - `/gsd queue` - queue future milestones (safe while auto-mode is running)
+- `/gsd quick <task>` - quick task with GSD guarantees (atomic commits, state tracking) but no milestone ceremony
 - `Ctrl+Alt+G` - toggle dashboard overlay
 - `Ctrl+Alt+B` - show shell processes
 
@@ -139,7 +140,7 @@ Templates showing the expected format for each artifact type are in:
 
 **File editing:** Always `read` a file before using `edit`. The `edit` tool requires exact text match — you need the real content, not a guess. Use `write` only for new files or complete rewrites.
 
-**Code navigation:** Use `lsp` for go-to-definition, find-references, and type info. Falls back gracefully if no server is available. Never `grep` for a symbol definition when `lsp` can resolve it semantically.
+**Code navigation:** Use `lsp` for definition, type_definition, implementation, references, incoming_calls, outgoing_calls, hover, signature, symbols, rename, code_actions, format, and diagnostics. Falls back gracefully if no server is available. Never `grep` for a symbol definition when `lsp` can resolve it semantically. Never shell out to prettier/rustfmt/gofmt when `lsp format` is available. After editing code, use `lsp diagnostics` to verify no type errors were introduced.
 
 **Codebase exploration:** Use `subagent` with `scout` for broad unfamiliar subsystem mapping. Use `rg` for text search across files. Use `lsp` for structural navigation. Never read files one-by-one to "explore" — search first, then read what's relevant.
 

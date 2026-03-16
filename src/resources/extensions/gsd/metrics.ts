@@ -17,6 +17,7 @@ import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import type { ExtensionContext } from "@gsd/pi-coding-agent";
 import { gsdRoot } from "./paths.js";
+import { getAndClearSkills } from "./skill-telemetry.js";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -39,8 +40,11 @@ export interface UnitMetrics {
   toolCalls: number;
   assistantMessages: number;
   userMessages: number;
+  promptCharCount?: number;
+  baselineCharCount?: number;
   tier?: string;           // complexity tier (light/standard/heavy) if dynamic routing active
   modelDowngraded?: boolean; // true if dynamic routing used a cheaper model
+  skills?: string[];       // skill names available/loaded during this unit (#599)
 }
 
 export interface MetricsLedger {
@@ -106,7 +110,7 @@ export function snapshotUnitMetrics(
   unitId: string,
   startedAt: number,
   model: string,
-  extras?: { tier?: string; modelDowngraded?: boolean },
+  opts?: { promptCharCount?: number; baselineCharCount?: number; tier?: string; modelDowngraded?: boolean },
 ): UnitMetrics | null {
   if (!ledger) return null;
 
@@ -159,9 +163,17 @@ export function snapshotUnitMetrics(
     toolCalls,
     assistantMessages,
     userMessages,
-    ...(extras?.tier ? { tier: extras.tier } : {}),
-    ...(extras?.modelDowngraded !== undefined ? { modelDowngraded: extras.modelDowngraded } : {}),
+    ...(opts?.promptCharCount != null ? { promptCharCount: opts.promptCharCount } : {}),
+    ...(opts?.baselineCharCount != null ? { baselineCharCount: opts.baselineCharCount } : {}),
+    ...(opts?.tier ? { tier: opts.tier } : {}),
+    ...(opts?.modelDowngraded !== undefined ? { modelDowngraded: opts.modelDowngraded } : {}),
   };
+
+  // Auto-capture skill telemetry (#599)
+  const skills = getAndClearSkills();
+  if (skills.length > 0) {
+    unit.skills = skills;
+  }
 
   ledger.units.push(unit);
   saveLedger(basePath, ledger);

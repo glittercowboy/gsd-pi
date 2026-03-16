@@ -3,10 +3,11 @@
  */
 
 import type { ChannelAdapter, RemotePrompt, RemoteDispatchResult, RemoteAnswer, RemotePromptRef } from "./types.js";
-import { formatForSlack, parseSlackReply } from "./format.js";
+import { formatForSlack, parseSlackReply, parseSlackReactionResponse, SLACK_NUMBER_REACTION_NAMES } from "./format.js";
 
 const SLACK_API = "https://slack.com/api";
 const PER_REQUEST_TIMEOUT_MS = 15_000;
+const SLACK_ACK_REACTION = "white_check_mark";
 
 export class SlackAdapter implements ChannelAdapter {
   readonly name = "slack" as const;
@@ -36,6 +37,17 @@ export class SlackAdapter implements ChannelAdapter {
 
     const ts = String(res.ts);
     const channel = String(res.channel);
+    if (prompt.questions.length === 1) {
+      const reactionNames = SLACK_NUMBER_REACTION_NAMES.slice(0, prompt.questions[0].options.length);
+      for (const name of reactionNames) {
+        try {
+          await this.slackApi("reactions.add", { channel, timestamp: ts, name });
+        } catch {
+          // Best-effort only
+        }
+      }
+    }
+
     return {
       ref: {
         id: prompt.id,
@@ -50,6 +62,11 @@ export class SlackAdapter implements ChannelAdapter {
 
   async pollAnswer(prompt: RemotePrompt, ref: RemotePromptRef): Promise<RemoteAnswer | null> {
     if (!this.botUserId) await this.validate();
+
+    if (prompt.questions.length === 1) {
+      const reactionAnswer = await this.checkReactions(prompt, ref);
+      if (reactionAnswer) return reactionAnswer;
+    }
 
     const res = await this.slackApi("conversations.replies", {
       channel: ref.channelId,
@@ -66,9 +83,48 @@ export class SlackAdapter implements ChannelAdapter {
     return parseSlackReply(String(userReplies[0].text), prompt.questions);
   }
 
+  async acknowledgeAnswer(ref: RemotePromptRef): Promise<void> {
+    try {
+      await this.slackApi("reactions.add", {
+        channel: ref.channelId,
+        timestamp: ref.messageId,
+        name: SLACK_ACK_REACTION,
+      });
+    } catch {
+      // Best-effort only
+    }
+  }
+
+  private async checkReactions(prompt: RemotePrompt, ref: RemotePromptRef): Promise<RemoteAnswer | null> {
+    const res = await this.slackApi("reactions.get", {
+      channel: ref.channelId,
+      timestamp: ref.messageId,
+      full: "true",
+    });
+
+    if (!res.ok) return null;
+
+    const message = (res.message ?? {}) as {
+      reactions?: Array<{ name?: string; count?: number; users?: string[] }>;
+    };
+    const reactions = Array.isArray(message.reactions) ? message.reactions : [];
+    const picked = reactions
+      .filter((reaction) => reaction.name && SLACK_NUMBER_REACTION_NAMES.includes(reaction.name))
+      .filter((reaction) => {
+        const count = Number(reaction.count ?? 0);
+        const users = Array.isArray(reaction.users) ? reaction.users.map(String) : [];
+        const botIncluded = this.botUserId ? users.includes(this.botUserId) : false;
+        return count > (botIncluded ? 1 : 0);
+      })
+      .map((reaction) => String(reaction.name));
+
+    if (picked.length === 0) return null;
+    return parseSlackReactionResponse(picked, prompt.questions);
+  }
+
   private async slackApi(method: string, params: Record<string, unknown>): Promise<Record<string, unknown>> {
     const url = `${SLACK_API}/${method}`;
-    const isGet = method === "conversations.replies" || method === "auth.test";
+    const isGet = method === "conversations.replies" || method === "auth.test" || method === "reactions.get";
 
     let response: Response;
     if (isGet) {

@@ -52,6 +52,12 @@ export interface GitPreferences {
    *  Default: true (planning docs are tracked in git).
    */
   commit_docs?: boolean;
+  /** Script to run after a worktree is created (#597).
+   *  Receives SOURCE_DIR and WORKTREE_DIR as environment variables.
+   *  Can be an absolute path or relative to the project root.
+   *  Failure is non-fatal — logged as a warning.
+   */
+  worktree_post_create?: string;
 }
 
 export const VALID_BRANCH_NAME = /^[a-zA-Z0-9_\-\/.]+$/;

@@ -159,7 +159,13 @@ export function buildSystemPrompt(options: BuildSystemPromptOptions = {}): strin
 	// LSP guideline
 	if (hasLsp) {
 		addGuideline(
-			"Use lsp for go-to-definition, find-references, hover, rename, and diagnostics when working in typed codebases. Prefer lsp over grep for semantic navigation (finding call sites, implementations, type info). Falls back gracefully if no language server is available for the file type.",
+			`Use lsp as the primary tool for code navigation in typed codebases:
+- Navigation: definition, type_definition, implementation, references, incoming_calls, outgoing_calls
+- Understanding: hover (types + docs), signature (parameter info), symbols (file/workspace search)
+- Refactoring: rename (project-wide), code_actions (quick-fixes, imports, refactors), format (formatter)
+- Verification: diagnostics after edits to catch type errors immediately
+- Never grep for a symbol definition when lsp can resolve it semantically
+- Never shell out to a formatter when lsp format is available`,
 		);
 	}
 

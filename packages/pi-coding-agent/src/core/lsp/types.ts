@@ -29,6 +29,10 @@ export const lspSchema = Type.Object({
 			"code_actions",
 			"type_definition",
 			"implementation",
+			"incoming_calls",
+			"outgoing_calls",
+			"format",
+			"signature",
 			"status",
 			"reload",
 		],
@@ -43,6 +47,8 @@ export const lspSchema = Type.Object({
 	query: Type.Optional(Type.String({ description: "Search query or SSR pattern" })),
 	new_name: Type.Optional(Type.String({ description: "New name for rename" })),
 	apply: Type.Optional(Type.Boolean({ description: "Apply edits (default: true)" })),
+	tab_size: Type.Optional(Type.Number({ description: "Tab size for formatting (default: 4)" })),
+	insert_spaces: Type.Optional(Type.Boolean({ description: "Use spaces for formatting (default: true)" })),
 	timeout: Type.Optional(Type.Number({ description: "Request timeout in seconds" })),
 });
 
@@ -418,4 +424,51 @@ export interface LspJsonRpcNotification {
 	jsonrpc: "2.0";
 	method: string;
 	params?: unknown;
+}
+
+// =============================================================================
+// Call Hierarchy
+// =============================================================================
+
+export interface CallHierarchyItem {
+	name: string;
+	kind: SymbolKind;
+	tags?: number[];
+	detail?: string;
+	uri: string;
+	range: Range;
+	selectionRange: Range;
+	data?: unknown;
+}
+
+export interface CallHierarchyIncomingCall {
+	from: CallHierarchyItem;
+	fromRanges: Range[];
+}
+
+export interface CallHierarchyOutgoingCall {
+	to: CallHierarchyItem;
+	fromRanges: Range[];
+}
+
+// =============================================================================
+// Signature Help
+// =============================================================================
+
+export interface ParameterInformation {
+	label: string | [number, number];
+	documentation?: string | MarkupContent;
+}
+
+export interface SignatureInformation {
+	label: string;
+	documentation?: string | MarkupContent;
+	parameters?: ParameterInformation[];
+	activeParameter?: number;
+}
+
+export interface SignatureHelp {
+	signatures: SignatureInformation[];
+	activeSignature?: number;
+	activeParameter?: number;
 }

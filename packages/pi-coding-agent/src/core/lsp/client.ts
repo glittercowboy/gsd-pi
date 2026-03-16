@@ -124,6 +124,18 @@ const CLIENT_CAPABILITIES = {
 				properties: ["edit"],
 			},
 		},
+		callHierarchy: {
+			dynamicRegistration: false,
+		},
+		signatureHelp: {
+			dynamicRegistration: false,
+			signatureInformation: {
+				documentationFormat: ["markdown", "plaintext"],
+				parameterInformation: {
+					labelOffsetSupport: true,
+				},
+			},
+		},
 		formatting: {
 			dynamicRegistration: false,
 		},
@@ -698,6 +710,20 @@ export async function refreshFile(client: LspClient, filePath: string, signal?: 
 		await refreshPromise;
 	} finally {
 		fileOperationLocks.delete(lockKey);
+	}
+}
+
+/**
+ * Notify all LSP clients that have the file open that it changed on disk.
+ * Synchronous entry point — async refresh runs in background.
+ * Swallows errors so editing never fails because of LSP.
+ */
+export function notifyFileChanged(filePath: string): void {
+	const uri = fileToUri(filePath);
+	for (const client of clients.values()) {
+		if (client.openFiles.has(uri)) {
+			refreshFile(client, filePath).catch(() => {});
+		}
 	}
 }
 

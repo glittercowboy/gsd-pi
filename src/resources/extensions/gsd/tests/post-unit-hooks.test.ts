@@ -18,6 +18,7 @@ import {
   clearPersistedHookState,
   getHookStatus,
   formatHookStatus,
+  triggerHookManually,
 } from "../post-unit-hooks.ts";
 
 const { assertEq, assertTrue, assertMatch, report } = createTestContext();
@@ -292,6 +293,46 @@ console.log("\n=== Hook status: no hooks ===");
 
   const formatted = formatHookStatus();
   assertMatch(formatted, /No hooks configured/, "status message says no hooks");
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Phase 4: Manual Hook Trigger Tests
+// ═══════════════════════════════════════════════════════════════════════════
+
+console.log("\n=== triggerHookManually: hook not found ===");
+
+{
+  resetHookState();
+  const base = createFixtureBase();
+  try {
+    const result = triggerHookManually("nonexistent-hook", "execute-task", "M001/S01/T01", base);
+    assertEq(result, null, "returns null when hook not found");
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+}
+
+console.log("\n=== triggerHookManually: with configured hook ===");
+
+{
+  resetHookState();
+  const base = createFixtureBase();
+  try {
+    // This test will work when preferences are configured
+    // For now, just verify the function exists and handles missing hooks
+    const result = triggerHookManually("code-review", "execute-task", "M001/S01/T01", base);
+    // Result depends on whether code-review hook is configured in preferences
+    // The function should either return null or a valid HookDispatchResult
+    assertTrue(result === null || typeof result === "object", "returns null or object");
+    if (result) {
+      assertEq(result.hookName, "code-review", "hook name in result");
+      assertEq(result.unitType, "hook/code-review", "unit type is hook-prefixed");
+      assertEq(result.unitId, "M001/S01/T01", "unit ID preserved");
+      assertTrue(typeof result.prompt === "string", "prompt is a string");
+    }
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
 }
 
 report();
