@@ -1,6 +1,5 @@
 
 # ── GSD (user project artifacts — never commit) ──
-.gsd/
 .claude/
 *.tgz
 .DS_Store
@@ -50,7 +49,6 @@ TODOS.md
 .planning/
 
 # ── GSD baseline (auto-generated) ──
-.gsd/
 !.gsd/
 .gsd/*
 !.gsd/milestones/
@@ -74,3 +72,9 @@ TODOS.md
 
 # ── GSD baseline (auto-generated) ──
 .gsd/completed-units.json
+
+# ── GSD baseline (auto-generated) ──
+.gsd/gsd.db
+.gsd/DISCUSSION-MANIFEST.json
+.gsd/milestones/**/*-CONTINUE.md
+.gsd/milestones/**/continue.md

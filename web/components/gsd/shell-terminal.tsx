@@ -368,17 +368,17 @@ export function ShellTerminal({ className }: ShellTerminalProps) {
                 />
               </div>
 
-              {/* Close button — shows on hover if more than 1 tab */}
+              {/* Close button — shows on hover as small badge in corner */}
               {tabs.length > 1 && (
                 <button
                   onClick={(e) => {
                     e.stopPropagation()
                     closeTab(tab.id)
                   }}
-                  className="absolute right-0 top-0 hidden h-full w-full items-center justify-center bg-[#0c0c0c]/90 text-zinc-500 hover:text-red-400 group-hover:flex"
+                  className="absolute -right-0.5 -top-0.5 z-10 hidden h-3.5 w-3.5 items-center justify-center rounded-full bg-zinc-800 text-zinc-500 hover:bg-red-500/20 hover:text-red-400 group-hover:flex"
                   title="Kill terminal"
                 >
-                  <Trash2 className="h-2.5 w-2.5" />
+                  <X className="h-2 w-2" />
                 </button>
               )}
             </button>

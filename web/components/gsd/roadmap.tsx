@@ -14,10 +14,10 @@ const StatusIcon = ({
 }) => {
   const sizeClass = size === "large" ? "h-5 w-5" : "h-4 w-4"
   if (status === "done") {
-    return <CheckCircle2 className={cn(sizeClass, "text-foreground/70")} />
+    return <CheckCircle2 className={cn(sizeClass, "text-emerald-400")} />
   }
   if (status === "in-progress") {
-    return <Play className={cn(sizeClass, "text-foreground")} />
+    return <Play className={cn(sizeClass, "text-amber-400")} />
   }
   return <Circle className={cn(sizeClass, "text-muted-foreground/40")} />
 }

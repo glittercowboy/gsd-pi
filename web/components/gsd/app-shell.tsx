@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef } from "react"
 import { Sidebar, MilestoneExplorer } from "@/components/gsd/sidebar"
-import { Terminal } from "@/components/gsd/terminal"
+import { ShellTerminal } from "@/components/gsd/shell-terminal"
 import { Dashboard } from "@/components/gsd/dashboard"
 import { Roadmap } from "@/components/gsd/roadmap"
 import { FilesView } from "@/components/gsd/files-view"
@@ -70,6 +70,7 @@ function WorkspaceChrome() {
   const [isTerminalExpanded, setIsTerminalExpanded] = useState(false)
   const [terminalHeight, setTerminalHeight] = useState(300)
   const isDraggingTerminal = useRef(false)
+  const didDragTerminal = useRef(false)
   const dragStartY = useRef(0)
   const dragStartHeight = useRef(0)
   const [viewRestored, setViewRestored] = useState(false)
@@ -124,10 +125,20 @@ function WorkspaceChrome() {
     setActiveView(view)
   }, [])
 
+  // Listen for cross-component file navigation events (e.g. sidebar task clicks)
+  useEffect(() => {
+    const handler = () => {
+      setActiveView("files")
+    }
+    window.addEventListener("gsd:open-file", handler)
+    return () => window.removeEventListener("gsd:open-file", handler)
+  }, [])
+
   // Terminal panel drag-to-resize
   useEffect(() => {
     const handleMouseMove = (e: MouseEvent) => {
       if (!isDraggingTerminal.current) return
+      didDragTerminal.current = true
       const delta = dragStartY.current - e.clientY
       const newHeight = Math.max(150, Math.min(600, dragStartHeight.current + delta))
       setTerminalHeight(newHeight)
@@ -263,37 +274,46 @@ function WorkspaceChrome() {
 
           {activeView !== "power" && (
             <div className="border-t border-border flex flex-col" style={{ flexShrink: 0 }}>
-              {/* Drag handle + toggle header */}
+              {/* Drag handle + toggle header — entire bar is clickable */}
               <div
+                role="button"
+                tabIndex={0}
+                onClick={() => {
+                  if (didDragTerminal.current) {
+                    didDragTerminal.current = false
+                    return
+                  }
+                  if (!isConnecting) setIsTerminalExpanded(!isTerminalExpanded)
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault()
+                    if (!isConnecting) setIsTerminalExpanded(!isTerminalExpanded)
+                  }
+                }}
                 className={cn(
-                  "flex h-8 w-full items-center justify-between bg-card px-3 text-xs",
+                  "flex h-8 w-full items-center justify-between bg-card px-3 text-xs select-none transition-colors",
                   isTerminalExpanded && "cursor-row-resize",
+                  !isTerminalExpanded && !isConnecting && "cursor-pointer hover:bg-muted/50",
+                  isConnecting && "cursor-default",
                 )}
                 onMouseDown={(e) => {
                   if (isTerminalExpanded) handleTerminalDragStart(e)
                 }}
               >
-                <button
-                  onClick={() => !isConnecting && setIsTerminalExpanded(!isTerminalExpanded)}
-                  disabled={isConnecting}
-                  className={cn(
-                    "flex items-center gap-2 text-muted-foreground",
-                    !isConnecting && "transition-colors hover:text-foreground",
-                    isConnecting && "cursor-default",
-                  )}
-                >
+                <div className="flex items-center gap-2 text-muted-foreground">
                   <span className="font-medium text-foreground">Terminal</span>
                   <span className="text-[10px] text-muted-foreground/50">
                     {isTerminalExpanded ? "▼" : "▲"}
                   </span>
-                </button>
+                </div>
               </div>
               {/* Terminal content */}
               <div
                 className="overflow-hidden"
                 style={{ height: isTerminalExpanded ? terminalHeight : 0, transition: isDraggingTerminal.current ? "none" : "height 200ms" }}
               >
-                <Terminal className="h-full" />
+                <ShellTerminal className="h-full" />
               </div>
             </div>
           )}

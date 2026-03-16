@@ -48,10 +48,10 @@ import { NewMilestoneDialog } from "@/components/gsd/new-milestone-dialog"
 
 const StatusIcon = ({ status }: { status: ItemStatus }) => {
   if (status === "done") {
-    return <CheckCircle2 className="h-4 w-4 shrink-0 text-foreground/70" />
+    return <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-400" />
   }
   if (status === "in-progress") {
-    return <Play className="h-4 w-4 shrink-0 text-foreground" />
+    return <Play className="h-4 w-4 shrink-0 text-amber-400" />
   }
   return <Circle className="h-4 w-4 shrink-0 text-muted-foreground/50" />
 }
@@ -193,6 +193,15 @@ export function MilestoneExplorer({ isConnecting = false }: { isConnecting?: boo
   const recoverySummary = workspace.live.recoverySummary
   const validationCount = liveWorkspace?.validationIssues.length ?? 0
   const currentScopeLabel = getCurrentScopeLabel(liveWorkspace)
+  const projectCwd = workspace.boot?.project.cwd ?? null
+
+  const openTaskFile = (absolutePath: string | undefined) => {
+    if (!absolutePath || !projectCwd) return
+    const gsdPrefix = `${projectCwd}/.gsd/`
+    if (!absolutePath.startsWith(gsdPrefix)) return
+    const relativePath = absolutePath.slice(gsdPrefix.length)
+    window.dispatchEvent(new CustomEvent("gsd:open-file", { detail: { root: "gsd", path: relativePath } }))
+  }
 
   const workflowAction = deriveWorkflowAction({
     phase: liveWorkspace?.active.phase ?? "pre-planning",
@@ -365,20 +374,25 @@ export function MilestoneExplorer({ isConnecting = false }: { isConnecting?: boo
                               )}
                               {slice.tasks.map((task) => {
                                 const taskStatus = getTaskStatus(milestone.id, slice.id, task, activeScope ?? {})
+                                const hasFile = !!(task.planPath || task.summaryPath)
                                 return (
-                                  <div
+                                  <button
                                     key={`${sliceKey}-${task.id}`}
+                                    type="button"
+                                    onClick={() => openTaskFile(task.summaryPath ?? task.planPath)}
+                                    disabled={!hasFile}
                                     className={cn(
-                                      "flex cursor-pointer items-center gap-1.5 px-2 py-1 text-xs transition-colors hover:bg-accent/50",
+                                      "flex w-full items-center gap-1.5 px-2 py-1 text-xs transition-colors",
+                                      hasFile ? "cursor-pointer hover:bg-accent/50" : "cursor-default opacity-70",
                                       activeScope?.taskId === task.id && sliceActive && "bg-accent/10",
                                     )}
                                   >
                                     <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />
                                     <StatusIcon status={taskStatus} />
-                                    <span className={cn("truncate", taskStatus === "pending" && "text-muted-foreground")}>
+                                    <span className={cn("truncate text-left", taskStatus === "pending" && "text-muted-foreground")}>
                                       {task.id}: {task.title}
                                     </span>
-                                  </div>
+                                  </button>
                                 )
                               })}
                             </div>

@@ -502,47 +502,7 @@ export function Dashboard({ onSwitchView, onExpandTerminal }: DashboardProps = {
                     </div>
                   </div>
                 </div>
-                <div className="border-t border-border px-4 py-3">
-                  <div className="flex items-center justify-between gap-2">
-                    <h3 className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Sessions</h3>
-                    <button
-                      type="button"
-                      onClick={() => void handleNewSession()}
-                      className="rounded-md border border-border bg-background px-2 py-1 text-[11px] font-medium text-foreground transition-colors hover:bg-accent"
-                    >
-                      New
-                    </button>
-                  </div>
-                  <div className="mt-3 space-y-2">
-                    {recentSessions.length > 0 ? (
-                      recentSessions.map((session) => {
-                        const isActiveSession = session.path === activeSessionPath || session.isActive
-                        return (
-                          <button
-                            key={session.path}
-                            type="button"
-                            onClick={() => void handleSwitchSession(session)}
-                            disabled={isActiveSession}
-                            className={cn(
-                              "flex w-full items-center gap-2.5 rounded border border-border px-3 py-2 text-left transition-colors",
-                              isActiveSession ? "bg-accent text-foreground" : "bg-background hover:bg-accent",
-                            )}
-                          >
-                            <span className={cn("h-2 w-2 shrink-0 rounded-full", isActiveSession ? "bg-success" : "bg-muted-foreground/40")} />
-                            <span className="min-w-0 flex-1 truncate text-xs font-medium">
-                              {session.name || session.id}
-                            </span>
-                            <span className="shrink-0 text-[10px] text-muted-foreground">
-                              {isActiveSession ? "active" : formatRelativeTime(session.modifiedAt)}
-                            </span>
-                          </button>
-                        )
-                      })
-                    ) : (
-                      <p className="text-xs text-muted-foreground">No resumable sessions yet.</p>
-                    )}
-                  </div>
-                </div>
+
 
                 {/* Live signals — only shown when active */}
                 {(activeToolExecution || streamingAssistantText.length > 0) && (

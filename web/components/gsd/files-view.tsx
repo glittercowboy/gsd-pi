@@ -18,6 +18,20 @@ import { FileContentViewer } from "@/components/gsd/file-content-viewer"
 
 type RootMode = "gsd" | "project"
 
+// Global pending file request — survives across component mount/unmount cycles.
+// Set by the custom event, consumed by FilesView on mount or when already mounted.
+let pendingFileRequest: { root: RootMode; path: string } | null = null
+
+// Set up the global event listener once (module-level, not component-level)
+if (typeof window !== "undefined") {
+  window.addEventListener("gsd:open-file", (e: Event) => {
+    const detail = (e as CustomEvent<{ root: RootMode; path: string }>).detail
+    if (detail?.root && detail?.path) {
+      pendingFileRequest = { root: detail.root, path: detail.path }
+    }
+  })
+}
+
 interface FileNode {
   name: string
   type: "file" | "directory"
@@ -199,6 +213,74 @@ export function FilesView() {
   useEffect(() => {
     fetchTree("gsd")
   }, [fetchTree])
+
+  // Process a file open request (used both on mount and on event)
+  const processFileOpen = useCallback(async (root: RootMode, path: string) => {
+    // Switch to the correct root tab
+    setActiveRoot(root)
+
+    // Ensure tree is loaded for this root
+    if (root === "gsd" && !gsdTree) {
+      fetchTree("gsd")
+    } else if (root === "project" && !projectTree) {
+      fetchTree("project")
+    }
+
+    // Auto-expand all parent directories
+    const parts = path.split("/")
+    const setExpanded = root === "gsd" ? setGsdExpanded : setProjectExpanded
+    setExpanded((prev) => {
+      const next = new Set(prev)
+      for (let i = 1; i < parts.length; i++) {
+        next.add(parts.slice(0, i).join("/"))
+      }
+      saveExpanded(projectCwd, root, next)
+      return next
+    })
+
+    // Select and load the file
+    setSelectedPath(path)
+    setFileContent(null)
+    setContentError(null)
+    setContentLoading(true)
+    try {
+      const res = await fetch(`/api/files?root=${root}&path=${encodeURIComponent(path)}`)
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}))
+        throw new Error(data.error || `Failed to fetch file (${res.status})`)
+      }
+      const data = await res.json()
+      setFileContent(data.content ?? null)
+    } catch (err) {
+      setContentError(err instanceof Error ? err.message : "Failed to fetch file content")
+    } finally {
+      setContentLoading(false)
+    }
+  }, [gsdTree, projectTree, fetchTree, projectCwd])
+
+  // On mount: consume any pending file request that arrived before this component mounted
+  const consumedPendingRef = useRef(false)
+  useEffect(() => {
+    if (consumedPendingRef.current) return
+    if (pendingFileRequest) {
+      consumedPendingRef.current = true
+      const { root, path } = pendingFileRequest
+      pendingFileRequest = null
+      void processFileOpen(root, path)
+    }
+  }, [processFileOpen])
+
+  // Listen for file open events while mounted
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent<{ root: RootMode; path: string }>).detail
+      if (!detail?.root || !detail?.path) return
+      pendingFileRequest = null // clear since we're handling it directly
+      void processFileOpen(detail.root, detail.path)
+    }
+    window.addEventListener("gsd:open-file", handler)
+    return () => window.removeEventListener("gsd:open-file", handler)
+  }, [processFileOpen])
 
   const handleToggleDir = useCallback((path: string) => {
     setExpandedPaths((prev) => {

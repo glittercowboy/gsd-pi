@@ -81,11 +81,11 @@ function getProjectCwd(): string {
   return process.env.GSD_WEB_PROJECT_CWD || process.cwd();
 }
 
-function getShellArgs(shell: string): string[] {
-  const shellName = basename(shell).toLowerCase();
-  if (shellName === "zsh") return ["-f"];
-  if (shellName === "bash") return ["--noprofile", "--norc"];
-  if (shellName === "fish") return ["--no-config"];
+function getShellArgs(_shell: string): string[] {
+  // Launch an interactive login shell with the user's normal config.
+  // Previously we passed -f / --norc to skip rc files, but that removed the
+  // user's prompt, PATH, aliases, etc. — making the terminal feel broken.
+  // History pollution is already prevented via HISTFILE=/dev/null in the env.
   return [];
 }
 

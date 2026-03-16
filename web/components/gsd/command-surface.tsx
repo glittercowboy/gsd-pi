@@ -1063,10 +1063,23 @@ export function CommandSurface() {
     )
   }
 
+  const gitFileStatusColor = (status: string) => {
+    switch (status) {
+      case "M": return "text-amber-400 bg-amber-400/10"
+      case "A": return "text-emerald-400 bg-emerald-400/10"
+      case "D": return "text-red-400 bg-red-400/10"
+      case "R": return "text-blue-400 bg-blue-400/10"
+      case "C": return "text-blue-400 bg-blue-400/10"
+      case "U": return "text-red-400 bg-red-400/10"
+      case "?": return "text-muted-foreground bg-foreground/5"
+      default: return "text-muted-foreground bg-foreground/5"
+    }
+  }
+
   const renderGitSection = () => {
     const result = gitSummary.result
     return (
-      <div className="space-y-4" data-testid="command-surface-git-summary">
+      <div className="space-y-5" data-testid="command-surface-git-summary">
         <div className="text-xs text-muted-foreground" data-testid="command-surface-git-state">
           {gitSummaryBusy
             ? "Loading git summary…"
@@ -1078,34 +1091,17 @@ export function CommandSurface() {
                   ? `Repo ready${result.hasChanges ? " — changes detected" : " — clean"}`
                   : "Git summary idle"}
         </div>
-        <SectionHeader
-          title="Git"
-          status={
-            result?.kind === "repo" ? (
-              <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                <StatusDot status={result.hasChanges ? "warning" : "ok"} />
-                {result.branch ?? "detached"}
-              </span>
-            ) : null
-          }
-          action={
-            <Button type="button" variant="ghost" size="sm" onClick={() => void loadGitSummary()} disabled={gitSummaryBusy} className="h-7 gap-1.5 text-xs">
-              <RefreshCw className={cn("h-3 w-3", gitSummaryBusy && "animate-spin")} />
-              Refresh
-            </Button>
-          }
-        />
 
         {gitSummaryBusy && !result && (
-          <div className="flex items-center gap-2 py-6 text-xs text-muted-foreground">
-            <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
-            Loading repo state…
+          <div className="flex flex-col items-center justify-center gap-3 py-16">
+            <LoaderCircle className="h-5 w-5 animate-spin text-muted-foreground" />
+            <span className="text-xs text-muted-foreground">Loading repo state…</span>
           </div>
         )}
 
         {gitSummary.error && (
           <div
-            className="rounded-lg border border-red-500/20 bg-red-500/5 px-3 py-2.5 text-xs text-red-400"
+            className="rounded-lg border border-red-500/20 bg-red-500/5 px-4 py-3 text-xs text-red-400"
             data-testid="command-surface-git-error"
           >
             {gitSummary.error}
@@ -1113,64 +1109,101 @@ export function CommandSurface() {
         )}
 
         {!gitSummary.error && result?.kind === "not_repo" && (
-          <div className="space-y-1 rounded-lg border border-border/50 bg-card/50 px-4 py-3" data-testid="command-surface-git-not-repo">
-            <div className="text-sm font-medium text-foreground">No Git repository</div>
-            <p className="text-xs text-muted-foreground">{result.message}</p>
+          <div className="flex flex-col items-center gap-3 py-16 text-center" data-testid="command-surface-git-not-repo">
+            <div className="flex h-10 w-10 items-center justify-center rounded-full border border-border/50 bg-card/50">
+              <GitBranch className="h-4.5 w-4.5 text-muted-foreground" />
+            </div>
+            <div>
+              <div className="text-sm font-medium text-foreground">No Git repository</div>
+              <p className="mt-1 text-xs text-muted-foreground">{result.message}</p>
+            </div>
           </div>
         )}
 
         {!gitSummary.error && result?.kind === "repo" && (
           <>
-            {/* Branch + scope */}
-            <div className="space-y-0.5 divide-y divide-border/30 rounded-lg border border-border/50 bg-card/50">
-              <div className="px-4 py-2.5">
-                <KV label="Branch" mono>{result.branch ?? "Detached HEAD"}</KV>
-                <KV label="Main" mono>{result.mainBranch ?? "—"}</KV>
-              </div>
-              <div className="px-4 py-2.5">
-                <KV label="Root" mono>{shortenPath(result.project.repoRoot, 4)}</KV>
-                {result.project.repoRelativePath && (
-                  <KV label="Subpath" mono>{result.project.repoRelativePath}</KV>
-                )}
-              </div>
+            {/* Repo info bar */}
+            <div className="flex items-center gap-2 text-xs text-muted-foreground">
+              <span className="font-mono">{shortenPath(result.project.repoRoot, 3)}</span>
+              {result.project.repoRelativePath && (
+                <>
+                  <ChevronRight className="h-3 w-3 text-foreground/20" />
+                  <span className="font-mono">{result.project.repoRelativePath}</span>
+                </>
+              )}
             </div>
 
-            {/* Counts */}
-            <div className="grid grid-cols-4 gap-2" data-testid="command-surface-git-counts">
+            {/* Counts row */}
+            <div className="grid grid-cols-4 gap-1.5" data-testid="command-surface-git-counts">
               {[
-                { label: "Staged", count: result.counts.staged },
-                { label: "Dirty", count: result.counts.dirty },
-                { label: "Untracked", count: result.counts.untracked },
-                { label: "Conflicts", count: result.counts.conflicts, danger: true },
-              ].map(({ label, count, danger }) => (
-                <div key={label} className="rounded-lg border border-border/50 bg-card/50 px-3 py-2 text-center">
-                  <div className={cn("text-lg font-semibold tabular-nums", danger && count > 0 ? "text-red-400" : "text-foreground")}>{count}</div>
-                  <div className="text-[10px] text-muted-foreground">{label}</div>
+                { label: "Staged", count: result.counts.staged, active: result.counts.staged > 0, color: "text-emerald-400" },
+                { label: "Modified", count: result.counts.dirty, active: result.counts.dirty > 0, color: "text-amber-400" },
+                { label: "Untracked", count: result.counts.untracked, active: result.counts.untracked > 0, color: "text-muted-foreground" },
+                { label: "Conflicts", count: result.counts.conflicts, active: result.counts.conflicts > 0, color: "text-red-400" },
+              ].map(({ label, count, active, color }) => (
+                <div key={label} className={cn(
+                  "rounded-md border px-2 py-2 text-center transition-colors",
+                  active ? "border-border/60 bg-card/80" : "border-border/30 bg-card/30",
+                )}>
+                  <div className={cn(
+                    "text-base font-semibold tabular-nums leading-none",
+                    active ? color : "text-foreground/25",
+                  )}>{count}</div>
+                  <div className={cn(
+                    "mt-1.5 text-[10px] leading-none",
+                    active ? "text-muted-foreground" : "text-muted-foreground/50",
+                  )}>{label}</div>
                 </div>
               ))}
             </div>
 
             {/* Changed files */}
             {result.changedFiles.length > 0 && (
-              <div className="space-y-1" data-testid="command-surface-git-files">
-                <div className="text-xs font-medium text-muted-foreground">Changed files</div>
-                {result.changedFiles.map((file) => (
-                  <div key={`${file.status}:${file.repoPath}`} className="flex items-center justify-between gap-3 rounded-md px-3 py-1.5 text-xs hover:bg-foreground/[0.03]">
-                    <span className="min-w-0 truncate font-mono text-[11px] text-foreground">{file.path}</span>
-                    <div className="flex shrink-0 gap-1">
-                      <span className="rounded bg-foreground/10 px-1.5 py-0.5 text-[10px] text-muted-foreground">{file.status}</span>
-                      {file.conflict && <span className="rounded bg-red-500/20 px-1.5 py-0.5 text-[10px] text-red-400">conflict</span>}
+              <div data-testid="command-surface-git-files">
+                <div className="mb-2 flex items-center justify-between">
+                  <span className="text-[11px] font-medium uppercase tracking-[0.06em] text-muted-foreground/70">
+                    Changes
+                  </span>
+                  <span className="text-[11px] tabular-nums text-muted-foreground/50">
+                    {result.changedFiles.length}{result.truncatedFileCount > 0 ? `+${result.truncatedFileCount}` : ""} files
+                  </span>
+                </div>
+                <div className="space-y-px rounded-lg border border-border/40 bg-card/30 overflow-hidden">
+                  {result.changedFiles.map((file) => (
+                    <div
+                      key={`${file.status}:${file.repoPath}`}
+                      className="group flex items-center gap-2.5 px-3 py-2 transition-colors hover:bg-foreground/[0.03]"
+                    >
+                      <span className={cn(
+                        "flex h-5 w-5 shrink-0 items-center justify-center rounded text-[10px] font-semibold",
+                        gitFileStatusColor(file.status),
+                      )}>
+                        {file.status}
+                      </span>
+                      <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-foreground/80">
+                        {file.path}
+                      </span>
+                      {file.conflict && (
+                        <span className="shrink-0 rounded bg-red-500/15 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wider text-red-400">
+                          conflict
+                        </span>
+                      )}
                     </div>
-                  </div>
-                ))}
+                  ))}
+                </div>
                 {result.truncatedFileCount > 0 && (
-                  <p className="px-3 text-[11px] text-muted-foreground">+{result.truncatedFileCount} more</p>
+                  <p className="mt-1.5 text-center text-[11px] text-muted-foreground/50">
+                    +{result.truncatedFileCount} more files not shown
+                  </p>
                 )}
               </div>
             )}
 
             {result.changedFiles.length === 0 && (
-              <p className="text-xs text-muted-foreground">Working tree clean.</p>
+              <div className="flex flex-col items-center gap-2 py-8 text-center">
+                <Check className="h-4 w-4 text-emerald-400/60" />
+                <span className="text-xs text-muted-foreground">Working tree clean</span>
+              </div>
             )}
           </>
         )}
@@ -1885,6 +1918,102 @@ export function CommandSurface() {
   // RENDER
   // ═══════════════════════════════════════════════════════════════════
 
+  const isSingleSection = surfaceSections.length <= 1
+  const isGitSurface = commandSurface.activeSurface === "git"
+  const gitResult = gitSummary.result
+
+  const renderGitHeader = () => {
+    const branchName = gitResult?.kind === "repo" ? (gitResult.branch ?? "detached") : null
+    const mainBranch = gitResult?.kind === "repo" ? gitResult.mainBranch : null
+    const hasChanges = gitResult?.kind === "repo" ? gitResult.hasChanges : false
+    const isClean = gitResult?.kind === "repo" && !hasChanges
+
+    return (
+      <div className="border-b border-border/40 px-5 py-4">
+        <div className="flex items-start justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <div className={cn(
+              "flex h-8 w-8 items-center justify-center rounded-lg",
+              isClean ? "bg-emerald-400/10" : hasChanges ? "bg-amber-400/10" : "bg-card/50",
+            )}>
+              <GitBranch className={cn(
+                "h-4 w-4",
+                isClean ? "text-emerald-400" : hasChanges ? "text-amber-400" : "text-muted-foreground",
+              )} />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <h2 className="text-sm font-semibold text-foreground" data-testid="command-surface-title">
+                  {branchName ?? "Git"}
+                </h2>
+                {branchName && mainBranch && branchName !== mainBranch && (
+                  <span className="text-[11px] text-muted-foreground/50">from {mainBranch}</span>
+                )}
+              </div>
+              {gitResult?.kind === "repo" && (
+                <div className="mt-0.5 flex items-center gap-1.5">
+                  <StatusDot status={isClean ? "ok" : hasChanges ? "warning" : "idle"} />
+                  <span className="text-[11px] text-muted-foreground">
+                    {isClean ? "Clean" : hasChanges ? "Changes detected" : "Loading…"}
+                  </span>
+                </div>
+              )}
+            </div>
+          </div>
+          <div className="flex items-center gap-1">
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              onClick={() => void loadGitSummary()}
+              disabled={gitSummaryBusy}
+              aria-label="Refresh"
+              className="h-7 w-7"
+            >
+              <RefreshCw className={cn("h-3.5 w-3.5", gitSummaryBusy && "animate-spin")} />
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              onClick={closeCommandSurface}
+              aria-label="Close"
+              className="h-7 w-7"
+            >
+              <X className="h-3.5 w-3.5" />
+            </Button>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  const renderDefaultHeader = () => (
+    <div className="flex items-center justify-between gap-3 border-b border-border/40 px-5 py-4">
+      <div>
+        <div className="text-xs uppercase tracking-wider text-muted-foreground">Command surface</div>
+        <div className="text-lg font-semibold text-foreground" data-testid="command-surface-title">
+          {surfaceTitle(commandSurface.activeSurface)}
+        </div>
+      </div>
+      <div className="flex items-center gap-2">
+        <div className="rounded-full border border-border bg-card px-2.5 py-1 text-xs font-medium text-muted-foreground" data-testid="command-surface-kind">
+          {surfaceKindLabel}
+        </div>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          onClick={closeCommandSurface}
+          aria-label="Close"
+          className="h-8 w-8"
+        >
+          <X className="h-4 w-4" />
+        </Button>
+      </div>
+    </div>
+  )
+
   return (
     <Sheet open={commandSurface.open} onOpenChange={(open) => !open && closeCommandSurface()}>
       <SheetContent side="right" className="flex h-full w-full flex-col p-0 sm:max-w-[540px]" data-testid="command-surface">
@@ -1895,60 +2024,40 @@ export function CommandSurface() {
         </SheetHeader>
 
         <div className="flex h-full min-h-0">
-          {/* ─── Left nav rail ─────────────────────────────────────── */}
-          <nav className="flex w-12 shrink-0 flex-col items-center gap-0.5 border-r border-border/40 bg-card/30 py-3" data-testid="command-surface-sections">
-            {surfaceSections.map((section) => {
-              const active = commandSurface.section === section
-              return (
-                <Tooltip key={section}>
-                  <TooltipTrigger asChild>
-                    <button
-                      type="button"
-                      className={cn(
-                        "flex h-9 w-9 items-center justify-center rounded-lg transition-colors",
-                        active
-                          ? "bg-foreground/10 text-foreground"
-                          : "text-muted-foreground hover:bg-foreground/[0.04] hover:text-foreground",
-                      )}
-                      onClick={() => setCommandSurfaceSection(section)}
-                      data-testid={`command-surface-section-${section}`}
-                    >
-                      {sectionIcon(section)}
-                    </button>
-                  </TooltipTrigger>
-                  <TooltipContent side="right" sideOffset={6}>
-                    {sectionLabel(section)}
-                  </TooltipContent>
-                </Tooltip>
-              )
-            })}
-          </nav>
+          {/* ─── Left nav rail (hidden for single-section surfaces) ─── */}
+          {!isSingleSection && (
+            <nav className="flex w-12 shrink-0 flex-col items-center gap-0.5 border-r border-border/40 bg-card/30 py-3" data-testid="command-surface-sections">
+              {surfaceSections.map((section) => {
+                const active = commandSurface.section === section
+                return (
+                  <Tooltip key={section}>
+                    <TooltipTrigger asChild>
+                      <button
+                        type="button"
+                        className={cn(
+                          "flex h-9 w-9 items-center justify-center rounded-lg transition-colors",
+                          active
+                            ? "bg-foreground/10 text-foreground"
+                            : "text-muted-foreground hover:bg-foreground/[0.04] hover:text-foreground",
+                        )}
+                        onClick={() => setCommandSurfaceSection(section)}
+                        data-testid={`command-surface-section-${section}`}
+                      >
+                        {sectionIcon(section)}
+                      </button>
+                    </TooltipTrigger>
+                    <TooltipContent side="right" sideOffset={6}>
+                      {sectionLabel(section)}
+                    </TooltipContent>
+                  </Tooltip>
+                )
+              })}
+            </nav>
+          )}
 
           {/* ─── Right content area ────────────────────────────────── */}
           <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-            <div className="flex items-center justify-between gap-3 border-b border-border/40 px-5 py-4">
-              <div>
-                <div className="text-xs uppercase tracking-wider text-muted-foreground">Command surface</div>
-                <div className="text-lg font-semibold text-foreground" data-testid="command-surface-title">
-                  {surfaceTitle(commandSurface.activeSurface)}
-                </div>
-              </div>
-              <div className="flex items-center gap-2">
-                <div className="rounded-full border border-border bg-card px-2.5 py-1 text-xs font-medium text-muted-foreground" data-testid="command-surface-kind">
-                  {surfaceKindLabel}
-                </div>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon"
-                  onClick={closeCommandSurface}
-                  aria-label="Close"
-                  className="h-8 w-8"
-                >
-                  <X className="h-4 w-4" />
-                </Button>
-              </div>
-            </div>
+            {isGitSurface ? renderGitHeader() : renderDefaultHeader()}
             {(commandSurface.lastResult || commandSurface.lastError) && (
               <div
                 className={cn(
