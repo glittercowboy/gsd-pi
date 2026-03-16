@@ -15,7 +15,7 @@
  *   4. remove()  — git worktree remove + branch cleanup
  */
 
-import { existsSync, mkdirSync, realpathSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, realpathSync } from "node:fs";
 import { join, resolve, sep } from "node:path";
 import {
   nativeBranchDelete,
@@ -72,6 +72,34 @@ function normalizePathForComparison(path: string): string {
 
 export function getMainBranch(basePath: string): string {
   return nativeDetectMainBranch(basePath);
+}
+
+// ─── resolveGitDir ─────────────────────────────────────────────────────────
+
+/**
+ * Resolve the actual git directory for a given repository path.
+ *
+ * In a normal repo, .git is a directory → returns `<basePath>/.git`.
+ * In a worktree, .git is a file containing `gitdir: <path>` → resolves
+ * and returns that path.
+ *
+ * This is critical for operations that reference git metadata files like
+ * MERGE_HEAD, SQUASH_MSG, etc. — these live in the git directory, not
+ * in the working tree root. Without this, worktree merges fail because
+ * they look for MERGE_HEAD in the wrong location.
+ */
+export function resolveGitDir(basePath: string): string {
+  const gitPath = join(basePath, ".git");
+  if (!existsSync(gitPath)) return join(basePath, ".git");
+  try {
+    const content = readFileSync(gitPath, "utf-8").trim();
+    if (content.startsWith("gitdir: ")) {
+      return resolve(basePath, content.slice(8));
+    }
+  } catch {
+    // Not a file or unreadable — fall through to default
+  }
+  return join(basePath, ".git");
 }
 
 export function worktreesDir(basePath: string): string {

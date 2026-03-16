@@ -55,6 +55,9 @@ export function setActiveMilestoneId(basePath: string, milestoneId: string | nul
  * if on a GSD slice branch.
  */
 export function captureIntegrationBranch(basePath: string, milestoneId: string, options?: { commitDocs?: boolean }): void {
+  // In a worktree, the base branch is implicit (worktree/<name>).
+  // Writing it to META.json would leave stale metadata after merge back to main.
+  if (detectWorktreeName(basePath)) return;
   const svc = getService(basePath);
   const current = svc.getCurrentBranch();
   writeIntegrationBranch(basePath, milestoneId, current, options);
