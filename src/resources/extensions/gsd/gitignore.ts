@@ -8,7 +8,7 @@
 
 import { join } from "node:path";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { execSync } from "node:child_process";
+import { nativeRmCached } from "./native-git-bridge.js";
 
 /**
  * Patterns that are always correct regardless of project type.
@@ -152,10 +152,7 @@ export function untrackRuntimeFiles(basePath: string): void {
     // Use -r for directory patterns (trailing slash), strip the slash for the command
     const target = pattern.endsWith("/") ? pattern.slice(0, -1) : pattern;
     try {
-      execSync(`git rm -r --cached ${target}`, {
-        cwd: basePath,
-        stdio: ["ignore", "ignore", "ignore"],
-      });
+      nativeRmCached(basePath, [target]);
     } catch {
       // File not tracked or doesn't exist — expected, ignore
     }

@@ -70,7 +70,7 @@ import { join } from "node:path";
 import { sep as pathSep } from "node:path";
 import { homedir } from "node:os";
 import { readdirSync, readFileSync, existsSync, mkdirSync, writeFileSync, unlinkSync, statSync } from "node:fs";
-import { execSync, execFileSync } from "node:child_process";
+import { nativeIsRepo, nativeInit, nativeAddPaths, nativeCommit } from "./native-git-bridge.js";
 import {
   autoCommitCurrentBranch,
   captureIntegrationBranch,
@@ -81,7 +81,7 @@ import {
   parseSliceBranch,
   setActiveMilestoneId,
 } from "./worktree.js";
-import { GitServiceImpl, runGit } from "./git-service.js";
+import { GitServiceImpl } from "./git-service.js";
 import { getPriorSliceCompletionBlocker } from "./dispatch-guard.js";
 import { formatGitError } from "./git-self-heal.js";
 import {
@@ -551,11 +551,9 @@ export async function startAuto(
   }
 
   // Ensure git repo exists — GSD needs it for worktree isolation
-  try {
-    execSync("git rev-parse --git-dir", { cwd: base, stdio: "pipe" });
-  } catch {
+  if (!nativeIsRepo(base)) {
     const mainBranch = loadEffectiveGSDPreferences()?.preferences?.git?.main_branch || "main";
-    execFileSync("git", ["init", "-b", mainBranch], { cwd: base, stdio: "pipe" });
+    nativeInit(base, mainBranch);
   }
 
   // Ensure .gitignore has baseline patterns
@@ -567,9 +565,8 @@ export async function startAuto(
   if (!existsSync(gsdDir)) {
     mkdirSync(join(gsdDir, "milestones"), { recursive: true });
     try {
-      execSync("git add -A .gsd .gitignore && git commit -m 'chore: init gsd'", {
-        cwd: base, stdio: "pipe",
-      });
+      nativeAddPaths(base, [".gsd", ".gitignore"]);
+      nativeCommit(base, "chore: init gsd");
     } catch { /* nothing to commit */ }
   }
 

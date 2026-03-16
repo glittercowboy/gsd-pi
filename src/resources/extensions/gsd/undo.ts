@@ -5,7 +5,7 @@
 import type { ExtensionCommandContext, ExtensionAPI } from "@gsd/pi-coding-agent";
 import { existsSync, readFileSync, writeFileSync, unlinkSync, readdirSync } from "node:fs";
 import { join } from "node:path";
-import { execFileSync } from "node:child_process";
+import { nativeRevertCommit, nativeRevertAbort } from "./native-git-bridge.js";
 import { deriveState } from "./state.js";
 import { invalidateAllCaches } from "./cache.js";
 import { gsdRoot, resolveTasksDir, resolveSlicePath, buildTaskFileName } from "./paths.js";
@@ -107,11 +107,11 @@ export async function handleUndo(args: string, ctx: ExtensionCommandContext, _pi
     if (commits.length > 0) {
       for (const sha of commits.reverse()) {
         try {
-          execFileSync("git", ["revert", "--no-commit", sha], { cwd: basePath, timeout: 10000, stdio: "ignore" });
+          nativeRevertCommit(basePath, sha);
           commitsReverted++;
         } catch {
           // Revert conflict or already reverted — skip
-          try { execFileSync("git", ["revert", "--abort"], { cwd: basePath, timeout: 5000, stdio: "ignore" }); } catch { /* no-op */ }
+          try { nativeRevertAbort(basePath); } catch { /* no-op */ }
           break;
         }
       }

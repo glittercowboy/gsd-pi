@@ -11,7 +11,14 @@ import type { ExtensionContext } from "@gsd/pi-coding-agent";
 import {
   clearUnitRuntimeRecord,
 } from "./unit-runtime.js";
-import { runGit } from "./git-service.js";
+import {
+  nativeConflictFiles,
+  nativeCommit,
+  nativeCheckoutTheirs,
+  nativeAddPaths,
+  nativeMergeAbort,
+  nativeResetHard,
+} from "./native-git-bridge.js";
 import {
   resolveMilestonePath,
   resolveSlicePath,
@@ -347,11 +354,11 @@ export function reconcileMergeState(basePath: string, ctx: ExtensionContext): bo
   const hasSquashMsg = existsSync(squashMsgPath);
   if (!hasMergeHead && !hasSquashMsg) return false;
 
-  const unmerged = runGit(basePath, ["diff", "--name-only", "--diff-filter=U"], { allowFailure: true });
-  if (!unmerged || !unmerged.trim()) {
+  const conflictedFiles = nativeConflictFiles(basePath);
+  if (conflictedFiles.length === 0) {
     // All conflicts resolved — finalize the merge/squash commit
     try {
-      runGit(basePath, ["commit", "--no-edit"], { allowFailure: false });
+      nativeCommit(basePath, "");  // --no-edit equivalent: use empty message placeholder
       const mode = hasMergeHead ? "merge" : "squash commit";
       ctx.ui.notify(`Finalized leftover ${mode} from prior session.`, "info");
     } catch {
@@ -359,25 +366,21 @@ export function reconcileMergeState(basePath: string, ctx: ExtensionContext): bo
     }
   } else {
     // Still conflicted — try auto-resolving .gsd/ state file conflicts (#530)
-    const conflictedFiles = unmerged.trim().split("\n").filter(Boolean);
     const gsdConflicts = conflictedFiles.filter(f => f.startsWith(".gsd/"));
     const codeConflicts = conflictedFiles.filter(f => !f.startsWith(".gsd/"));
 
     if (gsdConflicts.length > 0 && codeConflicts.length === 0) {
       // All conflicts are in .gsd/ state files — auto-resolve by accepting theirs
       let resolved = true;
-      for (const gsdFile of gsdConflicts) {
-        try {
-          runGit(basePath, ["checkout", "--theirs", "--", gsdFile], { allowFailure: false });
-          runGit(basePath, ["add", "--", gsdFile], { allowFailure: false });
-        } catch {
-          resolved = false;
-          break;
-        }
+      try {
+        nativeCheckoutTheirs(basePath, gsdConflicts);
+        nativeAddPaths(basePath, gsdConflicts);
+      } catch {
+        resolved = false;
       }
       if (resolved) {
         try {
-          runGit(basePath, ["commit", "--no-edit"], { allowFailure: false });
+          nativeCommit(basePath, "chore: auto-resolve .gsd/ state file conflicts");
           ctx.ui.notify(
             `Auto-resolved ${gsdConflicts.length} .gsd/ state file conflict(s) from prior merge.`,
             "info",
@@ -388,11 +391,11 @@ export function reconcileMergeState(basePath: string, ctx: ExtensionContext): bo
       }
       if (!resolved) {
         if (hasMergeHead) {
-          runGit(basePath, ["merge", "--abort"], { allowFailure: true });
+          try { nativeMergeAbort(basePath); } catch { /* best-effort */ }
         } else if (hasSquashMsg) {
           try { unlinkSync(squashMsgPath); } catch { /* best-effort */ }
         }
-        runGit(basePath, ["reset", "--hard", "HEAD"], { allowFailure: true });
+        try { nativeResetHard(basePath); } catch { /* best-effort */ }
         ctx.ui.notify(
           "Detected leftover merge state — auto-resolve failed, cleaned up. Re-deriving state.",
           "warning",
@@ -401,11 +404,11 @@ export function reconcileMergeState(basePath: string, ctx: ExtensionContext): bo
     } else {
       // Code conflicts present — abort and reset
       if (hasMergeHead) {
-        runGit(basePath, ["merge", "--abort"], { allowFailure: true });
+        try { nativeMergeAbort(basePath); } catch { /* best-effort */ }
       } else if (hasSquashMsg) {
         try { unlinkSync(squashMsgPath); } catch { /* best-effort */ }
       }
-      runGit(basePath, ["reset", "--hard", "HEAD"], { allowFailure: true });
+      try { nativeResetHard(basePath); } catch { /* best-effort */ }
       ctx.ui.notify(
         "Detected leftover merge state with unresolved conflicts — cleaned up. Re-deriving state.",
         "warning",

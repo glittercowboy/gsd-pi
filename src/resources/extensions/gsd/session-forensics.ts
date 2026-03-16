@@ -19,8 +19,8 @@
  */
 
 import { readFileSync, readdirSync, existsSync, statSync } from "node:fs";
-import { execSync } from "node:child_process";
 import { basename, join } from "node:path";
+import { nativeWorkingTreeStatus, nativeDiffStat } from "./native-git-bridge.js";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -210,11 +210,11 @@ export function extractTrace(entries: unknown[]): ExecutionTrace {
 
 function getGitChanges(basePath: string): string | null {
   try {
-    const status = execSync("git status --porcelain", { cwd: basePath, stdio: "pipe" }).toString().trim();
+    const status = nativeWorkingTreeStatus(basePath);
     if (!status) return null;
 
-    const diffStat = execSync("git diff --stat HEAD 2>/dev/null || true", { cwd: basePath, stdio: "pipe" }).toString().trim();
-    const stagedStat = execSync("git diff --stat --cached HEAD 2>/dev/null || true", { cwd: basePath, stdio: "pipe" }).toString().trim();
+    const diffStat = nativeDiffStat(basePath, "HEAD", "WORKDIR").summary;
+    const stagedStat = nativeDiffStat(basePath, "HEAD", "INDEX").summary;
 
     const parts: string[] = [];
     if (status) parts.push(`Status:\n${status}`);

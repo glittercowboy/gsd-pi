@@ -23,7 +23,7 @@ import {
 import { randomInt } from "node:crypto";
 import { join } from "node:path";
 import { readFileSync, existsSync, mkdirSync, readdirSync, rmSync, unlinkSync } from "node:fs";
-import { execSync, execFileSync } from "node:child_process";
+import { nativeIsRepo, nativeInit, nativeAddPaths, nativeCommit } from "./native-git-bridge.js";
 import { ensureGitignore, ensurePreferences, untrackRuntimeFiles } from "./gitignore.js";
 import { loadEffectiveGSDPreferences } from "./preferences.js";
 import { showConfirm } from "../shared/confirm-ui.js";
@@ -703,11 +703,9 @@ export async function showSmartEntry(
   const stepMode = options?.step;
 
   // ── Ensure git repo exists — GSD needs it for worktree isolation ──────
-  try {
-    execSync("git rev-parse --git-dir", { cwd: basePath, stdio: "pipe" });
-  } catch {
+  if (!nativeIsRepo(basePath)) {
     const mainBranch = loadEffectiveGSDPreferences()?.preferences?.git?.main_branch || "main";
-    execFileSync("git", ["init", "-b", mainBranch], { cwd: basePath, stdio: "pipe" });
+    nativeInit(basePath, mainBranch);
   }
 
   // ── Ensure .gitignore has baseline patterns ──────────────────────────
@@ -723,10 +721,8 @@ export async function showSmartEntry(
     // ── Create PREFERENCES.md template ────────────────────────────────
     ensurePreferences(basePath);
     try {
-      execSync("git add -A .gsd .gitignore && git commit -m 'chore: init gsd'", {
-        cwd: basePath,
-        stdio: "pipe",
-      });
+      nativeAddPaths(basePath, [".gsd", ".gitignore"]);
+      nativeCommit(basePath, "chore: init gsd");
     } catch {
       // nothing to commit — that's fine
     }

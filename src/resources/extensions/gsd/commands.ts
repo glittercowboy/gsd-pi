@@ -36,6 +36,7 @@ import { handleRemote } from "../remote-questions/remote-command.js";
 import { handleHistory } from "./history.js";
 import { handleUndo } from "./undo.js";
 import { handleExport } from "./export.js";
+import { nativeBranchList, nativeDetectMainBranch, nativeBranchListMerged, nativeBranchDelete, nativeForEachRef, nativeUpdateRef } from "./native-git-bridge.js";
 
 function dispatchDoctorHeal(pi: ExtensionAPI, scope: string | undefined, reportText: string, structuredIssues: string): void {
   const workflowPath = process.env.GSD_WORKFLOW_PATH ?? join(process.env.HOME ?? "~", ".pi", "GSD-WORKFLOW.md");
@@ -877,12 +878,9 @@ async function handleDryRun(ctx: ExtensionCommandContext, basePath: string): Pro
 // ─── Branch cleanup handler ──────────────────────────────────────────────────
 
 async function handleCleanupBranches(ctx: ExtensionCommandContext, basePath: string): Promise<void> {
-  const { execFileSync } = await import("node:child_process");
-
   let branches: string[];
   try {
-    const output = execFileSync("git", ["branch", "--list", "gsd/*"], { cwd: basePath, timeout: 10000, encoding: "utf-8" });
-    branches = output.split("\n").map(b => b.trim().replace(/^\* /, "")).filter(Boolean);
+    branches = nativeBranchList(basePath, "gsd/*");
   } catch {
     ctx.ui.notify("No GSD branches found.", "info");
     return;
@@ -893,18 +891,11 @@ async function handleCleanupBranches(ctx: ExtensionCommandContext, basePath: str
     return;
   }
 
-  let mainBranch: string;
-  try {
-    mainBranch = execFileSync("git", ["symbolic-ref", "refs/remotes/origin/HEAD", "--short"], { cwd: basePath, timeout: 5000, encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"] })
-      .trim().replace("origin/", "");
-  } catch {
-    mainBranch = "main";
-  }
+  const mainBranch = nativeDetectMainBranch(basePath);
 
   let merged: string[];
   try {
-    const output = execFileSync("git", ["branch", "--merged", mainBranch, "--list", "gsd/*"], { cwd: basePath, timeout: 10000, encoding: "utf-8" });
-    merged = output.split("\n").map(b => b.trim()).filter(Boolean);
+    merged = nativeBranchListMerged(basePath, mainBranch, "gsd/*");
   } catch {
     merged = [];
   }
@@ -917,7 +908,7 @@ async function handleCleanupBranches(ctx: ExtensionCommandContext, basePath: str
   let deleted = 0;
   for (const branch of merged) {
     try {
-      execFileSync("git", ["branch", "-d", branch], { cwd: basePath, timeout: 5000, stdio: "ignore" });
+      nativeBranchDelete(basePath, branch, false);
       deleted++;
     } catch { /* skip branches that can't be deleted */ }
   }
@@ -928,12 +919,9 @@ async function handleCleanupBranches(ctx: ExtensionCommandContext, basePath: str
 // ─── Snapshot cleanup handler ─────────────────────────────────────────────────
 
 async function handleCleanupSnapshots(ctx: ExtensionCommandContext, basePath: string): Promise<void> {
-  const { execFileSync } = await import("node:child_process");
-
   let refs: string[];
   try {
-    const output = execFileSync("git", ["for-each-ref", "refs/gsd/snapshots/", "--format=%(refname)"], { cwd: basePath, timeout: 10000, encoding: "utf-8" });
-    refs = output.split("\n").filter(Boolean);
+    refs = nativeForEachRef(basePath, "refs/gsd/snapshots/");
   } catch {
     ctx.ui.notify("No snapshot refs found.", "info");
     return;
@@ -957,7 +945,7 @@ async function handleCleanupSnapshots(ctx: ExtensionCommandContext, basePath: st
     const sorted = labelRefs.sort();
     for (const old of sorted.slice(0, -5)) {
       try {
-        execFileSync("git", ["update-ref", "-d", old], { cwd: basePath, timeout: 5000, stdio: "ignore" });
+        nativeUpdateRef(basePath, old);
         pruned++;
       } catch { /* skip */ }
     }

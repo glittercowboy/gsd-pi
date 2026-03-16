@@ -10,7 +10,7 @@
 
 import { execSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join, sep } from "node:path";
+import { join } from "node:path";
 
 import {
   detectWorktreeName,
@@ -21,6 +21,13 @@ import {
   nativeDetectMainBranch,
   nativeBranchExists,
   nativeHasChanges,
+  nativeAddAll,
+  nativeResetPaths,
+  nativeHasStagedChanges,
+  nativeCommit,
+  nativeRmCached,
+  nativeUpdateRef,
+  nativeAddPaths,
 } from "./native-git-bridge.js";
 import { GSDError, GSD_MERGE_CONFLICT } from "./errors.js";
 
@@ -172,10 +179,8 @@ export function writeIntegrationBranch(basePath: string, milestoneId: string, br
 
   // Commit immediately so the metadata is persisted in git.
   try {
-    runGit(basePath, ["add", metaFile]);
-    runGit(basePath, ["commit", "--no-verify", "-F", "-"], {
-      input: `chore(${milestoneId}): record integration branch`,
-    });
+    nativeAddPaths(basePath, [metaFile]);
+    nativeCommit(basePath, `chore(${milestoneId}): record integration branch`, { allowEmpty: false });
   } catch {
     // Non-fatal — file is on disk even if commit fails (e.g. nothing to commit
     // because the file was already tracked with identical content)
@@ -288,11 +293,11 @@ export class GitServiceImpl {
     if (!this._runtimeFilesCleanedUp) {
       let cleaned = false;
       for (const exclusion of RUNTIME_EXCLUSION_PATHS) {
-        const result = this.git(["rm", "--cached", "-r", "--ignore-unmatch", exclusion], { allowFailure: true });
-        if (result && result.includes("rm '")) cleaned = true;
+        const removed = nativeRmCached(this.basePath, [exclusion]);
+        if (removed.length > 0) cleaned = true;
       }
       if (cleaned) {
-        this.git(["commit", "--no-verify", "-F", "-"], { input: "chore: untrack .gsd/ runtime files from git index" });
+        nativeCommit(this.basePath, "chore: untrack .gsd/ runtime files from git index", { allowEmpty: false });
       }
       this._runtimeFilesCleanedUp = true;
     }
@@ -307,10 +312,10 @@ export class GitServiceImpl {
     //
     // git reset HEAD silently succeeds when the path isn't staged, so no
     // error handling is needed per-path.
-    this.git(["add", "-A"]);
+    nativeAddAll(this.basePath);
 
     for (const exclusion of allExclusions) {
-      this.git(["reset", "HEAD", "--", exclusion], { allowFailure: true });
+      try { nativeResetPaths(this.basePath, [exclusion]); } catch { /* path not staged — ignore */ }
     }
   }
 
@@ -326,13 +331,9 @@ export class GitServiceImpl {
     this.smartStage();
 
     // Check if anything was actually staged
-    const staged = this.git(["diff", "--cached", "--stat"], { allowFailure: true });
-    if (!staged && !opts.allowEmpty) return null;
+    if (!nativeHasStagedChanges(this.basePath) && !opts.allowEmpty) return null;
 
-    this.git(
-      ["commit", "--no-verify", "-F", "-", ...(opts.allowEmpty ? ["--allow-empty"] : [])],
-      { input: opts.message },
-    );
+    nativeCommit(this.basePath, opts.message, { allowEmpty: opts.allowEmpty ?? false });
     return opts.message;
   }
 
@@ -350,11 +351,10 @@ export class GitServiceImpl {
 
     // After smart staging, check if anything was actually staged
     // (all changes might have been runtime files that got excluded)
-    const staged = this.git(["diff", "--cached", "--stat"], { allowFailure: true });
-    if (!staged) return null;
+    if (!nativeHasStagedChanges(this.basePath)) return null;
 
     const message = `chore(${unitId}): auto-commit after ${unitType}`;
-    this.git(["commit", "--no-verify", "-F", "-"], { input: message });
+    nativeCommit(this.basePath, message, { allowEmpty: false });
     return message;
   }
 
@@ -431,7 +431,7 @@ export class GitServiceImpl {
       + String(now.getSeconds()).padStart(2, "0");
 
     const refPath = `refs/gsd/snapshots/${label}/${ts}`;
-    this.git(["update-ref", refPath, "HEAD"]);
+    nativeUpdateRef(this.basePath, refPath, "HEAD");
   }
 
   /**
@@ -452,7 +452,7 @@ export class GitServiceImpl {
     } else {
       // Auto-detect: look for package.json with a test script
       try {
-        const pkg = execSync("cat package.json", { cwd: this.basePath, encoding: "utf-8" });
+        const pkg = readFileSync(join(this.basePath, "package.json"), "utf-8");
         const parsed = JSON.parse(pkg);
         if (parsed.scripts?.test) {
           command = "npm test";
