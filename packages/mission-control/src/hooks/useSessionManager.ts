@@ -289,19 +289,33 @@ export function applyGSD2Event(
           phaseTransition: { phase: event.phase },
         },
       };
+    case "plain_text":
+      return {
+        ...state,
+        messageInsert: {
+          id: `text-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+          role: "assistant",
+          content: event.text,
+          timestamp: Date.now(),
+          streaming: false,
+        },
+      };
     case "tool_use":
       return {
         ...state,
         messageInsert: {
-          id: `tool-${Date.now()}`,
+          id: `tool-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
           role: "tool_use",
           content: event.name,
           timestamp: Date.now(),
-          streaming: true,
+          streaming: false,
           toolName: event.name,
           toolInput: event.input,
+          toolDone: true,
         },
       };
+    case "tool_result":
+      return { ...state };
     default:
       return { ...state };
   }

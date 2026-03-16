@@ -12,9 +12,10 @@ export interface AssetItem {
   type: string;
   size: number;
   createdAt: number;
+  category?: string;
 }
 
-export type AssetFilter = "all" | "images" | "video" | "documents";
+export type AssetFilter = string;
 export type AssetViewMode = "grid" | "list";
 
 const IMAGE_EXTS = ["png", "jpg", "jpeg", "gif", "svg", "webp"];
@@ -34,13 +35,14 @@ export interface UseAssetsResult {
   filteredAssets: AssetItem[];
   loading: boolean;
   error: string | null;
-  upload: (file: File) => Promise<AssetItem>;
+  upload: (file: File, category?: string) => Promise<AssetItem>;
   remove: (name: string) => Promise<void>;
   reload: () => Promise<void>;
   filter: AssetFilter;
   setFilter: (f: AssetFilter) => void;
   viewMode: AssetViewMode;
   setViewMode: (m: AssetViewMode) => void;
+  categories: string[];
 }
 
 export function useAssets(apiBase = "http://localhost:4000"): UseAssetsResult {
@@ -49,15 +51,23 @@ export function useAssets(apiBase = "http://localhost:4000"): UseAssetsResult {
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState<AssetFilter>("all");
   const [viewMode, setViewMode] = useState<AssetViewMode>("grid");
+  const [categories, setCategories] = useState<string[]>([]);
 
   const reload = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch(`${apiBase}/api/assets/list`);
-      if (!res.ok) throw new Error(`Assets fetch failed: ${res.status}`);
-      const data: AssetItem[] = await res.json();
+      const [listRes, catsRes] = await Promise.all([
+        fetch(`${apiBase}/api/assets/list`),
+        fetch(`${apiBase}/api/assets/categories`),
+      ]);
+      if (!listRes.ok) throw new Error(`Assets fetch failed: ${listRes.status}`);
+      const data: AssetItem[] = await listRes.json();
       setAssets(data);
+      if (catsRes.ok) {
+        const cats: string[] = await catsRes.json();
+        setCategories(cats);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unknown error");
     } finally {
@@ -70,10 +80,11 @@ export function useAssets(apiBase = "http://localhost:4000"): UseAssetsResult {
   }, [reload]);
 
   const upload = useCallback(
-    async (file: File): Promise<AssetItem> => {
+    async (file: File, category?: string): Promise<AssetItem> => {
       setError(null);
       const formData = new FormData();
       formData.append("file", file);
+      formData.append("category", category ?? "Uncategorized");
       const res = await fetch(`${apiBase}/api/assets/upload`, {
         method: "POST",
         body: formData,
@@ -100,7 +111,11 @@ export function useAssets(apiBase = "http://localhost:4000"): UseAssetsResult {
 
   const filteredAssets = useMemo(() => {
     if (filter === "all") return assets;
-    return assets.filter((a) => getAssetCategory(a.name) === filter);
+    if (["images", "video", "documents"].includes(filter)) {
+      return assets.filter((a) => getAssetCategory(a.name) === filter);
+    }
+    // Custom category filter
+    return assets.filter((a) => (a.category ?? "Uncategorized") === filter);
   }, [assets, filter]);
 
   return {
@@ -115,5 +130,6 @@ export function useAssets(apiBase = "http://localhost:4000"): UseAssetsResult {
     setFilter,
     viewMode,
     setViewMode,
+    categories,
   };
 }

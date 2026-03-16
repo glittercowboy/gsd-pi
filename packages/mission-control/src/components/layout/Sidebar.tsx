@@ -8,7 +8,7 @@
  */
 import { useCallback } from "react";
 import { useAppUpdater } from "@/hooks/useAppUpdater";
-import { PanelLeftClose, PanelLeft, ExternalLink, FolderOpen, Settings, Home } from "lucide-react";
+import { PanelLeftClose, PanelLeft, ExternalLink, FolderOpen, Settings } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { LAYOUT_DEFAULTS } from "@/styles/design-tokens";
 import { GsdLogo } from "@/components/sidebar/GsdLogo";
@@ -27,8 +27,7 @@ interface SidebarProps {
   activeView: ViewType;
   onSelectView: (view: ViewType) => void;
   onOpenFolder: () => void;
-  /** Navigate back to the project home screen. */
-  onGoHome?: () => void;
+  projectName?: string;
 }
 
 export function Sidebar({
@@ -40,7 +39,7 @@ export function Sidebar({
   activeView,
   onSelectView,
   onOpenFolder,
-  onGoHome,
+  projectName,
 }: SidebarProps) {
   const handleNewWindow = useCallback(() => {
     window.open(location.href, "_blank");
@@ -62,48 +61,44 @@ export function Sidebar({
           : LAYOUT_DEFAULTS.sidebarWidth,
       }}
     >
-      {/* Home button — shown when onGoHome prop is provided (WORKSPACE-02) */}
-      {onGoHome && (
-        <div className="border-b border-navy-600 p-2">
+      {/* Top header — collapse toggle only when collapsed, logo+label+toggle when expanded */}
+      {collapsed ? (
+        <div className="flex h-[48px] items-center justify-center border-b border-navy-600">
           <button
             type="button"
-            onClick={onGoHome}
-            aria-label="Home"
-            title="Home"
-            className="flex min-h-[44px] w-full items-center gap-2 rounded p-2 text-sm text-slate-400 transition-colors hover:bg-navy-700 hover:text-slate-300"
+            onClick={onToggle}
+            aria-label="Expand sidebar"
+            title="Expand sidebar"
+            className="flex h-8 w-8 items-center justify-center rounded text-slate-400 transition-colors hover:bg-navy-700 hover:text-slate-300"
           >
-            <Home className="h-4 w-4" />
-            {!collapsed && <span>Home</span>}
+            <PanelLeft className="h-4 w-4" />
+          </button>
+        </div>
+      ) : (
+        <div className="flex h-[48px] items-center gap-2 border-b border-navy-600 px-3">
+          <GsdLogo className="h-7 w-7 shrink-0" />
+          <div className="flex-1" />
+          <button
+            type="button"
+            onClick={onToggle}
+            aria-label="Collapse sidebar"
+            title="Collapse sidebar"
+            className="flex h-8 w-8 shrink-0 items-center justify-center rounded text-slate-400 transition-colors hover:bg-navy-700 hover:text-slate-300"
+          >
+            <PanelLeftClose className="h-4 w-4" />
           </button>
         </div>
       )}
 
-      {/* Top: Logo + label + collapse toggle */}
-      <div className="flex items-center gap-2 border-b border-navy-600 p-2">
-        <GsdLogo className="h-6 w-6 text-cyan-accent" />
-        {!collapsed && (
-          <span className="flex-1 font-display text-xs uppercase tracking-wider text-slate-400">
-            Projects
-          </span>
-        )}
-        <button
-          type="button"
-          onClick={onToggle}
-          aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
-          title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
-          className="flex min-h-[44px] min-w-[44px] items-center justify-center rounded p-2 text-slate-400 transition-colors hover:bg-navy-700 hover:text-slate-300"
-        >
-          {collapsed ? (
-            <PanelLeft className="h-4 w-4" />
-          ) : (
-            <PanelLeftClose className="h-4 w-4" />
-          )}
-        </button>
-      </div>
-
       {/* Action buttons — vertically stacked */}
       {!collapsed && (
         <div className="flex flex-col gap-1 border-b border-navy-600 p-2">
+          {projectName && (
+            <div className="flex items-center gap-2 px-2 py-1.5 text-xs font-mono text-slate-500 truncate">
+              <FolderOpen className="h-3.5 w-3.5 shrink-0 text-slate-600" />
+              <span className="truncate" title={projectName}>{projectName}</span>
+            </div>
+          )}
           <button
             type="button"
             onClick={handleNewWindow}
@@ -117,10 +112,10 @@ export function Sidebar({
             type="button"
             onClick={onOpenFolder}
             className="flex min-h-[44px] items-center gap-2 rounded p-2 text-xs text-slate-400 transition-colors hover:bg-navy-700 hover:text-slate-300"
-            title="Open Folder"
+            title="Open Project"
           >
             <FolderOpen className="h-4 w-4" />
-            <span>Open Folder</span>
+            <span>Open Project</span>
           </button>
         </div>
       )}

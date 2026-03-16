@@ -229,8 +229,8 @@ export function ChatView({
       {isCrashed && (
         <div
           role="alert"
-          className="mx-2 mt-2 rounded border bg-surface p-3 font-mono text-xs"
-          style={{ borderColor: "#F59E0B40", backgroundColor: "#131C2B" }}
+          className="mx-2 mt-2 rounded border bg-navy-900 p-3 font-mono text-xs"
+          style={{ borderColor: "#F59E0B40" }}
         >
           <div className="flex items-start gap-2">
             <span style={{ color: "#F59E0B" }}>&#9888;</span>
@@ -252,49 +252,51 @@ export function ChatView({
         </div>
       )}
 
-      {/* Compact task status at top — relative container for cost badge */}
-      <div className="border-b border-navy-600 bg-navy-900/50">
-        <div className="relative p-2">
-          {isExecuting && currentPlan ? (
-            <TaskExecuting
-              taskId={`${currentPlan.phase}-${String(currentPlan.plan).padStart(2, "0")}`}
-              wave={currentPlan.wave}
-              planNumber={currentPlan.plan}
-              filesCount={currentPlan.files_modified.length}
-              taskCount={currentPlan.task_count}
-              mustHaves={currentPlan.must_haves}
-              filesModified={currentPlan.files_modified}
-            />
-          ) : (
-            <TaskWaiting
-              lastCompleted={planningState?.projectState?.last_activity}
-              nextTask={nextPlan ? `Plan ${nextPlan.plan}` : undefined}
-              nextPlanNumber={nextPlan?.plan}
-            />
-          )}
-          {/* Cost badge — hidden in Builder mode (BUILDER-02) */}
-          {!builderMode && costState && costState.totalCost > 0 && (
-            <span
-              className="absolute right-2 top-2 font-mono text-xs tabular-nums"
-              style={{
-                color:
-                  costState.level === "critical"
-                    ? "#EF4444"
-                    : costState.level === "warning"
-                      ? "#F59E0B"
-                      : "#5BC8F0",
-              }}
-              title={
-                costState.budgetFraction !== null
-                  ? `${Math.round(costState.budgetFraction * 100)}% of budget`
-                  : "Running cost"
-              }
-            >
-              {costState.formatted}
-            </span>
-          )}
+      {/* Compact task status — only visible while GSD is actively working */}
+      {(isExecuting || isChatProcessing || isAutoMode) && (
+        <div className="border-b border-navy-600 bg-navy-900/50" data-testid="task-panel">
+          <div className="relative p-2">
+            {isExecuting && currentPlan ? (
+              <TaskExecuting
+                taskId={`${currentPlan.phase}-${String(currentPlan.plan).padStart(2, "0")}`}
+                wave={currentPlan.wave}
+                planNumber={currentPlan.plan}
+                filesCount={currentPlan.files_modified.length}
+                taskCount={currentPlan.task_count}
+                mustHaves={currentPlan.must_haves}
+                filesModified={currentPlan.files_modified}
+              />
+            ) : (
+              <TaskWaiting
+                lastCompleted={planningState?.projectState?.last_activity}
+                nextTask={nextPlan ? `Plan ${nextPlan.plan}` : undefined}
+                nextPlanNumber={nextPlan?.plan}
+              />
+            )}
+            {/* Cost badge — hidden in Builder mode (BUILDER-02) */}
+            {!builderMode && costState && costState.totalCost > 0 && (
+              <span
+                className="absolute right-2 top-2 font-mono text-xs tabular-nums"
+                style={{
+                  color:
+                    costState.level === "critical"
+                      ? "#EF4444"
+                      : costState.level === "warning"
+                        ? "#F59E0B"
+                        : "#5BC8F0",
+                }}
+                title={
+                  costState.budgetFraction !== null
+                    ? `${Math.round(costState.budgetFraction * 100)}% of budget`
+                    : "Running cost"
+                }
+              >
+                {costState.formatted}
+              </span>
+            )}
+          </div>
         </div>
-      </div>
+      )}
 
       {/* Budget warning banner — hidden in Builder mode (BUILDER-02); shown at critical level (95%+) */}
       {!builderMode && costState?.level === "critical" && (

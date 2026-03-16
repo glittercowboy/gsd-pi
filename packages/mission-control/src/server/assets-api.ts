@@ -35,6 +35,24 @@ function assetsDir(planningDir: string): string {
   return join(planningDir, "assets");
 }
 
+function metaFilePath(planningDir: string): string {
+  return join(planningDir, "assets-meta.json");
+}
+
+async function readAssetsMeta(planningDir: string): Promise<Record<string, { category?: string }>> {
+  try {
+    const raw = await Bun.file(metaFilePath(planningDir)).text();
+    return JSON.parse(raw);
+  } catch {
+    return {};
+  }
+}
+
+async function writeAssetsMeta(planningDir: string, meta: Record<string, { category?: string }>): Promise<void> {
+  await mkdir(assetsDir(planningDir), { recursive: true });
+  await Bun.write(metaFilePath(planningDir), JSON.stringify(meta, null, 2));
+}
+
 /**
  * Generate a unique filename by appending -1, -2 suffixes if needed.
  */
@@ -107,15 +125,24 @@ export async function handleAssetsRequest(
     const finalName = await uniqueFilename(dir, file.name);
     const filePath = join(dir, finalName);
 
+    // Read category from form data
+    const category = (formData.get("category") as string | null)?.trim() || "Uncategorized";
+
     // Write file
     const buffer = await file.arrayBuffer();
     await Bun.write(filePath, buffer);
+
+    // Update assets meta with category
+    const meta = await readAssetsMeta(planningDir);
+    meta[finalName] = { category };
+    await writeAssetsMeta(planningDir, meta);
 
     return Response.json({
       name: finalName,
       path: filePath.replace(/\\/g, "/"),
       type: ext,
       size: file.size,
+      category,
     });
   }
 
@@ -143,7 +170,12 @@ export async function handleAssetsRequest(
       })
     );
 
-    return Response.json(assets);
+    const meta = await readAssetsMeta(planningDir);
+    const enrichedAssets = assets.map((a) => ({
+      ...a,
+      category: meta[a.name]?.category ?? "Uncategorized",
+    }));
+    return Response.json(enrichedAssets);
   }
 
   // GET /api/assets/file/:name — serve a file
@@ -213,6 +245,9 @@ export async function handleAssetsRequest(
 
     try {
       await unlink(filePath);
+      const meta = await readAssetsMeta(planningDir);
+      delete meta[name];
+      await writeAssetsMeta(planningDir, meta);
       return Response.json({ deleted: true, name });
     } catch (err: any) {
       if (err.code === "ENOENT") {
@@ -220,6 +255,17 @@ export async function handleAssetsRequest(
       }
       return Response.json({ error: err.message }, { status: 500 });
     }
+  }
+
+  // GET /api/assets/categories
+  if (pathname === "/api/assets/categories" && req.method === "GET") {
+    const meta = await readAssetsMeta(planningDir);
+    const cats = new Set<string>();
+    cats.add("Uncategorized");
+    for (const entry of Object.values(meta)) {
+      if (entry.category) cats.add(entry.category);
+    }
+    return Response.json(Array.from(cats).sort());
   }
 
   return null;

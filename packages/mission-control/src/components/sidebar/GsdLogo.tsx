@@ -11,7 +11,7 @@ interface GsdLogoProps {
 export function GsdLogo({ className }: GsdLogoProps) {
   return (
     <img
-      src="/assets/gsd-logo-2000-transparent.svg"
+      src="/assets/gsd-2-mission-control-logo.png"
       alt="GSD"
       className={cn("h-8 w-8", className)}
     />

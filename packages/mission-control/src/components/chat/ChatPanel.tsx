@@ -41,6 +41,7 @@ export function ChatPanelView({
       <div
         className={cn("flex-1 overflow-y-auto", overlay && "opacity-30 pointer-events-none")}
         ref={scrollRef}
+        data-testid="message-area"
       >
         {messages.length === 0 ? (
           <div className="flex items-center justify-center h-full">

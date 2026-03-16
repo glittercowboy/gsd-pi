@@ -1,11 +1,21 @@
 /**
  * Settings API — two-tier config (global + project) with merge.
- * Also discovers real GSD 2 configuration:
- *   - Skills from ~/.claude/skills/
- *   - Commands from ~/.claude/commands/
- *   - Agents from ~/.claude/agents/
- *   - Plugins from ~/.claude/plugins/installed_plugins.json
- *   - Settings from ~/.claude/settings.json
+ * Also discovers GSD 2 configuration from two sources:
+ *
+ *   ~/.claude/ (Claude Code / Anthropic provider):
+ *     - Skills from ~/.claude/skills/
+ *     - Commands from ~/.claude/commands/
+ *     - Agents from ~/.claude/agents/
+ *     - Plugins from ~/.claude/plugins/installed_plugins.json
+ *     - Settings from ~/.claude/settings.json
+ *
+ *   ~/.gsd/ (provider-agnostic fallback for GitHub Copilot, OpenRouter, API Key users):
+ *     - Skills from ~/.gsd/skills/
+ *     - Commands from ~/.gsd/commands/
+ *     - Agents from ~/.gsd/agents/
+ *
+ * Skills, commands, and agents are merged (union, deduplicated) so non-Claude-Code
+ * users can place their assets in ~/.gsd/ and they will be discovered automatically.
  *
  * Project preferences are stored in {planningDir}/preferences.md as YAML frontmatter.
  * Parse with gray-matter; write back as YAML frontmatter block.
@@ -115,6 +125,26 @@ async function listSubcommands(dirPath: string): Promise<string[]> {
   }
 }
 
+/**
+ * Discover configuration from ~/.gsd/ — provider-agnostic fallback.
+ * Used by non-Claude-Code providers (GitHub Copilot, OpenRouter, API Key).
+ */
+async function discoverGsdConfig(): Promise<{
+  skills: string[];
+  commands: string[];
+  agents: string[];
+}> {
+  const gsdDir = getGlobalDir();
+  const [skills, commands, agents] = await Promise.all([
+    listDirNames(join(gsdDir, "skills")),
+    listSubcommands(join(gsdDir, "commands")),
+    listDirNames(join(gsdDir, "agents")).then((names) =>
+      names.filter((n) => !n.startsWith("gsd-")),
+    ),
+  ]);
+  return { skills, commands, agents };
+}
+
 /** Discover Claude Code configuration from filesystem. */
 async function discoverClaudeConfig(): Promise<{
   skills: string[];
@@ -125,7 +155,7 @@ async function discoverClaudeConfig(): Promise<{
 }> {
   const claudeDir = getClaudeDir();
 
-  const [skills, commands, agents, pluginsData, claudeSettings] =
+  const [claudeSkills, claudeCommands, claudeAgents, pluginsData, claudeSettings, gsd] =
     await Promise.all([
       listDirNames(join(claudeDir, "skills")),
       listSubcommands(join(claudeDir, "commands")),
@@ -134,7 +164,14 @@ async function discoverClaudeConfig(): Promise<{
       ),
       readJsonSafe(join(claudeDir, "plugins", "installed_plugins.json")),
       readJsonSafe(join(claudeDir, "settings.json")),
+      discoverGsdConfig(),
     ]);
+
+  // Merge ~/.claude/ and ~/.gsd/ — ~/.gsd/ provides fallback for non-Claude-Code providers.
+  // Union with deduplication: ~/.claude/ entries take precedence.
+  const skills = [...new Set([...claudeSkills, ...gsd.skills])];
+  const commands = [...new Set([...claudeCommands, ...gsd.commands])];
+  const agents = [...new Set([...claudeAgents, ...gsd.agents])];
 
   // Parse plugins from installed_plugins.json
   const pluginEntries: Array<{ name: string; scope: string }> = [];
@@ -172,7 +209,7 @@ async function discoverClaudeConfig(): Promise<{
 /**
  * Read settings from both tiers and return merged result.
  * Merged = { ...global, ...project } (project overrides global).
- * Also includes discovered Claude Code configuration.
+ * Also includes discovered configuration merged from ~/.claude/ and ~/.gsd/.
  */
 export async function getSettings(
   planningDir: string,

@@ -26,6 +26,18 @@ export function classifyPiSdkEvent(raw: unknown): GSD2StreamEvent | null {
       if (typeof obj["text"] !== "string") return null;
       return { kind: "plain_text", text: obj["text"] as string };
     }
+    case "message_update": {
+      if (typeof obj["text"] !== "string") return null;
+      return { kind: "plain_text", text: obj["text"] as string };
+    }
+    case "assistant": {
+      const message = obj["message"] as any;
+      if (!message || !Array.isArray(message.content)) return null;
+      // Find the first text content block
+      const textBlock = message.content.find((c: any) => c.type === "text");
+      if (!textBlock || typeof textBlock.text !== "string") return null;
+      return { kind: "plain_text", text: textBlock.text as string };
+    }
     case "tool_use": {
       if (typeof obj["name"] !== "string") return null;
       return { kind: "tool_use", name: obj["name"] as string, input: obj["input"] };

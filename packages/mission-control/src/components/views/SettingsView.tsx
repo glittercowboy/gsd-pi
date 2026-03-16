@@ -619,10 +619,10 @@ export function SettingsView() {
                 </span>
                 <span className="text-xs text-slate-500 font-mono">
                   {profile === "quality"
-                    ? "claude-opus-4"
+                    ? "claude-opus-4-6"
                     : profile === "balanced"
-                      ? "claude-sonnet-4"
-                      : "claude-haiku-3"}
+                      ? "claude-sonnet-4-6"
+                      : "claude-haiku-4-5"}
                 </span>
               </div>
             ))}

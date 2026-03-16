@@ -119,28 +119,30 @@ export function TabLayout({ className, planningState, chatMessages = [], onChatS
 
     return (
       <div className="flex flex-col h-full">
-        {/* Compact task status at top */}
-        <div className="border-b border-navy-600 bg-navy-900/50">
-          <div className="p-2">
-            {isExecuting && currentPlan ? (
-              <TaskExecuting
-                taskId={`${currentPlan.phase}-${String(currentPlan.plan).padStart(2, "0")}`}
-                wave={currentPlan.wave}
-                planNumber={currentPlan.plan}
-                filesCount={currentPlan.files_modified.length}
-                taskCount={currentPlan.task_count}
-                mustHaves={currentPlan.must_haves}
-                filesModified={currentPlan.files_modified}
-              />
-            ) : (
-              <TaskWaiting
-                lastCompleted={planningState?.projectState.last_activity}
-                nextTask={nextPlan ? `Plan ${nextPlan.plan}` : undefined}
-                nextPlanNumber={nextPlan?.plan}
-              />
-            )}
+        {/* Compact task status — only visible while GSD is actively working */}
+        {(isExecuting || isChatProcessing) && (
+          <div className="border-b border-navy-600 bg-navy-900/50" data-testid="task-panel">
+            <div className="p-2">
+              {isExecuting && currentPlan ? (
+                <TaskExecuting
+                  taskId={`${currentPlan.phase}-${String(currentPlan.plan).padStart(2, "0")}`}
+                  wave={currentPlan.wave}
+                  planNumber={currentPlan.plan}
+                  filesCount={currentPlan.files_modified.length}
+                  taskCount={currentPlan.task_count}
+                  mustHaves={currentPlan.must_haves}
+                  filesModified={currentPlan.files_modified}
+                />
+              ) : (
+                <TaskWaiting
+                  lastCompleted={planningState?.projectState.last_activity}
+                  nextTask={nextPlan ? `Plan ${nextPlan.plan}` : undefined}
+                  nextPlanNumber={nextPlan?.plan}
+                />
+              )}
+            </div>
           </div>
-        </div>
+        )}
         {/* Chat panel takes remaining space */}
         <div className="flex-1 min-h-0">
           <ChatPanel

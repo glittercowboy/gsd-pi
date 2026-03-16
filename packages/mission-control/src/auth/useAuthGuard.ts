@@ -19,6 +19,11 @@
 import { useState, useEffect, useRef } from "react";
 import { getActiveProvider, completeOAuth } from "./auth-api";
 
+/** Returns true when running inside a Tauri webview. */
+function isTauri(): boolean {
+  return typeof window !== "undefined" && "__TAURI__" in window;
+}
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -56,6 +61,11 @@ export function useAuthGuard(): UseAuthGuardResult {
 
   useEffect(() => {
     // --- 1. Check keychain on mount ---
+    // Non-Tauri (browser dev mode): skip auth gate — no keychain available.
+    if (!isTauri()) {
+      setState({ status: "authenticated", provider: "dev" });
+      return;
+    }
     getActiveProvider().then((provider) => {
       if (provider) {
         setState({ status: "authenticated", provider });

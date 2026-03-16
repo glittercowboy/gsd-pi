@@ -9,7 +9,7 @@ export interface LogoAnimationProps {
 
 const SIZE_CLASSES = {
   sm: "h-8 w-8",
-  lg: "h-16 w-16",
+  lg: "h-32 w-32",
 } as const;
 
 /**
@@ -22,7 +22,7 @@ export function LogoAnimationView({
 }: Omit<LogoAnimationProps, "onComplete">) {
   return (
     <img
-      src="/assets/gsd-logo-2000-transparent.svg"
+      src="/assets/gsd-2-mission-control-logo.png"
       alt="GSD Logo"
       className={cn(SIZE_CLASSES[size], className)}
     />

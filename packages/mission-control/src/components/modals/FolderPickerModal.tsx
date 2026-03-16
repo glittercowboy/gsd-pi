@@ -233,7 +233,7 @@ export function FolderPickerModal({ open, onClose, onSelect }: FolderPickerModal
               key={entry.path}
               entry={entry}
               depth={0}
-              selected={selectedPath === entry.path}
+              selectedPath={selectedPath}
               expandedDirs={expandedDirs}
               onExpandDir={(path, children) =>
                 setExpandedDirs((prev) => ({ ...prev, [path]: children }))
@@ -325,7 +325,7 @@ export function FolderPickerModal({ open, onClose, onSelect }: FolderPickerModal
 function FolderRow({
   entry,
   depth,
-  selected,
+  selectedPath,
   expandedDirs,
   onExpandDir,
   onCollapseDir,
@@ -334,13 +334,14 @@ function FolderRow({
 }: {
   entry: FileSystemEntry;
   depth: number;
-  selected: boolean;
+  selectedPath: string | null;
   expandedDirs: Record<string, FileSystemEntry[]>;
   onExpandDir: (path: string, children: FileSystemEntry[]) => void;
   onCollapseDir: (path: string) => void;
   onSelect: (path: string, isGsd: boolean) => void;
   onDoubleClick: (path: string) => void;
 }) {
+  const selected = entry.path === selectedPath;
   const isExpanded = entry.path in expandedDirs;
   const children = expandedDirs[entry.path];
   const [loadingChildren, setLoadingChildren] = useState(false);
@@ -372,12 +373,12 @@ function FolderRow({
         onClick={() => onSelect(entry.path, entry.isGsdProject)}
         onDoubleClick={() => onDoubleClick(entry.path)}
         className={cn(
-          "flex w-full items-center gap-2 py-1.5 px-3 text-left text-xs transition-colors",
+          "flex w-full items-center gap-2 py-1.5 text-left text-xs transition-colors border-l-2",
           selected
-            ? "bg-cyan-accent/10 text-cyan-accent"
-            : "text-slate-300 hover:bg-navy-700",
+            ? "border-cyan-accent bg-cyan-accent/10 text-cyan-accent"
+            : "border-transparent text-slate-300 hover:bg-navy-700 hover:border-navy-500",
         )}
-        style={{ paddingLeft: depth * 16 + 12 }}
+        style={{ paddingLeft: depth * 16 + 10 }}
       >
         {/* Expand chevron */}
         <span
@@ -409,7 +410,7 @@ function FolderRow({
           key={child.path}
           entry={child}
           depth={depth + 1}
-          selected={false}
+          selectedPath={selectedPath}
           expandedDirs={expandedDirs}
           onExpandDir={onExpandDir}
           onCollapseDir={onCollapseDir}

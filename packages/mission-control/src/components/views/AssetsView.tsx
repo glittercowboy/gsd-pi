@@ -19,7 +19,7 @@ import {
   ArrowLeft,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { useAssets, type AssetFilter, type AssetItem } from "@/hooks/useAssets";
+import { useAssets, type AssetItem } from "@/hooks/useAssets";
 
 const IMAGE_EXTS = ["png", "jpg", "jpeg", "gif", "svg", "webp"];
 const VIDEO_EXTS = ["mp4", "webm", "mov"];
@@ -41,25 +41,41 @@ function formatDate(ts: number): string {
   return new Date(ts).toLocaleDateString();
 }
 
-/** Custom branded file picker modal for asset uploads. */
+/** Custom branded file picker modal for asset uploads with category selection. */
 function AssetFilePickerModal({
   isOpen,
   onClose,
   onFilesSelected,
+  categories,
 }: {
   isOpen: boolean;
   onClose: () => void;
-  onFilesSelected: (files: File[]) => void;
+  onFilesSelected: (files: File[], category: string) => void;
+  categories: string[];
 }) {
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [step, setStep] = useState<"file" | "category">("file");
+  const [pendingFiles, setPendingFiles] = useState<File[]>([]);
+  const [selectedCategory, setSelectedCategory] = useState<string>("");
+  const [newCategory, setNewCategory] = useState<string>("");
+  const [useNewCategory, setUseNewCategory] = useState(false);
+
+  const handleClose = () => {
+    setStep("file");
+    setPendingFiles([]);
+    setSelectedCategory("");
+    setNewCategory("");
+    setUseNewCategory(false);
+    onClose();
+  };
 
   if (!isOpen) return null;
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files ?? []);
     if (files.length > 0) {
-      onFilesSelected(files);
-      onClose();
+      setPendingFiles(files);
+      setStep("category");
     }
     if (fileInputRef.current) fileInputRef.current.value = "";
   };
@@ -68,7 +84,7 @@ function AssetFilePickerModal({
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
       onClick={(e) => {
-        if (e.target === e.currentTarget) onClose();
+        if (e.target === e.currentTarget) handleClose();
       }}
     >
       <div className="w-[440px] rounded-lg border border-navy-600 bg-navy-900 shadow-2xl overflow-hidden">
@@ -80,53 +96,125 @@ function AssetFilePickerModal({
           </h2>
           <button
             type="button"
-            onClick={onClose}
+            onClick={handleClose}
             className="rounded p-1 text-slate-500 hover:bg-navy-700 hover:text-slate-300 transition-colors"
           >
             <X className="h-4 w-4" />
           </button>
         </div>
 
-        {/* Upload area */}
-        <div className="p-6">
-          <div
-            onClick={() => fileInputRef.current?.click()}
-            className="flex flex-col items-center justify-center gap-3 rounded-lg border-2 border-dashed border-navy-600 bg-navy-800/50 p-8 cursor-pointer transition-colors hover:border-cyan-accent/50 hover:bg-navy-800"
-          >
-            <div className="rounded-full bg-navy-700 p-4">
-              <FolderOpen className="h-8 w-8 text-cyan-accent" />
-            </div>
-            <div className="text-center">
-              <p className="text-sm font-medium text-slate-200">
-                Click to browse files
-              </p>
-              <p className="text-xs text-slate-500 mt-1">
-                Images, videos, documents — up to 10MB each
-              </p>
-            </div>
-          </div>
-          <input
-            ref={fileInputRef}
-            type="file"
-            multiple
-            onChange={handleFileChange}
-            className="hidden"
-          />
-        </div>
-
-        {/* Supported formats */}
-        <div className="border-t border-navy-600 px-4 py-3">
-          <div className="flex flex-wrap gap-2">
-            {["PNG", "JPG", "GIF", "SVG", "WebP", "MP4", "PDF", "MD"].map((fmt) => (
-              <span
-                key={fmt}
-                className="text-[10px] font-mono text-slate-500 bg-navy-800 px-2 py-0.5 rounded"
+        {step === "file" && (
+          <>
+            {/* Upload area */}
+            <div className="p-6">
+              <div
+                onClick={() => fileInputRef.current?.click()}
+                className="flex flex-col items-center justify-center gap-3 rounded-lg border-2 border-dashed border-navy-600 bg-navy-800/50 p-8 cursor-pointer transition-colors hover:border-cyan-accent/50 hover:bg-navy-800"
               >
-                .{fmt.toLowerCase()}
-              </span>
-            ))}
+                <div className="rounded-full bg-navy-700 p-4">
+                  <FolderOpen className="h-8 w-8 text-cyan-accent" />
+                </div>
+                <div className="text-center">
+                  <p className="text-sm font-medium text-slate-200">
+                    Click to browse files
+                  </p>
+                  <p className="text-xs text-slate-500 mt-1">
+                    Images, videos, documents — up to 10MB each
+                  </p>
+                </div>
+              </div>
+              <input
+                ref={fileInputRef}
+                type="file"
+                multiple
+                onChange={handleFileChange}
+                className="hidden"
+              />
+            </div>
+
+            {/* Supported formats */}
+            <div className="border-t border-navy-600 px-4 py-3">
+              <div className="flex flex-wrap gap-2">
+                {["PNG", "JPG", "GIF", "SVG", "WebP", "MP4", "PDF", "MD"].map((fmt) => (
+                  <span
+                    key={fmt}
+                    className="text-[10px] font-mono text-slate-500 bg-navy-800 px-2 py-0.5 rounded"
+                  >
+                    .{fmt.toLowerCase()}
+                  </span>
+                ))}
+              </div>
+            </div>
+          </>
+        )}
+
+        {step === "category" && (
+          <div className="p-6 flex flex-col gap-4">
+            <div>
+              <p className="text-sm text-slate-300 mb-1">
+                {pendingFiles.length} file{pendingFiles.length !== 1 ? "s" : ""} selected
+              </p>
+              <p className="text-xs text-slate-500">Select or create a category</p>
+            </div>
+
+            {/* Existing categories */}
+            {categories.length > 0 && (
+              <div className="flex flex-wrap gap-2">
+                {categories.map((cat) => (
+                  <button
+                    key={cat}
+                    type="button"
+                    onClick={() => { setSelectedCategory(cat); setUseNewCategory(false); }}
+                    className={cn(
+                      "rounded px-3 py-1.5 text-xs font-mono transition-colors",
+                      selectedCategory === cat && !useNewCategory
+                        ? "bg-cyan-accent text-navy-900"
+                        : "bg-navy-700 text-slate-300 hover:bg-navy-600"
+                    )}
+                  >
+                    {cat}
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {/* New category input */}
+            <div className="flex gap-2">
+              <input
+                type="text"
+                placeholder="New category name..."
+                value={newCategory}
+                onChange={(e) => { setNewCategory(e.target.value); setUseNewCategory(true); setSelectedCategory(""); }}
+                className="flex-1 rounded bg-navy-800 border border-navy-600 px-3 py-1.5 text-xs text-slate-300 font-mono placeholder:text-slate-600 focus:outline-none focus:border-cyan-accent"
+              />
+            </div>
+
+            {/* Action buttons */}
+            <div className="flex gap-2 justify-end">
+              <button type="button" onClick={() => setStep("file")} className="px-3 py-1.5 text-xs text-slate-400 hover:text-slate-300 rounded hover:bg-navy-700">
+                Back
+              </button>
+              <button
+                type="button"
+                disabled={!selectedCategory && !newCategory.trim()}
+                onClick={() => {
+                  const cat = useNewCategory ? newCategory.trim() : selectedCategory;
+                  if (!cat) return;
+                  onFilesSelected(pendingFiles, cat);
+                  handleClose();
+                }}
+                className={cn(
+                  "rounded px-4 py-1.5 text-xs font-display transition-colors",
+                  !selectedCategory && !newCategory.trim()
+                    ? "bg-navy-700 text-slate-500 cursor-not-allowed"
+                    : "bg-cyan-accent text-navy-900 hover:bg-cyan-accent/80"
+                )}
+              >
+                Upload
+              </button>
+            </div>
           </div>
-        </div>
+        )}
       </div>
     </div>
   );
@@ -143,6 +231,7 @@ export function AssetsView() {
     setFilter,
     viewMode,
     setViewMode,
+    categories,
   } = useAssets();
 
   const [isDragging, setIsDragging] = useState(false);
@@ -155,9 +244,9 @@ export function AssetsView() {
   }, []);
 
   const handleFilesSelected = useCallback(
-    async (files: File[]) => {
+    async (files: File[], category: string) => {
       for (const file of files) {
-        await upload(file);
+        await upload(file, category);
       }
     },
     [upload],
@@ -223,16 +312,25 @@ export function AssetsView() {
       <div className="border-b border-navy-600 p-4 flex items-center gap-2">
         <h1 className="text-lg font-display text-slate-200 flex-1">Assets</h1>
         {/* Filter */}
-        <select
-          value={filter}
-          onChange={(e) => setFilter(e.target.value as AssetFilter)}
-          className="rounded-md bg-navy-800 border border-navy-600 px-2 py-1.5 text-xs text-slate-300 focus:outline-none focus:border-cyan-accent"
-        >
-          <option value="all">All</option>
-          <option value="images">Images</option>
-          <option value="video">Video</option>
-          <option value="documents">Documents</option>
-        </select>
+        <div className="flex flex-wrap gap-1">
+          {(["all", "images", "video", "documents",
+             ...categories.filter(c => !["uncategorized"].includes(c.toLowerCase()) && !["images","video","documents"].includes(c.toLowerCase()))
+          ] as string[]).map((cat) => (
+            <button
+              key={cat}
+              type="button"
+              onClick={() => setFilter(cat)}
+              className={cn(
+                "rounded px-2 py-1 text-xs font-mono transition-colors",
+                filter === cat
+                  ? "bg-cyan-accent text-navy-900"
+                  : "bg-navy-700 text-slate-400 hover:text-slate-300 hover:bg-navy-600",
+              )}
+            >
+              {cat === "all" ? "All" : cat.charAt(0).toUpperCase() + cat.slice(1)}
+            </button>
+          ))}
+        </div>
         {/* View toggle */}
         <button
           type="button"
@@ -318,6 +416,7 @@ export function AssetsView() {
         isOpen={showFilePicker}
         onClose={() => setShowFilePicker(false)}
         onFilesSelected={handleFilesSelected}
+        categories={categories}
       />
     </div>
   );
@@ -360,6 +459,11 @@ function AssetCard({
       {/* Info */}
       <div className="p-2">
         <p className="text-xs text-slate-300 truncate">{asset.name}</p>
+        {asset.category && asset.category !== "Uncategorized" && (
+          <span className="block truncate text-[9px] font-mono text-cyan-accent/70 bg-cyan-accent/10 px-1 py-0.5 rounded mt-0.5">
+            {asset.category}
+          </span>
+        )}
         <p className="text-xs text-slate-500">{formatSize(asset.size)}</p>
       </div>
       {/* Delete */}

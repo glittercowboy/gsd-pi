@@ -16,6 +16,7 @@ export function ToolUseCard({ toolName, done }: ToolUseCardProps) {
     <div
       className="mx-4 my-1 rounded border px-3 py-2 font-mono text-xs"
       style={{ borderColor: "#1E2D3D", backgroundColor: "#1A2332" }}
+      data-testid="tool-use-card"
     >
       <div className="flex items-center gap-2">
         <span style={{ color: "#5BC8F0" }}>&#9881;</span>

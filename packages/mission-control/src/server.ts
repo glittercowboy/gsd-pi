@@ -1,6 +1,5 @@
-import { resolve } from "node:path";
+import { resolve, dirname, basename } from "node:path";
 import { access } from "node:fs/promises";
-import { basename } from "node:path";
 import homepage from "../public/index.html";
 import { startPipeline } from "./server/pipeline";
 import { handleFsRequest } from "./server/fs-api";
@@ -25,6 +24,26 @@ const pipeline = await startPipeline({
   wsPort: 4001,
 });
 console.log("File-to-state pipeline running. WebSocket on :4001");
+
+// Auto-restore last opened project so client doesn't land on onboarding after reload
+try {
+  const { getRecentProjects } = await import("./server/recent-projects");
+  const recent = await getRecentProjects();
+  if (recent.length > 0) {
+    const last = recent[0];
+    const lastPlanningDir = resolve(last.path, ".gsd");
+    if (lastPlanningDir !== resolve(repoRoot, ".gsd")) {
+      try {
+        await pipeline.switchProject(lastPlanningDir);
+        console.log(`[server] Auto-restored last project: ${last.path}`);
+      } catch (e: any) {
+        console.warn(`[server] Could not auto-restore last project: ${e?.message}`);
+      }
+    }
+  }
+} catch (e: any) {
+  console.warn(`[server] Could not read recent projects for restore: ${e?.message}`);
+}
 
 const server = Bun.serve({
   port: 4000,
@@ -53,7 +72,8 @@ const server = Bun.serve({
 
     // Route /api/git/* to git log handler
     if (pathname.startsWith("/api/git/")) {
-      const response = await handleGitRequest(req, url, repoRoot);
+      const projectRoot = dirname(pipeline.getPlanningDir());
+      const response = await handleGitRequest(req, url, projectRoot);
       if (response) return addCorsHeaders(response);
     }
 
@@ -97,6 +117,16 @@ const server = Bun.serve({
     if (pathname === "/api/gsd-file") {
       const response = await handleGsdFileRequest(req, url, pipeline.getPlanningDir(), repoRoot);
       if (response) return addCorsHeaders(response);
+    }
+
+    // POST /api/preview/port — set proxy port directly (used by tests and manual trigger)
+    if (pathname === "/api/preview/port" && req.method === "POST") {
+      const body = await req.json() as { port?: number };
+      if (typeof body.port === "number") {
+        pipeline.setPreviewPort(body.port);
+        return addCorsHeaders(Response.json({ ok: true, port: body.port }));
+      }
+      return addCorsHeaders(Response.json({ error: "port required" }, { status: 400 }));
     }
 
     // Route /api/preview/* to dev server proxy
@@ -187,6 +217,15 @@ const server = Bun.serve({
     // Handle CORS preflight for API routes
     if (req.method === "OPTIONS" && pathname.startsWith("/api/")) {
       return addCorsHeaders(new Response(null, { status: 204 }));
+    }
+
+    // Serve static files from public/ directory (assets, fonts, etc.)
+    if (req.method === "GET" && !pathname.startsWith("/api/")) {
+      const filePath = resolve(import.meta.dir, "../public", pathname.slice(1));
+      const file = Bun.file(filePath);
+      if (await file.exists()) {
+        return new Response(file);
+      }
     }
 
     return new Response("Not Found", { status: 404 });

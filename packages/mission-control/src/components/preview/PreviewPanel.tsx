@@ -40,7 +40,7 @@ export function PreviewPanel({
   const iframeSrc = port ? `/api/preview/` : undefined;
 
   return (
-    <div className="animate-in slide-in-from-right duration-200 absolute inset-0 flex flex-col bg-[#0F1419] border-l border-navy-700 z-20">
+    <div className="animate-in slide-in-from-right duration-200 flex flex-col h-full bg-[#0F1419]">
       {/* Header */}
       <div className="flex items-center justify-between border-b border-navy-700 px-3 py-2 flex-shrink-0">
         <div className="flex items-center gap-3">

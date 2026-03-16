@@ -261,15 +261,11 @@ export function AppShell() {
       <>
         <OnboardingScreen
           onOpenProject={() => setFolderPickerOpen(true)}
-          onNewProject={async (name) => {
-            const wsPath = await fetch("/api/workspace/path")
-              .then((r) => r.json())
-              .then((d) => d.path)
-              .catch(() => null);
+          onNewProject={async (name, location) => {
             const res = await fetch("/api/workspace/create", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ name, ...(wsPath ? { workspacePath: wsPath } : {}) }),
+              body: JSON.stringify({ name, workspacePath: location }),
             }).catch(() => null);
             if (res?.ok) {
               const { projectPath } = await res.json();
@@ -358,60 +354,79 @@ export function AppShell() {
           }).catch(() => {});
         }}
       />
-      <div className="flex flex-1 min-h-0">
+      <div className="flex flex-1 min-h-0 overflow-hidden">
       <Sidebar
         collapsed={sidebarCollapsed}
         onToggle={() => setSidebarCollapsed((prev) => !prev)}
         connectionStatus={status}
-        projectState={state?.state ?? null}
-        configState={state?.config ?? null}
+        projectState={state?.projectState ?? null}
+        configState={null}
         activeView={activeView}
-        onSelectView={setActiveView}
+        onSelectView={(view) => {
+          setActiveView(view);
+          if (view.kind !== "chat") setPreviewOpen(false);
+        }}
         onOpenFolder={() => setFolderPickerOpen(true)}
-        onGoHome={goHome}
+        projectName={
+          state?.projectState?.milestone_name ||
+          (activeProjectPath
+            ? (activeProjectPath.split(/[\\/]/).filter(Boolean).pop() ?? undefined)
+            : undefined)
+        }
       />
-      <div className="relative min-w-0 flex-1">
-        <SingleColumnView
-          activeView={activeView}
-          planningState={state}
-          chatMessages={activeMessages}
-          onChatSend={handleBuilderSend}
-          isChatProcessing={isActiveProcessing || isClassifying}
-          sessions={sessions}
-          activeSessionId={activeSessionId}
-          onSelectSession={selectSession}
-          onCreateSession={createSession}
-          onCloseSession={closeSession}
-          onRenameSession={renameSession}
-          reviewResults={reviewResults}
-          onReviewDismiss={dismissReview}
-          onReviewFix={handleFix}
-          discussOverlay={discussOverlay}
-          onTogglePreview={() => setPreviewOpen(!previewOpen)}
-          previewOpen={previewOpen}
-          headingRef={headingRef}
-          isAutoMode={isAutoMode}
-          isCrashed={isCrashed}
-          costState={costState}
-          onInterrupt={interrupt}
-          onDismissCrash={resetCrash}
-          onMilestoneAction={(action) => {
-            if (action.type === 'send_message') {
-              sendMessage(action.message);
-            } else if (action.type === 'interrupt') {
-              interrupt();
-            }
-          }}
-          builderMode={builderMode}
-          routingBadgeState={routingBadgeState}
-          phaseGateState={phaseGateState}
-          onClearRoutingBadge={() => setRoutingBadgeState(null)}
-          onClearPhaseGate={() => setPhaseGateState(null)}
-          onSendDirectMessage={sendMessage}
-        />
-        {/* Preview panel — absolute inset-0 with left offset to preserve Chat column 1 */}
+      <div className="flex flex-1 min-w-0 overflow-hidden">
+        <div className={previewOpen ? "flex flex-col w-[380px] min-w-[320px] shrink-0" : "flex flex-col flex-1 min-w-0"}>
+          <SingleColumnView
+            activeView={activeView}
+            planningState={state}
+            chatMessages={activeMessages}
+            onChatSend={handleBuilderSend}
+            isChatProcessing={isActiveProcessing || isClassifying}
+            sessions={sessions}
+            activeSessionId={activeSessionId}
+            onSelectSession={selectSession}
+            onCreateSession={createSession}
+            onCloseSession={closeSession}
+            onRenameSession={renameSession}
+            reviewResults={reviewResults}
+            onReviewDismiss={dismissReview}
+            onReviewFix={handleFix}
+            discussOverlay={discussOverlay}
+            onTogglePreview={() => setPreviewOpen(!previewOpen)}
+            previewOpen={previewOpen}
+            headingRef={headingRef}
+            isAutoMode={isAutoMode}
+            isCrashed={isCrashed}
+            costState={costState}
+            onInterrupt={interrupt}
+            onDismissCrash={resetCrash}
+            onMilestoneAction={(action) => {
+              if (action.type === 'send_message') {
+                sendMessage(action.message);
+              } else if (action.type === 'interrupt') {
+                interrupt();
+              }
+            }}
+            builderMode={builderMode}
+            routingBadgeState={routingBadgeState}
+            phaseGateState={phaseGateState}
+            onClearRoutingBadge={() => setRoutingBadgeState(null)}
+            onClearPhaseGate={() => setPhaseGateState(null)}
+            onSendDirectMessage={sendMessage}
+          />
+          {mode === "resume" && continueHere && (
+            <ResumeCard
+              data={continueHere}
+              onResume={() => {
+                dismiss();
+                setActiveView({ kind: "chat" });
+              }}
+              onDismiss={dismiss}
+            />
+          )}
+        </div>
         {previewOpen && (
-          <div className="absolute inset-0 left-[340px] z-30">
+          <div className="flex-1 min-w-0 h-full border-l border-navy-600">
             <PreviewPanelWithState
               initialPort={previewPort}
               initialViewport={viewport}
@@ -419,16 +434,6 @@ export function AppShell() {
               onViewportChange={setViewport}
             />
           </div>
-        )}
-        {mode === "resume" && continueHere && (
-          <ResumeCard
-            data={continueHere}
-            onResume={() => {
-              dismiss();
-              setActiveView({ kind: "chat" });
-            }}
-            onDismiss={dismiss}
-          />
         )}
       </div>
       <PermissionModal
