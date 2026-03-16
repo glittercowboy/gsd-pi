@@ -7,6 +7,7 @@ import { randomUUID } from "node:crypto";
 
 import {
   resolveExpectedArtifactPath,
+  verifyExpectedArtifact,
   diagnoseExpectedArtifact,
   buildLoopRemediationSteps,
   completedKeysPath,
@@ -14,6 +15,7 @@ import {
   removePersistedKey,
   loadPersistedKeys,
 } from "../auto-recovery.ts";
+import { parseRoadmap, clearParseCache } from "../files.ts";
 
 function makeTmpBase(): string {
   const base = join(tmpdir(), `gsd-test-${randomUUID()}`);
@@ -267,6 +269,54 @@ test("removePersistedKey is safe when file doesn't exist", () => {
   try {
     assert.doesNotThrow(() => removePersistedKey(base, "nonexistent"));
   } finally {
+    cleanup(base);
+  }
+});
+
+// ─── verifyExpectedArtifact: parse cache collision regression ─────────────
+
+test("verifyExpectedArtifact detects roadmap [x] change despite parse cache", () => {
+  // Regression test: cacheKey collision when [ ] → [x] doesn't change
+  // file length or first/last 100 chars. Without the fix, parseRoadmap
+  // returns stale cached data with done=false even though the file has [x].
+  const base = makeTmpBase();
+  try {
+    // Build a roadmap long enough that the [x] change is outside the first/last 100 chars
+    const padding = "A".repeat(200);
+    const roadmapBefore = [
+      `# M001: Test Milestone ${padding}`,
+      "",
+      "## Slices",
+      "",
+      "- [ ] **S01: First slice** `risk:low`",
+      "",
+      `## Footer ${padding}`,
+    ].join("\n");
+    const roadmapAfter = roadmapBefore.replace("- [ ] **S01:", "- [x] **S01:");
+
+    // Verify lengths are identical (the key collision condition)
+    assert.equal(roadmapBefore.length, roadmapAfter.length);
+
+    // Populate parse cache with the pre-edit roadmap
+    const before = parseRoadmap(roadmapBefore);
+    const sliceBefore = before.slices.find(s => s.id === "S01");
+    assert.ok(sliceBefore);
+    assert.equal(sliceBefore!.done, false);
+
+    // Now write the post-edit roadmap to disk and create required artifacts
+    const roadmapPath = join(base, ".gsd", "milestones", "M001", "M001-ROADMAP.md");
+    writeFileSync(roadmapPath, roadmapAfter);
+    const summaryPath = join(base, ".gsd", "milestones", "M001", "slices", "S01", "S01-SUMMARY.md");
+    writeFileSync(summaryPath, "# Summary\nDone.");
+    const uatPath = join(base, ".gsd", "milestones", "M001", "slices", "S01", "S01-UAT.md");
+    writeFileSync(uatPath, "# UAT\nPassed.");
+
+    // verifyExpectedArtifact should see the [x] despite the parse cache
+    // having the [ ] version. The fix clears the parse cache inside verify.
+    const verified = verifyExpectedArtifact("complete-slice", "M001/S01", base);
+    assert.equal(verified, true, "verifyExpectedArtifact should return true when roadmap has [x]");
+  } finally {
+    clearParseCache();
     cleanup(base);
   }
 });

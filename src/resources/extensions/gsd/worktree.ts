@@ -54,10 +54,10 @@ export function setActiveMilestoneId(basePath: string, milestoneId: string | nul
  * record when the user starts from a different branch (#300). Always a no-op
  * if on a GSD slice branch.
  */
-export function captureIntegrationBranch(basePath: string, milestoneId: string): void {
+export function captureIntegrationBranch(basePath: string, milestoneId: string, options?: { commitDocs?: boolean }): void {
   const svc = getService(basePath);
   const current = svc.getCurrentBranch();
-  writeIntegrationBranch(basePath, milestoneId, current);
+  writeIntegrationBranch(basePath, milestoneId, current, options);
 }
 
 // ─── Pure Utility Functions (unchanged) ────────────────────────────────────
@@ -74,6 +74,28 @@ export function detectWorktreeName(basePath: string): string | null {
   const afterMarker = normalizedPath.slice(idx + marker.length);
   const name = afterMarker.split("/")[0];
   return name || null;
+}
+
+/**
+ * Resolve the project root from a path that may be inside a worktree.
+ * If the path contains `/.gsd/worktrees/<name>/`, returns the portion
+ * before `/.gsd/`. Otherwise returns the input unchanged.
+ *
+ * Use this in commands that call `process.cwd()` to ensure they always
+ * operate against the real project root, not a worktree subdirectory.
+ */
+export function resolveProjectRoot(basePath: string): string {
+  const normalizedPath = basePath.replaceAll("\\", "/");
+  const marker = "/.gsd/worktrees/";
+  const idx = normalizedPath.indexOf(marker);
+  if (idx === -1) return basePath;
+  // Return the original path up to the .gsd/ marker (un-normalized)
+  // Account for potential OS-specific separators
+  const sep = basePath.includes("\\") ? "\\" : "/";
+  const markerOs = `${sep}.gsd${sep}worktrees${sep}`;
+  const idxOs = basePath.indexOf(markerOs);
+  if (idxOs !== -1) return basePath.slice(0, idxOs);
+  return basePath.slice(0, idx);
 }
 
 /**

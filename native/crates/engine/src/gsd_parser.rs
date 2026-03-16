@@ -47,6 +47,9 @@ pub struct ParsedGsdFile {
     pub body: String,
     /// Map of section heading -> content, serialized as JSON.
     pub sections: String,
+    /// Original raw file content.
+    #[napi(js_name = "rawContent")]
+    pub raw_content: String,
 }
 
 /// Batch parse result.
@@ -769,6 +772,7 @@ pub fn batch_parse_gsd_files(directory: String) -> Result<BatchParseResult> {
             metadata,
             body: body.to_string(),
             sections: sections_json,
+            raw_content: content.clone(),
         });
     }
 
@@ -829,6 +833,546 @@ fn collect_md_files(base: &Path, dir: &Path) -> Result<Vec<String>> {
 #[napi(js_name = "parseRoadmapFile")]
 pub fn parse_roadmap_file(content: String) -> NativeRoadmap {
     parse_roadmap_internal(&content)
+}
+
+// ─── GSD Tree Scanner ───────────────────────────────────────────────────────
+
+#[napi(object)]
+pub struct GsdTreeEntry {
+    pub path: String,
+    pub name: String,
+    #[napi(js_name = "isDir")]
+    pub is_dir: bool,
+}
+
+#[napi(js_name = "scanGsdTree")]
+pub fn scan_gsd_tree(directory: String) -> Result<Vec<GsdTreeEntry>> {
+    let base = Path::new(&directory);
+    if !base.exists() {
+        return Ok(Vec::new());
+    }
+    let mut entries = Vec::new();
+    collect_tree_entries(base, base, &mut entries)?;
+    Ok(entries)
+}
+
+fn collect_tree_entries(base: &Path, dir: &Path, entries: &mut Vec<GsdTreeEntry>) -> Result<()> {
+    let read_dir = match std::fs::read_dir(dir) {
+        Ok(rd) => rd,
+        Err(e) => {
+            return Err(napi::Error::from_reason(format!(
+                "Failed to read directory {}: {}",
+                dir.display(),
+                e
+            )));
+        }
+    };
+
+    for entry in read_dir {
+        let entry = match entry {
+            Ok(e) => e,
+            Err(_) => continue,
+        };
+        let path = entry.path();
+        let file_type = match entry.file_type() {
+            Ok(ft) => ft,
+            Err(_) => continue,
+        };
+        let relative = path
+            .strip_prefix(base)
+            .unwrap_or(&path)
+            .to_string_lossy()
+            .to_string();
+        let name = entry.file_name().to_string_lossy().to_string();
+        let is_dir = file_type.is_dir();
+
+        entries.push(GsdTreeEntry {
+            path: relative,
+            name,
+            is_dir,
+        });
+
+        if is_dir {
+            collect_tree_entries(base, &path, entries)?;
+        }
+    }
+    Ok(())
+}
+
+// ─── JSONL Tail Parser ──────────────────────────────────────────────────────
+
+#[napi(object)]
+pub struct JsonlParseResult {
+    pub entries: String,
+    pub count: u32,
+    #[napi(js_name = "truncated")]
+    pub truncated: bool,
+}
+
+#[napi(js_name = "parseJsonlTail")]
+pub fn parse_jsonl_tail(
+    file_path: String,
+    max_bytes: Option<u32>,
+    max_entries: Option<u32>,
+) -> Result<JsonlParseResult> {
+    use std::io::{Read, Seek, SeekFrom};
+
+    let max_bytes = max_bytes.unwrap_or(10 * 1024 * 1024) as u64; // default 10MB
+    let max_entries = max_entries.map(|m| m as usize);
+
+    let mut file = match std::fs::File::open(&file_path) {
+        Ok(f) => f,
+        Err(e) => {
+            return Err(napi::Error::from_reason(format!(
+                "Failed to open file {}: {}",
+                file_path, e
+            )));
+        }
+    };
+
+    let file_len = file
+        .metadata()
+        .map_err(|e| napi::Error::from_reason(format!("Failed to get file metadata: {}", e)))?
+        .len();
+
+    let truncated = file_len > max_bytes;
+
+    let content = if truncated {
+        let offset = file_len - max_bytes;
+        file.seek(SeekFrom::Start(offset))
+            .map_err(|e| napi::Error::from_reason(format!("Failed to seek: {}", e)))?;
+        let mut buf = String::new();
+        file.read_to_string(&mut buf)
+            .map_err(|e| napi::Error::from_reason(format!("Failed to read file: {}", e)))?;
+        buf
+    } else {
+        let mut buf = String::new();
+        file.read_to_string(&mut buf)
+            .map_err(|e| napi::Error::from_reason(format!("Failed to read file: {}", e)))?;
+        buf
+    };
+
+    let lines: Vec<&str> = content.split('\n').collect();
+
+    let mut valid_entries: Vec<&str> = Vec::new();
+    for line in &lines {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        // Validate JSON
+        if serde_json::from_str::<serde_json::Value>(trimmed).is_ok() {
+            valid_entries.push(trimmed);
+        }
+    }
+
+    // If max_entries is set, take only the last N entries
+    if let Some(max) = max_entries {
+        if valid_entries.len() > max {
+            let skip = valid_entries.len() - max;
+            valid_entries = valid_entries[skip..].to_vec();
+        }
+    }
+
+    let count = valid_entries.len() as u32;
+    let mut entries_json = String::from("[");
+    for (i, entry) in valid_entries.iter().enumerate() {
+        if i > 0 {
+            entries_json.push(',');
+        }
+        entries_json.push_str(entry);
+    }
+    entries_json.push(']');
+
+    Ok(JsonlParseResult {
+        entries: entries_json,
+        count,
+        truncated,
+    })
+}
+
+// ─── Plan File Parser ───────────────────────────────────────────────────────
+
+#[napi(object)]
+pub struct NativeTaskEntry {
+    pub id: String,
+    pub title: String,
+    pub description: String,
+    pub done: bool,
+    pub estimate: String,
+    pub files: Vec<String>,
+    pub verify: String,
+}
+
+#[napi(object)]
+pub struct NativePlan {
+    pub id: String,
+    pub title: String,
+    pub goal: String,
+    pub demo: String,
+    #[napi(js_name = "mustHaves")]
+    pub must_haves: Vec<String>,
+    pub tasks: Vec<NativeTaskEntry>,
+    #[napi(js_name = "filesLikelyTouched")]
+    pub files_likely_touched: Vec<String>,
+}
+
+#[napi(js_name = "parsePlanFile")]
+pub fn parse_plan_file(content: String) -> NativePlan {
+    let (fm_lines, body) = split_frontmatter_internal(&content);
+
+    // Extract id from frontmatter if present, otherwise from heading
+    let fm_map = fm_lines
+        .map(|lines| parse_frontmatter_map_internal(&lines))
+        .unwrap_or_default();
+
+    let fm_id = fm_map.iter().find_map(|(k, v)| {
+        if k == "id" {
+            if let FmValue::Scalar(s) = v {
+                Some(s.clone())
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    });
+
+    // Extract title from # heading: "# ID: Title"
+    let (heading_id, title) = body
+        .lines()
+        .find(|l| l.starts_with("# "))
+        .map(|l| {
+            let heading = l[2..].trim();
+            if let Some(colon_pos) = heading.find(": ") {
+                (
+                    heading[..colon_pos].trim().to_string(),
+                    heading[colon_pos + 2..].trim().to_string(),
+                )
+            } else {
+                (String::new(), heading.to_string())
+            }
+        })
+        .unwrap_or_default();
+
+    let id = fm_id.unwrap_or(heading_id);
+
+    let goal = extract_bold_field(body, "Goal")
+        .unwrap_or("")
+        .to_string();
+
+    let demo = extract_bold_field(body, "Demo")
+        .unwrap_or("")
+        .to_string();
+
+    let must_haves = extract_section_internal(body, "Must-Haves", 2)
+        .map(|s| parse_bullets(&s))
+        .unwrap_or_default();
+
+    let tasks = parse_plan_tasks(body);
+
+    let files_likely_touched = extract_section_internal(body, "Files Likely Touched", 2)
+        .map(|s| parse_bullets(&s))
+        .unwrap_or_default();
+
+    NativePlan {
+        id,
+        title,
+        goal,
+        demo,
+        must_haves,
+        tasks,
+        files_likely_touched,
+    }
+}
+
+fn parse_plan_tasks(body: &str) -> Vec<NativeTaskEntry> {
+    let tasks_section = match extract_section_internal(body, "Tasks", 2) {
+        Some(s) => s,
+        None => return Vec::new(),
+    };
+
+    let mut tasks: Vec<NativeTaskEntry> = Vec::new();
+
+    for line in tasks_section.lines() {
+        let trimmed = line.trim();
+
+        // Check for task checkbox line: - [x] **T01: Task Title** `est:2h`
+        if trimmed.starts_with("- [") && trimmed.len() > 4 {
+            let done_char = trimmed.chars().nth(3).unwrap_or(' ');
+            let done = done_char == 'x' || done_char == 'X';
+
+            let after_bracket = match trimmed.find("] ") {
+                Some(pos) => &trimmed[pos + 2..],
+                None => continue,
+            };
+
+            if !after_bracket.starts_with("**") {
+                continue;
+            }
+
+            let bold_end = match after_bracket[2..].find("**") {
+                Some(pos) => pos,
+                None => continue,
+            };
+            let bold_content = &after_bracket[2..2 + bold_end];
+
+            let (id, title) = if let Some(colon_pos) = bold_content.find(": ") {
+                (
+                    bold_content[..colon_pos].trim().to_string(),
+                    bold_content[colon_pos + 2..].trim().to_string(),
+                )
+            } else {
+                (String::new(), bold_content.to_string())
+            };
+
+            let after_bold = &after_bracket[2 + bold_end + 2..];
+            let estimate = if let Some(est_start) = after_bold.find("`est:") {
+                let val_start = est_start + 5;
+                let val_end = after_bold[val_start..]
+                    .find('`')
+                    .unwrap_or(0)
+                    + val_start;
+                after_bold[val_start..val_end].to_string()
+            } else {
+                String::new()
+            };
+
+            tasks.push(NativeTaskEntry {
+                id,
+                title,
+                description: String::new(),
+                done,
+                estimate,
+                files: Vec::new(),
+                verify: String::new(),
+            });
+            continue;
+        }
+
+        // Sub-items under a task
+        if let Some(task) = tasks.last_mut() {
+            if trimmed.starts_with("- Files:") || trimmed.starts_with("- files:") {
+                let files_str = trimmed[8..].trim();
+                task.files = files_str
+                    .split(',')
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty())
+                    .collect();
+            } else if trimmed.starts_with("- Verify:") || trimmed.starts_with("- verify:") {
+                task.verify = trimmed[9..].trim().to_string();
+            } else if trimmed.starts_with("- ") && !trimmed.starts_with("- [") {
+                // Description line
+                if task.description.is_empty() {
+                    task.description = trimmed[2..].trim().to_string();
+                }
+            }
+        }
+    }
+
+    tasks
+}
+
+// ─── Summary File Parser ────────────────────────────────────────────────────
+
+#[napi(object)]
+pub struct NativeFileModified {
+    pub path: String,
+    pub description: String,
+}
+
+#[napi(object)]
+pub struct NativeSummaryFrontmatter {
+    pub id: String,
+    pub parent: String,
+    pub milestone: String,
+    pub provides: Vec<String>,
+    pub affects: Vec<String>,
+    #[napi(js_name = "keyFiles")]
+    pub key_files: Vec<String>,
+    #[napi(js_name = "keyDecisions")]
+    pub key_decisions: Vec<String>,
+    #[napi(js_name = "patternsEstablished")]
+    pub patterns_established: Vec<String>,
+    #[napi(js_name = "drillDownPaths")]
+    pub drill_down_paths: Vec<String>,
+    #[napi(js_name = "observabilitySurfaces")]
+    pub observability_surfaces: Vec<String>,
+    pub duration: String,
+    #[napi(js_name = "verificationResult")]
+    pub verification_result: String,
+    #[napi(js_name = "completedAt")]
+    pub completed_at: String,
+    #[napi(js_name = "blockerDiscovered")]
+    pub blocker_discovered: bool,
+}
+
+#[napi(object)]
+pub struct NativeSummary {
+    pub frontmatter: NativeSummaryFrontmatter,
+    pub title: String,
+    #[napi(js_name = "oneLiner")]
+    pub one_liner: String,
+    #[napi(js_name = "whatHappened")]
+    pub what_happened: String,
+    pub deviations: String,
+    #[napi(js_name = "filesModified")]
+    pub files_modified: Vec<NativeFileModified>,
+}
+
+#[napi(js_name = "parseSummaryFile")]
+pub fn parse_summary_file(content: String) -> NativeSummary {
+    let (fm_lines, body) = split_frontmatter_internal(&content);
+
+    let fm_map = fm_lines
+        .map(|lines| parse_frontmatter_map_internal(&lines))
+        .unwrap_or_default();
+
+    let frontmatter = parse_summary_frontmatter(&fm_map);
+
+    let title = body
+        .lines()
+        .find(|l| l.starts_with("# "))
+        .map(|l| l[2..].trim().to_string())
+        .unwrap_or_default();
+
+    // One-liner: first bold line after h1
+    let one_liner = {
+        let mut found_h1 = false;
+        let mut result = String::new();
+        for line in body.lines() {
+            if line.starts_with("# ") {
+                found_h1 = true;
+                continue;
+            }
+            if found_h1 {
+                let trimmed = line.trim();
+                if trimmed.starts_with("**") && trimmed.ends_with("**") {
+                    result = trimmed[2..trimmed.len() - 2].to_string();
+                    break;
+                }
+                if !trimmed.is_empty() && !trimmed.starts_with('#') {
+                    break;
+                }
+            }
+        }
+        result
+    };
+
+    let what_happened = extract_section_internal(body, "What Happened", 2)
+        .unwrap_or_default();
+
+    let deviations = extract_section_internal(body, "Deviations", 2)
+        .unwrap_or_default();
+
+    let files_modified = extract_section_internal(body, "Files Created/Modified", 2)
+        .or_else(|| extract_section_internal(body, "Files Modified", 2))
+        .map(|s| parse_files_modified(&s))
+        .unwrap_or_default();
+
+    NativeSummary {
+        frontmatter,
+        title,
+        one_liner,
+        what_happened,
+        deviations,
+        files_modified,
+    }
+}
+
+fn parse_summary_frontmatter(fm_map: &[(String, FmValue)]) -> NativeSummaryFrontmatter {
+    let get_scalar = |key: &str| -> String {
+        fm_map
+            .iter()
+            .find_map(|(k, v)| {
+                if k == key {
+                    if let FmValue::Scalar(s) = v {
+                        Some(s.clone())
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            })
+            .unwrap_or_default()
+    };
+
+    let get_string_array = |key: &str| -> Vec<String> {
+        fm_map
+            .iter()
+            .find_map(|(k, v)| {
+                if k == key {
+                    if let FmValue::Array(items) = v {
+                        Some(
+                            items
+                                .iter()
+                                .filter_map(|item| {
+                                    if let FmArrayItem::Str(s) = item {
+                                        Some(s.clone())
+                                    } else {
+                                        None
+                                    }
+                                })
+                                .collect(),
+                        )
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            })
+            .unwrap_or_default()
+    };
+
+    let blocker_str = get_scalar("blocker_discovered");
+    let blocker_discovered =
+        blocker_str == "true" || blocker_str == "yes" || blocker_str == "True";
+
+    NativeSummaryFrontmatter {
+        id: get_scalar("id"),
+        parent: get_scalar("parent"),
+        milestone: get_scalar("milestone"),
+        provides: get_string_array("provides"),
+        affects: get_string_array("affects"),
+        key_files: get_string_array("key_files"),
+        key_decisions: get_string_array("key_decisions"),
+        patterns_established: get_string_array("patterns_established"),
+        drill_down_paths: get_string_array("drill_down_paths"),
+        observability_surfaces: get_string_array("observability_surfaces"),
+        duration: get_scalar("duration"),
+        verification_result: get_scalar("verification_result"),
+        completed_at: get_scalar("completed_at"),
+        blocker_discovered,
+    }
+}
+
+fn parse_files_modified(section: &str) -> Vec<NativeFileModified> {
+    let mut files = Vec::new();
+    for line in section.lines() {
+        let trimmed = line.trim();
+        let text = if trimmed.starts_with("- ") || trimmed.starts_with("* ") {
+            &trimmed[2..]
+        } else {
+            continue;
+        };
+
+        // Parse `path` — description  or  `path` - description
+        if text.starts_with('`') {
+            if let Some(end_tick) = text[1..].find('`') {
+                let path = text[1..1 + end_tick].to_string();
+                let rest = text[1 + end_tick + 1..].trim();
+                let description = if rest.starts_with("—") || rest.starts_with("–") || rest.starts_with('-') {
+                    rest[rest.find(|c: char| c != '—' && c != '–' && c != '-').unwrap_or(rest.len())..].trim().to_string()
+                } else {
+                    rest.to_string()
+                };
+                files.push(NativeFileModified { path, description });
+            }
+        }
+    }
+    files
 }
 
 // ─── Tests ──────────────────────────────────────────────────────────────────

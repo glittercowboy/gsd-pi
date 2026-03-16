@@ -159,45 +159,8 @@ async function _deriveStateImpl(basePath: string): Promise<GSDState> {
   const batchFiles = nativeBatchParseGsdFiles(gsdDir);
   if (batchFiles) {
     for (const f of batchFiles) {
-      // Reconstruct the full file content from parsed components so downstream
-      // parsers (parseRoadmap, parseSummary, etc.) receive the same input they
-      // expect from loadFile(). Files with frontmatter get it re-serialized;
-      // files without get just the body.
       const absPath = resolve(gsdDir, f.path);
-      const hasMetadata = Object.keys(f.metadata).length > 0;
-      if (hasMetadata) {
-        // Re-serialize frontmatter as simple YAML key: value lines
-        const fmLines: string[] = ['---'];
-        for (const [key, value] of Object.entries(f.metadata)) {
-          if (Array.isArray(value)) {
-            if (value.length === 0) {
-              fmLines.push(`${key}: []`);
-            } else if (typeof value[0] === 'object' && value[0] !== null) {
-              fmLines.push(`${key}:`);
-              for (const obj of value) {
-                const entries = Object.entries(obj as Record<string, unknown>);
-                if (entries.length > 0) {
-                  fmLines.push(`  - ${entries[0][0]}: ${entries[0][1]}`);
-                  for (let i = 1; i < entries.length; i++) {
-                    fmLines.push(`    ${entries[i][0]}: ${entries[i][1]}`);
-                  }
-                }
-              }
-            } else {
-              fmLines.push(`${key}:`);
-              for (const item of value) {
-                fmLines.push(`  - ${item}`);
-              }
-            }
-          } else {
-            fmLines.push(`${key}: ${value}`);
-          }
-        }
-        fmLines.push('---');
-        fileContentCache.set(absPath, fmLines.join('\n') + '\n\n' + f.body);
-      } else {
-        fileContentCache.set(absPath, f.body);
-      }
+      fileContentCache.set(absPath, f.rawContent);
     }
   }
   }
@@ -287,9 +250,21 @@ async function _deriveStateImpl(basePath: string): Promise<GSDState> {
           const draftFile = resolveMilestoneFile(basePath, mid, "CONTEXT-DRAFT");
           if (draftFile) activeMilestoneHasDraft = true;
         }
-        activeMilestone = { id: mid, title: mid };
-        activeMilestoneFound = true;
-        registry.push({ id: mid, title: mid, status: 'active' });
+
+        // Check milestone-level dependencies before promoting to active.
+        // Without this, a queued milestone with depends_on in its CONTEXT
+        // frontmatter would be promoted to active even when its deps are unmet
+        // (the dep check only existed in the has-roadmap path previously).
+        const contextContent = contextFile ? await cachedLoadFile(contextFile) : null;
+        const deps = parseContextDependsOn(contextContent);
+        const depsUnmet = deps.some(dep => !completeMilestoneIds.has(dep));
+        if (depsUnmet) {
+          registry.push({ id: mid, title: mid, status: 'pending', dependsOn: deps });
+        } else {
+          activeMilestone = { id: mid, title: mid };
+          activeMilestoneFound = true;
+          registry.push({ id: mid, title: mid, status: 'active', ...(deps.length > 0 ? { dependsOn: deps } : {}) });
+        }
       } else {
         registry.push({ id: mid, title: mid, status: 'pending' });
       }

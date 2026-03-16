@@ -24,6 +24,9 @@ import { existsSync, readFileSync } from "fs";
 import { join } from "path";
 import { getAgentDir } from "../config.js";
 import type { AuthStorage } from "./auth-storage.js";
+import { ModelDiscoveryCache } from "./discovery-cache.js";
+import type { DiscoveredModel, DiscoveryResult } from "./model-discovery.js";
+import { getDefaultTTL, getDiscoverableProviders, getDiscoveryAdapter } from "./model-discovery.js";
 import { clearConfigValueCache, resolveConfigValue, resolveHeaders } from "./resolve-config-value.js";
 
 const Ajv = (AjvModule as any).default || AjvModule;
@@ -221,6 +224,8 @@ export const clearApiKeyCache = clearConfigValueCache;
  */
 export class ModelRegistry {
 	private models: Model<Api>[] = [];
+	private discoveredModels: Model<Api>[] = [];
+	private discoveryCache: ModelDiscoveryCache;
 	private customProviderApiKeys: Map<string, string> = new Map();
 	private registeredProviders: Map<string, ProviderConfigInput> = new Map();
 	private loadError: string | undefined = undefined;
@@ -229,6 +234,8 @@ export class ModelRegistry {
 		readonly authStorage: AuthStorage,
 		private modelsJsonPath: string | undefined = join(getAgentDir(), "models.json"),
 	) {
+		this.discoveryCache = new ModelDiscoveryCache();
+
 		// Set up fallback resolver for custom provider API keys
 		this.authStorage.setFallbackResolver((provider) => {
 			const keyConfig = this.customProviderApiKeys.get(provider);
@@ -665,6 +672,106 @@ export class ModelRegistry {
 				};
 			});
 		}
+	}
+
+	/**
+	 * Discover models from all providers that support discovery.
+	 * Results are cached and merged into the registry (never overrides existing models).
+	 */
+	async discoverModels(providers?: string[]): Promise<DiscoveryResult[]> {
+		const targetProviders = providers ?? getDiscoverableProviders();
+		const results: DiscoveryResult[] = [];
+
+		for (const providerName of targetProviders) {
+			const adapter = getDiscoveryAdapter(providerName);
+			if (!adapter.supportsDiscovery) continue;
+
+			// Skip if cache is still fresh
+			if (!this.discoveryCache.isStale(providerName)) {
+				const cached = this.discoveryCache.get(providerName);
+				if (cached) {
+					results.push({
+						provider: providerName,
+						models: cached.models,
+						fetchedAt: cached.fetchedAt,
+					});
+					continue;
+				}
+			}
+
+			try {
+				const apiKey = await this.authStorage.getApiKey(providerName);
+				if (!apiKey && providerName !== "ollama") continue;
+
+				const models = await adapter.fetchModels(apiKey ?? "", undefined);
+				this.discoveryCache.set(providerName, models);
+				results.push({
+					provider: providerName,
+					models,
+					fetchedAt: Date.now(),
+				});
+			} catch (error) {
+				results.push({
+					provider: providerName,
+					models: [],
+					fetchedAt: Date.now(),
+					error: error instanceof Error ? error.message : String(error),
+				});
+			}
+		}
+
+		// Convert and merge discovered models
+		this.discoveredModels = this.convertDiscoveredModels(results);
+		return results;
+	}
+
+	/**
+	 * Get all models including discovered ones.
+	 * Discovered models are appended but never override existing models.
+	 */
+	getAllWithDiscovered(): Model<Api>[] {
+		const existingIds = new Set(this.models.map((m) => `${m.provider}/${m.id}`));
+		const unique = this.discoveredModels.filter((m) => !existingIds.has(`${m.provider}/${m.id}`));
+		return [...this.models, ...unique];
+	}
+
+	/**
+	 * Check if a model was added via discovery (not built-in or custom).
+	 */
+	isDiscovered(model: Model<Api>): boolean {
+		return this.discoveredModels.some((m) => m.provider === model.provider && m.id === model.id);
+	}
+
+	/**
+	 * Get the discovery cache instance.
+	 */
+	getDiscoveryCache(): ModelDiscoveryCache {
+		return this.discoveryCache;
+	}
+
+	/**
+	 * Convert DiscoveryResult[] into Model<Api>[] with default values.
+	 */
+	private convertDiscoveredModels(results: DiscoveryResult[]): Model<Api>[] {
+		const converted: Model<Api>[] = [];
+		for (const result of results) {
+			if (result.error) continue;
+			for (const dm of result.models) {
+				converted.push({
+					id: dm.id,
+					name: dm.name ?? dm.id,
+					api: "openai" as Api,
+					provider: result.provider,
+					baseUrl: "",
+					reasoning: dm.reasoning ?? false,
+					input: dm.input ?? ["text"],
+					cost: dm.cost ?? { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+					contextWindow: dm.contextWindow ?? 128000,
+					maxTokens: dm.maxTokens ?? 16384,
+				} as Model<Api>);
+			}
+		}
+		return converted;
 	}
 }
 

@@ -11,7 +11,7 @@ import { createInterface } from "readline";
 import { type Args, parseArgs, printHelp } from "./cli/args.js";
 import { selectConfig } from "./cli/config-selector.js";
 import { processFileArguments } from "./cli/file-processor.js";
-import { listModels } from "./cli/list-models.js";
+import { discoverAndPrintModels, listModels } from "./cli/list-models.js";
 import { selectSession } from "./cli/session-picker.js";
 import { APP_NAME, getAgentDir, getModelsPath, VERSION } from "./config.js";
 import { AuthStorage } from "./core/auth-storage.js";
@@ -660,9 +660,26 @@ export async function main(args: string[]) {
 		process.exit(0);
 	}
 
+	if (parsed.addProvider) {
+		const { ModelsJsonWriter } = await import("./core/models-json-writer.js");
+		const writer = new ModelsJsonWriter();
+		writer.setProvider(parsed.addProvider, {
+			baseUrl: parsed.addProviderBaseUrl,
+			apiKey: parsed.apiKey,
+		});
+		console.log(`Provider "${parsed.addProvider}" added to models.json`);
+		process.exit(0);
+	}
+
+	if (parsed.discoverModels !== undefined) {
+		const provider = typeof parsed.discoverModels === "string" ? parsed.discoverModels : undefined;
+		await discoverAndPrintModels(modelRegistry, provider);
+		process.exit(0);
+	}
+
 	if (parsed.listModels !== undefined) {
 		const searchPattern = typeof parsed.listModels === "string" ? parsed.listModels : undefined;
-		await listModels(modelRegistry, searchPattern);
+		await listModels(modelRegistry, { searchPattern, discover: parsed.discover });
 		process.exit(0);
 	}
 

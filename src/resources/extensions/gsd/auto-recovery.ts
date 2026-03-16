@@ -11,7 +11,15 @@ import type { ExtensionContext } from "@gsd/pi-coding-agent";
 import {
   clearUnitRuntimeRecord,
 } from "./unit-runtime.js";
-import { runGit } from "./git-service.js";
+import { clearParseCache } from "./files.js";
+import {
+  nativeConflictFiles,
+  nativeCommit,
+  nativeCheckoutTheirs,
+  nativeAddPaths,
+  nativeMergeAbort,
+  nativeResetHard,
+} from "./native-git-bridge.js";
 import {
   resolveMilestonePath,
   resolveSlicePath,
@@ -96,13 +104,17 @@ export function resolveExpectedArtifactPath(unitType: string, unitId: string, ba
  * skipped writing the UAT file (see #176).
  */
 export function verifyExpectedArtifact(unitType: string, unitId: string, base: string): boolean {
-  // Clear stale directory listing cache so artifact checks see fresh disk state (#431)
-  clearPathCache();
-
   // Hook units have no standard artifact — always pass. Their lifecycle
   // is managed by the hook engine, not the artifact verification system.
   if (unitType.startsWith("hook/")) return true;
 
+  // Clear stale directory listing cache AND parse cache so artifact checks see
+  // fresh disk state (#431). The parse cache must also be cleared because
+  // cacheKey() uses length + first/last 100 chars — when a checkbox changes
+  // from [ ] to [x], the key collides with the pre-edit version, returning
+  // stale parsed results (e.g., slice.done = false when it's actually true).
+  clearPathCache();
+  clearParseCache();
 
   if (unitType === "rewrite-docs") {
     const overridesPath = resolveGsdRootFile(base, "OVERRIDES");
@@ -296,7 +308,8 @@ export function persistCompletedKey(base: string, key: string): void {
       keys = JSON.parse(readFileSync(file, "utf-8"));
     }
   } catch (e) { /* corrupt file — start fresh */ void e; }
-  if (!keys.includes(key)) {
+  const keySet = new Set(keys);
+  if (!keySet.has(key)) {
     keys.push(key);
     // Atomic write: tmp file + rename prevents partial writes on crash
     const tmpFile = file + ".tmp";
@@ -310,12 +323,15 @@ export function removePersistedKey(base: string, key: string): void {
   const file = completedKeysPath(base);
   try {
     if (existsSync(file)) {
-      let keys: string[] = JSON.parse(readFileSync(file, "utf-8"));
-      keys = keys.filter(k => k !== key);
-      // Atomic write: tmp file + rename prevents partial writes on crash
-      const tmpFile = file + ".tmp";
-      writeFileSync(tmpFile, JSON.stringify(keys), "utf-8");
-      renameSync(tmpFile, file);
+      const keys: string[] = JSON.parse(readFileSync(file, "utf-8"));
+      const filtered = keys.filter(k => k !== key);
+      // Only write if the key was actually present
+      if (filtered.length !== keys.length) {
+        // Atomic write: tmp file + rename prevents partial writes on crash
+        const tmpFile = file + ".tmp";
+        writeFileSync(tmpFile, JSON.stringify(filtered), "utf-8");
+        renameSync(tmpFile, file);
+      }
     }
   } catch (e) { /* non-fatal: removePersistedKey failure */ void e; }
 }
@@ -347,11 +363,11 @@ export function reconcileMergeState(basePath: string, ctx: ExtensionContext): bo
   const hasSquashMsg = existsSync(squashMsgPath);
   if (!hasMergeHead && !hasSquashMsg) return false;
 
-  const unmerged = runGit(basePath, ["diff", "--name-only", "--diff-filter=U"], { allowFailure: true });
-  if (!unmerged || !unmerged.trim()) {
+  const conflictedFiles = nativeConflictFiles(basePath);
+  if (conflictedFiles.length === 0) {
     // All conflicts resolved — finalize the merge/squash commit
     try {
-      runGit(basePath, ["commit", "--no-edit"], { allowFailure: false });
+      nativeCommit(basePath, "");  // --no-edit equivalent: use empty message placeholder
       const mode = hasMergeHead ? "merge" : "squash commit";
       ctx.ui.notify(`Finalized leftover ${mode} from prior session.`, "info");
     } catch {
@@ -359,25 +375,21 @@ export function reconcileMergeState(basePath: string, ctx: ExtensionContext): bo
     }
   } else {
     // Still conflicted — try auto-resolving .gsd/ state file conflicts (#530)
-    const conflictedFiles = unmerged.trim().split("\n").filter(Boolean);
     const gsdConflicts = conflictedFiles.filter(f => f.startsWith(".gsd/"));
     const codeConflicts = conflictedFiles.filter(f => !f.startsWith(".gsd/"));
 
     if (gsdConflicts.length > 0 && codeConflicts.length === 0) {
       // All conflicts are in .gsd/ state files — auto-resolve by accepting theirs
       let resolved = true;
-      for (const gsdFile of gsdConflicts) {
-        try {
-          runGit(basePath, ["checkout", "--theirs", "--", gsdFile], { allowFailure: false });
-          runGit(basePath, ["add", "--", gsdFile], { allowFailure: false });
-        } catch {
-          resolved = false;
-          break;
-        }
+      try {
+        nativeCheckoutTheirs(basePath, gsdConflicts);
+        nativeAddPaths(basePath, gsdConflicts);
+      } catch {
+        resolved = false;
       }
       if (resolved) {
         try {
-          runGit(basePath, ["commit", "--no-edit"], { allowFailure: false });
+          nativeCommit(basePath, "chore: auto-resolve .gsd/ state file conflicts");
           ctx.ui.notify(
             `Auto-resolved ${gsdConflicts.length} .gsd/ state file conflict(s) from prior merge.`,
             "info",
@@ -388,11 +400,11 @@ export function reconcileMergeState(basePath: string, ctx: ExtensionContext): bo
       }
       if (!resolved) {
         if (hasMergeHead) {
-          runGit(basePath, ["merge", "--abort"], { allowFailure: true });
+          try { nativeMergeAbort(basePath); } catch { /* best-effort */ }
         } else if (hasSquashMsg) {
           try { unlinkSync(squashMsgPath); } catch { /* best-effort */ }
         }
-        runGit(basePath, ["reset", "--hard", "HEAD"], { allowFailure: true });
+        try { nativeResetHard(basePath); } catch { /* best-effort */ }
         ctx.ui.notify(
           "Detected leftover merge state — auto-resolve failed, cleaned up. Re-deriving state.",
           "warning",
@@ -401,11 +413,11 @@ export function reconcileMergeState(basePath: string, ctx: ExtensionContext): bo
     } else {
       // Code conflicts present — abort and reset
       if (hasMergeHead) {
-        runGit(basePath, ["merge", "--abort"], { allowFailure: true });
+        try { nativeMergeAbort(basePath); } catch { /* best-effort */ }
       } else if (hasSquashMsg) {
         try { unlinkSync(squashMsgPath); } catch { /* best-effort */ }
       }
-      runGit(basePath, ["reset", "--hard", "HEAD"], { allowFailure: true });
+      try { nativeResetHard(basePath); } catch { /* best-effort */ }
       ctx.ui.notify(
         "Detected leftover merge state with unresolved conflicts — cleaned up. Re-deriving state.",
         "warning",

@@ -1,9 +1,11 @@
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { isAbsolute, join } from "node:path";
 import { getAgentDir } from "@gsd/pi-coding-agent";
 import type { GitPreferences } from "./git-service.js";
-import type { PostUnitHookConfig, PreDispatchHookConfig, BudgetEnforcementMode, NotificationPreferences } from "./types.js";
+import type { PostUnitHookConfig, PreDispatchHookConfig, BudgetEnforcementMode, NotificationPreferences, TokenProfile, InlineLevel, PhaseSkipPreferences } from "./types.js";
+import type { DynamicRoutingConfig } from "./model-router.js";
+import { defaultRoutingConfig } from "./model-router.js";
 import { VALID_BRANCH_NAME } from "./git-service.js";
 
 const GLOBAL_PREFERENCES_PATH = join(homedir(), ".gsd", "preferences.md");
@@ -36,6 +38,9 @@ const KNOWN_PREFERENCE_KEYS = new Set<string>([
   "git",
   "post_unit_hooks",
   "pre_dispatch_hooks",
+  "dynamic_routing",
+  "token_profile",
+  "phases",
 ]);
 
 export interface GSDSkillRule {
@@ -66,7 +71,9 @@ export interface GSDModelConfig {
   research?: string;
   planning?: string;
   execution?: string;
+  execution_simple?: string;
   completion?: string;
+  subagent?: string;
 }
 
 /**
@@ -77,7 +84,9 @@ export interface GSDModelConfigV2 {
   research?: string | GSDPhaseModelConfig;
   planning?: string | GSDPhaseModelConfig;
   execution?: string | GSDPhaseModelConfig;
+  execution_simple?: string | GSDPhaseModelConfig;
   completion?: string | GSDPhaseModelConfig;
+  subagent?: string | GSDPhaseModelConfig;
 }
 
 /** Normalized model selection with resolved fallbacks */
@@ -122,6 +131,9 @@ export interface GSDPreferences {
   git?: GitPreferences;
   post_unit_hooks?: PostUnitHookConfig[];
   pre_dispatch_hooks?: PreDispatchHookConfig[];
+  dynamic_routing?: DynamicRoutingConfig;
+  token_profile?: TokenProfile;
+  phases?: PhaseSkipPreferences;
 }
 
 export interface LoadedGSDPreferences {
@@ -631,11 +643,19 @@ export function resolveModelWithFallbacksForUnit(unitType: string): ResolvedMode
     case "execute-task":
       phaseConfig = m.execution;
       break;
+    case "execute-task-simple":
+      phaseConfig = m.execution_simple ?? m.execution;
+      break;
     case "complete-slice":
     case "run-uat":
       phaseConfig = m.completion;
       break;
     default:
+      // Subagent unit types (e.g., "subagent", "subagent/scout")
+      if (unitType === "subagent" || unitType.startsWith("subagent/")) {
+        phaseConfig = m.subagent;
+        break;
+      }
       return undefined;
   }
 
@@ -658,6 +678,20 @@ export function resolveModelWithFallbacksForUnit(unitType: string): ResolvedMode
   };
 }
 
+/**
+ * Resolve the dynamic routing configuration from effective preferences.
+ * Returns the merged config with defaults applied.
+ */
+export function resolveDynamicRoutingConfig(): DynamicRoutingConfig {
+  const prefs = loadEffectiveGSDPreferences();
+  const configured = prefs?.preferences.dynamic_routing;
+  if (!configured) return defaultRoutingConfig();
+  return {
+    ...defaultRoutingConfig(),
+    ...configured,
+  };
+}
+
 export function resolveAutoSupervisorConfig(): AutoSupervisorConfig {
   const prefs = loadEffectiveGSDPreferences();
   const configured = prefs?.preferences.auto_supervisor ?? {};
@@ -668,6 +702,73 @@ export function resolveAutoSupervisorConfig(): AutoSupervisorConfig {
     hard_timeout_minutes: configured.hard_timeout_minutes ?? 30,
     ...(configured.model ? { model: configured.model } : {}),
   };
+}
+
+// ─── Token Profile Resolution ─────────────────────────────────────────────
+
+const VALID_TOKEN_PROFILES = new Set<TokenProfile>(["budget", "balanced", "quality"]);
+
+/**
+ * Resolve profile defaults for a given token profile tier.
+ * Returns a partial GSDPreferences that is used as the base layer —
+ * explicit user preferences always override these defaults.
+ */
+export function resolveProfileDefaults(profile: TokenProfile): Partial<GSDPreferences> {
+  switch (profile) {
+    case "budget":
+      return {
+        models: {
+          planning: "claude-sonnet-4-5-20250514",
+          execution: "claude-sonnet-4-5-20250514",
+          execution_simple: "claude-haiku-4-5-20250414",
+          completion: "claude-haiku-4-5-20250414",
+          subagent: "claude-haiku-4-5-20250414",
+        },
+        phases: {
+          skip_research: true,
+          skip_reassess: true,
+          skip_slice_research: true,
+        },
+      };
+    case "balanced":
+      return {
+        models: {
+          subagent: "claude-sonnet-4-5-20250514",
+        },
+        phases: {
+          skip_slice_research: true,
+        },
+      };
+    case "quality":
+      return {
+        models: {},
+        phases: {},
+      };
+  }
+}
+
+/**
+ * Resolve the effective token profile from preferences.
+ * Returns "balanced" when no profile is set (D046).
+ */
+export function resolveEffectiveProfile(): TokenProfile {
+  const prefs = loadEffectiveGSDPreferences();
+  const profile = prefs?.preferences.token_profile;
+  if (profile && VALID_TOKEN_PROFILES.has(profile)) return profile;
+  return "balanced";
+}
+
+/**
+ * Resolve the inline level from the active token profile.
+ * budget → minimal, balanced → standard, quality → full.
+ */
+export function resolveInlineLevel(): InlineLevel {
+  const profile = resolveEffectiveProfile();
+  switch (profile) {
+    case "budget": return "minimal";
+    case "balanced": return "standard";
+    case "quality": return "full";
+  }
 }
 
 function mergePreferences(base: GSDPreferences, override: GSDPreferences): GSDPreferences {
@@ -697,6 +798,13 @@ function mergePreferences(base: GSDPreferences, override: GSDPreferences): GSDPr
       : undefined,
     post_unit_hooks: mergePostUnitHooks(base.post_unit_hooks, override.post_unit_hooks),
     pre_dispatch_hooks: mergePreDispatchHooks(base.pre_dispatch_hooks, override.pre_dispatch_hooks),
+    dynamic_routing: (base.dynamic_routing || override.dynamic_routing)
+      ? { ...(base.dynamic_routing ?? {}), ...(override.dynamic_routing ?? {}) } as DynamicRoutingConfig
+      : undefined,
+    token_profile: override.token_profile ?? base.token_profile,
+    phases: (base.phases || override.phases)
+      ? { ...(base.phases ?? {}), ...(override.phases ?? {}) }
+      : undefined,
   };
 }
 
@@ -800,6 +908,36 @@ export function validatePreferences(preferences: GSDPreferences): {
       validated.budget_enforcement = preferences.budget_enforcement;
     } else {
       errors.push(`budget_enforcement must be one of: warn, pause, halt`);
+    }
+  }
+
+  // ─── Token Profile ─────────────────────────────────────────────────
+  if (preferences.token_profile !== undefined) {
+    if (typeof preferences.token_profile === "string" && VALID_TOKEN_PROFILES.has(preferences.token_profile as TokenProfile)) {
+      validated.token_profile = preferences.token_profile as TokenProfile;
+    } else {
+      errors.push(`token_profile must be one of: budget, balanced, quality`);
+    }
+  }
+
+  // ─── Phase Skip Preferences ─────────────────────────────────────────
+  if (preferences.phases !== undefined) {
+    if (typeof preferences.phases === "object" && preferences.phases !== null) {
+      const validatedPhases: PhaseSkipPreferences = {};
+      const p = preferences.phases as Record<string, unknown>;
+      if (p.skip_research !== undefined) validatedPhases.skip_research = !!p.skip_research;
+      if (p.skip_reassess !== undefined) validatedPhases.skip_reassess = !!p.skip_reassess;
+      if (p.skip_slice_research !== undefined) validatedPhases.skip_slice_research = !!p.skip_slice_research;
+      // Warn on unknown phase keys
+      const knownPhaseKeys = new Set(["skip_research", "skip_reassess", "skip_slice_research"]);
+      for (const key of Object.keys(p)) {
+        if (!knownPhaseKeys.has(key)) {
+          warnings.push(`unknown phases key "${key}" — ignored`);
+        }
+      }
+      validated.phases = validatedPhases;
+    } else {
+      errors.push(`phases must be an object`);
     }
   }
 
@@ -983,6 +1121,56 @@ export function validatePreferences(preferences: GSDPreferences): {
     }
   }
 
+  // ─── Dynamic Routing ─────────────────────────────────────────────────
+  if (preferences.dynamic_routing !== undefined) {
+    if (typeof preferences.dynamic_routing === "object" && preferences.dynamic_routing !== null) {
+      const dr = preferences.dynamic_routing as unknown as Record<string, unknown>;
+      const validDr: Partial<DynamicRoutingConfig> = {};
+
+      if (dr.enabled !== undefined) {
+        if (typeof dr.enabled === "boolean") validDr.enabled = dr.enabled;
+        else errors.push("dynamic_routing.enabled must be a boolean");
+      }
+      if (dr.escalate_on_failure !== undefined) {
+        if (typeof dr.escalate_on_failure === "boolean") validDr.escalate_on_failure = dr.escalate_on_failure;
+        else errors.push("dynamic_routing.escalate_on_failure must be a boolean");
+      }
+      if (dr.budget_pressure !== undefined) {
+        if (typeof dr.budget_pressure === "boolean") validDr.budget_pressure = dr.budget_pressure;
+        else errors.push("dynamic_routing.budget_pressure must be a boolean");
+      }
+      if (dr.cross_provider !== undefined) {
+        if (typeof dr.cross_provider === "boolean") validDr.cross_provider = dr.cross_provider;
+        else errors.push("dynamic_routing.cross_provider must be a boolean");
+      }
+      if (dr.hooks !== undefined) {
+        if (typeof dr.hooks === "boolean") validDr.hooks = dr.hooks;
+        else errors.push("dynamic_routing.hooks must be a boolean");
+      }
+      if (dr.tier_models !== undefined) {
+        if (typeof dr.tier_models === "object" && dr.tier_models !== null) {
+          const tm = dr.tier_models as Record<string, unknown>;
+          const validTm: Record<string, string> = {};
+          for (const tier of ["light", "standard", "heavy"]) {
+            if (tm[tier] !== undefined) {
+              if (typeof tm[tier] === "string") validTm[tier] = tm[tier] as string;
+              else errors.push(`dynamic_routing.tier_models.${tier} must be a string`);
+            }
+          }
+          if (Object.keys(validTm).length > 0) validDr.tier_models = validTm as DynamicRoutingConfig["tier_models"];
+        } else {
+          errors.push("dynamic_routing.tier_models must be an object");
+        }
+      }
+
+      if (Object.keys(validDr).length > 0) {
+        validated.dynamic_routing = validDr as unknown as DynamicRoutingConfig;
+      }
+    } else {
+      errors.push("dynamic_routing must be an object");
+    }
+  }
+
   // ─── Git Preferences ───────────────────────────────────────────────────
   if (preferences.git && typeof preferences.git === "object") {
     const git: Record<string, unknown> = {};
@@ -1045,6 +1233,10 @@ export function validatePreferences(preferences: GSDPreferences): {
       } else {
         errors.push("git.isolation must be one of: worktree, branch");
       }
+    }
+    if (g.commit_docs !== undefined) {
+      if (typeof g.commit_docs === "boolean") git.commit_docs = g.commit_docs;
+      else errors.push("git.commit_docs must be a boolean");
     }
     // Deprecated: merge_to_main is ignored (branchless architecture).
     if (g.merge_to_main !== undefined) {
@@ -1130,4 +1322,62 @@ export function resolvePreDispatchHooks(): PreDispatchHookConfig[] {
   const prefs = loadEffectiveGSDPreferences();
   return (prefs?.preferences.pre_dispatch_hooks ?? [])
     .filter(h => h.enabled !== false);
+}
+
+/**
+ * Validate a model ID string.
+ * Returns true if the ID looks like a valid model identifier.
+ */
+export function validateModelId(modelId: string): boolean {
+  if (!modelId || typeof modelId !== "string") return false;
+  const trimmed = modelId.trim();
+  if (trimmed.length === 0 || trimmed.length > 256) return false;
+  // Allow alphanumeric, hyphens, underscores, dots, slashes, colons
+  return /^[a-zA-Z0-9\-_./:]+$/.test(trimmed);
+}
+
+/**
+ * Update the models section of the global GSD preferences file.
+ * Performs a safe read-modify-write: reads current content, updates the models
+ * YAML block, and writes back. Creates the file if it doesn't exist.
+ */
+export function updatePreferencesModels(models: GSDModelConfigV2): void {
+  const prefsPath = getGlobalGSDPreferencesPath();
+
+  let content = "";
+  if (existsSync(prefsPath)) {
+    content = readFileSync(prefsPath, "utf-8");
+  }
+
+  // Build the new models block
+  const lines: string[] = ["models:"];
+  for (const [phase, value] of Object.entries(models)) {
+    if (typeof value === "string") {
+      lines.push(`  ${phase}: ${value}`);
+    } else if (value && typeof value === "object") {
+      const config = value as GSDPhaseModelConfig;
+      lines.push(`  ${phase}:`);
+      lines.push(`    model: ${config.model}`);
+      if (config.provider) {
+        lines.push(`    provider: ${config.provider}`);
+      }
+      if (config.fallbacks && config.fallbacks.length > 0) {
+        lines.push(`    fallbacks:`);
+        for (const fb of config.fallbacks) {
+          lines.push(`      - ${fb}`);
+        }
+      }
+    }
+  }
+  const modelsBlock = lines.join("\n");
+
+  // Replace existing models block or append
+  const modelsRegex = /^models:[\s\S]*?(?=\n[a-z_]|\n*$)/m;
+  if (modelsRegex.test(content)) {
+    content = content.replace(modelsRegex, modelsBlock);
+  } else {
+    content = content.trimEnd() + "\n\n" + modelsBlock + "\n";
+  }
+
+  writeFileSync(prefsPath, content, "utf-8");
 }

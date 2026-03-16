@@ -5,7 +5,7 @@
 import type { ExtensionCommandContext, ExtensionAPI } from "@gsd/pi-coding-agent";
 import { existsSync, readFileSync, writeFileSync, unlinkSync, readdirSync } from "node:fs";
 import { join } from "node:path";
-import { execFileSync } from "node:child_process";
+import { nativeRevertCommit, nativeRevertAbort } from "./native-git-bridge.js";
 import { deriveState } from "./state.js";
 import { invalidateAllCaches } from "./cache.js";
 import { gsdRoot, resolveTasksDir, resolveSlicePath, buildTaskFileName } from "./paths.js";
@@ -102,25 +102,27 @@ export async function handleUndo(args: string, ctx: ExtensionCommandContext, _pi
   // 5. Try to revert git commits from activity log
   let commitsReverted = 0;
   const activityDir = join(gsdRoot(basePath), "activity");
-  if (existsSync(activityDir)) {
-    const commits = findCommitsForUnit(activityDir, unitType, unitId);
-    if (commits.length > 0) {
-      for (const sha of commits.reverse()) {
-        try {
-          execFileSync("git", ["revert", "--no-commit", sha], { cwd: basePath, timeout: 10000, stdio: "ignore" });
-          commitsReverted++;
-        } catch {
-          // Revert conflict or already reverted — skip
-          try { execFileSync("git", ["revert", "--abort"], { cwd: basePath, timeout: 5000, stdio: "ignore" }); } catch { /* no-op */ }
-          break;
+  try {
+    if (existsSync(activityDir)) {
+      const commits = findCommitsForUnit(activityDir, unitType, unitId);
+      if (commits.length > 0) {
+        for (const sha of commits.reverse()) {
+          try {
+            nativeRevertCommit(basePath, sha);
+            commitsReverted++;
+          } catch {
+            // Revert conflict or already reverted — skip
+            try { nativeRevertAbort(basePath); } catch { /* no-op */ }
+            break;
+          }
         }
       }
     }
+  } finally {
+    // 6. Re-derive state — always invalidate caches even if git operations fail
+    invalidateAllCaches();
+    await deriveState(basePath);
   }
-
-  // 6. Re-derive state
-  invalidateAllCaches();
-  await deriveState(basePath);
 
   // Build result message
   const results: string[] = [`Undone: ${unitType} (${unitId})`];
@@ -172,6 +174,7 @@ function findFileWithPrefix(dir: string, prefix: string, suffix: string): string
 
 export function findCommitsForUnit(activityDir: string, unitType: string, unitId: string): string[] {
   const safeUnitId = unitId.replace(/\//g, "-");
+  const commitSet = new Set<string>();
   const commits: string[] = [];
 
   try {
@@ -194,7 +197,8 @@ export function findCommitsForUnit(activityDir: string, unitType: string, unitId
           for (const block of blocks) {
             if (block.type === "tool_result" && typeof block.content === "string") {
               for (const sha of extractCommitShas(block.content)) {
-                if (!commits.includes(sha)) {
+                if (!commitSet.has(sha)) {
+                  commitSet.add(sha);
                   commits.push(sha);
                 }
               }
@@ -209,10 +213,12 @@ export function findCommitsForUnit(activityDir: string, unitType: string, unitId
 }
 
 export function extractCommitShas(content: string): string[] {
+  const seen = new Set<string>();
   const commits: string[] = [];
   for (const match of content.matchAll(/\[[\w/.-]+\s+([a-f0-9]{7,40})\]/g)) {
     const sha = match[1];
-    if (sha && !commits.includes(sha)) {
+    if (sha && !seen.has(sha)) {
+      seen.add(sha);
       commits.push(sha);
     }
   }

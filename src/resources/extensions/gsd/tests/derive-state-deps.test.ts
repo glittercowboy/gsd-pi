@@ -303,6 +303,105 @@ async function main(): Promise<void> {
     }
   }
 
+  // ─── Test Group 7: unique-id-deps ──────────────────────────────────────
+  // M004-0zjrg0 is complete, M005-b0m2hl depends_on M004-0zjrg0 → M005 should activate.
+  // Regression: parseContextDependsOn() used .toUpperCase(), converting "M004-0zjrg0"
+  // to "M004-0ZJRG0", breaking the case-sensitive lookup in completeMilestoneIds.
+  console.log('\n=== unique-id-deps: unique milestone IDs with lowercase hex suffix ===');
+  {
+    const base = createFixtureBase();
+    try {
+      // M004-0zjrg0: complete (all slices done + SUMMARY present)
+      writeRoadmap(base, 'M004-0zjrg0', `# M004-0zjrg0: First Unique Milestone
+
+**Vision:** Complete milestone with unique ID.
+
+## Slices
+
+- [x] **S01: Done** \`risk:low\` \`depends:[]\`
+  > After this: Done.
+`);
+      writeMilestoneSummary(base, 'M004-0zjrg0', '# M004-0zjrg0 Summary\n\nComplete.');
+
+      // M005-b0m2hl: depends on M004-0zjrg0 (lowercase hex suffix)
+      writeContext(base, 'M005-b0m2hl', 'depends_on: [M004-0zjrg0]');
+
+      const state = await deriveState(base);
+
+      assertEq(state.registry.find(e => e.id === 'M004-0zjrg0')?.status, 'complete',
+        'unique-id-deps: M004-0zjrg0 is complete');
+      assertEq(state.registry.find(e => e.id === 'M005-b0m2hl')?.status, 'active',
+        'unique-id-deps: M005-b0m2hl is active (dep on M004-0zjrg0 met)');
+      assertEq(state.activeMilestone?.id, 'M005-b0m2hl',
+        'unique-id-deps: activeMilestone is M005-b0m2hl');
+      assertTrue(state.phase !== 'blocked',
+        'unique-id-deps: phase is not blocked');
+    } finally {
+      cleanup(base);
+    }
+  }
+
+  // ─── Test Group 8: unique-id-deps-blocked ─────────────────────────────
+  // M004-0zjrg0 is NOT complete, M005-b0m2hl depends_on M004-0zjrg0 → M005 should be pending
+  console.log('\n=== unique-id-deps-blocked: unique ID dep not yet met ===');
+  {
+    const base = createFixtureBase();
+    try {
+      // M004-0zjrg0: incomplete (slice not done)
+      writeRoadmap(base, 'M004-0zjrg0', `# M004-0zjrg0: Incomplete Unique Milestone
+
+**Vision:** Still in progress.
+
+## Slices
+
+- [ ] **S01: In Progress** \`risk:low\` \`depends:[]\`
+  > After this: Done.
+`);
+      writeSlicePlan(base, 'M004-0zjrg0', 'S01', `# S01: In Progress
+
+**Goal:** Test dep blocking with unique IDs.
+
+## Tasks
+
+- [ ] **T01: Work** \`est:15m\`
+  Still doing work.
+`);
+
+      // M005-b0m2hl: depends on M004-0zjrg0 (still incomplete)
+      writeContext(base, 'M005-b0m2hl', 'depends_on: [M004-0zjrg0]');
+
+      const state = await deriveState(base);
+
+      assertEq(state.activeMilestone?.id, 'M004-0zjrg0',
+        'unique-id-deps-blocked: activeMilestone is M004-0zjrg0');
+      assertEq(state.registry.find(e => e.id === 'M005-b0m2hl')?.status, 'pending',
+        'unique-id-deps-blocked: M005-b0m2hl is pending (dep not met)');
+    } finally {
+      cleanup(base);
+    }
+  }
+
+  // ─── Test Group 9: parseContextDependsOn preserves case ───────────────
+  // Direct unit test: verify the parsed dep ID matches the input exactly
+  console.log('\n=== parseContextDependsOn: preserves case of unique IDs ===');
+  {
+    const { parseContextDependsOn } = await import('../files.ts');
+
+    const deps1 = parseContextDependsOn('---\ndepends_on: [M004-0zjrg0]\n---\n');
+    assertEq(deps1[0], 'M004-0zjrg0',
+      'parseContextDependsOn preserves lowercase hex suffix');
+
+    const deps2 = parseContextDependsOn('---\ndepends_on: [M001, M004-abc123]\n---\n');
+    assertEq(deps2[0], 'M001', 'preserves classic uppercase ID');
+    assertEq(deps2[1], 'M004-abc123', 'preserves mixed-case unique ID');
+
+    const deps3 = parseContextDependsOn('---\ndepends_on: []\n---\n');
+    assertEq(deps3.length, 0, 'empty deps returns empty array');
+
+    const deps4 = parseContextDependsOn(null);
+    assertEq(deps4.length, 0, 'null content returns empty array');
+  }
+
   report();
 }
 

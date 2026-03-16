@@ -182,7 +182,7 @@ export class Editor implements Component, Focusable {
 	private undoStack = new UndoStack<EditorState>();
 	private textVersion = 0;
 	private cachedText: string | null = null;
-	private layoutCache: { width: number; textVersion: number; lines: LayoutLine[] } | null = null;
+	private layoutCache: { width: number; textVersion: number; cursorLine: number; cursorCol: number; lines: LayoutLine[] } | null = null;
 	private visualLineMapCache: { width: number; textVersion: number; lines: VisualLine[] } | null = null;
 
 	public onSubmit?: (text: string) => void;
@@ -243,12 +243,14 @@ export class Editor implements Component, Focusable {
 
 	private getLayoutLines(width: number): LayoutLine[] {
 		const cached = this.layoutCache;
-		if (cached && cached.width === width && cached.textVersion === this.textVersion) {
+		if (cached && cached.width === width && cached.textVersion === this.textVersion
+			&& cached.cursorLine === this.state.cursorLine && cached.cursorCol === this.state.cursorCol) {
 			return cached.lines;
 		}
 
 		const lines = this.layoutText(width);
-		this.layoutCache = { width, textVersion: this.textVersion, lines };
+		this.layoutCache = { width, textVersion: this.textVersion, lines,
+			cursorLine: this.state.cursorLine, cursorCol: this.state.cursorCol };
 		return lines;
 	}
 

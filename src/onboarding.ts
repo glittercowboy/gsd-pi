@@ -747,7 +747,7 @@ async function runRemoteQuestionsStep(
     })
     if (p.isCancel(channelId) || !channelId) return null
 
-    const { saveRemoteQuestionsConfig } = await import('./resources/extensions/remote-questions/remote-command.js')
+    const { saveRemoteQuestionsConfig } = await import('./remote-questions-config.js')
     saveRemoteQuestionsConfig('slack', (channelId as string).trim())
     p.log.success(`Slack channel: ${pc.green((channelId as string).trim())}`)
     return 'Slack'
@@ -852,7 +852,7 @@ async function runDiscordChannelStep(p: ClackModule, pc: PicoModule, token: stri
   }
 
   // Save remote questions config
-  const { saveRemoteQuestionsConfig } = await import('./resources/extensions/remote-questions/remote-command.js')
+  const { saveRemoteQuestionsConfig } = await import('./remote-questions-config.js')
   saveRemoteQuestionsConfig('discord', channelId)
   const channelName = channels.find(ch => ch.id === channelId)?.name
   p.log.success(`Discord channel: ${pc.green(channelName ? `#${channelName}` : channelId)}`)

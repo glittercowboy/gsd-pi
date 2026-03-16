@@ -69,18 +69,24 @@ export function formatForDiscord(prompt: RemotePrompt): { embeds: DiscordEmbed[]
       return `${emoji} **${opt.label}** — ${opt.description}`;
     });
 
-    const footerText = supportsReactions
-      ? (q.allowMultiple
-          ? "Reply with comma-separated choices (`1,3`) or react with matching numbers"
-          : "Reply with a number or react with the matching number")
-      : `Question ${questionIndex + 1}/${prompt.questions.length} — reply with one line per question or use semicolons`;
+    const footerParts: string[] = [];
+    if (supportsReactions) {
+      footerParts.push(q.allowMultiple
+        ? "Reply with comma-separated choices (`1,3`) or react with matching numbers"
+        : "Reply with a number or react with the matching number");
+    } else {
+      footerParts.push(`Question ${questionIndex + 1}/${prompt.questions.length} — reply with one line per question or use semicolons`);
+    }
+    if (prompt.context?.source) {
+      footerParts.push(`Source: ${prompt.context.source}`);
+    }
 
     return {
       title: q.header,
       description: q.question,
       color: 0x7c3aed,
       fields: [{ name: "Options", value: optionLines.join("\n") }],
-      footer: { text: footerText },
+      footer: { text: footerParts.join(" · ") },
     };
   });
 

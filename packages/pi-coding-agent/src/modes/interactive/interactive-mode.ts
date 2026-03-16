@@ -83,6 +83,7 @@ import { appKey, appKeyHint, editorKey, formatKeyForDisplay, keyHint, rawKeyHint
 import { LoginDialogComponent } from "./components/login-dialog.js";
 import { ModelSelectorComponent } from "./components/model-selector.js";
 import { OAuthSelectorComponent } from "./components/oauth-selector.js";
+import { ProviderManagerComponent } from "./components/provider-manager.js";
 import { ScopedModelsSelectorComponent } from "./components/scoped-models-selector.js";
 import { SessionSelectorComponent } from "./components/session-selector.js";
 import { SelectSubmenu, SettingsSelectorComponent, THINKING_DESCRIPTIONS } from "./components/settings-selector.js";
@@ -1997,6 +1998,11 @@ export class InteractiveMode {
 				this.editor.setText("");
 				return;
 			}
+			if (text === "/provider") {
+				this.showProviderManager();
+				this.editor.setText("");
+				return;
+			}
 			if (text === "/login") {
 				this.showOAuthSelector("login");
 				this.editor.setText("");
@@ -3744,6 +3750,37 @@ export class InteractiveMode {
 		this.chatContainer.clear();
 		this.renderInitialMessages();
 		this.showStatus("Resumed session");
+	}
+
+	private showProviderManager(): void {
+		this.showSelector((done) => {
+			const component = new ProviderManagerComponent(
+				this.ui,
+				this.session.modelRegistry.authStorage,
+				this.session.modelRegistry,
+				() => {
+					done();
+					this.ui.requestRender();
+				},
+				async (provider: string) => {
+					this.showStatus(`Discovering models for ${provider}...`);
+					try {
+						const results = await this.session.modelRegistry.discoverModels([provider]);
+						const result = results[0];
+						if (result?.error) {
+							this.showError(`Discovery failed: ${result.error}`);
+						} else {
+							this.showStatus(`Discovered ${result?.models.length ?? 0} models from ${provider}`);
+						}
+					} catch (error) {
+						this.showError(error instanceof Error ? error.message : String(error));
+					}
+					done();
+					this.ui.requestRender();
+				},
+			);
+			return { component, focus: component };
+		});
 	}
 
 	private async showOAuthSelector(mode: "login" | "logout"): Promise<void> {

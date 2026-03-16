@@ -80,9 +80,9 @@ Setting `prefer_skills: []` does **not** disable skill discovery — it just mea
 
 - `skill_rules`: situational rules with a human-readable `when` trigger and one or more of `use`, `prefer`, or `avoid`.
 
-- `custom_instructions`: extra durable instructions related to skill use.
+- `custom_instructions`: extra durable instructions related to skill use. For operational project knowledge (recurring rules, gotchas, patterns), use `.gsd/KNOWLEDGE.md` instead — it's injected into every agent prompt automatically and agents can append to it during execution.
 
-- `models`: per-stage model selection for auto-mode. Keys: `research`, `planning`, `execution`, `completion`. Values can be:
+- `models`: per-stage model selection for auto-mode. Keys: `research`, `planning`, `execution`, `execution_simple`, `completion`, `subagent`. Values can be:
   - Simple string: `"claude-sonnet-4-6"` — single model, no fallbacks
   - Provider-qualified string: `"bedrock/claude-sonnet-4-6"` — targets a specific provider when the same model ID exists across multiple providers
   - Object with fallbacks: `{ model: "claude-opus-4-6", fallbacks: ["glm-5", "minimax-m2.5"] }` — tries fallbacks in order if primary fails
@@ -108,8 +108,74 @@ Setting `prefer_skills: []` does **not** disable skill discovery — it just mea
   - `pre_merge_check`: boolean or `"auto"` — run pre-merge checks before merging a worktree back to the integration branch. `true` always runs, `false` never runs, `"auto"` runs when CI is detected. Default: `false`.
   - `commit_type`: string — override the conventional commit type prefix. Must be one of: `feat`, `fix`, `refactor`, `docs`, `test`, `chore`, `perf`, `ci`, `build`, `style`. Default: inferred from diff content.
   - `main_branch`: string — the primary branch name for new git repos (e.g., `"main"`, `"master"`, `"trunk"`). Also used by `getMainBranch()` as the preferred branch when auto-detection is ambiguous. Default: `"main"`.
+  - `merge_strategy`: `"squash"` or `"merge"` — controls how worktree branches are merged back. `"squash"` combines all commits into one; `"merge"` preserves individual commits. Default: `"squash"`.
+  - `isolation`: `"worktree"` or `"branch"` — controls auto-mode git isolation strategy. `"worktree"` creates a milestone worktree for isolated work; `"branch"` works directly in the project root (useful for submodule-heavy repos). Default: `"worktree"`.
+  - `commit_docs`: boolean — when `false`, prevents GSD from committing `.gsd/` planning artifacts to git. The `.gsd/` folder is added to `.gitignore` and kept local-only. Useful for teams where only some members use GSD, or when company policy requires a clean repository. Default: `true`.
 
 - `unique_milestone_ids`: boolean — when `true`, generates milestone IDs in `M{seq}-{rand6}` format (e.g. `M001-eh88as`) instead of plain sequential `M001`. Prevents ID collisions in team workflows where multiple contributors create milestones concurrently. Both formats coexist — existing `M001`-style milestones remain valid. Default: `false`.
+
+- `budget_ceiling`: number — maximum dollar amount to spend on auto-mode. When reached, behavior is controlled by `budget_enforcement`. Default: no limit.
+
+- `budget_enforcement`: `"warn"`, `"pause"`, or `"halt"` — action taken when `budget_ceiling` is reached.
+  - `warn` — log a warning but continue execution.
+  - `pause` — pause auto-mode and wait for user confirmation.
+  - `halt` — stop auto-mode immediately.
+  - Default: `"pause"`.
+
+- `context_pause_threshold`: number (0-100) — context window usage percentage at which auto-mode should pause to suggest checkpointing. Set to `0` to disable. Default: `0` (disabled).
+
+- `token_profile`: `"budget"`, `"balanced"`, or `"quality"` — coordinates model selection, phase skipping, and context compression. `budget` skips research/reassessment and uses cheaper models; `balanced` (default) runs all phases; `quality` prefers higher-quality models. See token-optimization docs.
+
+- `phases`: fine-grained control over which phases run. Usually set by `token_profile`, but can be overridden. Keys:
+  - `skip_research`: boolean — skip milestone-level research. Default: `false`.
+  - `skip_reassess`: boolean — skip roadmap reassessment after each slice. Default: `false`.
+  - `skip_slice_research`: boolean — skip per-slice research. Default: `false`.
+
+- `remote_questions`: route interactive questions to Slack/Discord for headless auto-mode. Keys:
+  - `channel`: `"slack"` or `"discord"` — channel type.
+  - `channel_id`: string or number — channel ID.
+  - `timeout_minutes`: number — question timeout in minutes (clamped 1-30).
+  - `poll_interval_seconds`: number — poll interval in seconds (clamped 2-30).
+
+- `notifications`: configures desktop notification behavior during auto-mode. Keys:
+  - `enabled`: boolean — master toggle for all notifications. Default: `true`.
+  - `on_complete`: boolean — notify when a unit completes. Default: `true`.
+  - `on_error`: boolean — notify on errors. Default: `true`.
+  - `on_budget`: boolean — notify when budget thresholds are reached. Default: `true`.
+  - `on_milestone`: boolean — notify when a milestone finishes. Default: `true`.
+  - `on_attention`: boolean — notify when manual attention is needed. Default: `true`.
+
+- `uat_dispatch`: boolean — when `true`, enables UAT (User Acceptance Testing) dispatch mode. Default: `false`.
+
+- `post_unit_hooks`: array — hooks that fire after a unit completes. Each entry has:
+  - `name`: string — unique hook identifier.
+  - `after`: string[] — unit types that trigger this hook (e.g., `["execute-task"]`).
+  - `prompt`: string — prompt sent to the LLM. Supports `{milestoneId}`, `{sliceId}`, `{taskId}` substitutions.
+  - `max_cycles`: number — max times this hook fires per trigger (default: 1, max: 10).
+  - `model`: string — optional model override.
+  - `artifact`: string — expected output file name (relative to task/slice dir). Hook is skipped if file already exists (idempotent).
+  - `retry_on`: string — if this file is produced instead of the artifact, re-run the trigger unit then re-run hooks.
+  - `agent`: string — agent definition file to use for hook execution.
+  - `enabled`: boolean — toggle without removing (default: `true`).
+
+- `pre_dispatch_hooks`: array — hooks that fire before a unit is dispatched. Each entry has:
+  - `name`: string — unique hook identifier.
+  - `before`: string[] — unit types to intercept.
+  - `action`: `"modify"`, `"skip"`, or `"replace"` — what to do with the unit.
+  - `prepend`: string — text prepended to unit prompt (for `"modify"` action).
+  - `append`: string — text appended to unit prompt (for `"modify"` action).
+  - `prompt`: string — replacement prompt (for `"replace"` action; required when action is `"replace"`).
+  - `unit_type`: string — override unit type label (for `"replace"` action).
+  - `skip_if`: string — for `"skip"` action: only skip if this file exists (relative to unit dir).
+  - `model`: string — optional model override when this hook fires.
+  - `enabled`: boolean — toggle without removing (default: `true`).
+
+  **Action validation:**
+  - `"modify"` requires at least one of `prepend` or `append`.
+  - `"replace"` requires `prompt`.
+  - `"skip"` is valid with no additional fields.
+
+  **Known unit types for `before`/`after`:** `research-milestone`, `plan-milestone`, `research-slice`, `plan-slice`, `execute-task`, `complete-slice`, `replan-slice`, `reassess-roadmap`, `run-uat`.
 
 ---
 
@@ -276,3 +342,137 @@ git:
 ```
 
 All git fields are optional. Omit any field to use the default behavior. Project-level preferences override global preferences on a per-field basis.
+
+---
+
+## Budget & Cost Control Example
+
+```yaml
+---
+version: 1
+budget_ceiling: 10.00
+budget_enforcement: pause
+context_pause_threshold: 80
+---
+```
+
+Sets a $10 budget ceiling. Auto-mode pauses when the ceiling is reached. Context window pauses at 80% usage for checkpointing.
+
+---
+
+## Notifications Example
+
+```yaml
+---
+version: 1
+notifications:
+  enabled: true
+  on_complete: false
+  on_error: true
+  on_budget: true
+  on_milestone: true
+  on_attention: true
+---
+```
+
+Disables per-unit completion notifications (noisy in long runs) while keeping error, budget, milestone, and attention notifications enabled.
+
+---
+
+## Post-Unit Hooks Example
+
+```yaml
+---
+version: 1
+post_unit_hooks:
+  - name: code-review
+    after:
+      - execute-task
+    prompt: "Review the code changes in {sliceId}/{taskId} for quality, security, and test coverage."
+    max_cycles: 1
+    artifact: REVIEW.md
+---
+```
+
+Runs an automated code review after each task execution. Skips if `REVIEW.md` already exists (idempotent).
+
+---
+
+## Pre-Dispatch Hooks Examples
+
+**Modify — inject instructions before every task:**
+
+```yaml
+---
+version: 1
+pre_dispatch_hooks:
+  - name: enforce-standards
+    before:
+      - execute-task
+    action: modify
+    prepend: "Follow our TypeScript coding standards and always run linting."
+---
+```
+
+**Skip — skip per-slice research when a research file already exists:**
+
+```yaml
+---
+version: 1
+pre_dispatch_hooks:
+  - name: skip-existing-research
+    before:
+      - research-slice
+    action: skip
+    skip_if: RESEARCH.md
+---
+```
+
+**Replace — substitute a custom prompt for task execution:**
+
+```yaml
+---
+version: 1
+pre_dispatch_hooks:
+  - name: tdd-execute
+    before:
+      - execute-task
+    action: replace
+    prompt: "Implement the task using strict TDD. Write failing tests first, then implement, then refactor."
+    model: claude-opus-4-6
+---
+```
+
+---
+
+## Token Profile & Phases Example
+
+```yaml
+---
+version: 1
+token_profile: budget
+phases:
+  skip_research: true
+  skip_reassess: true
+  skip_slice_research: false
+---
+```
+
+Uses the `budget` profile to minimize token usage, with explicit override to keep slice-level research enabled.
+
+---
+
+## Remote Questions Example
+
+```yaml
+---
+version: 1
+remote_questions:
+  channel: slack
+  channel_id: "C0123456789"
+  timeout_minutes: 15
+  poll_interval_seconds: 10
+---
+```
+
+Routes interactive questions to a Slack channel for headless auto-mode sessions. Questions time out after 15 minutes if unanswered.

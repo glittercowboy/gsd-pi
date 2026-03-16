@@ -12,7 +12,9 @@ import { fileURLToPath } from "node:url";
 import { deriveState } from "./state.js";
 import { GSDDashboardOverlay } from "./dashboard-overlay.js";
 import { showQueue, showDiscuss } from "./guided-flow.js";
-import { startAuto, stopAuto, pauseAuto, isAutoActive, isAutoPaused, isStepMode } from "./auto.js";
+import { startAuto, stopAuto, pauseAuto, isAutoActive, isAutoPaused, isStepMode, stopAutoRemote } from "./auto.js";
+import { resolveProjectRoot } from "./worktree.js";
+import { appendCapture, hasPendingCaptures, loadPendingCaptures } from "./captures.js";
 import {
   getGlobalGSDPreferencesPath,
   getLegacyGlobalGSDPreferencesPath,
@@ -22,7 +24,7 @@ import {
   loadEffectiveGSDPreferences,
   resolveAllSkillReferences,
 } from "./preferences.js";
-import { loadFile, saveFile, appendOverride } from "./files.js";
+import { loadFile, saveFile, appendOverride, appendKnowledge } from "./files.js";
 import {
   formatDoctorIssuesForPrompt,
   formatDoctorReport,
@@ -36,6 +38,7 @@ import { handleRemote } from "../remote-questions/remote-command.js";
 import { handleHistory } from "./history.js";
 import { handleUndo } from "./undo.js";
 import { handleExport } from "./export.js";
+import { nativeBranchList, nativeDetectMainBranch, nativeBranchListMerged, nativeBranchDelete, nativeForEachRef, nativeUpdateRef } from "./native-git-bridge.js";
 
 function dispatchDoctorHeal(pi: ExtensionAPI, scope: string | undefined, reportText: string, structuredIssues: string): void {
   const workflowPath = process.env.GSD_WORKFLOW_PATH ?? join(process.env.HOME ?? "~", ".pi", "GSD-WORKFLOW.md");
@@ -55,14 +58,20 @@ function dispatchDoctorHeal(pi: ExtensionAPI, scope: string | undefined, reportT
   );
 }
 
+/** Resolve the effective project root, accounting for worktree paths. */
+function projectRoot(): string {
+  return resolveProjectRoot(process.cwd());
+}
+
 export function registerGSDCommand(pi: ExtensionAPI): void {
   pi.registerCommand("gsd", {
-    description: "GSD — Get Shit Done: /gsd next|auto|stop|pause|status|queue|history|undo|skip|export|cleanup|prefs|config|hooks|doctor|migrate|remote|steer",
+    description: "GSD — Get Shit Done: /gsd next|auto|stop|pause|status|queue|capture|triage|history|undo|skip|export|cleanup|prefs|config|hooks|doctor|migrate|remote|steer|knowledge",
     getArgumentCompletions: (prefix: string) => {
       const subcommands = [
         "next", "auto", "stop", "pause", "status", "queue", "discuss",
+        "capture", "triage",
         "history", "undo", "skip", "export", "cleanup", "prefs",
-        "config", "hooks", "doctor", "migrate", "remote", "steer", "inspect",
+        "config", "hooks", "doctor", "migrate", "remote", "steer", "inspect", "knowledge",
       ];
       const parts = prefix.trim().split(/\s+/);
 
@@ -125,6 +134,13 @@ export function registerGSDCommand(pi: ExtensionAPI): void {
           .map((cmd) => ({ value: `cleanup ${cmd}`, label: cmd }));
       }
 
+      if (parts[0] === "knowledge" && parts.length <= 2) {
+        const subPrefix = parts[1] ?? "";
+        return ["rule", "pattern", "lesson"]
+          .filter((cmd) => cmd.startsWith(subPrefix))
+          .map((cmd) => ({ value: `knowledge ${cmd}`, label: cmd }));
+      }
+
       if (parts[0] === "doctor") {
         const modePrefix = parts[1] ?? "";
         const modes = ["fix", "heal", "audit"];
@@ -161,23 +177,31 @@ export function registerGSDCommand(pi: ExtensionAPI): void {
 
       if (trimmed === "next" || trimmed.startsWith("next ")) {
         if (trimmed.includes("--dry-run")) {
-          await handleDryRun(ctx, process.cwd());
+          await handleDryRun(ctx, projectRoot());
           return;
         }
         const verboseMode = trimmed.includes("--verbose");
-        await startAuto(ctx, pi, process.cwd(), verboseMode, { step: true });
+        await startAuto(ctx, pi, projectRoot(), verboseMode, { step: true });
         return;
       }
 
       if (trimmed === "auto" || trimmed.startsWith("auto ")) {
         const verboseMode = trimmed.includes("--verbose");
-        await startAuto(ctx, pi, process.cwd(), verboseMode);
+        await startAuto(ctx, pi, projectRoot(), verboseMode);
         return;
       }
 
       if (trimmed === "stop") {
         if (!isAutoActive() && !isAutoPaused()) {
-          ctx.ui.notify("Auto-mode is not running.", "info");
+          // Not running in this process — check for a remote auto-mode session
+          const result = stopAutoRemote(projectRoot());
+          if (result.found) {
+            ctx.ui.notify(`Sent stop signal to auto-mode session (PID ${result.pid}). It will shut down gracefully.`, "info");
+          } else if (result.error) {
+            ctx.ui.notify(`Failed to stop remote auto-mode: ${result.error}`, "error");
+          } else {
+            ctx.ui.notify("Auto-mode is not running.", "info");
+          }
           return;
         }
         await stopAuto(ctx, pi);
@@ -198,42 +222,52 @@ export function registerGSDCommand(pi: ExtensionAPI): void {
       }
 
       if (trimmed === "history" || trimmed.startsWith("history ")) {
-        await handleHistory(trimmed.replace(/^history\s*/, "").trim(), ctx, process.cwd());
+        await handleHistory(trimmed.replace(/^history\s*/, "").trim(), ctx, projectRoot());
         return;
       }
 
       if (trimmed === "undo" || trimmed.startsWith("undo ")) {
-        await handleUndo(trimmed.replace(/^undo\s*/, "").trim(), ctx, pi, process.cwd());
+        await handleUndo(trimmed.replace(/^undo\s*/, "").trim(), ctx, pi, projectRoot());
         return;
       }
 
       if (trimmed.startsWith("skip ")) {
-        await handleSkip(trimmed.replace(/^skip\s*/, "").trim(), ctx, process.cwd());
+        await handleSkip(trimmed.replace(/^skip\s*/, "").trim(), ctx, projectRoot());
         return;
       }
 
       if (trimmed === "export" || trimmed.startsWith("export ")) {
-        await handleExport(trimmed.replace(/^export\s*/, "").trim(), ctx, process.cwd());
+        await handleExport(trimmed.replace(/^export\s*/, "").trim(), ctx, projectRoot());
         return;
       }
 
       if (trimmed === "cleanup branches") {
-        await handleCleanupBranches(ctx, process.cwd());
+        await handleCleanupBranches(ctx, projectRoot());
         return;
       }
 
       if (trimmed === "cleanup snapshots") {
-        await handleCleanupSnapshots(ctx, process.cwd());
+        await handleCleanupSnapshots(ctx, projectRoot());
         return;
       }
 
       if (trimmed === "queue") {
-        await showQueue(ctx, pi, process.cwd());
+        await showQueue(ctx, pi, projectRoot());
         return;
       }
 
       if (trimmed === "discuss") {
-        await showDiscuss(ctx, pi, process.cwd());
+        await showDiscuss(ctx, pi, projectRoot());
+        return;
+      }
+
+      if (trimmed.startsWith("capture ") || trimmed === "capture") {
+        await handleCapture(trimmed.replace(/^capture\s*/, "").trim(), ctx);
+        return;
+      }
+
+      if (trimmed === "triage") {
+        await handleTriage(ctx, pi, process.cwd());
         return;
       }
 
@@ -257,6 +291,15 @@ export function registerGSDCommand(pi: ExtensionAPI): void {
         return;
       }
 
+      if (trimmed.startsWith("knowledge ")) {
+        await handleKnowledge(trimmed.replace(/^knowledge\s+/, "").trim(), ctx);
+        return;
+      }
+      if (trimmed === "knowledge") {
+        ctx.ui.notify("Usage: /gsd knowledge <rule|pattern|lesson> <description>. Example: /gsd knowledge rule Use real DB for integration tests", "warning");
+        return;
+      }
+
       if (trimmed === "migrate" || trimmed.startsWith("migrate ")) {
         const { handleMigrate } = await import("./migrate/command.js");
         await handleMigrate(trimmed.replace(/^migrate\s*/, "").trim(), ctx, pi);
@@ -275,12 +318,12 @@ export function registerGSDCommand(pi: ExtensionAPI): void {
 
       if (trimmed === "") {
         // Bare /gsd defaults to step mode
-        await startAuto(ctx, pi, process.cwd(), false, { step: true });
+        await startAuto(ctx, pi, projectRoot(), false, { step: true });
         return;
       }
 
       ctx.ui.notify(
-        `Unknown: /gsd ${trimmed}. Use /gsd next|auto|stop|pause|status|queue|discuss|history|undo|skip <unit>|export|cleanup|prefs|config|hooks|doctor|migrate|remote|steer <change>|inspect.`,
+        `Unknown: /gsd ${trimmed}. Use /gsd next|auto|stop|pause|status|queue|capture|triage|discuss|history|undo|skip <unit>|export|cleanup|prefs|config|hooks|doctor|migrate|remote|steer <change>|inspect|knowledge <type> <entry>.`,
         "warning",
       );
     },
@@ -288,7 +331,7 @@ export function registerGSDCommand(pi: ExtensionAPI): void {
 }
 
 async function handleStatus(ctx: ExtensionCommandContext): Promise<void> {
-  const basePath = process.cwd();
+  const basePath = projectRoot();
   const state = await deriveState(basePath);
 
   if (state.registry.length === 0) {
@@ -372,9 +415,9 @@ async function handleDoctor(args: string, ctx: ExtensionCommandContext, pi: Exte
   const parts = trimmed ? trimmed.split(/\s+/) : [];
   const mode = parts[0] === "fix" || parts[0] === "heal" || parts[0] === "audit" ? parts[0] : "doctor";
   const requestedScope = mode === "doctor" ? parts[0] : parts[1];
-  const scope = await selectDoctorScope(process.cwd(), requestedScope);
+  const scope = await selectDoctorScope(projectRoot(), requestedScope);
   const effectiveScope = mode === "audit" ? requestedScope : scope;
-  const report = await runGSDDoctor(process.cwd(), {
+  const report = await runGSDDoctor(projectRoot(), {
     fix: mode === "fix" || mode === "heal",
     scope: effectiveScope,
   });
@@ -576,8 +619,10 @@ async function handlePrefsWizard(
     prefs.auto_supervisor = autoSup;
   }
 
-  // ─── Git main branch ────────────────────────────────────────────────────
+  // ─── Git settings ───────────────────────────────────────────────────────
   const git: Record<string, unknown> = (prefs.git as Record<string, unknown>) ?? {};
+
+  // main_branch
   const currentBranch = git.main_branch ? String(git.main_branch) : "";
   const branchInput = await ctx.ui.input(
     `Git main branch${currentBranch ? ` (current: ${currentBranch})` : ""}:`,
@@ -591,6 +636,100 @@ async function handlePrefsWizard(
       delete git.main_branch;
     }
   }
+
+  // Boolean git toggles
+  const gitBooleanFields = [
+    { key: "auto_push", label: "Auto-push commits after committing", defaultVal: false },
+    { key: "push_branches", label: "Push milestone branches to remote", defaultVal: false },
+    { key: "snapshots", label: "Create WIP snapshot commits during long tasks", defaultVal: false },
+  ] as const;
+
+  for (const field of gitBooleanFields) {
+    const current = git[field.key];
+    const currentStr = current !== undefined ? String(current) : "";
+    const choice = await ctx.ui.select(
+      `${field.label}${currentStr ? ` (current: ${currentStr})` : ` (default: ${field.defaultVal})`}:`,
+      ["true", "false", "(keep current)"],
+    );
+    if (choice && choice !== "(keep current)") {
+      git[field.key] = choice === "true";
+    }
+  }
+
+  // remote
+  const currentRemote = git.remote ? String(git.remote) : "";
+  const remoteInput = await ctx.ui.input(
+    `Git remote name${currentRemote ? ` (current: ${currentRemote})` : " (default: origin)"}:`,
+    currentRemote || "origin",
+  );
+  if (remoteInput !== null && remoteInput !== undefined) {
+    const val = remoteInput.trim();
+    if (val && val !== "origin") {
+      git.remote = val;
+    } else if (!val && currentRemote) {
+      delete git.remote;
+    }
+  }
+
+  // pre_merge_check
+  const currentPreMerge = git.pre_merge_check !== undefined ? String(git.pre_merge_check) : "";
+  const preMergeChoice = await ctx.ui.select(
+    `Pre-merge check${currentPreMerge ? ` (current: ${currentPreMerge})` : " (default: false)"}:`,
+    ["true", "false", "auto", "(keep current)"],
+  );
+  if (preMergeChoice && preMergeChoice !== "(keep current)") {
+    if (preMergeChoice === "auto") {
+      git.pre_merge_check = "auto";
+    } else {
+      git.pre_merge_check = preMergeChoice === "true";
+    }
+  }
+
+  // commit_type
+  const currentCommitType = git.commit_type ? String(git.commit_type) : "";
+  const commitTypes = ["feat", "fix", "refactor", "docs", "test", "chore", "perf", "ci", "build", "style", "(inferred — default)", "(keep current)"];
+  const commitChoice = await ctx.ui.select(
+    `Default commit type${currentCommitType ? ` (current: ${currentCommitType})` : ""}:`,
+    commitTypes,
+  );
+  if (commitChoice && typeof commitChoice === "string" && commitChoice !== "(keep current)") {
+    if ((commitChoice as string).startsWith("(inferred")) {
+      delete git.commit_type;
+    } else {
+      git.commit_type = commitChoice;
+    }
+  }
+
+  // merge_strategy
+  const currentMerge = git.merge_strategy ? String(git.merge_strategy) : "";
+  const mergeChoice = await ctx.ui.select(
+    `Merge strategy${currentMerge ? ` (current: ${currentMerge})` : ""}:`,
+    ["squash", "merge", "(keep current)"],
+  );
+  if (mergeChoice && mergeChoice !== "(keep current)") {
+    git.merge_strategy = mergeChoice;
+  }
+
+  // isolation
+  const currentIsolation = git.isolation ? String(git.isolation) : "";
+  const isolationChoice = await ctx.ui.select(
+    `Git isolation strategy${currentIsolation ? ` (current: ${currentIsolation})` : " (default: worktree)"}:`,
+    ["worktree", "branch", "(keep current)"],
+  );
+  if (isolationChoice && isolationChoice !== "(keep current)") {
+    git.isolation = isolationChoice;
+  }
+
+  // ─── Git commit_docs ────────────────────────────────────────────────────
+  const currentCommitDocs = git.commit_docs;
+  const commitDocsChoice = await ctx.ui.select(
+    `Track .gsd/ planning docs in git${currentCommitDocs !== undefined ? ` (current: ${currentCommitDocs})` : ""}:`,
+    ["true", "false", "(keep current)"],
+  );
+  if (commitDocsChoice && commitDocsChoice !== "(keep current)") {
+    git.commit_docs = commitDocsChoice === "true";
+  }
+
   if (Object.keys(git).length > 0) {
     prefs.git = git;
   }
@@ -613,6 +752,89 @@ async function handlePrefsWizard(
   );
   if (uniqueChoice && uniqueChoice !== "(keep current)") {
     prefs.unique_milestone_ids = uniqueChoice === "true";
+  }
+
+  // ─── Budget & cost control ────────────────────────────────────────────
+  const currentCeiling = prefs.budget_ceiling;
+  const ceilingStr = currentCeiling !== undefined ? String(currentCeiling) : "";
+  const ceilingInput = await ctx.ui.input(
+    `Budget ceiling (USD)${ceilingStr ? ` (current: $${ceilingStr})` : " (default: no limit)"}:`,
+    ceilingStr || "",
+  );
+  if (ceilingInput !== null && ceilingInput !== undefined) {
+    const val = ceilingInput.trim().replace(/^\$/, "");
+    if (val && !isNaN(Number(val)) && isFinite(Number(val))) {
+      prefs.budget_ceiling = Number(val);
+    } else if (val && (isNaN(Number(val)) || !isFinite(Number(val)))) {
+      ctx.ui.notify(`Invalid budget ceiling "${val}" — must be a number. Keeping previous value.`, "warning");
+    } else if (!val && ceilingStr) {
+      delete prefs.budget_ceiling;
+    }
+  }
+
+  const currentEnforcement = (prefs.budget_enforcement as string) ?? "";
+  const enforcementChoice = await ctx.ui.select(
+    `Budget enforcement${currentEnforcement ? ` (current: ${currentEnforcement})` : " (default: pause)"}:`,
+    ["warn", "pause", "halt", "(keep current)"],
+  );
+  if (enforcementChoice && enforcementChoice !== "(keep current)") {
+    prefs.budget_enforcement = enforcementChoice;
+  }
+
+  const currentContextPause = prefs.context_pause_threshold;
+  const contextPauseStr = currentContextPause !== undefined ? String(currentContextPause) : "";
+  const contextPauseInput = await ctx.ui.input(
+    `Context pause threshold (0-100%, 0=disabled)${contextPauseStr ? ` (current: ${contextPauseStr}%)` : " (default: 0)"}:`,
+    contextPauseStr || "0",
+  );
+  if (contextPauseInput !== null && contextPauseInput !== undefined) {
+    const val = contextPauseInput.trim().replace(/%$/, "");
+    if (val && !isNaN(Number(val)) && Number(val) >= 0 && Number(val) <= 100) {
+      const num = Number(val);
+      if (num === 0) {
+        delete prefs.context_pause_threshold;
+      } else {
+        prefs.context_pause_threshold = num;
+      }
+    } else if (val && (isNaN(Number(val)) || Number(val) < 0 || Number(val) > 100)) {
+      ctx.ui.notify(`Invalid context pause threshold "${val}" — must be 0-100. Keeping previous value.`, "warning");
+    }
+  }
+
+  // ─── Notifications ────────────────────────────────────────────────────
+  const notif: Record<string, boolean> = (prefs.notifications as Record<string, boolean>) ?? {};
+  const notifFields = [
+    { key: "enabled", label: "Notifications enabled (master toggle)", defaultVal: true },
+    { key: "on_complete", label: "Notify on unit completion", defaultVal: true },
+    { key: "on_error", label: "Notify on errors", defaultVal: true },
+    { key: "on_budget", label: "Notify on budget thresholds", defaultVal: true },
+    { key: "on_milestone", label: "Notify on milestone completion", defaultVal: true },
+    { key: "on_attention", label: "Notify when manual attention needed", defaultVal: true },
+  ] as const;
+
+  for (const field of notifFields) {
+    const current = notif[field.key];
+    const currentStr = current !== undefined ? String(current) : "";
+    const choice = await ctx.ui.select(
+      `${field.label}${currentStr ? ` (current: ${currentStr})` : ` (default: ${field.defaultVal})`}:`,
+      ["true", "false", "(keep current)"],
+    );
+    if (choice && choice !== "(keep current)") {
+      notif[field.key] = choice === "true";
+    }
+  }
+  if (Object.keys(notif).length > 0) {
+    prefs.notifications = notif;
+  }
+
+  // ─── UAT dispatch ─────────────────────────────────────────────────────
+  const currentUat = prefs.uat_dispatch;
+  const uatChoice = await ctx.ui.select(
+    `UAT dispatch mode${currentUat !== undefined ? ` (current: ${currentUat})` : " (default: false)"}:`,
+    ["true", "false", "(keep current)"],
+  );
+  if (uatChoice && uatChoice !== "(keep current)") {
+    prefs.uat_dispatch = uatChoice === "true";
   }
 
   // ─── Serialize to frontmatter ───────────────────────────────────────────
@@ -705,7 +927,10 @@ function serializePreferencesToFrontmatter(prefs: Record<string, unknown>): stri
   const orderedKeys = [
     "version", "always_use_skills", "prefer_skills", "avoid_skills",
     "skill_rules", "custom_instructions", "models", "skill_discovery",
-    "auto_supervisor", "uat_dispatch", "unique_milestone_ids", "budget_ceiling", "remote_questions", "git",
+    "auto_supervisor", "uat_dispatch", "unique_milestone_ids",
+    "budget_ceiling", "budget_enforcement", "context_pause_threshold",
+    "notifications", "remote_questions", "git",
+    "post_unit_hooks", "pre_dispatch_hooks",
   ];
 
   const seen = new Set<string>();
@@ -967,12 +1192,9 @@ async function handleDryRun(ctx: ExtensionCommandContext, basePath: string): Pro
 // ─── Branch cleanup handler ──────────────────────────────────────────────────
 
 async function handleCleanupBranches(ctx: ExtensionCommandContext, basePath: string): Promise<void> {
-  const { execFileSync } = await import("node:child_process");
-
   let branches: string[];
   try {
-    const output = execFileSync("git", ["branch", "--list", "gsd/*"], { cwd: basePath, timeout: 10000, encoding: "utf-8" });
-    branches = output.split("\n").map(b => b.trim().replace(/^\* /, "")).filter(Boolean);
+    branches = nativeBranchList(basePath, "gsd/*");
   } catch {
     ctx.ui.notify("No GSD branches found.", "info");
     return;
@@ -983,18 +1205,11 @@ async function handleCleanupBranches(ctx: ExtensionCommandContext, basePath: str
     return;
   }
 
-  let mainBranch: string;
-  try {
-    mainBranch = execFileSync("git", ["symbolic-ref", "refs/remotes/origin/HEAD", "--short"], { cwd: basePath, timeout: 5000, encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"] })
-      .trim().replace("origin/", "");
-  } catch {
-    mainBranch = "main";
-  }
+  const mainBranch = nativeDetectMainBranch(basePath);
 
   let merged: string[];
   try {
-    const output = execFileSync("git", ["branch", "--merged", mainBranch, "--list", "gsd/*"], { cwd: basePath, timeout: 10000, encoding: "utf-8" });
-    merged = output.split("\n").map(b => b.trim()).filter(Boolean);
+    merged = nativeBranchListMerged(basePath, mainBranch, "gsd/*");
   } catch {
     merged = [];
   }
@@ -1007,7 +1222,7 @@ async function handleCleanupBranches(ctx: ExtensionCommandContext, basePath: str
   let deleted = 0;
   for (const branch of merged) {
     try {
-      execFileSync("git", ["branch", "-d", branch], { cwd: basePath, timeout: 5000, stdio: "ignore" });
+      nativeBranchDelete(basePath, branch, false);
       deleted++;
     } catch { /* skip branches that can't be deleted */ }
   }
@@ -1018,12 +1233,9 @@ async function handleCleanupBranches(ctx: ExtensionCommandContext, basePath: str
 // ─── Snapshot cleanup handler ─────────────────────────────────────────────────
 
 async function handleCleanupSnapshots(ctx: ExtensionCommandContext, basePath: string): Promise<void> {
-  const { execFileSync } = await import("node:child_process");
-
   let refs: string[];
   try {
-    const output = execFileSync("git", ["for-each-ref", "refs/gsd/snapshots/", "--format=%(refname)"], { cwd: basePath, timeout: 10000, encoding: "utf-8" });
-    refs = output.split("\n").filter(Boolean);
+    refs = nativeForEachRef(basePath, "refs/gsd/snapshots/");
   } catch {
     ctx.ui.notify("No snapshot refs found.", "info");
     return;
@@ -1047,13 +1259,138 @@ async function handleCleanupSnapshots(ctx: ExtensionCommandContext, basePath: st
     const sorted = labelRefs.sort();
     for (const old of sorted.slice(0, -5)) {
       try {
-        execFileSync("git", ["update-ref", "-d", old], { cwd: basePath, timeout: 5000, stdio: "ignore" });
+        nativeUpdateRef(basePath, old);
         pruned++;
       } catch { /* skip */ }
     }
   }
 
   ctx.ui.notify(`Pruned ${pruned} old snapshot refs. ${refs.length - pruned} remain.`, "success");
+}
+
+async function handleKnowledge(args: string, ctx: ExtensionCommandContext): Promise<void> {
+  const parts = args.split(/\s+/);
+  const typeArg = parts[0]?.toLowerCase();
+
+  if (!typeArg || !["rule", "pattern", "lesson"].includes(typeArg)) {
+    ctx.ui.notify(
+      "Usage: /gsd knowledge <rule|pattern|lesson> <description>\nExample: /gsd knowledge rule Use real DB for integration tests",
+      "warning",
+    );
+    return;
+  }
+
+  const entryText = parts.slice(1).join(" ").trim();
+  if (!entryText) {
+    ctx.ui.notify(`Usage: /gsd knowledge ${typeArg} <description>`, "warning");
+    return;
+  }
+
+  const type = typeArg as "rule" | "pattern" | "lesson";
+  const basePath = process.cwd();
+  const state = await deriveState(basePath);
+  const scope = state.activeMilestone?.id
+    ? `${state.activeMilestone.id}${state.activeSlice ? `/${state.activeSlice.id}` : ""}`
+    : "global";
+
+  await appendKnowledge(basePath, type, entryText, scope);
+  ctx.ui.notify(`Added ${type} to KNOWLEDGE.md: "${entryText}"`, "success");
+}
+
+// ─── Capture Command ──────────────────────────────────────────────────────────
+
+/**
+ * Handle `/gsd capture "..."` — fire-and-forget thought capture.
+ * Appends to `.gsd/CAPTURES.md` without interrupting auto-mode.
+ * Works in all modes: auto running, paused, stopped, no project.
+ */
+async function handleCapture(args: string, ctx: ExtensionCommandContext): Promise<void> {
+  // Strip surrounding quotes from the argument
+  let text = args.trim();
+  if (!text) {
+    ctx.ui.notify('Usage: /gsd capture "your thought here"', "warning");
+    return;
+  }
+  // Remove wrapping quotes (single or double)
+  if ((text.startsWith('"') && text.endsWith('"')) || (text.startsWith("'") && text.endsWith("'"))) {
+    text = text.slice(1, -1);
+  }
+  if (!text) {
+    ctx.ui.notify('Usage: /gsd capture "your thought here"', "warning");
+    return;
+  }
+
+  const basePath = process.cwd();
+
+  // Ensure .gsd/ exists — capture should work even without a milestone
+  const gsdDir = join(basePath, ".gsd");
+  if (!existsSync(gsdDir)) {
+    mkdirSync(gsdDir, { recursive: true });
+  }
+
+  const id = appendCapture(basePath, text);
+  ctx.ui.notify(`Captured: ${id} — "${text.length > 60 ? text.slice(0, 57) + "..." : text}"`, "info");
+}
+
+// ─── Triage Command ───────────────────────────────────────────────────────────
+
+/**
+ * Handle `/gsd triage` — manually trigger triage of pending captures.
+ * Dispatches the triage prompt to the LLM for classification.
+ * Triage result handling (confirmation UI) is wired in T03.
+ */
+async function handleTriage(ctx: ExtensionCommandContext, pi: ExtensionAPI, basePath: string): Promise<void> {
+  if (!hasPendingCaptures(basePath)) {
+    ctx.ui.notify("No pending captures to triage.", "info");
+    return;
+  }
+
+  const pending = loadPendingCaptures(basePath);
+  ctx.ui.notify(`Triaging ${pending.length} pending capture${pending.length === 1 ? "" : "s"}...`, "info");
+
+  // Build context for the triage prompt
+  const state = await deriveState(basePath);
+  let currentPlan = "";
+  let roadmapContext = "";
+
+  if (state.activeMilestone && state.activeSlice) {
+    const { resolveSliceFile, resolveMilestoneFile } = await import("./paths.js");
+    const planFile = resolveSliceFile(basePath, state.activeMilestone.id, state.activeSlice.id, "PLAN");
+    if (planFile) {
+      const { loadFile: load } = await import("./files.js");
+      currentPlan = (await load(planFile)) ?? "";
+    }
+    const roadmapFile = resolveMilestoneFile(basePath, state.activeMilestone.id, "ROADMAP");
+    if (roadmapFile) {
+      const { loadFile: load } = await import("./files.js");
+      roadmapContext = (await load(roadmapFile)) ?? "";
+    }
+  }
+
+  // Format pending captures for the prompt
+  const capturesList = pending.map(c =>
+    `- **${c.id}**: "${c.text}" (captured: ${c.timestamp})`
+  ).join("\n");
+
+  // Dispatch triage prompt
+  const { loadPrompt } = await import("./prompt-loader.js");
+  const prompt = loadPrompt("triage-captures", {
+    pendingCaptures: capturesList,
+    currentPlan: currentPlan || "(no active slice plan)",
+    roadmapContext: roadmapContext || "(no active roadmap)",
+  });
+
+  const workflowPath = process.env.GSD_WORKFLOW_PATH ?? join(process.env.HOME ?? "~", ".pi", "GSD-WORKFLOW.md");
+  const workflow = readFileSync(workflowPath, "utf-8");
+
+  pi.sendMessage(
+    {
+      customType: "gsd-triage",
+      content: `Read the following GSD workflow protocol and execute exactly.\n\n${workflow}\n\n## Your Task\n\n${prompt}`,
+      display: false,
+    },
+    { triggerTurn: true },
+  );
 }
 
 async function handleSteer(change: string, ctx: ExtensionCommandContext, pi: ExtensionAPI): Promise<void> {

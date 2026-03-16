@@ -38,6 +38,11 @@ export interface Args {
 	themes?: string[];
 	noThemes?: boolean;
 	listModels?: string | true;
+	discover?: boolean;
+	addProvider?: string;
+	addProviderBaseUrl?: string;
+	addProviderApiKey?: string;
+	discoverModels?: string | true;
 	offline?: boolean;
 	verbose?: boolean;
 	messages: string[];
@@ -150,6 +155,18 @@ export function parseArgs(args: string[], extensionFlags?: Map<string, { type: "
 			} else {
 				result.listModels = true;
 			}
+		} else if (arg === "--discover") {
+			result.discover = true;
+		} else if (arg === "--add-provider" && i + 1 < args.length) {
+			result.addProvider = args[++i];
+		} else if (arg === "--base-url" && i + 1 < args.length) {
+			result.addProviderBaseUrl = args[++i];
+		} else if (arg === "--discover-models") {
+			if (i + 1 < args.length && !args[i + 1].startsWith("-") && !args[i + 1].startsWith("@")) {
+				result.discoverModels = args[++i];
+			} else {
+				result.discoverModels = true;
+			}
 		} else if (arg === "--verbose") {
 			result.verbose = true;
 		} else if (arg === "--offline") {
@@ -219,6 +236,10 @@ ${chalk.bold("Options:")}
   --no-themes                    Disable theme discovery and loading
   --export <file>                Export session file to HTML and exit
   --list-models [search]         List available models (with optional fuzzy search)
+  --discover                     Include discovered models in --list-models output
+  --discover-models [provider]   Discover models from provider APIs (all or specific)
+  --add-provider <name>          Add a provider to models.json (use with --base-url, --api-key)
+  --base-url <url>               Base URL for --add-provider
   --verbose                      Force verbose startup (overrides quietStartup setting)
   --offline                      Disable startup network operations (same as PI_OFFLINE=1)
   --help, -h                     Show this help

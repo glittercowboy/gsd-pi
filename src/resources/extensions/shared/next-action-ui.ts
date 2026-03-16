@@ -118,7 +118,7 @@ export async function showNextAction(
 		}
 	});
 
-	return ctx.ui.custom<string>((_tui: TUI, theme: Theme, _kb, done) => {
+	const result = await ctx.ui.custom<string>((_tui: TUI, theme: Theme, _kb, done) => {
 		let cursorIdx = defaultIdx;
 		let cachedLines: string[] | undefined;
 
@@ -194,4 +194,19 @@ export async function showNextAction(
 
 		return { render, invalidate: () => { cachedLines = undefined; }, handleInput };
 	});
+
+	// Fallback for RPC mode where ctx.ui.custom() returns undefined (#447).
+	// Fall back to ctx.ui.select() which IS implemented in RPC mode.
+	if (result === undefined || result === null) {
+		const labels = allActions.map(a => {
+			const tag = a.recommended ? " (recommended)" : "";
+			return `${a.label}${tag}: ${a.description}`;
+		});
+		const selected = await ctx.ui.select(opts.title, labels);
+		if (selected === undefined || selected === null) return "not_yet";
+		const idx = labels.indexOf(selected as string);
+		return idx >= 0 ? allActions[idx].id : "not_yet";
+	}
+
+	return result;
 }

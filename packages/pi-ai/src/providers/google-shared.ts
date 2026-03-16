@@ -204,7 +204,7 @@ export function convertMessages<T extends GoogleApiType>(model: Model<T>, contex
 			// Cloud Code Assist API requires all function responses to be in a single user turn.
 			// Check if the last content is already a user turn with function responses and merge.
 			const lastContent = contents[contents.length - 1];
-			if (lastContent?.role === "user" && lastContent.parts?.some((p: Part) => p.functionResponse)) {
+			if (lastContent?.role === "user" && lastContent.parts?.some((p) => p.functionResponse)) {
 				lastContent.parts.push(functionResponsePart);
 			} else {
 				contents.push({
@@ -237,7 +237,7 @@ export function convertMessages<T extends GoogleApiType>(model: Model<T>, contex
  * This is needed for providers like `google-antigravity` when proxying Claude models,
  * since Google Cloud Code Assist uses a restricted subset of JSON Schema.
  */
-function sanitizeSchemaForGoogle(schema: unknown): unknown {
+export function sanitizeSchemaForGoogle(schema: unknown): unknown {
 	if (!schema || typeof schema !== "object") {
 		return schema;
 	}
@@ -250,29 +250,19 @@ function sanitizeSchemaForGoogle(schema: unknown): unknown {
 	const sanitized: Record<string, unknown> = {};
 
 	for (const [key, value] of Object.entries(obj)) {
-		// Skip patternProperties entirely
+		// Skip patternProperties entirely — not supported by Google's API
 		if (key === "patternProperties") {
 			continue;
 		}
 
-		// Convert const to enum in anyOf/oneOf blocks
+		// Convert const to enum — Google's API rejects the const keyword
 		if (key === "const" && typeof value === "string") {
-			// Only convert if we're inside anyOf/oneOf; otherwise leave as-is
-			// This will be handled by the anyOf/oneOf case below
 			sanitized.enum = [value];
 			continue;
 		}
 
-		// Recursively sanitize nested objects and arrays
-		if (key === "properties" && typeof value === "object") {
-			sanitized[key] = sanitizeSchemaForGoogle(value);
-		} else if (key === "items" && typeof value === "object") {
-			sanitized[key] = sanitizeSchemaForGoogle(value);
-		} else if (key === "anyOf" || key === "oneOf" || key === "allOf") {
-			sanitized[key] = sanitizeSchemaForGoogle(value);
-		} else if (key === "additionalProperties" && typeof value === "object") {
-			sanitized[key] = sanitizeSchemaForGoogle(value);
-		} else if (typeof value === "object" && !Array.isArray(value)) {
+		// Recursively sanitize all nested objects and arrays
+		if (typeof value === "object") {
 			sanitized[key] = sanitizeSchemaForGoogle(value);
 		} else {
 			sanitized[key] = value;
@@ -352,9 +342,10 @@ export function mapStopReason(reason: FinishReason): StopReason {
 		case FinishReason.UNEXPECTED_TOOL_CALL:
 		case FinishReason.NO_IMAGE:
 			return "error";
-		default:
-			// Fallback for new/unknown FinishReason values
-			return "error";
+		default: {
+			const _exhaustive: never = reason;
+			throw new Error(`Unhandled stop reason: ${_exhaustive}`);
+		}
 	}
 }
 

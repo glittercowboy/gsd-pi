@@ -143,7 +143,11 @@ export {
 // Footer data provider (git branch + extension statuses - data not otherwise available to extensions)
 export type { ReadonlyFooterDataProvider } from "./core/footer-data-provider.js";
 export { convertToLlm } from "./core/messages.js";
+export { ModelDiscoveryCache } from "./core/discovery-cache.js";
+export type { DiscoveredModel, DiscoveryResult, ProviderDiscoveryAdapter } from "./core/model-discovery.js";
+export { getDiscoverableProviders, getDiscoveryAdapter } from "./core/model-discovery.js";
 export { ModelRegistry } from "./core/model-registry.js";
+export { ModelsJsonWriter } from "./core/models-json-writer.js";
 export type {
 	PackageManager,
 	PathMetadata,
@@ -307,6 +311,7 @@ export {
 	LoginDialogComponent,
 	ModelSelectorComponent,
 	OAuthSelectorComponent,
+	ProviderManagerComponent,
 	type RenderDiffOptions,
 	rawKeyHint,
 	renderDiff,

@@ -5,7 +5,7 @@
  */
 
 import { clearLock } from "./crash-recovery.js";
-import { execSync } from "node:child_process";
+import { nativeHasChanges } from "./native-git-bridge.js";
 
 // ─── SIGTERM Handling ─────────────────────────────────────────────────────────
 
@@ -47,12 +47,7 @@ export function deregisterSigtermHandler(handler: (() => void) | null): void {
  */
 export function detectWorkingTreeActivity(cwd: string): boolean {
   try {
-    const out = execSync("git status --porcelain", {
-      cwd,
-      stdio: ["pipe", "pipe", "pipe"],
-      timeout: 5000,
-    });
-    return out.toString().trim().length > 0;
+    return nativeHasChanges(cwd);
   } catch {
     return false;
   }

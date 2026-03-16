@@ -8,7 +8,7 @@
 
 import { join } from "node:path";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { execSync } from "node:child_process";
+import { nativeRmCached } from "./native-git-bridge.js";
 
 /**
  * Patterns that are always correct regardless of project type.
@@ -78,13 +78,24 @@ const BASELINE_PATTERNS = [
  * Ensure basePath/.gitignore contains all baseline patterns.
  * Creates the file if missing; appends only missing lines if it exists.
  * Returns true if the file was created or modified, false if already complete.
+ *
+ * When `commitDocs` is false, the entire `.gsd/` directory is added to
+ * .gitignore instead of individual runtime patterns, keeping all GSD
+ * artifacts local-only.
  */
-export function ensureGitignore(basePath: string): boolean {
+export function ensureGitignore(basePath: string, options?: { commitDocs?: boolean }): boolean {
   const gitignorePath = join(basePath, ".gitignore");
+  const commitDocs = options?.commitDocs !== false; // default true
 
   let existing = "";
   if (existsSync(gitignorePath)) {
     existing = readFileSync(gitignorePath, "utf-8");
+  }
+
+  // When commit_docs is false, ensure blanket ".gsd/" is in .gitignore
+  // and skip the self-heal that would remove it.
+  if (!commitDocs) {
+    return ensureBlanketGsdIgnore(gitignorePath, existing);
   }
 
   // Self-heal: remove blanket ".gsd/" lines from pre-v2.14.0 projects.
@@ -152,10 +163,7 @@ export function untrackRuntimeFiles(basePath: string): void {
     // Use -r for directory patterns (trailing slash), strip the slash for the command
     const target = pattern.endsWith("/") ? pattern.slice(0, -1) : pattern;
     try {
-      execSync(`git rm -r --cached ${target}`, {
-        cwd: basePath,
-        stdio: ["ignore", "ignore", "ignore"],
-      });
+      nativeRmCached(basePath, [target]);
     } catch {
       // File not tracked or doesn't exist — expected, ignore
     }
@@ -206,7 +214,7 @@ See \`~/.gsd/agent/extensions/gsd/docs/preferences-reference.md\` for full field
 - \`models\`: Model preferences for specific task types
 - \`skill_discovery\`: Automatic skill detection preferences
 - \`auto_supervisor\`: Supervision and gating rules for autonomous modes
-- \`git\`: Git preferences — \`main_branch\` (default branch name for new repos, e.g., "main", "master", "trunk"), \`auto_push\`, \`snapshots\`, etc.
+- \`git\`: Git preferences — \`main_branch\` (default branch name for new repos, e.g., "main", "master", "trunk"), \`auto_push\`, \`snapshots\`, \`commit_docs\` (set to \`false\` to keep .gsd/ local-only), etc.
 
 ## Examples
 
@@ -224,6 +232,34 @@ custom_instructions:
 `;
 
   writeFileSync(preferencesPath, template, "utf-8");
+  return true;
+}
+
+/**
+ * When commit_docs is false, ensure `.gsd/` is in .gitignore as a blanket
+ * pattern. This keeps all GSD artifacts local-only.
+ * Returns true if the file was modified, false if already complete.
+ */
+function ensureBlanketGsdIgnore(gitignorePath: string, existing: string): boolean {
+  const existingLines = new Set(
+    existing
+      .split("\n")
+      .map((l) => l.trim())
+      .filter((l) => l && !l.startsWith("#")),
+  );
+
+  // Already has blanket .gsd/ ignore
+  if (existingLines.has(".gsd/") || existingLines.has(".gsd")) return false;
+
+  const block = [
+    "",
+    "# ── GSD (local-only, commit_docs: false) ──",
+    ".gsd/",
+    "",
+  ].join("\n");
+
+  const prefix = existing && !existing.endsWith("\n") ? "\n" : "";
+  writeFileSync(gitignorePath, existing + prefix + block, "utf-8");
   return true;
 }
 

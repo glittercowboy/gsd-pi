@@ -79,6 +79,13 @@ export interface FallbackSettings {
 	chains?: Record<string, FallbackChainEntry[]>; // keyed by chain name
 }
 
+export interface ModelDiscoverySettings {
+	enabled?: boolean; // default: false
+	providers?: string[]; // limit discovery to specific providers
+	ttlMinutes?: number; // override default TTLs (in minutes)
+	autoRefreshOnModelSelect?: boolean; // default: false - refresh discovery when opening model selector
+}
+
 export type TransportSetting = Transport;
 
 /**
@@ -134,6 +141,7 @@ export interface Settings {
 	bashInterceptor?: BashInterceptorSettings;
 	taskIsolation?: TaskIsolationSettings;
 	fallback?: FallbackSettings;
+	modelDiscovery?: ModelDiscoverySettings;
 }
 
 /** Deep merge settings: project/overrides take precedence, nested objects merge recursively */
@@ -1075,5 +1083,18 @@ export class SettingsManager {
 			enabled: this.getFallbackEnabled(),
 			chains: this.getFallbackChains(),
 		};
+	}
+
+	getModelDiscoverySettings(): ModelDiscoverySettings {
+		return this.settings.modelDiscovery ?? {};
+	}
+
+	setModelDiscoveryEnabled(enabled: boolean): void {
+		if (!this.globalSettings.modelDiscovery) {
+			this.globalSettings.modelDiscovery = {};
+		}
+		this.globalSettings.modelDiscovery.enabled = enabled;
+		this.markModified("modelDiscovery", "enabled");
+		this.save();
 	}
 }

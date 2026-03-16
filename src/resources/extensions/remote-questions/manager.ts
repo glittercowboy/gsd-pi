@@ -76,6 +76,14 @@ export async function tryRemoteQuestions(
   }
 
   markPromptAnswered(prompt.id, answer);
+
+  // Acknowledge receipt with a ✅ on Discord (Slack threads are self-evident)
+  if (config.channel === "discord" && dispatch.ref) {
+    try {
+      await (adapter as import("./discord-adapter.js").DiscordAdapter).acknowledgeAnswer(dispatch.ref);
+    } catch { /* best-effort */ }
+  }
+
   return {
     content: [{ type: "text", text: JSON.stringify({ answers: formatForTool(answer) }) }],
     details: {

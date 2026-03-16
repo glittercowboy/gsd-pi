@@ -15,11 +15,26 @@ import {
   removeWorktree,
   worktreePath,
 } from "./worktree-manager.js";
+import { detectWorktreeName } from "./worktree.js";
 import {
   MergeConflictError,
+  readIntegrationBranch,
 } from "./git-service.js";
 import { parseRoadmap } from "./files.js";
 import { loadEffectiveGSDPreferences } from "./preferences.js";
+import {
+  nativeGetCurrentBranch,
+  nativeWorkingTreeStatus,
+  nativeAddAll,
+  nativeCommit,
+  nativeCheckoutBranch,
+  nativeMergeSquash,
+  nativeConflictFiles,
+  nativeCheckoutTheirs,
+  nativeAddPaths,
+  nativeRmForce,
+  nativeBranchDelete,
+} from "./native-git-bridge.js";
 
 // ─── Module State ──────────────────────────────────────────────────────────
 
@@ -61,18 +76,6 @@ function nudgeGitBranchCache(previousCwd: string): void {
   }
 }
 
-function getCurrentBranch(cwd: string): string {
-  try {
-    return execSync("git branch --show-current", {
-      cwd,
-      stdio: ["ignore", "pipe", "pipe"],
-      encoding: "utf-8",
-    }).trim();
-  } catch {
-    return "";
-  }
-}
-
 // ─── Auto-Worktree Branch Naming ───────────────────────────────────────────
 
 export function autoWorktreeBranch(milestoneId: string): string {
@@ -90,7 +93,12 @@ export function autoWorktreeBranch(milestoneId: string): string {
  */
 export function createAutoWorktree(basePath: string, milestoneId: string): string {
   const branch = autoWorktreeBranch(milestoneId);
-  const info = createWorktree(basePath, milestoneId, { branch });
+
+  // Use the integration branch recorded in META.json as the start point.
+  // This ensures the worktree branch is created from the branch the user
+  // was on when they started the milestone (e.g. f-setup-gsd-2), not main.
+  const integrationBranch = readIntegrationBranch(basePath, milestoneId) ?? undefined;
+  const info = createWorktree(basePath, milestoneId, { branch, startPoint: integrationBranch });
 
   // Copy .gsd/ planning artifacts from the source repo into the new worktree.
   // Worktrees are fresh git checkouts — untracked files don't carry over.
@@ -186,7 +194,7 @@ export function isInAutoWorktree(basePath: string): boolean {
   const resolvedBase = existsSync(basePath) ? realpathSync(basePath) : basePath;
   const wtDir = join(resolvedBase, ".gsd", "worktrees");
   if (!cwd.startsWith(wtDir)) return false;
-  const branch = getCurrentBranch(cwd);
+  const branch = nativeGetCurrentBranch(cwd);
   return branch.startsWith("milestone/");
 }
 
@@ -233,6 +241,27 @@ export function getAutoWorktreeOriginalBase(): string | null {
   return originalBase;
 }
 
+export function getActiveAutoWorktreeContext(): {
+  originalBase: string;
+  worktreeName: string;
+  branch: string;
+} | null {
+  if (!originalBase) return null;
+  const cwd = process.cwd();
+  const resolvedBase = existsSync(originalBase) ? realpathSync(originalBase) : originalBase;
+  const wtDir = join(resolvedBase, ".gsd", "worktrees");
+  if (!cwd.startsWith(wtDir)) return null;
+  const worktreeName = detectWorktreeName(cwd);
+  if (!worktreeName) return null;
+  const branch = nativeGetCurrentBranch(cwd);
+  if (!branch.startsWith("milestone/")) return null;
+  return {
+    originalBase,
+    worktreeName,
+    branch,
+  };
+}
+
 // ─── Merge Milestone -> Main ───────────────────────────────────────────────
 
 /**
@@ -241,19 +270,11 @@ export function getAutoWorktreeOriginalBase(): string | null {
  */
 function autoCommitDirtyState(cwd: string): boolean {
   try {
-    const status = execSync("git status --porcelain", {
-      cwd,
-      stdio: ["ignore", "pipe", "pipe"],
-      encoding: "utf-8",
-    }).trim();
+    const status = nativeWorkingTreeStatus(cwd);
     if (!status) return false;
-    execFileSync("git", ["add", "-A"], { cwd, stdio: "pipe" });
-    execFileSync("git", ["commit", "-m", "chore: auto-commit before milestone merge"], {
-      cwd,
-      stdio: ["ignore", "pipe", "pipe"],
-      encoding: "utf-8",
-    });
-    return true;
+    nativeAddAll(cwd);
+    const result = nativeCommit(cwd, "chore: auto-commit before milestone merge");
+    return result !== null;
   } catch {
     return false;
   }
@@ -305,16 +326,13 @@ export function mergeMilestoneToMain(
   const previousCwd = process.cwd();
   process.chdir(originalBasePath_);
 
-  // 4. Resolve main branch from preferences
+  // 4. Resolve integration branch — prefer milestone metadata, fall back to preferences / "main"
   const prefs = loadEffectiveGSDPreferences()?.preferences?.git ?? {};
-  const mainBranch = prefs.main_branch || "main";
+  const integrationBranch = readIntegrationBranch(originalBasePath_, milestoneId);
+  const mainBranch = integrationBranch ?? prefs.main_branch ?? "main";
 
-  // 5. Checkout main
-  execSync(`git checkout ${mainBranch}`, {
-    cwd: originalBasePath_,
-    stdio: ["ignore", "pipe", "pipe"],
-    encoding: "utf-8",
-  });
+  // 5. Checkout integration branch
+  nativeCheckoutBranch(originalBasePath_, mainBranch);
 
   // 6. Build rich commit message
   const milestoneTitle = roadmap.title.replace(/^M\d+:\s*/, "").trim() || milestoneId;
@@ -327,85 +345,47 @@ export function mergeMilestoneToMain(
   const commitMessage = subject + body;
 
   // 7. Squash merge — auto-resolve .gsd/ state file conflicts (#530)
-  try {
-    execSync(`git merge --squash ${milestoneBranch}`, {
-      cwd: originalBasePath_,
-      stdio: ["ignore", "pipe", "pipe"],
-      encoding: "utf-8",
-    });
-  } catch (mergeErr) {
-    // Check for conflicts — auto-resolve .gsd/ state files, escalate the rest
-    try {
-      const conflictOutput = execSync("git diff --name-only --diff-filter=U", {
-        cwd: originalBasePath_,
-        encoding: "utf-8",
-        stdio: ["pipe", "pipe", "pipe"],
-      }).trim();
-      if (conflictOutput) {
-        const conflictedFiles = conflictOutput.split("\n").filter(Boolean);
+  const mergeResult = nativeMergeSquash(originalBasePath_, milestoneBranch);
 
-        // Separate .gsd/ state file conflicts from real code conflicts.
-        // GSD state files (STATE.md, completed-units.json, auto.lock, etc.)
-        // diverge between branches during normal operation — always prefer the
-        // milestone branch version since it has the latest execution state.
-        const gsdConflicts = conflictedFiles.filter(f => f.startsWith(".gsd/"));
-        const codeConflicts = conflictedFiles.filter(f => !f.startsWith(".gsd/"));
+  if (!mergeResult.success) {
+    // Check for conflicts — use merge result first, fall back to nativeConflictFiles
+    const conflictedFiles = mergeResult.conflicts.length > 0
+      ? mergeResult.conflicts
+      : nativeConflictFiles(originalBasePath_);
 
-        // Auto-resolve .gsd/ conflicts by accepting the milestone branch version
-        if (gsdConflicts.length > 0) {
-          for (const gsdFile of gsdConflicts) {
-            try {
-              execFileSync("git", ["checkout", "--theirs", "--", gsdFile], {
-                cwd: originalBasePath_,
-                stdio: ["ignore", "pipe", "pipe"],
-                encoding: "utf-8",
-              });
-              execFileSync("git", ["add", "--", gsdFile], {
-                cwd: originalBasePath_,
-                stdio: ["ignore", "pipe", "pipe"],
-                encoding: "utf-8",
-              });
-            } catch {
-              // If checkout --theirs fails, try removing the file from the merge
-              // (it's a runtime file that shouldn't be committed anyway)
-              execFileSync("git", ["rm", "--force", "--", gsdFile], {
-                cwd: originalBasePath_,
-                stdio: ["ignore", "pipe", "pipe"],
-                encoding: "utf-8",
-              });
-            }
+    if (conflictedFiles.length > 0) {
+      // Separate .gsd/ state file conflicts from real code conflicts.
+      // GSD state files (STATE.md, completed-units.json, auto.lock, etc.)
+      // diverge between branches during normal operation — always prefer the
+      // milestone branch version since it has the latest execution state.
+      const gsdConflicts = conflictedFiles.filter(f => f.startsWith(".gsd/"));
+      const codeConflicts = conflictedFiles.filter(f => !f.startsWith(".gsd/"));
+
+      // Auto-resolve .gsd/ conflicts by accepting the milestone branch version
+      if (gsdConflicts.length > 0) {
+        for (const gsdFile of gsdConflicts) {
+          try {
+            nativeCheckoutTheirs(originalBasePath_, [gsdFile]);
+            nativeAddPaths(originalBasePath_, [gsdFile]);
+          } catch {
+            // If checkout --theirs fails, try removing the file from the merge
+            // (it's a runtime file that shouldn't be committed anyway)
+            nativeRmForce(originalBasePath_, [gsdFile]);
           }
         }
-
-        // If there are still non-.gsd conflicts, escalate
-        if (codeConflicts.length > 0) {
-          throw new MergeConflictError(codeConflicts, "squash", milestoneBranch, mainBranch);
-        }
       }
-    } catch (diffErr) {
-      if (diffErr instanceof MergeConflictError) throw diffErr;
+
+      // If there are still non-.gsd conflicts, escalate
+      if (codeConflicts.length > 0) {
+        throw new MergeConflictError(codeConflicts, "squash", milestoneBranch, mainBranch);
+      }
     }
     // No conflicts detected — possibly "already up to date", fall through to commit
   }
 
   // 8. Commit (handle nothing-to-commit gracefully)
-  let nothingToCommit = false;
-  try {
-    execFileSync("git", ["commit", "-m", commitMessage], {
-      cwd: originalBasePath_,
-      stdio: ["ignore", "pipe", "pipe"],
-      encoding: "utf-8",
-    });
-  } catch (err: unknown) {
-    // execSync errors have stdout/stderr as properties -- check those for git's message
-    const errObj = err as { stdout?: string; stderr?: string; message?: string };
-    const combined = [errObj.stdout, errObj.stderr, errObj.message].filter(Boolean).join(" ");
-    if (combined.includes("nothing to commit") || combined.includes("nothing added to commit") || combined.includes("no changes added")) {
-      nothingToCommit = true;
-    } else {
-      throw err;
-    }
-  }
+  const commitResult = nativeCommit(originalBasePath_, commitMessage);
+  const nothingToCommit = commitResult === null;
 
   // 9. Auto-push if enabled
   let pushed = false;
@@ -432,11 +412,7 @@ export function mergeMilestoneToMain(
 
   // 11. Delete milestone branch (after worktree removal so ref is unlocked)
   try {
-    execSync(`git branch -D ${milestoneBranch}`, {
-      cwd: originalBasePath_,
-      stdio: ["ignore", "pipe", "pipe"],
-      encoding: "utf-8",
-    });
+    nativeBranchDelete(originalBasePath_, milestoneBranch);
   } catch {
     // Best-effort
   }

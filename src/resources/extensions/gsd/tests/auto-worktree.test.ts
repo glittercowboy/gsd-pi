@@ -17,6 +17,7 @@ import {
   getAutoWorktreePath,
   enterAutoWorktree,
   getAutoWorktreeOriginalBase,
+  getActiveAutoWorktreeContext,
 } from "../auto-worktree.ts";
 
 import { createTestContext } from "./test-helpers.ts";
@@ -76,6 +77,15 @@ async function main(): Promise<void> {
 
     // ─── getAutoWorktreeOriginalBase ─────────────────────────────────
     assertEq(getAutoWorktreeOriginalBase(), tempDir, "originalBase returns temp dir");
+    assertEq(
+      getActiveAutoWorktreeContext(),
+      {
+        originalBase: tempDir,
+        worktreeName: "M003",
+        branch: "milestone/M003",
+      },
+      "active auto-worktree context reflects the worktree cwd",
+    );
 
     // ─── getAutoWorktreePath ─────────────────────────────────────────
     assertEq(getAutoWorktreePath(tempDir, "M003"), wtPath, "getAutoWorktreePath returns correct path");
@@ -88,6 +98,7 @@ async function main(): Promise<void> {
     assertTrue(!existsSync(wtPath), "worktree directory removed after teardown");
     assertTrue(!isInAutoWorktree(tempDir), "isInAutoWorktree returns false after teardown");
     assertEq(getAutoWorktreeOriginalBase(), null, "originalBase is null after teardown");
+    assertEq(getActiveAutoWorktreeContext(), null, "active auto-worktree context clears after teardown");
 
     // ─── Re-entry: create again, exit without teardown, re-enter ─────
     console.log("\n=== re-entry ===");
@@ -103,6 +114,15 @@ async function main(): Promise<void> {
     assertEq(process.cwd(), entered, "re-entered worktree via enterAutoWorktree");
     assertEq(getAutoWorktreeOriginalBase(), tempDir, "originalBase restored on re-entry");
     assertTrue(isInAutoWorktree(tempDir), "isInAutoWorktree true after re-entry");
+    assertEq(
+      getActiveAutoWorktreeContext(),
+      {
+        originalBase: tempDir,
+        worktreeName: "M003",
+        branch: "milestone/M003",
+      },
+      "active auto-worktree context is restored on re-entry",
+    );
 
     // Cleanup
     teardownAutoWorktree(tempDir, "M003");

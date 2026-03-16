@@ -12,6 +12,14 @@ All relevant context has been preloaded below — the roadmap, current slice pla
 
 {{inlinedContext}}
 
+## Capture Context
+
+The following user-captured thoughts triggered or informed this replan:
+
+{{captureContext}}
+
+Consider these captures when rewriting the remaining tasks — they represent the user's real-time insights about what needs to change.
+
 ## Hard Constraints
 
 - **Do NOT renumber or remove completed tasks.** All `[x]` tasks and their IDs must remain exactly as they are in the plan.

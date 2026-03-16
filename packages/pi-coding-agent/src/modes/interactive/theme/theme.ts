@@ -11,6 +11,11 @@ import {
 } from "@gsd/native";
 import { getCustomThemesDir, getThemesDir } from "../../../config.js";
 
+// Issue #453: native preview highlighting can wedge the entire interactive
+// session after a successful file tool. Keep the safer plain-text path as the
+// default and allow native highlighting only as an explicit opt-in.
+const NATIVE_TUI_HIGHLIGHT_ENABLED = process.env.GSD_ENABLE_NATIVE_TUI_HIGHLIGHT === "1";
+
 // ============================================================================
 // Types & Schema
 // ============================================================================
@@ -955,6 +960,10 @@ function getHighlightColors(t: Theme): HighlightColors {
  * Returns array of highlighted lines.
  */
 export function highlightCode(code: string, lang?: string): string[] {
+	if (!NATIVE_TUI_HIGHLIGHT_ENABLED) {
+		return code.split("\n");
+	}
+
 	const validLang = lang && supportsLanguage(lang) ? lang : null;
 	try {
 		return nativeHighlightCode(code, validLang, getHighlightColors(theme)).split("\n");
@@ -1051,6 +1060,10 @@ export function getMarkdownTheme(): MarkdownTheme {
 		underline: (text: string) => theme.underline(text),
 		strikethrough: (text: string) => chalk.strikethrough(text),
 		highlightCode: (code: string, lang?: string): string[] => {
+			if (!NATIVE_TUI_HIGHLIGHT_ENABLED) {
+				return code.split("\n").map((line) => theme.fg("mdCodeBlock", line));
+			}
+
 			const validLang = lang && supportsLanguage(lang) ? lang : null;
 			try {
 				return nativeHighlightCode(code, validLang, getHighlightColors(theme)).split("\n");

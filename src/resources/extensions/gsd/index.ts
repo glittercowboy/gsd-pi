@@ -29,10 +29,11 @@ import { Type } from "@sinclair/typebox";
 import { registerGSDCommand, loadToolApiKeys } from "./commands.js";
 import { registerExitCommand } from "./exit-command.js";
 import { registerWorktreeCommand, getWorktreeOriginalCwd, getActiveWorktreeName } from "./worktree-command.js";
+import { getActiveAutoWorktreeContext } from "./auto-worktree.js";
 import { saveFile, formatContinue, loadFile, parseContinue, parseSummary, loadActiveOverrides, formatOverridesSection } from "./files.js";
 import { loadPrompt } from "./prompt-loader.js";
 import { deriveState } from "./state.js";
-import { isAutoActive, isAutoPaused, handleAgentEnd, pauseAuto, getAutoDashboardData } from "./auto.js";
+import { isAutoActive, isAutoPaused, handleAgentEnd, pauseAuto, getAutoDashboardData, markToolStart, markToolEnd } from "./auto.js";
 import { saveActivityLog } from "./activity-log.js";
 import { checkAutoStartAfterDiscuss, getDiscussionMilestoneId } from "./guided-flow.js";
 import { GSDDashboardOverlay } from "./dashboard-overlay.js";
@@ -48,10 +49,11 @@ import {
   resolveSlicePath, resolveSliceFile, resolveTaskFile, resolveTaskFiles, resolveTasksDir,
   relSliceFile, relSlicePath, relTaskFile,
   buildSliceFileName, buildMilestoneFileName, gsdRoot, resolveMilestonePath,
+  resolveGsdRootFile,
 } from "./paths.js";
 import { Key } from "@gsd/pi-tui";
 import { join } from "node:path";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { shortcutDesc } from "../shared/terminal.js";
 import { Text } from "@gsd/pi-tui";
 import { pauseAutoForProviderError } from "./provider-error-pause.js";
@@ -502,6 +504,20 @@ export default function (pi: ExtensionAPI) {
       }
     }
 
+    // Load project knowledge if available
+    let knowledgeBlock = "";
+    const knowledgePath = resolveGsdRootFile(process.cwd(), "KNOWLEDGE");
+    if (existsSync(knowledgePath)) {
+      try {
+        const content = readFileSync(knowledgePath, "utf-8").trim();
+        if (content) {
+          knowledgeBlock = `\n\n[PROJECT KNOWLEDGE — Rules, patterns, and lessons learned]\n\n${content}`;
+        }
+      } catch {
+        // File read error — skip knowledge injection
+      }
+    }
+
     // Detect skills installed during this auto-mode session
     let newSkillsBlock = "";
     if (hasSkillSnapshot()) {
@@ -517,6 +533,7 @@ export default function (pi: ExtensionAPI) {
     let worktreeBlock = "";
     const worktreeName = getActiveWorktreeName();
     const worktreeMainCwd = getWorktreeOriginalCwd();
+    const autoWorktree = getActiveAutoWorktreeContext();
     if (worktreeName && worktreeMainCwd) {
       worktreeBlock = [
         "",
@@ -534,10 +551,27 @@ export default function (pi: ExtensionAPI) {
         "All file operations, bash commands, and GSD state resolve against the worktree path above.",
         "Use /worktree merge to merge changes back. Use /worktree return to switch back to the main tree.",
       ].join("\n");
+    } else if (autoWorktree) {
+      worktreeBlock = [
+        "",
+        "",
+        "[WORKTREE CONTEXT — OVERRIDES CURRENT WORKING DIRECTORY ABOVE]",
+        `IMPORTANT: Ignore the "Current working directory" shown earlier in this prompt.`,
+        `The actual current working directory is: ${process.cwd()}`,
+        "",
+        "You are working inside a GSD auto-worktree.",
+        `- Milestone worktree: ${autoWorktree.worktreeName}`,
+        `- Worktree path (this is the real cwd): ${process.cwd()}`,
+        `- Main project: ${autoWorktree.originalBase}`,
+        `- Branch: ${autoWorktree.branch}`,
+        "",
+        "All file operations, bash commands, and GSD state resolve against the worktree path above.",
+        "Write every .gsd artifact in the worktree path above, never in the main project tree.",
+      ].join("\n");
     }
 
     return {
-      systemPrompt: `${event.systemPrompt}\n\n[SYSTEM CONTEXT — GSD]\n\n${systemContent}${preferenceBlock}${newSkillsBlock}${worktreeBlock}`,
+      systemPrompt: `${event.systemPrompt}\n\n[SYSTEM CONTEXT — GSD]\n\n${systemContent}${preferenceBlock}${knowledgeBlock}${newSkillsBlock}${worktreeBlock}`,
       ...(injection
         ? {
           message: {
@@ -771,6 +805,16 @@ export default function (pi: ExtensionAPI) {
     const newBlock = lines.join("\n");
     const existing = await loadFile(discussionPath) ?? `# ${milestoneId} Discussion Log\n\n`;
     await saveFile(discussionPath, existing + newBlock);
+  });
+
+  // ── tool_execution_start/end: track in-flight tools for idle detection ──
+  pi.on("tool_execution_start", async (event) => {
+    if (!isAutoActive()) return;
+    markToolStart(event.toolCallId);
+  });
+
+  pi.on("tool_execution_end", async (event) => {
+    markToolEnd(event.toolCallId);
   });
 }
 

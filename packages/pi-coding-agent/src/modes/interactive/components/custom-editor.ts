@@ -1,4 +1,4 @@
-import { Editor, type EditorOptions, type EditorTheme, type TUI } from "@gsd/pi-tui";
+import { Editor, type EditorOptions, type EditorTheme, type TUI, isKittyProtocolActive } from "@gsd/pi-tui";
 import type { AppAction, KeybindingsManager } from "../../../core/keybindings.js";
 
 /**
@@ -69,6 +69,13 @@ export class CustomEditor extends Editor {
 		// Check all other app actions
 		for (const [action, handler] of this.actionHandlers) {
 			if (action !== "interrupt" && action !== "exit" && this.keybindings.matches(data, action)) {
+				// When kitty protocol is not active, \x1b\r is ambiguous:
+				// it could be alt+enter (followUp) or shift+enter mapped via /terminal-setup.
+				// Prioritize newLine since that's what terminal-setup configures.
+				// Alt+enter followUp still works in kitty-protocol terminals.
+				if (action === "followUp" && !isKittyProtocolActive() && data === "\x1b\r") {
+					break; // Fall through to parent editor's newLine handling
+				}
 				handler();
 				return;
 			}

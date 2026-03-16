@@ -6,11 +6,15 @@
 
 import type { Roadmap, BoundaryMapEntry, RoadmapSliceEntry, RiskLevel } from './types.js';
 
+// Issue #453: auto-mode post-turn reconciliation must stay on the stable JS path
+// unless the native parser is explicitly requested.
+const NATIVE_GSD_PARSER_ENABLED = process.env.GSD_ENABLE_NATIVE_GSD_PARSER === "1";
+
 let nativeModule: {
   parseFrontmatter: (content: string) => { metadata: string; body: string };
   extractSection: (content: string, heading: string, level?: number) => { content: string; found: boolean };
   extractAllSections: (content: string, level?: number) => string;
-  batchParseGsdFiles: (directory: string) => { files: Array<{ path: string; metadata: string; body: string; sections: string }>; count: number };
+  batchParseGsdFiles: (directory: string) => { files: Array<{ path: string; metadata: string; body: string; sections: string; rawContent: string }>; count: number };
   parseRoadmapFile: (content: string) => {
     title: string;
     vision: string;
@@ -18,6 +22,10 @@ let nativeModule: {
     slices: Array<{ id: string; title: string; risk: string; depends: string[]; done: boolean; demo: string }>;
     boundaryMap: Array<{ fromSlice: string; toSlice: string; produces: string; consumes: string }>;
   };
+  scanGsdTree: (directory: string) => Array<{ path: string; name: string; isDir: boolean }>;
+  parseJsonlTail: (filePath: string, maxBytes?: number, maxEntries?: number) => { entries: string; count: number; truncated: boolean };
+  parsePlanFile: (content: string) => NativePlanResult;
+  parseSummaryFile: (content: string) => NativeSummaryResult;
 } | null = null;
 
 let loadAttempted = false;
@@ -25,6 +33,7 @@ let loadAttempted = false;
 function loadNative(): typeof nativeModule {
   if (loadAttempted) return nativeModule;
   loadAttempted = true;
+  if (!NATIVE_GSD_PARSER_ENABLED) return nativeModule;
 
   try {
     // Dynamic import to avoid hard dependency - fails gracefully if native module not built
@@ -108,6 +117,7 @@ export interface BatchParsedFile {
   metadata: Record<string, unknown>;
   body: string;
   sections: Record<string, string>;
+  rawContent: string;
 }
 
 /**
@@ -124,6 +134,7 @@ export function nativeBatchParseGsdFiles(directory: string): BatchParsedFile[] |
     metadata: JSON.parse(f.metadata) as Record<string, unknown>,
     body: f.body,
     sections: JSON.parse(f.sections) as Record<string, string>,
+    rawContent: f.rawContent,
   }));
 }
 
@@ -132,4 +143,125 @@ export function nativeBatchParseGsdFiles(directory: string): BatchParsedFile[] |
  */
 export function isNativeParserAvailable(): boolean {
   return loadNative() !== null;
+}
+
+// ─── Tree Scanning ────────────────────────────────────────────────────────────
+
+export interface GsdTreeEntry {
+  path: string;
+  name: string;
+  isDir: boolean;
+}
+
+/**
+ * Native-backed directory tree scan of a .gsd/ directory.
+ * Returns a flat list of all entries, or null if native module unavailable.
+ */
+export function nativeScanGsdTree(directory: string): GsdTreeEntry[] | null {
+  const native = loadNative();
+  if (!native) return null;
+  return native.scanGsdTree(directory);
+}
+
+// ─── JSONL Parsing ────────────────────────────────────────────────────────────
+
+export interface JsonlParseResult {
+  entries: unknown[];
+  count: number;
+  truncated: boolean;
+}
+
+/**
+ * Native-backed JSONL tail parser. Reads the last `maxBytes` of a JSONL file
+ * and parses up to `maxEntries` entries with constant memory usage.
+ * Returns null if native module unavailable.
+ */
+export function nativeParseJsonlTail(filePath: string, maxBytes?: number, maxEntries?: number): JsonlParseResult | null {
+  const native = loadNative();
+  if (!native) return null;
+  const result = native.parseJsonlTail(filePath, maxBytes, maxEntries);
+  return {
+    entries: JSON.parse(result.entries),
+    count: result.count,
+    truncated: result.truncated,
+  };
+}
+
+// ─── Plan & Summary File Parsing ──────────────────────────────────────────────
+
+export interface NativeTaskEntry {
+  id: string;
+  title: string;
+  description: string;
+  done: boolean;
+  estimate: string;
+  files: string[];
+  verify: string;
+}
+
+export interface NativePlanResult {
+  id: string;
+  title: string;
+  goal: string;
+  demo: string;
+  mustHaves: string[];
+  tasks: NativeTaskEntry[];
+  filesLikelyTouched: string[];
+}
+
+/**
+ * Native-backed plan file parser.
+ * Returns structured plan data or null if native module unavailable.
+ */
+export function nativeParsePlanFile(content: string): NativePlanResult | null {
+  const native = loadNative();
+  if (!native) return null;
+  return native.parsePlanFile(content) as NativePlanResult;
+}
+
+export interface NativeSummaryRequires {
+  slice: string;
+  provides: string;
+}
+
+export interface NativeSummaryFrontmatter {
+  id: string;
+  parent: string;
+  milestone: string;
+  provides: string[];
+  requires: NativeSummaryRequires[];
+  affects: string[];
+  keyFiles: string[];
+  keyDecisions: string[];
+  patternsEstablished: string[];
+  drillDownPaths: string[];
+  observabilitySurfaces: string[];
+  duration: string;
+  verificationResult: string;
+  completedAt: string;
+  blockerDiscovered: boolean;
+}
+
+export interface NativeFileModified {
+  path: string;
+  description: string;
+}
+
+export interface NativeSummaryResult {
+  frontmatter: NativeSummaryFrontmatter;
+  title: string;
+  oneLiner: string;
+  whatHappened: string;
+  deviations: string;
+  filesModified: NativeFileModified[];
+}
+
+/**
+ * Native-backed summary file parser.
+ * Returns structured summary data or null if native module unavailable.
+ */
+export function nativeParseSummaryFile(content: string): NativeSummaryResult | null {
+  const native = loadNative();
+  if (!native) return null;
+  return native.parseSummaryFile(content) as NativeSummaryResult;
 }

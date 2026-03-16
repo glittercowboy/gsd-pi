@@ -122,7 +122,9 @@ const DISPATCH_RULES: DispatchRule[] = [
   },
   {
     name: "reassess-roadmap (post-completion)",
-    match: async ({ state, mid, midTitle, basePath }) => {
+    match: async ({ state, mid, midTitle, basePath, prefs }) => {
+      // Phase skip: skip reassess when preference or profile says so
+      if (prefs?.phases?.skip_reassess) return null;
       const needsReassess = await checkNeedsReassessment(basePath, mid, state);
       if (!needsReassess) return null;
       return {
@@ -160,8 +162,10 @@ const DISPATCH_RULES: DispatchRule[] = [
   },
   {
     name: "pre-planning (no research) → research-milestone",
-    match: async ({ state, mid, midTitle, basePath }) => {
+    match: async ({ state, mid, midTitle, basePath, prefs }) => {
       if (state.phase !== "pre-planning") return null;
+      // Phase skip: skip research when preference or profile says so
+      if (prefs?.phases?.skip_research) return null;
       const researchFile = resolveMilestoneFile(basePath, mid, "RESEARCH");
       if (researchFile) return null; // has research, fall through
       return {
@@ -186,8 +190,10 @@ const DISPATCH_RULES: DispatchRule[] = [
   },
   {
     name: "planning (no research, not S01) → research-slice",
-    match: async ({ state, mid, midTitle, basePath }) => {
+    match: async ({ state, mid, midTitle, basePath, prefs }) => {
       if (state.phase !== "planning") return null;
+      // Phase skip: skip research when preference or profile says so
+      if (prefs?.phases?.skip_research || prefs?.phases?.skip_slice_research) return null;
       const sid = state.activeSlice!.id;
       const sTitle = state.activeSlice!.title;
       const researchFile = resolveSliceFile(basePath, mid, sid, "RESEARCH");

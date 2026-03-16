@@ -5,7 +5,7 @@ import { readFileSync } from "node:fs";
 import { readdirSync } from "node:fs";
 import { resolveMilestoneFile, milestonesDir } from "./paths.js";
 import { parseRoadmapSlices } from "./roadmap-slices.js";
-import { extractMilestoneSeq, milestoneIdSort } from "./guided-flow.js";
+import { findMilestoneIds } from "./guided-flow.js";
 
 const SLICE_DISPATCH_TYPES = new Set([
   "research-slice",
@@ -43,24 +43,12 @@ export function getPriorSliceCompletionBlocker(base: string, _mainBranch: string
   const [targetMid, targetSid] = unitId.split("/");
   if (!targetMid || !targetSid) return null;
 
-  const targetSeq = extractMilestoneSeq(targetMid);
-  if (targetSeq === 0) return null;
-
-  // Scan actual milestone directories instead of iterating by number
-  let milestoneIds: string[];
-  try {
-    milestoneIds = readdirSync(milestonesDir(base), { withFileTypes: true })
-      .filter(d => d.isDirectory())
-      .map(d => {
-        const match = d.name.match(/^(M\d+(?:-[a-z0-9]{6})?)/);
-        return match ? match[1] : null;
-      })
-      .filter((id): id is string => id !== null)
-      .sort(milestoneIdSort)
-      .filter(id => extractMilestoneSeq(id) <= targetSeq);
-  } catch {
-    return null;
-  }
+  // Use findMilestoneIds to respect custom queue order.
+  // Only check milestones that come BEFORE the target in queue order.
+  const allIds = findMilestoneIds(base);
+  const targetIdx = allIds.indexOf(targetMid);
+  if (targetIdx < 0) return null;
+  const milestoneIds = allIds.slice(0, targetIdx + 1);
 
   for (const mid of milestoneIds) {
     // Read from disk (working tree) — always has the latest state

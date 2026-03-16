@@ -1,10 +1,17 @@
 /**
- * List available models with optional fuzzy search
+ * List available models with optional fuzzy search and discovery support
  */
 
 import type { Api, Model } from "@gsd/pi-ai";
 import { fuzzyFilter } from "@gsd/pi-tui";
 import type { ModelRegistry } from "../core/model-registry.js";
+
+export interface ListModelsOptions {
+	/** Include discovered models in output */
+	discover?: boolean;
+	/** Search pattern for fuzzy filtering */
+	searchPattern?: string;
+}
 
 /**
  * Format a number as human-readable (e.g., 200000 -> "200K", 1000000 -> "1M")
@@ -22,10 +29,48 @@ function formatTokenCount(count: number): string {
 }
 
 /**
- * List available models, optionally filtered by search pattern
+ * Discover models from provider APIs and print results.
  */
-export async function listModels(modelRegistry: ModelRegistry, searchPattern?: string): Promise<void> {
-	const models = modelRegistry.getAvailable();
+export async function discoverAndPrintModels(
+	modelRegistry: ModelRegistry,
+	provider?: string,
+): Promise<void> {
+	const providers = provider ? [provider] : undefined;
+
+	console.log("Discovering models...");
+	const results = await modelRegistry.discoverModels(providers);
+
+	for (const result of results) {
+		if (result.error) {
+			console.log(`  ${result.provider}: error - ${result.error}`);
+		} else {
+			console.log(`  ${result.provider}: ${result.models.length} models found`);
+		}
+	}
+}
+
+/**
+ * List available models, optionally filtered by search pattern.
+ * Accepts either a string (backward compat) or ListModelsOptions.
+ */
+export async function listModels(
+	modelRegistry: ModelRegistry,
+	optionsOrSearch?: string | ListModelsOptions,
+): Promise<void> {
+	const options: ListModelsOptions =
+		typeof optionsOrSearch === "string"
+			? { searchPattern: optionsOrSearch }
+			: optionsOrSearch ?? {};
+
+	// If discover flag is set, run discovery first
+	if (options.discover) {
+		await modelRegistry.discoverModels();
+	}
+
+	// Get models — include discovered if discovery was run
+	const models = options.discover
+		? modelRegistry.getAllWithDiscovered()
+		: modelRegistry.getAvailable();
 
 	if (models.length === 0) {
 		console.log("No models available. Set API keys in environment variables.");
@@ -34,12 +79,12 @@ export async function listModels(modelRegistry: ModelRegistry, searchPattern?: s
 
 	// Apply fuzzy filter if search pattern provided
 	let filteredModels: Model<Api>[] = models;
-	if (searchPattern) {
-		filteredModels = fuzzyFilter(models, searchPattern, (m) => `${m.provider} ${m.id}`);
+	if (options.searchPattern) {
+		filteredModels = fuzzyFilter(models, options.searchPattern, (m) => `${m.provider} ${m.id}`);
 	}
 
 	if (filteredModels.length === 0) {
-		console.log(`No models matching "${searchPattern}"`);
+		console.log(`No models matching "${options.searchPattern}"`);
 		return;
 	}
 
@@ -53,15 +98,19 @@ export async function listModels(modelRegistry: ModelRegistry, searchPattern?: s
 	});
 
 	// Calculate column widths
-	const rows = filteredModels.map((m) => ({
-		provider: m.provider,
-		model: m.id,
-		name: m.name,
-		context: formatTokenCount(m.contextWindow),
-		maxOut: formatTokenCount(m.maxTokens),
-		thinking: m.reasoning ? "yes" : "no",
-		images: m.input.includes("image") ? "yes" : "no",
-	}));
+	const rows = filteredModels.map((m) => {
+		const isDiscovered = options.discover && modelRegistry.isDiscovered(m);
+		return {
+			provider: m.provider,
+			model: m.id,
+			name: m.name,
+			context: formatTokenCount(m.contextWindow),
+			maxOut: formatTokenCount(m.maxTokens),
+			thinking: m.reasoning ? "yes" : "no",
+			images: m.input.includes("image") ? "yes" : "no",
+			badge: isDiscovered ? "[discovered]" : "",
+		};
+	});
 
 	const headers = {
 		provider: "provider",
@@ -71,6 +120,7 @@ export async function listModels(modelRegistry: ModelRegistry, searchPattern?: s
 		maxOut: "max-out",
 		thinking: "thinking",
 		images: "images",
+		badge: "",
 	};
 
 	const widths = {
@@ -105,7 +155,10 @@ export async function listModels(modelRegistry: ModelRegistry, searchPattern?: s
 			row.maxOut.padEnd(widths.maxOut),
 			row.thinking.padEnd(widths.thinking),
 			row.images.padEnd(widths.images),
-		].join("  ");
+			row.badge,
+		]
+			.join("  ")
+			.trimEnd();
 		console.log(line);
 	}
 }
