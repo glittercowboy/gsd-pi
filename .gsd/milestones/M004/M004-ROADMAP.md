@@ -70,7 +70,7 @@ This milestone is complete only when all are true:
 - [x] **S03: Surgical Prompt Injection + Dual-Write** `risk:high` `depends:[S01,S02]`
   > After this: All 11 `build*Prompt()` functions in `auto-prompts.ts` use scoped DB queries instead of `inlineGsdRootFile`. Decisions filtered by milestone, requirements filtered by slice. Dual-write re-import in `handleAgentEnd` keeps DB in sync after each dispatch unit. Falls back to filesystem when DB unavailable.
 
-- [ ] **S04: Token Measurement + State Derivation** `risk:medium` `depends:[S03]`
+- [x] **S04: Token Measurement + State Derivation** `risk:medium` `depends:[S03]`
   > After this: `promptCharCount`/`baselineCharCount` in UnitMetrics, measurement wired into all `snapshotUnitMetrics` call sites. `deriveState()` reads content from DB when available. Savings ≥30% confirmed on fixture data.
 
 - [ ] **S05: Worktree DB Isolation** `risk:medium` `depends:[S01,S02]`

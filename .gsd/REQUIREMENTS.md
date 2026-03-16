@@ -67,8 +67,8 @@ This file is the explicit capability and coverage contract for the project.
 - Source: execution (memory-db port)
 - Primary owning slice: M004/S04
 - Supporting slices: M004/S03
-- Validation: unmapped
-- Notes: Port from memory-db. Module-scoped measurement vars reset at top of `dispatchNextUnit`.
+- Validation: S04 — `promptCharCount`/`baselineCharCount` added to UnitMetrics interface and snapshotUnitMetrics opts param. All 11 call sites in auto.ts updated (grep count: 18 ≥ 15). Measurement block wired after finalPrompt assembly using dynamic import of auto-prompts.js. token-savings.test.ts 99 assertions prove 52.2% plan-slice savings, 66.3% decisions-only savings, 32.2% research composite — all exceed 30% threshold.
+- Notes: Port from memory-db. Module-scoped measurement vars reset at top of `dispatchNextUnit`. Dynamic import pattern avoids auto.ts circular dependency.
 
 ### R052 — DB-first state derivation with filesystem fallback
 - Class: core-capability
@@ -78,7 +78,7 @@ This file is the explicit capability and coverage contract for the project.
 - Source: execution (memory-db port)
 - Primary owning slice: M004/S04
 - Supporting slices: M004/S01, M004/S02
-- Validation: unmapped
+- Validation: S04 — DB-first content loading tier added to `_deriveStateImpl` before native batch parser. Queries `SELECT path, full_content FROM artifacts`, populates fileContentCache by absolute path, sets dbContentLoaded=true only when rows.length > 0. derive-state-db.test.ts 51 assertions prove: DB path = identical GSDState, fallback when DB off, empty DB falls through, partial DB fills gaps from disk, multi-milestone registry, cache invalidation.
 - Notes: Port from memory-db. File discovery (which milestones/slices/tasks exist) stays on disk. Only content loading switches to DB.
 
 ### R053 — Worktree DB copy on creation
@@ -663,8 +663,8 @@ This file is the explicit capability and coverage contract for the project.
 | R048 | quality-attribute | active | M004/S02 | M004/S06 | S02 db-writer.test.ts 127 assertions: generators, round-trip parse→generate→parse, write helpers, ID sequencing |
 | R049 | core-capability | active | M004/S03 | M004/S01, M004/S02 | S03 — 19 calls rewired, 52 assertions, scoped filtering proven |
 | R050 | continuity | active | M004/S03 | M004/S06 | S03 — markdown→DB re-import wired in handleAgentEnd, tested. DB→markdown deferred to S06 |
-| R051 | operability | active | M004/S04 | M004/S03 | unmapped |
-| R052 | core-capability | active | M004/S04 | M004/S01, M004/S02 | unmapped |
+| R051 | operability | active | M004/S04 | M004/S03 | S04 token-savings.test.ts 99 assertions: 52.2% plan-slice, 66.3% decisions-only, 32.2% research composite. All 11 snapshotUnitMetrics call sites updated. |
+| R052 | core-capability | active | M004/S04 | M004/S01, M004/S02 | S04 derive-state-db.test.ts 51 assertions: DB path = identical GSDState, fallback, empty DB falls through, partial DB fills gaps, multi-milestone, cache invalidation. |
 | R053 | integration | active | M004/S05 | M004/S01 | unmapped |
 | R054 | integration | active | M004/S05 | M004/S01 | unmapped |
 | R055 | core-capability | active | M004/S06 | M004/S03 | unmapped |
