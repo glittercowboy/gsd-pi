@@ -2491,3 +2491,108 @@ export {
   skipExecuteTask,
   buildLoopRemediationSteps,
 } from "./auto-recovery.js";
+
+/**
+ * Dispatch a hook unit directly, bypassing normal pre-dispatch hooks.
+ * Used for manual hook triggers via /gsd run-hook.
+ */
+export async function dispatchHookUnit(
+  ctx: ExtensionContext,
+  pi: ExtensionAPI,
+  hookName: string,
+  triggerUnitType: string,
+  triggerUnitId: string,
+  hookPrompt: string,
+  hookModel: string | undefined,
+  targetBasePath: string,
+): Promise<boolean> {
+  // Ensure auto-mode is active
+  if (!active) {
+    // Initialize auto-mode state minimally
+    active = true;
+    stepMode = true;
+    cmdCtx = ctx as ExtensionCommandContext;
+    basePath = targetBasePath;
+    autoStartTime = Date.now();
+    currentUnit = null;
+    completedUnits = [];
+  }
+
+  const hookUnitType = `hook/${hookName}`;
+  const hookStartedAt = Date.now();
+  
+  // Set up the trigger unit as the "current" unit so post-unit hooks can reference it
+  currentUnit = { type: triggerUnitType, id: triggerUnitId, startedAt: hookStartedAt };
+  
+  // Create a new session for the hook
+  const result = await cmdCtx!.newSession();
+  if (result.cancelled) {
+    await stopAuto(ctx, pi);
+    return false;
+  }
+
+  // Update current unit to the hook unit
+  currentUnit = { type: hookUnitType, id: triggerUnitId, startedAt: hookStartedAt };
+  
+  // Write runtime record
+  writeUnitRuntimeRecord(basePath, hookUnitType, triggerUnitId, hookStartedAt, {
+    phase: "dispatched",
+    wrapupWarningSent: false,
+    timeoutAt: null,
+    lastProgressAt: hookStartedAt,
+    progressCount: 0,
+    lastProgressKind: "dispatch",
+  });
+
+  // Switch model if specified
+  if (hookModel) {
+    const availableModels = ctx.modelRegistry.getAvailable();
+    const match = availableModels.find(m =>
+      m.id === hookModel || `${m.provider}/${m.id}` === hookModel,
+    );
+    if (match) {
+      try {
+        await pi.setModel(match);
+      } catch { /* non-fatal — use current model */ }
+    }
+  }
+
+  // Write lock
+  const sessionFile = ctx.sessionManager.getSessionFile();
+  writeLock(lockBase(), hookUnitType, triggerUnitId, completedUnits.length, sessionFile);
+
+  // Set up timeout
+  clearUnitTimeout();
+  const supervisor = resolveAutoSupervisorConfig();
+  const hookHardTimeoutMs = (supervisor.hard_timeout_minutes ?? 30) * 60 * 1000;
+  unitTimeoutHandle = setTimeout(async () => {
+    unitTimeoutHandle = null;
+    if (!active) return;
+    if (currentUnit) {
+      writeUnitRuntimeRecord(basePath, hookUnitType, triggerUnitId, hookStartedAt, {
+        phase: "timeout",
+        timeoutAt: Date.now(),
+      });
+    }
+    ctx.ui.notify(
+      `Hook ${hookName} exceeded ${supervisor.hard_timeout_minutes ?? 30}min timeout. Pausing auto-mode.`,
+      "warning",
+    );
+    resetHookState();
+    await pauseAuto(ctx, pi);
+  }, hookHardTimeoutMs);
+
+  // Update status
+  ctx.ui.setStatus("gsd-auto", stepMode ? "next" : "auto");
+  ctx.ui.notify(`Running post-unit hook: ${hookName}`, "info");
+
+  // Send the hook prompt
+  console.log(`[dispatchHookUnit] Sending prompt of length ${hookPrompt.length}`);
+  console.log(`[dispatchHookUnit] Prompt preview: ${hookPrompt.substring(0, 200)}...`);
+  pi.sendMessage(
+    { customType: "gsd-auto", content: hookPrompt, display: true },
+    { triggerTurn: true },
+  );
+  
+  return true;
+}
