@@ -46,6 +46,7 @@ import type { GSDPreferences } from "./preferences.js";
 import { classifyUnitComplexity, tierLabel } from "./complexity-classifier.js";
 import { resolveModelForComplexity } from "./model-router.js";
 import { initRoutingHistory, resetRoutingHistory, recordOutcome } from "./routing-history.js";
+import { extractAndSaveLesson, clearRetryTracking } from "./automatic-lessons.js";
 import {
   checkPostUnitHooks,
   getActiveHook,
@@ -2428,6 +2429,23 @@ async function dispatchNextUnit(
       if (completedUnits.length > 200) {
         completedUnits = completedUnits.slice(-200);
       }
+      
+      // Automatic lesson extraction from completed tasks
+      // Extracts lessons for tasks with retries, token overruns, or decision revisions
+      const dispatchKey = `${currentUnit.type}/${currentUnit.id}`;
+      const dispatchCount = unitDispatchCount.get(dispatchKey) ?? 1;
+      const retryCount = Math.max(0, dispatchCount - 1);
+      void extractAndSaveLesson(
+        currentUnit.type,
+        currentUnit.id,
+        basePath,
+        retryCount,
+        [] // taskTags could be extracted from task metadata in future
+      ).catch(() => {
+        // Non-fatal — don't let lesson extraction break completion
+      });
+      clearRetryTracking(dispatchKey);
+      
       clearUnitRuntimeRecord(basePath, currentUnit.type, currentUnit.id);
       unitDispatchCount.delete(`${currentUnit.type}/${currentUnit.id}`);
       unitRecoveryCount.delete(`${currentUnit.type}/${currentUnit.id}`);
