@@ -383,6 +383,10 @@ The best practice for working in teams is to ensure unique milestone names acros
 .gsd/STATE.md
 # Per-developer token/cost accumulator
 .gsd/metrics.json
+# SQLite context store — runtime cache, regenerated on launch
+.gsd/gsd.db
+# Discussion session manifest — per-session ephemeral state
+.gsd/DISCUSSION-MANIFEST.json
 # Raw JSONL session dumps — crash recovery forensics, auto-pruned
 .gsd/activity/
 # Unit execution records — dispatch phase, timeouts, recovery tracking

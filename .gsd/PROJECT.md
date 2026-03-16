@@ -42,7 +42,7 @@ See `.gsd/REQUIREMENTS.md` for the explicit capability contract, requirement sta
 
 ## Milestone Sequence
 
-- [x] M001: Proactive Secret Management — Front-loaded API key collection into planning so auto-mode runs uninterrupted (10 requirements validated)
-- [x] M002: Browser Tools Performance & Intelligence — Module decomposition, action pipeline optimization, sharp-based screenshots, form intelligence, intent-ranked retrieval, semantic actions, 108-test suite (12 requirements validated)
-- [x] M003: Worktree-Isolated Git Architecture — Auto-worktree per milestone, --no-ff slice merges, milestone squash to main, preferences + backwards compat, self-healing git repair, doctor health checks, full e2e test suite (13 requirements validated)
-- [ ] M004: SQLite Context Store — Surgical context injection via SQLite-backed query layer, replacing whole-file prompt dumps with scoped DB queries for ≥30% token savings
+- [x] M001-h5msp6: Proactive Secret Management — Front-loaded API key collection into planning so auto-mode runs uninterrupted (10 requirements validated)
+- [x] M002-zbyhgi: Browser Tools Performance & Intelligence — Module decomposition, action pipeline optimization, sharp-based screenshots, form intelligence, intent-ranked retrieval, semantic actions, 108-test suite (12 requirements validated)
+- [x] M003-h2xpxp: Worktree-Isolated Git Architecture — Auto-worktree per milestone, --no-ff slice merges, milestone squash to main, preferences + backwards compat, self-healing git repair, doctor health checks, full e2e test suite (13 requirements validated)
+- [ ] M004-w9oh0t: SQLite Context Store — Surgical context injection via SQLite-backed query layer, replacing whole-file prompt dumps with scoped DB queries for ≥30% token savings
