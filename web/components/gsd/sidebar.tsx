@@ -194,6 +194,7 @@ export function MilestoneExplorer({ isConnecting = false }: { isConnecting?: boo
     commandInFlight: workspace.commandInFlight,
     bootStatus: workspace.bootStatus,
     hasMilestones: milestones.length > 0,
+    projectDetectionKind: workspace.boot?.projectDetection?.kind ?? null,
   })
 
   const handleCommand = (command: string) => {

@@ -265,6 +265,30 @@ export interface WorkspaceOnboardingState {
   bridgeAuthRefresh: WorkspaceOnboardingBridgeAuthRefreshState
 }
 
+// ─── Project Detection ──────────────────────────────────────────────────────
+
+export type ProjectDetectionKind =
+  | "active-gsd"
+  | "empty-gsd"
+  | "v1-legacy"
+  | "brownfield"
+  | "blank"
+
+export interface ProjectDetectionSignals {
+  hasGsdFolder: boolean
+  hasPlanningFolder: boolean
+  hasGitRepo: boolean
+  hasPackageJson: boolean
+  fileCount: number
+}
+
+export interface ProjectDetection {
+  kind: ProjectDetectionKind
+  signals: ProjectDetectionSignals
+}
+
+// ─── Boot Payload ───────────────────────────────────────────────────────────
+
 export interface WorkspaceBootPayload {
   project: {
     cwd: string
@@ -277,6 +301,7 @@ export interface WorkspaceBootPayload {
   onboardingNeeded: boolean
   resumableSessions: BootResumableSession[]
   bridge: BridgeRuntimeSnapshot
+  projectDetection: ProjectDetection
 }
 
 export interface BridgeStatusEvent {

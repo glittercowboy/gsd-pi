@@ -168,6 +168,7 @@ export function DualTerminal() {
     commandInFlight: state.commandInFlight,
     bootStatus: state.bootStatus,
     hasMilestones: (workspace?.milestones.length ?? 0) > 0,
+    projectDetectionKind: boot?.projectDetection?.kind ?? null,
   })
 
   const handleWorkflowAction = (command: string) => {

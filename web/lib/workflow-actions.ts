@@ -11,6 +11,8 @@ export interface WorkflowActionInput {
   commandInFlight: string | null
   bootStatus: string
   hasMilestones: boolean
+  /** When set, suppresses the action bar if the welcome screen is handling initialization. */
+  projectDetectionKind?: string | null
 }
 
 export interface WorkflowAction {
@@ -27,7 +29,17 @@ export interface WorkflowActionResult {
 }
 
 export function deriveWorkflowAction(input: WorkflowActionInput): WorkflowActionResult {
-  const { phase, autoActive, autoPaused, onboardingLocked, commandInFlight, bootStatus, hasMilestones } = input
+  const { phase, autoActive, autoPaused, onboardingLocked, commandInFlight, bootStatus, hasMilestones, projectDetectionKind } = input
+
+  // When the project welcome screen is active, it handles the initialization CTA.
+  // Suppress the action bar to avoid duplicate/confusing buttons.
+  if (
+    projectDetectionKind &&
+    projectDetectionKind !== "active-gsd" &&
+    projectDetectionKind !== "empty-gsd"
+  ) {
+    return { primary: null, secondaries: [], disabled: true, disabledReason: "Project setup pending" }
+  }
 
   // Determine disabled state and reason
   let disabled = false

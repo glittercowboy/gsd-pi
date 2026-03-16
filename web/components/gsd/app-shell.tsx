@@ -209,7 +209,12 @@ function WorkspaceChrome() {
               <Dashboard />
             ) : (
               <>
-                {activeView === "dashboard" && <Dashboard />}
+                {activeView === "dashboard" && (
+                  <Dashboard
+                    onSwitchView={handleViewChange}
+                    onExpandTerminal={() => setIsTerminalExpanded(true)}
+                  />
+                )}
                 {activeView === "power" && <DualTerminal />}
                 {activeView === "roadmap" && <Roadmap />}
                 {activeView === "files" && <FilesView />}

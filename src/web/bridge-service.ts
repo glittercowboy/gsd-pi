@@ -465,6 +465,79 @@ export interface GSDWorkspaceIndex {
   validationIssues: Array<Record<string, unknown>>;
 }
 
+// ─── Project Detection ──────────────────────────────────────────────────────
+
+export type ProjectDetectionKind =
+  | "active-gsd"    // .gsd with milestones — normal operation
+  | "empty-gsd"     // .gsd exists but no milestones (freshly bootstrapped)
+  | "v1-legacy"     // .planning/ exists, no .gsd
+  | "brownfield"    // existing code (git, package.json, files) but no .gsd
+  | "blank";        // empty/near-empty folder
+
+export interface ProjectDetectionSignals {
+  hasGsdFolder: boolean;
+  hasPlanningFolder: boolean;
+  hasGitRepo: boolean;
+  hasPackageJson: boolean;
+  fileCount: number;
+}
+
+export interface ProjectDetection {
+  kind: ProjectDetectionKind;
+  signals: ProjectDetectionSignals;
+}
+
+function detectProjectKind(projectCwd: string): ProjectDetection {
+  const checkExists = getBridgeDeps().existsSync ?? existsSync;
+
+  const hasGsdFolder = checkExists(join(projectCwd, ".gsd"));
+  const hasPlanningFolder = checkExists(join(projectCwd, ".planning"));
+  const hasGitRepo = checkExists(join(projectCwd, ".git"));
+  const hasPackageJson = checkExists(join(projectCwd, "package.json"));
+
+  // Count top-level non-dot entries (cheap heuristic for "has code")
+  let fileCount = 0;
+  try {
+    const entries = readdirSync(projectCwd);
+    fileCount = entries.filter(e => !e.startsWith(".")).length;
+  } catch {
+    // Can't read dir — treat as blank
+  }
+
+  const signals: ProjectDetectionSignals = {
+    hasGsdFolder,
+    hasPlanningFolder,
+    hasGitRepo,
+    hasPackageJson,
+    fileCount,
+  };
+
+  let kind: ProjectDetectionKind;
+
+  if (hasGsdFolder) {
+    // Check if milestones exist
+    const milestonesDir = join(projectCwd, ".gsd", "milestones");
+    let hasMilestones = false;
+    try {
+      const dirs = readdirSync(milestonesDir, { withFileTypes: true });
+      hasMilestones = dirs.some(d => d.isDirectory());
+    } catch {
+      // No milestones dir or can't read it
+    }
+    kind = hasMilestones ? "active-gsd" : "empty-gsd";
+  } else if (hasPlanningFolder) {
+    kind = "v1-legacy";
+  } else if (hasGitRepo || hasPackageJson || fileCount > 2) {
+    kind = "brownfield";
+  } else {
+    kind = "blank";
+  }
+
+  return { kind, signals };
+}
+
+// ─── Boot Payload ───────────────────────────────────────────────────────────
+
 export interface BridgeBootPayload {
   project: {
     cwd: string;
@@ -477,6 +550,7 @@ export interface BridgeBootPayload {
   onboardingNeeded: boolean;
   resumableSessions: BootResumableSession[];
   bridge: BridgeRuntimeSnapshot;
+  projectDetection: ProjectDetection;
 }
 
 export type BridgeStatusEvent = {
@@ -1935,6 +2009,7 @@ export async function collectBootPayload(): Promise<BridgeBootPayload> {
     onboardingNeeded: onboarding.locked,
     resumableSessions: sessions.map((session) => toBootResumableSession(session, bridgeSnapshot.activeSessionFile)),
     bridge: bridgeSnapshot,
+    projectDetection: detectProjectKind(config.projectCwd),
   };
 }
 
