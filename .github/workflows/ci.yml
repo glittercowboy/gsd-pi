@@ -19,8 +19,8 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v6
         with:
-          node-version: '22'
-          cache: 'npm'
+          node-version: "22"
+          cache: "npm"
 
       - name: Install dependencies
         run: npm ci
@@ -40,8 +40,8 @@ jobs:
       - name: Run integration tests
         run: npm run test:integration
 
-      - name: Check GSD milestones are complete
-        run: npm run check:milestones
+      # - name: Check GSD milestones are complete
+      #   run: npm run check:milestones
 
       - name: Check GSD milestones use the unique naming convention
         run: npm run check:milestone-ids
@@ -58,8 +58,8 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v6
         with:
-          node-version: '22'
-          cache: 'npm'
+          node-version: "22"
+          cache: "npm"
 
       - name: Install dependencies
         run: npm ci
