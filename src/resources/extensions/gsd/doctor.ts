@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, unlinkSync } from "node:fs";
 import { join, sep } from "node:path";
 
 import { loadFile, parsePlan, parseRoadmap, parseSummary, saveFile, parseTaskPlanMustHaves, countMustHavesMentionedInSummary } from "./files.js";
@@ -9,6 +9,8 @@ import { listWorktrees } from "./worktree-manager.js";
 import { abortAndReset } from "./git-self-heal.js";
 import { RUNTIME_EXCLUSION_PATHS } from "./git-service.js";
 import { nativeIsRepo, nativeWorktreeRemove, nativeBranchList, nativeBranchDelete, nativeLsFiles, nativeRmCached } from "./native-git-bridge.js";
+import { readCrashLock, isLockProcessAlive, clearLock } from "./crash-recovery.js";
+import { ensureGitignore } from "./gitignore.js";
 
 export type DoctorSeverity = "info" | "warning" | "error";
 export type DoctorIssueCode =
@@ -32,7 +34,14 @@ export type DoctorIssueCode =
   | "stale_milestone_branch"
   | "corrupt_merge_state"
   | "tracked_runtime_files"
-  | "legacy_slice_branches";
+  | "legacy_slice_branches"
+  | "stale_crash_lock"
+  | "orphaned_completed_units"
+  | "stale_hook_state"
+  | "activity_log_bloat"
+  | "state_file_stale"
+  | "state_file_missing"
+  | "gitignore_missing_patterns";
 
 export interface DoctorIssue {
   severity: DoctorSeverity;
@@ -657,6 +666,275 @@ async function checkGitHealth(
   }
 }
 
+// ── Runtime Health Checks ──────────────────────────────────────────────────
+// Checks for stale crash locks, orphaned completed-units, stale hook state,
+// activity log bloat, STATE.md drift, and gitignore drift.
+
+async function checkRuntimeHealth(
+  basePath: string,
+  issues: DoctorIssue[],
+  fixesApplied: string[],
+  shouldFix: (code: DoctorIssueCode) => boolean,
+): Promise<void> {
+  const root = gsdRoot(basePath);
+
+  // ── Stale crash lock ──────────────────────────────────────────────────
+  try {
+    const lock = readCrashLock(basePath);
+    if (lock) {
+      const alive = isLockProcessAlive(lock);
+      if (!alive) {
+        issues.push({
+          severity: "error",
+          code: "stale_crash_lock",
+          scope: "project",
+          unitId: "project",
+          message: `Stale auto.lock from PID ${lock.pid} (started ${lock.startedAt}, was executing ${lock.unitType} ${lock.unitId}) — process is no longer running`,
+          file: ".gsd/auto.lock",
+          fixable: true,
+        });
+
+        if (shouldFix("stale_crash_lock")) {
+          clearLock(basePath);
+          fixesApplied.push("cleared stale auto.lock");
+        }
+      }
+    }
+  } catch {
+    // Non-fatal — crash lock check failed
+  }
+
+  // ── Orphaned completed-units keys ─────────────────────────────────────
+  try {
+    const completedKeysFile = join(root, "completed-units.json");
+    if (existsSync(completedKeysFile)) {
+      const raw = readFileSync(completedKeysFile, "utf-8");
+      const keys: string[] = JSON.parse(raw);
+      const orphaned: string[] = [];
+
+      for (const key of keys) {
+        // Key format: "unitType/unitId" e.g. "execute-task/M001/S01/T01"
+        const slashIdx = key.indexOf("/");
+        if (slashIdx === -1) continue;
+        const unitType = key.slice(0, slashIdx);
+        const unitId = key.slice(slashIdx + 1);
+
+        // Only validate artifact-producing unit types
+        const { verifyExpectedArtifact } = await import("./auto-recovery.js");
+        if (!verifyExpectedArtifact(unitType, unitId, basePath)) {
+          orphaned.push(key);
+        }
+      }
+
+      if (orphaned.length > 0) {
+        issues.push({
+          severity: "warning",
+          code: "orphaned_completed_units",
+          scope: "project",
+          unitId: "project",
+          message: `${orphaned.length} completed-unit key(s) reference missing artifacts: ${orphaned.slice(0, 3).join(", ")}${orphaned.length > 3 ? "..." : ""}`,
+          file: ".gsd/completed-units.json",
+          fixable: true,
+        });
+
+        if (shouldFix("orphaned_completed_units")) {
+          const { removePersistedKey } = await import("./auto-recovery.js");
+          for (const key of orphaned) {
+            removePersistedKey(basePath, key);
+          }
+          fixesApplied.push(`removed ${orphaned.length} orphaned completed-unit key(s)`);
+        }
+      }
+    }
+  } catch {
+    // Non-fatal — completed-units check failed
+  }
+
+  // ── Stale hook state ──────────────────────────────────────────────────
+  try {
+    const hookStateFile = join(root, "hook-state.json");
+    if (existsSync(hookStateFile)) {
+      const raw = readFileSync(hookStateFile, "utf-8");
+      const state = JSON.parse(raw);
+      const hasCycleCounts = state.cycleCounts && typeof state.cycleCounts === "object"
+        && Object.keys(state.cycleCounts).length > 0;
+
+      // Only flag if there are actual cycle counts AND no auto-mode is running
+      if (hasCycleCounts) {
+        const lock = readCrashLock(basePath);
+        const autoRunning = lock ? isLockProcessAlive(lock) : false;
+
+        if (!autoRunning) {
+          issues.push({
+            severity: "info",
+            code: "stale_hook_state",
+            scope: "project",
+            unitId: "project",
+            message: `hook-state.json has ${Object.keys(state.cycleCounts).length} residual cycle count(s) from a previous session`,
+            file: ".gsd/hook-state.json",
+            fixable: true,
+          });
+
+          if (shouldFix("stale_hook_state")) {
+            const { clearPersistedHookState } = await import("./post-unit-hooks.js");
+            clearPersistedHookState(basePath);
+            fixesApplied.push("cleared stale hook-state.json");
+          }
+        }
+      }
+    }
+  } catch {
+    // Non-fatal — hook state check failed
+  }
+
+  // ── Activity log bloat ────────────────────────────────────────────────
+  try {
+    const activityDir = join(root, "activity");
+    if (existsSync(activityDir)) {
+      const files = readdirSync(activityDir);
+      let totalSize = 0;
+      for (const f of files) {
+        try {
+          totalSize += statSync(join(activityDir, f)).size;
+        } catch {
+          // stat failed — skip
+        }
+      }
+
+      const totalMB = totalSize / (1024 * 1024);
+      const BLOAT_FILE_THRESHOLD = 500;
+      const BLOAT_SIZE_MB = 100;
+
+      if (files.length > BLOAT_FILE_THRESHOLD || totalMB > BLOAT_SIZE_MB) {
+        issues.push({
+          severity: "warning",
+          code: "activity_log_bloat",
+          scope: "project",
+          unitId: "project",
+          message: `Activity logs: ${files.length} files, ${totalMB.toFixed(1)}MB (thresholds: ${BLOAT_FILE_THRESHOLD} files / ${BLOAT_SIZE_MB}MB)`,
+          file: ".gsd/activity/",
+          fixable: true,
+        });
+
+        if (shouldFix("activity_log_bloat")) {
+          const { pruneActivityLogs } = await import("./activity-log.js");
+          pruneActivityLogs(activityDir, 7); // 7-day retention
+          fixesApplied.push("pruned activity logs (7-day retention)");
+        }
+      }
+    }
+  } catch {
+    // Non-fatal — activity log check failed
+  }
+
+  // ── STATE.md health ───────────────────────────────────────────────────
+  try {
+    const stateFilePath = resolveGsdRootFile(basePath, "STATE");
+    const milestonesPath = milestonesDir(basePath);
+
+    if (existsSync(milestonesPath)) {
+      if (!existsSync(stateFilePath)) {
+        issues.push({
+          severity: "warning",
+          code: "state_file_missing",
+          scope: "project",
+          unitId: "project",
+          message: "STATE.md is missing — state display will not work",
+          file: ".gsd/STATE.md",
+          fixable: true,
+        });
+
+        if (shouldFix("state_file_missing")) {
+          const state = await deriveState(basePath);
+          await saveFile(stateFilePath, buildStateMarkdown(state));
+          fixesApplied.push("created STATE.md from derived state");
+        }
+      } else {
+        // Check if STATE.md is stale by comparing active milestone/slice/phase
+        const currentContent = readFileSync(stateFilePath, "utf-8");
+        const state = await deriveState(basePath);
+        const freshContent = buildStateMarkdown(state);
+
+        // Extract key fields for comparison — don't compare full content
+        // since timestamp/formatting differences are normal
+        const extractFields = (content: string) => {
+          const milestone = content.match(/\*\*Active Milestone:\*\*\s*(.+)/)?.[1]?.trim() ?? "";
+          const slice = content.match(/\*\*Active Slice:\*\*\s*(.+)/)?.[1]?.trim() ?? "";
+          const phase = content.match(/\*\*Phase:\*\*\s*(.+)/)?.[1]?.trim() ?? "";
+          return { milestone, slice, phase };
+        };
+
+        const current = extractFields(currentContent);
+        const fresh = extractFields(freshContent);
+
+        if (current.milestone !== fresh.milestone || current.slice !== fresh.slice || current.phase !== fresh.phase) {
+          issues.push({
+            severity: "warning",
+            code: "state_file_stale",
+            scope: "project",
+            unitId: "project",
+            message: `STATE.md is stale — shows "${current.phase}" but derived state is "${fresh.phase}"`,
+            file: ".gsd/STATE.md",
+            fixable: true,
+          });
+
+          if (shouldFix("state_file_stale")) {
+            await saveFile(stateFilePath, freshContent);
+            fixesApplied.push("rebuilt STATE.md from derived state");
+          }
+        }
+      }
+    }
+  } catch {
+    // Non-fatal — STATE.md check failed
+  }
+
+  // ── Gitignore drift ───────────────────────────────────────────────────
+  try {
+    const gitignorePath = join(basePath, ".gitignore");
+    if (existsSync(gitignorePath) && nativeIsRepo(basePath)) {
+      const content = readFileSync(gitignorePath, "utf-8");
+      const existingLines = new Set(
+        content.split("\n").map(l => l.trim()).filter(l => l && !l.startsWith("#")),
+      );
+
+      // Check for critical runtime patterns that must be present
+      const criticalPatterns = [
+        ".gsd/activity/",
+        ".gsd/runtime/",
+        ".gsd/auto.lock",
+        ".gsd/gsd.db",
+        ".gsd/completed-units.json",
+      ];
+
+      // If blanket .gsd/ or .gsd is present, all patterns are covered
+      const hasBlanketIgnore = existingLines.has(".gsd/") || existingLines.has(".gsd");
+
+      if (!hasBlanketIgnore) {
+        const missing = criticalPatterns.filter(p => !existingLines.has(p));
+        if (missing.length > 0) {
+          issues.push({
+            severity: "warning",
+            code: "gitignore_missing_patterns",
+            scope: "project",
+            unitId: "project",
+            message: `${missing.length} critical GSD runtime pattern(s) missing from .gitignore: ${missing.join(", ")}`,
+            file: ".gitignore",
+            fixable: true,
+          });
+
+          if (shouldFix("gitignore_missing_patterns")) {
+            ensureGitignore(basePath);
+            fixesApplied.push("added missing GSD runtime patterns to .gitignore");
+          }
+        }
+      }
+    }
+  } catch {
+    // Non-fatal — gitignore check failed
+  }
+}
+
 export async function runGSDDoctor(basePath: string, options?: { fix?: boolean; scope?: string; fixLevel?: "task" | "all" }): Promise<DoctorReport> {
   const issues: DoctorIssue[] = [];
   const fixesApplied: string[] = [];
@@ -699,6 +977,9 @@ export async function runGSDDoctor(basePath: string, options?: { fix?: boolean; 
 
   // Git health checks (orphaned worktrees, stale branches, corrupt merge state, tracked runtime files)
   await checkGitHealth(basePath, issues, fixesApplied, shouldFix);
+
+  // Runtime health checks (crash locks, completed-units, hook state, activity logs, STATE.md, gitignore)
+  await checkRuntimeHealth(basePath, issues, fixesApplied, shouldFix);
 
   const milestonesPath = milestonesDir(basePath);
   if (!existsSync(milestonesPath)) {
