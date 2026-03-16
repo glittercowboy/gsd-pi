@@ -49,6 +49,11 @@ Observable behaviors:
 - When source has no `gsd.db`: copy skips silently, no error
 - When worktree DB absent at merge time: reconcile skips silently, no error
 
+Failure-path / diagnostic checks:
+- `reconcileWorktreeDb(mainDbPath, "/nonexistent/path.db")` returns `{ decisions:0, requirements:0, artifacts:0, conflicts:[] }` — no throw (verified by Test 4 + Test 5 in integration suite)
+- On reconcile failure: `gsd-db:` prefix is emitted to stderr — observable via `node --experimental-sqlite ... 2>&1 | grep "gsd-db:"`
+- Post-merge DB state queryable: `openDatabase(join(basePath, ".gsd", "gsd.db"))` + `getActiveDecisions()` from `context-store.ts`
+
 ## Observability / Diagnostics
 
 - Runtime signals: existing `gsd-db:` stderr prefix for reconcile failures; copy errors non-fatal (caught silently)
@@ -70,7 +75,7 @@ Observable behaviors:
   - Verify: `npx tsc --noEmit` clean; existing tests pass (`npm test`)
   - Done when: TypeScript compiles clean, zero regressions in existing test suite
 
-- [ ] **T02: Wire reconcile into worktree-command.ts + write integration tests** `est:45m`
+- [x] **T02: Wire reconcile into worktree-command.ts + write integration tests** `est:45m`
   - Why: Closes the manual `/worktree merge` path (R054) and proves both hooks with real git fixtures
   - Files: `src/resources/extensions/gsd/worktree-command.ts`, `src/resources/extensions/gsd/tests/worktree-db-integration.test.ts`
   - Do: In `handleMerge` (worktree-command.ts), before the `mergeWorktreeToMain(basePath, name, commitMessage)` call in the deterministic path, add a dynamic import reconcile block: `const wtDbPath = join(worktreePath(basePath, name), ".gsd", "gsd.db")` and `const mainDbPath = join(basePath, ".gsd", "gsd.db")`, guard with `existsSync(wtDbPath) && existsSync(mainDbPath)`, dynamic import `reconcileWorktreeDb` from `./gsd-db.js`, non-fatal try/catch. Then write `worktree-db-integration.test.ts` with real git repo fixtures (follow `auto-worktree.test.ts` pattern: tmpdir + git init + initial commit + .gsd/). Test cases: (1) copy — create worktree after seeding `gsd.db` in source, assert DB appears in worktree; (2) copy skip — no `gsd.db` in source, assert no error and no DB in worktree; (3) reconcile — open DB in worktree, insert a decision row, call `reconcileWorktreeDb` into a fresh main DB, assert row present in main; (4) reconcile skip — absent worktree DB, assert reconcile call does not throw.
