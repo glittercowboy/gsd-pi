@@ -15,17 +15,6 @@ This file is the explicit capability and coverage contract for the project.
 - Validation: S01 gsd-db.test.ts (41 assertions) proves provider detection, schema init, CRUD, views, WAL, transactions, fallback. context-store.test.ts (56 assertions) proves query filtering and formatters. worktree-db.test.ts (36 assertions) proves copy/reconcile.
 - Notes: Port from memory-db worktree `gsd-db.ts`. Tiered provider chain proven on Node 22.20.0. `node:sqlite` returns null-prototype rows — DbAdapter normalizes via spread.
 
-### R046 — Graceful degradation when SQLite unavailable
-- Class: continuity
-- Status: active
-- Description: When no SQLite provider loads, all query functions return empty results and all prompt builders fall back to `inlineGsdRootFile` filesystem loading. No crash, no visible error.
-- Why it matters: SQLite must be optional. Users on exotic platforms or old Node versions must not be blocked.
-- Source: execution (memory-db port)
-- Primary owning slice: M004/S01
-- Supporting slices: M004/S03
-- Validation: S01 DB layer fallback proven — queryDecisions/queryRequirements return [], queryArtifact/queryProject return null when DB unavailable (gsd-db.test.ts, context-store.test.ts). Prompt builder fallback path not yet wired (S03).
-- Notes: Every query function guards with `isDbAvailable()` + try/catch. Every prompt builder falls back to existing `inlineGsdRootFile`.
-
 ### R047 — Auto-migration from markdown to DB on first run
 - Class: core-capability
 - Status: active
@@ -56,8 +45,8 @@ This file is the explicit capability and coverage contract for the project.
 - Source: user
 - Primary owning slice: M004/S03
 - Supporting slices: M004/S01, M004/S02
-- Validation: unmapped
-- Notes: Port from memory-db DB-aware helpers. Must be rewired into current `auto-prompts.ts` (not the old monolithic auto.ts). 19 `inlineGsdRootFile` calls to replace across 11 prompt builders.
+- Validation: S03 — all 19 inlineGsdRootFile data-artifact calls replaced with DB-aware helpers across 9 prompt builders. Decisions scoped by milestoneId, requirements scoped by sliceId in slice-level builders. prompt-db.test.ts 52 assertions prove scoped queries, formatted output, wrapper patterns, fallback, and re-import. grep confirms zero direct inlineGsdRootFile calls in builder bodies.
+- Notes: Port from memory-db DB-aware helpers. Rewired into current `auto-prompts.ts`. 19 calls replaced, 3 DB-aware helpers added.
 
 ### R050 — Dual-write keeping markdown and DB in sync
 - Class: continuity
@@ -67,8 +56,8 @@ This file is the explicit capability and coverage contract for the project.
 - Source: execution (memory-db port)
 - Primary owning slice: M004/S03
 - Supporting slices: M004/S06
-- Validation: unmapped
-- Notes: Re-import in `handleAgentEnd` after auto-commit. DB-first write in structured tools triggers markdown generation.
+- Validation: S03 — markdown-to-DB direction wired: migrateFromMarkdown(basePath) called in handleAgentEnd after doctor/rebuildState/commit, guarded by isDbAvailable(), non-fatal. prompt-db.test.ts re-import section proves updated markdown is reflected in DB queries. DB-to-markdown direction (structured tools) deferred to S06.
+- Notes: Re-import in `handleAgentEnd` after auto-commit. DB-first write in structured tools triggers markdown generation (S06).
 
 ### R051 — Token measurement with before/after comparison
 - Class: operability
@@ -148,6 +137,17 @@ This file is the explicit capability and coverage contract for the project.
 - Notes: Memory-db proved: 52.2% plan-slice, 66.3% decisions-only, 32.2% research composite, 42.4% lifecycle. Must re-prove against current codebase.
 
 ## Validated
+
+### R046 — Graceful degradation when SQLite unavailable
+- Class: continuity
+- Status: validated
+- Description: When no SQLite provider loads, all query functions return empty results and all prompt builders fall back to `inlineGsdRootFile` filesystem loading. No crash, no visible error.
+- Why it matters: SQLite must be optional. Users on exotic platforms or old Node versions must not be blocked.
+- Source: execution (memory-db port)
+- Primary owning slice: M004/S01
+- Supporting slices: M004/S03
+- Validation: S01 DB layer fallback proven — queryDecisions/queryRequirements return [], queryArtifact/queryProject return null when DB unavailable (gsd-db.test.ts, context-store.test.ts). S03 prompt builder fallback wired — all 3 DB-aware helpers fall back to inlineGsdRootFile when isDbAvailable() returns false (prompt-db.test.ts fallback section). All auto.ts lifecycle hooks guarded by isDbAvailable() with non-fatal try/catch.
+- Notes: Every query function guards with `isDbAvailable()` + try/catch. Every prompt builder falls back to existing `inlineGsdRootFile`.
 
 ### R029 — Auto-worktree creation on milestone start
 - Class: core-capability
@@ -658,11 +658,11 @@ This file is the explicit capability and coverage contract for the project.
 | R043 | quality-attribute | deferred | none | none | unmapped |
 | R044 | anti-feature | out-of-scope | none | none | n/a |
 | R045 | core-capability | active | M004/S01 | none | S01 133 assertions: provider, schema, CRUD, views, WAL, transactions, query, formatters, worktree ops, fallback |
-| R046 | continuity | active | M004/S01 | M004/S03 | S01 DB layer fallback proven (returns empty). Prompt builder fallback pending S03 |
+| R046 | continuity | validated | M004/S01 | M004/S03 | S01 DB layer fallback + S03 prompt builder fallback + lifecycle hooks: full chain proven |
 | R047 | core-capability | active | M004/S02 | M004/S01 | S02 md-importer.test.ts 70 assertions: parsers, supersession, orchestrator, idempotency, missing files, round-trip |
 | R048 | quality-attribute | active | M004/S02 | M004/S06 | S02 db-writer.test.ts 127 assertions: generators, round-trip parse→generate→parse, write helpers, ID sequencing |
-| R049 | core-capability | active | M004/S03 | M004/S01, M004/S02 | unmapped |
-| R050 | continuity | active | M004/S03 | M004/S06 | unmapped |
+| R049 | core-capability | active | M004/S03 | M004/S01, M004/S02 | S03 — 19 calls rewired, 52 assertions, scoped filtering proven |
+| R050 | continuity | active | M004/S03 | M004/S06 | S03 — markdown→DB re-import wired in handleAgentEnd, tested. DB→markdown deferred to S06 |
 | R051 | operability | active | M004/S04 | M004/S03 | unmapped |
 | R052 | core-capability | active | M004/S04 | M004/S01, M004/S02 | unmapped |
 | R053 | integration | active | M004/S05 | M004/S01 | unmapped |
@@ -673,9 +673,9 @@ This file is the explicit capability and coverage contract for the project.
 
 ## Coverage Summary
 
-- Active requirements: 13
+- Active requirements: 12
 - Mapped to slices: 13
-- Validated: 35
+- Validated: 36
 - Deferred: 5
 - Out of scope: 4
 - Unmapped active requirements: 0

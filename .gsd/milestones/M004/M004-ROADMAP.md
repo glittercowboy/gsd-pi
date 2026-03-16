@@ -67,7 +67,7 @@ This milestone is complete only when all are true:
 - [x] **S02: Markdown Importers + Auto-Migration** `risk:medium` `depends:[S01]`
   > After this: Existing GSD project with markdown files starts up → gsd.db appears silently with all artifact types imported. Round-trip fidelity proven for every artifact type — import then regenerate produces identical output.
 
-- [ ] **S03: Surgical Prompt Injection + Dual-Write** `risk:high` `depends:[S01,S02]`
+- [x] **S03: Surgical Prompt Injection + Dual-Write** `risk:high` `depends:[S01,S02]`
   > After this: All 11 `build*Prompt()` functions in `auto-prompts.ts` use scoped DB queries instead of `inlineGsdRootFile`. Decisions filtered by milestone, requirements filtered by slice. Dual-write re-import in `handleAgentEnd` keeps DB in sync after each dispatch unit. Falls back to filesystem when DB unavailable.
 
 - [ ] **S04: Token Measurement + State Derivation** `risk:medium` `depends:[S03]`
