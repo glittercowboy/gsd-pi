@@ -390,10 +390,8 @@ async function handleQueueReorder(
     filesToAdd.push(`.gsd/milestones/${r.milestone}/${r.milestone}-CONTEXT.md`);
   }
   try {
-    execSync(`git add ${filesToAdd.join(" ")} && git commit -m "docs: reorder queue"`, {
-      cwd: basePath,
-      stdio: ["ignore", "pipe", "pipe"],
-    });
+    nativeAddPaths(basePath, filesToAdd);
+    nativeCommit(basePath, "docs: reorder queue");
   } catch {
     // Commit may fail if nothing changed or git hooks block — non-fatal
   }

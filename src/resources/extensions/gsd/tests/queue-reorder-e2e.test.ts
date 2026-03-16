@@ -278,4 +278,4 @@ console.log('\n=== E2E: depends_on inline format preserved after partial removal
   }
 }
 
-report('queue-reorder-e2e');
+report();
