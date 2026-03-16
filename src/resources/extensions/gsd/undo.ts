@@ -6,7 +6,8 @@ import type { ExtensionCommandContext, ExtensionAPI } from "@gsd/pi-coding-agent
 import { existsSync, readFileSync, writeFileSync, unlinkSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
-import { deriveState, invalidateStateCache } from "./state.js";
+import { deriveState } from "./state.js";
+import { invalidateAllCaches } from "./cache.js";
 import { gsdRoot, resolveTasksDir, resolveSlicePath, buildTaskFileName } from "./paths.js";
 import { sendDesktopNotification } from "./notifications.js";
 
@@ -118,7 +119,7 @@ export async function handleUndo(args: string, ctx: ExtensionCommandContext, _pi
   }
 
   // 6. Re-derive state
-  invalidateStateCache();
+  invalidateAllCaches();
   await deriveState(basePath);
 
   // Build result message
