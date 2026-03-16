@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { parseSlackReply, parseDiscordResponse, formatForDiscord } from "../../remote-questions/format.ts";
+import { parseSlackReply, parseDiscordResponse, formatForDiscord, formatForSlack, parseSlackReactionResponse } from "../../remote-questions/format.ts";
 import { resolveRemoteConfig, isValidChannelId } from "../../remote-questions/config.ts";
 import { sanitizeError } from "../../remote-questions/manager.ts";
 
@@ -92,6 +92,21 @@ test("parseDiscordResponse rejects multi-question reaction parsing", () => {
 
   assert.match(String(result.answers.first.user_note), /single-question prompts/i);
   assert.match(String(result.answers.second.user_note), /single-question prompts/i);
+});
+
+test("parseSlackReactionResponse handles single-question reactions", () => {
+  const result = parseSlackReactionResponse(["two"], [{
+    id: "choice",
+    header: "Choice",
+    question: "Pick one",
+    allowMultiple: false,
+    options: [
+      { label: "Alpha", description: "A" },
+      { label: "Beta", description: "B" },
+    ],
+  }]);
+
+  assert.deepEqual(result, { answers: { choice: { answers: ["Beta"] } } });
 });
 
 test("parseSlackReply truncates user_note longer than 500 chars", () => {
@@ -187,6 +202,65 @@ test("formatForDiscord includes context source in footer when present", () => {
   const { embeds } = formatForDiscord(prompt);
   assert.equal(embeds.length, 1);
   assert.ok(embeds[0].footer?.text.includes("auto-mode-dispatch"), "footer should include context source");
+});
+
+test("formatForSlack includes context source when present", () => {
+  const blocks = formatForSlack({
+    id: "slack-1",
+    channel: "slack",
+    createdAt: Date.now(),
+    timeoutAt: Date.now() + 60000,
+    pollIntervalMs: 5000,
+    context: { source: "ask_user_questions" },
+    questions: [{
+      id: "q1",
+      header: "Confirm",
+      question: "Proceed?",
+      options: [
+        { label: "Yes", description: "Continue" },
+        { label: "No", description: "Stop" },
+      ],
+      allowMultiple: false,
+    }],
+  });
+
+  const sourceBlock = blocks.find((block) => block.type === "context" && block.elements?.some((el) => el.text.includes("Source:")));
+  assert.ok(sourceBlock, "Slack blocks should include a context source block");
+});
+
+test("formatForSlack multi-question prompts explain semicolon and newline reply format", () => {
+  const blocks = formatForSlack({
+    id: "slack-2",
+    channel: "slack",
+    createdAt: Date.now(),
+    timeoutAt: Date.now() + 60000,
+    pollIntervalMs: 5000,
+    questions: [
+      {
+        id: "q1",
+        header: "First",
+        question: "Pick one",
+        options: [
+          { label: "Alpha", description: "A" },
+          { label: "Beta", description: "B" },
+        ],
+        allowMultiple: false,
+      },
+      {
+        id: "q2",
+        header: "Second",
+        question: "Explain",
+        options: [
+          { label: "Gamma", description: "G" },
+          { label: "Delta", description: "D" },
+        ],
+        allowMultiple: false,
+      },
+    ],
+  });
+
+  const instructionBlock = blocks.find((block) => block.type === "context" && block.elements?.some((el) => el.text.includes("one line per question")));
+  assert.ok(instructionBlock, "Slack multi-question prompts should explain one-line or semicolon reply format");
 });
 
 test("formatForDiscord omits source from footer when context is absent", () => {
@@ -354,6 +428,27 @@ test("DiscordAdapter source-level: acknowledgeAnswer method exists", () => {
   );
   assert.ok(adapterSrc.includes("async acknowledgeAnswer"), "should have acknowledgeAnswer method");
   assert.ok(adapterSrc.includes("✅"), "should use checkmark emoji for acknowledgement");
+});
+
+test("SlackAdapter source-level: supports reaction polling and acknowledgement", () => {
+  const adapterSrc = readFileSync(
+    join(__dirname, "..", "..", "remote-questions", "slack-adapter.ts"),
+    "utf-8",
+  );
+  assert.ok(adapterSrc.includes("reactions.get"), "should poll Slack reactions");
+  assert.ok(adapterSrc.includes("reactions.add"), "should add Slack reactions");
+  assert.ok(adapterSrc.includes("async acknowledgeAnswer"), "should acknowledge Slack answers");
+  assert.ok(adapterSrc.includes("white_check_mark"), "should use a checkmark acknowledgement reaction");
+});
+
+test("Slack setup source-level: offers channel picker with manual fallback", () => {
+  const commandSrc = readFileSync(
+    join(__dirname, "..", "..", "remote-questions", "remote-command.ts"),
+    "utf-8",
+  );
+  assert.ok(commandSrc.includes("users.conversations"), "Slack setup should query Slack channels");
+  assert.ok(commandSrc.includes("Select a Slack channel"), "Slack setup should present a channel picker");
+  assert.ok(commandSrc.includes("Enter channel ID manually"), "Slack setup should preserve manual fallback");
 });
 
 test("DiscordAdapter source-level: resolves guild ID for message URLs", () => {

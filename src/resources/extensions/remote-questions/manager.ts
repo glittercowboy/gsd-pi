@@ -5,8 +5,8 @@
 import { randomUUID } from "node:crypto";
 import type { ChannelAdapter, RemotePrompt, RemoteQuestion, RemoteAnswer } from "./types.js";
 import { resolveRemoteConfig, type ResolvedConfig } from "./config.js";
-import { SlackAdapter } from "./slack-adapter.js";
 import { DiscordAdapter } from "./discord-adapter.js";
+import { SlackAdapter } from "./slack-adapter.js";
 import { createPromptRecord, writePromptRecord, markPromptAnswered, markPromptDispatched, markPromptStatus, updatePromptRecord } from "./store.js";
 
 interface ToolResult {
@@ -77,10 +77,10 @@ export async function tryRemoteQuestions(
 
   markPromptAnswered(prompt.id, answer);
 
-  // Acknowledge receipt with a ✅ on Discord (Slack threads are self-evident)
-  if (config.channel === "discord" && dispatch.ref) {
+  // Best-effort acknowledgement gives remote users a visible receipt signal.
+  if (dispatch.ref) {
     try {
-      await (adapter as import("./discord-adapter.js").DiscordAdapter).acknowledgeAnswer(dispatch.ref);
+      await adapter.acknowledgeAnswer?.(dispatch.ref);
     } catch { /* best-effort */ }
   }
 

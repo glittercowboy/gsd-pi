@@ -3,12 +3,10 @@
  */
 
 import type { ChannelAdapter, RemotePrompt, RemoteDispatchResult, RemoteAnswer, RemotePromptRef } from "./types.js";
-import { formatForDiscord, parseDiscordResponse } from "./format.js";
+import { formatForDiscord, parseDiscordResponse, DISCORD_NUMBER_EMOJIS } from "./format.js";
 
 const DISCORD_API = "https://discord.com/api/v10";
 const PER_REQUEST_TIMEOUT_MS = 15_000;
-const NUMBER_EMOJIS = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣"];
-
 export class DiscordAdapter implements ChannelAdapter {
   readonly name = "discord" as const;
   private botUserId: string | null = null;
@@ -102,7 +100,7 @@ export class DiscordAdapter implements ChannelAdapter {
 
   private async checkReactions(prompt: RemotePrompt, ref: RemotePromptRef): Promise<RemoteAnswer | null> {
     const reactions: Array<{ emoji: string; count: number }> = [];
-    for (const emoji of NUMBER_EMOJIS) {
+    for (const emoji of DISCORD_NUMBER_EMOJIS) {
       try {
         const users = await this.discordApi("GET", `/channels/${ref.channelId}/messages/${ref.messageId}/reactions/${encodeURIComponent(emoji)}`);
         if (Array.isArray(users)) {

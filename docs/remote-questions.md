@@ -36,14 +36,14 @@ The setup wizard:
 The setup wizard:
 1. Prompts for your Slack bot token (`xoxb-...`)
 2. Validates the token
-3. Prompts for a channel ID
+3. Lists channels the bot can access (with manual ID fallback)
 4. Sends a test message to confirm permissions
 5. Saves the configuration
 
 **Bot requirements:**
 - A Slack app with a bot token (from [Slack API](https://api.slack.com/apps))
 - Bot must be invited to the target channel
-- Required scopes: `chat:write`, `reactions:read`, `channels:history`
+- Typical scopes for public/private channels: `chat:write`, `reactions:read`, `reactions:write`, `channels:read`, `groups:read`, `channels:history`, `groups:history`
 
 ## Configuration
 
@@ -66,12 +66,12 @@ remote_questions:
    - **Reacting** with a number emoji (1️⃣, 2️⃣, etc.) for single-question prompts
    - **Replying** to the message with a number (`1`), comma-separated numbers (`1,3`), or free text
 5. GSD picks up the response and continues execution
-6. On Discord, a ✅ reaction is added to the prompt message to confirm receipt
+6. A ✅ reaction is added to the prompt message to confirm receipt
 
 ### Response Formats
 
 **Single question:**
-- React with a number emoji (Discord only, single-question prompts)
+- React with a number emoji (single-question prompts)
 - Reply with a number: `2`
 - Reply with free text (captured as a user note)
 
@@ -98,13 +98,13 @@ If no response is received within `timeout_minutes`, the prompt times out and GS
 | Feature | Discord | Slack |
 |---------|---------|-------|
 | Rich message format | Embeds with fields | Block Kit |
-| Reaction-based answers | ✅ (single-question) | ❌ |
+| Reaction-based answers | ✅ (single-question) | ✅ (single-question) |
 | Thread-based replies | Message replies | Thread replies |
 | Message URL in logs | ✅ | ✅ |
-| Answer acknowledgement | ✅ reaction on receipt | Thread context |
+| Answer acknowledgement | ✅ reaction on receipt | ✅ reaction on receipt |
 | Multi-question support | Text replies (semicolons/newlines) | Text replies (semicolons/newlines) |
-| Context source in prompt | ✅ (footer) | ❌ |
-| Server/channel picker | ✅ (interactive) | Manual channel ID |
+| Context source in prompt | ✅ (footer) | ✅ (context block) |
+| Server/channel picker | ✅ (interactive) | ✅ (interactive + manual fallback) |
 | Token validation | ✅ | ✅ |
 | Test message on setup | ✅ | ✅ |
 

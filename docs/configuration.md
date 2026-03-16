@@ -334,7 +334,33 @@ custom_instructions:
   - "Prefer functional patterns over classes"
 ```
 
-For project-specific knowledge (patterns, gotchas, lessons learned), use `.gsd/KNOWLEDGE.md` instead — it's injected into every agent prompt automatically.
+For project-specific knowledge (patterns, gotchas, lessons learned), use `.gsd/KNOWLEDGE.md` instead — it's injected into every agent prompt automatically. Add entries with `/gsd knowledge rule|pattern|lesson <description>`.
+
+### `dynamic_routing`
+
+Complexity-based model routing. See [Dynamic Model Routing](./dynamic-model-routing.md).
+
+```yaml
+dynamic_routing:
+  enabled: true
+  tier_models:
+    light: claude-haiku-4-5
+    standard: claude-sonnet-4-6
+    heavy: claude-opus-4-6
+  escalate_on_failure: true
+  budget_pressure: true
+  cross_provider: true
+```
+
+### `auto_visualize`
+
+Show the workflow visualizer automatically after milestone completion:
+
+```yaml
+auto_visualize: true
+```
+
+See [Workflow Visualizer](./visualizer.md).
 
 ## Full Example
 
@@ -355,6 +381,12 @@ models:
 
 # Token optimization
 token_profile: balanced
+
+# Dynamic model routing
+dynamic_routing:
+  enabled: true
+  escalate_on_failure: true
+  budget_pressure: true
 
 # Budget
 budget_ceiling: 25.00
@@ -386,6 +418,9 @@ notifications:
   on_complete: false
   on_milestone: true
   on_attention: true
+
+# Visualizer
+auto_visualize: true
 
 # Hooks
 post_unit_hooks:

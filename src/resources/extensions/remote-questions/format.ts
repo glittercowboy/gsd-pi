@@ -18,7 +18,8 @@ export interface DiscordEmbed {
   footer?: { text: string };
 }
 
-const NUMBER_EMOJIS = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣"];
+export const DISCORD_NUMBER_EMOJIS = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣"];
+export const SLACK_NUMBER_REACTION_NAMES = ["one", "two", "three", "four", "five"];
 const MAX_USER_NOTE_LENGTH = 500;
 
 export function formatForSlack(prompt: RemotePrompt): SlackBlock[] {
@@ -29,7 +30,18 @@ export function formatForSlack(prompt: RemotePrompt): SlackBlock[] {
     },
   ];
 
+  if (prompt.questions.length > 1) {
+    blocks.push({
+      type: "context",
+      elements: [{
+        type: "mrkdwn",
+        text: "Reply once in thread using one line per question or semicolons (`1; 2; custom note`).",
+      }],
+    });
+  }
+
   for (const q of prompt.questions) {
+    const supportsReactions = prompt.questions.length === 1;
     blocks.push({
       type: "section",
       text: { type: "mrkdwn", text: `*${q.header}*\n${q.question}` },
@@ -47,13 +59,31 @@ export function formatForSlack(prompt: RemotePrompt): SlackBlock[] {
       type: "context",
       elements: [{
         type: "mrkdwn",
-        text: q.allowMultiple
-          ? "Reply in thread with comma-separated numbers (`1,3`) or free text."
-          : "Reply in thread with a number (`1`) or free text.",
+        text: prompt.questions.length > 1
+          ? (q.allowMultiple
+              ? "For this question, use comma-separated numbers (`1,3`) or free text."
+              : "For this question, use one number (`1`) or free text.")
+          : (q.allowMultiple
+              ? (supportsReactions
+                  ? "Reply in thread with comma-separated numbers (`1,3`) or react with matching number emoji."
+                  : "Reply in thread with comma-separated numbers (`1,3`) or free text.")
+              : (supportsReactions
+                  ? "Reply in thread with a number (`1`) or react with the matching number emoji."
+                  : "Reply in thread with a number (`1`) or free text.")),
       }],
     });
 
     blocks.push({ type: "divider" });
+  }
+
+  if (prompt.context?.source) {
+    blocks.push({
+      type: "context",
+      elements: [{
+        type: "mrkdwn",
+        text: `Source: \`${prompt.context.source}\``,
+      }],
+    });
   }
 
   return blocks;
@@ -64,8 +94,8 @@ export function formatForDiscord(prompt: RemotePrompt): { embeds: DiscordEmbed[]
   const embeds: DiscordEmbed[] = prompt.questions.map((q, questionIndex) => {
     const supportsReactions = prompt.questions.length === 1;
     const optionLines = q.options.map((opt, i) => {
-      const emoji = NUMBER_EMOJIS[i] ?? `${i + 1}.`;
-      if (supportsReactions && NUMBER_EMOJIS[i]) reactionEmojis.push(NUMBER_EMOJIS[i]);
+      const emoji = DISCORD_NUMBER_EMOJIS[i] ?? `${i + 1}.`;
+      if (supportsReactions && DISCORD_NUMBER_EMOJIS[i]) reactionEmojis.push(DISCORD_NUMBER_EMOJIS[i]);
       return `${emoji} **${opt.label}** — ${opt.description}`;
     });
 
@@ -130,8 +160,33 @@ export function parseDiscordResponse(
 
   const q = questions[0];
   const picked = reactions
-    .filter((r) => NUMBER_EMOJIS.includes(r.emoji) && r.count > 0)
-    .map((r) => q.options[NUMBER_EMOJIS.indexOf(r.emoji)]?.label)
+    .filter((r) => DISCORD_NUMBER_EMOJIS.includes(r.emoji) && r.count > 0)
+    .map((r) => q.options[DISCORD_NUMBER_EMOJIS.indexOf(r.emoji)]?.label)
+    .filter(Boolean) as string[];
+
+  answers[q.id] = picked.length > 0
+    ? { answers: q.allowMultiple ? picked : [picked[0]] }
+    : { answers: [], user_note: "No clear response via reactions" };
+
+  return { answers };
+}
+
+export function parseSlackReactionResponse(
+  reactionNames: string[],
+  questions: RemoteQuestion[],
+): RemoteAnswer {
+  const answers: RemoteAnswer["answers"] = {};
+  if (questions.length !== 1) {
+    for (const q of questions) {
+      answers[q.id] = { answers: [], user_note: "Slack reactions are only supported for single-question prompts" };
+    }
+    return { answers };
+  }
+
+  const q = questions[0];
+  const picked = reactionNames
+    .filter((name) => SLACK_NUMBER_REACTION_NAMES.includes(name))
+    .map((name) => q.options[SLACK_NUMBER_REACTION_NAMES.indexOf(name)]?.label)
     .filter(Boolean) as string[];
 
   answers[q.id] = picked.length > 0

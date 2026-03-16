@@ -89,3 +89,5 @@ See [Token Optimization](./token-optimization.md) for details.
 - Switch to `budget` profile for well-understood, repetitive work
 - Use `quality` only when architectural decisions are being made
 - Per-phase model selection lets you use Opus only for planning while keeping execution on Sonnet
+- Enable `dynamic_routing` for automatic model downgrading on simple tasks — see [Dynamic Model Routing](./dynamic-model-routing.md)
+- Use `/gsd visualize` → Metrics tab to see where your budget is going

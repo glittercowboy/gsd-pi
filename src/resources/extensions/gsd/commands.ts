@@ -66,10 +66,10 @@ function projectRoot(): string {
 
 export function registerGSDCommand(pi: ExtensionAPI): void {
   pi.registerCommand("gsd", {
-    description: "GSD — Get Shit Done: /gsd next|auto|stop|pause|status|visualize|queue|capture|triage|history|undo|skip|export|cleanup|prefs|config|hooks|doctor|migrate|remote|steer|knowledge",
+    description: "GSD — Get Shit Done: /gsd help|next|auto|stop|pause|status|visualize|queue|capture|triage|history|undo|skip|export|cleanup|prefs|config|hooks|doctor|migrate|remote|steer|knowledge",
     getArgumentCompletions: (prefix: string) => {
       const subcommands = [
-        "next", "auto", "stop", "pause", "status", "visualize", "queue", "discuss",
+        "help", "next", "auto", "stop", "pause", "status", "visualize", "queue", "discuss",
         "capture", "triage",
         "history", "undo", "skip", "export", "cleanup", "prefs",
         "config", "hooks", "doctor", "migrate", "remote", "steer", "inspect", "knowledge",
@@ -160,6 +160,11 @@ export function registerGSDCommand(pi: ExtensionAPI): void {
 
     async handler(args: string, ctx: ExtensionCommandContext) {
       const trimmed = (typeof args === "string" ? args : "").trim();
+
+      if (trimmed === "help" || trimmed === "h" || trimmed === "?") {
+        showHelp(ctx);
+        return;
+      }
 
       if (trimmed === "status") {
         await handleStatus(ctx);
@@ -329,11 +334,54 @@ export function registerGSDCommand(pi: ExtensionAPI): void {
       }
 
       ctx.ui.notify(
-        `Unknown: /gsd ${trimmed}. Use /gsd next|auto|stop|pause|status|visualize|queue|capture|triage|discuss|history|undo|skip <unit>|export|cleanup|prefs|config|hooks|doctor|migrate|remote|steer <change>|inspect|knowledge <type> <entry>.`,
+        `Unknown: /gsd ${trimmed}. Run /gsd help for available commands.`,
         "warning",
       );
     },
   });
+}
+
+function showHelp(ctx: ExtensionCommandContext): void {
+  const lines = [
+    "GSD — Get Shit Done\n",
+    "WORKFLOW",
+    "  /gsd               Run next unit in step mode (same as /gsd next)",
+    "  /gsd next           Execute next task, then pause  [--dry-run] [--verbose]",
+    "  /gsd auto           Run all queued units continuously  [--verbose]",
+    "  /gsd stop           Stop auto-mode gracefully",
+    "  /gsd pause          Pause auto-mode (preserves state, /gsd auto to resume)",
+    "  /gsd discuss        Start guided milestone/slice discussion",
+    "",
+    "VISIBILITY",
+    "  /gsd status         Show progress dashboard  (Ctrl+Alt+G)",
+    "  /gsd visualize      Interactive tree visualizer with 4-tab TUI",
+    "  /gsd queue          Show queued/dispatched units and execution order",
+    "  /gsd history        View execution history  [--cost] [--phase] [--model] [N]",
+    "",
+    "COURSE CORRECTION",
+    "  /gsd steer <desc>   Apply user override to active work",
+    "  /gsd capture <text> Quick-capture a thought to CAPTURES.md",
+    "  /gsd triage         Classify and route pending captures",
+    "  /gsd skip <unit>    Prevent a unit from auto-mode dispatch",
+    "  /gsd undo           Revert last completed unit  [--force]",
+    "",
+    "PROJECT KNOWLEDGE",
+    "  /gsd knowledge <type> <text>   Add rule, pattern, or lesson to KNOWLEDGE.md",
+    "",
+    "CONFIGURATION",
+    "  /gsd prefs          Manage preferences  [global|project|status|wizard|setup]",
+    "  /gsd config         Set API keys for external tools",
+    "  /gsd hooks          Show post-unit hook configuration",
+    "",
+    "MAINTENANCE",
+    "  /gsd doctor         Diagnose and repair .gsd/ state  [audit|fix|heal] [scope]",
+    "  /gsd export         Export milestone/slice results  [--json|--markdown]",
+    "  /gsd cleanup        Remove merged branches or snapshots  [branches|snapshots]",
+    "  /gsd migrate        Upgrade .gsd/ structures to new format",
+    "  /gsd remote         Control remote auto-mode  [slack|discord|status|disconnect]",
+    "  /gsd inspect        Show SQLite DB diagnostics (schema, row counts, recent entries)",
+  ];
+  ctx.ui.notify(lines.join("\n"), "info");
 }
 
 async function handleStatus(ctx: ExtensionCommandContext): Promise<void> {
@@ -563,17 +611,87 @@ async function handleInspect(ctx: ExtensionCommandContext): Promise<void> {
 
 // ─── Preferences Wizard ───────────────────────────────────────────────────────
 
-async function handlePrefsWizard(
-  ctx: ExtensionCommandContext,
-  scope: "global" | "project",
-): Promise<void> {
-  const path = scope === "project" ? getProjectGSDPreferencesPath() : getGlobalGSDPreferencesPath();
-  const existing = scope === "project" ? loadProjectGSDPreferences() : loadGlobalGSDPreferences();
-  const prefs: Record<string, unknown> = existing?.preferences ? { ...existing.preferences } : {};
+/** Build short summary strings for each preference category. */
+function buildCategorySummaries(prefs: Record<string, unknown>): Record<string, string> {
+  // Models
+  const models = prefs.models as Record<string, string> | undefined;
+  let modelsSummary = "(not configured)";
+  if (models && Object.keys(models).length > 0) {
+    const parts = Object.entries(models).map(([phase, model]) => `${phase}: ${model}`);
+    modelsSummary = parts.join(", ");
+  }
 
-  ctx.ui.notify(`GSD preferences wizard (${scope}) — press Escape at any prompt to skip it.`, "info");
+  // Timeouts
+  const autoSup = prefs.auto_supervisor as Record<string, unknown> | undefined;
+  let timeoutsSummary = "(defaults)";
+  if (autoSup && Object.keys(autoSup).length > 0) {
+    const soft = autoSup.soft_timeout_minutes ?? "20";
+    const idle = autoSup.idle_timeout_minutes ?? "10";
+    const hard = autoSup.hard_timeout_minutes ?? "30";
+    timeoutsSummary = `soft: ${soft}m, idle: ${idle}m, hard: ${hard}m`;
+  }
 
-  // ─── Models ──────────────────────────────────────────────────────────────
+  // Git
+  const git = prefs.git as Record<string, unknown> | undefined;
+  let gitSummary = "(defaults)";
+  if (git && Object.keys(git).length > 0) {
+    const branch = git.main_branch ?? "main";
+    const push = git.auto_push ? "on" : "off";
+    gitSummary = `main: ${branch}, push: ${push}`;
+  }
+
+  // Skills
+  const discovery = prefs.skill_discovery as string | undefined;
+  const uat = prefs.uat_dispatch;
+  let skillsSummary = "(not configured)";
+  if (discovery || uat !== undefined) {
+    const parts: string[] = [];
+    if (discovery) parts.push(`discovery: ${discovery}`);
+    if (uat !== undefined) parts.push(`uat: ${uat}`);
+    skillsSummary = parts.join(", ");
+  }
+
+  // Budget
+  const ceiling = prefs.budget_ceiling;
+  const enforcement = prefs.budget_enforcement as string | undefined;
+  let budgetSummary = "(no limit)";
+  if (ceiling !== undefined) {
+    budgetSummary = `$${ceiling}`;
+    if (enforcement) budgetSummary += ` / ${enforcement}`;
+  } else if (enforcement) {
+    budgetSummary = enforcement;
+  }
+
+  // Notifications
+  const notif = prefs.notifications as Record<string, boolean> | undefined;
+  let notifSummary = "(defaults)";
+  if (notif && Object.keys(notif).length > 0) {
+    const allKeys = ["enabled", "on_complete", "on_error", "on_budget", "on_milestone", "on_attention"];
+    const enabledCount = allKeys.filter(k => notif[k] !== false).length;
+    notifSummary = `${enabledCount}/${allKeys.length} enabled`;
+  }
+
+  // Advanced
+  const uniqueIds = prefs.unique_milestone_ids;
+  let advancedSummary = "(defaults)";
+  if (uniqueIds !== undefined) {
+    advancedSummary = `unique IDs: ${uniqueIds ? "on" : "off"}`;
+  }
+
+  return {
+    models: modelsSummary,
+    timeouts: timeoutsSummary,
+    git: gitSummary,
+    skills: skillsSummary,
+    budget: budgetSummary,
+    notifications: notifSummary,
+    advanced: advancedSummary,
+  };
+}
+
+// ─── Category configuration functions ────────────────────────────────────────
+
+async function configureModels(ctx: ExtensionCommandContext, prefs: Record<string, unknown>): Promise<void> {
   const modelPhases = ["research", "planning", "execution", "completion"] as const;
   const models: Record<string, string> = (prefs.models as Record<string, string>) ?? {};
 
@@ -596,7 +714,6 @@ async function handlePrefsWizard(
       }
     }
   } else {
-    // No authenticated models available — fall back to text input
     for (const phase of modelPhases) {
       const current = models[phase] ?? "";
       const input = await ctx.ui.input(
@@ -616,8 +733,9 @@ async function handlePrefsWizard(
   if (Object.keys(models).length > 0) {
     prefs.models = models;
   }
+}
 
-  // ─── Auto-supervisor timeouts ────────────────────────────────────────────
+async function configureTimeouts(ctx: ExtensionCommandContext, prefs: Record<string, unknown>): Promise<void> {
   const autoSup: Record<string, unknown> = (prefs.auto_supervisor as Record<string, unknown>) ?? {};
   const timeoutFields = [
     { key: "soft_timeout_minutes", label: "Soft timeout (minutes)", defaultVal: "20" },
@@ -646,8 +764,9 @@ async function handlePrefsWizard(
   if (Object.keys(autoSup).length > 0) {
     prefs.auto_supervisor = autoSup;
   }
+}
 
-  // ─── Git settings ───────────────────────────────────────────────────────
+async function configureGit(ctx: ExtensionCommandContext, prefs: Record<string, unknown>): Promise<void> {
   const git: Record<string, unknown> = (prefs.git as Record<string, unknown>) ?? {};
 
   // main_branch
@@ -748,7 +867,7 @@ async function handlePrefsWizard(
     git.isolation = isolationChoice;
   }
 
-  // ─── Git commit_docs ────────────────────────────────────────────────────
+  // commit_docs
   const currentCommitDocs = git.commit_docs;
   const commitDocsChoice = await ctx.ui.select(
     `Track .gsd/ planning docs in git${currentCommitDocs !== undefined ? ` (current: ${currentCommitDocs})` : ""}:`,
@@ -761,8 +880,10 @@ async function handlePrefsWizard(
   if (Object.keys(git).length > 0) {
     prefs.git = git;
   }
+}
 
-  // ─── Skill discovery mode ───────────────────────────────────────────────
+async function configureSkills(ctx: ExtensionCommandContext, prefs: Record<string, unknown>): Promise<void> {
+  // Skill discovery mode
   const currentDiscovery = (prefs.skill_discovery as string) ?? "";
   const discoveryChoice = await ctx.ui.select(
     `Skill discovery mode${currentDiscovery ? ` (current: ${currentDiscovery})` : ""}:`,
@@ -772,17 +893,18 @@ async function handlePrefsWizard(
     prefs.skill_discovery = discoveryChoice;
   }
 
-  // ─── Unique milestone IDs ──────────────────────────────────────────────
-  const currentUnique = prefs.unique_milestone_ids;
-  const uniqueChoice = await ctx.ui.select(
-    `Unique milestone IDs${currentUnique !== undefined ? ` (current: ${currentUnique})` : ""}:`,
+  // UAT dispatch
+  const currentUat = prefs.uat_dispatch;
+  const uatChoice = await ctx.ui.select(
+    `UAT dispatch mode${currentUat !== undefined ? ` (current: ${currentUat})` : " (default: false)"}:`,
     ["true", "false", "(keep current)"],
   );
-  if (uniqueChoice && uniqueChoice !== "(keep current)") {
-    prefs.unique_milestone_ids = uniqueChoice === "true";
+  if (uatChoice && uatChoice !== "(keep current)") {
+    prefs.uat_dispatch = uatChoice === "true";
   }
+}
 
-  // ─── Budget & cost control ────────────────────────────────────────────
+async function configureBudget(ctx: ExtensionCommandContext, prefs: Record<string, unknown>): Promise<void> {
   const currentCeiling = prefs.budget_ceiling;
   const ceilingStr = currentCeiling !== undefined ? String(currentCeiling) : "";
   const ceilingInput = await ctx.ui.input(
@@ -828,8 +950,9 @@ async function handlePrefsWizard(
       ctx.ui.notify(`Invalid context pause threshold "${val}" — must be 0-100. Keeping previous value.`, "warning");
     }
   }
+}
 
-  // ─── Notifications ────────────────────────────────────────────────────
+async function configureNotifications(ctx: ExtensionCommandContext, prefs: Record<string, unknown>): Promise<void> {
   const notif: Record<string, boolean> = (prefs.notifications as Record<string, boolean>) ?? {};
   const notifFields = [
     { key: "enabled", label: "Notifications enabled (master toggle)", defaultVal: true },
@@ -854,15 +977,55 @@ async function handlePrefsWizard(
   if (Object.keys(notif).length > 0) {
     prefs.notifications = notif;
   }
+}
 
-  // ─── UAT dispatch ─────────────────────────────────────────────────────
-  const currentUat = prefs.uat_dispatch;
-  const uatChoice = await ctx.ui.select(
-    `UAT dispatch mode${currentUat !== undefined ? ` (current: ${currentUat})` : " (default: false)"}:`,
+async function configureAdvanced(ctx: ExtensionCommandContext, prefs: Record<string, unknown>): Promise<void> {
+  const currentUnique = prefs.unique_milestone_ids;
+  const uniqueChoice = await ctx.ui.select(
+    `Unique milestone IDs${currentUnique !== undefined ? ` (current: ${currentUnique})` : ""}:`,
     ["true", "false", "(keep current)"],
   );
-  if (uatChoice && uatChoice !== "(keep current)") {
-    prefs.uat_dispatch = uatChoice === "true";
+  if (uniqueChoice && uniqueChoice !== "(keep current)") {
+    prefs.unique_milestone_ids = uniqueChoice === "true";
+  }
+}
+
+// ─── Main wizard with category menu ─────────────────────────────────────────
+
+async function handlePrefsWizard(
+  ctx: ExtensionCommandContext,
+  scope: "global" | "project",
+): Promise<void> {
+  const path = scope === "project" ? getProjectGSDPreferencesPath() : getGlobalGSDPreferencesPath();
+  const existing = scope === "project" ? loadProjectGSDPreferences() : loadGlobalGSDPreferences();
+  const prefs: Record<string, unknown> = existing?.preferences ? { ...existing.preferences } : {};
+
+  ctx.ui.notify(`GSD preferences (${scope}) — pick a category to configure.`, "info");
+
+  while (true) {
+    const summaries = buildCategorySummaries(prefs);
+    const options = [
+      `Models          ${summaries.models}`,
+      `Timeouts        ${summaries.timeouts}`,
+      `Git             ${summaries.git}`,
+      `Skills          ${summaries.skills}`,
+      `Budget          ${summaries.budget}`,
+      `Notifications   ${summaries.notifications}`,
+      `Advanced        ${summaries.advanced}`,
+      `── Save & Exit ──`,
+    ];
+
+    const raw = await ctx.ui.select("GSD Preferences", options);
+    const choice = typeof raw === "string" ? raw : "";
+    if (!choice || choice.includes("Save & Exit")) break;
+
+    if (choice.startsWith("Models"))             await configureModels(ctx, prefs);
+    else if (choice.startsWith("Timeouts"))      await configureTimeouts(ctx, prefs);
+    else if (choice.startsWith("Git"))           await configureGit(ctx, prefs);
+    else if (choice.startsWith("Skills"))        await configureSkills(ctx, prefs);
+    else if (choice.startsWith("Budget"))        await configureBudget(ctx, prefs);
+    else if (choice.startsWith("Notifications")) await configureNotifications(ctx, prefs);
+    else if (choice.startsWith("Advanced"))      await configureAdvanced(ctx, prefs);
   }
 
   // ─── Serialize to frontmatter ───────────────────────────────────────────

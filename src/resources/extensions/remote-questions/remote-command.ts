@@ -36,9 +36,28 @@ async function handleSetupSlack(ctx: ExtensionCommandContext): Promise<void> {
   const auth = await fetchJson("https://slack.com/api/auth.test", { headers: { Authorization: `Bearer ${token}` } });
   if (!auth?.ok) return void ctx.ui.notify("Token validation failed — check the token and app install.", "error");
 
-  const channelId = await promptInput(ctx, "Channel ID", "Paste the Slack channel ID (e.g. C0123456789)");
+  const channels = await listSlackChannels(token);
+  const MANUAL_OPTION = "Enter channel ID manually";
+  let channelId: string;
+
+  if (!channels || channels.length === 0) {
+    ctx.ui.notify("Could not list Slack channels — falling back to manual entry.", "warning");
+    channelId = await promptSlackChannelId(ctx) ?? "";
+  } else {
+    const channelOptions = [...channels.map((channel) => channel.label), MANUAL_OPTION];
+    const selectedChannel = await ctx.ui.select("Select a Slack channel", channelOptions);
+    if (!selectedChannel) return void ctx.ui.notify("Slack setup cancelled.", "info");
+
+    if (selectedChannel === MANUAL_OPTION) {
+      channelId = await promptSlackChannelId(ctx) ?? "";
+    } else {
+      const chosen = channels.find((channel) => channel.label === selectedChannel);
+      if (!chosen) return void ctx.ui.notify("Slack setup cancelled.", "info");
+      channelId = chosen.id;
+    }
+  }
+
   if (!channelId) return void ctx.ui.notify("Slack setup cancelled.", "info");
-  if (!isValidChannelId("slack", channelId)) return void ctx.ui.notify("Invalid Slack channel ID format — expected 9-12 uppercase alphanumeric characters.", "error");
 
   const send = await fetchJson("https://slack.com/api/chat.postMessage", {
     method: "POST",
@@ -201,6 +220,52 @@ async function fetchJson(url: string, init?: RequestInit): Promise<any> {
   } catch {
     return null;
   }
+}
+
+async function listSlackChannels(token: string): Promise<Array<{ id: string; label: string }> | null> {
+  const headers = { Authorization: `Bearer ${token}` };
+  const channels: Array<{ id: string; label: string; name: string }> = [];
+  let cursor = "";
+
+  do {
+    const params = new URLSearchParams({
+      exclude_archived: "true",
+      limit: "200",
+      types: "public_channel,private_channel",
+    });
+    if (cursor) params.set("cursor", cursor);
+
+    const response = await fetchJson(`https://slack.com/api/users.conversations?${params.toString()}`, { headers });
+    if (!response?.ok || !Array.isArray(response.channels)) {
+      return channels.length > 0 ? channels.map(({ id, label }) => ({ id, label })) : null;
+    }
+
+    for (const channel of response.channels as Array<{ id?: string; name?: string; is_private?: boolean }>) {
+      if (!channel.id || !channel.name) continue;
+      channels.push({
+        id: channel.id,
+        name: channel.name,
+        label: channel.is_private ? `[private] ${channel.name}` : `#${channel.name}`,
+      });
+    }
+
+    cursor = typeof response.response_metadata?.next_cursor === "string"
+      ? response.response_metadata.next_cursor
+      : "";
+  } while (cursor);
+
+  channels.sort((a, b) => a.name.localeCompare(b.name));
+  return channels.map(({ id, label }) => ({ id, label }));
+}
+
+async function promptSlackChannelId(ctx: ExtensionCommandContext): Promise<string | null> {
+  const channelId = await promptInput(ctx, "Channel ID", "Paste the Slack channel ID (e.g. C0123456789)");
+  if (!channelId) return null;
+  if (!isValidChannelId("slack", channelId)) {
+    ctx.ui.notify("Invalid Slack channel ID format — expected 9-12 uppercase alphanumeric characters.", "error");
+    return null;
+  }
+  return channelId;
 }
 
 function getAuthStorage(): AuthStorage {
