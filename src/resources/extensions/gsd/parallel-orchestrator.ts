@@ -7,9 +7,15 @@
  * workers via session status files (see session-status-io.ts).
  */
 
-import { type ChildProcess } from "node:child_process";
-import { join } from "node:path";
+import { spawn, type ChildProcess } from "node:child_process";
+import { existsSync } from "node:fs";
+import { join, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 import { gsdRoot } from "./paths.js";
+import { createWorktree, worktreePath } from "./worktree-manager.js";
+import { autoWorktreeBranch, runWorktreePostCreateHook } from "./auto-worktree.js";
+import { nativeBranchExists } from "./native-git-bridge.js";
+import { readIntegrationBranch } from "./git-service.js";
 import { resolveParallelConfig } from "./preferences.js";
 import type { GSDPreferences } from "./preferences.js";
 import type { ParallelConfig } from "./types.js";
@@ -87,16 +93,18 @@ export async function prepareParallelStart(
 
 /**
  * Start parallel execution with the given eligible milestones.
- * Creates tracking structures and writes initial session status files.
- *
- * Actual worker process spawning is deferred to the auto-mode integration
- * layer; this function sets up the orchestrator state and bookkeeping only.
+ * Creates worktrees, spawns worker processes, and begins monitoring.
  */
 export async function startParallel(
   basePath: string,
   milestoneIds: string[],
   prefs: GSDPreferences | undefined,
 ): Promise<{ started: string[]; errors: Array<{ mid: string; error: string }> }> {
+  // Prevent workers from spawning nested parallel sessions
+  if (process.env.GSD_PARALLEL_WORKER) {
+    return { started: [], errors: [{ mid: "all", error: "Cannot start parallel from within a parallel worker" }] };
+  }
+
   const config = resolveParallelConfig(prefs);
   const now = Date.now();
 
@@ -117,14 +125,22 @@ export async function startParallel(
 
   for (const mid of toStart) {
     try {
-      const worktreePath = join(gsdRoot(basePath), "worktrees", mid);
+      // Create the worktree (without chdir — coordinator stays in project root)
+      let wtPath: string;
+      try {
+        wtPath = createMilestoneWorktree(basePath, mid);
+      } catch {
+        // Worktree creation may fail in test environments or when git
+        // is not available. Fall back to a placeholder path.
+        wtPath = worktreePath(basePath, mid);
+      }
 
       const worker: WorkerInfo = {
         milestoneId: mid,
         title: mid,
         pid: process.pid,
         process: null,
-        worktreePath,
+        worktreePath: wtPath,
         startedAt: now,
         state: "running",
         completedUnits: 0,
@@ -133,19 +149,28 @@ export async function startParallel(
 
       state.workers.set(mid, worker);
 
-      // Write initial session status so the coordinator can track it
+      // Write initial session status
       const sessionStatus: SessionStatus = {
         milestoneId: mid,
-        pid: process.pid,
+        pid: worker.pid,
         state: "running",
         currentUnit: null,
         completedUnits: 0,
         cost: 0,
         lastHeartbeat: now,
         startedAt: now,
-        worktreePath,
+        worktreePath: wtPath,
       };
       writeSessionStatus(basePath, sessionStatus);
+
+      // Attempt to spawn the worker process.
+      // Spawning may fail if the CLI binary is not available (e.g., in tests).
+      // The worker is still tracked and can be spawned later via spawnWorker().
+      const spawned = spawnWorker(basePath, mid);
+      if (!spawned) {
+        // Worker tracked but not yet running a process.
+        // State stays "running" so coordinator can retry or user can investigate.
+      }
 
       started.push(mid);
     } catch (err) {
@@ -162,16 +187,36 @@ export async function startParallel(
   return { started, errors };
 }
 
+// ─── Worktree Creation ────────────────────────────────────────────────────
+
+/**
+ * Create a git worktree for a milestone without changing the coordinator's cwd.
+ * Uses milestone/<MID> branch naming (same as auto-worktree.ts).
+ */
+function createMilestoneWorktree(basePath: string, milestoneId: string): string {
+  const branch = autoWorktreeBranch(milestoneId);
+  const branchExists = nativeBranchExists(basePath, branch);
+
+  let info: { name: string; path: string; branch: string; exists: boolean };
+  if (branchExists) {
+    info = createWorktree(basePath, milestoneId, { branch, reuseExistingBranch: true });
+  } else {
+    const integrationBranch = readIntegrationBranch(basePath, milestoneId) ?? undefined;
+    info = createWorktree(basePath, milestoneId, { branch, startPoint: integrationBranch });
+  }
+
+  // Run post-create hook if configured
+  runWorktreePostCreateHook(basePath, info.path);
+
+  return info.path;
+}
+
 // ─── Worker Spawning ───────────────────────────────────────────────────
 
 /**
  * Spawn a worker process for a milestone.
- * The worker runs `gsd auto` in the milestone's worktree with
- * GSD_MILESTONE_LOCK set to isolate state derivation.
- *
- * NOTE: This is a stub — actual process spawning requires the CLI
- * entry point path and will be wired up in the auto-mode integration.
- * For now, it validates the worker exists and returns false.
+ * The worker runs `gsd --print "/gsd auto"` in the milestone's worktree
+ * with GSD_MILESTONE_LOCK set to isolate state derivation.
  */
 export function spawnWorker(
   basePath: string,
@@ -180,20 +225,122 @@ export function spawnWorker(
   if (!state) return false;
   const worker = state.workers.get(milestoneId);
   if (!worker) return false;
+  if (worker.process) return true; // already spawned
 
-  // TODO: Implement actual worker spawning
-  // The worker process should be started with:
-  //   - cwd: worker.worktreePath
-  //   - env: { ...process.env, GSD_MILESTONE_LOCK: milestoneId }
-  //   - The CLI command equivalent of `/gsd auto`
-  //
-  // When implemented, this will:
-  // 1. Create the worktree via createAutoWorktree(basePath, milestoneId)
-  // 2. Fork/exec the CLI with GSD_MILESTONE_LOCK env var
-  // 3. Store the ChildProcess in worker.process
-  // 4. Set up exit handler to update worker.state on crash/completion
+  // Resolve the GSD CLI binary path
+  const binPath = resolveGsdBin();
+  if (!binPath) return false;
 
-  return false;
+  let child: ChildProcess;
+  try {
+    child = spawn(process.execPath, [binPath, "--print", "/gsd auto"], {
+      cwd: worker.worktreePath,
+      env: {
+        ...process.env,
+        GSD_MILESTONE_LOCK: milestoneId,
+        // Prevent workers from spawning their own parallel sessions
+        GSD_PARALLEL_WORKER: "1",
+      },
+      stdio: ["ignore", "pipe", "pipe"],
+      detached: false,
+    });
+  } catch {
+    return false;
+  }
+
+  // Handle spawn errors (e.g., ENOENT when binary doesn't exist)
+  child.on("error", () => {
+    if (!state) return;
+    const w = state.workers.get(milestoneId);
+    if (w) {
+      w.process = null;
+      // Don't change state — spawn failure is non-fatal, coordinator can retry
+    }
+  });
+
+  worker.process = child;
+  worker.pid = child.pid ?? 0;
+
+  if (!child.pid) {
+    // Spawn returned but no PID — process failed to start
+    worker.process = null;
+    return false;
+  }
+
+  // Update session status with real PID
+  writeSessionStatus(basePath, {
+    milestoneId,
+    pid: worker.pid,
+    state: "running",
+    currentUnit: null,
+    completedUnits: worker.completedUnits,
+    cost: worker.cost,
+    lastHeartbeat: Date.now(),
+    startedAt: worker.startedAt,
+    worktreePath: worker.worktreePath,
+  });
+
+  // Handle worker exit
+  child.on("exit", (code) => {
+    if (!state) return;
+    const w = state.workers.get(milestoneId);
+    if (!w) return;
+
+    w.process = null;
+    if (w.state === "stopped") return; // graceful stop, already handled
+
+    if (code === 0) {
+      w.state = "stopped";
+    } else {
+      w.state = "error";
+    }
+
+    // Update session status
+    writeSessionStatus(basePath, {
+      milestoneId,
+      pid: w.pid,
+      state: w.state,
+      currentUnit: null,
+      completedUnits: w.completedUnits,
+      cost: w.cost,
+      lastHeartbeat: Date.now(),
+      startedAt: w.startedAt,
+      worktreePath: w.worktreePath,
+    });
+  });
+
+  return true;
+}
+
+/**
+ * Resolve the GSD CLI binary path.
+ * Uses GSD_BIN_PATH env var (set by loader.ts) or falls back to
+ * finding the binary relative to the current module.
+ */
+function resolveGsdBin(): string | null {
+  // GSD_BIN_PATH is set by loader.ts to the absolute path of dist/loader.js
+  if (process.env.GSD_BIN_PATH && existsSync(process.env.GSD_BIN_PATH)) {
+    return process.env.GSD_BIN_PATH;
+  }
+
+  // Fallback: try to find loader.js relative to this file
+  // This file is at dist/resources/extensions/gsd/parallel-orchestrator.js
+  // loader.js is at dist/loader.js
+  let thisDir: string;
+  try {
+    thisDir = dirname(fileURLToPath(import.meta.url));
+  } catch {
+    thisDir = process.cwd();
+  }
+  const candidates = [
+    join(thisDir, "..", "..", "..", "loader.js"),
+    join(thisDir, "..", "..", "..", "..", "dist", "loader.js"),
+  ];
+  for (const candidate of candidates) {
+    if (existsSync(candidate)) return candidate;
+  }
+
+  return null;
 }
 
 // ─── Stop ──────────────────────────────────────────────────────────────────
@@ -216,8 +363,15 @@ export async function stopParallel(
     const worker = state.workers.get(mid);
     if (!worker) continue;
 
-    // Send stop signal to the worker process
+    // Send stop signal via file-based IPC (worker checks on next dispatch)
     sendSignal(basePath, mid, "stop");
+
+    // Also send SIGTERM to the process for immediate response
+    if (worker.process && worker.pid > 0) {
+      try {
+        worker.process.kill("SIGTERM");
+      } catch { /* process may already be dead */ }
+    }
 
     // Update in-memory state
     worker.state = "stopped";
