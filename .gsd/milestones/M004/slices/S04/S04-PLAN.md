@@ -54,7 +54,7 @@
   - Verify: `npx tsc --noEmit` clean. `grep -c 'lastPromptCharCount\|lastBaselineCharCount' src/resources/extensions/gsd/auto.ts` returns ≥15. `grep 'snapshotUnitMetrics(' src/resources/extensions/gsd/auto.ts | grep -cv 'promptCharCount'` returns 0.
   - Done when: TypeScript compiles clean, all 11 call sites updated, measurement block wired, DB-first tier in state.ts.
 
-- [ ] **T02: Port test suites and verify ≥30% savings** `est:15m`
+- [x] **T02: Port test suites and verify ≥30% savings** `est:15m`
   - Why: Provides contract verification for R051 (measurement fields recorded) and R052 (DB-first derivation produces identical state). Proves the ≥30% savings claim with realistic fixture data (R057 evidence).
   - Files: `src/resources/extensions/gsd/tests/token-savings.test.ts`, `src/resources/extensions/gsd/tests/derive-state-db.test.ts`
   - Do:

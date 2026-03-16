@@ -63,3 +63,18 @@ Port `token-savings.test.ts` and `derive-state-db.test.ts` from the memory-db wo
 
 - `src/resources/extensions/gsd/tests/token-savings.test.ts` — new test file proving ≥30% savings
 - `src/resources/extensions/gsd/tests/derive-state-db.test.ts` — new test file proving DB-first state derivation
+
+## Observability Impact
+
+**Signals this task makes visible:**
+- Test output from `token-savings.test.ts` reports concrete savings percentages (e.g. "saved 45.2%") — the primary evidence surface for R057.
+- `derive-state-db.test.ts` output confirms the DB-first path produces byte-for-byte identical `GSDState` vs file path — validates R052 without a live DB.
+
+**Future agent inspection:**
+- Re-run `node --test --experimental-test-module-mocks src/resources/extensions/gsd/tests/token-savings.test.ts` to see savings % on fixture data.
+- Re-run `node --test --experimental-test-module-mocks src/resources/extensions/gsd/tests/derive-state-db.test.ts` to validate DB-first derivation still works after any changes to `state.ts` or `gsd-db.ts`.
+
+**Failure visibility:**
+- If savings drop below 30%: `token-savings.test.ts` assertion fails with actual % in the error message — investigate `formatDecisionsForPrompt` / `formatRequirementsForPrompt` output bloat.
+- If DB path diverges: `derive-state-db.test.ts` deep-equal assertion fails with a diff of the mismatched `GSDState` fields — investigate `_deriveStateImpl` DB branch logic.
+- If `isDbAvailable()` or `openDatabase()` changes contract: derive-state-db tests will surface it via fallback-path assertion failures rather than silent wrong behavior.
