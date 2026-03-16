@@ -3,6 +3,8 @@
  *
  * Verifies that runWorktreePostCreateHook correctly executes user scripts
  * with SOURCE_DIR and WORKTREE_DIR environment variables.
+ *
+ * Uses Node.js scripts instead of bash for Windows compatibility.
  */
 
 import test from "node:test";
@@ -15,6 +17,15 @@ import { runWorktreePostCreateHook } from "../auto-worktree.ts";
 
 function makeTmpDir(): string {
   return mkdtempSync(join(tmpdir(), "gsd-wt-hook-test-"));
+}
+
+/** Create a cross-platform Node.js hook script. */
+function writeNodeHookScript(path: string, code: string): void {
+  const script = process.platform === "win32"
+    ? `@echo off\nnode -e "${code.replace(/"/g, '\\"')}"\n`
+    : `#!/usr/bin/env node\n${code}\n`;
+  writeFileSync(path, script);
+  chmodSync(path, 0o755);
 }
 
 // ─── runWorktreePostCreateHook ──────────────────────────────────────────────
@@ -51,11 +62,13 @@ test("executes hook script with correct SOURCE_DIR and WORKTREE_DIR env vars", (
     const hooksDir = join(src, ".gsd", "hooks");
     mkdirSync(hooksDir, { recursive: true });
     const hookScript = join(hooksDir, "post-create");
-    writeFileSync(hookScript, `#!/bin/bash
-echo "SOURCE=$SOURCE_DIR" > "$WORKTREE_DIR/hook-output.txt"
-echo "WORKTREE=$WORKTREE_DIR" >> "$WORKTREE_DIR/hook-output.txt"
-`);
-    chmodSync(hookScript, 0o755);
+    const code = [
+      `const fs = require("fs");`,
+      `const path = require("path");`,
+      `const out = path.join(process.env.WORKTREE_DIR, "hook-output.txt");`,
+      `fs.writeFileSync(out, "SOURCE=" + process.env.SOURCE_DIR + "\\n" + "WORKTREE=" + process.env.WORKTREE_DIR + "\\n");`,
+    ].join("\n");
+    writeNodeHookScript(hookScript, code);
 
     const result = runWorktreePostCreateHook(src, wt, ".gsd/hooks/post-create");
     assert.equal(result, null, "should succeed");
@@ -79,11 +92,7 @@ test("returns error message when hook script fails", () => {
     const hooksDir = join(src, ".gsd", "hooks");
     mkdirSync(hooksDir, { recursive: true });
     const hookScript = join(hooksDir, "failing-hook");
-    writeFileSync(hookScript, `#!/bin/bash
-echo "error" >&2
-exit 1
-`);
-    chmodSync(hookScript, 0o755);
+    writeNodeHookScript(hookScript, `process.exit(1);`);
 
     const result = runWorktreePostCreateHook(src, wt, ".gsd/hooks/failing-hook");
     assert.ok(result !== null, "should return error string");
@@ -98,11 +107,13 @@ test("supports absolute hook paths", () => {
   const src = makeTmpDir();
   const wt = makeTmpDir();
   try {
-    const hookScript = join(src, "absolute-hook.sh");
-    writeFileSync(hookScript, `#!/bin/bash
-touch "$WORKTREE_DIR/absolute-hook-ran"
-`);
-    chmodSync(hookScript, 0o755);
+    const hookScript = join(src, "absolute-hook");
+    const code = [
+      `const fs = require("fs");`,
+      `const path = require("path");`,
+      `fs.writeFileSync(path.join(process.env.WORKTREE_DIR, "absolute-hook-ran"), "");`,
+    ].join("\n");
+    writeNodeHookScript(hookScript, code);
 
     const result = runWorktreePostCreateHook(src, wt, hookScript);
     assert.equal(result, null, "absolute path hook should succeed");
@@ -117,20 +128,21 @@ test("hook can copy files from source to worktree", () => {
   const src = makeTmpDir();
   const wt = makeTmpDir();
   try {
-    // Create a .env file in source
     writeFileSync(join(src, ".env"), "DB_HOST=localhost\nAPI_KEY=secret123\n");
 
-    // Create hook that copies .env
-    const hookScript = join(src, "setup-hook.sh");
-    writeFileSync(hookScript, `#!/bin/bash
-cp "$SOURCE_DIR/.env" "$WORKTREE_DIR/.env"
-`);
-    chmodSync(hookScript, 0o755);
+    const hookScript = join(src, "setup-hook");
+    const code = [
+      `const fs = require("fs");`,
+      `const path = require("path");`,
+      `const envSrc = path.join(process.env.SOURCE_DIR, ".env");`,
+      `const envDst = path.join(process.env.WORKTREE_DIR, ".env");`,
+      `fs.copyFileSync(envSrc, envDst);`,
+    ].join("\n");
+    writeNodeHookScript(hookScript, code);
 
     const result = runWorktreePostCreateHook(src, wt, hookScript);
     assert.equal(result, null, "hook should succeed");
 
-    // Verify .env was copied
     assert.ok(existsSync(join(wt, ".env")), ".env should be copied to worktree");
     const envContent = readFileSync(join(wt, ".env"), "utf-8");
     assert.ok(envContent.includes("API_KEY=secret123"), ".env content should match");
