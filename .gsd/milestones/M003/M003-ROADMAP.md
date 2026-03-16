@@ -55,8 +55,8 @@ This milestone is complete only when all are true:
 
 ## Slices
 
-- [ ] **S01: Upstream merge and build stabilization** `risk:high` `depends:[]`
-  > After this: `npm run build` and `npm run build:web-host` succeed with all 398 upstream commits merged. Codebase compiles.
+- [x] **S01: Upstream merge and build stabilization** `risk:high` `depends:[]`
+  > After this: `npm run build` and `npm run build:web-host` succeed with all 415 upstream commits merged (v2.22.0). Codebase compiles.
 
 - [ ] **S02: Browser slash-command dispatch for all upstream commands** `risk:high` `depends:[S01]`
   > After this: every `/gsd` subcommand typed in browser terminal dispatches to a surface, executes via RPC, or rejects with clear guidance — no silent fallthrough.

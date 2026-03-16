@@ -17,7 +17,7 @@ A user can run `gsd --web`, complete setup, and do the full GSD workflow in a sn
 - The workspace store drives real dashboard, roadmap, files, activity, terminal, focused-panel prompt handling, workflow controls, continuity, and recovery surfaces.
 - M001 is complete: assembled route/runtime/browser proof is green, the preserved skin is wired to live state/actions.
 - M002 is complete: browser slash commands dispatch safely, current-project session browse/resume/rename/fork plus settings/auth/Git/shell controls are browser-native, dashboard/sidebar/roadmap/status/recovery surfaces stay fresh through targeted invalidation-driven updates.
-- Upstream has diverged significantly (398 commits, v2.12→v2.21) with major new features: workflow visualizer, forensics, capture/triage, dynamic model routing, SQLite context store, branchless worktree architecture, 15+ new /gsd subcommands. These need merging and web UI surfaces.
+- M003/S01 complete: all 415 upstream commits (v2.12→v2.22.0) merged, all 50 file conflicts resolved, both `npm run build` and `npm run build:web-host` pass. Upstream's new features (workflow visualizer, forensics, capture/triage, dynamic model routing, SQLite context store, branchless worktree architecture, 15+ new /gsd subcommands) are now available in the codebase. Web code has zero import dependencies on GSD extension core modules — only imports from native-git-bridge.ts. Browser surfaces for the new features are S02–S07 scope.
 
 ## Architecture / Key Patterns
 
