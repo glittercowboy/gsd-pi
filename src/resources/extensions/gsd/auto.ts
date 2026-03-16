@@ -568,19 +568,18 @@ export async function startAuto(
     ctx.ui.setStatus("gsd-auto", stepMode ? "next" : "auto");
     ctx.ui.setFooter(hideFooter);
     ctx.ui.notify(stepMode ? "Step-mode resumed." : "Auto-mode resumed.", "info");
-    const activeBasePath = basePath;
     // Restore hook state from disk in case session was interrupted
-    restoreHookState(activeBasePath);
+    restoreHookState(basePath);
     // Rebuild disk state before resuming — user interaction during pause may have changed files
-    try { await rebuildState(activeBasePath); } catch { /* non-fatal */ }
+    try { await rebuildState(basePath); } catch { /* non-fatal */ }
     try {
-      const report = await runGSDDoctor(activeBasePath, { fix: true });
+      const report = await runGSDDoctor(basePath, { fix: true });
       if (report.fixesApplied.length > 0) {
         ctx.ui.notify(`Resume: applied ${report.fixesApplied.length} fix(es) to state.`, "info");
       }
     } catch { /* non-fatal */ }
     // Self-heal: clear stale runtime records where artifacts already exist
-    await selfHealRuntimeRecords(activeBasePath, ctx, completedKeySet);
+    await selfHealRuntimeRecords(basePath, ctx, completedKeySet);
     invalidateAllCaches();
     await dispatchNextUnit(ctx, pi);
     return;
