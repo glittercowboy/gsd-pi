@@ -83,25 +83,25 @@ This file is the explicit capability and coverage contract for the project.
 
 ### R053 — Worktree DB copy on creation
 - Class: integration
-- Status: active
+- Status: validated
 - Description: When a worktree is created, copy `gsd.db` from the source project into the worktree's `.gsd/` directory. Skip WAL/SHM files. Non-fatal on failure.
 - Why it matters: Worktrees need their own DB with the project's current state. Without a copy, the worktree starts with no DB context.
 - Source: execution (memory-db port)
 - Primary owning slice: M004/S05
 - Supporting slices: M004/S01
-- Validation: unmapped
-- Notes: Port from memory-db `copyWorktreeDb`. Keep `createWorktree` synchronous — `copyFileSync` is sufficient. Guard with `isDbAvailable()`.
+- Validation: S05 — copy hook wired in `copyPlanningArtifacts` with existsSync file-presence guard and non-fatal try/catch. worktree-db-integration.test.ts cases 1 (copy on create) and 2 (copy skip) prove both paths against real git repos.
+- Notes: Copy guard is existsSync(srcDb), not isDbAvailable() — DB connection may not be open at worktree creation time but file still exists and can be copied (see D046).
 
 ### R054 — Worktree DB merge reconciliation
 - Class: integration
-- Status: active
+- Status: validated
 - Description: When a worktree merges back (slice or milestone), ATTACH the worktree's DB and reconcile rows: INSERT OR REPLACE in a transaction with conflict detection by content column comparison.
 - Why it matters: The worktree may have added decisions, requirements, or artifacts that the main DB doesn't have.
 - Source: execution (memory-db port)
 - Primary owning slice: M004/S05
 - Supporting slices: M004/S01
-- Validation: unmapped
-- Notes: Port from memory-db `reconcileWorktreeDb`. ATTACH/DETACH pattern with try/finally for cleanup.
+- Validation: S05 — reconcile hook wired in both `mergeMilestoneToMain` (auto path) and `handleMerge` (manual /worktree merge path). Both guarded with non-fatal try/catch. worktree-db-integration.test.ts cases 3 (reconcile merges rows), 4 (non-fatal on absent paths), and 5 (zero-result shape) prove the full contract.
+- Notes: ATTACH/DETACH pattern with try/finally for cleanup. handleMerge uses dynamic import pattern (async command handler). Returns structured { decisions, requirements, artifacts, conflicts } zero-shape when worktree DB absent.
 
 ### R055 — Structured LLM tools for decisions/requirements/summaries
 - Class: core-capability
@@ -665,17 +665,17 @@ This file is the explicit capability and coverage contract for the project.
 | R050 | continuity | active | M004/S03 | M004/S06 | S03 — markdown→DB re-import wired in handleAgentEnd, tested. DB→markdown deferred to S06 |
 | R051 | operability | active | M004/S04 | M004/S03 | S04 token-savings.test.ts 99 assertions: 52.2% plan-slice, 66.3% decisions-only, 32.2% research composite. All 11 snapshotUnitMetrics call sites updated. |
 | R052 | core-capability | active | M004/S04 | M004/S01, M004/S02 | S04 derive-state-db.test.ts 51 assertions: DB path = identical GSDState, fallback, empty DB falls through, partial DB fills gaps, multi-milestone, cache invalidation. |
-| R053 | integration | active | M004/S05 | M004/S01 | unmapped |
-| R054 | integration | active | M004/S05 | M004/S01 | unmapped |
+| R053 | integration | validated | M004/S05 | M004/S01 | S05 copy hook in copyPlanningArtifacts, worktree-db-integration.test.ts cases 1+2 |
+| R054 | integration | validated | M004/S05 | M004/S01 | S05 reconcile hooks in mergeMilestoneToMain + handleMerge, worktree-db-integration.test.ts cases 3+4+5 |
 | R055 | core-capability | active | M004/S06 | M004/S03 | unmapped |
 | R056 | operability | active | M004/S06 | M004/S01 | unmapped |
 | R057 | quality-attribute | active | M004/S07 | M004/S03, M004/S04 | unmapped |
 
 ## Coverage Summary
 
-- Active requirements: 12
+- Active requirements: 10
 - Mapped to slices: 13
-- Validated: 36
+- Validated: 38
 - Deferred: 5
 - Out of scope: 4
 - Unmapped active requirements: 0

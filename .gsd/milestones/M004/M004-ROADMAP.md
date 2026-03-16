@@ -73,7 +73,7 @@ This milestone is complete only when all are true:
 - [x] **S04: Token Measurement + State Derivation** `risk:medium` `depends:[S03]`
   > After this: `promptCharCount`/`baselineCharCount` in UnitMetrics, measurement wired into all `snapshotUnitMetrics` call sites. `deriveState()` reads content from DB when available. Savings ≥30% confirmed on fixture data.
 
-- [ ] **S05: Worktree DB Isolation** `risk:medium` `depends:[S01,S02]`
+- [x] **S05: Worktree DB Isolation** `risk:medium` `depends:[S01,S02]`
   > After this: `createWorktree` copies gsd.db to new worktrees (sync, non-fatal). Merge paths reconcile worktree DB rows back via ATTACH DATABASE with conflict detection.
 
 - [ ] **S06: Structured LLM Tools + /gsd inspect** `risk:medium` `depends:[S03]`
