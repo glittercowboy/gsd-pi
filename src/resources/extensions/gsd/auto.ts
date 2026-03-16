@@ -29,7 +29,7 @@ import {
   buildMilestoneFileName, buildSliceFileName, buildTaskFileName,
 } from "./paths.js";
 import { invalidateAllCaches } from "./cache.js";
-import { saveActivityLog } from "./activity-log.js";
+import { saveActivityLog, clearActivityLogState } from "./activity-log.js";
 import { synthesizeCrashRecovery, getDeepDiagnostic } from "./session-forensics.js";
 import { writeLock, clearLock, readCrashLock, formatCrashInfo, isLockProcessAlive } from "./crash-recovery.js";
 import {
@@ -485,7 +485,9 @@ export async function stopAuto(ctx?: ExtensionContext, pi?: ExtensionAPI): Promi
   currentUnit = null;
   currentMilestoneId = null;
   originalBasePath = "";
+  completedUnits = [];
   clearSliceProgressCache();
+  clearActivityLogState();
   pendingCrashRecovery = null;
   _handlingAgentEnd = false;
   ctx?.ui.setStatus("gsd-auto", undefined);
@@ -1784,6 +1786,10 @@ async function dispatchNextUnit(
         startedAt: currentUnit.startedAt,
         finishedAt: Date.now(),
       });
+      // Cap to last 200 entries to prevent unbounded growth (#611)
+      if (completedUnits.length > 200) {
+        completedUnits = completedUnits.slice(-200);
+      }
       clearUnitRuntimeRecord(basePath, currentUnit.type, currentUnit.id);
       unitDispatchCount.delete(`${currentUnit.type}/${currentUnit.id}`);
       unitRecoveryCount.delete(`${currentUnit.type}/${currentUnit.id}`);

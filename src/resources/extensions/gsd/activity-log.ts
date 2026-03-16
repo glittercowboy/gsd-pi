@@ -8,7 +8,7 @@
  * Diagnostic extraction is handled by session-forensics.ts.
  */
 
-import { writeFileSync, mkdirSync, readdirSync, unlinkSync, statSync, openSync, closeSync, constants } from "node:fs";
+import { writeFileSync, writeSync, mkdirSync, readdirSync, unlinkSync, statSync, openSync, closeSync, constants } from "node:fs";
 import { createHash } from "node:crypto";
 import { join } from "node:path";
 
@@ -22,6 +22,15 @@ interface ActivityLogState {
 }
 
 const activityLogState = new Map<string, ActivityLogState>();
+
+/**
+ * Clear accumulated activity log state (#611).
+ * Call when auto-mode stops to prevent unbounded memory growth
+ * from lastSnapshotKeyByUnit maps accumulating across units.
+ */
+export function clearActivityLogState(): void {
+  activityLogState.clear();
+}
 
 function scanNextSequence(activityDir: string): number {
   let maxSeq = 0;
@@ -46,9 +55,21 @@ function getActivityState(activityDir: string): ActivityLogState {
   return state;
 }
 
-function snapshotKey(unitType: string, unitId: string, content: string): string {
-  const digest = createHash("sha1").update(content).digest("hex");
-  return `${unitType}\0${unitId}\0${digest}`;
+/**
+ * Build a lightweight dedup key from session entries without serializing
+ * the entire content to a string (#611). Uses entry count + hash of
+ * the last few entries as a fingerprint instead of hashing megabytes.
+ */
+function snapshotKey(unitType: string, unitId: string, entries: unknown[]): string {
+  const hash = createHash("sha1");
+  hash.update(`${unitType}\0${unitId}\0${entries.length}\0`);
+  // Hash only the last 3 entries as a fingerprint — if the session grew,
+  // the count change alone detects it; if content changed, the tail hash catches it.
+  const tail = entries.slice(-3);
+  for (const entry of tail) {
+    hash.update(JSON.stringify(entry));
+  }
+  return hash.digest("hex");
 }
 
 function nextActivityFilePath(
@@ -91,14 +112,23 @@ export function saveActivityLog(
     mkdirSync(activityDir, { recursive: true });
 
     const safeUnitId = unitId.replace(/\//g, "-");
-    const content = `${entries.map(entry => JSON.stringify(entry)).join("\n")}\n`;
     const state = getActivityState(activityDir);
     const unitKey = `${unitType}\0${safeUnitId}`;
-    const key = snapshotKey(unitType, safeUnitId, content);
+    // Use lightweight fingerprint instead of serializing all entries (#611)
+    const key = snapshotKey(unitType, safeUnitId, entries);
     if (state.lastSnapshotKeyByUnit.get(unitKey) === key) return;
 
     const filePath = nextActivityFilePath(activityDir, state, unitType, safeUnitId);
-    writeFileSync(filePath, content, "utf-8");
+    // Stream entries to disk line-by-line instead of building one massive string (#611).
+    // For large sessions, the single-string approach allocated hundreds of MB.
+    const fd = openSync(filePath, "w");
+    try {
+      for (const entry of entries) {
+        writeSync(fd, JSON.stringify(entry) + "\n");
+      }
+    } finally {
+      closeSync(fd);
+    }
     state.nextSeq += 1;
     state.lastSnapshotKeyByUnit.set(unitKey, key);
   } catch (e) {

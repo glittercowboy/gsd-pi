@@ -15,6 +15,9 @@ import { nativeScanGsdTree, type GsdTreeEntry } from "./native-parser-bridge.js"
 
 // ─── Directory Listing Cache ──────────────────────────────────────────────────
 
+/** Max entries before eviction. Prevents unbounded growth in long sessions (#611). */
+const DIR_CACHE_MAX = 200;
+
 const dirEntryCache = new Map<string, Dirent[]>();
 const dirListCache = new Map<string, string[]>();
 
@@ -85,6 +88,7 @@ function cachedReaddirWithTypes(dirPath: string): Dirent[] {
           d.isSocket = () => false;
           return d;
         });
+        if (dirEntryCache.size >= DIR_CACHE_MAX) dirEntryCache.clear();
         dirEntryCache.set(dirPath, dirents);
         return dirents;
       }
@@ -92,6 +96,7 @@ function cachedReaddirWithTypes(dirPath: string): Dirent[] {
   }
 
   const entries = readdirSync(dirPath, { withFileTypes: true });
+  if (dirEntryCache.size >= DIR_CACHE_MAX) dirEntryCache.clear();
   dirEntryCache.set(dirPath, entries);
   return entries;
 }
@@ -107,6 +112,7 @@ function cachedReaddir(dirPath: string): string[] {
       const treeEntries = nativeTreeCache.get(key);
       if (treeEntries) {
         const names = treeEntries.map(e => e.name);
+        if (dirListCache.size >= DIR_CACHE_MAX) dirListCache.clear();
         dirListCache.set(dirPath, names);
         return names;
       }
@@ -114,6 +120,7 @@ function cachedReaddir(dirPath: string): string[] {
   }
 
   const entries = readdirSync(dirPath);
+  if (dirListCache.size >= DIR_CACHE_MAX) dirListCache.clear();
   dirListCache.set(dirPath, entries);
   return entries;
 }
