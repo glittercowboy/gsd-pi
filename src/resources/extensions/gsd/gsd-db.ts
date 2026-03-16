@@ -539,10 +539,10 @@ export function reconcileWorktreeDb(
     return zero;
   }
 
-  // Safety: reject paths with characters that could enable SQL injection via ATTACH.
-  // SQLite ATTACH doesn't support parameterized binding, so we allowlist safe chars.
-  // Allows backslash and colon for Windows paths (e.g. C:\Users\...).
-  if (!/^[a-zA-Z0-9_.\-\/ :\\]+$/.test(worktreeDbPath)) {
+  // Safety: reject single quotes which could break the ATTACH DATABASE '...' SQL literal.
+  // SQLite ATTACH doesn't support parameterized binding. We block the one dangerous char
+  // rather than allowlisting, since OS temp paths vary widely (tildes, parens, unicode).
+  if (worktreeDbPath.includes("'")) {
     process.stderr.write(`gsd-db: worktree DB reconciliation failed: path contains unsafe characters\n`);
     return zero;
   }
