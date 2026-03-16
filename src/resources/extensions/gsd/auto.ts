@@ -196,6 +196,72 @@ function shouldUseWorktreeIsolation(): boolean {
   return true; // default: worktree
 }
 
+function clearCompletedKeyTracking(base: string): void {
+  try {
+    const file = completedKeysPath(base);
+    if (existsSync(file)) writeFileSync(file, JSON.stringify([]), "utf-8");
+    completedKeySet.clear();
+  } catch { /* non-fatal */ }
+}
+
+function readRoadmapContentForMilestoneMerge(
+  activeBasePath: string,
+  originalBasePath_: string,
+  milestoneId: string,
+): string {
+  const roadmapPath = resolveMilestoneFile(activeBasePath, milestoneId, "ROADMAP")
+    ?? resolveMilestoneFile(originalBasePath_, milestoneId, "ROADMAP");
+  if (!roadmapPath) throw new Error(`Cannot resolve ROADMAP file for milestone ${milestoneId}`);
+  return readFileSync(roadmapPath, "utf-8");
+}
+
+function ensureAutoWorktreeForMilestone(originalBasePath_: string, milestoneId: string): string {
+  const existingWtPath = getAutoWorktreePath(originalBasePath_, milestoneId);
+  return existingWtPath
+    ? enterAutoWorktree(originalBasePath_, milestoneId)
+    : createAutoWorktree(originalBasePath_, milestoneId);
+}
+
+export async function completeAutoWorktreeMilestoneCeremony(
+  activeBasePath: string,
+  originalBasePath_: string,
+  completedMilestoneId: string,
+  nextMilestoneId: string | null,
+): Promise<{
+  activeBasePath: string;
+  state: GSDState;
+  mergeResult: { commitMessage: string; pushed: boolean };
+}> {
+  const roadmapContent = readRoadmapContentForMilestoneMerge(
+    activeBasePath,
+    originalBasePath_,
+    completedMilestoneId,
+  );
+  const mergeResult = mergeMilestoneToMain(originalBasePath_, completedMilestoneId, roadmapContent);
+
+  let nextBasePath = originalBasePath_;
+  invalidateAllCaches();
+  let state = await deriveState(nextBasePath);
+  const refreshedMilestoneId = state.activeMilestone?.id ?? null;
+
+  if (
+    nextMilestoneId &&
+    refreshedMilestoneId === nextMilestoneId &&
+    shouldUseWorktreeIsolation() &&
+    !detectWorktreeName(nextBasePath)
+  ) {
+    nextBasePath = ensureAutoWorktreeForMilestone(originalBasePath_, nextMilestoneId);
+    invalidateAllCaches();
+    state = await deriveState(nextBasePath);
+  }
+
+  return {
+    activeBasePath: nextBasePath,
+    state,
+    mergeResult,
+  };
+}
+
 /** Crash recovery prompt — set by startAuto, consumed by first dispatchNextUnit */
 let pendingCrashRecovery: string | null = null;
 
@@ -1237,13 +1303,46 @@ async function dispatchNextUnit(
   let state = await deriveState(basePath);
   let mid = state.activeMilestone?.id;
   let midTitle = state.activeMilestone?.title;
+  let justCompletedMilestoneId: string | null = null;
+
+  if (mid && currentMilestoneId && mid !== currentMilestoneId && originalBasePath && isInAutoWorktree(basePath)) {
+    const completedMilestoneId = currentMilestoneId;
+    try {
+      clearCompletedKeyTracking(basePath);
+      const ceremony = await completeAutoWorktreeMilestoneCeremony(
+        basePath,
+        originalBasePath,
+        completedMilestoneId,
+        mid,
+      );
+      justCompletedMilestoneId = completedMilestoneId;
+      basePath = ceremony.activeBasePath;
+      state = ceremony.state;
+      mid = state.activeMilestone?.id;
+      midTitle = state.activeMilestone?.title;
+      gitService = new GitServiceImpl(basePath, loadEffectiveGSDPreferences()?.preferences?.git ?? {});
+      ctx.ui.notify(
+        `Milestone ${completedMilestoneId} merged to main.${ceremony.mergeResult.pushed ? " Pushed to remote." : ""}${mid && mid !== completedMilestoneId ? ` Advancing to ${mid}: ${midTitle}.` : ""}`,
+        "info",
+      );
+    } catch (err) {
+      ctx.ui.notify(
+        `Milestone merge failed: ${err instanceof Error ? err.message : String(err)}`,
+        "warning",
+      );
+      await stopAuto(ctx, pi);
+      return;
+    }
+  }
 
   // Detect milestone transition
   if (mid && currentMilestoneId && mid !== currentMilestoneId) {
-    ctx.ui.notify(
-      `Milestone ${currentMilestoneId} complete. Advancing to ${mid}: ${midTitle}.`,
-      "info",
-    );
+    if (!justCompletedMilestoneId) {
+      ctx.ui.notify(
+        `Milestone ${currentMilestoneId} complete. Advancing to ${mid}: ${midTitle}.`,
+        "info",
+      );
+    }
     sendDesktopNotification("GSD", `Milestone ${currentMilestoneId} complete!`, "success", "milestone");
     // Reset stuck detection for new milestone
     unitDispatchCount.clear();
@@ -1308,22 +1407,23 @@ async function dispatchNextUnit(
       saveActivityLog(ctx, basePath, currentUnit.type, currentUnit.id);
     }
     // Clear completed-units.json for the finished milestone so it doesn't grow unbounded.
-    try {
-      const file = completedKeysPath(basePath);
-      if (existsSync(file)) writeFileSync(file, JSON.stringify([]), "utf-8");
-      completedKeySet.clear();
-    } catch { /* non-fatal */ }
+    clearCompletedKeyTracking(basePath);
     // ── Milestone merge: squash-merge milestone branch to main before stopping ──
     if (currentMilestoneId && isInAutoWorktree(basePath) && originalBasePath) {
       try {
-        const roadmapPath = resolveMilestoneFile(originalBasePath, currentMilestoneId, "ROADMAP");
-        if (!roadmapPath) throw new Error(`Cannot resolve ROADMAP file for milestone ${currentMilestoneId}`);
-        const roadmapContent = readFileSync(roadmapPath, "utf-8");
-        const mergeResult = mergeMilestoneToMain(originalBasePath, currentMilestoneId, roadmapContent);
-        basePath = originalBasePath;
+        const mergeResult = await completeAutoWorktreeMilestoneCeremony(
+          basePath,
+          originalBasePath,
+          currentMilestoneId,
+          null,
+        );
+        basePath = mergeResult.activeBasePath;
+        state = mergeResult.state;
+        mid = state.activeMilestone?.id;
+        midTitle = state.activeMilestone?.title;
         gitService = new GitServiceImpl(basePath, loadEffectiveGSDPreferences()?.preferences?.git ?? {});
         ctx.ui.notify(
-          `Milestone ${currentMilestoneId} merged to main.${mergeResult.pushed ? " Pushed to remote." : ""}`,
+          `Milestone ${currentMilestoneId} merged to main.${mergeResult.mergeResult.pushed ? " Pushed to remote." : ""}`,
           "info",
         );
       } catch (err) {
