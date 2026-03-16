@@ -572,47 +572,7 @@ export function Dashboard({ onSwitchView, onExpandTerminal }: DashboardProps = {
               </div>
             )}
 
-            {!isConnecting && recoverySummary.visible && (
-              <div className="rounded-md border border-border bg-card">
-                <div className="border-b border-border px-4 py-3">
-                  <div className="flex items-center justify-between gap-3">
-                    <div>
-                      <h2 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Recovery</h2>
-                      <p className="mt-1 text-sm font-medium text-foreground">{recoverySummary.label}</p>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={handleOpenRecovery}
-                      className="rounded-md border border-border bg-background px-2.5 py-1.5 text-xs font-medium text-foreground transition-colors hover:bg-accent"
-                      data-testid="dashboard-recovery-summary-entrypoint"
-                    >
-                      {recoverySummary.entrypointLabel}
-                    </button>
-                  </div>
-                </div>
-                <div className="space-y-3 px-4 py-3">
-                  <p className="text-xs text-muted-foreground" data-testid="dashboard-recovery-summary-state">{recoverySummary.detail}</p>
-                  <div
-                    className="flex items-center justify-between rounded-md border border-border bg-background px-3 py-2 text-xs"
-                    data-testid="dashboard-retry-freshness"
-                  >
-                    <span className="text-muted-foreground">Retry / compaction</span>
-                    <span className="font-medium text-foreground">
-                      {recoverySummary.retryInProgress
-                        ? `Retry ${Math.max(1, recoverySummary.retryAttempt)}`
-                        : recoverySummary.isCompacting
-                          ? "Compacting"
-                          : recoverySummary.freshness}
-                    </span>
-                  </div>
-                  {recoverySummary.lastError && (
-                    <div className="rounded-md border border-red-500/20 bg-red-500/5 px-3 py-2 text-xs text-red-400">
-                      {recoverySummary.lastError.phase}: {recoverySummary.lastError.message}
-                    </div>
-                  )}
-                </div>
-              </div>
-            )}
+
           </div>
         </div>
 
