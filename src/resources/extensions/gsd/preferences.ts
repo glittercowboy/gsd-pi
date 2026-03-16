@@ -2,8 +2,11 @@ import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from "
 import { homedir } from "node:os";
 import { isAbsolute, join } from "node:path";
 import { getAgentDir } from "@gsd/pi-coding-agent";
+import { parse as parseYaml } from "yaml";
 import type { GitPreferences } from "./git-service.js";
 import type { PostUnitHookConfig, PreDispatchHookConfig, BudgetEnforcementMode, NotificationPreferences, TokenProfile, InlineLevel, PhaseSkipPreferences } from "./types.js";
+import type { DynamicRoutingConfig } from "./model-router.js";
+import { defaultRoutingConfig } from "./model-router.js";
 import { VALID_BRANCH_NAME } from "./git-service.js";
 
 const GLOBAL_PREFERENCES_PATH = join(homedir(), ".gsd", "preferences.md");
@@ -36,8 +39,10 @@ const KNOWN_PREFERENCE_KEYS = new Set<string>([
   "git",
   "post_unit_hooks",
   "pre_dispatch_hooks",
+  "dynamic_routing",
   "token_profile",
   "phases",
+  "auto_visualize",
 ]);
 
 export interface GSDSkillRule {
@@ -128,8 +133,10 @@ export interface GSDPreferences {
   git?: GitPreferences;
   post_unit_hooks?: PostUnitHookConfig[];
   pre_dispatch_hooks?: PreDispatchHookConfig[];
+  dynamic_routing?: DynamicRoutingConfig;
   token_profile?: TokenProfile;
   phases?: PhaseSkipPreferences;
+  auto_visualize?: boolean;
 }
 
 export interface LoadedGSDPreferences {
@@ -425,142 +432,16 @@ export function parsePreferencesMarkdown(content: string): GSDPreferences | null
 }
 
 function parseFrontmatterBlock(frontmatter: string): GSDPreferences {
-  const root: Record<string, unknown> = {};
-  const stack: Array<{ indent: number; value: Record<string, unknown> }> = [{ indent: -1, value: root }];
-
-  const lines = frontmatter.split(/\r?\n/);
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-    if (!line.trim()) continue;
-
-    const indent = line.match(/^\s*/)?.[0].length ?? 0;
-    const trimmed = line.trim();
-
-    // Skip comment lines (standalone YAML comments)
-    if (trimmed.startsWith("#")) continue;
-
-    while (stack.length > 1 && indent <= stack[stack.length - 1].indent) {
-      stack.pop();
+  try {
+    const parsed = parseYaml(frontmatter);
+    if (typeof parsed !== 'object' || parsed === null) {
+      return {} as GSDPreferences;
     }
-
-    const current = stack[stack.length - 1].value;
-    const keyMatch = trimmed.match(/^([A-Za-z0-9_]+):(.*)$/);
-    if (!keyMatch) continue;
-
-    const [, key, remainder] = keyMatch;
-    // Strip inline comments from the value portion
-    const valuePart = remainder.replace(/\s+#.*$/, "").trim();
-
-    if (valuePart === "") {
-      const nextLine = lines[i + 1] ?? "";
-      const nextTrimmed = nextLine.trim();
-      if (nextTrimmed.startsWith("- ")) {
-        const items: unknown[] = [];
-        let j = i + 1;
-        while (j < lines.length) {
-          const candidate = lines[j];
-          const candidateIndent = candidate.match(/^\s*/)?.[0].length ?? 0;
-          const candidateTrimmed = candidate.trim();
-          if (!candidateTrimmed) {
-            j++;
-            continue;
-          }
-          if (candidateIndent <= indent || !candidateTrimmed.startsWith("- ")) break;
-
-          const itemText = candidateTrimmed.slice(2).trim();
-          const nextCandidate = lines[j + 1] ?? "";
-          const nextCandidateIndent = nextCandidate.match(/^\s*/)?.[0].length ?? 0;
-          const nextCandidateTrimmed = nextCandidate.trim();
-
-          // Treat an array item as a structured object only when:
-          //   a) It looks like a YAML key-value pair (key starts with [A-Za-z0-9_]+:), OR
-          //   b) The next line is indented deeper (nested block under this item).
-          // Bare colons (e.g. "qwen/qwen3-coder:free") are NOT key-value pairs.
-          const looksLikeKeyValue = /^[A-Za-z0-9_]+:/.test(itemText);
-          if (looksLikeKeyValue || (nextCandidateTrimmed && nextCandidateIndent > candidateIndent)) {
-            const obj: Record<string, unknown> = {};
-            const firstMatch = itemText.match(/^([A-Za-z0-9_]+):(.*)$/);
-            if (firstMatch) {
-              obj[firstMatch[1]] = parseScalar(firstMatch[2].trim());
-            }
-            j++;
-            while (j < lines.length) {
-              const nested = lines[j];
-              const nestedIndent = nested.match(/^\s*/)?.[0].length ?? 0;
-              const nestedTrimmed = nested.trim();
-              if (!nestedTrimmed) {
-                j++;
-                continue;
-              }
-              if (nestedIndent <= candidateIndent) break;
-              const nestedMatch = nestedTrimmed.match(/^([A-Za-z0-9_]+):(.*)$/);
-              if (nestedMatch) {
-                const nestedValue = nestedMatch[2].trim();
-                if (nestedValue === "") {
-                  const nestedItems: string[] = [];
-                  j++;
-                  while (j < lines.length) {
-                    const nestedArrayLine = lines[j];
-                    const nestedArrayIndent = nestedArrayLine.match(/^\s*/)?.[0].length ?? 0;
-                    const nestedArrayTrimmed = nestedArrayLine.trim();
-                    if (!nestedArrayTrimmed) {
-                      j++;
-                      continue;
-                    }
-                    if (nestedArrayIndent <= nestedIndent || !nestedArrayTrimmed.startsWith("- ")) break;
-                    nestedItems.push(String(parseScalar(nestedArrayTrimmed.slice(2).trim())));
-                    j++;
-                  }
-                  obj[nestedMatch[1]] = nestedItems;
-                  continue;
-                }
-                obj[nestedMatch[1]] = parseScalar(nestedValue);
-              }
-              j++;
-            }
-            items.push(obj);
-            continue;
-          }
-
-          items.push(parseScalar(itemText));
-          j++;
-        }
-        current[key] = items;
-        i = j - 1;
-      } else {
-        const obj: Record<string, unknown> = {};
-        current[key] = obj;
-        stack.push({ indent, value: obj });
-      }
-      continue;
-    }
-
-    current[key] = parseScalar(valuePart);
+    return parsed as GSDPreferences;
+  } catch (e) {
+    console.error("[parseFrontmatterBlock] YAML parse error:", e);
+    return {} as GSDPreferences;
   }
-
-  return root as GSDPreferences;
-}
-
-function parseScalar(value: string): unknown {
-  // Strip inline YAML comments: " # comment" (# preceded by whitespace).
-  // Quoted strings are returned as-is (the comment is inside quotes).
-  const quoteMatch = value.match(/^(['"])(.*)(\1)$/);
-  if (quoteMatch) return quoteMatch[2];
-
-  const stripped = value.replace(/\s+#.*$/, "");
-  if (stripped === "true") return true;
-  if (stripped === "false") return false;
-  // Recognize empty array/object literals (with or without surrounding quotes)
-  const unquoted = stripped.replace(/^['\"]|['\"]$/g, "");
-  if (unquoted === "[]") return [];
-  if (unquoted === "{}") return {};
-  if (/^-?\d+$/.test(stripped)) {
-    const n = Number(stripped);
-    // Keep large integers (e.g. Discord channel IDs) as strings to avoid precision loss
-    if (Number.isSafeInteger(n)) return n;
-    return stripped;
-  }
-  return unquoted;
 }
 
 /**
@@ -674,6 +555,20 @@ export function resolveModelWithFallbacksForUnit(unitType: string): ResolvedMode
   };
 }
 
+/**
+ * Resolve the dynamic routing configuration from effective preferences.
+ * Returns the merged config with defaults applied.
+ */
+export function resolveDynamicRoutingConfig(): DynamicRoutingConfig {
+  const prefs = loadEffectiveGSDPreferences();
+  const configured = prefs?.preferences.dynamic_routing;
+  if (!configured) return defaultRoutingConfig();
+  return {
+    ...defaultRoutingConfig(),
+    ...configured,
+  };
+}
+
 export function resolveAutoSupervisorConfig(): AutoSupervisorConfig {
   const prefs = loadEffectiveGSDPreferences();
   const configured = prefs?.preferences.auto_supervisor ?? {};
@@ -780,6 +675,9 @@ function mergePreferences(base: GSDPreferences, override: GSDPreferences): GSDPr
       : undefined,
     post_unit_hooks: mergePostUnitHooks(base.post_unit_hooks, override.post_unit_hooks),
     pre_dispatch_hooks: mergePreDispatchHooks(base.pre_dispatch_hooks, override.pre_dispatch_hooks),
+    dynamic_routing: (base.dynamic_routing || override.dynamic_routing)
+      ? { ...(base.dynamic_routing ?? {}), ...(override.dynamic_routing ?? {}) } as DynamicRoutingConfig
+      : undefined,
     token_profile: override.token_profile ?? base.token_profile,
     phases: (base.phases || override.phases)
       ? { ...(base.phases ?? {}), ...(override.phases ?? {}) }
@@ -1097,6 +995,56 @@ export function validatePreferences(preferences: GSDPreferences): {
     }
     if (validPreHooks.length > 0) {
       validated.pre_dispatch_hooks = validPreHooks;
+    }
+  }
+
+  // ─── Dynamic Routing ─────────────────────────────────────────────────
+  if (preferences.dynamic_routing !== undefined) {
+    if (typeof preferences.dynamic_routing === "object" && preferences.dynamic_routing !== null) {
+      const dr = preferences.dynamic_routing as unknown as Record<string, unknown>;
+      const validDr: Partial<DynamicRoutingConfig> = {};
+
+      if (dr.enabled !== undefined) {
+        if (typeof dr.enabled === "boolean") validDr.enabled = dr.enabled;
+        else errors.push("dynamic_routing.enabled must be a boolean");
+      }
+      if (dr.escalate_on_failure !== undefined) {
+        if (typeof dr.escalate_on_failure === "boolean") validDr.escalate_on_failure = dr.escalate_on_failure;
+        else errors.push("dynamic_routing.escalate_on_failure must be a boolean");
+      }
+      if (dr.budget_pressure !== undefined) {
+        if (typeof dr.budget_pressure === "boolean") validDr.budget_pressure = dr.budget_pressure;
+        else errors.push("dynamic_routing.budget_pressure must be a boolean");
+      }
+      if (dr.cross_provider !== undefined) {
+        if (typeof dr.cross_provider === "boolean") validDr.cross_provider = dr.cross_provider;
+        else errors.push("dynamic_routing.cross_provider must be a boolean");
+      }
+      if (dr.hooks !== undefined) {
+        if (typeof dr.hooks === "boolean") validDr.hooks = dr.hooks;
+        else errors.push("dynamic_routing.hooks must be a boolean");
+      }
+      if (dr.tier_models !== undefined) {
+        if (typeof dr.tier_models === "object" && dr.tier_models !== null) {
+          const tm = dr.tier_models as Record<string, unknown>;
+          const validTm: Record<string, string> = {};
+          for (const tier of ["light", "standard", "heavy"]) {
+            if (tm[tier] !== undefined) {
+              if (typeof tm[tier] === "string") validTm[tier] = tm[tier] as string;
+              else errors.push(`dynamic_routing.tier_models.${tier} must be a string`);
+            }
+          }
+          if (Object.keys(validTm).length > 0) validDr.tier_models = validTm as DynamicRoutingConfig["tier_models"];
+        } else {
+          errors.push("dynamic_routing.tier_models must be an object");
+        }
+      }
+
+      if (Object.keys(validDr).length > 0) {
+        validated.dynamic_routing = validDr as unknown as DynamicRoutingConfig;
+      }
+    } else {
+      errors.push("dynamic_routing must be an object");
     }
   }
 

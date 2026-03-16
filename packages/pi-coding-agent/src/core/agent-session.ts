@@ -1356,6 +1356,7 @@ export class AgentSession {
 		this.agent.reset();
 		// Update cwd to current process directory — auto-mode may have chdir'd
 		// into a worktree since the original session was created.
+		const previousCwd = this._cwd;
 		this._cwd = process.cwd();
 		this.sessionManager.newSession({ parentSession: options?.parentSession });
 		this.agent.sessionId = this.sessionManager.getSessionId();
@@ -1364,6 +1365,17 @@ export class AgentSession {
 		this._pendingNextTurnMessages = [];
 
 		this.sessionManager.appendThinkingLevelChange(this.thinkingLevel);
+
+		// Rebuild tools when cwd changed (e.g., auto-mode entered a worktree).
+		// Tools capture cwd at creation time for path resolution — without
+		// rebuilding, write/read/edit/bash resolve relative paths against
+		// the original project root instead of the worktree (#633).
+		if (this._cwd !== previousCwd) {
+			this._buildRuntime({
+				activeToolNames: this.getActiveToolNames(),
+				includeAllExtensionTools: true,
+			});
+		}
 
 		// Run setup callback if provided (e.g., to append initial messages)
 		if (options?.setup) {
@@ -2331,7 +2343,7 @@ export class AgentSession {
 
 		const defaultActiveToolNames = this._baseToolsOverride
 			? Object.keys(this._baseToolsOverride)
-			: ["read", "bash", "edit", "write"];
+			: ["read", "bash", "edit", "write", "lsp"];
 		const baseActiveToolNames = options.activeToolNames ?? defaultActiveToolNames;
 		this._refreshToolRegistry({
 			activeToolNames: baseActiveToolNames,

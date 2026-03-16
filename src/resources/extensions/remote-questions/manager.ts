@@ -5,8 +5,8 @@
 import { randomUUID } from "node:crypto";
 import type { ChannelAdapter, RemotePrompt, RemoteQuestion, RemoteAnswer } from "./types.js";
 import { resolveRemoteConfig, type ResolvedConfig } from "./config.js";
-import { SlackAdapter } from "./slack-adapter.js";
 import { DiscordAdapter } from "./discord-adapter.js";
+import { SlackAdapter } from "./slack-adapter.js";
 import { createPromptRecord, writePromptRecord, markPromptAnswered, markPromptDispatched, markPromptStatus, updatePromptRecord } from "./store.js";
 
 interface ToolResult {
@@ -76,6 +76,14 @@ export async function tryRemoteQuestions(
   }
 
   markPromptAnswered(prompt.id, answer);
+
+  // Best-effort acknowledgement gives remote users a visible receipt signal.
+  if (dispatch.ref) {
+    try {
+      await adapter.acknowledgeAnswer?.(dispatch.ref);
+    } catch { /* best-effort */ }
+  }
+
   return {
     content: [{ type: "text", text: JSON.stringify({ answers: formatForTool(answer) }) }],
     details: {

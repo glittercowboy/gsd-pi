@@ -11,9 +11,11 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { deriveState } from "./state.js";
 import { GSDDashboardOverlay } from "./dashboard-overlay.js";
+import { GSDVisualizerOverlay } from "./visualizer-overlay.js";
 import { showQueue, showDiscuss } from "./guided-flow.js";
 import { startAuto, stopAuto, pauseAuto, isAutoActive, isAutoPaused, isStepMode, stopAutoRemote } from "./auto.js";
 import { resolveProjectRoot } from "./worktree.js";
+import { appendCapture, hasPendingCaptures, loadPendingCaptures } from "./captures.js";
 import {
   getGlobalGSDPreferencesPath,
   getLegacyGlobalGSDPreferencesPath,
@@ -64,13 +66,13 @@ function projectRoot(): string {
 
 export function registerGSDCommand(pi: ExtensionAPI): void {
   pi.registerCommand("gsd", {
-    description: "GSD — Get Shit Done: /gsd help|next|auto|stop|pause|status|visualize|queue|capture|triage|history|undo|skip|export|cleanup|prefs|config|hooks|doctor|migrate|remote|steer|knowledge",
+    description: "GSD — Get Shit Done: /gsd help|next|auto|stop|pause|status|visualize|queue|capture|triage|history|undo|skip|export|cleanup|prefs|config|hooks|run-hook|doctor|migrate|remote|steer|knowledge",
     getArgumentCompletions: (prefix: string) => {
       const subcommands = [
         "help", "next", "auto", "stop", "pause", "status", "visualize", "queue", "discuss",
         "capture", "triage",
         "history", "undo", "skip", "export", "cleanup", "prefs",
-        "config", "hooks", "doctor", "migrate", "remote", "steer", "knowledge",
+        "config", "hooks", "run-hook", "doctor", "migrate", "remote", "steer", "inspect", "knowledge",
       ];
       const parts = prefix.trim().split(/\s+/);
 
@@ -166,6 +168,11 @@ export function registerGSDCommand(pi: ExtensionAPI): void {
 
       if (trimmed === "status") {
         await handleStatus(ctx);
+        return;
+      }
+
+      if (trimmed === "visualize") {
+        await handleVisualize(ctx);
         return;
       }
 
@@ -265,6 +272,16 @@ export function registerGSDCommand(pi: ExtensionAPI): void {
         return;
       }
 
+      if (trimmed.startsWith("capture ") || trimmed === "capture") {
+        await handleCapture(trimmed.replace(/^capture\s*/, "").trim(), ctx);
+        return;
+      }
+
+      if (trimmed === "triage") {
+        await handleTriage(ctx, pi, process.cwd());
+        return;
+      }
+
       if (trimmed === "config") {
         await handleConfig(ctx);
         return;
@@ -273,6 +290,26 @@ export function registerGSDCommand(pi: ExtensionAPI): void {
       if (trimmed === "hooks") {
         const { formatHookStatus } = await import("./post-unit-hooks.js");
         ctx.ui.notify(formatHookStatus(), "info");
+        return;
+      }
+
+      if (trimmed.startsWith("run-hook ")) {
+        await handleRunHook(trimmed.replace(/^run-hook\s*/, "").trim(), ctx, pi);
+        return;
+      }
+      if (trimmed === "run-hook") {
+        ctx.ui.notify(`Usage: /gsd run-hook <hook-name> <unit-type> <unit-id>
+
+Unit types:
+  execute-task   - Task execution (unit-id: M001/S01/T01)
+  plan-slice     - Slice planning (unit-id: M001/S01)
+  research-milestone - Milestone research (unit-id: M001)
+  complete-slice - Slice completion (unit-id: M001/S01)
+  complete-milestone - Milestone completion (unit-id: M001)
+
+Examples:
+  /gsd run-hook code-review execute-task M001/S01/T01
+  /gsd run-hook lint-check plan-slice M001/S01`, "warning");
         return;
       }
 
@@ -302,6 +339,11 @@ export function registerGSDCommand(pi: ExtensionAPI): void {
 
       if (trimmed === "remote" || trimmed.startsWith("remote ")) {
         await handleRemote(trimmed.replace(/^remote\s*/, "").trim(), ctx, pi);
+        return;
+      }
+
+      if (trimmed === "inspect") {
+        await handleInspect(ctx);
         return;
       }
 
@@ -357,6 +399,7 @@ function showHelp(ctx: ExtensionCommandContext): void {
     "  /gsd cleanup        Remove merged branches or snapshots  [branches|snapshots]",
     "  /gsd migrate        Upgrade .gsd/ structures to new format",
     "  /gsd remote         Control remote auto-mode  [slack|discord|status|disconnect]",
+    "  /gsd inspect        Show SQLite DB diagnostics (schema, row counts, recent entries)",
   ];
   ctx.ui.notify(lines.join("\n"), "info");
 }
@@ -390,6 +433,28 @@ export async function fireStatusViaCommand(
   ctx: import("@gsd/pi-coding-agent").ExtensionContext,
 ): Promise<void> {
   await handleStatus(ctx as ExtensionCommandContext);
+}
+
+async function handleVisualize(ctx: ExtensionCommandContext): Promise<void> {
+  if (!ctx.hasUI) {
+    ctx.ui.notify("Visualizer requires an interactive terminal.", "warning");
+    return;
+  }
+
+  await ctx.ui.custom<void>(
+    (tui, theme, _kb, done) => {
+      return new GSDVisualizerOverlay(tui, theme, () => done());
+    },
+    {
+      overlay: true,
+      overlayOptions: {
+        width: "80%",
+        minWidth: 80,
+        maxHeight: "90%",
+        anchor: "center",
+      },
+    },
+  );
 }
 
 async function handlePrefs(args: string, ctx: ExtensionCommandContext): Promise<void> {
@@ -479,19 +544,174 @@ async function handleDoctor(args: string, ctx: ExtensionCommandContext, pi: Exte
   }
 }
 
+// ─── Inspect ──────────────────────────────────────────────────────────────────
+
+export interface InspectData {
+  schemaVersion: number | null;
+  counts: { decisions: number; requirements: number; artifacts: number };
+  recentDecisions: Array<{ id: string; decision: string; choice: string }>;
+  recentRequirements: Array<{ id: string; status: string; description: string }>;
+}
+
+export function formatInspectOutput(data: InspectData): string {
+  const lines: string[] = [];
+  lines.push("=== GSD Database Inspect ===");
+  lines.push(`Schema version: ${data.schemaVersion ?? "unknown"}`);
+  lines.push("");
+  lines.push(`Decisions:    ${data.counts.decisions}`);
+  lines.push(`Requirements: ${data.counts.requirements}`);
+  lines.push(`Artifacts:    ${data.counts.artifacts}`);
+
+  if (data.recentDecisions.length > 0) {
+    lines.push("");
+    lines.push("Recent decisions:");
+    for (const d of data.recentDecisions) {
+      lines.push(`  ${d.id}: ${d.decision} → ${d.choice}`);
+    }
+  }
+
+  if (data.recentRequirements.length > 0) {
+    lines.push("");
+    lines.push("Recent requirements:");
+    for (const r of data.recentRequirements) {
+      lines.push(`  ${r.id} [${r.status}]: ${r.description}`);
+    }
+  }
+
+  return lines.join("\n");
+}
+
+async function handleInspect(ctx: ExtensionCommandContext): Promise<void> {
+  try {
+    const { isDbAvailable, _getAdapter } = await import("./gsd-db.js");
+
+    if (!isDbAvailable()) {
+      ctx.ui.notify("No GSD database available. Run /gsd auto to create one.", "info");
+      return;
+    }
+
+    const adapter = _getAdapter();
+    if (!adapter) {
+      ctx.ui.notify("No GSD database available. Run /gsd auto to create one.", "info");
+      return;
+    }
+
+    const versionRow = adapter.prepare("SELECT MAX(version) as v FROM schema_version").get();
+    const schemaVersion = versionRow ? (versionRow["v"] as number | null) : null;
+
+    const dCount = adapter.prepare("SELECT count(*) as cnt FROM decisions").get();
+    const rCount = adapter.prepare("SELECT count(*) as cnt FROM requirements").get();
+    const aCount = adapter.prepare("SELECT count(*) as cnt FROM artifacts").get();
+
+    const recentDecisions = adapter
+      .prepare("SELECT id, decision, choice FROM decisions ORDER BY seq DESC LIMIT 5")
+      .all() as Array<{ id: string; decision: string; choice: string }>;
+
+    const recentRequirements = adapter
+      .prepare("SELECT id, status, description FROM requirements ORDER BY id DESC LIMIT 5")
+      .all() as Array<{ id: string; status: string; description: string }>;
+
+    const data: InspectData = {
+      schemaVersion,
+      counts: {
+        decisions: (dCount?.["cnt"] as number) ?? 0,
+        requirements: (rCount?.["cnt"] as number) ?? 0,
+        artifacts: (aCount?.["cnt"] as number) ?? 0,
+      },
+      recentDecisions,
+      recentRequirements,
+    };
+
+    ctx.ui.notify(formatInspectOutput(data), "info");
+  } catch (err) {
+    process.stderr.write(`gsd-db: /gsd inspect failed: ${err instanceof Error ? err.message : String(err)}\n`);
+    ctx.ui.notify("Failed to inspect GSD database. Check stderr for details.", "error");
+  }
+}
+
 // ─── Preferences Wizard ───────────────────────────────────────────────────────
 
-async function handlePrefsWizard(
-  ctx: ExtensionCommandContext,
-  scope: "global" | "project",
-): Promise<void> {
-  const path = scope === "project" ? getProjectGSDPreferencesPath() : getGlobalGSDPreferencesPath();
-  const existing = scope === "project" ? loadProjectGSDPreferences() : loadGlobalGSDPreferences();
-  const prefs: Record<string, unknown> = existing?.preferences ? { ...existing.preferences } : {};
+/** Build short summary strings for each preference category. */
+function buildCategorySummaries(prefs: Record<string, unknown>): Record<string, string> {
+  // Models
+  const models = prefs.models as Record<string, string> | undefined;
+  let modelsSummary = "(not configured)";
+  if (models && Object.keys(models).length > 0) {
+    const parts = Object.entries(models).map(([phase, model]) => `${phase}: ${model}`);
+    modelsSummary = parts.join(", ");
+  }
 
-  ctx.ui.notify(`GSD preferences wizard (${scope}) — press Escape at any prompt to skip it.`, "info");
+  // Timeouts
+  const autoSup = prefs.auto_supervisor as Record<string, unknown> | undefined;
+  let timeoutsSummary = "(defaults)";
+  if (autoSup && Object.keys(autoSup).length > 0) {
+    const soft = autoSup.soft_timeout_minutes ?? "20";
+    const idle = autoSup.idle_timeout_minutes ?? "10";
+    const hard = autoSup.hard_timeout_minutes ?? "30";
+    timeoutsSummary = `soft: ${soft}m, idle: ${idle}m, hard: ${hard}m`;
+  }
 
-  // ─── Models ──────────────────────────────────────────────────────────────
+  // Git
+  const git = prefs.git as Record<string, unknown> | undefined;
+  let gitSummary = "(defaults)";
+  if (git && Object.keys(git).length > 0) {
+    const branch = git.main_branch ?? "main";
+    const push = git.auto_push ? "on" : "off";
+    gitSummary = `main: ${branch}, push: ${push}`;
+  }
+
+  // Skills
+  const discovery = prefs.skill_discovery as string | undefined;
+  const uat = prefs.uat_dispatch;
+  let skillsSummary = "(not configured)";
+  if (discovery || uat !== undefined) {
+    const parts: string[] = [];
+    if (discovery) parts.push(`discovery: ${discovery}`);
+    if (uat !== undefined) parts.push(`uat: ${uat}`);
+    skillsSummary = parts.join(", ");
+  }
+
+  // Budget
+  const ceiling = prefs.budget_ceiling;
+  const enforcement = prefs.budget_enforcement as string | undefined;
+  let budgetSummary = "(no limit)";
+  if (ceiling !== undefined) {
+    budgetSummary = `$${ceiling}`;
+    if (enforcement) budgetSummary += ` / ${enforcement}`;
+  } else if (enforcement) {
+    budgetSummary = enforcement;
+  }
+
+  // Notifications
+  const notif = prefs.notifications as Record<string, boolean> | undefined;
+  let notifSummary = "(defaults)";
+  if (notif && Object.keys(notif).length > 0) {
+    const allKeys = ["enabled", "on_complete", "on_error", "on_budget", "on_milestone", "on_attention"];
+    const enabledCount = allKeys.filter(k => notif[k] !== false).length;
+    notifSummary = `${enabledCount}/${allKeys.length} enabled`;
+  }
+
+  // Advanced
+  const uniqueIds = prefs.unique_milestone_ids;
+  let advancedSummary = "(defaults)";
+  if (uniqueIds !== undefined) {
+    advancedSummary = `unique IDs: ${uniqueIds ? "on" : "off"}`;
+  }
+
+  return {
+    models: modelsSummary,
+    timeouts: timeoutsSummary,
+    git: gitSummary,
+    skills: skillsSummary,
+    budget: budgetSummary,
+    notifications: notifSummary,
+    advanced: advancedSummary,
+  };
+}
+
+// ─── Category configuration functions ────────────────────────────────────────
+
+async function configureModels(ctx: ExtensionCommandContext, prefs: Record<string, unknown>): Promise<void> {
   const modelPhases = ["research", "planning", "execution", "completion"] as const;
   const models: Record<string, string> = (prefs.models as Record<string, string>) ?? {};
 
@@ -514,7 +734,6 @@ async function handlePrefsWizard(
       }
     }
   } else {
-    // No authenticated models available — fall back to text input
     for (const phase of modelPhases) {
       const current = models[phase] ?? "";
       const input = await ctx.ui.input(
@@ -534,8 +753,9 @@ async function handlePrefsWizard(
   if (Object.keys(models).length > 0) {
     prefs.models = models;
   }
+}
 
-  // ─── Auto-supervisor timeouts ────────────────────────────────────────────
+async function configureTimeouts(ctx: ExtensionCommandContext, prefs: Record<string, unknown>): Promise<void> {
   const autoSup: Record<string, unknown> = (prefs.auto_supervisor as Record<string, unknown>) ?? {};
   const timeoutFields = [
     { key: "soft_timeout_minutes", label: "Soft timeout (minutes)", defaultVal: "20" },
@@ -564,8 +784,9 @@ async function handlePrefsWizard(
   if (Object.keys(autoSup).length > 0) {
     prefs.auto_supervisor = autoSup;
   }
+}
 
-  // ─── Git settings ───────────────────────────────────────────────────────
+async function configureGit(ctx: ExtensionCommandContext, prefs: Record<string, unknown>): Promise<void> {
   const git: Record<string, unknown> = (prefs.git as Record<string, unknown>) ?? {};
 
   // main_branch
@@ -666,7 +887,7 @@ async function handlePrefsWizard(
     git.isolation = isolationChoice;
   }
 
-  // ─── Git commit_docs ────────────────────────────────────────────────────
+  // commit_docs
   const currentCommitDocs = git.commit_docs;
   const commitDocsChoice = await ctx.ui.select(
     `Track .gsd/ planning docs in git${currentCommitDocs !== undefined ? ` (current: ${currentCommitDocs})` : ""}:`,
@@ -679,8 +900,10 @@ async function handlePrefsWizard(
   if (Object.keys(git).length > 0) {
     prefs.git = git;
   }
+}
 
-  // ─── Skill discovery mode ───────────────────────────────────────────────
+async function configureSkills(ctx: ExtensionCommandContext, prefs: Record<string, unknown>): Promise<void> {
+  // Skill discovery mode
   const currentDiscovery = (prefs.skill_discovery as string) ?? "";
   const discoveryChoice = await ctx.ui.select(
     `Skill discovery mode${currentDiscovery ? ` (current: ${currentDiscovery})` : ""}:`,
@@ -690,17 +913,18 @@ async function handlePrefsWizard(
     prefs.skill_discovery = discoveryChoice;
   }
 
-  // ─── Unique milestone IDs ──────────────────────────────────────────────
-  const currentUnique = prefs.unique_milestone_ids;
-  const uniqueChoice = await ctx.ui.select(
-    `Unique milestone IDs${currentUnique !== undefined ? ` (current: ${currentUnique})` : ""}:`,
+  // UAT dispatch
+  const currentUat = prefs.uat_dispatch;
+  const uatChoice = await ctx.ui.select(
+    `UAT dispatch mode${currentUat !== undefined ? ` (current: ${currentUat})` : " (default: false)"}:`,
     ["true", "false", "(keep current)"],
   );
-  if (uniqueChoice && uniqueChoice !== "(keep current)") {
-    prefs.unique_milestone_ids = uniqueChoice === "true";
+  if (uatChoice && uatChoice !== "(keep current)") {
+    prefs.uat_dispatch = uatChoice === "true";
   }
+}
 
-  // ─── Budget & cost control ────────────────────────────────────────────
+async function configureBudget(ctx: ExtensionCommandContext, prefs: Record<string, unknown>): Promise<void> {
   const currentCeiling = prefs.budget_ceiling;
   const ceilingStr = currentCeiling !== undefined ? String(currentCeiling) : "";
   const ceilingInput = await ctx.ui.input(
@@ -746,8 +970,9 @@ async function handlePrefsWizard(
       ctx.ui.notify(`Invalid context pause threshold "${val}" — must be 0-100. Keeping previous value.`, "warning");
     }
   }
+}
 
-  // ─── Notifications ────────────────────────────────────────────────────
+async function configureNotifications(ctx: ExtensionCommandContext, prefs: Record<string, unknown>): Promise<void> {
   const notif: Record<string, boolean> = (prefs.notifications as Record<string, boolean>) ?? {};
   const notifFields = [
     { key: "enabled", label: "Notifications enabled (master toggle)", defaultVal: true },
@@ -772,15 +997,55 @@ async function handlePrefsWizard(
   if (Object.keys(notif).length > 0) {
     prefs.notifications = notif;
   }
+}
 
-  // ─── UAT dispatch ─────────────────────────────────────────────────────
-  const currentUat = prefs.uat_dispatch;
-  const uatChoice = await ctx.ui.select(
-    `UAT dispatch mode${currentUat !== undefined ? ` (current: ${currentUat})` : " (default: false)"}:`,
+async function configureAdvanced(ctx: ExtensionCommandContext, prefs: Record<string, unknown>): Promise<void> {
+  const currentUnique = prefs.unique_milestone_ids;
+  const uniqueChoice = await ctx.ui.select(
+    `Unique milestone IDs${currentUnique !== undefined ? ` (current: ${currentUnique})` : ""}:`,
     ["true", "false", "(keep current)"],
   );
-  if (uatChoice && uatChoice !== "(keep current)") {
-    prefs.uat_dispatch = uatChoice === "true";
+  if (uniqueChoice && uniqueChoice !== "(keep current)") {
+    prefs.unique_milestone_ids = uniqueChoice === "true";
+  }
+}
+
+// ─── Main wizard with category menu ─────────────────────────────────────────
+
+async function handlePrefsWizard(
+  ctx: ExtensionCommandContext,
+  scope: "global" | "project",
+): Promise<void> {
+  const path = scope === "project" ? getProjectGSDPreferencesPath() : getGlobalGSDPreferencesPath();
+  const existing = scope === "project" ? loadProjectGSDPreferences() : loadGlobalGSDPreferences();
+  const prefs: Record<string, unknown> = existing?.preferences ? { ...existing.preferences } : {};
+
+  ctx.ui.notify(`GSD preferences (${scope}) — pick a category to configure.`, "info");
+
+  while (true) {
+    const summaries = buildCategorySummaries(prefs);
+    const options = [
+      `Models          ${summaries.models}`,
+      `Timeouts        ${summaries.timeouts}`,
+      `Git             ${summaries.git}`,
+      `Skills          ${summaries.skills}`,
+      `Budget          ${summaries.budget}`,
+      `Notifications   ${summaries.notifications}`,
+      `Advanced        ${summaries.advanced}`,
+      `── Save & Exit ──`,
+    ];
+
+    const raw = await ctx.ui.select("GSD Preferences", options);
+    const choice = typeof raw === "string" ? raw : "";
+    if (!choice || choice.includes("Save & Exit")) break;
+
+    if (choice.startsWith("Models"))             await configureModels(ctx, prefs);
+    else if (choice.startsWith("Timeouts"))      await configureTimeouts(ctx, prefs);
+    else if (choice.startsWith("Git"))           await configureGit(ctx, prefs);
+    else if (choice.startsWith("Skills"))        await configureSkills(ctx, prefs);
+    else if (choice.startsWith("Budget"))        await configureBudget(ctx, prefs);
+    else if (choice.startsWith("Notifications")) await configureNotifications(ctx, prefs);
+    else if (choice.startsWith("Advanced"))      await configureAdvanced(ctx, prefs);
   }
 
   // ─── Serialize to frontmatter ───────────────────────────────────────────
@@ -1243,6 +1508,102 @@ async function handleKnowledge(args: string, ctx: ExtensionCommandContext): Prom
   ctx.ui.notify(`Added ${type} to KNOWLEDGE.md: "${entryText}"`, "success");
 }
 
+// ─── Capture Command ──────────────────────────────────────────────────────────
+
+/**
+ * Handle `/gsd capture "..."` — fire-and-forget thought capture.
+ * Appends to `.gsd/CAPTURES.md` without interrupting auto-mode.
+ * Works in all modes: auto running, paused, stopped, no project.
+ */
+async function handleCapture(args: string, ctx: ExtensionCommandContext): Promise<void> {
+  // Strip surrounding quotes from the argument
+  let text = args.trim();
+  if (!text) {
+    ctx.ui.notify('Usage: /gsd capture "your thought here"', "warning");
+    return;
+  }
+  // Remove wrapping quotes (single or double)
+  if ((text.startsWith('"') && text.endsWith('"')) || (text.startsWith("'") && text.endsWith("'"))) {
+    text = text.slice(1, -1);
+  }
+  if (!text) {
+    ctx.ui.notify('Usage: /gsd capture "your thought here"', "warning");
+    return;
+  }
+
+  const basePath = process.cwd();
+
+  // Ensure .gsd/ exists — capture should work even without a milestone
+  const gsdDir = join(basePath, ".gsd");
+  if (!existsSync(gsdDir)) {
+    mkdirSync(gsdDir, { recursive: true });
+  }
+
+  const id = appendCapture(basePath, text);
+  ctx.ui.notify(`Captured: ${id} — "${text.length > 60 ? text.slice(0, 57) + "..." : text}"`, "info");
+}
+
+// ─── Triage Command ───────────────────────────────────────────────────────────
+
+/**
+ * Handle `/gsd triage` — manually trigger triage of pending captures.
+ * Dispatches the triage prompt to the LLM for classification.
+ * Triage result handling (confirmation UI) is wired in T03.
+ */
+async function handleTriage(ctx: ExtensionCommandContext, pi: ExtensionAPI, basePath: string): Promise<void> {
+  if (!hasPendingCaptures(basePath)) {
+    ctx.ui.notify("No pending captures to triage.", "info");
+    return;
+  }
+
+  const pending = loadPendingCaptures(basePath);
+  ctx.ui.notify(`Triaging ${pending.length} pending capture${pending.length === 1 ? "" : "s"}...`, "info");
+
+  // Build context for the triage prompt
+  const state = await deriveState(basePath);
+  let currentPlan = "";
+  let roadmapContext = "";
+
+  if (state.activeMilestone && state.activeSlice) {
+    const { resolveSliceFile, resolveMilestoneFile } = await import("./paths.js");
+    const planFile = resolveSliceFile(basePath, state.activeMilestone.id, state.activeSlice.id, "PLAN");
+    if (planFile) {
+      const { loadFile: load } = await import("./files.js");
+      currentPlan = (await load(planFile)) ?? "";
+    }
+    const roadmapFile = resolveMilestoneFile(basePath, state.activeMilestone.id, "ROADMAP");
+    if (roadmapFile) {
+      const { loadFile: load } = await import("./files.js");
+      roadmapContext = (await load(roadmapFile)) ?? "";
+    }
+  }
+
+  // Format pending captures for the prompt
+  const capturesList = pending.map(c =>
+    `- **${c.id}**: "${c.text}" (captured: ${c.timestamp})`
+  ).join("\n");
+
+  // Dispatch triage prompt
+  const { loadPrompt } = await import("./prompt-loader.js");
+  const prompt = loadPrompt("triage-captures", {
+    pendingCaptures: capturesList,
+    currentPlan: currentPlan || "(no active slice plan)",
+    roadmapContext: roadmapContext || "(no active roadmap)",
+  });
+
+  const workflowPath = process.env.GSD_WORKFLOW_PATH ?? join(process.env.HOME ?? "~", ".pi", "GSD-WORKFLOW.md");
+  const workflow = readFileSync(workflowPath, "utf-8");
+
+  pi.sendMessage(
+    {
+      customType: "gsd-triage",
+      content: `Read the following GSD workflow protocol and execute exactly.\n\n${workflow}\n\n## Your Task\n\n${prompt}`,
+      display: false,
+    },
+    { triggerTurn: true },
+  );
+}
+
 async function handleSteer(change: string, ctx: ExtensionCommandContext, pi: ExtensionAPI): Promise<void> {
   const basePath = process.cwd();
   const state = await deriveState(basePath);
@@ -1283,5 +1644,71 @@ async function handleSteer(change: string, ctx: ExtensionCommandContext, pi: Ext
       display: false,
     }, { triggerTurn: true });
     ctx.ui.notify(`Override registered: "${change}". Update plan documents to reflect this change.`, "info");
+  }
+}
+
+async function handleRunHook(args: string, ctx: ExtensionCommandContext, pi: ExtensionAPI): Promise<void> {
+  const parts = args.trim().split(/\s+/);
+  if (parts.length < 3) {
+    ctx.ui.notify(`Usage: /gsd run-hook <hook-name> <unit-type> <unit-id>
+
+Unit types:
+  execute-task   - Task execution (unit-id: M001/S01/T01)
+  plan-slice     - Slice planning (unit-id: M001/S01)
+  research-milestone - Milestone research (unit-id: M001)
+  complete-slice - Slice completion (unit-id: M001/S01)
+  complete-milestone - Milestone completion (unit-id: M001)
+
+Examples:
+  /gsd run-hook code-review execute-task M001/S01/T01
+  /gsd run-hook lint-check plan-slice M001/S01`, "warning");
+    return;
+  }
+
+  const [hookName, unitType, unitId] = parts;
+  const basePath = projectRoot();
+
+  // Import the hook trigger function
+  const { triggerHookManually, formatHookStatus, getHookStatus } = await import("./post-unit-hooks.js");
+  const { dispatchHookUnit } = await import("./auto.js");
+  
+  // Check if the hook exists
+  const hooks = getHookStatus();
+  const hookExists = hooks.some(h => h.name === hookName);
+  if (!hookExists) {
+    ctx.ui.notify(`Hook "${hookName}" not found. Configured hooks:\n${formatHookStatus()}`, "error");
+    return;
+  }
+
+  // Validate unit ID format
+  const unitIdPattern = /^M\d{3}\/S\d{2,3}\/T\d{2,3}$/;
+  if (!unitIdPattern.test(unitId)) {
+    ctx.ui.notify(`Invalid unit ID format: "${unitId}". Expected format: M004/S04/T03`, "warning");
+    return;
+  }
+
+  // Trigger the hook manually
+  const hookUnit = triggerHookManually(hookName, unitType, unitId, basePath);
+  if (!hookUnit) {
+    ctx.ui.notify(`Failed to trigger hook "${hookName}". The hook may be disabled or not configured for unit type "${unitType}".`, "error");
+    return;
+  }
+
+  ctx.ui.notify(`Manually triggering hook: ${hookName} for ${unitType} ${unitId}`, "info");
+
+  // Dispatch the hook unit directly, bypassing normal pre-dispatch hooks
+  const success = await dispatchHookUnit(
+    ctx,
+    pi,
+    hookName,
+    unitType,
+    unitId,
+    hookUnit.prompt,
+    hookUnit.model,
+    basePath,
+  );
+
+  if (!success) {
+    ctx.ui.notify("Failed to dispatch hook. Auto-mode may have been cancelled.", "error");
   }
 }

@@ -92,17 +92,41 @@ Performance-critical operations use a Rust N-API engine:
 The auto mode dispatch pipeline:
 
 ```
-1. Read disk state (STATE.md, roadmap, plans)
-2. Determine next unit type and ID
-3. Classify complexity → select model tier
-4. Apply budget pressure adjustments
-5. Check routing history for adaptive adjustments
-6. Resolve effective model (with fallbacks)
-7. Build dispatch prompt (applying inline level compression)
-8. Create fresh agent session
-9. Inject prompt and let LLM execute
-10. On completion: snapshot metrics, verify artifacts, persist state
-11. Loop to step 1
+1.  Read disk state (STATE.md, roadmap, plans)
+2.  Determine next unit type and ID
+3.  Classify complexity → select model tier
+4.  Apply budget pressure adjustments
+5.  Check routing history for adaptive adjustments
+6.  Dynamic model routing (if enabled) → select cheapest model for tier
+7.  Resolve effective model (with fallbacks)
+8.  Check pending captures → triage if needed
+9.  Build dispatch prompt (applying inline level compression)
+10. Create fresh agent session
+11. Inject prompt and let LLM execute
+12. On completion: snapshot metrics, verify artifacts, persist state
+13. Loop to step 1
 ```
 
 Phase skipping (from token profile) gates steps 2-3: if a phase is skipped, the corresponding unit type is never dispatched.
+
+## Key Modules (v2.19)
+
+| Module | Purpose |
+|--------|---------|
+| `auto.ts` | Auto-mode state machine and orchestration |
+| `auto-dispatch.ts` | Declarative dispatch table (phase → unit mapping) |
+| `auto-prompts.ts` | Prompt builders with inline level compression |
+| `auto-worktree.ts` | Worktree lifecycle (create, enter, merge, teardown) |
+| `complexity-classifier.ts` | Unit complexity classification (light/standard/heavy) |
+| `model-router.ts` | Dynamic model routing with cost-aware selection |
+| `model-cost-table.ts` | Built-in per-model cost data for cross-provider comparison |
+| `routing-history.ts` | Adaptive learning from routing outcomes |
+| `captures.ts` | Fire-and-forget thought capture and triage classification |
+| `triage-resolution.ts` | Capture resolution (inject, defer, replan, quick-task) |
+| `visualizer-overlay.ts` | Workflow visualizer TUI overlay |
+| `visualizer-data.ts` | Data loading for visualizer tabs |
+| `visualizer-views.ts` | Tab renderers (progress, deps, metrics, timeline) |
+| `metrics.ts` | Token and cost tracking ledger |
+| `state.ts` | State derivation from disk |
+| `preferences.ts` | Preference loading, merging, validation |
+| `queue-order.ts` | Milestone queue ordering |

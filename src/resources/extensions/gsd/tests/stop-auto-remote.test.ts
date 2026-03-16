@@ -4,7 +4,7 @@ import { mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
-import { fork } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
 
 import { writeFileSync } from "node:fs";
 import {
@@ -23,6 +23,27 @@ function makeTmpBase(): string {
 
 function cleanup(base: string): void {
   try { rmSync(base, { recursive: true, force: true }); } catch { /* */ }
+}
+
+function waitForChildExit(child: ChildProcess, timeoutMs = 5000): Promise<number | null> {
+  return new Promise((resolve) => {
+    if (child.exitCode !== null) {
+      resolve(child.exitCode);
+      return;
+    }
+
+    const timeout = setTimeout(() => {
+      child.off("exit", onExit);
+      resolve(child.exitCode);
+    }, timeoutMs);
+
+    const onExit = (code: number | null) => {
+      clearTimeout(timeout);
+      resolve(code);
+    };
+
+    child.once("exit", onExit);
+  });
 }
 
 // ─── stopAutoRemote ──────────────────────────────────────────────────────
@@ -63,11 +84,15 @@ test("stopAutoRemote sends SIGTERM to a live process and returns found:true", as
   const base = makeTmpBase();
 
   // Spawn a child process that sleeps, acting as a fake auto-mode session
-  const child = fork(
-    "-e",
-    ["process.on('SIGTERM', () => process.exit(0)); setTimeout(() => process.exit(1), 30000);"],
+  const child = spawn(
+    process.execPath,
+    ["-e", "process.on('SIGTERM', () => process.exit(0)); setTimeout(() => process.exit(1), 30000);"],
     { stdio: "ignore", detached: false },
   );
+
+  if (!child.pid) {
+    throw new Error("failed to spawn child process for stopAutoRemote test");
+  }
 
   try {
     // Wait for child to be ready
@@ -84,15 +109,13 @@ test("stopAutoRemote sends SIGTERM to a live process and returns found:true", as
     };
     writeFileSync(join(base, ".gsd", "auto.lock"), JSON.stringify(lockData, null, 2), "utf-8");
 
+    const exitPromise = waitForChildExit(child);
     const result = stopAutoRemote(base);
     assert.equal(result.found, true, "should find running auto-mode");
     assert.equal(result.pid, child.pid, "should return the PID");
 
     // Wait for child to exit (it should receive SIGTERM)
-    const exitCode = await new Promise<number | null>((resolve) => {
-      child.on("exit", (code) => resolve(code));
-      setTimeout(() => resolve(null), 5000);
-    });
+    const exitCode = await exitPromise;
     // On Windows, SIGTERM is not interceptable — the process exits with code 1
     // rather than running the handler. Accept either clean exit (0) or forced (1).
     assert.ok(exitCode !== null, "child should have exited after SIGTERM");

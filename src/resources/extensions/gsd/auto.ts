@@ -19,6 +19,7 @@ import type {
 import { deriveState, invalidateStateCache } from "./state.js";
 import type { BudgetEnforcementMode, GSDState } from "./types.js";
 import { loadFile, parseRoadmap, getManifestStatus, resolveAllOverrides } from "./files.js";
+import { loadPrompt } from "./prompt-loader.js";
 export { inlinePriorMilestoneSummary } from "./files.js";
 import { collectSecretsFromManifest } from "../get-secrets-from-user.js";
 import {
@@ -39,9 +40,12 @@ import {
   readUnitRuntimeRecord,
   writeUnitRuntimeRecord,
 } from "./unit-runtime.js";
-import { resolveAutoSupervisorConfig, resolveModelWithFallbacksForUnit, loadEffectiveGSDPreferences, resolveSkillDiscoveryMode } from "./preferences.js";
+import { resolveAutoSupervisorConfig, resolveModelWithFallbacksForUnit, loadEffectiveGSDPreferences, resolveSkillDiscoveryMode, resolveDynamicRoutingConfig } from "./preferences.js";
 import { sendDesktopNotification } from "./notifications.js";
 import type { GSDPreferences } from "./preferences.js";
+import { classifyUnitComplexity, tierLabel } from "./complexity-classifier.js";
+import { resolveModelForComplexity } from "./model-router.js";
+import { initRoutingHistory, resetRoutingHistory, recordOutcome } from "./routing-history.js";
 import {
   checkPostUnitHooks,
   getActiveHook,
@@ -129,6 +133,8 @@ import {
   deregisterSigtermHandler as _deregisterSigtermHandler,
   detectWorkingTreeActivity,
 } from "./auto-supervisor.js";
+import { isDbAvailable } from "./gsd-db.js";
+import { hasPendingCaptures, loadPendingCaptures, countPendingCaptures } from "./captures.js";
 
 // ─── State ────────────────────────────────────────────────────────────────────
 
@@ -233,6 +239,9 @@ let autoStartTime: number = 0;
 let completedUnits: { type: string; id: string; startedAt: number; finishedAt: number }[] = [];
 let currentUnit: { type: string; id: string; startedAt: number } | null = null;
 
+/** Track dynamic routing decision for the current unit (for metrics) */
+let currentUnitRouting: { tier: string; modelDowngraded: boolean } | null = null;
+
 /** Track current milestone to detect transitions */
 let currentMilestoneId: string | null = null;
 let lastBudgetAlertLevel: BudgetAlertLevel = 0;
@@ -253,6 +262,10 @@ let idleWatchdogHandle: ReturnType<typeof setInterval> | null = null;
  *  an unhandled error kills the dispatch chain. */
 let dispatchGapHandle: ReturnType<typeof setTimeout> | null = null;
 const DISPATCH_GAP_TIMEOUT_MS = 5_000; // 5 seconds
+
+/** Prompt character measurement for token savings analysis (R051). */
+let lastPromptCharCount: number | undefined;
+let lastBaselineCharCount: number | undefined;
 
 /** SIGTERM handler registered while auto-mode is active — cleared on stop/pause. */
 let _sigtermHandler: (() => void) | null = null;
@@ -301,6 +314,15 @@ export { type AutoDashboardData } from "./auto-dashboard.js";
 export function getAutoDashboardData(): AutoDashboardData {
   const ledger = getLedger();
   const totals = ledger ? getProjectTotals(ledger.units) : null;
+  // Pending capture count — lazy check, non-fatal
+  let pendingCaptureCount = 0;
+  try {
+    if (basePath) {
+      pendingCaptureCount = countPendingCaptures(basePath);
+    }
+  } catch {
+    // Non-fatal — captures module may not be loaded
+  }
   return {
     active,
     paused,
@@ -312,6 +334,7 @@ export function getAutoDashboardData(): AutoDashboardData {
     basePath,
     totalCost: totals?.cost ?? 0,
     totalTokens: totals?.tokens.total ?? 0,
+    pendingCaptureCount,
   };
 }
 
@@ -464,18 +487,31 @@ export async function stopAuto(ctx?: ExtensionContext, pi?: ExtensionAPI): Promi
   deregisterSigtermHandler();
 
   // ── Auto-worktree: exit worktree and reset basePath on stop ──
+  // Preserve the milestone branch so the next /gsd auto can re-enter
+  // where it left off. The branch is only deleted during milestone
+  // completion (mergeMilestoneToMain) after the work has been squash-merged.
   if (currentMilestoneId && isInAutoWorktree(basePath)) {
     try {
-      teardownAutoWorktree(originalBasePath, currentMilestoneId);
+      // Auto-commit any dirty state before leaving so work isn't lost
+      try { autoCommitCurrentBranch(basePath, "stop", currentMilestoneId); } catch { /* non-fatal */ }
+      teardownAutoWorktree(originalBasePath, currentMilestoneId, { preserveBranch: true });
       basePath = originalBasePath;
       gitService = new GitServiceImpl(basePath, loadEffectiveGSDPreferences()?.preferences?.git ?? {});
-      ctx?.ui.notify("Exited auto-worktree.", "info");
+      ctx?.ui.notify("Exited auto-worktree (branch preserved for resume).", "info");
     } catch (err) {
       ctx?.ui.notify(
         `Auto-worktree teardown failed: ${err instanceof Error ? err.message : String(err)}`,
         "warning",
       );
     }
+  }
+
+  // ── DB cleanup: close the SQLite connection ──
+  if (isDbAvailable()) {
+    try {
+      const { closeDatabase } = await import("./gsd-db.js");
+      closeDatabase();
+    } catch { /* non-fatal */ }
   }
 
   // Always restore cwd to project root on stop (#608).
@@ -504,6 +540,7 @@ export async function stopAuto(ctx?: ExtensionContext, pi?: ExtensionAPI): Promi
   }
 
   resetMetrics();
+  resetRoutingHistory();
   resetHookState();
   if (basePath) clearPersistedHookState(basePath);
   active = false;
@@ -706,27 +743,104 @@ export async function startAuto(
     clearLock(base);
   }
 
-  const state = await deriveState(base);
+  let state = await deriveState(base);
 
-  // No active work at all — start a new milestone via the discuss flow.
-  if (!state.activeMilestone || state.phase === "complete") {
+  // ── Milestone branch recovery (#601) ─────────────────────────────────────
+  // When auto-mode was previously stopped, the milestone branch is preserved
+  // but the worktree is removed. The project root (integration branch) may
+  // not have the roadmap/artifacts — they live on the milestone branch.
+  // If state looks like pre-planning but a milestone branch exists with prior
+  // work, skip the early-return checks and let worktree setup + dispatch
+  // handle it correctly from the branch's state.
+  let hasSurvivorBranch = false;
+  if (
+    state.activeMilestone &&
+    (state.phase === "pre-planning" || state.phase === "needs-discussion") &&
+    shouldUseWorktreeIsolation() &&
+    !detectWorktreeName(base) &&
+    !base.includes(`${pathSep}.gsd${pathSep}worktrees${pathSep}`)
+  ) {
+    const milestoneBranch = `milestone/${state.activeMilestone.id}`;
+    const { nativeBranchExists } = await import("./native-git-bridge.js");
+    hasSurvivorBranch = nativeBranchExists(base, milestoneBranch);
+    if (hasSurvivorBranch) {
+      ctx.ui.notify(
+        `Found prior session branch ${milestoneBranch}. Resuming.`,
+        "info",
+      );
+    }
+  }
+
+  if (!hasSurvivorBranch) {
+    // No active work at all — start a new milestone via the discuss flow.
+    // After discussion completes, checkAutoStartAfterDiscuss() (fired from
+    // agent_end) will detect the new CONTEXT.md and restart auto mode.
+    // If the LLM didn't follow the discussion protocol (e.g. started editing
+    // files directly for a simple task), we re-derive state and either proceed
+    // with what was created or notify the user clearly (#609).
+    if (!state.activeMilestone || state.phase === "complete") {
+      const { showSmartEntry } = await import("./guided-flow.js");
+      await showSmartEntry(ctx, pi, base, { step: requestedStepMode });
+
+      // Re-derive state after discussion — the LLM may have created artifacts
+      // even if it didn't follow the full protocol.
+      invalidateAllCaches();
+      const postState = await deriveState(base);
+      if (postState.activeMilestone && postState.phase !== "complete" && postState.phase !== "pre-planning") {
+        state = postState;
+      } else if (postState.activeMilestone && postState.phase === "pre-planning") {
+        const contextFile = resolveMilestoneFile(base, postState.activeMilestone.id, "CONTEXT");
+        const hasContext = !!(contextFile && await loadFile(contextFile));
+        if (hasContext) {
+          state = postState;
+        } else {
+          ctx.ui.notify(
+            "Discussion completed but no milestone context was written. Run /gsd to try the discussion again, or /gsd auto after creating the milestone manually.",
+            "warning",
+          );
+          return;
+        }
+      } else {
+        return;
+      }
+    }
+
+    // Active milestone exists but has no roadmap — check if context exists.
+    // If context was pre-written (multi-milestone planning), auto-mode can
+    // research and plan it. If no context either, need user discussion.
+    if (state.phase === "pre-planning") {
+      const mid = state.activeMilestone!.id;
+      const contextFile = resolveMilestoneFile(base, mid, "CONTEXT");
+      const hasContext = !!(contextFile && await loadFile(contextFile));
+      if (!hasContext) {
+        const { showSmartEntry } = await import("./guided-flow.js");
+        await showSmartEntry(ctx, pi, base, { step: requestedStepMode });
+
+        // Same re-derive pattern as above
+        invalidateAllCaches();
+        const postState = await deriveState(base);
+        if (postState.activeMilestone && postState.phase !== "pre-planning") {
+          state = postState;
+        } else {
+          ctx.ui.notify(
+            "Discussion completed but milestone context is still missing. Run /gsd to try again.",
+            "warning",
+          );
+          return;
+        }
+      }
+      // Has context, no roadmap — auto-mode will research + plan it
+    }
+  }
+
+  // At this point activeMilestone is guaranteed non-null: either
+  // hasSurvivorBranch is true (which requires activeMilestone) or
+  // the !activeMilestone early-return above would have fired.
+  if (!state.activeMilestone) {
+    // Unreachable — satisfies TypeScript's null check
     const { showSmartEntry } = await import("./guided-flow.js");
     await showSmartEntry(ctx, pi, base, { step: requestedStepMode });
     return;
-  }
-
-  // Active milestone exists but has no roadmap — check if context exists.
-  // If context was pre-written (multi-milestone planning), auto-mode can
-  // research and plan it. If no context either, need user discussion.
-  if (state.phase === "pre-planning") {
-    const contextFile = resolveMilestoneFile(base, state.activeMilestone.id, "CONTEXT");
-    const hasContext = !!(contextFile && await loadFile(contextFile));
-    if (!hasContext) {
-      const { showSmartEntry } = await import("./guided-flow.js");
-      await showSmartEntry(ctx, pi, base, { step: requestedStepMode });
-      return;
-    }
-    // Has context, no roadmap — auto-mode will research + plan it
   }
 
   active = true;
@@ -806,8 +920,38 @@ export async function startAuto(
     }
   }
 
+  // ── DB lifecycle: auto-migrate or open existing database ──
+  const gsdDbPath = join(basePath, ".gsd", "gsd.db");
+  const gsdDirPath = join(basePath, ".gsd");
+  if (existsSync(gsdDirPath) && !existsSync(gsdDbPath)) {
+    const hasDecisions = existsSync(join(gsdDirPath, "DECISIONS.md"));
+    const hasRequirements = existsSync(join(gsdDirPath, "REQUIREMENTS.md"));
+    const hasMilestones = existsSync(join(gsdDirPath, "milestones"));
+    if (hasDecisions || hasRequirements || hasMilestones) {
+      try {
+        const { openDatabase: openDb } = await import("./gsd-db.js");
+        const { migrateFromMarkdown } = await import("./md-importer.js");
+        openDb(gsdDbPath);
+        migrateFromMarkdown(basePath);
+      } catch (err) {
+        process.stderr.write(`gsd-migrate: auto-migration failed: ${(err as Error).message}\n`);
+      }
+    }
+  }
+  if (existsSync(gsdDbPath) && !isDbAvailable()) {
+    try {
+      const { openDatabase: openDb } = await import("./gsd-db.js");
+      openDb(gsdDbPath);
+    } catch (err) {
+      process.stderr.write(`gsd-db: failed to open existing database: ${(err as Error).message}\n`);
+    }
+  }
+
   // Initialize metrics — loads existing ledger from disk
   initMetrics(base);
+
+  // Initialize routing history for adaptive learning
+  initRoutingHistory(base);
 
   // Snapshot installed skills so we can detect new ones after research
   if (resolveSkillDiscoveryMode() !== "off") {
@@ -824,7 +968,7 @@ export async function startAuto(
   ctx.ui.notify(`${modeLabel} started. ${scopeMsg}`, "info");
 
   // Secrets collection gate — collect pending secrets before first dispatch
-  const mid = state.activeMilestone.id;
+  const mid = state.activeMilestone!.id;
   try {
     const manifestStatus = await getManifestStatus(base, mid);
     if (manifestStatus && manifestStatus.pending.length > 0) {
@@ -1003,6 +1147,16 @@ export async function handleAgentEnd(
     }
   }
 
+  // ── DB dual-write: re-import changed markdown files so next unit's prompts use fresh data ──
+  if (isDbAvailable()) {
+    try {
+      const { migrateFromMarkdown } = await import("./md-importer.js");
+      migrateFromMarkdown(basePath);
+    } catch (err) {
+      process.stderr.write(`gsd-db: re-import failed: ${(err as Error).message}\n`);
+    }
+  }
+
   // ── Post-unit hooks: check if a configured hook should run before normal dispatch ──
   if (currentUnit && !stepMode) {
     const hookUnit = checkPostUnitHooks(currentUnit.type, currentUnit.id, basePath);
@@ -1011,7 +1165,7 @@ export async function handleAgentEnd(
       const hookStartedAt = Date.now();
       if (currentUnit) {
         const modelId = ctx.model?.id ?? "unknown";
-        snapshotUnitMetrics(ctx, currentUnit.type, currentUnit.id, currentUnit.startedAt, modelId);
+        snapshotUnitMetrics(ctx, currentUnit.type, currentUnit.id, currentUnit.startedAt, modelId, { promptCharCount: lastPromptCharCount, baselineCharCount: lastBaselineCharCount, ...(currentUnitRouting ?? {}) });
         saveActivityLog(ctx, basePath, currentUnit.type, currentUnit.id);
       }
       currentUnit = { type: hookUnit.unitType, id: hookUnit.unitId, startedAt: hookStartedAt };
@@ -1103,6 +1257,108 @@ export async function handleAgentEnd(
         // Fall through to normal dispatchNextUnit — state derivation will
         // re-select the same unit since it hasn't been marked complete
       }
+    }
+  }
+
+  // ── Triage check: dispatch triage unit if pending captures exist ──────────
+  // Fires after hooks complete, before normal dispatch. Follows the same
+  // early-dispatch-and-return pattern as hooks and fix-merge.
+  // Skip for: step mode (shows wizard instead), triage units (prevent triage-on-triage),
+  // hook units (hooks run before triage conceptually).
+  if (
+    !stepMode &&
+    currentUnit &&
+    !currentUnit.type.startsWith("hook/") &&
+    currentUnit.type !== "triage-captures" &&
+    currentUnit.type !== "quick-task"
+  ) {
+    try {
+      if (hasPendingCaptures(basePath)) {
+        const pending = loadPendingCaptures(basePath);
+        if (pending.length > 0) {
+          const state = await deriveState(basePath);
+          const mid = state.activeMilestone?.id;
+          const sid = state.activeSlice?.id;
+
+          if (mid && sid) {
+            // Build triage prompt with current context
+            let currentPlan = "";
+            let roadmapContext = "";
+            const planFile = resolveSliceFile(basePath, mid, sid, "PLAN");
+            if (planFile) currentPlan = (await loadFile(planFile)) ?? "";
+            const roadmapFile = resolveMilestoneFile(basePath, mid, "ROADMAP");
+            if (roadmapFile) roadmapContext = (await loadFile(roadmapFile)) ?? "";
+
+            const capturesList = pending.map(c =>
+              `- **${c.id}**: "${c.text}" (captured: ${c.timestamp})`
+            ).join("\n");
+
+            const prompt = loadPrompt("triage-captures", {
+              pendingCaptures: capturesList,
+              currentPlan: currentPlan || "(no active slice plan)",
+              roadmapContext: roadmapContext || "(no active roadmap)",
+            });
+
+            ctx.ui.notify(
+              `Triaging ${pending.length} pending capture${pending.length === 1 ? "" : "s"}...`,
+              "info",
+            );
+
+            // Close out previous unit metrics
+            if (currentUnit) {
+              const modelId = ctx.model?.id ?? "unknown";
+              snapshotUnitMetrics(ctx, currentUnit.type, currentUnit.id, currentUnit.startedAt, modelId);
+              saveActivityLog(ctx, basePath, currentUnit.type, currentUnit.id);
+            }
+
+            // Dispatch triage as a new unit (early-dispatch-and-return)
+            const triageUnitType = "triage-captures";
+            const triageUnitId = `${mid}/${sid}/triage`;
+            const triageStartedAt = Date.now();
+            currentUnit = { type: triageUnitType, id: triageUnitId, startedAt: triageStartedAt };
+            writeUnitRuntimeRecord(basePath, triageUnitType, triageUnitId, triageStartedAt, {
+              phase: "dispatched",
+              wrapupWarningSent: false,
+              timeoutAt: null,
+              lastProgressAt: triageStartedAt,
+              progressCount: 0,
+              lastProgressKind: "dispatch",
+            });
+            updateProgressWidget(ctx, triageUnitType, triageUnitId, state);
+
+            const result = await cmdCtx!.newSession();
+            if (result.cancelled) {
+              await stopAuto(ctx, pi);
+              return;
+            }
+            const sessionFile = ctx.sessionManager.getSessionFile();
+            writeLock(basePath, triageUnitType, triageUnitId, completedUnits.length, sessionFile);
+
+            // Start unit timeout for triage (use same supervisor config as hooks)
+            clearUnitTimeout();
+            const supervisor = resolveAutoSupervisorConfig();
+            const triageTimeoutMs = (supervisor.hard_timeout_minutes ?? 30) * 60 * 1000;
+            unitTimeoutHandle = setTimeout(async () => {
+              unitTimeoutHandle = null;
+              if (!active) return;
+              ctx.ui.notify(
+                `Triage unit exceeded timeout. Pausing auto-mode.`,
+                "warning",
+              );
+              await pauseAuto(ctx, pi);
+            }, triageTimeoutMs);
+
+            if (!active) return;
+            pi.sendMessage(
+              { customType: "gsd-auto", content: prompt, display: verbose },
+              { triggerTurn: true },
+            );
+            return; // handleAgentEnd will fire again when triage session completes
+          }
+        }
+      }
+    } catch {
+      // Triage check failure is non-fatal — proceed to normal dispatch
     }
   }
 
@@ -1227,7 +1483,10 @@ function updateProgressWidget(
   unitId: string,
   state: GSDState,
 ): void {
-  _updateProgressWidget(ctx, unitType, unitId, state, widgetStateAccessors);
+  const badge = currentUnitRouting?.tier
+    ? ({ light: "L", standard: "S", heavy: "H" }[currentUnitRouting.tier] ?? undefined)
+    : undefined;
+  _updateProgressWidget(ctx, unitType, unitId, state, widgetStateAccessors, badge);
 }
 
 /** State accessors for the widget — closures over module globals. */
@@ -1294,6 +1553,8 @@ async function dispatchNextUnit(
   // Parse cache is also cleared — doctor may have re-populated it with
   // stale data between handleAgentEnd and this dispatch call (Path B fix).
   invalidateAllCaches();
+  lastPromptCharCount = undefined;
+  lastBaselineCharCount = undefined;
 
   let state = await deriveState(basePath);
   let mid = state.activeMilestone?.id;
@@ -1306,12 +1567,85 @@ async function dispatchNextUnit(
       "info",
     );
     sendDesktopNotification("GSD", `Milestone ${currentMilestoneId} complete!`, "success", "milestone");
+    // Hint: visualizer available after milestone transition
+    const vizPrefs = loadEffectiveGSDPreferences()?.preferences;
+    if (vizPrefs?.auto_visualize) {
+      ctx.ui.notify("Run /gsd visualize to see progress overview.", "info");
+    }
     // Reset stuck detection for new milestone
     unitDispatchCount.clear();
     unitRecoveryCount.clear();
     unitLifetimeDispatches.clear();
-    // Capture integration branch for the new milestone and update git service
-    captureIntegrationBranch(originalBasePath || basePath, mid, { commitDocs: loadEffectiveGSDPreferences()?.preferences?.git?.commit_docs });
+    // Clear completed-units.json for the finished milestone
+    try {
+      const file = completedKeysPath(basePath);
+      if (existsSync(file)) writeFileSync(file, JSON.stringify([]), "utf-8");
+      completedKeySet.clear();
+    } catch { /* non-fatal */ }
+
+    // ── Worktree lifecycle on milestone transition (#616) ──────────────
+    // When transitioning from M_old to M_new inside a worktree, we must:
+    // 1. Merge the completed milestone's worktree back to main
+    // 2. Re-derive state from the project root
+    // 3. Create a new worktree for the incoming milestone
+    // Without this, M_new runs inside M_old's worktree on the wrong branch,
+    // and artifact paths resolve against the wrong .gsd/ directory.
+    if (isInAutoWorktree(basePath) && originalBasePath && shouldUseWorktreeIsolation()) {
+      try {
+        const roadmapPath = resolveMilestoneFile(originalBasePath, currentMilestoneId, "ROADMAP");
+        if (roadmapPath) {
+          const roadmapContent = readFileSync(roadmapPath, "utf-8");
+          const mergeResult = mergeMilestoneToMain(originalBasePath, currentMilestoneId, roadmapContent);
+          ctx.ui.notify(
+            `Milestone ${currentMilestoneId} merged to main.${mergeResult.pushed ? " Pushed to remote." : ""}`,
+            "info",
+          );
+        } else {
+          // No roadmap found — teardown worktree without merge
+          teardownAutoWorktree(originalBasePath, currentMilestoneId);
+          ctx.ui.notify(`Exited worktree for ${currentMilestoneId} (no roadmap for merge).`, "info");
+        }
+      } catch (err) {
+        ctx.ui.notify(
+          `Milestone merge failed during transition: ${err instanceof Error ? err.message : String(err)}`,
+          "warning",
+        );
+        // Force cwd back to project root even if merge failed
+        if (originalBasePath) {
+          try { process.chdir(originalBasePath); } catch { /* best-effort */ }
+        }
+      }
+
+      // Update basePath to project root (mergeMilestoneToMain already chdir'd)
+      basePath = originalBasePath;
+      gitService = new GitServiceImpl(basePath, loadEffectiveGSDPreferences()?.preferences?.git ?? {});
+      invalidateAllCaches();
+
+      // Re-derive state from project root before creating new worktree
+      state = await deriveState(basePath);
+      mid = state.activeMilestone?.id;
+      midTitle = state.activeMilestone?.title;
+
+      // Create new worktree for the incoming milestone
+      if (mid) {
+        captureIntegrationBranch(basePath, mid, { commitDocs: loadEffectiveGSDPreferences()?.preferences?.git?.commit_docs });
+        try {
+          const wtPath = createAutoWorktree(basePath, mid);
+          basePath = wtPath;
+          gitService = new GitServiceImpl(basePath, loadEffectiveGSDPreferences()?.preferences?.git ?? {});
+          ctx.ui.notify(`Created auto-worktree for ${mid} at ${wtPath}`, "info");
+        } catch (err) {
+          ctx.ui.notify(
+            `Auto-worktree creation for ${mid} failed: ${err instanceof Error ? err.message : String(err)}. Continuing in project root.`,
+            "warning",
+          );
+        }
+      }
+    } else {
+      // Not in worktree — just capture integration branch for the new milestone
+      captureIntegrationBranch(originalBasePath || basePath, mid, { commitDocs: loadEffectiveGSDPreferences()?.preferences?.git?.commit_docs });
+    }
+
     // Prune completed milestone from queue order file
     const pendingIds = state.registry
       .filter(m => m.status !== "complete")
@@ -1327,7 +1661,7 @@ async function dispatchNextUnit(
     // Save final session before stopping
     if (currentUnit) {
       const modelId = ctx.model?.id ?? "unknown";
-      snapshotUnitMetrics(ctx, currentUnit.type, currentUnit.id, currentUnit.startedAt, modelId);
+      snapshotUnitMetrics(ctx, currentUnit.type, currentUnit.id, currentUnit.startedAt, modelId, { promptCharCount: lastPromptCharCount, baselineCharCount: lastBaselineCharCount, ...(currentUnitRouting ?? {}) });
       saveActivityLog(ctx, basePath, currentUnit.type, currentUnit.id);
     }
     sendDesktopNotification("GSD", "All milestones complete!", "success", "milestone");
@@ -1355,7 +1689,7 @@ async function dispatchNextUnit(
   if (!mid || !midTitle) {
     if (currentUnit) {
       const modelId = ctx.model?.id ?? "unknown";
-      snapshotUnitMetrics(ctx, currentUnit.type, currentUnit.id, currentUnit.startedAt, modelId);
+      snapshotUnitMetrics(ctx, currentUnit.type, currentUnit.id, currentUnit.startedAt, modelId, { promptCharCount: lastPromptCharCount, baselineCharCount: lastBaselineCharCount, ...(currentUnitRouting ?? {}) });
       saveActivityLog(ctx, basePath, currentUnit.type, currentUnit.id);
     }
     await stopAuto(ctx, pi);
@@ -1370,7 +1704,7 @@ async function dispatchNextUnit(
   if (state.phase === "complete") {
     if (currentUnit) {
       const modelId = ctx.model?.id ?? "unknown";
-      snapshotUnitMetrics(ctx, currentUnit.type, currentUnit.id, currentUnit.startedAt, modelId);
+      snapshotUnitMetrics(ctx, currentUnit.type, currentUnit.id, currentUnit.startedAt, modelId, { promptCharCount: lastPromptCharCount, baselineCharCount: lastBaselineCharCount, ...(currentUnitRouting ?? {}) });
       saveActivityLog(ctx, basePath, currentUnit.type, currentUnit.id);
     }
     // Clear completed-units.json for the finished milestone so it doesn't grow unbounded.
@@ -1440,7 +1774,7 @@ async function dispatchNextUnit(
   if (state.phase === "blocked") {
     if (currentUnit) {
       const modelId = ctx.model?.id ?? "unknown";
-      snapshotUnitMetrics(ctx, currentUnit.type, currentUnit.id, currentUnit.startedAt, modelId);
+      snapshotUnitMetrics(ctx, currentUnit.type, currentUnit.id, currentUnit.startedAt, modelId, { promptCharCount: lastPromptCharCount, baselineCharCount: lastBaselineCharCount, ...(currentUnitRouting ?? {}) });
       saveActivityLog(ctx, basePath, currentUnit.type, currentUnit.id);
     }
     await stopAuto(ctx, pi);
@@ -1548,7 +1882,7 @@ async function dispatchNextUnit(
   if (dispatchResult.action === "stop") {
     if (currentUnit) {
       const modelId = ctx.model?.id ?? "unknown";
-      snapshotUnitMetrics(ctx, currentUnit.type, currentUnit.id, currentUnit.startedAt, modelId);
+      snapshotUnitMetrics(ctx, currentUnit.type, currentUnit.id, currentUnit.startedAt, modelId, { promptCharCount: lastPromptCharCount, baselineCharCount: lastBaselineCharCount, ...(currentUnitRouting ?? {}) });
       saveActivityLog(ctx, basePath, currentUnit.type, currentUnit.id);
     }
     await stopAuto(ctx, pi);
@@ -1658,7 +1992,7 @@ async function dispatchNextUnit(
   if (lifetimeCount > MAX_LIFETIME_DISPATCHES) {
     if (currentUnit) {
       const modelId = ctx.model?.id ?? "unknown";
-      snapshotUnitMetrics(ctx, currentUnit.type, currentUnit.id, currentUnit.startedAt, modelId);
+      snapshotUnitMetrics(ctx, currentUnit.type, currentUnit.id, currentUnit.startedAt, modelId, { promptCharCount: lastPromptCharCount, baselineCharCount: lastBaselineCharCount, ...(currentUnitRouting ?? {}) });
     }
     saveActivityLog(ctx, basePath, unitType, unitId);
     const expected = diagnoseExpectedArtifact(unitType, unitId, basePath);
@@ -1672,7 +2006,7 @@ async function dispatchNextUnit(
   if (prevCount >= MAX_UNIT_DISPATCHES) {
     if (currentUnit) {
       const modelId = ctx.model?.id ?? "unknown";
-      snapshotUnitMetrics(ctx, currentUnit.type, currentUnit.id, currentUnit.startedAt, modelId);
+      snapshotUnitMetrics(ctx, currentUnit.type, currentUnit.id, currentUnit.startedAt, modelId, { promptCharCount: lastPromptCharCount, baselineCharCount: lastBaselineCharCount, ...(currentUnitRouting ?? {}) });
     }
     saveActivityLog(ctx, basePath, unitType, unitId);
 
@@ -1830,8 +2164,18 @@ async function dispatchNextUnit(
   // The session still holds the previous unit's data (newSession hasn't fired yet).
   if (currentUnit) {
     const modelId = ctx.model?.id ?? "unknown";
-    snapshotUnitMetrics(ctx, currentUnit.type, currentUnit.id, currentUnit.startedAt, modelId);
+    snapshotUnitMetrics(ctx, currentUnit.type, currentUnit.id, currentUnit.startedAt, modelId, { promptCharCount: lastPromptCharCount, baselineCharCount: lastBaselineCharCount, ...(currentUnitRouting ?? {}) });
     saveActivityLog(ctx, basePath, currentUnit.type, currentUnit.id);
+
+    // Record routing outcome for adaptive learning
+    if (currentUnitRouting) {
+      const isRetry = currentUnit.type === unitType && currentUnit.id === unitId;
+      recordOutcome(
+        currentUnit.type,
+        currentUnitRouting.tier as "light" | "standard" | "heavy",
+        !isRetry, // success = not being retried
+      );
+    }
 
     // Only mark the previous unit as completed if:
     // 1. We're not about to re-dispatch the same unit (retry scenario)
@@ -1930,12 +2274,79 @@ async function dispatchNextUnit(
     finalPrompt = `${finalPrompt}${repairBlock}`;
   }
 
+  // ── Prompt char measurement (R051) ──
+  lastPromptCharCount = finalPrompt.length;
+  lastBaselineCharCount = undefined;
+  if (isDbAvailable()) {
+    try {
+      const { inlineGsdRootFile } = await import("./auto-prompts.js");
+      const [decisionsContent, requirementsContent, projectContent] = await Promise.all([
+        inlineGsdRootFile(basePath, "decisions.md", "Decisions"),
+        inlineGsdRootFile(basePath, "requirements.md", "Requirements"),
+        inlineGsdRootFile(basePath, "project.md", "Project"),
+      ]);
+      lastBaselineCharCount =
+        (decisionsContent?.length ?? 0) +
+        (requirementsContent?.length ?? 0) +
+        (projectContent?.length ?? 0);
+    } catch {
+      // Non-fatal — baseline measurement is best-effort
+    }
+  }
+
   // Switch model if preferences specify one for this unit type
   // Try primary model, then fallbacks in order if setting fails
   const modelConfig = resolveModelWithFallbacksForUnit(unitType);
   if (modelConfig) {
     const availableModels = ctx.modelRegistry.getAvailable();
-    const modelsToTry = [modelConfig.primary, ...modelConfig.fallbacks];
+
+    // ─── Dynamic Model Routing ─────────────────────────────────────────
+    // If enabled, classify unit complexity and potentially downgrade to a
+    // cheaper model. The user's configured model is the ceiling.
+    const routingConfig = resolveDynamicRoutingConfig();
+    let effectiveModelConfig = modelConfig;
+    let routingTierLabel = "";
+    currentUnitRouting = null;
+
+    if (routingConfig.enabled) {
+      // Compute budget pressure if budget ceiling is set
+      let budgetPct: number | undefined;
+      if (routingConfig.budget_pressure !== false) {
+        const budgetCeiling = prefs?.budget_ceiling;
+        if (budgetCeiling !== undefined && budgetCeiling > 0) {
+          const currentLedger = getLedger();
+          const totalCost = currentLedger ? getProjectTotals(currentLedger.units).cost : 0;
+          budgetPct = totalCost / budgetCeiling;
+        }
+      }
+
+      // Classify complexity (hook routing controlled by config.hooks)
+      const isHook = unitType.startsWith("hook/");
+      const shouldClassify = !isHook || routingConfig.hooks !== false;
+
+      if (shouldClassify) {
+        const classification = classifyUnitComplexity(unitType, unitId, basePath, budgetPct);
+        const availableModelIds = availableModels.map(m => m.id);
+        const routing = resolveModelForComplexity(classification, modelConfig, routingConfig, availableModelIds);
+
+        if (routing.wasDowngraded) {
+          effectiveModelConfig = {
+            primary: routing.modelId,
+            fallbacks: routing.fallbacks,
+          };
+          if (verbose) {
+            ctx.ui.notify(
+              `Dynamic routing [${tierLabel(classification.tier)}]: ${routing.modelId} (${classification.reason})`,
+              "info",
+            );
+          }
+        }
+        routingTierLabel = ` [${tierLabel(classification.tier)}]`;
+        currentUnitRouting = { tier: classification.tier, modelDowngraded: routing.wasDowngraded };
+      }
+    }
+
+    const modelsToTry = [effectiveModelConfig.primary, ...effectiveModelConfig.fallbacks];
     let modelSet = false;
 
     for (const modelId of modelsToTry) {
@@ -2000,11 +2411,11 @@ async function dispatchNextUnit(
 
       const ok = await pi.setModel(model, { persist: false });
       if (ok) {
-        const fallbackNote = modelId === modelConfig.primary
+        const fallbackNote = modelId === effectiveModelConfig.primary
           ? ""
-          : ` (fallback from ${modelConfig.primary})`;
+          : ` (fallback from ${effectiveModelConfig.primary})`;
         const phase = unitPhaseLabel(unitType);
-        ctx.ui.notify(`Model [${phase}]: ${model.provider}/${model.id}${fallbackNote}`, "info");
+        ctx.ui.notify(`Model [${phase}]${routingTierLabel}: ${model.provider}/${model.id}${fallbackNote}`, "info");
         modelSet = true;
         break;
       } else {
@@ -2083,7 +2494,7 @@ async function dispatchNextUnit(
 
     if (currentUnit) {
       const modelId = ctx.model?.id ?? "unknown";
-      snapshotUnitMetrics(ctx, currentUnit.type, currentUnit.id, currentUnit.startedAt, modelId);
+      snapshotUnitMetrics(ctx, currentUnit.type, currentUnit.id, currentUnit.startedAt, modelId, { promptCharCount: lastPromptCharCount, baselineCharCount: lastBaselineCharCount, ...(currentUnitRouting ?? {}) });
     }
     saveActivityLog(ctx, basePath, unitType, unitId);
 
@@ -2109,7 +2520,7 @@ async function dispatchNextUnit(
         timeoutAt: Date.now(),
       });
       const modelId = ctx.model?.id ?? "unknown";
-      snapshotUnitMetrics(ctx, currentUnit.type, currentUnit.id, currentUnit.startedAt, modelId);
+      snapshotUnitMetrics(ctx, currentUnit.type, currentUnit.id, currentUnit.startedAt, modelId, { promptCharCount: lastPromptCharCount, baselineCharCount: lastBaselineCharCount, ...(currentUnitRouting ?? {}) });
     }
     saveActivityLog(ctx, basePath, unitType, unitId);
 
@@ -2491,3 +2902,108 @@ export {
   skipExecuteTask,
   buildLoopRemediationSteps,
 } from "./auto-recovery.js";
+
+/**
+ * Dispatch a hook unit directly, bypassing normal pre-dispatch hooks.
+ * Used for manual hook triggers via /gsd run-hook.
+ */
+export async function dispatchHookUnit(
+  ctx: ExtensionContext,
+  pi: ExtensionAPI,
+  hookName: string,
+  triggerUnitType: string,
+  triggerUnitId: string,
+  hookPrompt: string,
+  hookModel: string | undefined,
+  targetBasePath: string,
+): Promise<boolean> {
+  // Ensure auto-mode is active
+  if (!active) {
+    // Initialize auto-mode state minimally
+    active = true;
+    stepMode = true;
+    cmdCtx = ctx as ExtensionCommandContext;
+    basePath = targetBasePath;
+    autoStartTime = Date.now();
+    currentUnit = null;
+    completedUnits = [];
+  }
+
+  const hookUnitType = `hook/${hookName}`;
+  const hookStartedAt = Date.now();
+  
+  // Set up the trigger unit as the "current" unit so post-unit hooks can reference it
+  currentUnit = { type: triggerUnitType, id: triggerUnitId, startedAt: hookStartedAt };
+  
+  // Create a new session for the hook
+  const result = await cmdCtx!.newSession();
+  if (result.cancelled) {
+    await stopAuto(ctx, pi);
+    return false;
+  }
+
+  // Update current unit to the hook unit
+  currentUnit = { type: hookUnitType, id: triggerUnitId, startedAt: hookStartedAt };
+  
+  // Write runtime record
+  writeUnitRuntimeRecord(basePath, hookUnitType, triggerUnitId, hookStartedAt, {
+    phase: "dispatched",
+    wrapupWarningSent: false,
+    timeoutAt: null,
+    lastProgressAt: hookStartedAt,
+    progressCount: 0,
+    lastProgressKind: "dispatch",
+  });
+
+  // Switch model if specified
+  if (hookModel) {
+    const availableModels = ctx.modelRegistry.getAvailable();
+    const match = availableModels.find(m =>
+      m.id === hookModel || `${m.provider}/${m.id}` === hookModel,
+    );
+    if (match) {
+      try {
+        await pi.setModel(match);
+      } catch { /* non-fatal — use current model */ }
+    }
+  }
+
+  // Write lock
+  const sessionFile = ctx.sessionManager.getSessionFile();
+  writeLock(lockBase(), hookUnitType, triggerUnitId, completedUnits.length, sessionFile);
+
+  // Set up timeout
+  clearUnitTimeout();
+  const supervisor = resolveAutoSupervisorConfig();
+  const hookHardTimeoutMs = (supervisor.hard_timeout_minutes ?? 30) * 60 * 1000;
+  unitTimeoutHandle = setTimeout(async () => {
+    unitTimeoutHandle = null;
+    if (!active) return;
+    if (currentUnit) {
+      writeUnitRuntimeRecord(basePath, hookUnitType, triggerUnitId, hookStartedAt, {
+        phase: "timeout",
+        timeoutAt: Date.now(),
+      });
+    }
+    ctx.ui.notify(
+      `Hook ${hookName} exceeded ${supervisor.hard_timeout_minutes ?? 30}min timeout. Pausing auto-mode.`,
+      "warning",
+    );
+    resetHookState();
+    await pauseAuto(ctx, pi);
+  }, hookHardTimeoutMs);
+
+  // Update status
+  ctx.ui.setStatus("gsd-auto", stepMode ? "next" : "auto");
+  ctx.ui.notify(`Running post-unit hook: ${hookName}`, "info");
+
+  // Send the hook prompt
+  console.log(`[dispatchHookUnit] Sending prompt of length ${hookPrompt.length}`);
+  console.log(`[dispatchHookUnit] Prompt preview: ${hookPrompt.substring(0, 200)}...`);
+  pi.sendMessage(
+    { customType: "gsd-auto", content: hookPrompt, display: true },
+    { triggerTurn: true },
+  );
+  
+  return true;
+}

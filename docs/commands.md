@@ -11,7 +11,11 @@
 | `/gsd steer` | Hard-steer plan documents during execution |
 | `/gsd discuss` | Discuss architecture and decisions (works alongside auto mode) |
 | `/gsd status` | Progress dashboard |
-| `/gsd queue` | Queue future milestones (safe during auto mode) |
+| `/gsd queue` | Queue and reorder future milestones (safe during auto mode) |
+| `/gsd capture` | Fire-and-forget thought capture (works during auto mode) |
+| `/gsd triage` | Manually trigger triage of pending captures |
+| `/gsd visualize` | Open workflow visualizer (progress, deps, metrics, timeline) |
+| `/gsd knowledge` | Add persistent project knowledge (rule, pattern, or lesson) |
 | `/gsd prefs` | Model selection, timeouts, budget ceiling |
 | `/gsd migrate` | Migrate a v1 `.planning` directory to `.gsd` format |
 | `/gsd doctor` | Validate `.gsd/` integrity, find and fix issues |

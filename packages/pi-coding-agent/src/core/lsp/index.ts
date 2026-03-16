@@ -15,10 +15,13 @@ import {
 	WARMUP_TIMEOUT_MS,
 } from "./client.js";
 import { getServersForFile, type LspConfig, loadConfig } from "./config.js";
-import { applyWorkspaceEdit } from "./edits.js";
+import { applyTextEdits, applyWorkspaceEdit } from "./edits.js";
 import { ToolAbortError, clampTimeout, throwIfAborted } from "./helpers.js";
 import { detectLspmux } from "./lspmux.js";
 import {
+	type CallHierarchyIncomingCall,
+	type CallHierarchyItem,
+	type CallHierarchyOutgoingCall,
 	type CodeAction,
 	type CodeActionContext,
 	type Command,
@@ -32,7 +35,9 @@ import {
 	type LspToolDetails,
 	lspSchema,
 	type ServerConfig,
+	type SignatureHelp,
 	type SymbolInformation,
+	type TextEdit,
 	type WorkspaceEdit,
 } from "./types.js";
 import {
@@ -42,12 +47,14 @@ import {
 	extractHoverText,
 	fileToUri,
 	filterWorkspaceSymbols,
+	formatCallHierarchyItem,
 	formatCodeAction,
 	formatDiagnostic,
 	formatDiagnosticsSummary,
 	formatDocumentSymbol,
 	formatGroupedDiagnosticMessages,
 	formatLocation,
+	formatSignatureHelp,
 	formatSymbolInformation,
 	formatWorkspaceEdit,
 	hasGlobPattern,
@@ -338,7 +345,7 @@ export function createLspTool(cwd: string): AgentTool<typeof lspSchema, LspToolD
 			signal?: AbortSignal,
 			_onUpdate?: AgentToolUpdateCallback<LspToolDetails>,
 		): Promise<AgentToolResult<LspToolDetails>> {
-			const { action, file, line, symbol, occurrence, query, new_name, apply, timeout } = params;
+			const { action, file, line, symbol, occurrence, query, new_name, apply, tab_size, insert_spaces, timeout } = params;
 			const timeoutSec = clampTimeout(timeout);
 			const timeoutSignal = AbortSignal.timeout(timeoutSec * 1000);
 			signal = signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal;
@@ -872,6 +879,154 @@ export function createLspTool(cwd: string): AgentTool<typeof lspSchema, LspToolD
 								});
 								output = `Symbols in ${relPath}:\n${lines.join("\n")}`;
 							}
+						}
+						break;
+					}
+
+					case "incoming_calls": {
+						const prepareResult = (await sendRequest(
+							client,
+							"textDocument/prepareCallHierarchy",
+							{
+								textDocument: { uri },
+								position,
+							},
+							signal,
+						)) as CallHierarchyItem[] | null;
+
+						if (!prepareResult || prepareResult.length === 0) {
+							output = "No call hierarchy item found at this position";
+							break;
+						}
+
+						const incomingResult = (await sendRequest(
+							client,
+							"callHierarchy/incomingCalls",
+							{ item: prepareResult[0] },
+							signal,
+						)) as CallHierarchyIncomingCall[] | null;
+
+						if (!incomingResult || incomingResult.length === 0) {
+							output = `No incoming calls found for ${prepareResult[0].name}`;
+							break;
+						}
+
+						const incomingLines: string[] = [];
+						const limitedIncoming = incomingResult.slice(0, REFERENCE_CONTEXT_LIMIT);
+						for (const call of limitedIncoming) {
+							const header = formatCallHierarchyItem(call.from, cwd);
+							const filePath = uriToFile(call.from.uri);
+							const callLine = call.fromRanges[0]?.start.line ?? call.from.selectionRange.start.line;
+							const context = await readLocationContext(filePath, callLine + 1, LOCATION_CONTEXT_LINES);
+							if (context.length > 0) {
+								incomingLines.push(`  ${header}\n${context.map(l => `    ${l}`).join("\n")}`);
+							} else {
+								incomingLines.push(`  ${header}`);
+							}
+						}
+
+						const truncation = incomingResult.length > REFERENCE_CONTEXT_LIMIT
+							? `\n  ... ${incomingResult.length - REFERENCE_CONTEXT_LIMIT} additional caller(s) omitted`
+							: "";
+						output = `${incomingResult.length} caller(s) of ${prepareResult[0].name}:\n${incomingLines.join("\n")}${truncation}`;
+						break;
+					}
+
+					case "outgoing_calls": {
+						const prepareResult = (await sendRequest(
+							client,
+							"textDocument/prepareCallHierarchy",
+							{
+								textDocument: { uri },
+								position,
+							},
+							signal,
+						)) as CallHierarchyItem[] | null;
+
+						if (!prepareResult || prepareResult.length === 0) {
+							output = "No call hierarchy item found at this position";
+							break;
+						}
+
+						const outgoingResult = (await sendRequest(
+							client,
+							"callHierarchy/outgoingCalls",
+							{ item: prepareResult[0] },
+							signal,
+						)) as CallHierarchyOutgoingCall[] | null;
+
+						if (!outgoingResult || outgoingResult.length === 0) {
+							output = `No outgoing calls found from ${prepareResult[0].name}`;
+							break;
+						}
+
+						const outgoingLines: string[] = [];
+						const limitedOutgoing = outgoingResult.slice(0, REFERENCE_CONTEXT_LIMIT);
+						for (const call of limitedOutgoing) {
+							const header = formatCallHierarchyItem(call.to, cwd);
+							const filePath = uriToFile(call.to.uri);
+							const callLine = call.to.selectionRange.start.line;
+							const context = await readLocationContext(filePath, callLine + 1, LOCATION_CONTEXT_LINES);
+							if (context.length > 0) {
+								outgoingLines.push(`  ${header}\n${context.map(l => `    ${l}`).join("\n")}`);
+							} else {
+								outgoingLines.push(`  ${header}`);
+							}
+						}
+
+						const outTruncation = outgoingResult.length > REFERENCE_CONTEXT_LIMIT
+							? `\n  ... ${outgoingResult.length - REFERENCE_CONTEXT_LIMIT} additional callee(s) omitted`
+							: "";
+						output = `${outgoingResult.length} callee(s) from ${prepareResult[0].name}:\n${outgoingLines.join("\n")}${outTruncation}`;
+						break;
+					}
+
+					case "format": {
+						if (!targetFile) {
+							output = "Error: file parameter required for format";
+							break;
+						}
+
+						const formatResult = (await sendRequest(
+							client,
+							"textDocument/formatting",
+							{
+								textDocument: { uri },
+								options: {
+									tabSize: tab_size ?? 4,
+									insertSpaces: insert_spaces ?? true,
+								},
+							},
+							signal,
+						)) as TextEdit[] | null;
+
+						if (!formatResult || formatResult.length === 0) {
+							const relPath = path.relative(cwd, targetFile);
+							output = `${relPath}: already formatted (no changes)`;
+							break;
+						}
+
+						await applyTextEdits(targetFile, formatResult);
+						const relPath = path.relative(cwd, targetFile);
+						output = `Formatted ${relPath}: ${formatResult.length} edit(s) applied`;
+						break;
+					}
+
+					case "signature": {
+						const sigResult = (await sendRequest(
+							client,
+							"textDocument/signatureHelp",
+							{
+								textDocument: { uri },
+								position,
+							},
+							signal,
+						)) as SignatureHelp | null;
+
+						if (!sigResult || !sigResult.signatures || sigResult.signatures.length === 0) {
+							output = "No signature information at this position";
+						} else {
+							output = formatSignatureHelp(sigResult);
 						}
 						break;
 					}

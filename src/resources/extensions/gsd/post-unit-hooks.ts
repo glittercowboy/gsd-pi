@@ -1,7 +1,6 @@
 // GSD Extension — Hook Engine (Post-Unit, Pre-Dispatch, State Persistence)
 // Manages hook queue, cycle tracking, artifact verification, pre-dispatch
 // interception, and durable hook state for user-configured extensibility.
-// Copyright (c) 2026 Jeremy McSpadden <jeremy@fluxlabs.net>
 
 import type {
   PostUnitHookConfig,
@@ -60,7 +59,8 @@ export function checkPostUnitHooks(
   }
 
   // Don't trigger hooks for other hook units (prevent hook-on-hook chains)
-  if (completedUnitType.startsWith("hook/")) return null;
+  // Don't trigger hooks for triage units (prevent hook-on-triage chains)
+  if (completedUnitType.startsWith("hook/") || completedUnitType === "triage-captures") return null;
 
   // Check if any hooks are configured for this unit type
   const hooks = resolvePostUnitHooks().filter(h =>
@@ -409,6 +409,76 @@ export function getHookStatus(): HookStatusEntry[] {
   }
 
   return entries;
+}
+
+/**
+ * Manually trigger a specific hook for a unit.
+ * This bypasses the normal flow and forces the hook to run even if its artifact exists.
+ * 
+ * @param hookName - The name of the hook to trigger (e.g., "code-review")
+ * @param unitType - The type of unit that triggered the hook (e.g., "execute-task")
+ * @param unitId - The unit ID (e.g., "M001/S01/T01")
+ * @param basePath - The project base path
+ * @returns The hook dispatch result or null if hook not found
+ */
+export function triggerHookManually(
+  hookName: string,
+  unitType: string,
+  unitId: string,
+  basePath: string,
+): HookDispatchResult | null {
+  // Find the hook configuration
+  const hook = resolvePostUnitHooks().find(h => h.name === hookName);
+  if (!hook) {
+    console.error(`[triggerHookManually] Hook "${hookName}" not found in post_unit_hooks`);
+    return null;
+  }
+
+  if (!hook.prompt || typeof hook.prompt !== 'string' || hook.prompt.trim().length === 0) {
+    console.error(`[triggerHookManually] Hook "${hookName}" has empty prompt`);
+    return null;
+  }
+
+  // Reset any active hook state to allow manual triggering
+  activeHook = {
+    hookName: hook.name,
+    triggerUnitType: unitType,
+    triggerUnitId: unitId,
+    cycle: 1,
+    pendingRetry: false,
+  };
+
+  // Build the hook queue with just this hook
+  hookQueue = [{
+    config: hook,
+    triggerUnitType: unitType,
+    triggerUnitId: unitId,
+  }];
+
+  // Set the cycle count for this specific hook+trigger
+  const cycleKey = `${hook.name}/${unitType}/${unitId}`;
+  const currentCycle = (cycleCounts.get(cycleKey) ?? 0) + 1;
+  cycleCounts.set(cycleKey, currentCycle);
+
+  // Update active hook with the cycle count
+  activeHook.cycle = currentCycle;
+
+  // Build the prompt with variable substitution
+  const [mid, sid, tid] = unitId.split("/");
+  const prompt = hook.prompt
+    .replace(/\{milestoneId\}/g, mid ?? "")
+    .replace(/\{sliceId\}/g, sid ?? "")
+    .replace(/\{taskId\}/g, tid ?? "");
+
+  console.log(`[triggerHookManually] Built prompt for ${hookName}, length: ${prompt.length}`);
+
+  return {
+    hookName: hook.name,
+    prompt,
+    model: hook.model,
+    unitType: `hook/${hook.name}`,
+    unitId,
+  };
 }
 
 /**

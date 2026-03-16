@@ -3,12 +3,15 @@ import path from "node:path";
 import { glob } from "glob";
 import { isEnoent } from "./helpers.js";
 import type {
+	CallHierarchyItem,
 	CodeAction,
 	Command,
 	Diagnostic,
 	DiagnosticSeverity,
 	DocumentSymbol,
 	Location,
+	MarkupContent,
+	SignatureHelp,
 	SymbolInformation,
 	SymbolKind,
 	TextEdit,
@@ -679,4 +682,57 @@ export async function readLocationContext(filePath: string, line: number, contex
 		}
 		throw error;
 	}
+}
+
+// =============================================================================
+// Call Hierarchy Formatting
+// =============================================================================
+
+export function formatCallHierarchyItem(item: CallHierarchyItem, cwd: string): string {
+	const icon = symbolKindToIcon(item.kind);
+	const detail = item.detail ? ` ${item.detail}` : "";
+	const relPath = path.relative(cwd, uriToFile(item.uri));
+	const line = item.selectionRange.start.line + 1;
+	return `${icon} ${item.name}${detail} @ ${relPath}:${line}`;
+}
+
+// =============================================================================
+// Signature Help Formatting
+// =============================================================================
+
+function extractDocText(doc: string | MarkupContent | undefined): string {
+	if (!doc) return "";
+	if (typeof doc === "string") return doc;
+	return doc.value;
+}
+
+export function formatSignatureHelp(result: SignatureHelp): string {
+	if (!result.signatures || result.signatures.length === 0) {
+		return "No signature information";
+	}
+
+	const activeIdx = result.activeSignature ?? 0;
+	const sig = result.signatures[activeIdx] ?? result.signatures[0];
+	const activeParam = result.activeParameter ?? sig.activeParameter;
+
+	const lines: string[] = [sig.label];
+
+	const sigDoc = extractDocText(sig.documentation);
+	if (sigDoc) {
+		lines.push("", sigDoc);
+	}
+
+	if (sig.parameters && sig.parameters.length > 0) {
+		lines.push("", "Parameters:");
+		for (let i = 0; i < sig.parameters.length; i++) {
+			const p = sig.parameters[i];
+			const label = typeof p.label === "string" ? p.label : sig.label.slice(p.label[0], p.label[1]);
+			const active = i === activeParam ? " <-- active" : "";
+			const doc = extractDocText(p.documentation);
+			const docSuffix = doc ? ` — ${doc}` : "";
+			lines.push(`  ${label}${docSuffix}${active}`);
+		}
+	}
+
+	return lines.join("\n");
 }

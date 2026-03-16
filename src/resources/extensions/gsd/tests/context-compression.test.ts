@@ -128,7 +128,7 @@ test("compression: buildCompleteMilestonePrompt minimal drops root GSD files", (
   const block = promptsSrc.slice(completeMilestoneIdx, nextBuilder);
   assert.ok(
     block.includes('inlineLevel !== "minimal"') &&
-    block.includes('inlineGsdRootFile(base, "requirements.md"'),
+    (block.includes('inlineGsdRootFile(base, "requirements.md"') || block.includes('inlineRequirementsFromDb(base')),
     "complete-milestone should gate root file inlining on level",
   );
 });

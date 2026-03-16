@@ -50,7 +50,9 @@ function runtimeDir(basePath: string): string {
 }
 
 function runtimePath(basePath: string, unitType: string, unitId: string): string {
-  return join(runtimeDir(basePath), `${unitType}-${unitId.replace(/[\/]/g, "-")}.json`);
+  const sanitizedUnitType = unitType.replace(/[\/]/g, "-");
+  const sanitizedUnitId = unitId.replace(/[\/]/g, "-");
+  return join(runtimeDir(basePath), `${sanitizedUnitType}-${sanitizedUnitId}.json`);
 }
 
 export function writeUnitRuntimeRecord(

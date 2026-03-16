@@ -32,6 +32,7 @@ import {
 
 import { milestoneIdSort, findMilestoneIds } from './guided-flow.js';
 import { nativeBatchParseGsdFiles, type BatchParsedFile } from './native-parser-bridge.js';
+import { isDbAvailable, _getAdapter } from './gsd-db.js';
 
 import { join, resolve } from 'path';
 
@@ -131,12 +132,37 @@ async function _deriveStateImpl(basePath: string): Promise<GSDState> {
   const fileContentCache = new Map<string, string>();
   const gsdDir = gsdRoot(basePath);
 
+  // ── DB-first content loading ──
+  // When the DB is available, load artifact content from the artifacts table
+  // (indexed SELECT instead of O(N) file I/O). Falls back to native Rust batch
+  // parser, which in turn falls back to sequential JS reads via cachedLoadFile.
+  let dbContentLoaded = false;
+  if (isDbAvailable()) {
+    const adapter = _getAdapter();
+    if (adapter) {
+      try {
+        const rows = adapter.prepare('SELECT path, full_content FROM artifacts').all();
+        for (const row of rows) {
+          const relPath = (row as Record<string, unknown>)['path'] as string;
+          const content = (row as Record<string, unknown>)['full_content'] as string;
+          const absPath = resolve(gsdDir, relPath);
+          fileContentCache.set(absPath, content);
+        }
+        dbContentLoaded = rows.length > 0;
+      } catch {
+        // DB query failed — fall through to native batch parse
+      }
+    }
+  }
+
+  if (!dbContentLoaded) {
   const batchFiles = nativeBatchParseGsdFiles(gsdDir);
   if (batchFiles) {
     for (const f of batchFiles) {
       const absPath = resolve(gsdDir, f.path);
       fileContentCache.set(absPath, f.rawContent);
     }
+  }
   }
 
   /**

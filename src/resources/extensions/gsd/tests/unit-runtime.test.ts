@@ -1,4 +1,4 @@
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import {
@@ -63,6 +63,30 @@ console.log("\n=== runtime record cleanup ===");
   clearUnitRuntimeRecord(base, "execute-task", "M100/S02/T09");
   const loaded = readUnitRuntimeRecord(base, "execute-task", "M100/S02/T09");
   assertEq(loaded, null, "record removed");
+}
+
+console.log("\n=== hook unit type sanitization (slash in unitType) ===");
+{
+  // Hook units have unitType like "hook/code-review" with a slash
+  // This should NOT create a subdirectory - the slash must be sanitized
+  const hookRecord = writeUnitRuntimeRecord(base, "hook/code-review", "M100/S02/T10", 2000, { phase: "dispatched" });
+  assertEq(hookRecord.unitType, "hook/code-review", "unitType preserved in record");
+  assertEq(hookRecord.unitId, "M100/S02/T10", "unitId preserved in record");
+  
+  const loaded = readUnitRuntimeRecord(base, "hook/code-review", "M100/S02/T10");
+  assertTrue(loaded !== null, "hook record readable");
+  assertEq(loaded!.phase, "dispatched", "hook phase correct");
+  
+  // Verify the file is in the units dir, not in a subdirectory
+  const unitsDir = join(base, ".gsd", "runtime", "units");
+  const files = readdirSync(unitsDir);
+  const hookFile = files.find((f: string) => f.includes("hook-code-review"));
+  assertTrue(hookFile !== undefined, "hook file exists with sanitized name");
+  assertTrue(!files.some((f: string) => f === "hook"), "no 'hook' subdirectory created");
+  
+  clearUnitRuntimeRecord(base, "hook/code-review", "M100/S02/T10");
+  const cleared = readUnitRuntimeRecord(base, "hook/code-review", "M100/S02/T10");
+  assertEq(cleared, null, "hook record removed");
 }
 
 // ─── Must-have durability integration tests ───────────────────────────────

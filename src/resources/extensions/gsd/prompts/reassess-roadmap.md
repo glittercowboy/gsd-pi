@@ -16,6 +16,12 @@ All relevant context has been preloaded below — the current roadmap, completed
 
 {{inlinedContext}}
 
+## Deferred Captures
+
+The following user thoughts were captured during execution and deferred to future slices during triage. Consider whether any should influence the remaining roadmap:
+
+{{deferredCaptures}}
+
 If a `GSD Skill Preferences` block is present in system context, use it to decide which skills to load and follow during reassessment, without relaxing required verification or artifact rules.
 
 Then assess whether the remaining roadmap still makes sense given what was just built.

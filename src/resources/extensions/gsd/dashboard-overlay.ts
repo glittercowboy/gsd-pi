@@ -39,6 +39,9 @@ function unitLabel(type: string): string {
     case "execute-task": return "Execute";
     case "complete-slice": return "Complete";
     case "reassess-roadmap": return "Reassess";
+    case "triage-captures": return "Triage";
+    case "quick-task": return "Quick Task";
+    case "replan-slice": return "Replan";
     default: return type;
   }
 }
@@ -342,6 +345,13 @@ export class GSDDashboardOverlay {
       lines.push(blank());
     } else {
       lines.push(row(th.fg("dim", "No unit running · /gsd auto to start")));
+      lines.push(blank());
+    }
+
+    // Pending captures badge — only shown when captures are waiting for triage
+    if (this.dashData.pendingCaptureCount > 0) {
+      const count = this.dashData.pendingCaptureCount;
+      lines.push(row(th.fg("warning", `📌 ${count} pending capture${count === 1 ? "" : "s"} awaiting triage`)));
       lines.push(blank());
     }
 
