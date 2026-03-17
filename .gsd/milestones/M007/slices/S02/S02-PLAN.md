@@ -54,7 +54,7 @@
   - Verify: `npm run build:web-host` exits 0; open browser, verify "Chat" icon in sidebar, click routes to chat view, sessionStorage persists the view selection
   - Done when: nav item visible below Power Mode, clicking shows ChatMode, no build errors, no regressions in other views
 
-- [ ] **T02: ChatPane SSE connection and parser integration** `est:1.5h`
+- [x] **T02: ChatPane SSE connection and parser integration** `est:1.5h`
   - Why: Without live data flowing through the parser, the chat view has nothing to render
   - Files: `web/components/gsd/chat-mode.tsx`
   - Do: (1) Read `web/components/gsd/shell-terminal.tsx` — copy the SSE connection pattern (EventSource + onmessage + input queue flush) exactly; do not import xterm.js. (2) Build `ChatPane` component: props `{ sessionId: string; command?: string; initialCommand?: string; onCompletionSignal?: () => void; className?: string }`. (3) Create `PtyChatParser` instance in a ref (stable). (4) `useState<ChatMessage[]>([])` for messages. (5) `useEffect` on mount: open EventSource to `/api/terminal/stream?id=${sessionId}${command ? "&command="+command : ""}`; on `type === "output"` call `parserRef.current.feed(msg.data)`; subscribe `parser.onMessage(() => setMessages([...parser.getMessages()]))`; subscribe `parser.onCompletionSignal(() => onCompletionSignal?.())`; cleanup: `es.close()` + unsubscribes. (6) Implement `sendInput(data: string)` using the input-queue flush pattern from shell-terminal.tsx (POST to `/api/terminal/input` with `{ id: sessionId, data }`). (7) Wire `ChatMode` to use `ChatPane` with `sessionId="gsd-main"` and `command="pi"`.
