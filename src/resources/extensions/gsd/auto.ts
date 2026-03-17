@@ -1525,6 +1525,15 @@ export async function handleAgentEnd(
         // Remove completion key so dispatchNextUnit re-dispatches this unit
         s.completedKeySet.delete(completionKey);
         removePersistedKey(s.basePath, completionKey);
+        // Dispatch retry immediately — without this, handleAgentEnd returns
+        // without calling dispatchNextUnit, leaving auto-mode stalled (#978).
+        try {
+          await dispatchNextUnit(ctx, pi);
+        } catch (retryDispatchErr) {
+          const msg = retryDispatchErr instanceof Error ? retryDispatchErr.message : String(retryDispatchErr);
+          ctx.ui.notify(`Verification retry dispatch error: ${msg}`, "error");
+          startDispatchGapWatchdog(ctx, pi);
+        }
         return; // ← Critical: exit before DB dual-write and post-unit hooks
       } else {
         // Gate failed, retries exhausted (or auto-fix disabled) — pause for human review
