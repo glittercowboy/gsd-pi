@@ -30,6 +30,12 @@ import {
 	editTool,
 	findTool,
 	grepTool,
+	hashlineCodingTools,
+	hashlineEditTool,
+	hashlineReadTool,
+	createHashlineCodingTools,
+	createHashlineEditTool,
+	createHashlineReadTool,
 	lsTool,
 	readOnlyTools,
 	readTool,
@@ -119,6 +125,13 @@ export {
 	createGrepTool,
 	createFindTool,
 	createLsTool,
+	// Hashline edit mode
+	hashlineCodingTools,
+	hashlineEditTool,
+	hashlineReadTool,
+	createHashlineCodingTools,
+	createHashlineEditTool,
+	createHashlineReadTool,
 };
 
 // Helper Functions
@@ -238,7 +251,10 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		thinkingLevel = "off";
 	}
 
-	const defaultActiveToolNames: ToolName[] = ["read", "bash", "edit", "write", "lsp"];
+	const editMode = settingsManager.getEditMode();
+	const defaultActiveToolNames: ToolName[] = editMode === "hashline"
+		? ["hashline_read", "bash", "hashline_edit", "write", "lsp"]
+		: ["read", "bash", "edit", "write", "lsp"];
 	const initialActiveToolNames: ToolName[] = options.tools
 		? options.tools.map((t) => t.name).filter((n): n is ToolName => n in allTools)
 		: defaultActiveToolNames;

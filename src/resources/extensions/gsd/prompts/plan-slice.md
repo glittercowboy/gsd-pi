@@ -59,7 +59,7 @@ Then:
     - **Scope sanity:** Target 2–5 steps and 3–8 files per task. 10+ steps or 12+ files — must split. Each task must be completable in a single fresh context window.
     - **Feature completeness:** Every task produces real, user-facing progress — not just internal scaffolding.
 9. If planning produced structural decisions, append them to `.gsd/DECISIONS.md`
-10. Commit: `docs({{sliceId}}): add slice plan`
+10. {{commitInstruction}}
 11. Update `.gsd/STATE.md`
 
 The slice directory and tasks/ subdirectory already exist. Do NOT mkdir. All work stays in your working directory: `{{workingDirectory}}`.

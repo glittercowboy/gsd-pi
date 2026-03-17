@@ -565,25 +565,28 @@ One commit per slice. Individually revertable. Reads like a changelog.
 
 ```
 gsd/M001/S01:
-  test(S01): round-trip tests passing
+  test(S01/T03): round-trip tests passing
   feat(S01/T03): file writer with round-trip fidelity
-  chore(S01/T03): auto-commit after task
   feat(S01/T02): markdown parser for plan files
-  chore(S01/T02): auto-commit after task
   feat(S01/T01): core types and interfaces
-  chore(S01/T01): auto-commit after task
+  docs(S01): add slice plan
 ```
 
 ### Commit Conventions
 
 | When | Format | Example |
 |------|--------|---------|
-| Auto-commit (dirty state) | `chore(S01/T02): auto-commit after task` | Automatic save of work in progress |
-| After task verified | `feat(S01/T02): <what was built>` | The real work |
-| Plan/docs committed | `docs(S01): add slice plan` | Bundled with first task |
-| Slice squash to main | `type(M001/S01): <slice title>` | Type inferred from title (`feat`, `fix`, `docs`, etc.) |
+| Task completed | `{type}(S01/T02): <one-liner from summary>` | Type inferred from title (`feat`, `fix`, `test`, etc.) |
+| Plan/docs committed | `docs(S01): add slice plan` | Planning artifacts |
+| Slice squash to main | `type(M001/S01): <slice title>` | Type inferred from title |
+| State rebuild | `chore(S01/T02): auto-commit after state-rebuild` | Bookkeeping only |
 
-Commit types: `feat`, `fix`, `test`, `refactor`, `docs`, `chore`
+The system reads the task summary after execution and builds a meaningful commit message:
+- **Subject**: `{type}({sliceId}/{taskId}): {one-liner}` — the one-liner from the summary frontmatter
+- **Type**: Inferred from the task title and one-liner (`feat`, `fix`, `test`, `refactor`, `docs`, `perf`, `chore`)
+- **Body**: Key files from the summary frontmatter (up to 8 files listed)
+
+Commit types: `feat`, `fix`, `test`, `refactor`, `docs`, `perf`, `chore`
 
 ### Squash Merge Message
 

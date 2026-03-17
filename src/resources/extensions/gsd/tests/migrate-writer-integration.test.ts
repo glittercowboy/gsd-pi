@@ -11,6 +11,7 @@ import { writeGSDDirectory } from '../migrate/writer.ts';
 import { generatePreview } from '../migrate/preview.ts';
 import { parseRoadmap, parsePlan, parseSummary } from '../files.ts';
 import { deriveState } from '../state.ts';
+import { invalidateAllCaches } from '../cache.ts';
 import type {
   GSDProject,
   GSDMilestone,
@@ -207,6 +208,7 @@ async function main(): Promise<void> {
 
       // (e) deriveState
       console.log('  --- deriveState ---');
+      invalidateAllCaches();
       const state = await deriveState(base);
       assertEq(state.phase, 'executing', 'incomplete: deriveState phase is executing');
       assertTrue(state.activeMilestone !== null, 'incomplete: deriveState has activeMilestone');
@@ -262,14 +264,18 @@ async function main(): Promise<void> {
       assertTrue(!existsSync(join(m, 'M001-RESEARCH.md')), 'complete: M001-RESEARCH.md NOT written (null)');
       // No REQUIREMENTS.md since empty requirements
       assertTrue(!existsSync(join(base, '.gsd', 'REQUIREMENTS.md')), 'complete: REQUIREMENTS.md NOT written (empty)');
+      // Completed milestone should have VALIDATION and SUMMARY from migration (#819)
+      assertTrue(existsSync(join(m, 'M001-VALIDATION.md')), 'complete: M001-VALIDATION.md written for completed milestone');
+      assertTrue(existsSync(join(m, 'M001-SUMMARY.md')), 'complete: M001-SUMMARY.md written for completed milestone');
 
-      // deriveState: all slices done, all tasks done — needs validation then milestone summary
-      // Without VALIDATION file, it should be 'validating-milestone'
+      // deriveState: all slices done, all tasks done — migration now writes
+      // VALIDATION.md and SUMMARY.md for completed milestones (#819),
+      // so the milestone should be fully complete.
+      invalidateAllCaches();
       const state = await deriveState(base);
-      // All slices are done in roadmap. No VALIDATION or SUMMARY exists.
-      // deriveState should return 'validating-milestone' since validation gate precedes completion.
-      assertEq(state.phase, 'validating-milestone', 'complete: deriveState phase is validating-milestone');
-      assertTrue(state.activeMilestone !== null, 'complete: deriveState has activeMilestone');
+      assertEq(state.phase, 'complete', 'complete: deriveState phase is complete (validation + summary written by migration)');
+      // When all milestones are complete, activeMilestone points to the last entry (for display)
+      assertTrue(state.activeMilestone !== null, 'complete: deriveState has activeMilestone (last entry)');
       assertEq(state.activeMilestone!.id, 'M001', 'complete: deriveState activeMilestone is M001');
 
       // generatePreview for complete project

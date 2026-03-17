@@ -6,6 +6,69 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [2.26.0] - 2026-03-17
+
+### Added
+- Model selector grouped by provider with model type, provider, and API docs fields
+- `require_slice_discussion` option to pause auto-mode before each slice for human review
+- Discussion status indicators in `/gsd discuss` slice picker
+- Worker NDJSON monitoring and budget enforcement for parallel orchestration
+- `gsd_generate_milestone_id` tool for multi-milestone unique ID generation
+- Alt+V clipboard image paste shortcut on macOS
+- Hashline edit mode integration into active workflow
+- Fallback parser for prose-style roadmaps without `## Slices` section
+
+### Fixed
+- Windows path normalization in LLM-visible text to prevent bash failures
+- Async bash job completion no longer triggers spurious LLM turns
+- Native web_search limited to max 5 uses per response
+- Completed milestone with summary no longer re-entered as active on resume
+- Replan-slice artifact verification breaks infinite replanning-slice loop
+- Auto-heal STATE.md missing in preDispatchHealthGate
+- Worktree artifact copy includes STATE.md, KNOWLEDGE.md, OVERRIDES.md
+- Transient network errors marked as retriable in Anthropic provider
+- `needs-remediation` treated as terminal validation verdict to prevent hard loop
+- Post-hook doctor uses fixLevel 'all' to fix roadmap checkboxes
+- `task_done_missing_summary` fixable in doctor to prevent validate-milestone skip loop
+- BMP clipboard images on WSL2 handled via wl-paste PNG conversion
+- Extended idle timeout for headless new-milestone
+- EPIPE handling in LSP sendNotification with proper process exit wait
+- Debug logging for silent early-return paths in dispatchNextUnit
+- Untracked .gsd/ state files removed before milestone merge checkout
+- Crash prevention when cancelling OAuth provider login dialog
+- Resource staleness check compares gsdVersion instead of syncedAt
+- Unique temp paths in saveFile() to prevent parallel write collisions
+- Validation/summary file generation for completed milestones during migration
+- Cache invalidation before initial state derivation in startAuto
+- Headless mode no longer exits early on progress notifications containing 'complete'
+
+### Removed
+- Symlink-based development workflow (reverted PR #744)
+
+### Changed
+- Explicit Gemini OAuth ToS warning added to README — recommends API keys over OAuth
+- Documentation updated for v2.24 release features
+- Bug report template updated with model type, provider, and API docs fields
+
+## [2.25.0] - 2026-03-16
+
+### Added
+- Native web search results rendering in TUI with `PREFER_BRAVE_SEARCH` environment variable toggle
+- Meaningful commit messages generated from task summaries instead of generic messages
+- Incremental memory system for auto-mode sessions
+- Visualizer enriched with stats and discussion status
+- 14 new E2E smoke tests for CLI verification
+
+### Fixed
+- Phantom skip loop caused by stale crash recovery context
+- Skip-loop now interruptible and counts toward lifetime cap
+- Cache invalidation consistency — orphaned `invalidateStateCache()` calls replaced, DB artifact cache included in `invalidateAllCaches()`
+- Plan checkbox reconciliation on worktree re-attach after crash
+
+### Changed
+- Removed unnecessary `as any` casts, dead exports, and duplicate code
+- Updated documentation for v2.22 and v2.23 release features
+
 ## [2.24.0] - 2026-03-16
 
 ### Added
@@ -919,7 +982,9 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Changed
 - License updated to MIT
 
-[Unreleased]: https://github.com/gsd-build/gsd-2/compare/v2.24.0...HEAD
+[Unreleased]: https://github.com/gsd-build/gsd-2/compare/v2.26.0...HEAD
+[2.26.0]: https://github.com/gsd-build/gsd-2/compare/v2.25.0...v2.26.0
+[2.25.0]: https://github.com/gsd-build/gsd-2/releases/tag/v2.25.0
 [2.24.0]: https://github.com/gsd-build/gsd-2/compare/v2.23.0...v2.24.0
 [2.23.0]: https://github.com/gsd-build/gsd-2/compare/v2.22.0...v2.23.0
 [2.21.0]: https://github.com/gsd-build/gsd-2/compare/v2.20.0...v2.21.0

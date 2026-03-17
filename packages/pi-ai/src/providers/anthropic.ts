@@ -204,6 +204,28 @@ function mergeHeaders(...headerSources: (Record<string, string> | undefined)[]):
 }
 
 /**
+ * Detect transient network errors that are likely to succeed on retry.
+ * Covers WebSocket disconnects (Tailscale, VPN), TCP resets, and DNS failures.
+ */
+function isTransientNetworkError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  const msg = error.message.toLowerCase();
+  const code = (error as NodeJS.ErrnoException).code;
+  return (
+    code === 'ECONNRESET' ||
+    code === 'EPIPE' ||
+    code === 'ETIMEDOUT' ||
+    code === 'ENOTFOUND' ||
+    code === 'EAI_AGAIN' ||
+    msg.includes('connector_closed') ||
+    msg.includes('socket hang up') ||
+    msg.includes('network') ||
+    msg.includes('connection') && msg.includes('closed') ||
+    msg.includes('fetch failed')
+  );
+}
+
+/**
  * Extract retry delay from Anthropic error response headers (in milliseconds).
  * Checks: retry-after (seconds or RFC date), x-ratelimit-reset-requests, x-ratelimit-reset-tokens.
  * Returns undefined if no valid delay is found or if the delay is in the past.
@@ -496,6 +518,11 @@ export const streamAnthropic: StreamFunction<"anthropic-messages", AnthropicOpti
 				if (retryAfterMs !== undefined) {
 					output.retryAfterMs = retryAfterMs;
 				}
+			}
+			// Mark transient network errors as retriable so auto-mode can
+			// detect them and retry instead of stopping (#833).
+			if (isTransientNetworkError(error)) {
+				output.retryAfterMs = output.retryAfterMs ?? 5000;
 			}
 			stream.push({ type: "error", reason: output.stopReason, error: output });
 			stream.end();

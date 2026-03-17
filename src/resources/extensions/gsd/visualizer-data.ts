@@ -1,25 +1,32 @@
 // Data loader for workflow visualizer overlay — aggregates state + metrics.
 
+import { existsSync, readFileSync, statSync } from 'node:fs';
 import { deriveState } from './state.js';
 import { parseRoadmap, parsePlan, parseSummary, loadFile } from './files.js';
 import { findMilestoneIds } from './guided-flow.js';
-import { resolveMilestoneFile, resolveSliceFile } from './paths.js';
+import { resolveMilestoneFile, resolveSliceFile, resolveGsdRootFile } from './paths.js';
 import {
   getLedger,
   getProjectTotals,
   aggregateByPhase,
   aggregateBySlice,
   aggregateByModel,
+  aggregateByTier,
+  formatTierSavings,
   loadLedgerFromDisk,
   classifyUnitPhase,
 } from './metrics.js';
+import { loadAllCaptures, countPendingCaptures } from './captures.js';
+import { loadEffectiveGSDPreferences } from './preferences.js';
 
 import type { Phase } from './types.js';
+import type { CaptureEntry } from './captures.js';
 import type {
   ProjectTotals,
   PhaseAggregate,
   SliceAggregate,
   ModelAggregate,
+  TierAggregate,
   UnitMetrics,
 } from './metrics.js';
 
@@ -48,6 +55,7 @@ export interface VisualizerTask {
   title: string;
   done: boolean;
   active: boolean;
+  estimate?: string;
 }
 
 export interface CriticalPathInfo {
@@ -81,6 +89,71 @@ export interface ChangelogInfo {
   entries: ChangelogEntry[];
 }
 
+export interface VisualizerSliceRef {
+  milestoneId: string;
+  sliceId: string;
+  title: string;
+}
+
+export interface VisualizerSliceActivity extends VisualizerSliceRef {
+  completedAt: string;
+}
+
+export interface VisualizerStats {
+  missingCount: number;
+  missingSlices: VisualizerSliceRef[];
+  updatedCount: number;
+  updatedSlices: VisualizerSliceActivity[];
+  recentEntries: ChangelogEntry[];
+}
+
+export type DiscussionState = 'undiscussed' | 'draft' | 'discussed';
+
+export interface VisualizerDiscussionState {
+  milestoneId: string;
+  title: string;
+  state: DiscussionState;
+  hasContext: boolean;
+  hasDraft: boolean;
+  lastUpdated: string | null;
+}
+
+export interface SliceVerification {
+  milestoneId: string;
+  sliceId: string;
+  verificationResult: string;
+  blockerDiscovered: boolean;
+  keyDecisions: string[];
+  patternsEstablished: string[];
+  provides: string[];
+  requires: { slice: string; provides: string }[];
+}
+
+export interface KnowledgeInfo {
+  rules: { id: string; scope: string; content: string }[];
+  patterns: { id: string; content: string }[];
+  lessons: { id: string; content: string }[];
+  exists: boolean;
+}
+
+export interface CapturesInfo {
+  entries: CaptureEntry[];
+  pendingCount: number;
+  totalCount: number;
+}
+
+export interface HealthInfo {
+  budgetCeiling: number | undefined;
+  tokenProfile: string;
+  truncationRate: number;
+  continueHereRate: number;
+  tierBreakdown: TierAggregate[];
+  tierSavingsLine: string;
+  toolCalls: number;
+  assistantMessages: number;
+  userMessages: number;
+}
+
 export interface VisualizerData {
   milestones: VisualizerMilestone[];
   phase: Phase;
@@ -88,11 +161,19 @@ export interface VisualizerData {
   byPhase: PhaseAggregate[];
   bySlice: SliceAggregate[];
   byModel: ModelAggregate[];
+  byTier: TierAggregate[];
+  tierSavingsLine: string;
   units: UnitMetrics[];
   criticalPath: CriticalPathInfo;
   remainingSliceCount: number;
   agentActivity: AgentActivityInfo | null;
   changelog: ChangelogInfo;
+  sliceVerifications: SliceVerification[];
+  knowledge: KnowledgeInfo;
+  captures: CapturesInfo;
+  health: HealthInfo;
+  discussion: VisualizerDiscussionState[];
+  stats: VisualizerStats;
 }
 
 // ─── Critical Path ────────────────────────────────────────────────────────────
@@ -334,12 +415,18 @@ function loadAgentActivity(units: UnitMetrics[], milestones: VisualizerMilestone
   };
 }
 
-// ─── Changelog ───────────────────────────────────────────────────────────────
+// ─── Changelog & Verifications ────────────────────────────────────────────────
 
-const changelogCache = new Map<string, { mtime: number; entry: ChangelogEntry }>();
+const changelogCache = new Map<string, { mtime: number; entry: ChangelogEntry; verification: SliceVerification }>();
 
-async function loadChangelog(basePath: string, milestones: VisualizerMilestone[]): Promise<ChangelogInfo> {
+interface ChangelogAndVerifications {
+  changelog: ChangelogInfo;
+  verifications: SliceVerification[];
+}
+
+async function loadChangelogAndVerifications(basePath: string, milestones: VisualizerMilestone[]): Promise<ChangelogAndVerifications> {
   const entries: ChangelogEntry[] = [];
+  const verifications: SliceVerification[] = [];
 
   for (const ms of milestones) {
     for (const sl of ms.slices) {
@@ -348,11 +435,9 @@ async function loadChangelog(basePath: string, milestones: VisualizerMilestone[]
       const summaryFile = resolveSliceFile(basePath, ms.id, sl.id, 'SUMMARY');
       if (!summaryFile) continue;
 
-      // Check cache by file path
       const cacheKey = `${ms.id}/${sl.id}`;
       const cached = changelogCache.get(cacheKey);
 
-      // Check mtime for cache invalidation
       let mtime = 0;
       try {
         const { statSync } = await import('node:fs');
@@ -363,6 +448,7 @@ async function loadChangelog(basePath: string, milestones: VisualizerMilestone[]
 
       if (cached && cached.mtime === mtime) {
         entries.push(cached.entry);
+        verifications.push(cached.verification);
         continue;
       }
 
@@ -382,15 +468,184 @@ async function loadChangelog(basePath: string, milestones: VisualizerMilestone[]
         completedAt: String(summary.frontmatter.completed_at ?? ''),
       };
 
-      changelogCache.set(cacheKey, { mtime, entry });
+      const verification: SliceVerification = {
+        milestoneId: ms.id,
+        sliceId: sl.id,
+        verificationResult: summary.frontmatter.verification_result || '',
+        blockerDiscovered: summary.frontmatter.blocker_discovered,
+        keyDecisions: summary.frontmatter.key_decisions || [],
+        patternsEstablished: summary.frontmatter.patterns_established || [],
+        provides: summary.frontmatter.provides || [],
+        requires: (summary.frontmatter.requires || []).map(r => ({
+          slice: r.slice,
+          provides: r.provides,
+        })),
+      };
+
+      changelogCache.set(cacheKey, { mtime, entry, verification });
       entries.push(entry);
+      verifications.push(verification);
     }
   }
 
-  // Sort by completedAt descending
   entries.sort((a, b) => String(b.completedAt || '').localeCompare(String(a.completedAt || '')));
 
-  return { entries };
+  return { changelog: { entries }, verifications };
+}
+
+// ─── Knowledge Loader ─────────────────────────────────────────────────────────
+
+function loadKnowledge(basePath: string): KnowledgeInfo {
+  const knowledgePath = resolveGsdRootFile(basePath, 'KNOWLEDGE');
+  if (!existsSync(knowledgePath)) {
+    return { rules: [], patterns: [], lessons: [], exists: false };
+  }
+
+  let content: string;
+  try {
+    content = readFileSync(knowledgePath, 'utf-8');
+  } catch {
+    return { rules: [], patterns: [], lessons: [], exists: false };
+  }
+
+  const rules: { id: string; scope: string; content: string }[] = [];
+  const patterns: { id: string; content: string }[] = [];
+  const lessons: { id: string; content: string }[] = [];
+
+  const lines = content.split('\n');
+  let currentSection = '';
+
+  for (const line of lines) {
+    if (line.startsWith('## Rules')) { currentSection = 'rules'; continue; }
+    if (line.startsWith('## Patterns')) { currentSection = 'patterns'; continue; }
+    if (line.startsWith('## Lessons')) { currentSection = 'lessons'; continue; }
+    if (line.startsWith('## ')) { currentSection = ''; continue; }
+
+    if (!line.startsWith('| ') || line.startsWith('| ---') || line.startsWith('| ID')) continue;
+    const cols = line.split('|').map(c => c.trim()).filter(c => c.length > 0);
+    if (cols.length < 2) continue;
+
+    if (currentSection === 'rules' && cols.length >= 3) {
+      rules.push({ id: cols[0], scope: cols[1], content: cols[2] });
+    } else if (currentSection === 'patterns' && cols.length >= 2) {
+      patterns.push({ id: cols[0], content: cols[1] });
+    } else if (currentSection === 'lessons' && cols.length >= 2) {
+      lessons.push({ id: cols[0], content: cols[1] });
+    }
+  }
+
+  return { rules, patterns, lessons, exists: true };
+}
+
+// ─── Health Loader ────────────────────────────────────────────────────────────
+
+function loadHealth(units: UnitMetrics[], totals: ProjectTotals | null): HealthInfo {
+  const prefs = loadEffectiveGSDPreferences();
+  const budgetCeiling = prefs?.preferences?.budget_ceiling;
+  const tokenProfile = prefs?.preferences?.token_profile ?? 'standard';
+
+  let truncationRate = 0;
+  let continueHereRate = 0;
+  if (totals && totals.units > 0) {
+    truncationRate = (totals.totalTruncationSections / totals.units) * 100;
+    continueHereRate = (totals.continueHereFiredCount / totals.units) * 100;
+  }
+
+  const tierBreakdown = aggregateByTier(units);
+  const tierSavingsLine = formatTierSavings(units);
+
+  return {
+    budgetCeiling,
+    tokenProfile,
+    truncationRate,
+    continueHereRate,
+    tierBreakdown,
+    tierSavingsLine,
+    toolCalls: totals?.toolCalls ?? 0,
+    assistantMessages: totals?.assistantMessages ?? 0,
+    userMessages: totals?.userMessages ?? 0,
+  };
+}
+
+const RECENT_ENTRY_LIMIT = 3;
+const FEATURE_PREVIEW_LIMIT = 5;
+const UPDATED_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
+
+function buildVisualizerStats(
+  milestones: VisualizerMilestone[],
+  entries: ChangelogEntry[],
+): VisualizerStats {
+  const missing: VisualizerSliceRef[] = [];
+  for (const ms of milestones) {
+    for (const sl of ms.slices) {
+      if (!sl.done) missing.push({ milestoneId: ms.id, sliceId: sl.id, title: sl.title });
+    }
+  }
+
+  const missingCount = missing.length;
+  const missingSlices = missing.slice(0, FEATURE_PREVIEW_LIMIT);
+
+  const now = Date.now();
+  const updatedEntries = entries.filter(entry => {
+    if (!entry.completedAt) return false;
+    const parsed = Date.parse(entry.completedAt);
+    return !Number.isNaN(parsed) && now - parsed <= UPDATED_WINDOW_MS;
+  });
+  const updatedCount = updatedEntries.length;
+  const updatedSlices = updatedEntries.slice(0, FEATURE_PREVIEW_LIMIT).map(entry => ({
+    milestoneId: entry.milestoneId,
+    sliceId: entry.sliceId,
+    title: entry.title,
+    completedAt: entry.completedAt,
+  }));
+
+  const recentEntries = entries.slice(0, RECENT_ENTRY_LIMIT);
+
+  return {
+    missingCount,
+    missingSlices,
+    updatedCount,
+    updatedSlices,
+    recentEntries,
+  };
+}
+
+function loadDiscussionState(
+  basePath: string,
+  milestones: VisualizerMilestone[],
+): VisualizerDiscussionState[] {
+  const states: VisualizerDiscussionState[] = [];
+
+  for (const ms of milestones) {
+    const contextPath = resolveMilestoneFile(basePath, ms.id, "CONTEXT");
+    const draftPath = resolveMilestoneFile(basePath, ms.id, "CONTEXT-DRAFT");
+    const state: DiscussionState = contextPath
+      ? "discussed"
+      : draftPath
+        ? "draft"
+        : "undiscussed";
+
+    let lastUpdated: string | null = null;
+    const target = contextPath ?? draftPath;
+    if (target) {
+      try {
+        lastUpdated = new Date(statSync(target).mtimeMs).toISOString();
+      } catch {
+        lastUpdated = null;
+      }
+    }
+
+    states.push({
+      milestoneId: ms.id,
+      title: ms.title,
+      state,
+      hasContext: !!contextPath,
+      hasDraft: !!draftPath,
+      lastUpdated,
+    });
+  }
+
+  return states;
 }
 
 // ─── Loader ───────────────────────────────────────────────────────────────────
@@ -433,6 +688,7 @@ export async function loadVisualizerData(basePath: string): Promise<VisualizerDa
                 title: t.title,
                 done: t.done,
                 active: state.activeTask?.id === t.id,
+                estimate: t.estimate || undefined,
               });
             }
           }
@@ -464,6 +720,8 @@ export async function loadVisualizerData(basePath: string): Promise<VisualizerDa
   let byPhase: PhaseAggregate[] = [];
   let bySlice: SliceAggregate[] = [];
   let byModel: ModelAggregate[] = [];
+  let byTier: TierAggregate[] = [];
+  let tierSavingsLine = '';
   let units: UnitMetrics[] = [];
 
   const ledger = getLedger() ?? loadLedgerFromDisk(basePath);
@@ -474,6 +732,8 @@ export async function loadVisualizerData(basePath: string): Promise<VisualizerDa
     byPhase = aggregateByPhase(units);
     bySlice = aggregateBySlice(units);
     byModel = aggregateByModel(units);
+    byTier = aggregateByTier(units);
+    tierSavingsLine = formatTierSavings(units);
   }
 
   // Compute new fields
@@ -487,7 +747,20 @@ export async function loadVisualizerData(basePath: string): Promise<VisualizerDa
   }
 
   const agentActivity = loadAgentActivity(units, milestones);
-  const changelog = await loadChangelog(basePath, milestones);
+  const { changelog, verifications: sliceVerifications } = await loadChangelogAndVerifications(basePath, milestones);
+
+  const knowledge = loadKnowledge(basePath);
+  const allCaptures = loadAllCaptures(basePath);
+  const pendingCount = countPendingCaptures(basePath);
+  const captures: CapturesInfo = {
+    entries: allCaptures,
+    pendingCount,
+    totalCount: allCaptures.length,
+  };
+
+  const health = loadHealth(units, totals);
+  const stats = buildVisualizerStats(milestones, changelog.entries);
+  const discussion = loadDiscussionState(basePath, milestones);
 
   return {
     milestones,
@@ -496,10 +769,18 @@ export async function loadVisualizerData(basePath: string): Promise<VisualizerDa
     byPhase,
     bySlice,
     byModel,
+    byTier,
+    tierSavingsLine,
     units,
     criticalPath,
     remainingSliceCount,
     agentActivity,
     changelog,
+    sliceVerifications,
+    knowledge,
+    captures,
+    health,
+    discussion,
+    stats,
   };
 }

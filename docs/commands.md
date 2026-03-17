@@ -15,6 +15,8 @@
 | `/gsd queue` | Queue and reorder future milestones (safe during auto mode) |
 | `/gsd capture` | Fire-and-forget thought capture (works during auto mode) |
 | `/gsd triage` | Manually trigger triage of pending captures |
+| `/gsd forensics` | Post-mortem investigation of auto-mode failures — structured root-cause analysis with log inspection |
+| `/gsd cleanup` | Clean up GSD state files and stale worktrees |
 | `/gsd visualize` | Open workflow visualizer (progress, deps, metrics, timeline) |
 | `/gsd knowledge` | Add persistent project knowledge (rule, pattern, or lesson) |
 | `/gsd help` | Categorized command reference with descriptions for all GSD subcommands |
@@ -72,9 +74,12 @@ See [Parallel Orchestration](./parallel-orchestration.md) for full documentation
 | `Ctrl+Alt+G` | Toggle dashboard overlay |
 | `Ctrl+Alt+V` | Toggle voice transcription |
 | `Ctrl+Alt+B` | Show background shell processes |
+| `Ctrl+V` / `Alt+V` | Paste image from clipboard (screenshot → vision input) |
 | `Escape` | Pause auto mode (preserves conversation) |
 
 > **Note:** In terminals without Kitty keyboard protocol support (macOS Terminal.app, JetBrains IDEs), slash-command fallbacks are shown instead of `Ctrl+Alt` shortcuts.
+>
+> **Tip:** If `Ctrl+V` is intercepted by your terminal (e.g. Warp), use `Alt+V` instead for clipboard image paste.
 
 ## CLI Flags
 
@@ -90,6 +95,7 @@ See [Parallel Orchestration](./parallel-orchestration.md) for full documentation
 | `gsd --debug` | Enable structured JSONL diagnostic logging for troubleshooting dispatch and state issues |
 | `gsd config` | Re-run the setup wizard (LLM provider + tool keys) |
 | `gsd update` | Update GSD to the latest version |
+| `gsd headless new-milestone` | Create a new milestone from a context file (headless — no TUI required) |
 
 ## Headless Mode
 
@@ -110,6 +116,15 @@ gsd headless --timeout 600000 auto
 
 # Force a specific phase
 gsd headless dispatch plan
+
+# Create a new milestone from a context file and start auto mode
+gsd headless new-milestone --context brief.md --auto
+
+# Create a milestone from inline text
+gsd headless new-milestone --context-text "Build a REST API with auth"
+
+# Pipe context from stdin
+echo "Build a CLI tool" | gsd headless new-milestone --context -
 ```
 
 | Flag | Description |
@@ -117,7 +132,21 @@ gsd headless dispatch plan
 | `--timeout N` | Overall timeout in milliseconds (default: 300000 / 5 min) |
 | `--json` | Stream all events as JSONL to stdout |
 | `--model ID` | Override the model for the headless session |
+| `--context <file>` | Context file for `new-milestone` (use `-` for stdin) |
+| `--context-text <text>` | Inline context text for `new-milestone` |
+| `--auto` | Chain into auto-mode after milestone creation |
 
 **Exit codes:** `0` = complete, `1` = error or timeout, `2` = blocked.
 
 Any `/gsd` subcommand works as a positional argument — `gsd headless status`, `gsd headless doctor`, `gsd headless dispatch execute`, etc.
+
+## MCP Server Mode
+
+`gsd --mode mcp` runs GSD as a [Model Context Protocol](https://modelcontextprotocol.io) server over stdin/stdout. This exposes all GSD tools (read, write, edit, bash, etc.) to external AI clients — Claude Desktop, VS Code Copilot, and any MCP-compatible host.
+
+```bash
+# Start GSD as an MCP server
+gsd --mode mcp
+```
+
+The server registers all tools from the agent session and maps MCP `tools/list` and `tools/call` requests to GSD tool definitions. It runs until the transport closes.

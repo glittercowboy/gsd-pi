@@ -637,6 +637,12 @@ export async function buildPlanSlicePrompt(
   const executorContextConstraints = formatExecutorConstraints();
 
   const outputRelPath = relSliceFile(base, mid, sid, "PLAN");
+  const prefs = loadEffectiveGSDPreferences();
+  const commitDocsEnabled = prefs?.preferences?.git?.commit_docs !== false;
+  const commitInstruction = commitDocsEnabled
+    ? `Commit: \`docs(${sid}): add slice plan\``
+    : "Do not commit — planning docs are not tracked in git for this project.";
+
   return loadPrompt("plan-slice", {
     workingDirectory: base,
     milestoneId: mid, sliceId: sid, sliceTitle: sTitle,
@@ -647,6 +653,7 @@ export async function buildPlanSlicePrompt(
     inlinedContext,
     dependencySummaries: depContent,
     executorContextConstraints,
+    commitInstruction,
   });
 }
 
@@ -1071,6 +1078,12 @@ export async function buildReassessRoadmapPrompt(
     // Non-fatal — captures module may not be available
   }
 
+  const reassessPrefs = loadEffectiveGSDPreferences();
+  const reassessCommitDocsEnabled = reassessPrefs?.preferences?.git?.commit_docs !== false;
+  const reassessCommitInstruction = reassessCommitDocsEnabled
+    ? `Commit: \`docs(${mid}): reassess roadmap after ${completedSliceId}\``
+    : "Do not commit — planning docs are not tracked in git for this project.";
+
   return loadPrompt("reassess-roadmap", {
     workingDirectory: base,
     milestoneId: mid,
@@ -1081,6 +1094,7 @@ export async function buildReassessRoadmapPrompt(
     assessmentPath,
     inlinedContext,
     deferredCaptures,
+    commitInstruction: reassessCommitInstruction,
   });
 }
 

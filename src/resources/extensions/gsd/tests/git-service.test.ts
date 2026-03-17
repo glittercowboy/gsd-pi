@@ -5,6 +5,7 @@ import { execSync } from "node:child_process";
 
 import {
   inferCommitType,
+  buildTaskCommitMessage,
   GitServiceImpl,
   RUNTIME_EXCLUSION_PATHS,
   VALID_BRANCH_NAME,
@@ -14,6 +15,7 @@ import {
   type GitPreferences,
   type CommitOptions,
   type PreMergeCheckResult,
+  type TaskCommitContext,
 } from "../git-service.ts";
 import { createTestContext } from './test-helpers.ts';
 
@@ -187,6 +189,58 @@ async function main(): Promise<void> {
     "feat",
     "'prefix' does not match 'fix' — word boundary prevents partial match"
   );
+
+  // ─── inferCommitType with oneLiner ──────────────────────────────────────
+
+  console.log("\n=== inferCommitType with oneLiner ===");
+
+  assertEq(
+    inferCommitType("implement dashboard", "Fixed rendering bug in sidebar"),
+    "fix",
+    "one-liner with 'fixed' overrides generic title → fix"
+  );
+
+  assertEq(
+    inferCommitType("add search", "Optimized query performance with caching"),
+    "perf",
+    "one-liner with 'performance' and 'caching' → perf"
+  );
+
+  // ─── buildTaskCommitMessage ─────────────────────────────────────────────
+
+  console.log("\n=== buildTaskCommitMessage ===");
+
+  {
+    const msg = buildTaskCommitMessage({
+      taskId: "S01/T02",
+      taskTitle: "implement user authentication",
+      oneLiner: "Added JWT-based auth with refresh token rotation",
+      keyFiles: ["src/auth.ts", "src/middleware/jwt.ts"],
+    });
+    assertTrue(msg.startsWith("feat(S01/T02):"), "message starts with type(scope)");
+    assertTrue(msg.includes("JWT-based auth"), "message includes one-liner content");
+    assertTrue(msg.includes("- src/auth.ts"), "message body includes key files");
+    assertTrue(msg.includes("- src/middleware/jwt.ts"), "message body includes second key file");
+  }
+
+  {
+    const msg = buildTaskCommitMessage({
+      taskId: "S02/T01",
+      taskTitle: "fix login redirect bug",
+    });
+    assertTrue(msg.startsWith("fix(S02/T01):"), "infers fix type from title");
+    assertTrue(msg.includes("fix login redirect bug"), "uses task title when no one-liner");
+    assertTrue(!msg.includes("\n"), "no body when no key files");
+  }
+
+  {
+    const msg = buildTaskCommitMessage({
+      taskId: "S01/T03",
+      taskTitle: "add tests",
+      oneLiner: "Unit tests for auth module with coverage",
+    });
+    assertTrue(msg.startsWith("test(S01/T03):"), "infers test type");
+  }
 
   // ─── RUNTIME_EXCLUSION_PATHS ───────────────────────────────────────────
 
@@ -430,13 +484,25 @@ async function main(): Promise<void> {
     const svc = new GitServiceImpl(repo);
 
     createFile(repo, "src/new-feature.ts", "export const x = 1;");
+
+    // Without task context, autoCommit uses generic chore message
     const msg = svc.autoCommit("task", "T01");
+    assertEq(msg, "chore(T01): auto-commit after task", "autoCommit returns generic format without task context");
 
-    assertEq(msg, "chore(T01): auto-commit after task", "autoCommit returns correct message format");
-
-    // Verify the commit exists
     const log = run("git log --oneline -1", repo);
-    assertTrue(log.includes("chore(T01): auto-commit after task"), "commit message is in git log");
+    assertTrue(log.includes("chore(T01): auto-commit after task"), "generic commit message is in git log");
+
+    // With task context, autoCommit uses meaningful message
+    createFile(repo, "src/auth.ts", "export function login() {}");
+    const msg2 = svc.autoCommit("task", "S01/T02", [], {
+      taskId: "S01/T02",
+      taskTitle: "implement user authentication endpoint",
+      oneLiner: "Added JWT-based auth with refresh token rotation",
+      keyFiles: ["src/auth.ts"],
+    });
+    assertTrue(msg2 !== null, "autoCommit with task context returns a message");
+    assertTrue(msg2!.startsWith("feat(S01/T02):"), "meaningful commit uses feat type and scope");
+    assertTrue(msg2!.includes("JWT-based auth"), "meaningful commit includes one-liner content");
 
     rmSync(repo, { recursive: true, force: true });
   }

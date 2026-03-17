@@ -36,7 +36,7 @@ import { loadPrompt } from "./prompt-loader.js";
 import { deriveState } from "./state.js";
 import { isAutoActive, isAutoPaused, handleAgentEnd, pauseAuto, getAutoDashboardData, markToolStart, markToolEnd } from "./auto.js";
 import { saveActivityLog } from "./activity-log.js";
-import { checkAutoStartAfterDiscuss, getDiscussionMilestoneId } from "./guided-flow.js";
+import { checkAutoStartAfterDiscuss, getDiscussionMilestoneId, findMilestoneIds, nextMilestoneId } from "./guided-flow.js";
 import { GSDDashboardOverlay } from "./dashboard-overlay.js";
 import {
   loadEffectiveGSDPreferences,
@@ -59,6 +59,7 @@ import { homedir } from "node:os";
 import { shortcutDesc } from "../shared/terminal.js";
 import { Text } from "@gsd/pi-tui";
 import { pauseAutoForProviderError } from "./provider-error-pause.js";
+import { toPosixPath } from "../shared/path-display.js";
 
 // ── Agent Instructions ────────────────────────────────────────────────────
 // Lightweight "always follow" files injected into every GSD agent session.
@@ -467,6 +468,46 @@ export default function (pi: ExtensionAPI) {
     },
   });
 
+  // ── gsd_generate_milestone_id — canonical milestone ID generation ──────
+  // The LLM cannot generate random suffixes for unique_milestone_ids on its
+  // own. This tool calls back into the TS code that owns ID generation,
+  // ensuring the preference is always respected and IDs are always valid.
+  pi.registerTool({
+    name: "gsd_generate_milestone_id",
+    label: "Generate Milestone ID",
+    description:
+      "Generate the next milestone ID for a new GSD milestone. " +
+      "Scans existing milestones on disk and respects the unique_milestone_ids preference. " +
+      "Always use this tool when creating a new milestone — never invent milestone IDs manually.",
+    promptSnippet: "Generate a valid milestone ID (respects unique_milestone_ids preference)",
+    promptGuidelines: [
+      "ALWAYS call gsd_generate_milestone_id before creating a new milestone directory or writing milestone files.",
+      "Never invent or hardcode milestone IDs like M001, M002 — always use this tool.",
+      "Call it once per milestone you need to create. For multi-milestone projects, call it once for each milestone in sequence.",
+      "The tool returns the correct format based on project preferences (e.g. M001 or M001-r5jzab).",
+    ],
+    parameters: Type.Object({}),
+    async execute(_toolCallId, _params, _signal, _onUpdate, _ctx) {
+      try {
+        const basePath = process.cwd();
+        const existingIds = findMilestoneIds(basePath);
+        const uniqueEnabled = !!loadEffectiveGSDPreferences()?.preferences?.unique_milestone_ids;
+        const newId = nextMilestoneId(existingIds, uniqueEnabled);
+        return {
+          content: [{ type: "text" as const, text: newId }],
+          details: { operation: "generate_milestone_id", id: newId, existingCount: existingIds.length, uniqueEnabled },
+        };
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return {
+          content: [{ type: "text" as const, text: `Error generating milestone ID: ${msg}` }],
+          isError: true,
+          details: { operation: "generate_milestone_id", error: msg },
+        };
+      }
+    },
+  });
+
   // ── session_start: render branded GSD header + load tool keys + remote status ──
   pi.on("session_start", async (_event, ctx) => {
     // Theme access throws in RPC mode (no TUI) — header is decorative, skip it
@@ -566,6 +607,19 @@ export default function (pi: ExtensionAPI) {
       }
     }
 
+    // Inject auto-learned project memories
+    let memoryBlock = "";
+    try {
+      const { getActiveMemoriesRanked, formatMemoriesForPrompt } = await import("./memory-store.js");
+      const memories = getActiveMemoriesRanked(30);
+      if (memories.length > 0) {
+        const formatted = formatMemoriesForPrompt(memories, 2000);
+        if (formatted) {
+          memoryBlock = `\n\n${formatted}`;
+        }
+      }
+    } catch { /* non-fatal */ }
+
     // Detect skills installed during this auto-mode session
     let newSkillsBlock = "";
     if (hasSkillSnapshot()) {
@@ -595,12 +649,12 @@ export default function (pi: ExtensionAPI) {
         "",
         "[WORKTREE CONTEXT — OVERRIDES CURRENT WORKING DIRECTORY ABOVE]",
         `IMPORTANT: Ignore the "Current working directory" shown earlier in this prompt.`,
-        `The actual current working directory is: ${process.cwd()}`,
+        `The actual current working directory is: ${toPosixPath(process.cwd())}`,
         "",
         `You are working inside a GSD worktree.`,
         `- Worktree name: ${worktreeName}`,
-        `- Worktree path (this is the real cwd): ${process.cwd()}`,
-        `- Main project: ${worktreeMainCwd}`,
+        `- Worktree path (this is the real cwd): ${toPosixPath(process.cwd())}`,
+        `- Main project: ${toPosixPath(worktreeMainCwd)}`,
         `- Branch: worktree/${worktreeName}`,
         "",
         "All file operations, bash commands, and GSD state resolve against the worktree path above.",
@@ -612,12 +666,12 @@ export default function (pi: ExtensionAPI) {
         "",
         "[WORKTREE CONTEXT — OVERRIDES CURRENT WORKING DIRECTORY ABOVE]",
         `IMPORTANT: Ignore the "Current working directory" shown earlier in this prompt.`,
-        `The actual current working directory is: ${process.cwd()}`,
+        `The actual current working directory is: ${toPosixPath(process.cwd())}`,
         "",
         "You are working inside a GSD auto-worktree.",
         `- Milestone worktree: ${autoWorktree.worktreeName}`,
-        `- Worktree path (this is the real cwd): ${process.cwd()}`,
-        `- Main project: ${autoWorktree.originalBase}`,
+        `- Worktree path (this is the real cwd): ${toPosixPath(process.cwd())}`,
+        `- Main project: ${toPosixPath(autoWorktree.originalBase)}`,
         `- Branch: ${autoWorktree.branch}`,
         "",
         "All file operations, bash commands, and GSD state resolve against the worktree path above.",
@@ -625,7 +679,7 @@ export default function (pi: ExtensionAPI) {
       ].join("\n");
     }
 
-    const fullSystem = `${event.systemPrompt}\n\n[SYSTEM CONTEXT — GSD]\n\n${systemContent}${preferenceBlock}${agentInstructionsBlock}${knowledgeBlock}${newSkillsBlock}${worktreeBlock}`;
+    const fullSystem = `${event.systemPrompt}\n\n[SYSTEM CONTEXT — GSD]\n\n${systemContent}${preferenceBlock}${agentInstructionsBlock}${knowledgeBlock}${memoryBlock}${newSkillsBlock}${worktreeBlock}`;
     stopContextTimer({
       systemPromptSize: fullSystem.length,
       injectionSize: injection?.length ?? 0,

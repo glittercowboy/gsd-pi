@@ -79,9 +79,9 @@ Determine where the new milestones should go in the overall sequence. Consider d
 
 ## Output Phase
 
-Once the user is satisfied, in a single pass for **each** new milestone (starting from {{nextId}}):
+Once the user is satisfied, in a single pass for **each** new milestone:
 
-1. `mkdir -p .gsd/milestones/<ID>/slices`
+1. Call `gsd_generate_milestone_id` to get the milestone ID — never invent milestone IDs manually. Then `mkdir -p .gsd/milestones/<ID>/slices`.
 2. Write `.gsd/milestones/<ID>/<ID>-CONTEXT.md` — use the **Context** output template below. Capture intent, scope, risks, constraints, integration points, and relevant requirements. Mark the status as "Queued — pending auto-mode execution." **If this milestone depends on other milestones, add YAML frontmatter with `depends_on`:**
    ```yaml
    ---
@@ -96,7 +96,7 @@ Then, after all milestone directories and context files are written:
 4. If `.gsd/REQUIREMENTS.md` exists and the queued work introduces new in-scope capabilities or promotes Deferred items, update it.
 5. If discussion produced decisions relevant to existing work, append to `.gsd/DECISIONS.md`.
 6. Append to `.gsd/QUEUE.md`.
-7. Commit: `docs: queue <milestone list>`
+7. {{commitInstruction}}
 
 **Do NOT write roadmaps for queued milestones.**
 **Do NOT update `.gsd/STATE.md`.**

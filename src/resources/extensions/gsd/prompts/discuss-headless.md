@@ -51,11 +51,11 @@ Use these templates exactly:
 5. Write `{{roadmapPath}}` (using Roadmap template) — decompose into demoable vertical slices with checkboxes, risk, depends, demo sentences, proof strategy, verification classes, milestone definition of done, requirement coverage, and a boundary map. If the milestone crosses multiple runtime boundaries, include an explicit final integration slice.
 6. Seed `.gsd/DECISIONS.md` (using Decisions template)
 7. Update `.gsd/STATE.md`
-8. Commit: `docs({{milestoneId}}): context, requirements, and roadmap`
+8. {{commitInstruction}}
 9. Say exactly: "Milestone {{milestoneId}} ready."
 
 **For multi-milestone**, write in this order:
-1. Create all milestone directories: `mkdir -p .gsd/milestones/{M###}/slices` for each
+1. For each milestone, call `gsd_generate_milestone_id` to get its ID — never invent milestone IDs manually. Then `mkdir -p .gsd/milestones/<ID>/slices` for each.
 2. Write `.gsd/PROJECT.md` — full vision across ALL milestones (using Project template)
 3. Write `.gsd/REQUIREMENTS.md` — full capability contract (using Requirements template)
 4. Seed `.gsd/DECISIONS.md` (using Decisions template)
@@ -71,7 +71,7 @@ Use these templates exactly:
    ```
    Each context file should be rich enough that a future agent — with no memory of this conversation — can understand the intent, constraints, dependencies, what the milestone unlocks, and what "done" looks like.
 8. Update `.gsd/STATE.md`
-9. Commit: `docs: project plan — N milestones`
+9. {{multiMilestoneCommitInstruction}}
 10. Say exactly: "Milestone {{milestoneId}} ready."
 
 ## Critical Rules
@@ -82,5 +82,5 @@ Use these templates exactly:
 - **Investigate before writing** — always scout the codebase first
 - **Use depends_on frontmatter** for multi-milestone sequences (the state machine reads this field to determine execution order)
 - **Anti-reduction rule** — if the spec describes a big vision, plan the big vision. Do not ask "what's the minimum viable version?" or reduce scope. Phase complex/risky work into later milestones — do not cut it.
-- **Naming convention** — directories use bare IDs (`M001/`, `S01/`), files use ID-SUFFIX format (`M001-CONTEXT.md`, `M001-ROADMAP.md`)
+- **Naming convention** — always use `gsd_generate_milestone_id` to get milestone IDs. Directories use bare IDs (e.g. `M001/` or `M001-r5jzab/`), files use ID-SUFFIX format (e.g. `M001-CONTEXT.md` or `M001-r5jzab-CONTEXT.md`). Never invent milestone IDs manually.
 - **End with "Milestone {{milestoneId}} ready."** — this triggers auto-start detection

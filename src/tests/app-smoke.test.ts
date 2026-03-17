@@ -13,7 +13,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { execSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { delimiter, join } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
@@ -232,6 +232,162 @@ test("loadStoredEnvKeys does not overwrite existing env vars", async () => {
     assert.equal(process.env.BRAVE_API_KEY, "existing-env-key", "existing env var not overwritten");
   } finally {
     if (origBrave) process.env.BRAVE_API_KEY = origBrave; else delete process.env.BRAVE_API_KEY;
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 6. State derivation — Gap 2
+// ═══════════════════════════════════════════════════════════════════════════
+
+test("deriveState returns pre-planning phase for empty .gsd/ directory", async () => {
+  const { deriveState } = await import("../resources/extensions/gsd/state.ts");
+  const tmp = mkdtempSync(join(tmpdir(), "gsd-state-smoke-"));
+
+  // Create minimal .gsd/ structure with no milestones
+  mkdirSync(join(tmp, ".gsd"), { recursive: true });
+
+  try {
+    const state = await deriveState(tmp);
+
+    assert.equal(state.phase, "pre-planning",
+      `expected pre-planning phase for empty .gsd/, got: ${state.phase}`);
+    assert.equal(state.activeMilestone, null, "no active milestone");
+    assert.equal(state.activeSlice, null, "no active slice");
+    assert.equal(state.activeTask, null, "no active task");
+    assert.ok(Array.isArray(state.blockers), "blockers is an array");
+    assert.ok(Array.isArray(state.registry), "registry is an array");
+    assert.equal(state.registry.length, 0, "empty registry");
+    assert.ok(typeof state.nextAction === "string", "nextAction is a string");
+    assert.ok(state.nextAction.length > 0, "nextAction is non-empty");
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test("deriveState returns pre-planning phase when no .gsd/ directory exists", async () => {
+  const { deriveState } = await import("../resources/extensions/gsd/state.ts");
+  // Use a temp dir with no .gsd/ subdirectory at all
+  const tmp = mkdtempSync(join(tmpdir(), "gsd-state-nogsd-"));
+
+  try {
+    // Should not throw — missing .gsd/ is a valid "no project" state
+    const state = await deriveState(tmp);
+
+    assert.equal(state.phase, "pre-planning",
+      `expected pre-planning phase when .gsd/ absent, got: ${state.phase}`);
+    assert.equal(state.activeMilestone, null, "no active milestone");
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test("deriveState shape is structurally complete", async () => {
+  const { deriveState } = await import("../resources/extensions/gsd/state.ts");
+  const tmp = mkdtempSync(join(tmpdir(), "gsd-state-shape-"));
+  mkdirSync(join(tmp, ".gsd"), { recursive: true });
+
+  try {
+    const state = await deriveState(tmp);
+
+    // All required fields present
+    const requiredFields = [
+      "phase", "activeMilestone", "activeSlice", "activeTask",
+      "recentDecisions", "blockers", "nextAction", "registry",
+    ] as const;
+    for (const field of requiredFields) {
+      assert.ok(field in state, `state.${field} should be present`);
+    }
+
+    // phase is a known string value
+    const validPhases = [
+      "pre-planning", "needs-discussion", "researching", "planning",
+      "executing", "summarizing", "replanning-slice", "validating-milestone",
+      "completing-milestone", "complete", "blocked",
+    ];
+    assert.ok(validPhases.includes(state.phase),
+      `state.phase '${state.phase}' should be a known phase`);
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 7. Doctor health checks — Gap 3
+// ═══════════════════════════════════════════════════════════════════════════
+
+test("runGSDDoctor completes without throwing on empty .gsd/ directory", async () => {
+  const { runGSDDoctor } = await import("../resources/extensions/gsd/doctor.ts");
+  const tmp = mkdtempSync(join(tmpdir(), "gsd-doctor-smoke-"));
+  mkdirSync(join(tmp, ".gsd"), { recursive: true });
+
+  try {
+    // audit-only mode (fix: false) — should never throw
+    const report = await runGSDDoctor(tmp, { fix: false });
+
+    // Structural assertions on the DoctorReport
+    assert.ok(typeof report === "object" && report !== null, "report is an object");
+    assert.ok("ok" in report, "report has ok field");
+    assert.ok("issues" in report, "report has issues field");
+    assert.ok("fixesApplied" in report, "report has fixesApplied field");
+    assert.ok("basePath" in report, "report has basePath field");
+    assert.ok(Array.isArray(report.issues), "report.issues is an array");
+    assert.ok(Array.isArray(report.fixesApplied), "report.fixesApplied is an array");
+    assert.equal(typeof report.ok, "boolean", "report.ok is a boolean");
+    assert.equal(report.fixesApplied.length, 0, "no fixes applied in audit mode");
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test("runGSDDoctor issue objects have required fields", async () => {
+  const { runGSDDoctor } = await import("../resources/extensions/gsd/doctor.ts");
+  const tmp = mkdtempSync(join(tmpdir(), "gsd-doctor-fields-"));
+  mkdirSync(join(tmp, ".gsd"), { recursive: true });
+
+  // Create a milestone dir with no ROADMAP.md to force a missing_roadmap issue
+  const mDir = join(tmp, ".gsd", "milestones", "M001");
+  mkdirSync(mDir, { recursive: true });
+  writeFileSync(join(mDir, "M001-CONTEXT.md"), "# Context\n");
+
+  try {
+    const report = await runGSDDoctor(tmp, { fix: false });
+
+    // Should find at least one issue (missing roadmap for M001)
+    assert.ok(report.issues.length > 0, "expected at least one issue for milestone missing ROADMAP.md");
+
+    // Verify structure of each issue
+    for (const issue of report.issues) {
+      assert.ok(typeof issue.severity === "string", "issue.severity is a string");
+      assert.ok(["info", "warning", "error"].includes(issue.severity),
+        `issue.severity '${issue.severity}' should be info|warning|error`);
+      assert.ok(typeof issue.code === "string", "issue.code is a string");
+      assert.ok(typeof issue.message === "string", "issue.message is a string");
+      assert.ok(issue.message.length > 0, "issue.message is non-empty");
+      assert.ok(typeof issue.fixable === "boolean", "issue.fixable is a boolean");
+    }
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test("runGSDDoctor with fix:false never modifies the filesystem", async () => {
+  const { runGSDDoctor } = await import("../resources/extensions/gsd/doctor.ts");
+  const tmp = mkdtempSync(join(tmpdir(), "gsd-doctor-readonly-"));
+  const gsdDir = join(tmp, ".gsd");
+  mkdirSync(gsdDir, { recursive: true });
+
+  // Write a sentinel file — doctor must not delete or modify it
+  const sentinelPath = join(gsdDir, "SENTINEL.md");
+  writeFileSync(sentinelPath, "# sentinel\n");
+
+  try {
+    await runGSDDoctor(tmp, { fix: false });
+
+    assert.ok(existsSync(sentinelPath), "sentinel file still exists after audit-only run");
+    const content = readFileSync(sentinelPath, "utf-8");
+    assert.equal(content, "# sentinel\n", "sentinel file content unchanged");
+  } finally {
     rmSync(tmp, { recursive: true, force: true });
   }
 });

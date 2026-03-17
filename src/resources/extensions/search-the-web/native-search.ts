@@ -14,6 +14,11 @@ export const CUSTOM_SEARCH_TOOL_NAMES = ["search-the-web", "search_and_read", "g
 /** Thinking block types that require signature validation by the API */
 const THINKING_TYPES = new Set(["thinking", "redacted_thinking"]);
 
+/** When true, skip native web search injection and keep Brave/custom tools active on Anthropic. */
+export function preferBraveSearch(): boolean {
+  return process.env.PREFER_BRAVE_SEARCH === "1" || process.env.PREFER_BRAVE_SEARCH === "true";
+}
+
 /** Minimal interface matching the subset of ExtensionAPI we use */
 export interface NativeSearchPI {
   on(event: string, handler: (...args: any[]) => any): void;
@@ -71,9 +76,9 @@ export function registerNativeSearchHooks(pi: NativeSearchPI): { getIsAnthropic:
 
     const hasBrave = !!process.env.BRAVE_API_KEY;
 
-    // When Anthropic: disable all custom search tools — native web_search is
-    // server-side and more reliable. Custom tools cause confusion and failures.
-    if (isAnthropicProvider) {
+    // When Anthropic (and not preferring Brave): disable custom search tools —
+    // native web_search is server-side and more reliable.
+    if (isAnthropicProvider && !preferBraveSearch()) {
       const active = pi.getActiveTools();
       pi.setActiveTools(
         active.filter((t: string) => !CUSTOM_SEARCH_TOOL_NAMES.includes(t))
@@ -90,8 +95,10 @@ export function registerNativeSearchHooks(pi: NativeSearchPI): { getIsAnthropic:
     }
 
     // Show provider-aware diagnostics on first selection or provider change
-    if (isAnthropicProvider && !wasAnthropic && event.source !== "restore") {
+    if (isAnthropicProvider && !preferBraveSearch() && !wasAnthropic && event.source !== "restore") {
       ctx.ui.notify("Native Anthropic web search active", "info");
+    } else if (isAnthropicProvider && preferBraveSearch() && !wasAnthropic && event.source !== "restore") {
+      ctx.ui.notify("Brave search active (PREFER_BRAVE_SEARCH)", "info");
     } else if (!isAnthropicProvider && !hasBrave) {
       ctx.ui.notify(
         "Web search: Set BRAVE_API_KEY or use an Anthropic model for built-in search",
@@ -129,6 +136,9 @@ export function registerNativeSearchHooks(pi: NativeSearchPI): { getIsAnthropic:
       stripThinkingFromHistory(messages);
     }
 
+    // When preferring Brave, skip native search injection entirely
+    if (preferBraveSearch()) return;
+
     if (!Array.isArray(payload.tools)) payload.tools = [];
 
     let tools = payload.tools as Array<Record<string, unknown>>;
@@ -136,7 +146,7 @@ export function registerNativeSearchHooks(pi: NativeSearchPI): { getIsAnthropic:
     // Don't double-inject if already present
     if (tools.some((t) => t.type === "web_search_20250305")) return;
 
-    // Always remove custom search tool definitions from Anthropic requests.
+    // Remove custom search tool definitions from Anthropic requests.
     // Native web_search is server-side and more reliable — keeping both confuses
     // the model and causes it to pick custom tools which can fail with network errors.
     tools = tools.filter(
@@ -147,6 +157,10 @@ export function registerNativeSearchHooks(pi: NativeSearchPI): { getIsAnthropic:
     tools.push({
       type: "web_search_20250305",
       name: "web_search",
+      // Cap server-side searches per response to prevent the model from
+      // looping on web_search without synthesizing results (#817).
+      // 5 searches is generous — most queries need 1-2.
+      max_uses: 5,
     });
 
     return payload;

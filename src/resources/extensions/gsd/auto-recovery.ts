@@ -90,6 +90,10 @@ export function resolveExpectedArtifactPath(unitType: string, unitId: string, ba
       const dir = resolveMilestonePath(base, mid);
       return dir ? join(dir, buildMilestoneFileName(mid, "SUMMARY")) : null;
     }
+    case "replan-slice": {
+      const dir = resolveSlicePath(base, mid, sid!);
+      return dir ? join(dir, buildSliceFileName(sid!, "REPLAN")) : null;
+    }
     case "rewrite-docs":
       return null;
     default:
@@ -127,10 +131,9 @@ export function verifyExpectedArtifact(unitType: string, unitId: string, base: s
   }
 
   const absPath = resolveExpectedArtifactPath(unitType, unitId, base);
-  // Unit types with no verifiable artifact always pass (e.g. replan-slice).
-  // For all other types, null means the parent directory is missing on disk
-  // — treat as stale completion state so the key gets evicted (#313).
-  if (!absPath) return unitType === "replan-slice";
+  // For unit types with no verifiable artifact (null path), the parent directory
+  // is missing on disk — treat as stale completion state so the key gets evicted (#313).
+  if (!absPath) return false;
   if (!existsSync(absPath)) return false;
 
   // plan-slice must produce a plan with actual task entries, not just a scaffold.

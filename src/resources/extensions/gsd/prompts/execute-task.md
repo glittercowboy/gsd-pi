@@ -58,14 +58,14 @@ Then:
     - Distinguish "I know" from "I assume." Observable facts (the error says X) are strong evidence. Assumptions (this library should work this way) need verification.
     - Know when to stop. If you've tried 3+ fixes without progress, your mental model is probably wrong. Stop. List what you know for certain. List what you've ruled out. Form fresh hypotheses from there.
     - Don't fix symptoms. Understand *why* something fails before changing code. A test that passes after a change you don't understand is luck, not a fix.
-12. **Blocker discovery:** If execution reveals that the remaining slice plan is fundamentally invalid — not just a bug or minor deviation, but a plan-invalidating finding like a wrong API, missing capability, or architectural mismatch — set `blocker_discovered: true` in the task summary frontmatter and describe the blocker clearly in the summary narrative. Do NOT set `blocker_discovered: true` for ordinary debugging, minor deviations, or issues that can be fixed within the current task or the remaining plan. This flag triggers an automatic replan of the slice.
-13. If you made an architectural, pattern, library, or observability decision during this task that downstream work should know about, append it to `.gsd/DECISIONS.md` (read the template at `~/.gsd/agent/extensions/gsd/templates/decisions.md` if the file doesn't exist yet). Not every task produces decisions — only append when a meaningful choice was made.
-14. If you discover a non-obvious rule, recurring gotcha, or useful pattern during execution, append it to `.gsd/KNOWLEDGE.md`. Only add entries that would save future agents from repeating your investigation. Don't add obvious things.
-15. Read the template at `~/.gsd/agent/extensions/gsd/templates/task-summary.md`
-16. Write `{{taskSummaryPath}}`
-17. Mark {{taskId}} done in `{{planPath}}` (change `[ ]` to `[x]`)
-18. Do not commit manually — the system auto-commits your changes after this unit completes.
-19. Update `.gsd/STATE.md`
+11. **Blocker discovery:** If execution reveals that the remaining slice plan is fundamentally invalid — not just a bug or minor deviation, but a plan-invalidating finding like a wrong API, missing capability, or architectural mismatch — set `blocker_discovered: true` in the task summary frontmatter and describe the blocker clearly in the summary narrative. Do NOT set `blocker_discovered: true` for ordinary debugging, minor deviations, or issues that can be fixed within the current task or the remaining plan. This flag triggers an automatic replan of the slice.
+12. If you made an architectural, pattern, library, or observability decision during this task that downstream work should know about, append it to `.gsd/DECISIONS.md` (read the template at `~/.gsd/agent/extensions/gsd/templates/decisions.md` if the file doesn't exist yet). Not every task produces decisions — only append when a meaningful choice was made.
+13. If you discover a non-obvious rule, recurring gotcha, or useful pattern during execution, append it to `.gsd/KNOWLEDGE.md`. Only add entries that would save future agents from repeating your investigation. Don't add obvious things.
+14. Read the template at `~/.gsd/agent/extensions/gsd/templates/task-summary.md`
+15. Write `{{taskSummaryPath}}`
+16. Mark {{taskId}} done in `{{planPath}}` (change `[ ]` to `[x]`)
+17. Do not run git commands — the system reads your task summary after completion and creates a meaningful commit from it (type inferred from title, message from your one-liner, key files from frontmatter). Write a clear, specific one-liner in the summary — it becomes the commit message.
+18. Update `.gsd/STATE.md`
 
 All work stays in your working directory: `{{workingDirectory}}`.
 

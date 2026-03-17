@@ -28,7 +28,7 @@ Then:
 7. Write `{{sliceUatPath}}` — a concrete UAT script with real test cases derived from the slice plan and task summaries. Include preconditions, numbered steps with expected outcomes, and edge cases. This must NOT be a placeholder or generic template — tailor every test case to what this slice actually built.
 8. Review task summaries for `key_decisions`. Append any significant decisions to `.gsd/DECISIONS.md` if missing.
 9. Mark {{sliceId}} done in `{{roadmapPath}}` (change `[ ]` to `[x]`)
-10. Do not commit or squash-merge manually — the system auto-commits your changes and handles the merge after this unit succeeds.
+10. Do not run git commands — the system commits your changes and handles any merge after this unit succeeds.
 11. Update `.gsd/PROJECT.md` if it exists — refresh current state if needed.
 12. Update `.gsd/STATE.md`
 

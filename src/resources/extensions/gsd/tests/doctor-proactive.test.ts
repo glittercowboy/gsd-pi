@@ -188,7 +188,7 @@ async function main(): Promise<void> {
       cleanups.push(dir);
       mkdirSync(join(dir, ".gsd"), { recursive: true });
 
-      const result = preDispatchHealthGate(dir);
+      const result = await preDispatchHealthGate(dir);
       assertTrue(result.proceed, "gate passes on clean state");
       assertEq(result.issues.length, 0, "no issues on clean state");
     }
@@ -206,7 +206,7 @@ async function main(): Promise<void> {
         unitStartedAt: "2026-03-10T00:01:00Z", completedUnits: 3,
       }));
 
-      const result = preDispatchHealthGate(dir);
+      const result = await preDispatchHealthGate(dir);
       assertTrue(result.proceed, "gate passes after auto-clearing stale lock");
       assertTrue(result.fixesApplied.some(f => f.includes("cleared stale auto.lock")), "reports lock cleared");
       assertTrue(!existsSync(join(dir, ".gsd", "auto.lock")), "lock file removed");
@@ -222,13 +222,33 @@ async function main(): Promise<void> {
       const headHash = run("git rev-parse HEAD", dir);
       writeFileSync(join(dir, ".git", "MERGE_HEAD"), headHash + "\n");
 
-      const result = preDispatchHealthGate(dir);
+      const result = await preDispatchHealthGate(dir);
       assertTrue(result.proceed, "gate passes after auto-healing merge state");
       assertTrue(result.fixesApplied.some(f => f.includes("cleaned merge state")), "reports merge state cleaned");
       assertTrue(!existsSync(join(dir, ".git", "MERGE_HEAD")), "MERGE_HEAD removed");
     }
     } else {
       console.log("  (skipped on Windows)");
+    }
+
+    console.log("\n=== health gate: STATE.md missing — auto-healed ===");
+    {
+      const dir = realpathSync(mkdtempSync(join(tmpdir(), "doc-proactive-")));
+      cleanups.push(dir);
+      // Minimal .gsd structure: milestones dir exists but no STATE.md
+      mkdirSync(join(dir, ".gsd", "milestones"), { recursive: true });
+
+      const stateFile = join(dir, ".gsd", "STATE.md");
+      assertTrue(!existsSync(stateFile), "STATE.md does not exist before gate");
+
+      const result = await preDispatchHealthGate(dir);
+      assertTrue(result.proceed, "gate passes after rebuilding STATE.md");
+      assertTrue(
+        result.fixesApplied.some(f => f.includes("rebuilt missing STATE.md")),
+        "reports STATE.md rebuilt",
+      );
+      assertTrue(existsSync(stateFile), "STATE.md created by auto-heal");
+      assertTrue(result.issues.length === 0, "no blocking issues after heal");
     }
 
   } finally {

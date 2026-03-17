@@ -65,8 +65,8 @@ console.log('\n=== gsd-db: fresh DB schema init (memory) ===');
 
   // Check schema_version table
   const adapter = _getAdapter()!;
-  const version = adapter.prepare('SELECT version FROM schema_version').get();
-  assertEq(version?.['version'], 2, 'schema version should be 2');
+  const version = adapter.prepare('SELECT MAX(version) as version FROM schema_version').get();
+  assertEq(version?.['version'], 3, 'schema version should be 3');
 
   // Check tables exist by querying them
   const dRows = adapter.prepare('SELECT count(*) as cnt FROM decisions').get();

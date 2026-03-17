@@ -104,5 +104,5 @@ Once the user confirms depth:
 1. Use the **Context** output template below
 2. `mkdir -p` the milestone directory if needed
 3. Write `{{milestoneId}}-CONTEXT.md` — preserve the user's exact terminology, emphasis, and framing. Do not paraphrase nuance into generic summaries. The context file is downstream agents' only window into this conversation.
-4. Commit: `git add {{milestoneId}}-CONTEXT.md && git commit -m "docs({{milestoneId}}): milestone context from discuss"`
+4. {{commitInstruction}}
 5. Say exactly: `"{{milestoneId}} context written."` — nothing else.

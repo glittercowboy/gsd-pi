@@ -17,6 +17,8 @@ import {
   loadPersistedKeys,
 } from "../auto-recovery.ts";
 import { parseRoadmap, clearParseCache } from "../files.ts";
+import { invalidateAllCaches } from "../cache.ts";
+import { deriveState, invalidateStateCache } from "../state.ts";
 
 function makeTmpBase(): string {
   const base = join(tmpdir(), `gsd-test-${randomUUID()}`);
@@ -582,5 +584,57 @@ test("selfHealRuntimeRecords clears stale record when artifact exists at worktre
   } finally {
     cleanup(worktreeBase);
     cleanup(mainBase);
+  }
+});
+
+// ─── #793: invalidateAllCaches unblocks skip-loop ─────────────────────────
+// When the skip-loop breaker fires, it must call invalidateAllCaches() (not
+// just invalidateStateCache()) to clear path/parse caches that deriveState
+// depends on. Without this, even after cache invalidation, deriveState reads
+// stale directory listings and returns the same unit, looping forever.
+test("#793: invalidateAllCaches clears all caches so deriveState sees fresh disk state", async () => {
+  const base = makeTmpBase();
+  try {
+    const mid = "M001";
+    const sid = "S01";
+    const planDir = join(base, ".gsd", "milestones", mid, "slices", sid);
+    const tasksDir = join(planDir, "tasks");
+    mkdirSync(tasksDir, { recursive: true });
+    mkdirSync(join(base, ".gsd", "milestones", mid), { recursive: true });
+
+    writeFileSync(
+      join(base, ".gsd", "milestones", mid, `${mid}-ROADMAP.md`),
+      `# M001: Test Milestone\n\n**Vision:** test.\n\n## Slices\n\n- [ ] **${sid}: Slice One** \`risk:low\` \`depends:[]\`\n  > After this: done.\n`,
+    );
+    const planUnchecked = `# ${sid}: Slice One\n\n**Goal:** test.\n\n## Tasks\n\n- [ ] **T01: Task One** \`est:10m\`\n- [ ] **T02: Task Two** \`est:10m\`\n`;
+    writeFileSync(join(planDir, `${sid}-PLAN.md`), planUnchecked);
+    writeFileSync(join(tasksDir, "T01-PLAN.md"), "# T01: Task One\n\n**Goal:** t\n\n## Steps\n- step\n\n## Verification\n- v\n");
+    writeFileSync(join(tasksDir, "T02-PLAN.md"), "# T02: Task Two\n\n**Goal:** t\n\n## Steps\n- step\n\n## Verification\n- v\n");
+
+    // Warm all caches
+    const state1 = await deriveState(base);
+    assert.equal(state1.activeTask?.id, "T01", "initial: T01 is active");
+
+    // Simulate task completion on disk (what the LLM does)
+    const planChecked = `# ${sid}: Slice One\n\n**Goal:** test.\n\n## Tasks\n\n- [x] **T01: Task One** \`est:10m\`\n- [ ] **T02: Task Two** \`est:10m\`\n`;
+    writeFileSync(join(planDir, `${sid}-PLAN.md`), planChecked);
+    writeFileSync(join(tasksDir, "T01-SUMMARY.md"), "---\nid: T01\n---\n# Summary\n");
+
+    // invalidateStateCache alone: _stateCache cleared but path/parse caches warm
+    invalidateStateCache();
+
+    // invalidateAllCaches: all caches cleared — deriveState must re-read disk
+    invalidateAllCaches();
+    const state2 = await deriveState(base);
+
+    // After full invalidation, T01 should be complete and T02 should be next
+    assert.notEqual(state2.activeTask?.id, "T01", "#793: T01 not re-dispatched after full invalidation");
+
+    // Verify the caches are truly cleared by calling clearParseCache and clearPathCache
+    // do not throw (they should be no-ops after invalidateAllCaches already cleared them)
+    clearParseCache(); // no-op, but should not throw
+    assert.ok(true, "clearParseCache after invalidateAllCaches is safe");
+  } finally {
+    cleanup(base);
   }
 });

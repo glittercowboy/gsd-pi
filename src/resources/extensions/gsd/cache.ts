@@ -12,16 +12,18 @@
 import { invalidateStateCache } from './state.js';
 import { clearPathCache } from './paths.js';
 import { clearParseCache } from './files.js';
+import { clearArtifacts } from './gsd-db.js';
 
 /**
  * Invalidate all GSD runtime caches in one call.
  *
  * Call this after file writes, milestone transitions, merge reconciliation,
  * or any operation that changes .gsd/ contents on disk. Forgetting to clear
- * any single cache causes stale reads (see #431).
+ * any single cache causes stale reads (see #431, #793).
  */
 export function invalidateAllCaches(): void {
   invalidateStateCache();
   clearPathCache();
   clearParseCache();
+  clearArtifacts();
 }

@@ -116,14 +116,6 @@ export function readManagedResourceVersion(agentDir: string): string | null {
   }
 }
 
-export function readManagedResourceSyncedAt(agentDir: string): number | null {
-  try {
-    const manifest = JSON.parse(readFileSync(getManagedResourceManifestPath(agentDir), 'utf-8')) as ManagedResourceManifest
-    return typeof manifest?.syncedAt === 'number' ? manifest.syncedAt : null
-  } catch {
-    return null
-  }
-}
 
 export function getNewerManagedResourceVersion(agentDir: string, currentVersion: string): string | null {
   const managedVersion = readManagedResourceVersion(agentDir)

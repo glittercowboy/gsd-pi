@@ -842,7 +842,17 @@ export async function sendNotification(client: LspClient, method: string, params
 	};
 
 	client.lastActivity = Date.now();
-	await writeMessage(client.proc.stdin, notification);
+	try {
+		await writeMessage(client.proc.stdin, notification);
+	} catch (err: unknown) {
+		// EPIPE means the LSP process died (e.g. after lsp.reload killed it).
+		// Swallow so callers don't crash — the next getOrCreateClient call
+		// will spawn a fresh server (#815).
+		if (err instanceof Error && 'code' in err && (err as NodeJS.ErrnoException).code === 'EPIPE') {
+			return;
+		}
+		throw err;
+	}
 }
 
 /**

@@ -19,6 +19,7 @@ import { join } from "node:path";
 import { gsdRoot, resolveGsdRootFile } from "./paths.js";
 import { readCrashLock, isLockProcessAlive, clearLock } from "./crash-recovery.js";
 import { abortAndReset } from "./git-self-heal.js";
+import { rebuildState } from "./doctor.js";
 
 // ── Health Score Tracking ──────────────────────────────────────────────────
 
@@ -131,7 +132,7 @@ export interface PreDispatchHealthResult {
  *
  * Returns { proceed: true } if dispatch should continue.
  */
-export function preDispatchHealthGate(basePath: string): PreDispatchHealthResult {
+export async function preDispatchHealthGate(basePath: string): Promise<PreDispatchHealthResult> {
   const issues: string[] = [];
   const fixesApplied: string[] = [];
 
@@ -172,17 +173,17 @@ export function preDispatchHealthGate(basePath: string): PreDispatchHealthResult
   }
 
   // ── STATE.md existence check ──
-  // If STATE.md is missing, deriveState will still work but the LLM
-  // may get confused. Rebuild it silently.
+  // If STATE.md is missing, rebuild it now so the next unit has accurate
+  // context. Non-blocking — if the rebuild throws, dispatch continues anyway.
   try {
     const stateFile = resolveGsdRootFile(basePath, "STATE");
     const milestonesDir = join(gsdRoot(basePath), "milestones");
     if (existsSync(milestonesDir) && !existsSync(stateFile)) {
-      issues.push("STATE.md missing — will rebuild after this unit");
-      // Don't block dispatch — rebuilding happens in post-hook
+      await rebuildState(basePath);
+      fixesApplied.push("rebuilt missing STATE.md before dispatch");
     }
   } catch {
-    // Non-fatal
+    // Non-fatal — dispatch continues without STATE.md if rebuild fails
   }
 
   // If we had critical issues that couldn't be auto-healed, block dispatch

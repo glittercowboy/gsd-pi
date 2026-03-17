@@ -103,6 +103,54 @@ try {
     process.exit(1);
   }
 
+  // --- Verify @gsd/* packages resolved correctly post-install ---
+  // This catches the Windows-style failure where symlinkSync fails silently and
+  // node_modules/@gsd/ is never populated, causing ERR_MODULE_NOT_FOUND at runtime.
+  console.log('==> Verifying @gsd/* workspace package resolution...');
+  const installedRoot = join(installDir, 'node_modules', 'gsd-pi');
+  const criticalPkgs = ['pi-coding-agent'];
+  let resolutionFailed = false;
+  for (const pkg of criticalPkgs) {
+    const pkgPath = join(installedRoot, 'node_modules', '@gsd', pkg);
+    const fallbackPath = join(installedRoot, 'packages', pkg);
+    if (!existsSync(pkgPath)) {
+      if (existsSync(fallbackPath)) {
+        console.log(`    MISSING symlink/copy: node_modules/@gsd/${pkg} (packages/${pkg} exists — postinstall may not have run)`);
+      } else {
+        console.log(`    MISSING: node_modules/@gsd/${pkg} (packages/${pkg} also absent — package is broken)`);
+      }
+      resolutionFailed = true;
+    }
+  }
+  if (resolutionFailed) {
+    console.log('ERROR: @gsd/* packages are not resolvable after install.');
+    console.log('    This will cause ERR_MODULE_NOT_FOUND on first run (especially on Windows).');
+    process.exit(1);
+  }
+  console.log('    @gsd/* packages are resolvable.');
+
+  // --- Run the binary to confirm end-to-end resolution ---
+  console.log('==> Running installed binary (gsd -v)...');
+  const loaderPath = join(installedRoot, 'dist', 'loader.js');
+  try {
+    const versionOutput = execSync(`node "${loaderPath}" -v`, {
+      cwd: installDir,
+      encoding: 'utf8',
+      stdio: ['pipe', 'pipe', 'pipe'],
+      timeout: 15000,
+    }).trim();
+    console.log(`    gsd -v => ${versionOutput}`);
+    if (!versionOutput.match(/^\d+\.\d+\.\d+/)) {
+      console.log('ERROR: gsd -v returned unexpected output (expected a version string).');
+      process.exit(1);
+    }
+  } catch (err) {
+    console.log('ERROR: Running gsd -v failed after install.');
+    if (err.stdout) console.log(err.stdout);
+    if (err.stderr) console.log(err.stderr);
+    process.exit(1);
+  }
+
   console.log('');
   console.log('Package is installable. Safe to publish.');
   process.exit(0);

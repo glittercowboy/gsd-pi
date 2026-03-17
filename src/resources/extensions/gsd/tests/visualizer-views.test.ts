@@ -9,6 +9,9 @@ import {
   renderAgentView,
   renderChangelogView,
   renderExportView,
+  renderKnowledgeView,
+  renderCapturesView,
+  renderHealthView,
 } from "../visualizer-views.js";
 import type { VisualizerData } from "../visualizer-data.js";
 import { createTestContext } from "./test-helpers.ts";
@@ -32,6 +35,8 @@ function makeVisualizerData(overrides: Partial<VisualizerData> = {}): Visualizer
     byPhase: [],
     bySlice: [],
     byModel: [],
+    byTier: [],
+    tierSavingsLine: "",
     units: [],
     criticalPath: {
       milestonePath: [],
@@ -42,6 +47,28 @@ function makeVisualizerData(overrides: Partial<VisualizerData> = {}): Visualizer
     remainingSliceCount: 0,
     agentActivity: null,
     changelog: { entries: [] },
+    sliceVerifications: [],
+    knowledge: { rules: [], patterns: [], lessons: [], exists: false },
+    captures: { entries: [], pendingCount: 0, totalCount: 0 },
+    health: {
+      budgetCeiling: undefined,
+      tokenProfile: "standard",
+      truncationRate: 0,
+      continueHereRate: 0,
+      tierBreakdown: [],
+      tierSavingsLine: "",
+      toolCalls: 0,
+      assistantMessages: 0,
+      userMessages: 0,
+    },
+    discussion: [],
+    stats: {
+      missingCount: 0,
+      missingSlices: [],
+      updatedCount: 0,
+      updatedSlices: [],
+      recentEntries: [],
+    },
     ...overrides,
   };
 }
@@ -76,29 +103,62 @@ console.log("\n=== renderProgressView ===");
             risk: "high",
             depends: ["S01"],
             tasks: [
-              { id: "T01", title: "Dispatch Loop", done: false, active: true },
+              { id: "T01", title: "Dispatch Loop", done: false, active: true, estimate: "30m" },
               { id: "T02", title: "Session Mgmt", done: true, active: false },
             ],
           },
-          {
-            id: "S03",
-            title: "Dashboard",
-            done: false,
-            active: false,
-            risk: "medium",
-            depends: ["S02"],
-            tasks: [],
-          },
-        ],
-      },
+        {
+          id: "S03",
+          title: "Dashboard",
+          done: false,
+          active: false,
+          risk: "medium",
+          depends: ["S02"],
+          tasks: [],
+        },
+      ],
+    },
+    {
+      id: "M002",
+      title: "Plugin Arch",
+      status: "pending",
+      dependsOn: ["M001"],
+      slices: [],
+    },
+  ],
+    sliceVerifications: [
       {
-        id: "M002",
-        title: "Plugin Arch",
-        status: "pending",
-        dependsOn: ["M001"],
-        slices: [],
+        milestoneId: "M001",
+        sliceId: "S01",
+        verificationResult: "passed",
+        blockerDiscovered: false,
+        keyDecisions: [],
+        patternsEstablished: [],
+        provides: ["core-types"],
+        requires: [],
       },
     ],
+    stats: {
+      missingCount: 2,
+      missingSlices: [
+        { milestoneId: "M001", sliceId: "S02", title: "State Engine" },
+        { milestoneId: "M001", sliceId: "S03", title: "Dashboard" },
+      ],
+      updatedCount: 1,
+      updatedSlices: [
+        { milestoneId: "M001", sliceId: "S01", title: "Core Types", completedAt: "2026-03-15T14:30:00Z" },
+      ],
+      recentEntries: [
+        {
+          milestoneId: "M001",
+          sliceId: "S01",
+          title: "Core Types Infrastructure",
+          oneLiner: "Core structures assembled",
+          filesModified: [],
+          completedAt: "2026-03-15T14:30:00Z",
+        },
+      ],
+    },
   });
 
   const lines = renderProgressView(data, mockTheme, 80);
@@ -108,12 +168,82 @@ console.log("\n=== renderProgressView ===");
   assertTrue(lines.some(l => l.includes("T01")), "shows task T01 for active slice");
   assertTrue(lines.some(l => l.includes("M002")), "shows milestone M002");
   assertTrue(lines.some(l => l.includes("depends on M001")), "shows dependency note");
+  assertTrue(lines.some(l => l.includes("30m")), "shows task estimate");
+  assertTrue(lines.some(l => l.includes("Feature Snapshot")), "shows stats header");
+  assertTrue(lines.some(l => l.includes("Missing slices")), "shows missing slices count");
+  assertTrue(lines.some(l => l.includes("State Engine")), "shows missing slice preview");
+  assertTrue(lines.some(l => l.includes("Updated (last 7 days)")), "shows updated count");
+  assertTrue(lines.some(l => l.includes("Recent completions")), "shows recent completions section");
+  assertTrue(lines.some(l => l.includes("Core structures assembled")), "shows recent one-liner entry");
+}
+
+{
+  const data = makeVisualizerData({
+    discussion: [
+      {
+        milestoneId: "M001",
+        title: "First Milestone",
+        state: "discussed",
+        hasContext: true,
+        hasDraft: false,
+        lastUpdated: "2026-03-15T14:30:00Z",
+      },
+      {
+        milestoneId: "M002",
+        title: "Plugin Arch",
+        state: "draft",
+        hasContext: false,
+        hasDraft: true,
+        lastUpdated: "2026-03-16T09:00:00Z",
+      },
+      {
+        milestoneId: "M003",
+        title: "Next Batch",
+        state: "undiscussed",
+        hasContext: false,
+        hasDraft: false,
+        lastUpdated: null,
+      },
+    ],
+  });
+
+  const lines = renderProgressView(data, mockTheme, 80);
+  assertTrue(lines.some(l => l.includes("Discussion Status")), "shows discussion section");
+  assertTrue(lines.some(l => l.includes("Discussed: 1")), "counts discussed milestones");
+  assertTrue(lines.some(l => l.includes("Draft")), "shows draft badge");
+  assertTrue(lines.some(l => l.includes("Pending")), "shows pending badge");
+}
+
+// Verification badges
+{
+  const data = makeVisualizerData({
+    milestones: [
+      {
+        id: "M001", title: "Test", status: "active", dependsOn: [],
+        slices: [
+          { id: "S01", title: "Done Slice", done: true, active: false, risk: "low", depends: [], tasks: [] },
+        ],
+      },
+    ],
+    sliceVerifications: [
+      {
+        milestoneId: "M001", sliceId: "S01",
+        verificationResult: "passed", blockerDiscovered: true,
+        keyDecisions: [], patternsEstablished: [], provides: [], requires: [],
+      },
+    ],
+  });
+
+  const lines = renderProgressView(data, mockTheme, 80);
+  // The verification badge should show check mark and warning
+  assertTrue(lines.some(l => l.includes("S01")), "shows slice with verification");
 }
 
 {
   const data = makeVisualizerData({ milestones: [] });
   const lines = renderProgressView(data, mockTheme, 80);
-  assertEq(lines.length, 0, "empty milestones produce no lines");
+  assertTrue(lines.some(l => l.includes("Feature Snapshot")), "shows stats snapshot even when no milestones");
+  assertTrue(lines.some(l => l.includes("Missing slices")), "reports missing slices count");
 }
 
 // ─── Risk Heatmap ───────────────────────────────────────────────────────────
@@ -140,8 +270,6 @@ console.log("\n=== Risk Heatmap ===");
 
   const lines = renderProgressView(data, mockTheme, 80);
   assertTrue(lines.some(l => l.includes("Risk Heatmap")), "heatmap header present");
-  assertTrue(lines.some(l => l.includes("██")), "heatmap has colored blocks");
-  assertTrue(lines.some(l => l.includes("low") && l.includes("med") && l.includes("high")), "heatmap legend present");
   assertTrue(lines.some(l => l.includes("1 low, 1 med, 2 high")), "risk summary counts");
   assertTrue(lines.some(l => l.includes("1 high-risk not started")), "high-risk not started warning");
 }
@@ -173,12 +301,10 @@ console.log("\n=== Search/Filter ===");
     ],
   });
 
-  // Filter by keyword "auth"
   const filtered = renderProgressView(data, mockTheme, 80, { text: "auth", field: "all" });
   assertTrue(filtered.some(l => l.includes("M001")), "filter shows matching milestone");
   assertTrue(filtered.some(l => l.includes("Filter (all): auth")), "filter indicator present");
 
-  // Filter by risk "high"
   const riskFiltered = renderProgressView(data, mockTheme, 80, { text: "high", field: "risk" });
   assertTrue(riskFiltered.some(l => l.includes("M001")), "risk filter shows milestone with high-risk slice");
 }
@@ -214,6 +340,14 @@ console.log("\n=== renderDepsView ===");
       milestoneSlack: new Map([["M001", 0], ["M002", 0]]),
       sliceSlack: new Map([["S01", 0], ["S02", 0]]),
     },
+    sliceVerifications: [
+      {
+        milestoneId: "M001", sliceId: "S01",
+        verificationResult: "passed", blockerDiscovered: false,
+        keyDecisions: [], patternsEstablished: [],
+        provides: ["api-types"], requires: [],
+      },
+    ],
   });
 
   const lines = renderDepsView(data, mockTheme, 80);
@@ -222,6 +356,8 @@ console.log("\n=== renderDepsView ===");
   assertTrue(lines.some(l => l.includes("S01") && l.includes("S02")), "shows slice dep edge");
   assertTrue(lines.some(l => l.includes("Critical Path")), "shows critical path section");
   assertTrue(lines.some(l => l.includes("[CRITICAL]")), "shows CRITICAL badge");
+  assertTrue(lines.some(l => l.includes("Data Flow")), "shows data flow section");
+  assertTrue(lines.some(l => l.includes("api-types")), "shows provides artifact");
 }
 
 {
@@ -260,13 +396,6 @@ console.log("\n=== renderMetricsView ===");
         cost: 1.50,
         duration: 40000,
       },
-      {
-        phase: "planning",
-        units: 2,
-        tokens: { input: 400, output: 200, cacheRead: 100, cacheWrite: 50, total: 750 },
-        cost: 1.00,
-        duration: 20000,
-      },
     ],
     byModel: [
       {
@@ -276,6 +405,11 @@ console.log("\n=== renderMetricsView ===");
         cost: 2.50,
       },
     ],
+    byTier: [
+      { tier: "standard", units: 3, tokens: { input: 600, output: 300, cacheRead: 100, cacheWrite: 50, total: 1050 }, cost: 1.50, downgraded: 0 },
+      { tier: "light", units: 2, tokens: { input: 400, output: 200, cacheRead: 100, cacheWrite: 50, total: 750 }, cost: 1.00, downgraded: 1 },
+    ],
+    tierSavingsLine: "Dynamic routing: 1/5 units downgraded (20%), cost: $1.00",
     bySlice: [
       { sliceId: "M001/S01", units: 3, tokens: { input: 600, output: 300, cacheRead: 100, cacheWrite: 50, total: 1050 }, cost: 1.50, duration: 40000 },
       { sliceId: "M001/S02", units: 2, tokens: { input: 400, output: 200, cacheRead: 100, cacheWrite: 50, total: 750 }, cost: 1.00, duration: 20000 },
@@ -288,11 +422,11 @@ console.log("\n=== renderMetricsView ===");
   assertTrue(lines.some(l => l.includes("$2.50")), "shows total cost");
   assertTrue(lines.some(l => l.includes("execution")), "shows phase name");
   assertTrue(lines.some(l => l.includes("claude-opus-4-6")), "shows model name");
-  assertTrue(lines.some(l => l.includes("Projections")), "shows projections section");
-  assertTrue(lines.some(l => l.includes("Avg cost/slice")), "shows avg cost per slice");
-  assertTrue(lines.some(l => l.includes("Projected remaining")), "shows projected remaining");
-  assertTrue(lines.some(l => l.includes("Burn rate")), "shows burn rate");
-  assertTrue(lines.some(l => l.includes("Cost trend")), "shows sparkline");
+  assertTrue(lines.some(l => l.includes("By Tier")), "shows tier breakdown section");
+  assertTrue(lines.some(l => l.includes("standard")), "shows tier name");
+  assertTrue(lines.some(l => l.includes("Dynamic routing")), "shows tier savings line");
+  assertTrue(lines.some(l => l.includes("Tools: 15")), "shows tool call count");
+  assertTrue(lines.some(l => l.includes("10") && l.includes("sent")), "shows message counts");
 }
 
 {
@@ -320,32 +454,16 @@ console.log("\n=== renderTimelineView ===");
         toolCalls: 5,
         assistantMessages: 3,
         userMessages: 1,
-      },
-      {
-        type: "plan-slice",
-        id: "M001/S02",
-        model: "claude-opus-4-6",
-        startedAt: now - 60000,
-        finishedAt: now - 30000,
-        tokens: { input: 300, output: 150, cacheRead: 50, cacheWrite: 25, total: 525 },
-        cost: 0.18,
-        toolCalls: 2,
-        assistantMessages: 2,
-        userMessages: 1,
+        tier: "standard",
       },
     ],
   });
 
-  // Wide terminal — Gantt view
-  const ganttLines = renderTimelineView(data, mockTheme, 120);
-  assertTrue(ganttLines.length >= 2, "gantt view produces lines for each unit");
-
-  // Narrow terminal — list view
   const listLines = renderTimelineView(data, mockTheme, 80);
-  assertTrue(listLines.length >= 2, "list view produces lines for each unit");
+  assertTrue(listLines.length >= 1, "list view produces lines");
   assertTrue(listLines.some(l => l.includes("execute-task")), "shows unit type");
-  assertTrue(listLines.some(l => l.includes("M001/S01/T01")), "shows unit id");
-  assertTrue(listLines.some(l => l.includes("$0.42")), "shows unit cost");
+  assertTrue(listLines.some(l => l.includes("[standard]")), "shows tier in timeline");
+  assertTrue(listLines.some(l => l.includes("opus-4-6")), "shows shortened model");
 }
 
 {
@@ -379,40 +497,27 @@ console.log("\n=== renderAgentView ===");
         cost: 0.12, toolCalls: 5, assistantMessages: 3, userMessages: 1,
       },
     ],
+    health: {
+      budgetCeiling: 10, tokenProfile: "standard",
+      truncationRate: 15.5, continueHereRate: 5.0,
+      tierBreakdown: [], tierSavingsLine: "",
+      toolCalls: 20, assistantMessages: 15, userMessages: 8,
+    },
+    captures: { entries: [], pendingCount: 3, totalCount: 5 },
   });
 
   const lines = renderAgentView(data, mockTheme, 80);
   assertTrue(lines.length > 0, "agent view produces output");
   assertTrue(lines.some(l => l.includes("ACTIVE")), "shows active status");
-  assertTrue(lines.some(l => l.includes("M001/S02/T03")), "shows current unit");
-  assertTrue(lines.some(l => l.includes("8/15")), "shows progress fraction");
-  assertTrue(lines.some(l => l.includes("2.4 units/hr")), "shows completion rate");
-  assertTrue(lines.some(l => l.includes("$1.23")), "shows session cost");
+  assertTrue(lines.some(l => l.includes("Pressure")), "shows pressure section");
+  assertTrue(lines.some(l => l.includes("15.5%")), "shows truncation rate");
+  assertTrue(lines.some(l => l.includes("Pending captures: 3")), "shows pending captures");
 }
 
 {
   const data = makeVisualizerData({ agentActivity: null });
   const lines = renderAgentView(data, mockTheme, 80);
   assertTrue(lines.some(l => l.includes("No agent activity")), "shows no-activity message");
-}
-
-{
-  const data = makeVisualizerData({
-    agentActivity: {
-      currentUnit: null,
-      elapsed: 0,
-      completedUnits: 5,
-      totalSlices: 10,
-      completionRate: 1.5,
-      active: false,
-      sessionCost: 0.50,
-      sessionTokens: 20000,
-    },
-  });
-
-  const lines = renderAgentView(data, mockTheme, 80);
-  assertTrue(lines.some(l => l.includes("IDLE")), "shows idle status");
-  assertTrue(lines.some(l => l.includes("Not in auto mode")), "shows not-in-auto message");
 }
 
 // ─── renderChangelogView ────────────────────────────────────────────────────
@@ -430,21 +535,28 @@ console.log("\n=== renderChangelogView ===");
           oneLiner: "Added JWT-based auth with refresh token rotation",
           filesModified: [
             { path: "src/auth/jwt.ts", description: "JWT token generation and validation" },
-            { path: "src/auth/middleware.ts", description: "Express middleware for auth checks" },
           ],
           completedAt: "2026-03-15T14:30:00Z",
         },
       ],
     },
+    sliceVerifications: [
+      {
+        milestoneId: "M001", sliceId: "S01",
+        verificationResult: "passed", blockerDiscovered: false,
+        keyDecisions: ["Use RS256 for JWT signing"],
+        patternsEstablished: ["Repository pattern for data access"],
+        provides: [], requires: [],
+      },
+    ],
   });
 
   const lines = renderChangelogView(data, mockTheme, 80);
-  assertTrue(lines.length > 0, "changelog view produces output");
   assertTrue(lines.some(l => l.includes("M001/S01")), "shows slice reference");
-  assertTrue(lines.some(l => l.includes("Core Authentication Setup")), "shows entry title");
-  assertTrue(lines.some(l => l.includes("JWT-based auth")), "shows one-liner");
-  assertTrue(lines.some(l => l.includes("src/auth/jwt.ts")), "shows modified file");
-  assertTrue(lines.some(l => l.includes("2026-03-15")), "shows completed date");
+  assertTrue(lines.some(l => l.includes("Decisions:")), "shows decisions section");
+  assertTrue(lines.some(l => l.includes("RS256")), "shows decision content");
+  assertTrue(lines.some(l => l.includes("Patterns:")), "shows patterns section");
+  assertTrue(lines.some(l => l.includes("Repository pattern")), "shows pattern content");
 }
 
 {
@@ -466,11 +578,126 @@ console.log("\n=== renderExportView ===");
   assertTrue(lines.some(l => l.includes("[s]")), "shows snapshot option");
 }
 
+// ─── renderKnowledgeView ────────────────────────────────────────────────────
+
+console.log("\n=== renderKnowledgeView ===");
+
 {
-  const data = makeVisualizerData();
-  const lines = renderExportView(data, mockTheme, 80, "/tmp/export-2026.md");
-  assertTrue(lines.some(l => l.includes("Last export:")), "shows last export path");
-  assertTrue(lines.some(l => l.includes("/tmp/export-2026.md")), "shows specific export path");
+  const data = makeVisualizerData({
+    knowledge: {
+      exists: true,
+      rules: [{ id: "K001", scope: "global", content: "Always use transactions" }],
+      patterns: [{ id: "P001", content: "Repository pattern for DB access" }],
+      lessons: [{ id: "L001", content: "Cache invalidation needs TTL" }],
+    },
+  });
+
+  const lines = renderKnowledgeView(data, mockTheme, 80);
+  assertTrue(lines.some(l => l.includes("Rules")), "shows rules section");
+  assertTrue(lines.some(l => l.includes("K001")), "shows rule ID");
+  assertTrue(lines.some(l => l.includes("Always use transactions")), "shows rule content");
+  assertTrue(lines.some(l => l.includes("Patterns")), "shows patterns section");
+  assertTrue(lines.some(l => l.includes("P001")), "shows pattern ID");
+  assertTrue(lines.some(l => l.includes("Lessons Learned")), "shows lessons section");
+  assertTrue(lines.some(l => l.includes("L001")), "shows lesson ID");
+}
+
+{
+  const data = makeVisualizerData({
+    knowledge: { exists: false, rules: [], patterns: [], lessons: [] },
+  });
+  const lines = renderKnowledgeView(data, mockTheme, 80);
+  assertTrue(lines.some(l => l.includes("No KNOWLEDGE.md found")), "shows no-knowledge message");
+}
+
+// ─── renderCapturesView ─────────────────────────────────────────────────────
+
+console.log("\n=== renderCapturesView ===");
+
+{
+  const data = makeVisualizerData({
+    captures: {
+      entries: [
+        { id: "CAP-abc123", text: "Need to add error handling", timestamp: "2026-03-15T10:00:00Z", status: "pending", classification: "inject" },
+        { id: "CAP-def456", text: "Consider caching layer", timestamp: "2026-03-15T11:00:00Z", status: "triaged", classification: "defer" },
+        { id: "CAP-ghi789", text: "Fixed typo in config", timestamp: "2026-03-15T12:00:00Z", status: "resolved", classification: "quick-task" },
+      ],
+      pendingCount: 1,
+      totalCount: 3,
+    },
+  });
+
+  const lines = renderCapturesView(data, mockTheme, 80);
+  assertTrue(lines.some(l => l.includes("3") && l.includes("total")), "shows total count");
+  assertTrue(lines.some(l => l.includes("1") && l.includes("pending")), "shows pending count");
+  assertTrue(lines.some(l => l.includes("CAP-abc123")), "shows capture ID");
+  assertTrue(lines.some(l => l.includes("(inject)")), "shows classification badge");
+  assertTrue(lines.some(l => l.includes("[pending]")), "shows status badge");
+}
+
+{
+  const data = makeVisualizerData({
+    captures: { entries: [], pendingCount: 0, totalCount: 0 },
+  });
+  const lines = renderCapturesView(data, mockTheme, 80);
+  assertTrue(lines.some(l => l.includes("No captures recorded")), "shows empty state");
+}
+
+// ─── renderHealthView ───────────────────────────────────────────────────────
+
+console.log("\n=== renderHealthView ===");
+
+{
+  const data = makeVisualizerData({
+    totals: {
+      units: 10, tokens: { input: 5000, output: 2000, cacheRead: 1000, cacheWrite: 500, total: 8500 },
+      cost: 5.00, duration: 120000, toolCalls: 50,
+      assistantMessages: 30, userMessages: 15,
+      totalTruncationSections: 3, continueHereFiredCount: 1,
+    },
+    health: {
+      budgetCeiling: 20.00,
+      tokenProfile: "standard",
+      truncationRate: 30.0,
+      continueHereRate: 10.0,
+      tierBreakdown: [
+        { tier: "standard", units: 7, tokens: { input: 3500, output: 1400, cacheRead: 700, cacheWrite: 350, total: 5950 }, cost: 3.50, downgraded: 0 },
+        { tier: "light", units: 3, tokens: { input: 1500, output: 600, cacheRead: 300, cacheWrite: 150, total: 2550 }, cost: 1.50, downgraded: 2 },
+      ],
+      tierSavingsLine: "Dynamic routing: 2/10 units downgraded (20%), cost: $1.50",
+      toolCalls: 50,
+      assistantMessages: 30,
+      userMessages: 15,
+    },
+  });
+
+  const lines = renderHealthView(data, mockTheme, 80);
+  assertTrue(lines.some(l => l.includes("Budget")), "shows budget section");
+  assertTrue(lines.some(l => l.includes("Ceiling")), "shows budget ceiling");
+  assertTrue(lines.some(l => l.includes("$20.00")), "shows ceiling amount");
+  assertTrue(lines.some(l => l.includes("Pressure")), "shows pressure section");
+  assertTrue(lines.some(l => l.includes("30.0%")), "shows truncation rate");
+  assertTrue(lines.some(l => l.includes("Routing")), "shows routing section");
+  assertTrue(lines.some(l => l.includes("standard")), "shows tier name");
+  assertTrue(lines.some(l => l.includes("2 downgraded")), "shows downgraded count");
+  assertTrue(lines.some(l => l.includes("Dynamic routing")), "shows savings line");
+  assertTrue(lines.some(l => l.includes("Session")), "shows session section");
+  assertTrue(lines.some(l => l.includes("Tool calls: 50")), "shows tool calls");
+}
+
+{
+  const data = makeVisualizerData({
+    health: {
+      budgetCeiling: undefined, tokenProfile: "compact",
+      truncationRate: 0, continueHereRate: 0,
+      tierBreakdown: [], tierSavingsLine: "",
+      toolCalls: 0, assistantMessages: 0, userMessages: 0,
+    },
+  });
+
+  const lines = renderHealthView(data, mockTheme, 80);
+  assertTrue(lines.some(l => l.includes("No budget ceiling set")), "shows no-ceiling message");
+  assertTrue(lines.some(l => l.includes("compact")), "shows token profile");
 }
 
 // ─── Report ─────────────────────────────────────────────────────────────────

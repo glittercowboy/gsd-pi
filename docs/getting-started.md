@@ -8,6 +8,18 @@ npm install -g gsd-pi
 
 Requires Node.js ≥ 20.6.0 (22+ recommended) and Git.
 
+GSD checks for updates once every 24 hours. When a new version is available, you'll see an interactive prompt at startup with the option to update immediately or skip.
+
+### VS Code Extension
+
+GSD is also available as a VS Code extension. Install from the marketplace (publisher: FluxLabs) or search for "GSD" in VS Code extensions. The extension provides:
+
+- **`@gsd` chat participant** — talk to the agent in VS Code Chat
+- **Sidebar dashboard** — connection status, model info, token usage, quick actions
+- **Full command palette** — start/stop agent, switch models, export sessions
+
+The CLI (`gsd-pi`) must be installed first — the extension connects to it via RPC.
+
 ## First Launch
 
 Run `gsd` in any directory:

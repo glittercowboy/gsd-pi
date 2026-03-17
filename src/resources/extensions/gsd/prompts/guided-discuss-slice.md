@@ -55,7 +55,7 @@ Once the user is ready to wrap up:
    - **Constraints** — anything the user flagged as a hard constraint
    - **Integration Points** — what this slice consumes and produces
    - **Open Questions** — anything still unresolved, with current thinking
-4. Commit: `git -C {{projectRoot}} add {{contextPath}} && git -C {{projectRoot}} commit -m "docs({{milestoneId}}/{{sliceId}}): slice context from discuss"`
+4. {{commitInstruction}}
 5. Say exactly: `"{{sliceId}} context written."` — nothing else.
 
 {{inlinedTemplates}}

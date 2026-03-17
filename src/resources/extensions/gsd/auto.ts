@@ -16,9 +16,9 @@ import type {
   ExtensionCommandContext,
 } from "@gsd/pi-coding-agent";
 
-import { deriveState, invalidateStateCache } from "./state.js";
+import { deriveState } from "./state.js";
 import type { BudgetEnforcementMode, GSDState } from "./types.js";
-import { loadFile, parseRoadmap, getManifestStatus, resolveAllOverrides, parsePlan } from "./files.js";
+import { loadFile, parseRoadmap, getManifestStatus, resolveAllOverrides, parsePlan, parseSummary } from "./files.js";
 import { loadPrompt } from "./prompt-loader.js";
 import { runVerificationGate, formatFailureContext, captureRuntimeErrors, runDependencyAudit } from "./verification-gate.js";
 import { writeVerificationJSON } from "./verification-evidence.js";
@@ -96,7 +96,7 @@ import {
   parseSliceBranch,
   setActiveMilestoneId,
 } from "./worktree.js";
-import { GitServiceImpl } from "./git-service.js";
+import { GitServiceImpl, type TaskCommitContext } from "./git-service.js";
 import { getPriorSliceCompletionBlocker } from "./dispatch-guard.js";
 import { formatGitError } from "./git-self-heal.js";
 import {
@@ -167,6 +167,41 @@ import { hasPendingCaptures, loadPendingCaptures, countPendingCaptures } from ".
 // startAutoMode reads initial state on restart). Without syncing, restarting
 // auto-mode reads stale state from the project root and re-dispatches
 // already-completed units.
+
+/**
+ * Sync milestone artifacts from project root INTO worktree before deriveState.
+ * Covers the case where the LLM wrote artifacts to the main repo filesystem
+ * (e.g. via absolute paths) but the worktree has stale data. Also deletes
+ * gsd.db in the worktree so it rebuilds from fresh disk state (#853).
+ * Non-fatal — sync failure should never block dispatch.
+ */
+function syncProjectRootToWorktree(projectRoot: string, worktreePath: string, milestoneId: string | null): void {
+  if (!worktreePath || !projectRoot || worktreePath === projectRoot) return;
+  if (!milestoneId) return;
+
+  const prGsd = join(projectRoot, ".gsd");
+  const wtGsd = join(worktreePath, ".gsd");
+
+  // Copy milestone directory from project root to worktree if the project root
+  // has newer artifacts (e.g. slices that don't exist in the worktree yet)
+  try {
+    const srcMilestone = join(prGsd, "milestones", milestoneId);
+    const dstMilestone = join(wtGsd, "milestones", milestoneId);
+    if (existsSync(srcMilestone)) {
+      mkdirSync(dstMilestone, { recursive: true });
+      cpSync(srcMilestone, dstMilestone, { recursive: true, force: false });
+    }
+  } catch { /* non-fatal */ }
+
+  // Delete worktree gsd.db so it rebuilds from the freshly synced files.
+  // Stale DB rows are the root cause of the infinite skip loop (#853).
+  try {
+    const wtDb = join(wtGsd, "gsd.db");
+    if (existsSync(wtDb)) {
+      unlinkSync(wtDb);
+    }
+  } catch { /* non-fatal */ }
+}
 
 /**
  * Sync dispatch-critical .gsd/ state files from worktree to project root.
@@ -263,28 +298,30 @@ const MAX_CONSECUTIVE_SKIPS = 3;
 /** Persisted completed-unit keys — survives restarts. Loaded from .gsd/completed-units.json. */
 const completedKeySet = new Set<string>();
 
-/** Resource sync timestamp captured at auto-mode start. If the managed-resources
- *  manifest changes mid-session (e.g. /gsd:update or dev edit + copy-resources),
+/** Resource version captured at auto-mode start. If the managed-resources
+ *  manifest version changes mid-session (e.g. npm update -g gsd-pi),
  *  templates on disk may expect variables the in-memory code doesn't provide.
- *  Detect this and stop gracefully instead of crashing. */
-let resourceSyncedAtOnStart: number | null = null;
+ *  Detect this and stop gracefully instead of crashing.
+ *  Uses gsdVersion (semver) instead of syncedAt (timestamp) so that
+ *  launching a second session doesn't falsely trigger staleness (#804). */
+let resourceVersionOnStart: string | null = null;
 
-function readResourceSyncedAt(): number | null {
+function readResourceVersion(): string | null {
   const agentDir = process.env.GSD_CODING_AGENT_DIR || join(homedir(), ".gsd", "agent");
   const manifestPath = join(agentDir, "managed-resources.json");
   try {
     const manifest = JSON.parse(readFileSync(manifestPath, "utf-8"));
-    return typeof manifest?.syncedAt === "number" ? manifest.syncedAt : null;
+    return typeof manifest?.gsdVersion === "string" ? manifest.gsdVersion : null;
   } catch {
     return null;
   }
 }
 
 function checkResourcesStale(): string | null {
-  if (resourceSyncedAtOnStart === null) return null;
-  const current = readResourceSyncedAt();
+  if (resourceVersionOnStart === null) return null;
+  const current = readResourceVersion();
   if (current === null) return null;
-  if (current !== resourceSyncedAtOnStart) {
+  if (current !== resourceVersionOnStart) {
     return "GSD resources were updated since this session started. Restart gsd to load the new code.";
   }
   return null;
@@ -900,23 +937,37 @@ export async function startAuto(
       );
       return;
     }
-    // Stale lock from a dead process — synthesize crash recovery context.
-    const activityDir = join(gsdRoot(base), "activity");
-    const recovery = synthesizeCrashRecovery(
-      base, crashLock.unitType, crashLock.unitId,
-      crashLock.sessionFile, activityDir,
-    );
-    if (recovery && recovery.trace.toolCallCount > 0) {
-      pendingCrashRecovery = recovery.prompt;
+    // Stale lock from a dead process — validate before synthesizing recovery context.
+    // If the recovered unit belongs to a fully-completed milestone (SUMMARY exists),
+    // discard recovery context to prevent phantom skip loops (#790).
+    const recoveredMid = crashLock.unitId.split("/")[0];
+    const milestoneAlreadyComplete = recoveredMid
+      ? !!resolveMilestoneFile(base, recoveredMid, "SUMMARY")
+      : false;
+
+    if (milestoneAlreadyComplete) {
       ctx.ui.notify(
-        `${formatCrashInfo(crashLock)}\nRecovered ${recovery.trace.toolCallCount} tool calls from crashed session. Resuming with full context.`,
-        "warning",
+        `Crash recovery: discarding stale context for ${crashLock.unitId} — milestone ${recoveredMid} is already complete.`,
+        "info",
       );
     } else {
-      ctx.ui.notify(
-        `${formatCrashInfo(crashLock)}\nNo session data recovered. Resuming from disk state.`,
-        "warning",
+      const activityDir = join(gsdRoot(base), "activity");
+      const recovery = synthesizeCrashRecovery(
+        base, crashLock.unitType, crashLock.unitId,
+        crashLock.sessionFile, activityDir,
       );
+      if (recovery && recovery.trace.toolCallCount > 0) {
+        pendingCrashRecovery = recovery.prompt;
+        ctx.ui.notify(
+          `${formatCrashInfo(crashLock)}\nRecovered ${recovery.trace.toolCallCount} tool calls from crashed session. Resuming with full context.`,
+          "warning",
+        );
+      } else {
+        ctx.ui.notify(
+          `${formatCrashInfo(crashLock)}\nNo session data recovered. Resuming from disk state.`,
+          "warning",
+        );
+      }
     }
     clearLock(base);
   }
@@ -939,6 +990,11 @@ export async function startAuto(
     ctx.ui.notify(`Debug logging enabled → ${getDebugLogPath()}`, "info");
   }
 
+  // Invalidate all caches before initial state derivation to ensure we read
+  // fresh disk state. Without this, a stale cache from a prior session (e.g.
+  // after a discussion that wrote new artifacts) may cause deriveState to
+  // return pre-planning when the roadmap already exists (#800).
+  invalidateAllCaches();
   let state = await deriveState(base);
 
   // ── Stale worktree state recovery (#654) ─────────────────────────────────
@@ -1072,7 +1128,7 @@ export async function startAuto(
   restoreHookState(base);
   resetProactiveHealing();
   autoStartTime = Date.now();
-  resourceSyncedAtOnStart = readResourceSyncedAt();
+  resourceVersionOnStart = readResourceVersion();
   completedUnits = [];
   pendingQuickTasks = [];
   currentUnit = null;
@@ -1325,12 +1381,41 @@ export async function handleAgentEnd(
   // Small delay to let files settle (git commits, file writes)
   await new Promise(r => setTimeout(r, 500));
 
-  // Auto-commit any dirty files the LLM left behind on the current branch.
+  // Commit any dirty files the LLM left behind on the current branch.
+  // For execute-task units, build a meaningful commit message from the
+  // task summary (one-liner, key_files, inferred type). For other unit
+  // types, fall back to the generic chore() message.
   if (currentUnit) {
     try {
-      const commitMsg = autoCommitCurrentBranch(basePath, currentUnit.type, currentUnit.id);
+      let taskContext: TaskCommitContext | undefined;
+
+      if (currentUnit.type === "execute-task") {
+        const parts = currentUnit.id.split("/");
+        const [mid, sid, tid] = parts;
+        if (mid && sid && tid) {
+          const summaryPath = resolveTaskFile(basePath, mid, sid, tid, "SUMMARY");
+          if (summaryPath) {
+            try {
+              const summaryContent = await loadFile(summaryPath);
+              if (summaryContent) {
+                const summary = parseSummary(summaryContent);
+                taskContext = {
+                  taskId: `${sid}/${tid}`,
+                  taskTitle: summary.title?.replace(/^T\d+:\s*/, "") || tid,
+                  oneLiner: summary.oneLiner || undefined,
+                  keyFiles: summary.frontmatter.key_files?.filter(f => !f.includes("{{")) || undefined,
+                };
+              }
+            } catch {
+              // Non-fatal — fall back to generic message
+            }
+          }
+        }
+      }
+
+      const commitMsg = autoCommitCurrentBranch(basePath, currentUnit.type, currentUnit.id, taskContext);
       if (commitMsg) {
-        ctx.ui.notify(`Auto-committed uncommitted changes.`, "info");
+        ctx.ui.notify(`Committed: ${commitMsg.split("\n")[0]}`, "info");
       }
     } catch {
       // Non-fatal
@@ -1342,10 +1427,13 @@ export async function handleAgentEnd(
     // fixLevel:"task" ensures doctor only fixes task-level issues (e.g. marking
     // checkboxes). Slice/milestone completion transitions (summary stubs,
     // roadmap [x] marking) are left for the complete-slice dispatch unit.
+    // Exception: after complete-slice itself, use fixLevel:"all" so roadmap
+    // checkboxes get fixed even if complete-slice crashed (#839).
     try {
       const scopeParts = currentUnit.id.split("/").slice(0, 2);
       const doctorScope = scopeParts.join("/");
-      const report = await runGSDDoctor(basePath, { fix: true, scope: doctorScope, fixLevel: "task" });
+      const effectiveFixLevel = currentUnit.type === "complete-slice" ? "all" as const : "task" as const;
+      const report = await runGSDDoctor(basePath, { fix: true, scope: doctorScope, fixLevel: effectiveFixLevel });
       if (report.fixesApplied.length > 0) {
         ctx.ui.notify(`Post-hook: applied ${report.fixesApplied.length} fix(es).`, "info");
       }
@@ -1383,7 +1471,8 @@ export async function handleAgentEnd(
     }
     try {
       await rebuildState(basePath);
-      autoCommitCurrentBranch(basePath, currentUnit.type, currentUnit.id);
+      // State rebuild commit is bookkeeping — generic message is appropriate
+      autoCommitCurrentBranch(basePath, "state-rebuild", currentUnit.id);
     } catch {
       // Non-fatal
     }
@@ -1476,7 +1565,7 @@ export async function handleAgentEnd(
             persistCompletedKey(basePath, completionKey);
             completedKeySet.add(completionKey);
           }
-          invalidateStateCache();
+          invalidateAllCaches();
         }
       } catch {
         // Non-fatal — worst case we fall through to normal dispatch which has its own checks
@@ -1654,7 +1743,16 @@ export async function handleAgentEnd(
       if (currentUnit) {
         const modelId = ctx.model?.id ?? "unknown";
         snapshotUnitMetrics(ctx, currentUnit.type, currentUnit.id, currentUnit.startedAt, modelId, { promptCharCount: lastPromptCharCount, baselineCharCount: lastBaselineCharCount, ...(currentUnitRouting ?? {}) });
-        saveActivityLog(ctx, basePath, currentUnit.type, currentUnit.id);
+        const hookActivityFile = saveActivityLog(ctx, basePath, currentUnit.type, currentUnit.id);
+        if (hookActivityFile) {
+          try {
+            const { buildMemoryLLMCall, extractMemoriesFromUnit } = await import('./memory-extractor.js');
+            const llmCallFn = buildMemoryLLMCall(ctx);
+            if (llmCallFn) {
+              extractMemoriesFromUnit(hookActivityFile, currentUnit.type, currentUnit.id, llmCallFn).catch(() => {});
+            }
+          } catch { /* non-fatal */ }
+        }
       }
       currentUnit = { type: hookUnit.unitType, id: hookUnit.unitId, startedAt: hookStartedAt };
       writeUnitRuntimeRecord(basePath, hookUnit.unitType, hookUnit.unitId, hookStartedAt, {
@@ -1796,7 +1894,16 @@ export async function handleAgentEnd(
             if (currentUnit) {
               const modelId = ctx.model?.id ?? "unknown";
               snapshotUnitMetrics(ctx, currentUnit.type, currentUnit.id, currentUnit.startedAt, modelId);
-              saveActivityLog(ctx, basePath, currentUnit.type, currentUnit.id);
+              const triageActivityFile = saveActivityLog(ctx, basePath, currentUnit.type, currentUnit.id);
+              if (triageActivityFile) {
+                try {
+                  const { buildMemoryLLMCall, extractMemoriesFromUnit } = await import('./memory-extractor.js');
+                  const llmCallFn = buildMemoryLLMCall(ctx);
+                  if (llmCallFn) {
+                    extractMemoriesFromUnit(triageActivityFile, currentUnit.type, currentUnit.id, llmCallFn).catch(() => {});
+                  }
+                } catch { /* non-fatal */ }
+              }
             }
 
             // Dispatch triage as a new unit (early-dispatch-and-return)
@@ -1874,7 +1981,16 @@ export async function handleAgentEnd(
       if (currentUnit) {
         const modelId = ctx.model?.id ?? "unknown";
         snapshotUnitMetrics(ctx, currentUnit.type, currentUnit.id, currentUnit.startedAt, modelId);
-        saveActivityLog(ctx, basePath, currentUnit.type, currentUnit.id);
+        const qtActivityFile = saveActivityLog(ctx, basePath, currentUnit.type, currentUnit.id);
+        if (qtActivityFile) {
+          try {
+            const { buildMemoryLLMCall, extractMemoriesFromUnit } = await import('./memory-extractor.js');
+            const llmCallFn = buildMemoryLLMCall(ctx);
+            if (llmCallFn) {
+              extractMemoriesFromUnit(qtActivityFile, currentUnit.type, currentUnit.id, llmCallFn).catch(() => {});
+            }
+          } catch { /* non-fatal */ }
+        }
       }
 
       // Dispatch quick-task as a new unit
@@ -2090,6 +2206,7 @@ async function dispatchNextUnit(
   pi: ExtensionAPI,
 ): Promise<void> {
   if (!active || !cmdCtx) {
+    debugLog(`dispatchNextUnit early return — active=${active}, cmdCtx=${!!cmdCtx}`);
     if (active && !cmdCtx) {
       ctx.ui.notify("Auto-mode session expired. Run /gsd auto to restart.", "info");
     }
@@ -2099,6 +2216,7 @@ async function dispatchNextUnit(
   // Reentrancy guard: allow recursive calls from skip paths (_skipDepth > 0)
   // but block concurrent external calls (watchdog, step wizard, etc.)
   if (_dispatching && _skipDepth === 0) {
+    debugLog("dispatchNextUnit reentrancy guard — another dispatch in progress, bailing");
     return; // Another dispatch is in progress — bail silently
   }
   _dispatching = true;
@@ -2134,7 +2252,7 @@ async function dispatchNextUnit(
   // Lightweight check for critical issues that would cause the next unit
   // to fail or corrupt state. Auto-heals what it can, blocks on the rest.
   try {
-    const healthGate = preDispatchHealthGate(basePath);
+    const healthGate = await preDispatchHealthGate(basePath);
     if (healthGate.fixesApplied.length > 0) {
       ctx.ui.notify(`Pre-dispatch: ${healthGate.fixesApplied.join(", ")}`, "info");
     }
@@ -2145,6 +2263,14 @@ async function dispatchNextUnit(
     }
   } catch {
     // Non-fatal — health gate failure should never block dispatch
+  }
+
+  // ── Sync project root artifacts into worktree (#853) ─────────────────
+  // When the LLM writes artifacts to the main repo filesystem instead of
+  // the worktree, the worktree's gsd.db becomes stale. Sync before
+  // deriveState to ensure the worktree has the latest artifacts.
+  if (originalBasePath && basePath !== originalBasePath && currentMilestoneId) {
+    syncProjectRootToWorktree(originalBasePath, basePath, currentMilestoneId);
   }
 
   const stopDeriveTimer = debugTime("derive-state");
@@ -2568,26 +2694,61 @@ async function dispatchNextUnit(
       const skipCount = (unitConsecutiveSkips.get(idempotencyKey) ?? 0) + 1;
       unitConsecutiveSkips.set(idempotencyKey, skipCount);
       if (skipCount > MAX_CONSECUTIVE_SKIPS) {
+        // Cross-check: verify deriveState actually returns this unit (#790).
+        // If the unit's milestone is already complete, this is a phantom skip
+        // loop from stale crash recovery context — don't evict.
+        const skippedMid = unitId.split("/")[0];
+        const skippedMilestoneComplete = skippedMid
+          ? !!resolveMilestoneFile(basePath, skippedMid, "SUMMARY")
+          : false;
+        if (skippedMilestoneComplete) {
+          // Milestone is complete — evicting this key would fight self-heal.
+          // Clear skip counter and re-dispatch from fresh state.
+          unitConsecutiveSkips.delete(idempotencyKey);
+          invalidateAllCaches();
+          ctx.ui.notify(
+            `Phantom skip loop cleared: ${unitType} ${unitId} belongs to completed milestone ${skippedMid}. Re-dispatching from fresh state.`,
+            "info",
+          );
+          _skipDepth++;
+          await new Promise(r => setTimeout(r, 50));
+          await dispatchNextUnit(ctx, pi);
+          _skipDepth = Math.max(0, _skipDepth - 1);
+          return;
+        }
         unitConsecutiveSkips.delete(idempotencyKey);
         completedKeySet.delete(idempotencyKey);
         removePersistedKey(basePath, idempotencyKey);
-        invalidateStateCache();
+        invalidateAllCaches();
         ctx.ui.notify(
           `Skip loop detected: ${unitType} ${unitId} skipped ${skipCount} times without advancing. Evicting completion record and forcing reconciliation.`,
           "warning",
         );
+        if (!active) return;
         _skipDepth++;
-        await new Promise(r => setTimeout(r, 50));
+        await new Promise(r => setTimeout(r, 150));
         await dispatchNextUnit(ctx, pi);
         _skipDepth = Math.max(0, _skipDepth - 1);
+        return;
+      }
+      // Count toward lifetime cap so hard-stop fires during skip loops (#792)
+      const lifeSkip = (unitLifetimeDispatches.get(idempotencyKey) ?? 0) + 1;
+      unitLifetimeDispatches.set(idempotencyKey, lifeSkip);
+      if (lifeSkip > MAX_LIFETIME_DISPATCHES) {
+        await stopAuto(ctx, pi, `Hard loop: ${unitType} ${unitId} (skip cycle)`);
+        ctx.ui.notify(
+          `Hard loop detected: ${unitType} ${unitId} hit lifetime cap during skip cycle (${lifeSkip} iterations).`,
+          "error",
+        );
         return;
       }
       ctx.ui.notify(
         `Skipping ${unitType} ${unitId} — already completed in a prior session. Advancing.`,
         "info",
       );
+      if (!active) return;
       _skipDepth++;
-      await new Promise(r => setTimeout(r, 50));
+      await new Promise(r => setTimeout(r, 150));
       await dispatchNextUnit(ctx, pi);
       _skipDepth = Math.max(0, _skipDepth - 1);
       return;
@@ -2610,31 +2771,62 @@ async function dispatchNextUnit(
   if (verifyExpectedArtifact(unitType, unitId, basePath)) {
     persistCompletedKey(basePath, idempotencyKey);
     completedKeySet.add(idempotencyKey);
-    invalidateStateCache();
+    invalidateAllCaches();
     // Same consecutive-skip guard as the idempotency path above.
     const skipCount2 = (unitConsecutiveSkips.get(idempotencyKey) ?? 0) + 1;
     unitConsecutiveSkips.set(idempotencyKey, skipCount2);
     if (skipCount2 > MAX_CONSECUTIVE_SKIPS) {
+      // Cross-check: verify the unit's milestone is still active (#790).
+      const skippedMid2 = unitId.split("/")[0];
+      const skippedMilestoneComplete2 = skippedMid2
+        ? !!resolveMilestoneFile(basePath, skippedMid2, "SUMMARY")
+        : false;
+      if (skippedMilestoneComplete2) {
+        unitConsecutiveSkips.delete(idempotencyKey);
+        invalidateAllCaches();
+        ctx.ui.notify(
+          `Phantom skip loop cleared: ${unitType} ${unitId} belongs to completed milestone ${skippedMid2}. Re-dispatching from fresh state.`,
+          "info",
+        );
+        _skipDepth++;
+        await new Promise(r => setTimeout(r, 50));
+        await dispatchNextUnit(ctx, pi);
+        _skipDepth = Math.max(0, _skipDepth - 1);
+        return;
+      }
       unitConsecutiveSkips.delete(idempotencyKey);
       completedKeySet.delete(idempotencyKey);
       removePersistedKey(basePath, idempotencyKey);
-      invalidateStateCache();
+      invalidateAllCaches();
       ctx.ui.notify(
         `Skip loop detected: ${unitType} ${unitId} skipped ${skipCount2} times without advancing. Evicting completion record and forcing reconciliation.`,
         "warning",
       );
+      if (!active) return;
       _skipDepth++;
-      await new Promise(r => setTimeout(r, 50));
+      await new Promise(r => setTimeout(r, 150));
       await dispatchNextUnit(ctx, pi);
       _skipDepth = Math.max(0, _skipDepth - 1);
+      return;
+    }
+    // Count toward lifetime cap so hard-stop fires during skip loops (#792)
+    const lifeSkip2 = (unitLifetimeDispatches.get(idempotencyKey) ?? 0) + 1;
+    unitLifetimeDispatches.set(idempotencyKey, lifeSkip2);
+    if (lifeSkip2 > MAX_LIFETIME_DISPATCHES) {
+      await stopAuto(ctx, pi, `Hard loop: ${unitType} ${unitId} (skip cycle)`);
+      ctx.ui.notify(
+        `Hard loop detected: ${unitType} ${unitId} hit lifetime cap during skip cycle (${lifeSkip2} iterations).`,
+        "error",
+      );
       return;
     }
     ctx.ui.notify(
       `Skipping ${unitType} ${unitId} — artifact exists but completion key was missing. Repaired and advancing.`,
       "info",
     );
+    if (!active) return;
     _skipDepth++;
-    await new Promise(r => setTimeout(r, 50));
+    await new Promise(r => setTimeout(r, 150));
     await dispatchNextUnit(ctx, pi);
     _skipDepth = Math.max(0, _skipDepth - 1);
     return;
@@ -2704,7 +2896,7 @@ async function dispatchNextUnit(
             persistCompletedKey(basePath, reconciledKey);
             completedKeySet.add(reconciledKey);
             unitDispatchCount.delete(dispatchKey);
-            invalidateStateCache();
+            invalidateAllCaches();
             await new Promise(r => setImmediate(r));
             await dispatchNextUnit(ctx, pi);
             return;
@@ -2731,7 +2923,7 @@ async function dispatchNextUnit(
       persistCompletedKey(basePath, dispatchKey);
       completedKeySet.add(dispatchKey);
       unitDispatchCount.delete(dispatchKey);
-      invalidateStateCache();
+      invalidateAllCaches();
       await new Promise(r => setImmediate(r));
       await dispatchNextUnit(ctx, pi);
       return;
@@ -2751,7 +2943,7 @@ async function dispatchNextUnit(
             persistCompletedKey(basePath, dispatchKey);
             completedKeySet.add(dispatchKey);
             unitDispatchCount.delete(dispatchKey);
-            invalidateStateCache();
+            invalidateAllCaches();
             await new Promise(r => setImmediate(r));
             await dispatchNextUnit(ctx, pi);
             return;
@@ -2792,7 +2984,7 @@ async function dispatchNextUnit(
             persistCompletedKey(basePath, repairedKey);
             completedKeySet.add(repairedKey);
             unitDispatchCount.delete(dispatchKey);
-            invalidateStateCache();
+            invalidateAllCaches();
             await new Promise(r => setImmediate(r));
             await dispatchNextUnit(ctx, pi);
             return;
@@ -2836,7 +3028,18 @@ async function dispatchNextUnit(
   if (currentUnit) {
     const modelId = ctx.model?.id ?? "unknown";
     snapshotUnitMetrics(ctx, currentUnit.type, currentUnit.id, currentUnit.startedAt, modelId, { promptCharCount: lastPromptCharCount, baselineCharCount: lastBaselineCharCount, ...(currentUnitRouting ?? {}) });
-    saveActivityLog(ctx, basePath, currentUnit.type, currentUnit.id);
+    const activityFile = saveActivityLog(ctx, basePath, currentUnit.type, currentUnit.id);
+
+    // Fire-and-forget memory extraction from completed unit
+    if (activityFile) {
+      try {
+        const { buildMemoryLLMCall, extractMemoriesFromUnit } = await import('./memory-extractor.js');
+        const llmCallFn = buildMemoryLLMCall(ctx);
+        if (llmCallFn) {
+          extractMemoriesFromUnit(activityFile, currentUnit.type, currentUnit.id, llmCallFn).catch(() => {});
+        }
+      } catch { /* non-fatal */ }
+    }
 
     // Record routing outcome for adaptive learning
     if (currentUnitRouting) {
@@ -3764,6 +3967,20 @@ export async function dispatchDirectPhase(
           ctx.ui.notify("Cannot dispatch research-slice: no active slice.", "warning");
           return;
         }
+
+        // When require_slice_discussion is enabled, pause auto-mode before
+        // each new slice so the user can discuss requirements first (#789).
+        const sliceContextFile = resolveSliceFile(base, mid, sid, "CONTEXT");
+        const requireDiscussion = loadEffectiveGSDPreferences()?.preferences?.phases?.require_slice_discussion;
+        if (requireDiscussion && !sliceContextFile) {
+          ctx.ui.notify(
+            `Slice ${sid} requires discussion before planning. Run /gsd discuss to discuss this slice, then /gsd auto to resume.`,
+            "info",
+          );
+          await pauseAuto(ctx, pi);
+          return;
+        }
+
         unitType = "research-slice";
         unitId = `${mid}/${sid}`;
         prompt = await buildResearchSlicePrompt(mid, midTitle, sid, sTitle, base);

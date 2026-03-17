@@ -92,11 +92,12 @@ test("before_provider_request injects web_search for claude models", async () =>
   });
 
   const tools = (result as any)?.tools ?? payload.tools;
-  const hasNative = (tools as any[]).some(
+  const nativeTool = (tools as any[]).find(
     (t: any) => t.type === "web_search_20250305"
   );
-  assert.ok(hasNative, "Should inject web_search_20250305 tool");
+  assert.ok(nativeTool, "Should inject web_search_20250305 tool");
   assert.equal((tools as any[]).length, 2, "Should have original + injected tool");
+  assert.equal(nativeTool.max_uses, 5, "Should set max_uses to 5 to prevent search loops (#817)");
 });
 
 test("before_provider_request injects web_search for claude models even without model_select", async () => {
@@ -278,6 +279,7 @@ test("before_provider_request creates tools array if missing", async () => {
   assert.ok(Array.isArray(tools), "Should create tools array");
   assert.equal((tools as any[]).length, 1, "Should have exactly 1 tool");
   assert.equal((tools as any[])[0].type, "web_search_20250305");
+  assert.equal((tools as any[])[0].max_uses, 5, "Should include max_uses limit");
 });
 
 test("before_provider_request skips when payload is falsy", async () => {

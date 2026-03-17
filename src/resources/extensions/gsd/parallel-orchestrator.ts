@@ -124,6 +124,12 @@ export async function startParallel(
   const toStart = milestoneIds.slice(0, config.max_workers);
 
   for (const mid of toStart) {
+    // Check budget ceiling before each spawn
+    if (isBudgetExceeded()) {
+      errors.push({ mid, error: `Budget ceiling ($${config.budget_ceiling}) reached — skipping` });
+      continue;
+    }
+
     try {
       // Create the worktree (without chdir — coordinator stays in project root)
       let wtPath: string;
@@ -233,7 +239,7 @@ export function spawnWorker(
 
   let child: ChildProcess;
   try {
-    child = spawn(process.execPath, [binPath, "--print", "/gsd auto"], {
+    child = spawn(process.execPath, [binPath, "--mode", "json", "--print", "/gsd auto"], {
       cwd: worker.worktreePath,
       env: {
         ...process.env,
@@ -265,6 +271,28 @@ export function spawnWorker(
     // Spawn returned but no PID — process failed to start
     worker.process = null;
     return false;
+  }
+
+  // ── NDJSON stdout monitoring ────────────────────────────────────────
+  // Workers run with --mode json, emitting one JSON event per line.
+  // We parse message_end events to extract cost/token usage, keeping
+  // the coordinator's cost tracking in sync with actual API spend.
+  if (child.stdout) {
+    let stdoutBuffer = "";
+    child.stdout.on("data", (data: Buffer) => {
+      stdoutBuffer += data.toString();
+      const lines = stdoutBuffer.split("\n");
+      stdoutBuffer = lines.pop() || "";
+      for (const line of lines) {
+        processWorkerLine(basePath, milestoneId, line);
+      }
+    });
+    // Flush remaining buffer on close
+    child.stdout.on("close", () => {
+      if (stdoutBuffer.trim()) {
+        processWorkerLine(basePath, milestoneId, stdoutBuffer);
+      }
+    });
   }
 
   // Update session status with real PID
@@ -343,6 +371,90 @@ function resolveGsdBin(): string | null {
   return null;
 }
 
+// ─── NDJSON Processing ──────────────────────────────────────────────────────
+
+/**
+ * Process a single NDJSON line from a worker's stdout.
+ * Extracts cost and token usage from message_end events and updates
+ * the worker's tracking state + session status file.
+ */
+function processWorkerLine(basePath: string, milestoneId: string, line: string): void {
+  if (!line.trim() || !state) return;
+
+  let event: Record<string, unknown>;
+  try {
+    event = JSON.parse(line);
+  } catch {
+    return; // Not valid JSON — skip (stderr leakage, debug output, etc.)
+  }
+
+  const type = String(event.type ?? "");
+
+  // message_end carries usage data with cost
+  if (type === "message_end" && event.message) {
+    const msg = event.message as Record<string, unknown>;
+    const usage = msg.usage as Record<string, unknown> | undefined;
+
+    if (usage) {
+      const cost = (usage.cost as Record<string, unknown>)?.total;
+      if (typeof cost === "number") {
+        const worker = state.workers.get(milestoneId);
+        if (worker) {
+          worker.cost += cost;
+          // Update aggregate
+          state.totalCost = 0;
+          for (const w of state.workers.values()) {
+            state.totalCost += w.cost;
+          }
+        }
+      }
+    }
+
+    // Track completed units (each message_end from assistant = progress)
+    if (msg.role === "assistant") {
+      const worker = state.workers.get(milestoneId);
+      if (worker) {
+        worker.completedUnits++;
+      }
+    }
+
+    // Update session status file so dashboard sees live cost
+    const worker = state.workers.get(milestoneId);
+    if (worker) {
+      writeSessionStatus(basePath, {
+        milestoneId,
+        pid: worker.pid,
+        state: worker.state,
+        currentUnit: null,
+        completedUnits: worker.completedUnits,
+        cost: worker.cost,
+        lastHeartbeat: Date.now(),
+        startedAt: worker.startedAt,
+        worktreePath: worker.worktreePath,
+      });
+    }
+  }
+
+  // tool_execution_start can track current unit
+  if (type === "extension_ui_request" && event.method === "notify") {
+    // GSD auto-mode sends notifications about current unit
+    const worker = state.workers.get(milestoneId);
+    if (worker) {
+      writeSessionStatus(basePath, {
+        milestoneId,
+        pid: worker.pid,
+        state: worker.state,
+        currentUnit: null,
+        completedUnits: worker.completedUnits,
+        cost: worker.cost,
+        lastHeartbeat: Date.now(),
+        startedAt: worker.startedAt,
+        worktreePath: worker.worktreePath,
+      });
+    }
+  }
+}
+
 // ─── Stop ──────────────────────────────────────────────────────────────────
 
 /**
@@ -366,10 +478,16 @@ export async function stopParallel(
     // Send stop signal via file-based IPC (worker checks on next dispatch)
     sendSignal(basePath, mid, "stop");
 
-    // Also send SIGTERM to the process for immediate response
-    if (worker.process && worker.pid > 0) {
+    // Send SIGTERM to the process for immediate response.
+    // Use process handle when available, fall back to PID-based kill
+    // (handles are null after coordinator restart / deserialization).
+    if (worker.pid > 0) {
       try {
-        worker.process.kill("SIGTERM");
+        if (worker.process) {
+          worker.process.kill("SIGTERM");
+        } else {
+          process.kill(worker.pid, "SIGTERM");
+        }
       } catch { /* process may already be dead */ }
     }
 

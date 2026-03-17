@@ -350,12 +350,11 @@ console.log('=== md-importer: missing file handling ===');
 console.log('=== md-importer: schema v1→v2 migration ===');
 
 {
-  // This test verifies that opening a v1 DB auto-migrates to v2
-  // (The actual migration is tested via the gsd-db.test.ts schema version assertion = 2)
+  // This test verifies that opening a fresh DB auto-migrates to current schema version
   openDatabase(':memory:');
   const adapter = _getAdapter();
   const version = adapter?.prepare('SELECT MAX(version) as v FROM schema_version').get();
-  assertEq(version?.v, 2, 'new DB should be at schema version 2');
+  assertEq(version?.v, 3, 'new DB should be at schema version 3');
 
   // Artifacts table should exist
   const tableCheck = adapter?.prepare("SELECT count(*) as c FROM sqlite_master WHERE type='table' AND name='artifacts'").get();

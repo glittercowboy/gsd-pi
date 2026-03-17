@@ -201,9 +201,9 @@ When writing context.md, preserve the user's exact terminology, emphasis, and sp
 5. Write `{{roadmapPath}}` — use the **Roadmap** output template below. Decompose into demoable vertical slices with checkboxes, risk, depends, demo sentences, proof strategy, verification classes, milestone definition of done, requirement coverage, and a boundary map. If the milestone crosses multiple runtime boundaries, include an explicit final integration slice that proves the assembled system works end-to-end in a real environment.
 6. Seed `.gsd/DECISIONS.md` — use the **Decisions** output template below. Append rows for any architectural or pattern decisions made during discussion.
 7. Update `.gsd/STATE.md`
-8. Commit: `docs({{milestoneId}}): context, requirements, and roadmap`
+8. {{commitInstruction}}
 
-After writing the files and committing, say exactly: "Milestone {{milestoneId}} ready." — nothing else. Auto-mode will start automatically.
+After writing the files, say exactly: "Milestone {{milestoneId}} ready." — nothing else. Auto-mode will start automatically.
 
 ### Multi-Milestone
 
@@ -211,7 +211,7 @@ Once the user confirms the milestone split:
 
 #### Phase 1: Shared artifacts
 
-1. `mkdir -p .gsd/milestones/{{milestoneId}}/slices` for each milestone
+1. For each milestone, call `gsd_generate_milestone_id` to get its ID — never invent milestone IDs manually. Then `mkdir -p .gsd/milestones/<ID>/slices`.
 2. Write `.gsd/PROJECT.md` — use the **Project** output template below.
 3. Write `.gsd/REQUIREMENTS.md` — use the **Requirements** output template below. Capture Active, Deferred, Out of Scope, and any already Validated requirements. Later milestones may have provisional ownership where slice plans do not exist yet.
 4. Seed `.gsd/DECISIONS.md` — use the **Decisions** output template below.
@@ -271,8 +271,8 @@ For single-milestone projects, do NOT write this file — it is only for multi-m
 #### Phase 4: Finalize
 
 7. Update `.gsd/STATE.md`
-8. Commit: `docs: project plan — N milestones` (replace N with the actual milestone count)
+8. {{multiMilestoneCommitInstruction}}
 
-After writing the files and committing, say exactly: "Milestone M001 ready." — nothing else. Auto-mode will start automatically.
+After writing the files, say exactly: "Milestone M001 ready." — nothing else. Auto-mode will start automatically.
 
 {{inlinedTemplates}}

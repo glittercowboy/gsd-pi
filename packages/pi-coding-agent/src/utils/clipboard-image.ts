@@ -114,16 +114,43 @@ function readClipboardImageViaWlPaste(): ClipboardImage | null {
 		.filter(Boolean);
 
 	const selectedType = selectPreferredImageMimeType(types);
-	if (!selectedType) {
-		return null;
+	if (selectedType) {
+		const data = runCommand("wl-paste", ["--type", selectedType, "--no-newline"]);
+		if (data.ok && data.stdout.length > 0) {
+			return { bytes: data.stdout, mimeType: baseMimeType(selectedType) };
+		}
 	}
 
-	const data = runCommand("wl-paste", ["--type", selectedType, "--no-newline"]);
-	if (!data.ok || data.stdout.length === 0) {
-		return null;
+	// Fallback for WSLg/BMP: when only image/bmp is available, ask wl-paste
+	// to convert to PNG on the fly. wl-paste supports format conversion for
+	// some compositor types. If that fails, try reading BMP and converting
+	// via ImageMagick (#813).
+	const hasBmp = types.some((t) => baseMimeType(t) === "image/bmp");
+	if (!selectedType && hasBmp) {
+		// Try requesting PNG directly — wl-paste may convert
+		const pngData = runCommand("wl-paste", ["--type", "image/png", "--no-newline"]);
+		if (pngData.ok && pngData.stdout.length > 0) {
+			return { bytes: pngData.stdout, mimeType: "image/png" };
+		}
+
+		// Try reading BMP and converting via ImageMagick convert
+		const bmpData = runCommand("wl-paste", ["--type", "image/bmp", "--no-newline"]);
+		if (bmpData.ok && bmpData.stdout.length > 0) {
+			const converted = spawnSync("convert", ["bmp:-", "png:-"], {
+				input: bmpData.stdout,
+				timeout: 5000,
+				maxBuffer: DEFAULT_MAX_BUFFER_BYTES,
+			});
+			if (!converted.error && converted.status === 0 && converted.stdout.length > 0) {
+				const stdout = Buffer.isBuffer(converted.stdout)
+					? converted.stdout
+					: Buffer.from(converted.stdout);
+				return { bytes: stdout, mimeType: "image/png" };
+			}
+		}
 	}
 
-	return { bytes: data.stdout, mimeType: baseMimeType(selectedType) };
+	return null;
 }
 
 function readClipboardImageViaXclip(): ClipboardImage | null {

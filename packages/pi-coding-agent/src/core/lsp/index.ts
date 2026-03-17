@@ -211,6 +211,13 @@ async function reloadServer(client: LspClient, serverName: string, signal?: Abor
 	}
 	if (output.startsWith("Restarted")) {
 		client.proc.kill();
+		// Wait for the process to actually exit so the crash recovery handler
+		// removes the client from the cache. Without this, the next
+		// getOrCreateClient call may return the dead client (#815).
+		await Promise.race([
+			client.proc.exited,
+			new Promise(r => setTimeout(r, 3000)),
+		]);
 	}
 	return output;
 }

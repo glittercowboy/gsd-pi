@@ -56,6 +56,51 @@ assertTrue(
   "exports ChangelogInfo interface",
 );
 
+assertTrue(
+  dataSrc.includes("export interface SliceVerification"),
+  "exports SliceVerification interface",
+);
+
+assertTrue(
+  dataSrc.includes("export interface KnowledgeInfo"),
+  "exports KnowledgeInfo interface",
+);
+
+assertTrue(
+  dataSrc.includes("export interface CapturesInfo"),
+  "exports CapturesInfo interface",
+);
+
+assertTrue(
+  dataSrc.includes("export interface HealthInfo"),
+  "exports HealthInfo interface",
+);
+
+assertTrue(
+  dataSrc.includes("export interface VisualizerDiscussionState"),
+  "exports VisualizerDiscussionState interface",
+);
+
+assertTrue(
+  dataSrc.includes("export type DiscussionState"),
+  "exports DiscussionState type",
+);
+
+assertTrue(
+  dataSrc.includes("export interface VisualizerSliceRef"),
+  "exports VisualizerSliceRef interface",
+);
+
+assertTrue(
+  dataSrc.includes("export interface VisualizerSliceActivity"),
+  "exports VisualizerSliceActivity interface",
+);
+
+assertTrue(
+  dataSrc.includes("export interface VisualizerStats"),
+  "exports VisualizerStats interface",
+);
+
 // Function export
 assertTrue(
   dataSrc.includes("export async function loadVisualizerData"),
@@ -123,6 +168,36 @@ assertTrue(
   "uses aggregateByModel",
 );
 
+assertTrue(
+  dataSrc.includes("aggregateByTier"),
+  "uses aggregateByTier",
+);
+
+assertTrue(
+  dataSrc.includes("formatTierSavings"),
+  "uses formatTierSavings",
+);
+
+assertTrue(
+  dataSrc.includes("loadAllCaptures"),
+  "uses loadAllCaptures",
+);
+
+assertTrue(
+  dataSrc.includes("countPendingCaptures"),
+  "uses countPendingCaptures",
+);
+
+assertTrue(
+  dataSrc.includes("loadEffectiveGSDPreferences"),
+  "uses loadEffectiveGSDPreferences",
+);
+
+assertTrue(
+  dataSrc.includes("resolveGsdRootFile"),
+  "uses resolveGsdRootFile for KNOWLEDGE path",
+);
+
 // Interface fields
 assertTrue(
   dataSrc.includes("dependsOn: string[]"),
@@ -144,6 +219,11 @@ assertTrue(
   "VisualizerData has units array",
 );
 
+assertTrue(
+  dataSrc.includes("estimate?: string"),
+  "VisualizerTask has optional estimate field",
+);
+
 // New data model fields
 assertTrue(
   dataSrc.includes("criticalPath: CriticalPathInfo"),
@@ -163,6 +243,56 @@ assertTrue(
 assertTrue(
   dataSrc.includes("changelog: ChangelogInfo"),
   "VisualizerData has changelog field",
+);
+
+assertTrue(
+  dataSrc.includes("sliceVerifications: SliceVerification[]"),
+  "VisualizerData has sliceVerifications field",
+);
+
+assertTrue(
+  dataSrc.includes("knowledge: KnowledgeInfo"),
+  "VisualizerData has knowledge field",
+);
+
+assertTrue(
+  dataSrc.includes("captures: CapturesInfo"),
+  "VisualizerData has captures field",
+);
+
+assertTrue(
+  dataSrc.includes("health: HealthInfo"),
+  "VisualizerData has health field",
+);
+
+assertTrue(
+  dataSrc.includes("stats: VisualizerStats"),
+  "VisualizerData has stats field",
+);
+
+assertTrue(
+  dataSrc.includes("discussion: VisualizerDiscussionState[]"),
+  "VisualizerData has discussion field",
+);
+
+assertTrue(
+  dataSrc.includes("loadDiscussionState"),
+  "uses loadDiscussionState helper",
+);
+
+assertTrue(
+  dataSrc.includes("buildVisualizerStats"),
+  "uses buildVisualizerStats helper",
+);
+
+assertTrue(
+  dataSrc.includes("byTier: TierAggregate[]"),
+  "VisualizerData has byTier field",
+);
+
+assertTrue(
+  dataSrc.includes("tierSavingsLine: string"),
+  "VisualizerData has tierSavingsLine field",
 );
 
 // completedAt must be coerced to String() to handle YAML Date objects (issue #644)
@@ -228,6 +358,21 @@ assertTrue(
 );
 
 assertTrue(
+  overlaySrc.includes("renderKnowledgeView"),
+  "overlay delegates to renderKnowledgeView",
+);
+
+assertTrue(
+  overlaySrc.includes("renderCapturesView"),
+  "overlay delegates to renderCapturesView",
+);
+
+assertTrue(
+  overlaySrc.includes("renderHealthView"),
+  "overlay delegates to renderHealthView",
+);
+
+assertTrue(
   overlaySrc.includes("handleInput"),
   "overlay has handleInput method",
 );
@@ -273,8 +418,8 @@ assertTrue(
 );
 
 assertTrue(
-  overlaySrc.includes("7 Export"),
-  "overlay has 7 tab labels",
+  overlaySrc.includes("0 Health"),
+  "overlay has 10 tab labels",
 );
 
 // Verify commands.ts integration

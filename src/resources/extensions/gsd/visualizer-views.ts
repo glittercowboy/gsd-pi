@@ -2,7 +2,7 @@
 
 import type { Theme } from "@gsd/pi-coding-agent";
 import { truncateToWidth, visibleWidth } from "@gsd/pi-tui";
-import type { VisualizerData, VisualizerMilestone } from "./visualizer-data.js";
+import type { VisualizerData, VisualizerMilestone, SliceVerification, VisualizerSliceActivity, VisualizerStats, VisualizerSliceRef } from "./visualizer-data.js";
 import { formatCost, formatTokenCount, classifyUnitPhase } from "./metrics.js";
 
 // ─── Local Helpers ───────────────────────────────────────────────────────────
@@ -34,10 +34,101 @@ function joinColumns(left: string, right: string, width: number): string {
 
 function sparkline(values: number[]): string {
   if (values.length === 0) return "";
-  const chars = "▁▂▃▄▅▆▇█";
+  const chars = "\u2581\u2582\u2583\u2584\u2585\u2586\u2587\u2588";
   const max = Math.max(...values);
   if (max === 0) return chars[0].repeat(values.length);
   return values.map(v => chars[Math.min(7, Math.floor((v / max) * 7))]).join("");
+}
+
+function formatCompletionDate(input: string): string {
+  if (!input) return "unknown";
+  const parsed = new Date(input);
+  if (Number.isNaN(parsed.getTime())) return input;
+  return parsed.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+}
+
+function sliceLabel(slice: VisualizerSliceRef): string {
+  return `${slice.milestoneId}/${slice.sliceId}`;
+}
+
+function renderFeatureStats(data: VisualizerData, th: Theme, width: number): string[] {
+  const stats = data.stats;
+  const lines: string[] = [];
+  lines.push(th.fg("accent", th.bold("Feature Snapshot")));
+  lines.push("");
+
+  const missingLabel = `Missing slices: ${th.fg("warning", String(stats.missingCount))}`;
+  lines.push(truncateToWidth(`  ${missingLabel}`, width));
+  if (stats.missingSlices.length > 0) {
+    for (const slice of stats.missingSlices) {
+      const row = `    ${th.fg("dim", sliceLabel(slice))} ${slice.title}`;
+      lines.push(truncateToWidth(row, width));
+    }
+    const remaining = stats.missingCount - stats.missingSlices.length;
+    if (remaining > 0) {
+      lines.push(truncateToWidth(`    ... and ${remaining} more`, width));
+    }
+  }
+
+  lines.push("");
+  const updatedLabel = `Updated (last 7 days): ${th.fg("accent", String(stats.updatedCount))}`;
+  lines.push(truncateToWidth(`  ${updatedLabel}`, width));
+  if (stats.updatedSlices.length > 0) {
+    for (const slice of stats.updatedSlices) {
+      const when = formatCompletionDate(slice.completedAt);
+      const row = `    ${th.fg("text", sliceLabel(slice))} ${th.fg("dim", when)} ${slice.title}`;
+      lines.push(truncateToWidth(row, width));
+    }
+  }
+
+  lines.push("");
+  lines.push(truncateToWidth(`  Recent completions: ${th.fg("success", String(stats.recentEntries.length))}`, width));
+  for (const entry of stats.recentEntries) {
+    const when = formatCompletionDate(entry.completedAt);
+    const row = `    ${th.fg("text", entry.sliceId)} — ${entry.oneLiner || entry.title} ${th.fg("dim", when)}`;
+    lines.push(truncateToWidth(row, width));
+  }
+
+  lines.push("");
+  return lines;
+}
+
+function renderDiscussionStatus(data: VisualizerData, th: Theme, width: number): string[] {
+  const states = data.discussion;
+  if (states.length === 0) return [];
+
+  const counts = {
+    discussed: 0,
+    draft: 0,
+    undiscussed: 0,
+  };
+  for (const state of states) counts[state.state]++;
+
+  const lines: string[] = [];
+  lines.push(th.fg("accent", th.bold("Discussion Status")));
+  lines.push("");
+  const summary = `  Discussed: ${th.fg("success", String(counts.discussed))}  Draft: ${th.fg("warning", String(counts.draft))}  Pending: ${th.fg("dim", String(counts.undiscussed))}`;
+  lines.push(truncateToWidth(summary, width));
+  lines.push("");
+
+  for (const state of states) {
+    const badge =
+      state.state === "discussed"
+        ? th.fg("success", "Discussed")
+        : state.state === "draft"
+          ? th.fg("warning", "Draft")
+          : th.fg("dim", "Pending");
+    const when = state.lastUpdated ? ` ${th.fg("dim", formatCompletionDate(state.lastUpdated))}` : "";
+    const row = `    ${th.fg("text", state.milestoneId)} ${badge} ${state.title}${when}`;
+    lines.push(truncateToWidth(row, width));
+  }
+
+  lines.push("");
+  return lines;
+}
+
+function findVerification(data: VisualizerData, milestoneId: string, sliceId: string): SliceVerification | undefined {
+  return data.sliceVerifications.find(v => v.milestoneId === milestoneId && v.sliceId === sliceId);
 }
 
 // ─── Progress View ───────────────────────────────────────────────────────────
@@ -52,6 +143,7 @@ export function renderProgressView(
   th: Theme,
   width: number,
   filter?: ProgressFilter,
+  collapsed?: Set<string>,
 ): string[] {
   const lines: string[] = [];
 
@@ -65,6 +157,9 @@ export function renderProgressView(
     lines.push("");
   }
 
+  lines.push(...renderFeatureStats(data, th, width));
+  lines.push(...renderDiscussionStatus(data, th, width));
+
   for (const ms of data.milestones) {
     // Apply filter to milestones
     if (filter && filter.text) {
@@ -75,19 +170,24 @@ export function renderProgressView(
     // Milestone header line
     const statusGlyph =
       ms.status === "complete"
-        ? th.fg("success", "✓")
+        ? th.fg("success", "\u2713")
         : ms.status === "active"
-          ? th.fg("accent", "▸")
-          : th.fg("dim", "○");
+          ? th.fg("accent", "\u25b8")
+          : th.fg("dim", "\u25cb");
     const statusLabel =
       ms.status === "complete"
         ? th.fg("success", "complete")
         : ms.status === "active"
           ? th.fg("accent", "active")
           : th.fg("dim", "pending");
-    const msLeft = `${ms.id}: ${ms.title}`;
+
+    const collapseIndicator = collapsed?.has(ms.id) ? "[+] " : "";
+    const msLeft = `${collapseIndicator}${ms.id}: ${ms.title}`;
     const msRight = `${statusGlyph} ${statusLabel}`;
     lines.push(joinColumns(msLeft, msRight, width));
+
+    // If collapsed, skip rendering slices/tasks
+    if (collapsed?.has(ms.id)) continue;
 
     if (ms.slices.length === 0 && ms.dependsOn.length > 0) {
       lines.push(th.fg("dim", `  (depends on ${ms.dependsOn.join(", ")})`));
@@ -107,10 +207,10 @@ export function renderProgressView(
 
       // Slice line
       const slGlyph = sl.done
-        ? th.fg("success", "✓")
+        ? th.fg("success", "\u2713")
         : sl.active
-          ? th.fg("accent", "▸")
-          : th.fg("dim", "○");
+          ? th.fg("accent", "\u25b8")
+          : th.fg("dim", "\u25cb");
       const riskColor =
         sl.risk === "high"
           ? "warning"
@@ -118,18 +218,36 @@ export function renderProgressView(
             ? "text"
             : "dim";
       const riskBadge = th.fg(riskColor, sl.risk);
-      const slLeft = `  ${slGlyph} ${sl.id}: ${sl.title}`;
+
+      // Verification badge
+      const ver = findVerification(data, ms.id, sl.id);
+      let verBadge = "";
+      if (ver) {
+        if (ver.verificationResult === "passed") {
+          verBadge = " " + th.fg("success", "\u2713");
+        } else if (ver.verificationResult === "failed") {
+          verBadge = " " + th.fg("error", "\u2717");
+        } else if (ver.verificationResult === "untested" || ver.verificationResult === "") {
+          verBadge = " " + th.fg("dim", "?");
+        }
+        if (ver.blockerDiscovered) {
+          verBadge += " " + th.fg("warning", "\u26a0");
+        }
+      }
+
+      const slLeft = `  ${slGlyph} ${sl.id}: ${sl.title}${verBadge}`;
       lines.push(joinColumns(slLeft, riskBadge, width));
 
       // Show tasks for active slice
       if (sl.active && sl.tasks.length > 0) {
         for (const task of sl.tasks) {
           const tGlyph = task.done
-            ? th.fg("success", "✓")
+            ? th.fg("success", "\u2713")
             : task.active
-              ? th.fg("accent", "▸")
-              : th.fg("dim", "○");
-          lines.push(`      ${tGlyph} ${task.id}: ${task.title}`);
+              ? th.fg("accent", "\u25b8")
+              : th.fg("dim", "\u25cb");
+          const estimateStr = task.estimate ? th.fg("dim", ` (${task.estimate})`) : "";
+          lines.push(`      ${tGlyph} ${task.id}: ${task.title}${estimateStr}`);
         }
       }
     }
@@ -176,7 +294,7 @@ function renderRiskHeatmap(data: VisualizerData, th: Theme, width: number): stri
     if (ms.slices.length === 0) continue;
     const blocks = ms.slices.map(s => {
       const color = s.risk === "high" ? "error" : s.risk === "medium" ? "warning" : "success";
-      return th.fg(color, "██");
+      return th.fg(color, "\u2588\u2588");
     });
     const row = `  ${padRight(ms.id, 6)} ${blocks.join(" ")}`;
     lines.push(truncateToWidth(row, width));
@@ -184,7 +302,7 @@ function renderRiskHeatmap(data: VisualizerData, th: Theme, width: number): stri
 
   lines.push("");
   lines.push(
-    `  ${th.fg("success", "██")} low  ${th.fg("warning", "██")} med  ${th.fg("error", "██")} high`,
+    `  ${th.fg("success", "\u2588\u2588")} low  ${th.fg("warning", "\u2588\u2588")} med  ${th.fg("error", "\u2588\u2588")} high`,
   );
 
   // Summary counts
@@ -230,7 +348,7 @@ export function renderDepsView(
     for (const ms of msDeps) {
       for (const dep of ms.dependsOn) {
         lines.push(
-          `  ${th.fg("text", dep)} ${th.fg("accent", "──►")} ${th.fg("text", ms.id)}`,
+          `  ${th.fg("text", dep)} ${th.fg("accent", "\u2500\u2500\u25ba")} ${th.fg("text", ms.id)}`,
         );
       }
     }
@@ -253,7 +371,7 @@ export function renderDepsView(
       for (const sl of slDeps) {
         for (const dep of sl.depends) {
           lines.push(
-            `  ${th.fg("text", dep)} ${th.fg("accent", "──►")} ${th.fg("text", sl.id)}`,
+            `  ${th.fg("text", dep)} ${th.fg("accent", "\u2500\u2500\u25ba")} ${th.fg("text", sl.id)}`,
           );
         }
       }
@@ -264,6 +382,37 @@ export function renderDepsView(
 
   // Critical Path section
   lines.push(...renderCriticalPath(data, th, width));
+
+  // Data Flow section from slice verifications
+  lines.push("");
+  lines.push(...renderDataFlow(data, th));
+
+  return lines;
+}
+
+// ─── Data Flow ───────────────────────────────────────────────────────────────
+
+function renderDataFlow(data: VisualizerData, th: Theme): string[] {
+  const lines: string[] = [];
+  const versWithProvides = data.sliceVerifications.filter(v => v.provides.length > 0);
+  const versWithRequires = data.sliceVerifications.filter(v => v.requires.length > 0);
+
+  if (versWithProvides.length === 0 && versWithRequires.length === 0) return lines;
+
+  lines.push(th.fg("accent", th.bold("Data Flow")));
+  lines.push("");
+
+  for (const v of versWithProvides) {
+    for (const artifact of v.provides) {
+      lines.push(`  ${th.fg("text", v.sliceId)} ${th.fg("accent", "\u2500\u2500\u25ba")} ${th.fg("dim", `[${artifact}]`)}`);
+    }
+  }
+
+  for (const v of versWithRequires) {
+    for (const req of v.requires) {
+      lines.push(`  ${th.fg("dim", `[${req.provides}]`)} ${th.fg("accent", "\u25c4\u2500\u2500")} ${th.fg("text", req.slice)}`);
+    }
+  }
 
   return lines;
 }
@@ -284,10 +433,9 @@ function renderCriticalPath(data: VisualizerData, th: Theme, _width: number): st
 
   // Milestone chain
   const chain = cp.milestonePath.map(id => {
-    const ms = data.milestones.find(m => m.id === id);
     const badge = th.fg("error", "[CRITICAL]");
     return `${id} ${badge}`;
-  }).join(` ${th.fg("accent", "──►")} `);
+  }).join(` ${th.fg("accent", "\u2500\u2500\u25ba")} `);
   lines.push(`  ${chain}`);
   lines.push("");
 
@@ -304,7 +452,7 @@ function renderCriticalPath(data: VisualizerData, th: Theme, _width: number): st
     lines.push(th.fg("accent", th.bold("Slice Critical Path")));
     lines.push("");
 
-    const sliceChain = cp.slicePath.join(` ${th.fg("accent", "──►")} `);
+    const sliceChain = cp.slicePath.join(` ${th.fg("accent", "\u2500\u2500\u25ba")} `);
     lines.push(`  ${sliceChain}`);
 
     // Bottleneck warnings
@@ -313,7 +461,7 @@ function renderCriticalPath(data: VisualizerData, th: Theme, _width: number): st
       for (const sid of cp.slicePath) {
         const sl = activeMs.slices.find(s => s.id === sid);
         if (sl && !sl.done && !sl.active) {
-          lines.push(th.fg("warning", `  ⚠ ${sid}: critical but not yet started`));
+          lines.push(th.fg("warning", `  \u26a0 ${sid}: critical but not yet started`));
         }
       }
     }
@@ -347,6 +495,10 @@ export function renderMetricsView(
     `Tokens: ${th.fg("text", formatTokenCount(totals.tokens.total))}  ` +
     `Units: ${th.fg("text", String(totals.units))}`,
   );
+  lines.push(
+    `  Tools: ${th.fg("text", String(totals.toolCalls))}  ` +
+    `Messages: ${th.fg("text", String(totals.assistantMessages))} sent / ${th.fg("text", String(totals.userMessages))} received`,
+  );
   lines.push("");
 
   const barWidth = Math.max(10, width - 40);
@@ -365,8 +517,8 @@ export function renderMetricsView(
           ? Math.round((phase.cost / maxPhaseCost) * barWidth)
           : 0;
       const bar =
-        th.fg("accent", "█".repeat(fillLen)) +
-        th.fg("dim", "░".repeat(barWidth - fillLen));
+        th.fg("accent", "\u2588".repeat(fillLen)) +
+        th.fg("dim", "\u2591".repeat(barWidth - fillLen));
       const label = padRight(phase.phase, 14);
       const costStr = formatCost(phase.cost);
       const pctStr = `${pct.toFixed(1)}%`;
@@ -391,12 +543,42 @@ export function renderMetricsView(
           ? Math.round((model.cost / maxModelCost) * barWidth)
           : 0;
       const bar =
-        th.fg("accent", "█".repeat(fillLen)) +
-        th.fg("dim", "░".repeat(barWidth - fillLen));
+        th.fg("accent", "\u2588".repeat(fillLen)) +
+        th.fg("dim", "\u2591".repeat(barWidth - fillLen));
       const label = padRight(model.model, 20);
       const costStr = formatCost(model.cost);
       const pctStr = `${pct.toFixed(1)}%`;
       lines.push(`  ${label} ${bar} ${costStr} ${pctStr}`);
+    }
+
+    lines.push("");
+  }
+
+  // By Tier
+  if (data.byTier.length > 0) {
+    lines.push(th.fg("accent", th.bold("By Tier")));
+    lines.push("");
+
+    const maxTierCost = Math.max(...data.byTier.map((t) => t.cost));
+
+    for (const tier of data.byTier) {
+      const pct = totals.cost > 0 ? (tier.cost / totals.cost) * 100 : 0;
+      const fillLen =
+        maxTierCost > 0
+          ? Math.round((tier.cost / maxTierCost) * barWidth)
+          : 0;
+      const bar =
+        th.fg("accent", "\u2588".repeat(fillLen)) +
+        th.fg("dim", "\u2591".repeat(barWidth - fillLen));
+      const label = padRight(tier.tier, 12);
+      const costStr = formatCost(tier.cost);
+      const pctStr = `${pct.toFixed(1)}%`;
+      const unitsStr = `${tier.units} units`;
+      lines.push(`  ${label} ${bar} ${costStr} ${pctStr} ${unitsStr}`);
+    }
+
+    if (data.tierSavingsLine) {
+      lines.push(`  ${th.fg("success", data.tierSavingsLine)}`);
     }
 
     lines.push("");
@@ -432,7 +614,7 @@ function renderCostProjections(data: VisualizerData, th: Theme, _width: number):
   lines.push(`  Avg cost/slice: ${th.fg("text", formatCost(avgCostPerSlice))}`);
   lines.push(
     `  Projected remaining: ${th.fg("text", formatCost(projectedRemaining))} ` +
-    `(${formatCost(avgCostPerSlice)}/slice × ${data.remainingSliceCount} remaining)`,
+    `(${formatCost(avgCostPerSlice)}/slice \u00d7 ${data.remainingSliceCount} remaining)`,
   );
 
   // Burn rate
@@ -448,10 +630,10 @@ function renderCostProjections(data: VisualizerData, th: Theme, _width: number):
     lines.push(`  Cost trend: ${spark}`);
   }
 
-  // Budget warning: projected total > 2× current spend
+  // Budget warning: projected total > 2x current spend
   const projectedTotal = data.totals.cost + projectedRemaining;
   if (projectedTotal > 2 * data.totals.cost && data.remainingSliceCount > 0) {
-    lines.push(th.fg("warning", `  ⚠ Projected total ${formatCost(projectedTotal)} exceeds 2× current spend`));
+    lines.push(th.fg("warning", `  \u26a0 Projected total ${formatCost(projectedTotal)} exceeds 2\u00d7 current spend`));
   }
 
   return lines;
@@ -479,6 +661,10 @@ export function renderTimelineView(
   return renderTimelineList(data, th, width);
 }
 
+function shortenModel(model: string): string {
+  return model.replace(/^claude-/, "").slice(0, 12);
+}
+
 function renderTimelineList(data: VisualizerData, th: Theme, width: number): string[] {
   const lines: string[] = [];
 
@@ -499,8 +685,8 @@ function renderTimelineList(data: VisualizerData, th: Theme, width: number): str
     const duration = unit.finishedAt - unit.startedAt;
     const glyph =
       unit.finishedAt > 0
-        ? th.fg("success", "✓")
-        : th.fg("accent", "▸");
+        ? th.fg("success", "\u2713")
+        : th.fg("accent", "\u25b8");
 
     const typeLabel = padRight(unit.type, 16);
     const idLabel = padRight(unit.id, 14);
@@ -510,13 +696,18 @@ function renderTimelineList(data: VisualizerData, th: Theme, width: number): str
         ? Math.round((duration / maxDuration) * timeBarWidth)
         : 0;
     const bar =
-      th.fg("accent", "█".repeat(fillLen)) +
-      th.fg("dim", "░".repeat(timeBarWidth - fillLen));
+      th.fg("accent", "\u2588".repeat(fillLen)) +
+      th.fg("dim", "\u2591".repeat(timeBarWidth - fillLen));
 
     const durStr = formatDuration(duration);
     const costStr = formatCost(unit.cost);
 
-    const line = `  ${time}  ${glyph} ${typeLabel} ${idLabel} ${bar}  ${durStr}  ${costStr}`;
+    // Tier and model info
+    const tierLabel = unit.tier ? th.fg("dim", `[${unit.tier}]`) : "";
+    const modelLabel = th.fg("dim", shortenModel(unit.model));
+    const tierModelPart = [tierLabel, modelLabel].filter(Boolean).join(" ");
+
+    const line = `  ${time}  ${glyph} ${typeLabel} ${tierModelPart} ${idLabel} ${bar}  ${durStr}  ${costStr}`;
     lines.push(truncateToWidth(line, width));
   }
 
@@ -554,7 +745,7 @@ function renderGanttView(data: VisualizerData, th: Theme, width: number): string
   for (const unit of recent) {
     const phase = classifyUnitPhase(unit.type);
     if (phase !== lastPhase && lastPhase !== "") {
-      lines.push(th.fg("dim", "  " + "─".repeat(width - 4)));
+      lines.push(th.fg("dim", "  " + "\u2500".repeat(width - 4)));
     }
     lastPhase = phase;
 
@@ -571,11 +762,12 @@ function renderGanttView(data: VisualizerData, th: Theme, width: number): string
 
     const barStr =
       " ".repeat(startPos) +
-      th.fg(phaseColor, "█".repeat(barLen)) +
+      th.fg(phaseColor, "\u2588".repeat(barLen)) +
       " ".repeat(Math.max(0, barArea - startPos - barLen));
 
+    const tierTag = unit.tier ? `[${unit.tier[0]}]` : "";
     const gutter = padRight(
-      truncateToWidth(`${unit.type.slice(0, 8)} ${unit.id}`, gutterWidth - 1),
+      truncateToWidth(`${unit.type.slice(0, 8)} ${unit.id}${tierTag}`, gutterWidth - 1),
       gutterWidth,
     );
 
@@ -611,10 +803,10 @@ export function renderAgentView(
 
   // Status line
   const statusDot = activity.active
-    ? th.fg("success", "●")
-    : th.fg("dim", "○");
+    ? th.fg("success", "\u25cf")
+    : th.fg("dim", "\u25cb");
   const statusText = activity.active ? "ACTIVE" : "IDLE";
-  const elapsedStr = activity.active ? formatDuration(activity.elapsed) : "—";
+  const elapsedStr = activity.active ? formatDuration(activity.elapsed) : "\u2014";
 
   lines.push(
     joinColumns(
@@ -640,20 +832,35 @@ export function renderAgentView(
     const barW = Math.max(10, Math.min(30, width - 30));
     const fillLen = Math.round(pct * barW);
     const bar =
-      th.fg("accent", "█".repeat(fillLen)) +
-      th.fg("dim", "░".repeat(barW - fillLen));
+      th.fg("accent", "\u2588".repeat(fillLen)) +
+      th.fg("dim", "\u2591".repeat(barW - fillLen));
     lines.push(`Progress ${bar} ${completed}/${total} slices`);
   }
 
   // Rate and session stats
   const rateStr = activity.completionRate > 0
     ? `${activity.completionRate.toFixed(1)} units/hr`
-    : "—";
+    : "\u2014";
   lines.push(
     `Rate: ${th.fg("text", rateStr)}    ` +
     `Session: ${th.fg("text", formatCost(activity.sessionCost))}  ` +
     `${th.fg("text", formatTokenCount(activity.sessionTokens))} tokens`,
   );
+
+  lines.push("");
+
+  // Budget pressure
+  const health = data.health;
+  const truncColor = health.truncationRate < 10 ? "success" : health.truncationRate < 30 ? "warning" : "error";
+  const contColor = health.continueHereRate < 10 ? "success" : health.continueHereRate < 30 ? "warning" : "error";
+  lines.push(th.fg("accent", th.bold("Pressure")));
+  lines.push(`  Truncation rate: ${th.fg(truncColor, `${health.truncationRate.toFixed(1)}%`)}`);
+  lines.push(`  Continue-here rate: ${th.fg(contColor, `${health.continueHereRate.toFixed(1)}%`)}`);
+
+  // Pending captures
+  if (data.captures.pendingCount > 0) {
+    lines.push(`  Pending captures: ${th.fg("warning", String(data.captures.pendingCount))}`);
+  }
 
   lines.push("");
 
@@ -670,7 +877,7 @@ export function renderAgentView(
       const typeLabel = padRight(u.type, 16);
       lines.push(
         truncateToWidth(
-          `  ${hh}:${mm}  ${th.fg("success", "✓")} ${typeLabel} ${padRight(u.id, 16)} ${dur}  ${cost}`,
+          `  ${hh}:${mm}  ${th.fg("success", "\u2713")} ${typeLabel} ${padRight(u.id, 16)} ${dur}  ${cost}`,
           width,
         ),
       );
@@ -713,10 +920,27 @@ export function renderChangelogView(
       for (const f of entry.filesModified) {
         lines.push(
           truncateToWidth(
-            `    ${th.fg("success", "✓")} ${f.path} — ${f.description}`,
+            `    ${th.fg("success", "\u2713")} ${f.path} \u2014 ${f.description}`,
             width,
           ),
         );
+      }
+    }
+
+    // Decisions and patterns from slice verification
+    const ver = findVerification(data, entry.milestoneId, entry.sliceId);
+    if (ver) {
+      if (ver.keyDecisions.length > 0) {
+        lines.push("  Decisions:");
+        for (const d of ver.keyDecisions) {
+          lines.push(`    - ${d}`);
+        }
+      }
+      if (ver.patternsEstablished.length > 0) {
+        lines.push("  Patterns:");
+        for (const p of ver.patternsEstablished) {
+          lines.push(`    - ${p}`);
+        }
       }
     }
 
@@ -742,14 +966,204 @@ export function renderExportView(
 
   lines.push(th.fg("accent", th.bold("Export Options")));
   lines.push("");
-  lines.push(`  ${th.fg("accent", "[m]")}  Markdown report — full project summary with tables`);
-  lines.push(`  ${th.fg("accent", "[j]")}  JSON report — machine-readable project data`);
-  lines.push(`  ${th.fg("accent", "[s]")}  Snapshot — current view as plain text`);
+  lines.push(`  ${th.fg("accent", "[m]")}  Markdown report \u2014 full project summary with tables`);
+  lines.push(`  ${th.fg("accent", "[j]")}  JSON report \u2014 machine-readable project data`);
+  lines.push(`  ${th.fg("accent", "[s]")}  Snapshot \u2014 current view as plain text`);
 
   if (lastExportPath) {
     lines.push("");
     lines.push(th.fg("dim", `Last export: ${lastExportPath}`));
   }
+
+  return lines;
+}
+
+// ─── Knowledge View ──────────────────────────────────────────────────────────
+
+export function renderKnowledgeView(
+  data: VisualizerData,
+  th: Theme,
+  width: number,
+): string[] {
+  const lines: string[] = [];
+  const knowledge = data.knowledge;
+
+  if (!knowledge.exists) {
+    lines.push(th.fg("dim", "No KNOWLEDGE.md found"));
+    return lines;
+  }
+
+  if (knowledge.rules.length === 0 && knowledge.patterns.length === 0 && knowledge.lessons.length === 0) {
+    lines.push(th.fg("dim", "KNOWLEDGE.md exists but is empty"));
+    return lines;
+  }
+
+  // Rules section
+  if (knowledge.rules.length > 0) {
+    lines.push(th.fg("accent", th.bold("Rules")));
+    lines.push("");
+    for (const rule of knowledge.rules) {
+      lines.push(truncateToWidth(
+        `  ${th.fg("accent", rule.id)}  ${th.fg("dim", `[${rule.scope}]`)}  ${rule.content}`,
+        width,
+      ));
+    }
+    lines.push("");
+  }
+
+  // Patterns section
+  if (knowledge.patterns.length > 0) {
+    lines.push(th.fg("accent", th.bold("Patterns")));
+    lines.push("");
+    for (const pattern of knowledge.patterns) {
+      lines.push(truncateToWidth(
+        `  ${th.fg("accent", pattern.id)}  ${pattern.content}`,
+        width,
+      ));
+    }
+    lines.push("");
+  }
+
+  // Lessons section
+  if (knowledge.lessons.length > 0) {
+    lines.push(th.fg("accent", th.bold("Lessons Learned")));
+    lines.push("");
+    for (const lesson of knowledge.lessons) {
+      lines.push(truncateToWidth(
+        `  ${th.fg("accent", lesson.id)}  ${lesson.content}`,
+        width,
+      ));
+    }
+    lines.push("");
+  }
+
+  return lines;
+}
+
+// ─── Captures View ───────────────────────────────────────────────────────────
+
+export function renderCapturesView(
+  data: VisualizerData,
+  th: Theme,
+  width: number,
+): string[] {
+  const lines: string[] = [];
+  const captures = data.captures;
+
+  // Summary line
+  const resolved = captures.entries.filter(e => e.status === "resolved").length;
+  lines.push(
+    `${th.fg("text", String(captures.totalCount))} total \u00b7 ` +
+    `${th.fg("warning", String(captures.pendingCount))} pending \u00b7 ` +
+    `${th.fg("dim", String(resolved))} resolved`,
+  );
+  lines.push("");
+
+  if (captures.entries.length === 0) {
+    lines.push(th.fg("dim", "No captures recorded."));
+    return lines;
+  }
+
+  // Group by status: pending first, then triaged, then resolved
+  const statusOrder: Record<string, number> = { pending: 0, triaged: 1, resolved: 2 };
+  const sorted = [...captures.entries].sort((a, b) =>
+    (statusOrder[a.status] ?? 3) - (statusOrder[b.status] ?? 3),
+  );
+
+  for (const entry of sorted) {
+    const statusColor =
+      entry.status === "pending" ? "warning" :
+      entry.status === "triaged" ? "accent" :
+      "dim";
+
+    const classColor =
+      entry.classification === "inject" ? "warning" :
+      entry.classification === "quick-task" ? "accent" :
+      entry.classification === "replan" ? "error" :
+      entry.classification === "defer" ? "text" :
+      "dim";
+
+    const classBadge = entry.classification
+      ? th.fg(classColor, `(${entry.classification})`)
+      : "";
+
+    const statusBadge = th.fg(statusColor, `[${entry.status}]`);
+    const textPreview = truncateToWidth(entry.text, Math.max(20, width - 50));
+
+    lines.push(`  ${th.fg("accent", entry.id)} ${statusBadge} ${textPreview} ${classBadge}`);
+    if (entry.timestamp) {
+      lines.push(`    ${th.fg("dim", entry.timestamp)}`);
+    }
+  }
+
+  return lines;
+}
+
+// ─── Health View ─────────────────────────────────────────────────────────────
+
+export function renderHealthView(
+  data: VisualizerData,
+  th: Theme,
+  width: number,
+): string[] {
+  const lines: string[] = [];
+  const health = data.health;
+
+  // Budget section
+  lines.push(th.fg("accent", th.bold("Budget")));
+  lines.push("");
+  if (health.budgetCeiling !== undefined) {
+    const currentSpend = data.totals?.cost ?? 0;
+    const pct = health.budgetCeiling > 0 ? Math.min(1, currentSpend / health.budgetCeiling) : 0;
+    const barW = Math.max(10, Math.min(30, width - 40));
+    const fillLen = Math.round(pct * barW);
+    const budgetColor = pct < 0.7 ? "success" : pct < 0.9 ? "warning" : "error";
+    const bar =
+      th.fg(budgetColor, "\u2588".repeat(fillLen)) +
+      th.fg("dim", "\u2591".repeat(barW - fillLen));
+    lines.push(`  Ceiling: ${th.fg("text", formatCost(health.budgetCeiling))}`);
+    lines.push(`  Spend:   ${bar} ${formatCost(currentSpend)} (${(pct * 100).toFixed(1)}%)`);
+  } else {
+    lines.push(th.fg("dim", "  No budget ceiling set"));
+  }
+  lines.push(`  Token profile: ${th.fg("text", health.tokenProfile)}`);
+  lines.push("");
+
+  // Pressure section
+  lines.push(th.fg("accent", th.bold("Pressure")));
+  lines.push("");
+  const truncColor = health.truncationRate < 10 ? "success" : health.truncationRate < 30 ? "warning" : "error";
+  const contColor = health.continueHereRate < 10 ? "success" : health.continueHereRate < 30 ? "warning" : "error";
+  const pressBarW = Math.max(10, Math.min(20, width - 50));
+
+  const truncFill = Math.round((Math.min(health.truncationRate, 100) / 100) * pressBarW);
+  const truncBar = th.fg(truncColor, "\u2588".repeat(truncFill)) + th.fg("dim", "\u2591".repeat(pressBarW - truncFill));
+  lines.push(`  Truncation:    ${truncBar} ${health.truncationRate.toFixed(1)}%`);
+
+  const contFill = Math.round((Math.min(health.continueHereRate, 100) / 100) * pressBarW);
+  const contBar = th.fg(contColor, "\u2588".repeat(contFill)) + th.fg("dim", "\u2591".repeat(pressBarW - contFill));
+  lines.push(`  Continue-here: ${contBar} ${health.continueHereRate.toFixed(1)}%`);
+  lines.push("");
+
+  // Routing section
+  if (health.tierBreakdown.length > 0) {
+    lines.push(th.fg("accent", th.bold("Routing")));
+    lines.push("");
+    for (const tier of health.tierBreakdown) {
+      const downTag = tier.downgraded > 0 ? th.fg("warning", ` (${tier.downgraded} downgraded)`) : "";
+      lines.push(`  ${padRight(tier.tier, 12)} ${tier.units} units  ${formatCost(tier.cost)}${downTag}`);
+    }
+    if (health.tierSavingsLine) {
+      lines.push(`  ${th.fg("success", health.tierSavingsLine)}`);
+    }
+    lines.push("");
+  }
+
+  // Session section
+  lines.push(th.fg("accent", th.bold("Session")));
+  lines.push("");
+  lines.push(`  Tool calls: ${th.fg("text", String(health.toolCalls))}`);
+  lines.push(`  Messages: ${th.fg("text", String(health.assistantMessages))} sent / ${th.fg("text", String(health.userMessages))} received`);
 
   return lines;
 }

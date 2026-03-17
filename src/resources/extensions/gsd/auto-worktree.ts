@@ -6,7 +6,7 @@
  * manages create, enter, detect, and teardown for auto-mode worktrees.
  */
 
-import { existsSync, cpSync, readFileSync, realpathSync, utimesSync } from "node:fs";
+import { existsSync, cpSync, readFileSync, writeFileSync, readdirSync, mkdirSync, realpathSync, utimesSync, unlinkSync } from "node:fs";
 import { isAbsolute, join, resolve } from "node:path";
 import { copyWorktreeDb, reconcileWorktreeDb, isDbAvailable } from "./gsd-db.js";
 import { execSync, execFileSync } from "node:child_process";
@@ -134,6 +134,112 @@ export function autoWorktreeBranch(milestoneId: string): string {
  * Atomic: chdir + originalBase update happen in the same try block
  * to prevent split-brain.
  */
+
+/**
+ * Forward-merge plan checkbox state from the project root into a freshly
+ * re-attached worktree (#778).
+ *
+ * When auto-mode stops via crash (not graceful stop), the milestone branch
+ * HEAD may be behind the filesystem state at the project root because
+ * syncStateToProjectRoot() runs after every task completion but the final
+ * git commit may not have happened before the crash. On restart the worktree
+ * is re-attached to the branch HEAD, which has [ ] for the crashed task,
+ * causing verifyExpectedArtifact() to fail and triggering an infinite
+ * dispatch/skip loop.
+ *
+ * Fix: after re-attaching, read every *.md plan file in the milestone
+ * directory at the project root and apply any [x] checkbox states that are
+ * ahead of the worktree version (forward-only: never downgrade [x] → [ ]).
+ *
+ * This is safe because syncStateToProjectRoot() is the authoritative source
+ * of post-task state at the project root — it writes the same [x] the LLM
+ * produced, then the auto-commit follows. If the commit never happened, the
+ * filesystem copy is still valid and correct.
+ */
+function reconcilePlanCheckboxes(projectRoot: string, wtPath: string, milestoneId: string): void {
+  const srcMilestone = join(projectRoot, ".gsd", "milestones", milestoneId);
+  const dstMilestone = join(wtPath, ".gsd", "milestones", milestoneId);
+  if (!existsSync(srcMilestone) || !existsSync(dstMilestone)) return;
+
+  // Walk all markdown files in the milestone directory (plans, summaries, etc.)
+  function walkMd(dir: string): string[] {
+    const results: string[] = [];
+    try {
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        const full = join(dir, entry.name);
+        if (entry.isDirectory()) {
+          results.push(...walkMd(full));
+        } else if (entry.isFile() && entry.name.endsWith(".md")) {
+          results.push(full);
+        }
+      }
+    } catch { /* non-fatal */ }
+    return results;
+  }
+
+  for (const srcFile of walkMd(srcMilestone)) {
+    const rel = srcFile.slice(srcMilestone.length);
+    const dstFile = dstMilestone + rel;
+    if (!existsSync(dstFile)) continue; // only reconcile existing files
+
+    let srcContent: string;
+    let dstContent: string;
+    try {
+      srcContent = readFileSync(srcFile, "utf-8");
+      dstContent = readFileSync(dstFile, "utf-8");
+    } catch { continue; }
+
+    if (srcContent === dstContent) continue;
+
+    // Extract all checked task IDs from the source (project root)
+    // Pattern: - [x] **T<id>: or - [x] **S<id>: (case-insensitive x)
+    const checkedRe = /^- \[[xX]\] \*\*([TS]\d+):/gm;
+    const srcChecked = new Set<string>();
+    for (const m of srcContent.matchAll(checkedRe)) srcChecked.add(m[1]);
+
+    if (srcChecked.size === 0) continue;
+
+    // Forward-apply: replace [ ] → [x] for any IDs that are checked in src
+    let updated = dstContent;
+    let changed = false;
+    for (const id of srcChecked) {
+      const escapedId = id.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const uncheckedRe = new RegExp(`^(- )\\[ \\]( \\*\\*${escapedId}:)`, "gm");
+      if (uncheckedRe.test(updated)) {
+        updated = updated.replace(
+          new RegExp(`^(- )\\[ \\]( \\*\\*${escapedId}:)`, "gm"),
+          "$1[x]$2",
+        );
+        changed = true;
+      }
+    }
+
+    if (changed) {
+      try {
+        writeFileSync(dstFile, updated, "utf-8");
+      } catch { /* non-fatal */ }
+    }
+  }
+
+  // Also forward-merge completed-units.json (set-union)
+  const srcKeys = join(projectRoot, ".gsd", "completed-units.json");
+  const dstKeys = join(wtPath, ".gsd", "completed-units.json");
+  if (existsSync(srcKeys)) {
+    try {
+      const src: string[] = JSON.parse(readFileSync(srcKeys, "utf-8"));
+      let dst: string[] = [];
+      if (existsSync(dstKeys)) {
+        try { dst = JSON.parse(readFileSync(dstKeys, "utf-8")); } catch { /* ignore corrupt */ }
+      }
+      const merged = [...new Set([...dst, ...src])];
+      if (merged.length > dst.length) {
+        mkdirSync(join(wtPath, ".gsd"), { recursive: true });
+        writeFileSync(dstKeys, JSON.stringify(merged), "utf-8");
+      }
+    } catch { /* non-fatal */ }
+  }
+}
+
 export function createAutoWorktree(basePath: string, milestoneId: string): string {
   const branch = autoWorktreeBranch(milestoneId);
 
@@ -166,6 +272,18 @@ export function createAutoWorktree(basePath: string, milestoneId: string): strin
   // not always fully synced.
   if (!branchExists) {
     copyPlanningArtifacts(basePath, info.path);
+  } else {
+    // Re-attaching to an existing branch: forward-merge any plan checkpoint
+    // state from the project root into the worktree (#778).
+    //
+    // If auto-mode stopped via crash, the milestone branch HEAD may lag behind
+    // the project root filesystem because syncStateToProjectRoot() ran after
+    // task completion but the auto-commit never fired. On restart the worktree
+    // is re-created from the branch HEAD (which has [ ] for the crashed task),
+    // causing verifyExpectedArtifact() to return false → stale-key eviction →
+    // infinite dispatch/skip loop. Reconciling here ensures the worktree sees
+    // the same [x] state that syncStateToProjectRoot() wrote to the root.
+    reconcilePlanCheckboxes(basePath, info.path, milestoneId);
   }
 
   // Run user-configured post-create hook (#597) — e.g. copy .env, symlink assets
@@ -194,7 +312,8 @@ export function createAutoWorktree(basePath: string, milestoneId: string): strin
 
 /**
  * Copy .gsd/ planning artifacts from source repo to a new worktree.
- * Copies milestones/, DECISIONS.md, REQUIREMENTS.md, PROJECT.md, QUEUE.md.
+ * Copies milestones/, DECISIONS.md, REQUIREMENTS.md, PROJECT.md, QUEUE.md,
+ * STATE.md, KNOWLEDGE.md, and OVERRIDES.md.
  * Skips runtime files (auto.lock, metrics.json, etc.) and the worktrees/ dir.
  * Best-effort — failures are non-fatal since auto-mode can recreate artifacts.
  */
@@ -212,7 +331,7 @@ function copyPlanningArtifacts(srcBase: string, wtPath: string): void {
   }
 
   // Copy top-level planning files
-  for (const file of ["DECISIONS.md", "REQUIREMENTS.md", "PROJECT.md", "QUEUE.md"]) {
+  for (const file of ["DECISIONS.md", "REQUIREMENTS.md", "PROJECT.md", "QUEUE.md", "STATE.md", "KNOWLEDGE.md", "OVERRIDES.md"]) {
     const src = join(srcGsd, file);
     if (existsSync(src)) {
       try {
@@ -441,6 +560,16 @@ export function mergeMilestoneToMain(
   //    when main is already checked out in the project-root worktree, #757)
   const currentBranchAtBase = nativeGetCurrentBranch(originalBasePath_);
   if (currentBranchAtBase !== mainBranch) {
+    // Remove untracked .gsd/ state files that may conflict with the branch
+    // being checked out. These are regenerated by doctor/rebuildState and
+    // are not meaningful in the main working tree — the worktree had the
+    // real state. Without this, `git checkout main` fails with
+    // "Your local changes would be overwritten" (#827).
+    const gsdStateFiles = ["STATE.md", "completed-units.json", "auto.lock"];
+    for (const f of gsdStateFiles) {
+      const p = join(originalBasePath_, ".gsd", f);
+      try { unlinkSync(p); } catch { /* non-fatal — file may not exist */ }
+    }
     nativeCheckoutBranch(originalBasePath_, mainBranch);
   }
 

@@ -142,6 +142,7 @@ export interface Settings {
 	taskIsolation?: TaskIsolationSettings;
 	fallback?: FallbackSettings;
 	modelDiscovery?: ModelDiscoverySettings;
+	editMode?: "standard" | "hashline"; // Edit tool mode: "standard" (text match) or "hashline" (LINE#ID anchors). Default: "standard"
 }
 
 /** Deep merge settings: project/overrides take precedence, nested objects merge recursively */
@@ -1125,6 +1126,16 @@ export class SettingsManager {
 		}
 		this.globalSettings.modelDiscovery.enabled = enabled;
 		this.markModified("modelDiscovery", "enabled");
+		this.save();
+	}
+
+	getEditMode(): "standard" | "hashline" {
+		return this.settings.editMode ?? "standard";
+	}
+
+	setEditMode(mode: "standard" | "hashline"): void {
+		this.globalSettings.editMode = mode;
+		this.markModified("editMode");
 		this.save();
 	}
 }

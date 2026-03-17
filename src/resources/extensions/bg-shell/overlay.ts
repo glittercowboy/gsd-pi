@@ -328,12 +328,9 @@ export class BgManagerOverlay {
 		return this.box(inner, width);
 	}
 
-	private renderOutput(width: number): string[] {
+	private processStatusHeader(p: typeof this.viewingProcess, activeTab: "output" | "events"): { statusIcon: string; headerLine: string } {
 		const th = this.theme;
-		const p = this.viewingProcess;
-		if (!p) return [""];
-		const inner: string[] = [];
-
+		if (!p) return { statusIcon: "", headerLine: "" };
 		const statusIcon = p.alive
 			? (p.status === "ready" ? th.fg("success", "●")
 				: p.status === "error" ? th.fg("error", "●")
@@ -343,9 +340,21 @@ export class BgManagerOverlay {
 		const uptime = th.fg("dim", formatUptime(Date.now() - p.startedAt));
 		const typeTag = th.fg("dim", `[${p.processType}]`);
 		const portInfo = p.ports.length > 0 ? th.fg("dim", ` :${p.ports.join(",")}`) : "";
-		const tabIndicator = th.fg("accent", "[Output]") + " " + th.fg("dim", "Events");
+		const tabIndicator = activeTab === "output"
+			? th.fg("accent", "[Output]") + " " + th.fg("dim", "Events")
+			: th.fg("dim", "Output") + " " + th.fg("accent", "[Events]");
+		const headerLine = `${statusIcon} ${name} ${typeTag} ${uptime}${portInfo}  ${tabIndicator}`;
+		return { statusIcon, headerLine };
+	}
 
-		inner.push(`${statusIcon} ${name} ${typeTag} ${uptime}${portInfo}  ${tabIndicator}`);
+	private renderOutput(width: number): string[] {
+		const th = this.theme;
+		const p = this.viewingProcess;
+		if (!p) return [""];
+		const inner: string[] = [];
+
+		const { headerLine } = this.processStatusHeader(p, "output");
+		inner.push(headerLine);
 		inner.push("");
 
 		// Unified buffer is already chronologically interleaved
@@ -384,16 +393,8 @@ export class BgManagerOverlay {
 		if (!p) return [""];
 		const inner: string[] = [];
 
-		const statusIcon = p.alive
-			? (p.status === "ready" ? th.fg("success", "●")
-				: p.status === "error" ? th.fg("error", "●")
-				: th.fg("warning", "●"))
-			: th.fg("dim", "○");
-		const name = th.fg("muted", p.label);
-		const uptime = th.fg("dim", formatUptime(Date.now() - p.startedAt));
-		const tabIndicator = th.fg("dim", "Output") + " " + th.fg("accent", "[Events]");
-
-		inner.push(`${statusIcon} ${name} ${uptime}  ${tabIndicator}`);
+		const { headerLine } = this.processStatusHeader(p, "events");
+		inner.push(headerLine);
 		inner.push("");
 
 		if (p.events.length === 0) {

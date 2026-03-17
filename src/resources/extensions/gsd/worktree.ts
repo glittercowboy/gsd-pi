@@ -14,10 +14,11 @@
 
 import { sep } from "node:path";
 
-import { GitServiceImpl, writeIntegrationBranch } from "./git-service.js";
+import { GitServiceImpl, writeIntegrationBranch, type TaskCommitContext } from "./git-service.js";
 import { loadEffectiveGSDPreferences } from "./preferences.js";
 
 export { MergeConflictError } from "./git-service.js";
+export type { TaskCommitContext } from "./git-service.js";
 
 // ─── Lazy GitServiceImpl Cache ─────────────────────────────────────────────
 
@@ -162,12 +163,18 @@ export function getCurrentBranch(basePath: string): string {
 
 /**
  * Auto-commit any dirty files in the current working tree.
+ *
+ * When `taskContext` is provided, generates a meaningful conventional commit
+ * message from the task summary (one-liner, inferred type, key files).
+ * Falls back to a generic `chore()` message for non-task commits.
+ *
  * Returns the commit message used, or null if already clean.
  */
 export function autoCommitCurrentBranch(
   basePath: string, unitType: string, unitId: string,
+  taskContext?: TaskCommitContext,
 ): string | null {
-  return getService(basePath).autoCommit(unitType, unitId);
+  return getService(basePath).autoCommit(unitType, unitId, [], taskContext);
 }
 
 

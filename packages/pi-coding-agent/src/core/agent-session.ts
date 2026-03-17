@@ -774,6 +774,42 @@ export class AgentSession {
 		);
 	}
 
+	/**
+	 * Switch edit mode between standard (text-match) and hashline (LINE#ID anchors).
+	 * Swaps the active read/edit tools and rebuilds the system prompt.
+	 */
+	setEditMode(mode: "standard" | "hashline"): void {
+		this.settingsManager.setEditMode(mode);
+
+		// Get current active tool registry keys
+		const currentKeys = new Set<string>();
+		for (const [key, tool] of this._toolRegistry.entries()) {
+			if (this.agent.state.tools.includes(tool)) {
+				currentKeys.add(key);
+			}
+		}
+
+		// Swap read tools
+		if (mode === "hashline") {
+			currentKeys.delete("read");
+			currentKeys.add("hashline_read");
+			currentKeys.delete("edit");
+			currentKeys.add("hashline_edit");
+		} else {
+			currentKeys.delete("hashline_read");
+			currentKeys.add("read");
+			currentKeys.delete("hashline_edit");
+			currentKeys.add("edit");
+		}
+
+		this.setActiveToolsByName([...currentKeys]);
+	}
+
+	/** Current edit mode */
+	get editMode(): "standard" | "hashline" {
+		return this.settingsManager.getEditMode();
+	}
+
 	/** All messages including custom types like BashExecutionMessage */
 	get messages(): AgentMessage[] {
 		return this.agent.state.messages;

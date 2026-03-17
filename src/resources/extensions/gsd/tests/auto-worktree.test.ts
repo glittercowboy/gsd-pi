@@ -153,6 +153,64 @@ async function main(): Promise<void> {
     // After teardown, originalBase should be null
     assertEq(getAutoWorktreeOriginalBase(), null, "no split-brain: originalBase cleared");
 
+    // ─── #778: reconcile plan checkboxes on re-attach ─────────────────
+    console.log("\n=== #778: reconcile plan checkboxes on re-attach ===");
+    {
+      // Simulate: T01 [x] was committed to milestone branch, T02 [x] was
+      // written to project root by syncStateToProjectRoot() but the
+      // auto-commit crashed before it fired. On restart the worktree is
+      // re-created from the milestone branch HEAD (T02 still [ ]).
+      // reconcilePlanCheckboxes should forward-apply T02 [x] from the root.
+
+      const planRelPath = join(".gsd", "milestones", "M004", "slices", "S01", "S01-PLAN.md");
+      const planDir = join(tempDir, ".gsd", "milestones", "M004", "slices", "S01");
+      const { mkdirSync: mkdir, writeFileSync: write, readFileSync: read } = await import("node:fs");
+
+      // Plan on integration branch (project root): T01 [x], T02 [x]
+      mkdir(planDir, { recursive: true });
+      write(
+        join(tempDir, planRelPath),
+        "# S01 Plan\n- [x] **T01:** task one\n- [x] **T02:** task two\n- [ ] **T03:** task three\n",
+      );
+
+      // Write integration-branch plan to git so milestone branch starts from it
+      run(`git add .`, tempDir);
+      run(`git commit -m "add plan with T01 and T02 checked" --allow-empty`, tempDir);
+
+      // Create milestone branch with only T01 [x] (simulating crash before T02 commit)
+      const milestoneBranch = "milestone/M004";
+      run(`git checkout -b ${milestoneBranch}`, tempDir);
+      mkdir(planDir, { recursive: true });
+      write(
+        join(tempDir, planRelPath),
+        "# S01 Plan\n- [x] **T01:** task one\n- [ ] **T02:** task two\n- [ ] **T03:** task three\n",
+      );
+      run(`git add .`, tempDir);
+      run(`git commit -m "milestone: only T01 checked"`, tempDir);
+      run(`git checkout main`, tempDir);
+
+      // Restore project root plan (T01+T02 [x]) — simulates syncStateToProjectRoot
+      write(
+        join(tempDir, planRelPath),
+        "# S01 Plan\n- [x] **T01:** task one\n- [x] **T02:** task two\n- [ ] **T03:** task three\n",
+      );
+
+      // Create worktree re-attached to existing milestone branch (T02 still [ ] in branch)
+      const wtPath = createAutoWorktree(tempDir, "M004");
+
+      try {
+        const wtPlanPath = join(wtPath, planRelPath);
+        assertTrue(existsSync(wtPlanPath), "plan file exists in worktree after re-attach");
+
+        const wtPlan = read(wtPlanPath, "utf-8");
+        assertTrue(wtPlan.includes("- [x] **T02:"), "T02 should be [x] after reconciliation (was [ ] on branch)");
+        assertTrue(wtPlan.includes("- [x] **T01:"), "T01 stays [x]");
+        assertTrue(wtPlan.includes("- [ ] **T03:"), "T03 stays [ ] (not in root either)");
+      } finally {
+        teardownAutoWorktree(tempDir, "M004");
+      }
+    }
+
   } finally {
     // Always restore cwd and clean up
     process.chdir(savedCwd);

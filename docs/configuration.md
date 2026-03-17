@@ -12,6 +12,9 @@ GSD preferences live in `~/.gsd/preferences.md` (global) or `.gsd/preferences.md
 | `/gsd prefs status` | Show current preference files, merged values, and skill resolution status |
 | `/gsd prefs wizard` | Alias for `/gsd prefs global` |
 | `/gsd prefs setup` | Alias for `/gsd prefs wizard` — creates preferences file if missing |
+| `/gsd prefs import-claude` | Import Claude marketplace plugins and skills as namespaced GSD components |
+| `/gsd prefs import-claude global` | Import to global scope |
+| `/gsd prefs import-claude project` | Import to project scope |
 
 ## Preferences File Format
 
@@ -73,6 +76,15 @@ models:
 - Provider targeting: use `provider/model` format (e.g., `bedrock/claude-sonnet-4-6`) or the `provider` field in object format
 - Omit a key to use whatever model is currently active
 
+### Custom Model Definitions (`models.json`)
+
+Define custom models in `~/.gsd/agent/models.json`. This lets you add models not included in the default registry — useful for self-hosted endpoints, fine-tuned models, or new releases.
+
+GSD resolves models.json with fallback logic:
+1. `~/.gsd/agent/models.json` — primary (GSD)
+2. `~/.pi/agent/models.json` — fallback (Pi)
+3. If neither exists, creates `~/.gsd/agent/models.json`
+
 **With fallbacks:**
 
 ```yaml
@@ -108,6 +120,7 @@ phases:
   skip_research: false        # skip milestone-level research
   skip_reassess: false        # skip roadmap reassessment after each slice
   skip_slice_research: true   # skip per-slice research
+  require_slice_discussion: false  # pause auto-mode before each slice for discussion
 ```
 
 These are usually set automatically by `token_profile`, but can be overridden explicitly.

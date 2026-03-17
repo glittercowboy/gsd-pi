@@ -37,19 +37,4 @@ export function resolveModelsJsonPath(): string {
   return GSD_MODELS_PATH
 }
 
-/**
- * Check if both GSD and PI models.json files exist.
- */
-export function hasBothModelsFiles(): boolean {
-  return existsSync(GSD_MODELS_PATH) && existsSync(PI_MODELS_PATH)
-}
 
-/**
- * Get the paths to both models.json files.
- */
-export function getModelsPaths(): { gsd: string; pi: string } {
-  return {
-    gsd: GSD_MODELS_PATH,
-    pi: PI_MODELS_PATH,
-  }
-}

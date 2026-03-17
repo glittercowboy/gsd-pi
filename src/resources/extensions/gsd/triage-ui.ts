@@ -135,7 +135,7 @@ export async function showTriageConfirmation(
       recommended: cls === proposed,
     }));
 
-    const choice = await showNextAction(ctx as any, {
+    const choice = await showNextAction(ctx, {
       title: `Triage: ${result.captureId}`,
       summary,
       actions,

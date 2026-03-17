@@ -21,6 +21,9 @@ GSD ships with these skills, installed to `~/.gsd/agent/skills/`:
 | `security-audit` | Security auditing — dependency scanning, OWASP | Comprehensive security assessment |
 | `security-review` | Code security review — injection, XSS, auth flaws | Vulnerability-focused code review |
 | `security-docker` | Docker security — Dockerfile, runtime hardening | Container security best practices |
+| `review` | Code review — staged changes, PRs, security, performance | Diff-aware code review with quality analysis |
+| `test` | Test generation and execution — auto-detects frameworks | Generate tests or run existing suites with failure analysis |
+| `lint` | Linting and formatting — ESLint, Biome, Prettier | Auto-detect linter, fix issues, report remaining problems |
 
 ## Skill Discovery
 

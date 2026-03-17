@@ -81,7 +81,7 @@ assert(
 
 // Check the branch has draft-aware menu options
 const branchIdx = guidedFlowSource.indexOf('state.phase === "needs-discussion"');
-const branchChunk = guidedFlowSource.slice(branchIdx, branchIdx + 3000);
+const branchChunk = guidedFlowSource.slice(branchIdx, branchIdx + 4000);
 
 assert(
   branchChunk.includes("discuss_draft"),

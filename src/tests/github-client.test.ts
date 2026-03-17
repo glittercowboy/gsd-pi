@@ -137,10 +137,11 @@ describe("createGitHubClient — Octokit instantiation", () => {
 describe("getRepoInfo — detects repo from git working directory", () => {
   it("returns owner/repo for the current repository", async () => {
     const info = await getRepoInfo(process.cwd());
-    // This test repo is gsd-build/gsd-2
+    // Verifies getRepoInfo can parse the origin remote — owner varies
+    // depending on whether this is the upstream repo or a fork.
     assert.notEqual(info, null);
-    assert.equal(info!.owner, "gsd-build");
-    assert.equal(info!.repo, "gsd-2" /* or GSD-2 depending on remote */);
+    assert.ok(info!.owner.length > 0, "owner should be non-empty");
+    assert.ok(info!.repo.toLowerCase().includes("gsd-2"), "repo should contain gsd-2");
   });
 
   it("returns null for a non-git directory", async () => {

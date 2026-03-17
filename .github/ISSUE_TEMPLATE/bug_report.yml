@@ -12,7 +12,7 @@ body:
     attributes:
       label: GSD version
       description: Run `gsd --version` or check `package.json`
-      placeholder: "e.g., 2.15.0"
+      placeholder: "e.g., 2.25.0"
     validations:
       required: true
 
@@ -90,15 +90,56 @@ body:
       placeholder: "e.g., v22.4.0"
 
   - type: dropdown
+    id: model-type
+    attributes:
+      label: Model type
+      description: Is the model a cloud-hosted provider or a locally-running model?
+      options:
+        - Cloud model
+        - Local model (Ollama, llama.cpp, LM Studio, etc.)
+        - N/A
+    validations:
+      required: true
+
+  - type: dropdown
     id: ai-provider
     attributes:
-      label: AI provider (if relevant)
+      label: AI provider
+      description: Which provider are you using? Select "Other" for providers not listed here.
       options:
         - Anthropic (Claude)
+        - OpenAI
+        - GitHub Copilot
+        - Google (Gemini)
+        - Google Vertex AI
+        - Google Gemini CLI
+        - Antigravity (Gemini 3, Claude, GPT-OSS)
+        - Amazon Bedrock
+        - Azure OpenAI
         - OpenRouter
-        - OpenAI-compatible
-        - Other
+        - Groq
+        - xAI (Grok)
+        - Mistral
+        - Ollama Cloud
+        - Vercel AI Gateway
+        - Other (provide details below)
         - N/A
+    validations:
+      required: true
+
+  - type: input
+    id: model-id
+    attributes:
+      label: Model ID
+      description: The specific model used. Run `/model` in GSD or check settings.
+      placeholder: "e.g., claude-sonnet-4-6, gpt-4o, gemini-2.5-pro"
+
+  - type: input
+    id: custom-provider-docs
+    attributes:
+      label: API documentation link
+      description: Required if you selected "Other" provider above. Link to the API docs for the provider/model you're using so we can verify compatibility.
+      placeholder: "e.g., https://docs.example.com/api"
 
   - type: textarea
     id: context

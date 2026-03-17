@@ -151,7 +151,7 @@ export async function handleMigrate(
   }
 
   // ── Confirmation via showNextAction ────────────────────────────────────────
-  const choice = await showNextAction(ctx as any, {
+  const choice = await showNextAction(ctx, {
     title: "Migration preview",
     summary: lines,
     actions: [
@@ -187,7 +187,7 @@ export async function handleMigrate(
   );
 
   // ── Post-write review offer ────────────────────────────────────────────────
-  const reviewChoice = await showNextAction(ctx as any, {
+  const reviewChoice = await showNextAction(ctx, {
     title: "Migration written",
     summary: [
       `${result.paths.length} files written to .gsd/`,

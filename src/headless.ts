@@ -33,6 +33,7 @@ export interface HeadlessOptions {
   contextText?: string   // inline text
   auto?: boolean         // chain into auto-mode after milestone creation
   verbose?: boolean      // show tool calls in output
+  maxRestarts?: number   // auto-restart on crash (default 3, 0 to disable)
 }
 
 interface ExtensionUIRequest {
@@ -92,6 +93,12 @@ export function parseHeadlessArgs(argv: string[]): HeadlessOptions {
         options.auto = true
       } else if (arg === '--verbose') {
         options.verbose = true
+      } else if (arg === '--max-restarts' && i + 1 < args.length) {
+        options.maxRestarts = parseInt(args[++i], 10)
+        if (Number.isNaN(options.maxRestarts) || options.maxRestarts < 0) {
+          process.stderr.write('[headless] Error: --max-restarts must be a non-negative integer\n')
+          process.exit(1)
+        }
       }
     } else if (!positionalStarted) {
       positionalStarted = true
@@ -188,18 +195,37 @@ function formatProgress(event: Record<string, unknown>, verbose: boolean): strin
 // Completion Detection
 // ---------------------------------------------------------------------------
 
-const TERMINAL_KEYWORDS = ['complete', 'stopped', 'blocked']
+/**
+ * Detect genuine auto-mode termination notifications.
+ *
+ * Only matches the actual stop signals emitted by stopAuto():
+ *   "Auto-mode stopped..."
+ *   "Step-mode stopped..."
+ *
+ * Does NOT match progress notifications that happen to contain words like
+ * "complete" or "stopped" (e.g., "Override resolved — rewrite-docs completed",
+ * "All slices are complete — nothing to discuss", "Skipped 5+ completed units").
+ *
+ * Blocked detection is separate — checked via isBlockedNotification.
+ */
+const TERMINAL_PREFIXES = ['auto-mode stopped', 'step-mode stopped']
 const IDLE_TIMEOUT_MS = 15_000
+// new-milestone is a long-running creative task where the LLM may pause
+// between tool calls (e.g. after mkdir, before writing files). Use a
+// longer idle timeout to avoid killing the session prematurely (#808).
+const NEW_MILESTONE_IDLE_TIMEOUT_MS = 120_000
 
 function isTerminalNotification(event: Record<string, unknown>): boolean {
   if (event.type !== 'extension_ui_request' || event.method !== 'notify') return false
   const message = String(event.message ?? '').toLowerCase()
-  return TERMINAL_KEYWORDS.some((kw) => message.includes(kw))
+  return TERMINAL_PREFIXES.some((prefix) => message.startsWith(prefix))
 }
 
 function isBlockedNotification(event: Record<string, unknown>): boolean {
   if (event.type !== 'extension_ui_request' || event.method !== 'notify') return false
-  return String(event.message ?? '').toLowerCase().includes('blocked')
+  const message = String(event.message ?? '').toLowerCase()
+  // Blocked notifications come through stopAuto as "Auto-mode stopped (Blocked: ...)"
+  return message.includes('blocked:')
 }
 
 function isMilestoneReadyNotification(event: Record<string, unknown>): boolean {
@@ -260,6 +286,37 @@ function bootstrapGsdProject(basePath: string): void {
 }
 
 export async function runHeadless(options: HeadlessOptions): Promise<void> {
+  const maxRestarts = options.maxRestarts ?? 3
+  let restartCount = 0
+
+  while (true) {
+    const result = await runHeadlessOnce(options, restartCount)
+
+    // Success or blocked — exit normally
+    if (result.exitCode === 0 || result.exitCode === 2) {
+      process.exit(result.exitCode)
+    }
+
+    // Crash/error — check if we should restart
+    if (restartCount >= maxRestarts) {
+      process.stderr.write(`[headless] Max restarts (${maxRestarts}) reached. Exiting.\n`)
+      process.exit(result.exitCode)
+    }
+
+    // Don't restart if SIGINT/SIGTERM was received
+    if (result.interrupted) {
+      process.exit(result.exitCode)
+    }
+
+    restartCount++
+    const backoffMs = Math.min(5000 * restartCount, 30_000)
+    process.stderr.write(`[headless] Restarting in ${(backoffMs / 1000).toFixed(0)}s (attempt ${restartCount}/${maxRestarts})...\n`)
+    await new Promise(resolve => setTimeout(resolve, backoffMs))
+  }
+}
+
+async function runHeadlessOnce(options: HeadlessOptions, restartCount: number): Promise<{ exitCode: number; interrupted: boolean }> {
+  let interrupted = false
   const startTime = Date.now()
   const isNewMilestone = options.command === 'new-milestone'
 
@@ -359,6 +416,7 @@ export async function runHeadless(options: HeadlessOptions): Promise<void> {
 
   // Idle timeout — fallback completion detection
   let idleTimer: ReturnType<typeof setTimeout> | null = null
+  const effectiveIdleTimeout = isNewMilestone ? NEW_MILESTONE_IDLE_TIMEOUT_MS : IDLE_TIMEOUT_MS
 
   function resetIdleTimer(): void {
     if (idleTimer) clearTimeout(idleTimer)
@@ -366,7 +424,7 @@ export async function runHeadless(options: HeadlessOptions): Promise<void> {
       idleTimer = setTimeout(() => {
         completed = true
         resolveCompletion()
-      }, IDLE_TIMEOUT_MS)
+      }, effectiveIdleTimeout)
     }
   }
 
@@ -432,6 +490,7 @@ export async function runHeadless(options: HeadlessOptions): Promise<void> {
   // Signal handling
   const signalHandler = () => {
     process.stderr.write('\n[headless] Interrupted, stopping child process...\n')
+    interrupted = true
     exitCode = 1
     client.stop().finally(() => {
       clearTimeout(timeoutTimer)
@@ -533,6 +592,9 @@ export async function runHeadless(options: HeadlessOptions): Promise<void> {
   process.stderr.write(`[headless] Status: ${status}\n`)
   process.stderr.write(`[headless] Duration: ${duration}s\n`)
   process.stderr.write(`[headless] Events: ${totalEvents} total, ${toolCallCount} tool calls\n`)
+  if (restartCount > 0) {
+    process.stderr.write(`[headless] Restarts: ${restartCount}\n`)
+  }
 
   // On failure, print last 5 events for diagnostics
   if (exitCode !== 0) {
@@ -545,5 +607,5 @@ export async function runHeadless(options: HeadlessOptions): Promise<void> {
     }
   }
 
-  process.exit(exitCode)
+  return { exitCode, interrupted }
 }

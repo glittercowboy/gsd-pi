@@ -22,6 +22,7 @@ Welcome to the GSD documentation. This covers everything from getting started to
 | [Skills](./skills.md) | Bundled skills, skill discovery, and custom skill authoring |
 | [Migration from v1](./migration.md) | Migrating `.planning` directories from the original GSD |
 | [Troubleshooting](./troubleshooting.md) | Common issues, `/gsd doctor`, and recovery procedures |
+| [VS Code Extension](../vscode-extension/README.md) | Chat participant, sidebar dashboard, and RPC integration for VS Code |
 
 ## Architecture & Internals
 

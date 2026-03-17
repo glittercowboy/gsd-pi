@@ -97,9 +97,11 @@ test("isValidationTerminal returns true for verdict: needs-attention", () => {
   assert.equal(isValidationTerminal(content), true);
 });
 
-test("isValidationTerminal returns false for verdict: needs-remediation", () => {
+test("isValidationTerminal returns true for verdict: needs-remediation (#832)", () => {
+  // needs-remediation is treated as terminal to prevent infinite loops
+  // when no remediation slices exist in the roadmap.
   const content = "---\nverdict: needs-remediation\nremediation_round: 0\n---\n\n# Validation";
-  assert.equal(isValidationTerminal(content), false);
+  assert.equal(isValidationTerminal(content), true);
 });
 
 test("isValidationTerminal returns false for missing frontmatter", () => {
@@ -145,14 +147,16 @@ test("deriveState returns completing-milestone when VALIDATION exists with termi
   }
 });
 
-test("deriveState returns validating-milestone when VALIDATION exists with needs-remediation verdict", async () => {
+test("deriveState treats needs-remediation as terminal — does not re-enter validating-milestone (#832)", async () => {
   const base = makeTmpBase();
   try {
     writeRoadmap(base, "M001", ALL_DONE_ROADMAP);
     writeValidation(base, "M001", "---\nverdict: needs-remediation\nremediation_round: 0\n---\n\n# Validation\nNeeds fixes.");
 
     const state = await deriveState(base);
-    assert.equal(state.phase, "validating-milestone");
+    // needs-remediation is now terminal — milestone needs a SUMMARY to be fully complete
+    // Without SUMMARY, it enters completing-milestone (not validating-milestone)
+    assert.notEqual(state.phase, "validating-milestone");
     assert.equal(state.activeMilestone?.id, "M001");
   } finally {
     cleanup(base);
