@@ -285,3 +285,38 @@
   margin-right: 0.4rem;
   accent-color: oklch(0.65 0.15 145);
 }
+
+/* ── Chat Mode: streaming cursor animation ── */
+@keyframes chat-cursor {
+  0%, 100% { opacity: 0.8; }
+  50% { opacity: 0.1; }
+}
+
+/* ── Chat Mode: shiki code blocks inside chat bubbles ── */
+.chat-code-block pre {
+  margin: 0;
+  padding: 1rem;
+  background: transparent !important;
+  overflow-x: auto;
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  line-height: 1.6;
+}
+
+.chat-code-block code {
+  font-family: var(--font-mono);
+}
+
+/* ── Chat Mode: markdown inside bubbles ── */
+.chat-markdown {
+  word-break: break-word;
+  overflow-wrap: anywhere;
+}
+
+.chat-markdown > *:first-child {
+  margin-top: 0 !important;
+}
+
+.chat-markdown > *:last-child {
+  margin-bottom: 0 !important;
+}

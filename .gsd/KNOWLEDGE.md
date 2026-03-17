@@ -59,3 +59,11 @@ GSD's shared UI uses `›` as the cursor glyph (`INDENT.cursor = "› "`). After
 ## GSD Test Fixtures in web/lib/ Break tsc --noEmit
 
 The `web/tsconfig.json` includes `**/*.ts`, so any test fixture or scratch file in `web/lib/` that uses top-level `await` or `.ts` import extensions will produce tsc errors. Either exclude test files from tsconfig or run fixtures with `npx tsx` directly and delete them after use. The fixture is for manual verification only — it's not part of the permanent test suite.
+
+## StreamingCursor Keyframe Must Use Inline Style, Not Tailwind animate-[]
+
+The Tailwind `animate-[chat-cursor_...]` arbitrary value syntax does NOT work for custom keyframes defined in `globals.css` unless they are also registered in the Tailwind config's `keyframes` block. Use `style={{ animation: "chat-cursor 1s ease-in-out infinite" }}` to reference a keyframe defined in CSS directly. This avoids having to add the keyframe to `tailwind.config.ts`.
+
+## MarkdownContent Streaming Update Pattern: Single useEffect([content])
+
+For streaming chat bubbles where content updates frequently, use a single `useEffect([content])` that re-runs the full dynamic import chain. After the first render, all imports resolve instantly from the module cache (no network hit), so re-running is cheap. The two-effect approach (one for module loading, one for content updates) introduces a stale-closure risk where the first effect's `cancelled` flag remains `true` after cleanup and suppresses subsequent updates.

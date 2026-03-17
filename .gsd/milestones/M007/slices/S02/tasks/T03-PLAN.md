@@ -58,3 +58,27 @@ Build `ChatBubble` — renders a `ChatMessage` as a visually styled bubble. Assi
 - The streaming indicator (dots/cursor) matters because GSD responses can take seconds to stream. Users need feedback that something is happening.
 - The markdown code block renderer uses `dangerouslySetInnerHTML` for shiki output — this is fine since shiki escapes everything and we're only rendering code, not user content. Match the pattern exactly from file-content-viewer.tsx.
 - Scroll lock: track `isNearBottom` with a boolean ref updated in the scroll handler. Only auto-scroll if `isNearBottom === true`. This is the standard pattern for chat UIs.
+
+## Observability Impact
+
+**Signals added by this task:**
+
+- `[ChatPane] SSE connected sessionId=%s` — console.log on successful SSE connect (preserved from T02)
+- `[ChatPane] SSE error/disconnected sessionId=%s` — console.log on SSE error/disconnect
+- `[ChatPane] messages=%d sessionId=%s` — console.debug on every parser update (fires during streaming)
+- `[ChatBubble] markdown modules loaded` — console.debug once when react-markdown + remark-gfm + shiki are first loaded
+- `window.__chatParser` — in dev mode, exposes PtyChatParser for `window.__chatParser.getMessages()` inspection
+
+**Failure visibility:**
+
+- If `connected === false`: `ChatInputBar` shows a "Disconnected" badge and disables the input field
+- If markdown modules fail to load: `ChatBubble` falls back to plain `whitespace-pre-wrap` text rendering
+- If shiki highlighting fails for a code block: falls back to plain `<pre><code>` rendering (try/catch)
+- Scroll behavior inspectable via `scrollRef.current.scrollTop` in React DevTools
+
+**How to inspect this task's runtime state:**
+
+1. Browser DevTools Console → filter `[ChatPane]` for SSE lifecycle; filter `[ChatBubble]` for markdown load
+2. Browser DevTools Network → filter `stream` → select gsd-main EventSource → EventStream sub-tab
+3. `window.__chatParser.getMessages()` in console for current parsed message array
+4. React DevTools: `ChatPane` state shows `messages[]` and `connected` boolean
