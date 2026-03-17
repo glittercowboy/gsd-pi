@@ -8,7 +8,7 @@
  */
 import { useCallback } from "react";
 import { useAppUpdater } from "@/hooks/useAppUpdater";
-import { PanelLeftClose, PanelLeft, ExternalLink, FolderOpen, Settings, MessageSquare, Flag, Clock, Images } from "lucide-react";
+import { PanelLeftClose, PanelLeft, ExternalLink, FolderOpen, Settings, MessageSquare, Flag, Clock, Images, Code } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { LAYOUT_DEFAULTS } from "@/styles/design-tokens";
 import { GsdLogo } from "@/components/sidebar/GsdLogo";
@@ -28,6 +28,7 @@ interface SidebarProps {
   onSelectView: (view: ViewType) => void;
   onOpenFolder: () => void;
   projectName?: string;
+  onOpenCodeExplorer?: () => void;
 }
 
 export function Sidebar({
@@ -40,6 +41,7 @@ export function Sidebar({
   onSelectView,
   onOpenFolder,
   projectName,
+  onOpenCodeExplorer,
 }: SidebarProps) {
   const handleNewWindow = useCallback(() => {
     window.open(location.href, "_blank");
@@ -117,6 +119,15 @@ export function Sidebar({
             <FolderOpen className="h-4 w-4" />
             <span>Open Project</span>
           </button>
+          <button
+            type="button"
+            onClick={onOpenCodeExplorer}
+            className="flex min-h-[44px] items-center gap-2 rounded p-2 text-sm text-slate-400 transition-colors hover:bg-navy-700 hover:text-slate-300"
+            title="Code Explorer"
+          >
+            <Code className="h-4 w-4" />
+            <span>Code Explorer</span>
+          </button>
         </div>
       )}
 
@@ -141,6 +152,15 @@ export function Sidebar({
               className="flex min-h-[44px] w-full items-center justify-center rounded transition-colors hover:bg-navy-700 text-slate-400 hover:text-slate-300"
             >
               <FolderOpen className="h-4 w-4" />
+            </button>
+            <button
+              type="button"
+              onClick={onOpenCodeExplorer}
+              aria-label="Code Explorer"
+              title="Code Explorer"
+              className="flex min-h-[44px] w-full items-center justify-center rounded transition-colors hover:bg-navy-700 text-slate-400 hover:text-slate-300"
+            >
+              <Code className="h-4 w-4" />
             </button>
             {(
               [
