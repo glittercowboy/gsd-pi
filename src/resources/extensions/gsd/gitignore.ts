@@ -19,6 +19,7 @@ const GSD_RUNTIME_PATTERNS = [
   ".gsd/forensics/",
   ".gsd/runtime/",
   ".gsd/worktrees/",
+  ".gsd/parallel/",
   ".gsd/auto.lock",
   ".gsd/metrics.json",
   ".gsd/completed-units.json",

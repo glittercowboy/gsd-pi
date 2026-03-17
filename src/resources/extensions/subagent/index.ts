@@ -33,6 +33,7 @@ import {
 	mergeDeltaPatches,
 	readIsolationMode,
 } from "./isolation.js";
+import { registerWorker, updateWorker } from "./worker-registry.js";
 
 const MAX_PARALLEL_TASKS = 8;
 const MAX_CONCURRENCY = 4;
@@ -626,7 +627,10 @@ export default function (pi: ExtensionAPI) {
 				};
 
 				const MAX_RETRIES = 1; // Retry failed tasks once
+				const batchId = crypto.randomUUID();
+				const batchSize = params.tasks.length;
 				const results = await mapWithConcurrencyLimit(params.tasks, MAX_CONCURRENCY, async (t, index) => {
+					const workerId = registerWorker(t.agent, t.task, index, batchSize, batchId);
 					let result = await runSingleAgent(
 						ctx.cwd,
 						agents,
@@ -666,6 +670,7 @@ export default function (pi: ExtensionAPI) {
 						);
 					}
 
+					updateWorker(workerId, result.exitCode === 0 ? "completed" : "failed");
 					allResults[index] = result;
 					emitParallelUpdate();
 					return result;

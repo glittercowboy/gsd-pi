@@ -11,6 +11,7 @@ import { RUNTIME_EXCLUSION_PATHS } from "./git-service.js";
 import { nativeIsRepo, nativeWorktreeRemove, nativeBranchList, nativeBranchDelete, nativeLsFiles, nativeRmCached } from "./native-git-bridge.js";
 import { readCrashLock, isLockProcessAlive, clearLock } from "./crash-recovery.js";
 import { ensureGitignore } from "./gitignore.js";
+import { readAllSessionStatuses, isSessionStale, removeSessionStatus } from "./session-status-io.js";
 
 export type DoctorSeverity = "info" | "warning" | "error";
 export type DoctorIssueCode =
@@ -37,6 +38,7 @@ export type DoctorIssueCode =
   | "tracked_runtime_files"
   | "legacy_slice_branches"
   | "stale_crash_lock"
+  | "stale_parallel_session"
   | "orphaned_completed_units"
   | "stale_hook_state"
   | "activity_log_bloat"
@@ -709,6 +711,31 @@ async function checkRuntimeHealth(
     }
   } catch {
     // Non-fatal — crash lock check failed
+  }
+
+  // ── Stale parallel sessions ────────────────────────────────────────────
+  try {
+    const parallelStatuses = readAllSessionStatuses(basePath);
+    for (const status of parallelStatuses) {
+      if (isSessionStale(status)) {
+        issues.push({
+          severity: "warning",
+          code: "stale_parallel_session",
+          scope: "project",
+          unitId: status.milestoneId,
+          message: `Stale parallel session for ${status.milestoneId} (PID ${status.pid}, started ${new Date(status.startedAt).toISOString()}, last heartbeat ${new Date(status.lastHeartbeat).toISOString()}) — process is no longer running`,
+          file: `.gsd/parallel/${status.milestoneId}.status.json`,
+          fixable: true,
+        });
+
+        if (shouldFix("stale_parallel_session")) {
+          removeSessionStatus(basePath, status.milestoneId);
+          fixesApplied.push(`cleaned up stale parallel session for ${status.milestoneId}`);
+        }
+      }
+    }
+  } catch {
+    // Non-fatal — parallel session check failed
   }
 
   // ── Orphaned completed-units keys ─────────────────────────────────────

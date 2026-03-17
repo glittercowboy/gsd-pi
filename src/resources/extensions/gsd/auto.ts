@@ -108,6 +108,7 @@ import {
   autoWorktreeBranch,
 } from "./auto-worktree.js";
 import { pruneQueueOrder } from "./queue-order.js";
+import { consumeSignal } from "./session-status-io.js";
 import { showNextAction } from "../shared/next-action-ui.js";
 import { debugLog, debugTime, debugCount, debugPeak, enableDebug, isDebugEnabled, writeDebugSummary, getDebugLogPath } from "./debug-logger.js";
 import {
@@ -361,11 +362,12 @@ let _sigtermHandler: (() => void) | null = null;
  */
 const inFlightTools = new Map<string, number>();
 
-type BudgetAlertLevel = 0 | 75 | 90 | 100;
+type BudgetAlertLevel = 0 | 75 | 80 | 90 | 100;
 
 export function getBudgetAlertLevel(budgetPct: number): BudgetAlertLevel {
   if (budgetPct >= 1.0) return 100;
   if (budgetPct >= 0.90) return 90;
+  if (budgetPct >= 0.80) return 80;
   if (budgetPct >= 0.75) return 75;
   return 0;
 }
@@ -1251,6 +1253,27 @@ export async function handleAgentEnd(
 
   // Unit completed — clear its timeout
   clearUnitTimeout();
+
+    // ── Parallel worker signal check ─────────────────────────────────────
+    // When running as a parallel worker (GSD_MILESTONE_LOCK set), check for
+    // coordinator signals before dispatching the next unit.
+    const milestoneLock = process.env.GSD_MILESTONE_LOCK;
+    if (milestoneLock) {
+      const signal = consumeSignal(basePath, milestoneLock);
+      if (signal) {
+        if (signal.signal === "stop") {
+          _handlingAgentEnd = false;
+          await stopAuto(ctx, pi);
+          return;
+        }
+        if (signal.signal === "pause") {
+          _handlingAgentEnd = false;
+          await pauseAuto(ctx, pi);
+          return;
+        }
+        // "resume" and "rebase" signals are handled elsewhere or no-op here
+      }
+    }
 
   // Invalidate all caches — the unit just completed and may have
   // written planning files (task summaries, roadmap checkboxes, etc.)
@@ -2211,6 +2234,10 @@ async function dispatchNextUnit(
       lastBudgetAlertLevel = newBudgetAlertLevel;
       ctx.ui.notify(`Budget 90%: ${formatCost(totalCost)} / ${formatCost(budgetCeiling)}`, "warning");
       sendDesktopNotification("GSD", `Budget 90%: ${formatCost(totalCost)} / ${formatCost(budgetCeiling)}`, "warning", "budget");
+    } else if (newBudgetAlertLevel === 80) {
+      lastBudgetAlertLevel = newBudgetAlertLevel;
+      ctx.ui.notify(`Approaching budget ceiling — 80%: ${formatCost(totalCost)} / ${formatCost(budgetCeiling)}`, "warning");
+      sendDesktopNotification("GSD", `Approaching budget ceiling — 80%: ${formatCost(totalCost)} / ${formatCost(budgetCeiling)}`, "warning", "budget");
     } else if (newBudgetAlertLevel === 75) {
       lastBudgetAlertLevel = newBudgetAlertLevel;
       ctx.ui.notify(`Budget 75%: ${formatCost(totalCost)} / ${formatCost(budgetCeiling)}`, "info");

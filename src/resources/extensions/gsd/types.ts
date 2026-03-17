@@ -364,3 +364,16 @@ export interface Requirement {
   full_content: string;     // full requirement text
   superseded_by: string | null;  // ID of superseding requirement, or null
 }
+
+// ─── Parallel Orchestration Types ────────────────────────────────────────
+
+export type MergeStrategy = "per-slice" | "per-milestone";
+export type AutoMergeMode = "auto" | "confirm" | "manual";
+
+export interface ParallelConfig {
+  enabled: boolean;
+  max_workers: number;
+  budget_ceiling?: number;
+  merge_strategy: MergeStrategy;
+  auto_merge: AutoMergeMode;
+}

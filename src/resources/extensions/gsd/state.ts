@@ -94,6 +94,11 @@ export function invalidateStateCache(): void {
  */
 export async function getActiveMilestoneId(basePath: string): Promise<string | null> {
   const milestoneIds = findMilestoneIds(basePath);
+  // Parallel worker isolation
+  const milestoneLock = process.env.GSD_MILESTONE_LOCK;
+  if (milestoneLock) {
+    return milestoneIds.includes(milestoneLock) ? milestoneLock : null;
+  }
   for (const mid of milestoneIds) {
     const roadmapFile = resolveMilestoneFile(basePath, mid, "ROADMAP");
     const content = roadmapFile ? await loadFile(roadmapFile) : null;
@@ -140,6 +145,18 @@ export async function deriveState(basePath: string): Promise<GSDState> {
 
 async function _deriveStateImpl(basePath: string): Promise<GSDState> {
   const milestoneIds = findMilestoneIds(basePath);
+
+  // ── Parallel worker isolation ──────────────────────────────────────────
+  // When GSD_MILESTONE_LOCK is set, this process is a parallel worker
+  // scoped to a single milestone. Filter the milestone list so this worker
+  // only sees its assigned milestone (all others are treated as if they
+  // don't exist). This gives each worker complete isolation without
+  // modifying any other state derivation logic.
+  const milestoneLock = process.env.GSD_MILESTONE_LOCK;
+  if (milestoneLock && milestoneIds.includes(milestoneLock)) {
+    milestoneIds.length = 0;
+    milestoneIds.push(milestoneLock);
+  }
 
   // ── Batch-parse file cache ──────────────────────────────────────────────
   // When the native Rust parser is available, read every .md file under .gsd/

@@ -389,6 +389,21 @@ auto_visualize: true
 
 See [Workflow Visualizer](./visualizer.md).
 
+### `parallel`
+
+Run multiple milestones simultaneously. Disabled by default.
+
+```yaml
+parallel:
+  enabled: false            # Master toggle
+  max_workers: 2            # Concurrent workers (1-4)
+  budget_ceiling: 50.00     # Aggregate cost limit in USD
+  merge_strategy: "per-milestone"  # "per-slice" or "per-milestone"
+  auto_merge: "confirm"            # "auto", "confirm", or "manual"
+```
+
+See [Parallel Orchestration](./parallel-orchestration.md) for full documentation.
+
 ## Full Example
 
 ```yaml

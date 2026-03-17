@@ -48,6 +48,26 @@ In **branch mode**, the flow is the same except work happens in the project root
 
 In **none mode**, commits land directly on the current branch — no milestone branch is created, and no merge step is needed.
 
+### Parallel Worktrees
+
+With [parallel orchestration](./parallel-orchestration.md) enabled, multiple milestones run in separate worktrees simultaneously:
+
+```
+main ──────────────────────────────────────────────────────────
+  │                                      ↑              ↑
+  ├── milestone/M002 (worktree) ─────────┘              │
+  │    commit: feat(S01/T01): auth types                │
+  │    commit: feat(S01/T02): JWT middleware             │
+  │    → squash-merged first                            │
+  │                                                     │
+  └── milestone/M003 (worktree) ────────────────────────┘
+       commit: feat(S01/T01): dashboard layout
+       commit: feat(S01/T02): chart components
+       → squash-merged second
+```
+
+Each worktree operates on its own branch with its own commit history. Merges happen sequentially to avoid conflicts.
+
 ### Key Properties
 
 - **Sequential commits on one branch** — no per-slice branches, no merge conflicts within a milestone

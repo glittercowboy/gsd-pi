@@ -42,6 +42,14 @@ import { handleQuick } from "./quick.js";
 import { handleHistory } from "./history.js";
 import { handleUndo } from "./undo.js";
 import { handleExport } from "./export.js";
+import {
+  isParallelActive, getOrchestratorState, getWorkerStatuses,
+  prepareParallelStart, startParallel, stopParallel,
+  pauseWorker, resumeWorker,
+} from "./parallel-orchestrator.js";
+import { formatEligibilityReport } from "./parallel-eligibility.js";
+import { mergeAllCompleted, mergeCompletedMilestone, formatMergeResults } from "./parallel-merge.js";
+import { resolveParallelConfig } from "./preferences.js";
 import { nativeBranchList, nativeDetectMainBranch, nativeBranchListMerged, nativeBranchDelete, nativeForEachRef, nativeUpdateRef } from "./native-git-bridge.js";
 
 export function dispatchDoctorHeal(pi: ExtensionAPI, scope: string | undefined, reportText: string, structuredIssues: string): void {
@@ -69,13 +77,13 @@ function projectRoot(): string {
 
 export function registerGSDCommand(pi: ExtensionAPI): void {
   pi.registerCommand("gsd", {
-    description: "GSD — Get Shit Done: /gsd help|next|auto|stop|pause|status|visualize|queue|quick|capture|triage|dispatch|history|undo|skip|export|cleanup|mode|prefs|config|hooks|run-hook|skill-health|doctor|forensics|migrate|remote|steer|knowledge",
+    description: "GSD — Get Shit Done: /gsd help|next|auto|stop|pause|status|visualize|queue|quick|capture|triage|dispatch|history|undo|skip|export|cleanup|mode|prefs|config|hooks|run-hook|skill-health|doctor|forensics|migrate|remote|steer|knowledge|parallel",
     getArgumentCompletions: (prefix: string) => {
       const subcommands = [
         "help", "next", "auto", "stop", "pause", "status", "visualize", "queue", "quick", "discuss",
         "capture", "triage", "dispatch",
         "history", "undo", "skip", "export", "cleanup", "mode", "prefs",
-        "config", "hooks", "run-hook", "skill-health", "doctor", "forensics", "migrate", "remote", "steer", "inspect", "knowledge",
+        "config", "hooks", "run-hook", "skill-health", "doctor", "forensics", "migrate", "remote", "steer", "inspect", "knowledge", "parallel",
       ];
       const parts = prefix.trim().split(/\s+/);
 
@@ -97,6 +105,13 @@ export function registerGSDCommand(pi: ExtensionAPI): void {
         return ["global", "project"]
           .filter((cmd) => cmd.startsWith(subPrefix))
           .map((cmd) => ({ value: `mode ${cmd}`, label: cmd }));
+      }
+
+      if (parts[0] === "parallel" && parts.length <= 2) {
+        const subPrefix = parts[1] ?? "";
+        return ["start", "status", "stop", "pause", "resume", "merge"]
+          .filter((cmd) => cmd.startsWith(subPrefix))
+          .map((cmd) => ({ value: `parallel ${cmd}`, label: cmd }));
       }
 
       if (parts[0] === "prefs" && parts.length <= 2) {
@@ -285,6 +300,108 @@ export function registerGSDCommand(pi: ExtensionAPI): void {
 
       if (trimmed === "export" || trimmed.startsWith("export ")) {
         await handleExport(trimmed.replace(/^export\s*/, "").trim(), ctx, projectRoot());
+        return;
+      }
+
+      // ─── Parallel Orchestration ────────────────────────────────────────
+      if (trimmed.startsWith("parallel")) {
+        const parallelArgs = trimmed.slice("parallel".length).trim();
+        const [subCmd = "", ...restParts] = parallelArgs.split(/\s+/);
+        const rest = restParts.join(" ");
+
+        if (subCmd === "start" || subCmd === "") {
+          const loaded = loadEffectiveGSDPreferences();
+          const config = resolveParallelConfig(loaded?.preferences);
+          if (!config.enabled) {
+            pi.sendMessage({
+              customType: "gsd-parallel",
+              content: "Parallel mode is not enabled. Set `parallel.enabled: true` in your preferences.",
+              display: false,
+            });
+            return;
+          }
+          const candidates = await prepareParallelStart(projectRoot(), loaded?.preferences);
+          const report = formatEligibilityReport(candidates);
+          if (candidates.eligible.length === 0) {
+            pi.sendMessage({ customType: "gsd-parallel", content: report + "\n\nNo milestones are eligible for parallel execution.", display: false });
+            return;
+          }
+          const result = await startParallel(
+            projectRoot(),
+            candidates.eligible.map(e => e.milestoneId),
+            loaded?.preferences,
+          );
+          const lines = [`Parallel orchestration started.`, `Workers: ${result.started.join(", ")}`];
+          if (result.errors.length > 0) {
+            lines.push(`Errors: ${result.errors.map(e => `${e.mid}: ${e.error}`).join("; ")}`);
+          }
+          pi.sendMessage({ customType: "gsd-parallel", content: report + "\n\n" + lines.join("\n"), display: false });
+          return;
+        }
+
+        if (subCmd === "status") {
+          if (!isParallelActive()) {
+            pi.sendMessage({ customType: "gsd-parallel", content: "No parallel orchestration is currently active.", display: false });
+            return;
+          }
+          const workers = getWorkerStatuses();
+          const lines = ["# Parallel Workers\n"];
+          for (const w of workers) {
+            lines.push(`- **${w.milestoneId}** (${w.title}) — ${w.state} — ${w.completedUnits} units — $${w.cost.toFixed(2)}`);
+          }
+          const orchState = getOrchestratorState();
+          if (orchState) {
+            lines.push(`\nTotal cost: $${orchState.totalCost.toFixed(2)}`);
+          }
+          pi.sendMessage({ customType: "gsd-parallel", content: lines.join("\n"), display: false });
+          return;
+        }
+
+        if (subCmd === "stop") {
+          const mid = rest.trim() || undefined;
+          await stopParallel(projectRoot(), mid);
+          pi.sendMessage({ customType: "gsd-parallel", content: mid ? `Stopped worker for ${mid}.` : "All parallel workers stopped.", display: false });
+          return;
+        }
+
+        if (subCmd === "pause") {
+          const mid = rest.trim() || undefined;
+          pauseWorker(projectRoot(), mid);
+          pi.sendMessage({ customType: "gsd-parallel", content: mid ? `Paused worker for ${mid}.` : "All parallel workers paused.", display: false });
+          return;
+        }
+
+        if (subCmd === "resume") {
+          const mid = rest.trim() || undefined;
+          resumeWorker(projectRoot(), mid);
+          pi.sendMessage({ customType: "gsd-parallel", content: mid ? `Resumed worker for ${mid}.` : "All parallel workers resumed.", display: false });
+          return;
+        }
+
+        if (subCmd === "merge") {
+          const mid = rest.trim() || undefined;
+          if (mid) {
+            // Merge a specific milestone
+            const result = await mergeCompletedMilestone(projectRoot(), mid);
+            pi.sendMessage({ customType: "gsd-parallel", content: formatMergeResults([result]), display: false });
+            return;
+          }
+          // Merge all completed milestones
+          const workers = getWorkerStatuses();
+          if (workers.length === 0) {
+            pi.sendMessage({ customType: "gsd-parallel", content: "No parallel workers to merge.", display: false });
+            return;
+          }
+          const results = await mergeAllCompleted(projectRoot(), workers);
+          pi.sendMessage({ customType: "gsd-parallel", content: formatMergeResults(results), display: false });
+          return;
+        }
+
+        pi.sendMessage({
+          customType: "gsd-parallel",
+          content: `Unknown parallel subcommand "${subCmd}". Usage: /gsd parallel [start|status|stop|pause|resume|merge]`,
+          display: false,
+        });
         return;
       }
 

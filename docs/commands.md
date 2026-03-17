@@ -34,6 +34,19 @@
 | `/gsd run-hook` | Manually trigger a specific hook |
 | `/gsd migrate` | Migrate a v1 `.planning` directory to `.gsd` format |
 
+## Parallel Orchestration
+
+| Command | Description |
+|---------|-------------|
+| `/gsd parallel start` | Analyze eligibility, confirm, and start workers |
+| `/gsd parallel status` | Show all workers with state, progress, and cost |
+| `/gsd parallel stop [MID]` | Stop all workers or a specific milestone's worker |
+| `/gsd parallel pause [MID]` | Pause all workers or a specific one |
+| `/gsd parallel resume [MID]` | Resume paused workers |
+| `/gsd parallel merge [MID]` | Merge completed milestones back to main |
+
+See [Parallel Orchestration](./parallel-orchestration.md) for full documentation.
+
 ## Git Commands
 
 | Command | Description |

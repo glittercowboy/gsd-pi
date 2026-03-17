@@ -51,6 +51,10 @@ GSD isolates milestone work using one of three modes (configured via `git.isolat
 
 See [Git Strategy](./git-strategy.md) for details.
 
+### Parallel Execution
+
+When your project has independent milestones, you can run them simultaneously. Each milestone gets its own worker process and worktree. See [Parallel Orchestration](./parallel-orchestration.md) for setup and usage.
+
 ### Crash Recovery
 
 A lock file tracks the current unit. If the session dies, the next `/gsd auto` reads the surviving session file, synthesizes a recovery briefing from every tool call that made it to disk, and resumes with full context.

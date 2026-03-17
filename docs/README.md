@@ -17,6 +17,7 @@ Welcome to the GSD documentation. This covers everything from getting started to
 | [Workflow Visualizer](./visualizer.md) | Interactive TUI overlay for progress, dependencies, metrics, and timeline (v2.19) |
 | [Cost Management](./cost-management.md) | Budget ceilings, cost tracking, projections, and enforcement modes |
 | [Git Strategy](./git-strategy.md) | Worktree isolation, branching model, and merge behavior |
+| [Parallel Orchestration](./parallel-orchestration.md) | Run multiple milestones simultaneously with worker isolation and coordination |
 | [Working in Teams](./working-in-teams.md) | Unique milestone IDs, `.gitignore` setup, and shared planning artifacts |
 | [Skills](./skills.md) | Bundled skills, skill discovery, and custom skill authoring |
 | [Migration from v1](./migration.md) | Migrating `.planning` directories from the original GSD |
