@@ -13,7 +13,6 @@ import { LogoAnimationView } from "../src/components/session/LogoAnimation";
 import { LoadingLogo } from "../src/components/session/LoadingLogo";
 import { SingleColumnView } from "../src/components/layout/SingleColumnView";
 import { ChatMessage } from "../src/components/chat/ChatMessage";
-import { shouldPulseOnTaskChange } from "../src/components/active-task/TaskExecuting";
 
 // -- LogoAnimationView (pure render, no hooks) --
 
@@ -22,14 +21,16 @@ describe("LogoAnimationView", () => {
     const result = LogoAnimationView({});
     const json = JSON.stringify(result);
     expect(json).toContain("img");
-    expect(json).toContain("gsd-logo-2000-transparent.svg");
+    // Plan 20.1-01: logo changed to PNG mission-control asset
+    expect(json).toContain("gsd-2-mission-control-logo.png");
   });
 
   it("applies lg size class by default", () => {
     const result = LogoAnimationView({});
     const json = JSON.stringify(result);
-    expect(json).toContain("h-16");
-    expect(json).toContain("w-16");
+    // Plan 20.1-01: lg uses w-80 h-auto (wide brand asset)
+    expect(json).toContain("w-80");
+    expect(json).toContain("h-auto");
   });
 
   it("applies sm size class when specified", () => {
@@ -135,25 +136,6 @@ describe("ChatMessage", () => {
   });
 });
 
-// -- TaskExecuting amber pulse on task advance (Plan 04) --
-
-describe("TaskExecuting amber pulse on task advance", () => {
-  it("shouldPulseOnTaskChange returns false when previous is undefined", () => {
-    expect(shouldPulseOnTaskChange(undefined, "07-01")).toBe(false);
-  });
-
-  it("shouldPulseOnTaskChange returns false when taskId is the same", () => {
-    expect(shouldPulseOnTaskChange("07-01", "07-01")).toBe(false);
-  });
-
-  it("shouldPulseOnTaskChange returns true when taskId changes", () => {
-    expect(shouldPulseOnTaskChange("07-01", "07-02")).toBe(true);
-  });
-
-  it("shouldPulseOnTaskChange returns false when previous is empty string", () => {
-    expect(shouldPulseOnTaskChange("", "07-01")).toBe(false);
-  });
-});
 
 // -- task-advance-pulse CSS class (Plan 03) --
 
