@@ -3,6 +3,7 @@
  */
 
 import { getDocsPath, getExamplesPath, getReadmePath } from "../config.js";
+import { toPosixPath } from "../utils/path-display.js";
 import { formatSkillsForPrompt, type Skill } from "./skills.js";
 
 /** Tool descriptions for system prompt */
@@ -48,7 +49,7 @@ export function buildSystemPrompt(options: BuildSystemPromptOptions = {}): strin
 		contextFiles: providedContextFiles,
 		skills: providedSkills,
 	} = options;
-	const resolvedCwd = cwd ?? process.cwd();
+	const resolvedCwd = toPosixPath(cwd ?? process.cwd());
 
 	const now = new Date();
 	const dateTime = now.toLocaleString("en-US", {

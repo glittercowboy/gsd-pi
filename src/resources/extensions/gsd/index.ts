@@ -59,6 +59,7 @@ import { homedir } from "node:os";
 import { shortcutDesc } from "../shared/terminal.js";
 import { Text } from "@gsd/pi-tui";
 import { pauseAutoForProviderError } from "./provider-error-pause.js";
+import { toPosixPath } from "../shared/path-display.js";
 
 // ── Agent Instructions ────────────────────────────────────────────────────
 // Lightweight "always follow" files injected into every GSD agent session.
@@ -608,12 +609,12 @@ export default function (pi: ExtensionAPI) {
         "",
         "[WORKTREE CONTEXT — OVERRIDES CURRENT WORKING DIRECTORY ABOVE]",
         `IMPORTANT: Ignore the "Current working directory" shown earlier in this prompt.`,
-        `The actual current working directory is: ${process.cwd()}`,
+        `The actual current working directory is: ${toPosixPath(process.cwd())}`,
         "",
         `You are working inside a GSD worktree.`,
         `- Worktree name: ${worktreeName}`,
-        `- Worktree path (this is the real cwd): ${process.cwd()}`,
-        `- Main project: ${worktreeMainCwd}`,
+        `- Worktree path (this is the real cwd): ${toPosixPath(process.cwd())}`,
+        `- Main project: ${toPosixPath(worktreeMainCwd)}`,
         `- Branch: worktree/${worktreeName}`,
         "",
         "All file operations, bash commands, and GSD state resolve against the worktree path above.",
@@ -625,12 +626,12 @@ export default function (pi: ExtensionAPI) {
         "",
         "[WORKTREE CONTEXT — OVERRIDES CURRENT WORKING DIRECTORY ABOVE]",
         `IMPORTANT: Ignore the "Current working directory" shown earlier in this prompt.`,
-        `The actual current working directory is: ${process.cwd()}`,
+        `The actual current working directory is: ${toPosixPath(process.cwd())}`,
         "",
         "You are working inside a GSD auto-worktree.",
         `- Milestone worktree: ${autoWorktree.worktreeName}`,
-        `- Worktree path (this is the real cwd): ${process.cwd()}`,
-        `- Main project: ${autoWorktree.originalBase}`,
+        `- Worktree path (this is the real cwd): ${toPosixPath(process.cwd())}`,
+        `- Main project: ${toPosixPath(autoWorktree.originalBase)}`,
         `- Branch: ${autoWorktree.branch}`,
         "",
         "All file operations, bash commands, and GSD state resolve against the worktree path above.",

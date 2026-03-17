@@ -66,6 +66,7 @@ import { waitForReady } from "./readiness-detector.js";
 import { queryShellEnv, sendAndWait, runOnSession } from "./interaction.js";
 import { formatUptime, formatTokenCount, resolveBgShellPersistenceCwd } from "./utilities.js";
 import { BgManagerOverlay } from "./overlay.js";
+import { toPosixPath } from "../shared/path-display.js";
 
 // ── Re-exports for consumers ───────────────────────────────────────────────
 
@@ -337,7 +338,7 @@ export default function (pi: ExtensionAPI) {
 					text += `  type: ${bg.processType}\n`;
 					text += `  status: ${bg.status}\n`;
 					text += `  command: ${bg.command}\n`;
-					text += `  cwd: ${bg.cwd}`;
+					text += `  cwd: ${toPosixPath(bg.cwd)}`;
 
 					if (bg.group) text += `\n  group: ${bg.group}`;
 					if (bg.readyPort) text += `\n  ready_port: ${bg.readyPort}`;
@@ -694,7 +695,7 @@ export default function (pi: ExtensionAPI) {
 					}
 
 					let text = `Shell environment for ${bg.id} (${bg.label}):\n`;
-					text += `  cwd: ${envResult.cwd}\n`;
+					text += `  cwd: ${toPosixPath(envResult.cwd)}\n`;
 					text += `  shell: ${envResult.shell}\n`;
 
 					const envEntries = Object.entries(envResult.env);

@@ -348,3 +348,5 @@ export { copyToClipboard } from "./utils/clipboard.js";
 export { parseFrontmatter, stripFrontmatter } from "./utils/frontmatter.js";
 // Shell utilities
 export { getShellConfig, sanitizeCommand } from "./utils/shell.js";
+// Cross-platform path display
+export { toPosixPath } from "./utils/path-display.js";
