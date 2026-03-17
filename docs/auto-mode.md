@@ -62,6 +62,10 @@ When your project has independent milestones, you can run them simultaneously. E
 
 A lock file tracks the current unit. If the session dies, the next `/gsd auto` reads the surviving session file, synthesizes a recovery briefing from every tool call that made it to disk, and resumes with full context.
 
+### Rate Limit Recovery
+
+When a provider hits a rate limit, GSD waits with exponential backoff (up to 5 minutes) and automatically resumes auto-mode after the cooldown period. No manual intervention needed — the session continues from where it left off.
+
 ### Stuck Detection
 
 If the same unit dispatches twice (the LLM didn't produce the expected artifact), GSD retries once with a deep diagnostic prompt. If it fails again, auto mode stops with the exact file it expected, so you can intervene.
@@ -161,6 +165,7 @@ Open the workflow visualizer — interactive tabs for progress, dependencies, me
 - Cost projections
 - Completed and in-progress units
 - Pending capture count (when captures are awaiting triage)
+- Parallel worker status (when running parallel milestones — includes 80% budget alert)
 
 ## Phase Skipping
 

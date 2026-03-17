@@ -92,6 +92,7 @@ See [Parallel Orchestration](./parallel-orchestration.md) for full documentation
 | `gsd --debug` | Enable structured JSONL diagnostic logging for troubleshooting dispatch and state issues |
 | `gsd config` | Re-run the setup wizard (LLM provider + tool keys) |
 | `gsd update` | Update GSD to the latest version |
+| `gsd headless new-milestone` | Create a new milestone from a context file (headless — no TUI required) |
 
 ## Headless Mode
 
@@ -112,6 +113,15 @@ gsd headless --timeout 600000 auto
 
 # Force a specific phase
 gsd headless dispatch plan
+
+# Create a new milestone from a context file and start auto mode
+gsd headless new-milestone --context brief.md --auto
+
+# Create a milestone from inline text
+gsd headless new-milestone --context-text "Build a REST API with auth"
+
+# Pipe context from stdin
+echo "Build a CLI tool" | gsd headless new-milestone --context -
 ```
 
 | Flag | Description |
@@ -119,6 +129,9 @@ gsd headless dispatch plan
 | `--timeout N` | Overall timeout in milliseconds (default: 300000 / 5 min) |
 | `--json` | Stream all events as JSONL to stdout |
 | `--model ID` | Override the model for the headless session |
+| `--context <file>` | Context file for `new-milestone` (use `-` for stdin) |
+| `--context-text <text>` | Inline context text for `new-milestone` |
+| `--auto` | Chain into auto-mode after milestone creation |
 
 **Exit codes:** `0` = complete, `1` = error or timeout, `2` = blocked.
 

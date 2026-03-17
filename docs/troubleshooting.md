@@ -52,7 +52,7 @@ It checks:
 
 **Symptoms:** Auto mode pauses with a provider error (rate limit, auth failure, etc.).
 
-**Fix:** GSD automatically tries fallback models if configured. To add fallbacks:
+**Fix:** GSD automatically resumes after rate limit cooldowns with exponential backoff (up to 5 minutes). For auth failures, GSD tries fallback models if configured:
 
 ```yaml
 models:

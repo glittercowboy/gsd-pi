@@ -43,6 +43,10 @@ vscode-extension/         VS Code extension — chat participant (@gsd), sidebar
 
 Bundled extensions and agents are synced to `~/.gsd/agent/` on every launch, not just first run. This means `npm update -g` takes effect immediately.
 
+### Lazy Provider Loading
+
+LLM provider SDKs (Anthropic, OpenAI, Google, etc.) are lazy-loaded on first use rather than imported at startup. This significantly reduces cold-start time — only the provider you actually connect to gets loaded.
+
 ### Fresh Session Per Unit
 
 Every dispatch creates a new agent session. The LLM starts with a clean context window containing only the pre-inlined artifacts it needs. This prevents quality degradation from context accumulation.
@@ -118,7 +122,7 @@ The auto mode dispatch pipeline:
 
 Phase skipping (from token profile) gates steps 2-3: if a phase is skipped, the corresponding unit type is never dispatched.
 
-## Key Modules (v2.19)
+## Key Modules (v2.24)
 
 | Module | Purpose |
 |--------|---------|
@@ -134,8 +138,11 @@ Phase skipping (from token profile) gates steps 2-3: if a phase is skipped, the 
 | `triage-resolution.ts` | Capture resolution (inject, defer, replan, quick-task) |
 | `visualizer-overlay.ts` | Workflow visualizer TUI overlay |
 | `visualizer-data.ts` | Data loading for visualizer tabs |
-| `visualizer-views.ts` | Tab renderers (progress, deps, metrics, timeline) |
+| `visualizer-views.ts` | Tab renderers (progress, deps, metrics, timeline, discussion status) |
 | `metrics.ts` | Token and cost tracking ledger |
 | `state.ts` | State derivation from disk |
 | `preferences.ts` | Preference loading, merging, validation |
+| `git-service.ts` | Git operations — commit, merge, worktree sync, completed-units cross-boundary sync |
+| `memory-extractor.ts` | Extract reusable knowledge from session transcripts |
+| `memory-store.ts` | Persistent memory store for cross-session knowledge |
 | `queue-order.ts` | Milestone queue ordering |

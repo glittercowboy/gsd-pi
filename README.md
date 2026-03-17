@@ -32,6 +32,7 @@ Full documentation is available in the [`docs/`](./docs/) directory:
 - **[Token Optimization](./docs/token-optimization.md)** — profiles, context compression, complexity routing (v2.17)
 - **[Cost Management](./docs/cost-management.md)** — budgets, tracking, projections
 - **[Git Strategy](./docs/git-strategy.md)** — worktree isolation, branching, merge behavior
+- **[Parallel Orchestration](./docs/parallel-orchestration.md)** — run multiple milestones simultaneously
 - **[Working in Teams](./docs/working-in-teams.md)** — unique IDs, shared artifacts
 - **[Skills](./docs/skills.md)** — bundled skills, discovery, custom authoring
 - **[Commands Reference](./docs/commands.md)** — all commands and keyboard shortcuts
@@ -112,9 +113,11 @@ Each slice flows through phases automatically:
 
 ```
 Research → Plan → Execute (per task) → Complete → Reassess Roadmap → Next Slice
+                                                                      ↓ (all slices done)
+                                                              Validate Milestone → Complete Milestone
 ```
 
-**Research** scouts the codebase and relevant docs. **Plan** decomposes the slice into tasks with must-haves (mechanically verifiable outcomes). **Execute** runs each task in a fresh context window with only the relevant files pre-loaded. **Complete** writes the summary, UAT script, marks the roadmap, and commits. **Reassess** checks if the roadmap still makes sense given what was learned.
+**Research** scouts the codebase and relevant docs. **Plan** decomposes the slice into tasks with must-haves (mechanically verifiable outcomes). **Execute** runs each task in a fresh context window with only the relevant files pre-loaded. **Complete** writes the summary, UAT script, marks the roadmap, and commits. **Reassess** checks if the roadmap still makes sense given what was learned. **Validate Milestone** runs a reconciliation gate after all slices complete — comparing roadmap success criteria against actual results before sealing the milestone.
 
 ### `/gsd auto` — The Main Event
 
