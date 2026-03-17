@@ -577,6 +577,13 @@ async function handleConfigCommand(args: string[]): Promise<boolean> {
 }
 
 export async function main(args: string[]) {
+	// Catch unhandled promise rejections so the process doesn't silently disappear
+	process.on("unhandledRejection", (reason) => {
+		const message = reason instanceof Error ? reason.stack ?? reason.message : String(reason);
+		console.error(`\nFatal: unhandled promise rejection\n${message}`);
+		process.exitCode = 1;
+	});
+
 	const offlineMode = args.includes("--offline") || isTruthyEnvFlag(process.env.PI_OFFLINE);
 	if (offlineMode) {
 		process.env.PI_OFFLINE = "1";
