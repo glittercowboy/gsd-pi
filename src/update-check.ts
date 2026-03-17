@@ -110,12 +110,13 @@ export async function checkForUpdates(options: UpdateCheckOptions = {}): Promise
   }
 }
 
-const NPM_PACKAGE = 'gsd-pi'
+const PROMPT_TIMEOUT_MS = 30_000
 
 /**
  * Interactive update prompt shown at startup when a newer version is available.
  * Fetches the latest version (with cache), then asks the user whether to
  * update now or skip. Runs at most once per 24 hours (same cache as checkForUpdates).
+ * Defaults to skip after 30 seconds of inactivity.
  *
  * Returns true if an update was performed, false otherwise.
  */
@@ -157,11 +158,19 @@ export async function checkAndPromptForUpdates(options: UpdateCheckOptions = {})
   }
 
   // Update available — show interactive prompt
+  // Build the inner content line without ANSI codes to measure visible width,
+  // then pad to fit a dynamic box.
+  const innerText = `  Update available! v${currentVersion} → v${latestVersion}  `
+  const innerWidth = innerText.length
+  const top = '╔' + '═'.repeat(innerWidth) + '╗'
+  const mid = '║' + `  ${chalk.bold('Update available!')} ${chalk.dim(`v${currentVersion}`)} → ${chalk.bold.green(`v${latestVersion}`)}  ` + '║'
+  const bot = '╚' + '═'.repeat(innerWidth) + '╝'
+
   process.stderr.write('\n')
   process.stderr.write(
-    `  ${chalk.yellow('╔══════════════════════════════════════════════╗')}\n` +
-    `  ${chalk.yellow('║')}  ${chalk.bold('Update available!')} ${chalk.dim(`v${currentVersion}`)} → ${chalk.bold.green(`v${latestVersion}`)}   ${chalk.yellow('║')}\n` +
-    `  ${chalk.yellow('╚══════════════════════════════════════════════╝')}\n\n`,
+    `  ${chalk.yellow(top)}\n` +
+    `  ${chalk.yellow('║')}${mid.slice(1, -1)}${chalk.yellow('║')}\n` +
+    `  ${chalk.yellow(bot)}\n\n`,
   )
 
   // Use readline for a simple two-option prompt that works without @clack/prompts
@@ -170,10 +179,19 @@ export async function checkAndPromptForUpdates(options: UpdateCheckOptions = {})
 
   const choice = await new Promise<string>((resolve) => {
     process.stderr.write(
-      `  ${chalk.bold('[1]')} Update now   ${chalk.dim(`npm install -g ${NPM_PACKAGE}@latest`)}\n` +
+      `  ${chalk.bold('[1]')} Update now   ${chalk.dim(`npm install -g ${NPM_PACKAGE_NAME}@latest`)}\n` +
       `  ${chalk.bold('[2]')} Skip\n\n`,
     )
+
+    // Default to skip if the user doesn't respond within PROMPT_TIMEOUT_MS
+    const timer = setTimeout(() => {
+      process.stderr.write('\n')
+      rl.close()
+      resolve('2')
+    }, PROMPT_TIMEOUT_MS)
+
     rl.question(`  ${chalk.bold('Choose [1/2]:')} `, (answer) => {
+      clearTimeout(timer)
       resolve(answer.trim())
     })
   })
@@ -187,13 +205,13 @@ export async function checkAndPromptForUpdates(options: UpdateCheckOptions = {})
   process.stdin.pause()
 
   if (choice === '1') {
-    process.stderr.write(`\n  ${chalk.dim('Running:')} npm install -g ${NPM_PACKAGE}@latest\n\n`)
+    process.stderr.write(`\n  ${chalk.dim('Running:')} npm install -g ${NPM_PACKAGE_NAME}@latest\n\n`)
     try {
-      execSync(`npm install -g ${NPM_PACKAGE}@latest`, { stdio: 'inherit' })
+      execSync(`npm install -g ${NPM_PACKAGE_NAME}@latest`, { stdio: 'inherit' })
       process.stderr.write(`\n  ${chalk.green.bold(`✓ Updated to v${latestVersion}`)}\n\n`)
       return true
     } catch {
-      process.stderr.write(`\n  ${chalk.yellow(`Update failed. You can run: npm install -g ${NPM_PACKAGE}@latest`)}\n\n`)
+      process.stderr.write(`\n  ${chalk.yellow(`Update failed. You can run: npm install -g ${NPM_PACKAGE_NAME}@latest`)}\n\n`)
     }
   } else {
     process.stderr.write(`  ${chalk.dim('Skipped. Run')} gsd update ${chalk.dim('anytime to upgrade.')}\n\n`)
