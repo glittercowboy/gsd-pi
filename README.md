@@ -39,6 +39,7 @@ Full documentation is available in the [`docs/`](./docs/) directory:
 - **[Architecture](./docs/architecture.md)** — system design and dispatch pipeline
 - **[Troubleshooting](./docs/troubleshooting.md)** — common issues, doctor, forensics, recovery
 - **[VS Code Extension](./vscode-extension/README.md)** — chat participant, sidebar dashboard, RPC integration
+- **[Visualizer](./docs/visualizer.md)** — workflow visualizer with stats and discussion status
 - **[Migration from v1](./docs/migration.md)** — `.planning` → `.gsd` migration
 
 ---
@@ -67,6 +68,9 @@ GSD v2 solves all of these because it's not a prompt framework anymore — it's 
 | Context injection    | "Read this file"             | Pre-inlined into dispatch prompt                        |
 | Roadmap reassessment | Manual                       | Automatic after each slice completes                    |
 | Skill discovery      | None                         | Auto-detect and install relevant skills during research |
+| Verification         | Manual                       | Automated verification commands with auto-fix retries   |
+| Reporting            | None                         | Self-contained HTML reports with metrics and dep graphs  |
+| Parallel execution   | None                         | Multi-worker parallel milestone orchestration            |
 
 ### Migrating from v1
 
@@ -117,7 +121,7 @@ Research → Plan → Execute (per task) → Complete → Reassess Roadmap → N
                                                               Validate Milestone → Complete Milestone
 ```
 
-**Research** scouts the codebase and relevant docs. **Plan** decomposes the slice into tasks with must-haves (mechanically verifiable outcomes). **Execute** runs each task in a fresh context window with only the relevant files pre-loaded. **Complete** writes the summary, UAT script, marks the roadmap, and commits. **Reassess** checks if the roadmap still makes sense given what was learned. **Validate Milestone** runs a reconciliation gate after all slices complete — comparing roadmap success criteria against actual results before sealing the milestone.
+**Research** scouts the codebase and relevant docs. **Plan** decomposes the slice into tasks with must-haves (mechanically verifiable outcomes). **Execute** runs each task in a fresh context window with only the relevant files pre-loaded — then runs configured verification commands (lint, test, etc.) with auto-fix retries. **Complete** writes the summary, UAT script, marks the roadmap, and commits with meaningful messages derived from task summaries. **Reassess** checks if the roadmap still makes sense given what was learned. **Validate Milestone** runs a reconciliation gate after all slices complete — comparing roadmap success criteria against actual results before sealing the milestone.
 
 ### `/gsd auto` — The Main Event
 
@@ -137,7 +141,7 @@ Auto mode is a state machine driven by files on disk. It reads `.gsd/STATE.md`, 
 
 3. **Git worktree isolation** — Each milestone runs in its own git worktree with a `milestone/<MID>` branch. All slice work commits sequentially — no branch switching, no merge conflicts. When the milestone completes, it's squash-merged to main as one clean commit.
 
-4. **Crash recovery** — A lock file tracks the current unit. If the session dies, the next `/gsd auto` reads the surviving session file, synthesizes a recovery briefing from every tool call that made it to disk, and resumes with full context.
+4. **Crash recovery** — A lock file tracks the current unit. If the session dies, the next `/gsd auto` reads the surviving session file, synthesizes a recovery briefing from every tool call that made it to disk, and resumes with full context. Parallel orchestrator state is persisted to disk with PID liveness detection, so multi-worker sessions survive crashes too.
 
 5. **Stuck detection** — If the same unit dispatches twice (the LLM didn't produce the expected artifact), it retries once with a deep diagnostic. If it fails again, auto mode stops with the exact file it expected.
 
@@ -147,7 +151,11 @@ Auto mode is a state machine driven by files on disk. It reads `.gsd/STATE.md`, 
 
 8. **Adaptive replanning** — After each slice completes, the roadmap is reassessed. If the work revealed new information that changes the plan, slices are reordered, added, or removed before continuing.
 
-9. **Escape hatch** — Press Escape to pause. The conversation is preserved. Interact with the agent, inspect what happened, or just `/gsd auto` to resume from disk state.
+9. **Verification enforcement** — Configure shell commands (`npm run lint`, `npm run test`, etc.) that run automatically after task execution. Failures trigger auto-fix retries before advancing. Configurable via `verification_commands`, `verification_auto_fix`, and `verification_max_retries` preferences.
+
+10. **Milestone validation** — After all slices complete, a `validate-milestone` gate compares roadmap success criteria against actual results before sealing the milestone.
+
+11. **Escape hatch** — Press Escape to pause. The conversation is preserved. Interact with the agent, inspect what happened, or just `/gsd auto` to resume from disk state.
 
 ### `/gsd` and `/gsd next` — Step Mode
 
@@ -233,17 +241,22 @@ Both terminals read and write the same `.gsd/` files on disk. Your decisions in 
 # Run auto mode in CI
 gsd headless --timeout 600000
 
+# Create and execute a milestone end-to-end
+gsd headless new-milestone --context spec.md --auto
+
 # One unit at a time (cron-friendly)
 gsd headless next
 
-# Machine-readable status
+# Machine-readable JSONL event stream
 gsd headless --json status
 
 # Force a specific pipeline phase
 gsd headless dispatch plan
 ```
 
-Headless auto-responds to interactive prompts, detects completion, and exits with structured codes: `0` complete, `1` error/timeout, `2` blocked. Pair with [remote questions](./docs/remote-questions.md) to route decisions to Slack or Discord when human input is needed.
+Headless auto-responds to interactive prompts, detects completion, and exits with structured codes: `0` complete, `1` error/timeout, `2` blocked. Auto-restarts on crash with exponential backoff. Pair with [remote questions](./docs/remote-questions.md) to route decisions to Slack or Discord when human input is needed.
+
+**Multi-session orchestration** — headless mode supports file-based IPC in `.gsd/parallel/` for coordinating multiple GSD workers across milestones. Build orchestrators that spawn, monitor, and budget-cap a fleet of GSD workers.
 
 ### First launch
 
@@ -269,6 +282,7 @@ On first run, GSD launches a branded setup wizard that walks you through LLM pro
 | `/gsd forensics`        | Post-mortem investigation of auto-mode failures                 |
 | `/gsd cleanup`          | Archive phase directories from completed milestones             |
 | `/gsd doctor`           | Runtime health checks with auto-fix for common issues           |
+| `/gsd export --html`    | Generate HTML report for current or completed milestone         |
 | `/worktree` (`/wt`)     | Git worktree lifecycle — create, switch, merge, remove          |
 | `/voice`                | Toggle real-time speech-to-text (macOS, Linux)                  |
 | `/exit`                 | Graceful shutdown — saves session state before exiting          |
@@ -277,6 +291,7 @@ On first run, GSD launches a branded setup wizard that walks you through LLM pro
 | `Ctrl+Alt+G`            | Toggle dashboard overlay                                        |
 | `Ctrl+Alt+V`            | Toggle voice transcription                                      |
 | `Ctrl+Alt+B`            | Show background shell processes                                 |
+| `Alt+V`                 | Paste clipboard image (macOS)                                   |
 | `gsd config`            | Re-run the setup wizard (LLM provider + tool keys)              |
 | `gsd update`            | Update GSD to the latest version                                |
 | `gsd headless [cmd]`    | Run `/gsd` commands without TUI (CI, cron, scripts)             |
@@ -321,7 +336,7 @@ gsd/M001/S01 (deleted after merge):
   feat(S01/T01): core types and interfaces
 ```
 
-One squash commit per milestone on main (or whichever branch you started from). The worktree is torn down after merge. Git bisect works. Individual milestones are revertable.
+One squash commit per milestone on main (or whichever branch you started from). The worktree is torn down after merge. Git bisect works. Individual milestones are revertable. Commit messages are generated from task summaries — no more generic "complete task" messages.
 
 ### Verification
 
@@ -342,6 +357,15 @@ The verification ladder: static checks → command execution → behavioral test
 - Per-unit cost and token breakdown by phase, slice, and model
 - Cost projections based on completed work
 - Completed and in-progress units
+
+### HTML Reports
+
+After a milestone completes, GSD auto-generates a self-contained HTML report in `.gsd/reports/`. Each report includes project summary, progress tree, slice dependency graph (SVG DAG), cost/token metrics with bar charts, execution timeline, changelog, and knowledge base sections. No external dependencies — all CSS and JS are inlined, printable to PDF from any browser.
+
+An auto-generated `index.html` shows all reports with progression metrics across milestones.
+
+- **Automatic** — generated after milestone completion (configurable via `auto_report` preference)
+- **Manual** — run `/gsd export --html` anytime
 
 ---
 
@@ -370,6 +394,10 @@ auto_supervisor:
   hard_timeout_minutes: 30
 budget_ceiling: 50.00
 unique_milestone_ids: true
+verification_commands:
+  - npm run lint
+  - npm run test
+auto_report: true
 ---
 ```
 
@@ -387,6 +415,11 @@ unique_milestone_ids: true
 | `skill_staleness_days` | Skills unused for N days get deprioritized (default: 60, 0 = disabled)                                |
 | `unique_milestone_ids` | Uses unique milestone names to avoid clashes when working in teams of people                          |
 | `git.isolation`        | `worktree` (default) or `none` — disable worktree isolation for projects that don't need it           |
+| `verification_commands`| Array of shell commands to run after task execution (e.g., `["npm run lint", "npm run test"]`)        |
+| `verification_auto_fix`| Auto-retry on verification failures (default: true)                                                   |
+| `verification_max_retries` | Max retries for verification failures (default: 2)                                               |
+| `require_slice_discussion` | Pause auto-mode before each slice for human discussion review                                    |
+| `auto_report`          | Auto-generate HTML reports after milestone completion (default: true)                                 |
 
 ### Agent Instructions
 
@@ -471,6 +504,10 @@ The best practice for working in teams is to ensure unique milestone names acros
 .gsd/runtime/
 # Git worktree working copies
 .gsd/worktrees/
+# Parallel orchestration IPC and worker status
+.gsd/parallel/
+# Generated HTML reports (regenerable via /gsd export --html)
+.gsd/reports/
 # Session-specific interrupted-work markers
 .gsd/milestones/**/continue.md
 .gsd/milestones/**/*-CONTINUE.md
