@@ -4,6 +4,7 @@ import { join, sep } from "node:path";
 import { loadFile, parsePlan, parseRoadmap, parseSummary, saveFile, parseTaskPlanMustHaves, countMustHavesMentionedInSummary } from "./files.js";
 import { resolveMilestoneFile, resolveMilestonePath, resolveSliceFile, resolveSlicePath, resolveTaskFile, resolveTaskFiles, resolveTasksDir, milestonesDir, gsdRoot, relMilestoneFile, relSliceFile, relTaskFile, relSlicePath, relGsdRootFile, resolveGsdRootFile } from "./paths.js";
 import { deriveState, isMilestoneComplete } from "./state.js";
+import { invalidateAllCaches } from "./cache.js";
 import { loadEffectiveGSDPreferences, type GSDPreferences } from "./preferences.js";
 import { listWorktrees, resolveGitDir } from "./worktree-manager.js";
 import { abortAndReset } from "./git-self-heal.js";
@@ -200,6 +201,7 @@ async function updateStateFile(basePath: string, fixesApplied: string[]): Promis
 
 /** Rebuild STATE.md from current disk state. Exported for auto-mode post-hooks. */
 export async function rebuildState(basePath: string): Promise<void> {
+  invalidateAllCaches();
   const state = await deriveState(basePath);
   const path = resolveGsdRootFile(basePath, "STATE");
   await saveFile(path, buildStateMarkdown(state));

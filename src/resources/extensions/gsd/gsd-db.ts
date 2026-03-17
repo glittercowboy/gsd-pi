@@ -750,3 +750,18 @@ export function insertArtifact(a: {
     ':imported_at': new Date().toISOString(),
   });
 }
+
+/**
+ * Delete all rows from the artifacts table.
+ * The artifacts table is a read cache — clearing it forces the next
+ * deriveState() to fall through to disk reads (native Rust batch parse).
+ * Safe to call when no database is open (no-op).
+ */
+export function clearArtifacts(): void {
+  if (!currentDb) return;
+  try {
+    currentDb.exec('DELETE FROM artifacts');
+  } catch {
+    // Clearing a cache should never be fatal
+  }
+}

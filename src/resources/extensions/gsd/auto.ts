@@ -2421,7 +2421,7 @@ async function dispatchNextUnit(
         unitConsecutiveSkips.delete(idempotencyKey);
         completedKeySet.delete(idempotencyKey);
         removePersistedKey(basePath, idempotencyKey);
-        invalidateStateCache();
+        invalidateAllCaches();
         ctx.ui.notify(
           `Skip loop detected: ${unitType} ${unitId} skipped ${skipCount} times without advancing. Evicting completion record and forcing reconciliation.`,
           "warning",
@@ -2468,7 +2468,7 @@ async function dispatchNextUnit(
       unitConsecutiveSkips.delete(idempotencyKey);
       completedKeySet.delete(idempotencyKey);
       removePersistedKey(basePath, idempotencyKey);
-      invalidateStateCache();
+      invalidateAllCaches();
       ctx.ui.notify(
         `Skip loop detected: ${unitType} ${unitId} skipped ${skipCount2} times without advancing. Evicting completion record and forcing reconciliation.`,
         "warning",
