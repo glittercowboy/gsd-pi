@@ -135,21 +135,8 @@ export function classifyUnitComplexity(
 
 // ─── Tier Helpers ─────────────────────────────────────────────────────────
 
-export function tierLabel(tier: ComplexityTier): string {
-  switch (tier) {
-    case "light": return "L";
-    case "standard": return "S";
-    case "heavy": return "H";
-  }
-}
-
-export function tierOrdinal(tier: ComplexityTier): number {
-  switch (tier) {
-    case "light": return 0;
-    case "standard": return 1;
-    case "heavy": return 2;
-  }
-}
+// tierLabel and tierOrdinal are exported from complexity-classifier.ts (single source)
+export { tierLabel, tierOrdinal } from "./complexity-classifier.js";
 
 export function escalateTier(currentTier: ComplexityTier): ComplexityTier | null {
   switch (currentTier) {
