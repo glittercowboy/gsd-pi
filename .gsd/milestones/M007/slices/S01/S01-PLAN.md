@@ -40,7 +40,7 @@
 
 ## Tasks
 
-- [ ] **T01: ANSI stripper, message segmenter, and role classifier** `est:2h`
+- [x] **T01: ANSI stripper, message segmenter, and role classifier** `est:2h`
   - Why: Core parser infrastructure — without clean ANSI-stripped, role-classified messages there is nothing to render
   - Files: `web/lib/pty-chat-parser.ts` (new)
   - Do: (1) Read `web/components/gsd/shell-terminal.tsx` and `web/app/api/terminal/stream/route.ts` — understand SSE payload shape `{ type: "output", data: string }`. (2) Write `stripAnsi(s: string): string` — handle CSI sequences `\x1b[...m`, cursor moves `\x1b[H/A/B/C/D/J/K`, OSC sequences `\x1b]...\x07`, title sequences, and `\r` overwrite patterns. (3) Define `ChatMessage`, `TuiPrompt`, `CompletionSignal` TypeScript interfaces. (4) Implement `PtyChatParser` class: internal buffer, `ChatMessage[]`, subscriber set. (5) Implement `feed()`: append to buffer, call `stripAnsi`, run segmentation — GSD prompt marker (`❯` or `>` at line start) signals boundary between turns; assistant responses are bulk text between prompts; short status lines are `'system'`. (6) Implement `getMessages()`, `onMessage()` with unsubscribe. (7) Assign stable UUIDs to messages (`crypto.randomUUID()`); append-in-place while `complete === false`, flip to `complete: true` on boundary.

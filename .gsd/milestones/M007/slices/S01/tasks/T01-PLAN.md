@@ -40,6 +40,20 @@ Build the core of `PtyChatParser`: a class that accepts raw PTY byte chunks, str
 9. Implement `getMessages()`, `onMessage()`, and unsubscribe
 10. Manually test with a hardcoded fixture string representing a realistic GSD session exchange
 
+## Observability Impact
+
+**Signals added by this task:**
+- `PtyChatParser` emits `debug`-level `console.debug` calls (prefixed `[pty-chat-parser]`) at each structural boundary: role boundary detected, message completed, raw buffer flush — uses structural labels only, never raw content
+- `getMessages()` is the primary in-browser inspection surface — callable from browser DevTools console during development: `window.__chatParser?.getMessages()`
+- TypeScript compilation gate: `npx tsc --noEmit` in `web/` is the primary CI signal; type errors in this module block all downstream S02/S03/S04 work
+
+**Failure visibility:**
+- Wrong role: `content` and `role` fields in `getMessages()` are immediately visible; misclassified lines appear in the wrong bucket
+- ANSI leakage: `content` fields containing `\x1b` characters are the failure signal — easy to spot in console output
+- Subscriber fires too often or never: add a `console.debug('[pty-chat-parser] onMessage fired', msg.id, msg.role)` probe to diagnose
+
+**Redaction constraint:** parser logs only boundary type and message IDs — never raw PTY content (may contain API keys or passwords typed by the user)
+
 ## Context
 
 - PTY output arrives as raw bytes — xterm.js handles ANSI internally in Power Mode, but we're reading the SSE stream directly and need our own ANSI stripper
