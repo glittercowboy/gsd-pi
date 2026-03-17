@@ -489,11 +489,23 @@ test("fresh gsd --web browser onboarding stays locked on failed validation and u
     await page.locator('[data-testid="onboarding-api-key-input"]').fill('valid-demo-key');
     await page.click('[data-testid="onboarding-save-api-key"]');
 
-    await page.waitForSelector('[data-testid="onboarding-gate"]', { state: 'detached' });
+    // Wait for onboarding to unlock and wizard to auto-advance past authenticate step
     await page.waitForFunction(() => {
       const node = document.querySelector('[data-testid="workspace-connection-status"]');
       return Boolean(node && !/Required setup|Refreshing bridge auth/i.test(node.textContent || ""));
-    });
+    }, null, { timeout: 30_000 });
+
+    // Complete the onboarding wizard — click through Optional and Ready steps
+    const optionalContinue = page.locator('[data-testid="onboarding-optional-continue"]');
+    if (await optionalContinue.isVisible({ timeout: 5_000 }).catch(() => false)) {
+      await optionalContinue.click();
+    }
+    const finishButton = page.locator('[data-testid="onboarding-finish"]');
+    if (await finishButton.isVisible({ timeout: 5_000 }).catch(() => false)) {
+      await finishButton.click();
+    }
+
+    await page.waitForSelector('[data-testid="onboarding-gate"]', { state: 'detached', timeout: 15_000 });
 
     assert.equal(await page.locator('[data-testid="terminal-command-input"]').isDisabled(), false);
 

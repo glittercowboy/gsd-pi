@@ -79,7 +79,7 @@ This milestone is complete only when all are true:
 - [x] **S08: TUI-to-web 1:1 parity audit and gap closure** `risk:low` `depends:[S03,S04,S05,S06,S07]`
   > After this: systematic comparison proves every TUI feature has a working web equivalent — gaps found are fixed.
 
-- [ ] **S09: Test suite hardening** `risk:low` `depends:[S08]`
+- [x] **S09: Test suite hardening** `risk:low` `depends:[S08]`
   > After this: `npm run test:unit`, `npm run test:integration`, `npm run build`, `npm run build:web-host` all pass clean.
 
 ## Boundary Map

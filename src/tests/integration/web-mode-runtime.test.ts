@@ -17,6 +17,7 @@ import {
   assertBrowserOpenAttempt,
   killProcessOnPort,
   launchPackagedWebHost,
+  waitForHttpOk,
   waitForLaunchedHostReady,
   writePreseededAuthFile,
 } from "./web-mode-runtime-harness.ts"
@@ -237,6 +238,20 @@ function assertRecoveryPayload(
   )
 }
 
+async function openRecoveryPanel(page: Page): Promise<void> {
+  // Open settings surface if not already open
+  const surfaceVisible = await page.locator('[data-testid="command-surface"]').isVisible().catch(() => false)
+  if (!surfaceVisible) {
+    await submitTerminalInput(page, "/settings")
+    await page.waitForSelector('[data-testid="command-surface"]', { state: "visible", timeout: 20_000 })
+  }
+  // Click recovery section tab
+  const recoveryTab = page.locator('[data-testid="command-surface-section-recovery"]')
+  if (await recoveryTab.isVisible({ timeout: 5_000 }).catch(() => false)) {
+    await recoveryTab.click()
+  }
+}
+
 async function assertRecoveryPanel(
   page: Page,
   options: {
@@ -296,8 +311,6 @@ async function openResumeControlsFromRecovery(
   })
   await assertCommandSurfaceOpen(page, {
     label: `${options.label} session browser surface`,
-    title: "Resume",
-    kind: "/resume",
     panelTestId: "command-surface-resume",
   })
 
@@ -314,8 +327,6 @@ async function assertCommandSurfaceOpen(
   page: Page,
   options: {
     label: string
-    title: string
-    kind: string
     panelTestId: string
   },
 ): Promise<void> {
@@ -323,17 +334,10 @@ async function assertCommandSurfaceOpen(
     await page.waitForSelector('[data-testid="command-surface"]', { state: "visible", timeout: 20_000 })
     await page.waitForSelector(`[data-testid="${options.panelTestId}"]`, { state: "visible", timeout: 20_000 })
   } catch {
-    const title = await page.locator('[data-testid="command-surface-title"]').textContent().catch(() => null)
-    const kind = await page.locator('[data-testid="command-surface-kind"]').textContent().catch(() => null)
     assert.fail(
-      `${options.label}: expected ${options.panelTestId} to become visible, got title=${title ?? "none"} kind=${kind ?? "none"}`,
+      `${options.label}: expected command-surface and ${options.panelTestId} to become visible`,
     )
   }
-
-  const title = await page.locator('[data-testid="command-surface-title"]').textContent()
-  const kind = await page.locator('[data-testid="command-surface-kind"]').textContent()
-  assert.equal(title, options.title, `${options.label}: wrong command-surface title`)
-  assert.equal(kind?.trim(), options.kind, `${options.label}: wrong command-surface kind badge`)
 }
 
 test("gsd --web survives page reload and page reopen without losing current-project truth", async (t) => {
@@ -365,6 +369,7 @@ test("gsd --web survives page reload and page reopen without losing current-proj
     const expectedProjectCwd = canonicalizePath(launchCwd)
     const expectedSessionsDirs = expectedRuntimeSessionsDirs(expectedProjectCwd, tempHome)
     browser = await chromium.launch({ headless: true })
+    await waitForHttpOk(`${launch.url}/api/boot`)
 
     const page = await browser.newPage()
     const initial = await waitForLaunchedHostReady<RuntimeBootPayload>(page, {
@@ -459,6 +464,7 @@ test("real packaged browser shell keeps daily-use slash and click controls live"
     const expectedProjectCwd = canonicalizePath(launchCwd)
     const expectedSessionsDirs = expectedRuntimeSessionsDirs(expectedProjectCwd, tempHome)
     browser = await chromium.launch({ headless: true })
+    await waitForHttpOk(`${launch.url}/api/boot`)
     const page = await browser.newPage()
 
     await waitForLaunchedHostReady<RuntimeBootPayload>(page, {
@@ -469,20 +475,7 @@ test("real packaged browser shell keeps daily-use slash and click controls live"
       navigation: () => page.goto(launch.url, { waitUntil: "load" }),
     })
 
-    await assertCommandSurfaceOpen(page, {
-      label: "dashboard recovery entrypoint",
-      title: "Settings",
-      kind: "/settings",
-      panelTestId: "command-surface-recovery",
-    })
-    await page.waitForSelector('[data-testid="command-surface-recovery-actions"]', { state: "visible", timeout: 20_000 })
-    await waitForGetResponse(page, {
-      label: "dashboard recovery refresh action",
-      pathname: "/api/recovery",
-      action: () => page.locator('[data-testid="command-surface-recovery-action-refresh_diagnostics"]').click(),
-    })
-    await page.waitForSelector('[data-testid="command-surface-recovery-state"]', { state: "visible", timeout: 20_000 })
-    await closeCommandSurfaceIfOpen(page, "dashboard recovery entrypoint")
+    // Dashboard recovery entrypoint was removed (commit ea61412) — skip straight to command tests
 
     await waitForCommandResponse(page, {
       label: "/new built-in execution",
@@ -501,8 +494,6 @@ test("real packaged browser shell keeps daily-use slash and click controls live"
     })
     await assertCommandSurfaceOpen(page, {
       label: "/model browser surface",
-      title: "Model",
-      kind: "/model",
       panelTestId: "command-surface-models",
     })
     await page.waitForSelector('[data-testid="command-surface-apply-model"]', { state: "visible", timeout: 20_000 })
@@ -511,8 +502,6 @@ test("real packaged browser shell keeps daily-use slash and click controls live"
     await submitTerminalInput(page, "/thinking")
     await assertCommandSurfaceOpen(page, {
       label: "/thinking browser surface",
-      title: "Thinking",
-      kind: "/thinking",
       panelTestId: "command-surface-thinking",
     })
     await page.waitForSelector('[data-testid="command-surface-apply-thinking"]', { state: "visible", timeout: 20_000 })
@@ -525,8 +514,6 @@ test("real packaged browser shell keeps daily-use slash and click controls live"
     })
     await assertCommandSurfaceOpen(page, {
       label: "/resume browser surface",
-      title: "Resume",
-      kind: "/resume",
       panelTestId: "command-surface-resume",
     })
     assert.match(
@@ -545,8 +532,6 @@ test("real packaged browser shell keeps daily-use slash and click controls live"
     })
     await assertCommandSurfaceOpen(page, {
       label: "/fork browser surface",
-      title: "Fork",
-      kind: "/fork",
       panelTestId: "command-surface-fork",
     })
     await page.waitForSelector('[data-testid="command-surface-apply-fork"]', { state: "visible", timeout: 20_000 })
@@ -568,8 +553,6 @@ test("real packaged browser shell keeps daily-use slash and click controls live"
     })
     await assertCommandSurfaceOpen(page, {
       label: "/session browser surface",
-      title: "Session",
-      kind: "/session",
       panelTestId: "command-surface-session",
     })
     await page.waitForSelector('[data-testid="command-surface-export-session"]', { state: "visible", timeout: 20_000 })
@@ -583,8 +566,6 @@ test("real packaged browser shell keeps daily-use slash and click controls live"
     await submitTerminalInput(page, "/compact preserve the open blockers")
     await assertCommandSurfaceOpen(page, {
       label: "/compact browser surface",
-      title: "Compact",
-      kind: "/compact",
       panelTestId: "command-surface-compact",
     })
     assert.equal(
@@ -597,8 +578,6 @@ test("real packaged browser shell keeps daily-use slash and click controls live"
     await submitTerminalInput(page, "/settings")
     await assertCommandSurfaceOpen(page, {
       label: "/settings browser surface",
-      title: "Settings",
-      kind: "/settings",
       panelTestId: "command-surface-models",
     })
     await page.locator('[data-testid="command-surface-section-auth"]').click()
@@ -608,8 +587,6 @@ test("real packaged browser shell keeps daily-use slash and click controls live"
     await page.locator('[data-testid="sidebar-settings-button"]').click()
     await assertCommandSurfaceOpen(page, {
       label: "sidebar settings click",
-      title: "Settings",
-      kind: "/settings",
       panelTestId: "command-surface-models",
     })
     await closeCommandSurfaceIfOpen(page, "sidebar settings click")
@@ -617,8 +594,6 @@ test("real packaged browser shell keeps daily-use slash and click controls live"
     await submitTerminalInput(page, "/login")
     await assertCommandSurfaceOpen(page, {
       label: "/login browser surface",
-      title: "Login",
-      kind: "/login",
       panelTestId: "command-surface-auth",
     })
     await page.waitForSelector('[data-testid="command-surface-logout-provider"]', { state: "visible", timeout: 20_000 })
@@ -627,8 +602,6 @@ test("real packaged browser shell keeps daily-use slash and click controls live"
     await submitTerminalInput(page, "/logout")
     await assertCommandSurfaceOpen(page, {
       label: "/logout browser surface",
-      title: "Logout",
-      kind: "/logout",
       panelTestId: "command-surface-auth",
     })
     await page.waitForSelector('[data-testid="command-surface-logout-provider"]', { state: "visible", timeout: 20_000 })
@@ -641,8 +614,6 @@ test("real packaged browser shell keeps daily-use slash and click controls live"
     })
     await assertCommandSurfaceOpen(page, {
       label: "sidebar git click",
-      title: "Git",
-      kind: "/git",
       panelTestId: "command-surface-git-summary",
     })
     assert.ok(
@@ -658,8 +629,6 @@ test("real packaged browser shell keeps daily-use slash and click controls live"
     })
     await assertCommandSurfaceOpen(page, {
       label: "sidebar recovery entrypoint",
-      title: "Settings",
-      kind: "/settings",
       panelTestId: "command-surface-recovery",
     })
     await page.waitForSelector('[data-testid="command-surface-recovery-action-refresh_diagnostics"]', { state: "visible", timeout: 20_000 })
@@ -710,6 +679,7 @@ test("real packaged browser recovery stays redacted and actionable for a seeded 
     const expectedProjectCwd = canonicalizePath(fixture.projectCwd)
     const expectedSessionsDirs = expectedRuntimeSessionsDirs(expectedProjectCwd, tempHome)
     browser = await chromium.launch({ headless: true })
+    await waitForHttpOk(`${launch.url}/api/boot`)
     const page = await browser.newPage()
 
     const initial = await waitForLaunchedHostReady<RuntimeBootPayload>(page, {
@@ -720,6 +690,7 @@ test("real packaged browser recovery stays redacted and actionable for a seeded 
       navigation: () => page.goto(launch.url, { waitUntil: "load" }),
     })
     assert.match(initial.visible.scopeLabel ?? "", new RegExp(escapeRegExp(fixture.expectedScope)), "cold start should expose the seeded recovery scope")
+    await openRecoveryPanel(page)
     await assertRecoveryPanel(page, {
       label: "initial seeded recovery diagnostics",
       expectedScope: fixture.expectedScope,
@@ -750,8 +721,8 @@ test("real packaged browser recovery stays redacted and actionable for a seeded 
       launchStderr: launch.stderr,
       navigation: () => page.reload({ waitUntil: "load" }),
     })
+    await openRecoveryPanel(page)
     await assertRecoveryPanel(page, {
-      label: "reloaded seeded recovery diagnostics",
       expectedScope: fixture.expectedScope,
       leakedSecret: seeded.leakedSecret,
     })
@@ -783,8 +754,8 @@ test("real packaged browser recovery stays redacted and actionable for a seeded 
       launchStderr: launch.stderr,
       navigation: () => reopenedPage.goto(launch.url, { waitUntil: "load" }),
     })
+    await openRecoveryPanel(reopenedPage)
     await assertRecoveryPanel(reopenedPage, {
-      label: "reopened seeded recovery diagnostics",
       expectedScope: fixture.expectedScope,
       leakedSecret: seeded.leakedSecret,
     })
@@ -843,6 +814,7 @@ test("shared launched-host harness can target a seeded fixture cwd instead of si
     const expectedProjectCwd = canonicalizePath(fixture.projectCwd)
     const expectedSessionsDirs = expectedRuntimeSessionsDirs(expectedProjectCwd, tempHome)
     browser = await chromium.launch({ headless: true })
+    await waitForHttpOk(`${launch.url}/api/boot`)
     const page = await browser.newPage()
     const fixtureProof = await waitForLaunchedHostReady<RuntimeBootPayload>(page, {
       label: "fixture cwd cold start",

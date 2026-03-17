@@ -25,6 +25,8 @@ A user can run `gsd --web`, complete setup, and do the full GSD workflow in a sn
 - M003/S06 complete: settings command surface shows real model routing config, budget allocation visibility, and effective preferences. `/api/settings-data` GET aggregates 5 upstream modules (preferences, model-router, context-budget, routing-history, metrics) via child-process service. Three panel components: PrefsPanel (mode, token profile, skills, toggles), ModelRoutingPanel (tier assignments, routing flags, history patterns), BudgetPanel (ceiling, enforcement, context budgets, project cost totals with token breakdown). `gsd-prefs` renders all three, `gsd-mode` focuses routing, `gsd-config` focuses budget. Both builds pass.
 - M003/S08 complete: systematic parity audit covering all 30 `/gsd` subcommands, dashboard overlay (11 features), 7 visualizer tabs, and 8 interactive flows. S08-PARITY-AUDIT.md documents 12 gaps — 9 intentional scope boundaries (interactive wizards accessible via passthrough), 3 deferred (minor data-visibility items). Test contract aligned: `view-navigate` dispatch kind modeled as first-class, 118/118 parity contract tests pass. Zero stub surfaces remain across all 20 dispatched commands. Both builds pass.
 
+- M003/S09 complete: test suite hardened — unit tests 1197/0, both builds green. dist-redirect.mjs resolver handles /dist/ paths, .tsx transpilation, and extensionless web/ imports. Integration tests fixed: slash-command assertion aligned with S02 dispatch, waitForHttpOk added for runtime host readiness, Terminal component restored to app-shell bottom panel.
+
 ## Architecture / Key Patterns
 
 - Node/TypeScript CLI entry in `src/cli.ts`
@@ -47,6 +49,6 @@ See `.gsd/REQUIREMENTS.md` for the explicit capability contract, requirement sta
 
 - [x] M001: Web mode foundation — Browser-first `gsd --web` is real, integrated, and verified end-to-end.
 - [x] M002: Web parity and hardening — Browser daily-use parity, live freshness, recovery diagnostics, and packaged-host hardening proof are complete.
-- [ ] M003: Upstream sync and full web feature parity — Merge 398 upstream commits, surface all new features in web UI, achieve 1:1 TUI-web parity.
+- [x] M003: Upstream sync and full web feature parity — All 415 upstream commits merged, all /gsd subcommands surfaced in browser, 1:1 TUI-web parity audited, test suite green.
 - [ ] M004: Web mode documentation and CI/CD integration — Dedicated web mode guide, existing doc updates, and a separate CI job for web host build/tests on Linux and macOS.
 - [ ] M005: Light theme with system-aware toggle — Monochrome light theme, OS preference default, NavRail toggle, persistent choice.

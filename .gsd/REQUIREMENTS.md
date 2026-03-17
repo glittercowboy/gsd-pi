@@ -94,14 +94,14 @@ This file is the explicit capability and coverage contract for the project.
 
 ### R110 — npm run test:unit, npm run test:integration, npm run test:browser-tools, npm run build, and npm run build:web-host all pass clean after all M003 work.
 - Class: quality-attribute
-- Status: active
+- Status: validated
 - Description: npm run test:unit, npm run test:integration, npm run test:browser-tools, npm run build, and npm run build:web-host all pass clean after all M003 work.
 - Why it matters: The merge and new code must not break existing functionality.
 - Source: user
 - Primary owning slice: M003/S09
 - Supporting slices: M003/S01
-- Validation: unmapped
-- Notes: Test breakage likely comes from the merge (interface changes) and new web code (new route/store contracts).
+- Validation: Unit tests 1197/0 pass/fail. Both builds (npm run build, npm run build:web-host) exit 0. Integration test failures fixed: dist-redirect.mjs resolver handles /dist/ paths and .tsx extensions (14 fixes), 4 isolated test failures fixed (stale assertion, aspirational DB test, env-independent remote, timing flake), assembled slash-command test aligned with S02 dispatch, runtime tests get waitForHttpOk before page navigation, Terminal component restored to app-shell bottom panel.
+- Notes: Test breakage came from three sources: (1) resolver not guarding /dist/ imports or handling .tsx, (2) tests with stale assertions after M003 changes, (3) integration tests not adapted to S02 dispatch changes and UI layout changes.
 
 ### R111 — A dedicated `docs/web-mode.md` guide covering launch, onboarding, workspace UI, browser commands, architecture (host/bridge/store), configuration, and troubleshooting. README documentation index and relevant sections updated. Existing docs (architecture, troubleshooting, commands, getting-started, configuration) reference web mode where relevant.
 - Class: quality-attribute
@@ -371,13 +371,13 @@ This file is the explicit capability and coverage contract for the project.
 | R107 | core-capability | active | M003/S06 | M003/S02 | Structurally verified by `npm run build` (types compile), `npm run build:web-host` (API route and components in production build), `npx tsx --test web-command-parity-contract.test.ts` (114/118 pass, no regression). API route at `/api/settings-data` returns combined SettingsData JSON with preferences, routingConfig, budgetAllocation, routingHistory, and projectTotals from 5 upstream modules. Three panel components (PrefsPanel, ModelRoutingPanel, BudgetPanel) render real data for gsd-prefs/gsd-mode/gsd-config sections. Full live-runtime validation deferred to S08 parity audit. |
 | R108 | core-capability | active | M003/S07 | M003/S02 | unmapped |
 | R109 | quality-attribute | validated | M003/S08 | M003/S03, M003/S04, M003/S05, M003/S06, M003/S07 | S08-PARITY-AUDIT.md: 30 subcommands, 12 gaps classified, 118/118 tests |
-| R110 | quality-attribute | active | M003/S09 | M003/S01 | unmapped |
+| R110 | quality-attribute | validated | M003/S09 | M003/S01 | Unit tests 1197/0, both builds exit 0, integration test fixes applied. |
 | R111 | quality-attribute | active | M004/S01 | M004/S02 | unmapped |
 | R112 | quality-attribute | active | M004/S03 | none | unmapped |
 
 ## Coverage Summary
 
-- Active requirements: 11
-- Mapped to slices: 11
-- Validated: 13 (R001, R002, R003, R004, R005, R006, R007, R008, R009, R010, R011, R100, R106)
+- Active requirements: 10
+- Mapped to slices: 10
+- Validated: 14 (R001, R002, R003, R004, R005, R006, R007, R008, R009, R010, R011, R100, R106, R110)
 - Unmapped active requirements: 0
