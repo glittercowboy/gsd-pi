@@ -21,6 +21,7 @@ WORKFLOW_SRC="$SRC_RESOURCES/GSD-WORKFLOW.md"
 AGENT_EXTENSIONS="$AGENT_DIR/extensions"
 AGENT_SKILLS="$AGENT_DIR/skills"
 AGENT_AGENTS="$AGENT_DIR/agents"
+AGENT_AGENTS_MD="$AGENT_DIR/AGENTS.md"
 AGENT_WORKFLOW="$HOME/.gsd/GSD-WORKFLOW.md"
 
 MODE="${1:-create}"
@@ -56,6 +57,7 @@ if [ "$MODE" = "--status" ] || [ "$MODE" = "status" ]; then
     check_symlink "extensions" "$AGENT_EXTENSIONS" "$EXTENSIONS_SRC"
     check_symlink "skills" "$AGENT_SKILLS" "$SKILLS_SRC"
     check_symlink "agents" "$AGENT_AGENTS" "$AGENTS_SRC"
+    check_symlink "AGENTS.md" "$AGENT_AGENTS_MD" "$AGENTS_SRC"
     check_symlink "GSD-WORKFLOW.md" "$AGENT_WORKFLOW" "$WORKFLOW_SRC"
     
     exit 0
@@ -79,6 +81,7 @@ if [ "$MODE" = "--remove" ] || [ "$MODE" = "remove" ]; then
     remove_if_symlink "extensions" "$AGENT_EXTENSIONS"
     remove_if_symlink "skills" "$AGENT_SKILLS"
     remove_if_symlink "agents" "$AGENT_AGENTS"
+    remove_if_symlink "AGENTS.md" "$AGENT_AGENTS_MD"
     remove_if_symlink "GSD-WORKFLOW.md" "$AGENT_WORKFLOW"
     
     echo ""
@@ -125,6 +128,11 @@ create_symlink() {
 create_symlink "extensions" "$AGENT_EXTENSIONS" "$EXTENSIONS_SRC"
 create_symlink "skills" "$AGENT_SKILLS" "$SKILLS_SRC"
 create_symlink "agents" "$AGENT_AGENTS" "$AGENTS_SRC"
+
+# AGENTS.md is a file in the agents directory, symlink to the directory instead
+# But we also need AGENTS.md specifically, so symlink to the file
+create_symlink "AGENTS.md" "$AGENT_AGENTS_MD" "$AGENTS_SRC/researcher.md" 2>/dev/null || \
+    create_symlink "AGENTS.md" "$AGENT_AGENTS_MD" "$AGENTS_SRC"
 
 # GSD-WORKFLOW.md goes to ~/.gsd/ not ~/.gsd/agent/
 mkdir -p "$HOME/.gsd"
