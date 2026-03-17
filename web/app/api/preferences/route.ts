@@ -33,8 +33,18 @@ export async function PUT(request: Request): Promise<Response> {
   try {
     const body = await request.json() as Record<string, unknown>;
 
-    // Validate shape — only allow known keys
-    const prefs: WebPreferences = {};
+    // Read existing prefs to merge (don't clobber fields not in this request)
+    let existing: WebPreferences = {};
+    try {
+      if (existsSync(webPreferencesPath)) {
+        existing = JSON.parse(readFileSync(webPreferencesPath, "utf-8"));
+      }
+    } catch {
+      // Corrupt file — start fresh
+    }
+
+    // Merge only provided keys
+    const prefs: WebPreferences = { ...existing };
     if (typeof body.devRoot === "string") {
       prefs.devRoot = body.devRoot;
     }

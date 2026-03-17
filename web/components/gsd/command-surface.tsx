@@ -12,6 +12,7 @@ import {
   Download,
   ExternalLink,
   FileText,
+  FolderRoot,
   GitBranch,
   KeyRound,
   LifeBuoy,
@@ -59,6 +60,7 @@ import {
 import { DoctorPanel, ForensicsPanel, SkillHealthPanel } from "./diagnostics-panels"
 import { KnowledgeCapturesPanel } from "./knowledge-captures-panel"
 import { PrefsPanel, ModelRoutingPanel, BudgetPanel } from "./settings-panels"
+import { DevRootSettingsSection } from "./projects-view"
 import {
   QuickPanel,
   HistoryPanel,
@@ -83,7 +85,7 @@ import {
 
 // ─── Section metadata ────────────────────────────────────────────────
 
-const SETTINGS_SURFACE_SECTIONS = ["model", "thinking", "queue", "compaction", "retry", "recovery", "auth"] as const
+const SETTINGS_SURFACE_SECTIONS = ["model", "thinking", "queue", "compaction", "retry", "recovery", "auth", "workspace"] as const
 const ADMIN_SECTION: CommandSurfaceSection = "admin"
 const GIT_SURFACE_SECTIONS = ["git"] as const
 const SESSION_SURFACE_SECTIONS = ["resume", "name", "fork", "session", "compact"] as const
@@ -107,7 +109,7 @@ function availableSectionsForSurface(surface: string | null, includeAdmin: boole
 }
 
 function sectionLabel(section: CommandSurfaceSection): string {
-  const labels: Record<CommandSurfaceSection, string> = {
+  const labels: Partial<Record<CommandSurfaceSection, string>> = {
     model: "Model",
     thinking: "Thinking",
     queue: "Queue",
@@ -122,12 +124,13 @@ function sectionLabel(section: CommandSurfaceSection): string {
     fork: "Fork",
     session: "Session",
     compact: "Compact",
+    workspace: "Workspace",
   }
-  return labels[section]
+  return labels[section] ?? section
 }
 
 function sectionIcon(section: CommandSurfaceSection) {
-  const icons: Record<CommandSurfaceSection, React.ReactNode> = {
+  const icons: Partial<Record<CommandSurfaceSection, React.ReactNode>> = {
     model: <Cpu className="h-4 w-4" />,
     thinking: <Brain className="h-4 w-4" />,
     queue: <ArrowRightLeft className="h-4 w-4" />,
@@ -142,8 +145,9 @@ function sectionIcon(section: CommandSurfaceSection) {
     fork: <GitBranch className="h-4 w-4" />,
     session: <FileText className="h-4 w-4" />,
     compact: <Archive className="h-4 w-4" />,
+    workspace: <FolderRoot className="h-4 w-4" />,
   }
-  return icons[section]
+  return icons[section] ?? null
 }
 
 function surfaceTitle(surface: string | null): string {
@@ -2015,6 +2019,7 @@ export function CommandSurface() {
       case "fork": return renderForkSection()
       case "session": return renderSessionSection()
       case "compact": return renderCompactSection()
+      case "workspace": return <DevRootSettingsSection />
       case "gsd-forensics": return <ForensicsPanel />
       case "gsd-doctor": return <DoctorPanel />
       case "gsd-skill-health": return <SkillHealthPanel />
@@ -2023,6 +2028,7 @@ export function CommandSurface() {
       case "gsd-triage": return <KnowledgeCapturesPanel initialTab="captures" />
       case "gsd-prefs": return (
         <div className="space-y-6">
+          <DevRootSettingsSection />
           <PrefsPanel />
           <ModelRoutingPanel />
           <BudgetPanel />
