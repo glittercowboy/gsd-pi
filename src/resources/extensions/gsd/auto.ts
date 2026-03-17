@@ -172,7 +172,11 @@ import { hasPendingCaptures, loadPendingCaptures, countPendingCaptures } from ".
 
 // ─── Session State ─────────────────────────────────────────────────────────
 
-import { AutoSession } from "./auto/session.js";
+import {
+  AutoSession,
+  MAX_UNIT_DISPATCHES, STUB_RECOVERY_THRESHOLD, MAX_LIFETIME_DISPATCHES,
+  MAX_CONSECUTIVE_SKIPS, DISPATCH_GAP_TIMEOUT_MS, MAX_SKIP_DEPTH,
+} from "./auto/session.js";
 import type { CompletedUnit, CurrentUnit, UnitRouting, StartModel, PendingVerificationRetry } from "./auto/session.js";
 export {
   MAX_UNIT_DISPATCHES, STUB_RECOVERY_THRESHOLD, MAX_LIFETIME_DISPATCHES,
@@ -227,8 +231,6 @@ export function shouldUseWorktreeIsolation(): boolean {
  *  has been dispatched (sendMessage not called), this timer fires to force a
  *  re-evaluation. Covers the case where dispatchNextUnit silently fails or
  *  an unhandled error kills the dispatch chain. */
-
-const DISPATCH_GAP_TIMEOUT_MS = 5_000; // 5 seconds
 
 /** Prompt character measurement for token savings analysis (R051). */
 
