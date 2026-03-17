@@ -211,12 +211,16 @@ if (!isPrintMode && shouldRunOnboarding(authStorage, settingsManager.getDefaultP
   process.stdin.pause()
 }
 
-// Interactive update check — runs at most once per 24h, asks user to update or skip
+// Update check — interactive prompt when stdin is a TTY, passive banner otherwise
 if (!isPrintMode) {
-  const updated = await checkAndPromptForUpdates().catch(() => false)
-  if (updated) {
-    // User chose to update — exit so they relaunch with the new version
-    process.exit(0)
+  if (process.stdin.isTTY) {
+    const updated = await checkAndPromptForUpdates().catch(() => false)
+    if (updated) {
+      // User chose to update — exit so they relaunch with the new version
+      process.exit(0)
+    }
+  } else {
+    checkForUpdates().catch(() => {})
   }
 }
 

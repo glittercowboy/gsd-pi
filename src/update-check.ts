@@ -158,18 +158,17 @@ export async function checkAndPromptForUpdates(options: UpdateCheckOptions = {})
   }
 
   // Update available — show interactive prompt
-  // Build the inner content line without ANSI codes to measure visible width,
-  // then pad to fit a dynamic box.
-  const innerText = `  Update available! v${currentVersion} → v${latestVersion}  `
-  const innerWidth = innerText.length
+  // Measure visible (ANSI-free) width to size the box, then render with chalk.
+  const midContent = `  ${chalk.bold('Update available!')} ${chalk.dim(`v${currentVersion}`)} → ${chalk.bold.green(`v${latestVersion}`)}  `
+  const midVisible = `  Update available! v${currentVersion} → v${latestVersion}  `
+  const innerWidth = midVisible.length
   const top = '╔' + '═'.repeat(innerWidth) + '╗'
-  const mid = '║' + `  ${chalk.bold('Update available!')} ${chalk.dim(`v${currentVersion}`)} → ${chalk.bold.green(`v${latestVersion}`)}  ` + '║'
   const bot = '╚' + '═'.repeat(innerWidth) + '╝'
 
   process.stderr.write('\n')
   process.stderr.write(
     `  ${chalk.yellow(top)}\n` +
-    `  ${chalk.yellow('║')}${mid.slice(1, -1)}${chalk.yellow('║')}\n` +
+    `  ${chalk.yellow('║')}${midContent}${chalk.yellow('║')}\n` +
     `  ${chalk.yellow(bot)}\n\n`,
   )
 
