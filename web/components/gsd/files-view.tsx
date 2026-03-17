@@ -282,6 +282,18 @@ export function FilesView() {
     return () => window.removeEventListener("gsd:open-file", handler)
   }, [processFileOpen])
 
+  // Auto-select STATE.md on initial load if no file is selected
+  const autoSelectedRef = useRef(false)
+  useEffect(() => {
+    if (autoSelectedRef.current) return
+    if (!gsdTree || selectedPath || consumedPendingRef.current) return
+    const hasStateMd = gsdTree.some((n) => n.name === "STATE.md" && n.type === "file")
+    if (hasStateMd) {
+      autoSelectedRef.current = true
+      void handleSelectFile("STATE.md")
+    }
+  }, [gsdTree, selectedPath, handleSelectFile])
+
   const handleToggleDir = useCallback((path: string) => {
     setExpandedPaths((prev) => {
       const next = new Set(prev)
