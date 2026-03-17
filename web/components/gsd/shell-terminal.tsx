@@ -266,10 +266,11 @@ function TerminalInstance({
 // ─── Multi-instance terminal panel ────────────────────────────────────────────
 
 export function ShellTerminal({ className, command }: ShellTerminalProps) {
+  const defaultId = command ? `gsd-default` : "default"
   const [tabs, setTabs] = useState<TerminalTab[]>([
-    { id: "default", label: command ? "pi" : "zsh", connected: false },
+    { id: defaultId, label: command ? "pi" : "zsh", connected: false },
   ])
-  const [activeTabId, setActiveTabId] = useState("default")
+  const [activeTabId, setActiveTabId] = useState(defaultId)
 
   const createTab = useCallback(async () => {
     try {
