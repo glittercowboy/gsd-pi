@@ -103,6 +103,14 @@ Relevant skill to load: `frontend-design` — for UI quality guidance on the tab
 - `web/components/gsd/dashboard.tsx` — existing component pattern reference (data fetching, Tailwind usage, icon imports)
 - `web/lib/utils.ts` — `cn()` utility for conditional classes
 
+## Observability Impact
+
+- **Client fetch cycle**: Component fetches `GET /api/visualizer` on mount and every 10s. Network tab shows periodic requests; 500 responses surface as error state in the UI.
+- **Tab rendering**: Each of the 7 tabs renders conditionally from `VisualizerData` fields. Empty/null data branches show explicit "no data" messages rather than blank panes.
+- **Export downloads**: Export tab creates client-side Blob URLs for markdown/JSON downloads. Browser download activity confirms export works. No server round-trip.
+- **Inspection**: `React DevTools → VisualizerView` shows current `data`, `loading`, `error` state. Console errors from failed fetches are not swallowed.
+- **Failure visibility**: Loading spinner on initial fetch; error banner with message on fetch failure; graceful empty states when data fields are null/empty.
+
 ## Expected Output
 
 - `web/components/gsd/visualizer-view.tsx` — new file, ~500-700 lines, complete visualizer component with 7 tabbed sections rendering real project data

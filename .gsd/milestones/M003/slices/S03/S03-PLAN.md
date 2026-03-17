@@ -52,7 +52,7 @@
   - Verify: `npm run build:web-host` exits 0
   - Done when: API route compiles, browser types defined, service layer converts Maps to Records
 
-- [ ] **T02: Build VisualizerView component with 7 tabbed sections** `est:2h`
+- [x] **T02: Build VisualizerView component with 7 tabbed sections** `est:2h`
   - Why: The core user-facing work — translates the TUI's 7 visualizer tab renderers (755 lines in `visualizer-views.ts`) into React components. Each tab renders a section of the VisualizerData. Uses existing Radix UI Tabs components.
   - Files: `web/components/gsd/visualizer-view.tsx`
   - Do: Create `web/components/gsd/visualizer-view.tsx` that fetches from `/api/visualizer` on mount with a 10-second auto-refresh interval. Use `Tabs`/`TabsList`/`TabsTrigger`/`TabsContent` from `@/components/ui/tabs`. Implement all 7 tab sections referencing `visualizer-views.ts` for content guidance: **Progress** — risk heatmap + milestone/slice/task tree with status icons; **Deps** — milestone dependency listing + slice dependency listing + critical path display; **Metrics** — cost/token summary + by-phase breakdown + by-model breakdown; **Timeline** — unit execution timeline with duration bars; **Agent** — active status, progress, rate, session cost, recent units; **Changes** — completed slice changelog with files modified; **Export** — client-side markdown/JSON download buttons generating blobs from the current data. Match the existing app-shell aesthetic (dark theme, Tailwind classes, same component patterns as dashboard.tsx). Show loading skeleton on initial fetch and error state on failure. Relevant skill: `frontend-design` (for the visualizer UI quality).
