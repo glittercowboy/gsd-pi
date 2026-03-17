@@ -67,7 +67,7 @@ This milestone is complete only when all are true:
 - [x] **S03: Auto-Fix Retry Loop** `risk:medium` `depends:[S01]`
   > After this: When verification commands fail, the agent gets 2 auto-fix attempts with failure context injected. After 2 failures, the gate fails and surfaces for human review. Retry count visible in evidence.
 
-- [ ] **S04: Runtime Error Capture** `risk:medium` `depends:[S01]`
+- [x] **S04: Runtime Error Capture** `risk:medium` `depends:[S01]`
   > After this: Server crashes and unhandled rejections from bg-shell processes appear in verification evidence and block the gate. Console.error and deprecation warnings are logged in evidence but do not block.
 
 - [ ] **S05: Dependency Security Scan** `risk:low` `depends:[S01]`
