@@ -47,4 +47,4 @@ See `.gsd/REQUIREMENTS.md` for the explicit capability contract, requirement sta
 - [x] M003: Upstream sync and full web feature parity — All 415 upstream commits merged, all /gsd subcommands surfaced in browser, 1:1 TUI-web parity audited, test suite green.
 - [ ] M004: Web mode documentation and CI/CD integration — Dedicated web mode guide, existing doc updates, and a separate CI job for web host build/tests on Linux and macOS.
 - [ ] M005: Light theme with system-aware toggle — Monochrome light theme, OS preference default, NavRail toggle, persistent choice.
-- [x] M006: Multi-project workspace — Bridge registry replacing singleton, project-scoped API across 26 routes, Projects NavRail tab with smart discovery, per-project store isolation with SSE lifecycle, onboarding dev root step, context-aware launch detection. 25 new contract tests, 1222 total tests pass, both builds green.
+- [ ] M006: Multi-project workspace — Dev root selection in onboarding, smart project discovery, Projects NavRail tab, multi-bridge registry with background sessions, context-aware launch.

@@ -21,8 +21,8 @@ function resolveTsLoaderPath(packageRoot: string): string {
  * captures module, calls loadAllCaptures() and loadActionableCaptures(), and
  * writes a CapturesData JSON to stdout.
  */
-export async function collectCapturesData(): Promise<CapturesData> {
-  const config = resolveBridgeRuntimeConfig()
+export async function collectCapturesData(projectCwdOverride?: string): Promise<CapturesData> {
+  const config = resolveBridgeRuntimeConfig(undefined, projectCwdOverride)
   const { packageRoot, projectCwd } = config
 
   const resolveTsLoader = resolveTsLoaderPath(packageRoot)

@@ -4,6 +4,17 @@ This file is the explicit capability and coverage contract for the project.
 
 ## Active
 
+### R020 — Support multi-project workspace with dev root selection, smart project discovery, NavRail project browser, concurrent background agent sessions, and context-aware launch.
+- Class: admin/support
+- Status: active
+- Description: Support multi-project workspace with dev root selection, smart project discovery, NavRail project browser, concurrent background agent sessions, and context-aware launch.
+- Why it matters: Users working across multiple projects must juggle separate browser tabs and host processes. A unified multi-project workspace removes this friction.
+- Source: user request
+- Primary owning slice: M006
+- Supporting slices: M006/S01, M006/S02, M006/S03
+- Validation: Dev root persists, project list populates, switching projects swaps all surfaces to the new project context while keeping the previous session alive, context-aware launch works.
+- Notes: Promoted from deferred to active. S01 delivers bridge registry and project-scoped APIs. S02 delivers project discovery, Projects view, and store switching. S03 delivers onboarding dev root step, context-aware launch, and final assembly.
+
 ### R111 — A dedicated `docs/web-mode.md` guide covering launch, onboarding, workspace UI, browser commands, architecture (host/bridge/store), configuration, and troubleshooting. README documentation index and relevant sections updated. Existing docs (architecture, troubleshooting, commands, getting-started, configuration) reference web mode where relevant.
 - Class: quality-attribute
 - Status: active
@@ -160,18 +171,7 @@ This file is the explicit capability and coverage contract for the project.
 - Validation: `npm run build` exits 0, `npm run build:web-host` exits 0, `rg "^<<<<<<<|^>>>>>>>|^=======$" src/ web/ packages/ .github/` returns empty, `git log --oneline HEAD..upstream/main | wc -l` returns 0. All verified on 2026-03-16 after merging 415 upstream commits (v2.12→v2.22.0) and resolving all 50 file conflicts.
 - Notes: Upstream advanced to v2.22.0 during execution (415 commits vs estimated 398). Web code has zero import dependencies on GSD extension core modules — only imports from native-git-bridge.ts. All 12 extension modules took upstream with no fork re-additions needed.
 
-### R106 — A dedicated browser page showing KNOWLEDGE.md entries and CAPTURES.md with pending/triaged/resolved status, classification labels, and triage action controls.
-- Class: core-capability
-- Status: validated
-- Description: A dedicated browser page showing KNOWLEDGE.md entries and CAPTURES.md with pending/triaged/resolved status, classification labels, and triage action controls.
-- Why it matters: Knowledge and captures are persistent project-context artifacts that need browser visibility and interaction.
-- Source: user
-- Primary owning slice: M003/S05
-- Supporting slices: M003/S02
-- Validation: Verified by S05: `/api/knowledge` GET returns parsed KNOWLEDGE.md entries with type classification; `/api/captures` GET returns capture entries with status/counts; POST validates and resolves captures with field-level 400 errors; KnowledgeCapturesPanel renders Knowledge tab (type badges) and Captures tab (status badges, classification labels, triage action buttons); `/gsd knowledge`, `/gsd capture`, `/gsd triage` dispatch to real panel. `npm run build` and `npm run build:web-host` pass.
-- Notes: S05 complete. Knowledge service reads KNOWLEDGE.md directly (freeform headings + table rows). Captures service uses child-process pattern for upstream captures.ts calls. Panel has duplicated helpers (PanelHeader/PanelError/PanelLoading/PanelEmpty) — could be extracted to shared module in S08.
-
-### R101 — Every /gsd subcommand dispatches correctly from the browser terminal — opening a surface, executing, or rejecting with clear guidance.
+### R101 — Every /gsd subcommand (help, next, auto, stop, pause, status, visualize, queue, quick, discuss, capture, triage, history, undo, skip, export, cleanup, mode, prefs, config, hooks, run-hook, skill-health, doctor, forensics, migrate, remote, steer, inspect, knowledge) dispatches correctly from the browser terminal — opening a surface, executing, or rejecting with clear guidance.
 - Class: primary-user-loop
 - Status: validated
 - Description: Every /gsd subcommand (help, next, auto, stop, pause, status, visualize, queue, quick, discuss, capture, triage, history, undo, skip, export, cleanup, mode, prefs, config, hooks, run-hook, skill-health, doctor, forensics, migrate, remote, steer, inspect, knowledge) dispatches correctly from the browser terminal — opening a surface, executing, or rejecting with clear guidance.
@@ -193,7 +193,7 @@ This file is the explicit capability and coverage contract for the project.
 - Validation: VisualizerView component with 7 TabsTrigger/TabsContent pairs (Progress, Deps, Metrics, Timeline, Agent, Changes, Export), /api/visualizer GET route compiled in production build, sidebar NavRail entry, /gsd visualize dispatch via view-navigate kind. Parity audit (S08) confirmed all 7 tabs match TUI visualizer. Both builds pass. Verified 2026-03-17.
 - Notes: Child-process pattern required for Turbopack compatibility (D054). Map→Record serialization for criticalPath slack fields.
 
-### R103 — A browser panel showing forensic anomaly scanning results.
+### R103 — A browser panel showing forensic anomaly scanning results — stuck loops, cost spikes, timeouts, missing artifacts, crashes, doctor issues, and error traces from auto-mode runs.
 - Class: failure-visibility
 - Status: validated
 - Description: A browser panel showing forensic anomaly scanning results — stuck loops, cost spikes, timeouts, missing artifacts, crashes, doctor issues, and error traces from auto-mode runs.
@@ -204,7 +204,7 @@ This file is the explicit capability and coverage contract for the project.
 - Validation: 28/28 diagnostics contract tests pass, /api/forensics GET returns ForensicReport JSON, ForensicsPanel renders anomaly list/recent units/crash lock/metrics. Parity audit (S08) confirmed against TUI. Both builds pass. Verified 2026-03-17.
 - Notes: ForensicReport simplified for browser — flattened metrics, counted traces. Full drill-down available via bridge passthrough.
 
-### R104 — A browser panel showing doctor health check results with auto-fix actions.
+### R104 — A browser panel showing doctor health check results (7 runtime checks), auto-fix actions, severity filtering, and scope selection.
 - Class: failure-visibility
 - Status: validated
 - Description: A browser panel showing doctor health check results (7 runtime checks), auto-fix actions, severity filtering, and scope selection.
@@ -215,7 +215,7 @@ This file is the explicit capability and coverage contract for the project.
 - Validation: 28/28 diagnostics contract tests pass, /api/doctor GET+POST routes return structured JSON, DoctorPanel renders issue list with severity/scope badges and Apply Fixes button. Parity audit (S08) confirmed against TUI. Both builds pass. Verified 2026-03-17.
 - Notes: Doctor GET+POST pattern enables read + fix-action lifecycle. Scope via query param. Audit/heal modes available via bridge passthrough.
 
-### R105 — A browser panel showing per-skill pass/fail rates, token usage, staleness warnings, and heal-skill suggestions.
+### R105 — A browser panel showing per-skill pass/fail rates, token usage, staleness warnings, declining performance flags, and heal-skill suggestions.
 - Class: operability
 - Status: validated
 - Description: A browser panel showing per-skill pass/fail rates, token usage, staleness warnings, declining performance flags, and heal-skill suggestions.
@@ -226,7 +226,18 @@ This file is the explicit capability and coverage contract for the project.
 - Validation: 28/28 diagnostics contract tests pass, /api/skill-health GET returns SkillHealthReport JSON, SkillHealthPanel renders skill table with pass rates/trends/staleness/suggestions. Parity audit (S08) confirmed against TUI. Both builds pass. Verified 2026-03-17.
 - Notes: Detailed drill-down and filters available via bridge passthrough. Browser panel shows summary view with actionable suggestions.
 
-### R107 — The browser settings command surface shows dynamic model routing configuration, budget allocation visibility, and all preference fields.
+### R106 — A dedicated browser page showing KNOWLEDGE.md entries and CAPTURES.md with pending/triaged/resolved status, classification labels, and triage action controls.
+- Class: core-capability
+- Status: validated
+- Description: A dedicated browser page showing KNOWLEDGE.md entries and CAPTURES.md with pending/triaged/resolved status, classification labels, and triage action controls.
+- Why it matters: Knowledge and captures are persistent project-context artifacts that need browser visibility and interaction.
+- Source: user
+- Primary owning slice: M003/S05
+- Supporting slices: M003/S02
+- Validation: Verified by S05: `/api/knowledge` GET returns parsed KNOWLEDGE.md entries with type classification; `/api/captures` GET returns capture entries with status/counts; POST validates and resolves captures with field-level 400 errors; KnowledgeCapturesPanel renders Knowledge tab (type badges) and Captures tab (status badges, classification labels, triage action buttons); `/gsd knowledge`, `/gsd capture`, `/gsd triage` dispatch to real panel. `npm run build` and `npm run build:web-host` pass.
+- Notes: S05 complete. Knowledge service reads KNOWLEDGE.md directly (freeform headings + table rows). Captures service uses child-process pattern for upstream captures.ts calls. Panel has duplicated helpers (PanelHeader/PanelError/PanelLoading/PanelEmpty) — could be extracted to shared module in S08.
+
+### R107 — The browser settings command surface shows dynamic model routing configuration, provider fallback chain management, budget allocation visibility, and all preference fields from the upstream preferences wizard.
 - Class: core-capability
 - Status: validated
 - Description: The browser settings command surface shows dynamic model routing configuration, provider fallback chain management, budget allocation visibility, and all preference fields from the upstream preferences wizard.
@@ -237,7 +248,7 @@ This file is the explicit capability and coverage contract for the project.
 - Validation: /api/settings-data GET aggregates 5 upstream modules (preferences, model-router, context-budget, routing-history, metrics). PrefsPanel, ModelRoutingPanel, BudgetPanel render real data for gsd-prefs/gsd-mode/gsd-config. Parity audit (S08) confirmed against TUI. Both builds pass. Verified 2026-03-17.
 - Notes: Read-only panels — preferences editing wizard accessible via bridge passthrough. Budget uses hardcoded 200K context window default.
 
-### R108 — Each of the remaining /gsd subcommands opens a browser-native surface with appropriate controls.
+### R108 — Each of the remaining /gsd subcommands opens a browser-native surface with appropriate controls, feedback, and state visibility.
 - Class: core-capability
 - Status: validated
 - Description: Each of the remaining /gsd subcommands opens a browser-native surface with appropriate controls, feedback, and state visibility.
@@ -271,17 +282,6 @@ This file is the explicit capability and coverage contract for the project.
 - Notes: Test breakage came from three sources: (1) resolver not guarding /dist/ imports or handling .tsx, (2) tests with stale assertions after M003 changes, (3) integration tests not adapted to S02 dispatch changes and UI layout changes.
 
 ## Deferred
-
-### R020 — Support multi-project workspace with dev root selection, project discovery, and project switching.
-- Class: admin/support
-- Status: validated
-- Description: Support multi-project workspace with dev root selection, smart project discovery, NavRail project browser, concurrent background agent sessions, and context-aware launch.
-- Why it matters: Users working across multiple projects must juggle separate browser tabs and host processes. A unified multi-project workspace removes this friction.
-- Source: user request
-- Primary owning slice: M006
-- Supporting slices: none
-- Validation: Bridge registry manages concurrent instances keyed by project path (S01). All 29 API routes accept `?project=` parameter with env-var fallback (S01). Project discovery scans dev root, Projects view renders in NavRail with kind badges, per-project store isolation with SSE lifecycle proven (S02). Onboarding dev root step at position 3 with skip, preferences persist via `/api/preferences` PUT (S03). Context-aware launch detection with 7 contract tests covering all edge cases (S03). Browser boot auto-initializes project store manager (S03). 1222 tests pass, both builds green. Human UAT scripted.
-- Notes: M006 delivered the full multi-project workspace across three slices. UAT is the remaining human acceptance gate.
 
 ### R021 — Add deeper analytics/history views beyond the live dashboard and activity surfaces required for the core web workflow.
 - Class: operability
@@ -355,31 +355,29 @@ This file is the explicit capability and coverage contract for the project.
 | R009 | quality-attribute | validated | M001/S06 | M001/S01, M001/S03, M001/S04, M001/S05, M001/S07 | verified by S06's continuity/performance hardening (`MAX_TRANSCRIPT_BLOCKS`, command timeout recovery, reconnect/visibility refresh), S07's thinner `launchWebMode` parent bootstrap and stable runtime/build regressions, and the final live browser/UAT closure for the remaining subjective acceptance bar. |
 | R010 | failure-visibility | validated | M001/S06 | M001/S03, M001/S04, M001/S07 | verified by `src/tests/web-continuity-contract.test.ts` (timeout clears stuck state with error visibility and reconnect recovery), S02's structured onboarding lock/validation diagnostics, the error-banner retry affordance in app-shell, and `npm run build:web-host`. |
 | R011 | core-capability | validated | M002/S01 | M002/S02, M002/S03, M002/S04 | verified by `src/tests/integration/web-mode-runtime.test.ts`, `src/tests/integration/web-mode-onboarding.test.ts`, `src/tests/integration/web-mode-assembled.test.ts`, `src/tests/web-command-parity-contract.test.ts`, `src/tests/web-session-parity-contract.test.ts`, `src/tests/web-live-state-contract.test.ts`, `src/tests/web-recovery-diagnostics-contract.test.ts`, `npm run build:web-host`, and the real packaged-host browser proof of refresh/reopen, daily-use browser controls, and seeded interrupted-run recovery. |
-| R020 | admin/support | validated | M006 | none | Bridge registry, project-scoped API, project discovery, Projects view, store isolation, onboarding dev root step, context-aware launch (7 tests), boot auto-init. 1222 tests pass, both builds green. |
+| R020 | admin/support | active | M006 | M006/S01, M006/S02, M006/S03 | Dev root persists, project list populates, switching projects swaps all surfaces to the new project context while keeping the previous session alive, context-aware launch works. |
 | R021 | operability | deferred | none | none | unmapped |
 | R022 | operability | deferred | none | none | unmapped |
 | R030 | anti-feature | out-of-scope | none | none | n/a |
 | R031 | anti-feature | out-of-scope | none | none | n/a |
 | R032 | constraint | out-of-scope | none | none | n/a |
 | R100 | core-capability | validated | M003/S01 | none | `npm run build` exits 0, `npm run build:web-host` exits 0, `rg "^<<<<<<<|^>>>>>>>|^=======$" src/ web/ packages/ .github/` returns empty, `git log --oneline HEAD..upstream/main | wc -l` returns 0. All verified on 2026-03-16 after merging 415 upstream commits (v2.12→v2.22.0) and resolving all 50 file conflicts. |
-| R101 | primary-user-loop | validated | M003/S02 | M003/S04, M003/S05, M003/S06, M003/S07 | 118/118 parity contract tests pass, all 30 subcommands classified, zero placeholder surfaces remain. Verified 2026-03-17. |
-| R102 | core-capability | validated | M003/S03 | none | VisualizerView with 7 tabs, /api/visualizer route, sidebar entry, parity audit confirmed. Verified 2026-03-17. |
-| R103 | failure-visibility | validated | M003/S04 | M003/S02 | 28/28 diagnostics contract tests, /api/forensics GET, ForensicsPanel renders real data. Verified 2026-03-17. |
-| R104 | failure-visibility | validated | M003/S04 | M003/S02 | 28/28 diagnostics contract tests, /api/doctor GET+POST, DoctorPanel with fix actions. Verified 2026-03-17. |
-| R105 | operability | validated | M003/S04 | M003/S02 | 28/28 diagnostics contract tests, /api/skill-health GET, SkillHealthPanel with pass rates. Verified 2026-03-17. |
+| R101 | primary-user-loop | validated | M003/S02 | M003/S04, M003/S05, M003/S06, M003/S07 | 118/118 parity contract tests pass, all 30 subcommands classified (20 surface with real content, 9 passthrough, 1 local help), zero placeholder surfaces remain, both builds exit 0. Verified 2026-03-17. |
+| R102 | core-capability | validated | M003/S03 | none | VisualizerView component with 7 TabsTrigger/TabsContent pairs (Progress, Deps, Metrics, Timeline, Agent, Changes, Export), /api/visualizer GET route compiled in production build, sidebar NavRail entry, /gsd visualize dispatch via view-navigate kind. Parity audit (S08) confirmed all 7 tabs match TUI visualizer. Both builds pass. Verified 2026-03-17. |
+| R103 | failure-visibility | validated | M003/S04 | M003/S02 | 28/28 diagnostics contract tests pass, /api/forensics GET returns ForensicReport JSON, ForensicsPanel renders anomaly list/recent units/crash lock/metrics. Parity audit (S08) confirmed against TUI. Both builds pass. Verified 2026-03-17. |
+| R104 | failure-visibility | validated | M003/S04 | M003/S02 | 28/28 diagnostics contract tests pass, /api/doctor GET+POST routes return structured JSON, DoctorPanel renders issue list with severity/scope badges and Apply Fixes button. Parity audit (S08) confirmed against TUI. Both builds pass. Verified 2026-03-17. |
+| R105 | operability | validated | M003/S04 | M003/S02 | 28/28 diagnostics contract tests pass, /api/skill-health GET returns SkillHealthReport JSON, SkillHealthPanel renders skill table with pass rates/trends/staleness/suggestions. Parity audit (S08) confirmed against TUI. Both builds pass. Verified 2026-03-17. |
 | R106 | core-capability | validated | M003/S05 | M003/S02 | Verified by S05: `/api/knowledge` GET returns parsed KNOWLEDGE.md entries with type classification; `/api/captures` GET returns capture entries with status/counts; POST validates and resolves captures with field-level 400 errors; KnowledgeCapturesPanel renders Knowledge tab (type badges) and Captures tab (status badges, classification labels, triage action buttons); `/gsd knowledge`, `/gsd capture`, `/gsd triage` dispatch to real panel. `npm run build` and `npm run build:web-host` pass. |
-| R107 | core-capability | validated | M003/S06 | M003/S02 | /api/settings-data aggregates 5 upstream modules, 3 panel components render. Parity audit confirmed. Verified 2026-03-17. |
-| R108 | core-capability | validated | M003/S07 | M003/S02 | 10 panels, 7 API routes, zero placeholders, parity audit confirmed. Verified 2026-03-17. |
-| R109 | quality-attribute | validated | M003/S08 | M003/S03, M003/S04, M003/S05, M003/S06, M003/S07 | S08-PARITY-AUDIT.md: 30 subcommands, 12 gaps classified, 118/118 tests |
-| R110 | quality-attribute | validated | M003/S09 | M003/S01 | Unit tests 1197/0, both builds exit 0, integration test fixes applied. |
+| R107 | core-capability | validated | M003/S06 | M003/S02 | /api/settings-data GET aggregates 5 upstream modules (preferences, model-router, context-budget, routing-history, metrics). PrefsPanel, ModelRoutingPanel, BudgetPanel render real data for gsd-prefs/gsd-mode/gsd-config. Parity audit (S08) confirmed against TUI. Both builds pass. Verified 2026-03-17. |
+| R108 | core-capability | validated | M003/S07 | M003/S02 | 10 panel components (QuickPanel, HistoryPanel, UndoPanel, SteerPanel, HooksPanel, InspectPanel, ExportPanel, CleanupPanel, QueuePanel, StatusPanel), 7 API routes compiled in production build, zero placeholder surfaces remain. Parity audit (S08) confirmed all surfaces against TUI. Both builds pass. Verified 2026-03-17. |
+| R109 | quality-attribute | validated | M003/S08 | M003/S03, M003/S04, M003/S05, M003/S06, M003/S07 | S08-PARITY-AUDIT.md covers all 30 /gsd subcommands, dashboard overlay, 7 visualizer tabs, and interactive flows. 12 gaps identified — 9 intentional scope boundaries, 3 deferred. 118/118 parity contract tests pass. Zero stub surfaces remain. |
+| R110 | quality-attribute | validated | M003/S09 | M003/S01 | Unit tests 1197/0 pass/fail. Both builds exit 0. Integration tests 27/0/1-skipped. All test fixes verified 2026-03-17. |
 | R111 | quality-attribute | active | M004/S01 | M004/S02 | unmapped |
 | R112 | quality-attribute | active | M004/S03 | none | unmapped |
 
 ## Coverage Summary
 
-- Active requirements: 2 (R111, R112)
-- Mapped to slices: 2
-- Validated: 22 (R001–R011, R100–R110 except R106 which is also included)
-- Deferred: 2 (R021, R022)
-- Out of scope: 3 (R030, R031, R032)
+- Active requirements: 3
+- Mapped to slices: 3
+- Validated: 22 (R001, R002, R003, R004, R005, R006, R007, R008, R009, R010, R011, R100, R101, R102, R103, R104, R105, R106, R107, R108, R109, R110)
 - Unmapped active requirements: 0

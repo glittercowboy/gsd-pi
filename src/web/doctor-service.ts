@@ -71,8 +71,8 @@ function runDoctorChild(
  * Loads doctor diagnostic data (GET — read-only, no fixes applied).
  * Returns full issues array + summary for the doctor panel.
  */
-export async function collectDoctorData(scope?: string): Promise<DoctorReport> {
-  const config = resolveBridgeRuntimeConfig()
+export async function collectDoctorData(scope?: string, projectCwdOverride?: string): Promise<DoctorReport> {
+  const config = resolveBridgeRuntimeConfig(undefined, projectCwdOverride)
   const { packageRoot, projectCwd } = config
 
   const resolveTsLoader = resolveTsLoaderPath(packageRoot)
