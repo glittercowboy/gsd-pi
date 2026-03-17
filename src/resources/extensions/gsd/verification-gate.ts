@@ -5,8 +5,8 @@
 
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
-import type { RuntimeError, VerificationCheck, VerificationResult } from "./types.js";
+import { join, basename } from "node:path";
+import type { AuditWarning, RuntimeError, VerificationCheck, VerificationResult } from "./types.js";
 
 /** Maximum bytes of stdout/stderr to retain per command (10 KB). */
 const MAX_OUTPUT_BYTES = 10 * 1024;
@@ -399,4 +399,150 @@ function buildBgShellMessage(
     parts.push(`errors: ${snippet}`);
   }
   return parts.join(" ");
+}
+
+// ─── Dependency Audit ───────────────────────────────────────────────────────
+
+/** Top-level dependency files that trigger an audit when changed. */
+const DEPENDENCY_FILES = new Set([
+  "package.json",
+  "package-lock.json",
+  "pnpm-lock.yaml",
+  "yarn.lock",
+  "bun.lockb",
+]);
+
+/**
+ * Injectable dependencies for runDependencyAudit (D023 pattern).
+ * When omitted the function uses real git/npm via spawnSync.
+ * Provide overrides in tests to avoid real git repos and npm registries.
+ */
+export interface DependencyAuditOptions {
+  gitDiff?: (cwd: string) => string[];
+  npmAudit?: (cwd: string) => { stdout: string; exitCode: number };
+}
+
+/**
+ * Default gitDiff: runs `git diff --name-only HEAD` and returns file paths.
+ * Returns empty array on any failure (non-git dir, git not found, etc.).
+ */
+function defaultGitDiff(cwd: string): string[] {
+  try {
+    const result = spawnSync("git", ["diff", "--name-only", "HEAD"], {
+      cwd,
+      encoding: "utf-8",
+      timeout: 10_000,
+    });
+    if (result.status !== 0 || !result.stdout) return [];
+    return result.stdout.trim().split("\n").filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Default npmAudit: runs `npm audit --audit-level=moderate --json`.
+ * Returns { stdout, exitCode }. Non-zero exit is expected when vulnerabilities exist.
+ */
+function defaultNpmAudit(cwd: string): { stdout: string; exitCode: number } {
+  const result = spawnSync("npm", ["audit", "--audit-level=moderate", "--json"], {
+    cwd,
+    encoding: "utf-8",
+    timeout: 60_000,
+  });
+  return {
+    stdout: result.stdout ?? "",
+    exitCode: result.status ?? 1,
+  };
+}
+
+/**
+ * Detect dependency file changes and run npm audit if changes are found.
+ *
+ * - Calls gitDiff to get changed files, checks if any are top-level dependency files
+ * - If no dependency files changed, returns []
+ * - Runs npmAudit and parses JSON output into AuditWarning[]
+ * - Never throws — all errors return []
+ * - Non-zero npm audit exit code is expected (vulnerabilities found), not an error
+ */
+export function runDependencyAudit(
+  cwd: string,
+  options?: DependencyAuditOptions,
+): AuditWarning[] {
+  try {
+    const gitDiff = options?.gitDiff ?? defaultGitDiff;
+    const npmAudit = options?.npmAudit ?? defaultNpmAudit;
+
+    // Get changed files and check for top-level dependency file matches
+    const changedFiles = gitDiff(cwd);
+    const hasDependencyChange = changedFiles.some((filePath) => {
+      const name = basename(filePath);
+      // Only match top-level files: the path must equal just the filename
+      // (no directory separators) to be considered top-level
+      return DEPENDENCY_FILES.has(name) && filePath === name;
+    });
+
+    if (!hasDependencyChange) return [];
+
+    // Run npm audit
+    const auditResult = npmAudit(cwd);
+
+    // Parse JSON output — npm audit exits non-zero when vulnerabilities exist
+    let parsed: Record<string, unknown>;
+    try {
+      parsed = JSON.parse(auditResult.stdout);
+    } catch {
+      return [];
+    }
+
+    // Extract vulnerabilities from the parsed output
+    const vulnerabilities = parsed.vulnerabilities;
+    if (!vulnerabilities || typeof vulnerabilities !== "object") return [];
+
+    const warnings: AuditWarning[] = [];
+    for (const [name, raw] of Object.entries(vulnerabilities as Record<string, unknown>)) {
+      const vuln = raw as {
+        severity?: string;
+        fixAvailable?: boolean;
+        via?: unknown[];
+      };
+      if (!vuln || typeof vuln !== "object") continue;
+
+      const severity = vuln.severity;
+      if (
+        severity !== "low" &&
+        severity !== "moderate" &&
+        severity !== "high" &&
+        severity !== "critical"
+      ) {
+        continue;
+      }
+
+      // Find the first `via` entry that's an object (not a string reference)
+      let title = name;
+      let url = "";
+      if (Array.isArray(vuln.via)) {
+        for (const entry of vuln.via) {
+          if (entry && typeof entry === "object" && !Array.isArray(entry)) {
+            const obj = entry as { title?: string; url?: string };
+            if (obj.title) title = obj.title;
+            if (obj.url) url = obj.url;
+            break;
+          }
+        }
+      }
+
+      warnings.push({
+        name,
+        severity: severity as AuditWarning["severity"],
+        title,
+        url,
+        fixAvailable: vuln.fixAvailable === true,
+      });
+    }
+
+    return warnings;
+  } catch {
+    return [];
+  }
 }

@@ -22,6 +22,7 @@
 - `npm run test:unit -- --test-name-pattern "verification-evidence"` — existing + new evidence tests pass
 - `npm run test:unit` — full suite, no regressions
 - `npx --yes tsx src/resources/extensions/gsd/verification-gate.ts` — compiles cleanly
+- `npm run test:unit -- --test-name-pattern "dependency-audit.*empty array"` — graceful failure paths (non-git dir, invalid JSON, npm error) all return empty array without throwing
 
 ## Observability / Diagnostics
 
@@ -38,7 +39,7 @@
 
 ## Tasks
 
-- [ ] **T01: Implement runDependencyAudit with types and unit tests** `est:30m`
+- [x] **T01: Implement runDependencyAudit with types and unit tests** `est:30m`
   - Why: Core logic for git change detection, npm audit execution, and JSON parsing. This is the riskiest piece — needs graceful handling of non-git dirs, missing lockfiles, and npm audit's non-zero exit on vulnerabilities.
   - Files: `src/resources/extensions/gsd/types.ts`, `src/resources/extensions/gsd/verification-gate.ts`, `src/resources/extensions/gsd/tests/verification-gate.test.ts`
   - Do: Add `AuditWarning` interface to types.ts. Add `auditWarnings?: AuditWarning[]` to `VerificationResult`. Implement `runDependencyAudit(cwd, options?)` in verification-gate.ts with injectable `gitDiff` and `npmAudit` dependencies (D023 pattern). Write unit tests covering: package.json change detected → audit runs, no changes → skipped, lockfile changes trigger audit, non-git dir → empty array, npm audit error → empty array, npm audit non-zero exit with valid JSON → parses vulnerabilities, empty vulnerabilities → empty array.

@@ -12,6 +12,7 @@
  *   8. Empty scripts → 0 checks → pass
  *   9. Preference validation for verification keys
  *  10. spawnSync error (command not found) → failure with exit code 127
+ *  11. Dependency audit — git diff detection, npm audit parsing, graceful failures
  */
 
 import test from "node:test";
@@ -19,8 +20,8 @@ import assert from "node:assert/strict";
 import { mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { discoverCommands, runVerificationGate, formatFailureContext, captureRuntimeErrors } from "../verification-gate.ts";
-import type { CaptureRuntimeErrorsOptions } from "../verification-gate.ts";
+import { discoverCommands, runVerificationGate, formatFailureContext, captureRuntimeErrors, runDependencyAudit } from "../verification-gate.ts";
+import type { CaptureRuntimeErrorsOptions, DependencyAuditOptions } from "../verification-gate.ts";
 import { validatePreferences } from "../preferences.ts";
 
 function makeTempDir(prefix: string): string {
@@ -784,4 +785,181 @@ test("captureRuntimeErrors: mixed bg-shell and browser errors", async () => {
   const nonBlocking = result.filter(r => !r.blocking);
   assert.equal(blocking.length, 2, "should have 2 blocking errors");
   assert.equal(nonBlocking.length, 2, "should have 2 non-blocking errors");
+});
+
+// ─── Dependency Audit Tests (S05/T01) ─────────────────────────────────────────
+
+/** Helper: build a realistic npm audit JSON stdout with vulnerabilities. */
+function makeAuditJson(
+  vulns: Record<string, { severity: string; fixAvailable: boolean; via: unknown[] }>,
+): string {
+  return JSON.stringify({ vulnerabilities: vulns });
+}
+
+/** Sample npm audit JSON with a high-severity vuln. */
+const SAMPLE_AUDIT_JSON = makeAuditJson({
+  "nth-check": {
+    severity: "high",
+    fixAvailable: true,
+    via: [
+      {
+        title: "Inefficient Regular Expression Complexity in nth-check",
+        url: "https://github.com/advisories/GHSA-rp65-9cf3-cjxr",
+        severity: "high",
+      },
+    ],
+  },
+});
+
+test("dependency-audit: package.json in git diff → runs npm audit and parses vulnerabilities", () => {
+  let npmAuditCalled = false;
+  const result = runDependencyAudit("/tmp/test", {
+    gitDiff: () => ["package.json", "src/index.ts"],
+    npmAudit: () => {
+      npmAuditCalled = true;
+      return { stdout: SAMPLE_AUDIT_JSON, exitCode: 0 };
+    },
+  });
+  assert.equal(npmAuditCalled, true, "npm audit should be called");
+  assert.equal(result.length, 1);
+  assert.equal(result[0].name, "nth-check");
+  assert.equal(result[0].severity, "high");
+  assert.equal(result[0].title, "Inefficient Regular Expression Complexity in nth-check");
+  assert.equal(result[0].url, "https://github.com/advisories/GHSA-rp65-9cf3-cjxr");
+  assert.equal(result[0].fixAvailable, true);
+});
+
+test("dependency-audit: package-lock.json change triggers audit", () => {
+  let npmAuditCalled = false;
+  const result = runDependencyAudit("/tmp/test", {
+    gitDiff: () => ["package-lock.json"],
+    npmAudit: () => {
+      npmAuditCalled = true;
+      return { stdout: SAMPLE_AUDIT_JSON, exitCode: 0 };
+    },
+  });
+  assert.equal(npmAuditCalled, true);
+  assert.equal(result.length, 1);
+});
+
+test("dependency-audit: pnpm-lock.yaml change triggers audit", () => {
+  let npmAuditCalled = false;
+  runDependencyAudit("/tmp/test", {
+    gitDiff: () => ["pnpm-lock.yaml"],
+    npmAudit: () => {
+      npmAuditCalled = true;
+      return { stdout: SAMPLE_AUDIT_JSON, exitCode: 0 };
+    },
+  });
+  assert.equal(npmAuditCalled, true);
+});
+
+test("dependency-audit: yarn.lock change triggers audit", () => {
+  let npmAuditCalled = false;
+  runDependencyAudit("/tmp/test", {
+    gitDiff: () => ["yarn.lock"],
+    npmAudit: () => {
+      npmAuditCalled = true;
+      return { stdout: SAMPLE_AUDIT_JSON, exitCode: 0 };
+    },
+  });
+  assert.equal(npmAuditCalled, true);
+});
+
+test("dependency-audit: bun.lockb change triggers audit", () => {
+  let npmAuditCalled = false;
+  runDependencyAudit("/tmp/test", {
+    gitDiff: () => ["bun.lockb"],
+    npmAudit: () => {
+      npmAuditCalled = true;
+      return { stdout: SAMPLE_AUDIT_JSON, exitCode: 0 };
+    },
+  });
+  assert.equal(npmAuditCalled, true);
+});
+
+test("dependency-audit: no dependency file changes → returns empty array, npm audit not called", () => {
+  let npmAuditCalled = false;
+  const result = runDependencyAudit("/tmp/test", {
+    gitDiff: () => ["src/index.ts", "README.md"],
+    npmAudit: () => {
+      npmAuditCalled = true;
+      return { stdout: "{}", exitCode: 0 };
+    },
+  });
+  assert.equal(npmAuditCalled, false, "npm audit should NOT be called when no dependency files changed");
+  assert.deepStrictEqual(result, []);
+});
+
+test("dependency-audit: git diff returns non-zero exit (not a git repo) → empty array", () => {
+  const result = runDependencyAudit("/tmp/test", {
+    gitDiff: () => { throw new Error("not a git repo"); },
+    npmAudit: () => { throw new Error("should not be called"); },
+  });
+  assert.deepStrictEqual(result, []);
+});
+
+test("dependency-audit: npm audit returns invalid JSON → empty array", () => {
+  const result = runDependencyAudit("/tmp/test", {
+    gitDiff: () => ["package.json"],
+    npmAudit: () => ({ stdout: "not json at all", exitCode: 1 }),
+  });
+  assert.deepStrictEqual(result, []);
+});
+
+test("dependency-audit: npm audit returns zero vulnerabilities → empty array", () => {
+  const result = runDependencyAudit("/tmp/test", {
+    gitDiff: () => ["package.json"],
+    npmAudit: () => ({
+      stdout: JSON.stringify({ vulnerabilities: {} }),
+      exitCode: 0,
+    }),
+  });
+  assert.deepStrictEqual(result, []);
+});
+
+test("dependency-audit: npm audit non-zero exit with valid JSON → parses correctly", () => {
+  // npm audit exits non-zero when vulnerabilities exist — this is expected, not an error
+  const result = runDependencyAudit("/tmp/test", {
+    gitDiff: () => ["package-lock.json"],
+    npmAudit: () => ({
+      stdout: SAMPLE_AUDIT_JSON,
+      exitCode: 1, // non-zero!
+    }),
+  });
+  assert.equal(result.length, 1);
+  assert.equal(result[0].name, "nth-check");
+  assert.equal(result[0].severity, "high");
+});
+
+test("dependency-audit: via entries with string-only values are skipped", () => {
+  const auditJson = makeAuditJson({
+    "postcss": {
+      severity: "moderate",
+      fixAvailable: false,
+      via: ["nth-check", "css-select"], // string-only via entries
+    },
+  });
+  const result = runDependencyAudit("/tmp/test", {
+    gitDiff: () => ["package.json"],
+    npmAudit: () => ({ stdout: auditJson, exitCode: 1 }),
+  });
+  assert.equal(result.length, 1);
+  // When no object via entry is found, title falls back to the package name
+  assert.equal(result[0].name, "postcss");
+  assert.equal(result[0].title, "postcss");
+  assert.equal(result[0].url, "");
+});
+
+test("dependency-audit: subdirectory package.json does not trigger audit", () => {
+  let npmAuditCalled = false;
+  const result = runDependencyAudit("/tmp/test", {
+    gitDiff: () => ["packages/foo/package.json", "libs/bar/package-lock.json"],
+    npmAudit: () => {
+      npmAuditCalled = true;
+      return { stdout: SAMPLE_AUDIT_JSON, exitCode: 0 };
+    },
+  });
+  assert.equal(npmAuditCalled, false, "subdirectory dependency files should not trigger audit");
+  assert.deepStrictEqual(result, []);
 });

@@ -65,6 +65,15 @@ export interface RuntimeError {
   blocking: boolean;
 }
 
+/** A dependency vulnerability warning from npm audit */
+export interface AuditWarning {
+  name: string;
+  severity: "low" | "moderate" | "high" | "critical";
+  title: string;
+  url: string;
+  fixAvailable: boolean;
+}
+
 /** Aggregate result from the verification gate */
 export interface VerificationResult {
   passed: boolean;              // true if all checks passed (or no checks discovered)
@@ -72,6 +81,7 @@ export interface VerificationResult {
   discoverySource: "preference" | "task-plan" | "package-json" | "none";
   timestamp: number;            // Date.now() at gate start
   runtimeErrors?: RuntimeError[];  // optional — populated by captureRuntimeErrors()
+  auditWarnings?: AuditWarning[];  // optional — populated by runDependencyAudit()
 }
 
 export interface SlicePlan {
