@@ -104,6 +104,12 @@ interface SearchDetails {
 const searchCache = new LRUTTLCache<CachedSearchResult>({ max: 100, ttlMs: 600_000 });
 searchCache.startPurgeInterval(60_000);
 
+// Consecutive duplicate search guard (#949)
+// Tracks recent query keys to detect and break search loops.
+const MAX_CONSECUTIVE_DUPES = 3;
+let lastSearchKey = "";
+let consecutiveDupeCount = 0;
+
 // Summarizer responses: max 50 entries, 15-minute TTL
 const summarizerCache = new LRUTTLCache<string>({ max: 50, ttlMs: 900_000 });
 
@@ -388,6 +394,26 @@ export function registerSearchTool(pi: ExtensionAPI) {
       // Cache lookup (provider-prefixed key)
       // ------------------------------------------------------------------
       const cacheKey = normalizeQuery(effectiveQuery) + `|f:${freshness || ""}|s:${wantSummary}|p:${provider}`;
+
+      // ── Consecutive duplicate search guard (#949) ──────────────────────
+      // If the LLM keeps calling the same search query, break the loop
+      // with an explicit warning instead of returning the same results.
+      if (cacheKey === lastSearchKey) {
+        consecutiveDupeCount++;
+        if (consecutiveDupeCount >= MAX_CONSECUTIVE_DUPES) {
+          consecutiveDupeCount = 0;
+          lastSearchKey = "";
+          return {
+            content: [{ type: "text" as const, text: `⚠️ Search loop detected: the query "${params.query}" has been searched ${MAX_CONSECUTIVE_DUPES + 1} times consecutively with identical results. The information you need is already in the previous search results above. Stop searching and use those results to proceed with your task.` }],
+            isError: true,
+            details: { errorKind: "search_loop", error: "Consecutive duplicate search detected" } satisfies Partial<SearchDetails>,
+          };
+        }
+      } else {
+        lastSearchKey = cacheKey;
+        consecutiveDupeCount = 0;
+      }
+
       const cached = searchCache.get(cacheKey);
 
       if (cached) {
