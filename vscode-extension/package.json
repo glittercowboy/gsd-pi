@@ -1,0 +1,156 @@
+{
+  "name": "gsd-vscode",
+  "displayName": "GSD - Get Shit Done",
+  "description": "VS Code integration for the GSD coding agent",
+  "publisher": "gsd-build",
+  "version": "0.1.0",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.95.0"
+  },
+  "categories": [
+    "AI",
+    "Chat"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "dist/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "gsd.start",
+        "title": "GSD: Start Agent"
+      },
+      {
+        "command": "gsd.stop",
+        "title": "GSD: Stop Agent"
+      },
+      {
+        "command": "gsd.newSession",
+        "title": "GSD: New Session"
+      },
+      {
+        "command": "gsd.sendMessage",
+        "title": "GSD: Send Message"
+      },
+      {
+        "command": "gsd.cycleModel",
+        "title": "GSD: Cycle Model"
+      },
+      {
+        "command": "gsd.cycleThinking",
+        "title": "GSD: Cycle Thinking Level"
+      },
+      {
+        "command": "gsd.compact",
+        "title": "GSD: Compact Context"
+      },
+      {
+        "command": "gsd.abort",
+        "title": "GSD: Abort Current Operation"
+      },
+      {
+        "command": "gsd.exportHtml",
+        "title": "GSD: Export Conversation as HTML"
+      },
+      {
+        "command": "gsd.sessionStats",
+        "title": "GSD: Show Session Stats"
+      },
+      {
+        "command": "gsd.runBash",
+        "title": "GSD: Run Bash Command"
+      },
+      {
+        "command": "gsd.switchModel",
+        "title": "GSD: Switch Model"
+      },
+      {
+        "command": "gsd.setThinking",
+        "title": "GSD: Set Thinking Level"
+      },
+      {
+        "command": "gsd.steer",
+        "title": "GSD: Steer Agent"
+      },
+      {
+        "command": "gsd.listCommands",
+        "title": "GSD: List Available Commands"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "gsd.newSession",
+        "key": "ctrl+shift+g ctrl+shift+n",
+        "mac": "cmd+shift+g cmd+shift+n"
+      },
+      {
+        "command": "gsd.cycleModel",
+        "key": "ctrl+shift+g ctrl+shift+m",
+        "mac": "cmd+shift+g cmd+shift+m"
+      },
+      {
+        "command": "gsd.cycleThinking",
+        "key": "ctrl+shift+g ctrl+shift+t",
+        "mac": "cmd+shift+g cmd+shift+t"
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "gsd",
+          "title": "GSD",
+          "icon": "$(hubot)"
+        }
+      ]
+    },
+    "views": {
+      "gsd": [
+        {
+          "type": "webview",
+          "id": "gsd-sidebar",
+          "name": "GSD Agent"
+        }
+      ]
+    },
+    "chatParticipants": [
+      {
+        "id": "gsd.agent",
+        "name": "gsd",
+        "fullName": "GSD Agent",
+        "description": "Get Shit Done coding agent",
+        "isSticky": true
+      }
+    ],
+    "configuration": {
+      "title": "GSD",
+      "properties": {
+        "gsd.binaryPath": {
+          "type": "string",
+          "default": "gsd",
+          "description": "Path to the GSD binary"
+        },
+        "gsd.autoStart": {
+          "type": "boolean",
+          "default": false,
+          "description": "Automatically start the GSD agent when the extension activates"
+        },
+        "gsd.autoCompaction": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable automatic context compaction"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "watch": "tsc --watch",
+    "package": "vsce package"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.95.0",
+    "typescript": "^5.7.0"
+  }
+}
