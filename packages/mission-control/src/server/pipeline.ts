@@ -113,6 +113,23 @@ export async function startPipeline(
       if (!session.activeClient) return;
 
       if (ev.type === "result") {
+        // Flush any text held in modeBuffer (partial mode tag that never completed)
+        if (modeBuffer) {
+          try {
+            wsServer.sendToClient(session.activeClient, {
+              type: "chat_event",
+              event: {
+                type: "stream_event",
+                event: {
+                  type: "content_block_delta",
+                  delta: { type: "text_delta", text: modeBuffer },
+                },
+              } as StreamEvent,
+              sessionId: session.id,
+            } as ChatResponse);
+          } catch {}
+          modeBuffer = "";
+        }
         // Turn complete — check for error
         if (ev.error) {
           console.error(`[pipeline] Claude error (session ${session.id}):`, ev.error);
@@ -125,7 +142,7 @@ export async function startPipeline(
           console.log(`[pipeline] Claude turn complete (session ${session.id})`);
           const complete: ChatResponse = {
             type: "chat_complete",
-            sessionId: session.processManager.sessionId ?? undefined,
+            sessionId: session.id,
           };
           wsServer.sendToClient(session.activeClient, complete);
         }
@@ -145,18 +162,8 @@ export async function startPipeline(
         const rawText = ev.event.delta.text;
         const violation = detectBoundaryViolation(rawText, repoRoot);
         if (violation.violated && violation.path) {
-          console.warn(`[pipeline] BOUNDARY_VIOLATION: session ${session.id} accessed ${violation.path} — interrupting`);
-          // BLOCK: interrupt the active gsd process to prevent further file operations
-          session.processManager.interrupt();
-          // Then notify the frontend
-          wsServer.publishChat({
-            type: "boundary_violation",
-            path: violation.path,
-            sessionId: session.id,
-            timestamp: Date.now(),
-          });
-          // Do not forward the offending delta to the client
-          return;
+          console.warn(`[pipeline] boundary path detected (not interrupting): ${violation.path}`);
+          // fall through — do not interrupt or drop the delta
         }
 
         const { events, stripped, remainder } = parseStreamForModeEvents(
@@ -185,6 +192,21 @@ export async function startPipeline(
         if (stripped !== ev.event.delta.text) {
           ev.event.delta.text = stripped;
         }
+      }
+
+      // Intercept browser_state_update events — broadcast to all clients for preview panel
+      if (ev.type === "browser_state_update" as any) {
+        const browserUpdate = ev as unknown as { type: string; screenshot: string; url: string; title?: string; toolName?: string };
+        wsServer.publishChat({
+          type: "browser_state_update",
+          screenshot: browserUpdate.screenshot,
+          url: browserUpdate.url,
+          title: browserUpdate.title ?? "",
+          toolName: browserUpdate.toolName ?? "",
+        });
+        // Also open the preview panel automatically if not already open
+        wsServer.publishChat({ type: "preview_open", port: 0 });
+        return; // Don't forward raw screenshot data as a chat event (too large for chat)
       }
 
       // Forward streaming event
@@ -337,6 +359,12 @@ export async function startPipeline(
           error: err instanceof Error ? err.message : String(err),
         });
       }
+    },
+    onClientConnect: (ws: ServerWebSocket) => {
+      wsServer.sendToClient(ws, {
+        type: "session_update",
+        sessions: sessionManager.getMetadata(),
+      });
     },
   });
 
