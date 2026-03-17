@@ -2091,8 +2091,8 @@ async function dispatchNextUnit(
     if (vizPrefs?.auto_visualize) {
       ctx.ui.notify("Run /gsd visualize to see progress overview.", "info");
     }
-    // Auto-generate HTML report snapshot on milestone completion
-    if (vizPrefs?.auto_report) {
+    // Auto-generate HTML report snapshot on milestone completion (default: on, disable with auto_report: false)
+    if (vizPrefs?.auto_report !== false) {
       try {
         const { loadVisualizerData } = await import("./visualizer-data.js");
         const { generateHtmlReport } = await import("./export-html.js");

@@ -173,6 +173,7 @@ export interface GSDPreferences {
   token_profile?: TokenProfile;
   phases?: PhaseSkipPreferences;
   auto_visualize?: boolean;
+  /** Generate HTML report snapshot after each milestone completion. Default: true. Set false to disable. */
   auto_report?: boolean;
   parallel?: import("./types.js").ParallelConfig;
 }
