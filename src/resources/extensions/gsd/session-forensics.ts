@@ -22,6 +22,7 @@ import { readFileSync, readdirSync, existsSync, statSync } from "node:fs";
 import { basename, join } from "node:path";
 import { nativeParseJsonlTail } from "./native-parser-bridge.js";
 import { nativeWorkingTreeStatus, nativeDiffStat } from "./native-git-bridge.js";
+import { getAutoWorktreePath } from "./auto-worktree.js";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -296,10 +297,43 @@ export function synthesizeCrashRecovery(
  * Replaces the old shallow getLastActivityDiagnostic().
  */
 export function getDeepDiagnostic(basePath: string): string | null {
-  const activityDir = join(basePath, ".gsd", "activity");
-  const trace = readLastActivityLog(activityDir);
+  // Try worktree activity logs first if an auto-worktree is active
+  let trace: ExecutionTrace | null = null;
+  try {
+    const mid = readActiveMilestoneId(basePath);
+    if (mid) {
+      const wtPath = getAutoWorktreePath(basePath, mid);
+      if (wtPath) {
+        const wtActivityDir = join(wtPath, ".gsd", "activity");
+        trace = readLastActivityLog(wtActivityDir);
+      }
+    }
+  } catch { /* non-fatal — fall through to root */ }
+
+  // Fall back to root activity logs
+  if (!trace || trace.toolCallCount === 0) {
+    const activityDir = join(basePath, ".gsd", "activity");
+    trace = readLastActivityLog(activityDir);
+  }
+
   if (!trace || trace.toolCallCount === 0) return null;
   return formatTraceSummary(trace);
+}
+
+/**
+ * Read the active milestone ID directly from STATE.md without async deriveState().
+ * Looks for `**Active Milestone:** M001` pattern.
+ */
+function readActiveMilestoneId(basePath: string): string | null {
+  try {
+    const statePath = join(basePath, ".gsd", "STATE.md");
+    if (!existsSync(statePath)) return null;
+    const content = readFileSync(statePath, "utf-8");
+    const match = /\*\*Active Milestone:\*\*\s*(\S+)/i.exec(content);
+    return match?.[1] ?? null;
+  } catch {
+    return null;
+  }
 }
 
 // ─── Formatting ───────────────────────────────────────────────────────────────
