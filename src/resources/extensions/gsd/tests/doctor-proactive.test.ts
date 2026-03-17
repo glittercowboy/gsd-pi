@@ -193,6 +193,20 @@ async function main(): Promise<void> {
       assertEq(result.issues.length, 0, "no issues on clean state");
     }
 
+    console.log("\n=== health gate: missing STATE.md does NOT block dispatch (#889) ===");
+    {
+      const dir = realpathSync(mkdtempSync(join(tmpdir(), "doc-proactive-")));
+      cleanups.push(dir);
+      // Create milestones dir but no STATE.md — mimics fresh worktree
+      mkdirSync(join(dir, ".gsd", "milestones", "M001"), { recursive: true });
+      writeFileSync(join(dir, ".gsd", "milestones", "M001", "M001-ROADMAP.md"), "# Roadmap\n");
+
+      const result = preDispatchHealthGate(dir);
+      assertTrue(result.proceed, "gate must NOT block when STATE.md is missing (deadlock #889)");
+      assertEq(result.issues.length, 0, "missing STATE.md is not a blocking issue");
+      assertTrue(result.fixesApplied.some(f => f.includes("STATE.md missing")), "reports STATE.md missing as info");
+    }
+
     console.log("\n=== health gate: stale crash lock auto-cleared ===");
     {
       const dir = realpathSync(mkdtempSync(join(tmpdir(), "doc-proactive-")));

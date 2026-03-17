@@ -173,14 +173,19 @@ export async function preDispatchHealthGate(basePath: string): Promise<PreDispat
   }
 
   // ── STATE.md existence check ──
-  // If STATE.md is missing, rebuild it now so the next unit has accurate
-  // context. Non-blocking — if the rebuild throws, dispatch continues anyway.
+  // If STATE.md is missing, attempt to rebuild it for the next unit's context.
+  // Non-blocking — fresh worktrees won't have it until the first unit completes (#889).
   try {
     const stateFile = resolveGsdRootFile(basePath, "STATE");
     const milestonesDir = join(gsdRoot(basePath), "milestones");
     if (existsSync(milestonesDir) && !existsSync(stateFile)) {
-      await rebuildState(basePath);
-      fixesApplied.push("rebuilt missing STATE.md before dispatch");
+      try {
+        await rebuildState(basePath);
+        fixesApplied.push("rebuilt missing STATE.md before dispatch");
+      } catch {
+        // Rebuild failed — non-blocking, dispatch continues
+        fixesApplied.push("STATE.md missing — will rebuild after first unit completes");
+      }
     }
   } catch {
     // Non-fatal — dispatch continues without STATE.md if rebuild fails
