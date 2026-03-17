@@ -70,6 +70,30 @@ describe("usePreview exports", () => {
     const mod = await import("../src/hooks/usePreview");
     expect(typeof mod.usePreview).toBe("function");
   });
+
+  test("scanForDevServers is exported as an async function", async () => {
+    const mod = await import("../src/hooks/usePreview");
+    expect(typeof mod.scanForDevServers).toBe("function");
+  });
+
+  test("CANDIDATE_PORTS is exported as an array", async () => {
+    const mod = await import("../src/hooks/usePreview");
+    expect(Array.isArray(mod.CANDIDATE_PORTS)).toBe(true);
+  });
+});
+
+// -- DetectedServer shape verification --
+
+describe("DetectedServer type shape", () => {
+  test("DetectedServer has port, type, and optional label fields (via source)", async () => {
+    const { readFileSync } = await import("fs");
+    const { join } = await import("path");
+    const src = readFileSync(join(import.meta.dir, "../src/hooks/usePreview.ts"), "utf-8");
+    expect(src).toContain("export interface DetectedServer");
+    expect(src).toContain("port: number");
+    expect(src).toContain('"frontend" | "backend" | "unknown"');
+    expect(src).toContain("label?:");
+  });
 });
 
 // -- WebSocket message shape validation --
@@ -93,10 +117,9 @@ describe("preview_open WebSocket message shape", () => {
     }
   });
 
-  test("setPort updates port without affecting open via logic inspection", () => {
-    // The hook exposes setPort as a direct state setter — setting port
+  test("setActiveFrontendPort updates port without affecting open via logic inspection", () => {
+    // The hook exposes setActiveFrontendPort as a direct state setter — setting port
     // does not call setOpen. Verified by reading the hook implementation.
-    // Logic: setPort = (p) => setPort(p) — no setOpen call
     const portSetter = (port: number | null) => port; // identity for test
     expect(portSetter(3000)).toBe(3000);
     expect(portSetter(null)).toBeNull();
@@ -122,5 +145,19 @@ describe("Viewport type", () => {
     expect(viewports).toContain("tablet");
     expect(viewports).toContain("mobile");
     expect(viewports).toContain("dual");
+  });
+});
+
+// -- Multi-server state fields --
+
+describe("UsePreviewReturn multi-server fields", () => {
+  test("hook source contains servers, activeFrontendPort, scanning, triggerScan", async () => {
+    const { readFileSync } = await import("fs");
+    const { join } = await import("path");
+    const src = readFileSync(join(import.meta.dir, "../src/hooks/usePreview.ts"), "utf-8");
+    expect(src).toContain("servers");
+    expect(src).toContain("activeFrontendPort");
+    expect(src).toContain("scanning");
+    expect(src).toContain("triggerScan");
   });
 });

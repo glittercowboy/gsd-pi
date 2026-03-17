@@ -1,18 +1,24 @@
 /**
- * Tests for PreviewPanel component tree (PREV-02, PREV-03, PREV-04).
+ * Tests for PreviewPanel component tree (PREV-02, PREV-03, PREV-04, POLISH-04..06).
  *
- * Pattern: Direct function call + JSON.stringify inspection,
- * matching the approach used in animations.test.tsx, discuss-review.test.tsx.
+ * Pattern: Static source-text inspection for components that use hooks
+ * (PreviewPanel uses useState so cannot be called directly in test environment).
+ * Direct function calls only for pure components (ViewportSwitcher, DeviceFrame).
  *
  * Components tested:
  * - ViewportSwitcher: four buttons (Desktop/Tablet/Mobile/Dual)
  * - DeviceFrame: CSS frame shells for iPhone/Pixel in Dual mode
- * - PreviewPanel: pure render — slide animation, header, iframe, port input
+ * - PreviewPanel: source assertions — slide animation, header, server selector, iframes, error boundary
  */
 import { describe, test, expect } from "bun:test";
-import { PreviewPanel } from "../src/components/preview/PreviewPanel";
+import { readFileSync } from "fs";
+import { join } from "path";
 import { ViewportSwitcher } from "../src/components/preview/ViewportSwitcher";
 import { DeviceFrame, DEVICE_FRAMES } from "../src/components/preview/DeviceFrame";
+
+const PANEL_PATH = join(import.meta.dir, "../src/components/preview/PreviewPanel.tsx");
+const WITH_STATE_PATH = join(import.meta.dir, "../src/components/preview/PreviewPanelWithState.tsx");
+const DEVICE_FRAME_PATH = join(import.meta.dir, "../src/components/preview/DeviceFrame.tsx");
 
 // -- ViewportSwitcher --
 
@@ -88,7 +94,7 @@ describe("DeviceFrame", () => {
   test("DeviceFrame renders iframe inside", () => {
     const html = JSON.stringify(DeviceFrame({
       device: "iphone",
-      src: "/api/preview/",
+      src: "http://localhost:5173/",
       iframeId: "preview-iframe-iphone",
     }));
     expect(html).toContain("iframe");
@@ -97,7 +103,7 @@ describe("DeviceFrame", () => {
   test("DeviceFrame iphone renders with id preview-iframe-iphone", () => {
     const html = JSON.stringify(DeviceFrame({
       device: "iphone",
-      src: "/api/preview/",
+      src: "http://localhost:5173/",
       iframeId: "preview-iframe-iphone",
     }));
     expect(html).toContain("preview-iframe-iphone");
@@ -106,149 +112,173 @@ describe("DeviceFrame", () => {
   test("DeviceFrame pixel renders with id preview-iframe-pixel", () => {
     const html = JSON.stringify(DeviceFrame({
       device: "pixel",
-      src: "/api/preview/",
+      src: "http://localhost:5173/",
       iframeId: "preview-iframe-pixel",
     }));
     expect(html).toContain("preview-iframe-pixel");
   });
+
+  test("DeviceFrame imports and uses ErrorBoundaryFrame (source check)", () => {
+    const src = readFileSync(DEVICE_FRAME_PATH, "utf-8");
+    expect(src).toContain("ErrorBoundaryFrame");
+    expect(src).toContain('from "./ErrorBoundaryFrame"');
+  });
 });
 
-// -- PreviewPanel --
+// -- PreviewPanel source assertions --
 
 describe("PreviewPanel animation", () => {
   test("panel root has animate-in slide-in-from-right duration-200 classes", () => {
-    const html = JSON.stringify(PreviewPanel({
-      port: null,
-      viewport: "desktop",
-      onClose: () => {},
-      onPortChange: () => {},
-      onViewportChange: () => {},
-    }));
-    expect(html).toContain("animate-in");
-    expect(html).toContain("slide-in-from-right");
-    expect(html).toContain("duration-200");
+    const src = readFileSync(PANEL_PATH, "utf-8");
+    expect(src).toContain("animate-in");
+    expect(src).toContain("slide-in-from-right");
+    expect(src).toContain("duration-200");
   });
 });
 
 describe("PreviewPanel header", () => {
   test("renders Live Preview title", () => {
-    const html = JSON.stringify(PreviewPanel({
-      port: null,
-      viewport: "desktop",
-      onClose: () => {},
-      onPortChange: () => {},
-      onViewportChange: () => {},
-    }));
-    expect(html).toContain("Live Preview");
+    const src = readFileSync(PANEL_PATH, "utf-8");
+    expect(src).toContain("Live Preview");
   });
 
-  test("renders port input with placeholder 'port' when port is null", () => {
-    const html = JSON.stringify(PreviewPanel({
-      port: null,
-      viewport: "desktop",
-      onClose: () => {},
-      onPortChange: () => {},
-      onViewportChange: () => {},
-    }));
-    expect(html).toContain("port");
-    expect(html).toContain("number");
+  test("contains Scan for servers button for empty state", () => {
+    const src = readFileSync(PANEL_PATH, "utf-8");
+    expect(src).toContain("Scan for servers");
   });
 
-  test("renders port input pre-filled with current port value", () => {
-    const html = JSON.stringify(PreviewPanel({
-      port: 3000,
-      viewport: "desktop",
-      onClose: () => {},
-      onPortChange: () => {},
-      onViewportChange: () => {},
-    }));
-    expect(html).toContain("3000");
+  test("contains manual port input for empty state", () => {
+    const src = readFileSync(PANEL_PATH, "utf-8");
+    // Manual port input has number type
+    expect(src).toContain("type=\"number\"");
+  });
+
+  test("contains Scanning... text for loading state", () => {
+    const src = readFileSync(PANEL_PATH, "utf-8");
+    expect(src).toContain("Scanning...");
+  });
+
+  test("contains Select server... option in dropdown", () => {
+    const src = readFileSync(PANEL_PATH, "utf-8");
+    expect(src).toContain("Select server...");
+  });
+});
+
+describe("PreviewPanel props interface", () => {
+  test("contains servers: DetectedServer[] prop", () => {
+    const src = readFileSync(PANEL_PATH, "utf-8");
+    expect(src).toContain("servers: DetectedServer[]");
+  });
+
+  test("contains activeFrontendPort prop", () => {
+    const src = readFileSync(PANEL_PATH, "utf-8");
+    expect(src).toContain("activeFrontendPort");
+  });
+
+  test("contains scanning prop", () => {
+    const src = readFileSync(PANEL_PATH, "utf-8");
+    expect(src).toContain("scanning");
+  });
+
+  test("contains onScan prop", () => {
+    const src = readFileSync(PANEL_PATH, "utf-8");
+    expect(src).toContain("onScan");
+  });
+
+  test("contains dualLeftPort and dualRightPort props", () => {
+    const src = readFileSync(PANEL_PATH, "utf-8");
+    expect(src).toContain("dualLeftPort");
+    expect(src).toContain("dualRightPort");
   });
 });
 
 describe("PreviewPanel viewport modes", () => {
-  test("in non-Dual mode renders single iframe with /api/preview/ src when port is set", () => {
-    const html = JSON.stringify(PreviewPanel({
-      port: 3000,
-      viewport: "desktop",
-      onClose: () => {},
-      onPortChange: () => {},
-      onViewportChange: () => {},
-    }));
-    expect(html).toContain("iframe");
-    expect(html).toContain("/api/preview/");
+  test("uses http://localhost:PORT/ format for iframe src (direct, interactive)", () => {
+    const src = readFileSync(PANEL_PATH, "utf-8");
+    expect(src).toContain("http://localhost:");
   });
 
-  test("in Dual mode renders iframe with id preview-iframe-iphone", () => {
-    const html = JSON.stringify(PreviewPanel({
-      port: 3000,
-      viewport: "dual",
-      onClose: () => {},
-      onPortChange: () => {},
-      onViewportChange: () => {},
-    }));
-    expect(html).toContain("preview-iframe-iphone");
+  test("renders DeviceFrame for iphone in dual mode", () => {
+    const src = readFileSync(PANEL_PATH, "utf-8");
+    expect(src).toContain('"iphone"');
+    expect(src).toContain("preview-iframe-iphone");
   });
 
-  test("in Dual mode renders iframe with id preview-iframe-pixel", () => {
-    const html = JSON.stringify(PreviewPanel({
-      port: 3000,
-      viewport: "dual",
-      onClose: () => {},
-      onPortChange: () => {},
-      onViewportChange: () => {},
-    }));
-    expect(html).toContain("preview-iframe-pixel");
+  test("renders DeviceFrame for pixel in dual mode", () => {
+    const src = readFileSync(PANEL_PATH, "utf-8");
+    expect(src).toContain('"pixel"');
+    expect(src).toContain("preview-iframe-pixel");
+  });
+
+  test("contains tablet width 768px", () => {
+    const src = readFileSync(PANEL_PATH, "utf-8");
+    expect(src).toContain("768px");
+  });
+
+  test("contains mobile width 375px", () => {
+    const src = readFileSync(PANEL_PATH, "utf-8");
+    expect(src).toContain("375px");
   });
 });
 
 describe("PreviewPanel native app empty state", () => {
-  test("renders no web preview message when isNativeApp=true", () => {
-    const html = JSON.stringify(PreviewPanel({
-      port: null,
-      viewport: "desktop",
-      onClose: () => {},
-      onPortChange: () => {},
-      onViewportChange: () => {},
-      isNativeApp: true,
-    }));
-    expect(html).toContain("No web preview available for native apps");
+  test("contains no web preview message for native apps", () => {
+    const src = readFileSync(PANEL_PATH, "utf-8");
+    expect(src).toContain("No web preview available for native apps");
   });
 });
 
 describe("PreviewPanel callbacks wiring", () => {
-  test("close button is present via aria-label in rendered output", () => {
-    const html = JSON.stringify(PreviewPanel({
-      port: null,
-      viewport: "desktop",
-      onClose: () => {},
-      onPortChange: () => {},
-      onViewportChange: () => {},
-    }));
-    // Close button has aria-label="Close preview"
-    expect(html).toContain("Close preview");
-  });
-
-  test("ViewportSwitcher is rendered with viewport prop in tree", () => {
-    const result = PreviewPanel({
-      port: null,
-      viewport: "desktop",
-      onClose: () => {},
-      onPortChange: () => {},
-      onViewportChange: () => {},
-    });
-    // ViewportSwitcher is a child component — check it appears in serialized tree
-    const html = JSON.stringify(result);
-    // ViewportSwitcher renders with props.viewport in the tree
-    expect(html).toContain('"viewport":"desktop"');
+  test("close button has aria-label Close preview", () => {
+    const src = readFileSync(PANEL_PATH, "utf-8");
+    expect(src).toContain("Close preview");
   });
 });
 
-// -- PreviewPanelWithState exports --
+describe("PreviewPanel ErrorBoundaryFrame usage", () => {
+  test("PreviewPanel source imports ErrorBoundaryFrame", () => {
+    const src = readFileSync(PANEL_PATH, "utf-8");
+    expect(src).toContain("ErrorBoundaryFrame");
+    expect(src).toContain('from "./ErrorBoundaryFrame"');
+  });
+
+  test("PreviewPanel source wraps iframes in ErrorBoundaryFrame", () => {
+    const src = readFileSync(PANEL_PATH, "utf-8");
+    expect(src).toContain("<ErrorBoundaryFrame>");
+    expect(src).toContain("</ErrorBoundaryFrame>");
+  });
+});
+
+describe("PreviewPanel sub-tabs", () => {
+  test("contains desktop sub-tab rendering logic", () => {
+    const src = readFileSync(PANEL_PATH, "utf-8");
+    // Sub-tabs are rendered when servers.length > 1 in desktop mode
+    expect(src).toContain("servers.length > 1");
+  });
+});
+
+// -- PreviewPanelWithState --
 
 describe("PreviewPanelWithState exports", () => {
   test("PreviewPanelWithState is exported from the wrapper file", async () => {
     const mod = await import("../src/components/preview/PreviewPanelWithState");
     expect(typeof mod.PreviewPanelWithState).toBe("function");
+  });
+
+  test("PreviewPanelWithState source calls usePreview() internally", () => {
+    const src = readFileSync(WITH_STATE_PATH, "utf-8");
+    expect(src).toContain("usePreview()");
+  });
+
+  test("PreviewPanelWithState source does not accept initialPort prop", () => {
+    const src = readFileSync(WITH_STATE_PATH, "utf-8");
+    expect(src).not.toContain("initialPort");
+  });
+
+  test("PreviewPanelWithState passes servers, scanning, triggerScan to PreviewPanel", () => {
+    const src = readFileSync(WITH_STATE_PATH, "utf-8");
+    expect(src).toContain("servers=");
+    expect(src).toContain("scanning=");
+    expect(src).toContain("onScan=");
   });
 });

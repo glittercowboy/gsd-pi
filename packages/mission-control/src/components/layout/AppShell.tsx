@@ -397,6 +397,7 @@ export function AppShell() {
         }}
         onOpenFolder={() => setFolderPickerOpen(true)}
         projectName={projectName}
+        onOpenCodeExplorer={openExplorer}
       />
       <div className="flex flex-1 min-w-0 overflow-hidden">
         <div className={previewOpen ? "flex flex-col w-[380px] min-w-[320px] shrink-0" : "flex flex-col flex-1 min-w-0"}>
@@ -470,6 +471,12 @@ export function AppShell() {
         open={folderPickerOpen}
         onClose={() => setFolderPickerOpen(false)}
         onSelect={() => dismiss()}
+      />
+      {/* Code Explorer modal — full-screen file browser (POLISH-09) */}
+      <CodeExplorer
+        isOpen={codeExplorerOpen}
+        onClose={closeExplorer}
+        projectRoot={activeProjectPath ?? ""}
       />
       {/* Command palette — Ctrl+Shift+P / Cmd+Shift+P to open; gated in Builder mode */}
       <CommandPalette

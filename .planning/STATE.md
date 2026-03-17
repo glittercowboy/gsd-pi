@@ -3,8 +3,8 @@ gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: Native Desktop
 status: in_progress
-stopped_at: Completed 20.1-03-PLAN.md
-last_updated: "2026-03-17T12:16:12.389Z"
+stopped_at: Completed 20.1-01-PLAN.md
+last_updated: "2026-03-17T12:17:03.289Z"
 last_activity: "2026-03-14 — Plan 19-01 complete: 4 RED test stub files created (workspace-api, project-archiving, project-home-screen, project-tab-bar); 747 passing tests unaffected; WORKSPACE-01..05 test coverage established"
 progress:
   total_phases: 11
@@ -502,7 +502,7 @@ Phase: 19 of 20 (Project Workspace) — In Progress (1 of 5 plans done)
 Plan: 1 of 5 complete (plan 01 done — 4 Nyquist Wave 0 RED test stubs created)
 Status: Phase 19 in progress. Next: Phase 19-02 workspace-api implementation.
 Last activity: 2026-03-14 — Plan 19-01 complete: 4 RED test stub files created (workspace-api, project-archiving, project-home-screen, project-tab-bar); 747 passing tests unaffected; WORKSPACE-01..05 test coverage established
-Stopped at: Completed 20.1-03-PLAN.md
+Stopped at: Completed 20.1-01-PLAN.md
 
 Progress: [█████████░] 89% (40/45 plans complete)
 
@@ -644,6 +644,8 @@ Progress: [█████████░] 89% (40/45 plans complete)
 - [Phase 20-installer-distribution]: Pages workflow path-filtered to docs/** to avoid spurious redeploys on unrelated pushes
 - [Phase 20.1]: Static source-read pattern used throughout (readFileSync + string.toContain) — avoids React hook rendering complexity, consistent with codebase conventions
 - [Phase 20.1]: pendingForkRef uses stateRef.current (pre-update sessions) for previousIds comparison; chat_complete auto-naming bug fixed (was using out-of-scope 'current', now uses stateRef.current)
+- [Phase 20.1]: projectName derived as const in AppShell before dashboard return, shared by Sidebar and SingleColumnView
+- [Phase 20.1]: layout.test.tsx TabLayout import removed (component deleted); replaced with SingleColumnView/AppShell projectName source-text tests
 
 ### Blockers/Concerns
 

@@ -2,12 +2,15 @@
  * DeviceFrame — CSS device frame shells for Dual preview mode.
  *
  * Renders iPhone 14 and Pixel 7 styled frames containing iframes.
+ * Each iframe is wrapped in ErrorBoundaryFrame so a crash shows
+ * "Preview unavailable" inside the device shell without taking down the app.
  * Pure render component: no hooks, no side effects.
  *
  * Dimensions from RESEARCH.md:
  * - iPhone 14: 390x750, border-radius 47
  * - Pixel 7: 412x750, border-radius 17
  */
+import { ErrorBoundaryFrame } from "./ErrorBoundaryFrame";
 
 export const DEVICE_FRAMES = {
   iphone: { width: 390, height: 750, radius: 47, label: "iPhone 14" },
@@ -76,18 +79,20 @@ export function DeviceFrame({ device, src, iframeId }: DeviceFrameProps) {
           />
         )}
 
-        {/* Content iframe */}
-        <iframe
-          id={iframeId}
-          src={src}
-          style={{
-            width: "100%",
-            height: "100%",
-            border: "none",
-            display: "block",
-          }}
-          title={frame.label}
-        />
+        {/* Content iframe wrapped in ErrorBoundaryFrame for crash isolation */}
+        <ErrorBoundaryFrame>
+          <iframe
+            id={iframeId}
+            src={src}
+            style={{
+              width: "100%",
+              height: "100%",
+              border: "none",
+              display: "block",
+            }}
+            title={frame.label}
+          />
+        </ErrorBoundaryFrame>
       </div>
     </div>
   );

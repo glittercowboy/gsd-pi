@@ -225,7 +225,7 @@ Plans:
 **Goal:** Fix 10 identified bugs/regressions in the shipped M2 app (preview panel crash, logo blur, missing project name, broken session fork, stale refresh state) and add Code Explorer — a VSCode-style modal file browser with CodeMirror 6 editor
 **Requirements**: POLISH-01 through POLISH-09
 **Depends on:** Phase 20
-**Plans:** 2/6 plans executed
+**Plans:** 3/6 plans executed
 
 Plans:
 - [ ] 20.1-00-PLAN.md — Wave 0: Create 9 stub test files for Nyquist compliance
@@ -269,4 +269,4 @@ Plans:
 | 18. Builder Mode | 4/4 | Complete    | 2026-03-14 | — |
 | 19. Project Workspace | 5/5 | Complete    | 2026-03-14 | — |
 | 20. Installer + Distribution | 3/3 | Complete    | 2026-03-15 | — |
-| 20.1 M2 Polish (INSERTED) | 2/6 | In Progress|  | — |
+| 20.1 M2 Polish (INSERTED) | 3/6 | In Progress|  | — |
