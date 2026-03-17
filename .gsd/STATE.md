@@ -1,7 +1,7 @@
 # GSD State
 
 **Active Milestone:** M003: Upstream Sync and Full Web Feature Parity
-**Active Slice:** S08: TUI-to-web 1:1 parity audit and gap closure
+**Active Slice:** S09: Test suite hardening
 **Phase:** executing
 **Requirements Status:** 11 active · 13 validated · 3 deferred · 3 out of scope
 
@@ -19,4 +19,4 @@
 - None
 
 ## Next Action
-Execute S08/T01 (produce TUI-to-web parity audit document).
+Execute T01 of S09 (fix dist-redirect.mjs resolver).
