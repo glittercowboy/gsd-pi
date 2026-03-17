@@ -196,6 +196,18 @@ For non-trivial work, verify both the feature and the failure/diagnostic surface
 
 Work is not done when the code compiles. Work is done when the verification passes.
 
+### Blocker Recovery and Replan
+
+During task execution, an agent may discover that the remaining slice plan is fundamentally invalid — a wrong API assumption, a missing capability, an architectural mismatch. This is distinct from ordinary bugs or minor deviations that can be fixed within the current task.
+
+When this happens, the executing agent sets `blocker_discovered: true` in the task summary frontmatter and describes the blocker in the summary narrative. The system detects this flag and triggers a **replan**: a dedicated unit rewrites the remaining incomplete tasks in the slice plan to account for the new information. Completed tasks and their summaries are preserved exactly as-is.
+
+Rules:
+- Only set `blocker_discovered: true` for plan-invalidating findings. Ordinary debugging, test failures, and fixable issues are not blockers.
+- The replan unit rewrites only incomplete (`[ ]`) tasks. Completed (`[x]`) tasks, their IDs, descriptions, and summaries are never modified.
+- New tasks added during replan continue the existing ID sequence.
+- The replan produces a `REPLAN.md` artifact documenting what changed and why, then rewrites the slice plan.
+
 ### Agent-First Observability
 
 For relevant work: add health/status surfaces, persist failure state (last error, phase, timestamp, retry count), verify both happy path and at least one diagnostic signal. Never log secrets. Remove noisy one-off instrumentation before finishing unless it provides durable diagnostic value.
