@@ -261,28 +261,30 @@ const MAX_CONSECUTIVE_SKIPS = 3;
 /** Persisted completed-unit keys — survives restarts. Loaded from .gsd/completed-units.json. */
 const completedKeySet = new Set<string>();
 
-/** Resource sync timestamp captured at auto-mode start. If the managed-resources
- *  manifest changes mid-session (e.g. /gsd:update or dev edit + copy-resources),
+/** Resource version captured at auto-mode start. If the managed-resources
+ *  manifest version changes mid-session (e.g. npm update -g gsd-pi),
  *  templates on disk may expect variables the in-memory code doesn't provide.
- *  Detect this and stop gracefully instead of crashing. */
-let resourceSyncedAtOnStart: number | null = null;
+ *  Detect this and stop gracefully instead of crashing.
+ *  Uses gsdVersion (semver) instead of syncedAt (timestamp) so that
+ *  launching a second session doesn't falsely trigger staleness (#804). */
+let resourceVersionOnStart: string | null = null;
 
-function readResourceSyncedAt(): number | null {
+function readResourceVersion(): string | null {
   const agentDir = process.env.GSD_CODING_AGENT_DIR || join(homedir(), ".gsd", "agent");
   const manifestPath = join(agentDir, "managed-resources.json");
   try {
     const manifest = JSON.parse(readFileSync(manifestPath, "utf-8"));
-    return typeof manifest?.syncedAt === "number" ? manifest.syncedAt : null;
+    return typeof manifest?.gsdVersion === "string" ? manifest.gsdVersion : null;
   } catch {
     return null;
   }
 }
 
 function checkResourcesStale(): string | null {
-  if (resourceSyncedAtOnStart === null) return null;
-  const current = readResourceSyncedAt();
+  if (resourceVersionOnStart === null) return null;
+  const current = readResourceVersion();
   if (current === null) return null;
-  if (current !== resourceSyncedAtOnStart) {
+  if (current !== resourceVersionOnStart) {
     return "GSD resources were updated since this session started. Restart gsd to load the new code.";
   }
   return null;
@@ -1075,7 +1077,7 @@ export async function startAuto(
   restoreHookState(base);
   resetProactiveHealing();
   autoStartTime = Date.now();
-  resourceSyncedAtOnStart = readResourceSyncedAt();
+  resourceVersionOnStart = readResourceVersion();
   completedUnits = [];
   pendingQuickTasks = [];
   currentUnit = null;
