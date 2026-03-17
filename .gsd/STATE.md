@@ -1,7 +1,7 @@
 # GSD State
 
 **Active Milestone:** M001: Verification Enforcement
-**Active Slice:** S03: Auto-Fix Retry Loop
+**Active Slice:** S04: Runtime Error Capture
 **Phase:** executing
 **Requirements Status:** 17 active · 0 validated · 2 deferred · 0 out of scope
 
@@ -18,4 +18,4 @@
 - None
 
 ## Next Action
-Execute S03/T01 (Add formatFailureContext helper and extend evidence JSON with retry fields).
+Execute S04/T01 (Implement RuntimeError type and captureRuntimeErrors function with tests).
