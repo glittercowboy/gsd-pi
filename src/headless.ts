@@ -18,7 +18,7 @@ import { ChildProcess } from 'node:child_process'
 // RpcClient is not in @gsd/pi-coding-agent's public exports — import from dist directly.
 // This relative path resolves correctly from both src/ (via tsx) and dist/ (compiled).
 import { RpcClient } from '../packages/pi-coding-agent/dist/modes/rpc/rpc-client.js'
-import { attachJsonlLineReader } from '../packages/pi-coding-agent/dist/modes/rpc/jsonl.js'
+import { attachJsonlLineReader, serializeJsonLine } from '../packages/pi-coding-agent/dist/modes/rpc/jsonl.js'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -121,14 +121,6 @@ export function parseHeadlessArgs(argv: string[]): HeadlessOptions {
   }
 
   return options
-}
-
-// ---------------------------------------------------------------------------
-// JSONL Helper
-// ---------------------------------------------------------------------------
-
-function serializeJsonLine(obj: Record<string, unknown>): string {
-  return JSON.stringify(obj) + '\n'
 }
 
 // ---------------------------------------------------------------------------
@@ -284,7 +276,7 @@ function startSupervisedStdinReader(
 
     switch (type) {
       case 'extension_ui_response':
-        stdinWriter(serializeJsonLine(msg))
+        stdinWriter(line + '\n')
         if (typeof msg.id === 'string') {
           onResponse(msg.id)
         }
@@ -474,11 +466,13 @@ async function runHeadlessOnce(options: HeadlessOptions, restartCount: number): 
   // Supervised mode state
   const pendingResponseTimers = new Map<string, ReturnType<typeof setTimeout>>()
   let supervisedFallback = false
+  let stopSupervisedReader: (() => void) | null = null
+  const onStdinClose = () => {
+    supervisedFallback = true
+    process.stderr.write('[headless] Warning: orchestrator stdin closed, falling back to auto-response\n')
+  }
   if (options.supervised) {
-    process.stdin.on('close', () => {
-      supervisedFallback = true
-      process.stderr.write('[headless] Warning: orchestrator stdin closed, falling back to auto-response\n')
-    })
+    process.stdin.on('close', onStdinClose)
   }
 
   // Completion promise
@@ -500,6 +494,9 @@ async function runHeadlessOnce(options: HeadlessOptions, restartCount: number): 
       }, effectiveIdleTimeout)
     }
   }
+
+  // Precompute supervised response timeout
+  const responseTimeout = options.responseTimeout ?? 30_000
 
   // Overall timeout
   const timeoutTimer = setTimeout(() => {
@@ -546,7 +543,6 @@ async function runHeadlessOnce(options: HeadlessOptions, restartCount: number): 
       if (shouldSupervise) {
         // Interactive request in supervised mode — let orchestrator respond
         const eventId = String(eventObj.id ?? '')
-        const responseTimeout = options.responseTimeout ?? 30_000
         const timer = setTimeout(() => {
           pendingResponseTimers.delete(eventId)
           handleExtensionUIRequest(eventObj as unknown as ExtensionUIRequest, stdinWriter!)
@@ -614,7 +610,7 @@ async function runHeadlessOnce(options: HeadlessOptions, restartCount: number): 
 
   // Start supervised stdin reader for orchestrator commands
   if (options.supervised) {
-    startSupervisedStdinReader(stdinWriter, client, (id) => {
+    stopSupervisedReader = startSupervisedStdinReader(stdinWriter, client, (id) => {
       const timer = pendingResponseTimers.get(id)
       if (timer) {
         clearTimeout(timer)
@@ -684,6 +680,8 @@ async function runHeadlessOnce(options: HeadlessOptions, restartCount: number): 
   if (idleTimer) clearTimeout(idleTimer)
   pendingResponseTimers.forEach((timer) => clearTimeout(timer))
   pendingResponseTimers.clear()
+  stopSupervisedReader?.()
+  process.stdin.removeListener('close', onStdinClose)
   process.removeListener('SIGINT', signalHandler)
   process.removeListener('SIGTERM', signalHandler)
 
