@@ -3,11 +3,27 @@ gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: Native Desktop
 status: in_progress
+stopped_at: Completed 20.2-01-PLAN.md — headless browser mode + screenshot extraction
+last_updated: "2026-03-17T16:57:32.940Z"
+last_activity: "2026-03-14 — Plan 19-01 complete: 4 RED test stub files created (workspace-api, project-archiving, project-home-screen, project-tab-bar); 747 passing tests unaffected; WORKSPACE-01..05 test coverage established"
+progress:
+  total_phases: 12
+  completed_phases: 9
+  total_plans: 56
+  completed_plans: 53
+  percent: 95
+---
+
+---
+gsd_state_version: 1.0
+milestone: v2.0
+milestone_name: Native Desktop
+status: in_progress
 stopped_at: Completed 20.1-04-PLAN.md — Code Explorer modal with CodeMirror 6
 last_updated: "2026-03-17T12:22:54.214Z"
 last_activity: "2026-03-14 — Plan 19-01 complete: 4 RED test stub files created (workspace-api, project-archiving, project-home-screen, project-tab-bar); 747 passing tests unaffected; WORKSPACE-01..05 test coverage established"
 progress:
-  total_phases: 11
+  [██████████] 95%
   completed_phases: 9
   total_plans: 54
   completed_plans: 52
@@ -502,7 +518,7 @@ Phase: 19 of 20 (Project Workspace) — In Progress (1 of 5 plans done)
 Plan: 1 of 5 complete (plan 01 done — 4 Nyquist Wave 0 RED test stubs created)
 Status: Phase 19 in progress. Next: Phase 19-02 workspace-api implementation.
 Last activity: 2026-03-14 — Plan 19-01 complete: 4 RED test stub files created (workspace-api, project-archiving, project-home-screen, project-tab-bar); 747 passing tests unaffected; WORKSPACE-01..05 test coverage established
-Stopped at: Completed 20.1-04-PLAN.md — Code Explorer modal with CodeMirror 6
+Stopped at: Completed 20.2-01-PLAN.md — headless browser mode + screenshot extraction
 
 Progress: [█████████░] 89% (40/45 plans complete)
 
@@ -532,6 +548,7 @@ Progress: [█████████░] 89% (40/45 plans complete)
 ### Roadmap Evolution
 
 - Phase 11.1 inserted after Phase 11: Pre-v2.0 Stabilization — address CONCERNS.md before v2.0 (URGENT)
+- Phase 20.2 inserted after Phase 20: gsd playwright cli browser tool use made native to mission control (URGENT)
 
 ### Decisions
 
@@ -650,6 +667,8 @@ Progress: [█████████░] 89% (40/45 plans complete)
 - [Phase 20.1-02]: PreviewPanelWithState calls usePreview() internally (no initialPort prop) — server management self-contained in preview component tree
 - [Phase 20.1-02]: Direct localhost:PORT/ used as iframe src (not /api/preview/ proxy) for full interactivity without CORS restrictions
 - [Phase 20.1]: CodeMirror EditorView recreated per filePath — simplest approach for language switching; handleFsRequest allowedRoot param backward-compatible; save is explicit Ctrl+S not auto-save
+- [Phase 20.2-01]: BrowserStateUpdate emitted via cast as unknown as StreamEvent — avoids modifying StreamEvent union type, consistent with process_crashed pattern
+- [Phase 20.2-01]: GSD_BROWSER_HEADLESS env var controls headless mode — browser tools default to visible when unset, headless when set to 1 (Mission Control always sets 1)
 
 ### Blockers/Concerns
 

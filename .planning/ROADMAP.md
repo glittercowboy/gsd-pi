@@ -229,7 +229,7 @@ Plans:
   1. No external Chromium window appears when GSD uses browser tools from Mission Control — the `GSD_BROWSER_HEADLESS=1` env var triggers headless mode
   2. Browser screenshots from `browser_navigate`, `browser_screenshot`, and other browser tools appear as live images in the preview panel
   3. The preview panel auto-toggles between live iframe mode (dev server) and browser agent view (headless screenshots), returning to iframe mode after 10 seconds of inactivity
-**Plans:** 2 plans
+**Plans:** 1/2 plans executed
 
 Plans:
 - [ ] 20.2-01-PLAN.md — Headless mode env var + screenshot extraction from tool results (BROWSER-01, BROWSER-02)
@@ -284,4 +284,4 @@ Plans:
 | 19. Project Workspace | 5/5 | Complete    | 2026-03-14 | — |
 | 20. Installer + Distribution | 3/3 | Complete    | 2026-03-15 | — |
 | 20.1 M2 Polish (INSERTED) | 5/6 | In Progress|  | — |
-| 20.2 Browser Agent Native Preview (INSERTED) | 0/2 | Planned |  | — |
+| 20.2 Browser Agent Native Preview (INSERTED) | 1/2 | In Progress|  | — |
