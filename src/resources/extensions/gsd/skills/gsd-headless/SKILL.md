@@ -13,7 +13,15 @@ Run GSD commands without TUI via `gsd headless`. Spawns an RPC child process, au
 gsd headless [flags] [command] [args...]
 ```
 
-**Flags:** `--timeout N` (ms, default 300000), `--json` (JSONL to stdout), `--model ID`, `--verbose`
+**Flags:**
+- `--timeout N` — overall timeout in ms (default 300000)
+- `--json` — JSONL event stream to stdout
+- `--model ID` — override LLM model
+- `--verbose` — show tool calls in progress output
+- `--supervised` — forward interactive UI requests to orchestrator via stdout/stdin
+- `--response-timeout N` — timeout for orchestrator response in supervised mode (default 30000)
+- `--max-restarts N` — auto-restart on crash with backoff (default 3, 0 to disable)
+
 **Exit codes:** 0=complete, 1=error/timeout, 2=blocked
 
 ## Core Workflows

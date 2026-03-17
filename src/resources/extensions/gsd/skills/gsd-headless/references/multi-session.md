@@ -68,20 +68,11 @@ Coordinator writes to `.gsd/parallel/<milestoneId>.signal.json`. Worker consumes
 # Spawn worker in its worktree
 GSD_MILESTONE_LOCK=M001 \
 GSD_PARALLEL_WORKER=1 \
-GSD_BIN_PATH=$(which gsd) \
-  gsd --mode json --print "/gsd auto" \
-  2>logs/M001.log &
+  gsd headless --json auto 2>logs/M001.log &
 WORKER_PID=$!
 ```
 
-Workers emit NDJSON on stdout. Parse `message_end` events for cost tracking:
-```bash
-# Extract cost from worker output
-gsd --mode json --print "/gsd auto" | while read -r line; do
-  COST=$(echo "$line" | jq -r 'select(.type=="message_end") | .message.usage.cost.total // empty')
-  [ -n "$COST" ] && echo "Cost update: $COST"
-done
-```
+Workers emit JSONL events on stdout when `--json` is set.
 
 ## Monitoring All Workers
 
@@ -122,9 +113,9 @@ send_signal M003 resume
 
 ## Budget Enforcement
 
-Track aggregate cost across all workers:
+Use `gsd headless query` for instant aggregate cost:
 ```bash
-TOTAL=$(jq -s 'map(.cost) | add // 0' .gsd/parallel/*.status.json)
+TOTAL=$(gsd headless query | jq -r '.cost.total')
 CEILING=50.00
 if (( $(echo "$TOTAL > $CEILING" | bc -l) )); then
   echo "Budget exceeded ($TOTAL > $CEILING) — stopping all"

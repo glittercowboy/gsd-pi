@@ -12,12 +12,14 @@ All commands can be run via `gsd headless [command]`.
 | `pause` | Pause auto-mode (preserves state, resumable) |
 | `new-milestone` | Create milestone from specification (requires `--context`) |
 | `dispatch <phase>` | Force-dispatch: research, plan, execute, complete, reassess, uat, replan |
+| `discuss` | Start guided milestone/slice discussion |
 
-## Status & Monitoring
+## State Inspection
 
 | Command | Description |
 |---------|-------------|
-| `status` | Progress dashboard (active unit, phase, blockers) |
+| `query` | **Instant JSON snapshot** — state, next dispatch, parallel costs. No LLM, ~50ms. Recommended for orchestrators. |
+| `status` | Progress dashboard (TUI overlay — useful interactively, not for parsing) |
 | `visualize` | Workflow visualizer (deps, metrics, timeline) |
 | `history` | Execution history (supports --cost, --phase, --model, limit) |
 
@@ -44,6 +46,9 @@ All commands can be run via `gsd headless [command]`.
 | `cleanup` | Remove merged branches or snapshots |
 | `export` | Export results (--json, --markdown) |
 | `migrate` | Migrate v1 .planning directory to .gsd format |
+| `remote` | Control remote auto-mode (slack, discord, status, disconnect) |
+| `inspect` | Show SQLite DB diagnostics (schema, row counts) |
+| `forensics` | Post-mortem investigation of auto-mode failures |
 
 ## Phases
 
