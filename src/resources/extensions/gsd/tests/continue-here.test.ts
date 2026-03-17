@@ -201,4 +201,85 @@ describe("continue-here", () => {
       }
     });
   });
+
+  describe("context-pressure monitor integration", () => {
+    it("should fire wrap-up when context >= threshold and mark continueHereFired", async () => {
+      const { writeUnitRuntimeRecord, readUnitRuntimeRecord, clearUnitRuntimeRecord } = await import("../unit-runtime.js");
+      const fs = await import("node:fs");
+      const path = await import("node:path");
+      const os = await import("node:os");
+
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "continue-here-monitor-"));
+      try {
+        // Simulate the monitor's one-shot logic:
+        // 1. Write initial runtime record (continueHereFired=false)
+        const startedAt = Date.now();
+        writeUnitRuntimeRecord(tmpDir, "execute-task", "M001/S01/T01", startedAt, {
+          phase: "dispatched",
+          wrapupWarningSent: false,
+        });
+
+        const budget = computeBudgets(128_000);
+        const threshold = budget.continueThresholdPercent;
+
+        // Simulate the monitor poll: context at 75% (above threshold)
+        const contextPercent = 75;
+        const runtime = readUnitRuntimeRecord(tmpDir, "execute-task", "M001/S01/T01");
+        assert.ok(runtime, "runtime record should exist");
+        assert.equal(runtime!.continueHereFired, false, "initially false");
+
+        // Check: should fire
+        const shouldFire = !runtime!.continueHereFired
+          && contextPercent >= threshold;
+        assert.ok(shouldFire, "should fire when context >= threshold and not yet fired");
+
+        // Mark as fired (what the monitor does)
+        writeUnitRuntimeRecord(tmpDir, "execute-task", "M001/S01/T01", startedAt, {
+          continueHereFired: true,
+        });
+
+        // Verify one-shot: second poll should NOT fire
+        const runtime2 = readUnitRuntimeRecord(tmpDir, "execute-task", "M001/S01/T01");
+        assert.ok(runtime2, "runtime record should still exist");
+        assert.equal(runtime2!.continueHereFired, true, "should be marked as fired");
+
+        const shouldFireAgain = !runtime2!.continueHereFired
+          && contextPercent >= threshold;
+        assert.equal(shouldFireAgain, false, "must not fire again — one-shot guard");
+
+        // Clean up
+        clearUnitRuntimeRecord(tmpDir, "execute-task", "M001/S01/T01");
+      } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+      }
+    });
+
+    it("should not fire when context is below threshold", () => {
+      const budget = computeBudgets(200_000);
+      const threshold = budget.continueThresholdPercent;
+
+      // Simulate monitor poll with context at 50%
+      const contextPercent = 50;
+      const continueHereFired = false;
+      const shouldFire = !continueHereFired && contextPercent >= threshold;
+      assert.equal(shouldFire, false, "50% should not trigger continue-here");
+    });
+
+    it("should not fire when contextUsage is null/undefined", () => {
+      const budget = computeBudgets(128_000);
+      const threshold = budget.continueThresholdPercent;
+
+      // Simulate the full guard chain from the monitor
+      const usageUndefined = undefined as { percent: number | null } | undefined;
+      const shouldFire1 = usageUndefined != null
+        && usageUndefined.percent != null
+        && usageUndefined.percent >= threshold;
+      assert.equal(shouldFire1, false, "undefined usage must not fire");
+
+      const usageNullPercent: { percent: number | null } = { percent: null };
+      const shouldFire2 = usageNullPercent.percent != null
+        && usageNullPercent.percent >= threshold;
+      assert.equal(shouldFire2, false, "null percent must not fire");
+    });
+  });
 });

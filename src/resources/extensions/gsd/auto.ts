@@ -81,6 +81,7 @@ import {
   initMetrics, resetMetrics, snapshotUnitMetrics, getLedger,
   getProjectTotals, formatCost, formatTokenCount,
 } from "./metrics.js";
+import { computeBudgets, resolveExecutorContextWindow } from "./context-budget.js";
 import { join } from "node:path";
 import { sep as pathSep } from "node:path";
 import { homedir } from "node:os";
@@ -412,6 +413,8 @@ let originalModelProvider: string | null = null;
 let unitTimeoutHandle: ReturnType<typeof setTimeout> | null = null;
 let wrapupWarningHandle: ReturnType<typeof setTimeout> | null = null;
 let idleWatchdogHandle: ReturnType<typeof setInterval> | null = null;
+/** Context-pressure continue-here monitor — fires once when context usage >= 70% */
+let continueHereHandle: ReturnType<typeof setInterval> | null = null;
 
 /** Dispatch gap watchdog — detects when the state machine stalls between units.
  *  After handleAgentEnd completes, if auto-mode is still active but no new unit
@@ -589,6 +592,10 @@ function clearUnitTimeout(): void {
     clearInterval(idleWatchdogHandle);
     idleWatchdogHandle = null;
   }
+  if (continueHereHandle) {
+    clearInterval(continueHereHandle);
+    continueHereHandle = null;
+  }
   inFlightTools.clear();
   clearDispatchGapWatchdog();
 }
@@ -598,6 +605,17 @@ function clearDispatchGapWatchdog(): void {
     clearTimeout(dispatchGapHandle);
     dispatchGapHandle = null;
   }
+}
+
+/** Build snapshot metric opts, enriching with continueHereFired from the runtime record. */
+function buildSnapshotOpts(unitType: string, unitId: string): { continueHereFired?: boolean; promptCharCount?: number; baselineCharCount?: number } & Record<string, unknown> {
+  const runtime = currentUnit ? readUnitRuntimeRecord(basePath, unitType, unitId) : null;
+  return {
+    promptCharCount: lastPromptCharCount,
+    baselineCharCount: lastBaselineCharCount,
+    ...(currentUnitRouting ?? {}),
+    ...(runtime?.continueHereFired ? { continueHereFired: true } : {}),
+  };
 }
 
 /**
@@ -1742,7 +1760,7 @@ export async function handleAgentEnd(
       const hookStartedAt = Date.now();
       if (currentUnit) {
         const modelId = ctx.model?.id ?? "unknown";
-        snapshotUnitMetrics(ctx, currentUnit.type, currentUnit.id, currentUnit.startedAt, modelId, { promptCharCount: lastPromptCharCount, baselineCharCount: lastBaselineCharCount, ...(currentUnitRouting ?? {}) });
+        snapshotUnitMetrics(ctx, currentUnit.type, currentUnit.id, currentUnit.startedAt, modelId, buildSnapshotOpts(currentUnit.type, currentUnit.id));
         const hookActivityFile = saveActivityLog(ctx, basePath, currentUnit.type, currentUnit.id);
         if (hookActivityFile) {
           try {
@@ -2389,7 +2407,7 @@ async function dispatchNextUnit(
     // Save final session before stopping
     if (currentUnit) {
       const modelId = ctx.model?.id ?? "unknown";
-      snapshotUnitMetrics(ctx, currentUnit.type, currentUnit.id, currentUnit.startedAt, modelId, { promptCharCount: lastPromptCharCount, baselineCharCount: lastBaselineCharCount, ...(currentUnitRouting ?? {}) });
+      snapshotUnitMetrics(ctx, currentUnit.type, currentUnit.id, currentUnit.startedAt, modelId, buildSnapshotOpts(currentUnit.type, currentUnit.id));
       saveActivityLog(ctx, basePath, currentUnit.type, currentUnit.id);
     }
 
@@ -2434,7 +2452,7 @@ async function dispatchNextUnit(
   if (!mid || !midTitle) {
     if (currentUnit) {
       const modelId = ctx.model?.id ?? "unknown";
-      snapshotUnitMetrics(ctx, currentUnit.type, currentUnit.id, currentUnit.startedAt, modelId, { promptCharCount: lastPromptCharCount, baselineCharCount: lastBaselineCharCount, ...(currentUnitRouting ?? {}) });
+      snapshotUnitMetrics(ctx, currentUnit.type, currentUnit.id, currentUnit.startedAt, modelId, buildSnapshotOpts(currentUnit.type, currentUnit.id));
       saveActivityLog(ctx, basePath, currentUnit.type, currentUnit.id);
     }
     const noMilestoneReason = !mid
@@ -2452,7 +2470,7 @@ async function dispatchNextUnit(
   if (state.phase === "complete") {
     if (currentUnit) {
       const modelId = ctx.model?.id ?? "unknown";
-      snapshotUnitMetrics(ctx, currentUnit.type, currentUnit.id, currentUnit.startedAt, modelId, { promptCharCount: lastPromptCharCount, baselineCharCount: lastBaselineCharCount, ...(currentUnitRouting ?? {}) });
+      snapshotUnitMetrics(ctx, currentUnit.type, currentUnit.id, currentUnit.startedAt, modelId, buildSnapshotOpts(currentUnit.type, currentUnit.id));
       saveActivityLog(ctx, basePath, currentUnit.type, currentUnit.id);
     }
     // Clear completed-units.json for the finished milestone so it doesn't grow unbounded.
@@ -2522,7 +2540,7 @@ async function dispatchNextUnit(
   if (state.phase === "blocked") {
     if (currentUnit) {
       const modelId = ctx.model?.id ?? "unknown";
-      snapshotUnitMetrics(ctx, currentUnit.type, currentUnit.id, currentUnit.startedAt, modelId, { promptCharCount: lastPromptCharCount, baselineCharCount: lastBaselineCharCount, ...(currentUnitRouting ?? {}) });
+      snapshotUnitMetrics(ctx, currentUnit.type, currentUnit.id, currentUnit.startedAt, modelId, buildSnapshotOpts(currentUnit.type, currentUnit.id));
       saveActivityLog(ctx, basePath, currentUnit.type, currentUnit.id);
     }
     const blockerMsg = `Blocked: ${state.blockers.join(", ")}`;
@@ -2633,7 +2651,7 @@ async function dispatchNextUnit(
   if (dispatchResult.action === "stop") {
     if (currentUnit) {
       const modelId = ctx.model?.id ?? "unknown";
-      snapshotUnitMetrics(ctx, currentUnit.type, currentUnit.id, currentUnit.startedAt, modelId, { promptCharCount: lastPromptCharCount, baselineCharCount: lastBaselineCharCount, ...(currentUnitRouting ?? {}) });
+      snapshotUnitMetrics(ctx, currentUnit.type, currentUnit.id, currentUnit.startedAt, modelId, buildSnapshotOpts(currentUnit.type, currentUnit.id));
       saveActivityLog(ctx, basePath, currentUnit.type, currentUnit.id);
     }
     await stopAuto(ctx, pi, dispatchResult.reason);
@@ -2855,7 +2873,7 @@ async function dispatchNextUnit(
   if (lifetimeCount > MAX_LIFETIME_DISPATCHES) {
     if (currentUnit) {
       const modelId = ctx.model?.id ?? "unknown";
-      snapshotUnitMetrics(ctx, currentUnit.type, currentUnit.id, currentUnit.startedAt, modelId, { promptCharCount: lastPromptCharCount, baselineCharCount: lastBaselineCharCount, ...(currentUnitRouting ?? {}) });
+      snapshotUnitMetrics(ctx, currentUnit.type, currentUnit.id, currentUnit.startedAt, modelId, buildSnapshotOpts(currentUnit.type, currentUnit.id));
     }
     saveActivityLog(ctx, basePath, unitType, unitId);
     const expected = diagnoseExpectedArtifact(unitType, unitId, basePath);
@@ -2869,7 +2887,7 @@ async function dispatchNextUnit(
   if (prevCount >= MAX_UNIT_DISPATCHES) {
     if (currentUnit) {
       const modelId = ctx.model?.id ?? "unknown";
-      snapshotUnitMetrics(ctx, currentUnit.type, currentUnit.id, currentUnit.startedAt, modelId, { promptCharCount: lastPromptCharCount, baselineCharCount: lastBaselineCharCount, ...(currentUnitRouting ?? {}) });
+      snapshotUnitMetrics(ctx, currentUnit.type, currentUnit.id, currentUnit.startedAt, modelId, buildSnapshotOpts(currentUnit.type, currentUnit.id));
     }
     saveActivityLog(ctx, basePath, unitType, unitId);
 
@@ -3027,7 +3045,7 @@ async function dispatchNextUnit(
   // The session still holds the previous unit's data (newSession hasn't fired yet).
   if (currentUnit) {
     const modelId = ctx.model?.id ?? "unknown";
-    snapshotUnitMetrics(ctx, currentUnit.type, currentUnit.id, currentUnit.startedAt, modelId, { promptCharCount: lastPromptCharCount, baselineCharCount: lastBaselineCharCount, ...(currentUnitRouting ?? {}) });
+    snapshotUnitMetrics(ctx, currentUnit.type, currentUnit.id, currentUnit.startedAt, modelId, buildSnapshotOpts(currentUnit.type, currentUnit.id));
     const activityFile = saveActivityLog(ctx, basePath, currentUnit.type, currentUnit.id);
 
     // Fire-and-forget memory extraction from completed unit
@@ -3409,7 +3427,7 @@ async function dispatchNextUnit(
 
     if (currentUnit) {
       const modelId = ctx.model?.id ?? "unknown";
-      snapshotUnitMetrics(ctx, currentUnit.type, currentUnit.id, currentUnit.startedAt, modelId, { promptCharCount: lastPromptCharCount, baselineCharCount: lastBaselineCharCount, ...(currentUnitRouting ?? {}) });
+      snapshotUnitMetrics(ctx, currentUnit.type, currentUnit.id, currentUnit.startedAt, modelId, buildSnapshotOpts(currentUnit.type, currentUnit.id));
     }
     saveActivityLog(ctx, basePath, unitType, unitId);
 
@@ -3435,7 +3453,7 @@ async function dispatchNextUnit(
         timeoutAt: Date.now(),
       });
       const modelId = ctx.model?.id ?? "unknown";
-      snapshotUnitMetrics(ctx, currentUnit.type, currentUnit.id, currentUnit.startedAt, modelId, { promptCharCount: lastPromptCharCount, baselineCharCount: lastBaselineCharCount, ...(currentUnitRouting ?? {}) });
+      snapshotUnitMetrics(ctx, currentUnit.type, currentUnit.id, currentUnit.startedAt, modelId, buildSnapshotOpts(currentUnit.type, currentUnit.id));
     }
     saveActivityLog(ctx, basePath, unitType, unitId);
 
@@ -3448,6 +3466,67 @@ async function dispatchNextUnit(
     );
     await pauseAuto(ctx, pi);
   }, hardTimeoutMs);
+
+  // ── Continue-here context-pressure monitor ────────────────────────────
+  // Polls context usage every 15s. When usage hits the continue-here
+  // threshold (70%), sends a one-shot wrap-up signal so the agent finishes
+  // gracefully and the next unit gets a fresh session. This is softer than
+  // context_pause_threshold which hard-pauses auto-mode entirely.
+  if (continueHereHandle) {
+    clearInterval(continueHereHandle);
+    continueHereHandle = null;
+  }
+  const executorContextWindow = resolveExecutorContextWindow(
+    ctx.modelRegistry as Parameters<typeof resolveExecutorContextWindow>[0],
+    prefs as Parameters<typeof resolveExecutorContextWindow>[1],
+    ctx.model?.contextWindow,
+  );
+  const continueHereThreshold = computeBudgets(executorContextWindow).continueThresholdPercent;
+  continueHereHandle = setInterval(() => {
+    if (!active || !currentUnit || !cmdCtx) return;
+    // One-shot guard: skip if already fired for this unit
+    const runtime = readUnitRuntimeRecord(basePath, unitType, unitId);
+    if (runtime?.continueHereFired) return;
+
+    const contextUsage = cmdCtx.getContextUsage();
+    if (!contextUsage || contextUsage.percent == null || contextUsage.percent < continueHereThreshold) return;
+
+    // Fire once — mark runtime record and send wrap-up message
+    writeUnitRuntimeRecord(basePath, unitType, unitId, currentUnit!.startedAt, {
+      continueHereFired: true,
+    });
+
+    if (verbose) {
+      ctx.ui.notify(
+        `Context at ${contextUsage.percent}% (threshold: ${continueHereThreshold}%) — sending wrap-up signal.`,
+        "info",
+      );
+    }
+
+    pi.sendMessage(
+      {
+        customType: "gsd-auto-wrapup",
+        display: verbose,
+        content: [
+          "**CONTEXT BUDGET WARNING — wrap up this unit now.**",
+          `Context window is at ${contextUsage.percent}% (threshold: ${continueHereThreshold}%).`,
+          "The next unit needs a fresh context to work effectively. Wrap up now:",
+          "1. Finish any in-progress file writes",
+          "2. Write or update the required durable artifacts (summary, checkboxes)",
+          "3. Mark task state on disk correctly",
+          "4. Leave precise resume notes if anything remains unfinished",
+          "Do NOT start new sub-tasks or investigations.",
+        ].join("\n"),
+      },
+      { triggerTurn: true },
+    );
+
+    // Clear the interval after firing — no need to keep polling
+    if (continueHereHandle) {
+      clearInterval(continueHereHandle);
+      continueHereHandle = null;
+    }
+  }, 15_000);
 
   // Inject prompt — verify auto-mode still active (guards against race with timeout/pause)
   if (!active) return;
