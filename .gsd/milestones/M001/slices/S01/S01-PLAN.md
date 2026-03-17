@@ -41,7 +41,7 @@
 
 ## Tasks
 
-- [ ] **T01: Implement verification gate types, preferences, and core logic** `est:1h`
+- [x] **T01: Implement verification gate types, preferences, and core logic** `est:1h`
   - Why: This is the core deliverable — the pure function that discovers verification commands and runs them. Types and preferences are prerequisites that must exist for the gate to compile.
   - Files: `src/resources/extensions/gsd/types.ts`, `src/resources/extensions/gsd/preferences.ts`, `src/resources/extensions/gsd/verification-gate.ts`
   - Do: Add `VerificationResult`/`VerificationCheck` interfaces to types.ts. Add 3 preference keys to GSDPreferences interface, KNOWN_PREFERENCE_KEYS, mergePreferences, and validatePreferences. Create verification-gate.ts with `runVerificationGate()` that discovers commands (preference → task plan verify → package.json) and runs them via `spawnSync`. Use `spawnSync` with `{ stdio: 'pipe', shell: true }` to capture output without throwing on non-zero exit.

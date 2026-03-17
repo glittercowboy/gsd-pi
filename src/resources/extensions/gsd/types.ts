@@ -46,6 +46,25 @@ export interface TaskPlanEntry {
   verify?: string;     // e.g. "run tests" — extracted from "- Verify:" subline
 }
 
+// ─── Verification Gate ─────────────────────────────────────────────────────
+
+/** Result of a single verification command execution */
+export interface VerificationCheck {
+  command: string;       // e.g. "npm run lint"
+  exitCode: number;      // 0 = pass
+  stdout: string;
+  stderr: string;
+  durationMs: number;
+}
+
+/** Aggregate result from the verification gate */
+export interface VerificationResult {
+  passed: boolean;              // true if all checks passed (or no checks discovered)
+  checks: VerificationCheck[];  // per-command results
+  discoverySource: "preference" | "task-plan" | "package-json" | "none";
+  timestamp: number;            // Date.now() at gate start
+}
+
 export interface SlicePlan {
   id: string;          // e.g. "S01"
   title: string;       // from the H1

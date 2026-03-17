@@ -91,6 +91,13 @@ Build the core verification gate: type definitions, preference keys, and the pur
 - `src/resources/extensions/gsd/preferences.ts` — existing preferences; follow exact patterns for KNOWN_PREFERENCE_KEYS (line 52), GSDPreferences (line 149), mergePreferences (line 737), validatePreferences (line 779)
 - Decision D003: discovery order is preference → task plan → package.json, first-non-empty-wins
 
+## Observability Impact
+
+- **New signals:** `VerificationResult` struct returned from `runVerificationGate()` with per-command exit codes, stdout/stderr, and duration. `discoverySource` field tells downstream consumers which discovery path activated.
+- **Inspection:** Call `discoverCommands()` with a cwd to see what commands the gate would run without executing them. Inspect `VerificationResult.checks` for per-command pass/fail after gate execution.
+- **Failure visibility:** Failed commands produce `VerificationCheck` entries with non-zero `exitCode`, stderr content, and truncated stdout. `VerificationResult.passed === false` is the top-level failure signal.
+- **Preference validation:** Invalid `verification_commands` / `verification_auto_fix` / `verification_max_retries` values produce validation errors surfaced in `LoadedGSDPreferences.warnings`.
+
 ## Expected Output
 
 - `src/resources/extensions/gsd/verification-gate.ts` — new file exporting `discoverCommands` and `runVerificationGate`
