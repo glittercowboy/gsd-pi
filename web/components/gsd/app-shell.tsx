@@ -202,10 +202,16 @@ function WorkspaceChrome() {
         <div className="flex items-center gap-3">
           <div className="flex items-center gap-2">
             <img
+              src="/logo-black.svg"
+              alt="GSD"
+              height={16}
+              className="shrink-0 h-4 w-auto dark:hidden"
+            />
+            <img
               src="/logo-white.svg"
               alt="GSD"
               height={16}
-              className="shrink-0 h-4 w-auto"
+              className="shrink-0 h-4 w-auto hidden dark:block"
             />
           </div>
           <span className="text-2xl font-thin text-muted-foreground/50 leading-none select-none">/</span>
