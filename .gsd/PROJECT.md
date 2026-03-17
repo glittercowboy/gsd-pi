@@ -48,4 +48,4 @@ See `.gsd/REQUIREMENTS.md` for the explicit capability contract, requirement sta
 - [ ] M004: Web mode documentation and CI/CD integration — Dedicated web mode guide, existing doc updates, and a separate CI job for web host build/tests on Linux and macOS.
 - [ ] M005: Light theme with system-aware toggle — Monochrome light theme, OS preference default, NavRail toggle, persistent choice.
 - [ ] M006: Multi-project workspace — Dev root selection in onboarding, smart project discovery, Projects NavRail tab, multi-bridge registry with background sessions, context-aware launch.
-- [ ] M007: Chat Mode — Consumer-grade chat interface over GSD PTY sessions for non-technical users.
+- [ ] M007: Chat Mode — Consumer-grade chat interface over GSD PTY sessions for non-technical users. S01 complete: `web/lib/pty-chat-parser.ts` ships `PtyChatParser`, `ChatMessage`, `TuiPrompt`, `CompletionSignal` with full ANSI stripping, role classification, ink select/clack text/password prompt detection, and 2s debounced completion signals.

@@ -53,7 +53,7 @@ This milestone is complete only when all are true:
 
 ## Slices
 
-- [ ] **S01: PTY output parser and chat message model** `risk:high` `depends:[]`
+- [x] **S01: PTY output parser and chat message model** `risk:high` `depends:[]`
   > After this: `web/lib/pty-chat-parser.ts` ships with `PtyChatParser`, `ChatMessage`, `TuiPrompt`, and `CompletionSignal` — the parser connects to a live GSD SSE stream, ANSI-strips output, segments it into role-classified messages, detects ink TUI prompts, and emits completion signals. Verified by feeding live SSE output and inspecting the resulting message array.
 
 - [ ] **S02: Chat Mode view — main pane** `risk:medium` `depends:[S01]`
