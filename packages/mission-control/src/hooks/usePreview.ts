@@ -4,9 +4,10 @@
  * Provides:
  * - open/servers/viewport/scanning state
  * - Cmd+P (or Ctrl+P on Windows) keyboard binding to toggle panel
- * - Raw WebSocket listener for preview_open events from server
+ * - Raw WebSocket listener for preview_open and browser_state_update events from server
  * - Multi-server detection via scanForDevServers()
  * - Manual port addition via addManualPort()
+ * - Browser agent screenshot state for headless Playwright relay
  *
  * Pure function extraction: shouldTogglePreview(e) exported for direct test
  * assertions without React renderer — same pattern as shouldPulseOnTaskChange.
@@ -28,12 +29,14 @@ export interface UsePreviewReturn {
   activeBackendPort: number | null;
   viewport: Viewport;
   scanning: boolean;
+  browserScreenshot: { screenshot: string; url: string; title: string } | null;
   setOpen: (open: boolean) => void;
   setActiveFrontendPort: (port: number | null) => void;
   setActiveBackendPort: (port: number | null) => void;
   setViewport: (viewport: Viewport) => void;
   triggerScan: () => void;
   addManualPort: (port: number) => void;
+  clearBrowserScreenshot: () => void;
 }
 
 export const CANDIDATE_PORTS = [3000, 4173, 5173, 8080, 8000];
@@ -107,8 +110,9 @@ export function shouldTogglePreview(e: KeyboardEvent): boolean {
  *                activeBackendPort=null, viewport="desktop", scanning=false
  *
  * Keyboard: Cmd+P / Ctrl+P toggles open, calls e.preventDefault()
- * WebSocket: listens on ws://localhost:4001 for { type: "preview_open", port: number }
- *            adds port as manual server and opens panel on receipt
+ * WebSocket: listens on ws://localhost:4001 for:
+ *   - { type: "preview_open", port: number } — adds port and opens panel
+ *   - { type: "browser_state_update", screenshot, url, title } — sets browser agent view
  */
 export function usePreview(): UsePreviewReturn {
   const [open, setOpen] = useState(false);
@@ -117,6 +121,9 @@ export function usePreview(): UsePreviewReturn {
   const [activeBackendPort, setActiveBackendPort] = useState<number | null>(null);
   const [viewport, setViewport] = useState<Viewport>("desktop");
   const [scanning, setScanning] = useState(false);
+  const [browserScreenshot, setBrowserScreenshot] = useState<{ screenshot: string; url: string; title: string } | null>(null);
+
+  const clearBrowserScreenshot = () => setBrowserScreenshot(null);
 
   const addManualPort = (port: number) => {
     setServers((prev) => {
@@ -154,7 +161,7 @@ export function usePreview(): UsePreviewReturn {
     return () => window.removeEventListener("keydown", handleKeydown);
   }, []);
 
-  // WebSocket: listen for preview_open broadcast from server (pipeline.ts)
+  // WebSocket: listen for preview_open and browser_state_update broadcasts from server (pipeline.ts)
   // Auto-reconnects every 2 s if the connection drops or the server isn't ready yet.
   useEffect(() => {
     let ws: WebSocket | null = null;
@@ -169,7 +176,17 @@ export function usePreview(): UsePreviewReturn {
         try {
           const data = JSON.parse(e.data as string);
           if (data.type === "preview_open" && typeof data.port === "number") {
-            addManualPort(data.port);
+            if (data.port > 0) {
+              addManualPort(data.port);
+            }
+            setOpen(true);
+          }
+          if (data.type === "browser_state_update" && typeof data.screenshot === "string") {
+            setBrowserScreenshot({
+              screenshot: data.screenshot,
+              url: data.url ?? "",
+              title: data.title ?? "",
+            });
             setOpen(true);
           }
         } catch {
@@ -194,6 +211,13 @@ export function usePreview(): UsePreviewReturn {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Auto-clear browser screenshot after 10s of no updates (return to iframe mode)
+  useEffect(() => {
+    if (!browserScreenshot) return;
+    const timer = setTimeout(() => setBrowserScreenshot(null), 10000);
+    return () => clearTimeout(timer);
+  }, [browserScreenshot]);
+
   return {
     open,
     servers,
@@ -201,11 +225,13 @@ export function usePreview(): UsePreviewReturn {
     activeBackendPort,
     viewport,
     scanning,
+    browserScreenshot,
     setOpen,
     setActiveFrontendPort,
     setActiveBackendPort,
     setViewport,
     triggerScan,
     addManualPort,
+    clearBrowserScreenshot,
   };
 }
