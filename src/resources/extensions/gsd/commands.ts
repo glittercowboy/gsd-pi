@@ -625,7 +625,7 @@ function showHelp(ctx: ExtensionCommandContext): void {
     "",
     "MAINTENANCE",
     "  /gsd doctor         Diagnose and repair .gsd/ state  [audit|fix|heal] [scope]",
-    "  /gsd export         Export milestone/slice results  [--json|--markdown]",
+    "  /gsd export         Export milestone/slice results  [--json|--markdown|--html]",
     "  /gsd cleanup        Remove merged branches or snapshots  [branches|snapshots]",
     "  /gsd migrate        Upgrade .gsd/ structures to new format",
     "  /gsd remote         Control remote auto-mode  [slack|discord|status|disconnect]",

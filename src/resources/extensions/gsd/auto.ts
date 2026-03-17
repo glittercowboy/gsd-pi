@@ -2091,6 +2091,55 @@ async function dispatchNextUnit(
     if (vizPrefs?.auto_visualize) {
       ctx.ui.notify("Run /gsd visualize to see progress overview.", "info");
     }
+    // Auto-generate HTML report snapshot on milestone completion
+    if (vizPrefs?.auto_report) {
+      try {
+        const { loadVisualizerData } = await import("./visualizer-data.js");
+        const { generateHtmlReport } = await import("./export-html.js");
+        const { writeReportSnapshot, reportsDir } = await import("./reports.js");
+        const { basename } = await import("node:path");
+        const snapData = await loadVisualizerData(basePath);
+        const completedMs = snapData.milestones.find(m => m.id === currentMilestoneId);
+        const msTitle = completedMs?.title ?? currentMilestoneId;
+        const gsdVersion = process.env.GSD_VERSION ?? "0.0.0";
+        const projName = basename(basePath);
+        const doneSlices = snapData.milestones.reduce((s, m) => s + m.slices.filter(sl => sl.done).length, 0);
+        const totalSlices = snapData.milestones.reduce((s, m) => s + m.slices.length, 0);
+        const outPath = writeReportSnapshot({
+          basePath,
+          html: generateHtmlReport(snapData, {
+            projectName: projName,
+            projectPath: basePath,
+            gsdVersion,
+            milestoneId: currentMilestoneId,
+            indexRelPath: "index.html",
+          }),
+          milestoneId: currentMilestoneId,
+          milestoneTitle: msTitle,
+          kind: "milestone",
+          projectName: projName,
+          projectPath: basePath,
+          gsdVersion,
+          totalCost: snapData.totals?.cost ?? 0,
+          totalTokens: snapData.totals?.tokens.total ?? 0,
+          totalDuration: snapData.totals?.duration ?? 0,
+          doneSlices,
+          totalSlices,
+          doneMilestones: snapData.milestones.filter(m => m.status === "complete").length,
+          totalMilestones: snapData.milestones.length,
+          phase: snapData.phase,
+        });
+        ctx.ui.notify(
+          `Report saved: .gsd/reports/${basename(outPath)} — open index.html to browse progression.`,
+          "info",
+        );
+      } catch (err) {
+        ctx.ui.notify(
+          `Report generation failed: ${err instanceof Error ? err.message : String(err)}`,
+          "warning",
+        );
+      }
+    }
     // Reset stuck detection for new milestone
     unitDispatchCount.clear();
     unitRecoveryCount.clear();

@@ -75,6 +75,7 @@ const KNOWN_PREFERENCE_KEYS = new Set<string>([
   "token_profile",
   "phases",
   "auto_visualize",
+  "auto_report",
   "parallel",
 ]);
 
@@ -172,6 +173,7 @@ export interface GSDPreferences {
   token_profile?: TokenProfile;
   phases?: PhaseSkipPreferences;
   auto_visualize?: boolean;
+  auto_report?: boolean;
   parallel?: import("./types.js").ParallelConfig;
 }
 
