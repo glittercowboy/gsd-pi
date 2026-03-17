@@ -9,14 +9,7 @@ import { execSync, execFileSync } from "node:child_process";
 import { existsSync, readFileSync, unlinkSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { GSDError, GSD_GIT_ERROR } from "./errors.js";
-
-/** Env overlay that suppresses interactive git credential prompts and git-svn noise. */
-const GIT_NO_PROMPT_ENV = {
-  ...process.env,
-  GIT_TERMINAL_PROMPT: "0",
-  GIT_ASKPASS: "",
-  GIT_SVN_ID: "",
-};
+import { GIT_NO_PROMPT_ENV } from "./git-constants.js";
 
 // Issue #453: keep auto-mode bookkeeping on the stable git CLI path unless a
 // caller explicitly opts into the native helper.
@@ -160,6 +153,7 @@ function gitFileExec(basePath: string, args: string[], allowFailure = false): st
       cwd: basePath,
       stdio: ["ignore", "pipe", "pipe"],
       encoding: "utf-8",
+      env: GIT_NO_PROMPT_ENV,
     }).trim();
   } catch {
     if (allowFailure) return "";

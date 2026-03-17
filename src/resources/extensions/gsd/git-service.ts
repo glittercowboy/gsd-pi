@@ -11,6 +11,7 @@
 import { execFileSync, execSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { GIT_NO_PROMPT_ENV } from "./git-constants.js";
 
 import {
   detectWorktreeName,
@@ -254,13 +255,6 @@ export function writeIntegrationBranch(basePath: string, milestoneId: string, br
 
 // ─── Git Helper ────────────────────────────────────────────────────────────
 
-/** Env overlay that suppresses interactive git credential prompts and git-svn noise. */
-const GIT_NO_PROMPT_ENV = {
-  ...process.env,
-  GIT_TERMINAL_PROMPT: "0",
-  GIT_ASKPASS: "",
-  GIT_SVN_ID: "",
-};
 
 /**
  * Strip git-svn noise from error messages.
