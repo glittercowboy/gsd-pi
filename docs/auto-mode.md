@@ -63,6 +63,10 @@ A lock file tracks the current unit. If the session dies, the next `/gsd auto` r
 
 If the same unit dispatches twice (the LLM didn't produce the expected artifact), GSD retries once with a deep diagnostic prompt. If it fails again, auto mode stops with the exact file it expected, so you can intervene.
 
+### Post-Mortem Investigation
+
+When auto mode fails or produces unexpected results, `/gsd forensics` provides structured post-mortem analysis. It inspects activity logs, crash locks, and session state to identify root causes — whether the failure was a model error, missing context, a stuck loop, or a broken tool call. See [Troubleshooting](./troubleshooting.md) for more on diagnosing issues.
+
 ### Timeout Supervision
 
 Three timeout tiers prevent runaway sessions:

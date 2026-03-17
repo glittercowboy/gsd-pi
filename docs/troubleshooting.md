@@ -111,5 +111,5 @@ Doctor rebuilds `STATE.md` from plan and roadmap files on disk and fixes detecte
 
 - **GitHub Issues:** [github.com/gsd-build/GSD-2/issues](https://github.com/gsd-build/GSD-2/issues)
 - **Dashboard:** `Ctrl+Alt+G` or `/gsd status` for real-time diagnostics
+- **Forensics:** `/gsd forensics` for structured post-mortem analysis of auto-mode failures
 - **Session logs:** `.gsd/activity/` contains JSONL session dumps for crash forensics
-ctivity/` contains JSONL session dumps for crash forensics

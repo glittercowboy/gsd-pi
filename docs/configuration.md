@@ -12,6 +12,9 @@ GSD preferences live in `~/.gsd/preferences.md` (global) or `.gsd/preferences.md
 | `/gsd prefs status` | Show current preference files, merged values, and skill resolution status |
 | `/gsd prefs wizard` | Alias for `/gsd prefs global` |
 | `/gsd prefs setup` | Alias for `/gsd prefs wizard` — creates preferences file if missing |
+| `/gsd prefs import-claude` | Import Claude marketplace plugins and skills as namespaced GSD components |
+| `/gsd prefs import-claude global` | Import to global scope |
+| `/gsd prefs import-claude project` | Import to project scope |
 
 ## Preferences File Format
 
