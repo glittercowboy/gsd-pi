@@ -45,7 +45,7 @@
 
 ## Tasks
 
-- [ ] **T01: Create visualizer API route, service layer, and browser types** `est:45m`
+- [x] **T01: Create visualizer API route, service layer, and browser types** `est:45m`
   - Why: Establishes the data pipeline from upstream `loadVisualizerData()` through a Next.js API route to the browser. This is the riskiest part — first time the upstream filesystem-based data loader runs in the web host context. Map→Record serialization for `CriticalPathInfo.milestoneSlack` and `.sliceSlack` must be explicit to avoid silent `JSON.stringify(new Map())` → `{}` failure.
   - Files: `src/web/visualizer-service.ts`, `web/app/api/visualizer/route.ts`, `web/lib/visualizer-types.ts`
   - Do: (1) Create `src/web/visualizer-service.ts` following the `recovery-diagnostics-service.ts` pattern — import `resolveBridgeRuntimeConfig` from `bridge-service.ts` to get `projectCwd`, call `loadVisualizerData(projectCwd)`, convert `criticalPath.milestoneSlack` and `criticalPath.sliceSlack` from `Map<string, number>` to `Record<string, number>` via `Object.fromEntries()`. (2) Create `web/app/api/visualizer/route.ts` following the `web/app/api/recovery/route.ts` pattern — `runtime = "nodejs"`, `dynamic = "force-dynamic"`, GET handler with try/catch, `Cache-Control: no-store`. (3) Create `web/lib/visualizer-types.ts` with browser-safe interfaces mirroring all upstream types but with `Record<string, number>` replacing `Map<string, number>` for slack fields, plus formatting utility functions (`formatCost`, `formatTokenCount`, `formatDuration`).

@@ -87,3 +87,9 @@ Establishes the data pipeline from upstream `loadVisualizerData()` through a Nex
 - `src/web/visualizer-service.ts` — new file, ~30-40 lines, wraps `loadVisualizerData()` with Map→Record conversion
 - `web/app/api/visualizer/route.ts` — new file, ~25 lines, GET endpoint returning serialized visualizer data
 - `web/lib/visualizer-types.ts` — new file, ~120-150 lines, all browser-safe interfaces + formatting utilities
+
+## Observability Impact
+
+- **New signal:** `GET /api/visualizer` — returns the full serialized `VisualizerData` payload or a structured `{ error: string }` with status 500 on failure. `Cache-Control: no-store` prevents stale data.
+- **How to inspect:** `curl http://localhost:3000/api/visualizer | jq .criticalPath` — verify `milestoneSlack` and `sliceSlack` are plain objects with string keys and numeric values, not empty `{}`.
+- **Failure visibility:** A 500 response includes the error message from the upstream `loadVisualizerData()` call. Common failures: missing `.gsd` directory (project not initialized), filesystem permission errors, or malformed state files.

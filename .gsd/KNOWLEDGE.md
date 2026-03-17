@@ -35,3 +35,7 @@ Fork-only files in `packages/pi-ai/src/` (like `web-runtime-oauth.ts`) that impo
 ## Parity Contract Test — EXPECTED_BUILTIN_OUTCOMES Drift
 
 `EXPECTED_BUILTIN_OUTCOMES` in `web-command-parity-contract.test.ts` must stay in sync with upstream's `BUILTIN_SLASH_COMMANDS`. As of M003/S02, upstream added `provider` (21 commands total) but the map only has 20. The size assertion at the top of the test catches this. When updating the test, check for new builtins first.
+
+## Turbopack Cannot Resolve .js→.ts Extension Imports
+
+Extension modules under `src/resources/extensions/gsd/` use Node ESM `.js` import extensions (e.g. `import { deriveState } from './state.js'`) which work at runtime with `--experimental-strip-types` but fail in Turbopack bundling because the actual files are `.ts`. Any web service that needs to call extension code must use the child-process pattern (`execFile` + `resolve-ts.mjs` loader) instead of direct imports. See `auto-dashboard-service.ts`, `recovery-diagnostics-service.ts`, and `visualizer-service.ts` for examples.
