@@ -10,7 +10,8 @@ import type { ExtensionAPI, ExtensionContext, ExtensionCommandContext } from "@g
 import { showNextAction } from "../shared/next-action-ui.js";
 import { loadFile, parseRoadmap } from "./files.js";
 import { loadPrompt, inlineTemplate } from "./prompt-loader.js";
-import { deriveState, invalidateStateCache } from "./state.js";
+import { deriveState } from "./state.js";
+import { invalidateAllCaches } from "./cache.js";
 import { startAuto } from "./auto.js";
 import { readCrashLock, clearLock, formatCrashInfo } from "./crash-recovery.js";
 import { listUnitRuntimeRecords, clearUnitRuntimeRecord } from "./unit-runtime.js";
@@ -454,7 +455,6 @@ async function handleQueueReorder(
   state: Awaited<ReturnType<typeof deriveState>>,
 ): Promise<void> {
   const { showQueueReorder: showReorderUI } = await import("./queue-reorder-ui.js");
-  const { invalidateStateCache } = await import("./state.js");
 
   const completed = state.registry
     .filter(m => m.status === "complete")
@@ -472,7 +472,7 @@ async function handleQueueReorder(
 
   // Save the new order
   saveQueueOrder(basePath, result.order);
-  invalidateStateCache();
+  invalidateAllCaches();
 
   // Remove conflicting depends_on entries from CONTEXT.md files
   if (result.depsToRemove.length > 0) {
@@ -1018,7 +1018,7 @@ export async function showDiscuss(
 
     // Wait for the discuss session to finish, then loop back to the picker
     await ctx.waitForIdle();
-    invalidateStateCache();
+    invalidateAllCaches();
   }
 }
 
