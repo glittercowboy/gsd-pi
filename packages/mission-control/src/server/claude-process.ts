@@ -2,13 +2,24 @@
  * GSD process manager.
  *
  * Spawns gsd binary per user message using:
- *   gsd -p "<prompt>" --output-format stream-json --verbose
+ *   gsd -p "<prompt>" --mode json
  *
- * Each message gets a fresh process.
+ * GSD emits its own NDJSON event format. An adapter layer in sendMessage()
+ * transforms these into the Claude CLI stream-json format so the rest of the
+ * pipeline works unchanged:
+ *   - agent_end  → { type: "result" }   (replaces turn_end — handles multi-turn tool use)
+ *   - turn_end   → suppressed            (fires per tool round-trip, not final completion)
+ *   - message_update (text_delta) → stream_event content_block_delta text_delta
+ *   - tool_execution_start    → stream_event text_delta "[toolName]\n$ command\n"
+ *   - tool_execution_update   → stream_event text_delta (cumulative output delta)
+ *   - tool_execution_end      → stream_event text_delta "\n"
+ *   - session                 → captures session ID internally, not forwarded
+ *   - agent_start/turn_start/message_start/message_end → suppressed
+ *   - everything else (cost_update, phase_transition, etc.) → forwarded as-is
+ *
  * Uses Node's child_process.spawn for reliable stdin/stdout on Windows
  * (Bun.spawn has known issues with stream handling on Windows).
  *
- * TODO(Phase-13): update args for Pi SDK interface (full arg mapping).
  * CRITICAL: CLAUDECODE env var is stripped to avoid "nested session" rejection.
  */
 
@@ -32,7 +43,6 @@ export interface ClaudeProcessOptions {
 /**
  * Manages gsd child processes.
  * Spawns a new process per message for reliability.
- * TODO(Phase-13): implement gsd session continuity (replaces --resume).
  */
 export class ClaudeProcessManager {
   private activeProcess: ChildProcess | null = null;
@@ -77,7 +87,7 @@ export class ClaudeProcessManager {
 
   /**
    * Send a user message by spawning a gsd process.
-   * TODO(Phase-13): add gsd session continuity args.
+   * Uses --mode json for NDJSON streaming output.
    */
   async sendMessage(prompt: string): Promise<void> {
     if (this._isProcessing) {
@@ -86,29 +96,28 @@ export class ClaudeProcessManager {
 
     this._isProcessing = true;
 
-    const args = [
-      "-p", prompt,
-      "--output-format", "stream-json",
-      "--verbose",
-      "--include-partial-messages",
-    ];
-
-    if (this.options.allowedTools) {
-      args.push("--allowedTools", this.options.allowedTools.join(","));
+    // Map /gsd slash commands to GSD subcommand invocations.
+    // "/gsd auto" → gsd auto --mode json  (not gsd -p "/gsd auto" --mode json)
+    const gsdCmdMatch = prompt.trim().match(/^\/gsd(?:\s+(.+))?$/);
+    let args: string[];
+    if (gsdCmdMatch) {
+      const subAndArgs = gsdCmdMatch[1]?.trim();
+      args = subAndArgs
+        ? [...subAndArgs.split(/\s+/), "--mode", "json"]
+        : ["--mode", "json"];
+    } else {
+      args = ["-p", prompt, "--mode", "json"];
     }
 
     if (this.options.model) {
       args.push("--model", this.options.model);
     }
 
-    // Add --dangerously-skip-permissions unless explicitly disabled
-    if (this.options.skipPermissions !== false) {
-      args.push("--dangerously-skip-permissions");
-    }
-
     // Strip CLAUDECODE env var to avoid "nested session" rejection
     const env = { ...process.env };
     delete env.CLAUDECODE;
+    // Suppress external Chromium window — Mission Control relays screenshots to preview panel
+    env.GSD_BROWSER_HEADLESS = "1";
 
     console.log(`[claude-process] Spawning: gsd ${args.slice(0, 6).join(" ")}...`);
     console.log(`[claude-process] CWD: ${this.cwd}`);
@@ -125,21 +134,156 @@ export class ClaudeProcessManager {
     let chunkCount = 0;
     let stderrText = "";
 
-    const parser = createNdjsonParser((event) => {
-      // Capture session_id from result messages
-      if (event.type === "result" && event.session_id) {
-        this._sessionId = event.session_id;
-        console.log(`[claude-process] Session ID: ${this._sessionId}`);
-      }
-
-      // Result event means the turn is complete
-      if (event.type === "result") {
-        this._isProcessing = false;
-      }
-
+    /**
+     * Emit a synthetic event to all registered handlers.
+     */
+    const emit = (event: StreamEvent) => {
       for (const handler of this.eventHandlers) {
         handler(event);
       }
+    };
+
+    // Tracks cumulative output length for tool_execution_update delta streaming
+    let lastToolOutputLength = 0;
+    // Tracks the current tool name for browser screenshot extraction
+    let currentToolName = "";
+
+    const parser = createNdjsonParser((rawEvent) => {
+      const raw = rawEvent as unknown as Record<string, unknown>;
+      const rawType = raw.type as string;
+
+      // Capture GSD session ID
+      if (rawType === "session") {
+        this._sessionId = raw.id as string;
+        console.log(`[claude-process] Session ID: ${this._sessionId}`);
+        return;
+      }
+
+      // Suppress GSD lifecycle noise
+      if (
+        rawType === "agent_start" ||
+        rawType === "turn_start" ||
+        rawType === "message_start" ||
+        rawType === "message_end"
+      ) {
+        return;
+      }
+
+      // turn_end fires once per tool-use round-trip; agent may have more turns.
+      // Do NOT emit result or clear _isProcessing here — wait for agent_end.
+      if (rawType === "turn_end") {
+        return;
+      }
+
+      // agent_end → the entire agent run is complete; signal pipeline to close turn
+      if (rawType === "agent_end") {
+        this._isProcessing = false;
+        emit({ type: "result" } as StreamEvent);
+        return;
+      }
+
+      // message_update: transform text_delta to stream_event content_block_delta.
+      // GSD sends two formats: structured { assistantMessageEvent: { type: "text_delta", delta } }
+      // and simple { text: "..." }. Handle both to avoid dropped words mid-sentence.
+      if (rawType === "message_update") {
+        const aMe = raw.assistantMessageEvent as Record<string, unknown> | undefined;
+        const textContent =
+          (aMe?.type === "text_delta" && typeof aMe.delta === "string" ? aMe.delta : null) ??
+          (typeof raw.text === "string" ? raw.text : null);
+        if (textContent) {
+          emit({
+            type: "stream_event",
+            event: {
+              type: "content_block_delta",
+              delta: { type: "text_delta", text: textContent },
+            },
+          } as StreamEvent);
+        }
+        return;
+      }
+
+      // tool_execution_start → emit tool name + command as text
+      if (rawType === "tool_execution_start") {
+        lastToolOutputLength = 0;
+        const toolName = raw.toolName as string;
+        currentToolName = toolName;
+        const args = raw.args as Record<string, unknown> | undefined;
+        let header = `\n[${toolName}]`;
+        if (toolName === "bash" && args?.command) {
+          header += `\n$ ${String(args.command)}`;
+        } else if (args?.file_path) {
+          header += `\n${String(args.file_path)}`;
+        } else if (args?.path) {
+          header += `\n${String(args.path)}`;
+        } else if (args?.pattern) {
+          header += `\n${String(args.pattern)}`;
+        }
+        emit({
+          type: "stream_event",
+          event: {
+            type: "content_block_delta",
+            delta: { type: "text_delta", text: header + "\n" },
+          },
+        } as StreamEvent);
+        return;
+      }
+
+      // tool_execution_update → stream delta of cumulative output
+      if (rawType === "tool_execution_update") {
+        const partialResult = raw.partialResult as
+          | { content?: Array<{ type: string; text?: string; data?: string; mimeType?: string }> }
+          | undefined;
+        const currentText = partialResult?.content?.[0]?.text ?? "";
+        const delta = currentText.slice(lastToolOutputLength);
+        lastToolOutputLength = currentText.length;
+        if (delta) {
+          emit({
+            type: "stream_event",
+            event: {
+              type: "content_block_delta",
+              delta: { type: "text_delta", text: delta },
+            },
+          } as StreamEvent);
+        }
+        // Extract browser screenshots from tool results and emit as browser_state_update
+        if (currentToolName.startsWith("browser_")) {
+          const contentItems = partialResult?.content as Array<{ type: string; data?: string; mimeType?: string; text?: string }> | undefined;
+          if (contentItems) {
+            const imageItem = contentItems.find((item) => item.type === "image" && item.data);
+            if (imageItem && imageItem.data) {
+              // Extract URL from text content if available
+              const textItem = contentItems.find((item) => item.type === "text" && item.text);
+              const urlMatch = textItem?.text?.match(/(?:Navigated to|Current URL|URL):\s*(\S+)/);
+              const titleMatch = textItem?.text?.match(/Title:\s*(.+)/);
+              emit({
+                type: "browser_state_update",
+                screenshot: imageItem.data,
+                url: urlMatch?.[1] ?? "",
+                title: titleMatch?.[1]?.trim() ?? "",
+                toolName: currentToolName,
+              } as unknown as StreamEvent);
+            }
+          }
+        }
+        return;
+      }
+
+      // tool_execution_end → reset tracking + emit trailing newline
+      if (rawType === "tool_execution_end") {
+        lastToolOutputLength = 0;
+        currentToolName = "";
+        emit({
+          type: "stream_event",
+          event: {
+            type: "content_block_delta",
+            delta: { type: "text_delta", text: "\n" },
+          },
+        } as StreamEvent);
+        return;
+      }
+
+      // Pass through GSD-specific events (cost_update, phase_transition, auto_mode, etc.)
+      emit(rawEvent);
     });
 
     proc.stdout!.on("data", (chunk: Buffer) => {
@@ -165,29 +309,23 @@ export class ClaudeProcessManager {
       // If process failed with no stream events, emit error
       if (code !== 0 && chunkCount === 0) {
         const errMsg = stderrText.trim() || `Claude exited with code ${code}`;
-        for (const handler of this.eventHandlers) {
-          handler({
-            type: "result",
-            error: errMsg,
-          } as StreamEvent);
-        }
+        emit({
+          type: "result",
+          error: errMsg,
+        } as StreamEvent);
         this._isProcessing = false;
       } else if (code !== 0 && chunkCount > 0) {
         // Process produced output but crashed — emit process_crashed event
         this._isProcessing = false;
-        for (const handler of this.eventHandlers) {
-          handler({
-            type: "process_crashed",
-            exitCode: code,
-            stderr: stderrText.trim(),
-          } as unknown as StreamEvent);
-        }
+        emit({
+          type: "process_crashed",
+          exitCode: code,
+          stderr: stderrText.trim(),
+        } as unknown as StreamEvent);
       } else if (this._isProcessing) {
-        // Safety: ensure isProcessing is cleared even if no result event
+        // Safety: ensure isProcessing is cleared even if no turn_end event
         this._isProcessing = false;
-        for (const handler of this.eventHandlers) {
-          handler({ type: "result" } as StreamEvent);
-        }
+        emit({ type: "result" } as StreamEvent);
       }
     });
 
@@ -195,12 +333,10 @@ export class ClaudeProcessManager {
       console.error(`[claude-process] Spawn error:`, err.message);
       this.activeProcess = null;
       this._isProcessing = false;
-      for (const handler of this.eventHandlers) {
-        handler({
-          type: "result",
-          error: `Failed to start Claude: ${err.message}`,
-        } as StreamEvent);
-      }
+      emit({
+        type: "result",
+        error: `Failed to start Claude: ${err.message}`,
+      } as StreamEvent);
     });
   }
 

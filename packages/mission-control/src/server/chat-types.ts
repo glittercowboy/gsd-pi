@@ -5,7 +5,7 @@
 
 // -- Stream Event Types (from Claude CLI stream-json output) --
 
-export type ChatEventType = "system" | "assistant" | "result" | "stream_event" | "permission_prompt";
+export type ChatEventType = "system" | "assistant" | "result" | "stream_event" | "permission_prompt" | "rate_limit_event";
 
 export interface StreamEvent {
   type: ChatEventType;
@@ -174,3 +174,13 @@ export type GSD2StreamEvent =
   | { kind: "stuck_detection"; message: string }
   | { kind: "timeout"; message: string; elapsed_seconds: number }
   | { kind: "auto_mode_announcement"; mode: "start" | "stop"; slice?: string };
+
+// -- Browser State (relayed from headless Playwright to preview panel) --
+
+export interface BrowserStateUpdate {
+  type: "browser_state_update";
+  screenshot: string;  // base64-encoded JPEG
+  url: string;
+  title?: string;
+  toolName?: string;   // which browser_* tool produced this
+}

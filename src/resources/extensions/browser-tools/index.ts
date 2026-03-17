@@ -343,7 +343,8 @@ async function ensureBrowser(): Promise<{ browser: Browser; context: BrowserCont
 	// Lazy import so playwright is only loaded when actually needed
 	const { chromium } = await import("playwright");
 
-	const launchOptions: Record<string, unknown> = { headless: false };
+	const headless = process.env.GSD_BROWSER_HEADLESS === "1";
+	const launchOptions: Record<string, unknown> = { headless };
 	const customPath = process.env.BROWSER_PATH;
 	if (customPath) launchOptions.executablePath = customPath;
 	browser = await chromium.launch(launchOptions);

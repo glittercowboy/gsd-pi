@@ -18,7 +18,7 @@ export type Viewport = "desktop" | "tablet" | "mobile" | "dual";
 export interface DetectedServer {
   port: number;
   type: "frontend" | "backend" | "unknown";
-  label?: string; // e.g., "Vite (:5173)"
+  label: string; // e.g., "Vite (:5173)"
 }
 
 export interface UsePreviewReturn {
@@ -107,7 +107,7 @@ export function shouldTogglePreview(e: KeyboardEvent): boolean {
  *                activeBackendPort=null, viewport="desktop", scanning=false
  *
  * Keyboard: Cmd+P / Ctrl+P toggles open, calls e.preventDefault()
- * WebSocket: listens on ws://localhost:4011 for { type: "preview_open", port: number }
+ * WebSocket: listens on ws://localhost:4001 for { type: "preview_open", port: number }
  *            adds port as manual server and opens panel on receipt
  */
 export function usePreview(): UsePreviewReturn {
@@ -163,7 +163,7 @@ export function usePreview(): UsePreviewReturn {
 
     function connect() {
       if (cancelled) return;
-      ws = new WebSocket("ws://localhost:4011");
+      ws = new WebSocket("ws://localhost:4001");
 
       ws.onmessage = (e: MessageEvent) => {
         try {
