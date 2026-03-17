@@ -3,7 +3,7 @@
 // Copyright (c) 2026 Jeremy McSpadden <jeremy@fluxlabs.net>
 import { fileURLToPath } from 'url'
 import { dirname, resolve, join, delimiter } from 'path'
-import { existsSync, readFileSync, readdirSync, mkdirSync, symlinkSync } from 'fs'
+import { existsSync, readFileSync, readdirSync, mkdirSync, symlinkSync, cpSync } from 'fs'
 
 // Fast-path: handle --version/-v and --help/-h before importing any heavy
 // dependencies. This avoids loading the entire pi-coding-agent barrel import
@@ -151,8 +151,12 @@ if (process.env.HTTP_PROXY || process.env.HTTPS_PROXY || process.env.http_proxy 
   setGlobalDispatcher(new EnvHttpProxyAgent())
 }
 
-// Ensure workspace packages are linked before importing cli.js (which imports @gsd/*).
+// Ensure workspace packages are linked (or copied on Windows) before importing
+// cli.js (which imports @gsd/*).
 // npm postinstall handles this normally, but npx --ignore-scripts skips postinstall.
+// On Windows without Developer Mode or admin rights, symlinkSync will throw even for
+// 'junction' type — so we fall back to cpSync (a full directory copy) which works
+// everywhere without elevated permissions.
 const gsdScopeDir = join(gsdNodeModules, '@gsd')
 const packagesDir = join(gsdRoot, 'packages')
 const wsPackages = ['native', 'pi-agent-core', 'pi-ai', 'pi-coding-agent', 'pi-tui']
@@ -161,11 +165,37 @@ try {
   for (const pkg of wsPackages) {
     const target = join(gsdScopeDir, pkg)
     const source = join(packagesDir, pkg)
-    if (existsSync(source) && !existsSync(target)) {
-      try { symlinkSync(source, target, 'junction') } catch { /* non-fatal */ }
+    if (!existsSync(source) || existsSync(target)) continue
+    try {
+      symlinkSync(source, target, 'junction')
+    } catch {
+      // Symlink failed (common on Windows without Developer Mode / admin).
+      // Fall back to a directory copy — slower on first run but universally works.
+      try { cpSync(source, target, { recursive: true }) } catch { /* non-fatal */ }
     }
   }
 } catch { /* non-fatal */ }
+
+// Validate critical workspace packages are resolvable. If still missing after the
+// symlink+copy attempts, emit a clear diagnostic instead of a cryptic
+// ERR_MODULE_NOT_FOUND from deep inside cli.js.
+const criticalPackages = ['pi-coding-agent']
+const missingPackages = criticalPackages.filter(pkg => !existsSync(join(gsdScopeDir, pkg)))
+if (missingPackages.length > 0) {
+  const missing = missingPackages.map(p => `@gsd/${p}`).join(', ')
+  process.stderr.write(
+    `\nError: GSD installation is broken — missing packages: ${missing}\n\n` +
+    `This is usually caused by one of:\n` +
+    `  • An outdated version installed from npm (run: npm install -g gsd-pi@latest)\n` +
+    `  • The packages/ directory was excluded from the installed tarball\n` +
+    `  • A filesystem error prevented linking or copying the workspace packages\n\n` +
+    `Fix it by reinstalling:\n\n` +
+    `  npm install -g gsd-pi@latest\n\n` +
+    `If the issue persists, please open an issue at:\n` +
+    `  https://github.com/gsd-build/gsd-2/issues\n`
+  )
+  process.exit(1)
+}
 
 // Dynamic import defers ESM evaluation — config.js will see PI_PACKAGE_DIR above
 await import('./cli.js')

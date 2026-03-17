@@ -253,3 +253,20 @@ jobs:
           done
           echo "::error::Smoke test failed — gsd-pi@${VERSION} not installable"
           exit 1
+
+      - name: Verify dist-tag after publish
+        if: steps.version-check.outputs.is_prerelease == 'false'
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          echo "Verifying npm dist-tag 'latest' points to ${VERSION}..."
+          for attempt in $(seq 1 10); do
+            LATEST=$(npm view gsd-pi dist-tags.latest 2>/dev/null || echo "")
+            if [ "${LATEST}" = "${VERSION}" ]; then
+              echo "  ✓ npm dist-tags.latest = ${VERSION}"
+              exit 0
+            fi
+            echo "  Attempt ${attempt}/10: latest=${LATEST}, expected=${VERSION}, retrying in 15s..."
+            sleep 15
+          done
+          echo "::error::dist-tags.latest is '${LATEST}' but expected '${VERSION}' — run: npm dist-tag add gsd-pi@${VERSION} latest"
+          exit 1
