@@ -207,6 +207,7 @@ async function pollOperation(
 		const response = await fetch(`${CODE_ASSIST_ENDPOINT}/v1internal/${operationName}`, {
 			method: "GET",
 			headers,
+			signal: AbortSignal.timeout(30_000),
 		});
 
 		if (!response.ok) {
@@ -250,6 +251,7 @@ async function discoverProject(accessToken: string, onProgress?: (message: strin
 				duetProject: envProjectId,
 			},
 		}),
+		signal: AbortSignal.timeout(30_000),
 	});
 
 	let data: LoadCodeAssistPayload;
@@ -321,6 +323,7 @@ async function discoverProject(accessToken: string, onProgress?: (message: strin
 		method: "POST",
 		headers,
 		body: JSON.stringify(onboardBody),
+		signal: AbortSignal.timeout(30_000),
 	});
 
 	if (!onboardResponse.ok) {
@@ -362,6 +365,7 @@ async function getUserEmail(accessToken: string): Promise<string | undefined> {
 			headers: {
 				Authorization: `Bearer ${accessToken}`,
 			},
+			signal: AbortSignal.timeout(30_000),
 		});
 
 		if (response.ok) {
@@ -387,6 +391,7 @@ export async function refreshGoogleCloudToken(refreshToken: string, projectId: s
 			refresh_token: refreshToken,
 			grant_type: "refresh_token",
 		}),
+		signal: AbortSignal.timeout(30_000),
 	});
 
 	if (!response.ok) {
@@ -534,6 +539,7 @@ export async function loginGeminiCli(
 				redirect_uri: REDIRECT_URI,
 				code_verifier: verifier,
 			}),
+			signal: AbortSignal.timeout(30_000),
 		});
 
 		if (!tokenResponse.ok) {

@@ -114,6 +114,7 @@ async function exchangeAuthorizationCode(
 			code_verifier: verifier,
 			redirect_uri: redirectUri,
 		}),
+		signal: AbortSignal.timeout(30_000),
 	});
 
 	if (!response.ok) {
@@ -151,6 +152,7 @@ async function refreshAccessToken(refreshToken: string): Promise<TokenResult> {
 				refresh_token: refreshToken,
 				client_id: CLIENT_ID,
 			}),
+			signal: AbortSignal.timeout(30_000),
 		});
 
 		if (!response.ok) {

@@ -89,7 +89,10 @@ export function getGitHubCopilotBaseUrl(token?: string, enterpriseDomain?: strin
 }
 
 async function fetchJson(url: string, init: RequestInit): Promise<unknown> {
-	const response = await fetch(url, init);
+	const response = await fetch(url, {
+		...init,
+		signal: init.signal ?? AbortSignal.timeout(30_000),
+	});
 	if (!response.ok) {
 		const text = await response.text();
 		throw new Error(`${response.status} ${response.statusText}: ${text}`);
@@ -276,6 +279,7 @@ async function enableGitHubCopilotModel(token: string, modelId: string, enterpri
 				"x-interaction-type": "chat-policy",
 			},
 			body: JSON.stringify({ state: "enabled" }),
+			signal: AbortSignal.timeout(30_000),
 		});
 		return response.ok;
 	} catch {

@@ -99,6 +99,18 @@ export class RpcClient {
 			this.handleLine(line);
 		});
 
+		// Detect unexpected subprocess exit and reject all pending requests
+		this.process.on("exit", (code, signal) => {
+			if (this.pendingRequests.size > 0) {
+				const reason = signal ? `signal ${signal}` : `code ${code}`;
+				const error = new Error(`Agent process exited unexpectedly (${reason}). Stderr: ${this.stderr}`);
+				for (const [id, pending] of this.pendingRequests) {
+					this.pendingRequests.delete(id);
+					pending.reject(error);
+				}
+			}
+		});
+
 		// Wait a moment for process to initialize
 		await new Promise((resolve) => setTimeout(resolve, 100));
 

@@ -184,6 +184,7 @@ async function discoverProject(accessToken: string, onProgress?: (message: strin
 						pluginType: "GEMINI",
 					},
 				}),
+				signal: AbortSignal.timeout(30_000),
 			});
 
 			if (loadResponse.ok) {
@@ -220,6 +221,7 @@ async function getUserEmail(accessToken: string): Promise<string | undefined> {
 			headers: {
 				Authorization: `Bearer ${accessToken}`,
 			},
+			signal: AbortSignal.timeout(30_000),
 		});
 
 		if (response.ok) {
@@ -245,6 +247,7 @@ export async function refreshAntigravityToken(refreshToken: string, projectId: s
 			refresh_token: refreshToken,
 			grant_type: "refresh_token",
 		}),
+		signal: AbortSignal.timeout(30_000),
 	});
 
 	if (!response.ok) {
@@ -392,6 +395,7 @@ export async function loginAntigravity(
 				redirect_uri: REDIRECT_URI,
 				code_verifier: verifier,
 			}),
+			signal: AbortSignal.timeout(30_000),
 		});
 
 		if (!tokenResponse.ok) {
