@@ -80,6 +80,12 @@ Create the pure-logic message model that transforms raw `StoreEvent[]` from the 
 - `studio/src/renderer/src/lib/rpc/use-gsd.ts` — useGsd hook (sendPrompt) used by CenterPanel
 - S02 Forward Intelligence: events have type in `data.type` or `data.event`. `isStreaming` toggled by `agent_start`/`agent_end`. Event shape: `{ id, timestamp, data: Record<string, unknown> }`.
 
+## Observability Impact
+
+- **New inspection surface:** `buildMessageBlocks()` is a pure function exported from `message-model.ts`. In React DevTools, call `buildMessageBlocks(useSessionStore.getState().events)` to inspect the derived message model at any point.
+- **Failure visibility:** If the message model produces unexpected blocks, the raw events remain inspectable via `useSessionStore.getState().events` in the console. The `MessageStream` component renders blocks directly — visual absence of expected content maps 1:1 to a missing/incorrect block in the model output.
+- **No new runtime signals:** The message model is a pure derivation with no async behavior, no network calls, and no persistent state. Failures manifest as incorrect rendered output, not as runtime errors or silent data loss.
+
 ## Expected Output
 
 - `studio/src/renderer/src/lib/message-model.ts` — pure message block transformer, fully typed, tested

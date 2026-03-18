@@ -44,7 +44,7 @@
 
 ## Tasks
 
-- [ ] **T01: Build message model and wire MessageStream into CenterPanel** `est:30m`
+- [x] **T01: Build message model and wire MessageStream into CenterPanel** `est:30m`
   - Why: The raw event log must be replaced with a structured message pipeline. The message model is the pure-logic seam between raw events and rendering — it must be correct and tested before adding markdown complexity. This task also installs streamdown + @streamdown/code to unblock T02.
   - Files: `studio/src/renderer/src/lib/message-model.ts`, `studio/src/renderer/src/components/message-stream/MessageStream.tsx`, `studio/src/renderer/src/components/layout/CenterPanel.tsx`, `studio/test/message-model.test.mjs`, `studio/package.json`
   - Do: Create `message-model.ts` with a `buildMessageBlocks(events)` function that transforms `StoreEvent[]` into `MessageBlock[]`. Each block is typed: `assistant-text` (accumulated text from message_update text content), `tool-use` (from tool_execution_start), or `user-prompt` (from the sendPrompt command echo or agent_start context). Install `streamdown` and `@streamdown/code` into studio workspace. Build `MessageStream.tsx` that reads events from the store, derives blocks via useMemo, and renders them — assistant text as plain `<pre>` for now. Replace the event log in CenterPanel with `<MessageStream>`. Write unit tests for the message model covering key edge cases. Preserve the ConnectionBadge, EmptyState, and Composer from CenterPanel.

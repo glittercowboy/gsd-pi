@@ -13,9 +13,11 @@
   "dependencies": {
     "@phosphor-icons/react": "^2.1.10",
     "@radix-ui/react-slot": "^1.2.4",
+    "@streamdown/code": "^1.1.1",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
     "react-resizable-panels": "^4.7.3",
+    "streamdown": "^2.5.0",
     "zustand": "^5.0.8"
   },
   "devDependencies": {
