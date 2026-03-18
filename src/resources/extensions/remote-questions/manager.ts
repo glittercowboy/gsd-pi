@@ -70,7 +70,7 @@ export async function tryRemoteQuestions(
         channel: config.channel,
         timed_out: true,
         promptId: prompt.id,
-        threadUrl: dispatch.ref.threadUrl,
+        threadUrl: dispatch.ref.threadUrl ?? null,
         status: signal?.aborted ? "cancelled" : "timed_out",
       },
     };
@@ -92,7 +92,7 @@ export async function tryRemoteQuestions(
       channel: config.channel,
       timed_out: false,
       promptId: prompt.id,
-      threadUrl: dispatch.ref.threadUrl,
+      threadUrl: dispatch.ref.threadUrl ?? null,
       questions,
       response: answer,
       status: "answered",
