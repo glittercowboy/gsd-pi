@@ -42,8 +42,8 @@ function MilestoneSectionHeader({
   return (
     <div
       className={cn(
-        "flex items-center gap-2 px-4 py-2 border-b border-[#1E2D3D]",
-        isActive ? "bg-[#0F1C2B] border-l-2 border-l-[#5BC8F0]" : "bg-[#0F1419]"
+        "flex items-center gap-2 px-4 py-2.5 border-b border-[#1E2D3D]",
+        isActive ? "bg-[#0D1A27]" : "bg-[#0F1419]"
       )}
     >
       <span className="inline-flex items-center rounded bg-navy-700 px-2 py-0.5 font-mono text-xs text-slate-400">
@@ -160,33 +160,40 @@ function MilestoneContent({
       {/* Aggregate metric cards */}
       <MilestoneMetrics gsd2State={gsd2State} />
 
-      {/* Stacked milestone sections */}
-      {allMilestones.map((milestone) => {
-        const isActive = milestone.milestoneId === activeMilestoneId;
-        async function handleMilestoneAction(action: SliceAction) {
-          if (action.type === 'view_tasks') {
-            await handleViewTasks(action.sliceId, milestone);
-          } else {
-            handleSliceAction(action);
+      {/* Stacked milestone cards */}
+      <div className="flex flex-col gap-3 p-3">
+        {allMilestones.map((milestone) => {
+          const isActive = milestone.milestoneId === activeMilestoneId;
+          async function handleMilestoneAction(action: SliceAction) {
+            if (action.type === 'view_tasks') {
+              await handleViewTasks(action.sliceId, milestone);
+            } else {
+              handleSliceAction(action);
+            }
           }
-        }
-        return (
-          <div
-            key={milestone.milestoneId}
-            className={cn("border-b border-[#1E2D3D]", !isActive && "opacity-80")}
-          >
-            <MilestoneSectionHeader milestone={milestone} isActive={isActive} />
-            <SliceAccordion
-              slices={milestone.slices}
-              activeSliceId={isActive ? activeSliceId : ""}
-              isAutoMode={isActive ? isAutoMode : false}
-              gsd2State={isActive ? gsd2State : null}
-              onAction={handleMilestoneAction}
-              onUatItemToggle={handleUatItemToggle}
-            />
-          </div>
-        );
-      })}
+          return (
+            <div
+              key={milestone.milestoneId}
+              className={cn(
+                "rounded-lg overflow-hidden border",
+                isActive
+                  ? "border-[#5BC8F0]/30 shadow-[0_0_0_1px_rgba(91,200,240,0.08)]"
+                  : "border-[#1E2D3D] opacity-75"
+              )}
+            >
+              <MilestoneSectionHeader milestone={milestone} isActive={isActive} />
+              <SliceAccordion
+                slices={milestone.slices}
+                activeSliceId={isActive ? activeSliceId : ""}
+                isAutoMode={isActive ? isAutoMode : false}
+                gsd2State={isActive ? gsd2State : null}
+                onAction={handleMilestoneAction}
+                onUatItemToggle={handleUatItemToggle}
+              />
+            </div>
+          );
+        })}
+      </div>
 
       {/* Modal for view_plan / view_task / view_diff / view_uat_results */}
       <InlineReadPanel
