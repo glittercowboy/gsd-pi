@@ -305,6 +305,15 @@ export function isAutoPaused(): boolean {
   return s.paused;
 }
 
+/**
+ * Return the model captured at auto-mode start for this session.
+ * Used by error-recovery to fall back to the session's own model
+ * instead of reading (potentially stale) preferences from disk (#1065).
+ */
+export function getAutoModeStartModel(): { provider: string; id: string } | null {
+  return s.autoModeStartModel;
+}
+
 // Tool tracking — delegates to auto-tool-tracking.ts
 export function markToolStart(toolCallId: string): void {
   _markToolStart(toolCallId, s.active);

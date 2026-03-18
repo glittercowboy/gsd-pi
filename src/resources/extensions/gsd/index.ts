@@ -34,7 +34,7 @@ import { getActiveAutoWorktreeContext } from "./auto-worktree.js";
 import { saveFile, formatContinue, loadFile, parseContinue, parseSummary, loadActiveOverrides, formatOverridesSection } from "./files.js";
 import { loadPrompt } from "./prompt-loader.js";
 import { deriveState } from "./state.js";
-import { isAutoActive, isAutoPaused, handleAgentEnd, pauseAuto, getAutoDashboardData, markToolStart, markToolEnd } from "./auto.js";
+import { isAutoActive, isAutoPaused, handleAgentEnd, pauseAuto, getAutoDashboardData, getAutoModeStartModel, markToolStart, markToolEnd } from "./auto.js";
 import { saveActivityLog } from "./activity-log.js";
 import { checkAutoStartAfterDiscuss, getDiscussionMilestoneId, findMilestoneIds, nextMilestoneId } from "./guided-flow.js";
 import { GSDDashboardOverlay } from "./dashboard-overlay.js";
@@ -820,6 +820,40 @@ export default function (pi: ExtensionAPI) {
                 );
                 return;
               }
+            }
+          }
+        }
+      }
+
+      // ── Session model recovery (#1065) ──────────────────────────────────
+      // Before pausing, attempt to restore the model captured at auto-mode
+      // start. This prevents cross-session model leakage: when fallback
+      // chains are exhausted (or absent), the session retries with the model
+      // the user originally chose instead of reading (possibly stale) global
+      // preferences that another concurrent session may have modified.
+      const sessionModel = getAutoModeStartModel();
+      if (sessionModel) {
+        const currentModelId = ctx.model?.id;
+        const currentProvider = ctx.model?.provider;
+        // Only attempt recovery if the current model diverged from the session model
+        if (currentModelId !== sessionModel.id || currentProvider !== sessionModel.provider) {
+          const availableModels = ctx.modelRegistry.getAvailable();
+          const startModel = availableModels.find(
+            m => m.provider === sessionModel.provider && m.id === sessionModel.id,
+          );
+          if (startModel) {
+            const ok = await pi.setModel(startModel, { persist: false });
+            if (ok) {
+              networkRetryCounters.clear();
+              ctx.ui.notify(
+                `Model error${errorDetail}. Restored session model: ${sessionModel.provider}/${sessionModel.id} and resuming.`,
+                "warning",
+              );
+              pi.sendMessage(
+                { customType: "gsd-auto-timeout-recovery", content: "Continue execution.", display: false },
+                { triggerTurn: true },
+              );
+              return;
             }
           }
         }

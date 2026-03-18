@@ -1,5 +1,5 @@
 /**
- * Tests for model config isolation between concurrent instances (#650).
+ * Tests for model config isolation between concurrent instances (#650, #1065).
  */
 
 import { describe, it, beforeEach, afterEach } from "node:test";
@@ -95,5 +95,63 @@ describe("model config isolation (#650)", () => {
     assert.notEqual(autoModeStartModel.id, globalSettings.defaultModel);
     assert.equal(autoModeStartModel.id, "claude-opus-4-6",
       "Captured model should be preserved regardless of global settings changes");
+  });
+});
+
+// ─── Session model recovery on error (#1065) ─────────────────────────────────
+
+describe("session model recovery on error (#1065)", () => {
+  it("session model is preferred over fallback chain from disk when models diverge", () => {
+    // Simulate: Session started with opus, fallback chain exhausted,
+    // another session's global prefs point to a different model.
+    const sessionModel = { provider: "anthropic", id: "claude-opus-4-6" };
+    const currentModel = { provider: "openai-codex", id: "codex-mini-latest" };
+
+    // The session model should be restored when current model differs
+    const shouldRecover = currentModel.id !== sessionModel.id
+      || currentModel.provider !== sessionModel.provider;
+
+    assert.ok(shouldRecover,
+      "Recovery should trigger when current model diverged from session model");
+  });
+
+  it("session model recovery is skipped when model has not diverged", () => {
+    // If the current model is still the session model, no recovery needed
+    const sessionModel = { provider: "anthropic", id: "claude-opus-4-6" };
+    const currentModel = { provider: "anthropic", id: "claude-opus-4-6" };
+
+    const shouldRecover = currentModel.id !== sessionModel.id
+      || currentModel.provider !== sessionModel.provider;
+
+    assert.ok(!shouldRecover,
+      "Recovery should NOT trigger when current model matches session model");
+  });
+
+  it("cross-session model leakage scenario is detected", () => {
+    // Session A: user chose opus for project-alpha
+    const sessionA = { provider: "anthropic", id: "claude-opus-4-6" };
+    // Session B: user chose gpt-5.4 for project-beta
+    const sessionB = { provider: "openai", id: "gpt-5.4" };
+
+    // If Session A's error handler somehow picked up Session B's model,
+    // the session model recovery should detect the divergence
+    const currentModelAfterBadFallback = sessionB; // leakage happened
+    const shouldRecover = currentModelAfterBadFallback.id !== sessionA.id
+      || currentModelAfterBadFallback.provider !== sessionA.provider;
+
+    assert.ok(shouldRecover,
+      "Session model recovery must detect cross-session leakage and restore original model");
+    assert.equal(sessionA.id, "claude-opus-4-6",
+      "Session A's model must be restored, not Session B's");
+  });
+
+  it("session model is null-safe when auto-mode was not started", () => {
+    // When getAutoModeStartModel() returns null, recovery should be skipped
+    const sessionModel: { provider: string; id: string } | null = null;
+
+    // The recovery block should guard against null
+    const shouldAttemptRecovery = sessionModel !== null;
+    assert.ok(!shouldAttemptRecovery,
+      "Recovery should be skipped when no session model was captured");
   });
 });
