@@ -18,27 +18,8 @@ import {
   selectDoctorScope,
   filterDoctorIssues,
 } from "./doctor.js";
-import { loadPrompt } from "./prompt-loader.js";
 import { isAutoActive } from "./auto.js";
-import { projectRoot } from "./commands.js";
-
-function dispatchDoctorHeal(pi: ExtensionAPI, scope: string | undefined, reportText: string, structuredIssues: string): void {
-  const workflowPath = process.env.GSD_WORKFLOW_PATH ?? join(process.env.HOME ?? "~", ".pi", "GSD-WORKFLOW.md");
-  const workflow = readFileSync(workflowPath, "utf-8");
-  const prompt = loadPrompt("doctor-heal", {
-    doctorSummary: reportText,
-    structuredIssues,
-    scopeLabel: scope ?? "active milestone / blocking scope",
-    doctorCommandSuffix: scope ? ` ${scope}` : "",
-  });
-
-  const content = `Read the following GSD workflow protocol and execute exactly.\n\n${workflow}\n\n## Your Task\n\n${prompt}`;
-
-  pi.sendMessage(
-    { customType: "gsd-doctor-heal", content, display: false },
-    { triggerTurn: true },
-  );
-}
+import { projectRoot, dispatchDoctorHeal } from "./commands.js";
 
 export async function handleDoctor(args: string, ctx: ExtensionCommandContext, pi: ExtensionAPI): Promise<void> {
   const trimmed = args.trim();
