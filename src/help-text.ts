@@ -88,6 +88,7 @@ export function printHelp(version: string): void {
   process.stdout.write('  --extension <path>       Load additional extension\n')
   process.stdout.write('  --tools <a,b,c>          Restrict available tools\n')
   process.stdout.write('  --list-models [search]   List available models and exit\n')
+  process.stdout.write('  --worktree, -w [name]    Start in a new worktree (auto-named if no name given)\n')
   process.stdout.write('  --version, -v            Print version and exit\n')
   process.stdout.write('  --help, -h               Print this help and exit\n')
   process.stdout.write('\nSubcommands:\n')

@@ -29,6 +29,7 @@ interface CliFlags {
   print?: boolean
   continue?: boolean
   noSession?: boolean
+  worktree?: boolean | string
   model?: string
   listModels?: string | true
   extensions: string[]
@@ -81,6 +82,13 @@ function parseCliArgs(argv: string[]): CliFlags {
     } else if (arg === '--version' || arg === '-v') {
       process.stdout.write((process.env.GSD_VERSION || '0.0.0') + '\n')
       process.exit(0)
+    } else if (arg === '--worktree' || arg === '-w') {
+      // -w with no value → auto-generate name; -w <name> → use that name
+      if (i + 1 < args.length && !args[i + 1].startsWith('-')) {
+        flags.worktree = args[++i]
+      } else {
+        flags.worktree = true
+      }
     } else if (arg === '--help' || arg === '-h') {
       printHelp(process.env.GSD_VERSION || '0.0.0')
       process.exit(0)
@@ -406,6 +414,48 @@ if (isPrintMode) {
     messages: cliFlags.messages,
   })
   process.exit(0)
+}
+
+// ---------------------------------------------------------------------------
+// Worktree mode — create/enter a worktree before starting the session
+// ---------------------------------------------------------------------------
+if (cliFlags.worktree) {
+  const { createWorktree, listWorktrees, worktreePath } = await import('./resources/extensions/gsd/worktree-manager.js')
+  const { runWorktreePostCreateHook } = await import('./resources/extensions/gsd/auto-worktree.js')
+  const { generateWorktreeName } = await import('./worktree-name-gen.js')
+
+  const basePath = process.cwd()
+  const name = typeof cliFlags.worktree === 'string' ? cliFlags.worktree : generateWorktreeName()
+
+  // Check if the worktree already exists — switch into it if so
+  const existing = listWorktrees(basePath)
+  const found = existing.find(wt => wt.name === name)
+
+  if (found) {
+    process.chdir(found.path)
+    process.stderr.write(chalk.green(`✓ Entered existing worktree ${chalk.bold(name)}\n`))
+    process.stderr.write(chalk.dim(`  path   ${found.path}\n`))
+    process.stderr.write(chalk.dim(`  branch ${found.branch}\n\n`))
+  } else {
+    try {
+      const info = createWorktree(basePath, name)
+
+      // Run user-configured post-create hook
+      const hookError = runWorktreePostCreateHook(basePath, info.path)
+      if (hookError) {
+        process.stderr.write(chalk.yellow(`[gsd] ${hookError}\n`))
+      }
+
+      process.chdir(info.path)
+      process.stderr.write(chalk.green(`✓ Created worktree ${chalk.bold(name)}\n`))
+      process.stderr.write(chalk.dim(`  path   ${info.path}\n`))
+      process.stderr.write(chalk.dim(`  branch ${info.branch}\n\n`))
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      process.stderr.write(chalk.red(`[gsd] Failed to create worktree: ${msg}\n`))
+      process.exit(1)
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------
