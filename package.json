@@ -35,7 +35,7 @@
     "configDir": ".gsd"
   },
   "engines": {
-    "node": ">=20.6.0"
+    "node": ">=22.0.0"
   },
   "packageManager": "npm@10.9.3",
   "scripts": {
@@ -117,7 +117,7 @@
     "zod-to-json-schema": "^3.24.6"
   },
   "devDependencies": {
-    "@types/node": "^22.0.0",
+    "@types/node": "^24.12.0",
     "@types/picomatch": "^4.0.2",
     "c8": "^11.0.0",
     "jiti": "^2.6.1",
