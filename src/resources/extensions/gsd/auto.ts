@@ -1212,7 +1212,7 @@ async function dispatchNextUnit(
             try { process.chdir(s.basePath); } catch { /* best-effort */ }
           }
         }
-      } else if (s.currentMilestoneId && !isInAutoWorktree(s.basePath) && getIsolationMode() !== "none") {
+      } else if (s.currentMilestoneId && !isInAutoWorktree(s.basePath) && getIsolationMode() === "branch") {
         try {
           const currentBranch = getCurrentBranch(s.basePath);
           const milestoneBranch = autoWorktreeBranch(s.currentMilestoneId);
@@ -1314,7 +1314,7 @@ async function dispatchNextUnit(
           try { process.chdir(s.basePath); } catch { /* best-effort */ }
         }
       }
-    } else if (s.currentMilestoneId && !isInAutoWorktree(s.basePath) && getIsolationMode() !== "none") {
+    } else if (s.currentMilestoneId && !isInAutoWorktree(s.basePath) && getIsolationMode() === "branch") {
       try {
         const currentBranch = getCurrentBranch(s.basePath);
         const milestoneBranch = autoWorktreeBranch(s.currentMilestoneId);
