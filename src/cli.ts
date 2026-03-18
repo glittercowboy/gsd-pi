@@ -417,45 +417,44 @@ if (isPrintMode) {
 }
 
 // ---------------------------------------------------------------------------
-// Worktree mode — create/enter a worktree before starting the session
+// Worktree subcommand — `gsd worktree <list|merge|clean|remove>`
+// ---------------------------------------------------------------------------
+if (cliFlags.messages[0] === 'worktree' || cliFlags.messages[0] === 'wt') {
+  const { handleList, handleMerge, handleClean, handleRemove } = await import('./worktree-cli.js')
+  const sub = cliFlags.messages[1]
+  const subArgs = cliFlags.messages.slice(2)
+
+  if (!sub || sub === 'list') {
+    handleList(process.cwd())
+  } else if (sub === 'merge') {
+    await handleMerge(process.cwd(), subArgs)
+  } else if (sub === 'clean') {
+    handleClean(process.cwd())
+  } else if (sub === 'remove' || sub === 'rm') {
+    handleRemove(process.cwd(), subArgs)
+  } else {
+    process.stderr.write(`Unknown worktree command: ${sub}\n`)
+    process.stderr.write('Commands: list, merge [name], clean, remove <name>\n')
+  }
+  process.exit(0)
+}
+
+// ---------------------------------------------------------------------------
+// Worktree flag (-w) — create/resume a worktree for the interactive session
 // ---------------------------------------------------------------------------
 if (cliFlags.worktree) {
-  const { createWorktree, listWorktrees, worktreePath } = await import('./resources/extensions/gsd/worktree-manager.js')
-  const { runWorktreePostCreateHook } = await import('./resources/extensions/gsd/auto-worktree.js')
-  const { generateWorktreeName } = await import('./worktree-name-gen.js')
+  const { handleWorktreeFlag } = await import('./worktree-cli.js')
+  handleWorktreeFlag(cliFlags.worktree)
+}
 
-  const basePath = process.cwd()
-  const name = typeof cliFlags.worktree === 'string' ? cliFlags.worktree : generateWorktreeName()
-
-  // Check if the worktree already exists — switch into it if so
-  const existing = listWorktrees(basePath)
-  const found = existing.find(wt => wt.name === name)
-
-  if (found) {
-    process.chdir(found.path)
-    process.stderr.write(chalk.green(`✓ Entered existing worktree ${chalk.bold(name)}\n`))
-    process.stderr.write(chalk.dim(`  path   ${found.path}\n`))
-    process.stderr.write(chalk.dim(`  branch ${found.branch}\n\n`))
-  } else {
-    try {
-      const info = createWorktree(basePath, name)
-
-      // Run user-configured post-create hook
-      const hookError = runWorktreePostCreateHook(basePath, info.path)
-      if (hookError) {
-        process.stderr.write(chalk.yellow(`[gsd] ${hookError}\n`))
-      }
-
-      process.chdir(info.path)
-      process.stderr.write(chalk.green(`✓ Created worktree ${chalk.bold(name)}\n`))
-      process.stderr.write(chalk.dim(`  path   ${info.path}\n`))
-      process.stderr.write(chalk.dim(`  branch ${info.branch}\n\n`))
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err)
-      process.stderr.write(chalk.red(`[gsd] Failed to create worktree: ${msg}\n`))
-      process.exit(1)
-    }
-  }
+// ---------------------------------------------------------------------------
+// Active worktree banner — remind user of unmerged worktrees on normal launch
+// ---------------------------------------------------------------------------
+if (!cliFlags.worktree && !isPrintMode) {
+  try {
+    const { handleStatusBanner } = await import('./worktree-cli.js')
+    handleStatusBanner(process.cwd())
+  } catch { /* non-fatal */ }
 }
 
 // ---------------------------------------------------------------------------

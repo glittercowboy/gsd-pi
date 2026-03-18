@@ -1048,6 +1048,19 @@ export default function (pi: ExtensionAPI) {
       } catch { /* best-effort */ }
     }
 
+    // Auto-commit dirty work in CLI-spawned worktrees so nothing is lost.
+    // The CLI sets GSD_CLI_WORKTREE when launched with -w.
+    const cliWorktree = process.env.GSD_CLI_WORKTREE;
+    if (cliWorktree) {
+      try {
+        const { autoCommitCurrentBranch } = await import("./worktree.js");
+        const msg = autoCommitCurrentBranch(process.cwd(), "session-end", cliWorktree);
+        if (msg) {
+          ctx.ui.notify(`Auto-committed worktree ${cliWorktree} before exit.`, "info");
+        }
+      } catch { /* best-effort */ }
+    }
+
     if (!isAutoActive() && !isAutoPaused()) return;
 
     // Save the current session — the lock file stays on disk
