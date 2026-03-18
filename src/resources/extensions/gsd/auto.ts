@@ -178,11 +178,13 @@ import {
   AutoSession,
   MAX_UNIT_DISPATCHES, STUB_RECOVERY_THRESHOLD, MAX_LIFETIME_DISPATCHES,
   MAX_CONSECUTIVE_SKIPS, DISPATCH_GAP_TIMEOUT_MS, MAX_SKIP_DEPTH,
+  NEW_SESSION_TIMEOUT_MS, DISPATCH_HANG_TIMEOUT_MS,
 } from "./auto/session.js";
 import type { CompletedUnit, CurrentUnit, UnitRouting, StartModel, PendingVerificationRetry } from "./auto/session.js";
 export {
   MAX_UNIT_DISPATCHES, STUB_RECOVERY_THRESHOLD, MAX_LIFETIME_DISPATCHES,
   MAX_CONSECUTIVE_SKIPS, DISPATCH_GAP_TIMEOUT_MS, MAX_SKIP_DEPTH,
+  NEW_SESSION_TIMEOUT_MS, DISPATCH_HANG_TIMEOUT_MS,
 } from "./auto/session.js";
 export type { CompletedUnit, CurrentUnit, UnitRouting, StartModel } from "./auto/session.js";
 
@@ -1869,6 +1871,25 @@ export async function handleAgentEnd(
     return;
   }
 
+  // ── Dispatch with hang detection (#1073) ────────────────────────────────
+  // Start a safety watchdog BEFORE calling dispatchNextUnit. If dispatch
+  // hangs at any await (newSession, model selection, etc.), the gap watchdog
+  // inside handleAgentEnd never fires because we never reach the check.
+  // This pre-dispatch watchdog ensures recovery even when dispatchNextUnit
+  // itself is permanently blocked.
+  const dispatchHangGuard = setTimeout(() => {
+    if (!s.active) return;
+    // dispatchNextUnit has been running for too long — it's likely hung.
+    // Start the gap watchdog which will retry dispatch from scratch.
+    if (!s.unitTimeoutHandle && !s.wrapupWarningHandle) {
+      ctx.ui.notify(
+        `Dispatch hang detected (${DISPATCH_HANG_TIMEOUT_MS / 1000}s without completion). Starting recovery watchdog.`,
+        "warning",
+      );
+      startDispatchGapWatchdog(ctx, pi);
+    }
+  }, DISPATCH_HANG_TIMEOUT_MS);
+
   try {
     await dispatchNextUnit(ctx, pi);
   } catch (dispatchErr) {
@@ -1885,6 +1906,8 @@ export async function handleAgentEnd(
     // This gives transient issues (dirty working tree, branch state) time to settle.
     startDispatchGapWatchdog(ctx, pi);
     return;
+  } finally {
+    clearTimeout(dispatchHangGuard);
   }
 
   // If dispatchNextUnit returned normally but auto-mode is still s.active and
@@ -3015,10 +3038,29 @@ async function dispatchNextUnit(
   // so the LLM doesn't have to get these right
   ensurePreconditions(unitType, unitId, s.basePath, state);
 
-  // Fresh session
-  const result = await s.cmdCtx!.newSession();
+  // Fresh session — with timeout to prevent permanent hangs (#1073).
+  // If newSession() hangs (e.g., session manager deadlock, network issue),
+  // without this timeout the entire dispatch chain stalls permanently: no
+  // timeouts are set, no gap watchdog fires, and auto-mode is left active
+  // but idle until the user Ctrl+C's.
+  let result: { cancelled: boolean };
+  try {
+    const sessionPromise = s.cmdCtx!.newSession();
+    const timeoutPromise = new Promise<{ cancelled: true }>((resolve) =>
+      setTimeout(() => resolve({ cancelled: true }), NEW_SESSION_TIMEOUT_MS),
+    );
+    result = await Promise.race([sessionPromise, timeoutPromise]);
+  } catch (sessionErr) {
+    const msg = sessionErr instanceof Error ? sessionErr.message : String(sessionErr);
+    ctx.ui.notify(`Session creation failed: ${msg}. Retrying via watchdog.`, "error");
+    throw new Error(`newSession() failed: ${msg}`);
+  }
   if (result.cancelled) {
-    await stopAuto(ctx, pi, "Session cancelled");
+    ctx.ui.notify(
+      `Session creation timed out or was cancelled for ${unitType} ${unitId}. Will retry.`,
+      "warning",
+    );
+    await stopAuto(ctx, pi, "Session creation failed");
     return;
   }
 

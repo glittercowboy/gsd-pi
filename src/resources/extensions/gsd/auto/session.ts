@@ -60,6 +60,8 @@ export const MAX_LIFETIME_DISPATCHES = 6;
 export const MAX_CONSECUTIVE_SKIPS = 3;
 export const DISPATCH_GAP_TIMEOUT_MS = 5_000;
 export const MAX_SKIP_DEPTH = 20;
+export const NEW_SESSION_TIMEOUT_MS = 30_000;
+export const DISPATCH_HANG_TIMEOUT_MS = 60_000;
 
 // ─── AutoSession ─────────────────────────────────────────────────────────────
 
