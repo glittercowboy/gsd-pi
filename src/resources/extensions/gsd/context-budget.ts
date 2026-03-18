@@ -8,6 +8,9 @@
  * @see D001 (module location), D002 (200K fallback), D003 (section-boundary truncation)
  */
 
+import { type TokenProvider, getCharsPerToken } from "./token-counter.js";
+import { compressToTarget } from "./prompt-compressor.js";
+
 // ─── Budget ratio constants ──────────────────────────────────────────────────
 // Percentages of total context window allocated to each budget category.
 // These are applied after tokens→chars conversion.
@@ -93,9 +96,10 @@ export interface MinimalPreferences {
  * Returns deterministic output for any given input. Invalid inputs (≤ 0)
  * silently default to 200K (D002).
  */
-export function computeBudgets(contextWindow: number): BudgetAllocation {
+export function computeBudgets(contextWindow: number, provider?: TokenProvider): BudgetAllocation {
   const effectiveWindow = contextWindow > 0 ? contextWindow : DEFAULT_CONTEXT_WINDOW;
-  const totalChars = effectiveWindow * CHARS_PER_TOKEN;
+  const charsPerToken = provider ? getCharsPerToken(provider) : CHARS_PER_TOKEN;
+  const totalChars = effectiveWindow * charsPerToken;
 
   return {
     summaryBudgetChars: Math.floor(totalChars * SUMMARY_RATIO),
@@ -195,6 +199,25 @@ export function resolveExecutorContextWindow(
 
   // Step 3: Fall back to default (D002)
   return DEFAULT_CONTEXT_WINDOW;
+}
+
+/**
+ * Smart context reduction: compress first, then truncate if still over budget.
+ * Returns the content within budget with maximum information preservation.
+ */
+export function reduceToFit(content: string, budgetChars: number): TruncationResult {
+  if (!content || content.length <= budgetChars) {
+    return { content, droppedSections: 0 };
+  }
+
+  // Step 1: Try compression
+  const compressed = compressToTarget(content, budgetChars);
+  if (compressed.compressedChars <= budgetChars) {
+    return { content: compressed.content, droppedSections: 0 };
+  }
+
+  // Step 2: Truncate the compressed content at section boundaries
+  return truncateAtSectionBoundary(compressed.content, budgetChars);
 }
 
 // ─── Internal helpers ────────────────────────────────────────────────────────

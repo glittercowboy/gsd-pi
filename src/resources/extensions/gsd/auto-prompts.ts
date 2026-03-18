@@ -21,6 +21,9 @@ import type { GSDPreferences } from "./preferences.js";
 import { join } from "node:path";
 import { existsSync } from "node:fs";
 import { computeBudgets, resolveExecutorContextWindow } from "./context-budget.js";
+import { compressToTarget } from "./prompt-compressor.js";
+import { distillSummaries } from "./summary-distiller.js";
+import { formatDecisionsCompact, formatRequirementsCompact } from "./structured-data-formatter.js";
 
 // ─── Executor Constraints ─────────────────────────────────────────────────────
 
@@ -111,8 +114,21 @@ export async function inlineDependencySummaries(
   }
 
   const result = sections.join("\n\n");
-  // When a budget is provided, truncate at section boundaries to fit
   if (budgetChars !== undefined && result.length > budgetChars) {
+    // For 3+ summaries, try distillation first (preserves more information)
+    if (sections.length >= 3) {
+      const rawSummaries = sections.map(s => {
+        // Extract content after the header line
+        const lines = s.split("\n");
+        const contentStart = lines.findIndex(l => l.startsWith("Source:"));
+        return contentStart >= 0 ? lines.slice(contentStart + 1).join("\n").trim() : s;
+      });
+      const distilled = distillSummaries(rawSummaries, budgetChars);
+      if (distilled.content.length <= budgetChars) {
+        return distilled.content;
+      }
+    }
+    // Fall back to section-boundary truncation
     const { truncateAtSectionBoundary } = await import("./context-budget.js");
     return truncateAtSectionBoundary(result, budgetChars).content;
   }
@@ -139,15 +155,19 @@ export async function inlineGsdRootFile(
  * Falls back to filesystem via inlineGsdRootFile when DB unavailable or empty.
  */
 export async function inlineDecisionsFromDb(
-  base: string, milestoneId?: string, scope?: string,
+  base: string, milestoneId?: string, scope?: string, level?: InlineLevel,
 ): Promise<string | null> {
+  const inlineLevel = level ?? resolveInlineLevel();
   try {
     const { isDbAvailable } = await import("./gsd-db.js");
     if (isDbAvailable()) {
       const { queryDecisions, formatDecisionsForPrompt } = await import("./context-store.js");
       const decisions = queryDecisions({ milestoneId, scope });
       if (decisions.length > 0) {
-        const formatted = formatDecisionsForPrompt(decisions);
+        // Use compact format for non-full levels to save ~35% tokens
+        const formatted = inlineLevel !== "full"
+          ? formatDecisionsCompact(decisions)
+          : formatDecisionsForPrompt(decisions);
         return `### Decisions\nSource: \`.gsd/DECISIONS.md\`\n\n${formatted}`;
       }
     }
@@ -162,15 +182,19 @@ export async function inlineDecisionsFromDb(
  * Falls back to filesystem via inlineGsdRootFile when DB unavailable or empty.
  */
 export async function inlineRequirementsFromDb(
-  base: string, sliceId?: string,
+  base: string, sliceId?: string, level?: InlineLevel,
 ): Promise<string | null> {
+  const inlineLevel = level ?? resolveInlineLevel();
   try {
     const { isDbAvailable } = await import("./gsd-db.js");
     if (isDbAvailable()) {
       const { queryRequirements, formatRequirementsForPrompt } = await import("./context-store.js");
       const requirements = queryRequirements({ sliceId });
       if (requirements.length > 0) {
-        const formatted = formatRequirementsForPrompt(requirements);
+        // Use compact format for non-full levels to save ~40% tokens
+        const formatted = inlineLevel !== "full"
+          ? formatRequirementsCompact(requirements)
+          : formatRequirementsForPrompt(requirements);
         return `### Requirements\nSource: \`.gsd/REQUIREMENTS.md\`\n\n${formatted}`;
       }
     }
@@ -519,9 +543,9 @@ export async function buildPlanMilestonePrompt(mid: string, midTitle: string, ba
   if (inlineLevel !== "minimal") {
     const projectInline = await inlineProjectFromDb(base);
     if (projectInline) inlined.push(projectInline);
-    const requirementsInline = await inlineRequirementsFromDb(base);
+    const requirementsInline = await inlineRequirementsFromDb(base, undefined, inlineLevel);
     if (requirementsInline) inlined.push(requirementsInline);
-    const decisionsInline = await inlineDecisionsFromDb(base, mid);
+    const decisionsInline = await inlineDecisionsFromDb(base, mid, undefined, inlineLevel);
     if (decisionsInline) inlined.push(decisionsInline);
   }
   const knowledgeInlinePM = await inlineGsdRootFile(base, "knowledge.md", "Project Knowledge");
@@ -614,9 +638,9 @@ export async function buildPlanSlicePrompt(
   const researchInline = await inlineFileOptional(researchPath, researchRel, "Slice Research");
   if (researchInline) inlined.push(researchInline);
   if (inlineLevel !== "minimal") {
-    const decisionsInline = await inlineDecisionsFromDb(base, mid);
+    const decisionsInline = await inlineDecisionsFromDb(base, mid, undefined, inlineLevel);
     if (decisionsInline) inlined.push(decisionsInline);
-    const requirementsInline = await inlineRequirementsFromDb(base, sid);
+    const requirementsInline = await inlineRequirementsFromDb(base, sid, inlineLevel);
     if (requirementsInline) inlined.push(requirementsInline);
   }
   const knowledgeInlinePS = await inlineGsdRootFile(base, "knowledge.md", "Project Knowledge");
@@ -728,6 +752,12 @@ export async function buildExecuteTaskPrompt(
   const budgets = computeBudgets(contextWindow);
   const verificationBudget = `~${Math.round(budgets.verificationBudgetChars / 1000)}K chars`;
 
+  // Compress carry-forward section when it exceeds 40% of inline context budget
+  const carryForwardBudget = Math.floor(budgets.inlineContextBudgetChars * 0.4);
+  const finalCarryForward = carryForwardSection.length > carryForwardBudget
+    ? compressToTarget(carryForwardSection, carryForwardBudget).content
+    : carryForwardSection;
+
   return loadPrompt("execute-task", {
     overridesSection,
     workingDirectory: base,
@@ -737,7 +767,7 @@ export async function buildExecuteTaskPrompt(
     taskPlanPath: taskPlanRelPath,
     taskPlanInline,
     slicePlanExcerpt,
-    carryForwardSection,
+    carryForwardSection: finalCarryForward,
     resumeSection,
     priorTaskLines: priorLines,
     taskSummaryPath,
@@ -760,7 +790,7 @@ export async function buildCompleteSlicePrompt(
   inlined.push(await inlineFile(roadmapPath, roadmapRel, "Milestone Roadmap"));
   inlined.push(await inlineFile(slicePlanPath, slicePlanRel, "Slice Plan"));
   if (inlineLevel !== "minimal") {
-    const requirementsInline = await inlineRequirementsFromDb(base, sid);
+    const requirementsInline = await inlineRequirementsFromDb(base, sid, inlineLevel);
     if (requirementsInline) inlined.push(requirementsInline);
   }
   const knowledgeInlineCS = await inlineGsdRootFile(base, "knowledge.md", "Project Knowledge");
@@ -831,9 +861,9 @@ export async function buildCompleteMilestonePrompt(
 
   // Inline root GSD files (skip for minimal — completion can read these if needed)
   if (inlineLevel !== "minimal") {
-    const requirementsInline = await inlineRequirementsFromDb(base);
+    const requirementsInline = await inlineRequirementsFromDb(base, undefined, inlineLevel);
     if (requirementsInline) inlined.push(requirementsInline);
-    const decisionsInline = await inlineDecisionsFromDb(base, mid);
+    const decisionsInline = await inlineDecisionsFromDb(base, mid, undefined, inlineLevel);
     if (decisionsInline) inlined.push(decisionsInline);
     const projectInline = await inlineProjectFromDb(base);
     if (projectInline) inlined.push(projectInline);
@@ -903,9 +933,9 @@ export async function buildValidateMilestonePrompt(
 
   // Inline root GSD files
   if (inlineLevel !== "minimal") {
-    const requirementsInline = await inlineRequirementsFromDb(base);
+    const requirementsInline = await inlineRequirementsFromDb(base, undefined, inlineLevel);
     if (requirementsInline) inlined.push(requirementsInline);
-    const decisionsInline = await inlineDecisionsFromDb(base, mid);
+    const decisionsInline = await inlineDecisionsFromDb(base, mid, undefined, inlineLevel);
     if (decisionsInline) inlined.push(decisionsInline);
     const projectInline = await inlineProjectFromDb(base);
     if (projectInline) inlined.push(projectInline);
@@ -1051,9 +1081,9 @@ export async function buildReassessRoadmapPrompt(
   if (inlineLevel !== "minimal") {
     const projectInline = await inlineProjectFromDb(base);
     if (projectInline) inlined.push(projectInline);
-    const requirementsInline = await inlineRequirementsFromDb(base);
+    const requirementsInline = await inlineRequirementsFromDb(base, undefined, inlineLevel);
     if (requirementsInline) inlined.push(requirementsInline);
-    const decisionsInline = await inlineDecisionsFromDb(base, mid);
+    const decisionsInline = await inlineDecisionsFromDb(base, mid, undefined, inlineLevel);
     if (decisionsInline) inlined.push(decisionsInline);
   }
   const knowledgeInlineRA = await inlineGsdRootFile(base, "knowledge.md", "Project Knowledge");

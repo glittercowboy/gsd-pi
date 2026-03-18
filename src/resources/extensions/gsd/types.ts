@@ -407,6 +407,9 @@ export interface Requirement {
 
 // ─── Parallel Orchestration Types ────────────────────────────────────────
 
+export type CompressionStrategy = 'truncate' | 'compress';
+export type ContextSelectionMode = 'full' | 'smart';
+
 export type MergeStrategy = "per-slice" | "per-milestone";
 export type AutoMergeMode = "auto" | "confirm" | "manual";
 

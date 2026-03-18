@@ -18,6 +18,8 @@ import {
   resolveExecutorContextWindow,
 } from "../context-budget.js";
 
+import type { TokenProvider } from "../token-counter.js";
+
 // ─── Test helpers ─────────────────────────────────────────────────────────────
 
 function makeRegistry(models: MinimalModel[]): MinimalModelRegistry {
@@ -279,5 +281,72 @@ describe("context-budget: resolveExecutorContextWindow", () => {
 
     const result = resolveExecutorContextWindow(registry, prefs, -1);
     assert.equal(result, 200_000); // falls through to default
+  });
+});
+
+// ─── computeBudgets with provider ─────────────────────────────────────────────
+
+describe("context-budget: computeBudgets with provider", () => {
+  it("anthropic budgets differ from default budgets for same window", () => {
+    const defaultBudgets = computeBudgets(200_000);
+    const anthropicBudgets = computeBudgets(200_000, "anthropic");
+
+    // anthropic uses 3.5 chars/token vs default 4.0
+    // so anthropic totalChars = 200K * 3.5 = 700K vs default 200K * 4 = 800K
+    assert.ok(
+      anthropicBudgets.summaryBudgetChars < defaultBudgets.summaryBudgetChars,
+      `anthropic summary (${anthropicBudgets.summaryBudgetChars}) should be less than default (${defaultBudgets.summaryBudgetChars})`,
+    );
+    assert.ok(
+      anthropicBudgets.inlineContextBudgetChars < defaultBudgets.inlineContextBudgetChars,
+      `anthropic inline (${anthropicBudgets.inlineContextBudgetChars}) should be less than default (${defaultBudgets.inlineContextBudgetChars})`,
+    );
+  });
+
+  it("openai provider matches default budgets (both use 4.0 chars/token)", () => {
+    const defaultBudgets = computeBudgets(128_000);
+    const openaiBudgets = computeBudgets(128_000, "openai");
+
+    assert.deepStrictEqual(openaiBudgets, defaultBudgets);
+  });
+
+  it("anthropic budgets are proportional to 3.5 chars/token", () => {
+    const b = computeBudgets(200_000, "anthropic");
+    // 200K tokens * 3.5 chars/token = 700K chars total
+    assert.equal(b.summaryBudgetChars, Math.floor(700_000 * 0.15));
+    assert.equal(b.inlineContextBudgetChars, Math.floor(700_000 * 0.40));
+    assert.equal(b.verificationBudgetChars, Math.floor(700_000 * 0.10));
+  });
+
+  it("bedrock budgets match anthropic (both use 3.5 chars/token)", () => {
+    const anthropicBudgets = computeBudgets(200_000, "anthropic");
+    const bedrockBudgets = computeBudgets(200_000, "bedrock");
+
+    assert.deepStrictEqual(bedrockBudgets, anthropicBudgets);
+  });
+
+  it("default behavior unchanged when no provider is passed", () => {
+    const b = computeBudgets(128_000);
+    // 128K * 4 = 512K
+    assert.equal(b.summaryBudgetChars, Math.floor(512_000 * 0.15));
+    assert.equal(b.inlineContextBudgetChars, Math.floor(512_000 * 0.40));
+    assert.equal(b.verificationBudgetChars, Math.floor(512_000 * 0.10));
+    assert.equal(b.continueThresholdPercent, 70);
+    assert.equal(b.taskCountRange.min, 2);
+    assert.equal(b.taskCountRange.max, 5);
+  });
+
+  it("task count range is unaffected by provider", () => {
+    const defaultBudgets = computeBudgets(200_000);
+    const anthropicBudgets = computeBudgets(200_000, "anthropic");
+
+    assert.deepStrictEqual(anthropicBudgets.taskCountRange, defaultBudgets.taskCountRange);
+    assert.equal(anthropicBudgets.continueThresholdPercent, defaultBudgets.continueThresholdPercent);
+  });
+
+  it("handles zero input with provider — defaults to 200K", () => {
+    const b = computeBudgets(0, "anthropic");
+    const b200 = computeBudgets(200_000, "anthropic");
+    assert.deepStrictEqual(b, b200);
   });
 });
