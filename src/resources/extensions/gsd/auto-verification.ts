@@ -155,6 +155,20 @@ export async function runPostUnitVerification(
       s.verificationRetryCount.delete(s.currentUnit.id);
       s.pendingVerificationRetry = null;
       return "continue";
+    } else if (result.discoverySource === "package-json") {
+      // Auto-discovered checks from package.json may fail on pre-existing errors
+      // that the current task didn't introduce. Don't trigger the retry loop —
+      // log a warning and let the task proceed (#1186).
+      process.stderr.write(
+        `verification-gate: auto-discovered checks failed (source: package-json) — treating as advisory, not blocking\n`,
+      );
+      ctx.ui.notify(
+        `Verification: auto-discovered checks failed (pre-existing errors likely). Continuing without retry.`,
+        "warning",
+      );
+      s.verificationRetryCount.delete(s.currentUnit.id);
+      s.pendingVerificationRetry = null;
+      return "continue";
     } else if (autoFixEnabled && attempt + 1 <= maxRetries) {
       const nextAttempt = attempt + 1;
       s.verificationRetryCount.set(s.currentUnit.id, nextAttempt);
