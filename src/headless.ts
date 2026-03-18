@@ -178,6 +178,11 @@ async function runHeadlessOnce(options: HeadlessOptions, restartCount: number): 
   const startTime = Date.now()
   const isNewMilestone = options.command === 'new-milestone'
 
+  // new-milestone involves codebase investigation + artifact writing — needs more time
+  if (isNewMilestone && options.timeout === 300_000) {
+    options.timeout = 600_000 // 10 minutes
+  }
+
   // Supervised mode cannot share stdin with --context -
   if (options.supervised && options.context === '-') {
     process.stderr.write('[headless] Error: --supervised cannot be used with --context - (both require stdin)\n')
