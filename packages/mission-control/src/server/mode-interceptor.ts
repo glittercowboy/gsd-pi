@@ -19,7 +19,7 @@ import type { ModeEvent, ReviewResults, QuestionCardPayload } from "./chat-types
 const DEV_SERVER_RE = /(?:https?:\/\/)?(?:localhost|127\.0\.0\.1):(\d+)/g;
 
 /** Ports to exclude from dev_server_detected — Mission Control's own ports */
-const EXCLUDED_PORTS = new Set([4000, 4001, 4010, 4001]);
+const EXCLUDED_PORTS = new Set([4200, 4001, 4010]);
 
 export function parseStreamForModeEvents(
   text: string,

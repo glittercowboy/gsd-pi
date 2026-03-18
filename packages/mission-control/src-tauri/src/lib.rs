@@ -47,20 +47,26 @@ pub fn run() {
                 dep_check::run_startup_checks(dep_handle).await;
             });
 
-            // Spawn managed Bun server
-            let bun_handle = app.handle().clone();
-            tauri::async_runtime::spawn(async move {
-                bun_manager::spawn_bun_server(bun_handle).await;
-            });
+            // Spawn managed Bun server (production only — dev uses beforeDevCommand)
+            #[cfg(not(dev))]
+            {
+                let bun_handle = app.handle().clone();
+                tauri::async_runtime::spawn(async move {
+                    bun_manager::spawn_bun_server(bun_handle).await;
+                });
+            }
 
             Ok(())
         })
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::Destroyed = event {
-                let app = window.app_handle().clone();
-                tauri::async_runtime::spawn(async move {
-                    bun_manager::kill_bun_server(app).await;
-                });
+                #[cfg(not(dev))]
+                {
+                    let app = window.app_handle().clone();
+                    tauri::async_runtime::spawn(async move {
+                        bun_manager::kill_bun_server(app).await;
+                    });
+                }
             }
         })
         .invoke_handler(tauri::generate_handler![
@@ -73,6 +79,7 @@ pub fn run() {
             commands::restart_bun,
             commands::retry_dep_check,
             commands::reveal_path,
+            commands::open_new_window,
             check_for_updates,
             install_update,
         ])

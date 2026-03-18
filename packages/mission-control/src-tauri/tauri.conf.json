@@ -4,8 +4,8 @@
   "version": "0.1.0",
   "identifier": "com.mzansiagentive.gsd-mission-control",
   "build": {
-    "beforeDevCommand": "bun run dev",
-    "devUrl": "http://localhost:4000",
+    "beforeDevCommand": "bun --hot src/server.ts",
+    "devUrl": "http://127.0.0.1:4200",
     "beforeBuildCommand": "bun run build"
   },
   "app": {
@@ -22,7 +22,7 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self' http://localhost:4000; connect-src http://localhost:4000 ws://localhost:4001 ws://localhost:* 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:"
+      "csp": "default-src 'self' http://127.0.0.1:4200; connect-src http://127.0.0.1:4200 ws://127.0.0.1:* ws://localhost:* 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:"
     }
   },
   "bundle": {

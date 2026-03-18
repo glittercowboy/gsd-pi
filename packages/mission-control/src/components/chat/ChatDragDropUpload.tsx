@@ -15,7 +15,7 @@ interface ChatDragDropUploadProps {
 
 export function ChatDragDropUpload({
   onAssetUploaded,
-  apiBase = "http://localhost:4000",
+  apiBase = "http://127.0.0.1:4200",
   children,
 }: ChatDragDropUploadProps) {
   const [isDragging, setIsDragging] = useState(false);

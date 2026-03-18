@@ -119,11 +119,14 @@ export class ClaudeProcessManager {
     // Suppress external Chromium window — Mission Control relays screenshots to preview panel
     env.GSD_BROWSER_HEADLESS = "1";
 
-    console.log(`[claude-process] Spawning: gsd ${args.slice(0, 6).join(" ")}...`);
+    // On Windows, npm global binaries are .cmd wrappers — must use gsd.cmd with shell:false
+    const gsdBin = process.platform === "win32" ? "gsd.cmd" : "gsd";
+
+    console.log(`[claude-process] Spawning: ${gsdBin} ${args.slice(0, 6).join(" ")}...`);
     console.log(`[claude-process] CWD: ${this.cwd}`);
 
     // Use Node's spawn for reliable stream handling on Windows
-    const proc = this._spawnFn("gsd", args, {
+    const proc = this._spawnFn(gsdBin, args, {
       cwd: this.cwd,
       env,
       stdio: ["ignore", "pipe", "pipe"],

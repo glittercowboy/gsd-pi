@@ -2,6 +2,7 @@ import { resolve, dirname, basename } from "node:path";
 import { access } from "node:fs/promises";
 import homepage from "../public/index.html";
 import { startPipeline } from "./server/pipeline";
+import type { PipelineHandle } from "./server/pipeline";
 import { handleFsRequest } from "./server/fs-api";
 import { handleDialogRequest } from "./server/dialog-api";
 import { handleGitRequest } from "./server/git-api";
@@ -16,38 +17,51 @@ import { handleGsdFileRequest } from "./server/gsd-file-api";
 import { isTrusted, writeTrustFlag } from "./server/trust-api";
 import { handleClassifyIntentRequest } from "./server/classify-intent-api";
 import { handleAuthRequest } from "./server/auth-api";
+import { freePort } from "./server/kill-port";
 
 const repoRoot = resolve(import.meta.dir, "../../..");
 
-// Start file-to-state pipeline with WebSocket server (before server so fetch can reference it)
-const pipeline = await startPipeline({
-  planningDir: resolve(repoRoot, ".gsd"),
-  wsPort: 4001,
-});
-console.log("File-to-state pipeline running. WebSocket on :4001");
+// Free the HTTP port — WS ports are freed per-window as pipelines are created
+await freePort(4200);
 
-// Auto-restore last opened project so client doesn't land on onboarding after reload
-try {
-  const { getRecentProjects } = await import("./server/recent-projects");
-  const recent = await getRecentProjects();
-  if (recent.length > 0) {
-    const last = recent[0];
-    const lastPlanningDir = resolve(last.path, ".gsd");
-    if (lastPlanningDir !== resolve(repoRoot, ".gsd")) {
-      try {
-        await pipeline.switchProject(lastPlanningDir);
-        console.log(`[server] Auto-restored last project: ${last.path}`);
-      } catch (e: any) {
-        console.warn(`[server] Could not auto-restore last project: ${e?.message}`);
-      }
-    }
+/** Per-window pipelines: windowId → PipelineHandle */
+const windowPipelines = new Map<string, PipelineHandle>();
+/** Per-window WS ports: windowId → port number */
+const windowWsPorts = new Map<string, number>();
+let nextWsPort = 4001;
+
+/** Get the pipeline for a request (via X-Window-Id header). Falls back to first window. */
+function getPipelineForReq(req: Request): PipelineHandle | null {
+  const windowId = req.headers.get("X-Window-Id");
+  if (windowId && windowPipelines.has(windowId)) {
+    return windowPipelines.get(windowId)!;
   }
-} catch (e: any) {
-  console.warn(`[server] Could not read recent projects for restore: ${e?.message}`);
+  // Fallback: first registered pipeline
+  const first = windowPipelines.values().next().value;
+  return first ?? null;
 }
 
+/** Register a window: get existing pipeline or create a new one. */
+async function registerWindow(windowId: string): Promise<number> {
+  if (windowWsPorts.has(windowId)) {
+    return windowWsPorts.get(windowId)!;
+  }
+  const wsPort = nextWsPort++;
+  windowWsPorts.set(windowId, wsPort);
+  await freePort(wsPort);
+  const pipeline = await startPipeline({
+    planningDir: resolve(repoRoot, ".gsd"),
+    wsPort,
+  });
+  windowPipelines.set(windowId, pipeline);
+  console.log(`[server] Window ${windowId} registered — pipeline on WS :${wsPort}`);
+  return wsPort;
+}
+
+
 const server = Bun.serve({
-  port: 4000,
+  port: 4200,
+  hostname: "127.0.0.1",
   routes: {
     "/": homepage,
   },
@@ -65,11 +79,25 @@ const server = Bun.serve({
       if (response) return addCorsHeaders(response);
     }
 
+    // POST /api/window/register — register a new window and get its WS port
+    if (pathname === "/api/window/register" && req.method === "POST") {
+      try {
+        const body = await req.json() as { windowId?: string };
+        if (!body.windowId) {
+          return addCorsHeaders(Response.json({ error: "windowId required" }, { status: 400 }));
+        }
+        const wsPort = await registerWindow(body.windowId);
+        return addCorsHeaders(Response.json({ wsPort }));
+      } catch (err: any) {
+        return addCorsHeaders(Response.json({ error: err.message }, { status: 500 }));
+      }
+    }
+
     // Route /api/fs/* to file system handler
     // allowedRoot is the current project root so read/write are scoped to the open project.
     // list and detect-project ignore allowedRoot (no root restriction on browsing).
     if (pathname.startsWith("/api/fs/")) {
-      const projectRoot = resolve(pipeline.getPlanningDir(), "..");
+      const projectRoot = resolve(getPipelineForReq(req)?.getPlanningDir() ?? resolve(repoRoot, ".gsd"), "..");
       const response = await handleFsRequest(req, url, projectRoot);
       if (response) return addCorsHeaders(response);
     }
@@ -82,7 +110,7 @@ const server = Bun.serve({
 
     // Route /api/git/* to git log handler
     if (pathname.startsWith("/api/git/")) {
-      const projectRoot = dirname(pipeline.getPlanningDir());
+      const p72 = getPipelineForReq(req); const projectRoot = dirname(p72?.getPlanningDir() ?? resolve(repoRoot, ".gsd"));
       const response = await handleGitRequest(req, url, projectRoot);
       if (response) return addCorsHeaders(response);
     }
@@ -101,32 +129,32 @@ const server = Bun.serve({
 
     // Route /api/settings to settings handler
     if (pathname.startsWith("/api/settings")) {
-      const response = await handleSettingsRequest(req, url, pipeline.getPlanningDir());
+      const response = await handleSettingsRequest(req, url, getPipelineForReq(req)?.getPlanningDir() ?? resolve(repoRoot, ".gsd"));
       if (response) return addCorsHeaders(response);
     }
 
     // Route /api/session/* to session status handler
     if (pathname.startsWith("/api/session/")) {
-      const response = await handleSessionStatusRequest(req, url, pipeline.getPlanningDir());
+      const response = await handleSessionStatusRequest(req, url, getPipelineForReq(req)?.getPlanningDir() ?? resolve(repoRoot, ".gsd"));
       if (response) return addCorsHeaders(response);
     }
 
     // Route /api/assets/* to assets handler
     if (pathname.startsWith("/api/assets/")) {
       // Assets live in <projectRoot>/assets/, not inside .gsd/
-      const response = await handleAssetsRequest(req, url, resolve(pipeline.getPlanningDir(), ".."));
+      const response = await handleAssetsRequest(req, url, resolve(getPipelineForReq(req)?.getPlanningDir() ?? resolve(repoRoot, ".gsd"), ".."));
       if (response) return addCorsHeaders(response);
     }
 
     // Route /api/uat-results to UAT results handler
     if (pathname === "/api/uat-results") {
-      const response = await handleUatResultsRequest(req, url, pipeline.getPlanningDir());
+      const response = await handleUatResultsRequest(req, url, getPipelineForReq(req)?.getPlanningDir() ?? resolve(repoRoot, ".gsd"));
       if (response) return addCorsHeaders(response);
     }
 
     // Route /api/gsd-file to inline read handler
     if (pathname === "/api/gsd-file") {
-      const response = await handleGsdFileRequest(req, url, pipeline.getPlanningDir(), repoRoot);
+      const response = await handleGsdFileRequest(req, url, getPipelineForReq(req)?.getPlanningDir() ?? resolve(repoRoot, ".gsd"), repoRoot);
       if (response) return addCorsHeaders(response);
     }
 
@@ -134,7 +162,7 @@ const server = Bun.serve({
     if (pathname === "/api/preview/port" && req.method === "POST") {
       const body = await req.json() as { port?: number };
       if (typeof body.port === "number") {
-        pipeline.setPreviewPort(body.port);
+        getPipelineForReq(req)?.setPreviewPort(body.port);
         return addCorsHeaders(Response.json({ ok: true, port: body.port }));
       }
       return addCorsHeaders(Response.json({ error: "port required" }, { status: 400 }));
@@ -142,7 +170,7 @@ const server = Bun.serve({
 
     // Route /api/preview/* to dev server proxy
     if (pathname.startsWith("/api/preview")) {
-      const response = await handleProxyRequest(req, url, pipeline.getPreviewPort());
+      const response = await handleProxyRequest(req, url, getPipelineForReq(req)?.getPreviewPort() ?? 0);
       return addCorsHeaders(response);
     }
 
@@ -181,7 +209,7 @@ const server = Bun.serve({
           // No .gsd/ yet — new project
         }
 
-        await pipeline.switchProject(planningDir);
+        await getPipelineForReq(req)?.switchProject(planningDir);
 
         // Record in recent projects
         await addRecentProject({
@@ -204,7 +232,7 @@ const server = Bun.serve({
 
     // GET /api/trust-status — check if current project has been trusted (PERM-02)
     if (pathname === "/api/trust-status") {
-      const gsdDir = pipeline.getPlanningDir();
+      const gsdDir = getPipelineForReq(req)?.getPlanningDir() ?? resolve(repoRoot, ".gsd");
       const trusted = await isTrusted(gsdDir);
       return addCorsHeaders(
         Response.json({ trusted, gsdDir })
@@ -220,7 +248,7 @@ const server = Bun.serve({
     // POST /api/trust — write trust flag for a project (PERM-02)
     if (pathname === "/api/trust" && req.method === "POST") {
       const body = await req.json() as { dir?: string };
-      const gsdDir = body.dir ?? pipeline.getPlanningDir();
+      const gsdDir = body.dir ?? getPipelineForReq(req)?.getPlanningDir() ?? resolve(repoRoot, ".gsd");
       await writeTrustFlag(gsdDir);
       return addCorsHeaders(Response.json({ ok: true }));
     }
@@ -248,7 +276,9 @@ console.log(`Mission Control running at ${server.url}`);
 // Orphan prevention: kill all gsd processes when the Bun server shuts down
 const cleanup = async () => {
   console.log("[server] Shutting down — killing all gsd processes...");
-  await pipeline.sessionManager.killAll();
+  for (const pipeline of windowPipelines.values()) {
+    await pipeline.sessionManager.killAll();
+  }
   server.stop(true);
   process.exit(0);
 };
@@ -258,8 +288,8 @@ process.on("SIGINT", cleanup);
 
 /** Add CORS headers to API responses (defensive — same-origin in practice). */
 function addCorsHeaders(response: Response): Response {
-  response.headers.set("Access-Control-Allow-Origin", "http://localhost:4000");
+  response.headers.set("Access-Control-Allow-Origin", "http://127.0.0.1:4200");
   response.headers.set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
-  response.headers.set("Access-Control-Allow-Headers", "Content-Type");
+  response.headers.set("Access-Control-Allow-Headers", "Content-Type, X-Window-Id");
   return response;
 }

@@ -117,7 +117,7 @@ export function shouldTogglePreview(e: KeyboardEvent): boolean {
  *   - { type: "preview_open", port: number } — adds port and opens panel
  *   - { type: "browser_state_update", screenshot, url, title } — sets browser agent view
  */
-export function usePreview(): UsePreviewReturn {
+export function usePreview(wsUrl: string = "ws://localhost:4001"): UsePreviewReturn {
   const [open, setOpen] = useState(false);
   const [servers, setServers] = useState<DetectedServer[]>([]);
   const [activeFrontendPort, setActiveFrontendPort] = useState<number | null>(null);
@@ -173,7 +173,7 @@ export function usePreview(): UsePreviewReturn {
 
     function connect() {
       if (cancelled) return;
-      ws = new WebSocket("ws://localhost:4001");
+      ws = new WebSocket(wsUrl);
 
       ws.onmessage = (e: MessageEvent) => {
         try {
@@ -213,7 +213,7 @@ export function usePreview(): UsePreviewReturn {
       ws?.close();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [wsUrl]);
 
   // Auto-clear browser screenshot after 10s of no updates (return to iframe mode)
   useEffect(() => {

@@ -15,27 +15,27 @@ impl BunState {
     }
 }
 
-/// Resolve the repo root relative to the running executable.
-/// In dev: tauri dev CWD is src-tauri/, so go up once.
-/// In prod: the executable is inside the app bundle; in that case
-/// resources are bundled — use current_dir() as fallback.
-fn resolve_repo_root() -> std::path::PathBuf {
-    // Try current_dir first (works for `tauri dev`)
+/// Resolve the packages/mission-control directory regardless of where tauri was invoked from.
+/// - From packages/mission-control/ (typical `tauri dev`): return cwd as-is
+/// - From packages/mission-control/src-tauri/ : go up one level
+/// - From repo root (e.g. workspace scripts): append packages/mission-control
+fn resolve_mc_dir() -> std::path::PathBuf {
     if let Ok(cwd) = std::env::current_dir() {
-        // If we're in src-tauri/, go up one
         if cwd.ends_with("src-tauri") {
             return cwd.parent().unwrap_or(&cwd).to_path_buf();
         }
-        return cwd;
+        if cwd.file_name().map(|n| n == "mission-control").unwrap_or(false) {
+            return cwd;
+        }
+        return cwd.join("packages").join("mission-control");
     }
-    std::path::PathBuf::from(".")
+    std::path::PathBuf::from("packages/mission-control")
 }
 
 /// Spawn the Bun server. Emits `bun-started` to all windows when ready.
 /// Watches the process and emits `bun-crashed` if it exits unexpectedly.
 pub async fn spawn_bun_server(app: AppHandle) {
-    let repo_root = resolve_repo_root();
-    let mc_dir = repo_root.join("packages").join("mission-control");
+    let mc_dir = resolve_mc_dir();
 
     #[cfg(target_os = "windows")]
     let bun_bin = "bun.exe";

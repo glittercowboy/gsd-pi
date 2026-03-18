@@ -23,6 +23,8 @@ interface ProjectHomeScreenProps {
    * When omitted the component fetches /api/projects/recent on mount.
    */
   projects?: RecentProject[];
+  /** Open a new independent window (Tauri multi-window). */
+  onNewWindow?: () => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -132,6 +134,7 @@ export default function ProjectHomeScreen({
   onOpenFolder,
   onCreateProject,
   projects: projectsProp,
+  onNewWindow,
 }: ProjectHomeScreenProps) {
   const [fetchedProjects, setFetchedProjects] = useState<RecentProject[]>([]);
   const [loading, setLoading] = useState(false);
@@ -186,7 +189,28 @@ export default function ProjectHomeScreen({
 
   return (
     <div style={rootStyle}>
-      <h1 style={headerStyle}>Projects</h1>
+      <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 32 }}>
+        <h1 style={{ ...headerStyle, marginBottom: 0 }}>Projects</h1>
+        {onNewWindow && (
+          <button
+            type="button"
+            onClick={onNewWindow}
+            style={{
+              border: "1px solid #5BC8F0",
+              color: "#5BC8F0",
+              background: "transparent",
+              padding: "4px 12px",
+              borderRadius: 4,
+              fontFamily: "'JetBrains Mono', monospace",
+              fontSize: 11,
+              cursor: "pointer",
+            }}
+            title="Open a new window with independent project state"
+          >
+            New Window
+          </button>
+        )}
+      </div>
 
       {loading && (
         <p

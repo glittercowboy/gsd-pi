@@ -12,6 +12,7 @@
  * Uses usePreview for live preview panel state (Cmd+P toggle, port detection).
  */
 import { useState, useEffect, useRef, useCallback } from "react";
+import { getWsUrl } from "@/window-identity";
 import { Sidebar } from "@/components/layout/Sidebar";
 import { SingleColumnView } from "@/components/layout/SingleColumnView";
 import { PreviewPanelWithState } from "@/components/preview/PreviewPanelWithState";
@@ -55,11 +56,10 @@ export function AppShell() {
   const [isDragging, setIsDragging] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
 
-  // Restore last project path on mount so the user doesn't have to reselect after
-  // hot reload or server restart
+  // Restore last project for THIS window from sessionStorage (not localStorage)
   useEffect(() => {
     try {
-      const saved = localStorage.getItem("gsd-mc-last-path");
+      const saved = sessionStorage.getItem("mc-last-path");
       if (saved) {
         fetch("/api/project/switch", {
           method: "POST",
@@ -70,13 +70,13 @@ export function AppShell() {
     } catch {}
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-  const { state, status } = usePlanningState();
+  const { state, status } = usePlanningState(getWsUrl());
   const { mode, continueHere, dismiss, goHome } = useSessionFlow(state, status);
 
   // Multi-project tab state (WORKSPACE-04)
   const [openProjects, setOpenProjects] = useState<OpenProject[]>([]);
   const [activeProjectPath, setActiveProjectPath] = useState<string | null>(() => {
-    try { return localStorage.getItem("gsd-mc-last-path"); } catch { return null; }
+    try { return sessionStorage.getItem("mc-last-path"); } catch { return null; }
   });
 
   // Load settings to get budget_ceiling for cost tracking
@@ -121,7 +121,7 @@ export function AppShell() {
     dismissBoundaryViolation,
     stuckSessionId,
     reconnectSession,
-  } = useSessionManager("ws://localhost:4001", { budgetCeiling });
+  } = useSessionManager(getWsUrl(), { budgetCeiling });
 
   // handleBuilderSend: classify intent before dispatching in Builder mode (BUILDER-04)
   const handleBuilderSend = useCallback(async (message: string) => {
@@ -162,17 +162,27 @@ export function AppShell() {
 
   const { activeView, setActiveView } = useSidebarNav();
 
+  const handleNewWindow = useCallback(async () => {
+    try {
+      const { invoke } = await import("@tauri-apps/api/core");
+      await invoke("open_new_window");
+    } catch {
+      // Browser fallback
+      window.open(window.location.href, "_blank");
+    }
+  }, []);
+
   // Keyboard shortcuts — command palette (Ctrl+Shift+P) and panel switching (Ctrl+1-5)
   const { open: paletteOpen, setOpen: setPaletteOpen } = useCommandPalette();
   const { headingRef } = usePanelFocus((kind) => setActiveView({ kind }));
 
   const { overlay: discussOverlay, reviewResults, handleFix, dismissReview, chatModeState } = useChatMode(
-    "ws://localhost:4001",
+    getWsUrl(),
     sendMessage,
   );
 
   // Live preview state — Cmd+P keyboard binding handled inside usePreview
-  const { open: previewOpen, viewport, setOpen: setPreviewOpen, setViewport, browserViewportWidth } = usePreview();
+  const { open: previewOpen, viewport, setOpen: setPreviewOpen, setViewport, browserViewportWidth } = usePreview(getWsUrl());
 
   // Session ref — tracks last read session data for partial viewport writes
   const sessionRef = useRef<MissionControlSession | null>(null);
@@ -261,8 +271,9 @@ export function AppShell() {
       <>
         <ProjectHomeScreen
           builderMode={builderMode}
+          onNewWindow={handleNewWindow}
           onOpenProject={(path) => {
-            try { localStorage.setItem("gsd-mc-last-path", path); } catch {}
+            try { sessionStorage.setItem("mc-last-path", path); } catch {}
             // Add to open projects list if not already there
             setOpenProjects((prev) => {
               if (prev.find((p) => p.path === path)) return prev;
@@ -313,7 +324,7 @@ export function AppShell() {
         <FolderPickerModal
           open={folderPickerOpen}
           onClose={() => setFolderPickerOpen(false)}
-          onSelect={(path) => { try { localStorage.setItem("gsd-mc-last-path", path); } catch {} setActiveProjectPath(path); dismiss(); }}
+          onSelect={(path) => { try { sessionStorage.setItem("mc-last-path", path); } catch {} setActiveProjectPath(path); dismiss(); }}
         />
       </>
     );
@@ -360,7 +371,7 @@ export function AppShell() {
         <FolderPickerModal
           open={folderPickerOpen}
           onClose={() => setFolderPickerOpen(false)}
-          onSelect={(path) => { try { localStorage.setItem("gsd-mc-last-path", path); } catch {} setActiveProjectPath(path); dismiss(); }}
+          onSelect={(path) => { try { sessionStorage.setItem("mc-last-path", path); } catch {} setActiveProjectPath(path); dismiss(); }}
         />
       </>
     );
@@ -528,7 +539,7 @@ export function AppShell() {
       <FolderPickerModal
         open={folderPickerOpen}
         onClose={() => setFolderPickerOpen(false)}
-        onSelect={(path) => { try { localStorage.setItem("gsd-mc-last-path", path); } catch {} setActiveProjectPath(path); dismiss(); }}
+        onSelect={(path) => { try { sessionStorage.setItem("mc-last-path", path); } catch {} setActiveProjectPath(path); dismiss(); }}
       />
       {/* Code Explorer modal — full-screen file browser (POLISH-09) */}
       <CodeExplorer

@@ -119,3 +119,26 @@ pub async fn retry_dep_check(app: AppHandle) -> bool {
     true
 }
 
+/// Open a new Mission Control window (independent project state).
+#[tauri::command]
+pub async fn open_new_window(app: AppHandle) -> Result<(), String> {
+    let label = format!(
+        "window-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis()
+    );
+    tauri::WebviewWindowBuilder::new(
+        &app,
+        label,
+        tauri::WebviewUrl::App("index.html".into()),
+    )
+    .title("GSD Mission Control")
+    .inner_size(1280.0, 800.0)
+    .min_inner_size(1024.0, 640.0)
+    .build()
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+

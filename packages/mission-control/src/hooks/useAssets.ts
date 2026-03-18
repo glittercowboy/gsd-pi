@@ -45,7 +45,7 @@ export interface UseAssetsResult {
   categories: string[];
 }
 
-export function useAssets(apiBase = "http://localhost:4000"): UseAssetsResult {
+export function useAssets(apiBase = "http://127.0.0.1:4200"): UseAssetsResult {
   const [assets, setAssets] = useState<AssetItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);

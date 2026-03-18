@@ -32,7 +32,7 @@ export interface UseSettingsResult {
   reload: () => Promise<void>;
 }
 
-export function useSettings(apiBase = "http://localhost:4000"): UseSettingsResult {
+export function useSettings(apiBase = "http://127.0.0.1:4200"): UseSettingsResult {
   const [settings, setSettings] = useState<SettingsData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
