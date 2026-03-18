@@ -9,7 +9,7 @@
 
 import { constants } from "fs";
 import { access, readFile } from "fs/promises";
-import { resolveToCwd } from "./path-utils.js";
+import { resolveToCwd, UNICODE_SPACES } from "./path-utils.js";
 
 export function detectLineEnding(content: string): "\r\n" | "\n" {
 	const crlfIdx = content.indexOf("\r\n");
@@ -41,7 +41,7 @@ export function normalizeForFuzzyMatch(text: string): string {
 		.replace(/[“”]/g, '"')
 		.replace(/[‘’]/g, "'")
 		.replace(/[‐‑‒–—−]/g, "-")
-		.replace(/[\u00A0\u1680\u2000-\u200A\u202F\u205F\u3000]/g, " ")
+		.replace(UNICODE_SPACES, " ")
 		.split("\n")
 		.map((line) => line.replace(/[ \t]+$/g, ""))
 		.join("\n");

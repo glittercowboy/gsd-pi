@@ -8,7 +8,7 @@ import {
 	validateLineRef,
 	applyHashlineEdits,
 	HashlineMismatchError,
-	hashlineParseText,
+	parseHashlineText,
 	stripNewLinePrefixes,
 	type HashlineEdit,
 	type Anchor,
@@ -395,31 +395,31 @@ describe("stripNewLinePrefixes", () => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
-// hashlineParseText
+// parseHashlineText
 // ═══════════════════════════════════════════════════════════════════════════
 
-describe("hashlineParseText", () => {
+describe("parseHashlineText", () => {
 	it("returns empty array for null", () => {
-		assert.deepEqual(hashlineParseText(null), []);
+		assert.deepEqual(parseHashlineText(null), []);
 	});
 
 	it("returns array input as-is when no strip heuristic applies", () => {
 		const input = ["- [x] done", "- [ ] todo"];
-		assert.equal(hashlineParseText(input), input);
+		assert.equal(parseHashlineText(input), input);
 	});
 
 	it("splits string on newline and preserves Markdown list '-' prefix", () => {
-		const result = hashlineParseText("- item one\n- item two\n- item three");
+		const result = parseHashlineText("- item one\n- item two\n- item three");
 		assert.deepEqual(result, ["- item one", "- item two", "- item three"]);
 	});
 
 	it("strips '+' diff markers from string input", () => {
-		const result = hashlineParseText("+line one\n+line two");
+		const result = parseHashlineText("+line one\n+line two");
 		assert.deepEqual(result, ["line one", "line two"]);
 	});
 
 	it("still strips trailing empty from string split", () => {
-		assert.deepEqual(hashlineParseText("foo\n"), ["foo"]);
+		assert.deepEqual(parseHashlineText("foo\n"), ["foo"]);
 	});
 });
 

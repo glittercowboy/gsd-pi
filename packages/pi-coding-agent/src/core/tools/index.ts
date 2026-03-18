@@ -99,7 +99,7 @@ export {
 	formatLineTag,
 	type HashlineEdit,
 	HashlineMismatchError,
-	hashlineParseText,
+	parseHashlineText,
 	type HashMismatch,
 	parseTag,
 	stripNewLinePrefixes,

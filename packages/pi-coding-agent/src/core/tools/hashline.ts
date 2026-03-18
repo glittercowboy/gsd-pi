@@ -230,7 +230,7 @@ export function stripNewLinePrefixes(lines: string[]): string[] {
  * Parse edit content — handles string, array, or null input.
  * Strips hashline prefixes and diff markers from model output.
  */
-export function hashlineParseText(edit: string[] | string | null): string[] {
+export function parseHashlineText(edit: string[] | string | null): string[] {
 	if (edit === null) return [];
 	if (typeof edit === "string") {
 		const normalizedEdit = edit.endsWith("\n") ? edit.slice(0, -1) : edit;

@@ -20,7 +20,7 @@ import {
 	applyHashlineEdits,
 	computeLineHash,
 	type HashlineEdit,
-	hashlineParseText,
+	parseHashlineText,
 	parseTag,
 } from "./hashline.js";
 import { resolveToCwd } from "./path-utils.js";
@@ -99,7 +99,7 @@ function tryParseTag(raw: string): Anchor | undefined {
 function resolveEditAnchors(edits: HashlineEditItem[]): HashlineEdit[] {
 	const result: HashlineEdit[] = [];
 	for (const edit of edits) {
-		const lines = hashlineParseText(edit.lines);
+		const lines = parseHashlineText(edit.lines);
 		const tag = edit.pos ? tryParseTag(edit.pos) : undefined;
 		const end = edit.end ? tryParseTag(edit.end) : undefined;
 
@@ -207,9 +207,9 @@ export function createHashlineEditTool(cwd: string, options?: HashlineEditToolOp
 							for (const edit of edits) {
 								if ((edit.op === "append" || edit.op === "prepend") && !edit.pos && !edit.end) {
 									if (edit.op === "prepend") {
-										lines.unshift(...hashlineParseText(edit.lines));
+										lines.unshift(...parseHashlineText(edit.lines));
 									} else {
-										lines.push(...hashlineParseText(edit.lines));
+										lines.push(...parseHashlineText(edit.lines));
 									}
 								} else {
 									throw new Error(`File not found: ${path}`);
