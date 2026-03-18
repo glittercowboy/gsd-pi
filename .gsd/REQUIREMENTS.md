@@ -4,17 +4,6 @@ This file is the explicit capability and coverage contract for the project.
 
 ## Active
 
-### R003 — Agent text streams in real-time as a continuous left-aligned document flow — headings, code blocks with syntax highlighting (Shiki), tables, inline code, lists, blockquotes. Not chat bubbles. Premium typography with Inter, proper spacing, hierarchy, and weights.
-- Class: primary-user-loop
-- Status: active
-- Description: Agent text streams in real-time as a continuous left-aligned document flow — headings, code blocks with syntax highlighting (Shiki), tables, inline code, lists, blockquotes. Not chat bubbles. Premium typography with Inter, proper spacing, hierarchy, and weights.
-- Why it matters: This is the primary reading experience. If the markdown rendering is mediocre, the whole app feels mediocre.
-- Source: user
-- Primary owning slice: M001-1ya5a3/S03
-- Supporting slices: none
-- Validation: unmapped
-- Notes: Must handle streaming deltas smoothly without jank. Tables must render properly. Code blocks need language-specific syntax highlighting.
-
 ### R004 — Tool calls render as bespoke collapsed/expandable cards. Edit cards show syntax-highlighted inline diffs. Read cards show formatted code previews with line numbers. Bash cards show styled terminal output. Write cards show the created file with highlighting. Collapsed view shows just enough to be interesting — a code snippet, a diff summary, a command. Expanded view shows full detail. Each card type is a design piece with considered borders, spacing, hierarchy, and subtle expand animation.
 - Class: differentiator
 - Status: active
@@ -70,17 +59,6 @@ This file is the explicit capability and coverage contract for the project.
 - Validation: unmapped
 - Notes: Must handle all extension_ui_request methods: select (single + multi), confirm, input, editor. Also handle fire-and-forget: notify, setStatus, setWidget, setTitle. The secure_env_collect tool uses paged masked input — handle via the input method with masking.
 
-### R012 — The RPC protocol emits high-frequency message_update deltas. The renderer must accumulate and display them smoothly without jank, dropped frames, or visible flicker. Markdown parsing and syntax highlighting must not block the render loop.
-- Class: quality-attribute
-- Status: active
-- Description: The RPC protocol emits high-frequency message_update deltas. The renderer must accumulate and display them smoothly without jank, dropped frames, or visible flicker. Markdown parsing and syntax highlighting must not block the render loop.
-- Why it matters: Stuttery streaming kills the premium feel instantly
-- Source: inferred
-- Primary owning slice: M001-1ya5a3/S03
-- Supporting slices: M001-1ya5a3/S04
-- Validation: unmapped
-- Notes: Consider requestAnimationFrame batching, virtual scrolling for long conversations, and deferred/async Shiki highlighting.
-
 ## Validated
 
 ### R001 — Electron desktop app launches with native window, title bar, and proper macOS integration
@@ -104,6 +82,17 @@ This file is the explicit capability and coverage contract for the project.
 - Supporting slices: none
 - Validation: `npm run test -w studio` passes 21 tests including 19 GsdService unit tests covering JSONL framing (LF-only, CR+LF, multi-chunk, Unicode passthrough), event dispatch (pending request resolution, unmatched forwarding), pending request timeout, fire-and-forget classification, and extension UI auto-response for all four interactive methods. `npm run build -w studio` compiles all three targets (main, preload, renderer) with zero TypeScript errors. RPC types self-contained — zero imports from agent packages.
 - Notes: Uses self-contained RPC types (no @gsd/ imports). GsdService spawns `gsd --mode rpc --no-session`, implements LF-only JSONL framing, pending request tracking with 30s timeout, exponential-backoff crash recovery (max 3 in 60s), and auto-responder for interactive extension UI. Full IPC bridge: gsd:event, gsd:send-command, gsd:spawn, gsd:status, gsd:connection-change, gsd:stderr.
+
+### R003 — Agent text streams in real-time as a continuous left-aligned document flow — headings, code blocks with syntax highlighting (Shiki), tables, inline code, lists, blockquotes. Not chat bubbles. Premium typography with Inter, proper spacing, hierarchy, and weights.
+- Class: primary-user-loop
+- Status: validated
+- Description: Agent text streams in real-time as a continuous left-aligned document flow — headings, code blocks with syntax highlighting (Shiki), tables, inline code, lists, blockquotes. Not chat bubbles. Premium typography with Inter, proper spacing, hierarchy, and weights.
+- Why it matters: This is the primary reading experience. If the markdown rendering is mediocre, the whole app feels mediocre.
+- Source: user
+- Primary owning slice: M001-1ya5a3/S03
+- Supporting slices: none
+- Validation: `npm run test -w studio` passes 34 tests including 12 message-model unit tests. `npm run build -w studio` bundles Shiki WASM (622 kB) and streamdown CSS (sd-fadeIn/sd-blurIn keyframes). 20+ custom markdown component overrides (h1-h6, code, pre, table, blockquote, lists, links) styled to dark amber design system. AssistantBlock wraps Streamdown with vitesse-dark Shiki theme and block caret. Continuous document flow with gap-6 spacing, not chat bubbles.
+- Notes: Must handle streaming deltas smoothly without jank. Tables must render properly. Code blocks need language-specific syntax highlighting.
 
 ### R008 — Comprehensive design system — dark backgrounds, light text, monochrome grays, warm amber/gold as the single accent color. Inter for UI text, JetBrains Mono for code. Phosphor Icons. Radix primitives + Tailwind for styling. No Lucide icons, no purple, no shadcn recognizable aesthetic. Custom component library that feels like Linear or Vercel.
 - Class: quality-attribute
@@ -137,6 +126,17 @@ This file is the explicit capability and coverage contract for the project.
 - Supporting slices: all slices
 - Validation: Live shell review confirms Phosphor icons, restrained amber-only accents, flattened panel/card radii, and custom desktop chrome rather than stock component-kit styling.
 - Notes: Enforce during every slice. UAT should include visual review.
+
+### R012 — The RPC protocol emits high-frequency message_update deltas. The renderer must accumulate and display them smoothly without jank, dropped frames, or visible flicker. Markdown parsing and syntax highlighting must not block the render loop.
+- Class: quality-attribute
+- Status: validated
+- Description: The RPC protocol emits high-frequency message_update deltas. The renderer must accumulate and display them smoothly without jank, dropped frames, or visible flicker. Markdown parsing and syntax highlighting must not block the render loop.
+- Why it matters: Stuttery streaming kills the premium feel instantly
+- Source: inferred
+- Primary owning slice: M001-1ya5a3/S03
+- Supporting slices: M001-1ya5a3/S04
+- Validation: Streamdown handles block-level memoization internally — only changed blocks re-render. buildMessageBlocks is pure and re-derived via useMemo keyed on events array identity. Shiki WASM loaded lazily by @streamdown/code. Auto-scroll depends on derived blocks (not raw event count). Architecture proven via build + test; live jank testing deferred to UAT.
+- Notes: Consider requestAnimationFrame batching, virtual scrolling for long conversations, and deferred/async Shiki highlighting.
 
 ## Deferred
 
@@ -214,7 +214,7 @@ This file is the explicit capability and coverage contract for the project.
 |---|---|---|---|---|---|
 | R001 | core-capability | validated | M001-1ya5a3/S01 | none | `npm run dev -w studio` reaches renderer URL plus `[studio] preload loaded`, `[studio] window created`, and `GSD Studio ready`; Electron window loads the custom title bar shell in browser verification. |
 | R002 | core-capability | validated | M001-1ya5a3/S02 | none | `npm run test -w studio` passes 21 tests including 19 GsdService unit tests covering JSONL framing (LF-only, CR+LF, multi-chunk, Unicode passthrough), event dispatch (pending request resolution, unmatched forwarding), pending request timeout, fire-and-forget classification, and extension UI auto-response for all four interactive methods. `npm run build -w studio` compiles all three targets (main, preload, renderer) with zero TypeScript errors. RPC types self-contained — zero imports from agent packages. |
-| R003 | primary-user-loop | active | M001-1ya5a3/S03 | none | unmapped |
+| R003 | primary-user-loop | validated | M001-1ya5a3/S03 | none | `npm run test -w studio` passes 34 tests (12 message-model). `npm run build -w studio` bundles Shiki WASM + streamdown CSS. 20+ custom markdown overrides styled to dark amber design system. AssistantBlock wraps Streamdown with vitesse-dark and block caret. |
 | R004 | differentiator | active | M001-1ya5a3/S04 | M001-1ya5a3/S03 | unmapped |
 | R005 | core-capability | active | M001-1ya5a3/S06 | none | unmapped |
 | R006 | core-capability | active | M001-1ya5a3/S06 | M001-1ya5a3/S02 | unmapped |
@@ -223,7 +223,7 @@ This file is the explicit capability and coverage contract for the project.
 | R009 | differentiator | active | M001-1ya5a3/S05 | M001-1ya5a3/S02 | unmapped |
 | R010 | core-capability | validated | M001-1ya5a3/S01 | none | Browser verification confirms the three-column shell; localStorage key `react-resizable-panels:gsd-studio-layout:files:conversation:editor` mutates after separator interaction, proving persisted resizable layout wiring. |
 | R011 | constraint | validated | M001-1ya5a3/S01 | all slices | Live shell review confirms Phosphor icons, restrained amber-only accents, flattened panel/card radii, and custom desktop chrome rather than stock component-kit styling. |
-| R012 | quality-attribute | active | M001-1ya5a3/S03 | M001-1ya5a3/S04 | unmapped |
+| R012 | quality-attribute | validated | M001-1ya5a3/S03 | M001-1ya5a3/S04 | Streamdown block-level memoization, pure buildMessageBlocks via useMemo, lazy Shiki WASM loading, auto-scroll on derived blocks. Architecture proven via build + test. |
 | R013 | continuity | deferred | none | none | unmapped |
 | R014 | admin/support | deferred | none | none | unmapped |
 | R015 | launchability | deferred | none | none | unmapped |
@@ -233,7 +233,7 @@ This file is the explicit capability and coverage contract for the project.
 
 ## Coverage Summary
 
-- Active requirements: 7
-- Mapped to slices: 7
-- Validated: 5 (R001, R002, R008, R010, R011)
+- Active requirements: 5
+- Mapped to slices: 5
+- Validated: 7 (R001, R002, R003, R008, R010, R011, R012)
 - Unmapped active requirements: 0

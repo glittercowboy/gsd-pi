@@ -57,3 +57,27 @@ while ((idx = buffer.indexOf('\n')) !== -1) {
 **Context:** Some gsd-2 RPC events use `{ type: 'message_update', ... }` and others use `{ event: 'tool_execution_start', ... }`. Both conventions exist in the protocol.
 
 **Solution:** Always check both: `const eventType = data.type ?? data.event`. This is done in useGsd for store routing and in CenterPanel for display badge colors.
+
+---
+
+## K006: Phosphor Icons — X is aliased to AlignBottomSimple
+
+**Context:** In the Phosphor Icons bundle, the named export `X` collides with `AlignBottomSimple`. Importing `X` from `@phosphor-icons/react` gives the wrong icon.
+
+**Solution:** Use `XCircle` for error/close indicators instead of `X`. Always verify Phosphor named exports render the expected glyph.
+
+---
+
+## K007: react-jsx tsconfig breaks JSX.IntrinsicElements global namespace
+
+**Context:** When `tsconfig.json` uses `"jsx": "react-jsx"` (the modern transform), the global `JSX` namespace is not exposed. Code like `JSX.IntrinsicElements['div']` causes TS2503.
+
+**Solution:** Use `ComponentPropsWithoutRef<'div'>` from React instead. It provides the same prop types without depending on the global namespace. Pattern: `type P<T extends keyof React.JSX.IntrinsicElements> = ComponentPropsWithoutRef<T> & ExtraProps`.
+
+---
+
+## K008: Worktree dist/ directories must be built before root tests pass
+
+**Context:** Git worktrees don't share `dist/` output directories. The root `npm run test` imports from `packages/*/dist/` and `dist/`, which don't exist in a fresh worktree.
+
+**Solution:** Build packages before running root tests: `npm run build -w packages/pi-ai && npm run build -w packages/pi-agent-core && npm run build -w packages/pi-tui && npx tsc` (root). `packages/pi-coding-agent` has pre-existing TypeScript errors and cannot be built in the current state. Workspace-scoped tests (`npm run test -w studio`) don't need dist/ builds.
