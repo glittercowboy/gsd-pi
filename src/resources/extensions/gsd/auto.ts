@@ -104,7 +104,8 @@ import { computeBudgets, resolveExecutorContextWindow } from "./context-budget.j
 import { GSDError, GSD_ARTIFACT_MISSING } from "./errors.js";
 import { join } from "node:path";
 import { sep as pathSep } from "node:path";
-import { readdirSync, readFileSync, existsSync, mkdirSync, writeFileSync, renameSync, unlinkSync, statSync } from "node:fs";
+import { readdirSync, readFileSync, existsSync, mkdirSync, writeFileSync, unlinkSync, statSync } from "node:fs";
+import { atomicWriteSync } from "./atomic-write.js";
 import { nativeIsRepo, nativeInit, nativeAddAll, nativeCommit } from "./native-git-bridge.js";
 import {
   autoCommitCurrentBranch,
@@ -2149,9 +2150,7 @@ async function dispatchNextUnit(
     try {
       const file = completedKeysPath(s.basePath);
       if (existsSync(file)) {
-        const tmpFile = file + ".tmp";
-        writeFileSync(tmpFile, JSON.stringify([]), "utf-8");
-        renameSync(tmpFile, file);
+        atomicWriteSync(file, JSON.stringify([]));
       }
       s.completedKeySet.clear();
     } catch (e) { debugLog("completed-keys-reset-failed", { error: e instanceof Error ? e.message : String(e) }); }
@@ -2348,9 +2347,7 @@ async function dispatchNextUnit(
     try {
       const file = completedKeysPath(s.basePath);
       if (existsSync(file)) {
-        const tmpFile = file + ".tmp";
-        writeFileSync(tmpFile, JSON.stringify([]), "utf-8");
-        renameSync(tmpFile, file);
+        atomicWriteSync(file, JSON.stringify([]));
       }
       s.completedKeySet.clear();
     } catch (e) { debugLog("completed-keys-reset-failed", { error: e instanceof Error ? e.message : String(e) }); }

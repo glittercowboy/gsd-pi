@@ -36,7 +36,8 @@ import {
   clearPathCache,
   resolveGsdRootFile,
 } from "./paths.js";
-import { existsSync, mkdirSync, readFileSync, writeFileSync, unlinkSync, renameSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync, unlinkSync } from "node:fs";
+import { atomicWriteSync } from "./atomic-write.js";
 import { dirname, join } from "node:path";
 
 // ─── Artifact Resolution & Verification ───────────────────────────────────────
@@ -354,10 +355,7 @@ export function persistCompletedKey(base: string, key: string): void {
   const keySet = new Set(keys);
   if (!keySet.has(key)) {
     keys.push(key);
-    // Atomic write: tmp file + rename prevents partial writes on crash
-    const tmpFile = file + ".tmp";
-    writeFileSync(tmpFile, JSON.stringify(keys), "utf-8");
-    renameSync(tmpFile, file);
+    atomicWriteSync(file, JSON.stringify(keys));
   }
 }
 
@@ -370,10 +368,7 @@ export function removePersistedKey(base: string, key: string): void {
       const filtered = keys.filter(k => k !== key);
       // Only write if the key was actually present
       if (filtered.length !== keys.length) {
-        // Atomic write: tmp file + rename prevents partial writes on crash
-        const tmpFile = file + ".tmp";
-        writeFileSync(tmpFile, JSON.stringify(filtered), "utf-8");
-        renameSync(tmpFile, file);
+        atomicWriteSync(file, JSON.stringify(filtered));
       }
     }
   } catch (e) { /* non-fatal: removePersistedKey failure */ void e; }
