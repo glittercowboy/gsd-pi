@@ -9,7 +9,7 @@
  * via prefix matching, so existing projects work without migration.
  */
 
-import { readdirSync, existsSync, Dirent } from "node:fs";
+import { readdirSync, existsSync, realpathSync, Dirent } from "node:fs";
 import { join } from "node:path";
 import { nativeScanGsdTree, type GsdTreeEntry } from "./native-parser-bridge.js";
 import { DIR_CACHE_MAX } from "./constants.js";
@@ -236,6 +236,23 @@ export function resolveTaskFiles(tasksDir: string, suffix: string): string[] {
   }
 }
 
+/**
+ * Find all task JSON files matching a pattern in a tasks directory.
+ * Returns sorted file names matching T##-SUFFIX.json or legacy T##-*-SUFFIX.json
+ */
+export function resolveTaskJsonFiles(tasksDir: string, suffix: string): string[] {
+  if (!existsSync(tasksDir)) return [];
+  try {
+    const currentPattern = new RegExp(`^T\\d+-${suffix}\\.json$`, "i");
+    const legacyPattern = new RegExp(`^T\\d+-.*-${suffix}\\.json$`, "i");
+    return cachedReaddir(tasksDir)
+      .filter(f => currentPattern.test(f) || legacyPattern.test(f))
+      .sort();
+  } catch {
+    return [];
+  }
+}
+
 // ─── Full Path Builders ────────────────────────────────────────────────────
 
 export const GSD_ROOT_FILES = {
@@ -261,7 +278,12 @@ const LEGACY_GSD_ROOT_FILES: Record<GSDRootFileKey, string> = {
 };
 
 export function gsdRoot(basePath: string): string {
-  return join(basePath, ".gsd");
+  const local = join(basePath, ".gsd");
+  try {
+    const resolved = realpathSync(local);
+    if (resolved !== local) return resolved; // symlink resolved
+  } catch { /* doesn't exist yet — fall through */ }
+  return local; // backwards compat: unmigrated projects
 }
 
 export function milestonesDir(basePath: string): string {

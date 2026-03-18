@@ -469,16 +469,6 @@ async function configureGit(ctx: ExtensionCommandContext, prefs: Record<string, 
     git.isolation = isolationChoice;
   }
 
-  // commit_docs
-  const currentCommitDocs = git.commit_docs;
-  const commitDocsChoice = await ctx.ui.select(
-    `Track .gsd/ planning docs in git${currentCommitDocs !== undefined ? ` (current: ${currentCommitDocs})` : ""}:`,
-    ["true", "false", "(keep current)"],
-  );
-  if (commitDocsChoice && commitDocsChoice !== "(keep current)") {
-    git.commit_docs = commitDocsChoice === "true";
-  }
-
   if (Object.keys(git).length > 0) {
     prefs.git = git;
   }
@@ -598,13 +588,13 @@ export async function configureMode(ctx: ExtensionCommandContext, prefs: Record<
     if (modeStr.startsWith("solo")) {
       prefs.mode = "solo";
       ctx.ui.notify(
-        "Mode: solo — defaults: auto_push=true, push_branches=false, pre_merge_check=false, merge_strategy=squash, isolation=worktree, commit_docs=true, unique_milestone_ids=false",
+        "Mode: solo — defaults: auto_push=true, push_branches=false, pre_merge_check=false, merge_strategy=squash, isolation=worktree, unique_milestone_ids=false",
         "info",
       );
     } else if (modeStr.startsWith("team")) {
       prefs.mode = "team";
       ctx.ui.notify(
-        "Mode: team — defaults: auto_push=false, push_branches=true, pre_merge_check=true, merge_strategy=squash, isolation=worktree, commit_docs=true, unique_milestone_ids=true",
+        "Mode: team — defaults: auto_push=false, push_branches=true, pre_merge_check=true, merge_strategy=squash, isolation=worktree, unique_milestone_ids=true",
         "info",
       );
     } else {

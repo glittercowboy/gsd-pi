@@ -10,7 +10,7 @@ import type { ExtensionAPI, ExtensionCommandContext } from "@gsd/pi-coding-agent
 import { existsSync, mkdirSync, writeFileSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { showNextAction } from "../shared/mod.js";
-import { nativeIsRepo, nativeInit, nativeAddPaths, nativeCommit } from "./native-git-bridge.js";
+import { nativeIsRepo, nativeInit } from "./native-git-bridge.js";
 import { ensureGitignore, untrackRuntimeFiles } from "./gitignore.js";
 import { gsdRoot } from "./paths.js";
 import { assertSafeDirectory } from "./validate-directory.js";
@@ -27,7 +27,6 @@ interface InitWizardResult {
 
 interface ProjectPreferences {
   mode: "solo" | "team";
-  commitDocs: boolean;
   gitIsolation: "worktree" | "branch" | "none";
   mainBranch: string;
   verificationCommands: string[];
@@ -41,7 +40,6 @@ interface ProjectPreferences {
 
 const DEFAULT_PREFS: ProjectPreferences = {
   mode: "solo",
-  commitDocs: true,
   gitIsolation: "worktree",
   mainBranch: "main",
   verificationCommands: [],
@@ -149,7 +147,6 @@ export async function showProjectInit(
 
   // ── Step 5: Git preferences ────────────────────────────────────────────────
   const gitSummary: string[] = [];
-  gitSummary.push(`Commit .gsd/ plans to git: yes`);
   gitSummary.push(`Git isolation: worktree`);
   gitSummary.push(`Main branch: ${prefs.mainBranch}`);
 
@@ -230,18 +227,8 @@ export async function showProjectInit(
   bootstrapGsdDirectory(basePath, prefs, signals);
 
   // Ensure .gitignore
-  ensureGitignore(basePath, { commitDocs: prefs.commitDocs });
+  ensureGitignore(basePath);
   untrackRuntimeFiles(basePath);
-
-  // Commit if enabled
-  if (prefs.commitDocs && nativeIsRepo(basePath)) {
-    try {
-      nativeAddPaths(basePath, [".gsd", ".gitignore"]);
-      nativeCommit(basePath, "chore: init gsd");
-    } catch {
-      // nothing to commit — that's fine
-    }
-  }
 
   ctx.ui.notify("GSD initialized. Starting your first milestone...", "info");
 
@@ -338,20 +325,6 @@ async function customizeGitPrefs(
   prefs: ProjectPreferences,
   signals: ProjectSignals,
 ): Promise<void> {
-  // Commit docs
-  const commitChoice = await showNextAction(ctx, {
-    title: "Commit .gsd/ plans to git?",
-    summary: [
-      "When enabled, .gsd/ planning docs are tracked in version control.",
-      "Team projects usually want this. Throwaway prototypes may not.",
-    ],
-    actions: [
-      { id: "yes", label: "Yes", description: "Track .gsd/ in git", recommended: true },
-      { id: "no", label: "No", description: "Keep .gsd/ local-only" },
-    ],
-  });
-  prefs.commitDocs = commitChoice !== "no";
-
   // Isolation strategy
   const hasSubmodules = existsSync(join(process.cwd(), ".gitmodules"));
   const isolationActions = [
@@ -459,7 +432,6 @@ function buildPreferencesFile(prefs: ProjectPreferences): string {
 
   // Git preferences
   lines.push("git:");
-  lines.push(`  commit_docs: ${prefs.commitDocs}`);
   lines.push(`  isolation: ${prefs.gitIsolation}`);
   lines.push(`  main_branch: ${prefs.mainBranch}`);
   lines.push(`  auto_push: ${prefs.autoPush}`);

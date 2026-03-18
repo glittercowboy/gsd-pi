@@ -25,18 +25,13 @@ const BASE_VARS = {
   outputPath: "/tmp/test-project/.gsd/milestones/M001/slices/S01/S01-PLAN.md",
   inlinedContext: "--- test inlined context ---",
   dependencySummaries: "", executorContextConstraints: "",
+  sourceFilePaths: "- **Requirements**: `.gsd/REQUIREMENTS.md`",
 };
 
-test("plan-slice prompt: commit step present when commit_docs=true", () => {
-  const result = loadPrompt("plan-slice", { ...BASE_VARS, commitInstruction: "Commit: `docs(S01): add slice plan`" });
-  assert.ok(result.includes("docs(S01): add slice plan"));
+test("plan-slice prompt: commit instruction says do not commit (external state)", () => {
+  const result = loadPrompt("plan-slice", { ...BASE_VARS, commitInstruction: "Do not commit planning artifacts — .gsd/ is managed externally." });
+  assert.ok(result.includes("Do not commit planning artifacts"));
   assert.ok(!result.includes("{{commitInstruction}}"));
-});
-
-test("plan-slice prompt: no commit step when commit_docs=false", () => {
-  const result = loadPrompt("plan-slice", { ...BASE_VARS, commitInstruction: "Do not commit — planning docs are not tracked in git for this project." });
-  assert.ok(!result.includes("docs(S01): add slice plan"));
-  assert.ok(result.includes("Do not commit"));
 });
 
 test("plan-slice prompt: all variables substituted", () => {

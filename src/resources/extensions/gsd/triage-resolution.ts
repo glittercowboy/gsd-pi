@@ -12,6 +12,7 @@
 
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { gsdRoot } from "./paths.js";
 import type { Classification, CaptureEntry } from "./captures.js";
 import {
   loadPendingCaptures,
@@ -36,7 +37,7 @@ export function executeInject(
 ): string | null {
   try {
     // Resolve the plan file path
-    const planPath = join(basePath, ".gsd", "milestones", mid, "slices", sid, `${sid}-PLAN.md`);
+    const planPath = join(gsdRoot(basePath), "milestones", mid, "slices", sid, `${sid}-PLAN.md`);
     if (!existsSync(planPath)) return null;
 
     const content = readFileSync(planPath, "utf-8");

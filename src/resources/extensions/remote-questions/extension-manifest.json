@@ -1,0 +1,11 @@
+{
+  "id": "remote-questions",
+  "name": "Remote Questions",
+  "version": "1.0.0",
+  "description": "Remote user question routing via Slack, Discord, and Telegram adapters",
+  "tier": "bundled",
+  "requires": { "platform": ">=2.29.0" },
+  "provides": {
+    "commands": ["remote"]
+  }
+}

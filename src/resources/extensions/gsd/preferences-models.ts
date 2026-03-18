@@ -254,13 +254,19 @@ export function resolveProfileDefaults(profile: TokenProfile): Partial<GSDPrefer
           subagent: "claude-sonnet-4-5-20250514",
         },
         phases: {
+          skip_research: true,
+          skip_reassess: true,
           skip_slice_research: true,
         },
       };
     case "quality":
       return {
         models: {},
-        phases: {},
+        phases: {
+          skip_research: true,
+          skip_slice_research: true,
+          skip_reassess: true,
+        },
       };
   }
 }

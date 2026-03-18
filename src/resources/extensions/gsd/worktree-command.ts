@@ -50,7 +50,7 @@ export function getWorktreeOriginalCwd(): string | null {
 export function getActiveWorktreeName(): string | null {
   if (!originalCwd) return null;
   const cwd = process.cwd();
-  const wtDir = join(originalCwd, ".gsd", "worktrees");
+  const wtDir = join(gsdRoot(originalCwd), "worktrees");
   if (!cwd.startsWith(wtDir)) return null;
   const rel = cwd.slice(wtDir.length + 1);
   const name = rel.split("/")[0] ?? rel.split("\\")[0];
@@ -632,16 +632,6 @@ async function handleMerge(
     // Try a direct squash-merge first. Only fall back to LLM on conflict.
     const commitType = inferCommitType(name);
     const commitMessage = `${commitType}(${name}): merge worktree ${name}`;
-
-    // Reconcile worktree DB into main DB before squash merge
-    const wtDbPath = join(worktreePath(basePath, name), ".gsd", "gsd.db");
-    const mainDbPath = join(basePath, ".gsd", "gsd.db");
-    if (existsSync(wtDbPath) && existsSync(mainDbPath)) {
-      try {
-        const { reconcileWorktreeDb } = await import("./gsd-db.js");
-        reconcileWorktreeDb(mainDbPath, wtDbPath);
-      } catch { /* non-fatal */ }
-    }
 
     try {
       mergeWorktreeToMain(basePath, name, commitMessage);

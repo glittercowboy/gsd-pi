@@ -75,7 +75,7 @@ async function ensureDbAvailable(): Promise<boolean> {
     if (db.isDbAvailable()) return true;
 
     // Auto-initialize: open (and create if needed) the DB at the standard path
-    const gsdDir = join(process.cwd(), ".gsd");
+    const gsdDir = gsdRoot(process.cwd());
     if (!existsSync(gsdDir)) return false; // No GSD project — can't create DB
     const dbPath = join(gsdDir, "gsd.db");
     return db.openDatabase(dbPath);
@@ -629,7 +629,7 @@ export default function (pi: ExtensionAPI) {
     description: shortcutDesc("Open GSD dashboard", "/gsd status"),
     handler: async (ctx) => {
       // Only show if .gsd/ exists
-      if (!existsSync(join(process.cwd(), ".gsd"))) {
+      if (!existsSync(gsdRoot(process.cwd()))) {
         ctx.ui.notify("No .gsd/ directory found. Run /gsd to start.", "info");
         return;
       }
@@ -659,7 +659,7 @@ export default function (pi: ExtensionAPI) {
 
   // ── before_agent_start: inject GSD contract into true system prompt ─────
   pi.on("before_agent_start", async (event, ctx: ExtensionContext) => {
-    if (!existsSync(join(process.cwd(), ".gsd"))) return;
+    if (!existsSync(gsdRoot(process.cwd()))) return;
 
     const stopContextTimer = debugTime("context-inject");
     const systemContent = loadPrompt("system");
@@ -1045,6 +1045,19 @@ export default function (pi: ExtensionAPI) {
     if (isParallelActive()) {
       try {
         await shutdownParallel(process.cwd());
+      } catch { /* best-effort */ }
+    }
+
+    // Auto-commit dirty work in CLI-spawned worktrees so nothing is lost.
+    // The CLI sets GSD_CLI_WORKTREE when launched with -w.
+    const cliWorktree = process.env.GSD_CLI_WORKTREE;
+    if (cliWorktree) {
+      try {
+        const { autoCommitCurrentBranch } = await import("./worktree.js");
+        const msg = autoCommitCurrentBranch(process.cwd(), "session-end", cliWorktree);
+        if (msg) {
+          ctx.ui.notify(`Auto-committed worktree ${cliWorktree} before exit.`, "info");
+        }
       } catch { /* best-effort */ }
     }
 

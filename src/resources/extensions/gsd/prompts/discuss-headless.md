@@ -16,12 +16,14 @@ Summarize your understanding of the specification concretely:
 - Scope estimate (how many milestones × slices)
 - Any ambiguities or gaps you notice
 
-### Step 2: Investigate
+### Step 2: Investigate (brief)
 
-Scout the codebase to understand what already exists:
+Quickly scout the codebase to understand what already exists — spend no more than 5-6 tool calls here:
 - `ls` the project root and key directories
 - Search for relevant existing code, patterns, dependencies
 - Check library docs if needed (`resolve_library` / `get_library_docs`)
+
+Then move on to writing artifacts. Do not explore exhaustively — the research phase will do deeper investigation later.
 
 ### Step 3: Make Decisions
 

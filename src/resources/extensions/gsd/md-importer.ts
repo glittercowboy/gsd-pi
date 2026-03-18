@@ -18,6 +18,7 @@ import {
 import {
   resolveGsdRootFile,
   milestonesDir,
+  gsdRoot,
   resolveTaskFiles,
 } from './paths.js';
 import { findMilestoneIds } from './guided-flow.js';
@@ -298,7 +299,7 @@ const TASK_SUFFIXES = ['PLAN', 'SUMMARY', 'CONTINUE', 'CONTEXT', 'RESEARCH'];
  */
 function importHierarchyArtifacts(gsdDir: string): number {
   let count = 0;
-  const gsdPath = join(gsdDir, '.gsd');
+  const gsdPath = gsdRoot(gsdDir);
 
   // Root-level artifacts: PROJECT.md, QUEUE.md
   const rootFiles = ['PROJECT.md', 'QUEUE.md', 'SECRETS-MANIFEST.md'];
@@ -487,7 +488,7 @@ export function migrateFromMarkdown(gsdDir: string): {
   requirements: number;
   artifacts: number;
 } {
-  const dbPath = join(gsdDir, '.gsd', 'gsd.db');
+  const dbPath = join(gsdRoot(gsdDir), 'gsd.db');
 
   // Open DB if not already open
   if (!_getAdapter()) {

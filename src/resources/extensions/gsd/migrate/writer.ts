@@ -5,6 +5,7 @@
 
 import { join } from 'node:path';
 import { saveFile } from '../files.js';
+import { gsdRoot } from '../paths.js';
 
 import type {
   GSDMilestone,
@@ -421,7 +422,7 @@ export async function writeGSDDirectory(
   project: GSDProject,
   targetPath: string,
 ): Promise<WrittenFiles> {
-  const gsdDir = join(targetPath, '.gsd');
+  const gsdDir = gsdRoot(targetPath);
   const milestonesBase = join(gsdDir, 'milestones');
   const paths: string[] = [];
   const counts: WrittenFiles['counts'] = {

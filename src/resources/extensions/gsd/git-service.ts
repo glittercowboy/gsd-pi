@@ -11,6 +11,7 @@
 import { execFileSync, execSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { gsdRoot } from "./paths.js";
 import { GIT_NO_PROMPT_ENV } from "./git-constants.js";
 
 import {
@@ -49,11 +50,6 @@ export interface GitPreferences {
    *  - "none": no git isolation — commits land on the user's current branch directly
    */
   isolation?: "worktree" | "branch" | "none";
-  /** When false, prevents GSD from committing .gsd/ planning artifacts to git.
-   *  The .gsd/ folder is added to .gitignore and kept local-only.
-   *  Default: true (planning docs are tracked in git).
-   */
-  commit_docs?: boolean;
   /** When false, GSD will not modify .gitignore at all — no baseline patterns
    *  are added and no self-healing occurs. Use this if you manage your own
    *  .gitignore and don't want GSD touching it.
@@ -193,7 +189,7 @@ export const RUNTIME_EXCLUSION_PATHS: readonly string[] = [
  * Format: .gsd/milestones/<MID>/<MID>-META.json
  */
 function milestoneMetaPath(basePath: string, milestoneId: string): string {
-  return join(basePath, ".gsd", "milestones", milestoneId, `${milestoneId}-META.json`);
+  return join(gsdRoot(basePath), "milestones", milestoneId, `${milestoneId}-META.json`);
 }
 
 /**
@@ -225,7 +221,7 @@ export function readIntegrationBranch(basePath: string, milestoneId: string): st
  *
  * The file is committed immediately so the metadata is persisted in git.
  */
-export function writeIntegrationBranch(basePath: string, milestoneId: string, branch: string, options?: { commitDocs?: boolean }): void {
+export function writeIntegrationBranch(basePath: string, milestoneId: string, branch: string): void {
   // Don't record slice branches as the integration target
   if (SLICE_BRANCH_RE.test(branch)) return;
   // Validate
@@ -237,7 +233,7 @@ export function writeIntegrationBranch(basePath: string, milestoneId: string, br
   if (existingBranch === branch) return;
 
   const metaFile = milestoneMetaPath(basePath, milestoneId);
-  mkdirSync(join(basePath, ".gsd", "milestones", milestoneId), { recursive: true });
+  mkdirSync(join(gsdRoot(basePath), "milestones", milestoneId), { recursive: true });
 
   // Merge with existing metadata if present
   let existing: Record<string, unknown> = {};
@@ -249,18 +245,7 @@ export function writeIntegrationBranch(basePath: string, milestoneId: string, br
 
   existing.integrationBranch = branch;
   writeFileSync(metaFile, JSON.stringify(existing, null, 2) + "\n", "utf-8");
-
-  // Commit immediately so the metadata is persisted in git.
-  // Skip when commit_docs is explicitly false — .gsd/ is local-only.
-  if (options?.commitDocs !== false) {
-    try {
-      nativeAddPaths(basePath, [metaFile]);
-      nativeCommit(basePath, `chore(${milestoneId}): record integration branch`, { allowEmpty: false });
-    } catch {
-      // Non-fatal — file is on disk even if commit fails (e.g. nothing to commit
-      // because the file was already tracked with identical content)
-    }
-  }
+  // .gsd/ is managed externally (symlinked) — metadata is not committed to git.
 }
 
 // ─── Git Helper ────────────────────────────────────────────────────────────
@@ -349,10 +334,8 @@ export class GitServiceImpl {
    * @param extraExclusions Additional pathspec exclusions beyond RUNTIME_EXCLUSION_PATHS.
    */
   private smartStage(extraExclusions: readonly string[] = []): void {
-    // When commit_docs is false, exclude the entire .gsd/ directory from staging
-    const commitDocsDisabled = this.prefs.commit_docs === false;
-    const gsdExclusion = commitDocsDisabled ? [".gsd/"] : [];
-    const allExclusions = [...RUNTIME_EXCLUSION_PATHS, ...gsdExclusion, ...extraExclusions];
+    // Always exclude .gsd/ — state is managed externally (symlinked to ~/.gsd/projects/<hash>/)
+    const allExclusions = [".gsd/", ...extraExclusions];
 
     // One-time cleanup: if runtime files are already tracked in the index
     // (from older versions where the fallback bug staged them), untrack them

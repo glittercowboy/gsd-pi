@@ -37,7 +37,6 @@ import { resolveAutoSupervisorConfig, loadEffectiveGSDPreferences } from "./pref
 import { runGSDDoctor, rebuildState, summarizeDoctorIssues } from "./doctor.js";
 import { COMPLETION_TRANSITION_CODES } from "./doctor-types.js";
 import { recordHealthSnapshot, checkHealEscalation } from "./doctor-proactive.js";
-import { syncStateToProjectRoot } from "./auto-worktree-sync.js";
 import { resetRewriteCircuitBreaker } from "./auto-dispatch.js";
 import { isDbAvailable } from "./gsd-db.js";
 import { consumeSignal } from "./session-status-io.js";
@@ -213,15 +212,6 @@ export async function postUnitPreVerification(pctx: PostUnitContext): Promise<"d
       // Non-fatal
     }
 
-    // Sync worktree state back to project root
-    if (s.originalBasePath && s.originalBasePath !== s.basePath) {
-      try {
-        syncStateToProjectRoot(s.basePath, s.originalBasePath, s.currentMilestoneId);
-      } catch {
-        // Non-fatal
-      }
-    }
-
     // Rewrite-docs completion
     if (s.currentUnit.type === "rewrite-docs") {
       try {
@@ -328,6 +318,45 @@ export async function postUnitPostVerification(pctx: PostUnitContext): Promise<"
       migrateFromMarkdown(s.basePath);
     } catch (err) {
       process.stderr.write(`gsd-db: re-import failed: ${(err as Error).message}\n`);
+    }
+  }
+
+  // ── Mechanical completion (ADR-003) ──
+  // After task execution, attempt mechanical slice and milestone completion
+  // instead of dispatching LLM sessions for complete-slice / validate-milestone.
+  if (s.currentUnit?.type === "execute-task" && !s.stepMode) {
+    try {
+      const [mid, sid] = s.currentUnit.id.split("/");
+      if (mid && sid) {
+        const state = await deriveState(s.basePath);
+        if (state.phase === "summarizing" && state.activeSlice?.id === sid) {
+          const { mechanicalSliceCompletion } = await import("./mechanical-completion.js");
+          const ok = await mechanicalSliceCompletion(s.basePath, mid, sid);
+          if (ok) {
+            invalidateAllCaches();
+            autoCommitCurrentBranch(s.basePath, "mechanical-completion", `${mid}/${sid}`);
+            ctx.ui.notify(`Mechanical completion: ${sid} summary + roadmap updated.`, "info");
+
+            // Re-derive state — check if milestone is now ready for validation
+            invalidateAllCaches();
+            const postSliceState = await deriveState(s.basePath);
+            if (postSliceState.phase === "validating-milestone" || postSliceState.phase === "completing-milestone") {
+              const { aggregateMilestoneVerification, generateMilestoneSummary } = await import("./mechanical-completion.js");
+              const validation = await aggregateMilestoneVerification(s.basePath, mid);
+              if (validation.verdict !== "failed") {
+                await generateMilestoneSummary(s.basePath, mid);
+                invalidateAllCaches();
+                autoCommitCurrentBranch(s.basePath, "mechanical-milestone-completion", mid);
+                ctx.ui.notify(`Mechanical completion: ${mid} validation + summary written.`, "info");
+              }
+            }
+          }
+          // If !ok, summarizing phase persists → dispatch rule fires as LLM fallback
+        }
+      }
+    } catch (err) {
+      process.stderr.write(`gsd-mechanical: completion failed: ${(err as Error).message}\n`);
+      // Non-fatal — fall through to normal dispatch
     }
   }
 

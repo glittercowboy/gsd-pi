@@ -96,24 +96,39 @@ export function parseRoadmapSlices(content: string): RoadmapSliceEntry[] {
 
 /**
  * Fallback parser for prose-style roadmaps where the LLM wrote
- * `## Slice S01: Title` headers instead of the machine-readable
- * `## Slices` checklist. Extracts slice IDs and titles so auto-mode
- * can at least identify slices and plan them.
+ * slice headers instead of the machine-readable `## Slices` checklist.
+ * Extracts slice IDs and titles so auto-mode can at least identify
+ * slices and plan them.
  *
- * Also handles `## S01: Title` and `## S01 — Title` variants.
+ * Handles these LLM-generated variants:
+ *   ## S01: Title           (H2, colon separator)
+ *   ### S01: Title          (H3)
+ *   #### S01: Title         (H4)
+ *   ## Slice S01: Title     (with "Slice" prefix)
+ *   ## S01 — Title          (em dash)
+ *   ## S01 – Title          (en dash)
+ *   ## S01 - Title          (hyphen)
+ *   ## S01. Title           (dot separator)
+ *   ## S01 Title            (space only, no separator)
+ *   ## **S01: Title**       (bold-wrapped)
+ *   ## **S01**: Title       (bold ID only)
+ *   ## S1: Title            (non-zero-padded ID)
  */
 function parseProseSliceHeaders(content: string): RoadmapSliceEntry[] {
   const slices: RoadmapSliceEntry[] = [];
-  const headerPattern = /^##\s+(?:Slice\s+)?(S\d+)[:\s—–-]+\s*(.+)/gm;
+  // Match H1–H4 headers containing S<digits> with optional "Slice" prefix and bold markers.
+  // Separator after the ID is flexible: colon, dash, em/en dash, dot, or just whitespace.
+  const headerPattern = /^#{1,4}\s+\*{0,2}(?:Slice\s+)?(S\d+)\*{0,2}[:\s.—–-]*\s*(.+)/gm;
   let match: RegExpExecArray | null;
 
   while ((match = headerPattern.exec(content)) !== null) {
     const id = match[1]!;
-    const title = match[2]!.trim();
+    let title = match[2]!.trim().replace(/\*{1,2}$/g, "").trim(); // strip trailing bold markers
+    if (!title) continue; // skip if we only matched the ID with no title
 
     // Try to extract depends from prose: "Depends on: S01" or "**Depends on:** S01, S02"
     const afterHeader = content.slice(match.index + match[0].length);
-    const nextHeader = afterHeader.search(/^##\s/m);
+    const nextHeader = afterHeader.search(/^#{1,4}\s/m);
     const section = nextHeader !== -1 ? afterHeader.slice(0, nextHeader) : afterHeader.slice(0, 500);
 
     const depsMatch = section.match(/\*{0,2}Depends\s+on:?\*{0,2}\s*(.+)/i);

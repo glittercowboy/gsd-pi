@@ -6,6 +6,7 @@ import { dirname, join, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { compareSemver } from './update-check.js'
 import { discoverExtensionEntryPaths } from './extension-discovery.js'
+import { loadRegistry, readManifestFromEntryPath, isExtensionEnabled, ensureRegistryEntries } from './extension-registry.js'
 
 // Resolve resources directory — prefer dist/resources/ (stable, set at build time)
 // over src/resources/ (live working tree, changes with git branch).
@@ -240,6 +241,7 @@ export function initResources(agentDir: string): void {
   makeTreeWritable(agentDir)
 
   writeManagedResourceManifest(agentDir)
+  ensureRegistryEntries(join(agentDir, 'extensions'))
 }
 
 /**
@@ -260,12 +262,17 @@ function getBundledExtensionKeys(): Set<string> {
 }
 
 export function buildResourceLoader(agentDir: string): DefaultResourceLoader {
+  const registry = loadRegistry()
   const piAgentDir = join(homedir(), '.pi', 'agent')
   const piExtensionsDir = join(piAgentDir, 'extensions')
   const bundledKeys = getBundledExtensionKeys()
-  const piExtensionPaths = discoverExtensionEntryPaths(piExtensionsDir).filter(
-    (entryPath) => !bundledKeys.has(getExtensionKey(entryPath, piExtensionsDir)),
-  )
+  const piExtensionPaths = discoverExtensionEntryPaths(piExtensionsDir)
+    .filter((entryPath) => !bundledKeys.has(getExtensionKey(entryPath, piExtensionsDir)))
+    .filter((entryPath) => {
+      const manifest = readManifestFromEntryPath(entryPath)
+      if (!manifest) return true
+      return isExtensionEnabled(registry, manifest.id)
+    })
 
   return new DefaultResourceLoader({
     agentDir,

@@ -12,7 +12,7 @@
  * SLICE_BRANCH_RE) remain for backwards compatibility with legacy branches.
  */
 
-import { existsSync, readFileSync, utimesSync } from "node:fs";
+import { existsSync, lstatSync, readFileSync, utimesSync } from "node:fs";
 import { join, resolve, sep } from "node:path";
 
 import { GitServiceImpl, writeIntegrationBranch, type TaskCommitContext } from "./git-service.js";
@@ -56,13 +56,13 @@ export function setActiveMilestoneId(basePath: string, milestoneId: string | nul
  * record when the user starts from a different branch (#300). Always a no-op
  * if on a GSD slice branch.
  */
-export function captureIntegrationBranch(basePath: string, milestoneId: string, options?: { commitDocs?: boolean }): void {
+export function captureIntegrationBranch(basePath: string, milestoneId: string): void {
   // In a worktree, the base branch is implicit (worktree/<name>).
   // Writing it to META.json would leave stale metadata after merge back to main.
   if (detectWorktreeName(basePath)) return;
   const svc = getService(basePath);
   const current = svc.getCurrentBranch();
-  writeIntegrationBranch(basePath, milestoneId, current, options);
+  writeIntegrationBranch(basePath, milestoneId, current);
 }
 
 // ─── Pure Utility Functions (unchanged) ────────────────────────────────────
@@ -72,6 +72,25 @@ export function captureIntegrationBranch(basePath: string, milestoneId: string, 
  * Returns null if not inside a GSD worktree (.gsd/worktrees/<name>/).
  */
 export function detectWorktreeName(basePath: string): string | null {
+  // Primary: use git metadata — .git file with gitdir: pointer
+  const gitPath = join(basePath, ".git");
+  try {
+    const stat = lstatSync(gitPath);
+    if (stat.isFile()) {
+      const content = readFileSync(gitPath, "utf-8").trim();
+      if (content.startsWith("gitdir:")) {
+        const gitdir = content.slice(7).trim();
+        // Git worktree gitdir format: <repo>/.git/worktrees/<name>
+        const parts = gitdir.replace(/\\/g, "/").split("/");
+        const wtIdx = parts.lastIndexOf("worktrees");
+        if (wtIdx !== -1 && wtIdx < parts.length - 1) {
+          return parts[wtIdx + 1] || null;
+        }
+      }
+    }
+  } catch { /* fall through */ }
+
+  // Fallback: path-based detection for legacy setups
   const normalizedPath = basePath.replaceAll("\\", "/");
   const marker = "/.gsd/worktrees/";
   const idx = normalizedPath.indexOf(marker);
@@ -90,14 +109,32 @@ export function detectWorktreeName(basePath: string): string | null {
  * operate against the real project root, not a worktree subdirectory.
  */
 export function resolveProjectRoot(basePath: string): string {
+  // Primary: use git metadata to resolve the main worktree root
+  const gitPath = join(basePath, ".git");
+  try {
+    const stat = lstatSync(gitPath);
+    if (stat.isFile()) {
+      const content = readFileSync(gitPath, "utf-8").trim();
+      if (content.startsWith("gitdir:")) {
+        const gitdir = resolve(basePath, content.slice(7).trim());
+        // Git worktree gitdir: <repo>/.git/worktrees/<name>
+        // Walk up to <repo>
+        const parts = gitdir.replace(/\\/g, "/").split("/");
+        const wtIdx = parts.lastIndexOf("worktrees");
+        if (wtIdx >= 2 && parts[wtIdx - 1] === ".git") {
+          return parts.slice(0, wtIdx - 1).join("/");
+        }
+      }
+    }
+  } catch { /* fall through */ }
+
+  // Fallback: legacy path-based detection
   const normalizedPath = basePath.replaceAll("\\", "/");
   const marker = "/.gsd/worktrees/";
   const idx = normalizedPath.indexOf(marker);
   if (idx === -1) return basePath;
-  // Return the original path up to the .gsd/ marker (un-normalized)
-  // Account for potential OS-specific separators
-  const sep = basePath.includes("\\") ? "\\" : "/";
-  const markerOs = `${sep}.gsd${sep}worktrees${sep}`;
+  const osSep = basePath.includes("\\") ? "\\" : "/";
+  const markerOs = `${osSep}.gsd${osSep}worktrees${osSep}`;
   const idxOs = basePath.indexOf(markerOs);
   if (idxOs !== -1) return basePath.slice(0, idxOs);
   return basePath.slice(0, idx);

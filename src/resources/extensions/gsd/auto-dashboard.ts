@@ -11,6 +11,7 @@ import type { GSDState } from "./types.js";
 import { getCurrentBranch } from "./worktree.js";
 import { getActiveHook } from "./post-unit-hooks.js";
 import { getLedger, getProjectTotals, formatCost, formatTokenCount, formatTierSavings } from "./metrics.js";
+import { getHealthTrend, getConsecutiveErrorUnits } from "./doctor-proactive.js";
 import {
   resolveMilestoneFile,
   resolveSliceFile,
@@ -204,13 +205,6 @@ export function estimateTimeRemaining(): string | null {
 
 // ─── Slice Progress Cache ─────────────────────────────────────────────────────
 
-/** Cached task detail for the widget task checklist */
-interface CachedTaskDetail {
-  id: string;
-  title: string;
-  done: boolean;
-}
-
 /** Cached slice progress for the widget — avoid async in render */
 let cachedSliceProgress: {
   done: number;
@@ -218,8 +212,6 @@ let cachedSliceProgress: {
   milestoneId: string;
   /** Real task progress for the active slice, if its plan file exists */
   activeSliceTasks: { done: number; total: number } | null;
-  /** Full task list for the active slice checklist */
-  taskDetails: CachedTaskDetail[] | null;
 } | null = null;
 
 export function updateSliceProgressCache(base: string, mid: string, activeSid?: string): void {
@@ -230,7 +222,6 @@ export function updateSliceProgressCache(base: string, mid: string, activeSid?: 
     const roadmap = parseRoadmap(content);
 
     let activeSliceTasks: { done: number; total: number } | null = null;
-    let taskDetails: CachedTaskDetail[] | null = null;
     if (activeSid) {
       try {
         const planFile = resolveSliceFile(base, mid, activeSid, "PLAN");
@@ -241,7 +232,6 @@ export function updateSliceProgressCache(base: string, mid: string, activeSid?: 
             done: plan.tasks.filter(t => t.done).length,
             total: plan.tasks.length,
           };
-          taskDetails = plan.tasks.map(t => ({ id: t.id, title: t.title, done: t.done }));
         }
       } catch {
         // Non-fatal — just omit task count
@@ -253,19 +243,13 @@ export function updateSliceProgressCache(base: string, mid: string, activeSid?: 
       total: roadmap.slices.length,
       milestoneId: mid,
       activeSliceTasks,
-      taskDetails,
     };
   } catch {
     // Non-fatal — widget just won't show progress bar
   }
 }
 
-export function getRoadmapSlicesSync(): {
-  done: number;
-  total: number;
-  activeSliceTasks: { done: number; total: number } | null;
-  taskDetails: CachedTaskDetail[] | null;
-} | null {
+export function getRoadmapSlicesSync(): { done: number; total: number; activeSliceTasks: { done: number; total: number } | null } | null {
   return cachedSliceProgress;
 }
 
@@ -366,84 +350,87 @@ export function updateProgressWidget(
         const lines: string[] = [];
         const pad = INDENT.base;
 
-        // ── Top bar ─────────────────────────────────────────────────────
+        // ── Line 1: Top bar ───────────────────────────────────────────────
         lines.push(...ui.bar());
 
-        // ── Header: GSD AUTO ... elapsed ────────────────────────────────
         const dot = pulseBright
           ? theme.fg("accent", GLYPH.statusActive)
           : theme.fg("dim", GLYPH.statusPending);
         const elapsed = formatAutoElapsed(accessors.getAutoStartTime());
         const modeTag = accessors.isStepMode() ? "NEXT" : "AUTO";
-        const headerLeft = `${pad}${dot} ${theme.fg("accent", theme.bold("GSD"))} ${theme.fg("success", modeTag)}`;
+        const headerLeft = `${pad}${dot} ${theme.fg("accent", theme.bold("GSD"))}  ${theme.fg("success", modeTag)}`;
         const headerRight = elapsed ? theme.fg("dim", elapsed) : "";
         lines.push(rightAlign(headerLeft, headerRight, width));
 
-        // ── Context: project · slice · action (merged into one line) ────
-        const contextParts: string[] = [];
-        if (mid) contextParts.push(theme.fg("dim", mid.title));
-        if (slice && unitType !== "research-milestone" && unitType !== "plan-milestone") {
-          contextParts.push(theme.fg("text", theme.bold(`${slice.id}: ${slice.title}`)));
+        lines.push("");
+
+        if (mid) {
+          lines.push(truncateToWidth(`${pad}${theme.fg("dim", mid.title)}`, width));
         }
+
+        if (slice && unitType !== "research-milestone" && unitType !== "plan-milestone") {
+          lines.push(truncateToWidth(
+            `${pad}${theme.fg("text", theme.bold(`${slice.id}: ${slice.title}`))}`,
+            width,
+          ));
+        }
+
+        lines.push("");
+
         const isHook = unitType.startsWith("hook/");
         const target = isHook
           ? (unitId.split("/").pop() ?? unitId)
           : (task ? `${task.id}: ${task.title}` : unitId);
-        contextParts.push(`${theme.fg("accent", "▸")} ${theme.fg("accent", verb)} ${theme.fg("text", target)}`);
-
+        const actionLeft = `${pad}${theme.fg("accent", "▸")} ${theme.fg("accent", verb)}  ${theme.fg("text", target)}`;
         const tierTag = tierBadge ? theme.fg("dim", `[${tierBadge}] `) : "";
         const phaseBadge = `${tierTag}${theme.fg("dim", phaseLabel)}`;
-        const contextLine = contextParts.join(theme.fg("dim", " · "));
-        lines.push(rightAlign(`${pad}${contextLine}`, phaseBadge, width));
+        lines.push(rightAlign(actionLeft, phaseBadge, width));
+        lines.push("");
 
-        // ── Two-column body ─────────────────────────────────────────────
-        // Left: progress, ETA, next, stats (fixed)  |  Right: task checklist (fixed, adjacent)
-        // Both columns sit left-to-center; empty space is on the right.
-        const divider = theme.fg("dim", "│");
-        const minTwoColWidth = 100;
-        const rightColFixed = 44;
-        const colGap = 5; // breathing room between columns
-        // Left column takes remaining space — no truncation on wide terminals
-        const useTwoCol = width >= minTwoColWidth;
-        const rightColWidth = useTwoCol ? rightColFixed : 0;
-        const leftColWidth = useTwoCol ? width - rightColWidth - colGap : width;
+        if (mid) {
+          const roadmapSlices = getRoadmapSlicesSync();
+          if (roadmapSlices) {
+            const { done, total, activeSliceTasks } = roadmapSlices;
+            const barWidth = Math.max(8, Math.min(24, Math.floor(width * 0.3)));
+            const pct = total > 0 ? done / total : 0;
+            const filled = Math.round(pct * barWidth);
+            const bar = theme.fg("success", "█".repeat(filled))
+              + theme.fg("dim", "░".repeat(barWidth - filled));
 
-        const roadmapSlices = mid ? getRoadmapSlicesSync() : null;
+            let meta = theme.fg("dim", `${done}/${total} slices`);
 
-        // Build left column: progress bar, ETA, next step, token stats
-        const leftLines: string[] = [];
+            if (activeSliceTasks && activeSliceTasks.total > 0) {
+              // For hooks, show the trigger task number (done), not the next task (done + 1)
+              const taskNum = isHook
+                ? Math.max(activeSliceTasks.done, 1)
+                : Math.min(activeSliceTasks.done + 1, activeSliceTasks.total);
+              meta += theme.fg("dim", `  ·  task ${taskNum}/${activeSliceTasks.total}`);
+            }
 
-        if (roadmapSlices) {
-          const { done, total, activeSliceTasks } = roadmapSlices;
-          const barWidth = Math.max(6, Math.min(18, Math.floor(leftColWidth * 0.4)));
-          const pct = total > 0 ? done / total : 0;
-          const filled = Math.round(pct * barWidth);
-          const bar = theme.fg("success", "█".repeat(filled))
-            + theme.fg("dim", "░".repeat(barWidth - filled));
+            // ETA estimate
+            const eta = estimateTimeRemaining();
+            if (eta) {
+              meta += theme.fg("dim", `  ·  ${eta}`);
+            }
 
-          let meta = theme.fg("dim", `${done}/${total} slices`);
-          if (activeSliceTasks && activeSliceTasks.total > 0) {
-            const taskNum = isHook
-              ? Math.max(activeSliceTasks.done, 1)
-              : Math.min(activeSliceTasks.done + 1, activeSliceTasks.total);
-            meta += theme.fg("dim", ` · task ${taskNum}/${activeSliceTasks.total}`);
-          }
-          leftLines.push(truncateToWidth(`${pad}${bar} ${meta}`, leftColWidth));
-
-          const eta = estimateTimeRemaining();
-          if (eta) {
-            leftLines.push(truncateToWidth(`${pad}${theme.fg("dim", eta)}`, leftColWidth));
+            lines.push(truncateToWidth(`${pad}${bar}  ${meta}`, width));
           }
         }
 
+        lines.push("");
+
         if (next) {
-          leftLines.push(truncateToWidth(
+          lines.push(truncateToWidth(
             `${pad}${theme.fg("dim", "→")} ${theme.fg("dim", `then ${next}`)}`,
-            leftColWidth,
+            width,
           ));
         }
 
-        // Token stats
+        // ── Footer info (pwd, tokens, cost, context, model) ──────────────
+        lines.push("");
+        lines.push(truncateToWidth(theme.fg("dim", `${pad}${widgetPwd}`), width, theme.fg("dim", "…")));
+
+        // Token stats from current unit session + cumulative cost from metrics
         {
           const cmdCtx = accessors.getCmdCtx();
           let totalInput = 0, totalOutput = 0;
@@ -478,6 +465,7 @@ export function updateProgressWidget(
           if (totalOutput) sp.push(`↓${formatWidgetTokens(totalOutput)}`);
           if (totalCacheRead) sp.push(`R${formatWidgetTokens(totalCacheRead)}`);
           if (totalCacheWrite) sp.push(`W${formatWidgetTokens(totalCacheWrite)}`);
+          // Cache hit rate for current unit
           if (totalCacheRead + totalInput > 0) {
             const hitRate = Math.round((totalCacheRead / (totalCacheRead + totalInput)) * 100);
             sp.push(`\u26A1${hitRate}%`);
@@ -496,134 +484,33 @@ export function updateProgressWidget(
             sp.push(cxDisplay);
           }
 
-          const tokenLine = sp.map(p => p.includes("\x1b[") ? p : theme.fg("dim", p))
+          const sLeft = sp.map(p => p.includes("\x1b[") ? p : theme.fg("dim", p))
             .join(theme.fg("dim", " "));
-          leftLines.push(truncateToWidth(`${pad}${tokenLine}`, leftColWidth));
 
           const modelId = cmdCtx?.model?.id ?? "";
           const modelProvider = cmdCtx?.model?.provider ?? "";
+          const modelPhase = phaseLabel ? theme.fg("dim", `[${phaseLabel}] `) : "";
           const modelDisplay = modelProvider && modelId
             ? `${modelProvider}/${modelId}`
             : modelId;
-          if (modelDisplay) {
-            leftLines.push(truncateToWidth(`${pad}${theme.fg("dim", modelDisplay)}`, leftColWidth));
-          }
+          const sRight = modelDisplay
+            ? `${modelPhase}${theme.fg("dim", modelDisplay)}`
+            : "";
+          lines.push(rightAlign(`${pad}${sLeft}`, sRight, width));
 
-          // Dynamic routing savings
+          // Dynamic routing savings summary
           if (mLedger && mLedger.units.some(u => u.tier)) {
             const savings = formatTierSavings(mLedger.units);
             if (savings) {
-              leftLines.push(truncateToWidth(`${pad}${theme.fg("dim", savings)}`, leftColWidth));
+              lines.push(truncateToWidth(theme.fg("dim", `${pad}${savings}`), width));
             }
           }
         }
 
-        // Build right column: task checklist (pegged to right edge)
-        const rightLines: string[] = [];
-        const taskDetails = roadmapSlices?.taskDetails ?? null;
-        const maxVisibleTasks = 8;
-        const rpad = " ";
-
-        if (useTwoCol) {
-          if (taskDetails && taskDetails.length > 0) {
-            const visibleTasks = taskDetails.slice(0, maxVisibleTasks);
-            for (const t of visibleTasks) {
-              const isCurrent = task && t.id === task.id;
-              const glyph = t.done
-                ? theme.fg("success", GLYPH.statusDone)
-                : isCurrent
-                  ? theme.fg("accent", "▸")
-                  : theme.fg("dim", " ");
-              const label = isCurrent
-                ? theme.fg("text", `${t.id}: ${t.title}`)
-                : t.done
-                  ? theme.fg("dim", `${t.id}: ${t.title}`)
-                  : theme.fg("text", `${t.id}: ${t.title}`);
-              rightLines.push(truncateToWidth(`${rpad}${glyph} ${label}`, rightColWidth));
-            }
-            if (taskDetails.length > maxVisibleTasks) {
-              rightLines.push(truncateToWidth(
-                `${rpad}${theme.fg("dim", `  …+${taskDetails.length - maxVisibleTasks} more`)}`,
-                rightColWidth,
-              ));
-            }
-          } else if (roadmapSlices?.activeSliceTasks) {
-            const { done: tDone, total: tTotal } = roadmapSlices.activeSliceTasks;
-            rightLines.push(`${rpad}${theme.fg("dim", `${tDone}/${tTotal} tasks`)}`);
-          }
-        } else {
-          // Narrow single-column: task list goes into left column
-          if (taskDetails && taskDetails.length > 0) {
-            for (const t of taskDetails.slice(0, maxVisibleTasks)) {
-              const isCurrent = task && t.id === task.id;
-              const glyph = t.done
-                ? theme.fg("success", GLYPH.statusDone)
-                : isCurrent
-                  ? theme.fg("accent", "▸")
-                  : theme.fg("dim", " ");
-              const label = isCurrent
-                ? theme.fg("text", `${t.id}: ${t.title}`)
-                : t.done
-                  ? theme.fg("dim", `${t.id}: ${t.title}`)
-                  : theme.fg("text", `${t.id}: ${t.title}`);
-              leftLines.push(truncateToWidth(`${pad}${glyph} ${label}`, leftColWidth));
-            }
-          }
-          // Add progress bar inline
-          if (roadmapSlices) {
-            const { done, total, activeSliceTasks } = roadmapSlices;
-            const barWidth = Math.max(6, Math.min(18, Math.floor(leftColWidth * 0.4)));
-            const pct = total > 0 ? done / total : 0;
-            const filled = Math.round(pct * barWidth);
-            const bar = theme.fg("success", "█".repeat(filled))
-              + theme.fg("dim", "░".repeat(barWidth - filled));
-            let meta = theme.fg("dim", `${done}/${total} slices`);
-            if (activeSliceTasks && activeSliceTasks.total > 0) {
-              const taskNum = isHook
-                ? Math.max(activeSliceTasks.done, 1)
-                : Math.min(activeSliceTasks.done + 1, activeSliceTasks.total);
-              meta += theme.fg("dim", ` · task ${taskNum}/${activeSliceTasks.total}`);
-            }
-            const eta = estimateTimeRemaining();
-            if (eta) meta += theme.fg("dim", ` · ${eta}`);
-            leftLines.push(truncateToWidth(`${pad}${bar} ${meta}`, leftColWidth));
-          }
-          if (next) {
-            leftLines.push(truncateToWidth(
-              `${pad}${theme.fg("dim", "→")} ${theme.fg("dim", `then ${next}`)}`,
-              leftColWidth,
-            ));
-          }
-        }
-
-        // Compose columns
-        if (useTwoCol) {
-          const maxRows = Math.max(leftLines.length, rightLines.length);
-          if (maxRows > 0) {
-            lines.push(""); // spacer before columns
-            for (let i = 0; i < maxRows; i++) {
-              const left = padToWidth(leftLines[i] ?? "", leftColWidth);
-              const gap = " ".repeat(colGap - 2); // colGap minus divider and its trailing space
-              const right = rightLines[i] ?? "";
-              lines.push(truncateToWidth(`${left}${gap}${divider} ${right}`, width));
-            }
-          }
-        } else {
-          // Narrow single-column: just stack
-          if (leftLines.length > 0) {
-            lines.push("");
-            for (const l of leftLines) lines.push(l);
-          }
-        }
-
-        // ── Footer: pwd + hints ─────────────────────────────────────────
-        lines.push("");
         const hintParts: string[] = [];
         hintParts.push("esc pause");
         hintParts.push(process.platform === "darwin" ? "⌃⌥G dashboard" : "Ctrl+Alt+G dashboard");
-        const hintStr = theme.fg("dim", hintParts.join(" | "));
-        const pwdStr = theme.fg("dim", widgetPwd);
-        lines.push(rightAlign(`${pad}${pwdStr}`, hintStr, width));
+        lines.push(...ui.hints(hintParts));
 
         lines.push(...ui.bar());
 
@@ -649,6 +536,31 @@ export function updateProgressWidget(
  * Build a compact string-array representation of the progress widget.
  * Used as a fallback when the factory-based widget cannot render (RPC mode).
  */
+// ─── Model Health Indicator ───────────────────────────────────────────────────
+
+/**
+ * Compute a traffic-light health indicator from observable signals.
+ * 🟢 progressing well — no errors, trend stable/improving
+ * 🟡 struggling — some errors or degrading trend
+ * 🔴 stuck — consecutive errors, likely needs attention
+ */
+export function getModelHealthIndicator(): { emoji: string; label: string } {
+  const trend = getHealthTrend();
+  const consecutiveErrors = getConsecutiveErrorUnits();
+
+  if (consecutiveErrors >= 3) {
+    return { emoji: "🔴", label: "stuck" };
+  }
+  if (consecutiveErrors >= 1 || trend === "degrading") {
+    return { emoji: "🟡", label: "struggling" };
+  }
+  if (trend === "improving") {
+    return { emoji: "🟢", label: "progressing well" };
+  }
+  // stable or unknown
+  return { emoji: "🟢", label: "progressing" };
+}
+
 function buildProgressTextLines(
   verb: string,
   phaseLabel: string,
@@ -697,6 +609,11 @@ function buildProgressTextLines(
   }
 
   if (next) lines.push(`  Next: ${next}`);
+
+  // Model health indicator
+  const health = getModelHealthIndicator();
+  lines.push(`  Health: ${health.emoji} ${health.label}`);
+
   lines.push(`  ${widgetPwd}`);
 
   return lines;
@@ -710,11 +627,4 @@ function rightAlign(left: string, right: string, width: number): string {
   const rightVis = visibleWidth(right);
   const gap = Math.max(1, width - leftVis - rightVis);
   return truncateToWidth(left + " ".repeat(gap) + right, width);
-}
-
-/** Pad a string with trailing spaces to fill exactly `colWidth` (ANSI-aware). */
-function padToWidth(s: string, colWidth: number): string {
-  const vis = visibleWidth(s);
-  if (vis >= colWidth) return truncateToWidth(s, colWidth);
-  return s + " ".repeat(colWidth - vis);
 }

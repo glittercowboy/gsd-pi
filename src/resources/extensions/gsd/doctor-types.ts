@@ -31,6 +31,8 @@ export type DoctorIssueCode =
   | "state_file_missing"
   | "gitignore_missing_patterns"
   | "unresolvable_dependency"
+  | "failed_migration"
+  | "broken_symlink"
   // Environment health checks (#1221)
   | "env_node_version"
   | "env_dependencies"

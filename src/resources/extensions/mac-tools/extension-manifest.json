@@ -1,0 +1,16 @@
+{
+  "id": "mac-tools",
+  "name": "Mac Tools",
+  "version": "1.0.0",
+  "description": "macOS automation via Accessibility API — screenshots, UI inspection, clicks, and typing",
+  "tier": "bundled",
+  "requires": { "platform": ">=2.29.0" },
+  "provides": {
+    "tools": [
+      "mac_check_permissions", "mac_list_apps", "mac_launch_app", "mac_activate_app",
+      "mac_quit_app", "mac_list_windows", "mac_screenshot", "mac_find",
+      "mac_get_tree", "mac_click", "mac_type", "mac_read"
+    ],
+    "hooks": ["before_agent_start"]
+  }
+}

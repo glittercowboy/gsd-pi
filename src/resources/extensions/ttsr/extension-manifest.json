@@ -1,0 +1,11 @@
+{
+  "id": "ttsr",
+  "name": "Time Traveling Stream Rules",
+  "version": "1.0.0",
+  "description": "Zero-context-cost guardrails that monitor streaming output against regex patterns",
+  "tier": "bundled",
+  "requires": { "platform": ">=2.29.0" },
+  "provides": {
+    "hooks": ["session_start", "turn_start", "message_update", "turn_end", "agent_end"]
+  }
+}

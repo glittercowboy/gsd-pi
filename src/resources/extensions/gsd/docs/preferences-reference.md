@@ -82,7 +82,6 @@ Setting `prefer_skills: []` does **not** disable skill discovery — it just mea
   | `git.pre_merge_check` | `false` | `true` |
   | `git.merge_strategy` | `"squash"` | `"squash"` |
   | `git.isolation` | `"worktree"` | `"worktree"` |
-  | `git.commit_docs` | `true` | `true` |
   | `unique_milestone_ids` | `false` | `true` |
 
   Quick setup: `/gsd mode` (global) or `/gsd mode project` (project-level).
@@ -127,7 +126,6 @@ Setting `prefer_skills: []` does **not** disable skill discovery — it just mea
   - `main_branch`: string — the primary branch name for new git repos (e.g., `"main"`, `"master"`, `"trunk"`). Also used by `getMainBranch()` as the preferred branch when auto-detection is ambiguous. Default: `"main"`.
   - `merge_strategy`: `"squash"` or `"merge"` — controls how worktree branches are merged back. `"squash"` combines all commits into one; `"merge"` preserves individual commits. Default: `"squash"`.
   - `isolation`: `"worktree"`, `"branch"`, or `"none"` — controls auto-mode git isolation strategy. `"worktree"` creates a milestone worktree for isolated work; `"branch"` works directly in the project root but creates a milestone branch (useful for submodule-heavy repos); `"none"` works directly on the current branch with no worktree or milestone branch (ideal for step-mode with hot reloads). Default: `"worktree"`.
-  - `commit_docs`: boolean — when `false`, prevents GSD from committing `.gsd/` planning artifacts to git. The `.gsd/` folder is added to `.gitignore` and kept local-only. Useful for teams where only some members use GSD, or when company policy requires a clean repository. Default: `true`.
   - `manage_gitignore`: boolean — when `false`, GSD will not touch `.gitignore` at all. Useful when your project has a strictly managed `.gitignore` and you don't want GSD adding entries. Default: `true`.
   - `worktree_post_create`: string — script to run after a worktree is created (both auto-mode and manual `/worktree`). Receives `SOURCE_DIR` and `WORKTREE_DIR` as environment variables. Can be absolute or relative to project root. Runs with 30-second timeout. Failure is non-fatal (logged as warning). Default: none.
 
@@ -244,7 +242,7 @@ mode: solo
 ---
 ```
 
-Equivalent to setting `git.auto_push: true`, `git.push_branches: false`, `git.pre_merge_check: false`, `git.merge_strategy: squash`, `git.isolation: worktree`, `git.commit_docs: true`, `unique_milestone_ids: false`.
+Equivalent to setting `git.auto_push: true`, `git.push_branches: false`, `git.pre_merge_check: false`, `git.merge_strategy: squash`, `git.isolation: worktree`, `unique_milestone_ids: false`.
 
 **Team — unique IDs, push branches, pre-merge checks:**
 
@@ -255,7 +253,7 @@ mode: team
 ---
 ```
 
-Equivalent to setting `git.auto_push: false`, `git.push_branches: true`, `git.pre_merge_check: true`, `git.merge_strategy: squash`, `git.isolation: worktree`, `git.commit_docs: true`, `unique_milestone_ids: true`.
+Equivalent to setting `git.auto_push: false`, `git.push_branches: true`, `git.pre_merge_check: true`, `git.merge_strategy: squash`, `git.isolation: worktree`, `unique_milestone_ids: true`.
 
 **Mode with overrides — team mode but with auto-push:**
 

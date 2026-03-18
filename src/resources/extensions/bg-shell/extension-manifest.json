@@ -1,0 +1,14 @@
+{
+  "id": "bg-shell",
+  "name": "Background Shell",
+  "version": "1.0.0",
+  "description": "Run and manage background shell processes with interactive monitoring",
+  "tier": "bundled",
+  "requires": { "platform": ">=2.29.0" },
+  "provides": {
+    "tools": ["bg_shell"],
+    "commands": ["bg"],
+    "hooks": ["session_shutdown"],
+    "shortcuts": ["Ctrl+Alt+B"]
+  }
+}

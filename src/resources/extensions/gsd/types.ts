@@ -304,6 +304,8 @@ export interface PhaseSkipPreferences {
   skip_reassess?: boolean;
   skip_slice_research?: boolean;
   skip_milestone_validation?: boolean;
+  /** When true, reassess-roadmap fires after each slice completion. Opt-in. */
+  reassess_after_slice?: boolean;
   /** When true, auto-mode pauses before each slice for discussion (#789). */
   require_slice_discussion?: boolean;
 }

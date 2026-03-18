@@ -308,8 +308,8 @@ test("loadPersistedKeys unions keys from project root and worktree", () => {
 });
 
 test("completed-units.json set-union merge produces correct result", () => {
-  // Verify that a manual set-union merge (as done in syncStateToProjectRoot)
-  // correctly merges two JSON arrays of keys.
+  // Verify that a manual set-union merge correctly merges two JSON arrays
+  // of completed-unit keys.
   const projectRoot = makeTmpBase();
   const worktree = makeTmpBase();
   try {
@@ -320,7 +320,7 @@ test("completed-units.json set-union merge produces correct result", () => {
     writeFileSync(prKeysFile, JSON.stringify(["a", "b"]));
     writeFileSync(wtKeysFile, JSON.stringify(["b", "c", "d"]));
 
-    // Perform the same merge logic used in syncStateToProjectRoot
+    // Perform a set-union merge of two JSON key arrays
     const srcKeys: string[] = JSON.parse(readFileSync(wtKeysFile, "utf8"));
     let dstKeys: string[] = [];
     if (existsSync(prKeysFile)) {

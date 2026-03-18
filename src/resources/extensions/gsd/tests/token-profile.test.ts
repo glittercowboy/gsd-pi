@@ -53,6 +53,7 @@ test("types: PhaseSkipPreferences interface exported", () => {
   assert.ok(typesSrc.includes("skip_research"), "should include skip_research");
   assert.ok(typesSrc.includes("skip_reassess"), "should include skip_reassess");
   assert.ok(typesSrc.includes("skip_slice_research"), "should include skip_slice_research");
+  assert.ok(typesSrc.includes("reassess_after_slice"), "should include reassess_after_slice");
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -113,24 +114,21 @@ test("profile: budget profile sets phase skips to true", () => {
   assert.ok(budgetBlock.includes("skip_slice_research: true"), "budget should skip slice research");
 });
 
-test("profile: balanced profile skips only slice research", () => {
+test("profile: balanced profile skips research, reassess, and slice research (ADR-003)", () => {
   const balancedIdx = preferencesSrc.indexOf('case "balanced":');
   const qualityIdx = preferencesSrc.indexOf('case "quality":');
   const balancedBlock = preferencesSrc.slice(balancedIdx, qualityIdx);
   assert.ok(balancedBlock.includes("skip_slice_research: true"), "balanced should skip slice research");
-  assert.ok(!balancedBlock.includes("skip_research: true"), "balanced should NOT skip milestone research");
-  assert.ok(!balancedBlock.includes("skip_reassess: true"), "balanced should NOT skip reassess");
+  assert.ok(balancedBlock.includes("skip_research: true"), "balanced should skip milestone research");
+  assert.ok(balancedBlock.includes("skip_reassess: true"), "balanced should skip reassess");
 });
 
-test("profile: quality profile has empty phases (no skips)", () => {
+test("profile: quality profile skips research, slice research, and reassess (ADR-003)", () => {
   const qualityIdx = preferencesSrc.indexOf('case "quality":');
-  const qualityEnd = preferencesSrc.indexOf("}", qualityIdx + 50);
-  // Look for the return block after case "quality":
-  const qualityReturn = preferencesSrc.slice(qualityIdx, qualityIdx + 200);
-  assert.ok(
-    qualityReturn.includes("phases: {}"),
-    "quality should have empty phases object (no skips)",
-  );
+  const qualityBlock = preferencesSrc.slice(qualityIdx, qualityIdx + 300);
+  assert.ok(qualityBlock.includes("skip_research: true"), "quality should skip research");
+  assert.ok(qualityBlock.includes("skip_slice_research: true"), "quality should skip slice research");
+  assert.ok(qualityBlock.includes("skip_reassess: true"), "quality should skip reassess");
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -253,10 +251,10 @@ test("dispatch: research-slice rule has skip guards", () => {
   );
 });
 
-test("dispatch: reassess-roadmap rule has skip_reassess guard", () => {
+test("dispatch: reassess-roadmap rule has reassess_after_slice opt-in guard (ADR-003)", () => {
   assert.ok(
-    dispatchSrc.includes("skip_reassess") && dispatchSrc.includes("reassess-roadmap"),
-    "reassess-roadmap dispatch rule should check phases.skip_reassess",
+    dispatchSrc.includes("reassess_after_slice") && dispatchSrc.includes("reassess-roadmap"),
+    "reassess-roadmap dispatch rule should check phases.reassess_after_slice",
   );
 });
 
@@ -265,6 +263,6 @@ test("dispatch: phase skip guards return null (not stop)", () => {
   const researchGuard = dispatchSrc.match(/skip_research\).*?return null/s);
   assert.ok(researchGuard, "skip_research guard should return null (fall-through)");
 
-  const reassessGuard = dispatchSrc.match(/skip_reassess\).*?return null/s);
-  assert.ok(reassessGuard, "skip_reassess guard should return null (fall-through)");
+  const reassessGuard = dispatchSrc.match(/reassess_after_slice\).*?return null/s);
+  assert.ok(reassessGuard, "reassess_after_slice guard should return null (fall-through)");
 });

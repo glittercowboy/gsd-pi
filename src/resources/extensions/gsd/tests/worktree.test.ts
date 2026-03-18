@@ -108,10 +108,7 @@ async function main(): Promise<void> {
     assertEq(readIntegrationBranch(repo, "M001"), "f-123-thing",
       "captureIntegrationBranch records the current branch");
 
-    // Verify it was committed (not just written to disk)
-    const logOut = run("git log --oneline -1", repo);
-    assertTrue(logOut.includes("integration branch"), "metadata committed to git");
-
+    // .gsd/ metadata is written to disk only (not committed) since commit_docs removal
     rmSync(repo, { recursive: true, force: true });
   }
 

@@ -1,0 +1,12 @@
+{
+  "id": "context7",
+  "name": "Context7",
+  "version": "1.0.0",
+  "description": "Fetch up-to-date library documentation and code examples from Context7",
+  "tier": "bundled",
+  "requires": { "platform": ">=2.29.0" },
+  "provides": {
+    "tools": ["resolve_library", "get_library_docs"],
+    "hooks": ["session_start"]
+  }
+}

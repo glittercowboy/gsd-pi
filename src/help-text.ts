@@ -32,6 +32,38 @@ const SUBCOMMAND_HELP: Record<string, string> = {
     'Compare with --continue (-c) which always resumes the most recent session.',
   ].join('\n'),
 
+  worktree: [
+    'Usage: gsd worktree <command> [args]',
+    '',
+    'Manage isolated git worktrees for parallel work streams.',
+    '',
+    'Commands:',
+    '  list                 List worktrees with status (files changed, commits, dirty)',
+    '  merge [name]         Squash-merge a worktree into main and clean up',
+    '  clean                Remove all worktrees that have been merged or are empty',
+    '  remove <name>        Remove a worktree (--force to remove with unmerged changes)',
+    '',
+    'The -w flag creates/resumes worktrees for interactive sessions:',
+    '  gsd -w               Auto-name a new worktree, or resume the only active one',
+    '  gsd -w my-feature    Create or resume a named worktree',
+    '',
+    'Lifecycle:',
+    '  1. gsd -w             Create worktree, start session inside it',
+    '  2. (work normally)    All changes happen on the worktree branch',
+    '  3. Ctrl+C             Exit — dirty work is auto-committed',
+    '  4. gsd -w             Resume where you left off',
+    '  5. gsd worktree merge Squash-merge into main when done',
+    '',
+    'Examples:',
+    '  gsd -w                              Start in a new auto-named worktree',
+    '  gsd -w auth-refactor                Create/resume "auth-refactor" worktree',
+    '  gsd worktree list                   See all worktrees and their status',
+    '  gsd worktree merge auth-refactor    Merge and clean up',
+    '  gsd worktree clean                  Remove all merged/empty worktrees',
+    '  gsd worktree remove old-branch      Remove a specific worktree',
+    '  gsd worktree remove old-branch --force  Remove even with unmerged changes',
+  ].join('\n'),
+
   headless: [
     'Usage: gsd headless [flags] [command] [args...]',
     '',
@@ -76,6 +108,9 @@ const SUBCOMMAND_HELP: Record<string, string> = {
   ].join('\n'),
 }
 
+// Alias: `gsd wt --help` → same as `gsd worktree --help`
+SUBCOMMAND_HELP['wt'] = SUBCOMMAND_HELP['worktree']
+
 export function printHelp(version: string): void {
   process.stdout.write(`GSD v${version} — Get Shit Done\n\n`)
   process.stdout.write('Usage: gsd [options] [message...]\n\n')
@@ -83,6 +118,7 @@ export function printHelp(version: string): void {
   process.stdout.write('  --mode <text|json|rpc|mcp> Output mode (default: interactive)\n')
   process.stdout.write('  --print, -p              Single-shot print mode\n')
   process.stdout.write('  --continue, -c           Resume the most recent session\n')
+  process.stdout.write('  --worktree, -w [name]    Start in an isolated worktree (auto-named if omitted)\n')
   process.stdout.write('  --model <id>             Override model (e.g. claude-opus-4-6)\n')
   process.stdout.write('  --no-session             Disable session persistence\n')
   process.stdout.write('  --extension <path>       Load additional extension\n')
@@ -94,6 +130,7 @@ export function printHelp(version: string): void {
   process.stdout.write('  config                   Re-run the setup wizard\n')
   process.stdout.write('  update                   Update GSD to the latest version\n')
   process.stdout.write('  sessions                 List and resume a past session\n')
+  process.stdout.write('  worktree <cmd>           Manage worktrees (list, merge, clean, remove)\n')
   process.stdout.write('  headless [cmd] [args]    Run /gsd commands without TUI (default: auto)\n')
   process.stdout.write('\nRun gsd <subcommand> --help for subcommand-specific help.\n')
 }

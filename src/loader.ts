@@ -33,6 +33,7 @@ if (firstArg === '--help' || firstArg === '-h') {
 import { agentDir, appRoot } from './app-paths.js'
 import { serializeBundledExtensionPaths } from './bundled-extension-paths.js'
 import { discoverExtensionEntryPaths } from './extension-discovery.js'
+import { loadRegistry, readManifestFromEntryPath, isExtensionEnabled } from './extension-registry.js'
 import { renderLogo } from './logo.js'
 
 // pkg/ is a shim directory: contains gsd's piConfig (package.json) and pi's
@@ -101,9 +102,14 @@ process.env.GSD_WORKFLOW_PATH = join(resourcesDir, 'GSD-WORKFLOW.md')
 // where initResources() will sync them.
 const bundledExtDir = join(resourcesDir, 'extensions')
 const agentExtDir = join(agentDir, 'extensions')
-const discoveredExtensionPaths = discoverExtensionEntryPaths(bundledExtDir).map(
-  (entryPath) => join(agentExtDir, relative(bundledExtDir, entryPath)),
-)
+const registry = loadRegistry()
+const discoveredExtensionPaths = discoverExtensionEntryPaths(bundledExtDir)
+  .map((entryPath) => join(agentExtDir, relative(bundledExtDir, entryPath)))
+  .filter((entryPath) => {
+    const manifest = readManifestFromEntryPath(entryPath)
+    if (!manifest) return true  // no manifest = always load
+    return isExtensionEnabled(registry, manifest.id)
+  })
 
 process.env.GSD_BUNDLED_EXTENSION_PATHS = serializeBundledExtensionPaths(discoveredExtensionPaths)
 

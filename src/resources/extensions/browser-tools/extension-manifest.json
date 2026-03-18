@@ -1,0 +1,37 @@
+{
+  "id": "browser-tools",
+  "name": "Browser Tools",
+  "version": "1.0.0",
+  "description": "Playwright-based web automation, screenshots, and analysis",
+  "tier": "bundled",
+  "requires": { "platform": ">=2.29.0" },
+  "provides": {
+    "tools": [
+      "browser_navigate", "browser_go_back", "browser_go_forward", "browser_reload",
+      "browser_click", "browser_drag", "browser_type", "browser_upload_file",
+      "browser_scroll", "browser_hover", "browser_key_press", "browser_select_option",
+      "browser_set_checked", "browser_screenshot", "browser_wait_for",
+      "browser_get_console_logs", "browser_get_network_logs", "browser_get_dialog_logs",
+      "browser_evaluate", "browser_get_accessibility_tree", "browser_find",
+      "browser_get_page_source", "browser_close",
+      "browser_trace_start", "browser_trace_stop", "browser_export_har",
+      "browser_timeline", "browser_session_summary", "browser_debug_bundle",
+      "browser_assert", "browser_diff", "browser_batch",
+      "browser_snapshot_refs", "browser_get_ref", "browser_click_ref",
+      "browser_hover_ref", "browser_fill_ref",
+      "browser_list_pages", "browser_switch_page", "browser_close_page",
+      "browser_list_frames", "browser_select_frame",
+      "browser_analyze_form", "browser_fill_form",
+      "browser_find_best", "browser_act",
+      "browser_save_pdf", "browser_save_state", "browser_restore_state",
+      "browser_mock_route", "browser_block_urls", "browser_clear_routes",
+      "browser_emulate_device", "browser_extract",
+      "browser_visual_diff", "browser_zoom_region",
+      "browser_generate_test", "browser_action_cache", "browser_check_injection"
+    ],
+    "hooks": ["session_shutdown"]
+  },
+  "dependencies": {
+    "runtime": ["playwright"]
+  }
+}

@@ -9,6 +9,7 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
+import { gsdRoot } from "./paths.js";
 
 // ─── Types ──────────────────────────────────────────────────────────────────────
 
@@ -214,7 +215,7 @@ export function detectV1Planning(basePath: string): V1Detection | null {
 // ─── V2 GSD Detection ──────────────────────────────────────────────────────────
 
 function detectV2Gsd(basePath: string): V2Detection | null {
-  const gsdPath = join(basePath, ".gsd");
+  const gsdPath = gsdRoot(basePath);
 
   if (!existsSync(gsdPath)) return null;
 

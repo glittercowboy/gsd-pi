@@ -9,6 +9,7 @@ import type { ExtensionAPI, ExtensionCommandContext } from "@gsd/pi-coding-agent
 import { existsSync, readFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { deriveState } from "./state.js";
+import { gsdRoot } from "./paths.js";
 import { appendCapture, hasPendingCaptures, loadPendingCaptures } from "./captures.js";
 import { appendOverride, appendKnowledge } from "./files.js";
 import {
@@ -136,7 +137,7 @@ export async function handleCapture(args: string, ctx: ExtensionCommandContext):
   const basePath = process.cwd();
 
   // Ensure .gsd/ exists — capture should work even without a milestone
-  const gsdDir = join(basePath, ".gsd");
+  const gsdDir = gsdRoot(basePath);
   if (!existsSync(gsdDir)) {
     mkdirSync(gsdDir, { recursive: true });
   }

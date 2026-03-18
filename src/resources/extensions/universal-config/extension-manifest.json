@@ -1,0 +1,13 @@
+{
+  "id": "universal-config",
+  "name": "Universal Config",
+  "version": "1.0.0",
+  "description": "Discover AI coding tool configurations across Claude Code, Cursor, Windsurf, Gemini CLI, and more",
+  "tier": "bundled",
+  "requires": { "platform": ">=2.29.0" },
+  "provides": {
+    "tools": ["discover_configs"],
+    "commands": ["configs"],
+    "hooks": ["session_switch"]
+  }
+}

@@ -1,0 +1,18 @@
+{
+  "id": "gsd",
+  "name": "GSD Workflow",
+  "version": "1.0.0",
+  "description": "Core GSD workflow engine — milestone planning, execution, and tracking",
+  "tier": "core",
+  "requires": { "platform": ">=2.29.0" },
+  "provides": {
+    "tools": [
+      "bash", "write", "read", "edit",
+      "gsd_save_decision", "gsd_save_summary",
+      "gsd_update_requirement", "gsd_generate_milestone_id"
+    ],
+    "commands": ["gsd", "kill", "worktree", "exit"],
+    "hooks": ["session_start"],
+    "shortcuts": ["Ctrl+Alt+G"]
+  }
+}

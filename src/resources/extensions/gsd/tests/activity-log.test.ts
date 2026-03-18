@@ -6,7 +6,7 @@
 
 import test from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, mkdirSync, readdirSync, rmSync, utimesSync, writeFileSync, readFileSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, readdirSync, realpathSync, rmSync, utimesSync, writeFileSync, readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
@@ -18,7 +18,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 function createTmpDir(): string {
-  return mkdtempSync(join(tmpdir(), "gsd-activity-test-"));
+  return realpathSync(mkdtempSync(join(tmpdir(), "gsd-activity-test-")));
 }
 
 function writeActivityFile(dir: string, seq: string, name: string): string {

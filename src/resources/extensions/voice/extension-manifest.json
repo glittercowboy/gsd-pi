@@ -1,0 +1,12 @@
+{
+  "id": "voice",
+  "name": "Voice",
+  "version": "1.0.0",
+  "description": "Voice input mode for hands-free interaction",
+  "tier": "bundled",
+  "requires": { "platform": ">=2.29.0" },
+  "provides": {
+    "commands": ["voice"],
+    "shortcuts": ["Ctrl+Alt+V"]
+  }
+}

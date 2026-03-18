@@ -1086,12 +1086,12 @@ async function main(): Promise<void> {
     rmSync(repo, { recursive: true, force: true });
   }
 
-  // ─── commit_docs: false — smartStage excludes .gsd/ ──────────────────
+  // ─── smartStage always excludes .gsd/ ──────────────────────────────
 
-  console.log("\n=== commit_docs: false — smartStage excludes .gsd/ ===");
+  console.log("\n=== smartStage always excludes .gsd/ ===");
 
   {
-    const repo = mkdtempSync(join(tmpdir(), "gsd-commit-docs-"));
+    const repo = mkdtempSync(join(tmpdir(), "gsd-smart-stage-excludes-"));
     run("git init -b main", repo);
     run("git config user.email test@test.com", repo);
     run("git config user.name Test", repo);
@@ -1104,116 +1104,61 @@ async function main(): Promise<void> {
     writeFileSync(join(repo, ".gsd", "preferences.md"), "---\nversion: 1\n---");
     writeFileSync(join(repo, "src.ts"), "const x = 1;");
 
-    // With commit_docs: false, smartStage should exclude .gsd/
-    const svc = new GitServiceImpl(repo, { commit_docs: false });
+    // smartStage always excludes .gsd/ — state is managed externally
+    const svc = new GitServiceImpl(repo);
     const msg = svc.commit({ message: "test commit" });
-    assertTrue(msg !== null, "commit_docs=false: commit succeeds with non-.gsd files");
+    assertTrue(msg !== null, "smartStage: commit succeeds with non-.gsd files");
 
     // .gsd/ files should NOT be in the commit
     const committed = run("git show --name-only HEAD", repo);
-    assertTrue(!committed.includes(".gsd/"), "commit_docs=false: .gsd/ files not in commit");
-    assertTrue(committed.includes("src.ts"), "commit_docs=false: source files ARE in commit");
+    assertTrue(!committed.includes(".gsd/"), "smartStage: .gsd/ files not in commit");
+    assertTrue(committed.includes("src.ts"), "smartStage: source files ARE in commit");
 
     rmSync(repo, { recursive: true, force: true });
   }
 
-  // ─── commit_docs: true (default) — smartStage includes .gsd/ ────────
+  // ─── writeIntegrationBranch: no commit (metadata in external storage) ──
 
-  console.log("\n=== commit_docs: true — smartStage includes .gsd/ ===");
-
-  {
-    const repo = mkdtempSync(join(tmpdir(), "gsd-commit-docs-default-"));
-    run("git init -b main", repo);
-    run("git config user.email test@test.com", repo);
-    run("git config user.name Test", repo);
-    writeFileSync(join(repo, "README.md"), "init");
-    run("git add -A && git commit -m init", repo);
-
-    mkdirSync(join(repo, ".gsd", "milestones", "M001"), { recursive: true });
-    writeFileSync(join(repo, ".gsd", "milestones", "M001", "ROADMAP.md"), "# Roadmap");
-    writeFileSync(join(repo, "src.ts"), "const x = 1;");
-
-    // Default behavior (commit_docs not set) — .gsd/ files ARE committed
-    const svc = new GitServiceImpl(repo);
-    const msg = svc.commit({ message: "test commit" });
-    assertTrue(msg !== null, "commit_docs=default: commit succeeds");
-
-    const committed = run("git show --name-only HEAD", repo);
-    assertTrue(committed.includes(".gsd/"), "commit_docs=default: .gsd/ files ARE in commit");
-    assertTrue(committed.includes("src.ts"), "commit_docs=default: source files in commit");
-
-    rmSync(repo, { recursive: true, force: true });
-  }
-
-  // ─── writeIntegrationBranch: commitDocs false skips commit ──────────
-
-  console.log("\n=== writeIntegrationBranch: commitDocs false skips commit ===");
+  console.log("\n=== writeIntegrationBranch: no commit ===");
 
   {
     const repo = initBranchTestRepo();
     const commitsBefore = run("git rev-list --count HEAD", repo);
 
-    writeIntegrationBranch(repo, "M001", "f-123-new-thing", { commitDocs: false });
+    writeIntegrationBranch(repo, "M001", "f-123-new-thing");
 
     // File should still be written to disk
     assertEq(readIntegrationBranch(repo, "M001"), "f-123-new-thing",
-      "commitDocs=false: metadata file exists on disk");
+      "writeIntegrationBranch: metadata file exists on disk");
 
-    // But no new commit should have been created
+    // No commit — .gsd/ is managed externally
     const commitsAfter = run("git rev-list --count HEAD", repo);
     assertEq(commitsBefore, commitsAfter,
-      "commitDocs=false: no git commit created for integration branch");
+      "writeIntegrationBranch: no git commit created for integration branch");
 
     rmSync(repo, { recursive: true, force: true });
   }
 
-  // ─── ensureGitignore: commit_docs false adds blanket .gsd/ ──────────
+  // ─── ensureGitignore: always adds .gsd to gitignore ──────────────────
 
-  console.log("\n=== ensureGitignore: commit_docs false ===");
+  console.log("\n=== ensureGitignore: adds .gsd entry ===");
 
   {
     const { ensureGitignore } = await import("../gitignore.ts");
-    const repo = mkdtempSync(join(tmpdir(), "gsd-gitignore-commit-docs-"));
+    const repo = mkdtempSync(join(tmpdir(), "gsd-gitignore-external-state-"));
 
-    // When commit_docs is false, should add blanket .gsd/ to gitignore
-    const modified = ensureGitignore(repo, { commitDocs: false });
-    assertTrue(modified, "commit_docs=false: gitignore was modified");
+    // Should add .gsd to gitignore (external state dir is a symlink)
+    const modified = ensureGitignore(repo);
+    assertTrue(modified, "ensureGitignore: gitignore was modified");
 
     const { readFileSync } = await import("node:fs");
     const content = readFileSync(join(repo, ".gitignore"), "utf-8");
-    assertTrue(content.includes(".gsd/"), "commit_docs=false: .gitignore contains blanket .gsd/");
-    assertTrue(content.includes("commit_docs: false"), "commit_docs=false: .gitignore contains explanatory comment");
-
-    // Should NOT contain individual runtime patterns (those are subsumed by blanket .gsd/)
-    // But it's OK if it does — the blanket .gsd/ covers everything
+    const lines = content.split("\n").map(l => l.trim()).filter(l => l && !l.startsWith("#"));
+    assertTrue(lines.includes(".gsd"), "ensureGitignore: .gitignore contains .gsd");
 
     // Idempotent — calling again doesn't add duplicates
-    const modified2 = ensureGitignore(repo, { commitDocs: false });
-    assertTrue(!modified2, "commit_docs=false: second call is idempotent");
-
-    rmSync(repo, { recursive: true, force: true });
-  }
-
-  // ─── ensureGitignore: commit_docs true removes blanket .gsd/ ────────
-
-  console.log("\n=== ensureGitignore: commit_docs true self-heals ===");
-
-  {
-    const { ensureGitignore } = await import("../gitignore.ts");
-    const repo = mkdtempSync(join(tmpdir(), "gsd-gitignore-selfheal-"));
-
-    // Start with a gitignore that has a blanket .gsd/ (e.g., user switched setting)
-    writeFileSync(join(repo, ".gitignore"), ".gsd/\n");
-
-    const modified = ensureGitignore(repo, { commitDocs: true });
-    assertTrue(modified, "commit_docs=true: gitignore was modified");
-
-    const { readFileSync } = await import("node:fs");
-    const content = readFileSync(join(repo, ".gitignore"), "utf-8");
-    // Blanket .gsd/ should be removed
-    const lines = content.split("\n").map(l => l.trim()).filter(l => l && !l.startsWith("#"));
-    assertTrue(!lines.includes(".gsd/"), "commit_docs=true: blanket .gsd/ was removed");
-    assertTrue(!lines.includes(".gsd"), "commit_docs=true: blanket .gsd was removed");
+    const modified2 = ensureGitignore(repo);
+    assertTrue(!modified2, "ensureGitignore: second call is idempotent");
 
     rmSync(repo, { recursive: true, force: true });
   }

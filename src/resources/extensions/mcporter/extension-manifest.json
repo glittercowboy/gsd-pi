@@ -1,0 +1,12 @@
+{
+  "id": "mcporter",
+  "name": "MCPorter",
+  "version": "1.0.0",
+  "description": "Discover and call tools from MCP servers configured in Claude Desktop, Cursor, and VS Code",
+  "tier": "bundled",
+  "requires": { "platform": ">=2.29.0" },
+  "provides": {
+    "tools": ["mcp_servers", "mcp_discover", "mcp_call"],
+    "hooks": ["session_start"]
+  }
+}

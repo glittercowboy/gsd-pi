@@ -1,0 +1,13 @@
+{
+  "id": "search-the-web",
+  "name": "Web Search",
+  "version": "1.0.0",
+  "description": "Web search via Brave and page extraction via Jina Reader",
+  "tier": "bundled",
+  "requires": { "platform": ">=2.29.0" },
+  "provides": {
+    "tools": ["search-the-web", "fetch_page", "search_and_read", "web_search"],
+    "commands": ["search-provider"],
+    "hooks": ["model_select", "before_provider_request"]
+  }
+}

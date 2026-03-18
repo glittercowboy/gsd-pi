@@ -2216,6 +2216,20 @@ export class AgentSession {
 						});
 					});
 				},
+				retryLastTurn: () => {
+					const messages = this.agent.state.messages;
+					const last = messages[messages.length - 1];
+					if (last?.role === "assistant" && (last as AssistantMessage).stopReason === "error") {
+						this.agent.replaceMessages(messages.slice(0, -1));
+						this.agent.continue().catch((err) => {
+							runner.emitError({
+								extensionPath: "<runtime>",
+								event: "retry_last_turn",
+								error: err instanceof Error ? err.message : String(err),
+							});
+						});
+					}
+				},
 				appendEntry: (customType, data) => {
 					this.sessionManager.appendCustomEntry(customType, data);
 				},

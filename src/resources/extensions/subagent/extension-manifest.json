@@ -1,0 +1,13 @@
+{
+  "id": "subagent",
+  "name": "Subagent",
+  "version": "1.0.0",
+  "description": "Delegate tasks to specialized subagents in single, parallel, or chain modes",
+  "tier": "bundled",
+  "requires": { "platform": ">=2.29.0" },
+  "provides": {
+    "tools": ["subagent"],
+    "commands": ["subagent"],
+    "hooks": ["session_shutdown"]
+  }
+}

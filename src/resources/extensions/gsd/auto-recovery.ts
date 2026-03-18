@@ -35,6 +35,7 @@ import {
   resolveMilestoneFile,
   clearPathCache,
   resolveGsdRootFile,
+  gsdRoot,
 } from "./paths.js";
 import { isValidationTerminal } from "./state.js";
 import { existsSync, mkdirSync, readFileSync, writeFileSync, unlinkSync } from "node:fs";
@@ -361,7 +362,7 @@ function isStringArray(data: unknown): data is string[] {
 
 /** Path to the persisted completed-unit keys file. */
 export function completedKeysPath(base: string): string {
-  return join(base, ".gsd", "completed-units.json");
+  return join(gsdRoot(base), "completed-units.json");
 }
 
 /** Write a completed unit key to disk (read-modify-write append to set). */

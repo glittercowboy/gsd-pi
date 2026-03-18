@@ -1,4 +1,4 @@
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { existsSync, lstatSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { join, sep } from "node:path";
 
 import type { DoctorIssue, DoctorIssueCode } from "./doctor-types.js";
@@ -13,6 +13,7 @@ import { nativeIsRepo, nativeWorktreeRemove, nativeBranchList, nativeBranchDelet
 import { readCrashLock, isLockProcessAlive, clearLock } from "./crash-recovery.js";
 import { ensureGitignore } from "./gitignore.js";
 import { readAllSessionStatuses, isSessionStale, removeSessionStatus } from "./session-status-io.js";
+import { recoverFailedMigration } from "./migrate-external.js";
 
 export async function checkGitHealth(
   basePath: string,
@@ -507,6 +508,53 @@ export async function checkRuntimeHealth(
     }
   } catch {
     // Non-fatal — gitignore check failed
+  }
+
+  // ── External state symlink health ──────────────────────────────────────
+  try {
+    const localGsd = join(basePath, ".gsd");
+    if (existsSync(localGsd)) {
+      const stat = lstatSync(localGsd);
+
+      // Check for .gsd.migrating (failed migration)
+      const migratingPath = join(basePath, ".gsd.migrating");
+      if (existsSync(migratingPath)) {
+        issues.push({
+          severity: "error",
+          code: "failed_migration",
+          scope: "project",
+          unitId: "project",
+          message: "Found .gsd.migrating — a previous external state migration failed. State may be incomplete.",
+          file: ".gsd.migrating",
+          fixable: true,
+        });
+
+        if (shouldFix("failed_migration")) {
+          if (recoverFailedMigration(basePath)) {
+            fixesApplied.push("recovered failed migration (.gsd.migrating → .gsd)");
+          }
+        }
+      }
+
+      // Check symlink target exists
+      if (stat.isSymbolicLink()) {
+        try {
+          realpathSync(localGsd);
+        } catch {
+          issues.push({
+            severity: "error",
+            code: "broken_symlink",
+            scope: "project",
+            unitId: "project",
+            message: ".gsd symlink target does not exist. External state directory may have been deleted.",
+            file: ".gsd",
+            fixable: false,
+          });
+        }
+      }
+    }
+  } catch {
+    // Non-fatal — external state check failed
   }
 }
 

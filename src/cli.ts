@@ -29,6 +29,7 @@ interface CliFlags {
   print?: boolean
   continue?: boolean
   noSession?: boolean
+  worktree?: boolean | string
   model?: string
   listModels?: string | true
   extensions: string[]
@@ -81,6 +82,13 @@ function parseCliArgs(argv: string[]): CliFlags {
     } else if (arg === '--version' || arg === '-v') {
       process.stdout.write((process.env.GSD_VERSION || '0.0.0') + '\n')
       process.exit(0)
+    } else if (arg === '--worktree' || arg === '-w') {
+      // -w with no value → auto-generate name; -w <name> → use that name
+      if (i + 1 < args.length && !args[i + 1].startsWith('-')) {
+        flags.worktree = args[++i]
+      } else {
+        flags.worktree = true
+      }
     } else if (arg === '--help' || arg === '-h') {
       printHelp(process.env.GSD_VERSION || '0.0.0')
       process.exit(0)
@@ -406,6 +414,47 @@ if (isPrintMode) {
     messages: cliFlags.messages,
   })
   process.exit(0)
+}
+
+// ---------------------------------------------------------------------------
+// Worktree subcommand — `gsd worktree <list|merge|clean|remove>`
+// ---------------------------------------------------------------------------
+if (cliFlags.messages[0] === 'worktree' || cliFlags.messages[0] === 'wt') {
+  const { handleList, handleMerge, handleClean, handleRemove } = await import('./worktree-cli.js')
+  const sub = cliFlags.messages[1]
+  const subArgs = cliFlags.messages.slice(2)
+
+  if (!sub || sub === 'list') {
+    handleList(process.cwd())
+  } else if (sub === 'merge') {
+    await handleMerge(process.cwd(), subArgs)
+  } else if (sub === 'clean') {
+    handleClean(process.cwd())
+  } else if (sub === 'remove' || sub === 'rm') {
+    handleRemove(process.cwd(), subArgs)
+  } else {
+    process.stderr.write(`Unknown worktree command: ${sub}\n`)
+    process.stderr.write('Commands: list, merge [name], clean, remove <name>\n')
+  }
+  process.exit(0)
+}
+
+// ---------------------------------------------------------------------------
+// Worktree flag (-w) — create/resume a worktree for the interactive session
+// ---------------------------------------------------------------------------
+if (cliFlags.worktree) {
+  const { handleWorktreeFlag } = await import('./worktree-cli.js')
+  handleWorktreeFlag(cliFlags.worktree)
+}
+
+// ---------------------------------------------------------------------------
+// Active worktree banner — remind user of unmerged worktrees on normal launch
+// ---------------------------------------------------------------------------
+if (!cliFlags.worktree && !isPrintMode) {
+  try {
+    const { handleStatusBanner } = await import('./worktree-cli.js')
+    handleStatusBanner(process.cwd())
+  } catch { /* non-fatal */ }
 }
 
 // ---------------------------------------------------------------------------

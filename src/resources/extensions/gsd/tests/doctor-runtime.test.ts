@@ -231,15 +231,14 @@ None
       const detect = await runGSDDoctor(dir);
       const gitignoreIssues = detect.issues.filter(i => i.code === "gitignore_missing_patterns");
       assertTrue(gitignoreIssues.length > 0, "detects missing gitignore patterns");
-      assertTrue(gitignoreIssues[0]?.message.includes(".gsd/activity/"), "message lists missing patterns");
+      assertTrue(gitignoreIssues[0]?.message.includes(".gsd"), "message lists missing .gsd pattern");
 
       const fixed = await runGSDDoctor(dir, { fix: true });
       assertTrue(fixed.fixesApplied.some(f => f.includes("added missing GSD runtime patterns")), "fix adds patterns");
 
-      // Verify patterns were added
+      // Verify .gsd entry was added (external state symlink)
       const content = readFileSync(join(dir, ".gitignore"), "utf-8");
-      assertTrue(content.includes(".gsd/activity/"), "gitignore now has activity pattern");
-      assertTrue(content.includes(".gsd/auto.lock"), "gitignore now has auto.lock pattern");
+      assertTrue(content.includes(".gsd"), "gitignore now has .gsd entry");
     }
     } else {
       console.log("\n=== gitignore_missing_patterns (skipped on Windows) ===");

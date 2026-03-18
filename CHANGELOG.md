@@ -6,6 +6,37 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [2.30.0] - 2026-03-18
+
+### Added
+- add extension manifest + registry for user-managed enable/disable (#1238)
+- add model health indicator to auto-mode progress widget (#1232)
+- simplify auto pipeline — merge research into planning, mechanical completion (ADR-003) (#1235)
+- add create-gsd-extension skill (#1229)
+- add built-in skill authoring system (ADR-003) (#1228)
+- **prefs**: two-step provider→model picker in preferences wizard (#1218)
+- workflow templates — right-sized workflows for every task type (#1185)
+
+### Fixed
+- align react-best-practices skill name with directory name (#1234)
+- gate slice progression on UAT verdict, not just file existence (#1241)
+- invalidate caches before roadmap check in /gsd discuss (#1240)
+- use shell: true for LSP spawn on Windows to resolve .cmd executables (#1233)
+- increase headless new-milestone timeout and limit investigation scope (#1230)
+- clean untracked .gsd/ files before squash-merge to prevent failure (#1239)
+- graceful fallback when native addon is unavailable on unsupported platforms (#1225)
+- replace ambiguous double-question in discussion reflection step (#1226)
+- kill non-persistent bg processes between auto-mode units (#1217)
+- Two-column dashboard layout with task checklist (#1195)
+
+### Changed
+- move .gsd/ to external state directory with symlink (ADR-002) (#1242)
+- replace MCPorter with native MCP client (#1210)
+- extend json-persistence utility and migrate top JSON I/O callsites (#1216)
+- deduplicate dispatchDoctorHeal — keep single copy in commands-handlers.ts (#1211)
+- remove facade re-exports from auto.ts — import directly from source modules (#1214)
+- extract shared HTTP client for remote-questions adapters (#1212)
+
 ## [2.29.0] - 2026-03-18
 
 ### Added
@@ -1212,7 +1243,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Changed
 - License updated to MIT
 
-[Unreleased]: https://github.com/gsd-build/gsd-2/compare/v2.29.0...HEAD
+[Unreleased]: https://github.com/gsd-build/gsd-2/compare/v2.30.0...HEAD
+[2.30.0]: https://github.com/gsd-build/gsd-2/compare/v2.29.0...v2.30.0
 [2.29.0]: https://github.com/gsd-build/gsd-2/compare/v2.28.0...v2.29.0
 [2.28.0]: https://github.com/gsd-build/gsd-2/compare/v2.27.0...v2.28.0
 [2.27.0]: https://github.com/gsd-build/gsd-2/compare/v2.26.0...v2.27.0

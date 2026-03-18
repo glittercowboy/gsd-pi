@@ -10,7 +10,7 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, realpathSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { GSD_ROOT_FILES, resolveGsdRootFile } from '../paths.ts';
@@ -27,7 +27,7 @@ test('knowledge: KNOWLEDGE key exists in GSD_ROOT_FILES', () => {
 // ─── resolveGsdRootFile resolves KNOWLEDGE.md ───────────────────────────────
 
 test('knowledge: resolveGsdRootFile returns canonical path when KNOWLEDGE.md exists', () => {
-  const tmp = mkdtempSync(join(tmpdir(), 'gsd-knowledge-'));
+  const tmp = realpathSync(mkdtempSync(join(tmpdir(), 'gsd-knowledge-')));
   const gsdDir = join(tmp, '.gsd');
   mkdirSync(gsdDir, { recursive: true });
   writeFileSync(join(gsdDir, 'KNOWLEDGE.md'), '# Project Knowledge\n');
@@ -39,7 +39,7 @@ test('knowledge: resolveGsdRootFile returns canonical path when KNOWLEDGE.md exi
 });
 
 test('knowledge: resolveGsdRootFile resolves when legacy knowledge.md exists', () => {
-  const tmp = mkdtempSync(join(tmpdir(), 'gsd-knowledge-'));
+  const tmp = realpathSync(mkdtempSync(join(tmpdir(), 'gsd-knowledge-')));
   const gsdDir = join(tmp, '.gsd');
   mkdirSync(gsdDir, { recursive: true });
   writeFileSync(join(gsdDir, 'knowledge.md'), '# Project Knowledge\n');
@@ -58,7 +58,7 @@ test('knowledge: resolveGsdRootFile resolves when legacy knowledge.md exists', (
 });
 
 test('knowledge: resolveGsdRootFile returns canonical path when file does not exist', () => {
-  const tmp = mkdtempSync(join(tmpdir(), 'gsd-knowledge-'));
+  const tmp = realpathSync(mkdtempSync(join(tmpdir(), 'gsd-knowledge-')));
   const gsdDir = join(tmp, '.gsd');
   mkdirSync(gsdDir, { recursive: true });
 

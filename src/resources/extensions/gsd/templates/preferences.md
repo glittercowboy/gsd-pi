@@ -20,7 +20,6 @@ git:
   main_branch:
   merge_strategy:
   isolation:
-  commit_docs:
   manage_gitignore:
   worktree_post_create:
 unique_milestone_ids:

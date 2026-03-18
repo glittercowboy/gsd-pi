@@ -1,0 +1,13 @@
+{
+  "id": "async-jobs",
+  "name": "Async Jobs",
+  "version": "1.0.0",
+  "description": "Run bash commands in the background with job tracking and cancellation",
+  "tier": "bundled",
+  "requires": { "platform": ">=2.29.0" },
+  "provides": {
+    "tools": ["async_bash", "await_job", "cancel_job"],
+    "commands": ["jobs"],
+    "hooks": ["session_start"]
+  }
+}

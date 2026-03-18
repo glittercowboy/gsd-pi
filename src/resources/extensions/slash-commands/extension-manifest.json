@@ -1,0 +1,11 @@
+{
+  "id": "slash-commands",
+  "name": "Slash Commands",
+  "version": "1.0.0",
+  "description": "Boilerplate generators for slash commands, extensions, and audit tools",
+  "tier": "bundled",
+  "requires": { "platform": ">=2.29.0" },
+  "provides": {
+    "commands": ["create-slash-command", "create-extension", "audit", "clear"]
+  }
+}

@@ -14,6 +14,7 @@ import type {
 import { resolvePostUnitHooks, resolvePreDispatchHooks } from "./preferences.js";
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
+import { gsdRoot } from "./paths.js";
 
 // ─── Hook Queue State ──────────────────────────────────────────────────────
 
@@ -210,13 +211,13 @@ export function resolveHookArtifactPath(basePath: string, unitId: string, artifa
   const parts = unitId.split("/");
   if (parts.length === 3) {
     const [mid, sid, tid] = parts;
-    return join(basePath, ".gsd", mid, "slices", sid, "tasks", `${tid}-${artifactName}`);
+    return join(gsdRoot(basePath), mid, "slices", sid, "tasks", `${tid}-${artifactName}`);
   }
   if (parts.length === 2) {
     const [mid, sid] = parts;
-    return join(basePath, ".gsd", mid, "slices", sid, artifactName);
+    return join(gsdRoot(basePath), mid, "slices", sid, artifactName);
   }
-  return join(basePath, ".gsd", parts[0], artifactName);
+  return join(gsdRoot(basePath), parts[0], artifactName);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -310,7 +311,7 @@ export function runPreDispatchHooks(
 const HOOK_STATE_FILE = "hook-state.json";
 
 function hookStatePath(basePath: string): string {
-  return join(basePath, ".gsd", HOOK_STATE_FILE);
+  return join(gsdRoot(basePath), HOOK_STATE_FILE);
 }
 
 /**
@@ -323,7 +324,7 @@ export function persistHookState(basePath: string): void {
     savedAt: new Date().toISOString(),
   };
   try {
-    const dir = join(basePath, ".gsd");
+    const dir = gsdRoot(basePath);
     if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
     writeFileSync(hookStatePath(basePath), JSON.stringify(state, null, 2), "utf-8");
   } catch {
