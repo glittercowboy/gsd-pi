@@ -455,6 +455,9 @@ async function getOrCreateClientOnce(config: ServerConfig, cwd: string, initTime
 			cwd,
 			stdio: ["pipe", "pipe", "pipe"],
 			env: env ? { ...process.env, ...env } : undefined,
+			// On Windows, executables like npx/tsc are .cmd scripts that need
+			// shell resolution. Without this, spawn fails with ENOENT (#1222).
+			shell: process.platform === "win32",
 		});
 
 		// Handle spawn failure (e.g., ENOENT when the command doesn't exist).
