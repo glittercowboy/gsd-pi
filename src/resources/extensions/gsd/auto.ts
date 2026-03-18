@@ -3309,15 +3309,16 @@ function ensurePreconditions(
       const slicesDir = join(mDirResolved, "slices");
       const sDir = resolveDir(slicesDir, sid);
       if (!sDir) {
-        // Create slice dir with bare ID
-        const newSliceDir = join(slicesDir, sid);
-        mkdirSync(join(newSliceDir, "tasks"), { recursive: true });
-      } else {
-        // Ensure tasks/ subdir exists
-        const tasksDir = join(slicesDir, sDir, "tasks");
-        if (!existsSync(tasksDir)) {
-          mkdirSync(tasksDir, { recursive: true });
-        }
+        // Create slice dir with bare ID (tasks/ included)
+        mkdirSync(join(slicesDir, sid, "tasks"), { recursive: true });
+      }
+      // Always ensure tasks/ subdir exists — even when slice dir was already
+      // present. Handles the case where a slice was created manually or by a
+      // previous run that didn't create tasks/. (#900)
+      const resolvedSliceDir = resolveDir(slicesDir, sid) ?? sid;
+      const tasksDir = join(slicesDir, resolvedSliceDir, "tasks");
+      if (!existsSync(tasksDir)) {
+        mkdirSync(tasksDir, { recursive: true });
       }
     }
   }
