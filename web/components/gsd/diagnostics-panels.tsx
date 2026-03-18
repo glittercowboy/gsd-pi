@@ -30,11 +30,11 @@ function SeverityIcon({ severity, className }: { severity: "info" | "warning" | 
   switch (severity) {
     case "error":
     case "critical":
-      return <XCircle className={cn(base, "text-red-400")} />
+      return <XCircle className={cn(base, "text-destructive")} />
     case "warning":
-      return <AlertTriangle className={cn(base, "text-amber-400")} />
+      return <AlertTriangle className={cn(base, "text-warning")} />
     default:
-      return <Info className={cn(base, "text-sky-400")} />
+      return <Info className={cn(base, "text-info")} />
   }
 }
 
@@ -74,7 +74,7 @@ function DiagHeader({
 
 function DiagError({ message }: { message: string }) {
   return (
-    <div className="rounded-lg border border-red-500/20 bg-red-500/5 px-3 py-2.5 text-xs text-red-400">
+    <div className="rounded-lg border border-destructive/20 bg-destructive/5 px-3 py-2.5 text-xs text-destructive">
       {message}
     </div>
   )
@@ -101,9 +101,9 @@ function StatPill({ label, value, variant }: { label: string; value: number | st
   return (
     <div className={cn(
       "flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs",
-      variant === "error" && "border-red-500/20 bg-red-500/5 text-red-400",
-      variant === "warning" && "border-amber-500/20 bg-amber-500/5 text-amber-400",
-      variant === "info" && "border-sky-500/20 bg-sky-500/5 text-sky-400",
+      variant === "error" && "border-destructive/20 bg-destructive/5 text-destructive",
+      variant === "warning" && "border-warning/20 bg-warning/5 text-warning",
+      variant === "info" && "border-info/20 bg-info/5 text-info",
       (!variant || variant === "default") && "border-border/40 bg-card/50 text-foreground/80",
     )}>
       <span className="text-muted-foreground">{label}</span>
@@ -150,7 +150,7 @@ export function ForensicsPanel() {
         status={data ? (
           <span className={cn(
             "inline-block h-1.5 w-1.5 rounded-full",
-            data.anomalies.length > 0 ? "bg-amber-400" : "bg-emerald-400",
+            data.anomalies.length > 0 ? "bg-warning" : "bg-success",
           )} />
         ) : null}
         onRefresh={() => void loadForensicsDiagnostics()}
@@ -174,10 +174,10 @@ export function ForensicsPanel() {
 
           {/* Crash lock */}
           {data.crashLock ? (
-            <div className="rounded-lg border border-red-500/20 bg-red-500/5 px-3 py-2.5 space-y-1">
+            <div className="rounded-lg border border-destructive/20 bg-destructive/5 px-3 py-2.5 space-y-1">
               <div className="flex items-center gap-2">
-                <ShieldAlert className="h-3.5 w-3.5 text-red-400" />
-                <span className="text-xs font-medium text-red-400">Crash Lock Active</span>
+                <ShieldAlert className="h-3.5 w-3.5 text-destructive" />
+                <span className="text-xs font-medium text-destructive">Crash Lock Active</span>
               </div>
               <div className="grid grid-cols-2 gap-x-4 gap-y-0.5 text-[11px]">
                 <span className="text-muted-foreground">PID</span>
@@ -190,7 +190,7 @@ export function ForensicsPanel() {
             </div>
           ) : (
             <div className="flex items-center gap-2 rounded-lg border border-border/30 bg-card/30 px-3 py-2 text-xs text-muted-foreground">
-              <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400" />
+              <CheckCircle2 className="h-3.5 w-3.5 text-success" />
               No crash lock
             </div>
           )}
@@ -258,7 +258,7 @@ function IssueRow({ issue }: { issue: DoctorIssue }) {
         <Badge variant="outline" className="text-[10px] px-1.5 py-0 font-mono">{humanizeCode(issue.code)}</Badge>
         {issue.scope && <span className="text-[10px] text-muted-foreground font-mono">{issue.scope}</span>}
         {issue.fixable && (
-          <Badge variant="outline" className="text-[10px] px-1.5 py-0 border-emerald-500/30 text-emerald-400">
+          <Badge variant="outline" className="text-[10px] px-1.5 py-0 border-success/30 text-success">
             <Wrench className="h-2.5 w-2.5 mr-0.5" />fixable
           </Badge>
         )}
@@ -285,7 +285,7 @@ export function DoctorPanel() {
         status={data ? (
           <span className={cn(
             "inline-block h-1.5 w-1.5 rounded-full",
-            data.ok ? "bg-emerald-400" : "bg-red-400",
+            data.ok ? "bg-success" : "bg-destructive",
           )} />
         ) : null}
         onRefresh={() => void loadDoctorDiagnostics()}
@@ -328,17 +328,17 @@ export function DoctorPanel() {
                 Apply Fixes ({fixableCount})
               </Button>
               {state.lastFixError && (
-                <span className="text-[11px] text-red-400">{state.lastFixError}</span>
+                <span className="text-[11px] text-destructive">{state.lastFixError}</span>
               )}
             </div>
           )}
 
           {/* Fix results */}
           {state.lastFixResult && state.lastFixResult.fixesApplied.length > 0 && (
-            <div className="rounded-lg border border-emerald-500/20 bg-emerald-500/5 px-3 py-2.5 space-y-1">
+            <div className="rounded-lg border border-success/20 bg-success/5 px-3 py-2.5 space-y-1">
               <div className="flex items-center gap-2">
-                <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400" />
-                <span className="text-xs font-medium text-emerald-400">Fixes Applied</span>
+                <CheckCircle2 className="h-3.5 w-3.5 text-success" />
+                <span className="text-xs font-medium text-success">Fixes Applied</span>
               </div>
               <ul className="space-y-0.5 pl-5">
                 {state.lastFixResult.fixesApplied.map((fix, i) => (
@@ -374,8 +374,8 @@ function trendArrow(trend: "stable" | "rising" | "declining"): string {
 }
 
 function trendColor(trend: "stable" | "rising" | "declining"): string {
-  if (trend === "rising") return "text-amber-400"
-  if (trend === "declining") return "text-red-400"
+  if (trend === "rising") return "text-warning"
+  if (trend === "declining") return "text-destructive"
   return "text-muted-foreground"
 }
 
@@ -408,7 +408,7 @@ export function SkillHealthPanel() {
         status={data ? (
           <span className={cn(
             "inline-block h-1.5 w-1.5 rounded-full",
-            data.decliningSkills.length > 0 ? "bg-amber-400" : "bg-emerald-400",
+            data.decliningSkills.length > 0 ? "bg-warning" : "bg-success",
           )} />
         ) : null}
         onRefresh={() => void loadSkillHealthDiagnostics()}
@@ -449,18 +449,18 @@ export function SkillHealthPanel() {
                     {data.skills.map((skill) => (
                       <tr key={skill.name} className={cn(
                         "border-b border-border/20 last:border-0",
-                        skill.flagged && "bg-red-500/3",
+                        skill.flagged && "bg-destructive/3",
                       )}>
                         <td className="px-2.5 py-1.5 font-mono text-foreground/80">
                           <span className="flex items-center gap-1.5">
                             {skill.name}
-                            {skill.flagged && <AlertTriangle className="h-3 w-3 text-amber-400 shrink-0" />}
+                            {skill.flagged && <AlertTriangle className="h-3 w-3 text-warning shrink-0" />}
                           </span>
                         </td>
                         <td className="px-2.5 py-1.5 text-right tabular-nums text-foreground/80">{skill.totalUses}</td>
                         <td className={cn(
                           "px-2.5 py-1.5 text-right tabular-nums",
-                          skill.successRate >= 0.9 ? "text-emerald-400" : skill.successRate >= 0.7 ? "text-amber-400" : "text-red-400",
+                          skill.successRate >= 0.9 ? "text-success" : skill.successRate >= 0.7 ? "text-warning" : "text-destructive",
                         )}>
                           {(skill.successRate * 100).toFixed(0)}%
                         </td>
@@ -470,7 +470,7 @@ export function SkillHealthPanel() {
                         </td>
                         <td className={cn(
                           "px-2.5 py-1.5 text-right tabular-nums",
-                          skill.staleDays > 30 ? "text-amber-400" : "text-foreground/80",
+                          skill.staleDays > 30 ? "text-warning" : "text-foreground/80",
                         )}>
                           {skill.staleDays > 0 ? `${skill.staleDays}d` : "—"}
                         </td>

@@ -52,6 +52,12 @@ Migrate all raw Tailwind accent color classes to semantic CSS custom property to
 
 - `rg "emerald-|amber-|red-[0-9]|sky-|orange-|green-[0-9]|blue-[0-9]" web/components/gsd/visualizer-view.tsx web/components/gsd/command-surface.tsx web/components/gsd/remaining-command-panels.tsx web/components/gsd/knowledge-captures-panel.tsx web/components/gsd/diagnostics-panels.tsx web/components/gsd/settings-panels.tsx` returns zero hits
 
+## Observability Impact
+
+- **Grep scan signal:** After this task, `rg "emerald-|amber-|red-[0-9]|sky-|orange-|green-[0-9]|blue-[0-9]" web/components/gsd/visualizer-view.tsx web/components/gsd/command-surface.tsx web/components/gsd/remaining-command-panels.tsx web/components/gsd/knowledge-captures-panel.tsx web/components/gsd/diagnostics-panels.tsx web/components/gsd/settings-panels.tsx` returns zero hits. Any future regressions (new raw colors introduced) surface as non-zero grep output.
+- **Build failure surface:** If any migrated token class is misspelled or the token is undefined, `npm run build:web-host` fails with stderr naming the offending utility class. This catches typos like `text-sucess` immediately.
+- **Visual inspection:** Semantic tokens resolve differently in `:root` (light) vs `.dark` blocks. If a color appears wrong visually after migration, the issue is in the token definition in `globals.css`, not in the component — narrowing the debugging surface.
+
 ## Inputs
 
 - T01 completed (default theme change)

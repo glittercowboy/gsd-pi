@@ -67,9 +67,9 @@ function statusIcon(status: "complete" | "active" | "pending" | "done") {
   switch (status) {
     case "complete":
     case "done":
-      return <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-500" />
+      return <CheckCircle2 className="h-4 w-4 shrink-0 text-success" />
     case "active":
-      return <Play className="h-4 w-4 shrink-0 text-sky-400" />
+      return <Play className="h-4 w-4 shrink-0 text-info" />
     case "pending":
       return <Circle className="h-4 w-4 shrink-0 text-muted-foreground/30" />
   }
@@ -84,10 +84,10 @@ function taskStatusIcon(task: VisualizerTask) {
 function RiskBadge({ risk }: { risk: string }) {
   const color =
     risk === "high"
-      ? "bg-red-500/15 text-red-400 border-red-500/25 ring-red-500/10"
+      ? "bg-destructive/15 text-destructive border-destructive/25 ring-destructive/10"
       : risk === "medium"
-        ? "bg-amber-500/15 text-amber-400 border-amber-500/25 ring-amber-500/10"
-        : "bg-emerald-500/15 text-emerald-400 border-emerald-500/25 ring-emerald-500/10"
+        ? "bg-warning/15 text-warning border-warning/25 ring-warning/10"
+        : "bg-success/15 text-success border-success/25 ring-success/10"
   return (
     <span
       className={cn(
@@ -152,9 +152,9 @@ function StatCard({
   accent?: "sky" | "emerald" | "amber" | "default"
 }) {
   const accentClasses = {
-    sky:     "from-sky-500/8 border-sky-500/20",
-    emerald: "from-emerald-500/8 border-emerald-500/20",
-    amber:   "from-amber-500/8 border-amber-500/20",
+    sky:     "from-info/8 border-info/20",
+    emerald: "from-success/8 border-success/20",
+    amber:   "from-warning/8 border-warning/20",
     default: "from-transparent border-border",
   }[accent ?? "default"]
 
@@ -189,7 +189,7 @@ function ProgressBar({
   animated?: boolean
 }) {
   const pct = max > 0 ? Math.max(1, (value / max) * 100) : 0
-  const barColor = { sky: "bg-sky-500", emerald: "bg-emerald-500", amber: "bg-amber-500" }[color]
+  const barColor = { sky: "bg-info", emerald: "bg-success", amber: "bg-warning" }[color]
   return (
     <div className="h-2 w-full overflow-hidden rounded-full bg-muted/60">
       <div
@@ -237,10 +237,10 @@ function ProgressTab({ data }: { data: VisualizerData }) {
                         className={cn(
                           "h-6 w-6 rounded cursor-default transition-transform hover:scale-125",
                           sl.risk === "high"
-                            ? "bg-red-500"
+                            ? "bg-destructive"
                             : sl.risk === "medium"
-                              ? "bg-amber-500"
-                              : "bg-emerald-500",
+                              ? "bg-warning"
+                              : "bg-success",
                         )}
                       />
                     ))}
@@ -250,15 +250,15 @@ function ProgressTab({ data }: { data: VisualizerData }) {
           </div>
           <div className="mt-5 flex items-center gap-5 text-xs text-muted-foreground">
             <span className="flex items-center gap-2">
-              <span className="h-3 w-3 rounded-sm bg-emerald-500" />
+              <span className="h-3 w-3 rounded-sm bg-success" />
               Low ({riskCounts.low})
             </span>
             <span className="flex items-center gap-2">
-              <span className="h-3 w-3 rounded-sm bg-amber-500" />
+              <span className="h-3 w-3 rounded-sm bg-warning" />
               Medium ({riskCounts.medium})
             </span>
             <span className="flex items-center gap-2">
-              <span className="h-3 w-3 rounded-sm bg-red-500" />
+              <span className="h-3 w-3 rounded-sm bg-destructive" />
               High ({riskCounts.high})
             </span>
           </div>
@@ -280,9 +280,9 @@ function ProgressTab({ data }: { data: VisualizerData }) {
                 className={cn(
                   "rounded-md px-2.5 py-1 text-xs font-semibold uppercase tracking-wider",
                   ms.status === "complete"
-                    ? "bg-emerald-500/15 text-emerald-400"
+                    ? "bg-success/15 text-success"
                     : ms.status === "active"
-                      ? "bg-sky-500/15 text-sky-400"
+                      ? "bg-info/15 text-info"
                       : "bg-muted text-muted-foreground",
                 )}
               >
@@ -332,7 +332,7 @@ function ProgressTab({ data }: { data: VisualizerData }) {
                               className={cn(
                                 "flex items-center gap-2.5 rounded-lg px-3 py-2 transition-colors",
                                 task.active
-                                  ? "bg-sky-500/8 border border-sky-500/20"
+                                  ? "bg-info/8 border border-info/20"
                                   : "hover:bg-muted/40",
                               )}
                             >
@@ -342,14 +342,14 @@ function ProgressTab({ data }: { data: VisualizerData }) {
                                 className={cn(
                                   "text-sm",
                                   task.done && "text-muted-foreground/50 line-through",
-                                  task.active && "font-semibold text-sky-300",
+                                  task.active && "font-semibold text-info",
                                   !task.done && !task.active && "text-muted-foreground",
                                 )}
                               >
                                 {task.title}
                               </span>
                               {task.active && (
-                                <span className="ml-auto rounded-md bg-sky-500/15 px-2 py-0.5 text-[11px] font-bold uppercase tracking-wider text-sky-400">
+                                <span className="ml-auto rounded-md bg-info/15 px-2 py-0.5 text-[11px] font-bold uppercase tracking-wider text-info">
                                   running
                                 </span>
                               )}
@@ -389,7 +389,7 @@ function DepsTab({ data }: { data: VisualizerData }) {
               {milestoneDeps.flatMap((ms) =>
                 ms.dependsOn.map((dep) => (
                   <div key={`${dep}-${ms.id}`} className="flex items-center gap-3">
-                    <span className="rounded-lg border border-sky-500/25 bg-sky-500/10 px-3 py-1.5 font-mono text-sm font-semibold text-sky-400">
+                    <span className="rounded-lg border border-info/25 bg-info/10 px-3 py-1.5 font-mono text-sm font-semibold text-info">
                       {dep}
                     </span>
                     <ArrowRight className="h-4 w-4 text-muted-foreground/50" />
@@ -421,7 +421,7 @@ function DepsTab({ data }: { data: VisualizerData }) {
                   {slDeps.flatMap((sl) =>
                     sl.depends.map((dep) => (
                       <div key={`${dep}-${sl.id}`} className="flex items-center gap-3">
-                        <span className="rounded-lg border border-sky-500/25 bg-sky-500/10 px-3 py-1.5 font-mono text-sm font-semibold text-sky-400">
+                        <span className="rounded-lg border border-info/25 bg-info/10 px-3 py-1.5 font-mono text-sm font-semibold text-info">
                           {dep}
                         </span>
                         <ArrowRight className="h-4 w-4 text-muted-foreground/50" />
@@ -455,7 +455,7 @@ function DepsTab({ data }: { data: VisualizerData }) {
                 <div className="flex flex-wrap items-center gap-2">
                   {cp.milestonePath.map((id, i) => (
                     <span key={id} className="flex items-center gap-2">
-                      <span className="rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-1.5 font-mono text-sm font-bold text-red-400">
+                      <span className="rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-1.5 font-mono text-sm font-bold text-destructive">
                         {id}
                       </span>
                       {i < cp.milestonePath.length - 1 && (
@@ -497,7 +497,7 @@ function DepsTab({ data }: { data: VisualizerData }) {
                   <div className="flex flex-wrap items-center gap-2">
                     {cp.slicePath.map((id, i) => (
                       <span key={id} className="flex items-center gap-2">
-                        <span className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-1.5 font-mono text-sm font-semibold text-amber-400">
+                        <span className="rounded-lg border border-warning/30 bg-warning/10 px-3 py-1.5 font-mono text-sm font-semibold text-warning">
                           {id}
                         </span>
                         {i < cp.slicePath.length - 1 && (
@@ -517,7 +517,7 @@ function DepsTab({ data }: { data: VisualizerData }) {
                         .map((sl) => (
                           <div
                             key={sl.id}
-                            className="flex items-center gap-2.5 rounded-lg border border-amber-500/20 bg-amber-500/8 px-4 py-2.5 text-sm text-amber-400"
+                            className="flex items-center gap-2.5 rounded-lg border border-warning/20 bg-warning/8 px-4 py-2.5 text-sm text-warning"
                           >
                             <AlertTriangle className="h-4 w-4 shrink-0" />
                             <span className="font-mono font-semibold">{sl.id}</span>
@@ -700,7 +700,7 @@ function ProjectionsSection({
         )}
       </div>
       {projectedTotal > 2 * totals.cost && data.remainingSliceCount > 0 && (
-        <div className="mt-4 flex items-center gap-2.5 rounded-lg border border-amber-500/20 bg-amber-500/8 px-4 py-3 text-sm text-amber-400">
+        <div className="mt-4 flex items-center gap-2.5 rounded-lg border border-warning/20 bg-warning/8 px-4 py-3 text-sm text-warning">
           <AlertTriangle className="h-4 w-4 shrink-0" />
           Projected total {formatCost(projectedTotal)} exceeds 2× current spend
         </div>
@@ -759,9 +759,9 @@ function TimelineTab({ data }: { data: VisualizerData }) {
                   {formatTime(unit.startedAt)}
                 </span>
                 {isRunning ? (
-                  <Play className="h-3.5 w-3.5 shrink-0 text-sky-400" />
+                  <Play className="h-3.5 w-3.5 shrink-0 text-info" />
                 ) : (
-                  <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-emerald-500" />
+                  <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-success" />
                 )}
                 <span className="truncate text-xs font-medium">{unit.type}</span>
                 <span className="truncate font-mono text-xs text-muted-foreground">{unit.id}</span>
@@ -810,15 +810,15 @@ function AgentTab({ data }: { data: VisualizerData }) {
             <div className={cn(
               "relative flex h-10 w-10 items-center justify-center rounded-full",
               activity.active
-                ? "bg-emerald-500/15"
+                ? "bg-success/15"
                 : "bg-muted/60",
             )}>
               {activity.active && (
-                <div className="absolute inset-0 animate-ping rounded-full bg-emerald-500/20" />
+                <div className="absolute inset-0 animate-ping rounded-full bg-success/20" />
               )}
               <div className={cn(
                 "h-3 w-3 rounded-full",
-                activity.active ? "bg-emerald-500" : "bg-muted-foreground/30",
+                activity.active ? "bg-success" : "bg-muted-foreground/30",
               )} />
             </div>
             <div>
@@ -837,11 +837,11 @@ function AgentTab({ data }: { data: VisualizerData }) {
         </div>
 
         {activity.currentUnit && (
-          <div className="mt-5 flex items-center gap-3 rounded-xl border border-sky-500/20 bg-sky-500/8 px-5 py-3.5">
-            <Play className="h-4 w-4 shrink-0 text-sky-400" />
+          <div className="mt-5 flex items-center gap-3 rounded-xl border border-info/20 bg-info/8 px-5 py-3.5">
+            <Play className="h-4 w-4 shrink-0 text-info" />
             <div>
               <p className="text-xs text-muted-foreground">Currently executing</p>
-              <p className="mt-0.5 font-mono text-sm font-semibold text-sky-300">
+              <p className="mt-0.5 font-mono text-sm font-semibold text-info">
                 {activity.currentUnit.type} — {activity.currentUnit.id}
               </p>
             </div>
@@ -892,7 +892,7 @@ function AgentTab({ data }: { data: VisualizerData }) {
               .map((u, i) => (
                 <div key={`${u.id}-${i}`} className="flex items-center gap-4 px-6 py-4 transition-colors hover:bg-muted/30">
                   <span className="w-12 font-mono text-xs text-muted-foreground">{formatTime(u.startedAt)}</span>
-                  <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-500" />
+                  <CheckCircle2 className="h-4 w-4 shrink-0 text-success" />
                   <span className="flex-1 truncate text-sm font-medium">{u.type}</span>
                   <span className="font-mono text-xs text-muted-foreground">{u.id}</span>
                   <span className="font-mono text-xs tabular-nums text-muted-foreground">{formatDuration(u.finishedAt - u.startedAt)}</span>
@@ -924,8 +924,8 @@ function ChangesTab({ data }: { data: VisualizerData }) {
           {/* Header */}
           <div className="flex items-center justify-between border-b border-border bg-muted/20 px-6 py-4">
             <div className="flex items-center gap-3">
-              <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-500" />
-              <span className="font-mono text-xs font-bold text-emerald-400">
+              <CheckCircle2 className="h-4 w-4 shrink-0 text-success" />
+              <span className="font-mono text-xs font-bold text-success">
                 {entry.milestoneId}/{entry.sliceId}
               </span>
               <span className="text-sm font-semibold">{entry.title}</span>
@@ -952,7 +952,7 @@ function ChangesTab({ data }: { data: VisualizerData }) {
                 <div className="space-y-2">
                   {entry.filesModified.map((f, fi) => (
                     <div key={fi} className="flex items-start gap-3 rounded-lg bg-muted/30 px-4 py-2.5">
-                      <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-emerald-500/70" />
+                      <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-success/70" />
                       <span className="font-mono text-xs font-medium text-muted-foreground">{f.path}</span>
                       {f.description && (
                         <span className="ml-1 text-xs text-muted-foreground/60">— {f.description}</span>
@@ -1064,30 +1064,30 @@ function ExportTab({ data }: { data: VisualizerData }) {
         <div className="mt-7 grid gap-4 sm:grid-cols-2">
           <button
             onClick={handleMarkdown}
-            className="group flex items-center gap-5 rounded-xl border border-border bg-muted/20 p-5 text-left transition-all hover:border-sky-500/40 hover:bg-sky-500/5"
+            className="group flex items-center gap-5 rounded-xl border border-border bg-muted/20 p-5 text-left transition-all hover:border-info/40 hover:bg-info/5"
           >
-            <div className="rounded-xl border border-sky-500/20 bg-sky-500/10 p-4 transition-colors group-hover:bg-sky-500/15">
-              <FileText className="h-6 w-6 text-sky-400" />
+            <div className="rounded-xl border border-info/20 bg-info/10 p-4 transition-colors group-hover:bg-info/15">
+              <FileText className="h-6 w-6 text-info" />
             </div>
             <div className="flex-1">
-              <p className="text-sm font-semibold transition-colors group-hover:text-sky-400">Download Markdown</p>
+              <p className="text-sm font-semibold transition-colors group-hover:text-info">Download Markdown</p>
               <p className="mt-1 text-xs text-muted-foreground">Human-readable report with tables and structure</p>
             </div>
-            <Download className="h-4 w-4 shrink-0 text-muted-foreground/0 transition-all group-hover:text-sky-400/70" />
+            <Download className="h-4 w-4 shrink-0 text-muted-foreground/0 transition-all group-hover:text-info/70" />
           </button>
 
           <button
             onClick={handleJSON}
-            className="group flex items-center gap-5 rounded-xl border border-border bg-muted/20 p-5 text-left transition-all hover:border-emerald-500/40 hover:bg-emerald-500/5"
+            className="group flex items-center gap-5 rounded-xl border border-border bg-muted/20 p-5 text-left transition-all hover:border-success/40 hover:bg-success/5"
           >
-            <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/10 p-4 transition-colors group-hover:bg-emerald-500/15">
-              <FileJson className="h-6 w-6 text-emerald-400" />
+            <div className="rounded-xl border border-success/20 bg-success/10 p-4 transition-colors group-hover:bg-success/15">
+              <FileJson className="h-6 w-6 text-success" />
             </div>
             <div className="flex-1">
-              <p className="text-sm font-semibold transition-colors group-hover:text-emerald-400">Download JSON</p>
+              <p className="text-sm font-semibold transition-colors group-hover:text-success">Download JSON</p>
               <p className="mt-1 text-xs text-muted-foreground">Full raw data payload for tooling</p>
             </div>
-            <Download className="h-4 w-4 shrink-0 text-muted-foreground/0 transition-all group-hover:text-emerald-400/70" />
+            <Download className="h-4 w-4 shrink-0 text-muted-foreground/0 transition-all group-hover:text-success/70" />
           </button>
         </div>
       </div>
@@ -1202,8 +1202,8 @@ export function VisualizerView() {
     return (
       <div className="flex h-full items-center justify-center">
         <div className="flex flex-col items-center gap-4 text-center">
-          <div className="rounded-full border border-amber-500/20 bg-amber-500/10 p-4">
-            <AlertTriangle className="h-6 w-6 text-amber-400" />
+          <div className="rounded-full border border-warning/20 bg-warning/10 p-4">
+            <AlertTriangle className="h-6 w-6 text-warning" />
           </div>
           <div>
             <p className="text-sm font-semibold">Failed to load visualizer</p>
@@ -1235,9 +1235,9 @@ export function VisualizerView() {
               <span className={cn(
                 "inline-flex items-center rounded-md px-2 py-0.5 text-xs font-semibold uppercase tracking-wider",
                 data.phase === "complete"
-                  ? "bg-emerald-500/15 text-emerald-400"
+                  ? "bg-success/15 text-success"
                   : data.phase === "active" || data.phase === "running"
-                    ? "bg-sky-500/15 text-sky-400"
+                    ? "bg-info/15 text-info"
                     : "bg-muted text-muted-foreground",
               )}>
                 {data.phase}
@@ -1254,7 +1254,7 @@ export function VisualizerView() {
             {error && (
               <>
                 <span className="text-border">·</span>
-                <span className="flex items-center gap-1 text-amber-400">
+                <span className="flex items-center gap-1 text-warning">
                   <AlertTriangle className="h-3 w-3" />
                   Stale — {error}
                 </span>

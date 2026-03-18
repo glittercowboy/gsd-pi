@@ -195,9 +195,9 @@ function StatusDot({ status }: { status: "ok" | "warning" | "error" | "idle" }) 
     <span
       className={cn(
         "inline-block h-1.5 w-1.5 rounded-full",
-        status === "ok" && "bg-emerald-400",
-        status === "warning" && "bg-amber-400",
-        status === "error" && "bg-red-400",
+        status === "ok" && "bg-success",
+        status === "warning" && "bg-warning",
+        status === "error" && "bg-destructive",
         status === "idle" && "bg-foreground/20",
       )}
     />
@@ -826,7 +826,7 @@ export function CommandSurface() {
           disabled={!liveSessionState || queueBusy}
         />
         {settingsRequests.steeringMode.error && (
-          <p className="text-xs text-red-400">{settingsRequests.steeringMode.error}</p>
+          <p className="text-xs text-destructive">{settingsRequests.steeringMode.error}</p>
         )}
       </div>
 
@@ -851,7 +851,7 @@ export function CommandSurface() {
           disabled={!liveSessionState || queueBusy}
         />
         {settingsRequests.followUpMode.error && (
-          <p className="text-xs text-red-400">{settingsRequests.followUpMode.error}</p>
+          <p className="text-xs text-destructive">{settingsRequests.followUpMode.error}</p>
         )}
       </div>
     </div>
@@ -863,7 +863,7 @@ export function CommandSurface() {
         title="Auto-compaction"
         status={
           liveSessionState?.isCompacting ? (
-            <span className="flex items-center gap-1.5 text-xs text-amber-400">
+            <span className="flex items-center gap-1.5 text-xs text-warning">
               <LoaderCircle className="h-3 w-3 animate-spin" /> Compacting
             </span>
           ) : null
@@ -881,10 +881,10 @@ export function CommandSurface() {
       />
 
       {settingsRequests.autoCompaction.error && (
-        <p className="text-xs text-red-400">{settingsRequests.autoCompaction.error}</p>
+        <p className="text-xs text-destructive">{settingsRequests.autoCompaction.error}</p>
       )}
       {settingsRequests.autoCompaction.result && (
-        <p className="text-xs text-emerald-400">{settingsRequests.autoCompaction.result}</p>
+        <p className="text-xs text-success">{settingsRequests.autoCompaction.result}</p>
       )}
     </div>
   )
@@ -895,7 +895,7 @@ export function CommandSurface() {
         title="Retry"
         status={
           liveSessionState?.retryInProgress ? (
-            <span className="flex items-center gap-1.5 text-xs text-amber-400">
+            <span className="flex items-center gap-1.5 text-xs text-warning">
               <Radio className="h-3 w-3" /> Attempt {Math.max(1, liveSessionState.retryAttempt)}
             </span>
           ) : null
@@ -925,7 +925,7 @@ export function CommandSurface() {
       </p>
 
       {liveSessionState?.retryInProgress && (
-        <div className="flex items-center justify-between rounded-lg border border-amber-500/20 bg-amber-500/5 px-4 py-3">
+        <div className="flex items-center justify-between rounded-lg border border-warning/20 bg-warning/5 px-4 py-3">
           <div>
             <div className="text-sm font-medium text-foreground">Retry in progress</div>
             <p className="text-xs text-muted-foreground">Attempt {Math.max(1, liveSessionState.retryAttempt)} is active</p>
@@ -945,7 +945,7 @@ export function CommandSurface() {
         </div>
       )}
 
-      {settingsRequests.autoRetry.error && <p className="text-xs text-red-400">{settingsRequests.autoRetry.error}</p>}
+      {settingsRequests.autoRetry.error && <p className="text-xs text-destructive">{settingsRequests.autoRetry.error}</p>}
       <p className="text-xs text-muted-foreground" data-testid="command-surface-abort-retry-state">
         {abortRetryBusy
           ? "Aborting retry…"
@@ -957,7 +957,7 @@ export function CommandSurface() {
                 ? "Retry can be aborted"
                 : "No retry in progress"}
       </p>
-      {settingsRequests.abortRetry.error && <p className="text-xs text-red-400">{settingsRequests.abortRetry.error}</p>}
+      {settingsRequests.abortRetry.error && <p className="text-xs text-destructive">{settingsRequests.abortRetry.error}</p>}
     </div>
   )
 
@@ -993,7 +993,7 @@ export function CommandSurface() {
 
         {recovery.error && (
           <div
-            className="rounded-lg border border-red-500/20 bg-red-500/5 px-3 py-2.5 text-xs text-red-400"
+            className="rounded-lg border border-destructive/20 bg-destructive/5 px-3 py-2.5 text-xs text-destructive"
             data-testid="command-surface-recovery-error"
           >
             {recovery.error}
@@ -1072,12 +1072,12 @@ export function CommandSurface() {
             {/* Last failure */}
             {diag.bridge.lastFailure && (
               <div
-                className="rounded-lg border border-red-500/20 bg-red-500/5 px-3 py-2.5"
+                className="rounded-lg border border-destructive/20 bg-destructive/5 px-3 py-2.5"
                 data-testid="command-surface-recovery-last-failure"
               >
-                <div className="text-xs font-medium text-red-400">Last failure</div>
-                <p className="mt-1 text-xs text-red-400/80">{diag.bridge.lastFailure.message}</p>
-                <div className="mt-1.5 flex gap-3 text-[10px] text-red-400/60">
+                <div className="text-xs font-medium text-destructive">Last failure</div>
+                <p className="mt-1 text-xs text-destructive/80">{diag.bridge.lastFailure.message}</p>
+                <div className="mt-1.5 flex gap-3 text-[10px] text-destructive/60">
                   <span>Phase: {diag.bridge.lastFailure.phase}</span>
                   <span>{formatRelativeTime(diag.bridge.lastFailure.at)}</span>
                 </div>
@@ -1115,14 +1115,14 @@ export function CommandSurface() {
 
             {/* Interrupted run */}
             {diag.interruptedRun.detected && (
-              <div className="rounded-lg border border-amber-500/20 bg-amber-500/5 px-3 py-2.5" data-testid="command-surface-recovery-interrupted-run">
-                <div className="text-xs font-medium text-amber-400">Interrupted run detected</div>
-                <div className="mt-1 space-y-1 text-xs text-amber-400/80">
+              <div className="rounded-lg border border-warning/20 bg-warning/5 px-3 py-2.5" data-testid="command-surface-recovery-interrupted-run">
+                <div className="text-xs font-medium text-warning">Interrupted run detected</div>
+                <div className="mt-1 space-y-1 text-xs text-warning/80">
                   <p>Available: yes</p>
                   <p>Detected: yes</p>
                   <p>{diag.interruptedRun.detail}</p>
                 </div>
-                <div className="mt-1.5 grid gap-1 text-[10px] text-amber-400/60">
+                <div className="mt-1.5 grid gap-1 text-[10px] text-warning/60">
                   <span>Tool calls: {diag.interruptedRun.counts.toolCalls}</span>
                   <span>Files written: {diag.interruptedRun.counts.filesWritten}</span>
                   <span>Commands: {diag.interruptedRun.counts.commandsRun}</span>
@@ -1174,12 +1174,12 @@ export function CommandSurface() {
 
   const gitFileStatusColor = (status: string) => {
     switch (status) {
-      case "M": return "text-amber-400 bg-amber-400/10"
-      case "A": return "text-emerald-400 bg-emerald-400/10"
-      case "D": return "text-red-400 bg-red-400/10"
-      case "R": return "text-blue-400 bg-blue-400/10"
-      case "C": return "text-blue-400 bg-blue-400/10"
-      case "U": return "text-red-400 bg-red-400/10"
+      case "M": return "text-warning bg-warning/10"
+      case "A": return "text-success bg-success/10"
+      case "D": return "text-destructive bg-destructive/10"
+      case "R": return "text-info bg-info/10"
+      case "C": return "text-info bg-info/10"
+      case "U": return "text-destructive bg-destructive/10"
       case "?": return "text-muted-foreground bg-foreground/5"
       default: return "text-muted-foreground bg-foreground/5"
     }
@@ -1210,7 +1210,7 @@ export function CommandSurface() {
 
         {gitSummary.error && (
           <div
-            className="rounded-lg border border-red-500/20 bg-red-500/5 px-4 py-3 text-xs text-red-400"
+            className="rounded-lg border border-destructive/20 bg-destructive/5 px-4 py-3 text-xs text-destructive"
             data-testid="command-surface-git-error"
           >
             {gitSummary.error}
@@ -1245,10 +1245,10 @@ export function CommandSurface() {
             {/* Counts row */}
             <div className="grid grid-cols-4 gap-1.5" data-testid="command-surface-git-counts">
               {[
-                { label: "Staged", count: result.counts.staged, active: result.counts.staged > 0, color: "text-emerald-400" },
-                { label: "Modified", count: result.counts.dirty, active: result.counts.dirty > 0, color: "text-amber-400" },
+                { label: "Staged", count: result.counts.staged, active: result.counts.staged > 0, color: "text-success" },
+                { label: "Modified", count: result.counts.dirty, active: result.counts.dirty > 0, color: "text-warning" },
                 { label: "Untracked", count: result.counts.untracked, active: result.counts.untracked > 0, color: "text-muted-foreground" },
-                { label: "Conflicts", count: result.counts.conflicts, active: result.counts.conflicts > 0, color: "text-red-400" },
+                { label: "Conflicts", count: result.counts.conflicts, active: result.counts.conflicts > 0, color: "text-destructive" },
               ].map(({ label, count, active, color }) => (
                 <div key={label} className={cn(
                   "rounded-md border px-2 py-2 text-center transition-colors",
@@ -1293,7 +1293,7 @@ export function CommandSurface() {
                         {file.path}
                       </span>
                       {file.conflict && (
-                        <span className="shrink-0 rounded bg-red-500/15 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wider text-red-400">
+                        <span className="shrink-0 rounded bg-destructive/15 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wider text-destructive">
                           conflict
                         </span>
                       )}
@@ -1310,7 +1310,7 @@ export function CommandSurface() {
 
             {result.changedFiles.length === 0 && (
               <div className="flex flex-col items-center gap-2 py-8 text-center">
-                <Check className="h-4 w-4 text-emerald-400/60" />
+                <Check className="h-4 w-4 text-success/60" />
                 <span className="text-xs text-muted-foreground">Working tree clean</span>
               </div>
             )}
@@ -1387,7 +1387,7 @@ export function CommandSurface() {
         </div>
 
         {sessionBrowser.error && (
-          <div className="rounded-lg border border-red-500/20 bg-red-500/5 px-3 py-2.5 text-xs text-red-400">{sessionBrowser.error}</div>
+          <div className="rounded-lg border border-destructive/20 bg-destructive/5 px-3 py-2.5 text-xs text-destructive">{sessionBrowser.error}</div>
         )}
 
         {/* Session list */}
@@ -1477,8 +1477,8 @@ export function CommandSurface() {
                 Rename
               </Button>
             </div>
-            {commandSurface.renameRequest.error && <p className="text-xs text-red-400">{commandSurface.renameRequest.error}</p>}
-            {commandSurface.renameRequest.result && <p className="text-xs text-emerald-400">{commandSurface.renameRequest.result}</p>}
+            {commandSurface.renameRequest.error && <p className="text-xs text-destructive">{commandSurface.renameRequest.error}</p>}
+            {commandSurface.renameRequest.result && <p className="text-xs text-success">{commandSurface.renameRequest.result}</p>}
           </div>
         )}
 
@@ -1664,7 +1664,7 @@ export function CommandSurface() {
         title="Manual compact"
         status={
           compactBusy ? (
-            <span className="flex items-center gap-1.5 text-xs text-amber-400">
+            <span className="flex items-center gap-1.5 text-xs text-warning">
               <LoaderCircle className="h-3 w-3 animate-spin" /> Working
             </span>
           ) : null
@@ -1844,7 +1844,7 @@ export function CommandSurface() {
                 disabled={authBusy}
                 onClick={() => void logoutProviderFromSurface(selectedAuthProvider.id)}
                 data-testid="command-surface-logout-provider"
-                className="h-8 gap-1.5 text-xs text-red-400 hover:text-red-400"
+                className="h-8 gap-1.5 text-xs text-destructive hover:text-destructive"
               >
                 {commandSurface.pendingAction === "logout_provider" ? (
                   <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
@@ -1950,7 +1950,7 @@ export function CommandSurface() {
       <SectionHeader
         title="Admin"
         status={
-          <Badge variant="outline" className="border-amber-500/20 bg-amber-500/[0.06] text-[10px] text-amber-300">
+          <Badge variant="outline" className="border-warning/20 bg-warning/[0.06] text-[10px] text-warning">
             Dev only
           </Badge>
         }
@@ -2080,11 +2080,11 @@ export function CommandSurface() {
           <div className="flex items-center gap-3">
             <div className={cn(
               "flex h-8 w-8 items-center justify-center rounded-lg",
-              isClean ? "bg-emerald-400/10" : hasChanges ? "bg-amber-400/10" : "bg-card/50",
+              isClean ? "bg-success/10" : hasChanges ? "bg-warning/10" : "bg-card/50",
             )}>
               <GitBranch className={cn(
                 "h-4 w-4",
-                isClean ? "text-emerald-400" : hasChanges ? "text-amber-400" : "text-muted-foreground",
+                isClean ? "text-success" : hasChanges ? "text-warning" : "text-muted-foreground",
               )} />
             </div>
             <div>
@@ -2208,7 +2208,7 @@ export function CommandSurface() {
               <div
                 className={cn(
                   "border-b border-border/30 px-5 py-3 text-xs",
-                  commandSurface.lastError ? "bg-red-500/5 text-red-400" : "bg-emerald-500/5 text-emerald-400",
+                  commandSurface.lastError ? "bg-destructive/5 text-destructive" : "bg-success/5 text-success",
                 )}
                 data-testid="command-surface-result"
               >

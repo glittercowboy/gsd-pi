@@ -95,7 +95,7 @@ function PanelHeader({
 
 function PanelError({ message }: { message: string }) {
   return (
-    <div className="rounded-lg border border-red-500/20 bg-red-500/5 px-3 py-2.5 text-xs text-red-400">
+    <div className="rounded-lg border border-destructive/20 bg-destructive/5 px-3 py-2.5 text-xs text-destructive">
       {message}
     </div>
   )
@@ -122,10 +122,10 @@ function InfoPill({ label, value, variant }: { label: string; value: string | nu
   return (
     <div className={cn(
       "flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs",
-      variant === "info" && "border-sky-500/20 bg-sky-500/5 text-sky-400",
-      variant === "warning" && "border-amber-500/20 bg-amber-500/5 text-amber-400",
-      variant === "success" && "border-emerald-500/20 bg-emerald-500/5 text-emerald-400",
-      variant === "error" && "border-red-500/20 bg-red-500/5 text-red-400",
+      variant === "info" && "border-info/20 bg-info/5 text-info",
+      variant === "warning" && "border-warning/20 bg-warning/5 text-warning",
+      variant === "success" && "border-success/20 bg-success/5 text-success",
+      variant === "error" && "border-destructive/20 bg-destructive/5 text-destructive",
       (!variant || variant === "default") && "border-border/40 bg-card/50 text-foreground/80",
     )}>
       <span className="text-muted-foreground">{label}</span>
@@ -188,7 +188,7 @@ export function QuickPanel() {
           </div>
         </div>
 
-        <div className="rounded-md border border-sky-500/15 bg-sky-500/5 px-3 py-2 text-[11px] text-sky-400/90">
+        <div className="rounded-md border border-info/15 bg-info/5 px-3 py-2 text-[11px] text-info/90">
           Quick tasks run as standalone units — they don&apos;t affect milestone progress, slices, or the plan. Use them
           for work that should happen now without ceremony.
         </div>
@@ -414,8 +414,8 @@ export function UndoPanel() {
         <div className={cn(
           "rounded-lg border px-3 py-2.5 text-xs",
           result.success
-            ? "border-emerald-500/20 bg-emerald-500/5 text-emerald-400"
-            : "border-red-500/20 bg-red-500/5 text-red-400",
+            ? "border-success/20 bg-success/5 text-success"
+            : "border-destructive/20 bg-destructive/5 text-destructive",
         )}>
           <div className="flex items-center gap-2">
             {result.success ? <CheckCircle2 className="h-3.5 w-3.5" /> : <XCircle className="h-3.5 w-3.5" />}
@@ -477,8 +477,8 @@ export function UndoPanel() {
                   Undo Last Unit
                 </Button>
               ) : (
-                <div className="rounded-lg border border-amber-500/20 bg-amber-500/5 px-3 py-2.5 space-y-2">
-                  <div className="flex items-center gap-2 text-xs text-amber-400">
+                <div className="rounded-lg border border-warning/20 bg-warning/5 px-3 py-2.5 space-y-2">
+                  <div className="flex items-center gap-2 text-xs text-warning">
                     <AlertTriangle className="h-3.5 w-3.5" />
                     <span className="font-medium">This will revert the last unit and its git commits.</span>
                   </div>
@@ -560,7 +560,7 @@ export function SteerPanel() {
 
       {/* Success banner */}
       {sent && (
-        <div className="rounded-lg border border-emerald-500/20 bg-emerald-500/5 px-3 py-2.5 text-xs text-emerald-400 flex items-center gap-2">
+        <div className="rounded-lg border border-success/20 bg-success/5 px-3 py-2.5 text-xs text-success flex items-center gap-2">
           <CheckCircle2 className="h-3.5 w-3.5" />
           Steering message sent successfully.
         </div>
@@ -663,7 +663,7 @@ export function HooksPanel() {
                             variant={entry.enabled ? "secondary" : "outline"}
                             className={cn(
                               "text-[10px] px-1.5 py-0",
-                              entry.enabled ? "border-emerald-500/30 text-emerald-400" : "text-muted-foreground",
+                              entry.enabled ? "border-success/30 text-success" : "text-muted-foreground",
                             )}
                           >
                             {entry.enabled ? "enabled" : "disabled"}
@@ -779,8 +779,8 @@ export function InspectPanel() {
                             variant={r.status === "active" ? "secondary" : "outline"}
                             className={cn(
                               "text-[10px] px-1.5 py-0",
-                              r.status === "active" && "border-emerald-500/30 text-emerald-400",
-                              r.status === "validated" && "border-sky-500/30 text-sky-400",
+                              r.status === "active" && "border-success/30 text-success",
+                              r.status === "validated" && "border-info/30 text-info",
                               r.status === "deferred" && "text-muted-foreground",
                             )}
                           >
@@ -881,8 +881,8 @@ export function ExportPanel() {
 
       {/* Download result */}
       {data && (
-        <div className="rounded-lg border border-emerald-500/20 bg-emerald-500/5 px-3 py-2.5 space-y-2">
-          <div className="flex items-center gap-2 text-xs text-emerald-400">
+        <div className="rounded-lg border border-success/20 bg-success/5 px-3 py-2.5 space-y-2">
+          <div className="flex items-center gap-2 text-xs text-success">
             <CheckCircle2 className="h-3.5 w-3.5" />
             <span className="font-medium">Export Ready</span>
           </div>
@@ -950,7 +950,7 @@ export function CleanupPanel() {
 
       {/* Result banner */}
       {result && (
-        <div className="rounded-lg border border-emerald-500/20 bg-emerald-500/5 px-3 py-2.5 text-xs text-emerald-400">
+        <div className="rounded-lg border border-success/20 bg-success/5 px-3 py-2.5 text-xs text-success">
           <div className="flex items-center gap-2">
             <CheckCircle2 className="h-3.5 w-3.5" />
             <span className="font-medium">Cleanup Complete</span>
@@ -1002,7 +1002,7 @@ export function CleanupPanel() {
                             variant={b.merged ? "secondary" : "outline"}
                             className={cn(
                               "text-[10px] px-1.5 py-0",
-                              b.merged ? "border-emerald-500/30 text-emerald-400" : "text-muted-foreground",
+                              b.merged ? "border-success/30 text-success" : "text-muted-foreground",
                             )}
                           >
                             {b.merged ? "merged" : "active"}
@@ -1102,7 +1102,7 @@ export function QueuePanel() {
                 className={cn(
                   "rounded-lg border px-3 py-2.5 space-y-1.5",
                   isActive
-                    ? "border-sky-500/25 bg-sky-500/5"
+                    ? "border-info/25 bg-info/5"
                     : "border-border/30 bg-card/30",
                 )}
               >
@@ -1111,7 +1111,7 @@ export function QueuePanel() {
                     <span className="text-xs font-mono font-medium text-foreground/80">{m.id}</span>
                     <span className="text-xs text-foreground/90 truncate">{m.title}</span>
                     {isActive && (
-                      <Badge variant="secondary" className="text-[10px] px-1.5 py-0 border-sky-500/30 text-sky-400">
+                      <Badge variant="secondary" className="text-[10px] px-1.5 py-0 border-info/30 text-info">
                         active
                       </Badge>
                     )}
@@ -1127,7 +1127,7 @@ export function QueuePanel() {
                     <div
                       className={cn(
                         "h-full rounded-full transition-all",
-                        progress.done === progress.total ? "bg-emerald-400" : "bg-sky-400",
+                        progress.done === progress.total ? "bg-success" : "bg-info",
                       )}
                       style={{ width: `${(progress.done / progress.total) * 100}%` }}
                     />
@@ -1140,11 +1140,11 @@ export function QueuePanel() {
                     {m.slices.map((s: WorkspaceSliceTarget) => (
                       <div key={s.id} className="flex items-center gap-2 text-[11px]">
                         {s.done ? (
-                          <CheckCircle2 className="h-3 w-3 text-emerald-400 shrink-0" />
+                          <CheckCircle2 className="h-3 w-3 text-success shrink-0" />
                         ) : (
                           <span className={cn(
                             "inline-block h-1.5 w-1.5 rounded-full shrink-0",
-                            active?.sliceId === s.id ? "bg-sky-400" : "bg-border/50",
+                            active?.sliceId === s.id ? "bg-info" : "bg-border/50",
                           )} />
                         )}
                         <span className="font-mono text-muted-foreground">{s.id}</span>
@@ -1155,7 +1155,7 @@ export function QueuePanel() {
                           {s.title}
                         </span>
                         {active?.sliceId === s.id && !s.done && (
-                          <Badge variant="outline" className="text-[9px] px-1 py-0 text-sky-400">current</Badge>
+                          <Badge variant="outline" className="text-[9px] px-1 py-0 text-info">current</Badge>
                         )}
                       </div>
                     ))}
@@ -1249,7 +1249,7 @@ export function StatusPanel() {
             <div
               className={cn(
                 "h-full rounded-full transition-all",
-                doneSlices === totalSlices ? "bg-emerald-400" : "bg-sky-400",
+                doneSlices === totalSlices ? "bg-success" : "bg-info",
               )}
               style={{ width: `${(doneSlices / totalSlices) * 100}%` }}
             />

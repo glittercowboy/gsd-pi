@@ -65,7 +65,7 @@ function SettingsHeader({
 
 function SettingsError({ message }: { message: string }) {
   return (
-    <div className="rounded-lg border border-red-500/20 bg-red-500/5 px-3 py-2.5 text-xs text-red-400">
+    <div className="rounded-lg border border-destructive/20 bg-destructive/5 px-3 py-2.5 text-xs text-destructive">
       {message}
     </div>
   )
@@ -92,9 +92,9 @@ function Pill({ label, value, variant }: { label: string; value: string | number
   return (
     <div className={cn(
       "flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs",
-      variant === "info" && "border-sky-500/20 bg-sky-500/5 text-sky-400",
-      variant === "warning" && "border-amber-500/20 bg-amber-500/5 text-amber-400",
-      variant === "success" && "border-emerald-500/20 bg-emerald-500/5 text-emerald-400",
+      variant === "info" && "border-info/20 bg-info/5 text-info",
+      variant === "warning" && "border-warning/20 bg-warning/5 text-warning",
+      variant === "success" && "border-success/20 bg-success/5 text-success",
       (!variant || variant === "default") && "border-border/40 bg-card/50 text-foreground/80",
     )}>
       <span className="text-muted-foreground">{label}</span>
@@ -109,7 +109,7 @@ function FlagBadge({ label, enabled }: { label: string; enabled: boolean | undef
       variant={enabled ? "secondary" : "outline"}
       className={cn(
         "text-[10px] px-1.5 py-0 font-mono",
-        enabled ? "border-emerald-500/30 text-emerald-400" : "text-muted-foreground",
+        enabled ? "border-success/30 text-success" : "text-muted-foreground",
       )}
     >
       {label}: {enabled ? "on" : "off"}
@@ -212,7 +212,7 @@ export function PrefsPanel() {
           <div className="grid grid-cols-2 gap-x-6 gap-y-1.5 rounded-lg border border-border/30 bg-card/30 px-3 py-2.5">
             <KvRow label="Auto-Supervisor">
               {prefs.autoSupervisor?.enabled ? (
-                <span className="text-emerald-400">
+                <span className="text-success">
                   on{prefs.autoSupervisor.softTimeoutMinutes != null && ` (${prefs.autoSupervisor.softTimeoutMinutes}m)`}
                 </span>
               ) : (
@@ -220,12 +220,12 @@ export function PrefsPanel() {
               )}
             </KvRow>
             <KvRow label="UAT Dispatch">
-              <span className={prefs.uatDispatch ? "text-emerald-400" : "text-muted-foreground"}>
+              <span className={prefs.uatDispatch ? "text-success" : "text-muted-foreground"}>
                 {prefs.uatDispatch ? "on" : "off"}
               </span>
             </KvRow>
             <KvRow label="Auto-Visualize">
-              <span className={prefs.autoVisualize ? "text-emerald-400" : "text-muted-foreground"}>
+              <span className={prefs.autoVisualize ? "text-success" : "text-muted-foreground"}>
                 {prefs.autoVisualize ? "on" : "off"}
               </span>
             </KvRow>
@@ -242,12 +242,12 @@ export function PrefsPanel() {
           {/* Warnings */}
           {prefs.warnings && prefs.warnings.length > 0 && (
             <div className="space-y-1.5">
-              <div className="flex items-center gap-1.5 text-xs text-amber-400">
+              <div className="flex items-center gap-1.5 text-xs text-warning">
                 <AlertTriangle className="h-3 w-3" />
                 <span className="font-medium">Warnings ({prefs.warnings.length})</span>
               </div>
               {prefs.warnings.map((warning, i) => (
-                <div key={i} className="rounded border border-amber-500/20 bg-amber-500/5 px-2.5 py-1.5 text-[11px] text-amber-300">
+                <div key={i} className="rounded border border-warning/20 bg-warning/5 px-2.5 py-1.5 text-[11px] text-warning">
                   {warning}
                 </div>
               ))}
@@ -295,7 +295,7 @@ function TierOutcomeBadge({ tier, success, fail }: { tier: string; success: numb
       variant="outline"
       className={cn(
         "text-[10px] px-1.5 py-0 font-mono",
-        fail > 0 ? "border-red-500/20 text-red-400" : "text-muted-foreground",
+        fail > 0 ? "border-destructive/20 text-destructive" : "text-muted-foreground",
       )}
     >
       {tier}: {success}✓{fail > 0 && <span> {fail}✗</span>}
@@ -328,7 +328,7 @@ export function ModelRoutingPanel() {
               variant={routingConfig?.enabled ? "secondary" : "outline"}
               className={cn(
                 "text-[10px] px-2 py-0.5",
-                routingConfig?.enabled ? "border-emerald-500/30 text-emerald-400" : "text-muted-foreground",
+                routingConfig?.enabled ? "border-success/30 text-success" : "text-muted-foreground",
               )}
             >
               Dynamic Routing: {routingConfig?.enabled ? "enabled" : "disabled"}

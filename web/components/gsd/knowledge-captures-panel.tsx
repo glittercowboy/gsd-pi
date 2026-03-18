@@ -68,7 +68,7 @@ function PanelHeader({
 
 function PanelError({ message }: { message: string }) {
   return (
-    <div className="rounded-lg border border-red-500/20 bg-red-500/5 px-3 py-2.5 text-xs text-red-400">
+    <div className="rounded-lg border border-destructive/20 bg-destructive/5 px-3 py-2.5 text-xs text-destructive">
       {message}
     </div>
   )
@@ -95,9 +95,9 @@ function StatPill({ label, value, variant }: { label: string; value: number | st
   return (
     <div className={cn(
       "flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs",
-      variant === "error" && "border-red-500/20 bg-red-500/5 text-red-400",
-      variant === "warning" && "border-amber-500/20 bg-amber-500/5 text-amber-400",
-      variant === "info" && "border-sky-500/20 bg-sky-500/5 text-sky-400",
+      variant === "error" && "border-destructive/20 bg-destructive/5 text-destructive",
+      variant === "warning" && "border-warning/20 bg-warning/5 text-warning",
+      variant === "info" && "border-info/20 bg-info/5 text-info",
       (!variant || variant === "default") && "border-border/40 bg-card/50 text-foreground/80",
     )}>
       <span className="text-muted-foreground">{label}</span>
@@ -115,11 +115,11 @@ function knowledgeTypeBadge(type: KnowledgeEntry["type"]) {
     case "rule":
       return { label: "Rule", className: "border-violet-500/30 bg-violet-500/10 text-violet-400" }
     case "pattern":
-      return { label: "Pattern", className: "border-sky-500/30 bg-sky-500/10 text-sky-400" }
+      return { label: "Pattern", className: "border-info/30 bg-info/10 text-info" }
     case "lesson":
-      return { label: "Lesson", className: "border-amber-500/30 bg-amber-500/10 text-amber-400" }
+      return { label: "Lesson", className: "border-warning/30 bg-warning/10 text-warning" }
     case "freeform":
-      return { label: "Freeform", className: "border-emerald-500/30 bg-emerald-500/10 text-emerald-400" }
+      return { label: "Freeform", className: "border-success/30 bg-success/10 text-success" }
   }
 }
 
@@ -129,11 +129,11 @@ function KnowledgeTypeIcon({ type, className }: { type: KnowledgeEntry["type"]; 
     case "rule":
       return <Tag className={cn(base, "text-violet-400")} />
     case "pattern":
-      return <Repeat2 className={cn(base, "text-sky-400")} />
+      return <Repeat2 className={cn(base, "text-info")} />
     case "lesson":
-      return <Lightbulb className={cn(base, "text-amber-400")} />
+      return <Lightbulb className={cn(base, "text-warning")} />
     case "freeform":
-      return <FileText className={cn(base, "text-emerald-400")} />
+      return <FileText className={cn(base, "text-success")} />
   }
 }
 
@@ -144,11 +144,11 @@ function KnowledgeTypeIcon({ type, className }: { type: KnowledgeEntry["type"]; 
 function captureStatusStyle(status: CaptureEntry["status"]) {
   switch (status) {
     case "pending":
-      return { label: "Pending", className: "border-amber-500/30 bg-amber-500/10 text-amber-400" }
+      return { label: "Pending", className: "border-warning/30 bg-warning/10 text-warning" }
     case "triaged":
-      return { label: "Triaged", className: "border-sky-500/30 bg-sky-500/10 text-sky-400" }
+      return { label: "Triaged", className: "border-info/30 bg-info/10 text-info" }
     case "resolved":
-      return { label: "Resolved", className: "border-emerald-500/30 bg-emerald-500/10 text-emerald-400" }
+      return { label: "Resolved", className: "border-success/30 bg-success/10 text-success" }
   }
 }
 
@@ -260,9 +260,9 @@ function CaptureEntryRow({
       <div className="flex items-start gap-2.5">
         <div className={cn(
           "mt-1 h-2 w-2 shrink-0 rounded-full",
-          entry.status === "pending" && "bg-amber-400",
-          entry.status === "triaged" && "bg-sky-400",
-          entry.status === "resolved" && "bg-emerald-400",
+          entry.status === "pending" && "bg-warning",
+          entry.status === "triaged" && "bg-info",
+          entry.status === "resolved" && "bg-success",
         )} />
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2 flex-wrap">
@@ -346,7 +346,7 @@ function CapturesTabContent({
       />
 
       {resolveError && (
-        <div className="rounded-lg border border-red-500/20 bg-red-500/5 px-3 py-2 text-[11px] text-red-400">
+        <div className="rounded-lg border border-destructive/20 bg-destructive/5 px-3 py-2 text-[11px] text-destructive">
           Resolve error: {resolveError}
         </div>
       )}
@@ -425,7 +425,7 @@ export function KnowledgeCapturesPanel({ initialTab }: KnowledgeCapturesPanelPro
           <InboxIcon className="h-3.5 w-3.5" />
           Captures
           {pendingCount > 0 && (
-            <Badge variant="outline" className="ml-1 h-4 px-1.5 py-0 text-[10px] border-amber-500/30 bg-amber-500/10 text-amber-400">
+            <Badge variant="outline" className="ml-1 h-4 px-1.5 py-0 text-[10px] border-warning/30 bg-warning/10 text-warning">
               {pendingCount} pending
             </Badge>
           )}

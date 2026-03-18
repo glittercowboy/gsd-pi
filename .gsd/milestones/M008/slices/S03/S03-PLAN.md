@@ -25,7 +25,7 @@
   - Verify: `grep 'defaultTheme="dark"' web/app/layout.tsx` returns a match; `grep 'enableSystem' web/app/layout.tsx` returns nothing
   - Done when: layout.tsx has `defaultTheme="dark"` and no `enableSystem` prop
 
-- [ ] **T02: Migrate raw accent colors in the 6 largest component files** `est:1h`
+- [x] **T02: Migrate raw accent colors in the 6 largest component files** `est:1h`
   - Why: R115 — these 6 files contain ~320 of the ~420 raw accent color instances. Migrating them first eliminates the bulk of the inconsistency.
   - Files: `web/components/gsd/visualizer-view.tsx`, `web/components/gsd/command-surface.tsx`, `web/components/gsd/remaining-command-panels.tsx`, `web/components/gsd/knowledge-captures-panel.tsx`, `web/components/gsd/diagnostics-panels.tsx`, `web/components/gsd/settings-panels.tsx`
   - Do: In each file, apply the mechanical color substitution rules: `emerald-*` → `success`, `amber-*`/`orange-*` → `warning`, `red-*` → `destructive`, `sky-*`/`blue-*` → `info`, `green-*` → `success`. Include hover/group-hover/focus variants. Preserve opacity modifiers (e.g., `bg-emerald-500/20` → `bg-success/20`). Do NOT create shade variants — all `-300`/`-400`/`-500` map to the same token.
@@ -51,6 +51,7 @@
 - `rg "emerald-|amber-|red-[0-9]|sky-|orange-|green-[0-9]|blue-[0-9]" web/components/ -g "*.tsx" -g "*.ts" | wc -l` returns `0`
 - `npm run build:web-host` exits 0
 - Open browser with cleared localStorage → `document.documentElement.classList.contains('dark')` returns `true` (failure-path: if `light` class is present instead, ThemeProvider default is wrong)
+- `npm run build:web-host 2>&1 | grep -i "error\|unknown utility"` returns empty — confirms no unresolved token references (failure-path: unresolved semantic tokens like `bg-success` produce stderr output naming the offending class and a non-zero exit code)
 
 ## Files Likely Touched
 
