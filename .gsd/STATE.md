@@ -1,8 +1,9 @@
 # GSD State
 
 **Active Milestone:** M009: Editor & File Viewer Upgrade
-**Active Slice:** S01: File Write API & Editor Font Size
+**Active Slice:** S02: CodeMirror Integration & Code Editing
 **Phase:** executing
+**Current Task:** T01: Install CodeMirror packages and build CodeEditor component
 **Requirements Status:** 16 active · 26 validated · 2 deferred · 5 out of scope
 
 ## Milestone Registry
@@ -25,4 +26,4 @@
 - None
 
 ## Next Action
-Execute T01 of S01 (Add POST handler to /api/files with path validation and write security).
+Execute T01: Install CodeMirror packages and build CodeEditor component.
