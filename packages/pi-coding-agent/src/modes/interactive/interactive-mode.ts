@@ -367,7 +367,10 @@ export class InteractiveMode {
 		this.autocompleteProvider = new CombinedAutocompleteProvider(
 			[...slashCommands, ...templateCommands, ...extensionCommands, ...skillCommandList],
 			process.cwd(),
-			{ respectGitignore: this.settingsManager.getRespectGitignoreInPicker() },
+			{
+				respectGitignore: this.settingsManager.getRespectGitignoreInPicker(),
+				excludeDirs: this.settingsManager.getSearchExcludeDirs(),
+			},
 		);
 		this.defaultEditor.setAutocompleteProvider(this.autocompleteProvider);
 		if (this.editor !== this.defaultEditor) {

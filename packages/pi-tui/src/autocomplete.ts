@@ -131,19 +131,25 @@ export class CombinedAutocompleteProvider implements AutocompleteProvider {
 	private commands: (SlashCommand | AutocompleteItem)[];
 	private basePath: string;
 	private respectGitignore: boolean;
+	private excludeDirs: Set<string>;
 
 	constructor(
 		commands: (SlashCommand | AutocompleteItem)[] = [],
 		basePath: string = process.cwd(),
-		options?: { respectGitignore?: boolean },
+		options?: { respectGitignore?: boolean; excludeDirs?: string[] },
 	) {
 		this.commands = commands;
 		this.basePath = basePath;
 		this.respectGitignore = options?.respectGitignore ?? true;
+		this.excludeDirs = new Set(options?.excludeDirs ?? []);
 	}
 
 	setRespectGitignore(value: boolean): void {
 		this.respectGitignore = value;
+	}
+
+	setExcludeDirs(dirs: string[]): void {
+		this.excludeDirs = new Set(dirs.filter(Boolean));
 	}
 
 	getSuggestions(
@@ -485,6 +491,11 @@ export class CombinedAutocompleteProvider implements AutocompleteProvider {
 					continue;
 				}
 
+				// Skip excluded directories
+				if (this.excludeDirs.has(entry.name)) {
+					continue;
+				}
+
 				// Check if entry is a directory (or a symlink pointing to a directory)
 				let isDirectory = entry.isDirectory();
 				if (!isDirectory && entry.isSymbolicLink()) {
@@ -578,6 +589,13 @@ export class CombinedAutocompleteProvider implements AutocompleteProvider {
 			for (const { path: entryPath, isDirectory } of result.matches) {
 				// Native module includes trailing / for directories
 				const pathWithoutSlash = isDirectory ? entryPath.slice(0, -1) : entryPath;
+
+				// Skip paths that start with or contain an excluded directory
+				if (this.excludeDirs.size > 0) {
+					const segments = pathWithoutSlash.split("/");
+					if (segments.some(seg => this.excludeDirs.has(seg))) continue;
+				}
+
 				const displayPath = scopedQuery
 					? this.scopedPathForDisplay(scopedQuery.displayBase, pathWithoutSlash)
 					: pathWithoutSlash;

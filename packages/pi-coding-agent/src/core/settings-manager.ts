@@ -141,6 +141,7 @@ export interface Settings {
 	editorPaddingX?: number; // Horizontal padding for input editor (default: 0)
 	autocompleteMaxVisible?: number; // Max visible items in autocomplete dropdown (default: 5)
 	respectGitignoreInPicker?: boolean; // When false, @ file picker shows gitignored files (default: true)
+	searchExcludeDirs?: string[]; // Directories to exclude from @ file search (e.g., ["node_modules", ".git", "dist"])
 	showHardwareCursor?: boolean; // Show terminal cursor while still positioning it for IME
 	markdown?: MarkdownSettings;
 	memory?: MemorySettings;
@@ -1038,6 +1039,16 @@ export class SettingsManager {
 	setRespectGitignoreInPicker(value: boolean): void {
 		this.globalSettings.respectGitignoreInPicker = value;
 		this.markModified("respectGitignoreInPicker");
+		this.save();
+	}
+
+	getSearchExcludeDirs(): string[] {
+		return this.settings.searchExcludeDirs ?? [];
+	}
+
+	setSearchExcludeDirs(dirs: string[]): void {
+		this.globalSettings.searchExcludeDirs = dirs.filter(Boolean);
+		this.markModified("searchExcludeDirs");
 		this.save();
 	}
 
