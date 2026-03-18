@@ -27,6 +27,7 @@ import { handleRemote } from "../remote-questions/mod.js";
 import { handleQuick } from "./quick.js";
 import { handleHistory } from "./history.js";
 import { handleUndo } from "./undo.js";
+import { handleSkillCommand, handleAgentCommand, handleComponentsCommand, handlePipelineCommand } from './component-commands.js';
 import { handleExport } from "./export.js";
 import {
   isParallelActive, getOrchestratorState, getWorkerStatuses,
@@ -122,6 +123,10 @@ export function registerGSDCommand(pi: ExtensionAPI): void {
         { cmd: "park", desc: "Park a milestone — skip without deleting" },
         { cmd: "unpark", desc: "Reactivate a parked milestone" },
         { cmd: "update", desc: "Update GSD to the latest version" },
+        { cmd: "skill", desc: "Manage skills (list, info, new, remove)" },
+        { cmd: "agent", desc: "Manage agents (list, info, new, remove)" },
+        { cmd: "components", desc: "List, inspect, and validate all components" },
+        { cmd: "pipeline", desc: "Manage pipelines (list, info, run, validate)" },
       ];
       const parts = prefix.trim().split(/\s+/);
 
@@ -798,6 +803,27 @@ Examples:
         return;
       }
 
+      // ─── Component System Commands ─────────────────────────────────
+      if (trimmed === "skill" || trimmed.startsWith("skill ")) {
+        await handleSkillCommand(trimmed.replace(/^skill\s*/, "").trim(), ctx, pi);
+        return;
+      }
+
+      if (trimmed === "agent" || trimmed.startsWith("agent ")) {
+        await handleAgentCommand(trimmed.replace(/^agent\s*/, "").trim(), ctx, pi);
+        return;
+      }
+
+      if (trimmed === "components" || trimmed.startsWith("components ")) {
+        await handleComponentsCommand(trimmed.replace(/^components\s*/, "").trim(), ctx, pi);
+        return;
+      }
+
+      if (trimmed === "pipeline" || trimmed.startsWith("pipeline ")) {
+        await handlePipelineCommand(trimmed.replace(/^pipeline\s*/, "").trim(), ctx, pi);
+        return;
+      }
+
       if (trimmed === "") {
         // Bare /gsd defaults to step mode
         await startAuto(ctx, pi, projectRoot(), false, { step: true });
@@ -859,6 +885,12 @@ function showHelp(ctx: ExtensionCommandContext): void {
     "  /gsd remote         Control remote auto-mode  [slack|discord|status|disconnect]",
     "  /gsd inspect        Show SQLite DB diagnostics (schema, row counts, recent entries)",
     "  /gsd update         Update GSD to the latest version via npm",
+    "",
+    "COMPONENT SYSTEM",
+    "  /gsd skill          Manage skills  [list|info|new|remove] [name]",
+    "  /gsd agent          Manage agents  [list|info|new|remove] [name]",
+    "  /gsd components     List, inspect, and validate all components  [list|info|validate]",
+    "  /gsd pipeline       Manage pipelines  [list|info|run|validate] [name]",
   ];
   ctx.ui.notify(lines.join("\n"), "info");
 }
