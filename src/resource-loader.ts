@@ -123,11 +123,14 @@ function makeTreeWritable(dirPath: string): void {
 export function initResources(agentDir: string): void {
   mkdirSync(agentDir, { recursive: true })
 
+  // Unlock all existing destination files in a single recursive walk so that
+  // rmSync and cpSync can overwrite read-only copies from the Nix store.
+  makeTreeWritable(agentDir)
+
   // Sync extensions — clean bundled subdirs first to remove stale leftover files,
   // then overwrite so updates land on next launch. Only bundled subdirs are removed;
   // user-created extension directories are preserved.
   const destExtensions = join(agentDir, 'extensions')
-  makeTreeWritable(destExtensions)
   for (const entry of readdirSync(bundledExtensionsDir, { withFileTypes: true })) {
     if (entry.isDirectory()) {
       const target = join(destExtensions, entry.name)
@@ -135,13 +138,11 @@ export function initResources(agentDir: string): void {
     }
   }
   cpSync(bundledExtensionsDir, destExtensions, { recursive: true, force: true })
-  makeTreeWritable(destExtensions)
 
   // Sync agents
   const destAgents = join(agentDir, 'agents')
   const srcAgents = join(resourcesDir, 'agents')
   if (existsSync(srcAgents)) {
-    makeTreeWritable(destAgents)
     for (const entry of readdirSync(srcAgents, { withFileTypes: true })) {
       if (entry.isDirectory()) {
         const target = join(destAgents, entry.name)
@@ -149,14 +150,12 @@ export function initResources(agentDir: string): void {
       }
     }
     cpSync(srcAgents, destAgents, { recursive: true, force: true })
-    makeTreeWritable(destAgents)
   }
 
   // Sync skills
   const destSkills = join(agentDir, 'skills')
   const srcSkills = join(resourcesDir, 'skills')
   if (existsSync(srcSkills)) {
-    makeTreeWritable(destSkills)
     for (const entry of readdirSync(srcSkills, { withFileTypes: true })) {
       if (entry.isDirectory()) {
         const target = join(destSkills, entry.name)
@@ -164,8 +163,11 @@ export function initResources(agentDir: string): void {
       }
     }
     cpSync(srcSkills, destSkills, { recursive: true, force: true })
-    makeTreeWritable(destSkills)
   }
+
+  // Ensure all newly copied files are owner-writable so the next run can
+  // overwrite them (covers extensions, agents, and skills in one walk).
+  makeTreeWritable(agentDir)
 
   writeManagedResourceManifest(agentDir)
 }
