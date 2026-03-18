@@ -43,11 +43,12 @@ jobs:
       - name: Build
         run: npm run build
 
-      - name: Stamp dev version
+      - name: Stamp dev version and sync platform packages
         id: stamp
         run: |
           npm run pipeline:version-stamp
-          echo "version=$(node -p 'require(\"./package.json\").version')" >> "$GITHUB_OUTPUT"
+          npm run sync-platform-versions
+          echo "version=$(node -e 'process.stdout.write(require("./package.json").version)')" >> "$GITHUB_OUTPUT"
 
       - name: Publish @dev
         run: npm publish --tag dev
