@@ -99,6 +99,16 @@ models:
 
 When a model fails to switch (provider unavailable, rate limited, credits exhausted), GSD automatically tries the next model in the `fallbacks` list.
 
+### Community Provider Extensions
+
+For providers not built into GSD, community extensions can add full provider support with proper model definitions, thinking format configuration, and interactive API key setup.
+
+| Extension | Provider | Models | Install |
+|-----------|----------|--------|---------|
+| [`pi-dashscope`](https://www.npmjs.com/package/pi-dashscope) | Alibaba DashScope (ModelStudio) | Qwen3, GLM-5, MiniMax M2.5, Kimi K2.5 | `gsd install npm:pi-dashscope` |
+
+Community extensions are recommended over the built-in `alibaba-coding-plan` provider for DashScope models — they use the correct OpenAI-compatible endpoint and include per-model compatibility flags for thinking mode.
+
 ### `token_profile`
 
 Coordinates model selection, phase skipping, and context compression. See [Token Optimization](./token-optimization.md).
