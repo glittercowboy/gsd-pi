@@ -19,7 +19,10 @@ A user can run `gsd --web`, complete setup, and do the full GSD workflow in a sn
 - M002 is complete: browser slash commands dispatch safely, current-project session browse/resume/rename/fork plus settings/auth/Git/shell controls are browser-native, dashboard/sidebar/roadmap/status/recovery surfaces stay fresh through targeted invalidation-driven updates.
 - M003 is complete: all 415 upstream commits (v2.12→v2.22.0) merged, 50 file conflicts resolved, all 30 /gsd subcommands dispatch correctly from the browser (20 surface with real content, 9 passthrough, 1 local help). Dedicated visualizer page with 7 tabs, three diagnostic panels (forensics, doctor, skill-health), combined knowledge/captures page, extended settings surface (model routing, budget, preferences), and 10 remaining command panels — all backed by 14 new API routes using child-process services. Systematic parity audit found 12 gaps (9 intentional scope boundaries, 3 deferred minor items). Test suite green: 1197 unit tests, 27 integration tests, 118 parity contract tests.
 - M007 is complete: Chat Mode — consumer-grade chat interface over GSD PTY sessions for non-technical users. PtyChatParser + ANSI stripping, ChatPane/ChatBubble with react-markdown+shiki, TUI select/text/password prompt intercept UI, ActionPanel with animated lifecycle, secondary PTY session management, completion auto-close, session DELETE cleanup.
-- M008 is in progress: Web polish — projects page redesign, browser update UI, theme defaults and color audit, remote questions settings, dynamic progress bar, terminal text size preference.
+- M008 is complete: Web polish — projects page redesign (expandable list with progress detail), browser update UI (banner + async npm install), dark mode default, full semantic color token migration (~235 instances across 24 components), remote questions settings panel (Slack/Discord/Telegram CRUD), dynamic progress bar coloring (oklch red→green), terminal text size preference (chat + expert, not footer).
+- M009 is planned: Editor & File Viewer Upgrade — file write API, editor font size setting, CodeMirror 6 integration with custom theme, markdown view/edit tab split.
+- M010 is queued: Upstream Sync v2.22→v2.28 — merge 349+ commits, selective web UI (park/discard, session picker), fix all errors/warnings/tests.
+- M011 is queued: CI/CD, Packaging & PWA — separate web CI workflow, npm packaging verification, PWA install prompt with Serwist.
 
 ## Architecture / Key Patterns
 
@@ -53,4 +56,7 @@ See `.gsd/REQUIREMENTS.md` for the explicit capability contract, requirement sta
 - [ ] M005: Light theme with system-aware toggle — Monochrome light theme, OS preference default, NavRail toggle, persistent choice.
 - [ ] M006: Multi-project workspace — Dev root selection in onboarding, smart project discovery, Projects NavRail tab, multi-bridge registry with background sessions, context-aware launch.
 - [x] M007: Chat Mode — Consumer-grade chat interface over GSD PTY sessions for non-technical users.
-- [ ] M008: Web Polish — S01 (projects page redesign) complete; remaining: browser update UI, theme defaults & color audit, remote questions settings, dynamic progress bar, terminal text size.
+- [x] M008: Web Polish — All 5 slices complete: projects page redesign, browser update UI, theme defaults & color audit, remote questions settings, progress bar dynamics & terminal text size.
+- [ ] M009: Editor & File Viewer Upgrade — Full code editing via CodeMirror 6, markdown view/edit tab split, file write API, editor font size setting.
+- [ ] M010: Upstream Sync v2.22→v2.28 — Merge 349+ upstream commits, selective web UI for new features, fix all errors/warnings/tests.
+- [ ] M011: CI/CD, Packaging & PWA — Separate web CI workflow, npm packaging verification, PWA install prompt.
