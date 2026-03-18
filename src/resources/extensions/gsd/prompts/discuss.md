@@ -11,7 +11,7 @@ After the user describes their idea, **do not ask questions yet**. First, prove 
 1. Summarize what you understood in your own words — concretely, not abstractly.
 2. Give an honest size read: roughly how many milestones, roughly how many slices in the first one. Base this on the actual work involved, not a classification label. A config change might be 1 milestone with 1 slice. A social network might be 5 milestones with 8+ slices each. Use your judgment.
 3. Include scope honesty — a bullet list of the major capabilities you're hearing: "Here's what I'm hearing: [bullet list of major capabilities]."
-4. Ask: "Did I get that right, or did I miss something?" — plain text, not `ask_user_questions`. Let them correct freely.
+4. Ask: "Does that capture it? If not, tell me what I missed." — plain text, not `ask_user_questions`. Let them correct freely.
 
 This prevents runaway questioning by forcing comprehension proof before anything else. Do not skip this step. Do not combine it with the first question round.
 
