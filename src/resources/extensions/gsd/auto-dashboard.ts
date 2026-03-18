@@ -397,16 +397,16 @@ export function updateProgressWidget(
         lines.push(rightAlign(`${pad}${contextLine}`, phaseBadge, width));
 
         // ── Two-column body ─────────────────────────────────────────────
-        // Left: progress, ETA, next, stats (fixed)  |  Right: task checklist (fixed, pegged right)
-        // Gap between columns grows with terminal width.
+        // Left: progress, ETA, next, stats (fixed)  |  Right: task checklist (fixed, adjacent)
+        // Both columns sit left-to-center; empty space is on the right.
         const divider = theme.fg("dim", "│");
         const minTwoColWidth = 80;
         const leftColFixed = 44;
         const rightColFixed = 44;
+        const colGap = 3; // space + │ + space
         const useTwoCol = width >= minTwoColWidth;
         const leftColWidth = useTwoCol ? leftColFixed : width;
         const rightColWidth = useTwoCol ? rightColFixed : 0;
-        const colGap = useTwoCol ? width - leftColWidth - rightColWidth : 0;
 
         const roadmapSlices = mid ? getRoadmapSlicesSync() : null;
 
@@ -601,11 +601,10 @@ export function updateProgressWidget(
           const maxRows = Math.max(leftLines.length, rightLines.length);
           if (maxRows > 0) {
             lines.push(""); // spacer before columns
-            const gapStr = " ".repeat(Math.max(1, colGap - 2)); // padding around divider
             for (let i = 0; i < maxRows; i++) {
               const left = padToWidth(leftLines[i] ?? "", leftColWidth);
               const right = rightLines[i] ?? "";
-              lines.push(truncateToWidth(`${left}${gapStr}${divider} ${right}`, width));
+              lines.push(truncateToWidth(`${left} ${divider} ${right}`, width));
             }
           }
         } else {
