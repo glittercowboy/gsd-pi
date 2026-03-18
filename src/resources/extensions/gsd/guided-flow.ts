@@ -504,6 +504,9 @@ export async function showDiscuss(
 
   // Loop: show picker, dispatch discuss, repeat until "not_yet"
   while (true) {
+    // Invalidate caches so we pick up CONTEXT files written by the just-completed discussion
+    invalidateAllCaches();
+
     // Build discussion-state map: which slices have CONTEXT files already?
     const discussedMap = new Map<string, boolean>();
     for (const s of pendingSlices) {
