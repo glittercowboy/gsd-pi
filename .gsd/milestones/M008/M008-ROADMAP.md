@@ -64,7 +64,7 @@ This milestone is complete only when all are true:
 - [x] **S03: Theme Defaults & Light Mode Color Audit** `risk:medium` `depends:[]`
   > After this: Dark mode is the default; every non-monochrome color in light mode uses semantic design tokens consistently — verified by grep scan.
 
-- [ ] **S04: Remote Questions Settings** `risk:low` `depends:[]`
+- [x] **S04: Remote Questions Settings** `risk:low` `depends:[]`
   > After this: Slack/Discord/Telegram channel type, channel ID, timeout, and poll interval are configurable from the web settings panel.
 
 - [ ] **S05: Progress Bar Dynamics & Terminal Text Size** `risk:low` `depends:[]`
