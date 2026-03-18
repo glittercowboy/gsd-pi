@@ -50,6 +50,10 @@ export function getPriorSliceCompletionBlocker(base: string, _mainBranch: string
   const milestoneIds = allIds.slice(0, targetIdx + 1);
 
   for (const mid of milestoneIds) {
+    // Skip parked milestones — they don't block dispatch of later milestones
+    const parkedFile = resolveMilestoneFile(base, mid, "PARKED");
+    if (parkedFile) continue;
+
     // Read from disk (working tree) — always has the latest state
     const roadmapContent = readRoadmapFromDisk(base, mid);
     if (!roadmapContent) continue;

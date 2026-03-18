@@ -71,3 +71,58 @@ test("dispatch guard works without git repo", () => {
     rmSync(repo, { recursive: true, force: true });
   }
 });
+
+test("dispatch guard skips parked milestones — they do not block later milestones", () => {
+  const repo = mkdtempSync(join(tmpdir(), "gsd-dispatch-guard-parked-"));
+  try {
+    // M004 is parked with incomplete slices
+    mkdirSync(join(repo, ".gsd", "milestones", "M004"), { recursive: true });
+    writeFileSync(join(repo, ".gsd", "milestones", "M004", "M004-ROADMAP.md"),
+      "# M004: Parked Milestone\n\n## Slices\n- [ ] **S01: Unfinished** `risk:high` `depends:[]`\n");
+    writeFileSync(join(repo, ".gsd", "milestones", "M004", "M004-PARKED.md"),
+      "---\nparked_at: 2026-03-18T09:00:00.000Z\nreason: \"Parked via /gsd park\"\n---\n\n# M004 — Parked\n");
+
+    // M010 is the target milestone
+    mkdirSync(join(repo, ".gsd", "milestones", "M010"), { recursive: true });
+    writeFileSync(join(repo, ".gsd", "milestones", "M010", "M010-ROADMAP.md"),
+      "# M010: Active Milestone\n\n## Slices\n- [ ] **S01: First** `risk:high` `depends:[]`\n");
+
+    // M004's incomplete S01 should NOT block M010/S01 because M004 is parked
+    assert.equal(
+      getPriorSliceCompletionBlocker(repo, "main", "plan-slice", "M010/S01"),
+      null,
+    );
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test("dispatch guard still blocks on non-parked incomplete milestones", () => {
+  const repo = mkdtempSync(join(tmpdir(), "gsd-dispatch-guard-mixed-"));
+  try {
+    // M003 is parked — should be skipped
+    mkdirSync(join(repo, ".gsd", "milestones", "M003"), { recursive: true });
+    writeFileSync(join(repo, ".gsd", "milestones", "M003", "M003-ROADMAP.md"),
+      "# M003: Parked\n\n## Slices\n- [ ] **S01: Unfinished** `risk:high` `depends:[]`\n");
+    writeFileSync(join(repo, ".gsd", "milestones", "M003", "M003-PARKED.md"),
+      "---\nparked_at: 2026-03-18T09:00:00.000Z\nreason: \"Parked\"\n---\n");
+
+    // M005 is NOT parked and has incomplete slices — should block
+    mkdirSync(join(repo, ".gsd", "milestones", "M005"), { recursive: true });
+    writeFileSync(join(repo, ".gsd", "milestones", "M005", "M005-ROADMAP.md"),
+      "# M005: Active Incomplete\n\n## Slices\n- [ ] **S01: Pending** `risk:low` `depends:[]`\n");
+
+    // M010 is the target
+    mkdirSync(join(repo, ".gsd", "milestones", "M010"), { recursive: true });
+    writeFileSync(join(repo, ".gsd", "milestones", "M010", "M010-ROADMAP.md"),
+      "# M010: Target\n\n## Slices\n- [ ] **S01: First** `risk:low` `depends:[]`\n");
+
+    // M005/S01 should block M010/S01 (M003 is parked, so skipped)
+    assert.equal(
+      getPriorSliceCompletionBlocker(repo, "main", "plan-slice", "M010/S01"),
+      "Cannot dispatch plan-slice M010/S01: earlier slice M005/S01 is not complete.",
+    );
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
