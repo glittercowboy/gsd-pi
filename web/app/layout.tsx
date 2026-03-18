@@ -1,7 +1,8 @@
-import type { Metadata } from 'next'
+import type { Metadata, Viewport } from 'next'
 import { Geist, Geist_Mono } from 'next/font/google'
 import { Toaster } from '@/components/ui/sonner'
 import { ThemeProvider } from '@/components/theme-provider'
+import { SwRegister } from './sw-register'
 import './globals.css'
 
 const _geist = Geist({ subsets: ["latin"] });
@@ -10,6 +11,13 @@ const _geistMono = Geist_Mono({ subsets: ["latin"] });
 export const metadata: Metadata = {
   title: 'Autonomous Coding Agent',
   description: 'The evolution of Get Shit Done — now a real coding agent. One command. Walk away. Come back to a built project.',
+  applicationName: 'GSD',
+  manifest: '/manifest.json',
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: 'default',
+    title: 'GSD',
+  },
   icons: {
     icon: [
       {
@@ -29,6 +37,10 @@ export const metadata: Metadata = {
   },
 }
 
+export const viewport: Viewport = {
+  themeColor: '#1a1a1a',
+}
+
 export default function RootLayout({
   children,
 }: Readonly<{
@@ -41,6 +53,7 @@ export default function RootLayout({
           {children}
           <Toaster position="bottom-right" />
         </ThemeProvider>
+        <SwRegister />
       </body>
     </html>
   )

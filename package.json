@@ -60,7 +60,7 @@
     "build:native:dev": "node native/scripts/build.js --dev",
     "dev": "node scripts/dev.js",
     "gsd": "node scripts/dev-cli.js",
-    "gsd:web": "node scripts/build-web-if-stale.cjs && node scripts/dev-cli.js --web",
+    "gsd:web": "npm run build:pi && node scripts/build-web-if-stale.cjs && node scripts/dev-cli.js --web",
     "gsd:web:stop": "node scripts/dev-cli.js web stop",
     "gsd:web:stop:all": "node scripts/dev-cli.js web stop all",
     "postinstall": "node scripts/link-workspace-packages.cjs && node scripts/postinstall.js",

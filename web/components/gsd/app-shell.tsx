@@ -33,6 +33,7 @@ import { ChatMode } from "@/components/gsd/chat-mode"
 import { ScopeBadge } from "@/components/gsd/scope-badge"
 import { ProjectsView } from "@/components/gsd/projects-view"
 import { UpdateBanner } from "@/components/gsd/update-banner"
+import { InstallPromptBanner } from "@/components/gsd/install-prompt-banner"
 
 function statusPillClass(tone: ReturnType<typeof getStatusPresentation>["tone"]): string {
   switch (tone) {
@@ -423,6 +424,7 @@ function WorkspaceChrome() {
       <CommandSurface />
       <OnboardingGate />
       <FocusedPanel />
+      <InstallPromptBanner />
     </div>
   )
 }

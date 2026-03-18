@@ -1,0 +1,44 @@
+name: Web
+
+on:
+  push:
+    branches: [main, feat/**]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Install root dependencies
+        run: npm ci
+
+      - name: Install web host dependencies
+        run: npm --prefix web ci
+
+      - name: Build workspace packages
+        run: npm run build
+
+      - name: Build web host
+        run: npm run build:web-host
+
+      - name: Validate package contents
+        run: npm run validate-pack
+
+      - name: Run unit tests
+        run: npm run test:unit
+
+      - name: Run integration tests
+        run: npm run test:integration
