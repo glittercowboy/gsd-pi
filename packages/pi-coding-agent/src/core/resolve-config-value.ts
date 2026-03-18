@@ -4,6 +4,7 @@
  */
 
 import { execSync } from "child_process";
+import { COMMAND_EXECUTION_TIMEOUT_MS } from "./constants.js";
 
 // Cache for shell command results (persists for process lifetime)
 const commandResultCache = new Map<string, string | undefined>();
@@ -51,7 +52,7 @@ function executeCommand(commandConfig: string): string | undefined {
 	try {
 		const output = execSync(command, {
 			encoding: "utf-8",
-			timeout: 10000,
+			timeout: COMMAND_EXECUTION_TIMEOUT_MS,
 			stdio: ["ignore", "pipe", "ignore"],
 		});
 		result = output.trim() || undefined;

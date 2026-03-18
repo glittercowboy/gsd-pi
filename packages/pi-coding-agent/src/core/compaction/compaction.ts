@@ -8,6 +8,7 @@
 import type { AgentMessage } from "@gsd/pi-agent-core";
 import type { AssistantMessage, Model, Usage } from "@gsd/pi-ai";
 import { completeSimple } from "@gsd/pi-ai";
+import { COMPACTION_KEEP_RECENT_TOKENS, COMPACTION_RESERVE_TOKENS } from "../constants.js";
 import {
 	convertToLlm,
 	createBranchSummaryMessage,
@@ -113,8 +114,8 @@ export interface CompactionSettings {
 
 export const DEFAULT_COMPACTION_SETTINGS: CompactionSettings = {
 	enabled: true,
-	reserveTokens: 16384,
-	keepRecentTokens: 20000,
+	reserveTokens: COMPACTION_RESERVE_TOKENS,
+	keepRecentTokens: COMPACTION_KEEP_RECENT_TOKENS,
 };
 
 // ============================================================================

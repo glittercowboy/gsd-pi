@@ -20,6 +20,7 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "f
 import { dirname, join } from "path";
 import lockfile from "proper-lockfile";
 import { getAgentDir } from "../config.js";
+import { AUTH_LOCK_STALE_MS } from "./constants.js";
 import { resolveConfigValue } from "./resolve-config-value.js";
 
 export type ApiKeyCredential = {
@@ -136,7 +137,7 @@ export class FileAuthStorageBackend implements AuthStorageBackend {
 					maxTimeout: 10000,
 					randomize: true,
 				},
-				stale: 30000,
+				stale: AUTH_LOCK_STALE_MS,
 				onCompromised: (err) => {
 					lockCompromised = true;
 					lockCompromisedError = err;

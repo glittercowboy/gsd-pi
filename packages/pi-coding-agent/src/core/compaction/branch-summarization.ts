@@ -8,6 +8,7 @@
 import type { AgentMessage } from "@gsd/pi-agent-core";
 import type { Model } from "@gsd/pi-ai";
 import { completeSimple } from "@gsd/pi-ai";
+import { COMPACTION_RESERVE_TOKENS } from "../constants.js";
 import {
 	convertToLlm,
 	createBranchSummaryMessage,
@@ -281,7 +282,7 @@ export async function generateBranchSummary(
 	entries: SessionEntry[],
 	options: GenerateBranchSummaryOptions,
 ): Promise<BranchSummaryResult> {
-	const { model, apiKey, signal, customInstructions, replaceInstructions, reserveTokens = 16384 } = options;
+	const { model, apiKey, signal, customInstructions, replaceInstructions, reserveTokens = COMPACTION_RESERVE_TOKENS } = options;
 
 	// Token budget = context window minus reserved space for prompt + response
 	const contextWindow = model.contextWindow || 128000;
