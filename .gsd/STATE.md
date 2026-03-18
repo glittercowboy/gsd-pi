@@ -1,7 +1,7 @@
 # GSD State
 
 **Active Milestone:** M008: Web Polish
-**Active Slice:** S04: Remote Questions Settings
+**Active Slice:** S05: Progress Bar Dynamics & Terminal Text Size
 **Phase:** executing
 **Requirements Status:** 3 active · 30 validated · 2 deferred · 3 out of scope
 
@@ -22,4 +22,4 @@
 - None
 
 ## Next Action
-Execute T01 of S04 (add remote questions types, child script field, and API route).
+Execute T01 of S05 (progress bar color interpolation).
