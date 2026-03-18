@@ -6,6 +6,11 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [2.31.2] - 2026-03-18
+
+### Fixed
+- **gsd**: stop replaying completed run-uat units (#1270)
+
 ## [2.31.1] - 2026-03-18
 
 ### Fixed
@@ -1265,7 +1270,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Changed
 - License updated to MIT
 
-[Unreleased]: https://github.com/gsd-build/gsd-2/compare/v2.31.1...HEAD
+[Unreleased]: https://github.com/gsd-build/gsd-2/compare/v2.31.2...HEAD
+[2.31.2]: https://github.com/gsd-build/gsd-2/compare/v2.31.1...v2.31.2
 [2.31.1]: https://github.com/gsd-build/gsd-2/compare/v2.31.0...v2.31.1
 [2.31.0]: https://github.com/gsd-build/gsd-2/compare/v2.30.0...v2.31.0
 [2.30.0]: https://github.com/gsd-build/gsd-2/compare/v2.29.0...v2.30.0
