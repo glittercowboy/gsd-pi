@@ -6,6 +6,23 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [2.31.0] - 2026-03-18
+
+### Added
+- add aws-auth extension for automatic Bedrock credential refresh (#1253)
+- add -w/--worktree CLI flag for isolated worktree sessions (#1247)
+
+### Fixed
+- remove stale git-commit assertion in worktree test after commit_docs removal
+- remove commit_docs test that broke CI after type removal (#1258)
+- replace blanket git clean .gsd/ with targeted runtime file removal (#1252)
+- invalidate caches inside discuss loop to detect newly written slice context (#1249)
+- robust prose slice header parsing — handle H1-H4, bold, dots, no-separator variants (#1248)
+- clean up stranded .gsd.lock/ directory to prevent false lock conflicts (#1251)
+
+### Changed
+- remove dead commit_docs preference (incompatible with external .gsd/ state) (#1258)
+
 ## [2.30.0] - 2026-03-18
 
 ### Added
@@ -1243,7 +1260,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Changed
 - License updated to MIT
 
-[Unreleased]: https://github.com/gsd-build/gsd-2/compare/v2.30.0...HEAD
+[Unreleased]: https://github.com/gsd-build/gsd-2/compare/v2.31.0...HEAD
+[2.31.0]: https://github.com/gsd-build/gsd-2/compare/v2.30.0...v2.31.0
 [2.30.0]: https://github.com/gsd-build/gsd-2/compare/v2.29.0...v2.30.0
 [2.29.0]: https://github.com/gsd-build/gsd-2/compare/v2.28.0...v2.29.0
 [2.28.0]: https://github.com/gsd-build/gsd-2/compare/v2.27.0...v2.28.0

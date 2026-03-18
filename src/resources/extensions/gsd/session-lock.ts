@@ -51,6 +51,9 @@ let _lockedPath: string | null = null;
 /** Our PID at lock acquisition time. */
 let _lockPid: number = 0;
 
+/** Set to true when proper-lockfile fires onCompromised (mtime drift, sleep, etc.). */
+let _lockCompromised: boolean = false;
+
 const LOCK_FILE = "auto.lock";
 
 function lockPath(basePath: string): string {
@@ -102,13 +105,22 @@ export function acquireSessionLock(basePath: string): SessionLockResult {
 
     const release = lockfile.lockSync(gsdDir, {
       realpath: false,
-      stale: 300_000, // 5 minutes — consider lock stale if holder hasn't updated
+      stale: 1_800_000, // 30 minutes — safe for laptop sleep / long event loop stalls
       update: 10_000, // Update lock mtime every 10s to prove liveness
+      onCompromised: () => {
+        // proper-lockfile detected mtime drift (system sleep, event loop stall, etc.).
+        // Default handler throws inside setTimeout — an uncaught exception that crashes
+        // or corrupts process state. Instead, set a flag so validateSessionLock() can
+        // detect the compromise gracefully on the next dispatch cycle.
+        _lockCompromised = true;
+        _releaseFunction = null;
+      },
     });
 
     _releaseFunction = release;
     _lockedPath = basePath;
     _lockPid = process.pid;
+    _lockCompromised = false;
 
     // Safety net: clean up lock dir on process exit if _releaseFunction
     // wasn't called (e.g., normal exit after clean completion) (#1245).
@@ -233,6 +245,11 @@ export function updateSessionLock(
  * This is called periodically during the dispatch loop.
  */
 export function validateSessionLock(basePath: string): boolean {
+  // Lock was compromised by proper-lockfile (mtime drift from sleep, stall, etc.)
+  if (_lockCompromised) {
+    return false;
+  }
+
   // If we have an OS-level lock, we're still the owner
   if (_releaseFunction && _lockedPath === basePath) {
     return true;
@@ -284,6 +301,7 @@ export function releaseSessionLock(basePath: string): void {
 
   _lockedPath = null;
   _lockPid = 0;
+  _lockCompromised = false;
 }
 
 /**
