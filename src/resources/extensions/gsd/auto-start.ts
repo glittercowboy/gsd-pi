@@ -16,7 +16,8 @@ import type {
 import { deriveState } from "./state.js";
 import { loadFile, getManifestStatus } from "./files.js";
 import { loadEffectiveGSDPreferences, resolveSkillDiscoveryMode, getIsolationMode } from "./preferences.js";
-
+import { sendDesktopNotification } from "./notifications.js";
+import { sendRemoteNotification } from "../remote-questions/notify.js";
 import {
   gsdRoot,
   resolveMilestoneFile,
@@ -423,6 +424,17 @@ export async function bootstrapAutoSession(
         "warning",
       );
       ctx.ui.setStatus("gsd-auto", "paused");
+      sendDesktopNotification(
+        "GSD — Secrets Required",
+        `${pendingKeys.length} env variable(s) needed for ${mid}. Run /gsd secrets to provide them.`,
+        "warning",
+        "attention",
+      );
+      // Notify remote channel if configured (one-way — never collect secrets via remote)
+      sendRemoteNotification(
+        "GSD — Secrets Required",
+        `Auto-mode paused: ${pendingKeys.length} env variable(s) needed for ${mid}.\n${keyList}\n\nReturn to the terminal and run /gsd secrets to provide them securely.`,
+      ).catch(() => {}); // fire-and-forget
       return false;
     }
   } catch (err) {

@@ -13,3 +13,4 @@ export {
 	parseTelegramResponse,
 } from "./format.js";
 export { resolveRemoteConfig, isValidChannelId } from "./config.js";
+export { sendRemoteNotification } from "./notify.js";
