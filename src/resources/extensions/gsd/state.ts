@@ -103,7 +103,11 @@ export async function getActiveMilestoneId(basePath: string): Promise<string | n
   // Parallel worker isolation
   const milestoneLock = process.env.GSD_MILESTONE_LOCK;
   if (milestoneLock) {
-    return milestoneIds.includes(milestoneLock) ? milestoneLock : null;
+    if (!milestoneIds.includes(milestoneLock)) return null;
+    // Locked milestone that is parked should not be active
+    const lockedParked = resolveMilestoneFile(basePath, milestoneLock, "PARKED");
+    if (lockedParked) return null;
+    return milestoneLock;
   }
   for (const mid of milestoneIds) {
     // Skip parked milestones — they are not eligible for active status
@@ -233,9 +237,14 @@ async function _deriveStateImpl(basePath: string): Promise<GSDState> {
 
   for (const mid of milestoneIds) {
     // Skip parked milestones — they do NOT count as complete (don't satisfy depends_on)
+    // But still parse their roadmap for title extraction in Phase 2.
     const parkedFile = resolveMilestoneFile(basePath, mid, "PARKED");
     if (parkedFile) {
       parkedMilestoneIds.add(mid);
+      // Cache roadmap for title extraction (but don't add to completeMilestoneIds)
+      const prf = resolveMilestoneFile(basePath, mid, "ROADMAP");
+      const prc = prf ? await cachedLoadFile(prf) : null;
+      if (prc) roadmapCache.set(mid, parseRoadmap(prc));
       continue;
     }
 

@@ -400,7 +400,7 @@ export async function bootstrapAutoSession(
   ctx.ui.setStatus("gsd-auto", s.stepMode ? "next" : "auto");
   ctx.ui.setFooter(hideFooter);
   const modeLabel = s.stepMode ? "Step-mode" : "Auto-mode";
-  const pendingCount = state.registry.filter(m => m.status !== 'complete').length;
+  const pendingCount = state.registry.filter(m => m.status !== 'complete' && m.status !== 'parked').length;
   const scopeMsg = pendingCount > 1
     ? `Will loop through ${pendingCount} milestones.`
     : "Will loop until milestone complete.";

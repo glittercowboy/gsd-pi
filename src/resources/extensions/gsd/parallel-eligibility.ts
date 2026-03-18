@@ -118,13 +118,13 @@ export async function analyzeParallelEligibility(
     const title = entry?.title ?? mid;
     const status = entry?.status ?? "pending";
 
-    // Rule 1: skip complete milestones
-    if (status === "complete") {
+    // Rule 1: skip complete and parked milestones
+    if (status === "complete" || status === "parked") {
       ineligible.push({
         milestoneId: mid,
         title,
         eligible: false,
-        reason: "Already complete.",
+        reason: status === "parked" ? "Milestone is parked." : "Already complete.",
       });
       continue;
     }

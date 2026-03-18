@@ -32,6 +32,10 @@ export function parkMilestone(basePath: string, milestoneId: string, reason: str
   const mDir = resolveMilestonePath(basePath, milestoneId);
   if (!mDir || !existsSync(mDir)) return false;
 
+  // Guard: do not park a completed milestone — it would corrupt depends_on satisfaction
+  const summaryFile = resolveMilestoneFile(basePath, milestoneId, "SUMMARY");
+  if (summaryFile) return false;
+
   const parkedPath = join(mDir, buildMilestoneFileName(milestoneId, "PARKED"));
   if (existsSync(parkedPath)) return false; // already parked
 

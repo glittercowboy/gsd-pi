@@ -822,8 +822,8 @@ async function showStepWizard(
     : "previous unit";
 
   if (!mid || state.phase === "complete") {
-    const incomplete = state.registry.filter(m => m.status !== "complete");
-    if (incomplete.length > 0 && state.phase !== "complete" && state.phase !== "blocked") {
+    const incomplete = state.registry.filter(m => m.status !== "complete" && m.status !== "parked");
+    if (incomplete.length > 0 && state.phase !== "complete" && state.phase !== "blocked" && state.phase !== "pre-planning") {
       const ids = incomplete.map(m => m.id).join(", ");
       const diag = `basePath=${s.basePath}, milestones=[${state.registry.map(m => `${m.id}:${m.status}`).join(", ")}], phase=${state.phase}`;
       ctx.ui.notify(`Unexpected: ${incomplete.length} incomplete milestone(s) (${ids}) but no active milestone.\n   Diagnostic: ${diag}`, "error");
@@ -1113,9 +1113,9 @@ async function dispatchNextUnit(
       await closeoutUnit(ctx, s.basePath, s.currentUnit.type, s.currentUnit.id, s.currentUnit.startedAt, buildSnapshotOpts(s.currentUnit.type, s.currentUnit.id));
     }
 
-    const incomplete = state.registry.filter(m => m.status !== "complete");
+    const incomplete = state.registry.filter(m => m.status !== "complete" && m.status !== "parked");
     if (incomplete.length === 0) {
-      // Genuinely all complete — merge milestone branch to main before stopping (#962)
+      // Genuinely all complete (parked milestones excluded) — merge milestone branch to main before stopping (#962)
       if (s.currentMilestoneId && isInAutoWorktree(s.basePath) && s.originalBasePath) {
         try {
           const roadmapPath = resolveMilestoneFile(s.originalBasePath, s.currentMilestoneId, "ROADMAP");

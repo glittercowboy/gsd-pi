@@ -654,10 +654,13 @@ async function handleMilestoneActions(
       notYetMessage: "Run /gsd when ready.",
     });
 
+    // User pressed "Not yet" / Escape — cancel the park operation
+    if (!reason || reason === "not_yet") return false;
+
     const reasonText = reason === "priority_shift" ? "Priority shift — other work is more important"
       : reason === "blocked_external" ? "Blocked externally — waiting on external dependency"
       : reason === "needs_rethink" ? "Needs rethinking — approach needs reconsideration"
-      : reason ?? "Parked by user";
+      : "Parked by user";
 
     const success = parkMilestone(basePath, milestoneId, reasonText);
     if (success) {
