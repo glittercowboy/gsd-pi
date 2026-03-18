@@ -6,7 +6,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
-import { TtsrManager, type Rule, type TtsrMatchContext } from '../../src/resources/extensions/ttsr/ttsr-manager.ts'
+import { TtsrManager, type Rule, type TtsrMatchContext } from '../../src/resources/extensions/ttsr/index.js'
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 

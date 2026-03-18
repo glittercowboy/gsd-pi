@@ -132,7 +132,7 @@ import {
 } from "./auto-worktree.js";
 import { pruneQueueOrder } from "./queue-order.js";
 import { consumeSignal } from "./session-status-io.js";
-import { showNextAction } from "../shared/next-action-ui.js";
+import { showNextAction } from "../shared/index.js";
 import { debugLog, debugTime, debugCount, debugPeak, enableDebug, isDebugEnabled, writeDebugSummary, getDebugLogPath } from "./debug-logger.js";
 import {
   resolveExpectedArtifactPath,

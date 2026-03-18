@@ -230,8 +230,8 @@ assertTrue(
 console.log("\n=== Overlay: Shared Imports ===");
 
 assertTrue(
-  overlaySrc.includes('from "../shared/format-utils.js"'),
-  "imports from shared format-utils",
+  overlaySrc.includes('from "../shared/index.js"'),
+  "imports from shared barrel",
 );
 
 report();

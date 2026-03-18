@@ -3,7 +3,7 @@
 // Zero Pi dependencies — uses only exported helpers from files.ts.
 
 import { splitFrontmatter, parseFrontmatterMap, extractBoldField } from '../files.js';
-import { normalizeStringArray } from '../../shared/format-utils.js';
+import { normalizeStringArray } from '../../shared/index.js';
 
 import type {
   PlanningRoadmap,
