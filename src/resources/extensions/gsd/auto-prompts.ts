@@ -469,6 +469,17 @@ export async function checkNeedsReassessment(
 
   if (hasAssessment) return null;
 
+  // Fallback: check the expected path directly via existsSync.
+  // resolveSliceFile relies on directory listing (readdirSync) which may not
+  // reflect a freshly written file in git worktree directories on some
+  // filesystems (observed on macOS APFS). A direct existsSync on the
+  // constructed path bypasses directory listing entirely. (#1112)
+  const sliceDir = resolveSlicePath(base, mid, lastCompleted.id);
+  if (sliceDir) {
+    const directPath = join(sliceDir, `${lastCompleted.id}-ASSESSMENT.md`);
+    if (existsSync(directPath)) return null;
+  }
+
   // Also need a summary to reassess against
   const summaryFile = resolveSliceFile(base, mid, lastCompleted.id, "SUMMARY");
   const hasSummary = !!(summaryFile && await loadFile(summaryFile));
