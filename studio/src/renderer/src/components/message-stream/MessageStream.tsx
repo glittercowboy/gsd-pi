@@ -3,6 +3,7 @@ import { SparkleIcon } from '@phosphor-icons/react'
 import { Text } from '../ui/Text'
 import { useSessionStore } from '@/stores/session-store'
 import { buildMessageBlocks, type MessageBlock } from '@/lib/message-model'
+import { AssistantBlock } from './AssistantBlock'
 
 // ---------------------------------------------------------------------------
 // Empty state — shown when no messages yet
@@ -22,16 +23,8 @@ function EmptyState() {
 }
 
 // ---------------------------------------------------------------------------
-// Block renderers (plain text for now — T02/T03 upgrade these)
+// Block renderers (T02: AssistantBlock uses Streamdown; tool/user stubs stay until T03)
 // ---------------------------------------------------------------------------
-
-function AssistantTextBlock({ block }: { block: Extract<MessageBlock, { type: 'assistant-text' }> }) {
-  return (
-    <pre className="whitespace-pre-wrap break-words rounded-[8px] bg-[#0b0b0b]/60 px-5 py-4 font-mono text-[13px] leading-6 text-[#e7d4b0]">
-      {block.content}
-    </pre>
-  )
-}
 
 function ToolUseBlockStub({ block }: { block: Extract<MessageBlock, { type: 'tool-use' }> }) {
   return (
@@ -56,10 +49,10 @@ function UserPromptBlock({ block }: { block: Extract<MessageBlock, { type: 'user
 // Block dispatcher
 // ---------------------------------------------------------------------------
 
-function BlockRenderer({ block }: { block: MessageBlock }) {
+function BlockRenderer({ block, isLastAssistant }: { block: MessageBlock; isLastAssistant: boolean }) {
   switch (block.type) {
     case 'assistant-text':
-      return <AssistantTextBlock block={block} />
+      return <AssistantBlock content={block.content} isLastBlock={isLastAssistant} />
     case 'tool-use':
       return <ToolUseBlockStub block={block} />
     case 'user-prompt':
@@ -74,6 +67,14 @@ function BlockRenderer({ block }: { block: MessageBlock }) {
 export function MessageStream() {
   const events = useSessionStore((s) => s.events)
   const blocks = useMemo(() => buildMessageBlocks(events), [events])
+
+  // Find the last assistant-text block index for caret logic
+  const lastAssistantIdx = useMemo(() => {
+    for (let i = blocks.length - 1; i >= 0; i--) {
+      if (blocks[i].type === 'assistant-text') return i
+    }
+    return -1
+  }, [blocks])
 
   const scrollRef = useRef<HTMLDivElement>(null)
   const isNearBottom = useRef(true)
@@ -103,8 +104,12 @@ export function MessageStream() {
       className="min-h-0 flex-1 overflow-auto"
     >
       <div className="mx-auto flex max-w-3xl flex-col gap-3 px-6 py-4">
-        {blocks.map((block) => (
-          <BlockRenderer key={block.id} block={block} />
+        {blocks.map((block, idx) => (
+          <BlockRenderer
+            key={block.id}
+            block={block}
+            isLastAssistant={idx === lastAssistantIdx}
+          />
         ))}
       </div>
     </div>

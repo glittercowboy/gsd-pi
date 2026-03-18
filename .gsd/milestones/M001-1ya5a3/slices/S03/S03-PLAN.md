@@ -51,7 +51,7 @@
   - Verify: `npm run test -w studio` passes including new message-model tests. `npm run build -w studio` succeeds. Dev app shows accumulated text from message_update events as plain text (not JSON).
   - Done when: message model tested, MessageStream wired in, assistant text accumulates and displays as plain text in the center panel.
 
-- [ ] **T02: Integrate Streamdown with Shiki highlighting and custom markdown components** `est:35m`
+- [x] **T02: Integrate Streamdown with Shiki highlighting and custom markdown components** `est:35m`
   - Why: This is the visual core of S03 — transforming plain accumulated text into beautifully rendered markdown with syntax-highlighted code blocks, styled tables, proper heading hierarchy, and all design-system-matched typography. Addresses R003 directly.
   - Files: `studio/src/renderer/src/components/message-stream/AssistantBlock.tsx`, `studio/src/renderer/src/components/markdown/components.tsx`, `studio/src/renderer/src/components/markdown/shiki-theme.ts`, `studio/src/renderer/src/components/message-stream/MessageStream.tsx`
   - Do: Create custom Streamdown component overrides in `components.tsx` for all markdown elements styled with Tailwind classes matching the dark amber design system. Create `shiki-theme.ts` that configures `createCodePlugin` with a dark theme (use `vitesse-dark` as base — closest to the app palette). Build `AssistantBlock.tsx` wrapping `<Streamdown>` with the code plugin, custom components, `caret="block"`, and `isAnimating` bound to store's `isStreaming`. Update MessageStream to render `<AssistantBlock>` instead of plain `<pre>`.

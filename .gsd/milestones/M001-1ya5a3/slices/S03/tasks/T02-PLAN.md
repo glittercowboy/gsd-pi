@@ -110,3 +110,10 @@ Replace the plain `<pre>` text rendering from T01 with Streamdown-powered markdo
 - `studio/src/renderer/src/components/markdown/components.tsx` — full set of custom component overrides for all markdown elements
 - `studio/src/renderer/src/components/markdown/shiki-theme.ts` — code plugin configured with vitesse-dark theme
 - `studio/src/renderer/src/components/message-stream/MessageStream.tsx` — updated to render AssistantBlock
+
+## Observability Impact
+
+- **Shiki WASM load failure:** If Shiki fails to load (WASM bundle missing or corrupted), code blocks fall back to unstyled `<pre>` elements — immediately visible in the UI. Console errors from `@streamdown/code` surface in Electron DevTools.
+- **Component override inspection:** All custom markdown components are plain React components with Tailwind classes — inspect via React DevTools component tree under `AssistantBlock > Streamdown`.
+- **Streaming caret state:** `isAnimating` prop is derived from `useSessionStore.isStreaming && isLastBlock`. If the caret doesn't appear/disappear correctly, check these two signals in React DevTools props on the Streamdown component.
+- **No new runtime signals added.** This task is pure rendering — no side effects, no new store state, no async operations beyond Shiki's lazy WASM loading.
