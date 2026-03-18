@@ -52,7 +52,7 @@ This milestone is complete only when all are true:
 
 ## Slices
 
-- [ ] **S01: File Write API & Editor Font Size** `risk:low` `depends:[]`
+- [x] **S01: File Write API & Editor Font Size** `risk:low` `depends:[]`
   > After this: POST /api/files saves file content to disk with path validation; editor font size is configurable in settings and persists in localStorage.
 
 - [ ] **S02: CodeMirror Integration & Code Editing** `risk:medium` `depends:[S01]`
