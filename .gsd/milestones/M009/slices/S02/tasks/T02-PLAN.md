@@ -86,3 +86,11 @@ Refactor `FileContentViewer` to show View/Edit tabs when editing props are provi
 - `web/components/gsd/file-content-viewer.tsx` — refactored with View/Edit tabs, dirty state, Save button
 - `web/components/gsd/files-view.tsx` — passes `root`, `path`, `onSave` props to FileContentViewer
 - Production build passes
+
+## Observability Impact
+
+- **New tab UI state:** Active tab ("view" | "edit") is visible via Radix `data-state="active"` attribute on `TabsTrigger` elements. Agents can verify which tab is active via `browser_find` with `[data-state=active]`.
+- **Dirty state indicator:** Save button renders with `disabled` attribute when content is unmodified or during save. Agents can check `button:has-text("Save"):not([disabled])` to confirm dirty detection works.
+- **Save error surfacing:** Save failures display an inline error message near the Save button with the error text from the API response. Visible in DOM as a `text-destructive` element. Network tab shows the POST request with 4xx/5xx status and `{ error }` JSON body.
+- **Save loading state:** During save, the Save button shows a `Loader2` spinner icon and is disabled. The `isSaving` state prevents double-submission.
+- **Content sync:** After successful save, the parent re-fetches via GET → `content` prop updates → `editContent` resets → `isDirty` becomes false → Save button disables. If this cycle breaks, the Save button stays enabled after save (visible diagnostic).

@@ -41,6 +41,8 @@
 In addition to the verification items above:
 - Browser console: no errors during CodeMirror load or language switching
 - Browser: if CodeMirror dynamic import fails, a loading spinner remains visible (no blank/broken state)
+- Browser: POST `/api/files` with invalid path returns structured `{ error }` JSON — save error is surfaced inline near the Save button, not silently swallowed
+- Browser network tab: failed saves show 4xx status codes with readable error messages in response body
 
 ## Integration Closure
 
@@ -57,7 +59,7 @@ In addition to the verification items above:
   - Verify: `npm run build:web-host` exits 0 after package install and after component creation
   - Done when: `code-editor.tsx` exports a working `CodeEditor` component and production build passes
 
-- [ ] **T02: Add View/Edit tabs to FileContentViewer and wire save from FilesView** `est:1h`
+- [x] **T02: Add View/Edit tabs to FileContentViewer and wire save from FilesView** `est:1h`
   - Why: This is the user-facing integration — adding the tab UI, dirty state tracking, Save button, and wiring the parent component to provide the new props.
   - Files: `web/components/gsd/file-content-viewer.tsx`, `web/components/gsd/files-view.tsx`
   - Do: Refactor `FileContentViewer` to accept optional `root`, `path`, `onSave` props. When present, render Radix Tabs (View/Edit). View tab = existing CodeViewer/MarkdownViewer/PlainViewer (unchanged). Edit tab = CodeEditor component. Track dirty state (content !== original). Show Save button when dirty. Save calls `onSave(newContent)`. When props absent, render current read-only view (backward compatible). Update `files-view.tsx` to pass `root={activeRoot}`, `path={selectedPath}`, and an `onSave` callback that POSTs to `/api/files` and re-fetches content on success.

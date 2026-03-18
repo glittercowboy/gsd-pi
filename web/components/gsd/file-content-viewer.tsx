@@ -1,8 +1,11 @@
 "use client"
 
-import { useEffect, useMemo, useRef, useState } from "react"
-import { Loader2 } from "lucide-react"
+import { useEffect, useMemo, useRef, useState, useCallback } from "react"
+import { Loader2, Save } from "lucide-react"
 import { cn } from "@/lib/utils"
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
+import { CodeEditor } from "@/components/gsd/code-editor"
+import { useEditorFontSize } from "@/lib/use-editor-font-size"
 
 /* ── Language detection ── */
 
@@ -341,24 +344,136 @@ function MarkdownViewer({ content, filepath }: { content: string; filepath: stri
   return <div className="markdown-body">{rendered}</div>
 }
 
+/* ── Read-only content renderer (shared between standalone and tab modes) ── */
+
+function ReadOnlyContent({ content, filepath }: { content: string; filepath: string }) {
+  return isMarkdown(filepath) ? (
+    <MarkdownViewer content={content} filepath={filepath} />
+  ) : (
+    <CodeViewer content={content} filepath={filepath} />
+  )
+}
+
 /* ── Exported component ── */
+
+interface FileContentViewerProps {
+  content: string
+  filepath: string
+  className?: string
+  /** Required for editing — the root context for the file */
+  root?: "gsd" | "project"
+  /** Required for editing — the relative path within the root */
+  path?: string
+  /** Required for editing — called with new content when the user saves */
+  onSave?: (newContent: string) => Promise<void>
+}
 
 export function FileContentViewer({
   content,
   filepath,
   className,
-}: {
-  content: string
-  filepath: string
-  className?: string
-}) {
+  root,
+  path,
+  onSave,
+}: FileContentViewerProps) {
+  const canEdit = root !== undefined && path !== undefined && onSave !== undefined
+
+  // ── Dirty state tracking ──
+  const [editContent, setEditContent] = useState(content)
+  const [isSaving, setIsSaving] = useState(false)
+  const [saveError, setSaveError] = useState<string | null>(null)
+
+  // Reset edit content when the source content changes (e.g. after save + re-fetch)
+  useEffect(() => {
+    setEditContent(content)
+  }, [content])
+
+  const isDirty = editContent !== content
+
+  const [fontSize] = useEditorFontSize()
+  const language = detectLanguage(filepath)
+
+  const handleSave = useCallback(async () => {
+    if (!onSave || !isDirty || isSaving) return
+    setIsSaving(true)
+    setSaveError(null)
+    try {
+      await onSave(editContent)
+    } catch (err) {
+      setSaveError(err instanceof Error ? err.message : "Failed to save")
+    } finally {
+      setIsSaving(false)
+    }
+  }, [onSave, isDirty, isSaving, editContent])
+
+  // ── Read-only mode (backward compatible) ──
+  if (!canEdit) {
+    return (
+      <div className={cn("flex-1 overflow-y-auto p-4", className)}>
+        <ReadOnlyContent content={content} filepath={filepath} />
+      </div>
+    )
+  }
+
+  // ── Editable mode with View/Edit tabs ──
   return (
-    <div className={cn("flex-1 overflow-y-auto p-4", className)}>
-      {isMarkdown(filepath) ? (
-        <MarkdownViewer content={content} filepath={filepath} />
-      ) : (
-        <CodeViewer content={content} filepath={filepath} />
-      )}
-    </div>
+    <Tabs defaultValue="view" className={cn("flex flex-1 flex-col overflow-hidden", className)}>
+      <div className="flex items-center gap-2 border-b border-border px-4">
+        <TabsList className="h-8 bg-transparent p-0">
+          <TabsTrigger
+            value="view"
+            className="h-7 rounded-md px-2.5 text-xs data-[state=active]:bg-muted"
+          >
+            View
+          </TabsTrigger>
+          <TabsTrigger
+            value="edit"
+            className="h-7 rounded-md px-2.5 text-xs data-[state=active]:bg-muted"
+          >
+            Edit
+          </TabsTrigger>
+        </TabsList>
+
+        {/* Save button — visible when editing */}
+        <div className="ml-auto flex items-center gap-2">
+          {saveError && (
+            <span className="text-xs text-destructive max-w-[200px] truncate" title={saveError}>
+              {saveError}
+            </span>
+          )}
+          <button
+            onClick={handleSave}
+            disabled={!isDirty || isSaving}
+            className={cn(
+              "inline-flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-medium transition-colors",
+              isDirty && !isSaving
+                ? "bg-foreground text-background hover:bg-foreground/90"
+                : "bg-muted text-muted-foreground cursor-not-allowed opacity-50",
+            )}
+          >
+            {isSaving ? (
+              <Loader2 className="h-3 w-3 animate-spin" />
+            ) : (
+              <Save className="h-3 w-3" />
+            )}
+            Save
+          </button>
+        </div>
+      </div>
+
+      <TabsContent value="view" className="flex-1 overflow-y-auto p-4 mt-0">
+        <ReadOnlyContent content={content} filepath={filepath} />
+      </TabsContent>
+
+      <TabsContent value="edit" className="flex-1 overflow-hidden mt-0">
+        <CodeEditor
+          value={editContent}
+          onChange={setEditContent}
+          language={language}
+          fontSize={fontSize}
+          className="h-full border-0 rounded-none"
+        />
+      </TabsContent>
+    </Tabs>
   )
 }

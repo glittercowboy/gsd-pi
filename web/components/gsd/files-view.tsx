@@ -323,6 +323,22 @@ export function FilesView() {
     }
   }, [activeRoot])
 
+  // Save handler: POST to /api/files, then re-fetch content
+  const handleSave = useCallback(async (newContent: string) => {
+    if (!selectedPath) return
+    const res = await fetch("/api/files", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ path: selectedPath, content: newContent, root: activeRoot }),
+    })
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}))
+      throw new Error(data.error || `Save failed (${res.status})`)
+    }
+    // Re-fetch to sync the view tab
+    await handleSelectFile(selectedPath)
+  }, [activeRoot, selectedPath, handleSelectFile])
+
   // Auto-select STATE.md on initial load if no file is selected
   const autoSelectedRef = useRef(false)
   useEffect(() => {
@@ -422,7 +438,13 @@ export function FilesView() {
                 {contentError}
               </div>
             ) : fileContent !== null ? (
-              <FileContentViewer content={fileContent} filepath={displayPath} />
+              <FileContentViewer
+                content={fileContent}
+                filepath={displayPath}
+                root={activeRoot}
+                path={selectedPath ?? undefined}
+                onSave={handleSave}
+              />
             ) : (
               <div className="flex flex-1 items-center justify-center text-muted-foreground italic">
                 No preview available
