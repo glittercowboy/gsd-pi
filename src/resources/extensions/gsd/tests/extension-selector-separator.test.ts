@@ -1,4 +1,6 @@
-// Tests for the SEPARATOR_PREFIX convention used by ExtensionSelectorComponent.
+// Tests for the SEPARATOR_PREFIX convention used by ExtensionSelectorComponent
+// and the two-step provider→model picker in configureModels.
+//
 // We cannot import the component directly in node:test because its transitive
 // dependency (countdown-timer.ts) uses TypeScript parameter properties which
 // are unsupported under --experimental-strip-types. Instead we duplicate the
@@ -69,16 +71,17 @@ describe("separator detection", () => {
 	});
 });
 
-describe("model grouping", () => {
-	test("groups models by provider with separator headers", () => {
-		// Simulate the grouping logic from configureModels
-		const availableModels = [
-			{ id: "claude-opus-4-6", provider: "anthropic" },
-			{ id: "gpt-4o", provider: "openai" },
-			{ id: "claude-sonnet-4-5", provider: "anthropic" },
-			{ id: "o3-mini", provider: "openai" },
-		];
+describe("two-step provider→model picker", () => {
+	// Simulate the grouping logic from configureModels
+	const availableModels = [
+		{ id: "claude-opus-4-6", provider: "anthropic" },
+		{ id: "gpt-4o", provider: "openai" },
+		{ id: "claude-sonnet-4-5", provider: "anthropic" },
+		{ id: "o3-mini", provider: "openai" },
+		{ id: "claude-haiku-4-5", provider: "anthropic" },
+	];
 
+	function buildProviderGroups() {
 		const byProvider = new Map<string, typeof availableModels>();
 		for (const m of availableModels) {
 			let group = byProvider.get(m.provider);
@@ -89,34 +92,53 @@ describe("model grouping", () => {
 			group.push(m);
 		}
 		const providers = Array.from(byProvider.keys()).sort((a, b) => a.localeCompare(b));
-
-		const modelOptions: string[] = [];
-		for (const provider of providers) {
-			const group = byProvider.get(provider)!;
-			modelOptions.push(`${SEPARATOR_PREFIX} ${provider} (${group.length}) ${SEPARATOR_PREFIX}`);
-			for (const m of group) {
-				modelOptions.push(`${m.id} · ${m.provider}`);
-			}
+		for (const group of byProvider.values()) {
+			group.sort((a, b) => a.id.localeCompare(b.id));
 		}
-		modelOptions.push("(keep current)", "(clear)");
+		return { byProvider, providers };
+	}
 
-		// Verify structure
-		assert.strictEqual(modelOptions[0], `${SEPARATOR_PREFIX} anthropic (2) ${SEPARATOR_PREFIX}`);
-		assert.strictEqual(modelOptions[1], "claude-opus-4-6 · anthropic");
-		assert.strictEqual(modelOptions[2], "claude-sonnet-4-5 · anthropic");
-		assert.strictEqual(modelOptions[3], `${SEPARATOR_PREFIX} openai (2) ${SEPARATOR_PREFIX}`);
-		assert.strictEqual(modelOptions[4], "gpt-4o · openai");
-		assert.strictEqual(modelOptions[5], "o3-mini · openai");
-		assert.strictEqual(modelOptions[6], "(keep current)");
-		assert.strictEqual(modelOptions[7], "(clear)");
+	test("provider menu lists providers with model counts", () => {
+		const { providers, byProvider } = buildProviderGroups();
+		const providerOptions = providers.map(p => {
+			const count = byProvider.get(p)!.length;
+			return `${p} (${count} models)`;
+		});
+		providerOptions.push("(keep current)", "(clear)", "(type manually)");
 
-		// Verify separators are correctly detected
-		assert.ok(isSeparator(modelOptions, 0));
-		assert.ok(!isSeparator(modelOptions, 1));
-		assert.ok(isSeparator(modelOptions, 3));
-		assert.ok(!isSeparator(modelOptions, 6));
+		assert.strictEqual(providerOptions[0], "anthropic (3 models)");
+		assert.strictEqual(providerOptions[1], "openai (2 models)");
+		assert.strictEqual(providerOptions[2], "(keep current)");
+		assert.strictEqual(providerOptions[3], "(clear)");
+		assert.strictEqual(providerOptions[4], "(type manually)");
+	});
 
-		// Verify first selectable is index 1, not the separator at 0
-		assert.strictEqual(nextSelectable(modelOptions, 0, 1), 1);
+	test("model menu for a provider is sorted alphabetically", () => {
+		const { byProvider } = buildProviderGroups();
+		const anthropicModels = byProvider.get("anthropic")!;
+		const modelOptions = anthropicModels.map(m => m.id);
+
+		assert.strictEqual(modelOptions[0], "claude-haiku-4-5");
+		assert.strictEqual(modelOptions[1], "claude-opus-4-6");
+		assert.strictEqual(modelOptions[2], "claude-sonnet-4-5");
+	});
+
+	test("provider name is extracted correctly from choice string", () => {
+		const choice = "anthropic (3 models)";
+		const providerName = choice.replace(/ \(\d+ models?\)$/, "");
+		assert.strictEqual(providerName, "anthropic");
+
+		const singleChoice = "ollama (1 model)";
+		const singleProvider = singleChoice.replace(/ \(\d+ models?\)$/, "");
+		assert.strictEqual(singleProvider, "ollama");
+	});
+
+	test("openai models are sorted within their group", () => {
+		const { byProvider } = buildProviderGroups();
+		const openaiModels = byProvider.get("openai")!;
+		const modelOptions = openaiModels.map(m => m.id);
+
+		assert.strictEqual(modelOptions[0], "gpt-4o");
+		assert.strictEqual(modelOptions[1], "o3-mini");
 	});
 });

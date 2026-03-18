@@ -260,27 +260,57 @@ async function configureModels(ctx: ExtensionCommandContext, prefs: Record<strin
       group.push(m);
     }
     const providers = Array.from(byProvider.keys()).sort((a, b) => a.localeCompare(b));
-
-    const modelOptions: string[] = [];
-    for (const provider of providers) {
-      const group = byProvider.get(provider)!;
-      modelOptions.push(`─── ${provider} (${group.length}) ───`);
-      for (const m of group) {
-        modelOptions.push(`${m.id} · ${m.provider}`);
-      }
+    // Sort models within each provider
+    for (const group of byProvider.values()) {
+      group.sort((a, b) => a.id.localeCompare(b.id));
     }
-    modelOptions.push("(keep current)", "(clear)");
+
+    // Build provider menu with model counts
+    const providerOptions = providers.map(p => {
+      const count = byProvider.get(p)!.length;
+      return `${p} (${count} models)`;
+    });
+    providerOptions.push("(keep current)", "(clear)", "(type manually)");
 
     for (const phase of modelPhases) {
       const current = models[phase] ?? "";
-      const title = `Model for ${phase} phase${current ? ` (current: ${current})` : ""}:`;
-      const choice = await ctx.ui.select(title, modelOptions);
+      const phaseLabel = `Model for ${phase} phase${current ? ` (current: ${current})` : ""}`;
 
-      if (choice && typeof choice === "string" && choice !== "(keep current)") {
-        if (choice === "(clear)") {
+      // Step 1: pick provider
+      const providerChoice = await ctx.ui.select(`${phaseLabel} — choose provider:`, providerOptions);
+      if (!providerChoice || typeof providerChoice !== "string" || providerChoice === "(keep current)") continue;
+
+      if (providerChoice === "(clear)") {
+        delete models[phase];
+        continue;
+      }
+
+      if (providerChoice === "(type manually)") {
+        const input = await ctx.ui.input(
+          `${phaseLabel} — enter model ID:`,
+          current || "e.g. claude-sonnet-4-20250514",
+        );
+        if (input !== null && input !== undefined) {
+          const val = input.trim();
+          if (val) models[phase] = val;
+        }
+        continue;
+      }
+
+      // Step 2: pick model within provider
+      const providerName = providerChoice.replace(/ \(\d+ models?\)$/, "");
+      const group = byProvider.get(providerName);
+      if (!group) continue;
+
+      const modelOptions = group.map(m => m.id);
+      modelOptions.push("(keep current)", "(clear)");
+
+      const modelChoice = await ctx.ui.select(`${phaseLabel} — ${providerName}:`, modelOptions);
+      if (modelChoice && typeof modelChoice === "string" && modelChoice !== "(keep current)") {
+        if (modelChoice === "(clear)") {
           delete models[phase];
         } else {
-          models[phase] = choice.split(" · ")[0];
+          models[phase] = modelChoice;
         }
       }
     }
