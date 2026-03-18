@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "milestone": "M007-aos64t",
+  "generatedAt": "2026-03-18T19:51:40.128Z",
+  "evidence": {
+    "refutedCount": 1,
+    "rerouteTarget": "plan-slice",
+    "correctedValuePresent": true,
+    "promptExcerptContains": "5.2.0",
+    "dispatchAction": {
+      "action": "dispatch",
+      "unitType": "plan-slice",
+      "unitId": "M999-PROOF/S01"
+    }
+  },
+  "result": "PASS",
+  "proofArtifacts": [
+    "FACTCHECK-STATUS.json",
+    "C001.json",
+    "reroute-action.json"
+  ]
+}

@@ -30,7 +30,7 @@
 
 ## Tasks
 
-- [ ] **T01: Create final audit test that writes durable validation report** `est:30m`
+- [x] **T01: Create final audit test that writes durable validation report** `est:30m`
   - Why: The S02 proof runs in temp dirs and its artifacts vanish. This task creates a test that runs the same proof path and persists a structured validation report to the milestone directory.
   - Files: `src/resources/extensions/gsd/tests/factcheck-final-audit.test.ts`, `.gsd/milestones/M007-aos64t/M007-VALIDATION-REPORT.json`
   - Do: Create `factcheck-final-audit.test.ts` that: (1) copies S01 fixtures to temp dir like the S02 test does, (2) runs dispatch and prompt assembly against them using real production code, (3) asserts dispatch reroute and corrected evidence in prompt, (4) writes `M007-VALIDATION-REPORT.json` to `.gsd/milestones/M007-aos64t/` with schema: `{ schemaVersion: 1, milestone: "M007-aos64t", generatedAt: ISO timestamp, evidence: { refutedCount, rerouteTarget, correctedValuePresent, promptExcerptContains, dispatchAction }, result: "PASS"|"FAIL", proofArtifacts: [list of files checked] }`, (5) asserts the written report parses back and has all required fields. Use the same `dist-redirect.mjs` loader and `--experimental-strip-types` approach as S02's test.
