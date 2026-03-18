@@ -8,7 +8,7 @@ on:
 
 concurrency:
   group: pipeline-${{ github.sha }}
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 permissions:
   contents: write
@@ -51,7 +51,13 @@ jobs:
           echo "version=$(node -e 'process.stdout.write(require("./package.json").version)')" >> "$GITHUB_OUTPUT"
 
       - name: Publish @dev
-        run: npm publish --tag dev
+        run: |
+          VERSION=$(node -e 'process.stdout.write(require("./package.json").version)')
+          if npm view "gsd-pi@${VERSION}" version 2>/dev/null; then
+            echo "Version ${VERSION} already published — skipping"
+          else
+            npm publish --tag dev
+          fi
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
