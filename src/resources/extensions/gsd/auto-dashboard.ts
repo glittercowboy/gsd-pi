@@ -397,163 +397,188 @@ export function updateProgressWidget(
         lines.push(rightAlign(`${pad}${contextLine}`, phaseBadge, width));
 
         // ── Two-column body ─────────────────────────────────────────────
-        // Left: progress, ETA, next, stats  |  Right: task checklist (pegged right)
+        // Left: task checklist (fixed width)  |  Right: progress, ETA, next, stats (flex)
         const divider = theme.fg("dim", "│");
         const colGap = 3; // space + │ + space
         const minTwoColWidth = 80; // below this, fall back to single column
-        const rightColFixed = 44; // fixed width for task checklist
+        const leftColFixed = 44; // fixed width for task checklist
         const useTwoCol = width >= minTwoColWidth;
-        const rightColWidth = useTwoCol ? Math.min(rightColFixed, Math.floor(width * 0.55)) : 0;
-        const leftColWidth = useTwoCol ? width - rightColWidth - colGap : width;
+        const leftColWidth = useTwoCol ? Math.min(leftColFixed, Math.floor(width * 0.55)) : width;
+        const rightColWidth = useTwoCol ? width - leftColWidth - colGap : 0;
 
         const roadmapSlices = mid ? getRoadmapSlicesSync() : null;
 
-        // Build left column: progress bar, ETA, next step, token stats
+        // Build left column: task checklist
         const leftLines: string[] = [];
+        const taskDetails = roadmapSlices?.taskDetails ?? null;
+        const maxVisibleTasks = 8;
 
-        if (roadmapSlices) {
-          const { done, total, activeSliceTasks } = roadmapSlices;
-          const barWidth = Math.max(6, Math.min(18, Math.floor(leftColWidth * 0.4)));
-          const pct = total > 0 ? done / total : 0;
-          const filled = Math.round(pct * barWidth);
-          const bar = theme.fg("success", "█".repeat(filled))
-            + theme.fg("dim", "░".repeat(barWidth - filled));
-
-          let meta = theme.fg("dim", `${done}/${total} slices`);
-          if (activeSliceTasks && activeSliceTasks.total > 0) {
-            const taskNum = isHook
-              ? Math.max(activeSliceTasks.done, 1)
-              : Math.min(activeSliceTasks.done + 1, activeSliceTasks.total);
-            meta += theme.fg("dim", ` · task ${taskNum}/${activeSliceTasks.total}`);
+        if (taskDetails && taskDetails.length > 0) {
+          const visibleTasks = taskDetails.slice(0, maxVisibleTasks);
+          for (const t of visibleTasks) {
+            const isCurrent = task && t.id === task.id;
+            const glyph = t.done
+              ? theme.fg("success", GLYPH.statusDone)
+              : isCurrent
+                ? theme.fg("accent", "▸")
+                : theme.fg("dim", " ");
+            const label = isCurrent
+              ? theme.fg("text", `${t.id}: ${t.title}`)
+              : t.done
+                ? theme.fg("dim", `${t.id}: ${t.title}`)
+                : theme.fg("text", `${t.id}: ${t.title}`);
+            leftLines.push(truncateToWidth(`${pad}${glyph} ${label}`, leftColWidth));
           }
-          leftLines.push(truncateToWidth(`${pad}${bar} ${meta}`, leftColWidth));
-
-          const eta = estimateTimeRemaining();
-          if (eta) {
-            leftLines.push(truncateToWidth(`${pad}${theme.fg("dim", eta)}`, leftColWidth));
+          if (taskDetails.length > maxVisibleTasks) {
+            leftLines.push(truncateToWidth(
+              `${pad}${theme.fg("dim", `  …+${taskDetails.length - maxVisibleTasks} more`)}`,
+              leftColWidth,
+            ));
           }
+        } else if (roadmapSlices?.activeSliceTasks) {
+          const { done: tDone, total: tTotal } = roadmapSlices.activeSliceTasks;
+          leftLines.push(`${pad}${theme.fg("dim", `${tDone}/${tTotal} tasks`)}`);
         }
 
-        if (next) {
-          leftLines.push(truncateToWidth(
-            `${pad}${theme.fg("dim", "→")} ${theme.fg("dim", `then ${next}`)}`,
-            leftColWidth,
-          ));
-        }
+        // Build right column: progress bar, ETA, next step, token stats (only in two-column mode)
+        const rightLines: string[] = [];
+        const rpad = " ";
 
-        // Token stats
-        {
-          const cmdCtx = accessors.getCmdCtx();
-          let totalInput = 0, totalOutput = 0;
-          let totalCacheRead = 0, totalCacheWrite = 0;
-          if (cmdCtx) {
-            for (const entry of cmdCtx.sessionManager.getEntries()) {
-              if (entry.type === "message") {
-                const msgEntry = entry as SessionMessageEntry;
-                if (msgEntry.message?.role === "assistant") {
-                  const u = (msgEntry.message as any).usage;
-                  if (u) {
-                    totalInput += u.input || 0;
-                    totalOutput += u.output || 0;
-                    totalCacheRead += u.cacheRead || 0;
-                    totalCacheWrite += u.cacheWrite || 0;
+        if (useTwoCol) {
+          if (roadmapSlices) {
+            const { done, total, activeSliceTasks } = roadmapSlices;
+            const barWidth = Math.max(6, Math.min(18, Math.floor(rightColWidth * 0.4)));
+            const pct = total > 0 ? done / total : 0;
+            const filled = Math.round(pct * barWidth);
+            const bar = theme.fg("success", "█".repeat(filled))
+              + theme.fg("dim", "░".repeat(barWidth - filled));
+
+            let meta = theme.fg("dim", `${done}/${total} slices`);
+            if (activeSliceTasks && activeSliceTasks.total > 0) {
+              const taskNum = isHook
+                ? Math.max(activeSliceTasks.done, 1)
+                : Math.min(activeSliceTasks.done + 1, activeSliceTasks.total);
+              meta += theme.fg("dim", ` · task ${taskNum}/${activeSliceTasks.total}`);
+            }
+            rightLines.push(truncateToWidth(`${rpad}${bar} ${meta}`, rightColWidth));
+
+            const eta = estimateTimeRemaining();
+            if (eta) {
+              rightLines.push(truncateToWidth(`${rpad}${theme.fg("dim", eta)}`, rightColWidth));
+            }
+          }
+
+          if (next) {
+            rightLines.push(truncateToWidth(
+              `${rpad}${theme.fg("dim", "→")} ${theme.fg("dim", `then ${next}`)}`,
+              rightColWidth,
+            ));
+          }
+
+          // Token stats
+          {
+            const cmdCtx = accessors.getCmdCtx();
+            let totalInput = 0, totalOutput = 0;
+            let totalCacheRead = 0, totalCacheWrite = 0;
+            if (cmdCtx) {
+              for (const entry of cmdCtx.sessionManager.getEntries()) {
+                if (entry.type === "message") {
+                  const msgEntry = entry as SessionMessageEntry;
+                  if (msgEntry.message?.role === "assistant") {
+                    const u = (msgEntry.message as any).usage;
+                    if (u) {
+                      totalInput += u.input || 0;
+                      totalOutput += u.output || 0;
+                      totalCacheRead += u.cacheRead || 0;
+                      totalCacheWrite += u.cacheWrite || 0;
+                    }
                   }
                 }
               }
             }
-          }
-          const mLedger = getLedger();
-          const autoTotals = mLedger ? getProjectTotals(mLedger.units) : null;
-          const cumulativeCost = autoTotals?.cost ?? 0;
+            const mLedger = getLedger();
+            const autoTotals = mLedger ? getProjectTotals(mLedger.units) : null;
+            const cumulativeCost = autoTotals?.cost ?? 0;
 
-          const cxUsage = cmdCtx?.getContextUsage?.();
-          const cxWindow = cxUsage?.contextWindow ?? cmdCtx?.model?.contextWindow ?? 0;
-          const cxPctVal = cxUsage?.percent ?? 0;
-          const cxPct = cxUsage?.percent !== null ? cxPctVal.toFixed(1) : "?";
+            const cxUsage = cmdCtx?.getContextUsage?.();
+            const cxWindow = cxUsage?.contextWindow ?? cmdCtx?.model?.contextWindow ?? 0;
+            const cxPctVal = cxUsage?.percent ?? 0;
+            const cxPct = cxUsage?.percent !== null ? cxPctVal.toFixed(1) : "?";
 
-          const sp: string[] = [];
-          if (totalInput) sp.push(`↑${formatWidgetTokens(totalInput)}`);
-          if (totalOutput) sp.push(`↓${formatWidgetTokens(totalOutput)}`);
-          if (totalCacheRead) sp.push(`R${formatWidgetTokens(totalCacheRead)}`);
-          if (totalCacheWrite) sp.push(`W${formatWidgetTokens(totalCacheWrite)}`);
-          if (totalCacheRead + totalInput > 0) {
-            const hitRate = Math.round((totalCacheRead / (totalCacheRead + totalInput)) * 100);
-            sp.push(`\u26A1${hitRate}%`);
-          }
-          if (cumulativeCost) sp.push(`$${cumulativeCost.toFixed(3)}`);
-          else if (autoTotals?.apiRequests) sp.push(`${autoTotals.apiRequests} reqs`);
+            const sp: string[] = [];
+            if (totalInput) sp.push(`↑${formatWidgetTokens(totalInput)}`);
+            if (totalOutput) sp.push(`↓${formatWidgetTokens(totalOutput)}`);
+            if (totalCacheRead) sp.push(`R${formatWidgetTokens(totalCacheRead)}`);
+            if (totalCacheWrite) sp.push(`W${formatWidgetTokens(totalCacheWrite)}`);
+            if (totalCacheRead + totalInput > 0) {
+              const hitRate = Math.round((totalCacheRead / (totalCacheRead + totalInput)) * 100);
+              sp.push(`\u26A1${hitRate}%`);
+            }
+            if (cumulativeCost) sp.push(`$${cumulativeCost.toFixed(3)}`);
+            else if (autoTotals?.apiRequests) sp.push(`${autoTotals.apiRequests} reqs`);
 
-          const cxDisplay = cxPct === "?"
-            ? `?/${formatWidgetTokens(cxWindow)}`
-            : `${cxPct}%/${formatWidgetTokens(cxWindow)}`;
-          if (cxPctVal > 90) {
-            sp.push(theme.fg("error", cxDisplay));
-          } else if (cxPctVal > 70) {
-            sp.push(theme.fg("warning", cxDisplay));
-          } else {
-            sp.push(cxDisplay);
-          }
+            const cxDisplay = cxPct === "?"
+              ? `?/${formatWidgetTokens(cxWindow)}`
+              : `${cxPct}%/${formatWidgetTokens(cxWindow)}`;
+            if (cxPctVal > 90) {
+              sp.push(theme.fg("error", cxDisplay));
+            } else if (cxPctVal > 70) {
+              sp.push(theme.fg("warning", cxDisplay));
+            } else {
+              sp.push(cxDisplay);
+            }
 
-          const tokenLine = sp.map(p => p.includes("\x1b[") ? p : theme.fg("dim", p))
-            .join(theme.fg("dim", " "));
-          leftLines.push(truncateToWidth(`${pad}${tokenLine}`, leftColWidth));
+            const tokenLine = sp.map(p => p.includes("\x1b[") ? p : theme.fg("dim", p))
+              .join(theme.fg("dim", " "));
+            rightLines.push(truncateToWidth(`${rpad}${tokenLine}`, rightColWidth));
 
-          const modelId = cmdCtx?.model?.id ?? "";
-          const modelProvider = cmdCtx?.model?.provider ?? "";
-          const modelDisplay = modelProvider && modelId
-            ? `${modelProvider}/${modelId}`
-            : modelId;
-          if (modelDisplay) {
-            leftLines.push(truncateToWidth(`${pad}${theme.fg("dim", modelDisplay)}`, leftColWidth));
-          }
+            const modelId = cmdCtx?.model?.id ?? "";
+            const modelProvider = cmdCtx?.model?.provider ?? "";
+            const modelDisplay = modelProvider && modelId
+              ? `${modelProvider}/${modelId}`
+              : modelId;
+            if (modelDisplay) {
+              rightLines.push(truncateToWidth(`${rpad}${theme.fg("dim", modelDisplay)}`, rightColWidth));
+            }
 
-          // Dynamic routing savings
-          if (mLedger && mLedger.units.some(u => u.tier)) {
-            const savings = formatTierSavings(mLedger.units);
-            if (savings) {
-              leftLines.push(truncateToWidth(`${pad}${theme.fg("dim", savings)}`, leftColWidth));
+            // Dynamic routing savings
+            if (mLedger && mLedger.units.some(u => u.tier)) {
+              const savings = formatTierSavings(mLedger.units);
+              if (savings) {
+                rightLines.push(truncateToWidth(`${rpad}${theme.fg("dim", savings)}`, rightColWidth));
+              }
             }
           }
-        }
-
-        // Build right column: task checklist (only in two-column mode)
-        const rightLines: string[] = [];
-        const taskDetails = roadmapSlices?.taskDetails ?? null;
-        const maxVisibleTasks = 8;
-        const rpad = " ";
-
-        if (useTwoCol) {
-          if (taskDetails && taskDetails.length > 0) {
-            const visibleTasks = taskDetails.slice(0, maxVisibleTasks);
-            for (const t of visibleTasks) {
-              const isCurrent = task && t.id === task.id;
-              const glyph = t.done
-                ? theme.fg("success", GLYPH.statusDone)
-                : isCurrent
-                  ? theme.fg("accent", "▸")
-                  : theme.fg("dim", " ");
-              const label = isCurrent
-                ? theme.fg("text", `${t.id}: ${t.title}`)
-                : t.done
-                  ? theme.fg("dim", `${t.id}: ${t.title}`)
-                  : theme.fg("text", `${t.id}: ${t.title}`);
-              rightLines.push(truncateToWidth(`${rpad}${glyph} ${label}`, rightColWidth));
+        } else {
+          // Narrow single-column: add stats below task list
+          if (roadmapSlices) {
+            const { done, total, activeSliceTasks } = roadmapSlices;
+            const barWidth = Math.max(6, Math.min(18, Math.floor(leftColWidth * 0.4)));
+            const pct = total > 0 ? done / total : 0;
+            const filled = Math.round(pct * barWidth);
+            const bar = theme.fg("success", "█".repeat(filled))
+              + theme.fg("dim", "░".repeat(barWidth - filled));
+            let meta = theme.fg("dim", `${done}/${total} slices`);
+            if (activeSliceTasks && activeSliceTasks.total > 0) {
+              const taskNum = isHook
+                ? Math.max(activeSliceTasks.done, 1)
+                : Math.min(activeSliceTasks.done + 1, activeSliceTasks.total);
+              meta += theme.fg("dim", ` · task ${taskNum}/${activeSliceTasks.total}`);
             }
-            if (taskDetails.length > maxVisibleTasks) {
-              rightLines.push(truncateToWidth(
-                `${rpad}${theme.fg("dim", `  …+${taskDetails.length - maxVisibleTasks} more`)}`,
-                rightColWidth,
-              ));
-            }
-          } else if (roadmapSlices?.activeSliceTasks) {
-            const { done: tDone, total: tTotal } = roadmapSlices.activeSliceTasks;
-            rightLines.push(`${rpad}${theme.fg("dim", `${tDone}/${tTotal} tasks`)}`);
+            const eta = estimateTimeRemaining();
+            if (eta) meta += theme.fg("dim", ` · ${eta}`);
+            leftLines.push(truncateToWidth(`${pad}${bar} ${meta}`, leftColWidth));
+          }
+          if (next) {
+            leftLines.push(truncateToWidth(
+              `${pad}${theme.fg("dim", "→")} ${theme.fg("dim", `then ${next}`)}`,
+              leftColWidth,
+            ));
           }
         }
 
         // Compose columns
         if (useTwoCol) {
-          // Two-column: zip left and right with divider
           const maxRows = Math.max(leftLines.length, rightLines.length);
           if (maxRows > 0) {
             lines.push(""); // spacer before columns
@@ -564,7 +589,7 @@ export function updateProgressWidget(
             }
           }
         } else {
-          // Narrow single-column: stack left lines, then task summary
+          // Narrow single-column: just stack
           if (leftLines.length > 0) {
             lines.push("");
             for (const l of leftLines) lines.push(l);

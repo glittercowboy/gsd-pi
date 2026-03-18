@@ -104,55 +104,68 @@ function render(width: number): string[] {
   const contextLine = contextParts.join(theme.fg("dim", " · "));
   lines.push(rightAlign(`${pad}${contextLine}`, phaseBadge, width));
 
-  // Column sizing: right column fixed, left column flexes
+  // Column sizing: left column fixed (tasks), right column flexes (stats)
   const colGap = 3;
   const minTwoColWidth = 80;
-  const rightColFixed = 44;
+  const leftColFixed = 44;
   const useTwoCol = width >= minTwoColWidth;
-  const rightColWidth = useTwoCol ? Math.min(rightColFixed, Math.floor(width * 0.55)) : 0;
-  const leftColWidth = useTwoCol ? width - rightColWidth - colGap : width;
+  const leftColWidth = useTwoCol ? Math.min(leftColFixed, Math.floor(width * 0.55)) : width;
+  const rightColWidth = useTwoCol ? width - leftColWidth - colGap : 0;
 
-  // Left column: progress, ETA, next, stats
+  // Left column: task checklist
   const leftLines: string[] = [];
 
-  const barWidth = Math.max(6, Math.min(18, Math.floor(leftColWidth * 0.4)));
-  const pct = slicesDone / slicesTotal;
-  const filled = Math.round(pct * barWidth);
-  const bar = theme.fg("success", "█".repeat(filled))
-    + theme.fg("dim", "░".repeat(barWidth - filled));
-  const meta = theme.fg("dim", `${slicesDone}/${slicesTotal} slices`)
-    + theme.fg("dim", ` · task ${taskNum}/${taskTotal}`);
-  leftLines.push(truncateToWidth(`${pad}${bar} ${meta}`, leftColWidth));
-  leftLines.push(truncateToWidth(`${pad}${theme.fg("dim", eta)}`, leftColWidth));
-  leftLines.push(truncateToWidth(
-    `${pad}${theme.fg("dim", "→")} ${theme.fg("dim", `then ${nextStep}`)}`,
-    leftColWidth,
-  ));
-  leftLines.push(truncateToWidth(
-    `${pad}${theme.fg("dim", tokenStats)} ${theme.fg("dim", contextStats)}`,
-    leftColWidth,
-  ));
-  leftLines.push(truncateToWidth(`${pad}${theme.fg("dim", modelDisplay)}`, leftColWidth));
+  for (const t of mockTasks) {
+    const isCurrent = t.id === currentTaskId;
+    const glyph = t.done
+      ? theme.fg("success", GLYPH.statusDone)
+      : isCurrent
+        ? theme.fg("accent", "▸")
+        : theme.fg("dim", " ");
+    const label = isCurrent
+      ? theme.fg("text", `${t.id}: ${t.title}`)
+      : t.done
+        ? theme.fg("dim", `${t.id}: ${t.title}`)
+        : theme.fg("text", `${t.id}: ${t.title}`);
+    leftLines.push(truncateToWidth(`${pad}${glyph} ${label}`, leftColWidth));
+  }
 
-  // Right column: task checklist (only in two-column mode)
+  // Right column: progress, ETA, next, stats (only in two-column mode)
   const rightLines: string[] = [];
   const rpad = " ";
 
   if (useTwoCol) {
-    for (const t of mockTasks) {
-      const isCurrent = t.id === currentTaskId;
-      const glyph = t.done
-        ? theme.fg("success", GLYPH.statusDone)
-        : isCurrent
-          ? theme.fg("accent", "▸")
-          : theme.fg("dim", " ");
-      const label = isCurrent
-        ? theme.fg("text", `${t.id}: ${t.title}`)
-        : t.done
-          ? theme.fg("dim", `${t.id}: ${t.title}`)
-          : theme.fg("text", `${t.id}: ${t.title}`);
-      rightLines.push(truncateToWidth(`${rpad}${glyph} ${label}`, rightColWidth));
-    }
+    const barWidth = Math.max(6, Math.min(18, Math.floor(rightColWidth * 0.4)));
+    const pct = slicesDone / slicesTotal;
+    const filled = Math.round(pct * barWidth);
+    const bar = theme.fg("success", "█".repeat(filled))
+      + theme.fg("dim", "░".repeat(barWidth - filled));
+    const meta = theme.fg("dim", `${slicesDone}/${slicesTotal} slices`)
+      + theme.fg("dim", ` · task ${taskNum}/${taskTotal}`);
+    rightLines.push(truncateToWidth(`${rpad}${bar} ${meta}`, rightColWidth));
+    rightLines.push(truncateToWidth(`${rpad}${theme.fg("dim", eta)}`, rightColWidth));
+    rightLines.push(truncateToWidth(
+      `${rpad}${theme.fg("dim", "→")} ${theme.fg("dim", `then ${nextStep}`)}`,
+      rightColWidth,
+    ));
+    rightLines.push(truncateToWidth(
+      `${rpad}${theme.fg("dim", tokenStats)} ${theme.fg("dim", contextStats)}`,
+      rightColWidth,
+    ));
+    rightLines.push(truncateToWidth(`${rpad}${theme.fg("dim", modelDisplay)}`, rightColWidth));
+  } else {
+    // Narrow: add progress inline below tasks
+    const barWidth = Math.max(6, Math.min(18, Math.floor(leftColWidth * 0.4)));
+    const pct = slicesDone / slicesTotal;
+    const filled = Math.round(pct * barWidth);
+    const bar = theme.fg("success", "█".repeat(filled))
+      + theme.fg("dim", "░".repeat(barWidth - filled));
+    const meta = theme.fg("dim", `${slicesDone}/${slicesTotal} slices · task ${taskNum}/${taskTotal} · ${eta}`);
+    leftLines.push(truncateToWidth(`${pad}${bar} ${meta}`, leftColWidth));
+    leftLines.push(truncateToWidth(
+      `${pad}${theme.fg("dim", "→")} ${theme.fg("dim", `then ${nextStep}`)}`,
+      leftColWidth,
+    ));
   }
 
   // Compose columns
@@ -166,7 +179,6 @@ function render(width: number): string[] {
       lines.push(truncateToWidth(`${left} ${divider} ${right}`, width));
     }
   } else {
-    // Narrow: single column, just stack
     lines.push("");
     for (const l of leftLines) lines.push(l);
   }
