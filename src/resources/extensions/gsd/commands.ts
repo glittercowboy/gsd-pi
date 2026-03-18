@@ -846,7 +846,7 @@ function showHelp(ctx: ExtensionCommandContext): void {
     "  /gsd init           Project init wizard — detect, configure, bootstrap .gsd/",
     "  /gsd setup          Global setup status  [llm|search|remote|keys|prefs]",
     "  /gsd mode           Set workflow mode (solo/team)  [global|project]",
-    "  /gsd prefs          Manage preferences  [global|project|status|wizard|setup]",
+    "  /gsd prefs          Manage preferences  [global|project|status|wizard|setup|import-claude]",
     "  /gsd config         Set API keys for external tools",
     "  /gsd keys           API key manager  [list|add|remove|test|rotate|doctor]",
     "  /gsd hooks          Show post-unit hook configuration",
