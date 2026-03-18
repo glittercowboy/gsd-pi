@@ -51,11 +51,15 @@ export function updatePromptRecord(
 ): RemotePromptRecord | null {
   const current = readPromptRecord(id);
   if (!current) return null;
-  const next: RemotePromptRecord = {
+  const merged = {
     ...current,
     ...updates,
     updatedAt: Date.now(),
   };
+  // After spreading, the merged object satisfies one of the union members
+  // but TypeScript can't prove it statically. The invariant is maintained
+  // by callers: once `ref` is set via markPromptDispatched it is never removed.
+  const next = merged as RemotePromptRecord;
   writePromptRecord(next);
   return next;
 }

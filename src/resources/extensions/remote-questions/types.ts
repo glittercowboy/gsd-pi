@@ -44,17 +44,16 @@ export interface RemoteAnswer {
 
 export type RemotePromptStatus = "pending" | "answered" | "timed_out" | "failed" | "cancelled";
 
-export interface RemotePromptRecord {
+/** Shared fields present on every prompt record regardless of dispatch state. */
+interface RemotePromptRecordBase {
   version: 1;
   id: string;
   createdAt: number;
   updatedAt: number;
-  status: RemotePromptStatus;
   channel: RemoteChannel;
   timeoutAt: number;
   pollIntervalMs: number;
   questions: RemoteQuestion[];
-  ref?: RemotePromptRef;
   response?: RemoteAnswer;
   lastPollAt?: number;
   lastError?: string;
@@ -62,6 +61,30 @@ export interface RemotePromptRecord {
     source: string;
   };
 }
+
+/** Record before the prompt has been dispatched to a channel. */
+export interface PendingPromptRecord extends RemotePromptRecordBase {
+  status: "pending";
+  ref?: undefined;
+}
+
+/** Record after the prompt has been dispatched (ref is always present). */
+export interface DispatchedPromptRecord extends RemotePromptRecordBase {
+  status: RemotePromptStatus;
+  ref: RemotePromptRef;
+}
+
+/**
+ * A prompt record is either pre-dispatch (no ref) or post-dispatch (ref required).
+ *
+ * Narrow via `record.ref`:
+ * ```ts
+ * if (record.ref) {
+ *   // DispatchedPromptRecord — ref is RemotePromptRef
+ * }
+ * ```
+ */
+export type RemotePromptRecord = PendingPromptRecord | DispatchedPromptRecord;
 
 export interface RemoteDispatchResult {
   ref: RemotePromptRef;
