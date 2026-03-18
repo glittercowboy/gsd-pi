@@ -112,6 +112,64 @@ export function detectStaleSkills(
   return stale;
 }
 
+// ============================================================================
+// Generalized Component Telemetry
+// ============================================================================
+
+/** Components (all types) actively used during the current unit */
+const activelyLoadedComponents = new Set<string>();
+
+/**
+ * Record that a component was actively used during the current unit.
+ * Works for any component type (skill, agent, pipeline).
+ */
+export function recordComponentUsage(componentName: string): void {
+  activelyLoadedComponents.add(componentName);
+}
+
+/**
+ * Get all component names used in the current unit and clear state.
+ * Includes both skills (tracked separately) and general components.
+ */
+export function getAndClearComponentUsage(): string[] {
+  const result = Array.from(activelyLoadedComponents);
+  activelyLoadedComponents.clear();
+  return result;
+}
+
+/**
+ * Reset all component telemetry state.
+ */
+export function resetComponentTelemetry(): void {
+  activelyLoadedComponents.clear();
+  resetSkillTelemetry();
+}
+
+/**
+ * List all installed component names from the ComponentRegistry.
+ * Falls back to listing skill directories if registry is unavailable.
+ */
+export function listInstalledComponents(): { skills: string[]; agents: string[] } {
+  try {
+    const { getComponentRegistry } = require("./component-registry.js");
+    const registry = getComponentRegistry();
+    if (registry.size > 0) {
+      return {
+        skills: registry.skills().map((s: { metadata: { name: string } }) => s.metadata.name),
+        agents: registry.agents().map((a: { metadata: { name: string } }) => a.metadata.name),
+      };
+    }
+  } catch {
+    // Fall through to legacy
+  }
+
+  const skillsDir = join(getAgentDir(), "skills");
+  return {
+    skills: listSkillNames(skillsDir),
+    agents: [],
+  };
+}
+
 // ─── Internals ────────────────────────────────────────────────────────────────
 
 function listSkillNames(skillsDir: string): string[] {

@@ -96,7 +96,29 @@ ${entries}
 
 // ─── Internals ────────────────────────────────────────────────────────────────
 
+/**
+ * List skill directory names, preferring ComponentRegistry when available.
+ * Falls back to direct directory scanning.
+ */
 function listSkillDirs(): string[] {
+  // Try ComponentRegistry first for unified discovery
+  try {
+    const { getComponentRegistry } = require('./component-registry.js');
+    const registry = getComponentRegistry();
+    if (registry.size > 0) {
+      const skills = registry.skills();
+      if (skills.length > 0) {
+        return skills.map(s => s.metadata.name);
+      }
+    }
+  } catch {
+    // Registry not available — fall through to legacy
+  }
+
+  return listSkillDirsLegacy();
+}
+
+function listSkillDirsLegacy(): string[] {
   if (!existsSync(SKILLS_DIR)) return [];
   try {
     return readdirSync(SKILLS_DIR, { withFileTypes: true })

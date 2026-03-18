@@ -290,6 +290,84 @@ export function computeStaleAvoidList(
   return stale.filter(s => !avoidSet.has(s));
 }
 
+// ============================================================================
+// Generalized Component Health (extends skill health to all component types)
+// ============================================================================
+
+export type ComponentKindForHealth = "skill" | "agent" | "pipeline" | "agent-team";
+
+export interface ComponentHealthEntry extends SkillHealthEntry {
+  /** Component kind (skill, agent, pipeline, agent-team) */
+  kind: ComponentKindForHealth;
+}
+
+export interface ComponentHealthReport extends Omit<SkillHealthReport, "skills"> {
+  /** All component health entries (skills + agents) */
+  components: ComponentHealthEntry[];
+  /** Skill-only entries for backward compatibility */
+  skills: SkillHealthEntry[];
+}
+
+/**
+ * Generate a unified health report covering both skills and agents.
+ * Extends the skill-only report with agent telemetry data.
+ */
+export function generateComponentHealthReport(basePath: string, staleDays?: number): ComponentHealthReport {
+  // Start with skill health
+  const skillReport = generateSkillHealthReport(basePath, staleDays);
+  const components: ComponentHealthEntry[] = skillReport.skills.map(s => ({
+    ...s,
+    kind: "skill" as ComponentKindForHealth,
+  }));
+
+  // Add agent metrics from AgentTelemetry
+  try {
+    const { AgentTelemetry } = require("./agent-telemetry.js");
+    const telemetry = new AgentTelemetry();
+    const agentMetrics = telemetry.getAllMetrics();
+
+    for (const m of agentMetrics) {
+      const now = Date.now();
+      const lastUsedTs = m.lastUsed ? new Date(m.lastUsed).getTime() : 0;
+      const staleDaysVal = lastUsedTs > 0 ? Math.floor((now - lastUsedTs) / (24 * 60 * 60 * 1000)) : 999;
+
+      let flagged = false;
+      let flagReason: string | undefined;
+
+      if (m.totalInvocations >= MIN_USES_FOR_TREND) {
+        if (m.successRate < SUCCESS_RATE_THRESHOLD) {
+          flagged = true;
+          flagReason = `Success rate ${Math.round(m.successRate * 100)}% (below ${Math.round(SUCCESS_RATE_THRESHOLD * 100)}% threshold)`;
+        } else if (m.trend === "declining") {
+          flagged = true;
+          flagReason = "Performance trend is declining";
+        }
+      }
+
+      components.push({
+        kind: "agent",
+        name: m.agentName,
+        totalUses: m.totalInvocations,
+        successRate: m.successRate,
+        avgTokens: 0, // Agent telemetry tracks cost, not raw tokens
+        tokenTrend: m.trend === "improving" ? "declining" : m.trend === "declining" ? "rising" : "stable",
+        lastUsed: lastUsedTs,
+        staleDays: staleDaysVal,
+        avgCost: m.avgCost,
+        flagged,
+        flagReason,
+      });
+    }
+  } catch {
+    // AgentTelemetry not available — skills-only report
+  }
+
+  return {
+    ...skillReport,
+    components,
+  };
+}
+
 // ─── Internals ────────────────────────────────────────────────────────────────
 
 function aggregateBySkill(units: UnitMetrics[]): Map<string, SkillHealthEntry> {

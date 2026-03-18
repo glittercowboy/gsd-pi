@@ -1,5 +1,8 @@
 /**
  * Agent discovery and configuration
+ *
+ * Delegates to ComponentRegistry when available (unified component system),
+ * falls back to legacy directory scanning otherwise.
  */
 
 import * as fs from "node:fs";
@@ -94,7 +97,45 @@ function findNearestProjectAgentsDir(cwd: string): string | null {
 	}
 }
 
+/**
+ * Attempt to discover agents via the unified ComponentRegistry.
+ * Returns null if the registry is unavailable.
+ */
+function discoverAgentsFromRegistry(cwd: string, scope: AgentScope): AgentDiscoveryResult | null {
+	try {
+		const { getComponentRegistry } = require("../gsd/component-registry.js");
+		const registry = getComponentRegistry(cwd);
+		registry.load();
+
+		const registryAgents = registry.getAgentsForSubagent();
+		if (registryAgents.length === 0) return null;
+
+		// Apply scope filter
+		const filtered = registryAgents.filter((a: { source: string }) => {
+			if (scope === "both") return true;
+			return a.source === scope;
+		});
+
+		const agentMap = new Map<string, AgentConfig>();
+		for (const a of filtered) {
+			agentMap.set(a.name, a);
+		}
+
+		// Determine project agents dir for display purposes
+		const projectAgentsDir = findNearestProjectAgentsDir(cwd);
+
+		return { agents: Array.from(agentMap.values()), projectAgentsDir };
+	} catch {
+		return null;
+	}
+}
+
 export function discoverAgents(cwd: string, scope: AgentScope): AgentDiscoveryResult {
+	// Try unified ComponentRegistry first
+	const registryResult = discoverAgentsFromRegistry(cwd, scope);
+	if (registryResult) return registryResult;
+
+	// Fall back to legacy directory scanning
 	const userDir = path.join(getAgentDir(), "agents");
 	const projectAgentsDir = findNearestProjectAgentsDir(cwd);
 

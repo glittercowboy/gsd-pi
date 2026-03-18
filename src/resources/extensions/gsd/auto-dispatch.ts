@@ -354,3 +354,94 @@ export async function resolveDispatch(ctx: DispatchContext): Promise<DispatchAct
 export function getDispatchRuleNames(): string[] {
   return DISPATCH_RULES.map(r => r.name);
 }
+
+// ============================================================================
+// Pipeline Dispatch (Component System Integration)
+// ============================================================================
+
+/**
+ * Dispatch a pipeline from auto-mode.
+ * Resolves the pipeline from the ComponentRegistry, validates inputs,
+ * and returns a dispatch action for the pipeline runtime.
+ *
+ * This is called externally (not via DISPATCH_RULES) because pipeline
+ * dispatch is triggered by explicit pipeline invocation, not by GSD phase state.
+ */
+export async function dispatchPipeline(
+  pipelineName: string,
+  inputs: Record<string, string | number | boolean>,
+  basePath: string,
+): Promise<DispatchAction> {
+  try {
+    const { getComponentRegistry } = await import("./component-registry.js");
+    const registry = getComponentRegistry();
+    const comp = registry.resolve(pipelineName);
+
+    if (!comp) {
+      return {
+        action: "stop",
+        reason: `Pipeline "${pipelineName}" not found in component registry.`,
+        level: "error",
+      };
+    }
+
+    if (comp.kind !== "pipeline") {
+      return {
+        action: "stop",
+        reason: `Component "${pipelineName}" is a ${comp.kind}, not a pipeline.`,
+        level: "error",
+      };
+    }
+
+    const spec = comp.spec as { steps: Array<{ id: string; component: string; task: string }>; inputs?: Record<string, { type: string; default?: unknown }> };
+
+    // Validate required inputs
+    if (spec.inputs) {
+      for (const [key, def] of Object.entries(spec.inputs)) {
+        if (def.default === undefined && inputs[key] === undefined) {
+          return {
+            action: "stop",
+            reason: `Pipeline "${pipelineName}" requires input "${key}" (${def.type}).`,
+            level: "error",
+          };
+        }
+      }
+    }
+
+    // Build the pipeline execution prompt
+    const stepList = spec.steps
+      .map((s, i) => `  ${i + 1}. [${s.id}] ${s.component}: ${s.task}`)
+      .join("\n");
+
+    const inputList = Object.entries(inputs)
+      .map(([k, v]) => `  ${k}: ${v}`)
+      .join("\n");
+
+    const prompt = [
+      `## Pipeline: ${comp.metadata.name}`,
+      `${comp.metadata.description}`,
+      "",
+      "### Steps",
+      stepList,
+      "",
+      inputList ? `### Inputs\n${inputList}` : "",
+      "",
+      "Execute each step in order, passing outputs between steps as specified.",
+      `Pipeline definition: ${comp.filePath}`,
+    ].filter(Boolean).join("\n");
+
+    return {
+      action: "dispatch",
+      unitType: "pipeline",
+      unitId: `pipeline/${pipelineName}`,
+      prompt,
+    };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "unknown error";
+    return {
+      action: "stop",
+      reason: `Failed to dispatch pipeline "${pipelineName}": ${message}`,
+      level: "error",
+    };
+  }
+}

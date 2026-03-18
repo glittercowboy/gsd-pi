@@ -34,6 +34,88 @@ import {
 } from "./isolation.js";
 import { registerWorker, updateWorker } from "./worker-registry.js";
 
+// ============================================================================
+// Agent Router Integration
+// ============================================================================
+
+/**
+ * Get the AgentRouter with routing rules from ComponentRegistry agents.
+ * Falls back gracefully if the router module is unavailable.
+ */
+function getAgentRouterSuggestion(
+	agents: AgentConfig[],
+	taskDescription: string,
+): { agent: string; confidence: string; score: number } | null {
+	try {
+		const { AgentRouter, getDefaultRules } = require("../gsd/agent-router.js");
+		const { getComponentRegistry } = require("../gsd/component-registry.js");
+
+		// Build routing rules from registry agents (if available) + defaults
+		const rules = [...getDefaultRules()];
+
+		try {
+			const registry = getComponentRegistry();
+			const registryAgents = registry.agents();
+			for (const comp of registryAgents) {
+				if (comp.routing) {
+					for (const rule of comp.routing) {
+						rules.push({
+							when: rule.when,
+							agent: comp.metadata.name,
+							confidence: rule.confidence ?? "medium",
+						});
+					}
+				}
+			}
+		} catch {
+			// Registry not loaded yet — use default rules only
+		}
+
+		const router = new AgentRouter(rules);
+		const match = router.bestMatch(taskDescription);
+		if (!match) return null;
+
+		// Only suggest if the matched agent is actually available
+		const available = agents.find((a) => a.name === match.agent);
+		if (!available) return null;
+
+		return { agent: match.agent, confidence: match.confidence, score: match.score };
+	} catch {
+		return null;
+	}
+}
+
+/**
+ * Apply enhanced agent config from ComponentRegistry (maxTurns, timeout, etc.).
+ * Returns enhanced agent config or null if not available.
+ */
+function getEnhancedAgentConfig(agentName: string): {
+	maxTurns?: number;
+	timeoutMinutes?: number;
+	isolation?: string;
+} | null {
+	try {
+		const { getComponentRegistry } = require("../gsd/component-registry.js");
+		const registry = getComponentRegistry();
+		const comp = registry.resolve(agentName);
+		if (!comp || comp.kind !== "agent") return null;
+
+		const spec = comp.spec as {
+			maxTurns?: number;
+			timeoutMinutes?: number;
+			isolation?: string;
+		};
+
+		return {
+			maxTurns: spec.maxTurns,
+			timeoutMinutes: spec.timeoutMinutes,
+			isolation: spec.isolation,
+		};
+	} catch {
+		return null;
+	}
+}
+
 const MAX_PARALLEL_TASKS = 8;
 const MAX_CONCURRENCY = 4;
 const COLLAPSED_ITEM_COUNT = 10;
@@ -476,7 +558,7 @@ export default function (pi: ExtensionAPI) {
 		await stopLiveSubagents();
 	});
 
-	// /subagent command - list available agents
+	// /subagent command - list available agents with routing info
 	pi.registerCommand("subagent", {
 		description: "List available subagents",
 		handler: async (_args, ctx) => {
@@ -485,9 +567,15 @@ export default function (pi: ExtensionAPI) {
 				ctx.ui.notify("No agents found. Add .md files to ~/.gsd/agent/agents/ or .gsd/agents/", "warning");
 				return;
 			}
-			const lines = discovery.agents.map(
-				(a) => `  ${a.name} [${a.source}]${a.model ? ` (${a.model})` : ""}: ${a.description}`,
-			);
+			const lines = discovery.agents.map((a) => {
+				const enhanced = getEnhancedAgentConfig(a.name);
+				const extras: string[] = [];
+				if (a.model) extras.push(a.model);
+				if (enhanced?.maxTurns) extras.push(`${enhanced.maxTurns} turns`);
+				if (enhanced?.timeoutMinutes) extras.push(`${enhanced.timeoutMinutes}m timeout`);
+				const suffix = extras.length > 0 ? ` (${extras.join(", ")})` : "";
+				return `  ${a.name} [${a.source}]${suffix}: ${a.description}`;
+			});
 			ctx.ui.notify(`Available agents (${discovery.agents.length}):\n${lines.join("\n")}`, "info");
 		},
 	});
@@ -509,6 +597,7 @@ export default function (pi: ExtensionAPI) {
 			"Use chain mode for scout→planner→worker or worker→reviewer→worker pipelines.",
 			"Use parallel mode when tasks are independent and don't need each other's output.",
 			"Always check available agents with /subagent before choosing one.",
+			"Agent routing can auto-suggest the best agent based on task description keywords.",
 		],
 		parameters: SubagentParams,
 

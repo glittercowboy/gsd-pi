@@ -301,6 +301,50 @@ export class NamespacedResolver {
 }
 
 // ============================================================================
+// ComponentRegistry Fallback Resolution
+// ============================================================================
+
+/**
+ * Resolve a component name using the unified ComponentRegistry as a fallback
+ * when the NamespacedRegistry doesn't have a match.
+ *
+ * This allows references to work across both old-style (NamespacedRegistry)
+ * and new-style (ComponentRegistry) registrations.
+ */
+export function resolveViaComponentRegistry(
+	name: string,
+	type?: ComponentType,
+): NamespacedComponent | undefined {
+	try {
+		const { getComponentRegistry } = require('./component-registry.js');
+		const registry = getComponentRegistry();
+		const comp = registry.resolve(name);
+		if (!comp) return undefined;
+
+		// Apply type filter
+		const compType: ComponentType = comp.kind === 'agent' ? 'agent' : 'skill';
+		if (type && compType !== type) return undefined;
+
+		// Convert to NamespacedComponent format
+		return {
+			name: comp.metadata.name,
+			namespace: comp.metadata.namespace,
+			canonicalName: comp.id,
+			type: compType,
+			filePath: comp.filePath,
+			source: comp.source,
+			description: comp.metadata.description,
+			metadata: {
+				pluginVersion: comp.metadata.version,
+				pluginAuthor: comp.metadata.author?.name,
+			},
+		};
+	} catch {
+		return undefined;
+	}
+}
+
+// ============================================================================
 // Exports
 // ============================================================================
 

@@ -461,6 +461,89 @@ export function componentsFromDiscovery(
 }
 
 // ============================================================================
+// ComponentRegistry Bridge
+// ============================================================================
+
+/**
+ * Sync all components in this NamespacedRegistry into the unified ComponentRegistry.
+ * Call after populating the NamespacedRegistry with plugin discovery results.
+ *
+ * This ensures plugin-discovered components are visible to both the legacy
+ * namespaced resolution system and the new unified ComponentRegistry.
+ */
+export function syncToComponentRegistry(registry: NamespacedRegistry): void {
+	try {
+		const { getComponentRegistry } = require('./component-registry.js');
+		const { computeComponentId } = require('./component-types.js');
+
+		const componentRegistry = getComponentRegistry();
+
+		for (const comp of registry.getAll()) {
+			const id = computeComponentId(comp.name, comp.namespace);
+
+			// Skip if already registered (avoid duplicates)
+			if (componentRegistry.has(id)) continue;
+
+			componentRegistry.register({
+				id,
+				kind: comp.type === 'agent' ? 'agent' : 'skill',
+				metadata: {
+					name: comp.name,
+					description: comp.description ?? '',
+					namespace: comp.namespace,
+					version: comp.metadata.pluginVersion,
+					author: comp.metadata.pluginAuthor ? { name: comp.metadata.pluginAuthor } : undefined,
+					tags: comp.metadata.pluginCategory ? [comp.metadata.pluginCategory] : undefined,
+				},
+				spec: comp.type === 'agent'
+					? { systemPrompt: 'AGENT.md' }
+					: { prompt: 'SKILL.md' },
+				dirPath: comp.filePath.replace(/\/[^/]+$/, ''),
+				filePath: comp.filePath,
+				source: 'plugin',
+				format: comp.type === 'agent' ? 'agent-md' : 'skill-md',
+				enabled: true,
+			});
+		}
+	} catch {
+		// ComponentRegistry not available — no-op
+	}
+}
+
+/**
+ * Import components from the unified ComponentRegistry into this NamespacedRegistry.
+ * Useful for populating the namespaced view from the registry's loaded state.
+ */
+export function syncFromComponentRegistry(registry: NamespacedRegistry): void {
+	try {
+		const { getComponentRegistry } = require('./component-registry.js');
+		const componentRegistry = getComponentRegistry();
+
+		for (const comp of componentRegistry.list({ enabledOnly: true })) {
+			if (!comp.metadata.namespace) continue; // Only sync namespaced components
+
+			const canonicalName = `${comp.metadata.namespace}:${comp.metadata.name}`;
+			if (registry.has(canonicalName)) continue;
+
+			registry.register({
+				name: comp.metadata.name,
+				namespace: comp.metadata.namespace,
+				type: comp.kind === 'agent' ? 'agent' : 'skill',
+				filePath: comp.filePath,
+				source: `plugin:${comp.metadata.namespace}`,
+				description: comp.metadata.description,
+				metadata: {
+					pluginVersion: comp.metadata.version,
+					pluginAuthor: comp.metadata.author?.name,
+				},
+			});
+		}
+	} catch {
+		// ComponentRegistry not available — no-op
+	}
+}
+
+// ============================================================================
 // Exports
 // ============================================================================
 

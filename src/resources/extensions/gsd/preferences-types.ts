@@ -86,9 +86,42 @@ export const KNOWN_PREFERENCE_KEYS = new Set<string>([
   "search_provider",
   "compression_strategy",
   "context_selection",
+  "components",
 ]);
 
 export const SKILL_ACTIONS = new Set(["use", "prefer", "avoid"]);
+
+// ============================================================================
+// Component Preferences (unified for all component types)
+// ============================================================================
+
+/** Agent routing mode: how agents are selected for subagent invocations */
+export type AgentRoutingMode = "manual" | "suggest" | "auto";
+
+/** Component-level preferences */
+export interface ComponentPreferences {
+  /** Default scope for component resolution: project-local first or user-global first */
+  default_scope?: "project-first" | "user-first";
+  /** Whether to auto-install missing dependencies when a component requires them */
+  auto_install_deps?: boolean;
+  /** Agent routing mode: manual (user picks), suggest (show recommendation), auto (route automatically) */
+  agent_routing?: AgentRoutingMode;
+  /** Custom routing rules that override defaults */
+  agent_routing_rules?: AgentRoutingRuleConfig[];
+  /** Component names to always enable regardless of staleness */
+  always_enable?: string[];
+  /** Component names to disable (won't be loaded or suggested) */
+  disabled?: string[];
+}
+
+export interface AgentRoutingRuleConfig {
+  /** Keywords or patterns to match in task descriptions */
+  when: string;
+  /** Agent name to route to */
+  agent: string;
+  /** Confidence level */
+  confidence?: "low" | "medium" | "high";
+}
 
 export interface GSDSkillRule {
   when: string;
@@ -196,6 +229,8 @@ export interface GSDPreferences {
   compression_strategy?: CompressionStrategy;
   /** Context selection mode for file inlining. "full" inlines entire files, "smart" uses semantic chunking. Default derived from token profile. */
   context_selection?: ContextSelectionMode;
+  /** Component system preferences: agent routing, scope defaults, disabled components. */
+  components?: ComponentPreferences;
 }
 
 export interface LoadedGSDPreferences {

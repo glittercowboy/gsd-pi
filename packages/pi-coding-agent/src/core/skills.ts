@@ -6,6 +6,71 @@ import { CONFIG_DIR_NAME, getAgentDir } from "../config.js";
 import { parseFrontmatter } from "../utils/frontmatter.js";
 import type { ResourceDiagnostic } from "./diagnostics.js";
 
+// ============================================================================
+// Component Registry Integration
+// ============================================================================
+
+/**
+ * Attempt to load skills via the unified ComponentRegistry.
+ * Falls back gracefully if the registry module is unavailable (e.g., during
+ * standalone pi-coding-agent usage without the GSD extension).
+ *
+ * @returns LoadSkillsResult if registry is available and loaded, null otherwise
+ */
+function loadSkillsFromRegistry(cwd: string): LoadSkillsResult | null {
+	try {
+		// Dynamic import to avoid hard dependency on the GSD extension
+		// eslint-disable-next-line @typescript-eslint/no-var-requires
+		const { getComponentRegistry } = require("../../resources/extensions/gsd/component-registry.js");
+		const registry = getComponentRegistry(cwd);
+		registry.load();
+
+		const registrySkills = registry.getSkillsForPrompt();
+		if (registrySkills.length === 0) return null;
+
+		const skills: Skill[] = registrySkills.map((s: {
+			name: string;
+			description: string;
+			filePath: string;
+			baseDir: string;
+			source: string;
+			disableModelInvocation: boolean;
+		}) => ({
+			name: s.name,
+			description: s.description,
+			filePath: s.filePath,
+			baseDir: s.baseDir,
+			source: s.source,
+			disableModelInvocation: s.disableModelInvocation,
+		}));
+
+		// Convert registry diagnostics to ResourceDiagnostic format
+		const diagnostics: ResourceDiagnostic[] = registry.getDiagnostics().map((d: {
+			type: string;
+			message: string;
+			path?: string;
+			collision?: { name: string; winnerPath: string; loserPath: string };
+		}) => ({
+			type: d.type === "collision" ? "collision" : "warning",
+			message: d.message,
+			path: d.path,
+			...(d.collision ? {
+				collision: {
+					resourceType: "skill" as const,
+					name: d.collision.name,
+					winnerPath: d.collision.winnerPath,
+					loserPath: d.collision.loserPath,
+				},
+			} : {}),
+		}));
+
+		return { skills, diagnostics };
+	} catch {
+		// Registry not available — fall through to legacy loading
+		return null;
+	}
+}
+
 /** Max name length per spec */
 const MAX_NAME_LENGTH = 64;
 
@@ -351,9 +416,20 @@ function resolveSkillPath(p: string, cwd: string): string {
 /**
  * Load skills from all configured locations.
  * Returns skills and any validation diagnostics.
+ *
+ * Resolution order:
+ * 1. Try ComponentRegistry (unified system) — handles both legacy and new format
+ * 2. Fall back to legacy directory scanning if registry is unavailable
+ * 3. Always process explicit skillPaths regardless of registry availability
  */
 export function loadSkills(options: LoadSkillsOptions = {}): LoadSkillsResult {
 	const { cwd = process.cwd(), agentDir, skillPaths = [], includeDefaults = true } = options;
+
+	// Try unified ComponentRegistry first (when GSD extension is loaded)
+	if (includeDefaults && skillPaths.length === 0 && !agentDir) {
+		const registryResult = loadSkillsFromRegistry(cwd);
+		if (registryResult) return registryResult;
+	}
 
 	// Resolve agentDir - if not provided, use default from config
 	const resolvedAgentDir = agentDir ?? getAgentDir();
