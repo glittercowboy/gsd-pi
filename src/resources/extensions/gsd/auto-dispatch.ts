@@ -105,25 +105,6 @@ const DISPATCH_RULES: DispatchRule[] = [
     },
   },
   {
-    name: "run-uat (post-completion)",
-    match: async ({ state, mid, basePath, prefs }) => {
-      const needsRunUat = await checkNeedsRunUat(basePath, mid, state, prefs);
-      if (!needsRunUat) return null;
-      const { sliceId, uatType } = needsRunUat;
-      const uatFile = resolveSliceFile(basePath, mid, sliceId, "UAT")!;
-      const uatContent = await loadFile(uatFile);
-      return {
-        action: "dispatch",
-        unitType: "run-uat",
-        unitId: `${mid}/${sliceId}`,
-        prompt: await buildRunUatPrompt(
-          mid, sliceId, relSliceFile(basePath, mid, sliceId, "UAT"), uatContent ?? "", basePath,
-        ),
-        pauseAfterDispatch: uatType !== "artifact-driven",
-      };
-    },
-  },
-  {
     name: "uat-verdict-gate (non-PASS blocks progression)",
     match: async ({ mid, basePath, prefs }) => {
       // Only applies when UAT dispatch is enabled
@@ -150,6 +131,25 @@ const DISPATCH_RULES: DispatchRule[] = [
         }
       }
       return null;
+    },
+  },
+  {
+    name: "run-uat (post-completion)",
+    match: async ({ state, mid, basePath, prefs }) => {
+      const needsRunUat = await checkNeedsRunUat(basePath, mid, state, prefs);
+      if (!needsRunUat) return null;
+      const { sliceId, uatType } = needsRunUat;
+      const uatFile = resolveSliceFile(basePath, mid, sliceId, "UAT")!;
+      const uatContent = await loadFile(uatFile);
+      return {
+        action: "dispatch",
+        unitType: "run-uat",
+        unitId: `${mid}/${sliceId}`,
+        prompt: await buildRunUatPrompt(
+          mid, sliceId, relSliceFile(basePath, mid, sliceId, "UAT"), uatContent ?? "", basePath,
+        ),
+        pauseAfterDispatch: uatType !== "artifact-driven",
+      };
     },
   },
   {
