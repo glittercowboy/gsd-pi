@@ -10,12 +10,15 @@ import { loadEffectiveGSDPreferences, type GSDPreferences } from "./preferences.
 import type { DoctorIssue, DoctorIssueCode } from "./doctor-types.js";
 import { COMPLETION_TRANSITION_CODES } from "./doctor-types.js";
 import { checkGitHealth, checkRuntimeHealth } from "./doctor-checks.js";
+import { checkEnvironmentHealth } from "./doctor-environment.js";
 
 // ── Re-exports ─────────────────────────────────────────────────────────────
 // All public types and functions from extracted modules are re-exported here
 // so that existing imports from "./doctor.js" continue to work unchanged.
 export type { DoctorSeverity, DoctorIssueCode, DoctorIssue, DoctorReport, DoctorSummary } from "./doctor-types.js";
 export { summarizeDoctorIssues, filterDoctorIssues, formatDoctorReport, formatDoctorIssuesForPrompt } from "./doctor-format.js";
+export { runEnvironmentChecks, runFullEnvironmentChecks, formatEnvironmentReport, type EnvironmentCheckResult } from "./doctor-environment.js";
+export { computeProgressScore, computeProgressScoreWithContext, formatProgressLine, formatProgressReport, type ProgressScore, type ProgressLevel } from "./progress-score.js";
 
 /**
  * Characters that are used as delimiters in GSD state management documents
@@ -389,6 +392,9 @@ export async function runGSDDoctor(basePath: string, options?: { fix?: boolean; 
 
   // Runtime health checks (crash locks, completed-units, hook state, activity logs, STATE.md, gitignore)
   await checkRuntimeHealth(basePath, issues, fixesApplied, shouldFix);
+
+  // Environment health checks (#1221: missing tools, port conflicts, stale deps, disk space)
+  await checkEnvironmentHealth(basePath, issues, { includeRemote: !options?.scope });
 
   const milestonesPath = milestonesDir(basePath);
   if (!existsSync(milestonesPath)) {

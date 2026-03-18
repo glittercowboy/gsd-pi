@@ -30,7 +30,20 @@ export type DoctorIssueCode =
   | "state_file_stale"
   | "state_file_missing"
   | "gitignore_missing_patterns"
-  | "unresolvable_dependency";
+  | "unresolvable_dependency"
+  // Environment health checks (#1221)
+  | "env_node_version"
+  | "env_dependencies"
+  | "env_env_file"
+  | "env_port_conflict"
+  | "env_disk_space"
+  | "env_docker"
+  | "env_package_manager"
+  | "env_typescript"
+  | "env_python"
+  | "env_cargo"
+  | "env_go"
+  | "env_git_remote";
 
 /**
  * Issue codes that represent expected completion-transition states.
