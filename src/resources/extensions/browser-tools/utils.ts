@@ -44,8 +44,8 @@ import {
 	type CompactPageState,
 	type CompactSelectorState,
 	type ClickTargetStateSnapshot,
-	type VerificationCheck,
-	type VerificationResult,
+	type BrowserVerificationCheck,
+	type BrowserVerificationResult,
 	type BrowserAssertionCheckInput,
 	type AdaptiveSettleOptions,
 	type AdaptiveSettleDetails,
@@ -265,9 +265,9 @@ export function getPendingCriticalRequests(p: Page): number {
 // ---------------------------------------------------------------------------
 
 export function verificationFromChecks(
-	checks: VerificationCheck[],
+	checks: BrowserVerificationCheck[],
 	retryHint?: string,
-): VerificationResult {
+): BrowserVerificationResult {
 	const passedChecks = checks
 		.filter((check) => check.passed)
 		.map((check) => check.name);
@@ -282,7 +282,7 @@ export function verificationFromChecks(
 	};
 }
 
-export function verificationLine(verification: VerificationResult): string {
+export function verificationLine(verification: BrowserVerificationResult): string {
 	return `Verification: ${verification.verificationSummary}`;
 }
 

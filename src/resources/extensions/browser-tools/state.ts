@@ -139,16 +139,16 @@ export interface ClickTargetStateSnapshot {
 	open: boolean | null;
 }
 
-export interface VerificationCheck {
+export interface BrowserVerificationCheck {
 	name: string;
 	passed: boolean;
 	value?: unknown;
 	expected?: unknown;
 }
 
-export interface VerificationResult {
+export interface BrowserVerificationResult {
 	verified: boolean;
-	checks: VerificationCheck[];
+	checks: BrowserVerificationCheck[];
 	verificationSummary: string;
 	retryHint?: string;
 }
@@ -379,8 +379,8 @@ export interface ToolDeps {
 
 	// Utilities (forwarded from utils.ts)
 	truncateText: (text: string) => string;
-	verificationFromChecks: (checks: VerificationCheck[], retryHint?: string) => VerificationResult;
-	verificationLine: (verification: VerificationResult) => string;
+	verificationFromChecks: (checks: BrowserVerificationCheck[], retryHint?: string) => BrowserVerificationResult;
+	verificationLine: (verification: BrowserVerificationResult) => string;
 	collectAssertionState: (
 		p: Page,
 		checks: BrowserAssertionCheckInput[],
