@@ -60,9 +60,7 @@ import {
   hideFooter,
 } from "./auto-dashboard.js";
 import { join } from "node:path";
-
-/** Throttle STATE.md rebuilds — at most once per 30 seconds */
-const STATE_REBUILD_MIN_INTERVAL_MS = 30_000;
+import { STATE_REBUILD_MIN_INTERVAL_MS } from "./auto-constants.js";
 
 export interface PostUnitContext {
   s: AutoSession;

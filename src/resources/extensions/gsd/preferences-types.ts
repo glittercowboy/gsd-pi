@@ -86,6 +86,14 @@ export const KNOWN_PREFERENCE_KEYS = new Set<string>([
   "context_selection",
 ]);
 
+/** Canonical list of all dispatch unit types. */
+export const KNOWN_UNIT_TYPES = [
+  "research-milestone", "plan-milestone", "research-slice", "plan-slice",
+  "execute-task", "complete-slice", "replan-slice", "reassess-roadmap",
+  "run-uat", "complete-milestone",
+] as const;
+export type UnitType = (typeof KNOWN_UNIT_TYPES)[number];
+
 export const SKILL_ACTIONS = new Set(["use", "prefer", "avoid"]);
 
 export interface GSDSkillRule {

@@ -14,6 +14,7 @@ import { normalizeStringArray } from "../shared/mod.js";
 
 import {
   KNOWN_PREFERENCE_KEYS,
+  KNOWN_UNIT_TYPES,
   SKILL_ACTIONS,
   type WorkflowMode,
   type GSDPreferences,
@@ -239,11 +240,7 @@ export function validatePreferences(preferences: GSDPreferences): {
   if (preferences.post_unit_hooks && Array.isArray(preferences.post_unit_hooks)) {
     const validHooks: PostUnitHookConfig[] = [];
     const seenNames = new Set<string>();
-    const knownUnitTypes = new Set([
-      "research-milestone", "plan-milestone", "research-slice", "plan-slice",
-      "execute-task", "complete-slice", "replan-slice", "reassess-roadmap",
-      "run-uat", "complete-milestone",
-    ]);
+    const knownUnitTypes = new Set<string>(KNOWN_UNIT_TYPES);
     for (const hook of preferences.post_unit_hooks) {
       if (!hook || typeof hook !== "object") {
         errors.push("post_unit_hooks entry must be an object");
@@ -305,11 +302,7 @@ export function validatePreferences(preferences: GSDPreferences): {
   if (preferences.pre_dispatch_hooks && Array.isArray(preferences.pre_dispatch_hooks)) {
     const validPreHooks: PreDispatchHookConfig[] = [];
     const seenPreNames = new Set<string>();
-    const knownUnitTypes = new Set([
-      "research-milestone", "plan-milestone", "research-slice", "plan-slice",
-      "execute-task", "complete-slice", "replan-slice", "reassess-roadmap",
-      "run-uat", "complete-milestone",
-    ]);
+    const knownUnitTypes = new Set<string>(KNOWN_UNIT_TYPES);
     const validActions = new Set(["modify", "skip", "replace"]);
     for (const hook of preferences.pre_dispatch_hooks) {
       if (!hook || typeof hook !== "object") {

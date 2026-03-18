@@ -204,8 +204,7 @@ import type { CompletedUnit, CurrentUnit, UnitRouting, StartModel, PendingVerifi
 // ─────────────────────────────────────────────────────────────────────────────
 const s = new AutoSession();
 
-/** Throttle STATE.md rebuilds — at most once per 30 seconds */
-const STATE_REBUILD_MIN_INTERVAL_MS = 30_000;
+import { STATE_REBUILD_MIN_INTERVAL_MS } from "./auto-constants.js";
 
 export function shouldUseWorktreeIsolation(): boolean {
   const prefs = loadEffectiveGSDPreferences()?.preferences?.git;
