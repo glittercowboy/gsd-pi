@@ -454,6 +454,7 @@ export function updateProgressWidget(
             sp.push(`\u26A1${hitRate}%`);
           }
           if (cumulativeCost) sp.push(`$${cumulativeCost.toFixed(3)}`);
+          else if (autoTotals?.apiRequests) sp.push(`${autoTotals.apiRequests} reqs`);
 
           const cxDisplay = cxPct === "?"
             ? `?/${formatWidgetTokens(cxWindow)}`

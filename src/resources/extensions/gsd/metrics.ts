@@ -43,6 +43,7 @@ export interface UnitMetrics {
   toolCalls: number;
   assistantMessages: number;
   userMessages: number;
+  apiRequests: number;     // total API requests made (useful for copilot users where cost is always 0)
   // Budget fields (optional — absent in pre-M009 metrics data)
   contextWindowTokens?: number;
   truncationSections?: number;
@@ -179,6 +180,7 @@ export function snapshotUnitMetrics(
     toolCalls,
     assistantMessages,
     userMessages,
+    apiRequests: assistantMessages, // each assistant message = one API request
     ...(opts?.tier ? { tier: opts.tier } : {}),
     ...(opts?.modelDowngraded !== undefined ? { modelDowngraded: opts.modelDowngraded } : {}),
     ...(opts?.contextWindowTokens !== undefined ? { contextWindowTokens: opts.contextWindowTokens } : {}),
@@ -247,6 +249,7 @@ export interface ProjectTotals {
   toolCalls: number;
   assistantMessages: number;
   userMessages: number;
+  apiRequests: number;
   totalTruncationSections: number;
   continueHereFiredCount: number;
 }
@@ -330,6 +333,7 @@ export function getProjectTotals(units: UnitMetrics[]): ProjectTotals {
     toolCalls: 0,
     assistantMessages: 0,
     userMessages: 0,
+    apiRequests: 0,
     totalTruncationSections: 0,
     continueHereFiredCount: 0,
   };
@@ -340,6 +344,7 @@ export function getProjectTotals(units: UnitMetrics[]): ProjectTotals {
     totals.toolCalls += u.toolCalls;
     totals.assistantMessages += u.assistantMessages;
     totals.userMessages += u.userMessages;
+    totals.apiRequests += u.apiRequests ?? u.assistantMessages; // fallback for pre-existing data
     totals.totalTruncationSections += u.truncationSections ?? 0;
     if (u.continueHereFired) totals.continueHereFiredCount++;
   }

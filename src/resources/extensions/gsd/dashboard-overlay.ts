@@ -479,8 +479,12 @@ export class GSDDashboardOverlay {
       lines.push(row(th.fg("text", th.bold("Cost & Usage"))));
       lines.push(blank());
 
+      // Show cost or request count (for copilot/subscription users where cost is 0)
+      const costOrReqs = totals.cost > 0
+        ? `${th.fg("warning", formatCost(totals.cost))} total`
+        : `${th.fg("text", String(totals.apiRequests))} requests`;
       lines.push(row(fitColumns([
-        `${th.fg("warning", formatCost(totals.cost))} total`,
+        costOrReqs,
         `${th.fg("text", formatTokenCount(totals.tokens.total))} tokens`,
         `${th.fg("text", String(totals.toolCalls))} tools`,
         `${th.fg("text", String(totals.units))} units`,
