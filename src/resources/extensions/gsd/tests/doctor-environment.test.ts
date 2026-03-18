@@ -14,7 +14,7 @@
  */
 
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
-import { join } from "node:path";
+import { join, dirname } from "node:path";
 import { tmpdir } from "node:os";
 
 import {
@@ -33,8 +33,7 @@ function createProjectDir(files: Record<string, string> = {}): string {
   const dir = mkdtempSync(join(tmpdir(), "gsd-env-test-"));
   for (const [name, content] of Object.entries(files)) {
     const filePath = join(dir, name);
-    const parentDir = filePath.substring(0, filePath.lastIndexOf("/"));
-    mkdirSync(parentDir, { recursive: true });
+    mkdirSync(dirname(filePath), { recursive: true });
     writeFileSync(filePath, content);
   }
   return dir;
