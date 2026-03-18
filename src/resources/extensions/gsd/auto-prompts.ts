@@ -465,6 +465,111 @@ export function extractSliceExecutionExcerpt(content: string | null, relPath: st
   return parts.join("\n");
 }
 
+// ─── Fact-Check Evidence ──────────────────────────────────────────────────────
+
+/**
+ * Load and format fact-check evidence from a slice's factcheck directory.
+ * Returns a formatted section for prompt injection when plan-impacting refutations exist.
+ *
+ * @param base - Base path to the GSD root
+ * @param mid - Milestone ID
+ * @param sid - Slice ID
+ * @returns Formatted fact-check evidence section, or null if no relevant evidence
+ */
+export async function loadFactcheckEvidence(
+  base: string, mid: string, sid: string
+): Promise<string | null> {
+  const sliceDir = resolveSlicePath(base, mid, sid);
+  if (!sliceDir) return null;
+
+  const factcheckStatusPath = join(sliceDir, "factcheck", "FACTCHECK-STATUS.json");
+  if (!existsSync(factcheckStatusPath)) return null;
+
+  try {
+    const statusContent = await loadFile(factcheckStatusPath);
+    if (!statusContent) return null;
+    const status = JSON.parse(statusContent);
+
+    // Only inject when there are refutations that impact the plan
+    if (status.overallStatus !== "has-refutations") return null;
+    if (!status.planImpactingClaims || status.planImpactingClaims.length === 0) return null;
+
+    // Load all claim annotations
+    const claimsDir = join(sliceDir, "factcheck", "claims");
+    if (!existsSync(claimsDir)) return null;
+
+    const refutedClaims: Array<{
+      claimId: string;
+      description: string;
+      correctedValue: string;
+      impact: string;
+      notes: string;
+    }> = [];
+
+    // Read each plan-impacting claim
+    for (const claimId of status.planImpactingClaims) {
+      const claimPath = join(claimsDir, `${claimId}.json`);
+      if (!existsSync(claimPath)) continue;
+      try {
+        const claimContent = await loadFile(claimPath);
+        if (!claimContent) continue;
+        const claim = JSON.parse(claimContent);
+        // Only include REFUTED claims with corrected values
+        if (claim.verdict === "refuted" && claim.correctedValue) {
+          refutedClaims.push({
+            claimId: claim.claimId,
+            description: claim.notes || `Claim ${claimId}`,
+            correctedValue: claim.correctedValue,
+            impact: claim.impact || "unknown",
+            notes: claim.notes || "",
+          });
+        }
+      } catch {
+        // Skip malformed claim files
+        continue;
+      }
+    }
+
+    if (refutedClaims.length === 0) return null;
+
+    // Format the evidence section
+    const lines: string[] = [
+      "## Fact-Check Evidence",
+      "",
+      "**⚠️ Plan-Impacting Refutations Detected**",
+      "",
+      `The following claims from research were refuted and impact this slice plan:`,
+      "",
+    ];
+
+    for (const claim of refutedClaims) {
+      lines.push(`### ${claim.claimId} (REFUTED)`);
+      lines.push("");
+      lines.push(`- **Original claim:** ${claim.description}`);
+      lines.push(`- **Corrected value:** \`${claim.correctedValue}\``);
+      lines.push(`- **Impact level:** ${claim.impact}`);
+      lines.push("");
+    }
+
+    // Add aggregate status summary
+    lines.push("**Aggregate Status:**");
+    lines.push("");
+    lines.push(`- Total claims checked: ${status.counts?.total || "unknown"}`);
+    lines.push(`- Confirmed: ${status.counts?.confirmed || 0}`);
+    lines.push(`- Refuted: ${status.counts?.refuted || 0}`);
+    lines.push(`- Inconclusive: ${status.counts?.inconclusive || 0}`);
+    if (status.rerouteTarget) {
+      lines.push(`- Reroute target: ${status.rerouteTarget}`);
+    }
+    lines.push("");
+    lines.push("**Action Required:** Incorporate the corrected values above into your plan. Do not rely on the refuted claims.");
+
+    return lines.join("\n");
+  } catch {
+    return null;
+  }
+}
+
 // ─── Prior Task Summaries ──────────────────────────────────────────────────
 
 export async function getPriorTaskSummaryPaths(
@@ -763,6 +868,11 @@ export async function buildPlanSlicePrompt(
   inlined.push(await inlineFile(roadmapPath, roadmapRel, "Milestone Roadmap"));
   const researchInline = await inlineFileOptional(researchPath, researchRel, "Slice Research");
   if (researchInline) inlined.push(researchInline);
+
+  // Inject fact-check evidence if plan-impacting refutations exist
+  const factcheckInline = await loadFactcheckEvidence(base, mid, sid);
+  if (factcheckInline) inlined.push(factcheckInline);
+
   if (inlineLevel !== "minimal") {
     const decisionsInline = await inlineDecisionsFromDb(base, mid, undefined, inlineLevel);
     if (decisionsInline) inlined.push(decisionsInline);

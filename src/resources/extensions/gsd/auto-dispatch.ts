@@ -16,8 +16,8 @@ import { loadFile, extractUatType, loadActiveOverrides, parseRoadmap } from "./f
 import {
   resolveMilestoneFile,
   resolveMilestonePath,
-  resolveSliceFile,
   resolveSlicePath,
+  resolveSliceFile,
   resolveTaskFile,
   relSliceFile,
   buildMilestoneFileName,
@@ -265,6 +265,40 @@ const DISPATCH_RULES: DispatchRule[] = [
           sTitle,
           basePath,
         ),
+      };
+    },
+  },
+  {
+    name: "factcheck-reroute → plan-slice",
+    match: async ({ state, mid, midTitle, basePath }) => {
+      if (state.phase !== "planning") return null;
+      const sid = state.activeSlice!.id;
+      const sTitle = state.activeSlice!.title;
+
+      // Check for FACTCHECK-STATUS.json in the slice's factcheck/ subdirectory
+      const sliceDir = resolveSlicePath(basePath, mid, sid);
+      if (!sliceDir) return null;
+      const factcheckStatusPath = join(sliceDir, "factcheck", "FACTCHECK-STATUS.json");
+      if (!existsSync(factcheckStatusPath)) return null;
+
+      // Read and parse the factcheck status
+      try {
+        const statusContent = await loadFile(factcheckStatusPath);
+        if (!statusContent) return null;
+        const status = JSON.parse(statusContent);
+        // Only reroute when planImpacting is true
+        if (status.planImpacting !== true) return null;
+      } catch {
+        // If parsing fails, fall through to normal rule
+        return null;
+      }
+
+      // Dispatch plan-slice with factcheck evidence (prompt builder handles injection)
+      return {
+        action: "dispatch",
+        unitType: "plan-slice",
+        unitId: `${mid}/${sid}`,
+        prompt: await buildPlanSlicePrompt(mid, midTitle, sid, sTitle, basePath),
       };
     },
   },

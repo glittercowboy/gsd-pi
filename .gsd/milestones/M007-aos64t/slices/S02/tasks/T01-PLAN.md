@@ -65,3 +65,19 @@ The S01 fixture proved the data contract exists. This task wires the runtime cod
 
 - `src/resources/extensions/gsd/auto-dispatch.ts` — modified with factcheck-reroute dispatch rule
 - `src/resources/extensions/gsd/auto-prompts.ts` — modified with fact-check evidence injection in buildPlanSlicePrompt
+
+## Observability Impact
+
+**Signals changed:**
+- Dispatch rule match name "factcheck-reroute → plan-slice" appears in dispatch trace logs when factcheck reroute triggers
+- "Fact-Check Evidence" section header appears in generated plan-slice prompts when REFUTED claims with plan impact exist
+
+**How future agents inspect this task:**
+- `grep -n "factcheck-reroute" src/resources/extensions/gsd/auto-dispatch.ts` finds the rule at line 217
+- `grep -n "Fact-Check Evidence" src/resources/extensions/gsd/auto-prompts.ts` finds the evidence section formatting
+- The exported `loadFactcheckEvidence` function can be called directly from tests or diagnostics
+
+**Failure state visibility:**
+- If factcheck reroute fails to trigger: check that FACTCHECK-STATUS.json exists in slice factcheck/ dir with planImpacting=true
+- If evidence injection fails: check that claim annotations exist in factcheck/claims/*.json with verdict="refuted" and correctedValue field
+- JSON parsing errors are caught and logged, causing graceful fallback to normal dispatch

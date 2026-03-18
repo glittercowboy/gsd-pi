@@ -39,7 +39,7 @@
 
 ## Tasks
 
-- [ ] **T01: Wire factcheck reroute dispatch rule and corrected-evidence prompt injection** `est:1h`
+- [x] **T01: Wire factcheck reroute dispatch rule and corrected-evidence prompt injection** `est:1h`
   - Why: The dispatch table has no factcheck-aware rule and the plan-slice prompt builder doesn't inject corrected evidence. Without these, the runtime path cannot reroute or inform the planner.
   - Files: `src/resources/extensions/gsd/auto-dispatch.ts`, `src/resources/extensions/gsd/auto-prompts.ts`
   - Do: (1) Add a dispatch rule before "planning → plan-slice" that checks for FACTCHECK-STATUS.json with planImpacting=true in the active slice's factcheck/ dir; when found, dispatch plan-slice with a flag indicating factcheck reroute. (2) In buildPlanSlicePrompt, read FACTCHECK-STATUS.json and REFUTED claim annotation files from the slice factcheck/ dir; format them as an inlined "Fact-Check Evidence" section in the prompt. (3) Use the same path resolution patterns already in auto-dispatch.ts and auto-prompts.ts. Do NOT add new npm dependencies.
