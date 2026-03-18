@@ -415,6 +415,9 @@ export async function showDiscuss(
     return;
   }
 
+  // Invalidate caches to pick up artifacts written by a just-completed discuss/plan
+  invalidateAllCaches();
+
   const state = await deriveState(basePath);
 
   // Guard: no active milestone
