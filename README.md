@@ -307,7 +307,7 @@ models:
     model: claude-opus-4-6
     fallbacks:
       - openrouter/z-ai/glm-5
-      - openrouter/minimax/minimax-m2.5
+      - openrouter/minimax/minimax-m2.7
   execution: claude-sonnet-4-6
   completion: claude-sonnet-4-6
 skill_discovery: suggest

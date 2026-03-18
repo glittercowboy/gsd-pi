@@ -518,7 +518,7 @@ export function resolveModelForUnit(unitType: string): string | undefined {
  *
  * Supports both legacy string format and extended object format:
  * - Legacy: `planning: claude-opus-4-6`
- * - Extended: `planning: { model: claude-opus-4-6, fallbacks: [glm-5, minimax-m2.5] }`
+ * - Extended: `planning: { model: claude-opus-4-6, fallbacks: [glm-5, minimax-m2.7] }`
  */
 /**
  * Determines the next fallback model to try when the current model fails.

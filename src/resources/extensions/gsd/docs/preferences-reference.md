@@ -85,7 +85,7 @@ Setting `prefer_skills: []` does **not** disable skill discovery — it just mea
 - `models`: per-stage model selection for auto-mode. Keys: `research`, `planning`, `execution`, `completion`. Values can be:
   - Simple string: `"claude-sonnet-4-6"` — single model, no fallbacks
   - Provider-qualified string: `"bedrock/claude-sonnet-4-6"` — targets a specific provider when the same model ID exists across multiple providers
-  - Object with fallbacks: `{ model: "claude-opus-4-6", fallbacks: ["glm-5", "minimax-m2.5"] }` — tries fallbacks in order if primary fails
+  - Object with fallbacks: `{ model: "claude-opus-4-6", fallbacks: ["glm-5", "minimax-m2.7"] }` — tries fallbacks in order if primary fails
   - Object with provider: `{ model: "claude-opus-4-6", provider: "bedrock" }` — explicit provider targeting in object format
   - Omit a key to use whatever model is currently active. Fallbacks are tried when model switching fails (provider unavailable, rate limited, etc.).
 
@@ -167,7 +167,7 @@ models:
   research:
     model: openrouter/deepseek/deepseek-r1
     fallbacks:
-      - openrouter/minimax/minimax-m2.5
+      - openrouter/minimax/minimax-m2.7
   planning:
     model: claude-opus-4-6
     fallbacks:
@@ -176,8 +176,8 @@ models:
   execution:
     model: openrouter/z-ai/glm-5
     fallbacks:
-      - openrouter/minimax/minimax-m2.5
-  completion: openrouter/minimax/minimax-m2.5
+      - openrouter/minimax/minimax-m2.7
+  completion: openrouter/minimax/minimax-m2.7
 ---
 ```
 
@@ -217,8 +217,8 @@ models:
     model: claude-opus-4-6                   # $5/$25 — best for architecture
     fallbacks:
       - openrouter/z-ai/glm-5                # $1/$3.20 — strong alternative
-  execution: openrouter/minimax/minimax-m2.5 # $0.30/$1.20 — cheapest quality
-  completion: openrouter/minimax/minimax-m2.5
+  execution: openrouter/minimax/minimax-m2.7 # $0.30/$1.20 — cheapest quality
+  completion: openrouter/minimax/minimax-m2.7
 ---
 ```
 
