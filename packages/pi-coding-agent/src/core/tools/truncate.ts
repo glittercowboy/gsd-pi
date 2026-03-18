@@ -8,7 +8,9 @@
  * Never returns partial lines (except bash tail truncation edge case).
  */
 
-export const DEFAULT_MAX_LINES = 2000;
+import { TRUNCATE_DEFAULT_MAX_LINES } from "../constants.js";
+
+export const DEFAULT_MAX_LINES = TRUNCATE_DEFAULT_MAX_LINES;
 export const DEFAULT_MAX_BYTES = 50 * 1024; // 50KB
 export const GREP_MAX_LINE_LENGTH = 500; // Max chars per grep match line
 

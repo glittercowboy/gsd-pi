@@ -85,6 +85,11 @@ function extractDeltaContext(
 	return null;
 }
 
+// Re-exports for external consumers
+export { TtsrManager } from "./ttsr-manager.js";
+export type { Rule, TtsrMatchContext } from "./ttsr-manager.js";
+export { loadRules } from "./rule-loader.js";
+
 export default function (pi: ExtensionAPI) {
 	let manager: TtsrManager | null = null;
 	let pendingViolation: PendingViolation | null = null;

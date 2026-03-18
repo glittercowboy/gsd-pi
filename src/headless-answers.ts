@@ -7,11 +7,7 @@
  */
 
 import { readFileSync } from 'node:fs'
-
-/** Serialize a value as a JSON line (same as serializeJsonLine from @gsd/pi-coding-agent). */
-function jsonLine(value: unknown): string {
-  return `${JSON.stringify(value)}\n`
-}
+import { serializeJsonLine } from '@gsd/pi-coding-agent'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -184,12 +180,12 @@ export class AnswerInjector {
 
       if (strategy === 'cancel') {
         const response = { type: 'extension_ui_response', id: event.id, cancelled: true }
-        writeToStdin(jsonLine(response))
+        writeToStdin(serializeJsonLine(response))
       } else {
         // first_option — send first option as response
         const options = event.options as string[] | undefined
         const response = { type: 'extension_ui_response', id: event.id, value: options?.[0] ?? '' }
-        writeToStdin(jsonLine(response))
+        writeToStdin(serializeJsonLine(response))
       }
     }, 500)
 
@@ -255,7 +251,7 @@ export class AnswerInjector {
         const valid = values.every((v) => eventOptions?.includes(v))
         if (valid) {
           const response = { type: 'extension_ui_response', id: event.id, values }
-          writeToStdin(jsonLine(response))
+          writeToStdin(serializeJsonLine(response))
           this.usedQuestionIds.add(meta.id)
           this.stats.questionsAnswered++
           return true
@@ -265,7 +261,7 @@ export class AnswerInjector {
         const value = Array.isArray(answer) ? answer[0] : answer
         if (eventOptions?.includes(value)) {
           const response = { type: 'extension_ui_response', id: event.id, value }
-          writeToStdin(jsonLine(response))
+          writeToStdin(serializeJsonLine(response))
           this.usedQuestionIds.add(meta.id)
           this.stats.questionsAnswered++
           return true
@@ -279,7 +275,7 @@ export class AnswerInjector {
 
     if (strategy === 'cancel') {
       const response = { type: 'extension_ui_response', id: event.id, cancelled: true }
-      writeToStdin(jsonLine(response))
+      writeToStdin(serializeJsonLine(response))
       return true
     }
 

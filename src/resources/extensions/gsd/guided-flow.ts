@@ -7,7 +7,7 @@
  */
 
 import type { ExtensionAPI, ExtensionContext, ExtensionCommandContext } from "@gsd/pi-coding-agent";
-import { showNextAction } from "../shared/next-action-ui.js";
+import { showNextAction } from "../shared/mod.js";
 import { loadFile, parseRoadmap } from "./files.js";
 import { loadPrompt, inlineTemplate } from "./prompt-loader.js";
 import { deriveState } from "./state.js";
@@ -29,7 +29,7 @@ import { ensureGitignore, ensurePreferences, untrackRuntimeFiles } from "./gitig
 import { loadEffectiveGSDPreferences } from "./preferences.js";
 import { detectProjectState } from "./detection.js";
 import { showProjectInit, offerMigration } from "./init-wizard.js";
-import { showConfirm } from "../shared/confirm-ui.js";
+import { showConfirm } from "../shared/mod.js";
 import { loadQueueOrder, sortByQueueOrder, saveQueueOrder } from "./queue-order.js";
 import { debugLog } from "./debug-logger.js";
 

@@ -70,6 +70,14 @@ export function fitColumns(parts: string[], width: number, separator = "  "): st
   return truncateToWidth(result, width);
 }
 
+// ─── Text Truncation ─────────────────────────────────────────────────────────
+
+/** Truncate a string to `maxLength` characters, replacing the last character with an ellipsis if needed. */
+export function truncateWithEllipsis(text: string, maxLength: number): string {
+  if (text.length <= maxLength) return text
+  return text.slice(0, maxLength - 1) + "…"
+}
+
 // ─── Data Visualization ───────────────────────────────────────────────────────
 
 /**

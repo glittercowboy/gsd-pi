@@ -3,7 +3,7 @@
 // Zero Pi dependencies — uses only exported helpers from files.ts.
 
 import { splitFrontmatter, parseFrontmatterMap, extractBoldField } from '../files.js';
-import { normalizeStringArray } from '../../shared/format-utils.js';
+import { normalizeStringArray } from '../../shared/mod.js';
 
 import type {
   PlanningRoadmap,
@@ -367,88 +367,7 @@ function parseRequiresArray(raw: unknown): PlanningSummaryRequires[] {
   });
 }
 
-/**
- * Parse YAML-like frontmatter lines into a flat key-value map.
- * Like parseFrontmatterMap but supports hyphenated keys (e.g. `tech-stack:`).
- */
-function parseFrontmatterMapHyphen(lines: string[]): Record<string, unknown> {
-  const result: Record<string, unknown> = {};
-  let currentKey: string | null = null;
-  let currentArray: unknown[] | null = null;
-  let currentObj: Record<string, string> | null = null;
-
-  for (const line of lines) {
-    // Nested object property (4-space indent with key: value)
-    const nestedMatch = line.match(/^    ([\w][\w_-]*)\s*:\s*(.*)$/);
-    if (nestedMatch && currentArray && currentObj) {
-      currentObj[nestedMatch[1]] = nestedMatch[2].trim();
-      continue;
-    }
-
-    // Array item (2-space indent)
-    const arrayMatch = line.match(/^  - (.*)$/);
-    if (arrayMatch && currentKey) {
-      if (currentObj && Object.keys(currentObj).length > 0) {
-        currentArray!.push(currentObj);
-      }
-      currentObj = null;
-
-      const val = arrayMatch[1].trim();
-      if (!currentArray) currentArray = [];
-
-      const nestedStart = val.match(/^([\w][\w_-]*)\s*:\s*(.*)$/);
-      if (nestedStart) {
-        currentObj = { [nestedStart[1]]: nestedStart[2].trim() };
-      } else {
-        currentArray.push(val);
-      }
-      continue;
-    }
-
-    // Flush previous key
-    if (currentKey) {
-      if (currentObj && Object.keys(currentObj).length > 0 && currentArray) {
-        currentArray.push(currentObj);
-        currentObj = null;
-      }
-      if (currentArray) {
-        result[currentKey] = currentArray;
-      }
-      currentArray = null;
-    }
-
-    // Top-level key: value (supports hyphens in key names)
-    const kvMatch = line.match(/^([\w][\w_-]*)\s*:\s*(.*)$/);
-    if (kvMatch) {
-      currentKey = kvMatch[1];
-      const val = kvMatch[2].trim();
-
-      if (val === '' || val === '[]') {
-        currentArray = [];
-      } else if (val.startsWith('[') && val.endsWith(']')) {
-        const inner = val.slice(1, -1).trim();
-        result[currentKey] = inner ? inner.split(',').map(s => s.trim()) : [];
-        currentKey = null;
-      } else {
-        result[currentKey] = val;
-        currentKey = null;
-      }
-    }
-  }
-
-  // Flush final key
-  if (currentKey) {
-    if (currentObj && Object.keys(currentObj).length > 0 && currentArray) {
-      currentArray.push(currentObj);
-      currentObj = null;
-    }
-    if (currentArray) {
-      result[currentKey] = currentArray;
-    }
-  }
-
-  return result;
-}
+// parseFrontmatterMap from shared now supports hyphenated keys natively
 
 function parseSummaryFrontmatter(fm: Record<string, unknown>): PlanningSummaryFrontmatter {
   return {
@@ -473,7 +392,7 @@ function parseSummaryFrontmatter(fm: Record<string, unknown>): PlanningSummaryFr
  */
 export function parseOldSummary(content: string, fileName: string = '', planNumber: string = ''): PlanningSummary {
   const [fmLines, body] = splitFrontmatter(content);
-  const fm = fmLines ? parseFrontmatterMapHyphen(fmLines) : {};
+  const fm = fmLines ? parseFrontmatterMap(fmLines) : {};
 
   return {
     fileName,

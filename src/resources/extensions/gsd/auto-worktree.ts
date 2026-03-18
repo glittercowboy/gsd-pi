@@ -11,6 +11,7 @@ import { isAbsolute, join } from "node:path";
 import { GSDError, GSD_IO_ERROR, GSD_GIT_ERROR } from "./errors.js";
 import { copyWorktreeDb, reconcileWorktreeDb, isDbAvailable } from "./gsd-db.js";
 import { execSync, execFileSync } from "node:child_process";
+import { safeCopy, safeCopyRecursive } from "./safe-fs.js";
 import {
   createWorktree,
   removeWorktree,
@@ -290,21 +291,11 @@ function copyPlanningArtifacts(srcBase: string, wtPath: string): void {
   if (!existsSync(srcGsd)) return;
 
   // Copy milestones/ directory (planning files, roadmaps, plans, research)
-  const srcMilestones = join(srcGsd, "milestones");
-  if (existsSync(srcMilestones)) {
-    try {
-      cpSync(srcMilestones, join(dstGsd, "milestones"), { recursive: true, force: true });
-    } catch { /* non-fatal */ }
-  }
+  safeCopyRecursive(join(srcGsd, "milestones"), join(dstGsd, "milestones"), { force: true });
 
   // Copy top-level planning files
   for (const file of ["DECISIONS.md", "REQUIREMENTS.md", "PROJECT.md", "QUEUE.md", "STATE.md", "KNOWLEDGE.md", "OVERRIDES.md"]) {
-    const src = join(srcGsd, file);
-    if (existsSync(src)) {
-      try {
-        cpSync(src, join(dstGsd, file), { force: true });
-      } catch { /* non-fatal */ }
-    }
+    safeCopy(join(srcGsd, file), join(dstGsd, file), { force: true });
   }
 
   // Copy gsd.db if present in source

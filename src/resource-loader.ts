@@ -110,6 +110,29 @@ function makeTreeWritable(dirPath: string): void {
 }
 
 /**
+ * Syncs a single bundled resource directory into the agent directory.
+ *
+ * 1. Makes the destination writable (handles Nix store read-only copies).
+ * 2. Removes destination subdirs that exist in source to clear stale files,
+ *    while preserving user-created directories.
+ * 3. Copies source into destination.
+ * 4. Makes the result writable for the next upgrade cycle.
+ */
+function syncResourceDir(srcDir: string, destDir: string): void {
+  makeTreeWritable(destDir)
+  if (existsSync(srcDir)) {
+    for (const entry of readdirSync(srcDir, { withFileTypes: true })) {
+      if (entry.isDirectory()) {
+        const target = join(destDir, entry.name)
+        if (existsSync(target)) rmSync(target, { recursive: true, force: true })
+      }
+    }
+    cpSync(srcDir, destDir, { recursive: true, force: true })
+    makeTreeWritable(destDir)
+  }
+}
+
+/**
  * Syncs all bundled resources to agentDir (~/.gsd/agent/) on every launch.
  *
  * - extensions/ → ~/.gsd/agent/extensions/   (overwrite when version changes)
@@ -135,47 +158,9 @@ export function initResources(agentDir: string): void {
     return
   }
 
-  // Unlock all existing destination files in a single recursive walk so that
-  // rmSync and cpSync can overwrite read-only copies from the Nix store.
-  makeTreeWritable(agentDir)
-
-  // Sync extensions — clean bundled subdirs first to remove stale leftover files,
-  // then overwrite so updates land on next launch. Only bundled subdirs are removed;
-  // user-created extension directories are preserved.
-  const destExtensions = join(agentDir, 'extensions')
-  for (const entry of readdirSync(bundledExtensionsDir, { withFileTypes: true })) {
-    if (entry.isDirectory()) {
-      const target = join(destExtensions, entry.name)
-      if (existsSync(target)) rmSync(target, { recursive: true, force: true })
-    }
-  }
-  cpSync(bundledExtensionsDir, destExtensions, { recursive: true, force: true })
-
-  // Sync agents
-  const destAgents = join(agentDir, 'agents')
-  const srcAgents = join(resourcesDir, 'agents')
-  if (existsSync(srcAgents)) {
-    for (const entry of readdirSync(srcAgents, { withFileTypes: true })) {
-      if (entry.isDirectory()) {
-        const target = join(destAgents, entry.name)
-        if (existsSync(target)) rmSync(target, { recursive: true, force: true })
-      }
-    }
-    cpSync(srcAgents, destAgents, { recursive: true, force: true })
-  }
-
-  // Sync skills
-  const destSkills = join(agentDir, 'skills')
-  const srcSkills = join(resourcesDir, 'skills')
-  if (existsSync(srcSkills)) {
-    for (const entry of readdirSync(srcSkills, { withFileTypes: true })) {
-      if (entry.isDirectory()) {
-        const target = join(destSkills, entry.name)
-        if (existsSync(target)) rmSync(target, { recursive: true, force: true })
-      }
-    }
-    cpSync(srcSkills, destSkills, { recursive: true, force: true })
-  }
+  syncResourceDir(bundledExtensionsDir, join(agentDir, 'extensions'))
+  syncResourceDir(join(resourcesDir, 'agents'), join(agentDir, 'agents'))
+  syncResourceDir(join(resourcesDir, 'skills'), join(agentDir, 'skills'))
 
   // Ensure all newly copied files are owner-writable so the next run can
   // overwrite them (covers extensions, agents, and skills in one walk).

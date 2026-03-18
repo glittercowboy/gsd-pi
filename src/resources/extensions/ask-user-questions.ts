@@ -18,7 +18,7 @@ import {
 	type Question,
 	type QuestionOption,
 	type RoundResult,
-} from "./shared/interview-ui.js";
+} from "./shared/mod.js";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 

@@ -1,5 +1,5 @@
 import type { ExtensionAPI, ExtensionContext } from "@gsd/pi-coding-agent";
-import { shortcutDesc } from "../shared/terminal.js";
+import { shortcutDesc } from "../shared/mod.js";
 import type { AssistantMessage } from "@gsd/pi-ai";
 import { isKeyRelease, Key, matchesKey, truncateToWidth, visibleWidth } from "@gsd/pi-tui";
 import { spawn, execSync, type ChildProcess } from "node:child_process";

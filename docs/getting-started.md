@@ -151,3 +151,23 @@ Shows each session's date, message count, and first-message preview so you can c
 - [Auto Mode](./auto-mode.md) — deep dive into autonomous execution
 - [Configuration](./configuration.md) — model selection, timeouts, budgets
 - [Commands Reference](./commands.md) — all commands and shortcuts
+
+## Troubleshooting
+
+### `gsd` command runs `git svn dcommit` instead of GSD
+
+The [oh-my-zsh git plugin](https://github.com/ohmyzsh/ohmyzsh/tree/master/plugins/git) defines `alias gsd='git svn dcommit'`, which shadows the GSD binary.
+
+**Option 1** — Remove the alias in your `~/.zshrc` (add after the `source $ZSH/oh-my-zsh.sh` line):
+
+```bash
+unalias gsd 2>/dev/null
+```
+
+**Option 2** — Use the alternative binary name:
+
+```bash
+gsd-cli
+```
+
+Both `gsd` and `gsd-cli` point to the same binary.

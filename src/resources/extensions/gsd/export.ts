@@ -10,7 +10,7 @@ import {
 } from "./metrics.js";
 import type { UnitMetrics } from "./metrics.js";
 import { gsdRoot } from "./paths.js";
-import { formatDuration } from "../shared/format-utils.js";
+import { formatDuration } from "../shared/mod.js";
 
 /**
  * Write an export file directly, without requiring an ExtensionCommandContext.

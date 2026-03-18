@@ -34,7 +34,7 @@ export function restoreWindowsVTInput(): void {
 
 // ── Time Formatting ────────────────────────────────────────────────────────
 
-import { formatDuration } from "../shared/format-utils.js";
+import { formatDuration } from "../shared/mod.js";
 
 export const formatUptime = formatDuration;
 

@@ -18,7 +18,7 @@ import {
 import { parseRoadmap, parsePlan } from "./files.js";
 import { readFileSync, existsSync } from "node:fs";
 import { truncateToWidth, visibleWidth } from "@gsd/pi-tui";
-import { makeUI, GLYPH, INDENT } from "../shared/ui.js";
+import { makeUI, GLYPH, INDENT } from "../shared/mod.js";
 
 // ─── Dashboard Data ───────────────────────────────────────────────────────────
 

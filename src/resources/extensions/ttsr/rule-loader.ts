@@ -9,53 +9,7 @@ import { readdirSync, readFileSync, existsSync } from "node:fs";
 import { join, basename } from "node:path";
 import { homedir } from "node:os";
 import type { Rule } from "./ttsr-manager.js";
-
-const FRONTMATTER_RE = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/;
-
-/** Minimal YAML parser for frontmatter (handles string arrays and scalars). */
-function parseFrontmatter(raw: string): Record<string, unknown> {
-	const result: Record<string, unknown> = {};
-	let currentKey: string | null = null;
-	let currentArray: string[] | null = null;
-
-	for (const line of raw.split("\n")) {
-		const trimmed = line.trimEnd();
-
-		// Array item under current key
-		if (currentKey && /^\s+-\s+/.test(trimmed)) {
-			const value = trimmed.replace(/^\s+-\s+/, "").replace(/^["']|["']$/g, "");
-			currentArray!.push(value);
-			continue;
-		}
-
-		// Flush previous array
-		if (currentKey && currentArray) {
-			result[currentKey] = currentArray;
-			currentKey = null;
-			currentArray = null;
-		}
-
-		// Key-value or key-with-array
-		const kvMatch = trimmed.match(/^(\w[\w-]*):\s*(.*)$/);
-		if (kvMatch) {
-			const [, key, value] = kvMatch;
-			if (value.length === 0) {
-				// Expect array items below
-				currentKey = key;
-				currentArray = [];
-			} else {
-				result[key] = value.replace(/^["']|["']$/g, "");
-			}
-		}
-	}
-
-	// Flush trailing array
-	if (currentKey && currentArray) {
-		result[currentKey] = currentArray;
-	}
-
-	return result;
-}
+import { splitFrontmatter, parseFrontmatterMap } from "../shared/frontmatter.js";
 
 function parseRuleFile(filePath: string): Rule | null {
 	let content: string;
@@ -65,11 +19,10 @@ function parseRuleFile(filePath: string): Rule | null {
 		return null;
 	}
 
-	const match = FRONTMATTER_RE.exec(content);
-	if (!match) return null;
+	const [fmLines, body] = splitFrontmatter(content);
+	if (!fmLines) return null;
 
-	const [, frontmatterRaw, body] = match;
-	const meta = parseFrontmatter(frontmatterRaw);
+	const meta = parseFrontmatterMap(fmLines);
 
 	const condition = meta.condition;
 	if (!Array.isArray(condition) || condition.length === 0) return null;

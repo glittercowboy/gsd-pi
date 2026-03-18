@@ -8,7 +8,7 @@ import type { PostUnitHookConfig, PreDispatchHookConfig, BudgetEnforcementMode, 
 import type { DynamicRoutingConfig } from "./model-router.js";
 import { defaultRoutingConfig } from "./model-router.js";
 import { VALID_BRANCH_NAME } from "./git-service.js";
-import { normalizeStringArray } from "../shared/format-utils.js";
+import { normalizeStringArray } from "../shared/mod.js";
 
 const GLOBAL_PREFERENCES_PATH = join(homedir(), ".gsd", "preferences.md");
 const LEGACY_GLOBAL_PREFERENCES_PATH = join(homedir(), ".pi", "agent", "gsd-preferences.md");

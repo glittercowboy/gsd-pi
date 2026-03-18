@@ -20,8 +20,7 @@ import {
 import { loadEffectiveGSDPreferences } from "./preferences.js";
 import { getActiveWorktreeName } from "./worktree-command.js";
 import { getWorkerBatches, hasActiveWorkers, type WorkerEntry } from "../subagent/worker-registry.js";
-import { formatDuration, padRight, joinColumns, centerLine, fitColumns } from "../shared/format-utils.js";
-import { STATUS_GLYPH, STATUS_COLOR } from "../shared/ui.js";
+import { formatDuration, padRight, joinColumns, centerLine, fitColumns, STATUS_GLYPH, STATUS_COLOR } from "../shared/mod.js";
 import { estimateTimeRemaining } from "./auto-dashboard.js";
 
 function unitLabel(type: string): string {

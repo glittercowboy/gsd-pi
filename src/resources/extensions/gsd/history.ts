@@ -2,7 +2,7 @@
 // Human-readable display of past auto-mode unit executions.
 
 import type { ExtensionCommandContext } from "@gsd/pi-coding-agent";
-import { formatDuration } from "../shared/format-utils.js";
+import { formatDuration, padRight, truncateWithEllipsis } from "../shared/format-utils.js";
 import {
   getLedger, getProjectTotals, formatCost, formatTokenCount,
   aggregateBySlice, aggregateByPhase, aggregateByModel, loadLedgerFromDisk,
@@ -58,7 +58,7 @@ export async function handleHistory(args: string, ctx: ExtensionCommandContext, 
     lines.push(
       padRight(formatRelativeTime(u.finishedAt), 14) +
       padRight(u.type, 20) +
-      padRight(truncate(u.id, 15), 16) +
+      padRight(truncateWithEllipsis(u.id, 15), 16) +
       padRight(shortModel(u.model), 14) +
       padRight(formatCost(u.cost), 10) +
       padRight(formatTokenCount(u.tokens.total), 10) +
@@ -141,10 +141,3 @@ function shortModel(model: string): string {
   return model.replace(/^claude-/, "").replace(/^anthropic\//, "");
 }
 
-function truncate(s: string, maxLen: number): string {
-  return s.length > maxLen ? s.slice(0, maxLen - 1) + "…" : s;
-}
-
-function padRight(s: string, len: number): string {
-  return s.length >= len ? s.slice(0, len) : s + " ".repeat(len - s.length);
-}

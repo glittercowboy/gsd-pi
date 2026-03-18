@@ -4,8 +4,8 @@
 // Pure functions, zero Pi dependencies - uses only Node built-ins.
 
 import { promises as fs } from 'node:fs';
-import { dirname, resolve } from 'node:path';
-import { randomBytes } from 'node:crypto';
+import { resolve } from 'node:path';
+import { atomicWriteAsync } from './atomic-write.js';
 import { resolveMilestoneFile, relMilestoneFile, resolveGsdRootFile } from './paths.js';
 import { milestoneIdSort, findMilestoneIds } from './guided-flow.js';
 
@@ -24,6 +24,10 @@ import { parseRoadmapSlices } from './roadmap-slices.js';
 import { nativeParseRoadmap, nativeExtractSection, nativeParsePlanFile, nativeParseSummaryFile, NATIVE_UNAVAILABLE } from './native-parser-bridge.js';
 import { debugTime, debugCount } from './debug-logger.js';
 import { CACHE_MAX } from './constants.js';
+import { splitFrontmatter, parseFrontmatterMap } from '../shared/frontmatter.js';
+
+// Re-export for downstream consumers
+export { splitFrontmatter, parseFrontmatterMap };
 
 // ─── Parse Cache ──────────────────────────────────────────────────────────
 
@@ -56,112 +60,6 @@ export function clearParseCache(): void {
 }
 
 // ─── Helpers ───────────────────────────────────────────────────────────────
-
-/**
- * Split markdown content into frontmatter (YAML-like) and body.
- * Returns [frontmatterLines, body] where frontmatterLines is null if no frontmatter.
- */
-export function splitFrontmatter(content: string): [string[] | null, string] {
-  const trimmed = content.trimStart();
-  if (!trimmed.startsWith('---')) return [null, content];
-
-  const afterFirst = trimmed.indexOf('\n');
-  if (afterFirst === -1) return [null, content];
-
-  const rest = trimmed.slice(afterFirst + 1);
-  const endIdx = rest.indexOf('\n---');
-  if (endIdx === -1) return [null, content];
-
-  const fmLines = rest.slice(0, endIdx).split('\n');
-  const body = rest.slice(endIdx + 4).replace(/^\n+/, '');
-  return [fmLines, body];
-}
-
-/**
- * Parse YAML-like frontmatter lines into a flat key-value map.
- * Handles simple scalars and arrays (lines starting with "  - ").
- * Handles nested objects like requires (lines with "    key: value").
- */
-export function parseFrontmatterMap(lines: string[]): Record<string, unknown> {
-  const result: Record<string, unknown> = {};
-  let currentKey: string | null = null;
-  let currentArray: unknown[] | null = null;
-  let currentObj: Record<string, string> | null = null;
-
-  for (const line of lines) {
-    // Nested object property (4-space indent with key: value)
-    const nestedMatch = line.match(/^    (\w[\w_]*)\s*:\s*(.*)$/);
-    if (nestedMatch && currentArray && currentObj) {
-      currentObj[nestedMatch[1]] = nestedMatch[2].trim();
-      continue;
-    }
-
-    // Array item (2-space indent)
-    const arrayMatch = line.match(/^  - (.*)$/);
-    if (arrayMatch && currentKey) {
-      // If there's a pending nested object, push it
-      if (currentObj && Object.keys(currentObj).length > 0) {
-        currentArray!.push(currentObj);
-      }
-      currentObj = null;
-
-      const val = arrayMatch[1].trim();
-      if (!currentArray) currentArray = [];
-
-      // Check if this array item starts a nested object (e.g. "- slice: S00")
-      const nestedStart = val.match(/^(\w[\w_]*)\s*:\s*(.*)$/);
-      if (nestedStart) {
-        currentObj = { [nestedStart[1]]: nestedStart[2].trim() };
-      } else {
-        currentArray.push(val);
-      }
-      continue;
-    }
-
-    // Flush previous key
-    if (currentKey) {
-      if (currentObj && Object.keys(currentObj).length > 0 && currentArray) {
-        currentArray.push(currentObj);
-        currentObj = null;
-      }
-      if (currentArray) {
-        result[currentKey] = currentArray;
-      }
-      currentArray = null;
-    }
-
-    // Top-level key: value
-    const kvMatch = line.match(/^(\w[\w_]*)\s*:\s*(.*)$/);
-    if (kvMatch) {
-      currentKey = kvMatch[1];
-      const val = kvMatch[2].trim();
-
-      if (val === '' || val === '[]') {
-        currentArray = [];
-      } else if (val.startsWith('[') && val.endsWith(']')) {
-        const inner = val.slice(1, -1).trim();
-        result[currentKey] = inner ? inner.split(',').map(s => s.trim()) : [];
-        currentKey = null;
-      } else {
-        result[currentKey] = val;
-        currentKey = null;
-      }
-    }
-  }
-
-  // Flush final key
-  if (currentKey) {
-    if (currentObj && Object.keys(currentObj).length > 0 && currentArray) {
-      currentArray.push(currentObj);
-      currentObj = null;
-    }
-    if (currentArray) {
-      result[currentKey] = currentArray;
-    }
-  }
-
-  return result;
-}
 
 /** Extract the text after a heading at a given level, up to the next heading of same or higher level. */
 export function extractSection(body: string, heading: string, level: number = 2): string | null {
@@ -702,24 +600,7 @@ export async function loadFile(path: string): Promise<string | null> {
  * Creates parent directories if needed.
  */
 export async function saveFile(path: string, content: string): Promise<void> {
-  const dir = dirname(path);
-  await fs.mkdir(dir, { recursive: true });
-
-  // Use a unique temp path per call to avoid collisions when parallel
-  // tool calls target the same file (e.g. concurrent gsd_save_decision).
-  // rename() is atomic on POSIX, so last-writer-wins is correct for
-  // regenerate-from-DB writes.
-  const tmpPath = path + `.tmp.${randomBytes(4).toString("hex")}`;
-  await fs.writeFile(tmpPath, content, 'utf-8');
-  try {
-    await fs.rename(tmpPath, path);
-  } catch (err) {
-    // Clean up orphaned temp file on rename failure
-    await fs.unlink(tmpPath).catch((unlinkErr) => {
-      if (process.env.GSD_DEBUG) console.error(`[gsd] temp file cleanup failed for ${tmpPath}:`, unlinkErr);
-    });
-    throw err;
-  }
+  await atomicWriteAsync(path, content);
 }
 
 export function parseRequirementCounts(content: string | null): RequirementCounts {

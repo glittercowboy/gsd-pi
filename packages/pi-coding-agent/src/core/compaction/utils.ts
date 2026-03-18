@@ -4,6 +4,7 @@
 
 import type { AgentMessage } from "@gsd/pi-agent-core";
 import type { Message } from "@gsd/pi-ai";
+import { TOOL_RESULT_MAX_CHARS } from "../constants.js";
 
 // ============================================================================
 // File Operation Tracking
@@ -85,8 +86,7 @@ export function formatFileOperations(readFiles: string[], modifiedFiles: string[
 // Message Serialization
 // ============================================================================
 
-/** Maximum characters for a tool result in serialized summaries. */
-const TOOL_RESULT_MAX_CHARS = 2000;
+// TOOL_RESULT_MAX_CHARS imported from ../constants.js
 
 /**
  * Truncate text to a maximum character length for summarization.

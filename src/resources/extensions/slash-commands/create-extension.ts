@@ -1,5 +1,5 @@
 import type { ExtensionAPI } from "@gsd/pi-coding-agent";
-import { showInterviewRound, type Question, type RoundResult } from "../shared/interview-ui.js";
+import { showInterviewRound, type Question, type RoundResult } from "../shared/mod.js";
 
 export default function createExtension(pi: ExtensionAPI) {
 	pi.registerCommand("create-extension", {

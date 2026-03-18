@@ -13,7 +13,7 @@ import { resolve } from "node:path";
 import type { ExtensionAPI, Theme } from "@gsd/pi-coding-agent";
 import { CURSOR_MARKER, Editor, type EditorTheme, Key, matchesKey, Text, truncateToWidth, wrapTextWithAnsi } from "@gsd/pi-tui";
 import { Type } from "@sinclair/typebox";
-import { makeUI, type ProgressStatus } from "./shared/ui.js";
+import { makeUI, type ProgressStatus } from "./shared/mod.js";
 import { parseSecretsManifest, formatSecretsManifest } from "./gsd/files.js";
 import { resolveMilestoneFile } from "./gsd/paths.js";
 import type { SecretsManifestEntry } from "./gsd/types.js";

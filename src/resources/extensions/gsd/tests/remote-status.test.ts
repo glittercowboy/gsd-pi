@@ -3,8 +3,8 @@ import assert from "node:assert/strict";
 import { mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { createPromptRecord, writePromptRecord } from "../../remote-questions/store.ts";
-import { getLatestPromptSummary } from "../../remote-questions/status.ts";
+import { createPromptRecord, writePromptRecord } from "../../remote-questions/mod.js";
+import { getLatestPromptSummary } from "../../remote-questions/mod.js";
 
 function withTempHome(fn: (tempHome: string) => void | Promise<void>) {
   return async () => {

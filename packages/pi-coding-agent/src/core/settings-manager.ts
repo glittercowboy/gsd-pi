@@ -3,6 +3,12 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import { dirname, join } from "path";
 import lockfile from "proper-lockfile";
 import { CONFIG_DIR_NAME, getAgentDir } from "../config.js";
+import {
+	COMPACTION_KEEP_RECENT_TOKENS,
+	COMPACTION_RESERVE_TOKENS,
+	RETRY_BASE_DELAY_MS,
+	RETRY_MAX_DELAY_MS,
+} from "./constants.js";
 import type { BashInterceptorRule } from "./tools/bash-interceptor.js";
 
 export interface CompactionSettings {
@@ -710,11 +716,11 @@ export class SettingsManager {
 	}
 
 	getCompactionReserveTokens(): number {
-		return this.settings.compaction?.reserveTokens ?? 16384;
+		return this.settings.compaction?.reserveTokens ?? COMPACTION_RESERVE_TOKENS;
 	}
 
 	getCompactionKeepRecentTokens(): number {
-		return this.settings.compaction?.keepRecentTokens ?? 20000;
+		return this.settings.compaction?.keepRecentTokens ?? COMPACTION_KEEP_RECENT_TOKENS;
 	}
 
 	getCompactionSettings(): { enabled: boolean; reserveTokens: number; keepRecentTokens: number } {
@@ -727,7 +733,7 @@ export class SettingsManager {
 
 	getBranchSummarySettings(): { reserveTokens: number; skipPrompt: boolean } {
 		return {
-			reserveTokens: this.settings.branchSummary?.reserveTokens ?? 16384,
+			reserveTokens: this.settings.branchSummary?.reserveTokens ?? COMPACTION_RESERVE_TOKENS,
 			skipPrompt: this.settings.branchSummary?.skipPrompt ?? false,
 		};
 	}
@@ -753,8 +759,8 @@ export class SettingsManager {
 		return {
 			enabled: this.getRetryEnabled(),
 			maxRetries: this.settings.retry?.maxRetries ?? 3,
-			baseDelayMs: this.settings.retry?.baseDelayMs ?? 2000,
-			maxDelayMs: this.settings.retry?.maxDelayMs ?? 300000,
+			baseDelayMs: this.settings.retry?.baseDelayMs ?? RETRY_BASE_DELAY_MS,
+			maxDelayMs: this.settings.retry?.maxDelayMs ?? RETRY_MAX_DELAY_MS,
 		};
 	}
 

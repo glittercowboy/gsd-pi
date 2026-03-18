@@ -13,6 +13,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync, cpSync, unlinkSync, readdirSync } from "node:fs";
 import { join, sep as pathSep } from "node:path";
 import { homedir } from "node:os";
+import { safeCopy, safeCopyRecursive } from "./safe-fs.js";
 
 // ─── Project Root → Worktree Sync ─────────────────────────────────────────
 
@@ -32,14 +33,7 @@ export function syncProjectRootToWorktree(projectRoot: string, worktreePath: str
 
   // Copy milestone directory from project root to worktree if the project root
   // has newer artifacts (e.g. slices that don't exist in the worktree yet)
-  try {
-    const srcMilestone = join(prGsd, "milestones", milestoneId);
-    const dstMilestone = join(wtGsd, "milestones", milestoneId);
-    if (existsSync(srcMilestone)) {
-      mkdirSync(dstMilestone, { recursive: true });
-      cpSync(srcMilestone, dstMilestone, { recursive: true, force: false });
-    }
-  } catch { /* non-fatal */ }
+  safeCopyRecursive(join(prGsd, "milestones", milestoneId), join(wtGsd, "milestones", milestoneId))
 
   // Delete worktree gsd.db so it rebuilds from the freshly synced files.
   // Stale DB rows are the root cause of the infinite skip loop (#853).
@@ -67,22 +61,11 @@ export function syncStateToProjectRoot(worktreePath: string, projectRoot: string
   const prGsd = join(projectRoot, ".gsd");
 
   // 1. STATE.md — the quick-glance status used by initial deriveState()
-  try {
-    const src = join(wtGsd, "STATE.md");
-    const dst = join(prGsd, "STATE.md");
-    if (existsSync(src)) cpSync(src, dst, { force: true });
-  } catch { /* non-fatal */ }
+  safeCopy(join(wtGsd, "STATE.md"), join(prGsd, "STATE.md"), { force: true })
 
   // 2. Milestone directory — ROADMAP, slice PLANs, task summaries
   // Copy the entire milestone .gsd subtree so deriveState reads current checkboxes
-  try {
-    const srcMilestone = join(wtGsd, "milestones", milestoneId);
-    const dstMilestone = join(prGsd, "milestones", milestoneId);
-    if (existsSync(srcMilestone)) {
-      mkdirSync(dstMilestone, { recursive: true });
-      cpSync(srcMilestone, dstMilestone, { recursive: true, force: true });
-    }
-  } catch { /* non-fatal */ }
+  safeCopyRecursive(join(wtGsd, "milestones", milestoneId), join(prGsd, "milestones", milestoneId), { force: true })
 
   // 3. Merge completed-units.json (set-union of both locations)
   // Prevents already-completed units from being re-dispatched after crash/restart.
@@ -104,14 +87,7 @@ export function syncStateToProjectRoot(worktreePath: string, projectRoot: string
   // Without this, a crash during a unit leaves the runtime record only in the
   // worktree. If the next session resolves basePath before worktree re-entry,
   // selfHeal can't find or clear the stale record (#769).
-  try {
-    const srcRuntime = join(wtGsd, "runtime", "units");
-    const dstRuntime = join(prGsd, "runtime", "units");
-    if (existsSync(srcRuntime)) {
-      mkdirSync(dstRuntime, { recursive: true });
-      cpSync(srcRuntime, dstRuntime, { recursive: true, force: true });
-    }
-  } catch { /* non-fatal */ }
+  safeCopyRecursive(join(wtGsd, "runtime", "units"), join(prGsd, "runtime", "units"), { force: true })
 }
 
 // ─── Resource Staleness ───────────────────────────────────────────────────

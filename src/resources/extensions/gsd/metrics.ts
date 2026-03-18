@@ -20,7 +20,7 @@ import { gsdRoot } from "./paths.js";
 import { getAndClearSkills } from "./skill-telemetry.js";
 
 // Re-export from shared — canonical implementation lives in format-utils.
-export { formatTokenCount } from "../shared/format-utils.js";
+export { formatTokenCount } from "../shared/mod.js";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 

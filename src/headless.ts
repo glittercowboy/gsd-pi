@@ -11,12 +11,35 @@
  *   2 — blocked (command reported a blocker)
  */
 
-import { existsSync, readFileSync, mkdirSync, writeFileSync } from 'node:fs'
-import { join, resolve } from 'node:path'
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
+import { join } from 'node:path'
+import { resolve } from 'node:path'
 import { ChildProcess } from 'node:child_process'
 
-import { RpcClient, attachJsonlLineReader, serializeJsonLine } from '@gsd/pi-coding-agent'
+import { RpcClient } from '@gsd/pi-coding-agent'
 import { loadAndValidateAnswerFile, AnswerInjector } from './headless-answers.js'
+
+import {
+  isTerminalNotification,
+  isBlockedNotification,
+  isMilestoneReadyNotification,
+  isQuickCommand,
+  FIRE_AND_FORGET_METHODS,
+  IDLE_TIMEOUT_MS,
+  NEW_MILESTONE_IDLE_TIMEOUT_MS,
+} from './headless-events.js'
+
+import {
+  handleExtensionUIRequest,
+  formatProgress,
+  startSupervisedStdinReader,
+} from './headless-ui.js'
+import type { ExtensionUIRequest } from './headless-ui.js'
+
+import {
+  loadContext,
+  bootstrapGsdProject,
+} from './headless-context.js'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -37,18 +60,6 @@ export interface HeadlessOptions {
   responseTimeout?: number // timeout for orchestrator response (default 30000ms)
   answers?: string       // path to answers JSON file
   eventFilter?: Set<string>  // filter JSONL output to specific event types
-}
-
-interface ExtensionUIRequest {
-  type: 'extension_ui_request'
-  id: string
-  method: string
-  title?: string
-  options?: string[]
-  message?: string
-  prefill?: string
-  timeout?: number
-  [key: string]: unknown
 }
 
 interface TrackedEvent {
@@ -129,215 +140,8 @@ export function parseHeadlessArgs(argv: string[]): HeadlessOptions {
 }
 
 // ---------------------------------------------------------------------------
-// Extension UI Auto-Responder
-// ---------------------------------------------------------------------------
-
-function handleExtensionUIRequest(
-  event: ExtensionUIRequest,
-  writeToStdin: (data: string) => void,
-): void {
-  const { id, method } = event
-  let response: Record<string, unknown>
-
-  switch (method) {
-    case 'select':
-      response = { type: 'extension_ui_response', id, value: event.options?.[0] ?? '' }
-      break
-    case 'confirm':
-      response = { type: 'extension_ui_response', id, confirmed: true }
-      break
-    case 'input':
-      response = { type: 'extension_ui_response', id, value: '' }
-      break
-    case 'editor':
-      response = { type: 'extension_ui_response', id, value: event.prefill ?? '' }
-      break
-    case 'notify':
-    case 'setStatus':
-    case 'setWidget':
-    case 'setTitle':
-    case 'set_editor_text':
-      response = { type: 'extension_ui_response', id, value: '' }
-      break
-    default:
-      process.stderr.write(`[headless] Warning: unknown extension_ui_request method "${method}", cancelling\n`)
-      response = { type: 'extension_ui_response', id, cancelled: true }
-      break
-  }
-
-  writeToStdin(serializeJsonLine(response))
-}
-
-// ---------------------------------------------------------------------------
-// Progress Formatter
-// ---------------------------------------------------------------------------
-
-function formatProgress(event: Record<string, unknown>, verbose: boolean): string | null {
-  const type = String(event.type ?? '')
-
-  switch (type) {
-    case 'tool_execution_start':
-      if (verbose) return `  [tool]    ${event.toolName ?? 'unknown'}`
-      return null
-
-    case 'agent_start':
-      return '[agent]   Session started'
-
-    case 'agent_end':
-      return '[agent]   Session ended'
-
-    case 'extension_ui_request':
-      if (event.method === 'notify') {
-        return `[gsd]     ${event.message ?? ''}`
-      }
-      if (event.method === 'setStatus') {
-        return `[status]  ${event.message ?? ''}`
-      }
-      return null
-
-    default:
-      return null
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Completion Detection
-// ---------------------------------------------------------------------------
-
-/**
- * Detect genuine auto-mode termination notifications.
- *
- * Only matches the actual stop signals emitted by stopAuto():
- *   "Auto-mode stopped..."
- *   "Step-mode stopped..."
- *
- * Does NOT match progress notifications that happen to contain words like
- * "complete" or "stopped" (e.g., "Override resolved — rewrite-docs completed",
- * "All slices are complete — nothing to discuss", "Skipped 5+ completed units").
- *
- * Blocked detection is separate — checked via isBlockedNotification.
- */
-const TERMINAL_PREFIXES = ['auto-mode stopped', 'step-mode stopped']
-const IDLE_TIMEOUT_MS = 15_000
-// new-milestone is a long-running creative task where the LLM may pause
-// between tool calls (e.g. after mkdir, before writing files). Use a
-// longer idle timeout to avoid killing the session prematurely (#808).
-const NEW_MILESTONE_IDLE_TIMEOUT_MS = 120_000
-
-function isTerminalNotification(event: Record<string, unknown>): boolean {
-  if (event.type !== 'extension_ui_request' || event.method !== 'notify') return false
-  const message = String(event.message ?? '').toLowerCase()
-  return TERMINAL_PREFIXES.some((prefix) => message.startsWith(prefix))
-}
-
-function isBlockedNotification(event: Record<string, unknown>): boolean {
-  if (event.type !== 'extension_ui_request' || event.method !== 'notify') return false
-  const message = String(event.message ?? '').toLowerCase()
-  // Blocked notifications come through stopAuto as "Auto-mode stopped (Blocked: ...)"
-  return message.includes('blocked:')
-}
-
-function isMilestoneReadyNotification(event: Record<string, unknown>): boolean {
-  if (event.type !== 'extension_ui_request' || event.method !== 'notify') return false
-  return /milestone\s+m\d+.*ready/i.test(String(event.message ?? ''))
-}
-
-// ---------------------------------------------------------------------------
-// Quick Command Detection
-// ---------------------------------------------------------------------------
-
-const FIRE_AND_FORGET_METHODS = new Set(['notify', 'setStatus', 'setWidget', 'setTitle', 'set_editor_text'])
-
-const QUICK_COMMANDS = new Set([
-  'status', 'queue', 'history', 'hooks', 'export', 'stop', 'pause',
-  'capture', 'skip', 'undo', 'knowledge', 'config', 'prefs',
-  'cleanup', 'migrate', 'doctor', 'remote', 'help', 'steer',
-  'triage', 'visualize',
-])
-
-function isQuickCommand(command: string): boolean {
-  return QUICK_COMMANDS.has(command)
-}
-
-// ---------------------------------------------------------------------------
-// Supervised Stdin Reader
-// ---------------------------------------------------------------------------
-
-function startSupervisedStdinReader(
-  stdinWriter: (data: string) => void,
-  client: RpcClient,
-  onResponse: (id: string) => void,
-): () => void {
-  return attachJsonlLineReader(process.stdin as import('node:stream').Readable, (line) => {
-    let msg: Record<string, unknown>
-    try {
-      msg = JSON.parse(line)
-    } catch {
-      process.stderr.write(`[headless] Warning: invalid JSON from orchestrator stdin, skipping\n`)
-      return
-    }
-
-    const type = String(msg.type ?? '')
-
-    switch (type) {
-      case 'extension_ui_response':
-        stdinWriter(line + '\n')
-        if (typeof msg.id === 'string') {
-          onResponse(msg.id)
-        }
-        break
-      case 'prompt':
-        client.prompt(String(msg.message ?? ''))
-        break
-      case 'steer':
-        client.steer(String(msg.message ?? ''))
-        break
-      case 'follow_up':
-        client.followUp(String(msg.message ?? ''))
-        break
-      default:
-        process.stderr.write(`[headless] Warning: unknown message type "${type}" from orchestrator stdin\n`)
-        break
-    }
-  })
-}
-
-// ---------------------------------------------------------------------------
 // Main Orchestrator
 // ---------------------------------------------------------------------------
-
-// ---------------------------------------------------------------------------
-// Context Loading (new-milestone)
-// ---------------------------------------------------------------------------
-
-async function readStdin(): Promise<string> {
-  const chunks: Buffer[] = []
-  for await (const chunk of process.stdin) {
-    chunks.push(chunk as Buffer)
-  }
-  return Buffer.concat(chunks).toString('utf-8')
-}
-
-async function loadContext(options: HeadlessOptions): Promise<string> {
-  if (options.contextText) return options.contextText
-  if (options.context === '-') {
-    return readStdin()
-  }
-  if (options.context) {
-    return readFileSync(resolve(options.context), 'utf-8')
-  }
-  throw new Error('No context provided. Use --context <file> or --context-text <text>')
-}
-
-/**
- * Bootstrap .gsd/ directory structure for headless new-milestone.
- * Mirrors the bootstrap logic from guided-flow.ts showSmartEntry().
- */
-function bootstrapGsdProject(basePath: string): void {
-  const gsdDir = join(basePath, '.gsd')
-  mkdirSync(join(gsdDir, 'milestones'), { recursive: true })
-  mkdirSync(join(gsdDir, 'runtime'), { recursive: true })
-}
 
 export async function runHeadless(options: HeadlessOptions): Promise<void> {
   const maxRestarts = options.maxRestarts ?? 3

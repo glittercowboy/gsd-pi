@@ -13,7 +13,7 @@ import type { ExtensionAPI, ExtensionCommandContext } from "@gsd/pi-coding-agent
 import { existsSync, readFileSync } from "node:fs";
 import { resolve, join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { showNextAction } from "../../shared/next-action-ui.js";
+import { showNextAction } from "../../shared/mod.js";
 import {
   validatePlanningDirectory,
   parsePlanningDirectory,

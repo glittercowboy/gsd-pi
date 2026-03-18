@@ -20,6 +20,7 @@
 
 import { readFileSync, readdirSync, existsSync, statSync } from "node:fs";
 import { basename, join } from "node:path";
+import { truncateWithEllipsis } from "../shared/format-utils.js";
 import { nativeParseJsonlTail } from "./native-parser-bridge.js";
 import { MAX_JSONL_BYTES, parseJSONL } from "./jsonl-utils.js";
 import { nativeWorkingTreeStatus, nativeDiffStat } from "./native-git-bridge.js";
@@ -366,7 +367,7 @@ function formatRecoveryPrompt(
     sections.push("", "### Commands Already Run");
     for (const c of significantCommands.slice(-10)) {
       const status = c.failed ? " ❌" : " ✓";
-      sections.push(`- \`${truncate(c.command, 120)}\`${status}`);
+      sections.push(`- \`${truncateWithEllipsis(c.command, 121)}\`${status}`);
     }
   }
 
@@ -374,7 +375,7 @@ function formatRecoveryPrompt(
   if (trace.errors.length > 0) {
     sections.push(
       "", "### Errors Before Interruption",
-      ...trace.errors.slice(-3).map(e => `- ${truncate(e, 200)}`),
+      ...trace.errors.slice(-3).map(e => `- ${truncateWithEllipsis(e, 201)}`),
     );
   }
 
@@ -440,7 +441,7 @@ function compressToolCallTrace(calls: ToolCall[]): string {
     if (call.name === "write" || call.name === "edit") {
       lines.push(`${num}. ${call.name} \`${call.input.path || "?"}\`${err}`);
     } else if (call.name === "bash" || call.name === "bg_shell") {
-      const cmd = truncate(String(call.input.command || ""), 80);
+      const cmd = truncateWithEllipsis(String(call.input.command || ""), 81);
       lines.push(`${num}. ${call.name}: \`${cmd}\`${err}`);
     } else {
       lines.push(`${num}. ${call.name}${err}`);
@@ -459,7 +460,7 @@ function formatTraceSummary(trace: ExecutionTrace): string {
     parts.push(`Files written: ${trace.filesWritten.map(f => `\`${f}\``).join(", ")}`);
   }
   if (trace.commandsRun.length > 0) {
-    const cmds = trace.commandsRun.slice(-5).map(c => `\`${truncate(c.command, 80)}\`${c.failed ? " ❌" : ""}`);
+    const cmds = trace.commandsRun.slice(-5).map(c => `\`${truncateWithEllipsis(c.command, 81)}\`${c.failed ? " ❌" : ""}`);
     parts.push(`Commands run: ${cmds.join(", ")}`);
   }
   if (trace.errors.length > 0) {
@@ -517,7 +518,7 @@ function redactInput(name: string, input: Record<string, unknown>): Record<strin
   const safe: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(input)) {
     if (key === "content" || key === "oldText" || key === "newText") {
-      safe[key] = typeof value === "string" ? truncate(value, 100) : "[redacted]";
+      safe[key] = typeof value === "string" ? truncateWithEllipsis(value, 101) : "[redacted]";
     } else {
       safe[key] = value;
     }
@@ -533,6 +534,3 @@ function findLast<T>(arr: T[], predicate: (item: T) => boolean): T | undefined {
   return undefined;
 }
 
-function truncate(s: string, max: number): string {
-  return s.length > max ? s.slice(0, max) + "…" : s;
-}

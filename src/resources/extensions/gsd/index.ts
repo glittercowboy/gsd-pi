@@ -57,10 +57,10 @@ import { Key } from "@gsd/pi-tui";
 import { join } from "node:path";
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { shortcutDesc } from "../shared/terminal.js";
+import { shortcutDesc } from "../shared/mod.js";
 import { Text } from "@gsd/pi-tui";
 import { pauseAutoForProviderError, classifyProviderError } from "./provider-error-pause.js";
-import { toPosixPath } from "../shared/path-display.js";
+import { toPosixPath } from "../shared/mod.js";
 import { isParallelActive, shutdownParallel } from "./parallel-orchestrator.js";
 import { DEFAULT_BASH_TIMEOUT_SECS } from "./constants.js";
 

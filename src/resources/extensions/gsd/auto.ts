@@ -104,7 +104,8 @@ import { computeBudgets, resolveExecutorContextWindow } from "./context-budget.j
 import { GSDError, GSD_ARTIFACT_MISSING } from "./errors.js";
 import { join } from "node:path";
 import { sep as pathSep } from "node:path";
-import { readdirSync, readFileSync, existsSync, mkdirSync, writeFileSync, renameSync, unlinkSync, statSync } from "node:fs";
+import { readdirSync, readFileSync, existsSync, mkdirSync, writeFileSync, unlinkSync, statSync } from "node:fs";
+import { atomicWriteSync } from "./atomic-write.js";
 import { nativeIsRepo, nativeInit, nativeAddAll, nativeCommit } from "./native-git-bridge.js";
 import {
   autoCommitCurrentBranch,
@@ -131,7 +132,7 @@ import {
 } from "./auto-worktree.js";
 import { pruneQueueOrder } from "./queue-order.js";
 import { consumeSignal } from "./session-status-io.js";
-import { showNextAction } from "../shared/next-action-ui.js";
+import { showNextAction } from "../shared/mod.js";
 import { debugLog, debugTime, debugCount, debugPeak, enableDebug, isDebugEnabled, writeDebugSummary, getDebugLogPath } from "./debug-logger.js";
 import {
   resolveExpectedArtifactPath,
@@ -2161,9 +2162,7 @@ async function dispatchNextUnit(
     try {
       const file = completedKeysPath(s.basePath);
       if (existsSync(file)) {
-        const tmpFile = file + ".tmp";
-        writeFileSync(tmpFile, JSON.stringify([]), "utf-8");
-        renameSync(tmpFile, file);
+        atomicWriteSync(file, JSON.stringify([]));
       }
       s.completedKeySet.clear();
     } catch (e) { debugLog("completed-keys-reset-failed", { error: e instanceof Error ? e.message : String(e) }); }
@@ -2360,9 +2359,7 @@ async function dispatchNextUnit(
     try {
       const file = completedKeysPath(s.basePath);
       if (existsSync(file)) {
-        const tmpFile = file + ".tmp";
-        writeFileSync(tmpFile, JSON.stringify([]), "utf-8");
-        renameSync(tmpFile, file);
+        atomicWriteSync(file, JSON.stringify([]));
       }
       s.completedKeySet.clear();
     } catch (e) { debugLog("completed-keys-reset-failed", { error: e instanceof Error ? e.message : String(e) }); }
@@ -3321,15 +3318,16 @@ function ensurePreconditions(
       const slicesDir = join(mDirResolved, "slices");
       const sDir = resolveDir(slicesDir, sid);
       if (!sDir) {
-        // Create slice dir with bare ID
-        const newSliceDir = join(slicesDir, sid);
-        mkdirSync(join(newSliceDir, "tasks"), { recursive: true });
-      } else {
-        // Ensure tasks/ subdir exists
-        const tasksDir = join(slicesDir, sDir, "tasks");
-        if (!existsSync(tasksDir)) {
-          mkdirSync(tasksDir, { recursive: true });
-        }
+        // Create slice dir with bare ID (tasks/ included)
+        mkdirSync(join(slicesDir, sid, "tasks"), { recursive: true });
+      }
+      // Always ensure tasks/ subdir exists — even when slice dir was already
+      // present. Handles the case where a slice was created manually or by a
+      // previous run that didn't create tasks/. (#900)
+      const resolvedSliceDir = resolveDir(slicesDir, sid) ?? sid;
+      const tasksDir = join(slicesDir, resolvedSliceDir, "tasks");
+      if (!existsSync(tasksDir)) {
+        mkdirSync(tasksDir, { recursive: true });
       }
     }
   }

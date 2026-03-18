@@ -3,6 +3,7 @@ import { glob as nativeGlob } from "@gsd/native/glob";
 import { type Static, Type } from "@sinclair/typebox";
 import { existsSync } from "fs";
 import path from "path";
+import { FIND_DEFAULT_LIMIT } from "../constants.js";
 import { resolveToCwd } from "./path-utils.js";
 import { DEFAULT_MAX_BYTES, formatSize, type TruncationResult, truncateHead } from "./truncate.js";
 
@@ -16,7 +17,7 @@ const findSchema = Type.Object({
 
 export type FindToolInput = Static<typeof findSchema>;
 
-const DEFAULT_LIMIT = 1000;
+const DEFAULT_LIMIT = FIND_DEFAULT_LIMIT;
 
 export interface FindToolDetails {
 	truncation?: TruncationResult;

@@ -4,6 +4,7 @@
  */
 
 import { execFileSync } from "child_process";
+import { COMMAND_EXECUTION_TIMEOUT_MS } from "./constants.js";
 
 const SHELL_OPERATORS = /[;|&`$><]/;
 
@@ -60,7 +61,7 @@ function executeCommand(commandConfig: string): string | undefined {
 	try {
 		const output = execFileSync(firstToken, tokens.slice(1), {
 			encoding: "utf-8",
-			timeout: 10000,
+			timeout: COMMAND_EXECUTION_TIMEOUT_MS,
 			stdio: ["ignore", "pipe", "ignore"],
 		});
 		result = output.trim() || undefined;

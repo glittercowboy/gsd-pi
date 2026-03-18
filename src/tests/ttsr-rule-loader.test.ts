@@ -9,7 +9,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 
-import { loadRules } from '../../src/resources/extensions/ttsr/rule-loader.ts'
+import { loadRules } from '../../src/resources/extensions/ttsr/index.js'
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
