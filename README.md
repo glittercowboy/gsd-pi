@@ -490,7 +490,7 @@ GSD ships with 14 extensions, all loaded automatically:
 | **Background Shell**   | Long-running process management with readiness detection                                                               |
 | **Subagent**           | Delegated tasks with isolated context windows                                                                          |
 | **Mac Tools**          | macOS native app automation via Accessibility APIs                                                                     |
-| **MCPorter**           | Lazy on-demand MCP server integration                                                                                  |
+| **MCP Client**         | Native MCP server integration via @modelcontextprotocol/sdk                                                            |
 | **Voice**              | Real-time speech-to-text transcription (macOS, Linux — Ubuntu 22.04+)                                                  |
 | **Slash Commands**     | Custom command creation                                                                                                |
 | **LSP**                | Language Server Protocol integration — diagnostics, go-to-definition, references, hover, symbols, rename, code actions |
