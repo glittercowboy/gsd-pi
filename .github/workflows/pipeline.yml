@@ -51,7 +51,15 @@ jobs:
           echo "version=$(node -e 'process.stdout.write(require("./package.json").version)')" >> "$GITHUB_OUTPUT"
 
       - name: Publish @dev
-        run: npm publish --tag dev
+        run: |
+          OUTPUT=$(npm publish --tag dev 2>&1) && echo "$OUTPUT" || {
+            if echo "$OUTPUT" | grep -q "cannot publish over the previously published"; then
+              echo "Version already published — skipping"
+            else
+              echo "$OUTPUT"
+              exit 1
+            fi
+          }
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
