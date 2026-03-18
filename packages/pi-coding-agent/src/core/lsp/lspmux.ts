@@ -49,7 +49,16 @@ const DEFAULT_SUPPORTED_SERVERS = new Set([
 
 function which(command: string): string | null {
 	try {
-		return execSync(`which ${command}`, { encoding: "utf-8" }).trim() || null;
+		// On Windows, prefer `where.exe` over `which` — MSYS/Git Bash's `which`
+		// returns POSIX paths (/c/Users/...) that Node's spawn() can't execute (#1121).
+		const isWindows = process.platform === "win32";
+		const cmd = isWindows ? "where.exe" : "which";
+		const result = isWindows
+			? execSync(`${cmd} ${command}`, { encoding: "utf-8" })
+			: execSync(`which ${command}`, { encoding: "utf-8" });
+		// `where.exe` may return multiple lines — take the first
+		const resolved = result.trim().split(/\r?\n/)[0]?.trim();
+		return resolved || null;
 	} catch {
 		return null;
 	}
