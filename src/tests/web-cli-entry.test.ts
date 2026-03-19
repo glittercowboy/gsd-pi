@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { pathToFileURL } from "node:url";
 
 const { resolveGsdCliEntry } = await import("../web/cli-entry.ts");
 
@@ -62,7 +63,7 @@ test("resolveGsdCliEntry prefers the source loader for source-dev interactive se
       command: "/custom/node",
       args: [
         "--import",
-        join(packageRoot, "src", "resources", "extensions", "gsd", "tests", "resolve-ts.mjs"),
+        pathToFileURL(join(packageRoot, "src", "resources", "extensions", "gsd", "tests", "resolve-ts.mjs")).href,
         "--experimental-strip-types",
         join(packageRoot, "src", "loader.ts"),
       ],

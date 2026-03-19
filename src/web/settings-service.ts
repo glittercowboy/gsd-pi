@@ -1,6 +1,7 @@
 import { execFile } from "node:child_process"
 import { existsSync } from "node:fs"
 import { join } from "node:path"
+import { pathToFileURL } from "node:url"
 
 import { resolveBridgeRuntimeConfig } from "./bridge-service.ts"
 import type { SettingsData } from "../../web/lib/settings-types.ts"

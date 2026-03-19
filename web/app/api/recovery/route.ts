@@ -7,7 +7,7 @@ export const dynamic = "force-dynamic"
 export async function GET(request: Request): Promise<Response> {
   try {
     const projectCwd = resolveProjectCwd(request);
-    const payload = await collectCurrentProjectRecoveryDiagnostics({ projectCwdOverride: projectCwd })
+    const payload = await collectCurrentProjectRecoveryDiagnostics(undefined, projectCwd)
     return Response.json(payload, {
       headers: {
         "Cache-Control": "no-store",

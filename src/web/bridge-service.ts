@@ -3,7 +3,7 @@ import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { StringDecoder } from "node:string_decoder";
 import type { Readable } from "node:stream";
 import { join, resolve, dirname } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 import type { AgentSessionEvent } from "../../packages/pi-coding-agent/src/core/agent-session.ts";
 import type {

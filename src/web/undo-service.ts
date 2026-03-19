@@ -1,6 +1,7 @@
 import { execFile } from "node:child_process"
 import { existsSync, readFileSync } from "node:fs"
 import { join } from "node:path"
+import { pathToFileURL } from "node:url"
 
 import { resolveBridgeRuntimeConfig } from "./bridge-service.ts"
 import type { UndoInfo, UndoResult } from "../../web/lib/remaining-command-types.ts"
