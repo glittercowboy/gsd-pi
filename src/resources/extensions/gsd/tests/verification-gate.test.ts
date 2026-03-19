@@ -261,6 +261,71 @@ test("verification-gate: each check has durationMs", () => {
   }
 });
 
+// ─── Infra Error Tagging Tests ───────────────────────────────────────────────
+
+test("verification-gate: spawnSync ETIMEDOUT → infraError: true on the check", () => {
+  const tmp = makeTempDir("vg-etimedout");
+  try {
+    // Use a short timeout against a long sleep to guarantee ETIMEDOUT
+    const result = runVerificationGate({
+      basePath: tmp,
+      unitId: "T01",
+      cwd: tmp,
+      preferenceCommands: ["sleep 60"],
+      commandTimeoutMs: 200,
+    });
+    assert.equal(result.passed, false);
+    assert.equal(result.checks.length, 1);
+    assert.ok(result.checks[0].exitCode !== 0, "should have non-zero exit code");
+    assert.equal(result.checks[0].infraError, true, "ETIMEDOUT should be tagged as infraError");
+  } finally {
+    rmSync(tmp, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+  }
+});
+
+test("verification-gate: real command failure does NOT have infraError", () => {
+  const tmp = makeTempDir("vg-real-fail");
+  try {
+    const result = runVerificationGate({
+      basePath: tmp,
+      unitId: "T01",
+      cwd: tmp,
+      // Cross-platform: node with --eval flag and no shell-sensitive characters
+      preferenceCommands: ["node --eval \"process.exitCode=1\""],
+    });
+    assert.equal(result.passed, false);
+    assert.equal(result.checks.length, 1);
+    assert.equal(result.checks[0].exitCode, 1);
+    assert.equal(result.checks[0].infraError, undefined, "real failure should not be tagged as infraError");
+  } finally {
+    rmSync(tmp, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+  }
+});
+
+test("verification-gate: mixed infra + real failure — only infra check is tagged", () => {
+  const tmp = makeTempDir("vg-mixed-infra");
+  try {
+    // Use a timeout that kills "sleep 60" but lets "node --eval" complete (~80ms).
+    // The gate applies the same timeout to each command sequentially.
+    const result = runVerificationGate({
+      basePath: tmp,
+      unitId: "T01",
+      cwd: tmp,
+      preferenceCommands: ["sleep 60", "node --eval \"process.exitCode=2\""],
+      commandTimeoutMs: 500,
+    });
+    assert.equal(result.passed, false);
+    assert.equal(result.checks.length, 2);
+    // First check: ETIMEDOUT → infraError
+    assert.equal(result.checks[0].infraError, true, "timed-out command should be infraError");
+    // Second check: real exit 2 → no infraError
+    assert.equal(result.checks[1].exitCode, 2);
+    assert.equal(result.checks[1].infraError, undefined, "real failure should not be infraError");
+  } finally {
+    rmSync(tmp, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+  }
+});
+
 // ─── Preference Validation Tests ─────────────────────────────────────────────
 
 test("verification-gate: validatePreferences accepts valid verification keys", () => {

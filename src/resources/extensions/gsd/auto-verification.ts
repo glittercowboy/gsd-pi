@@ -175,7 +175,23 @@ export async function runPostUnitVerification(
       s.verificationRetryCount.delete(s.currentUnit.id);
       s.pendingVerificationRetry = null;
       return "continue";
-    } else if (result.discoverySource === "package-json") {
+    }
+
+    // Check if all failures are infra errors (ETIMEDOUT, ENOENT, etc.).
+    // Infra errors are transient OS-level problems the agent cannot fix —
+    // retrying the entire task is wasteful and creates phantom failures.
+    const failedChecks = result.checks.filter(c => c.exitCode !== 0);
+    const allInfraErrors = failedChecks.length > 0 && failedChecks.every(c => c.infraError === true);
+    if (allInfraErrors) {
+      const infraNames = failedChecks.map(f => f.command).join(", ");
+      ctx.ui.notify(`Verification gate: infra error (${infraNames}) — skipping retry, not a code issue`, "warning");
+      process.stderr.write(`verification-gate: all ${failedChecks.length} failure(s) are infra errors — treating as transient, no retry\n`);
+      s.verificationRetryCount.delete(s.currentUnit.id);
+      s.pendingVerificationRetry = null;
+      return "continue";
+    }
+
+    if (result.discoverySource === "package-json") {
       // Auto-discovered checks from package.json may fail on pre-existing errors
       // that the current task didn't introduce. Don't trigger the retry loop —
       // log a warning and let the task proceed (#1186).
@@ -189,7 +205,9 @@ export async function runPostUnitVerification(
       s.verificationRetryCount.delete(s.currentUnit.id);
       s.pendingVerificationRetry = null;
       return "continue";
-    } else if (autoFixEnabled && attempt + 1 <= maxRetries) {
+    }
+
+    if (autoFixEnabled && attempt + 1 <= maxRetries) {
       const nextAttempt = attempt + 1;
       s.verificationRetryCount.set(s.currentUnit.id, nextAttempt);
       s.pendingVerificationRetry = {

@@ -56,6 +56,10 @@ export interface VerificationCheck {
   stderr: string;
   durationMs: number;
   blocking: boolean;     // true for preference/task-plan sources, false for package-json (advisory only)
+  /** True when the failure was a spawn/infra error (ETIMEDOUT, ENOENT, ENOMEM)
+   *  rather than the command itself failing. Infra errors are transient and
+   *  should not trigger auto-fix retries — the agent cannot fix the OS. */
+  infraError?: boolean;
 }
 
 /** A runtime error captured from bg-shell processes or browser console */

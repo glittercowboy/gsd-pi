@@ -232,13 +232,20 @@ export interface RunVerificationGateOptions {
   commandTimeoutMs?: number;
 }
 
+/** Error codes from spawnSync that indicate infrastructure/OS-level failures
+ *  rather than the command itself failing. These are transient — the agent
+ *  cannot fix them, so they should not trigger auto-fix retries. */
+const INFRA_ERROR_CODES = new Set(["ETIMEDOUT", "ENOENT", "ENOMEM", "EMFILE", "ENFILE", "EAGAIN"]);
+
 /**
  * Run the verification gate: discover commands, execute each via spawnSync,
  * and return a structured result.
  *
  * - All commands run sequentially regardless of individual pass/fail.
- * - `passed` is true when every command exits 0 (or no commands are discovered).
+ * - `passed` is true when every blocking command exits 0 (or no commands are discovered).
  * - stdout/stderr per command are truncated to 10 KB.
+ * - Spawn/infra errors (ETIMEDOUT, ENOENT, etc.) are tagged with `infraError: true`
+ *   so the retry logic can distinguish "the OS couldn't run this" from "the tests failed".
  */
 export function runVerificationGate(options: RunVerificationGateOptions): VerificationResult {
   const timestamp = Date.now();
@@ -279,12 +286,26 @@ export function runVerificationGate(options: RunVerificationGateOptions): Verifi
     let stderr: string;
 
     if (result.error) {
-      // Command not found or spawn failure
+      // Spawn infrastructure failure — OS-level, not a test failure.
+      // Tag with infraError so the retry logic can skip auto-fix attempts.
+      const errCode = (result.error as NodeJS.ErrnoException).code;
+      const isInfra = !!errCode && INFRA_ERROR_CODES.has(errCode);
       exitCode = 127;
       stderr = truncate(
         (result.stderr || "") + "\n" + (result.error as Error).message,
         MAX_OUTPUT_BYTES,
       );
+
+      checks.push({
+        command,
+        exitCode,
+        stdout: truncate(result.stdout, MAX_OUTPUT_BYTES),
+        stderr,
+        durationMs,
+        blocking,
+        ...(isInfra ? { infraError: true } : {}),
+      });
+      continue;
     } else {
       // status is null when killed by signal — treat as failure
       exitCode = result.status ?? 1;
