@@ -738,10 +738,14 @@ export function serializePreferencesToFrontmatter(prefs: Record<string, unknown>
   const orderedKeys = [
     "version", "mode", "always_use_skills", "prefer_skills", "avoid_skills",
     "skill_rules", "custom_instructions", "models", "skill_discovery",
-    "auto_supervisor", "uat_dispatch", "unique_milestone_ids",
+    "skill_staleness_days", "auto_supervisor", "uat_dispatch", "unique_milestone_ids",
     "budget_ceiling", "budget_enforcement", "context_pause_threshold",
     "notifications", "remote_questions", "git",
     "post_unit_hooks", "pre_dispatch_hooks",
+    "dynamic_routing", "token_profile", "phases", "parallel",
+    "auto_visualize", "auto_report",
+    "verification_commands", "verification_auto_fix", "verification_max_retries",
+    "search_provider", "compression_strategy", "context_selection",
   ];
 
   const seen = new Set<string>();

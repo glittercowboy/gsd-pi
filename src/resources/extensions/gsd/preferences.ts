@@ -252,6 +252,8 @@ function mergePreferences(base: GSDPreferences, override: GSDPreferences): GSDPr
     search_provider: override.search_provider ?? base.search_provider,
     compression_strategy: override.compression_strategy ?? base.compression_strategy,
     context_selection: override.context_selection ?? base.context_selection,
+    auto_visualize: override.auto_visualize ?? base.auto_visualize,
+    auto_report: override.auto_report ?? base.auto_report,
   };
 }
 
