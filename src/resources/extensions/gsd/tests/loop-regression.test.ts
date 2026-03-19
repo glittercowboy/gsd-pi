@@ -609,8 +609,46 @@ test("session lock: onCompromised handler exists in both primary and retry paths
   const compromisedMatches = [...lockSource.matchAll(/onCompromised/g)];
   // Should have at least 2 onCompromised handlers (primary + retry)
   // plus the flag declaration and the check in validateSessionLock
-  assert.ok(compromisedMatches.length >= 3, 
+  assert.ok(compromisedMatches.length >= 3,
     `expected ≥3 onCompromised references (primary + retry + flag), got ${compromisedMatches.length}`);
+});
+
+test("session lock: both onCompromised handlers null _releaseFunction (#1315)", async () => {
+  const lockSource = readFileSync(
+    "src/resources/extensions/gsd/session-lock.ts", "utf-8"
+  );
+  // Extract onCompromised handler blocks — both should set _releaseFunction = null
+  const handlers = lockSource.match(/onCompromised:\s*\(\)\s*=>\s*\{[^}]+\}/g) || [];
+  assert.ok(handlers.length >= 2, `expected ≥2 onCompromised handlers, got ${handlers.length}`);
+  for (const h of handlers) {
+    assert.ok(h.includes("_releaseFunction = null"),
+      `onCompromised handler should null _releaseFunction: ${h}`);
+  }
+});
+
+test("session lock: exit handler uses ensureExitHandler to prevent double-registration (#1315)", async () => {
+  const lockSource = readFileSync(
+    "src/resources/extensions/gsd/session-lock.ts", "utf-8"
+  );
+  // Should use ensureExitHandler instead of direct process.once("exit") in acquire paths
+  const directExitHandlers = (lockSource.match(/process\.once\("exit"/g) || []).length;
+  const ensureExitCalls = (lockSource.match(/ensureExitHandler\(/g) || []).length;
+  // Only 1 direct process.once("exit") allowed — inside ensureExitHandler itself
+  assert.ok(directExitHandlers <= 1,
+    `expected ≤1 direct process.once("exit") (inside ensureExitHandler), got ${directExitHandlers}`);
+  assert.ok(ensureExitCalls >= 2,
+    `expected ≥2 ensureExitHandler calls (primary + retry path), got ${ensureExitCalls}`);
+});
+
+test("signal handler: SIGINT handler registered alongside SIGTERM (#1315)", async () => {
+  const supervisorSource = readFileSync(
+    "src/resources/extensions/gsd/auto-supervisor.ts", "utf-8"
+  );
+  // registerSigtermHandler should register on both SIGTERM and SIGINT
+  assert.ok(supervisorSource.includes('process.on("SIGINT"') || supervisorSource.includes("process.on('SIGINT'"),
+    "registerSigtermHandler should register SIGINT handler");
+  assert.ok(supervisorSource.includes('process.off("SIGINT"') || supervisorSource.includes("process.off('SIGINT'"),
+    "deregisterSigtermHandler should deregister SIGINT handler");
 });
 
 // ─── Scope 5: Crash Recovery — Message Guidance per Unit Type ────────────

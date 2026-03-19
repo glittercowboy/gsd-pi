@@ -12,6 +12,7 @@ import {
   readSessionLockData,
   isSessionLockHeld,
   isSessionLockProcessAlive,
+  cleanupStrayLockFiles,
 } from "../session-lock.ts";
 
 // ─── acquireSessionLock ──────────────────────────────────────────────────
@@ -311,5 +312,123 @@ test("acquireSessionLock creates .gsd/ if it does not exist", () => {
   assert.ok(existsSync(join(dir, ".gsd")), ".gsd/ should be created");
 
   releaseSessionLock(dir);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+// ─── cleanupStrayLockFiles (#1315) ──────────────────────────────────────
+
+test("cleanupStrayLockFiles removes numbered lock variants but preserves auto.lock", () => {
+  const dir = mkdtempSync(join(tmpdir(), "gsd-session-lock-"));
+  const gsdDir = join(dir, ".gsd");
+  mkdirSync(gsdDir, { recursive: true });
+
+  // Create canonical lock file + numbered variants
+  writeFileSync(join(gsdDir, "auto.lock"), '{"pid":1}');
+  writeFileSync(join(gsdDir, "auto 2.lock"), '{"pid":2}');
+  writeFileSync(join(gsdDir, "auto 3.lock"), '{"pid":3}');
+  writeFileSync(join(gsdDir, "auto 4.lock"), '{"pid":4}');
+
+  cleanupStrayLockFiles(dir);
+
+  assert.ok(existsSync(join(gsdDir, "auto.lock")), "canonical auto.lock should be preserved");
+  assert.ok(!existsSync(join(gsdDir, "auto 2.lock")), "auto 2.lock should be removed");
+  assert.ok(!existsSync(join(gsdDir, "auto 3.lock")), "auto 3.lock should be removed");
+  assert.ok(!existsSync(join(gsdDir, "auto 4.lock")), "auto 4.lock should be removed");
+
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("cleanupStrayLockFiles handles parenthesized variants", () => {
+  const dir = mkdtempSync(join(tmpdir(), "gsd-session-lock-"));
+  const gsdDir = join(dir, ".gsd");
+  mkdirSync(gsdDir, { recursive: true });
+
+  // macOS sometimes uses parenthesized format: "auto (2).lock"
+  writeFileSync(join(gsdDir, "auto.lock"), '{"pid":1}');
+  writeFileSync(join(gsdDir, "auto (2).lock"), '{"pid":2}');
+
+  cleanupStrayLockFiles(dir);
+
+  assert.ok(existsSync(join(gsdDir, "auto.lock")), "canonical auto.lock should be preserved");
+  assert.ok(!existsSync(join(gsdDir, "auto (2).lock")), "auto (2).lock should be removed");
+
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("cleanupStrayLockFiles does not remove unrelated files", () => {
+  const dir = mkdtempSync(join(tmpdir(), "gsd-session-lock-"));
+  const gsdDir = join(dir, ".gsd");
+  mkdirSync(gsdDir, { recursive: true });
+
+  // Create unrelated files that should NOT be removed
+  writeFileSync(join(gsdDir, "auto.lock"), '{"pid":1}');
+  writeFileSync(join(gsdDir, "config.json"), '{}');
+  writeFileSync(join(gsdDir, "other.lock"), '{}');
+
+  cleanupStrayLockFiles(dir);
+
+  assert.ok(existsSync(join(gsdDir, "auto.lock")), "auto.lock should be preserved");
+  assert.ok(existsSync(join(gsdDir, "config.json")), "config.json should be preserved");
+  assert.ok(existsSync(join(gsdDir, "other.lock")), "other.lock should be preserved");
+
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("cleanupStrayLockFiles is safe on empty directory", () => {
+  const dir = mkdtempSync(join(tmpdir(), "gsd-session-lock-"));
+  const gsdDir = join(dir, ".gsd");
+  mkdirSync(gsdDir, { recursive: true });
+
+  // Should not throw
+  cleanupStrayLockFiles(dir);
+
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("cleanupStrayLockFiles is safe when .gsd/ does not exist", () => {
+  const dir = mkdtempSync(join(tmpdir(), "gsd-session-lock-"));
+
+  // Should not throw even without .gsd/
+  cleanupStrayLockFiles(dir);
+
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("acquireSessionLock cleans stray lock files before acquiring", () => {
+  const dir = mkdtempSync(join(tmpdir(), "gsd-session-lock-"));
+  const gsdDir = join(dir, ".gsd");
+  mkdirSync(gsdDir, { recursive: true });
+
+  // Plant stray lock files before acquire
+  writeFileSync(join(gsdDir, "auto 2.lock"), '{"pid":9999999}');
+  writeFileSync(join(gsdDir, "auto 3.lock"), '{"pid":9999998}');
+
+  const result = acquireSessionLock(dir);
+  assert.equal(result.acquired, true, "should acquire lock");
+
+  // Stray files should be cleaned up
+  assert.ok(!existsSync(join(gsdDir, "auto 2.lock")), "auto 2.lock should be removed during acquire");
+  assert.ok(!existsSync(join(gsdDir, "auto 3.lock")), "auto 3.lock should be removed during acquire");
+
+  releaseSessionLock(dir);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("releaseSessionLock cleans stray lock files after releasing", () => {
+  const dir = mkdtempSync(join(tmpdir(), "gsd-session-lock-"));
+  const gsdDir = join(dir, ".gsd");
+  mkdirSync(gsdDir, { recursive: true });
+
+  const result = acquireSessionLock(dir);
+  assert.equal(result.acquired, true);
+
+  // Plant stray lock files (simulating cloud sync creating them during session)
+  writeFileSync(join(gsdDir, "auto 2.lock"), '{"pid":9999999}');
+
+  releaseSessionLock(dir);
+
+  assert.ok(!existsSync(join(gsdDir, "auto 2.lock")), "auto 2.lock should be removed during release");
+  assert.ok(!existsSync(join(gsdDir, "auto.lock")), "auto.lock should also be removed");
+
   rmSync(dir, { recursive: true, force: true });
 });
