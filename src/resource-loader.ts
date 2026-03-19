@@ -170,18 +170,55 @@ function makeTreeWritable(dirPath: string): void {
  * 1. Makes the destination writable (handles Nix store read-only copies).
  * 2. Removes destination subdirs that exist in source to clear stale files,
  *    while preserving user-created directories.
- * 3. Copies source into destination.
- * 4. Makes the result writable for the next upgrade cycle.
+ * 3. Removes stale top-level files in destDir whose base name (without
+ *    extension) matches a file in srcDir but with a different extension —
+ *    e.g. ask-user-questions.js left over after the source switched to .ts.
+ * 4. Copies source into destination.
+ * 5. Makes the result writable for the next upgrade cycle.
  */
 function syncResourceDir(srcDir: string, destDir: string): void {
   makeTreeWritable(destDir)
   if (existsSync(srcDir)) {
+    // Build a set of base names (without extension) for all top-level files in srcDir.
+    const srcFileBases = new Set<string>()
+    for (const entry of readdirSync(srcDir, { withFileTypes: true })) {
+      if (entry.isFile() || entry.isSymbolicLink()) {
+        const dot = entry.name.lastIndexOf('.')
+        srcFileBases.add(dot > 0 ? entry.name.slice(0, dot) : entry.name)
+      }
+    }
+
     for (const entry of readdirSync(srcDir, { withFileTypes: true })) {
       if (entry.isDirectory()) {
+        // Remove matching destination subdirs so stale nested files don't accumulate.
         const target = join(destDir, entry.name)
         if (existsSync(target)) rmSync(target, { recursive: true, force: true })
       }
     }
+
+    // Remove stale top-level files in destDir that share a base name with a
+    // source file but have a different extension (e.g. .js ↔ .ts swaps).
+    if (existsSync(destDir)) {
+      for (const entry of readdirSync(destDir, { withFileTypes: true })) {
+        if (!entry.isFile() && !entry.isSymbolicLink()) continue
+        const dot = entry.name.lastIndexOf('.')
+        const base = dot > 0 ? entry.name.slice(0, dot) : entry.name
+        // If srcDir has a file with this base name but it's been renamed to a
+        // different extension, the destDir copy is now stale — remove it.
+        if (srcFileBases.has(base)) {
+          const destPath = join(destDir, entry.name)
+          const srcPath = join(srcDir, entry.name)
+          if (!existsSync(srcPath)) {
+            try {
+              rmSync(destPath)
+            } catch {
+              // Non-fatal — best-effort stale-file cleanup
+            }
+          }
+        }
+      }
+    }
+
     try {
       cpSync(srcDir, destDir, { recursive: true, force: true })
     } catch {
