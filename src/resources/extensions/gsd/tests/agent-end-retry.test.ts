@@ -1,15 +1,13 @@
 /**
  * agent-end-retry.test.ts — Verifies the agent_end handling mechanism.
  *
- * In the new architecture (S01), handleAgentEnd is a thin wrapper that calls
- * resolveAgentEnd(). The actual reentrancy and retry handling is done by the
- * autoLoop() while loop in auto-loop.ts, which awaits the promise resolved by
- * resolveAgentEnd() and handles inline-dispatched units via a while loop.
+ * In the new architecture (S01→S03), handleAgentEnd is a thin wrapper that calls
+ * resolveAgentEnd(). Post-unit work (hooks, triage, quick-tasks) runs via the
+ * sidecar queue consumed by the main loop — no inline dispatch or reentrancy guards.
  *
- * The AutoSession still declares pendingAgentEndRetry (S03 removes it).
- * The core mechanism for handling concurrent agent_end events is now:
+ * The core mechanism for handling concurrent agent_end events is:
  * 1. resolveAgentEnd() in auto-loop.ts resolves the pending promise
- * 2. autoLoop() processes the unit result and handles inline dispatches
+ * 2. autoLoop() processes the unit result and drains sidecar queue
  * 3. The one-shot promise pattern prevents double-resolution
  */
 
@@ -35,27 +33,6 @@ function getAutoLoopTsSource(): string {
 function getSessionTsSource(): string {
   return readFileSync(SESSION_TS_PATH, "utf-8");
 }
-
-// ── AutoSession must declare pendingAgentEndRetry (until S03 removes it) ─────
-
-test("AutoSession declares pendingAgentEndRetry field", () => {
-  const source = getSessionTsSource();
-  assert.ok(
-    source.includes("pendingAgentEndRetry"),
-    "AutoSession (auto/session.ts) must declare pendingAgentEndRetry field (removed in S03)",
-  );
-});
-
-test("AutoSession resets pendingAgentEndRetry in reset()", () => {
-  const source = getSessionTsSource();
-  const resetIdx = source.indexOf("reset(): void");
-  assert.ok(resetIdx > -1, "AutoSession must have a reset() method");
-  const resetBlock = source.slice(resetIdx, resetIdx + 3000);
-  assert.ok(
-    resetBlock.includes("pendingAgentEndRetry"),
-    "reset() must clear pendingAgentEndRetry",
-  );
-});
 
 // ── handleAgentEnd is now a thin wrapper calling resolveAgentEnd ─────────────
 

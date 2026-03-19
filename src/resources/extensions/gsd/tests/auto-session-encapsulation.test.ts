@@ -181,7 +181,6 @@ test("AutoSession.toJSON() includes key diagnostic properties", () => {
     "basePath",
     "currentMilestoneId",
     "currentUnit",
-    "dispatching",
   ];
 
   const missing = requiredDiagnostics.filter(prop => !toJSONBody.includes(prop));

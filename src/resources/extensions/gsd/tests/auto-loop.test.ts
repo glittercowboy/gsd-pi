@@ -226,7 +226,6 @@ function makeMockDeps(overrides?: Partial<LoopDeps>): LoopDeps & { callLog: stri
     pauseAuto: async () => { callLog.push("pauseAuto"); },
     clearUnitTimeout: () => {},
     updateProgressWidget: () => {},
-    startDispatchGapWatchdog: () => {},
     invalidateAllCaches: () => { callLog.push("invalidateAllCaches"); },
     deriveState: async () => {
       callLog.push("deriveState");
@@ -340,9 +339,6 @@ function makeLoopSession(overrides?: Partial<Record<string, unknown>>) {
     pendingCrashRecovery: null,
     pendingQuickTasks: [],
     sidecarQueue: [],
-    dispatching: false,
-    handlingAgentEnd: false,
-    pendingAgentEndRetry: false,
     autoModeStartModel: null,
     unitDispatchCount: new Map<string, number>(),
     unitLifetimeDispatches: new Map<string, number>(),

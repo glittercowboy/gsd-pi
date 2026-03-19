@@ -60,8 +60,8 @@ function createMilestoneArtifacts(dir: string, mid: string): void {
 
 // ─── Source-level: verify the merge code exists in the "all complete" path ────
 
-test("auto.ts 'all milestones complete' path merges before stopping (#962)", () => {
-  const autoSrc = readFileSync(join(__dirname, "..", "auto.ts"), "utf-8");
+test("auto-loop.ts 'all milestones complete' path merges before stopping (#962)", () => {
+  const autoSrc = readFileSync(join(__dirname, "..", "auto-loop.ts"), "utf-8");
 
   // Find the "incomplete.length === 0" block
   const incompleteIdx = autoSrc.indexOf("incomplete.length === 0");

@@ -122,9 +122,9 @@ test("worktree swap on milestone transition: merge old, create new", () => {
 
 // ─── Verify the transition code path exists in auto.ts ──────────────────────
 
-test("auto.ts milestone transition block contains worktree lifecycle", () => {
+test("auto-loop.ts milestone transition block contains worktree lifecycle", () => {
   const autoSrc = readFileSync(
-    join(__dirname, "..", "auto.ts"),
+    join(__dirname, "..", "auto-loop.ts"),
     "utf-8",
   );
 
