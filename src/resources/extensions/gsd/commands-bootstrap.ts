@@ -12,6 +12,7 @@ const TOP_LEVEL_SUBCOMMANDS = [
   { cmd: "quick", desc: "Execute a quick task without full planning overhead" },
   { cmd: "discuss", desc: "Discuss architecture and decisions" },
   { cmd: "capture", desc: "Fire-and-forget thought capture" },
+  { cmd: "changelog", desc: "Show categorized release notes" },
   { cmd: "triage", desc: "Manually trigger triage of pending captures" },
   { cmd: "dispatch", desc: "Dispatch a specific phase directly" },
   { cmd: "history", desc: "View execution history" },

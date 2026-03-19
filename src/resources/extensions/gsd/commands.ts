@@ -71,7 +71,7 @@ export function projectRoot(): string {
 
 export function registerGSDCommand(pi: ExtensionAPI): void {
   pi.registerCommand("gsd", {
-    description: "GSD — Get Shit Done: /gsd help|start|templates|next|auto|stop|pause|status|visualize|queue|quick|capture|triage|dispatch|history|undo|skip|export|cleanup|mode|prefs|config|keys|hooks|run-hook|skill-health|doctor|forensics|migrate|remote|steer|knowledge|new-milestone|parallel|update",
+    description: "GSD — Get Shit Done: /gsd help|start|templates|next|auto|stop|pause|status|visualize|queue|quick|capture|triage|dispatch|history|undo|skip|export|cleanup|mode|prefs|config|keys|hooks|run-hook|skill-health|doctor|forensics|changelog|migrate|remote|steer|knowledge|new-milestone|parallel|update",
     getArgumentCompletions: (prefix: string) => {
       const subcommands = [
         { cmd: "help", desc: "Categorized command reference with descriptions" },
@@ -85,6 +85,7 @@ export function registerGSDCommand(pi: ExtensionAPI): void {
         { cmd: "quick", desc: "Execute a quick task without full planning overhead" },
         { cmd: "discuss", desc: "Discuss architecture and decisions" },
         { cmd: "capture", desc: "Fire-and-forget thought capture" },
+        { cmd: "changelog", desc: "Show categorized release notes" },
         { cmd: "triage", desc: "Manually trigger triage of pending captures" },
         { cmd: "dispatch", desc: "Dispatch a specific phase directly" },
         { cmd: "history", desc: "View execution history" },
@@ -496,6 +497,12 @@ export async function handleGSDCommand(
       if (trimmed === "forensics" || trimmed.startsWith("forensics ")) {
         const { handleForensics } = await import("./forensics.js");
         await handleForensics(trimmed.replace(/^forensics\s*/, "").trim(), ctx, pi);
+        return;
+      }
+
+      if (trimmed === "changelog" || trimmed.startsWith("changelog ")) {
+        const { handleChangelog } = await import("./changelog.js");
+        await handleChangelog(trimmed.replace(/^changelog\s*/, "").trim(), ctx, pi);
         return;
       }
 
@@ -928,6 +935,7 @@ function showHelp(ctx: ExtensionCommandContext): void {
     "  /gsd visualize      Interactive 10-tab TUI (progress, timeline, deps, metrics, health, agent, changes, knowledge, captures, export)",
     "  /gsd queue          Show queued/dispatched units and execution order",
     "  /gsd history        View execution history  [--cost] [--phase] [--model] [N]",
+    "  /gsd changelog      Show categorized release notes  [version]",
     "",
     "COURSE CORRECTION",
     "  /gsd steer <desc>   Apply user override to active work",
