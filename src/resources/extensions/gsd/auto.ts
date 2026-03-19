@@ -2113,6 +2113,76 @@ async function dispatchNextUnit(
     setActiveMilestoneId(basePath, mid);
   }
 
+  // ── Worktree fallback (#1339): re-derive from project root ──────────
+  // When deriveState returns no active milestone while inside a worktree,
+  // the next milestone may exist only in the project root (not synced to
+  // the worktree). Merge the completed milestone back to main, switch to
+  // the project root, and re-derive before concluding "all complete".
+  if (!mid && isInAutoWorktree(basePath) && originalBasePath && shouldUseWorktreeIsolation()) {
+    try {
+      if (currentMilestoneId) {
+        const roadmapPath = resolveMilestoneFile(originalBasePath, currentMilestoneId, "ROADMAP");
+        if (roadmapPath) {
+          const roadmapContent = readFileSync(roadmapPath, "utf-8");
+          const mergeResult = mergeMilestoneToMain(originalBasePath, currentMilestoneId, roadmapContent);
+          ctx.ui.notify(
+            `Milestone ${currentMilestoneId} merged to main.${mergeResult.pushed ? " Pushed to remote." : ""}`,
+            "info",
+          );
+        } else {
+          teardownAutoWorktree(originalBasePath, currentMilestoneId);
+          ctx.ui.notify(`Exited worktree for ${currentMilestoneId} (no roadmap for merge).`, "info");
+        }
+      }
+    } catch (err) {
+      ctx.ui.notify(
+        `Milestone merge failed during worktree fallback: ${err instanceof Error ? err.message : String(err)}`,
+        "warning",
+      );
+      if (originalBasePath) {
+        try { process.chdir(originalBasePath); } catch { /* best-effort */ }
+      }
+    }
+
+    // Switch context to project root and re-derive
+    basePath = originalBasePath;
+    gitService = new GitServiceImpl(basePath, loadEffectiveGSDPreferences()?.preferences?.git ?? {});
+    invalidateAllCaches();
+    state = await deriveState(basePath);
+    mid = state.activeMilestone?.id;
+    midTitle = state.activeMilestone?.title;
+
+    // If a new milestone was discovered, create a worktree for it
+    if (mid) {
+      currentMilestoneId = mid;
+      setActiveMilestoneId(basePath, mid);
+      unitDispatchCount.clear();
+      unitRecoveryCount.clear();
+      unitConsecutiveSkips.clear();
+      unitLifetimeDispatches.clear();
+      try {
+        const file = completedKeysPath(basePath);
+        if (existsSync(file)) writeFileSync(file, JSON.stringify([]), "utf-8");
+        completedKeySet.clear();
+      } catch { /* non-fatal */ }
+
+      captureIntegrationBranch(basePath, mid, { commitDocs: loadEffectiveGSDPreferences()?.preferences?.git?.commit_docs });
+      try {
+        const wtPath = createAutoWorktree(basePath, mid);
+        basePath = wtPath;
+        gitService = new GitServiceImpl(basePath, loadEffectiveGSDPreferences()?.preferences?.git ?? {});
+        ctx.ui.notify(`Discovered milestone ${mid}. Created auto-worktree at ${wtPath}`, "info");
+        sendDesktopNotification("GSD", `Advancing to milestone ${mid}`, "success", "milestone");
+      } catch (err) {
+        ctx.ui.notify(
+          `Auto-worktree creation for ${mid} failed: ${err instanceof Error ? err.message : String(err)}. Continuing in project root.`,
+          "warning",
+        );
+      }
+    }
+    // If mid is still null after re-derive, fall through to the !mid handler below
+  }
+
   if (!mid) {
     // Save final session before stopping
     if (currentUnit) {
@@ -2242,9 +2312,64 @@ async function dispatchNextUnit(
         );
       }
     }
-    sendDesktopNotification("GSD", `Milestone ${mid} complete!`, "success", "milestone");
-    await stopAuto(ctx, pi, `Milestone ${mid} complete`);
-    return;
+    // ── Worktree fallback (#1339): after merging, re-derive from project root ──
+    // The worktree may not contain the next milestone's planning files.
+    // Re-derive from the project root to discover queued milestones before
+    // concluding that all work is done.
+    const rootPath = originalBasePath || basePath;
+    invalidateAllCaches();
+    const rootState = await deriveState(rootPath);
+    const nextMid = rootState.activeMilestone?.id;
+
+    if (nextMid && nextMid !== mid) {
+      // A new milestone was discovered in the project root — continue auto-mode
+      ctx.ui.notify(
+        `Milestone ${mid} complete. Advancing to ${nextMid}: ${rootState.activeMilestone?.title}.`,
+        "info",
+      );
+      sendDesktopNotification("GSD", `Milestone ${mid} complete! Advancing to ${nextMid}`, "success", "milestone");
+
+      // Reset stuck detection for new milestone
+      unitDispatchCount.clear();
+      unitRecoveryCount.clear();
+      unitConsecutiveSkips.clear();
+      unitLifetimeDispatches.clear();
+      try {
+        const file = completedKeysPath(rootPath);
+        if (existsSync(file)) writeFileSync(file, JSON.stringify([]), "utf-8");
+        completedKeySet.clear();
+      } catch { /* non-fatal */ }
+
+      // Update dispatch state for the new milestone
+      state = rootState;
+      mid = nextMid;
+      midTitle = rootState.activeMilestone?.title;
+      currentMilestoneId = nextMid;
+      setActiveMilestoneId(rootPath, nextMid);
+      basePath = rootPath;
+
+      if (shouldUseWorktreeIsolation()) {
+        captureIntegrationBranch(basePath, nextMid, { commitDocs: loadEffectiveGSDPreferences()?.preferences?.git?.commit_docs });
+        try {
+          const wtPath = createAutoWorktree(basePath, nextMid);
+          basePath = wtPath;
+          gitService = new GitServiceImpl(basePath, loadEffectiveGSDPreferences()?.preferences?.git ?? {});
+          ctx.ui.notify(`Created auto-worktree for ${nextMid} at ${wtPath}`, "info");
+        } catch (err) {
+          ctx.ui.notify(
+            `Auto-worktree creation for ${nextMid} failed: ${err instanceof Error ? err.message : String(err)}. Continuing in project root.`,
+            "warning",
+          );
+          gitService = new GitServiceImpl(basePath, loadEffectiveGSDPreferences()?.preferences?.git ?? {});
+        }
+      }
+
+      // Fall through to unit dispatch logic with updated state
+    } else {
+      sendDesktopNotification("GSD", `Milestone ${mid} complete!`, "success", "milestone");
+      await stopAuto(ctx, pi, `Milestone ${mid} complete`);
+      return;
+    }
   }
 
   if (state.phase === "blocked") {
