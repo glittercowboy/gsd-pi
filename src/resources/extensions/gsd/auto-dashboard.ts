@@ -407,12 +407,12 @@ export function updateProgressWidget(
           const bar = theme.fg("success", "█".repeat(filled))
             + theme.fg("dim", "░".repeat(barWidth - filled));
 
-          let meta = theme.fg("dim", `${done}/${total} slices`);
+          let meta = `${theme.fg("text", `${done}`)}${theme.fg("dim", `/${total} slices`)}`;
           if (activeSliceTasks && activeSliceTasks.total > 0) {
             const taskNum = isHook
               ? Math.max(activeSliceTasks.done, 1)
               : Math.min(activeSliceTasks.done + 1, activeSliceTasks.total);
-            meta += theme.fg("dim", ` · task ${taskNum}/${activeSliceTasks.total}`);
+            meta += `${theme.fg("dim", " · task ")}${theme.fg("accent", `${taskNum}`)}${theme.fg("dim", `/${activeSliceTasks.total}`)}`;
           }
           leftLines.push(`${pad}${bar} ${meta}`);
 
@@ -438,7 +438,7 @@ export function updateProgressWidget(
 
         if (next) {
           leftLines.push(
-            `${pad}${theme.fg("dim", "->")} ${theme.fg("dim", `then ${next}`)}`,
+            `${pad}${theme.fg("dim", "-> then")} ${theme.fg("accent", next)}`,
           );
         }
 
@@ -479,9 +479,10 @@ export function updateProgressWidget(
           if (totalCacheWrite) sp.push(`W${formatWidgetTokens(totalCacheWrite)}`);
           if (totalCacheRead + totalInput > 0) {
             const hitRate = Math.round((totalCacheRead / (totalCacheRead + totalInput)) * 100);
-            sp.push(`${hitRate}%hit`);
+            const hitColor = hitRate >= 70 ? "success" : hitRate >= 40 ? "warning" : "error";
+            sp.push(theme.fg(hitColor, `${hitRate}%hit`));
           }
-          if (cumulativeCost) sp.push(`$${cumulativeCost.toFixed(3)}`);
+          if (cumulativeCost) sp.push(theme.fg("warning", `$${cumulativeCost.toFixed(3)}`));
 
           const cxDisplay = cxPct === "?"
             ? `?/${formatWidgetTokens(cxWindow)}`
@@ -522,12 +523,17 @@ export function updateProgressWidget(
             : isCurrent
               ? theme.fg("accent", ">")
               : theme.fg("dim", ".");
-          const label = isCurrent
-            ? theme.fg("text", `${t.id}: ${t.title}`)
+          const id = isCurrent
+            ? theme.fg("accent", t.id)
             : t.done
-              ? theme.fg("dim", `${t.id}: ${t.title}`)
-              : theme.fg("text", `${t.id}: ${t.title}`);
-          return `${glyph} ${label}`;
+              ? theme.fg("muted", t.id)
+              : theme.fg("dim", t.id);
+          const title = isCurrent
+            ? theme.fg("text", t.title)
+            : t.done
+              ? theme.fg("muted", t.title)
+              : theme.fg("text", t.title);
+          return `${glyph} ${id}: ${title}`;
         }
 
         if (useTwoCol && taskDetailsCol) {

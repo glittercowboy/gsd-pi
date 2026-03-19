@@ -77,16 +77,23 @@ const nextStep = noMilestone ? "" : "reassess roadmap";
 const pwd = noMilestone
   ? "~/Github/my-project (main)"
   : "~/Github/git-patcher/.gsd/worktrees/M001-07dqzj (milestone/M001-07dqzj)";
-const tokenStats = "i22 o11k R1.1M W38k 85%hit $18.668 35.2%/200k";
+// Mock token/cost stats — individual values for colored rendering
+const mockInput = "22";
+const mockOutput = "11k";
+const mockCacheRead = "1.1M";
+const mockCacheWrite = "38k";
+const mockHitRate = 85;
+const mockCost = "$18.668";
+const mockCtxUsage = "35.2%/200k";
 const modelDisplay = "anthropic/claude-opus-4-6";
 
 // Health states
 const healthStates = unhealthy
   ? [
-    { icon: "⚠", color: "warning", summary: "Struggling — 2 consecutive error unit(s)" },
-    { icon: "✗", color: "error", summary: "Stuck — 4 consecutive error units" },
+    { icon: "!", color: "warning", summary: "Struggling — 2 consecutive error unit(s)" },
+    { icon: "x", color: "error", summary: "Stuck — 4 consecutive error units" },
   ]
-  : [{ icon: GLYPH.statusActive, color: "success", summary: "Progressing well" }];
+  : [{ icon: "o", color: "success", summary: "Progressing well" }];
 
 // ── Render helpers ──────────────────────────────────────────────────────
 
@@ -152,8 +159,8 @@ function render(w: number, healthState: { icon: string; color: string; summary: 
     const filled = Math.round(pct * barWidth);
     const bar = theme.fg("success", "█".repeat(filled))
       + theme.fg("dim", "░".repeat(barWidth - filled));
-    const meta = theme.fg("dim", `${slicesDone}/${slicesTotal} slices`)
-      + theme.fg("dim", ` · task ${taskNum}/${taskTotal}`);
+    const meta = `${theme.fg("text", `${slicesDone}`)}${theme.fg("dim", `/${slicesTotal} slices`)}`
+      + `${theme.fg("dim", " · task ")}${theme.fg("accent", `${taskNum}`)}${theme.fg("dim", `/${taskTotal}`)}`;
     leftLines.push(`${pad}${bar} ${meta}`);
     leftLines.push(`${pad}${theme.fg("dim", eta)}`);
   }
@@ -168,7 +175,7 @@ function render(w: number, healthState: { icon: string; color: string; summary: 
 
   if (nextStep) {
     leftLines.push(
-      `${pad}${theme.fg("dim", "->")} ${theme.fg("dim", `then ${nextStep}`)}`,
+      `${pad}${theme.fg("dim", "-> then")} ${theme.fg("accent", nextStep)}`,
     );
   }
 
@@ -182,12 +189,17 @@ function render(w: number, healthState: { icon: string; color: string; summary: 
       : isCurrent
         ? theme.fg("accent", ">")
         : theme.fg("dim", ".");
-    const label = isCurrent
-      ? theme.fg("text", `${t.id}: ${t.title}`)
+    const id = isCurrent
+      ? theme.fg("accent", t.id)
       : t.done
-        ? theme.fg("dim", `${t.id}: ${t.title}`)
-        : theme.fg("text", `${t.id}: ${t.title}`);
-    return `${glyph} ${label}`;
+        ? theme.fg("muted", t.id)
+        : theme.fg("dim", t.id);
+    const title = isCurrent
+      ? theme.fg("text", t.title)
+      : t.done
+        ? theme.fg("muted", t.title)
+        : theme.fg("text", t.title);
+    return `${glyph} ${id}: ${title}`;
   }
 
   if (useTwoCol) {
@@ -212,7 +224,15 @@ function render(w: number, healthState: { icon: string; color: string; summary: 
 
   // Footer: stats right-aligned, then pwd + hints
   lines.push("");
-  const statsStr = theme.fg("dim", `${tokenStats} ${modelDisplay}`);
+  const hitColor = mockHitRate >= 70 ? "success" : mockHitRate >= 40 ? "warning" : "error";
+  const statsParts = [
+    theme.fg("dim", `i${mockInput} o${mockOutput} R${mockCacheRead} W${mockCacheWrite}`),
+    theme.fg(hitColor, `${mockHitRate}%hit`),
+    theme.fg("warning", mockCost),
+    theme.fg("dim", mockCtxUsage),
+    theme.fg("muted", modelDisplay),
+  ];
+  const statsStr = statsParts.join(theme.fg("dim", " "));
   lines.push(rightAlign("", statsStr, w));
   const hintStr = theme.fg("dim", "esc pause | ⌃⌥G dashboard");
   const pwdStr = theme.fg("dim", pwd);
