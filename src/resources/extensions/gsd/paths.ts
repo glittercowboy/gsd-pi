@@ -10,7 +10,7 @@
  */
 
 import { readdirSync, existsSync, realpathSync, Dirent } from "node:fs";
-import { join, dirname } from "node:path";
+import { join, dirname, normalize } from "node:path";
 import { spawnSync } from "node:child_process";
 import { nativeScanGsdTree, type GsdTreeEntry } from "./native-parser-bridge.js";
 import { DIR_CACHE_MAX } from "./constants.js";
@@ -315,7 +315,7 @@ function probeGsdRoot(rawBasePath: string): string {
   // Resolve symlinks so path comparisons work correctly across platforms
   // (e.g. macOS /var → /private/var). Use rawBasePath as fallback if not resolvable.
   let basePath: string;
-  try { basePath = realpathSync(rawBasePath); } catch { basePath = rawBasePath; }
+  try { basePath = realpathSync.native(rawBasePath); } catch { basePath = rawBasePath; }
 
   // 2. Git root anchor — used as both probe target and walk-up boundary
   //    Only walk if we're inside a git project — prevents escaping into
@@ -328,7 +328,7 @@ function probeGsdRoot(rawBasePath: string): string {
     });
     if (out.status === 0) {
       const r = out.stdout.trim();
-      if (r) gitRoot = r;
+      if (r) gitRoot = normalize(r);
     }
   } catch { /* git not available */ }
 

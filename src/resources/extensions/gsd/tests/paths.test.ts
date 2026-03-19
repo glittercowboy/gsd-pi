@@ -8,9 +8,10 @@ import { createTestContext } from "./test-helpers.ts";
 
 const { assertEq, assertTrue, report } = createTestContext();
 
-/** Create a tmp dir and resolve any OS-level symlinks (e.g. /var → /private/var on macOS). */
+/** Create a tmp dir and resolve symlinks + 8.3 short names (macOS /var→/private/var, Windows RUNNER~1→runneradmin). */
 function tmp(): string {
-  return realpathSync(mkdtempSync(join(tmpdir(), "gsd-paths-test-")));
+  const p = mkdtempSync(join(tmpdir(), "gsd-paths-test-"));
+  try { return realpathSync.native(p); } catch { return p; }
 }
 
 function cleanup(dir: string): void {
