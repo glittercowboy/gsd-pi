@@ -445,8 +445,8 @@ export function updateProgressWidget(
           ));
         }
 
-        // Token stats
-        {
+        // Token stats — built here, rendered below the two-column section
+        const statsLine = (() => {
           const cmdCtx = accessors.getCmdCtx();
           let totalInput = 0, totalOutput = 0;
           let totalCacheRead = 0, totalCacheWrite = 0;
@@ -482,7 +482,7 @@ export function updateProgressWidget(
           if (totalCacheWrite) sp.push(`W${formatWidgetTokens(totalCacheWrite)}`);
           if (totalCacheRead + totalInput > 0) {
             const hitRate = Math.round((totalCacheRead / (totalCacheRead + totalInput)) * 100);
-            sp.push(`\u26A1${hitRate}%`);
+            sp.push(`${hitRate}%hit`);
           }
           if (cumulativeCost) sp.push(`$${cumulativeCost.toFixed(3)}`);
 
@@ -497,26 +497,21 @@ export function updateProgressWidget(
             sp.push(cxDisplay);
           }
 
-          const tokenLine = sp.map(p => p.includes("\x1b[") ? p : theme.fg("dim", p))
-            .join(theme.fg("dim", " "));
-          leftLines.push(truncateToWidth(`${pad}${tokenLine}`, leftColWidth));
-
           const modelId = cmdCtx?.model?.id ?? "";
           const modelProvider = cmdCtx?.model?.provider ?? "";
-          const modelDisplay = modelProvider && modelId
+          const modelName = modelProvider && modelId
             ? `${modelProvider}/${modelId}`
             : modelId;
-          if (modelDisplay) {
-            leftLines.push(truncateToWidth(`${pad}${theme.fg("dim", modelDisplay)}`, leftColWidth));
-          }
+          if (modelName) sp.push(modelName);
 
           if (mLedger && mLedger.units.some(u => u.tier)) {
             const savings = formatTierSavings(mLedger.units);
-            if (savings) {
-              leftLines.push(truncateToWidth(`${pad}${theme.fg("dim", savings)}`, leftColWidth));
-            }
+            if (savings) sp.push(savings);
           }
-        }
+
+          return sp.map(p => p.includes("\x1b[") ? p : theme.fg("dim", p))
+            .join(theme.fg("dim", " "));
+        })();
 
         // Build right column: task checklist (only in two-column mode)
         const rightLines: string[] = [];
@@ -589,8 +584,11 @@ export function updateProgressWidget(
           }
         }
 
-        // ── Footer: pwd + hints ─────────────────────────────────────────
+        // ── Footer: stats + pwd + hints ─────────────────────────────────
         lines.push("");
+        if (statsLine) {
+          lines.push(rightAlign("", statsLine, width));
+        }
         const hintParts: string[] = [];
         hintParts.push("esc pause");
         hintParts.push(process.platform === "darwin" ? "⌃⌥G dashboard" : "Ctrl+Alt+G dashboard");

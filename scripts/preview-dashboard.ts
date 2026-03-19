@@ -172,9 +172,7 @@ function render(w: number, healthState: { icon: string; color: string; summary: 
     ));
   }
 
-  // Token stats
-  leftLines.push(truncateToWidth(`${pad}${theme.fg("dim", tokenStats)}`, leftColWidth));
-  leftLines.push(truncateToWidth(`${pad}${theme.fg("dim", modelDisplay)}`, leftColWidth));
+  // Token stats — rendered below the two-column section, not in left column
 
   // Right column: task checklist
   const rightLines: string[] = [];
@@ -234,8 +232,10 @@ function render(w: number, healthState: { icon: string; color: string; summary: 
     for (const l of leftLines) lines.push(l);
   }
 
-  // Footer
+  // Footer: stats right-aligned, then pwd + hints
   lines.push("");
+  const statsStr = theme.fg("dim", `${tokenStats} ${modelDisplay}`);
+  lines.push(rightAlign("", statsStr, w));
   const hintStr = theme.fg("dim", "esc pause | ⌃⌥G dashboard");
   const pwdStr = theme.fg("dim", pwd);
   lines.push(rightAlign(`${pad}${pwdStr}`, hintStr, w));
