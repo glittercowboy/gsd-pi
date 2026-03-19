@@ -149,10 +149,14 @@ function dequeueNextHook(basePath: string): HookDispatchResult | null {
 
     // Build the prompt with variable substitution
     const [mid, sid, tid] = triggerUnitId.split("/");
-    const prompt = config.prompt
+    let prompt = config.prompt
       .replace(/\{milestoneId\}/g, mid ?? "")
       .replace(/\{sliceId\}/g, sid ?? "")
       .replace(/\{taskId\}/g, tid ?? "");
+
+    // Inject browser safety instruction for hooks that may use browser tools (#1345).
+    // Vite HMR and other persistent connections prevent networkidle from resolving.
+    prompt += "\n\n**Browser tool safety:** Do NOT use `browser_wait_for` with `condition: \"network_idle\"` — it hangs indefinitely when dev servers keep persistent connections (Vite HMR, WebSocket). Use `selector_visible`, `text_visible`, or `delay` instead.";
 
     return {
       hookName: config.name,
