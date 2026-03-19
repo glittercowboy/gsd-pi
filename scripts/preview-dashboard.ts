@@ -77,7 +77,7 @@ const nextStep = noMilestone ? "" : "reassess roadmap";
 const pwd = noMilestone
   ? "~/Github/my-project (main)"
   : "~/Github/git-patcher/.gsd/worktrees/M001-07dqzj (milestone/M001-07dqzj)";
-const tokenStats = "↑22 ↓11k R1.1M W38k ⚡85% $18.668 35.2%/200k";
+const tokenStats = "i22 o11k R1.1M W38k 85%hit $18.668 35.2%/200k";
 const modelDisplay = "anthropic/claude-opus-4-6";
 
 // Health states
@@ -212,7 +212,7 @@ function render(w: number, healthState: { icon: string; color: string; summary: 
 
   // Footer: stats right-aligned, then pwd + hints
   lines.push("");
-  const statsStr = theme.fg("dim", `i22 o11k R1.1M W38k 85%hit $18.668 35.2%/200k ${modelDisplay}`);
+  const statsStr = theme.fg("dim", `${tokenStats} ${modelDisplay}`);
   lines.push(rightAlign("", statsStr, w));
   const hintStr = theme.fg("dim", "esc pause | ⌃⌥G dashboard");
   const pwdStr = theme.fg("dim", pwd);
