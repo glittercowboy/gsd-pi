@@ -805,7 +805,7 @@ export async function inlinePriorMilestoneSummary(mid: string, base: string): Pr
  * file not on disk) - callers can distinguish "no manifest" from "empty manifest".
  */
 export async function getManifestStatus(
-  base: string, milestoneId: string,
+  base: string, milestoneId: string, projectRoot?: string,
 ): Promise<ManifestStatus | null> {
   const resolvedPath = resolveMilestoneFile(base, milestoneId, 'SECRETS');
   if (!resolvedPath) return null;
@@ -815,8 +815,17 @@ export async function getManifestStatus(
 
   const manifest = parseSecretsManifest(content);
   const keys = manifest.entries.map(e => e.key);
+
+  // Check both the base path .env AND the project root .env (#1387).
+  // In worktree mode, base is the worktree path which may not have .env.
+  // The project root's .env is where the user actually defined their keys.
   const existingKeys = await checkExistingEnvKeys(keys, resolve(base, '.env'));
   const existingSet = new Set(existingKeys);
+
+  if (projectRoot && projectRoot !== base) {
+    const rootKeys = await checkExistingEnvKeys(keys, resolve(projectRoot, '.env'));
+    for (const k of rootKeys) existingSet.add(k);
+  }
 
   const result: ManifestStatus = {
     pending: [],

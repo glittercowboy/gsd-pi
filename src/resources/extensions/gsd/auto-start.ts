@@ -484,7 +484,7 @@ export async function bootstrapAutoSession(
     // Secrets collection gate
     const mid = state.activeMilestone!.id;
     try {
-      const manifestStatus = await getManifestStatus(base, mid);
+      const manifestStatus = await getManifestStatus(base, mid, s.originalBasePath || base);
       if (manifestStatus && manifestStatus.pending.length > 0) {
         const result = await collectSecretsFromManifest(base, mid, ctx);
         if (
