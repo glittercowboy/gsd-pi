@@ -15,9 +15,10 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { gsdRoot } from "./paths.js";
 import { parse as parseYaml } from "yaml";
-import type { PostUnitHookConfig, PreDispatchHookConfig } from "./types.js";
+import type { PostUnitHookConfig, PreDispatchHookConfig, TokenProfile } from "./types.js";
 import type { DynamicRoutingConfig } from "./model-router.js";
 import { normalizeStringArray } from "../shared/mod.js";
+import { resolveProfileDefaults as _resolveProfileDefaults } from "./preferences-models.js";
 
 import {
   MODE_DEFAULTS,
@@ -138,6 +139,18 @@ export function loadEffectiveGSDPreferences(): LoadedGSDPreferences | null {
       scope: "project",
       preferences: mergePreferences(globalPreferences.preferences, projectPreferences.preferences),
       ...(mergedWarnings.length > 0 ? { warnings: mergedWarnings } : {}),
+    };
+  }
+
+  // Apply token-profile defaults as the lowest-priority layer so that
+  // `token_profile: budget` sets models and phase-skips automatically.
+  // Explicit user preferences always override profile defaults.
+  const profile = result.preferences.token_profile as TokenProfile | undefined;
+  if (profile) {
+    const profileDefaults = _resolveProfileDefaults(profile);
+    result = {
+      ...result,
+      preferences: mergePreferences(profileDefaults as GSDPreferences, result.preferences),
     };
   }
 

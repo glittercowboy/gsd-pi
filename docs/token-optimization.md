@@ -105,7 +105,11 @@ Explicit `phases` settings always override the profile defaults.
 
 ## Complexity-Based Task Routing
 
-GSD automatically classifies each task by complexity and routes it to an appropriate model tier. This means simple documentation fixes don't burn expensive Opus tokens, while complex architectural work gets the reasoning power it needs.
+GSD classifies each task by complexity and routes it to an appropriate model tier when dynamic routing is enabled. Simple documentation fixes use cheaper models while complex architectural work gets the reasoning power it needs.
+
+> **Prerequisite:** Dynamic routing requires explicit `models` in your preferences. Without a `models` section, routing is skipped and the session's launch model is used for all phases. Token profiles set `models` automatically.
+
+> **Ceiling behavior:** When dynamic routing is active, the model configured for each phase acts as a **ceiling**, not a fixed assignment. The router may downgrade to a cheaper model for simpler tasks but never upgrades beyond the configured model.
 
 ### How Classification Works
 
@@ -172,13 +176,15 @@ GSD tracks the success and failure of each tier assignment over time and adjusts
 
 ### User Feedback
 
-GSD accepts manual feedback to accelerate learning:
+Use `/gsd rate` to submit feedback on the last completed unit's model tier:
 
-- **"over"** — the model was overpowered for this task (encourages downgrading)
-- **"under"** — the model wasn't capable enough (encourages upgrading)
-- **"ok"** — correct assignment (no adjustment)
+```
+/gsd rate over    # model was overpowered — encourage cheaper next time
+/gsd rate ok      # model was appropriate — no adjustment
+/gsd rate under   # model was too weak — encourage stronger next time
+```
 
-Feedback signals are weighted 2× compared to automatic outcomes.
+Feedback signals are weighted 2× compared to automatic outcomes. Requires dynamic routing to be active (the last unit must have tier data).
 
 ### Data Management
 

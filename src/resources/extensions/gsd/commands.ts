@@ -89,6 +89,7 @@ export function registerGSDCommand(pi: ExtensionAPI): void {
         { cmd: "triage", desc: "Manually trigger triage of pending captures" },
         { cmd: "dispatch", desc: "Dispatch a specific phase directly" },
         { cmd: "history", desc: "View execution history" },
+        { cmd: "rate", desc: "Rate last unit's model tier (over/ok/under) — improves adaptive routing" },
         { cmd: "undo", desc: "Revert last completed unit" },
         { cmd: "skip", desc: "Prevent a unit from auto-mode dispatch" },
         { cmd: "export", desc: "Export milestone/slice results" },
@@ -563,6 +564,12 @@ export async function handleGSDCommand(
 
       if (trimmed === "undo" || trimmed.startsWith("undo ")) {
         await handleUndo(trimmed.replace(/^undo\s*/, "").trim(), ctx, pi, projectRoot());
+        return;
+      }
+
+      if (trimmed === "rate" || trimmed.startsWith("rate ")) {
+        const { handleRate } = await import("./commands-rate.js");
+        await handleRate(trimmed.replace(/^rate\s*/, "").trim(), ctx, projectRoot());
         return;
       }
 
