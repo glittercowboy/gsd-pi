@@ -11,6 +11,7 @@ import type { DoctorIssue, DoctorIssueCode } from "./doctor-types.js";
 import { COMPLETION_TRANSITION_CODES } from "./doctor-types.js";
 import { checkGitHealth, checkRuntimeHealth } from "./doctor-checks.js";
 import { checkEnvironmentHealth } from "./doctor-environment.js";
+import { runProviderChecks } from "./doctor-providers.js";
 
 // ── Re-exports ─────────────────────────────────────────────────────────────
 // All public types and functions from extracted modules are re-exported here
@@ -395,6 +396,35 @@ export async function runGSDDoctor(basePath: string, options?: { fix?: boolean; 
 
   // Environment health checks (#1221: missing tools, port conflicts, stale deps, disk space)
   await checkEnvironmentHealth(basePath, issues, { includeRemote: !options?.scope });
+
+  // Provider / auth health checks — detect missing or backed-off API keys before dispatching
+  try {
+    const providerResults = runProviderChecks();
+    for (const result of providerResults) {
+      if (!result.required) continue;
+      if (result.status === "error") {
+        issues.push({
+          severity: "error",
+          code: "provider_key_missing",
+          scope: "project",
+          unitId: "project",
+          message: result.message + (result.detail ? ` — ${result.detail}` : ""),
+          fixable: false,
+        });
+      } else if (result.status === "warning") {
+        issues.push({
+          severity: "warning",
+          code: "provider_key_backedoff",
+          scope: "project",
+          unitId: "project",
+          message: result.message + (result.detail ? ` — ${result.detail}` : ""),
+          fixable: false,
+        });
+      }
+    }
+  } catch {
+    // Non-fatal — provider check failure should not block other checks
+  }
 
   const milestonesPath = milestonesDir(basePath);
   if (!existsSync(milestonesPath)) {

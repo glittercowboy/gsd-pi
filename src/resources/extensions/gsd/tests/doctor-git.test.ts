@@ -2,9 +2,10 @@
  * doctor-git.test.ts — Integration tests for doctor git health checks.
  *
  * Creates real temp git repos with deliberate broken state, runs runGSDDoctor,
- * and asserts correct detection and fixing of all 4 git issue codes:
+ * and asserts correct detection and fixing of git issue codes:
  *   orphaned_auto_worktree, stale_milestone_branch,
- *   corrupt_merge_state, tracked_runtime_files
+ *   corrupt_merge_state, tracked_runtime_files,
+ *   integration_branch_missing, worktree_directory_orphaned
  */
 
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync, realpathSync } from "node:fs";
@@ -297,6 +298,101 @@ async function main(): Promise<void> {
     }
     } else {
       console.log("\n=== none-mode skips stale branch (skipped on Windows) ===");
+    }
+
+    // ─── Test: Integration branch missing ──────────────────────────────
+    if (process.platform !== "win32") {
+    console.log("\n=== integration_branch_missing ===");
+    {
+      const dir = createRepoWithActiveMilestone();
+      cleanups.push(dir);
+
+      // Write integration branch metadata for M001 pointing to a non-existent branch
+      const metaPath = join(dir, ".gsd", "milestones", "M001", "M001-META.json");
+      writeFileSync(metaPath, JSON.stringify({ integrationBranch: "feat/does-not-exist" }, null, 2));
+
+      const detect = await runGSDDoctor(dir);
+      const missingBranchIssues = detect.issues.filter(i => i.code === "integration_branch_missing");
+      assertTrue(missingBranchIssues.length > 0, "detects missing integration branch");
+      assertTrue(
+        missingBranchIssues[0]?.message.includes("feat/does-not-exist"),
+        "message includes the missing branch name",
+      );
+      assertEq(missingBranchIssues[0]?.fixable, false, "integration_branch_missing is not auto-fixable");
+      assertEq(missingBranchIssues[0]?.severity, "error", "severity is error");
+    }
+    } else {
+      console.log("\n=== integration_branch_missing (skipped on Windows) ===");
+    }
+
+    // ─── Test: Integration branch present — no false positive ──────────
+    if (process.platform !== "win32") {
+    console.log("\n=== integration_branch_missing (no false positive) ===");
+    {
+      const dir = createRepoWithActiveMilestone();
+      cleanups.push(dir);
+
+      // Write integration branch metadata for M001 pointing to "main" (which exists)
+      const metaPath = join(dir, ".gsd", "milestones", "M001", "M001-META.json");
+      writeFileSync(metaPath, JSON.stringify({ integrationBranch: "main" }, null, 2));
+
+      const detect = await runGSDDoctor(dir);
+      const missingBranchIssues = detect.issues.filter(i => i.code === "integration_branch_missing");
+      assertEq(missingBranchIssues.length, 0, "existing integration branch NOT flagged");
+    }
+    } else {
+      console.log("\n=== integration_branch_missing (no false positive — skipped on Windows) ===");
+    }
+
+    // ─── Test: Orphaned worktree directory ─────────────────────────────
+    if (process.platform !== "win32") {
+    console.log("\n=== worktree_directory_orphaned ===");
+    {
+      const dir = createRepoWithActiveMilestone();
+      cleanups.push(dir);
+
+      // Create a worktrees/ dir with an entry that is NOT in git worktree list
+      const orphanDir = join(dir, ".gsd", "worktrees", "orphan-feature");
+      mkdirSync(orphanDir, { recursive: true });
+      writeFileSync(join(orphanDir, "some-file.txt"), "leftover content\n");
+
+      const detect = await runGSDDoctor(dir);
+      const orphanDirIssues = detect.issues.filter(i => i.code === "worktree_directory_orphaned");
+      assertTrue(orphanDirIssues.length > 0, "detects orphaned worktree directory");
+      assertTrue(
+        orphanDirIssues[0]?.message.includes("orphan-feature"),
+        "message includes the orphaned directory name",
+      );
+      assertTrue(orphanDirIssues[0]?.fixable === true, "worktree_directory_orphaned is fixable");
+
+      const fixed = await runGSDDoctor(dir, { fix: true });
+      assertTrue(
+        fixed.fixesApplied.some(f => f.includes("removed orphaned worktree directory")),
+        "fix removes orphaned worktree directory",
+      );
+      assertTrue(!existsSync(orphanDir), "orphaned directory removed after fix");
+    }
+    } else {
+      console.log("\n=== worktree_directory_orphaned (skipped on Windows) ===");
+    }
+
+    // ─── Test: Registered worktree NOT flagged as orphaned ─────────────
+    if (process.platform !== "win32") {
+    console.log("\n=== worktree_directory_orphaned (registered worktree not flagged) ===");
+    {
+      const dir = createRepoWithActiveMilestone();
+      cleanups.push(dir);
+
+      // Create a real registered worktree under .gsd/worktrees/
+      mkdirSync(join(dir, ".gsd", "worktrees"), { recursive: true });
+      run("git worktree add -b worktree/feature-1 .gsd/worktrees/feature-1", dir);
+
+      const detect = await runGSDDoctor(dir);
+      const orphanDirIssues = detect.issues.filter(i => i.code === "worktree_directory_orphaned");
+      assertEq(orphanDirIssues.length, 0, "registered worktree NOT flagged as orphaned");
+    }
+    } else {
+      console.log("\n=== worktree_directory_orphaned (registered worktree not flagged — skipped on Windows) ===");
     }
 
     // ─── Test 9: none-mode still detects corrupt merge state ───────────

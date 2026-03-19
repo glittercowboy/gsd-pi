@@ -45,7 +45,15 @@ export type DoctorIssueCode =
   | "env_python"
   | "env_cargo"
   | "env_go"
-  | "env_git_remote";
+  | "env_git_remote"
+  // Provider / auth checks
+  | "provider_key_missing"
+  | "provider_key_backedoff"
+  // Lock infrastructure checks
+  | "stranded_lock_directory"
+  // Git / worktree integrity checks
+  | "integration_branch_missing"
+  | "worktree_directory_orphaned";
 
 /**
  * Issue codes that represent expected completion-transition states.

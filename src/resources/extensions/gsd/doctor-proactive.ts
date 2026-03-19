@@ -20,6 +20,9 @@ import { gsdRoot, resolveGsdRootFile } from "./paths.js";
 import { readCrashLock, isLockProcessAlive, clearLock } from "./crash-recovery.js";
 import { abortAndReset } from "./git-self-heal.js";
 import { rebuildState } from "./doctor.js";
+import { deriveState } from "./state.js";
+import { readIntegrationBranch } from "./git-service.js";
+import { nativeBranchExists, nativeIsRepo } from "./native-git-bridge.js";
 
 // ── Health Score Tracking ──────────────────────────────────────────────────
 
@@ -189,6 +192,27 @@ export async function preDispatchHealthGate(basePath: string): Promise<PreDispat
     }
   } catch {
     // Non-fatal — dispatch continues without STATE.md if rebuild fails
+  }
+
+  // ── Integration branch existence check ──
+  // If the active milestone's recorded integration branch no longer exists in
+  // git, the merge-back at the end of the milestone will fail. Block dispatch
+  // now to surface this before work is lost.
+  try {
+    if (nativeIsRepo(basePath)) {
+      const state = await deriveState(basePath);
+      if (state.activeMilestone) {
+        const integrationBranch = readIntegrationBranch(basePath, state.activeMilestone.id);
+        if (integrationBranch && !nativeBranchExists(basePath, integrationBranch)) {
+          issues.push(
+            `Integration branch "${integrationBranch}" for milestone ${state.activeMilestone.id} no longer exists in git. ` +
+            `Restore the branch or update the integration branch before dispatching. Run /gsd doctor for details.`,
+          );
+        }
+      }
+    }
+  } catch {
+    // Non-fatal — dispatch continues if state/branch check fails
   }
 
   // If we had critical issues that couldn't be auto-healed, block dispatch

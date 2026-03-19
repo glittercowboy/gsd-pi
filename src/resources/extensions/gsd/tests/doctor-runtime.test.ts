@@ -2,9 +2,9 @@
  * doctor-runtime.test.ts — Tests for doctor runtime health checks.
  *
  * Tests detection and auto-fix of:
- *   stale_crash_lock, orphaned_completed_units, stale_hook_state,
- *   activity_log_bloat, state_file_missing, state_file_stale,
- *   gitignore_missing_patterns
+ *   stale_crash_lock, stranded_lock_directory, orphaned_completed_units,
+ *   stale_hook_state, activity_log_bloat, state_file_missing,
+ *   state_file_stale, gitignore_missing_patterns
  */
 
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync, readFileSync, realpathSync } from "node:fs";
@@ -288,6 +288,55 @@ node_modules/
       // Verify keys were cleaned
       const content = JSON.parse(readFileSync(join(dir, ".gsd", "completed-units.json"), "utf-8"));
       assertEq(content.length, 0, "all orphaned keys removed");
+    }
+
+    // ─── Test: Stranded lock directory detection & fix ────────────────
+    console.log("\n=== stranded_lock_directory ===");
+    {
+      const dir = createMinimalProject();
+      cleanups.push(dir);
+
+      // Create the proper-lockfile lock directory without a live lock holder.
+      // The lock dir sits at <parent of .gsd>/.gsd.lock (i.e., <basePath>/.gsd.lock).
+      const lockDir = join(dir, ".gsd.lock");
+      mkdirSync(lockDir, { recursive: true });
+
+      const detect = await runGSDDoctor(dir);
+      const strandedIssues = detect.issues.filter(i => i.code === "stranded_lock_directory");
+      assertTrue(strandedIssues.length > 0, "detects stranded lock directory");
+      assertTrue(strandedIssues[0]?.message.includes("lock directory"), "message describes stranded lock directory");
+      assertTrue(strandedIssues[0]?.fixable === true, "stranded lock dir is fixable");
+
+      const fixed = await runGSDDoctor(dir, { fix: true });
+      assertTrue(
+        fixed.fixesApplied.some(f => f.includes("removed stranded lock directory")),
+        "fix removes stranded lock directory",
+      );
+      assertTrue(!existsSync(lockDir), "lock directory removed after fix");
+    }
+
+    // ─── Test: Stranded lock dir with live lock holder — NOT flagged ───
+    console.log("\n=== stranded_lock_directory (live holder not flagged) ===");
+    {
+      const dir = createMinimalProject();
+      cleanups.push(dir);
+
+      // Create lock dir + auto.lock with PID 1 (init/launchd — always alive, never our own PID)
+      const lockDir = join(dir, ".gsd.lock");
+      mkdirSync(lockDir, { recursive: true });
+      const liveLockData = {
+        pid: 1,
+        startedAt: new Date().toISOString(),
+        unitType: "execute-task",
+        unitId: "M001/S01/T01",
+        unitStartedAt: new Date().toISOString(),
+        completedUnits: 1,
+      };
+      writeFileSync(join(dir, ".gsd", "auto.lock"), JSON.stringify(liveLockData, null, 2));
+
+      const detect = await runGSDDoctor(dir);
+      const strandedIssues = detect.issues.filter(i => i.code === "stranded_lock_directory");
+      assertEq(strandedIssues.length, 0, "live lock holder: stranded_lock_directory NOT detected");
     }
 
   } finally {

@@ -1,15 +1,15 @@
-import { existsSync, lstatSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
-import { join, sep } from "node:path";
+import { existsSync, lstatSync, readdirSync, readFileSync, realpathSync, rmSync, statSync } from "node:fs";
+import { dirname, join, sep } from "node:path";
 
 import type { DoctorIssue, DoctorIssueCode } from "./doctor-types.js";
 import { loadFile, parseRoadmap } from "./files.js";
 import { resolveMilestoneFile, milestonesDir, gsdRoot, resolveGsdRootFile, relGsdRootFile } from "./paths.js";
 import { deriveState, isMilestoneComplete } from "./state.js";
 import { saveFile } from "./files.js";
-import { listWorktrees, resolveGitDir } from "./worktree-manager.js";
+import { listWorktrees, resolveGitDir, worktreesDir } from "./worktree-manager.js";
 import { abortAndReset } from "./git-self-heal.js";
-import { RUNTIME_EXCLUSION_PATHS } from "./git-service.js";
-import { nativeIsRepo, nativeWorktreeRemove, nativeBranchList, nativeBranchDelete, nativeLsFiles, nativeRmCached } from "./native-git-bridge.js";
+import { RUNTIME_EXCLUSION_PATHS, readIntegrationBranch } from "./git-service.js";
+import { nativeIsRepo, nativeBranchExists, nativeWorktreeList, nativeWorktreeRemove, nativeBranchList, nativeBranchDelete, nativeLsFiles, nativeRmCached } from "./native-git-bridge.js";
 import { readCrashLock, isLockProcessAlive, clearLock } from "./crash-recovery.js";
 import { ensureGitignore } from "./gitignore.js";
 import { readAllSessionStatuses, isSessionStale, removeSessionStatus } from "./session-status-io.js";
@@ -215,6 +215,70 @@ export async function checkGitHealth(
   } catch {
     // git branch list failed — skip
   }
+
+  // ── Integration branch existence ──────────────────────────────────────
+  // For each active (non-complete) milestone, verify the stored integration
+  // branch still exists in git. A missing integration branch blocks merge-back
+  // and causes the next merge operation to fail silently.
+  try {
+    const state = await deriveState(basePath);
+    for (const milestone of state.registry) {
+      if (milestone.status === "complete") continue;
+      const integrationBranch = readIntegrationBranch(basePath, milestone.id);
+      if (!integrationBranch) continue; // No stored branch — skip (not yet set)
+      if (!nativeBranchExists(basePath, integrationBranch)) {
+        issues.push({
+          severity: "error",
+          code: "integration_branch_missing",
+          scope: "milestone",
+          unitId: milestone.id,
+          message: `Milestone ${milestone.id} recorded integration branch "${integrationBranch}" but that branch no longer exists in git. Merge-back will fail.`,
+          fixable: false,
+        });
+      }
+    }
+  } catch {
+    // Non-fatal — integration branch check failed
+  }
+
+  // ── Orphaned worktree directories ────────────────────────────────────
+  // Worktree removal can fail after a branch delete, leaving a directory
+  // that is no longer registered with git. These orphaned dirs cause
+  // "already exists" errors when re-creating the same worktree name.
+  try {
+    const wtDir = worktreesDir(basePath);
+    if (existsSync(wtDir)) {
+      const registeredPaths = new Set(
+        nativeWorktreeList(basePath).map(entry => entry.path),
+      );
+      for (const entry of readdirSync(wtDir)) {
+        const fullPath = join(wtDir, entry);
+        try {
+          if (!statSync(fullPath).isDirectory()) continue;
+        } catch { continue; }
+        if (!registeredPaths.has(fullPath)) {
+          issues.push({
+            severity: "warning",
+            code: "worktree_directory_orphaned",
+            scope: "project",
+            unitId: entry,
+            message: `Worktree directory ${fullPath} exists on disk but is not registered with git. Run "git worktree prune" or doctor --fix to remove it.`,
+            fixable: true,
+          });
+          if (shouldFix("worktree_directory_orphaned")) {
+            try {
+              rmSync(fullPath, { recursive: true, force: true });
+              fixesApplied.push(`removed orphaned worktree directory ${fullPath}`);
+            } catch {
+              fixesApplied.push(`failed to remove orphaned worktree directory ${fullPath}`);
+            }
+          }
+        }
+      }
+    }
+  } catch {
+    // Non-fatal — orphaned worktree directory check failed
+  }
 }
 
 // ── Runtime Health Checks ──────────────────────────────────────────────────
@@ -253,6 +317,44 @@ export async function checkRuntimeHealth(
     }
   } catch {
     // Non-fatal — crash lock check failed
+  }
+
+  // ── Stranded lock directory ────────────────────────────────────────────
+  // proper-lockfile creates a `.gsd.lock/` directory as the OS-level lock
+  // mechanism. If the process was SIGKILLed or crashed hard, this directory
+  // can remain on disk without any live process holding it. The next session
+  // fails to acquire the lock until the directory is removed (#1245).
+  try {
+    const lockDir = join(dirname(root), `${root.split("/").pop() ?? ".gsd"}.lock`);
+    if (existsSync(lockDir)) {
+      const statRes = statSync(lockDir);
+      if (statRes.isDirectory()) {
+        // Check if any live process actually holds this lock
+        const lock = readCrashLock(basePath);
+        const lockHolderAlive = lock ? isLockProcessAlive(lock) : false;
+        if (!lockHolderAlive) {
+          issues.push({
+            severity: "error",
+            code: "stranded_lock_directory",
+            scope: "project",
+            unitId: "project",
+            message: `Stranded lock directory "${lockDir}" exists but no live process holds the session lock. This blocks new auto-mode sessions from starting.`,
+            file: lockDir,
+            fixable: true,
+          });
+          if (shouldFix("stranded_lock_directory")) {
+            try {
+              rmSync(lockDir, { recursive: true, force: true });
+              fixesApplied.push(`removed stranded lock directory ${lockDir}`);
+            } catch {
+              fixesApplied.push(`failed to remove stranded lock directory ${lockDir}`);
+            }
+          }
+        }
+      }
+    }
+  } catch {
+    // Non-fatal — stranded lock directory check failed
   }
 
   // ── Stale parallel sessions ────────────────────────────────────────────
