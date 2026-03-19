@@ -170,7 +170,6 @@ export interface LoopDeps {
   pauseAuto: (ctx?: ExtensionContext, pi?: ExtensionAPI) => Promise<void>;
   clearUnitTimeout: () => void;
   updateProgressWidget: (ctx: ExtensionContext, unitType: string, unitId: string, state: GSDState) => void;
-  startDispatchGapWatchdog: (ctx: ExtensionContext, pi: ExtensionAPI) => void;
 
   // State and cache functions
   invalidateAllCaches: () => void;

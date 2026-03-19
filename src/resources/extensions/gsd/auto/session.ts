@@ -73,9 +73,7 @@ export interface SidecarItem {
 export const MAX_UNIT_DISPATCHES = 3;
 export const STUB_RECOVERY_THRESHOLD = 2;
 export const MAX_LIFETIME_DISPATCHES = 6;
-export const DISPATCH_GAP_TIMEOUT_MS = 5_000;
 export const NEW_SESSION_TIMEOUT_MS = 30_000;
-export const DISPATCH_HANG_TIMEOUT_MS = 60_000;
 
 // ─── AutoSession ─────────────────────────────────────────────────────────────
 
@@ -102,7 +100,6 @@ export class AutoSession {
   wrapupWarningHandle: ReturnType<typeof setTimeout> | null = null;
   idleWatchdogHandle: ReturnType<typeof setInterval> | null = null;
   continueHereHandle: ReturnType<typeof setInterval> | null = null;
-  dispatchGapHandle: ReturnType<typeof setTimeout> | null = null;
 
   // ── Current unit ─────────────────────────────────────────────────────────
   currentUnit: CurrentUnit | null = null;
@@ -124,11 +121,6 @@ export class AutoSession {
   resourceVersionOnStart: string | null = null;
   lastStateRebuildAt = 0;
 
-  // ── Guards ───────────────────────────────────────────────────────────────
-  handlingAgentEnd = false;
-  pendingAgentEndRetry = false;
-  dispatching = false;
-
   // ── Sidecar queue ─────────────────────────────────────────────────────
   sidecarQueue: SidecarItem[] = [];
 
@@ -148,7 +140,6 @@ export class AutoSession {
     if (this.wrapupWarningHandle) { clearTimeout(this.wrapupWarningHandle); this.wrapupWarningHandle = null; }
     if (this.idleWatchdogHandle) { clearInterval(this.idleWatchdogHandle); this.idleWatchdogHandle = null; }
     if (this.continueHereHandle) { clearInterval(this.continueHereHandle); this.continueHereHandle = null; }
-    if (this.dispatchGapHandle) { clearTimeout(this.dispatchGapHandle); this.dispatchGapHandle = null; }
   }
 
   resetDispatchCounters(): void {
@@ -208,11 +199,6 @@ export class AutoSession {
     this.resourceVersionOnStart = null;
     this.lastStateRebuildAt = 0;
 
-    // Guards
-    this.handlingAgentEnd = false;
-    this.pendingAgentEndRetry = false;
-    this.dispatching = false;
-
     // Metrics
     this.autoStartTime = 0;
     this.lastPromptCharCount = undefined;
@@ -234,7 +220,6 @@ export class AutoSession {
       currentUnit: this.currentUnit,
       completedUnits: this.completedUnits.length,
       unitDispatchCount: Object.fromEntries(this.unitDispatchCount),
-      dispatching: this.dispatching,
     };
   }
 }

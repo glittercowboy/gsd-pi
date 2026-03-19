@@ -2,7 +2,7 @@
  * Unit supervision timers — soft timeout warning, idle watchdog,
  * hard timeout, and context-pressure monitor.
  *
- * Extracted from dispatchNextUnit() in auto.ts. All timers are set up
+ * Originally extracted from dispatchNextUnit() in auto.ts (now deleted — replaced by autoLoop).
  * via startUnitSupervision() and torn down by the caller via clearUnitTimeout().
  */
 
