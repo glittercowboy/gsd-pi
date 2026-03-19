@@ -528,17 +528,20 @@ export function updateProgressWidget(
           const visibleTasks = taskDetailsCol.slice(0, maxVisibleTasks);
           for (const t of visibleTasks) {
             const isCurrent = task && t.id === task.id;
-            const glyph = t.done
-              ? theme.fg("success", GLYPH.statusDone)
-              : isCurrent
-                ? theme.fg("accent", "▸")
-                : theme.fg("dim", "○");
+            let prefix: string;
+            if (t.done) {
+              prefix = `${theme.fg("success", GLYPH.statusDone)} `;
+            } else if (isCurrent) {
+              prefix = `${theme.fg("accent", "▸")} `;
+            } else {
+              prefix = "   ";
+            }
             const label = isCurrent
               ? theme.fg("text", `${t.id}: ${t.title}`)
               : t.done
                 ? theme.fg("dim", `${t.id}: ${t.title}`)
                 : theme.fg("text", `${t.id}: ${t.title}`);
-            rightLines.push(truncateToWidth(`${rpad}${glyph} ${label}`, rightColWidth));
+            rightLines.push(truncateToWidth(`${rpad}${prefix}${label}`, rightColWidth));
           }
           if (taskDetailsCol.length > maxVisibleTasks) {
             rightLines.push(truncateToWidth(
@@ -550,17 +553,20 @@ export function updateProgressWidget(
           // Narrow single-column: task list goes into left column
           for (const t of taskDetailsCol.slice(0, maxVisibleTasks)) {
             const isCurrent = task && t.id === task.id;
-            const glyph = t.done
-              ? theme.fg("success", GLYPH.statusDone)
-              : isCurrent
-                ? theme.fg("accent", "▸")
-                : theme.fg("dim", "○");
+            let prefix: string;
+            if (t.done) {
+              prefix = `${theme.fg("success", GLYPH.statusDone)} `;
+            } else if (isCurrent) {
+              prefix = `${theme.fg("accent", "▸")} `;
+            } else {
+              prefix = "   ";
+            }
             const label = isCurrent
               ? theme.fg("text", `${t.id}: ${t.title}`)
               : t.done
                 ? theme.fg("dim", `${t.id}: ${t.title}`)
                 : theme.fg("text", `${t.id}: ${t.title}`);
-            leftLines.push(truncateToWidth(`${pad}${glyph} ${label}`, leftColWidth));
+            leftLines.push(truncateToWidth(`${pad}${prefix}${label}`, leftColWidth));
           }
         }
 

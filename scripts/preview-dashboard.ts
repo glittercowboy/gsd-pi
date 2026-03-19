@@ -185,33 +185,39 @@ function render(w: number, healthState: { icon: string; color: string; summary: 
   if (useTwoCol) {
     for (const t of mockTasks) {
       const isCurrent = t.id === currentTaskId;
-      const glyph = t.done
-        ? theme.fg("success", GLYPH.statusDone)
-        : isCurrent
-          ? theme.fg("accent", "▸")
-          : theme.fg("dim", "○");
+      let prefix: string;
+      if (t.done) {
+        prefix = `${theme.fg("success", GLYPH.statusDone)} `;
+      } else if (isCurrent) {
+        prefix = `${theme.fg("accent", "▸")} `;
+      } else {
+        prefix = "   ";
+      }
       const label = isCurrent
         ? theme.fg("text", `${t.id}: ${t.title}`)
         : t.done
           ? theme.fg("dim", `${t.id}: ${t.title}`)
           : theme.fg("text", `${t.id}: ${t.title}`);
-      rightLines.push(truncateToWidth(`${rpad}${glyph} ${label}`, rightColWidth));
+      rightLines.push(truncateToWidth(`${rpad}${prefix}${label}`, rightColWidth));
     }
   } else if (hasTasks) {
     // Narrow: tasks inline
     for (const t of mockTasks) {
       const isCurrent = t.id === currentTaskId;
-      const glyph = t.done
-        ? theme.fg("success", GLYPH.statusDone)
-        : isCurrent
-          ? theme.fg("accent", "▸")
-          : theme.fg("dim", "○");
+      let prefix: string;
+      if (t.done) {
+        prefix = `${theme.fg("success", GLYPH.statusDone)} `;
+      } else if (isCurrent) {
+        prefix = `${theme.fg("accent", "▸")} `;
+      } else {
+        prefix = "   ";
+      }
       const label = isCurrent
         ? theme.fg("text", `${t.id}: ${t.title}`)
         : t.done
           ? theme.fg("dim", `${t.id}: ${t.title}`)
           : theme.fg("text", `${t.id}: ${t.title}`);
-      leftLines.push(truncateToWidth(`${pad}${glyph} ${label}`, leftColWidth));
+      leftLines.push(truncateToWidth(`${pad}${prefix}${label}`, leftColWidth));
     }
   }
 
