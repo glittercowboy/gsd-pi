@@ -63,6 +63,7 @@ const TOOL_KEYS: ToolKeyConfig[] = [
 /** Known LLM provider IDs that, if authed, mean the user doesn't need onboarding */
 const LLM_PROVIDER_IDS = [
   'anthropic',
+  'anthropic-vertex',
   'openai',
   'github-copilot',
   'openai-codex',

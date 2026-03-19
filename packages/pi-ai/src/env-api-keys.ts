@@ -73,6 +73,20 @@ export function getEnvApiKey(provider: any): string | undefined {
 		return process.env.ANTHROPIC_OAUTH_TOKEN || process.env.ANTHROPIC_API_KEY;
 	}
 
+	// Anthropic on Vertex AI uses Application Default Credentials.
+	// Detected via ANTHROPIC_VERTEX_PROJECT_ID (same env var as Claude Code).
+	if (provider === "anthropic-vertex") {
+		const hasProject = !!process.env.ANTHROPIC_VERTEX_PROJECT_ID;
+		if (hasProject) {
+			return "<authenticated>";
+		}
+		// Fall back to Google Cloud project env vars
+		const hasGoogleProject = !!(process.env.GOOGLE_CLOUD_PROJECT || process.env.GCLOUD_PROJECT);
+		if (hasGoogleProject && hasVertexAdcCredentials()) {
+			return "<authenticated>";
+		}
+	}
+
 	// Vertex AI uses Application Default Credentials, not API keys.
 	// Auth is configured via `gcloud auth application-default login`.
 	if (provider === "google-vertex") {
