@@ -137,6 +137,42 @@ The harness enables answering: "Does the fact-check pipeline actually improve pl
 
 ---
 
+## Fixtures
+
+The M007-aos64t proof used a synthetic fixture designed for deterministic verification:
+
+**M999-PROOF Fixture.** A synthetic milestone with a single slice (S01) containing verifiable claims:
+- `C001`: "The latest Node.js LTS version is 18.x" — **REFUTED** with corrected value "22.x"
+- `C002`, `C003`: Additional test claims for coverage
+
+The fixture manifest (FACTCHECK-STATUS.json) declares `planImpacting: true` to trigger the reroute path. This enables controlled testing without external dependencies.
+
+**Fixture Location:** `src/resources/extensions/gsd/tests/fixtures/factcheck-runtime/M999-PROOF/`
+
+---
+
+## Metrics
+
+The M008 experiment harness provides structured measurement:
+
+**Comparison Metrics.** The baseline/treatment comparison captures:
+- Claim resolution count and rate
+- Execution duration per phase
+- Reroute cycle count
+
+**Fidelity Rubric.** Human evaluation on a 1-5 scale across:
+- Factual accuracy
+- Completeness
+- Coherence
+- Conciseness
+
+**Convergence Detection.** Iteration stops when:
+- All metric deltas fall below threshold (converged)
+- Max iterations reached (bounded)
+- Explicit non-convergence declared
+
+---
+
 ## Key Decisions
 
 ### D055: Evidence Classification Over Task Classification
