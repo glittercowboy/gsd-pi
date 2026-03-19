@@ -16,7 +16,7 @@
  * cpSync (directory copy) which works universally.
  */
 const { existsSync, mkdirSync, symlinkSync, cpSync, lstatSync, readlinkSync, unlinkSync } = require('fs')
-const { resolve, join } = require('path')
+const { resolve, join, relative, dirname } = require('path')
 
 const root = resolve(__dirname, '..')
 const packagesDir = join(root, 'packages')
@@ -50,7 +50,8 @@ for (const [dir, name] of Object.entries(packageMap)) {
       const stat = lstatSync(target)
       if (stat.isSymbolicLink()) {
         const linkTarget = readlinkSync(target)
-        if (resolve(join(nodeModulesGsd, linkTarget)) === source || linkTarget === source) {
+        const resolvedLink = resolve(dirname(target), linkTarget)
+        if (resolvedLink === source) {
           continue // Already correct
         }
         unlinkSync(target) // Wrong target, relink
@@ -64,7 +65,11 @@ for (const [dir, name] of Object.entries(packageMap)) {
 
   let symlinkOk = false
   try {
-    symlinkSync(source, target, 'junction') // junction works on Windows too
+    // Use relative path so the symlink survives being moved (e.g., Volta
+    // installs into a temp dir then renames to the final location — absolute
+    // symlinks would still point at the deleted temp path).
+    const relSource = relative(dirname(target), source)
+    symlinkSync(relSource, target, 'junction') // junction works on Windows too
     symlinkOk = true
     linked++
   } catch {
