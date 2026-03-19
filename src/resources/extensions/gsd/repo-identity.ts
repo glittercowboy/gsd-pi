@@ -10,7 +10,7 @@ import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, symlinkSync } from "node:fs";
 import { homedir } from "node:os";
-import { join, resolve } from "node:path";
+import { join, resolve, sep } from "node:path";
 
 // ─── Repo Identity ──────────────────────────────────────────────────────────
 
@@ -37,6 +37,27 @@ function getRemoteUrl(basePath: string): string {
  */
 function resolveGitRoot(basePath: string): string {
   try {
+    // In a worktree, --show-toplevel returns the worktree path, not the main
+    // repo root. Use --git-common-dir to find the shared .git directory,
+    // then derive the main repo root from it (#1288).
+    const commonDir = execFileSync("git", ["rev-parse", "--git-common-dir"], {
+      cwd: basePath,
+      encoding: "utf-8",
+      stdio: ["ignore", "pipe", "ignore"],
+      timeout: 5_000,
+    }).trim();
+
+    // If commonDir ends with .git/worktrees/<name>, the main repo is two
+    // levels up from the worktrees dir. If it's just .git, resolve normally.
+    if (commonDir.includes(`${sep}worktrees${sep}`) || commonDir.includes("/worktrees/")) {
+      // e.g., /path/to/project/.gsd/worktrees/M001/.git → /path/to/project
+      // or /path/to/project/.git/worktrees/M001 → /path/to/project
+      const gitDir = commonDir.replace(/[/\\]worktrees[/\\][^/\\]+$/, "");
+      const mainRoot = resolve(gitDir, "..");
+      return mainRoot;
+    }
+
+    // Not in a worktree — use --show-toplevel as usual
     return execFileSync("git", ["rev-parse", "--show-toplevel"], {
       cwd: basePath,
       encoding: "utf-8",
