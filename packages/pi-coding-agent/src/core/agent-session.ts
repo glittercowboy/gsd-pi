@@ -1171,11 +1171,14 @@ export class AgentSession {
 		if (images) {
 			content.push(...images);
 		}
-		this.agent.steer({
-			role: "user",
-			content,
-			timestamp: Date.now(),
-		});
+		this.agent.steer(
+			{
+				role: "user",
+				content,
+				timestamp: Date.now(),
+			},
+			"user",
+		);
 	}
 
 	/**
@@ -1187,11 +1190,14 @@ export class AgentSession {
 		if (images) {
 			content.push(...images);
 		}
-		this.agent.followUp({
-			role: "user",
-			content,
-			timestamp: Date.now(),
-		});
+		this.agent.followUp(
+			{
+				role: "user",
+				content,
+				timestamp: Date.now(),
+			},
+			"user",
+		);
 	}
 
 	/**
@@ -1304,10 +1310,28 @@ export class AgentSession {
 	 * @returns Object with steering and followUp arrays
 	 */
 	clearQueue(): { steering: string[]; followUp: string[] } {
-		const steering = [...this._steeringMessages];
-		const followUp = [...this._followUpMessages];
+		// Drain user-origin messages from agent queues before clearing.
+		// This preserves messages the user explicitly typed during streaming,
+		// while system-generated messages (extension notifications, etc.) are discarded.
+		const userMessages = this.agent.drainUserMessages();
+
+		// Extract text content from preserved user messages
+		const extractText = (m: AgentMessage): string => {
+			if (!("content" in m) || !Array.isArray(m.content)) return "";
+			const textPart = m.content.find((c: { type: string }) => c.type === "text");
+			return textPart && "text" in textPart ? (textPart as { text: string }).text : "";
+		};
+		const preservedSteering = userMessages.steering.map(extractText).filter((t) => t.length > 0);
+		const preservedFollowUp = userMessages.followUp.map(extractText).filter((t) => t.length > 0);
+
+		// Session-level string arrays track what was queued for display purposes.
+		// Return the full set (session-tracked + any agent-only user messages).
+		const steering = [...this._steeringMessages, ...preservedSteering];
+		const followUp = [...this._followUpMessages, ...preservedFollowUp];
 		this._steeringMessages = [];
 		this._followUpMessages = [];
+
+		// Clear remaining system messages from agent queues
 		this.agent.clearAllQueues();
 		return { steering, followUp };
 	}
