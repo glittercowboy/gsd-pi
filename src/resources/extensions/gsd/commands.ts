@@ -32,11 +32,13 @@ import { handleExport } from "./export.js";
 import {
   isParallelActive, getOrchestratorState, getWorkerStatuses,
   prepareParallelStart, startParallel, stopParallel,
-  pauseWorker, resumeWorker,
+  pauseWorker, resumeWorker, addWorkerMidSession,
 } from "./parallel-orchestrator.js";
-import { formatEligibilityReport } from "./parallel-eligibility.js";
+import { formatEligibilityReport, getMidSessionCandidates, checkConflictWithRunning } from "./parallel-eligibility.js";
 import { mergeAllCompleted, mergeCompletedMilestone, formatMergeResults } from "./parallel-merge.js";
 import { resolveParallelConfig } from "./preferences.js";
+import { analyzeDomainSplit, formatSplitProposal } from "./team-domain.js";
+import type { DomainSplitProposal } from "./team-domain.js";
 
 // ─── Imports from extracted modules ──────────────────────────────────────────
 import { handlePrefs, handlePrefsMode, handlePrefsWizard, ensurePreferencesFile } from "./commands-prefs-wizard.js";
@@ -49,6 +51,32 @@ import { runEnvironmentChecks } from "./doctor-environment.js";
 import { handleLogs } from "./commands-logs.js";
 import { handleStart, handleTemplates, getTemplateCompletions } from "./commands-workflow-templates.js";
 
+// ─── Re-exports (preserve public API surface) ───────────────────────────────
+export { handlePrefs, handlePrefsMode, handlePrefsWizard, ensurePreferencesFile, handleImportClaude, buildCategorySummaries, serializePreferencesToFrontmatter, yamlSafeString, configureMode } from "./commands-prefs-wizard.js";
+export { TOOL_KEYS, loadToolApiKeys, getConfigAuthStorage, handleConfig } from "./commands-config.js";
+export { type InspectData, formatInspectOutput, handleInspect } from "./commands-inspect.js";
+export { handleCleanupBranches, handleCleanupSnapshots, handleSkip, handleDryRun } from "./commands-maintenance.js";
+export { handleDoctor, handleSteer, handleCapture, handleTriage, handleKnowledge, handleRunHook, handleUpdate, handleSkillHealth } from "./commands-handlers.js";
+
+export { formatSplitProposal } from "./team-domain.js";
+
+export function dispatchDoctorHeal(pi: ExtensionAPI, scope: string | undefined, reportText: string, structuredIssues: string): void {
+  const workflowPath = process.env.GSD_WORKFLOW_PATH ?? join(process.env.HOME ?? "~", ".pi", "GSD-WORKFLOW.md");
+  const workflow = readFileSync(workflowPath, "utf-8");
+  const prompt = loadPrompt("doctor-heal", {
+    doctorSummary: reportText,
+    structuredIssues,
+    scopeLabel: scope ?? "active milestone / blocking scope",
+    doctorCommandSuffix: scope ? ` ${scope}` : "",
+  });
+
+  const content = `Read the following GSD workflow protocol and execute exactly.\n\n${workflow}\n\n## Your Task\n\n${prompt}`;
+
+  pi.sendMessage(
+    { customType: "gsd-doctor-heal", content, display: false },
+    { triggerTurn: true },
+  );
+}
 
 /** Resolve the effective project root, accounting for worktree paths. */
 export function projectRoot(): string {
@@ -161,6 +189,7 @@ export function registerGSDCommand(pi: ExtensionAPI): void {
           { cmd: "pause", desc: "Pause a specific worker" },
           { cmd: "resume", desc: "Resume a paused worker" },
           { cmd: "merge", desc: "Merge completed milestone branches" },
+          { cmd: "split", desc: "Propose domain-aware worker assignments" },
         ];
         return subs
           .filter((s) => s.cmd.startsWith(subPrefix))
@@ -636,9 +665,30 @@ export function registerGSDCommand(pi: ExtensionAPI): void {
 
         if (subCmd === "merge") {
           const mid = rest.trim() || undefined;
+
+          // Construct resolveFn from team config — only if merge_healing is not "manual"
+          const loaded = loadEffectiveGSDPreferences();
+          const config = resolveParallelConfig(loaded?.preferences);
+          let resolveFn: ((prompt: string) => Promise<string>) | undefined;
+          let confidenceThreshold: number | undefined;
+
+          if (config.team?.merge_healing !== "manual") {
+            // TODO: Wire real LLM call when Pi SDK supports pi.chat()
+            const piAny = pi as unknown as Record<string, unknown>;
+            if (typeof piAny.chat === "function") {
+              const piChat = piAny.chat as (prompt: string) => Promise<unknown>;
+              resolveFn = async (prompt: string) => {
+                const response = await piChat(prompt);
+                return typeof response === "string" ? response : String(response);
+              };
+            }
+            // Set confidence threshold based on merge_healing mode
+            confidenceThreshold = config.team?.merge_healing === "auto" ? 0.6 : 0.8;
+          }
+
           if (mid) {
             // Merge a specific milestone
-            const result = await mergeCompletedMilestone(projectRoot(), mid);
+            const result = await mergeCompletedMilestone(projectRoot(), mid, resolveFn, confidenceThreshold);
             pi.sendMessage({ customType: "gsd-parallel", content: formatMergeResults([result]), display: false });
             return;
           }
@@ -648,14 +698,26 @@ export function registerGSDCommand(pi: ExtensionAPI): void {
             pi.sendMessage({ customType: "gsd-parallel", content: "No parallel workers to merge.", display: false });
             return;
           }
-          const results = await mergeAllCompleted(projectRoot(), workers);
+          const results = await mergeAllCompleted(projectRoot(), workers, "sequential", resolveFn, confidenceThreshold);
           pi.sendMessage({ customType: "gsd-parallel", content: formatMergeResults(results), display: false });
+          return;
+        }
+
+        if (subCmd === "split") {
+          const targetMid = rest.trim() || undefined;
+          if (!targetMid) {
+            pi.sendMessage({ customType: "gsd-parallel", content: "Usage: /gsd parallel split <milestoneId>", display: false });
+            return;
+          }
+          const proposal = await analyzeDomainSplit(projectRoot(), targetMid);
+          const report = formatSplitProposal(proposal);
+          pi.sendMessage({ customType: "gsd-parallel", content: report, display: false });
           return;
         }
 
         pi.sendMessage({
           customType: "gsd-parallel",
-          content: `Unknown parallel subcommand "${subCmd}". Usage: /gsd parallel [start|status|stop|pause|resume|merge]`,
+          content: `Unknown parallel subcommand "${subCmd}". Usage: /gsd parallel [start|status|stop|pause|resume|merge|split]`,
           display: false,
         });
         return;
@@ -966,7 +1028,75 @@ async function handleStatus(ctx: ExtensionCommandContext): Promise<void> {
 
   const result = await ctx.ui.custom<void>(
     (tui, theme, _kb, done) => {
-      return new GSDDashboardOverlay(tui, theme, () => done());
+      const createDashboard = (): GSDDashboardOverlay => {
+        return new GSDDashboardOverlay(tui, theme, () => done(), {
+          onAdd: async () => {
+            const bp = projectRoot();
+            const orchState = getOrchestratorState();
+            if (!orchState) {
+              ctx.ui.notify("Parallel orchestrator not active", "warning");
+              createDashboard();
+              return;
+            }
+            const runningMids = [...orchState.workers.values()]
+              .filter(w => w.state !== "stopped" && w.state !== "error")
+              .map(w => w.milestoneId);
+            const result = await getMidSessionCandidates(bp, runningMids, orchState.config.max_workers);
+            if (result.atCapacity) {
+              ctx.ui.notify("At max worker capacity", "warning");
+              createDashboard();
+              return;
+            }
+            const readyCandidates = result.candidates.filter(c => c.ready);
+            if (readyCandidates.length === 0) {
+              ctx.ui.notify("No eligible milestones ready for parallel execution", "info");
+              createDashboard();
+              return;
+            }
+            const options = readyCandidates.map(c => `${c.milestoneId}: ${c.title}`);
+            const selected = await ctx.ui.select("Add parallel worker", options);
+            if (!selected) {
+              createDashboard();
+              return;
+            }
+            const selectedStr = Array.isArray(selected) ? selected[0] : selected;
+            const selectedMid = selectedStr?.split(":")[0]?.trim();
+            if (!selectedMid) {
+              createDashboard();
+              return;
+            }
+            // Conflict gate: check for file overlap with running workers
+            const conflict = await checkConflictWithRunning(bp, selectedMid, runningMids);
+            if (conflict.hasConflict) {
+              const fileList = conflict.overlappingFiles.slice(0, 5).join(", ");
+              const suffix = conflict.overlappingFiles.length > 5 ? "..." : "";
+              const msg = `${selectedMid} overlaps files with running ${conflict.conflictingWorkerIds.join(", ")}: ${fileList}${suffix}`;
+              const choice = await ctx.ui.select(msg, [
+                "Queue for later",
+                "Start anyway (risk conflicts)",
+                "Cancel",
+              ]);
+              const choiceStr = Array.isArray(choice) ? choice[0] : choice;
+              if (!choiceStr || choiceStr === "Cancel") {
+                createDashboard();
+                return;
+              }
+              if (choiceStr === "Queue for later") {
+                ctx.ui.notify(`${selectedMid} queued — add it after conflicting workers complete`, "info");
+                createDashboard();
+                return;
+              }
+              // "Start anyway" falls through to addWorkerMidSession
+            }
+            const addResult = addWorkerMidSession(bp, selectedMid);
+            if (!addResult.success) {
+              ctx.ui.notify(addResult.error ?? "Failed to add worker", "error");
+            }
+            createDashboard();
+          },
+        });
+      };
+      return createDashboard();
     },
     {
       overlay: true,

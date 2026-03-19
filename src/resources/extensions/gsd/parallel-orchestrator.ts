@@ -32,13 +32,19 @@ import {
   removeSessionStatus,
   sendSignal,
   cleanupStaleSessions,
+  readTeamSignals,
+  writeTeamSignal,
+  clearTeamSignals,
   type SessionStatus,
+  type TeamSignal,
 } from "./session-status-io.js";
 import {
   analyzeParallelEligibility,
   type ParallelCandidates,
 } from "./parallel-eligibility.js";
 import { getErrorMessage } from "./error-utils.js";
+import { isPortActive, getPortState, clearPortState } from "./context-tracker.js";
+import { syncContracts } from "./team-contracts.js";
 
 // ─── Types ─────────────────────────────────────────────────────────────────
 
@@ -52,6 +58,9 @@ export interface WorkerInfo {
   state: "running" | "paused" | "stopped" | "error";
   completedUnits: number;
   cost: number;
+  stderrLines: string[];
+  restartCount: number;
+  domain?: string;
 }
 
 export interface OrchestratorState {
@@ -82,10 +91,15 @@ export interface PersistedState {
     state: "running" | "paused" | "stopped" | "error";
     completedUnits: number;
     cost: number;
+    stderrLines: string[];
+    restartCount: number;
+    domain?: string;
   }>;
   totalCost: number;
   startedAt: number;
   configSnapshot: { max_workers: number; budget_ceiling?: number };
+  /** Port state for crash recovery — present when coordinator is ported into a worker */
+  portState?: { coordinatorSessionFile: string; portedWorkerMid: string; portedAt: string };
 }
 
 function stateFilePath(basePath: string): string {
@@ -113,6 +127,9 @@ export function persistState(basePath: string): void {
         state: w.state,
         completedUnits: w.completedUnits,
         cost: w.cost,
+        stderrLines: w.stderrLines,
+        restartCount: w.restartCount,
+        ...(w.domain ? { domain: w.domain } : {}),
       })),
       totalCost: state.totalCost,
       startedAt: state.startedAt,
@@ -120,6 +137,7 @@ export function persistState(basePath: string): void {
         max_workers: state.config.max_workers,
         budget_ceiling: state.config.budget_ceiling,
       },
+      ...(isPortActive() ? { portState: getPortState()! } : {}),
     };
 
     const dest = stateFilePath(basePath);
@@ -243,7 +261,8 @@ export async function prepareParallelStart(
     }
   }
 
-  const candidates = await analyzeParallelEligibility(basePath);
+  const config = resolveParallelConfig(_prefs);
+  const candidates = await analyzeParallelEligibility(basePath, { overlap_policy: config.overlap_policy });
   return orphans.length > 0 ? { ...candidates, orphans } : candidates;
 }
 
@@ -267,6 +286,13 @@ export async function startParallel(
 
   // Try to restore from a previous crash
   const restored = restoreState(basePath);
+
+  // Port state crash recovery — clear stale port state and resume the paused worker
+  if (restored && restored.portState) {
+    clearPortState();
+    sendSignal(basePath, restored.portState.portedWorkerMid, "resume");
+  }
+
   if (restored && restored.workers.length > 0) {
     // Adopt surviving workers instead of starting new ones
     state = {
@@ -288,6 +314,9 @@ export async function startParallel(
         state: "running",
         completedUnits: w.completedUnits,
         cost: w.cost,
+        stderrLines: [],
+        restartCount: w.restartCount ?? 0,
+        domain: w.domain,
       });
       adopted.push(w.milestoneId);
     }
@@ -339,6 +368,8 @@ export async function startParallel(
         state: "running",
         completedUnits: 0,
         cost: 0,
+        stderrLines: [],
+        restartCount: 0,
       };
 
       state.workers.set(mid, worker);
@@ -433,6 +464,8 @@ export function spawnWorker(
         GSD_MILESTONE_LOCK: milestoneId,
         // Prevent workers from spawning their own parallel sessions
         GSD_PARALLEL_WORKER: "1",
+        // Let workers find the coordinator's parallel status directory for heartbeat writes
+        GSD_PROJECT_ROOT: basePath,
       },
       stdio: ["ignore", "pipe", "pipe"],
       detached: false,
@@ -482,6 +515,36 @@ export function spawnWorker(
     });
   }
 
+  // ── Stderr ring buffer ───────────────────────────────────────────────
+  // Actively read stderr to prevent pipe buffer deadlock (64KB fill)
+  // and capture the last 50 lines for diagnostic display.
+  if (child.stderr) {
+    let stderrBuffer = "";
+    child.stderr.on("data", (data: Buffer) => {
+      if (!state) return;
+      const w = state.workers.get(milestoneId);
+      if (!w) return;
+      stderrBuffer += data.toString();
+      const lines = stderrBuffer.split("\n");
+      stderrBuffer = lines.pop() || "";
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        w.stderrLines.push(line);
+        if (w.stderrLines.length > 50) {
+          w.stderrLines.shift();
+        }
+      }
+    });
+    child.stderr.on("close", () => {
+      if (!stderrBuffer.trim() || !state) return;
+      const w = state.workers.get(milestoneId);
+      if (w) {
+        w.stderrLines.push(stderrBuffer.trim());
+        if (w.stderrLines.length > 50) w.stderrLines.shift();
+      }
+    });
+  }
+
   // Update session status with real PID
   writeSessionStatus(basePath, {
     milestoneId,
@@ -495,7 +558,7 @@ export function spawnWorker(
     worktreePath: worker.worktreePath,
   });
 
-  // Handle worker exit
+  // Handle worker exit — includes auto-restart on crash
   child.on("exit", (code) => {
     if (!state) return;
     const w = state.workers.get(milestoneId);
@@ -506,7 +569,26 @@ export function spawnWorker(
 
     if (code === 0) {
       w.state = "stopped";
+    } else if (w.restartCount < state.config.max_retries) {
+      // Crash with retries remaining — restart the worker
+      w.restartCount++;
+      w.state = "running";
+      writeSessionStatus(basePath, {
+        milestoneId,
+        pid: w.pid,
+        state: "running",
+        currentUnit: null,
+        completedUnits: w.completedUnits,
+        cost: w.cost,
+        lastHeartbeat: Date.now(),
+        startedAt: w.startedAt,
+        worktreePath: w.worktreePath,
+      });
+      persistState(basePath);
+      spawnWorker(basePath, milestoneId);
+      return;
     } else {
+      // Max retries exhausted — mark as error
       w.state = "error";
     }
 
@@ -801,6 +883,70 @@ export function refreshWorkerStatuses(basePath: string): void {
 
   // Persist updated state for crash recovery
   persistState(basePath);
+
+  // Route team signals between workers
+  routeTeamSignals(basePath);
+
+  // Sync contract files between worker worktrees (non-fatal)
+  try { syncContracts(basePath); } catch { /* contract sync is non-fatal */ }
+}
+
+// ─── Team Signal Routing ───────────────────────────────────────────────────
+
+/**
+ * Route team signals between workers.
+ * For each worker, reads accumulated signals and routes them:
+ * - workerMid === "*" → broadcast to ALL other workers
+ * - workerMid === specific MID → write to that worker only
+ * After routing, clears the source worker's signals.
+ *
+ * Implementation: reads all signals first, clears all sources, then delivers —
+ * prevents signals delivered in the same pass from being re-routed.
+ */
+export function routeTeamSignals(basePath: string): void {
+  if (!state || !state.active) return;
+
+  const workerMids = [...state.workers.keys()];
+
+  // Phase 1: Read and collect all signals from all workers
+  const collected = new Map<string, TeamSignal[]>();
+  for (const sourceMid of workerMids) {
+    try {
+      const signals = readTeamSignals(basePath, sourceMid);
+      if (signals.length > 0) {
+        collected.set(sourceMid, signals);
+      }
+    } catch { /* non-fatal */ }
+  }
+
+  if (collected.size === 0) return;
+
+  // Phase 2: Clear all source signal files
+  for (const sourceMid of collected.keys()) {
+    try {
+      clearTeamSignals(basePath, sourceMid);
+    } catch { /* non-fatal */ }
+  }
+
+  // Phase 3: Deliver signals to their targets
+  for (const [sourceMid, signals] of collected) {
+    for (const signal of signals) {
+      if (signal.workerMid === "*") {
+        // Broadcast: write to all other workers
+        for (const targetMid of workerMids) {
+          if (targetMid === sourceMid) continue;
+          try {
+            writeTeamSignal(basePath, targetMid, signal);
+          } catch { /* non-fatal */ }
+        }
+      } else {
+        // Point-to-point: write to the specific target worker
+        try {
+          writeTeamSignal(basePath, signal.workerMid, signal);
+        } catch { /* non-fatal */ }
+      }
+    }
+  }
 }
 
 // ─── Budget ────────────────────────────────────────────────────────────────
@@ -823,4 +969,98 @@ export function isBudgetExceeded(): boolean {
 /** Reset orchestrator state. Called on clean shutdown. */
 export function resetOrchestrator(): void {
   state = null;
+}
+
+// ─── Mid-Session Worker Addition ───────────────────────────────────────────
+
+/**
+ * Add a new worker mid-session for a milestone that isn't already tracked.
+ *
+ * Performs guard checks (orchestrator active, not already tracked, capacity,
+ * budget), then creates the worktree, registers the worker, spawns the
+ * process, and persists state. Returns a structured result with distinct
+ * error strings for each failure mode.
+ */
+export function addWorkerMidSession(
+  basePath: string,
+  milestoneId: string,
+  title?: string,
+  domain?: string,
+): { success: boolean; error?: string; milestoneId: string } {
+  // ── Guard checks ──
+  if (!state || !state.active) {
+    return { success: false, error: "Orchestrator not active", milestoneId };
+  }
+
+  if (state.workers.has(milestoneId)) {
+    return { success: false, error: `Worker already tracked for ${milestoneId}`, milestoneId };
+  }
+
+  // Count only running/paused workers against capacity (stopped/error don't count)
+  const activeCount = [...state.workers.values()].filter(
+    w => w.state === "running" || w.state === "paused",
+  ).length;
+  if (activeCount >= state.config.max_workers) {
+    return { success: false, error: `At capacity (${activeCount}/${state.config.max_workers})`, milestoneId };
+  }
+
+  if (isBudgetExceeded()) {
+    return { success: false, error: "Budget ceiling exceeded", milestoneId };
+  }
+
+  // ── Happy path: create worktree, register, spawn ──
+  try {
+    let wtPath: string;
+    try {
+      wtPath = createMilestoneWorktree(basePath, milestoneId);
+    } catch {
+      // Worktree creation may fail in test environments — fall back to computed path
+      wtPath = worktreePath(basePath, milestoneId);
+    }
+
+    const now = Date.now();
+    const worker: WorkerInfo = {
+      milestoneId,
+      title: title ?? milestoneId,
+      pid: 0,
+      process: null,
+      worktreePath: wtPath,
+      startedAt: now,
+      state: "running",
+      completedUnits: 0,
+      cost: 0,
+      stderrLines: [],
+      restartCount: 0,
+      domain,
+    };
+
+    state.workers.set(milestoneId, worker);
+
+    const spawned = spawnWorker(basePath, milestoneId);
+    if (!spawned) {
+      worker.state = "error";
+      return { success: false, error: "Spawn failed", milestoneId };
+    }
+
+    writeSessionStatus(basePath, {
+      milestoneId,
+      pid: worker.pid,
+      state: worker.state,
+      currentUnit: null,
+      completedUnits: 0,
+      cost: 0,
+      lastHeartbeat: now,
+      startedAt: now,
+      worktreePath: wtPath,
+    });
+
+    persistState(basePath);
+
+    return { success: true, milestoneId };
+  } catch (err) {
+    // Clean up partially-added worker on unexpected error
+    state.workers.delete(milestoneId);
+    const message = err instanceof Error ? err.message : String(err);
+    return { success: false, error: message, milestoneId };
+  }
 }

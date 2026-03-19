@@ -412,5 +412,13 @@ export function resolveParallelConfig(prefs: GSDPreferences | undefined): import
     budget_ceiling: prefs?.parallel?.budget_ceiling,
     merge_strategy: prefs?.parallel?.merge_strategy ?? "per-milestone",
     auto_merge: prefs?.parallel?.auto_merge ?? "confirm",
+    overlap_policy: prefs?.parallel?.overlap_policy ?? "warn",
+    max_retries: Math.max(0, prefs?.parallel?.max_retries ?? 1),
+    team: {
+      signal_frequency: prefs?.parallel?.team?.signal_frequency ?? "slice",
+      merge_healing: prefs?.parallel?.team?.merge_healing ?? "confirm",
+      domain_detection: prefs?.parallel?.team?.domain_detection ?? "auto",
+      awareness_depth: prefs?.parallel?.team?.awareness_depth ?? "summaries",
+    },
   };
 }

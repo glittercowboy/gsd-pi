@@ -25,6 +25,7 @@ import { compressToTarget } from "./prompt-compressor.js";
 import { distillSummaries } from "./summary-distiller.js";
 import { formatDecisionsCompact, formatRequirementsCompact } from "./structured-data-formatter.js";
 import { chunkByRelevance, formatChunks } from "./semantic-chunker.js";
+import { buildCrossContextSection } from "./team-contracts.js";
 
 // ─── Executor Constraints ─────────────────────────────────────────────────────
 
@@ -842,6 +843,16 @@ export async function buildExecuteTaskPrompt(
     }
   }
 
+  // Build cross-context section: other workers' contracts + pending team signals.
+  // 10% of inline context budget. Non-fatal — prompt building must never crash here.
+  let crossContextSection = "";
+  try {
+    const crossContextBudget = Math.floor(budgets.inlineContextBudgetChars * 0.10);
+    const { pendingTeamSignals } = await import("./auto-post-unit.js");
+    const signals = pendingTeamSignals.splice(0);
+    crossContextSection = buildCrossContextSection(base, mid, crossContextBudget, signals);
+  } catch { /* non-fatal — cross-context issues must not crash prompt building */ }
+
   return loadPrompt("execute-task", {
     overridesSection,
     workingDirectory: base,
@@ -852,6 +863,7 @@ export async function buildExecuteTaskPrompt(
     taskPlanInline,
     slicePlanExcerpt,
     carryForwardSection: finalCarryForward,
+    crossContextSection,
     resumeSection,
     priorTaskLines: priorLines,
     taskSummaryPath,

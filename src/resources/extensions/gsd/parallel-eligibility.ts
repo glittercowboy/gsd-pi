@@ -5,6 +5,7 @@
  * dependency satisfaction and file overlap across slice plans.
  */
 
+import { existsSync } from "node:fs";
 import { deriveState } from "./state.js";
 import { parseRoadmap, parsePlan, loadFile } from "./files.js";
 import { resolveMilestoneFile, resolveSliceFile } from "./paths.js";
@@ -32,7 +33,7 @@ export interface ParallelCandidates {
  * Collect all `filesLikelyTouched` across every slice plan in a milestone.
  * Returns a deduplicated list of file paths.
  */
-async function collectTouchedFiles(
+export async function collectTouchedFiles(
   basePath: string,
   milestoneId: string,
 ): Promise<string[]> {
@@ -59,6 +60,47 @@ async function collectTouchedFiles(
   }
 
   return [...files];
+}
+
+// ─── Conflict Check (mid-session gate) ───────────────────────────────────────
+
+export interface ConflictCheckResult {
+  hasConflict: boolean;
+  overlappingFiles: string[];
+  conflictingWorkerIds: string[];
+}
+
+/**
+ * Check whether a candidate milestone overlaps files with any running workers.
+ * Used as a gate before `addWorkerMidSession()` in both dashboard entry points.
+ */
+export async function checkConflictWithRunning(
+  basePath: string,
+  candidateMid: string,
+  runningMids: string[],
+): Promise<ConflictCheckResult> {
+  const candidateFiles = await collectTouchedFiles(basePath, candidateMid);
+  if (candidateFiles.length === 0) {
+    return { hasConflict: false, overlappingFiles: [], conflictingWorkerIds: [] };
+  }
+  const candidateSet = new Set(candidateFiles);
+  const overlappingFiles = new Set<string>();
+  const conflictingWorkerIds: string[] = [];
+
+  for (const mid of runningMids) {
+    const workerFiles = await collectTouchedFiles(basePath, mid);
+    const overlap = workerFiles.filter(f => candidateSet.has(f));
+    if (overlap.length > 0) {
+      conflictingWorkerIds.push(mid);
+      for (const f of overlap) overlappingFiles.add(f);
+    }
+  }
+
+  return {
+    hasConflict: overlappingFiles.size > 0,
+    overlappingFiles: [...overlappingFiles],
+    conflictingWorkerIds,
+  };
 }
 
 // ─── Overlap Detection ──────────────────────────────────────────────────────
@@ -99,6 +141,7 @@ function detectFileOverlaps(
  */
 export async function analyzeParallelEligibility(
   basePath: string,
+  config?: { overlap_policy?: "warn" | "block" },
 ): Promise<ParallelCandidates> {
   const milestoneIds = findMilestoneIds(basePath);
   const state = await deriveState(basePath);
@@ -170,9 +213,39 @@ export async function analyzeParallelEligibility(
     overlappingIds.add(overlap.mid2);
   }
 
-  for (const result of eligible) {
-    if (overlappingIds.has(result.milestoneId)) {
-      result.reason = "All dependencies satisfied. WARNING: has file overlap with another eligible milestone.";
+  if (config?.overlap_policy === "block" && fileOverlaps.length > 0) {
+    // Build per-milestone overlap descriptions for blocking reasons
+    const overlapDesc = new Map<string, string[]>();
+    for (const overlap of fileOverlaps) {
+      const desc1 = overlapDesc.get(overlap.mid1) ?? [];
+      desc1.push(`${overlap.mid2} on ${overlap.files.length} file(s): ${overlap.files.join(", ")}`);
+      overlapDesc.set(overlap.mid1, desc1);
+
+      const desc2 = overlapDesc.get(overlap.mid2) ?? [];
+      desc2.push(`${overlap.mid1} on ${overlap.files.length} file(s): ${overlap.files.join(", ")}`);
+      overlapDesc.set(overlap.mid2, desc2);
+    }
+
+    // Move overlapping milestones from eligible to ineligible
+    for (let i = eligible.length - 1; i >= 0; i--) {
+      const result = eligible[i];
+      if (overlappingIds.has(result.milestoneId)) {
+        const reasons = overlapDesc.get(result.milestoneId) ?? [];
+        eligible.splice(i, 1);
+        ineligible.push({
+          milestoneId: result.milestoneId,
+          title: result.title,
+          eligible: false,
+          reason: `Blocked by overlap_policy: file overlap with ${reasons.join("; ")}`,
+        });
+      }
+    }
+  } else {
+    // Default "warn" behavior — annotate but don't block
+    for (const result of eligible) {
+      if (overlappingIds.has(result.milestoneId)) {
+        result.reason = "All dependencies satisfied. WARNING: has file overlap with another eligible milestone.";
+      }
     }
   }
 
@@ -184,10 +257,13 @@ export async function analyzeParallelEligibility(
 /**
  * Produce a human-readable report of parallel eligibility analysis.
  */
-export function formatEligibilityReport(candidates: ParallelCandidates): string {
+export function formatEligibilityReport(candidates: ParallelCandidates, config?: { overlap_policy?: "warn" | "block" }): string {
   const lines: string[] = [];
 
   lines.push("# Parallel Eligibility Report");
+  if (config?.overlap_policy === "block") {
+    lines.push("_Overlap policy: **block** — milestones with file overlaps are ineligible._");
+  }
   lines.push("");
 
   // Eligible milestones
@@ -230,4 +306,63 @@ export function formatEligibilityReport(candidates: ParallelCandidates): string 
   }
 
   return lines.join("\n");
+}
+
+// ─── Mid-Session Candidate Types ─────────────────────────────────────────────
+
+export interface MidSessionCandidate extends EligibilityResult {
+  hasRoadmap: boolean;
+  hasContext: boolean;
+  /** ready = hasRoadmap — a milestone needs at least a ROADMAP to start work */
+  ready: boolean;
+}
+
+export interface MidSessionCandidates {
+  candidates: MidSessionCandidate[];
+  atCapacity: boolean;
+  currentWorkerCount: number;
+  maxWorkers: number;
+}
+
+// ─── Mid-Session Eligibility ─────────────────────────────────────────────────
+
+/**
+ * Determine which milestones are eligible to be added as workers mid-session.
+ *
+ * Wraps `analyzeParallelEligibility()` with additional filtering:
+ * 1. Excludes milestones that are already running as workers
+ * 2. Annotates each candidate with ROADMAP/CONTEXT file existence
+ * 3. Reports capacity status against maxWorkers
+ */
+export async function getMidSessionCandidates(
+  basePath: string,
+  runningMilestoneIds: string[],
+  maxWorkers?: number,
+): Promise<MidSessionCandidates> {
+  const effectiveMax = maxWorkers ?? 4;
+  const analysis = await analyzeParallelEligibility(basePath);
+
+  const runningSet = new Set(runningMilestoneIds);
+
+  const candidates: MidSessionCandidate[] = analysis.eligible
+    .filter(e => !runningSet.has(e.milestoneId))
+    .map(e => {
+      const roadmapPath = resolveMilestoneFile(basePath, e.milestoneId, "ROADMAP");
+      const contextPath = resolveMilestoneFile(basePath, e.milestoneId, "CONTEXT");
+      const hasRoadmap = roadmapPath != null && existsSync(roadmapPath);
+      const hasContext = contextPath != null && existsSync(contextPath);
+      return {
+        ...e,
+        hasRoadmap,
+        hasContext,
+        ready: hasRoadmap,
+      };
+    });
+
+  return {
+    candidates,
+    atCapacity: runningMilestoneIds.length >= effectiveMax,
+    currentWorkerCount: runningMilestoneIds.length,
+    maxWorkers: effectiveMax,
+  };
 }

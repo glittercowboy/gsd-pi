@@ -24,6 +24,7 @@ import {
 import { parseRoadmap } from "./files.js";
 import { loadEffectiveGSDPreferences } from "./preferences.js";
 import { gsdRoot } from "./paths.js";
+import { setProjectRoot, getProjectRoot, clearProjectRoot } from "./context-tracker.js";
 import {
   nativeGetCurrentBranch,
   nativeWorkingTreeStatus,
@@ -259,6 +260,7 @@ export function createAutoWorktree(basePath: string, milestoneId: string): strin
   try {
     process.chdir(info.path);
     originalBase = basePath;
+    setProjectRoot(basePath);
   } catch (err) {
     // If chdir fails, the worktree was created but we couldn't enter it.
     // Don't store originalBase -- caller can retry or clean up.
@@ -288,6 +290,7 @@ export function teardownAutoWorktree(
   try {
     process.chdir(originalBasePath);
     originalBase = null;
+    clearProjectRoot();
   } catch (err) {
     throw new GSDError(
       GSD_IO_ERROR,
@@ -406,6 +409,7 @@ export function enterAutoWorktree(basePath: string, milestoneId: string): string
   try {
     process.chdir(p);
     originalBase = basePath;
+    setProjectRoot(basePath);
   } catch (err) {
     throw new GSDError(
       GSD_IO_ERROR,
@@ -422,7 +426,7 @@ export function enterAutoWorktree(basePath: string, milestoneId: string): string
  * Returns null if not currently in an auto-worktree.
  */
 export function getAutoWorktreeOriginalBase(): string | null {
-  return originalBase;
+  return getProjectRoot() ?? originalBase;
 }
 
 export function getActiveAutoWorktreeContext(): {
@@ -652,6 +656,7 @@ export function mergeMilestoneToMain(
 
   // 12. Clear module state
   originalBase = null;
+  clearProjectRoot();
   nudgeGitBranchCache(previousCwd);
 
   return { commitMessage, pushed, prCreated };

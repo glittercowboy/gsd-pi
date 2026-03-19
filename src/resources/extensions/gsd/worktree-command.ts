@@ -35,6 +35,7 @@ import { existsSync, realpathSync, readdirSync, rmSync, unlinkSync } from "node:
 import { nativeMergeAbort } from "./native-git-bridge.js";
 import { join, sep } from "node:path";
 import { getErrorMessage } from "./error-utils.js";
+import { setProjectRoot, getProjectRoot, clearProjectRoot } from "./context-tracker.js";
 
 /**
  * Tracks the original project root so we can switch back.
@@ -44,7 +45,7 @@ let originalCwd: string | null = null;
 
 /** Get the original project root if currently in a worktree, or null. */
 export function getWorktreeOriginalCwd(): string | null {
-  return originalCwd;
+  return getProjectRoot() ?? originalCwd;
 }
 
 /** Get the name of the active worktree, or null if not in one. */
@@ -239,6 +240,7 @@ export function registerWorktreeCommand(pi: ExtensionAPI): void {
     const markerIdx = cwd.indexOf(marker);
     if (markerIdx !== -1) {
       originalCwd = cwd.slice(0, markerIdx);
+      setProjectRoot(originalCwd);
     }
   }
 
@@ -322,7 +324,10 @@ async function handleCreate(
     }
 
     // Track original cwd before switching
-    if (!originalCwd) originalCwd = basePath;
+    if (!originalCwd) {
+      originalCwd = basePath;
+      setProjectRoot(basePath);
+    }
 
     const prevCwd = process.cwd();
     process.chdir(info.path);
@@ -397,7 +402,10 @@ async function handleSwitch(
     const commitMsg = autoCommitCurrentBranch(basePath, "worktree-switch", name);
 
     // Track original cwd before switching
-    if (!originalCwd) originalCwd = basePath;
+    if (!originalCwd) {
+      originalCwd = basePath;
+      setProjectRoot(basePath);
+    }
 
     const prevCwd = process.cwd();
     process.chdir(wtPath);
@@ -435,6 +443,7 @@ async function handleReturn(ctx: ExtensionCommandContext): Promise<void> {
 
   const returnTo = originalCwd;
   originalCwd = null;
+  clearProjectRoot();
 
   const prevCwd = process.cwd();
   process.chdir(returnTo);
@@ -627,6 +636,7 @@ async function handleMerge(
       process.chdir(basePath);
       nudgeGitBranchCache(prevCwd);
       originalCwd = null;
+      clearProjectRoot();
     }
 
     // --- Deterministic merge path (preferred) ---
@@ -743,6 +753,7 @@ async function handleRemove(
     if (originalCwd && process.cwd() !== prevCwd) {
       nudgeGitBranchCache(prevCwd);
       originalCwd = null;
+      clearProjectRoot();
     }
 
     ctx.ui.notify(`${CLR.ok("✓")} Worktree ${CLR.name(name)} removed ${CLR.muted("(branch deleted)")}.`, "info");
@@ -794,6 +805,7 @@ async function handleRemoveAll(
     if (originalCwd && process.cwd() !== prevCwd) {
       nudgeGitBranchCache(prevCwd);
       originalCwd = null;
+      clearProjectRoot();
     }
 
     const lines: string[] = [];

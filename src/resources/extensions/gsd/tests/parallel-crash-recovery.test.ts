@@ -21,9 +21,11 @@ import {
   restoreState,
   resetOrchestrator,
   getOrchestratorState,
+  startParallel,
   type PersistedState,
 } from "../parallel-orchestrator.ts";
-import { writeSessionStatus, readAllSessionStatuses, removeSessionStatus } from "../session-status-io.ts";
+import { writeSessionStatus, readAllSessionStatuses, removeSessionStatus, consumeSignal } from "../session-status-io.ts";
+import { isPortActive, clearPortState, _resetForTesting as resetContextTracker } from "../context-tracker.ts";
 import { createTestContext } from './test-helpers.ts';
 
 const { assertEq, assertTrue, report } = createTestContext();
@@ -33,6 +35,7 @@ const { assertEq, assertTrue, report } = createTestContext();
 function makeTempDir(): string {
   const dir = mkdtempSync(join(tmpdir(), "gsd-crash-recovery-"));
   mkdirSync(join(dir, ".gsd"), { recursive: true });
+  mkdirSync(join(dir, ".gsd", "parallel"), { recursive: true });
   return dir;
 }
 
@@ -294,5 +297,156 @@ function makePersistedState(overrides: Partial<PersistedState> = {}): PersistedS
 
 // Clean up module state
 resetOrchestrator();
+
+// ─── Port State Crash Recovery ────────────────────────────────────────────────
+
+// Test 8: clears stale portState and resumes paused worker on restore
+{
+  const basePath = makeTempDir();
+  try {
+    resetOrchestrator();
+    resetContextTracker();
+
+    // Write orchestrator.json with portState and one alive worker
+    const state = makePersistedState({
+      workers: [
+        {
+          milestoneId: "M001",
+          title: "M001",
+          pid: process.pid, // alive — triggers adoption path (no spawn)
+          worktreePath: "/tmp/wt-M001",
+          startedAt: Date.now(),
+          state: "running",
+          completedUnits: 2,
+          cost: 0.10,
+          stderrLines: [],
+          restartCount: 0,
+        },
+      ],
+      totalCost: 0.10,
+      portState: {
+        coordinatorSessionFile: "/tmp/session",
+        portedWorkerMid: "M005",
+        portedAt: "2026-01-01T00:00:00Z",
+      },
+    });
+    writeStateFile(basePath, state);
+
+    // startParallel with alive worker → adoption path (no spawn needed)
+    await startParallel(basePath, [], undefined);
+
+    // (a) isPortActive should be false after recovery
+    assertEq(isPortActive(), false, "portState recovery: isPortActive() false after clearPortState");
+
+    // (b) Resume signal should have been written for M005
+    const signal = consumeSignal(basePath, "M005");
+    assertTrue(signal !== null, "portState recovery: resume signal was sent to M005");
+    assertEq(signal!.signal, "resume", "portState recovery: signal is 'resume'");
+
+    // (c) Worker M001 was adopted normally
+    const orch = getOrchestratorState();
+    assertTrue(orch !== null, "portState recovery: orchestrator state exists");
+    assertTrue(orch!.workers.has("M001"), "portState recovery: M001 was adopted");
+    assertEq(orch!.workers.get("M001")!.completedUnits, 2, "portState recovery: M001 progress preserved");
+  } finally {
+    resetOrchestrator();
+    resetContextTracker();
+    rmSync(basePath, { recursive: true, force: true });
+  }
+}
+
+// Test 9: no portState — no recovery action
+{
+  const basePath = makeTempDir();
+  try {
+    resetOrchestrator();
+    resetContextTracker();
+
+    // Write orchestrator.json WITHOUT portState, one alive worker
+    const state = makePersistedState({
+      workers: [
+        {
+          milestoneId: "M001",
+          title: "M001",
+          pid: process.pid,
+          worktreePath: "/tmp/wt-M001",
+          startedAt: Date.now(),
+          state: "running",
+          completedUnits: 1,
+          cost: 0.05,
+          stderrLines: [],
+          restartCount: 0,
+        },
+      ],
+      totalCost: 0.05,
+    });
+    writeStateFile(basePath, state);
+
+    // isPortActive should already be false (no port state set in context-tracker)
+    assertEq(isPortActive(), false, "no portState: isPortActive() already false before recovery");
+
+    // startParallel with alive worker → adoption path (no spawn)
+    await startParallel(basePath, [], undefined);
+
+    // isPortActive still false
+    assertEq(isPortActive(), false, "no portState: isPortActive() still false after recovery");
+
+    // No resume signal should have been sent to any worker
+    const signalM001 = consumeSignal(basePath, "M001");
+    assertEq(signalM001, null, "no portState: no resume signal sent to M001");
+  } finally {
+    resetOrchestrator();
+    resetContextTracker();
+    rmSync(basePath, { recursive: true, force: true });
+  }
+}
+
+// Test 10: portState with non-existent worker — recovery still clears state
+{
+  const basePath = makeTempDir();
+  try {
+    resetOrchestrator();
+    resetContextTracker();
+
+    // Write orchestrator.json with portState referencing M099 (not in workers array)
+    // Workers array has alive M001 so restoreState returns non-null
+    const state = makePersistedState({
+      workers: [
+        {
+          milestoneId: "M001",
+          title: "M001",
+          pid: process.pid,
+          worktreePath: "/tmp/wt-M001",
+          startedAt: Date.now(),
+          state: "running",
+          completedUnits: 0,
+          cost: 0,
+          stderrLines: [],
+          restartCount: 0,
+        },
+      ],
+      portState: {
+        coordinatorSessionFile: "/tmp/session-old",
+        portedWorkerMid: "M099",
+        portedAt: "2026-01-01T00:00:00Z",
+      },
+    });
+    writeStateFile(basePath, state);
+
+    await startParallel(basePath, [], undefined);
+
+    // Port state should be cleared even though M099 isn't a tracked worker
+    assertEq(isPortActive(), false, "unknown worker portState: isPortActive() false after clearPortState");
+
+    // Resume signal was still sent for M099 (best-effort)
+    const signal = consumeSignal(basePath, "M099");
+    assertTrue(signal !== null, "unknown worker portState: resume signal sent to M099");
+    assertEq(signal!.signal, "resume", "unknown worker portState: signal is 'resume'");
+  } finally {
+    resetOrchestrator();
+    resetContextTracker();
+    rmSync(basePath, { recursive: true, force: true });
+  }
+}
 
 report();

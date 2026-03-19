@@ -10,6 +10,12 @@ import { resolveMilestoneFile } from "./paths.js";
 import { mergeMilestoneToMain } from "./auto-worktree.js";
 import { MergeConflictError } from "./git-service.js";
 import { removeSessionStatus } from "./session-status-io.js";
+import { nativeCommit } from "./native-git-bridge.js";
+import { abortAndReset } from "./git-self-heal.js";
+import { resolveMergeConflicts } from "./merge-healing.js";
+import { analyzePreMergeImpact, emitAdaptationSignals } from "./pre-merge-impact.js";
+import type { ImpactAnalysis } from "./pre-merge-impact.js";
+import type { HealingAttempt } from "./merge-healing.js";
 import type { WorkerInfo } from "./parallel-orchestrator.js";
 import { getErrorMessage } from "./error-utils.js";
 
@@ -22,6 +28,9 @@ export interface MergeResult {
   pushed?: boolean;
   error?: string;
   conflictFiles?: string[];
+  healingAttempts?: HealingAttempt[];
+  healingResolved?: boolean;
+  impactAnalysis?: ImpactAnalysis;
 }
 
 export type MergeOrder = "sequential" | "by-completion";
@@ -55,6 +64,8 @@ export function determineMergeOrder(
 export async function mergeCompletedMilestone(
   basePath: string,
   milestoneId: string,
+  resolveFn?: (prompt: string) => Promise<string>,
+  confidenceThreshold?: number,
 ): Promise<MergeResult> {
   try {
     // Load the roadmap content (needed by mergeMilestoneToMain)
@@ -76,6 +87,15 @@ export async function mergeCompletedMilestone(
       };
     }
 
+    // Pre-merge impact analysis — non-fatal, must never block the merge
+    let impactAnalysis: ImpactAnalysis | undefined;
+    try {
+      impactAnalysis = analyzePreMergeImpact(basePath, milestoneId);
+      if (impactAnalysis.breakingChanges.length > 0) {
+        emitAdaptationSignals(basePath, impactAnalysis);
+      }
+    } catch { /* non-fatal — impact analysis failure must not prevent merge */ }
+
     // Attempt the merge
     const result = mergeMilestoneToMain(basePath, milestoneId, roadmapContent);
 
@@ -87,14 +107,46 @@ export async function mergeCompletedMilestone(
       success: true,
       commitMessage: result.commitMessage,
       pushed: result.pushed,
+      impactAnalysis,
     };
   } catch (err) {
     if (err instanceof MergeConflictError) {
+      // Attempt three-tier merge healing
+      const healResult = await resolveMergeConflicts(
+        basePath,
+        milestoneId,
+        err.conflictedFiles,
+        resolveFn,
+        confidenceThreshold,
+      );
+
+      if (healResult.resolved) {
+        // All conflicts resolved — retry the merge commit
+        const commitMessage = `feat(${milestoneId}): merge with automated conflict resolution`;
+        nativeCommit(basePath, commitMessage);
+
+        // Clean up parallel session status
+        removeSessionStatus(basePath, milestoneId);
+
+        return {
+          milestoneId,
+          success: true,
+          commitMessage,
+          healingAttempts: healResult.healingAttempts,
+          healingResolved: true,
+        };
+      }
+
+      // Healing could not resolve all conflicts — abort and restore clean state
+      abortAndReset(basePath);
+
       return {
         milestoneId,
         success: false,
-        error: `Merge conflict: ${err.conflictedFiles.length} conflicting file(s)`,
-        conflictFiles: err.conflictedFiles,
+        error: `Merge conflict: ${healResult.unresolvedFiles.length} unresolved file(s) after healing`,
+        conflictFiles: healResult.unresolvedFiles,
+        healingAttempts: healResult.healingAttempts,
+        healingResolved: false,
       };
     }
     return {
@@ -113,12 +165,14 @@ export async function mergeAllCompleted(
   basePath: string,
   workers: WorkerInfo[],
   order: MergeOrder = "sequential",
+  resolveFn?: (prompt: string) => Promise<string>,
+  confidenceThreshold?: number,
 ): Promise<MergeResult[]> {
   const mergeOrder = determineMergeOrder(workers, order);
   const results: MergeResult[] = [];
 
   for (const mid of mergeOrder) {
-    const result = await mergeCompletedMilestone(basePath, mid);
+    const result = await mergeCompletedMilestone(basePath, mid, resolveFn, confidenceThreshold);
     results.push(result);
 
     // Stop on first conflict — later merges may depend on this one

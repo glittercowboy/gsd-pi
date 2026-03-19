@@ -11,6 +11,10 @@
  */
 
 import {
+  writeFileSync,
+  readFileSync,
+  appendFileSync,
+  renameSync,
   unlinkSync,
   readdirSync,
   mkdirSync,
@@ -32,6 +36,8 @@ export interface SessionStatus {
   lastHeartbeat: number;
   startedAt: number;
   worktreePath: string;
+  /** Path to the worker's Pi session file (.jsonl). Omitted if session not yet created. */
+  sessionFile?: string;
 }
 
 export type SessionSignal = "pause" | "resume" | "stop" | "rebase";
@@ -42,12 +48,34 @@ export interface SignalMessage {
   from: "coordinator";
 }
 
+// ─── Team Signal Types ─────────────────────────────────────────────────────
+
+export type TeamSignalType =
+  | "contract-change"
+  | "slice-complete"
+  | "api-available"
+  | "schema-update"
+  | "pattern-discovered";
+
+export interface TeamSignal {
+  type: TeamSignalType;
+  /** Emitting worker's milestone ID */
+  source: string;
+  /** Target worker's milestone ID, or "*" for broadcast */
+  workerMid: string;
+  payload: Record<string, unknown>;
+  timestamp: number;
+}
+
+export const TEAM_SIGNAL_SUFFIX = ".team-signals.ndjson";
+
 // ─── Constants ─────────────────────────────────────────────────────────────
 
 const PARALLEL_DIR = "parallel";
 const STATUS_SUFFIX = ".status.json";
 const SIGNAL_SUFFIX = ".signal.json";
-const DEFAULT_STALE_TIMEOUT_MS = 30_000;
+const TMP_SUFFIX = ".tmp";
+const DEFAULT_STALE_TIMEOUT_MS = 60_000;
 
 function isSessionStatus(data: unknown): data is SessionStatus {
   return data !== null && typeof data === "object" && "milestoneId" in data && "pid" in data;
@@ -176,4 +204,114 @@ export function cleanupStaleSessions(
   }
 
   return removed;
+}
+
+// ─── Team Signal I/O ───────────────────────────────────────────────────────
+
+function teamSignalPath(basePath: string, milestoneId: string): string {
+  return join(parallelDir(basePath), `${milestoneId}${TEAM_SIGNAL_SUFFIX}`);
+}
+
+/**
+ * Append a team signal to a worker's NDJSON signal file.
+ * Uses appendFileSync for append-log semantics — multiple signals
+ * accumulate between reads, unlike the existing consume-once signal channel.
+ * Non-fatal: failures are silently caught (same pattern as writeSessionStatus).
+ */
+export function writeTeamSignal(
+  basePath: string,
+  targetMid: string,
+  signal: TeamSignal,
+): void {
+  try {
+    ensureParallelDir(basePath);
+    const dest = teamSignalPath(basePath, targetMid);
+    appendFileSync(dest, JSON.stringify(signal) + "\n", "utf-8");
+  } catch { /* non-fatal */ }
+}
+
+/**
+ * Read all accumulated team signals for a milestone.
+ * Parses each NDJSON line independently — corrupt lines are silently skipped.
+ * Returns empty array if file doesn't exist or is unreadable.
+ */
+export function readTeamSignals(basePath: string, mid: string): TeamSignal[] {
+  try {
+    const p = teamSignalPath(basePath, mid);
+    if (!existsSync(p)) return [];
+    const raw = readFileSync(p, "utf-8");
+    const lines = raw.split("\n");
+    const signals: TeamSignal[] = [];
+    for (const line of lines) {
+      if (!line.trim()) continue;
+      try {
+        signals.push(JSON.parse(line) as TeamSignal);
+      } catch { /* skip corrupt line */ }
+    }
+    return signals;
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Delete the team signal file for a milestone.
+ * Used after signals have been consumed and routed.
+ * Non-fatal: failures are silently caught.
+ */
+export function clearTeamSignals(basePath: string, mid: string): void {
+  try {
+    const p = teamSignalPath(basePath, mid);
+    if (existsSync(p)) unlinkSync(p);
+  } catch { /* non-fatal */ }
+}
+
+// ─── Pause Handshake ───────────────────────────────────────────────────────
+
+export interface PauseHandshakeResult {
+  paused: boolean;
+  sessionFile?: string;
+  elapsedMs: number;
+}
+
+const DEFAULT_PAUSE_TIMEOUT_MS = 30_000;
+const PAUSE_POLL_INTERVAL_MS = 500;
+
+/**
+ * Send a pause signal to a worker and wait for it to confirm the pause
+ * by writing state: "paused" to its status file.
+ *
+ * Returns immediately with paused: false if the worker PID is dead.
+ * Returns paused: false after timeout if the worker never pauses.
+ */
+export async function waitForWorkerPause(
+  basePath: string,
+  milestoneId: string,
+  timeoutMs: number = DEFAULT_PAUSE_TIMEOUT_MS,
+): Promise<PauseHandshakeResult> {
+  const startedAt = Date.now();
+
+  // Send the pause signal first
+  sendSignal(basePath, milestoneId, "pause");
+
+  // Poll status file until paused or timeout
+  while (Date.now() - startedAt < timeoutMs) {
+    const status = readSessionStatus(basePath, milestoneId);
+    if (status) {
+      // If worker PID is dead, bail immediately
+      if (!isPidAlive(status.pid)) {
+        return { paused: false, elapsedMs: Date.now() - startedAt };
+      }
+      if (status.state === "paused") {
+        return {
+          paused: true,
+          sessionFile: status.sessionFile,
+          elapsedMs: Date.now() - startedAt,
+        };
+      }
+    }
+    await new Promise<void>((r) => setTimeout(r, PAUSE_POLL_INTERVAL_MS));
+  }
+
+  return { paused: false, elapsedMs: Date.now() - startedAt };
 }

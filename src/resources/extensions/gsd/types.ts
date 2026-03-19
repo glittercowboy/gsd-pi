@@ -416,10 +416,25 @@ export type ContextSelectionMode = 'full' | 'smart';
 export type MergeStrategy = "per-slice" | "per-milestone";
 export type AutoMergeMode = "auto" | "confirm" | "manual";
 
+export type TeamSignalFrequency = "task" | "slice" | "manual";
+export type TeamMergeHealing = "auto" | "confirm" | "manual";
+export type TeamDomainDetection = "auto" | "manual";
+export type TeamAwarenessDepth = "plans" | "summaries" | "full";
+
+export interface TeamConfig {
+  signal_frequency: TeamSignalFrequency;
+  merge_healing: TeamMergeHealing;
+  domain_detection: TeamDomainDetection;
+  awareness_depth: TeamAwarenessDepth;
+}
+
 export interface ParallelConfig {
   enabled: boolean;
   max_workers: number;
   budget_ceiling?: number;
   merge_strategy: MergeStrategy;
   auto_merge: AutoMergeMode;
+  overlap_policy: "warn" | "block";
+  max_retries: number;
+  team?: TeamConfig;
 }

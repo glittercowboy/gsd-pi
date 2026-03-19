@@ -61,10 +61,13 @@ import { loadPersistedKeys } from "./auto-recovery.js";
 import { hideFooter } from "./auto-dashboard.js";
 import { debugLog, enableDebug, isDebugEnabled, getDebugLogPath } from "./debug-logger.js";
 import type { AutoSession } from "./auto/session.js";
+import { startWorkerHeartbeat } from "./auto-timers.js";
 import { existsSync, mkdirSync, readdirSync, statSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { getErrorMessage } from "./error-utils.js";
 import { parseUnitId } from "./unit-id.js";
+import { sep as pathSep } from "node:path";
+import { setProjectRoot } from "./context-tracker.js";
 
 export interface BootstrapDeps {
   shouldUseWorktreeIsolation: () => boolean;
@@ -295,6 +298,9 @@ export async function bootstrapAutoSession(
   s.verbose = verboseMode;
   s.cmdCtx = ctx;
   s.basePath = base;
+
+  // ── Start worker heartbeat (only fires when GSD_PARALLEL_WORKER=1) ──
+  startWorkerHeartbeat(s);
   s.unitDispatchCount.clear();
   s.unitRecoveryCount.clear();
   s.unitConsecutiveSkips.clear();
@@ -327,6 +333,7 @@ export async function bootstrapAutoSession(
 
   // ── Auto-worktree setup ──
   s.originalBasePath = base;
+  setProjectRoot(base);
 
   if (s.currentMilestoneId && shouldUseWorktreeIsolation() && !detectWorktreeName(base) && !isInsideWorktree(base)) {
     try {

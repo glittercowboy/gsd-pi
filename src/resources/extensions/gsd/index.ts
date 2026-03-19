@@ -62,7 +62,8 @@ import { shortcutDesc } from "../shared/mod.js";
 import { Text } from "@gsd/pi-tui";
 import { pauseAutoForProviderError, classifyProviderError } from "./provider-error-pause.js";
 import { toPosixPath } from "../shared/mod.js";
-import { isParallelActive, shutdownParallel } from "./parallel-orchestrator.js";
+import { isParallelActive, shutdownParallel, getOrchestratorState, addWorkerMidSession } from "./parallel-orchestrator.js";
+import { getMidSessionCandidates, checkConflictWithRunning } from "./parallel-eligibility.js";
 import { DEFAULT_BASH_TIMEOUT_SECS } from "./constants.js";
 import { getErrorMessage } from "./error-utils.js";
 
@@ -654,7 +655,75 @@ export default function (pi: ExtensionAPI) {
 
       const result = await ctx.ui.custom<void>(
         (tui, theme, _kb, done) => {
-          return new GSDDashboardOverlay(tui, theme, () => done());
+          const createDashboard = (): GSDDashboardOverlay => {
+            return new GSDDashboardOverlay(tui, theme, () => done(), {
+              onAdd: async () => {
+                const basePath = process.cwd();
+                const orchState = getOrchestratorState();
+                if (!orchState) {
+                  ctx.ui.notify("Parallel orchestrator not active", "warning");
+                  createDashboard();
+                  return;
+                }
+                const runningMids = [...orchState.workers.values()]
+                  .filter(w => w.state !== "stopped" && w.state !== "error")
+                  .map(w => w.milestoneId);
+                const result = await getMidSessionCandidates(basePath, runningMids, orchState.config.max_workers);
+                if (result.atCapacity) {
+                  ctx.ui.notify("At max worker capacity", "warning");
+                  createDashboard();
+                  return;
+                }
+                const readyCandidates = result.candidates.filter(c => c.ready);
+                if (readyCandidates.length === 0) {
+                  ctx.ui.notify("No eligible milestones ready for parallel execution", "info");
+                  createDashboard();
+                  return;
+                }
+                const options = readyCandidates.map(c => `${c.milestoneId}: ${c.title}`);
+                const selected = await ctx.ui.select("Add parallel worker", options);
+                if (!selected) {
+                  createDashboard();
+                  return;
+                }
+                const selectedStr = Array.isArray(selected) ? selected[0] : selected;
+                const selectedMid = selectedStr?.split(":")[0]?.trim();
+                if (!selectedMid) {
+                  createDashboard();
+                  return;
+                }
+                // Conflict gate: check for file overlap with running workers
+                const conflict = await checkConflictWithRunning(basePath, selectedMid, runningMids);
+                if (conflict.hasConflict) {
+                  const fileList = conflict.overlappingFiles.slice(0, 5).join(", ");
+                  const suffix = conflict.overlappingFiles.length > 5 ? "..." : "";
+                  const msg = `${selectedMid} overlaps files with running ${conflict.conflictingWorkerIds.join(", ")}: ${fileList}${suffix}`;
+                  const choice = await ctx.ui.select(msg, [
+                    "Queue for later",
+                    "Start anyway (risk conflicts)",
+                    "Cancel",
+                  ]);
+                  const choiceStr = Array.isArray(choice) ? choice[0] : choice;
+                  if (!choiceStr || choiceStr === "Cancel") {
+                    createDashboard();
+                    return;
+                  }
+                  if (choiceStr === "Queue for later") {
+                    ctx.ui.notify(`${selectedMid} queued — add it after conflicting workers complete`, "info");
+                    createDashboard();
+                    return;
+                  }
+                  // "Start anyway" falls through to addWorkerMidSession
+                }
+                const addResult = addWorkerMidSession(basePath, selectedMid);
+                if (!addResult.success) {
+                  ctx.ui.notify(addResult.error ?? "Failed to add worker", "error");
+                }
+                createDashboard();
+              },
+            });
+          };
+          return createDashboard();
         },
         {
           overlay: true,

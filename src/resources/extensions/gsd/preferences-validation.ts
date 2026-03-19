@@ -450,6 +450,55 @@ export function validatePreferences(preferences: GSDPreferences): {
       }
     }
 
+    if (p.team !== undefined) {
+      if (typeof p.team === "object" && p.team !== null) {
+        const t = p.team as unknown as Record<string, unknown>;
+        const teamObj: Record<string, unknown> = {};
+
+        if (t.signal_frequency !== undefined) {
+          const valid = new Set(["task", "slice", "manual"]);
+          if (typeof t.signal_frequency === "string" && valid.has(t.signal_frequency)) {
+            teamObj.signal_frequency = t.signal_frequency;
+          } else {
+            errors.push("parallel.team.signal_frequency must be one of: task, slice, manual");
+          }
+        }
+
+        if (t.merge_healing !== undefined) {
+          const valid = new Set(["auto", "confirm", "manual"]);
+          if (typeof t.merge_healing === "string" && valid.has(t.merge_healing)) {
+            teamObj.merge_healing = t.merge_healing;
+          } else {
+            errors.push("parallel.team.merge_healing must be one of: auto, confirm, manual");
+          }
+        }
+
+        if (t.domain_detection !== undefined) {
+          const valid = new Set(["auto", "manual"]);
+          if (typeof t.domain_detection === "string" && valid.has(t.domain_detection)) {
+            teamObj.domain_detection = t.domain_detection;
+          } else {
+            errors.push("parallel.team.domain_detection must be one of: auto, manual");
+          }
+        }
+
+        if (t.awareness_depth !== undefined) {
+          const valid = new Set(["plans", "summaries", "full"]);
+          if (typeof t.awareness_depth === "string" && valid.has(t.awareness_depth)) {
+            teamObj.awareness_depth = t.awareness_depth;
+          } else {
+            errors.push("parallel.team.awareness_depth must be one of: plans, summaries, full");
+          }
+        }
+
+        if (Object.keys(teamObj).length > 0) {
+          parallel.team = teamObj;
+        }
+      } else {
+        errors.push("parallel.team must be an object");
+      }
+    }
+
     if (Object.keys(parallel).length > 0) {
       validated.parallel = parallel as unknown as import("./types.js").ParallelConfig;
     }

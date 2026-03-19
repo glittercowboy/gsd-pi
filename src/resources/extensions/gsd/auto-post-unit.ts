@@ -39,7 +39,7 @@ import { COMPLETION_TRANSITION_CODES } from "./doctor-types.js";
 import { recordHealthSnapshot, checkHealEscalation } from "./doctor-proactive.js";
 import { resetRewriteCircuitBreaker } from "./auto-dispatch.js";
 import { isDbAvailable } from "./gsd-db.js";
-import { consumeSignal } from "./session-status-io.js";
+import { consumeSignal, readTeamSignals, clearTeamSignals, type TeamSignal } from "./session-status-io.js";
 import {
   checkPostUnitHooks,
   getActiveHook,
@@ -87,6 +87,9 @@ function dispatchUnit(
   return startedAt;
 }
 
+/** Team signals consumed between units — stashed for prompt injection in S02. */
+export let pendingTeamSignals: TeamSignal[] = [];
+
 export interface PostUnitContext {
   s: AutoSession;
   ctx: ExtensionContext;
@@ -121,6 +124,17 @@ export async function postUnitPreVerification(pctx: PostUnitContext): Promise<"d
         return "dispatched";
       }
     }
+
+    // ── Team signal consumption ──
+    // Read and stash team signals for this worker. S02 will inject them
+    // into the next unit's prompt context. Consume and clear here.
+    try {
+      const teamSignals = readTeamSignals(s.basePath, milestoneLock);
+      if (teamSignals.length > 0) {
+        pendingTeamSignals = teamSignals;
+        clearTeamSignals(s.basePath, milestoneLock);
+      }
+    } catch { /* non-fatal */ }
   }
 
   // Invalidate all caches

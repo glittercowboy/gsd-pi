@@ -1,12 +1,16 @@
 /**
  * Unit supervision timers — soft timeout warning, idle watchdog,
- * hard timeout, and context-pressure monitor.
+ * hard timeout, context-pressure monitor, and worker heartbeat.
  *
  * Extracted from dispatchNextUnit() in auto.ts. All timers are set up
  * via startUnitSupervision() and torn down by the caller via clearUnitTimeout().
+ * Worker heartbeat is managed separately via startWorkerHeartbeat/stopWorkerHeartbeat.
  */
 
 import type { ExtensionAPI, ExtensionContext } from "@gsd/pi-coding-agent";
+import { readdirSync, statSync } from "node:fs";
+import { join } from "node:path";
+import { homedir } from "node:os";
 import { readUnitRuntimeRecord, writeUnitRuntimeRecord } from "./unit-runtime.js";
 import { resolveAutoSupervisorConfig } from "./preferences.js";
 import type { GSDPreferences } from "./preferences.js";
@@ -21,6 +25,7 @@ import { saveActivityLog } from "./activity-log.js";
 import { recoverTimedOutUnit, type RecoveryContext } from "./auto-timeout-recovery.js";
 import type { AutoSession } from "./auto/session.js";
 import { getErrorMessage } from "./error-utils.js";
+import { writeSessionStatus } from "./session-status-io.js";
 
 export interface SupervisionContext {
   s: AutoSession;
@@ -221,4 +226,90 @@ export function startUnitSupervision(sctx: SupervisionContext): void {
       s.continueHereHandle = null;
     }
   }, 15_000);
+}
+
+// ─── Worker Heartbeat ──────────────────────────────────────────────────────
+
+const HEARTBEAT_INTERVAL_MS = 15_000;
+
+/**
+ * Compute the Pi session directory for the current cwd.
+ * Mirrors Pi's session path encoding: strip leading `/`, replace `/\:` with `-`,
+ * wrap in `--..--`, prepend `~/.pi/agent/sessions/`.
+ */
+function computeSessionDir(): string {
+  const cwd = process.cwd();
+  const encoded = cwd.replace(/^\//, "").replace(/[/\\:]/g, "-");
+  return join(homedir(), ".pi", "agent", "sessions", `--${encoded}--`);
+}
+
+/**
+ * Find the most recent .jsonl session file in the given directory.
+ * Returns the full path, or undefined if the directory doesn't exist
+ * or contains no .jsonl files.
+ */
+function findLatestSessionFile(dir: string): string | undefined {
+  try {
+    const entries = readdirSync(dir).filter((e) => e.endsWith(".jsonl"));
+    if (entries.length === 0) return undefined;
+    // Sort by mtime descending — pick the most recently written session
+    let latest: { name: string; mtime: number } | null = null;
+    for (const name of entries) {
+      try {
+        const fullPath = join(dir, name);
+        const mtime = statSync(fullPath).mtimeMs;
+        if (!latest || mtime > latest.mtime) {
+          latest = { name, mtime };
+        }
+      } catch { /* skip unreadable files */ }
+    }
+    return latest ? join(dir, latest.name) : undefined;
+  } catch {
+    return undefined; // directory doesn't exist or not readable
+  }
+}
+
+/**
+ * Start a periodic heartbeat that writes session status for this worker.
+ * Only active when running as a parallel worker (GSD_PARALLEL_WORKER=1).
+ * Uses GSD_PROJECT_ROOT to locate the coordinator's parallel status directory.
+ */
+export function startWorkerHeartbeat(s: AutoSession): void {
+  if (process.env.GSD_PARALLEL_WORKER !== "1") return;
+
+  const milestoneId = process.env.GSD_MILESTONE_LOCK;
+  const coordBasePath = process.env.GSD_PROJECT_ROOT;
+  if (!milestoneId || !coordBasePath) return;
+
+  // Clear any existing heartbeat (safety against double-start)
+  stopWorkerHeartbeat(s);
+
+  s.heartbeatHandle = setInterval(() => {
+    // Discover session file on each tick (not cached — picks up new sessions)
+    const sessionDir = computeSessionDir();
+    const sessionFile = findLatestSessionFile(sessionDir);
+
+    writeSessionStatus(coordBasePath, {
+      milestoneId,
+      pid: process.pid,
+      state: "running",
+      currentUnit: s.currentUnit,
+      completedUnits: s.completedUnits.length,
+      cost: 0,
+      lastHeartbeat: Date.now(),
+      startedAt: s.autoStartTime || Date.now(),
+      worktreePath: s.basePath,
+      ...(sessionFile ? { sessionFile } : {}),
+    });
+  }, HEARTBEAT_INTERVAL_MS);
+}
+
+/**
+ * Stop the worker heartbeat timer.
+ */
+export function stopWorkerHeartbeat(s: AutoSession): void {
+  if (s.heartbeatHandle) {
+    clearInterval(s.heartbeatHandle);
+    s.heartbeatHandle = null;
+  }
 }

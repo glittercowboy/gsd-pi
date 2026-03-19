@@ -92,6 +92,7 @@ export class AutoSession {
   idleWatchdogHandle: ReturnType<typeof setInterval> | null = null;
   continueHereHandle: ReturnType<typeof setInterval> | null = null;
   dispatchGapHandle: ReturnType<typeof setTimeout> | null = null;
+  heartbeatHandle: ReturnType<typeof setInterval> | null = null;
 
   // ── Current unit ─────────────────────────────────────────────────────────
   currentUnit: CurrentUnit | null = null;
@@ -137,6 +138,7 @@ export class AutoSession {
     if (this.idleWatchdogHandle) { clearInterval(this.idleWatchdogHandle); this.idleWatchdogHandle = null; }
     if (this.continueHereHandle) { clearInterval(this.continueHereHandle); this.continueHereHandle = null; }
     if (this.dispatchGapHandle) { clearTimeout(this.dispatchGapHandle); this.dispatchGapHandle = null; }
+    if (this.heartbeatHandle) { clearInterval(this.heartbeatHandle); this.heartbeatHandle = null; }
   }
 
   resetDispatchCounters(): void {

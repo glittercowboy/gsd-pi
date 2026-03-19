@@ -172,12 +172,13 @@ import { isDbAvailable } from "./gsd-db.js";
 import { hasPendingCaptures, loadPendingCaptures, countPendingCaptures } from "./captures.js";
 
 // ── Extracted modules ──────────────────────────────────────────────────────
-import { startUnitSupervision, type SupervisionContext } from "./auto-timers.js";
+import { startUnitSupervision, startWorkerHeartbeat, stopWorkerHeartbeat, type SupervisionContext } from "./auto-timers.js";
 import { checkIdempotency, type IdempotencyContext } from "./auto-idempotency.js";
 import { checkStuckAndRecover, type StuckContext } from "./auto-stuck-detection.js";
 import { runPostUnitVerification, type VerificationContext } from "./auto-verification.js";
 import { postUnitPreVerification, postUnitPostVerification, type PostUnitContext } from "./auto-post-unit.js";
 import { bootstrapAutoSession, type BootstrapDeps } from "./auto-start.js";
+import { clearProjectRoot } from "./context-tracker.js";
 
 // Resource staleness, stale worktree escape → resource-version.ts
 
@@ -540,6 +541,7 @@ export async function stopAuto(ctx?: ExtensionContext, pi?: ExtensionAPI, reason
   resetRoutingHistory();
   resetHookState();
   if (s.basePath) clearPersistedHookState(s.basePath);
+  stopWorkerHeartbeat(s);
   s.active = false;
   s.paused = false;
   s.stepMode = false;
@@ -554,6 +556,7 @@ export async function stopAuto(ctx?: ExtensionContext, pi?: ExtensionAPI, reason
   s.autoModeStartModel = null;
   s.currentMilestoneId = null;
   s.originalBasePath = "";
+  clearProjectRoot();
   s.completedUnits = [];
   s.pendingQuickTasks = [];
   clearSliceProgressCache();
@@ -597,6 +600,7 @@ export async function pauseAuto(ctx?: ExtensionContext, _pi?: ExtensionAPI): Pro
 
   deregisterSigtermHandler();
 
+  stopWorkerHeartbeat(s);
   s.active = false;
   s.paused = true;
   s.pendingVerificationRetry = null;
@@ -642,6 +646,9 @@ export async function startAuto(
     s.stepMode = requestedStepMode;
     s.cmdCtx = ctx;
     s.basePath = base;
+
+    // ── Start worker heartbeat on resume (only fires when GSD_PARALLEL_WORKER=1) ──
+    startWorkerHeartbeat(s);
     s.unitDispatchCount.clear();
     s.unitLifetimeDispatches.clear();
     s.unitConsecutiveSkips.clear();
