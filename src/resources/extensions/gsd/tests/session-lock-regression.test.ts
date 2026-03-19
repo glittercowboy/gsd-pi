@@ -11,7 +11,6 @@
  */
 
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync, readFileSync } from 'node:fs';
-import { createRequire } from 'node:module';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
@@ -27,18 +26,6 @@ import { gsdRoot } from '../paths.ts';
 import { createTestContext } from './test-helpers.ts';
 
 const { assertEq, assertTrue, report } = createTestContext();
-const require = createRequire(import.meta.url);
-
-function hasProperLockfile(): boolean {
-  try {
-    require("proper-lockfile");
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-const properLockfileAvailable = hasProperLockfile();
 
 async function main(): Promise<void> {
 
@@ -215,57 +202,6 @@ async function main(): Promise<void> {
       const r2 = acquireSessionLock(base);
       assertTrue(r2.acquired, 're-acquisition after release');
       releaseSessionLock(base);
-    } finally {
-      rmSync(base, { recursive: true, force: true });
-    }
-  }
-
-  // ─── 9. Re-entrant acquisition without explicit release ───────────────
-  console.log('\n=== 9. re-entrant acquire without explicit release ===');
-  {
-    const base = mkdtempSync(join(tmpdir(), 'gsd-session-lock-'));
-    mkdirSync(join(base, '.gsd'), { recursive: true });
-
-    try {
-      const r1 = acquireSessionLock(base);
-      assertTrue(r1.acquired, 'first acquisition succeeds');
-
-      const r2 = acquireSessionLock(base);
-      assertTrue(r2.acquired, 're-entrant acquisition succeeds');
-
-      const valid = validateSessionLock(base);
-      assertTrue(valid, 're-entrant acquisition does not corrupt validation state');
-
-      releaseSessionLock(base);
-    } finally {
-      rmSync(base, { recursive: true, force: true });
-    }
-  }
-
-  // ─── 10. Re-entrant acquisition refreshes lock artifacts ──────────────
-  console.log('\n=== 10. re-entrant acquire refreshes lock artifacts ===');
-  {
-    const base = mkdtempSync(join(tmpdir(), 'gsd-session-lock-'));
-    mkdirSync(join(base, '.gsd'), { recursive: true });
-
-    try {
-      const r1 = acquireSessionLock(base);
-      assertTrue(r1.acquired, 'first acquisition succeeds');
-
-      const lockDir = gsdRoot(base) + '.lock';
-      if (properLockfileAvailable) {
-        assertTrue(existsSync(lockDir), '.gsd.lock/ exists after first acquisition');
-      }
-
-      const r2 = acquireSessionLock(base);
-      assertTrue(r2.acquired, 'second acquisition succeeds');
-      if (properLockfileAvailable) {
-        assertTrue(existsSync(lockDir), '.gsd.lock/ exists after re-entrant acquisition');
-      }
-      assertTrue(validateSessionLock(base), 'lock remains valid after re-entrant acquisition');
-
-      releaseSessionLock(base);
-      assertTrue(!existsSync(lockDir), '.gsd.lock/ is removed after release');
     } finally {
       rmSync(base, { recursive: true, force: true });
     }

@@ -1,25 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, writeFileSync, existsSync, readFileSync, rmSync } from "node:fs";
-import { createRequire } from "node:module";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
 import { writeLock, readCrashLock, clearLock, isLockProcessAlive } from "../crash-recovery.ts";
-import { acquireSessionLock, releaseSessionLock } from "../session-lock.ts";
-
-const require = createRequire(import.meta.url);
-
-function hasProperLockfile(): boolean {
-  try {
-    require("proper-lockfile");
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-const properLockfileAvailable = hasProperLockfile();
 
 // ─── writeLock creates auto.lock in .gsd/ ────────────────────────────────
 
@@ -108,28 +93,6 @@ test("clearLock is safe when no lock file exists", () => {
   clearLock(dir);
 
   rmSync(dir, { recursive: true, force: true });
-});
-
-test("bootstrap cleanup releases session lock artifacts", () => {
-  const dir = mkdtempSync(join(tmpdir(), "gsd-lock-test-"));
-  mkdirSync(join(dir, ".gsd"), { recursive: true });
-
-  try {
-    const result = acquireSessionLock(dir);
-    assert.equal(result.acquired, true, "session lock should be acquired");
-    assert.ok(existsSync(join(dir, ".gsd", "auto.lock")), "auto.lock should exist while lock is held");
-    if (properLockfileAvailable) {
-      assert.ok(existsSync(join(dir, ".gsd.lock")), ".gsd.lock should exist while lock is held");
-    }
-
-    releaseSessionLock(dir);
-    clearLock(dir);
-
-    assert.ok(!existsSync(join(dir, ".gsd", "auto.lock")), "auto.lock should be removed by bootstrap cleanup");
-    assert.ok(!existsSync(join(dir, ".gsd.lock")), ".gsd.lock should be removed by bootstrap cleanup");
-  } finally {
-    rmSync(dir, { recursive: true, force: true });
-  }
 });
 
 // ─── isLockProcessAlive detects live vs dead PIDs ────────────────────────

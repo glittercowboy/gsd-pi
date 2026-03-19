@@ -103,20 +103,13 @@ export async function bootstrapAutoSession(
     return false;
   }
 
-  function releaseLockAndReturn(): false {
-    releaseSessionLock(base);
-    clearLock(base);
-    return false;
+  // Ensure git repo exists
+  if (!nativeIsRepo(base)) {
+    const mainBranch = loadEffectiveGSDPreferences()?.preferences?.git?.main_branch || "main";
+    nativeInit(base, mainBranch);
   }
 
-  try {
-    // Ensure git repo exists
-    if (!nativeIsRepo(base)) {
-      const mainBranch = loadEffectiveGSDPreferences()?.preferences?.git?.main_branch || "main";
-      nativeInit(base, mainBranch);
-    }
-
-    // Ensure .gitignore has baseline patterns
+  // Ensure .gitignore has baseline patterns
   const gitPrefs = loadEffectiveGSDPreferences()?.preferences?.git;
   const manageGitignore = gitPrefs?.manage_gitignore;
   ensureGitignore(base, { manageGitignore });
@@ -258,10 +251,10 @@ export async function bootstrapAutoSession(
             "Discussion completed but no milestone context was written. Run /gsd to try the discussion again, or /gsd auto after creating the milestone manually.",
             "warning",
           );
-          return releaseLockAndReturn();
+          return false;
         }
       } else {
-        return releaseLockAndReturn();
+        return false;
       }
     }
 
@@ -283,7 +276,7 @@ export async function bootstrapAutoSession(
             "Discussion completed but milestone context is still missing. Run /gsd to try again.",
             "warning",
           );
-          return releaseLockAndReturn();
+          return false;
         }
       }
     }
@@ -293,7 +286,7 @@ export async function bootstrapAutoSession(
   if (!state.activeMilestone) {
     const { showSmartEntry } = await import("./guided-flow.js");
     await showSmartEntry(ctx, pi, base, { step: requestedStepMode });
-    return releaseLockAndReturn();
+    return false;
   }
 
   // ── Initialize session state ──
@@ -486,10 +479,5 @@ export async function bootstrapAutoSession(
     }
   } catch { /* non-fatal */ }
 
-    return true;
-  } catch (err) {
-    releaseSessionLock(base);
-    clearLock(base);
-    throw err;
-  }
+  return true;
 }
