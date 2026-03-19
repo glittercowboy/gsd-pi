@@ -20,7 +20,7 @@
     }
   },
   "scripts": {
-    "build": "tsc -p tsconfig.json"
+    "build": "tsc -p tsconfig.json && cp src/models.data.json dist/models.data.json"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.73.0",
