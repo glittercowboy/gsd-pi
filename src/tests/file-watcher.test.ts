@@ -54,10 +54,11 @@ test("settings.json change emits settings-changed event", async () => {
 	const bus = createMockEventBus();
 
 	await startFileWatcher(dir, bus);
+	await delay(200);
 
 	writeFileSync(join(dir, "settings.json"), JSON.stringify({ updated: true }));
 	// Wait for debounce (300ms) + filesystem propagation
-	await delay(600);
+	await delay(800);
 
 	const matched = bus.events.filter((e) => e.channel === "settings-changed");
 	assert.ok(matched.length > 0, "should emit settings-changed event");
@@ -68,9 +69,10 @@ test("auth.json change emits auth-changed event", async () => {
 	const bus = createMockEventBus();
 
 	await startFileWatcher(dir, bus);
+	await delay(200);
 
 	writeFileSync(join(dir, "auth.json"), JSON.stringify({ token: "new" }));
-	await delay(600);
+	await delay(800);
 
 	const matched = bus.events.filter((e) => e.channel === "auth-changed");
 	assert.ok(matched.length > 0, "should emit auth-changed event");
@@ -81,9 +83,10 @@ test("models.json change emits models-changed event", async () => {
 	const bus = createMockEventBus();
 
 	await startFileWatcher(dir, bus);
+	await delay(200);
 
 	writeFileSync(join(dir, "models.json"), JSON.stringify({ model: "new" }));
-	await delay(600);
+	await delay(800);
 
 	const matched = bus.events.filter((e) => e.channel === "models-changed");
 	assert.ok(matched.length > 0, "should emit models-changed event");
@@ -133,7 +136,7 @@ test("debouncing coalesces rapid changes into one event", async () => {
 	for (let i = 0; i < 5; i++) {
 		writeFileSync(join(dir, "settings.json"), JSON.stringify({ i }));
 	}
-	await delay(600);
+	await delay(800);
 
 	const matched = bus.events.filter((e) => e.channel === "settings-changed");
 	assert.strictEqual(

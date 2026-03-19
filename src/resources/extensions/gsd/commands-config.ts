@@ -1,5 +1,5 @@
 /**
- * GSD Config — Tool API key management.
+ * GSD Config — Tool API key and model management.
  *
  * Contains: TOOL_KEYS, loadToolApiKeys, getConfigAuthStorage, handleConfig
  */
@@ -98,5 +98,63 @@ export async function handleConfig(ctx: ExtensionCommandContext): Promise<void> 
     await ctx.waitForIdle();
     await ctx.reload();
     ctx.ui.notify("Configuration saved. Extensions reloaded with new keys.", "info");
+  }
+
+  // Model configuration — add openai-compatible models (#1366)
+  const addModel = await ctx.ui.select(
+    "Would you like to add a custom AI model?",
+    ["Add openai-compatible model", "Skip"],
+  );
+
+  if (addModel === "Add openai-compatible model") {
+    let addingModels = true;
+    while (addingModels) {
+      const baseUrl = await ctx.ui.input("Base URL (e.g. https://api.example.com/v1):", "https://");
+      if (!baseUrl?.trim()) break;
+
+      const modelId = await ctx.ui.input("Model ID (e.g. gpt-4, llama-3.1):", "model-name");
+      if (!modelId?.trim()) break;
+
+      const apiKey = await ctx.ui.input("API key for this endpoint:", "sk-...");
+      if (!apiKey?.trim()) break;
+
+      const displayName = await ctx.ui.input("Display name (optional, press Enter to use model ID):", modelId.trim());
+
+      // Write to settings.json
+      try {
+        const { existsSync, readFileSync, writeFileSync, mkdirSync } = await import("node:fs");
+        const { join } = await import("node:path");
+        const { homedir } = await import("node:os");
+
+        const settingsDir = join(homedir(), ".gsd");
+        mkdirSync(settingsDir, { recursive: true });
+        const settingsPath = join(settingsDir, "settings.json");
+
+        let settings: any = {};
+        if (existsSync(settingsPath)) {
+          try { settings = JSON.parse(readFileSync(settingsPath, "utf-8")); } catch { settings = {}; }
+        }
+
+        if (!Array.isArray(settings.customModels)) {
+          settings.customModels = [];
+        }
+
+        settings.customModels.push({
+          provider: "openai-compatible",
+          id: modelId.trim(),
+          name: (displayName?.trim() || modelId.trim()),
+          baseUrl: baseUrl.trim(),
+          apiKey: apiKey.trim(),
+        });
+
+        writeFileSync(settingsPath, JSON.stringify(settings, null, 2), "utf-8");
+        ctx.ui.notify(`Model "${displayName?.trim() || modelId.trim()}" added. Restart GSD to use it with --model ${modelId.trim()}.`, "info");
+      } catch (err) {
+        ctx.ui.notify(`Failed to save model: ${err instanceof Error ? err.message : String(err)}`, "error");
+      }
+
+      const another = await ctx.ui.select("Add another model?", ["Yes", "No"]);
+      addingModels = another === "Yes";
+    }
   }
 }

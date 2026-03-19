@@ -13,8 +13,8 @@ function run(command: string, cwd: string): string {
 }
 
 async function main(): Promise<void> {
-  const base = mkdtempSync(join(tmpdir(), "gsd-repo-identity-"));
-  const stateDir = mkdtempSync(join(tmpdir(), "gsd-state-"));
+  const base = realpathSync(mkdtempSync(join(tmpdir(), "gsd-repo-identity-")));
+  const stateDir = realpathSync(mkdtempSync(join(tmpdir(), "gsd-state-")));
 
   try {
     process.env.GSD_STATE_DIR = stateDir;
@@ -38,7 +38,7 @@ async function main(): Promise<void> {
     assertEq(worktreeState, expectedExternalState, "worktree symlink target matches main repo external state dir");
     assertTrue(existsSync(join(worktreePath, ".gsd")), "worktree .gsd exists");
     assertTrue(lstatSync(join(worktreePath, ".gsd")).isSymbolicLink(), "worktree .gsd is a symlink");
-    assertEq(realpathSync(join(worktreePath, ".gsd")), expectedExternalState, "worktree .gsd symlink resolves to main repo external state dir");
+    assertEq(realpathSync(join(worktreePath, ".gsd")), realpathSync(expectedExternalState), "worktree .gsd symlink resolves to main repo external state dir");
 
     console.log("\n=== ensureGsdSymlink heals stale worktree symlinks ===");
     const staleState = join(stateDir, "projects", "stale-worktree-state");
@@ -47,7 +47,7 @@ async function main(): Promise<void> {
     symlinkSync(staleState, join(worktreePath, ".gsd"), "junction");
     const healedState = ensureGsdSymlink(worktreePath);
     assertEq(healedState, expectedExternalState, "stale worktree symlink is repaired to canonical external state dir");
-    assertEq(realpathSync(join(worktreePath, ".gsd")), expectedExternalState, "healed worktree symlink resolves to canonical external state dir");
+    assertEq(realpathSync(join(worktreePath, ".gsd")), realpathSync(expectedExternalState), "healed worktree symlink resolves to canonical external state dir");
 
     console.log("\n=== ensureGsdSymlink preserves worktree .gsd directories ===");
     rmSync(join(worktreePath, ".gsd"), { recursive: true, force: true });

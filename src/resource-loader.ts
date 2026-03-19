@@ -19,7 +19,9 @@ import { loadRegistry, readManifestFromEntryPath, isExtensionEnabled, ensureRegi
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const distResources = join(packageRoot, 'dist', 'resources')
 const srcResources = join(packageRoot, 'src', 'resources')
-const resourcesDir = existsSync(distResources) ? distResources : srcResources
+const resourcesDir = (existsSync(distResources) && existsSync(join(distResources, 'agents')))
+  ? distResources
+  : srcResources
 const bundledExtensionsDir = join(resourcesDir, 'extensions')
 const resourceVersionManifestName = 'managed-resources.json'
 
