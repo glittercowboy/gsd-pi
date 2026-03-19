@@ -15,7 +15,7 @@ import { deriveState } from "./state.js";
 import { GSDDashboardOverlay } from "./dashboard-overlay.js";
 import { GSDVisualizerOverlay } from "./visualizer-overlay.js";
 import { showQueue, showDiscuss, showHeadlessMilestoneCreation } from "./guided-flow.js";
-import { startAuto, stopAuto, pauseAuto, isAutoActive, isAutoPaused, isStepMode, stopAutoRemote } from "./auto.js";
+import { startAuto, stopAuto, pauseAuto, isAutoActive, isAutoPaused, isStepMode, stopAutoRemote, checkRemoteAutoSession } from "./auto.js";
 import { dispatchDirectPhase } from "./auto-direct-dispatch.js";
 import { resolveProjectRoot } from "./worktree.js";
 import { assertSafeDirectory } from "./validate-directory.js";
@@ -48,6 +48,7 @@ import { computeProgressScore, formatProgressLine } from "./progress-score.js";
 import { runEnvironmentChecks } from "./doctor-environment.js";
 import { handleLogs } from "./commands-logs.js";
 import { handleStart, handleTemplates, getTemplateCompletions } from "./commands-workflow-templates.js";
+import { showNextAction } from "../shared/mod.js";
 
 
 /** Resolve the effective project root, accounting for worktree paths. */
@@ -67,6 +68,91 @@ export function projectRoot(): string {
     assertSafeDirectory(root);
   }
   return root;
+}
+
+/**
+ * Guard against starting auto-mode when a remote session is already running.
+ * Returns true if the caller should proceed with startAuto, false if handled.
+ */
+async function guardRemoteSession(
+  ctx: ExtensionCommandContext,
+  pi: ExtensionAPI,
+): Promise<boolean> {
+  // Local session already active — proceed (startAuto handles re-entrant calls)
+  if (isAutoActive() || isAutoPaused()) return true;
+
+  const remote = checkRemoteAutoSession(projectRoot());
+  if (!remote.running || !remote.pid) return true;
+
+  const unitLabel = remote.unitType && remote.unitId
+    ? `${remote.unitType} (${remote.unitId})`
+    : "unknown unit";
+  const unitsMsg = remote.completedUnits != null
+    ? `${remote.completedUnits} units completed`
+    : "";
+
+  const choice = await showNextAction(ctx, {
+    title: `Auto-mode is running in another terminal (PID ${remote.pid})`,
+    summary: [
+      `Currently executing: ${unitLabel}`,
+      ...(unitsMsg ? [unitsMsg] : []),
+      ...(remote.startedAt ? [`Started: ${remote.startedAt}`] : []),
+    ],
+    actions: [
+      {
+        id: "status",
+        label: "View status",
+        description: "Show the current GSD progress dashboard.",
+        recommended: true,
+      },
+      {
+        id: "steer",
+        label: "Steer the session",
+        description: "Use /gsd steer <instruction> to redirect the running session.",
+      },
+      {
+        id: "stop",
+        label: "Stop remote session",
+        description: `Send SIGTERM to PID ${remote.pid} to stop it gracefully.`,
+      },
+      {
+        id: "force",
+        label: "Force start (steal lock)",
+        description: "Start a new session, terminating the existing one.",
+      },
+    ],
+    notYetMessage: "Run /gsd when ready.",
+  });
+
+  if (choice === "status") {
+    await handleStatus(ctx);
+    return false;
+  }
+  if (choice === "steer") {
+    ctx.ui.notify(
+      "Use /gsd steer <instruction> to redirect the running auto-mode session.\n" +
+      "Example: /gsd steer Use Postgres instead of SQLite",
+      "info",
+    );
+    return false;
+  }
+  if (choice === "stop") {
+    const result = stopAutoRemote(projectRoot());
+    if (result.found) {
+      ctx.ui.notify(`Sent stop signal to auto-mode session (PID ${result.pid}). It will shut down gracefully.`, "info");
+    } else if (result.error) {
+      ctx.ui.notify(`Failed to stop remote auto-mode: ${result.error}`, "error");
+    } else {
+      ctx.ui.notify("Remote session is no longer running.", "info");
+    }
+    return false;
+  }
+  if (choice === "force") {
+    return true; // Proceed — startAuto will steal the lock
+  }
+
+  // "not_yet" or escape
+  return false;
 }
 
 export function registerGSDCommand(pi: ExtensionAPI): void {
@@ -514,6 +600,7 @@ export async function handleGSDCommand(
         const verboseMode = trimmed.includes("--verbose");
         const debugMode = trimmed.includes("--debug");
         if (debugMode) enableDebug(projectRoot());
+        if (!(await guardRemoteSession(ctx, pi))) return;
         await startAuto(ctx, pi, projectRoot(), verboseMode, { step: true });
         return;
       }
@@ -522,6 +609,7 @@ export async function handleGSDCommand(
         const verboseMode = trimmed.includes("--verbose");
         const debugMode = trimmed.includes("--debug");
         if (debugMode) enableDebug(projectRoot());
+        if (!(await guardRemoteSession(ctx, pi))) return;
         await startAuto(ctx, pi, projectRoot(), verboseMode);
         return;
       }
@@ -900,6 +988,7 @@ Examples:
 
       if (trimmed === "") {
         // Bare /gsd defaults to step mode
+        if (!(await guardRemoteSession(ctx, pi))) return;
         await startAuto(ctx, pi, projectRoot(), false, { step: true });
         return;
       }

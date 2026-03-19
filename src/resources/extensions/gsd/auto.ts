@@ -416,6 +416,38 @@ export function stopAutoRemote(projectRoot: string): {
   }
 }
 
+/**
+ * Check if a remote auto-mode session is running (from a different process).
+ * Reads the crash lock, checks PID liveness, and returns session details.
+ * Used by the guard in commands.ts to prevent bare /gsd, /gsd next, and
+ * /gsd auto from stealing the session lock.
+ */
+export function checkRemoteAutoSession(projectRoot: string): {
+  running: boolean;
+  pid?: number;
+  unitType?: string;
+  unitId?: string;
+  startedAt?: string;
+  completedUnits?: number;
+} {
+  const lock = readCrashLock(projectRoot);
+  if (!lock) return { running: false };
+
+  if (!isLockProcessAlive(lock)) {
+    // Stale lock from a dead process — not a live remote session
+    return { running: false };
+  }
+
+  return {
+    running: true,
+    pid: lock.pid,
+    unitType: lock.unitType,
+    unitId: lock.unitId,
+    startedAt: lock.startedAt,
+    completedUnits: lock.completedUnits,
+  };
+}
+
 export function isStepMode(): boolean {
   return s.stepMode;
 }
