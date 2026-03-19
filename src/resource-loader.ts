@@ -1,7 +1,7 @@
 import { DefaultResourceLoader } from '@gsd/pi-coding-agent'
 import { createHash } from 'node:crypto'
 import { homedir } from 'node:os'
-import { chmodSync, copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { chmodSync, copyFileSync, cpSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { dirname, join, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { compareSemver } from './update-check.js'
@@ -133,7 +133,12 @@ export function getNewerManagedResourceVersion(agentDir: string, currentVersion:
 function makeTreeWritable(dirPath: string): void {
   if (!existsSync(dirPath)) return
 
-  const stats = statSync(dirPath)
+  // Use lstatSync to avoid following symlinks into immutable filesystems
+  // (e.g., Nix store on NixOS/nix-darwin). Symlinks don't carry their own
+  // permissions and their targets may be read-only by design (#1298).
+  const stats = lstatSync(dirPath)
+  if (stats.isSymbolicLink()) return
+
   const isDir = stats.isDirectory()
   const currentMode = stats.mode & 0o777
 
@@ -144,7 +149,11 @@ function makeTreeWritable(dirPath: string): void {
   }
 
   if (newMode !== currentMode) {
-    chmodSync(dirPath, newMode)
+    try {
+      chmodSync(dirPath, newMode)
+    } catch {
+      // Non-fatal — may fail on read-only filesystems or insufficient permissions
+    }
   }
 
   if (isDir) {
