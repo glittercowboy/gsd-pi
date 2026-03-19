@@ -542,3 +542,298 @@ test("COMPLETION_TRANSITION_CODES are a subset of DoctorIssueCode", async () => 
     assert.ok(code.startsWith("all_tasks_done_"), `code should start with all_tasks_done_: ${code}`);
   }
 });
+
+// ─── Scope 2: State Derivation — Array Safety ────────────────────────────
+
+test("deriveState: registry is always an array with malformed roadmap", async () => {
+  const tmp = makeTmp("malformed-roadmap");
+  try {
+    const mDir = join(tmp, ".gsd", "milestones", "M001");
+    mkdirSync(mDir, { recursive: true });
+    writeFileSync(join(mDir, "M001-CONTEXT.md"), "# M001\n\nContext.");
+    // Roadmap exists but is completely empty
+    writeFileSync(join(mDir, "M001-ROADMAP.md"), "");
+    const state = await deriveState(tmp);
+    assert.ok(Array.isArray(state.registry), "registry must be array");
+    assert.equal(state.activeMilestone?.id, "M001");
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test("deriveState: plan with garbled content still returns valid state", async () => {
+  const tmp = makeTmp("garbled-plan");
+  try {
+    const mDir = join(tmp, ".gsd", "milestones", "M001");
+    const sDir = join(mDir, "slices", "S01");
+    mkdirSync(join(sDir, "tasks"), { recursive: true });
+    writeFileSync(join(mDir, "M001-CONTEXT.md"), "# M001\n\nContext.");
+    writeFileSync(join(mDir, "M001-ROADMAP.md"), buildMinimalRoadmap([
+      { id: "S01", title: "Test", done: false },
+    ]));
+    // Plan file exists but contains garbage
+    writeFileSync(join(sDir, "S01-PLAN.md"), "just some random text\nno tasks here\n!!!");
+    const state = await deriveState(tmp);
+    // Should fall back to planning since no tasks parsed
+    assert.equal(state.phase, "planning");
+    assert.equal(state.activeSlice?.id, "S01");
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+// ─── Scope 4: Lock Management — Exit Handler Verification ────────────────
+
+test("session lock: releaseSessionLock removes auto.lock file", async () => {
+  const tmp = makeTmp("lock-release");
+  try {
+    const gsd = join(tmp, ".gsd");
+    mkdirSync(gsd, { recursive: true });
+    const lockFile = join(gsd, "auto.lock");
+    writeFileSync(lockFile, JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString() }));
+    assert.ok(existsSync(lockFile), "lock file should exist before release");
+
+    const { releaseSessionLock } = await import("../session-lock.ts");
+    releaseSessionLock(tmp);
+
+    assert.ok(!existsSync(lockFile), "lock file should be removed after release");
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test("session lock: onCompromised handler exists in both primary and retry paths", async () => {
+  const lockSource = readFileSync(
+    "src/resources/extensions/gsd/session-lock.ts", "utf-8"
+  );
+  const compromisedMatches = [...lockSource.matchAll(/onCompromised/g)];
+  // Should have at least 2 onCompromised handlers (primary + retry)
+  // plus the flag declaration and the check in validateSessionLock
+  assert.ok(compromisedMatches.length >= 3, 
+    `expected ≥3 onCompromised references (primary + retry + flag), got ${compromisedMatches.length}`);
+});
+
+// ─── Scope 5: Crash Recovery — Message Guidance per Unit Type ────────────
+
+test("crash recovery: formatCrashInfo includes guidance for bootstrap crash", async () => {
+  const { formatCrashInfo } = await import("../crash-recovery.ts");
+  const info = formatCrashInfo({
+    pid: 12345,
+    startedAt: new Date().toISOString(),
+    unitType: "starting",
+    unitId: "bootstrap",
+    unitStartedAt: new Date().toISOString(),
+    completedUnits: 0,
+  });
+  assert.ok(info.includes("bootstrap"), "should mention bootstrap");
+  assert.ok(info.includes("No work was lost") || info.includes("/gsd auto"), 
+    "should include recovery guidance for bootstrap crash");
+});
+
+test("crash recovery: formatCrashInfo includes guidance for execute-task crash", async () => {
+  const { formatCrashInfo } = await import("../crash-recovery.ts");
+  const info = formatCrashInfo({
+    pid: 12345,
+    startedAt: new Date().toISOString(),
+    unitType: "execute-task",
+    unitId: "M001/S01/T02",
+    unitStartedAt: new Date().toISOString(),
+    completedUnits: 5,
+  });
+  assert.ok(info.includes("execute"), "should mention execute");
+  assert.ok(info.includes("resume") || info.includes("preserved") || info.includes("/gsd auto"),
+    "should include recovery guidance for task crash");
+});
+
+test("crash recovery: formatCrashInfo includes guidance for complete-slice crash", async () => {
+  const { formatCrashInfo } = await import("../crash-recovery.ts");
+  const info = formatCrashInfo({
+    pid: 12345,
+    startedAt: new Date().toISOString(),
+    unitType: "complete-slice",
+    unitId: "M001/S01",
+    unitStartedAt: new Date().toISOString(),
+    completedUnits: 10,
+  });
+  assert.ok(info.includes("complete"), "should mention complete");
+  assert.ok(info.includes("finish") || info.includes("/gsd auto"),
+    "should include recovery guidance for completion crash");
+});
+
+test("crash recovery: formatCrashInfo includes guidance for research crash", async () => {
+  const { formatCrashInfo } = await import("../crash-recovery.ts");
+  const info = formatCrashInfo({
+    pid: 12345,
+    startedAt: new Date().toISOString(),
+    unitType: "research-milestone",
+    unitId: "M001",
+    unitStartedAt: new Date().toISOString(),
+    completedUnits: 1,
+  });
+  assert.ok(info.includes("research"), "should mention research");
+  assert.ok(info.includes("incomplete") || info.includes("re-run") || info.includes("/gsd auto"),
+    "should include recovery guidance for research crash");
+});
+
+// ─── Scope 6: Milestone Transitions — Dispatch Flow ─────────────────────
+
+test("dispatch: needs-discussion stops with discussion guidance", async () => {
+  const tmp = makeTmp("dispatch-discussion");
+  try {
+    const mDir = join(tmp, ".gsd", "milestones", "M001");
+    mkdirSync(mDir, { recursive: true });
+    writeFileSync(join(mDir, "M001-CONTEXT-DRAFT.md"), "# Draft\n\nIdeas.");
+    const state = await deriveState(tmp);
+    const result = await resolveDispatch({
+      basePath: tmp, mid: "M001", midTitle: "Test", state, prefs: undefined,
+    });
+    assert.equal(result.action, "stop");
+    assert.ok((result as any).reason.includes("discussion") || (result as any).reason.includes("discuss"),
+      "stop reason should mention discussion");
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test("dispatch: pre-planning without context stops with guidance", async () => {
+  const tmp = makeTmp("dispatch-no-context");
+  try {
+    const mDir = join(tmp, ".gsd", "milestones", "M001");
+    mkdirSync(mDir, { recursive: true });
+    // No context, no roadmap — just a bare milestone directory
+    const state = await deriveState(tmp);
+    const result = await resolveDispatch({
+      basePath: tmp, mid: "M001", midTitle: "Test", state, prefs: undefined,
+    });
+    assert.equal(result.action, "stop");
+    assert.ok((result as any).reason.includes("context") || (result as any).reason.includes("discuss"),
+      "stop reason should mention missing context");
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test("dispatch: pre-planning with context dispatches research-milestone", async () => {
+  const tmp = makeTmp("dispatch-research");
+  try {
+    const mDir = join(tmp, ".gsd", "milestones", "M001");
+    mkdirSync(mDir, { recursive: true });
+    writeFileSync(join(mDir, "M001-CONTEXT.md"), "# M001\n\nBuild a thing.");
+    const state = await deriveState(tmp);
+    const result = await resolveDispatch({
+      basePath: tmp, mid: "M001", midTitle: "Test", state, prefs: undefined,
+    });
+    assert.equal(result.action, "dispatch");
+    assert.equal((result as any).unitType, "research-milestone");
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test("dispatch: executing phase dispatches execute-task", async () => {
+  const tmp = makeTmp("dispatch-execute");
+  try {
+    const mDir = join(tmp, ".gsd", "milestones", "M001");
+    const sDir = join(mDir, "slices", "S01");
+    mkdirSync(join(sDir, "tasks"), { recursive: true });
+    writeFileSync(join(mDir, "M001-CONTEXT.md"), "# M001\n\nContext.");
+    writeFileSync(join(mDir, "M001-ROADMAP.md"), buildMinimalRoadmap([
+      { id: "S01", title: "Test", done: false },
+    ]));
+    writeFileSync(join(sDir, "S01-PLAN.md"), buildMinimalPlan([
+      { id: "T01", title: "Do work", done: false },
+    ]));
+    writeFileSync(join(sDir, "tasks", "T01-PLAN.md"), "# T01\nDo the thing.");
+    const state = await deriveState(tmp);
+    assert.equal(state.phase, "executing");
+    const result = await resolveDispatch({
+      basePath: tmp, mid: "M001", midTitle: "Test", state, prefs: undefined,
+    });
+    assert.equal(result.action, "dispatch");
+    assert.equal((result as any).unitType, "execute-task");
+    assert.equal((result as any).unitId, "M001/S01/T01");
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test("dispatch: summarizing phase dispatches complete-slice", async () => {
+  const tmp = makeTmp("dispatch-complete-slice");
+  try {
+    const mDir = join(tmp, ".gsd", "milestones", "M001");
+    const sDir = join(mDir, "slices", "S01");
+    mkdirSync(join(sDir, "tasks"), { recursive: true });
+    writeFileSync(join(mDir, "M001-CONTEXT.md"), "# M001\n\nContext.");
+    writeFileSync(join(mDir, "M001-ROADMAP.md"), buildMinimalRoadmap([
+      { id: "S01", title: "Test", done: false },
+    ]));
+    writeFileSync(join(sDir, "S01-PLAN.md"), buildMinimalPlan([
+      { id: "T01", title: "Done task", done: true },
+    ]));
+    writeFileSync(join(sDir, "tasks", "T01-SUMMARY.md"), buildMinimalSummary("T01"));
+    const state = await deriveState(tmp);
+    assert.equal(state.phase, "summarizing");
+    const result = await resolveDispatch({
+      basePath: tmp, mid: "M001", midTitle: "Test", state, prefs: undefined,
+    });
+    assert.equal(result.action, "dispatch");
+    assert.equal((result as any).unitType, "complete-slice");
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test("dispatch: validating-milestone dispatches validate-milestone", async () => {
+  const tmp = makeTmp("dispatch-validate");
+  try {
+    const mDir = join(tmp, ".gsd", "milestones", "M001");
+    const sDir = join(mDir, "slices", "S01");
+    mkdirSync(join(sDir, "tasks"), { recursive: true });
+    writeFileSync(join(mDir, "M001-CONTEXT.md"), "# M001\n\nContext.");
+    writeFileSync(join(mDir, "M001-ROADMAP.md"), buildMinimalRoadmap([
+      { id: "S01", title: "Test", done: true },
+    ]));
+    writeFileSync(join(sDir, "S01-PLAN.md"), buildMinimalPlan([
+      { id: "T01", title: "Done", done: true },
+    ]));
+    writeFileSync(join(sDir, "tasks", "T01-SUMMARY.md"), buildMinimalSummary("T01"));
+    writeFileSync(join(sDir, "S01-SUMMARY.md"), "# Summary\nDone.");
+    const state = await deriveState(tmp);
+    assert.equal(state.phase, "validating-milestone");
+    const result = await resolveDispatch({
+      basePath: tmp, mid: "M001", midTitle: "Test", state, prefs: undefined,
+    });
+    assert.equal(result.action, "dispatch");
+    assert.equal((result as any).unitType, "validate-milestone");
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test("dispatch: completing-milestone dispatches complete-milestone", async () => {
+  const tmp = makeTmp("dispatch-complete-ms");
+  try {
+    const mDir = join(tmp, ".gsd", "milestones", "M001");
+    const sDir = join(mDir, "slices", "S01");
+    mkdirSync(join(sDir, "tasks"), { recursive: true });
+    writeFileSync(join(mDir, "M001-CONTEXT.md"), "# M001\n\nContext.");
+    writeFileSync(join(mDir, "M001-ROADMAP.md"), buildMinimalRoadmap([
+      { id: "S01", title: "Test", done: true },
+    ]));
+    writeFileSync(join(sDir, "S01-PLAN.md"), buildMinimalPlan([
+      { id: "T01", title: "Done", done: true },
+    ]));
+    writeFileSync(join(sDir, "tasks", "T01-SUMMARY.md"), buildMinimalSummary("T01"));
+    writeFileSync(join(sDir, "S01-SUMMARY.md"), "# Summary\nDone.");
+    writeFileSync(join(mDir, "M001-VALIDATION.md"), "---\nverdict: pass\nremediation_round: 0\n---\n# Validation\nPassed.");
+    const state = await deriveState(tmp);
+    assert.equal(state.phase, "completing-milestone");
+    const result = await resolveDispatch({
+      basePath: tmp, mid: "M001", midTitle: "Test", state, prefs: undefined,
+    });
+    assert.equal(result.action, "dispatch");
+    assert.equal((result as any).unitType, "complete-milestone");
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
