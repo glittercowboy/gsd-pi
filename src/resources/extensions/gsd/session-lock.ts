@@ -154,12 +154,23 @@ export function acquireSessionLock(basePath: string): SessionLockResult {
         // Retry acquisition after cleanup
         const release = lockfile.lockSync(gsdDir, {
           realpath: false,
-          stale: 300_000,
+          stale: 1_800_000, // 30 minutes — match primary lock settings
           update: 10_000,
+          onCompromised: () => {
+            _lockCompromised = true;
+          },
         });
         _releaseFunction = release;
         _lockedPath = basePath;
         _lockPid = process.pid;
+
+        // Safety net for retry path too
+        const retryLockDir = join(gsdDir + ".lock");
+        process.once("exit", () => {
+          try { if (_releaseFunction) { _releaseFunction(); _releaseFunction = null; } } catch {}
+          try { if (existsSync(retryLockDir)) rmSync(retryLockDir, { recursive: true, force: true }); } catch {}
+        });
+
         atomicWriteSync(lp, JSON.stringify(lockData, null, 2));
         return { acquired: true };
       } catch {
