@@ -35,6 +35,14 @@ function getRemoteUrl(basePath: string): string {
  * Resolve the git toplevel (real root) for the given path.
  * For worktrees this returns the main repo root, not the worktree path.
  */
+function canonicalizeExistingPath(path: string): string {
+  try {
+    return realpathSync(path);
+  } catch {
+    return resolve(path);
+  }
+}
+
 function resolveGitRoot(basePath: string): string {
   try {
     // First: inspect the local .git entry directly. In git worktrees this is
@@ -51,7 +59,7 @@ function resolveGitRoot(basePath: string): string {
           const normalized = gitdir.replaceAll("\\", "/");
           const marker = "/.git/worktrees/";
           if (normalized.includes(marker)) {
-            return resolve(gitdir, "..", "..", "..");
+            return canonicalizeExistingPath(resolve(gitdir, "..", "..", ".."));
           }
         }
       }
@@ -73,22 +81,22 @@ function resolveGitRoot(basePath: string): string {
 
     // Normal repo or worktree with shared common dir pointing at <repo>/.git.
     if (normalizedCommonDir.endsWith("/.git")) {
-      return resolve(commonDir, "..");
+      return canonicalizeExistingPath(resolve(commonDir, ".."));
     }
 
     // Some git setups may still expose <repo>/.git/worktrees/<name>.
     const worktreeMarker = "/.git/worktrees/";
     if (normalizedCommonDir.includes(worktreeMarker)) {
-      return resolve(commonDir, "..", "..");
+      return canonicalizeExistingPath(resolve(commonDir, "..", ".."));
     }
 
     // Fallback for unusual layouts.
-    return execFileSync("git", ["rev-parse", "--show-toplevel"], {
+    return canonicalizeExistingPath(execFileSync("git", ["rev-parse", "--show-toplevel"], {
       cwd: basePath,
       encoding: "utf-8",
       stdio: ["ignore", "pipe", "ignore"],
       timeout: 5_000,
-    }).trim();
+    }).trim());
   } catch {
     return resolve(basePath);
   }
