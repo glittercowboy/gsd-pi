@@ -17,9 +17,11 @@ import {
   resolveMilestoneFile,
   resolveMilestonePath,
   resolveSliceFile,
+  resolveSlicePath,
   resolveTaskFile,
   relSliceFile,
   buildMilestoneFileName,
+  buildSliceFileName,
 } from "./paths.js";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -369,6 +371,30 @@ const DISPATCH_RULES: DispatchRule[] = [
     name: "validating-milestone → validate-milestone",
     match: async ({ state, mid, midTitle, basePath, prefs }) => {
       if (state.phase !== "validating-milestone") return null;
+
+      // Safety guard (#1368): verify all roadmap slices have SUMMARY files before
+      // allowing milestone validation. If any slice lacks a summary, the milestone
+      // is not genuinely complete — something skipped earlier slices.
+      const roadmapFile = resolveMilestoneFile(basePath, mid, "ROADMAP");
+      const roadmapContent = roadmapFile ? await loadFile(roadmapFile) : null;
+      if (roadmapContent) {
+        const roadmap = parseRoadmap(roadmapContent);
+        const missingSlices: string[] = [];
+        for (const slice of roadmap.slices) {
+          const summaryPath = resolveSliceFile(basePath, mid, slice.id, "SUMMARY");
+          if (!summaryPath || !existsSync(summaryPath)) {
+            missingSlices.push(slice.id);
+          }
+        }
+        if (missingSlices.length > 0) {
+          return {
+            action: "stop",
+            reason: `Cannot validate milestone ${mid}: slices ${missingSlices.join(", ")} are missing SUMMARY files. These slices may have been skipped.`,
+            level: "error",
+          };
+        }
+      }
+
       // Skip preference: write a minimal pass-through VALIDATION file
       if (prefs?.phases?.skip_milestone_validation) {
         const mDir = resolveMilestonePath(basePath, mid);
@@ -404,6 +430,28 @@ const DISPATCH_RULES: DispatchRule[] = [
     name: "completing-milestone → complete-milestone",
     match: async ({ state, mid, midTitle, basePath }) => {
       if (state.phase !== "completing-milestone") return null;
+
+      // Safety guard (#1368): verify all roadmap slices have SUMMARY files.
+      const roadmapFile = resolveMilestoneFile(basePath, mid, "ROADMAP");
+      const roadmapContent = roadmapFile ? await loadFile(roadmapFile) : null;
+      if (roadmapContent) {
+        const roadmap = parseRoadmap(roadmapContent);
+        const missingSlices: string[] = [];
+        for (const slice of roadmap.slices) {
+          const summaryPath = resolveSliceFile(basePath, mid, slice.id, "SUMMARY");
+          if (!summaryPath || !existsSync(summaryPath)) {
+            missingSlices.push(slice.id);
+          }
+        }
+        if (missingSlices.length > 0) {
+          return {
+            action: "stop",
+            reason: `Cannot complete milestone ${mid}: slices ${missingSlices.join(", ")} are missing SUMMARY files. Run /gsd doctor to diagnose.`,
+            level: "error",
+          };
+        }
+      }
+
       return {
         action: "dispatch",
         unitType: "complete-milestone",

@@ -69,6 +69,7 @@ test("auth.json change emits auth-changed event", async () => {
 	const bus = createMockEventBus();
 
 	await startFileWatcher(dir, bus);
+	// Allow watcher to fully initialize before writing
 	await delay(200);
 
 	writeFileSync(join(dir, "auth.json"), JSON.stringify({ token: "new" }));
