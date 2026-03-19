@@ -180,26 +180,36 @@ function checkPortConflicts(basePath: string): EnvironmentCheckResult[] {
   const portsToCheck = new Set<number>();
   const pkgPath = join(basePath, "package.json");
 
-  if (existsSync(pkgPath)) {
-    try {
-      const pkg = JSON.parse(readFileSync(pkgPath, "utf-8"));
-      const scripts = pkg.scripts ?? {};
-      const scriptText = Object.values(scripts).join(" ");
-
-      // Look for --port NNNN, -p NNNN, PORT=NNNN, :NNNN patterns
-      const portMatches = scriptText.matchAll(/(?:--port\s+|(?:^|[^a-z])PORT[=:]\s*|-p\s+|:)(\d{4,5})\b/gi);
-      for (const m of portMatches) {
-        const port = parseInt(m[1], 10);
-        if (port >= 1024 && port <= 65535) portsToCheck.add(port);
-      }
-    } catch {
-      // parse failed — use defaults
-    }
+  if (!existsSync(pkgPath)) {
+    // No package.json — this isn't a Node.js project. Skip port checks
+    // entirely to avoid false positives from system services (e.g., macOS
+    // AirPlay Receiver on port 5000). (#1381)
+    return [];
   }
 
-  // If no ports found in scripts, check common defaults
+  try {
+    const pkg = JSON.parse(readFileSync(pkgPath, "utf-8"));
+    const scripts = pkg.scripts ?? {};
+    const scriptText = Object.values(scripts).join(" ");
+
+    // Look for --port NNNN, -p NNNN, PORT=NNNN, :NNNN patterns
+    const portMatches = scriptText.matchAll(/(?:--port\s+|(?:^|[^a-z])PORT[=:]\s*|-p\s+|:)(\d{4,5})\b/gi);
+    for (const m of portMatches) {
+      const port = parseInt(m[1], 10);
+      if (port >= 1024 && port <= 65535) portsToCheck.add(port);
+    }
+  } catch {
+    // parse failed — skip port checks rather than using defaults
+    return [];
+  }
+
+  // If no ports found in scripts, check common defaults.
+  // Filter out port 5000 on macOS — AirPlay Receiver uses it by default (#1381).
   if (portsToCheck.size === 0) {
-    for (const p of DEFAULT_DEV_PORTS) portsToCheck.add(p);
+    for (const p of DEFAULT_DEV_PORTS) {
+      if (p === 5000 && process.platform === "darwin") continue;
+      portsToCheck.add(p);
+    }
   }
 
   for (const port of portsToCheck) {

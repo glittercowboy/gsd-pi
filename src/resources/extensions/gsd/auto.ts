@@ -127,7 +127,7 @@ import {
   formatTokenCount,
 } from "./metrics.js";
 import { join } from "node:path";
-import { readFileSync, existsSync, mkdirSync } from "node:fs";
+import { readFileSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { atomicWriteSync } from "./atomic-write.js";
 import {
   autoCommitCurrentBranch,
@@ -554,6 +554,13 @@ export async function stopAuto(
   resetRoutingHistory();
   resetHookState();
   if (s.basePath) clearPersistedHookState(s.basePath);
+
+  // Remove paused-session metadata if present (#1383)
+  try {
+    const pausedPath = join(gsdRoot(s.originalBasePath || s.basePath), "runtime", "paused-session.json");
+    if (existsSync(pausedPath)) unlinkSync(pausedPath);
+  } catch { /* non-fatal */ }
+
   s.active = false;
   s.paused = false;
   s.stepMode = false;
@@ -607,8 +614,32 @@ export async function pauseAuto(
 
   s.pausedSessionFile = ctx?.sessionManager?.getSessionFile() ?? null;
 
-  if (lockBase()) clearLock(lockBase());
-  if (lockBase()) releaseSessionLock(lockBase());
+  // Persist paused-session metadata so resume survives /exit (#1383).
+  // The fresh-start bootstrap checks for this file and restores worktree context.
+  try {
+    const pausedMeta = {
+      milestoneId: s.currentMilestoneId,
+      worktreePath: isInAutoWorktree(s.basePath) ? s.basePath : null,
+      originalBasePath: s.originalBasePath,
+      stepMode: s.stepMode,
+      pausedAt: new Date().toISOString(),
+      sessionFile: s.pausedSessionFile,
+    };
+    const runtimeDir = join(gsdRoot(s.originalBasePath || s.basePath), "runtime");
+    mkdirSync(runtimeDir, { recursive: true });
+    writeFileSync(
+      join(runtimeDir, "paused-session.json"),
+      JSON.stringify(pausedMeta, null, 2),
+      "utf-8",
+    );
+  } catch {
+    // Non-fatal — resume will still work via full bootstrap, just without worktree context
+  }
+
+  if (lockBase()) {
+    releaseSessionLock(lockBase());
+    clearLock(lockBase());
+  }
 
   deregisterSigtermHandler();
 
@@ -792,6 +823,30 @@ export async function startAuto(
   base = escapeStaleWorktree(base);
 
   // If resuming from paused state, just re-activate and dispatch next unit.
+  // Check persisted paused-session first (#1383) — survives /exit.
+  if (!s.paused) {
+    try {
+      const pausedPath = join(gsdRoot(base), "runtime", "paused-session.json");
+      if (existsSync(pausedPath)) {
+        const meta = JSON.parse(readFileSync(pausedPath, "utf-8"));
+        if (meta.milestoneId) {
+          s.currentMilestoneId = meta.milestoneId;
+          s.originalBasePath = meta.originalBasePath || base;
+          s.stepMode = meta.stepMode ?? requestedStepMode;
+          s.paused = true;
+          // Clean up the persisted file — we're consuming it
+          try { unlinkSync(pausedPath); } catch { /* non-fatal */ }
+          ctx.ui.notify(
+            `Resuming paused session for ${meta.milestoneId}${meta.worktreePath ? ` (worktree)` : ""}.`,
+            "info",
+          );
+        }
+      }
+    } catch {
+      // Malformed or missing — proceed with fresh bootstrap
+    }
+  }
+
   if (s.paused) {
     const resumeLock = acquireSessionLock(base);
     if (!resumeLock.acquired) {
