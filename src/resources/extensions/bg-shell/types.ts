@@ -179,8 +179,6 @@ export interface ProcessManifest {
 export const MAX_BUFFER_LINES = 5000;
 export const MAX_EVENTS = 200;
 export const DEAD_PROCESS_TTL = 10 * 60 * 1000;
-/** Maximum unique entries in the per-process lineDedup Map before LRU eviction. */
-export const LINE_DEDUP_MAX = 500;
 export const PORT_PROBE_TIMEOUT = 500;
 export const READY_POLL_INTERVAL = 250;
 export const DEFAULT_READY_TIMEOUT = 30000;

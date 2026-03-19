@@ -22,7 +22,6 @@ import {
 	READINESS_PATTERNS,
 	BUILD_COMPLETE_PATTERNS,
 	TEST_RESULT_PATTERNS,
-	LINE_DEDUP_MAX,
 } from "./types.js";
 import { addEvent, pushAlert } from "./process-manager.js";
 import { transitionToReady } from "./readiness-detector.js";
@@ -106,22 +105,6 @@ export function analyzeLine(bg: BgProcess, line: string, stream: "stdout" | "std
 		}
 	}
 
-	// Dedup tracking — evict oldest entry when map exceeds LINE_DEDUP_MAX (LRU via Map insertion order)
-	bg.totalRawLines++;
-	const lineHash = line.trim().slice(0, 100);
-	const existing = bg.lineDedup.get(lineHash);
-	if (existing !== undefined) {
-		// Re-insert to update insertion order (move to tail = most recent)
-		bg.lineDedup.delete(lineHash);
-		bg.lineDedup.set(lineHash, existing + 1);
-	} else {
-		if (bg.lineDedup.size >= LINE_DEDUP_MAX) {
-			// Evict oldest entry (Map iteration order = insertion order = LRU at head)
-			const oldest = bg.lineDedup.keys().next().value;
-			if (oldest !== undefined) bg.lineDedup.delete(oldest);
-		}
-		bg.lineDedup.set(lineHash, 1);
-	}
 }
 
 // ── Digest Generation ──────────────────────────────────────────────────────
