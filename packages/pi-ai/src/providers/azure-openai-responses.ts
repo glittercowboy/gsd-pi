@@ -14,17 +14,11 @@ import type {
 	StreamOptions,
 } from "../types.js";
 import { AssistantMessageEventStream } from "../utils/event-stream.js";
+import { lazyImport } from "../utils/lazy-import.js";
 import { convertResponsesMessages, convertResponsesTools, processResponsesStream } from "./openai-responses-shared.js";
 import { buildBaseOptions, clampReasoning } from "./simple-options.js";
 
-let _AzureOpenAIClass: typeof AzureOpenAI | undefined;
-async function getAzureOpenAIClass(): Promise<typeof AzureOpenAI> {
-	if (!_AzureOpenAIClass) {
-		const mod = await import("openai");
-		_AzureOpenAIClass = mod.AzureOpenAI;
-	}
-	return _AzureOpenAIClass;
-}
+const getAzureOpenAIClass = lazyImport<typeof AzureOpenAI>("openai", (mod) => mod.AzureOpenAI);
 
 /**
  * Clamp reasoning effort for models that don't support all levels.

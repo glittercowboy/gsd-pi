@@ -7,14 +7,12 @@ import type {
 	ThinkingConfig,
 } from "@google/genai";
 
-let _GoogleGenAIClass: typeof GoogleGenAI | undefined;
-async function getGoogleGenAIClass(): Promise<typeof GoogleGenAI> {
-	if (!_GoogleGenAIClass) {
-		const mod = await import("@google/genai");
-		_GoogleGenAIClass = mod.GoogleGenAI;
-	}
-	return _GoogleGenAIClass;
-}
+import { lazyImport } from "../utils/lazy-import.js";
+
+const getGoogleGenAIClass = lazyImport<typeof GoogleGenAI>(
+	"@google/genai",
+	(mod) => mod.GoogleGenAI,
+);
 import { getEnvApiKey } from "../env-api-keys.js";
 import { calculateCost } from "../models.js";
 import type {

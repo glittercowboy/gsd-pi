@@ -31,19 +31,13 @@ import type {
 import { AssistantMessageEventStream } from "../utils/event-stream.js";
 import { parseStreamingJson } from "../utils/json-parse.js";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.js";
+import { lazyImport } from "../utils/lazy-import.js";
 
 import { buildCopilotDynamicHeaders, hasCopilotVisionInput } from "./github-copilot-headers.js";
 import { adjustMaxTokensForThinking, buildBaseOptions } from "./simple-options.js";
 import { transformMessages } from "./transform-messages.js";
 
-let _AnthropicClass: typeof Anthropic | undefined;
-async function getAnthropicClass(): Promise<typeof Anthropic> {
-	if (!_AnthropicClass) {
-		const mod = await import("@anthropic-ai/sdk");
-		_AnthropicClass = mod.default;
-	}
-	return _AnthropicClass;
-}
+const getAnthropicClass = lazyImport<typeof Anthropic>("@anthropic-ai/sdk");
 
 /**
  * Resolve cache retention preference.
@@ -512,7 +506,7 @@ export const streamAnthropic: StreamFunction<"anthropic-messages", AnthropicOpti
 			if (model.provider === "alibaba-coding-plan") {
 				output.errorMessage = `[alibaba-coding-plan] ${output.errorMessage}`;
 			}
-			const AnthropicSdk = _AnthropicClass;
+			const AnthropicSdk = await getAnthropicClass().catch(() => undefined);
 			if (AnthropicSdk && error instanceof AnthropicSdk.APIError && error.headers) {
 				const retryAfterMs = extractRetryAfterMs(error.headers, error.message);
 				if (retryAfterMs !== undefined) {

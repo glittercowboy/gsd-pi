@@ -31,18 +31,12 @@ import type {
 import { AssistantMessageEventStream } from "../utils/event-stream.js";
 import { parseStreamingJson } from "../utils/json-parse.js";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.js";
+import { lazyImport } from "../utils/lazy-import.js";
 import { buildCopilotDynamicHeaders, hasCopilotVisionInput } from "./github-copilot-headers.js";
 import { buildBaseOptions, clampReasoning } from "./simple-options.js";
 import { transformMessages } from "./transform-messages.js";
 
-let _OpenAICompletionsClass: typeof OpenAI | undefined;
-async function getOpenAICompletionsClass(): Promise<typeof OpenAI> {
-	if (!_OpenAICompletionsClass) {
-		const mod = await import("openai");
-		_OpenAICompletionsClass = mod.default;
-	}
-	return _OpenAICompletionsClass;
-}
+const getOpenAICompletionsClass = lazyImport<typeof OpenAI>("openai");
 
 /**
  * Check if conversation messages contain tool calls or tool results.

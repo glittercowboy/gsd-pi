@@ -16,18 +16,12 @@ import type {
 	Usage,
 } from "../types.js";
 import { AssistantMessageEventStream } from "../utils/event-stream.js";
+import { lazyImport } from "../utils/lazy-import.js";
 import { buildCopilotDynamicHeaders, hasCopilotVisionInput } from "./github-copilot-headers.js";
 import { convertResponsesMessages, convertResponsesTools, processResponsesStream } from "./openai-responses-shared.js";
 import { buildBaseOptions, clampReasoning } from "./simple-options.js";
 
-let _OpenAIResponsesClass: typeof OpenAI | undefined;
-async function getOpenAIResponsesClass(): Promise<typeof OpenAI> {
-	if (!_OpenAIResponsesClass) {
-		const mod = await import("openai");
-		_OpenAIResponsesClass = mod.default;
-	}
-	return _OpenAIResponsesClass;
-}
+const getOpenAIResponsesClass = lazyImport<typeof OpenAI>("openai");
 
 /**
  * Clamp reasoning effort for models that don't support all levels.

@@ -10,14 +10,12 @@ import type {
 	FunctionTool,
 } from "@mistralai/mistralai/models/components/index.js";
 
-let _MistralClass: typeof Mistral | undefined;
-async function getMistralClass(): Promise<typeof Mistral> {
-	if (!_MistralClass) {
-		const mod = await import("@mistralai/mistralai");
-		_MistralClass = mod.Mistral;
-	}
-	return _MistralClass;
-}
+import { lazyImport } from "../utils/lazy-import.js";
+
+const getMistralClass = lazyImport<typeof Mistral>(
+	"@mistralai/mistralai",
+	(mod) => mod.Mistral,
+);
 import { getEnvApiKey } from "../env-api-keys.js";
 import { calculateCost } from "../models.js";
 import type {

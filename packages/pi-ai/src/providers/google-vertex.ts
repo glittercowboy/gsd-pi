@@ -32,16 +32,13 @@ import {
 	mapToolChoice,
 	retainThoughtSignature,
 } from "./google-shared.js";
+import { lazyImport } from "../utils/lazy-import.js";
 import { buildBaseOptions, clampReasoning } from "./simple-options.js";
 
-let _GoogleVertexClass: typeof GoogleGenAI | undefined;
-async function getGoogleVertexClass(): Promise<typeof GoogleGenAI> {
-	if (!_GoogleVertexClass) {
-		const mod = await import("@google/genai");
-		_GoogleVertexClass = mod.GoogleGenAI;
-	}
-	return _GoogleVertexClass;
-}
+const getGoogleVertexClass = lazyImport<typeof GoogleGenAI>(
+	"@google/genai",
+	(mod) => mod.GoogleGenAI,
+);
 
 export interface GoogleVertexOptions extends StreamOptions {
 	toolChoice?: "auto" | "none" | "any";
