@@ -19,6 +19,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
 import { syncProjectRootToWorktree } from '../auto-worktree-sync.ts';
+import { syncGsdStateToWorktree } from '../auto-worktree.ts';
 import { createTestContext } from './test-helpers.ts';
 
 const { assertTrue, report } = createTestContext();
