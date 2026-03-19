@@ -385,7 +385,10 @@ if (isPrintMode) {
 
   if (extensionsResult.errors.length > 0) {
     for (const err of extensionsResult.errors) {
-      process.stderr.write(`[gsd] Extension load error: ${err.error}\n`)
+      // Downgrade conflicts with built-in tools to warnings (#1347)
+      const isSuperseded = err.error.includes("supersedes");
+      const prefix = isSuperseded ? "Extension conflict" : "Extension load error";
+      process.stderr.write(`[gsd] ${prefix}: ${err.error}\n`)
     }
   }
 
@@ -525,7 +528,9 @@ markStartup('createAgentSession')
 
 if (extensionsResult.errors.length > 0) {
   for (const err of extensionsResult.errors) {
-    process.stderr.write(`[gsd] Extension load error: ${err.error}\n`)
+    const isSuperseded = err.error.includes("supersedes");
+    const prefix = isSuperseded ? "Extension conflict" : "Extension load error";
+    process.stderr.write(`[gsd] ${prefix}: ${err.error}\n`)
   }
 }
 

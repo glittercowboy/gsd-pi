@@ -803,9 +803,15 @@ export class DefaultResourceLoader implements ResourceLoader {
 			for (const toolName of ext.tools.keys()) {
 				const existingOwner = toolOwners.get(toolName);
 				if (existingOwner && existingOwner !== ext.path) {
+					// Determine if the existing owner is a built-in (not a user extension)
+					const isBuiltIn = !existingOwner.includes("/.gsd/agent/extensions/") &&
+						!existingOwner.includes("/.gsd/extensions/");
+					const hint = isBuiltIn
+						? ` (built-in tool supersedes — consider removing ${ext.path})`
+						: "";
 					conflicts.push({
 						path: ext.path,
-						message: `Tool "${toolName}" conflicts with ${existingOwner}`,
+						message: `Tool "${toolName}" conflicts with ${existingOwner}${hint}`,
 					});
 				} else {
 					toolOwners.set(toolName, ext.path);
@@ -816,9 +822,14 @@ export class DefaultResourceLoader implements ResourceLoader {
 			for (const commandName of ext.commands.keys()) {
 				const existingOwner = commandOwners.get(commandName);
 				if (existingOwner && existingOwner !== ext.path) {
+					const isBuiltIn = !existingOwner.includes("/.gsd/agent/extensions/") &&
+						!existingOwner.includes("/.gsd/extensions/");
+					const hint = isBuiltIn
+						? ` (built-in command supersedes — consider removing ${ext.path})`
+						: "";
 					conflicts.push({
 						path: ext.path,
-						message: `Command "/${commandName}" conflicts with ${existingOwner}`,
+						message: `Command "/${commandName}" conflicts with ${existingOwner}${hint}`,
 					});
 				} else {
 					commandOwners.set(commandName, ext.path);
