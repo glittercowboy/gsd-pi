@@ -95,6 +95,11 @@ jobs:
       - name: Run fixture tests
         run: npm run test:fixtures
 
+      - name: Run live regression tests (against installed binary)
+        run: |
+          export GSD_SMOKE_BINARY=$(which gsd)
+          npm run test:live-regression
+
       - name: Promote to @next
         run: npm dist-tag add gsd-pi@${{ needs.dev-publish.outputs.dev-version }} next
         env:
