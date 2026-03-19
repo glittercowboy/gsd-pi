@@ -296,6 +296,15 @@ function makeMockDeps(overrides?: Partial<LoopDeps>): LoopDeps & { callLog: stri
     readFileSync: () => "",
     atomicWriteSync: () => {},
     GitServiceImpl: class {} as any,
+    resolver: {
+      get workPath() { return "/tmp/project"; },
+      get projectRoot() { return "/tmp/project"; },
+      get lockPath() { return "/tmp/project"; },
+      enterMilestone: () => {},
+      exitMilestone: () => {},
+      mergeAndExit: () => {},
+      mergeAndEnterNext: () => {},
+    } as any,
     postUnitPreVerification: async () => {
       callLog.push("postUnitPreVerification");
       return "continue" as const;

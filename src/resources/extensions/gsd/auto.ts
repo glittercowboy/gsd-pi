@@ -168,6 +168,7 @@ import { runPostUnitVerification, type VerificationContext } from "./auto-verifi
 import { postUnitPreVerification, postUnitPostVerification, type PostUnitContext } from "./auto-post-unit.js";
 import { bootstrapAutoSession, type BootstrapDeps } from "./auto-start.js";
 import { autoLoop, resolveAgentEnd, type LoopDeps } from "./auto-loop.js";
+import { WorktreeResolver, type WorktreeResolverDeps } from "./worktree-resolver.js";
 import { reorderForCaching } from "./prompt-ordering.js";
 
 // Worktree sync, resource staleness, stale worktree escape → auto-worktree-sync.ts
@@ -612,6 +613,27 @@ function buildLoopDeps(): LoopDeps {
 
     // Git
     GitServiceImpl: GitServiceImpl as unknown as LoopDeps["GitServiceImpl"],
+
+    // WorktreeResolver
+    resolver: new WorktreeResolver(s, {
+      isInAutoWorktree,
+      shouldUseWorktreeIsolation,
+      getIsolationMode,
+      mergeMilestoneToMain,
+      teardownAutoWorktree,
+      createAutoWorktree,
+      enterAutoWorktree,
+      getAutoWorktreePath,
+      autoCommitCurrentBranch,
+      getCurrentBranch,
+      autoWorktreeBranch,
+      resolveMilestoneFile,
+      readFileSync: (path: string, encoding: string) => readFileSync(path, encoding as BufferEncoding),
+      GitServiceImpl: GitServiceImpl as unknown as WorktreeResolverDeps["GitServiceImpl"],
+      loadEffectiveGSDPreferences: loadEffectiveGSDPreferences as unknown as WorktreeResolverDeps["loadEffectiveGSDPreferences"],
+      invalidateAllCaches,
+      captureIntegrationBranch,
+    } satisfies WorktreeResolverDeps),
 
     // Post-unit processing
     postUnitPreVerification,

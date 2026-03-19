@@ -128,17 +128,17 @@ test("auto-loop.ts milestone transition block contains worktree lifecycle", () =
     "utf-8",
   );
 
-  // The fix adds worktree merge + create inside the milestone transition block
+  // The resolver handles worktree merge + enter inside the milestone transition block
   assert.ok(
     autoSrc.includes("Worktree lifecycle on milestone transition"),
-    "auto.ts should contain the worktree lifecycle comment marker",
+    "auto-loop.ts should contain the worktree lifecycle comment marker",
   );
   assert.ok(
-    autoSrc.includes("mergeMilestoneToMain") && autoSrc.includes("mid !== s.currentMilestoneId"),
-    "auto.ts should call mergeMilestoneToMain during milestone transition",
+    autoSrc.includes("resolver.mergeAndExit") && autoSrc.includes("mid !== s.currentMilestoneId"),
+    "auto-loop.ts should call resolver.mergeAndExit during milestone transition",
   );
   assert.ok(
-    autoSrc.includes("createAutoWorktree") && autoSrc.includes("Created auto-worktree for"),
-    "auto.ts should create new worktree for incoming milestone",
+    autoSrc.includes("resolver.enterMilestone"),
+    "auto-loop.ts should call resolver.enterMilestone for incoming milestone",
   );
 });

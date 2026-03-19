@@ -65,33 +65,22 @@ test("auto-loop.ts 'all milestones complete' path merges before stopping (#962)"
 
   // Find the "incomplete.length === 0" block
   const incompleteIdx = autoSrc.indexOf("incomplete.length === 0");
-  assert.ok(incompleteIdx > -1, "auto.ts should have 'incomplete.length === 0' check");
+  assert.ok(incompleteIdx > -1, "auto-loop.ts should have 'incomplete.length === 0' check");
 
-  // The merge call must appear BETWEEN the incomplete check and the stopAuto call
-  // in that same block
+  // The resolver merge call must appear BETWEEN the incomplete check and the stopAuto call
   const blockAfterIncomplete = autoSrc.slice(incompleteIdx, incompleteIdx + 3000);
 
   assert.ok(
-    blockAfterIncomplete.includes("mergeMilestoneToMain"),
-    "auto.ts should call mergeMilestoneToMain in the 'all milestones complete' path",
+    blockAfterIncomplete.includes("resolver.mergeAndExit"),
+    "auto-loop.ts should call resolver.mergeAndExit in the 'all milestones complete' path",
   );
 
   // The merge should come before stopAuto in this block
-  const mergePos = blockAfterIncomplete.indexOf("mergeMilestoneToMain");
+  const mergePos = blockAfterIncomplete.indexOf("resolver.mergeAndExit");
   const stopPos = blockAfterIncomplete.indexOf("stopAuto");
   assert.ok(
     mergePos < stopPos,
-    "mergeMilestoneToMain should be called before stopAuto in the 'all complete' path",
-  );
-
-  // Should handle both worktree and branch isolation modes
-  assert.ok(
-    blockAfterIncomplete.includes("isInAutoWorktree"),
-    "should check isInAutoWorktree for worktree mode",
-  );
-  assert.ok(
-    blockAfterIncomplete.includes("getIsolationMode"),
-    "should check getIsolationMode for branch isolation mode",
+    "resolver.mergeAndExit should be called before stopAuto in the 'all complete' path",
   );
 });
 

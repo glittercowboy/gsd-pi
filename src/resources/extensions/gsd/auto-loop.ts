@@ -23,6 +23,7 @@ import type { CloseoutOptions } from "./auto-unit-closeout.js";
 import type { PostUnitContext } from "./auto-post-unit.js";
 import type { VerificationContext, VerificationResult } from "./auto-verification.js";
 import type { DispatchAction } from "./auto-dispatch.js";
+import type { WorktreeResolver } from "./worktree-resolver.js";
 import { debugLog } from "./debug-logger.js";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -247,6 +248,9 @@ export interface LoopDeps {
   // Git
   GitServiceImpl: new (basePath: string, gitConfig: unknown) => unknown;
 
+  // WorktreeResolver
+  resolver: WorktreeResolver;
+
   // Post-unit processing
   postUnitPreVerification: (pctx: PostUnitContext) => Promise<"dispatched" | "continue">;
   runPostUnitVerification: (vctx: VerificationContext, pauseAuto: (ctx?: ExtensionContext, pi?: ExtensionAPI) => Promise<void>) => Promise<VerificationResult>;
@@ -395,53 +399,19 @@ export async function autoLoop(
       lastDerivedUnit = "";
       sameUnitCount = 0;
 
-      // Worktree lifecycle on milestone transition
-      if (deps.isInAutoWorktree(s.basePath) && s.originalBasePath && deps.shouldUseWorktreeIsolation()) {
-        try {
-          const roadmapPath = deps.resolveMilestoneFile(s.originalBasePath, s.currentMilestoneId!, "ROADMAP");
-          if (roadmapPath) {
-            const roadmapContent = deps.readFileSync(roadmapPath, "utf-8");
-            const mergeResult = deps.mergeMilestoneToMain(s.originalBasePath, s.currentMilestoneId!, roadmapContent);
-            ctx.ui.notify(
-              `Milestone ${s.currentMilestoneId} merged to main.${mergeResult.pushed ? " Pushed to remote." : ""}`,
-              "info",
-            );
-          } else {
-            deps.teardownAutoWorktree(s.originalBasePath, s.currentMilestoneId!);
-            ctx.ui.notify(`Exited worktree for ${s.currentMilestoneId} (no roadmap for merge).`, "info");
-          }
-        } catch (err) {
-          ctx.ui.notify(
-            `Milestone merge failed during transition: ${err instanceof Error ? err.message : String(err)}`,
-            "warning",
-          );
-          if (s.originalBasePath) {
-            try { process.chdir(s.originalBasePath); } catch { /* best-effort */ }
-          }
-        }
+      // Worktree lifecycle on milestone transition — merge current, enter next
+      deps.resolver.mergeAndExit(s.currentMilestoneId!, ctx.ui);
+      deps.invalidateAllCaches();
 
-        s.basePath = s.originalBasePath;
-        s.gitService = new deps.GitServiceImpl(s.basePath, deps.loadEffectiveGSDPreferences()?.preferences?.git ?? {}) as AutoSession["gitService"];
-        deps.invalidateAllCaches();
+      state = await deps.deriveState(s.basePath);
+      mid = state.activeMilestone?.id;
+      midTitle = state.activeMilestone?.title;
 
-        state = await deps.deriveState(s.basePath);
-        mid = state.activeMilestone?.id;
-        midTitle = state.activeMilestone?.title;
-
-        if (mid) {
+      if (mid) {
+        if (deps.getIsolationMode() !== "none") {
           deps.captureIntegrationBranch(s.basePath, mid, { commitDocs: deps.loadEffectiveGSDPreferences()?.preferences?.git?.commit_docs });
-          try {
-            const wtPath = deps.createAutoWorktree(s.basePath, mid);
-            s.basePath = wtPath;
-            s.gitService = new deps.GitServiceImpl(s.basePath, deps.loadEffectiveGSDPreferences()?.preferences?.git ?? {}) as AutoSession["gitService"];
-            ctx.ui.notify(`Created auto-worktree for ${mid} at ${wtPath}`, "info");
-          } catch (err) {
-            ctx.ui.notify(
-              `Auto-worktree creation for ${mid} failed: ${err instanceof Error ? err.message : String(err)}. Continuing in project root.`,
-              "warning",
-            );
-          }
         }
+        deps.resolver.enterMilestone(mid, ctx.ui);
       } else {
         if (deps.getIsolationMode() !== "none") {
           deps.captureIntegrationBranch(s.originalBasePath || s.basePath, mid, { commitDocs: deps.loadEffectiveGSDPreferences()?.preferences?.git?.commit_docs });
@@ -469,51 +439,8 @@ export async function autoLoop(
       const incomplete = state.registry.filter((m: { status: string }) => m.status !== "complete");
       if (incomplete.length === 0) {
         // All milestones complete — merge milestone branch before stopping
-        if (s.currentMilestoneId && deps.isInAutoWorktree(s.basePath) && s.originalBasePath) {
-          try {
-            const roadmapPath = deps.resolveMilestoneFile(s.originalBasePath, s.currentMilestoneId, "ROADMAP");
-            if (roadmapPath) {
-              const roadmapContent = deps.readFileSync(roadmapPath, "utf-8");
-              const mergeResult = deps.mergeMilestoneToMain(s.originalBasePath, s.currentMilestoneId, roadmapContent);
-              s.basePath = s.originalBasePath;
-              s.gitService = new deps.GitServiceImpl(s.basePath, deps.loadEffectiveGSDPreferences()?.preferences?.git ?? {}) as AutoSession["gitService"];
-              ctx.ui.notify(
-                `Milestone ${s.currentMilestoneId} merged to main.${mergeResult.pushed ? " Pushed to remote." : ""}`,
-                "info",
-              );
-            }
-          } catch (err) {
-            ctx.ui.notify(
-              `Milestone merge failed: ${err instanceof Error ? err.message : String(err)}`,
-              "warning",
-            );
-            if (s.originalBasePath) {
-              s.basePath = s.originalBasePath;
-              try { process.chdir(s.basePath); } catch { /* best-effort */ }
-            }
-          }
-        } else if (s.currentMilestoneId && !deps.isInAutoWorktree(s.basePath) && deps.getIsolationMode() !== "none") {
-          try {
-            const currentBranch = deps.getCurrentBranch(s.basePath);
-            const milestoneBranch = deps.autoWorktreeBranch(s.currentMilestoneId);
-            if (currentBranch === milestoneBranch) {
-              const roadmapPath = deps.resolveMilestoneFile(s.basePath, s.currentMilestoneId, "ROADMAP");
-              if (roadmapPath) {
-                const roadmapContent = deps.readFileSync(roadmapPath, "utf-8");
-                const mergeResult = deps.mergeMilestoneToMain(s.basePath, s.currentMilestoneId, roadmapContent);
-                s.gitService = new deps.GitServiceImpl(s.basePath, deps.loadEffectiveGSDPreferences()?.preferences?.git ?? {}) as AutoSession["gitService"];
-                ctx.ui.notify(
-                  `Milestone ${s.currentMilestoneId} merged (branch mode).${mergeResult.pushed ? " Pushed to remote." : ""}`,
-                  "info",
-                );
-              }
-            }
-          } catch (err) {
-            ctx.ui.notify(
-              `Milestone merge failed (branch mode): ${err instanceof Error ? err.message : String(err)}`,
-              "warning",
-            );
-          }
+        if (s.currentMilestoneId) {
+          deps.resolver.mergeAndExit(s.currentMilestoneId, ctx.ui);
         }
         deps.sendDesktopNotification("GSD", "All milestones complete!", "success", "milestone");
         await deps.stopAuto(ctx, pi, "All milestones complete");
@@ -563,50 +490,8 @@ export async function autoLoop(
         await deps.closeoutUnit(ctx, s.basePath, s.currentUnit.type, s.currentUnit.id, s.currentUnit.startedAt, deps.buildSnapshotOpts(s.currentUnit.type, s.currentUnit.id));
       }
       // Milestone merge on complete
-      if (s.currentMilestoneId && deps.isInAutoWorktree(s.basePath) && s.originalBasePath) {
-        try {
-          const roadmapPath = deps.resolveMilestoneFile(s.originalBasePath, s.currentMilestoneId, "ROADMAP");
-          if (!roadmapPath) throw new Error(`Cannot resolve ROADMAP file for milestone ${s.currentMilestoneId}`);
-          const roadmapContent = deps.readFileSync(roadmapPath, "utf-8");
-          const mergeResult = deps.mergeMilestoneToMain(s.originalBasePath, s.currentMilestoneId, roadmapContent);
-          s.basePath = s.originalBasePath;
-          s.gitService = new deps.GitServiceImpl(s.basePath, deps.loadEffectiveGSDPreferences()?.preferences?.git ?? {}) as AutoSession["gitService"];
-          ctx.ui.notify(
-            `Milestone ${s.currentMilestoneId} merged to main.${mergeResult.pushed ? " Pushed to remote." : ""}`,
-            "info",
-          );
-        } catch (err) {
-          ctx.ui.notify(
-            `Milestone merge failed: ${err instanceof Error ? err.message : String(err)}`,
-            "warning",
-          );
-          if (s.originalBasePath) {
-            s.basePath = s.originalBasePath;
-            try { process.chdir(s.basePath); } catch { /* best-effort */ }
-          }
-        }
-      } else if (s.currentMilestoneId && !deps.isInAutoWorktree(s.basePath) && deps.getIsolationMode() !== "none") {
-        try {
-          const currentBranch = deps.getCurrentBranch(s.basePath);
-          const milestoneBranch = deps.autoWorktreeBranch(s.currentMilestoneId);
-          if (currentBranch === milestoneBranch) {
-            const roadmapPath = deps.resolveMilestoneFile(s.basePath, s.currentMilestoneId, "ROADMAP");
-            if (roadmapPath) {
-              const roadmapContent = deps.readFileSync(roadmapPath, "utf-8");
-              const mergeResult = deps.mergeMilestoneToMain(s.basePath, s.currentMilestoneId, roadmapContent);
-              s.gitService = new deps.GitServiceImpl(s.basePath, deps.loadEffectiveGSDPreferences()?.preferences?.git ?? {}) as AutoSession["gitService"];
-              ctx.ui.notify(
-                `Milestone ${s.currentMilestoneId} merged (branch mode).${mergeResult.pushed ? " Pushed to remote." : ""}`,
-                "info",
-              );
-            }
-          }
-        } catch (err) {
-          ctx.ui.notify(
-            `Milestone merge failed (branch mode): ${err instanceof Error ? err.message : String(err)}`,
-            "warning",
-          );
-        }
+      if (s.currentMilestoneId) {
+        deps.resolver.mergeAndExit(s.currentMilestoneId, ctx.ui);
       }
       deps.sendDesktopNotification("GSD", `Milestone ${mid} complete!`, "success", "milestone");
       await deps.stopAuto(ctx, pi, `Milestone ${mid} complete`);
