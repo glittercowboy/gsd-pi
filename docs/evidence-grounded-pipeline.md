@@ -235,6 +235,17 @@ GSD extension tests cannot run with `node --test` due to transitive `.js` import
 
 ---
 
+## Reproducibility
+
+To independently verify the proof chain described in this document, see the reproducibility kit:
+
+- `docs/reproducibility/README.md` — Step-by-step instructions to reproduce the M007-aos64t proof
+- `docs/reproducibility/artifact-manifest.md` — Complete inventory of proof artifacts with paths and descriptions
+
+The kit documents environment prerequisites (Node ≥22.5, tsx test runner), fixture locations, and expected PASS outcomes from the validation report.
+
+---
+
 ## Artifact Reference
 
 All durable artifacts referenced in this document:
