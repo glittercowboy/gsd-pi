@@ -122,6 +122,12 @@ function ensureExitHandler(gsdDir: string): void {
     try {
       if (_releaseFunction) { _releaseFunction(); _releaseFunction = null; }
     } catch { /* best-effort */ }
+    // Remove the auto.lock metadata file so crash-recovery doesn't
+    // falsely detect an interrupted session on the next startup.
+    try {
+      const lockFile = join(gsdDir, LOCK_FILE);
+      if (existsSync(lockFile)) unlinkSync(lockFile);
+    } catch { /* best-effort */ }
     try {
       const lockDir = join(gsdDir + ".lock");
       if (existsSync(lockDir)) rmSync(lockDir, { recursive: true, force: true });
