@@ -189,7 +189,7 @@ function render(w: number, healthState: { icon: string; color: string; summary: 
         ? theme.fg("success", GLYPH.statusDone)
         : isCurrent
           ? theme.fg("accent", "▸")
-          : theme.fg("dim", " ");
+          : theme.fg("dim", "○");
       const label = isCurrent
         ? theme.fg("text", `${t.id}: ${t.title}`)
         : t.done
@@ -205,7 +205,7 @@ function render(w: number, healthState: { icon: string; color: string; summary: 
         ? theme.fg("success", GLYPH.statusDone)
         : isCurrent
           ? theme.fg("accent", "▸")
-          : theme.fg("dim", " ");
+          : theme.fg("dim", "○");
       const label = isCurrent
         ? theme.fg("text", `${t.id}: ${t.title}`)
         : t.done

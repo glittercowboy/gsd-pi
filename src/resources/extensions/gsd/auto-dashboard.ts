@@ -532,7 +532,7 @@ export function updateProgressWidget(
               ? theme.fg("success", GLYPH.statusDone)
               : isCurrent
                 ? theme.fg("accent", "▸")
-                : theme.fg("dim", " ");
+                : theme.fg("dim", "○");
             const label = isCurrent
               ? theme.fg("text", `${t.id}: ${t.title}`)
               : t.done
@@ -554,7 +554,7 @@ export function updateProgressWidget(
               ? theme.fg("success", GLYPH.statusDone)
               : isCurrent
                 ? theme.fg("accent", "▸")
-                : theme.fg("dim", " ");
+                : theme.fg("dim", "○");
             const label = isCurrent
               ? theme.fg("text", `${t.id}: ${t.title}`)
               : t.done
