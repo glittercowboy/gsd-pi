@@ -55,7 +55,7 @@
   - Verify: `npx tsc --noEmit --project tsconfig.extensions.json` — 0 errors; `node --import ./src/resources/extensions/gsd/tests/resolve-ts.mjs --experimental-strip-types --test src/resources/extensions/gsd/tests/custom-engine-integration.test.ts` — 11/11 still pass
   - Done when: `createRun` creates directory with DEFINITION.yaml snapshot and valid GRAPH.yaml, `listRuns` returns run metadata, `getDisplayMetadata` shows definition name, zero regressions on existing tests
 
-- [ ] **T03: Integration test — YAML file through full dispatch cycle** `est:20m`
+- [x] **T03: Integration test — YAML file through full dispatch cycle** `est:20m`
   - Why: Proves the entire S04 pipeline works end-to-end: YAML definition → loadDefinition → createRun → CustomWorkflowEngine dispatch cycle → all steps complete. This is the slice's demo outcome and validates R006, R007, R008 together.
   - Files: `src/resources/extensions/gsd/tests/definition-run-integration.test.ts`
   - Do: Write integration test that: (1) writes a 3-step YAML definition to a temp workflow-defs dir, (2) calls loadDefinition, (3) calls createRun, (4) verifies DEFINITION.yaml exists and is byte-identical to source, (5) verifies GRAPH.yaml has 3 pending steps with correct dependencies, (6) runs the full deriveState → resolveDispatch → reconcile cycle 3 times through CustomWorkflowEngine, (7) verifies all steps complete on disk, (8) verifies getDisplayMetadata shows the workflow name from the definition. Include negative test: createRun with nonexistent definition throws.

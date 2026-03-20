@@ -109,3 +109,9 @@ Write the integration test that proves S04's demo outcome: a real YAML definitio
 ## Expected Output
 
 - `src/resources/extensions/gsd/tests/definition-run-integration.test.ts` — new file (~150 lines): 4 integration tests proving the full S04 pipeline
+
+## Observability Impact
+
+- **Signals changed:** No new runtime signals — this task adds tests, not production code.
+- **Inspection:** Run `node --import ./src/resources/extensions/gsd/tests/resolve-ts.mjs --experimental-strip-types --test src/resources/extensions/gsd/tests/definition-run-integration.test.ts` to re-verify the full S04 pipeline at any time. Each test exercises all observable outputs from T01/T02 (DEFINITION.yaml byte identity, GRAPH.yaml step statuses, display metadata, error messages).
+- **Failure visibility:** Test failures include assertion messages naming the specific requirement violated (R006/R007/R008) and the expected vs actual values.
