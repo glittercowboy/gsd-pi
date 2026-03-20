@@ -5,6 +5,7 @@ import {
   stripThinkingFromHistory,
   BRAVE_TOOL_NAMES,
   CUSTOM_SEARCH_TOOL_NAMES,
+  MAX_NATIVE_SEARCHES_PER_SESSION,
   type NativeSearchPI,
 } from "../resources/extensions/search-the-web/native-search.ts";
 
@@ -686,6 +687,203 @@ test("model_select DOES show notification on explicit user set", async () => {
     (n) => n.message.includes("Native Anthropic web search active")
   );
   assert.ok(nativeNotif, "Should show notification on explicit 'set' source");
+});
+
+// ─── Session-level search budget (#1309) ────────────────────────────────────
+
+test("session search budget: max_uses decreases as history accumulates search results", async () => {
+  const pi = createMockPI();
+  registerNativeSearchHooks(pi);
+
+  await pi.fire("model_select", {
+    type: "model_select",
+    model: { provider: "anthropic", name: "claude-sonnet-4-6" },
+    previousModel: undefined,
+    source: "set",
+  });
+
+  // Simulate a conversation with 10 web_search_tool_result blocks in history
+  const messages: any[] = [
+    { role: "user", content: "research this topic" },
+    {
+      role: "assistant",
+      content: [
+        { type: "web_search_tool_result", tool_use_id: "ws1", content: [] },
+        { type: "web_search_tool_result", tool_use_id: "ws2", content: [] },
+        { type: "web_search_tool_result", tool_use_id: "ws3", content: [] },
+        { type: "web_search_tool_result", tool_use_id: "ws4", content: [] },
+        { type: "web_search_tool_result", tool_use_id: "ws5", content: [] },
+        { type: "text", text: "Here are some results..." },
+      ],
+    },
+    { role: "user", content: "continue" },
+    {
+      role: "assistant",
+      content: [
+        { type: "web_search_tool_result", tool_use_id: "ws6", content: [] },
+        { type: "web_search_tool_result", tool_use_id: "ws7", content: [] },
+        { type: "web_search_tool_result", tool_use_id: "ws8", content: [] },
+        { type: "web_search_tool_result", tool_use_id: "ws9", content: [] },
+        { type: "web_search_tool_result", tool_use_id: "ws10", content: [] },
+        { type: "text", text: "More results..." },
+      ],
+    },
+    { role: "user", content: "keep going" },
+  ];
+
+  const payload: Record<string, unknown> = {
+    model: "claude-sonnet-4-6-20250514",
+    tools: [{ name: "bash", type: "custom" }],
+    messages,
+  };
+
+  const result = await pi.fire("before_provider_request", {
+    type: "before_provider_request",
+    payload,
+  });
+
+  const tools = ((result as any)?.tools ?? payload.tools) as any[];
+  const nativeTool = tools.find((t: any) => t.type === "web_search_20250305");
+  assert.ok(nativeTool, "Should still inject web_search when budget remaining");
+  // 15 - 10 = 5 remaining, min(5, 5) = 5
+  assert.equal(nativeTool.max_uses, 5, "Should cap at min(5, remaining)");
+});
+
+test("session search budget: reduces max_uses when close to limit", async () => {
+  const pi = createMockPI();
+  registerNativeSearchHooks(pi);
+
+  await pi.fire("model_select", {
+    type: "model_select",
+    model: { provider: "anthropic", name: "claude-sonnet-4-6" },
+    previousModel: undefined,
+    source: "set",
+  });
+
+  // 13 search results in history → only 2 remaining
+  const searchBlocks = Array.from({ length: 13 }, (_, i) => ({
+    type: "web_search_tool_result",
+    tool_use_id: `ws${i}`,
+    content: [],
+  }));
+
+  const messages: any[] = [
+    { role: "user", content: "research" },
+    { role: "assistant", content: [...searchBlocks, { type: "text", text: "results" }] },
+    { role: "user", content: "more" },
+  ];
+
+  const payload: Record<string, unknown> = {
+    model: "claude-sonnet-4-6-20250514",
+    tools: [{ name: "bash", type: "custom" }],
+    messages,
+  };
+
+  const result = await pi.fire("before_provider_request", {
+    type: "before_provider_request",
+    payload,
+  });
+
+  const tools = ((result as any)?.tools ?? payload.tools) as any[];
+  const nativeTool = tools.find((t: any) => t.type === "web_search_20250305");
+  assert.ok(nativeTool, "Should still inject when budget > 0");
+  // 15 - 13 = 2 remaining
+  assert.equal(nativeTool.max_uses, 2, "Should reduce max_uses to remaining budget");
+});
+
+test("session search budget: omits web_search tool when budget exhausted", async () => {
+  const pi = createMockPI();
+  registerNativeSearchHooks(pi);
+
+  await pi.fire("model_select", {
+    type: "model_select",
+    model: { provider: "anthropic", name: "claude-sonnet-4-6" },
+    previousModel: undefined,
+    source: "set",
+  });
+
+  // 15+ search results in history → budget exhausted
+  const searchBlocks = Array.from({ length: MAX_NATIVE_SEARCHES_PER_SESSION }, (_, i) => ({
+    type: "web_search_tool_result",
+    tool_use_id: `ws${i}`,
+    content: [],
+  }));
+
+  const messages: any[] = [
+    { role: "user", content: "research" },
+    { role: "assistant", content: [...searchBlocks, { type: "text", text: "results" }] },
+    { role: "user", content: "more" },
+  ];
+
+  const payload: Record<string, unknown> = {
+    model: "claude-sonnet-4-6-20250514",
+    tools: [{ name: "bash", type: "custom" }],
+    messages,
+  };
+
+  const result = await pi.fire("before_provider_request", {
+    type: "before_provider_request",
+    payload,
+  });
+
+  const tools = ((result as any)?.tools ?? payload.tools) as any[];
+  const nativeTool = tools.find((t: any) => t.type === "web_search_20250305");
+  assert.equal(nativeTool, undefined, "Should NOT inject web_search when budget exhausted (#1309)");
+  // Other tools should remain
+  assert.ok(tools.some((t: any) => t.name === "bash"), "Non-search tools should remain");
+});
+
+test("session search budget: resets on session_start", async () => {
+  const pi = createMockPI();
+  registerNativeSearchHooks(pi);
+
+  await pi.fire("model_select", {
+    type: "model_select",
+    model: { provider: "anthropic", name: "claude-sonnet-4-6" },
+    previousModel: undefined,
+    source: "set",
+  });
+
+  // First session: exhaust budget
+  const searchBlocks = Array.from({ length: MAX_NATIVE_SEARCHES_PER_SESSION }, (_, i) => ({
+    type: "web_search_tool_result",
+    tool_use_id: `ws${i}`,
+    content: [],
+  }));
+
+  let payload: Record<string, unknown> = {
+    model: "claude-sonnet-4-6-20250514",
+    tools: [{ name: "bash", type: "custom" }],
+    messages: [
+      { role: "user", content: "research" },
+      { role: "assistant", content: [...searchBlocks] },
+      { role: "user", content: "more" },
+    ],
+  };
+
+  await pi.fire("before_provider_request", { type: "before_provider_request", payload });
+  let tools = (payload.tools as any[]);
+  assert.ok(!tools.some((t: any) => t.type === "web_search_20250305"), "Budget should be exhausted");
+
+  // New session starts — counter resets
+  await pi.fire("session_start", { type: "session_start" });
+
+  // New request with no history — full budget available
+  payload = {
+    model: "claude-sonnet-4-6-20250514",
+    tools: [{ name: "bash", type: "custom" }],
+    messages: [{ role: "user", content: "new research" }],
+  };
+
+  const result = await pi.fire("before_provider_request", { type: "before_provider_request", payload });
+  tools = ((result as any)?.tools ?? payload.tools) as any[];
+  const nativeTool = tools.find((t: any) => t.type === "web_search_20250305");
+  assert.ok(nativeTool, "Should inject web_search after session reset");
+  assert.equal(nativeTool.max_uses, 5, "Should have full per-turn budget after reset");
+});
+
+test("MAX_NATIVE_SEARCHES_PER_SESSION is exported and equals 15", () => {
+  assert.equal(MAX_NATIVE_SEARCHES_PER_SESSION, 15, "Session budget should be 15 (#1309)");
 });
 
 // ─── stripThinkingFromHistory tests ─────────────────────────────────────────

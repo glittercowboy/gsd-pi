@@ -46,8 +46,9 @@ Research what this slice needs. Narrate key findings and surprises as you go —
 2. **Skill Discovery ({{skillDiscoveryMode}}):**{{skillDiscoveryInstructions}}
 3. Explore relevant code for this slice's scope. For targeted exploration, use `rg`, `find`, and reads. For broad or unfamiliar subsystems, use `scout` to map the relevant area first.
 4. Use `resolve_library` / `get_library_docs` for unfamiliar libraries — skip this for libraries already used in the codebase
-5. Use the **Research** output template from the inlined context above — include only sections that have real content. The template is already inlined above; do NOT attempt to read any template file from disk (there is no `templates/SLICE-RESEARCH.md` — the correct template is already present in this prompt).
-6. Write `{{outputPath}}`
+5. **Web search budget:** You have a limited budget of web searches (max ~15 per session). Use them strategically — prefer `resolve_library` / `get_library_docs` for library documentation. Do NOT repeat the same or similar queries. If a search didn't find what you need, rephrase once or move on. Target 3-5 total web searches for a typical research unit.
+6. Use the **Research** output template from the inlined context above — include only sections that have real content. The template is already inlined above; do NOT attempt to read any template file from disk (there is no `templates/SLICE-RESEARCH.md` — the correct template is already present in this prompt).
+7. Write `{{outputPath}}`
 
 The slice directory already exists at `{{slicePath}}/`. Do NOT mkdir — just write the file.
 

@@ -16,6 +16,16 @@ export const CUSTOM_SEARCH_TOOL_NAMES = ["search-the-web", "search_and_read", "g
 /** Thinking block types that require signature validation by the API */
 const THINKING_TYPES = new Set(["thinking", "redacted_thinking"]);
 
+/**
+ * Maximum number of native web searches allowed per session (agent unit).
+ * The Anthropic API's `max_uses` is per-request — it resets on each API call.
+ * When `pause_turn` triggers a resubmit, the model gets a fresh budget.
+ * This session-level cap prevents unbounded search accumulation (#1309).
+ *
+ * 15 = 3 full turns of 5 searches each — generous for research, but bounded.
+ */
+export const MAX_NATIVE_SEARCHES_PER_SESSION = 15;
+
 /** When true, skip native web search injection and keep Brave/custom tools active on Anthropic. */
 export function preferBraveSearch(): boolean {
   // preferences.md takes priority over env var
@@ -73,6 +83,11 @@ export function stripThinkingFromHistory(
 export function registerNativeSearchHooks(pi: NativeSearchPI): { getIsAnthropic: () => boolean } {
   let isAnthropicProvider = false;
   let modelSelectFired = false;
+
+  // Session-level native search counter (#1309).
+  // Tracks cumulative web_search_tool_result blocks across all turns in a session.
+  // Reset on session_start. Used to compute remaining budget for max_uses.
+  let sessionSearchCount = 0;
 
   // Track provider changes via model selection — also handles diagnostics
   // since model_select fires AFTER session_start and knows the provider.
@@ -161,13 +176,41 @@ export function registerNativeSearchHooks(pi: NativeSearchPI): { getIsAnthropic:
     );
     payload.tools = tools;
 
+    // ── Session-level search budget (#1309) ──────────────────────────────
+    // Count web_search_tool_result blocks in the conversation history to
+    // determine how many native searches have already been used this session.
+    // The Anthropic API's max_uses resets per request, so without this guard,
+    // pause_turn → resubmit cycles allow unlimited total searches.
+    if (Array.isArray(messages)) {
+      let historySearchCount = 0;
+      for (const msg of messages) {
+        const content = msg.content;
+        if (!Array.isArray(content)) continue;
+        for (const block of content) {
+          if ((block as any)?.type === "web_search_tool_result") {
+            historySearchCount++;
+          }
+        }
+      }
+      // Sync counter from history (handles session restore / context replay)
+      sessionSearchCount = historySearchCount;
+    }
+
+    const remaining = Math.max(0, MAX_NATIVE_SEARCHES_PER_SESSION - sessionSearchCount);
+
+    if (remaining <= 0) {
+      // Budget exhausted — don't inject the search tool at all.
+      // The model will proceed without web search capability.
+      return payload;
+    }
+
     tools.push({
       type: "web_search_20250305",
       name: "web_search",
-      // Cap server-side searches per response to prevent the model from
-      // looping on web_search without synthesizing results (#817).
-      // 5 searches is generous — most queries need 1-2.
-      max_uses: 5,
+      // Cap per-request searches to the lesser of 5 (per-turn cap) or the
+      // remaining session budget (#1309). This prevents the model from
+      // consuming unlimited searches via pause_turn → resubmit cycles.
+      max_uses: Math.min(5, remaining),
     });
 
     return payload;
@@ -175,6 +218,9 @@ export function registerNativeSearchHooks(pi: NativeSearchPI): { getIsAnthropic:
 
   // Basic startup diagnostics — provider-specific info comes from model_select
   pi.on("session_start", async (_event: any, ctx: any) => {
+    // Reset session-level search budget (#1309)
+    sessionSearchCount = 0;
+
     const hasBrave = !!process.env.BRAVE_API_KEY;
     const hasJina = !!process.env.JINA_API_KEY;
     const hasAnswers = !!process.env.BRAVE_ANSWERS_KEY;
