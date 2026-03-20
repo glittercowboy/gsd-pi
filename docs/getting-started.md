@@ -8,6 +8,8 @@ npm install -g gsd-pi
 
 Requires Node.js ≥ 22.0.0 (24 LTS recommended) and Git.
 
+> **`command not found: gsd`?** Your shell may not have npm's global bin directory in `$PATH`. Run `npm prefix -g` to find it, then add `$(npm prefix -g)/bin` to your PATH. See [Troubleshooting](./troubleshooting.md#command-not-found-gsd-after-install) for details.
+
 GSD checks for updates once every 24 hours. When a new version is available, you'll see an interactive prompt at startup with the option to update immediately or skip. You can also update from within a session with `/gsd update`.
 
 ### Set up API keys
