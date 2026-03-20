@@ -193,6 +193,26 @@ rm -rf "$(dirname .gsd)/.gsd.lock"
 - Set required environment variables in the MCP config's `env` block
 - If needed, set `cwd` explicitly in the server definition
 
+### Session lock stolen by `/gsd` in another terminal
+
+**Symptoms:** Running `/gsd` (step mode) in a second terminal causes a running auto-mode session to lose its lock.
+
+**Fix:** Fixed in v2.36.0. Bare `/gsd` no longer steals the session lock from a running auto-mode session. Upgrade to the latest version.
+
+### Worktree commits landing on main instead of milestone branch
+
+**Symptoms:** Auto-mode commits in a worktree end up on `main` instead of the `milestone/<MID>` branch.
+
+**Fix:** Fixed in v2.37.1. CWD is now realigned before dispatch and stale merge state is cleaned on failure. Upgrade to the latest version.
+
+### Extension loader fails with subpath export error
+
+**Symptoms:** Extension fails to load with a `Cannot find module` error referencing npm subpath exports.
+
+**Cause:** Dynamic imports in the extension loader didn't resolve npm subpath exports (e.g., `@pkg/foo/bar`).
+
+**Fix:** Fixed in v2.38+. The extension loader now auto-resolves npm subpath exports and creates a `node_modules` symlink for dynamic import resolution. Upgrade to the latest version.
+
 ## Recovery Procedures
 
 ### Reset auto mode state

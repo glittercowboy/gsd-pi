@@ -24,21 +24,25 @@ One command. Walk away. Come back to a built project with clean git history.
 
 ---
 
-## What's New in v2.37
+## What's New in v2.38
 
-- **cmux integration** — sidebar status, progress bars, and notifications for [cmux](https://cmux.com) terminal multiplexer users
-- **Redesigned dashboard** — two-column layout with redesigned widget
-- **Search budget enforcement** — session-level search budget prevents unbounded native web search
-- **AGENTS.md support** — deprecated `agent-instructions.md` in favor of standard `AGENTS.md` / `CLAUDE.md`
-- **AI-powered triage** — automated issue and PR triage via Claude Haiku
-- **Auto-generated OpenRouter registry** — model registry built from OpenRouter API for always-current model support
-- **Extension manifest system** — user-managed enable/disable for bundled extensions
-- **Pipeline simplification (ADR-003)** — merged research into planning, mechanical completion
-- **Workflow templates** — right-sized workflows for every task type
-- **Health widget** — always-on environment health checks with progress scoring
-- **`/gsd changelog`** — LLM-summarized release notes for any version
+- **Reactive task execution (ADR-004)** — graph-derived parallel task dispatch within slices. When enabled, GSD derives a dependency graph from IO annotations in task plans and dispatches multiple non-conflicting tasks in parallel via subagents. Backward compatible — disabled by default. Enable with `reactive_execution: true` in preferences.
+- **Anthropic Vertex AI provider** — run Claude models (Opus 4.6, Sonnet 4.6, Haiku 4.5) through Google Vertex AI. Set `ANTHROPIC_VERTEX_PROJECT_ID` to activate.
+- **CI optimization** — GitHub Actions minutes reduced ~60-70% (~10k → ~3-4k/month)
+- **Reactive batch verification** — dependency-based carry-forward for verification results across parallel task batches
+- **Backtick file path enforcement** — task plan IO sections now require backtick-wrapped paths for reliable parsing
 
 See the full [Changelog](./CHANGELOG.md) for details.
+
+### Previous highlights (v2.34–v2.37)
+
+- **cmux integration** — sidebar status, progress bars, and notifications for cmux terminal multiplexer users
+- **Redesigned dashboard** — two-column layout with 4 widget modes (full → small → min → off)
+- **AGENTS.md support** — deprecated `agent-instructions.md` in favor of standard `AGENTS.md` / `CLAUDE.md`
+- **AI-powered triage** — automated issue and PR triage via Claude Haiku
+- **Auto-generated OpenRouter registry** — model registry built from OpenRouter API
+- **`/gsd changelog`** — LLM-summarized release notes for any version
+- **Search budget enforcement** — session-level cap prevents unbounded web search
 
 ---
 

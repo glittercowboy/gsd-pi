@@ -31,6 +31,7 @@ Welcome to the GSD documentation. This covers everything from getting started to
 | [Architecture Overview](./architecture.md) | System design, extension model, state-on-disk, and dispatch pipeline |
 | [Native Engine](../native/README.md) | Rust N-API modules for performance-critical operations |
 | [ADR-001: Branchless Worktree Architecture](./ADR-001-branchless-worktree-architecture.md) | Decision record for the v2.14 git architecture |
+| [ADR-003: Pipeline Simplification](./ADR-003-pipeline-simplification.md) | Research merged into planning, mechanical completion (v2.30) |
 
 ## Pi SDK Documentation
 
