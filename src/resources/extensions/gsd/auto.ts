@@ -47,10 +47,11 @@ import {
 } from "./crash-recovery.js";
 import {
   acquireSessionLock,
-  validateSessionLock,
+  getSessionLockStatus,
   releaseSessionLock,
   updateSessionLock,
 } from "./session-lock.js";
+import type { SessionLockStatus } from "./session-lock.js";
 import {
   clearUnitRuntimeRecord,
   inspectExecuteTaskDurability,
@@ -461,15 +462,33 @@ function buildSnapshotOpts(
   };
 }
 
-function handleLostSessionLock(ctx?: ExtensionContext): void {
-  debugLog("session-lock-lost", { lockBase: lockBase() });
+function handleLostSessionLock(
+  ctx?: ExtensionContext,
+  lockStatus?: SessionLockStatus,
+): void {
+  debugLog("session-lock-lost", {
+    lockBase: lockBase(),
+    reason: lockStatus?.failureReason,
+    existingPid: lockStatus?.existingPid,
+    expectedPid: lockStatus?.expectedPid,
+  });
   s.active = false;
   s.paused = false;
   clearUnitTimeout();
   deregisterSigtermHandler();
   clearCmuxSidebar(loadEffectiveGSDPreferences()?.preferences);
+  const message =
+    lockStatus?.failureReason === "pid-mismatch"
+      ? lockStatus.existingPid
+        ? `Session lock moved to PID ${lockStatus.existingPid} — another GSD process appears to have taken over. Stopping gracefully.`
+        : "Session lock moved to a different process — another GSD process appears to have taken over. Stopping gracefully."
+      : lockStatus?.failureReason === "missing-metadata"
+        ? "Session lock metadata disappeared, so ownership could not be confirmed. Stopping gracefully."
+        : lockStatus?.failureReason === "compromised"
+          ? "Session lock was compromised or invalidated during heartbeat checks; takeover was not confirmed. Stopping gracefully."
+          : "Session lock lost. Stopping gracefully.";
   ctx?.ui.notify(
-    "Session lock lost — another GSD process appears to have taken over. Stopping gracefully.",
+    message,
     "error",
   );
   ctx?.ui.setStatus("gsd-auto", undefined);
@@ -736,7 +755,7 @@ function buildLoopDeps(): LoopDeps {
     checkResourcesStale,
 
     // Session lock
-    validateSessionLock,
+    validateSessionLock: getSessionLockStatus,
     updateSessionLock,
     handleLostSessionLock,
 

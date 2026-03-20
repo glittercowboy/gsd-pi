@@ -17,6 +17,7 @@ import { tmpdir } from 'node:os';
 
 import {
   acquireSessionLock,
+  getSessionLockStatus,
   validateSessionLock,
   releaseSessionLock,
   readSessionLockData,
@@ -196,6 +197,50 @@ async function main(): Promise<void> {
 
       const data = readSessionLockData(base);
       assertEq(data, null, 'corrupt JSON → null');
+    } finally {
+      rmSync(base, { recursive: true, force: true });
+    }
+  }
+
+  // ─── 7b. getSessionLockStatus with missing metadata → reason surfaced ──
+  console.log('\n=== 7b. missing lock metadata → structured reason ===');
+  {
+    const base = mkdtempSync(join(tmpdir(), 'gsd-session-lock-'));
+    mkdirSync(join(base, '.gsd'), { recursive: true });
+
+    try {
+      const status = getSessionLockStatus(base);
+      assertEq(status.valid, false, 'missing lock metadata is invalid');
+      assertEq(status.failureReason, 'missing-metadata', 'missing metadata reason is surfaced');
+      assertEq(status.expectedPid, process.pid, 'expected PID is included');
+    } finally {
+      rmSync(base, { recursive: true, force: true });
+    }
+  }
+
+  // ─── 7c. getSessionLockStatus with foreign PID → reason surfaced ───────
+  console.log('\n=== 7c. foreign PID in lock file → structured reason ===');
+  {
+    const base = mkdtempSync(join(tmpdir(), 'gsd-session-lock-'));
+    mkdirSync(join(base, '.gsd'), { recursive: true });
+
+    try {
+      const foreignPid = process.pid + 1000;
+      const lockFile = join(gsdRoot(base), 'auto.lock');
+      writeFileSync(lockFile, JSON.stringify({
+        pid: foreignPid,
+        startedAt: new Date().toISOString(),
+        unitType: 'execute-task',
+        unitId: 'M001/S01/T01',
+        unitStartedAt: new Date().toISOString(),
+        completedUnits: 0,
+      }, null, 2));
+
+      const status = getSessionLockStatus(base);
+      assertEq(status.valid, false, 'foreign PID lock is invalid');
+      assertEq(status.failureReason, 'pid-mismatch', 'PID mismatch reason is surfaced');
+      assertEq(status.existingPid, foreignPid, 'existing PID is included');
+      assertEq(status.expectedPid, process.pid, 'expected PID is included');
     } finally {
       rmSync(base, { recursive: true, force: true });
     }

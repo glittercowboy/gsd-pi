@@ -40,6 +40,19 @@ export type SessionLockResult =
   | { acquired: true }
   | { acquired: false; reason: string; existingPid?: number };
 
+export type SessionLockFailureReason =
+  | "compromised"
+  | "missing-metadata"
+  | "pid-mismatch";
+
+export interface SessionLockStatus {
+  valid: boolean;
+  failureReason?: SessionLockFailureReason;
+  existingPid?: number;
+  expectedPid?: number;
+  recovered?: boolean;
+}
+
 // ─── Module State ───────────────────────────────────────────────────────────
 
 /** Release function from proper-lockfile — calling it releases the OS lock. */
@@ -368,7 +381,7 @@ export function updateSessionLock(
  *
  * This is called periodically during the dispatch loop.
  */
-export function validateSessionLock(basePath: string): boolean {
+export function getSessionLockStatus(basePath: string): SessionLockStatus {
   // Lock was compromised by proper-lockfile (mtime drift from sleep, stall, etc.)
   if (_lockCompromised) {
     // Recovery gate (#1512): Before declaring the lock lost, check if the lock
@@ -385,18 +398,23 @@ export function validateSessionLock(basePath: string): boolean {
           process.stderr.write(
             `[gsd] Lock recovered after onCompromised — lock file PID matched, re-acquired.\n`,
           );
-          return true;
+          return { valid: true, recovered: true };
         }
       } catch {
         // Re-acquisition failed — fall through to return false
       }
     }
-    return false;
+    return {
+      valid: false,
+      failureReason: "compromised",
+      existingPid: existing?.pid,
+      expectedPid: process.pid,
+    };
   }
 
   // If we have an OS-level lock, we're still the owner
   if (_releaseFunction && _lockedPath === basePath) {
-    return true;
+    return { valid: true };
   }
 
   // Fallback: check the lock file PID
@@ -404,10 +422,27 @@ export function validateSessionLock(basePath: string): boolean {
   const existing = readExistingLockData(lp);
   if (!existing) {
     // Lock file was deleted — we lost ownership
-    return false;
+    return {
+      valid: false,
+      failureReason: "missing-metadata",
+      expectedPid: process.pid,
+    };
   }
 
-  return existing.pid === process.pid;
+  if (existing.pid !== process.pid) {
+    return {
+      valid: false,
+      failureReason: "pid-mismatch",
+      existingPid: existing.pid,
+      expectedPid: process.pid,
+    };
+  }
+
+  return { valid: true };
+}
+
+export function validateSessionLock(basePath: string): boolean {
+  return getSessionLockStatus(basePath).valid;
 }
 
 /**

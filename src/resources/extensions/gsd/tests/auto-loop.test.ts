@@ -14,6 +14,7 @@ import {
   type AgentEndEvent,
   type LoopDeps,
 } from "../auto-loop.js";
+import type { SessionLockStatus } from "../session-lock.js";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -341,7 +342,7 @@ function makeMockDeps(
     preDispatchHealthGate: async () => ({ proceed: true, fixesApplied: [] }),
     syncProjectRootToWorktree: () => {},
     checkResourcesStale: () => null,
-    validateSessionLock: () => true,
+    validateSessionLock: () => ({ valid: true } as SessionLockStatus),
     updateSessionLock: () => {
       callLog.push("updateSessionLock");
     },
@@ -529,6 +530,41 @@ test("autoLoop exits on terminal complete state", async (t) => {
   assert.ok(
     !deps.callLog.includes("resolveDispatch"),
     "should not dispatch when complete",
+  );
+});
+
+test("autoLoop passes structured session-lock failure details to the handler", async () => {
+  _resetPendingResolve();
+
+  const ctx = makeMockCtx();
+  ctx.ui.setStatus = () => {};
+  const pi = makeMockPi();
+  const s = makeLoopSession();
+  let observedLockStatus: SessionLockStatus | undefined;
+
+  const deps = makeMockDeps({
+    validateSessionLock: () =>
+      ({
+        valid: false,
+        failureReason: "compromised",
+        expectedPid: process.pid,
+      }) as SessionLockStatus,
+    handleLostSessionLock: (_ctx, lockStatus) => {
+      observedLockStatus = lockStatus;
+      deps.callLog.push("handleLostSessionLock");
+    },
+  });
+
+  await autoLoop(ctx, pi, s, deps);
+
+  assert.deepEqual(observedLockStatus, {
+    valid: false,
+    failureReason: "compromised",
+    expectedPid: process.pid,
+  });
+  assert.ok(
+    !deps.callLog.includes("resolveDispatch"),
+    "should stop before dispatch after lock validation fails",
   );
 });
 

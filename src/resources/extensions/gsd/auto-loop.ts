@@ -15,6 +15,7 @@ import type { ExtensionAPI, ExtensionContext } from "@gsd/pi-coding-agent";
 import type { AutoSession } from "./auto/session.js";
 import { NEW_SESSION_TIMEOUT_MS } from "./auto/session.js";
 import type { GSDPreferences } from "./preferences.js";
+import type { SessionLockStatus } from "./session-lock.js";
 import type { GSDState } from "./types.js";
 import type { CloseoutOptions } from "./auto-unit-closeout.js";
 import type { PostUnitContext } from "./auto-post-unit.js";
@@ -307,7 +308,7 @@ export interface LoopDeps {
   checkResourcesStale: (version: string | null) => string | null;
 
   // Session lock
-  validateSessionLock: (basePath: string) => boolean;
+  validateSessionLock: (basePath: string) => SessionLockStatus;
   updateSessionLock: (
     basePath: string,
     unitType: string,
@@ -315,7 +316,10 @@ export interface LoopDeps {
     completedUnits: number,
     sessionFile?: string,
   ) => void;
-  handleLostSessionLock: (ctx?: ExtensionContext) => void;
+  handleLostSessionLock: (
+    ctx?: ExtensionContext,
+    lockStatus?: SessionLockStatus,
+  ) => void;
 
   // Milestone transition functions
   sendDesktopNotification: (
@@ -559,10 +563,24 @@ export async function autoLoop(
     try {
       // ── Blanket try/catch: one bad iteration must not kill the session
 
-      if (deps.lockBase() && !deps.validateSessionLock(deps.lockBase())) {
-        deps.handleLostSessionLock(ctx);
-        debugLog("autoLoop", { phase: "exit", reason: "session-lock-lost" });
-        break;
+      const sessionLockBase = deps.lockBase();
+      if (sessionLockBase) {
+        const lockStatus = deps.validateSessionLock(sessionLockBase);
+        if (!lockStatus.valid) {
+          debugLog("autoLoop", {
+            phase: "session-lock-invalid",
+            reason: lockStatus.failureReason ?? "unknown",
+            existingPid: lockStatus.existingPid,
+            expectedPid: lockStatus.expectedPid,
+          });
+          deps.handleLostSessionLock(ctx, lockStatus);
+          debugLog("autoLoop", {
+            phase: "exit",
+            reason: "session-lock-lost",
+            detail: lockStatus.failureReason ?? "unknown",
+          });
+          break;
+        }
       }
 
       // ── Phase 1: Pre-dispatch ───────────────────────────────────────────
