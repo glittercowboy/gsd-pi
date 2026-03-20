@@ -2,7 +2,7 @@
 
 ## Slices
 
-- [ ] **S01: Telemetry Schema & Dispatch Hooking** `risk:medium` `depends:[]`
+- [x] **S01: Telemetry Schema & Dispatch Hooking** `risk:medium` `depends:[]`
   - Define telemetry JSONL schema.
   - Integrate `metrics.js` snapshot hooks into `auto-dispatch.ts` unit loop (start/end).
   - Implement durable activity log writer in `.gsd/activity/`.
