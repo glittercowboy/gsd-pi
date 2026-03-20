@@ -84,6 +84,7 @@ export const KNOWN_PREFERENCE_KEYS = new Set<string>([
   "search_provider",
   "compression_strategy",
   "context_selection",
+  "widget_mode",
 ]);
 
 /** Canonical list of all dispatch unit types. */
@@ -202,6 +203,8 @@ export interface GSDPreferences {
   compression_strategy?: CompressionStrategy;
   /** Context selection mode for file inlining. "full" inlines entire files, "smart" uses semantic chunking. Default derived from token profile. */
   context_selection?: ContextSelectionMode;
+  /** Default widget display mode for auto-mode dashboard. "full" | "small" | "min" | "off". Default: "full". */
+  widget_mode?: "full" | "small" | "min" | "off";
 }
 
 export interface LoadedGSDPreferences {

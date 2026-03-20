@@ -16,12 +16,13 @@ import {
   resolveSliceFile,
 } from "./paths.js";
 import { parseRoadmap, parsePlan } from "./files.js";
-import { readFileSync, existsSync } from "node:fs";
+import { readFileSync, writeFileSync, existsSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { truncateToWidth, visibleWidth } from "@gsd/pi-tui";
 import { makeUI, GLYPH, INDENT } from "../shared/mod.js";
 import { computeProgressScore } from "./progress-score.js";
 import { getActiveWorktreeName } from "./worktree-command.js";
+import { loadEffectiveGSDPreferences, getGlobalGSDPreferencesPath } from "./preferences.js";
 
 // ─── Dashboard Data ───────────────────────────────────────────────────────────
 
@@ -325,21 +326,58 @@ export const hideFooter = () => ({
 export type WidgetMode = "full" | "small" | "min" | "off";
 const WIDGET_MODES: WidgetMode[] = ["full", "small", "min", "off"];
 let widgetMode: WidgetMode = "full";
+let widgetModeInitialized = false;
+
+/** Load widget mode from preferences (once). */
+function ensureWidgetModeLoaded(): void {
+  if (widgetModeInitialized) return;
+  widgetModeInitialized = true;
+  try {
+    const loaded = loadEffectiveGSDPreferences();
+    const saved = loaded?.preferences?.widget_mode;
+    if (saved && WIDGET_MODES.includes(saved as WidgetMode)) {
+      widgetMode = saved as WidgetMode;
+    }
+  } catch { /* non-fatal — use default */ }
+}
+
+/** Persist widget mode to global preferences YAML. */
+function persistWidgetMode(mode: WidgetMode): void {
+  try {
+    const prefsPath = getGlobalGSDPreferencesPath();
+    let content = "";
+    if (existsSync(prefsPath)) {
+      content = readFileSync(prefsPath, "utf-8");
+    }
+    const line = `widget_mode: ${mode}`;
+    const re = /^widget_mode:\s*\S+/m;
+    if (re.test(content)) {
+      content = content.replace(re, line);
+    } else {
+      content = content.trimEnd() + "\n" + line + "\n";
+    }
+    writeFileSync(prefsPath, content, "utf-8");
+  } catch { /* non-fatal — mode still set in memory */ }
+}
 
 /** Cycle to the next widget mode. Returns the new mode. */
 export function cycleWidgetMode(): WidgetMode {
+  ensureWidgetModeLoaded();
   const idx = WIDGET_MODES.indexOf(widgetMode);
   widgetMode = WIDGET_MODES[(idx + 1) % WIDGET_MODES.length];
+  persistWidgetMode(widgetMode);
   return widgetMode;
 }
 
 /** Set widget mode directly. */
 export function setWidgetMode(mode: WidgetMode): void {
   widgetMode = mode;
+  persistWidgetMode(widgetMode);
 }
 
 /** Get current widget mode. */
 export function getWidgetMode(): WidgetMode {
+  ensureWidgetModeLoaded();
   return widgetMode;
 }
 
