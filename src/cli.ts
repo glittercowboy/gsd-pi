@@ -584,7 +584,6 @@ if (enabledModelPatterns && enabledModelPatterns.length > 0) {
     version: process.env.GSD_VERSION || '0.0.0',
     modelName: settingsManager.getDefaultModel() || undefined,
     provider: settingsManager.getDefaultProvider() || undefined,
-    sessionsDir,
   })
 }
 
