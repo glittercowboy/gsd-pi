@@ -7,9 +7,11 @@
  */
 
 import { join } from "node:path";
+import { execFileSync } from "node:child_process";
 import { existsSync, lstatSync, readFileSync, writeFileSync } from "node:fs";
 import { nativeRmCached, nativeLsFiles } from "./native-git-bridge.js";
 import { gsdRoot } from "./paths.js";
+import { GIT_NO_PROMPT_ENV } from "./git-constants.js";
 
 /**
  * GSD runtime patterns for git index cleanup.
@@ -104,10 +106,22 @@ export function hasGitTrackedGsdFiles(basePath: string): boolean {
   // Check if git tracks any files under .gsd/
   try {
     const tracked = nativeLsFiles(basePath, ".gsd");
-    return tracked.length > 0;
-  } catch {
-    // Not a git repo or git not available — safe to proceed
+    if (tracked.length > 0) return true;
+
+    // nativeLsFiles swallows git failures and returns []. An empty result
+    // could mean "nothing tracked" OR "git failed silently". Verify git is
+    // reachable before trusting the empty result — if it isn't, fail safe
+    // by assuming files ARE tracked to prevent data loss.
+    execFileSync("git", ["rev-parse", "--git-dir"], {
+      cwd: basePath,
+      stdio: "pipe",
+      env: GIT_NO_PROMPT_ENV,
+    });
+
     return false;
+  } catch {
+    // git unavailable, index locked, or repo corrupt — fail safe
+    return true;
   }
 }
 

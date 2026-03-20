@@ -6,11 +6,13 @@
  * symlink replaces the original directory so all paths remain valid.
  */
 
+import { execFileSync } from "node:child_process";
 import { existsSync, lstatSync, mkdirSync, readdirSync, realpathSync, renameSync, cpSync, rmSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
 import { externalGsdRoot } from "./repo-identity.js";
 import { getErrorMessage } from "./error-utils.js";
 import { hasGitTrackedGsdFiles } from "./gitignore.js";
+import { GIT_NO_PROMPT_ENV } from "./git-constants.js";
 
 export interface MigrationResult {
   migrated: boolean;
@@ -144,7 +146,22 @@ export function migrateToExternalState(basePath: string): MigrationResult {
       return { migrated: false, error: `Migration verification failed: ${getErrorMessage(verifyErr)}` };
     }
 
-    // Remove .gsd.migrating only after symlink is verified
+    // Clean the git index — any .gsd/* files tracked before migration now
+    // sit behind the symlink and git can't follow it, causing them to show
+    // as deleted. Remove them from the index so the working tree stays clean.
+    // --ignore-unmatch makes this a no-op on fresh projects with no tracked .gsd/.
+    try {
+      execFileSync("git", ["rm", "-r", "--cached", "--ignore-unmatch", ".gsd"], {
+        cwd: basePath,
+        stdio: ["ignore", "pipe", "ignore"],
+        env: GIT_NO_PROMPT_ENV,
+        timeout: 10_000,
+      });
+    } catch {
+      // Non-fatal — git may be unavailable or nothing was tracked
+    }
+
+    // Remove .gsd.migrating only after symlink is verified and index is clean
     rmSync(migratingPath, { recursive: true, force: true });
 
     return { migrated: true };

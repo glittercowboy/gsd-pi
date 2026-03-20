@@ -183,6 +183,28 @@ test("ensureGitignore with tracked .gsd/ does not cause git to see files as dele
   }
 });
 
+test("hasGitTrackedGsdFiles returns true (fail-safe) when git is not available", () => {
+  const dir = makeTempRepo();
+  try {
+    // Create and track .gsd/ files
+    mkdirSync(join(dir, ".gsd"), { recursive: true });
+    writeFileSync(join(dir, ".gsd", "PROJECT.md"), "# Project\n");
+    git(dir, "add", ".gsd/");
+    git(dir, "commit", "-m", "track gsd");
+
+    // Corrupt the git index to simulate git failure
+    const indexPath = join(dir, ".git", "index.lock");
+    writeFileSync(indexPath, "locked");
+
+    // Should fail safe — assume tracked rather than silently returning false
+    // (The index lock causes git ls-files to fail; rev-parse also fails → true)
+    const result = hasGitTrackedGsdFiles(dir);
+    assert.equal(result, true, "Should return true (fail-safe) when git is unavailable");
+  } finally {
+    cleanup(dir);
+  }
+});
+
 // ─── migrateToExternalState — tracked .gsd/ protection ──────────────
 
 test("migrateToExternalState aborts when .gsd/ has tracked files (#1364)", () => {
@@ -207,6 +229,34 @@ test("migrateToExternalState aborts when .gsd/ has tracked files (#1364)", () =>
     assert.ok(
       !existsSync(join(dir, ".gsd.migrating")),
       ".gsd.migrating should not exist",
+    );
+  } finally {
+    cleanup(dir);
+  }
+});
+
+test("migrateToExternalState cleans git index so tracked files don't show as deleted (#1364 path 2)", () => {
+  const dir = makeTempRepo();
+  try {
+    // Track .gsd/ files, then untrack them so migration proceeds
+    mkdirSync(join(dir, ".gsd", "milestones", "M001"), { recursive: true });
+    writeFileSync(join(dir, ".gsd", "PROJECT.md"), "# Project\n");
+    writeFileSync(join(dir, ".gsd", "milestones", "M001", "PLAN.md"), "# Plan\n");
+    git(dir, "add", ".gsd/");
+    git(dir, "commit", "-m", "track gsd state");
+    git(dir, "rm", "-r", "--cached", ".gsd/");
+    git(dir, "commit", "-m", "untrack gsd (simulates pre-migration project)");
+
+    const result = migrateToExternalState(dir);
+    assert.equal(result.migrated, true, "Migration should succeed");
+
+    // git status must show NO deleted files after migration
+    const status = git(dir, "status", "--porcelain");
+    const deletions = status.split("\n").filter((l) => /^\s*D\s/.test(l) || /^D\s/.test(l));
+    assert.equal(
+      deletions.length,
+      0,
+      `Expected no deleted files after migration, but found:\n${deletions.join("\n")}`,
     );
   } finally {
     cleanup(dir);
