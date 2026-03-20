@@ -21,9 +21,10 @@ import {
   writeGraph,
   getNextPendingStep,
   markStepComplete,
+  expandIteration,
 } from "./graph.js";
 import type { WorkflowGraph } from "./graph.js";
-import type { WorkflowDefinition, VerifyPolicy } from "./definition-loader.js";
+import type { WorkflowDefinition, VerifyPolicy, IterateConfig } from "./definition-loader.js";
 import { injectContext } from "./context-injector.js";
 import { parse } from "yaml";
 import { readFileSync, existsSync } from "node:fs";
@@ -78,7 +79,8 @@ export class CustomWorkflowEngine implements WorkflowEngine {
   async deriveState(_basePath: string): Promise<EngineState> {
     const graph = readGraph(this.runDir);
     const completed = graph.steps.filter((s) => s.status === "complete").length;
-    const total = graph.steps.length;
+    const nonExpanded = graph.steps.filter((s) => s.status !== "expanded");
+    const total = nonExpanded.length;
     const allComplete = total > 0 && completed === total;
     const nextStep = getNextPendingStep(graph);
 
@@ -147,8 +149,88 @@ export class CustomWorkflowEngine implements WorkflowEngine {
             produces: Array.isArray(s.produces) ? (s.produces as string[]) : [],
             contextFrom: Array.isArray(s.context_from) ? (s.context_from as string[]) : undefined,
             verify: s.verify as VerifyPolicy | undefined,
+            iterate: (s.iterate != null && typeof s.iterate === "object")
+              ? s.iterate as IterateConfig
+              : undefined,
           })),
         };
+
+        // ── Iterate expansion (S06) ──────────────────────────────
+        const stepDef = definition.steps.find((s) => s.id === nextStep.id);
+        if (stepDef?.iterate && nextStep.status === "pending") {
+          const iterate = stepDef.iterate;
+
+          // Idempotency guard: skip if instances already exist
+          const alreadyExpanded = graph.steps.some(
+            (s) => s.parentStepId === nextStep.id,
+          );
+
+          if (!alreadyExpanded) {
+            // Read source artifact
+            const sourcePath = join(this.runDir, iterate.source);
+            if (!existsSync(sourcePath)) {
+              return {
+                action: "stop",
+                reason: `Iterate source artifact not found: ${iterate.source}`,
+                level: "error",
+              };
+            }
+            const content = readFileSync(sourcePath, "utf-8");
+
+            // Apply regex with global + multiline flags
+            const regex = new RegExp(iterate.pattern, "gm");
+            let match: RegExpExecArray | null;
+            const items: string[] = [];
+            while ((match = regex.exec(content)) !== null) {
+              items.push(match[1] ?? match[0]);
+            }
+
+            if (items.length === 0) {
+              return {
+                action: "stop",
+                reason: `Iterate pattern matched no items from ${iterate.source}`,
+                level: "error",
+              };
+            }
+
+            // Expand and persist
+            const expandedGraph = expandIteration(
+              graph,
+              nextStep.id,
+              items,
+              nextStep.prompt,
+            );
+            writeGraph(this.runDir, expandedGraph);
+          }
+
+          // Re-read graph and dispatch first pending instance
+          const freshGraph = readGraph(this.runDir);
+          const firstInstance = getNextPendingStep(freshGraph);
+          if (!firstInstance) {
+            return {
+              action: "stop",
+              reason: "All steps complete after expansion",
+              level: "info",
+            };
+          }
+
+          // Apply context injection for the instance
+          let instancePrompt = firstInstance.prompt;
+          const instanceInjected = injectContext(firstInstance.id, definition, this.runDir);
+          if (instanceInjected) {
+            instancePrompt = instanceInjected + instancePrompt;
+          }
+
+          return {
+            action: "dispatch",
+            step: {
+              unitType: "custom-step",
+              unitId: firstInstance.id,
+              prompt: instancePrompt,
+            },
+          };
+        }
+
         const injected = injectContext(nextStep.id, definition, this.runDir);
         if (injected) {
           prompt = injected + prompt;
@@ -177,7 +259,7 @@ export class CustomWorkflowEngine implements WorkflowEngine {
     writeGraph(this.runDir, updatedGraph);
 
     const remaining = updatedGraph.steps.filter(
-      (s) => s.status !== "complete",
+      (s) => s.status !== "complete" && s.status !== "expanded",
     );
 
     if (remaining.length === 0) {
@@ -193,12 +275,12 @@ export class CustomWorkflowEngine implements WorkflowEngine {
       _definition?: { name: string };
     };
 
-    const completed = state.isComplete
-      ? rawState._graph?.steps.length ?? 0
-      : (rawState._graph?.steps.filter((s) => s.status === "complete") ?? [])
-          .length;
+    const nonExpanded = rawState._graph?.steps.filter((s) => s.status !== "expanded") ?? [];
+    const total = nonExpanded.length;
 
-    const total = rawState._graph?.steps.length ?? 0;
+    const completed = state.isComplete
+      ? total
+      : nonExpanded.filter((s) => s.status === "complete").length;
 
     return {
       engineLabel: rawState._definition?.name ?? "Custom Pipeline",
