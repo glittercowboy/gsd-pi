@@ -4,7 +4,7 @@
  * One command, one wizard. Routes to smart entry or status.
  */
 
-import type { ExtensionAPI, ExtensionCommandContext } from "@gsd/pi-coding-agent";
+import { importExtensionModule, type ExtensionAPI, type ExtensionCommandContext } from "@gsd/pi-coding-agent";
 import type { GSDState } from "./types.js";
 import { existsSync, readFileSync, readdirSync, unlinkSync } from "node:fs";
 import { homedir } from "node:os";
@@ -585,7 +585,7 @@ export async function handleGSDCommand(
   }
 
   if (trimmed === "widget" || trimmed.startsWith("widget ")) {
-    const { cycleWidgetMode, setWidgetMode, getWidgetMode } = await import("./auto-dashboard.js");
+    const { cycleWidgetMode, setWidgetMode, getWidgetMode } = await importExtensionModule<typeof import("./auto-dashboard.js")>(import.meta.url, "./auto-dashboard.js");
     const arg = trimmed.replace(/^widget\s*/, "").trim();
     if (arg === "full" || arg === "small" || arg === "min" || arg === "off") {
       setWidgetMode(arg);

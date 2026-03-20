@@ -1,7 +1,7 @@
 import { DefaultResourceLoader } from '@gsd/pi-coding-agent'
 import { createHash } from 'node:crypto'
 import { homedir } from 'node:os'
-import { chmodSync, copyFileSync, cpSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { chmodSync, copyFileSync, cpSync, existsSync, lstatSync, mkdirSync, readFileSync, readlinkSync, readdirSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs'
 import { dirname, join, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { compareSemver } from './update-check.js'
@@ -238,6 +238,35 @@ function copyDirRecursive(src: string, dest: string): void {
 }
 
 /**
+ * Creates (or updates) a symlink at agentDir/node_modules pointing to GSD's
+ * own node_modules directory.
+ *
+ * Native ESM `import()` ignores NODE_PATH — it resolves packages by walking
+ * up the directory tree from the importing file. Extension files synced to
+ * ~/.gsd/agent/extensions/ have no ancestor node_modules, so imports of
+ * @gsd/* packages fail. The symlink makes Node's standard resolution find
+ * them without requiring every call site to use jiti.
+ */
+function ensureNodeModulesSymlink(agentDir: string): void {
+  const agentNodeModules = join(agentDir, 'node_modules')
+  const gsdNodeModules = join(packageRoot, 'node_modules')
+
+  try {
+    const existing = readlinkSync(agentNodeModules)
+    if (existing === gsdNodeModules) return  // already correct
+    unlinkSync(agentNodeModules)
+  } catch {
+    // readlinkSync throws if path doesn't exist or isn't a symlink — both are fine
+  }
+
+  try {
+    symlinkSync(gsdNodeModules, agentNodeModules, 'junction')
+  } catch {
+    // Non-fatal — worst case, extensions fall back to NODE_PATH via jiti
+  }
+}
+
+/**
  * Syncs all bundled resources to agentDir (~/.gsd/agent/) on every launch.
  *
  * - extensions/ → ~/.gsd/agent/extensions/   (overwrite when version changes)
@@ -283,6 +312,11 @@ export function initResources(agentDir: string): void {
   // Ensure all newly copied files are owner-writable so the next run can
   // overwrite them (covers extensions, agents, and skills in one walk).
   makeTreeWritable(agentDir)
+
+  // Ensure ~/.gsd/agent/node_modules symlinks to GSD's node_modules so that
+  // native ESM import() calls from synced extension files can resolve @gsd/*
+  // packages via ancestor directory lookup. NODE_PATH only applies to CJS/jiti.
+  ensureNodeModulesSymlink(agentDir)
 
   writeManagedResourceManifest(agentDir)
   ensureRegistryEntries(join(agentDir, 'extensions'))

@@ -10,7 +10,7 @@
  * session rotation). No queue — stale agent_end events are dropped.
  */
 
-import type { ExtensionAPI, ExtensionContext } from "@gsd/pi-coding-agent";
+import { importExtensionModule, type ExtensionAPI, type ExtensionContext } from "@gsd/pi-coding-agent";
 
 import type { AutoSession } from "./auto/session.js";
 import { NEW_SESSION_TIMEOUT_MS } from "./auto/session.js";
@@ -563,9 +563,9 @@ async function generateMilestoneReport(
   ctx: ExtensionContext,
   milestoneId: string,
 ): Promise<void> {
-  const { loadVisualizerData } = await import("./visualizer-data.js");
-  const { generateHtmlReport } = await import("./export-html.js");
-  const { writeReportSnapshot } = await import("./reports.js");
+  const { loadVisualizerData } = await importExtensionModule<typeof import("./visualizer-data.js")>(import.meta.url, "./visualizer-data.js");
+  const { generateHtmlReport } = await importExtensionModule<typeof import("./export-html.js")>(import.meta.url, "./export-html.js");
+  const { writeReportSnapshot } = await importExtensionModule<typeof import("./reports.js")>(import.meta.url, "./reports.js");
   const { basename } = await import("node:path");
 
   const snapData = await loadVisualizerData(s.basePath);
@@ -1344,7 +1344,7 @@ export async function autoLoop(
       s.lastBaselineCharCount = undefined;
       if (deps.isDbAvailable()) {
         try {
-          const { inlineGsdRootFile } = await import("./auto-prompts.js");
+          const { inlineGsdRootFile } = await importExtensionModule<typeof import("./auto-prompts.js")>(import.meta.url, "./auto-prompts.js");
           const [decisionsContent, requirementsContent, projectContent] =
             await Promise.all([
               inlineGsdRootFile(s.basePath, "decisions.md", "Decisions"),
