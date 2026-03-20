@@ -57,14 +57,27 @@ export async function handleProxyRequest(
     });
   }
 
+  // C4: Validate port is in safe range (1024-65535) to prevent SSRF to privileged services
+  if (port < 1024 || port > 65535) {
+    return new Response(OFFLINE_HTML, {
+      status: 200,
+      headers: { "Content-Type": "text/html; charset=utf-8" },
+    });
+  }
+
   // Strip /api/preview prefix to get the target path
   const targetPath = url.pathname.replace(/^\/api\/preview/, "") || "/";
   const targetUrl = `http://localhost:${port}${targetPath}${url.search}`;
 
   try {
+    // C4: Strip auth headers to prevent credential leakage to proxied service
+    const forwardHeaders = new Headers(req.headers);
+    forwardHeaders.delete("authorization");
+    forwardHeaders.delete("cookie");
+
     const proxied = await fetch(targetUrl, {
       method: req.method,
-      headers: req.headers,
+      headers: forwardHeaders,
       body: req.method !== "GET" && req.method !== "HEAD" ? req.body : undefined,
     });
 

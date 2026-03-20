@@ -48,12 +48,28 @@ export async function registerTrustRoutes(
 
   if (method === "GET") {
     const dir = url.searchParams.get("dir") ?? "";
+    const normalizedDir = dir.replace(/\\/g, "/");
+    if (!dir || (!normalizedDir.endsWith("/.gsd") && !normalizedDir.includes("/.gsd/"))) {
+      return Response.json({ error: "dir must be a .gsd directory path" }, { status: 400 });
+    }
     const trusted = await isTrusted(dir);
     return Response.json({ trusted });
   }
 
   if (method === "POST") {
     const dir = (body as { dir?: string })?.dir ?? "";
+
+    // C3: Validate dir looks like a GSD project's .gsd directory.
+    // Prevents arbitrary directory creation by ensuring the path ends with
+    // /.gsd or contains /.gsd/ (e.g., /home/user/myproject/.gsd).
+    const normalizedDir = dir.replace(/\\/g, "/");
+    if (!dir || (!normalizedDir.endsWith("/.gsd") && !normalizedDir.includes("/.gsd/"))) {
+      return Response.json(
+        { error: "dir must be a .gsd directory path" },
+        { status: 400 }
+      );
+    }
+
     await writeTrustFlag(dir);
     return Response.json({ ok: true });
   }

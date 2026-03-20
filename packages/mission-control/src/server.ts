@@ -20,6 +20,7 @@ import { handleAuthRequest } from "./server/auth-api";
 import { freePort } from "./server/kill-port";
 
 const repoRoot = resolve(import.meta.dir, "../../..");
+const publicDir = resolve(import.meta.dir, "../public");
 
 const HTTP_PORT = parseInt(process.env.MC_PORT ?? "4200", 10);
 
@@ -61,6 +62,16 @@ async function registerWindow(windowId: string): Promise<number> {
 }
 
 
+// SECURITY NOTE — Intentional: No authentication on HTTP API endpoints.
+//
+// This is an accepted design decision for a desktop application:
+// 1. The server binds to 127.0.0.1 only (hostname below) — not accessible from the network
+// 2. The local-process threat (any process on the machine can make HTTP requests) is an
+//    accepted risk for a single-user desktop app where the user controls all local processes
+// 3. CORS headers restrict browser-based cross-origin access to the server's own origin
+//
+// If Mission Control ever becomes a multi-user or network-accessible service,
+// HTTP authentication (e.g., bearer token, session cookie) would be required.
 const server = Bun.serve({
   port: HTTP_PORT,
   hostname: "127.0.0.1",
@@ -259,7 +270,11 @@ const server = Bun.serve({
 
     // Serve static files from public/ directory (assets, fonts, etc.)
     if (req.method === "GET" && !pathname.startsWith("/api/")) {
-      const filePath = resolve(import.meta.dir, "../public", pathname.slice(1));
+      const filePath = resolve(publicDir, pathname.slice(1));
+      // H6: Prevent path traversal — reject if resolved path escapes public/
+      if (!filePath.startsWith(publicDir)) {
+        return new Response("Forbidden", { status: 403 });
+      }
       const file = Bun.file(filePath);
       if (await file.exists()) {
         return new Response(file);
