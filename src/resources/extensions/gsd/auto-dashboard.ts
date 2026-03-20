@@ -289,7 +289,7 @@ function refreshLastCommit(basePath: string): void {
     const sep = raw.indexOf("|");
     if (sep > 0) {
       cachedLastCommit = {
-        timeAgo: raw.slice(0, sep).replace(/ ago$/, "").replace(/ /g, ""),
+        timeAgo: raw.slice(0, sep).replace(/ ago$/, ""),
         message: raw.slice(sep + 1),
       };
     }
@@ -494,6 +494,20 @@ export function updateProgressWidget(
             : theme.fg("dim", elapsed))
           : "";
         lines.push(rightAlign(headerLeft, headerRight, width));
+
+        // Show health signal details when degraded (yellow/red)
+        if (score.level !== "green" && score.signals.length > 0 && widgetMode !== "min") {
+          // Show up to 3 most relevant signals in compact form
+          const topSignals = score.signals
+            .filter(s => s.kind === "negative")
+            .slice(0, 3);
+          if (topSignals.length > 0) {
+            const signalStr = topSignals
+              .map(s => theme.fg("dim", s.label))
+              .join(theme.fg("dim", " · "));
+            lines.push(`${pad}  ${signalStr}`);
+          }
+        }
 
         // ── Gather stats (needed by multiple modes) ─────────────────────
         const cmdCtx = accessors.getCmdCtx();
