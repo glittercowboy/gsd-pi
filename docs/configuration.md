@@ -187,12 +187,34 @@ models:
 
 ### Custom Model Definitions (`models.json`)
 
-Define custom models in `~/.gsd/agent/models.json`. This lets you add models not included in the default registry — useful for self-hosted endpoints, fine-tuned models, or new releases.
+Define custom models and providers in `~/.gsd/agent/models.json`. This lets you add models not included in the default registry — useful for self-hosted endpoints (Ollama, vLLM, LM Studio), fine-tuned models, proxies, or new provider releases.
 
 GSD resolves models.json with fallback logic:
 1. `~/.gsd/agent/models.json` — primary (GSD)
 2. `~/.pi/agent/models.json` — fallback (Pi)
 3. If neither exists, creates `~/.gsd/agent/models.json`
+
+**Quick example for local models (Ollama):**
+
+```json
+{
+  "providers": {
+    "ollama": {
+      "baseUrl": "http://localhost:11434/v1",
+      "api": "openai-completions",
+      "apiKey": "ollama",
+      "models": [
+        { "id": "llama3.1:8b" },
+        { "id": "qwen2.5-coder:7b" }
+      ]
+    }
+  }
+}
+```
+
+The file reloads each time you open `/model` — no restart needed.
+
+For full documentation including provider configuration, model overrides, OpenAI compatibility settings, and advanced examples, see the [Custom Models Guide](./custom-models.md).
 
 **With fallbacks:**
 

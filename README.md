@@ -53,6 +53,7 @@ Full documentation is available in the [`docs/`](./docs/) directory:
 - **[Getting Started](./docs/getting-started.md)** — install, first run, basic usage
 - **[Auto Mode](./docs/auto-mode.md)** — autonomous execution deep-dive
 - **[Configuration](./docs/configuration.md)** — all preferences, models, git, and hooks
+- **[Custom Models](./docs/custom-models.md)** — add custom providers (Ollama, vLLM, LM Studio, proxies)
 - **[Token Optimization](./docs/token-optimization.md)** — profiles, context compression, complexity routing
 - **[Cost Management](./docs/cost-management.md)** — budgets, tracking, projections
 - **[Git Strategy](./docs/git-strategy.md)** — worktree isolation, branching, merge behavior
