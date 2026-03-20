@@ -452,7 +452,7 @@ async function runSingleAgent(
 
 async function runSingleAgentInCmuxSplit(
 	cmuxClient: CmuxClient,
-	direction: "right" | "down",
+	directionOrSurfaceId: "right" | "down" | string,
 	defaultCwd: string,
 	agents: AgentConfig[],
 	agentName: string,
@@ -503,7 +503,12 @@ async function runSingleAgentInCmuxSplit(
 		const stdoutPath = path.join(tmpOutputDir, "stdout.jsonl");
 		const stderrPath = path.join(tmpOutputDir, "stderr.log");
 		const exitPath = path.join(tmpOutputDir, "exit.code");
-		const cmuxSurfaceId = await cmuxClient.createSplit(direction);
+		// Accept either a pre-created surface ID or a direction to create a new split
+		const isDirection = directionOrSurfaceId === "right" || directionOrSurfaceId === "down"
+			|| directionOrSurfaceId === "left" || directionOrSurfaceId === "up";
+		const cmuxSurfaceId = isDirection
+			? await cmuxClient.createSplit(directionOrSurfaceId as "right" | "down" | "left" | "up")
+			: directionOrSurfaceId;
 		if (!cmuxSurfaceId) {
 			return runSingleAgent(defaultCwd, agents, agentName, task, cwd, step, signal, onUpdate, makeDetails);
 		}
@@ -806,12 +811,16 @@ export default function (pi: ExtensionAPI) {
 				const MAX_RETRIES = 1; // Retry failed tasks once
 				const batchId = crypto.randomUUID();
 				const batchSize = params.tasks.length;
+				// Pre-create a grid layout for cmux splits so agents get a clean tiled arrangement
+				const gridSurfaces = cmuxSplitsEnabled
+					? await cmuxClient.createGridLayout(Math.min(batchSize, MAX_CONCURRENCY))
+					: [];
 				const results = await mapWithConcurrencyLimit(params.tasks, MAX_CONCURRENCY, async (t, index) => {
 					const workerId = registerWorker(t.agent, t.task, index, batchSize, batchId);
 					const runTask = () => cmuxSplitsEnabled
 						? runSingleAgentInCmuxSplit(
 							cmuxClient,
-							index % 2 === 0 ? "right" : "down",
+							gridSurfaces[index] ?? (index % 2 === 0 ? "right" : "down"),
 							ctx.cwd,
 							agents,
 							t.agent,

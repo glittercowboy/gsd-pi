@@ -210,7 +210,11 @@ export function registerGSDCommand(pi: ExtensionAPI): void {
         { cmd: "templates", desc: "List available workflow templates" },
         { cmd: "extensions", desc: "Manage extensions (list, enable, disable, info)" },
       ];
+      const hasTrailingSpace = prefix.endsWith(" ");
       const parts = prefix.trim().split(/\s+/);
+      if (hasTrailingSpace && parts.length >= 1) {
+        parts.push("");
+      }
 
       if (parts.length <= 1) {
         return subcommands
