@@ -38,6 +38,8 @@ import type { CmuxLogLevel } from "../cmux/index.js";
  * generous headroom including retries and sidecar work.
  */
 const MAX_LOOP_ITERATIONS = 500;
+/** Maximum characters of failure/crash context included in recovery prompts. */
+const MAX_RECOVERY_CHARS = 50_000;
 
 /** Data-driven budget threshold notifications (descending). The 100% entry
  *  triggers special enforcement logic (halt/pause/warn); sub-100 entries fire
@@ -690,6 +692,7 @@ export async function autoLoop(
 
     try {
       // ── Blanket try/catch: one bad iteration must not kill the session
+      const prefs = deps.loadEffectiveGSDPreferences()?.preferences;
 
       const sessionLockBase = deps.lockBase();
       if (sessionLockBase) {
@@ -762,7 +765,7 @@ export async function autoLoop(
 
       // Derive state
       let state = await deps.deriveState(s.basePath);
-      deps.syncCmuxSidebar(deps.loadEffectiveGSDPreferences()?.preferences, state);
+      deps.syncCmuxSidebar(prefs, state);
       let mid = state.activeMilestone?.id;
       let midTitle = state.activeMilestone?.title;
       debugLog("autoLoop", {
@@ -785,12 +788,12 @@ export async function autoLoop(
           "milestone",
         );
         deps.logCmuxEvent(
-          deps.loadEffectiveGSDPreferences()?.preferences,
+          prefs,
           `Milestone ${s.currentMilestoneId} complete. Advancing to ${mid}.`,
           "success",
         );
 
-        const vizPrefs = deps.loadEffectiveGSDPreferences()?.preferences;
+        const vizPrefs = prefs;
         if (vizPrefs?.auto_visualize) {
           ctx.ui.notify("Run /gsd visualize to see progress overview.", "info");
         }
@@ -823,9 +826,7 @@ export async function autoLoop(
         if (mid) {
           if (deps.getIsolationMode() !== "none") {
             deps.captureIntegrationBranch(s.basePath, mid, {
-              commitDocs:
-                deps.loadEffectiveGSDPreferences()?.preferences?.git
-                  ?.commit_docs,
+              commitDocs: prefs?.git?.commit_docs,
             });
           }
           deps.resolver.enterMilestone(mid, ctx.ui);
@@ -877,7 +878,7 @@ export async function autoLoop(
             "milestone",
           );
           deps.logCmuxEvent(
-            deps.loadEffectiveGSDPreferences()?.preferences,
+            prefs,
             "All milestones complete.",
             "success",
           );
@@ -899,7 +900,7 @@ export async function autoLoop(
           await deps.stopAuto(ctx, pi, blockerMsg);
           ctx.ui.notify(`${blockerMsg}. Fix and run /gsd auto.`, "warning");
           deps.sendDesktopNotification("GSD", blockerMsg, "error", "attention");
-          deps.logCmuxEvent(deps.loadEffectiveGSDPreferences()?.preferences, blockerMsg, "error");
+          deps.logCmuxEvent(prefs, blockerMsg, "error");
         } else {
           const ids = incomplete.map((m: { id: string }) => m.id).join(", ");
           const diag = `basePath=${s.basePath}, milestones=[${state.registry.map((m: { id: string; status: string }) => `${m.id}:${m.status}`).join(", ")}], phase=${state.phase}`;
@@ -958,7 +959,7 @@ export async function autoLoop(
           "milestone",
         );
         deps.logCmuxEvent(
-          deps.loadEffectiveGSDPreferences()?.preferences,
+          prefs,
           `Milestone ${mid} complete.`,
           "success",
         );
@@ -973,14 +974,12 @@ export async function autoLoop(
         await closeoutAndStop(ctx, pi, s, deps, blockerMsg);
         ctx.ui.notify(`${blockerMsg}. Fix and run /gsd auto.`, "warning");
         deps.sendDesktopNotification("GSD", blockerMsg, "error", "attention");
-        deps.logCmuxEvent(deps.loadEffectiveGSDPreferences()?.preferences, blockerMsg, "error");
+        deps.logCmuxEvent(prefs, blockerMsg, "error");
         debugLog("autoLoop", { phase: "exit", reason: "blocked" });
         break;
       }
 
       // ── Phase 2: Guards ─────────────────────────────────────────────────
-
-      const prefs = deps.loadEffectiveGSDPreferences()?.preferences;
 
       // Budget ceiling guard
       const budgetCeiling = prefs?.budget_ceiling;
@@ -1301,7 +1300,6 @@ export async function autoLoop(
       deps.ensurePreconditions(unitType, unitId, s.basePath, state);
 
       // Prompt injection
-      const MAX_RECOVERY_CHARS = 50_000;
       let finalPrompt = prompt;
 
       if (s.pendingVerificationRetry) {
