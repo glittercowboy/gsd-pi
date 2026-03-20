@@ -390,6 +390,8 @@ export interface WidgetStateAccessors {
   getCmdCtx(): ExtensionCommandContext | null;
   getBasePath(): string;
   isVerbose(): boolean;
+  /** True while newSession() is in-flight — render must not access session state. */
+  isSessionSwitching(): boolean;
 }
 
 export function updateProgressWidget(
@@ -459,6 +461,14 @@ export function updateProgressWidget(
     return {
       render(width: number): string[] {
         if (cachedLines && cachedWidth === width) return cachedLines;
+
+        // While newSession() is in-flight, session state is mid-mutation.
+        // Accessing cmdCtx.sessionManager or cmdCtx.getContextUsage() can
+        // block the render loop and freeze the TUI. Return the last cached
+        // frame (or an empty frame on first render) until the switch settles.
+        if (accessors.isSessionSwitching()) {
+          return cachedLines ?? [];
+        }
 
         const ui = makeUI(theme, width);
         const lines: string[] = [];

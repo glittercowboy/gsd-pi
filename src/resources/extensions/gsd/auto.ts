@@ -195,7 +195,7 @@ import {
   postUnitPostVerification,
 } from "./auto-post-unit.js";
 import { bootstrapAutoSession, type BootstrapDeps } from "./auto-start.js";
-import { autoLoop, resolveAgentEnd, type LoopDeps } from "./auto-loop.js";
+import { autoLoop, resolveAgentEnd, isSessionSwitchInFlight, type LoopDeps } from "./auto-loop.js";
 import {
   WorktreeResolver,
   type WorktreeResolverDeps,
@@ -1129,6 +1129,7 @@ const widgetStateAccessors: WidgetStateAccessors = {
   getCmdCtx: () => s.cmdCtx,
   getBasePath: () => s.basePath,
   isVerbose: () => s.verbose,
+  isSessionSwitching: isSessionSwitchInFlight,
 };
 
 // ─── Preconditions ────────────────────────────────────────────────────────────
