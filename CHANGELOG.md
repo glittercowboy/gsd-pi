@@ -6,6 +6,51 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [2.39.0] - 2026-03-20
+
+### Added
+- **gsd**: activate matching skills in dispatched prompts (#1630)
+- **gsd**: add .gsd/RUNTIME.md template for declared runtime context (#1626)
+- **gsd**: create draft PR on milestone completion when git.auto_pr enabled (#1627)
+- **gsd**: add browser-executable and runtime-executable UAT types (#1620)
+- apply model preferences in guided flow for milestone planning (#1614)
+- **gsd**: GitHub sync extension — auto-sync to Issues, PRs, Milestones (#1603)
+- add GSD_PROJECT_ID env var to override project hash (#1600)
+- add GSD_HOME env var to override global ~/.gsd directory (#1566)
+- **gsd**: add 13 enhancements to /gsd doctor (#1583)
+- feat(ui): minimal GSD welcome screen on startup (#1584)
+
+### Fixed
+- recover + prevent #1364 .gsd/ data-loss (v2.30.0–v2.38.0) (#1635)
+- treat summary as terminal artifact even when roadmap slices are unchecked (#1632)
+- **gsd**: close residual #1364 data-loss vectors on v2.36.0+ (#1637)
+- auto-resolve npm subpath exports in extension loader (#1624)
+- create node_modules symlink for dynamic import resolution in extensions (#1623)
+- filter cross-milestone errors from health tracker escalation (#1621)
+- move unit closeout to run immediately after completion (#1612)
+- use pathspec exclusions in smartStage to prevent hanging on large repos (#1613)
+- add auto-fix for premature slice completion deadlock in doctor (#1611)
+- resolve ${VAR} env references in MCP client .mcp.json configs (#1609)
+- return "dispatched" after doctor heal to prevent session race (#1580) (#1610)
+- update Anthropic OAuth endpoints to platform.claude.com (#1608)
+- lazy-open GSD database on first tool call in manual sessions (#1606)
+- **gsd**: detect anthropic-vertex in provider doctor (#1598)
+- **gsd**: tighten prompt automation contracts (#1556)
+- **gsd**: harden auto-mode agent loop — session teardown, unit correlation, sidecar perf (#1592)
+- break remaining shared/mod.js barrel imports in report generation chain (#1588)
+- apply pi manifest opt-out to extension-discovery.ts (#1545)
+- detect worktree paths resolved through .gsd symlinks (#1585)
+
+### Changed
+- **gsd**: unify sidecar mini-loop into main dispatch path (#1617)
+- **auto-loop**: initial cleanup — hoist constant, cache prefs per iteration (#1616)
+- **gsd**: add 30K char hard cap on prompt preamble (#1619)
+- **gsd**: replace stuck counter with sliding-window detection (#1618)
+- **auto-loop**: 5 code smell fixes (#1602)
+- **gsd**: replace session-scoped promise bridge with per-unit one-shot (#1595)
+- **gsd**: remove prompt compression subsystem (~4,100 lines) (#1597)
+- **gsd**: crashproof stopAuto with independent try/catch per cleanup step (#1596)
+
 ## [2.38.0] - 2026-03-20
 
 ### Added
@@ -1430,7 +1475,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Changed
 - License updated to MIT
 
-[Unreleased]: https://github.com/gsd-build/gsd-2/compare/v2.38.0...HEAD
+[Unreleased]: https://github.com/gsd-build/gsd-2/compare/v2.39.0...HEAD
+[2.39.0]: https://github.com/gsd-build/gsd-2/compare/v2.38.0...v2.39.0
 [2.38.0]: https://github.com/gsd-build/gsd-2/compare/v2.37.1...v2.38.0
 [2.37.1]: https://github.com/gsd-build/gsd-2/compare/v2.37.0...v2.37.1
 [2.37.0]: https://github.com/gsd-build/gsd-2/compare/v2.36.0...v2.37.0
