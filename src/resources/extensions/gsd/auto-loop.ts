@@ -12,7 +12,7 @@
 
 import type { ExtensionAPI, ExtensionContext } from "@gsd/pi-coding-agent";
 
-import type { AutoSession } from "./auto/session.js";
+import type { AutoSession, SidecarItem } from "./auto/session.js";
 import { NEW_SESSION_TIMEOUT_MS } from "./auto/session.js";
 import type { GSDPreferences } from "./preferences.js";
 import type { SessionLockStatus } from "./session-lock.js";
@@ -694,6 +694,18 @@ export async function autoLoop(
       // ── Blanket try/catch: one bad iteration must not kill the session
       const prefs = deps.loadEffectiveGSDPreferences()?.preferences;
 
+      // ── Check sidecar queue before deriveState ──
+      let sidecarItem: SidecarItem | undefined;
+      if (s.sidecarQueue.length > 0) {
+        sidecarItem = s.sidecarQueue.shift()!;
+        debugLog("autoLoop", {
+          phase: "sidecar-dequeue",
+          kind: sidecarItem.kind,
+          unitType: sidecarItem.unitType,
+          unitId: sidecarItem.unitId,
+        });
+      }
+
       const sessionLockBase = deps.lockBase();
       if (sessionLockBase) {
         const lockStatus = deps.validateSessionLock(sessionLockBase);
@@ -714,6 +726,17 @@ export async function autoLoop(
         }
       }
 
+      // Variables shared between the sidecar and normal paths
+      let unitType: string;
+      let unitId: string;
+      let prompt: string;
+      let pauseAfterUatDispatch = false;
+      let state: GSDState;
+      let mid: string | undefined;
+      let midTitle: string | undefined;
+      let observabilityIssues: unknown[] = [];
+
+      if (!sidecarItem) {
       // ── Phase 1: Pre-dispatch ───────────────────────────────────────────
 
       // Resource version guard
@@ -764,10 +787,10 @@ export async function autoLoop(
       }
 
       // Derive state
-      let state = await deps.deriveState(s.basePath);
+      state = await deps.deriveState(s.basePath);
       deps.syncCmuxSidebar(prefs, state);
-      let mid = state.activeMilestone?.id;
-      let midTitle = state.activeMilestone?.title;
+      mid = state.activeMilestone?.id;
+      midTitle = state.activeMilestone?.title;
       debugLog("autoLoop", {
         phase: "state-derived",
         iteration,
@@ -1130,10 +1153,10 @@ export async function autoLoop(
         continue;
       }
 
-      let unitType = dispatchResult.unitType;
-      let unitId = dispatchResult.unitId;
-      let prompt = dispatchResult.prompt;
-      const pauseAfterUatDispatch = dispatchResult.pauseAfterDispatch ?? false;
+      unitType = dispatchResult.unitType;
+      unitId = dispatchResult.unitId;
+      prompt = dispatchResult.prompt;
+      pauseAfterUatDispatch = dispatchResult.pauseAfterDispatch ?? false;
 
       // ── Sliding-window stuck detection with graduated recovery ──
       const derivedKey = `${unitType}/${unitId}`;
@@ -1250,12 +1273,26 @@ export async function autoLoop(
         break;
       }
 
-      const observabilityIssues = await deps.collectObservabilityWarnings(
+      observabilityIssues = await deps.collectObservabilityWarnings(
         ctx,
         s.basePath,
         unitType,
         unitId,
       );
+
+      // Derive state for shared use in execution phase
+      // (state, mid, midTitle already set above)
+
+      } else {
+        // ── Sidecar path: use values from the sidecar item directly ──
+        unitType = sidecarItem.unitType;
+        unitId = sidecarItem.unitId;
+        prompt = sidecarItem.prompt;
+        // Derive minimal state for progress widget / execution context
+        state = await deps.deriveState(s.basePath);
+        mid = state.activeMilestone?.id;
+        midTitle = state.activeMilestone?.title;
+      }
 
       // ── Phase 4: Unit execution ─────────────────────────────────────────
 
@@ -1371,7 +1408,7 @@ export async function autoLoop(
         );
       }
 
-      // Select and apply model (with tier escalation on retry)
+      // Select and apply model (with tier escalation on retry — normal units only)
       const modelResult = await deps.selectAndApplyModel(
         ctx,
         pi,
@@ -1381,7 +1418,7 @@ export async function autoLoop(
         prefs,
         s.verbose,
         s.autoModeStartModel,
-        { isRetry, previousTier },
+        sidecarItem ? undefined : { isRetry, previousTier },
       );
       s.currentUnitRouting =
         modelResult.routing as AutoSession["currentUnitRouting"];
@@ -1532,7 +1569,13 @@ export async function autoLoop(
       };
 
       // Pre-verification processing (commit, doctor, state rebuild, etc.)
-      const preResult = await deps.postUnitPreVerification(postUnitCtx);
+      // Sidecar items use lightweight pre-verification opts
+      const preVerificationOpts: PreVerificationOpts | undefined = sidecarItem
+        ? sidecarItem.kind === "hook"
+          ? { skipSettleDelay: true, skipDoctor: true, skipStateRebuild: true, skipWorktreeSync: true }
+          : { skipSettleDelay: true, skipStateRebuild: true }
+        : undefined;
+      const preResult = await deps.postUnitPreVerification(postUnitCtx, preVerificationOpts);
       if (preResult === "dispatched") {
         debugLog("autoLoop", {
           phase: "exit",
@@ -1551,22 +1594,32 @@ export async function autoLoop(
         break;
       }
 
-      // Verification gate — the loop handles retries via s.pendingVerificationRetry
-      const verificationResult = await deps.runPostUnitVerification(
-        { s, ctx, pi },
-        deps.pauseAuto,
-      );
+      // Verification gate
+      // Hook sidecar items skip verification entirely.
+      // Non-hook sidecar items run verification but skip retries (just continue).
+      const skipVerification = sidecarItem?.kind === "hook";
+      if (!skipVerification) {
+        const verificationResult = await deps.runPostUnitVerification(
+          { s, ctx, pi },
+          deps.pauseAuto,
+        );
 
-      if (verificationResult === "pause") {
-        debugLog("autoLoop", { phase: "exit", reason: "verification-pause" });
-        break;
-      }
+        if (verificationResult === "pause") {
+          debugLog("autoLoop", { phase: "exit", reason: "verification-pause" });
+          break;
+        }
 
-      if (verificationResult === "retry") {
-        // s.pendingVerificationRetry was set by runPostUnitVerification.
-        // Continue the loop — next iteration will inject the retry context into the prompt.
-        debugLog("autoLoop", { phase: "verification-retry", iteration });
-        continue;
+        if (verificationResult === "retry") {
+          if (sidecarItem) {
+            // Sidecar verification retries are skipped — just continue
+            debugLog("autoLoop", { phase: "sidecar-verification-retry-skipped", iteration });
+          } else {
+            // s.pendingVerificationRetry was set by runPostUnitVerification.
+            // Continue the loop — next iteration will inject the retry context into the prompt.
+            debugLog("autoLoop", { phase: "verification-retry", iteration });
+            continue;
+          }
+        }
       }
 
       // Post-verification processing (DB dual-write, hooks, triage, quick-tasks)
@@ -1585,162 +1638,6 @@ export async function autoLoop(
         debugLog("autoLoop", { phase: "exit", reason: "step-wizard" });
         break;
       }
-
-      // ── Sidecar drain: dispatch enqueued hooks/triage/quick-tasks ──
-      let sidecarBroke = false;
-      while (s.sidecarQueue.length > 0 && s.active) {
-        const item = s.sidecarQueue.shift()!;
-        debugLog("autoLoop", {
-          phase: "sidecar-dequeue",
-          kind: item.kind,
-          unitType: item.unitType,
-          unitId: item.unitId,
-        });
-
-        // Set up as current unit
-        const sidecarStartedAt = Date.now();
-        s.currentUnit = {
-          type: item.unitType,
-          id: item.unitId,
-          startedAt: sidecarStartedAt,
-        };
-        deps.writeUnitRuntimeRecord(
-          s.basePath,
-          item.unitType,
-          item.unitId,
-          sidecarStartedAt,
-          {
-            phase: "dispatched",
-            wrapupWarningSent: false,
-            timeoutAt: null,
-            lastProgressAt: sidecarStartedAt,
-            progressCount: 0,
-            lastProgressKind: "dispatch",
-          },
-        );
-
-        // Model selection (handles hook model override)
-        await deps.selectAndApplyModel(
-          ctx,
-          pi,
-          item.unitType,
-          item.unitId,
-          s.basePath,
-          prefs,
-          s.verbose,
-          s.autoModeStartModel,
-        );
-
-        // Supervision
-        deps.clearUnitTimeout();
-        deps.startUnitSupervision({
-          s,
-          ctx,
-          pi,
-          unitType: item.unitType,
-          unitId: item.unitId,
-          prefs,
-          buildSnapshotOpts: () =>
-            deps.buildSnapshotOpts(item.unitType, item.unitId),
-          buildRecoveryContext: () => ({}),
-          pauseAuto: deps.pauseAuto,
-        });
-
-        // Write lock
-        const sidecarSessionFile = deps.getSessionFile(ctx);
-        deps.writeLock(
-          deps.lockBase(),
-          item.unitType,
-          item.unitId,
-          s.completedUnits.length,
-          sidecarSessionFile,
-        );
-
-        // Execute via standard runUnit
-        const sidecarResult = await runUnit(
-          ctx,
-          pi,
-          s,
-          item.unitType,
-          item.unitId,
-          item.prompt,
-        );
-        deps.clearUnitTimeout();
-
-        if (sidecarResult.status === "cancelled") {
-          ctx.ui.notify(
-            `Sidecar unit ${item.unitType} ${item.unitId} session cancelled. Stopping.`,
-            "warning",
-          );
-          await deps.stopAuto(ctx, pi, "Sidecar session creation failed");
-          sidecarBroke = true;
-          break;
-        }
-
-        // Immediate closeout for sidecar unit
-        await deps.closeoutUnit(
-          ctx,
-          s.basePath,
-          item.unitType,
-          item.unitId,
-          sidecarStartedAt,
-          deps.buildSnapshotOpts(item.unitType, item.unitId),
-        );
-
-        // Run pre-verification for the sidecar unit (lightweight path)
-        const sidecarPreOpts: PreVerificationOpts = item.kind === "hook"
-          ? { skipSettleDelay: true, skipDoctor: true, skipStateRebuild: true, skipWorktreeSync: true }
-          : { skipSettleDelay: true, skipStateRebuild: true };
-        const sidecarPreResult =
-          await deps.postUnitPreVerification(postUnitCtx, sidecarPreOpts);
-        if (sidecarPreResult === "dispatched") {
-          // Pre-verification caused stop/pause
-          debugLog("autoLoop", {
-            phase: "exit",
-            reason: "sidecar-pre-verification-stop",
-          });
-          sidecarBroke = true;
-          break;
-        }
-
-        // Verification gate for non-hook sidecar units (triage, quick-tasks)
-        // Hook units are lightweight and don't need verification.
-        if (item.kind !== "hook") {
-          const sidecarVerification = await deps.runPostUnitVerification(
-            { s, ctx, pi },
-            deps.pauseAuto,
-          );
-          if (sidecarVerification === "pause") {
-            debugLog("autoLoop", {
-              phase: "exit",
-              reason: "sidecar-verification-pause",
-            });
-            sidecarBroke = true;
-            break;
-          }
-          // "retry" for sidecars — skip retry, just continue (sidecar retries are not worth the complexity)
-        }
-
-        // Post-verification (may enqueue more sidecar items)
-        const sidecarPostResult =
-          await deps.postUnitPostVerification(postUnitCtx);
-        if (sidecarPostResult === "stopped") {
-          debugLog("autoLoop", { phase: "exit", reason: "sidecar-stopped" });
-          sidecarBroke = true;
-          break;
-        }
-        if (sidecarPostResult === "step-wizard") {
-          debugLog("autoLoop", {
-            phase: "exit",
-            reason: "sidecar-step-wizard",
-          });
-          sidecarBroke = true;
-          break;
-        }
-        // "continue" — loop checks sidecarQueue again
-      }
-
-      if (sidecarBroke) break;
 
       consecutiveErrors = 0; // Iteration completed successfully
       debugLog("autoLoop", { phase: "iteration-complete", iteration });
