@@ -7,6 +7,7 @@ import {
   resolveAgentEnd,
   runUnit,
   autoLoop,
+  detectStuck,
   _resetPendingResolve,
   _setActiveSession,
   isSessionSwitchInFlight,
@@ -1042,7 +1043,7 @@ test("handleAgentEnd in auto.ts is a thin wrapper calling resolveAgentEnd", () =
 
 // ── Stuck counter tests ──────────────────────────────────────────────────────
 
-test("stuck counter: stops when deriveState returns same unit 5 consecutive times", async () => {
+test("stuck detection: stops when sliding window detects same unit 3 consecutive times", async () => {
   _resetPendingResolve();
 
   const ctx = makeMockCtx();
@@ -1077,20 +1078,15 @@ test("stuck counter: stops when deriveState returns same unit 5 consecutive time
 
   const loopPromise = autoLoop(ctx, pi, s, deps);
 
-  // The loop will dispatch the same unit each iteration. On iteration 1, sameUnitCount
-  // starts at 0 and the unit key is set. On iterations 2-5, sameUnitCount increments.
-  // At sameUnitCount=5 (iteration 6), stopAuto is called.
-  // Each iteration requires resolving an agent_end event.
-  // But the stuck counter fires BEFORE runUnit, so we only need to resolve 4 times
-  // (iterations 1-4 each run a unit, iteration 5 increments to 5 and stops).
+  // Sliding window: iteration 1 pushes [A], iteration 2 pushes [A,A],
+  // iteration 3 pushes [A,A,A] → Rule 2 fires (3 consecutive) → Level 1 recovery.
+  // Level 1 invalidates caches and continues. Iteration 4 pushes [A,A,A,A] →
+  // Rule 2 fires again → Level 2 hard stop.
+  // Iterations 1-3 each run a unit (3 resolves needed). Iteration 3 triggers
+  // Level 1 (cache invalidation + continue). Iteration 4 triggers Level 2 (stop
+  // before runUnit), so no 4th resolve needed.
 
-  // Actually: iteration 1 sets lastDerivedUnit (sameUnitCount=0).
-  // Iteration 2: derivedKey === lastDerivedUnit → sameUnitCount=1.
-  // Iteration 3: sameUnitCount=2. Iteration 4: sameUnitCount=3.
-  // Iteration 5: sameUnitCount=4. Iteration 6: sameUnitCount=5 → stop.
-  // So we need to resolve 5 agent_end events (iterations 1-5 each run a unit).
-
-  for (let i = 0; i < 5; i++) {
+  for (let i = 0; i < 3; i++) {
     await new Promise((r) => setTimeout(r, 30));
     resolveAgentEnd(makeEvent());
   }
@@ -1106,16 +1102,12 @@ test("stuck counter: stops when deriveState returns same unit 5 consecutive time
     `stop reason should mention 'Stuck', got: ${stopReason}`,
   );
   assert.ok(
-    stopReason.includes("execute-task"),
-    "stop reason should include unitType",
-  );
-  assert.ok(
     stopReason.includes("M001/S01/T01"),
     "stop reason should include unitId",
   );
 });
 
-test("stuck counter: resets when deriveState returns a different unit", async () => {
+test("stuck detection: window resets recovery when deriveState returns a different unit", async () => {
   _resetPendingResolve();
 
   const ctx = makeMockCtx();
@@ -1176,10 +1168,11 @@ test("stuck counter: resets when deriveState returns a different unit", async ()
 
   await loopPromise;
 
-  // The counter should have reset when T02 was derived — no stuck stop
+  // Level 1 recovery fires on iteration 3 (cache invalidation + continue),
+  // then iteration 4 derives T02 — no Level 2 hard stop.
   assert.ok(
     !stopCalled,
-    "stopAuto should NOT have been called — counter reset on unit change",
+    "stopAuto should NOT have been called — different unit broke stuck pattern",
   );
   assert.ok(
     deriveCallCount >= 4,
@@ -1187,7 +1180,7 @@ test("stuck counter: resets when deriveState returns a different unit", async ()
   );
 });
 
-test("stuck counter: does not increment during verification retry", async () => {
+test("stuck detection: does not push to window during verification retry", async () => {
   _resetPendingResolve();
 
   const ctx = makeMockCtx();
@@ -1249,10 +1242,10 @@ test("stuck counter: does not increment during verification retry", async () => 
   await loopPromise;
 
   // Even though same unit was derived 4 times, verification retries should
-  // not count, so stuck counter should not have fired
+  // not push to the sliding window, so stuck detection should not have fired
   assert.ok(
     !stopReason.includes("Stuck"),
-    `stuck counter should not fire during verification retries, got: ${stopReason}`,
+    `stuck detection should not fire during verification retries, got: ${stopReason}`,
   );
   assert.equal(
     verifyCallCount,
@@ -1261,24 +1254,106 @@ test("stuck counter: does not increment during verification retry", async () => 
   );
 });
 
-test("stuck counter: logs debug output with stuck-detected phase", () => {
-  // Structural test: verify the auto-loop.ts source contains both
-  // stuck-detected and stuck-counter-reset debug log phases
+// ── detectStuck unit tests ────────────────────────────────────────────────────
+
+test("detectStuck: returns null for fewer than 2 entries", () => {
+  assert.equal(detectStuck([]), null);
+  assert.equal(detectStuck([{ key: "A" }]), null);
+});
+
+test("detectStuck: Rule 1 — same error twice in a row", () => {
+  const result = detectStuck([
+    { key: "A", error: "ENOENT: file not found" },
+    { key: "A", error: "ENOENT: file not found" },
+  ]);
+  assert.ok(result?.stuck, "should detect same error repeated");
+  assert.ok(result?.reason.includes("Same error repeated"));
+});
+
+test("detectStuck: Rule 1 — different errors do not trigger", () => {
+  const result = detectStuck([
+    { key: "A", error: "ENOENT: file not found" },
+    { key: "A", error: "EACCES: permission denied" },
+  ]);
+  assert.equal(result, null);
+});
+
+test("detectStuck: Rule 2 — same unit 3 consecutive times", () => {
+  const result = detectStuck([
+    { key: "execute-task/M001/S01/T01" },
+    { key: "execute-task/M001/S01/T01" },
+    { key: "execute-task/M001/S01/T01" },
+  ]);
+  assert.ok(result?.stuck);
+  assert.ok(result?.reason.includes("3 consecutive times"));
+});
+
+test("detectStuck: Rule 2 — 2 consecutive does not trigger", () => {
+  assert.equal(detectStuck([
+    { key: "A" },
+    { key: "A" },
+  ]), null);
+});
+
+test("detectStuck: Rule 3 — oscillation A→B→A→B", () => {
+  const result = detectStuck([
+    { key: "A" },
+    { key: "B" },
+    { key: "A" },
+    { key: "B" },
+  ]);
+  assert.ok(result?.stuck);
+  assert.ok(result?.reason.includes("Oscillation"));
+});
+
+test("detectStuck: Rule 3 — non-oscillation pattern A→B→C→B", () => {
+  assert.equal(detectStuck([
+    { key: "A" },
+    { key: "B" },
+    { key: "C" },
+    { key: "B" },
+  ]), null);
+});
+
+test("detectStuck: Rule 1 takes priority over Rule 2 when both match", () => {
+  const result = detectStuck([
+    { key: "A", error: "test error" },
+    { key: "A", error: "test error" },
+    { key: "A", error: "test error" },
+  ]);
+  assert.ok(result?.stuck);
+  // Rule 1 fires first
+  assert.ok(result?.reason.includes("Same error repeated"));
+});
+
+test("detectStuck: truncates long error strings", () => {
+  const longError = "x".repeat(500);
+  const result = detectStuck([
+    { key: "A", error: longError },
+    { key: "A", error: longError },
+  ]);
+  assert.ok(result?.stuck);
+  assert.ok(result!.reason.length < 300, "reason should be truncated");
+});
+
+test("stuck detection: logs debug output with stuck-detected phase", () => {
+  // Structural test: verify the auto-loop.ts source contains
+  // stuck-detected and stuck-counter-reset debug log phases, plus detectStuck
   const src = readFileSync(
     resolve(import.meta.dirname, "..", "auto-loop.ts"),
     "utf-8",
   );
   assert.ok(
     src.includes('"stuck-detected"'),
-    "auto-loop.ts must log phase: 'stuck-detected' when stuck counter fires",
+    "auto-loop.ts must log phase: 'stuck-detected' when stuck detection fires",
   );
   assert.ok(
     src.includes('"stuck-counter-reset"'),
-    "auto-loop.ts must log phase: 'stuck-counter-reset' when counter resets on new unit",
+    "auto-loop.ts must log phase: 'stuck-counter-reset' when recovery resets on new unit",
   );
   assert.ok(
-    src.includes("sameUnitCount"),
-    "auto-loop.ts must track sameUnitCount for stuck detection",
+    src.includes("detectStuck"),
+    "auto-loop.ts must use detectStuck for sliding window analysis",
   );
 });
 

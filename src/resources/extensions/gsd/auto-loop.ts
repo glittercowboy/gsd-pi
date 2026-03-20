@@ -133,6 +133,63 @@ export function _setActiveSession(_session: AutoSession | null): void {
   // No-op — kept for test backward compatibility
 }
 
+// ─── detectStuck ─────────────────────────────────────────────────────────────
+
+type WindowEntry = { key: string; error?: string };
+
+/**
+ * Analyze a sliding window of recent unit dispatches for stuck patterns.
+ * Returns a signal with reason if stuck, null otherwise.
+ *
+ * Rule 1: Same error string twice in a row → stuck immediately.
+ * Rule 2: Same unit key 3+ consecutive times → stuck (preserves prior behavior).
+ * Rule 3: Oscillation A→B→A→B in last 4 entries → stuck.
+ */
+export function detectStuck(
+  window: readonly WindowEntry[],
+): { stuck: true; reason: string } | null {
+  if (window.length < 2) return null;
+
+  const last = window[window.length - 1];
+  const prev = window[window.length - 2];
+
+  // Rule 1: Same error repeated consecutively
+  if (last.error && prev.error && last.error === prev.error) {
+    return {
+      stuck: true,
+      reason: `Same error repeated: ${last.error.slice(0, 200)}`,
+    };
+  }
+
+  // Rule 2: Same unit 3+ consecutive times
+  if (window.length >= 3) {
+    const lastThree = window.slice(-3);
+    if (lastThree.every((u) => u.key === last.key)) {
+      return {
+        stuck: true,
+        reason: `${last.key} derived 3 consecutive times without progress`,
+      };
+    }
+  }
+
+  // Rule 3: Oscillation (A→B→A→B in last 4)
+  if (window.length >= 4) {
+    const w = window.slice(-4);
+    if (
+      w[0].key === w[2].key &&
+      w[1].key === w[3].key &&
+      w[0].key !== w[1].key
+    ) {
+      return {
+        stuck: true,
+        reason: `Oscillation detected: ${w[0].key} ↔ ${w[1].key}`,
+      };
+    }
+  }
+
+  return null;
+}
+
 // ─── runUnit ─────────────────────────────────────────────────────────────────
 
 /**
@@ -601,8 +658,10 @@ export async function autoLoop(
 ): Promise<void> {
   debugLog("autoLoop", { phase: "enter" });
   let iteration = 0;
-  let lastDerivedUnit = "";
-  let sameUnitCount = 0;
+  // ── Sliding-window stuck detection ──
+  const recentUnits: Array<{ key: string; error?: string }> = [];
+  const STUCK_WINDOW_SIZE = 6;
+  let stuckRecoveryAttempts = 0;
 
   let consecutiveErrors = 0;
 
@@ -750,8 +809,8 @@ export async function autoLoop(
         s.unitDispatchCount.clear();
         s.unitRecoveryCount.clear();
         s.unitLifetimeDispatches.clear();
-        lastDerivedUnit = "";
-        sameUnitCount = 0;
+        recentUnits.length = 0;
+        stuckRecoveryAttempts = 0;
 
         // Worktree lifecycle on milestone transition — merge current, enter next
         deps.resolver.mergeAndExit(s.currentMilestoneId!, ctx.ui);
@@ -1077,71 +1136,79 @@ export async function autoLoop(
       let prompt = dispatchResult.prompt;
       const pauseAfterUatDispatch = dispatchResult.pauseAfterDispatch ?? false;
 
-      // ── Same-unit stuck counter with graduated recovery ──
+      // ── Sliding-window stuck detection with graduated recovery ──
       const derivedKey = `${unitType}/${unitId}`;
-      if (derivedKey === lastDerivedUnit && !s.pendingVerificationRetry) {
-        sameUnitCount++;
-        debugLog("autoLoop", {
-          phase: "stuck-check",
-          unitType,
-          unitId,
-          sameUnitCount,
-        });
 
-        if (sameUnitCount === 3) {
-          // Level 1: try verifying the artifact — maybe it was written but not detected
-          const artifactExists = deps.verifyExpectedArtifact(
+      if (!s.pendingVerificationRetry) {
+        recentUnits.push({ key: derivedKey });
+        if (recentUnits.length > STUCK_WINDOW_SIZE) recentUnits.shift();
+
+        const stuckSignal = detectStuck(recentUnits);
+        if (stuckSignal) {
+          debugLog("autoLoop", {
+            phase: "stuck-check",
             unitType,
             unitId,
-            s.basePath,
-          );
-          if (artifactExists) {
-            debugLog("autoLoop", {
-              phase: "stuck-recovery",
-              level: 1,
-              action: "artifact-found",
-            });
+            reason: stuckSignal.reason,
+            recoveryAttempts: stuckRecoveryAttempts,
+          });
+
+          if (stuckRecoveryAttempts === 0) {
+            // Level 1: try verifying the artifact, then cache invalidation + retry
+            stuckRecoveryAttempts++;
+            const artifactExists = deps.verifyExpectedArtifact(
+              unitType,
+              unitId,
+              s.basePath,
+            );
+            if (artifactExists) {
+              debugLog("autoLoop", {
+                phase: "stuck-recovery",
+                level: 1,
+                action: "artifact-found",
+              });
+              ctx.ui.notify(
+                `Stuck recovery: artifact for ${unitType} ${unitId} found on disk. Invalidating caches.`,
+                "info",
+              );
+              deps.invalidateAllCaches();
+              continue;
+            }
             ctx.ui.notify(
-              `Stuck recovery: artifact for ${unitType} ${unitId} found on disk. Invalidating caches.`,
-              "info",
+              `Stuck on ${unitType} ${unitId} (${stuckSignal.reason}). Invalidating caches and retrying.`,
+              "warning",
             );
             deps.invalidateAllCaches();
-            continue;
+          } else {
+            // Level 2: hard stop — genuinely stuck
+            debugLog("autoLoop", {
+              phase: "stuck-detected",
+              unitType,
+              unitId,
+              reason: stuckSignal.reason,
+            });
+            await deps.stopAuto(
+              ctx,
+              pi,
+              `Stuck: ${stuckSignal.reason}`,
+            );
+            ctx.ui.notify(
+              `Stuck on ${unitType} ${unitId} — ${stuckSignal.reason}. The expected artifact was not written.`,
+              "error",
+            );
+            break;
           }
-          ctx.ui.notify(
-            `Stuck on ${unitType} ${unitId} (attempt ${sameUnitCount}). Invalidating caches and retrying.`,
-            "warning",
-          );
-          deps.invalidateAllCaches();
-        } else if (sameUnitCount === 5) {
-          // Level 2: hard stop — genuinely stuck
-          debugLog("autoLoop", {
-            phase: "stuck-detected",
-            unitType,
-            unitId,
-            sameUnitCount,
-          });
-          await deps.stopAuto(
-            ctx,
-            pi,
-            `Stuck: ${unitType} ${unitId} derived ${sameUnitCount} consecutive times without progress`,
-          );
-          ctx.ui.notify(
-            `Stuck on ${unitType} ${unitId} — deriveState returns the same unit after ${sameUnitCount} attempts. The expected artifact was not written.`,
-            "error",
-          );
-          break;
+        } else {
+          // Progress detected — reset recovery counter
+          if (stuckRecoveryAttempts > 0) {
+            debugLog("autoLoop", {
+              phase: "stuck-counter-reset",
+              from: recentUnits[recentUnits.length - 2]?.key ?? "",
+              to: derivedKey,
+            });
+            stuckRecoveryAttempts = 0;
+          }
         }
-      } else {
-        if (derivedKey !== lastDerivedUnit) {
-          debugLog("autoLoop", {
-            phase: "stuck-counter-reset",
-            from: lastDerivedUnit,
-            to: derivedKey,
-          });
-        }
-        lastDerivedUnit = derivedKey;
-        sameUnitCount = 0;
       }
 
       // Pre-dispatch hooks
@@ -1373,6 +1440,23 @@ export async function autoLoop(
         unitId,
         status: unitResult.status,
       });
+
+      // Tag the most recent window entry with error info for stuck detection
+      if (unitResult.status === "error" || unitResult.status === "cancelled") {
+        const lastEntry = recentUnits[recentUnits.length - 1];
+        if (lastEntry) {
+          lastEntry.error = `${unitResult.status}:${unitType}/${unitId}`;
+        }
+      } else if (unitResult.event?.messages?.length) {
+        const lastMsg = unitResult.event.messages[unitResult.event.messages.length - 1];
+        const msgStr = typeof lastMsg === "string" ? lastMsg : JSON.stringify(lastMsg);
+        if (/error|fail|exception/i.test(msgStr)) {
+          const lastEntry = recentUnits[recentUnits.length - 1];
+          if (lastEntry) {
+            lastEntry.error = msgStr.slice(0, 200);
+          }
+        }
+      }
 
       if (unitResult.status === "cancelled") {
         ctx.ui.notify(
