@@ -23,6 +23,12 @@ import * as _bundledYaml from "yaml";
 import * as _bundledMcpClient from "@modelcontextprotocol/sdk/client";
 import * as _bundledMcpStdio from "@modelcontextprotocol/sdk/client/stdio.js";
 import * as _bundledMcpStreamableHttp from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import * as _bundledMcpSse from "@modelcontextprotocol/sdk/client/sse.js";
+import * as _bundledMcpServer from "@modelcontextprotocol/sdk/server";
+import * as _bundledMcpServerStdio from "@modelcontextprotocol/sdk/server/stdio.js";
+import * as _bundledMcpServerSse from "@modelcontextprotocol/sdk/server/sse.js";
+import * as _bundledMcpServerStreamableHttp from "@modelcontextprotocol/sdk/server/streamableHttp.js";
+import * as _bundledMcpTypes from "@modelcontextprotocol/sdk/types.js";
 import { getAgentDir, isBunBinary } from "../../config.js";
 // NOTE: This import works because loader.ts exports are NOT re-exported from index.ts,
 // avoiding a circular dependency. Extensions can import from @gsd/pi-coding-agent.
@@ -44,8 +50,11 @@ import type {
 	ToolDefinition,
 } from "./types.js";
 
-/** Modules available to extensions via virtualModules (for compiled Bun binary) */
-const VIRTUAL_MODULES: Record<string, unknown> = {
+/**
+ * Statically imported modules for Bun binary virtualModules.
+ * Maps specifier -> module object for subpaths that must be available in compiled binaries.
+ */
+const STATIC_BUNDLED_MODULES: Record<string, unknown> = {
 	"@sinclair/typebox": _bundledTypebox,
 	"@gsd/pi-agent-core": _bundledPiAgentCore,
 	"@gsd/pi-tui": _bundledPiTui,
@@ -58,6 +67,17 @@ const VIRTUAL_MODULES: Record<string, unknown> = {
 	"@modelcontextprotocol/sdk/client/stdio.js": _bundledMcpStdio,
 	"@modelcontextprotocol/sdk/client/streamableHttp": _bundledMcpStreamableHttp,
 	"@modelcontextprotocol/sdk/client/streamableHttp.js": _bundledMcpStreamableHttp,
+	"@modelcontextprotocol/sdk/client/sse": _bundledMcpSse,
+	"@modelcontextprotocol/sdk/client/sse.js": _bundledMcpSse,
+	"@modelcontextprotocol/sdk/server": _bundledMcpServer,
+	"@modelcontextprotocol/sdk/server/stdio": _bundledMcpServerStdio,
+	"@modelcontextprotocol/sdk/server/stdio.js": _bundledMcpServerStdio,
+	"@modelcontextprotocol/sdk/server/sse": _bundledMcpServerSse,
+	"@modelcontextprotocol/sdk/server/sse.js": _bundledMcpServerSse,
+	"@modelcontextprotocol/sdk/server/streamableHttp": _bundledMcpServerStreamableHttp,
+	"@modelcontextprotocol/sdk/server/streamableHttp.js": _bundledMcpServerStreamableHttp,
+	"@modelcontextprotocol/sdk/types": _bundledMcpTypes,
+	"@modelcontextprotocol/sdk/types.js": _bundledMcpTypes,
 	// Aliases for external PI ecosystem packages that import from the original scope
 	"@mariozechner/pi-agent-core": _bundledPiAgentCore,
 	"@mariozechner/pi-tui": _bundledPiTui,
@@ -66,8 +86,197 @@ const VIRTUAL_MODULES: Record<string, unknown> = {
 	"@mariozechner/pi-coding-agent": _bundledPiCodingAgent,
 };
 
+/** Modules available to extensions via virtualModules (for compiled Bun binary) */
+const VIRTUAL_MODULES: Record<string, unknown> = { ...STATIC_BUNDLED_MODULES };
+
 const require = createRequire(import.meta.url);
 const EXTENSION_TIMING_ENABLED = process.env.GSD_STARTUP_TIMING === "1" || process.env.PI_TIMING === "1";
+
+/**
+ * Bundled npm packages whose subpath exports should be auto-resolved for extensions.
+ * Each package listed here will have its `exports` field read from package.json,
+ * and all subpath exports will be registered as jiti aliases (Node.js mode) so that
+ * extensions can import any standard subpath without hitting jiti's CJS double-resolve bug.
+ */
+const BUNDLED_PACKAGES_WITH_EXPORTS = [
+	"@modelcontextprotocol/sdk",
+	"yaml",
+];
+
+/**
+ * Read a package's `exports` field and return alias entries mapping
+ * specifiers (e.g. `@modelcontextprotocol/sdk/server`) to resolved file paths.
+ *
+ * Handles:
+ * - Explicit subpath exports: `./client` -> `@pkg/client`
+ * - Wildcard exports (`./*`): scans the package's dist directory for actual files
+ * - Both `.js`-suffixed and bare specifiers for each subpath
+ */
+function resolveSubpathExports(packageName: string): Record<string, string> {
+	const aliases: Record<string, string> = {};
+
+	let packageJsonPath: string;
+	try {
+		// Resolve the package's root directory via its package.json
+		packageJsonPath = require.resolve(`${packageName}/package.json`);
+	} catch {
+		// Package doesn't allow importing package.json via exports — find it manually
+		try {
+			const anyEntry = require.resolve(packageName);
+			// Walk up from the resolved entry to find package.json
+			let dir = path.dirname(anyEntry);
+			while (dir !== path.dirname(dir)) {
+				const candidate = path.join(dir, "package.json");
+				if (fs.existsSync(candidate)) {
+					try {
+						const pkg = JSON.parse(fs.readFileSync(candidate, "utf-8"));
+						if (pkg.name === packageName) {
+							packageJsonPath = candidate;
+							break;
+						}
+					} catch {
+						// not valid JSON, keep walking
+					}
+				}
+				dir = path.dirname(dir);
+			}
+		} catch {
+			return aliases;
+		}
+		if (!packageJsonPath!) return aliases;
+	}
+
+	let pkg: { exports?: Record<string, unknown> };
+	try {
+		pkg = JSON.parse(fs.readFileSync(packageJsonPath, "utf-8"));
+	} catch {
+		return aliases;
+	}
+
+	const exports = pkg.exports;
+	if (!exports || typeof exports !== "object") return aliases;
+
+	const packageDir = path.dirname(packageJsonPath);
+
+	for (const [subpath, target] of Object.entries(exports)) {
+		if (subpath === ".") continue; // Root export handled by static imports
+
+		// Handle wildcard exports like "./*"
+		if (subpath.includes("*")) {
+			resolveWildcardExports(packageName, packageDir, subpath, target, aliases);
+			continue;
+		}
+
+		// Explicit subpath: "./client" -> "@pkg/client"
+		const specifier = `${packageName}/${subpath.replace(/^\.\//, "")}`;
+
+		try {
+			const resolved = require.resolve(specifier);
+			aliases[specifier] = resolved;
+
+			// Add .js-suffixed variant if the specifier doesn't already end in .js
+			if (!specifier.endsWith(".js")) {
+				const jsSpecifier = `${specifier}.js`;
+				try {
+					const jsResolved = require.resolve(jsSpecifier);
+					aliases[jsSpecifier] = jsResolved;
+				} catch {
+					// .js variant doesn't resolve — that's fine
+				}
+			}
+
+			// Add bare variant (without .js) if it ends in .js
+			if (specifier.endsWith(".js")) {
+				const bareSpecifier = specifier.slice(0, -3);
+				try {
+					const bareResolved = require.resolve(bareSpecifier);
+					aliases[bareSpecifier] = bareResolved;
+				} catch {
+					// bare variant doesn't resolve — that's fine
+				}
+			}
+		} catch {
+			// Subpath doesn't resolve — skip it
+		}
+	}
+
+	return aliases;
+}
+
+/**
+ * Resolve wildcard export patterns (e.g. `./*`) by scanning the package's
+ * file structure to find all matching files and generate alias entries.
+ */
+function resolveWildcardExports(
+	packageName: string,
+	packageDir: string,
+	subpathPattern: string,
+	target: unknown,
+	aliases: Record<string, string>,
+): void {
+	// Extract the target directory pattern from the export target
+	// e.g. { "require": "./dist/cjs/*" } -> "dist/cjs"
+	let targetDir: string | null = null;
+
+	if (typeof target === "string") {
+		targetDir = target.replace(/\/\*$/, "").replace(/^\.\//, "");
+	} else if (target && typeof target === "object") {
+		const targetObj = target as Record<string, unknown>;
+		// Prefer "require" for CJS compatibility with jiti, fall back to "import"
+		const resolved = targetObj.require ?? targetObj.import ?? targetObj.default;
+		if (typeof resolved === "string") {
+			targetDir = resolved.replace(/\/\*$/, "").replace(/^\.\//, "");
+		}
+	}
+
+	if (!targetDir) return;
+
+	const fullTargetDir = path.join(packageDir, targetDir);
+	if (!fs.existsSync(fullTargetDir)) return;
+
+	// Scan for .js files and generate specifiers
+	const subpathPrefix = subpathPattern.replace(/\/?\*$/, "").replace(/^\.\//, "");
+	scanDirForExports(packageName, fullTargetDir, subpathPrefix, aliases);
+}
+
+/**
+ * Recursively scan a directory for .js files and register them as aliases.
+ */
+function scanDirForExports(
+	packageName: string,
+	dir: string,
+	relativePath: string,
+	aliases: Record<string, string>,
+): void {
+	let entries: fs.Dirent[];
+	try {
+		entries = fs.readdirSync(dir, { withFileTypes: true });
+	} catch {
+		return;
+	}
+
+	for (const entry of entries) {
+		const entryRelative = relativePath ? `${relativePath}/${entry.name}` : entry.name;
+
+		if (entry.isDirectory()) {
+			// Skip examples/test directories — extensions don't need them
+			if (entry.name === "examples" || entry.name === "__tests__" || entry.name === "test") continue;
+			scanDirForExports(packageName, path.join(dir, entry.name), entryRelative, aliases);
+		} else if (entry.name.endsWith(".js") && !entry.name.endsWith(".d.js")) {
+			const filePath = path.join(dir, entry.name);
+			const specifier = `${packageName}/${entryRelative}`;
+			// Only add if not already covered by an explicit export
+			if (!(specifier in aliases)) {
+				aliases[specifier] = filePath;
+			}
+			// Also add bare (no .js) variant
+			const bareSpecifier = specifier.replace(/\.js$/, "");
+			if (!(bareSpecifier in aliases)) {
+				aliases[bareSpecifier] = filePath;
+			}
+		}
+	}
+}
 
 function logExtensionTiming(extensionPath: string, ms: number, outcome: "loaded" | "failed"): void {
 	if (!EXTENSION_TIMING_ENABLED) return;
@@ -100,7 +309,19 @@ function getAliases(): Record<string, string> {
 		return fileURLToPath(import.meta.resolve(specifier));
 	};
 
+	// Auto-discover subpath exports from bundled npm packages.
+	// This ensures extensions can import any standard subpath (e.g. @modelcontextprotocol/sdk/server)
+	// without hitting jiti's CJS double-resolve bug.
+	const autoDiscovered: Record<string, string> = {};
+	for (const packageName of BUNDLED_PACKAGES_WITH_EXPORTS) {
+		const subpathAliases = resolveSubpathExports(packageName);
+		Object.assign(autoDiscovered, subpathAliases);
+	}
+
 	_aliases = {
+		// Auto-discovered subpath exports (lowest priority — overridden by manual entries below)
+		...autoDiscovered,
+		// Manual entries for workspace packages and packages needing special resolution
 		"@gsd/pi-coding-agent": packageIndex,
 		"@gsd/pi-agent-core": resolveWorkspaceOrImport("agent/dist/index.js", "@gsd/pi-agent-core"),
 		"@gsd/pi-tui": resolveWorkspaceOrImport("tui/dist/index.js", "@gsd/pi-tui"),
@@ -108,11 +329,6 @@ function getAliases(): Record<string, string> {
 		"@gsd/pi-ai/oauth": resolveWorkspaceOrImport("ai/dist/oauth.js", "@gsd/pi-ai/oauth"),
 		"@sinclair/typebox": typeboxRoot,
 		"yaml": yamlRoot,
-		"@modelcontextprotocol/sdk/client": require.resolve("@modelcontextprotocol/sdk/client"),
-		"@modelcontextprotocol/sdk/client/stdio": require.resolve("@modelcontextprotocol/sdk/client/stdio.js"),
-		"@modelcontextprotocol/sdk/client/stdio.js": require.resolve("@modelcontextprotocol/sdk/client/stdio.js"),
-		"@modelcontextprotocol/sdk/client/streamableHttp": require.resolve("@modelcontextprotocol/sdk/client/streamableHttp.js"),
-		"@modelcontextprotocol/sdk/client/streamableHttp.js": require.resolve("@modelcontextprotocol/sdk/client/streamableHttp.js"),
 		// Aliases for external PI ecosystem packages that import from the original scope
 		"@mariozechner/pi-coding-agent": packageIndex,
 		"@mariozechner/pi-agent-core": resolveWorkspaceOrImport("agent/dist/index.js", "@gsd/pi-agent-core"),
