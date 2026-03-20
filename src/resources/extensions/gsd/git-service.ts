@@ -584,6 +584,30 @@ export class GitServiceImpl {
 
 }
 
+// ─── Draft PR Creation ─────────────────────────────────────────────────────
+
+/**
+ * Create a draft pull request for a completed milestone using `gh pr create`.
+ * Returns the PR URL on success, or null on failure.
+ * Non-fatal: callers should treat failure as best-effort.
+ */
+export function createDraftPR(
+  basePath: string,
+  milestoneId: string,
+  title: string,
+  body: string,
+): string | null {
+  try {
+    const result = execSync(
+      `gh pr create --draft --title ${JSON.stringify(title)} --body ${JSON.stringify(body)}`,
+      { cwd: basePath, encoding: "utf8", timeout: 30000, env: GIT_NO_PROMPT_ENV },
+    );
+    return result.trim();
+  } catch {
+    return null;
+  }
+}
+
 // ─── Factory ───────────────────────────────────────────────────────────────
 
 /** Create a GitServiceImpl with the current effective git preferences. */
