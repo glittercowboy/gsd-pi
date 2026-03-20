@@ -3,7 +3,6 @@
 import Image from "next/image"
 import { useEffect, useRef, useCallback, useState, useMemo, KeyboardEvent, DragEvent, ClipboardEvent } from "react"
 import { MessagesSquare, SendHorizonal, Check, Eye, EyeOff, Play, Loader2, Milestone, X, MessageCircle, FileEdit, FilePlus, Terminal, ChevronDown, ChevronRight, MoreHorizontal, Zap, Square, Pause, BarChart3, LayoutGrid, ListOrdered, History, Compass, PenLine, Inbox, SkipForward, Undo2, BookOpen, Settings, SlidersHorizontal, Stethoscope, FileOutput, Trash2, Globe, type LucideIcon } from "lucide-react"
-import { AnimatePresence, motion } from "motion/react"
 import { cn } from "@/lib/utils"
 import { Input } from "@/components/ui/input"
 import { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider } from "@/components/ui/tooltip"
@@ -15,32 +14,21 @@ import {
   useGSDWorkspaceActions,
   buildPromptCommand,
   type CompletedToolExecution,
+  type PendingUiRequest,
 } from "@/lib/gsd-workspace-store"
-import { buildProjectAbsoluteUrl, buildProjectPath } from "@/lib/project-url"
 import { deriveWorkflowAction } from "@/lib/workflow-actions"
 import { useTerminalFontSize } from "@/lib/use-terminal-font-size"
 
-type HeadlessTerminal = import("@xterm/xterm").Terminal
-
 /* ─── ActionPanel types ─── */
 
-/**
- * Configuration for a secondary action panel.
- * accentColor maps to Tailwind color names (e.g. "sky", "amber", "green").
- */
-export interface ActionPanelConfig {
-  label: string
-  command: string
-  sessionId: string
-  accentColor: string
-  renderMode?: "chat" | "terminal"
-}
+// ActionPanelConfig removed — all commands now route through the main bridge.
 
 /* ─── GSD Action Definitions ─── */
 
 /**
  * Defines every /gsd subcommand available in the chat input bar.
  * Top 3 are shown as standalone buttons; the rest live in the overflow menu.
+ * All commands dispatch through the main bridge session.
  */
 interface GSDActionDef {
   label: string
@@ -48,40 +36,39 @@ interface GSDActionDef {
   icon: LucideIcon
   description: string
   category: "workflow" | "visibility" | "correction" | "knowledge" | "config" | "maintenance"
-  renderMode?: "chat" | "terminal"
-  /** Where this command executes: "main" sends to main agent, "panel" opens action panel */
-  target: "main" | "panel"
+  /** When true, this command is disabled while auto-mode is active (injects competing LLM prompt) */
+  disabledDuringAuto?: boolean
 }
 
 const GSD_ACTIONS: GSDActionDef[] = [
   // ── Top 3 (standalone buttons) ──
-  { label: "Discuss",   command: "/gsd discuss",   icon: MessageCircle,     description: "Start guided milestone/slice discussion",                    category: "workflow",    target: "panel" },
-  { label: "Next",      command: "/gsd next",      icon: Play,              description: "Execute next task, then pause",                              category: "workflow",    target: "main",   renderMode: "terminal" },
-  { label: "Auto",      command: "/gsd auto",      icon: Zap,               description: "Run all queued units continuously",                         category: "workflow",    target: "main",   renderMode: "terminal" },
+  { label: "Discuss",   command: "/gsd discuss",   icon: MessageCircle,     description: "Start guided milestone/slice discussion",                    category: "workflow",    disabledDuringAuto: true },
+  { label: "Next",      command: "/gsd next",      icon: Play,              description: "Execute next task, then pause",                              category: "workflow" },
+  { label: "Auto",      command: "/gsd auto",      icon: Zap,               description: "Run all queued units continuously",                         category: "workflow" },
   // ── Overflow: Workflow ──
-  { label: "Stop",      command: "/gsd stop",      icon: Square,            description: "Stop auto-mode gracefully",                                  category: "workflow",    target: "main",   renderMode: "terminal" },
-  { label: "Pause",     command: "/gsd pause",     icon: Pause,             description: "Pause auto-mode (preserves state)",                          category: "workflow",    target: "main",   renderMode: "terminal" },
+  { label: "Stop",      command: "/gsd stop",      icon: Square,            description: "Stop auto-mode gracefully",                                  category: "workflow" },
+  { label: "Pause",     command: "/gsd pause",     icon: Pause,             description: "Pause auto-mode (preserves state)",                          category: "workflow" },
   // ── Overflow: Visibility ──
-  { label: "Status",    command: "/gsd status",    icon: BarChart3,         description: "Show progress dashboard",                                    category: "visibility",  target: "panel",  renderMode: "terminal" },
-  { label: "Visualize", command: "/gsd visualize", icon: LayoutGrid,        description: "Interactive TUI (progress, deps, metrics, timeline)",        category: "visibility",  target: "panel",  renderMode: "terminal" },
-  { label: "Queue",     command: "/gsd queue",     icon: ListOrdered,       description: "Show queued/dispatched units and execution order",            category: "visibility",  target: "panel",  renderMode: "terminal" },
-  { label: "History",   command: "/gsd history",   icon: History,           description: "View execution history with cost/phase/model details",        category: "visibility",  target: "panel",  renderMode: "terminal" },
+  { label: "Status",    command: "/gsd status",    icon: BarChart3,         description: "Show progress dashboard",                                    category: "visibility" },
+  { label: "Visualize", command: "/gsd visualize", icon: LayoutGrid,        description: "Interactive TUI (progress, deps, metrics, timeline)",        category: "visibility" },
+  { label: "Queue",     command: "/gsd queue",     icon: ListOrdered,       description: "Show queued/dispatched units and execution order",            category: "visibility" },
+  { label: "History",   command: "/gsd history",   icon: History,           description: "View execution history with cost/phase/model details",        category: "visibility" },
   // ── Overflow: Course correction ──
-  { label: "Steer",     command: "/gsd steer",     icon: Compass,           description: "Apply user override to active work",                         category: "correction",  target: "panel" },
-  { label: "Capture",   command: "/gsd capture",   icon: PenLine,           description: "Quick-capture a thought to CAPTURES.md",                     category: "correction",  target: "panel" },
-  { label: "Triage",    command: "/gsd triage",    icon: Inbox,             description: "Classify and route pending captures",                        category: "correction",  target: "panel",  renderMode: "terminal" },
-  { label: "Skip",      command: "/gsd skip",      icon: SkipForward,       description: "Prevent a unit from auto-mode dispatch",                     category: "correction",  target: "panel",  renderMode: "terminal" },
-  { label: "Undo",      command: "/gsd undo",      icon: Undo2,             description: "Revert last completed unit",                                 category: "correction",  target: "panel",  renderMode: "terminal" },
+  { label: "Steer",     command: "/gsd steer",     icon: Compass,           description: "Apply user override to active work",                         category: "correction" },
+  { label: "Capture",   command: "/gsd capture",   icon: PenLine,           description: "Quick-capture a thought to CAPTURES.md",                     category: "correction" },
+  { label: "Triage",    command: "/gsd triage",    icon: Inbox,             description: "Classify and route pending captures",                        category: "correction",  disabledDuringAuto: true },
+  { label: "Skip",      command: "/gsd skip",      icon: SkipForward,       description: "Prevent a unit from auto-mode dispatch",                     category: "correction" },
+  { label: "Undo",      command: "/gsd undo",      icon: Undo2,             description: "Revert last completed unit",                                 category: "correction" },
   // ── Overflow: Knowledge ──
-  { label: "Knowledge", command: "/gsd knowledge", icon: BookOpen,          description: "Add rule, pattern, or lesson to KNOWLEDGE.md",               category: "knowledge",   target: "panel" },
+  { label: "Knowledge", command: "/gsd knowledge", icon: BookOpen,          description: "Add rule, pattern, or lesson to KNOWLEDGE.md",               category: "knowledge" },
   // ── Overflow: Configuration ──
-  { label: "Mode",      command: "/gsd mode",      icon: SlidersHorizontal, description: "Set workflow mode (solo/team)",                               category: "config",      target: "panel",  renderMode: "terminal" },
-  { label: "Prefs",     command: "/gsd prefs",     icon: Settings,          description: "Manage preferences (global/project)",                        category: "config",      target: "panel",  renderMode: "terminal" },
+  { label: "Mode",      command: "/gsd mode",      icon: SlidersHorizontal, description: "Set workflow mode (solo/team)",                               category: "config" },
+  { label: "Prefs",     command: "/gsd prefs",     icon: Settings,          description: "Manage preferences (global/project)",                        category: "config" },
   // ── Overflow: Maintenance ──
-  { label: "Doctor",    command: "/gsd doctor",    icon: Stethoscope,       description: "Diagnose and repair .gsd/ state",                            category: "maintenance", target: "panel",  renderMode: "terminal" },
-  { label: "Export",    command: "/gsd export",    icon: FileOutput,        description: "Export milestone/slice results (JSON or Markdown)",           category: "maintenance", target: "panel",  renderMode: "terminal" },
-  { label: "Cleanup",   command: "/gsd cleanup",   icon: Trash2,            description: "Remove merged branches or snapshots",                        category: "maintenance", target: "panel",  renderMode: "terminal" },
-  { label: "Remote",    command: "/gsd remote",    icon: Globe,             description: "Control remote auto-mode (Slack/Discord)",                    category: "maintenance", target: "panel",  renderMode: "terminal" },
+  { label: "Doctor",    command: "/gsd doctor",    icon: Stethoscope,       description: "Diagnose and repair .gsd/ state",                            category: "maintenance" },
+  { label: "Export",    command: "/gsd export",    icon: FileOutput,        description: "Export milestone/slice results (JSON or Markdown)",           category: "maintenance" },
+  { label: "Cleanup",   command: "/gsd cleanup",   icon: Trash2,            description: "Remove merged branches or snapshots",                        category: "maintenance" },
+  { label: "Remote",    command: "/gsd remote",    icon: Globe,             description: "Control remote auto-mode (Slack/Discord)",                    category: "maintenance" },
 ]
 
 /** Top 3 shown as standalone buttons next to chat input */
@@ -111,81 +98,27 @@ function groupByCategory(actions: GSDActionDef[]): Array<{ category: GSDActionDe
   return Array.from(seen.entries()).map(([cat, items]) => ({ category: cat, label: CATEGORY_LABELS[cat], items }))
 }
 
-function toActionPanelConfig(action: GSDActionDef): Omit<ActionPanelConfig, "sessionId"> {
-  return {
-    label: action.label,
-    command: action.command,
-    accentColor: "sky",
-    renderMode: action.renderMode,
-  }
-}
-
 /**
  * ChatMode — main view for the Chat tab.
  *
- * T01: Header with live GSD workflow action bar (mirrors Power Mode toolbar).
- * T02: ActionPanel — right-side panel with secondary PTY session; slides in on action click.
- * T03 adds fully-styled ChatBubble rendering (markdown + syntax highlight)
- *     and the fully-wired ChatInputBar.
+ * All /gsd commands dispatch through the main bridge session.
+ * Commands that inject competing LLM prompts (discuss, triage)
+ * are disabled while auto-mode is active.
  *
  * Observability:
  *   - This component mounts only when activeView === "chat" (no hidden pre-init).
  *   - sessionStorage key "gsd-active-view:<cwd>" equals "chat" when this view is active.
- *   - ChatPane logs SSE lifecycle to console under [ChatPane] prefix.
- *   - ActionPanel logs open/close/cleanup under [ActionPanel] prefix.
- *   - In dev mode, window.__chatParser exposes the PtyChatParser instance.
  *   - Header toolbar: data-testid="chat-mode-action-bar" confirms toolbar rendered.
  *   - Primary button: data-testid="chat-primary-action" reflects current workflowAction label.
  *   - Secondary buttons: data-testid="chat-secondary-action-{command}".
- *   - Action panel: data-testid="action-panel" — present when panel is open.
- *   - Action panel close: data-testid="action-panel-close".
  */
 export function ChatMode({ className }: { className?: string }) {
-  const [actionPanelState, setActionPanelState] = useState<ActionPanelConfig | null>(null)
   const state = useGSDWorkspaceState()
   const { sendCommand } = useGSDWorkspaceActions()
 
   const bridge = state.boot?.bridge ?? null
 
-  // ── Panel lifecycle ────────────────────────────────────────────────────────
-
-  const closePanel = useCallback(() => {
-    setActionPanelState((current) => {
-      if (!current) return null
-      const { sessionId } = current
-      console.log("[ActionPanel] close reason=manual sessionId=%s", sessionId)
-      // Session DELETE is handled by ActionPanel's unmount useEffect (backstop)
-      // This avoids double-DELETE when both explicit close and unmount fire.
-      return null
-    })
-  }, [])
-
-  const openPanel = useCallback(
-    (actionDef: Omit<ActionPanelConfig, "sessionId">) => {
-      const newSessionId = "gsd-action-" + Date.now()
-
-      setActionPanelState((current) => {
-        if (current) {
-          // Log the replace — unmount cleanup handles the DELETE for the old session
-          console.log("[ActionPanel] close reason=replace sessionId=%s", current.sessionId)
-        }
-
-        const newConfig: ActionPanelConfig = { ...actionDef, sessionId: newSessionId }
-        console.log("[ActionPanel] open sessionId=%s command=%s", newSessionId, actionDef.command)
-        return newConfig
-      })
-    },
-    [],
-  )
-
-  const handlePrimaryAction = useCallback(
-    (command: string) => {
-      void sendCommand(buildPromptCommand(command, bridge))
-    },
-    [sendCommand, bridge],
-  )
-
-  const handleSecondaryAction = useCallback(
+  const handleAction = useCallback(
     (command: string) => {
       void sendCommand(buildPromptCommand(command, bridge))
     },
@@ -196,60 +129,17 @@ export function ChatMode({ className }: { className?: string }) {
     <div className={cn("flex h-full flex-col overflow-hidden bg-background", className)}>
       {/* ── Header bar ── */}
       <ChatModeHeader
-        onPrimaryAction={handlePrimaryAction}
-        onSecondaryAction={handleSecondaryAction}
+        onPrimaryAction={handleAction}
+        onSecondaryAction={handleAction}
       />
 
-      {/* ── Main pane + optional right panel ── */}
-      <div className="flex flex-1 overflow-hidden">
-        {/* Main ChatPane: shrinks to ~58% when action panel is open */}
-        <ChatPane
-          sessionId="gsd-main"
-          command="gsd"
-          className={cn(
-            "min-w-0 transition-[width] duration-300",
-            actionPanelState ? "w-[58%]" : "flex-1",
-          )}
-          onOpenAction={(action) => {
-            if (action.target === "main") {
-              handlePrimaryAction(action.command)
-            } else {
-              openPanel(toActionPanelConfig(action))
-            }
-          }}
-        />
-
-        {/* Vertical divider — only visible when panel is open */}
-        <AnimatePresence>
-          {actionPanelState && (
-            <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              className="w-px flex-shrink-0 bg-border"
-            />
-          )}
-        </AnimatePresence>
-
-        {/* Action panel — animated slide-in from right */}
-        <AnimatePresence>
-          {actionPanelState && (
-            <motion.div
-              key={actionPanelState.sessionId}
-              initial={{ x: "100%", opacity: 0 }}
-              animate={{ x: 0, opacity: 1 }}
-              exit={{ x: "100%", opacity: 0 }}
-              transition={{ type: "spring", stiffness: 300, damping: 30 }}
-              className="w-[42%] flex-shrink-0 overflow-hidden"
-            >
-              <ActionPanel
-                config={actionPanelState}
-                onClose={closePanel}
-              />
-            </motion.div>
-          )}
-        </AnimatePresence>
-      </div>
+      {/* ── Main chat pane ── */}
+      <ChatPane
+        sessionId="gsd-main"
+        command="gsd"
+        className="flex-1"
+        onOpenAction={(action) => handleAction(action.command)}
+      />
     </div>
   )
 }
@@ -366,98 +256,6 @@ function ChatModeHeader({ onPrimaryAction, onSecondaryAction }: ChatModeHeaderPr
     </div>
   )
 }
-
-/* ─── ActionPanel ─── */
-
-/**
- * ActionPanel — right-side secondary chat pane for a GSD action.
- *
- * Opened by ChatMode.openPanel(). Contains a ChatPane connected to a fresh
- * PTY session. Auto-closes 1500ms after PtyChatParser emits CompletionSignal.
- *
- * Observability:
- *   - data-testid="action-panel" + data-session-id={config.sessionId}
- *   - data-testid="action-panel-close" — X button
- *   - console.log("[ActionPanel] completion signal received, closing in 1500ms sessionId=%s")
- *   - console.log("[ActionPanel] unmount cleanup sessionId=%s") — backstop on unmount
- */
-function ActionPanel({
-  config,
-  onClose,
-}: {
-  config: ActionPanelConfig
-  onClose: () => void
-}) {
-  const projectCwd = useGSDWorkspaceState().boot?.project.cwd
-
-  // Unmount backstop: DELETE the session if ActionPanel unmounts without closePanel being called
-  // (e.g., navigating away from Chat Mode while panel is open)
-  useEffect(() => {
-    const { sessionId } = config
-    return () => {
-      console.log("[ActionPanel] unmount cleanup sessionId=%s", sessionId)
-      const deleteUrl = buildProjectAbsoluteUrl("/api/terminal/sessions", window.location.origin, projectCwd)
-      deleteUrl.searchParams.set("id", sessionId)
-      fetch(deleteUrl.toString(), {
-        method: "DELETE",
-      }).catch((err: unknown) => {
-        console.error("[ActionPanel] unmount session DELETE failed sessionId=%s", sessionId, err)
-      })
-    }
-  // config.sessionId is stable for a given panel instance; config object itself changes on replace
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [config.sessionId, projectCwd])
-
-  // Subscribe to completion signal via ChatPane callback
-  const handleCompletionSignal = useCallback(() => {
-    console.log(
-      "[ActionPanel] completion signal received, closing in 1500ms sessionId=%s",
-      config.sessionId,
-    )
-    setTimeout(() => {
-      onClose()
-    }, 1500)
-  }, [config.sessionId, onClose])
-
-  return (
-    <div
-      data-testid="action-panel"
-      data-session-id={config.sessionId}
-      className="flex h-full flex-col overflow-hidden bg-background"
-    >
-      {/* Panel header */}
-      <div
-        className="flex h-11 flex-shrink-0 items-center justify-between border-b border-border bg-card px-4"
-      >
-        <div className="flex items-center gap-2">
-          <span className="text-sm font-medium text-foreground">
-            {config.label}
-          </span>
-        </div>
-        <button
-          data-testid="action-panel-close"
-          onClick={onClose}
-          aria-label="Close action panel"
-          className="flex h-6 w-6 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-        >
-          <X className="h-3.5 w-3.5" />
-        </button>
-      </div>
-
-      {/* Secondary pane — always uses StructuredTerminalActionPane for its own PTY session.
-          ChatPane reads from the global workspace store which is shared with the main chat,
-          so action panels must use their own independent terminal session. */}
-      <StructuredTerminalActionPane
-        sessionId={config.sessionId}
-        command="gsd"
-        commandArgs={[config.command]}
-        activityLabel={config.label}
-        onCompletionSignal={handleCompletionSignal}
-      />
-    </div>
-  )
-}
-
 
 
 type ShikiHighlighter = {
@@ -1050,249 +848,12 @@ function StreamingCursor() {
   )
 }
 
-function stripTerminalChrome(content: string): string {
-  return content
-    .split("\n")
-    .filter((line) => {
-      const trimmed = line.trim()
-      if (!trimmed) return true
-
-      // ── Per-line chrome patterns (anchored — match entire line) ──
-
-      // Update banners
-      if (trimmed.startsWith("Update available:")) return false
-      if (trimmed.startsWith("Run npm update -g gsd-pi")) return false
-      // Cost/pricing lines: $N.NNN (...) — any dollar amount followed by parens
-      if (/^\$\d+(?:\.\d+)?\s*\(/.test(trimmed)) return false
-      // Version banners
-      if (/^Get Shit Done v/i.test(trimmed)) return false
-      // Block/box-drawing decoration-only lines
-      if (/^[█▇▆▅▄▃▂▁\s]+$/.test(trimmed)) return false
-      if (/^[█╔╗║╝╚]+/.test(trimmed)) return false
-      if (/^[─━\-│┃╭╮╰╯┌┐└┘├┤┬┴┼\s]+$/.test(trimmed)) return false
-      // Dashboard / status overlay chrome
-      if (/^GSD Dashboard/i.test(trimmed)) return false
-      if (/No unit running/i.test(trimmed)) return false
-      if (/\/gsd auto to start/i.test(trimmed)) return false
-      // pi status bar: scroll indicators, row/col
-      if (/^[↑↓]\d+\s/.test(trimmed)) return false
-      // Path-only lines (working directory display)
-      if (/^~\/\S+$/.test(trimmed)) return false
-
-      // ── Substring chrome patterns (match anywhere in line) ──
-      // If a line CONTAINS startup/plugin chrome, drop the entire line.
-      // These are startup banners that sometimes get concatenated with
-      // user input echo or prompt text on the same terminal row.
-
-      if (/Warning:.*Google/i.test(trimmed)) return false
-      if (/No authentic\w*tion set/i.test(trimmed)) return false
-      if (/Log in via Google/i.test(trimmed)) return false
-      if (/GEMINI_API_KEY/i.test(trimmed)) return false
-      if (/\bgoogle_search\b/i.test(trimmed)) return false
-      if (/Web search v\d/i.test(trimmed)) return false
-      if (/\bJina\s+✓/i.test(trimmed)) return false
-      if (/\bBrave\s+✓/i.test(trimmed)) return false
-      if (/\bAnswers\s+✓/i.test(trimmed)) return false
-      // Web search plugin loading line (multi-part on one row)
-      if (/Web search.*loaded/i.test(trimmed)) return false
-
-      return true
-    })
-    .join("\n")
-    .replace(/\n{3,}/g, "\n\n")
-    .trim()
-}
-
-const SCREEN_SELECTED_OPTION_RE = /^\s*›\s+(\d+)\.\s+(.+)$/
-const SCREEN_UNSELECTED_OPTION_RE = /^\s*(\d+)\.\s+(.+)$/
-const SCREEN_HINTS_RE = /↑\/↓ to choose|quick-select|enter to confirm|scroll · g\/G top\/end · esc close/i
-const SCREEN_BAR_RE = /^[─━\-]{6,}$/
-const SCREEN_FRAME_CHARS_RE = /[│┃╭╮╰╯┌┐└┘├┤┬┴┼╞╡╪╫╬]/g
 
 function createLocalMessageId(): string {
   if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
     return crypto.randomUUID()
   }
   return `msg-${Date.now()}-${Math.random().toString(16).slice(2)}`
-}
-
-function isScreenChromeLine(trimmed: string): boolean {
-  if (!trimmed) return false
-  // Update / version banners
-  if (trimmed.startsWith("Update available:")) return true
-  if (trimmed.startsWith("Run npm update -g gsd-pi")) return true
-  if (trimmed.startsWith("Get Shit Done v")) return true
-  // Google auth / search plugin chrome — substring match handles wrapped lines
-  if (/Warning:.*Google/i.test(trimmed)) return true
-  if (/No authentic\w*tion set/i.test(trimmed)) return true
-  if (/Log in via Google/i.test(trimmed)) return true
-  if (/GEMINI_API_KEY/i.test(trimmed)) return true
-  if (/\bgoogle_search\b/i.test(trimmed)) return true
-  if (/Web search.*loaded/i.test(trimmed)) return true
-  if (/Web search v\d/i.test(trimmed)) return true
-  if (/\b(?:Brave|Answers|Jina)\s+✓/i.test(trimmed)) return true
-  // Block/box-drawing decoration
-  if (/^[█▇▆▅▄▃▂▁\s]+$/.test(trimmed)) return true
-  if (/^[█╔╗║╝╚]+/.test(trimmed)) return true
-  // Path-only lines
-  if (/^~\//.test(trimmed)) return true
-  // Cost lines
-  if (/^\$\d+(?:\.\d+)?\s*\(/.test(trimmed)) return true
-  // Dashboard chrome
-  if (/^GSD Dashboard/i.test(trimmed)) return true
-  if (/No unit running/i.test(trimmed)) return true
-  if (/\/gsd auto to start/i.test(trimmed)) return true
-  // pi status bar: scroll indicators
-  if (/^[↑↓]\d+\s/.test(trimmed)) return true
-  return false
-}
-
-function normalizeScreenLine(line: string): string {
-  return line
-    .replace(SCREEN_FRAME_CHARS_RE, " ")
-    .replace(/[─━\-]{4,}/g, " ")
-    .replace(/[█▇▆▅▄▃▂▁]{2,}/g, " ")
-    .replace(/\s+/g, " ")
-    .trimEnd()
-}
-
-function beautifyParsedScreenContent(content: string): string {
-  const lines = content.split("\n").map((l) => l.trim()).filter(Boolean)
-  const output: string[] = []
-
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i]
-
-    // Skip pure separator/hint lines
-    if (/^[─━\- ]+$/.test(line)) continue
-    if (SCREEN_HINTS_RE.test(line)) continue
-
-    // Dashboard header → chrome, skip
-    if (/^GSD Dashboard/i.test(line)) continue
-
-    // "No unit running" line → chrome, skip
-    if (/No unit running/i.test(line)) continue
-    if (/\/gsd auto to start/i.test(line)) continue
-
-    // Milestone title line: M007: ...
-    if (/^M\d{3}:/.test(line)) {
-      output.push(`\n### ${line}`)
-      continue
-    }
-
-    // Slices progress line
-    if (/^Slices\b/i.test(line)) {
-      const clean = line.replace(/\.\.\./g, "").trim()
-      output.push(`\n**${clean}**`)
-      continue
-    }
-
-    // Slice result line: ✓ S01: ...
-    if (/^✓\s*S\d{2}:/.test(line)) {
-      output.push(`- ${line}`)
-      continue
-    }
-
-    // "All milestones complete" or similar status
-    if (/all milestones complete/i.test(line)) {
-      output.push(`\n${line}`)
-      continue
-    }
-
-    // Checkmark status line: ✓ GSD — M007: ...
-    if (/^✓\s/.test(line)) {
-      output.push(`\n${line}`)
-      continue
-    }
-
-    // Default: keep as-is
-    output.push(line)
-  }
-
-  return output.join("\n").replace(/\n{3,}/g, "\n\n").trim()
-}
-
-function parseStructuredTerminalScreen(screenText: string, echoedCommand?: string): { content: string; prompt?: TuiPrompt } {
-  const sourceLines = screenText
-    .split("\n")
-    .map((line) => normalizeScreenLine(line.replace(/\r/g, "")))
-
-  const contentLines: string[] = []
-  const options: Array<{ label: string; description: string; selected: boolean }> = []
-
-  for (let i = 0; i < sourceLines.length; i++) {
-    const line = sourceLines[i]
-    const trimmed = line.trim()
-
-    if (!trimmed) {
-      if (contentLines[contentLines.length - 1] !== "") {
-        contentLines.push("")
-      }
-      continue
-    }
-
-    if (echoedCommand && trimmed === echoedCommand.trim()) continue
-    if (isScreenChromeLine(trimmed)) continue
-    if (SCREEN_BAR_RE.test(trimmed)) continue
-    if (SCREEN_HINTS_RE.test(trimmed)) continue
-
-    const selectedMatch = SCREEN_SELECTED_OPTION_RE.exec(line)
-    const unselectedMatch = SCREEN_UNSELECTED_OPTION_RE.exec(line)
-    const optionMatch = selectedMatch ?? unselectedMatch
-    if (optionMatch) {
-      const descriptionLines: string[] = []
-      while (i + 1 < sourceLines.length) {
-        const nextLine = sourceLines[i + 1]
-        const nextTrimmed = nextLine.trim()
-        if (!nextTrimmed) {
-          i += 1
-          break
-        }
-        if (isScreenChromeLine(nextTrimmed)) {
-          i += 1
-          continue
-        }
-        if (SCREEN_HINTS_RE.test(nextTrimmed) || SCREEN_BAR_RE.test(nextTrimmed)) {
-          break
-        }
-        if (SCREEN_SELECTED_OPTION_RE.test(nextLine) || SCREEN_UNSELECTED_OPTION_RE.test(nextLine)) {
-          break
-        }
-        descriptionLines.push(nextTrimmed)
-        i += 1
-        continue
-      }
-
-      options.push({
-        label: optionMatch[2].trim(),
-        description: descriptionLines.join(" "),
-        selected: Boolean(selectedMatch),
-      })
-      continue
-    }
-
-    contentLines.push(trimmed)
-  }
-
-  const content = beautifyParsedScreenContent(
-    contentLines.join("\n").replace(/\n{3,}/g, "\n\n").trim(),
-  )
-
-  if (options.length >= 2) {
-    const selectedIndex = Math.max(0, options.findIndex((option) => option.selected))
-    return {
-      content,
-      prompt: {
-        kind: "select",
-        label: "",
-        options: options.map((option) => option.label),
-        descriptions: options.map((option) => option.description),
-        selectedIndex,
-      },
-    }
-  }
-
-  return { content }
 }
 
 /* ─── InlineThinking ─── */
@@ -1557,6 +1118,7 @@ function ChatInputBar({
   connected: boolean
   onOpenAction?: (action: GSDActionDef) => void
 }) {
+  const autoActive = useGSDWorkspaceState().boot?.auto?.active ?? false
   const [value, setValue] = useState("")
   const [overflowOpen, setOverflowOpen] = useState(false)
   const [pendingImages, setPendingImages] = useState<PendingImage[]>([])
@@ -1805,13 +1367,18 @@ function ChatInputBar({
           <TooltipProvider delayDuration={300}>
             {TOP_ACTIONS.map((action) => {
               const Icon = action.icon
+              const isDisabled = action.disabledDuringAuto && autoActive
               return (
                 <Tooltip key={action.command}>
                   <TooltipTrigger asChild>
                     <button
                       onClick={() => onOpenAction(action)}
+                      disabled={isDisabled}
                       aria-label={action.description}
-                      className="flex flex-shrink-0 items-center justify-center gap-1.5 rounded-xl border border-border bg-background px-3 py-2.5 text-xs font-medium text-foreground transition-colors hover:bg-accent"
+                      className={cn(
+                        "flex flex-shrink-0 items-center justify-center gap-1.5 rounded-xl border border-border bg-background px-3 py-2.5 text-xs font-medium text-foreground transition-colors hover:bg-accent",
+                        isDisabled && "cursor-not-allowed opacity-40",
+                      )}
                     >
                       <Icon className="h-3.5 w-3.5 text-muted-foreground" />
                       {action.label}
@@ -1819,7 +1386,9 @@ function ChatInputBar({
                   </TooltipTrigger>
                   <TooltipContent side="top" sideOffset={6}>
                     <p className="font-medium">{action.label}</p>
-                    <p className="text-[10px] opacity-80">{action.description}</p>
+                    <p className="text-[10px] opacity-80">
+                      {isDisabled ? "Disabled while auto-mode is running" : action.description}
+                    </p>
                   </TooltipContent>
                 </Tooltip>
               )
@@ -1862,15 +1431,21 @@ function ChatInputBar({
                     </p>
                     {group.items.map((action) => {
                       const Icon = action.icon
+                      const isDisabled = action.disabledDuringAuto && autoActive
                       return (
                         <Tooltip key={action.command}>
                           <TooltipTrigger asChild>
                             <button
                               onClick={() => {
+                                if (isDisabled) return
                                 setOverflowOpen(false)
                                 onOpenAction(action)
                               }}
-                              className="flex w-full items-center gap-2.5 rounded-lg px-2 py-1.5 text-left text-sm text-foreground transition-colors hover:bg-accent"
+                              disabled={isDisabled}
+                              className={cn(
+                                "flex w-full items-center gap-2.5 rounded-lg px-2 py-1.5 text-left text-sm text-foreground transition-colors hover:bg-accent",
+                                isDisabled && "cursor-not-allowed opacity-40",
+                              )}
                             >
                               <Icon className="h-3.5 w-3.5 flex-shrink-0 text-muted-foreground" />
                               <span className="flex-1 truncate">{action.label}</span>
@@ -1878,7 +1453,9 @@ function ChatInputBar({
                           </TooltipTrigger>
                           <TooltipContent side="left" sideOffset={8}>
                             <p className="font-medium">{action.label}</p>
-                            <p className="text-[10px] opacity-80">{action.description}</p>
+                            <p className="text-[10px] opacity-80">
+                              {isDisabled ? "Disabled while auto-mode is running" : action.description}
+                            </p>
                           </TooltipContent>
                         </Tooltip>
                       )
@@ -1955,245 +1532,291 @@ function PlaceholderState({
   )
 }
 
-function StructuredTerminalActionPane({
-  sessionId,
-  command,
-  commandArgs,
-  activityLabel,
-  onCompletionSignal,
+
+/* ─── InlineUiRequest ─── */
+
+/**
+ * Renders a bridge-level PendingUiRequest inline in the chat message flow.
+ * Supports select (single + multi), confirm, input, and editor requests.
+ * After submission, transitions to a static confirmation state.
+ *
+ * The FocusedPanel (Sheet overlay in app-shell) is the fallback surface for
+ * these same requests in non-chat views. Whichever the user interacts with
+ * first resolves the request — the store deduplicates.
+ */
+function InlineUiRequest({ request }: { request: PendingUiRequest }) {
+  const { respondToUiRequest, dismissUiRequest } = useGSDWorkspaceActions()
+  const isSubmitting = useGSDWorkspaceState().commandInFlight === "extension_ui_response"
+
+  const handleSubmit = useCallback((value: Record<string, unknown>) => {
+    void respondToUiRequest(request.id, value)
+  }, [respondToUiRequest, request.id])
+
+  const handleDismiss = useCallback(() => {
+    void dismissUiRequest(request.id)
+  }, [dismissUiRequest, request.id])
+
+  return (
+    <div className="flex justify-start gap-3" data-testid="inline-ui-request" data-request-id={request.id}>
+      <div className="mt-1 flex-shrink-0 flex h-7 w-7 items-center justify-center rounded-full bg-card border border-border">
+        <MessagesSquare className="h-3.5 w-3.5 text-muted-foreground" />
+      </div>
+      <div className="max-w-[82%] min-w-0 rounded-2xl rounded-tl-md border border-border/60 bg-card px-4 py-3 shadow-sm">
+        {request.title && (
+          <p className="mb-2.5 text-sm font-medium text-foreground">{request.title}</p>
+        )}
+        {request.method === "select" && (
+          <InlineSelect request={request} onSubmit={handleSubmit} disabled={isSubmitting} />
+        )}
+        {request.method === "confirm" && (
+          <InlineConfirm request={request} onSubmit={handleSubmit} onDismiss={handleDismiss} disabled={isSubmitting} />
+        )}
+        {request.method === "input" && (
+          <InlineInput request={request} onSubmit={handleSubmit} disabled={isSubmitting} />
+        )}
+        {request.method === "editor" && (
+          <InlineEditor request={request} onSubmit={handleSubmit} disabled={isSubmitting} />
+        )}
+      </div>
+    </div>
+  )
+}
+
+function InlineSelect({
+  request,
+  onSubmit,
+  disabled,
 }: {
-  sessionId: string
-  command?: string
-  commandArgs?: string[]
-  activityLabel: string
-  onCompletionSignal?: () => void
+  request: Extract<PendingUiRequest, { method: "select" }>
+  onSubmit: (value: Record<string, unknown>) => void
+  disabled: boolean
 }) {
-  const projectCwd = useGSDWorkspaceState().boot?.project.cwd
-  const terminalRef = useRef<HeadlessTerminal | null>(null)
-  const hostElementRef = useRef<HTMLDivElement | null>(null)
-  const eventSourceRef = useRef<EventSource | null>(null)
-  const inputQueueRef = useRef<string[]>([])
-  const flushingRef = useRef(false)
-  const screenUpdateTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const commandArgsKey = (commandArgs ?? []).join("\u0000")
-  const [terminalFontSize] = useTerminalFontSize()
+  const isMulti = Boolean(request.allowMultiple)
+  const [singleValue, setSingleValue] = useState("")
+  const [multiValues, setMultiValues] = useState<Set<string>>(new Set())
+  const [submitted, setSubmitted] = useState(false)
 
-  const [connected, setConnected] = useState(false)
-  const [commandInProgress, setCommandInProgress] = useState(true)
-  const [notice, setNotice] = useState<string | null>(null)
-  const [messages, setMessages] = useState<ChatMessage[]>([])
-  const lastSnapshotRef = useRef<string>("")
-  const completionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const handleSubmit = useCallback(() => {
+    setSubmitted(true)
+    onSubmit({ value: isMulti ? Array.from(multiValues) : singleValue })
+  }, [isMulti, singleValue, multiValues, onSubmit])
 
-  const flushInputQueue = useCallback(async () => {
-    if (flushingRef.current) return
-    flushingRef.current = true
-    while (inputQueueRef.current.length > 0) {
-      const data = inputQueueRef.current.shift()!
-      try {
-        await fetch(buildProjectPath("/api/terminal/input", projectCwd), {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ id: sessionId, data }),
-        })
-      } catch {
-        inputQueueRef.current.unshift(data)
-        break
-      }
-    }
-    flushingRef.current = false
-  }, [projectCwd, sessionId])
-
-  const sendInput = useCallback((data: string) => {
-    inputQueueRef.current.push(data)
-    void flushInputQueue()
-  }, [flushInputQueue])
-
-  const updateParsedScreen = useCallback(() => {
-    const terminal = terminalRef.current as HeadlessTerminal & {
-      buffer?: {
-        active?: {
-          length: number
-          getLine: (index: number) => {
-            translateToString: (trimRight?: boolean) => string
-            isWrapped: boolean
-          } | undefined
-        }
-      }
-      rows?: number
-    } | null
-    if (!terminal?.buffer?.active) return
-
-    const active = terminal.buffer.active
-    const rows = terminal.rows ?? 30
-    const start = Math.max(0, active.length - rows)
-
-    // Reconstruct logical lines by joining wrapped physical rows
-    const logicalLines: string[] = []
-    let currentLogical = ""
-    for (let index = start; index < active.length; index++) {
-      const line = active.getLine(index)
-      if (!line) continue
-      if (line.isWrapped) {
-        currentLogical += line.translateToString(true)
-      } else {
-        if (currentLogical) logicalLines.push(currentLogical)
-        currentLogical = line.translateToString(true)
-      }
-    }
-    if (currentLogical) logicalLines.push(currentLogical)
-
-    const parsed = parseStructuredTerminalScreen(logicalLines.join("\n"), commandArgs?.[0])
-
-    // Strip terminal chrome from parsed content
-    const cleanContent = stripTerminalChrome(parsed.content)
-
-    if (cleanContent.trim().length === 0 && !parsed.prompt) return
-
-    const snapshotKey = cleanContent + (parsed.prompt?.options.join("|") ?? "")
-    if (snapshotKey === lastSnapshotRef.current) return
-    lastSnapshotRef.current = snapshotKey
-
-    setCommandInProgress(false)
-    setNotice(null)
-
-    setMessages((prev) => {
-      const completed = prev.map((m) =>
-        m.complete ? m : { ...m, complete: true, prompt: undefined },
-      )
-      const newMsg: ChatMessage = {
-        id: createLocalMessageId(),
-        role: "assistant",
-        content: cleanContent,
-        complete: !parsed.prompt,
-        prompt: parsed.prompt,
-        timestamp: Date.now(),
-      }
-      return [...completed, newMsg]
-    })
-
-    // Schedule completion signal — fire after screen stabilises for 2s
-    if (parsed.prompt === undefined && onCompletionSignal) {
-      if (completionTimerRef.current) clearTimeout(completionTimerRef.current)
-      completionTimerRef.current = setTimeout(() => {
-        completionTimerRef.current = null
-        onCompletionSignal()
-      }, 2000)
-    }
-  }, [commandArgs, onCompletionSignal])
-
-  useEffect(() => {
-    setCommandInProgress(true)
-    setNotice(null)
-    setMessages([])
-    lastSnapshotRef.current = ""
-
-    let disposed = false
-
-    const init = async () => {
-      const { Terminal } = await import("@xterm/xterm")
-      if (disposed) return
-
-      const terminal = new Terminal({
-        cols: 200,
-        rows: 30,
-        allowProposedApi: true,
-        convertEol: false,
-        scrollback: 10000,
-      })
-      terminalRef.current = terminal
-
-      const host = document.createElement("div")
-      host.style.position = "fixed"
-      host.style.left = "-10000px"
-      host.style.top = "0"
-      host.style.width = "1px"
-      host.style.height = "1px"
-      host.style.overflow = "hidden"
-      document.body.appendChild(host)
-      hostElementRef.current = host
-      terminal.open(host)
-
-      const streamUrl = buildProjectAbsoluteUrl(
-        "/api/terminal/stream",
-        window.location.origin,
-        projectCwd,
-      )
-      streamUrl.searchParams.set("id", sessionId)
-      if (command) streamUrl.searchParams.set("command", command)
-      for (const arg of commandArgs ?? []) {
-        streamUrl.searchParams.append("arg", arg)
-      }
-
-      const es = new EventSource(streamUrl.toString())
-      eventSourceRef.current = es
-
-      es.onmessage = (event) => {
-        try {
-          const msg = JSON.parse(event.data) as { type: string; data?: string }
-          if (msg.type === "connected") {
-            setConnected(true)
-          } else if (msg.type === "output" && msg.data) {
-            terminal.write(msg.data, () => {
-              if (screenUpdateTimerRef.current) {
-                clearTimeout(screenUpdateTimerRef.current)
-              }
-              screenUpdateTimerRef.current = setTimeout(() => {
-                updateParsedScreen()
-                screenUpdateTimerRef.current = null
-              }, 120)
-            })
-          }
-        } catch {
-          // ignore malformed event payloads
-        }
-      }
-
-      es.onerror = () => {
-        setConnected(false)
-      }
-    }
-
-    void init()
-
-    return () => {
-      disposed = true
-      eventSourceRef.current?.close()
-      eventSourceRef.current = null
-      if (screenUpdateTimerRef.current) {
-        clearTimeout(screenUpdateTimerRef.current)
-        screenUpdateTimerRef.current = null
-      }
-      terminalRef.current?.dispose()
-      terminalRef.current = null
-      hostElementRef.current?.remove()
-      hostElementRef.current = null
-    }
-  }, [sessionId, command, commandArgs, commandArgsKey, projectCwd, updateParsedScreen])
-
-  useEffect(() => {
-    if (commandInProgress || messages.length > 0) return
-    const timeout = setTimeout(() => {
-      if (messages.length === 0) {
-        setNotice(
-          activityLabel ? `${activityLabel} completed with no chat-visible output.` : "Command completed with no chat-visible output.",
-        )
-      }
-    }, 1500)
-    return () => clearTimeout(timeout)
-  }, [activityLabel, commandInProgress, messages.length])
-
-  if (messages.length === 0) {
+  if (submitted) {
     return (
-      <PlaceholderState
-        connected={connected}
-        runningLabel={commandInProgress ? activityLabel : undefined}
-        notice={!commandInProgress ? notice : null}
-      />
+      <div className="flex items-center gap-1.5 rounded-lg bg-primary/10 px-3 py-2 text-sm text-primary">
+        <Check className="h-3.5 w-3.5 flex-shrink-0" />
+        <span className="font-medium">{isMulti ? `${multiValues.size} selected` : singleValue}</span>
+      </div>
     )
   }
 
-  return <ChatMessageList messages={messages} onSubmitPrompt={sendInput} fontSize={terminalFontSize} />
+  const canSubmit = isMulti ? multiValues.size > 0 : singleValue !== ""
+
+  return (
+    <div className="space-y-1.5">
+      {request.options.map((option, i) => {
+        if (isMulti) {
+          const checked = multiValues.has(option)
+          return (
+            <button
+              key={i}
+              onClick={() => {
+                const next = new Set(multiValues)
+                if (checked) next.delete(option); else next.add(option)
+                setMultiValues(next)
+              }}
+              disabled={disabled}
+              className={cn(
+                "flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-sm transition-colors",
+                checked ? "bg-primary/15 text-primary font-medium" : "text-foreground hover:bg-muted/60",
+              )}
+            >
+              <span className="flex h-4 w-4 flex-shrink-0 items-center justify-center rounded border border-border">
+                {checked && <Check className="h-2.5 w-2.5 text-primary" />}
+              </span>
+              <span>{option}</span>
+            </button>
+          )
+        }
+        const selected = singleValue === option
+        return (
+          <button
+            key={i}
+            onClick={() => setSingleValue(option)}
+            disabled={disabled}
+            className={cn(
+              "flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-sm transition-colors",
+              selected ? "bg-primary/15 text-primary font-medium" : "text-foreground hover:bg-muted/60",
+            )}
+          >
+            <span className="flex h-4 w-4 flex-shrink-0 items-center justify-center">
+              {selected ? (
+                <Check className="h-3 w-3 text-primary" />
+              ) : (
+                <span className="h-1.5 w-1.5 rounded-full bg-muted-foreground/30" />
+              )}
+            </span>
+            <span>{option}</span>
+          </button>
+        )
+      })}
+      <button
+        onClick={handleSubmit}
+        disabled={disabled || !canSubmit}
+        className={cn(
+          "mt-2 flex w-full items-center justify-center rounded-lg px-3 py-2 text-xs font-medium transition-all",
+          canSubmit && !disabled
+            ? "bg-primary text-primary-foreground hover:bg-primary/90 active:scale-[0.98] shadow-sm"
+            : "bg-muted text-muted-foreground/40 cursor-not-allowed",
+        )}
+      >
+        {isMulti ? `Submit (${multiValues.size})` : "Submit"}
+      </button>
+    </div>
+  )
+}
+
+function InlineConfirm({
+  request,
+  onSubmit,
+  onDismiss,
+  disabled,
+}: {
+  request: Extract<PendingUiRequest, { method: "confirm" }>
+  onSubmit: (value: Record<string, unknown>) => void
+  onDismiss: () => void
+  disabled: boolean
+}) {
+  const [resolved, setResolved] = useState<boolean | null>(null)
+
+  if (resolved !== null) {
+    return (
+      <div className="flex items-center gap-1.5 rounded-lg bg-primary/10 px-3 py-2 text-sm text-primary">
+        <Check className="h-3.5 w-3.5 flex-shrink-0" />
+        <span className="font-medium">{resolved ? "Confirmed" : "Cancelled"}</span>
+      </div>
+    )
+  }
+
+  return (
+    <div className="space-y-2.5">
+      <p className="text-sm text-foreground leading-relaxed">{request.message}</p>
+      <div className="flex gap-2">
+        <button
+          onClick={() => { setResolved(true); onSubmit({ value: true }) }}
+          disabled={disabled}
+          className="flex-1 rounded-lg bg-primary px-3 py-2 text-xs font-medium text-primary-foreground hover:bg-primary/90 active:scale-[0.98] shadow-sm transition-all"
+        >
+          Confirm
+        </button>
+        <button
+          onClick={() => { setResolved(false); onDismiss() }}
+          disabled={disabled}
+          className="flex-1 rounded-lg border border-border bg-background px-3 py-2 text-xs font-medium text-foreground hover:bg-accent transition-colors"
+        >
+          Cancel
+        </button>
+      </div>
+    </div>
+  )
+}
+
+function InlineInput({
+  request,
+  onSubmit,
+  disabled,
+}: {
+  request: Extract<PendingUiRequest, { method: "input" }>
+  onSubmit: (value: Record<string, unknown>) => void
+  disabled: boolean
+}) {
+  const [value, setValue] = useState("")
+  const [submitted, setSubmitted] = useState(false)
+  const inputRef = useRef<HTMLInputElement>(null)
+
+  useEffect(() => { inputRef.current?.focus() }, [])
+
+  if (submitted) {
+    return (
+      <div className="flex items-center gap-1.5 rounded-lg bg-primary/10 px-3 py-2 text-sm text-primary">
+        <Check className="h-3.5 w-3.5 flex-shrink-0" />
+        <span className="font-medium">Submitted</span>
+      </div>
+    )
+  }
+
+  const handleSubmit = () => {
+    if (!value.trim() || disabled) return
+    setSubmitted(true)
+    onSubmit({ value })
+  }
+
+  return (
+    <div className="flex gap-2">
+      <Input
+        ref={inputRef}
+        value={value}
+        onChange={(e) => setValue(e.target.value)}
+        onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); handleSubmit() } }}
+        placeholder={request.placeholder || "Type your answer…"}
+        disabled={disabled}
+        className="flex-1 h-8 text-sm"
+      />
+      <button
+        onClick={handleSubmit}
+        disabled={disabled || !value.trim()}
+        className={cn(
+          "flex h-8 items-center justify-center rounded-lg px-3 text-xs font-medium transition-all",
+          value.trim() && !disabled
+            ? "bg-primary text-primary-foreground hover:bg-primary/90 active:scale-95 shadow-sm"
+            : "bg-muted text-muted-foreground/40 cursor-not-allowed",
+        )}
+      >
+        Submit
+      </button>
+    </div>
+  )
+}
+
+function InlineEditor({
+  request,
+  onSubmit,
+  disabled,
+}: {
+  request: Extract<PendingUiRequest, { method: "editor" }>
+  onSubmit: (value: Record<string, unknown>) => void
+  disabled: boolean
+}) {
+  const [value, setValue] = useState(request.prefill || "")
+  const [submitted, setSubmitted] = useState(false)
+
+  if (submitted) {
+    return (
+      <div className="flex items-center gap-1.5 rounded-lg bg-primary/10 px-3 py-2 text-sm text-primary">
+        <Check className="h-3.5 w-3.5 flex-shrink-0" />
+        <span className="font-medium">Submitted</span>
+      </div>
+    )
+  }
+
+  return (
+    <div className="space-y-2">
+      <textarea
+        value={value}
+        onChange={(e) => setValue(e.target.value)}
+        disabled={disabled}
+        className="w-full min-h-[120px] rounded-lg border border-border bg-background px-3 py-2 text-sm font-mono focus:outline-none focus:ring-1 focus:ring-border/30 resize-y"
+        autoFocus
+      />
+      <button
+        onClick={() => { setSubmitted(true); onSubmit({ value }) }}
+        disabled={disabled}
+        className="flex w-full items-center justify-center rounded-lg bg-primary px-3 py-2 text-xs font-medium text-primary-foreground hover:bg-primary/90 active:scale-[0.98] shadow-sm transition-all"
+      >
+        Submit
+      </button>
+    </div>
+  )
 }
 
 /* ─── Chat Pane ─── */
@@ -2517,6 +2140,11 @@ export function ChatPane({ className, onOpenAction }: ChatPaneProps) {
                 </div>
               </div>
             )}
+
+            {/* Pending UI requests — inline interactive controls from the agent */}
+            {state.pendingUiRequests.map((req) => (
+              <InlineUiRequest key={req.id} request={req} />
+            ))}
 
             <div className="h-2" />
           </div>

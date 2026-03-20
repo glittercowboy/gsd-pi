@@ -395,6 +395,7 @@ function WorkspaceChrome() {
 
       <StatusBar />
       <CommandSurface />
+      <FocusedPanel />
       <OnboardingGate />
     </div>
   )
