@@ -8,24 +8,29 @@ function isExtensionFile(name: string): boolean {
 /**
  * Resolves the entry-point file(s) for a single extension directory.
  *
- * 1. If the directory contains a package.json with a `pi.extensions` array,
- *    each entry is resolved relative to the directory and returned (if it exists).
- * 2. Otherwise falls back to `index.ts` → `index.js`.
+ * 1. If the directory contains a package.json with a `pi` manifest object,
+ *    the manifest is authoritative:
+ *    - `pi.extensions` array → resolve each entry relative to the directory.
+ *    - `pi: {}` (no extensions) → return empty (library opt-out, e.g. cmux).
+ * 2. Only when no `pi` manifest exists does it fall back to `index.ts` → `index.js`.
  */
 export function resolveExtensionEntries(dir: string): string[] {
   const packageJsonPath = join(dir, 'package.json')
   if (existsSync(packageJsonPath)) {
     try {
       const pkg = JSON.parse(readFileSync(packageJsonPath, 'utf-8'))
-      const declared = pkg?.pi?.extensions
-      if (Array.isArray(declared)) {
-        const resolved = declared
+      if (pkg?.pi && typeof pkg.pi === 'object') {
+        // When a pi manifest exists, it is authoritative — don't fall through
+        // to index.ts/index.js auto-detection. This allows library directories
+        // (like cmux) to opt out by declaring "pi": {} with no extensions.
+        const declared = pkg.pi.extensions
+        if (!Array.isArray(declared) || declared.length === 0) {
+          return []
+        }
+        return declared
           .filter((entry: unknown): entry is string => typeof entry === 'string')
           .map((entry: string) => resolve(dir, entry))
           .filter((entry: string) => existsSync(entry))
-        if (resolved.length > 0) {
-          return resolved
-        }
       }
     } catch {
       // Ignore malformed manifests and fall back to index.ts/index.js discovery.

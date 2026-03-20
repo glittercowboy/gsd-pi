@@ -18,6 +18,23 @@ function copyNonTsFiles(srcDir, destDir) {
     }
 
     mkdirSync(dirname(destPath), { recursive: true });
+
+    // Rewrite pi.extensions paths from .ts to .js in package.json files
+    // so they match the compiled output (tsc compiles index.ts → index.js
+    // but package.json is copied as-is).
+    if (entry.name === 'package.json') {
+      try {
+        const pkg = JSON.parse(require('fs').readFileSync(srcPath, 'utf-8'));
+        if (Array.isArray(pkg?.pi?.extensions)) {
+          pkg.pi.extensions = pkg.pi.extensions.map(ext =>
+            ext.replace(/\.ts$/, '.js').replace(/\.tsx$/, '.js')
+          );
+          require('fs').writeFileSync(destPath, JSON.stringify(pkg, null, 2) + '\n');
+          continue;
+        }
+      } catch { /* fall through to plain copy */ }
+    }
+
     copyFileSync(srcPath, destPath);
   }
 }

@@ -289,16 +289,72 @@ export class CmuxClient {
   }
 
   async createSplit(direction: "right" | "down" | "left" | "up"): Promise<string | null> {
+    return this.createSplitFrom(this.config.surfaceId, direction);
+  }
+
+  async createSplitFrom(
+    sourceSurfaceId: string | undefined,
+    direction: "right" | "down" | "left" | "up",
+  ): Promise<string | null> {
     if (!this.config.splits) return null;
     const before = new Set(await this.listSurfaceIds());
     const args = ["new-split", direction];
-    const scopedArgs = this.appendSurface(this.appendWorkspace(args), this.config.surfaceId);
+    const scopedArgs = this.appendSurface(this.appendWorkspace(args), sourceSurfaceId);
     await this.runAsync(scopedArgs);
     const after = await this.listSurfaceIds();
     for (const id of after) {
       if (!before.has(id)) return id;
     }
     return null;
+  }
+
+  /**
+   * Create a grid of surfaces for parallel agent execution.
+   *
+   * Layout strategy (gsd stays in the original surface):
+   *   1 agent:  [gsd | A]
+   *   2 agents: [gsd | A]
+   *             [    | B]
+   *   3 agents: [gsd | A]
+   *             [ C  | B]
+   *   4 agents: [gsd | A]
+   *             [ C  | B]  (D splits from B downward)
+   *             [    | D]
+   *
+   * Returns surface IDs in order, or empty array on failure.
+   */
+  async createGridLayout(count: number): Promise<string[]> {
+    if (!this.config.splits || count <= 0) return [];
+    const surfaces: string[] = [];
+
+    // First split: create right column from the gsd surface
+    const rightCol = await this.createSplitFrom(this.config.surfaceId, "right");
+    if (!rightCol) return [];
+    surfaces.push(rightCol);
+    if (count === 1) return surfaces;
+
+    // Second split: split right column down → bottom-right
+    const bottomRight = await this.createSplitFrom(rightCol, "down");
+    if (!bottomRight) return surfaces;
+    surfaces.push(bottomRight);
+    if (count === 2) return surfaces;
+
+    // Third split: split gsd surface down → bottom-left
+    const bottomLeft = await this.createSplitFrom(this.config.surfaceId, "down");
+    if (!bottomLeft) return surfaces;
+    surfaces.push(bottomLeft);
+    if (count === 3) return surfaces;
+
+    // Fourth+: split subsequent surfaces down from the last created
+    let lastSurface = bottomRight;
+    for (let i = 3; i < count; i++) {
+      const next = await this.createSplitFrom(lastSurface, "down");
+      if (!next) break;
+      surfaces.push(next);
+      lastSurface = next;
+    }
+
+    return surfaces;
   }
 
   async sendSurface(surfaceId: string, text: string): Promise<boolean> {

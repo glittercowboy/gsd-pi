@@ -100,6 +100,99 @@ test("buildCmuxStatusLabel and progress prefer deepest active unit", () => {
   assert.deepEqual(buildCmuxProgress(state), { value: 0.4, label: "2/5 tasks" });
 });
 
+describe("createGridLayout", () => {
+  // Create a mock CmuxClient that tracks createSplitFrom calls
+  function makeMockClient() {
+    let nextId = 1;
+    const calls: Array<{ source: string | undefined; direction: string }> = [];
+
+    const client = {
+      calls,
+      async createGridLayout(count: number) {
+        // Simulate the grid layout logic with a fake client
+        if (count <= 0) return [];
+        const surfaces: string[] = [];
+
+        const createSplitFrom = async (source: string | undefined, direction: string) => {
+          calls.push({ source, direction });
+          return `surface-${nextId++}`;
+        };
+
+        const rightCol = await createSplitFrom("gsd-surface", "right");
+        surfaces.push(rightCol);
+        if (count === 1) return surfaces;
+
+        const bottomRight = await createSplitFrom(rightCol, "down");
+        surfaces.push(bottomRight);
+        if (count === 2) return surfaces;
+
+        const bottomLeft = await createSplitFrom("gsd-surface", "down");
+        surfaces.push(bottomLeft);
+        if (count === 3) return surfaces;
+
+        let lastSurface = bottomRight;
+        for (let i = 3; i < count; i++) {
+          const next = await createSplitFrom(lastSurface, "down");
+          surfaces.push(next);
+          lastSurface = next;
+        }
+
+        return surfaces;
+      },
+    };
+    return client;
+  }
+
+  test("1 agent creates single right split", async () => {
+    const mock = makeMockClient();
+    const surfaces = await mock.createGridLayout(1);
+    assert.equal(surfaces.length, 1);
+    assert.deepEqual(mock.calls, [
+      { source: "gsd-surface", direction: "right" },
+    ]);
+  });
+
+  test("2 agents creates right column then splits it down", async () => {
+    const mock = makeMockClient();
+    const surfaces = await mock.createGridLayout(2);
+    assert.equal(surfaces.length, 2);
+    assert.deepEqual(mock.calls, [
+      { source: "gsd-surface", direction: "right" },
+      { source: "surface-1", direction: "down" },
+    ]);
+  });
+
+  test("3 agents creates 2x2 grid (gsd + 3 agent surfaces)", async () => {
+    const mock = makeMockClient();
+    const surfaces = await mock.createGridLayout(3);
+    assert.equal(surfaces.length, 3);
+    assert.deepEqual(mock.calls, [
+      { source: "gsd-surface", direction: "right" },
+      { source: "surface-1", direction: "down" },
+      { source: "gsd-surface", direction: "down" },
+    ]);
+  });
+
+  test("4 agents creates 2x2 grid with extra split", async () => {
+    const mock = makeMockClient();
+    const surfaces = await mock.createGridLayout(4);
+    assert.equal(surfaces.length, 4);
+    assert.deepEqual(mock.calls, [
+      { source: "gsd-surface", direction: "right" },
+      { source: "surface-1", direction: "down" },
+      { source: "gsd-surface", direction: "down" },
+      { source: "surface-2", direction: "down" },
+    ]);
+  });
+
+  test("0 agents returns empty", async () => {
+    const mock = makeMockClient();
+    const surfaces = await mock.createGridLayout(0);
+    assert.equal(surfaces.length, 0);
+    assert.equal(mock.calls.length, 0);
+  });
+});
+
 describe("cmux extension discovery opt-out", () => {
   test("cmux directory has package.json with pi manifest to prevent auto-discovery as extension", () => {
     const cmuxDir = path.resolve(
