@@ -62,6 +62,7 @@ export interface UnitMetrics {
   wallClockMs?: number;    // derived as finishedAt - startedAt when not explicit
   cacheHitRate?: number;       // percentage 0-100, computed from cacheRead/(cacheRead+input)
   compressionSavings?: number; // percentage 0-100, char savings from prompt compression
+}
 
 /** Budget state passed to snapshotUnitMetrics for persistence in the metrics ledger. */
 export interface BudgetInfo {
