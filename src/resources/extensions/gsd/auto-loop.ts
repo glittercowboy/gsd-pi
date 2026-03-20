@@ -35,6 +35,8 @@ import type { CmuxLogLevel } from "../cmux/index.js";
  * generous headroom including retries and sidecar work.
  */
 const MAX_LOOP_ITERATIONS = 500;
+/** Maximum characters of failure/crash context included in recovery prompts. */
+const MAX_RECOVERY_CHARS = 50_000;
 
 /** Data-driven budget threshold notifications (descending). The 100% entry
  *  triggers special enforcement logic (halt/pause/warn); sub-100 entries fire
@@ -1286,7 +1288,6 @@ export async function autoLoop(
       deps.ensurePreconditions(unitType, unitId, s.basePath, state);
 
       // Prompt injection
-      const MAX_RECOVERY_CHARS = 50_000;
       let finalPrompt = prompt;
 
       if (s.pendingVerificationRetry) {
