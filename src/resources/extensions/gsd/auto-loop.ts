@@ -18,7 +18,7 @@ import type { GSDPreferences } from "./preferences.js";
 import type { SessionLockStatus } from "./session-lock.js";
 import type { GSDState } from "./types.js";
 import type { CloseoutOptions } from "./auto-unit-closeout.js";
-import type { PostUnitContext } from "./auto-post-unit.js";
+import type { PostUnitContext, PreVerificationOpts } from "./auto-post-unit.js";
 import type {
   VerificationContext,
   VerificationResult,
@@ -35,6 +35,19 @@ import type { CmuxLogLevel } from "../cmux/index.js";
  * generous headroom including retries and sidecar work.
  */
 const MAX_LOOP_ITERATIONS = 500;
+
+/** Data-driven budget threshold notifications (75/80/90%). The 100% case is
+ *  handled inline because it requires break/pause/stop control flow. */
+const BUDGET_THRESHOLDS: Array<{
+  pct: number;
+  label: string;
+  notifyLevel: "info" | "warning";
+  cmuxLevel: "progress" | "warning";
+}> = [
+  { pct: 90, label: "Budget 90%", notifyLevel: "warning", cmuxLevel: "warning" },
+  { pct: 80, label: "Approaching budget ceiling — 80%", notifyLevel: "warning", cmuxLevel: "warning" },
+  { pct: 75, label: "Budget 75%", notifyLevel: "info", cmuxLevel: "progress" },
+];
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -96,10 +109,11 @@ export function resolveAgentEnd(event: AgentEndEvent): void {
     debugLog("resolveAgentEnd", {
       status: "queued",
       queueLength: s.pendingAgentEndQueue.length + 1,
+      unitId: s.currentUnit?.id,
       warning:
         "agent_end arrived between loop iterations — queued for next runUnit",
     });
-    s.pendingAgentEndQueue.push(event);
+    s.pendingAgentEndQueue.push({ ...event, unitId: s.currentUnit?.id });
   }
 }
 
@@ -166,14 +180,37 @@ export async function runUnit(
     ];
   }
   if (s.pendingAgentEndQueue.length > 0) {
-    const queued = s.pendingAgentEndQueue.shift()!;
+    // Find an event matching this unit; discard stale events from other units
+    const matchIdx = s.pendingAgentEndQueue.findIndex(
+      (e) => !e.unitId || e.unitId === unitId,
+    );
+    if (matchIdx >= 0) {
+      // Discard any stale events before the match
+      if (matchIdx > 0) {
+        debugLog("runUnit", {
+          phase: "discarded-stale-events",
+          count: matchIdx,
+          unitType,
+          unitId,
+        });
+      }
+      const queued = s.pendingAgentEndQueue.splice(0, matchIdx + 1).pop()!;
+      debugLog("runUnit", {
+        phase: "drained-queued-event",
+        unitType,
+        unitId,
+        queueRemaining: s.pendingAgentEndQueue.length,
+      });
+      return { status: "completed", event: queued };
+    }
+    // No matching event — discard all stale events and proceed to new session
     debugLog("runUnit", {
-      phase: "drained-queued-event",
+      phase: "discarded-all-stale-events",
+      count: s.pendingAgentEndQueue.length,
       unitType,
       unitId,
-      queueRemaining: s.pendingAgentEndQueue.length,
     });
-    return { status: "completed", event: queued };
+    s.pendingAgentEndQueue = [];
   }
 
   // ── Session creation with timeout ──
@@ -383,6 +420,7 @@ export interface LoopDeps {
     midTitle: string;
     state: GSDState;
     prefs: GSDPreferences | undefined;
+    session?: AutoSession;
   }) => Promise<DispatchAction>;
   runPreDispatchHooks: (
     unitType: string,
@@ -500,6 +538,7 @@ export interface LoopDeps {
   // Post-unit processing
   postUnitPreVerification: (
     pctx: PostUnitContext,
+    opts?: PreVerificationOpts,
   ) => Promise<"dispatched" | "continue">;
   runPostUnitVerification: (
     vctx: VerificationContext,
@@ -977,62 +1016,26 @@ export async function autoLoop(
           ctx.ui.notify(`${msg} Continuing (enforcement: warn).`, "warning");
           deps.sendDesktopNotification("GSD", msg, "warning", "budget");
           deps.logCmuxEvent(prefs, msg, "warning");
-        } else if (newBudgetAlertLevel === 90) {
-          s.lastBudgetAlertLevel =
-            newBudgetAlertLevel as AutoSession["lastBudgetAlertLevel"];
-          ctx.ui.notify(
-            `Budget 90%: ${deps.formatCost(totalCost)} / ${deps.formatCost(budgetCeiling)}`,
-            "warning",
+        } else {
+          // Data-driven 75/80/90% threshold notifications
+          const threshold = BUDGET_THRESHOLDS.find(
+            (t) => newBudgetAlertLevel === t.pct,
           );
-          deps.sendDesktopNotification(
-            "GSD",
-            `Budget 90%: ${deps.formatCost(totalCost)} / ${deps.formatCost(budgetCeiling)}`,
-            "warning",
-            "budget",
-          );
-          deps.logCmuxEvent(
-            prefs,
-            `Budget 90%: ${deps.formatCost(totalCost)} / ${deps.formatCost(budgetCeiling)}`,
-            "warning",
-          );
-        } else if (newBudgetAlertLevel === 80) {
-          s.lastBudgetAlertLevel =
-            newBudgetAlertLevel as AutoSession["lastBudgetAlertLevel"];
-          ctx.ui.notify(
-            `Approaching budget ceiling — 80%: ${deps.formatCost(totalCost)} / ${deps.formatCost(budgetCeiling)}`,
-            "warning",
-          );
-          deps.sendDesktopNotification(
-            "GSD",
-            `Approaching budget ceiling — 80%: ${deps.formatCost(totalCost)} / ${deps.formatCost(budgetCeiling)}`,
-            "warning",
-            "budget",
-          );
-          deps.logCmuxEvent(
-            prefs,
-            `Budget 80%: ${deps.formatCost(totalCost)} / ${deps.formatCost(budgetCeiling)}`,
-            "warning",
-          );
-        } else if (newBudgetAlertLevel === 75) {
-          s.lastBudgetAlertLevel =
-            newBudgetAlertLevel as AutoSession["lastBudgetAlertLevel"];
-          ctx.ui.notify(
-            `Budget 75%: ${deps.formatCost(totalCost)} / ${deps.formatCost(budgetCeiling)}`,
-            "info",
-          );
-          deps.sendDesktopNotification(
-            "GSD",
-            `Budget 75%: ${deps.formatCost(totalCost)} / ${deps.formatCost(budgetCeiling)}`,
-            "info",
-            "budget",
-          );
-          deps.logCmuxEvent(
-            prefs,
-            `Budget 75%: ${deps.formatCost(totalCost)} / ${deps.formatCost(budgetCeiling)}`,
-            "progress",
-          );
-        } else if (budgetAlertLevel === 0) {
-          s.lastBudgetAlertLevel = 0;
+          if (threshold) {
+            s.lastBudgetAlertLevel =
+              newBudgetAlertLevel as AutoSession["lastBudgetAlertLevel"];
+            const msg = `${threshold.label}: ${deps.formatCost(totalCost)} / ${deps.formatCost(budgetCeiling)}`;
+            ctx.ui.notify(msg, threshold.notifyLevel);
+            deps.sendDesktopNotification(
+              "GSD",
+              msg,
+              threshold.notifyLevel,
+              "budget",
+            );
+            deps.logCmuxEvent(prefs, msg, threshold.cmuxLevel);
+          } else if (budgetAlertLevel === 0) {
+            s.lastBudgetAlertLevel = 0;
+          }
         }
       } else {
         s.lastBudgetAlertLevel = 0;
@@ -1103,6 +1106,7 @@ export async function autoLoop(
         midTitle: midTitle!,
         state,
         prefs,
+        session: s,
       });
 
       if (dispatchResult.action === "stop") {
@@ -1661,9 +1665,12 @@ export async function autoLoop(
           break;
         }
 
-        // Run pre-verification for the sidecar unit
+        // Run pre-verification for the sidecar unit (lightweight path)
+        const sidecarPreOpts: PreVerificationOpts = item.kind === "hook"
+          ? { skipSettleDelay: true, skipDoctor: true, skipStateRebuild: true, skipWorktreeSync: true }
+          : { skipSettleDelay: true, skipStateRebuild: true };
         const sidecarPreResult =
-          await deps.postUnitPreVerification(postUnitCtx);
+          await deps.postUnitPreVerification(postUnitCtx, sidecarPreOpts);
         if (sidecarPreResult === "dispatched") {
           // Pre-verification caused stop/pause
           debugLog("autoLoop", {

@@ -622,43 +622,28 @@ export async function stopAuto(
     if (existsSync(pausedPath)) unlinkSync(pausedPath);
   } catch { /* non-fatal */ }
 
-  s.active = false;
-  s.paused = false;
-  s.stepMode = false;
-  s.unitDispatchCount.clear();
-  s.unitRecoveryCount.clear();
-  clearInFlightTools();
-  s.lastBudgetAlertLevel = 0;
-  s.lastStateRebuildAt = 0;
-  s.unitLifetimeDispatches.clear();
-  s.currentUnit = null;
-  s.autoModeStartModel = null;
-  s.currentMilestoneId = null;
-  s.originalBasePath = "";
-  s.completedUnits = [];
-  s.pendingQuickTasks = [];
-  clearSliceProgressCache();
-  clearActivityLogState();
-  resetProactiveHealing();
-  s.pendingCrashRecovery = null;
-  s.pendingVerificationRetry = null;
-  s.verificationRetryCount.clear();
-  s.pausedSessionFile = null;
-  ctx?.ui.setStatus("gsd-auto", undefined);
-  ctx?.ui.setWidget("gsd-progress", undefined);
-  ctx?.ui.setFooter(undefined);
-
+  // Restore original model before reset() clears the IDs
   if (pi && ctx && s.originalModelId && s.originalModelProvider) {
     const original = ctx.modelRegistry.find(
       s.originalModelProvider,
       s.originalModelId,
     );
     if (original) await pi.setModel(original);
-    s.originalModelId = null;
-    s.originalModelProvider = null;
   }
 
-  s.cmdCtx = null;
+  // External cleanup (not covered by session reset)
+  clearInFlightTools();
+  clearSliceProgressCache();
+  clearActivityLogState();
+  resetProactiveHealing();
+
+  // UI cleanup
+  ctx?.ui.setStatus("gsd-auto", undefined);
+  ctx?.ui.setWidget("gsd-progress", undefined);
+  ctx?.ui.setFooter(undefined);
+
+  // Reset all session state in one call
+  s.reset();
 }
 
 /**

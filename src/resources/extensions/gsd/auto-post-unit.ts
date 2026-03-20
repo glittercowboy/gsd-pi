@@ -33,7 +33,6 @@ import { writeUnitRuntimeRecord, clearUnitRuntimeRecord } from "./unit-runtime.j
 import { runGSDDoctor, rebuildState, summarizeDoctorIssues } from "./doctor.js";
 import { recordHealthSnapshot, checkHealEscalation } from "./doctor-proactive.js";
 import { syncStateToProjectRoot } from "./auto-worktree-sync.js";
-import { resetRewriteCircuitBreaker } from "./auto-dispatch.js";
 import { isDbAvailable } from "./gsd-db.js";
 import { consumeSignal } from "./session-status-io.js";
 import {
@@ -56,6 +55,13 @@ import { join } from "node:path";
 /** Throttle STATE.md rebuilds — at most once per 30 seconds */
 const STATE_REBUILD_MIN_INTERVAL_MS = 30_000;
 
+export interface PreVerificationOpts {
+  skipSettleDelay?: boolean;
+  skipDoctor?: boolean;
+  skipStateRebuild?: boolean;
+  skipWorktreeSync?: boolean;
+}
+
 export interface PostUnitContext {
   s: AutoSession;
   ctx: ExtensionContext;
@@ -73,7 +79,7 @@ export interface PostUnitContext {
  *
  * Returns "dispatched" if a signal caused stop/pause, "continue" to proceed.
  */
-export async function postUnitPreVerification(pctx: PostUnitContext): Promise<"dispatched" | "continue"> {
+export async function postUnitPreVerification(pctx: PostUnitContext, opts?: PreVerificationOpts): Promise<"dispatched" | "continue"> {
   const { s, ctx, pi, buildSnapshotOpts, stopAuto, pauseAuto } = pctx;
 
   // ── Parallel worker signal check ──
@@ -95,8 +101,10 @@ export async function postUnitPreVerification(pctx: PostUnitContext): Promise<"d
   // Invalidate all caches
   invalidateAllCaches();
 
-  // Small delay to let files settle
-  await new Promise(r => setTimeout(r, 500));
+  // Small delay to let files settle (skipped for sidecars where latency matters more)
+  if (!opts?.skipSettleDelay) {
+    await new Promise(r => setTimeout(r, 100));
+  }
 
   // Auto-commit
   if (s.currentUnit) {
@@ -120,8 +128,8 @@ export async function postUnitPreVerification(pctx: PostUnitContext): Promise<"d
                   keyFiles: summary.frontmatter.key_files?.filter(f => !f.includes("{{")) || undefined,
                 };
               }
-            } catch {
-              // Non-fatal
+            } catch (e) {
+              debugLog("postUnit", { phase: "task-summary-parse", error: String(e) });
             }
           }
         }
@@ -131,12 +139,12 @@ export async function postUnitPreVerification(pctx: PostUnitContext): Promise<"d
       if (commitMsg) {
         ctx.ui.notify(`Committed: ${commitMsg.split("\n")[0]}`, "info");
       }
-    } catch {
-      // Non-fatal
+    } catch (e) {
+      debugLog("postUnit", { phase: "auto-commit", error: String(e) });
     }
 
-    // Doctor: fix mechanical bookkeeping
-    try {
+    // Doctor: fix mechanical bookkeeping (skipped for lightweight sidecars)
+    if (!opts?.skipDoctor) try {
       const scopeParts = s.currentUnit.id.split("/").slice(0, 2);
       const doctorScope = scopeParts.join("/");
       const sliceTerminalUnits = new Set(["complete-slice", "run-uat"]);
@@ -168,24 +176,26 @@ export async function postUnitPreVerification(pctx: PostUnitContext): Promise<"d
             const reportText = formatDoctorReport(report, { scope: doctorScope, includeWarnings: true });
             const structuredIssues = formatDoctorIssuesForPrompt(actionable);
             dispatchDoctorHeal(pi, doctorScope, reportText, structuredIssues);
-          } catch {
-            // Non-fatal
+          } catch (e) {
+            debugLog("postUnit", { phase: "doctor-heal-dispatch", error: String(e) });
           }
         }
       }
-    } catch {
-      // Non-fatal
+    } catch (e) {
+      debugLog("postUnit", { phase: "doctor", error: String(e) });
     }
 
-    // Throttled STATE.md rebuild
-    const now = Date.now();
-    if (now - s.lastStateRebuildAt >= STATE_REBUILD_MIN_INTERVAL_MS) {
-      try {
-        await rebuildState(s.basePath);
-        s.lastStateRebuildAt = now;
-        autoCommitCurrentBranch(s.basePath, "state-rebuild", s.currentUnit.id);
-      } catch {
-        // Non-fatal
+    // Throttled STATE.md rebuild (skipped for lightweight sidecars)
+    if (!opts?.skipStateRebuild) {
+      const now = Date.now();
+      if (now - s.lastStateRebuildAt >= STATE_REBUILD_MIN_INTERVAL_MS) {
+        try {
+          await rebuildState(s.basePath);
+          s.lastStateRebuildAt = now;
+          autoCommitCurrentBranch(s.basePath, "state-rebuild", s.currentUnit.id);
+        } catch (e) {
+          debugLog("postUnit", { phase: "state-rebuild", error: String(e) });
+        }
       }
     }
 
@@ -193,16 +203,16 @@ export async function postUnitPreVerification(pctx: PostUnitContext): Promise<"d
     try {
       const { pruneDeadProcesses } = await import("../bg-shell/process-manager.js");
       pruneDeadProcesses();
-    } catch {
-      // Non-fatal
+    } catch (e) {
+      debugLog("postUnit", { phase: "prune-bg-shell", error: String(e) });
     }
 
-    // Sync worktree state back to project root
-    if (s.originalBasePath && s.originalBasePath !== s.basePath) {
+    // Sync worktree state back to project root (skipped for lightweight sidecars)
+    if (!opts?.skipWorktreeSync && s.originalBasePath && s.originalBasePath !== s.basePath) {
       try {
         syncStateToProjectRoot(s.basePath, s.originalBasePath, s.currentMilestoneId);
-      } catch {
-        // Non-fatal
+      } catch (e) {
+        debugLog("postUnit", { phase: "worktree-sync", error: String(e) });
       }
     }
 
@@ -210,10 +220,10 @@ export async function postUnitPreVerification(pctx: PostUnitContext): Promise<"d
     if (s.currentUnit.type === "rewrite-docs") {
       try {
         await resolveAllOverrides(s.basePath);
-        resetRewriteCircuitBreaker();
+        s.rewriteAttemptCount = 0;
         ctx.ui.notify("Override(s) resolved — rewrite-docs completed.", "info");
-      } catch {
-        // Non-fatal
+      } catch (e) {
+        debugLog("postUnit", { phase: "rewrite-docs-resolve", error: String(e) });
       }
     }
 
@@ -226,8 +236,8 @@ export async function postUnitPreVerification(pctx: PostUnitContext): Promise<"d
           const { clearReactiveState } = await import("./reactive-graph.js");
           clearReactiveState(s.basePath, mid, sid);
         }
-      } catch {
-        // Non-fatal
+      } catch (e) {
+        debugLog("postUnit", { phase: "reactive-state-cleanup", error: String(e) });
       }
     }
 
@@ -280,8 +290,8 @@ export async function postUnitPreVerification(pctx: PostUnitContext): Promise<"d
         if (triggerArtifactVerified) {
           invalidateAllCaches();
         }
-      } catch {
-        // Non-fatal
+      } catch (e) {
+        debugLog("postUnit", { phase: "artifact-verify", error: String(e) });
       }
     } else {
       // Hook unit completed — finalize its runtime record
@@ -292,8 +302,8 @@ export async function postUnitPreVerification(pctx: PostUnitContext): Promise<"d
           lastProgressKind: "hook-completed",
         });
         clearUnitRuntimeRecord(s.basePath, s.currentUnit.type, s.currentUnit.id);
-      } catch {
-        // Non-fatal
+      } catch (e) {
+        debugLog("postUnit", { phase: "hook-finalize", error: String(e) });
       }
     }
   }
@@ -429,8 +439,8 @@ export async function postUnitPostVerification(pctx: PostUnitContext): Promise<"
           }
         }
       }
-    } catch {
-      // Triage check failure is non-fatal
+    } catch (e) {
+      debugLog("postUnit", { phase: "triage-check", error: String(e) });
     }
   }
 
@@ -475,8 +485,8 @@ export async function postUnitPostVerification(pctx: PostUnitContext): Promise<"
       );
 
       return "continue";
-    } catch {
-      // Non-fatal — proceed to normal dispatch
+    } catch (e) {
+      debugLog("postUnit", { phase: "quick-task-dispatch", error: String(e) });
     }
   }
 

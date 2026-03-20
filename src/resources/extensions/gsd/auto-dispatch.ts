@@ -62,6 +62,7 @@ export interface DispatchContext {
   midTitle: string;
   state: GSDState;
   prefs: GSDPreferences | undefined;
+  session?: import("./auto/session.js").AutoSession;
 }
 
 interface DispatchRule {
@@ -82,26 +83,23 @@ function missingSliceStop(mid: string, phase: string): DispatchAction {
 // ─── Rewrite Circuit Breaker ──────────────────────────────────────────────
 
 const MAX_REWRITE_ATTEMPTS = 3;
-let rewriteAttemptCount = 0;
-export function resetRewriteCircuitBreaker(): void {
-  rewriteAttemptCount = 0;
-}
 
 // ─── Rules ────────────────────────────────────────────────────────────────
 
 const DISPATCH_RULES: DispatchRule[] = [
   {
     name: "rewrite-docs (override gate)",
-    match: async ({ mid, midTitle, state, basePath }) => {
+    match: async ({ mid, midTitle, state, basePath, session }) => {
       const pendingOverrides = await loadActiveOverrides(basePath);
       if (pendingOverrides.length === 0) return null;
-      if (rewriteAttemptCount >= MAX_REWRITE_ATTEMPTS) {
+      const count = session?.rewriteAttemptCount ?? 0;
+      if (count >= MAX_REWRITE_ATTEMPTS) {
         const { resolveAllOverrides } = await import("./files.js");
         await resolveAllOverrides(basePath);
-        rewriteAttemptCount = 0;
+        if (session) session.rewriteAttemptCount = 0;
         return null;
       }
-      rewriteAttemptCount++;
+      if (session) session.rewriteAttemptCount++;
       const unitId = state.activeSlice ? `${mid}/${state.activeSlice.id}` : mid;
       return {
         action: "dispatch",

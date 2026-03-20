@@ -124,6 +124,9 @@ export class AutoSession {
   // ── Sidecar queue ─────────────────────────────────────────────────────
   sidecarQueue: SidecarItem[] = [];
 
+  // ── Dispatch circuit breakers ──────────────────────────────────────
+  rewriteAttemptCount = 0;
+
   // ── Metrics ──────────────────────────────────────────────────────────────
   autoStartTime = 0;
   lastPromptCharCount: number | undefined;
@@ -154,7 +157,7 @@ export class AutoSession {
    * events between loop iterations. The next runUnit drains this queue
    * instead of waiting for a new event.
    */
-  pendingAgentEndQueue: Array<{ messages: unknown[] }> = [];
+  pendingAgentEndQueue: Array<{ messages: unknown[]; unitId?: string }> = [];
 
   // ── Methods ──────────────────────────────────────────────────────────────
 
@@ -228,6 +231,7 @@ export class AutoSession {
     this.lastBaselineCharCount = undefined;
     this.pendingQuickTasks = [];
     this.sidecarQueue = [];
+    this.rewriteAttemptCount = 0;
 
     // Signal handler
     this.sigtermHandler = null;
