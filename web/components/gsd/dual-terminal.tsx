@@ -1,18 +1,24 @@
 "use client"
 
 import { useState, useRef, useEffect } from "react"
-import { GripVertical } from "lucide-react"
+import { GripVertical, Loader2 } from "lucide-react"
 import { MainSessionTerminal } from "@/components/gsd/main-session-terminal"
 import { ShellTerminal } from "@/components/gsd/shell-terminal"
 import { useTerminalFontSize } from "@/lib/use-terminal-font-size"
 import { useGSDWorkspaceState } from "@/lib/gsd-workspace-store"
+import { derivePendingWorkflowCommandLabel } from "@/lib/workflow-action-execution"
 
 export function DualTerminal() {
   const [splitPosition, setSplitPosition] = useState(50)
   const containerRef = useRef<HTMLDivElement>(null)
   const isDragging = useRef(false)
   const [terminalFontSize] = useTerminalFontSize()
-  const projectCwd = useGSDWorkspaceState().boot?.project.cwd
+  const workspace = useGSDWorkspaceState()
+  const projectCwd = workspace.boot?.project.cwd
+  const pendingCommandLabel = derivePendingWorkflowCommandLabel({
+    commandInFlight: workspace.commandInFlight,
+    terminalLines: workspace.terminalLines,
+  })
 
   const handleMouseDown = () => {
     isDragging.current = true
@@ -45,6 +51,16 @@ export function DualTerminal() {
       <div className="flex items-center justify-between border-b border-border bg-card px-4 py-2">
         <span className="font-medium">Power User Mode</span>
         <div className="flex items-center gap-4 text-xs text-muted-foreground">
+          {pendingCommandLabel && (
+            <span
+              className="inline-flex items-center gap-1.5 rounded-full border border-primary/20 bg-primary/10 px-2.5 py-1 text-primary"
+              data-testid="power-mode-pending-command"
+              title={pendingCommandLabel}
+            >
+              <Loader2 className="h-3 w-3 animate-spin" />
+              Sending {pendingCommandLabel}
+            </span>
+          )}
           <span>Left: Main Session TUI</span>
           <span className="text-border">|</span>
           <span>Right: Interactive GSD</span>

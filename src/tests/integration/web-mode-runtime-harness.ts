@@ -54,8 +54,6 @@ export type RuntimeReadyProof<TBoot = unknown> = {
     unitLabel: string | null
     sessionBanner: string | null
     projectPathTitle: string | null
-    dashboardRecoveryState: string | null
-    dashboardRecoveryEntrypoint: string | null
     sidebarRecoveryEntrypoint: string | null
     recoveryPanelState: string | null
   }

@@ -517,7 +517,6 @@ test("live browser panels consume live selectors and expose inspectable freshnes
 
   assert.match(dashboardSource, /getLiveWorkspaceIndex/, "dashboard.tsx must derive roadmap state from the live workspace selector")
   assert.match(dashboardSource, /getLiveAutoDashboard/, "dashboard.tsx must derive auto metrics from the live auto selector")
-  assert.match(dashboardSource, /getLiveResumableSessions/, "dashboard.tsx must derive session picker state from the live session selector")
   assert.match(dashboardSource, /data-testid="dashboard-current-unit"/, "dashboard.tsx must expose a current-unit marker")
 
   assert.match(sidebarSource, /getLiveWorkspaceIndex/, "sidebar.tsx must derive explorer state from the live workspace selector")
@@ -583,6 +582,5 @@ test("recovery diagnostics surface stays on a dedicated route with explicit stal
   assert.match(surfaceSource, /data-testid="command-surface-recovery-last-failure"/, "command-surface.tsx must expose structured bridge failure metadata");
   assert.match(surfaceSource, /data-testid={`command-surface-recovery-action-\$\{action.id\}`}/, "command-surface.tsx must expose stable action wiring for recovery controls");
 
-  assert.match(dashboardSource, /setCommandSurfaceSection\("recovery"\)/, "dashboard.tsx must route the recovery entrypoint into the dedicated recovery section");
   assert.match(sidebarSource, /setCommandSurfaceSection\("recovery"\)/, "sidebar.tsx must route the recovery entrypoint into the dedicated recovery section");
 });

@@ -44,12 +44,12 @@ import {
   getCurrentScopeLabel,
   getLiveWorkspaceIndex,
   getLiveAutoDashboard,
-  buildPromptCommand,
   useGSDWorkspaceState,
   useGSDWorkspaceActions,
 } from "@/lib/gsd-workspace-store"
 import { getMilestoneStatus, getSliceStatus, getTaskStatus, type ItemStatus } from "@/lib/workspace-status"
 import { deriveWorkflowAction } from "@/lib/workflow-actions"
+import { executeWorkflowActionInPowerMode } from "@/lib/workflow-action-execution"
 import { useProjectStoreManager } from "@/lib/project-store-manager"
 import { Skeleton } from "@/components/ui/skeleton"
 import { NewMilestoneDialog } from "@/components/gsd/new-milestone-dialog"
@@ -351,7 +351,7 @@ export function MilestoneExplorer({ isConnecting = false, width, onCollapse }: {
   })
 
   const handleCommand = (command: string) => {
-    void sendCommand(buildPromptCommand(command, bridge))
+    void executeWorkflowActionInPowerMode({ command, bridge, sendCommand })
   }
 
   const handlePrimaryAction = () => {
@@ -651,7 +651,7 @@ export function CollapsedMilestoneSidebar({ onExpand }: { onExpand: () => void }
   })
 
   const handleCommand = (command: string) => {
-    void sendCommand(buildPromptCommand(command, bridge))
+    void executeWorkflowActionInPowerMode({ command, bridge, sendCommand })
   }
 
   const handlePrimaryAction = () => {

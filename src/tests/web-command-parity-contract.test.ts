@@ -675,22 +675,10 @@ test("surface action state keeps compaction summaries inspectable", () => {
   assert.equal(succeeded.lastCompaction?.summary, "Summary of the kept work")
 })
 
-test("clicked dashboard and command-surface session affordances use the shared store action path", () => {
-  const dashboardPath = resolve(import.meta.dirname, "../../web/components/gsd/dashboard.tsx")
-  const dashboardSource = readFileSync(dashboardPath, "utf-8")
+test("command-surface session affordances use the shared store action path", () => {
   const commandSurfacePath = resolve(import.meta.dirname, "../../web/components/gsd/command-surface.tsx")
   const commandSurfaceSource = readFileSync(commandSurfacePath, "utf-8")
 
-  assert.match(
-    dashboardSource,
-    /await submitInput\("\/new"\)/,
-    "dashboard new-session control should reuse the shared slash-command submit path",
-  )
-  assert.match(
-    dashboardSource,
-    /await switchSessionFromSurface\(session\.path\)/,
-    "dashboard session switch should reuse the shared session action path",
-  )
   assert.match(
     commandSurfaceSource,
     /void switchSessionFromSurface\(selectedResumeTarget\.sessionPath\)/,

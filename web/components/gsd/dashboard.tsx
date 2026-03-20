@@ -31,6 +31,7 @@ import {
 } from "@/lib/gsd-workspace-store"
 import { getTaskStatus, type ItemStatus } from "@/lib/workspace-status"
 import { deriveWorkflowAction } from "@/lib/workflow-actions"
+import { executeWorkflowActionInPowerMode } from "@/lib/workflow-action-execution"
 import { NewMilestoneDialog } from "@/components/gsd/new-milestone-dialog"
 import { Skeleton } from "@/components/ui/skeleton"
 import {
@@ -148,8 +149,7 @@ export function Dashboard({ onSwitchView, onExpandTerminal }: DashboardProps = {
   })
 
   const handleWorkflowAction = (command: string) => {
-    void sendCommand(buildPromptCommand(command, bridge))
-    onSwitchView?.("power")
+    void executeWorkflowActionInPowerMode({ command, bridge, sendCommand })
   }
 
   const handlePrimaryAction = () => {
