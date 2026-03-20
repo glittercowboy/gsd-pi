@@ -367,10 +367,25 @@ const DISPATCH_RULES: DispatchRule[] = [
           `ready:${metrics.readySetSize} dispatching:${selected.length} ambiguous:${metrics.ambiguous}\n`,
         );
 
+        // Persist dispatched batch so verification and recovery can check
+        // exactly which tasks were sent.
+        const { saveReactiveState } = await import("./reactive-graph.js");
+        saveReactiveState(basePath, mid, sid, {
+          sliceId: sid,
+          completed: [...completed],
+          dispatched: selected,
+          graphSnapshot: metrics,
+          updatedAt: new Date().toISOString(),
+        });
+
+        // Encode selected task IDs in unitId for artifact verification.
+        // Format: M001/S01/reactive+T02,T03
+        const batchSuffix = selected.join(",");
+
         return {
           action: "dispatch",
           unitType: "reactive-execute",
-          unitId: `${mid}/${sid}/reactive`,
+          unitId: `${mid}/${sid}/reactive+${batchSuffix}`,
           prompt: await buildReactiveExecutePrompt(
             mid,
             midTitle,

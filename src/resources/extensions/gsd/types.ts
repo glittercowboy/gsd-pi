@@ -468,6 +468,8 @@ export interface ReactiveExecutionState {
   sliceId: string;
   /** Task IDs that have been verified as completed. */
   completed: string[];
+  /** Task IDs dispatched in the current/most recent reactive batch. */
+  dispatched: string[];
   /** Snapshot of the graph at last dispatch. */
   graphSnapshot: {
     taskCount: number;

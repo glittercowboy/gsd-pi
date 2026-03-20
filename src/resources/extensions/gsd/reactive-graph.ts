@@ -245,7 +245,7 @@ function reactiveStatePath(basePath: string, mid: string, sid: string): string {
 function isReactiveState(data: unknown): data is ReactiveExecutionState {
   if (!data || typeof data !== "object") return false;
   const d = data as Record<string, unknown>;
-  return typeof d.sliceId === "string" && Array.isArray(d.completed);
+  return typeof d.sliceId === "string" && Array.isArray(d.completed) && Array.isArray(d.dispatched);
 }
 
 /**
