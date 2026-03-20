@@ -114,6 +114,22 @@ function getServerConfig(name: string): McpServerConfig | undefined {
 	return readConfigs().find((s) => s.name === name);
 }
 
+/** Resolve ${VAR} references in env values against process.env. */
+function resolveEnv(env: Record<string, string>): Record<string, string> {
+	const resolved: Record<string, string> = {};
+	for (const [key, value] of Object.entries(env)) {
+		if (typeof value === "string") {
+			resolved[key] = value.replace(
+				/\$\{([^}]+)\}/g,
+				(_match, varName) => process.env[varName] ?? "",
+			);
+		} else {
+			resolved[key] = value;
+		}
+	}
+	return resolved;
+}
+
 async function getOrConnect(name: string, signal?: AbortSignal): Promise<Client> {
 	const existing = connections.get(name);
 	if (existing) return existing.client;
@@ -128,7 +144,7 @@ async function getOrConnect(name: string, signal?: AbortSignal): Promise<Client>
 		transport = new StdioClientTransport({
 			command: config.command,
 			args: config.args,
-			env: config.env ? { ...process.env, ...config.env } as Record<string, string> : undefined,
+			env: config.env ? { ...process.env, ...resolveEnv(config.env) } as Record<string, string> : undefined,
 			cwd: config.cwd,
 			stderr: "pipe",
 		});
