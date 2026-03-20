@@ -745,7 +745,7 @@ export function serializePreferencesToFrontmatter(prefs: Record<string, unknown>
     "dynamic_routing", "token_profile", "phases", "parallel",
     "auto_visualize", "auto_report",
     "verification_commands", "verification_auto_fix", "verification_max_retries",
-    "search_provider", "compression_strategy", "context_selection",
+    "search_provider", "context_selection",
   ];
 
   const seen = new Set<string>();

@@ -21,10 +21,7 @@ import type { GSDPreferences } from "./preferences.js";
 import { join } from "node:path";
 import { existsSync } from "node:fs";
 import { computeBudgets, resolveExecutorContextWindow } from "./context-budget.js";
-import { compressToTarget } from "./prompt-compressor.js";
-import { distillSummaries } from "./summary-distiller.js";
 import { formatDecisionsCompact, formatRequirementsCompact } from "./structured-data-formatter.js";
-import { chunkByRelevance, formatChunks } from "./semantic-chunker.js";
 
 // ─── Executor Constraints ─────────────────────────────────────────────────────
 
@@ -159,16 +156,10 @@ export async function inlineFileSmart(
     return `### ${label}\nSource: \`${relPath}\`\n\n${content.trim()}`;
   }
 
-  // Use semantic chunking for large files
-  const result = chunkByRelevance(content, query, { maxChunks: 5, minScore: 0.05 });
-
-  // If chunking didn't save much (< 20%), just include full content
-  if (result.savingsPercent < 20) {
-    return `### ${label}\nSource: \`${relPath}\`\n\n${content.trim()}`;
-  }
-
-  const formatted = formatChunks(result, relPath);
-  return `### ${label} (${result.omittedChunks} sections omitted for relevance)\nSource: \`${relPath}\`\n\n${formatted}`;
+  // For large files, truncate at section boundary
+  const { truncateAtSectionBoundary } = await import("./context-budget.js");
+  const truncated = truncateAtSectionBoundary(content, threshold).content;
+  return `### ${label}\nSource: \`${relPath}\`\n\n${truncated}`;
 }
 
 /**
@@ -202,20 +193,6 @@ export async function inlineDependencySummaries(
 
   const result = sections.join("\n\n");
   if (budgetChars !== undefined && result.length > budgetChars) {
-    // For 3+ summaries, try distillation first (preserves more information)
-    if (sections.length >= 3) {
-      const rawSummaries = sections.map(s => {
-        // Extract content after the header line
-        const lines = s.split("\n");
-        const contentStart = lines.findIndex(l => l.startsWith("Source:"));
-        return contentStart >= 0 ? lines.slice(contentStart + 1).join("\n").trim() : s;
-      });
-      const distilled = distillSummaries(rawSummaries, budgetChars);
-      if (distilled.content.length <= budgetChars) {
-        return distilled.content;
-      }
-    }
-    // Fall back to section-boundary truncation
     const { truncateAtSectionBoundary } = await import("./context-budget.js");
     return truncateAtSectionBoundary(result, budgetChars).content;
   }
@@ -900,15 +877,12 @@ export async function buildExecuteTaskPrompt(
   const budgets = computeBudgets(contextWindow);
   const verificationBudget = `~${Math.round(budgets.verificationBudgetChars / 1000)}K chars`;
 
-  // Compress carry-forward section when it exceeds 40% of inline context budget.
-  // Only compress when compression_strategy is "compress" (budget/balanced profiles).
+  // Truncate carry-forward section when it exceeds 40% of inline context budget.
   const carryForwardBudget = Math.floor(budgets.inlineContextBudgetChars * 0.4);
   let finalCarryForward = carryForwardSection;
   if (carryForwardSection.length > carryForwardBudget) {
-    const { resolveCompressionStrategy } = await import("./preferences.js");
-    if (resolveCompressionStrategy() === "compress") {
-      finalCarryForward = compressToTarget(carryForwardSection, carryForwardBudget).content;
-    }
+    const { truncateAtSectionBoundary } = await import("./context-budget.js");
+    finalCarryForward = truncateAtSectionBoundary(carryForwardSection, carryForwardBudget).content;
   }
 
   return loadPrompt("execute-task", {

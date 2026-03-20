@@ -686,16 +686,6 @@ export function validatePreferences(preferences: GSDPreferences): {
     }
   }
 
-  // ─── Compression Strategy ───────────────────────────────────────────
-  if (preferences.compression_strategy !== undefined) {
-    const validStrategies = new Set(["truncate", "compress"]);
-    if (typeof preferences.compression_strategy === "string" && validStrategies.has(preferences.compression_strategy)) {
-      validated.compression_strategy = preferences.compression_strategy as GSDPreferences["compression_strategy"];
-    } else {
-      errors.push(`compression_strategy must be one of: truncate, compress`);
-    }
-  }
-
   // ─── Context Selection ──────────────────────────────────────────────
   if (preferences.context_selection !== undefined) {
     const validModes = new Set(["full", "smart"]);

@@ -77,7 +77,6 @@ export {
   resolveProfileDefaults,
   resolveEffectiveProfile,
   resolveInlineLevel,
-  resolveCompressionStrategy,
   resolveContextSelection,
   resolveSearchProviderFromPreferences,
 } from "./preferences-models.js";
@@ -269,7 +268,6 @@ function mergePreferences(base: GSDPreferences, override: GSDPreferences): GSDPr
     verification_auto_fix: override.verification_auto_fix ?? base.verification_auto_fix,
     verification_max_retries: override.verification_max_retries ?? base.verification_max_retries,
     search_provider: override.search_provider ?? base.search_provider,
-    compression_strategy: override.compression_strategy ?? base.compression_strategy,
     context_selection: override.context_selection ?? base.context_selection,
     auto_visualize: override.auto_visualize ?? base.auto_visualize,
     auto_report: override.auto_report ?? base.auto_report,

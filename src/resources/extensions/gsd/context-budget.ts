@@ -9,7 +9,6 @@
  */
 
 import { type TokenProvider, getCharsPerToken } from "./token-counter.js";
-import { compressToTarget } from "./prompt-compressor.js";
 
 // ─── Budget ratio constants ──────────────────────────────────────────────────
 // Percentages of total context window allocated to each budget category.
@@ -202,22 +201,13 @@ export function resolveExecutorContextWindow(
 }
 
 /**
- * Smart context reduction: compress first, then truncate if still over budget.
- * Returns the content within budget with maximum information preservation.
+ * Reduce content to fit within budget using section-boundary truncation.
  */
 export function reduceToFit(content: string, budgetChars: number): TruncationResult {
   if (!content || content.length <= budgetChars) {
     return { content, droppedSections: 0 };
   }
-
-  // Step 1: Try compression
-  const compressed = compressToTarget(content, budgetChars);
-  if (compressed.compressedChars <= budgetChars) {
-    return { content: compressed.content, droppedSections: 0 };
-  }
-
-  // Step 2: Truncate the compressed content at section boundaries
-  return truncateAtSectionBoundary(compressed.content, budgetChars);
+  return truncateAtSectionBoundary(content, budgetChars);
 }
 
 // ─── Internal helpers ────────────────────────────────────────────────────────

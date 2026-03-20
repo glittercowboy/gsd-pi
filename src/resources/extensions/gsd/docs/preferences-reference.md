@@ -194,8 +194,6 @@ Setting `prefer_skills: []` does **not** disable skill discovery — it just mea
 
 - `search_provider`: `"brave"`, `"tavily"`, `"ollama"`, `"native"`, or `"auto"` — selects the search backend for research phases. `"native"` forces Anthropic's built-in web search only; provider values force that backend and disable native search; `"auto"` uses the default heuristic. Default: `"auto"`.
 
-- `compression_strategy`: `"truncate"` or `"compress"` — controls how context that exceeds the budget is reduced. `"truncate"` (default) drops sections from the end. `"compress"` applies heuristic compression before truncating, preserving more content at the cost of some fidelity. Default: `"truncate"`.
-
 - `context_selection`: `"full"` or `"smart"` — controls how files are inlined into context. `"full"` inlines entire files; `"smart"` uses semantic chunking to include only the most relevant sections. Default is derived from `token_profile`.
 
 - `parallel`: configures parallel orchestration for running multiple slices concurrently. Keys:
