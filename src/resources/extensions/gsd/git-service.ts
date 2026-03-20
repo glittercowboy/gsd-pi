@@ -276,6 +276,91 @@ export function writeIntegrationBranch(
   // .gsd/ is managed externally (symlinked) — metadata is not committed to git.
 }
 
+export type IntegrationBranchResolutionStatus = "recorded" | "fallback" | "missing";
+
+export interface IntegrationBranchResolution {
+  recordedBranch: string | null;
+  effectiveBranch: string | null;
+  status: IntegrationBranchResolutionStatus;
+  reason: string;
+}
+
+/**
+ * Resolve a milestone's recorded integration branch into an actionable status.
+ *
+ * This helper is intentionally scoped to milestones that already have recorded
+ * metadata. If no integration branch is recorded, it returns `missing` with no
+ * effective branch so callers can continue with their existing non-milestone
+ * fallback logic (for example worktree/current-branch detection in getMainBranch).
+ */
+export function resolveMilestoneIntegrationBranch(
+  basePath: string,
+  milestoneId: string,
+  prefs: GitPreferences = {},
+): IntegrationBranchResolution {
+  const recordedBranch = readIntegrationBranch(basePath, milestoneId);
+  if (!recordedBranch) {
+    return {
+      recordedBranch: null,
+      effectiveBranch: null,
+      status: "missing",
+      reason: `Milestone ${milestoneId} has no recorded integration branch metadata.`,
+    };
+  }
+
+  if (nativeBranchExists(basePath, recordedBranch)) {
+    return {
+      recordedBranch,
+      effectiveBranch: recordedBranch,
+      status: "recorded",
+      reason: `Using recorded integration branch "${recordedBranch}" for milestone ${milestoneId}.`,
+    };
+  }
+
+  const configuredBranch = prefs.main_branch && VALID_BRANCH_NAME.test(prefs.main_branch)
+    ? prefs.main_branch
+    : null;
+
+  if (configuredBranch) {
+    if (nativeBranchExists(basePath, configuredBranch)) {
+      return {
+        recordedBranch,
+        effectiveBranch: configuredBranch,
+        status: "fallback",
+        reason: `Recorded integration branch "${recordedBranch}" for milestone ${milestoneId} no longer exists; using configured git.main_branch "${configuredBranch}" instead.`,
+      };
+    }
+
+    return {
+      recordedBranch,
+      effectiveBranch: null,
+      status: "missing",
+      reason: `Recorded integration branch "${recordedBranch}" for milestone ${milestoneId} no longer exists, and configured git.main_branch "${configuredBranch}" is unavailable.`,
+    };
+  }
+
+  try {
+    const detectedBranch = nativeDetectMainBranch(basePath);
+    if (detectedBranch && VALID_BRANCH_NAME.test(detectedBranch) && nativeBranchExists(basePath, detectedBranch)) {
+      return {
+        recordedBranch,
+        effectiveBranch: detectedBranch,
+        status: "fallback",
+        reason: `Recorded integration branch "${recordedBranch}" for milestone ${milestoneId} no longer exists; using detected fallback branch "${detectedBranch}" instead.`,
+      };
+    }
+  } catch {
+    // Fall through to the explicit missing result below.
+  }
+
+  return {
+    recordedBranch,
+    effectiveBranch: null,
+    status: "missing",
+    reason: `Recorded integration branch "${recordedBranch}" for milestone ${milestoneId} no longer exists, and no safe fallback branch could be determined.`,
+  };
+}
+
 // ─── Git Helper ────────────────────────────────────────────────────────────
 
 
@@ -480,10 +565,9 @@ export class GitServiceImpl {
 
     // Check milestone integration branch — recorded when auto-mode starts
     if (this._milestoneId) {
-      const integrationBranch = readIntegrationBranch(this.basePath, this._milestoneId);
-      if (integrationBranch) {
-        // Verify the branch still exists locally (could have been deleted)
-        if (nativeBranchExists(this.basePath, integrationBranch)) return integrationBranch;
+      const resolved = resolveMilestoneIntegrationBranch(this.basePath, this._milestoneId);
+      if (resolved.effectiveBranch) {
+        return resolved.effectiveBranch;
       }
     }
 

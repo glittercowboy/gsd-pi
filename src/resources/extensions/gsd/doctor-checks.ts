@@ -8,12 +8,13 @@ import { deriveState, isMilestoneComplete } from "./state.js";
 import { saveFile } from "./files.js";
 import { listWorktrees, resolveGitDir, worktreesDir } from "./worktree-manager.js";
 import { abortAndReset } from "./git-self-heal.js";
-import { RUNTIME_EXCLUSION_PATHS, readIntegrationBranch } from "./git-service.js";
+import { RUNTIME_EXCLUSION_PATHS, resolveMilestoneIntegrationBranch, writeIntegrationBranch } from "./git-service.js";
 import { nativeIsRepo, nativeBranchExists, nativeWorktreeList, nativeWorktreeRemove, nativeBranchList, nativeBranchDelete, nativeLsFiles, nativeRmCached } from "./native-git-bridge.js";
 import { readCrashLock, isLockProcessAlive, clearLock } from "./crash-recovery.js";
 import { ensureGitignore } from "./gitignore.js";
 import { readAllSessionStatuses, isSessionStale, removeSessionStatus } from "./session-status-io.js";
 import { recoverFailedMigration } from "./migrate-external.js";
+import { loadEffectiveGSDPreferences } from "./preferences.js";
 
 export async function checkGitHealth(
   basePath: string,
@@ -222,17 +223,34 @@ export async function checkGitHealth(
   // and causes the next merge operation to fail silently.
   try {
     const state = await deriveState(basePath);
+    const gitPrefs = loadEffectiveGSDPreferences()?.preferences?.git ?? {};
     for (const milestone of state.registry) {
       if (milestone.status === "complete") continue;
-      const integrationBranch = readIntegrationBranch(basePath, milestone.id);
-      if (!integrationBranch) continue; // No stored branch — skip (not yet set)
-      if (!nativeBranchExists(basePath, integrationBranch)) {
+      const resolution = resolveMilestoneIntegrationBranch(basePath, milestone.id, gitPrefs);
+      if (!resolution.recordedBranch) continue; // No stored branch — skip (not yet set)
+      if (resolution.status === "fallback" && resolution.effectiveBranch) {
+        issues.push({
+          severity: "warning",
+          code: "integration_branch_missing",
+          scope: "milestone",
+          unitId: milestone.id,
+          message: resolution.reason,
+          fixable: true,
+        });
+        if (shouldFix("integration_branch_missing")) {
+          writeIntegrationBranch(basePath, milestone.id, resolution.effectiveBranch);
+          fixesApplied.push(`updated integration branch for ${milestone.id} to "${resolution.effectiveBranch}"`);
+        }
+        continue;
+      }
+
+      if (resolution.status === "missing") {
         issues.push({
           severity: "error",
           code: "integration_branch_missing",
           scope: "milestone",
           unitId: milestone.id,
-          message: `Milestone ${milestone.id} recorded integration branch "${integrationBranch}" but that branch no longer exists in git. Merge-back will fail.`,
+          message: resolution.reason,
           fixable: false,
         });
       }

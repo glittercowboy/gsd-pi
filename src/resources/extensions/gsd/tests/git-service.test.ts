@@ -11,6 +11,7 @@ import {
   VALID_BRANCH_NAME,
   runGit,
   readIntegrationBranch,
+  resolveMilestoneIntegrationBranch,
   writeIntegrationBranch,
   type GitPreferences,
   type CommitOptions,
@@ -987,6 +988,65 @@ async function main(): Promise<void> {
     const svc = new GitServiceImpl(repo);
     svc.setMilestoneId("M001");
     assertEq(svc.getMainBranch(), "main", "getMainBranch falls back to main when integration branch no longer exists");
+
+    rmSync(repo, { recursive: true, force: true });
+  }
+
+  // ─── resolveMilestoneIntegrationBranch: recorded branch wins when it exists ───
+
+  console.log("\n=== Integration branch: resolver prefers recorded branch ===");
+
+  {
+    const repo = initBranchTestRepo();
+    run("git checkout -b feature/live", repo);
+    run("git checkout main", repo);
+    writeIntegrationBranch(repo, "M001", "feature/live");
+
+    const resolved = resolveMilestoneIntegrationBranch(repo, "M001");
+    assertEq(resolved.status, "recorded", "resolver reports recorded branch when metadata branch exists");
+    assertEq(resolved.recordedBranch, "feature/live", "resolver includes recorded branch");
+    assertEq(resolved.effectiveBranch, "feature/live", "resolver uses recorded branch as effective branch");
+
+    rmSync(repo, { recursive: true, force: true });
+  }
+
+  // ─── resolveMilestoneIntegrationBranch: falls back to detected default ────────
+
+  console.log("\n=== Integration branch: resolver falls back to detected default ===");
+
+  {
+    const repo = initBranchTestRepo();
+    writeIntegrationBranch(repo, "M001", "deleted-branch");
+
+    const resolved = resolveMilestoneIntegrationBranch(repo, "M001");
+    assertEq(resolved.status, "fallback", "resolver reports fallback when recorded branch is stale");
+    assertEq(resolved.recordedBranch, "deleted-branch", "resolver preserves stale recorded branch for diagnostics");
+    assertEq(resolved.effectiveBranch, "main", "resolver falls back to detected default branch");
+    assertTrue(
+      resolved.reason.includes("deleted-branch") && resolved.reason.includes("main"),
+      "resolver reason mentions stale recorded branch and fallback branch",
+    );
+
+    rmSync(repo, { recursive: true, force: true });
+  }
+
+  // ─── resolveMilestoneIntegrationBranch: configured main_branch is fallback ─────
+
+  console.log("\n=== Integration branch: resolver uses configured fallback branch ===");
+
+  {
+    const repo = initBranchTestRepo();
+    run("git checkout -b trunk", repo);
+    run("git checkout main", repo);
+    writeIntegrationBranch(repo, "M001", "deleted-branch");
+
+    const resolved = resolveMilestoneIntegrationBranch(repo, "M001", { main_branch: "trunk" });
+    assertEq(resolved.status, "fallback", "resolver reports fallback when using configured main_branch");
+    assertEq(resolved.effectiveBranch, "trunk", "resolver prefers configured main_branch as fallback");
+    assertTrue(
+      resolved.reason.includes("deleted-branch") && resolved.reason.includes("trunk"),
+      "configured fallback reason mentions stale branch and configured branch",
+    );
 
     rmSync(repo, { recursive: true, force: true });
   }

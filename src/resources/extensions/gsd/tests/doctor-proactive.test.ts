@@ -43,6 +43,33 @@ function createGitRepo(): string {
   return dir;
 }
 
+function createRepoWithActiveMilestone(): string {
+  const dir = createGitRepo();
+  const msDir = join(dir, ".gsd", "milestones", "M001");
+  mkdirSync(msDir, { recursive: true });
+  writeFileSync(join(msDir, "ROADMAP.md"), `---
+id: M001
+title: "Active Milestone"
+---
+
+# M001: Active Milestone
+
+## Vision
+Test
+
+## Success Criteria
+- Done
+
+## Slices
+- [ ] **S01: Test slice** \`risk:low\` \`depends:[]\`
+  > After this: done
+
+## Boundary Map
+_None_
+`);
+  return dir;
+}
+
 async function main(): Promise<void> {
   const cleanups: string[] = [];
 
@@ -263,6 +290,48 @@ async function main(): Promise<void> {
       );
       assertTrue(existsSync(stateFile), "STATE.md created by auto-heal");
       assertTrue(result.issues.length === 0, "no blocking issues after heal");
+    }
+
+    console.log("\n=== health gate: stale integration branch uses detected fallback ===");
+    {
+      const dir = createRepoWithActiveMilestone();
+      cleanups.push(dir);
+
+      const metaPath = join(dir, ".gsd", "milestones", "M001", "M001-META.json");
+      writeFileSync(metaPath, JSON.stringify({ integrationBranch: "feature/missing" }, null, 2));
+
+      const result = await preDispatchHealthGate(dir);
+      assertTrue(result.proceed, "gate does not block when stale integration branch has detected fallback");
+      assertEq(result.issues.length, 0, "stale integration branch with fallback is not a blocking issue");
+      assertTrue(
+        result.fixesApplied.some(f => f.includes('feature/missing') && f.includes('main')),
+        "fixesApplied reports stale recorded branch and detected fallback branch",
+      );
+    }
+
+    console.log("\n=== health gate: stale integration branch uses configured fallback ===");
+    {
+      const dir = createRepoWithActiveMilestone();
+      cleanups.push(dir);
+
+      run("git branch trunk", dir);
+      writeFileSync(join(dir, ".gsd", "preferences.md"), `---\ngit:\n  main_branch: "trunk"\n---\n`);
+      const metaPath = join(dir, ".gsd", "milestones", "M001", "M001-META.json");
+      writeFileSync(metaPath, JSON.stringify({ integrationBranch: "feature/missing" }, null, 2));
+
+      const previousCwd = process.cwd();
+      process.chdir(dir);
+      try {
+        const result = await preDispatchHealthGate(dir);
+        assertTrue(result.proceed, "gate does not block when configured main_branch can be used as fallback");
+        assertEq(result.issues.length, 0, "configured fallback is not treated as a blocking issue");
+        assertTrue(
+          result.fixesApplied.some(f => f.includes('feature/missing') && f.includes('trunk')),
+          "fixesApplied reports stale recorded branch and configured fallback branch",
+        );
+      } finally {
+        process.chdir(previousCwd);
+      }
     }
 
   } finally {
