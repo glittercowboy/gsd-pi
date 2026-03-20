@@ -485,6 +485,41 @@ export async function getPriorTaskSummaryPaths(
     .map(f => `${sRel}/tasks/${f}`);
 }
 
+/**
+ * Get carry-forward summary paths scoped to a task's derived dependencies.
+ *
+ * Instead of all prior tasks (order-based), returns only summaries for task
+ * IDs in `dependsOn`. Used by reactive-execute to give each subagent only
+ * the context it actually needs — not sibling tasks from a parallel batch.
+ *
+ * Falls back to order-based when dependsOn is empty (root tasks still get
+ * any available prior summaries for continuity).
+ */
+export async function getDependencyTaskSummaryPaths(
+  mid: string, sid: string, currentTid: string,
+  dependsOn: string[], base: string,
+): Promise<string[]> {
+  // If no dependencies, fall back to order-based for root tasks
+  if (dependsOn.length === 0) {
+    return getPriorTaskSummaryPaths(mid, sid, currentTid, base);
+  }
+
+  const tDir = resolveTasksDir(base, mid, sid);
+  if (!tDir) return [];
+
+  const summaryFiles = resolveTaskFiles(tDir, "SUMMARY");
+  const sRel = relSlicePath(base, mid, sid);
+  const depSet = new Set(dependsOn.map((d) => d.toUpperCase()));
+
+  return summaryFiles
+    .filter((f) => {
+      // Extract task ID from filename: "T02-SUMMARY.md" → "T02"
+      const tid = f.replace(/-SUMMARY\.md$/i, "").toUpperCase();
+      return depSet.has(tid);
+    })
+    .map((f) => `${sRel}/tasks/${f}`);
+}
+
 // ─── Adaptive Replanning Checks ────────────────────────────────────────────
 
 /**
@@ -772,13 +807,24 @@ export async function buildPlanSlicePrompt(
   });
 }
 
+/** Options for customizing execute-task prompt construction. */
+export interface ExecuteTaskPromptOptions {
+  level?: InlineLevel;
+  /** Override carry-forward paths (dependency-based instead of order-based). */
+  carryForwardPaths?: string[];
+}
+
 export async function buildExecuteTaskPrompt(
   mid: string, sid: string, sTitle: string,
-  tid: string, tTitle: string, base: string, level?: InlineLevel,
+  tid: string, tTitle: string, base: string,
+  level?: InlineLevel | ExecuteTaskPromptOptions,
 ): Promise<string> {
-  const inlineLevel = level ?? resolveInlineLevel();
+  const opts: ExecuteTaskPromptOptions = typeof level === "object" && level !== null && !Array.isArray(level)
+    ? level
+    : { level: level as InlineLevel | undefined };
+  const inlineLevel = opts.level ?? resolveInlineLevel();
 
-  const priorSummaries = await getPriorTaskSummaryPaths(mid, sid, tid, base);
+  const priorSummaries = opts.carryForwardPaths ?? await getPriorTaskSummaryPaths(mid, sid, tid, base);
   const priorLines = priorSummaries.length > 0
     ? priorSummaries.map(p => `- \`${p}\``).join("\n")
     : "- (no prior tasks)";
@@ -1272,8 +1318,16 @@ export async function buildReactiveExecutePrompt(
     const tTitle = node?.title ?? tid;
     readyTaskListLines.push(`- **${tid}: ${tTitle}**`);
 
-    // Build a full execute-task prompt for this task (reuse existing builder)
-    const taskPrompt = await buildExecuteTaskPrompt(mid, sid, sTitle, tid, tTitle, base);
+    // Build dependency-scoped carry-forward paths for this task
+    const depPaths = await getDependencyTaskSummaryPaths(
+      mid, sid, tid, node?.dependsOn ?? [], base,
+    );
+
+    // Build a full execute-task prompt with dependency-based carry-forward
+    const taskPrompt = await buildExecuteTaskPrompt(
+      mid, sid, sTitle, tid, tTitle, base,
+      { carryForwardPaths: depPaths },
+    );
 
     subagentSections.push([
       `### ${tid}: ${tTitle}`,

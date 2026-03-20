@@ -450,3 +450,62 @@ test("unitId batch encoding round-trips correctly", () => {
   const batchIds = batchPart.slice(plusIdx + 1).split(",");
   assert.deepEqual(batchIds, ["T02", "T03", "T05"]);
 });
+
+// ─── Dependency-Based Carry-Forward ───────────────────────────────────────
+
+test("getDependencyTaskSummaryPaths returns only dependency summaries", async () => {
+  const { getDependencyTaskSummaryPaths } = await import("../auto-prompts.ts");
+  const repo = mkdtempSync(join(tmpdir(), "gsd-reactive-depcarry-"));
+  try {
+    const tasksDir = join(repo, ".gsd", "milestones", "M001", "slices", "S01", "tasks");
+    mkdirSync(tasksDir, { recursive: true });
+    // T01, T02, T03 all have summaries
+    writeFileSync(join(tasksDir, "T01-SUMMARY.md"), "---\nid: T01\n---\n# T01\n");
+    writeFileSync(join(tasksDir, "T02-SUMMARY.md"), "---\nid: T02\n---\n# T02\n");
+    writeFileSync(join(tasksDir, "T03-SUMMARY.md"), "---\nid: T03\n---\n# T03\n");
+
+    // T04 depends only on T01 and T03 — should NOT get T02
+    const paths = await getDependencyTaskSummaryPaths("M001", "S01", "T04", ["T01", "T03"], repo);
+    assert.equal(paths.length, 2, "Should get exactly 2 dependency summaries");
+    assert.ok(paths.some((p) => p.includes("T01-SUMMARY")), "Should include T01");
+    assert.ok(paths.some((p) => p.includes("T03-SUMMARY")), "Should include T03");
+    assert.ok(!paths.some((p) => p.includes("T02-SUMMARY")), "Should NOT include T02");
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test("getDependencyTaskSummaryPaths falls back to order-based for root tasks", async () => {
+  const { getDependencyTaskSummaryPaths } = await import("../auto-prompts.ts");
+  const repo = mkdtempSync(join(tmpdir(), "gsd-reactive-depcarry-root-"));
+  try {
+    const tasksDir = join(repo, ".gsd", "milestones", "M001", "slices", "S01", "tasks");
+    mkdirSync(tasksDir, { recursive: true });
+    writeFileSync(join(tasksDir, "T01-SUMMARY.md"), "---\nid: T01\n---\n# T01\n");
+
+    // T02 has no dependencies (root task) — should fall back to order-based
+    const paths = await getDependencyTaskSummaryPaths("M001", "S01", "T02", [], repo);
+    assert.equal(paths.length, 1, "Root task should get order-based prior summaries");
+    assert.ok(paths[0].includes("T01-SUMMARY"), "Should include T01 via order fallback");
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test("getDependencyTaskSummaryPaths handles missing dependency summaries gracefully", async () => {
+  const { getDependencyTaskSummaryPaths } = await import("../auto-prompts.ts");
+  const repo = mkdtempSync(join(tmpdir(), "gsd-reactive-depcarry-missing-"));
+  try {
+    const tasksDir = join(repo, ".gsd", "milestones", "M001", "slices", "S01", "tasks");
+    mkdirSync(tasksDir, { recursive: true });
+    // Only T01 has a summary, T02 does not
+    writeFileSync(join(tasksDir, "T01-SUMMARY.md"), "---\nid: T01\n---\n# T01\n");
+
+    // T03 depends on T01 and T02, but T02 summary doesn't exist
+    const paths = await getDependencyTaskSummaryPaths("M001", "S01", "T03", ["T01", "T02"], repo);
+    assert.equal(paths.length, 1, "Should only return existing dependency summaries");
+    assert.ok(paths[0].includes("T01-SUMMARY"), "Should include T01 (exists)");
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
