@@ -429,10 +429,16 @@ export async function bootstrapAutoSession(
     s.originalBasePath = base;
 
     const isUnderGsdWorktrees = (p: string): boolean => {
+      // Direct layout: /.gsd/worktrees/
       const marker = `${pathSep}.gsd${pathSep}worktrees${pathSep}`;
       if (p.includes(marker)) return true;
       const worktreesSuffix = `${pathSep}.gsd${pathSep}worktrees`;
-      return p.endsWith(worktreesSuffix);
+      if (p.endsWith(worktreesSuffix)) return true;
+      // Symlink-resolved layout: /.gsd/projects/<hash>/worktrees/
+      const symlinkRe = new RegExp(
+        `\\${pathSep}\\.gsd\\${pathSep}projects\\${pathSep}[a-f0-9]+\\${pathSep}worktrees(?:\\${pathSep}|$)`,
+      );
+      return symlinkRe.test(p);
     };
 
     if (

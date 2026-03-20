@@ -787,7 +787,7 @@ export async function autoLoop(
           (m: { status: string }) =>
             m.status !== "complete" && m.status !== "parked",
         );
-        if (incomplete.length === 0) {
+        if (incomplete.length === 0 && state.registry.length > 0) {
           // All milestones complete — merge milestone branch before stopping
           if (s.currentMilestoneId) {
             deps.resolver.mergeAndExit(s.currentMilestoneId, ctx.ui);
@@ -804,6 +804,18 @@ export async function autoLoop(
             "success",
           );
           await deps.stopAuto(ctx, pi, "All milestones complete");
+        } else if (incomplete.length === 0 && state.registry.length === 0) {
+          // Empty registry — no milestones visible, likely a path resolution bug
+          const diag = `basePath=${s.basePath}, phase=${state.phase}`;
+          ctx.ui.notify(
+            `No milestones visible in current scope. Possible path resolution issue.\n   Diagnostic: ${diag}`,
+            "error",
+          );
+          await deps.stopAuto(
+            ctx,
+            pi,
+            `No milestones found — check basePath resolution`,
+          );
         } else if (state.phase === "blocked") {
           const blockerMsg = `Blocked: ${state.blockers.join(", ")}`;
           await deps.stopAuto(ctx, pi, blockerMsg);

@@ -59,8 +59,17 @@ const VALID_CLASSIFICATIONS: readonly string[] = [
  */
 export function resolveCapturesPath(basePath: string): string {
   const resolved = resolve(basePath);
+  // Direct layout: /.gsd/worktrees/
   const worktreeMarker = `${sep}.gsd${sep}worktrees${sep}`;
-  const idx = resolved.indexOf(worktreeMarker);
+  let idx = resolved.indexOf(worktreeMarker);
+  if (idx === -1) {
+    // Symlink-resolved layout: /.gsd/projects/<hash>/worktrees/
+    const symlinkRe = new RegExp(
+      `\\${sep}\\.gsd\\${sep}projects\\${sep}[a-f0-9]+\\${sep}worktrees\\${sep}`,
+    );
+    const match = resolved.match(symlinkRe);
+    if (match && match.index !== undefined) idx = match.index;
+  }
   if (idx !== -1) {
     // basePath is inside a worktree — resolve to project root
     const projectRoot = resolved.slice(0, idx);

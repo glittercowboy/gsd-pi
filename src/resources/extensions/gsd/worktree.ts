@@ -68,39 +68,59 @@ export function captureIntegrationBranch(basePath: string, milestoneId: string, 
 // ─── Pure Utility Functions (unchanged) ────────────────────────────────────
 
 /**
+ * Find the worktrees segment in a path, supporting both direct
+ * (`/.gsd/worktrees/`) and symlink-resolved (`/.gsd/projects/<hash>/worktrees/`)
+ * layouts.  When `.gsd` is a symlink to `~/.gsd/projects/<hash>`, resolved
+ * paths contain the intermediate `projects/<hash>/` segment that the old
+ * single-marker check missed.
+ */
+function findWorktreeSegment(normalizedPath: string): { gsdIdx: number; afterWorktrees: number } | null {
+  // Direct layout: /.gsd/worktrees/<name>
+  const directMarker = "/.gsd/worktrees/";
+  const idx = normalizedPath.indexOf(directMarker);
+  if (idx !== -1) {
+    return { gsdIdx: idx, afterWorktrees: idx + directMarker.length };
+  }
+  // Symlink-resolved layout: /.gsd/projects/<hash>/worktrees/<name>
+  const symlinkRe = /\/\.gsd\/projects\/[a-f0-9]+\/worktrees\//;
+  const match = normalizedPath.match(symlinkRe);
+  if (match && match.index !== undefined) {
+    return { gsdIdx: match.index, afterWorktrees: match.index + match[0].length };
+  }
+  return null;
+}
+
+/**
  * Detect the active worktree name from the current working directory.
  * Returns null if not inside a GSD worktree (.gsd/worktrees/<name>/).
  */
 export function detectWorktreeName(basePath: string): string | null {
   const normalizedPath = basePath.replaceAll("\\", "/");
-  const marker = "/.gsd/worktrees/";
-  const idx = normalizedPath.indexOf(marker);
-  if (idx === -1) return null;
-  const afterMarker = normalizedPath.slice(idx + marker.length);
+  const seg = findWorktreeSegment(normalizedPath);
+  if (!seg) return null;
+  const afterMarker = normalizedPath.slice(seg.afterWorktrees);
   const name = afterMarker.split("/")[0];
   return name || null;
 }
 
 /**
  * Resolve the project root from a path that may be inside a worktree.
- * If the path contains `/.gsd/worktrees/<name>/`, returns the portion
- * before `/.gsd/`. Otherwise returns the input unchanged.
+ * If the path contains a worktrees segment, returns the portion before
+ * `/.gsd/`. Otherwise returns the input unchanged.
  *
  * Use this in commands that call `process.cwd()` to ensure they always
  * operate against the real project root, not a worktree subdirectory.
  */
 export function resolveProjectRoot(basePath: string): string {
   const normalizedPath = basePath.replaceAll("\\", "/");
-  const marker = "/.gsd/worktrees/";
-  const idx = normalizedPath.indexOf(marker);
-  if (idx === -1) return basePath;
-  // Return the original path up to the .gsd/ marker (un-normalized)
-  // Account for potential OS-specific separators
+  const seg = findWorktreeSegment(normalizedPath);
+  if (!seg) return basePath;
+  // Return the original path up to the /.gsd/ boundary
   const sep = basePath.includes("\\") ? "\\" : "/";
-  const markerOs = `${sep}.gsd${sep}worktrees${sep}`;
-  const idxOs = basePath.indexOf(markerOs);
-  if (idxOs !== -1) return basePath.slice(0, idxOs);
-  return basePath.slice(0, idx);
+  const gsdMarker = `${sep}.gsd${sep}`;
+  const gsdIdx = basePath.indexOf(gsdMarker);
+  if (gsdIdx !== -1) return basePath.slice(0, gsdIdx);
+  return basePath.slice(0, seg.gsdIdx);
 }
 
 /**

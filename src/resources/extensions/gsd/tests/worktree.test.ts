@@ -11,6 +11,7 @@ import {
   getMainBranch,
   getSliceBranchName,
   parseSliceBranch,
+  resolveProjectRoot,
   setActiveMilestoneId,
   SLICE_BRANCH_RE,
 } from "../worktree.ts";
@@ -164,6 +165,52 @@ async function main(): Promise<void> {
 
     rmSync(repo, { recursive: true, force: true });
   }
+
+  // ── detectWorktreeName: symlink-resolved paths ───────────────────────────
+  console.log("\n=== detectWorktreeName (symlink-resolved paths) ===");
+  assertEq(
+    detectWorktreeName("/Users/fran/.gsd/projects/89e1c9ad49bf/worktrees/M001"),
+    "M001",
+    "detects milestone in symlink-resolved path",
+  );
+  assertEq(
+    detectWorktreeName("/Users/fran/.gsd/projects/abc123/worktrees/M002/subdir"),
+    "M002",
+    "detects milestone with trailing subdir in symlink-resolved path",
+  );
+  assertEq(
+    detectWorktreeName("/Users/fran/.gsd/projects/abc123"),
+    null,
+    "returns null for project root without worktrees segment",
+  );
+  assertEq(
+    detectWorktreeName("/foo/.gsd/worktrees/M001"),
+    "M001",
+    "still detects direct layout path",
+  );
+
+  // ── resolveProjectRoot: symlink-resolved paths ──────────────────────────
+  console.log("\n=== resolveProjectRoot (symlink-resolved paths) ===");
+  assertEq(
+    resolveProjectRoot("/Users/fran/.gsd/projects/89e1c9ad49bf/worktrees/M001"),
+    "/Users/fran",
+    "resolves to user home for symlink-resolved path",
+  );
+  assertEq(
+    resolveProjectRoot("/foo/.gsd/worktrees/M001"),
+    "/foo",
+    "still resolves direct layout path",
+  );
+  assertEq(
+    resolveProjectRoot("/some/repo"),
+    "/some/repo",
+    "returns unchanged for non-worktree path",
+  );
+  assertEq(
+    resolveProjectRoot("/data/.gsd/projects/deadbeef/worktrees/M003/nested"),
+    "/data",
+    "resolves correctly with nested subdirs after worktree name",
+  );
 
   rmSync(base, { recursive: true, force: true });
   report();
