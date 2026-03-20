@@ -160,8 +160,8 @@ function render(w: number, healthState: { icon: string; color: string; summary: 
     const barWidth = Math.max(6, Math.min(18, Math.floor(leftColWidth * 0.4)));
     const pct = slicesDone / slicesTotal;
     const filled = Math.round(pct * barWidth);
-    const bar = theme.fg("success", "█".repeat(filled))
-      + theme.fg("dim", "░".repeat(barWidth - filled));
+    const bar = theme.fg("success", "#".repeat(filled))
+      + theme.fg("dim", "-".repeat(barWidth - filled));
     const meta = `${theme.fg("text", `${slicesDone}`)}${theme.fg("dim", `/${slicesTotal} slices`)}`
       + `${theme.fg("dim", " · task ")}${theme.fg("accent", `${taskNum}`)}${theme.fg("dim", `/${taskTotal}`)}`;
     leftLines.push(`${pad}${bar} ${meta}`);

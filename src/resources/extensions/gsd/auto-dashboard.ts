@@ -446,8 +446,8 @@ export function updateProgressWidget(
           const barWidth = Math.max(6, Math.min(18, Math.floor(leftColWidth * 0.4)));
           const pct = total > 0 ? done / total : 0;
           const filled = Math.round(pct * barWidth);
-          const bar = theme.fg("success", "█".repeat(filled))
-            + theme.fg("dim", "░".repeat(barWidth - filled));
+          const bar = theme.fg("success", "#".repeat(filled))
+            + theme.fg("dim", "-".repeat(barWidth - filled));
 
           let meta = `${theme.fg("text", `${done}`)}${theme.fg("dim", `/${total} slices`)}`;
           if (activeSliceTasks && activeSliceTasks.total > 0) {
