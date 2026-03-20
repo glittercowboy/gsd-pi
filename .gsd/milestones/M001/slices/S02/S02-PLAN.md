@@ -29,6 +29,13 @@
 - `rg --files-without-match "dev-workflow-engine|dev-execution-policy|engine-resolver" src/resources/extensions/gsd/workflow-templates/` — workflow-templates directory has no references to new engine files (R017 coexistence)
 - `grep -c "from './" src/resources/extensions/gsd/engine-types.ts` returns 0 — leaf-node constraint preserved
 
+## Observability / Diagnostics
+
+- **Runtime signals:** `DevWorkflowEngine.engineId` is always `"dev"` — verifiable via `resolveEngine({ activeEngineId: null }).engine.engineId`. The `bridgeDispatchAction` function is exported for direct testing of the DispatchAction → EngineDispatchAction conversion.
+- **Inspection surfaces:** Contract test (`dev-engine-contract.test.ts`) exercises all interface shapes, bridge logic, resolver routing, and policy stub return values. Run `node --import ./src/resources/extensions/gsd/tests/resolve-ts.mjs --experimental-strip-types --test src/resources/extensions/gsd/tests/dev-engine-contract.test.ts` for isolated validation.
+- **Failure visibility:** `resolveEngine()` throws with `"Unknown engine: ${id}"` for unrecognized engine IDs — this is the primary failure signal for misconfigured sessions. `resolveDispatch` returns `{ action: "stop", reason: "No active milestone", level: "info" }` when `GSDState.activeMilestone` is null, surfacing the missing-milestone state clearly.
+- **Redaction constraints:** No secrets or user data flow through engine types. `EngineState.raw` carries `GSDState` which contains only structural project metadata (milestone IDs, phase names, task titles).
+
 ## Integration Closure
 
 - Upstream surfaces consumed: `workflow-engine.ts` (WorkflowEngine interface), `execution-policy.ts` (ExecutionPolicy interface), `engine-types.ts` (EngineState, EngineDispatchAction, StepContract, CompletedStep, ReconcileResult, DisplayMetadata, RecoveryAction, CloseoutResult), `loop-deps-groups.ts` (sub-interfaces), `auto/session.ts` (AutoSession.activeEngineId)
@@ -37,7 +44,7 @@
 
 ## Tasks
 
-- [ ] **T01: Create DevWorkflowEngine, DevExecutionPolicy, and engine resolver with contract tests** `est:45m`
+- [x] **T01: Create DevWorkflowEngine, DevExecutionPolicy, and engine resolver with contract tests** `est:45m`
   - Why: Establishes the three new files that implement S01's interfaces by delegating to existing GSD functions. All additive — no existing files modified except the new test. This is the safe creation phase before T02's wiring.
   - Files: `src/resources/extensions/gsd/dev-workflow-engine.ts`, `src/resources/extensions/gsd/dev-execution-policy.ts`, `src/resources/extensions/gsd/engine-resolver.ts`, `src/resources/extensions/gsd/tests/dev-engine-contract.test.ts`
   - Do: (1) Verify S01 interface signatures still match existing function signatures — quick grep comparison. (2) Create `DevWorkflowEngine` implementing `WorkflowEngine`: `deriveState()` calls `state.ts:deriveState()` and maps `GSDState` → `EngineState`, `resolveDispatch()` reconstructs `DispatchContext` from `EngineState.raw` and bridges `DispatchAction` → `EngineDispatchAction`, `reconcile()` returns simple pass-through, `getDisplayMetadata()` builds from `GSDState`. (3) Create `DevExecutionPolicy` implementing `ExecutionPolicy`: each method delegates to the corresponding existing function. (4) Create `engine-resolver.ts` with `resolveEngine(session)` that returns `DevWorkflowEngine` for null/"dev" `activeEngineId`. (5) Create contract test validating interface satisfaction, bridge correctness, and resolver logic. (6) Typecheck passes.

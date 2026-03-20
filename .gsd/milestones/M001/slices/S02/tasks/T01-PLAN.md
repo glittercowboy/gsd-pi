@@ -71,6 +71,12 @@ Key design constraints:
 - [ ] Typecheck passes with 0 errors
 - [ ] `engine-types.ts` leaf-node constraint preserved (0 local imports)
 
+## Observability Impact
+
+- **New signals:** `bridgeDispatchAction` is exported from `dev-workflow-engine.ts` as a pure function, enabling direct bridge-correctness testing without mocking the dispatch pipeline. `DevWorkflowEngine.engineId` provides a runtime-inspectable engine identifier.
+- **Inspection:** Contract test covers 18 assertions across shape satisfaction, bridge logic, resolver routing, reconcile pass-through, and display metadata construction. A future agent can run the contract test in isolation to verify engine/policy integrity.
+- **Failure visibility:** `resolveEngine()` throws `"Unknown engine: ${id}"` for unrecognized IDs — the error message includes the offending ID for debugging. `resolveDispatch` gracefully handles null `activeMilestone` with a structured stop action rather than a crash.
+
 ## Verification
 
 - `npx tsc --noEmit --project tsconfig.extensions.json` — 0 errors
