@@ -577,6 +577,17 @@ if (enabledModelPatterns && enabledModelPatterns.length > 0) {
   }
 }
 
+// Welcome screen — shown on every fresh interactive session before TUI takes over
+{
+  const { printWelcomeScreen } = await import('./welcome-screen.js')
+  printWelcomeScreen({
+    version: process.env.GSD_VERSION || '0.0.0',
+    modelName: settingsManager.getDefaultModel() || undefined,
+    provider: settingsManager.getDefaultProvider() || undefined,
+    sessionsDir,
+  })
+}
+
 const interactiveMode = new InteractiveMode(session)
 markStartup('InteractiveMode')
 printStartupTimings()
