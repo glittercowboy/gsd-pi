@@ -153,6 +153,25 @@ async function main(): Promise<void> {
     // After teardown, originalBase should be null
     assertEq(getAutoWorktreeOriginalBase(), null, "no split-brain: originalBase cleared");
 
+    // ─── #1526: getMainBranch returns milestone branch in auto-worktree ──
+    console.log("\n=== #1526: getMainBranch() returns milestone/<MID> in auto-worktree ===");
+    {
+      const { GitServiceImpl } = await import("../git-service.ts");
+
+      // Create worktree
+      const wtPath = createAutoWorktree(tempDir, "M005");
+      // Don't set main_branch pref so getMainBranch falls through to worktree detection
+      const gitService = new GitServiceImpl(wtPath);
+      gitService.setMilestoneId("M005");
+
+      // Verify getMainBranch returns the milestone branch
+      const mainBranch = gitService.getMainBranch();
+      assertEq(mainBranch, "milestone/M005", "getMainBranch returns milestone/<MID> in auto-worktree");
+
+      // Cleanup
+      teardownAutoWorktree(tempDir, "M005");
+    }
+
     // ─── #778: reconcile plan checkboxes on re-attach ─────────────────
     console.log("\n=== #778: reconcile plan checkboxes on re-attach ===");
     {

@@ -479,9 +479,20 @@ export class GitServiceImpl {
 
     const wtName = detectWorktreeName(this.basePath);
     if (wtName) {
+      // Auto-mode worktrees use milestone/<MID> branches (wtName = milestone ID)
+      const milestoneBranch = `milestone/${wtName}`;
+      const currentBranch = nativeGetCurrentBranch(this.basePath);
+
+      // If we're on a milestone/<MID> branch, use it (auto-mode case)
+      if (currentBranch.startsWith("milestone/")) {
+        return currentBranch;
+      }
+
+      // Otherwise check for manual worktree branch (worktree/<name>)
       const wtBranch = `worktree/${wtName}`;
       if (nativeBranchExists(this.basePath, wtBranch)) return wtBranch;
-      return nativeGetCurrentBranch(this.basePath);
+
+      return currentBranch;
     }
 
     // Repo-level default detection: origin/HEAD → main → master → current branch.
