@@ -70,7 +70,7 @@ async function writeEnvKey(filePath: string, key: string, value: string): Promis
 // Re-export from env-utils.ts so existing consumers still work.
 // The implementation lives in env-utils.ts to avoid pulling @gsd/pi-tui
 // into modules that only need env-checking (e.g. files.ts during reports).
-import { checkExistingEnvKeys } from "./env-utils.js";
+import { checkExistingEnvKeys } from "./gsd/env-utils.js";
 export { checkExistingEnvKeys };
 
 /**
