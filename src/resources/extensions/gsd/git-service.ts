@@ -24,7 +24,7 @@ import {
   nativeDetectMainBranch,
   nativeBranchExists,
   nativeHasChanges,
-  nativeAddAll,
+  nativeAddAllWithExclusions,
   nativeResetPaths,
   nativeHasStagedChanges,
   nativeCommit,
@@ -385,7 +385,9 @@ export class GitServiceImpl {
       this._runtimeFilesCleanedUp = true;
     }
 
-    // Stage everything, then unstage excluded paths.
+    // Stage everything using pathspec exclusions so excluded paths are never
+    // hashed by git. The old approach of `git add -A` followed by unstaging
+    // hangs indefinitely on repos with large untracked artifact trees (#1605).
     //
     // Exclude only RUNTIME paths from staging — not the entire .gsd/ directory.
     // When .gsd/milestones/ files are already tracked in the index (projects
@@ -395,13 +397,9 @@ export class GitServiceImpl {
     // the second half of a milestone's artifacts are never committed (#1326).
     //
     // If .gsd/ IS in .gitignore (the default for external state projects),
-    // git add -A already skips it and the reset is a harmless no-op.
-    nativeAddAll(this.basePath);
-
-    const runtimeExclusions = [...RUNTIME_EXCLUSION_PATHS, ...extraExclusions];
-    for (const exclusion of runtimeExclusions) {
-      try { nativeResetPaths(this.basePath, [exclusion]); } catch { /* path not staged — ignore */ }
-    }
+    // git add -A already skips it and the exclusions are harmless no-ops.
+    const allExclusions = [...RUNTIME_EXCLUSION_PATHS, ...extraExclusions];
+    nativeAddAllWithExclusions(this.basePath, allExclusions);
   }
 
   /** Tracks whether runtime file cleanup has run this session. */

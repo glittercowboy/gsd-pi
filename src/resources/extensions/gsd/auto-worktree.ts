@@ -37,13 +37,13 @@ import {
   resolveGitHeadPath,
   nudgeGitBranchCache,
 } from "./worktree.js";
-import { MergeConflictError, readIntegrationBranch } from "./git-service.js";
+import { MergeConflictError, readIntegrationBranch, RUNTIME_EXCLUSION_PATHS } from "./git-service.js";
 import { parseRoadmap } from "./files.js";
 import { loadEffectiveGSDPreferences } from "./preferences.js";
 import {
   nativeGetCurrentBranch,
   nativeWorkingTreeStatus,
-  nativeAddAll,
+  nativeAddAllWithExclusions,
   nativeCommit,
   nativeCheckoutBranch,
   nativeMergeSquash,
@@ -768,7 +768,7 @@ function autoCommitDirtyState(cwd: string): boolean {
   try {
     const status = nativeWorkingTreeStatus(cwd);
     if (!status) return false;
-    nativeAddAll(cwd);
+    nativeAddAllWithExclusions(cwd, RUNTIME_EXCLUSION_PATHS);
     const result = nativeCommit(
       cwd,
       "chore: auto-commit before milestone merge",
