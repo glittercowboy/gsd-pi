@@ -43,9 +43,21 @@ export function printWelcomeScreen(opts: WelcomeScreenOptions): void {
     lines.push(chalk.cyan(GSD_LOGO[i]) + (INFO[i] ?? ''))
   }
 
-  // Hint line — dim, aligned under the info text
-  const logoWidth = 28  // visible width of logo block
-  lines.push(chalk.dim(' '.repeat(logoWidth) + '  /gsd to begin  ·  /gsd help for all commands'))
+  // Tool status + hint — dim, aligned under the info text
+  const pad = ' '.repeat(28) + '  '  // aligns with the info text column
+
+  const toolParts: string[] = []
+  if (process.env.BRAVE_API_KEY)    toolParts.push('Brave ✓')
+  if (process.env.BRAVE_ANSWERS_KEY) toolParts.push('Answers ✓')
+  if (process.env.JINA_API_KEY)     toolParts.push('Jina ✓')
+  if (process.env.TAVILY_API_KEY)   toolParts.push('Tavily ✓')
+  if (process.env.CONTEXT7_API_KEY) toolParts.push('Context7 ✓')
+
+  if (toolParts.length > 0) {
+    lines.push(chalk.dim(pad + ['Web search loaded', ...toolParts].join('  ·  ')))
+  }
+
+  lines.push(chalk.dim(pad + '/gsd to begin  ·  /gsd help for all commands'))
   lines.push('')
 
   process.stderr.write(lines.join('\n') + '\n')
