@@ -143,12 +143,15 @@ function render(w: number, healthState: { icon: string; color: string; summary: 
   const actionLeft = `${pad}${theme.fg("accent", "▸")} ${theme.fg("accent", verb)}  ${theme.fg("text", target)}`;
   const phaseBadge = theme.fg("dim", phaseLabel);
   lines.push(rightAlign(actionLeft, phaseBadge, w));
+  lines.push("");
 
   // Two-column body — pad left to fixed width, concatenate right
   const minTwoColWidth = 76;
   const hasTasks = !noMilestone;
   const useTwoCol = w >= minTwoColWidth && hasTasks;
-  const leftColWidth = useTwoCol ? Math.floor(w * 0.5) : w;
+  const leftColWidth = useTwoCol
+    ? Math.floor(w * (w >= 100 ? 0.45 : 0.50))
+    : w;
 
   // Left column
   const leftLines: string[] = [];

@@ -80,6 +80,7 @@ export function registerGSDCommand(pi: ExtensionAPI): void {
         { cmd: "stop", desc: "Stop auto mode gracefully" },
         { cmd: "pause", desc: "Pause auto-mode (preserves state, /gsd auto to resume)" },
         { cmd: "status", desc: "Progress dashboard" },
+        { cmd: "compact", desc: "Toggle compact/expanded dashboard" },
         { cmd: "visualize", desc: "Open 10-tab workflow visualizer (progress, timeline, deps, metrics, health, agent, changes, knowledge, captures, export)" },
         { cmd: "queue", desc: "Queue and reorder future milestones" },
         { cmd: "quick", desc: "Execute a quick task without full planning overhead" },
@@ -436,6 +437,13 @@ export async function handleGSDCommand(
 
   if (trimmed === "status") {
     await handleStatus(ctx);
+    return;
+  }
+
+  if (trimmed === "compact") {
+    const { toggleCompactWidget } = await import("./auto-dashboard.js");
+    const isCompact = toggleCompactWidget();
+    ctx.ui.notify(`Dashboard ${isCompact ? "compact" : "expanded"} mode.`, "info");
     return;
   }
 

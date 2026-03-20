@@ -282,6 +282,22 @@ export const hideFooter = () => ({
   dispose() {},
 });
 
+// ─── Compact Mode ─────────────────────────────────────────────────────────────
+
+/** When true, the progress widget renders a minimal 2-line summary. */
+let compactWidget = false;
+
+/** Toggle compact/expanded widget mode. */
+export function toggleCompactWidget(): boolean {
+  compactWidget = !compactWidget;
+  return compactWidget;
+}
+
+/** Get current compact mode state. */
+export function isCompactWidget(): boolean {
+  return compactWidget;
+}
+
 // ─── Progress Widget ──────────────────────────────────────────────────────────
 
 /** State accessors passed to updateProgressWidget to avoid direct global access */
@@ -365,6 +381,27 @@ export function updateProgressWidget(
         const headerRight = elapsed ? theme.fg("dim", elapsed) : "";
         lines.push(rightAlign(headerLeft, headerRight, width));
 
+        // ── Compact mode: 2-line summary ────────────────────────────────
+        if (compactWidget) {
+          const target = task ? `${task.id}: ${task.title}` : unitId;
+          const compactLeft = `${pad}${theme.fg("accent", verb)}  ${theme.fg("text", target)}`;
+          const roadmapSlices = mid ? getRoadmapSlicesSync() : null;
+          let compactRight = "";
+          if (roadmapSlices) {
+            const { done, total, activeSliceTasks } = roadmapSlices;
+            compactRight = theme.fg("dim", `${done}/${total} slices`);
+            if (activeSliceTasks) {
+              const tn = Math.min(activeSliceTasks.done + 1, activeSliceTasks.total);
+              compactRight += theme.fg("dim", ` · task ${tn}/${activeSliceTasks.total}`);
+            }
+          }
+          lines.push(rightAlign(compactLeft, compactRight, width));
+          lines.push(...ui.bar());
+          cachedLines = lines;
+          cachedWidth = width;
+          return lines;
+        }
+
         lines.push("");
 
         // Context section: milestone + slice (only when present)
@@ -386,6 +423,8 @@ export function updateProgressWidget(
         const phaseBadge = `${tierTag}${theme.fg("dim", phaseLabel)}`;
         lines.push(rightAlign(actionLeft, phaseBadge, width));
 
+        lines.push("");
+
         // ── Two-column body ─────────────────────────────────────────────
         // Left: progress, health, next   Right: task checklist
         // Approach: pad each left line to a fixed visible width, then
@@ -394,7 +433,10 @@ export function updateProgressWidget(
         const roadmapSlices = mid ? getRoadmapSlicesSync() : null;
         const taskDetailsCol = roadmapSlices?.taskDetails ?? null;
         const useTwoCol = width >= minTwoColWidth && taskDetailsCol !== null && taskDetailsCol.length > 0;
-        const leftColWidth = useTwoCol ? Math.floor(width * 0.5) : width;
+        // Left column: 45% at wide terminals, 50% at narrow
+        const leftColWidth = useTwoCol
+          ? Math.floor(width * (width >= 100 ? 0.45 : 0.50))
+          : width;
 
         // Build left column: progress bar, health, next step
         const leftLines: string[] = [];
