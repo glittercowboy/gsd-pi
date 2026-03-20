@@ -60,17 +60,17 @@ test("buildSkillActivationBlock matches installed skills from task context", () 
   }
 });
 
-test("buildSkillActivationBlock includes always_use_skills from preferences", () => {
+test("buildSkillActivationBlock includes always_use_skills from preferences using exact Skill tool format", () => {
   const base = makeTempBase();
   try {
-    writeSkill(base, "testing", "Use for test setup, assertions, and verification patterns.");
+    writeSkill(base, "swift-testing", "Use for Swift Testing assertions and verification patterns.");
     loadOnlyTestSkills(base);
 
     const result = buildBlock(base, { taskTitle: "Unrelated task title" }, {
-      always_use_skills: ["testing"],
+      always_use_skills: ["swift-testing"],
     });
 
-    assert.match(result, /Call Skill\('testing'\)/);
+    assert.equal(result, "<skill_activation>Call Skill('swift-testing').</skill_activation>");
   } finally {
     cleanup(base);
   }
