@@ -21,7 +21,6 @@ pub fn run() {
                 .build()
         )
         .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_deep_link::init())
@@ -64,9 +63,15 @@ pub fn run() {
                 #[cfg(not(dev))]
                 {
                     let app = window.app_handle().clone();
-                    tauri::async_runtime::spawn(async move {
-                        bun_manager::kill_bun_server(app).await;
-                    });
+                    // M12: Only kill Bun when no windows remain (multi-window support).
+                    // Use <= 1 because the destroyed window may still be in the map
+                    // at the time the Destroyed event fires.
+                    let remaining = app.webview_windows().len();
+                    if remaining <= 1 {
+                        tauri::async_runtime::spawn(async move {
+                            bun_manager::kill_bun_server(app).await;
+                        });
+                    }
                 }
             }
         })
