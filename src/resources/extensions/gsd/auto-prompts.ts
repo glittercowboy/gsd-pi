@@ -759,8 +759,8 @@ export async function checkNeedsRunUat(
     if (hasResult) return null;
   }
 
-  // Classify UAT type; unknown type → treat as human-experience (human review)
-  const uatType = extractUatType(uatContent) ?? "human-experience";
+  // Classify UAT type; default to artifact-driven (LLM-executed UATs are always artifact-driven)
+  const uatType = extractUatType(uatContent) ?? "artifact-driven";
 
   return { sliceId: sid, uatType };
 }
@@ -1403,7 +1403,7 @@ export async function buildRunUatPrompt(
   const inlinedContext = capPreamble(`## Inlined Context (preloaded — do not re-read these files)\n\n${inlined.join("\n\n---\n\n")}`);
 
   const uatResultPath = join(base, relSliceFile(base, mid, sliceId, "UAT-RESULT"));
-  const uatType = extractUatType(uatContent) ?? "human-experience";
+  const uatType = extractUatType(uatContent) ?? "artifact-driven";
 
   return loadPrompt("run-uat", {
     workingDirectory: base,
