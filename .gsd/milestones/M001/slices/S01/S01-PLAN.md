@@ -38,7 +38,7 @@
 
 ## Tasks
 
-- [ ] **T01: Define engine types, WorkflowEngine interface, and ExecutionPolicy interface** `est:45m`
+- [x] **T01: Define engine types, WorkflowEngine interface, and ExecutionPolicy interface** `est:45m`
   - Why: These are the core abstractions (R001, R002) that enable pluggable workflows. They must exist before sub-interfaces or implementations can reference them. Pure type work with no imports from existing GSD modules (engine-types.ts is a leaf node).
   - Files: `src/resources/extensions/gsd/engine-types.ts`, `src/resources/extensions/gsd/workflow-engine.ts`, `src/resources/extensions/gsd/execution-policy.ts`
   - Do: Create `engine-types.ts` as a leaf file (no imports from existing GSD modules) with `EngineState`, `StepContract`, `DisplayMetadata`, `EngineDispatchAction`, `ReconcileResult`, `RecoveryAction`, `CloseoutResult`. Create `workflow-engine.ts` importing only from `engine-types.ts` with 4 methods. Create `execution-policy.ts` importing only from `engine-types.ts` with 5 methods. Method signatures must be grounded in research: `deriveState` returns `EngineState`, `resolveDispatch` returns `EngineDispatchAction`, etc. The `EngineDispatchAction` type is separate from the existing `DispatchAction` in `auto-dispatch.ts` to avoid import cycles — it will be the engine-polymorphic version that S02 bridges. Constraint: engine-types.ts must NOT import from any existing GSD module (`types.ts`, `auto-dispatch.ts`, etc.) to prevent import cycles.
@@ -58,6 +58,14 @@
   - Do: Write a test file using Node.js built-in test runner that: (1) imports all four new files and asserts they export the expected interfaces/types, (2) verifies `EngineState` has the expected shape fields, (3) verifies `WorkflowEngine` and `ExecutionPolicy` method names exist as interface properties, (4) verifies `AutoSession` has `activeEngineId` field. Then run `npm run test:unit` and `npm run test:integration` to prove zero regressions. If any test fails, investigate and fix — the failure is a bug in T01/T02, not an expected outcome.
   - Verify: `npm test` (runs both unit and integration) passes with zero failures. The new contract test passes.
   - Done when: All tests pass including the new contract test. Zero regressions in existing test suite.
+
+## Observability / Diagnostics
+
+- **Typecheck signal:** `npx tsc --noEmit --project tsconfig.extensions.json` must report zero errors from new files. Any regression here means an import cycle or type incompatibility was introduced.
+- **Test signal:** `npm run test:unit` and `npm run test:integration` pass count must match pre-slice baseline (217+ tests). A test count decrease indicates an import broke an existing module.
+- **Contract test:** `engine-interfaces-contract.test.ts` validates importability and shape of all new interfaces. Failure indicates a broken export, missing type, or naming mismatch.
+- **Import cycle detection:** `grep -c "from './" engine-types.ts` returning >0 means the leaf-node constraint is violated, which will cause circular dependency issues in S02.
+- **Failure visibility:** All new types are pure interfaces with no runtime code. If `--experimental-strip-types` fails on these files, the error will appear in the test runner output (Node.js strip-types error). No runtime state or logs to inspect — compilation and test pass/fail are the only diagnostic signals.
 
 ## Files Likely Touched
 

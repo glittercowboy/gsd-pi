@@ -82,3 +82,9 @@ The method signatures are derived from analysis of the existing auto-mode functi
 - `src/resources/extensions/gsd/engine-types.ts` — 8 type/interface definitions, zero GSD imports
 - `src/resources/extensions/gsd/workflow-engine.ts` — `WorkflowEngine` interface with 4 methods + `engineId` property
 - `src/resources/extensions/gsd/execution-policy.ts` — `ExecutionPolicy` interface with 5 methods
+
+## Observability Impact
+
+- **No runtime signals change.** These are pure type files erased at runtime by `--experimental-strip-types`. No logs, metrics, or state transitions are affected.
+- **Future agent inspection:** To verify these interfaces are correct, run `npx tsc --noEmit --project tsconfig.extensions.json`. To check the leaf-node constraint: `grep -c "from './" src/resources/extensions/gsd/engine-types.ts` must return 0.
+- **Failure visibility:** If a downstream task imports these types incorrectly, the typecheck will emit errors pointing to the exact line. No runtime failure is possible from pure type files.
