@@ -407,6 +407,63 @@ function checkGitRemote(basePath: string): EnvironmentCheckResult | null {
   return { name: "git_remote", status: "ok", message: "Git remote reachable" };
 }
 
+/**
+ * Check if the project build passes (opt-in slow check, use --build flag).
+ * Runs npm run build and reports failure as env_build.
+ */
+function checkBuildHealth(basePath: string): EnvironmentCheckResult | null {
+  const pkgPath = join(basePath, "package.json");
+  if (!existsSync(pkgPath)) return null;
+
+  try {
+    const pkg = JSON.parse(readFileSync(pkgPath, "utf-8"));
+    const buildScript = pkg.scripts?.build;
+    if (!buildScript) return null;
+
+    const result = tryExec("npm run build 2>&1", basePath);
+    if (result === null) {
+      return {
+        name: "build",
+        status: "error",
+        message: "Build failed — npm run build exited non-zero",
+        detail: "Fix build errors before dispatching work",
+      };
+    }
+    return { name: "build", status: "ok", message: "Build passes" };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Check if tests pass (opt-in slow check, use --test flag).
+ * Runs npm test and reports failures as env_test.
+ */
+function checkTestHealth(basePath: string): EnvironmentCheckResult | null {
+  const pkgPath = join(basePath, "package.json");
+  if (!existsSync(pkgPath)) return null;
+
+  try {
+    const pkg = JSON.parse(readFileSync(pkgPath, "utf-8"));
+    const testScript = pkg.scripts?.test;
+    // Skip if no test script or the default placeholder
+    if (!testScript || testScript.includes("no test specified")) return null;
+
+    const result = tryExec("npm test 2>&1", basePath);
+    if (result === null) {
+      return {
+        name: "test",
+        status: "warning",
+        message: "Tests failing — npm test exited non-zero",
+        detail: "Fix failing tests before shipping",
+      };
+    }
+    return { name: "test", status: "ok", message: "Tests pass" };
+  } catch {
+    return null;
+  }
+}
+
 // ── Public API ─────────────────────────────────────────────────────────────
 
 /**
@@ -455,6 +512,26 @@ export function runFullEnvironmentChecks(basePath: string): EnvironmentCheckResu
 }
 
 /**
+ * Run slow opt-in checks (build and/or test).
+ * These are never run on the pre-dispatch gate — only on explicit /gsd doctor --build/--test.
+ */
+export function runSlowEnvironmentChecks(
+  basePath: string,
+  options?: { includeBuild?: boolean; includeTests?: boolean },
+): EnvironmentCheckResult[] {
+  const results: EnvironmentCheckResult[] = [];
+  if (options?.includeBuild) {
+    const buildCheck = checkBuildHealth(basePath);
+    if (buildCheck) results.push(buildCheck);
+  }
+  if (options?.includeTests) {
+    const testCheck = checkTestHealth(basePath);
+    if (testCheck) results.push(testCheck);
+  }
+  return results;
+}
+
+/**
  * Convert environment check results to DoctorIssue format for the doctor pipeline.
  */
 export function environmentResultsToDoctorIssues(results: EnvironmentCheckResult[]): DoctorIssue[] {
@@ -477,11 +554,15 @@ export function environmentResultsToDoctorIssues(results: EnvironmentCheckResult
 export async function checkEnvironmentHealth(
   basePath: string,
   issues: DoctorIssue[],
-  options?: { includeRemote?: boolean },
+  options?: { includeRemote?: boolean; includeBuild?: boolean; includeTests?: boolean },
 ): Promise<void> {
   const results = options?.includeRemote
     ? runFullEnvironmentChecks(basePath)
     : runEnvironmentChecks(basePath);
+
+  if (options?.includeBuild || options?.includeTests) {
+    results.push(...runSlowEnvironmentChecks(basePath, options));
+  }
 
   issues.push(...environmentResultsToDoctorIssues(results));
 }

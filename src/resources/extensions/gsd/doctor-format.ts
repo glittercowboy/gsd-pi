@@ -76,3 +76,23 @@ export function formatDoctorIssuesForPrompt(issues: DoctorIssue[]): string {
     return `- [${prefix}] ${issue.unitId} | ${issue.code} | ${issue.message}${issue.file ? ` | file: ${issue.file}` : ""} | fixable: ${issue.fixable ? "yes" : "no"}`;
   }).join("\n");
 }
+
+/**
+ * Serialize a doctor report to JSON — suitable for CI/tooling integration.
+ * Usage: /gsd doctor --json
+ */
+export function formatDoctorReportJson(report: DoctorReport): string {
+  return JSON.stringify(
+    {
+      ok: report.ok,
+      basePath: report.basePath,
+      generatedAt: new Date().toISOString(),
+      summary: summarizeDoctorIssues(report.issues),
+      issues: report.issues,
+      fixesApplied: report.fixesApplied,
+      ...(report.timing ? { timing: report.timing } : {}),
+    },
+    null,
+    2,
+  );
+}

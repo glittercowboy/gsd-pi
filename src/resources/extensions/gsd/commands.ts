@@ -513,6 +513,10 @@ export function registerGSDCommand(pi: ExtensionAPI): void {
           { cmd: "fix", desc: "Auto-fix detected issues" },
           { cmd: "heal", desc: "AI-driven deep healing" },
           { cmd: "audit", desc: "Run health audit without fixing" },
+          { cmd: "--dry-run", desc: "Show what --fix would change without applying" },
+          { cmd: "--json", desc: "Output report as JSON (CI/tooling friendly)" },
+          { cmd: "--build", desc: "Include slow build health check (npm run build)" },
+          { cmd: "--test", desc: "Include slow test health check (npm test)" },
         ];
 
         if (parts.length <= 2) {

@@ -1,14 +1,15 @@
-import { existsSync, mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, lstatSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { loadFile, parsePlan, parseRoadmap, parseSummary, saveFile, parseTaskPlanMustHaves, countMustHavesMentionedInSummary } from "./files.js";
-import { resolveMilestoneFile, resolveMilestonePath, resolveSliceFile, resolveSlicePath, resolveTaskFile, resolveTasksDir, milestonesDir, gsdRoot, relMilestoneFile, relSliceFile, relTaskFile, relSlicePath, relGsdRootFile, resolveGsdRootFile } from "./paths.js";
+import { resolveMilestoneFile, resolveMilestonePath, resolveSliceFile, resolveSlicePath, resolveTaskFile, resolveTasksDir, milestonesDir, gsdRoot, relMilestoneFile, relSliceFile, relTaskFile, relSlicePath, relGsdRootFile, resolveGsdRootFile, relMilestonePath } from "./paths.js";
 import { deriveState, isMilestoneComplete } from "./state.js";
 import { invalidateAllCaches } from "./cache.js";
 import { loadEffectiveGSDPreferences, type GSDPreferences } from "./preferences.js";
 
-import type { DoctorIssue, DoctorIssueCode } from "./doctor-types.js";
+import type { DoctorIssue, DoctorIssueCode, DoctorReport } from "./doctor-types.js";
 import { COMPLETION_TRANSITION_CODES } from "./doctor-types.js";
+import type { RoadmapSliceEntry } from "./types.js";
 import { checkGitHealth, checkRuntimeHealth } from "./doctor-checks.js";
 import { checkEnvironmentHealth } from "./doctor-environment.js";
 import { runProviderChecks } from "./doctor-providers.js";
@@ -17,7 +18,7 @@ import { runProviderChecks } from "./doctor-providers.js";
 // All public types and functions from extracted modules are re-exported here
 // so that existing imports from "./doctor.js" continue to work unchanged.
 export type { DoctorSeverity, DoctorIssueCode, DoctorIssue, DoctorReport, DoctorSummary } from "./doctor-types.js";
-export { summarizeDoctorIssues, filterDoctorIssues, formatDoctorReport, formatDoctorIssuesForPrompt } from "./doctor-format.js";
+export { summarizeDoctorIssues, filterDoctorIssues, formatDoctorReport, formatDoctorIssuesForPrompt, formatDoctorReportJson } from "./doctor-format.js";
 export { runEnvironmentChecks, runFullEnvironmentChecks, formatEnvironmentReport, type EnvironmentCheckResult } from "./doctor-environment.js";
 export { computeProgressScore, computeProgressScoreWithContext, formatProgressLine, formatProgressReport, type ProgressScore, type ProgressLevel } from "./progress-score.js";
 
@@ -350,10 +351,60 @@ export async function selectDoctorScope(basePath: string, requestedScope?: strin
   return state.registry[0]?.id;
 }
 
-export async function runGSDDoctor(basePath: string, options?: { fix?: boolean; scope?: string; fixLevel?: "task" | "all"; isolationMode?: "none" | "worktree" | "branch" }): Promise<import("./doctor-types.js").DoctorReport> {
+// ── Helper: circular dependency detection ──────────────────────────────────
+function detectCircularDependencies(slices: RoadmapSliceEntry[]): string[][] {
+  const known = new Set(slices.map(s => s.id));
+  const adj = new Map<string, string[]>();
+  for (const s of slices) adj.set(s.id, s.depends.filter(d => known.has(d)));
+  const state = new Map<string, "unvisited" | "visiting" | "done">();
+  for (const s of slices) state.set(s.id, "unvisited");
+  const cycles: string[][] = [];
+  function dfs(id: string, path: string[]): void {
+    const st = state.get(id);
+    if (st === "done") return;
+    if (st === "visiting") { cycles.push([...path.slice(path.indexOf(id)), id]); return; }
+    state.set(id, "visiting");
+    for (const dep of adj.get(id) ?? []) dfs(dep, [...path, id]);
+    state.set(id, "done");
+  }
+  for (const s of slices) if (state.get(s.id) === "unvisited") dfs(s.id, []);
+  return cycles;
+}
+
+// ── Helper: doctor run history ──────────────────────────────────────────────
+interface DoctorHistoryEntry { ts: string; ok: boolean; errors: number; warnings: number; fixes: number; codes: string[] }
+
+async function appendDoctorHistory(basePath: string, report: DoctorReport): Promise<void> {
+  try {
+    const historyPath = join(gsdRoot(basePath), "doctor-history.jsonl");
+    const entry = JSON.stringify({
+      ts: new Date().toISOString(),
+      ok: report.ok,
+      errors: report.issues.filter(i => i.severity === "error").length,
+      warnings: report.issues.filter(i => i.severity === "warning").length,
+      fixes: report.fixesApplied.length,
+      codes: [...new Set(report.issues.map(i => i.code))],
+    } satisfies DoctorHistoryEntry);
+    const existing = existsSync(historyPath) ? readFileSync(historyPath, "utf-8") : "";
+    await saveFile(historyPath, existing + entry + "\n");
+  } catch { /* non-fatal */ }
+}
+
+/** Read the last N doctor history entries. Returns most-recent-first. */
+export async function readDoctorHistory(basePath: string, lastN = 50): Promise<DoctorHistoryEntry[]> {
+  try {
+    const historyPath = join(gsdRoot(basePath), "doctor-history.jsonl");
+    if (!existsSync(historyPath)) return [];
+    const lines = readFileSync(historyPath, "utf-8").split("\n").filter(l => l.trim());
+    return lines.slice(-lastN).reverse().map(l => JSON.parse(l) as DoctorHistoryEntry);
+  } catch { return []; }
+}
+
+export async function runGSDDoctor(basePath: string, options?: { fix?: boolean; dryRun?: boolean; scope?: string; fixLevel?: "task" | "all"; isolationMode?: "none" | "worktree" | "branch"; includeBuild?: boolean; includeTests?: boolean }): Promise<DoctorReport> {
   const issues: DoctorIssue[] = [];
   const fixesApplied: string[] = [];
   const fix = options?.fix === true;
+  const dryRun = options?.dryRun === true;
   const fixLevel = options?.fixLevel ?? "all";
 
   // Issue codes that represent completion state transitions — creating summary
@@ -364,9 +415,16 @@ export async function runGSDDoctor(basePath: string, options?: { fix?: boolean; 
 
   /** Whether a given issue code should be auto-fixed at the current fixLevel. */
   const shouldFix = (code: DoctorIssueCode): boolean => {
-    if (!fix) return false;
+    if (!fix || dryRun) return false;
     if (fixLevel === "task" && COMPLETION_TRANSITION_CODES.has(code)) return false;
     return true;
+  };
+
+  /** Log a dry-run "would fix" entry when fix=true but dryRun=true. */
+  const dryRunCanFix = (code: DoctorIssueCode, message: string): void => {
+    if (dryRun && fix && !(fixLevel === "task" && COMPLETION_TRANSITION_CODES.has(code))) {
+      fixesApplied.push(`[dry-run] would fix: ${message}`);
+    }
   };
 
   const prefs = loadEffectiveGSDPreferences();
@@ -385,21 +443,33 @@ export async function runGSDDoctor(basePath: string, options?: { fix?: boolean; 
     }
   }
 
-  // Git health checks (orphaned worktrees, stale branches, corrupt merge state, tracked runtime files)
+  // Git health checks — timed
+  const t0git = Date.now();
   const isolationMode: "none" | "worktree" | "branch" = options?.isolationMode ??
     (prefs?.preferences?.git?.isolation === "none" ? "none" :
     prefs?.preferences?.git?.isolation === "branch" ? "branch" : "worktree");
   await checkGitHealth(basePath, issues, fixesApplied, shouldFix, isolationMode);
+  const gitMs = Date.now() - t0git;
 
-  // Runtime health checks (crash locks, completed-units, hook state, activity logs, STATE.md, gitignore)
+  // Runtime health checks — timed
+  const t0runtime = Date.now();
   await checkRuntimeHealth(basePath, issues, fixesApplied, shouldFix);
+  const runtimeMs = Date.now() - t0runtime;
 
-  // Environment health checks (#1221: missing tools, port conflicts, stale deps, disk space)
-  await checkEnvironmentHealth(basePath, issues, { includeRemote: !options?.scope });
+  // Environment health checks — timed
+  const t0env = Date.now();
+  await checkEnvironmentHealth(basePath, issues, {
+    includeRemote: !options?.scope,
+    includeBuild: options?.includeBuild,
+    includeTests: options?.includeTests,
+  });
+  const envMs = Date.now() - t0env;
 
   const milestonesPath = milestonesDir(basePath);
   if (!existsSync(milestonesPath)) {
-    return { ok: issues.every(issue => issue.severity !== "error"), basePath, issues, fixesApplied };
+    const report: DoctorReport = { ok: issues.every(i => i.severity !== "error"), basePath, issues, fixesApplied, timing: { git: gitMs, runtime: runtimeMs, environment: envMs, gsdState: 0 } };
+    await appendDoctorHistory(basePath, report);
+    return report;
   }
 
   const requirementsPath = resolveGsdRootFile(basePath, "REQUIREMENTS");
@@ -464,6 +534,43 @@ export async function runGSDDoctor(basePath: string, options?: { fix?: boolean; 
     const roadmapContent = roadmapPath ? await loadFile(roadmapPath) : null;
     if (!roadmapContent) continue;
     const roadmap = parseRoadmap(roadmapContent);
+
+    // ── Circular dependency detection ──────────────────────────────────────
+    for (const cycle of detectCircularDependencies(roadmap.slices)) {
+      issues.push({
+        severity: "error",
+        code: "circular_slice_dependency",
+        scope: "milestone",
+        unitId: milestoneId,
+        message: `Circular dependency detected: ${cycle.join(" → ")}`,
+        file: relMilestoneFile(basePath, milestoneId, "ROADMAP"),
+        fixable: false,
+      });
+    }
+
+    // ── Orphaned slice directories ─────────────────────────────────────────
+    try {
+      const slicesDir = join(milestonePath, "slices");
+      if (existsSync(slicesDir)) {
+        const knownSliceIds = new Set(roadmap.slices.map(s => s.id));
+        for (const entry of readdirSync(slicesDir)) {
+          try {
+            if (!lstatSync(join(slicesDir, entry)).isDirectory()) continue;
+          } catch { continue; }
+          if (!knownSliceIds.has(entry)) {
+            issues.push({
+              severity: "warning",
+              code: "orphaned_slice_directory",
+              scope: "milestone",
+              unitId: milestoneId,
+              message: `Directory "${entry}" exists in ${milestoneId}/slices/ but is not referenced in the roadmap`,
+              file: `${relMilestonePath(basePath, milestoneId)}/slices/${entry}`,
+              fixable: false,
+            });
+          }
+        }
+      }
+    } catch { /* non-fatal */ }
 
     for (const slice of roadmap.slices) {
       const unitId = `${milestoneId}/${slice.id}`;
@@ -539,6 +646,33 @@ export async function runGSDDoctor(basePath: string, options?: { fix?: boolean; 
         continue;
       }
 
+      // ── Duplicate task IDs ───────────────────────────────────────────────
+      const taskIdCounts = new Map<string, number>();
+      for (const task of plan.tasks) taskIdCounts.set(task.id, (taskIdCounts.get(task.id) ?? 0) + 1);
+      for (const [taskId, count] of taskIdCounts) {
+        if (count > 1) {
+          issues.push({ severity: "error", code: "duplicate_task_id", scope: "slice", unitId,
+            message: `Task ID "${taskId}" appears ${count} times in ${slice.id}-PLAN.md — duplicate IDs cause dispatch failures`,
+            file: relSliceFile(basePath, milestoneId, slice.id, "PLAN"), fixable: false });
+        }
+      }
+
+      // ── Task files on disk not in plan ────────────────────────────────────
+      try {
+        if (tasksDir) {
+          const planTaskIds = new Set(plan.tasks.map(t => t.id));
+          for (const f of readdirSync(tasksDir)) {
+            if (!f.endsWith("-SUMMARY.md")) continue;
+            const diskTaskId = f.replace(/-SUMMARY\.md$/, "");
+            if (!planTaskIds.has(diskTaskId)) {
+              issues.push({ severity: "info", code: "task_file_not_in_plan", scope: "slice", unitId,
+                message: `Task summary "${f}" exists on disk but "${diskTaskId}" is not in ${slice.id}-PLAN.md`,
+                file: relTaskFile(basePath, milestoneId, slice.id, diskTaskId, "SUMMARY"), fixable: false });
+            }
+          }
+        }
+      } catch { /* non-fatal */ }
+
       let allTasksDone = plan.tasks.length > 0;
       for (const task of plan.tasks) {
         const taskUnitId = `${unitId}/${task.id}`;
@@ -555,6 +689,7 @@ export async function runGSDDoctor(basePath: string, options?: { fix?: boolean; 
             file: relTaskFile(basePath, milestoneId, slice.id, task.id, "SUMMARY"),
             fixable: true,
           });
+          dryRunCanFix("task_done_missing_summary", `create stub summary for ${taskUnitId}`);
           if (shouldFix("task_done_missing_summary")) {
             const stubPath = join(
               basePath, ".gsd", "milestones", milestoneId, "slices", slice.id, "tasks",
@@ -618,6 +753,22 @@ export async function runGSDDoctor(basePath: string, options?: { fix?: boolean; 
           }
         }
 
+        // ── Future timestamp check ─────────────────────────────────────
+        if (task.done && hasSummary && summaryPath) {
+          try {
+            const rawSummary = await loadFile(summaryPath);
+            const m = rawSummary?.match(/^completed_at:\s*(.+)$/m);
+            if (m) {
+              const ts = new Date(m[1].trim());
+              if (!isNaN(ts.getTime()) && ts.getTime() > Date.now() + 24 * 60 * 60 * 1000) {
+                issues.push({ severity: "warning", code: "future_timestamp", scope: "task", unitId: taskUnitId,
+                  message: `Task ${task.id} has completed_at "${m[1].trim()}" which is more than 24h in the future`,
+                  file: relTaskFile(basePath, milestoneId, slice.id, task.id, "SUMMARY"), fixable: false });
+              }
+            }
+          } catch { /* non-fatal */ }
+        }
+
         allTasksDone = allTasksDone && task.done;
       }
 
@@ -646,6 +797,13 @@ export async function runGSDDoctor(basePath: string, options?: { fix?: boolean; 
         }
       }
 
+      // ── Stale REPLAN: exists but all tasks done ────────────────────────
+      if (replanPath && allTasksDone) {
+        issues.push({ severity: "info", code: "stale_replan_file", scope: "slice", unitId,
+          message: `${slice.id} has a REPLAN.md but all tasks are done — REPLAN.md may be stale`,
+          file: relSliceFile(basePath, milestoneId, slice.id, "REPLAN"), fixable: false });
+      }
+
       const sliceSummaryPath = resolveSliceFile(basePath, milestoneId, slice.id, "SUMMARY");
       const sliceUatPath = join(slicePath, `${slice.id}-UAT.md`);
       const hasSliceSummary = !!(sliceSummaryPath && await loadFile(sliceSummaryPath));
@@ -661,6 +819,7 @@ export async function runGSDDoctor(basePath: string, options?: { fix?: boolean; 
           file: relSliceFile(basePath, milestoneId, slice.id, "SUMMARY"),
           fixable: true,
         });
+        dryRunCanFix("all_tasks_done_missing_slice_summary", `create placeholder summary for ${unitId}`);
         if (shouldFix("all_tasks_done_missing_slice_summary")) await ensureSliceSummaryStub(basePath, milestoneId, slice.id, fixesApplied);
       }
 
@@ -674,6 +833,7 @@ export async function runGSDDoctor(basePath: string, options?: { fix?: boolean; 
           file: `${relSlicePath(basePath, milestoneId, slice.id)}/${slice.id}-UAT.md`,
           fixable: true,
         });
+        dryRunCanFix("all_tasks_done_missing_slice_uat", `create placeholder UAT for ${unitId}`);
         if (shouldFix("all_tasks_done_missing_slice_uat")) await ensureSliceUatStub(basePath, milestoneId, slice.id, fixesApplied);
       }
 
@@ -687,6 +847,7 @@ export async function runGSDDoctor(basePath: string, options?: { fix?: boolean; 
           file: relMilestoneFile(basePath, milestoneId, "ROADMAP"),
           fixable: true,
         });
+        dryRunCanFix("all_tasks_done_roadmap_not_checked", `mark ${slice.id} done in roadmap`);
         if (shouldFix("all_tasks_done_roadmap_not_checked") && (hasSliceSummary || issues.some(issue => issue.code === "all_tasks_done_missing_slice_summary" && issue.unitId === unitId))) {
           await markSliceDoneInRoadmap(basePath, milestoneId, slice.id, fixesApplied);
         }
@@ -744,14 +905,17 @@ export async function runGSDDoctor(basePath: string, options?: { fix?: boolean; 
     }
   }
 
-  if (fix && fixesApplied.length > 0) {
+  if (fix && !dryRun && fixesApplied.length > 0) {
     await updateStateFile(basePath, fixesApplied);
   }
 
-  return {
+  const report: DoctorReport = {
     ok: issues.every(issue => issue.severity !== "error"),
     basePath,
     issues,
     fixesApplied,
+    timing: { git: gitMs, runtime: runtimeMs, environment: envMs, gsdState: Math.max(0, Date.now() - t0env - envMs) },
   };
+  await appendDoctorHistory(basePath, report);
+  return report;
 }

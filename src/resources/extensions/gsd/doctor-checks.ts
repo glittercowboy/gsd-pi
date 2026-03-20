@@ -657,6 +657,81 @@ export async function checkRuntimeHealth(
   } catch {
     // Non-fatal — external state check failed
   }
+
+  // ── Metrics ledger integrity ───────────────────────────────────────────
+  try {
+    const metricsPath = join(root, "metrics.json");
+    if (existsSync(metricsPath)) {
+      try {
+        const raw = readFileSync(metricsPath, "utf-8");
+        const ledger = JSON.parse(raw);
+        if (ledger.version !== 1 || !Array.isArray(ledger.units)) {
+          issues.push({
+            severity: "warning",
+            code: "metrics_ledger_corrupt",
+            scope: "project",
+            unitId: "project",
+            message: "metrics.json has an unexpected structure (version !== 1 or units is not an array) — metrics data may be unreliable",
+            file: ".gsd/metrics.json",
+            fixable: false,
+          });
+        }
+      } catch {
+        issues.push({
+          severity: "warning",
+          code: "metrics_ledger_corrupt",
+          scope: "project",
+          unitId: "project",
+          message: "metrics.json is not valid JSON — metrics data may be corrupt",
+          file: ".gsd/metrics.json",
+          fixable: false,
+        });
+      }
+    }
+  } catch {
+    // Non-fatal — metrics check failed
+  }
+
+  // ── Large planning file detection ──────────────────────────────────────
+  // Files over 100KB can cause LLM context pressure. Report the worst offenders.
+  try {
+    const MAX_FILE_BYTES = 100 * 1024; // 100KB
+    const milestonesPath = milestonesDir(basePath);
+    if (existsSync(milestonesPath)) {
+      const largeFiles: Array<{ path: string; sizeKB: number }> = [];
+      function scanForLargeFiles(dir: string, depth = 0): void {
+        if (depth > 6) return;
+        try {
+          for (const entry of readdirSync(dir)) {
+            const full = join(dir, entry);
+            try {
+              const s = statSync(full);
+              if (s.isDirectory()) { scanForLargeFiles(full, depth + 1); continue; }
+              if (entry.endsWith(".md") && s.size > MAX_FILE_BYTES) {
+                largeFiles.push({ path: full.replace(basePath + "/", ""), sizeKB: Math.round(s.size / 1024) });
+              }
+            } catch { /* skip entry */ }
+          }
+        } catch { /* skip dir */ }
+      }
+      scanForLargeFiles(milestonesPath);
+      if (largeFiles.length > 0) {
+        largeFiles.sort((a, b) => b.sizeKB - a.sizeKB);
+        const worst = largeFiles[0]!;
+        issues.push({
+          severity: "warning",
+          code: "large_planning_file",
+          scope: "project",
+          unitId: "project",
+          message: `${largeFiles.length} planning file(s) exceed 100KB — largest: ${worst.path} (${worst.sizeKB}KB). Large files cause LLM context pressure.`,
+          file: worst.path,
+          fixable: false,
+        });
+      }
+    }
+  } catch {
+    // Non-fatal — large file scan failed
+  }
 }
 
 /**
