@@ -98,6 +98,18 @@ This task delivers R009 (context continuity) and R010 (verification policies) at
 - Key patterns: DEFINITION.yaml in runDir is the frozen definition. Parse with `yaml.parse()`. Steps use `context_from` (snake_case) in YAML, `contextFrom` (camelCase) in TypeScript. The `loadDefinition()` function works from a defsDir — for reading DEFINITION.yaml directly, parse YAML manually and apply the same snake_case→camelCase conversion for the fields needed by `injectContext()`.
 - **Fragility note from S04:** `buildGSDStateStub()` accepts optional `definitionName` parameter. If attaching more to `_definition`, follow the same optional-param pattern.
 
+## Observability Impact
+
+- **New runtime signals:**
+  - `resolveDispatch()` now includes injected context in the dispatch prompt — visible as `## Context from prior steps` header in the dispatched prompt string. Empty string (no injection) when `context_from` is absent or referenced artifacts don't exist.
+  - `CustomExecutionPolicy.verify()` returns structured `"continue" | "retry" | "pause"` based on the step's verify policy — inspectable at the policy dispatch boundary. Returns `"continue"` when no verify config is defined.
+- **Inspection surfaces:**
+  - Dispatched prompt string from `resolveDispatch()` contains context injection output — agents can check for `## Context from prior steps` header to confirm injection occurred.
+  - `verify()` return value directly reflects the verification outcome. For `"pause"`, the underlying `VerificationResult.reason` contains the prompt text or human-review message (though the policy interface only surfaces the `"pause"` string).
+- **Failure modes:**
+  - Missing DEFINITION.yaml in runDir causes `resolveDispatch()` to skip context injection silently (no crash, no injection). `verify()` returns `"continue"` (safe default) if DEFINITION.yaml is unreadable.
+  - Invalid step ID passed to `verify()` returns `"continue"` (no verify config found = pass-through).
+
 ## Expected Output
 
 - `src/resources/extensions/gsd/custom-workflow-engine.ts` — modified: `resolveDispatch()` calls `injectContext()` and prepends context to prompt

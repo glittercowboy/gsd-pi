@@ -23,6 +23,8 @@ import {
   markStepComplete,
 } from "./graph.js";
 import type { WorkflowGraph } from "./graph.js";
+import type { WorkflowDefinition, VerifyPolicy } from "./definition-loader.js";
+import { injectContext } from "./context-injector.js";
 import { parse } from "yaml";
 import { readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
@@ -121,12 +123,47 @@ export class CustomWorkflowEngine implements WorkflowEngine {
       };
     }
 
+    // Inject context from prior step artifacts (S05 — context continuity)
+    let prompt = nextStep.prompt;
+    const defPath = join(this.runDir, "DEFINITION.yaml");
+    if (existsSync(defPath)) {
+      try {
+        const raw = readFileSync(defPath, "utf-8");
+        const parsed = parse(raw) as Record<string, unknown>;
+        // Build a minimal WorkflowDefinition from the frozen YAML
+        const yamlSteps = Array.isArray(parsed.steps) ? parsed.steps : [];
+        const definition: WorkflowDefinition = {
+          version: (parsed.version as number) ?? 1,
+          name: (parsed.name as string) ?? "",
+          steps: yamlSteps.map((s: Record<string, unknown>) => ({
+            id: s.id as string,
+            name: s.name as string,
+            prompt: s.prompt as string,
+            requires: Array.isArray(s.requires)
+              ? (s.requires as string[])
+              : Array.isArray(s.depends_on)
+                ? (s.depends_on as string[])
+                : [],
+            produces: Array.isArray(s.produces) ? (s.produces as string[]) : [],
+            contextFrom: Array.isArray(s.context_from) ? (s.context_from as string[]) : undefined,
+            verify: s.verify as VerifyPolicy | undefined,
+          })),
+        };
+        const injected = injectContext(nextStep.id, definition, this.runDir);
+        if (injected) {
+          prompt = injected + prompt;
+        }
+      } catch {
+        // If DEFINITION.yaml is unreadable, skip context injection silently
+      }
+    }
+
     return {
       action: "dispatch",
       step: {
         unitType: "custom-step",
         unitId: nextStep.id,
-        prompt: nextStep.prompt,
+        prompt,
       },
     };
   }

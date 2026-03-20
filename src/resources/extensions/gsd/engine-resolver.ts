@@ -43,7 +43,7 @@ export function resolveEngine(session: {
     const runDir = id.slice("custom:".length);
     return {
       engine: new CustomWorkflowEngine(runDir),
-      policy: new CustomExecutionPolicy(),
+      policy: new CustomExecutionPolicy(runDir),
     };
   }
 
