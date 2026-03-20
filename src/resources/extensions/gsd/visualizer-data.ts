@@ -174,6 +174,8 @@ export interface VisualizerDoctorEntry {
   codes: string[];
   issues?: Array<{ severity: string; code: string; message: string; unitId: string }>;
   fixDescriptions?: string[];
+  scope?: string;
+  summary?: string;
 }
 
 /** Current progress score snapshot for health display. */

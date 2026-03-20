@@ -56,7 +56,7 @@ import { readResourceVersion } from "./auto-worktree-sync.js";
 import { initMetrics } from "./metrics.js";
 import { initRoutingHistory } from "./routing-history.js";
 import { restoreHookState, resetHookState } from "./post-unit-hooks.js";
-import { resetProactiveHealing } from "./doctor-proactive.js";
+import { resetProactiveHealing, setLevelChangeCallback } from "./doctor-proactive.js";
 import { snapshotSkills } from "./skill-discovery.js";
 import { isDbAvailable } from "./gsd-db.js";
 import { hideFooter } from "./auto-dashboard.js";
@@ -415,6 +415,11 @@ export async function bootstrapAutoSession(
     resetHookState();
     restoreHookState(base);
     resetProactiveHealing();
+    // Notify user on health level transitions (green→yellow→red and back)
+    setLevelChangeCallback((_from, to, summary) => {
+      const level = to === "red" ? "error" : to === "yellow" ? "warning" : "info";
+      ctx.ui.notify(summary, level as "info" | "warning" | "error");
+    });
     s.autoStartTime = Date.now();
     s.resourceVersionOnStart = readResourceVersion();
     s.completedUnits = [];

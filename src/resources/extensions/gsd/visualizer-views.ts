@@ -1176,8 +1176,12 @@ export function renderHealthView(
     for (const entry of health.doctorHistory.slice(0, 10)) {
       const icon = entry.ok ? th.fg("success", "✓") : th.fg("error", "✗");
       const ts = entry.ts.replace("T", " ").slice(0, 19);
-      const counts = `${entry.errors}E ${entry.warnings}W ${entry.fixes}F`;
-      lines.push(`  ${icon} ${th.fg("dim", ts)}  ${th.fg("text", counts)}`);
+      const scopeTag = entry.scope ? th.fg("accent", ` [${entry.scope}]`) : "";
+      // Prefer human-readable summary, fall back to counts
+      const detail = entry.summary
+        ? th.fg("text", entry.summary)
+        : th.fg("text", `${entry.errors} errors, ${entry.warnings} warnings, ${entry.fixes} fixes`);
+      lines.push(`  ${icon} ${th.fg("dim", ts)}${scopeTag}  ${detail}`);
 
       // Show issue details if available
       if (entry.issues && entry.issues.length > 0) {

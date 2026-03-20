@@ -319,26 +319,27 @@ function buildHealthSection(data: VisualizerData): string {
       const statusIcon = entry.ok ? '✓' : '✗';
       const statusColor = entry.ok ? '#22c55e' : '#ef4444';
       const ts = entry.ts.replace('T', ' ').slice(0, 19);
+      const scopeTag = entry.scope ? `<span class="mono" style="color:#888"> [${esc(entry.scope)}]</span>` : '';
+      const summaryText = entry.summary ? esc(entry.summary) : `${entry.errors} errors, ${entry.warnings} warnings, ${entry.fixes} fixes`;
       const issueDetails = (entry.issues ?? []).slice(0, 3).map(i => {
         const iColor = i.severity === 'error' ? '#ef4444' : '#eab308';
-        return `<div style="margin-left:2em;color:${iColor};font-size:0.85em">${i.severity === 'error' ? '✗' : '⚠'} ${esc(i.message)}</div>`;
+        return `<div style="margin-left:2em;color:${iColor};font-size:0.85em">${i.severity === 'error' ? '✗' : '⚠'} ${esc(i.message)} <span class="mono" style="color:#888">${esc(i.unitId)}</span></div>`;
       }).join('');
       const fixDetails = (entry.fixDescriptions ?? []).slice(0, 2).map(f =>
         `<div style="margin-left:2em;color:#22c55e;font-size:0.85em">↳ ${esc(f)}</div>`
       ).join('');
       return `<tr style="color:${statusColor}">
         <td class="mono">${statusIcon}</td>
-        <td class="mono">${esc(ts)}</td>
-        <td>${entry.errors}E ${entry.warnings}W ${entry.fixes}F</td>
-        <td class="mono">${entry.codes.map(esc).join(', ')}</td>
+        <td class="mono">${esc(ts)}${scopeTag}</td>
+        <td>${summaryText}</td>
       </tr>
-      ${issueDetails || fixDetails ? `<tr><td colspan="4">${issueDetails}${fixDetails}</td></tr>` : ''}`;
+      ${issueDetails || fixDetails ? `<tr><td colspan="3">${issueDetails}${fixDetails}</td></tr>` : ''}`;
     }).join('');
 
     historyHtml = `
       <h3>Doctor Run History</h3>
       <table class="tbl">
-        <thead><tr><th></th><th>Time</th><th>Summary</th><th>Codes</th></tr></thead>
+        <thead><tr><th></th><th>Time</th><th>Summary</th></tr></thead>
         <tbody>${historyRows}</tbody>
       </table>`;
   }

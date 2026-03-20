@@ -111,6 +111,7 @@ import {
   recordHealthSnapshot,
   checkHealEscalation,
   resetProactiveHealing,
+  setLevelChangeCallback,
   formatHealthSummary,
   getConsecutiveErrorUnits,
 } from "./doctor-proactive.js";
@@ -687,6 +688,7 @@ export async function stopAuto(
     clearInFlightTools();
     clearSliceProgressCache();
     clearActivityLogState();
+    setLevelChangeCallback(null);
     resetProactiveHealing();
 
     // UI cleanup
