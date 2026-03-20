@@ -67,7 +67,7 @@ This file is the explicit capability and coverage contract for the project.
 - Source: user
 - Primary owning slice: M001/S04
 - Supporting slices: M001/S06
-- Validation: S03 T01: graph.ts implements GRAPH.yaml read/write with atomic writes (tmp + renameSync), step status tracking (pending→active→complete), topological dispatch order via getNextPendingStep(). S04 T01: graphFromDefinition() converts validated WorkflowDefinition into WorkflowGraph with all steps pending. S04 T02: createRun() generates initial GRAPH.yaml from definition via graphFromDefinition()+writeGraph(). S04 T03: Integration test proves full pipeline — YAML definition→createRun→3-step dispatch cycle→all steps complete with on-disk GRAPH.yaml verification. 11/11 engine tests + 4/4 integration tests pass.
+- Validation: S03 T01: graph.ts implements GRAPH.yaml read/write with atomic writes (tmp + renameSync), step status tracking (pending→active→complete), topological dispatch order via getNextPendingStep(). S04 T01: graphFromDefinition() converts validated WorkflowDefinition into WorkflowGraph with all steps pending. S04 T02: createRun() generates initial GRAPH.yaml from definition via graphFromDefinition()+writeGraph(). S04 T03: Integration test proves full pipeline — YAML definition→createRun→3-step dispatch cycle→all steps complete with on-disk GRAPH.yaml verification. S06 T02: GraphStep gains "expanded" status and parentStepId for iteration instances. expandIteration() materializes instances with deterministic IDs and rewrites downstream deps. YAML roundtrip preserves new fields. S06 T03: Iteration expansion persists to GRAPH.yaml with full instance lineage. 11/11 engine tests + 15/15 iteration tests pass.
 - Notes: Artifact existence is validated during `reconcile()` — GRAPH says done but artifact missing triggers a corruption warning. S03 established the core read/write/query primitives; S04 connects these to YAML definitions and run lifecycle.
 
 ### R010 — Custom workflow steps support four verification policies. `content-heuristic` checks artifact size and patterns. `shell-command` runs a script. `prompt-verify` has the LLM evaluate output. `human-review` pauses for user input.
@@ -80,17 +80,6 @@ This file is the explicit capability and coverage contract for the project.
 - Supporting slices: none
 - Validation: unmapped
 - Notes: Default for steps without explicit policy is `content-heuristic` with reasonable defaults (non-empty, >100 bytes).
-
-### R011 — Steps with an `iterate` field pattern-match items from a source artifact (e.g., chapters from an outline). Matched items are materialized as concrete step instances in `GRAPH.yaml` before dispatch. Instances execute serially in topological order.
-- Class: core-capability
-- Status: active
-- Description: Steps with an `iterate` field pattern-match items from a source artifact (e.g., chapters from an outline). Matched items are materialized as concrete step instances in `GRAPH.yaml` before dispatch. Instances execute serially in topological order.
-- Why it matters: Real workflows need fan-out — "draft each chapter," "audit each endpoint," "review each module." Linear-only is too limiting.
-- Source: user
-- Primary owning slice: M001/S06
-- Supporting slices: none
-- Validation: S06 T01: IterateConfig typed with source+pattern, validateDefinition() enforces valid regex with capture group and no path traversal. S06 T02: expandIteration() materializes instances in WorkflowGraph with deterministic zero-padded IDs, "expanded" status, parentStepId lineage, and downstream dep rewriting. S06 T03: resolveDispatch() triggers lazy expansion, integration test proves 5-dispatch fan-out (outline + 3 chapter instances + review), determinism proof shows byte-identical GRAPH.yaml from identical input.
-- Notes: Once expanded, iteration is frozen for that run. Source changes after expansion do not retroactively add/remove instances.
 
 ### R012 — `/gsd workflow new` starts a conversation where the user describes their workflow. The agent asks clarifying questions, then generates a valid YAML definition following the schema and saves it to `workflow-defs/`.
 - Class: primary-user-loop
@@ -181,6 +170,17 @@ This file is the explicit capability and coverage contract for the project.
 - Supporting slices: none
 - Validation: S05 T01: injectContext() in context-injector.ts reads contextFrom step IDs, resolves produces paths from frozen DEFINITION.yaml, reads artifacts from runDir, assembles formatted context with per-step headers and token budget truncation. Returns empty string sentinel for no-op cases. S05 T03: resolveDispatch() in CustomWorkflowEngine parses DEFINITION.yaml and prepends injected context to step prompts. Integration test proves step-2 dispatch prompt contains "## Context from prior steps" header with step-1 artifact content. 7 unit tests + 4 integration tests pass.
 - Notes: Summaries are extracted from step artifacts, not from conversational memory.
+
+### R011 — Steps with an `iterate` field pattern-match items from a source artifact (e.g., chapters from an outline). Matched items are materialized as concrete step instances in `GRAPH.yaml` before dispatch. Instances execute serially in topological order.
+- Class: core-capability
+- Status: validated
+- Description: Steps with an `iterate` field pattern-match items from a source artifact (e.g., chapters from an outline). Matched items are materialized as concrete step instances in `GRAPH.yaml` before dispatch. Instances execute serially in topological order.
+- Why it matters: Real workflows need fan-out — "draft each chapter," "audit each endpoint," "review each module." Linear-only is too limiting.
+- Source: user
+- Primary owning slice: M001/S06
+- Supporting slices: none
+- Validation: S06 T01: IterateConfig typed with source+pattern, validateDefinition() enforces valid regex with capture group and no path traversal (5 new tests). S06 T02: expandIteration() pure function materializes instances with deterministic zero-padded IDs (<parentId>--001), "expanded" status, parentStepId lineage, downstream dep rewriting. YAML roundtrip preserves all fields (11 unit tests). S06 T03: resolveDispatch() triggers lazy expansion from source artifact regex, idempotency guard prevents double-expansion, getDisplayMetadata() excludes expanded steps, deriveState()/reconcile() handle expanded status for completion detection. Integration test proves 5-dispatch fan-out (outline + 3 chapter instances + review). Determinism proof: byte-identical GRAPH.yaml from identical input. 15/15 iteration tests + 11/11 engine tests + 25/25 definition-loader tests pass. Zero type errors.
+- Notes: Once expanded, iteration is frozen for that run. Source changes after expansion do not retroactively add/remove instances.
 
 ### R016 — The existing dev workflow (milestones/slices/tasks) must be identical before and after the interface extraction. All 172 existing tests pass. No behavior change in state derivation, dispatch, post-unit processing, verification, or worktree management.
 - Class: constraint
@@ -296,10 +296,10 @@ This file is the explicit capability and coverage contract for the project.
 | R005 | core-capability | validated | M001/S02 | M001/S03 | S02 T01: resolveEngine() returns DevWorkflowEngine for null/"dev". S03 T01: resolveEngine() gains "custom:*" branch — extracts runDir, returns CustomWorkflowEngine + CustomExecutionPolicy. S03 T02: Integration test proves "custom:/tmp/test" returns correct engine/policy pair, bare "custom" and "bogus" still throw. 19/19 contract test assertions pass, 11/11 integration test assertions pass. Full suite 1602 pass, zero regressions. |
 | R006 | core-capability | active | M001/S04 | M001/S07 | S04 T01: definition-loader.ts implements V1 YAML schema with validateDefinition() enforcing version===1, name required, steps non-empty with id/name/prompt, produces paths reject ".." traversal. Unknown fields silently accepted for forward compatibility. loadDefinition() handles snake_case→camelCase conversion (depends_on→requires, context_from→contextFrom). S04 T03: Integration test proves YAML file loads, validates, and feeds full dispatch cycle. 13 unit tests + 4 integration tests pass. Parameterization via {{variable}} deferred to S07. |
 | R007 | continuity | active | M001/S04 | none | S04 T02: createRun() in run-manager.ts uses copyFileSync for exact byte-copy of source YAML into run directory as DEFINITION.yaml. S04 T03: Integration test "DEFINITION.yaml snapshot is immune to source modification" proves source YAML modified after createRun still has original bytes in run dir. 4/4 integration tests pass. |
-| R008 | core-capability | active | M001/S04 | M001/S06 | S03 T01: graph.ts implements GRAPH.yaml read/write with atomic writes (tmp + renameSync), step status tracking (pending→active→complete), topological dispatch order via getNextPendingStep(). S04 T01: graphFromDefinition() converts validated WorkflowDefinition into WorkflowGraph with all steps pending. S04 T02: createRun() generates initial GRAPH.yaml from definition via graphFromDefinition()+writeGraph(). S04 T03: Integration test proves full pipeline — YAML definition→createRun→3-step dispatch cycle→all steps complete with on-disk GRAPH.yaml verification. 11/11 engine tests + 4/4 integration tests pass. |
+| R008 | core-capability | active | M001/S04 | M001/S06 | S03 T01: graph.ts implements GRAPH.yaml read/write with atomic writes (tmp + renameSync), step status tracking (pending→active→complete), topological dispatch order via getNextPendingStep(). S04 T01: graphFromDefinition() converts validated WorkflowDefinition into WorkflowGraph with all steps pending. S04 T02: createRun() generates initial GRAPH.yaml from definition via graphFromDefinition()+writeGraph(). S04 T03: Integration test proves full pipeline — YAML definition→createRun→3-step dispatch cycle→all steps complete with on-disk GRAPH.yaml verification. S06 T02: GraphStep gains "expanded" status and parentStepId for iteration instances. expandIteration() materializes instances with deterministic IDs and rewrites downstream deps. YAML roundtrip preserves new fields. S06 T03: Iteration expansion persists to GRAPH.yaml with full instance lineage. 11/11 engine tests + 15/15 iteration tests pass. |
 | R009 | primary-user-loop | validated | M001/S05 | none | S05 T01: injectContext() in context-injector.ts reads contextFrom step IDs, resolves produces paths from frozen DEFINITION.yaml, reads artifacts from runDir, assembles formatted context with per-step headers and token budget truncation. Returns empty string sentinel for no-op cases. S05 T03: resolveDispatch() in CustomWorkflowEngine parses DEFINITION.yaml and prepends injected context to step prompts. Integration test proves step-2 dispatch prompt contains "## Context from prior steps" header with step-1 artifact content. 7 unit tests + 4 integration tests pass. |
 | R010 | failure-visibility | active | M001/S05 | none | unmapped |
-| R011 | core-capability | active | M001/S06 | none | S06 T01: IterateConfig typed with source+pattern, validateDefinition() enforces valid regex with capture group and no path traversal. S06 T02: expandIteration() materializes instances in WorkflowGraph with deterministic zero-padded IDs, "expanded" status, parentStepId lineage, and downstream dep rewriting. S06 T03: resolveDispatch() triggers lazy expansion, integration test proves 5-dispatch fan-out (outline + 3 chapter instances + review), determinism proof shows byte-identical GRAPH.yaml from identical input. |
+| R011 | core-capability | validated | M001/S06 | none | S06 T01: IterateConfig typed with source+pattern, validateDefinition() enforces valid regex with capture group and no path traversal (5 new tests). S06 T02: expandIteration() pure function materializes instances with deterministic zero-padded IDs (<parentId>--001), "expanded" status, parentStepId lineage, downstream dep rewriting. YAML roundtrip preserves all fields (11 unit tests). S06 T03: resolveDispatch() triggers lazy expansion from source artifact regex, idempotency guard prevents double-expansion, getDisplayMetadata() excludes expanded steps, deriveState()/reconcile() handle expanded status for completion detection. Integration test proves 5-dispatch fan-out (outline + 3 chapter instances + review). Determinism proof: byte-identical GRAPH.yaml from identical input. 15/15 iteration tests + 11/11 engine tests + 25/25 definition-loader tests pass. Zero type errors. |
 | R012 | primary-user-loop | active | M001/S07 | none | unmapped |
 | R013 | launchability | active | M001/S07 | M001/S08 | unmapped |
 | R014 | primary-user-loop | active | M001/S08 | none | unmapped |
@@ -317,7 +317,7 @@ This file is the explicit capability and coverage contract for the project.
 
 ## Coverage Summary
 
-- Active requirements: 13
-- Mapped to slices: 13
-- Validated: 4 (R004, R005, R009, R016)
+- Active requirements: 12
+- Mapped to slices: 12
+- Validated: 5 (R004, R005, R009, R011, R016)
 - Unmapped active requirements: 0
