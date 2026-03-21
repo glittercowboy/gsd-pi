@@ -738,6 +738,39 @@ async function _deriveStateImpl(basePath: string): Promise<GSDState> {
     // REPLAN.md exists — loop protection: fall through to normal executing
   }
 
+  // ── REPLAN-TRIGGER detection: triage-initiated replan ──────────────────
+  // Manual `/gsd triage` writes REPLAN-TRIGGER.md when a capture is classified
+  // as "replan". Detect it here and transition to replanning-slice so the
+  // dispatch loop picks it up (instead of silently advancing past it).
+  if (!blockerTaskId) {
+    const replanTriggerFile = resolveSliceFile(basePath, activeMilestone.id, activeSlice.id, "REPLAN-TRIGGER");
+    if (replanTriggerFile) {
+      // Same loop protection: if REPLAN.md already exists, a replan was
+      // already performed — skip further replanning and continue executing.
+      const replanFile = resolveSliceFile(basePath, activeMilestone.id, activeSlice.id, "REPLAN");
+      if (!replanFile) {
+        return {
+          activeMilestone,
+          activeSlice,
+          activeTask,
+          phase: 'replanning-slice',
+          recentDecisions: [],
+          blockers: ['Triage replan trigger detected — slice replan required'],
+          nextAction: `Triage replan triggered for slice ${activeSlice.id}. Replan before continuing.`,
+
+          activeWorkspace: undefined,
+          registry,
+          requirements,
+          progress: {
+            milestones: milestoneProgress,
+            slices: sliceProgress,
+            tasks: taskProgress,
+          },
+        };
+      }
+    }
+  }
+
   // Check for interrupted work
   const sDir = resolveSlicePath(basePath, activeMilestone.id, activeSlice.id);
   const continueFile = sDir ? resolveSliceFile(basePath, activeMilestone.id, activeSlice.id, "CONTINUE") : null;

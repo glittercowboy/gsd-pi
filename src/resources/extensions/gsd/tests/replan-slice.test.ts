@@ -56,6 +56,12 @@ function writeReplanFile(base: string, mid: string, sid: string, content: string
   writeFileSync(join(dir, `${sid}-REPLAN.md`), content);
 }
 
+function writeReplanTrigger(base: string, mid: string, sid: string, content: string): void {
+  const dir = join(base, '.gsd', 'milestones', mid, 'slices', sid);
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, `${sid}-REPLAN-TRIGGER.md`), content);
+}
+
 /** Standard roadmap with one slice having no dependencies */
 const ROADMAP_ONE_SLICE = `# M001: Test Milestone
 
@@ -532,6 +538,74 @@ console.log('\n=== artifact: verifyExpectedArtifact passes when REPLAN.md exists
 
   const result = verifyExpectedArtifact('replan-slice', 'M001/S01', base);
   assertEq(result, true, 'verifyExpectedArtifact returns true when REPLAN.md exists');
+  rmSync(base, { recursive: true, force: true });
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// REPLAN-TRIGGER.md detection (triage-initiated replan, #1701)
+// ═══════════════════════════════════════════════════════════════════════════
+
+// (a) REPLAN-TRIGGER.md exists + no REPLAN.md → replanning-slice
+console.log('\n=== deriveState: REPLAN-TRIGGER.md exists, no REPLAN → replanning-slice (#1701) ===');
+{
+  const base = createFixtureBase();
+  writeRoadmap(base, 'M001', ROADMAP_ONE_SLICE);
+  writePlan(base, 'M001', 'S01', makePlanT01DoneT02Pending());
+  // No blocker in task summary — the trigger comes from triage, not blocker_discovered
+  writeTaskSummary(base, 'M001', 'S01', 'T01', makeTaskSummary('T01', false));
+  writeReplanTrigger(base, 'M001', 'S01', '# Replan Trigger\n\n**Source:** Capture C001\n');
+
+  const state = await deriveState(base);
+  assertEq(state.phase, 'replanning-slice', 'phase is replanning-slice when REPLAN-TRIGGER.md exists');
+  assertTrue(state.blockers.length > 0, 'blockers array is non-empty for triage replan trigger');
+  assertTrue(state.nextAction.includes('Triage replan'), 'nextAction mentions triage replan');
+  assertEq(state.activeSlice?.id, 'S01', 'activeSlice is S01');
+  assertEq(state.activeTask?.id, 'T02', 'activeTask is T02 (next incomplete task)');
+  rmSync(base, { recursive: true, force: true });
+}
+
+// (b) REPLAN-TRIGGER.md + REPLAN.md both exist → executing (loop protection)
+console.log('\n=== deriveState: REPLAN-TRIGGER.md + REPLAN.md → executing (loop protection, #1701) ===');
+{
+  const base = createFixtureBase();
+  writeRoadmap(base, 'M001', ROADMAP_ONE_SLICE);
+  writePlan(base, 'M001', 'S01', makePlanT01DoneT02Pending());
+  writeTaskSummary(base, 'M001', 'S01', 'T01', makeTaskSummary('T01', false));
+  writeReplanTrigger(base, 'M001', 'S01', '# Replan Trigger\n\n**Source:** Capture C001\n');
+  writeReplanFile(base, 'M001', 'S01', '# Replan\n\nAlready replanned.');
+
+  const state = await deriveState(base);
+  assertEq(state.phase, 'executing', 'phase is executing when REPLAN.md exists (loop protection)');
+  assertEq(state.activeTask?.id, 'T02', 'activeTask is T02');
+  rmSync(base, { recursive: true, force: true });
+}
+
+// (c) No REPLAN-TRIGGER.md, no blocker → executing (no false positive)
+console.log('\n=== deriveState: no REPLAN-TRIGGER.md, no blocker → executing (#1701) ===');
+{
+  const base = createFixtureBase();
+  writeRoadmap(base, 'M001', ROADMAP_ONE_SLICE);
+  writePlan(base, 'M001', 'S01', makePlanT01DoneT02Pending());
+  writeTaskSummary(base, 'M001', 'S01', 'T01', makeTaskSummary('T01', false));
+
+  const state = await deriveState(base);
+  assertEq(state.phase, 'executing', 'phase is executing when no trigger and no blocker');
+  rmSync(base, { recursive: true, force: true });
+}
+
+// (d) blocker_discovered takes priority over REPLAN-TRIGGER.md
+console.log('\n=== deriveState: blocker_discovered takes priority over REPLAN-TRIGGER.md (#1701) ===');
+{
+  const base = createFixtureBase();
+  writeRoadmap(base, 'M001', ROADMAP_ONE_SLICE);
+  writePlan(base, 'M001', 'S01', makePlanT01DoneT02Pending());
+  writeTaskSummary(base, 'M001', 'S01', 'T01', makeTaskSummary('T01', true));
+  writeReplanTrigger(base, 'M001', 'S01', '# Replan Trigger\n\n**Source:** Capture C001\n');
+
+  const state = await deriveState(base);
+  assertEq(state.phase, 'replanning-slice', 'phase is replanning-slice');
+  // blocker_discovered path should fire first (blockerTaskId is set, so REPLAN-TRIGGER check is skipped)
+  assertTrue(state.nextAction.includes('T01'), 'nextAction mentions blocker task T01 (blocker path, not trigger path)');
   rmSync(base, { recursive: true, force: true });
 }
 
