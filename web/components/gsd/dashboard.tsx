@@ -1,6 +1,5 @@
 "use client"
 
-import { useState, useRef, useEffect } from "react"
 import {
   Activity,
   Clock,
@@ -39,7 +38,6 @@ import {
 } from "@/components/gsd/loading-skeletons"
 import { ScopeBadge } from "@/components/gsd/scope-badge"
 import { ProjectWelcome } from "@/components/gsd/project-welcome"
-import { GuidedDialog } from "@/components/gsd/guided-dialog"
 
 /** Interpolate progress bar color from red (0%) through yellow (50%) to green (100%) using oklch. */
 function getProgressColor(percent: number): string {
@@ -112,8 +110,6 @@ interface DashboardProps {
 export function Dashboard({ onSwitchView, onExpandTerminal }: DashboardProps = {}) {
   const state = useGSDWorkspaceState()
   const { sendCommand } = useGSDWorkspaceActions()
-  const [guidedDialog, setGuidedDialog] = useState<{ open: boolean; command: string } | null>(null)
-  const lastSentCommandRef = useRef<string | null>(null)
   const boot = state.boot
   const workspace = getLiveWorkspaceIndex(state)
   const auto = getLiveAutoDashboard(state)
@@ -161,20 +157,6 @@ export function Dashboard({ onSwitchView, onExpandTerminal }: DashboardProps = {
   const recentLines: WorkspaceTerminalLine[] = (state.terminalLines ?? []).slice(-6)
   const isConnecting = state.bootStatus === "idle" || state.bootStatus === "loading"
 
-  // ─── Guided Dialog Command Dispatch ───────────────────────────────────
-  // Send the initial command exactly once when the dialog opens.
-  // Ref guard prevents double-dispatch on re-renders; ref resets on close
-  // so reopening with the same command fires again.
-  useEffect(() => {
-    if (guidedDialog?.open && guidedDialog.command && guidedDialog.command !== lastSentCommandRef.current) {
-      lastSentCommandRef.current = guidedDialog.command
-      void sendCommand(buildPromptCommand(guidedDialog.command, bridge))
-    }
-    if (!guidedDialog?.open) {
-      lastSentCommandRef.current = null
-    }
-  }, [guidedDialog?.open, guidedDialog?.command, sendCommand, bridge])
-
   // ─── Project Welcome Gate ───────────────────────────────────────────
   // Show welcome screen for projects that aren't initialized with GSD yet
   const detection = boot?.projectDetection
@@ -190,19 +172,9 @@ export function Dashboard({ onSwitchView, onExpandTerminal }: DashboardProps = {
         <ProjectWelcome
           detection={detection}
           onCommand={(cmd) => handleWorkflowAction(cmd)}
-          onOpenDialog={(command) => setGuidedDialog({ open: true, command })}
           onSwitchView={(view) => onSwitchView?.(view)}
           disabled={!!state.commandInFlight || boot?.onboarding.locked}
         />
-        {guidedDialog && (
-          <GuidedDialog
-            open={guidedDialog.open}
-            onOpenChange={(open) => {
-              if (!open) setGuidedDialog(null)
-            }}
-            detectionKind={detection.kind}
-          />
-        )}
       </div>
     )
   }

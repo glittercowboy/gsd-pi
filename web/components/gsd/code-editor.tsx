@@ -21,26 +21,50 @@ const ReactCodeMirror = dynamic(() => import("@uiw/react-codemirror"), {
   ),
 })
 
-/* ── Monochrome syntax highlighting styles ── */
+/* ── Syntax highlighting styles ── */
 
 const darkStyles = [
-  { tag: [t.comment, t.lineComment, t.blockComment], color: "oklch(0.45 0 0)" },
-  { tag: [t.keyword, t.operator], color: "oklch(0.75 0 0)" },
-  { tag: [t.string, t.special(t.string)], color: "oklch(0.65 0 0)" },
-  { tag: [t.number, t.bool, t.null], color: "oklch(0.7 0 0)" },
-  { tag: [t.variableName, t.definition(t.variableName)], color: "oklch(0.85 0 0)" },
-  { tag: [t.typeName, t.className], color: "oklch(0.8 0 0)" },
-  { tag: [t.bracket], color: "oklch(0.5 0 0)" },
+  { tag: [t.comment, t.lineComment, t.blockComment], color: "#6a737d" },
+  { tag: [t.keyword], color: "#ff7b72" },
+  { tag: [t.operator], color: "#79c0ff" },
+  { tag: [t.string, t.special(t.string)], color: "#a5d6ff" },
+  { tag: [t.number, t.bool, t.null], color: "#79c0ff" },
+  { tag: [t.variableName], color: "#c9d1d9" },
+  { tag: [t.definition(t.variableName)], color: "#d2a8ff" },
+  { tag: [t.function(t.variableName)], color: "#d2a8ff" },
+  { tag: [t.typeName, t.className], color: "#ffa657" },
+  { tag: [t.propertyName], color: "#79c0ff" },
+  { tag: [t.definition(t.propertyName)], color: "#c9d1d9" },
+  { tag: [t.bracket], color: "#8b949e" },
+  { tag: [t.punctuation], color: "#8b949e" },
+  { tag: [t.tagName], color: "#7ee787" },
+  { tag: [t.attributeName], color: "#79c0ff" },
+  { tag: [t.attributeValue], color: "#a5d6ff" },
+  { tag: [t.regexp], color: "#7ee787" },
+  { tag: [t.escape], color: "#79c0ff" },
+  { tag: [t.meta], color: "#8b949e" },
 ]
 
 const lightStyles = [
-  { tag: [t.comment, t.lineComment, t.blockComment], color: "oklch(0.55 0 0)" },
-  { tag: [t.keyword, t.operator], color: "oklch(0.25 0 0)" },
-  { tag: [t.string, t.special(t.string)], color: "oklch(0.35 0 0)" },
-  { tag: [t.number, t.bool, t.null], color: "oklch(0.3 0 0)" },
-  { tag: [t.variableName, t.definition(t.variableName)], color: "oklch(0.15 0 0)" },
-  { tag: [t.typeName, t.className], color: "oklch(0.2 0 0)" },
-  { tag: [t.bracket], color: "oklch(0.5 0 0)" },
+  { tag: [t.comment, t.lineComment, t.blockComment], color: "#6a737d" },
+  { tag: [t.keyword], color: "#cf222e" },
+  { tag: [t.operator], color: "#0550ae" },
+  { tag: [t.string, t.special(t.string)], color: "#0a3069" },
+  { tag: [t.number, t.bool, t.null], color: "#0550ae" },
+  { tag: [t.variableName], color: "#24292f" },
+  { tag: [t.definition(t.variableName)], color: "#8250df" },
+  { tag: [t.function(t.variableName)], color: "#8250df" },
+  { tag: [t.typeName, t.className], color: "#953800" },
+  { tag: [t.propertyName], color: "#0550ae" },
+  { tag: [t.definition(t.propertyName)], color: "#24292f" },
+  { tag: [t.bracket], color: "#57606a" },
+  { tag: [t.punctuation], color: "#57606a" },
+  { tag: [t.tagName], color: "#116329" },
+  { tag: [t.attributeName], color: "#0550ae" },
+  { tag: [t.attributeValue], color: "#0a3069" },
+  { tag: [t.regexp], color: "#116329" },
+  { tag: [t.escape], color: "#0550ae" },
+  { tag: [t.meta], color: "#57606a" },
 ]
 
 /* ── Static theme objects (module-level, never recreated on render) ── */
@@ -180,6 +204,7 @@ export function CodeEditor({
       onChange={onChange}
       theme={theme}
       extensions={extensions}
+      height="100%"
       basicSetup={{
         lineNumbers: true,
         highlightActiveLine: true,

@@ -125,8 +125,6 @@ interface ProjectWelcomeProps {
   onCommand: (command: string) => void
   onSwitchView: (view: string) => void
   disabled?: boolean
-  /** When provided, CTA buttons open the guided dialog instead of sending commands directly */
-  onOpenDialog?: (command: string) => void
 }
 
 export function ProjectWelcome({
@@ -134,7 +132,6 @@ export function ProjectWelcome({
   onCommand,
   onSwitchView,
   disabled = false,
-  onOpenDialog,
 }: ProjectWelcomeProps) {
   const variant = getVariant(detection)
   const showSignals = detection.kind === "brownfield" || detection.kind === "v1-legacy"
@@ -174,7 +171,7 @@ export function ProjectWelcome({
         {/* Actions */}
         <div className="mt-8 flex items-center gap-3">
           <button
-            onClick={() => onOpenDialog ? onOpenDialog(variant.primaryCommand) : onCommand(variant.primaryCommand)}
+            onClick={() => onCommand(variant.primaryCommand)}
             disabled={disabled}
             className={cn(
               "inline-flex items-center gap-2 rounded-md bg-foreground px-5 py-2.5 text-sm font-medium text-background transition-colors hover:bg-foreground/90",
@@ -191,11 +188,7 @@ export function ProjectWelcome({
                 if (variant.secondary!.action === "files-view") {
                   onSwitchView("files")
                 } else if (variant.secondary!.command) {
-                  if (onOpenDialog) {
-                    onOpenDialog(variant.secondary!.command)
-                  } else {
-                    onCommand(variant.secondary!.command)
-                  }
+                  onCommand(variant.secondary!.command)
                 }
               }}
               disabled={disabled}

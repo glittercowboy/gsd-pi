@@ -23,6 +23,7 @@ import {
   RefreshCw,
   Search,
   ShieldCheck,
+  SlidersHorizontal,
   SquareTerminal,
   X,
 } from "lucide-react"
@@ -55,7 +56,7 @@ import {
 } from "@/lib/dev-overrides"
 import { DoctorPanel, ForensicsPanel, SkillHealthPanel } from "./diagnostics-panels"
 import { KnowledgeCapturesPanel } from "./knowledge-captures-panel"
-import { PrefsPanel, ModelRoutingPanel, BudgetPanel, RemoteQuestionsPanel, TerminalSizePanel, EditorSizePanel } from "./settings-panels"
+import { PrefsPanel, ModelRoutingPanel, BudgetPanel, RemoteQuestionsPanel, GeneralPanel } from "./settings-panels"
 import { DevRootSettingsSection } from "./projects-view"
 import {
   QuickPanel,
@@ -81,7 +82,7 @@ import {
 
 // ─── Section metadata ────────────────────────────────────────────────
 
-const SETTINGS_SURFACE_SECTIONS = ["model", "thinking", "queue", "compaction", "retry", "recovery", "auth", "workspace"] as const
+const SETTINGS_SURFACE_SECTIONS = ["general", "model", "session-behavior", "recovery", "auth", "workspace"] as const
 const ADMIN_SECTION: CommandSurfaceSection = "admin"
 const GIT_SURFACE_SECTIONS = ["git"] as const
 const SESSION_SURFACE_SECTIONS = ["resume", "name", "fork", "session", "compact"] as const
@@ -106,11 +107,13 @@ function availableSectionsForSurface(surface: string | null, includeAdmin: boole
 
 function sectionLabel(section: CommandSurfaceSection): string {
   const labels: Partial<Record<CommandSurfaceSection, string>> = {
+    general: "General",
     model: "Model",
     thinking: "Thinking",
     queue: "Queue",
     compaction: "Compaction",
     retry: "Retry",
+    "session-behavior": "Session",
     recovery: "Recovery",
     auth: "Auth",
     admin: "Admin",
@@ -127,11 +130,13 @@ function sectionLabel(section: CommandSurfaceSection): string {
 
 function sectionIcon(section: CommandSurfaceSection) {
   const icons: Partial<Record<CommandSurfaceSection, React.ReactNode>> = {
+    general: <SlidersHorizontal className="h-4 w-4" />,
     model: <Cpu className="h-4 w-4" />,
     thinking: <Brain className="h-4 w-4" />,
     queue: <ArrowRightLeft className="h-4 w-4" />,
     compaction: <Archive className="h-4 w-4" />,
     retry: <RefreshCw className="h-4 w-4" />,
+    "session-behavior": <ArrowRightLeft className="h-4 w-4" />,
     recovery: <LifeBuoy className="h-4 w-4" />,
     auth: <ShieldCheck className="h-4 w-4" />,
     admin: <SquareTerminal className="h-4 w-4" />,
@@ -2045,11 +2050,68 @@ export function CommandSurface() {
 
   const renderSection = () => {
     switch (commandSurface.section) {
-      case "model": return renderModelSection()
-      case "thinking": return renderThinkingSection()
-      case "queue": return renderQueueSection()
-      case "compaction": return renderCompactionSection()
-      case "retry": return renderRetrySection()
+      case "general": return <GeneralPanel />
+      case "model": return (
+        <div className="space-y-8">
+          {renderModelSection()}
+          <div className="border-t border-border/30 pt-6">
+            {renderThinkingSection()}
+          </div>
+        </div>
+      )
+      case "thinking": return (
+        <div className="space-y-8">
+          {renderModelSection()}
+          <div className="border-t border-border/30 pt-6">
+            {renderThinkingSection()}
+          </div>
+        </div>
+      )
+      case "session-behavior": return (
+        <div className="space-y-6">
+          {renderQueueSection()}
+          <div className="border-t border-border/30 pt-4">
+            {renderCompactionSection()}
+          </div>
+          <div className="border-t border-border/30 pt-4">
+            {renderRetrySection()}
+          </div>
+        </div>
+      )
+      // Legacy section routes — redirect to merged panels
+      case "queue": return (
+        <div className="space-y-6">
+          {renderQueueSection()}
+          <div className="border-t border-border/30 pt-4">
+            {renderCompactionSection()}
+          </div>
+          <div className="border-t border-border/30 pt-4">
+            {renderRetrySection()}
+          </div>
+        </div>
+      )
+      case "compaction": return (
+        <div className="space-y-6">
+          {renderQueueSection()}
+          <div className="border-t border-border/30 pt-4">
+            {renderCompactionSection()}
+          </div>
+          <div className="border-t border-border/30 pt-4">
+            {renderRetrySection()}
+          </div>
+        </div>
+      )
+      case "retry": return (
+        <div className="space-y-6">
+          {renderQueueSection()}
+          <div className="border-t border-border/30 pt-4">
+            {renderCompactionSection()}
+          </div>
+          <div className="border-t border-border/30 pt-4">
+            {renderRetrySection()}
+          </div>
+        </div>
+      )
       case "recovery": return renderRecoverySection()
       case "auth": return renderAuthSection()
       case "admin": return renderAdminSection()
@@ -2073,8 +2135,7 @@ export function CommandSurface() {
           <ModelRoutingPanel />
           <BudgetPanel />
           <RemoteQuestionsPanel />
-          <TerminalSizePanel />
-          <EditorSizePanel />
+          <GeneralPanel />
         </div>
       )
       case "gsd-mode": return <ModelRoutingPanel />

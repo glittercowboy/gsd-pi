@@ -11,6 +11,7 @@ import {
   Radio,
   RefreshCw,
   Settings,
+  SlidersHorizontal,
   Type,
 } from "lucide-react"
 
@@ -830,113 +831,107 @@ export function RemoteQuestionsPanel() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════
-// TERMINAL SIZE PANEL
+// GENERAL PANEL (font sizes)
 // ═══════════════════════════════════════════════════════════════════════
 
 const TERMINAL_SIZE_PRESETS = [11, 12, 13, 14, 15, 16] as const
-
-export function TerminalSizePanel() {
-  const [fontSize, setFontSize] = useTerminalFontSize()
-
-  return (
-    <div className="space-y-4" data-testid="settings-terminal-size">
-      <SettingsHeader
-        title="Terminal Text Size"
-        icon={<Type className="h-3.5 w-3.5" />}
-        subtitle="Applies to expert & chat terminals"
-        onRefresh={() => {}}
-        refreshing={false}
-      />
-
-      <div className="rounded-lg border border-border/30 bg-card/30 px-3 py-3 space-y-3">
-        <div className="text-[11px] text-muted-foreground">
-          Choose a font size for terminal content. The footer terminal always uses the default (13px).
-        </div>
-
-        <div className="flex flex-wrap gap-1.5">
-          {TERMINAL_SIZE_PRESETS.map((size) => (
-            <button
-              key={size}
-              type="button"
-              onClick={() => setFontSize(size)}
-              className={cn(
-                "rounded-md border px-3 py-1.5 text-xs font-medium tabular-nums transition-colors",
-                fontSize === size
-                  ? "border-foreground/30 bg-foreground/10 text-foreground shadow-sm"
-                  : "border-border/40 bg-card/50 text-muted-foreground hover:border-foreground/20 hover:text-foreground",
-              )}
-            >
-              {size}px
-              {size === 13 && (
-                <span className="ml-1 text-[10px] text-muted-foreground/60">(default)</span>
-              )}
-            </button>
-          ))}
-        </div>
-
-        <div
-          className="mt-2 rounded-md border border-border/20 bg-terminal px-3 py-2 font-mono text-foreground/80"
-          style={{ fontSize: `${fontSize}px`, lineHeight: 1.35 }}
-        >
-          The quick brown fox jumps over the lazy dog
-        </div>
-      </div>
-    </div>
-  )
-}
-
-// ═══════════════════════════════════════════════════════════════════════
-// EDITOR SIZE PANEL
-// ═══════════════════════════════════════════════════════════════════════
-
 const EDITOR_SIZE_PRESETS = [11, 12, 13, 14, 15, 16] as const
 
-export function EditorSizePanel() {
-  const [fontSize, setFontSize] = useEditorFontSize()
-
+function FontSizeControl({
+  label,
+  description,
+  presets,
+  defaultSize,
+  currentSize,
+  onChange,
+  previewFont,
+}: {
+  label: string
+  description: string
+  presets: readonly number[]
+  defaultSize: number
+  currentSize: number
+  onChange: (size: number) => void
+  previewFont: "mono" | "sans"
+}) {
   return (
-    <div className="space-y-4" data-testid="settings-editor-size">
-      <SettingsHeader
-        title="Editor Text Size"
-        icon={<Type className="h-3.5 w-3.5" />}
-        subtitle="Applies to file viewer & editor"
-        onRefresh={() => {}}
-        refreshing={false}
-      />
+    <div className="rounded-lg border border-border/30 bg-card/30 px-3 py-3 space-y-3">
+      <div>
+        <div className="text-xs font-medium text-foreground">{label}</div>
+        <div className="text-[11px] text-muted-foreground mt-0.5">{description}</div>
+      </div>
 
-      <div className="rounded-lg border border-border/30 bg-card/30 px-3 py-3 space-y-3">
-        <div className="text-[11px] text-muted-foreground">
-          Choose a font size for editor content. The default is 14px.
-        </div>
+      <div className="flex flex-wrap gap-1.5">
+        {presets.map((size) => (
+          <button
+            key={size}
+            type="button"
+            onClick={() => onChange(size)}
+            className={cn(
+              "rounded-md border px-3 py-1.5 text-xs font-medium tabular-nums transition-colors",
+              currentSize === size
+                ? "border-foreground/30 bg-foreground/10 text-foreground shadow-sm"
+                : "border-border/40 bg-card/50 text-muted-foreground hover:border-foreground/20 hover:text-foreground",
+            )}
+          >
+            {size}px
+            {size === defaultSize && (
+              <span className="ml-1 text-[10px] text-muted-foreground/60">(default)</span>
+            )}
+          </button>
+        ))}
+      </div>
 
-        <div className="flex flex-wrap gap-1.5">
-          {EDITOR_SIZE_PRESETS.map((size) => (
-            <button
-              key={size}
-              type="button"
-              onClick={() => setFontSize(size)}
-              className={cn(
-                "rounded-md border px-3 py-1.5 text-xs font-medium tabular-nums transition-colors",
-                fontSize === size
-                  ? "border-foreground/30 bg-foreground/10 text-foreground shadow-sm"
-                  : "border-border/40 bg-card/50 text-muted-foreground hover:border-foreground/20 hover:text-foreground",
-              )}
-            >
-              {size}px
-              {size === 14 && (
-                <span className="ml-1 text-[10px] text-muted-foreground/60">(default)</span>
-              )}
-            </button>
-          ))}
-        </div>
-
-        <div
-          className="mt-2 rounded-md border border-border/20 bg-terminal px-3 py-2 font-mono text-foreground/80"
-          style={{ fontSize: `${fontSize}px`, lineHeight: 1.35 }}
-        >
-          The quick brown fox jumps over the lazy dog
-        </div>
+      <div
+        className={cn(
+          "mt-2 rounded-md border border-border/20 bg-terminal px-3 py-2 text-foreground/80",
+          previewFont === "mono" ? "font-mono" : "font-sans",
+        )}
+        style={{ fontSize: `${currentSize}px`, lineHeight: 1.35 }}
+      >
+        The quick brown fox jumps over the lazy dog
       </div>
     </div>
   )
 }
+
+export function GeneralPanel() {
+  const [terminalFontSize, setTerminalFontSize] = useTerminalFontSize()
+  const [editorFontSize, setEditorFontSize] = useEditorFontSize()
+
+  return (
+    <div className="space-y-5" data-testid="settings-general">
+      <SettingsHeader
+        title="General"
+        icon={<SlidersHorizontal className="h-3.5 w-3.5" />}
+        subtitle="Appearance & behavior"
+        onRefresh={() => {}}
+        refreshing={false}
+      />
+
+      <FontSizeControl
+        label="Terminal font size"
+        description="Applies to all terminals and the chat mode interface"
+        presets={TERMINAL_SIZE_PRESETS}
+        defaultSize={13}
+        currentSize={terminalFontSize}
+        onChange={setTerminalFontSize}
+        previewFont="mono"
+      />
+
+      <FontSizeControl
+        label="Code font size"
+        description="Applies to the file viewer and code editor"
+        presets={EDITOR_SIZE_PRESETS}
+        defaultSize={14}
+        currentSize={editorFontSize}
+        onChange={setEditorFontSize}
+        previewFont="mono"
+      />
+    </div>
+  )
+}
+
+// Legacy exports for backward compatibility with gsd-prefs mega-scroll
+export const TerminalSizePanel = GeneralPanel
+export const EditorSizePanel = () => null

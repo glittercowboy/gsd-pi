@@ -439,7 +439,7 @@ export function FileContentViewer({
   // ── Editable mode: markdown keeps View/Edit tabs ──
   if (isMarkdown(filepath)) {
     return (
-      <Tabs defaultValue="view" className={cn("flex flex-1 flex-col overflow-hidden", className)}>
+      <Tabs defaultValue="view" className={cn("flex flex-1 flex-col overflow-hidden min-h-0", className)}>
         <div className="flex items-center gap-2 border-b border-border px-4">
           <TabsList className="h-8 bg-transparent p-0">
             <TabsTrigger
@@ -487,7 +487,7 @@ export function FileContentViewer({
           <ReadOnlyContent content={content} filepath={filepath} fontSize={fontSize} shikiTheme={shikiTheme} />
         </TabsContent>
 
-        <TabsContent value="edit" className="flex-1 overflow-hidden mt-0">
+        <TabsContent value="edit" className="flex-1 overflow-hidden mt-0 min-h-0">
           <CodeEditor
             value={editContent}
             onChange={setEditContent}
@@ -502,7 +502,7 @@ export function FileContentViewer({
 
   // ── Editable mode: non-markdown gets single CodeEditor view ──
   return (
-    <div className={cn("flex flex-1 flex-col overflow-hidden", className)}>
+    <div className={cn("flex flex-1 flex-col overflow-hidden min-h-0", className)}>
       {/* Header bar with save button */}
       <div className="flex items-center gap-2 border-b border-border px-4 py-1.5">
         <div className="ml-auto flex items-center gap-2">
@@ -536,7 +536,7 @@ export function FileContentViewer({
         onChange={setEditContent}
         language={language}
         fontSize={fontSize}
-        className="flex-1 border-0 rounded-none"
+        className="flex-1 min-h-0 border-0 rounded-none"
       />
     </div>
   )

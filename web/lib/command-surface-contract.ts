@@ -22,11 +22,13 @@ export const COMMAND_SURFACE_THINKING_LEVELS = ["off", "minimal", "low", "medium
 
 export type CommandSurfaceThinkingLevel = (typeof COMMAND_SURFACE_THINKING_LEVELS)[number]
 export type CommandSurfaceSection =
+  | "general"
   | "model"
   | "thinking"
   | "queue"
   | "compaction"
   | "retry"
+  | "session-behavior"
   | "recovery"
   | "auth"
   | "admin"
@@ -650,7 +652,7 @@ export function commandSurfaceSectionForRequest(request: CommandSurfaceOpenReque
     case "thinking":
       return "thinking"
     case "settings":
-      return request.onboardingLocked ? "auth" : "model"
+      return request.onboardingLocked ? "auth" : "general"
     case "git":
       return "git"
     case "login":
@@ -888,7 +890,7 @@ export function setCommandSurfaceSection(
     selectedTarget = buildModelTarget(request)
   } else if (section === "thinking") {
     selectedTarget = buildThinkingTarget(request)
-  } else if (section === "queue" || section === "compaction" || section === "retry" || section === "recovery" || section === "git" || section === "admin") {
+  } else if (section === "general" || section === "session-behavior" || section === "queue" || section === "compaction" || section === "retry" || section === "recovery" || section === "git" || section === "admin") {
     selectedTarget = buildSettingsTarget(section)
   } else if (section === "auth") {
     selectedTarget = buildAuthTarget({

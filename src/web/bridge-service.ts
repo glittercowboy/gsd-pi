@@ -542,7 +542,7 @@ export function detectProjectKind(projectCwd: string): ProjectDetection {
     kind = hasMilestones ? "active-gsd" : "empty-gsd";
   } else if (hasPlanningFolder) {
     kind = "v1-legacy";
-  } else if (hasGitRepo || hasPackageJson || hasCargo || hasGoMod || hasPyproject || fileCount > 2) {
+  } else if (hasPackageJson || hasCargo || hasGoMod || hasPyproject || fileCount > 2 || (hasGitRepo && fileCount > 0)) {
     kind = "brownfield";
   } else {
     kind = "blank";
