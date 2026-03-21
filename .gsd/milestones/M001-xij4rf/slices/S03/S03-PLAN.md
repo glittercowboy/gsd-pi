@@ -34,7 +34,7 @@
   - Verify: `node --import ./src/resources/extensions/gsd/tests/resolve-ts.mjs --experimental-strip-types --test src/resources/extensions/gsd/tests/journal.test.ts` — all 17+ tests pass
   - Done when: `queryJournal(base, { rule: "my-rule" })` returns only entries with matching `rule` field, and all existing tests still pass
 
-- [ ] **T02: Create gsd_journal_query tool and wire into extension** `est:30m`
+- [x] **T02: Create gsd_journal_query tool and wire into extension** `est:30m`
   - Why: This is the slice's core deliverable — the LLM-callable tool that satisfies R011. It wires `queryJournal()` into the GSD extension as a registered tool.
   - Files: `src/resources/extensions/gsd/bootstrap/journal-tools.ts`, `src/resources/extensions/gsd/bootstrap/register-extension.ts`, `src/resources/extensions/gsd/tests/journal-query-tool.test.ts`
   - Do: Create `journal-tools.ts` exporting `registerJournalTools(pi)` following the `db-tools.ts` pattern. Register one tool `gsd_journal_query` with TypeBox params (flowId, unitId, rule, eventType, after, before as Optional Strings; limit as Optional Number defaulting to 100). Execute calls `queryJournal(process.cwd(), filters)`, slices to limit, returns `JSON.stringify(entries, null, 2)` or "No matching journal entries found" for empty results. Import and call `registerJournalTools(pi)` from `register-extension.ts`. Write `journal-query-tool.test.ts` that creates a mock ExtensionAPI, calls registerJournalTools, and verifies tool name, parameters, and correct output.

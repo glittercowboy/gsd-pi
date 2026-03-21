@@ -5,6 +5,7 @@ import { registerExitCommand } from "../exit-command.js";
 import { registerWorktreeCommand } from "../worktree-command.js";
 import { registerDbTools } from "./db-tools.js";
 import { registerDynamicTools } from "./dynamic-tools.js";
+import { registerJournalTools } from "./journal-tools.js";
 import { registerHooks } from "./register-hooks.js";
 import { registerShortcuts } from "./register-shortcuts.js";
 
@@ -40,6 +41,7 @@ export function registerGsdExtension(pi: ExtensionAPI): void {
 
   registerDynamicTools(pi);
   registerDbTools(pi);
+  registerJournalTools(pi);
   registerShortcuts(pi);
   registerHooks(pi);
 }

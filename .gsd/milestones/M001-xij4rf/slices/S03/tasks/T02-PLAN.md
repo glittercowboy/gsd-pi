@@ -100,3 +100,10 @@ Create the `gsd_journal_query` LLM-callable tool that exposes `queryJournal()` a
 - `src/resources/extensions/gsd/bootstrap/journal-tools.ts` — new file with `registerJournalTools` export
 - `src/resources/extensions/gsd/bootstrap/register-extension.ts` — modified with journal tools import and call
 - `src/resources/extensions/gsd/tests/journal-query-tool.test.ts` — new test file for tool registration
+
+## Observability Impact
+
+- **New inspection surface:** The `gsd_journal_query` tool returns JSON-serialized `JournalEntry[]` or `"No matching journal entries found."`, giving the LLM agent direct visibility into journal contents for any filter combination.
+- **Error path:** Tool catches all exceptions and returns `"Error querying journal: <msg>"` text. Errors are also written to stderr via `process.stderr.write()`.
+- **Silent empty results:** When `queryJournal()` returns `[]` (missing directory, corrupt files, or no matches), the tool converts this to the user-visible "no entries found" message rather than an empty JSON array.
+- **Limit cap:** The `limit` parameter (default 100) prevents the tool from flooding the LLM context window with unbounded journal data.
