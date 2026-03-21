@@ -1,5 +1,7 @@
 import { execFile, execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { promisify } from "node:util";
 import type { GSDPreferences } from "../gsd/preferences.js";
 import type { GSDState, Phase } from "../gsd/types.js";

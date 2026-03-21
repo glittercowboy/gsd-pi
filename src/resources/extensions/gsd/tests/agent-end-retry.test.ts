@@ -14,30 +14,30 @@ import { fileURLToPath } from "node:url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const AUTO_TS_PATH = join(__dirname, "..", "auto.ts");
-const AUTO_LOOP_TS_PATH = join(__dirname, "..", "auto-loop.ts");
+const AUTO_RESOLVE_TS_PATH = join(__dirname, "..", "auto", "resolve.ts");
 const SESSION_TS_PATH = join(__dirname, "..", "auto", "session.ts");
 
 function getAutoTsSource(): string {
   return readFileSync(AUTO_TS_PATH, "utf-8");
 }
 
-function getAutoLoopTsSource(): string {
-  return readFileSync(AUTO_LOOP_TS_PATH, "utf-8");
+function getAutoResolveTsSource(): string {
+  return readFileSync(AUTO_RESOLVE_TS_PATH, "utf-8");
 }
 
 function getSessionTsSource(): string {
   return readFileSync(SESSION_TS_PATH, "utf-8");
 }
 
-test("auto-loop.ts declares _currentResolve for per-unit one-shot promises", () => {
-  const source = getAutoLoopTsSource();
+test("auto/resolve.ts declares _currentResolve for per-unit one-shot promises", () => {
+  const source = getAutoResolveTsSource();
   assert.ok(
     source.includes("_currentResolve"),
-    "auto-loop.ts must declare _currentResolve for the per-unit resolve function",
+    "auto/resolve.ts must declare _currentResolve for the per-unit resolve function",
   );
   assert.ok(
     source.includes("_sessionSwitchInFlight"),
-    "auto-loop.ts must declare _sessionSwitchInFlight guard",
+    "auto/resolve.ts must declare _sessionSwitchInFlight guard",
   );
 });
 
@@ -79,5 +79,65 @@ test("handleAgentEnd is a thin compatibility wrapper", () => {
   assert.ok(
     !fnBlock.includes("dispatchNextUnit"),
     "handleAgentEnd must not dispatch recursively",
+  );
+});
+
+test("handleAgentEnd early return calls resolveAgentEndCancelled", () => {
+  const source = getAutoTsSource();
+  const fnIdx = source.indexOf("export async function handleAgentEnd");
+  assert.ok(fnIdx > -1, "handleAgentEnd must exist in auto.ts");
+  const fnBlock = source.slice(fnIdx, source.indexOf("\n// ─── ", fnIdx + 100));
+
+  assert.ok(
+    fnBlock.includes("resolveAgentEndCancelled()"),
+    "handleAgentEnd must call resolveAgentEndCancelled on early return to prevent orphaned promises",
+  );
+});
+
+test("pauseAuto calls resolveAgentEndCancelled to unblock the loop", () => {
+  const source = getAutoTsSource();
+  const fnIdx = source.indexOf("export async function pauseAuto");
+  assert.ok(fnIdx > -1, "pauseAuto must exist in auto.ts");
+  // Extract the function body (up to the next export or top-level function)
+  const fnBlock = source.slice(fnIdx, source.indexOf("\n/**\n * Build", fnIdx + 100));
+
+  assert.ok(
+    fnBlock.includes("resolveAgentEndCancelled()"),
+    "pauseAuto must call resolveAgentEndCancelled to unblock the auto-loop promise",
+  );
+});
+
+test("auto-timers.ts idle watchdog catch calls resolveAgentEndCancelled", () => {
+  const TIMERS_PATH = join(__dirname, "..", "auto-timers.ts");
+  const source = readFileSync(TIMERS_PATH, "utf-8");
+
+  const idleCatchIdx = source.indexOf("[idle-watchdog] Unhandled error");
+  assert.ok(idleCatchIdx > -1, "idle watchdog catch block must exist");
+  // Check that resolveAgentEndCancelled is called near this catch
+  const catchRegion = source.slice(Math.max(0, idleCatchIdx - 200), idleCatchIdx + 200);
+  assert.ok(
+    catchRegion.includes("resolveAgentEndCancelled()"),
+    "idle watchdog catch block must call resolveAgentEndCancelled",
+  );
+});
+
+test("auto-timers.ts hard timeout catch calls resolveAgentEndCancelled", () => {
+  const TIMERS_PATH = join(__dirname, "..", "auto-timers.ts");
+  const source = readFileSync(TIMERS_PATH, "utf-8");
+
+  const hardCatchIdx = source.indexOf("[hard-timeout] Unhandled error");
+  assert.ok(hardCatchIdx > -1, "hard timeout catch block must exist");
+  const catchRegion = source.slice(Math.max(0, hardCatchIdx - 200), hardCatchIdx + 200);
+  assert.ok(
+    catchRegion.includes("resolveAgentEndCancelled()"),
+    "hard timeout catch block must call resolveAgentEndCancelled",
+  );
+});
+
+test("resolveAgentEndCancelled is exported from auto/resolve.ts", () => {
+  const source = getAutoResolveTsSource();
+  assert.ok(
+    source.includes("export function resolveAgentEndCancelled"),
+    "auto/resolve.ts must export resolveAgentEndCancelled",
   );
 });

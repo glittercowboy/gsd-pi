@@ -419,7 +419,7 @@ Built the legacy feature successfully.
       // Blocker: trying to dispatch M002-abc123/S02 when S01 is incomplete
       assertMatch(
         getPriorSliceCompletionBlocker(base, 'main', 'execute-task', 'M002-abc123/S02/T01') ?? '',
-        /earlier slice M002-abc123\/S01 is not complete/,
+        /dependency slice M002-abc123\/S01 is not complete/,
         'G5: blocks M002-abc123/S02 when S01 incomplete',
       );
 
@@ -478,7 +478,7 @@ Built the legacy feature successfully.
       // Check that S02 of M002-abc123 is still blocked by its own S01
       assertMatch(
         getPriorSliceCompletionBlocker(base, 'main', 'execute-task', 'M002-abc123/S02/T01') ?? '',
-        /earlier slice M002-abc123\/S01 is not complete/,
+        /dependency slice M002-abc123\/S01 is not complete/,
         'G5: intra-milestone blocker still works in mixed-format context',
       );
     } finally {

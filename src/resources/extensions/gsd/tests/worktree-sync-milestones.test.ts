@@ -1,9 +1,12 @@
 /**
- * worktree-sync-milestones.test.ts — Regression test for #1311.
+ * worktree-sync-milestones.test.ts — Regression tests for #1311 and #1678.
  *
  * Verifies that syncProjectRootToWorktree copies milestone artifacts
  * from the main repo's .gsd/ into the worktree's .gsd/ for the
  * specified milestone, and deletes gsd.db so it rebuilds from fresh state.
+ *
+ * Also verifies that syncWorktreeStateBack recurses into tasks/ subdirectories
+ * so task-level summaries are not dropped on milestone teardown (#1678).
  *
  * Covers:
  *   - Milestone directory synced from main to worktree
@@ -12,6 +15,7 @@
  *   - No-op when paths are equal
  *   - No-op when milestoneId is null
  *   - Non-existent directories handled gracefully
+ *   - syncWorktreeStateBack recurses into tasks/ subdirectory (#1678)
  */
 
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync } from 'node:fs';
@@ -19,7 +23,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
 import { syncProjectRootToWorktree } from '../auto-worktree-sync.ts';
-import { syncGsdStateToWorktree } from '../auto-worktree.ts';
+import { syncGsdStateToWorktree, syncWorktreeStateBack } from '../auto-worktree.ts';
 import { createTestContext } from './test-helpers.ts';
 
 const { assertTrue, report } = createTestContext();
@@ -176,6 +180,51 @@ async function main(): Promise<void> {
       assertTrue(result.synced.length > 0, 'sync reported files');
     } finally {
       cleanup(mainBase);
+      rmSync(wtBase, { recursive: true, force: true });
+    }
+  }
+
+  // ─── 8. syncWorktreeStateBack recurses into tasks/ (#1678) ───────────
+  console.log('\n=== 8. syncWorktreeStateBack copies tasks/ subdirectory (#1678) ===');
+  {
+    const mainBase = mkdtempSync(join(tmpdir(), 'gsd-wt-back-main-'));
+    const wtBase = mkdtempSync(join(tmpdir(), 'gsd-wt-back-wt-'));
+
+    try {
+      // Build worktree milestone structure with slice-level and task-level files
+      const wtSliceDir = join(wtBase, '.gsd', 'milestones', 'M001', 'slices', 'S01');
+      const wtTasksDir = join(wtSliceDir, 'tasks');
+      mkdirSync(wtTasksDir, { recursive: true });
+      writeFileSync(join(wtSliceDir, 'S01-SUMMARY.md'), '# S01 Summary');
+      writeFileSync(join(wtTasksDir, 'T01-SUMMARY.md'), '# T01 Summary');
+      writeFileSync(join(wtTasksDir, 'T02-SUMMARY.md'), '# T02 Summary');
+
+      // Main project root starts with only the milestone directory (no slices yet)
+      mkdirSync(join(mainBase, '.gsd', 'milestones', 'M001'), { recursive: true });
+
+      const { synced } = syncWorktreeStateBack(mainBase, wtBase, 'M001');
+
+      const mainSliceDir = join(mainBase, '.gsd', 'milestones', 'M001', 'slices', 'S01');
+      const mainTasksDir = join(mainSliceDir, 'tasks');
+
+      assertTrue(
+        existsSync(join(mainSliceDir, 'S01-SUMMARY.md')),
+        '#1678: slice SUMMARY synced to project root',
+      );
+      assertTrue(
+        existsSync(join(mainTasksDir, 'T01-SUMMARY.md')),
+        '#1678: task T01-SUMMARY synced to project root',
+      );
+      assertTrue(
+        existsSync(join(mainTasksDir, 'T02-SUMMARY.md')),
+        '#1678: task T02-SUMMARY synced to project root',
+      );
+      assertTrue(
+        synced.some((p) => p.includes('tasks/T01-SUMMARY.md')),
+        '#1678: task summary appears in synced list',
+      );
+    } finally {
+      rmSync(mainBase, { recursive: true, force: true });
       rmSync(wtBase, { recursive: true, force: true });
     }
   }

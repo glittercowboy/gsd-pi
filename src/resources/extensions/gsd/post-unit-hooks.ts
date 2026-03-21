@@ -34,7 +34,7 @@ const cycleCounts = new Map<string, number>();
 let retryPending = false;
 
 /** Stores the trigger unit info for pending retries so caller knows what to re-run. */
-let retryTrigger: { unitType: string; unitId: string } | null = null;
+let retryTrigger: { unitType: string; unitId: string; retryArtifact: string } | null = null;
 
 // ─── Public API ────────────────────────────────────────────────────────────
 
@@ -99,7 +99,7 @@ export function isRetryPending(): boolean {
  * Returns the trigger unit info for a pending retry, or null.
  * Clears the retry state after reading.
  */
-export function consumeRetryTrigger(): { unitType: string; unitId: string } | null {
+export function consumeRetryTrigger(): { unitType: string; unitId: string; retryArtifact: string } | null {
   if (!retryPending || !retryTrigger) return null;
   const trigger = { ...retryTrigger };
   retryPending = false;
@@ -191,7 +191,7 @@ function handleHookCompletion(basePath: string): HookDispatchResult | null {
         activeHook = null;
         hookQueue = [];
         retryPending = true;
-        retryTrigger = { unitType: hook.triggerUnitType, unitId: hook.triggerUnitId };
+        retryTrigger = { unitType: hook.triggerUnitType, unitId: hook.triggerUnitId, retryArtifact: config.retry_on };
         return null;
       }
       // Max cycles reached — fall through to normal completion
@@ -206,21 +206,21 @@ function handleHookCompletion(basePath: string): HookDispatchResult | null {
 /**
  * Resolve the path where a hook artifact is expected to be written.
  * Uses the trigger unit's directory context:
- *   - Task-level (M001/S01/T01): .gsd/M001/slices/S01/tasks/T01-{artifact}
- *   - Slice-level (M001/S01):    .gsd/M001/slices/S01/{artifact}
- *   - Milestone-level (M001):    .gsd/M001/{artifact}
+ *   - Task-level (M001/S01/T01): .gsd/milestones/M001/slices/S01/tasks/T01-{artifact}
+ *   - Slice-level (M001/S01):    .gsd/milestones/M001/slices/S01/{artifact}
+ *   - Milestone-level (M001):    .gsd/milestones/M001/{artifact}
  */
 export function resolveHookArtifactPath(basePath: string, unitId: string, artifactName: string): string {
   const parts = unitId.split("/");
   if (parts.length === 3) {
     const [mid, sid, tid] = parts;
-    return join(basePath, ".gsd", mid, "slices", sid, "tasks", `${tid}-${artifactName}`);
+    return join(basePath, ".gsd", "milestones", mid, "slices", sid, "tasks", `${tid}-${artifactName}`);
   }
   if (parts.length === 2) {
     const [mid, sid] = parts;
-    return join(basePath, ".gsd", mid, "slices", sid, artifactName);
+    return join(basePath, ".gsd", "milestones", mid, "slices", sid, artifactName);
   }
-  return join(basePath, ".gsd", parts[0], artifactName);
+  return join(basePath, ".gsd", "milestones", parts[0], artifactName);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

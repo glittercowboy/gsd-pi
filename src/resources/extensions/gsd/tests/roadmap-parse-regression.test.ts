@@ -349,6 +349,114 @@ async function main(): Promise<void> {
     assertEq(slices[0].id, 'S001', 'three-digit: S001');
   }
 
+  // ═══════════════════════════════════════════════════════════════════════
+  // Q. Regression #1736: Table format under ## Slices
+  // ═══════════════════════════════════════════════════════════════════════
+
+  console.log('\n=== Q. #1736: Table format under ## Slices ===');
+
+  {
+    const content = [
+      '# M001: Test',
+      '',
+      '## Slices',
+      '',
+      '| Slice | Title | Risk | Status |',
+      '| --- | --- | --- | --- |',
+      '| S01 | Setup Foundation | Low | [x] Done |',
+      '| S02 | Core Features | High | [ ] Pending |',
+      '| S03 | Polish | Medium | [x] Done |',
+      '',
+      '## Boundary Map',
+    ].join('\n');
+
+    const slices = parseRoadmapSlices(content);
+    assertEq(slices.length, 3, '#1736 table: 3 slices');
+    assertEq(slices[0].id, 'S01', '#1736 table: S01 id');
+    assertEq(slices[0].title, 'Setup Foundation', '#1736 table: S01 title');
+    assertEq(slices[0].done, true, '#1736 table: S01 done');
+    assertEq(slices[0].risk, 'low', '#1736 table: S01 risk');
+    assertEq(slices[1].done, false, '#1736 table: S02 not done');
+    assertEq(slices[2].done, true, '#1736 table: S03 done');
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // R. Regression #1736: Table format under ## Slice Overview
+  // ═══════════════════════════════════════════════════════════════════════
+
+  console.log('\n=== R. #1736: Table format under ## Slice Overview ===');
+
+  {
+    const content = [
+      '# M002: Overview Heading',
+      '',
+      '## Slice Overview',
+      '',
+      '| ID | Description | Risk | Done |',
+      '|---|---|---|---|',
+      '| S01 | Foundation | High | [x] |',
+      '| S02 | API Layer | Medium | [ ] |',
+      '',
+    ].join('\n');
+
+    const slices = parseRoadmapSlices(content);
+    assertEq(slices.length, 2, '#1736 overview: 2 slices');
+    assertEq(slices[0].done, true, '#1736 overview: S01 done');
+    assertEq(slices[1].done, false, '#1736 overview: S02 not done');
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // S. Regression #1736: Table with Done/Complete text status
+  // ═══════════════════════════════════════════════════════════════════════
+
+  console.log('\n=== S. #1736: Table with text status ===');
+
+  {
+    const content = [
+      '# M003: Status Text',
+      '',
+      '## Slices',
+      '',
+      '| Slice | Title | Risk | Status |',
+      '|---|---|---|---|',
+      '| S01 | First | Low | Done |',
+      '| S02 | Second | High | Pending |',
+      '| S03 | Third | Medium | Completed |',
+      '',
+    ].join('\n');
+
+    const slices = parseRoadmapSlices(content);
+    assertEq(slices.length, 3, '#1736 text status: 3 slices');
+    assertTrue(slices[0].done, '#1736 text status: Done = true');
+    assertTrue(!slices[1].done, '#1736 text status: Pending = false');
+    assertTrue(slices[2].done, '#1736 text status: Completed = true');
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // T. Regression #1736: Checkbox format still works after table support
+  // ═══════════════════════════════════════════════════════════════════════
+
+  console.log('\n=== T. #1736: Checkbox format unchanged ===');
+
+  {
+    const content = [
+      '# M005: Unchanged',
+      '',
+      '## Slices',
+      '',
+      '- [x] **S01: First** `risk:low` `depends:[]`',
+      '  > After this: demo works.',
+      '- [ ] **S02: Second** `risk:medium` `depends:[S01]`',
+      '',
+    ].join('\n');
+
+    const slices = parseRoadmapSlices(content);
+    assertEq(slices.length, 2, '#1736 checkbox compat: 2 slices');
+    assertEq(slices[0].done, true, '#1736 checkbox compat: S01 done');
+    assertEq(slices[0].demo, 'demo works.', '#1736 checkbox compat: demo');
+    assertEq(slices[1].done, false, '#1736 checkbox compat: S02 not done');
+  }
+
   report();
 }
 

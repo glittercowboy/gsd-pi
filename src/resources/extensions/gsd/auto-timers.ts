@@ -19,6 +19,7 @@ import { detectWorkingTreeActivity } from "./auto-supervisor.js";
 import { closeoutUnit, type CloseoutOptions } from "./auto-unit-closeout.js";
 import { saveActivityLog } from "./activity-log.js";
 import { recoverTimedOutUnit, type RecoveryContext } from "./auto-timeout-recovery.js";
+import { resolveAgentEndCancelled } from "./auto/resolve.js";
 import type { AutoSession } from "./auto/session.js";
 
 export interface SupervisionContext {
@@ -129,6 +130,8 @@ export function startUnitSupervision(sctx: SupervisionContext): void {
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       console.error(`[idle-watchdog] Unhandled error: ${message}`);
+      // Unblock any pending unit promise so the auto-loop is not orphaned.
+      resolveAgentEndCancelled();
       try {
         ctx.ui.notify(`Idle watchdog error: ${message}`, "warning");
       } catch { /* best effort */ }
@@ -161,6 +164,8 @@ export function startUnitSupervision(sctx: SupervisionContext): void {
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       console.error(`[hard-timeout] Unhandled error: ${message}`);
+      // Unblock any pending unit promise so the auto-loop is not orphaned.
+      resolveAgentEndCancelled();
       try {
         ctx.ui.notify(`Hard timeout error: ${message}`, "warning");
       } catch { /* best effort */ }

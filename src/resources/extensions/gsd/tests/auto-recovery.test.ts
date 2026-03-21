@@ -11,6 +11,7 @@ import {
   diagnoseExpectedArtifact,
   buildLoopRemediationSteps,
   selfHealRuntimeRecords,
+  hasImplementationArtifacts,
 } from "../auto-recovery.ts";
 import { parseRoadmap, clearParseCache } from "../files.ts";
 import { invalidateAllCaches } from "../cache.ts";
@@ -433,6 +434,39 @@ test("selfHealRuntimeRecords clears stale dispatched records (#769)", async () =
   }
 });
 
+// ─── #1625: selfHealRuntimeRecords on resume clears paused-session leftovers ──
+
+test("selfHealRuntimeRecords clears recently-paused dispatched records on resume (#1625)", async () => {
+  // When pauseAuto closes out a unit but clearUnitRuntimeRecord silently fails
+  // (e.g. permission error), selfHealRuntimeRecords on resume should still
+  // clean up stale dispatched records that are >1h old.
+  const base = makeTmpBase();
+  try {
+    const { writeUnitRuntimeRecord, readUnitRuntimeRecord } = await import("../unit-runtime.ts");
+
+    // Simulate a record left behind after a pause — aged >1h to be considered stale
+    writeUnitRuntimeRecord(base, "execute-task", "M001/S01/T01", Date.now() - 3700_000, {
+      phase: "dispatched",
+    });
+
+    const before = readUnitRuntimeRecord(base, "execute-task", "M001/S01/T01");
+    assert.ok(before, "dispatched record should exist before resume heal");
+    assert.equal(before!.phase, "dispatched");
+
+    const notifications: string[] = [];
+    const mockCtx = {
+      ui: { notify: (msg: string) => { notifications.push(msg); } },
+    } as any;
+
+    await selfHealRuntimeRecords(base, mockCtx);
+
+    const after = readUnitRuntimeRecord(base, "execute-task", "M001/S01/T01");
+    assert.equal(after, null, "stale dispatched record should be cleared on resume (#1625)");
+  } finally {
+    cleanup(base);
+  }
+});
+
 // ─── #793: invalidateAllCaches unblocks skip-loop ─────────────────────────
 // When the skip-loop breaker fires, it must call invalidateAllCaches() (not
 // just invalidateStateCache()) to clear path/parse caches that deriveState
@@ -480,6 +514,109 @@ test("#793: invalidateAllCaches clears all caches so deriveState sees fresh disk
     // do not throw (they should be no-ops after invalidateAllCaches already cleared them)
     clearParseCache(); // no-op, but should not throw
     assert.ok(true, "clearParseCache after invalidateAllCaches is safe");
+  } finally {
+    cleanup(base);
+  }
+});
+
+// ─── hasImplementationArtifacts (#1703) ───────────────────────────────────
+
+import { execFileSync } from "node:child_process";
+
+function makeGitBase(): string {
+  const base = join(tmpdir(), `gsd-test-git-${randomUUID()}`);
+  mkdirSync(base, { recursive: true });
+  execFileSync("git", ["init", "--initial-branch=main"], { cwd: base, stdio: "ignore" });
+  execFileSync("git", ["config", "user.email", "test@test.com"], { cwd: base, stdio: "ignore" });
+  execFileSync("git", ["config", "user.name", "Test"], { cwd: base, stdio: "ignore" });
+  // Create initial commit so HEAD exists
+  writeFileSync(join(base, ".gitkeep"), "");
+  execFileSync("git", ["add", "."], { cwd: base, stdio: "ignore" });
+  execFileSync("git", ["commit", "-m", "initial"], { cwd: base, stdio: "ignore" });
+  return base;
+}
+
+test("hasImplementationArtifacts returns false when only .gsd/ files committed (#1703)", () => {
+  const base = makeGitBase();
+  try {
+    // Create a feature branch and commit only .gsd/ files
+    execFileSync("git", ["checkout", "-b", "feat/test-milestone"], { cwd: base, stdio: "ignore" });
+    mkdirSync(join(base, ".gsd", "milestones", "M001"), { recursive: true });
+    writeFileSync(join(base, ".gsd", "milestones", "M001", "M001-ROADMAP.md"), "# Roadmap");
+    writeFileSync(join(base, ".gsd", "milestones", "M001", "M001-SUMMARY.md"), "# Summary");
+    execFileSync("git", ["add", "."], { cwd: base, stdio: "ignore" });
+    execFileSync("git", ["commit", "-m", "chore: add plan files"], { cwd: base, stdio: "ignore" });
+
+    const result = hasImplementationArtifacts(base);
+    assert.equal(result, false, "should return false when only .gsd/ files were committed");
+  } finally {
+    cleanup(base);
+  }
+});
+
+test("hasImplementationArtifacts returns true when implementation files committed (#1703)", () => {
+  const base = makeGitBase();
+  try {
+    // Create a feature branch with both .gsd/ and implementation files
+    execFileSync("git", ["checkout", "-b", "feat/test-impl"], { cwd: base, stdio: "ignore" });
+    mkdirSync(join(base, ".gsd", "milestones", "M001"), { recursive: true });
+    writeFileSync(join(base, ".gsd", "milestones", "M001", "M001-ROADMAP.md"), "# Roadmap");
+    mkdirSync(join(base, "src"), { recursive: true });
+    writeFileSync(join(base, "src", "feature.ts"), "export function feature() {}");
+    execFileSync("git", ["add", "."], { cwd: base, stdio: "ignore" });
+    execFileSync("git", ["commit", "-m", "feat: add feature"], { cwd: base, stdio: "ignore" });
+
+    const result = hasImplementationArtifacts(base);
+    assert.equal(result, true, "should return true when implementation files are present");
+  } finally {
+    cleanup(base);
+  }
+});
+
+test("hasImplementationArtifacts returns true on non-git directory (fail-open)", () => {
+  const base = join(tmpdir(), `gsd-test-nogit-${randomUUID()}`);
+  mkdirSync(base, { recursive: true });
+  try {
+    const result = hasImplementationArtifacts(base);
+    assert.equal(result, true, "should return true (fail-open) in non-git directory");
+  } finally {
+    cleanup(base);
+  }
+});
+
+// ─── verifyExpectedArtifact: complete-milestone requires impl artifacts (#1703) ──
+
+test("verifyExpectedArtifact complete-milestone fails with only .gsd/ files (#1703)", () => {
+  const base = makeGitBase();
+  try {
+    // Create feature branch with only .gsd/ files
+    execFileSync("git", ["checkout", "-b", "feat/ms-only-gsd"], { cwd: base, stdio: "ignore" });
+    mkdirSync(join(base, ".gsd", "milestones", "M001"), { recursive: true });
+    writeFileSync(join(base, ".gsd", "milestones", "M001", "M001-SUMMARY.md"), "# Milestone Summary\nDone.");
+    execFileSync("git", ["add", "."], { cwd: base, stdio: "ignore" });
+    execFileSync("git", ["commit", "-m", "chore: milestone plan files"], { cwd: base, stdio: "ignore" });
+
+    const result = verifyExpectedArtifact("complete-milestone", "M001", base);
+    assert.equal(result, false, "complete-milestone should fail verification when only .gsd/ files present");
+  } finally {
+    cleanup(base);
+  }
+});
+
+test("verifyExpectedArtifact complete-milestone passes with impl files (#1703)", () => {
+  const base = makeGitBase();
+  try {
+    // Create feature branch with implementation files AND milestone summary
+    execFileSync("git", ["checkout", "-b", "feat/ms-with-impl"], { cwd: base, stdio: "ignore" });
+    mkdirSync(join(base, ".gsd", "milestones", "M001"), { recursive: true });
+    writeFileSync(join(base, ".gsd", "milestones", "M001", "M001-SUMMARY.md"), "# Milestone Summary\nDone.");
+    mkdirSync(join(base, "src"), { recursive: true });
+    writeFileSync(join(base, "src", "app.ts"), "console.log('hello');");
+    execFileSync("git", ["add", "."], { cwd: base, stdio: "ignore" });
+    execFileSync("git", ["commit", "-m", "feat: implementation"], { cwd: base, stdio: "ignore" });
+
+    const result = verifyExpectedArtifact("complete-milestone", "M001", base);
+    assert.equal(result, true, "complete-milestone should pass verification with implementation files");
   } finally {
     cleanup(base);
   }

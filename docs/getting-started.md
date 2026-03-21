@@ -47,7 +47,7 @@ Run `gsd` in any directory:
 gsd
 ```
 
-On first launch, GSD runs a setup wizard:
+GSD displays a welcome screen showing your version, active model, and available tool keys. Then on first launch, it runs a setup wizard:
 
 1. **LLM Provider** — select from 20+ providers (Anthropic, OpenAI, Google, OpenRouter, GitHub Copilot, Amazon Bedrock, Azure, and more). OAuth flows handle Claude Max and Copilot subscriptions automatically; otherwise paste an API key.
 2. **Tool API Keys** (optional) — Brave Search, Context7, Jina, Slack, Discord. Press Enter to skip any.
@@ -134,6 +134,8 @@ All state lives on disk in `.gsd/`:
   PROJECT.md          — what the project is right now
   REQUIREMENTS.md     — requirement contract (active/validated/deferred)
   DECISIONS.md        — append-only architectural decisions
+  KNOWLEDGE.md        — cross-session rules, patterns, and lessons
+  RUNTIME.md          — runtime context: API endpoints, env vars, services (v2.39)
   STATE.md            — quick-glance status
   milestones/
     M001/

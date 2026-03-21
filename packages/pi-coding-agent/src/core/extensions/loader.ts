@@ -580,6 +580,46 @@ async function loadExtensionModule(extensionPath: string) {
 }
 
 /**
+ * Check whether a module path belongs to a non-extension library that should
+ * be silently skipped rather than reported as an error.
+ *
+ * A directory is a non-extension library when its package.json has a "pi"
+ * manifest that declares no extensions (e.g. `"pi": {}`). This is the
+ * opt-out convention used by shared libraries like cmux that live inside
+ * the extensions/ directory but are not extensions themselves.
+ *
+ * This serves as a defense-in-depth check: even if the upstream discovery
+ * layers fail to filter out the library, the loader itself will not emit
+ * a spurious error.
+ */
+function isNonExtensionLibrary(resolvedPath: string): boolean {
+	// Walk up from the resolved file to find the nearest package.json
+	let dir = path.dirname(resolvedPath);
+	const root = path.parse(dir).root;
+	while (dir !== root) {
+		const packageJsonPath = path.join(dir, "package.json");
+		if (fs.existsSync(packageJsonPath)) {
+			try {
+				const content = fs.readFileSync(packageJsonPath, "utf-8");
+				const pkg = JSON.parse(content);
+				if (pkg.pi && typeof pkg.pi === "object") {
+					// Has a pi manifest — check if it declares any extensions
+					const extensions = pkg.pi.extensions;
+					if (!Array.isArray(extensions) || extensions.length === 0) {
+						return true;
+					}
+				}
+			} catch {
+				// Malformed package.json — not a known library
+			}
+			break;
+		}
+		dir = path.dirname(dir);
+	}
+	return false;
+}
+
+/**
  * Create an Extension object with empty collections.
  */
 function createExtension(extensionPath: string, resolvedPath: string): Extension {
@@ -607,6 +647,12 @@ async function loadExtension(
 	try {
 		const factory = await loadExtensionModule(resolvedPath);
 		if (!factory) {
+			// Defense-in-depth: if the module is inside a directory that has
+			// explicitly opted out of extension loading via its pi manifest,
+			// silently skip it instead of reporting a spurious error.
+			if (isNonExtensionLibrary(resolvedPath)) {
+				return { extension: null, error: null };
+			}
 			logExtensionTiming(extensionPath, Date.now() - start, "failed");
 			return { extension: null, error: `Extension does not export a valid factory function: ${extensionPath}` };
 		}

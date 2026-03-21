@@ -299,7 +299,7 @@ export async function bootstrapAutoSession(
     let hasSurvivorBranch = false;
     if (
       state.activeMilestone &&
-      (state.phase === "pre-planning" || state.phase === "needs-discussion") &&
+      state.phase === "pre-planning" &&
       shouldUseWorktreeIsolation() &&
       !detectWorktreeName(base) &&
       !base.includes(`${pathSep}.gsd${pathSep}worktrees${pathSep}`)
@@ -312,6 +312,32 @@ export async function bootstrapAutoSession(
           `Found prior session branch ${milestoneBranch}. Resuming.`,
           "info",
         );
+      }
+    }
+
+    // Survivor branch exists but milestone still needs discussion (#1726):
+    // The worktree/branch was created but the milestone only has CONTEXT-DRAFT.md.
+    // Route to the interactive discussion handler instead of falling through to
+    // auto-mode, which would immediately stop with "needs discussion".
+    if (hasSurvivorBranch && state.phase === "needs-discussion") {
+      const { showSmartEntry } = await import("./guided-flow.js");
+      await showSmartEntry(ctx, pi, base, { step: requestedStepMode });
+
+      invalidateAllCaches();
+      const postState = await deriveState(base);
+      if (
+        postState.activeMilestone &&
+        postState.phase !== "needs-discussion"
+      ) {
+        state = postState;
+        // Discussion succeeded — clear survivor flag so normal flow continues
+        hasSurvivorBranch = false;
+      } else {
+        ctx.ui.notify(
+          "Discussion completed but milestone draft was not promoted. Run /gsd to try again.",
+          "warning",
+        );
+        return releaseLockAndReturn();
       }
     }
 
@@ -388,6 +414,27 @@ export async function bootstrapAutoSession(
             );
             return releaseLockAndReturn();
           }
+        }
+      }
+
+      // Active milestone has CONTEXT-DRAFT but no full context — needs discussion
+      if (state.phase === "needs-discussion") {
+        const { showSmartEntry } = await import("./guided-flow.js");
+        await showSmartEntry(ctx, pi, base, { step: requestedStepMode });
+
+        invalidateAllCaches();
+        const postState = await deriveState(base);
+        if (
+          postState.activeMilestone &&
+          postState.phase !== "needs-discussion"
+        ) {
+          state = postState;
+        } else {
+          ctx.ui.notify(
+            "Discussion completed but milestone draft was not promoted. Run /gsd to try again.",
+            "warning",
+          );
+          return releaseLockAndReturn();
         }
       }
     }

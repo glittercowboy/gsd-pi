@@ -19,6 +19,9 @@ import {
   resolveSliceFile,
   resolveTaskFile,
   resolveMilestoneFile,
+  resolveTasksDir,
+  buildTaskFileName,
+  gsdRoot,
 } from "./paths.js";
 import { invalidateAllCaches } from "./cache.js";
 import { closeoutUnit, type CloseoutOptions } from "./auto-unit-closeout.js";
@@ -28,6 +31,7 @@ import {
 } from "./worktree.js";
 import {
   verifyExpectedArtifact,
+  resolveExpectedArtifactPath,
 } from "./auto-recovery.js";
 import { writeUnitRuntimeRecord, clearUnitRuntimeRecord } from "./unit-runtime.js";
 import { runGSDDoctor, rebuildState, summarizeDoctorIssues } from "./doctor.js";
@@ -40,6 +44,7 @@ import {
   isRetryPending,
   consumeRetryTrigger,
   persistHookState,
+  resolveHookArtifactPath,
 } from "./post-unit-hooks.js";
 import { hasPendingCaptures, loadPendingCaptures } from "./captures.js";
 import { debugLog } from "./debug-logger.js";
@@ -50,7 +55,10 @@ import {
   unitVerb,
   hideFooter,
 } from "./auto-dashboard.js";
+import { existsSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
+import { uncheckTaskInPlan } from "./undo.js";
+import { atomicWriteSync } from "./atomic-write.js";
 
 /** Throttle STATE.md rebuilds — at most once per 30 seconds */
 const STATE_REBUILD_MIN_INTERVAL_MS = 30_000;
@@ -77,9 +85,12 @@ export interface PostUnitContext {
  * Pre-verification processing: parallel worker signal check, cache invalidation,
  * auto-commit, doctor run, state rebuild, worktree sync, artifact verification.
  *
- * Returns "dispatched" if a signal caused stop/pause, "continue" to proceed.
+ * Returns:
+ * - "dispatched" — a signal caused stop/pause
+ * - "continue" — proceed normally
+ * - "retry" — artifact verification failed, s.pendingVerificationRetry set for loop re-iteration
  */
-export async function postUnitPreVerification(pctx: PostUnitContext, opts?: PreVerificationOpts): Promise<"dispatched" | "continue"> {
+export async function postUnitPreVerification(pctx: PostUnitContext, opts?: PreVerificationOpts): Promise<"dispatched" | "continue" | "retry"> {
   const { s, ctx, pi, buildSnapshotOpts, stopAuto, pauseAuto } = pctx;
 
   // ── Parallel worker signal check ──
@@ -151,6 +162,7 @@ export async function postUnitPreVerification(pctx: PostUnitContext, opts?: PreV
       }
     } catch (e) {
       debugLog("postUnit", { phase: "auto-commit", error: String(e) });
+      ctx.ui.notify(`Auto-commit failed: ${String(e).split("\n")[0]}`, "warning");
     }
 
     // GitHub sync (non-blocking, opt-in)
@@ -241,6 +253,18 @@ export async function postUnitPreVerification(pctx: PostUnitContext, opts?: PreV
       debugLog("postUnit", { phase: "prune-bg-shell", error: String(e) });
     }
 
+    // Tear down browser between units to prevent Chrome process accumulation (#1733)
+    try {
+      const { getBrowser } = await import("../browser-tools/state.js");
+      if (getBrowser()) {
+        const { closeBrowser } = await import("../browser-tools/lifecycle.js");
+        await closeBrowser();
+        debugLog("postUnit", { phase: "browser-teardown", status: "closed" });
+      }
+    } catch (e) {
+      debugLog("postUnit", { phase: "browser-teardown", error: String(e) });
+    }
+
     // Sync worktree state back to project root (skipped for lightweight sidecars)
     if (!opts?.skipWorktreeSync && s.originalBasePath && s.originalBasePath !== s.basePath) {
       try {
@@ -327,6 +351,29 @@ export async function postUnitPreVerification(pctx: PostUnitContext, opts?: PreV
       } catch (e) {
         debugLog("postUnit", { phase: "artifact-verify", error: String(e) });
       }
+
+      // When artifact verification fails for a unit type that has a known expected
+      // artifact, return "retry" so the caller re-dispatches with failure context
+      // instead of blindly re-dispatching the same unit (#1571).
+      if (!triggerArtifactVerified) {
+        const hasExpectedArtifact = resolveExpectedArtifactPath(s.currentUnit.type, s.currentUnit.id, s.basePath) !== null;
+        if (hasExpectedArtifact) {
+          const retryKey = `${s.currentUnit.type}:${s.currentUnit.id}`;
+          const attempt = (s.verificationRetryCount.get(retryKey) ?? 0) + 1;
+          s.verificationRetryCount.set(retryKey, attempt);
+          s.pendingVerificationRetry = {
+            unitId: s.currentUnit.id,
+            failureContext: `Artifact verification failed: expected artifact for ${s.currentUnit.type} "${s.currentUnit.id}" was not found on disk after unit execution (attempt ${attempt}).`,
+            attempt,
+          };
+          debugLog("postUnit", { phase: "artifact-verify-retry", unitType: s.currentUnit.type, unitId: s.currentUnit.id, attempt });
+          ctx.ui.notify(
+            `Artifact missing for ${s.currentUnit.type} ${s.currentUnit.id} — retrying (attempt ${attempt})`,
+            "warning",
+          );
+          return "retry";
+        }
+      }
     } else {
       // Hook unit completed — finalize its runtime record
       try {
@@ -403,9 +450,55 @@ export async function postUnitPostVerification(pctx: PostUnitContext): Promise<"
       const trigger = consumeRetryTrigger();
       if (trigger) {
         ctx.ui.notify(
-          `Hook requested retry of ${trigger.unitType} ${trigger.unitId}.`,
+          `Hook requested retry of ${trigger.unitType} ${trigger.unitId} — resetting task state.`,
           "info",
         );
+
+        // ── State reset: undo the completion so deriveState re-derives the unit ──
+        try {
+          const parts = trigger.unitId.split("/");
+          const [mid, sid, tid] = parts;
+
+          // 1. Uncheck [x] → [ ] in PLAN.md
+          if (mid && sid && tid) {
+            uncheckTaskInPlan(s.basePath, mid, sid, tid);
+          }
+
+          // 2. Delete SUMMARY.md for the task
+          if (mid && sid && tid) {
+            const tasksDir = resolveTasksDir(s.basePath, mid, sid);
+            if (tasksDir) {
+              const summaryFile = join(tasksDir, buildTaskFileName(tid, "SUMMARY"));
+              if (existsSync(summaryFile)) {
+                unlinkSync(summaryFile);
+              }
+            }
+          }
+
+          // 3. Remove from s.completedUnits and flush to completed-units.json
+          s.completedUnits = s.completedUnits.filter(
+            u => !(u.type === trigger.unitType && u.id === trigger.unitId),
+          );
+          try {
+            const completedKeysPath = join(gsdRoot(s.basePath), "completed-units.json");
+            const keys = s.completedUnits.map(u => `${u.type}/${u.id}`);
+            atomicWriteSync(completedKeysPath, JSON.stringify(keys, null, 2));
+          } catch { /* non-fatal: disk flush failure */ }
+
+          // 4. Delete the retry_on artifact (e.g. NEEDS-REWORK.md)
+          if (trigger.retryArtifact) {
+            const retryArtifactPath = resolveHookArtifactPath(s.basePath, trigger.unitId, trigger.retryArtifact);
+            if (existsSync(retryArtifactPath)) {
+              unlinkSync(retryArtifactPath);
+            }
+          }
+
+          // 5. Invalidate caches so deriveState reads fresh disk state
+          invalidateAllCaches();
+        } catch (e) {
+          debugLog("postUnitPostVerification", { phase: "retry-state-reset", error: String(e) });
+        }
+
         // Fall through to normal dispatch — deriveState will re-derive the unit
       }
     }

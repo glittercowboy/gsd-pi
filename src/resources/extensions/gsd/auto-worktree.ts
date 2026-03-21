@@ -38,10 +38,12 @@ import {
   nudgeGitBranchCache,
 } from "./worktree.js";
 import { MergeConflictError, readIntegrationBranch, RUNTIME_EXCLUSION_PATHS } from "./git-service.js";
+import { debugLog } from "./debug-logger.js";
 import { parseRoadmap } from "./files.js";
 import { loadEffectiveGSDPreferences } from "./preferences.js";
 import {
   nativeGetCurrentBranch,
+  nativeDetectMainBranch,
   nativeWorkingTreeStatus,
   nativeAddAllWithExclusions,
   nativeCommit,
@@ -299,6 +301,31 @@ export function syncWorktreeStateBack(
               );
             } catch {
               /* non-fatal */
+            }
+          } else if (fileEntry.isDirectory() && fileEntry.name === "tasks") {
+            // Recurse into tasks/ subdirectory to sync task summaries (#1678).
+            // Without this, T01-SUMMARY.md etc. are silently dropped on
+            // worktree teardown because the loop only processes isFile() entries.
+            const wtTasksDir = join(wtSliceDir, "tasks");
+            const mainTasksDir = join(mainSliceDir, "tasks");
+            mkdirSync(mainTasksDir, { recursive: true });
+            try {
+              for (const taskEntry of readdirSync(wtTasksDir, { withFileTypes: true })) {
+                if (taskEntry.isFile() && taskEntry.name.endsWith(".md")) {
+                  const taskSrc = join(wtTasksDir, taskEntry.name);
+                  const taskDst = join(mainTasksDir, taskEntry.name);
+                  try {
+                    cpSync(taskSrc, taskDst, { force: true });
+                    synced.push(
+                      `milestones/${milestoneId}/slices/${sid}/tasks/${taskEntry.name}`,
+                    );
+                  } catch {
+                    /* non-fatal */
+                  }
+                }
+              }
+            } catch {
+              /* non-fatal: tasks dir read failure */
             }
           }
         }
@@ -774,7 +801,8 @@ function autoCommitDirtyState(cwd: string): boolean {
       "chore: auto-commit before milestone merge",
     );
     return result !== null;
-  } catch {
+  } catch (e) {
+    debugLog("autoCommitDirtyState", { error: String(e) });
     return false;
   }
 }
@@ -827,13 +855,17 @@ export function mergeMilestoneToMain(
   const previousCwd = process.cwd();
   process.chdir(originalBasePath_);
 
-  // 4. Resolve integration branch — prefer milestone metadata, fall back to preferences / "main"
+  // 4. Resolve integration branch — prefer milestone metadata, then preferences,
+  //    then auto-detect (origin/HEAD → main → master → current). Never hardcode
+  //    "main": repos using "master" or a custom default branch would fail at
+  //    checkout and leave the user with a broken merge state (#1668).
   const prefs = loadEffectiveGSDPreferences()?.preferences?.git ?? {};
   const integrationBranch = readIntegrationBranch(
     originalBasePath_,
     milestoneId,
   );
-  const mainBranch = integrationBranch ?? prefs.main_branch ?? "main";
+  const mainBranch =
+    integrationBranch ?? prefs.main_branch ?? nativeDetectMainBranch(originalBasePath_);
 
   // Remove transient project-root state files before any branch or merge
   // operation. Untracked milestone metadata can otherwise block squash merges.
@@ -954,20 +986,32 @@ export function mergeMilestoneToMain(
   }
 
   // 10. Remove worktree directory first (must happen before branch deletion)
-  try {
-    removeWorktree(originalBasePath_, milestoneId, {
-      branch: null as unknown as string,
-      deleteBranch: false,
-    });
-  } catch {
-    // Best-effort -- worktree dir may already be gone
-  }
+  //     ONLY when a commit was actually produced — if nativeCommit returned null
+  //     (nothing to commit), tearing down the worktree would destroy source code
+  //     that was never merged (#1672).
+  if (nothingToCommit) {
+    // eslint-disable-next-line no-console
+    console.warn(
+      `[GSD] Warning: squash merge of ${milestoneBranch} produced nothing to commit. ` +
+        "Worktree and branch preserved to prevent data loss. " +
+        "Inspect the worktree manually and retry.",
+    );
+  } else {
+    try {
+      removeWorktree(originalBasePath_, milestoneId, {
+        branch: null as unknown as string,
+        deleteBranch: false,
+      });
+    } catch {
+      // Best-effort -- worktree dir may already be gone
+    }
 
-  // 11. Delete milestone branch (after worktree removal so ref is unlocked)
-  try {
-    nativeBranchDelete(originalBasePath_, milestoneBranch);
-  } catch {
-    // Best-effort
+    // 11. Delete milestone branch (after worktree removal so ref is unlocked)
+    try {
+      nativeBranchDelete(originalBasePath_, milestoneBranch);
+    } catch {
+      // Best-effort
+    }
   }
 
   // 12. Clear module state

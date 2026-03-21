@@ -15,7 +15,7 @@
 | `/gsd queue` | Queue and reorder future milestones (safe during auto mode) |
 | `/gsd capture` | Fire-and-forget thought capture (works during auto mode) |
 | `/gsd triage` | Manually trigger triage of pending captures |
-| `/gsd forensics` | Post-mortem investigation of auto-mode failures — structured root-cause analysis with log inspection |
+| `/gsd forensics` | Full-access GSD debugger — structured anomaly detection, unit traces, and LLM-guided root-cause analysis for auto-mode failures |
 | `/gsd cleanup` | Clean up GSD state files and stale worktrees |
 | `/gsd visualize` | Open workflow visualizer (progress, deps, metrics, timeline) |
 | `/gsd export --html` | Generate self-contained HTML report for current or completed milestone |
@@ -32,7 +32,7 @@
 | `/gsd mode` | Switch workflow mode (solo/team) with coordinated defaults for milestone IDs, git commit behavior, and documentation |
 | `/gsd config` | Re-run the provider setup wizard (LLM provider + tool keys) |
 | `/gsd keys` | API key manager — list, add, remove, test, rotate, doctor |
-| `/gsd doctor` | Runtime health checks (7 checks) with auto-fix for common state corruption issues |
+| `/gsd doctor` | Runtime health checks with auto-fix — issues surface in real time across widget, visualizer, and HTML reports (v2.40) |
 | `/gsd skill-health` | Skill lifecycle dashboard — usage stats, success rates, token trends, staleness warnings |
 | `/gsd skill-health <name>` | Detailed view for a single skill |
 | `/gsd skill-health --declining` | Show only skills flagged for declining performance |
@@ -64,6 +64,15 @@
 | `/gsd parallel merge [MID]` | Merge completed milestones back to main |
 
 See [Parallel Orchestration](./parallel-orchestration.md) for full documentation.
+
+## GitHub Sync (v2.39)
+
+| Command | Description |
+|---------|-------------|
+| `/github-sync bootstrap` | Initial setup — creates GitHub Milestones, Issues, and draft PRs from current `.gsd/` state |
+| `/github-sync status` | Show sync mapping counts (milestones, slices, tasks) |
+
+Enable with `github.enabled: true` in preferences. Requires `gh` CLI installed and authenticated. Sync mapping is persisted in `.gsd/.github-sync.json`.
 
 ## Git Commands
 

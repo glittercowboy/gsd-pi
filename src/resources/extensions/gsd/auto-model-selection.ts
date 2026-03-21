@@ -164,7 +164,7 @@ export async function selectAndApplyModel(
  * Resolve a model ID string to a model object from the available models list.
  * Handles formats: "provider/model", "bare-id", "org/model-name" (OpenRouter).
  */
-function resolveModelId<T extends { id: string; provider: string }>(
+export function resolveModelId<T extends { id: string; provider: string }>(
   modelId: string,
   availableModels: T[],
   currentProvider: string | undefined,

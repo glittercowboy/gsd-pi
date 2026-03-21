@@ -78,7 +78,7 @@ function createMilestoneArtifacts(dir: string, mid: string): void {
 // ─── Source-level: verify the merge code exists in the "all complete" path ────
 
 test("auto-loop 'all milestones complete' path merges before stopping (#962)", () => {
-  const loopSrc = readFileSync(join(__dirname, "..", "auto-loop.ts"), "utf-8");
+  const loopSrc = readFileSync(join(__dirname, "..", "auto", "phases.ts"), "utf-8");
   const resolverSrc = readFileSync(
     join(__dirname, "..", "worktree-resolver.ts"),
     "utf-8",
@@ -88,7 +88,7 @@ test("auto-loop 'all milestones complete' path merges before stopping (#962)", (
   const incompleteIdx = loopSrc.indexOf("incomplete.length === 0");
   assert.ok(
     incompleteIdx > -1,
-    "auto-loop.ts should have 'incomplete.length === 0' check",
+    "auto/phases.ts should have 'incomplete.length === 0' check",
   );
 
   // The merge call must appear BETWEEN the incomplete check and the stopAuto call.
@@ -99,7 +99,7 @@ test("auto-loop 'all milestones complete' path merges before stopping (#962)", (
 
   assert.ok(
     blockAfterIncomplete.includes("deps.resolver.mergeAndExit"),
-    "auto-loop.ts should call resolver.mergeAndExit in the 'all milestones complete' path",
+    "auto/phases.ts should call resolver.mergeAndExit in the 'all milestones complete' path",
   );
 
   // The merge should come before stopAuto in this block

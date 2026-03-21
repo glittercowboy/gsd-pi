@@ -172,6 +172,29 @@ async function main(): Promise<void> {
       teardownAutoWorktree(tempDir, "M005");
     }
 
+    // ─── #1713: stale worktree directory recovery ─────────────────────
+    console.log("\n=== #1713: stale worktree directory without .git file ===");
+    {
+      // Simulate a crash leaving a stale directory with no .git file.
+      // createAutoWorktree should detect and remove the stale directory,
+      // then successfully create a fresh worktree.
+      const { worktreePath } = await import("../worktree-manager.ts");
+      const staleDir = worktreePath(tempDir, "M010");
+      mkdirSync(staleDir, { recursive: true });
+      // Write a dummy file to prove it's not an empty directory
+      writeFileSync(join(staleDir, "orphan.txt"), "stale leftover\n");
+      assertTrue(existsSync(staleDir), "stale directory exists before recovery");
+      assertTrue(!existsSync(join(staleDir, ".git")), "stale directory has no .git file");
+
+      // createAutoWorktree should remove the stale dir and create a real worktree
+      const recoveredPath = createAutoWorktree(tempDir, "M010");
+      assertTrue(existsSync(recoveredPath), "worktree created after stale dir recovery");
+      assertTrue(existsSync(join(recoveredPath, ".git")), "recovered worktree has .git file");
+      assertTrue(!existsSync(join(recoveredPath, "orphan.txt")), "stale file removed by recovery");
+
+      teardownAutoWorktree(tempDir, "M010");
+    }
+
     // ─── #778: reconcile plan checkboxes on re-attach ─────────────────
     console.log("\n=== #778: reconcile plan checkboxes on re-attach ===");
     {

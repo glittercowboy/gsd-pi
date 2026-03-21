@@ -41,7 +41,8 @@ export function expandDependencies(deps: string[]): string[] {
 }
 
 function extractSlicesSection(content: string): string {
-  const headingMatch = /^## Slices\b.*$/m.exec(content);
+  // Match "## Slices", "## Slice Overview", "## Slice Table", etc.
+  const headingMatch = /^## Slice(?:s| Overview| Table| Summary| Status)\b.*$/m.exec(content);
   if (!headingMatch || headingMatch.index == null) return "";
 
   const start = headingMatch.index + headingMatch[0].length;
@@ -50,9 +51,92 @@ function extractSlicesSection(content: string): string {
   return (nextHeading ? rest.slice(0, nextHeading.index) : rest).trimEnd();
 }
 
+/**
+ * Parse markdown table format for slices.
+ *
+ * Handles LLM-generated table variants:
+ *   | S01 | Title | High | [x] Done |
+ *   | S01 | Title | High | Done | [x] |
+ *   | S01 | Title | High | Complete |
+ *   | S01 | Title | [x] | High | S01,S02 |
+ *
+ * Returns parsed slices if a table with slice IDs is found, otherwise empty array.
+ */
+function parseTableSlices(section: string): RoadmapSliceEntry[] {
+  const lines = section.split("\n");
+  const slices: RoadmapSliceEntry[] = [];
+
+  for (const line of lines) {
+    // Skip non-table lines, separator lines (|---|---|), and header rows
+    if (!line.includes("|")) continue;
+    if (/^\s*\|[\s:-]+\|/.test(line) && !/S\d+/.test(line)) continue;
+
+    // Extract a slice ID from the row
+    const idMatch = line.match(/\b(S\d+)\b/);
+    if (!idMatch) continue;
+
+    const id = idMatch[1]!;
+    const cells = line.split("|").map(c => c.trim()).filter(Boolean);
+
+    // Determine completion status from any cell containing [x], "Done", or "Complete"
+    const fullRow = line.toLowerCase();
+    const done =
+      /\[x\]/i.test(line) ||
+      /\bdone\b/.test(fullRow) ||
+      /\bcomplete(?:d)?\b/.test(fullRow);
+
+    // Extract risk from any cell containing risk keywords
+    let risk: RiskLevel = "medium";
+    for (const cell of cells) {
+      const cellLower = cell.toLowerCase();
+      if (/\bhigh\b/.test(cellLower)) { risk = "high"; break; }
+      if (/\blow\b/.test(cellLower)) { risk = "low"; break; }
+      if (/\bmedium\b/.test(cellLower) || /\bmed\b/.test(cellLower)) { risk = "medium"; break; }
+    }
+
+    // Extract dependencies from cells containing S-prefixed IDs (excluding the slice's own ID)
+    let depends: string[] = [];
+    for (const cell of cells) {
+      if (/depends|deps/i.test(cell) || (cell.match(/S\d+/g)?.length ?? 0) > 0) {
+        const depIds = (cell.match(/S\d+/g) ?? []).filter(d => d !== id);
+        if (depIds.length > 0 || /none|—|-/i.test(cell)) {
+          depends = expandDependencies(depIds);
+          break;
+        }
+      }
+    }
+
+    // Extract title: use the cell after the ID cell, excluding cells that look like
+    // status, risk, dependency, or checkbox fields
+    let title = "";
+    const idCellIndex = cells.findIndex(c => c.includes(id));
+    for (let i = 0; i < cells.length; i++) {
+      if (i === idCellIndex) continue;
+      const cellLower = cells[i]!.toLowerCase();
+      // Skip cells that are clearly metadata
+      if (/^\[[ x]\]/.test(cells[i]!) || /\[x\]/i.test(cells[i]!)) continue;
+      if (/^(high|medium|med|low)$/i.test(cells[i]!.trim())) continue;
+      if (/^(done|complete[d]?|pending|in.?progress|not started|todo)$/i.test(cells[i]!.trim())) continue;
+      if (/^(none|—|-)$/.test(cells[i]!.trim())) continue;
+      if (/^S\d+/.test(cells[i]!.trim()) && i !== idCellIndex) continue;
+      if (/depends|deps/i.test(cellLower)) continue;
+      // First remaining cell is likely the title
+      if (!title && cells[i]!.trim()) {
+        title = cells[i]!.trim().replace(/^\*+|\*+$/g, "");
+        break;
+      }
+    }
+
+    if (!title) title = id;
+
+    slices.push({ id, title, risk, depends, done, demo: "" });
+  }
+
+  return slices;
+}
+
 export function parseRoadmapSlices(content: string): RoadmapSliceEntry[] {
   const slicesSection = extractSlicesSection(content);
-  const slices: RoadmapSliceEntry[] = [];
   if (!slicesSection) {
     // Fallback: detect prose-style slice headers (## Slice S01: Title)
     // when the LLM writes freeform prose instead of the ## Slices checklist.
@@ -60,6 +144,15 @@ export function parseRoadmapSlices(content: string): RoadmapSliceEntry[] {
     return parseProseSliceHeaders(content);
   }
 
+  // Try table format first — if the section contains pipe-delimited rows with
+  // slice IDs, parse them as a table (#1736).
+  const tableSlices = parseTableSlices(slicesSection);
+  if (tableSlices.length > 0) {
+    return tableSlices;
+  }
+
+  // Standard checkbox format
+  const slices: RoadmapSliceEntry[] = [];
   const checkboxItems = slicesSection.split("\n");
   let currentSlice: RoadmapSliceEntry | null = null;
 

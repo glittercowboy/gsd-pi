@@ -14,12 +14,28 @@ import { deriveState } from "../state.js";
 import { getAutoDashboardData, isAutoActive, isAutoPaused, markToolEnd, markToolStart } from "../auto.js";
 import { isParallelActive, shutdownParallel } from "../parallel-orchestrator.js";
 import { saveActivityLog } from "../activity-log.js";
-import { maybeRenderGsdHeader } from "./register-shortcuts.js";
+
+// Skip the welcome screen on the very first session_start — cli.ts already
+// printed it before the TUI launched. Only re-print on /clear (subsequent sessions).
+let isFirstSession = true;
 
 export function registerHooks(pi: ExtensionAPI): void {
   pi.on("session_start", async (_event, ctx) => {
     resetWriteGateState();
-    maybeRenderGsdHeader(ctx);
+    if (isFirstSession) {
+      isFirstSession = false;
+    } else {
+      try {
+        const gsdBinPath = process.env.GSD_BIN_PATH;
+        if (gsdBinPath) {
+          const { dirname } = await import('node:path');
+          const { printWelcomeScreen } = await import(
+            join(dirname(gsdBinPath), 'welcome-screen.js')
+          ) as { printWelcomeScreen: (opts: { version: string; modelName?: string; provider?: string }) => void };
+          printWelcomeScreen({ version: process.env.GSD_VERSION || '0.0.0' });
+        }
+      } catch { /* non-fatal */ }
+    }
     loadToolApiKeys();
     try {
       const [{ getRemoteConfigStatus }, { getLatestPromptSummary }] = await Promise.all([

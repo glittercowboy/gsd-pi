@@ -10,15 +10,21 @@ import { registerSearchProviderCommand } from "./command-search-provider.js";
 import { registerNativeSearchHooks } from "./native-search.js";
 
 let toolsPromise: Promise<void> | null = null;
+let resetSearchLoopGuardStateRef: (() => void) | null = null;
 
 async function registerSearchTools(pi: ExtensionAPI): Promise<void> {
   if (!toolsPromise) {
     toolsPromise = (async () => {
-      const [{ registerSearchTool }, { registerFetchPageTool }, { registerLLMContextTool }] = await Promise.all([
+      const [
+        { registerSearchTool, resetSearchLoopGuardState },
+        { registerFetchPageTool },
+        { registerLLMContextTool },
+      ] = await Promise.all([
         importExtensionModule<typeof import("./tool-search.js")>(import.meta.url, "./tool-search.js"),
         importExtensionModule<typeof import("./tool-fetch-page.js")>(import.meta.url, "./tool-fetch-page.js"),
         importExtensionModule<typeof import("./tool-llm-context.js")>(import.meta.url, "./tool-llm-context.js"),
       ]);
+      resetSearchLoopGuardStateRef = resetSearchLoopGuardState;
       registerSearchTool(pi);
       registerFetchPageTool(pi);
       registerLLMContextTool(pi);
@@ -36,13 +42,23 @@ export default function (pi: ExtensionAPI) {
   registerNativeSearchHooks(pi);
 
   pi.on("session_start", async (_event, ctx) => {
+    const resetLoopGuardState = () => {
+      resetSearchLoopGuardStateRef?.();
+    };
+
     if (ctx.hasUI) {
-      void registerSearchTools(pi).catch((error) => {
-        ctx.ui.notify(`search-the-web failed to load: ${error instanceof Error ? error.message : String(error)}`, "warning");
-      });
+      resetLoopGuardState();
+      void registerSearchTools(pi)
+        .then(() => {
+          resetLoopGuardState();
+        })
+        .catch((error) => {
+          ctx.ui.notify(`search-the-web failed to load: ${error instanceof Error ? error.message : String(error)}`, "warning");
+        });
       return;
     }
 
     await registerSearchTools(pi);
+    resetLoopGuardState();
   });
 }

@@ -64,3 +64,124 @@ test("parseRoadmapSlices: comma-separated depends still works", () => {
   const slices = parseRoadmapSlices(commaContent);
   assert.deepEqual(slices[0]?.depends, ["S01", "S02", "S03", "S04"]);
 });
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Regression #1736: Table format parsing
+// ═══════════════════════════════════════════════════════════════════════════
+
+test("parseRoadmapSlices: table format under ## Slices heading (#1736)", () => {
+  const tableContent = [
+    "# M001: Test Project",
+    "",
+    "## Slices",
+    "",
+    "| Slice | Title | Risk | Status |",
+    "| --- | --- | --- | --- |",
+    "| S01 | Setup Foundation | Low | [x] Done |",
+    "| S02 | Core Features | High | [ ] Pending |",
+    "| S03 | Polish | Medium | [x] Done |",
+    "",
+    "## Boundary Map",
+  ].join("\n");
+
+  const slices = parseRoadmapSlices(tableContent);
+  assert.equal(slices.length, 3, "should parse 3 slices from table");
+  assert.equal(slices[0]?.id, "S01");
+  assert.equal(slices[0]?.title, "Setup Foundation");
+  assert.equal(slices[0]?.done, true);
+  assert.equal(slices[0]?.risk, "low");
+  assert.equal(slices[1]?.id, "S02");
+  assert.equal(slices[1]?.done, false);
+  assert.equal(slices[1]?.risk, "high");
+  assert.equal(slices[2]?.id, "S03");
+  assert.equal(slices[2]?.done, true);
+  assert.equal(slices[2]?.risk, "medium");
+});
+
+test("parseRoadmapSlices: table format under ## Slice Overview heading (#1736)", () => {
+  const tableContent = [
+    "# M002: Another Project",
+    "",
+    "## Slice Overview",
+    "",
+    "| ID | Description | Risk | Done |",
+    "|---|---|---|---|",
+    "| S01 | Foundation Work | High | [x] |",
+    "| S02 | API Layer | Medium | [ ] |",
+    "",
+  ].join("\n");
+
+  const slices = parseRoadmapSlices(tableContent);
+  assert.equal(slices.length, 2, "should parse slices from Slice Overview table");
+  assert.equal(slices[0]?.id, "S01");
+  assert.equal(slices[0]?.title, "Foundation Work");
+  assert.equal(slices[0]?.done, true);
+  assert.equal(slices[0]?.risk, "high");
+  assert.equal(slices[1]?.id, "S02");
+  assert.equal(slices[1]?.done, false);
+});
+
+test("parseRoadmapSlices: table with Status Done/Complete text (#1736)", () => {
+  const tableContent = [
+    "# M003: Status Text",
+    "",
+    "## Slices",
+    "",
+    "| Slice | Title | Risk | Status |",
+    "|---|---|---|---|",
+    "| S01 | First | Low | Done |",
+    "| S02 | Second | High | Pending |",
+    "| S03 | Third | Medium | Completed |",
+    "",
+  ].join("\n");
+
+  const slices = parseRoadmapSlices(tableContent);
+  assert.equal(slices.length, 3);
+  assert.equal(slices[0]?.done, true, "Done text marks slice as done");
+  assert.equal(slices[1]?.done, false, "Pending text marks slice as not done");
+  assert.equal(slices[2]?.done, true, "Completed text marks slice as done");
+});
+
+test("parseRoadmapSlices: table with dependencies column (#1736)", () => {
+  const tableContent = [
+    "# M004: Deps",
+    "",
+    "## Slices",
+    "",
+    "| Slice | Title | Risk | Depends | Status |",
+    "|---|---|---|---|---|",
+    "| S01 | First | Low | None | Done |",
+    "| S02 | Second | High | S01 | Pending |",
+    "| S03 | Third | Medium | S01, S02 | [ ] |",
+    "",
+  ].join("\n");
+
+  const slices = parseRoadmapSlices(tableContent);
+  assert.equal(slices.length, 3);
+  assert.deepEqual(slices[0]?.depends, [], "None deps parsed as empty");
+  assert.deepEqual(slices[1]?.depends, ["S01"], "Single dep parsed");
+  assert.deepEqual(slices[2]?.depends, ["S01", "S02"], "Multiple deps parsed");
+});
+
+test("parseRoadmapSlices: standard checkbox format still works after table support (#1736)", () => {
+  // Verify the existing checkbox format is not broken by the table parsing addition
+  const checkboxContent = [
+    "# M005: Unchanged",
+    "",
+    "## Slices",
+    "",
+    "- [x] **S01: First Slice** `risk:low` `depends:[]`",
+    "  > After this: First demo works.",
+    "- [ ] **S02: Second Slice** `risk:medium` `depends:[S01]`",
+    "",
+  ].join("\n");
+
+  const slices = parseRoadmapSlices(checkboxContent);
+  assert.equal(slices.length, 2);
+  assert.equal(slices[0]?.id, "S01");
+  assert.equal(slices[0]?.done, true);
+  assert.equal(slices[0]?.demo, "First demo works.");
+  assert.equal(slices[1]?.id, "S02");
+  assert.equal(slices[1]?.done, false);
+  assert.deepEqual(slices[1]?.depends, ["S01"]);
+});

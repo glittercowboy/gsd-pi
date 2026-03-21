@@ -142,8 +142,9 @@ export function describeNextUnit(state: GSDState): { label: string; description:
 
 /** Format elapsed time since auto-mode started */
 export function formatAutoElapsed(autoStartTime: number): string {
-  if (!autoStartTime) return "";
+  if (!autoStartTime || autoStartTime <= 0 || !Number.isFinite(autoStartTime)) return "";
   const ms = Date.now() - autoStartTime;
+  if (ms < 0 || ms > 30 * 24 * 3600_000) return ""; // negative or >30 days = invalid
   const s = Math.floor(ms / 1000);
   if (s < 60) return `${s}s`;
   const m = Math.floor(s / 60);
@@ -289,7 +290,7 @@ function refreshLastCommit(basePath: string): void {
     const sep = raw.indexOf("|");
     if (sep > 0) {
       cachedLastCommit = {
-        timeAgo: raw.slice(0, sep).replace(/ ago$/, "").replace(/ /g, ""),
+        timeAgo: raw.slice(0, sep).replace(/ ago$/, ""),
         message: raw.slice(sep + 1),
       };
     }
@@ -504,6 +505,20 @@ export function updateProgressWidget(
             : theme.fg("dim", elapsed))
           : "";
         lines.push(rightAlign(headerLeft, headerRight, width));
+
+        // Show health signal details when degraded (yellow/red)
+        if (score.level !== "green" && score.signals.length > 0 && widgetMode !== "min") {
+          // Show up to 3 most relevant signals in compact form
+          const topSignals = score.signals
+            .filter(s => s.kind === "negative")
+            .slice(0, 3);
+          if (topSignals.length > 0) {
+            const signalStr = topSignals
+              .map(s => theme.fg("dim", s.label))
+              .join(theme.fg("dim", " · "));
+            lines.push(`${pad}  ${signalStr}`);
+          }
+        }
 
         // ── Gather stats (needed by multiple modes) ─────────────────────
         const cmdCtx = accessors.getCmdCtx();

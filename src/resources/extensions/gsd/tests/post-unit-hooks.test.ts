@@ -26,7 +26,7 @@ const { assertEq, assertTrue, assertMatch, report } = createTestContext();
 
 function createFixtureBase(): string {
   const base = mkdtempSync(join(tmpdir(), "gsd-hook-test-"));
-  mkdirSync(join(base, ".gsd", "M001", "slices", "S01", "tasks"), { recursive: true });
+  mkdirSync(join(base, ".gsd", "milestones", "M001", "slices", "S01", "tasks"), { recursive: true });
   return base;
 }
 
@@ -45,7 +45,7 @@ console.log("\n=== resolveHookArtifactPath ===");
   const taskPath = resolveHookArtifactPath(base, "M001/S01/T01", "REVIEW-PASS.md");
   assertEq(
     taskPath,
-    join(base, ".gsd", "M001", "slices", "S01", "tasks", "T01-REVIEW-PASS.md"),
+    join(base, ".gsd", "milestones", "M001", "slices", "S01", "tasks", "T01-REVIEW-PASS.md"),
     "task-level artifact path",
   );
 
@@ -53,7 +53,7 @@ console.log("\n=== resolveHookArtifactPath ===");
   const slicePath = resolveHookArtifactPath(base, "M001/S01", "REVIEW-PASS.md");
   assertEq(
     slicePath,
-    join(base, ".gsd", "M001", "slices", "S01", "REVIEW-PASS.md"),
+    join(base, ".gsd", "milestones", "M001", "slices", "S01", "REVIEW-PASS.md"),
     "slice-level artifact path",
   );
 
@@ -61,7 +61,7 @@ console.log("\n=== resolveHookArtifactPath ===");
   const milestonePath = resolveHookArtifactPath(base, "M001", "REVIEW-PASS.md");
   assertEq(
     milestonePath,
-    join(base, ".gsd", "M001", "REVIEW-PASS.md"),
+    join(base, ".gsd", "milestones", "M001", "REVIEW-PASS.md"),
     "milestone-level artifact path",
   );
 }
@@ -129,15 +129,18 @@ console.log("\n=== Variable substitution ===");
   assertTrue(path3.includes("M002"), "3-part ID extracts milestoneId");
   assertTrue(path3.includes("S03"), "3-part ID extracts sliceId");
   assertTrue(path3.includes("T05"), "3-part ID extracts taskId");
+  assertTrue(path3.includes("milestones"), "3-part ID includes milestones/ segment");
 
   // 2-part ID
   const path2 = resolveHookArtifactPath(base, "M002/S03", "result.md");
   assertTrue(path2.includes("M002"), "2-part ID extracts milestoneId");
   assertTrue(path2.includes("S03"), "2-part ID extracts sliceId");
+  assertTrue(path2.includes("milestones"), "2-part ID includes milestones/ segment");
 
   // 1-part ID
   const path1 = resolveHookArtifactPath(base, "M002", "result.md");
   assertTrue(path1.includes("M002"), "1-part ID extracts milestoneId");
+  assertTrue(path1.includes("milestones"), "1-part ID includes milestones/ segment");
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

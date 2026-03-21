@@ -433,41 +433,17 @@ test("model_select shows warning for non-Anthropic without Brave key", async () 
   }
 });
 
-test("session_start shows v4 loaded message", async () => {
+test("session_start resets search count and shows no startup notification", async () => {
   const pi = createMockPI();
   registerNativeSearchHooks(pi);
 
   await pi.fire("session_start", { type: "session_start" });
 
+  // Tool status is now shown in the welcome screen bar layout — no notification on session_start
   const infoNotif = pi.notifications.find(
     (n) => n.level === "info" && n.message.includes("v4")
   );
-  assert.ok(infoNotif, "Should have v4 info notification");
-  assert.ok(
-    infoNotif!.message.startsWith("Web search v4 loaded"),
-    `Should start with 'Web search v4 loaded' — got: ${infoNotif!.message}`
-  );
-});
-
-test("session_start shows Brave status when key present", async () => {
-  const originalKey = process.env.BRAVE_API_KEY;
-  process.env.BRAVE_API_KEY = "test-key";
-
-  try {
-    const pi = createMockPI();
-    registerNativeSearchHooks(pi);
-
-    await pi.fire("session_start", { type: "session_start" });
-
-    const info = pi.notifications.find((n) => n.level === "info");
-    assert.ok(info!.message.includes("Brave"), "Should mention Brave in status");
-
-    const warning = pi.notifications.find((n) => n.level === "warning");
-    assert.equal(warning, undefined, "Should NOT show warning when Brave key is present");
-  } finally {
-    if (originalKey) process.env.BRAVE_API_KEY = originalKey;
-    else delete process.env.BRAVE_API_KEY;
-  }
+  assert.equal(infoNotif, undefined, "Should NOT emit a v4 startup notification (welcome screen handles this)");
 });
 
 test("BRAVE_TOOL_NAMES contains expected tool names", () => {

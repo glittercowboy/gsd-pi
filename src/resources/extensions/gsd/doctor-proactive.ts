@@ -21,8 +21,10 @@ import { readCrashLock, isLockProcessAlive, clearLock } from "./crash-recovery.j
 import { abortAndReset } from "./git-self-heal.js";
 import { rebuildState } from "./doctor.js";
 import { deriveState } from "./state.js";
-import { readIntegrationBranch } from "./git-service.js";
-import { nativeBranchExists, nativeIsRepo } from "./native-git-bridge.js";
+import { resolveMilestoneIntegrationBranch } from "./git-service.js";
+import { nativeIsRepo } from "./native-git-bridge.js";
+import { loadEffectiveGSDPreferences } from "./preferences.js";
+import { runEnvironmentChecks } from "./doctor-environment.js";
 
 // ── Health Score Tracking ──────────────────────────────────────────────────
 
@@ -276,17 +278,34 @@ export async function preDispatchHealthGate(basePath: string): Promise<PreDispat
     if (nativeIsRepo(basePath)) {
       const state = await deriveState(basePath);
       if (state.activeMilestone) {
-        const integrationBranch = readIntegrationBranch(basePath, state.activeMilestone.id);
-        if (integrationBranch && !nativeBranchExists(basePath, integrationBranch)) {
+        const gitPrefs = loadEffectiveGSDPreferences()?.preferences?.git ?? {};
+        const resolution = resolveMilestoneIntegrationBranch(basePath, state.activeMilestone.id, gitPrefs);
+        if (resolution.status === "fallback" && resolution.effectiveBranch) {
+          fixesApplied.push(
+            `using fallback integration branch "${resolution.effectiveBranch}" for milestone ${state.activeMilestone.id}; recorded "${resolution.recordedBranch}" no longer exists`,
+          );
+        } else if (resolution.recordedBranch && resolution.status === "missing") {
           issues.push(
-            `Integration branch "${integrationBranch}" for milestone ${state.activeMilestone.id} no longer exists in git. ` +
-            `Restore the branch or update the integration branch before dispatching. Run /gsd doctor for details.`,
+            `${resolution.reason} Restore the branch or update the integration branch before dispatching. Run /gsd doctor for details.`,
           );
         }
       }
     }
   } catch {
     // Non-fatal — dispatch continues if state/branch check fails
+  }
+
+  // ── Disk space check ──
+  // Catches low-disk conditions before dispatch rather than letting the unit
+  // fail mid-execution with ENOSPC (which wastes a full LLM turn).
+  try {
+    const envResults = runEnvironmentChecks(basePath);
+    const diskError = envResults.find(r => r.name === "disk_space" && r.status === "error");
+    if (diskError) {
+      issues.push(`${diskError.message}${diskError.detail ? ` — ${diskError.detail}` : ""}`);
+    }
+  } catch {
+    // Non-fatal — dispatch continues if env check fails
   }
 
   // If we had critical issues that couldn't be auto-healed, block dispatch

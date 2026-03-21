@@ -156,29 +156,44 @@ jobs:
             cd "$GITHUB_WORKSPACE"
           done
 
-      - name: Wait for npm registry propagation
-        run: sleep 30
-
       - name: Verify platform packages are published
         run: |
           VERSION=$(node -p "require('./package.json').version")
           echo "Verifying platform packages at version ${VERSION}..."
-          FAILED=0
-          for platform in darwin-arm64 darwin-x64 linux-x64-gnu linux-arm64-gnu win32-x64-msvc; do
-            PKG="@gsd-build/engine-${platform}"
-            PUBLISHED=$(npm view "${PKG}@${VERSION}" version 2>/dev/null || echo "")
-            if [ "${PUBLISHED}" = "${VERSION}" ]; then
-              echo "  ✓ ${PKG}@${VERSION}"
-            else
-              echo "::error::${PKG}@${VERSION} not found on npm (got: '${PUBLISHED}')"
-              FAILED=1
+          # Exponential backoff: 5s, 10s, 20s, 30s, 30s (max 5 attempts, ~95s worst case vs fixed 30s + single check)
+          DELAY=5
+          for attempt in $(seq 1 5); do
+            FAILED=0
+            for platform in darwin-arm64 darwin-x64 linux-x64-gnu linux-arm64-gnu win32-x64-msvc; do
+              PKG="@gsd-build/engine-${platform}"
+              PUBLISHED=$(npm view "${PKG}@${VERSION}" version 2>/dev/null || echo "")
+              if [ "${PUBLISHED}" != "${VERSION}" ]; then
+                FAILED=1
+                break
+              fi
+            done
+            if [ "${FAILED}" = "0" ]; then
+              echo "All platform packages verified (attempt ${attempt})."
+              break
             fi
+            if [ "$attempt" = "5" ]; then
+              echo "::error::One or more platform packages not found after 5 attempts. Aborting."
+              for platform in darwin-arm64 darwin-x64 linux-x64-gnu linux-arm64-gnu win32-x64-msvc; do
+                PKG="@gsd-build/engine-${platform}"
+                PUBLISHED=$(npm view "${PKG}@${VERSION}" version 2>/dev/null || echo "")
+                if [ "${PUBLISHED}" = "${VERSION}" ]; then
+                  echo "  ✓ ${PKG}@${VERSION}"
+                else
+                  echo "  ✗ ${PKG}@${VERSION} (got: '${PUBLISHED}')"
+                fi
+              done
+              exit 1
+            fi
+            echo "  Attempt ${attempt}: not all packages visible yet, retrying in ${DELAY}s..."
+            sleep "$DELAY"
+            DELAY=$((DELAY * 2))
+            if [ "$DELAY" -gt 30 ]; then DELAY=30; fi
           done
-          if [ "${FAILED}" = "1" ]; then
-            echo "::error::One or more platform packages are missing from npm. Aborting main package publish to prevent broken installs."
-            exit 1
-          fi
-          echo "All platform packages verified."
 
       - name: Install dependencies
         run: npm ci
@@ -213,28 +228,31 @@ jobs:
           cd "$TMPDIR"
           npm init -y > /dev/null 2>&1
 
-          # Wait for npm registry to show the new version (metadata propagation)
+          # Wait for npm registry with exponential backoff (5s, 10s, 20s, 30s, 30s, 30s, 30s — max ~155s vs fixed 5min)
           echo "Waiting for gsd-pi@${VERSION} to appear on npm..."
-          for attempt in $(seq 1 20); do
+          DELAY=5
+          for attempt in $(seq 1 8); do
             PUBLISHED=$(npm view "gsd-pi@${VERSION}" version 2>/dev/null || echo "")
             if [ "${PUBLISHED}" = "${VERSION}" ]; then
               echo "  ✓ Version ${VERSION} visible on npm (attempt ${attempt})"
               break
             fi
-            if [ "$attempt" = "20" ]; then
-              echo "::warning::gsd-pi@${VERSION} not visible on npm after 5 minutes — skipping smoke test"
+            if [ "$attempt" = "8" ]; then
+              echo "::warning::gsd-pi@${VERSION} not visible on npm after 8 attempts — skipping smoke test"
               exit 0
             fi
-            sleep 15
+            echo "  Attempt ${attempt}: not yet visible, retrying in ${DELAY}s..."
+            sleep "$DELAY"
+            DELAY=$((DELAY * 2))
+            if [ "$DELAY" -gt 30 ]; then DELAY=30; fi
           done
 
-          # Now install and verify
+          # Install and verify with backoff (5s, 10s, 20s)
           echo "Installing gsd-pi@${VERSION}..."
+          DELAY=5
           for attempt in 1 2 3; do
             if npm install "gsd-pi@${VERSION}" 2>&1 | tee /tmp/install-output.txt; then
               echo "  ✓ Install succeeded"
-              # Run version check via node directly (npx may resolve wrong binary)
-              # Strip ANSI escape codes and match version on any line (--version prints a banner)
               RAW=$(node node_modules/gsd-pi/dist/loader.js --version 2>&1 || echo "FAILED")
               ACTUAL=$(echo "$RAW" | sed 's/\x1b\[[0-9;]*m//g' | grep -oE "^${VERSION}$" | head -1)
               if [ "$ACTUAL" = "$VERSION" ]; then
@@ -247,9 +265,10 @@ jobs:
                 exit 1
               fi
             fi
-            echo "Install attempt ${attempt}/3 failed, retrying in 15s..."
+            echo "Install attempt ${attempt}/3 failed, retrying in ${DELAY}s..."
             cat /tmp/install-output.txt
-            sleep 15
+            sleep "$DELAY"
+            DELAY=$((DELAY * 2))
           done
           echo "::error::Smoke test failed — gsd-pi@${VERSION} not installable"
           exit 1
@@ -259,14 +278,17 @@ jobs:
         run: |
           VERSION=$(node -p "require('./package.json').version")
           echo "Verifying npm dist-tag 'latest' points to ${VERSION}..."
-          for attempt in $(seq 1 10); do
+          DELAY=5
+          for attempt in $(seq 1 6); do
             LATEST=$(npm view gsd-pi dist-tags.latest 2>/dev/null || echo "")
             if [ "${LATEST}" = "${VERSION}" ]; then
               echo "  ✓ npm dist-tags.latest = ${VERSION}"
               exit 0
             fi
-            echo "  Attempt ${attempt}/10: latest=${LATEST}, expected=${VERSION}, retrying in 15s..."
-            sleep 15
+            echo "  Attempt ${attempt}/6: latest=${LATEST}, expected=${VERSION}, retrying in ${DELAY}s..."
+            sleep "$DELAY"
+            DELAY=$((DELAY * 2))
+            if [ "$DELAY" -gt 30 ]; then DELAY=30; fi
           done
           echo "::error::dist-tags.latest is '${LATEST}' but expected '${VERSION}' — run: npm dist-tag add gsd-pi@${VERSION} latest"
           exit 1

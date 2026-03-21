@@ -305,7 +305,11 @@ export class GSDDashboardOverlay {
       : "";
     let elapsedParts = "";
     if (this.dashData.active || this.dashData.paused) {
-      elapsedParts = th.fg("dim", formatDuration(this.dashData.elapsed));
+      // Guard: skip display when elapsed is zero or unreasonably large (>30 days)
+      const elapsed = this.dashData.elapsed;
+      elapsedParts = elapsed > 0 && elapsed < 30 * 24 * 3600_000
+        ? th.fg("dim", formatDuration(elapsed))
+        : "";
       const eta = estimateTimeRemaining();
       if (eta) elapsedParts += th.fg("dim", `  ·  ${eta}`);
     } else if (isRemote) {

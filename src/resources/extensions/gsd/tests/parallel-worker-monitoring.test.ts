@@ -10,8 +10,8 @@
  *   6. completedUnits counter increments on assistant message_end
  */
 
-import { describe, it, beforeEach, after } from "node:test";
-import { mkdtempSync, rmSync, existsSync, readFileSync } from "node:fs";
+import { describe, it, after } from "node:test";
+import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { createTestContext } from "./test-helpers.ts";
@@ -19,14 +19,12 @@ import { createTestContext } from "./test-helpers.ts";
 // We test processWorkerLine indirectly via the module's exported state.
 // To test the internal function, we use the exported accessors.
 import {
-  getOrchestratorState,
   getWorkerStatuses,
   getAggregateCost,
   isBudgetExceeded,
   isParallelActive,
   resetOrchestrator,
-  type OrchestratorState,
-  type WorkerInfo,
+  refreshWorkerStatuses,
 } from "../parallel-orchestrator.ts";
 
 const { assertEq, assertTrue, report } = createTestContext();
@@ -46,14 +44,6 @@ function makeMessageEndLine(cost: number, role = "assistant"): string {
         totalTokens: 1500,
       },
     },
-  });
-}
-
-/** Create a tool_execution_start NDJSON line. */
-function makeToolStartLine(toolName: string): string {
-  return JSON.stringify({
-    type: "tool_execution_start",
-    toolName,
   });
 }
 
@@ -154,18 +144,60 @@ describe("parallel-worker-monitoring", () => {
       "--mode comes before json");
   });
 
-  it("PID-based kill fallback pattern works", () => {
-    // Verify the pattern: try process handle first, fall back to process.kill
-    const worker = { process: null as null, pid: process.pid };
-    // With null process handle, PID-based kill should be used
-    assertTrue(worker.process === null, "process handle is null");
-    assertTrue(worker.pid > 0, "PID is valid");
-    // process.kill(pid, 0) checks if process exists without sending signal
-    let alive = false;
+  it("refreshWorkerStatuses restores persisted workers from disk", () => {
+    const base = mkdtempSync(join(tmpdir(), "gsd-parallel-monitoring-"));
     try {
-      process.kill(worker.pid, 0);
-      alive = true;
-    } catch { /* not alive */ }
-    assertTrue(alive, "PID-based liveness check works");
+      mkdirSync(join(base, ".gsd"), { recursive: true });
+      writeFileSync(join(base, ".gsd", "orchestrator.json"), JSON.stringify({
+        active: true,
+        workers: [
+          {
+            milestoneId: "M001",
+            title: "M001",
+            pid: process.pid,
+            worktreePath: "/tmp/wt-M001",
+            startedAt: Date.now(),
+            state: "running",
+            completedUnits: 1,
+            cost: 0.1,
+          },
+        ],
+        totalCost: 0.1,
+        startedAt: Date.now(),
+        configSnapshot: { max_workers: 2 },
+      }, null, 2));
+      refreshWorkerStatuses(base, { restoreIfNeeded: true });
+      const workers = getWorkerStatuses();
+      assertEq(workers.length, 1, "restored one worker");
+      assertEq(workers[0].milestoneId, "M001", "worker restored from persisted state");
+    } finally {
+      resetOrchestrator();
+      rmSync(base, { recursive: true, force: true });
+    }
+  });
+
+  it("refreshWorkerStatuses restores persisted workers from live session status files", () => {
+    const base = mkdtempSync(join(tmpdir(), "gsd-parallel-stderr-"));
+    try {
+      mkdirSync(join(base, ".gsd", "parallel"), { recursive: true });
+      writeFileSync(join(base, ".gsd", "parallel", "M009.status.json"), JSON.stringify({
+        milestoneId: "M009",
+        pid: process.pid,
+        state: "running",
+        currentUnit: null,
+        completedUnits: 3,
+        cost: 0.42,
+        lastHeartbeat: Date.now(),
+        startedAt: Date.now() - 1000,
+        worktreePath: "/tmp/wt-M009",
+      }, null, 2));
+      refreshWorkerStatuses(base, { restoreIfNeeded: true });
+      const workers = getWorkerStatuses();
+      assertEq(workers[0].state, "running", "live session status restored");
+      assertEq(workers[0].completedUnits, 3, "completed units restored from status file");
+    } finally {
+      resetOrchestrator();
+      rmSync(base, { recursive: true, force: true });
+    }
   });
 });

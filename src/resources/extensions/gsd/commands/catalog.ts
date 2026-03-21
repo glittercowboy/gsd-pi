@@ -14,7 +14,7 @@ export interface GsdCommandDefinition {
 type CompletionMap = Record<string, readonly GsdCommandDefinition[]>;
 
 export const GSD_COMMAND_DESCRIPTION =
-  "GSD — Get Shit Done: /gsd help|start|templates|next|auto|stop|pause|status|widget|visualize|queue|quick|capture|triage|dispatch|history|undo|rate|skip|export|cleanup|mode|prefs|config|keys|hooks|run-hook|skill-health|doctor|logs|forensics|changelog|migrate|remote|steer|knowledge|new-milestone|parallel|cmux|park|unpark|init|setup|inspect|extensions|update";
+  "GSD — Get Shit Done: /gsd help|start|templates|next|auto|stop|pause|status|widget|visualize|queue|quick|discuss|capture|triage|dispatch|history|undo|rate|skip|export|cleanup|mode|prefs|config|keys|hooks|run-hook|skill-health|doctor|logs|forensics|changelog|migrate|remote|steer|knowledge|new-milestone|parallel|cmux|park|unpark|init|setup|inspect|extensions|update";
 
 export const TOP_LEVEL_SUBCOMMANDS: readonly GsdCommandDefinition[] = [
   { cmd: "help", desc: "Categorized command reference with descriptions" },
@@ -74,6 +74,13 @@ const NESTED_COMPLETIONS: CompletionMap = {
   next: [
     { cmd: "--verbose", desc: "Show detailed step output" },
     { cmd: "--dry-run", desc: "Preview next step without executing" },
+    { cmd: "--debug", desc: "Enable debug logging" },
+  ],
+  widget: [
+    { cmd: "full", desc: "Full widget display" },
+    { cmd: "small", desc: "Compact widget display" },
+    { cmd: "min", desc: "Minimal widget display" },
+    { cmd: "off", desc: "Hide widget" },
   ],
   mode: [
     { cmd: "global", desc: "Edit global workflow mode" },
@@ -138,6 +145,8 @@ const NESTED_COMPLETIONS: CompletionMap = {
   cleanup: [
     { cmd: "branches", desc: "Remove merged milestone branches" },
     { cmd: "snapshots", desc: "Remove old execution snapshots" },
+    { cmd: "projects", desc: "Audit orphaned ~/.gsd/projects/ state directories" },
+    { cmd: "projects --fix", desc: "Delete orphaned project state directories (cannot be undone)" },
   ],
   knowledge: [
     { cmd: "rule", desc: "Add a project rule (always/never do X)" },

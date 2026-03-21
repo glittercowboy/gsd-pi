@@ -120,6 +120,37 @@ rm -rf "$(dirname .gsd)/.gsd.lock"
 
 **Fix:** GSD auto-resolves conflicts on `.gsd/` runtime files. For content conflicts in code files, the LLM is given an opportunity to resolve them via a fix-merge session. If that fails, manual resolution is needed.
 
+### Pre-dispatch says the milestone integration branch no longer exists
+
+**Symptoms:** Auto mode or `/gsd doctor` reports that a milestone recorded an integration branch that no longer exists in git.
+
+**What it means:** The milestone's `.gsd/milestones/<MID>/<MID>-META.json` still points at the branch that was active when the milestone started, but that branch has since been renamed or deleted.
+
+**Current behavior:**
+- If GSD can deterministically recover to a safe branch, it no longer hard-stops auto mode.
+- Safe fallbacks are:
+  - explicit `git.main_branch` when configured and present
+  - the repo's detected default integration branch (for example `main` or `master`)
+- In that case `/gsd doctor` reports a warning and `/gsd doctor fix` rewrites the stale metadata to the effective branch.
+- GSD still blocks when no safe fallback branch can be determined.
+
+**Fix:**
+- Run `/gsd doctor fix` to rewrite the stale milestone metadata automatically when the fallback is obvious.
+- If GSD still blocks, recreate the missing branch or update your git preferences so `git.main_branch` points at a real branch.
+
+### Transient `EBUSY` / `EPERM` / `EACCES` while writing `.gsd/` files
+
+**Symptoms:** On Windows, auto mode or doctor occasionally fails while updating `.gsd/` files with errors like `EBUSY`, `EPERM`, or `EACCES`.
+
+**Cause:** Antivirus, indexers, editors, or filesystem watchers can briefly lock the destination or temp file just as GSD performs the atomic rename.
+
+**Current behavior:** GSD now retries those transient rename failures with a short bounded backoff before surfacing an error. The retry is intentionally limited so genuine filesystem problems still fail loudly instead of hanging forever.
+
+**Fix:**
+- Re-run the operation; most transient lock races clear quickly.
+- If the error persists, close tools that may be holding the file open and then retry.
+- If repeated failures continue, run `/gsd doctor` to confirm the repo state is still healthy and report the exact path + error code.
+
 ## MCP Client Issues
 
 ### `mcp_servers` shows no configured servers

@@ -11,6 +11,7 @@ Welcome to the GSD documentation. This covers everything from getting started to
 | [Commands Reference](./commands.md) | All commands, keyboard shortcuts, and CLI flags |
 | [Remote Questions](./remote-questions.md) | Discord and Slack integration for headless auto-mode |
 | [Configuration](./configuration.md) | Preferences, model selection, git settings, and token profiles |
+| [Custom Models](./custom-models.md) | Add custom providers (Ollama, vLLM, LM Studio, proxies) via models.json |
 | [Token Optimization](./token-optimization.md) | Token profiles, context compression, complexity routing, and adaptive learning (v2.17) |
 | [Dynamic Model Routing](./dynamic-model-routing.md) | Complexity-based model selection, cost tables, escalation, and budget pressure (v2.19) |
 | [Captures & Triage](./captures-triage.md) | Fire-and-forget thought capture during auto-mode with automated triage (v2.19) |
@@ -21,7 +22,7 @@ Welcome to the GSD documentation. This covers everything from getting started to
 | [Working in Teams](./working-in-teams.md) | Unique milestone IDs, `.gitignore` setup, and shared planning artifacts |
 | [Skills](./skills.md) | Bundled skills, skill discovery, and custom skill authoring |
 | [Migration from v1](./migration.md) | Migrating `.planning` directories from the original GSD |
-| [Troubleshooting](./troubleshooting.md) | Common issues, `/gsd doctor`, and recovery procedures |
+| [Troubleshooting](./troubleshooting.md) | Common issues, `/gsd doctor` (real-time visibility v2.40), `/gsd forensics` (full debugger v2.40), and recovery procedures |
 | [VS Code Extension](../vscode-extension/README.md) | Chat participant, sidebar dashboard, and RPC integration for VS Code |
 
 ## Architecture & Internals

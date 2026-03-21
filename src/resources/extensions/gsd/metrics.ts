@@ -164,7 +164,7 @@ export function snapshotUnitMetrics(
       // Count tool calls in this message
       if (msg.content && Array.isArray(msg.content)) {
         for (const block of msg.content) {
-          if (block.type === "tool_call") toolCalls++;
+          if (block.type === "toolCall") toolCalls++;
         }
       }
     } else if (msg.role === "user") {
@@ -205,7 +205,20 @@ export function snapshotUnitMetrics(
     unit.cacheHitRate = totalInput > 0 ? Math.round((tokens.cacheRead / totalInput) * 100) : 0;
   }
 
-  ledger.units.push(unit);
+  // ── Idempotency guard ──────────────────────────────────────────────────
+  // Prevent duplicate metrics entries when multiple callers snapshot the
+  // same unit (e.g. idle-watchdog closeoutUnit + normal loop closeoutUnit).
+  // A unit is considered a duplicate when type, id, AND startedAt all match
+  // an existing entry. On duplicate, the existing entry is updated in-place
+  // with the latest finishedAt and token counts instead of appending.
+  const dupeIdx = ledger.units.findIndex(
+    (u) => u.type === unit.type && u.id === unit.id && u.startedAt === unit.startedAt,
+  );
+  if (dupeIdx >= 0) {
+    ledger.units[dupeIdx] = unit;
+  } else {
+    ledger.units.push(unit);
+  }
   saveLedger(basePath, ledger);
 
   return unit;
@@ -515,6 +528,31 @@ function isMetricsLedger(data: unknown): data is MetricsLedger {
 
 function defaultLedger(): MetricsLedger {
   return { version: 1, projectStartedAt: Date.now(), units: [] };
+}
+
+/**
+ * Prune the metrics ledger to at most `keepCount` most-recent unit entries.
+ *
+ * Called by the doctor when the ledger exceeds the bloat threshold.
+ * Keeps the newest entries (highest index = most recent) and discards
+ * the oldest from the head of the array. Preserves `projectStartedAt`.
+ *
+ * Updates both the on-disk file and the in-memory ledger if it is loaded,
+ * so the current session sees the pruned state immediately.
+ *
+ * @returns the number of entries removed, or 0 if no pruning was needed.
+ */
+export function pruneMetricsLedger(base: string, keepCount: number): number {
+  const disk = loadLedgerFromDisk(base);
+  if (!disk || disk.units.length <= keepCount) return 0;
+  const removed = disk.units.length - keepCount;
+  disk.units = disk.units.slice(-keepCount);
+  saveJsonFile(metricsPath(base), disk);
+  // Keep the in-memory ledger in sync if it is loaded for this session.
+  if (ledger) {
+    ledger.units = ledger.units.slice(-keepCount);
+  }
+  return removed;
 }
 
 /**

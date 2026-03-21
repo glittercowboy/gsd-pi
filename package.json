@@ -28,6 +28,7 @@
     "src/resources",
     "scripts/postinstall.js",
     "scripts/link-workspace-packages.cjs",
+    "scripts/ensure-workspace-builds.cjs",
     "package.json",
     "README.md"
   ],
@@ -73,7 +74,7 @@
     "gsd:web": "npm run build:pi && npm run copy-resources && node scripts/build-web-if-stale.cjs && node scripts/dev-cli.js --web",
     "gsd:web:stop": "node scripts/dev-cli.js web stop",
     "gsd:web:stop:all": "node scripts/dev-cli.js web stop all",
-    "postinstall": "node scripts/link-workspace-packages.cjs && node scripts/postinstall.js",
+    "postinstall": "node scripts/link-workspace-packages.cjs && node scripts/ensure-workspace-builds.cjs && node scripts/postinstall.js",
     "pi:install-global": "node scripts/install-pi-global.js",
     "pi:uninstall-global": "node scripts/uninstall-pi-global.js",
     "sync-pkg-version": "node scripts/sync-pkg-version.cjs",

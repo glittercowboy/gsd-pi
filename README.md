@@ -24,18 +24,28 @@ One command. Walk away. Come back to a built project with clean git history.
 
 ---
 
-## What's New in v2.38
+## What's New in v2.39–v2.40
 
-- **Reactive task execution (ADR-004)** — graph-derived parallel task dispatch within slices. When enabled, GSD derives a dependency graph from IO annotations in task plans and dispatches multiple non-conflicting tasks in parallel via subagents. Backward compatible — disabled by default. Enable with `reactive_execution: true` in preferences.
-- **Anthropic Vertex AI provider** — run Claude models (Opus 4.6, Sonnet 4.6, Haiku 4.5) through Google Vertex AI. Set `ANTHROPIC_VERTEX_PROJECT_ID` to activate.
-- **CI optimization** — GitHub Actions minutes reduced ~60-70% (~10k → ~3-4k/month)
-- **Reactive batch verification** — dependency-based carry-forward for verification results across parallel task batches
-- **Backtick file path enforcement** — task plan IO sections now require backtick-wrapped paths for reliable parsing
+- **GitHub sync extension** — auto-sync milestones, slices, and tasks to GitHub Issues, PRs, and Milestones. Opt in with `github.enabled: true` in preferences. Requires `gh` CLI.
+- **Skill tool resolution** — skills are now resolved and activated automatically in dispatched prompts based on `always_use_skills`, `prefer_skills`, and `skill_rules` preferences. Skills are matched to dispatch context at build time.
+- **Health check phase 2** — `/gsd doctor` issues now surface in real time across the dashboard widget, workflow visualizer, and HTML reports with severity levels (error/warning/info).
+- **Forensics upgrade** — `/gsd forensics` is now a full-access GSD debugger with structured anomaly detection (stuck loops, cost spikes, timeouts, missing artifacts), unit traces, and LLM-guided root-cause analysis.
+- **Auto PR on milestone completion** — set `git.auto_pr: true` to automatically create a draft PR when a milestone completes. Requires `auto_push: true` and `gh` CLI.
+- **RUNTIME.md template** — declare project-level runtime context (API endpoints, env vars, deployment info) in `.gsd/RUNTIME.md`. Inlined into task execution prompts to prevent hallucination.
+- **Welcome screen** — branded startup UI showing version, active model, available tool keys, and quick-start commands.
+- **`GSD_HOME` and `GSD_PROJECT_ID` env vars** — override the global `~/.gsd` directory and per-project identity hash for CI/CD and multi-clone environments.
+- **Browser and runtime UAT types** — new `browser-executable` and `runtime-executable` UAT types control when auto-mode pauses for validation.
+- **Pipeline decomposition** — auto-loop rewritten from recursive dispatch to a linear phase pipeline (pre-dispatch → dispatch → post-unit → verification → stuck detection) for better debuggability.
+- **Sliding-window stuck detection** — replaces the simple counter with a pattern-aware sliding window, reducing false positives on legitimate retries.
+- **Data-loss recovery** — automatic detection and recovery of `.gsd/` data loss from v2.30.0–v2.38.0 migration issues, with atomic migration and rollback on failure.
+- **Model preferences in guided flow** — per-phase model selection now applies in step mode, not just auto mode.
 
 See the full [Changelog](./CHANGELOG.md) for details.
 
-### Previous highlights (v2.34–v2.37)
+### Previous highlights (v2.34–v2.38)
 
+- **Reactive task execution (ADR-004)** — graph-derived parallel task dispatch within slices
+- **Anthropic Vertex AI provider** — Claude on Google Vertex AI
 - **cmux integration** — sidebar status, progress bars, and notifications for cmux terminal multiplexer users
 - **Redesigned dashboard** — two-column layout with 4 widget modes (full → small → min → off)
 - **AGENTS.md support** — deprecated `agent-instructions.md` in favor of standard `AGENTS.md` / `CLAUDE.md`
@@ -53,6 +63,7 @@ Full documentation is available in the [`docs/`](./docs/) directory:
 - **[Getting Started](./docs/getting-started.md)** — install, first run, basic usage
 - **[Auto Mode](./docs/auto-mode.md)** — autonomous execution deep-dive
 - **[Configuration](./docs/configuration.md)** — all preferences, models, git, and hooks
+- **[Custom Models](./docs/custom-models.md)** — add custom providers (Ollama, vLLM, LM Studio, proxies)
 - **[Token Optimization](./docs/token-optimization.md)** — profiles, context compression, complexity routing
 - **[Cost Management](./docs/cost-management.md)** — budgets, tracking, projections
 - **[Git Strategy](./docs/git-strategy.md)** — worktree isolation, branching, merge behavior
@@ -173,7 +184,7 @@ Auto mode is a state machine driven by files on disk. It reads `.gsd/STATE.md`, 
 
 5. **Provider error recovery** — Transient provider errors (rate limits, 500/503 server errors, overloaded) auto-resume after a delay. Permanent errors (auth, billing) pause for manual review. The model fallback chain retries transient network errors before switching models.
 
-6. **Stuck detection** — If the same unit dispatches twice (the LLM didn't produce the expected artifact), it retries once with a deep diagnostic. If it fails again, auto mode stops with the exact file it expected.
+6. **Stuck detection** — A sliding-window detector identifies repeated dispatch patterns (including multi-unit cycles). On detection, it retries once with a deep diagnostic. If it fails again, auto mode stops with the exact file it expected.
 
 7. **Timeout supervision** — Soft timeout warns the LLM to wrap up. Idle watchdog detects stalls. Hard timeout pauses auto mode. Recovery steering nudges the LLM to finish durable output before giving up.
 
@@ -309,9 +320,9 @@ On first run, GSD launches a branded setup wizard that walks you through LLM pro
 | `/gsd migrate`          | Migrate a v1 `.planning` directory to `.gsd` format             |
 | `/gsd help`             | Categorized command reference for all GSD subcommands           |
 | `/gsd mode`             | Switch workflow mode (solo/team) with coordinated defaults      |
-| `/gsd forensics`        | Post-mortem investigation of auto-mode failures                 |
+| `/gsd forensics`        | Full-access GSD debugger for auto-mode failure investigation    |
 | `/gsd cleanup`          | Archive phase directories from completed milestones             |
-| `/gsd doctor`           | Runtime health checks with auto-fix for common issues           |
+| `/gsd doctor`           | Runtime health checks — issues surface across widget, visualizer, and reports |
 | `/gsd keys`             | API key manager — list, add, remove, test, rotate, doctor       |
 | `/gsd logs`             | Browse activity, debug, and metrics logs                        |
 | `/gsd export --html`    | Generate HTML report for current or completed milestone         |
@@ -344,6 +355,8 @@ Every dispatch is carefully constructed. The LLM never wastes tool calls on orie
 | ------------------ | --------------------------------------------------------------- |
 | `PROJECT.md`       | Living doc — what the project is right now                      |
 | `DECISIONS.md`     | Append-only register of architectural decisions                 |
+| `KNOWLEDGE.md`     | Cross-session rules, patterns, and lessons learned              |
+| `RUNTIME.md`       | Runtime context — API endpoints, env vars, services (v2.39)     |
 | `STATE.md`         | Quick-glance dashboard — always read first                      |
 | `M001-ROADMAP.md`  | Milestone plan with slice checkboxes, risk levels, dependencies |
 | `M001-CONTEXT.md`  | User decisions from the discuss phase                           |

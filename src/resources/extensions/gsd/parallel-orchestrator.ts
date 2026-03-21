@@ -9,6 +9,7 @@
 
 import { spawn, type ChildProcess } from "node:child_process";
 import {
+  appendFileSync,
   existsSync,
   writeFileSync,
   readFileSync,
@@ -29,6 +30,7 @@ import type { ParallelConfig } from "./types.js";
 import {
   writeSessionStatus,
   readAllSessionStatuses,
+  readSessionStatus,
   removeSessionStatus,
   sendSignal,
   cleanupStaleSessions,
@@ -181,6 +183,92 @@ export function restoreState(basePath: string): PersistedState | null {
   }
 }
 
+function workerLogPath(basePath: string, milestoneId: string): string {
+  return join(gsdRoot(basePath), "parallel", `${milestoneId}.stderr.log`);
+}
+
+function appendWorkerLog(basePath: string, milestoneId: string, chunk: string): void {
+  try {
+    const dir = join(gsdRoot(basePath), "parallel");
+    if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+    appendFileSync(workerLogPath(basePath, milestoneId), chunk, "utf-8");
+  } catch {
+    // Non-fatal — diagnostics should never break orchestration.
+  }
+}
+
+function restoreRuntimeState(basePath: string): boolean {
+  if (state?.active) return true;
+
+  const restored = restoreState(basePath);
+  if (restored && restored.workers.length > 0) {
+    const config = resolveParallelConfig(undefined);
+    state = {
+      active: restored.active,
+      workers: new Map(),
+      config: {
+        ...config,
+        max_workers: restored.configSnapshot.max_workers,
+        budget_ceiling: restored.configSnapshot.budget_ceiling,
+      },
+      totalCost: restored.totalCost,
+      startedAt: restored.startedAt,
+    };
+
+    for (const w of restored.workers) {
+      const diskStatus = readSessionStatus(basePath, w.milestoneId);
+      state.workers.set(w.milestoneId, {
+        milestoneId: w.milestoneId,
+        title: w.title,
+        pid: diskStatus?.pid ?? w.pid,
+        process: null,
+        worktreePath: diskStatus?.worktreePath ?? w.worktreePath,
+        startedAt: w.startedAt,
+        state: diskStatus?.state ?? w.state,
+        completedUnits: diskStatus?.completedUnits ?? w.completedUnits,
+        cost: diskStatus?.cost ?? w.cost,
+      });
+    }
+
+    return true;
+  }
+
+  // Fallback: rebuild coordinator state from live session status files.
+  // This covers cases where orchestrator.json is missing/corrupt but workers are
+  // still running and writing heartbeats under .gsd/parallel/.
+  cleanupStaleSessions(basePath);
+  const statuses = readAllSessionStatuses(basePath);
+  if (statuses.length === 0) {
+    return false;
+  }
+
+  const config = resolveParallelConfig(undefined);
+  state = {
+    active: true,
+    workers: new Map(),
+    config,
+    totalCost: 0,
+    startedAt: Math.min(...statuses.map((status) => status.startedAt)),
+  };
+
+  for (const status of statuses) {
+    state.workers.set(status.milestoneId, {
+      milestoneId: status.milestoneId,
+      title: status.milestoneId,
+      pid: status.pid,
+      process: null,
+      worktreePath: status.worktreePath,
+      startedAt: status.startedAt,
+      state: status.state,
+      completedUnits: status.completedUnits,
+      cost: status.cost,
+    });
+    state.totalCost += status.cost;
+  }
+
+  return true;
+}
+
 async function waitForWorkerExit(worker: WorkerInfo, timeoutMs: number): Promise<boolean> {
   if (worker.process) {
     await new Promise<void>((resolve) => {
@@ -202,6 +290,7 @@ async function waitForWorkerExit(worker: WorkerInfo, timeoutMs: number): Promise
   return !isPidAlive(worker.pid);
 }
 
+
 // ─── Accessors ─────────────────────────────────────────────────────────────
 
 /** Returns true if the orchestrator is active and has been initialized. */
@@ -215,7 +304,10 @@ export function getOrchestratorState(): OrchestratorState | null {
 }
 
 /** Returns a snapshot of all tracked workers as an array. */
-export function getWorkerStatuses(): WorkerInfo[] {
+export function getWorkerStatuses(basePath?: string): WorkerInfo[] {
+  if (basePath) {
+    refreshWorkerStatuses(basePath, { restoreIfNeeded: true });
+  }
   if (!state) return [];
   return [...state.workers.values()];
 }
@@ -431,6 +523,11 @@ export function spawnWorker(
       env: {
         ...process.env,
         GSD_MILESTONE_LOCK: milestoneId,
+        // Pass the real project root so workers don't need to re-derive it.
+        // Without this, process.cwd() resolves symlinks and the worktree
+        // path heuristic can match the user-level ~/.gsd instead of the
+        // project .gsd, causing writes to ~ and corrupting user config.
+        GSD_PROJECT_ROOT: basePath,
         // Prevent workers from spawning their own parallel sessions
         GSD_PARALLEL_WORKER: "1",
       },
@@ -482,6 +579,12 @@ export function spawnWorker(
     });
   }
 
+  if (child.stderr) {
+    child.stderr.on("data", (data: Buffer) => {
+      appendWorkerLog(basePath, milestoneId, data.toString());
+    });
+  }
+
   // Update session status with real PID
   writeSessionStatus(basePath, {
     milestoneId,
@@ -508,6 +611,7 @@ export function spawnWorker(
       w.state = "stopped";
     } else {
       w.state = "error";
+      appendWorkerLog(basePath, milestoneId, `\n[orchestrator] worker exited with code ${code ?? "null"}\n`);
     }
 
     // Update session status and persist orchestrator state for crash recovery
@@ -762,7 +866,13 @@ export function resumeWorker(
  * Poll worker statuses from disk and update orchestrator state.
  * Call this periodically from the dashboard refresh cycle.
  */
-export function refreshWorkerStatuses(basePath: string): void {
+export function refreshWorkerStatuses(
+  basePath: string,
+  options: { restoreIfNeeded?: boolean } = {},
+): void {
+  if (!state && options.restoreIfNeeded) {
+    restoreRuntimeState(basePath);
+  }
   if (!state) return;
 
   // Clean up stale sessions first
@@ -785,7 +895,13 @@ export function refreshWorkerStatuses(basePath: string): void {
   // Update in-memory worker state from disk data
   for (const [mid, worker] of state.workers) {
     const diskStatus = statusMap.get(mid);
-    if (!diskStatus) continue;
+    if (!diskStatus) {
+      if (!isPidAlive(worker.pid)) {
+        worker.state = worker.completedUnits > 0 ? "stopped" : "error";
+        worker.process = null;
+      }
+      continue;
+    }
 
     worker.state = diskStatus.state;
     worker.completedUnits = diskStatus.completedUnits;

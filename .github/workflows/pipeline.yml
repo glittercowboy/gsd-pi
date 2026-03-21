@@ -36,6 +36,7 @@ jobs:
         with:
           node-version: 24
           registry-url: https://registry.npmjs.org
+          cache: 'npm'
 
       - name: Install dependencies
         run: npm ci
@@ -78,6 +79,7 @@ jobs:
         with:
           node-version: 24
           registry-url: https://registry.npmjs.org
+          cache: 'npm'
 
       - name: Install gsd-pi@dev globally
         run: npm install -g gsd-pi@dev
@@ -101,9 +103,10 @@ jobs:
           npm run test:live-regression
 
       - name: Promote to @next
-        run: npm dist-tag add gsd-pi@${{ needs.dev-publish.outputs.dev-version }} next
         env:
+          DEV_VERSION: ${{ needs.dev-publish.outputs.dev-version }}
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm dist-tag add "gsd-pi@${DEV_VERSION}" next
 
       - name: Log in to GHCR
         uses: docker/login-action@v4
@@ -113,13 +116,15 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build and push runtime Docker image
+        env:
+          DEV_VERSION: ${{ needs.dev-publish.outputs.dev-version }}
         run: |
           docker build --target runtime \
-            -t ghcr.io/gsd-build/gsd-pi:next \
-            -t ghcr.io/gsd-build/gsd-pi:${{ needs.dev-publish.outputs.dev-version }} \
+            -t "ghcr.io/gsd-build/gsd-pi:next" \
+            -t "ghcr.io/gsd-build/gsd-pi:${DEV_VERSION}" \
             .
           docker push ghcr.io/gsd-build/gsd-pi:next
-          docker push ghcr.io/gsd-build/gsd-pi:${{ needs.dev-publish.outputs.dev-version }}
+          docker push "ghcr.io/gsd-build/gsd-pi:${DEV_VERSION}"
 
   prod-release:
     name: Production Release
@@ -136,6 +141,7 @@ jobs:
         with:
           node-version: 24
           registry-url: https://registry.npmjs.org
+          cache: 'npm'
 
       - name: Install dependencies
         run: npm ci
@@ -158,44 +164,50 @@ jobs:
           echo "$OUTPUT" | jq -r '.releaseNotes' > /tmp/release-notes.md
 
       - name: Bump version and sync packages
-        run: node scripts/bump-version.mjs "${{ steps.release.outputs.version }}"
+        env:
+          RELEASE_VERSION: ${{ steps.release.outputs.version }}
+        run: node scripts/bump-version.mjs "$RELEASE_VERSION"
 
       - name: Update CHANGELOG.md
         run: node scripts/update-changelog.mjs /tmp/changelog-entry.md
 
       - name: Commit, tag, and push
+        env:
+          RELEASE_VERSION: ${{ steps.release.outputs.version }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add package.json package-lock.json CHANGELOG.md native/npm/*/package.json pkg/package.json packages/pi-coding-agent/package.json
-          git commit -m "release: v${{ steps.release.outputs.version }}"
-          git tag "v${{ steps.release.outputs.version }}"
+          git commit -m "release: v${RELEASE_VERSION}"
+          git tag "v${RELEASE_VERSION}"
           git push origin main
-          git push origin "v${{ steps.release.outputs.version }}"
+          git push origin "v${RELEASE_VERSION}"
 
       - name: Build release
         run: npm run build
 
       - name: Publish release to npm @latest
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          RELEASE_VERSION: ${{ steps.release.outputs.version }}
         run: |
           OUTPUT=$(npm publish 2>&1) && echo "$OUTPUT" || {
             if echo "$OUTPUT" | grep -q "cannot publish over the previously published"; then
               echo "Version already published — promoting to latest"
-              npm dist-tag add gsd-pi@${{ steps.release.outputs.version }} latest
+              npm dist-tag add "gsd-pi@${RELEASE_VERSION}" latest
             else
               echo "$OUTPUT"
               exit 1
             fi
           }
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_VERSION: ${{ steps.release.outputs.version }}
         run: |
-          gh release create "v${{ steps.release.outputs.version }}" \
-            --title "v${{ steps.release.outputs.version }}" \
+          gh release create "v${RELEASE_VERSION}" \
+            --title "v${RELEASE_VERSION}" \
             --notes-file /tmp/release-notes.md \
             --latest
 
@@ -203,12 +215,12 @@ jobs:
         if: ${{ env.DISCORD_WEBHOOK != '' }}
         env:
           DISCORD_WEBHOOK: ${{ secrets.DISCORD_CHANGELOG_WEBHOOK }}
+          RELEASE_VERSION: ${{ steps.release.outputs.version }}
         run: |
-          VERSION="${{ steps.release.outputs.version }}"
           NOTES=$(cat /tmp/release-notes.md)
           curl -s -X POST "$DISCORD_WEBHOOK" \
             -H "Content-Type: application/json" \
-            -d "$(jq -n --arg c "**GSD v${VERSION} Released**\n\n${NOTES}\n\n\`npm i gsd-pi@${VERSION}\`" '{content:$c}')"
+            -d "$(jq -n --arg c "**GSD v${RELEASE_VERSION} Released**\n\n${NOTES}\n\n\`npm i gsd-pi@${RELEASE_VERSION}\`" '{content:$c}')"
 
       - name: Log in to GHCR
         uses: docker/login-action@v4
@@ -218,9 +230,11 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Tag runtime Docker image as latest
+        env:
+          DEV_VERSION: ${{ needs.dev-publish.outputs.dev-version }}
         run: |
-          docker pull ghcr.io/gsd-build/gsd-pi:${{ needs.dev-publish.outputs.dev-version }}
-          docker tag ghcr.io/gsd-build/gsd-pi:${{ needs.dev-publish.outputs.dev-version }} ghcr.io/gsd-build/gsd-pi:latest
+          docker pull "ghcr.io/gsd-build/gsd-pi:${DEV_VERSION}"
+          docker tag "ghcr.io/gsd-build/gsd-pi:${DEV_VERSION}" ghcr.io/gsd-build/gsd-pi:latest
           docker push ghcr.io/gsd-build/gsd-pi:latest
 
   update-builder:
@@ -229,12 +243,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+        with:
+          fetch-depth: 2
 
       - name: Check for Dockerfile changes
         id: check
+        env:
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
         run: |
-          CHANGED=$(git diff --name-only ${{ github.event.workflow_run.head_sha }}~1 ${{ github.event.workflow_run.head_sha }} -- Dockerfile || echo "")
-          echo "changed=$([[ -n \"$CHANGED\" ]] && echo 'true' || echo 'false')" >> "$GITHUB_OUTPUT"
+          CHANGED=$(git diff --name-only "${HEAD_SHA}~1" "${HEAD_SHA}" -- Dockerfile || echo "")
+          echo "changed=$([[ -n "$CHANGED" ]] && echo 'true' || echo 'false')" >> "$GITHUB_OUTPUT"
 
       - name: Log in to GHCR
         if: steps.check.outputs.changed == 'true'

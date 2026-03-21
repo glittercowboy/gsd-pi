@@ -67,6 +67,8 @@ export function createAsyncBashTool(
 		promptGuidelines: [
 			"Use async_bash for commands that take more than a few seconds (builds, tests, installs, large git operations).",
 			"After starting async jobs, continue with other work and use await_job when you need the results.",
+			"await_job has a configurable timeout (default 120s) to prevent indefinite blocking — if it times out, jobs keep running and you can check again later.",
+			"For long-running processes (SSH, deploys, training) that may take minutes+, prefer async_bash with periodic await_job polling over a single long await.",
 			"Use cancel_job to stop a running background job.",
 			"Check /jobs to see all running and recent background jobs.",
 		],

@@ -155,7 +155,8 @@ Recommended verification order:
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `GSD_HOME` | `~/.gsd` | Global GSD directory. All paths derive from this unless individually overridden. |
+| `GSD_HOME` | `~/.gsd` | Global GSD directory. All paths derive from this unless individually overridden. Affects preferences, skills, sessions, and per-project state. (v2.39) |
+| `GSD_PROJECT_ID` | (auto-hash) | Override the automatic project identity hash. Per-project state goes to `$GSD_HOME/projects/<GSD_PROJECT_ID>/` instead of the computed hash. Useful for CI/CD or sharing state across clones of the same repo. (v2.39) |
 | `GSD_STATE_DIR` | `$GSD_HOME` | Per-project state root. Controls where `projects/<repo-hash>/` directories are created. Takes precedence over `GSD_HOME` for project state. |
 | `GSD_CODING_AGENT_DIR` | `$GSD_HOME/agent` | Agent directory containing managed resources, extensions, and auth. Takes precedence over `GSD_HOME` for agent paths. |
 
@@ -187,12 +188,34 @@ models:
 
 ### Custom Model Definitions (`models.json`)
 
-Define custom models in `~/.gsd/agent/models.json`. This lets you add models not included in the default registry — useful for self-hosted endpoints, fine-tuned models, or new releases.
+Define custom models and providers in `~/.gsd/agent/models.json`. This lets you add models not included in the default registry — useful for self-hosted endpoints (Ollama, vLLM, LM Studio), fine-tuned models, proxies, or new provider releases.
 
 GSD resolves models.json with fallback logic:
 1. `~/.gsd/agent/models.json` — primary (GSD)
 2. `~/.pi/agent/models.json` — fallback (Pi)
 3. If neither exists, creates `~/.gsd/agent/models.json`
+
+**Quick example for local models (Ollama):**
+
+```json
+{
+  "providers": {
+    "ollama": {
+      "baseUrl": "http://localhost:11434/v1",
+      "api": "openai-completions",
+      "apiKey": "ollama",
+      "models": [
+        { "id": "llama3.1:8b" },
+        { "id": "qwen2.5-coder:7b" }
+      ]
+    }
+  }
+}
+```
+
+The file reloads each time you open `/model` — no restart needed.
+
+For full documentation including provider configuration, model overrides, OpenAI compatibility settings, and advanced examples, see the [Custom Models Guide](./custom-models.md).
 
 **With fallbacks:**
 
@@ -429,6 +452,34 @@ git:
 
 If `pr_target_branch` is not set, the PR targets the `main_branch` (or auto-detected main branch). PR creation failure is non-fatal — GSD logs and continues.
 
+### `github` (v2.39)
+
+GitHub sync configuration. When enabled, GSD auto-syncs milestones, slices, and tasks to GitHub Issues, PRs, and Milestones.
+
+```yaml
+github:
+  enabled: true
+  repo: "owner/repo"              # auto-detected from git remote if omitted
+  labels: [gsd, auto-generated]   # labels applied to created issues/PRs
+  project: "Project ID"           # optional GitHub Project board
+```
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `enabled` | boolean | `false` | Enable GitHub sync |
+| `repo` | string | (auto-detected) | GitHub repository in `owner/repo` format |
+| `labels` | string[] | `[]` | Labels to apply to created issues and PRs |
+| `project` | string | (none) | GitHub Project ID for project board integration |
+
+**Requirements:**
+- `gh` CLI installed and authenticated (`gh auth login`)
+- Sync mapping is persisted in `.gsd/.github-sync.json`
+- Rate-limit aware — skips sync when GitHub API rate limit is low
+
+**Commands:**
+- `/github-sync bootstrap` — initial setup and sync
+- `/github-sync status` — show sync mapping counts
+
 ### `notifications`
 
 Control what notifications GSD sends during auto mode:
@@ -554,6 +605,32 @@ custom_instructions:
 ```
 
 For project-specific knowledge (patterns, gotchas, lessons learned), use `.gsd/KNOWLEDGE.md` instead — it's injected into every agent prompt automatically. Add entries with `/gsd knowledge rule|pattern|lesson <description>`.
+
+### `RUNTIME.md` — Runtime Context (v2.39)
+
+Declare project-level runtime context in `.gsd/RUNTIME.md`. This file is inlined into task execution prompts, giving the agent accurate information about your runtime environment without relying on hallucinated paths or URLs.
+
+**Location:** `.gsd/RUNTIME.md`
+
+**Example:**
+
+```markdown
+# Runtime Context
+
+## API Endpoints
+- Main API: https://api.example.com
+- Cache: redis://localhost:6379
+
+## Environment Variables
+- DEPLOYMENT_ENV: staging
+- DB_POOL_SIZE: 20
+
+## Local Services
+- PostgreSQL: localhost:5432
+- Redis: localhost:6379
+```
+
+Use this for information that the agent needs during execution but that doesn't belong in `DECISIONS.md` (architectural) or `KNOWLEDGE.md` (patterns/rules). Common examples: API base URLs, service ports, deployment targets, and environment-specific configuration.
 
 ### `dynamic_routing`
 

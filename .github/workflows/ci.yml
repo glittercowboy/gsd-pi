@@ -4,8 +4,6 @@ on:
   push:
     branches: [main]
     paths-ignore:
-      - '**.md'
-      - 'docs/**'
       - '.github/workflows/ai-triage.yml'
       - '.github/workflows/build-native.yml'
       - '.github/workflows/cleanup-dev-versions.yml'
@@ -14,8 +12,6 @@ on:
   pull_request:
     branches: [main]
     paths-ignore:
-      - '**.md'
-      - 'docs/**'
       - '.github/workflows/ai-triage.yml'
       - '.github/workflows/build-native.yml'
       - '.github/workflows/cleanup-dev-versions.yml'
@@ -27,12 +23,59 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  lint:
+  detect-changes:
     runs-on: ubuntu-latest
+    outputs:
+      docs-only: ${{ steps.check.outputs.docs-only }}
     steps:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
+
+      - name: Check if only documentation changed
+        id: check
+        env:
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PUSH_BEFORE_SHA: ${{ github.event.before }}
+          EVENT_NAME: ${{ github.event_name }}
+          HEAD_SHA: ${{ github.sha }}
+        run: |
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            BASE="$PR_BASE_SHA"
+          else
+            BASE="$PUSH_BEFORE_SHA"
+          fi
+          FILES=$(git diff --name-only "$BASE" "$HEAD_SHA" 2>/dev/null || git diff --name-only HEAD~1)
+          echo "Changed files:"
+          echo "$FILES"
+          NON_DOCS=$(echo "$FILES" | grep -vE '\.(md|markdown)$' | grep -vE '^docs/' | grep -vE '^LICENSE$' || true)
+          if [ -z "$NON_DOCS" ]; then
+            echo "docs-only=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::Only documentation files changed — skipping build/test"
+          else
+            echo "docs-only=false" >> "$GITHUB_OUTPUT"
+            echo "Non-docs files changed:"
+            echo "$NON_DOCS"
+          fi
+
+  docs-check:
+    runs-on: ubuntu-latest
+    needs: detect-changes
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Scan documentation for prompt injection
+        run: bash scripts/docs-prompt-injection-scan.sh --diff origin/main
+
+  lint:
+    needs: detect-changes
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 2
 
       - name: Scan for hardcoded secrets
         run: bash scripts/secret-scan.sh --diff origin/main
@@ -53,13 +96,13 @@ jobs:
         run: node scripts/check-skill-references.mjs
 
   build:
+    needs: detect-changes
+    if: needs.detect-changes.outputs.docs-only != 'true'
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
-        with:
-          fetch-depth: 0
 
       - name: Setup Node.js
         uses: actions/setup-node@v6
@@ -92,14 +135,15 @@ jobs:
         run: npm run test:integration
 
   windows-portability:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: detect-changes
+    if: >-
+      needs.detect-changes.outputs.docs-only != 'true' &&
+      github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: windows-latest
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
-        with:
-          fetch-depth: 0
 
       - name: Setup Node.js
         uses: actions/setup-node@v6

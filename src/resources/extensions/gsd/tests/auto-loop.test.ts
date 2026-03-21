@@ -5,6 +5,7 @@ import { resolve } from "node:path";
 
 import {
   resolveAgentEnd,
+  resolveAgentEndCancelled,
   runUnit,
   autoLoop,
   detectStuck,
@@ -247,20 +248,20 @@ test("auto-loop.ts exports autoLoop, runUnit, resolveAgentEnd", async () => {
   );
 });
 
-test("auto-loop.ts contains a while keyword", () => {
+test("auto/loop.ts contains a while keyword", () => {
   const src = readFileSync(
-    resolve(import.meta.dirname, "..", "auto-loop.ts"),
+    resolve(import.meta.dirname, "..", "auto", "loop.ts"),
     "utf-8",
   );
   assert.ok(
     src.includes("while"),
-    "auto-loop.ts should contain a while keyword (loop or placeholder)",
+    "auto/loop.ts should contain a while keyword (loop or placeholder)",
   );
 });
 
-test("auto-loop.ts one-shot pattern: _currentResolve is nulled before calling resolver", () => {
+test("auto/resolve.ts one-shot pattern: _currentResolve is nulled before calling resolver", () => {
   const src = readFileSync(
-    resolve(import.meta.dirname, "..", "auto-loop.ts"),
+    resolve(import.meta.dirname, "..", "auto", "resolve.ts"),
     "utf-8",
   );
   // The one-shot pattern requires: save ref, null the variable, then call
@@ -413,6 +414,8 @@ function makeMockDeps(
       return "continue" as const;
     },
     getSessionFile: () => "/tmp/session.json",
+    rebuildState: async () => {},
+    resolveModelId: (id: string, models: any[]) => models.find((m: any) => m.id === id),
   };
 
   const merged = { ...baseDeps, ...overrides, callLog };
@@ -664,6 +667,117 @@ test("autoLoop calls deriveState → resolveDispatch → runUnit in sequence", a
   );
 });
 
+test("crash lock records session file from AFTER newSession, not before (#1710)", async (t) => {
+  _resetPendingResolve();
+
+  const ctx = makeMockCtx();
+  ctx.ui.setStatus = () => {};
+
+  // Simulate newSession changing the session file path.
+  // newSession() in runUnit changes the underlying session, so getSessionFile
+  // returns a different path after newSession completes.
+  let currentSessionFile = "/tmp/old-session.json";
+  ctx.sessionManager = {
+    getSessionFile: () => currentSessionFile,
+  };
+  const pi = makeMockPi();
+
+  let loopCount = 0;
+  const s = makeLoopSession({
+    cmdCtx: {
+      newSession: () => {
+        // When newSession completes, the session file changes
+        currentSessionFile = "/tmp/new-session-after-newSession.json";
+        return Promise.resolve({ cancelled: false });
+      },
+      getContextUsage: () => ({ percent: 10, tokens: 1000, limit: 10000 }),
+    },
+  });
+
+  // Track all writeLock calls with their sessionFile argument
+  const writeLockCalls: { sessionFile: string | undefined }[] = [];
+  const updateSessionLockCalls: { sessionFile: string | undefined }[] = [];
+
+  const deps = makeMockDeps({
+    deriveState: async () => {
+      deps.callLog.push("deriveState");
+      return {
+        phase: "executing",
+        activeMilestone: { id: "M001", title: "Test", status: "active" },
+        activeSlice: { id: "S01", title: "Slice 1" },
+        activeTask: { id: "T01" },
+        registry: [{ id: "M001", status: "active" }],
+        blockers: [],
+      } as any;
+    },
+    resolveDispatch: async () => {
+      deps.callLog.push("resolveDispatch");
+      return {
+        action: "dispatch" as const,
+        unitType: "execute-task",
+        unitId: "M001/S01/T01",
+        prompt: "do the thing",
+      };
+    },
+    writeLock: (_base: string, _ut: string, _uid: string, _count: number, sessionFile?: string) => {
+      writeLockCalls.push({ sessionFile });
+    },
+    updateSessionLock: (_base: string, _ut: string, _uid: string, _count: number, sessionFile?: string) => {
+      updateSessionLockCalls.push({ sessionFile });
+    },
+    getSessionFile: (ctxArg: any) => {
+      return ctxArg.sessionManager?.getSessionFile() ?? "";
+    },
+    postUnitPostVerification: async () => {
+      deps.callLog.push("postUnitPostVerification");
+      loopCount++;
+      if (loopCount >= 1) {
+        s.active = false;
+      }
+      return "continue" as const;
+    },
+  });
+
+  const loopPromise = autoLoop(ctx, pi, s, deps);
+
+  // Give the loop time to reach runUnit's await
+  await new Promise((r) => setTimeout(r, 50));
+
+  // Resolve the unit's agent_end
+  resolveAgentEnd(makeEvent());
+
+  await loopPromise;
+
+  // The preliminary lock (before runUnit) should have NO session file
+  assert.ok(
+    writeLockCalls.length >= 2,
+    `expected at least 2 writeLock calls, got ${writeLockCalls.length}`,
+  );
+  assert.strictEqual(
+    writeLockCalls[0].sessionFile,
+    undefined,
+    "preliminary lock before runUnit should have no session file",
+  );
+
+  // The post-runUnit lock should have the NEW session file path
+  assert.strictEqual(
+    writeLockCalls[1].sessionFile,
+    "/tmp/new-session-after-newSession.json",
+    "post-runUnit lock should record the session file created by newSession",
+  );
+
+  // updateSessionLock should also have the new session file
+  assert.ok(
+    updateSessionLockCalls.length >= 1,
+    "updateSessionLock should have been called at least once",
+  );
+  assert.strictEqual(
+    updateSessionLockCalls[0].sessionFile,
+    "/tmp/new-session-after-newSession.json",
+    "updateSessionLock should record the session file created by newSession",
+  );
+});
+
 test("autoLoop handles verification retry by continuing loop", async (t) => {
   _resetPendingResolve();
 
@@ -893,18 +1007,18 @@ test("autoLoop exits when no active milestone found", async (t) => {
 
 test("autoLoop exports LoopDeps type", async () => {
   const src = readFileSync(
-    resolve(import.meta.dirname, "..", "auto-loop.ts"),
+    resolve(import.meta.dirname, "..", "auto", "loop-deps.ts"),
     "utf-8",
   );
   assert.ok(
     src.includes("export interface LoopDeps"),
-    "auto-loop.ts should export LoopDeps interface",
+    "auto/loop-deps.ts should export LoopDeps interface",
   );
 });
 
 test("autoLoop signature accepts deps parameter", async () => {
   const src = readFileSync(
-    resolve(import.meta.dirname, "..", "auto-loop.ts"),
+    resolve(import.meta.dirname, "..", "auto", "loop.ts"),
     "utf-8",
   );
   assert.ok(
@@ -915,7 +1029,7 @@ test("autoLoop signature accepts deps parameter", async () => {
 
 test("autoLoop contains while (s.active) loop", () => {
   const src = readFileSync(
-    resolve(import.meta.dirname, "..", "auto-loop.ts"),
+    resolve(import.meta.dirname, "..", "auto", "loop.ts"),
     "utf-8",
   );
   assert.ok(
@@ -926,22 +1040,47 @@ test("autoLoop contains while (s.active) loop", () => {
 
 // ── T03: End-to-end wiring structural assertions ─────────────────────────────
 
-test("auto-loop.ts exports autoLoop, runUnit, and resolveAgentEnd", () => {
-  const src = readFileSync(
+test("auto-loop.ts barrel re-exports autoLoop, runUnit, and resolveAgentEnd", () => {
+  const barrel = readFileSync(
     resolve(import.meta.dirname, "..", "auto-loop.ts"),
     "utf-8",
   );
   assert.ok(
-    src.includes("export async function autoLoop"),
-    "must export autoLoop",
+    barrel.includes("autoLoop"),
+    "barrel must re-export autoLoop",
   );
   assert.ok(
-    src.includes("export async function runUnit"),
-    "must export runUnit",
+    barrel.includes("runUnit"),
+    "barrel must re-export runUnit",
   );
   assert.ok(
-    src.includes("export function resolveAgentEnd"),
-    "must export resolveAgentEnd",
+    barrel.includes("resolveAgentEnd"),
+    "barrel must re-export resolveAgentEnd",
+  );
+  // Verify the actual function declarations exist in the submodules
+  const loopSrc = readFileSync(
+    resolve(import.meta.dirname, "..", "auto", "loop.ts"),
+    "utf-8",
+  );
+  assert.ok(
+    loopSrc.includes("export async function autoLoop"),
+    "auto/loop.ts must define autoLoop",
+  );
+  const runUnitSrc = readFileSync(
+    resolve(import.meta.dirname, "..", "auto", "run-unit.ts"),
+    "utf-8",
+  );
+  assert.ok(
+    runUnitSrc.includes("export async function runUnit"),
+    "auto/run-unit.ts must define runUnit",
+  );
+  const resolveSrc = readFileSync(
+    resolve(import.meta.dirname, "..", "auto", "resolve.ts"),
+    "utf-8",
+  );
+  assert.ok(
+    resolveSrc.includes("export function resolveAgentEnd"),
+    "auto/resolve.ts must define resolveAgentEnd",
   );
 });
 
@@ -960,6 +1099,32 @@ test("auto.ts startAuto calls autoLoop (not dispatchNextUnit as first dispatch)"
     fnBlock.includes("autoLoop("),
     "startAuto must call autoLoop() instead of dispatchNextUnit()",
   );
+});
+
+test("startAuto calls selfHealRuntimeRecords before autoLoop (#1727)", () => {
+  const src = readFileSync(
+    resolve(import.meta.dirname, "..", "auto.ts"),
+    "utf-8",
+  );
+  const fnIdx = src.indexOf("export async function startAuto");
+  assert.ok(fnIdx > -1, "startAuto must exist in auto.ts");
+  const fnEnd = src.indexOf("\n// ─── ", fnIdx + 100);
+  const fnBlock =
+    fnEnd > -1 ? src.slice(fnIdx, fnEnd) : src.slice(fnIdx, fnIdx + 5000);
+
+  // Both autoLoop call sites must be preceded by selfHealRuntimeRecords
+  const healIdx = fnBlock.indexOf("selfHealRuntimeRecords");
+  const loopIdx = fnBlock.indexOf("autoLoop(");
+  assert.ok(healIdx > -1, "startAuto must call selfHealRuntimeRecords");
+  assert.ok(healIdx < loopIdx, "selfHealRuntimeRecords must be called before autoLoop");
+
+  // Verify the second autoLoop call site also has selfHeal before it
+  const secondLoopIdx = fnBlock.indexOf("autoLoop(", loopIdx + 1);
+  if (secondLoopIdx > -1) {
+    const secondHealIdx = fnBlock.indexOf("selfHealRuntimeRecords", healIdx + 1);
+    assert.ok(secondHealIdx > -1, "second autoLoop call must also have selfHealRuntimeRecords");
+    assert.ok(secondHealIdx < secondLoopIdx, "second selfHealRuntimeRecords must precede second autoLoop");
+  }
 });
 
 test("agent_end handler calls resolveAgentEnd (not handleAgentEnd)", () => {
@@ -1341,23 +1506,23 @@ test("detectStuck: truncates long error strings", () => {
 });
 
 test("stuck detection: logs debug output with stuck-detected phase", () => {
-  // Structural test: verify the auto-loop.ts source contains
+  // Structural test: verify auto/phases.ts contains
   // stuck-detected and stuck-counter-reset debug log phases, plus detectStuck
   const src = readFileSync(
-    resolve(import.meta.dirname, "..", "auto-loop.ts"),
+    resolve(import.meta.dirname, "..", "auto", "phases.ts"),
     "utf-8",
   );
   assert.ok(
     src.includes('"stuck-detected"'),
-    "auto-loop.ts must log phase: 'stuck-detected' when stuck detection fires",
+    "auto/phases.ts must log phase: 'stuck-detected' when stuck detection fires",
   );
   assert.ok(
     src.includes('"stuck-counter-reset"'),
-    "auto-loop.ts must log phase: 'stuck-counter-reset' when recovery resets on new unit",
+    "auto/phases.ts must log phase: 'stuck-counter-reset' when recovery resets on new unit",
   );
   assert.ok(
     src.includes("detectStuck"),
-    "auto-loop.ts must use detectStuck for sliding window analysis",
+    "auto/phases.ts must use detectStuck for sliding window analysis",
   );
 });
 
@@ -1550,5 +1715,130 @@ test("autoLoop lifecycle: advances through research → plan → execute → ver
       "complete-slice",
     ],
     "dispatched unit types should follow the full lifecycle sequence",
+  );
+});
+
+// ─── resolveAgentEndCancelled tests ──────────────────────────────────────────
+
+test("resolveAgentEndCancelled resolves a pending promise with cancelled status", async () => {
+  _resetPendingResolve();
+
+  const ctx = makeMockCtx();
+  const pi = makeMockPi();
+  const s = makeMockSession();
+
+  const resultPromise = runUnit(ctx, pi, s, "task", "T01", "prompt");
+
+  await new Promise((r) => setTimeout(r, 10));
+
+  resolveAgentEndCancelled();
+
+  const result = await resultPromise;
+  assert.equal(result.status, "cancelled");
+  assert.equal(result.event, undefined);
+});
+
+test("resolveAgentEndCancelled is a no-op when no promise is pending", () => {
+  _resetPendingResolve();
+
+  assert.doesNotThrow(() => {
+    resolveAgentEndCancelled();
+  });
+});
+
+test("resolveAgentEndCancelled prevents orphaned promise after abort path", async () => {
+  _resetPendingResolve();
+
+  const ctx = makeMockCtx();
+  const pi = makeMockPi();
+  const s = makeMockSession();
+
+  const resultPromise = runUnit(ctx, pi, s, "task", "T01", "prompt");
+
+  await new Promise((r) => setTimeout(r, 10));
+
+  // Simulate abort: deactivate session then cancel
+  s.active = false;
+  resolveAgentEndCancelled();
+
+  const result = await resultPromise;
+  assert.equal(result.status, "cancelled");
+});
+
+// ─── #1571: artifact verification retry ──────────────────────────────────────
+
+test("autoLoop re-iterates when postUnitPreVerification returns retry (#1571)", async () => {
+  _resetPendingResolve();
+
+  const ctx = makeMockCtx();
+  ctx.ui.setStatus = () => {};
+  const pi = makeMockPi();
+  const s = makeLoopSession();
+
+  let preVerifyCallCount = 0;
+
+  const deps = makeMockDeps({
+    deriveState: async () => {
+      deps.callLog.push("deriveState");
+      return {
+        phase: "executing",
+        activeMilestone: { id: "M001", title: "Test", status: "active" },
+        activeSlice: { id: "S01", title: "Slice 1" },
+        activeTask: { id: "T01" },
+        registry: [{ id: "M001", status: "active" }],
+        blockers: [],
+      } as any;
+    },
+    postUnitPreVerification: async () => {
+      deps.callLog.push("postUnitPreVerification");
+      preVerifyCallCount++;
+      // First call returns "retry" (artifact missing), second returns "continue"
+      if (preVerifyCallCount === 1) {
+        return "retry" as const;
+      }
+      return "continue" as const;
+    },
+    postUnitPostVerification: async () => {
+      deps.callLog.push("postUnitPostVerification");
+      // After the retry succeeds (second iteration), stop the loop
+      s.active = false;
+      return "continue" as const;
+    },
+  });
+
+  const loopPromise = autoLoop(ctx, pi, s, deps);
+
+  // First iteration: runUnit completes → preVerification returns "retry" → loop continues
+  await new Promise((r) => setTimeout(r, 50));
+  resolveAgentEnd(makeEvent());
+
+  // Second iteration: runUnit completes → preVerification returns "continue" → full finalize
+  await new Promise((r) => setTimeout(r, 50));
+  resolveAgentEnd(makeEvent());
+
+  await loopPromise;
+
+  // preVerification should have been called twice (retry + success)
+  assert.equal(preVerifyCallCount, 2, "preVerification should be called twice");
+
+  // When preVerification returns "retry", runPostUnitVerification and
+  // postUnitPostVerification should be skipped for that iteration.
+  // So we expect 1 call each (only the second iteration proceeds past pre-verification).
+  const postVerifyCalls = deps.callLog.filter(
+    (c: string) => c === "runPostUnitVerification",
+  );
+  const postPostVerifyCalls = deps.callLog.filter(
+    (c: string) => c === "postUnitPostVerification",
+  );
+
+  assert.equal(
+    postVerifyCalls.length,
+    1,
+    "runPostUnitVerification should only be called once (skipped on retry iteration)",
+  );
+  assert.equal(
+    postPostVerifyCalls.length,
+    1,
+    "postUnitPostVerification should only be called once (skipped on retry iteration)",
   );
 });

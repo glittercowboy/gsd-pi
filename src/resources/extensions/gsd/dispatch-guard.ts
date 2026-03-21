@@ -70,14 +70,34 @@ export function getPriorSliceCompletionBlocker(
       continue;
     }
 
-    const targetIndex = slices.findIndex((slice) => slice.id === targetSid);
-    if (targetIndex === -1) return null;
+    const targetSlice = slices.find((slice) => slice.id === targetSid);
+    if (!targetSlice) return null;
 
-    const incomplete = slices
-      .slice(0, targetIndex)
-      .find((slice) => !slice.done);
-    if (incomplete) {
-      return `Cannot dispatch ${unitType} ${unitId}: earlier slice ${targetMid}/${incomplete.id} is not complete.`;
+    // Dependency-aware ordering: if the target slice declares dependencies,
+    // only require those specific slices to be complete — not all positionally
+    // earlier slices.  This prevents deadlocks when a positionally-earlier
+    // slice depends on a positionally-later one (e.g. S05 depends_on S06).
+    //
+    // When the target has NO declared dependencies, fall back to the original
+    // positional ordering for backward compatibility.
+    if (targetSlice.depends.length > 0) {
+      const sliceMap = new Map(slices.map((s) => [s.id, s]));
+      for (const depId of targetSlice.depends) {
+        const dep = sliceMap.get(depId);
+        if (dep && !dep.done) {
+          return `Cannot dispatch ${unitType} ${unitId}: dependency slice ${targetMid}/${depId} is not complete.`;
+        }
+        // If dep is not found in this milestone's slices, ignore it —
+        // it may be a cross-milestone reference handled elsewhere.
+      }
+    } else {
+      const targetIndex = slices.findIndex((slice) => slice.id === targetSid);
+      const incomplete = slices
+        .slice(0, targetIndex)
+        .find((slice) => !slice.done);
+      if (incomplete) {
+        return `Cannot dispatch ${unitType} ${unitId}: earlier slice ${targetMid}/${incomplete.id} is not complete.`;
+      }
     }
   }
 

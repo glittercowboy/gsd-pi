@@ -698,10 +698,17 @@ export function nativeAddAllWithExclusions(basePath: string, exclusions: readonl
       env: GIT_NO_PROMPT_ENV,
     });
   } catch (err: unknown) {
+    const stderr = (err as { stderr?: string })?.stderr ?? "";
     // git exits 1 when pathspec exclusions reference paths already covered
     // by .gitignore. The staging itself succeeds — only suppress that case.
-    const stderr = (err as { stderr?: string })?.stderr ?? "";
     if (stderr.includes("ignored by one of your .gitignore files")) {
+      return;
+    }
+    // When .gsd is a symlink, git rejects `:!.gsd/...` pathspecs with
+    // "beyond a symbolic link". Fall back to plain `git add -A` which
+    // respects .gitignore (where .gsd/ is listed by default).
+    if (stderr.includes("beyond a symbolic link")) {
+      nativeAddAll(basePath);
       return;
     }
     throw new GSDError(GSD_GIT_ERROR, `git add -A with exclusions failed in ${basePath}: ${getErrorMessage(err)}`);
@@ -835,11 +842,18 @@ export function nativeMergeSquash(basePath: string, branch: string): GitMergeRes
       encoding: "utf-8",
     });
     return { success: true, conflicts: [] };
-  } catch {
-    // Check for conflicts
+  } catch (err: unknown) {
+    // Check for conflicts — only treat as recoverable if actual conflict
+    // markers are present. Other failures (bad ref, corrupt repo, etc.)
+    // must propagate so callers don't assume the merge succeeded (#1672).
     const conflictOutput = gitExec(basePath, ["diff", "--name-only", "--diff-filter=U"], true);
     const conflicts = conflictOutput ? conflictOutput.split("\n").filter(Boolean) : [];
-    return { success: conflicts.length === 0, conflicts };
+    if (conflicts.length > 0) {
+      return { success: false, conflicts };
+    }
+    // No conflicts detected — this is a non-conflict failure; re-throw
+    // so the caller knows the merge did not succeed.
+    throw err;
   }
 }
 

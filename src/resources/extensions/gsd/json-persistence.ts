@@ -39,13 +39,21 @@ export function loadJsonFileOrNull<T>(
 }
 
 /**
- * Save a JSON file, creating parent directories as needed.
+ * Save a JSON file atomically (write to .tmp, then rename).
+ * Creates parent directories as needed.
  * Non-fatal — swallows errors to prevent persistence from breaking operations.
+ *
+ * Uses atomic write-tmp-rename to prevent partial/corrupt files on crash.
+ * This is the canonical way to persist JSON state in GSD — all callers
+ * (queue-order, metrics, routing-history, reactive-graph) benefit from
+ * crash-safety without code changes.
  */
 export function saveJsonFile<T>(filePath: string, data: T): void {
   try {
     mkdirSync(dirname(filePath), { recursive: true });
-    writeFileSync(filePath, JSON.stringify(data, null, 2) + "\n", "utf-8");
+    const tmp = filePath + ".tmp";
+    writeFileSync(tmp, JSON.stringify(data, null, 2) + "\n", "utf-8");
+    renameSync(tmp, filePath);
   } catch {
     // Non-fatal — don't let persistence failures break operation
   }

@@ -216,23 +216,9 @@ export function registerNativeSearchHooks(pi: NativeSearchPI): { getIsAnthropic:
     return payload;
   });
 
-  // Basic startup diagnostics — provider-specific info comes from model_select
-  pi.on("session_start", async (_event: any, ctx: any) => {
+  pi.on("session_start", async (_event: any, _ctx: any) => {
     // Reset session-level search budget (#1309)
     sessionSearchCount = 0;
-
-    const hasBrave = !!process.env.BRAVE_API_KEY;
-    const hasJina = !!process.env.JINA_API_KEY;
-    const hasAnswers = !!process.env.BRAVE_ANSWERS_KEY;
-    const hasTavily = !!process.env.TAVILY_API_KEY;
-
-    const parts: string[] = ["Web search v4 loaded"];
-    if (hasBrave) parts.push("Brave ✓");
-    if (hasAnswers) parts.push("Answers ✓");
-    if (hasJina) parts.push("Jina ✓");
-    if (hasTavily) parts.push("Tavily ✓");
-
-    ctx.ui.notify(parts.join(" · "), "info");
   });
 
   return { getIsAnthropic: () => isAnthropicProvider };

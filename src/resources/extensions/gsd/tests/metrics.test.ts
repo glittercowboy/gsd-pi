@@ -251,3 +251,134 @@ test("initMetrics creates ledger, snapshotUnitMetrics persists across resets", (
     rmSync(tmpBase, { recursive: true, force: true });
   }
 });
+
+// ── snapshotUnitMetrics idempotency ──────────────────────────────────────────
+
+test("snapshotUnitMetrics deduplicates entries with same type+id+startedAt", () => {
+  const tmpBase = mkdtempSync(join(tmpdir(), "gsd-metrics-dedup-"));
+  mkdirSync(join(tmpBase, ".gsd"), { recursive: true });
+  try {
+    initMetrics(tmpBase);
+    const startedAt = Date.now() - 10000;
+    const ctx = mockCtx([
+      {
+        role: "assistant",
+        content: [{ type: "text", text: "Working" }],
+        usage: {
+          input: 1000, output: 500, cacheRead: 0, cacheWrite: 0, totalTokens: 1500,
+          cost: 0.01,
+        },
+      },
+    ]);
+
+    // First snapshot — should create entry
+    const unit1 = snapshotUnitMetrics(ctx, "plan-slice", "M001/S01", startedAt, "test-model");
+    assert.ok(unit1);
+    assert.equal(getLedger()!.units.length, 1);
+
+    // Second snapshot with same type+id+startedAt — should UPDATE, not append
+    const unit2 = snapshotUnitMetrics(ctx, "plan-slice", "M001/S01", startedAt, "test-model");
+    assert.ok(unit2);
+    assert.equal(getLedger()!.units.length, 1, "should still be 1 entry after duplicate snapshot");
+
+    // The entry should have the latest finishedAt
+    assert.ok(getLedger()!.units[0].finishedAt >= unit1!.finishedAt);
+
+    // Different startedAt — should create a NEW entry (different execution)
+    const unit3 = snapshotUnitMetrics(ctx, "plan-slice", "M001/S01", startedAt + 5000, "test-model");
+    assert.ok(unit3);
+    assert.equal(getLedger()!.units.length, 2, "different startedAt = different execution = new entry");
+
+    // Persist and verify on disk
+    resetMetrics();
+    initMetrics(tmpBase);
+    assert.equal(getLedger()!.units.length, 2);
+  } finally {
+    resetMetrics();
+    rmSync(tmpBase, { recursive: true, force: true });
+  }
+});
+
+test("snapshotUnitMetrics handles simulated idle-watchdog duplicate pattern", () => {
+  const tmpBase = mkdtempSync(join(tmpdir(), "gsd-metrics-watchdog-"));
+  mkdirSync(join(tmpBase, ".gsd"), { recursive: true });
+  try {
+    initMetrics(tmpBase);
+    const startedAt = Date.now() - 60000;
+    const ctx = mockCtx([
+      {
+        role: "assistant",
+        content: [{ type: "text", text: "Done" }],
+        usage: {
+          input: 2000, output: 1000, cacheRead: 500, cacheWrite: 100, totalTokens: 3600,
+          cost: 0.05,
+        },
+      },
+    ]);
+
+    // Simulate watchdog calling closeoutUnit (which calls snapshotUnitMetrics)
+    // 10 times at 15s intervals — mimicking the bug scenario
+    for (let i = 0; i < 10; i++) {
+      snapshotUnitMetrics(ctx, "plan-slice", "M001/S01", startedAt, "test-model");
+    }
+
+    // Should still be exactly 1 entry, not 10
+    assert.equal(getLedger()!.units.length, 1, "10 watchdog snapshots should produce 1 entry, not 10");
+
+    // Persist and verify
+    const raw = readFileSync(join(tmpBase, ".gsd", "metrics.json"), "utf-8");
+    const parsed: MetricsLedger = JSON.parse(raw);
+    assert.equal(parsed.units.length, 1);
+  } finally {
+    resetMetrics();
+    rmSync(tmpBase, { recursive: true, force: true });
+  }
+});
+
+// ── toolCall block counting ─────────────────────────────────────────────────
+
+test("snapshotUnitMetrics counts toolCall blocks correctly (#1713)", () => {
+  const tmpBase = mkdtempSync(join(tmpdir(), "gsd-metrics-toolcall-"));
+  mkdirSync(join(tmpBase, ".gsd"), { recursive: true });
+
+  try {
+    resetMetrics();
+    initMetrics(tmpBase);
+
+    const ctx = mockCtx([
+      { role: "user", content: "Do something" },
+      {
+        role: "assistant",
+        content: [
+          { type: "text", text: "Let me help." },
+          { type: "toolCall", name: "Read", input: { file: "foo.ts" } },
+          { type: "toolCall", name: "Edit", input: { file: "bar.ts" } },
+        ],
+        usage: {
+          input: 1000, output: 500, cacheRead: 0, cacheWrite: 0, totalTokens: 1500,
+          cost: 0.01,
+        },
+      },
+      {
+        role: "assistant",
+        content: [
+          { type: "toolCall", name: "Bash", input: { command: "ls" } },
+          { type: "text", text: "All done." },
+        ],
+        usage: {
+          input: 800, output: 300, cacheRead: 0, cacheWrite: 0, totalTokens: 1100,
+          cost: 0.008,
+        },
+      },
+    ]);
+
+    const unit = snapshotUnitMetrics(ctx, "execute-task", "M001/S01/T01", Date.now() - 3000, "test-model");
+    assert.ok(unit);
+    assert.equal(unit!.toolCalls, 3, "should count 3 toolCall blocks across 2 assistant messages");
+    assert.equal(unit!.assistantMessages, 2);
+    assert.equal(unit!.userMessages, 1);
+  } finally {
+    resetMetrics();
+    rmSync(tmpBase, { recursive: true, force: true });
+  }
+});

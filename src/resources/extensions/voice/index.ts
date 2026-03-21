@@ -4,6 +4,7 @@ import type { AssistantMessage } from "@gsd/pi-ai";
 import { isKeyRelease, Key, matchesKey, truncateToWidth, visibleWidth } from "@gsd/pi-tui";
 import { spawn, execSync, type ChildProcess } from "node:child_process";
 import * as fs from "node:fs";
+import * as os from "node:os";
 import * as path from "node:path";
 import * as readline from "node:readline";
 
@@ -15,7 +16,7 @@ const PYTHON_SCRIPT = path.join(__extensionDir, "speech-recognizer.py");
 const IS_DARWIN = process.platform === "darwin";
 const IS_LINUX = process.platform === "linux";
 const VOICE_VENV_PYTHON = path.join(
-	process.env.HOME || process.env.USERPROFILE || "/tmp",
+	process.env.HOME || process.env.USERPROFILE || os.homedir(),
 	".gsd",
 	"voice-venv",
 	"bin",

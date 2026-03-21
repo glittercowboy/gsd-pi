@@ -93,3 +93,29 @@ export function markTaskDoneInPlan(basePath: string, planPath: string, tid: stri
   clearParseCache();
   return true;
 }
+
+/**
+ * Mark a task as not done ([ ]) in the slice plan.
+ * Idempotent — no-op if already unchecked or if the task isn't found.
+ *
+ * @returns true if the plan was modified, false if no change was needed
+ */
+export function markTaskUndoneInPlan(basePath: string, planPath: string, tid: string): boolean {
+  let content: string;
+  try {
+    content = readFileSync(planPath, "utf-8");
+  } catch {
+    return false;
+  }
+
+  const updated = content.replace(
+    new RegExp(`^(\\s*-\\s+)\\[x\\]\\s+\\*\\*${tid}:`, "mi"),
+    `$1[ ] **${tid}:`,
+  );
+
+  if (updated === content) return false;
+
+  atomicWriteSync(planPath, updated);
+  clearParseCache();
+  return true;
+}

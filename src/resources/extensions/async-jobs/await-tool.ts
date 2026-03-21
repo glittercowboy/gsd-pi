@@ -9,10 +9,19 @@ import type { ToolDefinition } from "@gsd/pi-coding-agent";
 import { Type } from "@sinclair/typebox";
 import type { AsyncJobManager, Job } from "./job-manager.js";
 
+const DEFAULT_TIMEOUT_SECONDS = 120;
+
 const schema = Type.Object({
 	jobs: Type.Optional(
 		Type.Array(Type.String(), {
 			description: "Job IDs to wait for. Omit to wait for any running job.",
+		}),
+	),
+	timeout: Type.Optional(
+		Type.Number({
+			description:
+				"Maximum seconds to wait before returning control. Defaults to 120. " +
+				"Jobs continue running in the background after timeout.",
 		}),
 	),
 });
@@ -26,7 +35,8 @@ export function createAwaitTool(getManager: () => AsyncJobManager): ToolDefiniti
 		parameters: schema,
 		async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
 			const manager = getManager();
-			const { jobs: jobIds } = params;
+			const { jobs: jobIds, timeout } = params;
+			const timeoutMs = ((timeout ?? DEFAULT_TIMEOUT_SECONDS) * 1000);
 
 			let watched: Job[];
 			if (jobIds && jobIds.length > 0) {
@@ -63,8 +73,20 @@ export function createAwaitTool(getManager: () => AsyncJobManager): ToolDefiniti
 				return { content: [{ type: "text", text: result }], details: undefined };
 			}
 
-			// Wait for at least one to complete
-			await Promise.race(running.map((j) => j.promise));
+			// Wait for at least one to complete, or timeout
+			const TIMEOUT_SENTINEL = Symbol("timeout");
+			const timeoutPromise = new Promise<typeof TIMEOUT_SENTINEL>((resolve) => {
+				const timer = setTimeout(() => resolve(TIMEOUT_SENTINEL), timeoutMs);
+				// Allow the process to exit even if the timer is pending
+				if (typeof timer === "object" && "unref" in timer) timer.unref();
+			});
+
+			const raceResult = await Promise.race([
+				Promise.race(running.map((j) => j.promise)).then(() => "completed" as const),
+				timeoutPromise,
+			]);
+
+			const timedOut = raceResult === TIMEOUT_SENTINEL;
 
 			// Collect all completed results (more may have finished while waiting)
 			const completed = watched.filter((j) => j.status !== "running");
@@ -73,6 +95,11 @@ export function createAwaitTool(getManager: () => AsyncJobManager): ToolDefiniti
 			let result = formatResults(completed);
 			if (stillRunning.length > 0) {
 				result += `\n\n**Still running:** ${stillRunning.map((j) => `${j.id} (${j.label})`).join(", ")}`;
+			}
+			if (timedOut) {
+				result += `\n\n⏱ **Timed out** after ${timeout ?? DEFAULT_TIMEOUT_SECONDS}s waiting for jobs to finish. ` +
+					`Jobs are still running in the background. ` +
+					`Use \`await_job\` again later or \`async_bash\` + \`await_job\` for shorter polling intervals.`;
 			}
 
 			return { content: [{ type: "text", text: result }], details: undefined };

@@ -15,7 +15,7 @@ import { fileURLToPath } from "node:url";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const SESSION_TS_PATH = join(__dirname, "..", "auto", "session.ts");
 const POST_UNIT_TS_PATH = join(__dirname, "..", "auto-post-unit.ts");
-const AUTO_LOOP_TS_PATH = join(__dirname, "..", "auto-loop.ts");
+const AUTO_LOOP_TS_PATH = join(__dirname, "..", "auto", "loop.ts");
 
 function getSessionTsSource(): string {
   return readFileSync(SESSION_TS_PATH, "utf-8");

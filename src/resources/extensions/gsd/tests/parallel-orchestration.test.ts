@@ -8,7 +8,15 @@
 
 import { describe, it, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, rmSync } from "node:fs";
+import {
+  mkdtempSync,
+  mkdirSync,
+  rmSync,
+  writeFileSync,
+  existsSync,
+  readFileSync,
+  lstatSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -41,6 +49,7 @@ import {
   getAggregateCost,
   isBudgetExceeded,
   resetOrchestrator,
+  refreshWorkerStatuses,
 } from "../parallel-orchestrator.js";
 
 import { validatePreferences, resolveParallelConfig } from "../preferences.js";
@@ -275,8 +284,37 @@ describe("parallel-orchestrator: lifecycle", () => {
     assert.equal(isParallelActive(), false);
   });
 
-  it("getOrchestratorState returns null initially", () => {
-    assert.equal(getOrchestratorState(), null);
+  it("getWorkerStatuses restores persisted workers from disk", async () => {
+    const base = makeTmpBase();
+    try {
+      const persisted = {
+        active: true,
+        workers: [
+          {
+            milestoneId: "M001",
+            title: "M001",
+            pid: process.pid,
+            worktreePath: "/tmp/wt-M001",
+            startedAt: Date.now(),
+            state: "running",
+            completedUnits: 2,
+            cost: 0.25,
+          },
+        ],
+        totalCost: 0.25,
+        startedAt: Date.now(),
+        configSnapshot: { max_workers: 2 },
+      };
+      writeFileSync(join(base, ".gsd", "orchestrator.json"), JSON.stringify(persisted, null, 2), "utf-8");
+      const workers = getWorkerStatuses(base);
+      assert.equal(workers.length, 1);
+      assert.equal(workers[0].milestoneId, "M001");
+      assert.equal(workers[0].completedUnits, 2);
+      assert.equal(isParallelActive(), true);
+    } finally {
+      resetOrchestrator();
+      rmSync(base, { recursive: true, force: true });
+    }
   });
 
   it("startParallel initializes orchestrator state", async () => {
@@ -360,12 +398,29 @@ describe("parallel-orchestrator: lifecycle", () => {
     }
   });
 
-  it("shutdownParallel deactivates the orchestrator state", async () => {
-    await startParallel(base, ["M001"], undefined);
-    assert.equal(isParallelActive(), true);
-    await shutdownParallel(base);
-    assert.equal(isParallelActive(), false);
-    assert.equal(getOrchestratorState(), null);
+  it("refreshWorkerStatuses restores live workers from session status files when orchestrator state is absent", async () => {
+    const base = makeTmpBase();
+    try {
+      writeSessionStatus(base, {
+        milestoneId: "M001",
+        pid: process.pid,
+        state: "running",
+        currentUnit: null,
+        completedUnits: 4,
+        cost: 0.33,
+        lastHeartbeat: Date.now(),
+        startedAt: Date.now() - 1000,
+        worktreePath: "/tmp/wt-M001",
+      });
+      refreshWorkerStatuses(base, { restoreIfNeeded: true });
+      const workers = getWorkerStatuses();
+      assert.equal(workers.length, 1);
+      assert.equal(workers[0].state, "running");
+      assert.equal(workers[0].completedUnits, 4);
+    } finally {
+      resetOrchestrator();
+      rmSync(base, { recursive: true, force: true });
+    }
   });
 });
 

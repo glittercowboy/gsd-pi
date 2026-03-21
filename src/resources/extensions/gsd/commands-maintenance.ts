@@ -204,3 +204,119 @@ export async function handleDryRun(ctx: ExtensionCommandContext, basePath: strin
 
   ctx.ui.notify(lines.join("\n"), "info");
 }
+
+export async function handleCleanupProjects(args: string, ctx: ExtensionCommandContext): Promise<void> {
+  const { readdirSync, existsSync: fsExists, rmSync: fsRmSync } = await import("node:fs");
+  const { join: pathJoin } = await import("node:path");
+  const { readRepoMeta, externalProjectsRoot } = await import("./repo-identity.js");
+
+  const fix = args.includes("--fix");
+  const projectsDir = externalProjectsRoot();
+
+  if (!fsExists(projectsDir)) {
+    ctx.ui.notify(`No project-state directory found at ${projectsDir} — nothing to clean up.`, "info");
+    return;
+  }
+
+  let hashList: string[];
+  try {
+    hashList = readdirSync(projectsDir, { withFileTypes: true })
+      .filter(e => e.isDirectory())
+      .map(e => e.name);
+  } catch {
+    ctx.ui.notify(`Failed to read project-state directory at ${projectsDir}.`, "error");
+    return;
+  }
+
+  if (hashList.length === 0) {
+    ctx.ui.notify(`Project-state directory is empty (${projectsDir}) — nothing to clean up.`, "info");
+    return;
+  }
+
+  type ProjectEntry = { hash: string; gitRoot: string; remoteUrl: string };
+  const active: ProjectEntry[] = [];
+  const orphaned: ProjectEntry[] = [];
+  const unknown: string[] = [];
+
+  for (const hash of hashList) {
+    const dirPath = pathJoin(projectsDir, hash);
+    const meta = readRepoMeta(dirPath);
+    if (!meta) {
+      unknown.push(hash);
+      continue;
+    }
+    const entry: ProjectEntry = { hash, gitRoot: meta.gitRoot, remoteUrl: meta.remoteUrl };
+    if (fsExists(meta.gitRoot)) {
+      active.push(entry);
+    } else {
+      orphaned.push(entry);
+    }
+  }
+
+  const pl = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
+  const lines: string[] = [
+    `${projectsDir}  ${pl(hashList.length, "project state director")}${hashList.length === 1 ? "y" : "ies"}`,
+    "",
+  ];
+
+  if (active.length > 0) {
+    lines.push(`Active (${active.length}) — git root present on disk:`);
+    for (const e of active) {
+      const remote = e.remoteUrl ? `  [${e.remoteUrl}]` : "";
+      lines.push(`  + ${e.hash}  ${e.gitRoot}${remote}`);
+    }
+    lines.push("");
+  }
+
+  if (orphaned.length > 0) {
+    lines.push(`Orphaned (${orphaned.length}) — git root no longer exists:`);
+    for (const e of orphaned) {
+      const remote = e.remoteUrl ? `  [${e.remoteUrl}]` : "";
+      lines.push(`  - ${e.hash}  ${e.gitRoot}${remote}`);
+    }
+    lines.push("");
+  }
+
+  if (unknown.length > 0) {
+    lines.push(`Unknown (${unknown.length}) — no metadata yet:`);
+    for (const h of unknown) {
+      lines.push(`  ? ${h}  (open that project in GSD once to register metadata)`);
+    }
+    lines.push("");
+  }
+
+  if (orphaned.length === 0) {
+    lines.push("No orphaned project state — all tracked repos are still present on disk.");
+    if (!fix) {
+      ctx.ui.notify(lines.join("\n"), "success");
+      return;
+    }
+  }
+
+  if (!fix && orphaned.length > 0) {
+    lines.push(`Run /gsd cleanup projects --fix to permanently delete ${pl(orphaned.length, "orphaned director")}${orphaned.length === 1 ? "y" : "ies"}.`);
+    ctx.ui.notify(lines.join("\n"), "warning");
+    return;
+  }
+
+  if (fix && orphaned.length > 0) {
+    let removed = 0;
+    const failed: string[] = [];
+    for (const e of orphaned) {
+      try {
+        fsRmSync(pathJoin(projectsDir, e.hash), { recursive: true, force: true });
+        removed++;
+      } catch {
+        failed.push(e.hash);
+      }
+    }
+    lines.push(`Removed ${pl(removed, "orphaned director")}${removed === 1 ? "y" : "ies"}.`);
+    if (failed.length > 0) {
+      lines.push(`Failed to remove: ${failed.join(", ")}`);
+    }
+    ctx.ui.notify(lines.join("\n"), removed > 0 ? "success" : "warning");
+    return;
+  }
+
+  ctx.ui.notify(lines.join("\n"), "info");
+}

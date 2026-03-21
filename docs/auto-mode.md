@@ -87,13 +87,27 @@ When context usage reaches 70%, GSD sends a wrap-up signal to the agent, nudging
 
 Commits are generated from task summaries — not generic "complete task" messages. Each commit message reflects what was actually built, giving clean `git log` output that reads like a changelog.
 
-### Stuck Detection
+### Stuck Detection (v2.39)
 
-If the same unit dispatches twice (the LLM didn't produce the expected artifact), GSD retries once with a deep diagnostic prompt. If it fails again, auto mode stops with the exact file it expected, so you can intervene.
+GSD uses a sliding-window analysis to detect stuck loops. Instead of a simple "same unit dispatched twice" counter, the detector examines recent dispatch history for repeated patterns — catching cycles like A→B→A→B as well as single-unit repeats. On detection, GSD retries once with a deep diagnostic prompt. If it fails again, auto mode stops with the exact file it expected, so you can intervene.
 
-### Post-Mortem Investigation
+The sliding-window approach reduces false positives on legitimate retries (e.g., verification failures that self-correct) while catching genuine stuck loops faster.
 
-When auto mode fails or produces unexpected results, `/gsd forensics` provides structured post-mortem analysis. It inspects activity logs, crash locks, and session state to identify root causes — whether the failure was a model error, missing context, a stuck loop, or a broken tool call. See [Troubleshooting](./troubleshooting.md) for more on diagnosing issues.
+### Post-Mortem Investigation (v2.40)
+
+`/gsd forensics` is a full-access GSD debugger for post-mortem analysis of auto-mode failures. It provides:
+
+- **Anomaly detection** — structured identification of stuck loops, cost spikes, timeouts, missing artifacts, and crashes with severity levels
+- **Unit traces** — last 10 unit executions with error details and execution times
+- **Metrics analysis** — cost, token counts, and execution time breakdowns
+- **Doctor integration** — includes structural health issues from `/gsd doctor`
+- **LLM-guided investigation** — an agent session with full tool access to investigate root causes
+
+```
+/gsd forensics [optional problem description]
+```
+
+See [Troubleshooting](./troubleshooting.md) for more on diagnosing issues.
 
 ### Timeout Supervision
 
@@ -161,6 +175,38 @@ Generate manually anytime with `/gsd export --html`, or generate reports for all
 ### Failure Recovery (v2.28)
 
 v2.28 hardens auto-mode reliability with multiple safeguards: atomic file writes prevent corruption on crash, OAuth fetch timeouts (30s) prevent indefinite hangs, RPC subprocess exit is detected and reported, and blob garbage collection prevents unbounded disk growth. Combined with the existing crash recovery and headless auto-restart, auto-mode is designed for true "fire and forget" overnight execution.
+
+### Pipeline Architecture (v2.40)
+
+The auto-loop is structured as a linear phase pipeline rather than recursive dispatch. Each iteration flows through explicit stages:
+
+1. **Pre-Dispatch** — validate state, check guards, resolve model preferences
+2. **Dispatch** — execute the unit with a focused prompt
+3. **Post-Unit** — close out the unit, update caches, run cleanup
+4. **Verification** — optional validation gate (lint, test, etc.)
+5. **Stuck Detection** — sliding-window pattern analysis
+
+This linear flow is easier to debug, uses less memory (no recursive call stack), and provides cleaner error recovery since each phase has well-defined entry and exit conditions.
+
+### Real-Time Health Visibility (v2.40)
+
+Doctor issues (from `/gsd doctor`) now surface in real time across three places:
+
+- **Dashboard widget** — health indicator with issue count and severity
+- **Workflow visualizer** — issues shown in the status panel
+- **HTML reports** — health section with all issues at report generation time
+
+Issues are classified by severity: `error` (blocks auto-mode), `warning` (non-blocking), and `info` (advisory). Auto-mode checks health at dispatch time and can pause on critical issues.
+
+### Skill Activation in Prompts (v2.39)
+
+Configured skills are automatically resolved and injected into dispatch prompts. The agent receives an "Available Skills" block listing skills that match the current context, based on:
+
+- `always_use_skills` — always included
+- `prefer_skills` — included with preference indicator
+- `skill_rules` — conditional activation based on `when` clauses
+
+See [Configuration](./configuration.md) for skill routing preferences.
 
 ## Controlling Auto Mode
 

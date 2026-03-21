@@ -70,6 +70,10 @@ let _lockCompromised: boolean = false;
 /** Whether we've already registered a process.on('exit') handler. */
 let _exitHandlerRegistered: boolean = false;
 
+/** Registry of all gsdDir paths where locks were created during this session.
+ *  The exit handler cleans ALL of these, not just the current gsdRoot(). (#1578) */
+const _lockDirRegistry: Set<string> = new Set();
+
 /** Snapshotted lock file path — captured at acquireSessionLock time to avoid
  *  gsdRoot() resolving differently in worktree vs project root contexts (#1363). */
 let _snapshotLockPath: string | null = null;
@@ -137,7 +141,10 @@ export function cleanupStrayLockFiles(basePath: string): void {
  * Uses module-level references so it always operates on current state.
  * Only registers once — subsequent calls are no-ops.
  */
-function ensureExitHandler(gsdDir: string): void {
+function ensureExitHandler(_gsdDir: string): void {
+  // Register the gsdDir so exit cleanup covers it
+  _lockDirRegistry.add(_gsdDir);
+
   if (_exitHandlerRegistered) return;
   _exitHandlerRegistered = true;
 
@@ -145,16 +152,19 @@ function ensureExitHandler(gsdDir: string): void {
     try {
       if (_releaseFunction) { _releaseFunction(); _releaseFunction = null; }
     } catch { /* best-effort */ }
-    // Remove the auto.lock metadata file so crash-recovery doesn't
-    // falsely detect an interrupted session on the next startup.
-    try {
-      const lockFile = join(gsdDir, LOCK_FILE);
-      if (existsSync(lockFile)) unlinkSync(lockFile);
-    } catch { /* best-effort */ }
-    try {
-      const lockDir = join(gsdDir + ".lock");
-      if (existsSync(lockDir)) rmSync(lockDir, { recursive: true, force: true });
-    } catch { /* best-effort */ }
+    // Clean ALL registered lock paths, not just the current one (#1578).
+    // Lock files accumulate across main project .gsd/, worktree .gsd/,
+    // and projects registry paths — cleanup must cover all of them.
+    for (const dir of _lockDirRegistry) {
+      try {
+        const lockFile = join(dir, LOCK_FILE);
+        if (existsSync(lockFile)) unlinkSync(lockFile);
+      } catch { /* best-effort */ }
+      try {
+        const lockDir = join(dir + ".lock");
+        if (existsSync(lockDir)) rmSync(lockDir, { recursive: true, force: true });
+      } catch { /* best-effort */ }
+    }
   });
 }
 
@@ -233,7 +243,17 @@ export function acquireSessionLock(basePath: string): SessionLockResult {
           );
           return; // Suppress false positive
         }
-        // Past the stale window — this is a real compromise
+        // Past the stale window — check if the lock file still belongs to us before
+        // declaring compromise (#1578). If our PID still owns the metadata, this is
+        // a false positive from a very long event loop stall (e.g. subagent execution).
+        const existing = readExistingLockData(lp);
+        if (existing && existing.pid === process.pid) {
+          process.stderr.write(
+            `[gsd] Lock heartbeat mismatch after ${Math.round(elapsed / 1000)}s — lock file still owned by PID ${process.pid}, treating as false positive.\n`,
+          );
+          return; // Our PID still owns the lock file — no real takeover
+        }
+        // Lock file is gone or owned by another PID — real compromise
         _lockCompromised = true;
         _releaseFunction = null;
       },
@@ -280,6 +300,14 @@ export function acquireSessionLock(basePath: string): SessionLockResult {
             if (elapsed < 1_800_000) {
               process.stderr.write(
                 `[gsd] Lock heartbeat mismatch after ${Math.round(elapsed / 1000)}s — event loop stall, continuing.\n`,
+              );
+              return;
+            }
+            // Check PID ownership before declaring compromise (#1578)
+            const existing = readExistingLockData(lp);
+            if (existing && existing.pid === process.pid) {
+              process.stderr.write(
+                `[gsd] Lock heartbeat mismatch after ${Math.round(elapsed / 1000)}s — lock file still owned by PID ${process.pid}, treating as false positive.\n`,
               );
               return;
             }
@@ -459,7 +487,7 @@ export function releaseSessionLock(basePath: string): void {
     _releaseFunction = null;
   }
 
-  // Remove the lock file
+  // Remove the lock file at the current path
   const lp = lockPath(basePath);
   try {
     if (existsSync(lp)) unlinkSync(lp);
@@ -467,16 +495,27 @@ export function releaseSessionLock(basePath: string): void {
     // Non-fatal
   }
 
-  // Remove the proper-lockfile directory (.gsd.lock/) if it exists.
-  // proper-lockfile creates this directory as the OS-level lock mechanism.
-  // If the process exits without calling _releaseFunction (SIGKILL, crash),
-  // this directory is stranded and blocks the next session (#1245).
+  // Remove the proper-lockfile directory (.gsd.lock/) for the current path
   try {
     const lockDir = join(gsdRoot(basePath) + ".lock");
     if (existsSync(lockDir)) rmSync(lockDir, { recursive: true, force: true });
   } catch {
     // Non-fatal
   }
+
+  // Clean ALL registered lock paths (#1578) — lock files accumulate across
+  // main project .gsd/, worktree .gsd/, and projects registry paths.
+  for (const dir of _lockDirRegistry) {
+    try {
+      const lockFile = join(dir, LOCK_FILE);
+      if (existsSync(lockFile)) unlinkSync(lockFile);
+    } catch { /* best-effort */ }
+    try {
+      const lockDir = join(dir + ".lock");
+      if (existsSync(lockDir)) rmSync(lockDir, { recursive: true, force: true });
+    } catch { /* best-effort */ }
+  }
+  _lockDirRegistry.clear();
 
   // Clean up numbered lock file variants from cloud sync conflicts (#1315)
   cleanupStrayLockFiles(basePath);
@@ -508,6 +547,14 @@ export function isSessionLockProcessAlive(data: SessionLockData): boolean {
  */
 export function isSessionLockHeld(basePath: string): boolean {
   return _lockedPath === basePath && _lockPid === process.pid;
+}
+
+/**
+ * Returns a snapshot of the registered lock directory paths for diagnostics.
+ * Exported for tests only.
+ */
+export function _getRegisteredLockDirs(): string[] {
+  return [..._lockDirRegistry];
 }
 
 // ─── Internal Helpers ───────────────────────────────────────────────────────
