@@ -1,10 +1,10 @@
 "use client"
 
+import { motion } from "motion/react"
 import { ArrowRight, Check, CircleDashed } from "lucide-react"
 
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { Separator } from "@/components/ui/separator"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import type { WorkspaceOnboardingOptionalSectionState } from "@/lib/gsd-workspace-store"
 import { cn } from "@/lib/utils"
@@ -16,70 +16,86 @@ interface StepOptionalProps {
 }
 
 export function StepOptional({ sections, onBack, onNext }: StepOptionalProps) {
-  const configuredCount = sections.filter((s) => s.configured).length
+  // Remote questions has its own dedicated step — don't show it here
+  const filtered = sections.filter((s) => s.id !== "remote_questions")
+  const configuredCount = filtered.filter((s) => s.configured).length
 
   return (
-    <div className="flex flex-col">
-      <div className="mb-1">
-        <h2 className="text-2xl font-bold tracking-tight text-foreground">
-          Optional integrations
+    <div className="flex flex-col items-center">
+      <motion.div
+        initial={{ opacity: 0, y: 12 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.4 }}
+        className="text-center"
+      >
+        <h2 className="text-2xl font-bold tracking-tight text-foreground sm:text-3xl">
+          Integrations
         </h2>
-        <p className="mt-2 text-sm leading-relaxed text-muted-foreground md:text-base">
-          These improve tools and capabilities but nothing here blocks the workspace.
-          You can configure them later from settings.
+        <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
+          Optional tools. Nothing here blocks the workspace — configure later from settings.
         </p>
-      </div>
+      </motion.div>
 
       {configuredCount > 0 && (
-        <div className="mt-4">
-          <Badge variant="outline" className="border-success/20 bg-success/[0.06] text-success">
-            {configuredCount} of {sections.length} configured
-          </Badge>
-        </div>
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ delay: 0.08, duration: 0.3 }}
+          className="mt-4"
+        >
+          <span className="text-xs text-muted-foreground">
+            <span className="font-medium text-success">{configuredCount}</span>
+            {" of "}
+            {filtered.length} configured
+          </span>
+        </motion.div>
       )}
 
-      <Separator className="mt-5 mb-1" />
-
-      <div className="mt-5 space-y-3">
-        {sections.map((section) => (
+      <motion.div
+        initial={{ opacity: 0, y: 16 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.1, duration: 0.45 }}
+        className="mt-8 w-full space-y-2"
+      >
+        {filtered.map((section) => (
           <div
             key={section.id}
             className={cn(
-              "flex items-start gap-4 rounded-xl border px-4 py-4 transition-colors",
+              "flex items-start gap-3.5 rounded-xl border px-4 py-3.5 transition-colors",
               section.configured
-                ? "border-success/15 bg-success/[0.04]"
-                : "border-border/50 bg-card/40",
+                ? "border-success/15 bg-success/[0.03]"
+                : "border-border/40 bg-card/20",
             )}
             data-testid={`onboarding-optional-${section.id}`}
           >
-            {/* Status icon */}
+            {/* Status dot */}
             <div
               className={cn(
-                "mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full",
+                "mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full",
                 section.configured
-                  ? "bg-success/20 text-success"
-                  : "bg-foreground/[0.06] text-muted-foreground",
+                  ? "bg-success/15 text-success"
+                  : "bg-foreground/[0.05] text-muted-foreground/40",
               )}
             >
               {section.configured ? (
-                <Check className="h-3.5 w-3.5" strokeWidth={3} />
+                <Check className="h-3 w-3" strokeWidth={3} />
               ) : (
-                <CircleDashed className="h-3.5 w-3.5" />
+                <CircleDashed className="h-3 w-3" />
               )}
             </div>
 
-            <div className="flex-1">
+            <div className="flex-1 min-w-0">
               <div className="flex items-center justify-between gap-2">
-                <span className="font-medium text-foreground">{section.label}</span>
+                <span className="text-sm font-medium text-foreground">{section.label}</span>
                 <Tooltip>
                   <TooltipTrigger asChild>
                     <Badge
                       variant="outline"
                       className={cn(
-                        "text-[11px]",
+                        "text-[10px]",
                         section.configured
-                          ? "border-success/20 text-success/80"
-                          : "border-border/60 text-muted-foreground",
+                          ? "border-success/15 text-success/70"
+                          : "border-border/40 text-muted-foreground/50",
                       )}
                     >
                       {section.configured ? "Ready" : "Skipped"}
@@ -94,12 +110,12 @@ export function StepOptional({ sections, onBack, onNext }: StepOptionalProps) {
               </div>
 
               {section.configuredItems.length > 0 && (
-                <div className="mt-1.5 flex flex-wrap gap-1.5">
+                <div className="mt-1.5 flex flex-wrap gap-1">
                   {section.configuredItems.map((item) => (
                     <Badge
                       key={item}
                       variant="outline"
-                      className="border-border/50 bg-background/40 text-[11px] text-muted-foreground"
+                      className="border-border/30 text-[10px] text-muted-foreground/60"
                     >
                       {item}
                     </Badge>
@@ -108,25 +124,38 @@ export function StepOptional({ sections, onBack, onNext }: StepOptionalProps) {
               )}
 
               {section.configuredItems.length === 0 && (
-                <p className="mt-1 text-sm text-muted-foreground">
-                  Nothing configured — skip for now, add later.
+                <p className="mt-0.5 text-xs text-muted-foreground/50">
+                  Not configured — add later from settings.
                 </p>
               )}
             </div>
           </div>
         ))}
-      </div>
+      </motion.div>
 
       {/* Navigation */}
-      <div className="mt-8 flex items-center justify-between">
-        <Button variant="ghost" onClick={onBack} className="text-muted-foreground">
+      <motion.div
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        transition={{ delay: 0.18, duration: 0.3 }}
+        className="mt-8 flex w-full items-center justify-between"
+      >
+        <Button
+          variant="ghost"
+          onClick={onBack}
+          className="text-muted-foreground transition-transform active:scale-[0.96]"
+        >
           Back
         </Button>
-        <Button onClick={onNext} className="gap-2" data-testid="onboarding-optional-continue">
+        <Button
+          onClick={onNext}
+          className="group gap-2 transition-transform active:scale-[0.96]"
+          data-testid="onboarding-optional-continue"
+        >
           Continue
-          <ArrowRight className="h-4 w-4" />
+          <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-0.5" />
         </Button>
-      </div>
+      </motion.div>
     </div>
   )
 }

@@ -4,8 +4,18 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useState, t
 
 // ─── Dev mode detection ─────────────────────────────────────────────
 
-/** True when the web host was started via `npm run gsd:web` (source-dev). */
-export const IS_DEV_MODE = process.env.NEXT_PUBLIC_GSD_DEV === "1"
+/**
+ * Build-time hint — may be `false` even in source-dev if the build happened
+ * without the env var. The runtime check via `/api/dev-mode` is authoritative.
+ */
+const BUILD_TIME_HINT = process.env.NEXT_PUBLIC_GSD_DEV === "1"
+
+/**
+ * Exported for static guards that run before the runtime check resolves.
+ * Defaults to the build-time hint, then gets upgraded by the API response.
+ * Components that need the authoritative value should use `useDevOverrides().isDevMode`.
+ */
+export let IS_DEV_MODE = BUILD_TIME_HINT
 
 // ─── Override keys ──────────────────────────────────────────────────
 
@@ -47,6 +57,8 @@ const DEFAULT_OVERRIDES: DevOverrideMap = {
 // ─── Context ────────────────────────────────────────────────────────
 
 interface DevOverridesContextValue {
+  /** Whether the host is source-dev (runtime-checked via /api/dev-mode). */
+  isDevMode: boolean
   /** Whether dev-mode overrides are globally enabled (the master toggle). */
   enabled: boolean
   setEnabled: (enabled: boolean) => void
@@ -65,6 +77,22 @@ const DevOverridesContext = createContext<DevOverridesContextValue | null>(null)
 export function DevOverridesProvider({ children }: { children: ReactNode }) {
   const [enabled, setEnabled] = useState(false)
   const [overrides, setOverrides] = useState<DevOverrideMap>(DEFAULT_OVERRIDES)
+  const [isDevMode, setIsDevMode] = useState(BUILD_TIME_HINT)
+
+  // Fetch authoritative dev-mode flag from the server at mount
+  useEffect(() => {
+    fetch("/api/dev-mode", { cache: "no-store" })
+      .then((res) => res.json())
+      .then((data: { isDevMode?: boolean }) => {
+        if (data.isDevMode) {
+          setIsDevMode(true)
+          IS_DEV_MODE = true
+        }
+      })
+      .catch(() => {
+        // Non-critical — fall back to build-time hint
+      })
+  }, [])
 
   const toggle = useCallback((key: DevOverrideKey) => {
     setOverrides((prev) => ({ ...prev, [key]: !prev[key] }))
@@ -77,7 +105,7 @@ export function DevOverridesProvider({ children }: { children: ReactNode }) {
 
   // ─── Global keyboard shortcuts ──────────────────────────────────
   useEffect(() => {
-    if (!IS_DEV_MODE) return
+    if (!isDevMode) return
 
     function handleKeyDown(e: KeyboardEvent) {
       // Only fire when master toggle is on
@@ -92,29 +120,21 @@ export function DevOverridesProvider({ children }: { children: ReactNode }) {
 
     window.addEventListener("keydown", handleKeyDown)
     return () => window.removeEventListener("keydown", handleKeyDown)
-  }, [enabled])
+  }, [enabled, isDevMode])
 
   const value = useMemo<DevOverridesContextValue>(
-    () => ({ enabled, setEnabled, overrides, toggle, isActive }),
-    [enabled, setEnabled, overrides, toggle, isActive],
-  )
-
-  // If not dev mode, still provide the context but everything is always off.
-  if (!IS_DEV_MODE) {
-    return (
-      <DevOverridesContext.Provider
-        value={{
+    () => isDevMode
+      ? { isDevMode, enabled, setEnabled, overrides, toggle, isActive }
+      : {
+          isDevMode: false,
           enabled: false,
           setEnabled: () => {},
           overrides: DEFAULT_OVERRIDES,
           toggle: () => {},
           isActive: () => false,
-        }}
-      >
-        {children}
-      </DevOverridesContext.Provider>
-    )
-  }
+        },
+    [isDevMode, enabled, setEnabled, overrides, toggle, isActive],
+  )
 
   return (
     <DevOverridesContext.Provider value={value}>

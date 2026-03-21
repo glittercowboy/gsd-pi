@@ -1,4 +1,5 @@
 import { existsSync, mkdirSync } from "node:fs";
+import { homedir } from "node:os";
 import { join } from "node:path";
 import { execSync } from "node:child_process";
 import { discoverProjects } from "../../../../src/web/project-discovery-service.ts";
@@ -6,6 +7,13 @@ import { detectProjectKind } from "../../../../src/web/bridge-service.ts";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+
+/** Expand leading `~/` to the user's home directory. */
+function expandTilde(p: string): string {
+  if (p === "~") return homedir();
+  if (p.startsWith("~/")) return join(homedir(), p.slice(2));
+  return p;
+}
 
 export async function GET(request: Request): Promise<Response> {
   const url = new URL(request.url);
@@ -20,7 +28,7 @@ export async function GET(request: Request): Promise<Response> {
 
   const detail = url.searchParams.get("detail") === "true";
 
-  const projects = discoverProjects(root, detail);
+  const projects = discoverProjects(expandTilde(root), detail);
   return Response.json(projects, {
     headers: {
       "Cache-Control": "no-store",
@@ -33,12 +41,14 @@ export async function GET(request: Request): Promise<Response> {
 export async function POST(request: Request): Promise<Response> {
   try {
     const body = (await request.json()) as Record<string, unknown>;
-    const devRoot = typeof body.devRoot === "string" ? body.devRoot.trim() : "";
+    const rawDevRoot = typeof body.devRoot === "string" ? body.devRoot.trim() : "";
     const name = typeof body.name === "string" ? body.name.trim() : "";
 
-    if (!devRoot) {
+    if (!rawDevRoot) {
       return Response.json({ error: "Missing devRoot" }, { status: 400 });
     }
+
+    const devRoot = expandTilde(rawDevRoot);
     if (!name) {
       return Response.json({ error: "Missing project name" }, { status: 400 });
     }

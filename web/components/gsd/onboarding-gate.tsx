@@ -2,39 +2,42 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react"
 import { AnimatePresence, motion } from "motion/react"
-import { RefreshCw } from "lucide-react"
-
-import { Button } from "@/components/ui/button"
-import { Progress } from "@/components/ui/progress"
-import { ScrollArea } from "@/components/ui/scroll-area"
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
+import Image from "next/image"
 import {
   type WorkspaceOnboardingProviderState,
   useGSDWorkspaceActions,
   useGSDWorkspaceState,
 } from "@/lib/gsd-workspace-store"
 import { useDevOverrides } from "@/lib/dev-overrides"
+import { useUserMode, type UserMode } from "@/lib/use-user-mode"
+import { navigateToGSDView } from "@/lib/workflow-action-execution"
 import { cn } from "@/lib/utils"
 
-import { WizardStepper, type WizardStep } from "./onboarding/wizard-stepper"
 import { StepWelcome } from "./onboarding/step-welcome"
+import { StepMode } from "./onboarding/step-mode"
 import { StepProvider } from "./onboarding/step-provider"
 import { StepAuthenticate } from "./onboarding/step-authenticate"
 import { StepDevRoot } from "./onboarding/step-dev-root"
 import { StepOptional } from "./onboarding/step-optional"
+import { StepRemote } from "./onboarding/step-remote"
 import { StepReady } from "./onboarding/step-ready"
+import { StepProject } from "./onboarding/step-project"
 
 // ─── Constants ──────────────────────────────────────────────────────
 
-const WIZARD_STEPS: WizardStep[] = [
-  { id: "welcome", label: "Welcome", shortLabel: "Welcome" },
-  { id: "provider", label: "Provider", shortLabel: "Provider" },
-  { id: "authenticate", label: "Authenticate", shortLabel: "Auth" },
-  { id: "devRoot", label: "Dev Root", shortLabel: "Root" },
-  { id: "optional", label: "Integrations", shortLabel: "Extras" },
-  { id: "ready", label: "Ready", shortLabel: "Ready" },
-]
+const WIZARD_STEPS = [
+  { id: "welcome", label: "Welcome" },
+  { id: "mode", label: "Mode" },
+  { id: "provider", label: "Provider" },
+  { id: "authenticate", label: "Auth" },
+  { id: "devRoot", label: "Root" },
+  { id: "optional", label: "Extras" },
+  { id: "remote", label: "Remote" },
+  { id: "ready", label: "Ready" },
+  { id: "project", label: "Project" },
+] as const
 
+const TOTAL_STEPS = WIZARD_STEPS.length
 const EMPTY_PROVIDERS: WorkspaceOnboardingProviderState[] = []
 
 // ─── Helpers ────────────────────────────────────────────────────────
@@ -42,30 +45,38 @@ const EMPTY_PROVIDERS: WorkspaceOnboardingProviderState[] = []
 function chooseDefaultProvider(providers: WorkspaceOnboardingProviderState[]): string | null {
   const unresolvedRecommended = providers.find((p) => !p.configured && p.recommended)
   if (unresolvedRecommended) return unresolvedRecommended.id
-
   const unresolved = providers.find((p) => !p.configured)
   if (unresolved) return unresolved.id
-
   return providers[0]?.id ?? null
 }
 
-// Slide animation variants keyed on direction
+// Slide animation
 const slideVariants = {
-  enter: (direction: number) => ({
-    x: direction > 0 ? 80 : -80,
-    opacity: 0,
-    filter: "blur(4px)",
-  }),
-  center: {
-    x: 0,
-    opacity: 1,
-    filter: "blur(0px)",
-  },
-  exit: (direction: number) => ({
-    x: direction < 0 ? 80 : -80,
-    opacity: 0,
-    filter: "blur(4px)",
-  }),
+  enter: (dir: number) => ({ x: dir > 0 ? 50 : -50, opacity: 0 }),
+  center: { x: 0, opacity: 1 },
+  exit: (dir: number) => ({ x: dir < 0 ? 50 : -50, opacity: 0 }),
+}
+
+// ─── Step indicator (centered row of dots with labels) ──────────────
+
+function StepIndicator({ current, total }: { current: number; total: number }) {
+  return (
+    <div className="flex items-center gap-1">
+      {Array.from({ length: total }, (_, i) => (
+        <div
+          key={i}
+          className={cn(
+            "rounded-full transition-all duration-300",
+            i === current
+              ? "h-1.5 w-5 bg-foreground"
+              : i < current
+                ? "h-1.5 w-1.5 bg-foreground/40"
+                : "h-1.5 w-1.5 bg-foreground/10",
+          )}
+        />
+      ))}
+    </div>
+  )
 }
 
 // ─── Main Component ─────────────────────────────────────────────────
@@ -87,119 +98,97 @@ export function OnboardingGate() {
   const isBusy = workspace.onboardingRequestState !== "idle"
 
   // ─── Wizard state ───
-  const [stepIndex, setStepIndex] = useState(1)
-  const [[, direction], setPage] = useState<[number, number]>([1, 0])
+  const [stepIndex, setStepIndex] = useState(0)
+  const [direction, setDirection] = useState(0)
   const [selectedProviderId, setSelectedProviderId] = useState<string | null>(null)
   const [dismissedAfterSuccess, setDismissedAfterSuccess] = useState(false)
+  const [userMode, setUserMode] = useUserMode()
+  const [selectedMode, setSelectedMode] = useState<UserMode | null>(userMode)
 
   const providers = onboarding?.required.providers ?? EMPTY_PROVIDERS
   const effectiveSelectedProviderId = useMemo(() => {
     if (onboarding?.activeFlow?.providerId) return onboarding.activeFlow.providerId
-    if (selectedProviderId && providers.some((provider) => provider.id === selectedProviderId)) {
-      return selectedProviderId
-    }
+    if (selectedProviderId && providers.some((p) => p.id === selectedProviderId)) return selectedProviderId
     return chooseDefaultProvider(providers)
   }, [onboarding?.activeFlow?.providerId, providers, selectedProviderId])
   const shouldHideAfterSuccess = dismissedAfterSuccess && !onboarding?.locked && !isBusy
 
-  const paginate = useCallback(
-    (newIndex: number) => {
-      setPage([newIndex, newIndex > stepIndex ? 1 : -1])
-      setStepIndex(newIndex)
+  // Track whether auth was locked when the user arrived at step 3.
+  // Auto-advance only fires when auth transitions from locked → unlocked
+  // while the user is on the auth step — not when navigating back or
+  // when the provider was already configured.
+  const [authWasLockedOnArrival, setAuthWasLockedOnArrival] = useState(false)
+
+  const goTo = useCallback(
+    (target: number) => {
+      // When arriving at auth step, snapshot the locked state
+      if (target === 3 && onboarding?.locked) {
+        setAuthWasLockedOnArrival(true)
+      } else if (target === 3 && !onboarding?.locked) {
+        // Already unlocked — don't set the flag (prevents auto-advance)
+        setAuthWasLockedOnArrival(false)
+      }
+      setDirection(target > stepIndex ? 1 : -1)
+      setStepIndex(target)
     },
-    [stepIndex],
+    [stepIndex, onboarding?.locked],
   )
 
-  // Auto-advance to ready when validation succeeds + bridge is done
+  // Auto-advance past auth only when it just succeeded during this visit
   useEffect(() => {
     if (!onboarding) return
+    if (stepIndex !== 3) return
+    if (!authWasLockedOnArrival) return
     const isUnlocked = !onboarding.locked
     const bridgeDone = onboarding.bridgeAuthRefresh.phase === "succeeded" || onboarding.bridgeAuthRefresh.phase === "idle"
-    if (!isUnlocked || !bridgeDone || stepIndex !== 2) return
-
-    const advanceTimer = window.setTimeout(() => {
-      paginate(3)
-    }, 0)
-    return () => window.clearTimeout(advanceTimer)
-  }, [onboarding, paginate, stepIndex])
+    if (!isUnlocked || !bridgeDone) return
+    const t = window.setTimeout(() => goTo(4), 0)
+    return () => window.clearTimeout(t)
+  }, [onboarding, goTo, stepIndex, authWasLockedOnArrival])
 
   const selectedProvider = useMemo(() => {
-    return providers.find((provider) => provider.id === effectiveSelectedProviderId) ?? null
+    return providers.find((p) => p.id === effectiveSelectedProviderId) ?? null
   }, [effectiveSelectedProviderId, providers])
 
-  const progressPercent = useMemo(() => {
-    return Math.round((stepIndex / (WIZARD_STEPS.length - 1)) * 100)
-  }, [stepIndex])
 
   // ─── Gate check ───
   if (!onboarding) return null
   const onboardingSettled =
     !onboarding.locked ||
-    (
-      onboarding.lastValidation?.status === "succeeded" &&
-      (onboarding.bridgeAuthRefresh.phase === "succeeded" || onboarding.bridgeAuthRefresh.phase === "idle")
-    )
+    (onboarding.lastValidation?.status === "succeeded" &&
+      (onboarding.bridgeAuthRefresh.phase === "succeeded" || onboarding.bridgeAuthRefresh.phase === "idle"))
   if (!forceVisible && (onboardingSettled || shouldHideAfterSuccess)) return null
 
-  // ─── Render ───
-  return (
-    <div
-      className="pointer-events-auto absolute inset-0 z-30 flex flex-col bg-background"
-      data-testid="onboarding-gate"
-    >
-      {/* Top bar */}
-      <header className="relative z-10 flex items-center justify-between border-b border-border/50 bg-background px-5 py-3 md:px-8">
-        <div className="flex items-center gap-4">
-          {/* Logo / brand */}
-          <div className="flex items-center gap-2.5">
-            <div className="flex h-7 w-7 items-center justify-center rounded-md border border-border/70 bg-foreground/[0.06]">
-              <span className="text-xs font-bold text-foreground">G</span>
-            </div>
-            <span className="text-sm font-semibold tracking-tight text-foreground">Setup</span>
-          </div>
+  const stepLabel = WIZARD_STEPS[stepIndex]?.label ?? ""
 
-          {/* Stepper — hidden on welcome/ready */}
-          <div className={cn("hidden transition-opacity md:block", stepIndex === 0 || stepIndex === 5 ? "opacity-0" : "opacity-100")}>
-            <WizardStepper
-              steps={WIZARD_STEPS}
-              currentIndex={stepIndex}
-              onStepClick={(i) => {
-                if (i <= stepIndex) paginate(i)
-              }}
-            />
+  return (
+    <div className="pointer-events-auto absolute inset-0 z-30 flex flex-col bg-background" data-testid="onboarding-gate">
+      {/* Header */}
+      <header className="relative z-10 flex h-12 shrink-0 items-center justify-between px-5 md:px-8">
+        {/* Left — logo */}
+        <div className="flex w-24 items-center gap-2">
+          <Image src="/logo-white.svg" alt="GSD" width={57} height={16} className="hidden h-4 w-auto dark:block" />
+          <Image src="/logo-black.svg" alt="GSD" width={57} height={16} className="h-4 w-auto dark:hidden" />
+        </div>
+
+        {/* Center — step indicator */}
+        <div className="absolute inset-x-0 flex justify-center pointer-events-none">
+          <div className="pointer-events-auto">
+            <StepIndicator current={stepIndex} total={TOTAL_STEPS} />
           </div>
         </div>
 
-        <div className="flex items-center gap-2">
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                className="h-8 w-8 text-muted-foreground"
-                onClick={() => void refreshOnboarding()}
-                disabled={isBusy}
-              >
-                <RefreshCw
-                  className={cn(
-                    "h-3.5 w-3.5",
-                    workspace.onboardingRequestState === "refreshing" && "animate-spin",
-                  )}
-                />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent>Reload setup state</TooltipContent>
-          </Tooltip>
+        {/* Right — step label */}
+        <div className="flex w-24 justify-end">
+          <span className="text-xs text-muted-foreground/60">{stepLabel}</span>
         </div>
       </header>
 
-      {/* Progress bar */}
-      <Progress value={progressPercent} className="h-0.5 rounded-none" />
+      {/* Thin progress — hidden when not needed */}
 
-      {/* Step content */}
-      <ScrollArea className="flex-1">
-        <div className="mx-auto flex min-h-[calc(100vh-4rem)] w-full max-w-2xl flex-col justify-center px-5 py-10 md:px-8 md:py-16">
+      {/* Content — full remaining height, scrollable */}
+      <div className="flex-1 overflow-y-auto">
+        <div className="mx-auto flex min-h-full w-full max-w-2xl flex-col justify-center px-5 py-10 md:px-8 md:py-16">
           <AnimatePresence mode="wait" custom={direction}>
             <motion.div
               key={stepIndex}
@@ -208,30 +197,33 @@ export function OnboardingGate() {
               initial="enter"
               animate="center"
               exit="exit"
-              transition={{
-                x: { type: "spring", stiffness: 400, damping: 35 },
-                opacity: { duration: 0.2 },
-                filter: { duration: 0.2 },
-              }}
+              transition={{ type: "spring", stiffness: 400, damping: 35, opacity: { duration: 0.15 } }}
             >
-              {stepIndex === 0 && (
-                <StepWelcome onNext={() => paginate(1)} />
-              )}
+              {stepIndex === 0 && <StepWelcome onNext={() => goTo(1)} />}
 
               {stepIndex === 1 && (
+                <StepMode
+                  selected={selectedMode}
+                  onSelect={(mode) => { setSelectedMode(mode); setUserMode(mode) }}
+                  onNext={() => goTo(2)}
+                  onBack={() => goTo(0)}
+                />
+              )}
+
+              {stepIndex === 2 && (
                 <StepProvider
                   providers={onboarding.required.providers}
                   selectedId={effectiveSelectedProviderId}
                   onSelect={(id) => {
                     setSelectedProviderId(id)
-                    paginate(2)
+                    goTo(3)
                   }}
-                  onNext={() => paginate(2)}
-                  onBack={() => paginate(0)}
+                  onNext={() => goTo(4)}
+                  onBack={() => goTo(1)}
                 />
               )}
 
-              {stepIndex === 2 && selectedProvider && (
+              {stepIndex === 3 && selectedProvider && (
                 <StepAuthenticate
                   provider={selectedProvider}
                   activeFlow={onboarding.activeFlow}
@@ -241,82 +233,71 @@ export function OnboardingGate() {
                   onSaveApiKey={async (pid, key) => {
                     const next = await saveApiKey(pid, key)
                     const settled = Boolean(
-                      next &&
-                      !next.locked &&
+                      next && !next.locked &&
                       (next.bridgeAuthRefresh.phase === "succeeded" || next.bridgeAuthRefresh.phase === "idle"),
                     )
-                    if (settled) {
-                      setDismissedAfterSuccess(true)
-                      void refreshBoot()
-                    }
+                    if (settled) { setDismissedAfterSuccess(true); void refreshBoot() }
                     return next
                   }}
                   onStartFlow={(pid) => void startProviderFlow(pid)}
                   onSubmitFlowInput={(fid, input) => void submitProviderFlowInput(fid, input)}
                   onCancelFlow={(fid) => void cancelProviderFlow(fid)}
-                  onBack={() => paginate(1)}
-                  onNext={() => paginate(3)}
+                  onBack={() => goTo(2)}
+                  onNext={() => goTo(2)}
                   bridgeRefreshPhase={onboarding.bridgeAuthRefresh.phase}
                   bridgeRefreshError={onboarding.bridgeAuthRefresh.error}
                 />
               )}
 
-              {stepIndex === 3 && (
-                <StepDevRoot
-                  onBack={() => paginate(2)}
-                  onNext={() => paginate(4)}
-                />
-              )}
-
-              {stepIndex === 4 && (
-                <StepOptional
-                  sections={onboarding.optional.sections}
-                  onBack={() => paginate(3)}
-                  onNext={() => paginate(5)}
-                />
-              )}
+              {stepIndex === 4 && <StepDevRoot onBack={() => goTo(2)} onNext={() => goTo(5)} />}
 
               {stepIndex === 5 && (
+                <StepOptional
+                  sections={onboarding.optional.sections}
+                  onBack={() => goTo(4)}
+                  onNext={() => goTo(6)}
+                />
+              )}
+
+              {stepIndex === 6 && (
+                <StepRemote
+                  onBack={() => goTo(5)}
+                  onNext={() => goTo(7)}
+                />
+              )}
+
+              {stepIndex === 7 && (
                 <StepReady
                   providerLabel={
                     onboarding.lastValidation?.providerId
-                      ? onboarding.required.providers.find(
-                          (p) => p.id === onboarding.lastValidation?.providerId,
-                        )?.label ?? "Provider"
+                      ? onboarding.required.providers.find((p) => p.id === onboarding.lastValidation?.providerId)?.label ?? "Provider"
                       : "Provider"
                   }
-                  onFinish={() => void refreshBoot()}
+                  onFinish={() => goTo(8)}
+                />
+              )}
+
+              {stepIndex === 8 && (
+                <StepProject
+                  onBack={() => goTo(7)}
+                  onBeforeSwitch={() => {
+                    // Disarm the gate BEFORE switchProject triggers a store remount
+                    if (devOverrides.isActive("forceOnboarding")) {
+                      devOverrides.toggle("forceOnboarding")
+                    }
+                    setDismissedAfterSuccess(true)
+                  }}
+                  onFinish={() => {
+                    const mode = selectedMode ?? userMode
+                    navigateToGSDView("dashboard")
+                    void refreshBoot()
+                  }}
                 />
               )}
             </motion.div>
           </AnimatePresence>
         </div>
-      </ScrollArea>
-
-      {/* Bottom bar — step indicator for mobile */}
-      <footer className="flex items-center justify-center border-t border-border/50 bg-background px-5 py-3 md:hidden">
-        <div className="flex items-center gap-2">
-          {WIZARD_STEPS.map((step, i) => (
-            <button
-              key={step.id}
-              type="button"
-              onClick={() => {
-                if (i <= stepIndex) paginate(i)
-              }}
-              disabled={i > stepIndex}
-              className={cn(
-                "h-1.5 rounded-full transition-all duration-300",
-                i === stepIndex
-                  ? "w-6 bg-foreground"
-                  : i < stepIndex
-                    ? "w-1.5 bg-foreground/50"
-                    : "w-1.5 bg-border",
-              )}
-              aria-label={step.label}
-            />
-          ))}
-        </div>
-      </footer>
+      </div>
     </div>
   )
 }

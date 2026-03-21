@@ -10,8 +10,7 @@ export async function GET(request: Request): Promise<Response> {
   cancelShutdown();
 
   const projectCwd = resolveProjectCwd(request);
-  const { projectDetection: omittedProjectDetection, ...bootPayload } = await collectBootPayload(projectCwd);
-  void omittedProjectDetection;
+  const bootPayload = await collectBootPayload(projectCwd);
 
   return Response.json(bootPayload, {
     headers: {

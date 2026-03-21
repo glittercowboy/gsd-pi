@@ -212,6 +212,15 @@ function WorkspaceChrome() {
     }
   }, [isConnecting])
 
+  // Detect project welcome state — hide chrome for v1-legacy, brownfield, blank projects
+  const detection = workspace.boot?.projectDetection
+  const isWelcomeState =
+    !isConnecting &&
+    activeView === "dashboard" &&
+    detection != null &&
+    detection.kind !== "active-gsd" &&
+    detection.kind !== "empty-gsd"
+
   return (
     <div className="relative flex h-screen flex-col overflow-hidden bg-background text-foreground">
       <header className="flex h-12 flex-shrink-0 items-center justify-between border-b border-border bg-card px-4">
@@ -367,8 +376,8 @@ function WorkspaceChrome() {
           )}
         </div>
 
-        {/* Resizable milestone sidebar */}
-        {!sidebarCollapsed && (
+        {/* Resizable milestone sidebar — hidden during project welcome */}
+        {!isWelcomeState && !sidebarCollapsed && (
           <div
             className="relative flex h-full items-stretch"
             style={{ flexShrink: 0 }}
@@ -382,7 +391,7 @@ function WorkspaceChrome() {
             />
           </div>
         )}
-        {sidebarCollapsed ? (
+        {!isWelcomeState && (sidebarCollapsed ? (
           <CollapsedMilestoneSidebar onExpand={() => setSidebarCollapsed(false)} />
         ) : (
           <MilestoneExplorer
@@ -390,7 +399,7 @@ function WorkspaceChrome() {
             width={sidebarWidth}
             onCollapse={() => setSidebarCollapsed(true)}
           />
-        )}
+        ))}
       </div>
 
       <StatusBar />

@@ -187,14 +187,6 @@ export function Dashboard({ onSwitchView, onExpandTerminal }: DashboardProps = {
   if (showWelcome) {
     return (
       <div className="flex h-full flex-col overflow-hidden">
-        <div className="flex items-center justify-between border-b border-border px-6 py-3">
-          <div>
-            <h1 className="text-lg font-semibold">Dashboard</h1>
-            <div className="mt-1 text-sm text-muted-foreground">
-              <ScopeBadge label={scopeLabel} size="sm" />
-            </div>
-          </div>
-        </div>
         <ProjectWelcome
           detection={detection}
           onCommand={(cmd) => handleWorkflowAction(cmd)}

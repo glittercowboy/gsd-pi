@@ -51,7 +51,6 @@ import {
 import { cn } from "@/lib/utils"
 import {
   DEV_OVERRIDE_REGISTRY,
-  IS_DEV_MODE,
   useDevOverrides,
 } from "@/lib/dev-overrides"
 import { DoctorPanel, ForensicsPanel, SkillHealthPanel } from "./diagnostics-panels"
@@ -591,7 +590,7 @@ export function CommandSurface() {
   const abortRetryBusy = settingsRequests.abortRetry.pending
   const selectedProviderApiKey = selectedAuthProvider ? apiKeys[selectedAuthProvider.id] ?? "" : ""
   const devOverrides = useDevOverrides()
-  const surfaceSections = availableSectionsForSurface(commandSurface.activeSurface, IS_DEV_MODE)
+  const surfaceSections = availableSectionsForSurface(commandSurface.activeSurface, devOverrides.isDevMode)
   const surfaceKindLabel = `/${commandSurface.activeSurface ?? "settings"}`
 
   const triggerRecoveryBrowserAction = (actionId: string) => {
@@ -2004,6 +2003,37 @@ export function CommandSurface() {
           ))}
         </div>
       )}
+
+      {/* Onboarding — one-click launch */}
+      <div className="rounded-lg border border-border/50 bg-card/30 p-3 space-y-3">
+        <div className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+          Onboarding
+        </div>
+        <div className="flex items-center justify-between gap-3 px-3 py-2.5">
+          <div className="min-w-0 flex-1">
+            <div className="text-sm font-medium text-foreground">Run setup wizard</div>
+            <p className="mt-0.5 text-xs text-muted-foreground">
+              Opens the full onboarding flow as a new user would see it.
+            </p>
+          </div>
+          <Button
+            type="button"
+            size="sm"
+            className="h-8 shrink-0 gap-1.5 text-xs"
+            onClick={() => {
+              closeCommandSurface()
+              // Small delay so the sheet closes before the gate renders
+              window.setTimeout(() => {
+                if (!devOverrides.enabled) devOverrides.setEnabled(true)
+                if (!devOverrides.overrides.forceOnboarding) devOverrides.toggle("forceOnboarding")
+              }, 150)
+            }}
+            data-testid="admin-trigger-onboarding"
+          >
+            Launch
+          </Button>
+        </div>
+      </div>
 
       <div className="rounded-lg border border-border/40 bg-card/30 px-3 py-2.5 text-xs text-muted-foreground">
         This tab is only visible when running via{" "}

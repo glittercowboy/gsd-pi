@@ -1,4 +1,5 @@
 import type { WorkspaceTerminalLine } from "./gsd-workspace-store"
+import { getUserMode } from "./use-user-mode"
 
 export type GSDViewName = "dashboard" | "power" | "chat" | "roadmap" | "files" | "activity" | "visualize" | "projects"
 
@@ -24,7 +25,8 @@ export function executeWorkflowActionInPowerMode({
   dispatch().catch((error) => {
     console.error("[workflow-action] dispatch failed:", error)
   })
-  navigateToGSDView("power")
+  const mode = getUserMode()
+  navigateToGSDView(mode === "vibe-coder" ? "chat" : "power")
 }
 
 export function derivePendingWorkflowCommandLabel({
