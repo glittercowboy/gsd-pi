@@ -191,7 +191,8 @@ export class Container implements Component {
 	render(width: number): string[] {
 		const lines: string[] = [];
 		for (const child of this.children) {
-			lines.push(...child.render(width));
+			const rendered = child.render(width);
+			for (let i = 0; i < rendered.length; i++) lines.push(rendered[i]);
 		}
 		return lines;
 	}

@@ -13,6 +13,7 @@ import { loadFile, saveFile, formatContinue } from "../files.js";
 import { deriveState } from "../state.js";
 import { getAutoDashboardData, isAutoActive, isAutoPaused, markToolEnd, markToolStart } from "../auto.js";
 import { isParallelActive, shutdownParallel } from "../parallel-orchestrator.js";
+import { checkToolCallLoop, resetToolCallLoopGuard } from "./tool-call-loop-guard.js";
 import { saveActivityLog } from "../activity-log.js";
 
 // Skip the welcome screen on the very first session_start — cli.ts already
@@ -22,6 +23,7 @@ let isFirstSession = true;
 export function registerHooks(pi: ExtensionAPI): void {
   pi.on("session_start", async (_event, ctx) => {
     resetWriteGateState();
+    resetToolCallLoopGuard();
     if (isFirstSession) {
       isFirstSession = false;
     } else {
@@ -58,6 +60,7 @@ export function registerHooks(pi: ExtensionAPI): void {
   });
 
   pi.on("agent_end", async (event, ctx: ExtensionContext) => {
+    resetToolCallLoopGuard();
     await handleAgentEnd(pi, event, ctx);
   });
 
@@ -113,6 +116,12 @@ export function registerHooks(pi: ExtensionAPI): void {
   });
 
   pi.on("tool_call", async (event) => {
+    // ── Loop guard: block repeated identical tool calls ──
+    const loopCheck = checkToolCallLoop(event.toolName, event.input as Record<string, unknown>);
+    if (loopCheck.block) {
+      return { block: true, reason: loopCheck.reason };
+    }
+
     if (!isToolCallEventType("write", event)) return;
     const result = shouldBlockContextWrite(
       event.toolName,

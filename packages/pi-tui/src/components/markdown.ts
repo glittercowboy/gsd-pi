@@ -121,7 +121,7 @@ export class Markdown implements Component {
 			const token = tokens[i];
 			const nextToken = tokens[i + 1];
 			const tokenLines = this.renderToken(token, contentWidth, nextToken?.type);
-			renderedLines.push(...tokenLines);
+			for (let j = 0; j < tokenLines.length; j++) renderedLines.push(tokenLines[j]);
 		}
 
 		// Wrap lines (NO padding, NO background yet)
@@ -308,7 +308,8 @@ export class Markdown implements Component {
 			}
 
 			case "code": {
-				lines.push(...this.renderCodeBlock(token.text, token.lang));
+				const codeBlockLines = this.renderCodeBlock(token.text, token.lang);
+				for (let j = 0; j < codeBlockLines.length; j++) lines.push(codeBlockLines[j]);
 				if (nextTokenType !== "space") {
 					lines.push(""); // Add spacing after code blocks (unless space token follows)
 				}
@@ -317,7 +318,7 @@ export class Markdown implements Component {
 
 			case "list": {
 				const listLines = this.renderList(token as any, 0, styleContext);
-				lines.push(...listLines);
+				for (let j = 0; j < listLines.length; j++) lines.push(listLines[j]);
 				// Don't add spacing after lists if a space token follows
 				// (the space token will handle it)
 				break;
@@ -325,7 +326,7 @@ export class Markdown implements Component {
 
 			case "table": {
 				const tableLines = this.renderTable(token as any, width, styleContext);
-				lines.push(...tableLines);
+				for (let j = 0; j < tableLines.length; j++) lines.push(tableLines[j]);
 				break;
 			}
 
@@ -561,7 +562,7 @@ export class Markdown implements Component {
 				// Nested list - render with one additional indent level
 				// These lines will have their own indent, so we just add them as-is
 				const nestedLines = this.renderList(token as any, parentDepth + 1, styleContext);
-				lines.push(...nestedLines);
+				for (let j = 0; j < nestedLines.length; j++) lines.push(nestedLines[j]);
 			} else if (token.type === "text") {
 				// Text content (may have inline tokens)
 				const text =
@@ -575,7 +576,8 @@ export class Markdown implements Component {
 				lines.push(text);
 			} else if (token.type === "code") {
 				// Code block in list item
-				lines.push(...this.renderCodeBlock(token.text, token.lang));
+				const codeLines = this.renderCodeBlock(token.text, token.lang);
+				for (let j = 0; j < codeLines.length; j++) lines.push(codeLines[j]);
 			} else {
 				// Other token types - try to render as inline
 				const text = this.renderInlineTokens([token], styleContext);

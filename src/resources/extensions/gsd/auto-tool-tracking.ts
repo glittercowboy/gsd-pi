@@ -27,7 +27,10 @@ export function markToolEnd(toolCallId: string): void {
  */
 export function getOldestInFlightToolAgeMs(): number {
   if (inFlightTools.size === 0) return 0;
-  const oldestStart = Math.min(...inFlightTools.values());
+  let oldestStart = Infinity;
+  for (const t of inFlightTools.values()) {
+    if (t < oldestStart) oldestStart = t;
+  }
   return Date.now() - oldestStart;
 }
 
@@ -43,7 +46,11 @@ export function getInFlightToolCount(): number {
  */
 export function getOldestInFlightToolStart(): number | undefined {
   if (inFlightTools.size === 0) return undefined;
-  return Math.min(...inFlightTools.values());
+  let oldest = Infinity;
+  for (const t of inFlightTools.values()) {
+    if (t < oldest) oldest = t;
+  }
+  return oldest;
 }
 
 /**
