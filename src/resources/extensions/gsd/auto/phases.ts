@@ -991,7 +991,12 @@ export async function runUnitPhase(
     unitId,
     prefs,
     buildSnapshotOpts: () => deps.buildSnapshotOpts(unitType, unitId),
-    buildRecoveryContext: () => ({}),
+    buildRecoveryContext: () => ({
+      basePath: s.basePath,
+      verbose: s.verbose,
+      currentUnitStartedAt: s.currentUnit?.startedAt ?? Date.now(),
+      unitRecoveryCount: s.unitRecoveryCount,
+    }),
     pauseAuto: deps.pauseAuto,
   });
 
