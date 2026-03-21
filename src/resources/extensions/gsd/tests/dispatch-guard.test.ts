@@ -144,6 +144,35 @@ test("dispatch guard allows slice with all declared dependencies complete", () =
   }
 });
 
+test("dispatch guard skips completed milestone with SUMMARY even if it has unchecked remediation slices (#1716)", () => {
+  const repo = mkdtempSync(join(tmpdir(), "gsd-dispatch-guard-"));
+  try {
+    mkdirSync(join(repo, ".gsd", "milestones", "M001"), { recursive: true });
+    mkdirSync(join(repo, ".gsd", "milestones", "M002"), { recursive: true });
+
+    // M001 is complete (has SUMMARY) but has unchecked remediation slices
+    writeFileSync(join(repo, ".gsd", "milestones", "M001", "M001-ROADMAP.md"),
+      "# M001: Previous\n\n## Slices\n" +
+      "- [x] **S01: Core** `risk:low` `depends:[]`\n" +
+      "- [x] **S02: Tests** `risk:low` `depends:[S01]`\n" +
+      "- [ ] **S03-R: Remediation** `risk:low` `depends:[S02]`\n" +
+      "- [ ] **S04-R: Remediation 2** `risk:low` `depends:[S02]`\n");
+    writeFileSync(join(repo, ".gsd", "milestones", "M001", "M001-SUMMARY.md"),
+      "---\nstatus: complete\n---\n# M001 Summary\nDone.\n");
+
+    writeFileSync(join(repo, ".gsd", "milestones", "M002", "M002-ROADMAP.md"),
+      "# M002: Current\n\n## Slices\n- [ ] **S01: Start** `risk:low` `depends:[]`\n");
+
+    // M001 has SUMMARY — should be skipped, not block M002/S01
+    assert.equal(
+      getPriorSliceCompletionBlocker(repo, "main", "plan-slice", "M002/S01"),
+      null,
+    );
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
 test("dispatch guard works without git repo", () => {
   const repo = mkdtempSync(join(tmpdir(), "gsd-dispatch-guard-nogit-"));
   try {

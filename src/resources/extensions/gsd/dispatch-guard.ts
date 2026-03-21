@@ -56,6 +56,7 @@ export function getPriorSliceCompletionBlocker(
 
   for (const mid of milestoneIds) {
     if (resolveMilestoneFile(base, mid, "PARKED")) continue;
+    if (resolveMilestoneFile(base, mid, "SUMMARY")) continue;
 
     // Read from disk (working tree) — always has the latest state
     const roadmapContent = readRoadmapFromDisk(base, mid);
