@@ -33,6 +33,13 @@ interface ManagedResourceManifest {
   syncedAt?: number
   /** Content fingerprint of bundled resources — detects same-version content changes. */
   contentHash?: string
+  /**
+   * Root-level files installed in extensions/ by this GSD version.
+   * Used on the next upgrade to detect and prune files that were removed or
+   * moved into a subdirectory, preventing orphaned non-extension files from
+   * causing extension load errors.
+   */
+  installedExtensionRootFiles?: string[]
 }
 
 export { discoverExtensionEntryPaths } from './extension-discovery.js'
@@ -60,10 +67,22 @@ function getBundledGsdVersion(): string {
 }
 
 function writeManagedResourceManifest(agentDir: string): void {
+  // Record root-level files currently in the bundled extensions source so that
+  // future upgrades can detect and prune any that get removed or moved.
+  let installedExtensionRootFiles: string[] = []
+  try {
+    if (existsSync(bundledExtensionsDir)) {
+      installedExtensionRootFiles = readdirSync(bundledExtensionsDir, { withFileTypes: true })
+        .filter(e => e.isFile())
+        .map(e => e.name)
+    }
+  } catch { /* non-fatal */ }
+
   const manifest: ManagedResourceManifest = {
     gsdVersion: getBundledGsdVersion(),
     syncedAt: Date.now(),
     contentHash: computeResourceFingerprint(),
+    installedExtensionRootFiles,
   }
   writeFileSync(getManagedResourceManifestPath(agentDir), JSON.stringify(manifest))
 }
@@ -267,6 +286,51 @@ function ensureNodeModulesSymlink(agentDir: string): void {
 }
 
 /**
+ * Prune root-level extension files that were installed by a previous GSD version
+ * but have since been removed or relocated to a subdirectory.
+ *
+ * Two strategies:
+ * 1. Manifest-based (preferred): the manifest records which root files were installed
+ *    last time; any that are no longer in the current bundle are deleted.
+ * 2. Known-stale fallback: for upgrades from versions before manifest tracking,
+ *    explicitly delete files known to have been moved (e.g. env-utils.js → gsd/).
+ */
+function pruneRemovedBundledExtensions(
+  manifest: ManagedResourceManifest | null,
+  agentDir: string,
+): void {
+  const extensionsDir = join(agentDir, 'extensions')
+  if (!existsSync(extensionsDir)) return
+
+  // Current bundled root-level files (what the new version provides)
+  const currentSourceFiles = new Set<string>()
+  try {
+    if (existsSync(bundledExtensionsDir)) {
+      for (const e of readdirSync(bundledExtensionsDir, { withFileTypes: true })) {
+        if (e.isFile()) currentSourceFiles.add(e.name)
+      }
+    }
+  } catch { /* non-fatal */ }
+
+  const removeIfStale = (fileName: string) => {
+    if (currentSourceFiles.has(fileName)) return  // still in bundle, not stale
+    const stale = join(extensionsDir, fileName)
+    try { if (existsSync(stale)) rmSync(stale, { force: true }) } catch { /* non-fatal */ }
+  }
+
+  if (manifest?.installedExtensionRootFiles) {
+    // Manifest-based: remove previously-installed root files that are no longer bundled
+    for (const prevFile of manifest.installedExtensionRootFiles) {
+      removeIfStale(prevFile)
+    }
+  } else {
+    // Fallback: explicitly remove known stale files from pre-manifest-tracking versions
+    // env-utils.js was moved from extensions/ root → gsd/ in v2.39.x (#1634)
+    removeIfStale('env-utils.js')
+  }
+}
+
+/**
  * Syncs all bundled resources to agentDir (~/.gsd/agent/) on every launch.
  *
  * - extensions/ → ~/.gsd/agent/extensions/   (overwrite when version changes)
@@ -284,11 +348,18 @@ function ensureNodeModulesSymlink(agentDir: string): void {
 export function initResources(agentDir: string): void {
   mkdirSync(agentDir, { recursive: true })
 
+  const currentVersion = getBundledGsdVersion()
+  const manifest = readManagedResourceManifest(agentDir)
+
+  // Always prune root-level extension files that were removed from the bundle.
+  // This is cheap (a few existence checks + at most one rmSync) and must run
+  // unconditionally so that stale files left by a previous version are cleaned
+  // up even when the version/hash match causes the full sync to be skipped.
+  pruneRemovedBundledExtensions(manifest, agentDir)
+
   // Skip the full copy when both version AND content fingerprint match.
   // Version-only checks miss same-version content changes (npm link dev workflow,
   // hotfixes within a release). The content hash catches those at ~1ms cost.
-  const currentVersion = getBundledGsdVersion()
-  const manifest = readManagedResourceManifest(agentDir)
   if (manifest && manifest.gsdVersion === currentVersion) {
     // Version matches — check content fingerprint for same-version staleness.
     const currentHash = computeResourceFingerprint()

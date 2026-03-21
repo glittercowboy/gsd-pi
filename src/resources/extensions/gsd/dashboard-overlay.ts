@@ -320,6 +320,16 @@ export class GSDDashboardOverlay {
         : progressScore.level === "yellow" ? th.fg("warning", "●")
           : th.fg("error", "●");
       lines.push(row(`${progressIcon} ${th.fg("text", progressScore.summary)}`));
+
+      // Show signal details when degraded — real-time visibility into what doctor found
+      if (progressScore.level !== "green" && progressScore.signals.length > 0) {
+        for (const signal of progressScore.signals) {
+          const prefix = signal.kind === "positive" ? th.fg("success", "  ✓")
+            : signal.kind === "negative" ? th.fg("error", "  ✗")
+              : th.fg("dim", "  ·");
+          lines.push(row(`${prefix} ${th.fg("dim", signal.label)}`));
+        }
+      }
     }
     lines.push(blank());
 

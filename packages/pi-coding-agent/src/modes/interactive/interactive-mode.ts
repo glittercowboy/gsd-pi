@@ -1184,12 +1184,10 @@ export class InteractiveMode {
 	}
 
 	/**
-	 * Get a registered tool definition by name (for custom rendering).
+	 * Get a tool definition by name (for custom rendering).
 	 */
 	private getRegisteredToolDefinition(toolName: string) {
-		const tools = this.session.extensionRunner?.getAllRegisteredTools() ?? [];
-		const registeredTool = tools.find((t) => t.definition.name === toolName);
-		return registeredTool?.definition;
+		return this.session.getRenderableToolDefinition(toolName);
 	}
 
 	/**

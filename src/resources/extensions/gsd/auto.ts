@@ -111,6 +111,7 @@ import {
   recordHealthSnapshot,
   checkHealEscalation,
   resetProactiveHealing,
+  setLevelChangeCallback,
   formatHealthSummary,
   getConsecutiveErrorUnits,
 } from "./doctor-proactive.js";
@@ -195,7 +196,7 @@ import {
   postUnitPostVerification,
 } from "./auto-post-unit.js";
 import { bootstrapAutoSession, type BootstrapDeps } from "./auto-start.js";
-import { autoLoop, resolveAgentEnd, type LoopDeps } from "./auto-loop.js";
+import { autoLoop, resolveAgentEnd, isSessionSwitchInFlight, type LoopDeps } from "./auto-loop.js";
 import {
   WorktreeResolver,
   type WorktreeResolverDeps,
@@ -687,6 +688,7 @@ export async function stopAuto(
     clearInFlightTools();
     clearSliceProgressCache();
     clearActivityLogState();
+    setLevelChangeCallback(null);
     resetProactiveHealing();
 
     // UI cleanup
@@ -1129,6 +1131,7 @@ const widgetStateAccessors: WidgetStateAccessors = {
   getCmdCtx: () => s.cmdCtx,
   getBasePath: () => s.basePath,
   isVerbose: () => s.verbose,
+  isSessionSwitching: isSessionSwitchInFlight,
 };
 
 // ─── Preconditions ────────────────────────────────────────────────────────────
@@ -1182,15 +1185,6 @@ function buildRecoveryContext(): import("./auto-timeout-recovery.js").RecoveryCo
     unitRecoveryCount: s.unitRecoveryCount,
   };
 }
-
-// Re-export recovery functions for external consumers
-export {
-  resolveExpectedArtifactPath,
-  verifyExpectedArtifact,
-  writeBlockerPlaceholder,
-  skipExecuteTask,
-  buildLoopRemediationSteps,
-} from "./auto-recovery.js";
 
 /**
  * Test-only: expose skip-loop state for unit tests.
@@ -1327,3 +1321,12 @@ export async function dispatchHookUnit(
 
 // Direct phase dispatch → auto-direct-dispatch.ts
 export { dispatchDirectPhase } from "./auto-direct-dispatch.js";
+
+// Re-export recovery functions for external consumers
+export {
+  resolveExpectedArtifactPath,
+  verifyExpectedArtifact,
+  writeBlockerPlaceholder,
+  skipExecuteTask,
+  buildLoopRemediationSteps,
+} from "./auto-recovery.js";

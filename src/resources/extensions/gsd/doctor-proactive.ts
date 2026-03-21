@@ -26,12 +26,26 @@ import { nativeBranchExists, nativeIsRepo } from "./native-git-bridge.js";
 
 // ── Health Score Tracking ──────────────────────────────────────────────────
 
+/** Compact issue detail stored per snapshot for real-time visibility. */
+export interface HealthIssueDetail {
+  code: string;
+  message: string;
+  severity: "error" | "warning" | "info";
+  unitId: string;
+}
+
 export interface HealthSnapshot {
   timestamp: number;
   errors: number;
   warnings: number;
   fixesApplied: number;
   unitIndex: number; // which unit dispatch triggered this snapshot
+  /** Top issues from the doctor run that produced this snapshot. */
+  issues: HealthIssueDetail[];
+  /** Fixes that were auto-applied during this snapshot's doctor run. */
+  fixes: string[];
+  /** Milestone/slice scope this snapshot belongs to (e.g. "M001" or "M001/S02"). */
+  scope?: string;
 }
 
 /** In-memory health history for the current auto-mode session. */
@@ -43,11 +57,33 @@ let consecutiveErrorUnits = 0;
 /** Unit index counter for health tracking. */
 let healthUnitIndex = 0;
 
+/** Previous progress level for state transition detection. */
+let previousProgressLevel: "green" | "yellow" | "red" = "green";
+
+/** Callback for state transition notifications. Set by auto-mode. */
+let onLevelChange: ((from: string, to: string, summary: string) => void) | null = null;
+
+/**
+ * Register a callback for progress level transitions (green→yellow, yellow→red, etc.).
+ * Called once when auto-mode starts. Pass null to unregister.
+ */
+export function setLevelChangeCallback(cb: ((from: string, to: string, summary: string) => void) | null): void {
+  onLevelChange = cb;
+  previousProgressLevel = "green";
+}
+
 /**
  * Record a health snapshot after a doctor run.
- * Called from the post-unit hook in auto.ts.
+ * Called from the post-unit hook in auto-post-unit.ts.
  */
-export function recordHealthSnapshot(errors: number, warnings: number, fixesApplied: number): void {
+export function recordHealthSnapshot(
+  errors: number,
+  warnings: number,
+  fixesApplied: number,
+  issues?: HealthIssueDetail[],
+  fixes?: string[],
+  scope?: string,
+): void {
   healthUnitIndex++;
   healthHistory.push({
     timestamp: Date.now(),
@@ -55,6 +91,9 @@ export function recordHealthSnapshot(errors: number, warnings: number, fixesAppl
     warnings,
     fixesApplied,
     unitIndex: healthUnitIndex,
+    issues: issues ?? [],
+    fixes: fixes ?? [],
+    scope,
   });
 
   // Keep only the last 50 snapshots to bound memory
@@ -66,6 +105,19 @@ export function recordHealthSnapshot(errors: number, warnings: number, fixesAppl
     consecutiveErrorUnits++;
   } else {
     consecutiveErrorUnits = 0;
+  }
+
+  // Detect progress level transitions and notify
+  if (onLevelChange) {
+    const newLevel = consecutiveErrorUnits >= 3 ? "red"
+      : consecutiveErrorUnits >= 1 || getHealthTrend() === "degrading" ? "yellow"
+        : "green";
+    if (newLevel !== previousProgressLevel) {
+      const topIssue = (issues ?? []).find(i => i.severity === "error") ?? (issues ?? [])[0];
+      const detail = topIssue ? `: ${topIssue.message}` : "";
+      onLevelChange(previousProgressLevel, newLevel, `Health ${previousProgressLevel} → ${newLevel}${detail}`);
+      previousProgressLevel = newLevel;
+    }
   }
 }
 
@@ -105,12 +157,34 @@ export function getHealthHistory(): readonly HealthSnapshot[] {
 }
 
 /**
+ * Get the latest health issues from the most recent snapshot.
+ * Returns issues from the last snapshot that had any, for real-time visibility.
+ */
+export function getLatestHealthIssues(): HealthIssueDetail[] {
+  for (let i = healthHistory.length - 1; i >= 0; i--) {
+    if (healthHistory[i]!.issues.length > 0) return healthHistory[i]!.issues;
+  }
+  return [];
+}
+
+/**
+ * Get the latest fixes applied from the most recent snapshot.
+ */
+export function getLatestHealthFixes(): string[] {
+  for (let i = healthHistory.length - 1; i >= 0; i--) {
+    if (healthHistory[i]!.fixes.length > 0) return healthHistory[i]!.fixes;
+  }
+  return [];
+}
+
+/**
  * Reset health tracking state. Called on auto-mode start/stop.
  */
 export function resetHealthTracking(): void {
   healthHistory = [];
   consecutiveErrorUnits = 0;
   healthUnitIndex = 0;
+  previousProgressLevel = "green";
 }
 
 // ── Pre-Dispatch Health Gate ───────────────────────────────────────────────
@@ -285,26 +359,48 @@ export function resetEscalation(): void {
 
 /**
  * Format a health summary for display in the auto-mode dashboard.
+ * Human-readable with full words, not abbreviations.
  */
 export function formatHealthSummary(): string {
   if (healthHistory.length === 0) return "No health data yet.";
 
   const latest = healthHistory[healthHistory.length - 1]!;
   const trend = getHealthTrend();
-  const trendIcon = trend === "improving" ? "+" : trend === "degrading" ? "-" : "=";
+  const trendLabel = trend === "improving" ? "improving"
+    : trend === "degrading" ? "degrading"
+      : trend === "stable" ? "stable"
+        : "unknown";
   const totalFixes = healthHistory.reduce((sum, s) => sum + s.fixesApplied, 0);
 
-  const parts = [
-    `Health: ${latest.errors}E/${latest.warnings}W`,
-    `trend:${trendIcon}`,
-    `fixes:${totalFixes}`,
-  ];
+  const parts: string[] = [];
 
-  if (consecutiveErrorUnits > 0) {
-    parts.push(`streak:${consecutiveErrorUnits}/${ESCALATION_THRESHOLD}`);
+  // Error/warning summary
+  if (latest.errors === 0 && latest.warnings === 0) {
+    parts.push("No issues");
+  } else {
+    const counts: string[] = [];
+    if (latest.errors > 0) counts.push(`${latest.errors} error${latest.errors > 1 ? "s" : ""}`);
+    if (latest.warnings > 0) counts.push(`${latest.warnings} warning${latest.warnings > 1 ? "s" : ""}`);
+    parts.push(counts.join(", "));
   }
 
-  return parts.join(" | ");
+  parts.push(`trend ${trendLabel}`);
+
+  if (totalFixes > 0) {
+    parts.push(`${totalFixes} fix${totalFixes > 1 ? "es" : ""} applied`);
+  }
+
+  if (consecutiveErrorUnits > 0) {
+    parts.push(`${consecutiveErrorUnits} of ${ESCALATION_THRESHOLD} consecutive errors before escalation`);
+  }
+
+  // Include top issue from latest snapshot
+  if (latest.issues.length > 0) {
+    const topIssue = latest.issues.find(i => i.severity === "error") ?? latest.issues[0]!;
+    parts.push(`latest: ${topIssue.message}`);
+  }
+
+  return parts.join(" · ");
 }
 
 /**

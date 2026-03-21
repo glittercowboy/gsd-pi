@@ -1150,6 +1150,64 @@ export function renderHealthView(
     }
   }
 
+  // Progress score section — current traffic light status
+  if (health.progressScore) {
+    lines.push("");
+    lines.push(th.fg("accent", th.bold("Progress Score")));
+    lines.push("");
+    const ps = health.progressScore;
+    const scoreColor = ps.level === "green" ? "success" : ps.level === "yellow" ? "warning" : "error";
+    const scoreIcon = ps.level === "green" ? "●" : ps.level === "yellow" ? "◐" : "○";
+    lines.push(`  ${th.fg(scoreColor, scoreIcon)} ${th.fg(scoreColor, ps.summary)}`);
+    for (const signal of ps.signals) {
+      const prefix = signal.kind === "positive" ? th.fg("success", "  ✓")
+        : signal.kind === "negative" ? th.fg("error", "  ✗")
+          : th.fg("dim", "  ·");
+      lines.push(`  ${prefix} ${th.fg("dim", signal.label)}`);
+    }
+  }
+
+  // Doctor history section — persisted across sessions
+  const doctorHistory = health.doctorHistory ?? [];
+  if (doctorHistory.length > 0) {
+    lines.push("");
+    lines.push(th.fg("accent", th.bold("Doctor History")));
+    lines.push("");
+
+    for (const entry of doctorHistory.slice(0, 10)) {
+      const icon = entry.ok ? th.fg("success", "✓") : th.fg("error", "✗");
+      const ts = entry.ts.replace("T", " ").slice(0, 19);
+      const scopeTag = entry.scope ? th.fg("accent", ` [${entry.scope}]`) : "";
+      // Prefer human-readable summary, fall back to counts
+      const detail = entry.summary
+        ? th.fg("text", entry.summary)
+        : th.fg("text", `${entry.errors} errors, ${entry.warnings} warnings, ${entry.fixes} fixes`);
+      lines.push(`  ${icon} ${th.fg("dim", ts)}${scopeTag}  ${detail}`);
+
+      // Show issue details if available
+      if (entry.issues && entry.issues.length > 0) {
+        for (const issue of entry.issues.slice(0, 3)) {
+          const issuePfx = issue.severity === "error" ? th.fg("error", "    ✗") : th.fg("warning", "    ⚠");
+          lines.push(`  ${issuePfx} ${th.fg("dim", truncateToWidth(issue.message, width - 12))}`);
+        }
+        if (entry.issues.length > 3) {
+          lines.push(`    ${th.fg("dim", `+${entry.issues.length - 3} more`)}`);
+        }
+      }
+
+      // Show fixes if available
+      if (entry.fixDescriptions && entry.fixDescriptions.length > 0) {
+        for (const fix of entry.fixDescriptions.slice(0, 2)) {
+          lines.push(`    ${th.fg("success", "↳")} ${th.fg("dim", truncateToWidth(fix, width - 12))}`);
+        }
+      }
+    }
+
+    if (doctorHistory.length > 10) {
+      lines.push(`  ${th.fg("dim", `...${doctorHistory.length - 10} older entries`)}`);
+    }
+  }
+
   // Skills section
   if (health.skillSummary?.total > 0) {
     lines.push("");

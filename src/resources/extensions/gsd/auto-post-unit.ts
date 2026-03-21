@@ -168,8 +168,12 @@ export async function postUnitPreVerification(pctx: PostUnitContext, opts?: PreV
       const sliceTerminalUnits = new Set(["complete-slice", "run-uat"]);
       const effectiveFixLevel = sliceTerminalUnits.has(s.currentUnit.type) ? "all" as const : "task" as const;
       const report = await runGSDDoctor(s.basePath, { fix: true, scope: doctorScope, fixLevel: effectiveFixLevel });
+      // Human-readable fix notification with details
       if (report.fixesApplied.length > 0) {
-        ctx.ui.notify(`Post-hook: applied ${report.fixesApplied.length} fix(es).`, "info");
+        const fixSummary = report.fixesApplied.length <= 2
+          ? report.fixesApplied.join("; ")
+          : `${report.fixesApplied[0]}; +${report.fixesApplied.length - 1} more`;
+        ctx.ui.notify(`Doctor: ${fixSummary}`, "info");
       }
 
       // Proactive health tracking — filter to current milestone to avoid
@@ -181,7 +185,11 @@ export async function postUnitPreVerification(pctx: PostUnitContext, opts?: PreV
             i.unitId.startsWith(`${currentMilestoneId}/`))
         : report.issues;
       const summary = summarizeDoctorIssues(milestoneIssues);
-      recordHealthSnapshot(summary.errors, summary.warnings, report.fixesApplied.length);
+      // Pass issue details + scope for real-time visibility in the progress widget
+      const issueDetails = milestoneIssues
+        .filter(i => i.severity === "error" || i.severity === "warning")
+        .map(i => ({ code: i.code, message: i.message, severity: i.severity, unitId: i.unitId }));
+      recordHealthSnapshot(summary.errors, summary.warnings, report.fixesApplied.length, issueDetails, report.fixesApplied, doctorScope);
 
       // Check if we should escalate to LLM-assisted heal
       if (summary.errors > 0) {

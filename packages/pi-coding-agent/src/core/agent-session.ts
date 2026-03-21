@@ -25,6 +25,7 @@ import type {
 } from "@gsd/pi-agent-core";
 import type { AssistantMessage, ImageContent, Message, Model, TextContent } from "@gsd/pi-ai";
 import { modelsAreEqual, resetApiProviders, supportsXhigh } from "@gsd/pi-ai";
+import { Type } from "@sinclair/typebox";
 import { getDocsPath } from "../config.js";
 import { getErrorMessage } from "../utils/error.js";
 import { theme } from "../modes/interactive/theme/theme.js";
@@ -732,9 +733,10 @@ export class AgentSession {
 	 * Changes take effect on the next agent turn.
 	 */
 	setActiveToolsByName(toolNames: string[]): void {
+		const requestedToolNames = [...new Set([...toolNames, ...this._getBuiltinToolNames()])];
 		const tools: AgentTool[] = [];
 		const validToolNames: string[] = [];
-		for (const name of toolNames) {
+		for (const name of requestedToolNames) {
 			const tool = this._toolRegistry.get(name);
 			if (tool) {
 				tools.push(tool);
@@ -742,6 +744,7 @@ export class AgentSession {
 			}
 		}
 		this.agent.setTools(tools);
+
 
 		// Rebuild base system prompt with new tool set
 		this._baseSystemPrompt = this._rebuildSystemPrompt(validToolNames);
@@ -856,6 +859,48 @@ export class AgentSession {
 			}
 		}
 		return Array.from(unique);
+	}
+
+	private _findSkillByName(skillName: string) {
+		return this.resourceLoader.getSkills().skills.find((skill) => skill.name === skillName);
+	}
+
+	private _formatMissingSkillMessage(skillName: string): string {
+		const availableSkills = this.resourceLoader.getSkills().skills.map((skill) => skill.name).join(", ") || "(none)";
+		return `Skill "${skillName}" not found. Available skills: ${availableSkills}`;
+	}
+
+	private _emitSkillExpansionError(skillFilePath: string, err: unknown): void {
+		this._extensionRunner?.emitError({
+			extensionPath: skillFilePath,
+			event: "skill_expansion",
+			error: getErrorMessage(err),
+		});
+	}
+
+	private _renderSkillInvocation(skill: { name: string; filePath: string; baseDir: string }, args?: string): string {
+		const content = readFileSync(skill.filePath, "utf-8");
+		const body = stripFrontmatter(content).trim();
+		const skillBlock = `<skill name="${skill.name}" location="${skill.filePath}">\nReferences are relative to ${skill.baseDir}.\n\n${body}\n</skill>`;
+		return args && args.trim() ? `${skillBlock}\n\n${args.trim()}` : skillBlock;
+	}
+
+	private _expandSkillByName(skillName: string, args?: string): string {
+		const skill = this._findSkillByName(skillName);
+		if (!skill) {
+			throw new Error(this._formatMissingSkillMessage(skillName));
+		}
+
+		try {
+			return this._renderSkillInvocation(skill, args);
+		} catch (err) {
+			this._emitSkillExpansionError(skill.filePath, err);
+			throw err;
+		}
+	}
+
+	private _formatSkillInvocation(skillName: string, args?: string): string {
+		return this._expandSkillByName(skillName, args);
 	}
 
 	private _rebuildSystemPrompt(toolNames: string[]): string {
@@ -1103,23 +1148,76 @@ export class AgentSession {
 		const skillName = spaceIndex === -1 ? text.slice(7) : text.slice(7, spaceIndex);
 		const args = spaceIndex === -1 ? "" : text.slice(spaceIndex + 1).trim();
 
-		const skill = this.resourceLoader.getSkills().skills.find((s) => s.name === skillName);
-		if (!skill) return text; // Unknown skill, pass through
+		if (!this._findSkillByName(skillName)) return text;
 
 		try {
-			const content = readFileSync(skill.filePath, "utf-8");
-			const body = stripFrontmatter(content).trim();
-			const skillBlock = `<skill name="${skill.name}" location="${skill.filePath}">\nReferences are relative to ${skill.baseDir}.\n\n${body}\n</skill>`;
-			return args ? `${skillBlock}\n\n${args}` : skillBlock;
-		} catch (err) {
-			// Emit error like extension commands do
-			this._extensionRunner?.emitError({
-				extensionPath: skill.filePath,
-				event: "skill_expansion",
-				error: getErrorMessage(err),
-			});
-			return text; // Return original on error
+			return this._formatSkillInvocation(skillName, args);
+		} catch {
+			return text;
 		}
+	}
+
+	private _createBuiltInSkillTool(): AgentTool {
+		const skillSchema = Type.Object({
+			skill: Type.String({ description: "The skill name. E.g., 'commit', 'review-pr', or 'pdf'" }),
+			args: Type.Optional(Type.String({ description: "Optional arguments for the skill" })),
+		});
+
+		return {
+			name: "Skill",
+			label: "Skill",
+			description:
+				"Execute a skill within the main conversation. Use this tool when users ask for a slash command or reference a skill by name. Returns the expanded skill block and appends args after it.",
+			parameters: skillSchema,
+			execute: async (_toolCallId, params: unknown) => {
+				const input = params as { skill: string; args?: string };
+				try {
+					return {
+						content: [
+							{
+								type: "text",
+								text: this._expandSkillByName(input.skill, input.args),
+							},
+						],
+						details: undefined,
+					};
+				} catch (err) {
+					return {
+						content: [{ type: "text", text: getErrorMessage(err) }],
+						details: undefined,
+					};
+				}
+			},
+		};
+	}
+
+	private _getBuiltinToolNames(): string[] {
+		return this._getBuiltinTools().map((tool) => tool.name);
+	}
+
+	private _getBuiltinTools(): AgentTool[] {
+		return [this._createBuiltInSkillTool()];
+	}
+
+	private _getRegisteredToolDefinitions(): ToolDefinition[] {
+		const registeredTools = this._extensionRunner?.getAllRegisteredTools() ?? [];
+		return registeredTools.map((tool) => tool.definition);
+	}
+
+	private _getBuiltinToolDefinitions(): ToolDefinition[] {
+		return this._getBuiltinTools().map((tool) => ({
+			name: tool.name,
+			label: tool.label,
+			description: tool.description,
+			parameters: tool.parameters,
+			execute: async () => ({ content: [], details: undefined }),
+		}));
+	}
+
+	getRenderableToolDefinition(toolName: string): ToolDefinition | undefined {
+		return [...this._getBuiltinToolDefinitions(), ...this._getRegisteredToolDefinitions()].find(
+			(tool) => tool.name === toolName,
+		);
 	}
 
 	/**
@@ -1967,8 +2065,12 @@ export class AgentSession {
 		const wrappedExtensionTools = this._extensionRunner
 			? wrapRegisteredTools(allCustomTools, this._extensionRunner)
 			: [];
+		const builtinTools = this._getBuiltinTools();
 
 		const toolRegistry = new Map(this._baseToolRegistry);
+		for (const tool of builtinTools) {
+			toolRegistry.set(tool.name, tool);
+		}
 		for (const tool of wrappedExtensionTools as AgentTool[]) {
 			toolRegistry.set(tool.name, tool);
 		}
@@ -2694,14 +2796,11 @@ export class AgentSession {
 	async exportToHtml(outputPath?: string): Promise<string> {
 		const themeName = this.settingsManager.getTheme();
 
-		// Create tool renderer if we have an extension runner (for custom tool HTML rendering)
-		let toolRenderer: ToolHtmlRenderer | undefined;
-		if (this._extensionRunner) {
-			toolRenderer = createToolHtmlRenderer({
-				getToolDefinition: (name) => this._extensionRunner!.getToolDefinition(name),
-				theme,
-			});
-		}
+		// Create tool renderer for extension and built-in tool HTML rendering
+		const toolRenderer = createToolHtmlRenderer({
+			getToolDefinition: (name) => this.getRenderableToolDefinition(name),
+			theme,
+		});
 
 		return await exportSessionToHtml(this.sessionManager, this.state, {
 			outputPath,

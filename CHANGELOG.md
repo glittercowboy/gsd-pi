@@ -6,6 +6,24 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [2.40.0] - 2026-03-20
+
+### Added
+- **pi**: add Skill tool resolution (#1661)
+- health check phase 2 — real-time doctor issue visibility across widget, visualizer, and HTML reports (#1644)
+- upgrade forensics prompt to full-access GSD debugger (#1660)
+
+### Fixed
+- prune stale env-utils.js from extensions root, preventing startup load error (#1655)
+- **splash**: replace box corners with full-width bars for visual unity with auto-mode widget (#1654)
+- add runtime paths to forensics prompt to prevent path hallucination (#1657)
+- guard TUI render during session transitions to prevent freeze (#1658)
+- default UAT type to artifact-driven to prevent unnecessary auto-mode pauses (#1651)
+- cancel trailing async jobs on session switch to prevent wasted LLM turns (#1643)
+
+### Changed
+- decompose autoLoop into pipeline phases (#1615) (#1659)
+
 ## [2.39.0] - 2026-03-20
 
 ### Added
@@ -1475,7 +1493,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Changed
 - License updated to MIT
 
-[Unreleased]: https://github.com/gsd-build/gsd-2/compare/v2.39.0...HEAD
+[Unreleased]: https://github.com/gsd-build/gsd-2/compare/v2.40.0...HEAD
+[2.40.0]: https://github.com/gsd-build/gsd-2/compare/v2.39.0...v2.40.0
 [2.39.0]: https://github.com/gsd-build/gsd-2/compare/v2.38.0...v2.39.0
 [2.38.0]: https://github.com/gsd-build/gsd-2/compare/v2.37.1...v2.38.0
 [2.37.1]: https://github.com/gsd-build/gsd-2/compare/v2.37.0...v2.37.1

@@ -20,7 +20,7 @@ import type {
   ManifestStatus,
 } from './types.js';
 
-import { checkExistingEnvKeys } from '../env-utils.js';
+import { checkExistingEnvKeys } from './env-utils.js';
 import { parseRoadmapSlices } from './roadmap-slices.js';
 import { nativeParseRoadmap, nativeExtractSection, nativeParsePlanFile, nativeParseSummaryFile, NATIVE_UNAVAILABLE } from './native-parser-bridge.js';
 import { debugTime, debugCount } from './debug-logger.js';

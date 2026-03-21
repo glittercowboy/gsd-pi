@@ -176,9 +176,9 @@ async function main(): Promise<void> {
 
       recordHealthSnapshot(2, 3, 1);
       const summary = formatHealthSummary();
-      assertTrue(summary.includes("2E/3W"), "summary includes error/warning counts");
-      assertTrue(summary.includes("fixes:1"), "summary includes fix count");
-      assertTrue(summary.includes("streak:1/5"), "summary includes error streak");
+      assertTrue(summary.includes("2 errors") && summary.includes("3 warnings"), "summary includes error/warning counts");
+      assertTrue(summary.includes("1 fix applied"), "summary includes fix count");
+      assertTrue(summary.includes("1 of 5 consecutive errors"), "summary includes error streak");
     }
 
     // ─── Pre-Dispatch Health Gate ─────────────────────────────────────

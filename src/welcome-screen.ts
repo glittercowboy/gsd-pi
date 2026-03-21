@@ -1,8 +1,9 @@
 /**
  * GSD Welcome Screen
  *
- * Rendered to stderr before the TUI takes over.
- * No box, no panels — logo with metadata alongside, dim hint below.
+ * Two-panel bar layout: full-width accent bars at top/bottom (matching the
+ * auto-mode progress widget style), logo left (fixed width), info right.
+ * Falls back to simple text on narrow terminals (<70 cols) or non-TTY.
  */
 
 import os from 'node:os'
@@ -21,44 +22,95 @@ function getShortCwd(): string {
   return cwd.startsWith(home) ? '~' + cwd.slice(home.length) : cwd
 }
 
+/** Visible length — strips ANSI escape codes before measuring. */
+function visLen(s: string): number {
+  return s.replace(/\x1b\[[0-9;]*m/g, '').length
+}
+
+/** Right-pad a string to the given visible width. */
+function rpad(s: string, w: number): string {
+  return s + ' '.repeat(Math.max(0, w - visLen(s)))
+}
+
 export function printWelcomeScreen(opts: WelcomeScreenOptions): void {
   if (!process.stderr.isTTY) return
 
   const { version, modelName, provider } = opts
   const shortCwd = getShortCwd()
+  const termWidth = Math.min((process.stderr.columns || 80) - 1, 200)
 
-  // Info lines to sit alongside the logo (one per logo row)
-  const modelLine = [modelName, provider].filter(Boolean).join('  ·  ')
-  const INFO: (string | undefined)[] = [
-    `  ${chalk.bold('Get Shit Done')}  ${chalk.dim('v' + version)}`,
-    undefined,
-    modelLine ? `  ${chalk.dim(modelLine)}` : undefined,
-    `  ${chalk.dim(shortCwd)}`,
-    undefined,
-    undefined,
-  ]
-
-  const lines: string[] = ['']
-  for (let i = 0; i < GSD_LOGO.length; i++) {
-    lines.push(chalk.cyan(GSD_LOGO[i]) + (INFO[i] ?? ''))
+  // Narrow terminal fallback
+  if (termWidth < 70) {
+    process.stderr.write(`\n  Get Shit Done v${version}\n  ${shortCwd}\n\n`)
+    return
   }
 
-  // Tool status + hint — dim, aligned under the info text
-  const pad = ' '.repeat(28) + '  '  // aligns with the info text column
+  // ── Panel widths ────────────────────────────────────────────────────────────
+  // Layout: 1 leading space + LEFT_INNER logo content + 1 inner divider + RIGHT_INNER info
+  // Total: 1 + LEFT_INNER + 1 + RIGHT_INNER = termWidth
+  const LEFT_INNER = 34
+  const RIGHT_INNER = termWidth - LEFT_INNER - 2  // 2 = leading space + inner divider
+
+  // ── Bar/divider chars (matching GLYPH.separator + widget ui.bar() style) ────
+  const H = '─', DV = '│', DS = '├'
+
+  // ── Left rows: blank + 6 logo lines + blank (8 total) ───────────────────────
+  const leftRows = ['', ...GSD_LOGO, '']
+
+  // ── Right rows (8 total, null = divider) ────────────────────────────────────
+  const titleLeft  = `  ${chalk.bold('Get Shit Done')}`
+  const titleRight = chalk.dim(`v${version}`)
+  const titleFill  = RIGHT_INNER - visLen(titleLeft) - visLen(titleRight)
+  const titleRow   = titleLeft + ' '.repeat(Math.max(1, titleFill)) + titleRight
 
   const toolParts: string[] = []
-  if (process.env.BRAVE_API_KEY)    toolParts.push('Brave ✓')
-  if (process.env.BRAVE_ANSWERS_KEY) toolParts.push('Answers ✓')
-  if (process.env.JINA_API_KEY)     toolParts.push('Jina ✓')
-  if (process.env.TAVILY_API_KEY)   toolParts.push('Tavily ✓')
-  if (process.env.CONTEXT7_API_KEY) toolParts.push('Context7 ✓')
+  if (process.env.BRAVE_API_KEY)      toolParts.push('Brave ✓')
+  if (process.env.BRAVE_ANSWERS_KEY)  toolParts.push('Answers ✓')
+  if (process.env.JINA_API_KEY)       toolParts.push('Jina ✓')
+  if (process.env.TAVILY_API_KEY)     toolParts.push('Tavily ✓')
+  if (process.env.CONTEXT7_API_KEY)   toolParts.push('Context7 ✓')
 
-  if (toolParts.length > 0) {
-    lines.push(chalk.dim(pad + ['Web search loaded', ...toolParts].join('  ·  ')))
+  // Tools left, hint right-aligned on the same row
+  const toolsLeft  = toolParts.length > 0 ? chalk.dim('  ' + toolParts.join('  ·  ')) : ''
+  const hintRight  = chalk.dim('/gsd to begin  ·  /gsd help')
+  const footerFill = RIGHT_INNER - visLen(toolsLeft) - visLen(hintRight)
+  const footerRow  = toolsLeft + ' '.repeat(Math.max(1, footerFill)) + hintRight
+
+  const DIVIDER = null
+  const rightRows: (string | null)[] = [
+    titleRow,
+    DIVIDER,
+    modelName ? `  Model      ${chalk.dim(modelName)}`  : '',
+    provider  ? `  Provider   ${chalk.dim(provider)}`   : '',
+    `  Directory  ${chalk.dim(shortCwd)}`,
+    DIVIDER,
+    footerRow,
+    '',
+  ]
+
+  // ── Render ──────────────────────────────────────────────────────────────────
+  const out: string[] = ['']
+
+  // Top bar — full-width accent separator, matches auto-mode widget ui.bar()
+  out.push(chalk.cyan(H.repeat(termWidth)))
+
+  for (let i = 0; i < 8; i++) {
+    const row      = leftRows[i] ?? ''
+    const lContent = rpad(row ? chalk.cyan(row) : '', LEFT_INNER)
+    const rRow     = rightRows[i]
+
+    if (rRow === null) {
+      // Section divider: left logo area + dim ├────... extending right
+      out.push(' ' + lContent + chalk.dim(DS + H.repeat(RIGHT_INNER)))
+    } else {
+      // Content row: 1 space + logo │ info (no outer vertical borders)
+      out.push(' ' + lContent + chalk.dim(DV) + rpad(rRow, RIGHT_INNER))
+    }
   }
 
-  lines.push(chalk.dim(pad + '/gsd to begin  ·  /gsd help for all commands'))
-  lines.push('')
+  // Bottom bar — full-width accent separator
+  out.push(chalk.cyan(H.repeat(termWidth)))
+  out.push('')
 
-  process.stderr.write(lines.join('\n') + '\n')
+  process.stderr.write(out.join('\n') + '\n')
 }

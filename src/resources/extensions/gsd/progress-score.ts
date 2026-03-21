@@ -14,6 +14,8 @@ import {
   getHealthTrend,
   getConsecutiveErrorUnits,
   getHealthHistory,
+  getLatestHealthIssues,
+  getLatestHealthFixes,
   type HealthSnapshot,
 } from "./doctor-proactive.js";
 
@@ -75,6 +77,27 @@ export function computeProgressScore(): ProgressScore {
   const history = getHealthHistory();
   if (history.length === 0) {
     signals.push({ kind: "neutral", label: "No health data yet" });
+  }
+
+  // Surface actual doctor issue details when degraded
+  if (level !== "green") {
+    const latestIssues = getLatestHealthIssues();
+    // Show up to 5 most relevant issues (errors first, then warnings)
+    const sorted = [...latestIssues].sort((a, b) => {
+      const rank = { error: 0, warning: 1, info: 2 };
+      return rank[a.severity] - rank[b.severity];
+    });
+    for (const issue of sorted.slice(0, 5)) {
+      signals.push({
+        kind: issue.severity === "error" ? "negative" : "neutral",
+        label: issue.message,
+      });
+    }
+
+    const latestFixes = getLatestHealthFixes();
+    for (const fix of latestFixes.slice(0, 3)) {
+      signals.push({ kind: "positive", label: `Fixed: ${fix}` });
+    }
   }
 
   const summary = level === "green"

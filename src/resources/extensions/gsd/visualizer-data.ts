@@ -1,10 +1,11 @@
 // Data loader for workflow visualizer overlay — aggregates state + metrics.
 
 import { existsSync, readFileSync, statSync } from 'node:fs';
+import { join } from 'node:path';
 import { deriveState } from './state.js';
 import { parseRoadmap, parsePlan, parseSummary, loadFile } from './files.js';
 import { findMilestoneIds } from './milestone-ids.js';
-import { resolveMilestoneFile, resolveSliceFile, resolveGsdRootFile } from './paths.js';
+import { resolveMilestoneFile, resolveSliceFile, resolveGsdRootFile, gsdRoot } from './paths.js';
 import {
   getLedger,
   getProjectTotals,
@@ -21,6 +22,8 @@ import { loadEffectiveGSDPreferences } from './preferences.js';
 import { runProviderChecks, type ProviderCheckResult } from './doctor-providers.js';
 import { generateSkillHealthReport } from './skill-health.js';
 import { runEnvironmentChecks, type EnvironmentCheckResult } from './doctor-environment.js';
+import { computeProgressScore } from './progress-score.js';
+import { getHealthHistory } from './doctor-proactive.js';
 
 import type { Phase } from './types.js';
 import type { CaptureEntry } from './captures.js';
@@ -161,6 +164,27 @@ export interface SkillSummaryInfo {
   topIssue: string | null;
 }
 
+/** A single doctor history entry for visualizer display. */
+export interface VisualizerDoctorEntry {
+  ts: string;
+  ok: boolean;
+  errors: number;
+  warnings: number;
+  fixes: number;
+  codes: string[];
+  issues?: Array<{ severity: string; code: string; message: string; unitId: string }>;
+  fixDescriptions?: string[];
+  scope?: string;
+  summary?: string;
+}
+
+/** Current progress score snapshot for health display. */
+export interface VisualizerProgressScore {
+  level: "green" | "yellow" | "red";
+  summary: string;
+  signals: Array<{ kind: "positive" | "negative" | "neutral"; label: string }>;
+}
+
 export interface HealthInfo {
   budgetCeiling: number | undefined;
   tokenProfile: string;
@@ -174,6 +198,10 @@ export interface HealthInfo {
   providers: ProviderStatusSummary[];
   skillSummary: SkillSummaryInfo;
   environmentIssues: import("./doctor-environment.js").EnvironmentCheckResult[];
+  /** Persisted doctor run history (most recent first, up to 20 entries). */
+  doctorHistory?: VisualizerDoctorEntry[];
+  /** Current in-memory progress score (null if auto-mode not active). */
+  progressScore?: VisualizerProgressScore | null;
 }
 
 export interface VisualizerData {
@@ -608,6 +636,26 @@ function loadHealth(units: UnitMetrics[], totals: ProjectTotals | null, basePath
     environmentIssues = runEnvironmentChecks(basePath).filter(r => r.status !== "ok");
   } catch { /* non-fatal */ }
 
+  // Doctor run history — persisted across sessions (sync read to keep loadHealth sync)
+  let doctorHistory: VisualizerDoctorEntry[] = [];
+  try {
+    const historyPath = join(gsdRoot(basePath), "doctor-history.jsonl");
+    if (existsSync(historyPath)) {
+      const lines = readFileSync(historyPath, "utf-8").split("\n").filter(l => l.trim());
+      doctorHistory = lines.slice(-20).reverse().map(l => JSON.parse(l) as VisualizerDoctorEntry);
+    }
+  } catch { /* non-fatal */ }
+
+  // Current progress score — only meaningful when auto-mode has health data
+  let progressScore: VisualizerProgressScore | null = null;
+  try {
+    const history = getHealthHistory();
+    if (history.length > 0) {
+      const score = computeProgressScore();
+      progressScore = { level: score.level, summary: score.summary, signals: score.signals };
+    }
+  } catch { /* non-fatal */ }
+
   return {
     budgetCeiling,
     tokenProfile,
@@ -621,6 +669,8 @@ function loadHealth(units: UnitMetrics[], totals: ProjectTotals | null, basePath
     providers,
     skillSummary,
     environmentIssues,
+    doctorHistory,
+    progressScore,
   };
 }
 
