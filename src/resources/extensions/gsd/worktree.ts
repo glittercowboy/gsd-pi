@@ -172,7 +172,7 @@ function resolveProjectRootFromGitFile(worktreePath: string): string | null {
   try {
     // Walk up from the worktree path to find the .git file
     let dir = worktreePath;
-    for (let i = 0; i < 10; i++) {
+    for (let i = 0; i < 30; i++) {
       const gitPath = join(dir, ".git");
       if (existsSync(gitPath)) {
         const content = readFileSync(gitPath, "utf8").trim();
