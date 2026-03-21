@@ -15,6 +15,7 @@ import {
   createAutoWorktree,
   mergeMilestoneToMain,
   getAutoWorktreeOriginalBase,
+  syncWorktreeStateBack,
 } from "../auto-worktree.ts";
 import { getSliceBranchName } from "../worktree.ts";
 import { nativeMergeSquash } from "../native-git-bridge.ts";
@@ -769,6 +770,61 @@ async function main(): Promise<void> {
         "#1906: codeFilesChanged must be true when real code files were merged",
       );
       assertTrue(existsSync(join(repo, "real-code.ts")), "real-code.ts merged to main");
+    }
+
+    // ─── Test 20: Tracked dirty .gsd/ files do not block squash merge (#1918) ──
+    console.log("\n=== tracked dirty .gsd/ files do not block squash merge (#1918) ===");
+    {
+      const repo = freshRepo();
+
+      // Make DECISIONS.md a tracked file in .gsd/ (committed to git)
+      writeFileSync(join(repo, ".gsd", "DECISIONS.md"), "# Decisions\n\n- D001: Initial decision\n");
+      run("git add .gsd/DECISIONS.md", repo);
+      run("git commit -m 'track DECISIONS.md'", repo);
+
+      const wtPath = createAutoWorktree(repo, "M180");
+
+      // Add a slice with real work
+      addSliceToMilestone(repo, wtPath, "M180", "S01", "Tracked state fix", [
+        { file: "tracked-fix.ts", content: "export const fix = true;\n", message: "add tracked fix" },
+      ]);
+
+      // Simulate what happens during milestone completion: the worktree's
+      // DECISIONS.md has new content that syncWorktreeStateBack copies to
+      // the project root, dirtying the tracked file.
+      writeFileSync(
+        join(wtPath, ".gsd", "DECISIONS.md"),
+        "# Decisions\n\n- D001: Initial decision\n- D017: New decision from worktree\n- D018: Another new decision\n",
+      );
+
+      // Sync worktree state back — this overwrites the tracked DECISIONS.md
+      // in the project root, making it dirty.
+      syncWorktreeStateBack(repo, wtPath, "M180");
+
+      // Verify the file is actually dirty (tracked + modified)
+      const statusBefore = run("git status --short .gsd/", repo);
+      assertTrue(statusBefore.includes("M .gsd/DECISIONS.md") || statusBefore.includes(" M .gsd/DECISIONS.md"),
+        "#1918: DECISIONS.md should be dirty after syncWorktreeStateBack");
+
+      // mergeMilestoneToMain should succeed despite the dirty tracked file.
+      // Before the fix, this threw: "working tree has dirty or untracked files
+      // that conflict with the merge."
+      const roadmap = makeRoadmap("M180", "Tracked state fix", [
+        { id: "S01", title: "Tracked state fix" },
+      ]);
+
+      let threw = false;
+      let errorMsg = "";
+      try {
+        mergeMilestoneToMain(repo, "M180", roadmap);
+      } catch (err: unknown) {
+        threw = true;
+        errorMsg = err instanceof Error ? err.message : String(err);
+      }
+      assertTrue(!threw, `#1918: merge must not fail with dirty tracked .gsd/ files (got: ${errorMsg})`);
+
+      // Verify the merge actually landed
+      assertTrue(existsSync(join(repo, "tracked-fix.ts")), "#1918: code file should be on main after merge");
     }
 
   } finally {

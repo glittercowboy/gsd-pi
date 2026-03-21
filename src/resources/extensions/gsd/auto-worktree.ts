@@ -117,6 +117,27 @@ function clearProjectRootStateFiles(basePath: string, milestoneId: string): void
       /* non-fatal — git command may fail if not in repo */
     }
   }
+
+  // Restore tracked-dirty .gsd/ files to HEAD state so they do not block
+  // the squash merge (#1918).  syncWorktreeStateBack has already copied the
+  // authoritative versions — they will arrive via the squash merge or be
+  // re-synced after.
+  try {
+    const dirtyGsd = execFileSync(
+      "git",
+      ["diff", "--name-only", gsdDir],
+      { cwd: basePath, stdio: ["ignore", "pipe", "pipe"], encoding: "utf-8" },
+    ).trim();
+    if (dirtyGsd) {
+      const dirtyFiles = dirtyGsd.split("\n").filter(Boolean);
+      execFileSync("git", ["checkout", "--", ...dirtyFiles], {
+        cwd: basePath,
+        stdio: "ignore",
+      });
+    }
+  } catch {
+    /* non-fatal — git command may fail if not in repo */
+  }
 }
 // ─── Worktree ↔ Main Repo Sync (#1311) ──────────────────────────────────────
 
