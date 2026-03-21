@@ -184,6 +184,14 @@ export function parseRoadmapSlices(content: string): RoadmapSliceEntry[] {
   }
 
   if (currentSlice) slices.push(currentSlice);
+
+  // When the ## Slices section exists but the checkbox parser found nothing
+  // (e.g. the LLM used H3 prose headers instead of checkboxes), fall through
+  // to the prose-header parser as a second-chance fallback.
+  if (slices.length === 0) {
+    return parseProseSliceHeaders(content);
+  }
+
   return slices;
 }
 

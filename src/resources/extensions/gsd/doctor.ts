@@ -706,7 +706,26 @@ export async function runGSDDoctor(basePath: string, options?: { fix?: boolean; 
       }
 
       const slicePath = resolveSlicePath(basePath, milestoneId, slice.id);
-      if (!slicePath) continue;
+      if (!slicePath) {
+        const expectedPath = relSlicePath(basePath, milestoneId, slice.id);
+        issues.push({
+          severity: slice.done ? "warning" : "error",
+          code: "missing_slice_dir",
+          scope: "slice",
+          unitId,
+          message: slice.done
+            ? `Missing slice directory for ${unitId} (slice is complete — cosmetic only)`
+            : `Missing slice directory for ${unitId}`,
+          file: expectedPath,
+          fixable: true,
+        });
+        if (fix) {
+          const absoluteSliceDir = join(milestonePath, "slices", slice.id);
+          mkdirSync(absoluteSliceDir, { recursive: true });
+          fixesApplied.push(`created ${absoluteSliceDir}`);
+        }
+        continue;
+      }
 
       const tasksDir = resolveTasksDir(basePath, milestoneId, slice.id);
       if (!tasksDir) {

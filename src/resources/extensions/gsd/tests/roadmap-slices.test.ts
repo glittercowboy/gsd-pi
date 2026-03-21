@@ -198,3 +198,58 @@ Not done.
   assert.equal(slices[0]?.title, "Done Slice");
   assert.equal(slices[1]?.done, false);
 });
+
+// ── Regression tests for #1711 ─────────────────────────────────────────────
+
+test("parseRoadmapSlices: H3 prose headers under ## Slices section triggers prose fallback (#1711)", () => {
+  const proseUnderSlices = `# M010: My Milestone
+
+**Vision:** Ship it.
+
+## Slices
+
+### S01 — Setup Environment
+Set up the dev environment and tooling.
+
+### S02 — Build Core
+Implement the core logic.
+**Depends on:** S01
+
+### S03 — Polish UI
+Final polish and theming.
+**Depends on:** S01, S02
+`;
+  const slices = parseRoadmapSlices(proseUnderSlices);
+  assert.equal(slices.length, 3, "should find 3 slices from H3 prose headers under ## Slices");
+  assert.equal(slices[0]?.id, "S01");
+  assert.equal(slices[0]?.title, "Setup Environment");
+  assert.equal(slices[1]?.id, "S02");
+  assert.deepEqual(slices[1]?.depends, ["S01"]);
+  assert.equal(slices[2]?.id, "S03");
+  assert.deepEqual(slices[2]?.depends, ["S01", "S02"]);
+});
+
+test("parseRoadmapSlices: ## Slices with valid checkboxes does NOT invoke prose fallback", () => {
+  const slices = parseRoadmapSlices(content);
+  assert.equal(slices.length, 3);
+  assert.equal(slices[0]?.id, "S01");
+  assert.equal(slices[0]?.done, true);
+});
+
+test("parseRoadmapSlices: ## Slices with only non-matching lines returns prose fallback results", () => {
+  const weirdContent = `# M020: Odd
+
+## Slices
+Some introductory text that is not a checkbox or a slice header.
+
+### S01: First Thing
+Do the first thing.
+
+### S02: Second Thing
+Do the second thing.
+`;
+  const slices = parseRoadmapSlices(weirdContent);
+  assert.equal(slices.length, 2, "should fall through to prose parser");
+  assert.equal(slices[0]?.id, "S01");
+  assert.equal(slices[1]?.id, "S02");
+});

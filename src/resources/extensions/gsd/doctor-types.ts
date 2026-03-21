@@ -57,6 +57,7 @@ export type DoctorIssueCode =
   // GSD state structural checks
   | "circular_slice_dependency"
   | "orphaned_slice_directory"
+  | "missing_slice_dir"
   | "duplicate_task_id"
   | "task_file_not_in_plan"
   | "stale_replan_file"
