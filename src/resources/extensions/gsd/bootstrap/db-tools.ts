@@ -1,7 +1,7 @@
 import { Type } from "@sinclair/typebox";
 import type { ExtensionAPI } from "@gsd/pi-coding-agent";
 
-import { findMilestoneIds, nextMilestoneId } from "../guided-flow.js";
+import { findMilestoneIds, nextMilestoneId, claimReservedId, getReservedMilestoneIds } from "../guided-flow.js";
 import { loadEffectiveGSDPreferences } from "../preferences.js";
 import { ensureDbOpen } from "./dynamic-tools.js";
 
@@ -197,7 +197,6 @@ export function registerDbTools(pi: ExtensionAPI): void {
     },
   });
 
-  const reservedMilestoneIds = new Set<string>();
   pi.registerTool({
     name: "gsd_generate_milestone_id",
     label: "Generate Milestone ID",
@@ -215,15 +214,24 @@ export function registerDbTools(pi: ExtensionAPI): void {
     parameters: Type.Object({}),
     async execute(_toolCallId, _params, _signal, _onUpdate, _ctx) {
       try {
+        // Claim a reserved ID if the guided-flow already previewed one to the user.
+        // This guarantees the ID shown in the UI matches the one materialised on disk.
+        const reserved = claimReservedId();
+        if (reserved) {
+          return {
+            content: [{ type: "text" as const, text: reserved }],
+            details: { operation: "generate_milestone_id", id: reserved, source: "reserved" } as any,
+          };
+        }
+
         const basePath = process.cwd();
         const existingIds = findMilestoneIds(basePath);
         const uniqueEnabled = !!loadEffectiveGSDPreferences()?.preferences?.unique_milestone_ids;
-        const allIds = [...new Set([...existingIds, ...reservedMilestoneIds])];
+        const allIds = [...new Set([...existingIds, ...getReservedMilestoneIds()])];
         const newId = nextMilestoneId(allIds, uniqueEnabled);
-        reservedMilestoneIds.add(newId);
         return {
           content: [{ type: "text" as const, text: newId }],
-          details: { operation: "generate_milestone_id", id: newId, existingCount: existingIds.length, reservedCount: reservedMilestoneIds.size, uniqueEnabled } as any,
+          details: { operation: "generate_milestone_id", id: newId, existingCount: existingIds.length, uniqueEnabled } as any,
         };
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);

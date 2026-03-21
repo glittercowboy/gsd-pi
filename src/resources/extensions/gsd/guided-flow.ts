@@ -33,7 +33,7 @@ import { showProjectInit, offerMigration } from "./init-wizard.js";
 import { validateDirectory } from "./validate-directory.js";
 import { showConfirm } from "../shared/mod.js";
 import { debugLog } from "./debug-logger.js";
-import { findMilestoneIds, nextMilestoneId } from "./milestone-ids.js";
+import { findMilestoneIds, nextMilestoneId, reserveMilestoneId, getReservedMilestoneIds } from "./milestone-ids.js";
 import { parkMilestone, discardMilestone } from "./milestone-actions.js";
 import { resolveModelWithFallbacksForUnit } from "./preferences-models.js";
 
@@ -42,12 +42,27 @@ export {
   MILESTONE_ID_RE, generateMilestoneSuffix, nextMilestoneId,
   extractMilestoneSeq, parseMilestoneId, milestoneIdSort,
   maxMilestoneNum, findMilestoneIds,
+  reserveMilestoneId, claimReservedId, getReservedMilestoneIds, clearReservedMilestoneIds,
 } from "./milestone-ids.js";
 export {
   showQueue, handleQueueReorder, showQueueAdd,
   buildExistingMilestonesContext,
 } from "./guided-flow-queue.js";
 import { getErrorMessage } from "./error-utils.js";
+
+// ─── ID Generation with Reservation ─────────────────────────────────────────
+
+/**
+ * Generate the next milestone ID, accounting for reserved IDs, and reserve it.
+ * Ensures any preview ID shown in the UI matches what `gsd_generate_milestone_id`
+ * will later return.
+ */
+function nextMilestoneIdReserved(existingIds: string[], uniqueEnabled: boolean): string {
+  const allIds = [...new Set([...existingIds, ...getReservedMilestoneIds()])];
+  const id = nextMilestoneId(allIds, uniqueEnabled);
+  reserveMilestoneId(id);
+  return id;
+}
 
 // ─── Commit Instruction Helpers ──────────────────────────────────────────────
 
@@ -362,7 +377,7 @@ export async function showHeadlessMilestoneCreation(
   // Generate next milestone ID
   const existingIds = findMilestoneIds(basePath);
   const prefs = loadEffectiveGSDPreferences();
-  const nextId = nextMilestoneId(existingIds, prefs?.preferences?.unique_milestone_ids ?? false);
+  const nextId = nextMilestoneIdReserved(existingIds, prefs?.preferences?.unique_milestone_ids ?? false);
 
   // Create milestone directory
   const milestoneDir = join(gsdRoot(basePath), "milestones", nextId, "slices");
@@ -552,7 +567,7 @@ export async function showDiscuss(
     } else if (choice === "skip_milestone") {
       const milestoneIds = findMilestoneIds(basePath);
       const uniqueMilestoneIds = !!loadEffectiveGSDPreferences()?.preferences?.unique_milestone_ids;
-      const nextId = nextMilestoneId(milestoneIds, uniqueMilestoneIds);
+      const nextId = nextMilestoneIdReserved(milestoneIds, uniqueMilestoneIds);
       pendingAutoStart = { ctx, pi, basePath, milestoneId: nextId, step: false };
       await dispatchWorkflow(pi, buildDiscussPrompt(nextId, `New milestone ${nextId}.`, basePath), "gsd-run", ctx, "plan-milestone");
     }
@@ -793,7 +808,7 @@ async function handleMilestoneActions(
   if (choice === "skip") {
     const milestoneIds = findMilestoneIds(basePath);
     const uniqueMilestoneIds = !!loadEffectiveGSDPreferences()?.preferences?.unique_milestone_ids;
-    const nextId = nextMilestoneId(milestoneIds, uniqueMilestoneIds);
+    const nextId = nextMilestoneIdReserved(milestoneIds, uniqueMilestoneIds);
     pendingAutoStart = { ctx, pi, basePath, milestoneId: nextId, step: stepMode };
     await dispatchWorkflow(pi, buildDiscussPrompt(nextId,
       `New milestone ${nextId}.`,
@@ -933,7 +948,7 @@ export async function showSmartEntry(
     }
 
     const uniqueMilestoneIds = !!loadEffectiveGSDPreferences()?.preferences?.unique_milestone_ids;
-    const nextId = nextMilestoneId(milestoneIds, uniqueMilestoneIds);
+    const nextId = nextMilestoneIdReserved(milestoneIds, uniqueMilestoneIds);
     const isFirst = milestoneIds.length === 0;
 
     if (isFirst) {
@@ -996,7 +1011,7 @@ export async function showSmartEntry(
     if (choice === "new_milestone") {
       const milestoneIds = findMilestoneIds(basePath);
       const uniqueMilestoneIds = !!loadEffectiveGSDPreferences()?.preferences?.unique_milestone_ids;
-      const nextId = nextMilestoneId(milestoneIds, uniqueMilestoneIds);
+      const nextId = nextMilestoneIdReserved(milestoneIds, uniqueMilestoneIds);
 
       pendingAutoStart = { ctx, pi, basePath, milestoneId: nextId, step: stepMode };
       await dispatchWorkflow(pi, buildDiscussPrompt(nextId,
@@ -1062,7 +1077,7 @@ export async function showSmartEntry(
     } else if (choice === "skip_milestone") {
       const milestoneIds = findMilestoneIds(basePath);
       const uniqueMilestoneIds = !!loadEffectiveGSDPreferences()?.preferences?.unique_milestone_ids;
-      const nextId = nextMilestoneId(milestoneIds, uniqueMilestoneIds);
+      const nextId = nextMilestoneIdReserved(milestoneIds, uniqueMilestoneIds);
       pendingAutoStart = { ctx, pi, basePath, milestoneId: nextId, step: stepMode };
       await dispatchWorkflow(pi, buildDiscussPrompt(nextId,
         `New milestone ${nextId}.`,
@@ -1146,7 +1161,7 @@ export async function showSmartEntry(
       } else if (choice === "skip_milestone") {
         const milestoneIds = findMilestoneIds(basePath);
         const uniqueMilestoneIds = !!loadEffectiveGSDPreferences()?.preferences?.unique_milestone_ids;
-        const nextId = nextMilestoneId(milestoneIds, uniqueMilestoneIds);
+        const nextId = nextMilestoneIdReserved(milestoneIds, uniqueMilestoneIds);
         pendingAutoStart = { ctx, pi, basePath, milestoneId: nextId, step: stepMode };
         await dispatchWorkflow(pi, buildDiscussPrompt(nextId,
           `New milestone ${nextId}.`,

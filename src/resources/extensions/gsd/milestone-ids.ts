@@ -70,6 +70,44 @@ export function nextMilestoneId(milestoneIds: string[], uniqueEnabled?: boolean)
   return `M${seq}`;
 }
 
+// ─── Reservation ─────────────────────────────────────────────────────────────
+
+/**
+ * Module-level set of milestone IDs that have been previewed/promised to the
+ * user but not yet materialised on disk. Both guided-flow (preview) and
+ * gsd_generate_milestone_id (tool) share this set so the ID shown in the UI
+ * matches the one the tool returns.
+ */
+const reservedMilestoneIds = new Set<string>();
+
+/** Reserve an ID so that subsequent calls to `claimReservedId` / `nextMilestoneId` account for it. */
+export function reserveMilestoneId(id: string): void {
+  reservedMilestoneIds.add(id);
+}
+
+/**
+ * If any IDs have been reserved, shift one out and return it.
+ * Returns `undefined` when the reservation set is empty.
+ */
+export function claimReservedId(): string | undefined {
+  const first = reservedMilestoneIds.values().next().value;
+  if (first !== undefined) {
+    reservedMilestoneIds.delete(first);
+    return first;
+  }
+  return undefined;
+}
+
+/** Return a snapshot of all currently reserved IDs (for merging into the "existing" list). */
+export function getReservedMilestoneIds(): ReadonlySet<string> {
+  return reservedMilestoneIds;
+}
+
+/** Clear all reservations (useful for tests). */
+export function clearReservedMilestoneIds(): void {
+  reservedMilestoneIds.clear();
+}
+
 // ─── Discovery ──────────────────────────────────────────────────────────────
 
 /** Scan the milestones directory and return IDs sorted by queue order (or numeric fallback). */
