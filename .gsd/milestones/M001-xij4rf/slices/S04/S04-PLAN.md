@@ -28,7 +28,7 @@
   - Verify: `npx tsx src/resources/extensions/gsd/tests/tool-naming.test.ts && npx tsx src/resources/extensions/gsd/tests/gsd-tools.test.ts`
   - Done when: 8 tools registered (4 canonical + 4 aliases), both old and new names resolve, existing tests pass
 
-- [ ] **T02: Update manifest, prompts, comments, and docs to use canonical names** `est:20m`
+- [x] **T02: Update manifest, prompts, comments, and docs to use canonical names** `est:20m`
   - Why: References across the codebase still use old names — updating them ensures LLM system prompts and developer-facing docs prefer canonical names
   - Files: `src/resources/extensions/gsd/extension-manifest.json`, `src/resources/extensions/gsd/prompts/discuss.md`, `src/resources/extensions/gsd/prompts/discuss-headless.md`, `src/resources/extensions/gsd/prompts/queue.md`, `src/resources/extensions/gsd/guided-flow.ts`, `src/resources/extensions/gsd/guided-flow-queue.ts`, `src/resources/extensions/gsd/milestone-ids.ts`, `src/resources/extensions/gsd/tests/gsd-tools.test.ts`, `docs/troubleshooting.md`
   - Do: Replace old tool names with canonical names in manifest `provides.tools`, prompt `.md` files, source code comments, and test file comments. In `docs/troubleshooting.md`, mention both canonical and alias names. Do NOT change `CHANGELOG.md` (historical).

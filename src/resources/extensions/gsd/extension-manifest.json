@@ -8,8 +8,8 @@
   "provides": {
     "tools": [
       "bash", "write", "read", "edit",
-      "gsd_save_decision", "gsd_save_summary",
-      "gsd_update_requirement", "gsd_generate_milestone_id"
+      "gsd_decision_save", "gsd_summary_save",
+      "gsd_requirement_update", "gsd_milestone_generate_id"
     ],
     "commands": ["gsd", "kill", "worktree", "exit"],
     "hooks": ["session_start"],

@@ -107,7 +107,7 @@ The user confirms or corrects before you write. One depth verification per miles
 
 Once the user is satisfied, in a single pass for **each** new milestone:
 
-1. Call `gsd_generate_milestone_id` to get the milestone ID — never invent milestone IDs manually. Then `mkdir -p .gsd/milestones/<ID>/slices`.
+1. Call `gsd_milestone_generate_id` to get the milestone ID — never invent milestone IDs manually. Then `mkdir -p .gsd/milestones/<ID>/slices`.
 2. Write `.gsd/milestones/<ID>/<ID>-CONTEXT.md` — use the **Context** output template below. Capture intent, scope, risks, constraints, integration points, and relevant requirements. Mark the status as "Queued — pending auto-mode execution." **If this milestone depends on other milestones, add YAML frontmatter with `depends_on`:**
    ```yaml
    ---

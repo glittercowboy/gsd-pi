@@ -61,3 +61,10 @@ Update all non-code references to use the canonical tool names. This covers the 
 - `src/resources/extensions/gsd/milestone-ids.ts` — updated comment
 - `src/resources/extensions/gsd/tests/gsd-tools.test.ts` — updated comment
 - `docs/troubleshooting.md` — updated with canonical + alias names
+
+## Observability Impact
+
+- **Manifest alignment:** `extension-manifest.json` now lists canonical tool names, so any tooling that reads the manifest (e.g. extension loaders, CI validation) will see names consistent with the runtime registry.
+- **LLM prompt consistency:** Prompt files reference canonical names exclusively, ensuring LLMs call tools by the preferred name and reducing ambiguity in agent logs.
+- **Grep diagnostics:** After this task, `grep -rn "gsd_save_decision\|gsd_update_requirement\|gsd_save_summary\|gsd_generate_milestone_id"` across prompts/source returns 0 hits (excluding alias contexts), making old-name detection trivial.
+- **Troubleshooting discoverability:** `docs/troubleshooting.md` mentions both canonical and alias forms, so users searching for either name find the relevant section.

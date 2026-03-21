@@ -75,7 +75,7 @@ export function nextMilestoneId(milestoneIds: string[], uniqueEnabled?: boolean)
 /**
  * Module-level set of milestone IDs that have been previewed/promised to the
  * user but not yet materialised on disk. Both guided-flow (preview) and
- * gsd_generate_milestone_id (tool) share this set so the ID shown in the UI
+ * gsd_milestone_generate_id (tool) share this set so the ID shown in the UI
  * matches the one the tool returns.
  */
 const reservedMilestoneIds = new Set<string>();

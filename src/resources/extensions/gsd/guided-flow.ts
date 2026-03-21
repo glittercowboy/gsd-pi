@@ -55,7 +55,7 @@ import { getErrorMessage } from "./error-utils.js";
 
 /**
  * Generate the next milestone ID, accounting for reserved IDs, and reserve it.
- * Ensures any preview ID shown in the UI matches what `gsd_generate_milestone_id`
+ * Ensures any preview ID shown in the UI matches what `gsd_milestone_generate_id`
  * will later return.
  */
 function nextMilestoneIdReserved(existingIds: string[], uniqueEnabled: boolean): string {
