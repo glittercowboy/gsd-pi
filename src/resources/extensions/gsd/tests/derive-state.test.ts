@@ -319,6 +319,89 @@ Continue from step 2.
     }
   }
 
+  // ─── Test 7b: complete with active requirements → surfaces unmapped reqs ──
+  console.log('\n=== complete with active requirements → surfaces unmapped reqs ===');
+  {
+    const base = createFixtureBase();
+    try {
+      writeRoadmap(base, 'M001', `# M001: Test Milestone
+
+**Vision:** Test complete phase with unmapped requirements.
+
+## Slices
+
+- [x] **S01: Done Slice** \`risk:low\` \`depends:[]\`
+  > After this: Done.
+`);
+
+      writeMilestoneValidation(base, 'M001');
+      writeMilestoneSummary(base, 'M001', `# M001 Summary\n\nMilestone complete.`);
+      writeRequirements(base, `# Requirements
+
+## Active
+
+### REQ01 — First active requirement
+- Status: active
+
+### REQ02 — Second active requirement
+- Status: active
+
+## Validated
+
+### REQ03 — Validated requirement
+- Status: validated
+`);
+
+      const state = await deriveState(base);
+
+      assertEq(state.phase, 'complete', 'complete-with-reqs: phase is complete');
+      assertTrue(
+        state.nextAction.includes('2 active requirements'),
+        'complete-with-reqs: nextAction mentions 2 active requirements'
+      );
+      assertTrue(
+        state.nextAction.includes('REQUIREMENTS.md'),
+        'complete-with-reqs: nextAction mentions REQUIREMENTS.md'
+      );
+    } finally {
+      cleanup(base);
+    }
+  }
+
+  // ─── Test 7c: complete with no active requirements → standard message ──
+  console.log('\n=== complete with no active requirements → standard message ===');
+  {
+    const base = createFixtureBase();
+    try {
+      writeRoadmap(base, 'M001', `# M001: Test Milestone
+
+**Vision:** Test complete phase with all requirements validated.
+
+## Slices
+
+- [x] **S01: Done Slice** \`risk:low\` \`depends:[]\`
+  > After this: Done.
+`);
+
+      writeMilestoneValidation(base, 'M001');
+      writeMilestoneSummary(base, 'M001', `# M001 Summary\n\nMilestone complete.`);
+      writeRequirements(base, `# Requirements
+
+## Validated
+
+### REQ01 — Validated requirement
+- Status: validated
+`);
+
+      const state = await deriveState(base);
+
+      assertEq(state.phase, 'complete', 'complete-no-active-reqs: phase is complete');
+      assertEq(state.nextAction, 'All milestones complete.', 'complete-no-active-reqs: standard completion message');
+    } finally {
+      cleanup(base);
+    }
+  }
+
   // ─── Test 8: blocked dependencies ──────────────────────────────────────
   console.log('\n=== blocked dependencies ===');
   {

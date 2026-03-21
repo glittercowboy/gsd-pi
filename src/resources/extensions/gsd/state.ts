@@ -469,6 +469,10 @@ async function _deriveStateImpl(basePath: string): Promise<GSDState> {
     }
     // All milestones complete
     const lastEntry = registry[registry.length - 1];
+    const activeReqs = requirements.active ?? 0;
+    const completionNote = activeReqs > 0
+      ? `All milestones complete. ${activeReqs} active requirement${activeReqs === 1 ? '' : 's'} in REQUIREMENTS.md ${activeReqs === 1 ? 'has' : 'have'} not been mapped to a milestone.`
+      : 'All milestones complete.';
     return {
       activeMilestone: lastEntry ? { id: lastEntry.id, title: lastEntry.title } : null,
       activeSlice: null,
@@ -476,7 +480,7 @@ async function _deriveStateImpl(basePath: string): Promise<GSDState> {
       phase: 'complete',
       recentDecisions: [],
       blockers: [],
-      nextAction: 'All milestones complete.',
+      nextAction: completionNote,
       registry,
       requirements,
       progress: {
