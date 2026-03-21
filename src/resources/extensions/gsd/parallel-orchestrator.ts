@@ -431,6 +431,11 @@ export function spawnWorker(
       env: {
         ...process.env,
         GSD_MILESTONE_LOCK: milestoneId,
+        // Pass the real project root so workers don't need to re-derive it.
+        // Without this, process.cwd() resolves symlinks and the worktree
+        // path heuristic can match the user-level ~/.gsd instead of the
+        // project .gsd, causing writes to ~ and corrupting user config.
+        GSD_PROJECT_ROOT: basePath,
         // Prevent workers from spawning their own parallel sessions
         GSD_PARALLEL_WORKER: "1",
       },
