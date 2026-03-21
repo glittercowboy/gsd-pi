@@ -17,6 +17,12 @@ const { execSync } = require('node:child_process')
 const { existsSync, readdirSync, statSync } = require('node:fs')
 const { join, resolve } = require('node:path')
 
+// Skip on Windows — Next.js webpack build hits EPERM scanning system dirs
+if (process.platform === 'win32') {
+  console.log('[gsd] Web build skipped on Windows.')
+  process.exit(0)
+}
+
 const root = resolve(__dirname, '..')
 const webRoot = join(root, 'web')
 // Also watch src/ because api routes import directly from src/web/* and src/resources/*
