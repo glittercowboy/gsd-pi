@@ -182,7 +182,7 @@ export function syncGsdStateToWorktree(
       const mainMilestones = readdirSync(mainMilestonesDir, {
         withFileTypes: true,
       })
-        .filter((d) => d.isDirectory() && /^M\d{3}/.test(d.name))
+        .filter((d) => d.isDirectory())
         .map((d) => d.name);
 
       for (const mid of mainMilestones) {
@@ -339,7 +339,7 @@ export function syncWorktreeStateBack(
 
   try {
     const wtMilestones = readdirSync(wtMilestonesDir, { withFileTypes: true })
-      .filter((d) => d.isDirectory() && /^M\d{3}/.test(d.name))
+      .filter((d) => d.isDirectory())
       .map((d) => d.name);
 
     for (const mid of wtMilestones) {

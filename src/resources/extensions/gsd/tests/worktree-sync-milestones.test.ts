@@ -19,6 +19,8 @@
  *   - syncWorktreeStateBack syncs root-level .gsd/ files (REQUIREMENTS, PROJECT, etc.)
  *   - syncWorktreeStateBack syncs ALL milestone directories, not just the current one
  *   - syncWorktreeStateBack handles next-milestone artifacts created during completion
+ *   - syncGsdStateToWorktree syncs non-standard milestone dir names (#1547)
+ *   - syncWorktreeStateBack syncs non-standard milestone dir names (#1547)
  */
 
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync, readFileSync } from 'node:fs';
@@ -510,6 +512,78 @@ async function main(): Promise<void> {
       assertTrue(
         synced.includes('completed-units.json'),
         '#1787: completed-units.json appears in synced list',
+      );
+    } finally {
+      rmSync(mainBase, { recursive: true, force: true });
+      rmSync(wtBase, { recursive: true, force: true });
+    }
+  }
+
+  // ─── 14. syncGsdStateToWorktree syncs non-standard milestone dir names (#1547) ──
+  console.log('\n=== 14. syncGsdStateToWorktree syncs non-standard milestone dir names (#1547) ===');
+  {
+    const mainBase = createBase('main');
+    const wtBase = createBase('wt');
+
+    try {
+      // Main has milestone dirs with non-standard names
+      const customDir = join(mainBase, '.gsd', 'milestones', 'sprint-alpha');
+      mkdirSync(customDir, { recursive: true });
+      writeFileSync(join(customDir, 'CONTEXT.md'), '# Sprint Alpha Context');
+
+      const suffixDir = join(mainBase, '.gsd', 'milestones', 'M001-abc123');
+      mkdirSync(suffixDir, { recursive: true });
+      writeFileSync(join(suffixDir, 'M001-abc123-CONTEXT.md'), '# M001 Context');
+
+      assertTrue(!existsSync(join(wtBase, '.gsd', 'milestones', 'sprint-alpha')), 'sprint-alpha missing before sync');
+      assertTrue(!existsSync(join(wtBase, '.gsd', 'milestones', 'M001-abc123')), 'M001-abc123 missing before sync');
+
+      const result = syncGsdStateToWorktree(mainBase, wtBase);
+
+      assertTrue(
+        existsSync(join(wtBase, '.gsd', 'milestones', 'sprint-alpha', 'CONTEXT.md')),
+        '#1547: non-standard milestone dir "sprint-alpha" synced to worktree',
+      );
+      assertTrue(
+        existsSync(join(wtBase, '.gsd', 'milestones', 'M001-abc123', 'M001-abc123-CONTEXT.md')),
+        '#1547: suffixed milestone dir "M001-abc123" synced to worktree',
+      );
+      assertTrue(result.synced.length > 0, 'sync reported files');
+    } finally {
+      cleanup(mainBase);
+      cleanup(wtBase);
+    }
+  }
+
+  // ─── 15. syncWorktreeStateBack syncs non-standard milestone dir names (#1547) ──
+  console.log('\n=== 15. syncWorktreeStateBack syncs non-standard milestone dir names (#1547) ===');
+  {
+    const mainBase = mkdtempSync(join(tmpdir(), 'gsd-wt-back-custom-main-'));
+    const wtBase = mkdtempSync(join(tmpdir(), 'gsd-wt-back-custom-wt-'));
+
+    try {
+      mkdirSync(join(mainBase, '.gsd', 'milestones'), { recursive: true });
+      mkdirSync(join(wtBase, '.gsd', 'milestones'), { recursive: true });
+
+      // Worktree has a non-standard milestone dir
+      const wtCustomDir = join(wtBase, '.gsd', 'milestones', 'sprint-beta');
+      mkdirSync(wtCustomDir, { recursive: true });
+      writeFileSync(join(wtCustomDir, 'SUMMARY.md'), '# Sprint Beta Summary');
+
+      assertTrue(
+        !existsSync(join(mainBase, '.gsd', 'milestones', 'sprint-beta')),
+        'sprint-beta missing in main before sync',
+      );
+
+      const { synced } = syncWorktreeStateBack(mainBase, wtBase, 'M001');
+
+      assertTrue(
+        existsSync(join(mainBase, '.gsd', 'milestones', 'sprint-beta', 'SUMMARY.md')),
+        '#1547: non-standard milestone dir "sprint-beta" synced back to main',
+      );
+      assertTrue(
+        synced.some((p) => p.includes('sprint-beta')),
+        '#1547: sprint-beta appears in synced list',
       );
     } finally {
       rmSync(mainBase, { recursive: true, force: true });
