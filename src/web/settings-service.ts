@@ -1,21 +1,8 @@
-import { execFile } from "node:child_process"
-import { existsSync } from "node:fs"
-import { join } from "node:path"
-import { pathToFileURL } from "node:url"
-
 import { resolveBridgeRuntimeConfig } from "./bridge-service.ts"
-import { resolveTypeStrippingFlag } from "./ts-subprocess-flags.ts"
+import { resolveModulePaths, runSubprocess } from "./subprocess-runner.ts"
 import type { SettingsData } from "../../web/lib/settings-types.ts"
 
 const SETTINGS_MAX_BUFFER = 2 * 1024 * 1024
-
-function resolveModulePath(packageRoot: string, moduleName: string): string {
-  return join(packageRoot, "src", "resources", "extensions", "gsd", moduleName)
-}
-
-function resolveTsLoaderPath(packageRoot: string): string {
-  return join(packageRoot, "src", "resources", "extensions", "gsd", "tests", "resolve-ts.mjs")
-}
 
 /**
  * Loads settings data via a child process. Calls upstream extension modules
@@ -30,19 +17,16 @@ export async function collectSettingsData(projectCwdOverride?: string): Promise<
   const config = resolveBridgeRuntimeConfig(undefined, projectCwdOverride)
   const { packageRoot, projectCwd } = config
 
-  const resolveTsLoader = resolveTsLoaderPath(packageRoot)
-  const prefsPath = resolveModulePath(packageRoot, "preferences.ts")
-  const routerPath = resolveModulePath(packageRoot, "model-router.ts")
-  const budgetPath = resolveModulePath(packageRoot, "context-budget.ts")
-  const historyPath = resolveModulePath(packageRoot, "routing-history.ts")
-  const metricsPath = resolveModulePath(packageRoot, "metrics.ts")
-
-  const requiredPaths = [resolveTsLoader, prefsPath, routerPath, budgetPath, historyPath, metricsPath]
-  for (const p of requiredPaths) {
-    if (!existsSync(p)) {
-      throw new Error(`settings data provider not found; missing=${p}`)
-    }
-  }
+  const resolved = resolveModulePaths(packageRoot, {
+    modules: [
+      { envKey: "GSD_SETTINGS_PREFS_MODULE", relativePath: "src/resources/extensions/gsd/preferences.ts" },
+      { envKey: "GSD_SETTINGS_ROUTER_MODULE", relativePath: "src/resources/extensions/gsd/model-router.ts" },
+      { envKey: "GSD_SETTINGS_BUDGET_MODULE", relativePath: "src/resources/extensions/gsd/context-budget.ts" },
+      { envKey: "GSD_SETTINGS_HISTORY_MODULE", relativePath: "src/resources/extensions/gsd/routing-history.ts" },
+      { envKey: "GSD_SETTINGS_METRICS_MODULE", relativePath: "src/resources/extensions/gsd/metrics.ts" },
+    ],
+    label: "settings",
+  })
 
   // The child script loads all upstream modules, calls the 5 data functions,
   // and writes a combined JSON payload to stdout.
@@ -105,46 +89,12 @@ export async function collectSettingsData(projectCwdOverride?: string): Promise<
     'process.stdout.write(JSON.stringify({ preferences, routingConfig, budgetAllocation, routingHistory, projectTotals }));',
   ].join(" ")
 
-  return await new Promise<SettingsData>((resolveResult, reject) => {
-    execFile(
-      process.execPath,
-      [
-        "--import",
-        pathToFileURL(resolveTsLoader).href,
-        resolveTypeStrippingFlag(packageRoot),
-        "--input-type=module",
-        "--eval",
-        script,
-      ],
-      {
-        cwd: packageRoot,
-        env: {
-          ...process.env,
-          GSD_SETTINGS_PREFS_MODULE: prefsPath,
-          GSD_SETTINGS_ROUTER_MODULE: routerPath,
-          GSD_SETTINGS_BUDGET_MODULE: budgetPath,
-          GSD_SETTINGS_HISTORY_MODULE: historyPath,
-          GSD_SETTINGS_METRICS_MODULE: metricsPath,
-          GSD_SETTINGS_BASE: projectCwd,
-        },
-        maxBuffer: SETTINGS_MAX_BUFFER,
-      },
-      (error, stdout, stderr) => {
-        if (error) {
-          reject(new Error(`settings data subprocess failed: ${stderr || error.message}`))
-          return
-        }
-
-        try {
-          resolveResult(JSON.parse(stdout) as SettingsData)
-        } catch (parseError) {
-          reject(
-            new Error(
-              `settings data subprocess returned invalid JSON: ${parseError instanceof Error ? parseError.message : String(parseError)}`,
-            ),
-          )
-        }
-      },
-    )
+  return await runSubprocess<SettingsData>({
+    packageRoot,
+    script,
+    env: { ...resolved.env, GSD_SETTINGS_BASE: projectCwd },
+    label: "settings data",
+    tsLoaderPath: resolved.tsLoaderPath,
+    maxBuffer: SETTINGS_MAX_BUFFER,
   })
 }

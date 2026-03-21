@@ -1,22 +1,8 @@
-import { execFile } from "node:child_process"
-import { existsSync } from "node:fs"
-import { join } from "node:path"
-import { pathToFileURL } from "node:url"
-
 import { resolveBridgeRuntimeConfig } from "./bridge-service.ts"
-import { resolveTypeStrippingFlag } from "./ts-subprocess-flags.ts"
+import { resolveModulePaths, runSubprocess } from "./subprocess-runner.ts"
 import type { SkillHealthReport } from "../../web/lib/diagnostics-types.ts"
 
-const SKILL_HEALTH_MAX_BUFFER = 2 * 1024 * 1024
 const SKILL_HEALTH_MODULE_ENV = "GSD_SKILL_HEALTH_MODULE"
-
-function resolveSkillHealthModulePath(packageRoot: string): string {
-  return join(packageRoot, "src", "resources", "extensions", "gsd", "skill-health.ts")
-}
-
-function resolveTsLoaderPath(packageRoot: string): string {
-  return join(packageRoot, "src", "resources", "extensions", "gsd", "tests", "resolve-ts.mjs")
-}
 
 /**
  * Loads skill health report via a child process.
@@ -26,14 +12,10 @@ export async function collectSkillHealthData(projectCwdOverride?: string): Promi
   const config = resolveBridgeRuntimeConfig(undefined, projectCwdOverride)
   const { packageRoot, projectCwd } = config
 
-  const resolveTsLoader = resolveTsLoaderPath(packageRoot)
-  const skillHealthModulePath = resolveSkillHealthModulePath(packageRoot)
-
-  if (!existsSync(resolveTsLoader) || !existsSync(skillHealthModulePath)) {
-    throw new Error(
-      `skill-health data provider not found; checked=${resolveTsLoader},${skillHealthModulePath}`,
-    )
-  }
+  const resolved = resolveModulePaths(packageRoot, {
+    modules: [{ envKey: SKILL_HEALTH_MODULE_ENV, relativePath: "src/resources/extensions/gsd/skill-health.ts" }],
+    label: "skill-health",
+  })
 
   const script = [
     'const { pathToFileURL } = await import("node:url");',
@@ -43,42 +25,11 @@ export async function collectSkillHealthData(projectCwdOverride?: string): Promi
     'process.stdout.write(JSON.stringify(report));',
   ].join(" ")
 
-  return await new Promise<SkillHealthReport>((resolveResult, reject) => {
-    execFile(
-      process.execPath,
-      [
-        "--import",
-        pathToFileURL(resolveTsLoader).href,
-        resolveTypeStrippingFlag(packageRoot),
-        "--input-type=module",
-        "--eval",
-        script,
-      ],
-      {
-        cwd: packageRoot,
-        env: {
-          ...process.env,
-          [SKILL_HEALTH_MODULE_ENV]: skillHealthModulePath,
-          GSD_SKILL_HEALTH_BASE: projectCwd,
-        },
-        maxBuffer: SKILL_HEALTH_MAX_BUFFER,
-      },
-      (error, stdout, stderr) => {
-        if (error) {
-          reject(new Error(`skill-health subprocess failed: ${stderr || error.message}`))
-          return
-        }
-
-        try {
-          resolveResult(JSON.parse(stdout) as SkillHealthReport)
-        } catch (parseError) {
-          reject(
-            new Error(
-              `skill-health subprocess returned invalid JSON: ${parseError instanceof Error ? parseError.message : String(parseError)}`,
-            ),
-          )
-        }
-      },
-    )
+  return await runSubprocess<SkillHealthReport>({
+    packageRoot,
+    script,
+    env: { ...resolved.env, GSD_SKILL_HEALTH_BASE: projectCwd },
+    label: "skill-health",
+    tsLoaderPath: resolved.tsLoaderPath,
   })
 }

@@ -1,27 +1,9 @@
-import { execFile } from "node:child_process"
 import { existsSync, readFileSync } from "node:fs"
 import { join } from "node:path"
-import { pathToFileURL } from "node:url"
 
 import { resolveBridgeRuntimeConfig } from "./bridge-service.ts"
-import { resolveTypeStrippingFlag } from "./ts-subprocess-flags.ts"
+import { resolveModulePaths, runSubprocess } from "./subprocess-runner.ts"
 import type { UndoInfo, UndoResult } from "../../web/lib/remaining-command-types.ts"
-
-const UNDO_MAX_BUFFER = 2 * 1024 * 1024
-const UNDO_MODULE_ENV = "GSD_UNDO_MODULE"
-const PATHS_MODULE_ENV = "GSD_PATHS_MODULE"
-
-function resolveUndoModulePath(packageRoot: string): string {
-  return join(packageRoot, "src", "resources", "extensions", "gsd", "undo.ts")
-}
-
-function resolvePathsModulePath(packageRoot: string): string {
-  return join(packageRoot, "src", "resources", "extensions", "gsd", "paths.ts")
-}
-
-function resolveTsLoaderPath(packageRoot: string): string {
-  return join(packageRoot, "src", "resources", "extensions", "gsd", "tests", "resolve-ts.mjs")
-}
 
 /**
  * Collects information about the last completed unit for display in the undo panel.
@@ -124,22 +106,23 @@ export async function executeUndo(projectCwdOverride?: string): Promise<UndoResu
   const config = resolveBridgeRuntimeConfig(undefined, projectCwdOverride)
   const { packageRoot, projectCwd } = config
 
-  const resolveTsLoader = resolveTsLoaderPath(packageRoot)
-  const undoModulePath = resolveUndoModulePath(packageRoot)
-  const pathsModulePath = resolvePathsModulePath(packageRoot)
+  const resolved = resolveModulePaths(packageRoot, {
+    modules: [
+      { envKey: "GSD_UNDO_MODULE", relativePath: "src/resources/extensions/gsd/undo.ts" },
+      { envKey: "GSD_PATHS_MODULE", relativePath: "src/resources/extensions/gsd/paths.ts" },
+    ],
+    label: "undo",
+  })
 
-  if (!existsSync(resolveTsLoader) || !existsSync(undoModulePath) || !existsSync(pathsModulePath)) {
-    throw new Error(
-      `undo service modules not found; checked=${resolveTsLoader},${undoModulePath},${pathsModulePath}`,
-    )
-  }
-
+  // Note: the child script uses execSync for git revert — this is intentional
+  // and matches the original implementation. The child process needs shell access
+  // to perform git operations within the child's execution context.
   const script = [
     'const { pathToFileURL } = await import("node:url");',
     'const { existsSync, readFileSync, writeFileSync, readdirSync, unlinkSync } = await import("node:fs");',
     'const { join } = await import("node:path");',
-    `const undoMod = await import(pathToFileURL(process.env.${UNDO_MODULE_ENV}).href);`,
-    `const pathsMod = await import(pathToFileURL(process.env.${PATHS_MODULE_ENV}).href);`,
+    'const undoMod = await import(pathToFileURL(process.env.GSD_UNDO_MODULE).href);',
+    'const pathsMod = await import(pathToFileURL(process.env.GSD_PATHS_MODULE).href);',
     'const basePath = process.env.GSD_UNDO_BASE;',
     'const gsdDir = pathsMod.gsdRoot(basePath);',
     'const completedPath = join(gsdDir, "completed-units.json");',
@@ -151,23 +134,20 @@ export async function executeUndo(projectCwdOverride?: string): Promise<UndoResu
     'const unitType = last.type;',
     'const unitId = last.id;',
     'const parts = unitId ? unitId.split("/") : [];',
-    // Uncheck task in plan if execute-task
     'let planUpdated = false;',
     'if (unitType === "execute-task" && parts.length === 3) { const [mid, sid, tid] = parts; planUpdated = undoMod.uncheckTaskInPlan(basePath, mid, sid, tid); }',
-    // Find and revert commits
     'let commitsReverted = 0;',
     'const activityDir = join(gsdDir, "activity");',
     'if (existsSync(activityDir)) {',
     '  const commits = undoMod.findCommitsForUnit(activityDir, unitType, unitId);',
     '  if (commits.length > 0) {',
-    '    const { execSync } = await import("node:child_process");',
+    '    const { execFileSync } = await import("node:child_process");',
     '    for (const sha of commits.reverse()) {',
-    '      try { execSync(`git revert --no-commit ${sha}`, { cwd: basePath, stdio: "pipe" }); commitsReverted++; }',
-    '      catch { try { execSync("git revert --abort", { cwd: basePath, stdio: "pipe" }); } catch {} break; }',
+    '      try { execFileSync("git", ["revert", "--no-commit", sha], { cwd: basePath, stdio: "pipe" }); commitsReverted++; }',
+    '      catch { try { execFileSync("git", ["revert", "--abort"], { cwd: basePath, stdio: "pipe" }); } catch {} break; }',
     '    }',
     '  }',
     '}',
-    // Remove the entry from completed-units.json
     'entries.pop();',
     'writeFileSync(completedPath, JSON.stringify(entries, null, 2), "utf-8");',
     'const results = [`Undone: ${unitType} (${unitId})`];',
@@ -177,43 +157,11 @@ export async function executeUndo(projectCwdOverride?: string): Promise<UndoResu
     'process.stdout.write(JSON.stringify({ success: true, message: results.join("\\n") }));',
   ].join(" ")
 
-  return await new Promise<UndoResult>((resolveResult, reject) => {
-    execFile(
-      process.execPath,
-      [
-        "--import",
-        pathToFileURL(resolveTsLoader).href,
-        resolveTypeStrippingFlag(packageRoot),
-        "--input-type=module",
-        "--eval",
-        script,
-      ],
-      {
-        cwd: packageRoot,
-        env: {
-          ...process.env,
-          [UNDO_MODULE_ENV]: undoModulePath,
-          [PATHS_MODULE_ENV]: pathsModulePath,
-          GSD_UNDO_BASE: projectCwd,
-        },
-        maxBuffer: UNDO_MAX_BUFFER,
-      },
-      (error, stdout, stderr) => {
-        if (error) {
-          reject(new Error(`undo subprocess failed: ${stderr || error.message}`))
-          return
-        }
-
-        try {
-          resolveResult(JSON.parse(stdout) as UndoResult)
-        } catch (parseError) {
-          reject(
-            new Error(
-              `undo subprocess returned invalid JSON: ${parseError instanceof Error ? parseError.message : String(parseError)}`,
-            ),
-          )
-        }
-      },
-    )
+  return await runSubprocess<UndoResult>({
+    packageRoot,
+    script,
+    env: { ...resolved.env, GSD_UNDO_BASE: projectCwd },
+    label: "undo",
+    tsLoaderPath: resolved.tsLoaderPath,
   })
 }
