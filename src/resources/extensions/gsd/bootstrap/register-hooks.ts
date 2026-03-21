@@ -191,5 +191,18 @@ export function registerHooks(pi: ExtensionAPI): void {
   pi.on("tool_execution_end", async (event) => {
     markToolEnd(event.toolCallId);
   });
+
+  pi.on("before_provider_request", async (event) => {
+    if (!isAutoActive()) return;
+    const modelId = event.model?.id;
+    if (!modelId) return;
+    const { getEffectiveServiceTier, supportsServiceTier } = await import("../service-tier.js");
+    const tier = getEffectiveServiceTier();
+    if (!tier || !supportsServiceTier(modelId)) return;
+    const payload = event.payload as Record<string, unknown> | null;
+    if (!payload || typeof payload !== "object") return;
+    payload.service_tier = tier;
+    return payload;
+  });
 }
 

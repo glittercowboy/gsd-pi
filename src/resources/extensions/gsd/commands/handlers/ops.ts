@@ -172,6 +172,11 @@ Examples:
     await handleUpdate(ctx);
     return true;
   }
+  if (trimmed === "fast" || trimmed.startsWith("fast ")) {
+    const { handleFast } = await import("../../service-tier.js");
+    await handleFast(trimmed.replace(/^fast\s*/, "").trim(), ctx);
+    return true;
+  }
   if (trimmed === "extensions" || trimmed.startsWith("extensions ")) {
     const { handleExtensions } = await import("../../commands-extensions.js");
     await handleExtensions(trimmed.replace(/^extensions\s*/, "").trim(), ctx);

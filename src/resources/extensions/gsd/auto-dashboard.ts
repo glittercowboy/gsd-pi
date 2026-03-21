@@ -24,6 +24,7 @@ import { GLYPH, INDENT } from "../shared/mod.js";
 import { computeProgressScore } from "./progress-score.js";
 import { getActiveWorktreeName } from "./worktree-command.js";
 import { loadEffectiveGSDPreferences, getGlobalGSDPreferencesPath } from "./preferences.js";
+import { resolveServiceTierIcon, getEffectiveServiceTier } from "./service-tier.js";
 
 // ─── UAT Slice Extraction ─────────────────────────────────────────────────────
 
@@ -460,6 +461,9 @@ export function updateProgressWidget(
   // Pre-fetch last commit for display
   refreshLastCommit(accessors.getBasePath());
 
+  // Cache the effective service tier at widget creation time (reads preferences)
+  const effectiveServiceTier = getEffectiveServiceTier();
+
   ctx.ui.setWidget("gsd-progress", (tui, theme) => {
     let pulseBright = true;
     let cachedLines: string[] | undefined;
@@ -572,9 +576,10 @@ export function updateProgressWidget(
         // Model display — shown in context section, not stats
         const modelId = cmdCtx?.model?.id ?? "";
         const modelProvider = cmdCtx?.model?.provider ?? "";
-        const modelDisplay = modelProvider && modelId
+        const tierIcon = resolveServiceTierIcon(effectiveServiceTier, modelId);
+        const modelDisplay = (modelProvider && modelId
           ? `${modelProvider}/${modelId}`
-          : modelId;
+          : modelId) + (tierIcon ? ` ${tierIcon}` : "");
 
         // ── Mode: off — return empty ──────────────────────────────────
         if (widgetMode === "off") {

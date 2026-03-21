@@ -14,7 +14,7 @@ export interface GsdCommandDefinition {
 type CompletionMap = Record<string, readonly GsdCommandDefinition[]>;
 
 export const GSD_COMMAND_DESCRIPTION =
-  "GSD — Get Shit Done: /gsd help|start|templates|next|auto|stop|pause|status|widget|visualize|queue|quick|discuss|capture|triage|dispatch|history|undo|rate|skip|export|cleanup|mode|prefs|config|keys|hooks|run-hook|skill-health|doctor|logs|forensics|changelog|migrate|remote|steer|knowledge|new-milestone|parallel|cmux|park|unpark|init|setup|inspect|extensions|update";
+  "GSD — Get Shit Done: /gsd help|start|templates|next|auto|stop|pause|status|widget|visualize|queue|quick|discuss|capture|triage|dispatch|history|undo|rate|skip|export|cleanup|mode|prefs|config|keys|hooks|run-hook|skill-health|doctor|logs|forensics|changelog|migrate|remote|steer|knowledge|new-milestone|parallel|cmux|park|unpark|init|setup|inspect|extensions|update|fast";
 
 export const TOP_LEVEL_SUBCOMMANDS: readonly GsdCommandDefinition[] = [
   { cmd: "help", desc: "Categorized command reference with descriptions" },
@@ -64,6 +64,7 @@ export const TOP_LEVEL_SUBCOMMANDS: readonly GsdCommandDefinition[] = [
   { cmd: "start", desc: "Start a workflow template (bugfix, spike, feature, etc.)" },
   { cmd: "templates", desc: "List available workflow templates" },
   { cmd: "extensions", desc: "Manage extensions (list, enable, disable, info)" },
+  { cmd: "fast", desc: "Toggle OpenAI service tier (on/off/flex/status)" },
 ];
 
 const NESTED_COMPLETIONS: CompletionMap = {
@@ -175,6 +176,12 @@ const NESTED_COMPLETIONS: CompletionMap = {
     { cmd: "enable", desc: "Enable a disabled extension" },
     { cmd: "disable", desc: "Disable an extension" },
     { cmd: "info", desc: "Show extension details" },
+  ],
+  fast: [
+    { cmd: "on", desc: "Priority tier (2x cost, faster)" },
+    { cmd: "off", desc: "Disable service tier" },
+    { cmd: "flex", desc: "Flex tier (0.5x cost, slower)" },
+    { cmd: "status", desc: "Show current service tier setting" },
   ],
   doctor: [
     { cmd: "fix", desc: "Auto-fix detected issues" },
