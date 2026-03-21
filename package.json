@@ -27,6 +27,7 @@
     "src/resources",
     "scripts/postinstall.js",
     "scripts/link-workspace-packages.cjs",
+    "scripts/ensure-workspace-builds.cjs",
     "package.json",
     "README.md"
   ],
