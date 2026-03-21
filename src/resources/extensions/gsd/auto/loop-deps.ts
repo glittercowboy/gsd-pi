@@ -236,6 +236,11 @@ export interface LoopDeps {
     startModel: { provider: string; id: string } | null,
     retryContext?: { isRetry: boolean; previousTier?: string },
   ) => Promise<{ routing: { tier: string; modelDowngraded: boolean } | null }>;
+  resolveModelId: <T extends { id: string; provider: string }>(
+    modelId: string,
+    availableModels: T[],
+    currentProvider: string | undefined,
+  ) => T | undefined;
   startUnitSupervision: (sctx: {
     s: AutoSession;
     ctx: ExtensionContext;

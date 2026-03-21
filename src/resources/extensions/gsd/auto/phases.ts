@@ -642,6 +642,7 @@ export async function runDispatch(
       pauseAfterUatDispatch, observabilityIssues,
       state, mid, midTitle,
       isRetry: false, previousTier: undefined,
+      hookModelOverride: preDispatchResult.model,
     },
   };
 }
@@ -927,6 +928,30 @@ export async function runUnitPhase(
   );
   s.currentUnitRouting =
     modelResult.routing as AutoSession["currentUnitRouting"];
+
+  // Apply sidecar/pre-dispatch hook model override (takes priority over standard model selection)
+  const hookModelOverride = sidecarItem?.model ?? iterData.hookModelOverride;
+  if (hookModelOverride) {
+    const availableModels = ctx.modelRegistry.getAvailable();
+    const match = deps.resolveModelId(hookModelOverride, availableModels, ctx.model?.provider);
+    if (match) {
+      const ok = await pi.setModel(match, { persist: false });
+      if (ok) {
+        ctx.ui.notify(`Hook model override: ${match.provider}/${match.id}`, "info");
+      } else {
+        ctx.ui.notify(
+          `Hook model "${hookModelOverride}" found but setModel failed. Using default.`,
+          "warning",
+        );
+      }
+    } else {
+      ctx.ui.notify(
+        `Hook model "${hookModelOverride}" not found in available models. Falling back to current session model. ` +
+        `Ensure the model is defined in models.json and has auth configured.`,
+        "warning",
+      );
+    }
+  }
 
   // Start unit supervision
   deps.clearUnitTimeout();

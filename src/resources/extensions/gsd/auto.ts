@@ -86,7 +86,7 @@ import {
 import { closeoutUnit } from "./auto-unit-closeout.js";
 import { recoverTimedOutUnit } from "./auto-timeout-recovery.js";
 import { selfHealRuntimeRecords } from "./auto-recovery.js";
-import { selectAndApplyModel } from "./auto-model-selection.js";
+import { selectAndApplyModel, resolveModelId } from "./auto-model-selection.js";
 import {
   syncProjectRootToWorktree,
   syncStateToProjectRoot,
@@ -912,6 +912,7 @@ function buildLoopDeps(): LoopDeps {
 
     // Model selection + supervision
     selectAndApplyModel,
+    resolveModelId,
     startUnitSupervision,
 
     // Prompt helpers
@@ -1307,15 +1308,19 @@ export async function dispatchHookUnit(
 
   if (hookModel) {
     const availableModels = ctx.modelRegistry.getAvailable();
-    const match = availableModels.find(
-      (m) => m.id === hookModel || `${m.provider}/${m.id}` === hookModel,
-    );
+    const match = resolveModelId(hookModel, availableModels, ctx.model?.provider);
     if (match) {
       try {
         await pi.setModel(match);
       } catch {
         /* non-fatal */
       }
+    } else {
+      ctx.ui.notify(
+        `Hook model "${hookModel}" not found in available models. Falling back to current session model. ` +
+        `Ensure the model is defined in models.json and has auth configured.`,
+        "warning",
+      );
     }
   }
 

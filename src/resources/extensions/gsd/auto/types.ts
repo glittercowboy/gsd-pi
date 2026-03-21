@@ -94,6 +94,8 @@ export interface IterationData {
   midTitle: string | undefined;
   isRetry: boolean;
   previousTier: string | undefined;
+  /** Model override from pre-dispatch hooks (applied after standard model selection). */
+  hookModelOverride?: string;
 }
 
 export type WindowEntry = { key: string; error?: string };
