@@ -15,7 +15,7 @@
  *   4. remove()  — git worktree remove + branch cleanup
  */
 
-import { existsSync, mkdirSync, readFileSync, realpathSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync } from "node:fs";
 import { join, resolve, sep } from "node:path";
 import { GSDError, GSD_PARSE_ERROR, GSD_STALE_STATE, GSD_LOCK_HELD, GSD_GIT_ERROR, GSD_MERGE_CONFLICT } from "./errors.js";
 import {
@@ -129,7 +129,19 @@ export function createWorktree(basePath: string, name: string, opts: { branch?: 
   const branch = opts.branch ?? worktreeBranchName(name);
 
   if (existsSync(wtPath)) {
-    throw new GSDError(GSD_STALE_STATE, `Worktree "${name}" already exists at ${wtPath}`);
+    // A valid git worktree has a .git file (not directory) containing a
+    // "gitdir:" pointer.  If the directory exists but has no .git file,
+    // it is a stale leftover from a prior crash — remove it so a fresh
+    // worktree can be created in its place.
+    const gitFilePath = join(wtPath, ".git");
+    if (!existsSync(gitFilePath)) {
+      console.error(
+        `[GSD] Removing stale worktree directory (no .git file): ${wtPath}`,
+      );
+      rmSync(wtPath, { recursive: true, force: true });
+    } else {
+      throw new GSDError(GSD_STALE_STATE, `Worktree "${name}" already exists at ${wtPath}`);
+    }
   }
 
   // Ensure the .gsd/worktrees/ directory exists

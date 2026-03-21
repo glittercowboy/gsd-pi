@@ -334,3 +334,51 @@ test("snapshotUnitMetrics handles simulated idle-watchdog duplicate pattern", ()
     rmSync(tmpBase, { recursive: true, force: true });
   }
 });
+
+// ── toolCall block counting ─────────────────────────────────────────────────
+
+test("snapshotUnitMetrics counts toolCall blocks correctly (#1713)", () => {
+  const tmpBase = mkdtempSync(join(tmpdir(), "gsd-metrics-toolcall-"));
+  mkdirSync(join(tmpBase, ".gsd"), { recursive: true });
+
+  try {
+    resetMetrics();
+    initMetrics(tmpBase);
+
+    const ctx = mockCtx([
+      { role: "user", content: "Do something" },
+      {
+        role: "assistant",
+        content: [
+          { type: "text", text: "Let me help." },
+          { type: "toolCall", name: "Read", input: { file: "foo.ts" } },
+          { type: "toolCall", name: "Edit", input: { file: "bar.ts" } },
+        ],
+        usage: {
+          input: 1000, output: 500, cacheRead: 0, cacheWrite: 0, totalTokens: 1500,
+          cost: 0.01,
+        },
+      },
+      {
+        role: "assistant",
+        content: [
+          { type: "toolCall", name: "Bash", input: { command: "ls" } },
+          { type: "text", text: "All done." },
+        ],
+        usage: {
+          input: 800, output: 300, cacheRead: 0, cacheWrite: 0, totalTokens: 1100,
+          cost: 0.008,
+        },
+      },
+    ]);
+
+    const unit = snapshotUnitMetrics(ctx, "execute-task", "M001/S01/T01", Date.now() - 3000, "test-model");
+    assert.ok(unit);
+    assert.equal(unit!.toolCalls, 3, "should count 3 toolCall blocks across 2 assistant messages");
+    assert.equal(unit!.assistantMessages, 2);
+    assert.equal(unit!.userMessages, 1);
+  } finally {
+    resetMetrics();
+    rmSync(tmpBase, { recursive: true, force: true });
+  }
+});

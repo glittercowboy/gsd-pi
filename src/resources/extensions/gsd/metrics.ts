@@ -164,7 +164,7 @@ export function snapshotUnitMetrics(
       // Count tool calls in this message
       if (msg.content && Array.isArray(msg.content)) {
         for (const block of msg.content) {
-          if (block.type === "tool_call") toolCalls++;
+          if (block.type === "toolCall") toolCalls++;
         }
       }
     } else if (msg.role === "user") {
