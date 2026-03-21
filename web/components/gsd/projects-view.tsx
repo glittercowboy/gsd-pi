@@ -1,13 +1,54 @@
 "use client"
 
+import Image from "next/image"
 import { useEffect, useState, useCallback, useRef, useSyncExternalStore } from "react"
-import { FolderOpen, Loader2, AlertCircle, Layers, Sparkles, ArrowUpCircle, GitBranch, CheckCircle2, FolderRoot, ChevronDown, ExternalLink, Plus } from "lucide-react"
+import {
+  FolderOpen,
+  Loader2,
+  AlertCircle,
+  Layers,
+  Sparkles,
+  ArrowUpCircle,
+  GitBranch,
+  CheckCircle2,
+  FolderRoot,
+  Plus,
+  ArrowRight,
+  X,
+  ChevronRight,
+  Folder,
+  CornerLeftUp,
+  Search,
+  Clock,
+} from "lucide-react"
 import { cn } from "@/lib/utils"
 import { useProjectStoreManager } from "@/lib/project-store-manager"
-import { useGSDWorkspaceState, getLiveWorkspaceIndex, getLiveAutoDashboard, formatCost, getCurrentSlice } from "@/lib/gsd-workspace-store"
+import {
+  useGSDWorkspaceState,
+  getLiveWorkspaceIndex,
+  getLiveAutoDashboard,
+  formatCost,
+  getCurrentSlice,
+} from "@/lib/gsd-workspace-store"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet"
+import { ScrollArea } from "@/components/ui/scroll-area"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
 
 // ─── Types (mirroring server-side ProjectMetadata) ─────────────────────────
 
@@ -42,50 +83,185 @@ interface ProjectMetadata {
   progress?: ProjectProgressInfo | null
 }
 
-// ─── Kind badge config ─────────────────────────────────────────────────────
+// ─── Kind style config ─────────────────────────────────────────────────
 
-const KIND_CONFIG: Record<ProjectDetectionKind, { label: string; className: string; icon: typeof FolderOpen }> = {
+const KIND_STYLE: Record<ProjectDetectionKind, { label: string; color: string; bgClass: string; icon: typeof Layers }> = {
   "active-gsd": {
     label: "Active",
-    className: "bg-success/15 text-success border-success/25",
+    color: "text-success",
+    bgClass: "bg-success/10",
     icon: Layers,
   },
   "empty-gsd": {
     label: "Initialized",
-    className: "bg-info/15 text-info border-info/25",
+    color: "text-info",
+    bgClass: "bg-info/10",
     icon: FolderOpen,
   },
   brownfield: {
     label: "Existing",
-    className: "bg-warning/15 text-warning border-warning/25",
+    color: "text-warning",
+    bgClass: "bg-warning/10",
     icon: GitBranch,
   },
   "v1-legacy": {
-    label: "Legacy v1",
-    className: "bg-warning/15 text-warning border-warning/25",
+    label: "Legacy",
+    color: "text-warning",
+    bgClass: "bg-warning/10",
     icon: ArrowUpCircle,
   },
   blank: {
-    label: "Blank",
-    className: "bg-zinc-500/15 text-zinc-400 border-zinc-500/25",
+    label: "New",
+    color: "text-muted-foreground",
+    bgClass: "bg-foreground/[0.04]",
     icon: Sparkles,
   },
 }
 
-function describeSignals(signals: ProjectDetectionSignals): string {
-  const parts: string[] = []
-  if (signals.hasGitRepo) parts.push("Git")
-  if (signals.hasPackageJson) parts.push("Node.js")
-  if (signals.hasCargo) parts.push("Rust")
-  if (signals.hasGoMod) parts.push("Go")
-  if (signals.hasPyproject) parts.push("Python")
-  if (parts.length === 0 && signals.fileCount > 0) parts.push(`${signals.fileCount} files`)
-  return parts.join(" · ")
+function techStack(signals: ProjectDetectionSignals): string[] {
+  const tags: string[] = []
+  if (signals.hasGitRepo) tags.push("Git")
+  if (signals.hasPackageJson) tags.push("Node.js")
+  if (signals.hasCargo) tags.push("Rust")
+  if (signals.hasGoMod) tags.push("Go")
+  if (signals.hasPyproject) tags.push("Python")
+  return tags
 }
 
-// ─── ProjectsView ──────────────────────────────────────────────────────────
+function progressLabel(p: ProjectProgressInfo): string | null {
+  if (p.milestonesTotal === 0) return null
+  const parts: string[] = []
+  if (p.activeMilestone) parts.push(p.activeMilestone)
+  if (p.activeSlice) parts.push(p.activeSlice)
+  if (p.phase) parts.push(p.phase)
+  return parts.join(" · ") || null
+}
 
-export function ProjectsView() {
+function relativeTime(timestamp: number): string {
+  const now = Date.now()
+  const diffMs = now - timestamp
+  if (diffMs < 60_000) return "just now"
+  const minutes = Math.floor(diffMs / 60_000)
+  if (minutes < 60) return `${minutes}m ago`
+  const hours = Math.floor(minutes / 60)
+  if (hours < 24) return `${hours}h ago`
+  const days = Math.floor(hours / 24)
+  if (days < 30) return `${days}d ago`
+  return new Date(timestamp).toLocaleDateString(undefined, { month: "short", day: "numeric" })
+}
+
+// ─── Shared project card component ─────────────────────────────────────
+
+function ProjectCard({
+  project,
+  isActive = false,
+  onClick,
+  disabled = false,
+}: {
+  project: ProjectMetadata
+  isActive?: boolean
+  onClick: () => void
+  disabled?: boolean
+}) {
+  const style = KIND_STYLE[project.kind]
+  const KindIcon = style.icon
+  const stack = techStack(project.signals)
+  const progress = project.progress ? progressLabel(project.progress) : null
+  const milestoneCount = project.progress
+    ? `${project.progress.milestonesCompleted}/${project.progress.milestonesTotal}`
+    : null
+
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      className={cn(
+        "group flex w-full items-start gap-3.5 rounded-xl border px-4 py-3.5 text-left transition-all duration-200",
+        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+        "active:scale-[0.98]",
+        isActive
+          ? "border-primary/30 bg-primary/[0.08]"
+          : "border-border/40 bg-card/20 hover:border-foreground/15 hover:bg-card/50",
+        disabled && "opacity-40 pointer-events-none",
+      )}
+    >
+      {/* Icon */}
+      <div
+        className={cn(
+          "flex h-9 w-9 shrink-0 items-center justify-center rounded-lg mt-0.5",
+          isActive ? "bg-primary/15" : style.bgClass,
+        )}
+      >
+        {isActive ? (
+          <CheckCircle2 className="h-4 w-4 text-primary" />
+        ) : (
+          <KindIcon className={cn("h-4 w-4", style.color)} />
+        )}
+      </div>
+
+      {/* Content */}
+      <div className="min-w-0 flex-1">
+        {/* Row 1: name + kind badge */}
+        <div className="flex items-center gap-2">
+          <span className="text-sm font-semibold text-foreground truncate">{project.name}</span>
+          <span className={cn("text-[10px] font-medium shrink-0", isActive ? "text-primary" : style.color)}>
+            {isActive ? "Current" : style.label}
+          </span>
+        </div>
+
+        {/* Row 2: tech stack tags */}
+        {stack.length > 0 && (
+          <div className="mt-1 flex items-center gap-1.5">
+            {stack.map((tag) => (
+              <span
+                key={tag}
+                className="rounded bg-foreground/[0.06] px-1.5 py-0.5 text-[10px] text-muted-foreground"
+              >
+                {tag}
+              </span>
+            ))}
+          </div>
+        )}
+
+        {/* Row 3: progress info */}
+        {progress && (
+          <div className="mt-1.5 text-[11px] text-muted-foreground/70">{progress}</div>
+        )}
+
+        {/* Row 4: milestone progress bar */}
+        {project.progress && project.progress.milestonesTotal > 0 && (
+          <div className="mt-2 flex items-center gap-2">
+            <div className="h-1 flex-1 overflow-hidden rounded-full bg-foreground/[0.08]">
+              <div
+                className="h-full rounded-full bg-success/70 transition-all"
+                style={{
+                  width: `${Math.round(
+                    (project.progress.milestonesCompleted / project.progress.milestonesTotal) * 100,
+                  )}%`,
+                }}
+              />
+            </div>
+            <span className="text-[10px] tabular-nums text-muted-foreground/60">{milestoneCount}</span>
+          </div>
+        )}
+      </div>
+
+      {/* Arrow */}
+      <ArrowRight className="mt-1 h-4 w-4 shrink-0 text-muted-foreground/30 transition-all group-hover:text-muted-foreground/70 group-hover:translate-x-0.5" />
+    </button>
+  )
+}
+
+// ─── ProjectsPanel (slide-out sheet from sidebar) ──────────────────────
+
+export function ProjectsPanel({
+  open,
+  onOpenChange,
+}: {
+  open: boolean
+  onOpenChange: (open: boolean) => void
+}) {
   const manager = useProjectStoreManager()
   const activeProjectCwd = useSyncExternalStore(manager.subscribe, manager.getSnapshot, manager.getSnapshot)
 
@@ -97,10 +273,12 @@ export function ProjectsView() {
   const loadProjects = useCallback(async (root: string) => {
     const projRes = await fetch(`/api/projects?root=${encodeURIComponent(root)}&detail=true`)
     if (!projRes.ok) throw new Error(`Failed to discover projects: ${projRes.status}`)
-    return await projRes.json() as ProjectMetadata[]
+    return (await projRes.json()) as ProjectMetadata[]
   }, [])
 
+  // Load projects when panel opens
   useEffect(() => {
+    if (!open) return
     let cancelled = false
 
     async function load() {
@@ -131,290 +309,205 @@ export function ProjectsView() {
     }
 
     load()
-    return () => { cancelled = true }
-  }, [loadProjects])
-
-  /** Called after dev root is saved — refreshes the view with discovered projects */
-  const handleDevRootSaved = useCallback(async (newRoot: string) => {
-    setDevRoot(newRoot)
-    setLoading(true)
-    setError(null)
-    try {
-      const discovered = await loadProjects(newRoot)
-      setProjects(discovered)
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load projects")
-    } finally {
-      setLoading(false)
+    return () => {
+      cancelled = true
     }
-  }, [loadProjects])
+  }, [open, loadProjects])
 
-  const [switchingTo, setSwitchingTo] = useState<string | null>(null)
-  const [expandedProject, setExpandedProject] = useState<string | null>(null)
+  const handleDevRootSaved = useCallback(
+    async (newRoot: string) => {
+      setDevRoot(newRoot)
+      setLoading(true)
+      setError(null)
+      try {
+        const discovered = await loadProjects(newRoot)
+        setProjects(discovered)
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Failed to load projects")
+      } finally {
+        setLoading(false)
+      }
+    },
+    [loadProjects],
+  )
+
   const [newProjectOpen, setNewProjectOpen] = useState(false)
-  const switchPollRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const workspaceState = useGSDWorkspaceState()
 
-  // Clean up poll on unmount
-  useEffect(() => {
-    return () => {
-      if (switchPollRef.current) clearInterval(switchPollRef.current)
-    }
-  }, [])
-
-  const handleProjectCreated = useCallback((newProject: ProjectMetadata) => {
-    setProjects(prev => [...prev, newProject].sort((a, b) => a.name.localeCompare(b.name)))
-    setNewProjectOpen(false)
-    handleSelectProject(newProject)
-  }, [])
+  const handleProjectCreated = useCallback(
+    (newProject: ProjectMetadata) => {
+      setProjects((prev) => [...prev, newProject].sort((a, b) => a.name.localeCompare(b.name)))
+      setNewProjectOpen(false)
+      handleSelectProject(newProject)
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [],
+  )
 
   function handleSelectProject(project: ProjectMetadata) {
-    // Already active — just navigate
+    // Already active — just close the panel
     if (activeProjectCwd === project.path) {
-      window.dispatchEvent(
-        new CustomEvent("gsd:navigate-view", { detail: { view: "dashboard" } })
-      )
+      onOpenChange(false)
       return
     }
 
-    setSwitchingTo(project.name)
-    const store = manager.switchProject(project.path)
-
-    // Poll the store's boot status until ready (or error/timeout)
-    if (switchPollRef.current) clearInterval(switchPollRef.current)
-    const startTime = Date.now()
-    switchPollRef.current = setInterval(() => {
-      const state = store.getSnapshot()
-      const elapsed = Date.now() - startTime
-      if (state.bootStatus === "ready" || state.bootStatus === "error" || elapsed > 30000) {
-        if (switchPollRef.current) clearInterval(switchPollRef.current)
-        switchPollRef.current = null
-        setSwitchingTo(null)
-        window.dispatchEvent(
-          new CustomEvent("gsd:navigate-view", { detail: { view: "dashboard" } })
-        )
-      }
-    }, 150)
+    // Close panel immediately — boot happens in the background with a
+    // loading toast managed by WorkspaceChrome
+    onOpenChange(false)
+    manager.switchProject(project.path)
+    window.dispatchEvent(new CustomEvent("gsd:navigate-view", { detail: { view: "dashboard" } }))
   }
 
-  // ─── Switching dialog ────────────────────────────────────────────────
+  // Sort: active-gsd first, then by name
+  const sortedProjects = [...projects].sort((a, b) => {
+    const kindOrder: Record<ProjectDetectionKind, number> = {
+      "active-gsd": 0,
+      "empty-gsd": 1,
+      brownfield: 2,
+      "v1-legacy": 3,
+      blank: 4,
+    }
+    const ka = kindOrder[a.kind] ?? 5
+    const kb = kindOrder[b.kind] ?? 5
+    if (ka !== kb) return ka - kb
+    return a.name.localeCompare(b.name)
+  })
 
-  const switchingDialog = (
-    <Dialog open={!!switchingTo} onOpenChange={() => {}}>
-      <DialogContent className="sm:max-w-sm" onPointerDownOutside={(e) => e.preventDefault()}>
-        <div className="flex flex-col items-center gap-4 py-4 text-center">
-          <Loader2 className="h-8 w-8 animate-spin text-primary" />
-          <div className="space-y-1.5">
-            <h3 className="text-base font-semibold text-foreground">
-              Opening {switchingTo}
-            </h3>
-            <p className="text-sm text-muted-foreground">
-              Starting project bridge and loading workspace…
-            </p>
-          </div>
-        </div>
-      </DialogContent>
-    </Dialog>
-  )
+  // ─── Content for the various states ──────────────────────────────
 
-  // ─── Loading state ─────────────────────────────────────────────────────
+  let content: React.ReactNode
 
   if (loading) {
-    return (
-      <>
-        {switchingDialog}
-        <div className="flex h-full items-center justify-center">
-          <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
-        </div>
-      </>
+    content = (
+      <div className="flex items-center justify-center gap-2 py-16 text-xs text-muted-foreground">
+        <Loader2 className="h-4 w-4 animate-spin" />
+        Discovering projects…
+      </div>
     )
-  }
-
-  // ─── Error state ───────────────────────────────────────────────────────
-
-  if (error) {
-    return (
-      <>
-        {switchingDialog}
-        <div className="flex h-full items-center justify-center px-6">
-          <div className="flex max-w-md flex-col items-center gap-3 text-center">
-            <AlertCircle className="h-8 w-8 text-destructive" />
-            <p className="text-sm text-destructive">{error}</p>
-          </div>
-        </div>
-      </>
+  } else if (error) {
+    content = (
+      <div className="flex flex-col items-center gap-3 px-5 py-16 text-center">
+        <AlertCircle className="h-8 w-8 text-destructive" />
+        <p className="text-sm text-destructive">{error}</p>
+      </div>
     )
-  }
-
-  // ─── No dev root configured ────────────────────────────────────────────
-
-  if (!devRoot) {
-    return <DevRootSetup onSaved={handleDevRootSaved} />
-  }
-
-  // ─── Dev root set, no projects found ───────────────────────────────────
-
-  if (projects.length === 0) {
-    return (
-      <div className="flex h-full items-center justify-center px-6">
-        <div className="flex max-w-md flex-col items-center gap-4 text-center">
-          <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-muted">
-            <FolderOpen className="h-7 w-7 text-muted-foreground" />
-          </div>
-          <div className="space-y-2">
-            <h2 className="text-lg font-semibold text-foreground">No projects found</h2>
-            <p className="text-sm text-muted-foreground leading-relaxed">
-              No project directories were discovered in{" "}
-              <code className="rounded bg-muted px-1.5 py-0.5 text-xs font-mono text-foreground">{devRoot}</code>
-            </p>
-          </div>
+  } else if (!devRoot) {
+    content = <DevRootSetup onSaved={handleDevRootSaved} />
+  } else if (sortedProjects.length === 0) {
+    content = (
+      <div className="flex flex-col items-center gap-4 px-5 py-16 text-center">
+        <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-muted">
+          <FolderOpen className="h-7 w-7 text-muted-foreground" />
+        </div>
+        <div className="space-y-2">
+          <h3 className="text-base font-semibold text-foreground">No projects found</h3>
+          <p className="text-sm text-muted-foreground leading-relaxed">
+            No project directories discovered in{" "}
+            <code className="rounded bg-muted px-1.5 py-0.5 text-xs font-mono text-foreground">
+              {devRoot}
+            </code>
+          </p>
         </div>
       </div>
     )
-  }
+  } else {
+    content = (
+      <div className="space-y-2">
+        {/* Project cards */}
+        {sortedProjects.map((project) => (
+          <ProjectCard
+            key={project.path}
+            project={project}
+            isActive={activeProjectCwd === project.path}
+            onClick={() => handleSelectProject(project)}
+          />
+        ))}
 
-  // ─── Project list ──────────────────────────────────────────────────────
-
-  return (
-    <>
-      {switchingDialog}
-      <div className="h-full overflow-y-auto">
-        <div className="mx-auto max-w-4xl px-6 py-6 space-y-6">
-          {/* Header */}
-        <div className="flex items-start justify-between gap-4">
-          <div className="space-y-1">
-            <h1 className="text-xl font-semibold text-foreground tracking-tight">Projects</h1>
-            <p className="text-sm text-muted-foreground">
-              <code className="rounded bg-muted px-1.5 py-0.5 text-xs font-mono">{devRoot}</code>
-              <span className="ml-2 text-muted-foreground/60">·</span>
-              <span className="ml-2">{projects.length} project{projects.length !== 1 ? "s" : ""}</span>
-            </p>
+        {/* Create new project button */}
+        <button
+          type="button"
+          onClick={() => setNewProjectOpen(true)}
+          className={cn(
+            "flex w-full items-center gap-3.5 rounded-xl border border-dashed px-4 py-3.5 text-left transition-all duration-200",
+            "border-border/40 text-muted-foreground hover:border-foreground/15 hover:text-foreground",
+            "active:scale-[0.98]",
+          )}
+        >
+          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-foreground/[0.04]">
+            <Plus className="h-4 w-4" />
           </div>
-          <Button
-            size="sm"
-            variant="outline"
-            className="gap-1.5 shrink-0"
-            onClick={() => setNewProjectOpen(true)}
-          >
-            <Plus className="h-3.5 w-3.5" />
-            New Project
-          </Button>
-        </div>
+          <div>
+            <span className="text-sm font-medium">Create new project</span>
+            <p className="mt-0.5 text-[11px] text-muted-foreground/70">Initialize a new directory with Git</p>
+          </div>
+        </button>
 
         {/* New project dialog */}
         <NewProjectDialog
           open={newProjectOpen}
           onOpenChange={setNewProjectOpen}
           devRoot={devRoot}
-          existingNames={projects.map(p => p.name)}
+          existingNames={projects.map((p) => p.name)}
           onCreated={handleProjectCreated}
         />
-
-        {/* List */}
-        <div className="flex flex-col gap-2">
-          {projects.map((project) => {
-            const isActive = activeProjectCwd === project.path
-            const isExpanded = expandedProject === project.path
-            const config = KIND_CONFIG[project.kind]
-            const BadgeIcon = config.icon
-            const signalText = describeSignals(project.signals)
-
-            return (
-              <div key={project.path} className="flex flex-col">
-                {/* Row */}
-                <button
-                  onClick={() => setExpandedProject(isExpanded ? null : project.path)}
-                  onDoubleClick={() => handleSelectProject(project)}
-                  className={cn(
-                    "group relative flex items-center gap-3 rounded-lg border px-4 py-3 text-left transition-all",
-                    "hover:bg-accent/50",
-                    isActive
-                      ? "border-primary/40 bg-primary/5 ring-1 ring-primary/20"
-                      : "border-border bg-card",
-                    isExpanded && "rounded-b-none border-b-0",
-                  )}
-                >
-                  {/* Active indicator dot */}
-                  {isActive && (
-                    <div className="h-2 w-2 shrink-0 rounded-full bg-primary animate-pulse" />
-                  )}
-
-                  {/* Name */}
-                  <h3 className="text-sm font-semibold text-foreground truncate">{project.name}</h3>
-
-                  {/* Kind badge */}
-                  <span
-                    className={cn(
-                      "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-medium shrink-0",
-                      config.className,
-                    )}
-                  >
-                    <BadgeIcon className="h-3 w-3" />
-                    {config.label}
-                  </span>
-
-                  {/* Signal chips */}
-                  {signalText && (
-                    <span className="text-[10px] text-muted-foreground/50 shrink-0 hidden sm:inline">{signalText}</span>
-                  )}
-
-                  {/* Spacer */}
-                  <div className="flex-1" />
-
-                  {/* Chevron */}
-                  <ChevronDown
-                    className={cn(
-                      "h-4 w-4 text-muted-foreground/40 transition-transform shrink-0",
-                      isExpanded && "rotate-180",
-                    )}
-                  />
-                </button>
-
-                {/* Expanded detail */}
-                {isExpanded && (
-                  <div
-                    className={cn(
-                      "rounded-b-lg border border-t-0 px-4 py-3 space-y-3",
-                      isActive
-                        ? "border-primary/40 bg-primary/5"
-                        : "border-border bg-card",
-                    )}
-                  >
-                    {/* Path */}
-                    <p className="text-[11px] text-muted-foreground/60 font-mono truncate">{project.path}</p>
-
-                    {/* Progress detail */}
-                    {isActive ? (
-                      <ActiveProjectDetail workspaceState={workspaceState} />
-                    ) : (
-                      <InactiveProjectDetail progress={project.progress ?? null} />
-                    )}
-
-                    {/* Open button */}
-                    <div className="flex justify-end pt-1">
-                      <Button
-                        size="sm"
-                        variant={isActive ? "default" : "outline"}
-                        className="gap-1.5 h-8 text-xs"
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          handleSelectProject(project)
-                        }}
-                      >
-                        <ExternalLink className="h-3 w-3" />
-                        {isActive ? "Go to Dashboard" : "Open"}
-                      </Button>
-                    </div>
-                  </div>
-                )}
-              </div>
-            )
-          })}
-        </div>
       </div>
-    </div>
-    </>
+    )
+  }
+
+  return (
+    <Sheet open={open} onOpenChange={onOpenChange}>
+      <SheetContent side="left" className="flex h-full w-full flex-col p-0 sm:max-w-[420px]" data-testid="projects-panel">
+        <SheetHeader className="sr-only">
+          <SheetTitle>Projects</SheetTitle>
+          <SheetDescription>Switch between projects or create a new one</SheetDescription>
+        </SheetHeader>
+
+        {/* Visible header */}
+        <div className="flex items-center justify-between border-b border-border/40 px-5 py-4">
+          <div>
+            <h2 className="text-base font-semibold text-foreground">Projects</h2>
+            {devRoot && !loading && (
+              <p className="mt-0.5 text-xs text-muted-foreground">
+                <code className="rounded bg-muted px-1 py-0.5 font-mono text-[10px]">{devRoot}</code>
+                <span className="ml-1.5 text-muted-foreground/50">·</span>
+                <span className="ml-1.5">{projects.length} project{projects.length !== 1 ? "s" : ""}</span>
+              </p>
+            )}
+          </div>
+          <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0" onClick={() => onOpenChange(false)}>
+            <X className="h-4 w-4" />
+          </Button>
+        </div>
+
+        {/* Scrollable project list */}
+        <ScrollArea className="min-h-0 flex-1">
+          <div className="px-5 py-4">{content}</div>
+        </ScrollArea>
+      </SheetContent>
+    </Sheet>
   )
+}
+
+// ─── Active project inline summary (compact for panel card) ────────────
+
+function ActiveProjectSummary({ workspaceState }: { workspaceState: ReturnType<typeof useGSDWorkspaceState> }) {
+  const workspace = getLiveWorkspaceIndex(workspaceState)
+  const dashboard = getLiveAutoDashboard(workspaceState)
+  const currentSlice = getCurrentSlice(workspace)
+
+  if (!workspace) return null
+
+  const activeMilestone = workspace.milestones.find((m) => m.id === workspace.active.milestoneId)
+  const cost = dashboard?.totalCost ?? 0
+
+  const parts: string[] = []
+  if (activeMilestone) parts.push(activeMilestone.id)
+  if (currentSlice) parts.push(currentSlice.id)
+  if (cost > 0) parts.push(formatCost(cost))
+
+  if (parts.length === 0) return null
+
+  return <div className="mt-1.5 text-[11px] text-muted-foreground/70">{parts.join(" · ")}</div>
 }
 
 // ─── New Project Dialog ────────────────────────────────────────────────
@@ -437,13 +530,11 @@ function NewProjectDialog({
   const [error, setError] = useState<string | null>(null)
   const inputRef = useRef<HTMLInputElement>(null)
 
-  // Focus input when dialog opens
   useEffect(() => {
     if (open) {
       setName("")
       setError(null)
       setCreating(false)
-      // Small delay to let the dialog render
       const t = setTimeout(() => inputRef.current?.focus(), 100)
       return () => clearTimeout(t)
     }
@@ -474,7 +565,7 @@ function NewProjectDialog({
         const body = await res.json().catch(() => ({}))
         throw new Error((body as { error?: string }).error ?? `Failed (${res.status})`)
       }
-      const project = await res.json() as ProjectMetadata
+      const project = (await res.json()) as ProjectMetadata
       onCreated(project)
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to create project")
@@ -514,12 +605,8 @@ function NewProjectDialog({
               autoComplete="off"
               aria-invalid={!!validationHint}
             />
-            {validationHint && (
-              <p className="text-xs text-destructive">{validationHint}</p>
-            )}
-            {error && (
-              <p className="text-xs text-destructive">{error}</p>
-            )}
+            {validationHint && <p className="text-xs text-destructive">{validationHint}</p>}
+            {error && <p className="text-xs text-destructive">{error}</p>}
             {name && nameValid && !nameConflict && (
               <p className="text-xs text-muted-foreground font-mono">
                 {devRoot}/{name}
@@ -532,17 +619,8 @@ function NewProjectDialog({
           <Button variant="ghost" size="sm" onClick={() => onOpenChange(false)} disabled={creating}>
             Cancel
           </Button>
-          <Button
-            size="sm"
-            onClick={() => void handleCreate()}
-            disabled={!canSubmit}
-            className="gap-1.5"
-          >
-            {creating ? (
-              <Loader2 className="h-3.5 w-3.5 animate-spin" />
-            ) : (
-              <Plus className="h-3.5 w-3.5" />
-            )}
+          <Button size="sm" onClick={() => void handleCreate()} disabled={!canSubmit} className="gap-1.5">
+            {creating ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Plus className="h-3.5 w-3.5" />}
             Create
           </Button>
         </DialogFooter>
@@ -551,105 +629,7 @@ function NewProjectDialog({
   )
 }
 
-// ─── Active project detail (reads from workspace store) ────────────────
-
-function ActiveProjectDetail({ workspaceState }: { workspaceState: ReturnType<typeof useGSDWorkspaceState> }) {
-  const workspace = getLiveWorkspaceIndex(workspaceState)
-  const dashboard = getLiveAutoDashboard(workspaceState)
-  const currentSlice = getCurrentSlice(workspace)
-
-  if (!workspace) {
-    return <p className="text-xs text-muted-foreground italic">Workspace not loaded</p>
-  }
-
-  // Find active milestone
-  const activeMilestone = workspace.milestones.find(
-    (m) => m.id === workspace.active.milestoneId
-  )
-
-  // Count tasks across all slices in the active milestone
-  let tasksDone = 0
-  let tasksTotal = 0
-  if (activeMilestone) {
-    for (const slice of activeMilestone.slices) {
-      for (const task of slice.tasks) {
-        tasksTotal++
-        if (task.done) tasksDone++
-      }
-    }
-  }
-
-  const cost = dashboard?.totalCost ?? 0
-
-  return (
-    <div className="flex flex-wrap gap-x-8 gap-y-2 text-xs">
-      <div className="space-y-0.5 min-w-[140px]">
-        <p className="text-muted-foreground/60 uppercase tracking-wider text-[10px] font-medium">Milestone</p>
-        <p className="text-foreground font-medium truncate">
-          {activeMilestone ? `${activeMilestone.id}: ${activeMilestone.title}` : "None"}
-        </p>
-      </div>
-      <div className="space-y-0.5 min-w-[140px]">
-        <p className="text-muted-foreground/60 uppercase tracking-wider text-[10px] font-medium">Active Slice</p>
-        <p className="text-foreground font-medium truncate">
-          {currentSlice ? `${currentSlice.id}: ${currentSlice.title}` : "None"}
-        </p>
-      </div>
-      <div className="space-y-0.5 min-w-[100px]">
-        <p className="text-muted-foreground/60 uppercase tracking-wider text-[10px] font-medium">Tasks</p>
-        <p className="text-foreground font-medium">
-          {tasksDone} / {tasksTotal} done
-        </p>
-      </div>
-      <div className="space-y-0.5 min-w-[100px]">
-        <p className="text-muted-foreground/60 uppercase tracking-wider text-[10px] font-medium">Session Cost</p>
-        <p className="text-foreground font-medium">{formatCost(cost)}</p>
-      </div>
-    </div>
-  )
-}
-
-// ─── Inactive project detail (reads from API progress) ─────────────────
-
-function InactiveProjectDetail({ progress }: { progress: ProjectProgressInfo | null }) {
-  if (!progress) {
-    return <p className="text-xs text-muted-foreground italic">No progress data available</p>
-  }
-
-  return (
-    <div className="flex flex-wrap gap-x-8 gap-y-2 text-xs">
-      <div className="space-y-0.5 min-w-[140px]">
-        <p className="text-muted-foreground/60 uppercase tracking-wider text-[10px] font-medium">Milestone</p>
-        <p className="text-foreground font-medium truncate">{progress.activeMilestone ?? "None"}</p>
-      </div>
-      <div className="space-y-0.5 min-w-[140px]">
-        <p className="text-muted-foreground/60 uppercase tracking-wider text-[10px] font-medium">Active Slice</p>
-        <p className="text-foreground font-medium truncate">{progress.activeSlice ?? "None"}</p>
-      </div>
-      <div className="space-y-0.5 min-w-[100px]">
-        <p className="text-muted-foreground/60 uppercase tracking-wider text-[10px] font-medium">Phase</p>
-        <p className="text-foreground font-medium">{progress.phase ?? "Unknown"}</p>
-      </div>
-      <div className="space-y-0.5 min-w-[100px]">
-        <p className="text-muted-foreground/60 uppercase tracking-wider text-[10px] font-medium">Milestones</p>
-        <p className="text-foreground font-medium">{progress.milestonesCompleted} / {progress.milestonesTotal}</p>
-      </div>
-    </div>
-  )
-}
-
 // ─── Folder Picker Dialog ───────────────────────────────────────────────
-
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog"
-import { ScrollArea } from "@/components/ui/scroll-area"
-import { ChevronRight, Folder, CornerLeftUp } from "lucide-react"
 
 interface BrowseEntry {
   name: string
@@ -700,7 +680,6 @@ function FolderPickerDialog({
     }
   }, [])
 
-  // Load initial directory when dialog opens
   useEffect(() => {
     if (open) {
       void browse(initialPath ?? undefined)
@@ -717,14 +696,12 @@ function FolderPickerDialog({
           </DialogDescription>
         </DialogHeader>
 
-        {/* Current path breadcrumb */}
         <div className="border-y border-border/40 bg-muted/30 px-5 py-2">
           <p className="font-mono text-xs text-muted-foreground truncate" title={currentPath}>
             {currentPath}
           </p>
         </div>
 
-        {/* Directory listing */}
         <ScrollArea className="h-[320px]">
           <div className="px-2 py-1">
             {loading && (
@@ -733,13 +710,10 @@ function FolderPickerDialog({
               </div>
             )}
 
-            {error && (
-              <div className="px-3 py-4 text-center text-xs text-destructive">{error}</div>
-            )}
+            {error && <div className="px-3 py-4 text-center text-xs text-destructive">{error}</div>}
 
             {!loading && !error && (
               <>
-                {/* Parent directory */}
                 {parentPath && (
                   <button
                     onClick={() => void browse(parentPath)}
@@ -750,7 +724,6 @@ function FolderPickerDialog({
                   </button>
                 )}
 
-                {/* Subdirectories */}
                 {entries.map((entry) => (
                   <button
                     key={entry.path}
@@ -763,11 +736,8 @@ function FolderPickerDialog({
                   </button>
                 ))}
 
-                {/* Empty directory */}
                 {!parentPath && entries.length === 0 && (
-                  <div className="px-3 py-8 text-center text-xs text-muted-foreground">
-                    No subdirectories
-                  </div>
+                  <div className="px-3 py-8 text-center text-xs text-muted-foreground">No subdirectories</div>
                 )}
               </>
             )}
@@ -796,46 +766,52 @@ function FolderPickerDialog({
   )
 }
 
-// ─── Dev Root Setup Component (uses folder picker) ──────────────────────
+// ─── Dev Root Setup Component ───────────────────────────────────────────
 
-function DevRootSetup({ onSaved, currentRoot }: { onSaved: (root: string) => void; currentRoot?: string | null }) {
+function DevRootSetup({
+  onSaved,
+  currentRoot,
+}: {
+  onSaved: (root: string) => void
+  currentRoot?: string | null
+}) {
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState(false)
   const [pickerOpen, setPickerOpen] = useState(false)
 
-  const handleSave = useCallback(async (selectedPath: string) => {
-    setSaving(true)
-    setError(null)
-    setSuccess(false)
+  const handleSave = useCallback(
+    async (selectedPath: string) => {
+      setSaving(true)
+      setError(null)
+      setSuccess(false)
 
-    try {
-      const res = await fetch("/api/preferences", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ devRoot: selectedPath }),
-      })
+      try {
+        const res = await fetch("/api/preferences", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ devRoot: selectedPath }),
+        })
 
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({}))
-        throw new Error(
-          (body as { error?: string }).error ?? `Request failed (${res.status})`,
-        )
+        if (!res.ok) {
+          const body = await res.json().catch(() => ({}))
+          throw new Error((body as { error?: string }).error ?? `Request failed (${res.status})`)
+        }
+
+        setSuccess(true)
+        onSaved(selectedPath)
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Failed to save preference")
+      } finally {
+        setSaving(false)
       }
-
-      setSuccess(true)
-      onSaved(selectedPath)
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to save preference")
-    } finally {
-      setSaving(false)
-    }
-  }, [onSaved])
+    },
+    [onSaved],
+  )
 
   const isCompact = !!currentRoot
 
   if (isCompact) {
-    // Compact inline form for settings panel
     return (
       <div className="space-y-3" data-testid="devroot-settings">
         <div className="flex items-center gap-2">
@@ -875,44 +851,39 @@ function DevRootSetup({ onSaved, currentRoot }: { onSaved: (root: string) => voi
     )
   }
 
-  // Full-page centered setup for first-time configuration
+  // Inline setup for first-time configuration
   return (
-    <div className="flex h-full items-center justify-center px-6">
-      <div className="flex max-w-md flex-col items-center gap-6 text-center">
-        <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-muted">
-          <FolderRoot className="h-7 w-7 text-muted-foreground" />
+    <div className="rounded-md border border-border bg-card p-6">
+      <div className="flex items-start gap-4">
+        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md border border-border bg-accent">
+          <FolderRoot className="h-5 w-5 text-muted-foreground" />
         </div>
-        <div className="space-y-2">
-          <h2 className="text-lg font-semibold text-foreground">Set your development root</h2>
-          <p className="text-sm text-muted-foreground leading-relaxed">
-            The folder that contains your projects. GSD will scan it for project directories.
+        <div className="min-w-0 flex-1">
+          <h3 className="text-sm font-semibold text-foreground">Set your development root</h3>
+          <p className="mt-1 text-xs text-muted-foreground leading-relaxed">
+            Point GSD at the folder that contains your project directories. It scans one level deep.
           </p>
+          <Button
+            onClick={() => setPickerOpen(true)}
+            disabled={saving}
+            size="sm"
+            className="mt-3 gap-2"
+            data-testid="projects-devroot-browse"
+          >
+            {saving ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <>
+                <FolderOpen className="h-3.5 w-3.5" />
+                Browse
+              </>
+            )}
+          </Button>
+          {error && <p className="mt-2 text-xs text-destructive">{error}</p>}
         </div>
-
-        <Button
-          onClick={() => setPickerOpen(true)}
-          disabled={saving}
-          className="h-11 gap-2.5 px-6"
-          data-testid="projects-devroot-browse"
-        >
-          {saving ? (
-            <Loader2 className="h-4 w-4 animate-spin" />
-          ) : (
-            <>
-              <FolderOpen className="h-4 w-4" />
-              Browse for Folder
-            </>
-          )}
-        </Button>
-
-        {error && <p className="text-sm text-destructive">{error}</p>}
-
-        <FolderPickerDialog
-          open={pickerOpen}
-          onOpenChange={setPickerOpen}
-          onSelect={(path) => void handleSave(path)}
-        />
       </div>
+
+      <FolderPickerDialog open={pickerOpen} onOpenChange={setPickerOpen} onSelect={(path) => void handleSave(path)} />
     </div>
   )
 }
@@ -951,10 +922,341 @@ export function DevRootSettingsSection() {
       <p className="text-xs text-muted-foreground leading-relaxed">
         The parent folder containing your project directories. GSD scans one level deep for projects.
       </p>
-      <DevRootSetup
-        currentRoot={devRoot ?? ""}
-        onSaved={(root) => setDevRoot(root)}
-      />
+      <DevRootSetup currentRoot={devRoot ?? ""} onSaved={(root) => setDevRoot(root)} />
+    </div>
+  )
+}
+
+// ─── Project Selection Gate ─────────────────────────────────────────────
+//
+// Full-screen IDE-style welcome shown before any project is opened.
+// Designed to feel like opening the app — not a wizard or onboarding flow.
+// Mirrors the app shell layout: header bar, sidebar-width left column,
+// project list as the main content area.
+
+export function ProjectSelectionGate() {
+  const manager = useProjectStoreManager()
+
+  const [projects, setProjects] = useState<ProjectMetadata[]>([])
+  const [devRoot, setDevRoot] = useState<string | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const [newProjectOpen, setNewProjectOpen] = useState(false)
+  const [filter, setFilter] = useState("")
+
+  const loadProjects = useCallback(async (root: string) => {
+    const projRes = await fetch(`/api/projects?root=${encodeURIComponent(root)}&detail=true`)
+    if (!projRes.ok) throw new Error(`Failed to discover projects: ${projRes.status}`)
+    return (await projRes.json()) as ProjectMetadata[]
+  }, [])
+
+  useEffect(() => {
+    let cancelled = false
+
+    async function load() {
+      setLoading(true)
+      setError(null)
+      try {
+        const prefsRes = await fetch("/api/preferences")
+        if (!prefsRes.ok) throw new Error(`Failed to load preferences: ${prefsRes.status}`)
+        const prefs = await prefsRes.json()
+
+        if (!prefs.devRoot) {
+          setDevRoot(null)
+          setProjects([])
+          setLoading(false)
+          return
+        }
+
+        setDevRoot(prefs.devRoot)
+        const discovered = await loadProjects(prefs.devRoot)
+        if (!cancelled) setProjects(discovered)
+      } catch (err) {
+        if (!cancelled) {
+          setError(err instanceof Error ? err.message : "Unknown error")
+        }
+      } finally {
+        if (!cancelled) setLoading(false)
+      }
+    }
+
+    load()
+    return () => {
+      cancelled = true
+    }
+  }, [loadProjects])
+
+  const handleDevRootSaved = useCallback(
+    async (newRoot: string) => {
+      setDevRoot(newRoot)
+      setLoading(true)
+      setError(null)
+      try {
+        const discovered = await loadProjects(newRoot)
+        setProjects(discovered)
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Failed to load projects")
+      } finally {
+        setLoading(false)
+      }
+    },
+    [loadProjects],
+  )
+
+  const handleProjectCreated = useCallback(
+    (newProject: ProjectMetadata) => {
+      setProjects((prev) => [...prev, newProject].sort((a, b) => a.name.localeCompare(b.name)))
+      setNewProjectOpen(false)
+      manager.switchProject(newProject.path)
+    },
+    [manager],
+  )
+
+  function handleSelectProject(project: ProjectMetadata) {
+    manager.switchProject(project.path)
+  }
+
+  // Sort: active-gsd first, then by name
+  const sortedProjects = [...projects].sort((a, b) => {
+    const kindOrder: Record<ProjectDetectionKind, number> = {
+      "active-gsd": 0,
+      "empty-gsd": 1,
+      brownfield: 2,
+      "v1-legacy": 3,
+      blank: 4,
+    }
+    const ka = kindOrder[a.kind] ?? 5
+    const kb = kindOrder[b.kind] ?? 5
+    if (ka !== kb) return ka - kb
+    return a.name.localeCompare(b.name)
+  })
+
+  // Filter projects by name
+  const filteredProjects = filter.trim()
+    ? sortedProjects.filter((p) => p.name.toLowerCase().includes(filter.toLowerCase()))
+    : sortedProjects
+
+  const hasProjects = !loading && sortedProjects.length > 0
+  const showFilter = sortedProjects.length > 5
+
+  return (
+    <div className="flex h-screen flex-col bg-background text-foreground" data-testid="project-selection-gate">
+      {/* ─── Header bar — matches the app shell ─── */}
+      <header className="flex h-12 shrink-0 items-center justify-between border-b border-border bg-card px-4">
+        <div className="flex items-center gap-2">
+          <Image
+            src="/logo-black.svg"
+            alt="GSD"
+            width={57}
+            height={16}
+            className="shrink-0 h-4 w-auto dark:hidden"
+          />
+          <Image
+            src="/logo-white.svg"
+            alt="GSD"
+            width={57}
+            height={16}
+            className="shrink-0 h-4 w-auto hidden dark:block"
+          />
+        </div>
+        {devRoot && !loading && (
+          <span className="text-xs text-muted-foreground font-mono">{devRoot}</span>
+        )}
+      </header>
+
+      {/* ─── Main content ─── */}
+      <div className="flex flex-1 overflow-hidden">
+        {/* Left gutter — mimics the nav rail width */}
+        <div className="hidden md:flex w-12 shrink-0 border-r border-border bg-sidebar" />
+
+        {/* Project area */}
+        <div className="flex-1 overflow-y-auto">
+          <div className="mx-auto max-w-2xl px-6 py-10 md:px-10 lg:py-14">
+
+            {/* Loading */}
+            {loading && (
+              <div className="flex items-center gap-3 py-20 justify-center text-sm text-muted-foreground">
+                <Loader2 className="h-4 w-4 animate-spin" />
+                Scanning for projects…
+              </div>
+            )}
+
+            {/* Error */}
+            {error && !loading && (
+              <div className="rounded-md border border-destructive/20 bg-destructive/[0.06] px-4 py-3 text-sm text-destructive">
+                {error}
+              </div>
+            )}
+
+            {/* No dev root — show setup */}
+            {!devRoot && !loading && !error && (
+              <div className="space-y-6">
+                <div>
+                  <h2 className="text-lg font-semibold tracking-tight text-foreground">
+                    Welcome to GSD
+                  </h2>
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    Set a development root to get started. GSD will discover projects inside it.
+                  </p>
+                </div>
+                <DevRootSetup onSaved={handleDevRootSaved} />
+              </div>
+            )}
+
+            {/* No projects found */}
+            {devRoot && !loading && sortedProjects.length === 0 && !error && (
+              <div className="space-y-6">
+                <div>
+                  <h2 className="text-lg font-semibold tracking-tight text-foreground">No projects found</h2>
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    No project directories were discovered. Create one to get started.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setNewProjectOpen(true)}
+                  className="flex items-center gap-3 rounded-md border border-dashed border-border px-4 py-3 text-sm text-muted-foreground transition-colors hover:border-foreground/20 hover:text-foreground"
+                >
+                  <Plus className="h-4 w-4" />
+                  Create a new project
+                </button>
+              </div>
+            )}
+
+            {/* ─── Project list ─── */}
+            {hasProjects && (
+              <div className="space-y-5">
+                {/* Section header with count + filter */}
+                <div className="flex items-end justify-between gap-4">
+                  <div>
+                    <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+                      Projects
+                    </p>
+                    <p className="mt-0.5 text-xs text-muted-foreground/60 tabular-nums">
+                      {sortedProjects.length} project{sortedProjects.length !== 1 ? "s" : ""}
+                    </p>
+                  </div>
+                  {showFilter && (
+                    <div className="relative w-48">
+                      <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground/50" />
+                      <input
+                        type="text"
+                        placeholder="Filter…"
+                        value={filter}
+                        onChange={(e) => setFilter(e.target.value)}
+                        className="h-8 w-full rounded-md border border-border bg-background pl-8 pr-3 text-xs text-foreground placeholder:text-muted-foreground/40 focus:outline-none focus:ring-1 focus:ring-ring"
+                      />
+                    </div>
+                  )}
+                </div>
+
+                {/* Project rows — table-like, dense */}
+                <div className="rounded-md border border-border bg-card overflow-hidden divide-y divide-border">
+                  {filteredProjects.map((project) => {
+                    const style = KIND_STYLE[project.kind]
+                    const KindIcon = style.icon
+                    const stack = techStack(project.signals)
+                    const progress = project.progress ? progressLabel(project.progress) : null
+                    const hasBar = project.progress && project.progress.milestonesTotal > 0
+                    const pct = hasBar
+                      ? Math.round((project.progress!.milestonesCompleted / project.progress!.milestonesTotal) * 100)
+                      : 0
+
+                    return (
+                      <button
+                        key={project.path}
+                        type="button"
+                        onClick={() => handleSelectProject(project)}
+                        className="group flex w-full items-center gap-4 px-4 py-3 text-left transition-colors hover:bg-accent/50 focus-visible:outline-none focus-visible:bg-accent/50"
+                      >
+                        {/* Icon */}
+                        <div className={cn("flex h-8 w-8 shrink-0 items-center justify-center rounded-md", style.bgClass)}>
+                          <KindIcon className={cn("h-3.5 w-3.5", style.color)} />
+                        </div>
+
+                        {/* Name + metadata */}
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-2">
+                            <span className="text-sm font-medium text-foreground truncate">{project.name}</span>
+                            <span className={cn("text-[10px] font-medium shrink-0", style.color)}>{style.label}</span>
+                          </div>
+                          {/* Stack tags + progress on one line */}
+                          <div className="mt-0.5 flex items-center gap-2 text-[11px] text-muted-foreground">
+                            {stack.length > 0 && (
+                              <span>{stack.join(" · ")}</span>
+                            )}
+                            {stack.length > 0 && progress && (
+                              <span className="text-muted-foreground/30">—</span>
+                            )}
+                            {progress && (
+                              <span className="truncate">{progress}</span>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Progress bar (compact) */}
+                        {hasBar && (
+                          <div className="hidden sm:flex items-center gap-2 shrink-0 w-24">
+                            <div className="h-1 flex-1 overflow-hidden rounded-full bg-foreground/[0.08]">
+                              <div
+                                className="h-full rounded-full bg-success/70 transition-all"
+                                style={{ width: `${pct}%` }}
+                              />
+                            </div>
+                            <span className="text-[10px] tabular-nums text-muted-foreground/50 w-6 text-right">
+                              {project.progress!.milestonesCompleted}/{project.progress!.milestonesTotal}
+                            </span>
+                          </div>
+                        )}
+
+                        {/* Modified time */}
+                        {project.lastModified > 0 && (
+                          <span className="hidden lg:inline text-[10px] text-muted-foreground/40 shrink-0 w-16 text-right tabular-nums">
+                            {relativeTime(project.lastModified)}
+                          </span>
+                        )}
+
+                        {/* Arrow */}
+                        <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground/20 transition-colors group-hover:text-muted-foreground/60" />
+                      </button>
+                    )
+                  })}
+
+                  {/* Empty filter state */}
+                  {filteredProjects.length === 0 && filter.trim() && (
+                    <div className="px-4 py-8 text-center text-xs text-muted-foreground">
+                      No projects matching "{filter}"
+                    </div>
+                  )}
+                </div>
+
+                {/* Create new row */}
+                <button
+                  type="button"
+                  onClick={() => setNewProjectOpen(true)}
+                  className="flex items-center gap-3 rounded-md border border-dashed border-border px-4 py-2.5 text-sm text-muted-foreground transition-colors hover:border-foreground/20 hover:text-foreground w-full"
+                >
+                  <Plus className="h-3.5 w-3.5" />
+                  New project
+                </button>
+
+                {devRoot && (
+                  <NewProjectDialog
+                    open={newProjectOpen}
+                    onOpenChange={setNewProjectOpen}
+                    devRoot={devRoot}
+                    existingNames={projects.map((p) => p.name)}
+                    onCreated={handleProjectCreated}
+                  />
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Right gutter — mimics the milestone sidebar width */}
+        <div className="hidden lg:flex w-64 shrink-0 border-l border-border bg-sidebar" />
+      </div>
     </div>
   )
 }

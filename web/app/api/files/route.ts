@@ -1,7 +1,7 @@
 import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join, resolve, relative, dirname } from "node:path";
 
-import { resolveProjectCwd } from "../../../../src/web/bridge-service.ts";
+import { requireProjectCwd } from "../../../../src/web/bridge-service.ts";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -110,7 +110,7 @@ export async function GET(request: Request): Promise<Response> {
     );
   }
 
-  const projectCwd = resolveProjectCwd(request);
+  const projectCwd = requireProjectCwd(request);
   const root = getRootForMode(rootParam, projectCwd);
   const headers = { "Cache-Control": "no-store" };
 
@@ -199,7 +199,7 @@ export async function POST(request: Request): Promise<Response> {
     );
   }
 
-  const projectCwd = resolveProjectCwd(request);
+  const projectCwd = requireProjectCwd(request);
   const root = getRootForMode(rootParam as RootMode, projectCwd);
 
   if (typeof pathParam !== "string" || pathParam.length === 0) {

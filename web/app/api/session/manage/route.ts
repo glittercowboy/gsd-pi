@@ -1,6 +1,6 @@
 import {
   renameSessionInCurrentProject,
-  resolveProjectCwd,
+  requireProjectCwd,
 } from "../../../../../src/web/bridge-service.ts"
 import {
   SESSION_BROWSER_SCOPE,
@@ -71,7 +71,7 @@ export async function POST(request: Request): Promise<Response> {
     })
   }
 
-  const projectCwd = resolveProjectCwd(request)
+  const projectCwd = requireProjectCwd(request)
   const response = await renameSessionInCurrentProject(payload, projectCwd)
   return Response.json(response, {
     status: responseStatus(response),

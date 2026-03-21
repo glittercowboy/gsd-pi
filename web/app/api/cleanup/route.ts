@@ -1,12 +1,12 @@
 import { collectCleanupData, executeCleanup } from "../../../../src/web/cleanup-service.ts"
-import { resolveProjectCwd } from "../../../../src/web/bridge-service.ts"
+import { requireProjectCwd } from "../../../../src/web/bridge-service.ts"
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
 
 export async function GET(request: Request): Promise<Response> {
   try {
-    const projectCwd = resolveProjectCwd(request);
+    const projectCwd = requireProjectCwd(request);
     const payload = await collectCleanupData(projectCwd)
     return Response.json(payload, {
       headers: {
@@ -39,7 +39,7 @@ export async function POST(request: Request): Promise<Response> {
       // No body or invalid JSON — empty arrays
     }
 
-    const projectCwd = resolveProjectCwd(request);
+    const projectCwd = requireProjectCwd(request);
     const payload = await executeCleanup(branches, snapshots, projectCwd)
     return Response.json(payload, {
       headers: {

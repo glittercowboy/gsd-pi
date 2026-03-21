@@ -11,7 +11,7 @@ import {
   getOrCreateSession,
   destroySession,
 } from "../../../../lib/pty-manager";
-import { resolveProjectCwd } from "../../../../../src/web/bridge-service.ts";
+import { requireProjectCwd } from "../../../../../src/web/bridge-service.ts";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -28,7 +28,7 @@ export async function GET(): Promise<Response> {
 }
 
 export async function POST(request: Request): Promise<Response> {
-  const projectCwd = resolveProjectCwd(request);
+  const projectCwd = requireProjectCwd(request);
   const id = `term-${getNextIndex()}`;
   let command: string | undefined;
   try {

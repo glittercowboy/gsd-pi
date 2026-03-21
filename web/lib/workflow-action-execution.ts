@@ -1,7 +1,7 @@
 import type { WorkspaceTerminalLine } from "./gsd-workspace-store"
 import { getUserMode } from "./use-user-mode"
 
-export type GSDViewName = "dashboard" | "power" | "chat" | "roadmap" | "files" | "activity" | "visualize" | "projects"
+export type GSDViewName = "dashboard" | "power" | "chat" | "roadmap" | "files" | "activity" | "visualize"
 
 export function navigateToGSDView(view: GSDViewName): void {
   if (typeof window === "undefined") return

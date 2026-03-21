@@ -1,4 +1,4 @@
-import { getProjectBridgeServiceForCwd, resolveProjectCwd } from "../../../../../src/web/bridge-service.ts";
+import { getProjectBridgeServiceForCwd, requireProjectCwd } from "../../../../../src/web/bridge-service.ts";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -18,7 +18,7 @@ export async function POST(request: Request): Promise<Response> {
   }
 
   try {
-    const projectCwd = resolveProjectCwd(request);
+    const projectCwd = requireProjectCwd(request);
     const bridge = getProjectBridgeServiceForCwd(projectCwd);
     await bridge.resizeTerminal(Math.floor(cols), Math.floor(rows));
     return Response.json({ ok: true });

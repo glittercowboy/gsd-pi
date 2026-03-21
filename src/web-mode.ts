@@ -444,9 +444,6 @@ async function waitForBootReady(url: string, timeoutMs = 180_000, stderr?: Writa
   const startedAt = Date.now()
   let lastError: string | null = null
   let hostUp = false
-  let lastPhase: string | null = null
-  let lastHealthyState: string | null = null
-  let consecutiveHealthyBoots = 0
   // Print a progress dot every N ms while waiting so the terminal isn't silent
   const TICKER_INTERVAL_MS = 5_000
   let lastTickAt = startedAt
@@ -459,67 +456,17 @@ async function waitForBootReady(url: string, timeoutMs = 180_000, stderr?: Writa
       const response = await requestLocalJson(`${url}/api/boot`, 45_000)
 
       if (response.statusCode >= 200 && response.statusCode < 300) {
-        const payload = JSON.parse(response.body) as {
-          bridge?: { phase?: string; lastError?: { message?: string } }
-          onboarding?: { locked?: boolean }
+        if (!hostUp) {
+          hostUp = true
+          stderr?.write(`[gsd] Web host ready.\n`)
         }
-        const phase = payload.bridge?.phase ?? 'unknown'
-        const healthyState = payload.onboarding?.locked ? 'locked' : phase === 'ready' ? 'ready' : null
-
-        if (payload.onboarding?.locked) {
-          if (!hostUp) {
-            hostUp = true
-            stderr?.write(`[gsd] Web host ready — waiting for onboarding unlock…\n`)
-          }
-          consecutiveHealthyBoots = healthyState === lastHealthyState ? consecutiveHealthyBoots + 1 : 1
-          lastHealthyState = healthyState
-          if (consecutiveHealthyBoots >= 2) {
-            return
-          }
-        } else {
-          if (!hostUp) {
-            hostUp = true
-            stderr?.write(`[gsd] Web host ready — waiting for agent bridge…\n`)
-          }
-
-          if (phase === 'ready') {
-            consecutiveHealthyBoots = healthyState === lastHealthyState ? consecutiveHealthyBoots + 1 : 1
-            lastHealthyState = healthyState
-            if (consecutiveHealthyBoots >= 2) {
-              return
-            }
-          } else {
-            consecutiveHealthyBoots = 0
-            lastHealthyState = null
-          }
-        }
-
-        if (phase === 'failed') {
-          const bridgeErrorMsg = payload.bridge?.lastError?.message
-          const detail = bridgeErrorMsg ? `: ${bridgeErrorMsg}` : ''
-          throw new Error(`bridge startup failed${detail}`)
-        }
-
-        // Log phase transitions
-        if (phase !== lastPhase) {
-          lastPhase = phase
-          if (phase === 'starting') {
-            stderr?.write(`[gsd] Agent bridge starting (this takes ~30s on first run)…\n`)
-          }
-        }
-
-        lastError = `bridge phase=${phase}`
+        // Host responded successfully — it's ready for the browser
+        return
       } else {
         lastError = `http ${response.statusCode}`
       }
     } catch (error) {
-      if (error instanceof Error && error.message.startsWith('bridge startup failed')) {
-        throw error
-      }
       lastError = error instanceof Error ? error.message : String(error)
-      if (!hostUp && Date.now() - startedAt < 3_000) {
-        // Very first poll — host not listening yet, normal
-      }
     }
 
     // Emit a heartbeat line every TICKER_INTERVAL_MS to show we're alive
@@ -527,7 +474,7 @@ async function waitForBootReady(url: string, timeoutMs = 180_000, stderr?: Writa
     if (now - lastTickAt >= TICKER_INTERVAL_MS) {
       lastTickAt = now
       if (hostUp) {
-        stderr?.write(`[gsd] Still waiting for bridge… (${elapsed()})\n`)
+        stderr?.write(`[gsd] Still waiting… (${elapsed()})\n`)
       } else {
         stderr?.write(`[gsd] Waiting for web host… (${elapsed()})\n`)
       }
@@ -579,7 +526,6 @@ export async function launchWebMode(
     PORT: String(port),
     GSD_WEB_HOST: host,
     GSD_WEB_PORT: String(port),
-    GSD_WEB_PROJECT_CWD: options.cwd,
     GSD_WEB_PROJECT_SESSIONS_DIR: options.projectSessionsDir,
     GSD_WEB_PACKAGE_ROOT: resolution.packageRoot,
     GSD_WEB_HOST_KIND: resolution.kind,

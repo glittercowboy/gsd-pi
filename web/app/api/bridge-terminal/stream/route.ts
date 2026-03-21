@@ -1,4 +1,4 @@
-import { getProjectBridgeServiceForCwd, resolveProjectCwd } from "../../../../../src/web/bridge-service.ts";
+import { getProjectBridgeServiceForCwd, requireProjectCwd } from "../../../../../src/web/bridge-service.ts";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -15,7 +15,7 @@ function parseDimension(value: string | null, fallback: number): number {
 }
 
 export async function GET(request: Request): Promise<Response> {
-  const projectCwd = resolveProjectCwd(request);
+  const projectCwd = requireProjectCwd(request);
   const bridge = getProjectBridgeServiceForCwd(projectCwd);
   const url = new URL(request.url);
   const cols = parseDimension(url.searchParams.get("cols"), 120);

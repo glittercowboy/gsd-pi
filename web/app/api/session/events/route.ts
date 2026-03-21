@@ -1,7 +1,7 @@
 import {
   collectCurrentProjectOnboardingState,
   getProjectBridgeServiceForCwd,
-  resolveProjectCwd,
+  requireProjectCwd,
 } from "../../../../../src/web/bridge-service.ts";
 import { cancelShutdown } from "../../../../lib/shutdown-gate";
 
@@ -18,7 +18,7 @@ export async function GET(request: Request): Promise<Response> {
   // SSE reconnection proves the client is alive — cancel any pending shutdown.
   cancelShutdown();
 
-  const projectCwd = resolveProjectCwd(request);
+  const projectCwd = requireProjectCwd(request);
   const bridge = getProjectBridgeServiceForCwd(projectCwd);
   const onboarding = await collectCurrentProjectOnboardingState(projectCwd);
 

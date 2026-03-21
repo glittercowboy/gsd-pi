@@ -1,5 +1,5 @@
 import { collectCapturesData, resolveCaptureAction } from "../../../../src/web/captures-service.ts"
-import { resolveProjectCwd } from "../../../../src/web/bridge-service.ts"
+import { requireProjectCwd } from "../../../../src/web/bridge-service.ts"
 import type { CaptureResolveRequest } from "../../../lib/knowledge-captures-types.ts"
 
 export const runtime = "nodejs"
@@ -15,7 +15,7 @@ const VALID_CLASSIFICATIONS = new Set([
 
 export async function GET(request: Request): Promise<Response> {
   try {
-    const projectCwd = resolveProjectCwd(request);
+    const projectCwd = requireProjectCwd(request);
     const payload = await collectCapturesData(projectCwd)
     return Response.json(payload, {
       headers: {
@@ -62,7 +62,7 @@ export async function POST(request: Request): Promise<Response> {
       )
     }
 
-    const projectCwd = resolveProjectCwd(request);
+    const projectCwd = requireProjectCwd(request);
     const result = await resolveCaptureAction(validation.value!, projectCwd)
     return Response.json(result, {
       headers: {

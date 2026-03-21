@@ -121,15 +121,13 @@ export function NavRail({ activeView, onViewChange, isConnecting = false }: NavR
       ))}
       <div className="mt-auto flex flex-col gap-1">
         <button
-          onClick={() => onViewChange("projects")}
+          onClick={() => window.dispatchEvent(new CustomEvent("gsd:open-projects"))}
           disabled={isConnecting}
           className={cn(
             "flex h-10 w-10 items-center justify-center rounded-md transition-colors",
             isConnecting
               ? "cursor-not-allowed text-muted-foreground/30"
-              : activeView === "projects"
-                ? "bg-accent text-foreground"
-                : "text-muted-foreground hover:bg-accent/50 hover:text-foreground",
+              : "text-muted-foreground hover:bg-accent/50 hover:text-foreground",
           )}
           title={isConnecting ? "Connecting…" : "Projects"}
         >

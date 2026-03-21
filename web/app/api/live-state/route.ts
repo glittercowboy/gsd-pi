@@ -1,6 +1,6 @@
 import {
   collectSelectiveLiveStatePayload,
-  resolveProjectCwd,
+  requireProjectCwd,
   type BridgeSelectiveLiveStateDomain,
 } from "../../../../src/web/bridge-service.ts"
 
@@ -30,7 +30,7 @@ export async function GET(request: Request): Promise<Response> {
   }
 
   const domains = (requestedDomains.length > 0 ? requestedDomains : ["auto", "workspace", "resumable_sessions"]) as BridgeSelectiveLiveStateDomain[]
-  const projectCwd = resolveProjectCwd(request)
+  const projectCwd = requireProjectCwd(request)
   const payload = await collectSelectiveLiveStatePayload(domains, projectCwd)
 
   return Response.json(payload, {

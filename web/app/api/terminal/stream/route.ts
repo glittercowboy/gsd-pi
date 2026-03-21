@@ -10,7 +10,7 @@ import {
   getOrCreateSession,
   addListener,
 } from "../../../../lib/pty-manager";
-import { resolveProjectCwd } from "../../../../../src/web/bridge-service.ts";
+import { requireProjectCwd } from "../../../../../src/web/bridge-service.ts";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -22,7 +22,7 @@ export async function GET(request: Request): Promise<Response> {
   const sessionId = url.searchParams.get("id") || "default";
   const command = url.searchParams.get("command") || undefined;
   const commandArgs = url.searchParams.getAll("arg");
-  const projectCwd = resolveProjectCwd(request);
+  const projectCwd = requireProjectCwd(request);
 
   // Ensure the session exists
   try {

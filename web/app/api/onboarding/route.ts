@@ -2,7 +2,7 @@ import {
   getOnboardingService,
   type OnboardingState,
 } from "../../../../src/web/onboarding-service.ts";
-import { resolveProjectCwd } from "../../../../src/web/bridge-service.ts";
+import { requireProjectCwd } from "../../../../src/web/bridge-service.ts";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -40,7 +40,7 @@ function isActionPayload(value: unknown): value is OnboardingAction {
 }
 
 export async function GET(request: Request): Promise<Response> {
-  resolveProjectCwd(request);
+  requireProjectCwd(request);
   return Response.json(
     {
       onboarding: await getOnboardingService().getState(),
@@ -52,7 +52,7 @@ export async function GET(request: Request): Promise<Response> {
 }
 
 export async function POST(request: Request): Promise<Response> {
-  resolveProjectCwd(request);
+  requireProjectCwd(request);
   let payload: unknown;
   try {
     payload = await request.json();

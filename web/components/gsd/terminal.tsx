@@ -141,8 +141,9 @@ export function Terminal({ className }: TerminalProps) {
 
   useEffect(() => {
     if (workspace.editorTextBuffer === null) return
+    const buffer = workspace.editorTextBuffer
     const updateTimer = window.setTimeout(() => {
-      setInput(workspace.editorTextBuffer)
+      setInput(buffer)
       consumeEditorTextBuffer()
       inputRef.current?.focus()
     }, 0)

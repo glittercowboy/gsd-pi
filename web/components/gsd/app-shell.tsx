@@ -31,10 +31,10 @@ import {
 import { ChatMode } from "@/components/gsd/chat-mode"
 import { ScopeBadge } from "@/components/gsd/scope-badge"
 import { Badge } from "@/components/ui/badge"
-import { ProjectsView } from "@/components/gsd/projects-view"
+import { ProjectsPanel, ProjectSelectionGate } from "@/components/gsd/projects-view"
 import { UpdateBanner } from "@/components/gsd/update-banner"
 
-const KNOWN_VIEWS = new Set(["dashboard", "power", "chat", "roadmap", "files", "activity", "visualize", "projects"])
+const KNOWN_VIEWS = new Set(["dashboard", "power", "chat", "roadmap", "files", "activity", "visualize"])
 
 function viewStorageKey(projectCwd: string): string {
   return `gsd-active-view:${projectCwd}`
@@ -55,6 +55,7 @@ function WorkspaceChrome() {
   const dragStartWidth = useRef(0)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const [viewRestored, setViewRestored] = useState(false)
+  const [projectsPanelOpen, setProjectsPanelOpen] = useState(false)
   const workspace = useGSDWorkspaceState()
   const { refreshBoot } = useGSDWorkspaceActions()
 
@@ -143,6 +144,13 @@ function WorkspaceChrome() {
     window.addEventListener("gsd:navigate-view", handler as EventListener)
     return () => window.removeEventListener("gsd:navigate-view", handler as EventListener)
   }, [handleViewChange])
+
+  // Listen for projects panel toggle (sidebar icon, or programmatic)
+  useEffect(() => {
+    const handler = () => setProjectsPanelOpen(true)
+    window.addEventListener("gsd:open-projects", handler)
+    return () => window.removeEventListener("gsd:open-projects", handler)
+  }, [])
 
   // Terminal + sidebar panel drag-to-resize
   useEffect(() => {
@@ -323,7 +331,6 @@ function WorkspaceChrome() {
                 {activeView === "files" && <FilesView />}
                 {activeView === "activity" && <ActivityView />}
                 {activeView === "visualize" && <VisualizerView />}
-                {activeView === "projects" && <ProjectsView />}
                 {activeView === "chat" && <ChatMode />}
               </>
             )}
@@ -403,6 +410,7 @@ function WorkspaceChrome() {
       </div>
 
       <StatusBar />
+      <ProjectsPanel open={projectsPanelOpen} onOpenChange={setProjectsPanelOpen} />
       <CommandSurface />
       <FocusedPanel />
       <OnboardingGate />
@@ -436,35 +444,16 @@ function ProjectAwareWorkspace() {
     }
   }, [])
 
+  // No project selected yet — show project selection gate
+  if (!activeProjectCwd || !activeStore) {
+    return <ProjectSelectionGate />
+  }
+
   return (
-    <GSDWorkspaceProvider store={activeStore ?? undefined}>
+    <GSDWorkspaceProvider store={activeStore}>
       <DevOverridesProvider>
-        <BootProjectInitializer />
         <WorkspaceChrome />
       </DevOverridesProvider>
     </GSDWorkspaceProvider>
   )
-}
-
-/**
- * Auto-registers the boot project with the ProjectStoreManager.
- *
- * When the workspace boots and provides a project.cwd (from the server's launch
- * payload), this component calls manager.switchProject() to register the initial
- * project — enabling the multi-project flow without requiring explicit user action.
- *
- * Runs once on boot completion, then becomes a no-op.
- */
-function BootProjectInitializer() {
-  const manager = useProjectStoreManager()
-  const workspace = useGSDWorkspaceState()
-  const bootProjectCwd = workspace.boot?.project.cwd
-
-  useEffect(() => {
-    if (bootProjectCwd && !manager.getActiveProjectCwd()) {
-      manager.switchProject(bootProjectCwd)
-    }
-  }, [bootProjectCwd, manager])
-
-  return null
 }

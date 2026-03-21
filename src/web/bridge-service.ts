@@ -1755,7 +1755,11 @@ export function getProjectBridgeServiceForCwd(projectCwd: string): BridgeService
   return service;
 }
 
-export function resolveProjectCwd(request: Request): string {
+/**
+ * Resolve the project CWD from the request query param or env.
+ * Returns null when no project is configured (pre-project-selection state).
+ */
+export function resolveProjectCwd(request: Request): string | null {
   try {
     const url = new URL(request.url);
     const projectParam = url.searchParams.get("project");
@@ -1763,7 +1767,26 @@ export function resolveProjectCwd(request: Request): string {
   } catch {
     // Malformed URL — fall through to env-based default.
   }
-  return (getBridgeDeps().env ?? process.env).GSD_WEB_PROJECT_CWD || process.cwd();
+  return (getBridgeDeps().env ?? process.env).GSD_WEB_PROJECT_CWD || null;
+}
+
+/**
+ * Like resolveProjectCwd but throws a 400-style error when no project is set.
+ * Use in API routes that require a project context.
+ */
+export function requireProjectCwd(request: Request): string {
+  const cwd = resolveProjectCwd(request);
+  if (!cwd) {
+    throw new NoProjectError();
+  }
+  return cwd;
+}
+
+export class NoProjectError extends Error {
+  constructor() {
+    super("No project selected");
+    this.name = "NoProjectError";
+  }
 }
 
 export function getProjectBridgeService(): BridgeService {

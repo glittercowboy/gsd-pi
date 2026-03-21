@@ -1,6 +1,6 @@
 import {
   collectSessionBrowserPayload,
-  resolveProjectCwd,
+  requireProjectCwd,
 } from "../../../../../src/web/bridge-service.ts"
 import {
   isSessionBrowserNameFilter,
@@ -32,7 +32,7 @@ export async function GET(request: Request): Promise<Response> {
     return invalidQuery(`Invalid nameFilter: ${nameFilter}`)
   }
 
-  const projectCwd = resolveProjectCwd(request)
+  const projectCwd = requireProjectCwd(request)
   const payload = await collectSessionBrowserPayload({
     query: searchParams.get("query") ?? undefined,
     sortMode: sortMode ?? undefined,
