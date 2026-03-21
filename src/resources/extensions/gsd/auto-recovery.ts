@@ -46,6 +46,7 @@ import {
   writeFileSync,
   unlinkSync,
 } from "node:fs";
+import { execFileSync } from "node:child_process";
 import { dirname, join } from "node:path";
 
 // ─── Artifact Resolution & Verification ───────────────────────────────────────
@@ -116,6 +117,112 @@ export function resolveExpectedArtifactPath(
       return null;
     default:
       return null;
+  }
+}
+
+/**
+ * Check whether a milestone produced implementation artifacts (non-`.gsd/` files)
+ * in the git history. Uses `git log --name-only` to inspect all commits on the
+ * current branch that touch files outside `.gsd/`.
+ *
+ * Returns true if at least one non-`.gsd/` file was committed, false otherwise.
+ * Non-fatal: returns true on git errors to avoid blocking the pipeline when
+ * running outside a git repo (e.g., tests).
+ */
+export function hasImplementationArtifacts(basePath: string): boolean {
+  try {
+    // Verify we're in a git repo — fail open if not
+    try {
+      execFileSync("git", ["rev-parse", "--is-inside-work-tree"], {
+        cwd: basePath,
+        stdio: ["ignore", "pipe", "pipe"],
+        encoding: "utf-8",
+      });
+    } catch {
+      return true;
+    }
+
+    // Strategy: check `git diff --name-only` against the merge-base with the
+    // main branch. This captures ALL files changed during the milestone's
+    // lifetime. If no merge-base exists (e.g., single-branch workflow), fall
+    // back to checking the last N commits.
+    const mainBranch = detectMainBranch(basePath);
+    const changedFiles = getChangedFilesSinceBranch(basePath, mainBranch);
+
+    // No files changed at all — fail open (could be detached HEAD, single-
+    // commit repo, or other edge case where git diff returns nothing).
+    if (changedFiles.length === 0) return true;
+
+    // Filter out .gsd/ files — only implementation files count.
+    // If every changed file is under .gsd/, the milestone produced no
+    // implementation code (#1703).
+    const implFiles = changedFiles.filter(f => !f.startsWith(".gsd/") && !f.startsWith(".gsd\\"));
+    return implFiles.length > 0;
+  } catch {
+    // Non-fatal — if git operations fail, don't block the pipeline
+    return true;
+  }
+}
+
+/**
+ * Detect the main/master branch name.
+ */
+function detectMainBranch(basePath: string): string {
+  try {
+    const result = execFileSync("git", ["rev-parse", "--verify", "main"], {
+      cwd: basePath,
+      stdio: ["ignore", "pipe", "pipe"],
+      encoding: "utf-8",
+    });
+    if (result.trim()) return "main";
+  } catch {
+    // main doesn't exist
+  }
+  try {
+    const result = execFileSync("git", ["rev-parse", "--verify", "master"], {
+      cwd: basePath,
+      stdio: ["ignore", "pipe", "pipe"],
+      encoding: "utf-8",
+    });
+    if (result.trim()) return "master";
+  } catch {
+    // master doesn't exist either
+  }
+  return "main"; // default fallback
+}
+
+/**
+ * Get files changed since the branch diverged from the target branch.
+ * Falls back to checking HEAD~20 if merge-base detection fails.
+ */
+function getChangedFilesSinceBranch(basePath: string, targetBranch: string): string[] {
+  try {
+    // Try merge-base approach first
+    const mergeBase = execFileSync(
+      "git", ["merge-base", targetBranch, "HEAD"],
+      { cwd: basePath, stdio: ["ignore", "pipe", "pipe"], encoding: "utf-8" },
+    ).trim();
+
+    if (mergeBase) {
+      const result = execFileSync(
+        "git", ["diff", "--name-only", mergeBase, "HEAD"],
+        { cwd: basePath, stdio: ["ignore", "pipe", "pipe"], encoding: "utf-8" },
+      ).trim();
+      return result ? result.split("\n").filter(Boolean) : [];
+    }
+  } catch {
+    // merge-base failed — fall back
+  }
+
+  // Fallback: check last 20 commits
+  try {
+    const result = execFileSync(
+      "git", ["log", "--name-only", "--pretty=format:", "-20", "HEAD"],
+      { cwd: basePath, stdio: ["ignore", "pipe", "pipe"], encoding: "utf-8" },
+    ).trim();
+    return result ? [...new Set(result.split("\n").filter(Boolean))] : [];
+  } catch {
+    return [];
   }
 }
 
@@ -285,6 +392,13 @@ export function verifyExpectedArtifact(
         }
       }
     }
+  }
+
+  // complete-milestone must have produced implementation artifacts (#1703).
+  // A milestone with only .gsd/ plan files and zero implementation code is
+  // not genuinely complete — the LLM wrote plan files but skipped actual work.
+  if (unitType === "complete-milestone") {
+    if (!hasImplementationArtifacts(base)) return false;
   }
 
   return true;

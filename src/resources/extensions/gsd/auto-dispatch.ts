@@ -25,6 +25,7 @@ import {
 } from "./paths.js";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { hasImplementationArtifacts } from "./auto-recovery.js";
 import {
   buildResearchMilestonePrompt,
   buildPlanMilestonePrompt,
@@ -541,6 +542,17 @@ const DISPATCH_RULES: DispatchRule[] = [
             level: "error",
           };
         }
+      }
+
+      // Safety guard (#1703): verify the milestone produced implementation
+      // artifacts (non-.gsd/ files). A milestone with only plan files and
+      // zero implementation code should not be marked complete.
+      if (!hasImplementationArtifacts(basePath)) {
+        return {
+          action: "stop",
+          reason: `Cannot complete milestone ${mid}: no implementation files found outside .gsd/. The milestone has only plan files — actual code changes are required.`,
+          level: "error",
+        };
       }
 
       return {
