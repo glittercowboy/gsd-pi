@@ -532,7 +532,7 @@ Discovered an issue.
     assertEq(milestoneIssue?.severity, "warning", "delimiter issue has warning severity");
     assertEq(milestoneIssue?.unitId, "M001", "delimiter issue unitId is M001");
     assertTrue(milestoneIssue?.message?.includes("em/en dash") ?? false, "issue message mentions em/en dash");
-    assertEq(milestoneIssue?.fixable, false, "delimiter issue is not auto-fixable");
+    assertEq(milestoneIssue?.fixable, true, "delimiter issue is auto-fixable");
 
     rmSync(dtBase, { recursive: true, force: true });
   }

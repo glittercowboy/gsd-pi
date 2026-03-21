@@ -205,7 +205,20 @@ export function snapshotUnitMetrics(
     unit.cacheHitRate = totalInput > 0 ? Math.round((tokens.cacheRead / totalInput) * 100) : 0;
   }
 
-  ledger.units.push(unit);
+  // ── Idempotency guard ──────────────────────────────────────────────────
+  // Prevent duplicate metrics entries when multiple callers snapshot the
+  // same unit (e.g. idle-watchdog closeoutUnit + normal loop closeoutUnit).
+  // A unit is considered a duplicate when type, id, AND startedAt all match
+  // an existing entry. On duplicate, the existing entry is updated in-place
+  // with the latest finishedAt and token counts instead of appending.
+  const dupeIdx = ledger.units.findIndex(
+    (u) => u.type === unit.type && u.id === unit.id && u.startedAt === unit.startedAt,
+  );
+  if (dupeIdx >= 0) {
+    ledger.units[dupeIdx] = unit;
+  } else {
+    ledger.units.push(unit);
+  }
   saveLedger(basePath, ledger);
 
   return unit;

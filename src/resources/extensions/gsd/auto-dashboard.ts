@@ -142,8 +142,9 @@ export function describeNextUnit(state: GSDState): { label: string; description:
 
 /** Format elapsed time since auto-mode started */
 export function formatAutoElapsed(autoStartTime: number): string {
-  if (!autoStartTime) return "";
+  if (!autoStartTime || autoStartTime <= 0 || !Number.isFinite(autoStartTime)) return "";
   const ms = Date.now() - autoStartTime;
+  if (ms < 0 || ms > 30 * 24 * 3600_000) return ""; // negative or >30 days = invalid
   const s = Math.floor(ms / 1000);
   if (s < 60) return `${s}s`;
   const m = Math.floor(s / 60);

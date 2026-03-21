@@ -582,15 +582,33 @@ export async function runGSDDoctor(basePath: string, options?: { fix?: boolean; 
     // Validate milestone title for delimiter characters that break state documents.
     const milestoneTitleIssue = validateTitle(milestone.title);
     if (milestoneTitleIssue) {
-      issues.push({
-        severity: "warning",
-        code: "delimiter_in_title",
-        scope: "milestone",
-        unitId: milestoneId,
-        message: `Milestone ${milestoneId} ${milestoneTitleIssue}. Rename the milestone to remove these characters to prevent state corruption.`,
-        file: relMilestoneFile(basePath, milestoneId, "ROADMAP"),
-        fixable: false,
-      });
+      const roadmapFile = resolveMilestoneFile(basePath, milestoneId, "ROADMAP");
+      let wasFixed = false;
+      if (shouldFix("delimiter_in_title") && roadmapFile) {
+        try {
+          const raw = readFileSync(roadmapFile, "utf-8");
+          // Replace em/en dashes with " - " in the H1 title line only
+          const sanitized = raw.replace(/^(# .*)$/m, (line) =>
+            line.replace(/[\u2014\u2013]/g, "-"),
+          );
+          if (sanitized !== raw) {
+            await saveFile(roadmapFile, sanitized);
+            fixesApplied.push(`sanitized delimiter characters in ${milestoneId} title`);
+            wasFixed = true;
+          }
+        } catch { /* non-fatal — report the warning below */ }
+      }
+      if (!wasFixed) {
+        issues.push({
+          severity: "warning",
+          code: "delimiter_in_title",
+          scope: "milestone",
+          unitId: milestoneId,
+          message: `Milestone ${milestoneId} ${milestoneTitleIssue}. Rename the milestone to remove these characters to prevent state corruption.`,
+          file: relMilestoneFile(basePath, milestoneId, "ROADMAP"),
+          fixable: true,
+        });
+      }
     }
 
     const roadmapPath = resolveMilestoneFile(basePath, milestoneId, "ROADMAP");
@@ -642,6 +660,9 @@ export async function runGSDDoctor(basePath: string, options?: { fix?: boolean; 
       // Validate slice title for delimiter characters.
       const sliceTitleIssue = validateTitle(slice.title);
       if (sliceTitleIssue) {
+        // Slice titles live inside the roadmap H1/checkbox lines — the milestone-level
+        // fix above already sanitizes the roadmap file. For slices we only report, because
+        // the title comes from the checkbox text and requires careful regex to fix safely.
         issues.push({
           severity: "warning",
           code: "delimiter_in_title",

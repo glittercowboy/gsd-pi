@@ -333,7 +333,9 @@ export function getAutoDashboardData(): AutoDashboardData {
     paused: s.paused,
     stepMode: s.stepMode,
     startTime: s.autoStartTime,
-    elapsed: s.active || s.paused ? Date.now() - s.autoStartTime : 0,
+    elapsed: s.active || s.paused
+      ? (s.autoStartTime > 0 ? Date.now() - s.autoStartTime : 0)
+      : 0,
     currentUnit: s.currentUnit ? { ...s.currentUnit } : null,
     completedUnits: [...s.completedUnits],
     basePath: s.basePath,
