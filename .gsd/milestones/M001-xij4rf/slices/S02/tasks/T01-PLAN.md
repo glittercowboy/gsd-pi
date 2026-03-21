@@ -60,6 +60,13 @@ Create the standalone `journal.ts` module with `JournalEntry` interface, `emitJo
 - `src/resources/extensions/gsd/debug-logger.ts` — reference pattern for `appendFileSync` + `mkdirSync` + silent catch
 - `src/resources/extensions/gsd/jsonl-utils.ts` — reference for JSONL parsing pattern (but journal.ts should have its own simpler parser since `jsonl-utils.ts` is tuned for large activity logs)
 
+## Observability Impact
+
+- **New signal:** `emitJournalEvent()` writes structured JSONL lines to `.gsd/journal/YYYY-MM-DD.jsonl` — each line is a self-contained `JournalEntry` with `flowId`, `seq`, `eventType`, `rule`, `causedBy`, and `data` fields.
+- **Inspection:** `queryJournal(basePath, { flowId })` returns all events for a given iteration; raw JSONL files are human-readable via `cat` or `jq '.flowId'`.
+- **Failure visibility:** Write errors are silently caught (never break auto-mode). Absence of expected events is detectable by querying for a flowId and finding zero results. `queryJournal` on a missing directory returns `[]` rather than throwing.
+- **No regressions:** This module has zero dependencies on `auto/` — it cannot affect existing auto-mode behavior until wired in T02/T03.
+
 ## Expected Output
 
 - `src/resources/extensions/gsd/journal.ts` — new module with `JournalEntry`, `emitJournalEvent`, `queryJournal`

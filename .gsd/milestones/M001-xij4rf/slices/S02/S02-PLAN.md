@@ -45,7 +45,7 @@
 
 ## Tasks
 
-- [ ] **T01: Build journal core module and unit tests** `est:45m`
+- [x] **T01: Build journal core module and unit tests** `est:45m`
   - Why: Standalone foundation — `journal.ts` has zero dependencies on `auto/` and unblocks all downstream wiring. Covers R007 (structured events), R008 (flowId grouping), R009 (causedBy chains), R012 (daily rotation).
   - Files: `src/resources/extensions/gsd/journal.ts`, `src/resources/extensions/gsd/tests/journal.test.ts`
   - Do: Create `JournalEntry` interface, `emitJournalEvent(basePath, entry)` using `appendFileSync` to `.gsd/journal/YYYY-MM-DD.jsonl` with `mkdirSync({recursive:true})` and silent catch. Create `queryJournal(basePath, filters)` reading JSONL files with filtering by flowId, eventType, unitId (from `data.unitId`), time range. Write comprehensive tests covering: JSONL write, directory auto-creation, daily rotation, silent failure on bad path, query by flowId, query by eventType, query by time range, empty results.
