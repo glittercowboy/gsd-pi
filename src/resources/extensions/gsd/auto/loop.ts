@@ -9,6 +9,7 @@
 
 import type { ExtensionAPI, ExtensionContext } from "@gsd/pi-coding-agent";
 
+import { randomUUID } from "node:crypto";
 import type { AutoSession, SidecarItem } from "./session.js";
 import type { LoopDeps } from "./loop-deps.js";
 import {
@@ -51,6 +52,11 @@ export async function autoLoop(
     iteration++;
     debugLog("autoLoop", { phase: "loop-top", iteration });
 
+    // ── Journal: per-iteration flow grouping ──
+    const flowId = randomUUID();
+    let seqCounter = 0;
+    const nextSeq = () => ++seqCounter;
+
     if (iteration > MAX_LOOP_ITERATIONS) {
       debugLog("autoLoop", {
         phase: "exit",
@@ -84,6 +90,7 @@ export async function autoLoop(
           unitType: sidecarItem.unitType,
           unitId: sidecarItem.unitId,
         });
+        deps.emitJournalEvent({ ts: new Date().toISOString(), flowId, seq: nextSeq(), eventType: "sidecar-dequeue", data: { kind: sidecarItem.kind, unitType: sidecarItem.unitType, unitId: sidecarItem.unitId } });
       }
 
       const sessionLockBase = deps.lockBase();
@@ -106,7 +113,8 @@ export async function autoLoop(
         }
       }
 
-      const ic: IterationContext = { ctx, pi, s, deps, prefs, iteration };
+      const ic: IterationContext = { ctx, pi, s, deps, prefs, iteration, flowId, nextSeq };
+      deps.emitJournalEvent({ ts: new Date().toISOString(), flowId, seq: nextSeq(), eventType: "iteration-start", data: { iteration } });
       let iterData: IterationData;
 
       if (!sidecarItem) {
@@ -153,6 +161,7 @@ export async function autoLoop(
       if (finalizeResult.action === "continue") continue;
 
       consecutiveErrors = 0; // Iteration completed successfully
+      deps.emitJournalEvent({ ts: new Date().toISOString(), flowId, seq: nextSeq(), eventType: "iteration-end", data: { iteration } });
       debugLog("autoLoop", { phase: "iteration-complete", iteration });
     } catch (loopErr) {
       // ── Blanket catch: absorb unexpected exceptions, apply graduated recovery ──

@@ -416,6 +416,7 @@ function makeMockDeps(
     getSessionFile: () => "/tmp/session.json",
     rebuildState: async () => {},
     resolveModelId: (id: string, models: any[]) => models.find((m: any) => m.id === id),
+    emitJournalEvent: () => {},
   };
 
   const merged = { ...baseDeps, ...overrides, callLog };

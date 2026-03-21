@@ -193,6 +193,7 @@ export async function runPreDispatch(
 
   // ── Milestone transition ────────────────────────────────────────────
   if (mid && s.currentMilestoneId && mid !== s.currentMilestoneId) {
+    deps.emitJournalEvent({ ts: new Date().toISOString(), flowId: ic.flowId, seq: ic.nextSeq(), eventType: "milestone-transition", data: { from: s.currentMilestoneId, to: mid } });
     ctx.ui.notify(
       `Milestone ${s.currentMilestoneId} complete. Advancing to ${mid}: ${midTitle}.`,
       "info",
@@ -387,6 +388,7 @@ export async function runPreDispatch(
       );
     }
     debugLog("autoLoop", { phase: "exit", reason: "no-active-milestone" });
+    deps.emitJournalEvent({ ts: new Date().toISOString(), flowId: ic.flowId, seq: ic.nextSeq(), eventType: "terminal", data: { reason: "no-active-milestone" } });
     return { action: "break", reason: "no-active-milestone" };
   }
 
@@ -455,6 +457,7 @@ export async function runPreDispatch(
     );
     await closeoutAndStop(ctx, pi, s, deps, `Milestone ${mid} complete`);
     debugLog("autoLoop", { phase: "exit", reason: "milestone-complete" });
+    deps.emitJournalEvent({ ts: new Date().toISOString(), flowId: ic.flowId, seq: ic.nextSeq(), eventType: "terminal", data: { reason: "milestone-complete", milestoneId: mid } });
     return { action: "break", reason: "milestone-complete" };
   }
 
@@ -466,6 +469,7 @@ export async function runPreDispatch(
     deps.sendDesktopNotification("GSD", blockerMsg, "error", "attention");
     deps.logCmuxEvent(prefs, blockerMsg, "error");
     debugLog("autoLoop", { phase: "exit", reason: "blocked" });
+    deps.emitJournalEvent({ ts: new Date().toISOString(), flowId: ic.flowId, seq: ic.nextSeq(), eventType: "terminal", data: { reason: "blocked", blockers: state.blockers } });
     return { action: "break", reason: "blocked" };
   }
 
@@ -498,6 +502,7 @@ export async function runDispatch(
   });
 
   if (dispatchResult.action === "stop") {
+    deps.emitJournalEvent({ ts: new Date().toISOString(), flowId: ic.flowId, seq: ic.nextSeq(), eventType: "dispatch-stop", rule: dispatchResult.matchedRule, data: { reason: dispatchResult.reason } });
     await closeoutAndStop(ctx, pi, s, deps, dispatchResult.reason);
     debugLog("autoLoop", { phase: "exit", reason: "dispatch-stop" });
     return { action: "break", reason: "dispatch-stop" };
@@ -508,6 +513,8 @@ export async function runDispatch(
     await new Promise((r) => setImmediate(r));
     return { action: "continue" };
   }
+
+  deps.emitJournalEvent({ ts: new Date().toISOString(), flowId: ic.flowId, seq: ic.nextSeq(), eventType: "dispatch-match", rule: dispatchResult.matchedRule, data: { unitType: dispatchResult.unitType, unitId: dispatchResult.unitId } });
 
   let unitType = dispatchResult.unitType;
   let unitId = dispatchResult.unitId;
@@ -601,6 +608,7 @@ export async function runDispatch(
       `Pre-dispatch hook${preDispatchResult.firedHooks.length > 1 ? "s" : ""}: ${preDispatchResult.firedHooks.join(", ")}`,
       "info",
     );
+    deps.emitJournalEvent({ ts: new Date().toISOString(), flowId: ic.flowId, seq: ic.nextSeq(), eventType: "pre-dispatch-hook", data: { firedHooks: preDispatchResult.firedHooks, action: preDispatchResult.action } });
   }
   if (preDispatchResult.action === "skip") {
     ctx.ui.notify(
@@ -846,6 +854,8 @@ export async function runUnitPhase(
   const previousTier = s.currentUnitRouting?.tier;
 
   s.currentUnit = { type: unitType, id: unitId, startedAt: Date.now() };
+  const unitStartSeq = ic.nextSeq();
+  deps.emitJournalEvent({ ts: new Date().toISOString(), flowId: ic.flowId, seq: unitStartSeq, eventType: "unit-start", data: { unitType, unitId } });
   deps.captureAvailableSkills();
   deps.writeUnitRuntimeRecord(
     s.basePath,
@@ -1148,6 +1158,8 @@ export async function runUnitPhase(
     s.unitDispatchCount.delete(`${unitType}/${unitId}`);
     s.unitRecoveryCount.delete(`${unitType}/${unitId}`);
   }
+
+  deps.emitJournalEvent({ ts: new Date().toISOString(), flowId: ic.flowId, seq: ic.nextSeq(), eventType: "unit-end", data: { unitType, unitId, status: unitResult.status, artifactVerified }, causedBy: { flowId: ic.flowId, seq: unitStartSeq } });
 
   return { action: "next", data: { unitStartedAt: s.currentUnit.startedAt } };
 }

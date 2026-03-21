@@ -31,7 +31,8 @@ export type JournalEventType =
   | "guard-block"
   | "milestone-transition"
   | "stuck-detected"
-  | "sidecar-dequeue";
+  | "sidecar-dequeue"
+  | "iteration-end";
 
 /** A single structured event in the journal. */
 export interface JournalEntry {

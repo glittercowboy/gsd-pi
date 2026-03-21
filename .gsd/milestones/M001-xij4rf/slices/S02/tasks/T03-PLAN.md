@@ -82,3 +82,10 @@ Wire `deps.emitJournalEvent()` calls into the auto-loop pipeline at every key or
 - `src/resources/extensions/gsd/auto/phases.ts` — dispatch-match, dispatch-stop, pre-dispatch-hook, unit-start, unit-end, terminal, milestone-transition emission
 - `src/resources/extensions/gsd/tests/journal-integration.test.ts` — integration test proving event sequence
 - `src/resources/extensions/gsd/journal.ts` — possibly updated event type union
+
+## Observability Impact
+
+- **New signals:** Every auto-mode iteration now emits structured journal events at key boundaries: `iteration-start`, `dispatch-match`/`dispatch-stop`, `pre-dispatch-hook`, `unit-start`, `unit-end` (with `causedBy` reference), `terminal`, `milestone-transition`, `sidecar-dequeue`, `iteration-end`.
+- **Inspection:** `queryJournal(basePath, { flowId })` reconstructs the full event sequence for any iteration. `cat .gsd/journal/YYYY-MM-DD.jsonl | jq .` gives raw access. Events with `rule` field trace provenance to the unified registry.
+- **Failure visibility:** Missing events for a given flowId indicates silent write failure (check disk/permissions). A `unit-end` without matching `unit-start` causedBy indicates a sequencing bug. Terminal events document why auto-mode stopped.
+- **What a future agent inspects:** Query for a flowId and check event count matches expected phases; verify `causedBy` chains are intact; check `rule` field on dispatch events for provenance.
