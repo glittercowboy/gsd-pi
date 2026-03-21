@@ -7,6 +7,7 @@ import {
   inferCommitType,
   buildTaskCommitMessage,
   GitServiceImpl,
+  MergeConflictError,
   RUNTIME_EXCLUSION_PATHS,
   VALID_BRANCH_NAME,
   runGit,
@@ -1299,6 +1300,113 @@ async function main(): Promise<void> {
 
     const staged = run("git diff --cached --name-only", repo);
     assertTrue(staged.includes("src/code.ts"), "real file staged with normal .gsd");
+
+    rmSync(repo, { recursive: true, force: true });
+  }
+
+  // ─── MergeConflictError: constructor fields ───────────────────────────────
+
+  console.log("\n=== MergeConflictError: constructor fields ===");
+  {
+    const err = new MergeConflictError(
+      ["src/foo.ts", "src/bar.ts"],
+      "squash",
+      "gsd/M001/S01",
+      "main",
+    );
+    assertEq(err.conflictedFiles, ["src/foo.ts", "src/bar.ts"], "MergeConflictError.conflictedFiles populated");
+    assertEq(err.strategy, "squash", "MergeConflictError.strategy set");
+    assertEq(err.branch, "gsd/M001/S01", "MergeConflictError.branch set");
+    assertEq(err.mainBranch, "main", "MergeConflictError.mainBranch set");
+    assertEq(err.name, "MergeConflictError", "MergeConflictError.name is MergeConflictError");
+    assertTrue(err.message.includes("src/foo.ts"), "MergeConflictError message lists conflicted files");
+    assertTrue(err.message.toLowerCase().includes("squash"), "MergeConflictError message mentions strategy");
+    assertTrue(err instanceof MergeConflictError, "MergeConflictError is an instanceof MergeConflictError");
+    assertTrue(err instanceof Error, "MergeConflictError is an Error instance");
+  }
+
+  // ─── Integration branch: rejects gsd/quick/* branches ────────────────────
+
+  console.log("\n=== Integration branch: rejects gsd/quick/* branches ===");
+  {
+    const repo = initBranchTestRepo();
+
+    writeIntegrationBranch(repo, "M001", "gsd/quick/1234-some-task");
+    assertEq(readIntegrationBranch(repo, "M001"), null, "gsd/quick/* branches are not recorded as integration branch");
+
+    rmSync(repo, { recursive: true, force: true });
+  }
+
+  // ─── Integration branch: resolver returns missing when no metadata ────────
+
+  console.log("\n=== Integration branch: resolver returns missing when no metadata ===");
+  {
+    const repo = initBranchTestRepo();
+
+    // No writeIntegrationBranch call — no metadata file exists
+    const resolved = resolveMilestoneIntegrationBranch(repo, "M999");
+    assertEq(resolved.status, "missing", "resolver reports missing when no metadata file");
+    assertEq(resolved.recordedBranch, null, "resolver recordedBranch is null when no metadata");
+    assertEq(resolved.effectiveBranch, null, "resolver effectiveBranch is null when no metadata");
+    assertTrue(resolved.reason.includes("M999"), "resolver reason mentions the milestone ID");
+
+    rmSync(repo, { recursive: true, force: true });
+  }
+
+  // ─── Integration branch: resolver missing when both recorded and configured branches gone ───
+
+  console.log("\n=== Integration branch: resolver missing when both recorded and configured branches gone ===");
+  {
+    const repo = initBranchTestRepo();
+
+    // Record a branch that doesn't exist
+    writeIntegrationBranch(repo, "M001", "deleted-feature");
+    // configured main_branch also doesn't exist
+    const resolved = resolveMilestoneIntegrationBranch(repo, "M001", { main_branch: "nonexistent-branch" });
+    assertEq(resolved.status, "missing", "resolver reports missing when recorded branch and configured main_branch both absent");
+    assertEq(resolved.recordedBranch, "deleted-feature", "resolver preserves stale recorded branch");
+    assertEq(resolved.effectiveBranch, null, "resolver effectiveBranch is null when no safe fallback");
+    assertTrue(
+      resolved.reason.includes("deleted-feature") && resolved.reason.includes("nonexistent-branch"),
+      "reason mentions both stale branch and unavailable configured branch",
+    );
+
+    rmSync(repo, { recursive: true, force: true });
+  }
+
+  // ─── buildTaskCommitMessage: issueNumber appends Resolves trailer ─────────
+
+  console.log("\n=== buildTaskCommitMessage: issueNumber appends Resolves trailer ===");
+  {
+    const msg = buildTaskCommitMessage({
+      taskId: "S01/T03",
+      taskTitle: "fix login redirect",
+      issueNumber: 42,
+    });
+    assertTrue(msg.includes("Resolves #42"), "buildTaskCommitMessage includes Resolves #N trailer when issueNumber is set");
+    assertTrue(msg.startsWith("fix(S01/T03):"), "buildTaskCommitMessage infers fix type");
+  }
+
+  {
+    // No issueNumber — no Resolves trailer
+    const msg = buildTaskCommitMessage({
+      taskId: "S01/T04",
+      taskTitle: "add dashboard widget",
+    });
+    assertTrue(!msg.includes("Resolves"), "buildTaskCommitMessage omits Resolves trailer when issueNumber is absent");
+  }
+
+  // ─── runPreMergeCheck: skips when no package.json ────────────────────────
+
+  console.log("\n=== runPreMergeCheck: skips when no package.json ===");
+  {
+    const repo = initBranchTestRepo();
+    // No package.json created — auto-detect should skip gracefully
+    const svc = new GitServiceImpl(repo, { pre_merge_check: true });
+    const result: PreMergeCheckResult = svc.runPreMergeCheck();
+
+    assertEq(result.passed, true, "runPreMergeCheck passes when no package.json (skip)");
+    assertEq(result.skipped, true, "runPreMergeCheck skips when no package.json found");
 
     rmSync(repo, { recursive: true, force: true });
   }
