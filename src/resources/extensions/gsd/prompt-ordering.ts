@@ -36,6 +36,7 @@ const HEADING_ROLES: Record<string, "static" | "semi-static" | "dynamic"> = {
   "Overrides": "semi-static",
   "Project Knowledge": "semi-static",
   "Dependency Summaries": "semi-static",
+  "Context Manifest": "semi-static",
 
   // Dynamic — changes per task
   "Inlined Task Plan": "dynamic",

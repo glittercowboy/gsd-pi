@@ -51,29 +51,29 @@ completed_at: {{date}}
 
 ## New Requirements Surfaced
 
-- {{newRequirementOr_none}}
+None.
 
 ## Requirements Invalidated or Re-scoped
 
-- {{requirementIdOr_none}} — {{what changed}}
+None.
 
 ## Deviations
 
 <!-- Deviations are unplanned changes to the written plan, not ordinary debugging inside the plan's intended scope. -->
 
-{{deviationsFromPlan_OR_none}}
+None.
 
 ## Known Limitations
 
 <!-- Known limitations are real gaps, rough edges, or deferred constraints that still exist after this slice shipped. -->
 
-{{whatDoesntWorkYet_OR_whatWasDeferredToLaterSlices}}
+None.
 
 ## Follow-ups
 
 <!-- Follow-ups are concrete next actions discovered during execution, not a restatement of known limitations. -->
 
-{{workDeferredOrDiscoveredDuringExecution_OR_none}}
+None.
 
 ## Files Created/Modified
 

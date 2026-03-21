@@ -803,6 +803,15 @@ export async function checkRuntimeHealth(
  */
 function buildStateMarkdownForCheck(state: Awaited<ReturnType<typeof deriveState>>): string {
   const lines: string[] = [];
+
+  // YAML frontmatter with machine-parseable phase and active_task
+  const activeTaskId = state.activeTask?.id ?? "none";
+  lines.push("---");
+  lines.push(`phase: ${state.phase}`);
+  lines.push(`active_task: ${activeTaskId}`);
+  lines.push("---");
+  lines.push("");
+
   lines.push("# GSD State", "");
 
   const activeMilestone = state.activeMilestone

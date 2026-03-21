@@ -294,3 +294,76 @@ describe("real-world prompt reordering", () => {
     );
   });
 });
+
+// ─── S03 heading classifications ─────────────────────────────────────────────
+
+describe("reorderForCaching: S03 heading classifications", () => {
+  it("classifies 'Context Manifest' as semi-static", () => {
+    const prompt = [
+      "## Inlined Task Plan",
+      "Dynamic task content.",
+      "",
+      "## Context Manifest",
+      "| File | Purpose | Size |",
+      "| `plan.md` | Slice plan | 2K |",
+      "",
+      "## Output Template",
+      "Static template.",
+    ].join("\n");
+
+    const result = reorderForCaching(prompt);
+    const staticIdx = result.indexOf("## Output Template");
+    const semiIdx = result.indexOf("## Context Manifest");
+    const dynamicIdx = result.indexOf("## Inlined Task Plan");
+
+    assert.ok(staticIdx < semiIdx, "Static 'Output Template' before semi-static 'Context Manifest'");
+    assert.ok(semiIdx < dynamicIdx, "Semi-static 'Context Manifest' before dynamic 'Inlined Task Plan'");
+  });
+
+  it("classifies 'Carry-Forward Context' as dynamic", () => {
+    const prompt = [
+      "## Carry-Forward Context",
+      "Prior task summary content.",
+      "",
+      "## Decisions",
+      "Semi-static decisions.",
+      "",
+      "## Output Template",
+      "Static template.",
+    ].join("\n");
+
+    const result = reorderForCaching(prompt);
+    const staticIdx = result.indexOf("## Output Template");
+    const semiIdx = result.indexOf("## Decisions");
+    const dynamicIdx = result.indexOf("## Carry-Forward Context");
+
+    assert.ok(staticIdx < semiIdx, "Static before semi-static");
+    assert.ok(semiIdx < dynamicIdx, "Semi-static before dynamic 'Carry-Forward Context'");
+  });
+
+  it("Context Manifest groups with other semi-static sections", () => {
+    const prompt = [
+      "## Inlined Task Plan",
+      "Task content.",
+      "",
+      "## Context Manifest",
+      "Manifest content.",
+      "",
+      "## Slice Plan Excerpt",
+      "Slice content.",
+      "",
+      "## Carry-Forward Context",
+      "Carry-forward content.",
+    ].join("\n");
+
+    const result = reorderForCaching(prompt);
+    const manifestIdx = result.indexOf("## Context Manifest");
+    const sliceIdx = result.indexOf("## Slice Plan Excerpt");
+    const taskIdx = result.indexOf("## Inlined Task Plan");
+    const carryIdx = result.indexOf("## Carry-Forward Context");
+
+    // Both semi-static sections come before both dynamic sections
+    assert.ok(manifestIdx < taskIdx, "Semi-static Context Manifest before dynamic Task Plan");
+    assert.ok(sliceIdx < carryIdx, "Semi-static Slice Plan before dynamic Carry-Forward");
+  });
+});

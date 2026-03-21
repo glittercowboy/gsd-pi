@@ -273,6 +273,10 @@ test("verifyExpectedArtifact accepts plan-slice with actual tasks", () => {
     writeFileSync(join(sliceDir, "S01-PLAN.md"), [
       "# S01: Test Slice",
       "",
+      "## Must-Haves",
+      "",
+      "- Feature implemented",
+      "",
       "## Tasks",
       "",
       "- [ ] **T01: Implement feature** `est:2h`",
@@ -298,6 +302,10 @@ test("verifyExpectedArtifact accepts plan-slice with completed tasks", () => {
     mkdirSync(tasksDir, { recursive: true });
     writeFileSync(join(sliceDir, "S01-PLAN.md"), [
       "# S01: Test Slice",
+      "",
+      "## Must-Haves",
+      "",
+      "- Feature implemented",
       "",
       "## Tasks",
       "",
@@ -325,6 +333,10 @@ test("verifyExpectedArtifact plan-slice passes when all task plan files exist", 
     const planPath = join(base, ".gsd", "milestones", "M001", "slices", "S01", "S01-PLAN.md");
     const planContent = [
       "# S01: Test Slice",
+      "",
+      "## Must-Haves",
+      "",
+      "- Tasks completed",
       "",
       "## Tasks",
       "",

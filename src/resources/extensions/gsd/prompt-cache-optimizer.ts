@@ -55,6 +55,7 @@ const SEMI_STATIC_LABELS = new Set([
   "prior-summaries",
   "project-context",
   "overrides",
+  "context-manifest",
 ]);
 
 /** Labels that change per-task */
@@ -65,6 +66,8 @@ const DYNAMIC_LABELS = new Set([
   "file-contents",
   "diff-context",
   "verification-commands",
+  "carry-forward",
+  "targeted-preloads",
 ]);
 
 // ─── Public API ──────────────────────────────────────────────────────────────

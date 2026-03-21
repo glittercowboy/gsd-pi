@@ -54,11 +54,11 @@ blocker_discovered: false
 
 <!-- Deviations are unplanned changes to the written task plan, not ordinary debugging during implementation. -->
 
-{{deviationsFromPlan_OR_none}}
+None.
 
 ## Known Issues
 
-{{issuesDiscoveredButNotFixed_OR_none}}
+None.
 
 ## Files Created/Modified
 

@@ -25,8 +25,7 @@
      If the project is straightforward, this section can be short or empty.
      Don't invent risks — only list things that could actually invalidate downstream work. -->
 
-- {{risk}} — {{whyItMatters}}
-- {{risk}} — {{whyItMatters}}
+None.
 
 ## Proof Strategy
 
@@ -34,8 +33,7 @@
      Proof comes from building the real thing, not from spikes or research.
      Skip this section for straightforward projects with no major unknowns. -->
 
-- {{riskOrUnknown}} → retire in {{sliceId}} by proving {{whatWillBeProven}}
-- {{riskOrUnknown}} → retire in {{sliceId}} by proving {{whatWillBeProven}}
+None.
 
 ## Verification Classes
 

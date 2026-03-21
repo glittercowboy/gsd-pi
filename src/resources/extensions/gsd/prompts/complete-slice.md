@@ -26,7 +26,7 @@ Then:
 5. If `.gsd/REQUIREMENTS.md` exists, update it based on what this slice actually proved. Move requirements between Active, Validated, Deferred, Blocked, or Out of Scope only when the evidence from execution supports that change.
 6. Write `{{sliceSummaryPath}}` (compress all task summaries).
 7. Write `{{sliceUatPath}}` — a concrete UAT script with real test cases derived from the slice plan and task summaries. Include preconditions, numbered steps with expected outcomes, and edge cases. This must NOT be a placeholder or generic template — tailor every test case to what this slice actually built.
-8. Review task summaries for `key_decisions`. Append any significant decisions to `.gsd/DECISIONS.md` if missing.
+8. Use the **Pre-Computed Aggregation** section (inlined above) for frontmatter fields: `key_files`, `key_decisions`, `patterns_established`, `duration`, `verification_result`. The aggregation is already deduplicated and summed — copy these values into your slice summary frontmatter. Write only the narrative sections manually.
 9. Review task summaries for patterns, gotchas, or non-obvious lessons learned. If any would save future agents from repeating investigation or hitting the same issues, append them to `.gsd/KNOWLEDGE.md`. Only add entries that are genuinely useful — don't pad with obvious observations.
 10. Mark {{sliceId}} done in `{{roadmapPath}}` (change `[ ]` to `[x]`)
 11. Do not run git commands — the system commits your changes and handles any merge after this unit succeeds.

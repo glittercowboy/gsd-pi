@@ -289,8 +289,9 @@ export function getCurrentBranch(basePath: string): string {
 export function autoCommitCurrentBranch(
   basePath: string, unitType: string, unitId: string,
   taskContext?: TaskCommitContext,
+  includeOverrides?: string[],
 ): string | null {
-  return getService(basePath).autoCommit(unitType, unitId, [], taskContext);
+  return getService(basePath).autoCommit(unitType, unitId, [], taskContext, includeOverrides);
 }
 
 // ─── Git HEAD Resolution ────────────────────────────────────────────────────

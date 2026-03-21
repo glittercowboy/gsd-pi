@@ -1,3 +1,8 @@
+---
+phase: {{phase}}
+active_task: {{taskId}}
+---
+
 # GSD State
 
 **Active Milestone:** {{milestoneId}}: {{milestoneTitle}}
@@ -14,4 +19,4 @@
 
 ## Blockers
 
-- (none)
+None.

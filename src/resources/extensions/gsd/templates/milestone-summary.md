@@ -45,9 +45,10 @@ completed_at: {{date}}
 ## Requirement Changes
 
 <!-- Transitions with evidence. Each requirement that changed status during this milestone
-     should be listed with the proof that supports the transition. -->
+     should be listed with the proof that supports the transition.
+     Write "None." if no requirements changed status. -->
 
-- {{requirementId}}: {{fromStatus}} → {{toStatus}} — {{evidence}}
+None.
 
 ## Forward Intelligence
 

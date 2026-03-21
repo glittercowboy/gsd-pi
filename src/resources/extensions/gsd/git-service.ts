@@ -521,12 +521,19 @@ export class GitServiceImpl {
     unitId: string,
     extraExclusions: readonly string[] = [],
     taskContext?: TaskCommitContext,
+    includeOverrides?: string[],
   ): string | null {
     // Quick check: is there anything dirty at all?
     // Native path uses libgit2 (single syscall), fallback spawns git.
     if (!nativeHasChanges(this.basePath)) return null;
 
     this.smartStage(extraExclusions);
+
+    // Re-stage paths that smartStage() excluded (e.g. STATE.md for atomic commits).
+    // Must happen after smartStage() but before the staged-changes check.
+    if (includeOverrides?.length) {
+      nativeAddPaths(this.basePath, includeOverrides);
+    }
 
     // After smart staging, check if anything was actually staged
     // (all changes might have been runtime files that got excluded)

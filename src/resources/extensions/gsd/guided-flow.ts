@@ -36,6 +36,14 @@ import { debugLog } from "./debug-logger.js";
 import { findMilestoneIds, nextMilestoneId } from "./milestone-ids.js";
 import { parkMilestone, discardMilestone } from "./milestone-actions.js";
 import { resolveModelWithFallbacksForUnit } from "./preferences-models.js";
+import {
+  assembleExecuteTaskPrompt,
+  assembleCompleteSlicePrompt,
+  assemblePlanSlicePrompt,
+  assemblePlanMilestonePrompt,
+  assembleResearchSlicePrompt,
+  assembleResumeTaskPrompt,
+} from "./execution-contract.js";
 
 // ─── Re-exports (preserve public API for existing importers) ────────────────
 export {
@@ -1117,25 +1125,7 @@ export async function showSmartEntry(
 
       if (choice === "plan") {
         pendingAutoStart = { ctx, pi, basePath, milestoneId, step: stepMode };
-        const planMilestoneTemplates = [
-          inlineTemplate("roadmap", "Roadmap"),
-          inlineTemplate("plan", "Slice Plan"),
-          inlineTemplate("task-plan", "Task Plan"),
-          inlineTemplate("secrets-manifest", "Secrets Manifest"),
-        ].join("\n\n---\n\n");
-        const secretsOutputPath = relMilestoneFile(basePath, milestoneId, "SECRETS");
-        await dispatchWorkflow(pi, loadPrompt("guided-plan-milestone", {
-          milestoneId,
-          milestoneTitle,
-          secretsOutputPath,
-          inlinedTemplates: planMilestoneTemplates,
-          skillActivation: buildSkillActivationBlock({
-            base: basePath,
-            milestoneId,
-            milestoneTitle,
-            extraContext: [planMilestoneTemplates],
-          }),
-        }), "gsd-run", ctx, "plan-milestone");
+        dispatchWorkflow(pi, await assemblePlanMilestonePrompt(milestoneId, milestoneTitle, basePath, 'guided'));
       } else if (choice === "discuss") {
         const discussMilestoneTemplates = inlineTemplate("context", "Context");
         const structuredQuestionsAvailable = pi.getActiveTools().includes("ask_user_questions") ? "true" : "false";
@@ -1259,40 +1249,11 @@ export async function showSmartEntry(
     });
 
     if (choice === "plan") {
-      const planSliceTemplates = [
-        inlineTemplate("plan", "Slice Plan"),
-        inlineTemplate("task-plan", "Task Plan"),
-      ].join("\n\n---\n\n");
-      await dispatchWorkflow(pi, loadPrompt("guided-plan-slice", {
-        milestoneId,
-        sliceId,
-        sliceTitle,
-        inlinedTemplates: planSliceTemplates,
-        skillActivation: buildSkillActivationBlock({
-          base: basePath,
-          milestoneId,
-          sliceId,
-          sliceTitle,
-          extraContext: [planSliceTemplates],
-        }),
-      }), "gsd-run", ctx, "plan-slice");
+      dispatchWorkflow(pi, await assemblePlanSlicePrompt(milestoneId, milestoneTitle, sliceId, sliceTitle, basePath, 'guided'));
     } else if (choice === "discuss") {
       await dispatchWorkflow(pi, await buildDiscussSlicePrompt(milestoneId, sliceId, sliceTitle, basePath, { rediscuss: hasContext }), "gsd-run", ctx, "plan-slice");
     } else if (choice === "research") {
-      const researchTemplates = inlineTemplate("research", "Research");
-      await dispatchWorkflow(pi, loadPrompt("guided-research-slice", {
-        milestoneId,
-        sliceId,
-        sliceTitle,
-        inlinedTemplates: researchTemplates,
-        skillActivation: buildSkillActivationBlock({
-          base: basePath,
-          milestoneId,
-          sliceId,
-          sliceTitle,
-          extraContext: [researchTemplates],
-        }),
-      }), "gsd-run", ctx, "research-slice");
+      dispatchWorkflow(pi, await assembleResearchSlicePrompt(milestoneId, milestoneTitle, sliceId, sliceTitle, basePath, 'guided'));
     } else if (choice === "status") {
       const { fireStatusViaCommand } = await import("./commands.js");
       await fireStatusViaCommand(ctx);
@@ -1330,24 +1291,7 @@ export async function showSmartEntry(
     });
 
     if (choice === "complete") {
-      const completeSliceTemplates = [
-        inlineTemplate("slice-summary", "Slice Summary"),
-        inlineTemplate("uat", "UAT"),
-      ].join("\n\n---\n\n");
-      await dispatchWorkflow(pi, loadPrompt("guided-complete-slice", {
-        workingDirectory: basePath,
-        milestoneId,
-        sliceId,
-        sliceTitle,
-        inlinedTemplates: completeSliceTemplates,
-        skillActivation: buildSkillActivationBlock({
-          base: basePath,
-          milestoneId,
-          sliceId,
-          sliceTitle,
-          extraContext: [completeSliceTemplates],
-        }),
-      }), "gsd-run", ctx, "complete-slice");
+      dispatchWorkflow(pi, await assembleCompleteSlicePrompt(milestoneId, milestoneTitle, sliceId, sliceTitle, basePath, 'guided'));
     } else if (choice === "status") {
       const { fireStatusViaCommand } = await import("./commands.js");
       await fireStatusViaCommand(ctx);
@@ -1410,34 +1354,9 @@ export async function showSmartEntry(
 
     if (choice === "execute") {
       if (hasInterrupted) {
-        await dispatchWorkflow(pi, loadPrompt("guided-resume-task", {
-          milestoneId,
-          sliceId,
-          skillActivation: buildSkillActivationBlock({
-            base: basePath,
-            milestoneId,
-            sliceId,
-            taskId,
-            taskTitle,
-          }),
-        }), "gsd-run", ctx, "execute-task");
+        dispatchWorkflow(pi, await assembleResumeTaskPrompt(milestoneId, sliceId, sliceTitle, taskId, taskTitle, basePath, 'guided'));
       } else {
-        const executeTaskTemplates = inlineTemplate("task-summary", "Task Summary");
-        await dispatchWorkflow(pi, loadPrompt("guided-execute-task", {
-          milestoneId,
-          sliceId,
-          taskId,
-          taskTitle,
-          inlinedTemplates: executeTaskTemplates,
-          skillActivation: buildSkillActivationBlock({
-            base: basePath,
-            milestoneId,
-            sliceId,
-            taskId,
-            taskTitle,
-            extraContext: [executeTaskTemplates],
-          }),
-        }), "gsd-run", ctx, "execute-task");
+        dispatchWorkflow(pi, await assembleExecuteTaskPrompt(milestoneId, sliceId, sliceTitle, taskId, taskTitle, basePath, 'guided'));
       }
     } else if (choice === "status") {
       const { fireStatusViaCommand } = await import("./commands.js");

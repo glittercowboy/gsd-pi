@@ -1,7 +1,33 @@
+---
+requirements:
+  - {{requirementId}}
+---
+
 # {{sliceId}}: {{sliceTitle}}
 
 **Goal:** {{goal}}
 **Demo:** {{demo}}
+
+## Why This Slice
+
+<!-- Why this slice is being done now. What does it unblock? Skip for obvious sequencing. -->
+
+## Integration Points
+
+<!-- What this slice consumes from prior work and what it produces for downstream slices.
+     Omit entirely for self-contained slices with no meaningful integration concerns. -->
+
+### Consumes
+
+- `{{fileOrArtifact}}` — {{description}}
+
+### Produces
+
+- `{{fileOrArtifact}}` — {{description}}
+
+## Research Findings
+
+<!-- Include when slice research produced findings that executors need. Omit for simple slices. -->
 
 ## Must-Haves
 

@@ -40,7 +40,7 @@ To call this milestone complete, we must prove:
 
 ## Risks and Unknowns
 
-- {{riskOrUnknown}} — {{whyItMatters}}
+None.
 
 ## Existing Codebase / Prior Art
 
@@ -73,4 +73,4 @@ To call this milestone complete, we must prove:
 
 ## Open Questions
 
-- {{question}} — {{currentThinking}}
+None.

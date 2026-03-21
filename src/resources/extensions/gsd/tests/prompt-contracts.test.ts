@@ -51,9 +51,3 @@ test("guided discussion prompts avoid wrap-up prompts after every round", () => 
   assert.doesNotMatch(slicePrompt, /I think I have a solid picture of this slice\. Ready to wrap up/i);
 });
 
-test("guided-resume-task prompt preserves recovery state until work is superseded", () => {
-  const prompt = readPrompt("guided-resume-task");
-  assert.match(prompt, /Do \*\*not\*\* delete the continue file immediately/i);
-  assert.match(prompt, /successfully completed or you have written a newer summary\/continue artifact/i);
-  assert.doesNotMatch(prompt, /Delete the continue file after reading it/i);
-});

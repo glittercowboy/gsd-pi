@@ -58,3 +58,6 @@ docs/coherence-audit/
 # ── Stale lock files (npm is canonical) ──
 pnpm-lock.yaml
 bun.lock
+
+# ── GSD baseline (auto-generated) ──
+.gsd

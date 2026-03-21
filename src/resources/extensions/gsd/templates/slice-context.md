@@ -37,7 +37,7 @@ status: {{draft|ready|in_progress|complete}}
 
 <!-- Known constraints: time-boxes, hard dependencies, prior decisions this slice must respect. -->
 
-- {{constraint}}
+None.
 
 ## Integration Points
 
@@ -55,4 +55,4 @@ status: {{draft|ready|in_progress|complete}}
 
 <!-- Unresolved questions at planning time. Answer them before or during execution. -->
 
-- {{question}} — {{currentThinking}}
+None.

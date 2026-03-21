@@ -1105,6 +1105,9 @@ export interface ExtensionAPI {
 	/** Get available slash commands in the current session. */
 	getCommands(): SlashCommandInfo[];
 
+	/** Get argument completions for a registered command (subcommands, flags, etc.). */
+	getCommandCompletions(commandName: string, prefix?: string): AutocompleteItem[] | null;
+
 	// =========================================================================
 	// Model and Thinking Level
 	// =========================================================================
@@ -1370,7 +1373,10 @@ export interface ExtensionCommandContextActions {
  * Full runtime = state + actions.
  * Created by loader with throwing action stubs, completed by runner.initialize().
  */
-export interface ExtensionRuntime extends ExtensionRuntimeState, ExtensionActions {}
+export interface ExtensionRuntime extends ExtensionRuntimeState, ExtensionActions {
+	/** Get argument completions for a registered command (populated by runner). */
+	getCommandCompletions: (commandName: string, prefix?: string) => AutocompleteItem[] | null;
+}
 
 /** Loaded extension with all registered items. */
 export interface Extension {

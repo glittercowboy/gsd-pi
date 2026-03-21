@@ -6,8 +6,8 @@
  * utility.
  */
 
-import { loadFile, parseContinue, parsePlan, parseRoadmap, parseSummary, extractUatType, loadActiveOverrides, formatOverridesSection, parseTaskPlanFile } from "./files.js";
-import type { Override, UatType } from "./files.js";
+import { loadFile, parseContinue, parsePlan, parseRoadmap, parseSummary, extractUatType, loadActiveOverrides, formatOverridesSection, parseTaskPlanFile, aggregateChildFrontmatter } from "./files.js";
+import type { Override, UatType, AggregatedFrontmatter } from "./files.js";
 import { loadPrompt, inlineTemplate } from "./prompt-loader.js";
 import {
   resolveMilestoneFile, resolveSliceFile, resolveSlicePath,
@@ -20,9 +20,70 @@ import type { GSDState, InlineLevel } from "./types.js";
 import type { GSDPreferences } from "./preferences.js";
 import { getLoadedSkills, type Skill } from "@gsd/pi-coding-agent";
 import { join, basename } from "node:path";
-import { existsSync } from "node:fs";
-import { computeBudgets, resolveExecutorContextWindow, truncateAtSectionBoundary } from "./context-budget.js";
+import { existsSync, statSync } from "node:fs";
+import { computeBudgets, resolveExecutorContextWindow } from "./context-budget.js";
 import { formatDecisionsCompact, formatRequirementsCompact } from "./structured-data-formatter.js";
+import { section, optimizeForCaching } from "./prompt-cache-optimizer.js";
+import { debugLog } from "./debug-logger.js";
+
+// ─── Aggregation Formatting ───────────────────────────────────────────────────
+
+/**
+ * Format an AggregatedFrontmatter object as a markdown section for injection
+ * into complete-slice and complete-milestone prompts.
+ *
+ * Returns empty string if the aggregation has no children (all arrays empty,
+ * duration zero, verification_results empty).
+ */
+function formatAggregationSection(agg: AggregatedFrontmatter): string {
+  const hasContent =
+    agg.key_files.length > 0 ||
+    agg.key_decisions.length > 0 ||
+    agg.patterns_established.length > 0 ||
+    agg.duration_minutes > 0 ||
+    Object.keys(agg.verification_results).length > 0;
+
+  if (!hasContent) return "";
+
+  const lines: string[] = [];
+  lines.push("## Pre-Computed Aggregation (from child summaries)");
+  lines.push("");
+
+  if (agg.key_files.length > 0) {
+    lines.push("**Key Files (deduplicated):**");
+    for (const f of agg.key_files) lines.push(`- ${f}`);
+    lines.push("");
+  }
+
+  if (agg.key_decisions.length > 0) {
+    lines.push("**Key Decisions (deduplicated):**");
+    for (const d of agg.key_decisions) lines.push(`- ${d}`);
+    lines.push("");
+  }
+
+  if (agg.patterns_established.length > 0) {
+    lines.push("**Patterns Established (deduplicated):**");
+    for (const p of agg.patterns_established) lines.push(`- ${p}`);
+    lines.push("");
+  }
+
+  lines.push(`**Duration (summed):** ${agg.duration_formatted}`);
+  lines.push("");
+
+  if (Object.keys(agg.verification_results).length > 0) {
+    lines.push("**Verification Results:**");
+    lines.push("| Task | Result |");
+    lines.push("|------|--------|");
+    for (const [task, result] of Object.entries(agg.verification_results)) {
+      lines.push(`| ${task} | ${result} |`);
+    }
+    lines.push("");
+  }
+
+  lines.push(`**All Passed:** ${agg.all_passed ? "yes" : "no"}`);
+
+  return lines.join("\n");
+}
 
 // ─── Preamble Cap ─────────────────────────────────────────────────────────────
 
@@ -982,6 +1043,149 @@ export async function buildPlanSlicePrompt(
   });
 }
 
+// ─── Context Manifest ──────────────────────────────────────────────────────
+
+/**
+ * Entry describing a single context file available to the executor agent.
+ * Used by `buildContextManifest()` to produce a structured manifest table.
+ */
+export interface ContextManifestEntry {
+  /** Relative path from the working directory */
+  relPath: string;
+  /** Human-readable purpose of this file */
+  purpose: string;
+  /** File size in bytes, or null if the file doesn't exist yet */
+  sizeBytes: number | null;
+}
+
+/**
+ * Format a byte count into a human-readable size string.
+ * <1024 → "N B", ≥1024 → "N.N KB"
+ */
+export function formatFileSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  return `${(bytes / 1024).toFixed(1)} KB`;
+}
+
+/**
+ * Build a markdown table of available context files for the executor agent.
+ *
+ * Each row shows the file path, its purpose, and its size (or "(not yet created)"
+ * if the file doesn't exist). This replaces bulk-inlined truncated text with a
+ * structured inventory the agent can read on demand.
+ *
+ * @param entries - Array of context file entries
+ * @returns Markdown string with a `## Context Manifest` heading and table
+ */
+export function buildContextManifest(entries: ContextManifestEntry[]): string {
+  const header = [
+    "## Context Manifest",
+    "| File | Purpose | Size |",
+    "|------|---------|------|",
+  ];
+
+  const rows = entries.map((e) => {
+    const size = e.sizeBytes === null ? "(not yet created)" : formatFileSize(e.sizeBytes);
+    return `| \`${e.relPath}\` | ${e.purpose} | ${size} |`;
+  });
+
+  return [...header, ...rows].join("\n");
+}
+
+/**
+ * Parameters for `buildTargetedPreloads()`.
+ */
+export interface TargetedPreloadsInput {
+  taskPlanInline: string;
+  slicePlanExcerpt: string;
+  dependencySummaries: string;
+}
+
+/**
+ * Assemble targeted preloaded sections for the executor agent.
+ *
+ * Concatenates the task plan, slice plan excerpt, and dependency summaries
+ * with `---` separators. Empty/null/whitespace-only sections are omitted.
+ * No truncation is applied — each section is included in full.
+ *
+ * @param input - The sections to preload
+ * @returns Combined markdown string with `---` separators between sections
+ */
+export function buildTargetedPreloads(input: TargetedPreloadsInput): string {
+  const sections: string[] = [];
+
+  if (input.taskPlanInline?.trim()) sections.push(input.taskPlanInline.trim());
+  if (input.slicePlanExcerpt?.trim()) sections.push(input.slicePlanExcerpt.trim());
+  if (input.dependencySummaries?.trim()) sections.push(input.dependencySummaries.trim());
+
+  return sections.join("\n\n---\n\n");
+}
+
+/**
+ * Build a `ContextManifestEntry[]` from the standard execute-task file set.
+ *
+ * Inventories: task plan, slice plan, roadmap, decisions, knowledge,
+ * requirements, and dependency/prior-task summaries. Uses `statSync()` for
+ * size (wrapped in try/catch → null for missing files).
+ *
+ * @param base - Project root directory
+ * @param mid - Milestone ID
+ * @param sid - Slice ID
+ * @param tid - Task ID
+ * @param priorSummaryPaths - Relative paths to prior/dependency task summaries
+ * @returns Array of ContextManifestEntry objects
+ */
+export function inventoryContextFiles(
+  base: string, mid: string, sid: string, tid: string,
+  priorSummaryPaths: string[],
+): ContextManifestEntry[] {
+  const entries: ContextManifestEntry[] = [];
+
+  function addEntry(relPath: string, purpose: string): void {
+    const absPath = join(base, relPath);
+    let sizeBytes: number | null = null;
+    try {
+      sizeBytes = statSync(absPath).size;
+    } catch {
+      sizeBytes = null;
+    }
+    entries.push({ relPath, purpose, sizeBytes });
+  }
+
+  // Task plan
+  const taskPlanRel = `${relSlicePath(base, mid, sid)}/tasks/${tid}-PLAN.md`;
+  addEntry(taskPlanRel, "Task plan (authoritative execution contract)");
+
+  // Slice plan
+  const slicePlanRel = relSliceFile(base, mid, sid, "PLAN");
+  addEntry(slicePlanRel, "Slice plan (goal, verification, tasks)");
+
+  // Roadmap
+  const roadmapRel = relMilestoneFile(base, mid, "ROADMAP");
+  addEntry(roadmapRel, "Milestone roadmap");
+
+  // Decisions
+  const decisionsRel = relGsdRootFile("DECISIONS");
+  addEntry(decisionsRel, "Project decisions");
+
+  // Knowledge
+  const knowledgeRel = relGsdRootFile("KNOWLEDGE");
+  addEntry(knowledgeRel, "Project knowledge / gotchas");
+
+  // Requirements
+  const requirementsRel = relGsdRootFile("REQUIREMENTS");
+  addEntry(requirementsRel, "Project requirements");
+
+  // Prior/dependency summaries
+  for (const summaryRel of priorSummaryPaths) {
+    const taskIdMatch = summaryRel.match(/\/(T\d+)-SUMMARY\.md$/i);
+    const taskLabel = taskIdMatch ? taskIdMatch[1] : "prior task";
+    addEntry(summaryRel, `Dependency summary (${taskLabel})`);
+  }
+
+  return entries;
+}
+
 /** Options for customizing execute-task prompt construction. */
 export interface ExecuteTaskPromptOptions {
   level?: InlineLevel;
@@ -1041,7 +1245,29 @@ export async function buildExecuteTaskPrompt(
   const effectivePriorSummaries = inlineLevel === "minimal" && priorSummaries.length > 1
     ? priorSummaries.slice(-1)
     : priorSummaries;
+
+  // --- Context Manifest + Targeted Preloads (replaces truncation-based carry-forward) ---
+  // Build a structured file inventory so the agent knows what's available on disk.
+  const manifestEntries = inventoryContextFiles(base, mid, sid, tid, effectivePriorSummaries);
+  const contextManifest = buildContextManifest(manifestEntries);
+
+  // Build dependency summaries content WITHOUT truncation for the execute-task path.
+  // inlineDependencySummaries() still supports truncation for complete-slice/milestone callers.
+  const depSummariesContent = await inlineDependencySummaries(mid, sid, base);
+
+  // Build the carry-forward section (prior task summaries) WITHOUT final truncation.
   const carryForwardSection = await buildCarryForwardSection(effectivePriorSummaries, base);
+
+  // Assemble targeted preloads — task plan, slice excerpt, dependency summaries, carry-forward —
+  // all without truncation, so the agent gets full context on direct dependencies.
+  const targetedPreloads = buildTargetedPreloads({
+    taskPlanInline,
+    slicePlanExcerpt,
+    dependencySummaries: [
+      depSummariesContent,
+      carryForwardSection,
+    ].filter(s => s?.trim()).join("\n\n---\n\n"),
+  });
 
   // Inline project knowledge if available (smart-chunked for relevance)
   const knowledgeAbsPath = resolveGsdRootFile(base, "KNOWLEDGE");
@@ -1075,12 +1301,27 @@ export async function buildExecuteTaskPrompt(
   const budgets = computeBudgets(contextWindow);
   const verificationBudget = `~${Math.round(budgets.verificationBudgetChars / 1000)}K chars`;
 
-  // Truncate carry-forward section when it exceeds 40% of inline context budget.
-  const carryForwardBudget = Math.floor(budgets.inlineContextBudgetChars * 0.4);
-  let finalCarryForward = carryForwardSection;
-  if (carryForwardSection.length > carryForwardBudget) {
-    finalCarryForward = truncateAtSectionBoundary(carryForwardSection, carryForwardBudget).content;
-  }
+  // ── Cache efficiency analysis ──────────────────────────────────────────────
+  // Build a parallel PromptSection[] from the content sections that will be
+  // substituted into the template. This lets us compute cache efficiency metrics
+  // via the structured optimizer without changing the template-based assembly.
+  // The heading-based reorderForCaching() in auto-loop.ts handles actual reordering.
+  const cacheAnalysisSections = [
+    section("template-execute-task", inlinedTemplates),
+    section("overrides", overridesSection),
+    section("slice-plan", slicePlanExcerpt),
+    section("context-manifest", contextManifest),
+    section("task-plan", taskPlanInline),
+    section("carry-forward", targetedPreloads),
+  ];
+  const cacheResult = optimizeForCaching(cacheAnalysisSections);
+  debugLog("cache", {
+    builder: "buildExecuteTaskPrompt",
+    cacheEfficiency: Math.round(cacheResult.cacheEfficiency * 1000) / 1000,
+    cacheablePrefixChars: cacheResult.cacheablePrefixChars,
+    totalChars: cacheResult.totalChars,
+    sectionCounts: cacheResult.sectionCounts,
+  });
 
   // Inline RUNTIME.md if present
   const runtimePath = resolveRuntimeFile(base);
@@ -1099,7 +1340,8 @@ export async function buildExecuteTaskPrompt(
     taskPlanPath: taskPlanRelPath,
     taskPlanInline,
     slicePlanExcerpt,
-    carryForwardSection: finalCarryForward,
+    contextManifest,
+    targetedPreloads,
     resumeSection,
     priorTaskLines: priorLines,
     taskSummaryPath,
@@ -1140,6 +1382,7 @@ export async function buildCompleteSlicePrompt(
 
   // Inline all task summaries for this slice
   const tDir = resolveTasksDir(base, mid, sid);
+  const summaryAbsPaths: string[] = [];
   if (tDir) {
     const summaryFiles = resolveTaskFiles(tDir, "SUMMARY").sort();
     for (const file of summaryFiles) {
@@ -1148,9 +1391,17 @@ export async function buildCompleteSlicePrompt(
       const sRel = relSlicePath(base, mid, sid);
       const relPath = `${sRel}/tasks/${file}`;
       if (content) {
+        summaryAbsPaths.push(absPath);
         inlined.push(`### Task Summary: ${file.replace(/-SUMMARY\.md$/i, "")}\nSource: \`${relPath}\`\n\n${content.trim()}`);
       }
     }
+  }
+
+  // Inject pre-computed aggregation from child task summaries
+  if (summaryAbsPaths.length > 0) {
+    const aggregation = aggregateChildFrontmatter(summaryAbsPaths);
+    const aggSection = formatAggregationSection(aggregation);
+    if (aggSection) inlined.push(aggSection);
   }
   inlined.push(inlineTemplate("slice-summary", "Slice Summary"));
   if (inlineLevel !== "minimal") {
@@ -1189,6 +1440,7 @@ export async function buildCompleteMilestonePrompt(
 
   // Inline all slice summaries (deduplicated by slice ID)
   const roadmapContent = roadmapPath ? await loadFile(roadmapPath) : null;
+  const sliceSummaryAbsPaths: string[] = [];
   if (roadmapContent) {
     const roadmap = parseRoadmap(roadmapContent);
     const seenSlices = new Set<string>();
@@ -1197,8 +1449,18 @@ export async function buildCompleteMilestonePrompt(
       seenSlices.add(slice.id);
       const summaryPath = resolveSliceFile(base, mid, slice.id, "SUMMARY");
       const summaryRel = relSliceFile(base, mid, slice.id, "SUMMARY");
+      if (summaryPath && existsSync(summaryPath)) {
+        sliceSummaryAbsPaths.push(summaryPath);
+      }
       inlined.push(await inlineFile(summaryPath, summaryRel, `${slice.id} Summary`));
     }
+  }
+
+  // Inject pre-computed aggregation from child slice summaries
+  if (sliceSummaryAbsPaths.length > 0) {
+    const aggregation = aggregateChildFrontmatter(sliceSummaryAbsPaths);
+    const aggSection = formatAggregationSection(aggregation);
+    if (aggSection) inlined.push(aggSection);
   }
 
   // Inline root GSD files (skip for minimal — completion can read these if needed)

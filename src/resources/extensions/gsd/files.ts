@@ -3,8 +3,8 @@
 // Used by state derivation and the status widget.
 // Pure functions, zero Pi dependencies - uses only Node built-ins.
 
-import { promises as fs } from 'node:fs';
-import { resolve } from 'node:path';
+import { promises as fs, readFileSync } from 'node:fs';
+import { resolve, basename } from 'node:path';
 import { atomicWriteAsync } from './atomic-write.js';
 import { resolveMilestoneFile, relMilestoneFile, resolveGsdRootFile } from './paths.js';
 import { milestoneIdSort, findMilestoneIds } from './milestone-ids.js';
@@ -818,15 +818,31 @@ export type UatType = 'artifact-driven' | 'live-runtime' | 'human-experience' | 
 /**
  * Extract the UAT type from a UAT file's raw content.
  *
- * UAT files have no YAML frontmatter - pass raw file content directly.
+ * Checks YAML frontmatter `uat_type:` first; falls back to body-based
+ * `## UAT Type` section parsing for backward compatibility.
  * Classification is leading-keyword-only: e.g. `mixed (artifact-driven + live-runtime)` → `'mixed'`.
  *
  * Returns `undefined` when:
- * - the `## UAT Type` section is absent
+ * - neither frontmatter `uat_type:` nor `## UAT Type` section is present
  * - no `UAT mode:` bullet is found in the section
  * - the value does not start with a recognised keyword
  */
 export function extractUatType(content: string): UatType | undefined {
+  // Try frontmatter first
+  const [fmLines] = splitFrontmatter(content);
+  if (fmLines) {
+    const fm = parseFrontmatterMap(fmLines);
+    const fmValue = fm['uat_type'];
+    if (typeof fmValue === 'string' && fmValue.trim().length > 0) {
+      const v = fmValue.trim().toLowerCase();
+      if (v.startsWith('artifact-driven')) return 'artifact-driven';
+      if (v.startsWith('live-runtime')) return 'live-runtime';
+      if (v.startsWith('human-experience')) return 'human-experience';
+      if (v.startsWith('mixed')) return 'mixed';
+    }
+  }
+
+  // Fall back to body-based ## UAT Type section
   const sectionText = extractSection(content, 'UAT Type');
   if (!sectionText) return undefined;
 
@@ -844,6 +860,24 @@ export function extractUatType(content: string): UatType | undefined {
   if (rawValue.startsWith('mixed')) return 'mixed';
 
   return undefined;
+}
+
+const PLACEHOLDER_RE = /^\{\{.*\}\}$/;
+
+/**
+ * Extract the `requirements:` list from a slice plan's YAML frontmatter.
+ * Returns [] when: no frontmatter, field absent, field empty, or all values are placeholders.
+ * Filters out placeholder entries like `{{requirementId}}`.
+ */
+export function extractPlanRequirements(content: string): string[] {
+  const [fmLines] = splitFrontmatter(content);
+  if (!fmLines) return [];
+  const fm = parseFrontmatterMap(fmLines);
+  const raw = fm['requirements'];
+  if (!Array.isArray(raw) || raw.length === 0) return [];
+  return (raw as string[])
+    .map(s => String(s).trim())
+    .filter(s => s.length > 0 && !PLACEHOLDER_RE.test(s));
 }
 
 /**
@@ -928,6 +962,94 @@ export async function getManifestStatus(
   }
 
   return result;
+}
+
+// ─── Duration Parsing & Aggregation ────────────────────────────────────────
+
+/**
+ * Parse a human-readable duration string into total minutes.
+ * Handles formats: "15m", "1h", "1h30m", "~20m", "≈10m", "2h 5m".
+ * Returns 0 for empty, undefined, or unparseable values.
+ */
+export function parseDurationMinutes(s: string | undefined | null): number {
+  if (!s || typeof s !== 'string') return 0;
+  const hourMatch = s.match(/(\d+)\s*h/);
+  const minMatch = s.match(/(\d+)\s*m/);
+  const hours = hourMatch ? parseInt(hourMatch[1], 10) : 0;
+  const minutes = minMatch ? parseInt(minMatch[1], 10) : 0;
+  return hours * 60 + minutes;
+}
+
+/**
+ * Format a duration in minutes to a human-readable string.
+ * Produces "1h 30m" for 90, "15m" for 15, "0m" for 0.
+ * Only includes hours component if >= 60 minutes.
+ */
+export function formatDurationMinutes(mins: number): string {
+  if (mins < 60) return `${mins}m`;
+  const h = Math.floor(mins / 60);
+  const m = mins % 60;
+  return `${h}h ${m}m`;
+}
+
+/** Aggregated frontmatter data from child summary files. */
+export interface AggregatedFrontmatter {
+  key_files: string[];
+  key_decisions: string[];
+  patterns_established: string[];
+  duration_minutes: number;
+  duration_formatted: string;
+  verification_results: Record<string, string>;
+  all_passed: boolean;
+}
+
+/**
+ * Read child summary files, parse their YAML frontmatter, and produce
+ * a deduplicated/summed aggregation object.
+ *
+ * Accepts absolute file paths. Files that don't exist or fail to parse
+ * are silently skipped (non-fatal).
+ */
+export function aggregateChildFrontmatter(summaryPaths: string[]): AggregatedFrontmatter {
+  const keyFilesSet = new Set<string>();
+  const keyDecisionsSet = new Set<string>();
+  const patternsSet = new Set<string>();
+  let totalMinutes = 0;
+  const verificationResults: Record<string, string> = {};
+  let childCount = 0;
+  let allPassed = true;
+
+  for (const filePath of summaryPaths) {
+    try {
+      const content = readFileSync(filePath, 'utf-8');
+      const summary = parseSummary(content);
+      const fm = summary.frontmatter;
+      childCount++;
+
+      for (const f of fm.key_files) keyFilesSet.add(f);
+      for (const d of fm.key_decisions) keyDecisionsSet.add(d);
+      for (const p of fm.patterns_established) patternsSet.add(p);
+
+      totalMinutes += parseDurationMinutes(fm.duration);
+
+      const id = fm.id;
+      const key = (typeof id === 'string' && id) ? id : basename(filePath, '.md');
+      verificationResults[key] = fm.verification_result || 'untested';
+      if (fm.verification_result !== 'passed') allPassed = false;
+    } catch {
+      // Silently skip non-existent or unparseable files
+    }
+  }
+
+  return {
+    key_files: [...keyFilesSet],
+    key_decisions: [...keyDecisionsSet],
+    patterns_established: [...patternsSet],
+    duration_minutes: totalMinutes,
+    duration_formatted: formatDurationMinutes(totalMinutes),
+    verification_results: verificationResults,
+    all_passed: childCount > 0 && allPassed,
+  };
 }
 
 // ─── Overrides ──────────────────────────────────────────────────────────────

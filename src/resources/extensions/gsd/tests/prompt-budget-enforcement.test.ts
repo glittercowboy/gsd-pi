@@ -298,7 +298,7 @@ describe("prompt-budget: different context windows produce different outputs", (
   });
 });
 
-// ─── execute-task template includes verificationBudget placeholder ─────────
+// ─── execute-task template includes manifest + preload placeholders ─────────
 
 describe("prompt-budget: execute-task template", () => {
   it("contains {{verificationBudget}} placeholder", () => {
@@ -307,6 +307,33 @@ describe("prompt-budget: execute-task template", () => {
     assert.ok(
       template.includes("{{verificationBudget}}"),
       "execute-task.md should contain {{verificationBudget}} placeholder",
+    );
+  });
+
+  it("contains {{contextManifest}} placeholder", () => {
+    const templatePath = join(__dirname, "..", "prompts", "execute-task.md");
+    const template = readFileSync(templatePath, "utf-8");
+    assert.ok(
+      template.includes("{{contextManifest}}"),
+      "execute-task.md should contain {{contextManifest}} placeholder",
+    );
+  });
+
+  it("contains {{targetedPreloads}} placeholder", () => {
+    const templatePath = join(__dirname, "..", "prompts", "execute-task.md");
+    const template = readFileSync(templatePath, "utf-8");
+    assert.ok(
+      template.includes("{{targetedPreloads}}"),
+      "execute-task.md should contain {{targetedPreloads}} placeholder",
+    );
+  });
+
+  it("does NOT contain old {{carryForwardSection}} placeholder", () => {
+    const templatePath = join(__dirname, "..", "prompts", "execute-task.md");
+    const template = readFileSync(templatePath, "utf-8");
+    assert.ok(
+      !template.includes("{{carryForwardSection}}"),
+      "execute-task.md should NOT contain {{carryForwardSection}} placeholder",
     );
   });
 
@@ -428,37 +455,137 @@ describe("prompt-budget: complete-milestone builder truncation pattern", () => {
   });
 });
 
-// ─── buildExecuteTaskPrompt budget enforcement (simulated) ───────────────────
+// ─── execute-task builder uses manifest + preloads instead of truncation ──────
 
-describe("prompt-budget: execute-task builder truncation pattern", () => {
-  it("truncateAtSectionBoundary truncates assembled carry-forward + task plan + slice excerpt", () => {
-    // Simulate the assembled content from buildExecuteTaskPrompt
-    const carryForward = "## Carry-Forward Context\n" + Array.from({ length: 20 }, (_, i) =>
-      `- \`tasks/T${String(i).padStart(2, "0")}-SUMMARY.md\` — ${"Summary details. ".repeat(100)}`
-    ).join("\n");
+describe("prompt-budget: execute-task builder manifest pattern", () => {
+  let base: string;
 
-    const taskPlan = "## Inlined Task Plan\n\n" + Array.from({ length: 10 }, (_, i) =>
-      `### Step ${i}\n\n${"Implementation step details. ".repeat(200)}`
-    ).join("\n\n");
+  beforeEach(() => {
+    base = createFixtureBase();
+  });
 
-    const sliceExcerpt = "## Slice Plan Excerpt\n\n" + "Slice goal and verification details. ".repeat(100);
+  afterEach(() => {
+    cleanup(base);
+  });
 
-    const assembled = [carryForward, taskPlan, sliceExcerpt].join("\n\n---\n\n");
+  it("buildExecuteTaskPrompt output contains Context Manifest section with table", async () => {
+    // Set up minimal fixture: milestone dir, roadmap, slice plan, task plan
+    const msDir = join(base, ".gsd", "milestones", "M001");
+    const sliceDir = join(msDir, "slices", "S01");
+    const taskDir = join(sliceDir, "tasks");
+    mkdirSync(taskDir, { recursive: true });
 
-    // Small context window should truncate
-    const budget128K = computeBudgets(128_000);
-    const result = truncateAtSectionBoundary(assembled, budget128K.inlineContextBudgetChars);
+    const roadmap = "# Roadmap\n\n## Slices\n\n- [ ] **S01: Test slice** `risk:low` `depends:[]`\n";
+    writeFileSync(join(msDir, "M001-ROADMAP.md"), roadmap);
 
-    // Content should respect budget
-    assert.ok(
-      result.content.length <= budget128K.inlineContextBudgetChars + 100,
-      `result should respect 128K budget, got ${result.content.length} chars vs budget ${budget128K.inlineContextBudgetChars}`,
-    );
+    const slicePlan = "# S01: Test Slice\n\n**Goal:** Test goal.\n**Demo:** Test demo.\n\n## Verification\n\n- `echo pass`\n\n## Tasks\n\n- [ ] **T01: Test task** `est:30m`\n";
+    writeFileSync(join(sliceDir, "S01-PLAN.md"), slicePlan);
 
-    // Large content should be truncated
-    if (assembled.length > budget128K.inlineContextBudgetChars) {
-      assert.ok(result.content.includes("[...truncated"), "should truncate when content exceeds 128K budget");
-      assert.ok(result.droppedSections > 0, "should report dropped sections");
+    const taskPlan = "# T01: Test task\n\n## Steps\n\n1. Do the thing\n";
+    writeFileSync(join(taskDir, "T01-PLAN.md"), taskPlan);
+
+    const { buildExecuteTaskPrompt } = await import("../auto-prompts.js");
+    const result = await buildExecuteTaskPrompt("M001", "S01", "Test slice", "T01", "Test task", base);
+
+    assert.ok(result.includes("## Context Manifest"), "output should contain Context Manifest heading");
+    assert.ok(result.includes("| File | Purpose | Size |"), "output should contain manifest table header");
+    assert.ok(result.includes("| `"), "output should contain manifest table rows");
+  });
+
+  it("buildExecuteTaskPrompt output does NOT contain truncation markers", async () => {
+    const msDir = join(base, ".gsd", "milestones", "M001");
+    const sliceDir = join(msDir, "slices", "S01");
+    const taskDir = join(sliceDir, "tasks");
+    mkdirSync(taskDir, { recursive: true });
+
+    const roadmap = "# Roadmap\n\n## Slices\n\n- [ ] **S01: Test slice** `risk:low` `depends:[]`\n";
+    writeFileSync(join(msDir, "M001-ROADMAP.md"), roadmap);
+
+    // Write many prior task summaries to simulate the carry-forward scenario
+    for (let i = 1; i <= 10; i++) {
+      const tid = `T${String(i).padStart(2, "0")}`;
+      const summaryContent = [
+        "---",
+        `id: ${tid}`,
+        "parent: S01",
+        "milestone: M001",
+        "provides:",
+        "  - some output",
+        "key_files:",
+        "  - some/file.ts",
+        "key_decisions:",
+        "  - a decision",
+        "patterns_established:",
+        "  - a pattern",
+        "observability_surfaces:",
+        "  - none",
+        "duration: 10m",
+        "verification_result: passed",
+        "completed_at: 2025-01-01",
+        "blocker_discovered: false",
+        "---",
+        "",
+        `# ${tid}: Task ${i}`,
+        "",
+        `**Did task ${i} stuff**`,
+        "",
+        "## What Happened",
+        "",
+        `${"Detailed task results with lots of content. ".repeat(100)}`,
+        "",
+        "## Diagnostics",
+        "",
+        "Check the logs.",
+      ].join("\n");
+      writeFileSync(join(taskDir, `${tid}-SUMMARY.md`), summaryContent);
     }
+
+    // Create a large slice plan
+    const slicePlan = "# S01: Test Slice\n\n**Goal:** Big slice goal.\n**Demo:** Demo.\n\n## Verification\n\n- `echo pass`\n\n## Tasks\n\n" +
+      Array.from({ length: 11 }, (_, i) => `- [${i < 10 ? 'x' : ' '}] **T${String(i + 1).padStart(2, "0")}: Task ${i + 1}** \`est:30m\``).join("\n") + "\n";
+    writeFileSync(join(sliceDir, "S01-PLAN.md"), slicePlan);
+
+    const taskPlan = "# T11: Task eleven\n\n## Steps\n\n1. Do the thing\n";
+    writeFileSync(join(taskDir, "T11-PLAN.md"), taskPlan);
+
+    const { buildExecuteTaskPrompt } = await import("../auto-prompts.js");
+    const result = await buildExecuteTaskPrompt("M001", "S01", "Test slice", "T11", "Task eleven", base);
+
+    assert.ok(!result.includes("[...truncated"), "execute-task output should NOT contain truncation markers");
+    assert.ok(result.includes("## Context Manifest"), "should still have manifest");
+    assert.ok(result.includes("T11-PLAN.md"), "should reference task plan in manifest");
+  });
+
+  it("buildExecuteTaskPrompt output contains inlined task plan content", async () => {
+    const msDir = join(base, ".gsd", "milestones", "M001");
+    const sliceDir = join(msDir, "slices", "S01");
+    const taskDir = join(sliceDir, "tasks");
+    mkdirSync(taskDir, { recursive: true });
+
+    const roadmap = "# Roadmap\n\n## Slices\n\n- [ ] **S01: Test slice** `risk:low` `depends:[]`\n";
+    writeFileSync(join(msDir, "M001-ROADMAP.md"), roadmap);
+
+    const slicePlan = "# S01: Test Slice\n\n**Goal:** Goal.\n**Demo:** Demo.\n\n## Verification\n\n- `echo ok`\n\n## Tasks\n\n- [ ] **T01: First task** `est:30m`\n";
+    writeFileSync(join(sliceDir, "S01-PLAN.md"), slicePlan);
+
+    const taskPlan = "# T01: First task\n\n## Steps\n\n1. Build the widget\n2. Test the widget\n";
+    writeFileSync(join(taskDir, "T01-PLAN.md"), taskPlan);
+
+    const { buildExecuteTaskPrompt } = await import("../auto-prompts.js");
+    const result = await buildExecuteTaskPrompt("M001", "S01", "Test slice", "T01", "First task", base);
+
+    // Task plan should be inlined in the targeted preloads
+    assert.ok(result.includes("Build the widget"), "output should contain task plan content");
+    assert.ok(result.includes("Test the widget"), "output should contain all task plan steps");
+    assert.ok(result.includes("## Inlined Task Plan"), "output should have task plan heading");
+  });
+
+  it("manifest includes agent instructions about reading files on demand", () => {
+    const templatePath = join(__dirname, "..", "prompts", "execute-task.md");
+    const template = readFileSync(templatePath, "utf-8");
+    assert.ok(
+      template.includes("read") && template.includes("on demand"),
+      "template should instruct agent to read non-preloaded files on demand",
+    );
   });
 });

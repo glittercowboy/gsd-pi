@@ -1,9 +1,15 @@
+---
+uat_type: {{artifact-driven | live-runtime | human-experience | mixed}}
+---
+
 # {{sliceId}}: {{sliceTitle}} — UAT
 
 **Milestone:** {{milestoneId}}
 **Written:** {{date}}
 
 ## UAT Type
+
+<!-- The uat_type frontmatter field above is authoritative. This body section is kept for backward compatibility. -->
 
 - UAT mode: {{artifact-driven | live-runtime | human-experience | mixed}}
 - Why this mode is sufficient: {{reason}}
@@ -42,12 +48,11 @@
 
 ## Requirements Proved By This UAT
 
-- {{requirementIdOr_none}} — {{what this UAT proves}}
+None.
 
 ## Not Proven By This UAT
 
-- {{what this UAT intentionally does not prove}}
-- {{remaining live/runtime/operational gaps, if any}}
+None.
 
 ## Notes for Tester
 

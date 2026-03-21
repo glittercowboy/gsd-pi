@@ -246,6 +246,13 @@ export class ExtensionRunner {
 		this.runtime.setActiveTools = actions.setActiveTools;
 		this.runtime.refreshTools = actions.refreshTools;
 		this.runtime.getCommands = actions.getCommands;
+		this.runtime.getCommandCompletions = (commandName: string, prefix?: string) => {
+			const command = this.getCommand(commandName);
+			if (command?.getArgumentCompletions) {
+				return command.getArgumentCompletions(prefix ?? "");
+			}
+			return null;
+		};
 		this.runtime.setModel = actions.setModel;
 		this.runtime.getThinkingLevel = actions.getThinkingLevel;
 		this.runtime.setThinkingLevel = actions.setThinkingLevel;

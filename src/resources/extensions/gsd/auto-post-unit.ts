@@ -13,7 +13,7 @@
 
 import type { ExtensionContext, ExtensionAPI } from "@gsd/pi-coding-agent";
 import { deriveState } from "./state.js";
-import { loadFile, parseSummary, resolveAllOverrides } from "./files.js";
+import { loadFile, parseSummary, resolveAllOverrides, extractPlanRequirements } from "./files.js";
 import { loadPrompt } from "./prompt-loader.js";
 import {
   resolveSliceFile,
@@ -25,6 +25,7 @@ import {
 } from "./paths.js";
 import { invalidateAllCaches } from "./cache.js";
 import { closeoutUnit, type CloseoutOptions } from "./auto-unit-closeout.js";
+import { appendProofEntry } from "./proof-ledger.js";
 import {
   autoCommitCurrentBranch,
   type TaskCommitContext,
@@ -117,6 +118,7 @@ export async function postUnitPreVerification(pctx: PostUnitContext, opts?: PreV
   if (s.currentUnit) {
     try {
       let taskContext: TaskCommitContext | undefined;
+      let verificationResult: string | undefined;
 
       if (s.currentUnit.type === "execute-task") {
         const parts = s.currentUnit.id.split("/");
@@ -128,6 +130,7 @@ export async function postUnitPreVerification(pctx: PostUnitContext, opts?: PreV
               const summaryContent = await loadFile(summaryPath);
               if (summaryContent) {
                 const summary = parseSummary(summaryContent);
+                verificationResult = summary.frontmatter.verification_result || undefined;
                 // Look up GitHub issue number for commit linking
                 let ghIssueNumber: number | undefined;
                 try {
@@ -152,7 +155,58 @@ export async function postUnitPreVerification(pctx: PostUnitContext, opts?: PreV
         }
       }
 
-      const commitMsg = autoCommitCurrentBranch(s.basePath, s.currentUnit.type, s.currentUnit.id, taskContext);
+      // For execute-task units, rebuild STATE.md *before* committing so it
+      // lands in the same commit as the task summary (atomic state).
+      let includeOverrides: string[] | undefined;
+      if (s.currentUnit.type === "execute-task" && !opts?.skipStateRebuild) {
+        try {
+          await rebuildState(s.basePath);
+          s.lastStateRebuildAt = Date.now();
+          includeOverrides = [".gsd/STATE.md"];
+          debugLog("postUnit", { phase: "state-rebuild-atomic" });
+        } catch (e) {
+          debugLog("postUnit", { phase: "state-rebuild-atomic", error: String(e) });
+          // Fall through — commit will proceed without STATE.md (degraded but not broken)
+        }
+      }
+
+      // ── Proof Ledger: append requirement evidence on task completion ──
+      if (s.currentUnit.type === "execute-task") {
+        try {
+          const parts = s.currentUnit.id.split("/");
+          const [mid, sid, tid] = parts;
+          if (mid && sid) {
+            const slicePlanPath = resolveSliceFile(s.basePath, mid, sid, "PLAN");
+            const slicePlanContent = slicePlanPath ? await loadFile(slicePlanPath) : null;
+            const requirements = slicePlanContent ? extractPlanRequirements(slicePlanContent) : [];
+
+            if (requirements.length === 0) {
+              debugLog("postUnit", { phase: "proof-ledger-skip", reason: "no requirements in slice plan" });
+            } else {
+              const evidence = verificationResult || "task completed";
+              for (const reqId of requirements) {
+                appendProofEntry(s.basePath, {
+                  requirementId: reqId,
+                  sliceId: sid,
+                  taskId: tid,
+                  strength: "supports",
+                  evidence,
+                });
+              }
+              if (!includeOverrides) includeOverrides = [];
+              if (!includeOverrides.includes(".gsd/PROOF.json")) {
+                includeOverrides.push(".gsd/PROOF.json");
+              }
+              debugLog("postUnit", { phase: "proof-ledger-append", requirementCount: requirements.length, sliceId: sid });
+            }
+          }
+        } catch (e) {
+          debugLog("postUnit", { phase: "proof-ledger-error", error: String(e) });
+          // Non-fatal — commit proceeds without proof ledger update
+        }
+      }
+
+      const commitMsg = autoCommitCurrentBranch(s.basePath, s.currentUnit.type, s.currentUnit.id, taskContext, includeOverrides);
       if (commitMsg) {
         ctx.ui.notify(`Committed: ${commitMsg.split("\n")[0]}`, "info");
       }
@@ -227,8 +281,9 @@ export async function postUnitPreVerification(pctx: PostUnitContext, opts?: PreV
       debugLog("postUnit", { phase: "doctor", error: String(e) });
     }
 
-    // Throttled STATE.md rebuild (skipped for lightweight sidecars)
-    if (!opts?.skipStateRebuild) {
+    // Throttled STATE.md rebuild (skipped for lightweight sidecars and execute-task
+    // units — execute-task already committed STATE.md atomically with the task summary)
+    if (!opts?.skipStateRebuild && s.currentUnit.type !== "execute-task") {
       const now = Date.now();
       if (now - s.lastStateRebuildAt >= STATE_REBUILD_MIN_INTERVAL_MS) {
         try {

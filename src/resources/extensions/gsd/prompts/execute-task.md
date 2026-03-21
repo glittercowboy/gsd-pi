@@ -14,11 +14,15 @@ A researcher explored the codebase and a planner decomposed the work — you are
 
 {{resumeSection}}
 
-{{carryForwardSection}}
+## Context Manifest
 
-{{taskPlanInline}}
+The table below lists all available context files with their sizes. Files marked as **preloaded** are inlined in the "Carry-Forward Context" section below — read them there. For non-preloaded files, use the `read` tool to load them on demand when needed.
 
-{{slicePlanExcerpt}}
+{{contextManifest}}
+
+## Carry-Forward Context
+
+{{targetedPreloads}}
 
 ## Backing Source Artifacts
 - Slice plan: `{{planPath}}`
