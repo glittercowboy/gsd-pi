@@ -8,6 +8,17 @@ import { createTestContext } from "./test-helpers.ts";
 
 const { assertEq, assertTrue, report } = createTestContext();
 
+/**
+ * Normalize a path for reliable comparison on Windows CI runners.
+ * `os.tmpdir()` may return the 8.3 short-path form (e.g. `C:\Users\RUNNER~1`)
+ * while `realpathSync` and git resolve to the long form (`C:\Users\runneradmin`).
+ * Apply `realpathSync` and lowercase on Windows to eliminate both discrepancies.
+ */
+function normalizePath(p: string): string {
+  const resolved = realpathSync(p);
+  return process.platform === "win32" ? resolved.toLowerCase() : resolved;
+}
+
 function run(command: string, cwd: string): string {
   return execSync(command, { cwd, stdio: ["ignore", "pipe", "pipe"], encoding: "utf-8" }).trim();
 }
@@ -90,16 +101,17 @@ async function main(): Promise<void> {
       const fixedExternal = ensureGsdSymlink(moveRepo);
       const before = readRepoMeta(fixedExternal);
       assertTrue(before !== null, "repo metadata exists before repo move");
-      assertEq(before!.gitRoot, realpathSync(moveRepo), "repo metadata tracks current git root before move");
+      assertEq(normalizePath(before!.gitRoot), normalizePath(moveRepo), "repo metadata tracks current git root before move");
 
-      const movedBase = join(tmpdir(), `gsd-repo-identity-moved-${Date.now()}-${Math.random().toString(36).slice(2)}`);
-      renameSync(moveRepo, movedBase);
+      const movedBaseRaw = join(tmpdir(), `gsd-repo-identity-moved-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+      renameSync(moveRepo, movedBaseRaw);
+      const movedBase = realpathSync(movedBaseRaw);
       const movedExternal = ensureGsdSymlink(movedBase);
       assertEq(realpathSync(movedExternal), realpathSync(fixedExternal), "fixed project id keeps the same external state dir");
 
       const after = readRepoMeta(movedExternal);
       assertTrue(after !== null, "repo metadata exists after repo move");
-      assertEq(after!.gitRoot, realpathSync(movedBase), "repo metadata gitRoot is refreshed to moved repo path");
+      assertEq(normalizePath(after!.gitRoot), normalizePath(movedBase), "repo metadata gitRoot is refreshed to moved repo path");
       assertEq(after!.createdAt, before!.createdAt, "repo metadata preserves createdAt on refresh");
 
       rmSync(movedBase, { recursive: true, force: true });

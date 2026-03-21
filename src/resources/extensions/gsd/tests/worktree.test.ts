@@ -20,6 +20,18 @@ import { _resetHasChangesCache } from "../native-git-bridge.ts";
 import { createTestContext } from './test-helpers.ts';
 
 const { assertEq, assertTrue, report } = createTestContext();
+
+/**
+ * Normalize a path for reliable comparison on Windows CI runners.
+ * `os.tmpdir()` may return the 8.3 short-path form (e.g. `C:\Users\RUNNER~1`)
+ * while `realpathSync` and git resolve to the long form (`C:\Users\runneradmin`).
+ * Apply `realpathSync` and lowercase on Windows to eliminate both discrepancies.
+ */
+function normalizePath(p: string): string {
+  const resolved = realpathSync(p);
+  return process.platform === "win32" ? resolved.toLowerCase() : resolved;
+}
+
 function run(command: string, cwd: string): string {
   return execSync(command, { cwd, stdio: ["ignore", "pipe", "pipe"], encoding: "utf-8" }).trim();
 }
@@ -236,7 +248,7 @@ async function main(): Promise<void> {
   // Real symlink + git worktree scenario, with deep nested path from cwd
   {
     const fakeHome = mkdtempSync(join(tmpdir(), "gsd-home-"));
-    const project = mkdtempSync(join(tmpdir(), "gsd-proj-"));
+    const project = realpathSync(mkdtempSync(join(tmpdir(), "gsd-proj-")));
     const storage = join(fakeHome, ".gsd", "projects", "abc123def456");
     mkdirSync(storage, { recursive: true });
     symlinkSync(storage, join(project, ".gsd"));
@@ -253,8 +265,8 @@ async function main(): Promise<void> {
 
     process.env.GSD_HOME = join(fakeHome, ".gsd");
     assertEq(
-      resolveProjectRoot(realpathSync(deep)),
-      realpathSync(project),
+      normalizePath(resolveProjectRoot(realpathSync(deep))),
+      normalizePath(project),
       "resolves to real project root from deep symlink-resolved worktree path",
     );
     delete process.env.GSD_HOME;
