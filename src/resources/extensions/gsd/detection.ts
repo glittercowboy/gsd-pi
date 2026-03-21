@@ -69,7 +69,7 @@ export interface ProjectSignals {
 
 // ─── Project File Markers ───────────────────────────────────────────────────────
 
-const PROJECT_FILES = [
+export const PROJECT_FILES = [
   "package.json",
   "Cargo.toml",
   "go.mod",

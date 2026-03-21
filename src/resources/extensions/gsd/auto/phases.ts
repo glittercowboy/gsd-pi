@@ -26,6 +26,7 @@ import { runUnit } from "./run-unit.js";
 import { debugLog } from "../debug-logger.js";
 import { gsdRoot } from "../paths.js";
 import { atomicWriteSync } from "../atomic-write.js";
+import { PROJECT_FILES } from "../detection.js";
 import { join } from "node:path";
 
 // ─── generateMilestoneReport ──────────────────────────────────────────────────
@@ -809,25 +810,27 @@ export async function runUnitPhase(
     unitId,
   });
 
-  // ── Worktree health check (#1833) ───────────────────────────────────
+  // ── Worktree health check (#1833, #1843) ────────────────────────────
   // Verify the working directory is a valid git checkout with project
   // files before dispatching work. A broken worktree causes agents to
   // hallucinate summaries since they cannot read or write any files.
+  // Uses the shared PROJECT_FILES list from detection.ts to support all
+  // ecosystems (Rust, Go, Python, Java, etc.), not just JS.
   if (s.basePath && unitType === "execute-task") {
     const gitMarker = join(s.basePath, ".git");
     const hasGit = deps.existsSync(gitMarker);
-    const hasPackageJson = deps.existsSync(join(s.basePath, "package.json"));
-    const hasSrcDir = deps.existsSync(join(s.basePath, "src"));
     if (!hasGit) {
       const msg = `Worktree health check failed: ${s.basePath} has no .git — refusing to dispatch ${unitType} ${unitId}`;
-      debugLog("runUnitPhase", { phase: "worktree-health-fail", basePath: s.basePath, hasGit, hasPackageJson, hasSrcDir });
+      debugLog("runUnitPhase", { phase: "worktree-health-fail", basePath: s.basePath, hasGit });
       ctx.ui.notify(msg, "error");
       await deps.stopAuto(ctx, pi, msg);
       return { action: "break", reason: "worktree-invalid" };
     }
-    if (!hasPackageJson && !hasSrcDir) {
-      const msg = `Worktree health check failed: ${s.basePath} has no package.json or src/ — refusing to dispatch ${unitType} ${unitId}`;
-      debugLog("runUnitPhase", { phase: "worktree-health-fail", basePath: s.basePath, hasGit, hasPackageJson, hasSrcDir });
+    const hasProjectFile = PROJECT_FILES.some((f) => deps.existsSync(join(s.basePath, f)));
+    const hasSrcDir = deps.existsSync(join(s.basePath, "src"));
+    if (!hasProjectFile && !hasSrcDir) {
+      const msg = `Worktree health check failed: ${s.basePath} has no recognized project files — refusing to dispatch ${unitType} ${unitId}`;
+      debugLog("runUnitPhase", { phase: "worktree-health-fail", basePath: s.basePath, hasProjectFile, hasSrcDir });
       ctx.ui.notify(msg, "error");
       await deps.stopAuto(ctx, pi, msg);
       return { action: "break", reason: "worktree-invalid" };
