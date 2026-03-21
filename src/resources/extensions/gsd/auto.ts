@@ -820,6 +820,7 @@ function buildLoopDeps(): LoopDeps {
     // State and cache
     invalidateAllCaches,
     deriveState,
+    rebuildState,
     loadEffectiveGSDPreferences,
 
     // Pre-dispatch health gate

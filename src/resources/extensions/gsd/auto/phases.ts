@@ -275,6 +275,25 @@ export async function runPreDispatch(
       )
       .map((m: { id: string }) => m.id);
     deps.pruneQueueOrder(s.basePath, pendingIds);
+
+    // Reset completed-units tracking for the new milestone — stale entries
+    // from the previous milestone cause the dispatch loop to skip units
+    // that haven't actually been completed in the new milestone's context.
+    s.completedUnits = [];
+    try {
+      const completedKeysPath = join(gsdRoot(s.basePath), "completed-units.json");
+      atomicWriteSync(completedKeysPath, JSON.stringify([], null, 2));
+    } catch { /* non-fatal */ }
+
+    // Rebuild STATE.md immediately so it reflects the new active milestone.
+    // This bypasses the 30-second throttle in the normal rebuild path —
+    // milestone transitions are rare and important enough to warrant an
+    // immediate write.
+    try {
+      await deps.rebuildState(s.basePath);
+    } catch {
+      // Non-fatal — STATE.md will be rebuilt on the next regular cycle
+    }
   }
 
   if (mid) {
