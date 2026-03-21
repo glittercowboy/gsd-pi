@@ -2,20 +2,10 @@
 
 import type { Theme } from "@gsd/pi-coding-agent";
 import { truncateToWidth, visibleWidth } from "@gsd/pi-tui";
-import type { VisualizerData, VisualizerMilestone, SliceVerification, VisualizerSliceActivity, VisualizerStats, VisualizerSliceRef } from "./visualizer-data.js";
+import type { VisualizerData, VisualizerMilestone, VisualizerSliceActivity, VisualizerStats } from "./visualizer-data.js";
 import { formatCost, formatTokenCount, classifyUnitPhase } from "./metrics.js";
 import { formatDuration, padRight, joinColumns, sparkline, STATUS_GLYPH, STATUS_COLOR } from "../shared/mod.js";
-
-function formatCompletionDate(input: string): string {
-  if (!input) return "unknown";
-  const parsed = new Date(input);
-  if (Number.isNaN(parsed.getTime())) return input;
-  return parsed.toLocaleDateString("en-US", { month: "short", day: "numeric" });
-}
-
-function sliceLabel(slice: VisualizerSliceRef): string {
-  return `${slice.milestoneId}/${slice.sliceId}`;
-}
+import { formatCompletionDate, sliceLabel, findVerification, shortenModel } from "./visualizer-formatters.js";
 
 function renderFeatureStats(data: VisualizerData, th: Theme, width: number): string[] {
   const stats = data.stats;
@@ -91,10 +81,6 @@ function renderDiscussionStatus(data: VisualizerData, th: Theme, width: number):
 
   lines.push("");
   return lines;
-}
-
-function findVerification(data: VisualizerData, milestoneId: string, sliceId: string): SliceVerification | undefined {
-  return data.sliceVerifications.find(v => v.milestoneId === milestoneId && v.sliceId === sliceId);
 }
 
 // ─── Progress View ───────────────────────────────────────────────────────────
@@ -610,10 +596,6 @@ export function renderTimelineView(
   }
 
   return renderTimelineList(data, th, width);
-}
-
-function shortenModel(model: string): string {
-  return model.replace(/^claude-/, "").slice(0, 12);
 }
 
 function renderTimelineList(data: VisualizerData, th: Theme, width: number): string[] {
