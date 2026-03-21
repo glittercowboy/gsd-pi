@@ -67,7 +67,7 @@ export interface DispatchContext {
   session?: import("./auto/session.js").AutoSession;
 }
 
-interface DispatchRule {
+export interface DispatchRule {
   /** Human-readable name for debugging and test identification */
   name: string;
   /** Return a DispatchAction if this rule matches, null to fall through */
@@ -88,7 +88,7 @@ const MAX_REWRITE_ATTEMPTS = 3;
 
 // ─── Rules ────────────────────────────────────────────────────────────────
 
-const DISPATCH_RULES: DispatchRule[] = [
+export const DISPATCH_RULES: DispatchRule[] = [
   {
     name: "rewrite-docs (override gate)",
     match: async ({ mid, midTitle, state, basePath, session }) => {
@@ -608,15 +608,29 @@ const DISPATCH_RULES: DispatchRule[] = [
   },
 ];
 
+import { getRegistry } from "./rule-registry.js";
+
 // ─── Resolver ─────────────────────────────────────────────────────────────
 
 /**
  * Evaluate dispatch rules in order. Returns the first matching action,
  * or a "stop" action if no rule matches (unhandled phase).
+ *
+ * Delegates to the RuleRegistry when initialized; falls back to inline
+ * loop over DISPATCH_RULES for backward compatibility (tests that import
+ * resolveDispatch directly without registry initialization).
  */
 export async function resolveDispatch(
   ctx: DispatchContext,
 ): Promise<DispatchAction> {
+  // Delegate to registry when available
+  try {
+    const registry = getRegistry();
+    return await registry.evaluateDispatch(ctx);
+  } catch {
+    // Registry not initialized — fall back to inline loop
+  }
+
   for (const rule of DISPATCH_RULES) {
     const result = await rule.match(ctx);
     if (result) return result;

@@ -7,7 +7,7 @@
 // A module-level singleton accessor allows existing code to migrate incrementally.
 
 import type { UnifiedRule, RulePhase } from "./rule-types.js";
-import type { DispatchAction, DispatchContext } from "./auto-dispatch.js";
+import type { DispatchAction, DispatchContext, DispatchRule } from "./auto-dispatch.js";
 import type {
   PostUnitHookConfig,
   PreDispatchHookConfig,
@@ -34,6 +34,23 @@ function resolveHookArtifactPath(basePath: string, unitId: string, artifactName:
     return join(basePath, ".gsd", "milestones", mid, "slices", sid, artifactName);
   }
   return join(basePath, ".gsd", "milestones", parts[0], artifactName);
+}
+
+// ─── Dispatch Rule Conversion ──────────────────────────────────────────────
+
+/**
+ * Convert an array of DispatchRule objects to UnifiedRule[] format.
+ * Preserves exact array order — dispatch is order-dependent (first-match-wins).
+ */
+export function convertDispatchRules(rules: DispatchRule[]): UnifiedRule[] {
+  return rules.map((rule) => ({
+    name: rule.name,
+    when: "dispatch" as const,
+    evaluation: "first-match" as const,
+    where: rule.match,
+    then: (result: any) => result,
+    description: `Dispatch rule: ${rule.name}`,
+  }));
 }
 
 // ─── RuleRegistry ─────────────────────────────────────────────────────────

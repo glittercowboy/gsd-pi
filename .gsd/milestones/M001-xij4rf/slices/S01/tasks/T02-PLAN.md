@@ -79,3 +79,10 @@ The key design decision: each `DispatchRule` already has `name` and `match: (ctx
 - `src/resources/extensions/gsd/auto-dispatch.ts` — refactored to thin facade with fallback
 - `src/resources/extensions/gsd/rule-registry.ts` — updated with `convertDispatchRules()` and refined `evaluateDispatch()`
 - `src/resources/extensions/gsd/tests/rule-registry.test.ts` — expanded with dispatch conversion tests
+
+## Observability Impact
+
+- **New signal:** `convertDispatchRules(DISPATCH_RULES)` is the conversion function — a future agent can call it to inspect how dispatch rules map to the unified format.
+- **Inspection surface:** `getRegistry().listRules().filter(r => r.when === "dispatch")` returns the converted dispatch rules in evaluation order. The count should match `getDispatchRuleNames().length`.
+- **Failure shape:** If `resolveDispatch()` is called without registry initialization, it silently falls back to inline evaluation (no visible error). If the registry IS initialized and a rule is missing, `listRules()` returns fewer dispatch-phase rules than expected.
+- **Existing surface preserved:** `getDispatchRuleNames()` still returns the same names in the same order, reading from the original `DISPATCH_RULES` array.

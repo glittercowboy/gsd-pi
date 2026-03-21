@@ -11,9 +11,11 @@ import {
   setRegistry,
   initRegistry,
   resetRegistry,
+  convertDispatchRules,
 } from "../rule-registry.ts";
 import type { UnifiedRule } from "../rule-types.ts";
 import type { DispatchAction, DispatchContext } from "../auto-dispatch.ts";
+import { DISPATCH_RULES, getDispatchRuleNames } from "../auto-dispatch.ts";
 import type { GSDState } from "../types.ts";
 
 // ─── Mock Rule Factories ──────────────────────────────────────────────────
@@ -258,6 +260,46 @@ describe("RuleRegistry", () => {
     assertEq(result.action, "dispatch", "dispatch action returned");
     if (result.action === "dispatch") {
       assertEq(result.unitType, "first-wins", "first rule won over second");
+    }
+  });
+
+  // ── Dispatch rule conversion tests ─────────────────────────────────
+
+  test("convertDispatchRules produces correct count of UnifiedRule objects", () => {
+    const converted = convertDispatchRules(DISPATCH_RULES);
+    assertEq(converted.length, DISPATCH_RULES.length, `convertDispatchRules produces ${DISPATCH_RULES.length} rules`);
+  });
+
+  test("each converted rule has correct when, evaluation, and original name", () => {
+    const converted = convertDispatchRules(DISPATCH_RULES);
+    for (let i = 0; i < converted.length; i++) {
+      const rule = converted[i];
+      assertEq(rule.when, "dispatch", `rule ${i} has when:"dispatch"`);
+      assertEq(rule.evaluation, "first-match", `rule ${i} has evaluation:"first-match"`);
+      assertEq(rule.name, DISPATCH_RULES[i].name, `rule ${i} preserves name "${DISPATCH_RULES[i].name}"`);
+      assertTrue(typeof rule.where === "function", `rule ${i} has a where function`);
+      assertTrue(typeof rule.then === "function", `rule ${i} has a then function`);
+    }
+  });
+
+  test("listRules after construction with real dispatch rules returns correct count", () => {
+    const converted = convertDispatchRules(DISPATCH_RULES);
+    const registry = new RuleRegistry(converted);
+    const listed = registry.listRules().filter(r => r.when === "dispatch");
+    assertEq(listed.length, DISPATCH_RULES.length, `listRules returns ${DISPATCH_RULES.length} dispatch rules`);
+  });
+
+  test("rule names from listRules match getDispatchRuleNames in exact order", () => {
+    const converted = convertDispatchRules(DISPATCH_RULES);
+    const registry = new RuleRegistry(converted);
+    const listedNames = registry.listRules()
+      .filter(r => r.when === "dispatch")
+      .map(r => r.name);
+    const originalNames = getDispatchRuleNames();
+
+    assertEq(listedNames.length, originalNames.length, "same number of names");
+    for (let i = 0; i < originalNames.length; i++) {
+      assertEq(listedNames[i], originalNames[i], `name at index ${i} matches: "${originalNames[i]}"`);
     }
   });
 });
