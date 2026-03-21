@@ -1086,8 +1086,8 @@ export async function runUnitPhase(
   if (unitType === "execute-task") {
     const currentLedger = deps.getLedger() as { units: Array<{ type: string; id: string; startedAt: number; toolCalls: number }> } | null;
     if (currentLedger?.units) {
-      const lastUnit = currentLedger.units.findLast(
-        (u) => u.type === unitType && u.id === unitId && u.startedAt === s.currentUnit!.startedAt,
+      const lastUnit = [...currentLedger.units].reverse().find(
+        (u: { type: string; id: string; startedAt: number; toolCalls: number }) => u.type === unitType && u.id === unitId && u.startedAt === s.currentUnit!.startedAt,
       );
       if (lastUnit && lastUnit.toolCalls === 0) {
         debugLog("runUnitPhase", {
