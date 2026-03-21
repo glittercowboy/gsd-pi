@@ -200,6 +200,37 @@ async function main(): Promise<void> {
     }
   }
 
+  // ─── 7. Survivor branch + needs-discussion routes to showSmartEntry (#1726) ─
+  console.log("\n=== 7. Survivor branch + needs-discussion routes to showSmartEntry ===");
+  {
+    const source = readAutoStartSource();
+
+    // When hasSurvivorBranch is true AND phase is needs-discussion, the code
+    // must route to showSmartEntry instead of falling through to auto-mode.
+    const survivorNeedsDiscussion = source.match(
+      /if\s*\(hasSurvivorBranch\s*&&\s*state\.phase\s*===\s*"needs-discussion"\)\s*\{[^}]*showSmartEntry/s,
+    );
+    assertTrue(!!survivorNeedsDiscussion,
+      "hasSurvivorBranch && needs-discussion must route to showSmartEntry");
+
+    // Verify the handler checks if the discussion succeeded
+    const handlerBlock = source.match(
+      /if\s*\(hasSurvivorBranch\s*&&\s*state\.phase\s*===\s*"needs-discussion"\)\s*\{([\s\S]*?)\n    \}/,
+    );
+    assertTrue(!!handlerBlock,
+      "found survivor + needs-discussion handler block");
+    if (handlerBlock) {
+      assertTrue(
+        handlerBlock[1].includes('postState.phase !== "needs-discussion"'),
+        "handler must check if phase advanced after discussion",
+      );
+      assertTrue(
+        handlerBlock[1].includes("releaseLockAndReturn"),
+        "handler must abort if discussion didn't promote draft",
+      );
+    }
+  }
+
   report();
 }
 
