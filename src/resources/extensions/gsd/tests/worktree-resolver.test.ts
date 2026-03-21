@@ -550,6 +550,40 @@ test("mergeAndExit failure message tells user worktree and branch are preserved 
   );
 });
 
+test("mergeAndExit failure message references /gsd dispatch complete-milestone, not /complete-milestone (#1891)", () => {
+  // Regression test: the failure notification previously told users to
+  // "retry /complete-milestone" — a command that does not exist. The correct
+  // recovery command is "/gsd dispatch complete-milestone".
+  const s = makeSession({
+    basePath: "/project/.gsd/worktrees/M001",
+    originalBasePath: "/project",
+  });
+  const deps = makeDeps({
+    isInAutoWorktree: () => true,
+    getIsolationMode: () => "worktree",
+    mergeMilestoneToMain: () => {
+      throw new Error("dirty working tree");
+    },
+  });
+  const ctx = makeNotifyCtx();
+  const resolver = new WorktreeResolver(s, deps);
+
+  resolver.mergeAndExit("M001", ctx);
+
+  const warning = ctx.messages.find((m) => m.level === "warning");
+  assert.ok(warning, "a warning message is emitted");
+  // Must reference the correct dispatch command
+  assert.ok(
+    warning!.msg.includes("/gsd dispatch complete-milestone"),
+    "warning references /gsd dispatch complete-milestone, not bare /complete-milestone",
+  );
+  // Must NOT contain the bare (incorrect) command without the dispatch prefix
+  assert.ok(
+    !warning!.msg.match(/retry\s+\/complete-milestone(?!\S)/),
+    "warning must not reference the non-existent /complete-milestone command",
+  );
+});
+
 // ─── mergeAndExit Tests (branch mode) ────────────────────────────────────────
 
 test("mergeAndExit in branch mode merges when on milestone branch", () => {
