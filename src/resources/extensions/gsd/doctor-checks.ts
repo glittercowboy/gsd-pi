@@ -1,9 +1,8 @@
 import { existsSync, lstatSync, readdirSync, readFileSync, realpathSync, rmSync, statSync } from "node:fs";
-import { homedir } from "node:os";
 import { basename, dirname, join, sep } from "node:path";
 
 import type { DoctorIssue, DoctorIssueCode } from "./doctor-types.js";
-import { readRepoMeta } from "./repo-identity.js";
+import { readRepoMeta, externalProjectsRoot } from "./repo-identity.js";
 import { loadFile, parseRoadmap } from "./files.js";
 import { resolveMilestoneFile, milestonesDir, gsdRoot, resolveGsdRootFile, relGsdRootFile } from "./paths.js";
 import { deriveState, isMilestoneComplete } from "./state.js";
@@ -844,8 +843,7 @@ export async function checkGlobalHealth(
   shouldFix: (code: DoctorIssueCode) => boolean,
 ): Promise<void> {
   try {
-    const gsdHome = process.env.GSD_HOME || join(homedir(), ".gsd");
-    const projectsDir = join(gsdHome, "projects");
+    const projectsDir = externalProjectsRoot();
 
     if (!existsSync(projectsDir)) return;
 
@@ -886,7 +884,7 @@ export async function checkGlobalHealth(
       code: "orphaned_project_state",
       scope: "project",
       unitId: "global",
-      message: `${orphaned.length} orphaned GSD project state director${orphaned.length === 1 ? "y" : "ies"} in ~/.gsd/projects/ whose git root no longer exists: ${labels}${overflow}${unknownNote}. Run /gsd cleanup projects to audit or /gsd cleanup projects --fix to reclaim disk space.`,
+      message: `${orphaned.length} orphaned GSD project state director${orphaned.length === 1 ? "y" : "ies"} in ${projectsDir} whose git root no longer exists: ${labels}${overflow}${unknownNote}. Run /gsd cleanup projects to audit or /gsd cleanup projects --fix to reclaim disk space.`,
       file: projectsDir,
       fixable: true,
     });
@@ -901,7 +899,7 @@ export async function checkGlobalHealth(
           // Individual removal failure is non-fatal — continue with remaining
         }
       }
-      fixesApplied.push(`removed ${removed} orphaned project state director${removed === 1 ? "y" : "ies"} from ~/.gsd/projects/`);
+      fixesApplied.push(`removed ${removed} orphaned project state director${removed === 1 ? "y" : "ies"} from ${projectsDir}`);
     }
   } catch {
     // Non-fatal — global health check must not block per-project doctor

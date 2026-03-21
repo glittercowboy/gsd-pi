@@ -208,15 +208,13 @@ export async function handleDryRun(ctx: ExtensionCommandContext, basePath: strin
 export async function handleCleanupProjects(args: string, ctx: ExtensionCommandContext): Promise<void> {
   const { readdirSync, existsSync: fsExists, rmSync: fsRmSync } = await import("node:fs");
   const { join: pathJoin } = await import("node:path");
-  const { homedir } = await import("node:os");
-  const { readRepoMeta } = await import("./repo-identity.js");
+  const { readRepoMeta, externalProjectsRoot } = await import("./repo-identity.js");
 
   const fix = args.includes("--fix");
-  const gsdHome = process.env.GSD_HOME || pathJoin(homedir(), ".gsd");
-  const projectsDir = pathJoin(gsdHome, "projects");
+  const projectsDir = externalProjectsRoot();
 
   if (!fsExists(projectsDir)) {
-    ctx.ui.notify("No ~/.gsd/projects/ directory found — nothing to clean up.", "info");
+    ctx.ui.notify(`No project-state directory found at ${projectsDir} — nothing to clean up.`, "info");
     return;
   }
 
@@ -226,12 +224,12 @@ export async function handleCleanupProjects(args: string, ctx: ExtensionCommandC
       .filter(e => e.isDirectory())
       .map(e => e.name);
   } catch {
-    ctx.ui.notify("Failed to read ~/.gsd/projects/.", "error");
+    ctx.ui.notify(`Failed to read project-state directory at ${projectsDir}.`, "error");
     return;
   }
 
   if (hashList.length === 0) {
-    ctx.ui.notify("~/.gsd/projects/ is empty — nothing to clean up.", "info");
+    ctx.ui.notify(`Project-state directory is empty (${projectsDir}) — nothing to clean up.`, "info");
     return;
   }
 
@@ -257,7 +255,7 @@ export async function handleCleanupProjects(args: string, ctx: ExtensionCommandC
 
   const pl = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
   const lines: string[] = [
-    `~/.gsd/projects/  ${pl(hashList.length, "project state director")}${hashList.length === 1 ? "y" : "ies"}`,
+    `${projectsDir}  ${pl(hashList.length, "project state director")}${hashList.length === 1 ? "y" : "ies"}`,
     "",
   ];
 
