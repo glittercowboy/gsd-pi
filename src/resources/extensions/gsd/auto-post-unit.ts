@@ -59,6 +59,7 @@ import { existsSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { uncheckTaskInPlan } from "./undo.js";
 import { atomicWriteSync } from "./atomic-write.js";
+import { _resetHasChangesCache } from "./native-git-bridge.js";
 
 /** Throttle STATE.md rebuilds — at most once per 30 seconds */
 const STATE_REBUILD_MIN_INTERVAL_MS = 30_000;
@@ -155,6 +156,13 @@ export async function postUnitPreVerification(pctx: PostUnitContext, opts?: PreV
           }
         }
       }
+
+      // Invalidate the nativeHasChanges cache before auto-commit (#1853).
+      // The cache has a 10-second TTL and is keyed by basePath.  A stale
+      // `false` result causes autoCommit to skip staging entirely, leaving
+      // code files only in the working tree where they are destroyed by
+      // `git worktree remove --force` during teardown.
+      _resetHasChangesCache();
 
       const commitMsg = autoCommitCurrentBranch(s.basePath, s.currentUnit.type, s.currentUnit.id, taskContext);
       if (commitMsg) {

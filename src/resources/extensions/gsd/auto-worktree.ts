@@ -31,6 +31,7 @@ import { gsdRoot } from "./paths.js";
 import {
   createWorktree,
   removeWorktree,
+  resolveGitDir,
   worktreePath,
 } from "./worktree-manager.js";
 import {
@@ -1142,6 +1143,16 @@ export function mergeMilestoneToMain(
   const commitResult = nativeCommit(originalBasePath_, commitMessage);
   const nothingToCommit = commitResult === null;
 
+  // 8a. Clean up SQUASH_MSG left by git merge --squash (#1853).
+  // git only removes SQUASH_MSG when the commit reads it directly (plain
+  // `git commit`).  nativeCommit uses `-F -` (stdin) or libgit2, neither
+  // of which trigger git's SQUASH_MSG cleanup.  If left on disk, doctor
+  // reports `corrupt_merge_state` on every subsequent run.
+  try {
+    const squashMsgPath = join(resolveGitDir(originalBasePath_), "SQUASH_MSG");
+    if (existsSync(squashMsgPath)) unlinkSync(squashMsgPath);
+  } catch { /* best-effort */ }
+
   // 8b. Safety check (#1792): if nothing was committed, verify the milestone
   // work is already on the integration branch before allowing teardown.
   // Compare only non-.gsd/ paths — .gsd/ state files diverge normally and
@@ -1213,6 +1224,30 @@ export function mergeMilestoneToMain(
   // 10. Guard removed — step 8b (#1792) now handles this with a smarter check:
   //     throws only when the milestone has unanchored code changes, passes
   //     through when the code is genuinely already on the integration branch.
+
+  // 10a. Pre-teardown safety net (#1853): if the worktree still has uncommitted
+  // changes (e.g. nativeHasChanges cache returned stale false, or auto-commit
+  // silently failed), force one final commit so code is not destroyed by
+  // `git worktree remove --force`.
+  if (existsSync(worktreeCwd)) {
+    try {
+      const dirtyCheck = nativeWorkingTreeStatus(worktreeCwd);
+      if (dirtyCheck) {
+        debugLog("mergeMilestoneToMain", {
+          phase: "pre-teardown-dirty",
+          worktreeCwd,
+          status: dirtyCheck.slice(0, 200),
+        });
+        nativeAddAllWithExclusions(worktreeCwd, RUNTIME_EXCLUSION_PATHS);
+        nativeCommit(worktreeCwd, "chore: pre-teardown auto-commit of uncommitted worktree changes");
+      }
+    } catch (e) {
+      debugLog("mergeMilestoneToMain", {
+        phase: "pre-teardown-commit-error",
+        error: String(e),
+      });
+    }
+  }
 
   // 11. Remove worktree directory first (must happen before branch deletion)
   try {

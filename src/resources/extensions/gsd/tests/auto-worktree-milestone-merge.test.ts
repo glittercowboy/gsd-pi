@@ -639,21 +639,17 @@ async function main(): Promise<void> {
         { file: "base.ts", content: "export const base = true;\n", message: "add base" },
       ]);
 
-      // Detach HEAD, then reset branch ref forward independently to create
-      // divergence (branch ref is NOT an ancestor of worktree HEAD).
       run("git checkout --detach HEAD", wtPath);
       writeFileSync(join(wtPath, "detached-work.ts"), "export const detached = true;\n");
       run("git add .", wtPath);
       run('git commit -m "detached work"', wtPath);
 
-      // Now advance the branch ref on a different path (via the main repo)
       run("git checkout milestone/M150", repo);
       writeFileSync(join(repo, "diverged-work.ts"), "export const diverged = true;\n");
       run("git add .", repo);
       run('git commit -m "diverged work on branch"', repo);
       run("git checkout main", repo);
 
-      // Move back to worktree cwd
       process.chdir(wtPath);
 
       const roadmap = makeRoadmap("M150", "Diverged milestone", [
@@ -669,16 +665,61 @@ async function main(): Promise<void> {
         errMsg = err instanceof Error ? err.message : String(err);
       }
       assertTrue(threw, "throws when worktree HEAD diverged from branch ref (#1846)");
-      assertTrue(
-        errMsg.includes("diverged"),
-        "error message mentions divergence (#1846)",
-      );
+      assertTrue(errMsg.includes("diverged"), "error message mentions divergence (#1846)");
 
-      // Branch must be preserved — no data loss
       const branches = run("git branch", repo);
+      assertTrue(branches.includes("milestone/M150"), "milestone branch preserved on divergence (#1846)");
+    }
+
+    // ─── Test 16: #1853 Bug 1 — SQUASH_MSG cleaned up after squash-merge ──
+    console.log("\n=== #1853 bug 1: SQUASH_MSG cleaned up after successful squash-merge ===");
+    {
+      const repo = freshRepo();
+      const wtPath = createAutoWorktree(repo, "M160");
+
+      addSliceToMilestone(repo, wtPath, "M160", "S01", "SQUASH_MSG cleanup test", [
+        { file: "squash-cleanup.ts", content: "export const cleanup = true;\n", message: "add squash-cleanup" },
+      ]);
+
+      const roadmap = makeRoadmap("M160", "SQUASH_MSG cleanup", [
+        { id: "S01", title: "SQUASH_MSG cleanup test" },
+      ]);
+
+      const squashMsgPath = join(repo, ".git", "SQUASH_MSG");
+      writeFileSync(squashMsgPath, "leftover squash message\n");
+      assertTrue(existsSync(squashMsgPath), "SQUASH_MSG planted before merge");
+
+      const result = mergeMilestoneToMain(repo, "M160", roadmap);
+      assertTrue(result.commitMessage.includes("feat(M160)"), "merge commit created");
+
       assertTrue(
-        branches.includes("milestone/M150"),
-        "milestone branch preserved on divergence (#1846)",
+        !existsSync(squashMsgPath),
+        "#1853: SQUASH_MSG must not persist after successful squash-merge",
+      );
+    }
+
+    // ─── Test 17: #1853 Bug 2 — uncommitted worktree code survives teardown ──
+    console.log("\n=== #1853 bug 2: uncommitted worktree changes committed before teardown ===");
+    {
+      const repo = freshRepo();
+      const wtPath = createAutoWorktree(repo, "M170");
+
+      addSliceToMilestone(repo, wtPath, "M170", "S01", "Teardown safety test", [
+        { file: "safe-file.ts", content: "export const safe = true;\n", message: "add safe file" },
+      ]);
+
+      writeFileSync(join(wtPath, "uncommitted-agent-code.ts"), "export const lost = true;\n");
+
+      const roadmap = makeRoadmap("M170", "Teardown safety", [
+        { id: "S01", title: "Teardown safety test" },
+      ]);
+
+      const result = mergeMilestoneToMain(repo, "M170", roadmap);
+      assertTrue(result.commitMessage.includes("feat(M170)"), "merge commit created");
+
+      assertTrue(
+        existsSync(join(repo, "uncommitted-agent-code.ts")),
+        "#1853: uncommitted worktree code must survive teardown",
       );
     }
 
