@@ -13,7 +13,10 @@ Discuss milestone {{milestoneId}} ("{{milestoneTitle}}"). Identify gray areas, a
 Do a lightweight targeted investigation so your questions are grounded in reality:
 - Scout the codebase (`rg`, `find`, or `scout`) to understand what already exists that this milestone touches or builds on
 - Check the roadmap context above (if present) to understand what surrounds this milestone
+- Use `resolve_library` / `get_library_docs` for unfamiliar libraries — prefer this over `web_search` for library documentation
 - Identify the 3–5 biggest behavioural and architectural unknowns: things where the user's answer will materially change what gets built
+
+**Web search budget:** You have a limited number of web searches per turn (typically 3-5). Prefer `resolve_library` / `get_library_docs` for library documentation and `search_and_read` for one-shot topic research — they are more budget-efficient. Target 2-3 web searches in the investigation pass. Distribute remaining searches across subsequent question rounds rather than clustering them.
 
 Do **not** go deep — just enough that your questions reflect what's actually true rather than what you assume.
 

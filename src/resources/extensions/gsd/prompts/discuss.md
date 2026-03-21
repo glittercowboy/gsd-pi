@@ -36,9 +36,16 @@ Before asking your first question, do a mandatory investigation pass. This is no
 2. **Check library docs** — `resolve_library` / `get_library_docs` for any tech the user mentioned. Get current facts about capabilities, constraints, API shapes, version-specific behavior.
 3. **Web search** — `search-the-web` if the domain is unfamiliar, if you need current best practices, or if the user referenced external services/APIs you need facts about. Use `fetch_page` for full content when snippets aren't enough.
 
+**Web search budget:** You have a limited number of web searches per turn (typically 3-5). The discuss phase spans many turns (investigation, question rounds, focused research, requirements), so budget carefully:
+- Prefer `resolve_library` / `get_library_docs` over `web_search` for library documentation — they don't consume the web search budget.
+- Prefer `search_and_read` for one-shot topic research — it combines search + page fetch in a single call.
+- Target 2-3 web searches in the investigation pass. Save remaining budget for the focused research pass before roadmap creation.
+- Do NOT repeat the same or similar queries. If a search didn't find what you need, rephrase once or move on.
+- When a search returns many results, each result contains multiple text spans — this is normal formatting, not separate searches.
+
 This happens ONCE, before the first round. The goal: your first questions should reflect what's actually true, not what you assume.
 
-For subsequent rounds, continue investigating between rounds — check docs, search, or scout as needed to make each round's questions smarter. But the first-round investigation is mandatory and explicit.
+For subsequent rounds, continue investigating between rounds — check docs, search, or scout as needed to make each round's questions smarter. But the first-round investigation is mandatory and explicit. Distribute searches across turns rather than clustering them in one turn.
 
 ## Questioning Philosophy
 
