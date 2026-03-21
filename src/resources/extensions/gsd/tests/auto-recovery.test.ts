@@ -434,6 +434,39 @@ test("selfHealRuntimeRecords clears stale dispatched records (#769)", async () =
   }
 });
 
+// ─── #1625: selfHealRuntimeRecords on resume clears paused-session leftovers ──
+
+test("selfHealRuntimeRecords clears recently-paused dispatched records on resume (#1625)", async () => {
+  // When pauseAuto closes out a unit but clearUnitRuntimeRecord silently fails
+  // (e.g. permission error), selfHealRuntimeRecords on resume should still
+  // clean up stale dispatched records that are >1h old.
+  const base = makeTmpBase();
+  try {
+    const { writeUnitRuntimeRecord, readUnitRuntimeRecord } = await import("../unit-runtime.ts");
+
+    // Simulate a record left behind after a pause — aged >1h to be considered stale
+    writeUnitRuntimeRecord(base, "execute-task", "M001/S01/T01", Date.now() - 3700_000, {
+      phase: "dispatched",
+    });
+
+    const before = readUnitRuntimeRecord(base, "execute-task", "M001/S01/T01");
+    assert.ok(before, "dispatched record should exist before resume heal");
+    assert.equal(before!.phase, "dispatched");
+
+    const notifications: string[] = [];
+    const mockCtx = {
+      ui: { notify: (msg: string) => { notifications.push(msg); } },
+    } as any;
+
+    await selfHealRuntimeRecords(base, mockCtx);
+
+    const after = readUnitRuntimeRecord(base, "execute-task", "M001/S01/T01");
+    assert.equal(after, null, "stale dispatched record should be cleared on resume (#1625)");
+  } finally {
+    cleanup(base);
+  }
+});
+
 // ─── #793: invalidateAllCaches unblocks skip-loop ─────────────────────────
 // When the skip-loop breaker fires, it must call invalidateAllCaches() (not
 // just invalidateStateCache()) to clear path/parse caches that deriveState

@@ -85,6 +85,7 @@ import {
 } from "./auto-observability.js";
 import { closeoutUnit } from "./auto-unit-closeout.js";
 import { recoverTimedOutUnit } from "./auto-timeout-recovery.js";
+import { selfHealRuntimeRecords } from "./auto-recovery.js";
 import { selectAndApplyModel } from "./auto-model-selection.js";
 import {
   syncProjectRootToWorktree,
@@ -743,6 +744,21 @@ export async function pauseAuto(
     // Non-fatal — resume will still work via full bootstrap, just without worktree context
   }
 
+  // Close out the current unit so its runtime record doesn't stay at "dispatched"
+  if (s.currentUnit && ctx) {
+    try {
+      await closeoutUnit(ctx, s.basePath, s.currentUnit.type, s.currentUnit.id, s.currentUnit.startedAt);
+    } catch {
+      // Non-fatal — best-effort closeout on pause
+    }
+    try {
+      clearUnitRuntimeRecord(s.basePath, s.currentUnit.type, s.currentUnit.id);
+    } catch {
+      // Non-fatal
+    }
+    s.currentUnit = null;
+  }
+
   if (lockBase()) {
     releaseSessionLock(lockBase());
     clearLock(lockBase());
@@ -1019,6 +1035,15 @@ export async function startAuto(
       });
     }
     invalidateAllCaches();
+
+    // Clean stale runtime records left from the paused session
+    try {
+      await selfHealRuntimeRecords(s.basePath, ctx);
+    } catch (e) {
+      debugLog("resume-self-heal-runtime-failed", {
+        error: e instanceof Error ? e.message : String(e),
+      });
+    }
 
     if (s.pausedSessionFile) {
       const activityDir = join(gsdRoot(s.basePath), "activity");
