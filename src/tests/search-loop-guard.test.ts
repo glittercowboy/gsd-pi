@@ -12,6 +12,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { registerSearchTool } from "../resources/extensions/search-the-web/tool-search.ts";
+import searchExtension from "../resources/extensions/search-the-web/index.ts";
 
 // =============================================================================
 // Mock helpers
@@ -50,14 +51,28 @@ function mockFetch(body: unknown, status = 200) {
 
 /** Create a minimal mock PI that captures the registered search tool. */
 function createMockPI() {
+  const handlers: Array<{ event: string; handler: (...args: any[]) => unknown }> = [];
+  const toolsByName = new Map<string, any>();
   let registeredTool: any = null;
 
   const pi = {
+    on(event: string, handler: (...args: any[]) => unknown) {
+      handlers.push({ event, handler });
+    },
+    registerCommand(_name: string, _command: unknown) {},
     registerTool(tool: any) {
+      if (typeof tool?.name === "string") {
+        toolsByName.set(tool.name, tool);
+      }
       registeredTool = tool;
     },
-    getRegisteredTool() {
-      return registeredTool;
+    async fire(event: string, eventData: unknown, ctx: unknown) {
+      for (const h of handlers) {
+        if (h.event === event) await h.handler(eventData, ctx);
+      }
+    },
+    getRegisteredTool(name = "search-the-web") {
+      return toolsByName.get(name) ?? registeredTool;
     },
     writeTempFile: async (_content: string, _opts?: unknown) => "/tmp/search-out.txt",
   };
@@ -109,6 +124,46 @@ test("search loop guard fires after MAX_CONSECUTIVE_DUPES duplicates", async () 
     assert.ok(
       result4.content[0].text.includes("Search loop detected"),
       "error message should mention search loop"
+    );
+  } finally {
+    restoreFetch();
+    delete process.env.BRAVE_API_KEY;
+  }
+});
+
+test("search loop guard resets at session_start boundary", async () => {
+  process.env.BRAVE_API_KEY = "test-key-loop-guard-session";
+  const restoreFetch = mockFetch(makeBraveResponse());
+  const query = "session boundary query";
+
+  try {
+    const pi = createMockPI();
+    const mockCtx = {
+      hasUI: false,
+      ui: { notify() {} },
+    };
+    searchExtension(pi as any);
+    await pi.fire("session_start", {}, mockCtx);
+
+    const tool = pi.getRegisteredTool();
+    assert.ok(tool, "search tool should be registered");
+    const execute = tool.execute.bind(tool);
+
+    // Trigger guard in session 1
+    for (let i = 1; i <= 4; i++) {
+      await callSearch(execute, query, `s1-call-${i}`);
+    }
+    const guardResult = await callSearch(execute, query, "s1-call-5");
+    assert.equal(guardResult.isError, true, "session 1 should be guarded");
+    assert.equal(guardResult.details?.errorKind, "search_loop");
+
+    // New session should clear guard state
+    await pi.fire("session_start", {}, mockCtx);
+    const firstCallSession2 = await callSearch(execute, query, "s2-call-1");
+    assert.notEqual(
+      firstCallSession2.isError,
+      true,
+      "first identical query in a new session should not be blocked by prior session state",
     );
   } finally {
     restoreFetch();

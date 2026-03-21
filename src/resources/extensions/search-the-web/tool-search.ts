@@ -110,6 +110,12 @@ const MAX_CONSECUTIVE_DUPES = 3;
 let lastSearchKey = "";
 let consecutiveDupeCount = 0;
 
+/** Reset session-scoped duplicate-search guard state. */
+export function resetSearchLoopGuardState(): void {
+  lastSearchKey = "";
+  consecutiveDupeCount = 0;
+}
+
 // Summarizer responses: max 50 entries, 15-minute TTL
 const summarizerCache = new LRUTTLCache<string>({ max: 50, ttlMs: 900_000 });
 
