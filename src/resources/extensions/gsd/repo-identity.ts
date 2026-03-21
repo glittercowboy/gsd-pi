@@ -8,11 +8,92 @@
 
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
-import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, rmSync, symlinkSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join, resolve } from "node:path";
+import { basename, join, resolve } from "node:path";
 
 const gsdHome = process.env.GSD_HOME || join(homedir(), ".gsd");
+
+// ─── Repo Metadata ───────────────────────────────────────────────────────────
+
+export interface RepoMeta {
+  version: number;
+  hash: string;
+  gitRoot: string;
+  remoteUrl: string;
+  createdAt: string;
+}
+
+function isRepoMeta(value: unknown): value is RepoMeta {
+  if (!value || typeof value !== "object") return false;
+  const v = value as Record<string, unknown>;
+  return typeof v.version === "number"
+    && typeof v.hash === "string"
+    && typeof v.gitRoot === "string"
+    && typeof v.remoteUrl === "string"
+    && typeof v.createdAt === "string";
+}
+
+/**
+ * Write (or refresh) repo metadata into the external state directory.
+ * Called on open so metadata tracks repo path moves while keeping createdAt stable.
+ * Non-fatal: a metadata write failure must never block project setup.
+ */
+function writeRepoMeta(externalPath: string, remoteUrl: string, gitRoot: string): void {
+  const metaPath = join(externalPath, "repo-meta.json");
+  try {
+    let createdAt = new Date().toISOString();
+    let existing: RepoMeta | null = null;
+    if (existsSync(metaPath)) {
+      try {
+        const parsed = JSON.parse(readFileSync(metaPath, "utf-8"));
+        if (isRepoMeta(parsed)) {
+          existing = parsed;
+          createdAt = parsed.createdAt;
+          // Fast path: nothing changed.
+          if (
+            parsed.version === 1
+            && parsed.hash === basename(externalPath)
+            && parsed.gitRoot === gitRoot
+            && parsed.remoteUrl === remoteUrl
+          ) {
+            return;
+          }
+        }
+      } catch {
+        // Fall through and rewrite invalid metadata.
+      }
+    }
+
+    const meta: RepoMeta = {
+      version: 1,
+      hash: basename(externalPath),
+      gitRoot,
+      remoteUrl,
+      createdAt,
+    };
+    // Keep file format stable even when refreshing.
+    writeFileSync(metaPath, JSON.stringify(meta, null, 2) + "\n", "utf-8");
+  } catch {
+    // Non-fatal — metadata write failure should not block project setup
+  }
+}
+
+/**
+ * Read repo metadata from the external state directory.
+ * Returns null if the file doesn't exist or can't be parsed.
+ */
+export function readRepoMeta(externalPath: string): RepoMeta | null {
+  const metaPath = join(externalPath, "repo-meta.json");
+  try {
+    if (!existsSync(metaPath)) return null;
+    const raw = readFileSync(metaPath, "utf-8");
+    const parsed = JSON.parse(raw);
+    return isRepoMeta(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
 
 // ─── Repo Identity ──────────────────────────────────────────────────────────
 
@@ -136,6 +217,15 @@ export function externalGsdRoot(basePath: string): string {
   return join(base, "projects", repoIdentity(basePath));
 }
 
+/**
+ * Resolve the root directory that stores project-scoped external state.
+ * Honors GSD_STATE_DIR override before falling back to GSD_HOME.
+ */
+export function externalProjectsRoot(): string {
+  const base = process.env.GSD_STATE_DIR || gsdHome;
+  return join(base, "projects");
+}
+
 // ─── Symlink Management ─────────────────────────────────────────────────────
 
 /**
@@ -155,6 +245,9 @@ export function ensureGsdSymlink(projectPath: string): string {
 
   // Ensure external directory exists
   mkdirSync(externalPath, { recursive: true });
+
+  // Write repo metadata once so cleanup commands can identify this directory later.
+  writeRepoMeta(externalPath, getRemoteUrl(projectPath), resolveGitRoot(projectPath));
 
   const replaceWithSymlink = (): string => {
     rmSync(localGsd, { recursive: true, force: true });

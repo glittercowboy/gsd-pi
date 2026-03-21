@@ -62,6 +62,8 @@ export type DoctorIssueCode =
   | "stale_replan_file"
   | "future_timestamp"
   // Runtime data integrity
+  | "orphaned_project_state"
+  | "metrics_ledger_bloat"
   | "metrics_ledger_corrupt"
   | "large_planning_file"
   // Slow environment checks (opt-in via --build / --test flags)
@@ -79,6 +81,15 @@ export const COMPLETION_TRANSITION_CODES = new Set<DoctorIssueCode>([
   "all_tasks_done_missing_slice_summary",
   "all_tasks_done_missing_slice_uat",
   "all_tasks_done_roadmap_not_checked",
+]);
+
+/**
+ * Issue codes that represent global (cross-project) state.
+ * These must NOT be auto-fixed when fixLevel is "task" — automated
+ * post-task health checks must never delete external project state directories.
+ */
+export const GLOBAL_STATE_CODES = new Set<DoctorIssueCode>([
+  "orphaned_project_state",
 ]);
 
 export interface DoctorIssue {

@@ -138,6 +138,8 @@ const NESTED_COMPLETIONS: CompletionMap = {
   cleanup: [
     { cmd: "branches", desc: "Remove merged milestone branches" },
     { cmd: "snapshots", desc: "Remove old execution snapshots" },
+    { cmd: "projects", desc: "Audit orphaned ~/.gsd/projects/ state directories" },
+    { cmd: "projects --fix", desc: "Delete orphaned project state directories (cannot be undone)" },
   ],
   knowledge: [
     { cmd: "rule", desc: "Add a project rule (always/never do X)" },

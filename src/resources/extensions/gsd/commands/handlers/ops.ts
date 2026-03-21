@@ -6,7 +6,7 @@ import { handleConfig } from "../../commands-config.js";
 import { handleDoctor, handleCapture, handleKnowledge, handleRunHook, handleSkillHealth, handleSteer, handleTriage, handleUpdate } from "../../commands-handlers.js";
 import { handleInspect } from "../../commands-inspect.js";
 import { handleLogs } from "../../commands-logs.js";
-import { handleCleanupBranches, handleCleanupSnapshots, handleSkip } from "../../commands-maintenance.js";
+import { handleCleanupBranches, handleCleanupSnapshots, handleSkip, handleCleanupProjects } from "../../commands-maintenance.js";
 import { handleExport } from "../../export.js";
 import { handleHistory } from "../../history.js";
 import { handleUndo } from "../../undo.js";
@@ -63,6 +63,10 @@ export async function handleOpsCommand(trimmed: string, ctx: ExtensionCommandCon
   }
   if (trimmed === "export" || trimmed.startsWith("export ")) {
     await handleExport(trimmed.replace(/^export\s*/, "").trim(), ctx, projectRoot());
+    return true;
+  }
+  if (trimmed === "cleanup projects" || trimmed.startsWith("cleanup projects ")) {
+    await handleCleanupProjects(trimmed.replace(/^cleanup projects\s*/, "").trim(), ctx);
     return true;
   }
   if (trimmed === "cleanup") {

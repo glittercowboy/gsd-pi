@@ -518,6 +518,31 @@ function defaultLedger(): MetricsLedger {
 }
 
 /**
+ * Prune the metrics ledger to at most `keepCount` most-recent unit entries.
+ *
+ * Called by the doctor when the ledger exceeds the bloat threshold.
+ * Keeps the newest entries (highest index = most recent) and discards
+ * the oldest from the head of the array. Preserves `projectStartedAt`.
+ *
+ * Updates both the on-disk file and the in-memory ledger if it is loaded,
+ * so the current session sees the pruned state immediately.
+ *
+ * @returns the number of entries removed, or 0 if no pruning was needed.
+ */
+export function pruneMetricsLedger(base: string, keepCount: number): number {
+  const disk = loadLedgerFromDisk(base);
+  if (!disk || disk.units.length <= keepCount) return 0;
+  const removed = disk.units.length - keepCount;
+  disk.units = disk.units.slice(-keepCount);
+  saveJsonFile(metricsPath(base), disk);
+  // Keep the in-memory ledger in sync if it is loaded for this session.
+  if (ledger) {
+    ledger.units = ledger.units.slice(-keepCount);
+  }
+  return removed;
+}
+
+/**
  * Load ledger from disk without initializing in-memory state.
  * Used by history/export commands outside of auto-mode.
  */

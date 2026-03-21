@@ -1,9 +1,9 @@
-import { mkdtempSync, rmSync, writeFileSync, existsSync, lstatSync, realpathSync, mkdirSync, symlinkSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync, existsSync, lstatSync, realpathSync, mkdirSync, symlinkSync, renameSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { execSync } from "node:child_process";
 
-import { repoIdentity, externalGsdRoot, ensureGsdSymlink, validateProjectId } from "../repo-identity.ts";
+import { repoIdentity, externalGsdRoot, ensureGsdSymlink, validateProjectId, readRepoMeta } from "../repo-identity.ts";
 import { createTestContext } from "./test-helpers.ts";
 
 const { assertEq, assertTrue, report } = createTestContext();
@@ -68,6 +68,44 @@ async function main(): Promise<void> {
     const hashIdentity = repoIdentity(base);
     assertTrue(/^[0-9a-f]{12}$/.test(hashIdentity), "repoIdentity returns 12-char hex hash when GSD_PROJECT_ID is unset");
 
+    console.log("\n=== readRepoMeta returns null for malformed metadata ===");
+    {
+      const malformedPath = join(stateDir, "projects", "malformed");
+      mkdirSync(malformedPath, { recursive: true });
+      writeFileSync(join(malformedPath, "repo-meta.json"), JSON.stringify({ version: 1 }) + "\n", "utf-8");
+      assertEq(readRepoMeta(malformedPath), null, "malformed repo-meta.json is treated as unknown metadata");
+    }
+
+    console.log("\n=== ensureGsdSymlink refreshes repo-meta gitRoot after repo move with fixed project id ===");
+    {
+      const moveRepo = realpathSync(mkdtempSync(join(tmpdir(), "gsd-repo-identity-move-")));
+      run("git init -b main", moveRepo);
+      run('git config user.name "Pi Test"', moveRepo);
+      run('git config user.email "pi@example.com"', moveRepo);
+      writeFileSync(join(moveRepo, "README.md"), "# Move Test Repo\n", "utf-8");
+      run("git add README.md", moveRepo);
+      run('git commit -m "chore: init move repo"', moveRepo);
+
+      process.env.GSD_PROJECT_ID = "fixed-project";
+      const fixedExternal = ensureGsdSymlink(moveRepo);
+      const before = readRepoMeta(fixedExternal);
+      assertTrue(before !== null, "repo metadata exists before repo move");
+      assertEq(before!.gitRoot, realpathSync(moveRepo), "repo metadata tracks current git root before move");
+
+      const movedBase = join(tmpdir(), `gsd-repo-identity-moved-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+      renameSync(moveRepo, movedBase);
+      const movedExternal = ensureGsdSymlink(movedBase);
+      assertEq(realpathSync(movedExternal), realpathSync(fixedExternal), "fixed project id keeps the same external state dir");
+
+      const after = readRepoMeta(movedExternal);
+      assertTrue(after !== null, "repo metadata exists after repo move");
+      assertEq(after!.gitRoot, realpathSync(movedBase), "repo metadata gitRoot is refreshed to moved repo path");
+      assertEq(after!.createdAt, before!.createdAt, "repo metadata preserves createdAt on refresh");
+
+      rmSync(movedBase, { recursive: true, force: true });
+      delete process.env.GSD_PROJECT_ID;
+    }
+
     console.log("\n=== validateProjectId rejects invalid values ===");
     for (const invalid of ["has spaces", "path/traversal", "dot..dot", "back\\slash"]) {
       assertTrue(!validateProjectId(invalid), `validateProjectId rejects invalid value: "${invalid}"`);
@@ -78,6 +116,7 @@ async function main(): Promise<void> {
       assertTrue(validateProjectId(valid), `validateProjectId accepts valid value: "${valid}"`);
     }
   } finally {
+    delete process.env.GSD_PROJECT_ID;
     delete process.env.GSD_STATE_DIR;
     rmSync(base, { recursive: true, force: true });
     rmSync(stateDir, { recursive: true, force: true });

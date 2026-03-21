@@ -300,6 +300,31 @@ export function syncWorktreeStateBack(
             } catch {
               /* non-fatal */
             }
+          } else if (fileEntry.isDirectory() && fileEntry.name === "tasks") {
+            // Recurse into tasks/ to sync task-level summaries (#1678)
+            const wtTasksDir = join(wtSliceDir, "tasks");
+            const mainTasksDir = join(mainSliceDir, "tasks");
+            try {
+              mkdirSync(mainTasksDir, { recursive: true });
+              for (const taskEntry of readdirSync(wtTasksDir, {
+                withFileTypes: true,
+              })) {
+                if (taskEntry.isFile() && taskEntry.name.endsWith(".md")) {
+                  const src = join(wtTasksDir, taskEntry.name);
+                  const dst = join(mainTasksDir, taskEntry.name);
+                  try {
+                    cpSync(src, dst, { force: true });
+                    synced.push(
+                      `milestones/${milestoneId}/slices/${sid}/tasks/${taskEntry.name}`,
+                    );
+                  } catch {
+                    /* non-fatal */
+                  }
+                }
+              }
+            } catch {
+              /* non-fatal */
+            }
           }
         }
       }

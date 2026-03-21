@@ -8,9 +8,9 @@ import { invalidateAllCaches } from "./cache.js";
 import { loadEffectiveGSDPreferences, type GSDPreferences } from "./preferences.js";
 
 import type { DoctorIssue, DoctorIssueCode, DoctorReport } from "./doctor-types.js";
-import { COMPLETION_TRANSITION_CODES } from "./doctor-types.js";
+import { COMPLETION_TRANSITION_CODES, GLOBAL_STATE_CODES } from "./doctor-types.js";
 import type { RoadmapSliceEntry } from "./types.js";
-import { checkGitHealth, checkRuntimeHealth } from "./doctor-checks.js";
+import { checkGitHealth, checkRuntimeHealth, checkGlobalHealth } from "./doctor-checks.js";
 import { checkEnvironmentHealth } from "./doctor-environment.js";
 import { runProviderChecks } from "./doctor-providers.js";
 
@@ -476,6 +476,7 @@ export async function runGSDDoctor(basePath: string, options?: { fix?: boolean; 
   const shouldFix = (code: DoctorIssueCode): boolean => {
     if (!fix || dryRun) return false;
     if (fixLevel === "task" && COMPLETION_TRANSITION_CODES.has(code)) return false;
+    if (fixLevel === "task" && GLOBAL_STATE_CODES.has(code)) return false;
     return true;
   };
 
@@ -514,6 +515,9 @@ export async function runGSDDoctor(basePath: string, options?: { fix?: boolean; 
   const t0runtime = Date.now();
   await checkRuntimeHealth(basePath, issues, fixesApplied, shouldFix);
   const runtimeMs = Date.now() - t0runtime;
+
+  // Global health checks — cross-project state (e.g. orphaned project state dirs)
+  await checkGlobalHealth(issues, fixesApplied, shouldFix);
 
   // Environment health checks — timed
   const t0env = Date.now();

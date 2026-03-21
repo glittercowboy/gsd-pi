@@ -2,6 +2,7 @@ import { existsSync, lstatSync, readdirSync, readFileSync, realpathSync, rmSync,
 import { basename, dirname, join, sep } from "node:path";
 
 import type { DoctorIssue, DoctorIssueCode } from "./doctor-types.js";
+import { readRepoMeta, externalProjectsRoot } from "./repo-identity.js";
 import { loadFile, parseRoadmap } from "./files.js";
 import { resolveMilestoneFile, milestonesDir, gsdRoot, resolveGsdRootFile, relGsdRootFile } from "./paths.js";
 import { deriveState, isMilestoneComplete } from "./state.js";
@@ -692,6 +693,42 @@ export async function checkRuntimeHealth(
     // Non-fatal — metrics check failed
   }
 
+  // ── Metrics ledger bloat ──────────────────────────────────────────────
+  // The metrics ledger has no TTL and grows by one entry per completed unit.
+  // At 50 units/day a project can accumulate tens of thousands of entries over
+  // months of use. Prune to the newest 1500 when the threshold is exceeded.
+  try {
+    const metricsFilePath = join(root, "metrics.json");
+    if (existsSync(metricsFilePath)) {
+      try {
+        const raw = readFileSync(metricsFilePath, "utf-8");
+        const parsed = JSON.parse(raw);
+        const BLOAT_UNITS_THRESHOLD = 2000;
+        if (parsed.version === 1 && Array.isArray(parsed.units) && parsed.units.length > BLOAT_UNITS_THRESHOLD) {
+          const fileSizeMB = (statSync(metricsFilePath).size / (1024 * 1024)).toFixed(1);
+          issues.push({
+            severity: "warning",
+            code: "metrics_ledger_bloat",
+            scope: "project",
+            unitId: "project",
+            message: `metrics.json has ${parsed.units.length} unit entries (${fileSizeMB}MB) — threshold is ${BLOAT_UNITS_THRESHOLD}. Run /gsd doctor --fix to prune to the newest 1500 entries.`,
+            file: ".gsd/metrics.json",
+            fixable: true,
+          });
+          if (shouldFix("metrics_ledger_bloat")) {
+            const { pruneMetricsLedger } = await import("./metrics.js");
+            const removed = pruneMetricsLedger(basePath, 1500);
+            fixesApplied.push(`pruned metrics ledger: removed ${removed} oldest entries (${parsed.units.length - removed} remain)`);
+          }
+        }
+      } catch {
+        // JSON parse failed — already handled by the integrity check above
+      }
+    }
+  } catch {
+    // Non-fatal — metrics bloat check failed
+  }
+
   // ── Large planning file detection ──────────────────────────────────────
   // Files over 100KB can cause LLM context pressure. Report the worst offenders.
   try {
@@ -785,4 +822,86 @@ function buildStateMarkdownForCheck(state: Awaited<ReturnType<typeof deriveState
   lines.push("");
 
   return lines.join("\n");
+}
+
+// ── Global Health Checks ────────────────────────────────────────────────────
+// Cross-project checks that scan ~/.gsd/ rather than a specific project directory.
+
+/**
+ * Check for orphaned project state directories in ~/.gsd/projects/.
+ *
+ * A project directory is orphaned when its recorded gitRoot no longer exists
+ * on disk — the repo was deleted, moved, or the external drive was unmounted.
+ * These directories accumulate silently and waste disk space.
+ *
+ * Severity: info — orphaned state is harmless but takes disk space.
+ * Fixable: yes — rmSync the directory. Never auto-fixed at fixLevel="task".
+ */
+export async function checkGlobalHealth(
+  issues: DoctorIssue[],
+  fixesApplied: string[],
+  shouldFix: (code: DoctorIssueCode) => boolean,
+): Promise<void> {
+  try {
+    const projectsDir = externalProjectsRoot();
+
+    if (!existsSync(projectsDir)) return;
+
+    let entries: string[];
+    try {
+      entries = readdirSync(projectsDir, { withFileTypes: true })
+        .filter(e => e.isDirectory())
+        .map(e => e.name);
+    } catch {
+      return; // Can't read directory — skip
+    }
+
+    if (entries.length === 0) return;
+
+    const orphaned: Array<{ hash: string; gitRoot: string; remoteUrl: string }> = [];
+    let unknownCount = 0;
+
+    for (const hash of entries) {
+      const dirPath = join(projectsDir, hash);
+      const meta = readRepoMeta(dirPath);
+      if (!meta) {
+        unknownCount++;
+        continue;
+      }
+      if (!existsSync(meta.gitRoot)) {
+        orphaned.push({ hash, gitRoot: meta.gitRoot, remoteUrl: meta.remoteUrl });
+      }
+    }
+
+    if (orphaned.length === 0) return;
+
+    const labels = orphaned.slice(0, 3).map(o => o.gitRoot).join(", ");
+    const overflow = orphaned.length > 3 ? ` (+${orphaned.length - 3} more)` : "";
+    const unknownNote = unknownCount > 0 ? ` — ${unknownCount} additional director${unknownCount === 1 ? "y" : "ies"} have no metadata yet (open those repos once to register them)` : "";
+
+    issues.push({
+      severity: "info",
+      code: "orphaned_project_state",
+      scope: "project",
+      unitId: "global",
+      message: `${orphaned.length} orphaned GSD project state director${orphaned.length === 1 ? "y" : "ies"} in ${projectsDir} whose git root no longer exists: ${labels}${overflow}${unknownNote}. Run /gsd cleanup projects to audit or /gsd cleanup projects --fix to reclaim disk space.`,
+      file: projectsDir,
+      fixable: true,
+    });
+
+    if (shouldFix("orphaned_project_state")) {
+      let removed = 0;
+      for (const { hash } of orphaned) {
+        try {
+          rmSync(join(projectsDir, hash), { recursive: true, force: true });
+          removed++;
+        } catch {
+          // Individual removal failure is non-fatal — continue with remaining
+        }
+      }
+      fixesApplied.push(`removed ${removed} orphaned project state director${removed === 1 ? "y" : "ies"} from ${projectsDir}`);
+    }
+  } catch {
+    // Non-fatal — global health check must not block per-project doctor
+  }
 }
