@@ -4,7 +4,7 @@
 import type { ExtensionCommandContext } from "@gsd/pi-coding-agent";
 import { writeFileSync, mkdirSync } from "node:fs";
 import { join, basename } from "node:path";
-import { exec } from "node:child_process";
+import { exec, execFile } from "node:child_process";
 import {
   getLedger, getProjectTotals, aggregateByPhase, aggregateBySlice,
   aggregateByModel, formatCost, formatTokenCount, loadLedgerFromDisk,
@@ -20,20 +20,13 @@ import { getErrorMessage } from "./error-utils.js";
  * Non-blocking, non-fatal — failures are silently ignored.
  */
 export function openInBrowser(filePath: string): void {
-  const cmd =
-    process.platform === "darwin" ? "open" :
-    process.platform === "win32" ? "start" :
-    "xdg-open";
-
-  // On Windows, `start` needs an empty title argument when the path has spaces
-  const args = process.platform === "win32"
-    ? `"" "${filePath}"`
-    : `"${filePath}"`;
-
-  exec(`${cmd} ${args}`, (err) => {
-    // Non-fatal — if the browser can't be opened, the file path is still shown
-    if (err) void err;
-  });
+  if (process.platform === "win32") {
+    // PowerShell's Start-Process handles paths with '&' and spaces safely.
+    execFile("powershell", ["-c", `Start-Process '${filePath.replace(/'/g, "''")}'`], () => {});
+  } else {
+    const cmd = process.platform === "darwin" ? "open" : "xdg-open";
+    execFile(cmd, [filePath], () => {});
+  }
 }
 
 /**

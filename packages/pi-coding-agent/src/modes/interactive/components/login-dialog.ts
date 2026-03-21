@@ -1,7 +1,7 @@
 // GSD Login Dialog Component — OAuth login flow UI
 // Copyright (c) 2026 Jeremy McSpadden <jeremy@fluxlabs.net>
 import { getOAuthProviders } from "@gsd/pi-ai/oauth";
-import { Container, type Focusable, getEditorKeybindings, Input, Spacer, Text, type TUI } from "@gsd/pi-tui";
+import { Container, type Focusable, getEditorKeybindings, Input, Spacer, Text, truncateToWidth, type TUI } from "@gsd/pi-tui";
 import { execFile } from "child_process";
 import { theme } from "../theme/theme.js";
 import { DynamicBorder } from "./dynamic-border.js";
@@ -121,21 +121,25 @@ export class LoginDialogComponent extends Container implements Focusable {
 	showAuth(url: string, instructions?: string): void {
 		this.contentContainer.clear();
 		this.contentContainer.addChild(new Spacer(1));
-		this.contentContainer.addChild(new Text(theme.fg("accent", url), 1, 0));
+
+		// Truncate the visible URL text so it never wraps (which would break
+		// the OSC 8 hyperlink). The full URL is still the link target.
+		const maxUrlWidth = Math.max(20, this.tui.terminal.columns - 4);
+		const displayUrl = truncateToWidth(url, maxUrlWidth);
+		const urlLink = `\x1b]8;;${url}\x07${theme.fg("accent", displayUrl)}\x1b]8;;\x07`;
+		this.contentContainer.addChild(new Text(urlLink, 1, 0));
 
 		const clickHint = process.platform === "darwin" ? "Cmd+click to open" : "Ctrl+click to open";
-		const hyperlink = `\x1b]8;;${url}\x07${clickHint}\x1b]8;;\x07`;
-		this.contentContainer.addChild(new Text(theme.fg("dim", hyperlink), 1, 0));
+		this.contentContainer.addChild(new Text(theme.fg("dim", clickHint), 1, 0));
 
 		if (instructions) {
 			this.contentContainer.addChild(new Spacer(1));
 			this.contentContainer.addChild(new Text(theme.fg("warning", instructions), 1, 0));
 		}
 
-		// Try to open browser — on Windows, `start` needs an empty title arg
-		// so it treats the URL as a target, not a window title
+		// PowerShell's Start-Process handles URLs with '&' safely; cmd /c start does not.
 		if (process.platform === "win32") {
-			execFile("cmd", ["/c", "start", "", url], () => {});
+			execFile("powershell", ["-c", `Start-Process '${url.replace(/'/g, "''")}'`], () => {});
 		} else {
 			const openCmd = process.platform === "darwin" ? "open" : "xdg-open";
 			execFile(openCmd, [url], () => {});

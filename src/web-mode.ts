@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto'
-import { exec, spawn, type ChildProcess, type SpawnOptions } from 'node:child_process'
+import { exec, execFile, spawn, type ChildProcess, type SpawnOptions } from 'node:child_process'
 import { existsSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs'
 import { request as httpRequest } from 'node:http'
 import { createServer } from 'node:net'
@@ -12,12 +12,13 @@ const DEFAULT_PACKAGE_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '.
 
 /** Open a URL in the user's default browser. */
 function openBrowser(url: string): void {
-  const cmd = process.platform === 'darwin' ? 'open' :
-    process.platform === 'win32' ? 'start' :
-      'xdg-open'
-  exec(`${cmd} "${url}"`, () => {
-    // Ignore errors — user can manually open the URL
-  })
+  if (process.platform === 'win32') {
+    // PowerShell's Start-Process handles URLs with '&' safely; cmd /c start does not.
+    execFile('powershell', ['-c', `Start-Process '${url.replace(/'/g, "''")}'`], () => {})
+  } else {
+    const cmd = process.platform === 'darwin' ? 'open' : 'xdg-open'
+    execFile(cmd, [url], () => {})
+  }
 }
 
 type WritableLike = Pick<typeof process.stderr, 'write'>
