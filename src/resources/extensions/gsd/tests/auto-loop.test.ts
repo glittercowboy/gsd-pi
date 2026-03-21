@@ -664,6 +664,117 @@ test("autoLoop calls deriveState → resolveDispatch → runUnit in sequence", a
   );
 });
 
+test("crash lock records session file from AFTER newSession, not before (#1710)", async (t) => {
+  _resetPendingResolve();
+
+  const ctx = makeMockCtx();
+  ctx.ui.setStatus = () => {};
+
+  // Simulate newSession changing the session file path.
+  // newSession() in runUnit changes the underlying session, so getSessionFile
+  // returns a different path after newSession completes.
+  let currentSessionFile = "/tmp/old-session.json";
+  ctx.sessionManager = {
+    getSessionFile: () => currentSessionFile,
+  };
+  const pi = makeMockPi();
+
+  let loopCount = 0;
+  const s = makeLoopSession({
+    cmdCtx: {
+      newSession: () => {
+        // When newSession completes, the session file changes
+        currentSessionFile = "/tmp/new-session-after-newSession.json";
+        return Promise.resolve({ cancelled: false });
+      },
+      getContextUsage: () => ({ percent: 10, tokens: 1000, limit: 10000 }),
+    },
+  });
+
+  // Track all writeLock calls with their sessionFile argument
+  const writeLockCalls: { sessionFile: string | undefined }[] = [];
+  const updateSessionLockCalls: { sessionFile: string | undefined }[] = [];
+
+  const deps = makeMockDeps({
+    deriveState: async () => {
+      deps.callLog.push("deriveState");
+      return {
+        phase: "executing",
+        activeMilestone: { id: "M001", title: "Test", status: "active" },
+        activeSlice: { id: "S01", title: "Slice 1" },
+        activeTask: { id: "T01" },
+        registry: [{ id: "M001", status: "active" }],
+        blockers: [],
+      } as any;
+    },
+    resolveDispatch: async () => {
+      deps.callLog.push("resolveDispatch");
+      return {
+        action: "dispatch" as const,
+        unitType: "execute-task",
+        unitId: "M001/S01/T01",
+        prompt: "do the thing",
+      };
+    },
+    writeLock: (_base: string, _ut: string, _uid: string, _count: number, sessionFile?: string) => {
+      writeLockCalls.push({ sessionFile });
+    },
+    updateSessionLock: (_base: string, _ut: string, _uid: string, _count: number, sessionFile?: string) => {
+      updateSessionLockCalls.push({ sessionFile });
+    },
+    getSessionFile: (ctxArg: any) => {
+      return ctxArg.sessionManager?.getSessionFile() ?? "";
+    },
+    postUnitPostVerification: async () => {
+      deps.callLog.push("postUnitPostVerification");
+      loopCount++;
+      if (loopCount >= 1) {
+        s.active = false;
+      }
+      return "continue" as const;
+    },
+  });
+
+  const loopPromise = autoLoop(ctx, pi, s, deps);
+
+  // Give the loop time to reach runUnit's await
+  await new Promise((r) => setTimeout(r, 50));
+
+  // Resolve the unit's agent_end
+  resolveAgentEnd(makeEvent());
+
+  await loopPromise;
+
+  // The preliminary lock (before runUnit) should have NO session file
+  assert.ok(
+    writeLockCalls.length >= 2,
+    `expected at least 2 writeLock calls, got ${writeLockCalls.length}`,
+  );
+  assert.strictEqual(
+    writeLockCalls[0].sessionFile,
+    undefined,
+    "preliminary lock before runUnit should have no session file",
+  );
+
+  // The post-runUnit lock should have the NEW session file path
+  assert.strictEqual(
+    writeLockCalls[1].sessionFile,
+    "/tmp/new-session-after-newSession.json",
+    "post-runUnit lock should record the session file created by newSession",
+  );
+
+  // updateSessionLock should also have the new session file
+  assert.ok(
+    updateSessionLockCalls.length >= 1,
+    "updateSessionLock should have been called at least once",
+  );
+  assert.strictEqual(
+    updateSessionLockCalls[0].sessionFile,
+    "/tmp/new-session-after-newSession.json",
+    "updateSessionLock should record the session file created by newSession",
+  );
+});
+
 test("autoLoop handles verification retry by continuing loop", async (t) => {
   _resetPendingResolve();
 

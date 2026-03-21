@@ -923,21 +923,13 @@ export async function runUnitPhase(
     pauseAuto: deps.pauseAuto,
   });
 
-  // Session + send + await
-  const sessionFile = deps.getSessionFile(ctx);
-  deps.updateSessionLock(
-    deps.lockBase(),
-    unitType,
-    unitId,
-    s.completedUnits.length,
-    sessionFile,
-  );
+  // Write preliminary lock (no session path yet — runUnit creates a new session).
+  // Crash recovery can still identify the in-flight unit from this lock.
   deps.writeLock(
     deps.lockBase(),
     unitType,
     unitId,
     s.completedUnits.length,
-    sessionFile,
   );
 
   debugLog("autoLoop", {
@@ -961,6 +953,23 @@ export async function runUnitPhase(
     unitId,
     status: unitResult.status,
   });
+
+  // Now that runUnit has called newSession(), the session file path is correct.
+  const sessionFile = deps.getSessionFile(ctx);
+  deps.updateSessionLock(
+    deps.lockBase(),
+    unitType,
+    unitId,
+    s.completedUnits.length,
+    sessionFile,
+  );
+  deps.writeLock(
+    deps.lockBase(),
+    unitType,
+    unitId,
+    s.completedUnits.length,
+    sessionFile,
+  );
 
   // Tag the most recent window entry with error info for stuck detection
   if (unitResult.status === "error" || unitResult.status === "cancelled") {
