@@ -397,7 +397,7 @@ export async function runGSDDoctor(basePath: string, options?: { fix?: boolean; 
       // Extract milestone ID from directory name (e.g., "M001" or "M001-abc123")
       const match = entry.name.match(MILESTONE_ID_RE);
       if (!match) continue; // Not a milestone directory pattern
-      const milestoneId = match[1];
+      const milestoneId = match[0];
 
       // Check if this milestone has substantive content
       if (!isSubstantiveMilestone(basePath, milestoneId)) {
