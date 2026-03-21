@@ -325,6 +325,70 @@ async function main(): Promise<void> {
       assertTrue(existsSync(join(repo, "skip-checkout.ts")), "skip-checkout.ts merged to main");
     }
 
+    // ─── Test 7: Repo using `master` as default branch (#1668) ────────
+    //
+    // Reproduces the exact failure mode from the bug report: a repo initialised
+    // with `master`, no GSD preferences file setting `main_branch`, and no
+    // META.json (so readIntegrationBranch returns null). Before the fix,
+    // mergeMilestoneToMain would fall back to the hardcoded string "main",
+    // attempt `git checkout main`, fail, and leave the user with a broken state
+    // and a confusing error. After the fix, nativeDetectMainBranch detects
+    // `master` and the squash-merge succeeds normally.
+    console.log("\n=== master-branch repo — no META.json, no prefs (#1668) ===");
+    {
+      // Build a repo with `master` as the default branch (not `main`).
+      // Use -b master to override the system default (which may be `main`).
+      const dir = realpathSync(mkdtempSync(join(tmpdir(), "wt-ms-master-test-")));
+      tempDirs.push(dir);
+      run("git init -b master", dir);
+      run("git config user.email test@test.com", dir);
+      run("git config user.name Test", dir);
+      writeFileSync(join(dir, "README.md"), "# master-branch repo\n");
+      mkdirSync(join(dir, ".gsd"), { recursive: true });
+      writeFileSync(join(dir, ".gsd", "STATE.md"), "# State\n");
+      run("git add .", dir);
+      run("git commit -m init", dir);
+      // Leave the default branch as `master` — do NOT run `git branch -M main`
+      const defaultBranch = run("git rev-parse --abbrev-ref HEAD", dir);
+      assertEq(defaultBranch, "master", "repo is on master branch");
+
+      // Create a worktree for the milestone (creates milestone/M070 branch)
+      const wtPath = createAutoWorktree(dir, "M070");
+
+      addSliceToMilestone(dir, wtPath, "M070", "S01", "Master branch test", [
+        { file: "master-feature.ts", content: "export const masterFeature = true;\n", message: "add master feature" },
+      ]);
+
+      // No META.json written (simulates the captureIntegrationBranch failure
+      // described in the issue) — readIntegrationBranch will return null.
+      const metaFile = join(dir, ".gsd", "milestones", "M070", "M070-META.json");
+      assertTrue(!existsSync(metaFile), "no META.json — integration branch not captured");
+
+      const roadmap = makeRoadmap("M070", "Master branch milestone", [
+        { id: "S01", title: "Master branch test" },
+      ]);
+
+      // Should succeed: nativeDetectMainBranch detects `master` automatically.
+      let threw = false;
+      let errMsg = "";
+      try {
+        const result = mergeMilestoneToMain(dir, "M070", roadmap);
+        assertTrue(result.commitMessage.includes("feat(M070)"), "merge commit created on master");
+      } catch (err) {
+        threw = true;
+        errMsg = err instanceof Error ? err.message : String(err);
+        console.error("Unexpected error:", err);
+      }
+      assertTrue(!threw, `should not throw on master-branch repo (got: ${errMsg})`);
+
+      // Verify the code landed on master and the milestone branch is gone
+      const finalBranch = run("git rev-parse --abbrev-ref HEAD", dir);
+      assertEq(finalBranch, "master", "repo is still on master after merge");
+      assertTrue(existsSync(join(dir, "master-feature.ts")), "feature merged to master");
+      const branches = run("git branch", dir);
+      assertTrue(!branches.includes("milestone/M070"), "milestone branch deleted after merge");
+    }
+
   } finally {
     process.chdir(savedCwd);
     for (const d of tempDirs) {

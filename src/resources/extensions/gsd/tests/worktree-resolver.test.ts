@@ -481,6 +481,43 @@ test("mergeAndExit in worktree mode restores to project root on merge failure", 
   assert.equal(findCalls(deps.calls, "GitServiceImpl").length, 1); // rebuilt after recovery
 });
 
+test("mergeAndExit failure message tells user worktree and branch are preserved (#1668)", () => {
+  // Regression test: before the fix, the failure message was a bare
+  // "Milestone merge failed: <reason>" with no recovery guidance. Users were
+  // left confused about whether their code had been deleted. The new message
+  // explicitly states that the worktree and branch are preserved and what to do.
+  const s = makeSession({
+    basePath: "/project/.gsd/worktrees/M001",
+    originalBasePath: "/project",
+  });
+  const deps = makeDeps({
+    isInAutoWorktree: () => true,
+    getIsolationMode: () => "worktree",
+    mergeMilestoneToMain: () => {
+      throw new Error("pathspec 'main' did not match any file(s) known to git");
+    },
+  });
+  const ctx = makeNotifyCtx();
+  const resolver = new WorktreeResolver(s, deps);
+
+  resolver.mergeAndExit("M001", ctx);
+
+  const warning = ctx.messages.find((m) => m.level === "warning");
+  assert.ok(warning, "a warning message is emitted");
+  // Must contain the original error
+  assert.ok(warning!.msg.includes("pathspec 'main' did not match"), "warning includes the original error");
+  // Must tell the user their work is safe
+  assert.ok(
+    warning!.msg.includes("preserved"),
+    "warning tells user the worktree and branch are preserved",
+  );
+  // Must suggest a recovery action
+  assert.ok(
+    warning!.msg.includes("retry") || warning!.msg.includes("manually"),
+    "warning suggests a recovery action",
+  );
+});
+
 // ─── mergeAndExit Tests (branch mode) ────────────────────────────────────────
 
 test("mergeAndExit in branch mode merges when on milestone branch", () => {

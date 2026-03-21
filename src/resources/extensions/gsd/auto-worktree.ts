@@ -42,6 +42,7 @@ import { parseRoadmap } from "./files.js";
 import { loadEffectiveGSDPreferences } from "./preferences.js";
 import {
   nativeGetCurrentBranch,
+  nativeDetectMainBranch,
   nativeWorkingTreeStatus,
   nativeAddAllWithExclusions,
   nativeCommit,
@@ -852,13 +853,17 @@ export function mergeMilestoneToMain(
   const previousCwd = process.cwd();
   process.chdir(originalBasePath_);
 
-  // 4. Resolve integration branch — prefer milestone metadata, fall back to preferences / "main"
+  // 4. Resolve integration branch — prefer milestone metadata, then preferences,
+  //    then auto-detect (origin/HEAD → main → master → current). Never hardcode
+  //    "main": repos using "master" or a custom default branch would fail at
+  //    checkout and leave the user with a broken merge state (#1668).
   const prefs = loadEffectiveGSDPreferences()?.preferences?.git ?? {};
   const integrationBranch = readIntegrationBranch(
     originalBasePath_,
     milestoneId,
   );
-  const mainBranch = integrationBranch ?? prefs.main_branch ?? "main";
+  const mainBranch =
+    integrationBranch ?? prefs.main_branch ?? nativeDetectMainBranch(originalBasePath_);
 
   // Remove transient project-root state files before any branch or merge
   // operation. Untracked milestone metadata can otherwise block squash merges.

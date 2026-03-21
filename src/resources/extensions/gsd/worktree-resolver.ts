@@ -372,7 +372,14 @@ export class WorktreeResolver {
         error: msg,
         fallback: "chdir-to-project-root",
       });
-      ctx.notify(`Milestone merge failed: ${msg}`, "warning");
+      // Surface a clear, actionable error. The worktree and milestone branch are
+      // intentionally preserved — nothing has been deleted. The user can retry
+      // /complete-milestone or merge manually once the underlying issue is fixed
+      // (e.g. checkout to wrong branch, unresolved conflicts). (#1668)
+      ctx.notify(
+        `Milestone merge failed: ${msg}. Your worktree and milestone branch are preserved — retry /complete-milestone or merge manually.`,
+        "warning",
+      );
 
       // Clean up stale merge state left by failed squash-merge (#1389)
       try {
