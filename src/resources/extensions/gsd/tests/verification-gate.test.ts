@@ -21,7 +21,7 @@ import { mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { tmpdir } from "node:os";
 import { spawnSync } from "node:child_process";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { discoverCommands, runVerificationGate, formatFailureContext, captureRuntimeErrors, runDependencyAudit, isLikelyCommand } from "../verification-gate.ts";
 import type { CaptureRuntimeErrorsOptions, DependencyAuditOptions } from "../verification-gate.ts";
 import { validatePreferences } from "../preferences.ts";
@@ -256,7 +256,7 @@ test("verification-gate: no DEP0190 deprecation warning when running commands", 
     const gatePath = join(thisDir, "..", "verification-gate.ts");
     const resolverPath = join(thisDir, "resolve-ts.mjs");
     const script = [
-      `import { runVerificationGate } from ${JSON.stringify("file://" + gatePath)};`,
+      `import { runVerificationGate } from ${JSON.stringify(pathToFileURL(gatePath).href)};`,
       `runVerificationGate({`,
       `  basePath: ${JSON.stringify(tmp)},`,
       `  unitId: "T-DEP",`,
