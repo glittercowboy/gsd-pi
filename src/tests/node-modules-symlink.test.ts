@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, lstatSync, mkdirSync, mkdtempSync, readlinkSync, rmSync, symlinkSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readlinkSync, rmSync, symlinkSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -69,7 +69,7 @@ test("initResources replaces a stale symlink with a correct one", async () => {
     const correctTarget = readlinkSync(nodeModulesPath);
 
     // Remove and replace with a stale symlink pointing to a non-existent path
-    rmSync(nodeModulesPath, { force: true });
+    unlinkSync(nodeModulesPath);
     symlinkSync("/tmp/nonexistent-gsd-node-modules-" + Date.now(), nodeModulesPath);
 
     const staleTarget = readlinkSync(nodeModulesPath);
@@ -98,7 +98,7 @@ test("initResources replaces symlink whose target was deleted", async () => {
 
     // Create a symlink that points to a path that doesn't exist
     // (simulates the case where npm upgrade moved the package location)
-    rmSync(nodeModulesPath, { force: true });
+    unlinkSync(nodeModulesPath);
     const deadTarget = join(tmp, "old-install", "node_modules");
     symlinkSync(deadTarget, nodeModulesPath);
 

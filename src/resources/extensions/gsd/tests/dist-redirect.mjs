@@ -10,6 +10,8 @@ export function resolve(specifier, context, nextResolve) {
     specifier = new URL("packages/pi-ai/dist/index.js", ROOT).href;
   } else if (specifier === "@gsd/pi-agent-core") {
     specifier = new URL("packages/pi-agent-core/dist/index.js", ROOT).href;
+  } else if (specifier === "@gsd/pi-tui") {
+    specifier = new URL("packages/pi-tui/dist/index.js", ROOT).href;
   }
   // 2. Redirect packages/*/dist/ → packages/*/src/ with .js→.ts for strip-types
   else if (specifier.endsWith('.js') && (specifier.startsWith('./') || specifier.startsWith('../'))) {

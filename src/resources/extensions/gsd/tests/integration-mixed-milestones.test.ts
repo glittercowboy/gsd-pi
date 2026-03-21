@@ -419,7 +419,7 @@ Built the legacy feature successfully.
       // Blocker: trying to dispatch M002-abc123/S02 when S01 is incomplete
       assertMatch(
         getPriorSliceCompletionBlocker(base, 'main', 'execute-task', 'M002-abc123/S02/T01') ?? '',
-        /dependency slice M002-abc123\/S01 is not complete/,
+        /M002-abc123\/S01 is not complete/,
         'G5: blocks M002-abc123/S02 when S01 incomplete',
       );
 
@@ -478,8 +478,40 @@ Built the legacy feature successfully.
       // Check that S02 of M002-abc123 is still blocked by its own S01
       assertMatch(
         getPriorSliceCompletionBlocker(base, 'main', 'execute-task', 'M002-abc123/S02/T01') ?? '',
-        /dependency slice M002-abc123\/S01 is not complete/,
+        /M002-abc123\/S01 is not complete/,
         'G5: intra-milestone blocker still works in mixed-format context',
+      );
+
+      // Positional path: S02 has no declared dependencies — blocked by positional ordering.
+      // Complete M002-abc123 so the guard reaches M003's intra-milestone check.
+      writeRoadmap(base, 'M002-abc123', `# M002-abc123: Second Feature
+
+**Vision:** Second
+
+## Slices
+- [x] **S01: Done** \`risk:low\` \`depends:[]\`
+  > Completed
+- [x] **S02: Done** \`risk:low\` \`depends:[S01]\`
+  > Completed
+`);
+      writeRoadmap(base, 'M003-xyz789', `# M003-xyz789: Positional Test
+
+**Vision:** Positional
+
+## Slices
+- [ ] **S01: Pending** \`risk:low\` \`depends:[]\`
+  > Not started
+- [ ] **S02: Also Pending** \`risk:low\` \`depends:[]\`
+  > Not started
+`);
+      run('git add .', base);
+      run('git commit -m add-m003', base);
+      clearPathCache();
+
+      assertMatch(
+        getPriorSliceCompletionBlocker(base, 'main', 'execute-task', 'M003-xyz789/S02/T01') ?? '',
+        /earlier slice M003-xyz789\/S01 is not complete/,
+        'G5: positional path produces "earlier slice" message with new-format milestone ID',
       );
     } finally {
       cleanup(base);
