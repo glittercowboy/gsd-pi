@@ -14,7 +14,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { resolve, join, dirname } from "node:path";
 import { gsdRoot } from "../paths.js";
 import { fileURLToPath } from "node:url";
-import { showNextAction } from "../../shared/mod.js";
+import { showNextAction } from "../../shared/tui.js";
 import {
   validatePlanningDirectory,
   parsePlanningDirectory,

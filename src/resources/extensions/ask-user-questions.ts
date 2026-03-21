@@ -18,7 +18,7 @@ import {
 	type Question,
 	type QuestionOption,
 	type RoundResult,
-} from "./shared/mod.js";
+} from "./shared/tui.js";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 

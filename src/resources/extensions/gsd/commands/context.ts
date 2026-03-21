@@ -3,7 +3,7 @@ import type { ExtensionAPI, ExtensionCommandContext } from "@gsd/pi-coding-agent
 import { checkRemoteAutoSession, isAutoActive, isAutoPaused, stopAutoRemote } from "../auto.js";
 import { assertSafeDirectory } from "../validate-directory.js";
 import { resolveProjectRoot } from "../worktree.js";
-import { showNextAction } from "../../shared/mod.js";
+import { showNextAction } from "../../shared/tui.js";
 import { handleStatus } from "./handlers/core.js";
 
 export interface GsdDispatchContext {

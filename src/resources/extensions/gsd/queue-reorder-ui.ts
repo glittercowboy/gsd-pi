@@ -11,7 +11,8 @@
 import type { ExtensionContext } from "@gsd/pi-coding-agent";
 import { type Theme } from "@gsd/pi-coding-agent";
 import { Key, matchesKey, truncateToWidth, type TUI } from "@gsd/pi-tui";
-import { makeUI, GLYPH } from "../shared/mod.js";
+import { makeUI } from "../shared/tui.js";
+import { GLYPH } from "../shared/mod.js";
 import { validateQueueOrder, type DependencyValidation } from "./queue-order.js";
 
 export interface ReorderItem {
