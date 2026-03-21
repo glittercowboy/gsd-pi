@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join, parse } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -100,33 +100,20 @@ test("buildResourceLoader excludes duplicate top-level pi extensions when bundle
   }
 });
 
-test("initResources prunes stale top-level extension siblings next to bundled compiled extensions", async () => {
+test("initResources replaces a plain agent/node_modules directory with the required symlink", async () => {
   const { initResources } = await import("../resource-loader.ts");
-  const tmp = mkdtempSync(join(tmpdir(), "gsd-resource-loader-sync-"));
+  const tmp = mkdtempSync(join(tmpdir(), "gsd-resource-loader-node-modules-"));
   const fakeAgentDir = join(tmp, "agent");
-  const bundledTsPath = join(fakeAgentDir, "extensions", "ask-user-questions.ts");
-  const bundledJsPath = join(fakeAgentDir, "extensions", "ask-user-questions.js");
+  const agentNodeModules = join(fakeAgentDir, "node_modules");
 
   try {
-    initResources(fakeAgentDir);
-
-    const bundledPath = existsSync(bundledJsPath)
-      ? bundledJsPath
-      : bundledTsPath;
-    const staleSiblingPath = bundledPath.endsWith(".js")
-      ? bundledTsPath
-      : bundledJsPath;
-
-    assert.equal(existsSync(bundledPath), true, "bundled top-level extension should exist");
-
-    // Simulate a stale opposite-format sibling left from a previous sync/build mismatch.
-    writeFileSync(staleSiblingPath, "export {};\n");
-    assert.equal(existsSync(staleSiblingPath), true);
+    mkdirSync(agentNodeModules, { recursive: true });
+    writeFileSync(join(agentNodeModules, "placeholder.txt"), "stale");
 
     initResources(fakeAgentDir);
 
-    assert.equal(existsSync(staleSiblingPath), false, "stale top-level sibling should be removed during sync");
-    assert.equal(existsSync(bundledPath), true, "bundled extension should remain after cleanup");
+    const stats = lstatSync(agentNodeModules);
+    assert.equal(stats.isSymbolicLink(), true, "agent/node_modules should be a symlink after sync");
   } finally {
     rmSync(tmp, { recursive: true, force: true });
   }

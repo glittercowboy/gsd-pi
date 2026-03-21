@@ -271,15 +271,39 @@ function ensureNodeModulesSymlink(agentDir: string): void {
   const gsdNodeModules = join(packageRoot, 'node_modules')
 
   try {
-    const existing = readlinkSync(agentNodeModules)
-    if (existing === gsdNodeModules) return  // already correct
-    unlinkSync(agentNodeModules)
-  } catch {
-    // readlinkSync throws if path doesn't exist or isn't a symlink — both are fine
-  }
+    if (existsSync(agentNodeModules)) {
+      const stats = lstatSync(agentNodeModules)
 
-  try {
-    symlinkSync(gsdNodeModules, agentNodeModules, 'junction')
+      if (stats.isSymbolicLink()) {
+        try {
+          const existing = readlinkSync(agentNodeModules)
+          const resolvedExisting = resolve(dirname(agentNodeModules), existing)
+          if (existing === gsdNodeModules || resolvedExisting === gsdNodeModules) {
+            return  // already correct
+          }
+        } catch {
+          // Broken/unreadable symlink — remove and recreate it below.
+        }
+
+        try {
+          unlinkSync(agentNodeModules)
+        } catch {
+          // Non-fatal — fall through and try to recreate only if path disappears.
+        }
+      } else {
+        // A plain directory here blocks native ESM resolution for synced extensions.
+        // Remove it so we can replace it with the intended symlink/junction.
+        try {
+          rmSync(agentNodeModules, { recursive: true, force: true })
+        } catch {
+          // Non-fatal — fall through and only attempt symlink creation if removal worked.
+        }
+      }
+    }
+
+    if (!existsSync(agentNodeModules)) {
+      symlinkSync(gsdNodeModules, agentNodeModules, 'junction')
+    }
   } catch {
     // Non-fatal — worst case, extensions fall back to NODE_PATH via jiti
   }
@@ -347,6 +371,13 @@ function pruneRemovedBundledExtensions(
  */
 export function initResources(agentDir: string): void {
   mkdirSync(agentDir, { recursive: true })
+
+  // Keep agentDir/node_modules healthy on every launch, even when the full
+  // resource sync is skipped because version/hash match. Without this, a stale
+  // plain directory at ~/.gsd/agent/node_modules can survive indefinitely and
+  // break native ESM imports from synced extensions, which makes commands like
+  // /gsd disappear because the extension never loads.
+  ensureNodeModulesSymlink(agentDir)
 
   const currentVersion = getBundledGsdVersion()
   const manifest = readManagedResourceManifest(agentDir)
