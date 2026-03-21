@@ -12,7 +12,7 @@
  * SLICE_BRANCH_RE) remain for backwards compatibility with legacy branches.
  */
 
-import { existsSync, readFileSync, utimesSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync, utimesSync } from "node:fs";
 import { join, resolve, sep } from "node:path";
 import { homedir } from "node:os";
 
@@ -123,14 +123,15 @@ export function detectWorktreeName(basePath: string): string | null {
  * operate against the real project root, not a worktree subdirectory.
  */
 export function resolveProjectRoot(basePath: string): string {
-  // Layer 1: If the coordinator passed the real project root, use it.
-  if (process.env.GSD_PROJECT_ROOT) {
-    return process.env.GSD_PROJECT_ROOT;
-  }
-
   const normalizedPath = basePath.replaceAll("\\", "/");
   const seg = findWorktreeSegment(normalizedPath);
   if (!seg) return basePath;
+
+  // Layer 1: If the coordinator passed the real project root, use it.
+  // Only apply this override when basePath actually looks like a worktree path.
+  if (process.env.GSD_PROJECT_ROOT) {
+    return process.env.GSD_PROJECT_ROOT;
+  }
 
   // Candidate root via the string-slice heuristic
   const sepChar = basePath.includes("\\") ? "\\" : "/";
@@ -143,9 +144,8 @@ export function resolveProjectRoot(basePath: string): string {
   // Layer 2: Guard against resolving to the user's home directory.
   // When .gsd is a symlink into ~/.gsd/projects/<hash>, the resolved path
   // contains /.gsd/ at the user-level boundary. Slicing there yields ~ — wrong.
-  const gsdHome = (process.env.GSD_HOME || join(homedir(), ".gsd")).replaceAll("\\", "/");
-  const candidateNormalized = candidate.replaceAll("\\", "/");
-  const candidateGsdPath = `${candidateNormalized}/.gsd`;
+  const gsdHome = normalizePathForCompare(process.env.GSD_HOME || join(homedir(), ".gsd"));
+  const candidateGsdPath = normalizePathForCompare(join(candidate, ".gsd"));
 
   if (candidateGsdPath === gsdHome || candidateGsdPath.startsWith(gsdHome + "/")) {
     // The candidate is the home directory (or within it in a way that .gsd
@@ -173,7 +173,7 @@ function resolveProjectRootFromGitFile(worktreePath: string): string | null {
   try {
     // Walk up from the worktree path to find the .git file
     let dir = worktreePath;
-    for (let i = 0; i < 10; i++) {
+    while (true) {
       const gitPath = join(dir, ".git");
       if (existsSync(gitPath)) {
         const content = readFileSync(gitPath, "utf8").trim();
@@ -205,6 +205,18 @@ function resolveProjectRootFromGitFile(worktreePath: string): string | null {
     // Non-fatal — caller will use fallback
   }
   return null;
+}
+
+function normalizePathForCompare(path: string): string {
+  let normalized: string;
+  try {
+    normalized = realpathSync(path);
+  } catch {
+    normalized = resolve(path);
+  }
+  const slashed = normalized.replaceAll("\\", "/");
+  const trimmed = slashed.replace(/\/+$/, "");
+  return trimmed || "/";
 }
 
 /**

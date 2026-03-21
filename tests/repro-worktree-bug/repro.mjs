@@ -16,9 +16,10 @@
  * user-level ~/.gsd), causing resolveProjectRoot() to return /root (home dir).
  */
 
-import { mkdirSync, symlinkSync, existsSync, realpathSync } from "node:fs";
+import { mkdirSync, symlinkSync, existsSync, realpathSync, mkdtempSync } from "node:fs";
 import { execSync } from "node:child_process";
 import { join } from "node:path";
+import { homedir, tmpdir } from "node:os";
 
 // ── Reproduce the exact functions from worktree.ts ──────────────────────
 
@@ -53,9 +54,11 @@ function resolveProjectRoot(basePath) {
 // ── Set up the filesystem layout ────────────────────────────────────────
 
 const HASH = "abc123def456";
-const USER_GSD = "/root/.gsd";
+const TEST_ROOT = mkdtempSync(join(tmpdir(), "gsd-repro-"));
+const USER_GSD = process.env.GSD_HOME || join(TEST_ROOT, ".gsd");
+const USER_HOME = homedir();
 const PROJECT_GSD_STORAGE = `${USER_GSD}/projects/${HASH}`;
-const PROJECT_DIR = "/tmp/myproject";
+const PROJECT_DIR = mkdtempSync(join(tmpdir(), "myproject-"));
 const PROJECT_GSD_LINK = `${PROJECT_DIR}/.gsd`;
 
 console.log("=== Setting up filesystem layout ===\n");
@@ -145,7 +148,7 @@ if (seg) {
   console.log(`  gsdIdx:         ${seg.gsdIdx}`);
   console.log(`  afterWorktrees: ${seg.afterWorktrees}`);
   console.log(`  Path before /.gsd/: "${resolvedPath.slice(0, seg.gsdIdx)}"`);
-  console.log(`  This is: ${resolvedPath.slice(0, seg.gsdIdx) === "/root" ? "THE HOME DIRECTORY (bug!)" : "some other directory"}`);
+  console.log(`  This is: ${resolvedPath.slice(0, seg.gsdIdx) === USER_HOME ? "THE HOME DIRECTORY (bug!)" : "some other directory"}`);
   
   // Show which regex matched
   const directMarker = "/.gsd/worktrees/";

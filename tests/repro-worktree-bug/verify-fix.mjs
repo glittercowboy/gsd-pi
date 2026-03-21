@@ -5,10 +5,12 @@
  * reproduced the bug. Copies the fixed function logic from worktree.ts.
  */
 
-import { mkdirSync, symlinkSync, existsSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import {
+  mkdirSync, symlinkSync, existsSync, readFileSync, realpathSync, writeFileSync, mkdtempSync,
+} from "node:fs";
 import { execSync } from "node:child_process";
 import { join, resolve } from "node:path";
-import { homedir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 
 // ── Fixed functions (copied from worktree.ts after fix) ─────────────────
 
@@ -29,7 +31,7 @@ function findWorktreeSegment(normalizedPath) {
 function resolveProjectRootFromGitFile(worktreePath) {
   try {
     let dir = worktreePath;
-    for (let i = 0; i < 10; i++) {
+    while (true) {
       const gitPath = join(dir, ".git");
       if (existsSync(gitPath)) {
         const content = readFileSync(gitPath, "utf8").trim();
@@ -56,15 +58,27 @@ function resolveProjectRootFromGitFile(worktreePath) {
   return null;
 }
 
+function normalizePathForCompare(path) {
+  let normalized;
+  try {
+    normalized = realpathSync(path);
+  } catch {
+    normalized = resolve(path);
+  }
+  const slashed = normalized.replaceAll("\\", "/");
+  const trimmed = slashed.replace(/\/+$/, "");
+  return trimmed || "/";
+}
+
 function resolveProjectRoot(basePath) {
+  const normalizedPath = basePath.replaceAll("\\", "/");
+  const seg = findWorktreeSegment(normalizedPath);
+  if (!seg) return basePath;
+
   // Layer 1: If the coordinator passed the real project root, use it.
   if (process.env.GSD_PROJECT_ROOT) {
     return process.env.GSD_PROJECT_ROOT;
   }
-
-  const normalizedPath = basePath.replaceAll("\\", "/");
-  const seg = findWorktreeSegment(normalizedPath);
-  if (!seg) return basePath;
 
   const sepChar = basePath.includes("\\") ? "\\" : "/";
   const gsdMarker = `${sepChar}.gsd${sepChar}`;
@@ -74,9 +88,8 @@ function resolveProjectRoot(basePath) {
     : basePath.slice(0, seg.gsdIdx);
 
   // Layer 2: Guard against resolving to the user's home directory.
-  const gsdHome = (process.env.GSD_HOME || join(homedir(), ".gsd")).replaceAll("\\", "/");
-  const candidateNormalized = candidate.replaceAll("\\", "/");
-  const candidateGsdPath = `${candidateNormalized}/.gsd`;
+  const gsdHome = normalizePathForCompare(process.env.GSD_HOME || join(homedir(), ".gsd"));
+  const candidateGsdPath = normalizePathForCompare(join(candidate, ".gsd"));
 
   if (candidateGsdPath === gsdHome || candidateGsdPath.startsWith(gsdHome + "/")) {
     const realRoot = resolveProjectRootFromGitFile(basePath);
@@ -90,10 +103,16 @@ function resolveProjectRoot(basePath) {
 // ── Set up filesystem layout ────────────────────────────────────────────
 
 const HASH = "abc123def456";
-const USER_GSD = "/root/.gsd";
+const TEST_ROOT = mkdtempSync(join(tmpdir(), "gsd-verify-fix-"));
+const USER_GSD = process.env.GSD_HOME || join(TEST_ROOT, ".gsd");
+const USER_HOME = homedir();
 const PROJECT_GSD_STORAGE = `${USER_GSD}/projects/${HASH}`;
-const PROJECT_DIR = "/tmp/myproject";
+const PROJECT_DIR = mkdtempSync(join(tmpdir(), "myproject-"));
 const PROJECT_GSD_LINK = `${PROJECT_DIR}/.gsd`;
+const PROJECT_REAL = normalizePathForCompare(PROJECT_DIR);
+const EXPECTED_BUGGY_ROOT = normalizePathForCompare(resolve(USER_GSD, ".."));
+
+process.env.GSD_HOME = USER_GSD;
 
 console.log("=== Setting up filesystem layout ===\n");
 
@@ -135,12 +154,12 @@ function test(name, actual, expected) {
 
 console.log("=== Layer 1: GSD_PROJECT_ROOT env var ===\n");
 
-process.env.GSD_PROJECT_ROOT = "/tmp/myproject";
+process.env.GSD_PROJECT_ROOT = PROJECT_DIR;
 const resolvedPath = realpathSync(`${PROJECT_DIR}/.gsd/worktrees/M001`);
 test(
   "GSD_PROJECT_ROOT overrides path resolution",
   resolveProjectRoot(resolvedPath),
-  "/tmp/myproject",
+  PROJECT_DIR,
 );
 delete process.env.GSD_PROJECT_ROOT;
 
@@ -175,13 +194,13 @@ console.log(`  resolveProjectRoot():  ${result}`);
 test(
   "Symlink-resolved worktree path resolves to REAL project (not ~)",
   result,
-  PROJECT_DIR,
+  PROJECT_REAL,
 );
 
 // Verify it's NOT the home directory
 test(
   "Result is not the home directory",
-  result !== "/root",
+  result !== USER_HOME,
   true,
 );
 
@@ -200,7 +219,7 @@ const gitFallback = resolveProjectRootFromGitFile(workerCwd);
 test(
   "resolveProjectRootFromGitFile returns real project",
   gitFallback,
-  PROJECT_DIR,
+  PROJECT_REAL,
 );
 
 // ── Test 5: Old buggy path would have returned ~ ────────────────────────
@@ -222,14 +241,14 @@ function oldResolveProjectRoot(basePath) {
 const oldResult = oldResolveProjectRoot(workerCwd);
 console.log(`  Old (buggy) code returns: ${oldResult}`);
 test(
-  "Old code would have returned home directory (confirming bug existed)",
+  "Old code returns parent of GSD home (confirming bug existed)",
   oldResult,
-  "/root",
+  EXPECTED_BUGGY_ROOT,
 );
 
 test(
   "New code does NOT return home directory",
-  result !== "/root",
+  result !== USER_HOME,
   true,
 );
 

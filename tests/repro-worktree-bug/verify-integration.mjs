@@ -16,11 +16,11 @@
 
 import {
   mkdirSync, symlinkSync, existsSync, readFileSync, realpathSync,
-  writeFileSync, statSync,
+  writeFileSync, mkdtempSync,
 } from "node:fs";
 import { execSync } from "node:child_process";
 import { join, resolve } from "node:path";
-import { homedir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 
 // ── Fixed functions (from worktree.ts after fix) ─────────────────────────
 
@@ -41,7 +41,7 @@ function findWorktreeSegment(normalizedPath) {
 function resolveProjectRootFromGitFile(worktreePath) {
   try {
     let dir = worktreePath;
-    for (let i = 0; i < 10; i++) {
+    while (true) {
       const gitPath = join(dir, ".git");
       if (existsSync(gitPath)) {
         const content = readFileSync(gitPath, "utf8").trim();
@@ -68,22 +68,35 @@ function resolveProjectRootFromGitFile(worktreePath) {
   return null;
 }
 
-function resolveProjectRoot(basePath) {
-  if (process.env.GSD_PROJECT_ROOT) {
-    return process.env.GSD_PROJECT_ROOT;
+function normalizePathForCompare(path) {
+  let normalized;
+  try {
+    normalized = realpathSync(path);
+  } catch {
+    normalized = resolve(path);
   }
+  const slashed = normalized.replaceAll("\\", "/");
+  const trimmed = slashed.replace(/\/+$/, "");
+  return trimmed || "/";
+}
+
+function resolveProjectRoot(basePath) {
   const normalizedPath = basePath.replaceAll("\\", "/");
   const seg = findWorktreeSegment(normalizedPath);
   if (!seg) return basePath;
+
+  if (process.env.GSD_PROJECT_ROOT) {
+    return process.env.GSD_PROJECT_ROOT;
+  }
+
   const sepChar = basePath.includes("\\") ? "\\" : "/";
   const gsdMarker = `${sepChar}.gsd${sepChar}`;
   const gsdIdx = basePath.indexOf(gsdMarker);
   const candidate = gsdIdx !== -1
     ? basePath.slice(0, gsdIdx)
     : basePath.slice(0, seg.gsdIdx);
-  const gsdHome = (process.env.GSD_HOME || join(homedir(), ".gsd")).replaceAll("\\", "/");
-  const candidateNormalized = candidate.replaceAll("\\", "/");
-  const candidateGsdPath = `${candidateNormalized}/.gsd`;
+  const gsdHome = normalizePathForCompare(process.env.GSD_HOME || join(homedir(), ".gsd"));
+  const candidateGsdPath = normalizePathForCompare(join(candidate, ".gsd"));
   if (candidateGsdPath === gsdHome || candidateGsdPath.startsWith(gsdHome + "/")) {
     const realRoot = resolveProjectRootFromGitFile(basePath);
     if (realRoot) return realRoot;
@@ -118,10 +131,16 @@ function validateDirectory(dirPath) {
 // ── Setup ────────────────────────────────────────────────────────────────
 
 const HASH = "abc123def456";
-const USER_GSD = "/root/.gsd";
+const TEST_ROOT = mkdtempSync(join(tmpdir(), "gsd-verify-integration-"));
+const USER_GSD = process.env.GSD_HOME || join(TEST_ROOT, ".gsd");
+const USER_HOME = homedir();
 const PROJECT_GSD_STORAGE = `${USER_GSD}/projects/${HASH}`;
-const PROJECT_DIR = "/tmp/myproject";
+const PROJECT_DIR = mkdtempSync(join(tmpdir(), "myproject-"));
 const PROJECT_GSD_LINK = `${PROJECT_DIR}/.gsd`;
+const PROJECT_REAL = normalizePathForCompare(PROJECT_DIR);
+let PROJECT_STORAGE_REAL = "";
+
+process.env.GSD_HOME = USER_GSD;
 
 console.log("=== Setup ===\n");
 
@@ -129,6 +148,7 @@ mkdirSync(`${PROJECT_GSD_STORAGE}/worktrees`, { recursive: true });
 mkdirSync(`${PROJECT_GSD_STORAGE}/milestones`, { recursive: true });
 mkdirSync(PROJECT_DIR, { recursive: true });
 symlinkSync(PROJECT_GSD_STORAGE, PROJECT_GSD_LINK);
+PROJECT_STORAGE_REAL = normalizePathForCompare(PROJECT_GSD_STORAGE);
 
 execSync("git init -b main", { cwd: PROJECT_DIR, stdio: "pipe" });
 execSync('git config user.name "Test"', { cwd: PROJECT_DIR, stdio: "pipe" });
@@ -155,19 +175,19 @@ console.log(`  Worker cwd (resolved): ${workerCwd}`);
 
 const projectRoot = resolveProjectRoot(workerCwd);
 console.log(`  Resolved project root: ${projectRoot}`);
-test("resolveProjectRoot returns /tmp/myproject", projectRoot, PROJECT_DIR);
-test("resolveProjectRoot does NOT return home dir", projectRoot !== "/root", true);
+test("resolveProjectRoot returns real project root", projectRoot, PROJECT_REAL);
+test("resolveProjectRoot does NOT return home dir", projectRoot !== USER_HOME, true);
 
 console.log("\n=== Test 2: gsdRoot finds project .gsd ===\n");
 
 const gsd = gsdRoot(projectRoot);
 console.log(`  gsdRoot result: ${gsd}`);
-test("gsdRoot points to project .gsd", gsd, `${PROJECT_DIR}/.gsd`);
+test("gsdRoot points to project .gsd", gsd, `${PROJECT_REAL}/.gsd`);
 
 // Verify it's a symlink to the right place
 const gsdReal = realpathSync(gsd);
 console.log(`  gsdRoot resolves to: ${gsdReal}`);
-test("gsdRoot resolves to project storage", gsdReal, PROJECT_GSD_STORAGE);
+test("gsdRoot resolves to project storage", gsdReal, PROJECT_STORAGE_REAL);
 test("gsdRoot does NOT resolve to user-level ~/.gsd", gsdReal !== USER_GSD, true);
 
 console.log("\n=== Test 3: parallel/ directory targets project .gsd ===\n");
@@ -176,7 +196,7 @@ const parallelDir = join(gsd, "parallel");
 console.log(`  Parallel dir would be: ${parallelDir}`);
 const parallelReal = join(gsdReal, "parallel");
 console.log(`  Resolves physically to: ${parallelReal}`);
-test("parallel dir is under project .gsd", parallelDir.startsWith(PROJECT_DIR), true);
+test("parallel dir is under project .gsd", parallelDir.startsWith(PROJECT_REAL), true);
 test("parallel dir is NOT under ~/.gsd root", !parallelDir.startsWith(USER_GSD) || parallelDir.startsWith(`${USER_GSD}/projects/`), true);
 
 // Actually create it and verify
@@ -204,7 +224,7 @@ test("NO orchestrator.json at user-level ~/.gsd root", !existsSync(userOrchestra
 
 console.log("\n=== Test 5: validateDirectory blocks ~ as project root ===\n");
 
-const homeValidation = validateDirectory("/root");
+const homeValidation = validateDirectory(USER_HOME);
 test("validateDirectory blocks home dir", homeValidation.safe, false);
 test("validateDirectory blocks with 'blocked' severity", homeValidation.severity, "blocked");
 

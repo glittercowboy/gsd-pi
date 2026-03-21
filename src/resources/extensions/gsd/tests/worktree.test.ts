@@ -1,4 +1,4 @@
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync, symlinkSync, realpathSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { execSync } from "node:child_process";
@@ -204,6 +204,11 @@ async function main(): Promise<void> {
     "/real/project",
     "uses GSD_PROJECT_ROOT when set",
   );
+  assertEq(
+    resolveProjectRoot("/some/repo"),
+    "/some/repo",
+    "ignores GSD_PROJECT_ROOT override for non-worktree paths",
+  );
   delete process.env.GSD_PROJECT_ROOT;
 
   // Without GSD_PROJECT_ROOT, direct layout still works (no ~/.gsd collision)
@@ -224,6 +229,36 @@ async function main(): Promise<void> {
     "/data",
     "resolves correctly with nested subdirs after worktree name (direct layout)",
   );
+
+  // Real symlink + git worktree scenario, with deep nested path from cwd
+  {
+    const fakeHome = mkdtempSync(join(tmpdir(), "gsd-home-"));
+    const project = mkdtempSync(join(tmpdir(), "gsd-proj-"));
+    const storage = join(fakeHome, ".gsd", "projects", "abc123def456");
+    mkdirSync(storage, { recursive: true });
+    symlinkSync(storage, join(project, ".gsd"));
+
+    run("git init -b main", project);
+    run("git config user.name 'Pi Test'", project);
+    run("git config user.email 'pi@example.com'", project);
+    writeFileSync(join(project, "README.md"), "init\n");
+    run("git add -A && git commit -m init", project);
+    run("git worktree add .gsd/worktrees/M001 -b worktree/M001", project);
+
+    const deep = join(project, ".gsd", "worktrees", "M001", "a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k");
+    mkdirSync(deep, { recursive: true });
+
+    process.env.GSD_HOME = join(fakeHome, ".gsd");
+    assertEq(
+      resolveProjectRoot(realpathSync(deep)),
+      realpathSync(project),
+      "resolves to real project root from deep symlink-resolved worktree path",
+    );
+    delete process.env.GSD_HOME;
+
+    rmSync(project, { recursive: true, force: true });
+    rmSync(fakeHome, { recursive: true, force: true });
+  }
 
   rmSync(base, { recursive: true, force: true });
   report();
