@@ -271,17 +271,27 @@ function ensureNodeModulesSymlink(agentDir: string): void {
   const gsdNodeModules = join(packageRoot, 'node_modules')
 
   try {
-    const existing = readlinkSync(agentNodeModules)
-    if (existing === gsdNodeModules) return  // already correct
-    unlinkSync(agentNodeModules)
+    const stat = lstatSync(agentNodeModules)
+
+    if (stat.isSymbolicLink()) {
+      const existing = readlinkSync(agentNodeModules)
+      // Symlink exists — verify it points to the correct, existing target
+      if (existing === gsdNodeModules && existsSync(agentNodeModules)) return  // correct and target exists
+      // Stale or wrong target — remove and recreate
+      unlinkSync(agentNodeModules)
+    } else {
+      // Real directory (not a symlink) is blocking — remove it
+      rmSync(agentNodeModules, { recursive: true, force: true })
+    }
   } catch {
-    // readlinkSync throws if path doesn't exist or isn't a symlink — both are fine
+    // lstatSync throws if path doesn't exist — that's fine, we'll create below
   }
 
   try {
     symlinkSync(gsdNodeModules, agentNodeModules, 'junction')
-  } catch {
-    // Non-fatal — worst case, extensions fall back to NODE_PATH via jiti
+  } catch (err) {
+    // This failure makes GSD non-functional — extensions can't resolve @gsd/* packages
+    console.error(`[gsd] WARN: Failed to symlink ${agentNodeModules} → ${gsdNodeModules}: ${err instanceof Error ? err.message : err}`)
   }
 }
 
@@ -359,6 +369,11 @@ export function initResources(agentDir: string): void {
   // up even when the version/hash match causes the full sync to be skipped.
   pruneRemovedBundledExtensions(manifest, agentDir)
 
+  // Ensure ~/.gsd/agent/node_modules symlinks to GSD's node_modules on EVERY
+  // launch, not just during resource syncs. A stale/broken symlink makes ALL
+  // extensions fail to resolve @gsd/* packages, rendering GSD non-functional.
+  ensureNodeModulesSymlink(agentDir)
+
   // Skip the full copy when both version AND content fingerprint match.
   // Version-only checks miss same-version content changes (npm link dev workflow,
   // hotfixes within a release). The content hash catches those at ~1ms cost.
@@ -385,11 +400,6 @@ export function initResources(agentDir: string): void {
   // Ensure all newly copied files are owner-writable so the next run can
   // overwrite them (covers extensions, agents, and skills in one walk).
   makeTreeWritable(agentDir)
-
-  // Ensure ~/.gsd/agent/node_modules symlinks to GSD's node_modules so that
-  // native ESM import() calls from synced extension files can resolve @gsd/*
-  // packages via ancestor directory lookup. NODE_PATH only applies to CJS/jiti.
-  ensureNodeModulesSymlink(agentDir)
 
   writeManagedResourceManifest(agentDir)
   ensureRegistryEntries(join(agentDir, 'extensions'))
