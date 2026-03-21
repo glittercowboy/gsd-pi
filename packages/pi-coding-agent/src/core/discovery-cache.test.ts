@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
@@ -59,7 +59,9 @@ describe("ModelDiscoveryCache — basic operations", () => {
 
 		cache.clear("openai");
 		assert.equal(cache.get("openai"), undefined);
-		assert.ok(cache.get("google"));
+		const googleEntry = cache.get("google");
+		assert.ok(googleEntry);
+		assert.equal(googleEntry.models[0].id, "gemini-pro");
 	});
 
 	it("clear without provider removes all entries", () => {

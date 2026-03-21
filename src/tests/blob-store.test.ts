@@ -71,7 +71,6 @@ test('get retrieves stored data', () => {
 		const { hash } = store.put(data)
 		const retrieved = store.get(hash)
 
-		assert.ok(retrieved)
 		assert.deepEqual(retrieved, data)
 	} finally {
 		cleanup()

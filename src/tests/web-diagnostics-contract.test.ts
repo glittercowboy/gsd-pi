@@ -72,9 +72,9 @@ describe("diagnostics type exports", () => {
     }
     assert.equal(typeof report.gsdVersion, "string")
     assert.equal(typeof report.timestamp, "string")
-    assert.ok(Array.isArray(report.anomalies))
-    assert.ok(Array.isArray(report.recentUnits))
-    assert.ok(Array.isArray(report.unitTraces))
+    assert.deepEqual(report.anomalies, [])
+    assert.deepEqual(report.recentUnits, [])
+    assert.deepEqual(report.unitTraces, [])
     assert.equal(report.crashLock, null)
     assert.equal(typeof report.doctorIssueCount, "number")
     assert.equal(typeof report.unitTraceCount, "number")
@@ -142,18 +142,17 @@ describe("diagnostics type exports", () => {
       summary: { total: 0, errors: 0, warnings: 0, infos: 0, fixable: 0, byCode: [] },
     }
     assert.equal(typeof report.ok, "boolean")
-    assert.ok(Array.isArray(report.issues))
-    assert.ok(Array.isArray(report.fixesApplied))
+    assert.deepEqual(report.issues, [])
+    assert.deepEqual(report.fixesApplied, [])
     assert.equal(typeof report.summary.total, "number")
     assert.equal(typeof report.summary.fixable, "number")
-    assert.ok(Array.isArray(report.summary.byCode))
+    assert.deepEqual(report.summary.byCode, [])
   })
 
   it("DoctorFixResult has required fields", () => {
     const fix: DoctorFixResult = { ok: true, fixesApplied: ["fix1"] }
     assert.equal(typeof fix.ok, "boolean")
-    assert.ok(Array.isArray(fix.fixesApplied))
-    assert.equal(fix.fixesApplied.length, 1)
+    assert.deepEqual(fix.fixesApplied, ["fix1"])
   })
 
   it("SkillHealthEntry has required fields", () => {
@@ -200,10 +199,10 @@ describe("diagnostics type exports", () => {
     }
     assert.equal(typeof report.generatedAt, "string")
     assert.equal(typeof report.totalUnitsWithSkills, "number")
-    assert.ok(Array.isArray(report.skills))
-    assert.ok(Array.isArray(report.staleSkills))
-    assert.ok(Array.isArray(report.decliningSkills))
-    assert.ok(Array.isArray(report.suggestions))
+    assert.deepEqual(report.skills, [])
+    assert.deepEqual(report.staleSkills, [])
+    assert.deepEqual(report.decliningSkills, [])
+    assert.deepEqual(report.suggestions, [])
   })
 })
 
@@ -311,10 +310,10 @@ describe("diagnostics surface→section mapping", () => {
 
 // Compile-time assertion: if any of these method names were removed from the
 // class, TypeScript would error on these type aliases.
-type _AssertLoadForensics = GSDWorkspaceStore["loadForensicsDiagnostics"]
-type _AssertLoadDoctor = GSDWorkspaceStore["loadDoctorDiagnostics"]
-type _AssertApplyFixes = GSDWorkspaceStore["applyDoctorFixes"]
-type _AssertLoadSkillHealth = GSDWorkspaceStore["loadSkillHealthDiagnostics"]
+type _AssertLoadForensics = InstanceType<typeof GSDWorkspaceStore>["loadForensicsDiagnostics"]
+type _AssertLoadDoctor = InstanceType<typeof GSDWorkspaceStore>["loadDoctorDiagnostics"]
+type _AssertApplyFixes = InstanceType<typeof GSDWorkspaceStore>["applyDoctorFixes"]
+type _AssertLoadSkillHealth = InstanceType<typeof GSDWorkspaceStore>["loadSkillHealthDiagnostics"]
 
 describe("diagnostics store methods", () => {
   it("GSDWorkspaceStore is a constructable class export", () => {
@@ -326,22 +325,22 @@ describe("diagnostics store methods", () => {
     // field exists. At runtime, arrow-field methods are on instances, not
     // prototype. We verify the field name appears in the actions Pick type by
     // checking the useGSDWorkspaceActions hook references it in the exports.
-    const methodName: keyof Pick<GSDWorkspaceStore, "loadForensicsDiagnostics"> = "loadForensicsDiagnostics"
+    const methodName: keyof Pick<InstanceType<typeof GSDWorkspaceStore>, "loadForensicsDiagnostics"> = "loadForensicsDiagnostics"
     assert.equal(methodName, "loadForensicsDiagnostics")
   })
 
   it("loadDoctorDiagnostics is a recognized method name on the store type", () => {
-    const methodName: keyof Pick<GSDWorkspaceStore, "loadDoctorDiagnostics"> = "loadDoctorDiagnostics"
+    const methodName: keyof Pick<InstanceType<typeof GSDWorkspaceStore>, "loadDoctorDiagnostics"> = "loadDoctorDiagnostics"
     assert.equal(methodName, "loadDoctorDiagnostics")
   })
 
   it("applyDoctorFixes is a recognized method name on the store type", () => {
-    const methodName: keyof Pick<GSDWorkspaceStore, "applyDoctorFixes"> = "applyDoctorFixes"
+    const methodName: keyof Pick<InstanceType<typeof GSDWorkspaceStore>, "applyDoctorFixes"> = "applyDoctorFixes"
     assert.equal(methodName, "applyDoctorFixes")
   })
 
   it("loadSkillHealthDiagnostics is a recognized method name on the store type", () => {
-    const methodName: keyof Pick<GSDWorkspaceStore, "loadSkillHealthDiagnostics"> = "loadSkillHealthDiagnostics"
+    const methodName: keyof Pick<InstanceType<typeof GSDWorkspaceStore>, "loadSkillHealthDiagnostics"> = "loadSkillHealthDiagnostics"
     assert.equal(methodName, "loadSkillHealthDiagnostics")
   })
 })

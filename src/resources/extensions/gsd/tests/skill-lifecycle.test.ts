@@ -3,7 +3,7 @@
  * Tests the pure functions — no file I/O, no extension context.
  */
 
-import { describe, it, beforeEach } from "node:test";
+import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import type { UnitMetrics } from "../metrics.js";
 
@@ -72,7 +72,7 @@ describe("skill-health", () => {
 
     // With no metrics file, should return empty
     const result = computeStaleAvoidList("/nonexistent/path", ["some-skill"]);
-    assert.ok(Array.isArray(result));
+    assert.deepEqual(result, []);
   });
 });
 
