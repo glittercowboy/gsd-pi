@@ -4,6 +4,7 @@ import { join } from "node:path"
 import { pathToFileURL } from "node:url"
 
 import { resolveBridgeRuntimeConfig } from "./bridge-service.ts"
+import { resolveTypeStrippingFlag } from "./ts-subprocess-flags.ts"
 import type { HooksData } from "../../web/lib/remaining-command-types.ts"
 
 const HOOKS_MAX_BUFFER = 512 * 1024
@@ -54,7 +55,7 @@ export async function collectHooksData(projectCwdOverride?: string): Promise<Hoo
       [
         "--import",
         pathToFileURL(resolveTsLoader).href,
-        "--experimental-strip-types",
+        resolveTypeStrippingFlag(packageRoot),
         "--input-type=module",
         "--eval",
         script,

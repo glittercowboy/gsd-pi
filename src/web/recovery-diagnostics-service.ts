@@ -8,6 +8,7 @@ import {
   collectSelectiveLiveStatePayload,
   resolveBridgeRuntimeConfig,
 } from "./bridge-service.ts"
+import { resolveTypeStrippingFlag } from "./ts-subprocess-flags.ts"
 import type {
   WorkspaceRecoveryBrowserAction,
   WorkspaceRecoveryCodeSummary,
@@ -473,7 +474,7 @@ async function collectRecoveryDiagnosticsChildPayload(
       [
         "--import",
         pathToFileURL(resolveTsLoader).href,
-        "--experimental-strip-types",
+        resolveTypeStrippingFlag(packageRoot),
         "--input-type=module",
         "--eval",
         script,

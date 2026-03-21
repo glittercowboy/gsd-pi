@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
+import { resolveTypeStrippingFlag } from "./ts-subprocess-flags.ts";
 
 export interface GsdCliEntry {
   command: string;
@@ -46,7 +47,7 @@ export function resolveGsdCliEntry(options: ResolveGsdCliEntryOptions): GsdCliEn
           args: [
             "--import",
             pathToFileURL(resolveTsLoader).href,
-            "--experimental-strip-types",
+            resolveTypeStrippingFlag(options.packageRoot),
             sourceEntry,
             ...extraArgs,
             ...messageArgs,

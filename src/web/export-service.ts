@@ -4,6 +4,7 @@ import { join } from "node:path"
 import { pathToFileURL } from "node:url"
 
 import { resolveBridgeRuntimeConfig } from "./bridge-service.ts"
+import { resolveTypeStrippingFlag } from "./ts-subprocess-flags.ts"
 import type { ExportResult } from "../../web/lib/remaining-command-types.ts"
 
 const EXPORT_MAX_BUFFER = 4 * 1024 * 1024
@@ -60,7 +61,7 @@ export async function collectExportData(
       [
         "--import",
         pathToFileURL(resolveTsLoader).href,
-        "--experimental-strip-types",
+        resolveTypeStrippingFlag(packageRoot),
         "--input-type=module",
         "--eval",
         script,

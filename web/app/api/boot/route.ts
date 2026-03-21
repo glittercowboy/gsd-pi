@@ -28,11 +28,19 @@ export async function GET(request: Request): Promise<Response> {
     });
   }
 
-  const bootPayload = await collectBootPayload(projectCwd);
+  try {
+    const bootPayload = await collectBootPayload(projectCwd);
 
-  return Response.json(bootPayload, {
-    headers: {
-      "Cache-Control": "no-store",
-    },
-  });
+    return Response.json(bootPayload, {
+      headers: {
+        "Cache-Control": "no-store",
+      },
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return Response.json(
+      { error: message },
+      { status: 500, headers: { "Cache-Control": "no-store" } },
+    );
+  }
 }

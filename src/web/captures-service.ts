@@ -4,6 +4,7 @@ import { join } from "node:path"
 import { pathToFileURL } from "node:url"
 
 import { resolveBridgeRuntimeConfig } from "./bridge-service.ts"
+import { resolveTypeStrippingFlag } from "./ts-subprocess-flags.ts"
 import type { CapturesData, CaptureResolveRequest, CaptureResolveResult } from "../../web/lib/knowledge-captures-types.ts"
 
 const CAPTURES_MAX_BUFFER = 2 * 1024 * 1024
@@ -51,7 +52,7 @@ export async function collectCapturesData(projectCwdOverride?: string): Promise<
       [
         "--import",
         pathToFileURL(resolveTsLoader).href,
-        "--experimental-strip-types",
+        resolveTypeStrippingFlag(packageRoot),
         "--input-type=module",
         "--eval",
         script,
@@ -120,7 +121,7 @@ export async function resolveCaptureAction(request: CaptureResolveRequest, proje
       [
         "--import",
         pathToFileURL(resolveTsLoader).href,
-        "--experimental-strip-types",
+        resolveTypeStrippingFlag(packageRoot),
         "--input-type=module",
         "--eval",
         script,

@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
 import type { AutoDashboardData } from "./bridge-service.ts";
+import { resolveTypeStrippingFlag } from "./ts-subprocess-flags.ts"
 
 const AUTO_DASHBOARD_MAX_BUFFER = 1024 * 1024;
 const TEST_AUTO_DASHBOARD_MODULE_ENV = "GSD_WEB_TEST_AUTO_DASHBOARD_MODULE";
@@ -73,7 +74,7 @@ export async function collectAuthoritativeAutoDashboardData(
       [
         "--import",
         pathToFileURL(resolveTsLoader).href,
-        "--experimental-strip-types",
+        resolveTypeStrippingFlag(packageRoot),
         "--input-type=module",
         "--eval",
         script,

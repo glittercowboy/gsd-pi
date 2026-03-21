@@ -4,6 +4,7 @@ import { join } from "node:path"
 import { pathToFileURL } from "node:url"
 
 import { resolveBridgeRuntimeConfig } from "./bridge-service.ts"
+import { resolveTypeStrippingFlag } from "./ts-subprocess-flags.ts"
 import type { DoctorReport, DoctorFixResult } from "../../web/lib/diagnostics-types.ts"
 
 const DOCTOR_MAX_BUFFER = 2 * 1024 * 1024
@@ -42,7 +43,7 @@ function runDoctorChild(
       [
         "--import",
         pathToFileURL(resolveTsLoader).href,
-        "--experimental-strip-types",
+        resolveTypeStrippingFlag(packageRoot),
         "--input-type=module",
         "--eval",
         script,

@@ -451,7 +451,10 @@ async function waitForBootReady(url: string, timeoutMs = 180_000, stderr?: Writa
   const deadline = Date.now() + timeoutMs
   const startedAt = Date.now()
   let lastError: string | null = null
+  let lastBody: string | null = null
   let hostUp = false
+  let consecutive5xx = 0
+  const MAX_CONSECUTIVE_5XX = 3
   // Print a progress dot every N ms while waiting so the terminal isn't silent
   const TICKER_INTERVAL_MS = 5_000
   let lastTickAt = startedAt
@@ -468,12 +471,29 @@ async function waitForBootReady(url: string, timeoutMs = 180_000, stderr?: Writa
           hostUp = true
           stderr?.write(`[gsd] Web host ready.\n`)
         }
+        consecutive5xx = 0
         // Host responded successfully — it's ready for the browser
         return
+      } else if (response.statusCode >= 500) {
+        consecutive5xx++
+        lastError = `http ${response.statusCode}`
+        lastBody = response.body || null
+        if (consecutive5xx >= MAX_CONSECUTIVE_5XX) {
+          const detail = lastBody ? `: ${lastBody.slice(0, 500)}` : ''
+          throw new Error(
+            `boot route returned ${MAX_CONSECUTIVE_5XX} consecutive 5xx responses (last: ${response.statusCode})${detail}`,
+          )
+        }
       } else {
+        consecutive5xx = 0
         lastError = `http ${response.statusCode}`
       }
     } catch (error) {
+      if (error instanceof Error && error.message.startsWith('boot route returned')) {
+        throw error
+      }
+      // Connection refused, timeout, etc. — transient during cold start
+      consecutive5xx = 0
       lastError = error instanceof Error ? error.message : String(error)
     }
 

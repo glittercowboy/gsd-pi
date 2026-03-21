@@ -4,6 +4,7 @@ import { join } from "node:path"
 import { pathToFileURL } from "node:url"
 
 import { resolveBridgeRuntimeConfig } from "./bridge-service.ts"
+import { resolveTypeStrippingFlag } from "./ts-subprocess-flags.ts"
 import type { HistoryData } from "../../web/lib/remaining-command-types.ts"
 
 const HISTORY_MAX_BUFFER = 2 * 1024 * 1024
@@ -53,7 +54,7 @@ export async function collectHistoryData(projectCwdOverride?: string): Promise<H
       [
         "--import",
         pathToFileURL(resolveTsLoader).href,
-        "--experimental-strip-types",
+        resolveTypeStrippingFlag(packageRoot),
         "--input-type=module",
         "--eval",
         script,
