@@ -569,6 +569,119 @@ async function main(): Promise<void> {
       assertTrue(existsSync(join(repo, "landed.ts")), "landed.ts present on main");
     }
 
+    // ─── Test 14: Stale branch ref — worktree HEAD ahead of branch (#1846) ─
+    console.log("\n=== stale branch ref — fast-forward before squash merge (#1846) ===");
+    {
+      const repo = freshRepo();
+      const wtPath = createAutoWorktree(repo, "M140");
+
+      // Add a first slice normally — this advances both the branch ref and HEAD
+      addSliceToMilestone(repo, wtPath, "M140", "S01", "Initial work", [
+        { file: "initial.ts", content: "export const initial = true;\n", message: "add initial" },
+      ]);
+
+      // Now simulate the bug: detach HEAD in the worktree, then make commits
+      // that advance HEAD but leave the milestone/M140 branch ref behind.
+      const branchRefBefore = run("git rev-parse milestone/M140", wtPath);
+      run("git checkout --detach HEAD", wtPath);
+
+      // Add multiple commits on the detached HEAD (simulates agent work)
+      writeFileSync(join(wtPath, "feature-a.ts"), "export const featureA = true;\n");
+      run("git add .", wtPath);
+      run('git commit -m "add feature-a"', wtPath);
+
+      writeFileSync(join(wtPath, "feature-b.ts"), "export const featureB = true;\n");
+      run("git add .", wtPath);
+      run('git commit -m "add feature-b"', wtPath);
+
+      writeFileSync(join(wtPath, "feature-c.ts"), "export const featureC = true;\n");
+      run("git add .", wtPath);
+      run('git commit -m "add feature-c"', wtPath);
+
+      // Verify: branch ref is stale, HEAD is ahead
+      const branchRefAfter = run("git rev-parse milestone/M140", wtPath);
+      const worktreeHead = run("git rev-parse HEAD", wtPath);
+      assertEq(branchRefBefore, branchRefAfter, "branch ref unchanged (stale)");
+      assertTrue(worktreeHead !== branchRefAfter, "worktree HEAD ahead of branch ref");
+
+      const roadmap = makeRoadmap("M140", "Stale ref milestone", [
+        { id: "S01", title: "Initial work" },
+      ]);
+
+      // The fix should fast-forward the branch ref to worktree HEAD before
+      // squash-merging, so ALL commits are captured.
+      let threw = false;
+      let errMsg = "";
+      try {
+        const result = mergeMilestoneToMain(repo, "M140", roadmap);
+        assertTrue(result.commitMessage.includes("feat(M140)"), "merge commit created");
+      } catch (err) {
+        threw = true;
+        errMsg = err instanceof Error ? err.message : String(err);
+      }
+      assertTrue(!threw, `should not throw with stale branch ref (got: ${errMsg})`);
+
+      // ALL files from detached HEAD commits must be on main — not just
+      // the ones from the stale branch ref
+      assertTrue(existsSync(join(repo, "initial.ts")), "initial.ts on main");
+      assertTrue(existsSync(join(repo, "feature-a.ts")), "feature-a.ts on main (#1846)");
+      assertTrue(existsSync(join(repo, "feature-b.ts")), "feature-b.ts on main (#1846)");
+      assertTrue(existsSync(join(repo, "feature-c.ts")), "feature-c.ts on main (#1846)");
+    }
+
+    // ─── Test 15: Diverged worktree HEAD — throws instead of losing data (#1846) ─
+    console.log("\n=== diverged worktree HEAD — throws on divergence (#1846) ===");
+    {
+      const repo = freshRepo();
+      const wtPath = createAutoWorktree(repo, "M150");
+
+      addSliceToMilestone(repo, wtPath, "M150", "S01", "Base work", [
+        { file: "base.ts", content: "export const base = true;\n", message: "add base" },
+      ]);
+
+      // Detach HEAD, then reset branch ref forward independently to create
+      // divergence (branch ref is NOT an ancestor of worktree HEAD).
+      run("git checkout --detach HEAD", wtPath);
+      writeFileSync(join(wtPath, "detached-work.ts"), "export const detached = true;\n");
+      run("git add .", wtPath);
+      run('git commit -m "detached work"', wtPath);
+
+      // Now advance the branch ref on a different path (via the main repo)
+      run("git checkout milestone/M150", repo);
+      writeFileSync(join(repo, "diverged-work.ts"), "export const diverged = true;\n");
+      run("git add .", repo);
+      run('git commit -m "diverged work on branch"', repo);
+      run("git checkout main", repo);
+
+      // Move back to worktree cwd
+      process.chdir(wtPath);
+
+      const roadmap = makeRoadmap("M150", "Diverged milestone", [
+        { id: "S01", title: "Base work" },
+      ]);
+
+      let threw = false;
+      let errMsg = "";
+      try {
+        mergeMilestoneToMain(repo, "M150", roadmap);
+      } catch (err) {
+        threw = true;
+        errMsg = err instanceof Error ? err.message : String(err);
+      }
+      assertTrue(threw, "throws when worktree HEAD diverged from branch ref (#1846)");
+      assertTrue(
+        errMsg.includes("diverged"),
+        "error message mentions divergence (#1846)",
+      );
+
+      // Branch must be preserved — no data loss
+      const branches = run("git branch", repo);
+      assertTrue(
+        branches.includes("milestone/M150"),
+        "milestone branch preserved on divergence (#1846)",
+      );
+    }
+
   } finally {
     process.chdir(savedCwd);
     for (const d of tempDirs) {

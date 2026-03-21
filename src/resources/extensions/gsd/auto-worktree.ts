@@ -57,6 +57,8 @@ import {
   nativeBranchDelete,
   nativeBranchExists,
   nativeDiffNumstat,
+  nativeUpdateRef,
+  nativeIsAncestor,
 } from "./native-git-bridge.js";
 
 // ─── Module State ──────────────────────────────────────────────────────────
@@ -1019,6 +1021,62 @@ export function mergeMilestoneToMain(
     body = `\n\nCompleted slices:\n${sliceLines}\n\nBranch: ${milestoneBranch}`;
   }
   const commitMessage = subject + body;
+
+  // 6b. Reconcile worktree HEAD with milestone branch ref (#1846).
+  //     When the worktree HEAD detaches and advances past the named branch,
+  //     the branch ref becomes stale. Squash-merging the stale ref silently
+  //     orphans all commits between the branch ref and the actual worktree HEAD.
+  //     Fix: fast-forward the branch ref to the worktree HEAD before merging.
+  //     Only applies when merging from an actual worktree (worktreeCwd differs
+  //     from originalBasePath_).
+  if (worktreeCwd !== originalBasePath_) {
+    try {
+      const worktreeHead = execFileSync("git", ["rev-parse", "HEAD"], {
+        cwd: worktreeCwd,
+        stdio: ["ignore", "pipe", "pipe"],
+        encoding: "utf-8",
+      }).trim();
+      const branchHead = execFileSync("git", ["rev-parse", milestoneBranch], {
+        cwd: originalBasePath_,
+        stdio: ["ignore", "pipe", "pipe"],
+        encoding: "utf-8",
+      }).trim();
+
+      if (worktreeHead && branchHead && worktreeHead !== branchHead) {
+        if (nativeIsAncestor(originalBasePath_, branchHead, worktreeHead)) {
+          // Worktree HEAD is strictly ahead — fast-forward the branch ref
+          nativeUpdateRef(
+            originalBasePath_,
+            `refs/heads/${milestoneBranch}`,
+            worktreeHead,
+          );
+          debugLog("mergeMilestoneToMain", {
+            action: "fast-forward-branch-ref",
+            milestoneBranch,
+            oldRef: branchHead.slice(0, 8),
+            newRef: worktreeHead.slice(0, 8),
+          });
+        } else {
+          // Diverged — fail loudly rather than silently losing commits
+          process.chdir(previousCwd);
+          throw new GSDError(
+            GSD_GIT_ERROR,
+            `Worktree HEAD (${worktreeHead.slice(0, 8)}) diverged from ` +
+              `${milestoneBranch} (${branchHead.slice(0, 8)}). ` +
+              `Manual reconciliation required before merge.`,
+          );
+        }
+      }
+    } catch (err) {
+      // Re-throw GSDError (divergence); swallow rev-parse failures
+      // (e.g. worktree dir already removed by external cleanup)
+      if (err instanceof GSDError) throw err;
+      debugLog("mergeMilestoneToMain", {
+        action: "reconcile-skipped",
+        reason: String(err),
+      });
+    }
+  }
 
   // 7. Squash merge — auto-resolve .gsd/ state file conflicts (#530)
   const mergeResult = nativeMergeSquash(originalBasePath_, milestoneBranch);
