@@ -60,6 +60,18 @@ import {
 /** Original project root before chdir into auto-worktree. */
 let originalBase: string | null = null;
 
+function sanitizeMilestoneCommitTitle(rawTitle: string, milestoneId: string): string {
+  const normalized = rawTitle
+    .replace(/[\r\n\t]+/g, " ")
+    .replace(/[\x00-\x1F\x7F]/g, "")
+    .replace(/[\u2014\u2013]/g, "-")
+    .replace(/\//g, "-")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  return normalized || milestoneId;
+}
+
 function clearProjectRootStateFiles(basePath: string, milestoneId: string): void {
   const gsdDir = gsdRoot(basePath);
   const transientFiles = [
@@ -847,8 +859,10 @@ export function mergeMilestoneToMain(
   }
 
   // 6. Build rich commit message
-  const milestoneTitle =
-    roadmap.title.replace(/^M\d+:\s*/, "").trim() || milestoneId;
+  const milestoneTitle = sanitizeMilestoneCommitTitle(
+    roadmap.title.replace(/^M\d+(?:-[a-z0-9]{6})?[^:]*:\s*/, "").trim(),
+    milestoneId,
+  );
   const subject = `feat(${milestoneId}): ${milestoneTitle}`;
   let body = "";
   if (completedSlices.length > 0) {

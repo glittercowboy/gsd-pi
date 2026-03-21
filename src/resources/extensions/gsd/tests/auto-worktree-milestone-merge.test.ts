@@ -180,7 +180,29 @@ async function main(): Promise<void> {
       assertTrue(gitMsg.includes("- S01: Core API"), "git commit body has S01");
     }
 
-    // ─── Test 3: Nothing to commit — no changes ────────────────────────
+    // ─── Test 3: Unsafe milestone titles are sanitized for commit subject ─────────
+    console.log("\n=== unsafe milestone titles are sanitized for commit subject ===");
+    {
+      const repo = freshRepo();
+      const wtPath = createAutoWorktree(repo, "M025");
+
+      addSliceToMilestone(repo, wtPath, "M025", "S01", "Core plumbing", [
+        { file: "core.ts", content: "export const core = true;\n", message: "add core" },
+      ]);
+
+      const roadmap = makeRoadmap("M025", "Foundation — Build Core/API\n\tPhase\u0007", [
+        { id: "S01", title: "Core plumbing" },
+      ]);
+
+      const result = mergeMilestoneToMain(repo, "M025", roadmap);
+      assertTrue(result.commitMessage.startsWith("feat(M025): Foundation - Build Core-API Phase"), "sanitizes em dash, slash, newline, tab, and control chars in subject");
+
+      const gitMsg = run("git log -1 --format=%B main", repo).trim();
+      assertTrue(gitMsg.startsWith("feat(M025): Foundation - Build Core-API Phase"), "git commit subject is sanitized");
+      assertTrue(!gitMsg.includes("\n\n\n"), "subject sanitation does not inject extra blank lines");
+    }
+
+    // ─── Test 4: Nothing to commit — no changes ────────────────────────
     console.log("\n=== nothing to commit — no changes ===");
     {
       const repo = freshRepo();
