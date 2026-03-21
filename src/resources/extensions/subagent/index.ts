@@ -516,12 +516,16 @@ async function runSingleAgentInCmuxSplit(
 		const bundledPaths = (process.env.GSD_BUNDLED_EXTENSION_PATHS ?? "").split(path.delimiter).map((s) => s.trim()).filter(Boolean);
 		const extensionArgs = bundledPaths.flatMap((p) => ["--extension", p]);
 		const processArgs = [process.env.GSD_BIN_PATH!, ...extensionArgs, ...buildSubagentProcessArgs(agent, task, tmpPromptPath)];
+		// Normalize all paths to forward slashes before embedding in bash strings.
+		// On Windows, backslashes are interpreted as escape characters by bash,
+		// mangling paths like C:\Users\user into C:Useruser (#1436).
+		const bashPath = (p: string) => shellEscape(p.replaceAll("\\", "/"));
 		const innerScript = [
-			`cd ${shellEscape(cwd ?? defaultCwd)}`,
+			`cd ${bashPath(cwd ?? defaultCwd)}`,
 			"set -o pipefail",
-			`${shellEscape(process.execPath)} ${processArgs.map(shellEscape).join(" ")} 2> >(tee ${shellEscape(stderrPath)} >&2) | tee ${shellEscape(stdoutPath)}`,
+			`${bashPath(process.execPath)} ${processArgs.map(a => bashPath(a)).join(" ")} 2> >(tee ${bashPath(stderrPath)} >&2) | tee ${bashPath(stdoutPath)}`,
 			"status=${PIPESTATUS[0]}",
-			`printf '%s' "$status" > ${shellEscape(exitPath)}`,
+			`printf '%s' "$status" > ${bashPath(exitPath)}`,
 		].join("; ");
 
 		const sent = await cmuxClient.sendSurface(cmuxSurfaceId, `bash -lc ${shellEscape(innerScript)}`);

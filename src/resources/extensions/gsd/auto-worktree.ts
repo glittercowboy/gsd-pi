@@ -761,6 +761,24 @@ export function teardownAutoWorktree(
     branch,
     deleteBranch: !preserveBranch,
   });
+
+  // Verify cleanup succeeded — warn if the worktree directory is still on disk.
+  // On Windows, bash-based cleanup can silently fail when paths contain
+  // backslashes (#1436), leaving ~1 GB+ orphaned directories.
+  const wtDir = worktreePath(originalBasePath, milestoneId);
+  if (existsSync(wtDir)) {
+    console.error(
+      `[GSD] WARNING: Worktree directory still exists after teardown: ${wtDir}\n` +
+        `  This is likely an orphaned directory consuming disk space.\n` +
+        `  Remove it manually with: rm -rf "${wtDir.replaceAll("\\", "/")}"`,
+    );
+    // Attempt a direct filesystem removal as a fallback
+    try {
+      rmSync(wtDir, { recursive: true, force: true });
+    } catch {
+      // Non-fatal — the warning above tells the user how to clean up
+    }
+  }
 }
 
 /**
