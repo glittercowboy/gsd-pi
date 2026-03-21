@@ -74,11 +74,14 @@ export type DoctorIssueCode =
  * they are resolved by the complete-slice/complete-milestone dispatch units.
  * Consumers (e.g. auto-post-unit health tracking) should exclude these from
  * error counts when running at task fixLevel to avoid false escalation.
+ *
+ * Only the slice summary is deferred here because it requires LLM-generated
+ * content.  Roadmap checkbox and UAT stub are mechanical bookkeeping and are
+ * fixed immediately to avoid inconsistent state if the session stops before
+ * complete-slice runs (#1808).
  */
 export const COMPLETION_TRANSITION_CODES = new Set<DoctorIssueCode>([
   "all_tasks_done_missing_slice_summary",
-  "all_tasks_done_missing_slice_uat",
-  "all_tasks_done_roadmap_not_checked",
 ]);
 
 export interface DoctorIssue {
