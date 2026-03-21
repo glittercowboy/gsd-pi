@@ -66,7 +66,7 @@
     "build:native": "node native/scripts/build.js",
     "build:native:dev": "node native/scripts/build.js --dev",
     "dev": "node scripts/dev.js",
-    "postinstall": "node scripts/link-workspace-packages.cjs && node scripts/postinstall.js",
+    "postinstall": "node scripts/link-workspace-packages.cjs && node scripts/ensure-workspace-builds.cjs && node scripts/postinstall.js",
     "pi:install-global": "node scripts/install-pi-global.js",
     "pi:uninstall-global": "node scripts/uninstall-pi-global.js",
     "sync-pkg-version": "node scripts/sync-pkg-version.cjs",

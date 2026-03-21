@@ -424,7 +424,7 @@ export function buildSkillActivationBlock(params: {
     params.taskPlanContent ?? undefined,
   );
 
-  const visibleSkills = getLoadedSkills().filter(skill => !skill.disableModelInvocation);
+  const visibleSkills = (typeof getLoadedSkills === 'function' ? getLoadedSkills() : []).filter(skill => !skill.disableModelInvocation);
   const installedNames = new Set(visibleSkills.map(skill => normalizeSkillReference(skill.name)));
   const avoided = new Set(resolvePreferenceSkillNames(prefs?.avoid_skills ?? [], params.base));
   const matched = new Set<string>();
