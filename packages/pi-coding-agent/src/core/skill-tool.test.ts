@@ -87,6 +87,15 @@ describe("Skill tool", () => {
 		assert.match(message, /swift-testing/);
 	});
 
+	it("includes skill catalog in the default session prompt", async () => {
+		writeSkill(testDir, "swift-testing", "Use for Swift Testing assertions and verification patterns.");
+		const session = await createSession();
+
+		assert.ok(session.getActiveToolNames().includes("Skill"));
+		assert.ok(session.systemPrompt.includes("<available_skills>"));
+		assert.ok(session.systemPrompt.includes("swift-testing"));
+	});
+
 	it("includes skill catalog in the session prompt when read is disabled but Skill is preserved", async () => {
 		writeSkill(testDir, "swift-testing", "Use for Swift Testing assertions and verification patterns.");
 		const session = await createSession();

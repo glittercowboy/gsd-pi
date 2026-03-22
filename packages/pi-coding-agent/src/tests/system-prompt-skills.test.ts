@@ -31,12 +31,21 @@ test("default prompt: includes skill catalog when Skill tool is present without 
 	assert.ok(prompt.includes("swift-testing"), "should contain the skill name");
 });
 
-test("default prompt: excludes skill catalog when no selectedTools (defaults)", () => {
+test("default prompt: includes skill catalog when no selectedTools (defaults)", () => {
 	const prompt = buildSystemPrompt({
 		skills: [sampleSkill],
 		cwd: "/project",
 	});
-	assert.ok(!prompt.includes("<available_skills>"), "defaults without Skill should exclude catalog");
+	assert.ok(prompt.includes("<available_skills>"), "defaults should include catalog");
+});
+
+test("default prompt: excludes skill catalog when read is present without Skill", () => {
+	const prompt = buildSystemPrompt({
+		selectedTools: ["read", "bash", "edit", "write"],
+		skills: [sampleSkill],
+		cwd: "/project",
+	});
+	assert.ok(!prompt.includes("<available_skills>"), "read without Skill should exclude catalog");
 });
 
 test("default prompt: excludes skill catalog when neither Skill nor read is present", () => {
@@ -79,13 +88,13 @@ test("custom prompt: includes skill catalog when Skill tool is present without r
 	assert.ok(prompt.includes("swift-testing"), "should contain the skill name");
 });
 
-test("custom prompt: excludes skill catalog when selectedTools is unset", () => {
+test("custom prompt: includes skill catalog when selectedTools is unset", () => {
 	const prompt = buildSystemPrompt({
 		customPrompt: "You are a helpful assistant.",
 		skills: [sampleSkill],
 		cwd: "/project",
 	});
-	assert.ok(!prompt.includes("<available_skills>"), "defaults without Skill should exclude catalog");
+	assert.ok(prompt.includes("<available_skills>"), "defaults should include catalog");
 });
 
 test("custom prompt: excludes skill catalog when Skill is not in selectedTools", () => {
@@ -96,6 +105,16 @@ test("custom prompt: excludes skill catalog when Skill is not in selectedTools",
 		cwd: "/project",
 	});
 	assert.ok(!prompt.includes("<available_skills>"), "should not contain <available_skills>");
+});
+
+test("custom prompt: excludes skill catalog when read is present without Skill", () => {
+	const prompt = buildSystemPrompt({
+		customPrompt: "You are a helpful assistant.",
+		selectedTools: ["read", "bash"],
+		skills: [sampleSkill],
+		cwd: "/project",
+	});
+	assert.ok(!prompt.includes("<available_skills>"), "read without Skill should exclude catalog");
 });
 
 test("custom prompt: excludes skill catalog when selectedTools is empty array", () => {

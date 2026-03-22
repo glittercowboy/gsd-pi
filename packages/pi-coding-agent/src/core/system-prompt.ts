@@ -12,6 +12,7 @@ const toolDescriptions: Record<string, string> = {
 	bash: "Execute bash commands (ls, grep, find, etc.)",
 	edit: "Make surgical edits to files (find exact text and replace)",
 	write: "Create or overwrite files",
+	Skill: "Expand and execute an installed skill by name",
 	grep: "Search file contents for patterns (respects .gitignore)",
 	find: "Find files by glob pattern (respects .gitignore)",
 	ls: "List directory contents",
@@ -21,7 +22,7 @@ const toolDescriptions: Record<string, string> = {
 export interface BuildSystemPromptOptions {
 	/** Custom system prompt (replaces default). */
 	customPrompt?: string;
-	/** Tools to include in prompt. Default: [read, bash, edit, write] */
+	/** Tools to include in prompt. Default: [read, bash, edit, write, lsp, Skill] */
 	selectedTools?: string[];
 	/** Optional one-line tool snippets keyed by tool name. */
 	toolSnippets?: Record<string, string>;
@@ -67,7 +68,7 @@ export function buildSystemPrompt(options: BuildSystemPromptOptions = {}): strin
 
 	const contextFiles = providedContextFiles ?? [];
 	const skills = providedSkills ?? [];
-	const tools = selectedTools ?? ["read", "bash", "edit", "write"];
+	const tools = selectedTools ?? ["read", "bash", "edit", "write", "lsp", "Skill"];
 
 	if (customPrompt) {
 		let prompt = customPrompt;
