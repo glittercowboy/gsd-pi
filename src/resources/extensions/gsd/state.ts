@@ -412,6 +412,7 @@ async function _deriveStateImpl(basePath: string): Promise<GSDState> {
       const summaryFile = resolveMilestoneFile(basePath, mid, "SUMMARY");
       if (summaryFile) {
         registry.push({ id: mid, title, status: 'complete' });
+        completeMilestoneIds.add(mid); // defensive: Phase 1 already adds, but keep in sync (#1941)
       } else if (!activeMilestoneFound) {
         // Check milestone-level dependencies before promoting to active.
         // Fall back to CONTEXT-DRAFT.md when CONTEXT.md is absent (#1724).

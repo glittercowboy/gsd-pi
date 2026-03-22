@@ -623,6 +623,56 @@ async function main(): Promise<void> {
     }
   }
 
+  // ─── Test Group: unchecked-slices-summary-dep (#1941) ─────────────────
+  // M001 has a roadmap with UNCHECKED slices but a SUMMARY file exists.
+  // The summary is the terminal artifact (#864), so M001 should be complete
+  // AND added to completeMilestoneIds. M002 depends_on M001 → M002 should
+  // become active, not remain dep-blocked.
+  console.log('\n=== unchecked-slices-summary-dep: summary overrides unchecked slices for dep resolution ===');
+  {
+    const base = createFixtureBase();
+    try {
+      // M001: roadmap with UNCHECKED slices + SUMMARY exists → complete
+      writeRoadmap(base, 'M001', `# M001: First Milestone
+
+**Vision:** Milestone with unchecked slices but summary present.
+
+## Slices
+
+- [ ] **S01: Moved to Later** \`risk:low\` \`depends:[]\`
+  > After this: Done.
+- [x] **S02: Completed** \`risk:low\` \`depends:[]\`
+  > After this: Done.
+`);
+      writeMilestoneSummary(base, 'M001', '# M001 Summary\n\nMilestone complete despite unchecked slices.');
+
+      // M002: depends on M001, should be unblocked because M001 has SUMMARY
+      writeRoadmap(base, 'M002', `# M002: Second Milestone
+
+**Vision:** Should activate because M001 is complete (has SUMMARY).
+
+## Slices
+
+- [ ] **S01: Ready** \`risk:low\` \`depends:[]\`
+  > After this: Done.
+`);
+      writeContext(base, 'M002', 'depends_on: [M001]');
+
+      const state = await deriveState(base);
+
+      assertEq(state.registry[0]?.status, 'complete',
+        'unchecked-slices-summary-dep: M001 is complete (summary overrides unchecked slices)');
+      assertEq(state.registry[1]?.status, 'active',
+        'unchecked-slices-summary-dep: M002 is active (dep on M001 met via summary)');
+      assertEq(state.activeMilestone?.id, 'M002',
+        'unchecked-slices-summary-dep: activeMilestone is M002');
+      assertTrue(state.phase !== 'blocked',
+        'unchecked-slices-summary-dep: phase is not blocked');
+    } finally {
+      cleanup(base);
+    }
+  }
+
   // ─── Test Group 13: draft-only-no-deps (#1724) ────────────────────────
   // M002 has only CONTEXT-DRAFT.md with NO depends_on field.
   // Should behave same as no context file — normal sequential behavior.
