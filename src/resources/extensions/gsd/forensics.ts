@@ -33,7 +33,7 @@ import { getAutoWorktreePath } from "./auto-worktree.js";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-interface ForensicAnomaly {
+export interface ForensicAnomaly {
   type: "stuck-loop" | "cost-spike" | "timeout" | "missing-artifact" | "crash" | "doctor-issue" | "error-trace";
   severity: "info" | "warning" | "error";
   unitType?: string;
