@@ -449,10 +449,42 @@ test("mergeAndExit falls back to teardown when roadmap is missing", () => {
 
   resolver.mergeAndExit("M001", ctx);
 
+  // Should tear down worktree but preserve branch for manual recovery (#2003)
   assert.equal(findCalls(deps.calls, "teardownAutoWorktree").length, 1);
+  const teardownCall = findCalls(deps.calls, "teardownAutoWorktree")[0];
+  assert.deepEqual(teardownCall.args[2], { preserveBranch: true });
   assert.equal(findCalls(deps.calls, "mergeMilestoneToMain").length, 0);
   assert.equal(s.basePath, "/project"); // restored
-  assert.ok(ctx.messages.some((m) => m.msg.includes("no roadmap for merge")));
+  assert.ok(ctx.messages.some((m) => m.msg.includes("branch preserved")));
+});
+
+test("mergeAndExit falls back to worktree path when roadmap missing from project root (#2003)", () => {
+  const s = makeSession({
+    basePath: "/project/.gsd/worktrees/M001",
+    originalBasePath: "/project",
+  });
+  // resolveMilestoneFile returns null for project root, non-null for worktree path
+  const deps = makeDeps({
+    isInAutoWorktree: () => true,
+    getIsolationMode: () => "worktree",
+    resolveMilestoneFile: (basePath: string) => {
+      // Only find roadmap in the worktree, not in project root
+      if (basePath.includes("worktrees")) {
+        return "/project/.gsd/worktrees/M001/.gsd/milestones/M001/M001-ROADMAP.md";
+      }
+      return null;
+    },
+  });
+  const ctx = makeNotifyCtx();
+  const resolver = new WorktreeResolver(s, deps);
+
+  resolver.mergeAndExit("M001", ctx);
+
+  // Should have found the roadmap via fallback and merged
+  assert.equal(findCalls(deps.calls, "mergeMilestoneToMain").length, 1);
+  assert.equal(findCalls(deps.calls, "teardownAutoWorktree").length, 0);
+  assert.equal(s.basePath, "/project"); // restored
+  assert.ok(ctx.messages.some((m) => m.msg.includes("merged to main")));
 });
 
 test("mergeAndExit in worktree mode restores to project root on merge failure", () => {
@@ -475,9 +507,13 @@ test("mergeAndExit in worktree mode restores to project root on merge failure", 
   assert.equal(s.basePath, "/project"); // error recovery — restored
   assert.ok(
     ctx.messages.some(
-      (m) => m.level === "warning" && m.msg.includes("conflict in main"),
+      (m) => m.level === "error" && m.msg.includes("conflict in main"),
     ),
   );
+  // Branch should be preserved on merge failure (#2003)
+  const teardownCalls = findCalls(deps.calls, "teardownAutoWorktree");
+  assert.equal(teardownCalls.length, 1);
+  assert.deepEqual(teardownCalls[0].args[2], { preserveBranch: true });
   assert.equal(findCalls(deps.calls, "GitServiceImpl").length, 1); // rebuilt after recovery
 });
 
@@ -651,7 +687,7 @@ test("mergeAndEnterNext enters next milestone even if merge fails", () => {
   assert.equal(s.basePath, "/project/.gsd/worktrees/M002");
   assert.ok(
     ctx.messages.some(
-      (m) => m.level === "warning" && m.msg.includes("merge failed"),
+      (m) => m.level === "error" && m.msg.includes("merge failed"),
     ),
   );
   assert.ok(

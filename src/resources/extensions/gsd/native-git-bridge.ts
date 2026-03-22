@@ -58,6 +58,8 @@ interface GitBatchInfo {
 interface GitMergeResult {
   success: boolean;
   conflicts: string[];
+  /** True when the merge found nothing to do ("Already up to date"). */
+  noChanges?: boolean;
 }
 
 // ─── Native Module Loading ──────────────────────────────────────────────────
@@ -829,17 +831,41 @@ export function nativeMergeSquash(basePath: string, branch: string): GitMergeRes
   }
 
   try {
-    execSync(`git merge --squash ${branch}`, {
+    const output = execSync(`git merge --squash ${branch}`, {
       cwd: basePath,
       stdio: ["ignore", "pipe", "pipe"],
       encoding: "utf-8",
     });
+    // Detect "Already up to date" — git exits 0 but nothing was staged.
+    // Return success with a noChanges flag so callers can distinguish this
+    // from a real merge that staged changes (#2003).
+    if (output && /already up[- ]to[- ]date/i.test(output)) {
+      return { success: true, conflicts: [], noChanges: true };
+    }
     return { success: true, conflicts: [] };
-  } catch {
-    // Check for conflicts
+  } catch (err: unknown) {
+    const errObj = err as { stdout?: string; stderr?: string; status?: number };
+    const combined = [errObj.stdout, errObj.stderr].filter(Boolean).join("\n");
+
+    // Check for merge conflicts — the expected "failure" case
     const conflictOutput = gitExec(basePath, ["diff", "--name-only", "--diff-filter=U"], true);
     const conflicts = conflictOutput ? conflictOutput.split("\n").filter(Boolean) : [];
-    return { success: conflicts.length === 0, conflicts };
+    if (conflicts.length > 0) {
+      return { success: false, conflicts };
+    }
+
+    // "Already up to date" can also appear via the error path on some git versions
+    if (/already up[- ]to[- ]date/i.test(combined)) {
+      return { success: true, conflicts: [], noChanges: true };
+    }
+
+    // Non-conflict failure (dirty worktree, branch not found, etc.) —
+    // do NOT silently report success. Re-throw so callers know the merge
+    // did not happen (#2003 Bug 1).
+    throw new GSDError(
+      GSD_GIT_ERROR,
+      `git merge --squash ${branch} failed in ${basePath}: ${combined.slice(0, 500)}`,
+    );
   }
 }
 

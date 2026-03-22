@@ -53,6 +53,8 @@ import {
   nativeRmForce,
   nativeBranchDelete,
   nativeBranchExists,
+  nativeHasStagedChanges,
+  nativeCommitCountBetween,
 } from "./native-git-bridge.js";
 
 // ─── Module State ──────────────────────────────────────────────────────────
@@ -862,6 +864,26 @@ export function mergeMilestoneToMain(
   // 7. Squash merge — auto-resolve .gsd/ state file conflicts (#530)
   const mergeResult = nativeMergeSquash(originalBasePath_, milestoneBranch);
 
+  // Safety check: if squash merge reports "no changes" (already up to date),
+  // verify the milestone branch doesn't have unmerged commits. If it does,
+  // something went wrong — abort instead of deleting work (#2003 Bug 5).
+  if (mergeResult.noChanges) {
+    let unmergedCommits = 0;
+    try {
+      unmergedCommits = nativeCommitCountBetween(originalBasePath_, mainBranch, milestoneBranch);
+    } catch { /* non-fatal — fall through to branch preservation */ }
+
+    if (unmergedCommits > 0) {
+      throw new GSDError(
+        GSD_GIT_ERROR,
+        `Squash merge reported "already up to date" but milestone branch ${milestoneBranch} has ${unmergedCommits} unmerged commit(s). ` +
+        `This indicates a merge anomaly — refusing to delete the branch to prevent data loss. ` +
+        `Manually inspect with: git log ${mainBranch}..${milestoneBranch}`,
+      );
+    }
+    // Genuinely nothing to merge — branch is fully merged. Proceed to cleanup.
+  }
+
   if (!mergeResult.success) {
     // Check for conflicts — use merge result first, fall back to nativeConflictFiles
     const conflictedFiles =
@@ -909,6 +931,25 @@ export function mergeMilestoneToMain(
   // 8. Commit (handle nothing-to-commit gracefully)
   const commitResult = nativeCommit(originalBasePath_, commitMessage);
   const nothingToCommit = commitResult === null;
+
+  // Safety guard: if nothing was committed AND the milestone branch still has
+  // commits ahead of main, something went wrong during the squash. Do NOT
+  // delete the branch — that would destroy work (#2003 Bug 2).
+  if (nothingToCommit && !mergeResult.noChanges) {
+    let unmergedCommits = 0;
+    try {
+      unmergedCommits = nativeCommitCountBetween(originalBasePath_, mainBranch, milestoneBranch);
+    } catch { /* non-fatal */ }
+
+    if (unmergedCommits > 0) {
+      throw new GSDError(
+        GSD_GIT_ERROR,
+        `Squash merge completed but commit produced nothing, yet milestone branch ${milestoneBranch} has ${unmergedCommits} unmerged commit(s). ` +
+        `Refusing to delete branch to prevent data loss. ` +
+        `Manually inspect with: git diff ${mainBranch}..${milestoneBranch}`,
+      );
+    }
+  }
 
   // 9. Auto-push if enabled
   let pushed = false;

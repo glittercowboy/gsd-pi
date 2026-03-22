@@ -344,8 +344,14 @@ export class WorktreeResolver {
         "ROADMAP",
       );
 
-      if (roadmapPath) {
-        const roadmapContent = this.deps.readFileSync(roadmapPath, "utf-8");
+      // Fallback: if roadmap isn't found at the project root (e.g. .gsd/ is
+      // gitignored or syncWorktreeStateBack failed), try the worktree path
+      // where the roadmap definitely exists (#2003 Bug 3).
+      const effectiveRoadmapPath = roadmapPath
+        ?? this.deps.resolveMilestoneFile(this.s.basePath, milestoneId, "ROADMAP");
+
+      if (effectiveRoadmapPath) {
+        const roadmapContent = this.deps.readFileSync(effectiveRoadmapPath, "utf-8");
         const mergeResult = this.deps.mergeMilestoneToMain(
           originalBase,
           milestoneId,
@@ -356,11 +362,15 @@ export class WorktreeResolver {
           "info",
         );
       } else {
-        // No roadmap — fall back to bare teardown
-        this.deps.teardownAutoWorktree(originalBase, milestoneId);
+        // No roadmap anywhere — preserve the branch so work isn't lost (#2003).
+        // Only tear down the worktree directory, keep the branch for manual recovery.
+        this.deps.teardownAutoWorktree(originalBase, milestoneId, {
+          preserveBranch: true,
+        });
         ctx.notify(
-          `Exited worktree for ${milestoneId} (no roadmap for merge).`,
-          "info",
+          `No roadmap found for ${milestoneId} — worktree removed but branch preserved. ` +
+          `Merge manually with: git merge --squash milestone/${milestoneId}`,
+          "warning",
         );
       }
     } catch (err) {
@@ -370,9 +380,8 @@ export class WorktreeResolver {
         milestoneId,
         result: "error",
         error: msg,
-        fallback: "chdir-to-project-root",
+        fallback: "preserve-branch-chdir-to-project-root",
       });
-      ctx.notify(`Milestone merge failed: ${msg}`, "warning");
 
       // Clean up stale merge state left by failed squash-merge (#1389)
       try {
@@ -382,6 +391,32 @@ export class WorktreeResolver {
           if (existsSync(p)) unlinkSync(p);
         }
       } catch { /* best-effort */ }
+
+      // Abort any in-progress merge to leave the repo in a clean state
+      try {
+        const { execSync } = require("node:child_process");
+        execSync("git merge --abort", {
+          cwd: originalBase || this.s.basePath,
+          stdio: ["ignore", "pipe", "pipe"],
+        });
+      } catch { /* best-effort — no merge in progress is fine */ }
+
+      // Preserve the worktree and branch so work isn't orphaned (#2003 Bug 4).
+      // Tear down the worktree directory (it can be re-created from the branch)
+      // but keep the branch intact for manual recovery.
+      try {
+        this.deps.teardownAutoWorktree(originalBase, milestoneId, {
+          preserveBranch: true,
+        });
+      } catch {
+        /* best-effort — worktree cleanup may fail if already partially torn down */
+      }
+
+      ctx.notify(
+        `Milestone merge failed: ${msg}. Branch milestone/${milestoneId} preserved — ` +
+        `merge manually with: git merge --squash milestone/${milestoneId}`,
+        "error",
+      );
 
       // Error recovery: always restore to project root
       if (originalBase) {
