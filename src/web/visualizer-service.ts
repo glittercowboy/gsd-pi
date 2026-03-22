@@ -1,12 +1,6 @@
-import { execFile } from "node:child_process"
-import { existsSync } from "node:fs"
-import { join } from "node:path"
-import { pathToFileURL } from "node:url"
-
 import { resolveBridgeRuntimeConfig } from "./bridge-service.ts"
-import { resolveTypeStrippingFlag } from "./ts-subprocess-flags.ts"
+import { resolveModulePaths, runSubprocess } from "./subprocess-runner.ts"
 
-const VISUALIZER_MAX_BUFFER = 2 * 1024 * 1024
 const VISUALIZER_MODULE_ENV = "GSD_VISUALIZER_MODULE"
 
 /**
@@ -35,14 +29,6 @@ export interface SerializedVisualizerData {
   changelog: unknown
 }
 
-function resolveVisualizerModulePath(packageRoot: string): string {
-  return join(packageRoot, "src", "resources", "extensions", "gsd", "visualizer-data.ts")
-}
-
-function resolveTsLoaderPath(packageRoot: string): string {
-  return join(packageRoot, "src", "resources", "extensions", "gsd", "tests", "resolve-ts.mjs")
-}
-
 /**
  * Loads visualizer data from the current project's filesystem via a child
  * process (required because upstream .ts files use Node ESM .js import
@@ -53,14 +39,10 @@ export async function collectVisualizerData(projectCwdOverride?: string): Promis
   const config = resolveBridgeRuntimeConfig(undefined, projectCwdOverride)
   const { packageRoot, projectCwd } = config
 
-  const resolveTsLoader = resolveTsLoaderPath(packageRoot)
-  const visualizerModulePath = resolveVisualizerModulePath(packageRoot)
-
-  if (!existsSync(resolveTsLoader) || !existsSync(visualizerModulePath)) {
-    throw new Error(
-      `visualizer data provider not found; checked=${resolveTsLoader},${visualizerModulePath}`,
-    )
-  }
+  const resolved = resolveModulePaths(packageRoot, {
+    modules: [{ envKey: VISUALIZER_MODULE_ENV, relativePath: "src/resources/extensions/gsd/visualizer-data.ts" }],
+    label: "visualizer",
+  })
 
   // The child script loads the upstream module, calls loadVisualizerData(),
   // converts Map fields to Records, and writes JSON to stdout.
@@ -80,42 +62,11 @@ export async function collectVisualizerData(projectCwdOverride?: string): Promis
     'process.stdout.write(JSON.stringify(result));',
   ].join(" ")
 
-  return await new Promise<SerializedVisualizerData>((resolveResult, reject) => {
-    execFile(
-      process.execPath,
-      [
-        "--import",
-        pathToFileURL(resolveTsLoader).href,
-        resolveTypeStrippingFlag(packageRoot),
-        "--input-type=module",
-        "--eval",
-        script,
-      ],
-      {
-        cwd: packageRoot,
-        env: {
-          ...process.env,
-          [VISUALIZER_MODULE_ENV]: visualizerModulePath,
-          GSD_VISUALIZER_BASE: projectCwd,
-        },
-        maxBuffer: VISUALIZER_MAX_BUFFER,
-      },
-      (error, stdout, stderr) => {
-        if (error) {
-          reject(new Error(`visualizer data subprocess failed: ${stderr || error.message}`))
-          return
-        }
-
-        try {
-          resolveResult(JSON.parse(stdout) as SerializedVisualizerData)
-        } catch (parseError) {
-          reject(
-            new Error(
-              `visualizer data subprocess returned invalid JSON: ${parseError instanceof Error ? parseError.message : String(parseError)}`,
-            ),
-          )
-        }
-      },
-    )
+  return await runSubprocess<SerializedVisualizerData>({
+    packageRoot,
+    script,
+    env: { ...resolved.env, GSD_VISUALIZER_BASE: projectCwd },
+    label: "visualizer data",
+    tsLoaderPath: resolved.tsLoaderPath,
   })
 }

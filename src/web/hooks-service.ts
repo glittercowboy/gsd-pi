@@ -1,22 +1,9 @@
-import { execFile } from "node:child_process"
-import { existsSync } from "node:fs"
-import { join } from "node:path"
-import { pathToFileURL } from "node:url"
-
 import { resolveBridgeRuntimeConfig } from "./bridge-service.ts"
-import { resolveTypeStrippingFlag } from "./ts-subprocess-flags.ts"
+import { resolveModulePaths, runSubprocess } from "./subprocess-runner.ts"
 import type { HooksData } from "../../web/lib/remaining-command-types.ts"
 
 const HOOKS_MAX_BUFFER = 512 * 1024
 const HOOKS_MODULE_ENV = "GSD_HOOKS_MODULE"
-
-function resolveHooksModulePath(packageRoot: string): string {
-  return join(packageRoot, "src", "resources", "extensions", "gsd", "post-unit-hooks.ts")
-}
-
-function resolveTsLoaderPath(packageRoot: string): string {
-  return join(packageRoot, "src", "resources", "extensions", "gsd", "tests", "resolve-ts.mjs")
-}
 
 /**
  * Collects hook configuration and status via a child process.
@@ -28,14 +15,10 @@ export async function collectHooksData(projectCwdOverride?: string): Promise<Hoo
   const config = resolveBridgeRuntimeConfig(undefined, projectCwdOverride)
   const { packageRoot, projectCwd } = config
 
-  const resolveTsLoader = resolveTsLoaderPath(packageRoot)
-  const hooksModulePath = resolveHooksModulePath(packageRoot)
-
-  if (!existsSync(resolveTsLoader) || !existsSync(hooksModulePath)) {
-    throw new Error(
-      `hooks data provider not found; checked=${resolveTsLoader},${hooksModulePath}`,
-    )
-  }
+  const resolved = resolveModulePaths(packageRoot, {
+    modules: [{ envKey: HOOKS_MODULE_ENV, relativePath: "src/resources/extensions/gsd/post-unit-hooks.ts" }],
+    label: "hooks",
+  })
 
   // getHookStatus() internally calls resolvePostUnitHooks() and resolvePreDispatchHooks()
   // from preferences.ts, which read from process.cwd()/.gsd/preferences.md.
@@ -49,41 +32,13 @@ export async function collectHooksData(projectCwdOverride?: string): Promise<Hoo
     'process.stdout.write(JSON.stringify({ entries, formattedStatus }));',
   ].join(" ")
 
-  return await new Promise<HooksData>((resolveResult, reject) => {
-    execFile(
-      process.execPath,
-      [
-        "--import",
-        pathToFileURL(resolveTsLoader).href,
-        resolveTypeStrippingFlag(packageRoot),
-        "--input-type=module",
-        "--eval",
-        script,
-      ],
-      {
-        cwd: projectCwd,
-        env: {
-          ...process.env,
-          [HOOKS_MODULE_ENV]: hooksModulePath,
-        },
-        maxBuffer: HOOKS_MAX_BUFFER,
-      },
-      (error, stdout, stderr) => {
-        if (error) {
-          reject(new Error(`hooks data subprocess failed: ${stderr || error.message}`))
-          return
-        }
-
-        try {
-          resolveResult(JSON.parse(stdout) as HooksData)
-        } catch (parseError) {
-          reject(
-            new Error(
-              `hooks data subprocess returned invalid JSON: ${parseError instanceof Error ? parseError.message : String(parseError)}`,
-            ),
-          )
-        }
-      },
-    )
+  return await runSubprocess<HooksData>({
+    packageRoot,
+    script,
+    env: { ...resolved.env },
+    label: "hooks data",
+    tsLoaderPath: resolved.tsLoaderPath,
+    cwd: projectCwd,
+    maxBuffer: HOOKS_MAX_BUFFER,
   })
 }

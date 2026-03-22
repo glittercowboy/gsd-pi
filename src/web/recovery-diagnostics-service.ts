@@ -1,14 +1,12 @@
-import { execFile } from "node:child_process"
 import { existsSync } from "node:fs"
 import { join, resolve } from "node:path"
-import { pathToFileURL } from "node:url"
 
 import {
   collectCurrentProjectOnboardingState,
   collectSelectiveLiveStatePayload,
   resolveBridgeRuntimeConfig,
 } from "./bridge-service.ts"
-import { resolveTypeStrippingFlag } from "./ts-subprocess-flags.ts"
+import { runSubprocess } from "./subprocess-runner.ts"
 import type {
   WorkspaceRecoveryBrowserAction,
   WorkspaceRecoveryCodeSummary,
@@ -376,7 +374,6 @@ async function collectRecoveryDiagnosticsChildPayload(
   sessionFile: string | null,
   options: RecoveryDiagnosticsServiceOptions,
 ): Promise<RecoveryDiagnosticsChildPayload> {
-  const env = options.env ?? process.env
   const checkExists = options.existsSync ?? existsSync
   const resolveTsLoader = resolveTsLoaderPath(packageRoot)
   const doctorModulePath = resolveDoctorModulePath(packageRoot)
@@ -468,49 +465,23 @@ async function collectRecoveryDiagnosticsChildPayload(
     '}));',
   ].join(" ")
 
-  return await new Promise<RecoveryDiagnosticsChildPayload>((resolveResult, reject) => {
-    execFile(
-      options.execPath ?? process.execPath,
-      [
-        "--import",
-        pathToFileURL(resolveTsLoader).href,
-        resolveTypeStrippingFlag(packageRoot),
-        "--input-type=module",
-        "--eval",
-        script,
-      ],
-      {
-        cwd: packageRoot,
-        env: {
-          ...env,
-          GSD_RECOVERY_BASE: basePath,
-          GSD_RECOVERY_SCOPE: scope ?? "",
-          GSD_RECOVERY_UNIT_TYPE: unit?.type ?? "execute-project",
-          GSD_RECOVERY_UNIT_ID: unit?.id ?? "project",
-          GSD_RECOVERY_SESSION_FILE: sessionFile ?? "",
-          GSD_RECOVERY_ACTIVITY_DIR: join(basePath, ".gsd", "activity"),
-          GSD_RECOVERY_DOCTOR_MODULE: doctorModulePath,
-          GSD_RECOVERY_FORENSICS_MODULE: sessionForensicsModulePath,
-        },
-        maxBuffer: RECOVERY_DIAGNOSTICS_MAX_BUFFER,
-      },
-      (error, stdout, stderr) => {
-        if (error) {
-          reject(new Error(`recovery diagnostics subprocess failed: ${stderr || error.message}`))
-          return
-        }
-
-        try {
-          resolveResult(JSON.parse(stdout) as RecoveryDiagnosticsChildPayload)
-        } catch (parseError) {
-          reject(
-            new Error(
-              `recovery diagnostics subprocess returned invalid JSON: ${parseError instanceof Error ? parseError.message : String(parseError)}`,
-            ),
-          )
-        }
-      },
-    )
+  return await runSubprocess<RecoveryDiagnosticsChildPayload>({
+    packageRoot,
+    script,
+    env: {
+      GSD_RECOVERY_BASE: basePath,
+      GSD_RECOVERY_SCOPE: scope ?? "",
+      GSD_RECOVERY_UNIT_TYPE: unit?.type ?? "execute-project",
+      GSD_RECOVERY_UNIT_ID: unit?.id ?? "project",
+      GSD_RECOVERY_SESSION_FILE: sessionFile ?? "",
+      GSD_RECOVERY_ACTIVITY_DIR: join(basePath, ".gsd", "activity"),
+      GSD_RECOVERY_DOCTOR_MODULE: doctorModulePath,
+      GSD_RECOVERY_FORENSICS_MODULE: sessionForensicsModulePath,
+    },
+    label: "recovery diagnostics",
+    tsLoaderPath: resolveTsLoader,
+    maxBuffer: RECOVERY_DIAGNOSTICS_MAX_BUFFER,
+    execPath: options.execPath,
   })
 }
 

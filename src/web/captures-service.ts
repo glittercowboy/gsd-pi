@@ -1,22 +1,8 @@
-import { execFile } from "node:child_process"
-import { existsSync } from "node:fs"
-import { join } from "node:path"
-import { pathToFileURL } from "node:url"
-
 import { resolveBridgeRuntimeConfig } from "./bridge-service.ts"
-import { resolveTypeStrippingFlag } from "./ts-subprocess-flags.ts"
+import { resolveModulePaths, runSubprocess } from "./subprocess-runner.ts"
 import type { CapturesData, CaptureResolveRequest, CaptureResolveResult } from "../../web/lib/knowledge-captures-types.ts"
 
-const CAPTURES_MAX_BUFFER = 2 * 1024 * 1024
 const CAPTURES_MODULE_ENV = "GSD_CAPTURES_MODULE"
-
-function resolveCapturesModulePath(packageRoot: string): string {
-  return join(packageRoot, "src", "resources", "extensions", "gsd", "captures.ts")
-}
-
-function resolveTsLoaderPath(packageRoot: string): string {
-  return join(packageRoot, "src", "resources", "extensions", "gsd", "tests", "resolve-ts.mjs")
-}
 
 /**
  * Loads all capture entries via a child process. The child imports the upstream
@@ -27,14 +13,10 @@ export async function collectCapturesData(projectCwdOverride?: string): Promise<
   const config = resolveBridgeRuntimeConfig(undefined, projectCwdOverride)
   const { packageRoot, projectCwd } = config
 
-  const resolveTsLoader = resolveTsLoaderPath(packageRoot)
-  const capturesModulePath = resolveCapturesModulePath(packageRoot)
-
-  if (!existsSync(resolveTsLoader) || !existsSync(capturesModulePath)) {
-    throw new Error(
-      `captures data provider not found; checked=${resolveTsLoader},${capturesModulePath}`,
-    )
-  }
+  const resolved = resolveModulePaths(packageRoot, {
+    modules: [{ envKey: CAPTURES_MODULE_ENV, relativePath: "src/resources/extensions/gsd/captures.ts" }],
+    label: "captures",
+  })
 
   const script = [
     'const { pathToFileURL } = await import("node:url");',
@@ -46,43 +28,12 @@ export async function collectCapturesData(projectCwdOverride?: string): Promise<
     'process.stdout.write(JSON.stringify(result));',
   ].join(" ")
 
-  return await new Promise<CapturesData>((resolveResult, reject) => {
-    execFile(
-      process.execPath,
-      [
-        "--import",
-        pathToFileURL(resolveTsLoader).href,
-        resolveTypeStrippingFlag(packageRoot),
-        "--input-type=module",
-        "--eval",
-        script,
-      ],
-      {
-        cwd: packageRoot,
-        env: {
-          ...process.env,
-          [CAPTURES_MODULE_ENV]: capturesModulePath,
-          GSD_CAPTURES_BASE: projectCwd,
-        },
-        maxBuffer: CAPTURES_MAX_BUFFER,
-      },
-      (error, stdout, stderr) => {
-        if (error) {
-          reject(new Error(`captures data subprocess failed: ${stderr || error.message}`))
-          return
-        }
-
-        try {
-          resolveResult(JSON.parse(stdout) as CapturesData)
-        } catch (parseError) {
-          reject(
-            new Error(
-              `captures data subprocess returned invalid JSON: ${parseError instanceof Error ? parseError.message : String(parseError)}`,
-            ),
-          )
-        }
-      },
-    )
+  return await runSubprocess<CapturesData>({
+    packageRoot,
+    script,
+    env: { ...resolved.env, GSD_CAPTURES_BASE: projectCwd },
+    label: "captures data",
+    tsLoaderPath: resolved.tsLoaderPath,
   })
 }
 
@@ -94,14 +45,10 @@ export async function resolveCaptureAction(request: CaptureResolveRequest, proje
   const config = resolveBridgeRuntimeConfig(undefined, projectCwdOverride)
   const { packageRoot, projectCwd } = config
 
-  const resolveTsLoader = resolveTsLoaderPath(packageRoot)
-  const capturesModulePath = resolveCapturesModulePath(packageRoot)
-
-  if (!existsSync(resolveTsLoader) || !existsSync(capturesModulePath)) {
-    throw new Error(
-      `captures data provider not found; checked=${resolveTsLoader},${capturesModulePath}`,
-    )
-  }
+  const resolved = resolveModulePaths(packageRoot, {
+    modules: [{ envKey: CAPTURES_MODULE_ENV, relativePath: "src/resources/extensions/gsd/captures.ts" }],
+    label: "captures",
+  })
 
   const safeId = JSON.stringify(request.captureId)
   const safeClassification = JSON.stringify(request.classification)
@@ -115,42 +62,11 @@ export async function resolveCaptureAction(request: CaptureResolveRequest, proje
     `process.stdout.write(JSON.stringify({ ok: true, captureId: ${safeId} }));`,
   ].join(" ")
 
-  return await new Promise<CaptureResolveResult>((resolveResult, reject) => {
-    execFile(
-      process.execPath,
-      [
-        "--import",
-        pathToFileURL(resolveTsLoader).href,
-        resolveTypeStrippingFlag(packageRoot),
-        "--input-type=module",
-        "--eval",
-        script,
-      ],
-      {
-        cwd: packageRoot,
-        env: {
-          ...process.env,
-          [CAPTURES_MODULE_ENV]: capturesModulePath,
-          GSD_CAPTURES_BASE: projectCwd,
-        },
-        maxBuffer: CAPTURES_MAX_BUFFER,
-      },
-      (error, stdout, stderr) => {
-        if (error) {
-          reject(new Error(`capture resolve subprocess failed: ${stderr || error.message}`))
-          return
-        }
-
-        try {
-          resolveResult(JSON.parse(stdout) as CaptureResolveResult)
-        } catch (parseError) {
-          reject(
-            new Error(
-              `capture resolve subprocess returned invalid JSON: ${parseError instanceof Error ? parseError.message : String(parseError)}`,
-            ),
-          )
-        }
-      },
-    )
+  return await runSubprocess<CaptureResolveResult>({
+    packageRoot,
+    script,
+    env: { ...resolved.env, GSD_CAPTURES_BASE: projectCwd },
+    label: "capture resolve",
+    tsLoaderPath: resolved.tsLoaderPath,
   })
 }

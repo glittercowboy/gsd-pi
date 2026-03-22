@@ -1,10 +1,9 @@
-import { execFile } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync as defaultExistsSync } from "node:fs";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
 import type { AutoDashboardData } from "./bridge-service.ts";
-import { resolveTypeStrippingFlag } from "./ts-subprocess-flags.ts"
+import { runSubprocess } from "./subprocess-runner.ts";
 
 const AUTO_DASHBOARD_MAX_BUFFER = 1024 * 1024;
 const TEST_AUTO_DASHBOARD_MODULE_ENV = "GSD_WEB_TEST_AUTO_DASHBOARD_MODULE";
@@ -53,12 +52,12 @@ export async function collectAuthoritativeAutoDashboardData(
     return fallbackAutoDashboardData();
   }
 
-  const checkExists = options.existsSync ?? existsSync;
-  const resolveTsLoader = resolveTsLoaderPath(packageRoot);
+  const checkExists = options.existsSync ?? defaultExistsSync;
+  const tsLoaderPath = resolveTsLoaderPath(packageRoot);
   const autoModulePath = resolveAutoDashboardModulePath(packageRoot, env);
 
-  if (!checkExists(resolveTsLoader) || !checkExists(autoModulePath)) {
-    throw new Error(`authoritative auto dashboard provider not found; checked=${resolveTsLoader},${autoModulePath}`);
+  if (!checkExists(tsLoaderPath) || !checkExists(autoModulePath)) {
+    throw new Error(`authoritative auto dashboard provider not found; checked=${tsLoaderPath},${autoModulePath}`);
   }
 
   const script = [
@@ -68,41 +67,13 @@ export async function collectAuthoritativeAutoDashboardData(
     'process.stdout.write(JSON.stringify(result));',
   ].join(" ");
 
-  return await new Promise<AutoDashboardData>((resolveResult, reject) => {
-    execFile(
-      options.execPath ?? process.execPath,
-      [
-        "--import",
-        pathToFileURL(resolveTsLoader).href,
-        resolveTypeStrippingFlag(packageRoot),
-        "--input-type=module",
-        "--eval",
-        script,
-      ],
-      {
-        cwd: packageRoot,
-        env: {
-          ...env,
-          [AUTO_DASHBOARD_MODULE_ENV]: autoModulePath,
-        },
-        maxBuffer: AUTO_DASHBOARD_MAX_BUFFER,
-      },
-      (error, stdout, stderr) => {
-        if (error) {
-          reject(new Error(`authoritative auto dashboard subprocess failed: ${stderr || error.message}`));
-          return;
-        }
-
-        try {
-          resolveResult(JSON.parse(stdout) as AutoDashboardData);
-        } catch (parseError) {
-          reject(
-            new Error(
-              `authoritative auto dashboard subprocess returned invalid JSON: ${parseError instanceof Error ? parseError.message : String(parseError)}`,
-            ),
-          );
-        }
-      },
-    );
+  return await runSubprocess<AutoDashboardData>({
+    packageRoot,
+    script,
+    env: { [AUTO_DASHBOARD_MODULE_ENV]: autoModulePath },
+    label: "authoritative auto dashboard",
+    tsLoaderPath,
+    maxBuffer: AUTO_DASHBOARD_MAX_BUFFER,
+    execPath: options.execPath,
   });
 }
