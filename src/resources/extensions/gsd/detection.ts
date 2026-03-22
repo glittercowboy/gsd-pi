@@ -118,12 +118,34 @@ export const PROJECT_FILES = [
   "nuxt.config.js",
   "svelte.config.js",
   "svelte.config.ts",
+  // Frontend tooling
+  "tailwind.config.js",
+  "tailwind.config.ts",
+  "tailwind.config.mjs",
+  "tailwind.config.cjs",
+  // Android project markers
+  "app/build.gradle",
+  "app/build.gradle.kts",
   // Container / DevOps config files
   "Dockerfile",
   "docker-compose.yml",
   "docker-compose.yaml",
   // Infrastructure as Code
   "main.tf",
+  // Kubernetes / Helm markers
+  "Chart.yaml",
+  "kustomization.yaml",
+  // CI/CD markers
+  ".github/workflows",
+  // Blockchain / Web3 markers
+  "hardhat.config.js",
+  "hardhat.config.ts",
+  "foundry.toml",
+  // Data engineering markers
+  "dbt_project.yml",
+  // Game engine markers
+  "ProjectSettings/ProjectVersion.txt",
+  "project.godot",
   // Python framework markers
   "manage.py",
   "requirements.txt",

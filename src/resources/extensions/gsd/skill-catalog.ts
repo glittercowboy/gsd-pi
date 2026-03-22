@@ -194,6 +194,47 @@ export const SKILL_CATALOG: SkillPack[] = [
     skills: ["vercel-react-native-skills"],
     matchFiles: ["metro.config.js", "metro.config.ts", "react-native.config.js"],
   },
+  {
+    label: "React Native Architecture",
+    description: "React Native app architecture, navigation, and cross-platform design patterns",
+    repo: "wshobson/agents",
+    skills: ["react-native-architecture", "react-native-design"],
+    matchFiles: ["metro.config.js", "metro.config.ts", "react-native.config.js"],
+  },
+  // ── TypeScript & JS Ecosystem (wshobson/agents — 41K combined installs) ──
+  {
+    label: "TypeScript & JS Development",
+    description: "Advanced TypeScript types, Node.js backend, testing, and modern JS patterns",
+    repo: "wshobson/agents",
+    skills: [
+      "typescript-advanced-types",
+      "nodejs-backend-patterns",
+      "javascript-testing-patterns",
+      "modern-javascript-patterns",
+    ],
+    matchLanguages: ["javascript/typescript"],
+  },
+  // ── React State (wshobson/agents — 8.1K combined installs) ─────────────
+  {
+    label: "React State & Patterns",
+    description: "State management with Zustand, Jotai, React Query, and React modernization",
+    repo: "wshobson/agents",
+    skills: ["react-state-management", "react-modernization"],
+    matchLanguages: ["javascript/typescript"],
+  },
+  // ── Tailwind CSS (wshobson/agents — 22.8K installs) ───────────────────
+  {
+    label: "Tailwind CSS",
+    description: "Tailwind v4 design system, CVA patterns, and utility-first CSS",
+    repo: "wshobson/agents",
+    skills: ["tailwind-design-system"],
+    matchFiles: [
+      "tailwind.config.js",
+      "tailwind.config.ts",
+      "tailwind.config.mjs",
+      "tailwind.config.cjs",
+    ],
+  },
   // ── General Frontend ──────────────────────────────────────────────────────
   {
     label: "Frontend Design & UX",
@@ -214,6 +255,13 @@ export const SKILL_CATALOG: SkillPack[] = [
       "angular-routing",
       "angular-testing",
     ],
+    matchFiles: ["angular.json"],
+  },
+  {
+    label: "Angular Migration",
+    description: "Migrate from AngularJS to Angular with hybrid mode and incremental rewriting",
+    repo: "wshobson/agents",
+    skills: ["angular-migration"],
     matchFiles: ["angular.json"],
   },
   // ── Vue.js / Nuxt ────────────────────────────────────────────────────────
@@ -245,6 +293,13 @@ export const SKILL_CATALOG: SkillPack[] = [
     skills: ["nextjs"],
     matchFiles: ["next.config.js", "next.config.ts", "next.config.mjs"],
   },
+  {
+    label: "Next.js App Router Patterns",
+    description: "Next.js 14+ App Router, React Server Components, and streaming",
+    repo: "wshobson/agents",
+    skills: ["nextjs-app-router-patterns"],
+    matchFiles: ["next.config.js", "next.config.ts", "next.config.mjs"],
+  },
   // ── Java / Spring Boot ────────────────────────────────────────────────────
   {
     label: "Java & Spring Boot",
@@ -261,6 +316,13 @@ export const SKILL_CATALOG: SkillPack[] = [
     repo: "github/awesome-copilot",
     skills: ["dotnet-best-practices", "dotnet-design-pattern-review"],
     matchLanguages: ["csharp"],
+    matchFiles: ["*.csproj"],
+  },
+  {
+    label: ".NET Backend Patterns",
+    description: ".NET backend architecture, middleware, and production patterns",
+    repo: "wshobson/agents",
+    skills: ["dotnet-backend-patterns"],
     matchFiles: ["*.csproj"],
   },
   // ── Flutter / Dart ────────────────────────────────────────────────────────
@@ -303,6 +365,14 @@ export const SKILL_CATALOG: SkillPack[] = [
     matchLanguages: ["rust"],
     matchFiles: ["Cargo.toml"],
   },
+  {
+    label: "Rust Async Patterns",
+    description: "Async Rust with Tokio, futures, and proper error handling",
+    repo: "wshobson/agents",
+    skills: ["rust-async-patterns"],
+    matchLanguages: ["rust"],
+    matchFiles: ["Cargo.toml"],
+  },
   // ── Python ────────────────────────────────────────────────────────────────
   {
     label: "Python",
@@ -312,12 +382,34 @@ export const SKILL_CATALOG: SkillPack[] = [
     matchLanguages: ["python"],
     matchFiles: ["pyproject.toml", "setup.py"],
   },
+  {
+    label: "Python Advanced",
+    description: "Python performance, testing, async patterns, uv package manager, and FastAPI",
+    repo: "wshobson/agents",
+    skills: [
+      "python-performance-optimization",
+      "python-testing-patterns",
+      "async-python-patterns",
+      "uv-package-manager",
+      "fastapi-templates",
+    ],
+    matchLanguages: ["python"],
+    matchFiles: ["pyproject.toml", "setup.py", "requirements.txt"],
+  },
   // ── Go ────────────────────────────────────────────────────────────────────
   {
     label: "Go",
     description: "Go language patterns and best practices",
     repo: "anthropics/skills",
     skills: ["go-best-practices"],
+    matchLanguages: ["go"],
+    matchFiles: ["go.mod"],
+  },
+  {
+    label: "Go Concurrency Patterns",
+    description: "Go concurrency with channels, worker pools, and context cancellation",
+    repo: "wshobson/agents",
+    skills: ["go-concurrency-patterns"],
     matchLanguages: ["go"],
     matchFiles: ["go.mod"],
   },
@@ -339,6 +431,13 @@ export const SKILL_CATALOG: SkillPack[] = [
     repo: "supabase/agent-skills",
     skills: ["supabase-postgres-best-practices"],
     matchFiles: ["supabase/config.toml"],
+  },
+  {
+    label: "PostgreSQL Design",
+    description: "PostgreSQL table design, indexing strategies, and query optimization",
+    repo: "wshobson/agents",
+    skills: ["postgresql-table-design"],
+    matchFiles: ["supabase/config.toml", "*.sql"],
   },
   {
     label: "SQL Optimization & Review",
@@ -411,6 +510,68 @@ export const SKILL_CATALOG: SkillPack[] = [
     skills: ["terraform-style-guide", "terraform-test", "terraform-stacks"],
     matchFiles: ["main.tf"],
   },
+  // ── Android (wshobson/agents — 7K installs) ────────────────────────────────
+  {
+    label: "Android",
+    description: "Android app design following Material Design 3 guidelines",
+    repo: "wshobson/agents",
+    skills: ["mobile-android-design"],
+    matchFiles: ["app/build.gradle", "app/build.gradle.kts"],
+  },
+  // ── Kubernetes (wshobson/agents — 4 skills) ────────────────────────────────
+  {
+    label: "Kubernetes",
+    description: "K8s manifests, Helm charts, GitOps workflows, and security policies",
+    repo: "wshobson/agents",
+    skills: [
+      "k8s-manifest-generator",
+      "helm-chart-scaffolding",
+      "gitops-workflow",
+      "k8s-security-policies",
+    ],
+    matchFiles: ["Chart.yaml", "kustomization.yaml"],
+  },
+  // ── CI/CD (wshobson/agents — 3 skills) ─────────────────────────────────────
+  {
+    label: "CI/CD Automation",
+    description: "Pipeline design, GitHub Actions workflows, and secrets management",
+    repo: "wshobson/agents",
+    skills: [
+      "deployment-pipeline-design",
+      "github-actions-templates",
+      "secrets-management",
+    ],
+    matchFiles: [".github/workflows"],
+  },
+  // ── Blockchain / Web3 (wshobson/agents — 3 skills) ─────────────────────────
+  {
+    label: "Blockchain & Web3",
+    description: "Solidity security, DeFi protocols, and smart contract testing",
+    repo: "wshobson/agents",
+    skills: ["solidity-security", "defi-protocol-templates", "web3-testing"],
+    matchFiles: ["hardhat.config.js", "hardhat.config.ts", "foundry.toml"],
+  },
+  // ── Data Engineering (wshobson/agents — 4 skills) ──────────────────────────
+  {
+    label: "Data Engineering",
+    description: "dbt transformations, Airflow DAGs, Spark optimization, and data quality",
+    repo: "wshobson/agents",
+    skills: [
+      "dbt-transformation-patterns",
+      "airflow-dag-patterns",
+      "spark-optimization",
+      "data-quality-frameworks",
+    ],
+    matchFiles: ["dbt_project.yml"],
+  },
+  // ── Game Development (wshobson/agents — 2 skills) ──────────────────────────
+  {
+    label: "Game Development",
+    description: "Unity ECS patterns and Godot GDScript best practices",
+    repo: "wshobson/agents",
+    skills: ["unity-ecs-patterns", "godot-gdscript-patterns"],
+    matchFiles: ["ProjectSettings/ProjectVersion.txt", "project.godot"],
+  },
   // ── Essential (all projects) ────────────────────────────────────────────
   {
     label: "Skill Discovery",
@@ -439,6 +600,21 @@ export const SKILL_CATALOG: SkillPack[] = [
     description: "PDF, DOCX, XLSX, PPTX creation and manipulation",
     repo: "anthropics/skills",
     skills: ["pdf", "docx", "xlsx", "pptx"],
+    matchAlways: true,
+  },
+  // ── Code Quality (wshobson/agents — matchAlways) ──────────────────────────
+  {
+    label: "Code Review & Quality",
+    description: "Code review excellence and error handling patterns",
+    repo: "wshobson/agents",
+    skills: ["code-review-excellence", "error-handling-patterns"],
+    matchAlways: true,
+  },
+  {
+    label: "Git Advanced Workflows",
+    description: "Advanced Git rebasing, cherry-picking, bisect, worktrees, and reflog",
+    repo: "wshobson/agents",
+    skills: ["git-advanced-workflows"],
     matchAlways: true,
   },
 ];
@@ -485,37 +661,37 @@ export const GREENFIELD_STACKS: Array<{
     id: "react-web",
     label: "React Web",
     description: "React, Next.js, shadcn/ui, web frontend",
-    packs: ["React & Web Frontend", "shadcn/ui", "Frontend Design & UX"],
+    packs: ["React & Web Frontend", "TypeScript & JS Development", "React State & Patterns", "shadcn/ui", "Frontend Design & UX"],
   },
   {
     id: "react-native",
     label: "React Native",
     description: "Cross-platform mobile with React Native",
-    packs: ["React Native", "React & Web Frontend"],
+    packs: ["React Native", "React Native Architecture", "React & Web Frontend", "TypeScript & JS Development"],
   },
   {
     id: "fullstack-js",
     label: "Full-Stack JavaScript/TypeScript",
     description: "Node.js backend + React frontend",
-    packs: ["React & Web Frontend", "shadcn/ui", "Frontend Design & UX"],
+    packs: ["React & Web Frontend", "TypeScript & JS Development", "React State & Patterns", "shadcn/ui", "Frontend Design & UX"],
   },
   {
     id: "rust",
     label: "Rust",
     description: "Systems programming with Rust",
-    packs: ["Rust"],
+    packs: ["Rust", "Rust Async Patterns"],
   },
   {
     id: "python",
     label: "Python",
     description: "Python applications, scripts, or ML",
-    packs: ["Python"],
+    packs: ["Python", "Python Advanced"],
   },
   {
     id: "go",
     label: "Go",
     description: "Go services and CLIs",
-    packs: ["Go"],
+    packs: ["Go", "Go Concurrency Patterns"],
   },
   {
     id: "firebase",
@@ -539,7 +715,7 @@ export const GREENFIELD_STACKS: Array<{
     id: "angular",
     label: "Angular",
     description: "Angular components, signals, forms, routing",
-    packs: ["Angular", "Frontend Design & UX"],
+    packs: ["Angular", "Angular Migration", "Frontend Design & UX"],
   },
   {
     id: "vue",
@@ -557,7 +733,7 @@ export const GREENFIELD_STACKS: Array<{
     id: "nextjs",
     label: "Next.js",
     description: "Next.js app router, React, and Vercel deployment",
-    packs: ["Next.js", "React & Web Frontend", "shadcn/ui"],
+    packs: ["Next.js", "Next.js App Router Patterns", "React & Web Frontend", "TypeScript & JS Development", "shadcn/ui"],
   },
   {
     id: "flutter",
@@ -575,7 +751,7 @@ export const GREENFIELD_STACKS: Array<{
     id: "dotnet",
     label: ".NET / C#",
     description: "ASP.NET Core, Entity Framework, and design patterns",
-    packs: [".NET & C#"],
+    packs: [".NET & C#", ".NET Backend Patterns"],
   },
   {
     id: "php",
@@ -587,7 +763,31 @@ export const GREENFIELD_STACKS: Array<{
     id: "django",
     label: "Django",
     description: "Django models, views, middleware, and Celery",
-    packs: ["Django", "Python"],
+    packs: ["Django", "Python", "Python Advanced"],
+  },
+  {
+    id: "android",
+    label: "Android / Kotlin",
+    description: "Android app development with Material Design 3",
+    packs: ["Android", "Java & Spring Boot"],
+  },
+  {
+    id: "kubernetes",
+    label: "Kubernetes",
+    description: "Kubernetes manifests, Helm charts, and GitOps",
+    packs: ["Kubernetes", "Docker"],
+  },
+  {
+    id: "blockchain",
+    label: "Blockchain / Web3",
+    description: "Solidity, DeFi protocols, and smart contract testing",
+    packs: ["Blockchain & Web3"],
+  },
+  {
+    id: "data-engineering",
+    label: "Data Engineering",
+    description: "dbt, Airflow, Spark, and data quality",
+    packs: ["Data Engineering", "Python", "Python Advanced"],
   },
   {
     id: "other",
