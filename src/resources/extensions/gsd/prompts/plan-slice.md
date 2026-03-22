@@ -65,7 +65,8 @@ Then:
    - Observability Impact section **only if the task touches runtime boundaries, async flows, or error paths** — omit it otherwise
 6. Write `{{outputPath}}`
 7. Write individual task plans in `{{slicePath}}/tasks/`: `T01-PLAN.md`, `T02-PLAN.md`, etc.
-8. **Self-audit the plan.** Walk through each check — if any fail, fix the plan files before moving on:
+8. Call `gsd_plan_slice` with milestone_id, slice_id, and the task list derived from the plans you just wrote. This registers the plan in the engine DB and renders projections. Do NOT skip this step — the engine must know the task structure for tool-based completion to work.
+9. **Self-audit the plan.** Walk through each check — if any fail, fix the plan files before moving on:
     - **Completion semantics:** If every task were completed exactly as written, the slice goal/demo should actually be true.
     - **Requirement coverage:** Every must-have in the slice maps to at least one task. No must-have is orphaned. If `REQUIREMENTS.md` exists, every Active requirement this slice owns maps to at least one task.
     - **Task completeness:** Every task has steps, must-haves, verification, inputs, and expected output — none are blank or vague. Inputs and Expected Output list backtick-wrapped file paths, not prose descriptions.
@@ -73,8 +74,8 @@ Then:
     - **Key links planned:** For every pair of artifacts that must connect, there is an explicit step that wires them.
     - **Scope sanity:** Target 2–5 steps and 3–8 files per task. 10+ steps or 12+ files — must split. Each task must be completable in a single fresh context window.
     - **Feature completeness:** Every task produces real, user-facing progress — not just internal scaffolding.
-9. If planning produced structural decisions, append them to `.gsd/DECISIONS.md`
-10. {{commitInstruction}}
+10. If planning produced structural decisions, append them to `.gsd/DECISIONS.md`
+11. {{commitInstruction}}
 
 The slice directory and tasks/ subdirectory already exist. Do NOT mkdir. All work stays in your working directory: `{{workingDirectory}}`.
 

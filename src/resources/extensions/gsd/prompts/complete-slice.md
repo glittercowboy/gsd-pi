@@ -28,10 +28,10 @@ Then:
 7. Write `{{sliceUatPath}}` — a concrete UAT script with real test cases derived from the slice plan and task summaries. Include preconditions, numbered steps with expected outcomes, and edge cases. This must NOT be a placeholder or generic template — tailor every test case to what this slice actually built.
 8. Review task summaries for `key_decisions`. Append any significant decisions to `.gsd/DECISIONS.md` if missing.
 9. Review task summaries for patterns, gotchas, or non-obvious lessons learned. If any would save future agents from repeating investigation or hitting the same issues, append them to `.gsd/KNOWLEDGE.md`. Only add entries that are genuinely useful — don't pad with obvious observations.
-10. Mark {{sliceId}} done in `{{roadmapPath}}` (change `[ ]` to `[x]`)
+10. Call `gsd_complete_slice` with milestone_id, slice_id, the slice summary, and the UAT result. Do NOT manually mark the roadmap checkbox — the tool writes to the DB and renders the ROADMAP.md projection automatically.
 11. Do not run git commands — the system commits your changes and handles any merge after this unit succeeds.
 12. Update `.gsd/PROJECT.md` if it exists — refresh current state if needed.
 
-**You MUST do ALL THREE before finishing: (1) write `{{sliceSummaryPath}}`, (2) write `{{sliceUatPath}}`, (3) mark {{sliceId}} as `[x]` in `{{roadmapPath}}`. The unit will not be marked complete if any of these files are missing.**
+**You MUST do ALL THREE before finishing: (1) write `{{sliceSummaryPath}}`, (2) write `{{sliceUatPath}}`, (3) call `gsd_complete_slice`. The unit will not be marked complete if any of these are missing.**
 
 When done, say: "Slice {{sliceId}} complete."
