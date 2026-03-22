@@ -10,11 +10,11 @@ See: .planning/PROJECT.md (updated 2026-03-22)
 ## Current Position
 
 Phase: 1 of 5 (Engine Foundation + Team Infrastructure)
-Plan: 1 of 5 in current phase
+Plan: 3 of 5 in current phase
 Status: Executing
-Last activity: 2026-03-22 — Completed 1-01: Schema v5 + WorkflowEngine foundation
+Last activity: 2026-03-22 — Completed 1-03: Projection renderers (PLAN, ROADMAP, SUMMARY, STATE)
 
-Progress: [██░░░░░░░░] 4%
+Progress: [██████░░░░] 12%
 
 ## Performance Metrics
 
@@ -48,6 +48,9 @@ Recent decisions affecting current work:
 - 1-01: Called migrateToV5() in both initSchema and migrateSchema for fresh/existing DB coverage
 - 1-01: Used plain property instead of TS parameter property for Node strip-only mode compatibility
 - 1-01: Phase detection minimal (pre-planning/planning/executing) — extends with commands in 1-02
+- 1-03: Pure content renderers separated from disk writers for testability without DB
+- 1-03: renderStateContent matches buildStateMarkdown format exactly for backward compat
+- 1-03: All projection writes wrapped in try/catch per D-02 (non-fatal failure)
 
 ### Pending Todos
 
@@ -60,5 +63,5 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-03-22
-Stopped at: Completed 1-01-PLAN.md — Schema v5 + WorkflowEngine foundation
+Stopped at: Completed 1-03-PLAN.md — Projection renderers
 Resume file: None
