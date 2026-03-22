@@ -1,7 +1,7 @@
 import type { ExtensionAPI, ExtensionContext } from "@gsd/pi-coding-agent";
 
 import { checkAutoStartAfterDiscuss } from "../guided-flow.js";
-import { getAutoDashboardData, getAutoModeStartModel, isAutoActive, pauseAuto } from "../auto.js";
+import { getAutoDashboardData, getAutoModeStartModel, isAutoActive, pauseAuto, resumeAutoAfterDelay } from "../auto.js";
 import { getNextFallbackModel, isTransientNetworkError, resolveModelWithFallbacksForUnit } from "../preferences.js";
 import { classifyProviderError, pauseAutoForProviderError } from "../provider-error-pause.js";
 import { isSessionSwitchInFlight, resolveAgentEnd } from "../auto-loop.js";
@@ -115,10 +115,10 @@ export async function handleAgentEnd(
       retryAfterMs,
       resume: allowAutoResume
         ? () => {
-          pi.sendMessage(
-            { customType: "gsd-auto-timeout-recovery", content: "Continue execution — provider error recovery delay elapsed.", display: false },
-            { triggerTurn: true },
-          );
+          void resumeAutoAfterDelay(pi).catch((error) => {
+            const message = error instanceof Error ? error.message : String(error);
+            ctx.ui.notify(`Auto-resume failed: ${message}`, "error");
+          });
         }
         : undefined,
     });

@@ -359,6 +359,39 @@ export function isAutoPaused(): boolean {
 }
 
 /**
+ * Resume auto-mode after a delayed recovery window (e.g. transient provider error).
+ *
+ * This must go through startAuto(), not a plain triggerTurn message, so the
+ * paused-session metadata is consumed and the auto-loop/session machinery is
+ * restored correctly.
+ */
+export async function resumeAutoAfterDelay(
+  pi: ExtensionAPI,
+  deps?: {
+    isPaused?: () => boolean;
+    getCommandContext?: () => ExtensionCommandContext | null;
+    getBasePath?: () => string;
+    getVerbose?: () => boolean;
+    getStepMode?: () => boolean;
+    startAutoFn?: typeof startAuto;
+  },
+): Promise<boolean> {
+  const isPaused = deps?.isPaused ?? (() => s.paused);
+  if (!isPaused()) return false;
+
+  const cmdCtx = deps?.getCommandContext?.() ?? s.cmdCtx;
+  const basePath = deps?.getBasePath?.() ?? s.basePath;
+  if (!cmdCtx || !basePath) return false;
+
+  const verbose = deps?.getVerbose?.() ?? s.verbose;
+  const stepMode = deps?.getStepMode?.() ?? s.stepMode;
+  const startAutoFn = deps?.startAutoFn ?? startAuto;
+
+  await startAutoFn(cmdCtx, pi, basePath, verbose, { step: stepMode });
+  return true;
+}
+
+/**
  * Return the model captured at auto-mode start for this session.
  * Used by error-recovery to fall back to the session's own model
  * instead of reading (potentially stale) preferences from disk (#1065).
