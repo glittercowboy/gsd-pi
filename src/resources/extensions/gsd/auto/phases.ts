@@ -230,6 +230,7 @@ export async function runPreDispatch(
     s.unitLifetimeDispatches.clear();
     loopState.recentUnits.length = 0;
     loopState.stuckRecoveryAttempts = 0;
+    s.stuckRecoveryAttempts = 0; // Fix M2: sync reset on milestone transition
 
     // Worktree lifecycle on milestone transition — merge current, enter next
     deps.resolver.mergeAndExit(s.currentMilestoneId!, ctx.ui);
@@ -538,6 +539,7 @@ export async function runDispatch(
       if (loopState.stuckRecoveryAttempts === 0) {
         // Level 1: try verifying the artifact, then cache invalidation + retry
         loopState.stuckRecoveryAttempts++;
+        s.stuckRecoveryAttempts = loopState.stuckRecoveryAttempts; // Fix M2: sync to session for persistence
         const artifactExists = deps.verifyExpectedArtifact(
           unitType,
           unitId,
@@ -589,6 +591,7 @@ export async function runDispatch(
           to: derivedKey,
         });
         loopState.stuckRecoveryAttempts = 0;
+        s.stuckRecoveryAttempts = 0; // Fix M2: sync reset to session
       }
     }
   }

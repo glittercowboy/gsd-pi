@@ -126,6 +126,8 @@ export class AutoSession {
 
   // ── Dispatch circuit breakers ──────────────────────────────────────
   rewriteAttemptCount = 0;
+  /** Persisted across pause/resume so stuck-recovery escalation survives process restart. */
+  stuckRecoveryAttempts = 0;
 
   // ── Metrics ──────────────────────────────────────────────────────────────
   autoStartTime = 0;
@@ -213,6 +215,7 @@ export class AutoSession {
     this.pendingQuickTasks = [];
     this.sidecarQueue = [];
     this.rewriteAttemptCount = 0;
+    this.stuckRecoveryAttempts = 0;
 
     // Signal handler
     this.sigtermHandler = null;
