@@ -42,21 +42,27 @@ export function dispatchDoctorHeal(pi: ExtensionAPI, scope: string | undefined, 
   );
 }
 
-export async function handleDoctor(args: string, ctx: ExtensionCommandContext, pi: ExtensionAPI): Promise<void> {
+/** Parse doctor command args into structured flags and positionals (pure, no I/O). */
+export function parseDoctorArgs(args: string) {
   const trimmed = args.trim();
-  // Extract flags before positional parsing
   const jsonMode = trimmed.includes("--json");
   const dryRun = trimmed.includes("--dry-run");
+  const fixFlag = trimmed.includes("--fix");
   const includeBuild = trimmed.includes("--build");
   const includeTests = trimmed.includes("--test");
-  const stripped = trimmed.replace(/--json|--dry-run|--build|--test/g, "").trim();
+  const stripped = trimmed.replace(/--json|--dry-run|--build|--test|--fix/g, "").trim();
   const parts = stripped ? stripped.split(/\s+/) : [];
   const mode = parts[0] === "fix" || parts[0] === "heal" || parts[0] === "audit" ? parts[0] : "doctor";
   const requestedScope = mode === "doctor" ? parts[0] : parts[1];
+  return { jsonMode, dryRun, fixFlag, includeBuild, includeTests, mode, requestedScope };
+}
+
+export async function handleDoctor(args: string, ctx: ExtensionCommandContext, pi: ExtensionAPI): Promise<void> {
+  const { jsonMode, dryRun, fixFlag, includeBuild, includeTests, mode, requestedScope } = parseDoctorArgs(args);
   const scope = await selectDoctorScope(projectRoot(), requestedScope);
   const effectiveScope = mode === "audit" ? requestedScope : scope;
   const report = await runGSDDoctor(projectRoot(), {
-    fix: mode === "fix" || mode === "heal" || dryRun,
+    fix: mode === "fix" || mode === "heal" || dryRun || fixFlag,
     dryRun,
     scope: effectiveScope,
     includeBuild,
