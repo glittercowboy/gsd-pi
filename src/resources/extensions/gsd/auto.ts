@@ -798,6 +798,8 @@ export async function pauseAuto(
       stepMode: s.stepMode,
       pausedAt: new Date().toISOString(),
       sessionFile: s.pausedSessionFile,
+      activeEngineId: s.activeEngineId,
+      activeRunDir: s.activeRunDir,
     };
     const runtimeDir = join(gsdRoot(s.originalBasePath || s.basePath), "runtime");
     mkdirSync(runtimeDir, { recursive: true });
@@ -1034,7 +1036,19 @@ export async function startAuto(
       const pausedPath = join(gsdRoot(base), "runtime", "paused-session.json");
       if (existsSync(pausedPath)) {
         const meta = JSON.parse(readFileSync(pausedPath, "utf-8"));
-        if (meta.milestoneId) {
+        if (meta.activeEngineId && meta.activeEngineId !== "dev") {
+          // Custom workflow resume — restore engine state
+          s.activeEngineId = meta.activeEngineId;
+          s.activeRunDir = meta.activeRunDir ?? null;
+          s.originalBasePath = meta.originalBasePath || base;
+          s.stepMode = meta.stepMode ?? requestedStepMode;
+          s.paused = true;
+          try { unlinkSync(pausedPath); } catch { /* non-fatal */ }
+          ctx.ui.notify(
+            `Resuming paused custom workflow${meta.activeRunDir ? ` (${meta.activeRunDir})` : ""}.`,
+            "info",
+          );
+        } else if (meta.milestoneId) {
           // Validate the milestone still exists and isn't already complete (#1664).
           const mDir = resolveMilestonePath(base, meta.milestoneId);
           const summaryFile = resolveMilestoneFile(base, meta.milestoneId, "SUMMARY");

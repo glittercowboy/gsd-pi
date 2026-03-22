@@ -3,6 +3,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 
 import { loadRegistry } from "../workflow-templates.js";
+import { resolveProjectRoot } from "../worktree.js";
 
 const gsdHome = process.env.GSD_HOME || join(homedir(), ".gsd");
 
@@ -321,7 +322,7 @@ export function getGsdArgumentCompletions(prefix: string) {
   // Workflow definition-name completion for `workflow run <name>` and `workflow validate <name>`
   if (command === "workflow" && (subcommand === "run" || subcommand === "validate") && parts.length <= 3) {
     try {
-      const defsDir = join(process.cwd(), ".gsd", "workflow-defs");
+      const defsDir = join(resolveProjectRoot(process.cwd()), ".gsd", "workflow-defs");
       if (existsSync(defsDir)) {
         return readdirSync(defsDir)
           .filter((f) => f.endsWith(".yaml") && f.startsWith(third))

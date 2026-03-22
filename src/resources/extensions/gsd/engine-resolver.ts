@@ -23,20 +23,15 @@ export interface ResolvedEngine {
 /**
  * Resolve an engine/policy pair for the given session.
  *
- * - `GSD_ENGINE_BYPASS=1` → throws (fall through to direct auto-mode path)
  * - `null` or `"dev"` → DevWorkflowEngine + DevExecutionPolicy
  * - any other non-null ID → CustomWorkflowEngine(activeRunDir) + CustomExecutionPolicy()
  *   (requires activeRunDir to be a non-empty string)
+ *
+ * Note: `GSD_ENGINE_BYPASS=1` is checked in autoLoop before calling this function.
  */
 export function resolveEngine(
   session: { activeEngineId: string | null; activeRunDir?: string | null },
 ): ResolvedEngine {
-  if (process.env.GSD_ENGINE_BYPASS === "1") {
-    throw new Error(
-      "Engine layer bypassed (GSD_ENGINE_BYPASS=1) — falling through to direct auto-mode path",
-    );
-  }
-
   const { activeEngineId, activeRunDir } = session;
 
   if (activeEngineId === null || activeEngineId === "dev") {

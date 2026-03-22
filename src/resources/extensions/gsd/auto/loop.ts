@@ -122,9 +122,11 @@ export async function autoLoop(
       // When activeEngineId is a non-dev value, bypass runPreDispatch and
       // runDispatch entirely — the custom engine drives its own state via
       // GRAPH.yaml. Shares runGuards and runUnitPhase with the dev path.
-      // After unit execution, calls engine.reconcile() + policy.verify()
-      // instead of runFinalize().
-      if (s.activeEngineId != null && s.activeEngineId !== "dev" && !sidecarItem) {
+      // After unit execution, verifies then reconciles via the engine layer.
+      //
+      // GSD_ENGINE_BYPASS=1 skips the engine layer entirely — falls through
+      // to the dev path below.
+      if (s.activeEngineId != null && s.activeEngineId !== "dev" && !sidecarItem && process.env.GSD_ENGINE_BYPASS !== "1") {
         debugLog("autoLoop", { phase: "custom-engine-derive", iteration, engineId: s.activeEngineId });
 
         const { engine, policy } = resolveEngine({
@@ -178,7 +180,19 @@ export async function autoLoop(
         const unitPhaseResult = await runUnitPhase(ic, iterData, loopState);
         if (unitPhaseResult.action === "break") break;
 
-        // ── Reconcile + verify (replaces runFinalize) ──
+        // ── Verify first, then reconcile (only mark complete on pass) ──
+        debugLog("autoLoop", { phase: "custom-engine-verify", iteration, unitId: iterData.unitId });
+        const verifyResult = await policy.verify(iterData.unitType, iterData.unitId, { basePath: s.basePath });
+        if (verifyResult === "pause") {
+          await deps.pauseAuto(ctx, pi);
+          break;
+        }
+        if (verifyResult === "retry") {
+          debugLog("autoLoop", { phase: "custom-engine-verify-retry", iteration, unitId: iterData.unitId });
+          continue;
+        }
+
+        // Verification passed — mark step complete
         debugLog("autoLoop", { phase: "custom-engine-reconcile", iteration, unitId: iterData.unitId });
         await engine.reconcile(engineState, {
           unitType: iterData.unitType,
@@ -186,12 +200,6 @@ export async function autoLoop(
           startedAt: s.currentUnit?.startedAt ?? Date.now(),
           finishedAt: Date.now(),
         });
-
-        const verifyResult = await policy.verify(iterData.unitType, iterData.unitId, { basePath: s.basePath });
-        if (verifyResult === "pause") {
-          await deps.pauseAuto(ctx, pi);
-          break;
-        }
 
         deps.clearUnitTimeout();
         consecutiveErrors = 0;

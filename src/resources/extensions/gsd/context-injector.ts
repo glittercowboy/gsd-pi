@@ -14,9 +14,9 @@
  */
 
 import { readFileSync, existsSync } from "node:fs";
-import { join } from "node:path";
-import { parse } from "yaml";
-import type { WorkflowDefinition, StepDefinition } from "./definition-loader.js";
+import { join, resolve } from "node:path";
+import type { StepDefinition } from "./definition-loader.js";
+import { readFrozenDefinition } from "./custom-workflow-engine.js";
 
 /** Maximum characters per artifact to prevent context window blowout. */
 const MAX_CONTEXT_CHARS = 10_000;
@@ -40,9 +40,7 @@ export function injectContext(
   stepId: string,
   prompt: string,
 ): string {
-  const defPath = join(runDir, "DEFINITION.yaml");
-  const raw = readFileSync(defPath, "utf-8");
-  const def = parse(raw) as WorkflowDefinition;
+  const def = readFrozenDefinition(runDir);
 
   const step = def.steps.find((s: StepDefinition) => s.id === stepId);
   if (!step || !step.contextFrom || step.contextFrom.length === 0) {
@@ -65,7 +63,14 @@ export function injectContext(
     }
 
     for (const relPath of refStep.produces) {
-      const absPath = join(runDir, relPath);
+      const absPath = resolve(runDir, relPath);
+      // Path traversal guard: ensure resolved path stays within runDir
+      if (!absPath.startsWith(resolve(runDir) + "/") && absPath !== resolve(runDir)) {
+        console.warn(
+          `context-injector: artifact path "${relPath}" resolves outside runDir — skipping`,
+        );
+        continue;
+      }
       if (!existsSync(absPath)) {
         // Artifact not yet produced or optional — skip silently
         continue;

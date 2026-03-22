@@ -359,7 +359,11 @@ export function loadDefinition(defsDir: string, name: string): WorkflowDefinitio
     name: yamlDef.name as string,
     description: typeof yamlDef.description === "string" ? yamlDef.description : undefined,
     params: yamlDef.params != null && typeof yamlDef.params === "object"
-      ? yamlDef.params as Record<string, string>
+      ? Object.fromEntries(
+          Object.entries(yamlDef.params as Record<string, unknown>).map(
+            ([k, v]) => [k, String(v)],
+          ),
+        )
       : undefined,
     steps: yamlSteps.map((s) => ({
       id: s.id as string,

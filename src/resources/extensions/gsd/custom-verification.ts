@@ -18,10 +18,10 @@
  */
 
 import { readFileSync, existsSync, statSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
-import { parse } from "yaml";
-import type { WorkflowDefinition, StepDefinition, VerifyPolicy } from "./definition-loader.js";
+import type { StepDefinition, VerifyPolicy } from "./definition-loader.js";
+import { readFrozenDefinition } from "./custom-workflow-engine.js";
 
 /** Verification outcome type — matches ExecutionPolicy.verify() return type. */
 export type VerificationOutcome = "continue" | "retry" | "pause";
@@ -42,9 +42,7 @@ export function runCustomVerification(
   runDir: string,
   stepId: string,
 ): VerificationOutcome {
-  const defPath = join(runDir, "DEFINITION.yaml");
-  const raw = readFileSync(defPath, "utf-8");
-  const def = parse(raw) as WorkflowDefinition;
+  const def = readFrozenDefinition(runDir);
 
   const step = def.steps.find((s: StepDefinition) => s.id === stepId);
   if (!step) {
@@ -105,7 +103,11 @@ function handleContentHeuristic(
   }
 
   for (const relPath of produces) {
-    const absPath = join(runDir, relPath);
+    const absPath = resolve(runDir, relPath);
+    // Path traversal guard
+    if (!absPath.startsWith(resolve(runDir) + "/") && absPath !== resolve(runDir)) {
+      return "pause";
+    }
 
     // 1. File existence
     if (!existsSync(absPath)) {
@@ -120,10 +122,15 @@ function handleContentHeuristic(
       }
     }
 
-    // 3. Pattern match check
+    // 3. Pattern match check (with timeout guard against ReDoS)
     if (verify.pattern !== undefined) {
       const content = readFileSync(absPath, "utf-8");
-      if (!new RegExp(verify.pattern).test(content)) {
+      try {
+        if (!new RegExp(verify.pattern).test(content)) {
+          return "pause";
+        }
+      } catch {
+        // Invalid regex at runtime — treat as verification failure
         return "pause";
       }
     }
@@ -138,16 +145,31 @@ function handleContentHeuristic(
  * Runs the command via `sh -c` with cwd set to the run directory
  * and a 30-second timeout. Returns "continue" if exit code 0,
  * "retry" otherwise (including timeout/signal kills).
+ *
+ * SECURITY: The command string comes from a frozen DEFINITION.yaml written
+ * at run-creation time. The trust boundary is the workflow definition author.
+ * Commands run with the same privileges as the GSD process. Only use
+ * shell-command verification with definitions you trust.
  */
 function handleShellCommand(
   runDir: string,
   verify: { policy: "shell-command"; command: string },
 ): VerificationOutcome {
+  // Guard: reject commands containing shell expansion patterns that suggest injection
+  const dangerousPatterns = /\$\(|`|;\s*(rm|curl|wget|nc|bash|sh|eval)\b/;
+  if (dangerousPatterns.test(verify.command)) {
+    console.warn(
+      `custom-verification: shell-command contains suspicious pattern, skipping: ${verify.command}`,
+    );
+    return "pause";
+  }
+
   const result = spawnSync("sh", ["-c", verify.command], {
     cwd: runDir,
     timeout: 30_000,
     encoding: "utf-8",
     stdio: "pipe",
+    env: { ...process.env, PATH: process.env.PATH },
   });
 
   if (result.status === 0) {

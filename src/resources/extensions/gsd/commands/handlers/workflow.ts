@@ -79,6 +79,9 @@ async function handleCustomWorkflow(
       ctx.ui.notify(`Created workflow run: ${defName}\nRun dir: ${runDir}`, "info");
       await startAuto(ctx, pi, base, false);
     } catch (err) {
+      // Clean up engine state so a failed workflow run doesn't pollute the next /gsd auto
+      setActiveEngineId(null);
+      setActiveRunDir(null);
       const msg = err instanceof Error ? err.message : String(err);
       ctx.ui.notify(`Failed to run workflow "${defName}": ${msg}`, "error");
     }

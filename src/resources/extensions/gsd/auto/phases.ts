@@ -1133,9 +1133,9 @@ export async function runUnitPhase(
     );
   }
 
-  const isHookUnit = unitType.startsWith("hook/") || unitType === "custom-step";
+  const skipArtifactVerification = unitType.startsWith("hook/") || unitType === "custom-step";
   const artifactVerified =
-    isHookUnit ||
+    skipArtifactVerification ||
     deps.verifyExpectedArtifact(unitType, unitId, s.basePath);
   if (artifactVerified) {
     s.completedUnits.push({

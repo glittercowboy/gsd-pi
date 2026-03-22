@@ -124,5 +124,5 @@ How it works:
 
 Common usage:
 - Make workflows reusable across different topics, projects, or configurations.
-- Users override defaults at run time: `/gsd workflow run blog-post --param topic="Rust performance"`.
+- Users override defaults at run time: `/gsd workflow run blog-post topic="Rust performance"`.
 </feature_patterns>

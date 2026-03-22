@@ -34,6 +34,13 @@ import {
 import { injectContext } from "./context-injector.js";
 import type { WorkflowDefinition, StepDefinition } from "./definition-loader.js";
 
+/** Read and parse the frozen DEFINITION.yaml from a run directory. */
+export function readFrozenDefinition(runDir: string): WorkflowDefinition {
+  const defPath = join(runDir, "DEFINITION.yaml");
+  const raw = readFileSync(defPath, "utf-8");
+  return parse(raw, { schema: "core" }) as WorkflowDefinition;
+}
+
 export class CustomWorkflowEngine implements WorkflowEngine {
   readonly engineId = "custom";
   private readonly runDir: string;
@@ -97,9 +104,7 @@ export class CustomWorkflowEngine implements WorkflowEngine {
     }
 
     // Check frozen DEFINITION.yaml for iterate config on this step
-    const defPath = join(this.runDir, "DEFINITION.yaml");
-    const defRaw = readFileSync(defPath, "utf-8");
-    const def = parse(defRaw) as WorkflowDefinition;
+    const def = readFrozenDefinition(this.runDir);
     const stepDef = def.steps.find((s: StepDefinition) => s.id === next!.id);
 
     if (stepDef?.iterate) {
@@ -116,10 +121,20 @@ export class CustomWorkflowEngine implements WorkflowEngine {
         );
       }
 
-      // Extract items via regex with global+multiline flags
-      const items = [...sourceContent.matchAll(new RegExp(iterate.pattern, "gm"))].map(
-        (m) => m[1],
-      );
+      // Extract items via regex with global+multiline flags.
+      // Guard against ReDoS: if matching takes too long on large inputs, bail.
+      const regex = new RegExp(iterate.pattern, "gm");
+      const items: string[] = [];
+      const matchStart = Date.now();
+      let match: RegExpExecArray | null;
+      while ((match = regex.exec(sourceContent)) !== null) {
+        if (match[1] !== undefined) items.push(match[1]);
+        if (Date.now() - matchStart > 5_000) {
+          throw new Error(
+            `Iterate pattern "${iterate.pattern}" exceeded 5s timeout on step "${next.id}" — possible ReDoS`,
+          );
+        }
+      }
 
       // Expand the graph
       const expandedGraph = expandIteration(graph, next.id, items, next.prompt);

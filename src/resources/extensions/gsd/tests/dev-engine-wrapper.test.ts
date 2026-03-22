@@ -280,15 +280,13 @@ describe("Kill switch (GSD_ENGINE_BYPASS)", () => {
     }
   });
 
-  test("GSD_ENGINE_BYPASS=1 causes resolveEngine to throw", async () => {
+  test("GSD_ENGINE_BYPASS=1 does not affect resolveEngine (bypass checked in autoLoop)", async () => {
     const { resolveEngine } = await import("../engine-resolver.ts");
     process.env.GSD_ENGINE_BYPASS = "1";
     try {
-      assert.throws(
-        () => resolveEngine({ activeEngineId: null }),
-        /bypassed/i,
-        "should throw with bypass message",
-      );
+      // resolveEngine should still resolve normally — bypass is checked in autoLoop
+      const { engine } = resolveEngine({ activeEngineId: null });
+      assert.ok(engine, "should return an engine even with bypass set");
     } finally {
       delete process.env.GSD_ENGINE_BYPASS;
     }

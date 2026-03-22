@@ -246,7 +246,7 @@ export function expandIteration(
       id: instanceId,
       title: `${parentStep.title}: ${item}`,
       status: "pending" as const,
-      prompt: promptTemplate.replace(/\{\{item\}\}/g, item),
+      prompt: promptTemplate.replace(/\{\{item\}\}/g, () => item),
       dependsOn: [...parentStep.dependsOn],
       parentStepId: stepId,
     };
