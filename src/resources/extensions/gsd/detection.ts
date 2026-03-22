@@ -87,6 +87,27 @@ export const PROJECT_FILES = [
   "mix.exs",
   "deno.json",
   "deno.jsonc",
+  "Justfile",
+  "Taskfile.yml",
+  "Dockerfile",
+  "requirements.txt",
+  "setup.cfg",
+  "build.sh",
+] as const;
+
+/**
+ * Common source directory names used as a fallback signal for project detection.
+ * If a directory has .git but no PROJECT_FILES match, the presence of any of
+ * these directories indicates it is a real project (not an empty worktree).
+ */
+export const SOURCE_DIRS = [
+  "src",
+  "app",
+  "lib",
+  "Sources",     // Swift convention
+  "pkg",         // Go convention
+  "cmd",         // Go convention
+  "internal",    // Go convention
 ] as const;
 
 const LANGUAGE_MAP: Record<string, string> = {
@@ -95,6 +116,8 @@ const LANGUAGE_MAP: Record<string, string> = {
   "go.mod": "go",
   "pyproject.toml": "python",
   "setup.py": "python",
+  "requirements.txt": "python",
+  "setup.cfg": "python",
   "Gemfile": "ruby",
   "pom.xml": "java",
   "build.gradle": "java/kotlin",

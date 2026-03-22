@@ -26,7 +26,7 @@ import { runUnit } from "./run-unit.js";
 import { debugLog } from "../debug-logger.js";
 import { gsdRoot } from "../paths.js";
 import { atomicWriteSync } from "../atomic-write.js";
-import { PROJECT_FILES } from "../detection.js";
+import { PROJECT_FILES, SOURCE_DIRS } from "../detection.js";
 import { join } from "node:path";
 
 // ─── generateMilestoneReport ──────────────────────────────────────────────────
@@ -835,7 +835,7 @@ export async function runUnitPhase(
       return { action: "break", reason: "worktree-invalid" };
     }
     const hasProjectFile = PROJECT_FILES.some((f) => deps.existsSync(join(s.basePath, f)));
-    const hasSrcDir = deps.existsSync(join(s.basePath, "src"));
+    const hasSrcDir = SOURCE_DIRS.some((d) => deps.existsSync(join(s.basePath, d)));
     if (!hasProjectFile && !hasSrcDir) {
       const msg = `Worktree health check failed: ${s.basePath} has no recognized project files — refusing to dispatch ${unitType} ${unitId}`;
       debugLog("runUnitPhase", { phase: "worktree-health-fail", basePath: s.basePath, hasProjectFile, hasSrcDir });

@@ -14,7 +14,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { execSync } from "node:child_process";
 
-import { PROJECT_FILES } from "../detection.js";
+import { PROJECT_FILES, SOURCE_DIRS } from "../detection.js";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -37,7 +37,7 @@ function createGitRepo(): string {
  * proceeds), false when it would FAIL (dispatch blocked).
  *
  * This mirrors the fixed logic: .git must exist, AND at least one
- * PROJECT_FILES entry or a src/ directory must exist.
+ * PROJECT_FILES entry or a SOURCE_DIRS directory must exist.
  */
 function wouldPassHealthCheck(basePath: string, existsSyncFn: (p: string) => boolean): boolean {
   const hasGit = existsSyncFn(join(basePath, ".git"));
@@ -46,7 +46,9 @@ function wouldPassHealthCheck(basePath: string, existsSyncFn: (p: string) => boo
   for (const file of PROJECT_FILES) {
     if (existsSyncFn(join(basePath, file))) return true;
   }
-  if (existsSyncFn(join(basePath, "src"))) return true;
+  for (const dir of SOURCE_DIRS) {
+    if (existsSyncFn(join(basePath, dir))) return true;
+  }
 
   return false;
 }
@@ -57,7 +59,7 @@ import { existsSync } from "node:fs";
 
 test("PROJECT_FILES is exported and contains expected multi-ecosystem entries", () => {
   assert.ok(Array.isArray(PROJECT_FILES), "PROJECT_FILES is an array");
-  assert.ok(PROJECT_FILES.length >= 17, `expected >= 17 entries, got ${PROJECT_FILES.length}`);
+  assert.ok(PROJECT_FILES.length >= 23, `expected >= 23 entries, got ${PROJECT_FILES.length}`);
   // Spot-check key ecosystems
   assert.ok(PROJECT_FILES.includes("Cargo.toml"), "includes Rust marker");
   assert.ok(PROJECT_FILES.includes("go.mod"), "includes Go marker");
@@ -65,6 +67,17 @@ test("PROJECT_FILES is exported and contains expected multi-ecosystem entries", 
   assert.ok(PROJECT_FILES.includes("package.json"), "includes JS marker");
   assert.ok(PROJECT_FILES.includes("pom.xml"), "includes Java marker");
   assert.ok(PROJECT_FILES.includes("Package.swift"), "includes Swift marker");
+  assert.ok(PROJECT_FILES.includes("Justfile"), "includes Justfile marker");
+  assert.ok(PROJECT_FILES.includes("Dockerfile"), "includes Dockerfile marker");
+  assert.ok(PROJECT_FILES.includes("build.sh"), "includes build.sh marker");
+});
+
+test("SOURCE_DIRS is exported and contains expected directory names", () => {
+  assert.ok(Array.isArray(SOURCE_DIRS), "SOURCE_DIRS is an array");
+  assert.ok(SOURCE_DIRS.includes("src"), "includes src");
+  assert.ok(SOURCE_DIRS.includes("app"), "includes app");
+  assert.ok(SOURCE_DIRS.includes("lib"), "includes lib");
+  assert.ok(SOURCE_DIRS.includes("Sources"), "includes Sources (Swift)");
 });
 
 test("health check passes for Rust project (Cargo.toml, no package.json)", () => {
@@ -153,6 +166,36 @@ test("health check passes for src/-only project (backward compat)", () => {
   try {
     mkdirSync(join(dir, "src"), { recursive: true });
     assert.ok(wouldPassHealthCheck(dir, existsSync), "src/-only project should pass health check");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("health check passes for app/-only project (e.g. Swift without SPM)", () => {
+  const dir = createGitRepo();
+  try {
+    mkdirSync(join(dir, "app"), { recursive: true });
+    assert.ok(wouldPassHealthCheck(dir, existsSync), "app/-only project should pass health check");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("health check passes for lib/-only project", () => {
+  const dir = createGitRepo();
+  try {
+    mkdirSync(join(dir, "lib"), { recursive: true });
+    assert.ok(wouldPassHealthCheck(dir, existsSync), "lib/-only project should pass health check");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("health check passes for Sources/-only project (Swift convention)", () => {
+  const dir = createGitRepo();
+  try {
+    mkdirSync(join(dir, "Sources"), { recursive: true });
+    assert.ok(wouldPassHealthCheck(dir, existsSync), "Sources/-only project should pass health check");
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
