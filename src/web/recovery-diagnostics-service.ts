@@ -8,7 +8,7 @@ import {
   collectSelectiveLiveStatePayload,
   resolveBridgeRuntimeConfig,
 } from "./bridge-service.ts"
-import { resolveTypeStrippingFlag } from "./ts-subprocess-flags.ts"
+import { resolveTypeStrippingFlag, resolveSubprocessModule } from "./ts-subprocess-flags.ts"
 import type {
   WorkspaceRecoveryBrowserAction,
   WorkspaceRecoveryCodeSummary,
@@ -361,11 +361,11 @@ function resolveTsLoaderPath(packageRoot: string): string {
 }
 
 function resolveDoctorModulePath(packageRoot: string): string {
-  return join(packageRoot, "src", "resources", "extensions", "gsd", "doctor.ts")
+  return resolveSubprocessModule(packageRoot, "resources/extensions/gsd/doctor.ts")
 }
 
 function resolveSessionForensicsModulePath(packageRoot: string): string {
-  return join(packageRoot, "src", "resources", "extensions", "gsd", "session-forensics.ts")
+  return resolveSubprocessModule(packageRoot, "resources/extensions/gsd/session-forensics.ts")
 }
 
 async function collectRecoveryDiagnosticsChildPayload(

@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
 import type { AutoDashboardData } from "./bridge-service.ts";
-import { resolveTypeStrippingFlag } from "./ts-subprocess-flags.ts"
+import { resolveTypeStrippingFlag, resolveSubprocessModule } from "./ts-subprocess-flags.ts"
 
 const AUTO_DASHBOARD_MAX_BUFFER = 1024 * 1024;
 const TEST_AUTO_DASHBOARD_MODULE_ENV = "GSD_WEB_TEST_AUTO_DASHBOARD_MODULE";
@@ -33,7 +33,7 @@ function fallbackAutoDashboardData(): AutoDashboardData {
 }
 
 function resolveAutoDashboardModulePath(packageRoot: string, env: NodeJS.ProcessEnv): string {
-  return env[TEST_AUTO_DASHBOARD_MODULE_ENV] || join(packageRoot, "src", "resources", "extensions", "gsd", "auto.ts");
+  return env[TEST_AUTO_DASHBOARD_MODULE_ENV] || resolveSubprocessModule(packageRoot, "resources/extensions/gsd/auto.ts");
 }
 
 function resolveTsLoaderPath(packageRoot: string): string {

@@ -4,14 +4,14 @@ import { join } from "node:path"
 import { pathToFileURL } from "node:url"
 
 import { resolveBridgeRuntimeConfig } from "./bridge-service.ts"
-import { resolveTypeStrippingFlag } from "./ts-subprocess-flags.ts"
+import { resolveTypeStrippingFlag, resolveSubprocessModule } from "./ts-subprocess-flags.ts"
 import type { HooksData } from "../../web/lib/remaining-command-types.ts"
 
 const HOOKS_MAX_BUFFER = 512 * 1024
 const HOOKS_MODULE_ENV = "GSD_HOOKS_MODULE"
 
 function resolveHooksModulePath(packageRoot: string): string {
-  return join(packageRoot, "src", "resources", "extensions", "gsd", "post-unit-hooks.ts")
+  return resolveSubprocessModule(packageRoot, "resources/extensions/gsd/post-unit-hooks.ts")
 }
 
 function resolveTsLoaderPath(packageRoot: string): string {

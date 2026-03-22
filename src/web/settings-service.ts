@@ -4,13 +4,13 @@ import { join } from "node:path"
 import { pathToFileURL } from "node:url"
 
 import { resolveBridgeRuntimeConfig } from "./bridge-service.ts"
-import { resolveTypeStrippingFlag } from "./ts-subprocess-flags.ts"
+import { resolveTypeStrippingFlag, resolveSubprocessModule } from "./ts-subprocess-flags.ts"
 import type { SettingsData } from "../../web/lib/settings-types.ts"
 
 const SETTINGS_MAX_BUFFER = 2 * 1024 * 1024
 
 function resolveModulePath(packageRoot: string, moduleName: string): string {
-  return join(packageRoot, "src", "resources", "extensions", "gsd", moduleName)
+  return resolveSubprocessModule(packageRoot, `resources/extensions/gsd/${moduleName}`)
 }
 
 function resolveTsLoaderPath(packageRoot: string): string {

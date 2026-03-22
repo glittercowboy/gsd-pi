@@ -4,14 +4,14 @@ import { join } from "node:path"
 import { pathToFileURL } from "node:url"
 
 import { resolveBridgeRuntimeConfig } from "./bridge-service.ts"
-import { resolveTypeStrippingFlag } from "./ts-subprocess-flags.ts"
+import { resolveTypeStrippingFlag, resolveSubprocessModule } from "./ts-subprocess-flags.ts"
 import type { CleanupData, CleanupResult } from "../../web/lib/remaining-command-types.ts"
 
 const CLEANUP_MAX_BUFFER = 2 * 1024 * 1024
 const CLEANUP_MODULE_ENV = "GSD_CLEANUP_MODULE"
 
 function resolveCleanupModulePath(packageRoot: string): string {
-  return join(packageRoot, "src", "resources", "extensions", "gsd", "native-git-bridge.ts")
+  return resolveSubprocessModule(packageRoot, "resources/extensions/gsd/native-git-bridge.ts")
 }
 
 function resolveTsLoaderPath(packageRoot: string): string {

@@ -4,14 +4,14 @@ import { join } from "node:path"
 import { pathToFileURL } from "node:url"
 
 import { resolveBridgeRuntimeConfig } from "./bridge-service.ts"
-import { resolveTypeStrippingFlag } from "./ts-subprocess-flags.ts"
+import { resolveTypeStrippingFlag, resolveSubprocessModule } from "./ts-subprocess-flags.ts"
 import type { ForensicReport } from "../../web/lib/diagnostics-types.ts"
 
 const FORENSICS_MAX_BUFFER = 2 * 1024 * 1024
 const FORENSICS_MODULE_ENV = "GSD_FORENSICS_MODULE"
 
 function resolveForensicsModulePath(packageRoot: string): string {
-  return join(packageRoot, "src", "resources", "extensions", "gsd", "forensics.ts")
+  return resolveSubprocessModule(packageRoot, "resources/extensions/gsd/forensics.ts")
 }
 
 function resolveTsLoaderPath(packageRoot: string): string {

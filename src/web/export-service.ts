@@ -4,14 +4,14 @@ import { join } from "node:path"
 import { pathToFileURL } from "node:url"
 
 import { resolveBridgeRuntimeConfig } from "./bridge-service.ts"
-import { resolveTypeStrippingFlag } from "./ts-subprocess-flags.ts"
+import { resolveTypeStrippingFlag, resolveSubprocessModule } from "./ts-subprocess-flags.ts"
 import type { ExportResult } from "../../web/lib/remaining-command-types.ts"
 
 const EXPORT_MAX_BUFFER = 4 * 1024 * 1024
 const EXPORT_MODULE_ENV = "GSD_EXPORT_MODULE"
 
 function resolveExportModulePath(packageRoot: string): string {
-  return join(packageRoot, "src", "resources", "extensions", "gsd", "export.ts")
+  return resolveSubprocessModule(packageRoot, "resources/extensions/gsd/export.ts")
 }
 
 function resolveTsLoaderPath(packageRoot: string): string {

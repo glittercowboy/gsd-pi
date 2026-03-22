@@ -4,14 +4,14 @@ import { join } from "node:path"
 import { pathToFileURL } from "node:url"
 
 import { resolveBridgeRuntimeConfig } from "./bridge-service.ts"
-import { resolveTypeStrippingFlag } from "./ts-subprocess-flags.ts"
+import { resolveTypeStrippingFlag, resolveSubprocessModule } from "./ts-subprocess-flags.ts"
 import type { HistoryData } from "../../web/lib/remaining-command-types.ts"
 
 const HISTORY_MAX_BUFFER = 2 * 1024 * 1024
 const HISTORY_MODULE_ENV = "GSD_HISTORY_MODULE"
 
 function resolveHistoryModulePath(packageRoot: string): string {
-  return join(packageRoot, "src", "resources", "extensions", "gsd", "metrics.ts")
+  return resolveSubprocessModule(packageRoot, "resources/extensions/gsd/metrics.ts")
 }
 
 function resolveTsLoaderPath(packageRoot: string): string {

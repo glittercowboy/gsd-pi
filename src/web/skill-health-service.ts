@@ -4,14 +4,14 @@ import { join } from "node:path"
 import { pathToFileURL } from "node:url"
 
 import { resolveBridgeRuntimeConfig } from "./bridge-service.ts"
-import { resolveTypeStrippingFlag } from "./ts-subprocess-flags.ts"
+import { resolveTypeStrippingFlag, resolveSubprocessModule } from "./ts-subprocess-flags.ts"
 import type { SkillHealthReport } from "../../web/lib/diagnostics-types.ts"
 
 const SKILL_HEALTH_MAX_BUFFER = 2 * 1024 * 1024
 const SKILL_HEALTH_MODULE_ENV = "GSD_SKILL_HEALTH_MODULE"
 
 function resolveSkillHealthModulePath(packageRoot: string): string {
-  return join(packageRoot, "src", "resources", "extensions", "gsd", "skill-health.ts")
+  return resolveSubprocessModule(packageRoot, "resources/extensions/gsd/skill-health.ts")
 }
 
 function resolveTsLoaderPath(packageRoot: string): string {

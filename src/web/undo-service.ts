@@ -4,7 +4,7 @@ import { join } from "node:path"
 import { pathToFileURL } from "node:url"
 
 import { resolveBridgeRuntimeConfig } from "./bridge-service.ts"
-import { resolveTypeStrippingFlag } from "./ts-subprocess-flags.ts"
+import { resolveTypeStrippingFlag, resolveSubprocessModule } from "./ts-subprocess-flags.ts"
 import type { UndoInfo, UndoResult } from "../../web/lib/remaining-command-types.ts"
 
 const UNDO_MAX_BUFFER = 2 * 1024 * 1024
@@ -12,11 +12,11 @@ const UNDO_MODULE_ENV = "GSD_UNDO_MODULE"
 const PATHS_MODULE_ENV = "GSD_PATHS_MODULE"
 
 function resolveUndoModulePath(packageRoot: string): string {
-  return join(packageRoot, "src", "resources", "extensions", "gsd", "undo.ts")
+  return resolveSubprocessModule(packageRoot, "resources/extensions/gsd/undo.ts")
 }
 
 function resolvePathsModulePath(packageRoot: string): string {
-  return join(packageRoot, "src", "resources", "extensions", "gsd", "paths.ts")
+  return resolveSubprocessModule(packageRoot, "resources/extensions/gsd/paths.ts")
 }
 
 function resolveTsLoaderPath(packageRoot: string): string {

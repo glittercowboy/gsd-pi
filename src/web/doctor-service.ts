@@ -4,14 +4,14 @@ import { join } from "node:path"
 import { pathToFileURL } from "node:url"
 
 import { resolveBridgeRuntimeConfig } from "./bridge-service.ts"
-import { resolveTypeStrippingFlag } from "./ts-subprocess-flags.ts"
+import { resolveTypeStrippingFlag, resolveSubprocessModule } from "./ts-subprocess-flags.ts"
 import type { DoctorReport, DoctorFixResult } from "../../web/lib/diagnostics-types.ts"
 
 const DOCTOR_MAX_BUFFER = 2 * 1024 * 1024
 const DOCTOR_MODULE_ENV = "GSD_DOCTOR_MODULE"
 
 function resolveDoctorModulePath(packageRoot: string): string {
-  return join(packageRoot, "src", "resources", "extensions", "gsd", "doctor.ts")
+  return resolveSubprocessModule(packageRoot, "resources/extensions/gsd/doctor.ts")
 }
 
 function resolveTsLoaderPath(packageRoot: string): string {

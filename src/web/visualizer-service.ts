@@ -4,7 +4,7 @@ import { join } from "node:path"
 import { pathToFileURL } from "node:url"
 
 import { resolveBridgeRuntimeConfig } from "./bridge-service.ts"
-import { resolveTypeStrippingFlag } from "./ts-subprocess-flags.ts"
+import { resolveTypeStrippingFlag, resolveSubprocessModule } from "./ts-subprocess-flags.ts"
 
 const VISUALIZER_MAX_BUFFER = 2 * 1024 * 1024
 const VISUALIZER_MODULE_ENV = "GSD_VISUALIZER_MODULE"
@@ -36,7 +36,7 @@ export interface SerializedVisualizerData {
 }
 
 function resolveVisualizerModulePath(packageRoot: string): string {
-  return join(packageRoot, "src", "resources", "extensions", "gsd", "visualizer-data.ts")
+  return resolveSubprocessModule(packageRoot, "resources/extensions/gsd/visualizer-data.ts")
 }
 
 function resolveTsLoaderPath(packageRoot: string): string {

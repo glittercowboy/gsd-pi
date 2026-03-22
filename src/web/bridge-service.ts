@@ -4,7 +4,7 @@ import { StringDecoder } from "node:string_decoder";
 import type { Readable } from "node:stream";
 import { join, resolve, dirname } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { resolveTypeStrippingFlag } from "./ts-subprocess-flags.ts";
+import { resolveTypeStrippingFlag, resolveSubprocessModule } from "./ts-subprocess-flags.ts";
 
 import type { AgentSessionEvent, SessionStateChangeReason } from "../../packages/pi-coding-agent/src/core/agent-session.ts";
 import type {
@@ -906,7 +906,7 @@ async function loadCachedWorkspaceIndex(
 async function loadWorkspaceIndexViaChildProcess(basePath: string, packageRoot: string): Promise<GSDWorkspaceIndex> {
   const deps = getBridgeDeps();
   const resolveTsLoader = join(packageRoot, "src", "resources", "extensions", "gsd", "tests", "resolve-ts.mjs");
-  const workspaceModulePath = join(packageRoot, "src", "resources", "extensions", "gsd", "workspace-index.ts");
+  const workspaceModulePath = resolveSubprocessModule(packageRoot, "resources/extensions/gsd/workspace-index.ts");
   const checkExists = deps.existsSync ?? existsSync;
   if (!checkExists(resolveTsLoader) || !checkExists(workspaceModulePath)) {
     throw new Error(`workspace index loader not found; checked=${resolveTsLoader},${workspaceModulePath}`);
