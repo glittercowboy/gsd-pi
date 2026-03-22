@@ -51,4 +51,65 @@ describe("prompt-migration", () => {
       assert.ok(content.includes("{{outputPath}}") || content.includes("Write"), "must still have file-write instructions");
     });
   });
+
+  describe("complete-milestone.md (PMG-04)", () => {
+    let content: string;
+    it("loads prompt file", () => {
+      content = readFileSync(join(promptsDir, "complete-milestone.md"), "utf-8");
+    });
+    it("contains gsd_save_decision for requirement updates", () => {
+      assert.ok(content.includes("gsd_save_decision"), "must reference gsd_save_decision tool for requirement status transitions");
+    });
+    it("contains 'Do NOT write' qualifier for REQUIREMENTS.md", () => {
+      assert.ok(content.includes("Do NOT write"), "must contain 'Do NOT write' to block direct REQUIREMENTS.md edits");
+    });
+    it("still contains PROJECT.md (content file write preserved)", () => {
+      assert.ok(content.includes("PROJECT.md"), "PROJECT.md content file write must still be referenced");
+    });
+  });
+
+  describe("prompt audit — no checkbox-edit instructions (PMG-04)", () => {
+    const promptFiles = [
+      "complete-milestone.md",
+      "replan-slice.md",
+      "validate-milestone.md",
+      "research-slice.md",
+      "guided-complete-slice.md",
+      "guided-discuss-milestone.md",
+      "guided-discuss-slice.md",
+      "guided-execute-task.md",
+      "guided-plan-milestone.md",
+      "guided-plan-slice.md",
+      "guided-research-slice.md",
+      "guided-resume-task.md",
+      "worktree-merge.md",
+      "plan-milestone.md",
+      "reassess-roadmap.md",
+      "research-milestone.md",
+    ];
+
+    for (const promptFile of promptFiles) {
+      it(`${promptFile} — does not contain checkbox-edit instructions`, () => {
+        let fileContent: string;
+        try {
+          fileContent = readFileSync(join(promptsDir, promptFile), "utf-8");
+        } catch {
+          // Some guided prompts may not exist — skip gracefully
+          return;
+        }
+        assert.ok(
+          !fileContent.includes("Edit the checkbox"),
+          `${promptFile} must not contain 'Edit the checkbox'`,
+        );
+        assert.ok(
+          !fileContent.includes("toggle the checkbox"),
+          `${promptFile} must not contain 'toggle the checkbox'`,
+        );
+        assert.ok(
+          !fileContent.includes("mark the checkbox"),
+          `${promptFile} must not contain 'mark the checkbox'`,
+        );
+      });
+    }
+  });
 });

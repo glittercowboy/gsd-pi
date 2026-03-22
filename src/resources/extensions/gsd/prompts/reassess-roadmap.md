@@ -56,7 +56,7 @@ Write `{{assessmentPath}}` with a brief confirmation that roadmap coverage still
 
 1. Rewrite the remaining (unchecked) slices in `{{roadmapPath}}`. Keep completed slices exactly as they are (`[x]`). Update the boundary map for changed slices. Update the proof strategy if risks changed. Update requirement coverage if ownership or scope changed.
 2. Write `{{assessmentPath}}` explaining what changed and why — keep it brief and concrete.
-3. If `.gsd/REQUIREMENTS.md` exists and requirement ownership or status changed, update it.
+3. If requirement ownership or status changed based on this slice's evidence, call `gsd_save_decision` with scope="requirement", decision="{requirement-id}", choice="{new-status}", rationale="{evidence}". Do NOT write `.gsd/REQUIREMENTS.md` directly — the engine renders it from the database.
 4. {{commitInstruction}}
 
 **You MUST write the file `{{assessmentPath}}` before finishing.**
