@@ -253,3 +253,44 @@ Do the second thing.
   assert.equal(slices[0]?.id, "S01");
   assert.equal(slices[1]?.id, "S02");
 });
+
+// ── Regression tests: checkbox separator variants ───────────────────────────
+
+test("parseRoadmapSlices: checkbox with em-dash separator", () => {
+  const content = `# M021: Em Dash
+
+## Slices
+
+- [x] **S01 — Model Swap Control Plane** \`risk:medium\` \`depends:[]\`
+  > After this: founder can swap models.
+
+- [ ] **S02 — Pipeline Config** \`risk:high\` \`depends:[S01]\`
+  > After this: pipeline uses new models.
+`;
+  const slices = parseRoadmapSlices(content);
+  assert.equal(slices.length, 2, "should parse em-dash checkbox slices");
+  assert.equal(slices[0]?.id, "S01");
+  assert.equal(slices[0]?.done, true, "S01 should be done");
+  assert.equal(slices[0]?.title, "Model Swap Control Plane");
+  assert.equal(slices[0]?.risk, "medium");
+  assert.equal(slices[1]?.id, "S02");
+  assert.equal(slices[1]?.done, false);
+  assert.deepEqual(slices[1]?.depends, ["S01"]);
+});
+
+test("parseRoadmapSlices: checkbox with en-dash and hyphen separators", () => {
+  const content = `# M022: Mixed Separators
+
+## Slices
+
+- [ ] **S01 – En Dash Slice** \`risk:low\` \`depends:[]\`
+- [x] **S02 - Hyphen Slice** \`risk:high\` \`depends:[S01]\`
+`;
+  const slices = parseRoadmapSlices(content);
+  assert.equal(slices.length, 2, "should parse en-dash and hyphen separators");
+  assert.equal(slices[0]?.id, "S01");
+  assert.equal(slices[0]?.title, "En Dash Slice");
+  assert.equal(slices[1]?.id, "S02");
+  assert.equal(slices[1]?.done, true);
+  assert.equal(slices[1]?.title, "Hyphen Slice");
+});
