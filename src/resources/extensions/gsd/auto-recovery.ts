@@ -169,6 +169,29 @@ export function hasImplementationArtifacts(basePath: string): boolean {
 }
 
 /**
+ * Check whether a milestone SUMMARY file contains substantive content beyond
+ * a bare heading. Used as a fallback when git-based artifact detection fails
+ * after a worktree merge (#2023). The threshold (200 chars of non-heading text)
+ * filters out trivial scaffolds while accepting real summaries.
+ */
+export function hasMilestoneSummaryContent(absPath: string): boolean {
+  try {
+    const content = readFileSync(absPath, "utf-8");
+    // Strip markdown headings and blank lines, measure remaining content
+    const stripped = content
+      .split("\n")
+      .filter(line => !/^\s*$/.test(line) && !/^#+\s/.test(line))
+      .join("\n")
+      .trim();
+    // A substantive summary should have at least 100 chars of non-heading text
+    // (e.g., outcome description, slice list, key changes).
+    return stripped.length >= 100;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Detect the main/master branch name.
  */
 function detectMainBranch(basePath: string): string {
@@ -409,8 +432,15 @@ export function verifyExpectedArtifact(
   // complete-milestone must have produced implementation artifacts (#1703).
   // A milestone with only .gsd/ plan files and zero implementation code is
   // not genuinely complete — the LLM wrote plan files but skipped actual work.
+  //
+  // After a worktree squash-merge, git diff against the merge-base may show
+  // only .gsd/ files because the implementation files now exist on both sides.
+  // In that case, fall back to checking the SUMMARY for substantive content
+  // to break the infinite dispatch loop (#2023).
   if (unitType === "complete-milestone") {
-    if (!hasImplementationArtifacts(base)) return false;
+    if (!hasImplementationArtifacts(base)) {
+      if (!hasMilestoneSummaryContent(absPath)) return false;
+    }
   }
 
   return true;

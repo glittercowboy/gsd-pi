@@ -12,6 +12,7 @@ import {
   buildLoopRemediationSteps,
   selfHealRuntimeRecords,
   hasImplementationArtifacts,
+  hasMilestoneSummaryContent,
 } from "../auto-recovery.ts";
 import { parseRoadmap, clearParseCache } from "../files.ts";
 import { invalidateAllCaches } from "../cache.ts";
@@ -702,6 +703,173 @@ test("verifyExpectedArtifact complete-milestone passes with impl files (#1703)",
 
     const result = verifyExpectedArtifact("complete-milestone", "M001", base);
     assert.equal(result, true, "complete-milestone should pass verification with implementation files");
+  } finally {
+    cleanup(base);
+  }
+});
+
+// ─── hasMilestoneSummaryContent (#2023) ───────────────────────────────────
+
+test("hasMilestoneSummaryContent returns true for substantive summary (#2023)", () => {
+  const base = makeTmpBase();
+  try {
+    const summaryPath = join(base, ".gsd", "milestones", "M001", "M001-SUMMARY.md");
+    writeFileSync(summaryPath, [
+      "# M001: Database Refactoring",
+      "",
+      "## Outcome",
+      "Migrated all database queries to the new ORM layer across 12 service files.",
+      "",
+      "## Slices completed",
+      "- S01: Schema migration — added 5 new tables",
+      "- S02: Query refactoring — replaced raw SQL with ORM calls",
+    ].join("\n"));
+    assert.equal(hasMilestoneSummaryContent(summaryPath), true,
+      "should return true for summary with >100 chars of non-heading content");
+  } finally {
+    cleanup(base);
+  }
+});
+
+test("hasMilestoneSummaryContent returns false for trivial summary (#2023)", () => {
+  const base = makeTmpBase();
+  try {
+    const summaryPath = join(base, ".gsd", "milestones", "M001", "M001-SUMMARY.md");
+    writeFileSync(summaryPath, "# Summary\nDone.\n");
+    assert.equal(hasMilestoneSummaryContent(summaryPath), false,
+      "should return false for summary with minimal content");
+  } finally {
+    cleanup(base);
+  }
+});
+
+test("hasMilestoneSummaryContent returns false for nonexistent file (#2023)", () => {
+  assert.equal(hasMilestoneSummaryContent("/nonexistent/path/SUMMARY.md"), false);
+});
+
+// ─── #2023: complete-milestone infinite loop after worktree merge ─────────
+
+test("hasImplementationArtifacts returns false after worktree squash-merge (#2023)", () => {
+  const base = makeGitBase();
+  try {
+    // Simulate worktree workflow with squash merge (common GSD default):
+    // 1. Create milestone branch with implementation files
+    execFileSync("git", ["checkout", "-b", "milestone/M002"], { cwd: base, stdio: "ignore" });
+    mkdirSync(join(base, "src", "db"), { recursive: true });
+    writeFileSync(join(base, "src", "db", "orm.ts"), "export class ORM {}");
+    writeFileSync(join(base, "src", "db", "pool.ts"), "export const pool = {};");
+    mkdirSync(join(base, ".gsd", "milestones", "M002"), { recursive: true });
+    writeFileSync(join(base, ".gsd", "milestones", "M002", "M002-ROADMAP.md"), "# Roadmap");
+    execFileSync("git", ["add", "."], { cwd: base, stdio: "ignore" });
+    execFileSync("git", ["commit", "-m", "feat: database refactoring"], { cwd: base, stdio: "ignore" });
+
+    // 2. Squash-merge milestone branch back to main (worktree default)
+    execFileSync("git", ["checkout", "main"], { cwd: base, stdio: "ignore" });
+    execFileSync("git", ["merge", "--squash", "milestone/M002"], { cwd: base, stdio: "ignore" });
+    execFileSync("git", ["commit", "-m", "feat: merge milestone M002"], { cwd: base, stdio: "ignore" });
+
+    // 3. Switch back to milestone branch to simulate auto-mode continuing there.
+    //    The milestone branch's merge-base with main is now BEFORE the squash,
+    //    so git diff shows .gsd/ + impl files. But on main, we write SUMMARY...
+    //    Actually: switch to main and add a .gsd/-only commit to trigger the bug.
+    writeFileSync(join(base, ".gsd", "milestones", "M002", "M002-SUMMARY.md"), [
+      "# M002: Database Refactoring",
+      "",
+      "## Outcome",
+      "Migrated all database queries to the new ORM layer.",
+    ].join("\n"));
+    execFileSync("git", ["add", ".gsd/"], { cwd: base, stdio: "ignore" });
+    execFileSync("git", ["commit", "-m", "chore: milestone summary"], { cwd: base, stdio: "ignore" });
+
+    // 4. Now create a NEW branch from main for the complete-milestone dispatch.
+    //    This branch diverged from main at the commit above. git diff from
+    //    merge-base to HEAD only shows .gsd/ files — implementation files are
+    //    already in both main and this branch.
+    execFileSync("git", ["checkout", "-b", "gsd/complete-M002"], { cwd: base, stdio: "ignore" });
+    // Auto-mode might commit additional .gsd/ state files
+    writeFileSync(join(base, ".gsd", "milestones", "M002", "M002-VALIDATION.md"), "# Validation\nverdict: pass");
+    execFileSync("git", ["add", ".gsd/"], { cwd: base, stdio: "ignore" });
+    execFileSync("git", ["commit", "-m", "chore: validation"], { cwd: base, stdio: "ignore" });
+
+    // BUG: git diff from merge-base to HEAD only shows .gsd/ files.
+    // hasImplementationArtifacts returns false → infinite dispatch loop.
+    const result = hasImplementationArtifacts(base);
+    assert.equal(result, false,
+      "confirms the bug: returns false on branch with only .gsd/ diff after squash-merge (#2023)");
+  } finally {
+    cleanup(base);
+  }
+});
+
+test("verifyExpectedArtifact complete-milestone passes after squash-merge with substantive SUMMARY (#2023)", () => {
+  const base = makeGitBase();
+  try {
+    // Simulate worktree squash-merge + post-merge completion branch
+    execFileSync("git", ["checkout", "-b", "milestone/M002"], { cwd: base, stdio: "ignore" });
+    mkdirSync(join(base, "src"), { recursive: true });
+    writeFileSync(join(base, "src", "feature.ts"), "export function feature() { return 42; }");
+    mkdirSync(join(base, ".gsd", "milestones", "M002"), { recursive: true });
+    writeFileSync(join(base, ".gsd", "milestones", "M002", "M002-ROADMAP.md"), "# Roadmap");
+    execFileSync("git", ["add", "."], { cwd: base, stdio: "ignore" });
+    execFileSync("git", ["commit", "-m", "feat: implement feature"], { cwd: base, stdio: "ignore" });
+
+    // Squash-merge to main
+    execFileSync("git", ["checkout", "main"], { cwd: base, stdio: "ignore" });
+    execFileSync("git", ["merge", "--squash", "milestone/M002"], { cwd: base, stdio: "ignore" });
+    execFileSync("git", ["commit", "-m", "feat: merge milestone M002"], { cwd: base, stdio: "ignore" });
+
+    // Create completion branch from main (auto-mode dispatches complete-milestone here)
+    execFileSync("git", ["checkout", "-b", "gsd/complete-M002"], { cwd: base, stdio: "ignore" });
+    writeFileSync(join(base, ".gsd", "milestones", "M002", "M002-SUMMARY.md"), [
+      "# M002: Feature Implementation",
+      "",
+      "## Outcome",
+      "Successfully implemented the feature with full test coverage.",
+      "",
+      "## Slices completed",
+      "- S01: Core implementation",
+      "",
+      "## Key changes",
+      "- Added feature.ts with core logic",
+    ].join("\n"));
+    execFileSync("git", ["add", ".gsd/"], { cwd: base, stdio: "ignore" });
+    execFileSync("git", ["commit", "-m", "chore: milestone summary"], { cwd: base, stdio: "ignore" });
+
+    // BUG: hasImplementationArtifacts returns false (only .gsd/ in diff).
+    // After fix: verifyExpectedArtifact should pass because SUMMARY has
+    // substantive content — the fallback check breaks the infinite loop.
+    const result = verifyExpectedArtifact("complete-milestone", "M002", base);
+    assert.equal(result, true,
+      "complete-milestone verification should pass after squash-merge with substantive SUMMARY (#2023)");
+  } finally {
+    cleanup(base);
+  }
+});
+
+test("verifyExpectedArtifact complete-milestone still rejects trivial summary after squash-merge (#2023)", () => {
+  const base = makeGitBase();
+  try {
+    // Squash-merge with only .gsd/ plan files and trivially short summary
+    execFileSync("git", ["checkout", "-b", "milestone/M003"], { cwd: base, stdio: "ignore" });
+    mkdirSync(join(base, ".gsd", "milestones", "M003"), { recursive: true });
+    writeFileSync(join(base, ".gsd", "milestones", "M003", "M003-ROADMAP.md"), "# Roadmap");
+    execFileSync("git", ["add", "."], { cwd: base, stdio: "ignore" });
+    execFileSync("git", ["commit", "-m", "chore: plan files only"], { cwd: base, stdio: "ignore" });
+
+    execFileSync("git", ["checkout", "main"], { cwd: base, stdio: "ignore" });
+    execFileSync("git", ["merge", "--squash", "milestone/M003"], { cwd: base, stdio: "ignore" });
+    execFileSync("git", ["commit", "-m", "chore: merge M003"], { cwd: base, stdio: "ignore" });
+
+    // Completion branch with trivial SUMMARY
+    execFileSync("git", ["checkout", "-b", "gsd/complete-M003"], { cwd: base, stdio: "ignore" });
+    writeFileSync(join(base, ".gsd", "milestones", "M003", "M003-SUMMARY.md"), "# Summary\n");
+    execFileSync("git", ["add", ".gsd/"], { cwd: base, stdio: "ignore" });
+    execFileSync("git", ["commit", "-m", "chore: summary"], { cwd: base, stdio: "ignore" });
+
+    // Even after fix, trivial SUMMARY + no impl files should still fail
+    const result = verifyExpectedArtifact("complete-milestone", "M003", base);
+    assert.equal(result, false,
+      "complete-milestone should still fail when SUMMARY is trivially short and no impl files (#2023)");
   } finally {
     cleanup(base);
   }
