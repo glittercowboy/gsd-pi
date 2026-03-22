@@ -8,7 +8,7 @@ import type { DbAdapter } from "./gsd-db.js";
 import { _getAdapter, isDbAvailable } from "./gsd-db.js";
 import type { GSDState, ActiveRef, Phase, MilestoneRegistryEntry } from "./types.js";
 import { writeManifest } from "./workflow-manifest.js";
-import { appendEvent } from "./workflow-events.js";
+import { appendEvent, compactMilestoneEvents } from "./workflow-events.js";
 import type { WorkflowEvent } from "./workflow-events.js";
 import { renderAllProjections } from "./workflow-projections.js";
 import {
@@ -19,6 +19,7 @@ import {
   startTask as _startTask,
   recordVerification as _recordVerification,
   reportBlocker as _reportBlocker,
+  _milestoneProgress,
 } from "./workflow-commands.js";
 import type {
   CompleteTaskParams,
@@ -203,6 +204,22 @@ export class WorkflowEngine {
   completeSlice(params: CompleteSliceParams): CompleteSliceResult {
     const result = _completeSlice(this.db, params);
     this.afterCommand("complete_slice", params as unknown as Record<string, unknown>);
+
+    // Event log compaction (EVT-03, D-16):
+    // When all slices in the milestone are done, archive the milestone's events
+    // to keep the active event log bounded for fork-point detection.
+    const progress = _milestoneProgress(this.db, params.milestoneId);
+    if (progress.pct === 100) {
+      try {
+        compactMilestoneEvents(this.basePath, params.milestoneId);
+      } catch (err) {
+        // Non-fatal: compaction failure must not block slice completion
+        process.stderr.write(
+          `event-compaction: failed for ${params.milestoneId}: ${(err as Error).message}\n`,
+        );
+      }
+    }
+
     return result;
   }
 

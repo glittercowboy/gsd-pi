@@ -424,6 +424,31 @@ export function reportBlocker(
   });
 }
 
+// ─── Exported Helpers ────────────────────────────────────────────────────────
+
+/**
+ * Compute milestone slice completion progress.
+ * Returns total slices, done slices, and percentage for the given milestone.
+ * Used by WorkflowEngine to trigger event compaction at 100% (EVT-03).
+ */
+export function _milestoneProgress(
+  db: DbAdapter,
+  milestoneId: string,
+): { total: number; done: number; pct: number } {
+  const totalRow = db
+    .prepare("SELECT COUNT(*) as cnt FROM slices WHERE milestone_id = ?")
+    .get(milestoneId);
+  const doneRow = db
+    .prepare("SELECT COUNT(*) as cnt FROM slices WHERE milestone_id = ? AND status = 'done'")
+    .get(milestoneId);
+
+  const total = (totalRow?.["cnt"] as number) ?? 0;
+  const done = (doneRow?.["cnt"] as number) ?? 0;
+  const pct = total === 0 ? 0 : Math.round((done / total) * 100);
+
+  return { total, done, pct };
+}
+
 // ─── Private Helpers ────────────────────────────────────────────────────────
 
 function computeTaskProgress(
