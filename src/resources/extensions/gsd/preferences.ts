@@ -286,6 +286,7 @@ function mergePreferences(base: GSDPreferences, override: GSDPreferences): GSDPr
       ? { ...(base.github ?? {}), ...(override.github ?? {}) } as import("../github-sync/types.js").GitHubSyncConfig
       : undefined,
     service_tier: override.service_tier ?? base.service_tier,
+    forensics_dedup: override.forensics_dedup ?? base.forensics_dedup,
   };
 }
 

@@ -101,6 +101,8 @@ Explain your findings:
 - **Code snippet** — the problematic code and what it should do instead
 - **Recovery** — what the user can do right now to get unstuck
 
+{{dedupSection}}
+
 Then **offer GitHub issue creation**: "Would you like me to create a GitHub issue for this on gsd-build/gsd-2?"
 
 If yes, create using `gh issue create` with this format:

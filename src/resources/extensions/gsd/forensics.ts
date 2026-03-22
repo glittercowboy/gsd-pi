@@ -30,6 +30,9 @@ import { loadPrompt } from "./prompt-loader.js";
 import { gsdRoot } from "./paths.js";
 import { formatDuration } from "../shared/format-utils.js";
 import { getAutoWorktreePath } from "./auto-worktree.js";
+import { loadEffectiveGSDPreferences, loadGlobalGSDPreferences, getGlobalGSDPreferencesPath } from "./preferences.js";
+import { showNextAction } from "../shared/tui.js";
+import { ensurePreferencesFile, serializePreferencesToFrontmatter } from "./commands-prefs-wizard.js";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -67,6 +70,71 @@ interface ForensicReport {
   recentUnits: { type: string; id: string; cost: number; duration: number; model: string; finishedAt: number }[];
 }
 
+// ─── Duplicate Detection ──────────────────────────────────────────────────────
+
+const DEDUP_PROMPT_SECTION = `
+## Duplicate Detection (REQUIRED before issue creation)
+
+Before offering to create a GitHub issue, you MUST search for existing issues and PRs that may already address this bug. This step uses the user's AI tokens for analysis.
+
+### Search Steps
+
+1. **Search closed issues** for similar keywords from your diagnosis:
+   \`\`\`
+   gh issue list --repo gsd-build/gsd-2 --state closed --search "<keywords from root cause>" --limit 20
+   \`\`\`
+
+2. **Search open PRs** that might contain the fix:
+   \`\`\`
+   gh pr list --repo gsd-build/gsd-2 --state open --search "<keywords>" --limit 10
+   \`\`\`
+
+3. **Search merged PRs** that may have already fixed this:
+   \`\`\`
+   gh pr list --repo gsd-build/gsd-2 --state merged --search "<keywords>" --limit 10
+   \`\`\`
+
+### Analysis
+
+For each result, compare it against your root-cause diagnosis:
+- Does the issue describe the same code path or file?
+- Does the PR modify the same file:line you identified?
+- Is the symptom description semantically similar even if keywords differ?
+
+### Present Findings
+
+If you find potential matches, present them to the user:
+
+1. **"Already fixed by PR #X — skip issue creation"** — when a merged PR or closed issue clearly addresses the same root cause. Explain why you believe it matches.
+2. **"Add my findings to existing issue #Y"** — when an open issue exists for the same bug. Use \`gh issue comment #Y --repo gsd-build/gsd-2\` to add forensic evidence.
+3. **"Create new issue anyway"** — when existing results do not cover this specific failure.
+
+Only proceed to issue creation if no matches were found OR the user explicitly chooses "Create new issue anyway".
+`;
+
+async function writeForensicsDedupPref(ctx: ExtensionCommandContext, enabled: boolean): Promise<void> {
+  const prefsPath = getGlobalGSDPreferencesPath();
+  await ensurePreferencesFile(prefsPath, ctx, "global");
+  const existing = loadGlobalGSDPreferences();
+  const prefs: Record<string, unknown> = existing?.preferences ? { ...existing.preferences } : {};
+  prefs.version = prefs.version || 1;
+  prefs.forensics_dedup = enabled;
+
+  const frontmatter = serializePreferencesToFrontmatter(prefs);
+  const raw = existsSync(prefsPath) ? readFileSync(prefsPath, "utf-8") : "";
+  let body = "\n# GSD Skill Preferences\n\nSee `~/.gsd/agent/extensions/gsd/docs/preferences-reference.md` for full field documentation and examples.\n";
+  const start = raw.startsWith("---\n") ? 4 : raw.startsWith("---\r\n") ? 5 : -1;
+  if (start !== -1) {
+    const closingIdx = raw.indexOf("\n---", start);
+    if (closingIdx !== -1) {
+      const after = raw.slice(closingIdx + 4);
+      if (after.trim()) body = after;
+    }
+  }
+
+  writeFileSync(prefsPath, `---\n${frontmatter}---${body}`, "utf-8");
+}
+
 // ─── Entry Point ──────────────────────────────────────────────────────────────
 
 export async function handleForensics(
@@ -98,6 +166,29 @@ export async function handleForensics(
     return;
   }
 
+  // ─── Duplicate detection opt-in ─────────────────────────────────────────────
+  const effectivePrefs = loadEffectiveGSDPreferences()?.preferences;
+  let dedupEnabled = effectivePrefs?.forensics_dedup === true;
+
+  if (effectivePrefs?.forensics_dedup === undefined) {
+    const choice = await showNextAction(ctx, {
+      title: "Duplicate detection available",
+      summary: "Before filing a GitHub issue, forensics can search existing issues and PRs to avoid duplicates. This uses additional AI tokens.",
+      actions: [
+        { id: "enable", label: "Enable duplicate detection", description: "Search issues/PRs before filing (recommended)", recommended: true },
+        { id: "skip", label: "Skip for now", description: "File without checking for duplicates" },
+      ],
+      notYetMessage: "You can enable this later via preferences (forensics_dedup: true).",
+    });
+
+    if (choice === "enable") {
+      await writeForensicsDedupPref(ctx, true);
+      dedupEnabled = true;
+    }
+  }
+
+  const dedupSection = dedupEnabled ? DEDUP_PROMPT_SECTION : "";
+
   ctx.ui.notify("Building forensic report...", "info");
 
   const report = await buildForensicReport(basePath);
@@ -117,6 +208,7 @@ export async function handleForensics(
     problemDescription,
     forensicData,
     gsdSourceDir,
+    dedupSection,
   });
 
   ctx.ui.notify(`Forensic report saved: ${relative(basePath, savedPath)}`, "info");
