@@ -8,9 +8,12 @@ import assert from "node:assert/strict";
 import {
   renderPlanContent,
   renderRoadmapContent,
+  renderSummaryContent,
+  renderStateContent,
 } from "../workflow-projections.ts";
 
 import type { SliceRow, TaskRow, MilestoneRow } from "../workflow-engine.ts";
+import type { GSDState, MilestoneRegistryEntry } from "../types.ts";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────
 
@@ -148,5 +151,113 @@ describe("renderRoadmapContent", () => {
     const s01Line = lines.find((l) => l.includes("| S01 |"));
     assert.ok(s01Line, "S01 row should exist");
     assert.ok(s01Line!.includes("\u2014"), "S01 should show em dash for empty depends");
+  });
+});
+
+// ─── renderSummaryContent Tests ───────────────────────────────────────────
+
+describe("renderSummaryContent", () => {
+  it("produces frontmatter with id, parent, milestone fields", () => {
+    const task = makeTaskRow({
+      id: "T01",
+      slice_id: "S01",
+      milestone_id: "M001",
+      title: "First Task",
+      completed_at: "2026-03-22T12:00:00Z",
+    });
+    const md = renderSummaryContent(task, "S01", "M001");
+    assert.ok(md.includes("id: T01"), "should have id field");
+    assert.ok(md.includes("parent: S01"), "should have parent field");
+    assert.ok(md.includes("milestone: M001"), "should have milestone field");
+    assert.ok(md.startsWith("---"), "should start with frontmatter delimiter");
+  });
+
+  it('includes "## What Happened" section with summary text', () => {
+    const task = makeTaskRow({
+      id: "T01",
+      summary: "Implemented the core feature with full test coverage.",
+      completed_at: "2026-03-22T12:00:00Z",
+    });
+    const md = renderSummaryContent(task, "S01", "M001");
+    assert.ok(md.includes("## What Happened"), "should have What Happened section");
+    assert.ok(
+      md.includes("Implemented the core feature with full test coverage."),
+      "should include summary text",
+    );
+  });
+
+  it('shows "No summary recorded." when summary is null', () => {
+    const task = makeTaskRow({ id: "T01", summary: null });
+    const md = renderSummaryContent(task, "S01", "M001");
+    assert.ok(md.includes("No summary recorded."), "should show default summary");
+  });
+});
+
+// ─── renderStateContent Tests ─────────────────────────────────────────────
+
+function makeGSDState(overrides: Partial<GSDState> = {}): GSDState {
+  return {
+    activeMilestone: { id: "M001", title: "Engine Foundation" },
+    activeSlice: { id: "S01", title: "Foundation Slice" },
+    activeTask: { id: "T01", title: "First Task" },
+    phase: "executing",
+    recentDecisions: ["D-01: Use SQLite"],
+    blockers: [],
+    nextAction: "Execute task T01: First Task",
+    registry: [
+      { id: "M001", title: "Engine Foundation", status: "active" },
+    ],
+    progress: {
+      milestones: { done: 0, total: 1 },
+      slices: { done: 0, total: 3 },
+      tasks: { done: 1, total: 5 },
+    },
+    ...overrides,
+  };
+}
+
+describe("renderStateContent", () => {
+  it("produces STATE.md format with active milestone and slice", () => {
+    const state = makeGSDState();
+    const md = renderStateContent(state);
+    assert.ok(md.includes("# GSD State"), "should have title");
+    assert.ok(md.includes("**Active Milestone:** M001: Engine Foundation"), "should have active milestone");
+    assert.ok(md.includes("**Active Slice:** S01: Foundation Slice"), "should have active slice");
+    assert.ok(md.includes("**Phase:** executing"), "should have phase");
+    assert.ok(md.includes("## Milestone Registry"), "should have registry section");
+  });
+
+  it('produces "None" for active milestone/slice when empty DB', () => {
+    const state = makeGSDState({
+      activeMilestone: null,
+      activeSlice: null,
+      activeTask: null,
+      phase: "pre-planning",
+      recentDecisions: [],
+      blockers: [],
+      nextAction: "None",
+      registry: [],
+    });
+    const md = renderStateContent(state);
+    assert.ok(md.includes("**Active Milestone:** None"), "should show None for milestone");
+    assert.ok(md.includes("**Active Slice:** None"), "should show None for slice");
+    assert.ok(md.includes("- None recorded"), "should show no decisions");
+    assert.ok(md.includes("- None"), "should show no blockers");
+  });
+
+  it("includes milestone registry with correct status glyphs", () => {
+    const state = makeGSDState({
+      registry: [
+        { id: "M001", title: "Active Milestone", status: "active" },
+        { id: "M002", title: "Done Milestone", status: "complete" },
+        { id: "M003", title: "Pending Milestone", status: "pending" },
+        { id: "M004", title: "Parked Milestone", status: "parked" },
+      ],
+    });
+    const md = renderStateContent(state);
+    assert.ok(md.includes("\uD83D\uDD04 **M001:**"), "active should have refresh glyph");
+    assert.ok(md.includes("\u2705 **M002:**"), "complete should have checkmark");
+    assert.ok(md.includes("\u2B1C **M003:**"), "pending should have empty square");
+    assert.ok(md.includes("\u23F8\uFE0F **M004:**"), "parked should have pause glyph");
   });
 });
