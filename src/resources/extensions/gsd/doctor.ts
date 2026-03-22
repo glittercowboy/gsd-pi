@@ -135,6 +135,9 @@ function buildStateMarkdown(state: Awaited<ReturnType<typeof deriveState>>): str
 }
 
 async function updateStateFile(basePath: string, fixesApplied: string[]): Promise<void> {
+  // Invalidate caches so deriveState reads the post-fix disk state, not stale
+  // pre-fix parsed ROADMAP/PLAN data (#1885).
+  invalidateAllCaches();
   const state = await deriveState(basePath);
   const path = resolveGsdRootFile(basePath, "STATE");
   await saveFile(path, buildStateMarkdown(state));
@@ -475,6 +478,12 @@ export async function readDoctorHistory(basePath: string, lastN = 50): Promise<D
 }
 
 export async function runGSDDoctor(basePath: string, options?: { fix?: boolean; dryRun?: boolean; scope?: string; fixLevel?: "task" | "all"; isolationMode?: "none" | "worktree" | "branch"; includeBuild?: boolean; includeTests?: boolean }): Promise<DoctorReport> {
+  // Invalidate module-level caches at the start so this run always reads current
+  // disk state. Without this, a second doctor invocation in the same process sees
+  // pre-fix cached ROADMAP/PLAN/state data and re-reports already-fixed issues
+  // (#1885).
+  invalidateAllCaches();
+
   const issues: DoctorIssue[] = [];
   const fixesApplied: string[] = [];
   const fix = options?.fix === true;

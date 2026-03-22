@@ -643,6 +643,44 @@ Discovered an issue.
     rmSync(base, { recursive: true, force: true });
   }
 
+  // ─── Idempotency regression (#1885): second run reads post-fix state ──────
+  // Without invalidateAllCaches() at the start of runGSDDoctor, a second call in
+  // the same process sees stale cached ROADMAP/PLAN data and re-reports issues
+  // that were already fixed by the first call.
+  console.log("\n=== doctor idempotency: second run produces no new fixes (#1885) ===");
+  {
+    const idBase = mkdtempSync(join(tmpdir(), "gsd-doctor-idempotency-"));
+    const idGsd = join(idBase, ".gsd");
+    const idMDir = join(idGsd, "milestones", "M001");
+    const idSDir = join(idMDir, "slices", "S01");
+    const idTDir = join(idSDir, "tasks");
+    mkdirSync(idTDir, { recursive: true });
+
+    // Task marked done in plan with no summary on disk — doctor will:
+    //   run 1: uncheck task, then (since slice was done) uncheck slice, then
+    //          create UAT stub, then update STATE.md
+    //   run 2: should see unchecked task, no summary → nothing to fix
+    writeFileSync(join(idMDir, "M001-ROADMAP.md"), `# M001: Test Milestone\n\n## Slices\n- [x] **S01: Demo Slice** \`risk:low\` \`depends:[]\`\n  > After this: demo works\n`);
+    writeFileSync(join(idSDir, "S01-PLAN.md"), `# S01: Demo Slice\n\n**Goal:** Demo\n**Demo:** Demo\n\n## Tasks\n- [x] **T01: Implement thing** \`est:10m\`\n  Task is complete.\n`);
+    writeFileSync(join(idSDir, "S01-SUMMARY.md"), `---\nid: S01\nparent: M001\n---\n# S01: Demo Slice\nDone.\n`);
+    writeFileSync(join(idSDir, "S01-UAT.md"), `# S01 UAT\nVerified.\n`);
+    // No T01-SUMMARY.md — triggers task_done_missing_summary on first run
+
+    // First run: should apply fixes
+    const run1 = await runGSDDoctor(idBase, { fix: true });
+    assertTrue(run1.fixesApplied.length > 0, "first run applies fixes");
+
+    // Second run: must not re-detect or re-fix the same issues (#1885)
+    const run2 = await runGSDDoctor(idBase, { fix: true });
+    const run2TaskIssues = run2.issues.filter(i => i.code === "task_done_missing_summary");
+    assertEq(run2TaskIssues.length, 0, "second run does NOT re-detect task_done_missing_summary (no stale cache)");
+    // fixesApplied on run 2 should be empty — nothing to fix
+    const run2Mechanical = run2.fixesApplied.filter(f => !f.startsWith("updated ") || !f.includes("STATE"));
+    assertEq(run2Mechanical.length, 0, "second run applies no mechanical fixes (idempotent)");
+
+    rmSync(idBase, { recursive: true, force: true });
+  }
+
   report();
 }
 
