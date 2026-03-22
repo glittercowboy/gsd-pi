@@ -97,6 +97,7 @@ export function registerNativeSearchHooks(pi: NativeSearchPI): { getIsAnthropic:
     isAnthropicProvider = event.model.provider === "anthropic";
 
     const hasBrave = !!process.env.BRAVE_API_KEY;
+    const hasAlternativeSearch = !!process.env.TAVILY_API_KEY || !!process.env.GEMINI_API_KEY;
 
     // When Anthropic (and not preferring Brave): disable custom search tools —
     // native web_search is server-side and more reliable.
@@ -121,7 +122,7 @@ export function registerNativeSearchHooks(pi: NativeSearchPI): { getIsAnthropic:
       ctx.ui.notify("Native Anthropic web search active", "info");
     } else if (isAnthropicProvider && preferBraveSearch() && !wasAnthropic && event.source !== "restore") {
       ctx.ui.notify("Brave search active (PREFER_BRAVE_SEARCH)", "info");
-    } else if (!isAnthropicProvider && !hasBrave) {
+    } else if (!isAnthropicProvider && !hasBrave && !hasAlternativeSearch) {
       ctx.ui.notify(
         "Web search: Set BRAVE_API_KEY or use an Anthropic model for built-in search",
         "warning"

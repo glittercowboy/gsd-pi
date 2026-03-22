@@ -85,7 +85,11 @@ test("fix: google-search uses OAuth if GEMINI_API_KEY is missing", async () => {
 
 test("google-search warns if NO authentication is present", async () => {
   const originalKey = process.env.GEMINI_API_KEY;
+  const origBrave = process.env.BRAVE_API_KEY;
+  const origTavily = process.env.TAVILY_API_KEY;
   delete process.env.GEMINI_API_KEY;
+  delete process.env.BRAVE_API_KEY;
+  delete process.env.TAVILY_API_KEY;
 
   try {
     const pi = createMockPI();
@@ -106,7 +110,64 @@ test("google-search warns if NO authentication is present", async () => {
     assert.equal(result.isError, true);
     assert.ok(result.content[0].text.includes("No authentication found"));
   } finally {
-    process.env.GEMINI_API_KEY = originalKey;
+    if (originalKey) process.env.GEMINI_API_KEY = originalKey;
+    else delete process.env.GEMINI_API_KEY;
+    if (origBrave) process.env.BRAVE_API_KEY = origBrave;
+    else delete process.env.BRAVE_API_KEY;
+    if (origTavily) process.env.TAVILY_API_KEY = origTavily;
+    else delete process.env.TAVILY_API_KEY;
+  }
+});
+
+test("#2027: google-search does NOT warn when TAVILY_API_KEY is set", async () => {
+  const originalKey = process.env.GEMINI_API_KEY;
+  const origTavily = process.env.TAVILY_API_KEY;
+  delete process.env.GEMINI_API_KEY;
+  process.env.TAVILY_API_KEY = "tvly-test-key";
+
+  try {
+    const pi = createMockPI();
+    googleSearchExtension(pi as any);
+
+    const notifications: any[] = [];
+    const mockCtx = {
+      ui: { notify(msg: string, level: string) { notifications.push({ msg, level }); } },
+      modelRegistry: mockModelRegistry(undefined),
+    };
+
+    await pi.fire("session_start", {}, mockCtx);
+    assert.equal(notifications.length, 0, "Should NOT warn about Google auth when Tavily is configured");
+  } finally {
+    if (originalKey) process.env.GEMINI_API_KEY = originalKey;
+    else delete process.env.GEMINI_API_KEY;
+    if (origTavily) process.env.TAVILY_API_KEY = origTavily;
+    else delete process.env.TAVILY_API_KEY;
+  }
+});
+
+test("#2027: google-search does NOT warn when BRAVE_API_KEY is set", async () => {
+  const originalKey = process.env.GEMINI_API_KEY;
+  const origBrave = process.env.BRAVE_API_KEY;
+  delete process.env.GEMINI_API_KEY;
+  process.env.BRAVE_API_KEY = "test-brave-key";
+
+  try {
+    const pi = createMockPI();
+    googleSearchExtension(pi as any);
+
+    const notifications: any[] = [];
+    const mockCtx = {
+      ui: { notify(msg: string, level: string) { notifications.push({ msg, level }); } },
+      modelRegistry: mockModelRegistry(undefined),
+    };
+
+    await pi.fire("session_start", {}, mockCtx);
+    assert.equal(notifications.length, 0, "Should NOT warn about Google auth when Brave is configured");
+  } finally {
+    if (originalKey) process.env.GEMINI_API_KEY = originalKey;
+    else delete process.env.GEMINI_API_KEY;
+    if (origBrave) process.env.BRAVE_API_KEY = origBrave;
+    else delete process.env.BRAVE_API_KEY;
   }
 });
 

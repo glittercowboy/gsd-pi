@@ -423,6 +423,9 @@ export default function (pi: ExtensionAPI) {
 	pi.on("session_start", async (_event, ctx) => {
 		if (process.env.GEMINI_API_KEY) return;
 
+		// Don't warn about Google auth when the user has another search provider configured (#2027)
+		if (process.env.BRAVE_API_KEY || process.env.TAVILY_API_KEY) return;
+
 		const hasOAuth = await ctx.modelRegistry.authStorage.hasAuth("google-gemini-cli");
 		if (!hasOAuth) {
 			ctx.ui.notify(

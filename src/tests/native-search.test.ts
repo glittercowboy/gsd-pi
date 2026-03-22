@@ -406,9 +406,13 @@ test("model_select shows 'Native Anthropic web search active' for Anthropic prov
   );
 });
 
-test("model_select shows warning for non-Anthropic without Brave key", async () => {
-  const originalKey = process.env.BRAVE_API_KEY;
+test("model_select shows warning for non-Anthropic without any search key", async () => {
+  const origBrave = process.env.BRAVE_API_KEY;
+  const origTavily = process.env.TAVILY_API_KEY;
+  const origGemini = process.env.GEMINI_API_KEY;
   delete process.env.BRAVE_API_KEY;
+  delete process.env.TAVILY_API_KEY;
+  delete process.env.GEMINI_API_KEY;
 
   try {
     const pi = createMockPI();
@@ -422,14 +426,18 @@ test("model_select shows warning for non-Anthropic without Brave key", async () 
     });
 
     const warning = pi.notifications.find((n) => n.level === "warning");
-    assert.ok(warning, "Should show warning for non-Anthropic without Brave key");
+    assert.ok(warning, "Should show warning for non-Anthropic without any search key");
     assert.ok(
       warning!.message.includes("Anthropic"),
       `Warning should mention Anthropic — got: ${warning!.message}`
     );
   } finally {
-    if (originalKey) process.env.BRAVE_API_KEY = originalKey;
+    if (origBrave) process.env.BRAVE_API_KEY = origBrave;
     else delete process.env.BRAVE_API_KEY;
+    if (origTavily) process.env.TAVILY_API_KEY = origTavily;
+    else delete process.env.TAVILY_API_KEY;
+    if (origGemini) process.env.GEMINI_API_KEY = origGemini;
+    else delete process.env.GEMINI_API_KEY;
   }
 });
 
