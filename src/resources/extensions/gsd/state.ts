@@ -102,6 +102,15 @@ interface StateCache {
 const CACHE_TTL_MS = 100;
 let _stateCache: StateCache | null = null;
 
+// ── Telemetry: track engine vs markdown state derivation (TOOL-03) ────────
+let _telemetry = { engineDeriveCount: 0, markdownDeriveCount: 0 };
+export function getDeriveTelemetry(): { engineDeriveCount: number; markdownDeriveCount: number } {
+  return { ..._telemetry };
+}
+export function resetDeriveTelemetry(): void {
+  _telemetry = { engineDeriveCount: 0, markdownDeriveCount: 0 };
+}
+
 /**
  * Invalidate the deriveState() cache. Call this whenever planning files on disk
  * may have changed (unit completion, merges, file writes).
@@ -170,11 +179,29 @@ export async function deriveState(basePath: string): Promise<GSDState> {
     return _stateCache.result;
   }
 
+  // Engine bridge (Phase 1 dual-write — ENG-03, TOOL-02)
+  // When WorkflowEngine is available (v5 schema), bypass the 868-line markdown parse
+  // and return typed state directly from DB in <1ms.
+  try {
+    const { isEngineAvailable, getEngine } = await import('./workflow-engine.js');
+    if (isEngineAvailable(basePath)) {
+      const engine = getEngine(basePath);
+      const engineState = engine.deriveState();
+      // Cache the engine result with the same TTL as the markdown path
+      _stateCache = { basePath, result: engineState, timestamp: Date.now() };
+      _telemetry.engineDeriveCount++;
+      return engineState;
+    }
+  } catch {
+    // Fall through to legacy markdown parse — engine not yet initialized or import failed
+  }
+
   const stopTimer = debugTime("derive-state-impl");
   const result = await _deriveStateImpl(basePath);
   stopTimer({ phase: result.phase, milestone: result.activeMilestone?.id });
   debugCount("deriveStateCalls");
   _stateCache = { basePath, result, timestamp: Date.now() };
+  _telemetry.markdownDeriveCount++;
   return result;
 }
 
