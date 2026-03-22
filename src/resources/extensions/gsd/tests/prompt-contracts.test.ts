@@ -57,3 +57,11 @@ test("guided-resume-task prompt preserves recovery state until work is supersede
   assert.match(prompt, /successfully completed or you have written a newer summary\/continue artifact/i);
   assert.doesNotMatch(prompt, /Delete the continue file after reading it/i);
 });
+
+test("forensics prompt searches existing issues before offering to create a new one", () => {
+  const prompt = readPrompt("forensics");
+  assert.match(prompt, /Before offering to create a new issue, search for existing matches/i);
+  assert.match(prompt, /gh search issues/i);
+  assert.match(prompt, /These existing issues look related/i);
+  assert.match(prompt, /Would you like me to create a GitHub issue for this on gsd-build\/gsd-2\?/i);
+});

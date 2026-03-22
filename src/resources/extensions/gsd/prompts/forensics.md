@@ -103,9 +103,16 @@ Explain your findings:
 
 {{dedupSection}}
 
-Then **offer GitHub issue creation**: "Would you like me to create a GitHub issue for this on gsd-build/gsd-2?"
+Before offering to create a new issue, search for existing matches:
+
+1. Derive 2–3 search keywords from your findings: the primary affected module, the defect type, and the key error pattern if one exists.
+2. Run `gh search issues "<keywords>" -R gsd-build/gsd-2 --state open -L 5` for 1–2 focused queries.
+3. If related open issues exist, show them with issue number, title, and URL, then ask: "These existing issues look related — would you like to comment on one of these instead, or create a new issue?"
+4. If no relevant matches exist, then **offer GitHub issue creation**: "Would you like me to create a GitHub issue for this on gsd-build/gsd-2?"
 
 **CRITICAL: The `github_issues` tool ONLY targets the current user's repository — it has no `repo` parameter. You MUST use `gh issue create --repo gsd-build/gsd-2` via the `bash` tool to file on the correct repo. Do NOT use the `github_issues` tool for this.**
+
+If the user chooses a new issue, create it using `gh issue create` with this format:
 
 If yes, create using the `bash` tool:
 
