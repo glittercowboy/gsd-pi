@@ -7,6 +7,7 @@ depends_on: [3-01]
 files_modified:
   - src/resources/extensions/gsd/workflow-events.ts
   - src/resources/extensions/gsd/engine/compaction.test.ts
+  - src/resources/extensions/gsd/workflow-commands.ts
 autonomous: true
 requirements: [EVT-03]
 
@@ -16,6 +17,7 @@ must_haves:
     - "Active event-log.jsonl retains only events from other milestones after compaction"
     - "Archived log file is named event-log-{milestoneId}.jsonl.archived and kept on disk"
     - "Compaction is safe to call when no events match the milestone (returns 0 archived)"
+    - "Compaction is triggered automatically when completeSlice detects all slices in a milestone are done"
   artifacts:
     - path: "src/resources/extensions/gsd/workflow-events.ts"
       provides: "compactMilestoneEvents() function"
@@ -25,16 +27,16 @@ must_haves:
       min_lines: 50
   key_links:
     - from: "src/resources/extensions/gsd/workflow-events.ts"
-      to: "Milestone completion flow"
-      via: "compactMilestoneEvents called when milestone status='done'"
+      to: "src/resources/extensions/gsd/workflow-commands.ts"
+      via: "compactMilestoneEvents called from _completeSlice when milestoneProgress reaches 100%"
       pattern: "compactMilestoneEvents"
 ---
 
 <objective>
-Add event log compaction to workflow-events.ts. When a milestone is completed, its events are archived to a separate file and removed from the active event log, keeping fork-point detection fast.
+Add event log compaction to workflow-events.ts. When a milestone is completed, its events are archived to a separate file and removed from the active event log, keeping fork-point detection fast. Wire compaction into the milestone completion path so it triggers automatically.
 
 Purpose: Keep the active event log bounded as milestones complete (EVT-03). Archived logs are preserved on disk for forensics.
-Output: compactMilestoneEvents() added to workflow-events.ts, compaction.test.ts.
+Output: compactMilestoneEvents() added to workflow-events.ts, wired into completeSlice milestone-completion check, compaction.test.ts.
 </objective>
 
 <execution_context>
@@ -70,6 +72,14 @@ export function findForkPoint(logA: WorkflowEvent[], logB: WorkflowEvent[]): num
 From src/resources/extensions/gsd/atomic-write.ts:
 ```typescript
 export function atomicWriteSync(filePath: string, content: string): void;
+```
+
+From src/resources/extensions/gsd/workflow-commands.ts (_completeSlice and milestoneProgress):
+```typescript
+// _completeSlice updates the slice, then computes milestone progress:
+export function _milestoneProgress(db: DbAdapter, milestoneId: string): { total: number; done: number; pct: number };
+// When pct === 100, all slices in the milestone are done.
+// This is the trigger point for compaction.
 ```
 </interfaces>
 </context>
@@ -179,16 +189,71 @@ Run tests — all 7 must pass.
   <done>compactMilestoneEvents() archives milestone events to .jsonl.archived file, truncates active log to remaining events. Safe for empty logs and no-match milestones. All 7 tests pass.</done>
 </task>
 
+<task type="auto">
+  <name>Task 2: Wire compaction into milestone completion path</name>
+  <files>src/resources/extensions/gsd/workflow-commands.ts</files>
+  <read_first>
+    src/resources/extensions/gsd/workflow-commands.ts (full file — find _completeSlice and _milestoneProgress)
+    src/resources/extensions/gsd/workflow-events.ts (compactMilestoneEvents from Task 1)
+  </read_first>
+  <action>
+Wire `compactMilestoneEvents()` into the milestone completion detection path in `workflow-commands.ts`.
+
+The `_completeSlice` function already computes milestone progress after completing a slice. When all slices in a milestone are done (pct === 100), this is the trigger point for compaction.
+
+1. Add import at top of workflow-commands.ts:
+```typescript
+import { compactMilestoneEvents } from "./workflow-events.js";
+```
+
+2. Find the `_completeSlice` function. After it computes milestone progress (the `_milestoneProgress` call), add compaction trigger:
+```typescript
+    // Event log compaction (EVT-03, D-16):
+    // When all slices in milestone are done, archive the milestone's events
+    // to keep the active event log bounded for fork-point detection.
+    const progress = _milestoneProgress(db, milestoneId);
+    if (progress.pct === 100) {
+      try {
+        // basePath is derived from the db path — the db is at {basePath}/.gsd/gsd.db
+        // The engine passes basePath to workflow-commands functions.
+        // If basePath is not directly available, extract it from the db filename.
+        compactMilestoneEvents(basePath, milestoneId);
+      } catch (err) {
+        // Non-fatal: compaction failure should not block slice completion
+        process.stderr.write(`event-compaction: failed for ${milestoneId}: ${(err as Error).message}\n`);
+      }
+    }
+```
+
+IMPORTANT: Check how `_completeSlice` gets access to basePath. If it only receives `db: DbAdapter`, you need to either:
+a. Add `basePath` as a parameter to `_completeSlice` (and update the caller in workflow-engine.ts), OR
+b. Extract basePath from the db adapter's filename property (e.g., `db.name` gives the db file path, strip `.gsd/gsd.db` suffix)
+
+Choose approach (b) if it avoids touching workflow-engine.ts. Choose (a) if the db adapter doesn't expose the file path.
+  </action>
+  <verify>
+    <automated>node --import ./src/resources/extensions/gsd/tests/resolve-ts.mjs --experimental-strip-types --test src/resources/extensions/gsd/engine/*.test.ts</automated>
+  </verify>
+  <acceptance_criteria>
+    - src/resources/extensions/gsd/workflow-commands.ts contains `compactMilestoneEvents(`
+    - src/resources/extensions/gsd/workflow-commands.ts contains `import { compactMilestoneEvents }` or `import.*compactMilestoneEvents` pattern
+    - src/resources/extensions/gsd/workflow-commands.ts contains `progress.pct === 100` or equivalent milestone-complete check near the compaction call
+    - All engine tests still pass (no regressions)
+  </acceptance_criteria>
+  <done>compactMilestoneEvents() is called automatically when completeSlice detects all slices in a milestone are done (pct === 100). Compaction failure is non-fatal. All tests pass.</done>
+</task>
+
 </tasks>
 
 <verification>
 - `node --import ./src/resources/extensions/gsd/tests/resolve-ts.mjs --experimental-strip-types --test src/resources/extensions/gsd/engine/compaction.test.ts` — all 7 compaction tests pass
 - `node --import ./src/resources/extensions/gsd/tests/resolve-ts.mjs --experimental-strip-types --test src/resources/extensions/gsd/engine/*.test.ts` — all engine tests pass (no regressions)
 - `grep "compactMilestoneEvents" src/resources/extensions/gsd/workflow-events.ts` — returns match
+- `grep "compactMilestoneEvents" src/resources/extensions/gsd/workflow-commands.ts` — returns match (wiring confirmed)
 </verification>
 
 <success_criteria>
-Event log compaction archives milestone events on completion, keeping active log bounded. Archived logs preserved on disk. All tests pass.
+Event log compaction archives milestone events on completion, keeping active log bounded. Compaction triggered automatically when all slices in a milestone reach done status. Archived logs preserved on disk. All tests pass.
 </success_criteria>
 
 <output>

@@ -8,6 +8,8 @@ files_modified:
   - src/resources/extensions/gsd/workflow-migration.ts
   - src/resources/extensions/gsd/engine/migration.test.ts
   - src/resources/extensions/gsd/state.ts
+  - src/resources/extensions/gsd/commands/handlers/ops.ts
+  - src/resources/extensions/gsd/commands/catalog.ts
 autonomous: true
 requirements: [MIG-01, MIG-02, MIG-03]
 
@@ -18,6 +20,8 @@ must_haves:
     - "deriveState() auto-triggers migration when engine tables are empty and markdown exists"
     - "After migration, deriveState() returns engine state with no markdown parsing in the call path"
     - "A synthetic 'migrate' event is written to event log for fork-point baseline"
+    - "Running `gsd migrate` from the CLI explicitly triggers migrateFromMarkdown as a failsafe"
+    - "After migration, engine deriveState() and legacy deriveStateLegacy() produce equivalent output (discrepancies logged)"
   artifacts:
     - path: "src/resources/extensions/gsd/workflow-migration.ts"
       provides: "migrateFromMarkdown(), needsAutoMigration()"
@@ -34,13 +38,17 @@ must_haves:
       to: "src/resources/extensions/gsd/files.ts"
       via: "import parsePlan, parseRoadmap for markdown parsing"
       pattern: "parsePlan|parseRoadmap"
+    - from: "src/resources/extensions/gsd/commands/handlers/ops.ts"
+      to: "src/resources/extensions/gsd/workflow-migration.ts"
+      via: "dynamic import of migrateFromMarkdown for gsd migrate CLI command"
+      pattern: "workflow-migration"
 ---
 
 <objective>
-Build `gsd migrate` functionality: a workflow-migration.ts module that converts legacy markdown-only projects to engine state by parsing existing ROADMAP.md, *-PLAN.md, and *-SUMMARY.md files and inserting rows into engine tables. Wire auto-migration trigger into deriveState() and switch it to engine-only path after migration.
+Build `gsd migrate` functionality: a workflow-migration.ts module that converts legacy markdown-only projects to engine state by parsing existing ROADMAP.md, *-PLAN.md, and *-SUMMARY.md files and inserting rows into engine tables. Wire auto-migration trigger into deriveState() and switch it to engine-only path after migration. Register `gsd migrate` CLI command as explicit failsafe entry point (D-12).
 
 Purpose: Enable smooth onboarding of legacy projects (MIG-01, MIG-02) and eliminate markdown parsing from the deriveState() hot path (MIG-03).
-Output: workflow-migration.ts module, migration.test.ts, updated state.ts.
+Output: workflow-migration.ts module, migration.test.ts, updated state.ts, gsd migrate CLI command.
 </objective>
 
 <execution_context>
@@ -113,6 +121,20 @@ export function migrateSchema(): void;
 // DbAdapter.prepare(sql).run(...params) for raw inserts
 // DbAdapter.transaction(fn) for atomic operations
 ```
+
+From src/resources/extensions/gsd/commands/handlers/ops.ts (CLI registration pattern):
+```typescript
+// Existing pattern at line 149-152:
+if (trimmed === "migrate" || trimmed.startsWith("migrate ")) {
+    const { handleMigrate } = await import("../../migrate/command.js");
+    await handleMigrate(trimmed.replace(/^migrate\s*/, "").trim(), ctx, pi);
+    return true;
+}
+```
+NOTE: The existing `gsd migrate` command in ops.ts handles v1-to-v2 (.planning/ -> .gsd/) migration.
+The NEW engine migration (D-12) is a DIFFERENT operation: it migrates markdown-only .gsd/ projects
+to engine DB state. This needs a separate subcommand, e.g. `gsd migrate --engine` or a new entry
+like `gsd migrate-engine`, to avoid conflicting with the existing v1-to-v2 migration.
 </interfaces>
 </context>
 
@@ -142,10 +164,11 @@ export function migrateSchema(): void;
     - Test 10: migrateFromMarkdown handles orphaned summary files — logs warning, does not crash
     - Test 11: migrateFromMarkdown writes a synthetic "migrate" event to event-log.jsonl with actor="system", cmd="migrate"
     - Test 12: migrateFromMarkdown calls writeManifest after all inserts
+    - Test 13: After migrateFromMarkdown, engine deriveState() produces output with matching milestone/slice/task counts and statuses compared to parsing markdown directly (D-14 validation). Log any discrepancies to stderr but do not throw.
   </behavior>
   <action>
 RED phase:
-Create `src/resources/extensions/gsd/engine/migration.test.ts` with 12 test cases. Setup:
+Create `src/resources/extensions/gsd/engine/migration.test.ts` with 13 test cases. Setup:
 - Create temp dir with `.gsd/milestones/M001/` structure
 - Write sample ROADMAP.md with 2 slices (one done, one pending)
 - Write sample S01-PLAN.md with 3 tasks (2 done, 1 pending)
@@ -187,12 +210,19 @@ Exports:
   6. Call `writeManifest(basePath, db)` to write state-manifest.json
   7. Handle orphaned summaries (summary file exists but slice not found in ROADMAP) — `process.stderr.write()` warning, skip
 
+- `function validateMigration(basePath: string): { discrepancies: string[] }` (D-14)
+  1. Get engine via `getEngine(basePath)` and call `engine.deriveState()` for engine state
+  2. Parse markdown directly using existing parsers for legacy state
+  3. Compare milestone count, slice count, task count, and status distributions
+  4. Log each discrepancy to stderr via `process.stderr.write()`
+  5. Return array of discrepancy strings (empty = clean migration)
+
 Error handling for directory shapes:
 - No DB yet: The caller (deriveState) handles DB creation via openDatabase + initSchema
 - Stale DB (tables exist but empty): needsAutoMigration returns true → migrateFromMarkdown runs normally (tables empty, inserts succeed)
 - No markdown at all: `readdirSync(milestonesDir)` returns empty → no-op, return early with stderr message
 
-Run tests — all 12 must pass.
+Run tests — all 13 must pass.
   </action>
   <verify>
     <automated>node --import ./src/resources/extensions/gsd/tests/resolve-ts.mjs --experimental-strip-types --test src/resources/extensions/gsd/engine/migration.test.ts</automated>
@@ -200,6 +230,7 @@ Run tests — all 12 must pass.
   <acceptance_criteria>
     - src/resources/extensions/gsd/workflow-migration.ts contains `export function migrateFromMarkdown(`
     - src/resources/extensions/gsd/workflow-migration.ts contains `export function needsAutoMigration(`
+    - src/resources/extensions/gsd/workflow-migration.ts contains `export function validateMigration(`
     - src/resources/extensions/gsd/workflow-migration.ts contains `parsePlan` or `parseRoadmap` (reuses existing parsers)
     - src/resources/extensions/gsd/workflow-migration.ts contains `transaction(` (atomic inserts)
     - src/resources/extensions/gsd/workflow-migration.ts contains `writeManifest(`
@@ -208,7 +239,7 @@ Run tests — all 12 must pass.
     - src/resources/extensions/gsd/workflow-migration.ts contains `Copyright (c) 2026 Jeremy McSpadden`
     - src/resources/extensions/gsd/engine/migration.test.ts exits 0 with all tests passing
   </acceptance_criteria>
-  <done>Migration module parses markdown state, populates engine tables atomically, handles all directory shapes, writes synthetic migrate event for fork-point baseline, and calls writeManifest. All 12 tests pass.</done>
+  <done>Migration module parses markdown state, populates engine tables atomically, handles all directory shapes, writes synthetic migrate event for fork-point baseline, calls writeManifest, and validates engine vs legacy output (D-14). All 13 tests pass.</done>
 </task>
 
 <task type="auto">
@@ -249,9 +280,14 @@ try {
 
     // Auto-migration trigger (D-11): if engine tables empty AND markdown exists
     try {
-      const { needsAutoMigration, migrateFromMarkdown } = await import('./workflow-migration.js');
+      const { needsAutoMigration, migrateFromMarkdown, validateMigration } = await import('./workflow-migration.js');
       if (needsAutoMigration(basePath)) {
         migrateFromMarkdown(basePath);
+        // D-14: validate migration output, log discrepancies
+        const { discrepancies } = validateMigration(basePath);
+        if (discrepancies.length > 0) {
+          process.stderr.write(`workflow-migration: ${discrepancies.length} discrepancy(ies) after migration (engine state is authoritative)\n`);
+        }
       }
     } catch (migErr) {
       process.stderr.write(`workflow-migration: auto-migration failed: ${(migErr as Error).message}\n`);
@@ -271,6 +307,7 @@ try {
 Key points:
 - Migration try/catch is INSIDE the engine try block, not outside (Pitfall #4)
 - Migration failure does NOT prevent engine from returning state — it logs warning and continues
+- After migration, validateMigration() is called to compare engine vs legacy output (D-14)
 - After migration, the normal `engine.deriveState()` call runs and returns engine state
 - Legacy fallback (`_deriveStateImpl`) is preserved for cold start when engine isn't available at all
 
@@ -287,24 +324,108 @@ Also: rename `_deriveStateImpl` to `_deriveStateLegacy` per D-15 and add a comme
     - src/resources/extensions/gsd/state.ts contains `workflow-migration.js` (dynamic import)
     - src/resources/extensions/gsd/state.ts contains `needsAutoMigration(`
     - src/resources/extensions/gsd/state.ts contains `migrateFromMarkdown(`
+    - src/resources/extensions/gsd/state.ts contains `validateMigration(`
     - src/resources/extensions/gsd/state.ts contains `_deriveStateLegacy` (renamed from _deriveStateImpl per D-15)
     - src/resources/extensions/gsd/state.ts contains `disaster recovery` (D-15 comment)
     - All engine tests still pass
   </acceptance_criteria>
-  <done>deriveState() auto-triggers migration when engine tables empty, then returns engine state exclusively. Legacy markdown parser renamed to _deriveStateLegacy and preserved for disaster recovery only. All tests pass.</done>
+  <done>deriveState() auto-triggers migration when engine tables empty, validates output (D-14), then returns engine state exclusively. Legacy markdown parser renamed to _deriveStateLegacy and preserved for disaster recovery only. All tests pass.</done>
+</task>
+
+<task type="auto">
+  <name>Task 3: Register `gsd migrate --engine` CLI command (D-12)</name>
+  <files>src/resources/extensions/gsd/commands/handlers/ops.ts, src/resources/extensions/gsd/commands/handlers/core.ts</files>
+  <read_first>
+    src/resources/extensions/gsd/commands/handlers/ops.ts (existing migrate handler at lines 149-152)
+    src/resources/extensions/gsd/commands/handlers/core.ts (help text)
+    src/resources/extensions/gsd/workflow-migration.ts (migrateFromMarkdown, validateMigration from Task 1)
+  </read_first>
+  <action>
+The existing `gsd migrate` command handles v1-to-v2 (.planning/ to .gsd/) format migration. D-12 requires an explicit CLI entry point for the engine migration (markdown .gsd/ to engine DB state). Add this as a `--engine` flag on the existing migrate command.
+
+**ops.ts — modify the existing migrate handler (lines 149-152):**
+
+Change from:
+```typescript
+if (trimmed === "migrate" || trimmed.startsWith("migrate ")) {
+    const { handleMigrate } = await import("../../migrate/command.js");
+    await handleMigrate(trimmed.replace(/^migrate\s*/, "").trim(), ctx, pi);
+    return true;
+}
+```
+
+To:
+```typescript
+if (trimmed === "migrate" || trimmed.startsWith("migrate ")) {
+    const migrateArgs = trimmed.replace(/^migrate\s*/, "").trim();
+
+    // D-12: explicit engine migration failsafe
+    if (migrateArgs === "--engine" || migrateArgs.startsWith("--engine ")) {
+      try {
+        const { migrateFromMarkdown, validateMigration } = await import("../../workflow-migration.js");
+        ctx.ui.notify("Running engine migration (markdown -> engine DB)...", "info");
+        migrateFromMarkdown(process.cwd());
+        const { discrepancies } = validateMigration(process.cwd());
+        if (discrepancies.length > 0) {
+          ctx.ui.notify(
+            `Migration complete with ${discrepancies.length} discrepancy(ies):\n${discrepancies.map(d => `  - ${d}`).join("\n")}`,
+            "warning",
+          );
+        } else {
+          ctx.ui.notify("Engine migration complete — all entities migrated successfully.", "info");
+        }
+      } catch (err) {
+        ctx.ui.notify(
+          `Engine migration failed: ${err instanceof Error ? err.message : String(err)}`,
+          "error",
+        );
+      }
+      return true;
+    }
+
+    // Existing v1-to-v2 migration
+    const { handleMigrate } = await import("../../migrate/command.js");
+    await handleMigrate(migrateArgs, ctx, pi);
+    return true;
+}
+```
+
+**core.ts — update help text:**
+
+Find the line:
+```
+"  /gsd migrate        Migrate .planning/ (v1) to .gsd/ (v2) format",
+```
+
+Replace with:
+```
+"  /gsd migrate        Migrate .planning/ (v1) to .gsd/ (v2) format  [--engine]",
+```
+  </action>
+  <verify>
+    <automated>grep -n "migrate.*--engine" src/resources/extensions/gsd/commands/handlers/ops.ts src/resources/extensions/gsd/commands/handlers/core.ts</automated>
+  </verify>
+  <acceptance_criteria>
+    - src/resources/extensions/gsd/commands/handlers/ops.ts contains `--engine`
+    - src/resources/extensions/gsd/commands/handlers/ops.ts contains `migrateFromMarkdown(`
+    - src/resources/extensions/gsd/commands/handlers/ops.ts contains `validateMigration(`
+    - src/resources/extensions/gsd/commands/handlers/core.ts contains `--engine`
+  </acceptance_criteria>
+  <done>`gsd migrate --engine` explicitly triggers migrateFromMarkdown() + validateMigration() as a CLI failsafe (D-12). Help text updated. Original v1-to-v2 migration path preserved for `gsd migrate` without flags.</done>
 </task>
 
 </tasks>
 
 <verification>
-- `node --import ./src/resources/extensions/gsd/tests/resolve-ts.mjs --experimental-strip-types --test src/resources/extensions/gsd/engine/migration.test.ts` — all 12 migration tests pass
+- `node --import ./src/resources/extensions/gsd/tests/resolve-ts.mjs --experimental-strip-types --test src/resources/extensions/gsd/engine/migration.test.ts` — all 13 migration tests pass
 - `node --import ./src/resources/extensions/gsd/tests/resolve-ts.mjs --experimental-strip-types --test src/resources/extensions/gsd/engine/*.test.ts` — all engine tests pass
 - `grep "needsAutoMigration" src/resources/extensions/gsd/state.ts` — returns match
 - `grep "_deriveStateLegacy" src/resources/extensions/gsd/state.ts` — returns match
+- `grep "migrateFromMarkdown" src/resources/extensions/gsd/commands/handlers/ops.ts` — returns match (CLI wiring)
 </verification>
 
 <success_criteria>
-Migration converts legacy markdown to engine state. Auto-trigger in deriveState() handles the transparent migration. deriveState() uses engine exclusively after migration. All tests pass.
+Migration converts legacy markdown to engine state. Auto-trigger in deriveState() handles transparent migration with D-14 validation. deriveState() uses engine exclusively after migration. `gsd migrate --engine` CLI command available as explicit failsafe. All tests pass.
 </success_criteria>
 
 <output>

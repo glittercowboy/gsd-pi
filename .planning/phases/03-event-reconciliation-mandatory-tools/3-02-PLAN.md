@@ -7,6 +7,7 @@ depends_on: []
 files_modified:
   - src/resources/extensions/gsd/write-intercept.ts
   - src/resources/extensions/gsd/engine/write-intercept.test.ts
+  - src/resources/extensions/gsd/bootstrap/register-hooks.ts
   - src/resources/extensions/gsd/prompts/complete-milestone.md
   - src/resources/extensions/gsd/engine/prompt-migration.test.ts
 autonomous: true
@@ -16,7 +17,7 @@ must_haves:
   truths:
     - "Agent writes to .gsd/ authoritative state files are blocked with an error directing them to use engine tools"
     - "complete-milestone.md instructs agents to use engine tools for REQUIREMENTS.md updates instead of direct file writes"
-    - "All remaining prompts have been audited for residual state-file-write instructions"
+    - "No prompt file in prompts/ instructs agents to directly edit .gsd/STATE.md, .gsd/REQUIREMENTS.md, or PLAN.md checkboxes"
   artifacts:
     - path: "src/resources/extensions/gsd/write-intercept.ts"
       provides: "isBlockedStateFile() check and blocked-write error message"
@@ -26,8 +27,8 @@ must_haves:
       min_lines: 40
   key_links:
     - from: "src/resources/extensions/gsd/write-intercept.ts"
-      to: "Agent tool execution path"
-      via: "isBlockedStateFile() called before file write tools execute"
+      to: "src/resources/extensions/gsd/bootstrap/register-hooks.ts"
+      via: "isBlockedStateFile() called in tool_call handler for write and edit tool events"
       pattern: "isBlockedStateFile"
     - from: "src/resources/extensions/gsd/prompts/complete-milestone.md"
       to: "Engine tools"
@@ -36,10 +37,10 @@ must_haves:
 ---
 
 <objective>
-Build a write intercept module that blocks agent writes to .gsd/ authoritative state files with an error directing them to use engine tools. Complete prompt migration for complete-milestone.md and audit all remaining prompts for residual state-file-write instructions.
+Build a write intercept module that blocks agent writes to .gsd/ authoritative state files with an error directing them to use engine tools. Wire the intercept into the existing tool_call handler in register-hooks.ts so that both `write` and `edit` tool calls are checked. Complete prompt migration for complete-milestone.md and audit all remaining prompts for residual state-file-write instructions.
 
 Purpose: Prevent rogue agent file edits that bypass the engine (PMG-05) and complete the prompt migration to tool-call instructions (PMG-04).
-Output: write-intercept.ts module, updated prompts, content-assertion tests.
+Output: write-intercept.ts module, wired into register-hooks.ts, updated prompts, content-assertion tests.
 </objective>
 
 <execution_context>
@@ -67,6 +68,37 @@ Step 8: PROJECT.md is non-authoritative content — file write remains.
 
 From src/resources/extensions/gsd/engine/prompt-migration.test.ts (existing test file):
 Tests use content-assertion pattern: read prompt file, assert on string contents.
+
+From src/resources/extensions/gsd/bootstrap/register-hooks.ts (lines 118-134 — wiring target):
+```typescript
+pi.on("tool_call", async (event) => {
+    // ── Loop guard: block repeated identical tool calls ──
+    const loopCheck = checkToolCallLoop(event.toolName, event.input as Record<string, unknown>);
+    if (loopCheck.block) {
+      return { block: true, reason: loopCheck.reason };
+    }
+
+    if (!isToolCallEventType("write", event)) return;
+    const result = shouldBlockContextWrite(
+      event.toolName,
+      event.input.path,
+      getDiscussionMilestoneId(),
+      isDepthVerified(),
+      isQueuePhaseActive(),
+    );
+    if (result.block) return result;
+  });
+```
+The write-intercept check must be added INSIDE this existing tool_call handler, checking
+both "write" and "edit" tool events for blocked state file paths.
+
+From @gsd/pi-coding-agent extension types:
+```typescript
+// WriteToolCallEvent has input.path (string)
+// EditToolCallEvent has input.path (string)
+// isToolCallEventType("write", event) / isToolCallEventType("edit", event) for narrowing
+// Return { block: true, reason: string } to block the tool call
+```
 
 Prompt files to audit (all in src/resources/extensions/gsd/prompts/):
 complete-milestone.md, replan-slice.md, validate-milestone.md, research-slice.md,
@@ -168,7 +200,50 @@ Run tests — all 11 must pass.
 </task>
 
 <task type="auto">
-  <name>Task 2: Migrate complete-milestone.md + audit all remaining prompts</name>
+  <name>Task 2: Wire isBlockedStateFile into tool_call handler in register-hooks.ts</name>
+  <files>src/resources/extensions/gsd/bootstrap/register-hooks.ts</files>
+  <read_first>
+    src/resources/extensions/gsd/bootstrap/register-hooks.ts (full file — especially lines 118-134, the tool_call handler)
+    src/resources/extensions/gsd/write-intercept.ts (just created in Task 1)
+  </read_first>
+  <action>
+Modify the existing `pi.on("tool_call", ...)` handler in `src/resources/extensions/gsd/bootstrap/register-hooks.ts` to add an `isBlockedStateFile` check for both `write` and `edit` tool events.
+
+1. Add import at top of file:
+```typescript
+import { isBlockedStateFile, BLOCKED_WRITE_ERROR } from "../write-intercept.js";
+```
+
+2. Inside the existing `tool_call` handler (after the loop guard check at line ~123, BEFORE the `shouldBlockContextWrite` check), add:
+```typescript
+    // ── State file write intercept (D-07, D-08 — PMG-05) ──
+    // Block agent writes/edits to authoritative .gsd/ state files.
+    if (isToolCallEventType("write", event) && isBlockedStateFile(event.input.path)) {
+      return { block: true, reason: BLOCKED_WRITE_ERROR };
+    }
+    if (isToolCallEventType("edit", event) && isBlockedStateFile(event.input.path)) {
+      return { block: true, reason: BLOCKED_WRITE_ERROR };
+    }
+```
+
+This must come BEFORE the existing `shouldBlockContextWrite` check, because `isBlockedStateFile` is a hard block (D-07) while `shouldBlockContextWrite` is context-specific.
+
+Note: `isToolCallEventType` is already imported in register-hooks.ts (used for the existing write check). Verify the import includes it.
+  </action>
+  <verify>
+    <automated>node --import ./src/resources/extensions/gsd/tests/resolve-ts.mjs --experimental-strip-types --test src/resources/extensions/gsd/engine/write-intercept.test.ts</automated>
+  </verify>
+  <acceptance_criteria>
+    - src/resources/extensions/gsd/bootstrap/register-hooks.ts contains `import { isBlockedStateFile, BLOCKED_WRITE_ERROR } from "../write-intercept.js"`
+    - src/resources/extensions/gsd/bootstrap/register-hooks.ts contains `isBlockedStateFile(event.input.path)`
+    - src/resources/extensions/gsd/bootstrap/register-hooks.ts contains `isToolCallEventType("edit", event)` (new — edit tool also blocked)
+    - The isBlockedStateFile check appears BEFORE shouldBlockContextWrite in the handler
+  </acceptance_criteria>
+  <done>isBlockedStateFile() is wired into the tool_call handler in register-hooks.ts. Both write and edit tool calls to authoritative .gsd/ state files are blocked with BLOCKED_WRITE_ERROR directing agents to use engine tools.</done>
+</task>
+
+<task type="auto">
+  <name>Task 3: Migrate complete-milestone.md + audit all remaining prompts</name>
   <files>src/resources/extensions/gsd/prompts/complete-milestone.md, src/resources/extensions/gsd/engine/prompt-migration.test.ts</files>
   <read_first>
     src/resources/extensions/gsd/prompts/complete-milestone.md
@@ -239,11 +314,12 @@ Add audit assertions:
 - `node --import ./src/resources/extensions/gsd/tests/resolve-ts.mjs --experimental-strip-types --test src/resources/extensions/gsd/engine/write-intercept.test.ts` — all write intercept tests pass
 - `node --import ./src/resources/extensions/gsd/tests/resolve-ts.mjs --experimental-strip-types --test src/resources/extensions/gsd/engine/prompt-migration.test.ts` — all prompt tests pass including new assertions
 - `grep -r "gsd_save_decision" src/resources/extensions/gsd/prompts/complete-milestone.md` — returns match
+- `grep "isBlockedStateFile" src/resources/extensions/gsd/bootstrap/register-hooks.ts` — returns match (wiring confirmed)
 - `node --import ./src/resources/extensions/gsd/tests/resolve-ts.mjs --experimental-strip-types --test src/resources/extensions/gsd/engine/*.test.ts` — all engine tests pass
 </verification>
 
 <success_criteria>
-Write intercept blocks agent writes to authoritative state files. complete-milestone.md migrated to engine tools. All prompts audited for residual state-file-write instructions. All tests pass.
+Write intercept blocks agent writes to authoritative state files via the tool_call handler in register-hooks.ts. Both write and edit tool calls are intercepted. complete-milestone.md migrated to engine tools. All prompts audited for residual state-file-write instructions. All tests pass.
 </success_criteria>
 
 <output>

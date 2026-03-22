@@ -65,13 +65,14 @@ Plans:
   3. `gsd migrate` successfully converts a legacy markdown-only project to engine state, handling all known .gsd/ directory shapes
   4. `deriveState()` queries WorkflowEngine exclusively — no markdown parsing in the call path
   5. Event log compaction archives milestone events on completion, keeping the active log bounded
-**Plans:** 4 plans
+**Plans:** 5 plans
 
 Plans:
 - [ ] 3-01-PLAN.md — Event-based reconciliation (reconcileWorktreeLogs replaces reconcileWorktreeDb)
 - [ ] 3-02-PLAN.md — Write intercept + remaining prompt migration (complete-milestone.md + audit)
 - [ ] 3-03-PLAN.md — Legacy markdown to engine migration (gsd migrate + auto-trigger in deriveState)
 - [ ] 3-04-PLAN.md — Event log compaction (archive milestone events on completion)
+- [ ] 3-05-PLAN.md — Conflict resolution CLI (gsd resolve-conflict command)
 
 ### Phase 4: Remove Parsing from Hot Path
 **Goal**: Doctor is reduced to infrastructure diagnostics only (git, disk, environment, provider, DB constraints, projection drift) and markdown parsers are moved to legacy/ for use only by `gsd migrate`
@@ -104,6 +105,6 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5
 |-------|----------------|--------|-----------|
 | 1. Engine Foundation + Team Infrastructure | 5/5 | Complete | 2026-03-22 |
 | 2. Sync Migration + Prompt Migration | 3/3 | Complete | 2026-03-22 |
-| 3. Event Reconciliation + Mandatory Tools | 0/4 | Not started | - |
+| 3. Event Reconciliation + Mandatory Tools | 0/5 | Not started | - |
 | 4. Remove Parsing from Hot Path | 0/TBD | Not started | - |
 | 5. Dead Code Cleanup | 0/TBD | Not started | - |
