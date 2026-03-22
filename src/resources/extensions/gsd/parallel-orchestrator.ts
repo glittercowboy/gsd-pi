@@ -669,7 +669,6 @@ function resolveGsdBin(): string | null {
   if (envBinPath) {
     const preferred = preferBuiltLoaderPath(envBinPath);
     if (existsSync(preferred)) return preferred;
-    if (existsSync(envBinPath)) return envBinPath;
   }
 
   // Fallback: try to find loader.js relative to this file
