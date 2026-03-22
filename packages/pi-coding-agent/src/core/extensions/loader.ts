@@ -569,6 +569,24 @@ function createExtensionAPI(
 }
 
 async function loadExtensionModule(extensionPath: string) {
+	// Pre-compiled extension loading: if the source is .ts and a sibling .js
+	// file exists with matching or newer mtime, use native import() to skip
+	// jiti JIT compilation entirely.  This is the biggest startup win for
+	// bundled extensions that have already been built.
+	if (extensionPath.endsWith(".ts")) {
+		const jsPath = extensionPath.replace(/\.ts$/, ".js");
+		try {
+			const [tsStat, jsStat] = [fs.statSync(extensionPath), fs.statSync(jsPath)];
+			if (jsStat.mtimeMs >= tsStat.mtimeMs) {
+				const module = await import(jsPath);
+				const factory = (module.default ?? module) as ExtensionFactory;
+				return typeof factory !== "function" ? undefined : factory;
+			}
+		} catch {
+			// .js file doesn't exist or stat failed — fall through to jiti
+		}
+	}
+
 	const jiti = createJiti(import.meta.url, {
 		moduleCache: false,
 		...getJitiOptions(),
