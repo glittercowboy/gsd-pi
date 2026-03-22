@@ -59,6 +59,7 @@ export function showHelp(ctx: ExtensionCommandContext): void {
     "  /gsd export         Export milestone/slice results  [--json|--markdown|--html] [--all]",
     "  /gsd cleanup        Remove merged branches or snapshots  [branches|snapshots]",
     "  /gsd migrate        Migrate .planning/ (v1) to .gsd/ (v2) format",
+    "  /gsd resolve-conflict  Resolve worktree merge conflicts  [--entity TYPE:ID --pick main|worktree]",
     "  /gsd remote         Control remote auto-mode  [slack|discord|status|disconnect]",
     "  /gsd inspect        Show SQLite DB diagnostics (schema, row counts, recent entries)",
     "  /gsd update         Update GSD to the latest version via npm",
