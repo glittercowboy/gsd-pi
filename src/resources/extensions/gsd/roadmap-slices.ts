@@ -217,18 +217,19 @@ export function parseRoadmapSlices(content: string): RoadmapSliceEntry[] {
  */
 function parseProseSliceHeaders(content: string): RoadmapSliceEntry[] {
   const slices: RoadmapSliceEntry[] = [];
-  // Match H1-H4 headers containing S<digits> with optional "Slice" prefix, bold markers,
-  // and optional checkmark completion marker before the slice ID.
+  // Match H1-H4 headers containing S<digits> with optional checkbox [x]/[ ],
+  // "Slice" prefix, bold markers, and optional checkmark completion marker before the slice ID.
   // Separator after the ID is flexible: colon, dash, em/en dash, dot, or just whitespace.
-  const headerPattern = /^#{1,4}\s+\*{0,2}(?:\u2713\s+)?(?:Slice\s+)?(S\d+)\*{0,2}[:\s.\u2014\u2013-]*\s*(.+)/gm;
+  const headerPattern = /^#{1,4}\s+\*{0,2}(?:\[([ xX])\]\s+)?(?:\u2713\s+)?(?:Slice\s+)?(S\d+)\*{0,2}[:\s.\u2014\u2013-]*\s*(.+)/gm;
   let match: RegExpExecArray | null;
 
   // Check for checkmark before the slice ID (e.g., "## checkmark S01: Title")
   const prefixCheckPattern = /^#{1,4}\s+\*{0,2}\u2713\s+/;
 
   while ((match = headerPattern.exec(content)) !== null) {
-    const id = match[1]!;
-    let title = match[2]!.trim().replace(/\*{1,2}$/g, "").trim(); // strip trailing bold markers
+    const checkboxState = match[1]; // undefined when no checkbox, "x"/"X" when done, " " when not done
+    const id = match[2]!;
+    let title = match[3]!.trim().replace(/\*{1,2}$/g, "").trim(); // strip trailing bold markers
     if (!title) continue; // skip if we only matched the ID with no title
 
     // Detect completion markers:
@@ -236,7 +237,7 @@ function parseProseSliceHeaders(content: string): RoadmapSliceEntry[] {
     // 2. Checkmark after separator: "## S01: checkmark Title"
     // 3. (Complete) suffix: "## S01: Title (Complete)"
     const line = match[0];
-    let done = prefixCheckPattern.test(line);
+    let done = checkboxState?.toLowerCase() === "x" || prefixCheckPattern.test(line);
 
     if (!done && title.startsWith("\u2713")) {
       done = true;

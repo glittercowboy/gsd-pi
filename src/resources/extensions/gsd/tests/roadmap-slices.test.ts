@@ -236,6 +236,100 @@ test("parseRoadmapSlices: ## Slices with valid checkboxes does NOT invoke prose 
   assert.equal(slices[0]?.done, true);
 });
 
+// ── Regression tests for #2053 ─────────────────────────────────────────────
+// parseProseSliceHeaders must handle [x]/[ ] checkbox markers before slice ID
+
+test("parseRoadmapSlices: prose headers with [x] checkbox detected as done (#2053)", () => {
+  const proseContent = `# M020: Auth Milestone
+
+### [x] S01: Per-User Auth
+Completed auth work.
+
+### [ ] S02: Passkey Support
+Not started yet.
+
+### S03: PWA Foundation
+No checkbox at all.
+`;
+  const slices = parseRoadmapSlices(proseContent);
+  assert.equal(slices.length, 3, "should parse all 3 slices including [x] prefixed ones");
+  assert.equal(slices[0]?.id, "S01");
+  assert.equal(slices[0]?.done, true, "S01 with [x] should be done");
+  assert.equal(slices[0]?.title, "Per-User Auth");
+  assert.equal(slices[1]?.id, "S02");
+  assert.equal(slices[1]?.done, false, "S02 with [ ] should not be done");
+  assert.equal(slices[1]?.title, "Passkey Support");
+  assert.equal(slices[2]?.id, "S03");
+  assert.equal(slices[2]?.done, false, "S03 without checkbox should not be done");
+});
+
+test("parseRoadmapSlices: prose headers with [X] uppercase checkbox detected as done (#2053)", () => {
+  const proseContent = `# M021: Test
+
+## [X] S01: Done Slice
+Complete.
+
+## [ ] S02: Pending Slice
+Not done.
+`;
+  const slices = parseRoadmapSlices(proseContent);
+  assert.equal(slices.length, 2);
+  assert.equal(slices[0]?.done, true, "uppercase [X] should be done");
+  assert.equal(slices[1]?.done, false);
+});
+
+test("parseRoadmapSlices: all slices with [x] should not return empty array (#2053)", () => {
+  // This is the exact scenario that causes the stuck plan-milestone loop:
+  // all slices done via [x] → parser returns [] → state machine enters pre-planning
+  const proseContent = `# M003: Feature Build
+
+### [x] S01: Setup Environment
+Done.
+
+### [x] S02: Build Core
+Done.
+
+### [x] S03: Polish UI
+Done.
+
+### [x] S04: Testing
+Done.
+
+### [x] S05: Deploy
+Done.
+`;
+  const slices = parseRoadmapSlices(proseContent);
+  assert.equal(slices.length, 5, "all 5 slices should be parsed even when all have [x]");
+  for (const s of slices) {
+    assert.equal(s.done, true, `${s.id} should be done`);
+  }
+});
+
+test("parseRoadmapSlices: [x] prose headers under ## Slices section triggers prose fallback (#2053)", () => {
+  // When ## Slices section exists but has H3 prose headers with [x], the checkbox
+  // parser finds nothing → falls through to prose fallback which must handle [x]
+  const proseUnderSlices = `# M010: My Milestone
+
+**Vision:** Ship it.
+
+## Slices
+
+### [x] S01: Setup Environment
+Done.
+
+### [ ] S02: Build Core
+In progress.
+
+### [x] S03: Polish UI
+Done.
+`;
+  const slices = parseRoadmapSlices(proseUnderSlices);
+  assert.equal(slices.length, 3, "should find 3 slices from [x] H3 prose headers under ## Slices");
+  assert.equal(slices[0]?.done, true, "S01 with [x] should be done");
+  assert.equal(slices[1]?.done, false, "S02 with [ ] should not be done");
+  assert.equal(slices[2]?.done, true, "S03 with [x] should be done");
+});
+
 test("parseRoadmapSlices: ## Slices with only non-matching lines returns prose fallback results", () => {
   const weirdContent = `# M020: Odd
 

@@ -33,14 +33,15 @@ export function markSliceDoneInRoadmap(basePath: string, mid: string, sid: strin
     `$1[x] **${sid}:`,
   );
 
-  // If checkbox format didn't match, try prose format: "## S01: Title" -> "## S01: \u2713 Title"
+  // If checkbox format didn't match, try prose format with optional [x]/[ ] before slice ID:
+  // "## S01: Title" or "## [ ] S01: Title" -> "## [x] S01: Title"
   if (updated === content) {
     updated = content.replace(
-      new RegExp(`^(#{1,4}\\s+(?:\\*{0,2})(?:Slice\\s+)?${sid}\\*{0,2}[:\\s.\\u2014\\u2013-]+\\s*)(.+)`, "m"),
+      new RegExp(`^(#{1,4}\\s+)(?:\\[[ ]\\]\\s+)?(?:\\*{0,2})(?:Slice\\s+)?${sid}\\*{0,2}[:\\s.\\u2014\\u2013-]+\\s*(.+)`, "m"),
       (match, prefix, title) => {
         // Already marked done — no-op
-        if (/^\u2713/.test(title) || /\(Complete\)\s*$/i.test(title)) return match;
-        return `${prefix}\u2713 ${title}`;
+        if (/\[x\]/i.test(match) || /^\u2713/.test(title) || /\(Complete\)\s*$/i.test(title)) return match;
+        return `${prefix}[x] ${sid}: ${title}`;
       },
     );
   }
