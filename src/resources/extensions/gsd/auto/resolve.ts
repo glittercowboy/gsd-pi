@@ -68,6 +68,11 @@ export function isSessionSwitchInFlight(): boolean {
   return _sessionSwitchInFlight;
 }
 
+/** Test helper: whether a unit resolve callback is currently installed. */
+export function _hasPendingResolve(): boolean {
+  return _currentResolve !== null;
+}
+
 // ─── resolveAgentEndCancelled ─────────────────────────────────────────────────
 
 /**

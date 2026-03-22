@@ -195,6 +195,19 @@ function makeSession() {
   } as any;
 }
 
+async function waitForPendingResolve(
+  hasPendingResolve: () => boolean,
+  timeoutMs = 1000,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!hasPendingResolve()) {
+    if (Date.now() > deadline) {
+      throw new Error("Timed out waiting for pending agent_end resolver");
+    }
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+}
+
 // ─── Tests ───────────────────────────────────────────────────────────────────
 
 test("runDispatch emits dispatch-match with correct rule and flowId", async () => {
@@ -276,7 +289,7 @@ test("runUnitPhase emits unit-start and unit-end with causedBy reference", async
   // Instead, we test that unit-start is emitted at the right point by examining
   // the event immediately after calling runUnitPhase with a session where
   // newSession resolves quickly, and we resolve the agent_end externally.
-  const { resolveAgentEnd, _resetPendingResolve } = await import("../auto-loop.js");
+  const { resolveAgentEnd, _hasPendingResolve, _resetPendingResolve } = await import("../auto-loop.js");
   _resetPendingResolve();
 
   const deps = makeMockDeps(capture);
@@ -299,8 +312,7 @@ test("runUnitPhase emits unit-start and unit-end with causedBy reference", async
   // Start runUnitPhase (it will block on runUnit internally)
   const unitPromise = runUnitPhase(ic, iterData, loopState);
 
-  // Give it time to reach the await inside runUnit
-  await new Promise(r => setTimeout(r, 50));
+  await waitForPendingResolve(_hasPendingResolve);
 
   // Resolve the agent_end
   resolveAgentEnd({ messages: [{ role: "assistant" }] });
@@ -331,7 +343,7 @@ test("runUnitPhase emits unit-start and unit-end with causedBy reference", async
 
 test("all events from a mock iteration have monotonically increasing seq and same flowId", async () => {
   const capture = createEventCapture();
-  const { resolveAgentEnd, _resetPendingResolve } = await import("../auto-loop.js");
+  const { resolveAgentEnd, _hasPendingResolve, _resetPendingResolve } = await import("../auto-loop.js");
   _resetPendingResolve();
 
   const deps = makeMockDeps(capture, {
@@ -358,7 +370,7 @@ test("all events from a mock iteration have monotonically increasing seq and sam
   // Phase 2: Unit execution
   const iterData = (dispatchResult as { action: "next"; data: IterationData }).data;
   const unitPromise = runUnitPhase(ic, iterData, loopState);
-  await new Promise(r => setTimeout(r, 50));
+  await waitForPendingResolve(_hasPendingResolve);
   resolveAgentEnd({ messages: [{ role: "assistant" }] });
   await unitPromise;
 

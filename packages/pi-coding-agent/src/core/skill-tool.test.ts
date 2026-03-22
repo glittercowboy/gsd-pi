@@ -136,11 +136,19 @@ describe("Skill tool", () => {
 
 	it("includes skill catalog in the default session prompt", async () => {
 		writeSkill(testDir, "swift-testing", "Use for Swift Testing assertions and verification patterns.");
+		writeSkill(
+			testDir,
+			"hidden-skill",
+			"Hidden skill description.",
+			"# Hidden Skill\nUse only via explicit /skill command.\n",
+			{ disableModelInvocation: true },
+		);
 		const session = await createSession();
 
 		assert.ok(session.getActiveToolNames().includes("Skill"));
 		assert.ok(session.systemPrompt.includes("<available_skills>"));
 		assert.ok(session.systemPrompt.includes("swift-testing"));
+		assert.ok(!session.systemPrompt.includes("hidden-skill"));
 	});
 
 	it("includes skill catalog in the session prompt when read is disabled but Skill is preserved", async () => {
