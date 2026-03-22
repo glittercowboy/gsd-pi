@@ -67,6 +67,7 @@ export function buildSystemPrompt(options: BuildSystemPromptOptions = {}): strin
 
 	const contextFiles = providedContextFiles ?? [];
 	const skills = providedSkills ?? [];
+	const tools = selectedTools ?? ["read", "bash", "edit", "write"];
 
 	if (customPrompt) {
 		let prompt = customPrompt;
@@ -85,7 +86,7 @@ export function buildSystemPrompt(options: BuildSystemPromptOptions = {}): strin
 		}
 
 		// Append skills section (only if Skill tool is available)
-		const customPromptHasSkill = !selectedTools || selectedTools.includes("Skill");
+		const customPromptHasSkill = tools.includes("Skill");
 		if (customPromptHasSkill && skills.length > 0) {
 			prompt += formatSkillsForPrompt(skills);
 		}
@@ -115,7 +116,6 @@ export function buildSystemPrompt(options: BuildSystemPromptOptions = {}): strin
 
 	// Build tools list based on selected tools.
 	// Built-ins use toolDescriptions. Custom tools can provide one-line snippets.
-	const tools = selectedTools || ["read", "bash", "edit", "write"];
 	const toolsList =
 		tools.length > 0
 			? tools
@@ -232,10 +232,8 @@ Pi documentation (read only when the user asks about pi itself, its SDK, extensi
 		}
 	}
 
-	// Append skills section (only if Skill tool is available).
-	// When selectedTools is unset (caller uses defaults), include skills — the runtime
-	// always adds Skill as a built-in, so omitting the catalog would be a mismatch.
-	const hasSkill = !selectedTools || tools.includes("Skill");
+	// Append skills section (only if Skill tool is available)
+	const hasSkill = tools.includes("Skill");
 	if (hasSkill && skills.length > 0) {
 		prompt += formatSkillsForPrompt(skills);
 	}

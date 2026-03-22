@@ -31,14 +31,12 @@ test("default prompt: includes skill catalog when Skill tool is present without 
 	assert.ok(prompt.includes("swift-testing"), "should contain the skill name");
 });
 
-test("default prompt: includes skill catalog when no selectedTools (defaults)", () => {
+test("default prompt: excludes skill catalog when no selectedTools (defaults)", () => {
 	const prompt = buildSystemPrompt({
 		skills: [sampleSkill],
 		cwd: "/project",
 	});
-	// When selectedTools is undefined, the runtime always adds Skill as a built-in,
-	// so the catalog should be included to match runtime behavior.
-	assert.ok(prompt.includes("<available_skills>"), "defaults should include catalog");
+	assert.ok(!prompt.includes("<available_skills>"), "defaults without Skill should exclude catalog");
 });
 
 test("default prompt: excludes skill catalog when neither Skill nor read is present", () => {
@@ -81,14 +79,13 @@ test("custom prompt: includes skill catalog when Skill tool is present without r
 	assert.ok(prompt.includes("swift-testing"), "should contain the skill name");
 });
 
-test("custom prompt: includes skill catalog when selectedTools is unset", () => {
+test("custom prompt: excludes skill catalog when selectedTools is unset", () => {
 	const prompt = buildSystemPrompt({
 		customPrompt: "You are a helpful assistant.",
 		skills: [sampleSkill],
 		cwd: "/project",
 	});
-	// selectedTools undefined → condition is !selectedTools = true → catalog included
-	assert.ok(prompt.includes("<available_skills>"), "should contain <available_skills>");
+	assert.ok(!prompt.includes("<available_skills>"), "defaults without Skill should exclude catalog");
 });
 
 test("custom prompt: excludes skill catalog when Skill is not in selectedTools", () => {

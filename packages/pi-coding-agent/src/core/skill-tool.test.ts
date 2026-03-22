@@ -86,4 +86,16 @@ describe("Skill tool", () => {
 		assert.match(message, /^Skill "nonexistent" not found\. Available skills: /);
 		assert.match(message, /swift-testing/);
 	});
+
+	it("includes skill catalog in the session prompt when read is disabled but Skill is preserved", async () => {
+		writeSkill(testDir, "swift-testing", "Use for Swift Testing assertions and verification patterns.");
+		const session = await createSession();
+
+		session.setActiveToolsByName(["bash"]);
+
+		assert.deepEqual(session.getActiveToolNames().sort(), ["Skill", "bash"]);
+		assert.ok(session.systemPrompt.includes("<available_skills>"));
+		assert.ok(session.systemPrompt.includes("swift-testing"));
+		assert.ok(!session.getActiveToolNames().includes("read"));
+	});
 });
