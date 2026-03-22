@@ -38,7 +38,7 @@ import { ensurePreferencesFile, serializePreferencesToFrontmatter } from "./comm
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-interface ForensicAnomaly {
+export interface ForensicAnomaly {
   type: "stuck-loop" | "cost-spike" | "timeout" | "missing-artifact" | "crash" | "doctor-issue" | "error-trace" | "journal-stuck" | "journal-guard-block" | "journal-rapid-iterations" | "journal-worktree-failure";
   severity: "info" | "warning" | "error";
   unitType?: string;

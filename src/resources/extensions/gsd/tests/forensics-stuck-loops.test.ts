@@ -9,7 +9,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import type { UnitMetrics } from "../metrics.js";
-import { detectStuckLoops } from "../forensics.js";
+import { detectStuckLoops, type ForensicAnomaly } from "../forensics.js";
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -29,14 +29,6 @@ function makeUnit(overrides: Partial<UnitMetrics> = {}): UnitMetrics {
   };
 }
 
-interface ForensicAnomaly {
-  type: string;
-  severity: string;
-  unitType?: string;
-  unitId?: string;
-  summary: string;
-  details: string;
-}
 
 // ── Tests ────────────────────────────────────────────────────────────────────
 
