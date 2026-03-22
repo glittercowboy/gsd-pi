@@ -8,9 +8,9 @@ import assert from "node:assert/strict";
 import {
   renderPlanContent,
   renderRoadmapContent,
-} from "../workflow-projections.js";
+} from "../workflow-projections.ts";
 
-import type { SliceRow, TaskRow, MilestoneRow } from "../workflow-engine.js";
+import type { SliceRow, TaskRow, MilestoneRow } from "../workflow-engine.ts";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────
 
