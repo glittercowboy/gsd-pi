@@ -91,3 +91,9 @@ The `activeEngineId` property follows the existing AutoSession maintenance rule:
 
 - `src/resources/extensions/gsd/auto/session.ts` — modified with `activeEngineId` property
 - `src/resources/extensions/gsd/tests/engine-interfaces-contract.test.ts` — new contract test file
+
+## Observability Impact
+
+- **activeEngineId in session snapshots**: `AutoSession.toJSON()` now includes `activeEngineId`, making the currently selected engine visible in diagnostic dumps and session JSON. A future agent can inspect `s.toJSON().activeEngineId` to determine which engine is driving the loop.
+- **Contract test as diagnostic artifact**: `engine-interfaces-contract.test.ts` itself is the inspection surface — running it verifies all four engine files have the expected shapes, the leaf-node constraint holds, and the resolver still throws. Any shape drift will produce a named assertion failure identifying the specific contract violation.
+- **Failure visibility**: If `activeEngineId` is removed from `reset()`, the existing `auto-session-encapsulation.test.ts` invariant 3 fails with an explicit message naming the missing property. If it's removed from `toJSON()`, the contract test's "appears in toJSON() output" assertion fails.

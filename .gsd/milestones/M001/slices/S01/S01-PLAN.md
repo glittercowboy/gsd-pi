@@ -42,7 +42,7 @@
   - Verify: `node -e "import('./src/resources/extensions/gsd/engine-types.ts')"` succeeds under `--experimental-strip-types`
   - Done when: all four files exist, parse cleanly, and `engine-types.ts` contains no `import` from `../` or `./` GSD paths
 
-- [ ] **T02: Add activeEngineId to AutoSession and write contract tests** `est:20m`
+- [x] **T02: Add activeEngineId to AutoSession and write contract tests** `est:20m`
   - Why: Completes the slice by wiring `activeEngineId` into session lifecycle and proving all contracts via source-level assertion tests (the established pattern)
   - Files: `src/resources/extensions/gsd/auto/session.ts`, `src/resources/extensions/gsd/tests/engine-interfaces-contract.test.ts`
   - Do: Add `activeEngineId: string | null = null` property to `AutoSession`. Add it to `reset()` (set to `null`) and `toJSON()`. Then write `engine-interfaces-contract.test.ts` following the same pattern as `auto-session-encapsulation.test.ts` — source-level regex assertions on all four new files plus runtime assertions on `AutoSession.activeEngineId` and `resolveEngine()` behavior.
