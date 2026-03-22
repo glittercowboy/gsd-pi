@@ -83,6 +83,8 @@ export class AutoSession {
   paused = false;
   stepMode = false;
   verbose = false;
+  activeEngineId: string | null = null;
+  activeRunDir: string | null = null;
   cmdCtx: ExtensionCommandContext | null = null;
 
   // ── Paths ────────────────────────────────────────────────────────────────
@@ -174,6 +176,8 @@ export class AutoSession {
     this.paused = false;
     this.stepMode = false;
     this.verbose = false;
+    this.activeEngineId = null;
+    this.activeRunDir = null;
     this.cmdCtx = null;
 
     // Paths
@@ -226,6 +230,8 @@ export class AutoSession {
       paused: this.paused,
       stepMode: this.stepMode,
       basePath: this.basePath,
+      activeEngineId: this.activeEngineId,
+      activeRunDir: this.activeRunDir,
       currentMilestoneId: this.currentMilestoneId,
       currentUnit: this.currentUnit,
       completedUnits: this.completedUnits.length,

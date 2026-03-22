@@ -1,0 +1,60 @@
+# Example: Code Audit
+# Demonstrates: iterate (fan-out over file list), shell-command verification,
+# prompt-verify, and content-heuristic across a 3-step workflow.
+
+version: 1
+name: code-audit
+description: >-
+  Inventory TypeScript files, audit each one for quality issues,
+  and produce a consolidated report. Uses iterate to fan-out
+  audits across discovered files.
+
+steps:
+  - id: inventory
+    name: Inventory source files
+    prompt: >-
+      List all TypeScript source files in the project that should
+      be audited. Write one file path per line as a Markdown list
+      item (e.g. "- src/index.ts"). Save the list to inventory.md.
+    requires: []
+    produces:
+      - inventory.md
+    verify:
+      policy: content-heuristic
+
+  - id: audit-file
+    name: Audit individual file
+    prompt: >-
+      Review the file for code quality issues including unused imports,
+      missing error handling, type safety gaps, and potential bugs.
+      Document each finding with the line number and a recommended fix.
+      Append results to audit-results.md.
+    requires:
+      - inventory
+    context_from:
+      - inventory
+    produces:
+      - audit-results.md
+    iterate:
+      source: inventory.md
+      pattern: "^- (.+\\.ts)$"
+    verify:
+      policy: shell-command
+      command: "test -f audit-results.md"
+
+  - id: report
+    name: Compile audit report
+    prompt: >-
+      Compile all individual file audit results into a single
+      comprehensive audit report. Group findings by severity
+      (critical, warning, info), include summary statistics,
+      and provide prioritized recommendations. Save to audit-report.md.
+    requires:
+      - audit-file
+    context_from:
+      - audit-file
+    produces:
+      - audit-report.md
+    verify:
+      policy: prompt-verify
+      prompt: "Does the report cover all audited files and group findings by severity? Answer PASS or FAIL."

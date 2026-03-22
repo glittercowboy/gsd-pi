@@ -1,0 +1,60 @@
+# Example: Blog Post Pipeline
+# Demonstrates: context chaining (context_from), parameters (params),
+# and content-heuristic verification across a 3-step linear chain.
+
+version: 1
+name: blog-post-pipeline
+description: >-
+  Research a topic, create an outline, and draft a blog post.
+  Uses params for topic/audience, context_from for chaining,
+  and content-heuristic verification at every step.
+
+params:
+  topic: "AI"
+  audience: "developers"
+
+steps:
+  - id: research
+    name: Research the topic
+    prompt: >-
+      Research the topic "{{ topic }}" for an audience of {{ audience }}.
+      Write detailed findings including key trends, important facts,
+      and relevant examples. Save the results to research.md.
+    requires: []
+    produces:
+      - research.md
+    verify:
+      policy: content-heuristic
+      minSize: 200
+
+  - id: outline
+    name: Create an outline
+    prompt: >-
+      Using the research findings, create a structured blog post outline
+      targeting {{ audience }}. Include section headings, key points
+      for each section, and a logical flow. Save to outline.md.
+    requires:
+      - research
+    context_from:
+      - research
+    produces:
+      - outline.md
+    verify:
+      policy: content-heuristic
+
+  - id: draft
+    name: Write the draft
+    prompt: >-
+      Write a complete blog post draft following the outline.
+      The post should be engaging for {{ audience }}, cover all
+      outlined sections, and include a compelling introduction
+      and conclusion. Save to draft.md.
+    requires:
+      - outline
+    context_from:
+      - outline
+    produces:
+      - draft.md
+    verify:
+      policy: content-heuristic
+      minSize: 500

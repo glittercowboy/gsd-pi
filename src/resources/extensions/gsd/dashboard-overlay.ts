@@ -38,6 +38,7 @@ function unitLabel(type: string): string {
     case "triage-captures": return "Triage";
     case "quick-task": return "Quick Task";
     case "replan-slice": return "Replan";
+    case "custom-step": return "Workflow Step";
     default: return type;
   }
 }

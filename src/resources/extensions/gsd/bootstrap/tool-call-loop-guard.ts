@@ -24,8 +24,15 @@ let enabled = true;
 function hashToolCall(toolName: string, args: Record<string, unknown>): string {
   const h = createHash("sha256");
   h.update(toolName);
-  // Sort keys for deterministic hashing regardless of object key order
-  h.update(JSON.stringify(args, Object.keys(args).sort()));
+  // Sort keys recursively for deterministic hashing regardless of object key order
+  h.update(JSON.stringify(args, (_key, value) =>
+    value && typeof value === "object" && !Array.isArray(value)
+      ? Object.keys(value).sort().reduce<Record<string, unknown>>((o, k) => {
+          o[k] = value[k];
+          return o;
+        }, {})
+      : value
+  ));
   return h.digest("hex").slice(0, 16);
 }
 

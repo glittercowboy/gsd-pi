@@ -1,0 +1,32 @@
+version: 1
+name: my-workflow
+# description: A brief description of what this workflow accomplishes.
+
+# params:
+#   topic: "default value"
+#   target: "another default"
+
+steps:
+  - id: step-one
+    name: First step
+    prompt: "Describe what this step should accomplish."
+    # requires: []
+    produces:
+      - output.md
+    # context_from:
+    #   - some-prior-step
+    # verify:
+    #   policy: content-heuristic
+    #   minSize: 100
+    #   pattern: "## Summary"
+    # verify:
+    #   policy: shell-command
+    #   command: "test -f output.md"
+    # verify:
+    #   policy: prompt-verify
+    #   prompt: "Does the output meet quality standards? Answer PASS or FAIL."
+    # verify:
+    #   policy: human-review
+    # iterate:
+    #   source: file-list.txt
+    #   pattern: "^(.+)$"

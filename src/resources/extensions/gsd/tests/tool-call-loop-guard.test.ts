@@ -119,5 +119,50 @@ console.log('\n── Loop guard: arg order is normalized ──');
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// Nested/array arguments produce distinct hashes
+// ═══════════════════════════════════════════════════════════════════════════
+
+console.log('\n── Loop guard: nested args are not stripped ──');
+
+{
+  resetToolCallLoopGuard();
+
+  // Simulate ask_user_questions-style calls with different nested content
+  for (let i = 1; i <= 5; i++) {
+    const result = checkToolCallLoop('ask_user_questions', {
+      questions: [{ id: `q${i}`, question: `Question ${i}?` }],
+    });
+    assertTrue(result.block === false, `Nested call ${i} with unique content should be allowed`);
+    assertEq(getToolCallLoopCount(), 1, `Each unique nested call should reset count to 1`);
+  }
+
+  // Truly identical nested calls should still be detected
+  resetToolCallLoopGuard();
+  for (let i = 1; i <= 4; i++) {
+    checkToolCallLoop('ask_user_questions', {
+      questions: [{ id: 'same', question: 'Same?' }],
+    });
+  }
+  const blocked = checkToolCallLoop('ask_user_questions', {
+    questions: [{ id: 'same', question: 'Same?' }],
+  });
+  assertTrue(blocked.block === true, 'Identical nested calls should still be blocked');
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Nested object key order is normalized
+// ═══════════════════════════════════════════════════════════════════════════
+
+console.log('\n── Loop guard: nested key order is normalized ──');
+
+{
+  resetToolCallLoopGuard();
+
+  checkToolCallLoop('tool', { outer: { b: 2, a: 1 } });
+  const result = checkToolCallLoop('tool', { outer: { a: 1, b: 2 } });
+  assertEq(getToolCallLoopCount(), 2, 'Same nested args in different key order should match');
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 
 report();

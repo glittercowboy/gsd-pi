@@ -2327,6 +2327,11 @@ export class InteractiveMode {
 	}
 
 	private handleCtrlZ(): void {
+		// On Windows, SIGTSTP doesn't exist - Ctrl+Z is not supported
+		if (process.platform === "win32") {
+			return;
+		}
+
 		// Ignore SIGINT while suspended so Ctrl+C in the terminal does not
 		// kill the backgrounded process. The handler is removed on resume.
 		const ignoreSigint = () => {};

@@ -1,0 +1,66 @@
+# Example: Release Checklist
+# Demonstrates: diamond dependency pattern (version-bump and test-suite
+# both depend on changelog, publish depends on both), shell-command
+# verification, and human-review policy.
+
+version: 1
+name: release-checklist
+description: >-
+  Prepare a software release: generate changelog, bump version,
+  run tests, and publish release notes. Uses a diamond dependency
+  pattern where publish waits for both version-bump and test-suite.
+
+steps:
+  - id: changelog
+    name: Generate changelog
+    prompt: >-
+      Review recent commits and generate a changelog draft.
+      Group changes by category (features, fixes, breaking changes).
+      Follow Keep a Changelog format. Save to CHANGELOG-draft.md.
+    requires: []
+    produces:
+      - CHANGELOG-draft.md
+    verify:
+      policy: content-heuristic
+
+  - id: version-bump
+    name: Bump version number
+    prompt: >-
+      Based on the changelog, determine the appropriate semver bump
+      (major, minor, or patch). Write the new version number to
+      version.txt as a single line (e.g. "1.2.3").
+    requires:
+      - changelog
+    produces:
+      - version.txt
+    verify:
+      policy: shell-command
+      command: "grep -E '^[0-9]+\\.[0-9]+\\.[0-9]+$' version.txt"
+
+  - id: test-suite
+    name: Run test suite
+    prompt: >-
+      Run the full test suite and capture results. Include test
+      counts (passed, failed, skipped), execution time, and any
+      failure details. Save results to test-results.md.
+    requires:
+      - changelog
+    produces:
+      - test-results.md
+    verify:
+      policy: shell-command
+      command: "test -f test-results.md"
+
+  - id: publish
+    name: Publish release
+    prompt: >-
+      Compile the final release notes combining the changelog,
+      version number, and test results. Format for GitHub Releases
+      with proper Markdown. Save to release-notes.md.
+    requires:
+      - version-bump
+      - test-suite
+    produces:
+      - release-notes.md
+    verify:
+      policy: human-review

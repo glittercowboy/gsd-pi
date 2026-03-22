@@ -79,6 +79,7 @@ export function unitVerb(unitType: string): string {
     case "rewrite-docs": return "rewriting";
     case "reassess-roadmap": return "reassessing";
     case "run-uat": return "running UAT";
+    case "custom-step": return "executing workflow step";
     default: return unitType;
   }
 }
@@ -97,6 +98,7 @@ export function unitPhaseLabel(unitType: string): string {
     case "rewrite-docs": return "REWRITE";
     case "reassess-roadmap": return "REASSESS";
     case "run-uat": return "UAT";
+    case "custom-step": return "WORKFLOW";
     default: return unitType.toUpperCase();
   }
 }
