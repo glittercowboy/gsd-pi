@@ -46,6 +46,10 @@ export async function autoLoop(
   debugLog("autoLoop", { phase: "enter" });
   let iteration = 0;
   const loopState: LoopState = { recentUnits: [], stuckRecoveryAttempts: 0 };
+  // TODO (Fix M2): restore loopState.stuckRecoveryAttempts from persisted session state
+  // (e.g. .gsd/runtime/paused-session.json or a dedicated runtime/loop-state.json) so
+  // recovery attempt counts survive a process restart. When incrementing stuckRecoveryAttempts
+  // below (in phases.ts), persist the updated value back via the same mechanism.
   let consecutiveErrors = 0;
 
   while (s.active) {
@@ -93,26 +97,6 @@ export async function autoLoop(
         deps.emitJournalEvent({ ts: new Date().toISOString(), flowId, seq: nextSeq(), eventType: "sidecar-dequeue", data: { kind: sidecarItem.kind, unitType: sidecarItem.unitType, unitId: sidecarItem.unitId } });
       }
 
-      const sessionLockBase = deps.lockBase();
-      if (sessionLockBase) {
-        const lockStatus = deps.validateSessionLock(sessionLockBase);
-        if (!lockStatus.valid) {
-          debugLog("autoLoop", {
-            phase: "session-lock-invalid",
-            reason: lockStatus.failureReason ?? "unknown",
-            existingPid: lockStatus.existingPid,
-            expectedPid: lockStatus.expectedPid,
-          });
-          deps.handleLostSessionLock(ctx, lockStatus);
-          debugLog("autoLoop", {
-            phase: "exit",
-            reason: "session-lock-lost",
-            detail: lockStatus.failureReason ?? "unknown",
-          });
-          break;
-        }
-      }
-
       const ic: IterationContext = { ctx, pi, s, deps, prefs, iteration, flowId, nextSeq };
       deps.emitJournalEvent({ ts: new Date().toISOString(), flowId, seq: nextSeq(), eventType: "iteration-start", data: { iteration } });
       let iterData: IterationData;
@@ -129,6 +113,31 @@ export async function autoLoop(
         const guardsResult = await runGuards(ic, preData.mid);
         if (guardsResult.action === "break") break;
 
+        // ── Validate session lock immediately before dispatch (Fix L1) ──
+        // Positioned here — after all async pre-dispatch work (state derivation,
+        // worktree sync) — so the lock check reflects the most current timing.
+        // Checking at iteration start would allow long pre-dispatch async operations
+        // to run for minutes with no heartbeat validation.
+        const sessionLockBase = deps.lockBase();
+        if (sessionLockBase) {
+          const lockStatus = deps.validateSessionLock(sessionLockBase);
+          if (!lockStatus.valid) {
+            debugLog("autoLoop", {
+              phase: "session-lock-invalid",
+              reason: lockStatus.failureReason ?? "unknown",
+              existingPid: lockStatus.existingPid,
+              expectedPid: lockStatus.expectedPid,
+            });
+            deps.handleLostSessionLock(ctx, lockStatus);
+            debugLog("autoLoop", {
+              phase: "exit",
+              reason: "session-lock-lost",
+              detail: lockStatus.failureReason ?? "unknown",
+            });
+            break;
+          }
+        }
+
         // ── Phase 3: Dispatch ─────────────────────────────────────────────
         const dispatchResult = await runDispatch(ic, preData, loopState);
         if (dispatchResult.action === "break") break;
@@ -136,6 +145,27 @@ export async function autoLoop(
         iterData = dispatchResult.data;
       } else {
         // ── Sidecar path: use values from the sidecar item directly ──
+        // Fix H2b: Sidecar items bypass dispatch rules, so MAX_REWRITE_ATTEMPTS
+        // is never enforced on this path. Guard here to ensure sidecar-injected
+        // rewrite-docs units cannot cause unbounded rewrites.
+        if (sidecarItem.unitType === "rewrite-docs") {
+          const MAX_REWRITE_ATTEMPTS = 3; // mirrors auto-dispatch.ts constant
+          if (s.rewriteAttemptCount >= MAX_REWRITE_ATTEMPTS) {
+            debugLog("autoLoop", {
+              phase: "sidecar-rewrite-circuit-breaker",
+              rewriteAttemptCount: s.rewriteAttemptCount,
+              MAX_REWRITE_ATTEMPTS,
+            });
+            ctx.ui.notify(
+              `Skipping sidecar rewrite-docs: MAX_REWRITE_ATTEMPTS (${MAX_REWRITE_ATTEMPTS}) reached.`,
+              "warning",
+            );
+            s.rewriteAttemptCount = 0;
+            await new Promise((r) => setImmediate(r));
+            continue;
+          }
+          s.rewriteAttemptCount++;
+        }
         const sidecarState = await deps.deriveState(s.basePath);
         iterData = {
           unitType: sidecarItem.unitType,
@@ -211,15 +241,18 @@ export async function autoLoop(
         );
         break;
       } else if (consecutiveErrors === 2) {
-        // 2nd consecutive: try invalidating caches + re-deriving state
+        // 2nd consecutive: log extra warning — caches were already invalidated on 1st error
         ctx.ui.notify(
-          `Iteration error (attempt ${consecutiveErrors}): ${msg}. Invalidating caches and retrying.`,
+          `Iteration error (attempt ${consecutiveErrors}): ${msg}. Second consecutive error after cache invalidation.`,
+          "warning",
+        );
+      } else {
+        // 1st error: invalidate caches and retry — clear stale state before next attempt
+        ctx.ui.notify(
+          `Iteration error: ${msg}. Invalidating caches and retrying.`,
           "warning",
         );
         deps.invalidateAllCaches();
-      } else {
-        // 1st error: log and retry — transient failures happen
-        ctx.ui.notify(`Iteration error: ${msg}. Retrying.`, "warning");
       }
     }
   }

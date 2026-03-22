@@ -7,6 +7,7 @@
 import type { ExtensionContext } from "@gsd/pi-coding-agent";
 import { snapshotUnitMetrics } from "./metrics.js";
 import { saveActivityLog } from "./activity-log.js";
+import { debugLog } from "./debug-logger.js";
 
 export interface CloseoutOptions {
   promptCharCount?: number;
@@ -14,6 +15,44 @@ export interface CloseoutOptions {
   tier?: string;
   modelDowngraded?: boolean;
   continueHereFired?: boolean;
+}
+
+// ─── Memory Extraction FIFO Queue ───────────────────────────────────────────
+// Keeps at most 3 pending extractions so concurrent calls are queued rather
+// than silently dropped by the mutex guard in memory-extractor.ts (#M8).
+
+interface MemoryExtractionJob {
+  activityFile: string;
+  unitType: string;
+  unitId: string;
+  llmCallFn: import('./memory-extractor.js').LLMCallFn;
+}
+
+const _memoryQueue: MemoryExtractionJob[] = [];
+const MAX_MEMORY_QUEUE = 3;
+let _memoryQueueRunning = false;
+
+async function _drainMemoryQueue(): Promise<void> {
+  if (_memoryQueueRunning) return;
+  _memoryQueueRunning = true;
+  try {
+    while (_memoryQueue.length > 0) {
+      const job = _memoryQueue.shift()!;
+      try {
+        const { extractMemoriesFromUnit } = await import('./memory-extractor.js');
+        await extractMemoriesFromUnit(job.activityFile, job.unitType, job.unitId, job.llmCallFn);
+      } catch (err) {
+        debugLog("closeoutUnit", {
+          phase: "memory-extraction",
+          unitType: job.unitType,
+          unitId: job.unitId,
+          error: String(err),
+        });
+      }
+    }
+  } finally {
+    _memoryQueueRunning = false;
+  }
 }
 
 /**
@@ -34,14 +73,37 @@ export async function closeoutUnit(
 
   if (activityFile) {
     try {
-      const { buildMemoryLLMCall, extractMemoriesFromUnit } = await import('./memory-extractor.js');
+      const { buildMemoryLLMCall } = await import('./memory-extractor.js');
       const llmCallFn = buildMemoryLLMCall(ctx);
       if (llmCallFn) {
-        extractMemoriesFromUnit(activityFile, unitType, unitId, llmCallFn).catch((err) => {
-          if (process.env.GSD_DEBUG) console.error(`[gsd] memory extraction failed for ${unitType}/${unitId}:`, err);
-        });
+        if (_memoryQueue.length < MAX_MEMORY_QUEUE) {
+          _memoryQueue.push({ activityFile, unitType, unitId, llmCallFn });
+          // Drain asynchronously — never awaited, never throws to caller
+          _drainMemoryQueue().catch((err) => {
+            debugLog("closeoutUnit", {
+              phase: "memory-queue-drain",
+              unitType,
+              unitId,
+              error: String(err),
+            });
+          });
+        } else {
+          debugLog("closeoutUnit", {
+            phase: "memory-extraction",
+            unitType,
+            unitId,
+            warning: "memory extraction queue full — job dropped",
+          });
+        }
       }
-    } catch { /* non-fatal */ }
+    } catch (err) {
+      debugLog("closeoutUnit", {
+        phase: "memory-extraction-setup",
+        unitType,
+        unitId,
+        error: String(err),
+      });
+    }
   }
 
   return activityFile ?? undefined;

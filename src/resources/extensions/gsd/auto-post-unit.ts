@@ -273,16 +273,8 @@ export async function postUnitPreVerification(pctx: PostUnitContext, opts?: PreV
       debugLog("postUnit", { phase: "browser-teardown", error: String(e) });
     }
 
-    // Sync worktree state back to project root (skipped for lightweight sidecars)
-    if (!opts?.skipWorktreeSync && s.originalBasePath && s.originalBasePath !== s.basePath) {
-      try {
-        syncStateToProjectRoot(s.basePath, s.originalBasePath, s.currentMilestoneId);
-      } catch (e) {
-        debugLog("postUnit", { phase: "worktree-sync", error: String(e) });
-      }
-    }
-
-    // Rewrite-docs completion
+    // Rewrite-docs completion — must run BEFORE worktree sync so cleared
+    // override state is included in the synced copy (#H6b).
     if (s.currentUnit.type === "rewrite-docs") {
       try {
         await resolveAllOverrides(s.basePath);
@@ -290,6 +282,15 @@ export async function postUnitPreVerification(pctx: PostUnitContext, opts?: PreV
         ctx.ui.notify("Override(s) resolved — rewrite-docs completed.", "info");
       } catch (e) {
         debugLog("postUnit", { phase: "rewrite-docs-resolve", error: String(e) });
+      }
+    }
+
+    // Sync worktree state back to project root (skipped for lightweight sidecars)
+    if (!opts?.skipWorktreeSync && s.originalBasePath && s.originalBasePath !== s.basePath) {
+      try {
+        syncStateToProjectRoot(s.basePath, s.originalBasePath, s.currentMilestoneId);
+      } catch (e) {
+        debugLog("postUnit", { phase: "worktree-sync", error: String(e) });
       }
     }
 
@@ -376,6 +377,26 @@ export async function postUnitPreVerification(pctx: PostUnitContext, opts?: PreV
           const retryKey = `${s.currentUnit.type}:${s.currentUnit.id}`;
           const attempt = (s.verificationRetryCount.get(retryKey) ?? 0) + 1;
           s.verificationRetryCount.set(retryKey, attempt);
+
+          if (attempt > 2) {
+            // Max retries exceeded — give up and advance past the stuck unit
+            debugLog("postUnit", {
+              phase: "artifact-verify-retry",
+              unitType: s.currentUnit.type,
+              unitId: s.currentUnit.id,
+              attempt,
+              warning: "max verification retries exceeded — advancing past stuck unit",
+            });
+            s.verificationRetryCount.delete(retryKey);
+            debugLog("postUnit", {
+              phase: "artifact-verify-missing",
+              unitType: s.currentUnit.type,
+              unitId: s.currentUnit.id,
+              note: `Artifact permanently missing after ${attempt} attempts; unit will be treated as complete.`,
+            });
+            return "continue";
+          }
+
           s.pendingVerificationRetry = {
             unitId: s.currentUnit.id,
             failureContext: `Artifact verification failed: expected artifact for ${s.currentUnit.type} "${s.currentUnit.id}" was not found on disk after unit execution (attempt ${attempt}).`,

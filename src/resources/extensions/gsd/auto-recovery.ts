@@ -45,9 +45,12 @@ import {
   readFileSync,
   writeFileSync,
   unlinkSync,
+  renameSync,
+  statSync,
 } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { dirname, join } from "node:path";
+import { debugLog } from "./debug-logger.js";
 
 // ─── Artifact Resolution & Verification ───────────────────────────────────────
 
@@ -162,9 +165,10 @@ export function hasImplementationArtifacts(basePath: string): boolean {
     // implementation code (#1703).
     const implFiles = changedFiles.filter(f => !f.startsWith(".gsd/") && !f.startsWith(".gsd\\"));
     return implFiles.length > 0;
-  } catch {
-    // Non-fatal — if git operations fail, don't block the pipeline
-    return true;
+  } catch (err) {
+    // Fail-closed: if git check errors, assume no implementation artifacts to be safe
+    debugLog("auto-recovery", { phase: "has-impl-artifacts-error", error: String(err) });
+    return false;
   }
 }
 
@@ -264,12 +268,15 @@ export function verifyExpectedArtifact(
   }
 
   // Reactive-execute: verify that each dispatched task's summary exists.
-  // The unitId encodes the batch: "{mid}/{sid}/reactive+T02,T03"
+  // Fix L3: The unitId encodes the batch using JSON+encodeURIComponent:
+  //   "{mid}/{sid}/reactive+%5B%22T02%22%2C%22T03%22%5D"
+  // Legacy comma-split format "reactive+T02,T03" is still supported for
+  // unitIds written before this fix was deployed.
   if (unitType === "reactive-execute") {
     const parts = unitId.split("/");
     const mid = parts[0];
     const sidAndBatch = parts[1];
-    const batchPart = parts[2]; // "reactive+T02,T03"
+    const batchPart = parts[2]; // "reactive+<encoded>"
     if (!mid || !sidAndBatch || !batchPart) return false;
 
     const sid = sidAndBatch;
@@ -282,7 +289,15 @@ export function verifyExpectedArtifact(
       return summaryFiles.length > 0;
     }
 
-    const batchIds = batchPart.slice(plusIdx + 1).split(",").filter(Boolean);
+    const encoded = batchPart.slice(plusIdx + 1);
+    let batchIds: string[];
+    try {
+      // New format: JSON array encoded with encodeURIComponent
+      batchIds = JSON.parse(decodeURIComponent(encoded)) as string[];
+    } catch {
+      // Legacy format: comma-separated plain task IDs (e.g. "T02,T03")
+      batchIds = encoded.split(",").filter(Boolean);
+    }
     if (batchIds.length === 0) return false;
 
     const tDir = resolveTasksDir(base, mid, sid);
@@ -364,6 +379,9 @@ export function verifyExpectedArtifact(
           for (const task of plan.tasks) {
             const taskPlanFile = join(tasksDir, `${task.id}-PLAN.md`);
             if (!existsSync(taskPlanFile)) return false;
+            // Also verify file is non-empty
+            const stat = statSync(taskPlanFile);
+            if (stat.size === 0) return false;
           }
         }
       } catch {
@@ -509,13 +527,20 @@ export function skipExecuteTask(
     if (!targetDir) return false;
     if (!existsSync(targetDir)) mkdirSync(targetDir, { recursive: true });
     const summaryPath = join(targetDir, buildTaskFileName(tid, "SUMMARY"));
+    // If a partial summary already exists, preserve it before overwriting
+    let backupNote = "";
+    if (existsSync(summaryPath)) {
+      const backupPath = `${summaryPath}.backup`;
+      renameSync(summaryPath, backupPath);
+      backupNote = `\nPrevious partial summary was preserved at ${tid}-SUMMARY.md.backup`;
+    }
     const content = [
       `# BLOCKER — task skipped by auto-mode recovery`,
       ``,
       `Task \`${tid}\` in slice \`${sid}\` (milestone \`${mid}\`) failed to complete after ${reason} recovery exhausted ${maxAttempts} attempts.`,
       ``,
       `This placeholder was written by auto-mode so the pipeline can advance.`,
-      `Review this task manually and replace this file with a real summary.`,
+      `Review this task manually and replace this file with a real summary.${backupNote}`,
     ].join("\n");
     writeFileSync(summaryPath, content, "utf-8");
   }
@@ -704,6 +729,59 @@ export async function selfHealRuntimeRecords(
                 }
               }
             }
+          }
+        }
+      }
+
+      // Case 1: execute-task with SUMMARY + checkbox [x] but stale runtime record.
+      // If the task summary exists and the plan shows [x], the task is done —
+      // the record was left behind by a crash after completion.
+      if (unitType === "execute-task") {
+        const { milestone: mid, slice: sid, task: tid } = parseUnitId(unitId);
+        if (mid && sid && tid) {
+          const dir = resolveSlicePath(base, mid, sid);
+          if (dir) {
+            const summaryPath = join(dir, "tasks", buildTaskFileName(tid, "SUMMARY"));
+            if (existsSync(summaryPath)) {
+              const planAbs = resolveSliceFile(base, mid, sid, "PLAN");
+              if (planAbs && existsSync(planAbs)) {
+                try {
+                  const planContent = readFileSync(planAbs, "utf-8");
+                  const escapedTid = tid.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+                  const cbRe = new RegExp(`^- \\[[xX]\\] \\*\\*${escapedTid}:`, "m");
+                  if (cbRe.test(planContent)) {
+                    clearUnitRuntimeRecord(base, unitType, unitId);
+                    healed++;
+                    ctx.ui.notify(
+                      `Self-heal: cleared stale execute-task record for ${unitId} (SUMMARY + [x] checkbox found).`,
+                      "info",
+                    );
+                    continue;
+                  }
+                } catch {
+                  // Plan parse failure — don't block self-heal
+                }
+              }
+            }
+          }
+        }
+      }
+
+      // Case 2: plan-slice with PLAN.md present but stale runtime record.
+      // If the slice PLAN.md exists, the plan-slice unit already completed —
+      // the record is stale and should be cleared.
+      if (unitType === "plan-slice") {
+        const { milestone: mid, slice: sid } = parseUnitId(unitId);
+        if (mid && sid) {
+          const planAbs = resolveSliceFile(base, mid, sid, "PLAN");
+          if (planAbs && existsSync(planAbs)) {
+            clearUnitRuntimeRecord(base, unitType, unitId);
+            healed++;
+            ctx.ui.notify(
+              `Self-heal: cleared stale plan-slice record for ${unitId} (PLAN.md found).`,
+              "info",
+            );
+            continue;
           }
         }
       }

@@ -353,7 +353,7 @@ export async function bootstrapAutoSession(
         // If we've entered this branch multiple times in quick succession,
         // the discuss workflow isn't producing a milestone. Break the cycle.
         _consecutiveCompleteBootstraps++;
-        if (_consecutiveCompleteBootstraps > MAX_CONSECUTIVE_COMPLETE_BOOTSTRAPS) {
+        if (_consecutiveCompleteBootstraps >= MAX_CONSECUTIVE_COMPLETE_BOOTSTRAPS) {
           _consecutiveCompleteBootstraps = 0;
           ctx.ui.notify(
             "All milestones are complete and the discussion didn't produce a new one. " +

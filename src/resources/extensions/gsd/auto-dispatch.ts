@@ -94,16 +94,48 @@ export const DISPATCH_RULES: DispatchRule[] = [
   {
     name: "rewrite-docs (override gate)",
     match: async ({ mid, midTitle, state, basePath, session }) => {
-      const pendingOverrides = await loadActiveOverrides(basePath);
+      const allActiveOverrides = await loadActiveOverrides(basePath);
+      if (allActiveOverrides.length === 0) return null;
+
+      // Fix M5: Filter overrides to those scoped to the current milestone.
+      // appliedAt format is "MID/SID/TID" — include overrides that either
+      // have no appliedAt (legacy) or whose appliedAt starts with `mid/`.
+      // Overrides with no milestoneId field use appliedAt as the scope key.
+      const pendingOverrides = allActiveOverrides.filter(o =>
+        !o.appliedAt || o.appliedAt.startsWith(`${mid}/`) || o.appliedAt === mid,
+      );
       if (pendingOverrides.length === 0) return null;
+
       const count = session?.rewriteAttemptCount ?? 0;
       if (count >= MAX_REWRITE_ATTEMPTS) {
-        const { resolveAllOverrides } = await import("./files.js");
-        await resolveAllOverrides(basePath);
+        // Fix H6: Idempotency guard — skip resolveAllOverrides if no active
+        // overrides remain (e.g. auto-post-unit already resolved them).
+        const stillActive = await loadActiveOverrides(basePath);
+        if (stillActive.length > 0) {
+          const { resolveAllOverrides } = await import("./files.js");
+          await resolveAllOverrides(basePath);
+        }
         if (session) session.rewriteAttemptCount = 0;
+        // Fix H3: Clear reactive state so the next batch rebuilds the
+        // dependency graph after a rewrite-docs force-resolve.
+        if (state.activeSlice) {
+          const { clearReactiveState } = await import("./reactive-graph.js");
+          clearReactiveState(basePath, mid, state.activeSlice.id);
+        }
         return null;
       }
+      // Fix M4: TODO — persist rewriteAttemptCount to session.json so it
+      // survives pause/resume cycles. Currently resets to 0 when auto-mode
+      // stops. Tracked in issue #M4.
       if (session) session.rewriteAttemptCount++;
+      // Fix H2: Invalidate the reactive graph snapshot when an override is
+      // being dispatched. The stale snapshot (derived before /steer) would
+      // cause the next reactive batch to use outdated dependency edges. Clear
+      // it here so the next reactive-execute cycle rebuilds from disk.
+      if (state.activeSlice) {
+        const { clearReactiveState } = await import("./reactive-graph.js");
+        clearReactiveState(basePath, mid, state.activeSlice.id);
+      }
       const unitId = state.activeSlice ? `${mid}/${state.activeSlice.id}` : mid;
       return {
         action: "dispatch",
@@ -411,9 +443,11 @@ export const DISPATCH_RULES: DispatchRule[] = [
           updatedAt: new Date().toISOString(),
         });
 
-        // Encode selected task IDs in unitId for artifact verification.
-        // Format: M001/S01/reactive+T02,T03
-        const batchSuffix = selected.join(",");
+        // Fix L3: Encode selected task IDs in unitId for artifact verification
+        // using JSON+encodeURIComponent to avoid fragile comma-split parsing
+        // that breaks when task IDs contain commas or other delimiters.
+        // Format: M001/S01/reactive+%5B%22T02%22%2C%22T03%22%5D
+        const batchSuffix = encodeURIComponent(JSON.stringify(selected));
 
         return {
           action: "dispatch",

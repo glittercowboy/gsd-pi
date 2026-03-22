@@ -585,15 +585,27 @@ function reconcilePlanCheckboxes(
 
     if (srcContent === dstContent) continue;
 
+    // Strip fenced code blocks before matching checkboxes so that [x] patterns
+    // inside ``` blocks are not treated as real task completions. Masking with
+    // [_] preserves char positions for safe regex matching without altering the
+    // content we will actually write.
+    const stripCodeBlocks = (content: string) =>
+      content.replace(/```[\s\S]*?```/g, (m) => m.replace(/\[[ x]\]/gi, "[_]"));
+
+    const srcForMatching = stripCodeBlocks(srcContent);
+
     // Extract all checked task IDs from the source (project root)
     // Pattern: - [x] **T<id>: or - [x] **S<id>: (case-insensitive x)
     const checkedRe = /^- \[[xX]\] \*\*([TS]\d+):/gm;
     const srcChecked = new Set<string>();
-    for (const m of srcContent.matchAll(checkedRe)) srcChecked.add(m[1]);
+    for (const m of srcForMatching.matchAll(checkedRe)) srcChecked.add(m[1]);
 
     if (srcChecked.size === 0) continue;
 
-    // Forward-apply: replace [ ] → [x] for any IDs that are checked in src
+    // Forward-apply: replace [ ] → [x] for any IDs that are checked in src.
+    // Use the stripped dst for presence-checking so code block lines are skipped,
+    // but apply replacements to the original dstContent so we never corrupt fences.
+    const dstForMatching = stripCodeBlocks(dstContent);
     let updated = dstContent;
     let changed = false;
     for (const id of srcChecked) {
@@ -602,7 +614,7 @@ function reconcilePlanCheckboxes(
         `^(- )\\[ \\]( \\*\\*${escapedId}:)`,
         "gm",
       );
-      if (uncheckedRe.test(updated)) {
+      if (uncheckedRe.test(dstForMatching)) {
         updated = updated.replace(
           new RegExp(`^(- )\\[ \\]( \\*\\*${escapedId}:)`, "gm"),
           "$1[x]$2",
@@ -986,6 +998,15 @@ export function mergeMilestoneToMain(
     } catch {
       /* non-fatal */
     }
+  }
+
+  // Sync worktree state (REQUIREMENTS, PROJECT, QUEUE, etc.) back to project
+  // root before any branch/merge operation so teardown doesn't silently drop
+  // artifacts that live only in the worktree's .gsd/ directory (#1787).
+  try {
+    syncWorktreeStateBack(originalBasePath_, worktreeCwd, milestoneId);
+  } catch {
+    /* non-fatal — best effort; merge continues even if sync fails */
   }
 
   // 2. Parse roadmap for slice listing

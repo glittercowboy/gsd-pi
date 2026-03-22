@@ -216,13 +216,22 @@ export async function handleTriage(ctx: ExtensionCommandContext, pi: ExtensionAP
 }
 
 export async function handleSteer(change: string, ctx: ExtensionCommandContext, pi: ExtensionAPI): Promise<void> {
-  const basePath = process.cwd();
+  const basePath = projectRoot();
   const state = await deriveState(basePath);
   const mid = state.activeMilestone?.id ?? "none";
   const sid = state.activeSlice?.id ?? "none";
   const tid = state.activeTask?.id ?? "none";
   const appliedAt = `${mid}/${sid}/${tid}`;
-  await appendOverride(basePath, change, appliedAt);
+
+  try {
+    await Promise.race([
+      appendOverride(basePath, change, appliedAt),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('appendOverride timeout')), 5000))
+    ]);
+  } catch (err) {
+    ctx.ui.notify(`Failed to save override: ${(err as Error).message}`, 'error');
+    return;
+  }
 
   if (isAutoActive()) {
     pi.sendMessage({
@@ -233,13 +242,13 @@ export async function handleSteer(change: string, ctx: ExtensionCommandContext, 
         `**Override:** ${change}`,
         "",
         "This override has been saved to `.gsd/OVERRIDES.md` and will be injected into all future task prompts.",
-        "A document rewrite unit will run before the next task to propagate this change across all active plan documents.",
         "",
-        "If you are mid-task, finish your current work respecting this override. The next dispatched unit will be a document rewrite.",
+        "The current unit will finish as-is — it will NOT see this override.",
+        "rewrite-docs will run before the next task to apply the override across all active plan documents.",
       ].join("\n"),
       display: false,
     }, { triggerTurn: true });
-    ctx.ui.notify(`Override registered: "${change}". Will be applied before next task dispatch.`, "info");
+    ctx.ui.notify(`Override registered. The current unit will finish as-is. rewrite-docs will run before the next task to apply: "${change}"`, "info");
   } else {
     pi.sendMessage({
       customType: "gsd-hard-steer",
@@ -249,12 +258,13 @@ export async function handleSteer(change: string, ctx: ExtensionCommandContext, 
         `**Override:** ${change}`,
         "",
         "This override has been saved to `.gsd/OVERRIDES.md`.",
+        "The current unit will NOT see this override — it takes effect on the next unit dispatch.",
         "Before continuing, read `.gsd/OVERRIDES.md` and update the current plan documents to reflect this change.",
         "Focus on: active slice plan, incomplete task plans, and DECISIONS.md.",
       ].join("\n"),
       display: false,
     }, { triggerTurn: true });
-    ctx.ui.notify(`Override registered: "${change}". Update plan documents to reflect this change.`, "info");
+    ctx.ui.notify(`Override registered. The current unit will finish as-is. rewrite-docs will run before the next task to apply: "${change}"`, "info");
   }
 }
 

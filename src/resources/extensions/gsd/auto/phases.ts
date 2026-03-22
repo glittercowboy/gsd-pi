@@ -524,10 +524,14 @@ export async function runDispatch(
   // ── Sliding-window stuck detection with graduated recovery ──
   const derivedKey = `${unitType}/${unitId}`;
 
-  if (!s.pendingVerificationRetry) {
-    loopState.recentUnits.push({ key: derivedKey });
-    if (loopState.recentUnits.length > STUCK_WINDOW_SIZE) loopState.recentUnits.shift();
+  // Fix M1: Always push to recentUnits, even during verification retries.
+  // Previously, verification retries skipped this push, creating a blind spot
+  // where a unit repeatedly failing artifact verification would never be
+  // detected as stuck.
+  loopState.recentUnits.push({ key: derivedKey });
+  if (loopState.recentUnits.length > STUCK_WINDOW_SIZE) loopState.recentUnits.shift();
 
+  if (!s.pendingVerificationRetry) {
     const stuckSignal = detectStuck(loopState.recentUnits);
     if (stuckSignal) {
       debugLog("autoLoop", {

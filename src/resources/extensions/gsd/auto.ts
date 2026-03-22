@@ -574,6 +574,17 @@ export async function stopAuto(
   const reasonSuffix = reason ? ` — ${reason}` : "";
 
   try {
+    // ── Step 0: Resolve pending overrides so they don't leak to next session ──
+    if (s.basePath) {
+      try {
+        // Resolve pending overrides so they don't leak to next session
+        const { resolveAllOverrides } = await import("./files.js");
+        await resolveAllOverrides(s.basePath);
+      } catch (_) {
+        // non-fatal: cleanup best-effort
+      }
+    }
+
     // ── Step 1: Timers and locks ──
     try {
       clearUnitTimeout();

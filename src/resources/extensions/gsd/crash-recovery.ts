@@ -15,6 +15,72 @@ import { join } from "node:path";
 import { gsdRoot } from "./paths.js";
 import { atomicWriteSync } from "./atomic-write.js";
 
+/**
+ * Read the last N lines of a JSONL session file and extract a brief summary
+ * of recent tool calls and assistant messages before a crash.
+ * Returns a formatted "Last activity before crash:" string, or null if the
+ * file is unreadable or contains no relevant entries.
+ */
+export function readSessionFileSummary(sessionFile: string, maxLines = 20): string | null {
+  try {
+    if (!existsSync(sessionFile)) return null;
+    const raw = readFileSync(sessionFile, "utf-8");
+    const allLines = raw.split("\n").filter(Boolean);
+    const lastLines = allLines.slice(-maxLines);
+
+    const entries: string[] = [];
+    for (const line of lastLines) {
+      try {
+        const entry = JSON.parse(line) as Record<string, unknown>;
+        const type = entry["type"] as string | undefined;
+        // Tool call entries
+        if (type === "tool_use" || type === "tool_call") {
+          const name = (entry["name"] as string) ?? (entry["tool"] as string) ?? "unknown";
+          const inputRaw = entry["input"] ?? entry["arguments"] ?? "";
+          const inputStr = typeof inputRaw === "string"
+            ? inputRaw
+            : JSON.stringify(inputRaw);
+          const truncated = inputStr.length > 200 ? inputStr.slice(0, 200) + "…" : inputStr;
+          entries.push(`  tool: ${name}(${truncated})`);
+        }
+        // Tool result entries
+        if (type === "tool_result") {
+          const contentRaw = entry["content"] ?? entry["output"] ?? "";
+          const contentStr = typeof contentRaw === "string"
+            ? contentRaw
+            : JSON.stringify(contentRaw);
+          const truncated = contentStr.length > 200 ? contentStr.slice(0, 200) + "…" : contentStr;
+          entries.push(`  result: ${truncated}`);
+        }
+        // Assistant message entries
+        if (type === "assistant" || type === "message") {
+          const contentRaw = entry["content"] ?? "";
+          const contentStr = typeof contentRaw === "string"
+            ? contentRaw
+            : JSON.stringify(contentRaw);
+          if (contentStr.trim()) {
+            const truncated = contentStr.length > 200 ? contentStr.slice(0, 200) + "…" : contentStr;
+            entries.push(`  assistant: ${truncated}`);
+          }
+        }
+      } catch {
+        // Skip malformed lines
+      }
+    }
+
+    // Keep only the last 3–5 tool/result pairs
+    const toolEntries = entries.filter(e => e.startsWith("  tool:") || e.startsWith("  result:"));
+    const recentTools = toolEntries.slice(-5);
+
+    if (recentTools.length === 0) return null;
+
+    return ["Last activity before crash:", ...recentTools].join("\n");
+  } catch {
+    // File unreadable — skip gracefully
+    return null;
+  }
+}
+
 const LOCK_FILE = "auto.lock";
 
 export interface LockData {
@@ -115,6 +181,14 @@ export function formatCrashInfo(lock: LockData): string {
     lines.push(`Task execution was interrupted. Run /gsd auto to resume — completed work is preserved.`);
   } else if (lock.unitType.includes("complete")) {
     lines.push(`Slice/milestone completion was interrupted. Run /gsd auto to finish.`);
+  }
+
+  // If the lock recorded a session file, read the last activity summary from JSONL
+  if (lock.sessionFile) {
+    const summary = readSessionFileSummary(lock.sessionFile);
+    if (summary) {
+      lines.push(summary);
+    }
   }
 
   return lines.join("\n");

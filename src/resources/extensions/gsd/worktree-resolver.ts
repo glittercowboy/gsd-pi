@@ -433,6 +433,9 @@ export class WorktreeResolver {
         } catch {
           /* best-effort */
         }
+        // Invalidate caches immediately after chdir so any reads on the error
+        // path use the restored project-root context, not stale worktree state.
+        this.deps.invalidateAllCaches();
       }
     }
 
