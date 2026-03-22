@@ -25,11 +25,13 @@ export type { GSDSkillRule, SkillDiscoveryMode, SkillResolution, SkillResolution
 
 /**
  * Known skill directories, in priority order.
- * User skills (~/.gsd/agent/skills/) take precedence over project skills.
+ * User skills (~/.gsd/agent/skills/) take precedence over agentskills.io standard
+ * skills (~/.agents/skills/), which take precedence over project skills.
  */
 export function getSkillSearchDirs(cwd: string): Array<{ dir: string; method: SkillResolution["method"] }> {
   return [
     { dir: join(getAgentDir(), "skills"), method: "user-skill" },
+    { dir: join(homedir(), ".agents", "skills"), method: "user-skill" },
     { dir: join(cwd, ".pi", "agent", "skills"), method: "project-skill" },
   ];
 }
