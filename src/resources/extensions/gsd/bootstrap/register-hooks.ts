@@ -20,21 +20,27 @@ import { saveActivityLog } from "../activity-log.js";
 // printed it before the TUI launched. Only re-print on /clear (subsequent sessions).
 let isFirstSession = true;
 
+async function syncServiceTierStatus(ctx: ExtensionContext): Promise<void> {
+  const { getEffectiveServiceTier, formatServiceTierFooterStatus } = await import("../service-tier.js");
+  ctx.ui.setStatus("gsd-fast", formatServiceTierFooterStatus(getEffectiveServiceTier(), ctx.model?.id));
+}
+
 export function registerHooks(pi: ExtensionAPI): void {
   pi.on("session_start", async (_event, ctx) => {
     resetWriteGateState();
     resetToolCallLoopGuard();
+    await syncServiceTierStatus(ctx);
     if (isFirstSession) {
       isFirstSession = false;
     } else {
       try {
         const gsdBinPath = process.env.GSD_BIN_PATH;
         if (gsdBinPath) {
-          const { dirname } = await import('node:path');
+          const { dirname } = await import("node:path");
           const { printWelcomeScreen } = await import(
-            join(dirname(gsdBinPath), 'welcome-screen.js')
+            join(dirname(gsdBinPath), "welcome-screen.js")
           ) as { printWelcomeScreen: (opts: { version: string; modelName?: string; provider?: string }) => void };
-          printWelcomeScreen({ version: process.env.GSD_VERSION || '0.0.0' });
+          printWelcomeScreen({ version: process.env.GSD_VERSION || "0.0.0" });
         }
       } catch { /* non-fatal */ }
     }
@@ -192,8 +198,11 @@ export function registerHooks(pi: ExtensionAPI): void {
     markToolEnd(event.toolCallId);
   });
 
+  pi.on("model_select", async (_event, ctx) => {
+    await syncServiceTierStatus(ctx);
+  });
+
   pi.on("before_provider_request", async (event) => {
-    if (!isAutoActive()) return;
     const modelId = event.model?.id;
     if (!modelId) return;
     const { getEffectiveServiceTier, supportsServiceTier } = await import("../service-tier.js");
@@ -205,4 +214,3 @@ export function registerHooks(pi: ExtensionAPI): void {
     return payload;
   });
 }
-
