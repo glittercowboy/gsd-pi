@@ -220,6 +220,30 @@ test("auto_visualize, auto_report, context_selection validate correctly", () => 
   assert.equal(preferences.context_selection, "smart");
 });
 
+test("service_tier validates correctly", () => {
+  const { preferences: p1, errors: e1 } = validatePreferences({ service_tier: "priority" });
+  assert.equal(e1.length, 0);
+  assert.equal(p1.service_tier, "priority");
+
+  const { preferences: p2, errors: e2 } = validatePreferences({ service_tier: "flex" });
+  assert.equal(e2.length, 0);
+  assert.equal(p2.service_tier, "flex");
+});
+
+test("service_tier rejects invalid values", () => {
+  const { preferences, errors } = validatePreferences({ service_tier: "turbo" as never });
+  assert.equal(preferences.service_tier, undefined);
+  assert.ok(errors.some((error) => error.includes("service_tier must be one of: priority, flex")));
+});
+
+test("service_tier survives parse and validation round-trip", () => {
+  const prefs = parsePreferencesMarkdown("---\nversion: 1\nservice_tier: priority\n---\n");
+  assert.notEqual(prefs, null);
+  const { preferences, errors } = validatePreferences(prefs!);
+  assert.equal(errors.length, 0);
+  assert.equal(preferences.service_tier, "priority");
+});
+
 test("auto_visualize, auto_report, context_selection reject invalid values", () => {
   const { errors: e1 } = validatePreferences({ auto_visualize: "yes" as never });
   assert.ok(e1.some(e => e.includes("auto_visualize")));

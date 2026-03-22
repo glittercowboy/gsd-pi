@@ -697,6 +697,16 @@ export function validatePreferences(preferences: GSDPreferences): {
     }
   }
 
+  // ─── Service Tier ───────────────────────────────────────────────────
+  if (preferences.service_tier !== undefined) {
+    const validServiceTiers = new Set(["priority", "flex"]);
+    if (typeof preferences.service_tier === "string" && validServiceTiers.has(preferences.service_tier)) {
+      validated.service_tier = preferences.service_tier as GSDPreferences["service_tier"];
+    } else {
+      errors.push("service_tier must be one of: priority, flex");
+    }
+  }
+
   // ─── GitHub Sync ────────────────────────────────────────────────────────
   if (preferences.github !== undefined) {
     if (typeof preferences.github === "object" && preferences.github !== null) {
