@@ -143,14 +143,19 @@ export async function handleAgentEvent(host: InteractiveModeStateHost & {
 						}
 					} else if (content.type === "webSearchResult") {
 						const component = host.pendingTools.get(content.toolUseId);
-						if (component) {
+						if (component && !component._webSearchRendered) {
 							const searchContent = content.content;
 							const isError = searchContent && typeof searchContent === "object" && "type" in (searchContent as any) && (searchContent as any).type === "web_search_tool_result_error";
 							component.updateResult({
 								content: [{ type: "text", text: host.formatWebSearchResult(searchContent) }],
 								isError: !!isError,
 							});
-							host.pendingTools.delete(content.toolUseId);
+							// Mark as rendered but do NOT delete from pendingTools.
+							// Deleting would remove the duplicate-creation guard on the
+							// serverToolUse branch, causing every subsequent message_update
+							// to re-create the component (#2029).  message_end / agent_end
+							// already clear pendingTools, so no leak occurs.
+							component._webSearchRendered = true;
 						}
 					}
 				}
