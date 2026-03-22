@@ -151,6 +151,38 @@ rm -rf "$(dirname .gsd)/.gsd.lock"
 - If the error persists, close tools that may be holding the file open and then retry.
 - If repeated failures continue, run `/gsd doctor` to confirm the repo state is still healthy and report the exact path + error code.
 
+### Node v24 web boot failure
+
+**Symptoms:** `gsd --web` fails with `ERR_UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING` on Node v24.
+
+**Cause:** Node v24 changed type-stripping behavior for `node_modules`, breaking the Next.js web build.
+
+**Fix:** Fixed in v2.42.0+ (#1864). Upgrade to the latest version.
+
+### Orphan web server process
+
+**Symptoms:** `gsd --web` fails because port 3000 is already in use, even though no GSD session is running.
+
+**Cause:** A previous web server process was not cleaned up on exit.
+
+**Fix:** Fixed in v2.42.0+. GSD now cleans up stale web server processes automatically. If you're on an older version, kill the orphan process manually: `lsof -ti:3000 | xargs kill`.
+
+### Non-JS project blocked by worktree health check
+
+**Symptoms:** Worktree health check fails or blocks auto-mode in projects that don't use Node.js (e.g., Rust, Go, Python).
+
+**Cause:** The worktree health check only recognized JavaScript ecosystems prior to v2.42.0.
+
+**Fix:** Fixed in v2.42.0+ (#1860). The health check now supports 17+ ecosystems. Upgrade to the latest version.
+
+### German/non-English locale git errors
+
+**Symptoms:** Git commands fail or produce unexpected results when the system locale is non-English (e.g., German).
+
+**Cause:** GSD parsed git output assuming English locale strings.
+
+**Fix:** Fixed in v2.42.0+. All git commands now force `LC_ALL=C` to ensure consistent English output regardless of system locale.
+
 ## MCP Client Issues
 
 ### `mcp_servers` shows no configured servers

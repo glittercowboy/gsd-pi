@@ -22,6 +22,7 @@
 | `/gsd export --html --all` | Generate retrospective reports for all milestones at once |
 | `/gsd update` | Update GSD to the latest version in-session |
 | `/gsd knowledge` | Add persistent project knowledge (rule, pattern, or lesson) |
+| `/gsd fast` | Toggle service tier for supported models (prioritized API routing) |
 | `/gsd help` | Categorized command reference with descriptions for all GSD subcommands |
 
 ## Configuration & Diagnostics

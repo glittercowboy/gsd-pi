@@ -24,6 +24,29 @@ One command. Walk away. Come back to a built project with clean git history.
 
 ---
 
+## What's New in v2.42.0
+
+### New Features
+
+- **Declarative workflow engine** — define YAML workflows that execute through auto-loop, enabling repeatable multi-step automations without code. (#2024)
+- **Unified rule registry & event journal** — centralized rule registry, event journal with query tool, and standardized tool naming convention. (#1928)
+- **PR risk checker** — CI classifies changed files by system area and surfaces risk level on pull requests. (#1930)
+- **`/gsd fast`** — toggle service tier for supported models, enabling prioritized API routing for faster responses. (#1862)
+- **Web mode CLI flags** — `--host`, `--port`, and `--allowed-origins` flags give full control over the web server bind address and CORS policy. (#1873)
+- **ADR attribution** — architecture decision records now distinguish human, agent, and collaborative authorship. (#1830)
+
+### Key Fixes
+
+- **Node v24 web boot** — resolved `ERR_UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING` that prevented `gsd --web` from starting on Node v24. (#1864)
+- **Worktree health check for all ecosystems** — broadened from JS-only to 17+ ecosystems (Rust, Go, Python, Java, etc.). (#1860)
+- **Doctor roadmap atomicity** — roadmap checkbox gating now checks summary on disk, not issue detection, preventing false unchecks. (#1915)
+- **Windows path handling** — 8.3 short path resolution, backslash normalization in bash commands, PowerShell browser launch, and parenthesis escaping. (#1960, #1863, #1870, #1872)
+- **Auth token persistence** — web UI auth token survives page refreshes via sessionStorage. (#1877)
+- **German/non-English locale git errors** — git commands now force `LC_ALL=C` to prevent locale-dependent parse failures.
+- **Orphan web server process** — stale web server processes on port 3000 are now cleaned up automatically.
+
+---
+
 ## What's New in v2.41.0
 
 ### New Features

@@ -7,10 +7,22 @@ GSD includes a browser-based web interface for project management, real-time pro
 ## Quick Start
 
 ```bash
-pi --web
+gsd --web
 ```
 
 This starts a local web server and opens the GSD dashboard in your default browser.
+
+### CLI Flags (v2.42.0)
+
+```bash
+gsd --web --host 0.0.0.0 --port 8080 --allowed-origins "https://example.com"
+```
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--host` | `localhost` | Bind address for the web server |
+| `--port` | `3000` | Port for the web server |
+| `--allowed-origins` | (none) | Comma-separated list of allowed CORS origins |
 
 ## Features
 
@@ -31,13 +43,21 @@ Key components:
 
 ## Configuration
 
-The web server binds to `localhost` by default. No additional configuration is required.
+The web server binds to `localhost:3000` by default. Use `--host`, `--port`, and `--allowed-origins` to override (see CLI Flags above).
 
 ### Environment Variables
 
 | Variable | Description |
 |----------|-------------|
 | `GSD_WEB_PROJECT_CWD` | Default project path when `?project=` is not specified |
+
+## Node v24 Compatibility
+
+Node v24 introduced breaking changes to type stripping that caused `ERR_UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING` on web boot. This is fixed in v2.42.0+ (#1864). If you encounter this error, upgrade GSD.
+
+## Auth Token Persistence
+
+As of v2.42.0, the web UI persists the auth token in `sessionStorage` so it survives page refreshes (#1877). Previously, refreshing the page required re-authentication.
 
 ## Platform Notes
 
