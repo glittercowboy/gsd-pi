@@ -40,6 +40,12 @@ interface ManagedResourceManifest {
    * causing extension load errors.
    */
   installedExtensionRootFiles?: string[]
+  /**
+   * Subdirectory extensions installed in extensions/ by this GSD version.
+   * Used on the next upgrade to detect and prune directories that were removed
+   * from the bundle, preventing stale extensions from causing tool name conflicts.
+   */
+  installedExtensionDirs?: string[]
 }
 
 export { discoverExtensionEntryPaths } from './extension-discovery.js'
@@ -67,14 +73,16 @@ function getBundledGsdVersion(): string {
 }
 
 function writeManagedResourceManifest(agentDir: string): void {
-  // Record root-level files currently in the bundled extensions source so that
-  // future upgrades can detect and prune any that get removed or moved.
+  // Record root-level files and subdirectory extensions currently in the bundled
+  // extensions source so that future upgrades can detect and prune any that get
+  // removed or moved.
   let installedExtensionRootFiles: string[] = []
+  let installedExtensionDirs: string[] = []
   try {
     if (existsSync(bundledExtensionsDir)) {
-      installedExtensionRootFiles = readdirSync(bundledExtensionsDir, { withFileTypes: true })
-        .filter(e => e.isFile())
-        .map(e => e.name)
+      const entries = readdirSync(bundledExtensionsDir, { withFileTypes: true })
+      installedExtensionRootFiles = entries.filter(e => e.isFile()).map(e => e.name)
+      installedExtensionDirs = entries.filter(e => e.isDirectory()).map(e => e.name)
     }
   } catch { /* non-fatal */ }
 
@@ -83,6 +91,7 @@ function writeManagedResourceManifest(agentDir: string): void {
     syncedAt: Date.now(),
     contentHash: computeResourceFingerprint(),
     installedExtensionRootFiles,
+    installedExtensionDirs,
   }
   writeFileSync(getManagedResourceManifestPath(agentDir), JSON.stringify(manifest))
 }
@@ -312,12 +321,14 @@ function pruneRemovedBundledExtensions(
   const extensionsDir = join(agentDir, 'extensions')
   if (!existsSync(extensionsDir)) return
 
-  // Current bundled root-level files (what the new version provides)
+  // Current bundled entries (what the new version provides)
   const currentSourceFiles = new Set<string>()
+  const currentSourceDirs = new Set<string>()
   try {
     if (existsSync(bundledExtensionsDir)) {
       for (const e of readdirSync(bundledExtensionsDir, { withFileTypes: true })) {
         if (e.isFile()) currentSourceFiles.add(e.name)
+        if (e.isDirectory()) currentSourceDirs.add(e.name)
       }
     }
   } catch { /* non-fatal */ }
@@ -328,6 +339,12 @@ function pruneRemovedBundledExtensions(
     try { if (existsSync(stale)) rmSync(stale, { force: true }) } catch { /* non-fatal */ }
   }
 
+  const removeIfStaleDir = (dirName: string) => {
+    if (currentSourceDirs.has(dirName)) return  // still in bundle, not stale
+    const stale = join(extensionsDir, dirName)
+    try { if (existsSync(stale)) rmSync(stale, { recursive: true, force: true }) } catch { /* non-fatal */ }
+  }
+
   if (manifest?.installedExtensionRootFiles) {
     // Manifest-based: remove previously-installed root files that are no longer bundled
     for (const prevFile of manifest.installedExtensionRootFiles) {
@@ -335,11 +352,21 @@ function pruneRemovedBundledExtensions(
     }
   }
 
-  // Always remove known stale files regardless of manifest state.
+  if (manifest?.installedExtensionDirs) {
+    // Manifest-based: remove previously-installed subdirectory extensions that
+    // are no longer in the bundle (e.g. mcporter/ removed in favour of mcp-client/).
+    for (const prevDir of manifest.installedExtensionDirs) {
+      removeIfStaleDir(prevDir)
+    }
+  }
+
+  // Always remove known stale entries regardless of manifest state.
   // These were installed by pre-manifest versions so they may not appear in
-  // installedExtensionRootFiles even when a manifest exists.
+  // installedExtensionRootFiles/installedExtensionDirs even when a manifest exists.
   // env-utils.js was moved from extensions/ root → gsd/ in v2.39.x (#1634)
   removeIfStale('env-utils.js')
+  // mcporter/ was replaced by mcp-client/ in v2.41.x (#1318)
+  removeIfStaleDir('mcporter')
 }
 
 /**
