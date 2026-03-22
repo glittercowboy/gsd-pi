@@ -9,7 +9,7 @@
 
 export { autoLoop } from "./auto/loop.js";
 export { isInfrastructureError, INFRA_ERROR_CODES } from "./auto/infra-errors.js";
-export { resolveAgentEnd, resolveAgentEndCancelled, isSessionSwitchInFlight, _beginSessionSwitch, _endSessionSwitch, _hasPendingResolve, _resetPendingResolve, _setActiveSession } from "./auto/resolve.js";
+export { resolveAgentEnd, resolveAgentEndCancelled, isSessionSwitchInFlight, _resetPendingResolve } from "./auto/resolve.js";
 export { detectStuck } from "./auto/detect-stuck.js";
 export { runUnit } from "./auto/run-unit.js";
 export type { LoopDeps } from "./auto/loop-deps.js";

@@ -289,7 +289,8 @@ test("runUnitPhase emits unit-start and unit-end with causedBy reference", async
   // Instead, we test that unit-start is emitted at the right point by examining
   // the event immediately after calling runUnitPhase with a session where
   // newSession resolves quickly, and we resolve the agent_end externally.
-  const { resolveAgentEnd, _hasPendingResolve, _resetPendingResolve } = await import("../auto-loop.js");
+  const { resolveAgentEnd, _resetPendingResolve } = await import("../auto-loop.js");
+  const { _hasPendingResolve } = await import("../auto/resolve.js");
   _resetPendingResolve();
 
   const deps = makeMockDeps(capture);
@@ -343,7 +344,8 @@ test("runUnitPhase emits unit-start and unit-end with causedBy reference", async
 
 test("all events from a mock iteration have monotonically increasing seq and same flowId", async () => {
   const capture = createEventCapture();
-  const { resolveAgentEnd, _hasPendingResolve, _resetPendingResolve } = await import("../auto-loop.js");
+  const { resolveAgentEnd, _resetPendingResolve } = await import("../auto-loop.js");
+  const { _hasPendingResolve } = await import("../auto/resolve.js");
   _resetPendingResolve();
 
   const deps = makeMockDeps(capture, {
@@ -479,6 +481,67 @@ test("pre-dispatch-hook event is emitted when hooks fire", async () => {
   assert.deepEqual((hookEvents[0].data as any).firedHooks, ["observability-check", "lint-gate"]);
   assert.equal((hookEvents[0].data as any).action, "proceed");
   assert.equal(hookEvents[0].flowId, ic.flowId);
+});
+
+test("dispatch-match reflects post-hook unit type after replace", async () => {
+  const capture = createEventCapture();
+  const deps = makeMockDeps(capture, {
+    resolveDispatch: async () => ({
+      action: "dispatch" as const,
+      unitType: "execute-task",
+      unitId: "M001/S01/T01",
+      prompt: "test",
+      matchedRule: "some-rule",
+    }),
+    runPreDispatchHooks: () => ({
+      firedHooks: ["replace-hook"],
+      action: "replace",
+      unitType: "hook/custom",
+      prompt: "hook prompt",
+    }),
+  });
+  const ic = makeIC(deps);
+  const preData: PreDispatchData = {
+    state: { phase: "executing", activeMilestone: { id: "M001", title: "T", status: "active" }, activeSlice: { id: "S01" }, activeTask: { id: "T01" }, registry: [{ id: "M001", status: "active" }], blockers: [] } as any,
+    mid: "M001",
+    midTitle: "Test",
+  };
+
+  const result = await runDispatch(ic, preData, { recentUnits: [], stuckRecoveryAttempts: 0 });
+  assert.equal(result.action, "next");
+
+  const matchEvents = capture.events.filter(e => e.eventType === "dispatch-match");
+  assert.equal(matchEvents.length, 1, "should emit one dispatch-match event");
+  assert.equal((matchEvents[0].data as any).unitType, "hook/custom");
+});
+
+test("dispatch-match is not emitted when pre-dispatch hooks skip the unit", async () => {
+  const capture = createEventCapture();
+  const deps = makeMockDeps(capture, {
+    resolveDispatch: async () => ({
+      action: "dispatch" as const,
+      unitType: "execute-task",
+      unitId: "M001/S01/T01",
+      prompt: "test",
+      matchedRule: "some-rule",
+    }),
+    runPreDispatchHooks: () => ({
+      firedHooks: ["skip-hook"],
+      action: "skip",
+    }),
+  });
+  const ic = makeIC(deps);
+  const preData: PreDispatchData = {
+    state: { phase: "executing", activeMilestone: { id: "M001", title: "T", status: "active" }, activeSlice: { id: "S01" }, activeTask: { id: "T01" }, registry: [{ id: "M001", status: "active" }], blockers: [] } as any,
+    mid: "M001",
+    midTitle: "Test",
+  };
+
+  const result = await runDispatch(ic, preData, { recentUnits: [], stuckRecoveryAttempts: 0 });
+  assert.equal(result.action, "continue");
+
+  const matchEvents = capture.events.filter(e => e.eventType === "dispatch-match");
+  assert.equal(matchEvents.length, 0, "skip hooks should prevent dispatch-match journaling");
 });
 
 test("terminal event is emitted on milestone-complete", async () => {

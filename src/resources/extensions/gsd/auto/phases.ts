@@ -514,8 +514,6 @@ export async function runDispatch(
     return { action: "continue" };
   }
 
-  deps.emitJournalEvent({ ts: new Date().toISOString(), flowId: ic.flowId, seq: ic.nextSeq(), eventType: "dispatch-match", rule: dispatchResult.matchedRule, data: { unitType: dispatchResult.unitType, unitId: dispatchResult.unitId } });
-
   let unitType = dispatchResult.unitType;
   let unitId = dispatchResult.unitId;
   let prompt = dispatchResult.prompt;
@@ -624,6 +622,8 @@ export async function runDispatch(
   } else if (preDispatchResult.prompt) {
     prompt = preDispatchResult.prompt;
   }
+
+  deps.emitJournalEvent({ ts: new Date().toISOString(), flowId: ic.flowId, seq: ic.nextSeq(), eventType: "dispatch-match", rule: dispatchResult.matchedRule, data: { unitType, unitId } });
 
   const priorSliceBlocker = deps.getPriorSliceCompletionBlocker(
     s.basePath,

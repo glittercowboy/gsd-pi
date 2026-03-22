@@ -9,15 +9,14 @@ import {
   runUnit,
   autoLoop,
   detectStuck,
-  _beginSessionSwitch,
-  _endSessionSwitch,
   _resetPendingResolve,
-  _setActiveSession,
   isSessionSwitchInFlight,
   type UnitResult,
   type AgentEndEvent,
   type LoopDeps,
 } from "../auto-loop.js";
+import { _beginSessionSwitch, _endSessionSwitch } from "../auto/resolve.js";
+import { NEW_SESSION_TIMEOUT_MS } from "../auto/session.js";
 import type { SessionLockStatus } from "../session-lock.js";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -177,10 +176,22 @@ test("runUnit returns cancelled when session creation times out", async () => {
 
   const ctx = makeMockCtx();
   const pi = makeMockPi();
-  // Session returns cancelled: true (simulates the timeout race outcome)
-  const s = makeMockSession({ newSessionResult: { cancelled: true } });
+  const s = makeMockSession({ newSessionDelayMs: 10 });
+  const originalSetTimeout = globalThis.setTimeout;
+  (globalThis as typeof globalThis & { setTimeout: typeof setTimeout }).setTimeout =
+    ((callback: Parameters<typeof setTimeout>[0], delay?: number, ...args: unknown[]) =>
+      originalSetTimeout(
+        callback as (...cbArgs: unknown[]) => void,
+        delay === NEW_SESSION_TIMEOUT_MS ? 0 : delay,
+        ...(args as []),
+      )) as typeof setTimeout;
 
-  const result = await runUnit(ctx, pi, s, "task", "T01", "prompt");
+  let result;
+  try {
+    result = await runUnit(ctx, pi, s, "task", "T01", "prompt");
+  } finally {
+    (globalThis as typeof globalThis & { setTimeout: typeof setTimeout }).setTimeout = originalSetTimeout;
+  }
 
   assert.equal(result.status, "cancelled");
   assert.equal(result.event, undefined);
