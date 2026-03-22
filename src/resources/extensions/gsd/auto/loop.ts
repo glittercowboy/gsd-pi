@@ -45,11 +45,9 @@ export async function autoLoop(
 ): Promise<void> {
   debugLog("autoLoop", { phase: "enter" });
   let iteration = 0;
-  const loopState: LoopState = { recentUnits: [], stuckRecoveryAttempts: 0 };
-  // TODO (Fix M2): restore loopState.stuckRecoveryAttempts from persisted session state
-  // (e.g. .gsd/runtime/paused-session.json or a dedicated runtime/loop-state.json) so
-  // recovery attempt counts survive a process restart. When incrementing stuckRecoveryAttempts
-  // below (in phases.ts), persist the updated value back via the same mechanism.
+  // Fix M2: restore stuckRecoveryAttempts from session so escalation survives pause/resume.
+  // s.stuckRecoveryAttempts is populated from paused-session.json before autoLoop() is called.
+  const loopState: LoopState = { recentUnits: [], stuckRecoveryAttempts: s.stuckRecoveryAttempts };
   let consecutiveErrors = 0;
 
   while (s.active) {

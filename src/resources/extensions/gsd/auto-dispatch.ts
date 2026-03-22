@@ -124,9 +124,8 @@ export const DISPATCH_RULES: DispatchRule[] = [
         }
         return null;
       }
-      // Fix M4: TODO — persist rewriteAttemptCount to session.json so it
-      // survives pause/resume cycles. Currently resets to 0 when auto-mode
-      // stops. Tracked in issue #M4.
+      // Fix M4: rewriteAttemptCount is persisted via paused-session.json on pause
+      // and restored into s.rewriteAttemptCount before autoLoop() is called (auto.ts).
       if (session) session.rewriteAttemptCount++;
       // Fix H2: Invalidate the reactive graph snapshot when an override is
       // being dispatched. The stale snapshot (derived before /steer) would

@@ -793,6 +793,9 @@ export async function pauseAuto(
       stepMode: s.stepMode,
       pausedAt: new Date().toISOString(),
       sessionFile: s.pausedSessionFile,
+      // Fix M2/M4: persist circuit-breaker counters so they survive pause/resume
+      rewriteAttemptCount: s.rewriteAttemptCount,
+      stuckRecoveryAttempts: s.stuckRecoveryAttempts,
     };
     const runtimeDir = join(gsdRoot(s.originalBasePath || s.basePath), "runtime");
     mkdirSync(runtimeDir, { recursive: true });
@@ -1044,6 +1047,9 @@ export async function startAuto(
             s.currentMilestoneId = meta.milestoneId;
             s.originalBasePath = meta.originalBasePath || base;
             s.stepMode = meta.stepMode ?? requestedStepMode;
+            // Fix M2/M4: restore circuit-breaker counters from persisted state
+            s.rewriteAttemptCount = meta.rewriteAttemptCount ?? 0;
+            s.stuckRecoveryAttempts = meta.stuckRecoveryAttempts ?? 0;
             s.paused = true;
             // Clean up the persisted file — we're consuming it
             try { unlinkSync(pausedPath); } catch { /* non-fatal */ }
