@@ -40,16 +40,16 @@ Requirements for v1.0 milestone. Each maps to roadmap phases.
 
 ### State Manifest
 
-- [ ] **MAN-01**: `engine.snapshot()` produces atomic JSON dump of all state
-- [ ] **MAN-02**: `engine.restore(snapshot)` atomically replaces all state
-- [ ] **MAN-03**: `state-manifest.json` written after every command via atomicWriteSync
-- [ ] **MAN-04**: Fresh clone bootstraps DB from state-manifest.json (no markdown parsing needed)
-- [ ] **MAN-05**: State manifest is git-tracked and three-way mergeable
+- [x] **MAN-01**: `engine.snapshot()` produces atomic JSON dump of all state
+- [x] **MAN-02**: `engine.restore(snapshot)` atomically replaces all state
+- [x] **MAN-03**: `state-manifest.json` written after every command via atomicWriteSync
+- [x] **MAN-04**: Fresh clone bootstraps DB from state-manifest.json (no markdown parsing needed)
+- [x] **MAN-05**: State manifest is git-tracked and three-way mergeable
 
 ### Event Log
 
-- [ ] **EVT-01**: Append-only JSONL records every engine command with content hash
-- [ ] **EVT-02**: Fork-point detection identifies last common event between diverged logs
+- [x] **EVT-01**: Append-only JSONL records every engine command with content hash
+- [x] **EVT-02**: Fork-point detection identifies last common event between diverged logs
 - [ ] **EVT-03**: Event log compaction archives milestone events on completion
 - [ ] **EVT-04**: `engine.replay(event)` applies a command from another engine's log
 

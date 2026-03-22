@@ -10,27 +10,27 @@ See: .planning/PROJECT.md (updated 2026-03-22)
 ## Current Position
 
 Phase: 1 of 5 (Engine Foundation + Team Infrastructure)
-Plan: 5 of 5 in current phase
-Status: Executing
-Last activity: 2026-03-22 — Completed 1-04: Workflow tools + engine bridge
+Plan: 5 of 5 in current phase (COMPLETE)
+Status: Phase 1 Complete
+Last activity: 2026-03-22 — Completed 1-05: Manifest and event log
 
-Progress: [████████░░] 16%
+Progress: [██████████] 20%
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 4
+- Total plans completed: 5
 - Average duration: 5 min
-- Total execution time: 0.3 hours
+- Total execution time: 0.4 hours
 
 **By Phase:**
 
 | Phase | Plans | Total | Avg/Plan |
 |-------|-------|-------|----------|
-| 1 - Engine Foundation | 4 | 19 min | 5 min |
+| 1 - Engine Foundation | 5 | 23 min | 5 min |
 
 **Recent Trend:**
-- Last 5 plans: 1-01 (6 min), 1-02 (5 min), 1-03 (4 min), 1-04 (4 min)
+- Last 5 plans: 1-01 (6 min), 1-02 (5 min), 1-03 (4 min), 1-04 (4 min), 1-05 (4 min)
 - Trend: Steady
 
 *Updated after each plan completion*
@@ -54,6 +54,9 @@ Recent decisions affecting current work:
 - 1-04: Dynamic import of workflow-engine.js in tool execute functions to avoid circular deps
 - 1-04: Engine bridge in deriveState after cache check, before markdown parse
 - 1-04: Telemetry uses module-level counters with copy-on-read for thread safety
+- 1-05: Manifest includes all 5 entity types per D-06 — full DB dump, not curated
+- 1-05: Event hash from cmd+params only (deterministic, ts/actor-independent)
+- 1-05: afterCommand is non-fatal for projections, manifest, and events
 
 ### Pending Todos
 
@@ -66,5 +69,5 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-03-22
-Stopped at: Completed 1-04-PLAN.md — Workflow tools + engine bridge
+Stopped at: Completed 1-05-PLAN.md — Manifest and event log (Phase 1 complete)
 Resume file: None
