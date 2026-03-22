@@ -1241,7 +1241,7 @@ async function main(): Promise<void> {
   {
     // When .gsd is a symlink, git rejects `:!.gsd/...` pathspecs with
     // "fatal: pathspec '...' is beyond a symbolic link". The fix falls
-    // back to plain `git add -A`, which respects .gitignore.
+    // back to `git add -u` (tracked files only), NOT `git add -A`.
     const repo = initTempRepo();
 
     // Create the real .gsd directory outside the repo, then symlink it
@@ -1253,11 +1253,18 @@ async function main(): Promise<void> {
     // Symlink .gsd -> external directory
     symlinkSync(externalGsd, join(repo, ".gsd"));
 
-    // Add .gitignore so git add -A fallback skips .gsd/
+    // Add .gitignore so .gsd/ is ignored
     writeFileSync(join(repo, ".gitignore"), ".gsd\n");
 
-    // Create a real file that should be staged
+    // Create a tracked file and commit it, then modify it
     createFile(repo, "src/app.ts", "export const x = 1;");
+    run("git add -A", repo);
+    run('git commit -m "add app"', repo);
+    writeFileSync(join(repo, "src/app.ts"), "export const x = 2;");
+
+    // Create an untracked file simulating large data (NOT in .gitignore)
+    // This is the key scenario: large untracked dirs that git add -A would traverse
+    createFile(repo, "data/large-model.bin", "pretend this is 10GB");
 
     // nativeAddAllWithExclusions should NOT throw despite .gsd being a symlink
     let threw = false;
@@ -1269,9 +1276,15 @@ async function main(): Promise<void> {
     }
     assertTrue(!threw, "nativeAddAllWithExclusions does not throw with symlinked .gsd");
 
-    // Verify the real file was staged
+    // Verify the tracked modified file was staged
     const staged = run("git diff --cached --name-only", repo);
-    assertTrue(staged.includes("src/app.ts"), "real file staged despite symlinked .gsd");
+    assertTrue(staged.includes("src/app.ts"), "modified tracked file staged despite symlinked .gsd");
+
+    // CRITICAL: untracked files must NOT be staged — the symlink fallback
+    // should use `git add -u` (tracked only), not `git add -A` (all files).
+    // Using `git add -A` on a repo with large untracked data dirs hangs. (#1977)
+    assertTrue(!staged.includes("data/large-model.bin"),
+      "symlink fallback must not stage untracked files (would hang on large repos)");
     assertTrue(!staged.includes(".gsd"), ".gsd content not staged");
 
     rmSync(repo, { recursive: true, force: true });
