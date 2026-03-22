@@ -53,6 +53,7 @@ export interface AgentEndEvent {
 export interface UnitResult {
   status: "completed" | "cancelled" | "error";
   event?: AgentEndEvent;
+  cancelReason?: "paused" | "session-failed";
 }
 
 // ─── Phase pipeline types ────────────────────────────────────────────────────

@@ -144,6 +144,7 @@ function makeIC(
       ui: { notify: () => {}, setStatus: () => {} },
       model: { id: "test-model" },
       modelRegistry: { getAvailable: () => [] },
+      getSystemPrompt: () => "",
     } as any,
     pi: {
       sendMessage: () => {},

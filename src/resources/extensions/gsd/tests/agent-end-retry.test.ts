@@ -165,7 +165,7 @@ test("pauseAuto calls resolveAgentEndCancelled to unblock the loop", () => {
   const fnBlock = source.slice(fnIdx, source.indexOf("\n/**\n * Build", fnIdx + 100));
 
   assert.ok(
-    fnBlock.includes("resolveAgentEndCancelled()"),
+    fnBlock.includes("resolveAgentEndCancelled("),
     "pauseAuto must call resolveAgentEndCancelled to unblock the auto-loop promise",
   );
 });
