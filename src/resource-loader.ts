@@ -43,8 +43,7 @@ interface ManagedResourceManifest {
   /**
    * Subdirectory extension names installed in extensions/ by this GSD version.
    * Used on the next upgrade to detect and prune subdirectory extensions that
-   * were removed from the bundle.
-   */
+   * were removed from the bundle.   */
   installedExtensionDirs?: string[]
 }
 
@@ -75,8 +74,7 @@ function getBundledGsdVersion(): string {
 function writeManagedResourceManifest(agentDir: string): void {
   // Record root-level files and subdirectory extension names currently in the
   // bundled extensions source so that future upgrades can detect and prune any
-  // that get removed or moved.
-  let installedExtensionRootFiles: string[] = []
+  // that get removed or moved.  let installedExtensionRootFiles: string[] = []
   let installedExtensionDirs: string[] = []
   try {
     if (existsSync(bundledExtensionsDir)) {
@@ -95,8 +93,7 @@ function writeManagedResourceManifest(agentDir: string): void {
             || existsSync(join(dirPath, 'index.ts'))
             || existsSync(join(dirPath, 'extension-manifest.json'))
         })
-        .map(e => e.name)
-    }
+        .map(e => e.name)    }
   } catch { /* non-fatal */ }
 
   const manifest: ManagedResourceManifest = {
@@ -334,10 +331,9 @@ function pruneRemovedBundledExtensions(
   const extensionsDir = join(agentDir, 'extensions')
   if (!existsSync(extensionsDir)) return
 
-  // Current bundled root-level files (what the new version provides)
+  // Current bundled entries (what the new version provides)
   const currentSourceFiles = new Set<string>()
-  // Current bundled subdirectory extensions
-  const currentSourceDirs = new Set<string>()
+  // Current bundled subdirectory extensions  const currentSourceDirs = new Set<string>()
   try {
     if (existsSync(bundledExtensionsDir)) {
       for (const e of readdirSync(bundledExtensionsDir, { withFileTypes: true })) {
@@ -353,8 +349,7 @@ function pruneRemovedBundledExtensions(
     try { if (existsSync(stale)) rmSync(stale, { force: true }) } catch { /* non-fatal */ }
   }
 
-  const removeDirIfStale = (dirName: string) => {
-    if (currentSourceDirs.has(dirName)) return  // still in bundle, not stale
+  const removeDirIfStale = (dirName: string) => {    if (currentSourceDirs.has(dirName)) return  // still in bundle, not stale
     const stale = join(extensionsDir, dirName)
     try { if (existsSync(stale)) rmSync(stale, { recursive: true, force: true }) } catch { /* non-fatal */ }
   }
@@ -373,12 +368,19 @@ function pruneRemovedBundledExtensions(
     }
   }
 
-  // Always remove known stale files regardless of manifest state.
+  if (manifest?.installedExtensionDirs) {
+    // Manifest-based: remove previously-installed subdirectory extensions that
+    // are no longer in the bundle (e.g. mcporter/ removed in favour of mcp-client/).
+    for (const prevDir of manifest.installedExtensionDirs) {
+      removeIfStaleDir(prevDir)
+    }
+  }
+
+  // Always remove known stale entries regardless of manifest state.
   // These were installed by pre-manifest versions so they may not appear in
-  // installedExtensionRootFiles even when a manifest exists.
+  // installedExtensionRootFiles/installedExtensionDirs even when a manifest exists.
   // env-utils.js was moved from extensions/ root → gsd/ in v2.39.x (#1634)
-  removeFileIfStale('env-utils.js')
-}
+  removeFileIfStale('env-utils.js')}
 
 /**
  * Syncs all bundled resources to agentDir (~/.gsd/agent/) on every launch.

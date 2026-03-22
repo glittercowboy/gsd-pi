@@ -160,3 +160,49 @@ test("initResources prunes stale top-level extension siblings next to bundled co
   assert.equal(existsSync(staleSiblingPath), false, "stale top-level sibling should be removed during sync");
   assert.equal(existsSync(bundledPath), true, "bundled extension should remain after cleanup");
 });
+
+test("pruneRemovedBundledExtensions removes stale subdirectory extensions not in current bundle", async () => {
+  const { initResources } = await import("../resource-loader.ts");
+  const tmp = mkdtempSync(join(tmpdir(), "gsd-resource-loader-prune-dirs-"));
+  const fakeAgentDir = join(tmp, "agent");
+
+  try {
+    // First sync — seeds the agent dir and writes the manifest.
+    initResources(fakeAgentDir);
+
+    // Simulate a stale subdirectory extension left from a previous GSD version.
+    // This mirrors the mcporter scenario: it was bundled before, synced to
+    // ~/.gsd/agent/extensions/, then removed from the bundle in a newer version.
+    const staleExtDir = join(fakeAgentDir, "extensions", "mcporter");
+    mkdirSync(staleExtDir, { recursive: true });
+    writeFileSync(join(staleExtDir, "index.ts"), 'export default { name: "mcporter" };\n');
+    assert.equal(existsSync(staleExtDir), true, "stale subdir extension should exist before prune");
+
+    // Read the manifest to verify subdirectory extensions are tracked.
+    const manifestPath = join(fakeAgentDir, "managed-resources.json");
+    const manifest = JSON.parse(readFileSync(manifestPath, "utf-8"));
+
+    // The manifest must record installed extension directories so the pruner
+    // can detect when one has been removed from the bundle.
+    assert.ok(
+      Array.isArray(manifest.installedExtensionDirs),
+      "manifest should contain installedExtensionDirs array",
+    );
+
+    // Bump the manifest version to force a re-sync (simulates upgrading GSD).
+    manifest.gsdVersion = "0.0.0-force-resync";
+    manifest.contentHash = "0000000000000000";
+    writeFileSync(manifestPath, JSON.stringify(manifest));
+
+    // Second sync — the bundle no longer contains mcporter/, so it must be pruned.
+    initResources(fakeAgentDir);
+
+    assert.equal(
+      existsSync(staleExtDir),
+      false,
+      "stale subdirectory extension (mcporter/) should be pruned after upgrade",
+    );
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
