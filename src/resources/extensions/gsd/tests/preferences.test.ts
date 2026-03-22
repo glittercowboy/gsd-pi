@@ -352,3 +352,44 @@ test("handles empty models config", () => {
   assert.notEqual(prefs, null);
   assert.equal(prefs!.models, undefined);
 });
+
+// ── Non-frontmatter markdown format (#2036) ──────────────────────────────────
+
+test("parsePreferencesMarkdown warns and returns null for non-frontmatter markdown content", () => {
+  // A GSD agent recovery session wrote preferences in markdown heading+list
+  // format instead of YAML frontmatter. parsePreferencesMarkdown should warn
+  // (via stderr) so the user knows the file was not parsed.
+  const content = "## Git\n\n- isolation: none\n";
+  const stderrMessages: string[] = [];
+  const origWrite = process.stderr.write;
+  process.stderr.write = ((chunk: string | Uint8Array) => {
+    stderrMessages.push(chunk.toString());
+    return true;
+  }) as typeof process.stderr.write;
+  try {
+    const result = parsePreferencesMarkdown(content);
+    assert.equal(result, null, "non-frontmatter content returns null");
+    assert.ok(
+      stderrMessages.some(m => m.includes("preferences") && m.includes("frontmatter")),
+      "should emit a warning to stderr about missing frontmatter delimiters",
+    );
+  } finally {
+    process.stderr.write = origWrite;
+  }
+});
+
+test("parsePreferencesMarkdown does not warn for empty/whitespace-only content", () => {
+  const stderrMessages: string[] = [];
+  const origWrite = process.stderr.write;
+  process.stderr.write = ((chunk: string | Uint8Array) => {
+    stderrMessages.push(chunk.toString());
+    return true;
+  }) as typeof process.stderr.write;
+  try {
+    assert.equal(parsePreferencesMarkdown(""), null);
+    assert.equal(parsePreferencesMarkdown("   \n  \n"), null);
+    assert.equal(stderrMessages.length, 0, "no warnings for empty content");
+  } finally {
+    process.stderr.write = origWrite;
+  }
+});
