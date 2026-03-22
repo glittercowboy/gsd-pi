@@ -202,6 +202,7 @@ export class AuthStorage {
 	private fallbackResolver?: (provider: string) => string | undefined;
 	private loadError: Error | null = null;
 	private errors: Error[] = [];
+	private credentialChangeListeners: Set<() => void> = new Set();
 
 	/**
 	 * Round-robin index per provider. Incremented on each call to getApiKey
@@ -261,6 +262,25 @@ export class AuthStorage {
 	 */
 	setFallbackResolver(resolver: (provider: string) => string | undefined): void {
 		this.fallbackResolver = resolver;
+	}
+
+	/**
+	 * Register a callback to be notified when credentials change (e.g., after OAuth token refresh).
+	 * Returns a function to unregister the listener.
+	 */
+	onCredentialChange(listener: () => void): () => void {
+		this.credentialChangeListeners.add(listener);
+		return () => this.credentialChangeListeners.delete(listener);
+	}
+
+	private notifyCredentialChange(): void {
+		for (const listener of this.credentialChangeListeners) {
+			try {
+				listener();
+			} catch {
+				// Don't let listener errors break the refresh flow
+			}
+		}
 	}
 
 	private recordError(error: unknown): void {
@@ -666,6 +686,11 @@ export class AuthStorage {
 			this.loadError = null;
 			return { result: refreshed, next: JSON.stringify(merged, null, 2) };
 		});
+
+		// Notify listeners after credential change (e.g., model registry refresh)
+		if (result) {
+			queueMicrotask(() => this.notifyCredentialChange());
+		}
 
 		return result;
 	}

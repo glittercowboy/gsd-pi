@@ -243,6 +243,9 @@ export class ModelRegistry {
 			return undefined;
 		});
 
+		// Refresh models when credentials change (e.g., OAuth token refresh with new model limits)
+		this.authStorage.onCredentialChange(() => this.refresh());
+
 		// Load models
 		this.loadModels();
 	}
