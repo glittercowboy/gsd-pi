@@ -59,7 +59,7 @@ Requirements for v1.0 milestone. Each maps to roadmap phases.
 - [ ] **SYNC-02**: `syncStateToProjectRoot()` uses snapshot + projection render
 - [ ] **SYNC-03**: Advisory lock prevents concurrent worktree syncs from colliding
 - [ ] **SYNC-04**: Event-based reconciliation replaces INSERT OR REPLACE on merge
-- [ ] **SYNC-05**: Conflicting entity modifications surfaced for human resolution (no silent data loss)
+- [x] **SYNC-05**: Conflicting entity modifications surfaced for human resolution (no silent data loss)
 
 ### Prompt Migration
 

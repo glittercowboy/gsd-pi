@@ -72,7 +72,7 @@ Plans:
 - [x] 3-02-PLAN.md — Write intercept + remaining prompt migration (complete-milestone.md + audit)
 - [ ] 3-03-PLAN.md — Legacy markdown to engine migration (gsd migrate + auto-trigger in deriveState)
 - [ ] 3-04-PLAN.md — Event log compaction (archive milestone events on completion)
-- [ ] 3-05-PLAN.md — Conflict resolution CLI (gsd resolve-conflict command)
+- [x] 3-05-PLAN.md — Conflict resolution CLI (gsd resolve-conflict command)
 
 ### Phase 4: Remove Parsing from Hot Path
 **Goal**: Doctor is reduced to infrastructure diagnostics only (git, disk, environment, provider, DB constraints, projection drift) and markdown parsers are moved to legacy/ for use only by `gsd migrate`
@@ -105,6 +105,6 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5
 |-------|----------------|--------|-----------|
 | 1. Engine Foundation + Team Infrastructure | 5/5 | Complete | 2026-03-22 |
 | 2. Sync Migration + Prompt Migration | 3/3 | Complete | 2026-03-22 |
-| 3. Event Reconciliation + Mandatory Tools | 2/5 | In progress | - |
+| 3. Event Reconciliation + Mandatory Tools | 5/5 | In progress | - |
 | 4. Remove Parsing from Hot Path | 0/TBD | Not started | - |
 | 5. Dead Code Cleanup | 0/TBD | Not started | - |
