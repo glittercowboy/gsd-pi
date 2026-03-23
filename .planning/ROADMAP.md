@@ -14,7 +14,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 
 - [x] **Phase 1: Engine Foundation + Team Infrastructure** - Build WorkflowEngine, command API, agent tools, projections, state manifest, and event log foundation
 - [x] **Phase 2: Sync Migration + Prompt Migration** - Migrate worktree sync to snapshot/restore and migrate key prompts to tool calls (completed 2026-03-22)
-- [ ] **Phase 3: Event Reconciliation + Mandatory Tools** - Replace INSERT OR REPLACE with event-based merge, complete prompt migration, add gsd migrate
+- [x] **Phase 3: Event Reconciliation + Mandatory Tools** - Replace INSERT OR REPLACE with event-based merge, complete prompt migration, add gsd migrate (completed 2026-03-22)
 - [ ] **Phase 4: Remove Parsing from Hot Path** - Reduce doctor to infrastructure checks and move markdown parsers to legacy
 - [ ] **Phase 5: Dead Code Cleanup** - Remove all dead code unlocked by prior phases (~4,600 lines)
 
@@ -70,8 +70,8 @@ Plans:
 Plans:
 - [x] 3-01-PLAN.md — Event-based reconciliation (reconcileWorktreeLogs replaces reconcileWorktreeDb)
 - [x] 3-02-PLAN.md — Write intercept + remaining prompt migration (complete-milestone.md + audit)
-- [ ] 3-03-PLAN.md — Legacy markdown to engine migration (gsd migrate + auto-trigger in deriveState)
-- [ ] 3-04-PLAN.md — Event log compaction (archive milestone events on completion)
+- [x] 3-03-PLAN.md — Legacy markdown to engine migration (gsd migrate + auto-trigger in deriveState)
+- [x] 3-04-PLAN.md — Event log compaction (archive milestone events on completion)
 - [x] 3-05-PLAN.md — Conflict resolution CLI (gsd resolve-conflict command)
 
 ### Phase 4: Remove Parsing from Hot Path
@@ -105,6 +105,6 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5
 |-------|----------------|--------|-----------|
 | 1. Engine Foundation + Team Infrastructure | 5/5 | Complete | 2026-03-22 |
 | 2. Sync Migration + Prompt Migration | 3/3 | Complete | 2026-03-22 |
-| 3. Event Reconciliation + Mandatory Tools | 5/5 | In progress | - |
+| 3. Event Reconciliation + Mandatory Tools | 5/5 | Complete | 2026-03-22 |
 | 4. Remove Parsing from Hot Path | 0/TBD | Not started | - |
 | 5. Dead Code Cleanup | 0/TBD | Not started | - |
