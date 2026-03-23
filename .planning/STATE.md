@@ -5,23 +5,23 @@
 See: .planning/PROJECT.md (updated 2026-03-22)
 
 **Core value:** One sheriff in town — all state mutations flow through a single typed engine
-**Current focus:** Phase 3 complete — ready for Phase 4
+**Current focus:** Phase 4 — Remove Parsing from Hot Path
 
 ## Current Position
 
-Phase: 3 of 5 (Event Reconciliation + Mandatory Tools) — COMPLETE
-Plan: 5 of 5 in current phase (all complete)
-Status: Phase 3 Complete
-Last activity: 2026-03-22 — Phase 3 verified (16/16 must-haves, 160/160 tests)
+Phase: 4 of 5 (Remove Parsing from Hot Path) — IN PROGRESS
+Plan: 1 of 4 in current phase (4-00 complete)
+Status: Executing
+Last activity: 2026-03-23 — Plan 4-00 complete (Wave 0 test scaffolds)
 
-Progress: [██████████░] 60%
+Progress: [███████████░] 65%
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 12
+- Total plans completed: 13
 - Average duration: 4 min
-- Total execution time: 0.7 hours
+- Total execution time: 0.8 hours
 
 **By Phase:**
 
@@ -29,10 +29,11 @@ Progress: [██████████░] 60%
 |-------|-------|-------|----------|
 | 1 - Engine Foundation | 5 | 23 min | 5 min |
 | 2 - Sync + Prompt Migration | 2 | 5 min | 3 min |
-| 3 - Event Reconciliation + Mandatory Tools | 5 (so far) | ~23 min | 5 min |
+| 3 - Event Reconciliation + Mandatory Tools | 5 | ~23 min | 5 min |
+| 4 - Remove Parsing from Hot Path | 1 (so far) | 5 min | 5 min |
 
 **Recent Trend:**
-- Last 5 plans: 2-02 (3 min), 3-01 (4 min), 3-02 (4 min), 3-05 (3 min)
+- Last 5 plans: 3-01 (4 min), 3-02 (4 min), 3-05 (3 min), 4-00 (5 min)
 - Trend: Steady
 
 *Updated after each plan completion*
@@ -81,6 +82,9 @@ Recent decisions affecting current work:
 - 3-05: CONFLICTS.md parsed with line-by-line regex — matches writeConflictsFile format exactly
 - 3-05: resolveConflict re-writes CONFLICTS.md with empty worktreePath string on partial resolve (worktreePath is display-only)
 - 3-05: Dynamic import of resolveConflict/listConflicts in ops.ts consistent with existing migrate handler pattern
+- 4-00: TODO placeholders for checkEngineHealth tests (import would fail since function doesn't exist yet)
+- 4-00: Multi-line import regex for state.ts boundary test to handle TypeScript multi-line import blocks
+- 4-00: Removed-export tests use dynamic import + typeof check for runtime export presence validation
 
 ### Pending Todos
 
@@ -92,6 +96,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-03-22
-Stopped at: Phase 3 complete — all 5 plans executed, verified (16/16 must-haves)
+Last session: 2026-03-23
+Stopped at: Completed 4-00-PLAN.md (Wave 0 test scaffolds)
 Resume file: None

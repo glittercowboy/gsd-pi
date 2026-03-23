@@ -85,7 +85,7 @@ Plans:
 **Plans:** 4 plans
 
 Plans:
-- [ ] 4-00-PLAN.md — Wave 0 test scaffolds (checkEngineHealth, import boundary, removed exports)
+- [x] 4-00-PLAN.md — Wave 0 test scaffolds (checkEngineHealth, import boundary, removed exports)
 - [ ] 4-01-PLAN.md — Parser relocation (create legacy/parsers.ts, update all imports)
 - [ ] 4-02-PLAN.md — Doctor surgery (remove reconciliation, add engine health checks)
 - [ ] 4-03-PLAN.md — Recovery + forensics simplification (engine queries, event log)
@@ -112,5 +112,5 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5
 | 1. Engine Foundation + Team Infrastructure | 5/5 | Complete | 2026-03-22 |
 | 2. Sync Migration + Prompt Migration | 3/3 | Complete | 2026-03-22 |
 | 3. Event Reconciliation + Mandatory Tools | 5/5 | Complete | 2026-03-22 |
-| 4. Remove Parsing from Hot Path | 0/4 | Not started | - |
+| 4. Remove Parsing from Hot Path | 1/4 | In Progress | - |
 | 5. Dead Code Cleanup | 0/TBD | Not started | - |
