@@ -836,7 +836,10 @@ export async function runUnitPhase(
     }
     const hasProjectFile = PROJECT_FILES.some((f) => deps.existsSync(join(s.basePath, f)));
     const hasSrcDir = deps.existsSync(join(s.basePath, "src"));
-    if (!hasProjectFile && !hasSrcDir) {
+    // A .gsd directory (or symlink) counts as a valid project — greenfield
+    // projects won't have package.json/src yet; the first task creates them.
+    const hasGsdDir = deps.existsSync(join(s.basePath, ".gsd"));
+    if (!hasProjectFile && !hasSrcDir && !hasGsdDir) {
       const msg = `Worktree health check failed: ${s.basePath} has no recognized project files — refusing to dispatch ${unitType} ${unitId}`;
       debugLog("runUnitPhase", { phase: "worktree-health-fail", basePath: s.basePath, hasProjectFile, hasSrcDir });
       ctx.ui.notify(msg, "error");
