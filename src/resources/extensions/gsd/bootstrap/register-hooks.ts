@@ -6,7 +6,7 @@ import { isToolCallEventType } from "@gsd/pi-coding-agent";
 import { buildMilestoneFileName, resolveMilestonePath, resolveSliceFile, resolveSlicePath } from "../paths.js";
 import { buildBeforeAgentStartResult } from "./system-context.js";
 import { handleAgentEnd } from "./agent-end-recovery.js";
-import { clearDiscussionFlowState, isDepthVerified, isQueuePhaseActive, markDepthVerified, resetWriteGateState, shouldBlockContextWrite } from "./write-gate.js";
+import { clearDiscussionFlowState, isDepthVerified, isQueuePhaseActive, markDepthVerified, markDimensionVerified, resetWriteGateState, shouldBlockContextWrite } from "./write-gate.js";
 import { getDiscussionMilestoneId } from "../guided-flow.js";
 import { loadToolApiKeys } from "../commands-config.js";
 import { loadFile, saveFile, formatContinue } from "../files.js";
@@ -151,8 +151,16 @@ export function registerHooks(pi: ExtensionAPI): void {
     const questions: any[] = (event.input as any)?.questions ?? [];
     for (const question of questions) {
       if (typeof question.id === "string" && question.id.includes("depth_verification")) {
-        markDepthVerified();
-        break;
+        // Try to extract a dimension suffix: depth_verification_what, depth_verification_risks, etc.
+        const dimMatch = question.id.match(/depth_verification_(\w+)/);
+        if (dimMatch && dimMatch[1] !== 'confirm') {
+          // Dimension-specific verification (e.g. depth_verification_what → 'what')
+          markDimensionVerified(dimMatch[1]);
+        } else {
+          // Bare depth_verification or depth_verification_confirm → legacy fast-path
+          markDepthVerified();
+          break;
+        }
       }
     }
 
