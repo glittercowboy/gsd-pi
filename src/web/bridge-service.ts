@@ -2,9 +2,10 @@ import { execFile, spawn, type ChildProcess, type SpawnOptions } from "node:chil
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { StringDecoder } from "node:string_decoder";
 import type { Readable } from "node:stream";
-import { join, resolve, dirname } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { join, resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 import { resolveTypeStrippingFlag } from "./ts-subprocess-flags.ts";
+import { safePackageRootFromImportUrl } from "./safe-import-meta-resolve.ts";
 
 import type { AgentSessionEvent, SessionStateChangeReason } from "../../packages/pi-coding-agent/src/core/agent-session.ts";
 import type {
@@ -39,7 +40,7 @@ import {
 } from "./auto-dashboard-service.ts";
 import { resolveGsdCliEntry } from "./cli-entry.ts";
 
-const DEFAULT_PACKAGE_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
+const DEFAULT_PACKAGE_ROOT = safePackageRootFromImportUrl(import.meta.url);
 const RESPONSE_TIMEOUT_MS = 30_000;
 const START_TIMEOUT_MS = 150_000;
 const MAX_STDERR_BUFFER = 8_000;
@@ -1047,7 +1048,7 @@ async function fallbackWorkspaceIndex(basePath: string): Promise<GSDWorkspaceInd
 export function resolveBridgeRuntimeConfig(env: NodeJS.ProcessEnv = getBridgeDeps().env ?? process.env, projectCwdOverride?: string): BridgeRuntimeConfig {
   const projectCwd = projectCwdOverride || env.GSD_WEB_PROJECT_CWD || process.cwd();
   const projectSessionsDir = env.GSD_WEB_PROJECT_SESSIONS_DIR || getProjectSessionsDir(projectCwd);
-  const packageRoot = env.GSD_WEB_PACKAGE_ROOT || DEFAULT_PACKAGE_ROOT;
+  const packageRoot = env.GSD_WEB_PACKAGE_ROOT || DEFAULT_PACKAGE_ROOT || process.cwd();
   return { projectCwd, projectSessionsDir, packageRoot };
 }
 
