@@ -30,13 +30,9 @@ import {
   autoCommitCurrentBranch,
   type TaskCommitContext,
 } from "./worktree.js";
-import {
-  verifyExpectedArtifact,
-  resolveExpectedArtifactPath,
-} from "./auto-recovery.js";
+import { resolveExpectedArtifactPath } from "./auto-artifact-paths.js";
+import { WorkflowEngine, isEngineAvailable } from "./workflow-engine.js";
 import { writeUnitRuntimeRecord, clearUnitRuntimeRecord } from "./unit-runtime.js";
-import { runGSDDoctor, rebuildState, summarizeDoctorIssues } from "./doctor.js";
-import { recordHealthSnapshot, checkHealEscalation } from "./doctor-proactive.js";
 import { syncStateToProjectRoot } from "./auto-worktree-sync.js";
 import { isDbAvailable } from "./gsd-db.js";
 import { consumeSignal } from "./session-status-io.js";
@@ -62,13 +58,8 @@ import { uncheckTaskInPlan } from "./undo.js";
 import { atomicWriteSync } from "./atomic-write.js";
 import { _resetHasChangesCache } from "./native-git-bridge.js";
 
-/** Throttle STATE.md rebuilds — at most once per 30 seconds */
-const STATE_REBUILD_MIN_INTERVAL_MS = 30_000;
-
 export interface PreVerificationOpts {
   skipSettleDelay?: boolean;
-  skipDoctor?: boolean;
-  skipStateRebuild?: boolean;
   skipWorktreeSync?: boolean;
 }
 
@@ -182,78 +173,6 @@ export async function postUnitPreVerification(pctx: PostUnitContext, opts?: PreV
       debugLog("postUnit", { phase: "github-sync", error: String(e) });
     }
 
-    // Doctor: fix mechanical bookkeeping (skipped for lightweight sidecars)
-    if (!opts?.skipDoctor) try {
-      const scopeParts = s.currentUnit.id.split("/").slice(0, 2);
-      const doctorScope = scopeParts.join("/");
-      const sliceTerminalUnits = new Set(["complete-slice", "run-uat"]);
-      const effectiveFixLevel = sliceTerminalUnits.has(s.currentUnit.type) ? "all" as const : "task" as const;
-      const report = await runGSDDoctor(s.basePath, { fix: true, scope: doctorScope, fixLevel: effectiveFixLevel });
-      // Human-readable fix notification with details
-      if (report.fixesApplied.length > 0) {
-        const fixSummary = report.fixesApplied.length <= 2
-          ? report.fixesApplied.join("; ")
-          : `${report.fixesApplied[0]}; +${report.fixesApplied.length - 1} more`;
-        ctx.ui.notify(`Doctor: ${fixSummary}`, "info");
-      }
-
-      // Proactive health tracking — filter to current milestone to avoid
-      // cross-milestone stale errors inflating the escalation counter
-      const currentMilestoneId = s.currentUnit.id.split("/")[0];
-      const milestoneIssues = currentMilestoneId
-        ? report.issues.filter(i =>
-            i.unitId === currentMilestoneId ||
-            i.unitId.startsWith(`${currentMilestoneId}/`))
-        : report.issues;
-      const summary = summarizeDoctorIssues(milestoneIssues);
-      // Pass issue details + scope for real-time visibility in the progress widget
-      const issueDetails = milestoneIssues
-        .filter(i => i.severity === "error" || i.severity === "warning")
-        .map(i => ({ code: i.code, message: i.message, severity: i.severity, unitId: i.unitId }));
-      recordHealthSnapshot(summary.errors, summary.warnings, report.fixesApplied.length, issueDetails, report.fixesApplied, doctorScope);
-
-      // Check if we should escalate to LLM-assisted heal
-      if (summary.errors > 0) {
-        const unresolvedErrors = milestoneIssues
-          .filter(i => i.severity === "error" && !i.fixable)
-          .map(i => ({ code: i.code, message: i.message, unitId: i.unitId }));
-        const escalation = checkHealEscalation(summary.errors, unresolvedErrors);
-        if (escalation.shouldEscalate) {
-          ctx.ui.notify(
-            `Doctor heal escalation: ${escalation.reason}. Dispatching LLM-assisted heal.`,
-            "warning",
-          );
-          try {
-            const { formatDoctorIssuesForPrompt, formatDoctorReport } = await import("./doctor.js");
-            const { dispatchDoctorHeal } = await import("./commands-handlers.js");
-            const actionable = report.issues.filter(i => i.severity === "error");
-            const reportText = formatDoctorReport(report, { scope: doctorScope, includeWarnings: true });
-            const structuredIssues = formatDoctorIssuesForPrompt(actionable);
-            dispatchDoctorHeal(pi, doctorScope, reportText, structuredIssues);
-            return "dispatched";
-          } catch (e) {
-            debugLog("postUnit", { phase: "doctor-heal-dispatch", error: String(e) });
-          }
-        }
-      }
-    } catch (e) {
-      debugLog("postUnit", { phase: "doctor", error: String(e) });
-    }
-
-    // Throttled STATE.md rebuild (skipped for lightweight sidecars)
-    if (!opts?.skipStateRebuild) {
-      const now = Date.now();
-      if (now - s.lastStateRebuildAt >= STATE_REBUILD_MIN_INTERVAL_MS) {
-        try {
-          await rebuildState(s.basePath);
-          s.lastStateRebuildAt = now;
-          autoCommitCurrentBranch(s.basePath, "state-rebuild", s.currentUnit.id);
-        } catch (e) {
-          debugLog("postUnit", { phase: "state-rebuild", error: String(e) });
-        }
-      }
-    }
-
     // Prune dead bg-shell processes
     try {
       const { pruneDeadProcesses } = await import("../bg-shell/process-manager.js");
@@ -356,16 +275,46 @@ export async function postUnitPreVerification(pctx: PostUnitContext, opts?: PreV
       }
     }
 
-    // Artifact verification
+    // Artifact verification — query engine if available, else fall back to
+    // file-existence check via resolveExpectedArtifactPath.
     let triggerArtifactVerified = false;
     if (!s.currentUnit.type.startsWith("hook/")) {
       try {
-        triggerArtifactVerified = verifyExpectedArtifact(s.currentUnit.type, s.currentUnit.id, s.basePath);
+        const { type: unitType, id: unitId } = s.currentUnit;
+        const parts = unitId.split("/");
+        const mid = parts[0];
+        const sid = parts[1];
+        const tid = parts[2];
+        if (isEngineAvailable(s.basePath) && mid) {
+          const engine = new WorkflowEngine(s.basePath);
+          if (unitType === "execute-task" && sid && tid) {
+            const taskRow = engine.getTask(mid, sid, tid);
+            triggerArtifactVerified = !!(taskRow && taskRow.status === "done" && taskRow.summary);
+          } else if (unitType === "complete-slice" && sid) {
+            const sliceRow = engine.getSlice(mid, sid);
+            triggerArtifactVerified = !!(sliceRow && sliceRow.status === "done");
+          } else if (unitType === "plan-slice" && sid) {
+            triggerArtifactVerified = engine.getTasks(mid, sid).length > 0;
+          } else {
+            // For all other unit types, fall back to file existence
+            const artifactPath = resolveExpectedArtifactPath(unitType, unitId, s.basePath);
+            triggerArtifactVerified = artifactPath !== null
+              ? existsSync(artifactPath)
+              : true;
+          }
+        } else {
+          // No engine — fall back to file existence
+          const artifactPath = resolveExpectedArtifactPath(unitType, unitId, s.basePath);
+          triggerArtifactVerified = artifactPath !== null
+            ? existsSync(artifactPath)
+            : true;
+        }
         if (triggerArtifactVerified) {
           invalidateAllCaches();
         }
       } catch (e) {
         debugLog("postUnit", { phase: "artifact-verify", error: String(e) });
+        triggerArtifactVerified = true; // fail open
       }
 
       // When artifact verification fails for a unit type that has a known expected

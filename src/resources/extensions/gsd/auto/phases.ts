@@ -539,13 +539,34 @@ export async function runDispatch(
       });
 
       if (loopState.stuckRecoveryAttempts === 0) {
-        // Level 1: try verifying the artifact, then cache invalidation + retry
+        // Level 1: try checking engine for unit completion, then cache invalidation + retry
         loopState.stuckRecoveryAttempts++;
-        const artifactExists = deps.verifyExpectedArtifact(
-          unitType,
-          unitId,
-          s.basePath,
-        );
+        let artifactExists = false;
+        try {
+          const { isEngineAvailable, WorkflowEngine } = await import("../workflow-engine.js");
+          if (isEngineAvailable(s.basePath)) {
+            const engine = new WorkflowEngine(s.basePath);
+            const parts = unitId.split("/");
+            const mid = parts[0];
+            const sid = parts[1];
+            const tid = parts[2];
+            if (unitType === "execute-task" && mid && sid && tid) {
+              const taskRow = engine.getTask(mid, sid, tid);
+              artifactExists = !!(taskRow && taskRow.status === "done");
+            } else if (unitType === "complete-slice" && mid && sid) {
+              const sliceRow = engine.getSlice(mid, sid);
+              artifactExists = !!(sliceRow && sliceRow.status === "done");
+            } else if (unitType === "plan-slice" && mid && sid) {
+              artifactExists = engine.getTasks(mid, sid).length > 0;
+            } else {
+              artifactExists = true; // no engine check — fall back to optimistic
+            }
+          } else {
+            artifactExists = true; // no engine — fail open
+          }
+        } catch {
+          artifactExists = true; // non-fatal
+        }
         if (artifactExists) {
           debugLog("autoLoop", {
             phase: "stuck-recovery",
@@ -1133,10 +1154,35 @@ export async function runUnitPhase(
     );
   }
 
-  const skipArtifactVerification = unitType.startsWith("hook/") || unitType === "custom-step";
-  const artifactVerified =
-    skipArtifactVerification ||
-    deps.verifyExpectedArtifact(unitType, unitId, s.basePath);
+  const isHookUnit = unitType.startsWith("hook/");
+  let artifactVerified = isHookUnit;
+  if (!isHookUnit) {
+    try {
+      const { isEngineAvailable, WorkflowEngine } = await import("../workflow-engine.js");
+      const parts = unitId.split("/");
+      const mid = parts[0];
+      const sid = parts[1];
+      const tid = parts[2];
+      if (isEngineAvailable(s.basePath) && mid) {
+        const engine = new WorkflowEngine(s.basePath);
+        if (unitType === "execute-task" && sid && tid) {
+          const taskRow = engine.getTask(mid, sid, tid);
+          artifactVerified = !!(taskRow && taskRow.status === "done" && taskRow.summary);
+        } else if (unitType === "complete-slice" && sid) {
+          const sliceRow = engine.getSlice(mid, sid);
+          artifactVerified = !!(sliceRow && sliceRow.status === "done");
+        } else if (unitType === "plan-slice" && sid) {
+          artifactVerified = engine.getTasks(mid, sid).length > 0;
+        } else {
+          artifactVerified = true; // no specific engine check — fall through
+        }
+      } else {
+        artifactVerified = true; // no engine — fail open
+      }
+    } catch {
+      artifactVerified = true; // non-fatal
+    }
+  }
   if (artifactVerified) {
     s.completedUnits.push({
       type: unitType,

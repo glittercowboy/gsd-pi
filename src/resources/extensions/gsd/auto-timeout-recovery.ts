@@ -14,7 +14,7 @@ import {
 import {
   resolveExpectedArtifactPath,
   diagnoseExpectedArtifact,
-} from "./auto-recovery.js";
+} from "./auto-artifact-paths.js";
 import { existsSync } from "node:fs";
 
 import { resolveAgentEnd } from "./auto-loop.js";

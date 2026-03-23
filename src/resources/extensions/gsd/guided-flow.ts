@@ -16,7 +16,6 @@ import { deriveState } from "./state.js";
 import { invalidateAllCaches } from "./cache.js";
 import { startAuto } from "./auto.js";
 import { readCrashLock, clearLock, formatCrashInfo } from "./crash-recovery.js";
-import { resolveExpectedArtifactPath } from "./auto.js";
 import {
   gsdRoot, milestonesDir, resolveMilestoneFile, resolveMilestonePath,
   resolveSliceFile, resolveSlicePath, resolveGsdRootFile, relGsdRootFile,
@@ -682,7 +681,6 @@ export async function showDiscuss(
 /**
  * The one wizard. Reads state, shows contextual options, dispatches into the workflow doc.
  */
-// selfHealRuntimeRecords removed (D-05) — engine is authoritative
 
 // ─── Milestone Actions Submenu ──────────────────────────────────────────────
 

@@ -530,7 +530,7 @@ export function autoWorktreeBranch(milestoneId: string): string {
  * syncStateToProjectRoot() runs after every task completion but the final
  * git commit may not have happened before the crash. On restart the worktree
  * is re-attached to the branch HEAD, which has [ ] for the crashed task,
- * causing verifyExpectedArtifact() to fail and triggering an infinite
+ * causing artifact verification to fail and triggering an infinite
  * dispatch/skip loop.
  *
  * Fix: after re-attaching, read every *.md plan file in the milestone
@@ -671,7 +671,7 @@ export function createAutoWorktree(
     // the project root filesystem because syncStateToProjectRoot() ran after
     // task completion but the auto-commit never fired. On restart the worktree
     // is re-created from the branch HEAD (which has [ ] for the crashed task),
-    // causing verifyExpectedArtifact() to return false → stale-key eviction →
+    // causing artifact verification to return false → stale-key eviction →
     // infinite dispatch/skip loop. Reconciling here ensures the worktree sees
     // the same [x] state that syncStateToProjectRoot() wrote to the root.
     reconcilePlanCheckboxes(basePath, info.path, milestoneId);

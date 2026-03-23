@@ -23,7 +23,8 @@ import {
 } from "./metrics.js";
 import { readCrashLock, isLockProcessAlive, formatCrashInfo, type LockData } from "./crash-recovery.js";
 import { runGSDDoctor, formatDoctorIssuesForPrompt, type DoctorIssue } from "./doctor.js";
-import { verifyExpectedArtifact } from "./auto-recovery.js";
+import { WorkflowEngine, isEngineAvailable } from "./workflow-engine.js";
+import { resolveExpectedArtifactPath } from "./auto-artifact-paths.js";
 import { readEvents } from "./workflow-events.js";
 import { deriveState } from "./state.js";
 import { isAutoActive } from "./auto.js";
@@ -383,6 +384,44 @@ function detectTimeouts(traces: UnitTrace[], anomalies: ForensicAnomaly[]): void
   }
 }
 
+/**
+ * Check whether an artifact is present for a completed unit.
+ * Uses engine query if available, falls back to file-existence check.
+ */
+function checkArtifactPresent(unitType: string, unitId: string, basePath: string): boolean {
+  // Hook units always pass
+  if (unitType.startsWith("hook/")) return true;
+
+  try {
+    const parts = unitId.split("/");
+    const mid = parts[0];
+    const sid = parts[1];
+    const tid = parts[2];
+
+    if (isEngineAvailable(basePath) && mid) {
+      const engine = new WorkflowEngine(basePath);
+      if (unitType === "execute-task" && sid && tid) {
+        const taskRow = engine.getTask(mid, sid, tid);
+        return !!(taskRow && taskRow.status === "done");
+      }
+      if (unitType === "complete-slice" && sid) {
+        const sliceRow = engine.getSlice(mid, sid);
+        return !!(sliceRow && sliceRow.status === "done");
+      }
+      if (unitType === "plan-slice" && sid) {
+        return engine.getTasks(mid, sid).length > 0;
+      }
+    }
+
+    // Fallback: file-existence check
+    const artifactPath = resolveExpectedArtifactPath(unitType, unitId, basePath);
+    if (!artifactPath) return true; // no known artifact — treat as present
+    return existsSync(artifactPath);
+  } catch {
+    return true; // non-fatal: fail open
+  }
+}
+
 function detectMissingArtifacts(completedKeys: string[], basePath: string, activeMilestone: string | null, anomalies: ForensicAnomaly[]): void {
   // Also check the worktree path for artifacts — they may exist there but not at root
   const wtBasePath = activeMilestone ? getAutoWorktreePath(basePath, activeMilestone) : null;
@@ -415,8 +454,8 @@ function detectMissingArtifacts(completedKeys: string[], basePath: string, activ
     const unitType = key.slice(0, slashIdx);
     const unitId = key.slice(slashIdx + 1);
 
-    const rootHasArtifact = verifyExpectedArtifact(unitType, unitId, basePath);
-    const wtHasArtifact = wtBasePath ? verifyExpectedArtifact(unitType, unitId, wtBasePath) : false;
+    const rootHasArtifact = checkArtifactPresent(unitType, unitId, basePath);
+    const wtHasArtifact = wtBasePath ? checkArtifactPresent(unitType, unitId, wtBasePath) : false;
 
     if (!rootHasArtifact && !wtHasArtifact) {
       anomalies.push({
@@ -425,7 +464,7 @@ function detectMissingArtifacts(completedKeys: string[], basePath: string, activ
         unitType,
         unitId,
         summary: `Event log records ${key} as completed but artifact missing or invalid`,
-        details: `The unit has a completion event in the event log but verifyExpectedArtifact() returns false at both project root and worktree.`,
+        details: `The unit has a completion event in the event log but artifact check returns false at both project root and worktree.`,
       });
     }
   }

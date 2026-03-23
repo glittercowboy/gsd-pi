@@ -188,11 +188,6 @@ export interface LoopDeps {
     startedAt: number,
     opts?: CloseoutOptions & Record<string, unknown>,
   ) => Promise<void>;
-  verifyExpectedArtifact: (
-    unitType: string,
-    unitId: string,
-    basePath: string,
-  ) => boolean;
   clearUnitRuntimeRecord: (
     basePath: string,
     unitType: string,
