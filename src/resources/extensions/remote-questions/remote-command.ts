@@ -22,6 +22,7 @@ export async function handleRemote(
   if (trimmed === "slack") return handleSetupSlack(ctx);
   if (trimmed === "discord") return handleSetupDiscord(ctx);
   if (trimmed === "telegram") return handleSetupTelegram(ctx);
+  if (trimmed === "signal") return handleSetupSignal(ctx);
   if (trimmed === "status") return handleRemoteStatus(ctx);
   if (trimmed === "disconnect") return handleDisconnect(ctx);
 
@@ -182,6 +183,52 @@ async function handleSetupTelegram(ctx: ExtensionCommandContext): Promise<void> 
   ctx.ui.notify(`Telegram connected — remote questions enabled for chat ${chatId}.`, "info");
 }
 
+async function handleSetupSignal(ctx: ExtensionCommandContext): Promise<void> {
+  const serviceUrl = await promptInput(ctx, "Signal Service URL", "signal-cli-rest-api URL (e.g. http://localhost:8080)");
+  if (!serviceUrl) return void ctx.ui.notify("Signal setup cancelled.", "info");
+  try { new URL(serviceUrl); } catch { return void ctx.ui.notify("Invalid URL format.", "error"); }
+  const trimmedUrl = serviceUrl.replace(/\/+$/, "");
+
+  const phoneNumber = await promptInput(ctx, "Bot Phone Number", "Registered with signal-cli (e.g. +15551234567)");
+  if (!phoneNumber) return void ctx.ui.notify("Signal setup cancelled.", "info");
+  if (!/^\+\d{7,15}$/.test(phoneNumber)) return void ctx.ui.notify("Invalid phone number — expected international format: +15551234567", "error");
+
+  ctx.ui.notify("Connecting to signal-cli-rest-api...", "info");
+  const about = await fetchJson(`${trimmedUrl}/v1/about`);
+  if (!about) return void ctx.ui.notify("Could not reach signal-cli-rest-api — check the URL.", "error");
+
+  const recipientNumber = await promptInput(ctx, "Your Phone Number", "Where questions will be sent (e.g. +15559876543)");
+  if (!recipientNumber) return void ctx.ui.notify("Signal setup cancelled.", "info");
+  if (!isValidChannelId("signal", recipientNumber)) return void ctx.ui.notify("Invalid phone number — expected international format: +15559876543", "error");
+
+  // Test send
+  ctx.ui.notify("Sending test message...", "info");
+  try {
+    const res = await fetch(`${trimmedUrl}/v2/send`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        message: "✅ GSD remote questions connected via Signal.",
+        number: phoneNumber,
+        recipients: [recipientNumber],
+      }),
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      return void ctx.ui.notify(`Could not send test message: HTTP ${res.status} ${body.slice(0, 100)}`, "error");
+    }
+  } catch (err) {
+    return void ctx.ui.notify(`Could not send test message: ${(err as Error).message}`, "error");
+  }
+
+  saveProviderToken("signal_service", trimmedUrl);
+  process.env.SIGNAL_SERVICE_URL = trimmedUrl;
+  process.env.SIGNAL_PHONE_NUMBER = phoneNumber;
+  saveRemoteQuestionsConfig("signal", recipientNumber);
+  ctx.ui.notify(`Signal connected — remote questions enabled for ${recipientNumber}.`, "info");
+}
+
 async function handleRemoteStatus(ctx: ExtensionCommandContext): Promise<void> {
   const status = getRemoteConfigStatus();
   const config = resolveRemoteConfig();
@@ -207,11 +254,12 @@ async function handleDisconnect(ctx: ExtensionCommandContext): Promise<void> {
   if (!channel) return void ctx.ui.notify("No remote channel configured — nothing to disconnect.", "info");
 
   removeRemoteQuestionsConfig();
-  const providerMap: Record<string, string> = { slack: "slack_bot", discord: "discord_bot", telegram: "telegram_bot" };
+  const providerMap: Record<string, string> = { slack: "slack_bot", discord: "discord_bot", telegram: "telegram_bot", signal: "signal_service" };
   removeProviderToken(providerMap[channel] ?? channel);
   if (channel === "slack") delete process.env.SLACK_BOT_TOKEN;
   if (channel === "discord") delete process.env.DISCORD_BOT_TOKEN;
   if (channel === "telegram") delete process.env.TELEGRAM_BOT_TOKEN;
+  if (channel === "signal") { delete process.env.SIGNAL_SERVICE_URL; delete process.env.SIGNAL_PHONE_NUMBER; }
   ctx.ui.notify(`Remote questions disconnected (${channel}).`, "info");
 }
 
@@ -230,6 +278,7 @@ async function handleRemoteMenu(ctx: ExtensionCommandContext): Promise<void> {
         "  /gsd remote slack",
         "  /gsd remote discord",
         "  /gsd remote telegram",
+        "  /gsd remote signal",
       ]
     : [
         "No remote question channel configured.",
@@ -238,6 +287,7 @@ async function handleRemoteMenu(ctx: ExtensionCommandContext): Promise<void> {
         "  /gsd remote slack",
         "  /gsd remote discord",
         "  /gsd remote telegram",
+        "  /gsd remote signal",
         "  /gsd remote status",
       ];
 
@@ -315,7 +365,7 @@ function removeProviderToken(provider: string): void {
   auth.set(provider, { type: "api_key", key: "" });
 }
 
-export function saveRemoteQuestionsConfig(channel: "slack" | "discord" | "telegram", channelId: string): void {
+export function saveRemoteQuestionsConfig(channel: "slack" | "discord" | "telegram" | "signal", channelId: string): void {
   const prefsPath = getGlobalGSDPreferencesPath();
   const block = [
     "remote_questions:",

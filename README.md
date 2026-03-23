@@ -116,7 +116,7 @@ Full documentation is available in the [`docs/`](./docs/) directory:
 - **[CI/CD Pipeline](./docs/ci-cd-pipeline.md)** — three-stage promotion pipeline (Dev → Test → Prod)
 - **[VS Code Extension](./vscode-extension/README.md)** — chat participant, sidebar dashboard, RPC integration
 - **[Visualizer](./docs/visualizer.md)** — workflow visualizer with stats and discussion status
-- **[Remote Questions](./docs/remote-questions.md)** — route decisions to Slack or Discord when human input is needed
+- **[Remote Questions](./docs/remote-questions.md)** — route decisions to Slack, Discord, Telegram, or Signal when human input is needed
 - **[Dynamic Model Routing](./docs/dynamic-model-routing.md)** — complexity-based model selection and budget pressure
 - **[Pipeline Simplification (ADR-003)](./docs/ADR-003-pipeline-simplification.md)** — merged research into planning, mechanical completion
 - **[Migration from v1](./docs/migration.md)** — `.planning` → `.gsd` migration
@@ -335,7 +335,7 @@ gsd headless query
 gsd headless dispatch plan
 ```
 
-Headless auto-responds to interactive prompts, detects completion, and exits with structured codes: `0` complete, `1` error/timeout, `2` blocked. Auto-restarts on crash with exponential backoff. Use `gsd headless query` for instant, machine-readable state inspection — returns phase, next dispatch preview, and parallel worker costs as a single JSON object without spawning an LLM session. Pair with [remote questions](./docs/remote-questions.md) to route decisions to Slack or Discord when human input is needed.
+Headless auto-responds to interactive prompts, detects completion, and exits with structured codes: `0` complete, `1` error/timeout, `2` blocked. Auto-restarts on crash with exponential backoff. Use `gsd headless query` for instant, machine-readable state inspection — returns phase, next dispatch preview, and parallel worker costs as a single JSON object without spawning an LLM session. Pair with [remote questions](./docs/remote-questions.md) to route decisions to Slack, Discord, Telegram, or Signal when human input is needed.
 
 **Multi-session orchestration** — headless mode supports file-based IPC in `.gsd/parallel/` for coordinating multiple GSD workers across milestones. Build orchestrators that spawn, monitor, and budget-cap a fleet of GSD workers.
 
@@ -561,7 +561,7 @@ GSD ships with 19 extensions, all loaded automatically:
 | **Slash Commands**     | Custom command creation                                                                                                |
 | **Ask User Questions** | Structured user input with single/multi-select                                                                         |
 | **Secure Env Collect** | Masked secret collection without manual .env editing                                                                   |
-| **Remote Questions**   | Route decisions to Slack/Discord when human input is needed in headless/CI mode                                         |
+| **Remote Questions**   | Route decisions to Slack, Discord, Telegram, or Signal when human input is needed in headless/CI mode                   |
 | **Universal Config**   | Discover and import MCP servers and rules from other AI coding tools                                                    |
 | **AWS Auth**           | Automatic Bedrock credential refresh for AWS-hosted models                                                              |
 | **TTSR**               | Tool-use type-safe runtime validation                                                                                   |

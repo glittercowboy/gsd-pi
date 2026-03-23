@@ -18,7 +18,7 @@ import { appRoot } from "./app-paths.js";
 // in dist/. See #592, #1110.
 const GLOBAL_PREFERENCES_PATH = join(appRoot, "preferences.md");
 
-export function saveRemoteQuestionsConfig(channel: "slack" | "discord" | "telegram", channelId: string): void {
+export function saveRemoteQuestionsConfig(channel: "slack" | "discord" | "telegram" | "signal", channelId: string): void {
   const prefsPath = GLOBAL_PREFERENCES_PATH;
   const block = [
     "remote_questions:",

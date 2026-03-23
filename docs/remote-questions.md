@@ -1,6 +1,6 @@
 # Remote Questions
 
-Remote questions allow GSD to ask for user input via Slack, Discord, or Telegram when running in headless auto-mode. When GSD encounters a decision point that needs human input, it posts the question to your configured channel and polls for a response.
+Remote questions allow GSD to ask for user input via Slack, Discord, Telegram, or Signal when running in headless auto-mode. When GSD encounters a decision point that needs human input, it posts the question to your configured channel and polls for a response.
 
 ## Setup
 
@@ -63,13 +63,47 @@ The setup wizard:
 - Bot must be added to the target group chat (or use private chat with the bot)
 - The `TELEGRAM_BOT_TOKEN` environment variable must be set
 
+### Signal
+
+```
+/gsd remote signal
+```
+
+The setup wizard:
+1. Prompts for your signal-cli-rest-api URL (e.g. `http://localhost:8080`)
+2. Prompts for the bot's phone number (registered with signal-cli)
+3. Validates connectivity against the `/v1/about` endpoint
+4. Prompts for the recipient's phone number (where questions will be sent)
+5. Sends a test message to confirm the pipeline works
+6. Saves the configuration
+
+**Requirements:**
+- A running [signal-cli-rest-api](https://github.com/bbernhard/signal-cli-rest-api) instance
+- A phone number registered with signal-cli (the bot's number)
+- The recipient's phone number (your personal number)
+- Environment variables:
+  - `SIGNAL_SERVICE_URL` — base URL of signal-cli-rest-api
+  - `SIGNAL_PHONE_NUMBER` — the bot's phone number
+
+**Signal configuration example:**
+
+```yaml
+remote_questions:
+  channel: signal
+  channel_id: "+15559876543"    # recipient phone number
+  timeout_minutes: 5
+  poll_interval_seconds: 5
+```
+
+**Note:** Signal uses plain text messages (no rich formatting, no inline buttons). Questions are formatted with numbered options and emoji bullets for readability on mobile. Reply with a number (`1`), comma-separated numbers (`1,3`), or free text.
+
 ## Configuration
 
 Remote questions are configured in `~/.gsd/preferences.md`:
 
 ```yaml
 remote_questions:
-  channel: discord          # or slack or telegram
+  channel: discord          # or slack, telegram, signal
   channel_id: "1234567890123456789"
   timeout_minutes: 5        # 1-30, default 5
   poll_interval_seconds: 5  # 2-30, default 5
@@ -108,6 +142,8 @@ If no response is received within `timeout_minutes`, the prompt times out and GS
 | `/gsd remote` | Show remote questions menu and current status |
 | `/gsd remote slack` | Set up Slack integration |
 | `/gsd remote discord` | Set up Discord integration |
+| `/gsd remote telegram` | Set up Telegram integration |
+| `/gsd remote signal` | Set up Signal integration |
 | `/gsd remote status` | Show current configuration and last prompt status |
 | `/gsd remote disconnect` | Remove remote questions configuration |
 
@@ -146,4 +182,6 @@ If no response is received within `timeout_minutes`, the prompt times out and GS
 ### Channel ID format
 - **Slack:** 9-12 uppercase alphanumeric characters (e.g., `C0123456789`)
 - **Discord:** 17-20 digit numeric snowflake ID (e.g., `1234567890123456789`)
+- **Telegram:** Numeric chat ID, can be negative for groups (e.g., `-1001234567890`)
+- **Signal:** International phone number format (e.g., `+15551234567`)
 - Enable Developer Mode in Discord (Settings → Advanced) to copy channel IDs

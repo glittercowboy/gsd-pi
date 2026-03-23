@@ -686,6 +686,7 @@ async function runRemoteQuestionsStep(
     { value: 'discord', label: 'Discord', hint: 'receive questions in a Discord channel' },
     { value: 'slack', label: 'Slack', hint: 'receive questions in a Slack channel' },
     { value: 'telegram', label: 'Telegram', hint: 'receive questions via Telegram bot' },
+    { value: 'signal', label: 'Signal', hint: 'receive questions via Signal (signal-cli-rest-api)' },
     { value: 'skip', label: 'Skip for now', hint: 'use /gsd remote inside GSD later' },
   )
 
@@ -827,6 +828,87 @@ async function runRemoteQuestionsStep(
     saveRemoteQuestionsConfig('telegram', trimmedChatId)
     p.log.success(`Telegram chat: ${pc.green(trimmedChatId)}`)
     return 'Telegram'
+  }
+
+  if (choice === 'signal') {
+    const serviceUrl = await p.text({
+      message: `Signal service URL ${pc.dim('(signal-cli-rest-api, e.g. http://localhost:8080)')}:`,
+      validate: (val) => {
+        if (!val?.trim()) return 'URL is required'
+        try { new URL(val.trim()) } catch { return 'Invalid URL' }
+      },
+    })
+    if (p.isCancel(serviceUrl) || !serviceUrl) return null
+    const trimmedUrl = (serviceUrl as string).trim().replace(/\/+$/, '')
+
+    const phoneNumber = await p.text({
+      message: `Bot phone number ${pc.dim('(registered with signal-cli, e.g. +15551234567)')}:`,
+      validate: (val) => {
+        if (!val || !/^\+\d{7,15}$/.test(val.trim())) return 'Expected international format: +15551234567'
+      },
+    })
+    if (p.isCancel(phoneNumber) || !phoneNumber) return null
+    const trimmedPhone = (phoneNumber as string).trim()
+
+    // Validate connectivity
+    const s = p.spinner()
+    s.start('Connecting to signal-cli-rest-api...')
+    try {
+      const res = await fetch(`${trimmedUrl}/v1/about`, { signal: AbortSignal.timeout(10_000) })
+      if (!res.ok) {
+        s.stop(`Signal service returned HTTP ${res.status}`)
+        return null
+      }
+      const data = await res.json() as any
+      s.stop(`Signal service: ${pc.green(data?.versions?.['signal-cli'] ? `signal-cli ${data.versions['signal-cli']}` : 'connected')}`)
+    } catch {
+      s.stop('Could not reach signal-cli-rest-api')
+      return null
+    }
+
+    const recipientNumber = await p.text({
+      message: `Your phone number ${pc.dim('(where questions will be sent, e.g. +15559876543)')}:`,
+      validate: (val) => {
+        if (!val || !/^\+\d{7,15}$/.test(val.trim())) return 'Expected international format: +15559876543'
+      },
+    })
+    if (p.isCancel(recipientNumber) || !recipientNumber) return null
+    const trimmedRecipient = (recipientNumber as string).trim()
+
+    // Test send
+    const ts = p.spinner()
+    ts.start('Sending test message...')
+    try {
+      const res = await fetch(`${trimmedUrl}/v2/send`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          message: '✅ GSD remote questions connected via Signal.',
+          number: trimmedPhone,
+          recipients: [trimmedRecipient],
+        }),
+        signal: AbortSignal.timeout(15_000),
+      })
+      if (!res.ok) {
+        const body = await res.text().catch(() => '')
+        ts.stop(`Could not send test message: HTTP ${res.status} ${body.slice(0, 100)}`)
+        return null
+      }
+      ts.stop('Test message sent')
+    } catch (err) {
+      ts.stop(`Could not send test message: ${(err as Error).message}`)
+      return null
+    }
+
+    // Store the service URL as the "token" and phone as env vars
+    authStorage.set('signal_service', { type: 'api_key', key: trimmedUrl })
+    process.env.SIGNAL_SERVICE_URL = trimmedUrl
+    process.env.SIGNAL_PHONE_NUMBER = trimmedPhone
+
+    const { saveRemoteQuestionsConfig } = await import('./remote-questions-config.js')
+    saveRemoteQuestionsConfig('signal', trimmedRecipient)
+    p.log.success(`Signal: ${pc.green(trimmedRecipient)} via ${pc.green(trimmedUrl)}`)
+    return 'Signal'
   }
 
   return null

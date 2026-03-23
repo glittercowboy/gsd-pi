@@ -313,3 +313,53 @@ function parseAnswerForQuestion(text: string, q: RemoteQuestion): { answers: str
 function truncateNote(text: string): string {
   return text.length > MAX_USER_NOTE_LENGTH ? text.slice(0, MAX_USER_NOTE_LENGTH) + "…" : text;
 }
+
+// ---------------------------------------------------------------------------
+// Signal formatting
+// ---------------------------------------------------------------------------
+
+/**
+ * Format a prompt as a plain-text Signal message.
+ * Signal has no rich formatting (no HTML, no inline keyboards) — use
+ * numbered options with emoji bullets for clarity on mobile.
+ */
+export function formatForSignal(prompt: RemotePrompt): string {
+  const lines: string[] = ["🤖 GSD needs your input", ""];
+
+  for (let qi = 0; qi < prompt.questions.length; qi++) {
+    const q = prompt.questions[qi];
+    lines.push(`📋 ${q.header}`);
+    lines.push(q.question);
+    lines.push("");
+
+    for (let i = 0; i < q.options.length; i++) {
+      lines.push(`  ${i + 1}. ${q.options[i].label} — ${q.options[i].description}`);
+    }
+
+    lines.push("");
+    if (prompt.questions.length === 1) {
+      lines.push(q.allowMultiple
+        ? "Reply with comma-separated numbers (1,3) or free text."
+        : "Reply with a number (1) or free text.");
+    } else {
+      lines.push(`Question ${qi + 1}/${prompt.questions.length} — reply with one line per question or use semicolons.`);
+    }
+
+    if (qi < prompt.questions.length - 1) lines.push("");
+  }
+
+  return lines.join("\n");
+}
+
+/**
+ * Parse a Signal text reply into a RemoteAnswer.
+ * Reuses the same number/text parsing logic as Slack (format-agnostic).
+ */
+export function parseSignalResponse(
+  text: string,
+  questions: RemoteQuestion[],
+  _promptId: string,
+): RemoteAnswer {
+  return parseSlackReply(text, questions);
+}
+
