@@ -10,9 +10,10 @@ import { loadEffectiveGSDPreferences, type GSDPreferences } from "./preferences.
 import type { DoctorIssue, DoctorIssueCode, DoctorReport } from "./doctor-types.js";
 import { COMPLETION_TRANSITION_CODES, GLOBAL_STATE_CODES } from "./doctor-types.js";
 import type { RoadmapSliceEntry } from "./types.js";
-import { checkGitHealth, checkRuntimeHealth, checkGlobalHealth } from "./doctor-checks.js";
+import { checkGitHealth, checkRuntimeHealth, checkGlobalHealth, checkEngineHealth } from "./doctor-checks.js";
 import { checkEnvironmentHealth } from "./doctor-environment.js";
 import { runProviderChecks } from "./doctor-providers.js";
+import { isEngineAvailable, WorkflowEngine } from "./workflow-engine.js";
 
 // ── Re-exports ─────────────────────────────────────────────────────────────
 // All public types and functions from extracted modules are re-exported here
@@ -149,106 +150,8 @@ export async function rebuildState(basePath: string): Promise<void> {
   await saveFile(path, buildStateMarkdown(state));
 }
 
-async function ensureSliceSummaryStub(basePath: string, milestoneId: string, sliceId: string, fixesApplied: string[]): Promise<void> {
-  const path = join(resolveSlicePath(basePath, milestoneId, sliceId) ?? relSlicePath(basePath, milestoneId, sliceId), `${sliceId}-SUMMARY.md`);
-  const absolute = resolveSliceFile(basePath, milestoneId, sliceId, "SUMMARY") ?? join(resolveSlicePath(basePath, milestoneId, sliceId)!, `${sliceId}-SUMMARY.md`);
-  const content = [
-    "---",
-    `id: ${sliceId}`,
-    `parent: ${milestoneId}`,
-    `milestone: ${milestoneId}`,
-    "provides: []",
-    "requires: []",
-    "affects: []",
-    "key_files: []",
-    "key_decisions: []",
-    "patterns_established: []",
-    "observability_surfaces:",
-    "  - none yet \u2014 doctor created placeholder summary; replace with real diagnostics before treating as complete",
-    "drill_down_paths: []",
-    "duration: unknown",
-    "verification_result: unknown",
-    `completed_at: ${new Date().toISOString()}`,
-    "---",
-    "",
-    `# ${sliceId}: Recovery placeholder summary`,
-    "",
-    "**Doctor-created placeholder.**",
-    "",
-    "## What Happened",
-    "Doctor detected that all tasks were complete but the slice summary was missing. Replace this with a real compressed slice summary before relying on it.",
-    "",
-    "## Verification",
-    "Not re-run by doctor.",
-    "",
-    "## Deviations",
-    "Recovery placeholder created to restore required artifact shape.",
-    "",
-    "## Known Limitations",
-    "This file is intentionally incomplete and should be replaced by a real summary.",
-    "",
-    "## Follow-ups",
-    "- Regenerate this summary from task summaries.",
-    "",
-    "## Files Created/Modified",
-    `- \`${relSliceFile(basePath, milestoneId, sliceId, "SUMMARY")}\` \u2014 doctor-created placeholder summary`,
-    "",
-    "## Forward Intelligence",
-    "",
-    "### What the next slice should know",
-    "- Doctor had to reconstruct completion artifacts; inspect task summaries before continuing.",
-    "",
-    "### What's fragile",
-    "- Placeholder summary exists solely to unblock invariant checks.",
-    "",
-    "### Authoritative diagnostics",
-    "- Task summaries in the slice tasks/ directory \u2014 they are the actual authoritative source until this summary is rewritten.",
-    "",
-    "### What assumptions changed",
-    "- The system assumed completion would always write a slice summary; in practice doctor may need to restore missing artifacts.",
-    "",
-  ].join("\n");
-  await saveFile(absolute, content);
-  fixesApplied.push(`created placeholder ${absolute}`);
-}
-
-async function ensureSliceUatStub(basePath: string, milestoneId: string, sliceId: string, fixesApplied: string[]): Promise<void> {
-  const sDir = resolveSlicePath(basePath, milestoneId, sliceId);
-  if (!sDir) return;
-  const absolute = join(sDir, `${sliceId}-UAT.md`);
-  const content = [
-    `# ${sliceId}: Recovery placeholder UAT`,
-    "",
-    `**Milestone:** ${milestoneId}`,
-    `**Written:** ${new Date().toISOString()}`,
-    "",
-    "## Preconditions",
-    "- Doctor created this placeholder because the expected UAT file was missing.",
-    "",
-    "## Smoke Test",
-    "- Re-run the slice verification from the slice plan before shipping.",
-    "",
-    "## Test Cases",
-    "### 1. Replace this placeholder",
-    "1. Read the slice plan and task summaries.",
-    "2. Write a real UAT script.",
-    "3. **Expected:** This placeholder is replaced with meaningful human checks.",
-    "",
-    "## Edge Cases",
-    "### Missing completion artifacts",
-    "1. Confirm the summary, roadmap checkbox, and state file are coherent.",
-    "2. **Expected:** GSD doctor reports no remaining completion drift for this slice.",
-    "",
-    "## Failure Signals",
-    "- Placeholder content still present when treating the slice as done",
-    "",
-    "## Notes for Tester",
-    "Doctor created this file only to restore the required artifact shape. Replace it with a real UAT script.",
-    "",
-  ].join("\n");
-  await saveFile(absolute, content);
-  fixesApplied.push(`created placeholder ${absolute}`);
-}
+// (Removed: ensureSliceSummaryStub and ensureSliceUatStub per D-03 — engine's completeTask()
+// atomically creates summaries. If no summary exists, the task isn't complete. No placeholders needed.)
 
 async function markTaskDoneInPlan(basePath: string, milestoneId: string, sliceId: string, taskId: string, fixesApplied: string[]): Promise<void> {
   const planPath = resolveSliceFile(basePath, milestoneId, sliceId, "PLAN");
@@ -370,14 +273,21 @@ export async function selectDoctorScope(basePath: string, requestedScope?: strin
   const milestonesPath = milestonesDir(basePath);
   if (!existsSync(milestonesPath)) return undefined;
 
+  // Use engine to find first non-complete milestone
+  if (isEngineAvailable(basePath)) {
+    try {
+      const engine = new WorkflowEngine(basePath);
+      for (const m of engine.getMilestones()) {
+        if (m.status !== "complete") return m.id;
+      }
+    } catch {
+      // Fall through to registry-based fallback
+    }
+  }
+
+  // Fallback: return first milestone from registry
   for (const milestone of state.registry) {
-    const roadmapPath = resolveMilestoneFile(basePath, milestone.id, "ROADMAP");
-    const roadmapContent = roadmapPath ? await loadFile(roadmapPath) : null;
-    if (!roadmapContent) continue;
-    // TODO(phase-4-plan-02): replace with engine query
-    // const roadmap = parseRoadmap(roadmapContent);
-    // if (!isMilestoneComplete(roadmap)) return milestone.id;
-    return milestone.id;
+    if (milestone.status !== "complete") return milestone.id;
   }
 
   return state.registry[0]?.id;
@@ -533,6 +443,9 @@ export async function runGSDDoctor(basePath: string, options?: { fix?: boolean; 
   await checkRuntimeHealth(basePath, issues, fixesApplied, shouldFix);
   const runtimeMs = Date.now() - t0runtime;
 
+  // Engine health checks — DB constraint violations + projection drift (D-08, D-09, D-10)
+  await checkEngineHealth(basePath, issues, fixesApplied);
+
   // Global health checks — cross-project state (e.g. orphaned project state dirs)
   await checkGlobalHealth(issues, fixesApplied, shouldFix);
 
@@ -628,12 +541,35 @@ export async function runGSDDoctor(basePath: string, options?: { fix?: boolean; 
       }
     }
 
-    const roadmapPath = resolveMilestoneFile(basePath, milestoneId, "ROADMAP");
-    const roadmapContent = roadmapPath ? await loadFile(roadmapPath) : null;
-    if (!roadmapContent) continue;
-    // TODO(phase-4-plan-02): replace with engine query
-    // const roadmap = parseRoadmap(roadmapContent);
-    const roadmap = { title: '', vision: '', successCriteria: [] as string[], slices: [] as any[], boundaryMap: [] as any[] };
+    // Use engine queries for milestone/slice data instead of parseRoadmap
+    let engineSlices: import("./workflow-engine.js").SliceRow[] = [];
+    let engineAvailable = false;
+    if (isEngineAvailable(basePath)) {
+      try {
+        const engine = new WorkflowEngine(basePath);
+        engineSlices = engine.getSlices(milestoneId);
+        engineAvailable = true;
+      } catch {
+        // Engine not available — skip engine-based checks
+      }
+    }
+
+    // Build a roadmap-compatible structure from engine data
+    const roadmap = {
+      title: milestone.title,
+      vision: '',
+      successCriteria: [] as string[],
+      slices: engineSlices.map(s => ({
+        id: s.id,
+        title: s.title,
+        done: s.status === "done",
+        risk: (s.risk || "medium") as import("./types.js").RiskLevel,
+        depends: s.depends_on ? s.depends_on.split(",").map(d => d.trim()).filter(Boolean) : [],
+        demo: '',
+      })) as RoadmapSliceEntry[],
+      boundaryMap: [] as any[],
+    };
+    if (!engineAvailable) continue;
 
     // ── Circular dependency detection ──────────────────────────────────────
     for (const cycle of detectCircularDependencies(roadmap.slices)) {
@@ -750,11 +686,21 @@ export async function runGSDDoctor(basePath: string, options?: { fix?: boolean; 
         }
       }
 
-      const planPath = resolveSliceFile(basePath, milestoneId, slice.id, "PLAN");
-      const planContent = planPath ? await loadFile(planPath) : null;
-      // TODO(phase-4-plan-02): replace with engine query
-      // const plan = planContent ? parsePlan(planContent) : null;
-      const plan = null;
+      // Use engine to get tasks for this slice
+      let plan: { tasks: Array<{ id: string; done: boolean }> } | null = null;
+      if (engineAvailable) {
+        try {
+          const engine = new WorkflowEngine(basePath);
+          const tasks = engine.getTasks(milestoneId, slice.id);
+          if (tasks.length > 0) {
+            plan = {
+              tasks: tasks.map(t => ({ id: t.id, done: t.status === "done" })),
+            };
+          }
+        } catch {
+          // Engine query failed — fall through to missing plan check
+        }
+      }
       if (!plan) {
         if (!slice.done) {
           issues.push({
@@ -890,30 +836,29 @@ export async function runGSDDoctor(basePath: string, options?: { fix?: boolean; 
         await markSliceUndoneInRoadmap(basePath, milestoneId, slice.id, fixesApplied);
       }
 
-      // Blocker-without-replan detection
+      // Blocker-without-replan detection (using engine task blocker field)
       const replanPath = resolveSliceFile(basePath, milestoneId, slice.id, "REPLAN");
-      if (!replanPath) {
-        for (const task of plan.tasks) {
-          if (!task.done) continue;
-          const summaryPath = resolveTaskFile(basePath, milestoneId, slice.id, task.id, "SUMMARY");
-          if (!summaryPath) continue;
-          const summaryContent = await loadFile(summaryPath);
-          if (!summaryContent) continue;
-          // TODO(phase-4-plan-02): replace with engine query
-          // const summary = parseSummary(summaryContent);
-          const summary = { frontmatter: { blocker_discovered: false } } as any;
-          if (summary.frontmatter.blocker_discovered) {
-            issues.push({
-              severity: "warning",
-              code: "blocker_discovered_no_replan",
-              scope: "slice",
-              unitId,
-              message: `Task ${task.id} reported blocker_discovered but no REPLAN.md exists for ${slice.id} \u2014 slice may be stuck`,
-              file: relSliceFile(basePath, milestoneId, slice.id, "REPLAN"),
-              fixable: false,
-            });
-            break;
+      if (!replanPath && engineAvailable) {
+        try {
+          const engine = new WorkflowEngine(basePath);
+          const tasks = engine.getTasks(milestoneId, slice.id);
+          for (const task of tasks) {
+            if (task.status !== "done") continue;
+            if (task.blocker) {
+              issues.push({
+                severity: "warning",
+                code: "blocker_discovered_no_replan",
+                scope: "slice",
+                unitId,
+                message: `Task ${task.id} has a blocker recorded but no REPLAN.md exists for ${slice.id} \u2014 slice may be stuck`,
+                file: relSliceFile(basePath, milestoneId, slice.id, "REPLAN"),
+                fixable: false,
+              });
+              break;
+            }
           }
+        } catch {
+          // Non-fatal — blocker detection failed
         }
       }
 
@@ -929,18 +874,18 @@ export async function runGSDDoctor(basePath: string, options?: { fix?: boolean; 
       const hasSliceSummary = !!(sliceSummaryPath && await loadFile(sliceSummaryPath));
       const hasSliceUat = existsSync(sliceUatPath);
 
+      // Placeholder summary generation removed per D-03: engine's completeTask()
+      // atomically creates summaries — if missing, the task isn't truly complete.
       if (allTasksDone && !hasSliceSummary) {
         issues.push({
           severity: "error",
           code: "all_tasks_done_missing_slice_summary",
           scope: "slice",
           unitId,
-          message: `All tasks are done but ${slice.id}-SUMMARY.md is missing`,
+          message: `All tasks are done but ${slice.id}-SUMMARY.md is missing — complete the slice via the engine to generate it`,
           file: relSliceFile(basePath, milestoneId, slice.id, "SUMMARY"),
-          fixable: true,
+          fixable: false,
         });
-        dryRunCanFix("all_tasks_done_missing_slice_summary", `create placeholder summary for ${unitId}`);
-        if (shouldFix("all_tasks_done_missing_slice_summary")) await ensureSliceSummaryStub(basePath, milestoneId, slice.id, fixesApplied);
       }
 
       if (allTasksDone && !hasSliceUat) {
@@ -951,10 +896,8 @@ export async function runGSDDoctor(basePath: string, options?: { fix?: boolean; 
           unitId,
           message: `All tasks are done but ${slice.id}-UAT.md is missing`,
           file: `${relSlicePath(basePath, milestoneId, slice.id)}/${slice.id}-UAT.md`,
-          fixable: true,
+          fixable: false,
         });
-        dryRunCanFix("all_tasks_done_missing_slice_uat", `create placeholder UAT for ${unitId}`);
-        if (shouldFix("all_tasks_done_missing_slice_uat")) await ensureSliceUatStub(basePath, milestoneId, slice.id, fixesApplied);
       }
 
       if (allTasksDone && !slice.done) {
