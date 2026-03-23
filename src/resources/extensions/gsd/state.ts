@@ -179,13 +179,30 @@ export async function deriveState(basePath: string): Promise<GSDState> {
     return _stateCache.result;
   }
 
-  // Engine bridge (Phase 1 dual-write — ENG-03, TOOL-02)
-  // When WorkflowEngine is available (v5 schema), bypass the 868-line markdown parse
-  // and return typed state directly from DB in <1ms.
+  // Engine bridge (Phase 3 — MIG-03)
+  // When WorkflowEngine is available, use engine exclusively.
+  // Auto-migrate from markdown if tables are empty (D-11).
   try {
     const { isEngineAvailable, getEngine } = await import('./workflow-engine.js');
     if (isEngineAvailable(basePath)) {
       const engine = getEngine(basePath);
+
+      // Auto-migration trigger (D-11): if engine tables empty AND markdown exists
+      try {
+        const { needsAutoMigration, migrateFromMarkdown, validateMigration } = await import('./workflow-migration.js');
+        if (needsAutoMigration(basePath)) {
+          migrateFromMarkdown(basePath);
+          // D-14: validate migration output, log discrepancies
+          const { discrepancies } = validateMigration(basePath);
+          if (discrepancies.length > 0) {
+            process.stderr.write(`workflow-migration: ${discrepancies.length} discrepancy(ies) after migration (engine state is authoritative)\n`);
+          }
+        }
+      } catch (migErr) {
+        process.stderr.write(`workflow-migration: auto-migration failed: ${(migErr as Error).message}\n`);
+        // Continue — engine may still have valid state from prior migration
+      }
+
       const engineState = engine.deriveState();
       // Cache the engine result with the same TTL as the markdown path
       _stateCache = { basePath, result: engineState, timestamp: Date.now() };
@@ -197,7 +214,7 @@ export async function deriveState(basePath: string): Promise<GSDState> {
   }
 
   const stopTimer = debugTime("derive-state-impl");
-  const result = await _deriveStateImpl(basePath);
+  const result = await _deriveStateLegacy(basePath);
   stopTimer({ phase: result.phase, milestone: result.activeMilestone?.id });
   debugCount("deriveStateCalls");
   _stateCache = { basePath, result, timestamp: Date.now() };
@@ -217,7 +234,9 @@ function extractContextTitle(content: string | null, fallback: string): string {
   return h1.slice(2).trim().replace(/^M\d+(?:-[a-z0-9]{6})?[^:]*:\s*/, '') || fallback;
 }
 
-async function _deriveStateImpl(basePath: string): Promise<GSDState> {
+// Legacy markdown parser — preserved for disaster recovery only (D-15).
+// After Phase 3 auto-migration, this path should only be hit when engine is truly unavailable.
+async function _deriveStateLegacy(basePath: string): Promise<GSDState> {
   const milestoneIds = findMilestoneIds(basePath);
 
   // ── Parallel worker isolation ──────────────────────────────────────────
