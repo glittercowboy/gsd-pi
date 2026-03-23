@@ -118,6 +118,10 @@ function parseCliArgs(argv: string[]): CliFlags {
       if (i + 1 < args.length && !args[i + 1].startsWith('-')) {
         flags.webPath = args[++i]
       }
+    } else if ((arg === '--host' || arg === '--port' || arg === '--allowed-origins') && i + 1 < args.length) {
+      // Consume web-mode network flags so their values don't leak into messages[].
+      // The actual parsing happens in parseWebCliArgs() inside the web branch.
+      i++
     } else if (!arg.startsWith('--') && !arg.startsWith('-')) {
       flags.messages.push(arg)
     }

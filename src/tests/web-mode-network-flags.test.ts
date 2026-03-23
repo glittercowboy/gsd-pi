@@ -152,6 +152,87 @@ test('launchWebMode omits GSD_WEB_ALLOWED_ORIGINS when none provided', async () 
   }
 })
 
+// ─── Port validation ─────────────────────────────────────────────────
+
+test('launchWebMode fails fast when user-specified port is already in use', async () => {
+  const { createServer } = await import('node:net')
+  const tmp = mkdtempSync(join(tmpdir(), 'gsd-web-port-inuse-'))
+  const standaloneRoot = join(tmp, 'dist', 'web', 'standalone')
+  mkdirSync(standaloneRoot, { recursive: true })
+  writeFileSync(join(standaloneRoot, 'server.js'), 'console.log("stub")\n')
+
+  // Occupy a port
+  const blocker = createServer()
+  const port: number = await new Promise((resolve) => {
+    blocker.listen(0, '127.0.0.1', () => {
+      const addr = blocker.address()
+      resolve(typeof addr === 'object' && addr ? addr.port : 0)
+    })
+  })
+
+  let stderrOutput = ''
+
+  try {
+    const status = await webMode.launchWebMode(
+      {
+        cwd: '/tmp/project',
+        projectSessionsDir: '/tmp/.gsd/sessions',
+        agentDir: '/tmp/.gsd/agent',
+        packageRoot: tmp,
+        port,
+      },
+      {
+        initResources: () => {},
+        spawn: () => ({ pid: 99999, once: () => undefined, unref: () => {} } as any),
+        waitForBootReady: async () => undefined,
+        openBrowser: () => {},
+        stderr: { write: (s: string) => { stderrOutput += s; return true } },
+      },
+    )
+
+    assert.equal(status.ok, false)
+    if (status.ok) throw new Error('expected failure when port is in use')
+    assert.match(status.failureReason, /port.*in use|EADDRINUSE/i)
+  } finally {
+    blocker.close()
+    rmSync(tmp, { recursive: true, force: true })
+  }
+})
+
+test('launchWebMode uses 127.0.0.1 for health check when host is 0.0.0.0', async () => {
+  const tmp = mkdtempSync(join(tmpdir(), 'gsd-web-health-'))
+  const standaloneRoot = join(tmp, 'dist', 'web', 'standalone')
+  mkdirSync(standaloneRoot, { recursive: true })
+  writeFileSync(join(standaloneRoot, 'server.js'), 'console.log("stub")\n')
+
+  let bootReadyUrl = ''
+
+  try {
+    await webMode.launchWebMode(
+      {
+        cwd: '/tmp/project',
+        projectSessionsDir: '/tmp/.gsd/sessions',
+        agentDir: '/tmp/.gsd/agent',
+        packageRoot: tmp,
+        host: '0.0.0.0',
+        port: 19876,
+      },
+      {
+        initResources: () => {},
+        spawn: () => ({ pid: 99999, once: () => undefined, unref: () => {} } as any),
+        waitForBootReady: async (url) => { bootReadyUrl = url },
+        openBrowser: () => {},
+        stderr: { write: () => true },
+      },
+    )
+
+    // The health check should probe 127.0.0.1, not 0.0.0.0
+    assert.equal(bootReadyUrl, 'http://127.0.0.1:19876')
+  } finally {
+    rmSync(tmp, { recursive: true, force: true })
+  }
+})
+
 // ─── runWebCliBranch end-to-end forwarding ───────────────────────────
 
 test('runWebCliBranch forwards --host, --port, --allowed-origins to launchWebMode', async () => {

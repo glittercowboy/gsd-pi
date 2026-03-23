@@ -91,6 +91,7 @@ export interface WebModeDeps {
   existsSync?: (path: string) => boolean
   initResources?: (agentDir: string) => void
   resolvePort?: (host: string) => Promise<number>
+  checkPort?: (host: string, port: number) => Promise<void>
   spawn?: (command: string, args: readonly string[], options: SpawnOptions) => SpawnedChildLike
   waitForBootReady?: (url: string) => Promise<void>
   openBrowser?: (url: string) => void
@@ -349,6 +350,45 @@ export async function reserveWebPort(host = DEFAULT_HOST): Promise<number> {
   })
 }
 
+/**
+ * Verify that a specific port is available before attempting to start the
+ * web server. When the user provides an explicit `--port`, we need to
+ * validate it up front because the child process runs with `stdio: 'ignore'`
+ * and an EADDRINUSE error would be invisible — causing `waitForBootReady` to
+ * spin for the full 180 s timeout.
+ */
+export async function checkPortAvailable(host: string, port: number): Promise<void> {
+  return await new Promise<void>((resolve, reject) => {
+    const server = createServer()
+    server.unref()
+    server.once('error', (error: NodeJS.ErrnoException) => {
+      if (error.code === 'EADDRINUSE') {
+        reject(new Error(`port ${port} is already in use on ${host}`))
+      } else {
+        reject(error)
+      }
+    })
+    server.listen(port, host, () => {
+      server.close((error) => {
+        if (error) {
+          reject(error)
+          return
+        }
+        resolve()
+      })
+    })
+  })
+}
+
+/**
+ * Return the host to use for the readiness health check. When the server
+ * binds to `0.0.0.0` (all interfaces), we probe `127.0.0.1` instead
+ * because `0.0.0.0` is not a valid destination address on all platforms.
+ */
+function healthCheckHost(host: string): string {
+  return host === '0.0.0.0' ? '127.0.0.1' : host
+}
+
 function getSpawnCommandForSourceHost(platform: NodeJS.Platform): string {
   return platform === 'win32' ? 'npm.cmd' : 'npm'
 }
@@ -578,6 +618,32 @@ export async function launchWebMode(
   cleanupStaleInstance(options.cwd, stderr, deps.registryPath)
 
   const port = options.port ?? await (deps.resolvePort ?? reserveWebPort)(host)
+
+  // When the user specifies an explicit port, validate it is free before
+  // spawning the server — otherwise EADDRINUSE is silently swallowed by
+  // `stdio: 'ignore'` and waitForBootReady spins for the full 180 s timeout.
+  if (options.port !== undefined) {
+    try {
+      await (deps.checkPort ?? checkPortAvailable)(host, port)
+    } catch (error) {
+      const failure: WebModeLaunchFailure = {
+        mode: 'web',
+        ok: false,
+        cwd: options.cwd,
+        projectSessionsDir: options.projectSessionsDir,
+        host,
+        port,
+        url: null,
+        hostKind: resolution.kind,
+        hostPath: resolution.entryPath,
+        hostRoot: resolution.hostRoot,
+        failureReason: `port-check:${error instanceof Error ? error.message : String(error)}`,
+      }
+      emitLaunchStatus(stderr, failure)
+      return failure
+    }
+  }
+
   const authToken = randomBytes(32).toString('hex')
   const url = `http://${host}:${port}`
   const env = {
@@ -658,8 +724,11 @@ export async function launchWebMode(
   }
 
   try {
+    // Use 127.0.0.1 for the health check when the server binds to 0.0.0.0,
+    // since 0.0.0.0 is not a valid destination address on all platforms.
+    const probeUrl = `http://${healthCheckHost(host)}:${port}`
     const bootReadyFn = deps.waitForBootReady ?? ((u: string) => waitForBootReady(u, 180_000, stderr, authToken))
-    await bootReadyFn(url)
+    await bootReadyFn(probeUrl)
   } catch (error) {
     const failure: WebModeLaunchFailure = {
       mode: 'web',
