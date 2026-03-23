@@ -420,8 +420,6 @@ export function buildSkillActivationBlock(params: {
     params.sliceTitle,
     params.taskId,
     params.taskTitle,
-    ...(params.extraContext ?? []),
-    params.taskPlanContent ?? undefined,
   );
 
   const visibleSkills = (typeof getLoadedSkills === 'function' ? getLoadedSkills() : []).filter(skill => !skill.disableModelInvocation);
@@ -449,12 +447,6 @@ export function buildSkillActivationBlock(params: {
       }
     } catch {
       // Non-fatal — malformed task plan should not break prompt construction
-    }
-  }
-
-  for (const skill of visibleSkills) {
-    if (skillMatchesContext(skill, contextTokens)) {
-      matched.add(normalizeSkillReference(skill.name));
     }
   }
 
