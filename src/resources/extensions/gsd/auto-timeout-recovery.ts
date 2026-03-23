@@ -1,7 +1,7 @@
 /**
  * Timeout recovery logic for auto-mode units.
  * Handles idle and hard timeout recovery with escalation, steering messages,
- * and blocker placeholder generation.
+ * and blocker reporting via engine.
  */
 
 import type { ExtensionAPI, ExtensionContext } from "@gsd/pi-coding-agent";
@@ -14,8 +14,6 @@ import {
 import {
   resolveExpectedArtifactPath,
   diagnoseExpectedArtifact,
-  skipExecuteTask,
-  writeBlockerPlaceholder,
 } from "./auto-recovery.js";
 import { existsSync } from "node:fs";
 
@@ -127,14 +125,29 @@ export async function recoverTimedOutUnit(
       return "recovered";
     }
 
-    // Retries exhausted — write missing durable artifacts and advance.
+    // Retries exhausted — report blocker via engine and advance.
     const diagnostic = formatExecuteTaskRecoveryStatus(status);
     const [mid, sid, tid] = unitId.split("/");
-    const skipped = mid && sid && tid
-      ? skipExecuteTask(basePath, mid, sid, tid, status, reason, maxRecoveryAttempts)
-      : false;
+    let reported = false;
+    if (mid && sid && tid) {
+      try {
+        const { WorkflowEngine, isEngineAvailable } = await import("./workflow-engine.js");
+        if (isEngineAvailable(basePath)) {
+          const engine = new WorkflowEngine(basePath);
+          engine.reportBlocker({
+            milestoneId: mid,
+            sliceId: sid,
+            taskId: tid,
+            description: `${reason} recovery exhausted ${maxRecoveryAttempts} attempts. ${diagnostic}`,
+          });
+          reported = true;
+        }
+      } catch {
+        // Engine not available — fall through to pause
+      }
+    }
 
-    if (skipped) {
+    if (reported) {
       writeUnitRuntimeRecord(basePath, unitType, unitId, currentUnitStartedAt, {
         phase: "skipped",
         recovery: status,
@@ -142,7 +155,7 @@ export async function recoverTimedOutUnit(
         lastRecoveryReason: reason,
       });
       ctx.ui.notify(
-        `${unitType} ${unitId} skipped after ${maxRecoveryAttempts} recovery attempts (${diagnostic}). Blocker artifacts written. Advancing pipeline. (attempt ${attemptNumber})`,
+        `${unitType} ${unitId} skipped after ${maxRecoveryAttempts} recovery attempts (${diagnostic}). Blocker reported via engine. Advancing pipeline. (attempt ${attemptNumber})`,
         "warning",
       );
       unitRecoveryCount.delete(recoveryKey);
@@ -150,7 +163,7 @@ export async function recoverTimedOutUnit(
       return "recovered";
     }
 
-    // Fallback: couldn't write skip artifacts — pause as before.
+    // Fallback: engine not available — pause as before.
     writeUnitRuntimeRecord(basePath, unitType, unitId, currentUnitStartedAt, {
       phase: "paused",
       recovery: status,
@@ -231,21 +244,37 @@ export async function recoverTimedOutUnit(
     return "recovered";
   }
 
-  // Retries exhausted — write a blocker placeholder and advance the pipeline
+  // Retries exhausted — report blocker via engine and advance the pipeline
   // instead of silently stalling.
-  const placeholder = writeBlockerPlaceholder(
-    unitType, unitId, basePath,
-    `${reason} recovery exhausted ${maxRecoveryAttempts} attempts without producing the artifact.`,
-  );
+  let blockerReported = false;
+  try {
+    const parts = unitId.split("/");
+    const [bMid, bSid, bTid] = parts;
+    if (bMid && bSid && bTid) {
+      const { WorkflowEngine, isEngineAvailable } = await import("./workflow-engine.js");
+      if (isEngineAvailable(basePath)) {
+        const engine = new WorkflowEngine(basePath);
+        engine.reportBlocker({
+          milestoneId: bMid,
+          sliceId: bSid,
+          taskId: bTid,
+          description: `${reason} recovery exhausted ${maxRecoveryAttempts} attempts without producing the artifact.`,
+        });
+        blockerReported = true;
+      }
+    }
+  } catch {
+    // Engine not available — fall through
+  }
 
-  if (placeholder) {
+  if (blockerReported) {
     writeUnitRuntimeRecord(basePath, unitType, unitId, currentUnitStartedAt, {
       phase: "skipped",
       recoveryAttempts: recoveryAttempts + 1,
       lastRecoveryReason: reason,
     });
     ctx.ui.notify(
-      `${unitType} ${unitId} skipped after ${maxRecoveryAttempts} recovery attempts. Blocker placeholder written to ${placeholder}. Advancing pipeline. (attempt ${attemptNumber})`,
+      `${unitType} ${unitId} skipped after ${maxRecoveryAttempts} recovery attempts. Blocker reported via engine. Advancing pipeline. (attempt ${attemptNumber})`,
       "warning",
     );
     unitRecoveryCount.delete(recoveryKey);

@@ -16,7 +16,6 @@ import { deriveState } from "./state.js";
 import { invalidateAllCaches } from "./cache.js";
 import { startAuto } from "./auto.js";
 import { readCrashLock, clearLock, formatCrashInfo } from "./crash-recovery.js";
-import { listUnitRuntimeRecords, clearUnitRuntimeRecord } from "./unit-runtime.js";
 import { resolveExpectedArtifactPath } from "./auto.js";
 import {
   gsdRoot, milestonesDir, resolveMilestoneFile, resolveMilestonePath,
@@ -683,41 +682,7 @@ export async function showDiscuss(
 /**
  * The one wizard. Reads state, shows contextual options, dispatches into the workflow doc.
  */
-/**
- * Self-heal: scan runtime records and clear stale ones left behind when
- * auto-mode crashed mid-unit. auto.ts has its own selfHealRuntimeRecords()
- * but guided-flow (manual /gsd mode) never called it — meaning stale records
- * persisted until the next /gsd auto run.  This ensures the wizard always
- * starts from a clean state regardless of how the previous session ended.
- */
-function selfHealRuntimeRecords(basePath: string, ctx: ExtensionContext): { cleared: number } {
-  try {
-    const records = listUnitRuntimeRecords(basePath);
-    let cleared = 0;
-    for (const record of records) {
-      const { unitType, unitId, phase } = record;
-      // Clear records whose expected artifact already exists (completed but not cleaned up)
-      const artifactPath = resolveExpectedArtifactPath(unitType, unitId, basePath);
-      if (artifactPath && existsSync(artifactPath)) {
-        clearUnitRuntimeRecord(basePath, unitType, unitId);
-        cleared++;
-        continue;
-      }
-      // Clear records stuck in dispatched or timeout phase (process died mid-unit)
-      if (phase === "dispatched" || phase === "timeout") {
-        clearUnitRuntimeRecord(basePath, unitType, unitId);
-        cleared++;
-      }
-    }
-    if (cleared > 0) {
-      ctx.ui.notify(`Self-heal: cleared ${cleared} stale runtime record(s) from a previous session.`, "info");
-    }
-    return { cleared };
-  } catch {
-    // Non-fatal — self-heal should never block the wizard
-    return { cleared: 0 };
-  }
-}
+// selfHealRuntimeRecords removed (D-05) — engine is authoritative
 
 // ─── Milestone Actions Submenu ──────────────────────────────────────────────
 
@@ -884,8 +849,7 @@ export async function showSmartEntry(
   ensureGitignore(basePath);
   untrackRuntimeFiles(basePath);
 
-  // ── Self-heal stale runtime records from crashed auto-mode sessions ──
-  selfHealRuntimeRecords(basePath, ctx);
+  // Engine is authoritative — no stale record cleanup needed (D-05)
 
   // Check for crash from previous auto-mode session.
   // Skip if the lock was written by the current process — acquireSessionLock()

@@ -4,8 +4,6 @@ import { tmpdir } from "node:os";
 import { execSync } from "node:child_process";
 import {
   resolveExpectedArtifactPath,
-  writeBlockerPlaceholder,
-  skipExecuteTask,
   verifyExpectedArtifact,
   buildLoopRemediationSteps,
 } from "../auto.ts";
@@ -95,190 +93,8 @@ function cleanup(base: string): void {
   }
 }
 
-// ═══ writeBlockerPlaceholder ═════════════════════════════════════════════════
-
-{
-  console.log("\n=== writeBlockerPlaceholder: writes file for research-slice ===");
-  const base = createFixtureBase();
-  try {
-    const result = writeBlockerPlaceholder("research-slice", "M001/S01", base, "idle recovery exhausted 2 attempts");
-    assertTrue(result !== null, "should return relative path");
-    const absPath = resolveExpectedArtifactPath("research-slice", "M001/S01", base)!;
-    assertTrue(existsSync(absPath), "file should exist on disk");
-    const content = readFileSync(absPath, "utf-8");
-    assertTrue(content.includes("BLOCKER"), "should contain BLOCKER heading");
-    assertTrue(content.includes("idle recovery exhausted 2 attempts"), "should contain the reason");
-    assertTrue(content.includes("research-slice"), "should mention the unit type");
-    assertTrue(content.includes("M001/S01"), "should mention the unit ID");
-  } finally {
-    cleanup(base);
-  }
-}
-
-{
-  console.log("\n=== writeBlockerPlaceholder: creates directory if missing ===");
-  const base = mkdtempSync(join(tmpdir(), "gsd-idle-recovery-test-"));
-  try {
-    // Only create milestone dir, not slice dir
-    mkdirSync(join(base, ".gsd", "milestones", "M001"), { recursive: true });
-    // resolveSlicePath needs the slice dir to exist to resolve, so this should return null
-    const result = writeBlockerPlaceholder("research-slice", "M001/S01", base, "test reason");
-    // Since the slice dir doesn't exist, resolveExpectedArtifactPath returns null
-    assertEq(result, null, "returns null when directory structure doesn't exist");
-  } finally {
-    cleanup(base);
-  }
-}
-
-{
-  console.log("\n=== writeBlockerPlaceholder: writes file for research-milestone ===");
-  const base = createFixtureBase();
-  try {
-    const result = writeBlockerPlaceholder("research-milestone", "M001", base, "hard timeout");
-    assertTrue(result !== null, "should return relative path");
-    const absPath = resolveExpectedArtifactPath("research-milestone", "M001", base)!;
-    assertTrue(existsSync(absPath), "file should exist on disk");
-    const content = readFileSync(absPath, "utf-8");
-    assertTrue(content.includes("BLOCKER"), "should contain BLOCKER heading");
-    assertTrue(content.includes("hard timeout"), "should contain the reason");
-  } finally {
-    cleanup(base);
-  }
-}
-
-{
-  console.log("\n=== writeBlockerPlaceholder: unknown type → null ===");
-  const base = createFixtureBase();
-  try {
-    const result = writeBlockerPlaceholder("unknown-type", "M001/S01", base, "test");
-    assertEq(result, null, "unknown type returns null");
-  } finally {
-    cleanup(base);
-  }
-}
-
-// ═══ skipExecuteTask ═════════════════════════════════════════════════════════
-
-{
-  console.log("\n=== skipExecuteTask: writes summary and checks plan checkbox ===");
-  const base = createFixtureBase();
-  try {
-    const planPath = join(base, ".gsd", "milestones", "M001", "slices", "S01", "S01-PLAN.md");
-    writeFileSync(planPath, [
-      "# S01: Test Slice",
-      "",
-      "## Tasks",
-      "",
-      "- [ ] **T01: First task** `est:10m`",
-      "  Do the first thing.",
-      "- [ ] **T02: Second task** `est:15m`",
-      "  Do the second thing.",
-    ].join("\n"), "utf-8");
-
-    const result = skipExecuteTask(
-      base, "M001", "S01", "T01",
-      { summaryExists: false, taskChecked: false },
-      "idle", 2,
-    );
-
-    assertTrue(result === true, "should return true");
-
-    // Check summary was written
-    const summaryPath = join(base, ".gsd", "milestones", "M001", "slices", "S01", "tasks", "T01-SUMMARY.md");
-    assertTrue(existsSync(summaryPath), "task summary should exist");
-    const summaryContent = readFileSync(summaryPath, "utf-8");
-    assertTrue(summaryContent.includes("BLOCKER"), "summary should contain BLOCKER");
-    assertTrue(summaryContent.includes("T01"), "summary should mention task ID");
-
-    // Check plan checkbox was marked
-    const planContent = readFileSync(planPath, "utf-8");
-    assertTrue(planContent.includes("- [x] **T01:"), "T01 should be checked");
-    assertTrue(planContent.includes("- [ ] **T02:"), "T02 should remain unchecked");
-  } finally {
-    cleanup(base);
-  }
-}
-
-{
-  console.log("\n=== skipExecuteTask: skips summary if already exists ===");
-  const base = createFixtureBase();
-  try {
-    const planPath = join(base, ".gsd", "milestones", "M001", "slices", "S01", "S01-PLAN.md");
-    writeFileSync(planPath, "- [ ] **T01: Task** `est:10m`\n", "utf-8");
-
-    // Pre-write a summary
-    const summaryPath = join(base, ".gsd", "milestones", "M001", "slices", "S01", "tasks", "T01-SUMMARY.md");
-    writeFileSync(summaryPath, "# Real summary\nActual work done.", "utf-8");
-
-    const result = skipExecuteTask(
-      base, "M001", "S01", "T01",
-      { summaryExists: true, taskChecked: false },
-      "idle", 2,
-    );
-
-    assertTrue(result === true, "should return true");
-
-    // Summary should be untouched (not overwritten with blocker)
-    const content = readFileSync(summaryPath, "utf-8");
-    assertTrue(content.includes("Real summary"), "original summary should be preserved");
-    assertTrue(!content.includes("BLOCKER"), "should not contain BLOCKER");
-
-    // Plan checkbox should still be marked
-    const planContent = readFileSync(planPath, "utf-8");
-    assertTrue(planContent.includes("- [x] **T01:"), "T01 should be checked");
-  } finally {
-    cleanup(base);
-  }
-}
-
-{
-  console.log("\n=== skipExecuteTask: skips checkbox if already checked ===");
-  const base = createFixtureBase();
-  try {
-    const planPath = join(base, ".gsd", "milestones", "M001", "slices", "S01", "S01-PLAN.md");
-    writeFileSync(planPath, "- [x] **T01: Task** `est:10m`\n", "utf-8");
-
-    const result = skipExecuteTask(
-      base, "M001", "S01", "T01",
-      { summaryExists: false, taskChecked: true },
-      "idle", 2,
-    );
-
-    assertTrue(result === true, "should return true");
-
-    // Summary should be written (since summaryExists was false)
-    const summaryPath = join(base, ".gsd", "milestones", "M001", "slices", "S01", "tasks", "T01-SUMMARY.md");
-    assertTrue(existsSync(summaryPath), "task summary should exist");
-
-    // Plan checkbox should be untouched
-    const planContent = readFileSync(planPath, "utf-8");
-    assertTrue(planContent.includes("- [x] **T01:"), "T01 should remain checked");
-  } finally {
-    cleanup(base);
-  }
-}
-
-{
-  console.log("\n=== skipExecuteTask: handles special regex chars in task ID ===");
-  const base = createFixtureBase();
-  try {
-    const planPath = join(base, ".gsd", "milestones", "M001", "slices", "S01", "S01-PLAN.md");
-    writeFileSync(planPath, "- [ ] **T01.1: Sub-task** `est:10m`\n", "utf-8");
-
-    const result = skipExecuteTask(
-      base, "M001", "S01", "T01.1",
-      { summaryExists: false, taskChecked: false },
-      "idle", 2,
-    );
-
-    assertTrue(result === true, "should return true");
-
-    const planContent = readFileSync(planPath, "utf-8");
-    assertTrue(planContent.includes("- [x] **T01.1:"), "T01.1 should be checked (regex chars escaped)");
-  } finally {
-    cleanup(base);
-  }
-}
+// writeBlockerPlaceholder and skipExecuteTask tests removed (D-05)
+// These functions are replaced by engine.reportBlocker()
 
 // ═══ verifyExpectedArtifact: complete-slice roadmap check ════════════════════
 // Regression for #indefinite-hang: complete-slice must verify roadmap [x] or
@@ -317,7 +133,7 @@ const ROADMAP_COMPLETE = `# M001: Test Milestone
 }
 
 {
-  console.log("\n=== verifyExpectedArtifact: complete-slice — SUMMARY + UAT present but roadmap NOT marked [x] returns false ===");
+  console.log("\n=== verifyExpectedArtifact: complete-slice — SUMMARY + UAT present, no engine — returns true (fallback checks files only) ===");
   const base = createFixtureBase();
   try {
     const sliceDir = join(base, ".gsd", "milestones", "M001", "slices", "S01");
@@ -325,7 +141,8 @@ const ROADMAP_COMPLETE = `# M001: Test Milestone
     writeFileSync(join(sliceDir, "S01-UAT.md"), "# UAT\n", "utf-8");
     writeFileSync(join(base, ".gsd", "milestones", "M001", "M001-ROADMAP.md"), ROADMAP_INCOMPLETE, "utf-8");
     const result = verifyExpectedArtifact("complete-slice", "M001/S01", base);
-    assertTrue(result === false, "roadmap not marked [x] should return false (crash recovery scenario)");
+    // Without engine, fallback path only checks UAT file existence — roadmap checkbox no longer inspected
+    assertTrue(result === true, "fallback path with SUMMARY + UAT should return true (roadmap check removed)");
   } finally {
     cleanup(base);
   }
@@ -420,46 +237,7 @@ const ROADMAP_COMPLETE = `# M001: Test Milestone
   }
 }
 
-{
-  console.log("\n=== skipExecuteTask: loop-recovery writes blocker when both summary and checkbox missing ===");
-  const base = mkdtempSync(join(tmpdir(), "gsd-loop-recovery-test-"));
-  try {
-    mkdirSync(join(base, ".gsd", "milestones", "M002", "slices", "S03", "tasks"), { recursive: true });
-    const planPath = join(base, ".gsd", "milestones", "M002", "slices", "S03", "S03-PLAN.md");
-    writeFileSync(planPath, [
-      "# S03: Harden guided session",
-      "",
-      "## Tasks",
-      "",
-      "- [ ] **T01: Harden contract usage** `est:30m`",
-      "  Harden guided session contract usage in desktop flow.",
-    ].join("\n"), "utf-8");
-
-    const result = skipExecuteTask(
-      base, "M002", "S03", "T01",
-      { summaryExists: false, taskChecked: false },
-      "loop-recovery",
-      // 3 == MAX_UNIT_DISPATCHES: represents the prevCount when the final
-      // reconciliation path runs (loop detected, reconciling before halting).
-      3,
-    );
-
-    assertTrue(result === true, "loop-recovery should succeed");
-
-    // Blocker summary written
-    const summaryPath = join(base, ".gsd", "milestones", "M002", "slices", "S03", "tasks", "T01-SUMMARY.md");
-    assertTrue(existsSync(summaryPath), "blocker summary should be written");
-    const summaryContent = readFileSync(summaryPath, "utf-8");
-    assertTrue(summaryContent.includes("BLOCKER"), "summary should be a blocker placeholder");
-    assertTrue(summaryContent.includes("loop-recovery"), "summary should mention the recovery reason");
-
-    // Checkbox marked
-    const planContent = readFileSync(planPath, "utf-8");
-    assertTrue(planContent.includes("- [x] **T01:"), "T01 checkbox should be marked [x] after loop-recovery");
-  } finally {
-    rmSync(base, { recursive: true, force: true });
-  }
-}
+// skipExecuteTask loop-recovery test removed (D-05) — replaced by engine.reportBlocker()
 
 // ═══ verifyExpectedArtifact: hook unit types ═════════════════════════════════
 
