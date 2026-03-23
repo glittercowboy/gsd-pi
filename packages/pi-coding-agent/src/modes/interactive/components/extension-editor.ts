@@ -113,6 +113,9 @@ export class ExtensionEditorComponent extends Container implements Focusable {
 	private openExternalEditor(): void {
 		const editorCmd = process.env.VISUAL || process.env.EDITOR;
 		if (!editorCmd) {
+			// No editor configured — nothing to do.
+			// The main interactive-mode handler shows a warning with an iTerm2 hint;
+			// this component is a secondary editor so we silently bail.
 			return;
 		}
 

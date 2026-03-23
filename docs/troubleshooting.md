@@ -278,6 +278,16 @@ Doctor rebuilds `STATE.md` from plan and roadmap files on disk and fixes detecte
 - **Forensics:** `/gsd forensics` for structured post-mortem analysis of auto-mode failures
 - **Session logs:** `.gsd/activity/` contains JSONL session dumps for crash forensics
 
+## iTerm2-Specific Issues
+
+### Ctrl+Alt shortcuts trigger the wrong action (e.g., Ctrl+Alt+G opens external editor instead of GSD dashboard)
+
+**Symptoms:** Pressing Ctrl+Alt+G opens the external editor prompt (Ctrl+G) instead of the GSD dashboard. Other Ctrl+Alt shortcuts behave as their Ctrl-only counterparts.
+
+**Cause:** iTerm2's default Left Option Key setting is "Normal", which swallows the Alt modifier for Ctrl+Alt key combinations. The terminal receives only the Ctrl key, so Ctrl+Alt+G arrives as Ctrl+G.
+
+**Fix:** In iTerm2, go to **Profiles → Keys → General** and set **Left Option Key** to **Esc+**. This makes Alt/Option send an escape prefix that terminal applications can detect, enabling Ctrl+Alt shortcuts to work correctly.
+
 ## Windows-Specific Issues
 
 ### LSP returns ENOENT on Windows (MSYS2/Git Bash)

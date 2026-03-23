@@ -2460,7 +2460,14 @@ export class InteractiveMode {
 		// Determine editor (respect $VISUAL, then $EDITOR)
 		const editorCmd = process.env.VISUAL || process.env.EDITOR;
 		if (!editorCmd) {
-			this.showWarning("No editor configured. Set $VISUAL or $EDITOR environment variable.");
+			let msg = "No editor configured. Set $VISUAL or $EDITOR environment variable.";
+			if (process.env.TERM_PROGRAM === "iTerm.app") {
+				msg +=
+					"\n\nTip: If you meant to open the GSD dashboard (Ctrl+Alt+G), set Left Option Key to" +
+					" \"Esc+\" in iTerm2 → Profiles → Keys. With the default \"Normal\" setting," +
+					" Ctrl+Alt+G sends Ctrl+G instead.";
+			}
+			this.showWarning(msg);
 			return;
 		}
 
