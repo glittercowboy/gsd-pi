@@ -2,7 +2,7 @@
 phase: 05-dead-code-cleanup
 plan: 03
 type: execute
-wave: 2
+wave: 3
 depends_on:
   - 5-01
   - 5-02
@@ -13,7 +13,7 @@ files_modified:
   - src/resources/extensions/gsd/auto/session.ts
   - src/resources/extensions/gsd/session-status-io.ts
   - src/resources/extensions/gsd/auto-start.ts
-autonomous: true
+autonomous: false
 requirements:
   - CLN-01
   - CLN-04
@@ -135,43 +135,25 @@ The grep showed 38 files reference `completedUnits`. Plans 01-02 handled the mai
   <done>completedUnits removed from all state types, initializations, serializations, and display code. No residual references to any removed functionality anywhere in the codebase.</done>
 </task>
 
-<task type="auto">
+<task type="checkpoint:human-verify" gate="blocking">
   <name>Task 2: Verify net line deletion and full test suite</name>
-  <files></files>
-  <read_first>
-    .planning/ROADMAP.md
-  </read_first>
-  <action>
-**Line count verification:**
-1. Run `git diff --stat main...HEAD` to get overall line changes for the milestone
-2. Verify net deletion is at least 4,000 lines (insertions - deletions should show >=4000 net deletions)
-3. If below 4,000, check if there are additional dead code blocks that can be safely removed (comments referencing removed functions, unused imports, etc.)
+  <what-built>Plans 01-03 removed all dead code: verifyExpectedArtifact, selfHealRuntimeRecords, unit-runtime.ts, completed-units.json paths, completedUnits state field, doctor/STATE rebuild blocks from auto-post-unit.ts, and oscillation detection (Rule 3) from detect-stuck.ts.</what-built>
+  <how-to-verify>
+    The executor will run these automated checks before presenting results:
 
-**Full test suite:**
-1. Run `npx tsc --noEmit` — must exit 0
-2. Run `node --test src/resources/extensions/gsd/tests/*.test.ts` — all tests must pass
-3. Run `node --test src/resources/extensions/gsd/tests/*.test.mjs` — all tests must pass
-4. Run `npm run build` if available — must exit 0
+    1. Line count: `git diff --stat main...HEAD | tail -1` — verify net deletion >= 4,000 lines
+    2. TypeScript: `npx tsc --noEmit` — must exit 0
+    3. Test suite: `node --test src/resources/extensions/gsd/tests/*.test.ts` — all pass
+    4. Test suite (mjs): `node --test src/resources/extensions/gsd/tests/*.test.mjs` — all pass
+    5. SC-1: `grep -r "completed-units\.json" src/resources/extensions/gsd/` — zero matches
+    6. SC-2: `grep -r "selfHealRuntimeRecords" src/resources/extensions/gsd/` — zero matches
+    7. SC-3: `grep "runGSDDoctor\|rebuildState\|STATE_REBUILD" src/resources/extensions/gsd/auto-post-unit.ts` — zero matches
+    8. SC-4: `grep "oscillat\|Rule 3" src/resources/extensions/gsd/auto/detect-stuck.ts` — zero matches
+    9. SC-5: Net line deletion >= 4,000 (from step 1)
 
-**Success criteria verification against ROADMAP.md Phase 5:**
-1. `grep -r "completed-units\.json" src/resources/extensions/gsd/` — zero matches (SC-1)
-2. `grep -r "selfHealRuntimeRecords" src/resources/extensions/gsd/` — zero matches (SC-2)
-3. `grep "runGSDDoctor\|rebuildState\|STATE_REBUILD" src/resources/extensions/gsd/auto-post-unit.ts` — zero matches (SC-3)
-4. `grep "oscillat\|Rule 3" src/resources/extensions/gsd/auto/detect-stuck.ts` — zero matches (SC-4)
-5. Net line deletion >= 4,000 (SC-5)
-
-If any check fails, fix it before marking complete.
-  </action>
-  <verify>
-    <automated>cd /Users/jeremymcspadden/Github/gsd-2/.claude/worktrees/single-writer-state-architecture && npx tsc --noEmit && echo "TSC OK" && node --test src/resources/extensions/gsd/tests/auto-loop.test.ts 2>&1 | tail -3 && node --test src/resources/extensions/gsd/tests/auto-recovery.test.ts 2>&1 | tail -3</automated>
-  </verify>
-  <acceptance_criteria>
-    - `npx tsc --noEmit` exits 0
-    - `git diff --stat main...HEAD | tail -1` shows net deletion of at least 4,000 lines
-    - All 5 ROADMAP Phase 5 success criteria verified as described in action
-    - No test failures in the gsd extension test suite
-  </acceptance_criteria>
-  <done>All 5 Phase 5 success criteria from ROADMAP.md verified. Net line deletion >= 4,000. All tests pass. TypeScript compiles clean. Phase 5 complete.</done>
+    Review the output of all 9 checks. If all pass, Phase 5 is complete.
+  </how-to-verify>
+  <resume-signal>Type "approved" if all checks pass, or describe which checks failed</resume-signal>
 </task>
 
 </tasks>

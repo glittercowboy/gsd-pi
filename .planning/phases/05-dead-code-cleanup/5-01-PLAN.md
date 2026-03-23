@@ -15,6 +15,7 @@ files_modified:
   - src/resources/extensions/gsd/tests/validate-milestone.test.ts
   - src/resources/extensions/gsd/tests/replan-slice.test.ts
   - src/resources/extensions/gsd/tests/reactive-executor.test.ts
+  - src/resources/extensions/gsd/tests/auto-loop.test.ts
 autonomous: true
 requirements:
   - CLN-02

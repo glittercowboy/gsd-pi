@@ -2,8 +2,9 @@
 phase: 05-dead-code-cleanup
 plan: 02
 type: execute
-wave: 1
-depends_on: []
+wave: 2
+depends_on:
+  - 5-01
 files_modified:
   - src/resources/extensions/gsd/unit-runtime.ts
   - src/resources/extensions/gsd/auto.ts
