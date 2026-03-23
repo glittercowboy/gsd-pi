@@ -42,7 +42,7 @@
 
 ## Tasks
 
-- [ ] **T01: Schema v10 + flag-file DB migration in deriveStateFromDb** `est:45m`
+- [x] **T01: Schema v10 + flag-file DB migration in deriveStateFromDb** `est:45m`
   - Why: The architecturally novel piece — REPLAN.md and REPLAN-TRIGGER.md detection in `deriveStateFromDb()` must use DB queries instead of disk-file checks. Schema v10 adds the `replan_triggered_at` column. Triage-resolution must also write the column.
   - Files: `src/resources/extensions/gsd/gsd-db.ts`, `src/resources/extensions/gsd/state.ts`, `src/resources/extensions/gsd/triage-resolution.ts`, `src/resources/extensions/gsd/tests/flag-file-db.test.ts`
   - Do: (1) Bump SCHEMA_VERSION to 10, add `replan_triggered_at TEXT DEFAULT NULL` to slices CREATE TABLE DDL and v10 migration block. (2) Update `SliceRow` interface and `rowToSlice()`. (3) In `deriveStateFromDb()`, replace `resolveSliceFile(... "REPLAN")` with `getReplanHistory(mid, sid).length > 0` check, replace `resolveSliceFile(... "REPLAN-TRIGGER")` with checking `getSlice(mid, sid)?.replan_triggered_at`. (4) In `triage-resolution.ts` `executeReplan()`, after writing the disk file, also write the `replan_triggered_at` column via `UPDATE slices SET replan_triggered_at = :ts`. (5) Write `flag-file-db.test.ts` testing: blocker→replan detection via DB (no disk file), REPLAN-TRIGGER via DB column (no disk file), loop protection (replan_history exists = no replanning phase).

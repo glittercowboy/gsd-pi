@@ -43,6 +43,8 @@ import {
   getAllMilestones,
   getMilestoneSlices,
   getSliceTasks,
+  getReplanHistory,
+  getSlice,
   type MilestoneRow,
   type SliceRow,
   type TaskRow,
@@ -639,8 +641,10 @@ export async function deriveStateFromDb(basePath: string): Promise<GSDState> {
   }
 
   if (blockerTaskId) {
-    const replanFile = resolveSliceFile(basePath, activeMilestone.id, activeSlice.id, "REPLAN");
-    if (!replanFile) {
+    // Loop protection: if replan_history has entries for this slice, a replan
+    // was already performed — don't re-enter replanning phase.
+    const replanHistory = getReplanHistory(activeMilestone.id, activeSlice.id);
+    if (replanHistory.length === 0) {
       return {
         activeMilestone, activeSlice, activeTask,
         phase: 'replanning-slice',
@@ -656,10 +660,11 @@ export async function deriveStateFromDb(basePath: string): Promise<GSDState> {
 
   // ── REPLAN-TRIGGER detection ─────────────────────────────────────────
   if (!blockerTaskId) {
-    const replanTriggerFile = resolveSliceFile(basePath, activeMilestone.id, activeSlice.id, "REPLAN-TRIGGER");
-    if (replanTriggerFile) {
-      const replanFile = resolveSliceFile(basePath, activeMilestone.id, activeSlice.id, "REPLAN");
-      if (!replanFile) {
+    const sliceRow = getSlice(activeMilestone.id, activeSlice.id);
+    if (sliceRow?.replan_triggered_at) {
+      // Loop protection: if replan_history has entries, replan was already done
+      const replanHistory = getReplanHistory(activeMilestone.id, activeSlice.id);
+      if (replanHistory.length === 0) {
         return {
           activeMilestone, activeSlice, activeTask,
           phase: 'replanning-slice',

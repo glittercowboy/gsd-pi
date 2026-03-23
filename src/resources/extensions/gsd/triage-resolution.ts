@@ -12,6 +12,7 @@
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { createRequire } from "node:module";
 import { gsdRoot, milestonesDir } from "./paths.js";
 import { MILESTONE_ID_RE } from "./milestone-ids.js";
 import type { Classification, CaptureEntry } from "./captures.js";
@@ -90,19 +91,37 @@ export function executeReplan(
     const triggerPath = join(
       basePath, ".gsd", "milestones", mid, "slices", sid, `${sid}-REPLAN-TRIGGER.md`,
     );
+    const ts = new Date().toISOString();
     const content = [
       `# Replan Trigger`,
       ``,
       `**Source:** Capture ${capture.id}`,
       `**Capture:** ${capture.text}`,
       `**Rationale:** ${capture.rationale ?? "User-initiated replan via capture triage"}`,
-      `**Triggered:** ${new Date().toISOString()}`,
+      `**Triggered:** ${ts}`,
       ``,
       `This file was created by the triage pipeline. The next dispatch cycle`,
       `will detect it and enter the replanning-slice phase.`,
     ].join("\n");
 
     writeFileSync(triggerPath, content, "utf-8");
+
+    // Also write replan_triggered_at column for DB-backed detection
+    try {
+      const req = createRequire(import.meta.url);
+      const { isDbAvailable, _getAdapter } = req("./gsd-db.js");
+      if (isDbAvailable()) {
+        const adapter = _getAdapter();
+        if (adapter) {
+          adapter.prepare(
+            "UPDATE slices SET replan_triggered_at = :ts WHERE milestone_id = :mid AND id = :sid",
+          ).run({ ":ts": ts, ":mid": mid, ":sid": sid });
+        }
+      }
+    } catch {
+      // DB write is best-effort — disk file is the primary trigger for fallback path
+    }
+
     return true;
   } catch {
     return false;

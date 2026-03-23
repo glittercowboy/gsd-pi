@@ -145,7 +145,7 @@ function openRawDb(path: string): unknown {
   return new Database(path);
 }
 
-const SCHEMA_VERSION = 9;
+const SCHEMA_VERSION = 10;
 
 function initSchema(db: DbAdapter, fileBacked: boolean): void {
   if (fileBacked) db.exec("PRAGMA journal_mode=WAL");
@@ -268,6 +268,7 @@ function initSchema(db: DbAdapter, fileBacked: boolean): void {
         integration_closure TEXT NOT NULL DEFAULT '',
         observability_impact TEXT NOT NULL DEFAULT '',
         sequence INTEGER DEFAULT 0,
+        replan_triggered_at TEXT DEFAULT NULL,
         PRIMARY KEY (milestone_id, id),
         FOREIGN KEY (milestone_id) REFERENCES milestones(id)
       )
@@ -600,6 +601,15 @@ function migrateSchema(db: DbAdapter): void {
 
       db.prepare("INSERT INTO schema_version (version, applied_at) VALUES (:version, :applied_at)").run({
         ":version": 9,
+        ":applied_at": new Date().toISOString(),
+      });
+    }
+
+    if (currentVersion < 10) {
+      ensureColumn(db, "slices", "replan_triggered_at", `ALTER TABLE slices ADD COLUMN replan_triggered_at TEXT DEFAULT NULL`);
+
+      db.prepare("INSERT INTO schema_version (version, applied_at) VALUES (:version, :applied_at)").run({
+        ":version": 10,
         ":applied_at": new Date().toISOString(),
       });
     }
@@ -1150,6 +1160,7 @@ export interface SliceRow {
   integration_closure: string;
   observability_impact: string;
   sequence: number;
+  replan_triggered_at: string | null;
 }
 
 function rowToSlice(row: Record<string, unknown>): SliceRow {
@@ -1171,6 +1182,7 @@ function rowToSlice(row: Record<string, unknown>): SliceRow {
     integration_closure: (row["integration_closure"] as string) ?? "",
     observability_impact: (row["observability_impact"] as string) ?? "",
     sequence: (row["sequence"] as number) ?? 0,
+    replan_triggered_at: (row["replan_triggered_at"] as string) ?? null,
   };
 }
 

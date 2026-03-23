@@ -738,6 +738,13 @@ async function main(): Promise<void> {
       insertTask({ id: 'T01', sliceId: 'S01', milestoneId: 'M001', title: 'First Task', status: 'pending' });
       insertTask({ id: 'T02', sliceId: 'S01', milestoneId: 'M001', title: 'Done Task', status: 'complete' });
 
+      // Seed the replan_triggered_at column — DB path uses column instead of disk file
+      const { _getAdapter } = await import('../gsd-db.ts');
+      const adapter = _getAdapter();
+      adapter!.prepare(
+        "UPDATE slices SET replan_triggered_at = :ts WHERE milestone_id = :mid AND id = :sid",
+      ).run({ ":ts": new Date().toISOString(), ":mid": "M001", ":sid": "S01" });
+
       invalidateStateCache();
       const dbState = await deriveStateFromDb(base);
 
