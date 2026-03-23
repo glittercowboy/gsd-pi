@@ -14,12 +14,22 @@ import { deriveState } from "./state.js";
 import { gsdRoot } from "./paths.js";
 import { loadPrompt } from "./prompt-loader.js";
 
-function findLastCompletedSlice(state: { activeMilestone?: { slices?: Array<{ id: string; status: string }> } }): string | null {
-  const slices = state.activeMilestone?.slices ?? [];
-  for (let i = slices.length - 1; i >= 0; i--) {
-    if (slices[i].status === "done" || slices[i].status === "completed") {
-      return slices[i].id;
+function findLastCompletedSlice(basePath: string, milestoneId: string): string | null {
+  // Scan disk for slices that have a SUMMARY.md (indicating completion)
+  const slicesDir = join(gsdRoot(basePath), "milestones", milestoneId, "slices");
+  if (!existsSync(slicesDir)) return null;
+
+  try {
+    const entries = readdirSync(slicesDir, { withFileTypes: true })
+      .filter((e) => e.isDirectory() && /^S\d+$/.test(e.name))
+      .sort((a, b) => b.name.localeCompare(a.name)); // reverse order — latest first
+
+    for (const entry of entries) {
+      const summaryPath = join(slicesDir, entry.name, `${entry.name}-SUMMARY.md`);
+      if (existsSync(summaryPath)) return entry.name;
     }
+  } catch {
+    // non-fatal
   }
   return null;
 }
@@ -92,7 +102,7 @@ export async function handleAddTests(
   const milestoneId = state.activeMilestone.id;
 
   // Determine target
-  const targetId = args.trim() || findLastCompletedSlice(state);
+  const targetId = args.trim() || findLastCompletedSlice(basePath, milestoneId);
   if (!targetId) {
     ctx.ui.notify(
       "No completed slices found. Specify a slice ID: /gsd add-tests S03",

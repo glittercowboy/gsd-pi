@@ -22,20 +22,21 @@ function formatSessionReport(units: UnitMetrics[]): string {
   const lines: string[] = [];
   lines.push("╭─ Session Report ──────────────────────────────────────╮");
 
-  if (totals.totalDuration > 0) {
-    lines.push(`│ Duration:    ${formatDuration(totals.totalDuration).padEnd(40)}│`);
+  if (totals.duration > 0) {
+    lines.push(`│ Duration:    ${formatDuration(totals.duration).padEnd(40)}│`);
   }
   lines.push(`│ Units:       ${String(units.length).padEnd(40)}│`);
-  lines.push(`│ Cost:        ${formatCost(totals.totalCost).padEnd(40)}│`);
-  lines.push(`│ Tokens:      ${`${formatTokenCount(totals.totalInput)} in / ${formatTokenCount(totals.totalOutput)} out`.padEnd(40)}│`);
+  lines.push(`│ Cost:        ${formatCost(totals.cost).padEnd(40)}│`);
+  lines.push(`│ Tokens:      ${`${formatTokenCount(totals.tokens.input)} in / ${formatTokenCount(totals.tokens.output)} out`.padEnd(40)}│`);
   lines.push("│                                                       │");
 
   // Work completed
   if (units.length > 0) {
     lines.push("│ Work Completed:                                       │");
     for (const unit of units) {
-      const status = unit.status === "completed" ? "✓" : unit.status === "skipped" ? "⊘" : "•";
-      const label = `  ${status} ${unit.unitId ?? "unknown"}`;
+      const finished = unit.finishedAt > 0;
+      const status = finished ? "✓" : "•";
+      const label = `  ${status} ${unit.id ?? "unknown"}`;
       lines.push(`│ ${label.padEnd(53)}│`);
     }
     lines.push("│                                                       │");
@@ -45,7 +46,7 @@ function formatSessionReport(units: UnitMetrics[]): string {
   if (byModel.length > 0) {
     lines.push("│ Model Usage:                                          │");
     for (const m of byModel) {
-      const label = `  ${m.model}: ${m.count} units (${formatCost(m.cost)})`;
+      const label = `  ${m.model}: ${m.units} units (${formatCost(m.cost)})`;
       lines.push(`│ ${label.padEnd(53)}│`);
     }
   }

@@ -23,8 +23,6 @@ const ROUTES: Route[] = [
   { keywords: ["export", "report", "share results"], command: "export" },
   { keywords: ["ship", "pull request", "create pr", "open pr", "merge"], command: "ship" },
   { keywords: ["discuss", "talk about", "architecture", "design"], command: "discuss" },
-  { keywords: ["add slice", "new slice", "add scope", "expand scope"], command: "add-slice" },
-  { keywords: ["remove slice", "delete slice", "drop slice"], command: "remove-slice" },
   { keywords: ["undo", "revert", "rollback", "take back"], command: "undo" },
   { keywords: ["skip", "skip task", "skip this"], command: "skip" },
   { keywords: ["queue", "reorder", "milestone order", "order milestones"], command: "queue" },

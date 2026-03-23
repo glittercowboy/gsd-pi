@@ -31,7 +31,6 @@ const ROUTES: Route[] = [
   { keywords: ["clean up", "cleanup", "remove old", "prune", "tidy"], command: "cleanup" },
   { keywords: ["ship", "pull request", "create pr", "open pr", "merge"], command: "ship" },
   { keywords: ["discuss", "talk about", "architecture", "design"], command: "discuss" },
-  { keywords: ["add slice", "new slice", "add scope", "expand scope"], command: "add-slice" },
   { keywords: ["undo", "revert", "rollback", "take back"], command: "undo" },
   { keywords: ["skip", "skip task", "skip this"], command: "skip" },
   { keywords: ["visualize", "viz", "graph", "chart", "show graph"], command: "visualize" },
@@ -125,10 +124,4 @@ test("/gsd do: routes 'session report' to session-report", () => {
   const match = matchRoute("show me the session report");
   assert.ok(match);
   assert.equal(match.command, "session-report");
-});
-
-test("/gsd do: routes 'add new slice' to add-slice", () => {
-  const match = matchRoute("add new slice for authentication");
-  assert.ok(match);
-  assert.equal(match.command, "add-slice");
 });

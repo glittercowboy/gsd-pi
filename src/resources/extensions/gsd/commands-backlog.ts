@@ -129,14 +129,12 @@ async function promoteBacklogItem(
     return;
   }
 
-  // Promote via add-slice
-  const { handleAddSlice } = await import("./commands-slice-mutation.js");
-  await handleAddSlice(item.title, ctx, pi);
-
-  // Mark as done
+  // Promote — currently requires single-writer engine (not yet available)
+  // Mark as promoted in backlog for now; slice creation will be available with the engine.
   item.done = true;
   item.note = `promoted ${new Date().toISOString().slice(0, 10)}`;
   writeBacklog(basePath, items);
+  ctx.ui.notify(`Promoted ${itemId}: "${item.title}" — add it to the roadmap manually or wait for engine slice commands.`, "info");
 }
 
 async function removeBacklogItem(basePath: string, itemId: string, ctx: ExtensionCommandContext): Promise<void> {

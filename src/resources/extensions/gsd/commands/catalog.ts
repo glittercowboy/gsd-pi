@@ -15,7 +15,7 @@ export interface GsdCommandDefinition {
 type CompletionMap = Record<string, readonly GsdCommandDefinition[]>;
 
 export const GSD_COMMAND_DESCRIPTION =
-  "GSD — Get Shit Done: /gsd help|start|templates|next|auto|stop|pause|status|widget|visualize|queue|quick|discuss|capture|triage|dispatch|history|undo|undo-task|reset-slice|rate|skip|export|cleanup|mode|prefs|config|keys|hooks|run-hook|skill-health|doctor|logs|forensics|changelog|migrate|remote|steer|knowledge|new-milestone|parallel|cmux|park|unpark|init|setup|inspect|extensions|update|fast|mcp|rethink|ship|add-slice|insert-slice|remove-slice|do|session-report|backlog|pr-branch|add-tests";
+  "GSD — Get Shit Done: /gsd help|start|templates|next|auto|stop|pause|status|widget|visualize|queue|quick|discuss|capture|triage|dispatch|history|undo|undo-task|reset-slice|rate|skip|export|cleanup|mode|prefs|config|keys|hooks|run-hook|skill-health|doctor|logs|forensics|changelog|migrate|remote|steer|knowledge|new-milestone|parallel|cmux|park|unpark|init|setup|inspect|extensions|update|fast|mcp|rethink|ship|do|session-report|backlog|pr-branch|add-tests";
 
 export const TOP_LEVEL_SUBCOMMANDS: readonly GsdCommandDefinition[] = [
   { cmd: "help", desc: "Categorized command reference with descriptions" },
@@ -72,9 +72,6 @@ export const TOP_LEVEL_SUBCOMMANDS: readonly GsdCommandDefinition[] = [
   { cmd: "rethink", desc: "Conversational project reorganization — reorder, park, discard, add milestones" },
   { cmd: "workflow", desc: "Custom workflow lifecycle (new, run, list, validate, pause, resume)" },
   { cmd: "ship", desc: "Create PR from milestone artifacts and open for review" },
-  { cmd: "add-slice", desc: "Append a new slice to the active milestone's roadmap" },
-  { cmd: "insert-slice", desc: "Insert a slice after a specific position in the roadmap" },
-  { cmd: "remove-slice", desc: "Remove a pending slice from the roadmap" },
   { cmd: "do", desc: "Route freeform text to the right GSD command" },
   { cmd: "session-report", desc: "Session cost, tokens, and work summary" },
   { cmd: "backlog", desc: "Manage backlog items (add, promote, remove, list)" },
@@ -238,14 +235,6 @@ const NESTED_COMPLETIONS: CompletionMap = {
     { cmd: "--draft", desc: "Open as draft PR" },
     { cmd: "--base", desc: "Override target branch (default: main)" },
     { cmd: "--force", desc: "Ship even with pending tasks" },
-  ],
-  "add-slice": [
-    { cmd: "--id", desc: "Explicit slice ID (default: auto-generated)" },
-    { cmd: "--risk", desc: "Risk level: low, medium, high (default: medium)" },
-    { cmd: "--depends", desc: "Comma-separated dependency slice IDs" },
-  ],
-  "remove-slice": [
-    { cmd: "--force", desc: "Remove even if slice has tasks (deletes them)" },
   ],
   "session-report": [
     { cmd: "--json", desc: "Machine-readable JSON output" },

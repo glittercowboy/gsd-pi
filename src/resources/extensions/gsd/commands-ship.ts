@@ -85,13 +85,13 @@ function generatePRContent(basePath: string, milestoneId: string, milestoneTitle
     const byModel = aggregateByModel(units);
     sections.push("## Metrics\n");
     sections.push(`- **Units executed:** ${units.length}`);
-    sections.push(`- **Total cost:** ${formatCost(totals.totalCost)}`);
-    sections.push(`- **Tokens:** ${formatTokenCount(totals.totalInput)} input / ${formatTokenCount(totals.totalOutput)} output`);
-    if (totals.totalDuration > 0) {
-      sections.push(`- **Duration:** ${formatDuration(totals.totalDuration)}`);
+    sections.push(`- **Total cost:** ${formatCost(totals.cost)}`);
+    sections.push(`- **Tokens:** ${formatTokenCount(totals.tokens.input)} input / ${formatTokenCount(totals.tokens.output)} output`);
+    if (totals.duration > 0) {
+      sections.push(`- **Duration:** ${formatDuration(totals.duration)}`);
     }
     if (byModel.length > 0) {
-      sections.push(`- **Models:** ${byModel.map((m) => `${m.model} (${m.count} units)`).join(", ")}`);
+      sections.push(`- **Models:** ${byModel.map((m) => `${m.model} (${m.units} units)`).join(", ")}`);
     }
     sections.push("");
   }
@@ -134,10 +134,10 @@ export async function handleShip(
   const milestoneId = state.activeMilestone.id;
   const milestoneTitle = state.activeMilestone.title ?? "";
 
-  // 2. Check for incomplete work
-  if (state.activeMilestone.phase !== "complete" && !force) {
+  // 2. Check for incomplete work (use GSD phase as proxy — no phase field on ActiveRef)
+  if (state.phase !== "complete" && !force) {
     ctx.ui.notify(
-      `Milestone ${milestoneId} is not complete (phase: ${state.activeMilestone.phase}). Use --force to ship anyway.`,
+      `Milestone ${milestoneId} may not be complete (phase: ${state.phase}). Use --force to ship anyway.`,
       "warning",
     );
     return;

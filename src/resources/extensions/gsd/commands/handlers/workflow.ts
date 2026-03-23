@@ -179,22 +179,6 @@ export async function handleWorkflowCommand(trimmed: string, ctx: ExtensionComma
     await handleDo(trimmed.replace(/^do\s*/, "").trim(), ctx, pi);
     return true;
   }
-  // ── Slice mutation commands ──
-  if (trimmed === "add-slice" || trimmed.startsWith("add-slice ")) {
-    const { handleAddSlice } = await import("../../commands-slice-mutation.js");
-    await handleAddSlice(trimmed.replace(/^add-slice\s*/, "").trim(), ctx, pi);
-    return true;
-  }
-  if (trimmed === "insert-slice" || trimmed.startsWith("insert-slice ")) {
-    const { handleInsertSlice } = await import("../../commands-slice-mutation.js");
-    await handleInsertSlice(trimmed.replace(/^insert-slice\s*/, "").trim(), ctx, pi);
-    return true;
-  }
-  if (trimmed === "remove-slice" || trimmed.startsWith("remove-slice ")) {
-    const { handleRemoveSlice } = await import("../../commands-slice-mutation.js");
-    await handleRemoveSlice(trimmed.replace(/^remove-slice\s*/, "").trim(), ctx, pi);
-    return true;
-  }
   // ── Backlog management ──
   if (trimmed === "backlog" || trimmed.startsWith("backlog ")) {
     const { handleBacklog } = await import("../../commands-backlog.js");
