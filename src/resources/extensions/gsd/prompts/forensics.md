@@ -32,7 +32,6 @@ GSD extension source code is at: `{{gsdSourceDir}}`
 ├── PROJECT.md, DECISIONS.md, QUEUE.md, STATE.md, REQUIREMENTS.md, OVERRIDES.md, KNOWLEDGE.md, RUNTIME.md
 ├── auto.lock                    — crash lock (JSON: pid, unitType, unitId, sessionFile)
 ├── metrics.json                 — token/cost ledger (units array with cost, tokens, duration)
-├── completed-units.json         — array of "type/id" strings
 ├── doctor-history.jsonl         — doctor check history
 ├── activity/                    — session activity logs (JSONL per unit)
 │   └── {seq}-{unitType}-{unitId}.jsonl
@@ -62,7 +61,7 @@ GSD extension source code is at: `{{gsdSourceDir}}`
 
 ### Crash Lock Format (`auto.lock`)
 
-JSON with fields: `pid`, `startedAt`, `unitType`, `unitId`, `unitStartedAt`, `completedUnits`, `sessionFile`
+JSON with fields: `pid`, `startedAt`, `unitType`, `unitId`, `unitStartedAt`, `sessionFile`
 
 A stale lock (PID is dead) means the previous auto-mode session crashed mid-unit.
 
@@ -88,7 +87,7 @@ A unit dispatched more than once (`type/id` appears multiple times) indicates a 
    - Missing edge case / unhandled condition
    - Wrong boolean logic or comparison
    - Race condition or ordering issue
-   - State corruption (e.g. completed-units.json out of sync with artifacts)
+   - State corruption (e.g. engine task status out of sync with artifacts)
    - Timeout / recovery logic not triggering correctly
 
 6. **Clarify if needed.** Use ask_user_questions (max 2 questions) only if the report is genuinely insufficient. Do not ask questions you can answer from the data or source code.

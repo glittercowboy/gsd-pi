@@ -24,8 +24,6 @@ import {
 import { detectStuck } from "./detect-stuck.js";
 import { runUnit } from "./run-unit.js";
 import { debugLog } from "../debug-logger.js";
-import { gsdRoot } from "../paths.js";
-import { atomicWriteSync } from "../atomic-write.js";
 import { PROJECT_FILES } from "../detection.js";
 import { join } from "node:path";
 
@@ -276,15 +274,6 @@ export async function runPreDispatch(
       )
       .map((m: { id: string }) => m.id);
     deps.pruneQueueOrder(s.basePath, pendingIds);
-
-    // Reset completed-units tracking for the new milestone — stale entries
-    // from the previous milestone cause the dispatch loop to skip units
-    // that haven't actually been completed in the new milestone's context.
-    s.completedUnits = [];
-    try {
-      const completedKeysPath = join(gsdRoot(s.basePath), "completed-units.json");
-      atomicWriteSync(completedKeysPath, JSON.stringify([], null, 2));
-    } catch { /* non-fatal */ }
 
     // Rebuild STATE.md immediately so it reflects the new active milestone.
     // This bypasses the 30-second throttle in the normal rebuild path —
@@ -1027,7 +1016,7 @@ export async function runUnitPhase(
     deps.lockBase(),
     unitType,
     unitId,
-    s.completedUnits.length,
+    0,
   );
 
   debugLog("autoLoop", {
@@ -1058,14 +1047,14 @@ export async function runUnitPhase(
     deps.lockBase(),
     unitType,
     unitId,
-    s.completedUnits.length,
+    0,
     sessionFile,
   );
   deps.writeLock(
     deps.lockBase(),
     unitType,
     unitId,
-    s.completedUnits.length,
+    0,
     sessionFile,
   );
 
@@ -1129,7 +1118,7 @@ export async function runUnitPhase(
           `${unitType} ${unitId} completed with 0 tool calls — hallucinated summary, will retry`,
           "warning",
         );
-        // Do NOT add to completedUnits — fall through to next iteration
+        // Do NOT mark as verified — fall through to next iteration
         // where dispatch will re-derive and re-dispatch this task.
         return { action: "next", data: { unitStartedAt: s.currentUnit.startedAt } };
       }
@@ -1174,23 +1163,6 @@ export async function runUnitPhase(
     }
   }
   if (artifactVerified) {
-    s.completedUnits.push({
-      type: unitType,
-      id: unitId,
-      startedAt: s.currentUnit.startedAt,
-      finishedAt: Date.now(),
-    });
-    if (s.completedUnits.length > 200) {
-      s.completedUnits = s.completedUnits.slice(-200);
-    }
-    // Flush completed-units to disk so the record survives crashes
-    try {
-      const completedKeysPath = join(gsdRoot(s.basePath), "completed-units.json");
-      const keys = s.completedUnits.map((u) => `${u.type}/${u.id}`);
-      atomicWriteSync(completedKeysPath, JSON.stringify(keys, null, 2));
-    } catch { /* non-fatal: disk flush failure */ }
-
-    deps.clearUnitRuntimeRecord(s.basePath, unitType, unitId);
     s.unitDispatchCount.delete(`${unitType}/${unitId}`);
     s.unitRecoveryCount.delete(`${unitType}/${unitId}`);
   }

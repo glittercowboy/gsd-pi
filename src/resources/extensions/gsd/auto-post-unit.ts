@@ -22,7 +22,6 @@ import {
   resolveMilestoneFile,
   resolveTasksDir,
   buildTaskFileName,
-  gsdRoot,
 } from "./paths.js";
 import { invalidateAllCaches } from "./cache.js";
 import { closeoutUnit, type CloseoutOptions } from "./auto-unit-closeout.js";
@@ -32,7 +31,6 @@ import {
 } from "./worktree.js";
 import { resolveExpectedArtifactPath } from "./auto-artifact-paths.js";
 import { WorkflowEngine, isEngineAvailable } from "./workflow-engine.js";
-import { writeUnitRuntimeRecord, clearUnitRuntimeRecord } from "./unit-runtime.js";
 import { syncStateToProjectRoot } from "./auto-worktree-sync.js";
 import { isDbAvailable } from "./gsd-db.js";
 import { consumeSignal } from "./session-status-io.js";
@@ -55,7 +53,6 @@ import {
 import { existsSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { uncheckTaskInPlan } from "./undo.js";
-import { atomicWriteSync } from "./atomic-write.js";
 import { _resetHasChangesCache } from "./native-git-bridge.js";
 
 export interface PreVerificationOpts {
@@ -340,17 +337,7 @@ export async function postUnitPreVerification(pctx: PostUnitContext, opts?: PreV
         }
       }
     } else {
-      // Hook unit completed — finalize its runtime record
-      try {
-        writeUnitRuntimeRecord(s.basePath, s.currentUnit.type, s.currentUnit.id, s.currentUnit.startedAt, {
-          phase: "finalized",
-          progressCount: 1,
-          lastProgressKind: "hook-completed",
-        });
-        clearUnitRuntimeRecord(s.basePath, s.currentUnit.type, s.currentUnit.id);
-      } catch (e) {
-        debugLog("postUnit", { phase: "hook-finalize", error: String(e) });
-      }
+      // Hook unit completed
     }
   }
 
@@ -440,17 +427,7 @@ export async function postUnitPostVerification(pctx: PostUnitContext): Promise<"
             }
           }
 
-          // 3. Remove from s.completedUnits and flush to completed-units.json
-          s.completedUnits = s.completedUnits.filter(
-            u => !(u.type === trigger.unitType && u.id === trigger.unitId),
-          );
-          try {
-            const completedKeysPath = join(gsdRoot(s.basePath), "completed-units.json");
-            const keys = s.completedUnits.map(u => `${u.type}/${u.id}`);
-            atomicWriteSync(completedKeysPath, JSON.stringify(keys, null, 2));
-          } catch { /* non-fatal: disk flush failure */ }
-
-          // 4. Delete the retry_on artifact (e.g. NEEDS-REWORK.md)
+          // 3. Delete the retry_on artifact (e.g. NEEDS-REWORK.md)
           if (trigger.retryArtifact) {
             const retryArtifactPath = resolveHookArtifactPath(s.basePath, trigger.unitId, trigger.retryArtifact);
             if (existsSync(retryArtifactPath)) {

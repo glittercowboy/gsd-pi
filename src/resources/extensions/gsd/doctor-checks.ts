@@ -639,7 +639,6 @@ export async function checkRuntimeHealth(
         ".gsd/runtime/",
         ".gsd/auto.lock",
         ".gsd/gsd.db",
-        ".gsd/completed-units.json",
       ];
 
       // If blanket .gsd/ or .gsd is present, all patterns are covered

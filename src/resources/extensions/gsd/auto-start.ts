@@ -474,7 +474,6 @@ export async function bootstrapAutoSession(
     });
     s.autoStartTime = Date.now();
     s.resourceVersionOnStart = readResourceVersion();
-    s.completedUnits = [];
     s.pendingQuickTasks = [];
     s.currentUnit = null;
     s.currentMilestoneId = state.activeMilestone?.id ?? null;

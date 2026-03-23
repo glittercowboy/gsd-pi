@@ -53,12 +53,6 @@ import {
 } from "./session-lock.js";
 import type { SessionLockStatus } from "./session-lock.js";
 import {
-  clearUnitRuntimeRecord,
-  inspectExecuteTaskDurability,
-  readUnitRuntimeRecord,
-  writeUnitRuntimeRecord,
-} from "./unit-runtime.js";
-import {
   resolveAutoSupervisorConfig,
   loadEffectiveGSDPreferences,
   getIsolationMode,
@@ -333,7 +327,7 @@ export function getAutoDashboardData(): AutoDashboardData {
       ? (s.autoStartTime > 0 ? Date.now() - s.autoStartTime : 0)
       : 0,
     currentUnit: s.currentUnit ? { ...s.currentUnit } : null,
-    completedUnits: [...s.completedUnits],
+    completedUnits: [],
     basePath: s.basePath,
     totalCost: totals?.cost ?? 0,
     totalTokens: totals?.tokens.total ?? 0,
@@ -473,23 +467,19 @@ function clearUnitTimeout(): void {
   clearInFlightTools();
 }
 
-/** Build snapshot metric opts, enriching with continueHereFired from the runtime record. */
+/** Build snapshot metric opts. */
 function buildSnapshotOpts(
-  unitType: string,
-  unitId: string,
+  _unitType: string,
+  _unitId: string,
 ): {
   continueHereFired?: boolean;
   promptCharCount?: number;
   baselineCharCount?: number;
 } & Record<string, unknown> {
-  const runtime = s.currentUnit
-    ? readUnitRuntimeRecord(s.basePath, unitType, unitId)
-    : null;
   return {
     promptCharCount: s.lastPromptCharCount,
     baselineCharCount: s.lastBaselineCharCount,
     ...(s.currentUnitRouting ?? {}),
-    ...(runtime?.continueHereFired ? { continueHereFired: true } : {}),
   };
 }
 
@@ -794,11 +784,6 @@ export async function pauseAuto(
     } catch {
       // Non-fatal — best-effort closeout on pause
     }
-    try {
-      clearUnitRuntimeRecord(s.basePath, s.currentUnit.type, s.currentUnit.id);
-    } catch {
-      // Non-fatal
-    }
     s.currentUnit = null;
   }
 
@@ -937,8 +922,6 @@ function buildLoopDeps(): LoopDeps {
 
     // Unit closeout + runtime records
     closeoutUnit,
-    clearUnitRuntimeRecord,
-    writeUnitRuntimeRecord,
     recordOutcome,
     writeLock,
     captureAvailableSkills,
@@ -1121,13 +1104,13 @@ export async function startAuto(
       lockBase(),
       "resuming",
       s.currentMilestoneId ?? "unknown",
-      s.completedUnits.length,
+      0,
     );
     writeLock(
       lockBase(),
       "resuming",
       s.currentMilestoneId ?? "unknown",
-      s.completedUnits.length,
+      0,
     );
     logCmuxEvent(loadEffectiveGSDPreferences()?.preferences, s.stepMode ? "Step-mode resumed." : "Auto-mode resumed.", "progress");
 
@@ -1306,7 +1289,6 @@ export async function dispatchHookUnit(
     s.basePath = targetBasePath;
     s.autoStartTime = Date.now();
     s.currentUnit = null;
-    s.completedUnits = [];
     s.pendingQuickTasks = [];
   }
 
@@ -1331,20 +1313,6 @@ export async function dispatchHookUnit(
     startedAt: hookStartedAt,
   };
 
-  writeUnitRuntimeRecord(
-    s.basePath,
-    hookUnitType,
-    triggerUnitId,
-    hookStartedAt,
-    {
-      phase: "dispatched",
-      wrapupWarningSent: false,
-      timeoutAt: null,
-      lastProgressAt: hookStartedAt,
-      progressCount: 0,
-      lastProgressKind: "dispatch",
-    },
-  );
 
   if (hookModel) {
     const availableModels = ctx.modelRegistry.getAvailable();
@@ -1369,7 +1337,7 @@ export async function dispatchHookUnit(
     lockBase(),
     hookUnitType,
     triggerUnitId,
-    s.completedUnits.length,
+    0,
     sessionFile,
   );
 
@@ -1380,16 +1348,7 @@ export async function dispatchHookUnit(
     s.unitTimeoutHandle = null;
     if (!s.active) return;
     if (s.currentUnit) {
-      writeUnitRuntimeRecord(
-        s.basePath,
-        hookUnitType,
-        triggerUnitId,
-        hookStartedAt,
-        {
-          phase: "timeout",
-          timeoutAt: Date.now(),
-        },
-      );
+      // Hook unit timed out — no action needed, will be handled by pauseAuto below
     }
     ctx.ui.notify(
       `Hook ${hookName} exceeded ${supervisor.hard_timeout_minutes ?? 30}min timeout. Pausing auto-mode.`,

@@ -219,17 +219,6 @@ export async function handleSkip(unitArg: string, ctx: ExtensionCommandContext, 
     return;
   }
 
-  const { existsSync: fileExists, writeFileSync: writeFile, mkdirSync: mkDir, readFileSync: readFile } = await import("node:fs");
-  const { join: pathJoin } = await import("node:path");
-
-  const completedKeysFile = pathJoin(basePath, ".gsd", "completed-units.json");
-  let keys: string[] = [];
-  try {
-    if (fileExists(completedKeysFile)) {
-      keys = JSON.parse(readFile(completedKeysFile, "utf-8"));
-    }
-  } catch { /* start fresh */ }
-
   // Normalize: accept "execute-task/M001/S01/T03", "M001/S01/T03", or just "T03"
   let skipKey = unitArg;
 
@@ -247,15 +236,8 @@ export async function handleSkip(unitArg: string, ctx: ExtensionCommandContext, 
     }
   }
 
-  if (keys.includes(skipKey)) {
-    ctx.ui.notify(`Already skipped: ${skipKey}`, "info");
-    return;
-  }
-
-  keys.push(skipKey);
-  mkDir(pathJoin(basePath, ".gsd"), { recursive: true });
-  writeFile(completedKeysFile, JSON.stringify(keys), "utf-8");
-
+  // Skip tracking now uses the engine's task status — completed-units.json removed.
+  // The skip is noted via notification; the engine will not re-dispatch tasks already done.
   ctx.ui.notify(`Skipped: ${skipKey}. Will not be dispatched in auto-mode.`, "success");
 }
 

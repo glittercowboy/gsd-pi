@@ -187,18 +187,6 @@ export interface LoopDeps {
     startedAt: number,
     opts?: CloseoutOptions & Record<string, unknown>,
   ) => Promise<void>;
-  clearUnitRuntimeRecord: (
-    basePath: string,
-    unitType: string,
-    unitId: string,
-  ) => void;
-  writeUnitRuntimeRecord: (
-    basePath: string,
-    unitType: string,
-    unitId: string,
-    startedAt: number,
-    record: Record<string, unknown>,
-  ) => void;
   recordOutcome: (unitType: string, tier: string, success: boolean) => void;
   writeLock: (
     lockBase: string,

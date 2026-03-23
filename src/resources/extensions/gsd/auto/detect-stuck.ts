@@ -12,7 +12,6 @@ import type { WindowEntry } from "./types.js";
  *
  * Rule 1: Same error string twice in a row → stuck immediately.
  * Rule 2: Same unit key 3+ consecutive times → stuck (preserves prior behavior).
- * Rule 3: Oscillation A→B→A→B in last 4 entries → stuck.
  */
 export function detectStuck(
   window: readonly WindowEntry[],
@@ -37,21 +36,6 @@ export function detectStuck(
       return {
         stuck: true,
         reason: `${last.key} derived 3 consecutive times without progress`,
-      };
-    }
-  }
-
-  // Rule 3: Oscillation (A→B→A→B in last 4)
-  if (window.length >= 4) {
-    const w = window.slice(-4);
-    if (
-      w[0].key === w[2].key &&
-      w[1].key === w[3].key &&
-      w[0].key !== w[1].key
-    ) {
-      return {
-        stuck: true,
-        reason: `Oscillation detected: ${w[0].key} ↔ ${w[1].key}`,
       };
     }
   }

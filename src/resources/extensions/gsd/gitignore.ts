@@ -26,7 +26,6 @@ const GSD_RUNTIME_PATTERNS = [
   ".gsd/parallel/",
   ".gsd/auto.lock",
   ".gsd/metrics.json",
-  ".gsd/completed-units.json",
   ".gsd/STATE.md",
   ".gsd/gsd.db",
   ".gsd/DISCUSSION-MANIFEST.json",

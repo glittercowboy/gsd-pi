@@ -193,7 +193,6 @@ export const RUNTIME_EXCLUSION_PATHS: readonly string[] = [
   ".gsd/worktrees/",
   ".gsd/auto.lock",
   ".gsd/metrics.json",
-  ".gsd/completed-units.json",
   ".gsd/STATE.md",
   ".gsd/gsd.db",
   ".gsd/DISCUSSION-MANIFEST.json",

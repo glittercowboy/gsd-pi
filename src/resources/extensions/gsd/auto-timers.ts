@@ -7,7 +7,6 @@
  */
 
 import type { ExtensionAPI, ExtensionContext } from "@gsd/pi-coding-agent";
-import { readUnitRuntimeRecord, writeUnitRuntimeRecord } from "./unit-runtime.js";
 import { resolveAutoSupervisorConfig } from "./preferences.js";
 import type { GSDPreferences } from "./preferences.js";
 import { computeBudgets, resolveExecutorContextWindow } from "./context-budget.js";
@@ -53,10 +52,6 @@ export function startUnitSupervision(sctx: SupervisionContext): void {
   s.wrapupWarningHandle = setTimeout(() => {
     s.wrapupWarningHandle = null;
     if (!s.active || !s.currentUnit) return;
-    writeUnitRuntimeRecord(s.basePath, unitType, unitId, s.currentUnit.startedAt, {
-      phase: "wrapup-warning-sent",
-      wrapupWarningSent: true,
-    });
     pi.sendMessage(
       {
         customType: "gsd-auto-wrapup",
@@ -76,12 +71,13 @@ export function startUnitSupervision(sctx: SupervisionContext): void {
   }, softTimeoutMs);
 
   // ── 2. Idle watchdog ──
+  // Track last-seen progress time for idle detection
+  let lastProgressAt = Date.now();
+
   s.idleWatchdogHandle = setInterval(async () => {
     try {
       if (!s.active || !s.currentUnit) return;
-      const runtime = readUnitRuntimeRecord(s.basePath, unitType, unitId);
-      if (!runtime) return;
-      if (Date.now() - runtime.lastProgressAt < idleTimeoutMs) return;
+      if (Date.now() - lastProgressAt < idleTimeoutMs) return;
 
       // Agent has tool calls currently executing — not idle, just waiting.
       // But only suppress recovery if the tool started recently.
@@ -89,10 +85,7 @@ export function startUnitSupervision(sctx: SupervisionContext): void {
         const oldestStart = getOldestInFlightToolStart()!;
         const toolAgeMs = Date.now() - oldestStart;
         if (toolAgeMs < idleTimeoutMs) {
-          writeUnitRuntimeRecord(s.basePath, unitType, unitId, s.currentUnit.startedAt, {
-            lastProgressAt: Date.now(),
-            lastProgressKind: "tool-in-flight",
-          });
+          lastProgressAt = Date.now();
           return;
         }
         ctx.ui.notify(
@@ -103,10 +96,7 @@ export function startUnitSupervision(sctx: SupervisionContext): void {
 
       // Check if the agent is producing work on disk.
       if (detectWorkingTreeActivity(s.basePath)) {
-        writeUnitRuntimeRecord(s.basePath, unitType, unitId, s.currentUnit.startedAt, {
-          lastProgressAt: Date.now(),
-          lastProgressKind: "filesystem-activity",
-        });
+        lastProgressAt = Date.now();
         return;
       }
 
@@ -119,9 +109,6 @@ export function startUnitSupervision(sctx: SupervisionContext): void {
       const recovery = await recoverTimedOutUnit(ctx, pi, unitType, unitId, "idle", buildRecoveryContext());
       if (recovery === "recovered") return;
 
-      writeUnitRuntimeRecord(s.basePath, unitType, unitId, s.currentUnit.startedAt, {
-        phase: "paused",
-      });
       ctx.ui.notify(
         `Unit ${unitType} ${unitId} made no meaningful progress for ${supervisor.idle_timeout_minutes}min. Pausing auto-mode.`,
         "warning",
@@ -144,10 +131,6 @@ export function startUnitSupervision(sctx: SupervisionContext): void {
       s.unitTimeoutHandle = null;
       if (!s.active) return;
       if (s.currentUnit) {
-        writeUnitRuntimeRecord(s.basePath, unitType, unitId, s.currentUnit.startedAt, {
-          phase: "timeout",
-          timeoutAt: Date.now(),
-        });
         await closeoutUnit(ctx, s.basePath, s.currentUnit.type, s.currentUnit.id, s.currentUnit.startedAt, buildSnapshotOpts());
       } else {
         saveActivityLog(ctx, s.basePath, unitType, unitId);
@@ -183,17 +166,15 @@ export function startUnitSupervision(sctx: SupervisionContext): void {
     ctx.model?.contextWindow,
   );
   const continueHereThreshold = computeBudgets(executorContextWindow).continueThresholdPercent;
+  let continueHereFired = false;
   s.continueHereHandle = setInterval(() => {
     if (!s.active || !s.currentUnit || !s.cmdCtx) return;
-    const runtime = readUnitRuntimeRecord(s.basePath, unitType, unitId);
-    if (runtime?.continueHereFired) return;
+    if (continueHereFired) return;
 
     const contextUsage = s.cmdCtx.getContextUsage();
     if (!contextUsage || contextUsage.percent == null || contextUsage.percent < continueHereThreshold) return;
 
-    writeUnitRuntimeRecord(s.basePath, unitType, unitId, s.currentUnit!.startedAt, {
-      continueHereFired: true,
-    });
+    continueHereFired = true;
 
     if (s.verbose) {
       ctx.ui.notify(

@@ -161,7 +161,6 @@ export function syncGsdStateToWorktree(
     "KNOWLEDGE.md",
     "OVERRIDES.md",
     "QUEUE.md",
-    "completed-units.json",
   ];
   for (const f of rootFiles) {
     const src = join(mainGsd, f);
@@ -309,8 +308,8 @@ export function syncWorktreeStateBack(
   // ── 1. Sync root-level .gsd/ files back ──────────────────────────────
   // The worktree is authoritative — complete-milestone updates REQUIREMENTS,
   // PROJECT, etc. These must overwrite main's copies so they survive teardown.
-  // Also includes QUEUE.md and completed-units.json which are written during
-  // milestone closeout and lost on teardown without explicit sync (#1787).
+  // Also includes QUEUE.md which is written during milestone closeout and
+  // lost on teardown without explicit sync (#1787).
   const rootFiles = [
     "DECISIONS.md",
     "REQUIREMENTS.md",
@@ -318,7 +317,6 @@ export function syncWorktreeStateBack(
     "KNOWLEDGE.md",
     "OVERRIDES.md",
     "QUEUE.md",
-    "completed-units.json",
   ];
   for (const f of rootFiles) {
     const src = join(wtGsd, f);
