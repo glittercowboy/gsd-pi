@@ -72,6 +72,9 @@ Recent decisions affecting current work:
 - 3-02: realpathSync try/catch in isBlockedStateFile handles files that don't exist yet (pre-write path matching)
 - 3-02: discuss.md/discuss-headless.md REQUIREMENTS.md writes left as-is — initial project setup, not status updates
 - 3-02: complete-slice.md and reassess-roadmap.md residual REQUIREMENTS.md writes replaced with gsd_save_decision (found during audit)
+- 3-03: tasks table has no created_at column — INSERT uses description/estimate/files/seq only (schema check required)
+- 3-03: Empty IN() clause invalid in SQLite — guard added before transaction when migratedMilestoneIds is empty
+- 3-03: needsAutoMigration() inside inner try/catch (not outer engine try) per Pitfall #4 — migration failure non-fatal
 - 3-04: Compaction wired in WorkflowEngine.completeSlice (not workflow-commands.ts) — engine has basePath, commands layer does not
 - 3-04: _milestoneProgress exported from workflow-commands.ts — returns { total, done, pct } for slice completion tracking
 - 3-04: Static import of atomicWriteSync in workflow-events.ts — no circular dependency risk
