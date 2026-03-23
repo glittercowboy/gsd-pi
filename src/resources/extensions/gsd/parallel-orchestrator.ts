@@ -52,7 +52,6 @@ export interface WorkerInfo {
   worktreePath: string;
   startedAt: number;
   state: "running" | "paused" | "stopped" | "error";
-  completedUnits: number;
   cost: number;
 }
 
@@ -82,7 +81,6 @@ export interface PersistedState {
     worktreePath: string;
     startedAt: number;
     state: "running" | "paused" | "stopped" | "error";
-    completedUnits: number;
     cost: number;
   }>;
   totalCost: number;
@@ -113,7 +111,6 @@ export function persistState(basePath: string): void {
         worktreePath: w.worktreePath,
         startedAt: w.startedAt,
         state: w.state,
-        completedUnits: w.completedUnits,
         cost: w.cost,
       })),
       totalCost: state.totalCost,
@@ -225,7 +222,6 @@ function restoreRuntimeState(basePath: string): boolean {
         worktreePath: diskStatus?.worktreePath ?? w.worktreePath,
         startedAt: w.startedAt,
         state: diskStatus?.state ?? w.state,
-        completedUnits: diskStatus?.completedUnits ?? w.completedUnits,
         cost: diskStatus?.cost ?? w.cost,
       });
     }
@@ -260,7 +256,6 @@ function restoreRuntimeState(basePath: string): boolean {
       worktreePath: status.worktreePath,
       startedAt: status.startedAt,
       state: status.state,
-      completedUnits: status.completedUnits,
       cost: status.cost,
     });
     state.totalCost += status.cost;
@@ -378,7 +373,6 @@ export async function startParallel(
         worktreePath: w.worktreePath,
         startedAt: w.startedAt,
         state: "running",
-        completedUnits: w.completedUnits,
         cost: w.cost,
       });
       adopted.push(w.milestoneId);
@@ -429,7 +423,6 @@ export async function startParallel(
         worktreePath: wtPath,
         startedAt: now,
         state: "running",
-        completedUnits: 0,
         cost: 0,
       };
 
@@ -447,7 +440,6 @@ export async function startParallel(
         pid: worker.pid,
         state: worker.state,
         currentUnit: null,
-        completedUnits: 0,
         cost: 0,
         lastHeartbeat: now,
         startedAt: now,
@@ -591,7 +583,6 @@ export function spawnWorker(
     pid: worker.pid,
     state: "running",
     currentUnit: null,
-    completedUnits: worker.completedUnits,
     cost: worker.cost,
     lastHeartbeat: Date.now(),
     startedAt: worker.startedAt,
@@ -620,7 +611,6 @@ export function spawnWorker(
       pid: w.pid,
       state: w.state,
       currentUnit: null,
-      completedUnits: w.completedUnits,
       cost: w.cost,
       lastHeartbeat: Date.now(),
       startedAt: w.startedAt,
@@ -702,14 +692,6 @@ function processWorkerLine(basePath: string, milestoneId: string, line: string):
       }
     }
 
-    // Track completed units (each message_end from assistant = progress)
-    if (msg.role === "assistant") {
-      const worker = state.workers.get(milestoneId);
-      if (worker) {
-        worker.completedUnits++;
-      }
-    }
-
     // Update session status file so dashboard sees live cost
     const worker = state.workers.get(milestoneId);
     if (worker) {
@@ -718,7 +700,6 @@ function processWorkerLine(basePath: string, milestoneId: string, line: string):
         pid: worker.pid,
         state: worker.state,
         currentUnit: null,
-        completedUnits: worker.completedUnits,
         cost: worker.cost,
         lastHeartbeat: Date.now(),
         startedAt: worker.startedAt,
@@ -737,7 +718,6 @@ function processWorkerLine(basePath: string, milestoneId: string, line: string):
         pid: worker.pid,
         state: worker.state,
         currentUnit: null,
-        completedUnits: worker.completedUnits,
         cost: worker.cost,
         lastHeartbeat: Date.now(),
         startedAt: worker.startedAt,
@@ -897,14 +877,13 @@ export function refreshWorkerStatuses(
     const diskStatus = statusMap.get(mid);
     if (!diskStatus) {
       if (!isPidAlive(worker.pid)) {
-        worker.state = worker.completedUnits > 0 ? "stopped" : "error";
+        worker.state = "stopped";
         worker.process = null;
       }
       continue;
     }
 
     worker.state = diskStatus.state;
-    worker.completedUnits = diskStatus.completedUnits;
     worker.cost = diskStatus.cost;
     worker.pid = diskStatus.pid;
   }

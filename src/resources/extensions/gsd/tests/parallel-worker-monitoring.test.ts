@@ -7,7 +7,7 @@
  *   3. Cost aggregation across workers sums correctly
  *   4. Budget ceiling blocks new spawns when exceeded
  *   5. Session status files are updated with live cost data
- *   6. completedUnits counter increments on assistant message_end
+ *   6. Worker state is tracked from session status files
  */
 
 import { describe, it, after } from "node:test";
@@ -158,7 +158,6 @@ describe("parallel-worker-monitoring", () => {
             worktreePath: "/tmp/wt-M001",
             startedAt: Date.now(),
             state: "running",
-            completedUnits: 1,
             cost: 0.1,
           },
         ],
@@ -185,7 +184,6 @@ describe("parallel-worker-monitoring", () => {
         pid: process.pid,
         state: "running",
         currentUnit: null,
-        completedUnits: 3,
         cost: 0.42,
         lastHeartbeat: Date.now(),
         startedAt: Date.now() - 1000,
@@ -194,7 +192,6 @@ describe("parallel-worker-monitoring", () => {
       refreshWorkerStatuses(base, { restoreIfNeeded: true });
       const workers = getWorkerStatuses();
       assertEq(workers[0].state, "running", "live session status restored");
-      assertEq(workers[0].completedUnits, 3, "completed units restored from status file");
     } finally {
       resetOrchestrator();
       rmSync(base, { recursive: true, force: true });

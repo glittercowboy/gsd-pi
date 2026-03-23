@@ -486,7 +486,7 @@ console.log("\n=== renderAgentView ===");
     agentActivity: {
       currentUnit: { type: "execute-task", id: "M001/S02/T03", startedAt: now - 60000 },
       elapsed: 60000,
-      completedUnits: 8,
+      unitsFinished: 8,
       totalSlices: 15,
       completionRate: 2.4,
       active: true,

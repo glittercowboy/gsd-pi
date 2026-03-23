@@ -205,7 +205,6 @@ import {
   NEW_SESSION_TIMEOUT_MS,
 } from "./auto/session.js";
 import type {
-  CompletedUnit,
   CurrentUnit,
   UnitRouting,
   StartModel,
@@ -217,7 +216,6 @@ export {
   NEW_SESSION_TIMEOUT_MS,
 } from "./auto/session.js";
 export type {
-  CompletedUnit,
   CurrentUnit,
   UnitRouting,
   StartModel,
@@ -327,7 +325,6 @@ export function getAutoDashboardData(): AutoDashboardData {
       ? (s.autoStartTime > 0 ? Date.now() - s.autoStartTime : 0)
       : 0,
     currentUnit: s.currentUnit ? { ...s.currentUnit } : null,
-    completedUnits: [],
     basePath: s.basePath,
     totalCost: totals?.cost ?? 0,
     totalTokens: totals?.tokens.total ?? 0,
@@ -423,7 +420,6 @@ export function checkRemoteAutoSession(projectRoot: string): {
   unitType?: string;
   unitId?: string;
   startedAt?: string;
-  completedUnits?: number;
 } {
   const lock = readCrashLock(projectRoot);
   if (!lock) return { running: false };
@@ -439,7 +435,6 @@ export function checkRemoteAutoSession(projectRoot: string): {
     unitType: lock.unitType,
     unitId: lock.unitId,
     startedAt: lock.startedAt,
-    completedUnits: lock.completedUnits,
   };
 }
 
@@ -1104,13 +1099,11 @@ export async function startAuto(
       lockBase(),
       "resuming",
       s.currentMilestoneId ?? "unknown",
-      0,
     );
     writeLock(
       lockBase(),
       "resuming",
       s.currentMilestoneId ?? "unknown",
-      0,
     );
     logCmuxEvent(loadEffectiveGSDPreferences()?.preferences, s.stepMode ? "Step-mode resumed." : "Auto-mode resumed.", "progress");
 
@@ -1337,7 +1330,6 @@ export async function dispatchHookUnit(
     lockBase(),
     hookUnitType,
     triggerUnitId,
-    0,
     sessionFile,
   );
 

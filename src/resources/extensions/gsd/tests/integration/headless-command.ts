@@ -268,7 +268,6 @@ function createFixture(): string {
   // Add .gitignore for runtime files
   writeFileSync(join(tmpDir, ".gitignore"), [
     ".gsd/auto.lock",
-    ".gsd/completed-units.json",
     ".gsd/metrics.json",
     ".gsd/activity/",
     ".gsd/runtime/",

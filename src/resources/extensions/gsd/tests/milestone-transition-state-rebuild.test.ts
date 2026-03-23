@@ -1,18 +1,14 @@
 /**
  * milestone-transition-state-rebuild.test.ts — Tests for #1576 fix.
  *
- * Verifies that:
- * 1. rebuildState() is called after milestone transitions so STATE.md
- *    reflects the new active milestone.
- * 2. completed-units.json is reset when the active milestone changes,
- *    preventing stale entries from causing dispatch skips.
+ * Verifies that rebuildState() is called after milestone transitions so STATE.md
+ * reflects the new active milestone.
  */
 
 import test from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync, mkdtempSync, mkdirSync, writeFileSync, existsSync, rmSync, realpathSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
-import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -43,30 +39,6 @@ test("auto/phases.ts milestone transition block calls rebuildState", () => {
   );
 });
 
-test("auto/phases.ts milestone transition block resets completed-units.json", () => {
-  const phasesSrc = readFileSync(
-    join(__dirname, "..", "auto", "phases.ts"),
-    "utf-8",
-  );
-
-  // completed-units.json must be cleared during milestone transition
-  // Look for the reset pattern within the transition block
-  const transitionStart = phasesSrc.indexOf("Milestone transition");
-  const transitionResetSection = phasesSrc.indexOf(
-    "s.completedUnits = []",
-    transitionStart,
-  );
-  assert.ok(
-    transitionResetSection > 0,
-    "auto/phases.ts should reset s.completedUnits to [] during milestone transition",
-  );
-
-  // The disk file should also be cleared
-  assert.ok(
-    phasesSrc.includes('atomicWriteSync(completedKeysPath, JSON.stringify([], null, 2))'),
-    "auto/phases.ts should write empty array to completed-units.json during milestone transition",
-  );
-});
 
 test("auto/loop-deps.ts LoopDeps interface includes rebuildState", () => {
   const loopDepsSrc = readFileSync(
@@ -97,35 +69,3 @@ test("auto.ts buildLoopDeps wires rebuildState", () => {
   );
 });
 
-// ─── Functional test: completed-units.json reset ─────────────────────────────
-
-test("completed-units.json is cleared on milestone transition (functional)", () => {
-  const tempDir = realpathSync(mkdtempSync(join(tmpdir(), "gsd-cu-reset-")));
-  try {
-    // Create .gsd directory with a populated completed-units.json
-    const gsdDir = join(tempDir, ".gsd");
-    mkdirSync(gsdDir, { recursive: true });
-
-    const completedKeysPath = join(gsdDir, "completed-units.json");
-    const staleEntries = [
-      "context-gather/M001",
-      "roadmap-plan/M001",
-      "plan-slice/S01",
-      "execute-task/T01",
-    ];
-    writeFileSync(completedKeysPath, JSON.stringify(staleEntries, null, 2));
-
-    // Verify stale entries exist
-    const before = JSON.parse(readFileSync(completedKeysPath, "utf-8"));
-    assert.equal(before.length, 4, "Should have 4 stale entries before reset");
-
-    // Simulate what phases.ts does: write empty array
-    writeFileSync(completedKeysPath, JSON.stringify([], null, 2));
-
-    // Verify reset
-    const after = JSON.parse(readFileSync(completedKeysPath, "utf-8"));
-    assert.deepEqual(after, [], "completed-units.json should be empty after milestone transition");
-  } finally {
-    rmSync(tempDir, { recursive: true, force: true });
-  }
-});

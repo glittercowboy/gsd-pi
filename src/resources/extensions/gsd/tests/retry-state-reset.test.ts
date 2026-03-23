@@ -44,13 +44,6 @@ function createRetryFixture(): { base: string; cleanup: () => void } {
   const summaryFile = join(milestonesTasksDir, "T01-SUMMARY.md");
   writeFileSync(summaryFile, "---\ntitle: T01 Summary\n---\nDone.", "utf-8");
 
-  // Write completed-units.json with T01
-  writeFileSync(
-    join(base, ".gsd", "completed-units.json"),
-    JSON.stringify(["execute-task/M001/S01/T01"]),
-    "utf-8",
-  );
-
   // Write the retry_on artifact in the hook artifact path
   const retryArtifact = join(milestonesTasksDir, "T01-NEEDS-REWORK.md");
   writeFileSync(retryArtifact, "Rework needed: test coverage insufficient.", "utf-8");
@@ -127,42 +120,6 @@ console.log("\n=== Retry reset step 2: delete SUMMARY.md ===");
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Test: Remove from completedUnits array and flush
-// ═══════════════════════════════════════════════════════════════════════════
-
-console.log("\n=== Retry reset step 3: remove from completedUnits ===");
-
-{
-  const { base, cleanup } = createRetryFixture();
-  try {
-    // Simulate the completedUnits array (as AutoSession would have it)
-    const completedUnits = [
-      { type: "execute-task", id: "M001/S01/T01", startedAt: 1000, finishedAt: 2000 },
-      { type: "execute-task", id: "M001/S01/T02", startedAt: 3000, finishedAt: 4000 },
-    ];
-
-    // Step 3: Filter out the retried unit
-    const filtered = completedUnits.filter(
-      u => !(u.type === "execute-task" && u.id === "M001/S01/T01"),
-    );
-
-    assertEq(filtered.length, 1, "one unit removed from completedUnits");
-    assertEq(filtered[0].id, "M001/S01/T02", "T02 still in completedUnits");
-
-    // Flush to completed-units.json
-    const completedKeysPath = join(base, ".gsd", "completed-units.json");
-    const keys = filtered.map(u => `${u.type}/${u.id}`);
-    writeFileSync(completedKeysPath, JSON.stringify(keys, null, 2), "utf-8");
-
-    const onDisk = JSON.parse(readFileSync(completedKeysPath, "utf-8"));
-    assertEq(onDisk.length, 1, "completed-units.json has one entry");
-    assertEq(onDisk[0], "execute-task/M001/S01/T02", "only T02 remains in completed-units.json");
-  } finally {
-    cleanup();
-  }
-}
-
-// ═══════════════════════════════════════════════════════════════════════════
 // Test: Delete the retry_on artifact
 // ═══════════════════════════════════════════════════════════════════════════
 
@@ -202,10 +159,6 @@ console.log("\n=== Full retry reset: all steps combined ===");
     const parts = trigger.unitId.split("/");
     const [mid, sid, tid] = parts;
 
-    // Simulate completedUnits
-    let completedUnits = [
-      { type: "execute-task", id: "M001/S01/T01", startedAt: 1000, finishedAt: 2000 },
-    ];
 
     // ── Execute the full reset sequence (mirrors auto-post-unit.ts logic) ──
 
@@ -221,17 +174,7 @@ console.log("\n=== Full retry reset: all steps combined ===");
       unlinkSync(summaryFile);
     }
 
-    // Step 3: Remove from completedUnits + flush
-    completedUnits = completedUnits.filter(
-      u => !(u.type === trigger.unitType && u.id === trigger.unitId),
-    );
-    const completedKeysPath = join(base, ".gsd", "completed-units.json");
-    writeFileSync(completedKeysPath, JSON.stringify(
-      completedUnits.map(u => `${u.type}/${u.id}`),
-      null, 2,
-    ), "utf-8");
-
-    // Step 4: Delete retry artifact
+    // Step 3: Delete retry artifact
     const retryArtifactPath = resolveHookArtifactPath(base, trigger.unitId, trigger.retryArtifact);
     if (existsSync(retryArtifactPath)) {
       unlinkSync(retryArtifactPath);
@@ -247,10 +190,6 @@ console.log("\n=== Full retry reset: all steps combined ===");
 
     // SUMMARY.md: deleted
     assertTrue(!existsSync(summaryFile), "after reset: SUMMARY.md deleted");
-
-    // completed-units.json: empty
-    const onDisk = JSON.parse(readFileSync(completedKeysPath, "utf-8"));
-    assertEq(onDisk.length, 0, "after reset: completed-units.json is empty");
 
     // Retry artifact: deleted
     assertTrue(!existsSync(retryArtifactPath), "after reset: retry artifact deleted");
@@ -270,11 +209,6 @@ console.log("\n=== Retry reset: idempotent when artifacts already missing ===");
   try {
     // Create minimal structure — NO summary, NO retry artifact, NO plan
     mkdirSync(join(base, ".gsd", "milestones", "M001", "slices", "S01", "tasks"), { recursive: true });
-    writeFileSync(
-      join(base, ".gsd", "completed-units.json"),
-      JSON.stringify([]),
-      "utf-8",
-    );
 
     const trigger = {
       unitType: "execute-task",
@@ -297,13 +231,6 @@ console.log("\n=== Retry reset: idempotent when artifacts already missing ===");
     // Retry artifact does not exist — no crash
     const retryPath = resolveHookArtifactPath(base, trigger.unitId, trigger.retryArtifact);
     assertTrue(!existsSync(retryPath), "no retry artifact to delete — safe");
-
-    // completed-units.json filter on empty array — safe
-    const completedUnits: Array<{ type: string; id: string }> = [];
-    const filtered = completedUnits.filter(
-      u => !(u.type === trigger.unitType && u.id === trigger.unitId),
-    );
-    assertEq(filtered.length, 0, "filter on empty array is safe");
   } finally {
     rmSync(base, { recursive: true, force: true });
   }

@@ -23,13 +23,6 @@ import type { BudgetAlertLevel } from "../auto-budget.js";
 
 // ─── Exported Types ──────────────────────────────────────────────────────────
 
-export interface CompletedUnit {
-  type: string;
-  id: string;
-  startedAt: number;
-  finishedAt: number;
-}
-
 export interface CurrentUnit {
   type: string;
   id: string;
@@ -118,7 +111,6 @@ export class AutoSession {
   readonly verificationRetryCount = new Map<string, number>();
   pausedSessionFile: string | null = null;
   resourceVersionOnStart: string | null = null;
-  lastStateRebuildAt = 0;
 
   // ── Sidecar queue ─────────────────────────────────────────────────────
   sidecarQueue: SidecarItem[] = [];
@@ -155,13 +147,6 @@ export class AutoSession {
 
   get lockBasePath(): string {
     return this.originalBasePath || this.basePath;
-  }
-
-  completeCurrentUnit(): CompletedUnit | null {
-    if (!this.currentUnit) return null;
-    const done: CompletedUnit = { ...this.currentUnit, finishedAt: Date.now() };
-    this.currentUnit = null;
-    return done;
   }
 
   reset(): void {
@@ -201,7 +186,6 @@ export class AutoSession {
     this.verificationRetryCount.clear();
     this.pausedSessionFile = null;
     this.resourceVersionOnStart = null;
-    this.lastStateRebuildAt = 0;
 
     // Metrics
     this.autoStartTime = 0;
@@ -225,7 +209,6 @@ export class AutoSession {
       basePath: this.basePath,
       currentMilestoneId: this.currentMilestoneId,
       currentUnit: this.currentUnit,
-      completedUnits: 0,
       unitDispatchCount: Object.fromEntries(this.unitDispatchCount),
     };
   }

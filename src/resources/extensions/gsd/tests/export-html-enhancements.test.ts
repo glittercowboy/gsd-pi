@@ -98,7 +98,7 @@ function mockData(overrides: Partial<VisualizerData> = {}): VisualizerData {
     agentActivity: {
       currentUnit: { type: "execute-task", id: "M002/S01/T01", startedAt: Date.now() - 30_000 },
       elapsed: 30_000,
-      completedUnits: 4,
+      unitsFinished: 4,
       totalSlices: 4,
       completionRate: 2.5,
       active: true,

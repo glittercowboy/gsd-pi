@@ -23,7 +23,6 @@ export interface LockData {
   unitType: string;
   unitId: string;
   unitStartedAt: string;
-  completedUnits: number;
   /** Path to the pi session JSONL file that was active when this unit started. */
   sessionFile?: string;
 }
@@ -37,7 +36,6 @@ export function writeLock(
   basePath: string,
   unitType: string,
   unitId: string,
-  completedUnits: number,
   sessionFile?: string,
 ): void {
   try {
@@ -47,7 +45,6 @@ export function writeLock(
       unitType,
       unitId,
       unitStartedAt: new Date().toISOString(),
-      completedUnits,
       sessionFile,
     };
     const lp = lockPath(basePath);
@@ -102,12 +99,11 @@ export function formatCrashInfo(lock: LockData): string {
     `Previous auto-mode session was interrupted.`,
     `  Was executing: ${lock.unitType} (${lock.unitId})`,
     `  Started at: ${lock.unitStartedAt}`,
-    `  Units completed before crash: ${lock.completedUnits}`,
     `  PID: ${lock.pid}`,
   ];
 
   // Add recovery guidance based on what was happening when it crashed
-  if (lock.unitType === "starting" && lock.unitId === "bootstrap" && lock.completedUnits === 0) {
+  if (lock.unitType === "starting" && lock.unitId === "bootstrap") {
     lines.push(`No work was lost. Run /gsd auto to restart.`);
   } else if (lock.unitType.includes("research") || lock.unitType.includes("plan")) {
     lines.push(`The ${lock.unitType} unit may be incomplete. Run /gsd auto to re-run it.`);

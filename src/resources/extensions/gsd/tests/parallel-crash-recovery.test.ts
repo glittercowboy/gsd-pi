@@ -72,7 +72,6 @@ function makePersistedState(overrides: Partial<PersistedState> = {}): PersistedS
           worktreePath: "/tmp/wt-M001",
           startedAt: Date.now(),
           state: "running",
-          completedUnits: 3,
           cost: 0.15,
         },
       ],
@@ -117,7 +116,6 @@ function makePersistedState(overrides: Partial<PersistedState> = {}): PersistedS
           worktreePath: "/tmp/wt-M001",
           startedAt: Date.now(),
           state: "running",
-          completedUnits: 0,
           cost: 0,
         },
         {
@@ -127,7 +125,6 @@ function makePersistedState(overrides: Partial<PersistedState> = {}): PersistedS
           worktreePath: "/tmp/wt-M002",
           startedAt: Date.now(),
           state: "running",
-          completedUnits: 0,
           cost: 0,
         },
       ],
@@ -157,7 +154,6 @@ function makePersistedState(overrides: Partial<PersistedState> = {}): PersistedS
           worktreePath: "/tmp/wt-M001",
           startedAt: Date.now(),
           state: "running",
-          completedUnits: 5,
           cost: 0.25,
         },
         {
@@ -167,7 +163,6 @@ function makePersistedState(overrides: Partial<PersistedState> = {}): PersistedS
           worktreePath: "/tmp/wt-M002",
           startedAt: Date.now(),
           state: "running",
-          completedUnits: 0,
           cost: 0,
         },
       ],
@@ -180,7 +175,6 @@ function makePersistedState(overrides: Partial<PersistedState> = {}): PersistedS
     assertEq(result!.workers.length, 1, "restoreState: filters out dead PID");
     assertEq(result!.workers[0].milestoneId, "M001", "restoreState: keeps alive worker");
     assertEq(result!.workers[0].pid, process.pid, "restoreState: preserves PID");
-    assertEq(result!.workers[0].completedUnits, 5, "restoreState: preserves progress");
   } finally {
     rmSync(basePath, { recursive: true, force: true });
   }
@@ -199,7 +193,6 @@ function makePersistedState(overrides: Partial<PersistedState> = {}): PersistedS
           worktreePath: "/tmp/wt-M001",
           startedAt: Date.now(),
           state: "stopped",
-          completedUnits: 10,
           cost: 0.50,
         },
       ],
@@ -224,7 +217,6 @@ function makePersistedState(overrides: Partial<PersistedState> = {}): PersistedS
       pid: 99999999,
       state: "running",
       currentUnit: null,
-      completedUnits: 3,
       cost: 0.10,
       lastHeartbeat: Date.now(),
       startedAt: Date.now(),
@@ -237,7 +229,6 @@ function makePersistedState(overrides: Partial<PersistedState> = {}): PersistedS
       pid: process.pid,
       state: "running",
       currentUnit: null,
-      completedUnits: 1,
       cost: 0.05,
       lastHeartbeat: Date.now(),
       startedAt: Date.now(),

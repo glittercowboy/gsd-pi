@@ -369,70 +369,8 @@ test("completed tasks are not re-dispatched on next iteration", async () => {
 });
 
 // ─── Batch Verification ───────────────────────────────────────────────────
-
-test("verifyExpectedArtifact: reactive-execute passes when all dispatched summaries exist", async () => {
-  const { verifyExpectedArtifact } = await import("../auto-recovery.ts");
-  const repo = mkdtempSync(join(tmpdir(), "gsd-reactive-verify-pass-"));
-  try {
-    const tasksDir = join(repo, ".gsd", "milestones", "M001", "slices", "S01", "tasks");
-    mkdirSync(tasksDir, { recursive: true });
-    writeFileSync(join(tasksDir, "T02-SUMMARY.md"), "---\nid: T02\n---\n# T02: Done\n");
-    writeFileSync(join(tasksDir, "T03-SUMMARY.md"), "---\nid: T03\n---\n# T03: Done\n");
-
-    const result = verifyExpectedArtifact("reactive-execute", "M001/S01/reactive+T02,T03", repo);
-    assert.equal(result, true, "Should pass when all dispatched task summaries exist");
-  } finally {
-    rmSync(repo, { recursive: true, force: true });
-  }
-});
-
-test("verifyExpectedArtifact: reactive-execute fails when a dispatched summary is missing", async () => {
-  const { verifyExpectedArtifact } = await import("../auto-recovery.ts");
-  const repo = mkdtempSync(join(tmpdir(), "gsd-reactive-verify-fail-"));
-  try {
-    const tasksDir = join(repo, ".gsd", "milestones", "M001", "slices", "S01", "tasks");
-    mkdirSync(tasksDir, { recursive: true });
-    // Only T02 has a summary, T03 does not
-    writeFileSync(join(tasksDir, "T02-SUMMARY.md"), "---\nid: T02\n---\n# T02: Done\n");
-
-    const result = verifyExpectedArtifact("reactive-execute", "M001/S01/reactive+T02,T03", repo);
-    assert.equal(result, false, "Should fail when dispatched task T03 summary is missing");
-  } finally {
-    rmSync(repo, { recursive: true, force: true });
-  }
-});
-
-test("verifyExpectedArtifact: reactive-execute fails even with pre-existing summaries from other tasks", async () => {
-  const { verifyExpectedArtifact } = await import("../auto-recovery.ts");
-  const repo = mkdtempSync(join(tmpdir(), "gsd-reactive-verify-preexisting-"));
-  try {
-    const tasksDir = join(repo, ".gsd", "milestones", "M001", "slices", "S01", "tasks");
-    mkdirSync(tasksDir, { recursive: true });
-    // T01 summary exists from before, but T02 and T03 were dispatched
-    writeFileSync(join(tasksDir, "T01-SUMMARY.md"), "---\nid: T01\n---\n# T01: Prior\n");
-
-    const result = verifyExpectedArtifact("reactive-execute", "M001/S01/reactive+T02,T03", repo);
-    assert.equal(result, false, "Pre-existing T01 summary should not satisfy T02,T03 batch");
-  } finally {
-    rmSync(repo, { recursive: true, force: true });
-  }
-});
-
-test("verifyExpectedArtifact: reactive-execute legacy format (no batch IDs) falls back", async () => {
-  const { verifyExpectedArtifact } = await import("../auto-recovery.ts");
-  const repo = mkdtempSync(join(tmpdir(), "gsd-reactive-verify-legacy-"));
-  try {
-    const tasksDir = join(repo, ".gsd", "milestones", "M001", "slices", "S01", "tasks");
-    mkdirSync(tasksDir, { recursive: true });
-    writeFileSync(join(tasksDir, "T01-SUMMARY.md"), "---\nid: T01\n---\n# T01\n");
-
-    // Legacy format without +batch suffix
-    const result = verifyExpectedArtifact("reactive-execute", "M001/S01/reactive", repo);
-    assert.equal(result, true, "Legacy format should fall back to any-summary check");
-  } finally {
-    rmSync(repo, { recursive: true, force: true });
-  }
-});
+// Batch artifact verification tests removed — engine task status queries
+// are now authoritative (CLN-02)
 
 test("unitId batch encoding round-trips correctly", () => {
   const mid = "M001";

@@ -6,7 +6,8 @@ import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
 
 import { deriveState, isValidationTerminal } from "../state.ts";
-import { resolveExpectedArtifactPath, verifyExpectedArtifact, diagnoseExpectedArtifact, buildLoopRemediationSteps } from "../auto-recovery.ts";
+import { buildLoopRemediationSteps } from "../auto-recovery.ts";
+import { resolveExpectedArtifactPath, diagnoseExpectedArtifact } from "../auto-artifact-paths.ts";
 import { resolveDispatch, type DispatchContext } from "../auto-dispatch.ts";
 import type { GSDState } from "../types.ts";
 import { clearPathCache } from "../paths.ts";
@@ -266,87 +267,6 @@ test("resolveExpectedArtifactPath returns VALIDATION path for validate-milestone
     const result = resolveExpectedArtifactPath("validate-milestone", "M001", base);
     assert.ok(result);
     assert.ok(result!.includes("VALIDATION"));
-  } finally {
-    cleanup(base);
-  }
-});
-
-test("verifyExpectedArtifact passes when VALIDATION.md exists", () => {
-  const base = makeTmpBase();
-  try {
-    writeValidation(base, "M001", "---\nverdict: pass\n---\n# Val");
-    clearPathCache();
-    clearParseCache();
-    const result = verifyExpectedArtifact("validate-milestone", "M001", base);
-    assert.equal(result, true);
-  } finally {
-    cleanup(base);
-  }
-});
-
-test("verifyExpectedArtifact fails when VALIDATION.md is missing", () => {
-  const base = makeTmpBase();
-  try {
-    mkdirSync(join(base, ".gsd", "milestones", "M001"), { recursive: true });
-    clearPathCache();
-    clearParseCache();
-    const result = verifyExpectedArtifact("validate-milestone", "M001", base);
-    assert.equal(result, false);
-  } finally {
-    cleanup(base);
-  }
-});
-
-test("verifyExpectedArtifact rejects VALIDATION with missing frontmatter", () => {
-  const base = makeTmpBase();
-  try {
-    // A VALIDATION file without frontmatter should be treated as incomplete —
-    // matching what deriveState expects. Without this, the artifact check passes
-    // but deriveState still returns validating-milestone, causing the hard skip loop.
-    writeValidation(base, "M001", "# Validation\nNo frontmatter here.");
-    clearPathCache();
-    clearParseCache();
-    const result = verifyExpectedArtifact("validate-milestone", "M001", base);
-    assert.equal(result, false, "VALIDATION without frontmatter should fail verification");
-  } finally {
-    cleanup(base);
-  }
-});
-
-test("verifyExpectedArtifact rejects VALIDATION with missing verdict field", () => {
-  const base = makeTmpBase();
-  try {
-    writeValidation(base, "M001", "---\nremediation_round: 0\n---\n\n# Validation");
-    clearPathCache();
-    clearParseCache();
-    const result = verifyExpectedArtifact("validate-milestone", "M001", base);
-    assert.equal(result, false, "VALIDATION without verdict field should fail verification");
-  } finally {
-    cleanup(base);
-  }
-});
-
-test("verifyExpectedArtifact rejects VALIDATION with unrecognized verdict", () => {
-  const base = makeTmpBase();
-  try {
-    writeValidation(base, "M001", "---\nverdict: unknown-value\nremediation_round: 0\n---\n\n# Validation");
-    clearPathCache();
-    clearParseCache();
-    const result = verifyExpectedArtifact("validate-milestone", "M001", base);
-    assert.equal(result, false, "VALIDATION with unrecognized verdict should fail verification");
-  } finally {
-    cleanup(base);
-  }
-});
-
-test("verifyExpectedArtifact passes VALIDATION with needs-attention verdict", () => {
-  const base = makeTmpBase();
-  try {
-    writeValidation(base, "M001", "---\nverdict: needs-attention\nremediation_round: 0\n---\n\n# Validation\nNeeds attention.");
-    clearPathCache();
-    clearParseCache();
-    const result = verifyExpectedArtifact("validate-milestone", "M001", base);
-    assert.equal(result, true, "VALIDATION with needs-attention verdict should pass verification");
   } finally {
     cleanup(base);
   }

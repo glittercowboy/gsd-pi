@@ -4,7 +4,6 @@ import { tmpdir } from "node:os";
 import { execSync } from "node:child_process";
 import {
   resolveExpectedArtifactPath,
-  verifyExpectedArtifact,
   buildLoopRemediationSteps,
 } from "../auto.ts";
 import { createTestContext } from './test-helpers.ts';
@@ -96,88 +95,6 @@ function cleanup(base: string): void {
 // writeBlockerPlaceholder and skipExecuteTask tests removed (D-05)
 // These functions are replaced by engine.reportBlocker()
 
-// ═══ verifyExpectedArtifact: complete-slice roadmap check ════════════════════
-// Regression for #indefinite-hang: complete-slice must verify roadmap [x] or
-// the idempotency skip loops forever after a crash that wrote SUMMARY+UAT but
-// did not mark the roadmap done.
-
-const ROADMAP_INCOMPLETE = `# M001: Test Milestone
-
-## Slices
-
-- [ ] **S01: Test Slice** \`risk:low\`
-> After this: something works
-`;
-
-const ROADMAP_COMPLETE = `# M001: Test Milestone
-
-## Slices
-
-- [x] **S01: Test Slice** \`risk:low\`
-> After this: something works
-`;
-
-{
-  console.log("\n=== verifyExpectedArtifact: complete-slice — all artifacts present + roadmap marked [x] returns true ===");
-  const base = createFixtureBase();
-  try {
-    const sliceDir = join(base, ".gsd", "milestones", "M001", "slices", "S01");
-    writeFileSync(join(sliceDir, "S01-SUMMARY.md"), "# Summary\n", "utf-8");
-    writeFileSync(join(sliceDir, "S01-UAT.md"), "# UAT\n", "utf-8");
-    writeFileSync(join(base, ".gsd", "milestones", "M001", "M001-ROADMAP.md"), ROADMAP_COMPLETE, "utf-8");
-    const result = verifyExpectedArtifact("complete-slice", "M001/S01", base);
-    assertTrue(result === true, "SUMMARY + UAT + roadmap [x] should verify as true");
-  } finally {
-    cleanup(base);
-  }
-}
-
-{
-  console.log("\n=== verifyExpectedArtifact: complete-slice — SUMMARY + UAT present, no engine — returns true (fallback checks files only) ===");
-  const base = createFixtureBase();
-  try {
-    const sliceDir = join(base, ".gsd", "milestones", "M001", "slices", "S01");
-    writeFileSync(join(sliceDir, "S01-SUMMARY.md"), "# Summary\n", "utf-8");
-    writeFileSync(join(sliceDir, "S01-UAT.md"), "# UAT\n", "utf-8");
-    writeFileSync(join(base, ".gsd", "milestones", "M001", "M001-ROADMAP.md"), ROADMAP_INCOMPLETE, "utf-8");
-    const result = verifyExpectedArtifact("complete-slice", "M001/S01", base);
-    // Without engine, fallback path only checks UAT file existence — roadmap checkbox no longer inspected
-    assertTrue(result === true, "fallback path with SUMMARY + UAT should return true (roadmap check removed)");
-  } finally {
-    cleanup(base);
-  }
-}
-
-{
-  console.log("\n=== verifyExpectedArtifact: complete-slice — SUMMARY present but UAT missing returns false ===");
-  const base = createFixtureBase();
-  try {
-    const sliceDir = join(base, ".gsd", "milestones", "M001", "slices", "S01");
-    writeFileSync(join(sliceDir, "S01-SUMMARY.md"), "# Summary\n", "utf-8");
-    // no UAT file
-    writeFileSync(join(base, ".gsd", "milestones", "M001", "M001-ROADMAP.md"), ROADMAP_COMPLETE, "utf-8");
-    const result = verifyExpectedArtifact("complete-slice", "M001/S01", base);
-    assertTrue(result === false, "missing UAT should return false");
-  } finally {
-    cleanup(base);
-  }
-}
-
-{
-  console.log("\n=== verifyExpectedArtifact: complete-slice — no roadmap file present is lenient (returns true) ===");
-  const base = createFixtureBase();
-  try {
-    const sliceDir = join(base, ".gsd", "milestones", "M001", "slices", "S01");
-    writeFileSync(join(sliceDir, "S01-SUMMARY.md"), "# Summary\n", "utf-8");
-    writeFileSync(join(sliceDir, "S01-UAT.md"), "# UAT\n", "utf-8");
-    // no roadmap file
-    const result = verifyExpectedArtifact("complete-slice", "M001/S01", base);
-    assertTrue(result === true, "missing roadmap file should be lenient and return true");
-  } finally {
-    cleanup(base);
-  }
-}
-
 // ═══ buildLoopRemediationSteps ═══════════════════════════════════════════════
 
 {
@@ -238,26 +155,5 @@ const ROADMAP_COMPLETE = `# M001: Test Milestone
 }
 
 // skipExecuteTask loop-recovery test removed (D-05) — replaced by engine.reportBlocker()
-
-// ═══ verifyExpectedArtifact: hook unit types ═════════════════════════════════
-
-console.log("\n=== verifyExpectedArtifact: hook types always return true ===");
-
-{
-  const base = createFixtureBase();
-  try {
-    // Hook units don't have standard artifacts — they should always pass
-    const result1 = verifyExpectedArtifact("hook/code-review", "M001/S01/T01", base);
-    assertTrue(result1, "hook/code-review should always return true");
-
-    const result2 = verifyExpectedArtifact("hook/simplify", "M001/S01/T02", base);
-    assertTrue(result2, "hook/simplify should always return true");
-
-    const result3 = verifyExpectedArtifact("hook/custom-hook", "M001/S01", base);
-    assertTrue(result3, "hook/custom-hook at slice level should return true");
-  } finally {
-    rmSync(base, { recursive: true, force: true });
-  }
-}
 
 report();

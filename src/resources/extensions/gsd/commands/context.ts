@@ -47,15 +47,10 @@ export async function guardRemoteSession(
     return false;
   }
 
-  const unitsMsg = remote.completedUnits != null
-    ? `${remote.completedUnits} units completed`
-    : "";
-
   const choice = await showNextAction(ctx, {
     title: `Auto-mode is running in another terminal (PID ${remote.pid})`,
     summary: [
       `Currently executing: ${unitLabel}`,
-      ...(unitsMsg ? [unitsMsg] : []),
       ...(remote.startedAt ? [`Started: ${remote.startedAt}`] : []),
     ],
     actions: [

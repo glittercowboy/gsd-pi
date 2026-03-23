@@ -55,7 +55,6 @@ function writeParallelStatus(base: string, mid: string, cost: number): void {
     pid: process.pid,
     state: 'running',
     currentUnit: { type: 'execute-task', id: `${mid}/S01/T01`, startedAt: Date.now() },
-    completedUnits: 2,
     cost,
     lastHeartbeat: Date.now(),
     startedAt: Date.now() - 60_000,

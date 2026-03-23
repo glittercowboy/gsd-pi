@@ -773,7 +773,7 @@ export function renderAgentView(
   lines.push("");
 
   // Progress bar
-  const completed = activity.completedUnits;
+  const completed = activity.unitsFinished;
   const total = Math.max(completed, activity.totalSlices);
   if (total > 0) {
     const pct = Math.min(1, completed / total);

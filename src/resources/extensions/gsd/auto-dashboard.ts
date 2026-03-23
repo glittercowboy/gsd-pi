@@ -48,7 +48,6 @@ export interface AutoDashboardData {
   startTime: number;
   elapsed: number;
   currentUnit: { type: string; id: string; startedAt: number } | null;
-  completedUnits: { type: string; id: string; startedAt: number; finishedAt: number }[];
   basePath: string;
   /** Running cost and token totals from metrics ledger */
   totalCost: number;

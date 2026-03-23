@@ -75,7 +75,7 @@ export interface CriticalPathInfo {
 export interface AgentActivityInfo {
   currentUnit: { type: string; id: string; startedAt: number } | null;
   elapsed: number;
-  completedUnits: number;
+  unitsFinished: number;
   totalSlices: number;
   completionRate: number;
   active: boolean;
@@ -436,7 +436,7 @@ function loadAgentActivity(units: UnitMetrics[], milestones: VisualizerMilestone
   const running = units.find(u => u.finishedAt === 0);
   const now = Date.now();
 
-  const completedUnits = units.filter(u => u.finishedAt > 0).length;
+  const unitsFinished = units.filter(u => u.finishedAt > 0).length;
   const totalSlices = milestones.reduce((sum, m) => sum + m.slices.length, 0);
 
   // Completion rate from finished units
@@ -457,7 +457,7 @@ function loadAgentActivity(units: UnitMetrics[], milestones: VisualizerMilestone
       ? { type: running.type, id: running.id, startedAt: running.startedAt }
       : null,
     elapsed: running ? now - running.startedAt : 0,
-    completedUnits,
+    unitsFinished,
     totalSlices,
     completionRate,
     active: !!running,

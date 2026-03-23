@@ -27,7 +27,6 @@ export interface SessionStatus {
   pid: number;
   state: "running" | "paused" | "stopped" | "error";
   currentUnit: { type: string; id: string; startedAt: number } | null;
-  completedUnits: number;
   cost: number;
   lastHeartbeat: number;
   startedAt: number;

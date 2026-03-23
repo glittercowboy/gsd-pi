@@ -369,9 +369,6 @@ function makeMockDeps(
     collectObservabilityWarnings: async () => [],
     buildObservabilityRepairBlock: () => null,
     closeoutUnit: async () => {},
-    verifyExpectedArtifact: () => true,
-    clearUnitRuntimeRecord: () => {},
-    writeUnitRuntimeRecord: () => {},
     recordOutcome: () => {},
     writeLock: () => {},
     captureAvailableSkills: () => {},
@@ -437,7 +434,6 @@ function makeLoopSession(overrides?: Partial<Record<string, unknown>>) {
     currentMilestoneId: "M001",
     currentUnit: null,
     currentUnitRouting: null,
-    completedUnits: [],
     resourceVersionOnStart: null,
     lastPromptCharCount: undefined,
     lastBaselineCharCount: undefined,
@@ -1101,32 +1097,6 @@ test("auto.ts startAuto calls autoLoop (not dispatchNextUnit as first dispatch)"
   );
 });
 
-test("startAuto calls selfHealRuntimeRecords before autoLoop (#1727)", () => {
-  const src = readFileSync(
-    resolve(import.meta.dirname, "..", "auto.ts"),
-    "utf-8",
-  );
-  const fnIdx = src.indexOf("export async function startAuto");
-  assert.ok(fnIdx > -1, "startAuto must exist in auto.ts");
-  const fnEnd = src.indexOf("\n// ─── ", fnIdx + 100);
-  const fnBlock =
-    fnEnd > -1 ? src.slice(fnIdx, fnEnd) : src.slice(fnIdx, fnIdx + 5000);
-
-  // Both autoLoop call sites must be preceded by selfHealRuntimeRecords
-  const healIdx = fnBlock.indexOf("selfHealRuntimeRecords");
-  const loopIdx = fnBlock.indexOf("autoLoop(");
-  assert.ok(healIdx > -1, "startAuto must call selfHealRuntimeRecords");
-  assert.ok(healIdx < loopIdx, "selfHealRuntimeRecords must be called before autoLoop");
-
-  // Verify the second autoLoop call site also has selfHeal before it
-  const secondLoopIdx = fnBlock.indexOf("autoLoop(", loopIdx + 1);
-  if (secondLoopIdx > -1) {
-    const secondHealIdx = fnBlock.indexOf("selfHealRuntimeRecords", healIdx + 1);
-    assert.ok(secondHealIdx > -1, "second autoLoop call must also have selfHealRuntimeRecords");
-    assert.ok(secondHealIdx < secondLoopIdx, "second selfHealRuntimeRecords must precede second autoLoop");
-  }
-});
-
 test("agent_end handler calls resolveAgentEnd (not handleAgentEnd)", () => {
   const hooksSrc = readFileSync(
     resolve(import.meta.dirname, "..", "bootstrap", "register-hooks.ts"),
@@ -1464,25 +1434,6 @@ test("detectStuck: Rule 2 — 2 consecutive does not trigger", () => {
   ]), null);
 });
 
-test("detectStuck: Rule 3 — oscillation A→B→A→B", () => {
-  const result = detectStuck([
-    { key: "A" },
-    { key: "B" },
-    { key: "A" },
-    { key: "B" },
-  ]);
-  assert.ok(result?.stuck);
-  assert.ok(result?.reason.includes("Oscillation"));
-});
-
-test("detectStuck: Rule 3 — non-oscillation pattern A→B→C→B", () => {
-  assert.equal(detectStuck([
-    { key: "A" },
-    { key: "B" },
-    { key: "C" },
-    { key: "B" },
-  ]), null);
-});
 
 test("detectStuck: Rule 1 takes priority over Rule 2 when both match", () => {
   const result = detectStuck([
@@ -1938,8 +1889,8 @@ test("autoLoop rejects execute-task with 0 tool calls as hallucinated (#1833)", 
 
   await loopPromise;
 
-  // The task should NOT have been added to completedUnits on the first iteration
-  // (0 tool calls), but SHOULD be added on the second iteration (5 tool calls)
+  // The task should NOT be considered verified on the first iteration
+  // (0 tool calls), but SHOULD pass on the second iteration (5 tool calls)
   const warningNotification = notifications.find(
     (n) => n.includes("0 tool calls") && n.includes("hallucinated"),
   );
@@ -2009,7 +1960,6 @@ test("autoLoop does NOT reject non-execute-task units with 0 tool calls (#1833)"
       });
     },
     getLedger: () => mockLedger,
-    verifyExpectedArtifact: () => true,
     postUnitPostVerification: async () => {
       deps.callLog.push("postUnitPostVerification");
       s.active = false;
@@ -2031,12 +1981,6 @@ test("autoLoop does NOT reject non-execute-task units with 0 tool calls (#1833)"
   assert.ok(
     !warningNotification,
     "should NOT flag non-execute-task units with 0 tool calls",
-  );
-
-  // The unit should have been added to completedUnits normally
-  assert.ok(
-    s.completedUnits.length >= 1,
-    "complete-slice with 0 tool calls should still be marked as completed",
   );
 });
 

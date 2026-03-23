@@ -98,18 +98,11 @@ export class GSDDashboardOverlay {
     const currentUnit = dashData.currentUnit
       ? `${dashData.currentUnit.type}:${dashData.currentUnit.id}:${dashData.currentUnit.startedAt}`
       : "-";
-    const lastCompleted = dashData.completedUnits.length > 0
-      ? dashData.completedUnits[dashData.completedUnits.length - 1]
-      : null;
-    const completedKey = lastCompleted
-      ? `${dashData.completedUnits.length}:${lastCompleted.type}:${lastCompleted.id}:${lastCompleted.finishedAt}`
-      : "0";
     return [
       base,
       dashData.active ? "1" : "0",
       dashData.paused ? "1" : "0",
       currentUnit,
-      completedKey,
     ].join("|");
   }
 
@@ -452,49 +445,6 @@ export class GSDDashboardOverlay {
       }
     } else {
       lines.push(centered(th.fg("dim", "No active milestone.")));
-    }
-
-    if (this.dashData.completedUnits.length > 0) {
-      lines.push(blank());
-      lines.push(hr());
-      lines.push(row(th.fg("text", th.bold("Completed"))));
-      lines.push(blank());
-
-      // Build ledger lookup for budget indicators (last entry wins for retries)
-      const ledgerLookup = new Map<string, UnitMetrics>();
-      const currentLedger = getLedger();
-      if (currentLedger) {
-        for (const lu of currentLedger.units) {
-          ledgerLookup.set(`${lu.type}:${lu.id}`, lu);
-        }
-      }
-
-      const recent = [...this.dashData.completedUnits].reverse().slice(0, 10);
-      for (const u of recent) {
-        // Budget indicators from ledger — use warning glyph for pressured units
-        const ledgerEntry = ledgerLookup.get(`${u.type}:${u.id}`);
-        const hadPressure = ledgerEntry?.continueHereFired === true;
-        const hadTruncation = (ledgerEntry?.truncationSections ?? 0) > 0;
-        const unitGlyph = hadPressure
-          ? th.fg(STATUS_COLOR.warning, STATUS_GLYPH.warning)
-          : th.fg(STATUS_COLOR.done, STATUS_GLYPH.done);
-        const left = `  ${unitGlyph} ${th.fg("muted", unitLabel(u.type))} ${th.fg("muted", u.id)}`;
-
-        let budgetMarkers = "";
-        if (hadTruncation) {
-          budgetMarkers += th.fg("warning", ` ▼${ledgerEntry!.truncationSections}`);
-        }
-        if (hadPressure) {
-          budgetMarkers += th.fg("error", " → wrap-up");
-        }
-
-        const right = th.fg("dim", formatDuration(u.finishedAt - u.startedAt));
-        lines.push(row(joinColumns(`${left}${budgetMarkers}`, right, contentWidth)));
-      }
-
-      if (this.dashData.completedUnits.length > 10) {
-        lines.push(row(th.fg("dim", `  ...and ${this.dashData.completedUnits.length - 10} more`)));
-      }
     }
 
     const ledger = getLedger();

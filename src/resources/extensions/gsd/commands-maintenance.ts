@@ -236,7 +236,7 @@ export async function handleSkip(unitArg: string, ctx: ExtensionCommandContext, 
     }
   }
 
-  // Skip tracking now uses the engine's task status — completed-units.json removed.
+  // Skip tracking now uses the engine's task status — engine is authoritative (D-01).
   // The skip is noted via notification; the engine will not re-dispatch tasks already done.
   ctx.ui.notify(`Skipped: ${skipKey}. Will not be dispatched in auto-mode.`, "success");
 }

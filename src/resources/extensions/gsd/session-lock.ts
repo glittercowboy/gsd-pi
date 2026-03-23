@@ -32,7 +32,6 @@ export interface SessionLockData {
   unitType: string;
   unitId: string;
   unitStartedAt: string;
-  completedUnits: number;
   sessionFile?: string;
 }
 
@@ -205,7 +204,6 @@ export function acquireSessionLock(basePath: string): SessionLockResult {
     unitType: "starting",
     unitId: "bootstrap",
     unitStartedAt: new Date().toISOString(),
-    completedUnits: 0,
   };
 
   let lockfile: typeof import("proper-lockfile");
@@ -379,7 +377,6 @@ export function updateSessionLock(
   basePath: string,
   unitType: string,
   unitId: string,
-  completedUnits: number,
   sessionFile?: string,
 ): void {
   if (_lockedPath !== basePath && _lockedPath !== null) return;
@@ -392,7 +389,6 @@ export function updateSessionLock(
       unitType,
       unitId,
       unitStartedAt: new Date().toISOString(),
-      completedUnits,
       sessionFile,
     };
     atomicWriteSync(lp, JSON.stringify(data, null, 2));

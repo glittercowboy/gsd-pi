@@ -244,7 +244,7 @@ async function main(): Promise<void> {
       writeFileSync(join(dir, ".gsd", "auto.lock"), JSON.stringify({
         pid: 9999999, startedAt: "2026-03-10T00:00:00Z",
         unitType: "execute-task", unitId: "M001/S01/T01",
-        unitStartedAt: "2026-03-10T00:01:00Z", completedUnits: 3,
+        unitStartedAt: "2026-03-10T00:01:00Z",
       }));
 
       const result = await preDispatchHealthGate(dir);

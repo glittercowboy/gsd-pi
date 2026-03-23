@@ -412,7 +412,7 @@ export async function checkGitHealth(
 }
 
 // ── Runtime Health Checks ──────────────────────────────────────────────────
-// Checks for stale crash locks, orphaned completed-units, stale hook state,
+// Checks for stale crash locks, stale hook state,
 // activity log bloat, STATE.md drift, and gitignore drift.
 
 export async function checkRuntimeHealth(
@@ -512,7 +512,7 @@ export async function checkRuntimeHealth(
     // Non-fatal — parallel session check failed
   }
 
-  // (Removed: orphaned completed-units key validation — engine is authoritative, per D-01)
+  // (Removed: orphaned runtime record validation — engine is authoritative, per D-01)
 
   // ── Stale hook state ──────────────────────────────────────────────────
   try {

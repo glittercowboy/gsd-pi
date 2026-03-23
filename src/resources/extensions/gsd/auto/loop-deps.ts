@@ -79,7 +79,6 @@ export interface LoopDeps {
     basePath: string,
     unitType: string,
     unitId: string,
-    completedUnits: number,
     sessionFile?: string,
   ) => void;
   handleLostSessionLock: (
@@ -192,7 +191,6 @@ export interface LoopDeps {
     lockBase: string,
     unitType: string,
     unitId: string,
-    completedCount: number,
     sessionFile?: string,
   ) => void;
   captureAvailableSkills: () => void;

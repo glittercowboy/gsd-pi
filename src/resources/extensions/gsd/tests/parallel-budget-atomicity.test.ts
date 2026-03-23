@@ -67,14 +67,12 @@ function writeWorkerCost(
   base: string,
   milestoneId: string,
   cost: number,
-  completedUnits = 1,
 ): void {
   writeSessionStatus(base, {
     milestoneId,
     pid: process.pid,
     state: "running",
     currentUnit: null,
-    completedUnits,
     cost,
     lastHeartbeat: Date.now(),
     startedAt: Date.now() - 60000,
@@ -310,7 +308,6 @@ test("budget — refreshWorkerStatuses updates worker state from disk", async ()
       pid: process.pid,
       state: "paused",
       currentUnit: { type: "execute-task", id: "M001/S01/T02", startedAt: Date.now() },
-      completedUnits: 5,
       cost: 2.5,
       lastHeartbeat: Date.now(),
       startedAt: Date.now() - 120000,
@@ -322,7 +319,6 @@ test("budget — refreshWorkerStatuses updates worker state from disk", async ()
     const workers = getWorkerStatuses();
     assert.equal(workers.length, 1);
     assert.equal(workers[0]!.state, "paused", "worker state should be updated from disk");
-    assert.equal(workers[0]!.completedUnits, 5, "completedUnits should be updated from disk");
     assert.equal(workers[0]!.cost, 2.5, "cost should be updated from disk");
   } finally {
     resetOrchestrator();

@@ -861,8 +861,7 @@ export async function showSmartEntry(
     // when the user exits during init wizard or discuss phase before any
     // real auto-mode work begins.
     const isBootstrapCrash = crashLock.unitType === "starting"
-      && crashLock.unitId === "bootstrap"
-      && crashLock.completedUnits === 0;
+      && crashLock.unitId === "bootstrap";
 
     if (!isBootstrapCrash) {
       const resume = await showNextAction(ctx, {

@@ -29,12 +29,11 @@ function cleanup(base: string): void {
 test("writeLock creates lock file and readCrashLock reads it", () => {
   const base = makeTmpBase();
   try {
-    writeLock(base, "execute-task", "M001/S01/T01", 3, "/tmp/session.jsonl");
+    writeLock(base, "execute-task", "M001/S01/T01", "/tmp/session.jsonl");
     const lock = readCrashLock(base);
     assert.ok(lock, "lock should exist");
     assert.equal(lock!.unitType, "execute-task");
     assert.equal(lock!.unitId, "M001/S01/T01");
-    assert.equal(lock!.completedUnits, 3);
     assert.equal(lock!.sessionFile, "/tmp/session.jsonl");
     assert.equal(lock!.pid, process.pid);
   } finally {
@@ -57,7 +56,7 @@ test("readCrashLock returns null when no lock exists", () => {
 test("clearLock removes existing lock file", () => {
   const base = makeTmpBase();
   try {
-    writeLock(base, "plan-slice", "M001/S01", 0);
+    writeLock(base, "plan-slice", "M001/S01");
     assert.ok(readCrashLock(base), "lock should exist before clear");
     clearLock(base);
     assert.equal(readCrashLock(base), null, "lock should be gone after clear");
@@ -85,7 +84,6 @@ test("isLockProcessAlive returns true for current process (different pid)", () =
     unitType: "execute-task",
     unitId: "M001/S01/T01",
     unitStartedAt: new Date().toISOString(),
-    completedUnits: 0,
   };
   assert.equal(isLockProcessAlive(lock), false, "own PID should return false");
 });
@@ -97,7 +95,6 @@ test("isLockProcessAlive returns false for dead PID", () => {
     unitType: "execute-task",
     unitId: "M001/S01/T01",
     unitStartedAt: new Date().toISOString(),
-    completedUnits: 0,
   };
   assert.equal(isLockProcessAlive(lock), false);
 });
@@ -108,7 +105,6 @@ test("isLockProcessAlive returns false for invalid PIDs", () => {
     unitType: "x",
     unitId: "x",
     unitStartedAt: new Date().toISOString(),
-    completedUnits: 0,
   };
   assert.equal(isLockProcessAlive({ ...base, pid: 0 } as LockData), false);
   assert.equal(isLockProcessAlive({ ...base, pid: -1 } as LockData), false);
@@ -124,7 +120,6 @@ test("formatCrashInfo includes unit type, id, and PID", () => {
     unitType: "complete-slice",
     unitId: "M002/S03",
     unitStartedAt: "2025-01-01T00:01:00.000Z",
-    completedUnits: 7,
   };
   const info = formatCrashInfo(lock);
   assert.ok(info.includes("complete-slice"));

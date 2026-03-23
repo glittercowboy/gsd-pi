@@ -111,7 +111,6 @@ test("stopAutoRemote sends SIGTERM to a live process and returns found:true", { 
       unitType: "execute-task",
       unitId: "M001/S01/T01",
       unitStartedAt: new Date().toISOString(),
-      completedUnits: 0,
     };
     writeFileSync(join(base, ".gsd", "auto.lock"), JSON.stringify(lockData, null, 2), "utf-8");
 
