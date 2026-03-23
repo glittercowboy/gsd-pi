@@ -457,6 +457,50 @@ async function main(): Promise<void> {
     assertEq(slices[1].done, false, '#1736 checkbox compat: S02 not done');
   }
 
+  // ═══════════════════════════════════════════════════════════════════════
+
+  console.log('\n=== U. #2263: Heading-checkbox format (### [x] S01 — Title) ===');
+
+  {
+    const content = [
+      '# M003: IaC Automation',
+      '',
+      '## Slices',
+      '',
+      '### [x] S01 — Pipeline Configuration',
+      '',
+      'Set up CI/CD pipelines.',
+      '',
+      '### [x] S02 — Infrastructure Templates',
+      '',
+      'Create CloudFormation templates.',
+      '',
+      '### [ ] S03 — Monitoring Setup',
+      '',
+      'Configure alerting and dashboards.',
+      '',
+    ].join('\n');
+
+    const slices = parseRoadmapSlices(content);
+    assertEq(slices.length, 3, '#2263 heading-checkbox: 3 slices parsed');
+    assertEq(slices[0].id, 'S01', '#2263: S01 id');
+    assertEq(slices[0].title, 'Pipeline Configuration', '#2263: S01 title');
+    assertEq(slices[0].done, true, '#2263: S01 done (checked)');
+    assertEq(slices[1].id, 'S02', '#2263: S02 id');
+    assertEq(slices[1].done, true, '#2263: S02 done (checked)');
+    assertEq(slices[2].id, 'S03', '#2263: S03 id');
+    assertEq(slices[2].done, false, '#2263: S03 not done (unchecked)');
+  }
+
+  {
+    // Verify the exact pattern from the issue report
+    const content = '### [x] S01 — Title\n\nSome content.\n\n### [ ] S02 — Other\n\nMore content.\n';
+    const slices = parseRoadmapSlices(content);
+    assertEq(slices.length, 2, '#2263 exact repro: 2 slices');
+    assertEq(slices[0].done, true, '#2263 exact repro: S01 done');
+    assertEq(slices[1].done, false, '#2263 exact repro: S02 not done');
+  }
+
   report();
 }
 
