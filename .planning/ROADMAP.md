@@ -82,7 +82,13 @@ Plans:
   1. Running `gsd doctor` no longer attempts checkbox/file mismatch reconciliation or generates placeholder summaries
   2. `gsd doctor` detects DB constraint violations and projection drift and reports them as actionable diagnostics
   3. Markdown parser imports outside of `legacy/` and `gsd migrate` paths produce a lint or import error
-**Plans**: TBD
+**Plans:** 4 plans
+
+Plans:
+- [ ] 4-00-PLAN.md — Wave 0 test scaffolds (checkEngineHealth, import boundary, removed exports)
+- [ ] 4-01-PLAN.md — Parser relocation (create legacy/parsers.ts, update all imports)
+- [ ] 4-02-PLAN.md — Doctor surgery (remove reconciliation, add engine health checks)
+- [ ] 4-03-PLAN.md — Recovery + forensics simplification (engine queries, event log)
 
 ### Phase 5: Dead Code Cleanup
 **Goal**: All code made dead by Phases 1-4 is removed, leaving no completed-units.json paths, no selfHeal, no checkbox mutations, and no oscillation detection
@@ -106,5 +112,5 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5
 | 1. Engine Foundation + Team Infrastructure | 5/5 | Complete | 2026-03-22 |
 | 2. Sync Migration + Prompt Migration | 3/3 | Complete | 2026-03-22 |
 | 3. Event Reconciliation + Mandatory Tools | 5/5 | Complete | 2026-03-22 |
-| 4. Remove Parsing from Hot Path | 0/TBD | Not started | - |
+| 4. Remove Parsing from Hot Path | 0/4 | Not started | - |
 | 5. Dead Code Cleanup | 0/TBD | Not started | - |
