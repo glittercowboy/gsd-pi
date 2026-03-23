@@ -16,16 +16,16 @@ describe("write-intercept", () => {
       assert.equal(isBlockedStateFile("/project/.gsd/REQUIREMENTS.md"), true);
     });
 
-    it("returns true for .gsd/PROJECT.md", () => {
-      assert.equal(isBlockedStateFile("/project/.gsd/PROJECT.md"), true);
+    it("returns false for .gsd/PROJECT.md (content file, agent-authored)", () => {
+      assert.equal(isBlockedStateFile("/project/.gsd/PROJECT.md"), false);
     });
 
-    it("returns true for .gsd/milestones/M001/S01-PLAN.md (PLAN.md pattern)", () => {
-      assert.equal(isBlockedStateFile("/project/.gsd/milestones/M001/S01-PLAN.md"), true);
+    it("returns false for .gsd/milestones/M001/S01-PLAN.md (agent-authored during planning)", () => {
+      assert.equal(isBlockedStateFile("/project/.gsd/milestones/M001/S01-PLAN.md"), false);
     });
 
-    it("returns true for .gsd/milestones/M001/ROADMAP.md", () => {
-      assert.equal(isBlockedStateFile("/project/.gsd/milestones/M001/ROADMAP.md"), true);
+    it("returns false for .gsd/milestones/M001/ROADMAP.md (agent-authored during planning)", () => {
+      assert.equal(isBlockedStateFile("/project/.gsd/milestones/M001/ROADMAP.md"), false);
     });
 
     it("returns false for .gsd/milestones/M001/S01-SUMMARY.md (summaries are content)", () => {

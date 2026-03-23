@@ -9,23 +9,17 @@ import { realpathSync } from "node:fs";
  * Patterns matching authoritative .gsd/ state files that agents must NOT write directly.
  * Agents must use engine tool calls instead (gsd_complete_task, gsd_save_decision, etc.).
  *
- * Note: SUMMARY.md files are excluded — they are content files, not authoritative state.
- * KNOWLEDGE.md and CONTEXT.md are also excluded — non-authoritative content.
+ * Note: ROADMAP.md and PLAN.md are NOT blocked — agents create/edit these during planning.
+ * The engine renders projections into them but they are agent-authored content.
+ * SUMMARY.md, KNOWLEDGE.md, and CONTEXT.md are also excluded — non-authoritative content.
  */
 const BLOCKED_PATTERNS: RegExp[] = [
-  // Top-level .gsd/ authoritative state files
+  // Top-level .gsd/ authoritative state files (engine-rendered, not agent-authored)
   /[/\\]\.gsd[/\\]STATE\.md$/,
   /[/\\]\.gsd[/\\]REQUIREMENTS\.md$/,
-  /[/\\]\.gsd[/\\]PROJECT\.md$/,
-  // Milestone-level plan and roadmap files (state, not content)
-  /[/\\]\.gsd[/\\].*PLAN\.md$/,
-  /[/\\]\.gsd[/\\].*ROADMAP\.md$/,
   // Also match resolved symlink paths under ~/.gsd/projects/ (Pitfall #6)
   /[/\\]\.gsd[/\\]projects[/\\][^/\\]+[/\\]STATE\.md$/,
   /[/\\]\.gsd[/\\]projects[/\\][^/\\]+[/\\]REQUIREMENTS\.md$/,
-  /[/\\]\.gsd[/\\]projects[/\\][^/\\]+[/\\]PROJECT\.md$/,
-  /[/\\]\.gsd[/\\]projects[/\\][^/\\]+[/\\].*PLAN\.md$/,
-  /[/\\]\.gsd[/\\]projects[/\\][^/\\]+[/\\].*ROADMAP\.md$/,
 ];
 
 /**
