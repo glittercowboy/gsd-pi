@@ -14,9 +14,9 @@
  *    after N units, escalates to LLM-assisted heal dispatch.
  */
 
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { gsdRoot, resolveGsdRootFile } from "./paths.js";
+import { gsdRoot, resolveGsdRootFile, resolveMilestoneFile } from "./paths.js";
 import { readCrashLock, isLockProcessAlive, clearLock } from "./crash-recovery.js";
 import { abortAndReset } from "./git-self-heal.js";
 import { rebuildState } from "./doctor.js";
@@ -25,6 +25,9 @@ import { resolveMilestoneIntegrationBranch } from "./git-service.js";
 import { nativeIsRepo } from "./native-git-bridge.js";
 import { loadEffectiveGSDPreferences } from "./preferences.js";
 import { runEnvironmentChecks } from "./doctor-environment.js";
+import { readEvents } from "./workflow-events.js";
+import { renderAllProjections } from "./workflow-projections.js";
+import { isEngineAvailable, WorkflowEngine } from "./workflow-engine.js";
 
 // ── Health Score Tracking ──────────────────────────────────────────────────
 
@@ -307,6 +310,32 @@ export async function preDispatchHealthGate(basePath: string): Promise<PreDispat
   } catch {
     // Non-fatal — dispatch continues if env check fails
   }
+
+  // ── Projection drift repair (fast, <50ms per D-10) ──
+  try {
+    if (isEngineAvailable(basePath)) {
+      const eventLogPath = join(basePath, ".gsd", "event-log.jsonl");
+      const events = readEvents(eventLogPath);
+      if (events.length > 0) {
+        const lastEventTs = new Date(events[events.length - 1]!.ts).getTime();
+        const engine = new WorkflowEngine(basePath);
+        for (const milestone of engine.getMilestones()) {
+          if (milestone.status !== "active") continue;
+          const roadmapPath = resolveMilestoneFile(basePath, milestone.id, "ROADMAP");
+          if (!roadmapPath || !existsSync(roadmapPath)) {
+            renderAllProjections(basePath, milestone.id);
+            fixesApplied.push(`re-rendered missing projections for ${milestone.id}`);
+            continue;
+          }
+          const projectionMtime = statSync(roadmapPath).mtimeMs;
+          if (lastEventTs > projectionMtime) {
+            renderAllProjections(basePath, milestone.id);
+            fixesApplied.push(`re-rendered stale projections for ${milestone.id}`);
+          }
+        }
+      }
+    }
+  } catch { /* non-fatal — projection drift repair must never block dispatch */ }
 
   // If we had critical issues that couldn't be auto-healed, block dispatch
   if (issues.length > 0) {
