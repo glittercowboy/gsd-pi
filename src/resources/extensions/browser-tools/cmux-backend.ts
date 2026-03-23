@@ -1365,8 +1365,21 @@ export class CmuxPage implements BrowserPage {
       }
       throw new Error(`Timed out waiting for URL predicate (${timeout}ms)`);
     }
-    const urlStr = typeof url === "string" ? url : url.source;
-    browserCmd(this.surfaceId, ["wait", "--url-contains", urlStr, "--timeout-ms", String(options?.timeout ?? 10000)]);
+    if (url instanceof RegExp) {
+      // RegExp — cmux --url-contains only does substring match, so poll with regex test
+      const timeout = options?.timeout ?? 10000;
+      const start = Date.now();
+      while (Date.now() - start < timeout) {
+        try {
+          const currentUrl = browserCmd(this.surfaceId, ["get", "url"]);
+          if (url.test(currentUrl)) return;
+        } catch { /* retry */ }
+        await new Promise((resolve) => setTimeout(resolve, 200));
+      }
+      throw new Error(`Timed out waiting for URL matching ${url} (${timeout}ms)`);
+    }
+    // Plain string — cmux --url-contains works fine for substrings
+    browserCmd(this.surfaceId, ["wait", "--url-contains", url, "--timeout-ms", String(options?.timeout ?? 10000)]);
   }
 
   async waitForFunction(fn: string | ((arg?: any) => boolean), arg?: any, options?: { timeout?: number }): Promise<void> {

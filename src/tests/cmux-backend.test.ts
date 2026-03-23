@@ -662,16 +662,30 @@ describe("CmuxPage.waitForURL", () => {
     await page.waitForURL("https://example.com/done");
   });
 
-  test("handles RegExp via cmux wait", async () => {
+  test("handles RegExp via polling (not cmux --url-contains)", async () => {
+    let pollCount = 0;
     restore = _setBrowserCmd((_sid: string, args: string[]) => {
-      if (args[0] === "wait" && args[1] === "--url-contains") {
-        assert.equal(args[2], "example\\.com\\/done");
-        return "ok";
+      if (args[0] === "get" && args[1] === "url") {
+        pollCount++;
+        return pollCount >= 2 ? "https://example.com/done" : "https://example.com/loading";
       }
       throw new Error(`Unexpected: ${args.join(" ")}`);
     });
     const page = new CmuxPage({ surfaceId: "surface:1" });
-    await page.waitForURL(/example\.com\/done/);
+    await page.waitForURL(/example\.com\/done/, { timeout: 3000 });
+    assert.ok(pollCount >= 2, `Expected polling, got ${pollCount} calls`);
+  });
+
+  test("handles RegExp — times out when no match", async () => {
+    restore = _setBrowserCmd((_sid: string, args: string[]) => {
+      if (args[0] === "get" && args[1] === "url") return "https://other.com/nope";
+      throw new Error(`Unexpected: ${args.join(" ")}`);
+    });
+    const page = new CmuxPage({ surfaceId: "surface:1" });
+    await assert.rejects(
+      () => page.waitForURL(/example\.com\/done/, { timeout: 500 }),
+      /Timed out waiting for URL matching/
+    );
   });
 
   test("handles predicate function — resolves when predicate returns true", async () => {
