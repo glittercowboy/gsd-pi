@@ -79,6 +79,7 @@ export function createFindTool(cwd: string, options?: FindToolOptions): AgentToo
 						// If custom operations provided with glob, use that
 						if (customOps?.glob) {
 							if (!(await ops.exists(searchPath))) {
+								signal?.removeEventListener("abort", onAbort);
 								reject(new Error(`Path not found: ${searchPath}`));
 								return;
 							}
