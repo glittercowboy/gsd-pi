@@ -29,6 +29,9 @@ let idleTimeoutMs: number | null = null;
 let idleCheckInterval: ReturnType<typeof setInterval> | null = null;
 const IDLE_CHECK_INTERVAL_MS = 60 * 1000;
 
+/** Maximum allowed size for the message buffer (10 MB). */
+const MAX_MESSAGE_BUFFER_SIZE = 10 * 1024 * 1024;
+
 /**
  * Configure the idle timeout for LSP clients.
  */
@@ -51,6 +54,10 @@ function startIdleChecker(): void {
 			if (now - client.lastActivity > idleTimeoutMs) {
 				shutdownClient(key);
 			}
+		}
+		// Stop the checker if there are no more clients to monitor
+		if (clients.size === 0) {
+			stopIdleChecker();
 		}
 	}, IDLE_CHECK_INTERVAL_MS);
 }
@@ -252,6 +259,17 @@ async function startMessageReader(client: LspClient): Promise<void> {
 	return new Promise<void>((resolve) => {
 		stdout.on("data", async (chunk: Buffer) => {
 			const currentBuffer: Buffer = Buffer.concat([client.messageBuffer, chunk]);
+
+			if (currentBuffer.length > MAX_MESSAGE_BUFFER_SIZE) {
+				if (process.env.DEBUG) {
+					console.error(
+						`[lsp] Message buffer exceeded ${MAX_MESSAGE_BUFFER_SIZE} bytes (${currentBuffer.length}), discarding`,
+					);
+				}
+				client.messageBuffer = Buffer.alloc(0);
+				return;
+			}
+
 			client.messageBuffer = currentBuffer;
 
 			let workingBuffer = currentBuffer;
@@ -778,6 +796,14 @@ export function shutdownClient(key: string): void {
 		client.proc.kill();
 	}
 	clients.delete(key);
+	clientLocks.delete(key);
+
+	// Clean up any file operation locks associated with this client
+	for (const lockKey of Array.from(fileOperationLocks.keys())) {
+		if (lockKey.startsWith(`${key}:`)) {
+			fileOperationLocks.delete(lockKey);
+		}
+	}
 }
 
 // =============================================================================
@@ -892,6 +918,9 @@ export async function sendNotification(client: LspClient, method: string, params
 export function shutdownAll(): void {
 	const clientsToShutdown = Array.from(clients.values());
 	clients.clear();
+	clientLocks.clear();
+	fileOperationLocks.clear();
+	stopIdleChecker();
 
 	const err = new Error("LSP client shutdown");
 	for (const client of clientsToShutdown) {
