@@ -86,14 +86,13 @@ const API_KEY_PREFIXES: Record<string, string[]> = {
 }
 
 const OTHER_PROVIDERS = [
-  { value: 'google', label: 'Google (Gemini)' },
-  { value: 'groq', label: 'Groq' },
-  { value: 'xai', label: 'xAI (Grok)' },
-  { value: 'openrouter', label: 'OpenRouter' },
-  { value: 'mistral', label: 'Mistral' },
-  { value: 'ollama', label: 'Ollama (Local)' },
+  { value: 'google', label: 'Google (Gemini)', hint: 'aistudio.google.com/app/apikey' },
+  { value: 'groq', label: 'Groq', hint: 'console.groq.com/keys' },
+  { value: 'xai', label: 'xAI (Grok)', hint: 'console.x.ai' },
+  { value: 'openrouter', label: 'OpenRouter', hint: '200+ models — openrouter.ai/keys' },
+  { value: 'mistral', label: 'Mistral', hint: 'console.mistral.ai/api-keys' },
   { value: 'ollama-cloud', label: 'Ollama Cloud' },
-  { value: 'custom-openai', label: 'Custom (OpenAI-compatible)' },
+  { value: 'custom-openai', label: 'Custom (OpenAI-compatible)', hint: 'Ollama, LM Studio, vLLM, proxies — see docs/providers.md' },
 ]
 
 // ─── Dynamic imports ──────────────────────────────────────────────────────────
@@ -446,6 +445,13 @@ async function runApiKeyFlow(
 
   authStorage.set(providerId, { type: 'api_key', key: trimmed })
   p.log.success(`API key saved for ${pc.green(providerLabel)}`)
+
+  // Provider-specific post-setup hints
+  if (providerId === 'openrouter') {
+    p.log.info(`Use ${pc.cyan('/model')} inside GSD to pick an OpenRouter model.`)
+    p.log.info(`To add custom models or control routing, see ${pc.dim('docs/providers.md#openrouter')}`)
+  }
+
   return true
 }
 
@@ -504,10 +510,12 @@ async function runCustomOpenAIFlow(
   pc: PicoModule,
   authStorage: AuthStorage,
 ): Promise<boolean> {
+  p.log.info(pc.dim('Common endpoints:\n  Ollama:     http://localhost:11434/v1\n  LM Studio:  http://localhost:1234/v1\n  vLLM:       http://localhost:8000/v1'))
+
   // Prompt for base URL
   const baseUrl = await p.text({
     message: 'Base URL of your OpenAI-compatible endpoint:',
-    placeholder: 'https://my-proxy.example.com/v1',
+    placeholder: 'http://localhost:11434/v1',
     validate: (val) => {
       const trimmed = val?.trim()
       if (!trimmed) return 'Base URL is required'
@@ -588,6 +596,8 @@ async function runCustomOpenAIFlow(
   p.log.success(`Custom endpoint saved: ${pc.green(trimmedUrl)}`)
   p.log.info(`Model: ${pc.cyan(trimmedModelId)}`)
   p.log.info(`Config written to ${pc.dim(modelsJsonPath)}`)
+  p.log.info(`If you get role or streaming errors, add compat settings to models.json.`)
+  p.log.info(`See ${pc.dim('docs/providers.md#common-pitfalls')} for details.`)
   return true
 }
 

@@ -58,6 +58,8 @@ GSD displays a welcome screen showing your version, active model, and available 
 
 If you have an existing Pi installation, provider credentials are imported automatically.
 
+For detailed setup instructions for specific providers (OpenRouter, Ollama, LM Studio, vLLM, and more), see the [Provider Setup Guide](./providers.md).
+
 Re-run the wizard anytime with:
 
 ```bash
