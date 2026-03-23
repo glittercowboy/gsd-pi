@@ -1,5 +1,6 @@
 import { Type } from "@sinclair/typebox";
 import type { ExtensionAPI } from "@gsd/pi-coding-agent";
+import { Text } from "@gsd/pi-tui";
 
 import { findMilestoneIds, nextMilestoneId, claimReservedId, getReservedMilestoneIds } from "../guided-flow.js";
 import { loadEffectiveGSDPreferences } from "../preferences.js";
@@ -85,6 +86,22 @@ export function registerDbTools(pi: ExtensionAPI): void {
       ], { description: "Who made this decision: 'human' (user directed), 'agent' (LLM decided autonomously), or 'collaborative' (discussed and agreed). Default: 'agent'" })),
     }),
     execute: decisionSaveExecute,
+    renderCall(args: any, theme: any) {
+      let text = theme.fg("toolTitle", theme.bold("decision_save "));
+      if (args.scope) text += theme.fg("accent", `[${args.scope}] `);
+      if (args.decision) text += theme.fg("muted", args.decision);
+      if (args.choice) text += theme.fg("dim", ` — ${args.choice}`);
+      return new Text(text, 0, 0);
+    },
+    renderResult(result: any, _options: any, theme: any) {
+      const d = result.details;
+      if (result.isError || d?.error) {
+        return new Text(theme.fg("error", `Error: ${d?.error ?? "unknown"}`), 0, 0);
+      }
+      let text = theme.fg("success", `Decision ${d?.id ?? ""} saved`);
+      if (d?.id) text += theme.fg("dim", ` → DECISIONS.md`);
+      return new Text(text, 0, 0);
+    },
   };
 
   pi.registerTool(decisionSaveTool);
@@ -155,6 +172,22 @@ export function registerDbTools(pi: ExtensionAPI): void {
       supporting_slices: Type.Optional(Type.String({ description: "Supporting slices" })),
     }),
     execute: requirementUpdateExecute,
+    renderCall(args: any, theme: any) {
+      let text = theme.fg("toolTitle", theme.bold("requirement_update "));
+      if (args.id) text += theme.fg("accent", args.id);
+      const fields = ["status", "validation", "notes", "description"].filter((f) => args[f]);
+      if (fields.length > 0) text += theme.fg("dim", ` (${fields.join(", ")})`);
+      return new Text(text, 0, 0);
+    },
+    renderResult(result: any, _options: any, theme: any) {
+      const d = result.details;
+      if (result.isError || d?.error) {
+        return new Text(theme.fg("error", `Error: ${d?.error ?? "unknown"}`), 0, 0);
+      }
+      let text = theme.fg("success", `Requirement ${d?.id ?? ""} updated`);
+      text += theme.fg("dim", ` → REQUIREMENTS.md`);
+      return new Text(text, 0, 0);
+    },
   };
 
   pi.registerTool(requirementUpdateTool);
@@ -233,6 +266,22 @@ export function registerDbTools(pi: ExtensionAPI): void {
       content: Type.String({ description: "The full markdown content of the artifact" }),
     }),
     execute: summarySaveExecute,
+    renderCall(args: any, theme: any) {
+      let text = theme.fg("toolTitle", theme.bold("summary_save "));
+      if (args.artifact_type) text += theme.fg("accent", args.artifact_type);
+      const path = [args.milestone_id, args.slice_id, args.task_id].filter(Boolean).join("/");
+      if (path) text += theme.fg("dim", ` ${path}`);
+      return new Text(text, 0, 0);
+    },
+    renderResult(result: any, _options: any, theme: any) {
+      const d = result.details;
+      if (result.isError || d?.error) {
+        return new Text(theme.fg("error", `Error: ${d?.error ?? "unknown"}`), 0, 0);
+      }
+      let text = theme.fg("success", `${d?.artifact_type ?? "Artifact"} saved`);
+      if (d?.path) text += theme.fg("dim", ` → ${d.path}`);
+      return new Text(text, 0, 0);
+    },
   };
 
   pi.registerTool(summarySaveTool);
@@ -286,6 +335,18 @@ export function registerDbTools(pi: ExtensionAPI): void {
     ],
     parameters: Type.Object({}),
     execute: milestoneGenerateIdExecute,
+    renderCall(_args: any, theme: any) {
+      return new Text(theme.fg("toolTitle", theme.bold("milestone_generate_id")), 0, 0);
+    },
+    renderResult(result: any, _options: any, theme: any) {
+      const d = result.details;
+      if (result.isError || d?.error) {
+        return new Text(theme.fg("error", `Error: ${d?.error ?? "unknown"}`), 0, 0);
+      }
+      let text = theme.fg("success", `Generated ${d?.id ?? "ID"}`);
+      if (d?.source === "reserved") text += theme.fg("dim", " (reserved)");
+      return new Text(text, 0, 0);
+    },
   };
 
   pi.registerTool(milestoneGenerateIdTool);
