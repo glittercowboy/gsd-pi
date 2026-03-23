@@ -17,6 +17,10 @@ import { getAllWorktreeHealth } from "./worktree-health.js";
 import { readAllSessionStatuses, isSessionStale, removeSessionStatus } from "./session-status-io.js";
 import { recoverFailedMigration } from "./migrate-external.js";
 import { loadEffectiveGSDPreferences } from "./preferences.js";
+import { _getAdapter, isDbAvailable } from "./gsd-db.js";
+import { readEvents } from "./workflow-events.js";
+import { renderAllProjections, renderStateProjection } from "./workflow-projections.js";
+import { isEngineAvailable, WorkflowEngine } from "./workflow-engine.js";
 
 export async function checkGitHealth(
   basePath: string,
@@ -48,16 +52,15 @@ export async function checkGitHealth(
       const milestoneId = wt.branch.replace(/^milestone\//, "");
       const milestoneEntry = state.registry.find(m => m.id === milestoneId);
 
-      // Check if milestone is complete via roadmap
+      // Check if milestone is complete via engine
       let isComplete = false;
-      if (milestoneEntry) {
-        const roadmapPath = resolveMilestoneFile(basePath, milestoneId, "ROADMAP");
-        const roadmapContent = roadmapPath ? await loadFile(roadmapPath) : null;
-        if (roadmapContent) {
-          // TODO(phase-4-plan-02): replace with engine query
-          // const roadmap = parseRoadmap(roadmapContent);
-          // isComplete = isMilestoneComplete(roadmap);
-          isComplete = false;
+      if (milestoneEntry && isEngineAvailable(basePath)) {
+        try {
+          const engine = new WorkflowEngine(basePath);
+          const milestoneRow = engine.getMilestone(milestoneId);
+          isComplete = milestoneRow?.status === "complete";
+        } catch {
+          // Engine not available — fall back to not complete
         }
       }
 
@@ -99,13 +102,19 @@ export async function checkGitHealth(
           if (worktreeBranches.has(branch)) continue;
 
           const milestoneId = branch.replace(/^milestone\//, "");
-          const roadmapPath = resolveMilestoneFile(basePath, milestoneId, "ROADMAP");
-          const roadmapContent = roadmapPath ? await loadFile(roadmapPath) : null;
-          if (!roadmapContent) continue;
+          let branchMilestoneComplete = false;
+          if (isEngineAvailable(basePath)) {
+            try {
+              const engine = new WorkflowEngine(basePath);
+              const milestoneRow = engine.getMilestone(milestoneId);
+              branchMilestoneComplete = milestoneRow?.status === "complete";
+            } catch {
+              // Engine not available — skip
+            }
+          }
+          if (!branchMilestoneComplete) continue;
 
-          // TODO(phase-4-plan-02): replace with engine query
-          // const roadmap = parseRoadmap(roadmapContent);
-          if (false /* isMilestoneComplete(roadmap) */) {
+          if (branchMilestoneComplete) {
             issues.push({
               severity: "info",
               code: "stale_milestone_branch",
@@ -503,50 +512,7 @@ export async function checkRuntimeHealth(
     // Non-fatal — parallel session check failed
   }
 
-  // ── Orphaned completed-units keys ─────────────────────────────────────
-  try {
-    const completedKeysFile = join(root, "completed-units.json");
-    if (existsSync(completedKeysFile)) {
-      const raw = readFileSync(completedKeysFile, "utf-8");
-      const keys: string[] = JSON.parse(raw);
-      const orphaned: string[] = [];
-
-      for (const key of keys) {
-        // Key format: "unitType/unitId" e.g. "execute-task/M001/S01/T01"
-        const slashIdx = key.indexOf("/");
-        if (slashIdx === -1) continue;
-        const unitType = key.slice(0, slashIdx);
-        const unitId = key.slice(slashIdx + 1);
-
-        // Only validate artifact-producing unit types
-        const { verifyExpectedArtifact } = await import("./auto-recovery.js");
-        if (!verifyExpectedArtifact(unitType, unitId, basePath)) {
-          orphaned.push(key);
-        }
-      }
-
-      if (orphaned.length > 0) {
-        issues.push({
-          severity: "warning",
-          code: "orphaned_completed_units",
-          scope: "project",
-          unitId: "project",
-          message: `${orphaned.length} completed-unit key(s) reference missing artifacts: ${orphaned.slice(0, 3).join(", ")}${orphaned.length > 3 ? "..." : ""}`,
-          file: ".gsd/completed-units.json",
-          fixable: true,
-        });
-
-        if (shouldFix("orphaned_completed_units")) {
-          const orphanedSet = new Set(orphaned);
-          const remaining = keys.filter((key) => !orphanedSet.has(key));
-          await saveFile(completedKeysFile, JSON.stringify(remaining));
-          fixesApplied.push(`removed ${orphaned.length} orphaned completed-unit key(s)`);
-        }
-      }
-    }
-  } catch {
-    // Non-fatal — completed-units check failed
-  }
+  // (Removed: orphaned completed-units key validation — engine is authoritative, per D-01)
 
   // ── Stale hook state ──────────────────────────────────────────────────
   try {
@@ -625,61 +591,32 @@ export async function checkRuntimeHealth(
     // Non-fatal — activity log check failed
   }
 
-  // ── STATE.md health ───────────────────────────────────────────────────
+  // ── STATE.md existence check ──────────────────────────────────────────
+  // (Drift detection removed per D-01 — engine is authoritative, projections are disposable)
   try {
     const stateFilePath = resolveGsdRootFile(basePath, "STATE");
     const milestonesPath = milestonesDir(basePath);
 
-    if (existsSync(milestonesPath)) {
-      if (!existsSync(stateFilePath)) {
-        issues.push({
-          severity: "warning",
-          code: "state_file_missing",
-          scope: "project",
-          unitId: "project",
-          message: "STATE.md is missing — state display will not work",
-          file: ".gsd/STATE.md",
-          fixable: true,
-        });
+    if (existsSync(milestonesPath) && !existsSync(stateFilePath)) {
+      issues.push({
+        severity: "warning",
+        code: "state_file_missing",
+        scope: "project",
+        unitId: "project",
+        message: "STATE.md is missing — state display will not work",
+        file: ".gsd/STATE.md",
+        fixable: true,
+      });
 
-        if (shouldFix("state_file_missing")) {
+      if (shouldFix("state_file_missing")) {
+        try {
+          renderStateProjection(basePath);
+          fixesApplied.push("re-rendered STATE.md from engine state");
+        } catch {
+          // Fallback: derive state and write directly
           const state = await deriveState(basePath);
           await saveFile(stateFilePath, buildStateMarkdownForCheck(state));
           fixesApplied.push("created STATE.md from derived state");
-        }
-      } else {
-        // Check if STATE.md is stale by comparing active milestone/slice/phase
-        const currentContent = readFileSync(stateFilePath, "utf-8");
-        const state = await deriveState(basePath);
-        const freshContent = buildStateMarkdownForCheck(state);
-
-        // Extract key fields for comparison — don't compare full content
-        // since timestamp/formatting differences are normal
-        const extractFields = (content: string) => {
-          const milestone = content.match(/\*\*Active Milestone:\*\*\s*(.+)/)?.[1]?.trim() ?? "";
-          const slice = content.match(/\*\*Active Slice:\*\*\s*(.+)/)?.[1]?.trim() ?? "";
-          const phase = content.match(/\*\*Phase:\*\*\s*(.+)/)?.[1]?.trim() ?? "";
-          return { milestone, slice, phase };
-        };
-
-        const current = extractFields(currentContent);
-        const fresh = extractFields(freshContent);
-
-        if (current.milestone !== fresh.milestone || current.slice !== fresh.slice || current.phase !== fresh.phase) {
-          issues.push({
-            severity: "warning",
-            code: "state_file_stale",
-            scope: "project",
-            unitId: "project",
-            message: `STATE.md is stale — shows "${current.phase}" but derived state is "${fresh.phase}"`,
-            file: ".gsd/STATE.md",
-            fixable: true,
-          });
-
-          if (shouldFix("state_file_stale")) {
-            await saveFile(stateFilePath, freshContent);
-            fixesApplied.push("rebuilt STATE.md from derived state");
-          }
         }
       }
     }
@@ -1067,5 +1004,179 @@ export async function checkGlobalHealth(
     }
   } catch {
     // Non-fatal — global health check must not block per-project doctor
+  }
+}
+
+// ── Engine Health Checks ─────────────────────────────────────────────────
+// DB constraint violation detection + projection drift repair (D-08, D-09, D-10)
+
+export async function checkEngineHealth(
+  basePath: string,
+  issues: DoctorIssue[],
+  fixesApplied: string[],
+): Promise<void> {
+  // ── DB constraint violation detection (full doctor only, not pre-dispatch per D-10) ──
+  try {
+    if (isDbAvailable()) {
+      const adapter = _getAdapter()!;
+
+      // a. Orphaned tasks (task.slice_id points to non-existent slice)
+      try {
+        const orphanedTasks = adapter
+          .prepare(
+            `SELECT t.id, t.slice_id, t.milestone_id
+             FROM tasks t
+             LEFT JOIN slices s ON t.milestone_id = s.milestone_id AND t.slice_id = s.id
+             WHERE s.id IS NULL`,
+          )
+          .all() as Array<{ id: string; slice_id: string; milestone_id: string }>;
+
+        for (const row of orphanedTasks) {
+          issues.push({
+            severity: "error",
+            code: "db_orphaned_task",
+            scope: "task",
+            unitId: `${row.milestone_id}/${row.slice_id}/${row.id}`,
+            message: `Task ${row.id} references slice ${row.slice_id} in milestone ${row.milestone_id} but no such slice exists in the database`,
+            fixable: false,
+          });
+        }
+      } catch {
+        // Non-fatal — orphaned task check failed
+      }
+
+      // b. Orphaned slices (slice.milestone_id points to non-existent milestone)
+      try {
+        const orphanedSlices = adapter
+          .prepare(
+            `SELECT s.id, s.milestone_id
+             FROM slices s
+             LEFT JOIN milestones m ON s.milestone_id = m.id
+             WHERE m.id IS NULL`,
+          )
+          .all() as Array<{ id: string; milestone_id: string }>;
+
+        for (const row of orphanedSlices) {
+          issues.push({
+            severity: "error",
+            code: "db_orphaned_slice",
+            scope: "slice",
+            unitId: `${row.milestone_id}/${row.id}`,
+            message: `Slice ${row.id} references milestone ${row.milestone_id} but no such milestone exists in the database`,
+            fixable: false,
+          });
+        }
+      } catch {
+        // Non-fatal — orphaned slice check failed
+      }
+
+      // c. Tasks marked complete without summaries
+      try {
+        const doneTasks = adapter
+          .prepare(
+            `SELECT id, slice_id, milestone_id FROM tasks
+             WHERE status = 'done' AND (summary IS NULL OR summary = '')`,
+          )
+          .all() as Array<{ id: string; slice_id: string; milestone_id: string }>;
+
+        for (const row of doneTasks) {
+          issues.push({
+            severity: "warning",
+            code: "db_done_task_no_summary",
+            scope: "task",
+            unitId: `${row.milestone_id}/${row.slice_id}/${row.id}`,
+            message: `Task ${row.id} is marked done but has no summary in the database`,
+            fixable: false,
+          });
+        }
+      } catch {
+        // Non-fatal — done-task-no-summary check failed
+      }
+
+      // d. Duplicate entity IDs (safety check)
+      try {
+        const dupMilestones = adapter
+          .prepare("SELECT id, COUNT(*) as cnt FROM milestones GROUP BY id HAVING cnt > 1")
+          .all() as Array<{ id: string; cnt: number }>;
+        for (const row of dupMilestones) {
+          issues.push({
+            severity: "error",
+            code: "db_duplicate_id",
+            scope: "milestone",
+            unitId: row.id,
+            message: `Duplicate milestone ID "${row.id}" appears ${row.cnt} times in the database`,
+            fixable: false,
+          });
+        }
+
+        const dupSlices = adapter
+          .prepare("SELECT id, milestone_id, COUNT(*) as cnt FROM slices GROUP BY id, milestone_id HAVING cnt > 1")
+          .all() as Array<{ id: string; milestone_id: string; cnt: number }>;
+        for (const row of dupSlices) {
+          issues.push({
+            severity: "error",
+            code: "db_duplicate_id",
+            scope: "slice",
+            unitId: `${row.milestone_id}/${row.id}`,
+            message: `Duplicate slice ID "${row.id}" in milestone ${row.milestone_id} appears ${row.cnt} times`,
+            fixable: false,
+          });
+        }
+
+        const dupTasks = adapter
+          .prepare("SELECT id, slice_id, milestone_id, COUNT(*) as cnt FROM tasks GROUP BY id, slice_id, milestone_id HAVING cnt > 1")
+          .all() as Array<{ id: string; slice_id: string; milestone_id: string; cnt: number }>;
+        for (const row of dupTasks) {
+          issues.push({
+            severity: "error",
+            code: "db_duplicate_id",
+            scope: "task",
+            unitId: `${row.milestone_id}/${row.slice_id}/${row.id}`,
+            message: `Duplicate task ID "${row.id}" in slice ${row.slice_id} appears ${row.cnt} times`,
+            fixable: false,
+          });
+        }
+      } catch {
+        // Non-fatal — duplicate ID check failed
+      }
+    }
+  } catch {
+    // Non-fatal — DB constraint checks failed entirely
+  }
+
+  // ── Projection drift detection (also runs in pre-dispatch per D-10) ──
+  try {
+    if (isEngineAvailable(basePath)) {
+      const eventLogPath = join(basePath, ".gsd", "event-log.jsonl");
+      const events = readEvents(eventLogPath);
+      if (events.length > 0) {
+        const lastEventTs = new Date(events[events.length - 1]!.ts).getTime();
+        const engine = new WorkflowEngine(basePath);
+        for (const milestone of engine.getMilestones()) {
+          if (milestone.status !== "active") continue;
+          const roadmapPath = resolveMilestoneFile(basePath, milestone.id, "ROADMAP");
+          if (!roadmapPath || !existsSync(roadmapPath)) {
+            try {
+              renderAllProjections(basePath, milestone.id);
+              fixesApplied.push(`re-rendered missing projections for ${milestone.id}`);
+            } catch {
+              // Non-fatal — projection re-render failed
+            }
+            continue;
+          }
+          const projectionMtime = statSync(roadmapPath).mtimeMs;
+          if (lastEventTs > projectionMtime) {
+            try {
+              renderAllProjections(basePath, milestone.id);
+              fixesApplied.push(`re-rendered stale projections for ${milestone.id}`);
+            } catch {
+              // Non-fatal — projection re-render failed
+            }
+          }
+        }
+      }
+    }
+  } catch {
+    // Non-fatal — projection drift check must never block doctor
   }
 }
