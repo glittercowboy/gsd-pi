@@ -5,16 +5,16 @@
 See: .planning/PROJECT.md (updated 2026-03-22)
 
 **Core value:** One sheriff in town — all state mutations flow through a single typed engine
-**Current focus:** Phase 4 complete — ready for Phase 5
+**Current focus:** Phase 5 — Dead Code Cleanup
 
 ## Current Position
 
-Phase: 4 of 5 (Remove Parsing from Hot Path) — COMPLETE
-Plan: 4 of 4 in current phase (all complete)
-Status: Phase 4 Complete
-Last activity: 2026-03-22 — Phase 4 verified (3/3 success criteria, all 6 requirement IDs)
+Phase: 5 of 5 (Dead Code Cleanup) — IN PROGRESS
+Plan: 1 of 3 in current phase (5-01 complete)
+Status: Executing
+Last activity: 2026-03-22 — Plan 5-01 complete (selfHeal + verifyExpectedArtifact + doctor/STATE blocks removed)
 
-Progress: [████████████████░] 80%
+Progress: [████████████████░░] 87%
 
 ## Performance Metrics
 
