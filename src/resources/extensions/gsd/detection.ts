@@ -87,6 +87,18 @@ export const PROJECT_FILES = [
   "mix.exs",
   "deno.json",
   "deno.jsonc",
+  // .NET
+  ".sln",
+  ".csproj",
+  "Directory.Build.props",
+  // Git submodules
+  ".gitmodules",
+  // Xcode
+  "project.yml",
+  ".xcodeproj",
+  ".xcworkspace",
+  // Docker
+  "Dockerfile",
 ] as const;
 
 const LANGUAGE_MAP: Record<string, string> = {
@@ -106,6 +118,13 @@ const LANGUAGE_MAP: Record<string, string> = {
   "mix.exs": "elixir",
   "deno.json": "typescript/deno",
   "deno.jsonc": "typescript/deno",
+  ".sln": "dotnet",
+  ".csproj": "dotnet",
+  "Directory.Build.props": "dotnet",
+  "project.yml": "swift/xcode",
+  ".xcodeproj": "swift/xcode",
+  ".xcworkspace": "swift/xcode",
+  "Dockerfile": "docker",
 };
 
 const MONOREPO_MARKERS = [

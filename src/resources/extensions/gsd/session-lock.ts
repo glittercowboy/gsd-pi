@@ -239,7 +239,7 @@ export function acquireSessionLock(basePath: string): SessionLockResult {
         const elapsed = Date.now() - _lockAcquiredAt;
         if (elapsed < 1_800_000) {
           process.stderr.write(
-            `[gsd] Lock heartbeat mismatch after ${Math.round(elapsed / 1000)}s — event loop stall, continuing.\n`,
+            `[gsd] Lock heartbeat caught up after ${Math.round(elapsed / 1000)}s — long LLM call, no action needed.\n`,
           );
           return; // Suppress false positive
         }
@@ -299,7 +299,7 @@ export function acquireSessionLock(basePath: string): SessionLockResult {
             const elapsed = Date.now() - _lockAcquiredAt;
             if (elapsed < 1_800_000) {
               process.stderr.write(
-                `[gsd] Lock heartbeat mismatch after ${Math.round(elapsed / 1000)}s — event loop stall, continuing.\n`,
+                `[gsd] Lock heartbeat caught up after ${Math.round(elapsed / 1000)}s — long LLM call, no action needed.\n`,
               );
               return;
             }

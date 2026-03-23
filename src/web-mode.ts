@@ -687,7 +687,12 @@ export async function launchWebMode(
       // Register in multi-instance registry
       registerInstance(options.cwd, { pid, port, url }, deps.registryPath)
     }
-    ;(deps.openBrowser ?? openBrowser)(`${url}/#token=${authToken}`)
+    const authenticatedUrl = `${url}/#token=${authToken}`
+    try {
+      ;(deps.openBrowser ?? openBrowser)(authenticatedUrl)
+    } catch (browserError) {
+      stderr.write(`[gsd] Could not open browser: ${browserError instanceof Error ? browserError.message : String(browserError)}\n`)
+    }
   } catch (error) {
     const failure: WebModeLaunchFailure = {
       mode: 'web',
@@ -706,6 +711,7 @@ export async function launchWebMode(
     return failure
   }
 
+  const authenticatedUrl = `${url}/#token=${authToken}`
   const success: WebModeLaunchSuccess = {
     mode: 'web',
     ok: true,
@@ -718,7 +724,7 @@ export async function launchWebMode(
     hostPath: resolution.entryPath,
     hostRoot: resolution.hostRoot,
   }
-  stderr.write(`[gsd] Ready → ${url}\n`)
+  stderr.write(`[gsd] Ready → ${authenticatedUrl}\n`)
   emitLaunchStatus(stderr, success)
   return success
 }

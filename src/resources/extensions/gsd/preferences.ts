@@ -200,12 +200,22 @@ function loadPreferencesFile(path: string, scope: "global" | "project"): LoadedG
 export function parsePreferencesMarkdown(content: string): GSDPreferences | null {
   // Use indexOf instead of [\s\S]*? regex to avoid backtracking (#468)
   const startMarker = content.startsWith('---\r\n') ? '---\r\n' : '---\n';
-  if (!content.startsWith(startMarker)) return null;
-  const searchStart = startMarker.length;
-  const endIdx = content.indexOf('\n---', searchStart);
-  if (endIdx === -1) return null;
-  const block = content.slice(searchStart, endIdx);
-  return parseFrontmatterBlock(block.replace(/\r/g, ''));
+  if (content.startsWith(startMarker)) {
+    const searchStart = startMarker.length;
+    const endIdx = content.indexOf('\n---', searchStart);
+    if (endIdx === -1) return null;
+    const block = content.slice(searchStart, endIdx);
+    return parseFrontmatterBlock(block.replace(/\r/g, ''));
+  }
+
+  // Fallback: heading+list format (e.g. "## Git\n- isolation: none") (#2036)
+  // GSD agents may write preferences files without frontmatter delimiters.
+  if (/^##\s+\w/m.test(content)) {
+    return parseHeadingListFormat(content);
+  }
+
+  console.warn("[parsePreferencesMarkdown] preferences.md exists but uses an unrecognized format — skipping.");
+  return null;
 }
 
 function parseFrontmatterBlock(frontmatter: string): GSDPreferences {
@@ -219,6 +229,51 @@ function parseFrontmatterBlock(frontmatter: string): GSDPreferences {
     console.error("[parseFrontmatterBlock] YAML parse error:", e);
     return {} as GSDPreferences;
   }
+}
+
+/**
+ * Parse heading+list format into a nested object, then cast to GSDPreferences.
+ * Handles markdown like:
+ *   ## Git
+ *   - isolation: none
+ *   - commit_docs: true
+ *   ## Models
+ *   - planner: sonnet
+ */
+function parseHeadingListFormat(content: string): GSDPreferences {
+  const result: Record<string, Record<string, string>> = {};
+  let currentSection: string | null = null;
+
+  for (const rawLine of content.split('\n')) {
+    const line = rawLine.replace(/\r$/, '');
+    const headingMatch = line.match(/^##\s+(.+)$/);
+    if (headingMatch) {
+      currentSection = headingMatch[1].trim().toLowerCase().replace(/\s+/g, '_');
+      continue;
+    }
+    if (currentSection) {
+      const itemMatch = line.match(/^-\s+([^:]+):\s*(.*)$/);
+      if (itemMatch) {
+        if (!result[currentSection]) result[currentSection] = {};
+        const value = itemMatch[2].trim();
+        // Coerce "true"/"false" strings and numbers
+        result[currentSection][itemMatch[1].trim()] = value;
+      }
+    }
+  }
+
+  // Convert string values to appropriate types via YAML parser for each section
+  const typed: Record<string, unknown> = {};
+  for (const [section, entries] of Object.entries(result)) {
+    const yamlLines = Object.entries(entries).map(([k, v]) => `${k}: ${v}`).join('\n');
+    try {
+      typed[section] = parseYaml(yamlLines);
+    } catch {
+      typed[section] = entries;
+    }
+  }
+
+  return typed as GSDPreferences;
 }
 
 // ─── Merging ────────────────────────────────────────────────────────────────

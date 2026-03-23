@@ -149,7 +149,11 @@ async function getOrConnect(name: string, signal?: AbortSignal): Promise<Client>
 			stderr: "pipe",
 		});
 	} else if (config.transport === "http" && config.url) {
-		transport = new StreamableHTTPClientTransport(new URL(config.url));
+		const resolvedUrl = config.url.replace(
+			/\$\{([^}]+)\}/g,
+			(_, name) => process.env[name] ?? "",
+		);
+		transport = new StreamableHTTPClientTransport(new URL(resolvedUrl));
 	} else {
 		throw new Error(`Server "${name}" has unsupported transport: ${config.transport}`);
 	}

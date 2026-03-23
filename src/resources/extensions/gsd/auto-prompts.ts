@@ -986,7 +986,7 @@ export async function buildPlanSlicePrompt(
   const prefs = loadEffectiveGSDPreferences();
   const commitDocsEnabled = prefs?.preferences?.git?.commit_docs !== false;
   const commitInstruction = commitDocsEnabled
-    ? `Commit the plan files only: \`git add ${relSlicePath(base, mid, sid)}/ .gsd/DECISIONS.md .gitignore && git commit -m "docs(${sid}): add slice plan"\`. Do not stage .gsd/STATE.md or other runtime files — the system manages those.`
+    ? `Commit the plan files only: \`git add --force ${relSlicePath(base, mid, sid)}/ .gsd/DECISIONS.md .gitignore && git commit -m "docs(${sid}): add slice plan"\`. Do not stage .gsd/STATE.md or other runtime files — the system manages those.`
     : "Do not commit — planning docs are not tracked in git for this project.";
   return loadPrompt("plan-slice", {
     workingDirectory: base,
