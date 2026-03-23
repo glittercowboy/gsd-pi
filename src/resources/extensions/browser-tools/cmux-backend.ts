@@ -25,7 +25,7 @@
 
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, mkdirSync } from "node:fs";
-import { join } from "node:path";
+import { join, dirname } from "node:path";
 import { tmpdir } from "node:os";
 import type {
   BrowserEngine,
@@ -86,6 +86,27 @@ function unsupported(cls: string, method: string): never {
     `This operation requires Playwright. ` +
     `Disable cmux browser (/gsd cmux browser off) to use Playwright instead.`
   );
+}
+
+/** Normalize selectOption value union to a plain string for cmux. */
+type SelectOptionValue =
+  | string
+  | string[]
+  | { label?: string; value?: string; index?: number }
+  | Array<{ label?: string; value?: string; index?: number }>;
+
+function normalizeSelectValue(value: SelectOptionValue): string {
+  if (typeof value === "string") return value;
+  if (Array.isArray(value)) {
+    const first = value[0];
+    if (typeof first === "string") return first;
+    if (first && typeof first === "object") return first.label ?? first.value ?? String(first.index ?? "");
+    return "";
+  }
+  if (typeof value === "object" && value !== null) {
+    return value.label ?? value.value ?? String(value.index ?? "");
+  }
+  return String(value);
 }
 
 // ─── CSP-safe evaluate ──────────────────────────────────────────────────────
@@ -554,7 +575,7 @@ export function buildRefSnapshotNative(surfaceId: string, arg: any): any[] {
 
           if (hints.length > 0) {
             node.selectorHints = hints;
-            console.error(`[cmux-build-debug] ${node.role}:"${node.name}" → hints=${JSON.stringify(hints)}`);
+            if (process.env.GSD_DEBUG) console.error(`[cmux-build-debug] ${node.role}:"${node.name}" → hints=${JSON.stringify(hints)}`);
           }
         }
       } catch { /* HTML fetch failed — nodes still work, just without selectorHints */ }
@@ -591,7 +612,7 @@ export function selectorExists(surfaceId: string, selector: string): boolean {
 export function resolveRefTargetNative(surfaceId: string, refNode: any): any {
   // Debug: log what we received
   const dbg = { role: refNode?.role, name: refNode?.name, tag: refNode?.tag, hints: refNode?.selectorHints, path: refNode?.path };
-  console.error(`[cmux-resolve-debug] refNode=${JSON.stringify(dbg)}`);
+  if (process.env.GSD_DEBUG) console.error(`[cmux-resolve-debug] refNode=${JSON.stringify(dbg)}`);
 
   // Try selector hints first (may have been populated by buildRefSnapshotNative)
   for (const hint of refNode?.selectorHints || []) {
@@ -626,7 +647,7 @@ export function resolveRefTargetNative(surfaceId: string, refNode: any): any {
         }
       }
 
-      console.error(`[cmux-resolve-debug] cmux find succeeded but no CSS selector matched for role="${refNode.role}" name="${refNode.name}" — trying HTML strategies`);
+      if (process.env.GSD_DEBUG) console.error(`[cmux-resolve-debug] cmux find succeeded but no CSS selector matched for role="${refNode.role}" name="${refNode.name}" — trying HTML strategies`);
     } catch { /* cmux find failed — try native approaches */ }
 
     // Strategy 1: aria-label selector
@@ -970,10 +991,10 @@ class CmuxLocator implements BrowserLocator {
     browserCmd(this.surfaceId, [checked ? "check" : "uncheck", this.selector]);
   }
 
-  async selectOption(value: string | string[], _options?: { timeout?: number }): Promise<string[]> {
-    const val = Array.isArray(value) ? value[0] : value;
+  async selectOption(value: SelectOptionValue, _options?: { timeout?: number }): Promise<string[]> {
+    const val = normalizeSelectValue(value);
     browserCmd(this.surfaceId, ["select", this.selector, val]);
-    return Array.isArray(value) ? value : [value];
+    return [val];
   }
 
   async hover(_options?: { timeout?: number }): Promise<void> {
@@ -1084,7 +1105,7 @@ class CmuxFrame implements BrowserFrame {
   }
 
   url(): string {
-    return browserCmd(this.surfaceId, ["url"]);
+    return browserCmd(this.surfaceId, ["get", "url"]);
   }
 
   async evaluate<R, Arg = any>(fn: string | ((arg: Arg) => R), arg?: Arg): Promise<R> {
@@ -1124,10 +1145,10 @@ class CmuxFrame implements BrowserFrame {
     browserCmd(this.surfaceId, ["wait", "--selector", selector, "--timeout-ms", String(options?.timeout ?? 10000)]);
   }
 
-  async selectOption(selector: string, value: string | string[]): Promise<string[]> {
-    const val = Array.isArray(value) ? value[0] : value;
+  async selectOption(selector: string, value: SelectOptionValue): Promise<string[]> {
+    const val = normalizeSelectValue(value);
     browserCmd(this.surfaceId, ["select", selector, val]);
-    return Array.isArray(value) ? value : [value];
+    return [val];
   }
 
   async dragAndDrop(_source: string, _target: string): Promise<void> {
@@ -1144,7 +1165,7 @@ class CmuxFrame implements BrowserFrame {
 
   async screenshot(options?: { type?: string; quality?: number; path?: string }): Promise<Buffer> {
     const tmpPath = options?.path ?? join(tmpdir(), `cmux-frame-screenshot-${Date.now()}.png`);
-    mkdirSync(join(tmpPath, ".."), { recursive: true });
+    mkdirSync(dirname(tmpPath), { recursive: true });
     try {
       browserCmd(this.surfaceId, ["screenshot", "--out", tmpPath]);
       return readFileSync(tmpPath);
@@ -1267,7 +1288,7 @@ export class CmuxPage implements BrowserPage {
   // ── State ──
 
   url(): string {
-    return browserCmd(this.surfaceId, ["url"]);
+    return browserCmd(this.surfaceId, ["get", "url"]);
   }
 
   async title(): Promise<string> {
@@ -1292,7 +1313,7 @@ export class CmuxPage implements BrowserPage {
 
   async screenshot(options?: { type?: string; quality?: number; path?: string; fullPage?: boolean; scale?: string; clip?: { x: number; y: number; width: number; height: number } }): Promise<Buffer> {
     const tmpPath = options?.path ?? join(tmpdir(), `cmux-screenshot-${Date.now()}.png`);
-    mkdirSync(join(tmpPath, ".."), { recursive: true });
+    mkdirSync(dirname(tmpPath), { recursive: true });
     try {
       browserCmd(this.surfaceId, ["screenshot", "--out", tmpPath]);
       return readFileSync(tmpPath);
@@ -1330,7 +1351,20 @@ export class CmuxPage implements BrowserPage {
     } catch { /* non-fatal, like Playwright's networkidle timeout */ }
   }
 
-  async waitForURL(url: string | RegExp, options?: { timeout?: number }): Promise<void> {
+  async waitForURL(url: string | RegExp | ((url: URL) => boolean), options?: { timeout?: number }): Promise<void> {
+    if (typeof url === "function") {
+      // Predicate — poll until it passes
+      const timeout = options?.timeout ?? 10000;
+      const start = Date.now();
+      while (Date.now() - start < timeout) {
+        try {
+          const currentUrl = new URL(browserCmd(this.surfaceId, ["get", "url"]));
+          if (url(currentUrl)) return;
+        } catch { /* url parse failed — retry */ }
+        await new Promise((resolve) => setTimeout(resolve, 200));
+      }
+      throw new Error(`Timed out waiting for URL predicate (${timeout}ms)`);
+    }
     const urlStr = typeof url === "string" ? url : url.source;
     browserCmd(this.surfaceId, ["wait", "--url-contains", urlStr, "--timeout-ms", String(options?.timeout ?? 10000)]);
   }
@@ -1343,10 +1377,10 @@ export class CmuxPage implements BrowserPage {
     browserCmd(this.surfaceId, ["wait", "--selector", selector, "--timeout-ms", String(options?.timeout ?? 10000)]);
   }
 
-  async selectOption(selector: string, value: string | string[]): Promise<string[]> {
-    const val = Array.isArray(value) ? value[0] : value;
+  async selectOption(selector: string, value: SelectOptionValue): Promise<string[]> {
+    const val = normalizeSelectValue(value);
     browserCmd(this.surfaceId, ["select", selector, val]);
-    return Array.isArray(value) ? value : [value];
+    return [val];
   }
 
   async dragAndDrop(_source: string, _target: string): Promise<void> {
@@ -1425,7 +1459,8 @@ export class CmuxPage implements BrowserPage {
 export async function openCmuxBrowser(url?: string): Promise<{ page: CmuxPage; surfaceId: string }> {
   const args = url ? ["browser", "open", url] : ["browser", "open"];
   const output = cmux(args, 15000);
-  const surfaceMatch = output.match(/surface=(surface:\d+)/);
+  // Accept both "surface=(surface:N)" and bare "surface:N workspace:M" formats
+  const surfaceMatch = output.match(/surface=(surface:\d+)/) ?? output.match(/(surface:\d+)/);
   if (!surfaceMatch) {
     throw new Error(`Failed to open cmux browser. Output: ${output}`);
   }
