@@ -3,11 +3,12 @@ import { exec, execFile, spawn, type ChildProcess, type SpawnOptions } from 'nod
 import { existsSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs'
 import { request as httpRequest } from 'node:http'
 import { createServer } from 'node:net'
+import { networkInterfaces } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { appRoot, webPidFilePath as defaultWebPidFilePath } from './app-paths.js'
 
-const DEFAULT_HOST = '127.0.0.1'
+const DEFAULT_HOST = '0.0.0.0'
 const DEFAULT_PACKAGE_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 
 /** Open a URL in the user's default browser. */
@@ -580,6 +581,27 @@ export async function launchWebMode(
   const port = options.port ?? await (deps.resolvePort ?? reserveWebPort)(host)
   const authToken = randomBytes(32).toString('hex')
   const url = `http://${host}:${port}`
+
+  // When binding to 0.0.0.0, auto-discover all network interface IPs and add
+  // them as allowed CORS origins so the middleware accepts API requests coming
+  // from LAN / Tailscale / other non-loopback addresses.
+  const autoOrigins: string[] = []
+  if (host === '0.0.0.0') {
+    try {
+      const nets = networkInterfaces()
+      for (const name of Object.keys(nets)) {
+        for (const net of (nets[name] ?? [])) {
+          if (net.family === 'IPv4' && !net.internal) {
+            autoOrigins.push(`http://${net.address}:${port}`)
+          }
+        }
+      }
+    } catch { /* os.networkInterfaces may fail in sandboxed envs */ }
+    autoOrigins.push(`http://127.0.0.1:${port}`)
+    autoOrigins.push(`http://localhost:${port}`)
+  }
+  const mergedOrigins = [...(options.allowedOrigins ?? []), ...autoOrigins]
+
   const env = {
     ...(deps.env ?? process.env),
     HOSTNAME: host,
@@ -592,7 +614,7 @@ export async function launchWebMode(
     GSD_WEB_PACKAGE_ROOT: resolution.packageRoot,
     GSD_WEB_HOST_KIND: resolution.kind,
     ...(resolution.kind === 'source-dev' ? { NEXT_PUBLIC_GSD_DEV: '1' } : {}),
-    ...(options.allowedOrigins?.length ? { GSD_WEB_ALLOWED_ORIGINS: options.allowedOrigins.join(',') } : {}),
+    ...(mergedOrigins.length ? { GSD_WEB_ALLOWED_ORIGINS: mergedOrigins.join(',') } : {}),
   }
 
   try {
@@ -687,9 +709,13 @@ export async function launchWebMode(
       // Register in multi-instance registry
       registerInstance(options.cwd, { pid, port, url }, deps.registryPath)
     }
-    const authenticatedUrl = `${url}/#token=${authToken}`
+    // When bound to 0.0.0.0, open the browser with 127.0.0.1 since
+    // 0.0.0.0 is not a routable address in browsers.
+    const browserUrl = host === '0.0.0.0'
+      ? `http://127.0.0.1:${port}/#token=${authToken}`
+      : `${url}/#token=${authToken}`
     try {
-      ;(deps.openBrowser ?? openBrowser)(authenticatedUrl)
+      ;(deps.openBrowser ?? openBrowser)(browserUrl)
     } catch (browserError) {
       stderr.write(`[gsd] Could not open browser: ${browserError instanceof Error ? browserError.message : String(browserError)}\n`)
     }
@@ -711,7 +737,8 @@ export async function launchWebMode(
     return failure
   }
 
-  const authenticatedUrl = `${url}/#token=${authToken}`
+  const localUrl = host === '0.0.0.0' ? `http://127.0.0.1:${port}` : url
+  const localAuthUrl = `${localUrl}/#token=${authToken}`
   const success: WebModeLaunchSuccess = {
     mode: 'web',
     ok: true,
@@ -724,7 +751,18 @@ export async function launchWebMode(
     hostPath: resolution.entryPath,
     hostRoot: resolution.hostRoot,
   }
-  stderr.write(`[gsd] Ready → ${authenticatedUrl}\n`)
+  stderr.write(`[gsd] Ready → ${localAuthUrl}\n`)
+  if (host === '0.0.0.0' && autoOrigins.length > 0) {
+    const networkUrls = autoOrigins
+      .filter(o => !o.includes('127.0.0.1') && !o.includes('localhost'))
+      .map(o => `${o}/#token=${authToken}`)
+    if (networkUrls.length > 0) {
+      stderr.write(`[gsd] Network access:\n`)
+      for (const nu of networkUrls) {
+        stderr.write(`[gsd]   → ${nu}\n`)
+      }
+    }
+  }
   emitLaunchStatus(stderr, success)
   return success
 }

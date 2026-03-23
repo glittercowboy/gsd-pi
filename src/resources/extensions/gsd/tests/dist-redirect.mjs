@@ -54,6 +54,24 @@ export function resolve(specifier, context, nextResolve) {
 }
 
 export function load(url, context, nextLoad) {
+  // Node v22+ built-in type stripping handles .ts files — but explicitly refuses
+  // to strip types from .ts files under node_modules/, throwing
+  // ERR_UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING.
+  //
+  // This matters for packaged (npm) installs where src/ ships alongside dist/:
+  // the web server's bridge spawns subprocesses that import .ts source files
+  // (auto.ts, workspace-index.ts) via this loader. When those files live under
+  // node_modules/ the automatic stripping fails.
+  //
+  // Fix: call stripTypeScriptTypes() from the module API directly — it performs
+  // the same SWC-based type erasure but without the node_modules guard.
+  if (url.endsWith('.ts') && url.includes('node_modules')) {
+    const { stripTypeScriptTypes } = require('node:module');
+    const source = readFileSync(fileURLToPath(url), 'utf-8');
+    const stripped = stripTypeScriptTypes(source, { mode: 'strip', sourceUrl: url });
+    return { format: 'module', source: stripped, shortCircuit: true };
+  }
+
   // Node's --experimental-strip-types handles .ts but not .tsx (which may contain JSX).
   // Use TypeScript to transpile .tsx → JS with react-jsx transform, then serve as module.
   if (url.endsWith('.tsx')) {
