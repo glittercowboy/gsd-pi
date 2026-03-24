@@ -47,37 +47,43 @@ describe('requirements', () => {
   const sDir = join(mDir, "slices", "S01");
   const tDir = join(sDir, "tasks");
   mkdirSync(tDir, { recursive: true });
-  writeFileSync(join(gsd, "REQUIREMENTS.md"), `# Requirements
-  ## Active
-  ### R001 — Missing owner
-  - Class: core-capability
-  - Status: active
-  - Description: thing
-  - Why it matters: thing
-  - Source: user
-  - Primary owning slice: none yet
-  - Supporting slices: none
-  - Validation: unmapped
-  - Notes: none
-  ## Validated
-  ## Deferred
-  ## Out of Scope
-  ## Traceability
-  `, "utf-8");
-  writeFileSync(join(mDir, "M001-ROADMAP.md"), `# M001: Demo
-  ## Slices
-  - [ ] **S01: Demo Slice** \`risk:low\` \`depends:[]\`
-    > After this: demo works
-  `, "utf-8");
-  writeFileSync(join(sDir, "S01-PLAN.md"), `# S01: Demo Slice
-  **Goal:** Demo
-  **Demo:** Demo
-  ## Must-Haves
-  - done
-  ## Tasks
-  - [ ] **T01: Implement thing** \`est:10m\`
-    Task is in progress.
-  `, "utf-8");
+  writeFileSync(join(gsd, "REQUIREMENTS.md"), [
+    "# Requirements",
+    "## Active",
+    "### R001 — Missing owner",
+    "- Class: core-capability",
+    "- Status: active",
+    "- Description: thing",
+    "- Why it matters: thing",
+    "- Source: user",
+    "- Primary owning slice: none yet",
+    "- Supporting slices: none",
+    "- Validation: unmapped",
+    "- Notes: none",
+    "## Validated",
+    "## Deferred",
+    "## Out of Scope",
+    "## Traceability",
+    "",
+  ].join("\n"), "utf-8");
+  writeFileSync(join(mDir, "M001-ROADMAP.md"), [
+    "# M001: Demo",
+    "## Slices",
+    "- [ ] **S01: Demo Slice** `risk:low` `depends:[]`",
+    "  > After this: demo works",
+    "",
+  ].join("\n"), "utf-8");
+  writeFileSync(join(sDir, "S01-PLAN.md"), [
+    "# S01: Demo Slice",
+    "**Goal:** Demo",
+    "**Demo:** Demo",
+    "## Must-Haves",
+    "- done",
+    "## Tasks",
+    "- [ ] **T01: Implement thing** `est:10m`",
+    "  Task is in progress.",
+    "",
+  ].join("\n"), "utf-8");
   test('deriveState includes requirements counts', async () => {
     const state = await deriveState(base);
     assert.ok(state.requirements !== undefined, "state includes requirements summary");
