@@ -287,7 +287,10 @@ test("verification-gate: all commands pass → gate passes", async () => {
     assert.ok(result.checks[0].stdout.includes("hello"));
     assert.ok(result.checks[1].stdout.includes("world"));
     assert.equal(typeof result.timestamp, "number");
-  });
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
 
 test("verification-gate: one command fails → gate fails with exit code + stderr", async () => {
   const tmp = makeTempDir("vg-fail");
@@ -303,7 +306,10 @@ test("verification-gate: one command fails → gate fails with exit code + stder
     assert.equal(result.checks[0].exitCode, 0);
     assert.equal(result.checks[1].exitCode, 1);
     assert.ok(result.checks[1].stderr.includes("err"));
-  });
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
 
 test("verification-gate: no commands discovered → gate passes with 0 checks", async () => {
   const tmp = makeTempDir("vg-empty");
@@ -316,7 +322,10 @@ test("verification-gate: no commands discovered → gate passes with 0 checks", 
     assert.equal(result.passed, true);
     assert.equal(result.checks.length, 0);
     assert.equal(result.discoverySource, "none");
-  });
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
 
 test("verification-gate: command not found → exit code 127", async () => {
   const tmp = makeTempDir("vg-notfound");
@@ -331,9 +340,14 @@ test("verification-gate: command not found → exit code 127", async () => {
     assert.equal(result.checks.length, 1);
     assert.ok(result.checks[0].exitCode !== 0, "should have non-zero exit code");
     assert.ok(result.checks[0].durationMs >= 0);
-  });
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
 
-  test("no DEP0190 deprecation warning when running commands", () => {
+test("no DEP0190 deprecation warning when running commands", () => {
+  const tmp = makeTempDir("vg-dep0190");
+  try {
     // Run a subprocess with --throw-deprecation so any DeprecationWarning
     // becomes a thrown error (non-zero exit). The fix passes the command
     // string to sh -c explicitly instead of using spawnSync(cmd, {shell:true}).
@@ -367,7 +381,10 @@ test("verification-gate: command not found → exit code 127", async () => {
       0,
       `Expected exit 0 (no deprecation) but got ${child.status}. stderr: ${child.stderr}`,
     );
-  });
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
 
 test("verification-gate: each check has durationMs", async () => {
   const tmp = makeTempDir("vg-duration");
@@ -381,11 +398,16 @@ test("verification-gate: each check has durationMs", async () => {
     assert.equal(result.checks.length, 1);
     assert.equal(typeof result.checks[0].durationMs, "number");
     assert.ok(result.checks[0].durationMs >= 0);
-  });
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
 
-  test("one command fails — remaining commands still run (non-short-circuit)", () => {
+test("one command fails — remaining commands still run (non-short-circuit)", async () => {
+  const tmp = makeTempDir("vg-nonshorty");
+  try {
     // First fails, second and third should still execute
-    const result = runVerificationGate({
+    const result = await runVerificationGate({
       basePath: tmp,
       unitId: "T02",
       cwd: tmp,
@@ -402,11 +424,16 @@ test("verification-gate: each check has durationMs", async () => {
     assert.ok(result.checks[1].stdout.includes("second"));
     assert.equal(result.checks[2].exitCode, 0, "third command runs and passes");
     assert.ok(result.checks[2].stdout.includes("third"));
-  });
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
 
-  test("gate execution uses cwd for spawnSync", () => {
+test("gate execution uses cwd for spawnSync", async () => {
+  const tmp = makeTempDir("vg-cwd");
+  try {
     // pwd should report the temp dir
-    const result = runVerificationGate({
+    const result = await runVerificationGate({
       basePath: tmp,
       unitId: "T02",
       cwd: tmp,
@@ -416,7 +443,9 @@ test("verification-gate: each check has durationMs", async () => {
     assert.equal(result.checks.length, 1);
     // The stdout should contain the tmp dir path (resolving symlinks)
     assert.ok(result.checks[0].stdout.trim().length > 0, "pwd should produce output");
-  });
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
 });
 
 // ─── Preference Validation Tests ─────────────────────────────────────────────
