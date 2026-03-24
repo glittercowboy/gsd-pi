@@ -779,7 +779,9 @@ async function main(): Promise<void> {
       const elapsed = performance.now() - start;
 
       console.log(`  deriveStateFromDb() took ${elapsed.toFixed(3)}ms`);
-      assertTrue(elapsed < 1, `perf-db: deriveStateFromDb() <1ms (got ${elapsed.toFixed(3)}ms)`);
+      // Use 10ms threshold — catches real regressions without flaking on
+      // CI runners under load (1ms threshold failed at 1.050ms on GitHub Actions)
+      assertTrue(elapsed < 10, `perf-db: deriveStateFromDb() <10ms (got ${elapsed.toFixed(3)}ms)`);
 
       closeDatabase();
     } finally {

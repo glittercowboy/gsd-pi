@@ -2,11 +2,9 @@ import { execFile, execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { promisify } from "node:util";
 import type { GSDPreferences } from "../gsd/preferences.js";
 import type { GSDState, Phase } from "../gsd/types.js";
 
-const execFileAsync = promisify(execFile);
 const DEFAULT_SOCKET_PATH = "/tmp/cmux.sock";
 const STATUS_KEY = "gsd";
 const lastSidebarSnapshots = new Map<string, string>();
@@ -200,6 +198,7 @@ export class CmuxClient {
       return execFileSync("cmux", args, {
         encoding: "utf-8",
         timeout: 3000,
+        stdio: ["ignore", "pipe", "pipe"],
         env: process.env,
       });
     } catch {
@@ -210,10 +209,15 @@ export class CmuxClient {
   private async runAsync(args: string[]): Promise<string | null> {
     if (!this.canRun()) return null;
     try {
-      const result = await execFileAsync("cmux", args, {
-        encoding: "utf-8",
-        timeout: 5000,
-        env: process.env,
+      const result = await new Promise<{ stdout: string; stderr: string }>((resolve, reject) => {
+        execFile("cmux", args, {
+          encoding: "utf-8",
+          timeout: 5000,
+          env: process.env,
+        }, (error, stdout, stderr) => {
+          if (error) reject(error);
+          else resolve({ stdout, stderr });
+        }).stdin?.end();
       });
       return result.stdout;
     } catch {
