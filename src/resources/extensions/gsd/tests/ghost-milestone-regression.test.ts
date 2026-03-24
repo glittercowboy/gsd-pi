@@ -11,7 +11,8 @@ import { tmpdir } from 'node:os';
 
 import { deriveState } from '../state.ts';
 import { createTestContext } from './test-helpers.ts';
-import { findMilestoneIds, isSubstantiveMilestone } from '../guided-flow.ts';
+import { findMilestoneIds } from '../guided-flow.ts';
+import { isSubstantiveMilestone } from '../milestone-ids.ts';
 
 const { assertEq, assertTrue, report } = createTestContext();
 

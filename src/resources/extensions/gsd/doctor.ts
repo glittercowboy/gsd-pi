@@ -7,22 +7,18 @@ import { deriveState, isMilestoneComplete } from "./state.js";
 import { invalidateAllCaches } from "./cache.js";
 import { loadEffectiveGSDPreferences, type GSDPreferences } from "./preferences.js";
 
-import type { DoctorIssue, DoctorIssueCode, DoctorReport } from "./doctor-types.js";
-import { GLOBAL_STATE_CODES } from "./doctor-types.js";
+import { GLOBAL_STATE_CODES, type DoctorIssue, type DoctorIssueCode, type DoctorReport, type DoctorSeverity, type DoctorSummary } from "./doctor-types.js";
 import type { RoadmapSliceEntry } from "./types.js";
 import { checkGitHealth, checkRuntimeHealth, checkGlobalHealth } from "./doctor-checks.js";
 import { checkEnvironmentHealth } from "./doctor-environment.js";
 import { runProviderChecks } from "./doctor-providers.js";
-import type { DoctorIssue, DoctorIssueCode, DoctorReport } from "./doctor-types.js";
-import { COMPLETION_TRANSITION_CODES } from "./doctor-types.js";
 import { summarizeDoctorIssues } from "./doctor-format.js";
 import { isSubstantiveMilestone, MILESTONE_ID_RE } from "./milestone-ids.js";
-
 
 // ── Re-exports ─────────────────────────────────────────────────────────────
 // All public types and functions from extracted modules are re-exported here
 // so that existing imports from "./doctor.js" continue to work unchanged.
-export type { DoctorSeverity, DoctorIssueCode, DoctorIssue, DoctorReport, DoctorSummary } from "./doctor-types.js";
+export type { DoctorSeverity, DoctorIssueCode, DoctorIssue, DoctorReport, DoctorSummary };
 export { summarizeDoctorIssues, filterDoctorIssues, formatDoctorReport, formatDoctorIssuesForPrompt, formatDoctorReportJson } from "./doctor-format.js";
 export { runEnvironmentChecks, runFullEnvironmentChecks, formatEnvironmentReport, type EnvironmentCheckResult } from "./doctor-environment.js";
 export { computeProgressScore, computeProgressScoreWithContext, formatProgressLine, formatProgressReport, type ProgressScore, type ProgressLevel } from "./progress-score.js";

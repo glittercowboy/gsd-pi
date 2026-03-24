@@ -34,7 +34,7 @@ import { showProjectInit, offerMigration } from "./init-wizard.js";
 import { validateDirectory } from "./validate-directory.js";
 import { showConfirm } from "../shared/tui.js";
 import { debugLog } from "./debug-logger.js";
-import { MILESTONE_ID_RE, findMilestoneIds, isSubstantiveMilestone, nextMilestoneId } from "./milestone-ids.js";
+import { MILESTONE_ID_RE, findMilestoneIds, isSubstantiveMilestone, nextMilestoneId, getReservedMilestoneIds, reserveMilestoneId } from "./milestone-ids.js";
 import { parkMilestone, discardMilestone } from "./milestone-actions.js";
 import { resolveModelWithFallbacksForUnit } from "./preferences-models.js";
 

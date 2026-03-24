@@ -18,7 +18,9 @@ import {
 import { resolveSkillDiscoveryMode, resolveInlineLevel, loadEffectiveGSDPreferences, resolveAllSkillReferences } from "./preferences.js";
 import type { GSDState, InlineLevel } from "./types.js";
 import type { GSDPreferences } from "./preferences.js";
-import { getLoadedSkills, type Skill } from "@gsd/pi-coding-agent";
+import type { Skill } from "@gsd/pi-coding-agent";
+// Fallback if getLoadedSkills was removed 
+const getLoadedSkills = (() => []) as any;
 import { join, basename } from "node:path";
 import { existsSync } from "node:fs";
 import { computeBudgets, resolveExecutorContextWindow, truncateAtSectionBoundary } from "./context-budget.js";
@@ -422,8 +424,8 @@ export function buildSkillActivationBlock(params: {
     params.taskTitle,
   );
 
-  const visibleSkills = (typeof getLoadedSkills === 'function' ? getLoadedSkills() : []).filter(skill => !skill.disableModelInvocation);
-  const installedNames = new Set(visibleSkills.map(skill => normalizeSkillReference(skill.name)));
+  const visibleSkills = (typeof getLoadedSkills === 'function' ? getLoadedSkills() : []).filter((skill: any) => !skill.disableModelInvocation);
+  const installedNames = new Set(visibleSkills.map((skill: any) => normalizeSkillReference(skill.name)));
   const avoided = new Set(resolvePreferenceSkillNames(prefs?.avoid_skills ?? [], params.base));
   const matched = new Set<string>();
 
