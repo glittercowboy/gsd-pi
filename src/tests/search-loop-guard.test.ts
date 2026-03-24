@@ -116,83 +116,82 @@ async function callSearch(
  * state (lastSearchKey, consecutiveDupeCount) starts fresh here.
  */
 
-test("search loop guard fires after MAX_CONSECUTIVE_DUPES duplicates", async () => {
+test("search loop guard fires after MAX_CONSECUTIVE_DUPES duplicates", async (t) => {
   process.env.BRAVE_API_KEY = "test-key-loop-guard";
   delete process.env.TAVILY_API_KEY;
   delete process.env.OLLAMA_API_KEY;
   const restoreFetch = mockFetch(makeBraveResponse());
 
-  try {
-    const pi = createMockPI();
-    registerSearchTool(pi as any);
-    const tool = pi.getRegisteredTool();
-    assert.ok(tool, "search tool should be registered");
-
-    const execute = tool.execute.bind(tool);
-
-    // Calls 1–3: below threshold, should return search results (not an error)
-    for (let i = 1; i <= 3; i++) {
-      const result = await callSearch(execute, "loop test query", `call-${i}`);
-      assert.notEqual(result.isError, true, `call ${i} should not trigger loop guard`);
-    }
-
-    // Call 4: hits the threshold — guard fires
-    const result4 = await callSearch(execute, "loop test query", "call-4");
-    assert.equal(result4.isError, true, "call 4 should trigger the loop guard");
-    assert.equal(result4.details?.errorKind, "search_loop");
-    assert.ok(
-      result4.content[0].text.includes("Search loop detected"),
-      "error message should mention search loop"
-    );
-  } finally {
+    t.after(() => {
     restoreFetch();
     restoreSearchEnv();
-  }
-});
+  });
 
-test("search loop guard resets at session_start boundary", async () => {
+  const pi = createMockPI();
+  registerSearchTool(pi as any);
+  const tool = pi.getRegisteredTool();
+  assert.ok(tool, "search tool should be registered");
+
+  const execute = tool.execute.bind(tool);
+
+  // Calls 1–3: below threshold, should return search results (not an error)
+  for (let i = 1; i <= 3; i++) {
+    const result = await callSearch(execute, "loop test query", `call-${i}`);
+    assert.notEqual(result.isError, true, `call ${i} should not trigger loop guard`);
+  }
+
+  // Call 4: hits the threshold — guard fires
+  const result4 = await callSearch(execute, "loop test query", "call-4");
+  assert.equal(result4.isError, true, "call 4 should trigger the loop guard");
+  assert.equal(result4.details?.errorKind, "search_loop");
+  assert.ok(
+    result4.content[0].text.includes("Search loop detected"),
+    "error message should mention search loop"
+  );
+
+});
+test("search loop guard resets at session_start boundary", async (t) => {{
   process.env.BRAVE_API_KEY = "test-key-loop-guard-session";
   delete process.env.TAVILY_API_KEY;
   delete process.env.OLLAMA_API_KEY;
   const restoreFetch = mockFetch(makeBraveResponse());
   const query = "session boundary query";
 
-  try {
-    const pi = createMockPI();
-    const mockCtx = {
-      hasUI: false,
-      ui: { notify() {} },
-    };
-    searchExtension(pi as any);
-    await pi.fire("session_start", {}, mockCtx);
-
-    const tool = pi.getRegisteredTool();
-    assert.ok(tool, "search tool should be registered");
-    const execute = tool.execute.bind(tool);
-
-    // Trigger guard in session 1
-    for (let i = 1; i <= 4; i++) {
-      await callSearch(execute, query, `s1-call-${i}`);
-    }
-    const guardResult = await callSearch(execute, query, "s1-call-5");
-    assert.equal(guardResult.isError, true, "session 1 should be guarded");
-    assert.equal(guardResult.details?.errorKind, "search_loop");
-
-    // New session should clear guard state
-    await pi.fire("session_start", {}, mockCtx);
-    const firstCallSession2 = await callSearch(execute, query, "s2-call-1");
-    assert.notEqual(
-      firstCallSession2.isError,
-      true,
-      "first identical query in a new session should not be blocked by prior session state",
-    );
-  } finally {
+    t.after(() => {
     restoreFetch();
     restoreSearchEnv();
-  }
-});
+  });
 
-test("search loop guard stays armed after firing — subsequent duplicates immediately re-trigger (#1671)", async () => {
+  const pi = createMockPI();
+  const mockCtx = {
+    hasUI: false,
+    ui: { notify() {} },
+  };
+  searchExtension(pi as any);
+  await pi.fire("session_start", {}, mockCtx);
+
+  const tool = pi.getRegisteredTool();
+  assert.ok(tool, "search tool should be registered");
+  const execute = tool.execute.bind(tool);
+
+  // Trigger guard in session 1
+  for (let i = 1; i <= 4; i++) {
+    await callSearch(execute, query, `s1-call-${i}`);
+  }
+  const guardResult = await callSearch(execute, query, "s1-call-5");
+  assert.equal(guardResult.isError, true, "session 1 should be guarded");
+  assert.equal(guardResult.details?.errorKind, "search_loop");
+
+  // New session should clear guard state
+  await pi.fire("session_start", {}, mockCtx);
+  const firstCallSession2 = await callSearch(execute, query, "s2-call-1");
+  assert.notEqual(
+    firstCallSession2.isError,
+    true,
+    "first identical query in a new session should not be blocked by prior session state",
+  );
+
+});test("search loop guard stays armed after firing — subsequent duplicates immediately re-trigger (#1671)", async (t) => { {
   process.env.BRAVE_API_KEY = "test-key-loop-guard-2";
   delete process.env.TAVILY_API_KEY;
   delete process.env.OLLAMA_API_KEY;
@@ -201,42 +200,41 @@ test("search loop guard stays armed after firing — subsequent duplicates immed
   // Use a unique query so module-level state from previous test doesn't interfere
   const query = "persistent loop query";
 
-  try {
-    const pi = createMockPI();
-    registerSearchTool(pi as any);
-    const tool = pi.getRegisteredTool();
-    const execute = tool.execute.bind(tool);
-
-    // Exhaust the initial window (calls 1–3 succeed, call 4 fires guard)
-    for (let i = 1; i <= 3; i++) {
-      await callSearch(execute, query, `call-${i}`);
-    }
-    const guardFirst = await callSearch(execute, query, "call-4");
-    assert.equal(guardFirst.isError, true, "call 4 should trigger the loop guard");
-
-    // Key regression test: call 5 (and beyond) must ALSO trigger the guard.
-    // The original bug reset state on trigger, so call 5 was treated as a fresh
-    // first search and the loop restarted.
-    const guardSecond = await callSearch(execute, query, "call-5");
-    assert.equal(
-      guardSecond.isError, true,
-      "call 5 should STILL trigger the loop guard (guard must stay armed after firing)"
-    );
-    assert.equal(guardSecond.details?.errorKind, "search_loop");
-
-    // Call 6 as well — guard should keep firing
-    const guardThird = await callSearch(execute, query, "call-6");
-    assert.equal(
-      guardThird.isError, true,
-      "call 6 should STILL trigger the loop guard"
-    );
-  } finally {
+    t.after(() => {
     restoreFetch();
     restoreSearchEnv();
-  }
-});
+  });
 
-test("search loop guard resets cleanly when a different query is issued", async () => {
+  const pi = createMockPI();
+  registerSearchTool(pi as any);
+  const tool = pi.getRegisteredTool();
+  const execute = tool.execute.bind(tool);
+
+  // Exhaust the initial window (calls 1–3 succeed, call 4 fires guard)
+  for (let i = 1; i <= 3; i++) {
+    await callSearch(execute, query, `call-${i}`);
+  }
+  const guardFirst = await callSearch(execute, query, "call-4");
+  assert.equal(guardFirst.isError, true, "call 4 should trigger the loop guard");
+
+  // Key regression test: call 5 (and beyond) must ALSO trigger the guard.
+  // The original bug reset state on trigger, so call 5 was treated as a fresh
+  // first search and the loop restarted.
+  const guardSecond = await callSearch(execute, query, "call-5");
+  assert.equal(
+    guardSecond.isError, true,
+    "call 5 should STILL trigger the loop guard (guard must stay armed after firing)"
+  );
+  assert.equal(guardSecond.details?.errorKind, "search_loop");
+
+  // Call 6 as well — guard should keep firing
+  const guardThird = await callSearch(execute, query, "call-6");
+  assert.equal(
+    guardThird.isError, true,
+    "call 6 should STILL trigger the loop guard"
+  );
+
+})test("search loop guard resets cleanly when a different query is issued", async (t) => {> {
   process.env.BRAVE_API_KEY = "test-key-loop-guard-3";
   delete process.env.TAVILY_API_KEY;
   delete process.env.OLLAMA_API_KEY;
@@ -245,25 +243,26 @@ test("search loop guard resets cleanly when a different query is issued", async 
   const queryA = "query alpha reset test";
   const queryB = "query beta reset test";
 
-  try {
-    const pi = createMockPI();
-    registerSearchTool(pi as any);
-    const tool = pi.getRegisteredTool();
-    const execute = tool.execute.bind(tool);
-
-    // Trigger guard for queryA
-    for (let i = 1; i <= 4; i++) {
-      await callSearch(execute, queryA, `call-a-${i}`);
-    }
-
-    // Issue a different query — should succeed (resets the duplicate counter)
-    const resultB = await callSearch(execute, queryB, "call-b-1");
-    assert.notEqual(
-      resultB.isError, true,
-      "a different query after guard should not be treated as a loop"
-    );
-  } finally {
+    t.after(() => {
     restoreFetch();
     restoreSearchEnv();
+  });
+
+  const pi = createMockPI();
+  registerSearchTool(pi as any);
+  const tool = pi.getRegisteredTool();
+  const execute = tool.execute.bind(tool);
+
+  // Trigger guard for queryA
+  for (let i = 1; i <= 4; i++) {
+    await callSearch(execute, queryA, `call-a-${i}`);
   }
+
+  // Issue a different query — should succeed (resets the duplicate counter)
+  const resultB = await callSearch(execute, queryB, "call-b-1");
+  assert.notEqual(
+    resultB.isError, true,
+    "a different query after guard should not be treated as a loop"
+  );
+
 });

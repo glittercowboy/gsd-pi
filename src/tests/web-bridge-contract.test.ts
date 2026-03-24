@@ -336,7 +336,7 @@ test("/api/boot returns current-project workspace data, resumable sessions, onbo
   }
 });
 
-test("/api/boot uses the authoritative auto helper by default and stays snapshot-shaped", async () => {
+test("/api/boot uses the authoritative auto helper by default and stays snapshot-shaped", async (t) => {
   const fixture = makeWorkspaceFixture();
   const sessionPath = createSessionFile(fixture.projectCwd, fixture.sessionsDir, "sess-auto", "Authoritative Auto");
   const authoritativeAuto = {
@@ -394,27 +394,27 @@ test("/api/boot uses the authoritative auto helper by default and stays snapshot
     getOnboardingNeeded: () => false,
   });
 
-  try {
-    const response = await bootRoute.GET();
-    assert.equal(response.status, 200);
-    const payload = await response.json() as any;
-
-    assert.deepEqual(
-      Object.keys(payload).sort(),
-      ["auto", "bridge", "onboarding", "onboardingNeeded", "project", "projectDetection", "resumableSessions", "workspace"],
-      "/api/boot must remain snapshot-shaped while auto truth becomes authoritative",
-    );
-    assert.deepEqual(payload.auto, authoritativeAuto, "default boot path should read authoritative auto dashboard data");
-    assert.notEqual(payload.auto.startTime, 0, "authoritative auto helper must replace the all-zero fallback payload");
-    assert.equal("recovery" in payload, false, "/api/boot should not grow a recovery diagnostics payload in T01");
-    assert.equal("liveState" in payload, false, "/api/boot should not expose live invalidation payloads directly");
-  } finally {
+    t.after(() => {
     await bridge.resetBridgeServiceForTests();
     fixture.cleanup();
-  }
-});
+  });
 
-test("bridge service is a singleton for the project runtime and /api/session/command forwards real RPC responses", async () => {
+  const response = await bootRoute.GET();
+  assert.equal(response.status, 200);
+  const payload = await response.json() as any;
+
+  assert.deepEqual(
+    Object.keys(payload).sort(),
+    ["auto", "bridge", "onboarding", "onboardingNeeded", "project", "projectDetection", "resumableSessions", "workspace"],
+    "/api/boot must remain snapshot-shaped while auto truth becomes authoritative",
+  );
+  assert.deepEqual(payload.auto, authoritativeAuto, "default boot path should read authoritative auto dashboard data");
+  assert.notEqual(payload.auto.startTime, 0, "authoritative auto helper must replace the all-zero fallback payload");
+  assert.equal("recovery" in payload, false, "/api/boot should not grow a recovery diagnostics payload in T01");
+  assert.equal("liveState" in payload, false, "/api/boot should not expose live invalidation payloads directly");
+
+});
+test("bridge service is a singleton for the project runtime and /api/session/command forwards real RPC responses", async (t) => {{
   const fixture = makeWorkspaceFixture();
   const sessionPath = createSessionFile(fixture.projectCwd, fixture.sessionsDir, "sess-shared", "Shared Session");
   const harness = createHarness((command, current) => {
@@ -459,37 +459,38 @@ test("bridge service is a singleton for the project runtime and /api/session/com
     getOnboardingNeeded: () => false,
   });
 
-  try {
-    const serviceA = bridge.getProjectBridgeService();
-    const serviceB = bridge.getProjectBridgeService();
-    assert.strictEqual(serviceA, serviceB);
-
-    const first = await commandRoute.POST(
-      new Request("http://localhost/api/session/command", {
-        method: "POST",
-        body: JSON.stringify({ type: "get_state" }),
-      }),
-    );
-    const firstBody = await first.json() as any;
-    assert.equal(first.status, 200);
-    assert.equal(firstBody.success, true);
-    assert.equal(firstBody.command, "get_state");
-    assert.equal(firstBody.data.sessionId, "sess-shared");
-
-    const second = await commandRoute.POST(
-      new Request("http://localhost/api/session/command", {
-        method: "POST",
-        body: JSON.stringify({ type: "get_state" }),
-      }),
-    );
-    const secondBody = await second.json() as any;
-    assert.equal(second.status, 200);
-    assert.equal(secondBody.data.sessionId, "sess-shared");
-    assert.equal(harness.spawnCalls, 1);
-  } finally {
+    t.after(() => {
     await bridge.resetBridgeServiceForTests();
     fixture.cleanup();
-  }
+  });
+
+  const serviceA = bridge.getProjectBridgeService();
+  const serviceB = bridge.getProjectBridgeService();
+  assert.strictEqual(serviceA, serviceB);
+
+  const first = await commandRoute.POST(
+    new Request("http://localhost/api/session/command", {
+      method: "POST",
+      body: JSON.stringify({ type: "get_state" }),
+    }),
+  );
+  const firstBody = await first.json() as any;
+  assert.equal(first.status, 200);
+  assert.equal(firstBody.success, true);
+  assert.equal(firstBody.command, "get_state");
+  assert.equal(firstBody.data.sessionId, "sess-shared");
+
+  const second = await commandRoute.POST(
+    new Request("http://localhost/api/session/command", {
+      method: "POST",
+      body: JSON.stringify({ type: "get_state" }),
+    }),
+  );
+  const secondBody = await second.json() as any;
+  assert.equal(second.status, 200);
+  assert.equal(secondBody.data.sessionId, "sess-shared");
+  assert.equal(harness.spawnCalls, 1);
+
 });
 
 test("/api/session/events streams bridge status, agent events, and extension_ui_request payloads over SSE", async () => {
@@ -566,9 +567,7 @@ test("/api/session/events streams bridge status, agent events, and extension_ui_
     await bridge.resetBridgeServiceForTests();
     fixture.cleanup();
   }
-});
-
-test("bridge command/runtime failures are inspectable and redact secret material", async () => {
+});test("bridge command/runtime failures are inspectable and redact secret material", async (t) => { {
   const fixture = makeWorkspaceFixture();
   const sessionPath = createSessionFile(fixture.projectCwd, fixture.sessionsDir, "sess-failure", "Failure Session");
 
@@ -631,41 +630,40 @@ test("bridge command/runtime failures are inspectable and redact secret material
     getOnboardingNeeded: () => false,
   });
 
-  try {
-    const response = await commandRoute.POST(
-      new Request("http://localhost/api/session/command", {
-        method: "POST",
-        body: JSON.stringify({ type: "bash", command: "echo test" }),
-      }),
-    );
-    const body = await response.json() as any;
-
-    assert.equal(response.status, 502);
-    assert.equal(body.success, false);
-    assert.match(body.error, /authentication failed/i);
-    assert.doesNotMatch(body.error, /sk-test-command-secret-9999/);
-
-    harness.stderr("fatal runtime error: sk-after-attach-12345");
-    harness.exit(1);
-    await waitForMicrotasks();
-
-    const snapshot = bridge.getProjectBridgeService().getSnapshot();
-    assert.equal(snapshot.phase, "failed");
-    assert.equal(snapshot.lastError?.afterSessionAttachment, true);
-    assert.doesNotMatch(snapshot.lastError?.message ?? "", /sk-after-attach-12345|sk-test-command-secret-9999/);
-  } finally {
+    t.after(() => {
     await bridge.resetBridgeServiceForTests();
     onboarding.resetOnboardingServiceForTests();
     fixture.cleanup();
-  }
+  });
+
+  const response = await commandRoute.POST(
+    new Request("http://localhost/api/session/command", {
+      method: "POST",
+      body: JSON.stringify({ type: "bash", command: "echo test" }),
+    }),
+  );
+  const body = await response.json() as any;
+
+  assert.equal(response.status, 502);
+  assert.equal(body.success, false);
+  assert.match(body.error, /authentication failed/i);
+  assert.doesNotMatch(body.error, /sk-test-command-secret-9999/);
+
+  harness.stderr("fatal runtime error: sk-after-attach-12345");
+  harness.exit(1);
+  await waitForMicrotasks();
+
+  const snapshot = bridge.getProjectBridgeService().getSnapshot();
+  assert.equal(snapshot.phase, "failed");
+  assert.equal(snapshot.lastError?.afterSessionAttachment, true);
+  assert.doesNotMatch(snapshot.lastError?.message ?? "", /sk-after-attach-12345|sk-test-command-secret-9999/);
+
 });
 
 // ---------------------------------------------------------------------------
 // Bug — readdirSync must be available in bridge-service for session listing
 // (Fixes #1936: /api/boot returns 500 when readdirSync is missing)
-// ---------------------------------------------------------------------------
-
-test("/api/boot lists sessions from the real filesystem via readdirSync (#1936)", async () => {
+// --------------------------------------------------------------------------test("/api/boot lists sessions from the real filesystem via readdirSync (#1936)", async (t) => {> {
   const fixture = makeWorkspaceFixture();
   const sessionPath = createSessionFile(fixture.projectCwd, fixture.sessionsDir, "sess-fs", "FS Session");
   const harness = createHarness((command, current) => {
@@ -712,24 +710,25 @@ test("/api/boot lists sessions from the real filesystem via readdirSync (#1936)"
     getOnboardingNeeded: () => false,
   });
 
-  try {
-    const response = await bootRoute.GET();
-    assert.equal(response.status, 200, "/api/boot must not return 500 — readdirSync must be available");
-    const payload = await response.json() as any;
-
-    // The real listProjectSessions should have found the session file via readdirSync
-    assert.ok(
-      Array.isArray(payload.resumableSessions),
-      "boot payload must include resumableSessions array",
-    );
-    assert.equal(
-      payload.resumableSessions.length,
-      1,
-      "readdirSync-based session listing must find the test session file",
-    );
-    assert.equal(payload.resumableSessions[0].id, "sess-fs");
-  } finally {
+    t.after(() => {
     await bridge.resetBridgeServiceForTests();
     fixture.cleanup();
-  }
+  });
+
+  const response = await bootRoute.GET();
+  assert.equal(response.status, 200, "/api/boot must not return 500 — readdirSync must be available");
+  const payload = await response.json() as any;
+
+  // The real listProjectSessions should have found the session file via readdirSync
+  assert.ok(
+    Array.isArray(payload.resumableSessions),
+    "boot payload must include resumableSessions array",
+  );
+  assert.equal(
+    payload.resumableSessions.length,
+    1,
+    "readdirSync-based session listing must find the test session file",
+  );
+  assert.equal(payload.resumableSessions[0].id, "sess-fs");
+
 });

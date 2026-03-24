@@ -114,7 +114,7 @@ test('launchWebMode forwards custom host, port, and allowed origins to subproces
   }
 })
 
-test('launchWebMode omits GSD_WEB_ALLOWED_ORIGINS when none provided', async () => {
+test('launchWebMode omits GSD_WEB_ALLOWED_ORIGINS when none provided', async (t) => {
   const tmp = mkdtempSync(join(tmpdir(), 'gsd-web-no-origins-'))
   const standaloneRoot = join(tmp, 'dist', 'web', 'standalone')
   const serverPath = join(standaloneRoot, 'server.js')
@@ -123,33 +123,32 @@ test('launchWebMode omits GSD_WEB_ALLOWED_ORIGINS when none provided', async () 
 
   let spawnEnv: Record<string, string> | undefined
 
-  try {
-    await webMode.launchWebMode(
-      {
-        cwd: '/tmp/project',
-        projectSessionsDir: '/tmp/.gsd/sessions',
-        agentDir: '/tmp/.gsd/agent',
-        packageRoot: tmp,
-      },
-      {
-        initResources: () => {},
-        resolvePort: async () => 45000,
-        env: { CLEAN_ENV: '1' },
-        spawn: (_command, _args, options) => {
-          spawnEnv = (options as { env: Record<string, string> }).env
-          return { pid: 99999, once: () => undefined, unref: () => {} } as any
-        },
-        waitForBootReady: async () => undefined,
-        openBrowser: () => {},
-        stderr: { write: () => true },
-      },
-    )
+    t.after(() => { rmSync(tmp, { recursive: true, force: true }) });
 
-    assert.ok(spawnEnv)
-    assert.equal(spawnEnv!.GSD_WEB_ALLOWED_ORIGINS, undefined)
-  } finally {
-    rmSync(tmp, { recursive: true, force: true })
-  }
+  await webMode.launchWebMode(
+    {
+      cwd: '/tmp/project',
+      projectSessionsDir: '/tmp/.gsd/sessions',
+      agentDir: '/tmp/.gsd/agent',
+      packageRoot: tmp,
+    },
+    {
+      initResources: () => {},
+      resolvePort: async () => 45000,
+      env: { CLEAN_ENV: '1' },
+      spawn: (_command, _args, options) => {
+        spawnEnv = (options as { env: Record<string, string> }).env
+        return { pid: 99999, once: () => undefined, unref: () => {} } as any
+      },
+      waitForBootReady: async () => undefined,
+      openBrowser: () => {},
+      stderr: { write: () => true },
+    },
+  )
+
+  assert.ok(spawnEnv)
+  assert.equal(spawnEnv!.GSD_WEB_ALLOWED_ORIGINS, undefined)
+
 })
 
 // ─── runWebCliBranch end-to-end forwarding ───────────────────────────
