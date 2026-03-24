@@ -285,7 +285,6 @@ test("runUnitPhase emits unit-start and unit-end with causedBy reference", async
     prompt: "do stuff",
     finalPrompt: "do stuff",
     pauseAfterUatDispatch: false,
-    observabilityIssues: [],
     state: { phase: "executing", activeMilestone: { id: "M001" }, activeSlice: { id: "S01" }, registry: [], blockers: [] } as any,
     mid: "M001",
     midTitle: "Test",
