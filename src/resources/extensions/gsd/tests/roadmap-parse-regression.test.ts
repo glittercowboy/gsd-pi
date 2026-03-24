@@ -457,6 +457,83 @@ async function main(): Promise<void> {
     assertEq(slices[1].done, false, '#1736 checkbox compat: S02 not done');
   }
 
+  // ═══════════════════════════════════════════════════════════════════════
+
+  console.log('\n=== U. Bullet-checkbox hybrid format (### - [ ] S01 — Title) ===');
+
+  {
+    // Full roadmap with bullet-checkbox hybrid headers under ## Slices
+    const content = [
+      '# M007: Feature Milestone',
+      '',
+      '## Slices',
+      '',
+      '### - [ ] S01 — Setup Foundation',
+      '',
+      'Set up the dev environment.',
+      '',
+      '### - [x] S02 — Core Implementation',
+      '',
+      'Build the core logic.',
+      '',
+      '### - [ ] S03 — Integration Testing',
+      '',
+      'Run integration tests.',
+      '',
+    ].join('\n');
+
+    const slices = parseRoadmapSlices(content);
+    assertEq(slices.length, 3, 'bullet-checkbox: 3 slices parsed');
+    assertEq(slices[0].id, 'S01', 'bullet-checkbox: S01 id');
+    assertEq(slices[0].title, 'Setup Foundation', 'bullet-checkbox: S01 title');
+    assertEq(slices[0].done, false, 'bullet-checkbox: S01 not done');
+    assertEq(slices[1].id, 'S02', 'bullet-checkbox: S02 id');
+    assertEq(slices[1].done, true, 'bullet-checkbox: S02 done');
+    assertEq(slices[2].id, 'S03', 'bullet-checkbox: S03 id');
+    assertEq(slices[2].done, false, 'bullet-checkbox: S03 not done');
+  }
+
+  {
+    // Bullet without checkbox (### - S01 — Title)
+    const content = [
+      '# M008: Simple Milestone',
+      '',
+      '### - S01 — First Slice',
+      '',
+      'Content.',
+      '',
+      '### - S02 — Second Slice',
+      '',
+      'More content.',
+      '',
+    ].join('\n');
+
+    const slices = parseRoadmapSlices(content);
+    assertEq(slices.length, 2, 'bullet-no-checkbox: 2 slices parsed');
+    assertEq(slices[0].id, 'S01', 'bullet-no-checkbox: S01 id');
+    assertEq(slices[0].title, 'First Slice', 'bullet-no-checkbox: S01 title');
+    assertEq(slices[0].done, false, 'bullet-no-checkbox: S01 not done');
+    assertEq(slices[1].id, 'S02', 'bullet-no-checkbox: S02 id');
+  }
+
+  {
+    // Bare checkbox without bullet (### [x] S01 — Title) — PR #2265 pattern
+    const content = '### [x] S01 — Title\n\nContent.\n\n### [ ] S02 — Other\n\nMore.\n';
+    const slices = parseRoadmapSlices(content);
+    assertEq(slices.length, 2, 'bare-checkbox: 2 slices parsed');
+    assertEq(slices[0].done, true, 'bare-checkbox: S01 done');
+    assertEq(slices[1].done, false, 'bare-checkbox: S02 not done');
+  }
+
+  {
+    // H2 bullet-checkbox variant
+    const content = '## - [x] S01 — Done Feature\n\nContent.\n\n## - [ ] S02 — Pending\n\nMore.\n';
+    const slices = parseRoadmapSlices(content);
+    assertEq(slices.length, 2, 'H2-bullet-checkbox: 2 slices');
+    assertEq(slices[0].done, true, 'H2-bullet-checkbox: S01 done');
+    assertEq(slices[1].done, false, 'H2-bullet-checkbox: S02 not done');
+  }
+
   report();
 }
 
