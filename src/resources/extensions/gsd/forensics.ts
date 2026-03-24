@@ -36,7 +36,7 @@ import { ensurePreferencesFile, serializePreferencesToFrontmatter } from "./comm
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-interface ForensicAnomaly {
+export interface ForensicAnomaly {
   type: "stuck-loop" | "cost-spike" | "timeout" | "missing-artifact" | "crash" | "doctor-issue" | "error-trace";
   severity: "info" | "warning" | "error";
   unitType?: string;
@@ -394,13 +394,29 @@ function loadCompletedKeys(basePath: string): string[] {
 
 // ─── Anomaly Detectors ───────────────────────────────────────────────────────
 
-function detectStuckLoops(units: UnitMetrics[], anomalies: ForensicAnomaly[]): void {
-  const counts = new Map<string, number>();
+/**
+ * Detect units that were dispatched multiple times (stuck in a loop).
+ *
+ * Counts distinct dispatches by grouping on (type, id, startedAt) first to
+ * collapse idle-watchdog duplicate snapshots (#1943), then counts unique
+ * startedAt values per type/id to determine actual dispatch count.
+ *
+ * Exported for testability.
+ */
+export function detectStuckLoops(units: UnitMetrics[], anomalies: ForensicAnomaly[]): void {
+  // First, collect unique startedAt values per type/id key
+  const dispatchMap = new Map<string, Set<number>>();
   for (const u of units) {
     const key = `${u.type}/${u.id}`;
-    counts.set(key, (counts.get(key) ?? 0) + 1);
+    let starts = dispatchMap.get(key);
+    if (!starts) {
+      starts = new Set();
+      dispatchMap.set(key, starts);
+    }
+    starts.add(u.startedAt);
   }
-  for (const [key, count] of counts) {
+  for (const [key, starts] of dispatchMap) {
+    const count = starts.size;
     if (count > 1) {
       const [unitType, ...idParts] = key.split("/");
       anomalies.push({
