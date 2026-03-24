@@ -68,6 +68,12 @@ export type DoctorIssueCode =
   | "metrics_ledger_bloat"
   | "metrics_ledger_corrupt"
   | "large_planning_file"
+  // Slice completion checks
+  | "all_tasks_done_missing_slice_summary"
+  | "all_tasks_done_missing_slice_uat"
+  | "all_tasks_done_roadmap_not_checked"
+  | "slice_checked_missing_summary"
+  | "slice_checked_missing_uat"
   // Slow environment checks (opt-in via --build / --test flags)
   | "env_build"
   | "env_test";

@@ -469,6 +469,13 @@ export async function runGSDDoctor(basePath: string, options?: { fix?: boolean; 
     return true;
   };
 
+  /** Record a fixable issue during dry-run mode (logged but not applied). */
+  const dryRunCanFix = (code: DoctorIssueCode, description: string): void => {
+    if (fix && dryRun) {
+      fixesApplied.push(`[dry-run] would ${description}`);
+    }
+  };
+
   const prefs = loadEffectiveGSDPreferences();
   if (prefs) {
     const prefIssues = validatePreferenceShape(prefs.preferences);
@@ -759,6 +766,7 @@ export async function runGSDDoctor(basePath: string, options?: { fix?: boolean; 
       } catch { /* non-fatal */ }
 
       let allTasksDone = plan.tasks.length > 0;
+      let taskUncheckedByDoctor = false;
       for (const task of plan.tasks) {
         const taskUnitId = `${unitId}/${task.id}`;
         const summaryPath = resolveTaskFile(basePath, milestoneId, slice.id, task.id, "SUMMARY");
