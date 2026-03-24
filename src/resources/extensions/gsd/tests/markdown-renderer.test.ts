@@ -425,9 +425,7 @@ test('── markdown-renderer: renderPlanCheckboxes bidirectional ──', asyn
   }
 });
 
-console.log('\n── markdown-renderer: renderPlanFromDb creates parse-compatible slice plan + task plan files ──');
-
-{
+test('── markdown-renderer: renderPlanFromDb creates parse-compatible slice plan + task plan files ──', async () => {
   const tmpDir = makeTmpDir();
   const dbPath = path.join(tmpDir, '.gsd', 'gsd.db');
   openDatabase(dbPath);
@@ -524,11 +522,9 @@ console.log('\n── markdown-renderer: renderPlanFromDb creates parse-compatib
     closeDatabase();
     cleanupDir(tmpDir);
   }
-}
+});
 
-console.log('\n── markdown-renderer: renderTaskPlanFromDb throws for missing task ──');
-
-{
+test('── markdown-renderer: renderTaskPlanFromDb throws for missing task ──', async () => {
   const tmpDir = makeTmpDir();
   const dbPath = path.join(tmpDir, '.gsd', 'gsd.db');
   openDatabase(dbPath);
@@ -551,7 +547,7 @@ console.log('\n── markdown-renderer: renderTaskPlanFromDb throws for missing
     closeDatabase();
     cleanupDir(tmpDir);
   }
-}
+});
 
 
 // ═══════════════════════════════════════════════════════════════════════════
