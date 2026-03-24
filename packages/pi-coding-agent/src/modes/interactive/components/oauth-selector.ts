@@ -96,14 +96,14 @@ export class OAuthSelectorComponent extends Container {
 
 	handleInput(keyData: string): void {
 		const kb = getEditorKeybindings();
-		// Up arrow
+		// Up arrow (wrap)
 		if (kb.matches(keyData, "selectUp")) {
-			this.selectedIndex = Math.max(0, this.selectedIndex - 1);
+			this.selectedIndex = this.selectedIndex === 0 ? this.allProviders.length - 1 : this.selectedIndex - 1;
 			this.updateList();
 		}
-		// Down arrow
+		// Down arrow (wrap)
 		else if (kb.matches(keyData, "selectDown")) {
-			this.selectedIndex = Math.min(this.allProviders.length - 1, this.selectedIndex + 1);
+			this.selectedIndex = this.selectedIndex === this.allProviders.length - 1 ? 0 : this.selectedIndex + 1;
 			this.updateList();
 		}
 		// Enter

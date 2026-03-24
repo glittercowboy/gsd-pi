@@ -23,7 +23,7 @@ const dark: ThemeJson = {
 		blue: "#5f87ff",
 		green: "#b5bd68",
 		red: "#cc6666",
-		yellow: "#ffff00",
+		yellow: "#e6b800",
 		gray: "#808080",
 		dimGray: "#666666",
 		darkGray: "#505050",

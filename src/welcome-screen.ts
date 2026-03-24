@@ -8,6 +8,7 @@
 
 import os from 'node:os'
 import chalk from 'chalk'
+import stripAnsi from 'strip-ansi'
 import { GSD_LOGO } from './logo.js'
 
 export interface WelcomeScreenOptions {
@@ -24,7 +25,7 @@ function getShortCwd(): string {
 
 /** Visible length — strips ANSI escape codes before measuring. */
 function visLen(s: string): number {
-  return s.replace(/\x1b\[[0-9;]*m/g, '').length
+  return stripAnsi(s).length
 }
 
 /** Right-pad a string to the given visible width. */
