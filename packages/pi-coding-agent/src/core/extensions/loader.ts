@@ -568,6 +568,39 @@ function createExtensionAPI(
 	return api;
 }
 
+/**
+ * Heuristic patterns that indicate TypeScript syntax in a source file.
+ * Used to detect when a .js file accidentally contains TypeScript code
+ * and provide a helpful error message instead of a cryptic parse failure.
+ */
+const TS_SYNTAX_PATTERNS: RegExp[] = [
+	// Variable type annotations: const name: string, let count: number
+	/\b(?:const|let|var)\s+\w+\s*:\s*(?:string|number|boolean|any|void|never|unknown|object|bigint|symbol|undefined|null)\b/,
+	// Parameter type annotations: (api: ExtensionAPI)
+	/\(\s*\w+\s*:\s*[A-Z]\w*/,
+	// Return type annotations: ): Promise<void> {  or  ): string =>
+	/\)\s*:\s*(?:Promise|string|number|boolean|void|any|never|unknown)\b/,
+	// Interface declarations
+	/\binterface\s+[A-Z]\w*\s*(?:<[^>]*>)?\s*\{/,
+	// Type alias declarations
+	/\btype\s+[A-Z]\w*\s*(?:<[^>]*>)?\s*=/,
+	// Angle-bracket type assertions: <Type>value
+	/(?:as\s+\w+(?:<[^>]*>)?)\s*[;,)\]}]/,
+	// Generic type parameters on functions: function foo<T>
+	/\bfunction\s+\w+\s*<[^>]+>/,
+	// Enum declarations
+	/\benum\s+[A-Z]\w*\s*\{/,
+];
+
+/**
+ * Check whether a source string likely contains TypeScript syntax.
+ * This is a heuristic — it may produce false positives for unusual JS,
+ * but is tuned to catch the most common TS-in-JS mistakes.
+ */
+export function containsTypeScriptSyntax(source: string): boolean {
+	return TS_SYNTAX_PATTERNS.some((pattern) => pattern.test(source));
+}
+
 async function loadExtensionModule(extensionPath: string) {
 	// Pre-compiled extension loading: if the source is .ts and a sibling .js
 	// file exists with matching or newer mtime, use native import() to skip
@@ -672,6 +705,22 @@ async function loadExtension(
 				return { extension: null, error: null };
 			}
 			logExtensionTiming(extensionPath, Date.now() - start, "failed");
+
+			// Check if a .js file contains TypeScript syntax
+			if (resolvedPath.endsWith(".js")) {
+				try {
+					const source = fs.readFileSync(resolvedPath, "utf-8");
+					if (containsTypeScriptSyntax(source)) {
+						return {
+							extension: null,
+							error: `Extension file "${extensionPath}" appears to contain TypeScript syntax but has a .js extension. Rename it to .ts so the loader can compile it.`,
+						};
+					}
+				} catch {
+					// Could not read file — fall through to generic error
+				}
+			}
+
 			return { extension: null, error: `Extension does not export a valid factory function: ${extensionPath}` };
 		}
 
@@ -684,6 +733,23 @@ async function loadExtension(
 	} catch (err) {
 		const message = err instanceof Error ? err.message : String(err);
 		logExtensionTiming(extensionPath, Date.now() - start, "failed");
+
+		// Check if a .js file contains TypeScript syntax — the parse error from
+		// jiti/Node is often cryptic, so surface a clearer diagnostic.
+		if (resolvedPath.endsWith(".js")) {
+			try {
+				const source = fs.readFileSync(resolvedPath, "utf-8");
+				if (containsTypeScriptSyntax(source)) {
+					return {
+						extension: null,
+						error: `Extension file "${extensionPath}" appears to contain TypeScript syntax but has a .js extension. Rename it to .ts so the loader can compile it.`,
+					};
+				}
+			} catch {
+				// Could not read file — fall through to generic error
+			}
+		}
+
 		return { extension: null, error: `Failed to load extension: ${message}` };
 	}
 }
