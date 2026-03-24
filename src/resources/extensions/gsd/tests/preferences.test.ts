@@ -15,6 +15,7 @@ import {
   applyModeDefaults,
   getIsolationMode,
   parsePreferencesMarkdown,
+  renderPreferencesForSystemPrompt,
 } from "../preferences.ts";
 import type { GSDPreferences, GSDModelConfigV2, GSDPhaseModelConfig } from "../preferences.ts";
 
@@ -351,4 +352,77 @@ test("handles empty models config", () => {
   const prefs = parsePreferencesMarkdown("---\nversion: 1\n---\n");
   assert.notEqual(prefs, null);
   assert.equal(prefs!.models, undefined);
+});
+
+// ── Communication language preference (#2124) ────────────────────────────────
+
+test("communication_language is recognized as a known preference key", () => {
+  const { warnings } = validatePreferences({ communication_language: "Polish" });
+  const unknownKeyWarning = warnings.find(w => w.includes("communication_language"));
+  assert.equal(unknownKeyWarning, undefined, "should not warn about unknown key");
+});
+
+test("communication_language validates non-empty string", () => {
+  const { errors, preferences } = validatePreferences({ communication_language: "French" });
+  assert.equal(errors.length, 0);
+  assert.equal(preferences.communication_language, "French");
+});
+
+test("communication_language trims whitespace", () => {
+  const { errors, preferences } = validatePreferences({ communication_language: "  Polish  " });
+  assert.equal(errors.length, 0);
+  assert.equal(preferences.communication_language, "Polish");
+});
+
+test("communication_language rejects empty string", () => {
+  const { errors } = validatePreferences({ communication_language: "" });
+  assert.ok(errors.length > 0);
+  assert.ok(errors[0].includes("communication_language"));
+});
+
+test("communication_language rejects non-string values", () => {
+  const { errors } = validatePreferences({ communication_language: 42 as any });
+  assert.ok(errors.length > 0);
+  assert.ok(errors[0].includes("communication_language"));
+});
+
+test("communication_language parses from YAML frontmatter", () => {
+  const content = "---\ncommunication_language: Polish\n---\n";
+  const prefs = parsePreferencesMarkdown(content);
+  assert.notEqual(prefs, null);
+  assert.equal(prefs!.communication_language, "Polish");
+});
+
+test("renderPreferencesForSystemPrompt includes language directive for non-English language", () => {
+  const prefs: GSDPreferences = { communication_language: "Polish" };
+  const rendered = renderPreferencesForSystemPrompt(prefs);
+  assert.ok(rendered.includes("## Communication Language"), "should have Communication Language heading");
+  assert.ok(rendered.includes("Communicate with the user in Polish"), "should include Polish directive");
+  assert.ok(rendered.includes("Technical terms, code, file paths, and command names should remain in English"), "should keep technical terms in English");
+});
+
+test("renderPreferencesForSystemPrompt omits language directive for English", () => {
+  const prefs: GSDPreferences = { communication_language: "English" };
+  const rendered = renderPreferencesForSystemPrompt(prefs);
+  assert.ok(!rendered.includes("## Communication Language"), "should not include language section for English");
+});
+
+test("renderPreferencesForSystemPrompt omits language directive for english (case-insensitive)", () => {
+  const prefs: GSDPreferences = { communication_language: "english" };
+  const rendered = renderPreferencesForSystemPrompt(prefs);
+  assert.ok(!rendered.includes("## Communication Language"), "should not include language section for lowercase english");
+});
+
+test("renderPreferencesForSystemPrompt omits language directive when not set", () => {
+  const prefs: GSDPreferences = {};
+  const rendered = renderPreferencesForSystemPrompt(prefs);
+  assert.ok(!rendered.includes("## Communication Language"), "should not include language section when unset");
+});
+
+test("communication_language merges correctly (project overrides global)", () => {
+  const global: GSDPreferences = { communication_language: "French" };
+  const project: GSDPreferences = { communication_language: "Polish" };
+  const merged = applyModeDefaults("solo", { ...global, ...project });
+  // applyModeDefaults applies mode defaults as base, project prefs override
+  assert.equal(merged.communication_language, "Polish");
 });

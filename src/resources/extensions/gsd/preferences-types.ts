@@ -91,6 +91,7 @@ export const KNOWN_PREFERENCE_KEYS = new Set<string>([
   "service_tier",
   "forensics_dedup",
   "show_token_cost",
+  "communication_language",
 ]);
 
 /** Canonical list of all dispatch unit types. */
@@ -229,6 +230,8 @@ export interface GSDPreferences {
   forensics_dedup?: boolean;
   /** Opt-in: show per-prompt and cumulative session token cost in the footer. Default: false. */
   show_token_cost?: boolean;
+  /** Communication language preference. When set to a non-English language (e.g. "Polish", "French"), GSD communicates in that language. Technical terms, code, and file paths remain in English. */
+  communication_language?: string;
 }
 
 export interface LoadedGSDPreferences {

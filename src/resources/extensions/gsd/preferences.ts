@@ -343,6 +343,7 @@ function mergePreferences(base: GSDPreferences, override: GSDPreferences): GSDPr
     service_tier: override.service_tier ?? base.service_tier,
     forensics_dedup: override.forensics_dedup ?? base.forensics_dedup,
     show_token_cost: override.show_token_cost ?? base.show_token_cost,
+    communication_language: override.communication_language ?? base.communication_language,
   };
 }
 
@@ -456,6 +457,14 @@ export function renderPreferencesForSystemPrompt(preferences: GSDPreferences, re
     for (const instruction of preferences.custom_instructions) {
       lines.push(`  - ${instruction}`);
     }
+  }
+
+  // ─── Communication Language Directive ──────────────────────────────
+  const lang = preferences.communication_language?.trim();
+  if (lang && lang.toLowerCase() !== "english") {
+    lines.push("");
+    lines.push("## Communication Language");
+    lines.push(`Communicate with the user in ${lang}. Write all explanations, questions, and status messages in ${lang}. Technical terms, code, file paths, and command names should remain in English.`);
   }
 
   return lines.join("\n");

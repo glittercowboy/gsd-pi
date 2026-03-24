@@ -756,5 +756,14 @@ export function validatePreferences(preferences: GSDPreferences): {
     }
   }
 
+  // ─── Communication Language ─────────────────────────────────────────
+  if (preferences.communication_language !== undefined) {
+    if (typeof preferences.communication_language === "string" && preferences.communication_language.trim() !== "") {
+      validated.communication_language = preferences.communication_language.trim();
+    } else {
+      errors.push("communication_language must be a non-empty string (e.g. \"Polish\", \"French\", \"English\")");
+    }
+  }
+
   return { preferences: validated, errors, warnings };
 }
