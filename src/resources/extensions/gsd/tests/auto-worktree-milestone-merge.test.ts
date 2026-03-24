@@ -463,8 +463,11 @@ async function main(): Promise<void> {
       assertTrue(existsSync(join(repo, "sync-test.ts")), "sync-test.ts on main after merge");
     }
 
-    // ─── Test 11: #1738 Bug 1+2 — dirty tree merge preserves branch end-to-end ──
-    console.log("\n=== #1738 e2e: dirty tree rejection preserves branch ===");
+    // ─── Test 11: #1738 Bug 1+2 → #2151: dirty tree auto-stashed, merge succeeds ──
+    // Before #2151, a conflicting dirty file in the project root would cause
+    // the squash merge to reject.  Now auto-stash moves it out of the way,
+    // the merge succeeds, and the user's local file goes to the stash.
+    console.log("\n=== #2151: dirty tree auto-stashed, merge succeeds ===");
     {
       const repo = freshRepo();
       const wtPath = createAutoWorktree(repo, "M100");
@@ -473,31 +476,21 @@ async function main(): Promise<void> {
         { file: "e2e.ts", content: "export const e2e = true;\n", message: "add e2e" },
       ]);
 
+      // Create a conflicting local file — previously blocked the merge.
       writeFileSync(join(repo, "e2e.ts"), "// conflicting local file\n");
 
       const roadmap = makeRoadmap("M100", "E2E dirty tree", [
         { id: "S01", title: "E2E test" },
       ]);
 
-      let threw = false;
-      let errorMsg = "";
-      try {
-        mergeMilestoneToMain(repo, "M100", roadmap);
-      } catch (err: unknown) {
-        threw = true;
-        errorMsg = err instanceof Error ? err.message : String(err);
-      }
-      assertTrue(threw, "#1738 e2e: throws on dirty working tree");
-      assertTrue(
-        errorMsg.includes("dirty") || errorMsg.includes("untracked") || errorMsg.includes("overwritten"),
-        "#1738 e2e: error identifies dirty tree cause",
-      );
+      // With auto-stash (#2151), the merge should succeed.
+      const result = mergeMilestoneToMain(repo, "M100", roadmap);
+      assertTrue(result.commitMessage.includes("feat(M100)"), "#2151: merge succeeds after auto-stash");
 
-      const branches = run("git branch", repo);
-      assertTrue(
-        branches.includes("milestone/M100"),
-        "#1738 e2e: milestone branch preserved on dirty tree rejection",
-      );
+      // The milestone code should be on main.
+      assertTrue(existsSync(join(repo, "e2e.ts")), "#2151: e2e.ts merged to main");
+      const content = readFileSync(join(repo, "e2e.ts"), "utf-8");
+      assertEq(content, "export const e2e = true;\n", "#2151: merged content is from milestone branch");
     }
 
     // ─── Test 12: Throw on unanchored code changes after empty commit (#1792) ─
@@ -770,6 +763,8 @@ async function main(): Promise<void> {
       );
       assertTrue(existsSync(join(repo, "real-code.ts")), "real-code.ts merged to main");
     }
+
+    // Tests 20 and 21 for #2151 are in auto-stash-merge.test.ts (node:test format).
 
   } finally {
     process.chdir(savedCwd);

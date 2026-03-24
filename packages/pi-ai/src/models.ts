@@ -1,15 +1,31 @@
 import { MODELS } from "./models.generated.js";
+import { CUSTOM_MODELS } from "./models.custom.js";
 import type { Api, KnownProvider, Model, Usage } from "./types.js";
 
 const modelRegistry: Map<string, Map<string, Model<Api>>> = new Map();
 
-// Initialize registry from MODELS on module load
+// Initialize registry from auto-generated MODELS (models.dev catalog)
 for (const [provider, models] of Object.entries(MODELS)) {
 	const providerModels = new Map<string, Model<Api>>();
 	for (const [id, model] of Object.entries(models)) {
 		providerModels.set(id, model as Model<Api>);
 	}
 	modelRegistry.set(provider, providerModels);
+}
+
+// Merge manually-maintained custom providers that are NOT in models.dev.
+// Custom models are additive — they never overwrite generated entries.
+// See: https://github.com/gsd-build/gsd-2/issues/2339
+for (const [provider, models] of Object.entries(CUSTOM_MODELS)) {
+	if (!modelRegistry.has(provider)) {
+		modelRegistry.set(provider, new Map<string, Model<Api>>());
+	}
+	const providerModels = modelRegistry.get(provider)!;
+	for (const [id, model] of Object.entries(models)) {
+		if (!providerModels.has(id)) {
+			providerModels.set(id, model as Model<Api>);
+		}
+	}
 }
 
 /** Providers that have entries in the generated MODELS constant */

@@ -54,6 +54,7 @@ export interface WorkerInfo {
   state: "running" | "paused" | "stopped" | "error";
   completedUnits: number;
   cost: number;
+  cleanup?: () => void;
 }
 
 export interface OrchestratorState {
@@ -357,6 +358,16 @@ export async function startParallel(
 
   const config = resolveParallelConfig(prefs);
 
+  // Release any leftover state from a previous session before reassigning
+  if (state) {
+    for (const w of state.workers.values()) {
+      w.cleanup?.();
+      w.cleanup = undefined;
+      w.process = null;
+    }
+    state.workers.clear();
+  }
+
   // Try to restore from a previous crash
   const restored = restoreState(basePath);
   if (restored && restored.workers.length > 0) {
@@ -598,11 +609,25 @@ export function spawnWorker(
     worktreePath: worker.worktreePath,
   });
 
+  // Store cleanup function to remove all listeners from the child process.
+  // This prevents listener accumulation when workers are respawned, since
+  // handler closures capture milestoneId and other data that would otherwise
+  // be retained indefinitely.
+  worker.cleanup = () => {
+    child.stdout?.removeAllListeners();
+    child.stderr?.removeAllListeners();
+    child.removeAllListeners();
+  };
+
   // Handle worker exit
   child.on("exit", (code) => {
     if (!state) return;
     const w = state.workers.get(milestoneId);
     if (!w) return;
+
+    // Remove all stream listeners to release closure references
+    w.cleanup?.();
+    w.cleanup = undefined;
 
     w.process = null;
     if (w.state === "stopped") return; // graceful stop, already handled
@@ -795,6 +820,10 @@ export async function stopParallel(
       await waitForWorkerExit(worker, 250);
     }
 
+    // Remove stream listeners before releasing the process handle
+    worker.cleanup?.();
+    worker.cleanup = undefined;
+
     // Update in-memory state
     worker.state = "stopped";
     worker.process = null;
@@ -880,6 +909,8 @@ export function refreshWorkerStatuses(
   for (const mid of staleIds) {
     const worker = state.workers.get(mid);
     if (worker) {
+      worker.cleanup?.();
+      worker.cleanup = undefined;
       worker.state = "error";
       worker.process = null;
     }
@@ -897,6 +928,8 @@ export function refreshWorkerStatuses(
     const diskStatus = statusMap.get(mid);
     if (!diskStatus) {
       if (!isPidAlive(worker.pid)) {
+        worker.cleanup?.();
+        worker.cleanup = undefined;
         worker.state = worker.completedUnits > 0 ? "stopped" : "error";
         worker.process = null;
       }
@@ -938,5 +971,15 @@ export function isBudgetExceeded(): boolean {
 
 /** Reset orchestrator state. Called on clean shutdown. */
 export function resetOrchestrator(): void {
+  if (state) {
+    // Explicitly release all WorkerInfo references and run any pending
+    // cleanup callbacks so child process stream closures are freed.
+    for (const w of state.workers.values()) {
+      w.cleanup?.();
+      w.cleanup = undefined;
+      w.process = null;
+    }
+    state.workers.clear();
+  }
   state = null;
 }

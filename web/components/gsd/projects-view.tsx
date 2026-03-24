@@ -317,22 +317,35 @@ export function ProjectsPanel({
 
   const handleDevRootSaved = useCallback(
     async (newRoot: string) => {
-      setDevRoot(newRoot)
       setLoading(true)
       setError(null)
       try {
-        const discovered = await loadProjects(newRoot)
-        setProjects(discovered)
+        // Validate path and persist in a single call
+        const res = await authFetch("/api/switch-root", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ devRoot: newRoot }),
+        })
+
+        if (!res.ok) {
+          const body = await res.json().catch(() => ({}))
+          throw new Error((body as { error?: string }).error ?? `Request failed (${res.status})`)
+        }
+
+        const data = await res.json() as { devRoot: string; projects: ProjectMetadata[] }
+        setDevRoot(data.devRoot)
+        setProjects(data.projects)
       } catch (err) {
-        setError(err instanceof Error ? err.message : "Failed to load projects")
+        setError(err instanceof Error ? err.message : "Failed to switch project root")
       } finally {
         setLoading(false)
       }
     },
-    [loadProjects],
+    [],
   )
 
   const [newProjectOpen, setNewProjectOpen] = useState(false)
+  const [changeRootOpen, setChangeRootOpen] = useState(false)
   const workspaceState = useGSDWorkspaceState()
 
   const handleProjectCreated = useCallback(
@@ -468,11 +481,19 @@ export function ProjectsPanel({
           <div>
             <h2 className="text-base font-semibold text-foreground">Projects</h2>
             {devRoot && !loading && (
-              <p className="mt-0.5 text-xs text-muted-foreground">
-                <code className="rounded bg-muted px-1 py-0.5 font-mono text-[10px]">{devRoot}</code>
-                <span className="ml-1.5 text-muted-foreground/50">·</span>
-                <span className="ml-1.5">{projects.length} project{projects.length !== 1 ? "s" : ""}</span>
-              </p>
+              <div className="mt-0.5 flex items-center gap-1.5 text-xs text-muted-foreground">
+                <code className="rounded bg-muted px-1 py-0.5 font-mono text-[10px] truncate max-w-[200px]">{devRoot}</code>
+                <button
+                  type="button"
+                  onClick={() => setChangeRootOpen(true)}
+                  className="shrink-0 text-[10px] text-primary hover:text-primary/80 transition-colors font-medium"
+                  data-testid="projects-panel-change-root"
+                >
+                  Change
+                </button>
+                <span className="text-muted-foreground/50">·</span>
+                <span>{projects.length} project{projects.length !== 1 ? "s" : ""}</span>
+              </div>
             )}
           </div>
           <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0" onClick={() => onOpenChange(false)}>
@@ -484,6 +505,14 @@ export function ProjectsPanel({
         <ScrollArea className="min-h-0 flex-1">
           <div className="px-5 py-4">{content}</div>
         </ScrollArea>
+
+        {/* Folder picker for changing dev root */}
+        <FolderPickerDialog
+          open={changeRootOpen}
+          onOpenChange={setChangeRootOpen}
+          onSelect={(path) => void handleDevRootSaved(path)}
+          initialPath={devRoot}
+        />
       </SheetContent>
     </Sheet>
   )
@@ -943,6 +972,7 @@ export function ProjectSelectionGate() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [newProjectOpen, setNewProjectOpen] = useState(false)
+  const [changeRootOpen, setChangeRootOpen] = useState(false)
   const [filter, setFilter] = useState("")
 
   const loadProjects = useCallback(async (root: string) => {
@@ -989,19 +1019,30 @@ export function ProjectSelectionGate() {
 
   const handleDevRootSaved = useCallback(
     async (newRoot: string) => {
-      setDevRoot(newRoot)
       setLoading(true)
       setError(null)
       try {
-        const discovered = await loadProjects(newRoot)
-        setProjects(discovered)
+        const res = await authFetch("/api/switch-root", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ devRoot: newRoot }),
+        })
+
+        if (!res.ok) {
+          const body = await res.json().catch(() => ({}))
+          throw new Error((body as { error?: string }).error ?? `Request failed (${res.status})`)
+        }
+
+        const data = await res.json() as { devRoot: string; projects: ProjectMetadata[] }
+        setDevRoot(data.devRoot)
+        setProjects(data.projects)
       } catch (err) {
-        setError(err instanceof Error ? err.message : "Failed to load projects")
+        setError(err instanceof Error ? err.message : "Failed to switch project root")
       } finally {
         setLoading(false)
       }
     },
-    [loadProjects],
+    [],
   )
 
   const handleProjectCreated = useCallback(
@@ -1120,6 +1161,22 @@ export function ProjectSelectionGate() {
             {/* ─── Project list ─── */}
             {hasProjects && (
               <div className="space-y-5">
+                {/* Dev root + change button */}
+                {devRoot && (
+                  <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                    <FolderRoot className="h-3.5 w-3.5 shrink-0 text-muted-foreground/50" />
+                    <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground truncate">{devRoot}</code>
+                    <button
+                      type="button"
+                      onClick={() => setChangeRootOpen(true)}
+                      className="shrink-0 text-[11px] text-primary hover:text-primary/80 transition-colors font-medium"
+                      data-testid="gate-change-root"
+                    >
+                      Change
+                    </button>
+                  </div>
+                )}
+
                 {/* Filter + count */}
                 <div className="flex items-center justify-between gap-4">
                   <p className="text-xs text-muted-foreground/60 tabular-nums">
@@ -1240,8 +1297,31 @@ export function ProjectSelectionGate() {
                 )}
               </div>
             )}
+
+            {/* Change root for "no projects" and "no devRoot" states */}
+            {devRoot && !loading && sortedProjects.length === 0 && !error && (
+              <div className="mt-4">
+                <button
+                  type="button"
+                  onClick={() => setChangeRootOpen(true)}
+                  className="flex items-center gap-2 text-xs text-primary hover:text-primary/80 transition-colors font-medium"
+                  data-testid="gate-change-root-empty"
+                >
+                  <FolderOpen className="h-3.5 w-3.5" />
+                  Change project root
+                </button>
+              </div>
+            )}
         </div>
       </div>
+
+      {/* Folder picker for changing dev root */}
+      <FolderPickerDialog
+        open={changeRootOpen}
+        onOpenChange={setChangeRootOpen}
+        onSelect={(path) => void handleDevRootSaved(path)}
+        initialPath={devRoot}
+      />
     </div>
   )
 }

@@ -547,6 +547,7 @@ let currentDb: DbAdapter | null = null;
 let currentPath: string | null = null;
 /** PID that opened the current connection — used for diagnostic logging. */
 let currentPid: number = 0;
+let _exitHandlerRegistered = false;
 
 // ─── Public API ────────────────────────────────────────────────────────────
 
@@ -599,6 +600,12 @@ export function openDatabase(path: string): boolean {
   currentDb = adapter;
   currentPath = path;
   currentPid = process.pid;
+
+  if (!_exitHandlerRegistered) {
+    _exitHandlerRegistered = true;
+    process.on("exit", () => { try { closeDatabase(); } catch {} });
+  }
+
   return true;
 }
 
@@ -607,6 +614,9 @@ export function openDatabase(path: string): boolean {
  */
 export function closeDatabase(): void {
   if (currentDb) {
+    try {
+      currentDb.exec('PRAGMA wal_checkpoint(TRUNCATE)');
+    } catch { /* non-fatal — best effort before close */ }
     try {
       currentDb.close();
     } catch {

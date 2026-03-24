@@ -1098,7 +1098,32 @@ export function mergeMilestoneToMain(
     }
   }
 
-  // 7. Squash merge — auto-resolve .gsd/ state file conflicts (#530)
+  // 7. Stash any pre-existing dirty files so the squash merge is not
+  //    blocked by unrelated local changes (#2151).  clearProjectRootStateFiles
+  //    only removes untracked .gsd/ files; tracked dirty files elsewhere (e.g.
+  //    .planning/work-state.json with stash conflict markers) are invisible to
+  //    that cleanup but will cause `git merge --squash` to reject.
+  let stashed = false;
+  try {
+    const status = execFileSync("git", ["status", "--porcelain"], {
+      cwd: originalBasePath_,
+      stdio: ["ignore", "pipe", "pipe"],
+      encoding: "utf-8",
+    }).trim();
+    if (status) {
+      execFileSync(
+        "git",
+        ["stash", "push", "--include-untracked", "-m", `gsd: pre-merge stash for ${milestoneId}`],
+        { cwd: originalBasePath_, stdio: ["ignore", "pipe", "pipe"], encoding: "utf-8" },
+      );
+      stashed = true;
+    }
+  } catch {
+    // Stash failure is non-fatal — proceed without stash and let the merge
+    // report the dirty tree if it fails.
+  }
+
+  // 8. Squash merge — auto-resolve .gsd/ state file conflicts (#530)
   const mergeResult = nativeMergeSquash(originalBasePath_, milestoneBranch);
 
   if (!mergeResult.success) {
@@ -1106,12 +1131,27 @@ export function mergeMilestoneToMain(
     // untracked .gsd/ files left by syncStateToProjectRoot).  Preserve the
     // milestone branch so commits are not lost.
     if (mergeResult.conflicts.includes("__dirty_working_tree__")) {
+      // Pop stash before throwing so local work is not lost.
+      if (stashed) {
+        try {
+          execFileSync("git", ["stash", "pop"], {
+            cwd: originalBasePath_,
+            stdio: ["ignore", "pipe", "pipe"],
+            encoding: "utf-8",
+          });
+        } catch { /* stash pop conflict is non-fatal */ }
+      }
       // Restore cwd so the caller is not stranded on the integration branch
       process.chdir(previousCwd);
+      // Surface the actual dirty filenames from git stderr instead of
+      // generically blaming .gsd/ (#2151).
+      const fileList = mergeResult.dirtyFiles?.length
+        ? `Dirty files:\n${mergeResult.dirtyFiles.map((f) => `  ${f}`).join("\n")}`
+        : `Check \`git status\` in the project root for details.`;
       throw new GSDError(
         GSD_GIT_ERROR,
-        `Squash merge of ${milestoneBranch} rejected: working tree has dirty or untracked files that conflict with the merge. ` +
-          `Clean the project root .gsd/ directory and retry.`,
+        `Squash merge of ${milestoneBranch} rejected: working tree has dirty or untracked files ` +
+          `that conflict with the merge. ${fileList}`,
       );
     }
 
@@ -1147,6 +1187,16 @@ export function mergeMilestoneToMain(
 
       // If there are still non-.gsd conflicts, escalate
       if (codeConflicts.length > 0) {
+        // Pop stash before throwing so local work is not lost (#2151).
+        if (stashed) {
+          try {
+            execFileSync("git", ["stash", "pop"], {
+              cwd: originalBasePath_,
+              stdio: ["ignore", "pipe", "pipe"],
+              encoding: "utf-8",
+            });
+          } catch { /* stash pop conflict is non-fatal */ }
+        }
         throw new MergeConflictError(
           codeConflicts,
           "squash",
@@ -1158,11 +1208,11 @@ export function mergeMilestoneToMain(
     // No conflicts detected — possibly "already up to date", fall through to commit
   }
 
-  // 8. Commit (handle nothing-to-commit gracefully)
+  // 9. Commit (handle nothing-to-commit gracefully)
   const commitResult = nativeCommit(originalBasePath_, commitMessage);
   const nothingToCommit = commitResult === null;
 
-  // 8a. Clean up SQUASH_MSG left by git merge --squash (#1853).
+  // 9a. Clean up SQUASH_MSG left by git merge --squash (#1853).
   // git only removes SQUASH_MSG when the commit reads it directly (plain
   // `git commit`).  nativeCommit uses `-F -` (stdin) or libgit2, neither
   // of which trigger git's SQUASH_MSG cleanup.  If left on disk, doctor
@@ -1172,7 +1222,23 @@ export function mergeMilestoneToMain(
     if (existsSync(squashMsgPath)) unlinkSync(squashMsgPath);
   } catch { /* best-effort */ }
 
-  // 8b. Safety check (#1792): if nothing was committed, verify the milestone
+  // 9a-ii. Restore stashed files now that the merge+commit is complete (#2151).
+  // Pop after commit so stashed changes do not interfere with the squash merge
+  // or the commit content.  Conflict on pop is non-fatal — the stash entry is
+  // preserved and the user can resolve manually with `git stash pop`.
+  if (stashed) {
+    try {
+      execFileSync("git", ["stash", "pop"], {
+        cwd: originalBasePath_,
+        stdio: ["ignore", "pipe", "pipe"],
+        encoding: "utf-8",
+      });
+    } catch {
+      // Stash pop conflict is non-fatal — stash entry persists for manual resolution.
+    }
+  }
+
+  // 9b. Safety check (#1792): if nothing was committed, verify the milestone
   // work is already on the integration branch before allowing teardown.
   // Compare only non-.gsd/ paths — .gsd/ state files diverge normally and
   // are auto-resolved during the squash merge.
@@ -1197,7 +1263,7 @@ export function mergeMilestoneToMain(
     }
   }
 
-  // 8c. Detect whether any non-.gsd/ code files were actually merged (#1906).
+  // 9c. Detect whether any non-.gsd/ code files were actually merged (#1906).
   // When a milestone only produced .gsd/ metadata (summaries, roadmaps) but no
   // real code, the user sees "milestone complete" but nothing changed in their
   // codebase. Surface this so the caller can warn the user.
@@ -1218,7 +1284,7 @@ export function mergeMilestoneToMain(
     }
   }
 
-  // 9. Auto-push if enabled
+  // 10. Auto-push if enabled
   let pushed = false;
   if (prefs.auto_push === true && !nothingToCommit) {
     const remote = prefs.remote ?? "origin";
@@ -1264,11 +1330,11 @@ export function mergeMilestoneToMain(
     }
   }
 
-  // 10. Guard removed — step 8b (#1792) now handles this with a smarter check:
+  // 11. Guard removed — step 9b (#1792) now handles this with a smarter check:
   //     throws only when the milestone has unanchored code changes, passes
   //     through when the code is genuinely already on the integration branch.
 
-  // 10a. Pre-teardown safety net (#1853): if the worktree still has uncommitted
+  // 11a. Pre-teardown safety net (#1853): if the worktree still has uncommitted
   // changes (e.g. nativeHasChanges cache returned stale false, or auto-commit
   // silently failed), force one final commit so code is not destroyed by
   // `git worktree remove --force`.
@@ -1292,7 +1358,7 @@ export function mergeMilestoneToMain(
     }
   }
 
-  // 11. Remove worktree directory first (must happen before branch deletion)
+  // 12. Remove worktree directory first (must happen before branch deletion)
   try {
     removeWorktree(originalBasePath_, milestoneId, {
       branch: null as unknown as string,
@@ -1302,14 +1368,14 @@ export function mergeMilestoneToMain(
     // Best-effort -- worktree dir may already be gone
   }
 
-  // 12. Delete milestone branch (after worktree removal so ref is unlocked)
+  // 13. Delete milestone branch (after worktree removal so ref is unlocked)
   try {
     nativeBranchDelete(originalBasePath_, milestoneBranch);
   } catch {
     // Best-effort
   }
 
-  // 13. Clear module state
+  // 14. Clear module state
   originalBase = null;
   nudgeGitBranchCache(previousCwd);
 

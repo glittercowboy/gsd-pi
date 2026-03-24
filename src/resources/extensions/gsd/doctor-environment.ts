@@ -37,6 +37,29 @@ const CMD_TIMEOUT = 5_000;
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
+/** Worktree sentinel — path segment that marks an auto-worktree directory. */
+const WORKTREE_PATH_SEGMENT = `${join(".gsd", "worktrees")}/`;
+
+/**
+ * Resolve the project root when running inside a `.gsd/worktrees/<name>/`
+ * auto-worktree. Returns `null` if not in a worktree.
+ *
+ * Detection order:
+ *   1. `GSD_WORKTREE` env var (set by the worktree launcher)
+ *   2. `.gsd/worktrees/` segment in basePath
+ */
+function resolveWorktreeProjectRoot(basePath: string): string | null {
+  const envRoot = process.env.GSD_WORKTREE;
+  if (envRoot) return envRoot;
+
+  const normalised = basePath.replace(/\\/g, "/");
+  const idx = normalised.indexOf(WORKTREE_PATH_SEGMENT.replace(/\\/g, "/"));
+  if (idx === -1) return null;
+
+  // Everything before `.gsd/worktrees/` is the project root
+  return basePath.slice(0, idx);
+}
+
 function tryExec(cmd: string, cwd: string): string | null {
   try {
     return execSync(cmd, {
@@ -111,6 +134,14 @@ function checkDependenciesInstalled(basePath: string): EnvironmentCheckResult | 
 
   const nodeModules = join(basePath, "node_modules");
   if (!existsSync(nodeModules)) {
+    // In auto-worktrees node_modules is absent by design — the worktree
+    // symlinks to (or expects) the project root's copy.  Fall back to
+    // checking the project root before reporting an error (#2303).
+    const projectRoot = resolveWorktreeProjectRoot(basePath);
+    if (projectRoot && existsSync(join(projectRoot, "node_modules"))) {
+      return { name: "dependencies", status: "ok", message: "Dependencies installed (project root)" };
+    }
+
     return {
       name: "dependencies",
       status: "error",

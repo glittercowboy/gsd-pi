@@ -90,6 +90,7 @@ export const KNOWN_PREFERENCE_KEYS = new Set<string>([
   "github",
   "service_tier",
   "forensics_dedup",
+  "show_token_cost",
 ]);
 
 /** Canonical list of all dispatch unit types. */
@@ -226,6 +227,8 @@ export interface GSDPreferences {
   service_tier?: "priority" | "flex";
   /** Opt-in: search existing issues and PRs before filing from /gsd forensics. Uses additional AI tokens. */
   forensics_dedup?: boolean;
+  /** Opt-in: show per-prompt and cumulative session token cost in the footer. Default: false. */
+  show_token_cost?: boolean;
 }
 
 export interface LoadedGSDPreferences {
