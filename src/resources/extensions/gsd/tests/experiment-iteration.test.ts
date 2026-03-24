@@ -459,7 +459,7 @@ describe("computeDelta", () => {
     treatmentTokens?: { input: number; output: number };
     baselineCost?: number;
     treatmentCost?: number;
-    treatmentFactCheck?: { claimsChecked: number; verified: number; refuted: number; inconclusive: number } | null;
+    treatmentFactCheck?: { claimsChecked: number; verified: number; refuted: number; inconclusive: number; scoutTokens: number } | null;
   }): CompareReport {
     const baselineTokens = overrides?.baselineTokens ?? { input: 100, output: 50 };
     const treatmentTokens = overrides?.treatmentTokens ?? { input: 130, output: 65 };
@@ -541,10 +541,10 @@ describe("computeDelta", () => {
 
   it("computes fact-check deltas when both reports have fact-check data", () => {
     const prevReport = createReport({ 
-      treatmentFactCheck: { claimsChecked: 3, verified: 2, refuted: 0, inconclusive: 1 } 
+      treatmentFactCheck: { claimsChecked: 3, verified: 2, refuted: 0, inconclusive: 1, scoutTokens: 100 } 
     });
     const currReport = createReport({ 
-      treatmentFactCheck: { claimsChecked: 5, verified: 4, refuted: 1, inconclusive: 0 } 
+      treatmentFactCheck: { claimsChecked: 5, verified: 4, refuted: 1, inconclusive: 0, scoutTokens: 100 } 
     });
 
     const delta = computeDelta(prevReport, currReport);

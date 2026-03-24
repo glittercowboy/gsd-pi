@@ -175,7 +175,7 @@ test("final-audit: writes durable validation report to milestone directory", asy
       state: {
         phase: "planning",
         activeSlice: { id: "S01", title: "Proof Slice", done: false },
-      },
+      } as any,
       prefs: prefs?.preferences,
     };
 

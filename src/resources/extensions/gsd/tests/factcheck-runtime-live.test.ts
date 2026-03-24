@@ -181,10 +181,7 @@ test("dispatch: factcheck-reroute rule matches when planImpacting=true", async (
       basePath: ctx.gsdRoot,
       mid: "M999-PROOF",
       midTitle: "Proof Milestone",
-      state: {
-        phase: "planning",
-        activeSlice: { id: "S01", title: "Proof Slice", done: false },
-      },
+      state: { phase: "planning", activeSlice: { id: "S01", title: "Proof Slice", done: false } } as any,
       prefs: prefs?.preferences,
     };
 
@@ -295,10 +292,7 @@ test("negative: dispatch falls through when FACTCHECK-STATUS.json missing", asyn
       basePath: ctx.gsdRoot,
       mid: "M999-PROOF",
       midTitle: "Proof Milestone",
-      state: {
-        phase: "planning",
-        activeSlice: { id: "S01", title: "Proof Slice", done: false },
-      },
+      state: { phase: "planning", activeSlice: { id: "S01", title: "Proof Slice", done: false } } as any,
       prefs: prefs?.preferences,
     };
 
@@ -339,10 +333,7 @@ test("negative: dispatch falls through when planImpacting=false", async () => {
       basePath: ctx.gsdRoot,
       mid: "M999-PROOF",
       midTitle: "Proof Milestone",
-      state: {
-        phase: "planning",
-        activeSlice: { id: "S01", title: "Proof Slice", done: false },
-      },
+      state: { phase: "planning", activeSlice: { id: "S01", title: "Proof Slice", done: false } } as any,
       prefs: prefs?.preferences,
     };
 
@@ -383,10 +374,7 @@ test("artifacts: proof artifacts written to proof-output directory", async () =>
       basePath: ctx.gsdRoot,
       mid: "M999-PROOF",
       midTitle: "Proof Milestone",
-      state: {
-        phase: "planning",
-        activeSlice: { id: "S01", title: "Proof Slice", done: false },
-      },
+      state: { phase: "planning", activeSlice: { id: "S01", title: "Proof Slice", done: false } } as any,
       prefs: prefs?.preferences,
     };
 
