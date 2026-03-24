@@ -747,5 +747,14 @@ export function validatePreferences(preferences: GSDPreferences): {
     }
   }
 
+  // ─── Show Token Cost ──────────────────────────────────────────────
+  if (preferences.show_token_cost !== undefined) {
+    if (typeof preferences.show_token_cost === "boolean") {
+      validated.show_token_cost = preferences.show_token_cost;
+    } else {
+      errors.push("show_token_cost must be a boolean");
+    }
+  }
+
   return { preferences: validated, errors, warnings };
 }

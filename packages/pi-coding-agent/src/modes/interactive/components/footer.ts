@@ -27,6 +27,18 @@ function formatTokens(count: number): string {
 }
 
 /**
+ * Format a cost value for compact display.
+ * Uses fewer decimal places for larger amounts.
+ * @internal Exported for testing only.
+ */
+export function formatPromptCost(cost: number): string {
+	if (cost < 0.001) return `$${cost.toFixed(4)}`;
+	if (cost < 0.01) return `$${cost.toFixed(3)}`;
+	if (cost < 1) return `$${cost.toFixed(3)}`;
+	return `$${cost.toFixed(2)}`;
+}
+
+/**
  * Footer component that shows pwd, token stats, and context usage.
  * Computes token/context stats from session, gets git branch and extension statuses from provider.
  */
@@ -110,6 +122,14 @@ export class FooterComponent implements Component {
 		if (totalCost || usingSubscription) {
 			const costStr = `$${totalCost.toFixed(3)}${usingSubscription ? " (sub)" : ""}`;
 			statsParts.push(costStr);
+		}
+
+		// Per-prompt cost annotation (opt-in via show_token_cost preference, #1515)
+		if (process.env.GSD_SHOW_TOKEN_COST === "1") {
+			const lastTurnCost = this.session.getLastTurnCost();
+			if (lastTurnCost > 0) {
+				statsParts.push(`(last: ${formatPromptCost(lastTurnCost)})`);
+			}
 		}
 
 		// Colorize context percentage based on usage

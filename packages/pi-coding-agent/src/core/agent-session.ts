@@ -255,6 +255,10 @@ export class AgentSession {
 	private _cumulativeOutputTokens = 0;
 	private _cumulativeToolCalls = 0;
 
+	/** Cost of the most recent assistant response (for per-prompt display). */
+	private _lastTurnCost = 0;
+
+
 	// Bash execution state
 	private _bashAbortController: AbortController | undefined = undefined;
 	private _pendingBashMessages: BashExecutionMessage[] = [];
@@ -454,6 +458,7 @@ export class AgentSession {
 
 				// Accumulate session stats that survive compaction (#1423)
 				const assistantMsg = event.message as AssistantMessage;
+				this._lastTurnCost = assistantMsg.usage?.cost?.total ?? 0;
 				this._cumulativeCost += assistantMsg.usage?.cost?.total ?? 0;
 				this._cumulativeInputTokens += assistantMsg.usage?.input ?? 0;
 				this._cumulativeOutputTokens += assistantMsg.usage?.output ?? 0;
@@ -2778,6 +2783,14 @@ export class AgentSession {
 			},
 			cost: Math.max(totalCost, this._cumulativeCost),
 		};
+	}
+
+	/**
+	 * Get the cost of the most recent assistant response.
+	 * Returns 0 if no assistant message has been received yet.
+	 */
+	getLastTurnCost(): number {
+		return this._lastTurnCost;
 	}
 
 	getContextUsage(): ContextUsage | undefined {
