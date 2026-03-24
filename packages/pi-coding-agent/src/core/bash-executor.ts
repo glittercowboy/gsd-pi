@@ -76,9 +76,17 @@ export interface BashResult {
  * @param options - Optional streaming callback and abort signal
  * @returns Promise resolving to execution result
  */
-export function executeBash(command: string, options?: BashExecutorOptions): Promise<BashResult> {
+export function executeBash(command: string, options?: BashExecutorOptions & { loginShell?: boolean }): Promise<BashResult> {
 	return new Promise((resolve, reject) => {
-		const { shell, args } = getShellConfig();
+		let shell: string;
+		let args: string[];
+		if (options?.loginShell) {
+			// Use the user's login shell with -l for PATH/env from shell profiles
+			shell = process.env.SHELL || "/bin/bash";
+			args = ["-l", "-c"];
+		} else {
+			({ shell, args } = getShellConfig());
+		}
 		const child: ChildProcess = spawn(shell, [...args, sanitizeCommand(command)], {
 			detached: true,
 			env: getShellEnv(),
