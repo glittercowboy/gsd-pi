@@ -355,27 +355,14 @@ test("handles empty models config", () => {
 
 // ── Non-frontmatter markdown format (#2036) ──────────────────────────────────
 
-test("parsePreferencesMarkdown warns and returns null for non-frontmatter markdown content", () => {
+test("parsePreferencesMarkdown parses heading+list format without frontmatter (#2036)", () => {
   // A GSD agent recovery session wrote preferences in markdown heading+list
-  // format instead of YAML frontmatter. parsePreferencesMarkdown should warn
-  // (via stderr) so the user knows the file was not parsed.
+  // format instead of YAML frontmatter. Since the heading+list fallback parser
+  // was added, this format is now handled gracefully.
   const content = "## Git\n\n- isolation: none\n";
-  const stderrMessages: string[] = [];
-  const origWrite = process.stderr.write;
-  process.stderr.write = ((chunk: string | Uint8Array) => {
-    stderrMessages.push(chunk.toString());
-    return true;
-  }) as typeof process.stderr.write;
-  try {
-    const result = parsePreferencesMarkdown(content);
-    assert.equal(result, null, "non-frontmatter content returns null");
-    assert.ok(
-      stderrMessages.some(m => m.includes("preferences") && m.includes("frontmatter")),
-      "should emit a warning to stderr about missing frontmatter delimiters",
-    );
-  } finally {
-    process.stderr.write = origWrite;
-  }
+  const result = parsePreferencesMarkdown(content);
+  assert.notEqual(result, null, "heading+list content should be parsed");
+  assert.deepStrictEqual(result!.git, { isolation: "none" });
 });
 
 test("parsePreferencesMarkdown does not warn for empty/whitespace-only content", () => {
