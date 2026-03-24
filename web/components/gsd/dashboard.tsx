@@ -181,18 +181,18 @@ export function Dashboard({ onSwitchView, onExpandTerminal }: DashboardProps = {
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
-      <div className="flex items-center justify-between border-b border-border px-6 py-3">
-        <div className="flex items-center gap-2">
-          <h1 className="text-lg font-semibold">Dashboard</h1>
+      <div className="flex items-center justify-between border-b border-border px-3 py-2 md:px-6 md:py-3">
+        <div className="flex items-center gap-2 min-w-0">
+          <h1 className="text-base md:text-lg font-semibold shrink-0">Dashboard</h1>
           {!isConnecting && scopeLabel && (
             <>
-              <span className="text-lg font-thin text-muted-foreground/40 select-none">/</span>
-              <ScopeBadge label={scopeLabel} size="sm" />
+              <span className="hidden sm:inline text-lg font-thin text-muted-foreground/40 select-none">/</span>
+              <span className="hidden sm:inline"><ScopeBadge label={scopeLabel} size="sm" /></span>
             </>
           )}
           {isConnecting && <Skeleton className="h-4 w-40" />}
         </div>
-        <div className="flex items-center gap-3" data-testid="dashboard-action-bar">
+        <div className="flex items-center gap-2 md:gap-3" data-testid="dashboard-action-bar">
           {isConnecting ? (
             <>
               <Skeleton className="h-8 w-40 rounded-md" />
@@ -220,8 +220,8 @@ export function Dashboard({ onSwitchView, onExpandTerminal }: DashboardProps = {
         </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto p-6">
-        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+      <div className="flex-1 overflow-y-auto p-3 md:p-6">
+        <div className="grid gap-3 grid-cols-1 sm:grid-cols-2 md:grid-cols-2 xl:grid-cols-4">
           <div className="rounded-md border border-border bg-card p-4" data-testid="dashboard-current-unit">
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
