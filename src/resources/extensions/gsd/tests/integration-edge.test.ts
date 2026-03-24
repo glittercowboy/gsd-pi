@@ -19,9 +19,8 @@ import {
   formatDecisionsForPrompt,
   formatRequirementsForPrompt,
 } from '../context-store.ts';
-import { createTestContext } from './test-helpers.ts';
-
-const { assertEq, assertTrue, report } = createTestContext();
+import { describe, test, beforeEach, afterEach } from 'node:test';
+import assert from 'node:assert/strict';
 
 // ─── Fixture Helper ────────────────────────────────────────────────────────
 
@@ -48,8 +47,7 @@ function generateDecisionsMarkdown(count: number): string {
 // Edge Case 1: Empty Project
 // ═══════════════════════════════════════════════════════════════════════════
 
-console.log('\n=== integration-edge: empty project ===');
-{
+test('integration-edge: empty project', () => {
   const base = mkdtempSync(join(tmpdir(), 'gsd-int-edge-empty-'));
   const gsdDir = join(base, '.gsd');
   mkdirSync(gsdDir, { recursive: true });
@@ -59,55 +57,54 @@ console.log('\n=== integration-edge: empty project ===');
   try {
     // Open DB first so migrateFromMarkdown doesn't auto-create at default path
     openDatabase(dbPath);
-    assertTrue(isDbAvailable(), 'empty: DB available after open');
+    assert.ok(isDbAvailable(), 'empty: DB available after open');
 
     // Migrate with no markdown files on disk
     const result = migrateFromMarkdown(base);
 
-    assertEq(result.decisions, 0, 'empty: 0 decisions imported');
-    assertEq(result.requirements, 0, 'empty: 0 requirements imported');
-    assertEq(result.artifacts, 0, 'empty: 0 artifacts imported');
+    assert.deepStrictEqual(result.decisions, 0, 'empty: 0 decisions imported');
+    assert.deepStrictEqual(result.requirements, 0, 'empty: 0 requirements imported');
+    assert.deepStrictEqual(result.artifacts, 0, 'empty: 0 artifacts imported');
 
     // Query decisions → empty array
     const decisions = queryDecisions();
-    assertEq(decisions.length, 0, 'empty: queryDecisions returns empty array');
+    assert.deepStrictEqual(decisions.length, 0, 'empty: queryDecisions returns empty array');
 
     // Query requirements → empty array
     const requirements = queryRequirements();
-    assertEq(requirements.length, 0, 'empty: queryRequirements returns empty array');
+    assert.deepStrictEqual(requirements.length, 0, 'empty: queryRequirements returns empty array');
 
     // Query with scope filters → still empty, no crash
     const scopedDecisions = queryDecisions({ milestoneId: 'M001' });
-    assertEq(scopedDecisions.length, 0, 'empty: scoped queryDecisions returns empty');
+    assert.deepStrictEqual(scopedDecisions.length, 0, 'empty: scoped queryDecisions returns empty');
 
     const scopedRequirements = queryRequirements({ sliceId: 'S01' });
-    assertEq(scopedRequirements.length, 0, 'empty: scoped queryRequirements returns empty');
+    assert.deepStrictEqual(scopedRequirements.length, 0, 'empty: scoped queryRequirements returns empty');
 
     // Format empty results → empty strings
     const formattedD = formatDecisionsForPrompt([]);
     const formattedR = formatRequirementsForPrompt([]);
-    assertEq(formattedD, '', 'empty: formatDecisionsForPrompt returns empty string');
-    assertEq(formattedR, '', 'empty: formatRequirementsForPrompt returns empty string');
+    assert.deepStrictEqual(formattedD, '', 'empty: formatDecisionsForPrompt returns empty string');
+    assert.deepStrictEqual(formattedR, '', 'empty: formatRequirementsForPrompt returns empty string');
 
     // Format with actual empty query results
     const formattedD2 = formatDecisionsForPrompt(decisions);
     const formattedR2 = formatRequirementsForPrompt(requirements);
-    assertEq(formattedD2, '', 'empty: format of empty query decisions is empty string');
-    assertEq(formattedR2, '', 'empty: format of empty query requirements is empty string');
+    assert.deepStrictEqual(formattedD2, '', 'empty: format of empty query decisions is empty string');
+    assert.deepStrictEqual(formattedR2, '', 'empty: format of empty query requirements is empty string');
 
     closeDatabase();
   } finally {
     closeDatabase();
     rmSync(base, { recursive: true, force: true });
   }
-}
+});
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Edge Case 2: Partial Migration (decisions only, no requirements)
 // ═══════════════════════════════════════════════════════════════════════════
 
-console.log('\n=== integration-edge: partial migration ===');
-{
+test('integration-edge: partial migration', () => {
   const base = mkdtempSync(join(tmpdir(), 'gsd-int-edge-partial-'));
   const gsdDir = join(base, '.gsd');
   mkdirSync(gsdDir, { recursive: true });
@@ -120,49 +117,48 @@ console.log('\n=== integration-edge: partial migration ===');
 
   try {
     openDatabase(dbPath);
-    assertTrue(isDbAvailable(), 'partial: DB available after open');
+    assert.ok(isDbAvailable(), 'partial: DB available after open');
 
     const result = migrateFromMarkdown(base);
 
     // Decisions imported, requirements skipped gracefully
-    assertTrue(result.decisions === 6, `partial: imported ${result.decisions} decisions, expected 6`);
-    assertEq(result.requirements, 0, 'partial: 0 requirements imported (no file)');
+    assert.ok(result.decisions === 6, `partial: imported ${result.decisions} decisions, expected 6`);
+    assert.deepStrictEqual(result.requirements, 0, 'partial: 0 requirements imported (no file)');
 
     // Decisions queryable
     const decisions = queryDecisions();
-    assertTrue(decisions.length === 6, `partial: queryDecisions returns 6 (got ${decisions.length})`);
+    assert.ok(decisions.length === 6, `partial: queryDecisions returns 6 (got ${decisions.length})`);
 
     const m001Decisions = queryDecisions({ milestoneId: 'M001' });
-    assertTrue(m001Decisions.length > 0, 'partial: M001 decisions non-empty');
-    assertTrue(m001Decisions.length < decisions.length, 'partial: M001 scope filters correctly');
+    assert.ok(m001Decisions.length > 0, 'partial: M001 decisions non-empty');
+    assert.ok(m001Decisions.length < decisions.length, 'partial: M001 scope filters correctly');
 
     // Requirements return empty — no crash
     const requirements = queryRequirements();
-    assertEq(requirements.length, 0, 'partial: queryRequirements returns empty');
+    assert.deepStrictEqual(requirements.length, 0, 'partial: queryRequirements returns empty');
 
     const scopedReqs = queryRequirements({ sliceId: 'S01' });
-    assertEq(scopedReqs.length, 0, 'partial: scoped queryRequirements returns empty');
+    assert.deepStrictEqual(scopedReqs.length, 0, 'partial: scoped queryRequirements returns empty');
 
     // Format works on partial data
     const formattedD = formatDecisionsForPrompt(m001Decisions);
-    assertTrue(formattedD.length > 0, 'partial: formatted decisions non-empty');
+    assert.ok(formattedD.length > 0, 'partial: formatted decisions non-empty');
 
     const formattedR = formatRequirementsForPrompt(requirements);
-    assertEq(formattedR, '', 'partial: formatted empty requirements is empty string');
+    assert.deepStrictEqual(formattedR, '', 'partial: formatted empty requirements is empty string');
 
     closeDatabase();
   } finally {
     closeDatabase();
     rmSync(base, { recursive: true, force: true });
   }
-}
+});
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Edge Case 3: Fallback Mode (_resetProvider)
 // ═══════════════════════════════════════════════════════════════════════════
 
-console.log('\n=== integration-edge: fallback mode ===');
-{
+test('integration-edge: fallback mode', () => {
   const base = mkdtempSync(join(tmpdir(), 'gsd-int-edge-fallback-'));
   const gsdDir = join(base, '.gsd');
   mkdirSync(gsdDir, { recursive: true });
@@ -175,54 +171,53 @@ console.log('\n=== integration-edge: fallback mode ===');
   try {
     // Step 1: Open DB normally and verify it works
     openDatabase(dbPath);
-    assertTrue(isDbAvailable(), 'fallback: DB available after open');
+    assert.ok(isDbAvailable(), 'fallback: DB available after open');
 
     migrateFromMarkdown(base);
     const before = queryDecisions();
-    assertTrue(before.length === 4, `fallback: 4 decisions before reset (got ${before.length})`);
+    assert.ok(before.length === 4, `fallback: 4 decisions before reset (got ${before.length})`);
 
     // Step 2: Close and reset provider → DB unavailable
     closeDatabase();
     _resetProvider();
-    assertTrue(!isDbAvailable(), 'fallback: DB unavailable after _resetProvider');
+    assert.ok(!isDbAvailable(), 'fallback: DB unavailable after _resetProvider');
 
     // Step 3: Queries degrade gracefully (return empty, don't throw)
     const degradedDecisions = queryDecisions();
-    assertEq(degradedDecisions.length, 0, 'fallback: queryDecisions returns empty when unavailable');
+    assert.deepStrictEqual(degradedDecisions.length, 0, 'fallback: queryDecisions returns empty when unavailable');
 
     const degradedRequirements = queryRequirements();
-    assertEq(degradedRequirements.length, 0, 'fallback: queryRequirements returns empty when unavailable');
+    assert.deepStrictEqual(degradedRequirements.length, 0, 'fallback: queryRequirements returns empty when unavailable');
 
     const degradedScopedD = queryDecisions({ milestoneId: 'M001' });
-    assertEq(degradedScopedD.length, 0, 'fallback: scoped queryDecisions returns empty when unavailable');
+    assert.deepStrictEqual(degradedScopedD.length, 0, 'fallback: scoped queryDecisions returns empty when unavailable');
 
     const degradedScopedR = queryRequirements({ sliceId: 'S01' });
-    assertEq(degradedScopedR.length, 0, 'fallback: scoped queryRequirements returns empty when unavailable');
+    assert.deepStrictEqual(degradedScopedR.length, 0, 'fallback: scoped queryRequirements returns empty when unavailable');
 
     // Format functions work on empty arrays (no crash)
     const formattedD = formatDecisionsForPrompt(degradedDecisions);
-    assertEq(formattedD, '', 'fallback: format degraded decisions is empty');
+    assert.deepStrictEqual(formattedD, '', 'fallback: format degraded decisions is empty');
 
     const formattedR = formatRequirementsForPrompt(degradedRequirements);
-    assertEq(formattedR, '', 'fallback: format degraded requirements is empty');
+    assert.deepStrictEqual(formattedR, '', 'fallback: format degraded requirements is empty');
 
     // Step 4: Re-open DB → restores availability
     openDatabase(dbPath);
-    assertTrue(isDbAvailable(), 'fallback: DB available after re-open');
+    assert.ok(isDbAvailable(), 'fallback: DB available after re-open');
 
     // Data should be there from the file-backed DB (persisted by first open)
     // But rows may need re-import since the DB was freshly opened from the file
     migrateFromMarkdown(base);
     const restored = queryDecisions();
-    assertTrue(restored.length === 4, `fallback: 4 decisions after re-open (got ${restored.length})`);
+    assert.ok(restored.length === 4, `fallback: 4 decisions after re-open (got ${restored.length})`);
 
     closeDatabase();
   } finally {
     closeDatabase();
     rmSync(base, { recursive: true, force: true });
   }
-}
+});
 
 // ─── Report ────────────────────────────────────────────────────────────────
 
-report();

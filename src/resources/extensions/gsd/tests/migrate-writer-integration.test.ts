@@ -20,9 +20,9 @@ import type {
   GSDTask,
   GSDRequirement,
 } from '../migrate/types.ts';
-import { createTestContext } from './test-helpers.ts';
+import { describe, test, beforeEach, afterEach } from 'node:test';
+import assert from 'node:assert/strict';
 
-const { assertEq, assertTrue, report } = createTestContext();
 // ─── Fixture Builders ──────────────────────────────────────────────────────
 
 function makeTask(id: string, title: string, done: boolean, hasSummary: boolean): GSDTask {
@@ -130,11 +130,9 @@ function buildCompleteProject(): GSDProject {
 // Tests
 // ═══════════════════════════════════════════════════════════════════════════
 
-async function main(): Promise<void> {
-
   // ─── Scenario 1: Incomplete project ────────────────────────────────────
-  console.log('\n=== Scenario 1: Incomplete project — write, parse, deriveState ===');
-  {
+
+test('Scenario 1: Incomplete project — write, parse, deriveState', async () => {
     const base = mkdtempSync(join(tmpdir(), 'gsd-writer-int-'));
     try {
       const project = buildIncompleteProject();
@@ -145,64 +143,64 @@ async function main(): Promise<void> {
       const gsd = join(base, '.gsd');
       const m = join(gsd, 'milestones', 'M001');
 
-      assertTrue(existsSync(join(m, 'M001-ROADMAP.md')), 'incomplete: M001-ROADMAP.md exists');
-      assertTrue(existsSync(join(m, 'M001-CONTEXT.md')), 'incomplete: M001-CONTEXT.md exists');
-      assertTrue(existsSync(join(m, 'M001-RESEARCH.md')), 'incomplete: M001-RESEARCH.md exists');
-      assertTrue(existsSync(join(m, 'slices', 'S01', 'S01-PLAN.md')), 'incomplete: S01-PLAN.md exists');
-      assertTrue(existsSync(join(m, 'slices', 'S02', 'S02-PLAN.md')), 'incomplete: S02-PLAN.md exists');
-      assertTrue(existsSync(join(m, 'slices', 'S01', 'S01-SUMMARY.md')), 'incomplete: S01-SUMMARY.md exists');
-      assertTrue(!existsSync(join(m, 'slices', 'S02', 'S02-SUMMARY.md')), 'incomplete: S02-SUMMARY.md NOT written (null)');
-      assertTrue(existsSync(join(gsd, 'REQUIREMENTS.md')), 'incomplete: REQUIREMENTS.md exists');
-      assertTrue(existsSync(join(gsd, 'PROJECT.md')), 'incomplete: PROJECT.md exists');
-      assertTrue(existsSync(join(gsd, 'DECISIONS.md')), 'incomplete: DECISIONS.md exists');
-      assertTrue(existsSync(join(gsd, 'STATE.md')), 'incomplete: STATE.md exists');
+      assert.ok(existsSync(join(m, 'M001-ROADMAP.md')), 'incomplete: M001-ROADMAP.md exists');
+      assert.ok(existsSync(join(m, 'M001-CONTEXT.md')), 'incomplete: M001-CONTEXT.md exists');
+      assert.ok(existsSync(join(m, 'M001-RESEARCH.md')), 'incomplete: M001-RESEARCH.md exists');
+      assert.ok(existsSync(join(m, 'slices', 'S01', 'S01-PLAN.md')), 'incomplete: S01-PLAN.md exists');
+      assert.ok(existsSync(join(m, 'slices', 'S02', 'S02-PLAN.md')), 'incomplete: S02-PLAN.md exists');
+      assert.ok(existsSync(join(m, 'slices', 'S01', 'S01-SUMMARY.md')), 'incomplete: S01-SUMMARY.md exists');
+      assert.ok(!existsSync(join(m, 'slices', 'S02', 'S02-SUMMARY.md')), 'incomplete: S02-SUMMARY.md NOT written (null)');
+      assert.ok(existsSync(join(gsd, 'REQUIREMENTS.md')), 'incomplete: REQUIREMENTS.md exists');
+      assert.ok(existsSync(join(gsd, 'PROJECT.md')), 'incomplete: PROJECT.md exists');
+      assert.ok(existsSync(join(gsd, 'DECISIONS.md')), 'incomplete: DECISIONS.md exists');
+      assert.ok(existsSync(join(gsd, 'STATE.md')), 'incomplete: STATE.md exists');
 
       // Task files
-      assertTrue(existsSync(join(m, 'slices', 'S01', 'tasks', 'T01-PLAN.md')), 'incomplete: T01-PLAN.md exists');
-      assertTrue(existsSync(join(m, 'slices', 'S01', 'tasks', 'T01-SUMMARY.md')), 'incomplete: T01-SUMMARY.md exists');
-      assertTrue(existsSync(join(m, 'slices', 'S01', 'tasks', 'T02-PLAN.md')), 'incomplete: T02-PLAN.md exists (auth task)');
-      assertTrue(existsSync(join(m, 'slices', 'S01', 'tasks', 'T02-SUMMARY.md')), 'incomplete: T02-SUMMARY.md exists (auth task)');
-      assertTrue(existsSync(join(m, 'slices', 'S02', 'tasks', 'T03-PLAN.md')), 'incomplete: T03-PLAN.md exists');
-      assertTrue(!existsSync(join(m, 'slices', 'S02', 'tasks', 'T03-SUMMARY.md')), 'incomplete: T03-SUMMARY.md NOT written (null)');
+      assert.ok(existsSync(join(m, 'slices', 'S01', 'tasks', 'T01-PLAN.md')), 'incomplete: T01-PLAN.md exists');
+      assert.ok(existsSync(join(m, 'slices', 'S01', 'tasks', 'T01-SUMMARY.md')), 'incomplete: T01-SUMMARY.md exists');
+      assert.ok(existsSync(join(m, 'slices', 'S01', 'tasks', 'T02-PLAN.md')), 'incomplete: T02-PLAN.md exists (auth task)');
+      assert.ok(existsSync(join(m, 'slices', 'S01', 'tasks', 'T02-SUMMARY.md')), 'incomplete: T02-SUMMARY.md exists (auth task)');
+      assert.ok(existsSync(join(m, 'slices', 'S02', 'tasks', 'T03-PLAN.md')), 'incomplete: T03-PLAN.md exists');
+      assert.ok(!existsSync(join(m, 'slices', 'S02', 'tasks', 'T03-SUMMARY.md')), 'incomplete: T03-SUMMARY.md NOT written (null)');
 
       // WrittenFiles counts
       console.log('  --- WrittenFiles counts ---');
-      assertEq(result.counts.roadmaps, 1, 'incomplete: WrittenFiles roadmaps count');
-      assertEq(result.counts.plans, 2, 'incomplete: WrittenFiles plans count');
-      assertEq(result.counts.taskPlans, 3, 'incomplete: WrittenFiles taskPlans count');
-      assertEq(result.counts.taskSummaries, 2, 'incomplete: WrittenFiles taskSummaries count');
-      assertEq(result.counts.sliceSummaries, 1, 'incomplete: WrittenFiles sliceSummaries count');
-      assertEq(result.counts.research, 1, 'incomplete: WrittenFiles research count');
-      assertEq(result.counts.requirements, 1, 'incomplete: WrittenFiles requirements count');
-      assertEq(result.counts.contexts, 1, 'incomplete: WrittenFiles contexts count');
+      assert.deepStrictEqual(result.counts.roadmaps, 1, 'incomplete: WrittenFiles roadmaps count');
+      assert.deepStrictEqual(result.counts.plans, 2, 'incomplete: WrittenFiles plans count');
+      assert.deepStrictEqual(result.counts.taskPlans, 3, 'incomplete: WrittenFiles taskPlans count');
+      assert.deepStrictEqual(result.counts.taskSummaries, 2, 'incomplete: WrittenFiles taskSummaries count');
+      assert.deepStrictEqual(result.counts.sliceSummaries, 1, 'incomplete: WrittenFiles sliceSummaries count');
+      assert.deepStrictEqual(result.counts.research, 1, 'incomplete: WrittenFiles research count');
+      assert.deepStrictEqual(result.counts.requirements, 1, 'incomplete: WrittenFiles requirements count');
+      assert.deepStrictEqual(result.counts.contexts, 1, 'incomplete: WrittenFiles contexts count');
 
       // (b) parseRoadmap on written roadmap
       console.log('  --- parseRoadmap ---');
       const roadmapContent = readFileSync(join(m, 'M001-ROADMAP.md'), 'utf-8');
       const roadmap = parseRoadmap(roadmapContent);
-      assertEq(roadmap.slices.length, 2, 'incomplete: roadmap has 2 slices');
-      assertTrue(roadmap.slices[0].done === true, 'incomplete: roadmap S01 is done');
-      assertTrue(roadmap.slices[1].done === false, 'incomplete: roadmap S02 is not done');
-      assertEq(roadmap.slices[0].id, 'S01', 'incomplete: roadmap slice 0 id');
-      assertEq(roadmap.slices[1].id, 'S02', 'incomplete: roadmap slice 1 id');
+      assert.deepStrictEqual(roadmap.slices.length, 2, 'incomplete: roadmap has 2 slices');
+      assert.ok(roadmap.slices[0].done === true, 'incomplete: roadmap S01 is done');
+      assert.ok(roadmap.slices[1].done === false, 'incomplete: roadmap S02 is not done');
+      assert.deepStrictEqual(roadmap.slices[0].id, 'S01', 'incomplete: roadmap slice 0 id');
+      assert.deepStrictEqual(roadmap.slices[1].id, 'S02', 'incomplete: roadmap slice 1 id');
 
       // (c) parsePlan on S01 plan
       console.log('  --- parsePlan S01 ---');
       const s01PlanContent = readFileSync(join(m, 'slices', 'S01', 'S01-PLAN.md'), 'utf-8');
       const s01Plan = parsePlan(s01PlanContent);
-      assertEq(s01Plan.tasks.length, 2, 'incomplete: S01 plan has 2 tasks');
-      assertTrue(s01Plan.tasks[0].done === true, 'incomplete: S01 T01 is done');
-      assertTrue(s01Plan.tasks[1].done === true, 'incomplete: S01 T02 is done');
+      assert.deepStrictEqual(s01Plan.tasks.length, 2, 'incomplete: S01 plan has 2 tasks');
+      assert.ok(s01Plan.tasks[0].done === true, 'incomplete: S01 T01 is done');
+      assert.ok(s01Plan.tasks[1].done === true, 'incomplete: S01 T02 is done');
 
       // (d) parseSummary on S01 summary
       console.log('  --- parseSummary S01 ---');
       const s01SummaryContent = readFileSync(join(m, 'slices', 'S01', 'S01-SUMMARY.md'), 'utf-8');
       const s01Summary = parseSummary(s01SummaryContent);
-      assertTrue(
+      assert.ok(
         (s01Summary.frontmatter.key_files as string[]).length > 0,
         'incomplete: S01 summary has key_files',
       );
-      assertTrue(
+      assert.ok(
         (s01Summary.frontmatter.provides as string[]).length > 0,
         'incomplete: S01 summary has provides',
       );
@@ -211,50 +209,50 @@ async function main(): Promise<void> {
       console.log('  --- deriveState ---');
       invalidateAllCaches();
       const state = await deriveState(base);
-      assertEq(state.phase, 'executing', 'incomplete: deriveState phase is executing');
-      assertTrue(state.activeMilestone !== null, 'incomplete: deriveState has activeMilestone');
-      assertEq(state.activeMilestone!.id, 'M001', 'incomplete: deriveState activeMilestone is M001');
-      assertTrue(state.activeSlice !== null, 'incomplete: deriveState has activeSlice');
-      assertEq(state.activeSlice!.id, 'S02', 'incomplete: deriveState activeSlice is S02');
-      assertTrue(state.activeTask !== null, 'incomplete: deriveState has activeTask');
-      assertEq(state.activeTask!.id, 'T03', 'incomplete: deriveState activeTask is T03');
-      assertTrue(state.progress!.slices !== undefined, 'incomplete: deriveState has slices progress');
-      assertEq(state.progress!.slices!.done, 1, 'incomplete: deriveState slices done count');
-      assertEq(state.progress!.slices!.total, 2, 'incomplete: deriveState slices total count');
-      assertTrue(state.progress!.tasks !== undefined, 'incomplete: deriveState has tasks progress');
+      assert.deepStrictEqual(state.phase, 'executing', 'incomplete: deriveState phase is executing');
+      assert.ok(state.activeMilestone !== null, 'incomplete: deriveState has activeMilestone');
+      assert.deepStrictEqual(state.activeMilestone!.id, 'M001', 'incomplete: deriveState activeMilestone is M001');
+      assert.ok(state.activeSlice !== null, 'incomplete: deriveState has activeSlice');
+      assert.deepStrictEqual(state.activeSlice!.id, 'S02', 'incomplete: deriveState activeSlice is S02');
+      assert.ok(state.activeTask !== null, 'incomplete: deriveState has activeTask');
+      assert.deepStrictEqual(state.activeTask!.id, 'T03', 'incomplete: deriveState activeTask is T03');
+      assert.ok(state.progress!.slices !== undefined, 'incomplete: deriveState has slices progress');
+      assert.deepStrictEqual(state.progress!.slices!.done, 1, 'incomplete: deriveState slices done count');
+      assert.deepStrictEqual(state.progress!.slices!.total, 2, 'incomplete: deriveState slices total count');
+      assert.ok(state.progress!.tasks !== undefined, 'incomplete: deriveState has tasks progress');
       // S02 has 1 task, 0 done (only active slice tasks counted)
-      assertEq(state.progress!.tasks!.done, 0, 'incomplete: deriveState tasks done (in active slice)');
-      assertEq(state.progress!.tasks!.total, 1, 'incomplete: deriveState tasks total (in active slice)');
+      assert.deepStrictEqual(state.progress!.tasks!.done, 0, 'incomplete: deriveState tasks done (in active slice)');
+      assert.deepStrictEqual(state.progress!.tasks!.total, 1, 'incomplete: deriveState tasks total (in active slice)');
       // Requirements
-      assertEq(state.requirements!.active, 1, 'incomplete: deriveState requirements active');
-      assertEq(state.requirements!.validated, 1, 'incomplete: deriveState requirements validated');
-      assertEq(state.requirements!.deferred, 1, 'incomplete: deriveState requirements deferred');
-      assertEq(state.requirements!.outOfScope, 1, 'incomplete: deriveState requirements outOfScope');
+      assert.deepStrictEqual(state.requirements!.active, 1, 'incomplete: deriveState requirements active');
+      assert.deepStrictEqual(state.requirements!.validated, 1, 'incomplete: deriveState requirements validated');
+      assert.deepStrictEqual(state.requirements!.deferred, 1, 'incomplete: deriveState requirements deferred');
+      assert.deepStrictEqual(state.requirements!.outOfScope, 1, 'incomplete: deriveState requirements outOfScope');
 
       // (f) generatePreview
       console.log('  --- generatePreview ---');
       const preview = generatePreview(project);
-      assertEq(preview.milestoneCount, 1, 'incomplete: preview milestoneCount');
-      assertEq(preview.totalSlices, 2, 'incomplete: preview totalSlices');
-      assertEq(preview.totalTasks, 3, 'incomplete: preview totalTasks');
-      assertEq(preview.doneSlices, 1, 'incomplete: preview doneSlices');
-      assertEq(preview.doneTasks, 2, 'incomplete: preview doneTasks');
-      assertEq(preview.sliceCompletionPct, 50, 'incomplete: preview sliceCompletionPct');
-      assertEq(preview.taskCompletionPct, 67, 'incomplete: preview taskCompletionPct');
-      assertEq(preview.requirements.active, 1, 'incomplete: preview requirements active');
-      assertEq(preview.requirements.validated, 1, 'incomplete: preview requirements validated');
-      assertEq(preview.requirements.deferred, 1, 'incomplete: preview requirements deferred');
-      assertEq(preview.requirements.outOfScope, 1, 'incomplete: preview requirements outOfScope');
-      assertEq(preview.requirements.total, 4, 'incomplete: preview requirements total');
+      assert.deepStrictEqual(preview.milestoneCount, 1, 'incomplete: preview milestoneCount');
+      assert.deepStrictEqual(preview.totalSlices, 2, 'incomplete: preview totalSlices');
+      assert.deepStrictEqual(preview.totalTasks, 3, 'incomplete: preview totalTasks');
+      assert.deepStrictEqual(preview.doneSlices, 1, 'incomplete: preview doneSlices');
+      assert.deepStrictEqual(preview.doneTasks, 2, 'incomplete: preview doneTasks');
+      assert.deepStrictEqual(preview.sliceCompletionPct, 50, 'incomplete: preview sliceCompletionPct');
+      assert.deepStrictEqual(preview.taskCompletionPct, 67, 'incomplete: preview taskCompletionPct');
+      assert.deepStrictEqual(preview.requirements.active, 1, 'incomplete: preview requirements active');
+      assert.deepStrictEqual(preview.requirements.validated, 1, 'incomplete: preview requirements validated');
+      assert.deepStrictEqual(preview.requirements.deferred, 1, 'incomplete: preview requirements deferred');
+      assert.deepStrictEqual(preview.requirements.outOfScope, 1, 'incomplete: preview requirements outOfScope');
+      assert.deepStrictEqual(preview.requirements.total, 4, 'incomplete: preview requirements total');
 
     } finally {
       rmSync(base, { recursive: true, force: true });
     }
-  }
+});
 
   // ─── Scenario 2: Fully complete project ────────────────────────────────
-  console.log('\n=== Scenario 2: Fully complete project — deriveState phase ===');
-  {
+
+test('Scenario 2: Fully complete project — deriveState phase', async () => {
     const base = mkdtempSync(join(tmpdir(), 'gsd-writer-int-complete-'));
     try {
       const project = buildCompleteProject();
@@ -262,43 +260,36 @@ async function main(): Promise<void> {
 
       // Null research should NOT produce a file
       const m = join(base, '.gsd', 'milestones', 'M001');
-      assertTrue(!existsSync(join(m, 'M001-RESEARCH.md')), 'complete: M001-RESEARCH.md NOT written (null)');
+      assert.ok(!existsSync(join(m, 'M001-RESEARCH.md')), 'complete: M001-RESEARCH.md NOT written (null)');
       // No REQUIREMENTS.md since empty requirements
-      assertTrue(!existsSync(join(base, '.gsd', 'REQUIREMENTS.md')), 'complete: REQUIREMENTS.md NOT written (empty)');
+      assert.ok(!existsSync(join(base, '.gsd', 'REQUIREMENTS.md')), 'complete: REQUIREMENTS.md NOT written (empty)');
       // Completed milestone should have VALIDATION and SUMMARY from migration (#819)
-      assertTrue(existsSync(join(m, 'M001-VALIDATION.md')), 'complete: M001-VALIDATION.md written for completed milestone');
-      assertTrue(existsSync(join(m, 'M001-SUMMARY.md')), 'complete: M001-SUMMARY.md written for completed milestone');
+      assert.ok(existsSync(join(m, 'M001-VALIDATION.md')), 'complete: M001-VALIDATION.md written for completed milestone');
+      assert.ok(existsSync(join(m, 'M001-SUMMARY.md')), 'complete: M001-SUMMARY.md written for completed milestone');
 
       // deriveState: all slices done, all tasks done — migration now writes
       // VALIDATION.md and SUMMARY.md for completed milestones (#819),
       // so the milestone should be fully complete.
       invalidateAllCaches();
       const state = await deriveState(base);
-      assertEq(state.phase, 'complete', 'complete: deriveState phase is complete (validation + summary written by migration)');
+      assert.deepStrictEqual(state.phase, 'complete', 'complete: deriveState phase is complete (validation + summary written by migration)');
       // When all milestones are complete, activeMilestone points to the last entry (for display)
-      assertTrue(state.activeMilestone !== null, 'complete: deriveState has activeMilestone (last entry)');
-      assertEq(state.activeMilestone!.id, 'M001', 'complete: deriveState activeMilestone is M001');
+      assert.ok(state.activeMilestone !== null, 'complete: deriveState has activeMilestone (last entry)');
+      assert.deepStrictEqual(state.activeMilestone!.id, 'M001', 'complete: deriveState activeMilestone is M001');
 
       // generatePreview for complete project
       const preview = generatePreview(project);
-      assertEq(preview.milestoneCount, 1, 'complete: preview milestoneCount');
-      assertEq(preview.totalSlices, 1, 'complete: preview totalSlices');
-      assertEq(preview.doneSlices, 1, 'complete: preview doneSlices');
-      assertEq(preview.totalTasks, 1, 'complete: preview totalTasks');
-      assertEq(preview.doneTasks, 1, 'complete: preview doneTasks');
-      assertEq(preview.sliceCompletionPct, 100, 'complete: preview sliceCompletionPct');
-      assertEq(preview.taskCompletionPct, 100, 'complete: preview taskCompletionPct');
-      assertEq(preview.requirements.total, 0, 'complete: preview requirements total');
+      assert.deepStrictEqual(preview.milestoneCount, 1, 'complete: preview milestoneCount');
+      assert.deepStrictEqual(preview.totalSlices, 1, 'complete: preview totalSlices');
+      assert.deepStrictEqual(preview.doneSlices, 1, 'complete: preview doneSlices');
+      assert.deepStrictEqual(preview.totalTasks, 1, 'complete: preview totalTasks');
+      assert.deepStrictEqual(preview.doneTasks, 1, 'complete: preview doneTasks');
+      assert.deepStrictEqual(preview.sliceCompletionPct, 100, 'complete: preview sliceCompletionPct');
+      assert.deepStrictEqual(preview.taskCompletionPct, 100, 'complete: preview taskCompletionPct');
+      assert.deepStrictEqual(preview.requirements.total, 0, 'complete: preview requirements total');
 
     } finally {
       rmSync(base, { recursive: true, force: true });
     }
-  }
-
-  report();
-}
-
-main().catch((err) => {
-  console.error('Unhandled error:', err);
-  process.exit(1);
 });
+

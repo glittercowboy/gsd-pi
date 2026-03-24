@@ -1,4 +1,3 @@
-import { createTestContext } from './test-helpers.ts';
 import {
   openDatabase,
   closeDatabase,
@@ -21,94 +20,90 @@ import {
   formatMemoriesForPrompt,
 } from '../memory-store.ts';
 import type { MemoryAction } from '../memory-store.ts';
-
-const { assertEq, assertTrue, assertMatch, report } = createTestContext();
+import { describe, test, beforeEach, afterEach } from 'node:test';
+import assert from 'node:assert/strict';
 
 // ═══════════════════════════════════════════════════════════════════════════
 // memory-store: fallback when DB not open
 // ═══════════════════════════════════════════════════════════════════════════
 
-console.log('\n=== memory-store: fallback returns empty when DB not open ===');
-{
+test('memory-store: fallback returns empty when DB not open', () => {
   closeDatabase();
-  assertTrue(!isDbAvailable(), 'DB should not be available');
+  assert.ok(!isDbAvailable(), 'DB should not be available');
 
-  assertEq(getActiveMemories(), [], 'getActiveMemories returns [] when DB closed');
-  assertEq(getActiveMemoriesRanked(), [], 'getActiveMemoriesRanked returns [] when DB closed');
-  assertEq(nextMemoryId(), 'MEM001', 'nextMemoryId returns MEM001 when DB closed');
-  assertEq(createMemory({ category: 'test', content: 'test' }), null, 'createMemory returns null when DB closed');
-  assertTrue(!reinforceMemory('MEM001'), 'reinforceMemory returns false when DB closed');
-  assertTrue(!isUnitProcessed('test/key'), 'isUnitProcessed returns false when DB closed');
-}
+  assert.deepStrictEqual(getActiveMemories(), [], 'getActiveMemories returns [] when DB closed');
+  assert.deepStrictEqual(getActiveMemoriesRanked(), [], 'getActiveMemoriesRanked returns [] when DB closed');
+  assert.deepStrictEqual(nextMemoryId(), 'MEM001', 'nextMemoryId returns MEM001 when DB closed');
+  assert.deepStrictEqual(createMemory({ category: 'test', content: 'test' }), null, 'createMemory returns null when DB closed');
+  assert.ok(!reinforceMemory('MEM001'), 'reinforceMemory returns false when DB closed');
+  assert.ok(!isUnitProcessed('test/key'), 'isUnitProcessed returns false when DB closed');
+});
 
 // ═══════════════════════════════════════════════════════════════════════════
 // memory-store: CRUD operations
 // ═══════════════════════════════════════════════════════════════════════════
 
-console.log('\n=== memory-store: create and query memories ===');
-{
+test('memory-store: create and query memories', () => {
   openDatabase(':memory:');
 
   // Create memories
   const id1 = createMemory({ category: 'gotcha', content: 'esbuild drops .node binaries' });
-  assertTrue(id1 !== null, 'createMemory should return an ID');
-  assertEq(id1, 'MEM001', 'first memory ID should be MEM001');
+  assert.ok(id1 !== null, 'createMemory should return an ID');
+  assert.deepStrictEqual(id1, 'MEM001', 'first memory ID should be MEM001');
 
   const id2 = createMemory({ category: 'convention', content: 'use :memory: for tests', confidence: 0.9 });
-  assertEq(id2, 'MEM002', 'second memory ID should be MEM002');
+  assert.deepStrictEqual(id2, 'MEM002', 'second memory ID should be MEM002');
 
   const id3 = createMemory({ category: 'architecture', content: 'extensions discovered from src/resources/' });
-  assertEq(id3, 'MEM003', 'third memory ID should be MEM003');
+  assert.deepStrictEqual(id3, 'MEM003', 'third memory ID should be MEM003');
 
   // Query all active
   const active = getActiveMemories();
-  assertEq(active.length, 3, 'should have 3 active memories');
-  assertEq(active[0].category, 'gotcha', 'first memory category');
-  assertEq(active[0].content, 'esbuild drops .node binaries', 'first memory content');
-  assertEq(active[1].confidence, 0.9, 'second memory confidence');
+  assert.deepStrictEqual(active.length, 3, 'should have 3 active memories');
+  assert.deepStrictEqual(active[0].category, 'gotcha', 'first memory category');
+  assert.deepStrictEqual(active[0].content, 'esbuild drops .node binaries', 'first memory content');
+  assert.deepStrictEqual(active[1].confidence, 0.9, 'second memory confidence');
 
   closeDatabase();
-}
+});
 
 // ═══════════════════════════════════════════════════════════════════════════
 // memory-store: update and reinforce
 // ═══════════════════════════════════════════════════════════════════════════
 
-console.log('\n=== memory-store: update and reinforce ===');
-{
+test('memory-store: update and reinforce', () => {
   openDatabase(':memory:');
 
   createMemory({ category: 'gotcha', content: 'original content' });
 
   // Update content
   const updated = updateMemoryContent('MEM001', 'revised content', 0.95);
-  assertTrue(updated, 'updateMemoryContent should return true');
+  assert.ok(updated, 'updateMemoryContent should return true');
 
   const active = getActiveMemories();
-  assertEq(active[0].content, 'revised content', 'content should be updated');
-  assertEq(active[0].confidence, 0.95, 'confidence should be updated');
+  assert.deepStrictEqual(active[0].content, 'revised content', 'content should be updated');
+  assert.deepStrictEqual(active[0].confidence, 0.95, 'confidence should be updated');
 
   // Reinforce
   const reinforced = reinforceMemory('MEM001');
-  assertTrue(reinforced, 'reinforceMemory should return true');
+  assert.ok(reinforced, 'reinforceMemory should return true');
 
   const after = getActiveMemories();
-  assertEq(after[0].hit_count, 1, 'hit_count should be 1 after reinforce');
+  assert.deepStrictEqual(after[0].hit_count, 1, 'hit_count should be 1 after reinforce');
 
   // Reinforce again
   reinforceMemory('MEM001');
   const after2 = getActiveMemories();
-  assertEq(after2[0].hit_count, 2, 'hit_count should be 2 after second reinforce');
+  assert.deepStrictEqual(after2[0].hit_count, 2, 'hit_count should be 2 after second reinforce');
 
   closeDatabase();
-}
+});
 
 // ═══════════════════════════════════════════════════════════════════════════
 // memory-store: supersede
 // ═══════════════════════════════════════════════════════════════════════════
 
-console.log('\n=== memory-store: supersede ===');
-{
+test('memory-store: supersede', () => {
   openDatabase(':memory:');
 
   createMemory({ category: 'convention', content: 'old convention' });
@@ -117,18 +112,17 @@ console.log('\n=== memory-store: supersede ===');
   supersedeMemory('MEM001', 'MEM002');
 
   const active = getActiveMemories();
-  assertEq(active.length, 1, 'should have 1 active memory after supersede');
-  assertEq(active[0].id, 'MEM002', 'active memory should be MEM002');
+  assert.deepStrictEqual(active.length, 1, 'should have 1 active memory after supersede');
+  assert.deepStrictEqual(active[0].id, 'MEM002', 'active memory should be MEM002');
 
   closeDatabase();
-}
+});
 
 // ═══════════════════════════════════════════════════════════════════════════
 // memory-store: ranked query ordering
 // ═══════════════════════════════════════════════════════════════════════════
 
-console.log('\n=== memory-store: ranked query ordering ===');
-{
+test('memory-store: ranked query ordering', () => {
   openDatabase(':memory:');
 
   // Low confidence, no hits
@@ -142,45 +136,43 @@ console.log('\n=== memory-store: ranked query ordering ===');
   for (let i = 0; i < 10; i++) reinforceMemory('MEM003');
 
   const ranked = getActiveMemoriesRanked(10);
-  assertEq(ranked.length, 3, 'should have 3 ranked memories');
+  assert.deepStrictEqual(ranked.length, 3, 'should have 3 ranked memories');
   // MEM003: 0.7 * (1 + 10*0.1) = 0.7 * 2.0 = 1.4
   // MEM002: 0.95 * (1 + 0*0.1) = 0.95
   // MEM001: 0.5 * (1 + 0*0.1) = 0.5
-  assertEq(ranked[0].id, 'MEM003', 'highest ranked should be MEM003 (reinforced)');
-  assertEq(ranked[1].id, 'MEM002', 'second ranked should be MEM002 (high confidence)');
-  assertEq(ranked[2].id, 'MEM001', 'lowest ranked should be MEM001');
+  assert.deepStrictEqual(ranked[0].id, 'MEM003', 'highest ranked should be MEM003 (reinforced)');
+  assert.deepStrictEqual(ranked[1].id, 'MEM002', 'second ranked should be MEM002 (high confidence)');
+  assert.deepStrictEqual(ranked[2].id, 'MEM001', 'lowest ranked should be MEM001');
 
   // Test limit
   const limited = getActiveMemoriesRanked(2);
-  assertEq(limited.length, 2, 'limit should cap results');
+  assert.deepStrictEqual(limited.length, 2, 'limit should cap results');
 
   closeDatabase();
-}
+});
 
 // ═══════════════════════════════════════════════════════════════════════════
 // memory-store: processed unit tracking
 // ═══════════════════════════════════════════════════════════════════════════
 
-console.log('\n=== memory-store: processed unit tracking ===');
-{
+test('memory-store: processed unit tracking', () => {
   openDatabase(':memory:');
 
-  assertTrue(!isUnitProcessed('execute-task/M001/S01/T01'), 'should not be processed initially');
+  assert.ok(!isUnitProcessed('execute-task/M001/S01/T01'), 'should not be processed initially');
 
   markUnitProcessed('execute-task/M001/S01/T01', '/path/to/activity.jsonl');
 
-  assertTrue(isUnitProcessed('execute-task/M001/S01/T01'), 'should be processed after marking');
-  assertTrue(!isUnitProcessed('execute-task/M001/S01/T02'), 'different key should not be processed');
+  assert.ok(isUnitProcessed('execute-task/M001/S01/T01'), 'should be processed after marking');
+  assert.ok(!isUnitProcessed('execute-task/M001/S01/T02'), 'different key should not be processed');
 
   closeDatabase();
-}
+});
 
 // ═══════════════════════════════════════════════════════════════════════════
 // memory-store: enforce memory cap
 // ═══════════════════════════════════════════════════════════════════════════
 
-console.log('\n=== memory-store: enforce memory cap ===');
-{
+test('memory-store: enforce memory cap', () => {
   openDatabase(':memory:');
 
   // Create 5 memories with varying confidence
@@ -194,23 +186,22 @@ console.log('\n=== memory-store: enforce memory cap ===');
   enforceMemoryCap(3);
 
   const active = getActiveMemories();
-  assertEq(active.length, 3, 'should have 3 active memories after cap enforcement');
+  assert.deepStrictEqual(active.length, 3, 'should have 3 active memories after cap enforcement');
 
   // The 2 lowest-ranked (MEM003=0.3 and MEM002=0.5) should be superseded
   const ids = active.map(m => m.id).sort();
-  assertTrue(ids.includes('MEM001'), 'MEM001 (0.9) should survive');
-  assertTrue(ids.includes('MEM004'), 'MEM004 (0.95) should survive');
-  assertTrue(ids.includes('MEM005'), 'MEM005 (0.7) should survive');
+  assert.ok(ids.includes('MEM001'), 'MEM001 (0.9) should survive');
+  assert.ok(ids.includes('MEM004'), 'MEM004 (0.95) should survive');
+  assert.ok(ids.includes('MEM005'), 'MEM005 (0.7) should survive');
 
   closeDatabase();
-}
+});
 
 // ═══════════════════════════════════════════════════════════════════════════
 // memory-store: applyMemoryActions transaction
 // ═══════════════════════════════════════════════════════════════════════════
 
-console.log('\n=== memory-store: applyMemoryActions ===');
-{
+test('memory-store: applyMemoryActions', () => {
   openDatabase(':memory:');
 
   const actions: MemoryAction[] = [
@@ -221,7 +212,7 @@ console.log('\n=== memory-store: applyMemoryActions ===');
   applyMemoryActions(actions, 'execute-task', 'M001/S01/T01');
 
   let active = getActiveMemories();
-  assertEq(active.length, 2, 'should have 2 memories after CREATE actions');
+  assert.deepStrictEqual(active.length, 2, 'should have 2 memories after CREATE actions');
 
   // Now apply UPDATE + REINFORCE
   const updateActions: MemoryAction[] = [
@@ -232,8 +223,8 @@ console.log('\n=== memory-store: applyMemoryActions ===');
   applyMemoryActions(updateActions, 'execute-task', 'M001/S01/T02');
 
   active = getActiveMemories();
-  assertEq(active.find(m => m.id === 'MEM001')?.content, 'updated gotcha', 'MEM001 should be updated');
-  assertEq(active.find(m => m.id === 'MEM002')?.hit_count, 1, 'MEM002 should be reinforced');
+  assert.deepStrictEqual(active.find(m => m.id === 'MEM001')?.content, 'updated gotcha', 'MEM001 should be updated');
+  assert.deepStrictEqual(active.find(m => m.id === 'MEM002')?.hit_count, 1, 'MEM002 should be reinforced');
 
   // SUPERSEDE
   const supersedeActions: MemoryAction[] = [
@@ -244,19 +235,18 @@ console.log('\n=== memory-store: applyMemoryActions ===');
   applyMemoryActions(supersedeActions, 'execute-task', 'M001/S01/T03');
 
   active = getActiveMemories();
-  assertEq(active.length, 2, 'should have 2 active after supersede');
-  assertTrue(!active.find(m => m.id === 'MEM001'), 'MEM001 should be superseded');
-  assertTrue(!!active.find(m => m.id === 'MEM003'), 'MEM003 should be active');
+  assert.deepStrictEqual(active.length, 2, 'should have 2 active after supersede');
+  assert.ok(!active.find(m => m.id === 'MEM001'), 'MEM001 should be superseded');
+  assert.ok(!!active.find(m => m.id === 'MEM003'), 'MEM003 should be active');
 
   closeDatabase();
-}
+});
 
 // ═══════════════════════════════════════════════════════════════════════════
 // memory-store: formatMemoriesForPrompt
 // ═══════════════════════════════════════════════════════════════════════════
 
-console.log('\n=== memory-store: formatMemoriesForPrompt ===');
-{
+test('memory-store: formatMemoriesForPrompt', () => {
   openDatabase(':memory:');
 
   createMemory({ category: 'gotcha', content: 'esbuild drops .node binaries' });
@@ -267,18 +257,18 @@ console.log('\n=== memory-store: formatMemoriesForPrompt ===');
   const memories = getActiveMemoriesRanked(30);
   const formatted = formatMemoriesForPrompt(memories);
 
-  assertTrue(formatted.includes('## Project Memory (auto-learned)'), 'should have header');
-  assertTrue(formatted.includes('### Gotcha'), 'should have gotcha category');
-  assertTrue(formatted.includes('### Convention'), 'should have convention category');
-  assertTrue(formatted.includes('### Architecture'), 'should have architecture category');
-  assertTrue(formatted.includes('- esbuild drops .node binaries'), 'should have gotcha content');
-  assertTrue(formatted.includes('- use :memory: for tests'), 'should have convention content');
+  assert.ok(formatted.includes('## Project Memory (auto-learned)'), 'should have header');
+  assert.ok(formatted.includes('### Gotcha'), 'should have gotcha category');
+  assert.ok(formatted.includes('### Convention'), 'should have convention category');
+  assert.ok(formatted.includes('### Architecture'), 'should have architecture category');
+  assert.ok(formatted.includes('- esbuild drops .node binaries'), 'should have gotcha content');
+  assert.ok(formatted.includes('- use :memory: for tests'), 'should have convention content');
 
   // Test empty memories
   closeDatabase();
   openDatabase(':memory:');
   const emptyFormatted = formatMemoriesForPrompt([]);
-  assertEq(emptyFormatted, '', 'empty memories should return empty string');
+  assert.deepStrictEqual(emptyFormatted, '', 'empty memories should return empty string');
 
   // Test token budget truncation
   closeDatabase();
@@ -288,58 +278,55 @@ console.log('\n=== memory-store: formatMemoriesForPrompt ===');
   }
   const budgetMemories = getActiveMemoriesRanked(30);
   const truncated = formatMemoriesForPrompt(budgetMemories, 500);
-  assertTrue(truncated.length < 2500, `formatted length ${truncated.length} should be under budget`);
+  assert.ok(truncated.length < 2500, `formatted length ${truncated.length} should be under budget`);
 
   closeDatabase();
-}
+});
 
 // ═══════════════════════════════════════════════════════════════════════════
 // memory-store: ID generation
 // ═══════════════════════════════════════════════════════════════════════════
 
-console.log('\n=== memory-store: ID generation ===');
-{
+test('memory-store: ID generation', () => {
   openDatabase(':memory:');
 
-  assertEq(nextMemoryId(), 'MEM001', 'first ID should be MEM001');
+  assert.deepStrictEqual(nextMemoryId(), 'MEM001', 'first ID should be MEM001');
 
   createMemory({ category: 'test', content: 'test' });
-  assertEq(nextMemoryId(), 'MEM002', 'after first create, next should be MEM002');
+  assert.deepStrictEqual(nextMemoryId(), 'MEM002', 'after first create, next should be MEM002');
 
   // Create several more
   for (let i = 0; i < 98; i++) createMemory({ category: 'test', content: `test ${i}` });
-  assertEq(nextMemoryId(), 'MEM100', 'after 99 creates, next should be MEM100');
+  assert.deepStrictEqual(nextMemoryId(), 'MEM100', 'after 99 creates, next should be MEM100');
 
   closeDatabase();
-}
+});
 
 // ═══════════════════════════════════════════════════════════════════════════
 // memory-store: schema migration (v2 → v3)
 // ═══════════════════════════════════════════════════════════════════════════
 
-console.log('\n=== memory-store: schema includes memories table ===');
-{
+test('memory-store: schema includes memories table', () => {
   openDatabase(':memory:');
 
   const adapter = _getAdapter()!;
 
   // Verify memories table exists
   const memCount = adapter.prepare('SELECT count(*) as cnt FROM memories').get();
-  assertEq(memCount?.['cnt'], 0, 'memories table should exist and be empty');
+  assert.deepStrictEqual(memCount?.['cnt'], 0, 'memories table should exist and be empty');
 
   // Verify memory_processed_units table exists
   const procCount = adapter.prepare('SELECT count(*) as cnt FROM memory_processed_units').get();
-  assertEq(procCount?.['cnt'], 0, 'memory_processed_units table should exist and be empty');
+  assert.deepStrictEqual(procCount?.['cnt'], 0, 'memory_processed_units table should exist and be empty');
 
   // Verify active_memories view exists
   const viewCount = adapter.prepare('SELECT count(*) as cnt FROM active_memories').get();
-  assertEq(viewCount?.['cnt'], 0, 'active_memories view should exist');
+  assert.deepStrictEqual(viewCount?.['cnt'], 0, 'active_memories view should exist');
 
   // Verify schema version is 10 (after M001 planning migrations)
   const version = adapter.prepare('SELECT MAX(version) as v FROM schema_version').get();
-  assertEq(version?.['v'], 10, 'schema version should be 10');
+  assert.deepStrictEqual(version?.['v'], 10, 'schema version should be 10');
 
   closeDatabase();
-}
+});
 
-report();

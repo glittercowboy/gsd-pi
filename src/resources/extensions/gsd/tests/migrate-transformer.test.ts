@@ -19,9 +19,9 @@ import type {
   GSDSlice,
   GSDTask,
 } from '../migrate/types.ts';
-import { createTestContext } from './test-helpers.ts';
+import { describe, test, beforeEach, afterEach } from 'node:test';
+import assert from 'node:assert/strict';
 
-const { assertEq, assertTrue, report } = createTestContext();
 // ─── Fixture Helpers ───────────────────────────────────────────────────────
 
 function emptyProject(overrides: Partial<PlanningProject> = {}): PlanningProject {
@@ -134,8 +134,7 @@ function makeResearch(fileName: string, content: string): PlanningResearch {
 
 // ─── Scenario 1: Flat Single-Milestone (3 phases → M001 with S01/S02/S03) ──
 
-{
-  console.log('Scenario 1: Flat single-milestone');
+test('Scenario 1: Flat single-milestone', () => {
 
   const project = emptyProject({
     project: '# My Project\nA cool project.',
@@ -159,26 +158,25 @@ function makeResearch(fileName: string, content: string): PlanningResearch {
 
   const result = transformToGSD(project);
 
-  assertEq(result.milestones.length, 1, 'flat: produces 1 milestone');
-  assertTrue(result.milestones[0]?.id === 'M001', 'flat: milestone ID is M001');
-  assertEq(result.milestones[0]?.slices.length, 3, 'flat: 3 slices');
-  assertEq(result.milestones[0]?.slices[0]?.id, 'S01', 'flat: first slice is S01');
-  assertEq(result.milestones[0]?.slices[1]?.id, 'S02', 'flat: second slice is S02');
-  assertEq(result.milestones[0]?.slices[2]?.id, 'S03', 'flat: third slice is S03');
-  assertTrue(result.milestones[0]?.slices[0]?.title.length > 0, 'flat: slice title not empty');
-  assertEq(result.milestones[0]?.slices[0]?.tasks.length, 1, 'flat: S01 has 1 task');
-  assertEq(result.milestones[0]?.slices[1]?.tasks.length, 2, 'flat: S02 has 2 tasks');
-  assertEq(result.milestones[0]?.slices[2]?.tasks.length, 1, 'flat: S03 has 1 task');
-  assertEq(result.milestones[0]?.slices[0]?.tasks[0]?.id, 'T01', 'flat: first task is T01');
-  assertEq(result.milestones[0]?.slices[1]?.tasks[1]?.id, 'T02', 'flat: second task in S02 is T02');
-  assertTrue(result.projectContent.includes('My Project'), 'flat: projectContent preserved');
-  assertEq(result.milestones[0]?.boundaryMap, [], 'flat: boundaryMap defaults to empty');
-}
+  assert.deepStrictEqual(result.milestones.length, 1, 'flat: produces 1 milestone');
+  assert.ok(result.milestones[0]?.id === 'M001', 'flat: milestone ID is M001');
+  assert.deepStrictEqual(result.milestones[0]?.slices.length, 3, 'flat: 3 slices');
+  assert.deepStrictEqual(result.milestones[0]?.slices[0]?.id, 'S01', 'flat: first slice is S01');
+  assert.deepStrictEqual(result.milestones[0]?.slices[1]?.id, 'S02', 'flat: second slice is S02');
+  assert.deepStrictEqual(result.milestones[0]?.slices[2]?.id, 'S03', 'flat: third slice is S03');
+  assert.ok(result.milestones[0]?.slices[0]?.title.length > 0, 'flat: slice title not empty');
+  assert.deepStrictEqual(result.milestones[0]?.slices[0]?.tasks.length, 1, 'flat: S01 has 1 task');
+  assert.deepStrictEqual(result.milestones[0]?.slices[1]?.tasks.length, 2, 'flat: S02 has 2 tasks');
+  assert.deepStrictEqual(result.milestones[0]?.slices[2]?.tasks.length, 1, 'flat: S03 has 1 task');
+  assert.deepStrictEqual(result.milestones[0]?.slices[0]?.tasks[0]?.id, 'T01', 'flat: first task is T01');
+  assert.deepStrictEqual(result.milestones[0]?.slices[1]?.tasks[1]?.id, 'T02', 'flat: second task in S02 is T02');
+  assert.ok(result.projectContent.includes('My Project'), 'flat: projectContent preserved');
+  assert.deepStrictEqual(result.milestones[0]?.boundaryMap, [], 'flat: boundaryMap defaults to empty');
+});
 
 // ─── Scenario 2: Multi-Milestone (2 milestones with independent numbering) ──
 
-{
-  console.log('Scenario 2: Multi-milestone');
+test('Scenario 2: Multi-milestone', () => {
 
   const project = emptyProject({
     roadmap: milestoneRoadmap([
@@ -206,23 +204,22 @@ function makeResearch(fileName: string, content: string): PlanningResearch {
 
   const result = transformToGSD(project);
 
-  assertEq(result.milestones.length, 2, 'multi: 2 milestones');
-  assertEq(result.milestones[0]?.id, 'M001', 'multi: first milestone M001');
-  assertEq(result.milestones[1]?.id, 'M002', 'multi: second milestone M002');
-  assertEq(result.milestones[0]?.slices.length, 2, 'multi: M001 has 2 slices');
-  assertEq(result.milestones[1]?.slices.length, 3, 'multi: M002 has 3 slices');
+  assert.deepStrictEqual(result.milestones.length, 2, 'multi: 2 milestones');
+  assert.deepStrictEqual(result.milestones[0]?.id, 'M001', 'multi: first milestone M001');
+  assert.deepStrictEqual(result.milestones[1]?.id, 'M002', 'multi: second milestone M002');
+  assert.deepStrictEqual(result.milestones[0]?.slices.length, 2, 'multi: M001 has 2 slices');
+  assert.deepStrictEqual(result.milestones[1]?.slices.length, 3, 'multi: M002 has 3 slices');
   // Independent numbering: both start at S01
-  assertEq(result.milestones[0]?.slices[0]?.id, 'S01', 'multi: M001 starts at S01');
-  assertEq(result.milestones[1]?.slices[0]?.id, 'S01', 'multi: M002 starts at S01');
-  assertEq(result.milestones[1]?.slices[2]?.id, 'S03', 'multi: M002 third slice is S03');
-  assertTrue(result.milestones[0]?.title.length > 0, 'multi: M001 has title');
-  assertTrue(result.milestones[1]?.title.length > 0, 'multi: M002 has title');
-}
+  assert.deepStrictEqual(result.milestones[0]?.slices[0]?.id, 'S01', 'multi: M001 starts at S01');
+  assert.deepStrictEqual(result.milestones[1]?.slices[0]?.id, 'S01', 'multi: M002 starts at S01');
+  assert.deepStrictEqual(result.milestones[1]?.slices[2]?.id, 'S03', 'multi: M002 third slice is S03');
+  assert.ok(result.milestones[0]?.title.length > 0, 'multi: M001 has title');
+  assert.ok(result.milestones[1]?.title.length > 0, 'multi: M002 has title');
+});
 
 // ─── Scenario 3: Decimal Phase Ordering (1, 2, 2.1, 2.2, 3 → S01–S05) ──
 
-{
-  console.log('Scenario 3: Decimal phase ordering');
+test('Scenario 3: Decimal phase ordering', () => {
 
   const project = emptyProject({
     roadmap: flatRoadmap([
@@ -243,27 +240,26 @@ function makeResearch(fileName: string, content: string): PlanningResearch {
 
   const result = transformToGSD(project);
 
-  assertEq(result.milestones[0]?.slices.length, 5, 'decimal: 5 slices total');
-  assertEq(result.milestones[0]?.slices[0]?.id, 'S01', 'decimal: first is S01');
-  assertEq(result.milestones[0]?.slices[1]?.id, 'S02', 'decimal: second is S02');
-  assertEq(result.milestones[0]?.slices[2]?.id, 'S03', 'decimal: third is S03');
-  assertEq(result.milestones[0]?.slices[3]?.id, 'S04', 'decimal: fourth is S04');
-  assertEq(result.milestones[0]?.slices[4]?.id, 'S05', 'decimal: fifth is S05');
+  assert.deepStrictEqual(result.milestones[0]?.slices.length, 5, 'decimal: 5 slices total');
+  assert.deepStrictEqual(result.milestones[0]?.slices[0]?.id, 'S01', 'decimal: first is S01');
+  assert.deepStrictEqual(result.milestones[0]?.slices[1]?.id, 'S02', 'decimal: second is S02');
+  assert.deepStrictEqual(result.milestones[0]?.slices[2]?.id, 'S03', 'decimal: third is S03');
+  assert.deepStrictEqual(result.milestones[0]?.slices[3]?.id, 'S04', 'decimal: fourth is S04');
+  assert.deepStrictEqual(result.milestones[0]?.slices[4]?.id, 'S05', 'decimal: fifth is S05');
   // Order must be by float value: 1, 2, 2.1, 2.2, 3
-  assertTrue(
+  assert.ok(
     result.milestones[0]?.slices[0]?.title.toLowerCase().includes('foundation'),
     'decimal: S01 is foundation (phase 1)',
   );
-  assertTrue(
+  assert.ok(
     result.milestones[0]?.slices[4]?.title.toLowerCase().includes('finalize'),
     'decimal: S05 is finalize (phase 3)',
   );
-}
+});
 
 // ─── Scenario 4: Completion State ──────────────────────────────────────────
 
-{
-  console.log('Scenario 4: Completion state mapping');
+test('Scenario 4: Completion state mapping', () => {
 
   const project = emptyProject({
     roadmap: flatRoadmap([
@@ -288,26 +284,25 @@ function makeResearch(fileName: string, content: string): PlanningResearch {
   const doneSlice = result.milestones[0]?.slices[0];
   const activeSlice = result.milestones[0]?.slices[1];
 
-  assertTrue(doneSlice?.done === true, 'completion: done phase → done slice');
-  assertTrue(activeSlice?.done === false, 'completion: active phase → not-done slice');
-  assertTrue(doneSlice?.tasks[0]?.done === true, 'completion: plan with summary → done task');
-  assertTrue(doneSlice?.tasks[1]?.done === false, 'completion: plan without summary → not-done task');
-  assertTrue(doneSlice?.tasks[0]?.summary !== null, 'completion: done task has summary data');
-  assertTrue(doneSlice?.tasks[1]?.summary === null, 'completion: not-done task has null summary');
-  assertEq(doneSlice?.tasks[0]?.summary?.completedAt, '2026-01-15', 'completion: summary completedAt from frontmatter');
-  assertEq(doneSlice?.tasks[0]?.summary?.duration, '2h', 'completion: summary duration from frontmatter');
-  assertEq(doneSlice?.tasks[0]?.summary?.provides, ['feature-01'], 'completion: summary provides from frontmatter');
-  assertEq(doneSlice?.tasks[0]?.summary?.keyFiles, ['file-01.ts'], 'completion: summary keyFiles from frontmatter');
-  assertTrue(doneSlice?.tasks[0]?.summary?.whatHappened?.includes('Summary body') ?? false, 'completion: summary whatHappened from body');
-  assertTrue(doneSlice?.summary !== null, 'completion: done slice has slice summary');
-  assertTrue(activeSlice?.summary === null, 'completion: active slice has null summary');
-  assertEq(doneSlice?.tasks[0]?.estimate, '2h', 'completion: task estimate from summary duration');
-}
+  assert.ok(doneSlice?.done === true, 'completion: done phase → done slice');
+  assert.ok(activeSlice?.done === false, 'completion: active phase → not-done slice');
+  assert.ok(doneSlice?.tasks[0]?.done === true, 'completion: plan with summary → done task');
+  assert.ok(doneSlice?.tasks[1]?.done === false, 'completion: plan without summary → not-done task');
+  assert.ok(doneSlice?.tasks[0]?.summary !== null, 'completion: done task has summary data');
+  assert.ok(doneSlice?.tasks[1]?.summary === null, 'completion: not-done task has null summary');
+  assert.deepStrictEqual(doneSlice?.tasks[0]?.summary?.completedAt, '2026-01-15', 'completion: summary completedAt from frontmatter');
+  assert.deepStrictEqual(doneSlice?.tasks[0]?.summary?.duration, '2h', 'completion: summary duration from frontmatter');
+  assert.deepStrictEqual(doneSlice?.tasks[0]?.summary?.provides, ['feature-01'], 'completion: summary provides from frontmatter');
+  assert.deepStrictEqual(doneSlice?.tasks[0]?.summary?.keyFiles, ['file-01.ts'], 'completion: summary keyFiles from frontmatter');
+  assert.ok(doneSlice?.tasks[0]?.summary?.whatHappened?.includes('Summary body') ?? false, 'completion: summary whatHappened from body');
+  assert.ok(doneSlice?.summary !== null, 'completion: done slice has slice summary');
+  assert.ok(activeSlice?.summary === null, 'completion: active slice has null summary');
+  assert.deepStrictEqual(doneSlice?.tasks[0]?.estimate, '2h', 'completion: task estimate from summary duration');
+});
 
 // ─── Scenario 5: Research Consolidation ────────────────────────────────────
 
-{
-  console.log('Scenario 5: Research consolidation');
+test('Scenario 5: Research consolidation', () => {
 
   const project = emptyProject({
     roadmap: flatRoadmap([roadmapEntry(1, 'researched-phase')]),
@@ -328,28 +323,27 @@ function makeResearch(fileName: string, content: string): PlanningResearch {
   const result = transformToGSD(project);
 
   // Project-level research → milestone research
-  assertTrue(result.milestones[0]?.research !== null, 'research: milestone has consolidated research');
-  assertTrue(result.milestones[0]?.research!.includes('Project Summary'), 'research: includes SUMMARY content');
-  assertTrue(result.milestones[0]?.research!.includes('Architecture'), 'research: includes ARCHITECTURE content');
-  assertTrue(result.milestones[0]?.research!.includes('Pitfalls'), 'research: includes PITFALLS content');
+  assert.ok(result.milestones[0]?.research !== null, 'research: milestone has consolidated research');
+  assert.ok(result.milestones[0]?.research!.includes('Project Summary'), 'research: includes SUMMARY content');
+  assert.ok(result.milestones[0]?.research!.includes('Architecture'), 'research: includes ARCHITECTURE content');
+  assert.ok(result.milestones[0]?.research!.includes('Pitfalls'), 'research: includes PITFALLS content');
 
   // Fixed ordering: SUMMARY before ARCHITECTURE before PITFALLS
   const summaryIdx = result.milestones[0]?.research!.indexOf('Project Summary') ?? -1;
   const archIdx = result.milestones[0]?.research!.indexOf('Architecture') ?? -1;
   const pitfallIdx = result.milestones[0]?.research!.indexOf('Pitfalls') ?? -1;
-  assertTrue(summaryIdx < archIdx, 'research: SUMMARY before ARCHITECTURE in consolidated');
-  assertTrue(archIdx < pitfallIdx, 'research: ARCHITECTURE before PITFALLS in consolidated');
+  assert.ok(summaryIdx < archIdx, 'research: SUMMARY before ARCHITECTURE in consolidated');
+  assert.ok(archIdx < pitfallIdx, 'research: ARCHITECTURE before PITFALLS in consolidated');
 
   // Phase-level research → slice research
   const slice = result.milestones[0]?.slices[0];
-  assertTrue(slice?.research !== null, 'research: slice has phase research');
-  assertTrue(slice?.research!.includes('Phase Features'), 'research: slice research includes phase content');
-}
+  assert.ok(slice?.research !== null, 'research: slice has phase research');
+  assert.ok(slice?.research!.includes('Phase Features'), 'research: slice research includes phase content');
+});
 
 // ─── Scenario 6: Requirements Classification ──────────────────────────────
 
-{
-  console.log('Scenario 6: Requirements classification');
+test('Scenario 6: Requirements classification', () => {
 
   const project = emptyProject({
     roadmap: flatRoadmap([roadmapEntry(1, 'req-phase')]),
@@ -365,22 +359,21 @@ function makeResearch(fileName: string, content: string): PlanningResearch {
 
   const result = transformToGSD(project);
 
-  assertEq(result.requirements.length, 3, 'requirements: 3 requirements');
-  assertEq(result.requirements[0]?.id, 'R001', 'requirements: first is R001');
-  assertEq(result.requirements[0]?.status, 'active', 'requirements: R001 status active');
-  assertEq(result.requirements[1]?.status, 'validated', 'requirements: R002 status validated');
-  assertEq(result.requirements[2]?.status, 'deferred', 'requirements: R003 status deferred');
-  assertTrue(result.requirements[0]?.title === 'Core Feature', 'requirements: R001 title preserved');
-  assertTrue(result.requirements[0]?.description.includes('Description for R001'), 'requirements: R001 description preserved');
-  assertEq(result.requirements[0]?.class, 'core-capability', 'requirements: default class');
-  assertEq(result.requirements[0]?.source, 'inferred', 'requirements: default source');
-  assertEq(result.requirements[0]?.primarySlice, 'none yet', 'requirements: default primarySlice');
-}
+  assert.deepStrictEqual(result.requirements.length, 3, 'requirements: 3 requirements');
+  assert.deepStrictEqual(result.requirements[0]?.id, 'R001', 'requirements: first is R001');
+  assert.deepStrictEqual(result.requirements[0]?.status, 'active', 'requirements: R001 status active');
+  assert.deepStrictEqual(result.requirements[1]?.status, 'validated', 'requirements: R002 status validated');
+  assert.deepStrictEqual(result.requirements[2]?.status, 'deferred', 'requirements: R003 status deferred');
+  assert.ok(result.requirements[0]?.title === 'Core Feature', 'requirements: R001 title preserved');
+  assert.ok(result.requirements[0]?.description.includes('Description for R001'), 'requirements: R001 description preserved');
+  assert.deepStrictEqual(result.requirements[0]?.class, 'core-capability', 'requirements: default class');
+  assert.deepStrictEqual(result.requirements[0]?.source, 'inferred', 'requirements: default source');
+  assert.deepStrictEqual(result.requirements[0]?.primarySlice, 'none yet', 'requirements: default primarySlice');
+});
 
 // ─── Scenario 7: Empty Phase (no plans → slice with 0 tasks) ───────────────
 
-{
-  console.log('Scenario 7: Empty phase');
+test('Scenario 7: Empty phase', () => {
 
   const project = emptyProject({
     roadmap: flatRoadmap([
@@ -397,15 +390,14 @@ function makeResearch(fileName: string, content: string): PlanningResearch {
 
   const result = transformToGSD(project);
 
-  assertEq(result.milestones[0]?.slices[0]?.tasks.length, 0, 'empty: empty phase → 0 tasks');
-  assertEq(result.milestones[0]?.slices[1]?.tasks.length, 1, 'empty: non-empty phase → 1 task');
-  assertTrue(result.milestones[0]?.slices[0]?.id === 'S01', 'empty: empty slice still gets ID');
-}
+  assert.deepStrictEqual(result.milestones[0]?.slices[0]?.tasks.length, 0, 'empty: empty phase → 0 tasks');
+  assert.deepStrictEqual(result.milestones[0]?.slices[1]?.tasks.length, 1, 'empty: non-empty phase → 1 task');
+  assert.ok(result.milestones[0]?.slices[0]?.id === 'S01', 'empty: empty slice still gets ID');
+});
 
 // ─── Scenario 8: Demo Derivation from Plan Objective ───────────────────────
 
-{
-  console.log('Scenario 8: Demo derivation');
+test('Scenario 8: Demo derivation', () => {
 
   const project = emptyProject({
     roadmap: flatRoadmap([roadmapEntry(1, 'demo-phase')]),
@@ -420,19 +412,18 @@ function makeResearch(fileName: string, content: string): PlanningResearch {
 
   const result = transformToGSD(project);
 
-  assertTrue(result.milestones[0]?.slices[0]?.demo.length > 0, 'demo: slice demo is not empty');
-  assertTrue(
+  assert.ok(result.milestones[0]?.slices[0]?.demo.length > 0, 'demo: slice demo is not empty');
+  assert.ok(
     result.milestones[0]?.slices[0]?.demo.includes('authentication') ||
     result.milestones[0]?.slices[0]?.demo.includes('Build'),
     'demo: slice demo derived from first plan objective',
   );
-  assertTrue(result.milestones[0]?.slices[0]?.goal.length > 0, 'demo: slice goal is not empty');
-}
+  assert.ok(result.milestones[0]?.slices[0]?.goal.length > 0, 'demo: slice goal is not empty');
+});
 
 // ─── Scenario 9: Field Defaults and Type Safety ────────────────────────────
 
-{
-  console.log('Scenario 9: Field defaults');
+test('Scenario 9: Field defaults', () => {
 
   const project = emptyProject({
     roadmap: flatRoadmap([roadmapEntry(1, 'defaults-phase')]),
@@ -460,20 +451,19 @@ function makeResearch(fileName: string, content: string): PlanningResearch {
   const slice = result.milestones[0]?.slices[0];
   const task = slice?.tasks[0];
 
-  assertEq(slice?.risk, 'medium', 'defaults: slice risk defaults to medium');
-  assertEq(slice?.depends, [], 'defaults: S01 has no depends');
-  assertTrue(task?.description.length > 0, 'defaults: task description not empty');
-  assertEq(task?.files, ['src/auth.ts', 'src/db.ts'], 'defaults: task files from frontmatter');
-  assertEq(task?.mustHaves, ['Auth works', 'DB connected'], 'defaults: task mustHaves from frontmatter');
-  assertEq(task?.done, false, 'defaults: task without summary is not done');
-  assertEq(task?.estimate, '', 'defaults: task without summary has empty estimate');
-  assertTrue(task?.summary === null, 'defaults: task without summary has null summary');
-}
+  assert.deepStrictEqual(slice?.risk, 'medium', 'defaults: slice risk defaults to medium');
+  assert.deepStrictEqual(slice?.depends, [], 'defaults: S01 has no depends');
+  assert.ok(task?.description.length > 0, 'defaults: task description not empty');
+  assert.deepStrictEqual(task?.files, ['src/auth.ts', 'src/db.ts'], 'defaults: task files from frontmatter');
+  assert.deepStrictEqual(task?.mustHaves, ['Auth works', 'DB connected'], 'defaults: task mustHaves from frontmatter');
+  assert.deepStrictEqual(task?.done, false, 'defaults: task without summary is not done');
+  assert.deepStrictEqual(task?.estimate, '', 'defaults: task without summary has empty estimate');
+  assert.ok(task?.summary === null, 'defaults: task without summary has null summary');
+});
 
 // ─── Scenario 10: Sequential Depends ──────────────────────────────────────
 
-{
-  console.log('Scenario 10: Sequential depends');
+test('Scenario 10: Sequential depends', () => {
 
   const project = emptyProject({
     roadmap: flatRoadmap([
@@ -491,15 +481,14 @@ function makeResearch(fileName: string, content: string): PlanningResearch {
   const result = transformToGSD(project);
   const slices = result.milestones[0]?.slices;
 
-  assertEq(slices?.[0]?.depends, [], 'depends: S01 has empty depends');
-  assertEq(slices?.[1]?.depends, ['S01'], 'depends: S02 depends on S01');
-  assertEq(slices?.[2]?.depends, ['S02'], 'depends: S03 depends on S02');
-}
+  assert.deepStrictEqual(slices?.[0]?.depends, [], 'depends: S01 has empty depends');
+  assert.deepStrictEqual(slices?.[1]?.depends, ['S01'], 'depends: S02 depends on S01');
+  assert.deepStrictEqual(slices?.[2]?.depends, ['S02'], 'depends: S03 depends on S02');
+});
 
 // ─── Scenario 11: Requirements with unknown status and missing IDs ─────────
 
-{
-  console.log('Scenario 11: Requirements edge cases');
+test('Scenario 11: Requirements edge cases', () => {
 
   const project = emptyProject({
     roadmap: flatRoadmap([roadmapEntry(1, 'req-edge')]),
@@ -516,17 +505,16 @@ function makeResearch(fileName: string, content: string): PlanningResearch {
 
   const result = transformToGSD(project);
 
-  assertEq(result.requirements[0]?.id, 'R001', 'req-edge: empty id gets R001');
-  assertEq(result.requirements[1]?.id, 'R002', 'req-edge: second empty id gets R002');
-  assertEq(result.requirements[2]?.id, 'R005', 'req-edge: existing id preserved');
-  assertEq(result.requirements[2]?.status, 'active', 'req-edge: unknown status normalized to active');
-  assertEq(result.requirements[3]?.status, 'deferred', 'req-edge: uppercase DEFERRED normalized');
-}
+  assert.deepStrictEqual(result.requirements[0]?.id, 'R001', 'req-edge: empty id gets R001');
+  assert.deepStrictEqual(result.requirements[1]?.id, 'R002', 'req-edge: second empty id gets R002');
+  assert.deepStrictEqual(result.requirements[2]?.id, 'R005', 'req-edge: existing id preserved');
+  assert.deepStrictEqual(result.requirements[2]?.status, 'active', 'req-edge: unknown status normalized to active');
+  assert.deepStrictEqual(result.requirements[3]?.status, 'deferred', 'req-edge: uppercase DEFERRED normalized');
+});
 
 // ─── Scenario 12: Vision derivation ────────────────────────────────────────
 
-{
-  console.log('Scenario 12: Vision derivation');
+test('Scenario 12: Vision derivation', () => {
 
   // Vision from project description
   const project1 = emptyProject({
@@ -536,7 +524,7 @@ function makeResearch(fileName: string, content: string): PlanningResearch {
   });
 
   const result1 = transformToGSD(project1);
-  assertTrue(result1.milestones[0]?.vision.includes('revolutionary'), 'vision: derived from project first line');
+  assert.ok(result1.milestones[0]?.vision.includes('revolutionary'), 'vision: derived from project first line');
 
   // Vision fallback when no project
   const project2 = emptyProject({
@@ -545,13 +533,12 @@ function makeResearch(fileName: string, content: string): PlanningResearch {
   });
 
   const result2 = transformToGSD(project2);
-  assertTrue(result2.milestones[0]?.vision.length > 0, 'vision: fallback is non-empty');
-}
+  assert.ok(result2.milestones[0]?.vision.length > 0, 'vision: fallback is non-empty');
+});
 
 // ─── Scenario 13: Decisions content from summaries ─────────────────────────
 
-{
-  console.log('Scenario 13: Decisions content');
+test('Scenario 13: Decisions content', () => {
 
   const project = emptyProject({
     roadmap: flatRoadmap([roadmapEntry(1, 'decision-phase', true)]),
@@ -565,13 +552,12 @@ function makeResearch(fileName: string, content: string): PlanningResearch {
 
   const result = transformToGSD(project);
 
-  assertTrue(result.decisionsContent.includes('decision-01'), 'decisions: extracts key-decisions from summaries');
-}
+  assert.ok(result.decisionsContent.includes('decision-01'), 'decisions: extracts key-decisions from summaries');
+});
 
 // ─── Scenario 14: No undefined values in output ───────────────────────────
 
-{
-  console.log('Scenario 14: No undefined values');
+test('Scenario 14: No undefined values', () => {
 
   const project = emptyProject({
     project: '# Test\nDescription.',
@@ -596,7 +582,7 @@ function makeResearch(fileName: string, content: string): PlanningResearch {
   // Deep check for undefined values
   function checkNoUndefined(obj: unknown, path: string): void {
     if (obj === undefined) {
-      assertTrue(false, `no-undefined: ${path} is undefined`);
+      assert.ok(false, `no-undefined: ${path} is undefined`);
       return;
     }
     if (obj === null) return; // null is allowed (e.g. research, summary)
@@ -612,13 +598,12 @@ function makeResearch(fileName: string, content: string): PlanningResearch {
   }
 
   checkNoUndefined(result, 'result');
-  assertTrue(true, 'no-undefined: deep check completed without finding undefined values');
-}
+  assert.ok(true, 'no-undefined: deep check completed without finding undefined values');
+});
 
 // ─── Scenario 15: Research with no files ───────────────────────────────────
 
-{
-  console.log('Scenario 15: Empty research');
+test('Scenario 15: Empty research', () => {
 
   const project = emptyProject({
     roadmap: flatRoadmap([roadmapEntry(1, 'no-research')]),
@@ -626,10 +611,9 @@ function makeResearch(fileName: string, content: string): PlanningResearch {
   });
 
   const result = transformToGSD(project);
-  assertTrue(result.milestones[0]?.research === null, 'empty-research: milestone research is null');
-  assertTrue(result.milestones[0]?.slices[0]?.research === null, 'empty-research: slice research is null');
-}
+  assert.ok(result.milestones[0]?.research === null, 'empty-research: milestone research is null');
+  assert.ok(result.milestones[0]?.slices[0]?.research === null, 'empty-research: slice research is null');
+});
 
 // ─── Results ───────────────────────────────────────────────────────────────
 
-report();

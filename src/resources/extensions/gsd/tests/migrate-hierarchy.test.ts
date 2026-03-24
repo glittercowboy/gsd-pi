@@ -18,9 +18,8 @@ import {
   getActiveTaskFromDb,
 } from '../gsd-db.ts';
 import { migrateHierarchyToDb } from '../md-importer.ts';
-import { createTestContext } from './test-helpers.ts';
-
-const { assertEq, assertTrue, report } = createTestContext();
+import { describe, test, beforeEach, afterEach } from 'node:test';
+import assert from 'node:assert/strict';
 
 // ─── Fixture Helpers ───────────────────────────────────────────────────────
 
@@ -98,11 +97,9 @@ const PLAN_S02_1_TASK = `# S02: Second Slice
 // Test Cases
 // ═══════════════════════════════════════════════════════════════════════════
 
-async function main(): Promise<void> {
-
   // ─── Test (a): Single milestone with 2 slices, 3 tasks ────────────────
-  console.log('\n=== migrate-hier: single milestone with 2 slices, 3 tasks ===');
-  {
+
+test('migrate-hier: single milestone with 2 slices, 3 tasks', () => {
     const base = createFixtureBase();
     try {
       writeFile(base, 'milestones/M001/M001-ROADMAP.md', ROADMAP_2_SLICES);
@@ -112,48 +109,48 @@ async function main(): Promise<void> {
       openDatabase(':memory:');
       const counts = migrateHierarchyToDb(base);
 
-      assertEq(counts.milestones, 1, 'single-ms: 1 milestone inserted');
-      assertEq(counts.slices, 2, 'single-ms: 2 slices inserted');
-      assertEq(counts.tasks, 4, 'single-ms: 4 tasks inserted (3 + 1)');
+      assert.deepStrictEqual(counts.milestones, 1, 'single-ms: 1 milestone inserted');
+      assert.deepStrictEqual(counts.slices, 2, 'single-ms: 2 slices inserted');
+      assert.deepStrictEqual(counts.tasks, 4, 'single-ms: 4 tasks inserted (3 + 1)');
 
       const milestones = getAllMilestones();
-      assertEq(milestones.length, 1, 'single-ms: 1 milestone in DB');
-      assertEq(milestones[0]!.id, 'M001', 'single-ms: milestone ID is M001');
-      assertEq(milestones[0]!.title, 'M001: Test Milestone', 'single-ms: milestone title correct');
-      assertEq(milestones[0]!.status, 'active', 'single-ms: milestone status is active');
+      assert.deepStrictEqual(milestones.length, 1, 'single-ms: 1 milestone in DB');
+      assert.deepStrictEqual(milestones[0]!.id, 'M001', 'single-ms: milestone ID is M001');
+      assert.deepStrictEqual(milestones[0]!.title, 'M001: Test Milestone', 'single-ms: milestone title correct');
+      assert.deepStrictEqual(milestones[0]!.status, 'active', 'single-ms: milestone status is active');
 
       const slices = getMilestoneSlices('M001');
-      assertEq(slices.length, 2, 'single-ms: 2 slices in DB');
-      assertEq(slices[0]!.id, 'S01', 'single-ms: first slice is S01');
-      assertEq(slices[0]!.title, 'First Slice', 'single-ms: S01 title correct');
-      assertEq(slices[0]!.risk, 'low', 'single-ms: S01 risk is low');
-      assertEq(slices[0]!.status, 'pending', 'single-ms: S01 status is pending');
-      assertEq(slices[1]!.id, 'S02', 'single-ms: second slice is S02');
-      assertEq(slices[1]!.risk, 'high', 'single-ms: S02 risk is high');
+      assert.deepStrictEqual(slices.length, 2, 'single-ms: 2 slices in DB');
+      assert.deepStrictEqual(slices[0]!.id, 'S01', 'single-ms: first slice is S01');
+      assert.deepStrictEqual(slices[0]!.title, 'First Slice', 'single-ms: S01 title correct');
+      assert.deepStrictEqual(slices[0]!.risk, 'low', 'single-ms: S01 risk is low');
+      assert.deepStrictEqual(slices[0]!.status, 'pending', 'single-ms: S01 status is pending');
+      assert.deepStrictEqual(slices[1]!.id, 'S02', 'single-ms: second slice is S02');
+      assert.deepStrictEqual(slices[1]!.risk, 'high', 'single-ms: S02 risk is high');
 
       const s01Tasks = getSliceTasks('M001', 'S01');
-      assertEq(s01Tasks.length, 3, 'single-ms: 3 tasks for S01');
-      assertEq(s01Tasks[0]!.id, 'T01', 'single-ms: first task is T01');
-      assertEq(s01Tasks[0]!.title, 'First Task', 'single-ms: T01 title correct');
-      assertEq(s01Tasks[0]!.status, 'pending', 'single-ms: T01 status is pending');
-      assertEq(s01Tasks[1]!.id, 'T02', 'single-ms: second task is T02');
-      assertEq(s01Tasks[1]!.status, 'complete', 'single-ms: T02 status is complete (was [x])');
-      assertEq(s01Tasks[2]!.id, 'T03', 'single-ms: third task is T03');
+      assert.deepStrictEqual(s01Tasks.length, 3, 'single-ms: 3 tasks for S01');
+      assert.deepStrictEqual(s01Tasks[0]!.id, 'T01', 'single-ms: first task is T01');
+      assert.deepStrictEqual(s01Tasks[0]!.title, 'First Task', 'single-ms: T01 title correct');
+      assert.deepStrictEqual(s01Tasks[0]!.status, 'pending', 'single-ms: T01 status is pending');
+      assert.deepStrictEqual(s01Tasks[1]!.id, 'T02', 'single-ms: second task is T02');
+      assert.deepStrictEqual(s01Tasks[1]!.status, 'complete', 'single-ms: T02 status is complete (was [x])');
+      assert.deepStrictEqual(s01Tasks[2]!.id, 'T03', 'single-ms: third task is T03');
 
       const s02Tasks = getSliceTasks('M001', 'S02');
-      assertEq(s02Tasks.length, 1, 'single-ms: 1 task for S02');
-      assertEq(s02Tasks[0]!.id, 'T01', 'single-ms: S02 T01 correct');
+      assert.deepStrictEqual(s02Tasks.length, 1, 'single-ms: 1 task for S02');
+      assert.deepStrictEqual(s02Tasks[0]!.id, 'T01', 'single-ms: S02 T01 correct');
 
       closeDatabase();
     } finally {
       closeDatabase();
       cleanup(base);
     }
-  }
+});
 
   // ─── Test (b): Multi-milestone — M001 complete, M002 active with deps ─
-  console.log('\n=== migrate-hier: multi-milestone with deps ===');
-  {
+
+test('migrate-hier: multi-milestone with deps', () => {
     const base = createFixtureBase();
     try {
       // M001: complete (has SUMMARY)
@@ -197,35 +194,35 @@ Depends on M001 completion.
       openDatabase(':memory:');
       const counts = migrateHierarchyToDb(base);
 
-      assertEq(counts.milestones, 2, 'multi-ms: 2 milestones inserted');
+      assert.deepStrictEqual(counts.milestones, 2, 'multi-ms: 2 milestones inserted');
 
       const m001 = getMilestone('M001');
-      assertTrue(m001 !== null, 'multi-ms: M001 exists');
-      assertEq(m001!.status, 'complete', 'multi-ms: M001 is complete');
+      assert.ok(m001 !== null, 'multi-ms: M001 exists');
+      assert.deepStrictEqual(m001!.status, 'complete', 'multi-ms: M001 is complete');
 
       const m002 = getMilestone('M002');
-      assertTrue(m002 !== null, 'multi-ms: M002 exists');
-      assertEq(m002!.status, 'active', 'multi-ms: M002 is active');
-      assertEq(m002!.depends_on, ['M001'], 'multi-ms: M002 depends on M001');
+      assert.ok(m002 !== null, 'multi-ms: M002 exists');
+      assert.deepStrictEqual(m002!.status, 'active', 'multi-ms: M002 is active');
+      assert.deepStrictEqual(m002!.depends_on, ['M001'], 'multi-ms: M002 depends on M001');
 
       // Active milestone should be M002
       const active = getActiveMilestoneFromDb();
-      assertEq(active?.id, 'M002', 'multi-ms: active milestone is M002');
+      assert.deepStrictEqual(active?.id, 'M002', 'multi-ms: active milestone is M002');
 
       // Active slice in M002 should be S01 (S02 depends on S01)
       const activeSlice = getActiveSliceFromDb('M002');
-      assertEq(activeSlice?.id, 'S01', 'multi-ms: active slice is S01');
+      assert.deepStrictEqual(activeSlice?.id, 'S01', 'multi-ms: active slice is S01');
 
       closeDatabase();
     } finally {
       closeDatabase();
       cleanup(base);
     }
-  }
+});
 
   // ─── Test (c): Partially-completed slice — some tasks [x], some [ ] ───
-  console.log('\n=== migrate-hier: partially-completed slice ===');
-  {
+
+test('migrate-hier: partially-completed slice', () => {
     const base = createFixtureBase();
     try {
       const roadmap = `# M001: Partial
@@ -260,25 +257,25 @@ Depends on M001 completion.
       migrateHierarchyToDb(base);
 
       const tasks = getSliceTasks('M001', 'S01');
-      assertEq(tasks.length, 3, 'partial: 3 tasks');
-      assertEq(tasks[0]!.status, 'complete', 'partial: T01 is complete');
-      assertEq(tasks[1]!.status, 'complete', 'partial: T02 is complete');
-      assertEq(tasks[2]!.status, 'pending', 'partial: T03 is pending');
+      assert.deepStrictEqual(tasks.length, 3, 'partial: 3 tasks');
+      assert.deepStrictEqual(tasks[0]!.status, 'complete', 'partial: T01 is complete');
+      assert.deepStrictEqual(tasks[1]!.status, 'complete', 'partial: T02 is complete');
+      assert.deepStrictEqual(tasks[2]!.status, 'pending', 'partial: T03 is pending');
 
       // Active task should be T03
       const activeTask = getActiveTaskFromDb('M001', 'S01');
-      assertEq(activeTask?.id, 'T03', 'partial: active task is T03');
+      assert.deepStrictEqual(activeTask?.id, 'T03', 'partial: active task is T03');
 
       closeDatabase();
     } finally {
       closeDatabase();
       cleanup(base);
     }
-  }
+});
 
   // ─── Test (d): Ghost milestone skipped ────────────────────────────────
-  console.log('\n=== migrate-hier: ghost milestone skipped ===');
-  {
+
+test('migrate-hier: ghost milestone skipped', () => {
     const base = createFixtureBase();
     try {
       // M001: real milestone
@@ -289,21 +286,21 @@ Depends on M001 completion.
       openDatabase(':memory:');
       const counts = migrateHierarchyToDb(base);
 
-      assertEq(counts.milestones, 1, 'ghost: only 1 milestone inserted');
+      assert.deepStrictEqual(counts.milestones, 1, 'ghost: only 1 milestone inserted');
       const milestones = getAllMilestones();
-      assertEq(milestones.length, 1, 'ghost: 1 milestone in DB');
-      assertEq(milestones[0]!.id, 'M001', 'ghost: only M001 in DB');
+      assert.deepStrictEqual(milestones.length, 1, 'ghost: 1 milestone in DB');
+      assert.deepStrictEqual(milestones[0]!.id, 'M001', 'ghost: only M001 in DB');
 
       closeDatabase();
     } finally {
       closeDatabase();
       cleanup(base);
     }
-  }
+});
 
   // ─── Test (e): Idempotent re-run — calling twice doesn't duplicate ────
-  console.log('\n=== migrate-hier: idempotent re-run ===');
-  {
+
+test('migrate-hier: idempotent re-run', () => {
     const base = createFixtureBase();
     try {
       writeFile(base, 'milestones/M001/M001-ROADMAP.md', ROADMAP_2_SLICES);
@@ -313,31 +310,31 @@ Depends on M001 completion.
 
       // First run
       const counts1 = migrateHierarchyToDb(base);
-      assertEq(counts1.milestones, 1, 'idempotent-1: 1 milestone first run');
-      assertEq(counts1.slices, 2, 'idempotent-1: 2 slices first run');
-      assertEq(counts1.tasks, 3, 'idempotent-1: 3 tasks first run');
+      assert.deepStrictEqual(counts1.milestones, 1, 'idempotent-1: 1 milestone first run');
+      assert.deepStrictEqual(counts1.slices, 2, 'idempotent-1: 2 slices first run');
+      assert.deepStrictEqual(counts1.tasks, 3, 'idempotent-1: 3 tasks first run');
 
       // Second run — INSERT OR IGNORE means no duplicates
       const counts2 = migrateHierarchyToDb(base);
       // Counts reflect attempts, not actual inserts (INSERT OR IGNORE silently skips)
       // The important thing: DB doesn't have duplicates
       const milestones = getAllMilestones();
-      assertEq(milestones.length, 1, 'idempotent-2: still 1 milestone after second run');
+      assert.deepStrictEqual(milestones.length, 1, 'idempotent-2: still 1 milestone after second run');
       const slices = getMilestoneSlices('M001');
-      assertEq(slices.length, 2, 'idempotent-2: still 2 slices after second run');
+      assert.deepStrictEqual(slices.length, 2, 'idempotent-2: still 2 slices after second run');
       const tasks = getSliceTasks('M001', 'S01');
-      assertEq(tasks.length, 3, 'idempotent-2: still 3 tasks for S01 after second run');
+      assert.deepStrictEqual(tasks.length, 3, 'idempotent-2: still 3 tasks for S01 after second run');
 
       closeDatabase();
     } finally {
       closeDatabase();
       cleanup(base);
     }
-  }
+});
 
   // ─── Test (f): Empty roadmap — milestone inserted but no slices ───────
-  console.log('\n=== migrate-hier: empty roadmap, no slices ===');
-  {
+
+test('migrate-hier: empty roadmap, no slices', () => {
     const base = createFixtureBase();
     try {
       const emptyRoadmap = `# M001: Empty Milestone
@@ -353,27 +350,27 @@ Depends on M001 completion.
       openDatabase(':memory:');
       const counts = migrateHierarchyToDb(base);
 
-      assertEq(counts.milestones, 1, 'empty-roadmap: 1 milestone inserted');
-      assertEq(counts.slices, 0, 'empty-roadmap: 0 slices inserted');
-      assertEq(counts.tasks, 0, 'empty-roadmap: 0 tasks inserted');
+      assert.deepStrictEqual(counts.milestones, 1, 'empty-roadmap: 1 milestone inserted');
+      assert.deepStrictEqual(counts.slices, 0, 'empty-roadmap: 0 slices inserted');
+      assert.deepStrictEqual(counts.tasks, 0, 'empty-roadmap: 0 tasks inserted');
 
       const milestones = getAllMilestones();
-      assertEq(milestones.length, 1, 'empty-roadmap: 1 milestone in DB');
-      assertEq(milestones[0]!.title, 'M001: Empty Milestone', 'empty-roadmap: title correct');
+      assert.deepStrictEqual(milestones.length, 1, 'empty-roadmap: 1 milestone in DB');
+      assert.deepStrictEqual(milestones[0]!.title, 'M001: Empty Milestone', 'empty-roadmap: title correct');
 
       const slices = getMilestoneSlices('M001');
-      assertEq(slices.length, 0, 'empty-roadmap: no slices in DB');
+      assert.deepStrictEqual(slices.length, 0, 'empty-roadmap: no slices in DB');
 
       closeDatabase();
     } finally {
       closeDatabase();
       cleanup(base);
     }
-  }
+});
 
   // ─── Test (g): Slice depends parsed correctly ─────────────────────────
-  console.log('\n=== migrate-hier: slice depends parsed ===');
-  {
+
+test('migrate-hier: slice depends parsed', () => {
     const base = createFixtureBase();
     try {
       const roadmap = `# M001: Deps Test
@@ -397,21 +394,21 @@ Depends on M001 completion.
       migrateHierarchyToDb(base);
 
       const slices = getMilestoneSlices('M001');
-      assertEq(slices.length, 3, 'depends: 3 slices');
-      assertEq(slices[0]!.depends, [], 'depends: S01 has no deps');
-      assertEq(slices[1]!.depends, ['S01'], 'depends: S02 depends on S01');
-      assertEq(slices[2]!.depends, ['S01', 'S02'], 'depends: S03 depends on S01,S02');
+      assert.deepStrictEqual(slices.length, 3, 'depends: 3 slices');
+      assert.deepStrictEqual(slices[0]!.depends, [], 'depends: S01 has no deps');
+      assert.deepStrictEqual(slices[1]!.depends, ['S01'], 'depends: S02 depends on S01');
+      assert.deepStrictEqual(slices[2]!.depends, ['S01', 'S02'], 'depends: S03 depends on S01,S02');
 
       closeDatabase();
     } finally {
       closeDatabase();
       cleanup(base);
     }
-  }
+});
 
   // ─── Test (h): Demo text extracted from roadmap ───────────────────────
-  console.log('\n=== migrate-hier: demo text extracted ===');
-  {
+
+test('migrate-hier: demo text extracted', () => {
     const base = createFixtureBase();
     try {
       writeFile(base, 'milestones/M001/M001-ROADMAP.md', ROADMAP_2_SLICES);
@@ -420,20 +417,13 @@ Depends on M001 completion.
       migrateHierarchyToDb(base);
 
       const slices = getMilestoneSlices('M001');
-      assertEq(slices[0]!.demo, 'First slice done.', 'demo: S01 demo text correct');
-      assertEq(slices[1]!.demo, 'All slices done.', 'demo: S02 demo text correct');
+      assert.deepStrictEqual(slices[0]!.demo, 'First slice done.', 'demo: S01 demo text correct');
+      assert.deepStrictEqual(slices[1]!.demo, 'All slices done.', 'demo: S02 demo text correct');
 
       closeDatabase();
     } finally {
       closeDatabase();
       cleanup(base);
     }
-  }
-
-  report();
-}
-
-main().catch((error) => {
-  console.error(error);
-  process.exit(1);
 });
+
