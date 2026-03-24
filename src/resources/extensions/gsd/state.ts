@@ -1,5 +1,5 @@
 // GSD Extension — State Derivation
-// Reads roadmap + plan files to determine current position.
+// DB-primary state derivation with filesystem fallback for unmigrated projects.
 // Pure TypeScript, zero Pi dependencies.
 
 import type {
@@ -129,36 +129,45 @@ export function invalidateStateCache(): void {
  * Returns the ID of the first incomplete milestone, or null if all are complete.
  */
 export async function getActiveMilestoneId(basePath: string): Promise<string | null> {
-  const milestoneIds = findMilestoneIds(basePath);
   // Parallel worker isolation
   const milestoneLock = process.env.GSD_MILESTONE_LOCK;
   if (milestoneLock) {
+    const milestoneIds = findMilestoneIds(basePath);
     if (!milestoneIds.includes(milestoneLock)) return null;
-    // Locked milestone that is parked should not be active
     const lockedParked = resolveMilestoneFile(basePath, milestoneLock, "PARKED");
     if (lockedParked) return null;
     return milestoneLock;
   }
+
+  // DB-first: query milestones table for the first non-complete, non-parked milestone
+  if (isDbAvailable()) {
+    const allMilestones = getAllMilestones();
+    if (allMilestones.length > 0) {
+      const sorted = [...allMilestones].sort((a, b) => a.id.localeCompare(b.id));
+      for (const m of sorted) {
+        if (m.status === "complete" || m.status === "done" || m.status === "parked") continue;
+        return m.id;
+      }
+      return null;
+    }
+  }
+
+  // Filesystem fallback for unmigrated projects or empty DB
+  const milestoneIds = findMilestoneIds(basePath);
   for (const mid of milestoneIds) {
-    // Skip parked milestones — they are not eligible for active status
     const parkedFile = resolveMilestoneFile(basePath, mid, "PARKED");
     if (parkedFile) continue;
 
     const roadmapFile = resolveMilestoneFile(basePath, mid, "ROADMAP");
     const content = roadmapFile ? await loadFile(roadmapFile) : null;
     if (!content) {
-      // No roadmap — but if a summary exists, the milestone is already complete
       const summaryFile = resolveMilestoneFile(basePath, mid, "SUMMARY");
-      if (summaryFile) continue; // completed milestone, skip
-      if (isGhostMilestone(basePath, mid)) continue; // ghost dir — skip
-      return mid; // No roadmap and no summary — milestone is incomplete
-      // Note: draft-awareness (CONTEXT-DRAFT.md) is handled in deriveState(), not here.
-      // A draft milestone is still "active" — this function only determines which milestone is current.
+      if (summaryFile) continue;
+      if (isGhostMilestone(basePath, mid)) continue;
+      return mid;
     }
     const roadmap = parseRoadmap(content);
     if (!isMilestoneComplete(roadmap)) {
-      // Summary is the terminal artifact — if it exists, the milestone is
-      // complete even when roadmap checkboxes weren't ticked (#864).
       const summaryFile = resolveMilestoneFile(basePath, mid, "SUMMARY");
       if (!summaryFile) return mid;
     }
@@ -167,13 +176,12 @@ export async function getActiveMilestoneId(basePath: string): Promise<string | n
 }
 
 /**
- * Reconstruct GSD state from files on disk.
- * This is the source of truth — STATE.md is just a cache of this output.
+ * Reconstruct GSD state from DB (primary) or filesystem (fallback).
+ * STATE.md is a rendered cache of this output.
  *
- * Uses native batch parsing when available: a single Rust call reads and parses
- * every .md file under .gsd/, populating an in-memory cache that replaces all
- * individual loadFile() calls during milestone/slice/task traversal.
- * Falls back to sequential JS file reads when the native module is absent.
+ * When DB is available, queries milestone/slice/task tables directly.
+ * Falls back to filesystem parsing for unmigrated projects or when DB
+ * has zero milestones (e.g. first run before migration).
  */
 export async function deriveState(basePath: string): Promise<GSDState> {
   // Return cached result if within the TTL window for the same basePath
@@ -700,6 +708,9 @@ export async function deriveStateFromDb(basePath: string): Promise<GSDState> {
   };
 }
 
+// LEGACY: Filesystem-based state derivation for unmigrated projects.
+// DB-backed projects use deriveStateFromDb() above. Target: extract to
+// state-legacy.ts when all projects are DB-backed.
 export async function _deriveStateImpl(basePath: string): Promise<GSDState> {
   const milestoneIds = findMilestoneIds(basePath);
 

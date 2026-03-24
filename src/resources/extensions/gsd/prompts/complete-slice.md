@@ -24,7 +24,7 @@ Then:
 3. Run all slice-level verification checks defined in the slice plan. All must pass before marking the slice done. If any fail, fix them first.
 4. If the slice plan includes observability/diagnostic surfaces, confirm they work. Skip this for simple slices that don't have observability sections.
 5. If `.gsd/REQUIREMENTS.md` exists, update it based on what this slice actually proved. Move requirements between Active, Validated, Deferred, Blocked, or Out of Scope only when the evidence from execution supports that change.
-6. Call the `gsd_slice_complete` tool (alias: `gsd_complete_slice`) to record the slice as complete. The tool validates all tasks are complete, writes the slice summary to `{{sliceSummaryPath}}`, UAT to `{{sliceUatPath}}`, and toggles the `{{sliceId}}` checkbox in `{{roadmapPath}}` — all atomically. Read the summary and UAT templates at `~/.gsd/agent/extensions/gsd/templates/` to understand the expected structure, then pass the following parameters:
+6. Call the `gsd_slice_complete` tool (alias: `gsd_complete_slice`) to record the slice as complete. The tool validates all tasks are complete, updates the slice status in the DB, renders the summary to `{{sliceSummaryPath}}`, UAT to `{{sliceUatPath}}`, and re-renders `{{roadmapPath}}` — all atomically. Read the summary and UAT templates at `~/.gsd/agent/extensions/gsd/templates/` to understand the expected structure, then pass the following parameters:
 
    **Identity:** `sliceId`, `milestoneId`, `sliceTitle`
 
@@ -45,6 +45,6 @@ Then:
 9. Do not run git commands — the system commits your changes and handles any merge after this unit succeeds.
 10. Update `.gsd/PROJECT.md` if it exists — refresh current state if needed.
 
-**You MUST call `gsd_slice_complete` before finishing.** The tool handles writing `{{sliceSummaryPath}}`, `{{sliceUatPath}}`, and toggling the `{{roadmapPath}}` checkbox atomically. You must still review decisions and knowledge manually (steps 7-8).
+**You MUST call `gsd_slice_complete` before finishing.** The tool handles writing `{{sliceSummaryPath}}`, `{{sliceUatPath}}`, and updating `{{roadmapPath}}` atomically. You must still review decisions and knowledge manually (steps 7-8).
 
 When done, say: "Slice {{sliceId}} complete."

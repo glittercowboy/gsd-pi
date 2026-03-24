@@ -63,7 +63,7 @@ Then:
 11. **Blocker discovery:** If execution reveals that the remaining slice plan is fundamentally invalid — not just a bug or minor deviation, but a plan-invalidating finding like a wrong API, missing capability, or architectural mismatch — set `blocker_discovered: true` in the task summary frontmatter and describe the blocker clearly in the summary narrative. Do NOT set `blocker_discovered: true` for ordinary debugging, minor deviations, or issues that can be fixed within the current task or the remaining plan. This flag triggers an automatic replan of the slice.
 12. If you made an architectural, pattern, library, or observability decision during this task that downstream work should know about, append it to `.gsd/DECISIONS.md` (read the template at `~/.gsd/agent/extensions/gsd/templates/decisions.md` if the file doesn't exist yet). Not every task produces decisions — only append when a meaningful choice was made.
 13. If you discover a non-obvious rule, recurring gotcha, or useful pattern during execution, append it to `.gsd/KNOWLEDGE.md`. Only add entries that would save future agents from repeating your investigation. Don't add obvious things.
-14. Call the `gsd_task_complete` tool (alias: `gsd_complete_task`) to record the task completion. This single tool call atomically writes the summary file to `{{taskSummaryPath}}`, toggles the `[ ]` → `[x]` checkbox in `{{planPath}}`, and persists the task row to the DB. Read the summary template at `~/.gsd/agent/extensions/gsd/templates/task-summary.md` to understand the expected structure — but pass the content as tool parameters, not as a file write. The tool parameters are:
+14. Call the `gsd_task_complete` tool (alias: `gsd_complete_task`) to record the task completion. This single tool call atomically updates the task status in the DB, renders the summary file to `{{taskSummaryPath}}`, and re-renders the plan file at `{{planPath}}`. Read the summary template at `~/.gsd/agent/extensions/gsd/templates/task-summary.md` to understand the expected structure — but pass the content as tool parameters, not as a file write. The tool parameters are:
     - `taskId`: "{{taskId}}"
     - `sliceId`: "{{sliceId}}"
     - `milestoneId`: "{{milestoneId}}"
@@ -80,6 +80,6 @@ Then:
 
 All work stays in your working directory: `{{workingDirectory}}`.
 
-**You MUST call `gsd_task_complete` before finishing.** The tool handles writing `{{taskSummaryPath}}` and toggling the checkbox in `{{planPath}}` — do not write the summary file or toggle the checkbox manually.
+**You MUST call `gsd_task_complete` before finishing.** The tool handles writing `{{taskSummaryPath}}` and updating the plan file at `{{planPath}}` — do not write the summary file or modify the plan file manually.
 
 When done, say: "Task {{taskId}} complete."

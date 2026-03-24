@@ -339,10 +339,10 @@ export function verifyExpectedArtifact(
         // DB available — trust it
         if (dbTask.status !== "complete" && dbTask.status !== "done") return false;
       } else if (!isDbAvailable()) {
-        // DB unavailable — fall back to plan heading check (format detection,
-        // not reconciliation). Heading-style entries (### T01 --) count as
-        // verified because the summary file existence (checked above) is the
-        // real signal.
+        // LEGACY: Pre-migration fallback for projects without DB.
+        // Fall back to plan heading check (format detection, not reconciliation).
+        // Heading-style entries (### T01 --) count as verified because the
+        // summary file existence (checked above) is the real signal.
         const planAbs = resolveSliceFile(base, mid, sid, "PLAN");
         if (planAbs && existsSync(planAbs)) {
           const planContent = readFileSync(planAbs, "utf-8");
@@ -375,7 +375,7 @@ export function verifyExpectedArtifact(
         }
 
         if (!taskIds) {
-          // DB unavailable or no tasks in DB — parse plan file for task IDs
+          // LEGACY: DB unavailable or no tasks in DB — parse plan file for task IDs
           const planContent = readFileSync(absPath, "utf-8");
           const plan = parseLegacyPlan(planContent);
           if (plan.tasks.length > 0) taskIds = plan.tasks.map((t: { id: string }) => t.id);
@@ -414,7 +414,8 @@ export function verifyExpectedArtifact(
         // DB available — trust it
         if (dbSlice.status !== "complete") return false;
       } else if (!isDbAvailable()) {
-        // DB unavailable — fall back to roadmap checkbox check via parsers-legacy
+        // LEGACY: Pre-migration fallback for projects without DB.
+        // Fall back to roadmap checkbox check via parsers-legacy
         const roadmapFile = resolveMilestoneFile(base, mid, "ROADMAP");
         if (roadmapFile && existsSync(roadmapFile)) {
           try {
