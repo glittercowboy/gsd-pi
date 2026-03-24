@@ -25,9 +25,9 @@ import {
   isSessionLockHeld,
 } from '../session-lock.ts';
 import { gsdRoot } from '../paths.ts';
-import { createTestContext } from './test-helpers.ts';
+import { describe, test } from 'node:test';
+import assert from 'node:assert/strict';
 
-const { assertEq, assertTrue, report } = createTestContext();
 const require = createRequire(import.meta.url);
 
 function hasProperLockfile(): boolean {
@@ -41,7 +41,7 @@ function hasProperLockfile(): boolean {
 
 const properLockfileAvailable = hasProperLockfile();
 
-async function main(): Promise<void> {
+describe('session-lock-regression', async () => {
 
   // ─── 1. Basic acquire/release lifecycle ───────────────────────────────
   console.log('\n=== 1. acquire → validate → release lifecycle ===');
@@ -51,22 +51,22 @@ async function main(): Promise<void> {
 
     try {
       const result = acquireSessionLock(base);
-      assertTrue(result.acquired, 'lock acquired successfully');
+      assert.ok(result.acquired, 'lock acquired successfully');
 
       const valid = validateSessionLock(base);
-      assertTrue(valid, 'lock validates after acquisition');
+      assert.ok(valid, 'lock validates after acquisition');
 
-      assertTrue(isSessionLockHeld(base), 'isSessionLockHeld returns true');
+      assert.ok(isSessionLockHeld(base), 'isSessionLockHeld returns true');
 
       releaseSessionLock(base);
 
       // After release, the lock file should be cleaned up
       const lockFile = join(gsdRoot(base), 'auto.lock');
-      assertTrue(!existsSync(lockFile), 'lock file removed after release');
+      assert.ok(!existsSync(lockFile), 'lock file removed after release');
 
       // The .gsd.lock/ directory should be cleaned up
       const lockDir = gsdRoot(base) + '.lock';
-      assertTrue(!existsSync(lockDir), '.gsd.lock/ directory removed after release (#1245)');
+      assert.ok(!existsSync(lockDir), '.gsd.lock/ directory removed after release (#1245)');
     } finally {
       rmSync(base, { recursive: true, force: true });
     }
@@ -88,7 +88,7 @@ async function main(): Promise<void> {
       } catch {
         threw = true;
       }
-      assertTrue(!threw, 'double release does not throw');
+      assert.ok(!threw, 'double release does not throw');
     } finally {
       rmSync(base, { recursive: true, force: true });
     }
@@ -106,13 +106,13 @@ async function main(): Promise<void> {
       updateSessionLock(base, 'execute-task', 'M001/S01/T01', 5, '/tmp/session.json');
 
       const data = readSessionLockData(base);
-      assertTrue(data !== null, 'lock data readable after update');
+      assert.ok(data !== null, 'lock data readable after update');
       if (data) {
-        assertEq(data.pid, process.pid, 'lock data has correct PID');
-        assertEq(data.unitType, 'execute-task', 'lock data has correct unit type');
-        assertEq(data.unitId, 'M001/S01/T01', 'lock data has correct unit ID');
-        assertEq(data.completedUnits, 5, 'lock data has correct completed count');
-        assertEq(data.sessionFile, '/tmp/session.json', 'lock data has session file');
+        assert.deepStrictEqual(data.pid, process.pid, 'lock data has correct PID');
+        assert.deepStrictEqual(data.unitType, 'execute-task', 'lock data has correct unit type');
+        assert.deepStrictEqual(data.unitId, 'M001/S01/T01', 'lock data has correct unit ID');
+        assert.deepStrictEqual(data.completedUnits, 5, 'lock data has correct completed count');
+        assert.deepStrictEqual(data.sessionFile, '/tmp/session.json', 'lock data has session file');
       }
 
       releaseSessionLock(base);
@@ -142,7 +142,7 @@ async function main(): Promise<void> {
 
       // Should be able to acquire despite the stale lock
       const result = acquireSessionLock(base);
-      assertTrue(result.acquired, '#1245: stale lock from dead PID → re-acquirable');
+      assert.ok(result.acquired, '#1245: stale lock from dead PID → re-acquirable');
 
       releaseSessionLock(base);
     } finally {
@@ -158,7 +158,7 @@ async function main(): Promise<void> {
 
     try {
       const data = readSessionLockData(base);
-      assertEq(data, null, 'no lock file → null');
+      assert.deepStrictEqual(data, null, 'no lock file → null');
     } finally {
       rmSync(base, { recursive: true, force: true });
     }
@@ -176,7 +176,7 @@ async function main(): Promise<void> {
       // Multiple validations should all return true (regression for #1257)
       for (let i = 0; i < 5; i++) {
         const valid = validateSessionLock(base);
-        assertTrue(valid, `#1257: validation ${i + 1} returns true for own lock`);
+        assert.ok(valid, `#1257: validation ${i + 1} returns true for own lock`);
       }
 
       releaseSessionLock(base);
@@ -196,7 +196,7 @@ async function main(): Promise<void> {
       writeFileSync(lockFile, 'NOT VALID JSON {{{');
 
       const data = readSessionLockData(base);
-      assertEq(data, null, 'corrupt JSON → null');
+      assert.deepStrictEqual(data, null, 'corrupt JSON → null');
     } finally {
       rmSync(base, { recursive: true, force: true });
     }
@@ -210,9 +210,9 @@ async function main(): Promise<void> {
 
     try {
       const status = getSessionLockStatus(base);
-      assertEq(status.valid, false, 'missing lock metadata is invalid');
-      assertEq(status.failureReason, 'missing-metadata', 'missing metadata reason is surfaced');
-      assertEq(status.expectedPid, process.pid, 'expected PID is included');
+      assert.deepStrictEqual(status.valid, false, 'missing lock metadata is invalid');
+      assert.deepStrictEqual(status.failureReason, 'missing-metadata', 'missing metadata reason is surfaced');
+      assert.deepStrictEqual(status.expectedPid, process.pid, 'expected PID is included');
     } finally {
       rmSync(base, { recursive: true, force: true });
     }
@@ -237,10 +237,10 @@ async function main(): Promise<void> {
       }, null, 2));
 
       const status = getSessionLockStatus(base);
-      assertEq(status.valid, false, 'foreign PID lock is invalid');
-      assertEq(status.failureReason, 'pid-mismatch', 'PID mismatch reason is surfaced');
-      assertEq(status.existingPid, foreignPid, 'existing PID is included');
-      assertEq(status.expectedPid, process.pid, 'expected PID is included');
+      assert.deepStrictEqual(status.valid, false, 'foreign PID lock is invalid');
+      assert.deepStrictEqual(status.failureReason, 'pid-mismatch', 'PID mismatch reason is surfaced');
+      assert.deepStrictEqual(status.existingPid, foreignPid, 'existing PID is included');
+      assert.deepStrictEqual(status.expectedPid, process.pid, 'expected PID is included');
     } finally {
       rmSync(base, { recursive: true, force: true });
     }
@@ -254,11 +254,11 @@ async function main(): Promise<void> {
 
     try {
       const r1 = acquireSessionLock(base);
-      assertTrue(r1.acquired, 'first acquisition');
+      assert.ok(r1.acquired, 'first acquisition');
       releaseSessionLock(base);
 
       const r2 = acquireSessionLock(base);
-      assertTrue(r2.acquired, 're-acquisition after release');
+      assert.ok(r2.acquired, 're-acquisition after release');
       releaseSessionLock(base);
     } finally {
       rmSync(base, { recursive: true, force: true });
@@ -273,13 +273,13 @@ async function main(): Promise<void> {
 
     try {
       const r1 = acquireSessionLock(base);
-      assertTrue(r1.acquired, 'first acquisition succeeds');
+      assert.ok(r1.acquired, 'first acquisition succeeds');
 
       const r2 = acquireSessionLock(base);
-      assertTrue(r2.acquired, 're-entrant acquisition succeeds');
+      assert.ok(r2.acquired, 're-entrant acquisition succeeds');
 
       const valid = validateSessionLock(base);
-      assertTrue(valid, 're-entrant acquisition does not corrupt validation state');
+      assert.ok(valid, 're-entrant acquisition does not corrupt validation state');
 
       releaseSessionLock(base);
     } finally {
@@ -295,31 +295,24 @@ async function main(): Promise<void> {
 
     try {
       const r1 = acquireSessionLock(base);
-      assertTrue(r1.acquired, 'first acquisition succeeds');
+      assert.ok(r1.acquired, 'first acquisition succeeds');
 
       const lockDir = gsdRoot(base) + '.lock';
       if (properLockfileAvailable) {
-        assertTrue(existsSync(lockDir), '.gsd.lock/ exists after first acquisition');
+        assert.ok(existsSync(lockDir), '.gsd.lock/ exists after first acquisition');
       }
 
       const r2 = acquireSessionLock(base);
-      assertTrue(r2.acquired, 'second acquisition succeeds');
+      assert.ok(r2.acquired, 'second acquisition succeeds');
       if (properLockfileAvailable) {
-        assertTrue(existsSync(lockDir), '.gsd.lock/ exists after re-entrant acquisition');
+        assert.ok(existsSync(lockDir), '.gsd.lock/ exists after re-entrant acquisition');
       }
-      assertTrue(validateSessionLock(base), 'lock remains valid after re-entrant acquisition');
+      assert.ok(validateSessionLock(base), 'lock remains valid after re-entrant acquisition');
 
       releaseSessionLock(base);
-      assertTrue(!existsSync(lockDir), '.gsd.lock/ is removed after release');
+      assert.ok(!existsSync(lockDir), '.gsd.lock/ is removed after release');
     } finally {
       rmSync(base, { recursive: true, force: true });
     }
   }
-
-  report();
-}
-
-main().catch((error) => {
-  console.error(error);
-  process.exit(1);
 });

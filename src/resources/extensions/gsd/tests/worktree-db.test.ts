@@ -1,4 +1,5 @@
-import { createTestContext } from './test-helpers.ts';
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
@@ -16,7 +17,6 @@ import {
   reconcileWorktreeDb,
 } from '../gsd-db.ts';
 
-const { assertEq, assertTrue, report } = createTestContext();
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Helpers
@@ -91,18 +91,18 @@ console.log('\n=== worktree-db: copyWorktreeDb ===');
   closeDatabase();
 
   const result = copyWorktreeDb(srcDb, destDb);
-  assertTrue(result === true, 'copyWorktreeDb returns true on success');
-  assertTrue(fs.existsSync(destDb), 'dest DB file exists after copy');
+  assert.ok(result === true, 'copyWorktreeDb returns true on success');
+  assert.ok(fs.existsSync(destDb), 'dest DB file exists after copy');
 
   // Open the copy and verify data is queryable
   openDatabase(destDb);
   const d = getDecisionById('D001');
-  assertTrue(d !== null, 'decision queryable in copied DB');
-  assertEq(d?.choice, 'node:sqlite', 'decision data preserved in copy');
+  assert.ok(d !== null, 'decision queryable in copied DB');
+  assert.deepStrictEqual(d?.choice, 'node:sqlite', 'decision data preserved in copy');
 
   const r = getRequirementById('R001');
-  assertTrue(r !== null, 'requirement queryable in copied DB');
-  assertEq(r?.description, 'Must store decisions', 'requirement data preserved in copy');
+  assert.ok(r !== null, 'requirement queryable in copied DB');
+  assert.deepStrictEqual(r?.description, 'Must store decisions', 'requirement data preserved in copy');
 
   cleanup(srcDir, destDir);
 }
@@ -123,9 +123,9 @@ console.log('\n=== worktree-db: copyWorktreeDb ===');
 
   copyWorktreeDb(srcDb, destDb);
 
-  assertTrue(fs.existsSync(destDb), 'DB file copied');
-  assertTrue(!fs.existsSync(destDb + '-wal'), 'WAL file NOT copied');
-  assertTrue(!fs.existsSync(destDb + '-shm'), 'SHM file NOT copied');
+  assert.ok(fs.existsSync(destDb), 'DB file copied');
+  assert.ok(!fs.existsSync(destDb + '-wal'), 'WAL file NOT copied');
+  assert.ok(!fs.existsSync(destDb + '-shm'), 'SHM file NOT copied');
 
   cleanup(srcDir, destDir);
 }
@@ -134,7 +134,7 @@ console.log('\n=== worktree-db: copyWorktreeDb ===');
 {
   const destDir = tempDir();
   const result = copyWorktreeDb('/nonexistent/path/gsd.db', path.join(destDir, 'gsd.db'));
-  assertEq(result, false, 'returns false for missing source');
+  assert.deepStrictEqual(result, false, 'returns false for missing source');
   cleanup(destDir);
 }
 
@@ -149,8 +149,8 @@ console.log('\n=== worktree-db: copyWorktreeDb ===');
   closeDatabase();
 
   const result = copyWorktreeDb(srcDb, deepDest);
-  assertTrue(result === true, 'copyWorktreeDb succeeds with nested dest');
-  assertTrue(fs.existsSync(deepDest), 'DB file created at deeply nested path');
+  assert.ok(result === true, 'copyWorktreeDb succeeds with nested dest');
+  assert.ok(fs.existsSync(deepDest), 'DB file created at deeply nested path');
 
   cleanup(srcDir, destDir);
 }
@@ -192,10 +192,10 @@ console.log('\n=== worktree-db: reconcileWorktreeDb ===');
   openDatabase(mainDb);
   const result = reconcileWorktreeDb(mainDb, wtDb);
 
-  assertTrue(result.decisions > 0, 'decisions merged count > 0');
+  assert.ok(result.decisions > 0, 'decisions merged count > 0');
   const d2 = getDecisionById('D002');
-  assertTrue(d2 !== null, 'D002 from worktree now in main');
-  assertEq(d2?.choice, 'WAL', 'D002 data correct after merge');
+  assert.ok(d2 !== null, 'D002 from worktree now in main');
+  assert.deepStrictEqual(d2?.choice, 'WAL', 'D002 data correct after merge');
 
   cleanup(mainDir, wtDir);
 }
@@ -231,10 +231,10 @@ console.log('\n=== worktree-db: reconcileWorktreeDb ===');
   openDatabase(mainDb);
   const result = reconcileWorktreeDb(mainDb, wtDb);
 
-  assertTrue(result.requirements > 0, 'requirements merged count > 0');
+  assert.ok(result.requirements > 0, 'requirements merged count > 0');
   const r2 = getRequirementById('R002');
-  assertTrue(r2 !== null, 'R002 from worktree now in main');
-  assertEq(r2?.description, 'Must be fast', 'R002 data correct after merge');
+  assert.ok(r2 !== null, 'R002 from worktree now in main');
+  assert.deepStrictEqual(r2?.description, 'Must be fast', 'R002 data correct after merge');
 
   cleanup(mainDir, wtDir);
 }
@@ -264,11 +264,11 @@ console.log('\n=== worktree-db: reconcileWorktreeDb ===');
   openDatabase(mainDb);
   const result = reconcileWorktreeDb(mainDb, wtDb);
 
-  assertTrue(result.artifacts > 0, 'artifacts merged count > 0');
+  assert.ok(result.artifacts > 0, 'artifacts merged count > 0');
   const adapter = _getAdapter()!;
   const row = adapter.prepare('SELECT * FROM artifacts WHERE path = ?').get('docs/api.md');
-  assertTrue(row !== null, 'artifact from worktree now in main');
-  assertEq(row?.['artifact_type'], 'reference', 'artifact data correct after merge');
+  assert.ok(row !== null, 'artifact from worktree now in main');
+  assert.deepStrictEqual(row?.['artifact_type'], 'reference', 'artifact data correct after merge');
 
   cleanup(mainDir, wtDir);
 }
@@ -305,15 +305,15 @@ console.log('\n=== worktree-db: reconcileWorktreeDb ===');
   openDatabase(mainDb);
   const result = reconcileWorktreeDb(mainDb, wtDb);
 
-  assertTrue(result.conflicts.length > 0, 'conflicts detected');
-  assertTrue(
+  assert.ok(result.conflicts.length > 0, 'conflicts detected');
+  assert.ok(
     result.conflicts.some(c => c.includes('D001')),
     'conflict mentions D001',
   );
 
   // Worktree-wins: D001 should now have worktree's value
   const d1 = getDecisionById('D001');
-  assertEq(d1?.choice, 'sql.js', 'worktree wins on conflict (INSERT OR REPLACE)');
+  assert.deepStrictEqual(d1?.choice, 'sql.js', 'worktree wins on conflict (INSERT OR REPLACE)');
 
   cleanup(mainDir, wtDir);
 }
@@ -326,10 +326,10 @@ console.log('\n=== worktree-db: reconcileWorktreeDb ===');
   seedMainDb(mainDb);
 
   const result = reconcileWorktreeDb(mainDb, '/nonexistent/worktree.db');
-  assertEq(result.decisions, 0, 'no decisions merged for missing worktree DB');
-  assertEq(result.requirements, 0, 'no requirements merged for missing worktree DB');
-  assertEq(result.artifacts, 0, 'no artifacts merged for missing worktree DB');
-  assertEq(result.conflicts.length, 0, 'no conflicts for missing worktree DB');
+  assert.deepStrictEqual(result.decisions, 0, 'no decisions merged for missing worktree DB');
+  assert.deepStrictEqual(result.requirements, 0, 'no requirements merged for missing worktree DB');
+  assert.deepStrictEqual(result.artifacts, 0, 'no artifacts merged for missing worktree DB');
+  assert.deepStrictEqual(result.conflicts.length, 0, 'no conflicts for missing worktree DB');
 
   cleanup(mainDir);
 }
@@ -366,9 +366,9 @@ console.log('\n=== worktree-db: reconcileWorktreeDb ===');
 
   openDatabase(mainDb);
   const result = reconcileWorktreeDb(mainDb, wtDb);
-  assertTrue(result.decisions > 0, 'reconciliation works with spaces in path');
+  assert.ok(result.decisions > 0, 'reconciliation works with spaces in path');
   const d3 = getDecisionById('D003');
-  assertTrue(d3 !== null, 'D003 merged from worktree with spaces in path');
+  assert.ok(d3 !== null, 'D003 merged from worktree with spaces in path');
 
   cleanup(baseDir);
 }
@@ -388,7 +388,7 @@ console.log('\n=== worktree-db: reconcileWorktreeDb ===');
   reconcileWorktreeDb(mainDb, wtDb);
 
   // Verify main DB is still fully usable after DETACH
-  assertTrue(isDbAvailable(), 'DB still available after reconciliation');
+  assert.ok(isDbAvailable(), 'DB still available after reconciliation');
 
   insertDecision({
     id: 'D099',
@@ -403,8 +403,8 @@ console.log('\n=== worktree-db: reconcileWorktreeDb ===');
   });
 
   const d99 = getDecisionById('D099');
-  assertTrue(d99 !== null, 'can insert and query after reconciliation');
-  assertEq(d99?.choice, 'works', 'post-reconcile data correct');
+  assert.ok(d99 !== null, 'can insert and query after reconciliation');
+  assert.deepStrictEqual(d99?.choice, 'works', 'post-reconcile data correct');
 
   // Verify no "wt" database still attached
   const adapter = _getAdapter()!;
@@ -415,7 +415,7 @@ console.log('\n=== worktree-db: reconcileWorktreeDb ===');
   } catch {
     // Expected — wt should be detached
   }
-  assertTrue(!wtAccessible, 'wt database is detached after reconciliation');
+  assert.ok(!wtAccessible, 'wt database is detached after reconciliation');
 
   cleanup(mainDir, wtDir);
 }
@@ -436,11 +436,10 @@ console.log('\n=== worktree-db: reconcileWorktreeDb ===');
   const result = reconcileWorktreeDb(mainDb, wtDb);
 
   // Should still report counts for the existing rows (INSERT OR REPLACE touches them)
-  assertTrue(result.conflicts.length === 0, 'no conflicts when DBs are identical');
-  assertTrue(isDbAvailable(), 'DB usable after no-change reconciliation');
+  assert.ok(result.conflicts.length === 0, 'no conflicts when DBs are identical');
+  assert.ok(isDbAvailable(), 'DB usable after no-change reconciliation');
 
   cleanup(mainDir, wtDir);
 }
 
 // ─── Final Report ──────────────────────────────────────────────────────────
-report();

@@ -29,9 +29,9 @@ import { tmpdir } from 'node:os';
 
 import { syncProjectRootToWorktree } from '../auto-worktree-sync.ts';
 import { syncGsdStateToWorktree, syncWorktreeStateBack } from '../auto-worktree.ts';
-import { createTestContext } from './test-helpers.ts';
+import { describe, test } from 'node:test';
+import assert from 'node:assert/strict';
 
-const { assertTrue, report } = createTestContext();
 
 function createBase(name: string): string {
   const base = mkdtempSync(join(tmpdir(), `gsd-wt-sync-${name}-`));
@@ -43,7 +43,7 @@ function cleanup(base: string): void {
   rmSync(base, { recursive: true, force: true });
 }
 
-async function main(): Promise<void> {
+describe('worktree-sync-milestones', async () => {
 
   // ─── 1. Milestone directory synced from main to worktree ──────────────
   console.log('\n=== 1. milestone directory synced from main to worktree ===');
@@ -58,13 +58,13 @@ async function main(): Promise<void> {
       writeFileSync(join(m001Dir, 'M001-ROADMAP.md'), '# Roadmap');
 
       // Worktree has no M001
-      assertTrue(!existsSync(join(wtBase, '.gsd', 'milestones', 'M001')), 'M001 missing before sync');
+      assert.ok(!existsSync(join(wtBase, '.gsd', 'milestones', 'M001')), 'M001 missing before sync');
 
       syncProjectRootToWorktree(mainBase, wtBase, 'M001');
 
-      assertTrue(existsSync(join(wtBase, '.gsd', 'milestones', 'M001')), '#1311: M001 synced to worktree');
-      assertTrue(existsSync(join(wtBase, '.gsd', 'milestones', 'M001', 'M001-CONTEXT.md')), 'M001 CONTEXT synced');
-      assertTrue(existsSync(join(wtBase, '.gsd', 'milestones', 'M001', 'M001-ROADMAP.md')), 'M001 ROADMAP synced');
+      assert.ok(existsSync(join(wtBase, '.gsd', 'milestones', 'M001')), '#1311: M001 synced to worktree');
+      assert.ok(existsSync(join(wtBase, '.gsd', 'milestones', 'M001', 'M001-CONTEXT.md')), 'M001 CONTEXT synced');
+      assert.ok(existsSync(join(wtBase, '.gsd', 'milestones', 'M001', 'M001-ROADMAP.md')), 'M001 ROADMAP synced');
     } finally {
       cleanup(mainBase);
       cleanup(wtBase);
@@ -92,8 +92,8 @@ async function main(): Promise<void> {
 
       syncProjectRootToWorktree(mainBase, wtBase, 'M001');
 
-      assertTrue(existsSync(join(wtBase, '.gsd', 'milestones', 'M001', 'slices', 'S02')), '#1311: S02 synced');
-      assertTrue(existsSync(join(wtBase, '.gsd', 'milestones', 'M001', 'slices', 'S02', 'S02-PLAN.md')), 'S02 PLAN synced');
+      assert.ok(existsSync(join(wtBase, '.gsd', 'milestones', 'M001', 'slices', 'S02')), '#1311: S02 synced');
+      assert.ok(existsSync(join(wtBase, '.gsd', 'milestones', 'M001', 'slices', 'S02', 'S02-PLAN.md')), 'S02 PLAN synced');
     } finally {
       cleanup(mainBase);
       cleanup(wtBase);
@@ -113,11 +113,11 @@ async function main(): Promise<void> {
 
       // Worktree has a stale gsd.db
       writeFileSync(join(wtBase, '.gsd', 'gsd.db'), 'stale data');
-      assertTrue(existsSync(join(wtBase, '.gsd', 'gsd.db')), 'gsd.db exists before sync');
+      assert.ok(existsSync(join(wtBase, '.gsd', 'gsd.db')), 'gsd.db exists before sync');
 
       syncProjectRootToWorktree(mainBase, wtBase, 'M001');
 
-      assertTrue(!existsSync(join(wtBase, '.gsd', 'gsd.db')), '#853: gsd.db deleted after sync');
+      assert.ok(!existsSync(join(wtBase, '.gsd', 'gsd.db')), '#853: gsd.db deleted after sync');
     } finally {
       cleanup(mainBase);
       cleanup(wtBase);
@@ -131,7 +131,7 @@ async function main(): Promise<void> {
     try {
       // Should not throw
       syncProjectRootToWorktree(base, base, 'M001');
-      assertTrue(true, 'no crash when paths are equal');
+      assert.ok(true, 'no crash when paths are equal');
     } finally {
       cleanup(base);
     }
@@ -144,7 +144,7 @@ async function main(): Promise<void> {
     const wtBase = createBase('wt');
     try {
       syncProjectRootToWorktree(mainBase, wtBase, null);
-      assertTrue(true, 'no crash when milestoneId is null');
+      assert.ok(true, 'no crash when milestoneId is null');
     } finally {
       cleanup(mainBase);
       cleanup(wtBase);
@@ -155,7 +155,7 @@ async function main(): Promise<void> {
   console.log('\n=== 6. non-existent directories → no-op ===');
   {
     syncProjectRootToWorktree('/tmp/does-not-exist-main', '/tmp/does-not-exist-wt', 'M001');
-    assertTrue(true, 'no crash on missing directories');
+    assert.ok(true, 'no crash on missing directories');
   }
 
   // ─── 7. milestones/ directory created in worktree when missing ────────
@@ -174,15 +174,15 @@ async function main(): Promise<void> {
       writeFileSync(join(m001Dir, 'M001-CONTEXT.md'), '# M001 Context');
       writeFileSync(join(m001Dir, 'M001-ROADMAP.md'), '# M001 Roadmap');
 
-      assertTrue(!existsSync(join(wtBase, '.gsd', 'milestones')), 'milestones/ missing before sync');
+      assert.ok(!existsSync(join(wtBase, '.gsd', 'milestones')), 'milestones/ missing before sync');
 
       const result = syncGsdStateToWorktree(mainBase, wtBase);
 
-      assertTrue(existsSync(join(wtBase, '.gsd', 'milestones')), 'milestones/ created in worktree');
-      assertTrue(existsSync(join(wtBase, '.gsd', 'milestones', 'M001')), 'M001 synced to worktree');
-      assertTrue(existsSync(join(wtBase, '.gsd', 'milestones', 'M001', 'M001-CONTEXT.md')), 'M001 CONTEXT synced');
-      assertTrue(existsSync(join(wtBase, '.gsd', 'milestones', 'M001', 'M001-ROADMAP.md')), 'M001 ROADMAP synced');
-      assertTrue(result.synced.length > 0, 'sync reported files');
+      assert.ok(existsSync(join(wtBase, '.gsd', 'milestones')), 'milestones/ created in worktree');
+      assert.ok(existsSync(join(wtBase, '.gsd', 'milestones', 'M001')), 'M001 synced to worktree');
+      assert.ok(existsSync(join(wtBase, '.gsd', 'milestones', 'M001', 'M001-CONTEXT.md')), 'M001 CONTEXT synced');
+      assert.ok(existsSync(join(wtBase, '.gsd', 'milestones', 'M001', 'M001-ROADMAP.md')), 'M001 ROADMAP synced');
+      assert.ok(result.synced.length > 0, 'sync reported files');
     } finally {
       cleanup(mainBase);
       rmSync(wtBase, { recursive: true, force: true });
@@ -212,19 +212,19 @@ async function main(): Promise<void> {
       const mainSliceDir = join(mainBase, '.gsd', 'milestones', 'M001', 'slices', 'S01');
       const mainTasksDir = join(mainSliceDir, 'tasks');
 
-      assertTrue(
+      assert.ok(
         existsSync(join(mainSliceDir, 'S01-SUMMARY.md')),
         '#1678: slice SUMMARY synced to project root',
       );
-      assertTrue(
+      assert.ok(
         existsSync(join(mainTasksDir, 'T01-SUMMARY.md')),
         '#1678: task T01-SUMMARY synced to project root',
       );
-      assertTrue(
+      assert.ok(
         existsSync(join(mainTasksDir, 'T02-SUMMARY.md')),
         '#1678: task T02-SUMMARY synced to project root',
       );
-      assertTrue(
+      assert.ok(
         synced.some((p) => p.includes('tasks/T01-SUMMARY.md')),
         '#1678: task summary appears in synced list',
       );
@@ -257,27 +257,27 @@ async function main(): Promise<void> {
 
       // Root-level files should be overwritten with worktree versions
       const reqContent = readFileSync(join(mainBase, '.gsd', 'REQUIREMENTS.md'), 'utf-8');
-      assertTrue(
+      assert.ok(
         reqContent.includes('R002'),
         'REQUIREMENTS.md updated with worktree content',
       );
 
       const projContent = readFileSync(join(mainBase, '.gsd', 'PROJECT.md'), 'utf-8');
-      assertTrue(
+      assert.ok(
         projContent.includes('M002'),
         'PROJECT.md updated with worktree content',
       );
 
-      assertTrue(
+      assert.ok(
         existsSync(join(mainBase, '.gsd', 'KNOWLEDGE.md')),
         'KNOWLEDGE.md synced from worktree',
       );
 
-      assertTrue(
+      assert.ok(
         synced.includes('REQUIREMENTS.md'),
         'REQUIREMENTS.md appears in synced list',
       );
-      assertTrue(
+      assert.ok(
         synced.includes('PROJECT.md'),
         'PROJECT.md appears in synced list',
       );
@@ -308,11 +308,11 @@ async function main(): Promise<void> {
       writeFileSync(join(wtM002Dir, 'M002-abc123-ROADMAP.md'), '# M002 Roadmap');
 
       // Main has neither
-      assertTrue(
+      assert.ok(
         !existsSync(join(mainBase, '.gsd', 'milestones', 'M001')),
         'M001 missing in main before sync',
       );
-      assertTrue(
+      assert.ok(
         !existsSync(join(mainBase, '.gsd', 'milestones', 'M002-abc123')),
         'M002 missing in main before sync',
       );
@@ -321,22 +321,22 @@ async function main(): Promise<void> {
       const { synced } = syncWorktreeStateBack(mainBase, wtBase, 'M001');
 
       // M001 should be synced (current milestone — always synced)
-      assertTrue(
+      assert.ok(
         existsSync(join(mainBase, '.gsd', 'milestones', 'M001', 'M001-SUMMARY.md')),
         'M001 SUMMARY synced to main',
       );
 
       // M002 should ALSO be synced (next milestone — the fix)
-      assertTrue(
+      assert.ok(
         existsSync(join(mainBase, '.gsd', 'milestones', 'M002-abc123', 'M002-abc123-CONTEXT.md')),
         'M002 CONTEXT synced to main (next-milestone fix)',
       );
-      assertTrue(
+      assert.ok(
         existsSync(join(mainBase, '.gsd', 'milestones', 'M002-abc123', 'M002-abc123-ROADMAP.md')),
         'M002 ROADMAP synced to main (next-milestone fix)',
       );
 
-      assertTrue(
+      assert.ok(
         synced.some((p) => p.includes('M002-abc123')),
         'M002 appears in synced list',
       );
@@ -387,34 +387,34 @@ async function main(): Promise<void> {
       const { synced } = syncWorktreeStateBack(mainBase, wtBase, 'M006-589wvh');
 
       // Verify M006 artifacts synced
-      assertTrue(
+      assert.ok(
         existsSync(join(mainBase, '.gsd', 'milestones', 'M006-589wvh', 'M006-589wvh-SUMMARY.md')),
         'M006 SUMMARY synced',
       );
-      assertTrue(
+      assert.ok(
         existsSync(join(mainBase, '.gsd', 'milestones', 'M006-589wvh', 'slices', 'S01', 'S01-SUMMARY.md')),
         'M006 S01 SUMMARY synced',
       );
 
       // Verify M007 artifacts synced (the critical fix)
-      assertTrue(
+      assert.ok(
         existsSync(join(mainBase, '.gsd', 'milestones', 'M007-wortc8', 'M007-wortc8-CONTEXT.md')),
         'M007 CONTEXT synced to main (next-milestone)',
       );
-      assertTrue(
+      assert.ok(
         existsSync(join(mainBase, '.gsd', 'milestones', 'M007-wortc8', 'M007-wortc8-ROADMAP.md')),
         'M007 ROADMAP synced to main (next-milestone)',
       );
 
       // Verify root-level files updated
       const reqContent = readFileSync(join(mainBase, '.gsd', 'REQUIREMENTS.md'), 'utf-8');
-      assertTrue(
+      assert.ok(
         reqContent.includes('R090'),
         'REQUIREMENTS.md has R090 from worktree',
       );
 
       const projContent = readFileSync(join(mainBase, '.gsd', 'PROJECT.md'), 'utf-8');
-      assertTrue(
+      assert.ok(
         projContent.includes('M007'),
         'PROJECT.md has M007 from worktree',
       );
@@ -441,11 +441,11 @@ async function main(): Promise<void> {
 
       // Main's REQUIREMENTS should be untouched (worktree had nothing to sync)
       const content = readFileSync(join(mainBase, '.gsd', 'REQUIREMENTS.md'), 'utf-8');
-      assertTrue(
+      assert.ok(
         content === '# Original',
         'REQUIREMENTS.md unchanged when worktree has no copy',
       );
-      assertTrue(
+      assert.ok(
         !synced.includes('REQUIREMENTS.md'),
         'REQUIREMENTS.md not in synced list',
       );
@@ -473,11 +473,11 @@ async function main(): Promise<void> {
       );
 
       // Main has neither
-      assertTrue(
+      assert.ok(
         !existsSync(join(mainBase, '.gsd', 'QUEUE.md')),
         'QUEUE.md missing in main before sync',
       );
-      assertTrue(
+      assert.ok(
         !existsSync(join(mainBase, '.gsd', 'completed-units.json')),
         'completed-units.json missing in main before sync',
       );
@@ -485,31 +485,31 @@ async function main(): Promise<void> {
       const { synced } = syncWorktreeStateBack(mainBase, wtBase, 'M001');
 
       // QUEUE.md should be synced
-      assertTrue(
+      assert.ok(
         existsSync(join(mainBase, '.gsd', 'QUEUE.md')),
         '#1787: QUEUE.md synced from worktree to main',
       );
       const queueContent = readFileSync(join(mainBase, '.gsd', 'QUEUE.md'), 'utf-8');
-      assertTrue(
+      assert.ok(
         queueContent.includes('M002 next'),
         '#1787: QUEUE.md has correct content',
       );
-      assertTrue(
+      assert.ok(
         synced.includes('QUEUE.md'),
         '#1787: QUEUE.md appears in synced list',
       );
 
       // completed-units.json should be synced
-      assertTrue(
+      assert.ok(
         existsSync(join(mainBase, '.gsd', 'completed-units.json')),
         '#1787: completed-units.json synced from worktree to main',
       );
       const cuContent = readFileSync(join(mainBase, '.gsd', 'completed-units.json'), 'utf-8');
-      assertTrue(
+      assert.ok(
         cuContent.includes('M001-S01-T01'),
         '#1787: completed-units.json has correct content',
       );
-      assertTrue(
+      assert.ok(
         synced.includes('completed-units.json'),
         '#1787: completed-units.json appears in synced list',
       );
@@ -535,20 +535,20 @@ async function main(): Promise<void> {
       mkdirSync(suffixDir, { recursive: true });
       writeFileSync(join(suffixDir, 'M001-abc123-CONTEXT.md'), '# M001 Context');
 
-      assertTrue(!existsSync(join(wtBase, '.gsd', 'milestones', 'sprint-alpha')), 'sprint-alpha missing before sync');
-      assertTrue(!existsSync(join(wtBase, '.gsd', 'milestones', 'M001-abc123')), 'M001-abc123 missing before sync');
+      assert.ok(!existsSync(join(wtBase, '.gsd', 'milestones', 'sprint-alpha')), 'sprint-alpha missing before sync');
+      assert.ok(!existsSync(join(wtBase, '.gsd', 'milestones', 'M001-abc123')), 'M001-abc123 missing before sync');
 
       const result = syncGsdStateToWorktree(mainBase, wtBase);
 
-      assertTrue(
+      assert.ok(
         existsSync(join(wtBase, '.gsd', 'milestones', 'sprint-alpha', 'CONTEXT.md')),
         '#1547: non-standard milestone dir "sprint-alpha" synced to worktree',
       );
-      assertTrue(
+      assert.ok(
         existsSync(join(wtBase, '.gsd', 'milestones', 'M001-abc123', 'M001-abc123-CONTEXT.md')),
         '#1547: suffixed milestone dir "M001-abc123" synced to worktree',
       );
-      assertTrue(result.synced.length > 0, 'sync reported files');
+      assert.ok(result.synced.length > 0, 'sync reported files');
     } finally {
       cleanup(mainBase);
       cleanup(wtBase);
@@ -570,18 +570,18 @@ async function main(): Promise<void> {
       mkdirSync(wtCustomDir, { recursive: true });
       writeFileSync(join(wtCustomDir, 'SUMMARY.md'), '# Sprint Beta Summary');
 
-      assertTrue(
+      assert.ok(
         !existsSync(join(mainBase, '.gsd', 'milestones', 'sprint-beta')),
         'sprint-beta missing in main before sync',
       );
 
       const { synced } = syncWorktreeStateBack(mainBase, wtBase, 'M001');
 
-      assertTrue(
+      assert.ok(
         existsSync(join(mainBase, '.gsd', 'milestones', 'sprint-beta', 'SUMMARY.md')),
         '#1547: non-standard milestone dir "sprint-beta" synced back to main',
       );
-      assertTrue(
+      assert.ok(
         synced.some((p) => p.includes('sprint-beta')),
         '#1547: sprint-beta appears in synced list',
       );
@@ -590,11 +590,4 @@ async function main(): Promise<void> {
       rmSync(wtBase, { recursive: true, force: true });
     }
   }
-
-  report();
-}
-
-main().catch((error) => {
-  console.error(error);
-  process.exit(1);
 });

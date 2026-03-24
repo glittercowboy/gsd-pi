@@ -14,12 +14,10 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { execSync } from "node:child_process";
 import { describe, it, after } from "node:test";
+import assert from 'node:assert/strict';
 
 import { resolveGitDir } from "../worktree-manager.ts";
 import { detectWorktreeName, captureIntegrationBranch } from "../worktree.ts";
-import { createTestContext } from "./test-helpers.ts";
-
-const { assertEq, assertTrue, report } = createTestContext();
 
 // ─── Helpers ──────────────────────────────────────────────────────────────
 
@@ -40,7 +38,6 @@ describe("worktree-bugfix", () => {
   const dirs: string[] = [];
   after(() => {
     for (const d of dirs) rmSync(d, { recursive: true, force: true });
-    report();
   });
 
   it("resolveGitDir returns .git directory in normal repo", () => {
@@ -48,8 +45,8 @@ describe("worktree-bugfix", () => {
     dirs.push(repo);
     initRepo(repo);
     const gitDir = resolveGitDir(repo);
-    assertTrue(gitDir.endsWith(".git"), "ends with .git");
-    assertTrue(existsSync(gitDir), ".git dir exists");
+    assert.ok(gitDir.endsWith(".git"), "ends with .git");
+    assert.ok(existsSync(gitDir), ".git dir exists");
   });
 
   it("resolveGitDir follows gitdir: pointer in worktree", () => {
@@ -65,18 +62,18 @@ describe("worktree-bugfix", () => {
     writeFileSync(join(wtDir, ".git"), `gitdir: ${realGitDir}\n`);
 
     const resolved = resolveGitDir(wtDir);
-    assertEq(resolved, realGitDir, "resolves to real git dir");
+    assert.deepStrictEqual(resolved, realGitDir, "resolves to real git dir");
   });
 
   it("resolveGitDir returns default when .git doesn't exist", () => {
     const noGit = mkdtempSync(join(tmpdir(), "gsd-wt-fix-"));
     dirs.push(noGit);
     const gitDir = resolveGitDir(noGit);
-    assertTrue(gitDir.endsWith(".git"), "returns default .git path");
+    assert.ok(gitDir.endsWith(".git"), "returns default .git path");
   });
 
   it("detectWorktreeName returns name for worktree path", () => {
-    assertEq(
+    assert.deepStrictEqual(
       detectWorktreeName("/project/.gsd/worktrees/M005"),
       "M005",
       "detects worktree name",
@@ -84,7 +81,7 @@ describe("worktree-bugfix", () => {
   });
 
   it("detectWorktreeName returns null for normal repo", () => {
-    assertEq(
+    assert.deepStrictEqual(
       detectWorktreeName("/project"),
       null,
       "null for non-worktree path",
@@ -106,7 +103,7 @@ describe("worktree-bugfix", () => {
     // captureIntegrationBranch should be a no-op — no META.json written
     const metaPath = join(wtPath, ".gsd", "milestones", "M005", "M005-META.json");
     captureIntegrationBranch(wtPath, "M005");
-    assertTrue(!existsSync(metaPath), "no META.json written in worktree");
+    assert.ok(!existsSync(metaPath), "no META.json written in worktree");
   });
 
   it("detectWorktreeName prevents pull in worktree context", () => {
@@ -114,7 +111,7 @@ describe("worktree-bugfix", () => {
     // the caller should skip pull/fetch operations
     const inWorktree = detectWorktreeName("/project/.gsd/worktrees/M006");
     const inNormal = detectWorktreeName("/project");
-    assertTrue(inWorktree !== null, "worktree detected → skip pull");
-    assertTrue(inNormal === null, "normal repo → allow pull");
+    assert.ok(inWorktree !== null, "worktree detected → skip pull");
+    assert.ok(inNormal === null, "normal repo → allow pull");
   });
 });

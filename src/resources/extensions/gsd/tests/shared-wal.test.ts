@@ -14,9 +14,9 @@ import {
   getAllMilestones,
   _getAdapter,
 } from '../gsd-db.ts';
-import { createTestContext } from './test-helpers.ts';
+import { describe, test } from 'node:test';
+import assert from 'node:assert/strict';
 
-const { assertEq, assertTrue, report } = createTestContext();
 
 // ─── Helpers ──────────────────────────────────────────────────────────────
 
@@ -30,14 +30,14 @@ function cleanup(dir: string): void {
 
 // ─── Tests ────────────────────────────────────────────────────────────────
 
-async function main() {
+describe('shared-wal', async () => {
   // ─── Test (a): resolveProjectRootDbPath returns project root DB for worktree path ───
   console.log('\n=== shared-wal: resolve worktree path to project root DB ===');
   {
     const projectRoot = '/home/user/myproject';
     const worktreePath = join(projectRoot, '.gsd', 'worktrees', 'M001');
     const result = resolveProjectRootDbPath(worktreePath);
-    assertEq(result, join(projectRoot, '.gsd', 'gsd.db'),
+    assert.deepStrictEqual(result, join(projectRoot, '.gsd', 'gsd.db'),
       'worktree path resolves to project root DB');
   }
 
@@ -46,7 +46,7 @@ async function main() {
   {
     const projectRoot = '/home/user/myproject';
     const result = resolveProjectRootDbPath(projectRoot);
-    assertEq(result, join(projectRoot, '.gsd', 'gsd.db'),
+    assert.deepStrictEqual(result, join(projectRoot, '.gsd', 'gsd.db'),
       'project root path stays at project root DB');
   }
 
@@ -56,7 +56,7 @@ async function main() {
     const projectRoot = '/home/user/myproject';
     const nestedPath = join(projectRoot, '.gsd', 'worktrees', 'M002', 'src', 'lib');
     const result = resolveProjectRootDbPath(nestedPath);
-    assertEq(result, join(projectRoot, '.gsd', 'gsd.db'),
+    assert.deepStrictEqual(result, join(projectRoot, '.gsd', 'gsd.db'),
       'nested worktree subdir resolves to project root DB');
   }
 
@@ -64,7 +64,7 @@ async function main() {
   console.log('\n=== shared-wal: resolve forward-slash path ===');
   {
     const result = resolveProjectRootDbPath('/proj/.gsd/worktrees/M001');
-    assertEq(result, join('/proj', '.gsd', 'gsd.db'),
+    assert.deepStrictEqual(result, join('/proj', '.gsd', 'gsd.db'),
       'forward-slash worktree path resolves correctly');
   }
 
@@ -99,9 +99,9 @@ async function main() {
 
       // Verify all 3 milestones are visible
       const all = getAllMilestones();
-      assertEq(all.length, 3, 'concurrent: all 3 milestones visible');
+      assert.deepStrictEqual(all.length, 3, 'concurrent: all 3 milestones visible');
       const ids = all.map(m => m.id).sort();
-      assertEq(ids, ['M001', 'M002', 'M003'], 'concurrent: correct IDs');
+      assert.deepStrictEqual(ids, ['M001', 'M002', 'M003'], 'concurrent: correct IDs');
 
       closeDatabase();
     } finally {
@@ -132,7 +132,7 @@ async function main() {
       // Connection 2: write M002, verify sees M001
       openDatabase(dbPath);
       const afterConn2Before = getAllMilestones();
-      assertTrue(afterConn2Before.some(m => m.id === 'M001'),
+      assert.ok(afterConn2Before.some(m => m.id === 'M001'),
         'rawconc: conn2 sees M001 from conn1');
       insertMilestone({ id: 'M002', title: 'Writer 2', status: 'active' });
       closeDatabase();
@@ -140,16 +140,16 @@ async function main() {
       // Connection 3: write M003, verify sees M001 + M002
       openDatabase(dbPath);
       const afterConn3Before = getAllMilestones();
-      assertTrue(afterConn3Before.some(m => m.id === 'M001'),
+      assert.ok(afterConn3Before.some(m => m.id === 'M001'),
         'rawconc: conn3 sees M001');
-      assertTrue(afterConn3Before.some(m => m.id === 'M002'),
+      assert.ok(afterConn3Before.some(m => m.id === 'M002'),
         'rawconc: conn3 sees M002');
       insertMilestone({ id: 'M003', title: 'Writer 3', status: 'active' });
 
       // Final read: all 3 visible
       const finalAll = getAllMilestones();
-      assertEq(finalAll.length, 3, 'rawconc: all 3 milestones visible');
-      assertEq(
+      assert.deepStrictEqual(finalAll.length, 3, 'rawconc: all 3 milestones visible');
+      assert.deepStrictEqual(
         finalAll.map(m => m.id).sort(),
         ['M001', 'M002', 'M003'],
         'rawconc: all IDs present',
@@ -177,7 +177,7 @@ async function main() {
 
       // Verify it committed
       const all = getAllMilestones();
-      assertEq(all.length, 1, 'busy: M001 committed via transaction');
+      assert.deepStrictEqual(all.length, 1, 'busy: M001 committed via transaction');
 
       // Verify transaction rolls back on error
       let errorCaught = false;
@@ -188,17 +188,17 @@ async function main() {
         });
       } catch (err) {
         errorCaught = true;
-        assertTrue(
+        assert.ok(
           (err as Error).message.includes('Simulated failure'),
           'busy: error propagated from transaction',
         );
       }
-      assertTrue(errorCaught, 'busy: transaction threw on error');
+      assert.ok(errorCaught, 'busy: transaction threw on error');
 
       // M002 should NOT be visible (rolled back)
       const afterRollback = getAllMilestones();
-      assertEq(afterRollback.length, 1, 'busy: M002 rolled back — still only 1 milestone');
-      assertEq(afterRollback[0]!.id, 'M001', 'busy: only M001 survives');
+      assert.deepStrictEqual(afterRollback.length, 1, 'busy: M002 rolled back — still only 1 milestone');
+      assert.deepStrictEqual(afterRollback[0]!.id, 'M001', 'busy: only M001 survives');
 
       closeDatabase();
     } finally {
@@ -206,11 +206,4 @@ async function main() {
       cleanup(tmp);
     }
   }
-
-  report();
-}
-
-main().catch((error) => {
-  console.error(error);
-  process.exit(1);
 });

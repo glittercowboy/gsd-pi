@@ -17,9 +17,9 @@ import {
 } from "../worktree.ts";
 import { readIntegrationBranch } from "../git-service.ts";
 import { _resetHasChangesCache } from "../native-git-bridge.ts";
-import { createTestContext } from './test-helpers.ts';
+import { describe, test } from 'node:test';
+import assert from 'node:assert/strict';
 
-const { assertEq, assertTrue, report } = createTestContext();
 
 /**
  * Normalize a path for reliable comparison on Windows CI runners.
@@ -47,56 +47,56 @@ writeFileSync(join(base, ".gsd", "milestones", "M001", "slices", "S01", "S01-PLA
 run("git add .", base);
 run('git commit -m "chore: init"', base);
 
-async function main(): Promise<void> {
+describe('worktree', async () => {
 
   console.log("\n=== autoCommitCurrentBranch ===");
   // Clean — should return null
   const cleanResult = autoCommitCurrentBranch(base, "execute-task", "M001/S01/T01");
-  assertEq(cleanResult, null, "returns null for clean repo");
+  assert.deepStrictEqual(cleanResult, null, "returns null for clean repo");
 
   // Make dirty — reset the nativeHasChanges cache so the fresh dirt is detected
   _resetHasChangesCache();
   writeFileSync(join(base, "dirty.txt"), "uncommitted\n", "utf-8");
   const dirtyResult = autoCommitCurrentBranch(base, "execute-task", "M001/S01/T01");
-  assertTrue(dirtyResult !== null, "returns commit message for dirty repo");
-  assertTrue(dirtyResult!.includes("M001/S01/T01"), "commit message includes unit id");
-  assertEq(run("git status --short", base), "", "repo is clean after auto-commit");
+  assert.ok(dirtyResult !== null, "returns commit message for dirty repo");
+  assert.ok(dirtyResult!.includes("M001/S01/T01"), "commit message includes unit id");
+  assert.deepStrictEqual(run("git status --short", base), "", "repo is clean after auto-commit");
 
   console.log("\n=== getSliceBranchName ===");
-  assertEq(getSliceBranchName("M001", "S01"), "gsd/M001/S01", "branch name format correct");
-  assertEq(getSliceBranchName("M001", "S01", null), "gsd/M001/S01", "null worktree = plain branch");
-  assertEq(getSliceBranchName("M001", "S01", "my-wt"), "gsd/my-wt/M001/S01", "worktree-namespaced branch");
+  assert.deepStrictEqual(getSliceBranchName("M001", "S01"), "gsd/M001/S01", "branch name format correct");
+  assert.deepStrictEqual(getSliceBranchName("M001", "S01", null), "gsd/M001/S01", "null worktree = plain branch");
+  assert.deepStrictEqual(getSliceBranchName("M001", "S01", "my-wt"), "gsd/my-wt/M001/S01", "worktree-namespaced branch");
 
   console.log("\n=== parseSliceBranch ===");
   const plain = parseSliceBranch("gsd/M001/S01");
-  assertTrue(plain !== null, "parses plain branch");
-  assertEq(plain!.worktreeName, null, "plain branch has no worktree name");
-  assertEq(plain!.milestoneId, "M001", "plain branch milestone");
-  assertEq(plain!.sliceId, "S01", "plain branch slice");
+  assert.ok(plain !== null, "parses plain branch");
+  assert.deepStrictEqual(plain!.worktreeName, null, "plain branch has no worktree name");
+  assert.deepStrictEqual(plain!.milestoneId, "M001", "plain branch milestone");
+  assert.deepStrictEqual(plain!.sliceId, "S01", "plain branch slice");
 
   const namespaced = parseSliceBranch("gsd/feature-auth/M001/S01");
-  assertTrue(namespaced !== null, "parses worktree-namespaced branch");
-  assertEq(namespaced!.worktreeName, "feature-auth", "worktree name extracted");
-  assertEq(namespaced!.milestoneId, "M001", "namespaced branch milestone");
-  assertEq(namespaced!.sliceId, "S01", "namespaced branch slice");
+  assert.ok(namespaced !== null, "parses worktree-namespaced branch");
+  assert.deepStrictEqual(namespaced!.worktreeName, "feature-auth", "worktree name extracted");
+  assert.deepStrictEqual(namespaced!.milestoneId, "M001", "namespaced branch milestone");
+  assert.deepStrictEqual(namespaced!.sliceId, "S01", "namespaced branch slice");
 
   const invalid = parseSliceBranch("main");
-  assertEq(invalid, null, "non-slice branch returns null");
+  assert.deepStrictEqual(invalid, null, "non-slice branch returns null");
 
   const worktreeBranch = parseSliceBranch("worktree/foo");
-  assertEq(worktreeBranch, null, "worktree/ prefix is not a slice branch");
+  assert.deepStrictEqual(worktreeBranch, null, "worktree/ prefix is not a slice branch");
 
   console.log("\n=== SLICE_BRANCH_RE ===");
-  assertTrue(SLICE_BRANCH_RE.test("gsd/M001/S01"), "regex matches plain branch");
-  assertTrue(SLICE_BRANCH_RE.test("gsd/my-wt/M001/S01"), "regex matches worktree branch");
-  assertTrue(!SLICE_BRANCH_RE.test("main"), "regex rejects main");
-  assertTrue(!SLICE_BRANCH_RE.test("gsd/"), "regex rejects bare gsd/");
-  assertTrue(!SLICE_BRANCH_RE.test("worktree/foo"), "regex rejects worktree/foo");
+  assert.ok(SLICE_BRANCH_RE.test("gsd/M001/S01"), "regex matches plain branch");
+  assert.ok(SLICE_BRANCH_RE.test("gsd/my-wt/M001/S01"), "regex matches worktree branch");
+  assert.ok(!SLICE_BRANCH_RE.test("main"), "regex rejects main");
+  assert.ok(!SLICE_BRANCH_RE.test("gsd/"), "regex rejects bare gsd/");
+  assert.ok(!SLICE_BRANCH_RE.test("worktree/foo"), "regex rejects worktree/foo");
 
   console.log("\n=== detectWorktreeName ===");
-  assertEq(detectWorktreeName("/projects/myapp"), null, "no worktree in plain path");
-  assertEq(detectWorktreeName("/projects/myapp/.gsd/worktrees/feature-auth"), "feature-auth", "detects worktree name");
-  assertEq(detectWorktreeName("/projects/myapp/.gsd/worktrees/my-wt/subdir"), "my-wt", "detects worktree with subdir");
+  assert.deepStrictEqual(detectWorktreeName("/projects/myapp"), null, "no worktree in plain path");
+  assert.deepStrictEqual(detectWorktreeName("/projects/myapp/.gsd/worktrees/feature-auth"), "feature-auth", "detects worktree name");
+  assert.deepStrictEqual(detectWorktreeName("/projects/myapp/.gsd/worktrees/my-wt/subdir"), "my-wt", "detects worktree with subdir");
 
   // ═══════════════════════════════════════════════════════════════════════
   // Integration branch — facade-level tests
@@ -115,16 +115,16 @@ async function main(): Promise<void> {
     run("git add -A && git commit -m init", repo);
 
     run("git checkout -b f-123-thing", repo);
-    assertEq(getCurrentBranch(repo), "f-123-thing", "on feature branch");
+    assert.deepStrictEqual(getCurrentBranch(repo), "f-123-thing", "on feature branch");
 
     const commitsBefore = run("git rev-list --count HEAD", repo);
     captureIntegrationBranch(repo, "M001");
-    assertEq(readIntegrationBranch(repo, "M001"), "f-123-thing",
+    assert.deepStrictEqual(readIntegrationBranch(repo, "M001"), "f-123-thing",
       "captureIntegrationBranch records the current branch");
 
     // Metadata is stored in external state, not committed to git.
     const commitsAfter = run("git rev-list --count HEAD", repo);
-    assertEq(commitsAfter, commitsBefore, "captureIntegrationBranch does not create a git commit");
+    assert.deepStrictEqual(commitsAfter, commitsBefore, "captureIntegrationBranch does not create a git commit");
 
     rmSync(repo, { recursive: true, force: true });
   }
@@ -144,7 +144,7 @@ async function main(): Promise<void> {
     run("git checkout -b gsd/M001/S01", repo);
     captureIntegrationBranch(repo, "M001");
 
-    assertEq(readIntegrationBranch(repo, "M001"), null,
+    assert.deepStrictEqual(readIntegrationBranch(repo, "M001"), null,
       "capture from slice branch is a no-op");
 
     rmSync(repo, { recursive: true, force: true });
@@ -167,12 +167,12 @@ async function main(): Promise<void> {
 
     // Without milestone set, getMainBranch returns "main"
     setActiveMilestoneId(repo, null);
-    assertEq(getMainBranch(repo), "main",
+    assert.deepStrictEqual(getMainBranch(repo), "main",
       "getMainBranch returns main without milestone set");
 
     // With milestone set, getMainBranch returns feature branch
     setActiveMilestoneId(repo, "M001");
-    assertEq(getMainBranch(repo), "my-feature",
+    assert.deepStrictEqual(getMainBranch(repo), "my-feature",
       "getMainBranch returns integration branch with milestone set");
 
     rmSync(repo, { recursive: true, force: true });
@@ -180,22 +180,22 @@ async function main(): Promise<void> {
 
   // ── detectWorktreeName: symlink-resolved paths ───────────────────────────
   console.log("\n=== detectWorktreeName (symlink-resolved paths) ===");
-  assertEq(
+  assert.deepStrictEqual(
     detectWorktreeName("/Users/fran/.gsd/projects/89e1c9ad49bf/worktrees/M001"),
     "M001",
     "detects milestone in symlink-resolved path",
   );
-  assertEq(
+  assert.deepStrictEqual(
     detectWorktreeName("/Users/fran/.gsd/projects/abc123/worktrees/M002/subdir"),
     "M002",
     "detects milestone with trailing subdir in symlink-resolved path",
   );
-  assertEq(
+  assert.deepStrictEqual(
     detectWorktreeName("/Users/fran/.gsd/projects/abc123"),
     null,
     "returns null for project root without worktrees segment",
   );
-  assertEq(
+  assert.deepStrictEqual(
     detectWorktreeName("/foo/.gsd/worktrees/M001"),
     "M001",
     "still detects direct layout path",
@@ -211,7 +211,7 @@ async function main(): Promise<void> {
   
   // With GSD_PROJECT_ROOT env var set (layer 1 — coordinator passes it)
   process.env.GSD_PROJECT_ROOT = "/real/project";
-  assertEq(
+  assert.deepStrictEqual(
     resolveProjectRoot("/Users/fran/.gsd/projects/89e1c9ad49bf/worktrees/M001"),
     "/real/project",
     "uses GSD_PROJECT_ROOT when set",
@@ -219,7 +219,7 @@ async function main(): Promise<void> {
   delete process.env.GSD_PROJECT_ROOT;
 
   // Without GSD_PROJECT_ROOT, direct layout still works (no ~/.gsd collision)
-  assertEq(
+  assert.deepStrictEqual(
     resolveProjectRoot("/some/repo"),
     "/some/repo",
     "ignores GSD_PROJECT_ROOT override for non-worktree paths",
@@ -227,19 +227,19 @@ async function main(): Promise<void> {
   delete process.env.GSD_PROJECT_ROOT;
 
   // Without GSD_PROJECT_ROOT, direct layout still works (no ~/.gsd collision)
-  assertEq(
+  assert.deepStrictEqual(
     resolveProjectRoot("/foo/.gsd/worktrees/M001"),
     "/foo",
     "still resolves direct layout path",
   );
-  assertEq(
+  assert.deepStrictEqual(
     resolveProjectRoot("/some/repo"),
     "/some/repo",
     "returns unchanged for non-worktree path",
   );
 
   // Without GSD_PROJECT_ROOT, direct layout with nested subdirs
-  assertEq(
+  assert.deepStrictEqual(
     resolveProjectRoot("/data/.gsd/worktrees/M003/nested"),
     "/data",
     "resolves correctly with nested subdirs after worktree name (direct layout)",
@@ -264,7 +264,7 @@ async function main(): Promise<void> {
     mkdirSync(deep, { recursive: true });
 
     process.env.GSD_HOME = join(fakeHome, ".gsd");
-    assertEq(
+    assert.deepStrictEqual(
       normalizePath(resolveProjectRoot(realpathSync(deep))),
       normalizePath(project),
       "resolves to real project root from deep symlink-resolved worktree path",
@@ -276,10 +276,4 @@ async function main(): Promise<void> {
   }
 
   rmSync(base, { recursive: true, force: true });
-  report();
-}
-
-main().catch((error) => {
-  console.error(error);
-  process.exit(1);
 });

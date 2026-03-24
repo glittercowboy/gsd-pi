@@ -4,10 +4,10 @@
 // AND under a backward-compatible alias name.
 // The alias must share the exact same execute function reference as the canonical tool.
 
-import { createTestContext } from './test-helpers.ts';
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
 import { registerDbTools } from '../bootstrap/db-tools.ts';
 
-const { assertEq, assertTrue, report } = createTestContext();
 
 // ─── Mock PI ──────────────────────────────────────────────────────────────────
 
@@ -43,7 +43,7 @@ console.log('\n── Tool naming: registration count ──');
 const pi = makeMockPi();
 registerDbTools(pi);
 
-assertEq(pi.tools.length, 24, 'Should register exactly 24 tools (12 canonical + 12 aliases)');
+assert.deepStrictEqual(pi.tools.length, 24, 'Should register exactly 24 tools (12 canonical + 12 aliases)');
 
 // ─── Both names exist for each pair ──────────────────────────────────────────
 
@@ -53,8 +53,8 @@ for (const { canonical, alias } of RENAME_MAP) {
   const canonicalTool = pi.tools.find((t: any) => t.name === canonical);
   const aliasTool = pi.tools.find((t: any) => t.name === alias);
 
-  assertTrue(canonicalTool !== undefined, `Canonical tool "${canonical}" should be registered`);
-  assertTrue(aliasTool !== undefined, `Alias tool "${alias}" should be registered`);
+  assert.ok(canonicalTool !== undefined, `Canonical tool "${canonical}" should be registered`);
+  assert.ok(aliasTool !== undefined, `Alias tool "${alias}" should be registered`);
 }
 
 // ─── Execute function identity ───────────────────────────────────────────────
@@ -66,7 +66,7 @@ for (const { canonical, alias } of RENAME_MAP) {
   const aliasTool = pi.tools.find((t: any) => t.name === alias);
 
   if (canonicalTool && aliasTool) {
-    assertTrue(
+    assert.ok(
       canonicalTool.execute === aliasTool.execute,
       `"${canonical}" and "${alias}" should share the same execute function reference`,
     );
@@ -81,7 +81,7 @@ for (const { canonical, alias } of RENAME_MAP) {
   const aliasTool = pi.tools.find((t: any) => t.name === alias);
 
   if (aliasTool) {
-    assertTrue(
+    assert.ok(
       aliasTool.description.includes(`alias for ${canonical}`),
       `Alias "${alias}" description should include "alias for ${canonical}"`,
     );
@@ -97,7 +97,7 @@ for (const { canonical } of RENAME_MAP) {
 
   if (canonicalTool) {
     const guidelinesText = canonicalTool.promptGuidelines.join(' ');
-    assertTrue(
+    assert.ok(
       guidelinesText.includes(canonical),
       `Canonical tool "${canonical}" promptGuidelines should reference its own name`,
     );
@@ -113,7 +113,7 @@ for (const { canonical, alias } of RENAME_MAP) {
 
   if (aliasTool) {
     const guidelinesText = aliasTool.promptGuidelines.join(' ');
-    assertTrue(
+    assert.ok(
       guidelinesText.includes(`Alias for ${canonical}`),
       `Alias "${alias}" promptGuidelines should say "Alias for ${canonical}"`,
     );
@@ -121,5 +121,3 @@ for (const { canonical, alias } of RENAME_MAP) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-
-report();
