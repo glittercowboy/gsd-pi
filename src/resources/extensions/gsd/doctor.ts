@@ -532,18 +532,39 @@ export async function runGSDDoctor(basePath: string, options?: { fix?: boolean; 
       // Validate slice title for delimiter characters.
       const sliceTitleIssue = validateTitle(slice.title);
       if (sliceTitleIssue) {
-        // Slice titles live inside the roadmap H1/checkbox lines — the milestone-level
-        // fix above already sanitizes the roadmap file. For slices we only report, because
-        // the title comes from the checkbox text and requires careful regex to fix safely.
-        issues.push({
-          severity: "warning",
-          code: "delimiter_in_title",
-          scope: "slice",
-          unitId,
-          message: `Slice ${unitId} ${sliceTitleIssue}. Rename the slice to remove these characters to prevent state corruption.`,
-          file: relMilestoneFile(basePath, milestoneId, "ROADMAP"),
-          fixable: false,
-        });
+        let wasSliceFixed = false;
+        if (shouldFix("delimiter_in_title") && roadmapPath) {
+          try {
+            const raw = readFileSync(roadmapPath, "utf-8");
+            // Replace delimiter characters inside the bold title portion of the
+            // slice checkbox line:  - [x] **S01: Title — here** `risk:low` ...
+            // The regex targets only the bold segment so metadata after ** is untouched.
+            const sliceIdEscaped = slice.id.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+            const cbRe = new RegExp(
+              `^(\\s*-\\s+\\[[\\sxX]\\]\\s+\\*\\*${sliceIdEscaped}:\\s+)(.+?)(\\*\\*.*)$`,
+              "m",
+            );
+            const sanitized = raw.replace(cbRe, (_match, prefix: string, title: string, suffix: string) =>
+              prefix + title.replace(/[\u2014\u2013]/g, "-").replace(/\//g, "-") + suffix,
+            );
+            if (sanitized !== raw) {
+              await saveFile(roadmapPath, sanitized);
+              fixesApplied.push(`sanitized delimiter characters in ${unitId} slice title`);
+              wasSliceFixed = true;
+            }
+          } catch { /* non-fatal — report the warning below */ }
+        }
+        if (!wasSliceFixed) {
+          issues.push({
+            severity: "warning",
+            code: "delimiter_in_title",
+            scope: "slice",
+            unitId,
+            message: `Slice ${unitId} ${sliceTitleIssue}. Rename the slice to remove these characters to prevent state corruption.`,
+            file: relMilestoneFile(basePath, milestoneId, "ROADMAP"),
+            fixable: true,
+          });
+        }
       }
 
       // Check for unresolvable dependency IDs

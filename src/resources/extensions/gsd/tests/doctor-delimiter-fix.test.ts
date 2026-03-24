@@ -60,6 +60,100 @@ test("doctor fix=true sanitizes em-dash in milestone title", async () => {
   }
 });
 
+test("doctor fix=true sanitizes em-dash in slice checkbox title", async () => {
+  const tmpBase = mkdtempSync(join(tmpdir(), "gsd-doctor-delim-slice-"));
+  const gsd = join(tmpBase, ".gsd");
+  const mDir = join(gsd, "milestones", "M001");
+  const s01Dir = join(mDir, "slices", "S01");
+  const t01Dir = join(s01Dir, "tasks");
+  const s02Dir = join(mDir, "slices", "S02");
+  const t02Dir = join(s02Dir, "tasks");
+  mkdirSync(t01Dir, { recursive: true });
+  mkdirSync(t02Dir, { recursive: true });
+
+  // Slice S02 has an em-dash in its checkbox title
+  const roadmap = `# M001: Clean Title
+
+## Success Criteria
+- It works
+
+## Slices
+- [x] **S01: Initial Setup** \`risk:low\` \`depends:[]\`
+  > After this: setup works
+- [ ] **S02: Dashboard \u2014 Metrics Panel** \`risk:medium\` \`depends:[S01]\`
+  > After this: metrics visible
+`;
+
+  writeFileSync(join(mDir, "M001-ROADMAP.md"), roadmap);
+  writeFileSync(join(s01Dir, "S01-PLAN.md"), `# S01: Initial Setup\n\n## Tasks\n- [x] **T01: Scaffold** \`est:15m\`\n`);
+  writeFileSync(join(t01Dir, "T01-PLAN.md"), "# T01: Scaffold\n");
+  writeFileSync(join(s02Dir, "S02-PLAN.md"), `# S02: Dashboard \u2014 Metrics Panel\n\n## Tasks\n- [ ] **T01: Build** \`est:30m\`\n`);
+  writeFileSync(join(t02Dir, "T01-PLAN.md"), "# T01: Build\n");
+
+  try {
+    const report = await runGSDDoctor(tmpBase, { fix: true });
+
+    // The em-dash in the slice checkbox line should have been replaced
+    const fixed = readFileSync(join(mDir, "M001-ROADMAP.md"), "utf-8");
+    const sliceLine = fixed.split("\n").find(l => l.includes("S02:"))!;
+    assert.ok(sliceLine, "S02 checkbox line should exist");
+    assert.ok(!sliceLine.includes("\u2014"), "em-dash in slice title should be replaced");
+    assert.ok(!sliceLine.includes("\u2013"), "en-dash in slice title should be replaced");
+
+    // Should have recorded the fix
+    assert.ok(
+      report.fixesApplied.some(f => f.includes("sanitized") && f.includes("S02")),
+      `fixesApplied should mention slice sanitization, got: ${JSON.stringify(report.fixesApplied)}`,
+    );
+
+    // The slice delimiter issue should NOT appear in the report (it was fixed)
+    const delimIssues = report.issues.filter(i => i.code === "delimiter_in_title" && i.unitId === "M001/S02");
+    assert.equal(delimIssues.length, 0, "fixed slice issue should not appear in issues list");
+  } finally {
+    rmSync(tmpBase, { recursive: true, force: true });
+  }
+});
+
+test("doctor fix=true sanitizes forward slash in slice checkbox title", async () => {
+  const tmpBase = mkdtempSync(join(tmpdir(), "gsd-doctor-delim-slash-"));
+  const gsd = join(tmpBase, ".gsd");
+  const mDir = join(gsd, "milestones", "M001");
+  const sDir = join(mDir, "slices", "S01");
+  const tDir = join(sDir, "tasks");
+  mkdirSync(tDir, { recursive: true });
+
+  const roadmap = `# M001: Clean Title
+
+## Slices
+- [ ] **S01: Input/Output Handling** \`risk:low\` \`depends:[]\`
+  > After this: I/O works
+`;
+
+  writeFileSync(join(mDir, "M001-ROADMAP.md"), roadmap);
+  writeFileSync(join(sDir, "S01-PLAN.md"), `# S01: Input/Output Handling\n\n## Tasks\n- [ ] **T01: Build** \`est:15m\`\n`);
+  writeFileSync(join(tDir, "T01-PLAN.md"), "# T01: Build\n");
+
+  try {
+    const report = await runGSDDoctor(tmpBase, { fix: true });
+
+    const fixed = readFileSync(join(mDir, "M001-ROADMAP.md"), "utf-8");
+    const sliceLine = fixed.split("\n").find(l => l.includes("S01:"))!;
+    assert.ok(sliceLine, "S01 checkbox line should exist");
+    // Forward slashes in the bold title portion should be removed or replaced
+    const boldMatch = sliceLine.match(/\*\*S01:\s+(.+?)\*\*/);
+    assert.ok(boldMatch, "bold title should exist");
+    assert.ok(!boldMatch[1]!.includes("/"), "forward slash in slice title should be sanitized");
+
+    // Should have recorded the fix
+    assert.ok(
+      report.fixesApplied.some(f => f.includes("sanitized") && f.includes("S01")),
+      `fixesApplied should mention slice sanitization, got: ${JSON.stringify(report.fixesApplied)}`,
+    );
+  } finally {
+    rmSync(tmpBase, { recursive: true, force: true });
+  }
+});
+
 test("doctor fix=false still reports delimiter_in_title as warning", async () => {
   const tmpBase = mkdtempSync(join(tmpdir(), "gsd-doctor-delim-nf-"));
   const gsd = join(tmpBase, ".gsd");
