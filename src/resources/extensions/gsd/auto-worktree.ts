@@ -1320,9 +1320,9 @@ export function mergeMilestoneToMain(
     }
   }
 
-  // 9b. Auto-create PR if enabled (requires push_branches + push succeeded)
+  // 9b. Auto-create PR if enabled (#2302: no longer gated on pushed/auto_push)
   let prCreated = false;
-  if (prefs.auto_pr === true && pushed) {
+  if (prefs.auto_pr === true && !nothingToCommit) {
     const remote = prefs.remote ?? "origin";
     const prTarget = prefs.pr_target_branch ?? mainBranch;
     try {
@@ -1332,9 +1332,9 @@ export function mergeMilestoneToMain(
         stdio: ["ignore", "pipe", "pipe"],
         encoding: "utf-8",
       });
-      // Create PR via gh CLI
+      // Create PR via gh CLI with explicit --head and --base (#2302)
       execFileSync("gh", [
-        "pr", "create",
+        "pr", "create", "--draft",
         "--base", prTarget,
         "--head", milestoneBranch,
         "--title", `Milestone ${milestoneId} complete`,

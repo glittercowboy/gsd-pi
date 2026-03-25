@@ -684,13 +684,17 @@ export function createDraftPR(
   milestoneId: string,
   title: string,
   body: string,
+  opts?: { head?: string; base?: string },
 ): string | null {
   try {
-    const result = execFileSync("gh", [
+    const args = [
       "pr", "create", "--draft",
       "--title", title,
       "--body", body,
-    ], { cwd: basePath, encoding: "utf8", timeout: 30000, env: GIT_NO_PROMPT_ENV });
+    ];
+    if (opts?.head) args.push("--head", opts.head);
+    if (opts?.base) args.push("--base", opts.base);
+    const result = execFileSync("gh", args, { cwd: basePath, encoding: "utf8", timeout: 30000, env: GIT_NO_PROMPT_ENV });
     return result.trim();
   } catch {
     return null;

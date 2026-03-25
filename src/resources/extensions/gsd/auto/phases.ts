@@ -235,23 +235,7 @@ export async function runPreDispatch(
     // Worktree lifecycle on milestone transition — merge current, enter next
     deps.resolver.mergeAndExit(s.currentMilestoneId!, ctx.ui);
 
-    // Opt-in: create draft PR on milestone completion
-    if (prefs?.git?.auto_pr) {
-      try {
-        const { createDraftPR } = await import("../git-service.js");
-        const prUrl = createDraftPR(
-          s.basePath,
-          s.currentMilestoneId!,
-          `[GSD] ${s.currentMilestoneId} complete`,
-          `Milestone ${s.currentMilestoneId} completed by GSD auto-mode.\n\nSee .gsd/${s.currentMilestoneId}/ for details.`,
-        );
-        if (prUrl) {
-          ctx.ui.notify(`Draft PR created: ${prUrl}`, "info");
-        }
-      } catch {
-        // Non-fatal — PR creation is best-effort
-      }
-    }
+    // PR creation (auto_pr) is handled inside mergeMilestoneToMain (#2302)
 
     deps.invalidateAllCaches();
 
@@ -324,23 +308,7 @@ export async function runPreDispatch(
       if (s.currentMilestoneId) {
         deps.resolver.mergeAndExit(s.currentMilestoneId, ctx.ui);
 
-        // Opt-in: create draft PR on milestone completion
-        if (prefs?.git?.auto_pr) {
-          try {
-            const { createDraftPR } = await import("../git-service.js");
-            const prUrl = createDraftPR(
-              s.basePath,
-              s.currentMilestoneId,
-              `[GSD] ${s.currentMilestoneId} complete`,
-              `Milestone ${s.currentMilestoneId} completed by GSD auto-mode.\n\nSee .gsd/${s.currentMilestoneId}/ for details.`,
-            );
-            if (prUrl) {
-              ctx.ui.notify(`Draft PR created: ${prUrl}`, "info");
-            }
-          } catch {
-            // Non-fatal — PR creation is best-effort
-          }
-        }
+        // PR creation (auto_pr) is handled inside mergeMilestoneToMain (#2302)
       }
       deps.sendDesktopNotification(
         "GSD",
@@ -424,23 +392,7 @@ export async function runPreDispatch(
     if (s.currentMilestoneId) {
       deps.resolver.mergeAndExit(s.currentMilestoneId, ctx.ui);
 
-      // Opt-in: create draft PR on milestone completion
-      if (prefs?.git?.auto_pr) {
-        try {
-          const { createDraftPR } = await import("../git-service.js");
-          const prUrl = createDraftPR(
-            s.basePath,
-            s.currentMilestoneId,
-            `[GSD] ${s.currentMilestoneId} complete`,
-            `Milestone ${s.currentMilestoneId} completed by GSD auto-mode.\n\nSee .gsd/${s.currentMilestoneId}/ for details.`,
-          );
-          if (prUrl) {
-            ctx.ui.notify(`Draft PR created: ${prUrl}`, "info");
-          }
-        } catch {
-          // Non-fatal — PR creation is best-effort
-        }
-      }
+      // PR creation (auto_pr) is handled inside mergeMilestoneToMain (#2302)
     }
     deps.sendDesktopNotification(
       "GSD",
