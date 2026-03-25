@@ -27,7 +27,7 @@ import { debugLog } from "../debug-logger.js";
 import { gsdRoot } from "../paths.js";
 import { atomicWriteSync } from "../atomic-write.js";
 import { PROJECT_FILES } from "../detection.js";
-import { join } from "node:path";
+import { join, dirname, parse as parsePath } from "node:path";
 
 // ─── generateMilestoneReport ──────────────────────────────────────────────────
 
@@ -827,7 +827,22 @@ export async function runUnitPhase(
     }
     const hasProjectFile = PROJECT_FILES.some((f) => deps.existsSync(join(s.basePath, f)));
     const hasSrcDir = deps.existsSync(join(s.basePath, "src"));
+    // Monorepo support (#2347): if no project files in the worktree directory,
+    // walk parent directories up to the filesystem root. In monorepos,
+    // package.json / Cargo.toml etc. live in a parent directory.
+    let hasProjectFileInParent = false;
     if (!hasProjectFile && !hasSrcDir) {
+      let checkDir = dirname(s.basePath);
+      const { root } = parsePath(checkDir);
+      while (checkDir !== root) {
+        if (PROJECT_FILES.some((f) => deps.existsSync(join(checkDir, f)))) {
+          hasProjectFileInParent = true;
+          break;
+        }
+        checkDir = dirname(checkDir);
+      }
+    }
+    if (!hasProjectFile && !hasSrcDir && !hasProjectFileInParent) {
       // Greenfield projects won't have project files yet — the first task creates them.
       // Log a warning but allow execution to proceed. The .git check above is sufficient
       // to ensure we're in a valid working directory.
