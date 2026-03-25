@@ -28,6 +28,7 @@ import { gsdRoot } from "../paths.js";
 import { atomicWriteSync } from "../atomic-write.js";
 import { PROJECT_FILES } from "../detection.js";
 import { join } from "node:path";
+import { existsSync, cpSync } from "node:fs";
 
 // ─── generateMilestoneReport ──────────────────────────────────────────────────
 
@@ -279,9 +280,17 @@ export async function runPreDispatch(
     // Reset completed-units tracking for the new milestone — stale entries
     // from the previous milestone cause the dispatch loop to skip units
     // that haven't actually been completed in the new milestone's context.
+    // Archive the old completed-units.json instead of wiping it (#2313).
     s.completedUnits = [];
     try {
       const completedKeysPath = join(gsdRoot(s.basePath), "completed-units.json");
+      if (existsSync(completedKeysPath) && s.currentMilestoneId) {
+        const archivePath = join(
+          gsdRoot(s.basePath),
+          `completed-units-${s.currentMilestoneId}.json`,
+        );
+        cpSync(completedKeysPath, archivePath);
+      }
       atomicWriteSync(completedKeysPath, JSON.stringify([], null, 2));
     } catch { /* non-fatal */ }
 

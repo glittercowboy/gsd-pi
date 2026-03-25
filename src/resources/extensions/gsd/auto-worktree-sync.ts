@@ -93,6 +93,11 @@ export function syncStateToProjectRoot(
     { force: true },
   );
 
+  // 3. metrics.json — session cost/token tracking (#2313).
+  // Without this, metrics accumulated in the worktree are invisible from the
+  // project root and never appear in the dashboard or skill-health reports.
+  safeCopy(join(wtGsd, "metrics.json"), join(prGsd, "metrics.json"), { force: true });
+
   // 4. Runtime records — unit dispatch state used by selfHealRuntimeRecords().
   // Without this, a crash during a unit leaves the runtime record only in the
   // worktree. If the next session resolves basePath before worktree re-entry,
