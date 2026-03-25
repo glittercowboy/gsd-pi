@@ -12,14 +12,13 @@ test('write-intercept: blocks unix .gsd/STATE.md path', () => {
 });
 
 test('write-intercept: blocks relative path with dir prefix before .gsd/STATE.md', () => {
-  // The regex requires a path separator before .gsd — bare '.gsd/STATE.md' is not blocked
-  // but 'project/.gsd/STATE.md' is (has separator before .gsd)
   assert.strictEqual(isBlockedStateFile('project/.gsd/STATE.md'), true);
 });
 
-test('write-intercept: does NOT block bare .gsd/STATE.md without leading separator', () => {
-  // Regex requires [/\\] before .gsd — bare relative path has no such separator
-  assert.strictEqual(isBlockedStateFile('.gsd/STATE.md'), false);
+test('write-intercept: blocks bare relative .gsd/STATE.md (no leading separator)', () => {
+  // (^|[/\\]) matches paths that start with .gsd/ — covers the case where write
+  // tools receive a bare relative path before the file exists (realpathSync fails).
+  assert.strictEqual(isBlockedStateFile('.gsd/STATE.md'), true);
 });
 
 test('write-intercept: blocks nested project .gsd/STATE.md path', () => {

@@ -16,10 +16,12 @@ import { realpathSync } from "node:fs";
  * - SUMMARY.md, KNOWLEDGE.md, CONTEXT.md — non-authoritative content
  */
 const BLOCKED_PATTERNS: RegExp[] = [
-  // STATE.md is the only purely engine-rendered file
-  /[/\\]\.gsd[/\\]STATE\.md$/,
+  // STATE.md is the only purely engine-rendered file.
+  // (^|[/\\]) matches both absolute paths (/project/.gsd/…) and bare relative
+  // paths (.gsd/STATE.md) so a path without a leading separator is also blocked.
+  /(^|[/\\])\.gsd[/\\]STATE\.md$/,
   // Also match resolved symlink paths under ~/.gsd/projects/ (Pitfall #6)
-  /[/\\]\.gsd[/\\]projects[/\\][^/\\]+[/\\]STATE\.md$/,
+  /(^|[/\\])\.gsd[/\\]projects[/\\][^/\\]+[/\\]STATE\.md$/,
 ];
 
 /**
