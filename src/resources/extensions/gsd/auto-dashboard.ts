@@ -25,6 +25,7 @@ import { computeProgressScore } from "./progress-score.js";
 import { getActiveWorktreeName } from "./worktree-command.js";
 import { loadEffectiveGSDPreferences, getGlobalGSDPreferencesPath } from "./preferences.js";
 import { resolveServiceTierIcon, getEffectiveServiceTier } from "./service-tier.js";
+import type { RtkSessionSavings } from "../shared/rtk-session-stats.js";
 
 // ─── UAT Slice Extraction ─────────────────────────────────────────────────────
 
@@ -58,6 +59,8 @@ export interface AutoDashboardData {
   profileDowngraded?: boolean;
   /** Number of pending captures awaiting triage (0 if none or file missing) */
   pendingCaptureCount: number;
+  /** RTK token savings for the current session, or null when unavailable. */
+  rtkSavings?: RtkSessionSavings | null;
   /** Cross-process: another auto-mode session detected via auto.lock (PID, startedAt) */
   remoteSession?: { pid: number; startedAt: string; unitType: string; unitId: string };
 }

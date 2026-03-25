@@ -110,6 +110,7 @@ import {
   captureAvailableSkills,
   resetSkillTelemetry,
 } from "./skill-telemetry.js";
+import { getRtkSessionSavings } from "../shared/rtk-session-stats.js";
 import {
   initMetrics,
   resetMetrics,
@@ -304,6 +305,10 @@ export { type AutoDashboardData } from "./auto-dashboard.js";
 export function getAutoDashboardData(): AutoDashboardData {
   const ledger = getLedger();
   const totals = ledger ? getProjectTotals(ledger.units) : null;
+  const sessionId = s.cmdCtx?.sessionManager?.getSessionId?.() ?? null;
+  const rtkSavings = sessionId && s.basePath
+    ? getRtkSessionSavings(s.basePath, sessionId)
+    : null;
   // Pending capture count — lazy check, non-fatal
   let pendingCaptureCount = 0;
   try {

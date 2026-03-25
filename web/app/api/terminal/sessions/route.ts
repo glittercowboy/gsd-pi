@@ -10,6 +10,7 @@ import {
   listSessions,
   getOrCreateSession,
   destroySession,
+  isAllowedTerminalCommand,
 } from "../../../../lib/pty-manager";
 import { requireProjectCwd } from "../../../../../src/web/bridge-service.ts";
 

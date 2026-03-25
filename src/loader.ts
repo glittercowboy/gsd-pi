@@ -71,6 +71,7 @@ if (firstArg === '--help' || firstArg === '-h') {
 }
 
 import { agentDir, appRoot } from './app-paths.js'
+import { applyRtkProcessEnv } from './rtk.js'
 import { serializeBundledExtensionPaths } from './bundled-extension-paths.js'
 import { discoverExtensionEntryPaths } from './extension-discovery.js'
 import { loadRegistry, readManifestFromEntryPath, isExtensionEnabled } from './extension-registry.js'
@@ -108,6 +109,10 @@ if (!existsSync(appRoot)) {
 
 // GSD_CODING_AGENT_DIR — tells pi's getAgentDir() to return ~/.gsd/agent/ instead of ~/.gsd/agent/
 process.env.GSD_CODING_AGENT_DIR = agentDir
+
+// RTK environment — make ~/.gsd/agent/bin visible to all child-process paths,
+// not just the bash tool, and force-disable RTK telemetry for GSD-managed use.
+applyRtkProcessEnv(process.env)
 
 // NODE_PATH — make gsd's own node_modules available to extensions loaded via jiti.
 // Without this, extensions (e.g. browser-tools) can't resolve dependencies like

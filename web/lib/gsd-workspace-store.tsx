@@ -180,6 +180,17 @@ export interface WorkspaceIndex {
   validationIssues: WorkspaceValidationIssue[]
 }
 
+export interface RtkSessionSavings {
+  commands: number
+  inputTokens: number
+  outputTokens: number
+  savedTokens: number
+  savingsPct: number
+  totalTimeMs: number
+  avgTimeMs: number
+  updatedAt: string
+}
+
 export interface AutoDashboardData {
   active: boolean
   paused: boolean
@@ -191,6 +202,7 @@ export interface AutoDashboardData {
   basePath: string
   totalCost: number
   totalTokens: number
+  rtkSavings?: RtkSessionSavings | null
 }
 
 export interface BootResumableSession {
