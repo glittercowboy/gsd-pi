@@ -259,6 +259,28 @@ export async function deriveStateFromDb(basePath: string): Promise<GSDState> {
 
   const allMilestones = getAllMilestones();
 
+  // Reconcile: discover milestones that exist on disk but are missing from
+  // the DB. This happens when milestones were created before the DB migration
+  // or were manually added to the filesystem. Without this, disk-only
+  // milestones are invisible after migration (#2416).
+  const dbMilestoneIds = new Set(allMilestones.map(m => m.id));
+  const diskMilestoneIds = findMilestoneIds(basePath);
+  for (const diskId of diskMilestoneIds) {
+    if (!dbMilestoneIds.has(diskId)) {
+      // Synthesize a minimal MilestoneRow for the disk-only milestone.
+      // Title and status will be resolved from disk files in the loop below.
+      allMilestones.push({
+        id: diskId,
+        title: diskId,
+        status: 'active',
+        depends_on: [] as string[],
+        created_at: new Date().toISOString(),
+      } as MilestoneRow);
+    }
+  }
+  // Re-sort so milestones are in canonical order after injection
+  allMilestones.sort((a, b) => milestoneIdSort(a.id, b.id));
+
   // Parallel worker isolation: when locked, filter to just the locked milestone
   const milestoneLock = process.env.GSD_MILESTONE_LOCK;
   const milestones = milestoneLock
