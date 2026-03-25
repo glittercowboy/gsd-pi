@@ -104,6 +104,7 @@ export const KNOWN_PREFERENCE_KEYS = new Set<string>([
   "context_management",
   "experimental",
   "codebase",
+  "slice_parallel",
 ]);
 
 /** Canonical list of all dispatch unit types. */
@@ -288,6 +289,8 @@ export interface GSDPreferences {
   experimental?: ExperimentalPreferences;
   /** Configuration for the codebase map generator (/gsd codebase). */
   codebase?: CodebaseMapPreferences;
+  /** Slice-level parallelism within a milestone. Disabled by default. */
+  slice_parallel?: { enabled?: boolean; max_workers?: number };
 }
 
 export interface LoadedGSDPreferences {

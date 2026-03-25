@@ -388,6 +388,9 @@ function mergePreferences(base: GSDPreferences, override: GSDPreferences): GSDPr
           ].filter(Boolean),
         }
       : undefined,
+    slice_parallel: (base.slice_parallel || override.slice_parallel)
+      ? { ...(base.slice_parallel ?? {}), ...(override.slice_parallel ?? {}) }
+      : undefined,
   };
 }
 

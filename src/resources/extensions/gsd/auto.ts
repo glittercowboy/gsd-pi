@@ -188,6 +188,9 @@ import {
 } from "./auto-post-unit.js";
 import { bootstrapAutoSession, openProjectDbIfPresent, type BootstrapDeps } from "./auto-start.js";
 import { autoLoop, resolveAgentEnd, resolveAgentEndCancelled, _resetPendingResolve, isSessionSwitchInFlight, type LoopDeps, type ErrorContext } from "./auto-loop.js";
+// Slice-level parallelism (#2340)
+import { getEligibleSlices } from "./slice-parallel-eligibility.js";
+import { startSliceParallel } from "./slice-parallel-orchestrator.js";
 import {
   WorktreeResolver,
   type WorktreeResolverDeps,
