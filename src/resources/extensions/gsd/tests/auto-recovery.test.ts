@@ -9,6 +9,7 @@ import {
   resolveExpectedArtifactPath,
   verifyExpectedArtifact,
   diagnoseExpectedArtifact,
+  writeBlockerPlaceholder,
   buildLoopRemediationSteps,
   selfHealRuntimeRecords,
   hasImplementationArtifacts,
@@ -1229,4 +1230,431 @@ test("skipExecuteTask returns false when plan regex doesn't match", () => {
   } finally {
     cleanup(base);
   }
+});
+
+// ─── verifyExpectedArtifact: execute-task DB branches ─────────────────────
+
+test("verifyExpectedArtifact execute-task: DB task status 'complete' → returns true", (t) => {
+  const base = makeTmpBase();
+  const dbPath = join(base, ".gsd", "gsd.db");
+  openDatabase(dbPath);
+  t.after(() => {
+    closeDatabase();
+    cleanup(base);
+  });
+
+  insertMilestone({ id: "M001", title: "Milestone", status: "active" });
+  insertSlice({
+    id: "S01",
+    milestoneId: "M001",
+    title: "Slice",
+    status: "active",
+    demo: "d",
+    planning: {
+      goal: "g",
+      successCriteria: "s",
+      proofLevel: "integration",
+      integrationClosure: "c",
+      observabilityImpact: "o",
+    },
+  });
+  insertTask({
+    id: "T01",
+    sliceId: "S01",
+    milestoneId: "M001",
+    title: "Task",
+    status: "complete",
+    planning: {
+      description: "d",
+      estimate: "1h",
+      files: [],
+      verify: "v",
+      inputs: [],
+      expectedOutput: [],
+      observabilityImpact: "o",
+    },
+  });
+
+  const tasksDir = join(base, ".gsd", "milestones", "M001", "slices", "S01", "tasks");
+  writeFileSync(join(tasksDir, "T01-SUMMARY.md"), "# T01 Summary\nDone.");
+
+  const result = verifyExpectedArtifact("execute-task", "M001/S01/T01", base);
+  assert.equal(result, true, "DB task with status 'complete' and summary file should verify as true");
+});
+
+test("verifyExpectedArtifact execute-task: DB task status 'done' → returns true", (t) => {
+  const base = makeTmpBase();
+  const dbPath = join(base, ".gsd", "gsd.db");
+  openDatabase(dbPath);
+  t.after(() => {
+    closeDatabase();
+    cleanup(base);
+  });
+
+  insertMilestone({ id: "M001", title: "Milestone", status: "active" });
+  insertSlice({
+    id: "S01",
+    milestoneId: "M001",
+    title: "Slice",
+    status: "active",
+    demo: "d",
+    planning: {
+      goal: "g",
+      successCriteria: "s",
+      proofLevel: "integration",
+      integrationClosure: "c",
+      observabilityImpact: "o",
+    },
+  });
+  insertTask({
+    id: "T01",
+    sliceId: "S01",
+    milestoneId: "M001",
+    title: "Task",
+    status: "done",
+    planning: {
+      description: "d",
+      estimate: "1h",
+      files: [],
+      verify: "v",
+      inputs: [],
+      expectedOutput: [],
+      observabilityImpact: "o",
+    },
+  });
+
+  const tasksDir = join(base, ".gsd", "milestones", "M001", "slices", "S01", "tasks");
+  writeFileSync(join(tasksDir, "T01-SUMMARY.md"), "# T01 Summary\nDone.");
+
+  const result = verifyExpectedArtifact("execute-task", "M001/S01/T01", base);
+  assert.equal(result, true, "DB task with status 'done' and summary file should verify as true");
+});
+
+test("verifyExpectedArtifact execute-task: DB task status 'pending' → returns false", (t) => {
+  const base = makeTmpBase();
+  const dbPath = join(base, ".gsd", "gsd.db");
+  openDatabase(dbPath);
+  t.after(() => {
+    closeDatabase();
+    cleanup(base);
+  });
+
+  insertMilestone({ id: "M001", title: "Milestone", status: "active" });
+  insertSlice({
+    id: "S01",
+    milestoneId: "M001",
+    title: "Slice",
+    status: "active",
+    demo: "d",
+    planning: {
+      goal: "g",
+      successCriteria: "s",
+      proofLevel: "integration",
+      integrationClosure: "c",
+      observabilityImpact: "o",
+    },
+  });
+  insertTask({
+    id: "T01",
+    sliceId: "S01",
+    milestoneId: "M001",
+    title: "Task",
+    status: "pending",
+    planning: {
+      description: "d",
+      estimate: "1h",
+      files: [],
+      verify: "v",
+      inputs: [],
+      expectedOutput: [],
+      observabilityImpact: "o",
+    },
+  });
+
+  const tasksDir = join(base, ".gsd", "milestones", "M001", "slices", "S01", "tasks");
+  writeFileSync(join(tasksDir, "T01-SUMMARY.md"), "# T01 Summary\nDone.");
+
+  const result = verifyExpectedArtifact("execute-task", "M001/S01/T01", base);
+  assert.equal(result, false, "DB task with status 'pending' should verify as false even if summary file exists");
+});
+
+test("verifyExpectedArtifact execute-task: task not found but DB available → returns true", (t) => {
+  const base = makeTmpBase();
+  const dbPath = join(base, ".gsd", "gsd.db");
+  openDatabase(dbPath);
+  t.after(() => {
+    closeDatabase();
+    cleanup(base);
+  });
+
+  // DB is open but no task inserted — getTask will return null
+  // The code path: DB available, task not found → treat as verified (summary file exists)
+  const tasksDir = join(base, ".gsd", "milestones", "M001", "slices", "S01", "tasks");
+  writeFileSync(join(tasksDir, "T01-SUMMARY.md"), "# T01 Summary\nDone.");
+
+  const result = verifyExpectedArtifact("execute-task", "M001/S01/T01", base);
+  assert.equal(result, true, "DB available but task not found + summary file exists → should treat as verified");
+});
+
+// ─── verifyExpectedArtifact: complete-slice DB branches ───────────────────
+
+test("verifyExpectedArtifact complete-slice: DB slice status 'complete' → returns true", (t) => {
+  const base = makeTmpBase();
+  const dbPath = join(base, ".gsd", "gsd.db");
+  openDatabase(dbPath);
+  t.after(() => {
+    closeDatabase();
+    cleanup(base);
+  });
+
+  insertMilestone({ id: "M001", title: "Milestone", status: "active" });
+  insertSlice({
+    id: "S01",
+    milestoneId: "M001",
+    title: "Slice",
+    status: "complete",
+    demo: "d",
+    planning: {
+      goal: "g",
+      successCriteria: "s",
+      proofLevel: "integration",
+      integrationClosure: "c",
+      observabilityImpact: "o",
+    },
+  });
+
+  const sliceDir = join(base, ".gsd", "milestones", "M001", "slices", "S01");
+  writeFileSync(join(sliceDir, "S01-SUMMARY.md"), "# S01 Summary\nDone.");
+  writeFileSync(join(sliceDir, "S01-UAT.md"), "# S01 UAT\nPassed.");
+
+  const result = verifyExpectedArtifact("complete-slice", "M001/S01", base);
+  assert.equal(result, true, "DB slice with status 'complete' + summary + UAT files should verify as true");
+});
+
+test("verifyExpectedArtifact complete-slice: DB slice status 'active' → returns false", (t) => {
+  const base = makeTmpBase();
+  const dbPath = join(base, ".gsd", "gsd.db");
+  openDatabase(dbPath);
+  t.after(() => {
+    closeDatabase();
+    cleanup(base);
+  });
+
+  insertMilestone({ id: "M001", title: "Milestone", status: "active" });
+  insertSlice({
+    id: "S01",
+    milestoneId: "M001",
+    title: "Slice",
+    status: "active",
+    demo: "d",
+    planning: {
+      goal: "g",
+      successCriteria: "s",
+      proofLevel: "integration",
+      integrationClosure: "c",
+      observabilityImpact: "o",
+    },
+  });
+
+  const sliceDir = join(base, ".gsd", "milestones", "M001", "slices", "S01");
+  writeFileSync(join(sliceDir, "S01-SUMMARY.md"), "# S01 Summary\nDone.");
+  writeFileSync(join(sliceDir, "S01-UAT.md"), "# S01 UAT\nPassed.");
+
+  const result = verifyExpectedArtifact("complete-slice", "M001/S01", base);
+  assert.equal(result, false, "DB slice with status 'active' should verify as false even if files exist");
+});
+
+test("verifyExpectedArtifact complete-slice: slice not found but DB available → returns true", (t) => {
+  const base = makeTmpBase();
+  const dbPath = join(base, ".gsd", "gsd.db");
+  openDatabase(dbPath);
+  t.after(() => {
+    closeDatabase();
+    cleanup(base);
+  });
+
+  // DB is open but no slice inserted — getSlice will return null
+  // The code path: DB available, slice not found → treat as verified (summary + UAT exist)
+  const sliceDir = join(base, ".gsd", "milestones", "M001", "slices", "S01");
+  writeFileSync(join(sliceDir, "S01-SUMMARY.md"), "# S01 Summary\nDone.");
+  writeFileSync(join(sliceDir, "S01-UAT.md"), "# S01 UAT\nPassed.");
+
+  const result = verifyExpectedArtifact("complete-slice", "M001/S01", base);
+  assert.equal(result, true, "DB available but slice not found + summary + UAT files → should treat as verified");
+});
+
+test("verifyExpectedArtifact complete-slice: no UAT file → returns false even if DB says complete", (t) => {
+  const base = makeTmpBase();
+  const dbPath = join(base, ".gsd", "gsd.db");
+  openDatabase(dbPath);
+  t.after(() => {
+    closeDatabase();
+    cleanup(base);
+  });
+
+  insertMilestone({ id: "M001", title: "Milestone", status: "active" });
+  insertSlice({
+    id: "S01",
+    milestoneId: "M001",
+    title: "Slice",
+    status: "complete",
+    demo: "d",
+    planning: {
+      goal: "g",
+      successCriteria: "s",
+      proofLevel: "integration",
+      integrationClosure: "c",
+      observabilityImpact: "o",
+    },
+  });
+
+  const sliceDir = join(base, ".gsd", "milestones", "M001", "slices", "S01");
+  writeFileSync(join(sliceDir, "S01-SUMMARY.md"), "# S01 Summary\nDone.");
+  // UAT file intentionally NOT written
+
+  const result = verifyExpectedArtifact("complete-slice", "M001/S01", base);
+  assert.equal(result, false, "complete-slice should return false when UAT file is missing even if DB says complete");
+});
+
+// ─── writeBlockerPlaceholder ───────────────────────────────────────────────
+
+test("writeBlockerPlaceholder writes blocker file with reason in content", (t) => {
+  const base = makeTmpBase();
+  t.after(() => cleanup(base));
+
+  const reason = "exhausted all retries after 5 attempts";
+  writeBlockerPlaceholder("execute-task", "M001/S01/T01", base, reason);
+
+  const tasksDir = join(base, ".gsd", "milestones", "M001", "slices", "S01", "tasks");
+  const summaryPath = join(tasksDir, "T01-SUMMARY.md");
+  assert.ok(existsSync(summaryPath), "blocker file should be written at the expected artifact path");
+
+  const content = readFileSync(summaryPath, "utf-8");
+  assert.ok(content.includes(reason), "blocker file content should include the reason");
+  assert.ok(content.includes("BLOCKER"), "blocker file should be identifiable as a placeholder");
+});
+
+test("writeBlockerPlaceholder creates parent directory if it does not exist", (t) => {
+  const base = makeTmpBase();
+  t.after(() => cleanup(base));
+
+  // Remove the tasks dir so it doesn't exist
+  const tasksDir = join(base, ".gsd", "milestones", "M001", "slices", "S01", "tasks");
+  rmSync(tasksDir, { recursive: true, force: true });
+  assert.ok(!existsSync(tasksDir), "tasks dir should not exist before test");
+
+  writeBlockerPlaceholder("execute-task", "M001/S01/T01", base, "some reason");
+
+  assert.ok(existsSync(tasksDir), "tasks dir should be created by writeBlockerPlaceholder");
+  assert.ok(existsSync(join(tasksDir, "T01-SUMMARY.md")), "blocker file should exist after dir creation");
+});
+
+test("writeBlockerPlaceholder returns null for unknown unitType", (t) => {
+  const base = makeTmpBase();
+  t.after(() => cleanup(base));
+
+  const result = writeBlockerPlaceholder("unknown-type", "M001", base, "some reason");
+  assert.equal(result, null, "unknown unitType should cause writeBlockerPlaceholder to return null");
+});
+
+test("writeBlockerPlaceholder returns diagnostic string for known unitType", (t) => {
+  const base = makeTmpBase();
+  t.after(() => cleanup(base));
+
+  const result = writeBlockerPlaceholder("execute-task", "M001/S01/T01", base, "loop detected");
+  assert.ok(result !== null, "known unitType should return a non-null diagnostic string");
+  assert.ok(typeof result === "string", "diagnostic should be a string");
+  assert.ok(result.includes("T01"), "diagnostic string should reference the task id");
+});
+
+// ─── diagnoseExpectedArtifact: remaining unit types ───────────────────────
+
+test("diagnoseExpectedArtifact returns description for discuss-milestone", (t) => {
+  const base = makeTmpBase();
+  t.after(() => cleanup(base));
+
+  const result = diagnoseExpectedArtifact("discuss-milestone", "M001", base);
+  assert.ok(result !== null, "discuss-milestone should return a diagnostic string");
+  assert.ok(result!.includes("context"), "discuss-milestone diagnostic should mention context");
+});
+
+test("diagnoseExpectedArtifact returns description for plan-milestone", (t) => {
+  const base = makeTmpBase();
+  t.after(() => cleanup(base));
+
+  const result = diagnoseExpectedArtifact("plan-milestone", "M001", base);
+  assert.ok(result !== null, "plan-milestone should return a non-null diagnostic");
+  assert.ok(result!.includes("roadmap") || result!.includes("ROADMAP"), "plan-milestone diagnostic should mention roadmap");
+});
+
+test("diagnoseExpectedArtifact returns description for research-slice", (t) => {
+  const base = makeTmpBase();
+  t.after(() => cleanup(base));
+
+  const result = diagnoseExpectedArtifact("research-slice", "M001/S01", base);
+  assert.ok(result !== null, "research-slice should return a non-null diagnostic");
+  assert.ok(result!.includes("research"), "research-slice diagnostic should mention research");
+});
+
+test("diagnoseExpectedArtifact returns description for complete-slice", (t) => {
+  const base = makeTmpBase();
+  t.after(() => cleanup(base));
+
+  const result = diagnoseExpectedArtifact("complete-slice", "M001/S01", base);
+  assert.ok(result !== null, "complete-slice should return a non-null diagnostic");
+  assert.ok(result!.includes("S01"), "complete-slice diagnostic should reference slice id");
+});
+
+test("diagnoseExpectedArtifact returns description for replan-slice", (t) => {
+  const base = makeTmpBase();
+  t.after(() => cleanup(base));
+
+  const result = diagnoseExpectedArtifact("replan-slice", "M001/S01", base);
+  assert.ok(result !== null, "replan-slice should return a non-null diagnostic");
+  assert.ok(result!.includes("REPLAN") || result!.includes("replan"), "replan-slice diagnostic should mention replan");
+});
+
+test("diagnoseExpectedArtifact returns description for rewrite-docs", (t) => {
+  const base = makeTmpBase();
+  t.after(() => cleanup(base));
+
+  const result = diagnoseExpectedArtifact("rewrite-docs", "M001/S01", base);
+  assert.ok(result !== null, "rewrite-docs should return a non-null diagnostic");
+  assert.ok(result!.includes("OVERRIDES") || result!.includes("overrides"), "rewrite-docs diagnostic should mention overrides");
+});
+
+test("diagnoseExpectedArtifact returns description for reassess-roadmap", (t) => {
+  const base = makeTmpBase();
+  t.after(() => cleanup(base));
+
+  const result = diagnoseExpectedArtifact("reassess-roadmap", "M001/S01", base);
+  assert.ok(result !== null);
+  assert.ok(result!.includes("ASSESSMENT") || result!.includes("assessment"), "reassess-roadmap diagnostic should mention assessment");
+});
+
+test("diagnoseExpectedArtifact returns description for run-uat", (t) => {
+  const base = makeTmpBase();
+  t.after(() => cleanup(base));
+
+  const result = diagnoseExpectedArtifact("run-uat", "M001/S01", base);
+  assert.ok(result !== null);
+  assert.ok(result!.includes("UAT"), "run-uat diagnostic should mention UAT");
+});
+
+test("diagnoseExpectedArtifact returns description for validate-milestone", (t) => {
+  const base = makeTmpBase();
+  t.after(() => cleanup(base));
+
+  const result = diagnoseExpectedArtifact("validate-milestone", "M001", base);
+  assert.ok(result !== null, "validate-milestone should return a non-null diagnostic");
+  assert.ok(result!.includes("VALIDATION") || result!.includes("validation"), "validate-milestone diagnostic should mention validation");
+});
+
+test("diagnoseExpectedArtifact returns description for complete-milestone", (t) => {
+  const base = makeTmpBase();
+  t.after(() => cleanup(base));
+
+  const result = diagnoseExpectedArtifact("complete-milestone", "M001", base);
+  assert.ok(result !== null, "complete-milestone should return a non-null diagnostic");
+  assert.ok(result!.includes("SUMMARY") || result!.includes("summary"), "complete-milestone diagnostic should mention summary");
 });
