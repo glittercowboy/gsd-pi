@@ -1,5 +1,6 @@
 "use client"
 
+import { useCallback, useEffect, useState } from "react"
 import {
   Activity,
   Clock,
@@ -9,8 +10,7 @@ import {
   Circle,
   Play,
   GitBranch,
-  Loader2,
-  Milestone,
+  TrendingDown,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import {
@@ -38,6 +38,8 @@ import {
 } from "@/components/gsd/loading-skeletons"
 import { ScopeBadge } from "@/components/gsd/scope-badge"
 import { ProjectWelcome } from "@/components/gsd/project-welcome"
+import { authFetch } from "@/lib/auth"
+import { buildProjectPath } from "@/lib/project-url"
 
 /** Interpolate progress bar color from red (0%) through yellow (50%) to green (100%) using oklch. */
 function getProgressColor(percent: number): string {
@@ -52,6 +54,21 @@ interface MetricCardProps {
   value: string | null
   subtext?: string | null
   icon: React.ReactNode
+}
+
+interface RtkSavingsSnapshot {
+  commands: number
+  inputTokens: number
+  outputTokens: number
+  savedTokens: number
+  savingsPct: number
+  totalTimeMs: number
+  avgTimeMs: number
+  updatedAt: string
+}
+
+interface RtkSavingsResponse {
+  savings: RtkSavingsSnapshot | null
 }
 
 function MetricCard({ label, value, subtext, icon }: MetricCardProps) {
@@ -156,6 +173,43 @@ export function Dashboard({ onSwitchView, onExpandTerminal }: DashboardProps = {
 
   const recentLines: WorkspaceTerminalLine[] = (state.terminalLines ?? []).slice(-6)
   const isConnecting = state.bootStatus === "idle" || state.bootStatus === "loading"
+  const [rtkSavings, setRtkSavings] = useState<RtkSavingsSnapshot | null>(null)
+
+  const fetchRtkSavings = useCallback(async () => {
+    if (!projectCwd) {
+      setRtkSavings(null)
+      return
+    }
+    try {
+      const response = await authFetch(buildProjectPath("/api/rtk-savings", projectCwd))
+      if (!response.ok) return
+      const payload = await response.json() as RtkSavingsResponse
+      setRtkSavings(payload.savings)
+    } catch {
+      // Non-critical dashboard metric.
+    }
+  }, [projectCwd])
+
+  useEffect(() => {
+    if (!projectCwd) return
+    const timeout = window.setTimeout(() => {
+      void fetchRtkSavings()
+    }, 0)
+    const interval = window.setInterval(() => {
+      void fetchRtkSavings()
+    }, 30_000)
+    return () => {
+      window.clearTimeout(timeout)
+      window.clearInterval(interval)
+    }
+  }, [fetchRtkSavings, projectCwd])
+
+  const rtkValue = isConnecting ? null : formatTokens(rtkSavings?.savedTokens ?? 0)
+  const rtkSubtext = isConnecting
+    ? null
+    : rtkSavings && rtkSavings.commands > 0
+      ? `${Math.round(rtkSavings.savingsPct)}% saved • ${rtkSavings.commands} cmd${rtkSavings.commands === 1 ? "" : "s"}`
+      : "Waiting for shell usage"
 
   // ─── Project Welcome Gate ───────────────────────────────────────────
   // Show welcome screen for projects that aren't initialized with GSD yet
@@ -221,7 +275,7 @@ export function Dashboard({ onSwitchView, onExpandTerminal }: DashboardProps = {
       </div>
 
       <div className="flex-1 overflow-y-auto p-3 md:p-6">
-        <div className="grid gap-3 grid-cols-1 sm:grid-cols-2 md:grid-cols-2 xl:grid-cols-4">
+        <div className="grid gap-3 grid-cols-1 sm:grid-cols-2 md:grid-cols-2 xl:grid-cols-5">
           <div className="rounded-md border border-border bg-card p-4" data-testid="dashboard-current-unit">
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
@@ -261,6 +315,12 @@ export function Dashboard({ onSwitchView, onExpandTerminal }: DashboardProps = {
             label="Tokens Used"
             value={isConnecting ? null : formatTokens(totalTokens)}
             icon={<Zap className="h-5 w-5" />}
+          />
+          <MetricCard
+            label="RTK Saved"
+            value={rtkValue}
+            subtext={rtkSubtext}
+            icon={<TrendingDown className="h-5 w-5" />}
           />
 
         </div>

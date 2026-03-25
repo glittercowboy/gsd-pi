@@ -20,6 +20,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomBytes } from "node:crypto";
 import type { AsyncJobManager } from "./job-manager.js";
+import { rewriteCommandWithRtk } from "../shared/rtk.js";
 
 const schema = Type.Object({
 	command: Type.String({ description: "Bash command to execute in the background" }),
@@ -114,7 +115,8 @@ function executeBashInBackground(
 		const safeReject = (err: unknown) => { if (!settled) { settled = true; reject(err); } };
 
 		const { shell, args } = getShellConfig();
-		const resolvedCommand = sanitizeCommand(command);
+		const rewrittenCommand = rewriteCommandWithRtk(command);
+		const resolvedCommand = sanitizeCommand(rewrittenCommand);
 
 		const child = spawn(shell, [...args, resolvedCommand], {
 			cwd,

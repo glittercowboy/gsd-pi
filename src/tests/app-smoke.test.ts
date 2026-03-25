@@ -100,6 +100,9 @@ test("loader sets all 4 GSD_ env vars and PI_PACKAGE_DIR", async (t) => {
   assert.ok(loaderSrc.includes("GSD_BIN_PATH"), "loader sets GSD_BIN_PATH");
   assert.ok(loaderSrc.includes("GSD_WORKFLOW_PATH"), "loader sets GSD_WORKFLOW_PATH");
   assert.ok(loaderSrc.includes("GSD_BUNDLED_EXTENSION_PATHS"), "loader sets GSD_BUNDLED_EXTENSION_PATHS");
+  assert.ok(loaderSrc.includes("applyRtkProcessEnv"), "loader applies RTK environment bootstrap");
+  const rtkSrc = readFileSync(join(projectRoot, "src", "rtk.ts"), "utf-8");
+  assert.ok(rtkSrc.includes("RTK_TELEMETRY_DISABLED"), "RTK helper disables telemetry for managed sessions");
   assert.ok(loaderSrc.includes("serializeBundledExtensionPaths"), "loader uses shared bundled path serializer");
   assert.ok(loaderSrc.includes("join(delimiter)"), "loader uses platform delimiter for NODE_PATH");
 

@@ -8,6 +8,7 @@ import { randomUUID } from "node:crypto";
 import { writeFileSync, readFileSync, existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { getShellConfig, sanitizeCommand } from "@gsd/pi-coding-agent";
+import { rewriteCommandWithRtk } from "../shared/rtk.js";
 import type {
 	BgProcess,
 	BgProcessInfo,
@@ -127,7 +128,9 @@ export function startProcess(opts: StartOptions): BgProcess {
 
 	const { shell, args: shellArgs } = getShellConfig();
 	// Shell sessions default to the user's shell if no command specified
-	const command = processType === "shell" && !opts.command ? shell : opts.command;
+	const command = processType === "shell" && !opts.command
+		? shell
+		: rewriteCommandWithRtk(opts.command);
 	const proc = spawn(shell, [...shellArgs, sanitizeCommand(command)], {
 		cwd: opts.cwd,
 		stdio: ["pipe", "pipe", "pipe"],

@@ -19,6 +19,8 @@ One command. Walk away. Come back to a built project with clean git history.
 
 <pre><code>npm install -g gsd-pi@latest</code></pre>
 
+> GSD now provisions a managed [RTK](https://github.com/rtk-ai/rtk) binary on supported macOS, Linux, and Windows installs to compress shell-command output in `bash`, `async_bash`, `bg_shell`, and verification flows. GSD forces `RTK_TELEMETRY_DISABLED=1` for all managed invocations. Set `GSD_RTK_DISABLED=1` to disable the integration.
+
 > **📋 NOTICE: New to Node on Mac?** If you installed Node.js via Homebrew, you may be running a development release instead of LTS. **[Read this guide](./docs/node-lts-macos.md)** to pin Node 24 LTS and avoid compatibility issues.
 
 </div>

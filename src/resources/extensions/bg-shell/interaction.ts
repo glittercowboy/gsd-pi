@@ -4,6 +4,7 @@
 
 import { randomUUID } from "node:crypto";
 import type { BgProcess } from "./types.js";
+import { rewriteCommandWithRtk } from "../shared/rtk.js";
 
 // ── Query Shell Environment ────────────────────────────────────────────────
 
@@ -128,9 +129,10 @@ export async function runOnSession(
 	const startIndex = bg.output.length;
 
 	// Write the sentinel-wrapped command to stdin
+	const rewrittenCommand = rewriteCommandWithRtk(command);
 	const wrappedCommand = [
 		`echo ${startMarker}`,
-		command,
+		rewrittenCommand,
 		`${exitVar}=$?`,
 		`echo ${endMarker} $${exitVar}`,
 	].join("\n");
