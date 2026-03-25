@@ -1,6 +1,7 @@
 import { clearParseCache } from "../files.js";
 import {
   transaction,
+  getMilestone,
   insertMilestone,
   insertSlice,
   upsertMilestonePlanning,
@@ -31,6 +32,10 @@ export interface PlanMilestoneParams {
   title: string;
   status?: string;
   dependsOn?: string[];
+  /** Optional caller-provided identity for audit trail */
+  actorName?: string;
+  /** Optional caller-provided reason this action was triggered */
+  triggerReason?: string;
   vision: string;
   successCriteria: string[];
   keyRisks: Array<{ risk: string; whyItMatters: string }>;
@@ -184,6 +189,25 @@ export async function handlePlanMilestone(
     return { error: `validation failed: ${(err as Error).message}` };
   }
 
+  // ── State machine preconditions ─────────────────────────────────────────
+  const existingMilestone = getMilestone(params.milestoneId);
+  if (existingMilestone && (existingMilestone.status === "complete" || existingMilestone.status === "done")) {
+    return { error: `cannot re-plan milestone ${params.milestoneId}: it is already complete` };
+  }
+
+  // Validate depends_on: all dependencies must exist and be complete
+  if (params.dependsOn && params.dependsOn.length > 0) {
+    for (const depId of params.dependsOn) {
+      const dep = getMilestone(depId);
+      if (!dep) {
+        return { error: `depends_on references unknown milestone: ${depId}` };
+      }
+      if (dep.status !== "complete" && dep.status !== "done") {
+        return { error: `depends_on milestone ${depId} is not yet complete (status: ${dep.status})` };
+      }
+    }
+  }
+
   try {
     transaction(() => {
       insertMilestone({
@@ -254,6 +278,8 @@ export async function handlePlanMilestone(
       params: { milestoneId: params.milestoneId },
       ts: new Date().toISOString(),
       actor: "agent",
+      actor_name: params.actorName,
+      trigger_reason: params.triggerReason,
     });
   } catch (hookErr) {
     process.stderr.write(

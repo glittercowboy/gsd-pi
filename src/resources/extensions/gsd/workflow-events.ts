@@ -1,7 +1,19 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { appendFileSync, readFileSync, existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { atomicWriteSync } from "./atomic-write.js";
+
+// ─── Session ID ───────────────────────────────────────────────────────────
+
+/**
+ * Engine-generated session ID — stable for the lifetime of this process.
+ * Agents can reference this to correlate all events from one run.
+ */
+const ENGINE_SESSION_ID: string = randomUUID();
+
+export function getSessionId(): string {
+  return ENGINE_SESSION_ID;
+}
 
 // ─── Event Types ─────────────────────────────────────────────────────────
 
@@ -11,25 +23,32 @@ export interface WorkflowEvent {
   ts: string;            // ISO 8601
   hash: string;          // content hash (hex, 16 chars)
   actor: "agent" | "system";
+  actor_name?: string;      // e.g. "executor-agent-01" — caller-provided identity
+  trigger_reason?: string;  // e.g. "plan-phase complete" — caller-provided causation
+  session_id: string;       // engine-generated UUID, stable per process lifetime
 }
 
 // ─── appendEvent ─────────────────────────────────────────────────────────
 
 /**
  * Append one event to .gsd/event-log.jsonl.
- * Computes a content hash from cmd+params (deterministic, independent of ts/actor).
+ * Computes a content hash from cmd+params (deterministic, independent of ts/actor/session).
  * Creates .gsd directory if needed.
  */
 export function appendEvent(
   basePath: string,
-  event: Omit<WorkflowEvent, "hash">,
+  event: Omit<WorkflowEvent, "hash" | "session_id"> & { actor_name?: string; trigger_reason?: string },
 ): void {
   const hash = createHash("sha256")
     .update(JSON.stringify({ cmd: event.cmd, params: event.params }))
     .digest("hex")
     .slice(0, 16);
 
-  const fullEvent: WorkflowEvent = { ...event, hash };
+  const fullEvent: WorkflowEvent = {
+    ...event,
+    hash,
+    session_id: ENGINE_SESSION_ID,
+  };
   const dir = join(basePath, ".gsd");
   mkdirSync(dir, { recursive: true });
   appendFileSync(join(dir, "event-log.jsonl"), JSON.stringify(fullEvent) + "\n", "utf-8");

@@ -19,6 +19,10 @@ export interface PlanTaskParams {
   expectedOutput: string[];
   observabilityImpact?: string;
   fullPlanMd?: string;
+  /** Optional caller-provided identity for audit trail */
+  actorName?: string;
+  /** Optional caller-provided reason this action was triggered */
+  triggerReason?: string;
 }
 
 export interface PlanTaskResult {
@@ -77,10 +81,18 @@ export async function handlePlanTask(
   if (!parentSlice) {
     return { error: `missing parent slice: ${params.milestoneId}/${params.sliceId}` };
   }
+  if (parentSlice.status === "complete" || parentSlice.status === "done") {
+    return { error: `cannot plan task in a closed slice: ${params.sliceId} (status: ${parentSlice.status})` };
+  }
+
+  const existingTask = getTask(params.milestoneId, params.sliceId, params.taskId);
+  if (existingTask && (existingTask.status === "complete" || existingTask.status === "done")) {
+    return { error: `cannot re-plan task ${params.taskId}: it is already complete — use gsd_task_reopen first` };
+  }
 
   try {
     transaction(() => {
-      if (!getTask(params.milestoneId, params.sliceId, params.taskId)) {
+      if (!existingTask) {
         insertTask({
           id: params.taskId,
           sliceId: params.sliceId,
@@ -119,6 +131,8 @@ export async function handlePlanTask(
         params: { milestoneId: params.milestoneId, sliceId: params.sliceId, taskId: params.taskId },
         ts: new Date().toISOString(),
         actor: "agent",
+        actor_name: params.actorName,
+        trigger_reason: params.triggerReason,
       });
     } catch (hookErr) {
       process.stderr.write(

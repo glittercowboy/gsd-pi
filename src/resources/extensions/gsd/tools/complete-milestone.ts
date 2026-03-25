@@ -11,7 +11,9 @@ import { mkdirSync } from "node:fs";
 
 import {
   transaction,
+  getMilestone,
   getMilestoneSlices,
+  getSliceTasks,
   _getAdapter,
 } from "../gsd-db.js";
 import { resolveMilestonePath, clearPathCache } from "../paths.js";
@@ -34,6 +36,10 @@ export interface CompleteMilestoneParams {
   lessonsLearned: string[];
   followUps: string;
   deviations: string;
+  /** Optional caller-provided identity for audit trail */
+  actorName?: string;
+  /** Optional caller-provided reason this action was triggered */
+  triggerReason?: string;
 }
 
 export interface CompleteMilestoneResult {
@@ -111,6 +117,15 @@ export async function handleCompleteMilestone(
     return { error: "title is required and must be a non-empty string" };
   }
 
+  // ── State machine preconditions ─────────────────────────────────────────
+  const milestone = getMilestone(params.milestoneId);
+  if (!milestone) {
+    return { error: `milestone not found: ${params.milestoneId}` };
+  }
+  if (milestone.status === "complete" || milestone.status === "done") {
+    return { error: `milestone ${params.milestoneId} is already complete` };
+  }
+
   // ── Verify all slices are complete ───────────────────────────────────────
   const slices = getMilestoneSlices(params.milestoneId);
   if (slices.length === 0) {
@@ -121,6 +136,16 @@ export async function handleCompleteMilestone(
   if (incompleteSlices.length > 0) {
     const incompleteIds = incompleteSlices.map(s => `${s.id} (status: ${s.status})`).join(", ");
     return { error: `incomplete slices: ${incompleteIds}` };
+  }
+
+  // ── Deep check: verify all tasks in all slices are complete ──────────────
+  for (const slice of slices) {
+    const tasks = getSliceTasks(params.milestoneId, slice.id);
+    const incompleteTasks = tasks.filter(t => t.status !== "complete" && t.status !== "done");
+    if (incompleteTasks.length > 0) {
+      const ids = incompleteTasks.map(t => `${t.id} (status: ${t.status})`).join(", ");
+      return { error: `slice ${slice.id} has incomplete tasks: ${ids}` };
+    }
   }
 
   // ── DB writes inside a transaction ──────────────────────────────────────
@@ -181,6 +206,8 @@ export async function handleCompleteMilestone(
       params: { milestoneId: params.milestoneId },
       ts: new Date().toISOString(),
       actor: "agent",
+      actor_name: params.actorName,
+      trigger_reason: params.triggerReason,
     });
   } catch (hookErr) {
     process.stderr.write(

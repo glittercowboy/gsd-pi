@@ -35,8 +35,8 @@ export function renderPlanContent(sliceRow: SliceRow, taskRows: TaskRow[]): stri
   lines.push("## Tasks");
 
   for (const task of taskRows) {
-    const checkbox = task.status === "done" ? "[x]" : "[ ]";
-    lines.push(`- ${checkbox} **${task.id}:** ${task.title} \u2014 ${task.description}`);
+    const checkbox = task.status === "done" || task.status === "complete" ? "[x]" : "[ ]";
+    lines.push(`- ${checkbox} **${task.id}: ${task.title}** \u2014 ${task.description}`);
 
     // Estimate subline (always present if non-empty)
     if (task.estimate) {
@@ -104,7 +104,7 @@ export function renderRoadmapContent(milestoneRow: MilestoneRow, sliceRows: Slic
   lines.push("|----|-------|------|---------|------|------------|");
 
   for (const slice of sliceRows) {
-    const done = slice.status === "done" ? "\u2705" : "\u2B1C";
+    const done = slice.status === "done" || slice.status === "complete" ? "\u2705" : "\u2B1C";
 
     // depends is already parsed to string[] by rowToSlice
     let depends = "\u2014";

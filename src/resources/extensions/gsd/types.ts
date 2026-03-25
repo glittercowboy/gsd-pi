@@ -520,6 +520,10 @@ export interface CompleteTaskParams {
     verdict: string;
     durationMs: number;
   }>;
+  /** Optional caller-provided identity for audit trail */
+  actorName?: string;
+  /** Optional caller-provided reason this action was triggered */
+  triggerReason?: string;
 }
 
 // ─── Complete Slice Params (gsd_complete_slice tool input) ───────────────
@@ -548,4 +552,8 @@ export interface CompleteSliceParams {
   requires: Array<{ slice: string; provides: string }>;
   affects: string[];
   drillDownPaths: string[];
+  /** Optional caller-provided identity for audit trail */
+  actorName?: string;
+  /** Optional caller-provided reason this action was triggered */
+  triggerReason?: string;
 }

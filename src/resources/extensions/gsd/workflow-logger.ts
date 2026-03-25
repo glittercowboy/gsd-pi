@@ -2,6 +2,10 @@
 // Centralized warning/error accumulator for the workflow engine pipeline.
 // Captures structured entries that the auto-loop can drain after each unit
 // to surface root causes for stuck loops, silent degradation, and blocked writes.
+// All entries are also persisted to .gsd/audit-log.jsonl for post-mortem analysis.
+
+import { appendFileSync, readFileSync, existsSync, mkdirSync } from "node:fs";
+import { join } from "node:path";
 
 // ─── Types ──────────────────────────────────────────────────────────────
 
@@ -28,10 +32,20 @@ export interface LogEntry {
   context?: Record<string, string>;
 }
 
-// ─── Buffer ─────────────────────────────────────────────────────────────
+// ─── Buffer & Persistent Audit ──────────────────────────────────────────
 
 const MAX_BUFFER = 100;
 let _buffer: LogEntry[] = [];
+let _auditBasePath: string | null = null;
+
+/**
+ * Set the base path for persistent audit log writes.
+ * Should be called once at engine init with the project root.
+ * Until set, log entries are buffered in-memory only.
+ */
+export function setLogBasePath(basePath: string): void {
+  _auditBasePath = basePath;
+}
 
 // ─── Public API ─────────────────────────────────────────────────────────
 
@@ -116,10 +130,34 @@ export function formatForNotification(entries: readonly LogEntry[]): string {
 }
 
 /**
+ * Read all entries from the persistent audit log.
+ * Returns empty array if no basePath is set or the file doesn't exist.
+ */
+export function readAuditLog(basePath?: string): LogEntry[] {
+  const bp = basePath ?? _auditBasePath;
+  if (!bp) return [];
+  const auditPath = join(bp, ".gsd", "audit-log.jsonl");
+  if (!existsSync(auditPath)) return [];
+  try {
+    const content = readFileSync(auditPath, "utf-8");
+    return content
+      .split("\n")
+      .filter((l) => l.length > 0)
+      .map((l) => {
+        try { return JSON.parse(l) as LogEntry; } catch { return null; }
+      })
+      .filter((e): e is LogEntry => e !== null);
+  } catch {
+    return [];
+  }
+}
+
+/**
  * Reset buffer (testing only).
  */
 export function _resetLogs(): void {
   _buffer = [];
+  _auditBasePath = null;
 }
 
 // ─── Internal ───────────────────────────────────────────────────────────
@@ -147,5 +185,16 @@ function _push(
   _buffer.push(entry);
   if (_buffer.length > MAX_BUFFER) {
     _buffer.shift();
+  }
+
+  // Persist to .gsd/audit-log.jsonl so entries survive context resets
+  if (_auditBasePath) {
+    try {
+      const auditDir = join(_auditBasePath, ".gsd");
+      mkdirSync(auditDir, { recursive: true });
+      appendFileSync(join(auditDir, "audit-log.jsonl"), JSON.stringify(entry) + "\n", "utf-8");
+    } catch {
+      // Best-effort — never let audit write failures bubble up
+    }
   }
 }

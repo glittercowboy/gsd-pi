@@ -1,5 +1,4 @@
-import { describe, test, afterEach } from "node:test";
-import assert from "node:assert/strict";
+import { createTestContext } from './test-helpers.ts';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
@@ -17,6 +16,8 @@ import {
 } from '../gsd-db.ts';
 import { handleCompleteSlice } from '../tools/complete-slice.ts';
 import type { CompleteSliceParams } from '../types.ts';
+
+const { assertEq, assertTrue, assertMatch, report } = createTestContext();
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Helpers
@@ -114,262 +115,297 @@ Run the test suite and verify all assertions pass.
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Tests
+// complete-slice: Schema v6 migration
 // ═══════════════════════════════════════════════════════════════════════════
 
-describe("complete-slice: schema v6 migration", () => {
-  test("schema version and columns exist", () => {
-    const dbPath = tempDbPath();
-    openDatabase(dbPath);
+console.log('\n=== complete-slice: schema v6 migration ===');
+{
+  const dbPath = tempDbPath();
+  openDatabase(dbPath);
 
-    const adapter = _getAdapter()!;
+  const adapter = _getAdapter()!;
 
-    // Verify schema version is current (v10 after M001 planning migrations)
-    const versionRow = adapter.prepare('SELECT MAX(version) as v FROM schema_version').get();
-    assert.strictEqual(versionRow?.['v'], 10, 'schema version should be 10');
+  // Verify schema version is current (v10 after M001 planning migrations)
+  const versionRow = adapter.prepare('SELECT MAX(version) as v FROM schema_version').get();
+  assertEq(versionRow?.['v'], 11, 'schema version should be 11');
 
-    // Verify slices table has full_summary_md and full_uat_md columns
-    const cols = adapter.prepare("PRAGMA table_info(slices)").all();
-    const colNames = cols.map(c => c['name'] as string);
-    assert.ok(colNames.includes('full_summary_md'), 'slices table should have full_summary_md column');
-    assert.ok(colNames.includes('full_uat_md'), 'slices table should have full_uat_md column');
+  // Verify slices table has full_summary_md and full_uat_md columns
+  const cols = adapter.prepare("PRAGMA table_info(slices)").all();
+  const colNames = cols.map(c => c['name'] as string);
+  assertTrue(colNames.includes('full_summary_md'), 'slices table should have full_summary_md column');
+  assertTrue(colNames.includes('full_uat_md'), 'slices table should have full_uat_md column');
 
-    cleanup(dbPath);
-  });
-});
+  cleanup(dbPath);
+}
 
-describe("complete-slice: getSlice/updateSliceStatus accessors", () => {
-  test("getSlice and updateSliceStatus work correctly", () => {
-    const dbPath = tempDbPath();
-    openDatabase(dbPath);
+// ═══════════════════════════════════════════════════════════════════════════
+// complete-slice: getSlice/updateSliceStatus accessors
+// ═══════════════════════════════════════════════════════════════════════════
 
-    // Insert milestone and slice
-    insertMilestone({ id: 'M001' });
-    insertSlice({ id: 'S01', milestoneId: 'M001', title: 'Test Slice', risk: 'high' });
+console.log('\n=== complete-slice: getSlice/updateSliceStatus accessors ===');
+{
+  const dbPath = tempDbPath();
+  openDatabase(dbPath);
 
-    // getSlice returns correct row
-    const slice = getSlice('M001', 'S01');
-    assert.ok(slice !== null, 'getSlice should return non-null for existing slice');
-    assert.strictEqual(slice!.id, 'S01', 'slice id');
-    assert.strictEqual(slice!.milestone_id, 'M001', 'slice milestone_id');
-    assert.strictEqual(slice!.title, 'Test Slice', 'slice title');
-    assert.strictEqual(slice!.risk, 'high', 'slice risk');
-    assert.strictEqual(slice!.status, 'pending', 'slice default status should be pending');
-    assert.strictEqual(slice!.completed_at, null, 'slice completed_at should be null initially');
-    assert.strictEqual(slice!.full_summary_md, '', 'slice full_summary_md should be empty initially');
-    assert.strictEqual(slice!.full_uat_md, '', 'slice full_uat_md should be empty initially');
+  // Insert milestone and slice
+  insertMilestone({ id: 'M001' });
+  insertSlice({ id: 'S01', milestoneId: 'M001', title: 'Test Slice', risk: 'high' });
 
-    // getSlice returns null for non-existent
-    const noSlice = getSlice('M001', 'S99');
-    assert.strictEqual(noSlice, null, 'non-existent slice should return null');
+  // getSlice returns correct row
+  const slice = getSlice('M001', 'S01');
+  assertTrue(slice !== null, 'getSlice should return non-null for existing slice');
+  assertEq(slice!.id, 'S01', 'slice id');
+  assertEq(slice!.milestone_id, 'M001', 'slice milestone_id');
+  assertEq(slice!.title, 'Test Slice', 'slice title');
+  assertEq(slice!.risk, 'high', 'slice risk');
+  assertEq(slice!.status, 'pending', 'slice default status should be pending');
+  assertEq(slice!.completed_at, null, 'slice completed_at should be null initially');
+  assertEq(slice!.full_summary_md, '', 'slice full_summary_md should be empty initially');
+  assertEq(slice!.full_uat_md, '', 'slice full_uat_md should be empty initially');
 
-    // updateSliceStatus changes status and completed_at
-    const now = new Date().toISOString();
-    updateSliceStatus('M001', 'S01', 'complete', now);
-    const updated = getSlice('M001', 'S01');
-    assert.strictEqual(updated!.status, 'complete', 'slice status should be updated to complete');
-    assert.strictEqual(updated!.completed_at, now, 'slice completed_at should be set');
+  // getSlice returns null for non-existent
+  const noSlice = getSlice('M001', 'S99');
+  assertEq(noSlice, null, 'non-existent slice should return null');
 
-    cleanup(dbPath);
-  });
-});
+  // updateSliceStatus changes status and completed_at
+  const now = new Date().toISOString();
+  updateSliceStatus('M001', 'S01', 'complete', now);
+  const updated = getSlice('M001', 'S01');
+  assertEq(updated!.status, 'complete', 'slice status should be updated to complete');
+  assertEq(updated!.completed_at, now, 'slice completed_at should be set');
 
-describe("complete-slice: handler", () => {
-  test("happy path", async () => {
-    const dbPath = tempDbPath();
-    openDatabase(dbPath);
+  cleanup(dbPath);
+}
 
-    const { basePath, roadmapPath } = createTempProject();
+// ═══════════════════════════════════════════════════════════════════════════
+// complete-slice: Handler happy path
+// ═══════════════════════════════════════════════════════════════════════════
 
-    // Set up DB state: milestone, slice, 2 complete tasks
-    insertMilestone({ id: 'M001' });
-    insertSlice({ id: 'S01', milestoneId: 'M001' });
-    insertTask({ id: 'T01', sliceId: 'S01', milestoneId: 'M001', status: 'complete', title: 'Task 1' });
-    insertTask({ id: 'T02', sliceId: 'S01', milestoneId: 'M001', status: 'complete', title: 'Task 2' });
+console.log('\n=== complete-slice: handler happy path ===');
+{
+  const dbPath = tempDbPath();
+  openDatabase(dbPath);
 
-    const params = makeValidSliceParams();
-    const result = await handleCompleteSlice(params, basePath);
+  const { basePath, roadmapPath } = createTempProject();
 
-    assert.ok(!('error' in result), 'handler should succeed without error');
-    if (!('error' in result)) {
-      assert.strictEqual(result.sliceId, 'S01', 'result sliceId');
-      assert.strictEqual(result.milestoneId, 'M001', 'result milestoneId');
-      assert.ok(result.summaryPath.endsWith('S01-SUMMARY.md'), 'summaryPath should end with S01-SUMMARY.md');
-      assert.ok(result.uatPath.endsWith('S01-UAT.md'), 'uatPath should end with S01-UAT.md');
+  // Set up DB state: milestone, slices (S01 + S02), 2 complete tasks
+  insertMilestone({ id: 'M001' });
+  insertSlice({ id: 'S01', milestoneId: 'M001' });
+  insertSlice({ id: 'S02', milestoneId: 'M001', title: 'Second Slice' });
+  insertTask({ id: 'T01', sliceId: 'S01', milestoneId: 'M001', status: 'complete', title: 'Task 1' });
+  insertTask({ id: 'T02', sliceId: 'S01', milestoneId: 'M001', status: 'complete', title: 'Task 2' });
 
-      // (a) Verify SUMMARY.md exists on disk with correct YAML frontmatter
-      assert.ok(fs.existsSync(result.summaryPath), 'summary file should exist on disk');
-      const summaryContent = fs.readFileSync(result.summaryPath, 'utf-8');
-      assert.match(summaryContent, /^---\n/, 'summary should start with YAML frontmatter');
-      assert.match(summaryContent, /id: S01/, 'summary should contain id: S01');
-      assert.match(summaryContent, /parent: M001/, 'summary should contain parent: M001');
-      assert.match(summaryContent, /milestone: M001/, 'summary should contain milestone: M001');
-      assert.match(summaryContent, /blocker_discovered: false/, 'summary should contain blocker_discovered');
-      assert.match(summaryContent, /verification_result: passed/, 'summary should contain verification_result');
-      assert.match(summaryContent, /key_files:/, 'summary should contain key_files');
-      assert.match(summaryContent, /patterns_established:/, 'summary should contain patterns_established');
-      assert.match(summaryContent, /observability_surfaces:/, 'summary should contain observability_surfaces');
-      assert.match(summaryContent, /provides:/, 'summary should contain provides');
-      assert.match(summaryContent, /# S01: Test Slice/, 'summary should have H1 with slice ID and title');
-      assert.match(summaryContent, /\*\*Implemented test slice with full coverage\*\*/, 'summary should have one-liner in bold');
-      assert.match(summaryContent, /## What Happened/, 'summary should have What Happened section');
-      assert.match(summaryContent, /## Verification/, 'summary should have Verification section');
-      assert.match(summaryContent, /## Requirements Advanced/, 'summary should have Requirements Advanced section');
+  const params = makeValidSliceParams();
+  const result = await handleCompleteSlice(params, basePath);
 
-      // (b) Verify UAT.md exists on disk
-      assert.ok(fs.existsSync(result.uatPath), 'UAT file should exist on disk');
-      const uatContent = fs.readFileSync(result.uatPath, 'utf-8');
-      assert.match(uatContent, /# S01: Test Slice — UAT/, 'UAT should have correct title');
-      assert.match(uatContent, /Milestone:\*\* M001/, 'UAT should reference milestone');
-      assert.match(uatContent, /Smoke Test/, 'UAT should contain smoke test from params');
+  assertTrue(!('error' in result), 'handler should succeed without error');
+  if (!('error' in result)) {
+    assertEq(result.sliceId, 'S01', 'result sliceId');
+    assertEq(result.milestoneId, 'M001', 'result milestoneId');
+    assertTrue(result.summaryPath.endsWith('S01-SUMMARY.md'), 'summaryPath should end with S01-SUMMARY.md');
+    assertTrue(result.uatPath.endsWith('S01-UAT.md'), 'uatPath should end with S01-UAT.md');
 
-      // (c) Verify roadmap checkbox toggled to [x]
-      const roadmapContent = fs.readFileSync(roadmapPath, 'utf-8');
-      assert.match(roadmapContent, /\[x\]\s+\*\*S01:/, 'S01 should be checked in roadmap');
-      assert.match(roadmapContent, /\[ \]\s+\*\*S02:/, 'S02 should still be unchecked in roadmap');
+    // (a) Verify SUMMARY.md exists on disk with correct YAML frontmatter
+    assertTrue(fs.existsSync(result.summaryPath), 'summary file should exist on disk');
+    const summaryContent = fs.readFileSync(result.summaryPath, 'utf-8');
+    assertMatch(summaryContent, /^---\n/, 'summary should start with YAML frontmatter');
+    assertMatch(summaryContent, /id: S01/, 'summary should contain id: S01');
+    assertMatch(summaryContent, /parent: M001/, 'summary should contain parent: M001');
+    assertMatch(summaryContent, /milestone: M001/, 'summary should contain milestone: M001');
+    assertMatch(summaryContent, /blocker_discovered: false/, 'summary should contain blocker_discovered');
+    assertMatch(summaryContent, /verification_result: passed/, 'summary should contain verification_result');
+    assertMatch(summaryContent, /key_files:/, 'summary should contain key_files');
+    assertMatch(summaryContent, /patterns_established:/, 'summary should contain patterns_established');
+    assertMatch(summaryContent, /observability_surfaces:/, 'summary should contain observability_surfaces');
+    assertMatch(summaryContent, /provides:/, 'summary should contain provides');
+    assertMatch(summaryContent, /# S01: Test Slice/, 'summary should have H1 with slice ID and title');
+    assertMatch(summaryContent, /\*\*Implemented test slice with full coverage\*\*/, 'summary should have one-liner in bold');
+    assertMatch(summaryContent, /## What Happened/, 'summary should have What Happened section');
+    assertMatch(summaryContent, /## Verification/, 'summary should have Verification section');
+    assertMatch(summaryContent, /## Requirements Advanced/, 'summary should have Requirements Advanced section');
 
-      // (d) Verify full_summary_md and full_uat_md stored in DB for D004 recovery
-      const sliceAfter = getSlice('M001', 'S01');
-      assert.ok(sliceAfter !== null, 'slice should exist in DB after handler');
-      assert.ok(sliceAfter!.full_summary_md.length > 0, 'full_summary_md should be non-empty in DB');
-      assert.match(sliceAfter!.full_summary_md, /id: S01/, 'full_summary_md should contain frontmatter');
-      assert.ok(sliceAfter!.full_uat_md.length > 0, 'full_uat_md should be non-empty in DB');
-      assert.match(sliceAfter!.full_uat_md, /S01: Test Slice — UAT/, 'full_uat_md should contain UAT title');
+    // (b) Verify UAT.md exists on disk
+    assertTrue(fs.existsSync(result.uatPath), 'UAT file should exist on disk');
+    const uatContent = fs.readFileSync(result.uatPath, 'utf-8');
+    assertMatch(uatContent, /# S01: Test Slice — UAT/, 'UAT should have correct title');
+    assertMatch(uatContent, /Milestone:\*\* M001/, 'UAT should reference milestone');
+    assertMatch(uatContent, /Smoke Test/, 'UAT should contain smoke test from params');
 
-      // (e) Verify slice status is complete in DB
-      assert.strictEqual(sliceAfter!.status, 'complete', 'slice status should be complete in DB');
-      assert.ok(sliceAfter!.completed_at !== null, 'completed_at should be set in DB');
-    }
+    // (c) Verify roadmap shows S01 complete (✅) and S02 pending (⬜) in table format
+    // Projection renders roadmap as a Slice Overview table, not checkbox list
+    const roadmapContent = fs.readFileSync(roadmapPath, 'utf-8');
+    assertMatch(roadmapContent, /\| S01 \|/, 'S01 should appear in roadmap table');
+    assertTrue(roadmapContent.includes('✅'), 'completed S01 should show ✅ in roadmap table');
+    assertMatch(roadmapContent, /\| S02 \|/, 'S02 should appear in roadmap table');
+    assertTrue(roadmapContent.includes('⬜'), 'pending S02 should show ⬜ in roadmap table');
 
-    cleanupDir(basePath);
-    cleanup(dbPath);
-  });
+    // (d) Verify full_summary_md and full_uat_md stored in DB for D004 recovery
+    const sliceAfter = getSlice('M001', 'S01');
+    assertTrue(sliceAfter !== null, 'slice should exist in DB after handler');
+    assertTrue(sliceAfter!.full_summary_md.length > 0, 'full_summary_md should be non-empty in DB');
+    assertMatch(sliceAfter!.full_summary_md, /id: S01/, 'full_summary_md should contain frontmatter');
+    assertTrue(sliceAfter!.full_uat_md.length > 0, 'full_uat_md should be non-empty in DB');
+    assertMatch(sliceAfter!.full_uat_md, /S01: Test Slice — UAT/, 'full_uat_md should contain UAT title');
 
-  test("rejects incomplete tasks", async () => {
-    const dbPath = tempDbPath();
-    openDatabase(dbPath);
+    // (e) Verify slice status is complete in DB
+    assertEq(sliceAfter!.status, 'complete', 'slice status should be complete in DB');
+    assertTrue(sliceAfter!.completed_at !== null, 'completed_at should be set in DB');
+  }
 
-    // Insert milestone, slice, 2 tasks — one complete, one pending
-    insertMilestone({ id: 'M001' });
-    insertSlice({ id: 'S01', milestoneId: 'M001' });
-    insertTask({ id: 'T01', sliceId: 'S01', milestoneId: 'M001', status: 'complete', title: 'Task 1' });
-    insertTask({ id: 'T02', sliceId: 'S01', milestoneId: 'M001', status: 'pending', title: 'Task 2' });
+  cleanupDir(basePath);
+  cleanup(dbPath);
+}
 
-    const params = makeValidSliceParams();
-    const result = await handleCompleteSlice(params, '/tmp/fake');
+// ═══════════════════════════════════════════════════════════════════════════
+// complete-slice: Handler rejects incomplete tasks
+// ═══════════════════════════════════════════════════════════════════════════
 
-    assert.ok('error' in result, 'should return error when tasks are incomplete');
-    if ('error' in result) {
-      assert.match(result.error, /incomplete tasks/, 'error should mention incomplete tasks');
-      assert.match(result.error, /T02/, 'error should mention the specific incomplete task ID');
-    }
+console.log('\n=== complete-slice: handler rejects incomplete tasks ===');
+{
+  const dbPath = tempDbPath();
+  openDatabase(dbPath);
 
-    cleanup(dbPath);
-  });
+  // Insert milestone, slice, 2 tasks — one complete, one pending
+  insertMilestone({ id: 'M001' });
+  insertSlice({ id: 'S01', milestoneId: 'M001' });
+  insertTask({ id: 'T01', sliceId: 'S01', milestoneId: 'M001', status: 'complete', title: 'Task 1' });
+  insertTask({ id: 'T02', sliceId: 'S01', milestoneId: 'M001', status: 'pending', title: 'Task 2' });
 
-  test("rejects no tasks", async () => {
-    const dbPath = tempDbPath();
-    openDatabase(dbPath);
+  const params = makeValidSliceParams();
+  const result = await handleCompleteSlice(params, '/tmp/fake');
 
-    // Insert milestone and slice but NO tasks
-    insertMilestone({ id: 'M001' });
-    insertSlice({ id: 'S01', milestoneId: 'M001' });
+  assertTrue('error' in result, 'should return error when tasks are incomplete');
+  if ('error' in result) {
+    assertMatch(result.error, /incomplete tasks/, 'error should mention incomplete tasks');
+    assertMatch(result.error, /T02/, 'error should mention the specific incomplete task ID');
+  }
 
-    const params = makeValidSliceParams();
-    const result = await handleCompleteSlice(params, '/tmp/fake');
+  cleanup(dbPath);
+}
 
-    assert.ok('error' in result, 'should return error when no tasks exist');
-    if ('error' in result) {
-      assert.match(result.error, /no tasks found/, 'error should say no tasks found');
-    }
+// ═══════════════════════════════════════════════════════════════════════════
+// complete-slice: Handler rejects no tasks
+// ═══════════════════════════════════════════════════════════════════════════
 
-    cleanup(dbPath);
-  });
+console.log('\n=== complete-slice: handler rejects no tasks ===');
+{
+  const dbPath = tempDbPath();
+  openDatabase(dbPath);
 
-  test("validation errors", async () => {
-    const dbPath = tempDbPath();
-    openDatabase(dbPath);
+  // Insert milestone and slice but NO tasks
+  insertMilestone({ id: 'M001' });
+  insertSlice({ id: 'S01', milestoneId: 'M001' });
 
-    const params = makeValidSliceParams();
+  const params = makeValidSliceParams();
+  const result = await handleCompleteSlice(params, '/tmp/fake');
 
-    // Empty sliceId
-    const r1 = await handleCompleteSlice({ ...params, sliceId: '' }, '/tmp/fake');
-    assert.ok('error' in r1, 'should return error for empty sliceId');
-    if ('error' in r1) {
-      assert.match(r1.error, /sliceId/, 'error should mention sliceId');
-    }
+  assertTrue('error' in result, 'should return error when no tasks exist');
+  if ('error' in result) {
+    assertMatch(result.error, /no tasks found/, 'error should say no tasks found');
+  }
 
-    // Empty milestoneId
-    const r2 = await handleCompleteSlice({ ...params, milestoneId: '' }, '/tmp/fake');
-    assert.ok('error' in r2, 'should return error for empty milestoneId');
-    if ('error' in r2) {
-      assert.match(r2.error, /milestoneId/, 'error should mention milestoneId');
-    }
+  cleanup(dbPath);
+}
 
-    cleanup(dbPath);
-  });
+// ═══════════════════════════════════════════════════════════════════════════
+// complete-slice: Handler validation errors
+// ═══════════════════════════════════════════════════════════════════════════
 
-  test("idempotency", async () => {
-    const dbPath = tempDbPath();
-    openDatabase(dbPath);
+console.log('\n=== complete-slice: handler validation errors ===');
+{
+  const dbPath = tempDbPath();
+  openDatabase(dbPath);
 
-    const { basePath, roadmapPath } = createTempProject();
+  const params = makeValidSliceParams();
 
-    // Set up DB state
-    insertMilestone({ id: 'M001' });
-    insertSlice({ id: 'S01', milestoneId: 'M001' });
-    insertTask({ id: 'T01', sliceId: 'S01', milestoneId: 'M001', status: 'complete', title: 'Task 1' });
+  // Empty sliceId
+  const r1 = await handleCompleteSlice({ ...params, sliceId: '' }, '/tmp/fake');
+  assertTrue('error' in r1, 'should return error for empty sliceId');
+  if ('error' in r1) {
+    assertMatch(r1.error, /sliceId/, 'error should mention sliceId');
+  }
 
-    const params = makeValidSliceParams();
+  // Empty milestoneId
+  const r2 = await handleCompleteSlice({ ...params, milestoneId: '' }, '/tmp/fake');
+  assertTrue('error' in r2, 'should return error for empty milestoneId');
+  if ('error' in r2) {
+    assertMatch(r2.error, /milestoneId/, 'error should mention milestoneId');
+  }
 
-    // First call
-    const r1 = await handleCompleteSlice(params, basePath);
-    assert.ok(!('error' in r1), 'first call should succeed');
+  cleanup(dbPath);
+}
 
-    // Second call with same params — should not crash
-    const r2 = await handleCompleteSlice(params, basePath);
-    assert.ok(!('error' in r2), 'second call should succeed (idempotent)');
+// ═══════════════════════════════════════════════════════════════════════════
+// complete-slice: Handler idempotency
+// ═══════════════════════════════════════════════════════════════════════════
 
-    // Verify only 1 slice row (not duplicated)
-    const adapter = _getAdapter()!;
-    const sliceRows = adapter.prepare("SELECT * FROM slices WHERE milestone_id = 'M001' AND id = 'S01'").all();
-    assert.strictEqual(sliceRows.length, 1, 'should have exactly 1 slice row after 2 calls');
+console.log('\n=== complete-slice: handler idempotency ===');
+{
+  const dbPath = tempDbPath();
+  openDatabase(dbPath);
 
-    // Files should still exist
-    if (!('error' in r2)) {
-      assert.ok(fs.existsSync(r2.summaryPath), 'summary should still exist after second call');
-      assert.ok(fs.existsSync(r2.uatPath), 'UAT should still exist after second call');
-    }
+  const { basePath, roadmapPath } = createTempProject();
 
-    cleanupDir(basePath);
-    cleanup(dbPath);
-  });
+  // Set up DB state
+  insertMilestone({ id: 'M001' });
+  insertSlice({ id: 'S01', milestoneId: 'M001' });
+  insertTask({ id: 'T01', sliceId: 'S01', milestoneId: 'M001', status: 'complete', title: 'Task 1' });
 
-  test("missing roadmap (graceful)", async () => {
-    const dbPath = tempDbPath();
-    openDatabase(dbPath);
+  const params = makeValidSliceParams();
 
-    // Create a temp dir WITHOUT a roadmap file
-    const basePath = fs.mkdtempSync(path.join(os.tmpdir(), 'gsd-no-roadmap-'));
-    const sliceDir = path.join(basePath, '.gsd', 'milestones', 'M001', 'slices', 'S01');
-    fs.mkdirSync(sliceDir, { recursive: true });
+  // First call
+  const r1 = await handleCompleteSlice(params, basePath);
+  assertTrue(!('error' in r1), 'first call should succeed');
 
-    // Set up DB state
-    insertMilestone({ id: 'M001' });
-    insertSlice({ id: 'S01', milestoneId: 'M001' });
-    insertTask({ id: 'T01', sliceId: 'S01', milestoneId: 'M001', status: 'complete', title: 'Task 1' });
+  // Second call — state machine guard rejects (slice is already complete)
+  const r2 = await handleCompleteSlice(params, basePath);
+  assertTrue('error' in r2, 'second call should return error (slice already complete)');
+  if ('error' in r2) {
+    assertMatch(r2.error, /already complete/, 'error should mention already complete');
+  }
 
-    const params = makeValidSliceParams();
-    const result = await handleCompleteSlice(params, basePath);
+  // Verify only 1 slice row (not duplicated)
+  const adapter = _getAdapter()!;
+  const sliceRows = adapter.prepare("SELECT * FROM slices WHERE milestone_id = 'M001' AND id = 'S01'").all();
+  assertEq(sliceRows.length, 1, 'should have exactly 1 slice row after calls');
 
-    // Should succeed even without roadmap file — just skip checkbox toggle
-    assert.ok(!('error' in result), 'handler should succeed without roadmap file');
-    if (!('error' in result)) {
-      assert.ok(fs.existsSync(result.summaryPath), 'summary should be written even without roadmap');
-      assert.ok(fs.existsSync(result.uatPath), 'UAT should be written even without roadmap');
-    }
+  cleanupDir(basePath);
+  cleanup(dbPath);
+}
 
-    cleanupDir(basePath);
-    cleanup(dbPath);
-  });
-});
+// ═══════════════════════════════════════════════════════════════════════════
+// complete-slice: Handler with missing roadmap (graceful)
+// ═══════════════════════════════════════════════════════════════════════════
+
+console.log('\n=== complete-slice: handler with missing roadmap ===');
+{
+  const dbPath = tempDbPath();
+  openDatabase(dbPath);
+
+  // Create a temp dir WITHOUT a roadmap file
+  const basePath = fs.mkdtempSync(path.join(os.tmpdir(), 'gsd-no-roadmap-'));
+  const sliceDir = path.join(basePath, '.gsd', 'milestones', 'M001', 'slices', 'S01');
+  fs.mkdirSync(sliceDir, { recursive: true });
+
+  // Set up DB state
+  insertMilestone({ id: 'M001' });
+  insertSlice({ id: 'S01', milestoneId: 'M001' });
+  insertTask({ id: 'T01', sliceId: 'S01', milestoneId: 'M001', status: 'complete', title: 'Task 1' });
+
+  const params = makeValidSliceParams();
+  const result = await handleCompleteSlice(params, basePath);
+
+  // Should succeed even without roadmap file — just skip checkbox toggle
+  assertTrue(!('error' in result), 'handler should succeed without roadmap file');
+  if (!('error' in result)) {
+    assertTrue(fs.existsSync(result.summaryPath), 'summary should be written even without roadmap');
+    assertTrue(fs.existsSync(result.uatPath), 'UAT should be written even without roadmap');
+  }
+
+  cleanupDir(basePath);
+  cleanup(dbPath);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+
+report();

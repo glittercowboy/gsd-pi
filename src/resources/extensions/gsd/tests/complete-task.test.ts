@@ -1,5 +1,4 @@
-import { describe, test } from "node:test";
-import assert from "node:assert/strict";
+import { createTestContext } from './test-helpers.ts';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
@@ -17,6 +16,8 @@ import {
   insertVerificationEvidence,
 } from '../gsd-db.ts';
 import { handleCompleteTask } from '../tools/complete-task.ts';
+
+const { assertEq, assertTrue, assertMatch, report } = createTestContext();
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Helpers
@@ -98,290 +99,356 @@ function makeValidParams() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Tests
+// complete-task: Schema v5 migration
 // ═══════════════════════════════════════════════════════════════════════════
 
-describe("complete-task: schema v5 migration", () => {
-  test("schema version and tables exist", () => {
-    const dbPath = tempDbPath();
-    openDatabase(dbPath);
+console.log('\n=== complete-task: schema v5 migration ===');
+{
+  const dbPath = tempDbPath();
+  openDatabase(dbPath);
 
-    const adapter = _getAdapter()!;
+  const adapter = _getAdapter()!;
 
-    // Verify schema version is current (v10 after M001 planning migrations)
-    const versionRow = adapter.prepare('SELECT MAX(version) as v FROM schema_version').get();
-    assert.strictEqual(versionRow?.['v'], 10, 'schema version should be 10');
+  // Verify schema version is current (v11 after state machine migration)
+  const versionRow = adapter.prepare('SELECT MAX(version) as v FROM schema_version').get();
+  assertEq(versionRow?.['v'], 11, 'schema version should be 11');
 
-    // Verify all 4 new tables exist
-    const tables = adapter.prepare(
-      "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"
-    ).all();
-    const tableNames = tables.map(t => t['name'] as string);
-    assert.ok(tableNames.includes('milestones'), 'milestones table should exist');
-    assert.ok(tableNames.includes('slices'), 'slices table should exist');
-    assert.ok(tableNames.includes('tasks'), 'tasks table should exist');
-    assert.ok(tableNames.includes('verification_evidence'), 'verification_evidence table should exist');
+  // Verify all 4 new tables exist
+  const tables = adapter.prepare(
+    "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"
+  ).all();
+  const tableNames = tables.map(t => t['name'] as string);
+  assertTrue(tableNames.includes('milestones'), 'milestones table should exist');
+  assertTrue(tableNames.includes('slices'), 'slices table should exist');
+  assertTrue(tableNames.includes('tasks'), 'tasks table should exist');
+  assertTrue(tableNames.includes('verification_evidence'), 'verification_evidence table should exist');
 
-    cleanup(dbPath);
+  cleanup(dbPath);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// complete-task: Accessor CRUD
+// ═══════════════════════════════════════════════════════════════════════════
+
+console.log('\n=== complete-task: accessor CRUD ===');
+{
+  const dbPath = tempDbPath();
+  openDatabase(dbPath);
+
+  // Insert milestone
+  insertMilestone({ id: 'M001', title: 'Test Milestone' });
+  const adapter = _getAdapter()!;
+  const mRow = adapter.prepare("SELECT * FROM milestones WHERE id = 'M001'").get();
+  assertEq(mRow?.['id'], 'M001', 'milestone id should be M001');
+  assertEq(mRow?.['title'], 'Test Milestone', 'milestone title should match');
+
+  // Insert slice
+  insertSlice({ id: 'S01', milestoneId: 'M001', title: 'Test Slice', risk: 'high' });
+  const sRow = adapter.prepare("SELECT * FROM slices WHERE id = 'S01' AND milestone_id = 'M001'").get();
+  assertEq(sRow?.['id'], 'S01', 'slice id should be S01');
+  assertEq(sRow?.['risk'], 'high', 'slice risk should be high');
+
+  // Insert task with all fields
+  insertTask({
+    id: 'T01',
+    sliceId: 'S01',
+    milestoneId: 'M001',
+    title: 'Test Task',
+    status: 'complete',
+    oneLiner: 'Did the thing',
+    narrative: 'Full story here.',
+    verificationResult: 'passed',
+    duration: '30m',
+    blockerDiscovered: false,
+    deviations: 'None',
+    knownIssues: 'None',
+    keyFiles: ['file1.ts', 'file2.ts'],
+    keyDecisions: ['D001'],
+    fullSummaryMd: '# Summary',
   });
-});
 
-describe("complete-task: accessor CRUD", () => {
-  test("insert and query milestones, slices, tasks, evidence", () => {
-    const dbPath = tempDbPath();
-    openDatabase(dbPath);
+  // getTask verifies all fields
+  const task = getTask('M001', 'S01', 'T01');
+  assertTrue(task !== null, 'task should not be null');
+  assertEq(task!.id, 'T01', 'task id');
+  assertEq(task!.slice_id, 'S01', 'task slice_id');
+  assertEq(task!.milestone_id, 'M001', 'task milestone_id');
+  assertEq(task!.title, 'Test Task', 'task title');
+  assertEq(task!.status, 'complete', 'task status');
+  assertEq(task!.one_liner, 'Did the thing', 'task one_liner');
+  assertEq(task!.narrative, 'Full story here.', 'task narrative');
+  assertEq(task!.verification_result, 'passed', 'task verification_result');
+  assertEq(task!.blocker_discovered, false, 'task blocker_discovered');
+  assertEq(task!.key_files, ['file1.ts', 'file2.ts'], 'task key_files JSON round-trip');
+  assertEq(task!.key_decisions, ['D001'], 'task key_decisions JSON round-trip');
+  assertEq(task!.full_summary_md, '# Summary', 'task full_summary_md');
 
-    // Insert milestone
-    insertMilestone({ id: 'M001', title: 'Test Milestone' });
-    const adapter = _getAdapter()!;
-    const mRow = adapter.prepare("SELECT * FROM milestones WHERE id = 'M001'").get();
-    assert.strictEqual(mRow?.['id'], 'M001', 'milestone id should be M001');
-    assert.strictEqual(mRow?.['title'], 'Test Milestone', 'milestone title should match');
+  // getTask returns null for non-existent
+  const noTask = getTask('M001', 'S01', 'T99');
+  assertEq(noTask, null, 'non-existent task should return null');
 
-    // Insert slice
-    insertSlice({ id: 'S01', milestoneId: 'M001', title: 'Test Slice', risk: 'high' });
-    const sRow = adapter.prepare("SELECT * FROM slices WHERE id = 'S01' AND milestone_id = 'M001'").get();
-    assert.strictEqual(sRow?.['id'], 'S01', 'slice id should be S01');
-    assert.strictEqual(sRow?.['risk'], 'high', 'slice risk should be high');
+  // Insert verification evidence
+  insertVerificationEvidence({
+    taskId: 'T01',
+    sliceId: 'S01',
+    milestoneId: 'M001',
+    command: 'npm test',
+    exitCode: 0,
+    verdict: '✅ pass',
+    durationMs: 3000,
+  });
+  const evRows = adapter.prepare(
+    "SELECT * FROM verification_evidence WHERE task_id = 'T01' AND slice_id = 'S01' AND milestone_id = 'M001'"
+  ).all();
+  assertEq(evRows.length, 1, 'should have 1 verification evidence row');
+  assertEq(evRows[0]['command'], 'npm test', 'evidence command');
+  assertEq(evRows[0]['exit_code'], 0, 'evidence exit_code');
+  assertEq(evRows[0]['verdict'], '✅ pass', 'evidence verdict');
+  assertEq(evRows[0]['duration_ms'], 3000, 'evidence duration_ms');
 
-    // Insert task with all fields
-    insertTask({
-      id: 'T01',
-      sliceId: 'S01',
-      milestoneId: 'M001',
-      title: 'Test Task',
-      status: 'complete',
-      oneLiner: 'Did the thing',
-      narrative: 'Full story here.',
-      verificationResult: 'passed',
-      duration: '30m',
-      blockerDiscovered: false,
-      deviations: 'None',
-      knownIssues: 'None',
-      keyFiles: ['file1.ts', 'file2.ts'],
-      keyDecisions: ['D001'],
-      fullSummaryMd: '# Summary',
-    });
+  // getSliceTasks returns array
+  const sliceTasks = getSliceTasks('M001', 'S01');
+  assertEq(sliceTasks.length, 1, 'getSliceTasks should return 1 task');
+  assertEq(sliceTasks[0].id, 'T01', 'getSliceTasks first task id');
 
-    // getTask verifies all fields
-    const task = getTask('M001', 'S01', 'T01');
-    assert.ok(task !== null, 'task should not be null');
-    assert.strictEqual(task!.id, 'T01', 'task id');
-    assert.strictEqual(task!.slice_id, 'S01', 'task slice_id');
-    assert.strictEqual(task!.milestone_id, 'M001', 'task milestone_id');
-    assert.strictEqual(task!.title, 'Test Task', 'task title');
-    assert.strictEqual(task!.status, 'complete', 'task status');
-    assert.strictEqual(task!.one_liner, 'Did the thing', 'task one_liner');
-    assert.strictEqual(task!.narrative, 'Full story here.', 'task narrative');
-    assert.strictEqual(task!.verification_result, 'passed', 'task verification_result');
-    assert.strictEqual(task!.blocker_discovered, false, 'task blocker_discovered');
-    assert.deepStrictEqual(task!.key_files, ['file1.ts', 'file2.ts'], 'task key_files JSON round-trip');
-    assert.deepStrictEqual(task!.key_decisions, ['D001'], 'task key_decisions JSON round-trip');
-    assert.strictEqual(task!.full_summary_md, '# Summary', 'task full_summary_md');
+  // updateTaskStatus changes status
+  updateTaskStatus('M001', 'S01', 'T01', 'failed', new Date().toISOString());
+  const updatedTask = getTask('M001', 'S01', 'T01');
+  assertEq(updatedTask!.status, 'failed', 'task status should be updated to failed');
+  assertTrue(updatedTask!.completed_at !== null, 'completed_at should be set after status update');
 
-    // getTask returns null for non-existent
-    const noTask = getTask('M001', 'S01', 'T99');
-    assert.strictEqual(noTask, null, 'non-existent task should return null');
+  cleanup(dbPath);
+}
 
-    // Insert verification evidence
+// ═══════════════════════════════════════════════════════════════════════════
+// complete-task: Accessor stale-state error
+// ═══════════════════════════════════════════════════════════════════════════
+
+console.log('\n=== complete-task: accessor stale-state error ===');
+{
+  // No DB open — accessors should throw GSD_STALE_STATE
+  closeDatabase();
+  let threw = false;
+  try {
+    insertMilestone({ id: 'M001' });
+  } catch (err: any) {
+    threw = true;
+    assertTrue(err.code === 'GSD_STALE_STATE' || err.message.includes('No database open'),
+      'should throw GSD_STALE_STATE when no DB open');
+  }
+  assertTrue(threw, 'insertMilestone should throw when no DB open');
+
+  threw = false;
+  try {
+    insertSlice({ id: 'S01', milestoneId: 'M001' });
+  } catch (err: any) {
+    threw = true;
+    assertTrue(err.code === 'GSD_STALE_STATE' || err.message.includes('No database open'),
+      'insertSlice should throw GSD_STALE_STATE');
+  }
+  assertTrue(threw, 'insertSlice should throw when no DB open');
+
+  threw = false;
+  try {
+    insertTask({ id: 'T01', sliceId: 'S01', milestoneId: 'M001' });
+  } catch (err: any) {
+    threw = true;
+    assertTrue(err.code === 'GSD_STALE_STATE' || err.message.includes('No database open'),
+      'insertTask should throw GSD_STALE_STATE');
+  }
+  assertTrue(threw, 'insertTask should throw when no DB open');
+
+  threw = false;
+  try {
     insertVerificationEvidence({
-      taskId: 'T01',
-      sliceId: 'S01',
-      milestoneId: 'M001',
-      command: 'npm test',
-      exitCode: 0,
-      verdict: '✅ pass',
-      durationMs: 3000,
-    });
-    const evRows = adapter.prepare(
-      "SELECT * FROM verification_evidence WHERE task_id = 'T01' AND slice_id = 'S01' AND milestone_id = 'M001'"
-    ).all();
-    assert.strictEqual(evRows.length, 1, 'should have 1 verification evidence row');
-    assert.strictEqual(evRows[0]['command'], 'npm test', 'evidence command');
-    assert.strictEqual(evRows[0]['exit_code'], 0, 'evidence exit_code');
-    assert.strictEqual(evRows[0]['verdict'], '✅ pass', 'evidence verdict');
-    assert.strictEqual(evRows[0]['duration_ms'], 3000, 'evidence duration_ms');
-
-    // getSliceTasks returns array
-    const sliceTasks = getSliceTasks('M001', 'S01');
-    assert.strictEqual(sliceTasks.length, 1, 'getSliceTasks should return 1 task');
-    assert.strictEqual(sliceTasks[0].id, 'T01', 'getSliceTasks first task id');
-
-    // updateTaskStatus changes status
-    updateTaskStatus('M001', 'S01', 'T01', 'failed', new Date().toISOString());
-    const updatedTask = getTask('M001', 'S01', 'T01');
-    assert.strictEqual(updatedTask!.status, 'failed', 'task status should be updated to failed');
-    assert.ok(updatedTask!.completed_at !== null, 'completed_at should be set after status update');
-
-    cleanup(dbPath);
-  });
-});
-
-describe("complete-task: accessor stale-state error", () => {
-  test("accessors throw when no DB open", () => {
-    closeDatabase();
-
-    assert.throws(() => insertMilestone({ id: 'M001' }),
-      (err: any) => err.code === 'GSD_STALE_STATE' || err.message.includes('No database open'),
-      'insertMilestone should throw when no DB open');
-
-    assert.throws(() => insertSlice({ id: 'S01', milestoneId: 'M001' }),
-      (err: any) => err.code === 'GSD_STALE_STATE' || err.message.includes('No database open'),
-      'insertSlice should throw when no DB open');
-
-    assert.throws(() => insertTask({ id: 'T01', sliceId: 'S01', milestoneId: 'M001' }),
-      (err: any) => err.code === 'GSD_STALE_STATE' || err.message.includes('No database open'),
-      'insertTask should throw when no DB open');
-
-    assert.throws(() => insertVerificationEvidence({
       taskId: 'T01', sliceId: 'S01', milestoneId: 'M001',
       command: 'test', exitCode: 0, verdict: 'pass', durationMs: 0,
-    }),
-      (err: any) => err.code === 'GSD_STALE_STATE' || err.message.includes('No database open'),
-      'insertVerificationEvidence should throw when no DB open');
-  });
-});
+    });
+  } catch (err: any) {
+    threw = true;
+    assertTrue(err.code === 'GSD_STALE_STATE' || err.message.includes('No database open'),
+      'insertVerificationEvidence should throw GSD_STALE_STATE');
+  }
+  assertTrue(threw, 'insertVerificationEvidence should throw when no DB open');
+}
 
-describe("complete-task: handler", () => {
-  test("happy path", async () => {
-    const dbPath = tempDbPath();
-    openDatabase(dbPath);
+// ═══════════════════════════════════════════════════════════════════════════
+// complete-task: Handler happy path
+// ═══════════════════════════════════════════════════════════════════════════
 
-    const { basePath, planPath } = createTempProject();
+console.log('\n=== complete-task: handler happy path ===');
+{
+  const dbPath = tempDbPath();
+  openDatabase(dbPath);
 
-    const params = makeValidParams();
-    const result = await handleCompleteTask(params, basePath);
+  const { basePath, planPath } = createTempProject();
 
-    assert.ok(!('error' in result), 'handler should succeed without error');
-    if (!('error' in result)) {
-      assert.strictEqual(result.taskId, 'T01', 'result taskId');
-      assert.strictEqual(result.sliceId, 'S01', 'result sliceId');
-      assert.strictEqual(result.milestoneId, 'M001', 'result milestoneId');
-      assert.ok(result.summaryPath.endsWith('T01-SUMMARY.md'), 'summaryPath should end with T01-SUMMARY.md');
+  // Seed milestone + slice + both tasks so projection renders T01 ([x]) and T02 ([ ])
+  insertMilestone({ id: 'M001', title: 'Test Milestone' });
+  insertSlice({ id: 'S01', milestoneId: 'M001', title: 'Test Slice' });
+  insertTask({ id: 'T02', sliceId: 'S01', milestoneId: 'M001', status: 'pending', title: 'Second task' });
 
-      // (a) Verify task row in DB with status 'complete'
-      const task = getTask('M001', 'S01', 'T01');
-      assert.ok(task !== null, 'task should exist in DB after handler');
-      assert.strictEqual(task!.status, 'complete', 'task status should be complete');
-      assert.strictEqual(task!.one_liner, 'Added test functionality', 'task one_liner in DB');
-      assert.deepStrictEqual(task!.key_files, ['src/test.ts', 'src/test.test.ts'], 'task key_files in DB');
+  const params = makeValidParams();
+  const result = await handleCompleteTask(params, basePath);
 
-      // (b) Verify verification_evidence rows in DB
-      const adapter = _getAdapter()!;
-      const evRows = adapter.prepare(
-        "SELECT * FROM verification_evidence WHERE task_id = 'T01' AND milestone_id = 'M001'"
-      ).all();
-      assert.strictEqual(evRows.length, 1, 'should have 1 verification evidence row after handler');
-      assert.strictEqual(evRows[0]['command'], 'npm run test:unit', 'evidence command from handler');
+  assertTrue(!('error' in result), 'handler should succeed without error');
+  if (!('error' in result)) {
+    assertEq(result.taskId, 'T01', 'result taskId');
+    assertEq(result.sliceId, 'S01', 'result sliceId');
+    assertEq(result.milestoneId, 'M001', 'result milestoneId');
+    assertTrue(result.summaryPath.endsWith('T01-SUMMARY.md'), 'summaryPath should end with T01-SUMMARY.md');
 
-      // (c) Verify T01-SUMMARY.md file on disk with correct YAML frontmatter
-      assert.ok(fs.existsSync(result.summaryPath), 'summary file should exist on disk');
-      const summaryContent = fs.readFileSync(result.summaryPath, 'utf-8');
-      assert.match(summaryContent, /^---\n/, 'summary should start with YAML frontmatter');
-      assert.match(summaryContent, /id: T01/, 'summary should contain id: T01');
-      assert.match(summaryContent, /parent: S01/, 'summary should contain parent: S01');
-      assert.match(summaryContent, /milestone: M001/, 'summary should contain milestone: M001');
-      assert.match(summaryContent, /blocker_discovered: false/, 'summary should contain blocker_discovered');
-      assert.match(summaryContent, /# T01:/, 'summary should have H1 with task ID');
-      assert.match(summaryContent, /\*\*Added test functionality\*\*/, 'summary should have one-liner in bold');
-      assert.match(summaryContent, /## What Happened/, 'summary should have What Happened section');
-      assert.match(summaryContent, /## Verification Evidence/, 'summary should have Verification Evidence section');
-      assert.match(summaryContent, /npm run test:unit/, 'summary evidence should contain command');
+    // (a) Verify task row in DB with status 'complete'
+    const task = getTask('M001', 'S01', 'T01');
+    assertTrue(task !== null, 'task should exist in DB after handler');
+    assertEq(task!.status, 'complete', 'task status should be complete');
+    assertEq(task!.one_liner, 'Added test functionality', 'task one_liner in DB');
+    assertEq(task!.key_files, ['src/test.ts', 'src/test.test.ts'], 'task key_files in DB');
 
-      // (d) Verify plan checkbox changed to [x]
-      const planContent = fs.readFileSync(planPath, 'utf-8');
-      assert.match(planContent, /\[x\]\s+\*\*T01:/, 'T01 should be checked in plan');
-      // T02 should still be unchecked
-      assert.match(planContent, /\[ \]\s+\*\*T02:/, 'T02 should still be unchecked in plan');
+    // (b) Verify verification_evidence rows in DB
+    const adapter = _getAdapter()!;
+    const evRows = adapter.prepare(
+      "SELECT * FROM verification_evidence WHERE task_id = 'T01' AND milestone_id = 'M001'"
+    ).all();
+    assertEq(evRows.length, 1, 'should have 1 verification evidence row after handler');
+    assertEq(evRows[0]['command'], 'npm run test:unit', 'evidence command from handler');
 
-      // (e) Verify full_summary_md stored in DB for D004 recovery
-      const taskAfter = getTask('M001', 'S01', 'T01');
-      assert.ok(taskAfter!.full_summary_md.length > 0, 'full_summary_md should be non-empty in DB');
-      assert.match(taskAfter!.full_summary_md, /id: T01/, 'full_summary_md should contain frontmatter');
-    }
+    // (c) Verify T01-SUMMARY.md file on disk with correct YAML frontmatter
+    assertTrue(fs.existsSync(result.summaryPath), 'summary file should exist on disk');
+    const summaryContent = fs.readFileSync(result.summaryPath, 'utf-8');
+    assertMatch(summaryContent, /^---\n/, 'summary should start with YAML frontmatter');
+    assertMatch(summaryContent, /id: T01/, 'summary should contain id: T01');
+    assertMatch(summaryContent, /parent: S01/, 'summary should contain parent: S01');
+    assertMatch(summaryContent, /milestone: M001/, 'summary should contain milestone: M001');
+    assertMatch(summaryContent, /blocker_discovered: false/, 'summary should contain blocker_discovered');
+    assertMatch(summaryContent, /# T01:/, 'summary should have H1 with task ID');
+    assertMatch(summaryContent, /\*\*Added test functionality\*\*/, 'summary should have one-liner in bold');
+    assertMatch(summaryContent, /## What Happened/, 'summary should have What Happened section');
+    assertMatch(summaryContent, /## Verification Evidence/, 'summary should have Verification Evidence section');
+    assertMatch(summaryContent, /npm run test:unit/, 'summary evidence should contain command');
 
-    cleanupDir(basePath);
-    cleanup(dbPath);
-  });
+    // (d) Verify plan checkbox changed to [x]
+    const planContent = fs.readFileSync(planPath, 'utf-8');
+    assertMatch(planContent, /\[x\]\s+\*\*T01:/, 'T01 should be checked in plan');
+    // T02 should still be unchecked
+    assertMatch(planContent, /\[ \]\s+\*\*T02:/, 'T02 should still be unchecked in plan');
 
-  test("validation errors", async () => {
-    const dbPath = tempDbPath();
-    openDatabase(dbPath);
+    // (e) Verify full_summary_md stored in DB for D004 recovery
+    const taskAfter = getTask('M001', 'S01', 'T01');
+    assertTrue(taskAfter!.full_summary_md.length > 0, 'full_summary_md should be non-empty in DB');
+    assertMatch(taskAfter!.full_summary_md, /id: T01/, 'full_summary_md should contain frontmatter');
+  }
 
-    const params = makeValidParams();
+  cleanupDir(basePath);
+  cleanup(dbPath);
+}
 
-    // Empty taskId
-    const r1 = await handleCompleteTask({ ...params, taskId: '' }, '/tmp/fake');
-    assert.ok('error' in r1, 'should return error for empty taskId');
-    if ('error' in r1) {
-      assert.match(r1.error, /taskId/, 'error should mention taskId');
-    }
+// ═══════════════════════════════════════════════════════════════════════════
+// complete-task: Handler validation errors
+// ═══════════════════════════════════════════════════════════════════════════
 
-    // Empty milestoneId
-    const r2 = await handleCompleteTask({ ...params, milestoneId: '' }, '/tmp/fake');
-    assert.ok('error' in r2, 'should return error for empty milestoneId');
-    if ('error' in r2) {
-      assert.match(r2.error, /milestoneId/, 'error should mention milestoneId');
-    }
+console.log('\n=== complete-task: handler validation errors ===');
+{
+  const dbPath = tempDbPath();
+  openDatabase(dbPath);
 
-    // Empty sliceId
-    const r3 = await handleCompleteTask({ ...params, sliceId: '' }, '/tmp/fake');
-    assert.ok('error' in r3, 'should return error for empty sliceId');
-    if ('error' in r3) {
-      assert.match(r3.error, /sliceId/, 'error should mention sliceId');
-    }
+  const params = makeValidParams();
 
-    cleanup(dbPath);
-  });
+  // Empty taskId
+  const r1 = await handleCompleteTask({ ...params, taskId: '' }, '/tmp/fake');
+  assertTrue('error' in r1, 'should return error for empty taskId');
+  if ('error' in r1) {
+    assertMatch(r1.error, /taskId/, 'error should mention taskId');
+  }
 
-  test("idempotency", async () => {
-    const dbPath = tempDbPath();
-    openDatabase(dbPath);
+  // Empty milestoneId
+  const r2 = await handleCompleteTask({ ...params, milestoneId: '' }, '/tmp/fake');
+  assertTrue('error' in r2, 'should return error for empty milestoneId');
+  if ('error' in r2) {
+    assertMatch(r2.error, /milestoneId/, 'error should mention milestoneId');
+  }
 
-    const { basePath, planPath } = createTempProject();
+  // Empty sliceId
+  const r3 = await handleCompleteTask({ ...params, sliceId: '' }, '/tmp/fake');
+  assertTrue('error' in r3, 'should return error for empty sliceId');
+  if ('error' in r3) {
+    assertMatch(r3.error, /sliceId/, 'error should mention sliceId');
+  }
 
-    const params = makeValidParams();
+  cleanup(dbPath);
+}
 
-    // First call
-    const r1 = await handleCompleteTask(params, basePath);
-    assert.ok(!('error' in r1), 'first call should succeed');
+// ═══════════════════════════════════════════════════════════════════════════
+// complete-task: Handler idempotency
+// ═══════════════════════════════════════════════════════════════════════════
 
-    // Second call with same params — should not crash (INSERT OR REPLACE)
-    const r2 = await handleCompleteTask(params, basePath);
-    assert.ok(!('error' in r2), 'second call should succeed (idempotent)');
+console.log('\n=== complete-task: handler idempotency ===');
+{
+  const dbPath = tempDbPath();
+  openDatabase(dbPath);
 
-    // Verify only 1 task row (upserted, not duplicated)
-    const tasks = getSliceTasks('M001', 'S01');
-    assert.strictEqual(tasks.length, 1, 'should have exactly 1 task row after 2 calls (upsert)');
+  const { basePath, planPath } = createTempProject();
 
-    // File should still exist
-    if (!('error' in r2)) {
-      assert.ok(fs.existsSync(r2.summaryPath), 'summary should still exist after second call');
-    }
+  // Seed milestone + slice so state machine guards pass
+  insertMilestone({ id: 'M001', title: 'Test Milestone' });
+  insertSlice({ id: 'S01', milestoneId: 'M001', title: 'Test Slice' });
 
-    cleanupDir(basePath);
-    cleanup(dbPath);
-  });
+  const params = makeValidParams();
 
-  test("missing plan file (graceful)", async () => {
-    const dbPath = tempDbPath();
-    openDatabase(dbPath);
+  // First call should succeed
+  const r1 = await handleCompleteTask(params, basePath);
+  assertTrue(!('error' in r1), 'first call should succeed');
 
-    // Create a temp dir WITHOUT a plan file
-    const basePath = fs.mkdtempSync(path.join(os.tmpdir(), 'gsd-no-plan-'));
-    const tasksDir = path.join(basePath, '.gsd', 'milestones', 'M001', 'slices', 'S01', 'tasks');
-    fs.mkdirSync(tasksDir, { recursive: true });
+  // Verify only 1 task row
+  const tasks = getSliceTasks('M001', 'S01');
+  assertEq(tasks.length, 1, 'should have exactly 1 task row after first call');
 
-    const params = makeValidParams();
-    const result = await handleCompleteTask(params, basePath);
+  // Second call with same params — state machine guard rejects (task is already complete)
+  const r2 = await handleCompleteTask(params, basePath);
+  assertTrue('error' in r2, 'second call should return error (task already complete)');
+  if ('error' in r2) {
+    assertMatch(r2.error, /already complete/, 'error should mention already complete');
+  }
 
-    // Should succeed even without plan file — just skip checkbox toggle
-    assert.ok(!('error' in result), 'handler should succeed without plan file');
-    if (!('error' in result)) {
-      assert.ok(fs.existsSync(result.summaryPath), 'summary should be written even without plan file');
-    }
+  // Still only 1 task row (no duplication from rejected second call)
+  const tasksAfter = getSliceTasks('M001', 'S01');
+  assertEq(tasksAfter.length, 1, 'should still have exactly 1 task row after rejected second call');
 
-    cleanupDir(basePath);
-    cleanup(dbPath);
-  });
-});
+  cleanupDir(basePath);
+  cleanup(dbPath);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// complete-task: Handler with missing plan file (graceful)
+// ═══════════════════════════════════════════════════════════════════════════
+
+console.log('\n=== complete-task: handler with missing plan file ===');
+{
+  const dbPath = tempDbPath();
+  openDatabase(dbPath);
+
+  // Create a temp dir WITHOUT a plan file
+  const basePath = fs.mkdtempSync(path.join(os.tmpdir(), 'gsd-no-plan-'));
+  const tasksDir = path.join(basePath, '.gsd', 'milestones', 'M001', 'slices', 'S01', 'tasks');
+  fs.mkdirSync(tasksDir, { recursive: true });
+
+  // Seed milestone + slice so state machine guards pass
+  insertMilestone({ id: 'M001', title: 'Test Milestone' });
+  insertSlice({ id: 'S01', milestoneId: 'M001', title: 'Test Slice' });
+
+  const params = makeValidParams();
+  const result = await handleCompleteTask(params, basePath);
+
+  // Should succeed even without plan file — just skip checkbox toggle
+  assertTrue(!('error' in result), 'handler should succeed without plan file');
+  if (!('error' in result)) {
+    assertTrue(fs.existsSync(result.summaryPath), 'summary should be written even without plan file');
+  }
+
+  cleanupDir(basePath);
+  cleanup(dbPath);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+
+report();

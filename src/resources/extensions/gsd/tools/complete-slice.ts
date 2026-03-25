@@ -15,11 +15,14 @@ import {
   transaction,
   insertMilestone,
   insertSlice,
+  getSlice,
   getSliceTasks,
+  getMilestone,
   updateSliceStatus,
   _getAdapter,
 } from "../gsd-db.js";
 import { resolveSliceFile, resolveSlicePath, clearPathCache } from "../paths.js";
+import { checkOwnership, sliceUnitKey } from "../unit-ownership.js";
 import { saveFile, clearParseCache } from "../files.js";
 import { invalidateStateCache } from "../state.js";
 import { renderRoadmapCheckboxes } from "../markdown-renderer.js";
@@ -203,6 +206,33 @@ export async function handleCompleteSlice(
     return { error: "milestoneId is required and must be a non-empty string" };
   }
 
+  // ── State machine preconditions ─────────────────────────────────────────
+  const milestone = getMilestone(params.milestoneId);
+  if (!milestone) {
+    return { error: `milestone not found: ${params.milestoneId}` };
+  }
+  if (milestone.status === "complete" || milestone.status === "done") {
+    return { error: `cannot complete slice in a closed milestone: ${params.milestoneId} (status: ${milestone.status})` };
+  }
+
+  const slice = getSlice(params.milestoneId, params.sliceId);
+  if (!slice) {
+    return { error: `slice not found: ${params.milestoneId}/${params.sliceId}` };
+  }
+  if (slice.status === "complete" || slice.status === "done") {
+    return { error: `slice ${params.sliceId} is already complete — use gsd_slice_reopen first if you need to redo it` };
+  }
+
+  // ── Ownership check (opt-in: only enforced when claim file exists) ──────
+  const ownershipErr = checkOwnership(
+    basePath,
+    sliceUnitKey(params.milestoneId, params.sliceId),
+    params.actorName,
+  );
+  if (ownershipErr) {
+    return { error: ownershipErr };
+  }
+
   // ── Verify all tasks are complete ───────────────────────────────────────
   const tasks = getSliceTasks(params.milestoneId, params.sliceId);
   if (tasks.length === 0) {
@@ -303,6 +333,8 @@ export async function handleCompleteSlice(
       params: { milestoneId: params.milestoneId, sliceId: params.sliceId },
       ts: new Date().toISOString(),
       actor: "agent",
+      actor_name: params.actorName,
+      trigger_reason: params.triggerReason,
     });
   } catch (hookErr) {
     process.stderr.write(

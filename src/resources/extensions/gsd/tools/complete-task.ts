@@ -17,9 +17,13 @@ import {
   insertSlice,
   insertTask,
   insertVerificationEvidence,
+  getMilestone,
+  getSlice,
+  getTask,
   _getAdapter,
 } from "../gsd-db.js";
 import { resolveSliceFile, resolveTasksDir, clearPathCache } from "../paths.js";
+import { checkOwnership, taskUnitKey } from "../unit-ownership.js";
 import { saveFile, clearParseCache } from "../files.js";
 import { invalidateStateCache } from "../state.js";
 import { renderPlanCheckboxes } from "../markdown-renderer.js";
@@ -132,6 +136,38 @@ export async function handleCompleteTask(
   }
   if (!params.milestoneId || typeof params.milestoneId !== "string" || params.milestoneId.trim() === "") {
     return { error: "milestoneId is required and must be a non-empty string" };
+  }
+
+  // ── State machine preconditions ─────────────────────────────────────────
+  const milestone = getMilestone(params.milestoneId);
+  if (!milestone) {
+    return { error: `milestone not found: ${params.milestoneId}` };
+  }
+  if (milestone.status === "complete" || milestone.status === "done") {
+    return { error: `cannot complete task in a closed milestone: ${params.milestoneId} (status: ${milestone.status})` };
+  }
+
+  const slice = getSlice(params.milestoneId, params.sliceId);
+  if (!slice) {
+    return { error: `slice not found: ${params.milestoneId}/${params.sliceId}` };
+  }
+  if (slice.status === "complete" || slice.status === "done") {
+    return { error: `cannot complete task in a closed slice: ${params.sliceId} (status: ${slice.status})` };
+  }
+
+  const existingTask = getTask(params.milestoneId, params.sliceId, params.taskId);
+  if (existingTask && (existingTask.status === "complete" || existingTask.status === "done")) {
+    return { error: `task ${params.taskId} is already complete — use gsd_task_reopen first if you need to redo it` };
+  }
+
+  // ── Ownership check (opt-in: only enforced when claim file exists) ──────
+  const ownershipErr = checkOwnership(
+    basePath,
+    taskUnitKey(params.milestoneId, params.sliceId, params.taskId),
+    params.actorName,
+  );
+  if (ownershipErr) {
+    return { error: ownershipErr };
   }
 
   // ── DB writes inside a transaction ──────────────────────────────────────
@@ -248,6 +284,8 @@ export async function handleCompleteTask(
       params: { milestoneId: params.milestoneId, sliceId: params.sliceId, taskId: params.taskId },
       ts: new Date().toISOString(),
       actor: "agent",
+      actor_name: params.actorName,
+      trigger_reason: params.triggerReason,
     });
   } catch (hookErr) {
     process.stderr.write(

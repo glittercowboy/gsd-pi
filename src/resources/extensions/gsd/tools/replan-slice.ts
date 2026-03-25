@@ -35,6 +35,10 @@ export interface ReplanSliceParams {
   whatChanged: string;
   updatedTasks: ReplanSliceTaskInput[];
   removedTaskIds: string[];
+  /** Optional caller-provided identity for audit trail */
+  actorName?: string;
+  /** Optional caller-provided reason this action was triggered */
+  triggerReason?: string;
 }
 
 export interface ReplanSliceResult {
@@ -86,10 +90,22 @@ export async function handleReplanSlice(
     return { error: `validation failed: ${(err as Error).message}` };
   }
 
-  // ── Verify parent slice exists ────────────────────────────────────
+  // ── Verify parent slice exists and is not closed ─────────────────
   const parentSlice = getSlice(params.milestoneId, params.sliceId);
   if (!parentSlice) {
     return { error: `missing parent slice: ${params.milestoneId}/${params.sliceId}` };
+  }
+  if (parentSlice.status === "complete" || parentSlice.status === "done") {
+    return { error: `cannot replan a closed slice: ${params.sliceId} (status: ${parentSlice.status})` };
+  }
+
+  // ── Verify blocker task exists and is complete ────────────────────
+  const blockerTask = getTask(params.milestoneId, params.sliceId, params.blockerTaskId);
+  if (!blockerTask) {
+    return { error: `blockerTaskId not found: ${params.milestoneId}/${params.sliceId}/${params.blockerTaskId}` };
+  }
+  if (blockerTask.status !== "complete" && blockerTask.status !== "done") {
+    return { error: `blockerTaskId ${params.blockerTaskId} is not complete (status: ${blockerTask.status}) — the blocker task must be finished before a replan is triggered` };
   }
 
   // ── Structural enforcement ────────────────────────────────────────
@@ -195,6 +211,8 @@ export async function handleReplanSlice(
         params: { milestoneId: params.milestoneId, sliceId: params.sliceId, blockerTaskId: params.blockerTaskId },
         ts: new Date().toISOString(),
         actor: "agent",
+        actor_name: params.actorName,
+        trigger_reason: params.triggerReason,
       });
     } catch (hookErr) {
       process.stderr.write(
