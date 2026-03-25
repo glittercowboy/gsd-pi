@@ -701,7 +701,7 @@ export function createAutoWorktree(
   const hookError = runWorktreePostCreateHook(basePath, info.path);
   if (hookError) {
     // Non-fatal — log but don't prevent worktree usage
-    logWarning("reconcile", hookError, { worktree: name });
+    logWarning("reconcile", hookError, { worktree: info.name });
   }
 
   const previousCwd = process.cwd();
