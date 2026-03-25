@@ -297,11 +297,14 @@ export async function bootstrapAutoSession(
       }
     }
 
-    // Milestone branch recovery (#601)
+    // Milestone branch recovery (#601, #2358)
+    // Detect survivor milestone branches in both pre-planning and complete phases.
+    // In phase=complete, the milestone artifacts exist but finalization (merge,
+    // worktree cleanup) was never run — the survivor branch must be merged.
     let hasSurvivorBranch = false;
     if (
       state.activeMilestone &&
-      state.phase === "pre-planning" &&
+      (state.phase === "pre-planning" || state.phase === "complete") &&
       shouldUseWorktreeIsolation() &&
       !detectWorktreeName(base) &&
       !base.includes(`${pathSep}.gsd${pathSep}worktrees${pathSep}`)
@@ -341,6 +344,26 @@ export async function bootstrapAutoSession(
         );
         return releaseLockAndReturn();
       }
+    }
+
+    // Survivor branch exists and milestone is complete (#2358):
+    // The milestone artifacts were written but finalization (merge, worktree
+    // cleanup) never ran. Run mergeAndExit to finalize, then re-derive state
+    // so the normal "all milestones complete" or "next milestone" path runs.
+    if (hasSurvivorBranch && state.phase === "complete") {
+      const mid = state.activeMilestone!.id;
+      ctx.ui.notify(
+        `Milestone ${mid} is complete but branch/worktree was not finalized. Running merge now.`,
+        "info",
+      );
+      const resolver = buildResolver();
+      resolver.mergeAndExit(mid, {
+        notify: ctx.ui.notify.bind(ctx.ui),
+      });
+      invalidateAllCaches();
+      state = await deriveState(base);
+      // Clear survivor flag — finalization is done
+      hasSurvivorBranch = false;
     }
 
     if (!hasSurvivorBranch) {
