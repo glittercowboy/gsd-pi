@@ -18,6 +18,11 @@ import type {
 
 import { deriveState } from "./state.js";
 import type { GSDState } from "./types.js";
+import {
+  assessInterruptedSession,
+  readPausedSessionMetadata,
+  type InterruptedSessionAssessment,
+} from "./interrupted-session.js";
 import { getManifestStatus } from "./files.js";
 export { inlinePriorMilestoneSummary } from "./files.js";
 import { collectSecretsFromManifest } from "../get-secrets-from-user.js";
@@ -44,6 +49,7 @@ import {
   clearLock,
   readCrashLock,
   isLockProcessAlive,
+  formatCrashInfo,
 } from "./crash-recovery.js";
 import {
   acquireSessionLock,
@@ -793,6 +799,8 @@ export async function pauseAuto(
       stepMode: s.stepMode,
       pausedAt: new Date().toISOString(),
       sessionFile: s.pausedSessionFile,
+      unitType: s.currentUnit?.type ?? undefined,
+      unitId: s.currentUnit?.id ?? undefined,
       activeEngineId: s.activeEngineId,
       activeRunDir: s.activeRunDir,
     };
@@ -1014,33 +1022,58 @@ export async function startAuto(
   pi: ExtensionAPI,
   base: string,
   verboseMode: boolean,
-  options?: { step?: boolean },
+  options?: {
+    step?: boolean;
+    interrupted?: InterruptedSessionAssessment;
+  },
 ): Promise<void> {
   const requestedStepMode = options?.step ?? false;
+  const interruptedAssessment = options?.interrupted ?? null;
 
   // Escape stale worktree cwd from a previous milestone (#608).
   base = escapeStaleWorktree(base);
+
+  const freshStartAssessment = interruptedAssessment
+    ?? await assessInterruptedSession(base);
+
+  if (freshStartAssessment.classification === "running") {
+    const pid = freshStartAssessment.lock?.pid;
+    ctx.ui.notify(
+      pid
+        ? `Another auto-mode session (PID ${pid}) appears to be running.\nStop it with \`kill ${pid}\` before starting a new session.`
+        : "Another auto-mode session appears to be running.",
+      "error",
+    );
+    return;
+  }
 
   // If resuming from paused state, just re-activate and dispatch next unit.
   // Check persisted paused-session first (#1383) — survives /exit.
   if (!s.paused) {
     try {
+      const meta = freshStartAssessment.pausedSession ?? readPausedSessionMetadata(base);
       const pausedPath = join(gsdRoot(base), "runtime", "paused-session.json");
-      if (existsSync(pausedPath)) {
-        const meta = JSON.parse(readFileSync(pausedPath, "utf-8"));
-        if (meta.activeEngineId && meta.activeEngineId !== "dev") {
-          // Custom workflow resume — restore engine state
-          s.activeEngineId = meta.activeEngineId;
-          s.activeRunDir = meta.activeRunDir ?? null;
-          s.originalBasePath = meta.originalBasePath || base;
-          s.stepMode = meta.stepMode ?? requestedStepMode;
-          s.paused = true;
-          try { unlinkSync(pausedPath); } catch { /* non-fatal */ }
-          ctx.ui.notify(
-            `Resuming paused custom workflow${meta.activeRunDir ? ` (${meta.activeRunDir})` : ""}.`,
-            "info",
+      if (meta?.activeEngineId && meta.activeEngineId !== "dev") {
+        // Custom workflow resume — restore engine state
+        s.activeEngineId = meta.activeEngineId;
+        s.activeRunDir = meta.activeRunDir ?? null;
+        s.originalBasePath = meta.originalBasePath || base;
+        s.stepMode = meta.stepMode ?? requestedStepMode;
+        s.paused = true;
+        try { unlinkSync(pausedPath); } catch { /* non-fatal */ }
+        ctx.ui.notify(
+          `Resuming paused custom workflow${meta.activeRunDir ? ` (${meta.activeRunDir})` : ""}.`,
+          "info",
+        );
+      } else if (meta?.milestoneId) {
+        const shouldResumePausedSession =
+          freshStartAssessment.classification === "recoverable"
+          && (
+            freshStartAssessment.hasResumableDiskState
+            || !!freshStartAssessment.recoveryPrompt
+            || !!freshStartAssessment.lock
           );
-        } else if (meta.milestoneId) {
+        if (shouldResumePausedSession) {
           // Validate the milestone still exists and isn't already complete (#1664).
           const mDir = resolveMilestonePath(base, meta.milestoneId);
           const summaryFile = resolveMilestoneFile(base, meta.milestoneId, "SUMMARY");
@@ -1055,18 +1088,49 @@ export async function startAuto(
             s.currentMilestoneId = meta.milestoneId;
             s.originalBasePath = meta.originalBasePath || base;
             s.stepMode = meta.stepMode ?? requestedStepMode;
+            s.pausedSessionFile = meta.sessionFile ?? null;
+            s.pausedUnitType = meta.unitType ?? null;
+            s.pausedUnitId = meta.unitId ?? null;
             s.paused = true;
-            // Clean up the persisted file — we're consuming it
             try { unlinkSync(pausedPath); } catch { /* non-fatal */ }
             ctx.ui.notify(
-              `Resuming paused session for ${meta.milestoneId}${meta.worktreePath ? ` (worktree)` : ""}.`,
+              `Resuming paused session for ${meta.milestoneId}${meta.worktreePath && existsSync(meta.worktreePath) ? ` (worktree)` : ""}.`,
               "info",
             );
           }
+        } else if (existsSync(pausedPath)) {
+          try { unlinkSync(pausedPath); } catch { /* non-fatal */ }
         }
       }
     } catch {
       // Malformed or missing — proceed with fresh bootstrap
+    }
+  }
+
+  if (!s.paused) {
+    s.stepMode = requestedStepMode;
+  }
+
+  if (freshStartAssessment.lock) {
+    clearLock(base);
+  }
+
+  if (!s.paused) {
+    s.pendingCrashRecovery =
+      freshStartAssessment.classification === "recoverable"
+        ? freshStartAssessment.recoveryPrompt
+        : null;
+
+    if (freshStartAssessment.classification === "recoverable" && freshStartAssessment.lock) {
+      const info = formatCrashInfo(freshStartAssessment.lock);
+      if (freshStartAssessment.recoveryToolCallCount > 0) {
+        ctx.ui.notify(
+          `${info}\nRecovered ${freshStartAssessment.recoveryToolCallCount} tool calls from crashed session. Resuming with full context.`,
+          "warning",
+        );
+      } else if (freshStartAssessment.hasResumableDiskState) {
+        ctx.ui.notify(`${info}\nResuming from disk state.`, "warning");
+      }
     }
   }
 
@@ -1080,13 +1144,26 @@ export async function startAuto(
     s.paused = false;
     s.active = true;
     s.verbose = verboseMode;
-    s.stepMode = requestedStepMode;
+    s.stepMode = s.stepMode || requestedStepMode;
     s.cmdCtx = ctx;
     s.basePath = base;
+    s.autoStartTime = Date.now();
+    s.resourceVersionOnStart = readResourceVersion();
+    s.originalModelId = ctx.model?.id ?? null;
+    s.originalModelProvider = ctx.model?.provider ?? null;
+    if (ctx.model) {
+      s.autoModeStartModel = { provider: ctx.model.provider, id: ctx.model.id };
+    }
     s.unitDispatchCount.clear();
     s.unitLifetimeDispatches.clear();
     if (!getLedger()) initMetrics(base);
     if (s.currentMilestoneId) setActiveMilestoneId(base, s.currentMilestoneId);
+
+    // Re-register health level notification callback lost across process restart
+    setLevelChangeCallback((_from, to, summary) => {
+      const level = to === "red" ? "error" : to === "yellow" ? "warning" : "info";
+      ctx.ui.notify(summary, level as "info" | "warning" | "error");
+    });
 
     // ── Auto-worktree: re-enter worktree on resume ──
     if (
@@ -1147,8 +1224,8 @@ export async function startAuto(
       const activityDir = join(gsdRoot(s.basePath), "activity");
       const recovery = synthesizeCrashRecovery(
         s.basePath,
-        s.currentUnit?.type ?? "unknown",
-        s.currentUnit?.id ?? "unknown",
+        s.currentUnit?.type ?? s.pausedUnitType ?? "unknown",
+        s.currentUnit?.id ?? s.pausedUnitId ?? "unknown",
         s.pausedSessionFile ?? undefined,
         activityDir,
       );
@@ -1200,6 +1277,7 @@ export async function startAuto(
     verboseMode,
     requestedStepMode,
     bootstrapDeps,
+    freshStartAssessment,
   );
   if (!ready) return;
 
@@ -1315,27 +1393,6 @@ function ensurePreconditions(
   }
 }
 
-// ─── Diagnostics ──────────────────────────────────────────────────────────────
-
-/** Build recovery context from module state for recoverTimedOutUnit */
-function buildRecoveryContext(): import("./auto-timeout-recovery.js").RecoveryContext {
-  return {
-    basePath: s.basePath,
-    verbose: s.verbose,
-    currentUnitStartedAt: s.currentUnit?.startedAt ?? Date.now(),
-    unitRecoveryCount: s.unitRecoveryCount,
-  };
-}
-
-/**
- * Test-only: expose skip-loop state for unit tests.
- * Not part of the public API.
- */
-
-/**
- * Dispatch a hook unit directly, bypassing normal pre-dispatch hooks.
- * Used for manual hook triggers via /gsd run-hook.
- */
 export async function dispatchHookUnit(
   ctx: ExtensionContext,
   pi: ExtensionAPI,

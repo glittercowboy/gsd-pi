@@ -15,6 +15,7 @@ import type {
 } from "@gsd/pi-coding-agent";
 import { deriveState } from "./state.js";
 import { loadFile, getManifestStatus } from "./files.js";
+import type { InterruptedSessionAssessment } from "./interrupted-session.js";
 import {
   loadEffectiveGSDPreferences,
   resolveSkillDiscoveryMode,
@@ -23,16 +24,9 @@ import {
 import { ensureGsdSymlink, isInheritedRepo, validateProjectId } from "./repo-identity.js";
 import { migrateToExternalState, recoverFailedMigration } from "./migrate-external.js";
 import { collectSecretsFromManifest } from "../get-secrets-from-user.js";
-import { gsdRoot, resolveMilestoneFile, milestonesDir } from "./paths.js";
+import { gsdRoot, resolveMilestoneFile } from "./paths.js";
 import { invalidateAllCaches } from "./cache.js";
-import { synthesizeCrashRecovery } from "./session-forensics.js";
-import {
-  writeLock,
-  clearLock,
-  readCrashLock,
-  formatCrashInfo,
-  isLockProcessAlive,
-} from "./crash-recovery.js";
+import { writeLock, clearLock } from "./crash-recovery.js";
 import {
   acquireSessionLock,
   releaseSessionLock,
@@ -109,6 +103,7 @@ export async function bootstrapAutoSession(
   verboseMode: boolean,
   requestedStepMode: boolean,
   deps: BootstrapDeps,
+  interrupted: InterruptedSessionAssessment,
 ): Promise<boolean> {
   const {
     shouldUseWorktreeIsolation,
@@ -189,50 +184,6 @@ export async function bootstrapAutoSession(
       loadEffectiveGSDPreferences()?.preferences?.git ?? {},
     );
 
-    // Check for crash from previous session. Skip our own fresh bootstrap lock.
-    const crashLock = readCrashLock(base);
-    if (crashLock && crashLock.pid !== process.pid) {
-      if (isLockProcessAlive(crashLock)) {
-        ctx.ui.notify(
-          `Another auto-mode session (PID ${crashLock.pid}) appears to be running.\nStop it with \`kill ${crashLock.pid}\` before starting a new session.`,
-          "error",
-        );
-        return releaseLockAndReturn();
-      }
-      const recoveredMid = crashLock.unitId.split("/")[0];
-      const milestoneAlreadyComplete = recoveredMid
-        ? !!resolveMilestoneFile(base, recoveredMid, "SUMMARY")
-        : false;
-
-      if (milestoneAlreadyComplete) {
-        ctx.ui.notify(
-          `Crash recovery: discarding stale context for ${crashLock.unitId} — milestone ${recoveredMid} is already complete.`,
-          "info",
-        );
-      } else {
-        const activityDir = join(gsdRoot(base), "activity");
-        const recovery = synthesizeCrashRecovery(
-          base,
-          crashLock.unitType,
-          crashLock.unitId,
-          crashLock.sessionFile,
-          activityDir,
-        );
-        if (recovery && recovery.trace.toolCallCount > 0) {
-          s.pendingCrashRecovery = recovery.prompt;
-          ctx.ui.notify(
-            `${formatCrashInfo(crashLock)}\nRecovered ${recovery.trace.toolCallCount} tool calls from crashed session. Resuming with full context.`,
-            "warning",
-          );
-        } else {
-          ctx.ui.notify(
-            `${formatCrashInfo(crashLock)}\nNo session data recovered. Resuming from disk state.`,
-            "warning",
-          );
-        }
-      }
-      clearLock(base);
-    }
 
     // ── Debug mode ──
     if (!isDebugEnabled() && process.env.GSD_DEBUG === "1") {
@@ -251,6 +202,10 @@ export async function bootstrapAutoSession(
         cwd: base,
       });
       ctx.ui.notify(`Debug logging enabled → ${getDebugLogPath()}`, "info");
+    }
+
+    if (interrupted.classification !== "recoverable") {
+      s.pendingCrashRecovery = null;
     }
 
     // Invalidate caches before initial state derivation

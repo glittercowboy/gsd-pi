@@ -292,6 +292,71 @@ test("verifyExpectedArtifact accepts plan-slice with completed tasks", (t) => {
   );
 });
 
+test("verifyExpectedArtifact treats complete-slice as satisfied when summary, UAT, and roadmap checkbox exist", () => {
+  const base = makeTmpBase();
+  try {
+    const milestoneDir = join(base, ".gsd", "milestones", "M001");
+    const sliceDir = join(milestoneDir, "slices", "S01");
+    mkdirSync(sliceDir, { recursive: true });
+    writeFileSync(join(milestoneDir, "M001-ROADMAP.md"), [
+      "# M001: Test Milestone",
+      "",
+      "## Slices",
+      "",
+      "- [x] **S01: First slice** `risk:low`",
+      "",
+      "## Boundary Map",
+      "",
+      "- S01 → terminal",
+      "  - Produces: done",
+      "  - Consumes: nothing",
+    ].join("\n"));
+    writeFileSync(join(sliceDir, "S01-SUMMARY.md"), "# Summary\nDone.\n");
+    writeFileSync(join(sliceDir, "S01-UAT.md"), "# UAT\nPassed.\n");
+
+    assert.equal(
+      verifyExpectedArtifact("complete-slice", "M001/S01", base),
+      true,
+      "complete-slice should verify when expected artifact and state mutation are already satisfied",
+    );
+  } finally {
+    cleanup(base);
+  }
+});
+
+test("verifyExpectedArtifact rejects complete-slice when roadmap checkbox is still unchecked", () => {
+  const base = makeTmpBase();
+  try {
+    const milestoneDir = join(base, ".gsd", "milestones", "M001");
+    const sliceDir = join(milestoneDir, "slices", "S01");
+    mkdirSync(sliceDir, { recursive: true });
+    writeFileSync(join(milestoneDir, "M001-ROADMAP.md"), [
+      "# M001: Test Milestone",
+      "",
+      "## Slices",
+      "",
+      "- [ ] **S01: First slice** `risk:low`",
+      "",
+      "## Boundary Map",
+      "",
+      "- S01 → terminal",
+      "  - Produces: done",
+      "  - Consumes: nothing",
+    ].join("\n"));
+    writeFileSync(join(sliceDir, "S01-SUMMARY.md"), "# Summary\nDone.\n");
+    writeFileSync(join(sliceDir, "S01-UAT.md"), "# UAT\nPassed.\n");
+
+    assert.equal(
+      verifyExpectedArtifact("complete-slice", "M001/S01", base),
+      false,
+      "complete-slice should remain unsatisfied when roadmap state still requires the unit to run",
+    );
+  } finally {
+    cleanup(base);
+  }
+});
+
+
 // ─── verifyExpectedArtifact: plan-slice task plan check (#739) ────────────
 
 test("verifyExpectedArtifact plan-slice passes when all task plan files exist", (t) => {
