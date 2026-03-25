@@ -256,6 +256,11 @@ export async function autoLoop(
       // ── Blanket catch: absorb unexpected exceptions, apply graduated recovery ──
       const msg = loopErr instanceof Error ? loopErr.message : String(loopErr);
 
+      // Always emit iteration-end on error so the journal records iteration
+      // completion even on failure (#2344). Without this, errors in
+      // runFinalize leave the journal incomplete, making diagnosis harder.
+      deps.emitJournalEvent({ ts: new Date().toISOString(), flowId, seq: nextSeq(), eventType: "iteration-end", data: { iteration, error: msg } });
+
       // ── Infrastructure errors: immediate stop, no retry ──
       // These are unrecoverable (disk full, OOM, etc.). Retrying just burns
       // LLM budget on guaranteed failures.
