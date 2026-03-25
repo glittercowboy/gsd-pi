@@ -1307,6 +1307,12 @@ export async function buildCompleteMilestonePrompt(
     roadmapPath: roadmapRel,
     inlinedContext,
     milestoneSummaryPath,
+    skillActivation: buildSkillActivationBlock({
+      base,
+      milestoneId: mid,
+      milestoneTitle: midTitle,
+      extraContext: [inlinedContext],
+    }),
   });
 }
 
@@ -1390,6 +1396,12 @@ export async function buildValidateMilestonePrompt(
     inlinedContext,
     validationPath: validationOutputPath,
     remediationRound: String(remediationRound),
+    skillActivation: buildSkillActivationBlock({
+      base,
+      milestoneId: mid,
+      milestoneTitle: midTitle,
+      extraContext: [inlinedContext],
+    }),
   });
 }
 
@@ -1500,6 +1512,12 @@ export async function buildRunUatPrompt(
     uatResultPath,
     uatType,
     inlinedContext,
+    skillActivation: buildSkillActivationBlock({
+      base,
+      milestoneId: mid,
+      sliceId,
+      extraContext: [inlinedContext],
+    }),
   });
 }
 
@@ -1552,11 +1570,16 @@ export async function buildReassessRoadmapPrompt(
     milestoneTitle: midTitle,
     completedSliceId,
     roadmapPath: roadmapRel,
-    completedSliceSummaryPath: summaryRel,
     assessmentPath,
     inlinedContext,
     deferredCaptures,
     commitInstruction: reassessCommitInstruction,
+    skillActivation: buildSkillActivationBlock({
+      base,
+      milestoneId: mid,
+      milestoneTitle: midTitle,
+      extraContext: [inlinedContext, deferredCaptures],
+    }),
   });
 }
 

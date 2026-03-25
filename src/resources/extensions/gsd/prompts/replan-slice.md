@@ -32,19 +32,8 @@ Consider these captures when rewriting the remaining tasks — they represent th
 
 1. Read the blocker task summary carefully. Understand exactly what was discovered and why it blocks the current plan.
 2. Analyze the remaining `[ ]` tasks in the slice plan. Determine which are still valid, which need modification, and which should be replaced.
-3. **Persist replan state through `gsd_replan_slice`.** Call it with the following parameters: `milestoneId`, `sliceId`, `blockerTaskId`, `blockerDescription`, `whatChanged`, `updatedTasks` (array of task objects with taskId, title, description, estimate, files, verify, inputs, expectedOutput), `removedTaskIds` (array of task ID strings). The tool structurally enforces preservation of completed tasks, writes replan history to the DB, re-renders PLAN.md, and renders REPLAN.md. Skip steps 4–5 when this tool succeeds.
-4. **Degraded fallback — direct file writes:** If `gsd_replan_slice` is not available, fall back to writing files directly. Write `{{replanPath}}` documenting:
-   - What blocker was discovered and in which task
-   - What changed in the plan and why
-   - Which incomplete tasks were modified, added, or removed
-   - Any new risks or considerations introduced by the replan
-5. If using the degraded fallback, rewrite `{{planPath}}` with the updated slice plan:
-   - Keep all `[x]` tasks exactly as they were (same IDs, same descriptions, same checkmarks)
-   - Update the `[ ]` tasks to address the blocker
-   - Ensure the slice Goal and Demo sections are still achievable with the new tasks, or update them if the blocker fundamentally changes what the slice can deliver
-   - Update the Files Likely Touched section if the replan changes which files are affected
-   - If a DB-backed planning tool exists for this phase, use it as the source of truth and make any rewritten `PLAN.md` reflect that persisted state rather than bypassing it
-6. If any incomplete task had a `T0x-PLAN.md`, remove or rewrite it to match the new task description.
-7. Do not commit manually — the system auto-commits your changes after this unit completes.
+3. **Persist replan state through `gsd_replan_slice`.** Call it with: `milestoneId`, `sliceId`, `blockerTaskId`, `blockerDescription`, `whatChanged`, `updatedTasks` (array of task objects with taskId, title, description, estimate, files, verify, inputs, expectedOutput), `removedTaskIds` (array of task ID strings). The tool structurally enforces preservation of completed tasks, writes replan history to the DB, re-renders PLAN.md, and renders REPLAN.md.
+4. If any incomplete task had a `T0x-PLAN.md`, remove or rewrite it to match the new task description.
+5. Do not commit manually — the system auto-commits your changes after this unit completes.
 
 When done, say: "Slice {{sliceId}} replanned."

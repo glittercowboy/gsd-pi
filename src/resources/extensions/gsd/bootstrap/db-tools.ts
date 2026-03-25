@@ -813,6 +813,74 @@ export function registerDbTools(pi: ExtensionAPI): void {
   pi.registerTool(milestoneCompleteTool);
   registerAlias(pi, milestoneCompleteTool, "gsd_milestone_complete", "gsd_complete_milestone");
 
+  // ─── gsd_validate_milestone (gsd_milestone_validate alias) ─────────────
+
+  const milestoneValidateExecute = async (_toolCallId: string, params: any, _signal: AbortSignal | undefined, _onUpdate: unknown, _ctx: unknown) => {
+    const dbAvailable = await ensureDbOpen();
+    if (!dbAvailable) {
+      return {
+        content: [{ type: "text" as const, text: "Error: GSD database is not available. Cannot validate milestone." }],
+        details: { operation: "validate_milestone", error: "db_unavailable" } as any,
+      };
+    }
+    try {
+      const { handleValidateMilestone } = await import("../tools/validate-milestone.js");
+      const result = await handleValidateMilestone(params, process.cwd());
+      if ("error" in result) {
+        return {
+          content: [{ type: "text" as const, text: `Error validating milestone: ${result.error}` }],
+          details: { operation: "validate_milestone", error: result.error } as any,
+        };
+      }
+      return {
+        content: [{ type: "text" as const, text: `Validated milestone ${result.milestoneId} — verdict: ${result.verdict}. Written to ${result.validationPath}` }],
+        details: {
+          operation: "validate_milestone",
+          milestoneId: result.milestoneId,
+          verdict: result.verdict,
+          validationPath: result.validationPath,
+        } as any,
+      };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      process.stderr.write(`gsd-db: validate_milestone tool failed: ${msg}\n`);
+      return {
+        content: [{ type: "text" as const, text: `Error validating milestone: ${msg}` }],
+        details: { operation: "validate_milestone", error: msg } as any,
+      };
+    }
+  };
+
+  const milestoneValidateTool = {
+    name: "gsd_validate_milestone",
+    label: "Validate Milestone",
+    description:
+      "Validate a milestone before completion — persist validation results to the DB, render VALIDATION.md to disk. " +
+      "Records verdict (pass/needs-attention/needs-remediation) and rationale.",
+    promptSnippet: "Validate a GSD milestone (DB write + VALIDATION.md render)",
+    promptGuidelines: [
+      "Use gsd_validate_milestone when all slices are done and the milestone needs validation before completion.",
+      "Parameters: milestoneId, verdict, remediationRound, successCriteriaChecklist, sliceDeliveryAudit, crossSliceIntegration, requirementCoverage, verdictRationale, remediationPlan (optional).",
+      "If verdict is 'needs-remediation', also provide remediationPlan and use gsd_reassess_roadmap to add remediation slices to the roadmap.",
+      "On success, returns validationPath where VALIDATION.md was written.",
+    ],
+    parameters: Type.Object({
+      milestoneId: Type.String({ description: "Milestone ID (e.g. M001)" }),
+      verdict: StringEnum(["pass", "needs-attention", "needs-remediation"], { description: "Validation verdict" }),
+      remediationRound: Type.Number({ description: "Remediation round (0 for first validation)" }),
+      successCriteriaChecklist: Type.String({ description: "Markdown checklist of success criteria with pass/fail and evidence" }),
+      sliceDeliveryAudit: Type.String({ description: "Markdown table auditing each slice's claimed vs delivered output" }),
+      crossSliceIntegration: Type.String({ description: "Markdown describing any cross-slice boundary mismatches" }),
+      requirementCoverage: Type.String({ description: "Markdown describing any unaddressed requirements" }),
+      verdictRationale: Type.String({ description: "Why this verdict was chosen" }),
+      remediationPlan: Type.Optional(Type.String({ description: "Remediation plan (required if verdict is needs-remediation)" })),
+    }),
+    execute: milestoneValidateExecute,
+  };
+
+  pi.registerTool(milestoneValidateTool);
+  registerAlias(pi, milestoneValidateTool, "gsd_milestone_validate", "gsd_validate_milestone");
+
   // ─── gsd_replan_slice (gsd_slice_replan alias) ─────────────────────────
 
   const replanSliceExecute = async (_toolCallId: string, params: any, _signal: AbortSignal | undefined, _onUpdate: unknown, _ctx: unknown) => {

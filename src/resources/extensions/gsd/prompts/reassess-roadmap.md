@@ -50,14 +50,14 @@ If all criteria have at least one remaining owning slice, the coverage check pas
 
 **If the roadmap is still good:**
 
-Write `{{assessmentPath}}` with a brief confirmation that roadmap coverage still holds after {{completedSliceId}}. If requirements exist, explicitly note whether requirement coverage remains sound. If `gsd_reassess_roadmap` is available, use it with `verdict: "roadmap-confirmed"`, an empty `sliceChanges` object, and the assessment text — the tool writes the assessment to the DB and renders ASSESSMENT.md.
+Use `gsd_reassess_roadmap` with `verdict: "roadmap-confirmed"`, an empty `sliceChanges` object, and the assessment text — the tool writes the assessment to the DB and renders ASSESSMENT.md. If requirements exist, explicitly note whether requirement coverage remains sound.
 
 **If changes are needed:**
 
-1. **Persist changes through `gsd_reassess_roadmap`.** Pass: `milestoneId`, `completedSliceId`, `verdict` (e.g. "roadmap-adjusted"), `assessment` (text explaining the decision), and `sliceChanges` with `modified` (array of sliceId, title, risk, depends, demo), `added` (same shape), `removed` (array of slice ID strings). The tool structurally enforces preservation of completed slices, writes the assessment to the DB, re-renders ROADMAP.md, and renders ASSESSMENT.md. Skip step 2 when this tool succeeds.
-2. **Degraded fallback — direct file writes:** If `gsd_reassess_roadmap` is not available, rewrite the remaining (unchecked) slices in `{{roadmapPath}}` directly. Keep completed slices exactly as they are (`[x]`). Update the boundary map for changed slices. Update the proof strategy if risks changed. Update requirement coverage if ownership or scope changed.
-3. Write `{{assessmentPath}}` explaining what changed and why — keep it brief and concrete.
-4. If `.gsd/REQUIREMENTS.md` exists and requirement ownership or status changed, update it.
-5. {{commitInstruction}}
+**Persist changes through `gsd_reassess_roadmap`.** Pass: `milestoneId`, `completedSliceId`, `verdict` (e.g. "roadmap-adjusted"), `assessment` (text explaining the decision), and `sliceChanges` with `modified` (array of sliceId, title, risk, depends, demo), `added` (same shape), `removed` (array of slice ID strings). The tool structurally enforces preservation of completed slices, writes the assessment to the DB, re-renders ROADMAP.md, and renders ASSESSMENT.md.
+
+If `.gsd/REQUIREMENTS.md` exists and requirement ownership or status changed, update it.
+
+{{commitInstruction}}
 
 When done, say: "Roadmap reassessed."
