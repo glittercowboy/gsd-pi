@@ -70,7 +70,6 @@ function makeWorker(overrides: Partial<WorkerInfo> = {}): WorkerInfo {
     worktreePath: "/tmp/test",
     startedAt: Date.now(),
     state: "stopped",
-    completedUnits: 3,
     cost: 1.5,
     ...overrides,
   };
@@ -132,16 +131,16 @@ test("determineMergeOrder — by-completion sorts by startedAt (earliest first)"
   assert.deepEqual(order, ["M003", "M002", "M001"]);
 });
 
-test("determineMergeOrder — only includes stopped workers with completedUnits > 0", () => {
+test("determineMergeOrder — only includes stopped workers", () => {
   const workers = [
-    makeWorker({ milestoneId: "M001", state: "stopped", completedUnits: 3 }),
-    makeWorker({ milestoneId: "M002", state: "running", completedUnits: 2 }),
-    makeWorker({ milestoneId: "M003", state: "stopped", completedUnits: 0 }),
-    makeWorker({ milestoneId: "M004", state: "error", completedUnits: 5 }),
-    makeWorker({ milestoneId: "M005", state: "paused", completedUnits: 1 }),
+    makeWorker({ milestoneId: "M001", state: "stopped" }),
+    makeWorker({ milestoneId: "M002", state: "running" }),
+    makeWorker({ milestoneId: "M003", state: "stopped" }),
+    makeWorker({ milestoneId: "M004", state: "error" }),
+    makeWorker({ milestoneId: "M005", state: "paused" }),
   ];
   const order = determineMergeOrder(workers, "sequential");
-  assert.deepEqual(order, ["M001"]);
+  assert.deepEqual(order, ["M001", "M003"]);
 });
 
 test("determineMergeOrder — empty workers returns empty array", () => {

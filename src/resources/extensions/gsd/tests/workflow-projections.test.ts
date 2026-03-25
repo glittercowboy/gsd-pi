@@ -57,6 +57,7 @@ function makeTask(overrides: Partial<TaskRow> = {}): TaskRow {
     inputs: [],
     expected_output: [],
     observability_impact: '',
+    full_plan_md: '',
     sequence: 1,
     ...overrides,
   };

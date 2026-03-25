@@ -71,7 +71,6 @@ test('Test 1: persistState writes valid JSON', () => {
           worktreePath: "/tmp/wt-M001",
           startedAt: Date.now(),
           state: "running",
-          completedUnits: 3,
           cost: 0.15,
         },
       ],
@@ -114,7 +113,6 @@ test('Test 3: restoreState filters dead PIDs', () => {
           worktreePath: "/tmp/wt-M001",
           startedAt: Date.now(),
           state: "running",
-          completedUnits: 0,
           cost: 0,
         },
         {
@@ -124,7 +122,6 @@ test('Test 3: restoreState filters dead PIDs', () => {
           worktreePath: "/tmp/wt-M002",
           startedAt: Date.now(),
           state: "running",
-          completedUnits: 0,
           cost: 0,
         },
       ],
@@ -153,7 +150,6 @@ test('Test 4: restoreState keeps alive PIDs', () => {
           worktreePath: "/tmp/wt-M001",
           startedAt: Date.now(),
           state: "running",
-          completedUnits: 5,
           cost: 0.25,
         },
         {
@@ -163,7 +159,6 @@ test('Test 4: restoreState keeps alive PIDs', () => {
           worktreePath: "/tmp/wt-M002",
           startedAt: Date.now(),
           state: "running",
-          completedUnits: 0,
           cost: 0,
         },
       ],
@@ -176,7 +171,6 @@ test('Test 4: restoreState keeps alive PIDs', () => {
     assert.deepStrictEqual(result!.workers.length, 1, "restoreState: filters out dead PID");
     assert.deepStrictEqual(result!.workers[0].milestoneId, "M001", "restoreState: keeps alive worker");
     assert.deepStrictEqual(result!.workers[0].pid, process.pid, "restoreState: preserves PID");
-    assert.deepStrictEqual(result!.workers[0].completedUnits, 5, "restoreState: preserves progress");
   } finally {
     rmSync(basePath, { recursive: true, force: true });
   }
@@ -194,7 +188,6 @@ test('Test 5: restoreState skips stopped/error workers even with alive PIDs', ()
           worktreePath: "/tmp/wt-M001",
           startedAt: Date.now(),
           state: "stopped",
-          completedUnits: 10,
           cost: 0.50,
         },
       ],

@@ -53,6 +53,8 @@
     "copy-resources": "node scripts/copy-resources.cjs",
     "copy-themes": "node scripts/copy-themes.cjs",
     "copy-export-html": "node scripts/copy-export-html.cjs",
+    "typecheck:extensions": "tsc --noEmit --project tsconfig.extensions.json",
+    "pretest": "npm run typecheck:extensions",
     "test:unit": "node --import ./src/resources/extensions/gsd/tests/resolve-ts.mjs --experimental-strip-types --experimental-test-isolation=process --test src/resources/extensions/gsd/tests/*.test.ts src/resources/extensions/gsd/tests/*.test.mjs src/tests/*.test.ts",
     "test:marketplace": "GSD_TEST_CLONE_MARKETPLACES=1 node --import ./src/resources/extensions/gsd/tests/resolve-ts.mjs --experimental-strip-types --test src/resources/extensions/gsd/tests/claude-import-tui.test.ts src/resources/extensions/gsd/tests/plugin-importer-live.test.ts src/tests/marketplace-discovery.test.ts",
     "test:coverage": "c8 --reporter=text --reporter=lcov --exclude='src/resources/extensions/gsd/tests/**' --exclude='src/tests/**' --exclude='scripts/**' --exclude='native/**' --exclude='node_modules/**' --check-coverage --statements=50 --lines=50 --branches=20 --functions=20 node --import ./src/resources/extensions/gsd/tests/resolve-ts.mjs --experimental-strip-types --experimental-test-isolation=process --test src/resources/extensions/gsd/tests/*.test.ts src/resources/extensions/gsd/tests/*.test.mjs src/tests/*.test.ts",

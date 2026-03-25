@@ -23,7 +23,7 @@ function cleanupDir(dirPath: string): void {
 }
 
 function makeEvent(cmd: string, params: Record<string, unknown> = {}): Omit<WorkflowEvent, 'hash'> {
-  return { cmd, params, ts: new Date().toISOString(), actor: 'agent' };
+  return { cmd, params, ts: new Date().toISOString(), actor: 'agent', session_id: 'test-session-001' };
 }
 
 // ─── appendEvent ─────────────────────────────────────────────────────────

@@ -367,9 +367,6 @@ function makeMockDeps(
     getPriorSliceCompletionBlocker: () => null,
     getMainBranch: () => "main",
     closeoutUnit: async () => {},
-    verifyExpectedArtifact: () => true,
-    clearUnitRuntimeRecord: () => {},
-    writeUnitRuntimeRecord: () => {},
     recordOutcome: () => {},
     writeLock: () => {},
     captureAvailableSkills: () => {},
@@ -1990,7 +1987,6 @@ test("autoLoop does NOT reject non-execute-task units with 0 tool calls (#1833)"
       });
     },
     getLedger: () => mockLedger,
-    verifyExpectedArtifact: () => true,
     postUnitPostVerification: async () => {
       deps.callLog.push("postUnitPostVerification");
       s.active = false;

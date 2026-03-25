@@ -103,7 +103,7 @@ describe('session-lock-regression', async () => {
     try {
       acquireSessionLock(base);
 
-      updateSessionLock(base, 'execute-task', 'M001/S01/T01', 5, '/tmp/session.json');
+      updateSessionLock(base, 'execute-task', 'M001/S01/T01', '/tmp/session.json');
 
       const data = readSessionLockData(base);
       assert.ok(data !== null, 'lock data readable after update');
@@ -111,7 +111,6 @@ describe('session-lock-regression', async () => {
         assert.deepStrictEqual(data.pid, process.pid, 'lock data has correct PID');
         assert.deepStrictEqual(data.unitType, 'execute-task', 'lock data has correct unit type');
         assert.deepStrictEqual(data.unitId, 'M001/S01/T01', 'lock data has correct unit ID');
-        assert.deepStrictEqual(data.completedUnits, 5, 'lock data has correct completed count');
         assert.deepStrictEqual(data.sessionFile, '/tmp/session.json', 'lock data has session file');
       }
 

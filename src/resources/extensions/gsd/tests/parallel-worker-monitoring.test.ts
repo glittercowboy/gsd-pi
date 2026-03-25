@@ -191,7 +191,6 @@ describe("parallel-worker-monitoring", () => {
       refreshWorkerStatuses(base, { restoreIfNeeded: true });
       const workers = getWorkerStatuses();
       assert.deepStrictEqual(workers[0].state, "running", "live session status restored");
-      assert.deepStrictEqual(workers[0].completedUnits, 3, "completed units restored from status file");
     } finally {
       resetOrchestrator();
       rmSync(base, { recursive: true, force: true });
