@@ -1,6 +1,5 @@
 "use client"
 
-import { useCallback, useEffect, useState } from "react"
 import {
   Activity,
   Clock,
@@ -38,8 +37,6 @@ import {
 } from "@/components/gsd/loading-skeletons"
 import { ScopeBadge } from "@/components/gsd/scope-badge"
 import { ProjectWelcome } from "@/components/gsd/project-welcome"
-import { authFetch } from "@/lib/auth"
-import { buildProjectPath } from "@/lib/project-url"
 
 /** Interpolate progress bar color from red (0%) through yellow (50%) to green (100%) using oklch. */
 function getProgressColor(percent: number): string {
@@ -54,21 +51,6 @@ interface MetricCardProps {
   value: string | null
   subtext?: string | null
   icon: React.ReactNode
-}
-
-interface RtkSavingsSnapshot {
-  commands: number
-  inputTokens: number
-  outputTokens: number
-  savedTokens: number
-  savingsPct: number
-  totalTimeMs: number
-  avgTimeMs: number
-  updatedAt: string
-}
-
-interface RtkSavingsResponse {
-  savings: RtkSavingsSnapshot | null
 }
 
 function MetricCard({ label, value, subtext, icon }: MetricCardProps) {
@@ -131,12 +113,12 @@ export function Dashboard({ onSwitchView, onExpandTerminal }: DashboardProps = {
   const workspace = getLiveWorkspaceIndex(state)
   const auto = getLiveAutoDashboard(state)
   const bridge = boot?.bridge ?? null
-  const projectCwd = boot?.project.cwd ?? null
   const freshness = state.live.freshness
 
   const elapsed = auto?.elapsed ?? 0
   const totalCost = auto?.totalCost ?? 0
   const totalTokens = auto?.totalTokens ?? 0
+  const rtkSavings = auto?.rtkSavings ?? null
 
   const currentSlice = getCurrentSlice(workspace)
   const doneTasks = currentSlice?.tasks.filter((t) => t.done).length ?? 0
@@ -173,36 +155,6 @@ export function Dashboard({ onSwitchView, onExpandTerminal }: DashboardProps = {
 
   const recentLines: WorkspaceTerminalLine[] = (state.terminalLines ?? []).slice(-6)
   const isConnecting = state.bootStatus === "idle" || state.bootStatus === "loading"
-  const [rtkSavings, setRtkSavings] = useState<RtkSavingsSnapshot | null>(null)
-
-  const fetchRtkSavings = useCallback(async () => {
-    if (!projectCwd) {
-      setRtkSavings(null)
-      return
-    }
-    try {
-      const response = await authFetch(buildProjectPath("/api/rtk-savings", projectCwd))
-      if (!response.ok) return
-      const payload = await response.json() as RtkSavingsResponse
-      setRtkSavings(payload.savings)
-    } catch {
-      // Non-critical dashboard metric.
-    }
-  }, [projectCwd])
-
-  useEffect(() => {
-    if (!projectCwd) return
-    const timeout = window.setTimeout(() => {
-      void fetchRtkSavings()
-    }, 0)
-    const interval = window.setInterval(() => {
-      void fetchRtkSavings()
-    }, 30_000)
-    return () => {
-      window.clearTimeout(timeout)
-      window.clearInterval(interval)
-    }
-  }, [fetchRtkSavings, projectCwd])
 
   const rtkValue = isConnecting ? null : formatTokens(rtkSavings?.savedTokens ?? 0)
   const rtkSubtext = isConnecting

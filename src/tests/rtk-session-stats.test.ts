@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -85,6 +85,52 @@ test("RTK session savings baseline resets cleanly when tracking totals go backwa
     else process.env.GSD_RTK_PATH = previous;
     first.cleanup();
     second.cleanup();
+    rmSync(basePath, { recursive: true, force: true });
+  }
+});
+
+test("RTK session stats fall back to the managed RTK path when GSD_RTK_PATH is unset", () => {
+  const basePath = mkdtempSync(join(tmpdir(), "gsd-rtk-session-managed-"));
+  mkdirSync(join(basePath, ".gsd", "runtime"), { recursive: true });
+
+  const fake = createFakeRtk({
+    "gain --all --format json": { stdout: summary(6, 900, 500, 400) },
+  });
+  const managedHome = mkdtempSync(join(tmpdir(), "gsd-rtk-home-"));
+  const managedDir = join(managedHome, "agent", "bin");
+  const managedPath = join(managedDir, process.platform === "win32" ? "rtk.exe" : "rtk");
+  mkdirSync(managedDir, { recursive: true });
+  copyFileSync(fake.path, managedPath);
+  if (process.platform !== "win32") {
+    chmodSync(managedPath, 0o755);
+  }
+
+  const previousHome = process.env.GSD_HOME;
+  const previousPath = process.env.GSD_RTK_PATH;
+
+  try {
+    process.env.GSD_HOME = managedHome;
+    delete process.env.GSD_RTK_PATH;
+
+    const env: NodeJS.ProcessEnv = {
+      ...process.env,
+      GSD_HOME: managedHome,
+    };
+    delete env.GSD_RTK_PATH;
+
+    const baseline = ensureRtkSessionBaseline(basePath, "sess-managed", env);
+    assert.ok(baseline, "expected baseline from managed RTK path");
+
+    const savings = getRtkSessionSavings(basePath, "sess-managed", env);
+    assert.ok(savings, "expected savings snapshot from managed RTK path");
+    assert.equal(savings?.commands, 0);
+  } finally {
+    if (previousHome === undefined) delete process.env.GSD_HOME;
+    else process.env.GSD_HOME = previousHome;
+    if (previousPath === undefined) delete process.env.GSD_RTK_PATH;
+    else process.env.GSD_RTK_PATH = previousPath;
+    fake.cleanup();
+    rmSync(managedHome, { recursive: true, force: true });
     rmSync(basePath, { recursive: true, force: true });
   }
 });

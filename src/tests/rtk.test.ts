@@ -1,6 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { delimiter } from "node:path";
+import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { delimiter, join } from "node:path";
 
 import {
   buildRtkEnv,
@@ -11,9 +13,11 @@ import {
   getManagedRtkDir,
   prependPathEntry,
   resolveRtkAssetName,
+  resolveRtkBinaryPath,
   rewriteCommandWithRtk,
   validateRtkBinary,
 } from "../rtk.ts";
+import { createFakeRtk } from "./rtk-test-utils.ts";
 
 test("resolveRtkAssetName maps supported release assets correctly", () => {
   assert.equal(resolveRtkAssetName("darwin", "arm64"), "rtk-aarch64-apple-darwin.tar.gz");
@@ -34,7 +38,7 @@ test("prependPathEntry preserves the original PATH key casing and avoids duplica
 
 test("buildRtkEnv prepends the managed bin dir and disables telemetry", () => {
   const env = buildRtkEnv({ PATH: "/usr/bin" });
-  assert.ok(env.PATH?.startsWith(`${getManagedRtkDir()}:`));
+  assert.ok(env.PATH?.startsWith(`${getManagedRtkDir()}${delimiter}`));
   assert.equal(env.RTK_TELEMETRY_DISABLED, "1");
 });
 
@@ -67,6 +71,33 @@ test("rewriteCommandWithRtk respects the disable flag", () => {
     }),
     "git status",
   );
+});
+
+test("rewriteCommandWithRtk falls back to the managed RTK path when GSD_RTK_PATH is unset", () => {
+  const fake = createFakeRtk({ "git status": "rtk git status" });
+  const managedHome = mkdtempSync(join(tmpdir(), "gsd-rtk-managed-home-"));
+  const managedDir = join(managedHome, "agent", "bin");
+  const managedPath = join(managedDir, process.platform === "win32" ? "rtk.exe" : "rtk");
+
+  mkdirSync(managedDir, { recursive: true });
+  copyFileSync(fake.path, managedPath);
+  if (process.platform !== "win32") {
+    chmodSync(managedPath, 0o755);
+  }
+
+  try {
+    const env = {
+      ...process.env,
+      GSD_HOME: managedHome,
+    };
+    delete env.GSD_RTK_PATH;
+
+    assert.equal(resolveRtkBinaryPath({ env }), managedPath);
+    assert.equal(rewriteCommandWithRtk("git status", { env }), "rtk git status");
+  } finally {
+    fake.cleanup();
+    rmSync(managedHome, { recursive: true, force: true });
+  }
 });
 
 test("validateRtkBinary checks the rewrite contract", () => {

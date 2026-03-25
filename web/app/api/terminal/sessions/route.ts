@@ -28,19 +28,6 @@ export async function GET(): Promise<Response> {
   return Response.json({ sessions: listSessions() });
 }
 
-/**
- * Whitelist of commands allowed to be spawned via the terminal API.
- * Only known-safe executables are permitted to prevent arbitrary code execution
- * if the auth layer is ever bypassed.
- */
-const ALLOWED_COMMANDS = new Set([
-  "gsd",
-  process.env.SHELL || "/bin/zsh",
-  "/bin/bash",
-  "/bin/zsh",
-  "/bin/sh",
-]);
-
 export async function POST(request: Request): Promise<Response> {
   const projectCwd = requireProjectCwd(request);
   const id = `term-${getNextIndex()}`;
@@ -52,7 +39,7 @@ export async function POST(request: Request): Promise<Response> {
     // No body or invalid JSON — use default shell
   }
 
-  if (command && !ALLOWED_COMMANDS.has(command)) {
+  if (command && !isAllowedTerminalCommand(command)) {
     return Response.json(
       { error: `Command not allowed: ${command}` },
       { status: 403 },

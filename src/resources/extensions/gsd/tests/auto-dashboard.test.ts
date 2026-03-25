@@ -1,5 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 
 import {
   unitVerb,
@@ -10,6 +12,8 @@ import {
   estimateTimeRemaining,
   extractUatSliceId,
 } from "../auto-dashboard.ts";
+
+const autoSource = readFileSync(join(process.cwd(), "src", "resources", "extensions", "gsd", "auto.ts"), "utf-8");
 
 // ─── unitVerb ─────────────────────────────────────────────────────────────
 
@@ -178,6 +182,11 @@ test("formatAutoElapsed returns empty string for negative autoStartTime", () => 
   // handle it gracefully via its falsy check.
   assert.equal(formatAutoElapsed(-1), "");
   assert.equal(formatAutoElapsed(NaN), "");
+});
+
+test("getAutoDashboardData returns RTK savings in the dashboard payload", () => {
+  assert.match(autoSource, /const rtkSavings = sessionId && s\.basePath/);
+  assert.match(autoSource, /rtkSavings,/);
 });
 
 // ─── extractUatSliceId ───────────────────────────────────────────────────

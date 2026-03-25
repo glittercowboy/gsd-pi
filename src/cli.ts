@@ -209,6 +209,7 @@ if (cliFlags.messages[0] === 'web' && cliFlags.messages[1] === 'stop') {
 
 // `gsd --web [path]` or `gsd web [start] [path]` — launch browser-only web mode
 if (cliFlags.web || (cliFlags.messages[0] === 'web' && cliFlags.messages[1] !== 'stop')) {
+  await ensureRtkBootstrap()
   const webFlags = parseWebCliArgs(process.argv)
   const webBranch = await runWebCliBranch(webFlags, {
     stderr: process.stderr,
@@ -280,6 +281,7 @@ if (cliFlags.messages[0] === 'sessions') {
 
 // `gsd headless` — run auto-mode without TUI
 if (cliFlags.messages[0] === 'headless') {
+  await ensureRtkBootstrap()
   const { runHeadless, parseHeadlessArgs } = await import('./headless.js')
   await runHeadless(parseHeadlessArgs(process.argv))
   process.exit(0)
@@ -426,6 +428,7 @@ if (!settingsManager.getCollapseChangelog()) {
 // Print / subagent mode — single-shot execution, no TTY required
 // ---------------------------------------------------------------------------
 if (isPrintMode) {
+  await ensureRtkBootstrap()
   const sessionManager = cliFlags.noSession
     ? SessionManager.inMemory()
     : SessionManager.create(process.cwd())

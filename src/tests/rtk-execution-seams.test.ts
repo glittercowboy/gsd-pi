@@ -1,8 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import { createBashTool } from "../../packages/pi-coding-agent/src/core/tools/bash.ts";
 import { rewriteCommandForGsd } from "../../packages/pi-coding-agent/src/utils/rtk.ts";
+import { rewriteCommandWithRtk as rewriteSharedCommandWithRtk } from "../resources/extensions/shared/rtk.ts";
 import { createAsyncBashTool } from "../resources/extensions/async-jobs/async-bash-tool.ts";
 import { AsyncJobManager } from "../resources/extensions/async-jobs/job-manager.ts";
 import { runVerificationGate } from "../resources/extensions/gsd/verification-gate.ts";
@@ -40,6 +44,54 @@ function withFakeRtk<T>(mapping: Record<string, string | { status?: number; stdo
   }
 }
 
+function withManagedFakeRtk<T>(mapping: Record<string, string | { status?: number; stdout?: string }>, run: (env: NodeJS.ProcessEnv, managedPath: string) => Promise<T> | T): Promise<T> | T {
+  const fake = createFakeRtk(mapping);
+  const managedHome = mkdtempSync(join(tmpdir(), "gsd-rtk-managed-home-"));
+  const managedDir = join(managedHome, "agent", "bin");
+  const managedPath = join(managedDir, process.platform === "win32" ? "rtk.exe" : "rtk");
+  mkdirSync(managedDir, { recursive: true });
+  copyFileSync(fake.path, managedPath);
+  if (process.platform !== "win32") {
+    chmodSync(managedPath, 0o755);
+  }
+
+  const previousHome = process.env.GSD_HOME;
+  const previousPath = process.env.GSD_RTK_PATH;
+  const previousDisabled = process.env.GSD_RTK_DISABLED;
+  process.env.GSD_HOME = managedHome;
+  delete process.env.GSD_RTK_PATH;
+  delete process.env.GSD_RTK_DISABLED;
+
+  const env: NodeJS.ProcessEnv = {
+    ...process.env,
+    GSD_HOME: managedHome,
+  };
+  delete env.GSD_RTK_PATH;
+
+  const finalize = () => {
+    if (previousHome === undefined) delete process.env.GSD_HOME;
+    else process.env.GSD_HOME = previousHome;
+    if (previousPath === undefined) delete process.env.GSD_RTK_PATH;
+    else process.env.GSD_RTK_PATH = previousPath;
+    if (previousDisabled === undefined) delete process.env.GSD_RTK_DISABLED;
+    else process.env.GSD_RTK_DISABLED = previousDisabled;
+    fake.cleanup();
+    rmSync(managedHome, { recursive: true, force: true });
+  };
+
+  try {
+    const result = run(env, managedPath);
+    if (result && typeof (result as Promise<T>).then === "function") {
+      return (result as Promise<T>).finally(finalize);
+    }
+    finalize();
+    return result;
+  } catch (error) {
+    finalize();
+    throw error;
+  }
+}
+
 test("bash tool rewrites commands through RTK before execution", async () => {
   await withFakeRtk({ "echo raw": "echo rewritten" }, async () => {
     let seenCommand = "";
@@ -66,6 +118,14 @@ test("pi-coding-agent RTK helper rewrites commands before delegated execution", 
     });
 
     assert.equal(rewritten, "echo rewritten");
+  });
+});
+
+test("pi-coding-agent RTK helpers fall back to the managed RTK path when GSD_RTK_PATH is unset", async () => {
+  await withManagedFakeRtk({ "echo raw": "echo rewritten" }, async (env, managedPath) => {
+    assert.equal(rewriteCommandForGsd("echo raw", { env }), "echo rewritten");
+    assert.equal(rewriteSharedCommandWithRtk("echo raw", env), "echo rewritten");
+    assert.equal(rewriteCommandForGsd("echo raw", { env, binaryPath: managedPath }), "echo rewritten");
   });
 });
 

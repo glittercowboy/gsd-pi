@@ -328,6 +328,7 @@ export function getAutoDashboardData(): AutoDashboardData {
     totalCost: totals?.cost ?? 0,
     totalTokens: totals?.tokens.total ?? 0,
     pendingCaptureCount,
+    rtkSavings,
   };
 }
 

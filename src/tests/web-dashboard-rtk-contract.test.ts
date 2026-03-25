@@ -10,6 +10,7 @@ test("dashboard renders an RTK Saved metric card", () => {
   assert.match(source, /label="RTK Saved"/, "dashboard should render an RTK Saved card");
 });
 
-test("dashboard fetches the RTK savings API", () => {
-  assert.match(source, /buildProjectPath\("\/api\/rtk-savings"/, "dashboard should fetch /api/rtk-savings");
+test("dashboard reads RTK savings from live auto state", () => {
+  assert.match(source, /const rtkSavings = auto\?\.rtkSavings \?\? null/, "dashboard should source RTK savings from the live auto payload");
+  assert.doesNotMatch(source, /\/api\/rtk-savings/, "dashboard should not fetch RTK savings through a dedicated API route");
 });

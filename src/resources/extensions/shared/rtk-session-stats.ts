@@ -4,10 +4,8 @@ import { join } from "node:path";
 
 import { gsdRoot } from "../gsd/paths.js";
 import { formatTokenCount } from "./format-utils.js";
+import { buildRtkEnv, isRtkEnabled, resolveRtkBinaryPath } from "./rtk.js";
 
-const GSD_RTK_DISABLED_ENV = "GSD_RTK_DISABLED";
-const GSD_RTK_PATH_ENV = "GSD_RTK_PATH";
-const RTK_TELEMETRY_DISABLED_ENV = "RTK_TELEMETRY_DISABLED";
 const SESSION_BASELINES_FILE = "rtk-session-baselines.json";
 const CURRENT_SUMMARY_TTL_MS = 15_000;
 const CURRENT_SUMMARY_TIMEOUT_MS = 5_000;
@@ -46,12 +44,6 @@ interface BaselineStore {
 }
 
 let cachedSummary: { at: number; binaryPath: string; summary: RtkGainSummary | null } | null = null;
-
-function isTruthy(value: string | undefined): boolean {
-  if (!value) return false;
-  const normalized = value.trim().toLowerCase();
-  return normalized === "1" || normalized === "true" || normalized === "yes";
-}
 
 function getRuntimeDir(basePath: string): string {
   return join(gsdRoot(basePath), "runtime");
@@ -98,12 +90,6 @@ function saveBaselineStore(basePath: string, store: BaselineStore): void {
   writeFileSync(getBaselinesPath(basePath), JSON.stringify(normalized, null, 2), "utf-8");
 }
 
-function resolveRtkBinary(env: NodeJS.ProcessEnv = process.env): string | null {
-  const binaryPath = env[GSD_RTK_PATH_ENV];
-  if (!binaryPath || !existsSync(binaryPath)) return null;
-  return binaryPath;
-}
-
 function normalizeSummary(raw: unknown): RtkGainSummary | null {
   if (!raw || typeof raw !== "object") return null;
   const summary = raw as Record<string, unknown>;
@@ -119,9 +105,9 @@ function normalizeSummary(raw: unknown): RtkGainSummary | null {
 }
 
 export function readCurrentRtkGainSummary(env: NodeJS.ProcessEnv = process.env): RtkGainSummary | null {
-  if (isTruthy(env[GSD_RTK_DISABLED_ENV])) return null;
+  if (!isRtkEnabled(env)) return null;
 
-  const binaryPath = resolveRtkBinary(env);
+  const binaryPath = resolveRtkBinaryPath({ env });
   if (!binaryPath) return null;
 
   if (
@@ -134,10 +120,7 @@ export function readCurrentRtkGainSummary(env: NodeJS.ProcessEnv = process.env):
 
   const result = spawnSync(binaryPath, ["gain", "--all", "--format", "json"], {
     encoding: "utf-8",
-    env: {
-      ...env,
-      [RTK_TELEMETRY_DISABLED_ENV]: "1",
-    },
+    env: buildRtkEnv(env),
     stdio: ["ignore", "pipe", "ignore"],
     timeout: CURRENT_SUMMARY_TIMEOUT_MS,
   });

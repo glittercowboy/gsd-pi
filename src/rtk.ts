@@ -2,13 +2,11 @@ import { createHash, randomUUID } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, chmodSync, readdirSync } from "node:fs";
 import { createWriteStream } from "node:fs";
-import { arch as osArch } from "node:os";
+import { arch as osArch, homedir as osHomedir } from "node:os";
 import { delimiter, join } from "node:path";
 import { Readable } from "node:stream";
 import { finished } from "node:stream/promises";
 import extractZip from "extract-zip";
-
-import { agentDir } from "./app-paths.js";
 
 export const RTK_VERSION = "0.33.1";
 export const GSD_RTK_DISABLED_ENV = "GSD_RTK_DISABLED";
@@ -47,8 +45,12 @@ export function isRtkEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
   return !isTruthy(env[GSD_RTK_DISABLED_ENV]);
 }
 
-export function getManagedRtkDir(): string {
-  return join(agentDir, "bin");
+function resolveAppRoot(env: NodeJS.ProcessEnv = process.env): string {
+  return env.GSD_HOME || join(osHomedir(), ".gsd");
+}
+
+export function getManagedRtkDir(env: NodeJS.ProcessEnv = process.env): string {
+  return join(resolveAppRoot(env), "agent", "bin");
 }
 
 export function getRtkBinaryName(platform: NodeJS.Platform = process.platform): string {
@@ -73,7 +75,7 @@ export function prependPathEntry(env: NodeJS.ProcessEnv, entry: string): NodeJS.
 }
 
 export function applyRtkProcessEnv(env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
-  prependPathEntry(env, getManagedRtkDir());
+  prependPathEntry(env, getManagedRtkDir(env));
   env[RTK_TELEMETRY_DISABLED_ENV] = "1";
   return env;
 }
@@ -198,8 +200,8 @@ function resolvePathCandidates(pathValue: string | undefined): string[] {
     .filter(Boolean);
 }
 
-function resolveSystemRtkPath(pathValue: string | undefined): string | null {
-  const candidates = process.platform === "win32"
+function resolveSystemRtkPath(pathValue: string | undefined, platform: NodeJS.Platform = process.platform): string | null {
+  const candidates = platform === "win32"
     ? ["rtk.exe", "rtk.cmd", "rtk.bat", "rtk"]
     : ["rtk"];
 
@@ -215,6 +217,31 @@ function resolveSystemRtkPath(pathValue: string | undefined): string | null {
   return null;
 }
 
+export interface ResolveRtkBinaryPathOptions {
+  binaryPath?: string;
+  env?: NodeJS.ProcessEnv;
+  pathValue?: string;
+  platform?: NodeJS.Platform;
+  targetDir?: string;
+}
+
+export function resolveRtkBinaryPath(options: ResolveRtkBinaryPathOptions = {}): string | null {
+  const env = options.env ?? process.env;
+  const platform = options.platform ?? process.platform;
+
+  const explicitPath = options.binaryPath ?? env[GSD_RTK_PATH_ENV];
+  if (explicitPath && existsSync(explicitPath)) {
+    return explicitPath;
+  }
+
+  const managedPath = getManagedRtkPath(platform, options.targetDir ?? getManagedRtkDir(env));
+  if (existsSync(managedPath)) {
+    return managedPath;
+  }
+
+  return resolveSystemRtkPath(options.pathValue ?? getPathValue(env), platform);
+}
+
 export interface RewriteCommandOptions {
   binaryPath?: string;
   env?: NodeJS.ProcessEnv;
@@ -227,9 +254,10 @@ export function rewriteCommandWithRtk(command: string, options: RewriteCommandOp
   if (!isRtkEnabled(options.env ?? process.env)) return command;
 
   const env = options.env ?? process.env;
-  const binaryPath = options.binaryPath
-    ?? env[GSD_RTK_PATH_ENV]
-    ?? (existsSync(getManagedRtkPath()) ? getManagedRtkPath() : resolveSystemRtkPath(getPathValue(env)));
+  const binaryPath = resolveRtkBinaryPath({
+    env,
+    binaryPath: options.binaryPath,
+  });
 
   if (!binaryPath) return command;
 
@@ -280,7 +308,7 @@ export async function ensureRtkAvailable(options: EnsureRtkOptions = {}): Promis
     return { enabled: true, supported: true, available: false, source: "missing", reason: `${GSD_SKIP_RTK_INSTALL_ENV} is set` };
   }
 
-  const targetDir = options.targetDir ?? getManagedRtkDir();
+  const targetDir = options.targetDir ?? getManagedRtkDir(env);
   const managedPath = getManagedRtkPath(process.platform, targetDir);
 
   if (existsSync(managedPath) && validateRtkBinary(managedPath, { env })) {
