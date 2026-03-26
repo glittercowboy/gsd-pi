@@ -22,7 +22,7 @@ export function classifyProviderError(errorMsg: string): {
   // Connection/process errors — transient, auto-resume after brief backoff (#2309).
   // These indicate the process was killed, the connection was reset, or a network
   // blip occurred. They are NOT permanent failures.
-  const isConnectionError = /terminated|connection.?reset|connection.?refused|other side closed|fetch failed|network.?(?:is\s+)?unavailable|ECONNREFUSED|ECONNRESET|EPIPE/i.test(errorMsg);
+  const isConnectionError = /terminated|connection.?reset|connection.?refused|other side closed|fetch failed|network.?(?:is\s+)?unavailable|ECONNREFUSED|ECONNRESET|EPIPE|stream_exhausted(?:_without_result)?/i.test(errorMsg);
 
   // Permanent errors — never auto-resume
   const isPermanent = /auth|unauthorized|forbidden|invalid.*key|invalid.*api|billing|quota exceeded|account/i.test(errorMsg);

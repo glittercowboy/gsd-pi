@@ -42,6 +42,15 @@ test("classifyProviderError defaults to 60s for rate limit without reset", () =>
   assert.equal(result.suggestedDelayMs, 60_000);
 });
 
+test("classifyProviderError treats stream_exhausted_without_result as transient connection failure", () => {
+  const result = classifyProviderError("stream_exhausted_without_result");
+  assert.deepStrictEqual(result, {
+    isTransient: true,
+    isRateLimit: false,
+    suggestedDelayMs: 15_000,
+  });
+});
+
 test("classifyProviderError detects Anthropic internal server error", () => {
   const msg = '{"type":"error","error":{"details":null,"type":"api_error","message":"Internal server error"}}';
   const result = classifyProviderError(msg);

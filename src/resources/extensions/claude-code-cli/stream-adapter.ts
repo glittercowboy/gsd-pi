@@ -113,6 +113,20 @@ function makeErrorMessage(model: string, errorMsg: string): AssistantMessage {
 	};
 }
 
+/**
+ * Generator exhaustion without a terminal result means the SDK stream was
+ * interrupted mid-turn. Surface it as an error so downstream recovery logic
+ * can classify and retry it instead of treating it as a clean completion.
+ */
+export function makeStreamExhaustedErrorMessage(model: string, lastTextContent: string): AssistantMessage {
+	const errorMsg = "stream_exhausted_without_result";
+	const message = makeErrorMessage(model, errorMsg);
+	if (lastTextContent) {
+		message.content = [{ type: "text", text: lastTextContent }];
+	}
+	return message;
+}
+
 // ---------------------------------------------------------------------------
 // streamSimple implementation
 // ---------------------------------------------------------------------------
@@ -339,26 +353,11 @@ async function pumpSdkMessages(
 			}
 		}
 
-		// Generator exhausted without a result message (unexpected)
-		const fallbackContent: AssistantMessage["content"] = [];
-		if (lastTextContent) {
-			fallbackContent.push({ type: "text", text: lastTextContent });
-		}
-		if (fallbackContent.length === 0) {
-			fallbackContent.push({ type: "text", text: "(Claude Code session ended without a response)" });
-		}
-
-		const fallback: AssistantMessage = {
-			role: "assistant",
-			content: fallbackContent,
-			api: "anthropic-messages",
-			provider: "claude-code",
-			model: modelId,
-			usage: { ...ZERO_USAGE },
-			stopReason: "stop",
-			timestamp: Date.now(),
-		};
-		stream.push({ type: "done", reason: "stop", message: fallback });
+		// Generator exhaustion without a terminal result is a stream interruption,
+		// not a successful completion. Emitting an error lets GSD classify it as a
+		// transient provider failure instead of advancing auto-mode state.
+		const fallback = makeStreamExhaustedErrorMessage(modelId, lastTextContent);
+		stream.push({ type: "error", reason: "error", error: fallback });
 	} catch (err) {
 		const errorMsg = err instanceof Error ? err.message : String(err);
 		stream.push({
