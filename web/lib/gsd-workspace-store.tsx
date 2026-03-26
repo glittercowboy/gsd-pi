@@ -66,7 +66,7 @@ import type {
 } from "./session-browser-contract"
 import { authFetch, appendAuthParam } from "./auth"
 
-export type WorkspaceStatus = "idle" | "loading" | "ready" | "error"
+export type WorkspaceStatus = "idle" | "loading" | "ready" | "error" | "unauthenticated"
 export type WorkspaceConnectionState =
   | "idle"
   | "connecting"
@@ -4135,6 +4135,13 @@ export class GSDWorkspaceStore {
         })
 
         if (!response.ok) {
+          if (response.status === 401) {
+            this.patchState({
+              bootStatus: "unauthenticated",
+              connectionState: "error",
+            })
+            return
+          }
           throw new Error(`Boot request failed with ${response.status}`)
         }
 

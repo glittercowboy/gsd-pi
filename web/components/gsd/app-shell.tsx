@@ -235,6 +235,41 @@ function WorkspaceChrome() {
     detection.kind !== "active-gsd" &&
     detection.kind !== "empty-gsd"
 
+  // --- Unauthenticated gate ---
+  // Render a clear recovery screen before any workspace chrome is mounted so
+  // users who open a manually-typed URL (no #token= fragment) get actionable
+  // guidance instead of a cascade of 401 errors.
+  if (workspace.bootStatus === "unauthenticated") {
+    return (
+      <div className="flex h-dvh flex-col items-center justify-center gap-6 bg-background p-8 text-center">
+        <Image
+          src="/logo-black.svg"
+          alt="GSD"
+          width={57}
+          height={16}
+          className="shrink-0 h-4 w-auto dark:hidden"
+        />
+        <Image
+          src="/logo-white.svg"
+          alt="GSD"
+          width={57}
+          height={16}
+          className="shrink-0 h-4 w-auto hidden dark:block"
+        />
+        <div className="flex flex-col items-center gap-2">
+          <h1 className="text-lg font-semibold text-foreground">Authentication Required</h1>
+          <p className="max-w-sm text-sm text-muted-foreground">
+            This workspace requires an auth token. Copy the full URL from your terminal
+            (including the{" "}
+            <code className="rounded bg-muted px-1 py-0.5 font-mono text-xs">#token=…</code>{" "}
+            part) or restart with{" "}
+            <code className="rounded bg-muted px-1 py-0.5 font-mono text-xs">gsd --web</code>.
+          </p>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div className="relative flex h-screen flex-col overflow-hidden bg-background text-foreground">
       <header className="flex h-12 flex-shrink-0 items-center justify-between border-b border-border bg-card px-2 md:px-4">
