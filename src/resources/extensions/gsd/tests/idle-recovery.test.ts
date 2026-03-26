@@ -294,3 +294,66 @@ test('verifyExpectedArtifact: hook types always return true', () => {
   }
 });
 
+
+test('writeBlockerPlaceholder: updates DB task status for execute-task (#2531)', async () => {
+  const base = createFixtureBase();
+  try {
+    const { openDatabase, closeDatabase, insertMilestone, insertSlice, insertTask, getTask, isDbAvailable } =
+      await import("../gsd-db.ts");
+
+    const dbPath = join(base, ".gsd", "gsd.db");
+    // Create the tasks directory (required for artifact path resolution)
+    mkdirSync(join(base, ".gsd", "milestones", "M001", "slices", "S01", "tasks"), { recursive: true });
+
+    openDatabase(dbPath);
+    try {
+      insertMilestone({ id: "M001", title: "Test", status: "active" });
+      insertSlice({ id: "S01", milestoneId: "M001", title: "Slice", status: "active" });
+      insertTask({ id: "T01", sliceId: "S01", milestoneId: "M001", title: "Task", status: "pending" });
+
+      // Before fix: writeBlockerPlaceholder wrote the file but left DB as "pending"
+      writeBlockerPlaceholder("execute-task", "M001/S01/T01", base, "idle recovery exhausted");
+
+      const task = getTask("M001", "S01", "T01");
+      assert.equal(task?.status, "complete",
+        "writeBlockerPlaceholder must update DB task status to 'complete' so verifyExpectedArtifact passes");
+
+      // Verify the full chain works: verifyExpectedArtifact should return true
+      const verified = verifyExpectedArtifact("execute-task", "M001/S01/T01", base);
+      assert.equal(verified, true,
+        "verifyExpectedArtifact should pass after writeBlockerPlaceholder updates DB status");
+    } finally {
+      if (isDbAvailable()) closeDatabase();
+    }
+  } finally {
+    cleanup(base);
+  }
+});
+
+test('writeBlockerPlaceholder: does NOT update DB for non-execute-task types', async () => {
+  const base = createFixtureBase();
+  try {
+    const { openDatabase, closeDatabase, insertMilestone, insertSlice, getSlice, isDbAvailable } =
+      await import("../gsd-db.ts");
+
+    const dbPath = join(base, ".gsd", "gsd.db");
+    mkdirSync(join(base, ".gsd", "milestones", "M001", "slices", "S01"), { recursive: true });
+
+    openDatabase(dbPath);
+    try {
+      insertMilestone({ id: "M001", title: "Test", status: "active" });
+      insertSlice({ id: "S01", milestoneId: "M001", title: "Slice", status: "active" });
+
+      // research-slice is NOT execute-task — DB should NOT be updated
+      writeBlockerPlaceholder("research-slice", "M001/S01", base, "idle recovery exhausted");
+
+      const slice = getSlice("M001", "S01");
+      assert.equal(slice?.status, "active",
+        "writeBlockerPlaceholder should not change DB status for non-execute-task types");
+    } finally {
+      if (isDbAvailable()) closeDatabase();
+    }
+  } finally {
+    cleanup(base);
+  }
+});

@@ -122,6 +122,11 @@ export class AutoSession {
   /** Set to true when worktree creation fails; prevents merge of nonexistent branch. */
   isolationDegraded = false;
 
+  // ── Merge guard ──────────────────────────────────────────────────────
+  /** Set to true after phases.ts successfully calls mergeAndExit, so that
+   *  stopAuto does not attempt the same merge a second time (#2645). */
+  milestoneMergedInPhases = false;
+
   // ── Dispatch circuit breakers ──────────────────────────────────────
   rewriteAttemptCount = 0;
 
@@ -205,6 +210,7 @@ export class AutoSession {
     this.sidecarQueue = [];
     this.rewriteAttemptCount = 0;
     this.isolationDegraded = false;
+    this.milestoneMergedInPhases = false;
 
     // Signal handler
     this.sigtermHandler = null;

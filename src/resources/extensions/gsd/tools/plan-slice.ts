@@ -6,8 +6,10 @@ import {
   insertTask,
   upsertSlicePlanning,
   upsertTaskPlanning,
+  insertGateRow,
   _getAdapter,
 } from "../gsd-db.js";
+import type { GateId } from "../types.js";
 import { invalidateStateCache } from "../state.js";
 import { renderPlanFromDb } from "../markdown-renderer.js";
 import { renderAllProjections } from "../workflow-projections.js";
@@ -190,6 +192,20 @@ export async function handlePlanSlice(
           fullPlanMd: task.fullPlanMd,
         });
       }
+
+      // Seed quality gate rows inside the transaction — all-or-nothing with
+      // the plan data so a crash can't leave orphaned gates without tasks.
+      const sliceGates: GateId[] = ["Q3", "Q4"];
+      for (const gid of sliceGates) {
+        insertGateRow({ milestoneId: params.milestoneId, sliceId: params.sliceId, gateId: gid, scope: "slice" });
+      }
+      const taskGates: GateId[] = ["Q5", "Q6", "Q7"];
+      for (const task of params.tasks) {
+        for (const gid of taskGates) {
+          insertGateRow({ milestoneId: params.milestoneId, sliceId: params.sliceId, gateId: gid, scope: "task", taskId: task.taskId });
+        }
+      }
+      insertGateRow({ milestoneId: params.milestoneId, sliceId: params.sliceId, gateId: "Q8", scope: "slice" });
     });
   } catch (err) {
     return { error: `db write failed: ${(err as Error).message}` };

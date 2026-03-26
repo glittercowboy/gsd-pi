@@ -14,6 +14,7 @@ import {
 import { resolveMilestonePath, clearPathCache } from "../paths.js";
 import { saveFile, clearParseCache } from "../files.js";
 import { invalidateStateCache } from "../state.js";
+import { VALIDATION_VERDICTS, isValidMilestoneVerdict } from "../verdict-parser.js";
 
 export interface ValidateMilestoneParams {
   milestoneId: string;
@@ -71,9 +72,8 @@ export async function handleValidateMilestone(
   if (!params.milestoneId || typeof params.milestoneId !== "string" || params.milestoneId.trim() === "") {
     return { error: "milestoneId is required and must be a non-empty string" };
   }
-  const validVerdicts = ["pass", "needs-attention", "needs-remediation"];
-  if (!validVerdicts.includes(params.verdict)) {
-    return { error: `verdict must be one of: ${validVerdicts.join(", ")}` };
+  if (!isValidMilestoneVerdict(params.verdict)) {
+    return { error: `verdict must be one of: ${VALIDATION_VERDICTS.join(", ")}` };
   }
 
   // ── Filesystem render ──────────────────────────────────────────────────

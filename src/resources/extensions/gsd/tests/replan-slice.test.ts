@@ -503,7 +503,8 @@ console.log('\n=== doctor: no blocker → no blocker_discovered_no_replan issue 
 // Artifact Resolution: resolveExpectedArtifactPath for replan-slice (#858)
 // ═══════════════════════════════════════════════════════════════════════════
 
-import { resolveExpectedArtifactPath, verifyExpectedArtifact } from '../auto-recovery.ts';
+import { resolveExpectedArtifactPath } from '../auto-artifact-paths.ts';
+import { verifyExpectedArtifact } from '../auto-recovery.ts';
 
 
 describe('replan-slice', () => {

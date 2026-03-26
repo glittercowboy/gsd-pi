@@ -538,6 +538,43 @@ export function validatePreferences(preferences: GSDPreferences): {
     }
   }
 
+  // ─── Gate Evaluation ─────────────────────────────────────────────────────
+  if (preferences.gate_evaluation !== undefined) {
+    if (typeof preferences.gate_evaluation === "object" && preferences.gate_evaluation !== null) {
+      const ge = preferences.gate_evaluation as unknown as Record<string, unknown>;
+      const validGe: Record<string, unknown> = {};
+
+      if (ge.enabled !== undefined) {
+        if (typeof ge.enabled === "boolean") validGe.enabled = ge.enabled;
+        else errors.push("gate_evaluation.enabled must be a boolean");
+      }
+      if (ge.slice_gates !== undefined) {
+        if (Array.isArray(ge.slice_gates) && ge.slice_gates.every((g: unknown) => typeof g === "string")) {
+          validGe.slice_gates = ge.slice_gates;
+        } else {
+          errors.push("gate_evaluation.slice_gates must be an array of strings");
+        }
+      }
+      if (ge.task_gates !== undefined) {
+        if (typeof ge.task_gates === "boolean") validGe.task_gates = ge.task_gates;
+        else errors.push("gate_evaluation.task_gates must be a boolean");
+      }
+
+      const knownGeKeys = new Set(["enabled", "slice_gates", "task_gates"]);
+      for (const key of Object.keys(ge)) {
+        if (!knownGeKeys.has(key)) {
+          warnings.push(`unknown gate_evaluation key "${key}" — ignored`);
+        }
+      }
+
+      if (Object.keys(validGe).length > 0) {
+        validated.gate_evaluation = validGe as unknown as import("./types.js").GateEvaluationConfig;
+      }
+    } else {
+      errors.push("gate_evaluation must be an object");
+    }
+  }
+
   // ─── Verification Preferences ───────────────────────────────────────────
   if (preferences.verification_commands !== undefined) {
     if (Array.isArray(preferences.verification_commands)) {

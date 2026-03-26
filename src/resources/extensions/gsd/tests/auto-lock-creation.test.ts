@@ -140,7 +140,7 @@ test("isLockProcessAlive returns false for dead PID", () => {
   assert.equal(isLockProcessAlive(lock), false, "dead PID should return false");
 });
 
-test("isLockProcessAlive returns false for own PID (recycled)", () => {
+test("#2470: isLockProcessAlive returns true for own PID (we hold the lock)", () => {
   const lock = {
     pid: process.pid,
     startedAt: new Date().toISOString(),
@@ -148,7 +148,7 @@ test("isLockProcessAlive returns false for own PID (recycled)", () => {
     unitId: "M001/S01/T01",
     unitStartedAt: new Date().toISOString(),
   };
-  assert.equal(isLockProcessAlive(lock), false, "own PID should return false (recycled)");
+  assert.equal(isLockProcessAlive(lock), true, "own PID means we are alive — not stale (#2470)");
 });
 
 test("isLockProcessAlive returns false for invalid PID", () => {

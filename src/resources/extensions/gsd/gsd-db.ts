@@ -8,7 +8,7 @@
 import { createRequire } from "node:module";
 import { existsSync, copyFileSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
-import type { Decision, Requirement } from "./types.js";
+import type { Decision, Requirement, GateRow, GateId, GateScope, GateStatus, GateVerdict } from "./types.js";
 import { GSDError, GSD_STALE_STATE } from "./errors.js";
 
 const _require = createRequire(import.meta.url);
@@ -149,7 +149,7 @@ function openRawDb(path: string): unknown {
   return new Database(path);
 }
 
-const SCHEMA_VERSION = 11;
+const SCHEMA_VERSION = 12;
 
 function initSchema(db: DbAdapter, fileBacked: boolean): void {
   if (fileBacked) db.exec("PRAGMA journal_mode=WAL");
@@ -352,6 +352,23 @@ function initSchema(db: DbAdapter, fileBacked: boolean): void {
         full_content TEXT NOT NULL DEFAULT '',
         created_at TEXT NOT NULL DEFAULT '',
         FOREIGN KEY (milestone_id) REFERENCES milestones(id)
+      )
+    `);
+
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS quality_gates (
+        milestone_id TEXT NOT NULL,
+        slice_id TEXT NOT NULL,
+        gate_id TEXT NOT NULL,
+        scope TEXT NOT NULL DEFAULT 'slice',
+        task_id TEXT NOT NULL DEFAULT '',
+        status TEXT NOT NULL DEFAULT 'pending',
+        verdict TEXT NOT NULL DEFAULT '',
+        rationale TEXT NOT NULL DEFAULT '',
+        findings TEXT NOT NULL DEFAULT '',
+        evaluated_at TEXT DEFAULT NULL,
+        PRIMARY KEY (milestone_id, slice_id, gate_id, task_id),
+        FOREIGN KEY (milestone_id, slice_id) REFERENCES slices(milestone_id, id)
       )
     `);
 
@@ -633,6 +650,29 @@ function migrateSchema(db: DbAdapter): void {
 
       db.prepare("INSERT INTO schema_version (version, applied_at) VALUES (:version, :applied_at)").run({
         ":version": 11,
+        ":applied_at": new Date().toISOString(),
+      });
+    }
+
+    if (currentVersion < 12) {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS quality_gates (
+          milestone_id TEXT NOT NULL,
+          slice_id TEXT NOT NULL,
+          gate_id TEXT NOT NULL,
+          scope TEXT NOT NULL DEFAULT 'slice',
+          task_id TEXT DEFAULT NULL,
+          status TEXT NOT NULL DEFAULT 'pending',
+          verdict TEXT NOT NULL DEFAULT '',
+          rationale TEXT NOT NULL DEFAULT '',
+          findings TEXT NOT NULL DEFAULT '',
+          evaluated_at TEXT DEFAULT NULL,
+          PRIMARY KEY (milestone_id, slice_id, gate_id, COALESCE(task_id, '')),
+          FOREIGN KEY (milestone_id, slice_id) REFERENCES slices(milestone_id, id)
+        )
+      `);
+      db.prepare("INSERT INTO schema_version (version, applied_at) VALUES (:version, :applied_at)").run({
+        ":version": 12,
         ":applied_at": new Date().toISOString(),
       });
     }
@@ -1721,4 +1761,112 @@ export function getAssessment(path: string): Record<string, unknown> | null {
     `SELECT * FROM assessments WHERE path = :path`,
   ).get({ ":path": path });
   return row ?? null;
+}
+
+// ─── Quality Gates ───────────────────────────────────────────────────────
+
+function rowToGate(row: Record<string, unknown>): GateRow {
+  return {
+    milestone_id: row["milestone_id"] as string,
+    slice_id: row["slice_id"] as string,
+    gate_id: row["gate_id"] as GateId,
+    scope: row["scope"] as GateScope,
+    task_id: (row["task_id"] as string) ?? "",
+    status: row["status"] as GateStatus,
+    verdict: (row["verdict"] as GateVerdict) || "",
+    rationale: (row["rationale"] as string) || "",
+    findings: (row["findings"] as string) || "",
+    evaluated_at: (row["evaluated_at"] as string) ?? null,
+  };
+}
+
+export function insertGateRow(g: {
+  milestoneId: string;
+  sliceId: string;
+  gateId: GateId;
+  scope: GateScope;
+  taskId?: string | null;
+  status?: GateStatus;
+}): void {
+  if (!currentDb) throw new GSDError(GSD_STALE_STATE, "gsd-db: No database open");
+  currentDb.prepare(
+    `INSERT OR IGNORE INTO quality_gates (milestone_id, slice_id, gate_id, scope, task_id, status)
+     VALUES (:mid, :sid, :gid, :scope, :tid, :status)`,
+  ).run({
+    ":mid": g.milestoneId,
+    ":sid": g.sliceId,
+    ":gid": g.gateId,
+    ":scope": g.scope,
+    ":tid": g.taskId ?? "",
+    ":status": g.status ?? "pending",
+  });
+}
+
+export function saveGateResult(g: {
+  milestoneId: string;
+  sliceId: string;
+  gateId: string;
+  taskId?: string | null;
+  verdict: GateVerdict;
+  rationale: string;
+  findings: string;
+}): void {
+  if (!currentDb) throw new GSDError(GSD_STALE_STATE, "gsd-db: No database open");
+  currentDb.prepare(
+    `UPDATE quality_gates
+     SET status = 'complete', verdict = :verdict, rationale = :rationale,
+         findings = :findings, evaluated_at = :evaluated_at
+     WHERE milestone_id = :mid AND slice_id = :sid AND gate_id = :gid
+       AND task_id = :tid`,
+  ).run({
+    ":mid": g.milestoneId,
+    ":sid": g.sliceId,
+    ":gid": g.gateId,
+    ":tid": g.taskId ?? "",
+    ":verdict": g.verdict,
+    ":rationale": g.rationale,
+    ":findings": g.findings,
+    ":evaluated_at": new Date().toISOString(),
+  });
+}
+
+export function getPendingGates(milestoneId: string, sliceId: string, scope?: GateScope): GateRow[] {
+  if (!currentDb) return [];
+  const sql = scope
+    ? `SELECT * FROM quality_gates WHERE milestone_id = :mid AND slice_id = :sid AND scope = :scope AND status = 'pending'`
+    : `SELECT * FROM quality_gates WHERE milestone_id = :mid AND slice_id = :sid AND status = 'pending'`;
+  const params: Record<string, unknown> = { ":mid": milestoneId, ":sid": sliceId };
+  if (scope) params[":scope"] = scope;
+  return currentDb.prepare(sql).all(params).map(rowToGate);
+}
+
+export function getGateResults(milestoneId: string, sliceId: string, scope?: GateScope): GateRow[] {
+  if (!currentDb) return [];
+  const sql = scope
+    ? `SELECT * FROM quality_gates WHERE milestone_id = :mid AND slice_id = :sid AND scope = :scope`
+    : `SELECT * FROM quality_gates WHERE milestone_id = :mid AND slice_id = :sid`;
+  const params: Record<string, unknown> = { ":mid": milestoneId, ":sid": sliceId };
+  if (scope) params[":scope"] = scope;
+  return currentDb.prepare(sql).all(params).map(rowToGate);
+}
+
+export function markAllGatesOmitted(milestoneId: string, sliceId: string): void {
+  if (!currentDb) return;
+  currentDb.prepare(
+    `UPDATE quality_gates SET status = 'omitted', verdict = 'omitted', evaluated_at = :now
+     WHERE milestone_id = :mid AND slice_id = :sid AND status = 'pending'`,
+  ).run({
+    ":mid": milestoneId,
+    ":sid": sliceId,
+    ":now": new Date().toISOString(),
+  });
+}
+
+export function getPendingSliceGateCount(milestoneId: string, sliceId: string): number {
+  if (!currentDb) return 0;
+  const row = currentDb.prepare(
+    `SELECT COUNT(*) as cnt FROM quality_gates
+     WHERE milestone_id = :mid AND slice_id = :sid AND scope = 'slice' AND status = 'pending'`,
+  ).get({ ":mid": milestoneId, ":sid": sliceId });
+  return row ? (row["cnt"] as number) : 0;
 }

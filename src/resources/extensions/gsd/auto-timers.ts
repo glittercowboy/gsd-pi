@@ -192,7 +192,7 @@ export function startUnitSupervision(sctx: SupervisionContext): void {
       const message = err instanceof Error ? err.message : String(err);
       console.error(`[idle-watchdog] Unhandled error: ${message}`);
       // Unblock any pending unit promise so the auto-loop is not orphaned.
-      resolveAgentEndCancelled();
+      resolveAgentEndCancelled({ message: `Idle watchdog error: ${message}`, category: "idle", isTransient: true });
       try {
         ctx.ui.notify(`Idle watchdog error: ${message}`, "warning");
       } catch { /* best effort */ }
@@ -226,7 +226,7 @@ export function startUnitSupervision(sctx: SupervisionContext): void {
       const message = err instanceof Error ? err.message : String(err);
       console.error(`[hard-timeout] Unhandled error: ${message}`);
       // Unblock any pending unit promise so the auto-loop is not orphaned.
-      resolveAgentEndCancelled();
+      resolveAgentEndCancelled({ message: `Hard timeout error: ${message}`, category: "timeout", isTransient: true });
       try {
         ctx.ui.notify(`Hard timeout error: ${message}`, "warning");
       } catch { /* best effort */ }

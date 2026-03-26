@@ -244,7 +244,12 @@ export class PartialMessageBuilder {
 					try {
 						block.arguments = JSON.parse(jsonStr);
 					} catch {
+						// Stream was truncated mid-tool-call — JSON is garbage.
+						// Preserve the raw string for diagnostics but signal the
+						// malformation explicitly so downstream consumers can
+						// distinguish this from a healthy tool completion (#2574).
 						block.arguments = { _raw: jsonStr };
+						return { type: "toolcall_end", contentIndex, toolCall: block, partial: this.partial, malformedArguments: true };
 					}
 					return { type: "toolcall_end", contentIndex, toolCall: block, partial: this.partial };
 				}

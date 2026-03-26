@@ -8,6 +8,22 @@
 - {{mustHave}}
 - {{mustHave}}
 
+## Threat Surface
+
+<!-- Q3: How can this be exploited? OMIT ENTIRELY for simple slices with no auth, user input, or data exposure. -->
+
+- **Abuse**: {{abuseScenarios — parameter tampering, replay, privilege escalation, or N/A}}
+- **Data exposure**: {{sensitiveDataAccessible — PII, tokens, secrets, or none}}
+- **Input trust**: {{untrustedInput — user input reaching DB/API/filesystem, or none}}
+
+## Requirement Impact
+
+<!-- Q4: What existing promises does this break? OMIT ENTIRELY if no existing requirements are affected. -->
+
+- **Requirements touched**: {{requirementIds — e.g. R001, R003, or none}}
+- **Re-verify**: {{whatMustBeRetested — e.g. login flow, API contract, or N/A}}
+- **Decisions revisited**: {{decisionIds — e.g. D002, or none}}
+
 ## Proof Level
 
 <!-- Omit this section entirely for simple slices where the answer is trivially obvious. -->

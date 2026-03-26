@@ -31,7 +31,10 @@ test("shouldSendDesktopNotification disables all categories when notifications a
   assert.equal(shouldSendDesktopNotification("milestone", prefs), false);
 });
 
-test("buildDesktopNotificationCommand uses argument arrays for macOS notifications", () => {
+test("buildDesktopNotificationCommand falls back to osascript on macOS when terminal-notifier is absent", () => {
+  // When terminal-notifier is not on PATH, falls back to osascript.
+  // This test runs in CI where terminal-notifier is typically not installed.
+  // If terminal-notifier IS installed, we verify it returns that instead.
   const command = buildDesktopNotificationCommand(
     "darwin",
     `Bob's "Milestone"`,
@@ -40,11 +43,30 @@ test("buildDesktopNotificationCommand uses argument arrays for macOS notificatio
   );
 
   assert.ok(command);
-  assert.equal(command.file, "osascript");
-  assert.deepEqual(command.args.slice(0, 1), ["-e"]);
-  assert.match(command.args[1], /Bob's \\"Milestone\\"/);
-  assert.match(command.args[1], /Budget! Path: C:\\\\temp/);
-  assert.doesNotMatch(command.args[1], /\n/);
+  if (command.file.includes("terminal-notifier")) {
+    // terminal-notifier path — verify args structure
+    assert.ok(command.args.includes("-title"));
+    assert.ok(command.args.includes("-message"));
+    assert.ok(command.args.includes("-sound"));
+    assert.ok(command.args.includes("Basso")); // error level
+  } else {
+    // osascript fallback path
+    assert.equal(command.file, "osascript");
+    assert.deepEqual(command.args.slice(0, 1), ["-e"]);
+    assert.match(command.args[1], /Bob's \\"Milestone\\"/);
+    assert.match(command.args[1], /Budget! Path: C:\\\\temp/);
+    assert.doesNotMatch(command.args[1], /\n/);
+  }
+});
+
+test("buildDesktopNotificationCommand uses Glass sound for non-error on macOS", () => {
+  const command = buildDesktopNotificationCommand("darwin", "Title", "Message", "info");
+  assert.ok(command);
+  if (command.file.includes("terminal-notifier")) {
+    assert.ok(command.args.includes("Glass"));
+  } else {
+    assert.match(command.args[1], /sound name "Glass"/);
+  }
 });
 
 test("buildDesktopNotificationCommand preserves literal shell characters on linux", () => {

@@ -219,6 +219,8 @@ export {
 } from "./core/settings-manager.js";
 // Skills
 export {
+	ECOSYSTEM_SKILLS_DIR,
+	ECOSYSTEM_PROJECT_SKILLS_DIR,
 	formatSkillsForPrompt,
 	getLoadedSkills,
 	type LoadSkillsFromDirOptions,

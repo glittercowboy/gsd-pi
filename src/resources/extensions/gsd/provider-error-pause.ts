@@ -46,6 +46,15 @@ export function classifyProviderError(errorMsg: string): {
     return { isTransient: true, isRateLimit: false, suggestedDelayMs: 15_000 }; // 15s for connection errors
   }
 
+  // Stream-truncation JSON parse errors — transient (#2572).
+  // When the API stream is cut mid-chunk, pi tries to reassemble the partial
+  // tool-call JSON and gets a SyntaxError. This is the downstream symptom of
+  // a connection drop — same root cause as ECONNRESET, one layer up.
+  const isMalformedStream = /Unexpected end of JSON|Unexpected token.*JSON|Expected double-quoted property name|SyntaxError.*JSON/i.test(errorMsg);
+  if (isMalformedStream) {
+    return { isTransient: true, isRateLimit: false, suggestedDelayMs: 15_000 }; // 15s, same as connection errors
+  }
+
   // Unknown error — treat as permanent (user reviews)
   return { isTransient: false, isRateLimit: false, suggestedDelayMs: 0 };
 }

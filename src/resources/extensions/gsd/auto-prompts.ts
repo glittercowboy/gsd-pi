@@ -6,8 +6,9 @@
  * utility.
  */
 
-import { loadFile, parseContinue, parseSummary, extractUatType, loadActiveOverrides, formatOverridesSection, parseTaskPlanFile } from "./files.js";
+import { loadFile, parseContinue, parseSummary, loadActiveOverrides, formatOverridesSection, parseTaskPlanFile } from "./files.js";
 import type { Override, UatType } from "./files.js";
+import { hasVerdict, getUatType } from "./verdict-parser.js";
 import { loadPrompt, inlineTemplate } from "./prompt-loader.js";
 import {
   resolveMilestoneFile, resolveSliceFile, resolveSlicePath,
@@ -23,6 +24,7 @@ import { getLoadedSkills, type Skill } from "@gsd/pi-coding-agent";
 import { join, basename } from "node:path";
 import { existsSync } from "node:fs";
 import { computeBudgets, resolveExecutorContextWindow, truncateAtSectionBoundary } from "./context-budget.js";
+import { getPendingGates } from "./gsd-db.js";
 import { formatDecisionsCompact, formatRequirementsCompact } from "./structured-data-formatter.js";
 
 // ─── Preamble Cap ─────────────────────────────────────────────────────────────
@@ -781,8 +783,16 @@ export async function checkNeedsRunUat(
         const uatContent = await loadFile(uatFile);
         if (!uatContent) return null;
         // If the UAT file already contains a verdict, UAT has been run — skip
-        if (/verdict:\s*[\w-]+/i.test(uatContent)) return null;
-        const uatType = extractUatType(uatContent) ?? "artifact-driven";
+        if (hasVerdict(uatContent)) return null;
+        // Also check the ASSESSMENT file — the run-uat prompt writes the verdict
+        // there (via gsd_summary_save artifact_type:"ASSESSMENT"), not into the
+        // UAT spec file. Without this check the unit re-dispatches indefinitely.
+        const assessmentFile = resolveSliceFile(base, mid, sid, "ASSESSMENT");
+        if (assessmentFile) {
+          const assessmentContent = await loadFile(assessmentFile);
+          if (assessmentContent && hasVerdict(assessmentContent)) return null;
+        }
+        const uatType = getUatType(uatContent);
         return { sliceId: sid, uatType };
       }
     }
@@ -805,8 +815,15 @@ export async function checkNeedsRunUat(
   const uatContentFb = await loadFile(uatFileFb);
   if (!uatContentFb) return null;
   // If the UAT file already contains a verdict, UAT has been run — skip
-  if (/verdict:\s*[\w-]+/i.test(uatContentFb)) return null;
-  const uatTypeFb = extractUatType(uatContentFb) ?? "artifact-driven";
+  if (hasVerdict(uatContentFb)) return null;
+  // Also check the ASSESSMENT file for the file-based fallback path (same
+  // reason as the DB path above — verdict lives in ASSESSMENT, not UAT).
+  const assessmentFileFb = resolveSliceFile(base, mid, uatSid, "ASSESSMENT");
+  if (assessmentFileFb) {
+    const assessmentContentFb = await loadFile(assessmentFileFb);
+    if (assessmentContentFb && hasVerdict(assessmentContentFb)) return null;
+  }
+  const uatTypeFb = getUatType(uatContentFb);
   return { sliceId: uatSid, uatType: uatTypeFb };
 }
 
@@ -1328,6 +1345,24 @@ export async function buildValidateMilestonePrompt(
   const inlined: string[] = [];
   inlined.push(await inlineFile(roadmapPath, roadmapRel, "Milestone Roadmap"));
 
+  // Inline verification classes from planning (if available in DB)
+  try {
+    const { isDbAvailable, getMilestone } = await import("./gsd-db.js");
+    if (isDbAvailable()) {
+      const milestone = getMilestone(mid);
+      if (milestone) {
+        const classes: string[] = [];
+        if (milestone.verification_contract) classes.push(`- **Contract:** ${milestone.verification_contract}`);
+        if (milestone.verification_integration) classes.push(`- **Integration:** ${milestone.verification_integration}`);
+        if (milestone.verification_operational) classes.push(`- **Operational:** ${milestone.verification_operational}`);
+        if (milestone.verification_uat) classes.push(`- **UAT:** ${milestone.verification_uat}`);
+        if (classes.length > 0) {
+          inlined.push(`### Verification Classes (from planning)\n\nThese verification tiers were defined during milestone planning. Each non-empty class must be checked for evidence during validation.\n\n${classes.join("\n")}`);
+        }
+      }
+    }
+  } catch { /* fall through */ }
+
   // Inline all slice summaries and UAT results
   let valSliceIds: string[] = [];
   try {
@@ -1504,7 +1539,7 @@ export async function buildRunUatPrompt(
   const inlinedContext = capPreamble(`## Inlined Context (preloaded — do not re-read these files)\n\n${inlined.join("\n\n---\n\n")}`);
 
   const uatResultPath = join(base, relSliceFile(base, mid, sliceId, "UAT"));
-  const uatType = extractUatType(uatContent) ?? "artifact-driven";
+  const uatType = getUatType(uatContent);
 
   return loadPrompt("run-uat", {
     workingDirectory: base,
@@ -1658,6 +1693,96 @@ export async function buildReactiveExecutePrompt(
     readyTaskList: readyTaskListLines.join("\n"),
     subagentPrompts: subagentSections.join("\n\n---\n\n"),
     inlinedTemplates,
+  });
+}
+
+// ─── Gate Evaluation ──────────────────────────────────────────────────────
+
+const GATE_QUESTIONS: Record<string, { question: string; guidance: string }> = {
+  Q3: {
+    question: "How can this be exploited?",
+    guidance: [
+      "Identify abuse scenarios: parameter tampering, replay attacks, privilege escalation.",
+      "Map data exposure risks: PII, tokens, secrets accessible through this slice.",
+      "Define input trust boundaries: untrusted user input reaching DB, API, or filesystem.",
+      "If none apply, return verdict 'omitted' with rationale explaining why.",
+    ].join("\n"),
+  },
+  Q4: {
+    question: "What existing promises does this break?",
+    guidance: [
+      "List which existing requirements (R001, R003, etc.) are touched by this slice.",
+      "Identify what must be re-tested after shipping.",
+      "Flag decisions that should be revisited given the new scope.",
+      "If no existing requirements are affected, return verdict 'omitted'.",
+    ].join("\n"),
+  },
+};
+
+export async function buildGateEvaluatePrompt(
+  mid: string, midTitle: string, sid: string, sTitle: string,
+  base: string,
+): Promise<string> {
+  const pending = getPendingGates(mid, sid, "slice");
+
+  // Load the slice plan for context
+  const planFile = resolveSliceFile(base, mid, sid, "PLAN");
+  const planContent = planFile ? (await loadFile(planFile)) ?? "(plan file empty)" : "(plan file not found)";
+
+  // Build per-gate subagent prompts
+  const subagentSections: string[] = [];
+  const gateListLines: string[] = [];
+
+  for (const gate of pending) {
+    const meta = GATE_QUESTIONS[gate.gate_id];
+    if (!meta) continue;
+
+    gateListLines.push(`- **${gate.gate_id}**: ${meta.question}`);
+
+    const subPrompt = [
+      `You are evaluating quality gate **${gate.gate_id}** for slice ${sid} (${sTitle}).`,
+      "",
+      `## Question: ${meta.question}`,
+      "",
+      meta.guidance,
+      "",
+      "## Slice Plan",
+      "",
+      planContent,
+      "",
+      "## Instructions",
+      "",
+      "Analyze the slice plan above and answer the gate question.",
+      `Call the \`gsd_save_gate_result\` tool with:`,
+      `- \`milestoneId\`: "${mid}"`,
+      `- \`sliceId\`: "${sid}"`,
+      `- \`gateId\`: "${gate.gate_id}"`,
+      "- `verdict`: \"pass\" (no concerns), \"flag\" (concerns found), or \"omitted\" (not applicable)",
+      "- `rationale`: one-sentence justification",
+      "- `findings`: detailed markdown findings (or empty if omitted)",
+    ].join("\n");
+
+    subagentSections.push([
+      `### ${gate.gate_id}: ${meta.question}`,
+      "",
+      "Use this as the prompt for a `subagent` call:",
+      "",
+      "```",
+      subPrompt,
+      "```",
+    ].join("\n"));
+  }
+
+  return loadPrompt("gate-evaluate", {
+    workingDirectory: base,
+    milestoneId: mid,
+    milestoneTitle: midTitle,
+    sliceId: sid,
+    sliceTitle: sTitle,
+    slicePlanContent: planContent,
+    gateCount: String(pending.length),
+    gateList: gateListLines.join("\n"),
+    subagentPrompts: subagentSections.join("\n\n---\n\n"),
   });
 }
 

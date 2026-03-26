@@ -25,6 +25,7 @@ import { computeProgressScore } from "./progress-score.js";
 import { getActiveWorktreeName } from "./worktree-command.js";
 import { loadEffectiveGSDPreferences, getGlobalGSDPreferencesPath } from "./preferences.js";
 import { resolveServiceTierIcon, getEffectiveServiceTier } from "./service-tier.js";
+import { parseUnitId } from "./unit-id.js";
 
 // ─── UAT Slice Extraction ─────────────────────────────────────────────────────
 
@@ -33,8 +34,8 @@ import { resolveServiceTierIcon, getEffectiveServiceTier } from "./service-tier.
  * Returns null if the format doesn't match.
  */
 export function extractUatSliceId(unitId: string): string | null {
-  const parts = unitId.split("/");
-  if (parts.length >= 2 && parts[1]!.startsWith("S")) return parts[1]!;
+  const { slice } = parseUnitId(unitId);
+  if (slice?.startsWith("S")) return slice;
   return null;
 }
 
@@ -151,6 +152,8 @@ export function describeNextUnit(state: GSDState): { label: string; description:
       return { label: `Replan ${sid}: ${sTitle}`, description: "Blocker found — replan the slice." };
     case "completing-milestone":
       return { label: "Complete milestone", description: "Write milestone summary." };
+    case "evaluating-gates":
+      return { label: `Evaluate gates for ${sid}: ${sTitle}`, description: "Parallel quality gate assessment before execution." };
     default:
       return { label: "Continue", description: "Execute the next step." };
   }

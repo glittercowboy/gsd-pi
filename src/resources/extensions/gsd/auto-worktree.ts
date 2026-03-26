@@ -17,7 +17,8 @@ import {
   unlinkSync,
   lstatSync as lstatSyncFn,
 } from "node:fs";
-import { isAbsolute, join } from "node:path";
+import { isAbsolute, join, sep as pathSep } from "node:path";
+import { homedir } from "node:os";
 import { GSDError, GSD_IO_ERROR, GSD_GIT_ERROR } from "./errors.js";
 import {
   reconcileWorktreeDb,
@@ -62,6 +63,38 @@ import {
   nativeUpdateRef,
   nativeIsAncestor,
 } from "./native-git-bridge.js";
+
+const gsdHome = process.env.GSD_HOME || join(homedir(), ".gsd");
+
+// ─── Shared Constants & Helpers ─────────────────────────────────────────────
+
+/**
+ * Root-level .gsd/ state files synced between worktree and project root.
+ * Single source of truth — used by syncGsdStateToWorktree, syncWorktreeStateBack,
+ * and the dispatch-level sync functions.
+ */
+const ROOT_STATE_FILES = [
+  "DECISIONS.md",
+  "REQUIREMENTS.md",
+  "PROJECT.md",
+  "KNOWLEDGE.md",
+  "OVERRIDES.md",
+  "QUEUE.md",
+  "completed-units.json",
+  "metrics.json",
+] as const;
+
+/**
+ * Check if two filesystem paths resolve to the same real location.
+ * Returns false if either path cannot be resolved (e.g. doesn't exist).
+ */
+function isSamePath(a: string, b: string): boolean {
+  try {
+    return realpathSync(a) === realpathSync(b);
+  } catch {
+    return false;
+  }
+}
 
 // ─── Module State ──────────────────────────────────────────────────────────
 
@@ -119,6 +152,227 @@ function clearProjectRootStateFiles(basePath: string, milestoneId: string): void
     }
   }
 }
+
+// ─── Dispatch-Level Sync (project root ↔ worktree) ──────────────────────────
+
+/**
+ * Sync milestone artifacts from project root INTO worktree before deriveState.
+ * Covers the case where the LLM wrote artifacts to the main repo filesystem
+ * (e.g. via absolute paths) but the worktree has stale data. Also deletes
+ * gsd.db in the worktree so it rebuilds from fresh disk state (#853).
+ * Non-fatal — sync failure should never block dispatch.
+ */
+export function syncProjectRootToWorktree(
+  projectRoot: string,
+  worktreePath_: string,
+  milestoneId: string | null,
+): void {
+  if (!worktreePath_ || !projectRoot || worktreePath_ === projectRoot) return;
+  if (!milestoneId) return;
+
+  const prGsd = join(projectRoot, ".gsd");
+  const wtGsd = join(worktreePath_, ".gsd");
+
+  // Copy milestone directory from project root to worktree — additive only.
+  // force:false prevents cpSync from overwriting existing worktree files.
+  // Without this, worktree-authoritative files (e.g. VALIDATION.md written
+  // by validate-milestone) get clobbered by stale project root copies,
+  // causing an infinite re-validation loop (#1886).
+  safeCopyRecursive(
+    join(prGsd, "milestones", milestoneId),
+    join(wtGsd, "milestones", milestoneId),
+    { force: false },
+  );
+
+  // Forward-sync completed-units.json from project root to worktree.
+  // Project root is authoritative for completion state after crash recovery;
+  // without this, the worktree re-dispatches already-completed units (#1886).
+  safeCopy(
+    join(prGsd, "completed-units.json"),
+    join(wtGsd, "completed-units.json"),
+    { force: true },
+  );
+
+  // Delete worktree gsd.db so it rebuilds from the freshly synced files.
+  // Stale DB rows are the root cause of the infinite skip loop (#853).
+  try {
+    const wtDb = join(wtGsd, "gsd.db");
+    if (existsSync(wtDb)) {
+      unlinkSync(wtDb);
+    }
+  } catch {
+    /* non-fatal */
+  }
+}
+
+/**
+ * Sync dispatch-critical .gsd/ state files from worktree to project root.
+ * Only runs when inside an auto-worktree (worktreePath differs from projectRoot).
+ * Copies: STATE.md + active milestone directory (roadmap, slice plans, task summaries).
+ * Non-fatal — sync failure should never block dispatch.
+ */
+export function syncStateToProjectRoot(
+  worktreePath_: string,
+  projectRoot: string,
+  milestoneId: string | null,
+): void {
+  if (!worktreePath_ || !projectRoot || worktreePath_ === projectRoot) return;
+  if (!milestoneId) return;
+
+  const wtGsd = join(worktreePath_, ".gsd");
+  const prGsd = join(projectRoot, ".gsd");
+
+  // 1. STATE.md — the quick-glance status used by initial deriveState()
+  safeCopy(join(wtGsd, "STATE.md"), join(prGsd, "STATE.md"), { force: true });
+
+  // 2. Milestone directory — ROADMAP, slice PLANs, task summaries
+  // Copy the entire milestone .gsd subtree so deriveState reads current checkboxes
+  safeCopyRecursive(
+    join(wtGsd, "milestones", milestoneId),
+    join(prGsd, "milestones", milestoneId),
+    { force: true },
+  );
+
+  // 3. metrics.json — session cost/token tracking (#2313).
+  // Without this, metrics accumulated in the worktree are invisible from the
+  // project root and never appear in the dashboard or skill-health reports.
+  safeCopy(join(wtGsd, "metrics.json"), join(prGsd, "metrics.json"), { force: true });
+
+  // 4. Runtime records — unit dispatch state used by selfHealRuntimeRecords().
+  // Without this, a crash during a unit leaves the runtime record only in the
+  // worktree. If the next session resolves basePath before worktree re-entry,
+  // selfHeal can't find or clear the stale record (#769).
+  safeCopyRecursive(
+    join(wtGsd, "runtime", "units"),
+    join(prGsd, "runtime", "units"),
+    { force: true },
+  );
+}
+
+// ─── Resource Staleness ───────────────────────────────────────────────────
+
+/**
+ * Read the resource version (semver) from the managed-resources manifest.
+ * Uses gsdVersion instead of syncedAt so that launching a second session
+ * doesn't falsely trigger staleness (#804).
+ */
+export function readResourceVersion(): string | null {
+  const agentDir =
+    process.env.GSD_CODING_AGENT_DIR || join(gsdHome, "agent");
+  const manifestPath = join(agentDir, "managed-resources.json");
+  try {
+    const manifest = JSON.parse(readFileSync(manifestPath, "utf-8"));
+    return typeof manifest?.gsdVersion === "string"
+      ? manifest.gsdVersion
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Check if managed resources have been updated since session start.
+ * Returns a warning message if stale, null otherwise.
+ */
+export function checkResourcesStale(
+  versionOnStart: string | null,
+): string | null {
+  if (versionOnStart === null) return null;
+  const current = readResourceVersion();
+  if (current === null) return null;
+  if (current !== versionOnStart) {
+    return "GSD resources were updated since this session started. Restart gsd to load the new code.";
+  }
+  return null;
+}
+
+// ─── Stale Worktree Escape ────────────────────────────────────────────────
+
+/**
+ * Detect and escape a stale worktree cwd (#608).
+ *
+ * After milestone completion + merge, the worktree directory is removed but
+ * the process cwd may still point inside `.gsd/worktrees/<MID>/`.
+ * When a new session starts, `process.cwd()` is passed as `base` to startAuto
+ * and all subsequent writes land in the wrong directory. This function detects
+ * that scenario and chdir back to the project root.
+ *
+ * Returns the corrected base path.
+ */
+export function escapeStaleWorktree(base: string): string {
+  // Direct layout: /.gsd/worktrees/
+  const directMarker = `${pathSep}.gsd${pathSep}worktrees${pathSep}`;
+  let idx = base.indexOf(directMarker);
+  if (idx === -1) {
+    // Symlink-resolved layout: /.gsd/projects/<hash>/worktrees/
+    const symlinkRe = new RegExp(
+      `\\${pathSep}\\.gsd\\${pathSep}projects\\${pathSep}[a-f0-9]+\\${pathSep}worktrees\\${pathSep}`,
+    );
+    const match = base.match(symlinkRe);
+    if (!match || match.index === undefined) return base;
+    idx = match.index;
+  }
+
+  // base is inside .gsd/worktrees/<something> — extract the project root
+  const projectRoot = base.slice(0, idx);
+
+  // Guard: If the candidate project root's .gsd IS the user-level ~/.gsd,
+  // the string-slice heuristic matched the wrong /.gsd/ boundary. This happens
+  // when .gsd is a symlink into ~/.gsd/projects/<hash> and process.cwd()
+  // resolved through the symlink. Returning ~ would be catastrophic (#1676).
+  const candidateGsd = join(projectRoot, ".gsd").replaceAll("\\", "/");
+  const gsdHomePath = gsdHome.replaceAll("\\", "/");
+  if (candidateGsd === gsdHomePath || candidateGsd.startsWith(gsdHomePath + "/")) {
+    // Don't chdir to home — return base unchanged.
+    // resolveProjectRoot() in worktree.ts has the full git-file-based recovery
+    // and will be called by the caller (startAuto → projectRoot()).
+    return base;
+  }
+
+  try {
+    process.chdir(projectRoot);
+  } catch {
+    // If chdir fails, return the original — caller will handle errors downstream
+    return base;
+  }
+  return projectRoot;
+}
+
+/**
+ * Clean stale runtime unit files for completed milestones.
+ *
+ * After restart, stale runtime/units/*.json from prior milestones can
+ * cause deriveState to resume the wrong milestone (#887). Removes files
+ * for milestones that have a SUMMARY (fully complete).
+ */
+export function cleanStaleRuntimeUnits(
+  gsdRootPath: string,
+  hasMilestoneSummary: (mid: string) => boolean,
+): number {
+  const runtimeUnitsDir = join(gsdRootPath, "runtime", "units");
+  if (!existsSync(runtimeUnitsDir)) return 0;
+
+  let cleaned = 0;
+  try {
+    for (const file of readdirSync(runtimeUnitsDir)) {
+      if (!file.endsWith(".json")) continue;
+      const midMatch = file.match(/(M\d+(?:-[a-z0-9]{6})?)/);
+      if (!midMatch) continue;
+      if (hasMilestoneSummary(midMatch[1])) {
+        try {
+          unlinkSync(join(runtimeUnitsDir, file));
+          cleaned++;
+        } catch {
+          /* non-fatal */
+        }
+      }
+    }
+  } catch {
+    /* non-fatal */
+  }
+  return cleaned;
+}
+
 // ─── Worktree ↔ Main Repo Sync (#1311) ──────────────────────────────────────
 
 /**
@@ -144,28 +398,12 @@ export function syncGsdStateToWorktree(
   const synced: string[] = [];
 
   // If both resolve to the same directory (symlink), no sync needed
-  try {
-    const mainResolved = realpathSync(mainGsd);
-    const wtResolved = realpathSync(wtGsd);
-    if (mainResolved === wtResolved) return { synced };
-  } catch {
-    // Can't resolve — proceed with sync as a safety measure
-  }
+  if (isSamePath(mainGsd, wtGsd)) return { synced };
 
   if (!existsSync(mainGsd) || !existsSync(wtGsd)) return { synced };
 
   // Sync root-level .gsd/ files (DECISIONS, REQUIREMENTS, PROJECT, KNOWLEDGE, etc.)
-  const rootFiles = [
-    "DECISIONS.md",
-    "REQUIREMENTS.md",
-    "PROJECT.md",
-    "KNOWLEDGE.md",
-    "OVERRIDES.md",
-    "QUEUE.md",
-    "completed-units.json",
-    "metrics.json",
-  ];
-  for (const f of rootFiles) {
+  for (const f of ROOT_STATE_FILES) {
     const src = join(mainGsd, f);
     const dst = join(wtGsd, f);
     if (existsSync(src) && !existsSync(dst)) {
@@ -298,13 +536,7 @@ export function syncWorktreeStateBack(
   const synced: string[] = [];
 
   // If both resolve to the same directory (symlink), no sync needed
-  try {
-    const mainResolved = realpathSync(mainGsd);
-    const wtResolved = realpathSync(wtGsd);
-    if (mainResolved === wtResolved) return { synced };
-  } catch {
-    // Can't resolve — proceed with sync
-  }
+  if (isSamePath(mainGsd, wtGsd)) return { synced };
 
   if (!existsSync(wtGsd) || !existsSync(mainGsd)) return { synced };
 
@@ -330,17 +562,7 @@ export function syncWorktreeStateBack(
   // Also includes QUEUE.md, completed-units.json, and metrics.json which are
   // written during milestone closeout and lost on teardown without explicit sync
   // (#1787, #2313).
-  const rootFiles = [
-    "DECISIONS.md",
-    "REQUIREMENTS.md",
-    "PROJECT.md",
-    "KNOWLEDGE.md",
-    "OVERRIDES.md",
-    "QUEUE.md",
-    "completed-units.json",
-    "metrics.json",
-  ];
-  for (const f of rootFiles) {
+  for (const f of ROOT_STATE_FILES) {
     const src = join(wtGsd, f);
     const dst = join(mainGsd, f);
     if (existsSync(src)) {
@@ -379,6 +601,29 @@ export function syncWorktreeStateBack(
  * Sync a single milestone directory from worktree to main.
  * Copies milestone-level .md files, slice-level files, and task summaries.
  */
+/** Copy matching files from srcDir to dstDir (non-fatal per file). */
+function syncDirFiles(
+  srcDir: string,
+  dstDir: string,
+  filter: (name: string) => boolean,
+  synced: string[],
+  prefix: string,
+): void {
+  try {
+    for (const entry of readdirSync(srcDir, { withFileTypes: true })) {
+      if (!entry.isFile() || !filter(entry.name)) continue;
+      try {
+        cpSync(join(srcDir, entry.name), join(dstDir, entry.name), { force: true });
+        synced.push(`${prefix}${entry.name}`);
+      } catch {
+        /* non-fatal */
+      }
+    }
+  } catch {
+    /* non-fatal — srcDir may not be readable */
+  }
+}
+
 function syncMilestoneDir(
   wtGsd: string,
   mainGsd: string,
@@ -391,83 +636,35 @@ function syncMilestoneDir(
   if (!existsSync(wtMilestoneDir)) return;
   mkdirSync(mainMilestoneDir, { recursive: true });
 
+  const isMd = (name: string): boolean => name.endsWith(".md");
+
   // Sync milestone-level files (SUMMARY, VALIDATION, ROADMAP, CONTEXT)
+  syncDirFiles(wtMilestoneDir, mainMilestoneDir, isMd, synced, `milestones/${mid}/`);
+
+  // Sync slice-level files (summaries, UATs) and task summaries (#1678)
+  const wtSlicesDir = join(wtMilestoneDir, "slices");
+  const mainSlicesDir = join(mainMilestoneDir, "slices");
+  if (!existsSync(wtSlicesDir)) return;
+
   try {
-    for (const entry of readdirSync(wtMilestoneDir, { withFileTypes: true })) {
-      if (entry.isFile() && entry.name.endsWith(".md")) {
-        const src = join(wtMilestoneDir, entry.name);
-        const dst = join(mainMilestoneDir, entry.name);
-        try {
-          cpSync(src, dst, { force: true });
-          synced.push(`milestones/${mid}/${entry.name}`);
-        } catch {
-          /* non-fatal */
-        }
+    for (const sliceEntry of readdirSync(wtSlicesDir, { withFileTypes: true })) {
+      if (!sliceEntry.isDirectory()) continue;
+      const sid = sliceEntry.name;
+      const wtSliceDir = join(wtSlicesDir, sid);
+      const mainSliceDir = join(mainSlicesDir, sid);
+      mkdirSync(mainSliceDir, { recursive: true });
+
+      syncDirFiles(wtSliceDir, mainSliceDir, isMd, synced, `milestones/${mid}/slices/${sid}/`);
+
+      const wtTasksDir = join(wtSliceDir, "tasks");
+      const mainTasksDir = join(mainSliceDir, "tasks");
+      if (existsSync(wtTasksDir)) {
+        mkdirSync(mainTasksDir, { recursive: true });
+        syncDirFiles(wtTasksDir, mainTasksDir, isMd, synced, `milestones/${mid}/slices/${sid}/tasks/`);
       }
     }
   } catch {
     /* non-fatal */
-  }
-
-  // Sync slice-level files (summaries, UATs)
-  const wtSlicesDir = join(wtMilestoneDir, "slices");
-  const mainSlicesDir = join(mainMilestoneDir, "slices");
-  if (existsSync(wtSlicesDir)) {
-    try {
-      for (const sliceEntry of readdirSync(wtSlicesDir, {
-        withFileTypes: true,
-      })) {
-        if (!sliceEntry.isDirectory()) continue;
-        const sid = sliceEntry.name;
-        const wtSliceDir = join(wtSlicesDir, sid);
-        const mainSliceDir = join(mainSlicesDir, sid);
-        mkdirSync(mainSliceDir, { recursive: true });
-
-        for (const fileEntry of readdirSync(wtSliceDir, {
-          withFileTypes: true,
-        })) {
-          if (fileEntry.isFile() && fileEntry.name.endsWith(".md")) {
-            const src = join(wtSliceDir, fileEntry.name);
-            const dst = join(mainSliceDir, fileEntry.name);
-            try {
-              cpSync(src, dst, { force: true });
-              synced.push(
-                `milestones/${mid}/slices/${sid}/${fileEntry.name}`,
-              );
-            } catch {
-              /* non-fatal */
-            }
-          } else if (fileEntry.isDirectory() && fileEntry.name === "tasks") {
-            // Recurse into tasks/ subdirectory to sync task summaries (#1678).
-            // Without this, T01-SUMMARY.md etc. are silently dropped on
-            // worktree teardown because the loop only processes isFile() entries.
-            const wtTasksDir = join(wtSliceDir, "tasks");
-            const mainTasksDir = join(mainSliceDir, "tasks");
-            mkdirSync(mainTasksDir, { recursive: true });
-            try {
-              for (const taskEntry of readdirSync(wtTasksDir, { withFileTypes: true })) {
-                if (taskEntry.isFile() && taskEntry.name.endsWith(".md")) {
-                  const taskSrc = join(wtTasksDir, taskEntry.name);
-                  const taskDst = join(mainTasksDir, taskEntry.name);
-                  try {
-                    cpSync(taskSrc, taskDst, { force: true });
-                    synced.push(
-                      `milestones/${mid}/slices/${sid}/tasks/${taskEntry.name}`,
-                    );
-                  } catch {
-                    /* non-fatal */
-                  }
-                }
-              }
-            } catch {
-              /* non-fatal: tasks dir read failure */
-            }
-          }
-        }
-      }
-    } catch {
-      /* non-fatal */
-    }
   }
 }
 // ─── Worktree Post-Create Hook (#597) ────────────────────────────────────────

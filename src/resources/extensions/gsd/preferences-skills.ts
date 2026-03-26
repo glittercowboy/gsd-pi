@@ -8,7 +8,6 @@
 import { existsSync, readdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { isAbsolute, join } from "node:path";
-import { getAgentDir } from "@gsd/pi-coding-agent";
 import { statSync } from "node:fs";
 
 import type {
@@ -25,13 +24,20 @@ export type { GSDSkillRule, SkillDiscoveryMode, SkillResolution, SkillResolution
 
 /**
  * Known skill directories, in priority order.
- * User skills (~/.gsd/agent/skills/) take precedence over project skills.
+ * Global skills (~/.agents/skills/) take precedence over project skills.
+ * Legacy ~/.gsd/agent/skills/ is included as a fallback for pre-migration installs.
  */
 export function getSkillSearchDirs(cwd: string): Array<{ dir: string; method: SkillResolution["method"] }> {
-  return [
-    { dir: join(getAgentDir(), "skills"), method: "user-skill" },
-    { dir: join(cwd, ".pi", "agent", "skills"), method: "project-skill" },
+  const dirs: Array<{ dir: string; method: SkillResolution["method"] }> = [
+    { dir: join(homedir(), ".agents", "skills"), method: "user-skill" },
+    { dir: join(cwd, ".agents", "skills"), method: "project-skill" },
   ];
+  // Legacy fallback — read skills from old GSD directory only if migration hasn't completed
+  const legacyDir = join(homedir(), ".gsd", "agent", "skills");
+  if (existsSync(legacyDir) && !existsSync(join(legacyDir, ".migrated-to-agents"))) {
+    dirs.push({ dir: legacyDir, method: "user-skill" });
+  }
+  return dirs;
 }
 
 /**

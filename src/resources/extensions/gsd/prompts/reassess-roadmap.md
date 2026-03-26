@@ -36,6 +36,9 @@ Ask yourself:
 - Did assumptions in remaining slice descriptions turn out wrong?
 - If `.gsd/REQUIREMENTS.md` exists: did this slice validate, invalidate, defer, block, or newly surface requirements?
 - If `.gsd/REQUIREMENTS.md` exists: does the remaining roadmap still provide credible coverage for Active requirements, including launchability, primary user loop, continuity, and failure visibility where relevant?
+- Are the Threat Surface and Requirement Impact sections in completed slice plans still accurate for remaining slices?
+- Did this slice's Operational Readiness reveal monitoring gaps that remaining slices should address?
+- Should any Horizontal Checklist items be updated based on what was actually built?
 
 ### Success-Criterion Coverage Check
 

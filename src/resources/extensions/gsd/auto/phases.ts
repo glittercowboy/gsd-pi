@@ -333,6 +333,8 @@ export async function runPreDispatch(
       if (s.currentMilestoneId) {
         try {
           deps.resolver.mergeAndExit(s.currentMilestoneId, ctx.ui);
+          // Prevent stopAuto from attempting the same merge (#2645)
+          s.milestoneMergedInPhases = true;
         } catch (mergeErr) {
           if (mergeErr instanceof MergeConflictError) {
             ctx.ui.notify(
@@ -428,6 +430,8 @@ export async function runPreDispatch(
     if (s.currentMilestoneId) {
       try {
         deps.resolver.mergeAndExit(s.currentMilestoneId, ctx.ui);
+        // Prevent stopAuto from attempting the same merge (#2645)
+        s.milestoneMergedInPhases = true;
       } catch (mergeErr) {
         if (mergeErr instanceof MergeConflictError) {
           ctx.ui.notify(
@@ -500,7 +504,17 @@ export async function runDispatch(
 
   if (dispatchResult.action === "stop") {
     deps.emitJournalEvent({ ts: new Date().toISOString(), flowId: ic.flowId, seq: ic.nextSeq(), eventType: "dispatch-stop", rule: dispatchResult.matchedRule, data: { reason: dispatchResult.reason } });
-    await closeoutAndStop(ctx, pi, s, deps, dispatchResult.reason);
+    // Warning-level stops are recoverable human checkpoints (e.g. UAT verdict
+    // gate) — pause instead of hard-stopping so the session is resumable with
+    // `/gsd auto`. Error/info-level stops remain hard stops for infrastructure
+    // failures and terminal conditions respectively.
+    // See: https://github.com/gsd-build/gsd-2/issues/2474
+    if (dispatchResult.level === "warning") {
+      ctx.ui.notify(dispatchResult.reason, "warning");
+      await deps.pauseAuto(ctx, pi);
+    } else {
+      await closeoutAndStop(ctx, pi, s, deps, dispatchResult.reason);
+    }
     debugLog("autoLoop", { phase: "exit", reason: "dispatch-stop" });
     return { action: "break", reason: "dispatch-stop" };
   }
@@ -1039,17 +1053,16 @@ export async function runUnitPhase(
   );
 
   // Tag the most recent window entry with error info for stuck detection
-  if (unitResult.status === "error" || unitResult.status === "cancelled") {
-    const lastEntry = loopState.recentUnits[loopState.recentUnits.length - 1];
-    if (lastEntry) {
+  const lastEntry = loopState.recentUnits[loopState.recentUnits.length - 1];
+  if (lastEntry) {
+    if (unitResult.errorContext) {
+      lastEntry.error = `${unitResult.errorContext.category}:${unitResult.errorContext.message}`.slice(0, 200);
+    } else if (unitResult.status === "error" || unitResult.status === "cancelled") {
       lastEntry.error = `${unitResult.status}:${unitType}/${unitId}`;
-    }
-  } else if (unitResult.event?.messages?.length) {
-    const lastMsg = unitResult.event.messages[unitResult.event.messages.length - 1];
-    const msgStr = typeof lastMsg === "string" ? lastMsg : JSON.stringify(lastMsg);
-    if (/error|fail|exception/i.test(msgStr)) {
-      const lastEntry = loopState.recentUnits[loopState.recentUnits.length - 1];
-      if (lastEntry) {
+    } else if (unitResult.event?.messages?.length) {
+      const lastMsg = unitResult.event.messages[unitResult.event.messages.length - 1];
+      const msgStr = typeof lastMsg === "string" ? lastMsg : JSON.stringify(lastMsg);
+      if (/error|fail|exception/i.test(msgStr)) {
         lastEntry.error = msgStr.slice(0, 200);
       }
     }
@@ -1122,7 +1135,7 @@ export async function runUnitPhase(
     s.unitRecoveryCount.delete(`${unitType}/${unitId}`);
   }
 
-  deps.emitJournalEvent({ ts: new Date().toISOString(), flowId: ic.flowId, seq: ic.nextSeq(), eventType: "unit-end", data: { unitType, unitId, status: unitResult.status, artifactVerified }, causedBy: { flowId: ic.flowId, seq: unitStartSeq } });
+  deps.emitJournalEvent({ ts: new Date().toISOString(), flowId: ic.flowId, seq: ic.nextSeq(), eventType: "unit-end", data: { unitType, unitId, status: unitResult.status, artifactVerified, ...(unitResult.errorContext ? { errorContext: unitResult.errorContext } : {}) }, causedBy: { flowId: ic.flowId, seq: unitStartSeq } });
 
   return { action: "next", data: { unitStartedAt: s.currentUnit.startedAt } };
 }

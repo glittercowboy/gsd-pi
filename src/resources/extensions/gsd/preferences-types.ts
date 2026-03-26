@@ -18,6 +18,7 @@ import type {
   ParallelConfig,
   ContextSelectionMode,
   ReactiveExecutionConfig,
+  GateEvaluationConfig,
 } from "./types.js";
 import type { DynamicRoutingConfig } from "./model-router.js";
 import type { GitHubSyncConfig } from "../github-sync/types.js";
@@ -87,6 +88,7 @@ export const KNOWN_PREFERENCE_KEYS = new Set<string>([
   "context_selection",
   "widget_mode",
   "reactive_execution",
+  "gate_evaluation",
   "github",
   "service_tier",
   "forensics_dedup",
@@ -96,7 +98,7 @@ export const KNOWN_PREFERENCE_KEYS = new Set<string>([
 /** Canonical list of all dispatch unit types. */
 export const KNOWN_UNIT_TYPES = [
   "research-milestone", "plan-milestone", "research-slice", "plan-slice",
-  "execute-task", "reactive-execute", "complete-slice", "replan-slice", "reassess-roadmap",
+  "execute-task", "reactive-execute", "gate-evaluate", "complete-slice", "replan-slice", "reassess-roadmap",
   "run-uat", "complete-milestone",
 ] as const;
 export type UnitType = (typeof KNOWN_UNIT_TYPES)[number];
@@ -221,6 +223,8 @@ export interface GSDPreferences {
   widget_mode?: "full" | "small" | "min" | "off";
   /** Reactive (graph-derived parallel) task execution within slices. Disabled by default. */
   reactive_execution?: ReactiveExecutionConfig;
+  /** Parallel quality gate evaluation during slice planning. Disabled by default. */
+  gate_evaluation?: GateEvaluationConfig;
   /** GitHub sync configuration. Opt-in: syncs GSD events to GitHub Issues, Milestones, and PRs. */
   github?: GitHubSyncConfig;
   /** OpenAI service tier preference. "priority" = 2x cost, faster. "flex" = 0.5x cost, slower. Only affects gpt-5.4 models. */

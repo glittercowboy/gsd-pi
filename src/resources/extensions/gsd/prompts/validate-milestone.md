@@ -24,7 +24,12 @@ All relevant context has been preloaded below — the roadmap, all slice summari
 2. For each **slice** in the roadmap, verify its demo/deliverable claim against its summary. Flag any slice whose summary does not substantiate its claimed output.
 3. Check **cross-slice integration points** — do boundary map entries (produces/consumes) align with what was actually built?
 4. Check **requirement coverage** — are all active requirements addressed by at least one slice?
-5. Determine a verdict:
+5. If **Verification Classes** are provided in the inlined context above, check each non-empty class:
+   - For each verification class (Contract, Integration, Operational, UAT), determine whether slice summaries, UAT results, or observable behavior provide evidence that this verification tier was addressed.
+   - Document the compliance status of each class in your verdict rationale.
+   - If `Operational` verification is non-empty and no evidence of operational verification exists, flag this explicitly — it means planned operational checks (migrations, deployments, runtime verification) were not proven.
+   - A milestone with unaddressed verification classes may still pass if the gaps are minor, but the gaps MUST be documented in the Deferred Work Inventory.
+6. Determine a verdict:
    - `pass` — all criteria met, all slices delivered, no gaps
    - `needs-attention` — minor gaps that do not block completion (document them)
    - `needs-remediation` — material gaps found; remediation slices must be added to the roadmap

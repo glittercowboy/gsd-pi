@@ -76,12 +76,16 @@ export function readCrashLock(basePath: string): LockData | null {
 /**
  * Check whether the process that wrote the lock is still running.
  * Uses `process.kill(pid, 0)` which sends no signal but checks liveness.
- * Returns false if the PID matches our own (recycled PID from a prior run).
+ * Returns true if the PID matches our own — we are the lock holder (#2470).
  */
 export function isLockProcessAlive(lock: LockData): boolean {
   const pid = lock.pid;
   if (!Number.isInteger(pid) || pid <= 0) return false;
-  if (pid === process.pid) return false;
+  // Our own PID means WE hold this lock — we are alive. (#2470)
+  // Callers that need to distinguish "our lock" from "someone else's lock"
+  // (e.g. startAuto checking for a prior crashed session with a recycled PID)
+  // already guard with `crashLock.pid !== process.pid` before calling us.
+  if (pid === process.pid) return true;
   try {
     process.kill(pid, 0);
     return true;

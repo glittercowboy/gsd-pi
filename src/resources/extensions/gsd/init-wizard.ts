@@ -15,6 +15,7 @@ import { ensureGitignore, untrackRuntimeFiles } from "./gitignore.js";
 import { gsdRoot } from "./paths.js";
 import { assertSafeDirectory } from "./validate-directory.js";
 import type { ProjectDetection, ProjectSignals } from "./detection.js";
+import { runSkillInstallStep } from "./skill-catalog.js";
 
 // ─── Types ──────────────────────────────────────────────────────────────────────
 
@@ -223,7 +224,14 @@ export async function showProjectInit(
     await customizeAdvancedPrefs(ctx, prefs);
   }
 
-  // ── Step 8: Bootstrap .gsd/ ────────────────────────────────────────────────
+  // ── Step 8: Skill Installation ─────────────────────────────────────────────
+  try {
+    await runSkillInstallStep(ctx, signals);
+  } catch {
+    // Non-fatal — skill installation failure should never block project init
+  }
+
+  // ── Step 9: Bootstrap .gsd/ ────────────────────────────────────────────────
   bootstrapGsdDirectory(basePath, prefs, signals);
 
   // Ensure .gitignore

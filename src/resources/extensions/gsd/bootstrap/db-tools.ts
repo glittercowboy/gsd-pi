@@ -1112,4 +1112,97 @@ export function registerDbTools(pi: ExtensionAPI): void {
 
   pi.registerTool(reassessRoadmapTool);
   registerAlias(pi, reassessRoadmapTool, "gsd_roadmap_reassess", "gsd_reassess_roadmap");
+
+  // ─── gsd_save_gate_result ──────────────────────────────────────────────
+
+  const saveGateResultExecute = async (_toolCallId: string, params: any, _signal: AbortSignal | undefined, _onUpdate: unknown, _ctx: unknown) => {
+    const dbAvailable = await ensureDbOpen();
+    if (!dbAvailable) {
+      return {
+        content: [{ type: "text" as const, text: "Error: GSD database is not available." }],
+        details: { operation: "save_gate_result", error: "db_unavailable" } as any,
+      };
+    }
+    const validGates = ["Q3", "Q4", "Q5", "Q6", "Q7", "Q8"];
+    if (!validGates.includes(params.gateId)) {
+      return {
+        content: [{ type: "text" as const, text: `Error: Invalid gateId "${params.gateId}". Must be one of: ${validGates.join(", ")}` }],
+        details: { operation: "save_gate_result", error: "invalid_gate_id" } as any,
+      };
+    }
+    const validVerdicts = ["pass", "flag", "omitted"];
+    if (!validVerdicts.includes(params.verdict)) {
+      return {
+        content: [{ type: "text" as const, text: `Error: Invalid verdict "${params.verdict}". Must be one of: ${validVerdicts.join(", ")}` }],
+        details: { operation: "save_gate_result", error: "invalid_verdict" } as any,
+      };
+    }
+    try {
+      const { saveGateResult } = await import("../gsd-db.js");
+      const { invalidateStateCache } = await import("../state.js");
+      saveGateResult({
+        milestoneId: params.milestoneId,
+        sliceId: params.sliceId,
+        gateId: params.gateId,
+        taskId: params.taskId ?? "",
+        verdict: params.verdict,
+        rationale: params.rationale,
+        findings: params.findings ?? "",
+      });
+      invalidateStateCache();
+      return {
+        content: [{ type: "text" as const, text: `Gate ${params.gateId} result saved: verdict=${params.verdict}` }],
+        details: { operation: "save_gate_result", gateId: params.gateId, verdict: params.verdict } as any,
+      };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      logError("tool", `gsd_save_gate_result failed: ${msg}`, { tool: "gsd_save_gate_result", error: String(err) });
+      return {
+        content: [{ type: "text" as const, text: `Error saving gate result: ${msg}` }],
+        details: { operation: "save_gate_result", error: msg } as any,
+      };
+    }
+  };
+
+  const saveGateResultTool = {
+    name: "gsd_save_gate_result",
+    label: "Save Gate Result",
+    description:
+      "Save the result of a quality gate evaluation (Q3-Q8) to the GSD database. " +
+      "Called by gate evaluation sub-agents after analyzing a specific quality question.",
+    promptSnippet: "Save quality gate evaluation result (verdict, rationale, findings)",
+    promptGuidelines: [
+      "Use gsd_save_gate_result after evaluating a quality gate question.",
+      "gateId must be one of: Q3, Q4, Q5, Q6, Q7, Q8.",
+      "verdict must be: pass (no concerns), flag (concerns found), or omitted (not applicable).",
+      "rationale should be a one-sentence justification for the verdict.",
+      "findings should contain detailed markdown analysis (or empty string if omitted).",
+    ],
+    parameters: Type.Object({
+      milestoneId: Type.String({ description: "Milestone ID (e.g. M001)" }),
+      sliceId: Type.String({ description: "Slice ID (e.g. S01)" }),
+      gateId: Type.String({ description: "Gate ID: Q3, Q4, Q5, Q6, Q7, or Q8" }),
+      taskId: Type.Optional(Type.String({ description: "Task ID for task-scoped gates (Q5/Q6/Q7)" })),
+      verdict: Type.String({ description: "pass, flag, or omitted" }),
+      rationale: Type.String({ description: "One-sentence justification" }),
+      findings: Type.Optional(Type.String({ description: "Detailed markdown findings" })),
+    }),
+    execute: saveGateResultExecute,
+    renderCall(args: any, theme: any) {
+      let text = theme.fg("toolTitle", theme.bold("save_gate_result "));
+      text += theme.fg("accent", args.gateId ?? "");
+      text += theme.fg("dim", ` → ${args.verdict ?? ""}`);
+      return new Text(text, 0, 0);
+    },
+    renderResult(result: any, _options: any, theme: any) {
+      const d = result.details;
+      if (result.isError || d?.error) {
+        return new Text(theme.fg("error", `Error: ${d?.error ?? "unknown"}`), 0, 0);
+      }
+      const color = d?.verdict === "flag" ? "warning" : "success";
+      return new Text(theme.fg(color, `${d?.gateId}: ${d?.verdict}`), 0, 0);
+    },
+  };
+
+  pi.registerTool(saveGateResultTool);
 }

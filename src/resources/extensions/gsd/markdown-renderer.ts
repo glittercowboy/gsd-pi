@@ -20,8 +20,10 @@ import {
   getSlice,
   getArtifact,
   insertArtifact,
+  getGateResults,
 } from "./gsd-db.js";
 import type { MilestoneRow, SliceRow, TaskRow, ArtifactRow } from "./gsd-db.js";
+import type { GateRow } from "./types.js";
 import {
   resolveMilestoneFile,
   resolveSliceFile,
@@ -188,7 +190,7 @@ function renderRoadmapMarkdown(milestone: MilestoneRow, slices: SliceRow[]): str
   return `${lines.join("\n").trimEnd()}\n`;
 }
 
-function renderTaskPlanMarkdown(task: TaskRow): string {
+function renderTaskPlanMarkdown(task: TaskRow, taskGates: GateRow[] = []): string {
   const estimatedSteps = Math.max(1, task.description.trim().split(/\n+/).filter(Boolean).length || 1);
   const estimatedFiles = task.files.length > 0
     ? task.files.length
@@ -251,10 +253,22 @@ function renderTaskPlanMarkdown(task: TaskRow): string {
     lines.push("");
   }
 
+  // ── Quality Gate Sections (Q5/Q6/Q7) ──────────────────────────────────
+  const gateLabels: Record<string, string> = { Q5: "Failure Modes", Q6: "Load Profile", Q7: "Negative Tests" };
+  for (const [gid, label] of Object.entries(gateLabels)) {
+    const gate = taskGates.find(g => g.gate_id === gid && g.status === "complete");
+    if (gate && gate.verdict !== "omitted") {
+      lines.push(`## ${label}`);
+      lines.push("");
+      lines.push(gate.findings.trim() || `- **Verdict:** ${gate.verdict}\n- **Rationale:** ${gate.rationale}`);
+      lines.push("");
+    }
+  }
+
   return `${lines.join("\n").trimEnd()}\n`;
 }
 
-function renderSlicePlanMarkdown(slice: SliceRow, tasks: TaskRow[]): string {
+function renderSlicePlanMarkdown(slice: SliceRow, tasks: TaskRow[], gates: GateRow[] = []): string {
   const lines: string[] = [];
 
   lines.push(`# ${slice.id}: ${slice.title || slice.id}`);
@@ -273,6 +287,23 @@ function renderSlicePlanMarkdown(slice: SliceRow, tasks: TaskRow[]): string {
     lines.push("- Complete the planned slice outcomes.");
   }
   lines.push("");
+
+  // ── Quality Gate Sections (Q3/Q4) ────────────────────────────────────
+  const q3 = gates.find(g => g.gate_id === "Q3" && g.status === "complete");
+  if (q3 && q3.verdict !== "omitted") {
+    lines.push("## Threat Surface");
+    lines.push("");
+    lines.push(q3.findings.trim() || `- **Verdict:** ${q3.verdict}\n- **Rationale:** ${q3.rationale}`);
+    lines.push("");
+  }
+
+  const q4 = gates.find(g => g.gate_id === "Q4" && g.status === "complete");
+  if (q4 && q4.verdict !== "omitted") {
+    lines.push("## Requirement Impact");
+    lines.push("");
+    lines.push(q4.findings.trim() || `- **Verdict:** ${q4.verdict}\n- **Rationale:** ${q4.rationale}`);
+    lines.push("");
+  }
 
   if (slice.proof_level.trim()) {
     lines.push("## Proof Level");
@@ -354,7 +385,8 @@ export async function renderPlanFromDb(
   const absPath = resolveSliceFile(basePath, milestoneId, sliceId, "PLAN")
     ?? join(slicePath, `${sliceId}-PLAN.md`);
   const artifactPath = toArtifactPath(absPath, basePath);
-  const content = renderSlicePlanMarkdown(slice, tasks);
+  const sliceGates = getGateResults(milestoneId, sliceId, "slice");
+  const content = renderSlicePlanMarkdown(slice, tasks, sliceGates);
 
   await writeAndStore(absPath, artifactPath, content, {
     artifact_type: "PLAN",
@@ -387,7 +419,8 @@ export async function renderTaskPlanFromDb(
   mkdirSync(tasksDir, { recursive: true });
   const absPath = join(tasksDir, buildTaskFileName(taskId, "PLAN"));
   const artifactPath = toArtifactPath(absPath, basePath);
-  const content = task.full_plan_md.trim() ? task.full_plan_md : renderTaskPlanMarkdown(task);
+  const taskGates = getGateResults(milestoneId, sliceId, "task").filter(g => g.task_id === taskId);
+  const content = task.full_plan_md.trim() ? task.full_plan_md : renderTaskPlanMarkdown(task, taskGates);
 
   await writeAndStore(absPath, artifactPath, content, {
     artifact_type: "PLAN",

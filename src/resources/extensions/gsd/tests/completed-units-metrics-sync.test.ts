@@ -48,35 +48,32 @@ test("#2313: completed-units.json should not be blindly wiped to [] on milestone
 // ─── Bug 2: metrics.json should be in the sync file lists ──────────────────
 
 test("#2313: syncStateToProjectRoot should sync metrics.json", () => {
-  const syncSrcPath = join(import.meta.dirname, "..", "auto-worktree-sync.ts");
+  const syncSrcPath = join(import.meta.dirname, "..", "auto-worktree.ts");
   const syncSrc = readFileSync(syncSrcPath, "utf-8");
 
   // syncStateToProjectRoot should copy metrics.json from worktree to project root
   assert.ok(
     syncSrc.includes("metrics.json"),
-    "auto-worktree-sync.ts should reference metrics.json for sync",
+    "auto-worktree.ts should reference metrics.json for sync",
   );
 });
 
-test("#2313: syncWorktreeStateBack should include metrics.json in root files list", () => {
+test("#2313: syncWorktreeStateBack should include metrics.json in ROOT_STATE_FILES", () => {
   const autoWorktreeSrcPath = join(import.meta.dirname, "..", "auto-worktree.ts");
   const autoWorktreeSrc = readFileSync(autoWorktreeSrcPath, "utf-8");
 
-  // Find the rootFiles array in syncWorktreeStateBack
-  const syncBackIdx = autoWorktreeSrc.indexOf("syncWorktreeStateBack");
-  assert.ok(syncBackIdx !== -1, "syncWorktreeStateBack exists");
+  // Find the ROOT_STATE_FILES constant (single source of truth for both sync directions)
+  const constIdx = autoWorktreeSrc.indexOf("ROOT_STATE_FILES");
+  assert.ok(constIdx !== -1, "ROOT_STATE_FILES constant exists");
 
-  const rootFilesIdx = autoWorktreeSrc.indexOf("rootFiles", syncBackIdx);
-  assert.ok(rootFilesIdx !== -1, "rootFiles list exists in syncWorktreeStateBack");
-
-  // Get the rootFiles array content
-  const arrayStart = autoWorktreeSrc.indexOf("[", rootFilesIdx);
+  // Get the array content
+  const arrayStart = autoWorktreeSrc.indexOf("[", constIdx);
   const arrayEnd = autoWorktreeSrc.indexOf("]", arrayStart);
   const rootFilesBlock = autoWorktreeSrc.slice(arrayStart, arrayEnd);
 
   assert.ok(
     rootFilesBlock.includes("metrics.json"),
-    "metrics.json should be in syncWorktreeStateBack rootFiles list",
+    "metrics.json should be in ROOT_STATE_FILES list",
   );
 });
 

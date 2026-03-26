@@ -69,6 +69,14 @@ export function registerHooks(pi: ExtensionAPI): void {
     }
   });
 
+  pi.on("session_switch", async (_event, ctx) => {
+    resetWriteGateState();
+    resetToolCallLoopGuard();
+    clearDiscussionFlowState();
+    await syncServiceTierStatus(ctx);
+    loadToolApiKeys();
+  });
+
   pi.on("before_agent_start", async (event, ctx: ExtensionContext) => {
     return buildBeforeAgentStartResult(event, ctx);
   });

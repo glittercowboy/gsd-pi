@@ -220,8 +220,6 @@ function sanitizeCommand(cmd: string): string | null {
 }
 
 export interface RunVerificationGateOptions {
-  basePath: string;
-  unitId: string;
   cwd: string;
   preferenceCommands?: string[];
   taskPlanVerify?: string;

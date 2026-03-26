@@ -203,8 +203,7 @@ test("initResources syncs extensions, agents, and skills to target dir", async (
   // Agents synced
   assert.ok(existsSync(join(fakeAgentDir, "agents", "scout.md")), "scout agent synced");
 
-  // Skills synced
-  assert.ok(existsSync(join(fakeAgentDir, "skills")), "skills directory synced");
+  // Skills are NOT synced here — they use ~/.agents/skills/ via skills.sh
 
   // Version manifest synced
   const managedVersion = readManagedResourceVersion(fakeAgentDir);

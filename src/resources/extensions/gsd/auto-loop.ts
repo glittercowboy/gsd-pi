@@ -13,4 +13,4 @@ export { resolveAgentEnd, resolveAgentEndCancelled, isSessionSwitchInFlight, _re
 export { detectStuck } from "./auto/detect-stuck.js";
 export { runUnit } from "./auto/run-unit.js";
 export type { LoopDeps } from "./auto/loop-deps.js";
-export type { AgentEndEvent, UnitResult } from "./auto/types.js";
+export type { AgentEndEvent, ErrorContext, UnitResult } from "./auto/types.js";

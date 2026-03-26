@@ -12,6 +12,7 @@
 
 import type { ExtensionContext, ExtensionAPI } from "@gsd/pi-coding-agent";
 import { resolveSliceFile, resolveSlicePath } from "./paths.js";
+import { parseUnitId } from "./unit-id.js";
 import { isDbAvailable, getTask } from "./gsd-db.js";
 import { loadEffectiveGSDPreferences } from "./preferences.js";
 import {
@@ -60,10 +61,9 @@ export async function runPostUnitVerification(
     const prefs = effectivePrefs?.preferences;
 
     // Read task plan verify field
-    const parts = s.currentUnit.id.split("/");
+    const { milestone: mid, slice: sid, task: tid } = parseUnitId(s.currentUnit.id);
     let taskPlanVerify: string | undefined;
-    if (parts.length >= 3) {
-      const [mid, sid, tid] = parts;
+    if (mid && sid && tid) {
       if (isDbAvailable()) {
         taskPlanVerify = getTask(mid, sid, tid)?.verify;
       }
@@ -71,8 +71,6 @@ export async function runPostUnitVerification(
     }
 
     const result = runVerificationGate({
-      basePath: s.basePath,
-      unitId: s.currentUnit.id,
       cwd: s.basePath,
       preferenceCommands: prefs?.verification_commands,
       taskPlanVerify,
@@ -141,9 +139,8 @@ export async function runPostUnitVerification(
 
     // Write verification evidence JSON
     const attempt = s.verificationRetryCount.get(s.currentUnit.id) ?? 0;
-    if (parts.length >= 3) {
+    if (mid && sid && tid) {
       try {
-        const [mid, sid, tid] = parts;
         const sDir = resolveSlicePath(s.basePath, mid, sid);
         if (sDir) {
           const tasksDir = join(sDir, "tasks");

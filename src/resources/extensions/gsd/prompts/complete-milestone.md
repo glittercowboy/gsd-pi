@@ -20,11 +20,13 @@ Then:
 3. **Verify code changes exist.** Run `git diff --stat HEAD $(git merge-base HEAD main) -- ':!.gsd/'` (or the equivalent for the integration branch). If no non-`.gsd/` files appear in the diff, the milestone produced only planning artifacts and no actual code. Record this as a **verification failure**.
 4. Verify each **success criterion** from the milestone definition in `{{roadmapPath}}`. For each criterion, confirm it was met with specific evidence from slice summaries, test results, or observable behavior. Record any criterion that was NOT met as a **verification failure**.
 5. Verify the milestone's **definition of done** — all slices are `[x]`, all slice summaries exist, and any cross-slice integration points work correctly. Record any unmet items as a **verification failure**.
-6. Validate **requirement status transitions**. For each requirement that changed status during this milestone, confirm the transition is supported by evidence. Requirements can move between Active, Validated, Deferred, Blocked, or Out of Scope — but only with proof.
+6. If the roadmap includes a **Horizontal Checklist**, verify each item was addressed during the milestone. Note unchecked items in the milestone summary.
+7. Fill the **Decision Re-evaluation** table in the milestone summary. For each key decision from `.gsd/DECISIONS.md` made during this milestone, evaluate whether it is still valid given what was actually built. Flag decisions that should be revisited next milestone.
+8. Validate **requirement status transitions**. For each requirement that changed status during this milestone, confirm the transition is supported by evidence. Requirements can move between Active, Validated, Deferred, Blocked, or Out of Scope — but only with proof.
 
 ### Verification Gate — STOP if verification failed
 
-**If ANY verification failure was recorded in steps 3, 4, or 5, you MUST follow the failure path below. Do NOT proceed to step 7.**
+**If ANY verification failure was recorded in steps 3, 4, or 5, you MUST follow the failure path below. Do NOT proceed to step 9.**
 
 **Failure path** (verification failed):
 - Do NOT call `gsd_complete_milestone` — the milestone must not be marked as complete.
@@ -33,9 +35,9 @@ Then:
 - Write a clear summary of what failed and why to help the next attempt.
 - Say: "Milestone {{milestoneId}} verification FAILED — not complete." and stop.
 
-**Success path** (all verifications passed — continue with steps 7–11):
+**Success path** (all verifications passed — continue with steps 9–13):
 
-7. **Persist completion through `gsd_complete_milestone`.** Call it with the parameters below. The tool updates the milestone status in the DB, renders `{{milestoneSummaryPath}}`, and validates all slices are complete before proceeding.
+9. **Persist completion through `gsd_complete_milestone`.** Call it with the parameters below. The tool updates the milestone status in the DB, renders `{{milestoneSummaryPath}}`, and validates all slices are complete before proceeding.
 
    **Required parameters:**
    - `milestoneId` (string) — Milestone ID (e.g. M001)
@@ -53,10 +55,10 @@ Then:
    **Optional parameters:**
    - `followUps` (string) — Follow-up items for future milestones
    - `deviations` (string) — Deviations from the original plan
-8. For each requirement whose status changed in step 6, call `gsd_requirement_update` with the requirement ID and updated `status` and `validation` fields — the tool regenerates `.gsd/REQUIREMENTS.md` automatically.
-9. Update `.gsd/PROJECT.md` to reflect milestone completion and current project state.
-10. Review all slice summaries for cross-cutting lessons, patterns, or gotchas that emerged during this milestone. Append any non-obvious, reusable insights to `.gsd/KNOWLEDGE.md`.
-11. Do not commit manually — the system auto-commits your changes after this unit completes.
+10. For each requirement whose status changed in step 8, call `gsd_requirement_update` with the requirement ID and updated `status` and `validation` fields — the tool regenerates `.gsd/REQUIREMENTS.md` automatically.
+11. Update `.gsd/PROJECT.md` to reflect milestone completion and current project state.
+12. Review all slice summaries for cross-cutting lessons, patterns, or gotchas that emerged during this milestone. Append any non-obvious, reusable insights to `.gsd/KNOWLEDGE.md`.
+13. Do not commit manually — the system auto-commits your changes after this unit completes.
 - Say: "Milestone {{milestoneId}} complete."
 
 **Important:** Do NOT skip the code change verification, success criteria, or definition of done verification (steps 3-5). The milestone summary must reflect actual verified outcomes, not assumed success. Verification failures BLOCK completion — there is no override. The milestone stays in its current state until issues are resolved and verification is re-run.

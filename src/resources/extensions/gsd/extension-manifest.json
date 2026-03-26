@@ -12,7 +12,7 @@
       "gsd_requirement_update", "gsd_milestone_generate_id"
     ],
     "commands": ["gsd", "kill", "worktree", "exit"],
-    "hooks": ["session_start"],
+    "hooks": ["session_start", "session_switch"],
     "shortcuts": ["Ctrl+Alt+G"]
   }
 }

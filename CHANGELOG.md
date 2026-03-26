@@ -6,6 +6,60 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [2.50.0] - 2026-03-26
+
+### Added
+- **gsd**: wire structured error propagation through UnitResult
+- add parallel quality gate evaluation with evaluating-gates phase
+- add 8-question quality gates to planning and completion templates
+
+### Fixed
+- reconcile stale task status in filesystem-based state derivation (#2514)
+- merge duplicate extractUatType imports in auto-dispatch
+- use Record<string, any> for hasNonEmptyFields to accept typed DB rows
+- **tests**: replace undefined assertTrue/assertEq with assert.ok/assert.equal
+- **tests**: replace undefined assertTrue/assertEq with assert.ok/deepStrictEqual
+- **gsd**: handle session_switch event so /resume restores GSD state (#2587)
+- use GitHub Issue Types via GraphQL instead of classification labels
+- **headless**: disable overall timeout for auto-mode, fix lock-guard auto-select (#2586)
+- **auto**: align UAT artifact suffix with gsd_slice_complete output (#2592)
+- **retry-handler**: stop treating 5xx server errors as credential-level failures
+- **test**: replace stale completedUnits with sessionFile in session-lock test
+- **session-lock**: retry lock file reads before declaring compromise
+- **gsd**: prevent ensureGsdSymlink from creating subdirectory .gsd when git-root .gsd exists
+- **auto**: add EAGAIN to INFRA_ERROR_CODES to stop budget-burning retries
+- **search**: enforce hard search budget and survive context compaction
+- **remote-questions**: use static ESM import for AuthStorage hydration
+- add SAFE_SKILL_NAME guard to reject prompt-injection via crafted skill names
+- **gsd**: use explicit parameter syntax in skill activation prompts
+- guard writeIntegrationBranch against workflow-template branches
+- preserve doctor missing-dir checks for active legacy slices
+- **gsd**: downgrade isolation mode when worktree creation fails
+- **gsd**: skip loading files for completed milestones in queue context builder
+- resolve race conditions in blob-store, discovery-cache, and agent-loop
+- **ai**: resolve WebSocket listener leaks and bound session cache
+- **rpc**: resolve double-set race, missing error ID, and stream handler
+- **pi-coding-agent**: prevent crash when login is cancelled
+- **doctor**: compare lockfile mtime against install marker, not directory mtime (#1974)
+- **doctor**: chdir out of orphaned worktree before removal (#1946)
+- **roadmap**: recognize '## Slice Roadmap' header in extractSlicesSection
+- prevent worktree sync from overwriting state and forward-sync completed-units.json
+- **web**: lazily compute default package root to avoid Windows standalone crash
+
+### Changed
+- adopt parseUnitId utility across all auto-* modules
+- flatten syncMilestoneDir nesting with shared helper
+- extract merge-state cleanup helper in reconcileMergeState
+- extract planning-state validation helpers in detectRogueFileWrites
+- split doctor-checks into focused modules
+- merge auto-worktree-sync into auto-worktree
+- deduplicate artifact path functions into single module
+- remove dead selfHealRuntimeRecords function from auto-recovery
+- decouple session-forensics from auto-worktree
+- remove dead worktree code and unused methods
+- consolidate branch name patterns into single module
+- deduplicate session-lock compromise handler and state assignment
+
 ## [2.49.0] - 2026-03-25
 
 ### Added
@@ -1879,7 +1933,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Changed
 - License updated to MIT
 
-[Unreleased]: https://github.com/gsd-build/gsd-2/compare/v2.49.0...HEAD
+[Unreleased]: https://github.com/gsd-build/gsd-2/compare/v2.50.0...HEAD
+[2.50.0]: https://github.com/gsd-build/gsd-2/compare/v2.49.0...v2.50.0
 [2.49.0]: https://github.com/gsd-build/gsd-2/compare/v2.48.0...v2.49.0
 [2.48.0]: https://github.com/gsd-build/gsd-2/compare/v2.47.0...v2.48.0
 [2.47.0]: https://github.com/gsd-build/gsd-2/compare/v2.46.1...v2.47.0

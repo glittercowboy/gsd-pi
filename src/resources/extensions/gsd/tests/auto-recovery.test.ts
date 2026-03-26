@@ -10,7 +10,6 @@ import {
   verifyExpectedArtifact,
   diagnoseExpectedArtifact,
   buildLoopRemediationSteps,
-  selfHealRuntimeRecords,
   hasImplementationArtifacts,
 } from "../auto-recovery.ts";
 import { parseRoadmap, parsePlan } from "../parsers-legacy.ts";
@@ -570,85 +569,6 @@ test("verifyExpectedArtifact plan-slice fails after deleting a rendered task pla
     closeDatabase();
     cleanup(base);
   }
-});
-
-// ─── selfHealRuntimeRecords — worktree base path (#769) ──────────────────
-
-test("selfHealRuntimeRecords clears stale dispatched records (#769)", async (t) => {
-  // selfHealRuntimeRecords now only clears stale dispatched records (>1h).
-  // No completedKeySet parameter — deriveState is sole authority.
-  const worktreeBase = makeTmpBase();
-  const mainBase = makeTmpBase();
-  t.after(() => {
-    cleanup(worktreeBase);
-    cleanup(mainBase);
-  });
-
-  const { writeUnitRuntimeRecord, readUnitRuntimeRecord } = await import("../unit-runtime.ts");
-
-  // Write a stale runtime record in the worktree .gsd/runtime/units/
-  writeUnitRuntimeRecord(worktreeBase, "run-uat", "M001/S01", Date.now() - 7200_000, {
-    phase: "dispatched",
-  });
-
-  // Verify the runtime record exists before heal
-  const before = readUnitRuntimeRecord(worktreeBase, "run-uat", "M001/S01");
-  assert.ok(before, "runtime record should exist before heal");
-
-  // Mock ExtensionContext with minimal notify
-  const notifications: string[] = [];
-  const mockCtx = {
-    ui: { notify: (msg: string) => { notifications.push(msg); } },
-  } as any;
-
-  // Call selfHeal with worktreeBase — should clear the stale record
-  await selfHealRuntimeRecords(worktreeBase, mockCtx);
-
-  // The stale record should be cleared
-  const after = readUnitRuntimeRecord(worktreeBase, "run-uat", "M001/S01");
-  assert.equal(after, null, "runtime record should be cleared after heal");
-  assert.ok(notifications.some(n => n.includes("Self-heal")), "should emit self-heal notification");
-
-  // Write a stale record at mainBase
-  writeUnitRuntimeRecord(mainBase, "run-uat", "M001/S01", Date.now() - 7200_000, {
-    phase: "dispatched",
-  });
-  await selfHealRuntimeRecords(mainBase, mockCtx);
-
-  // The record at mainBase should also be cleared by the stale timeout (>1h)
-  const afterMain = readUnitRuntimeRecord(mainBase, "run-uat", "M001/S01");
-  assert.equal(afterMain, null, "stale record at main base should be cleared by timeout");
-});
-
-// ─── #1625: selfHealRuntimeRecords on resume clears paused-session leftovers ──
-
-test("selfHealRuntimeRecords clears recently-paused dispatched records on resume (#1625)", async (t) => {
-  // When pauseAuto closes out a unit but clearUnitRuntimeRecord silently fails
-  // (e.g. permission error), selfHealRuntimeRecords on resume should still
-  // clean up stale dispatched records that are >1h old.
-  const base = makeTmpBase();
-  t.after(() => cleanup(base));
-
-  const { writeUnitRuntimeRecord, readUnitRuntimeRecord } = await import("../unit-runtime.ts");
-
-  // Simulate a record left behind after a pause — aged >1h to be considered stale
-  writeUnitRuntimeRecord(base, "execute-task", "M001/S01/T01", Date.now() - 3700_000, {
-    phase: "dispatched",
-  });
-
-  const before = readUnitRuntimeRecord(base, "execute-task", "M001/S01/T01");
-  assert.ok(before, "dispatched record should exist before resume heal");
-  assert.equal(before!.phase, "dispatched");
-
-  const notifications: string[] = [];
-  const mockCtx = {
-    ui: { notify: (msg: string) => { notifications.push(msg); } },
-  } as any;
-
-  await selfHealRuntimeRecords(base, mockCtx);
-
-  const after = readUnitRuntimeRecord(base, "execute-task", "M001/S01/T01");
-  assert.equal(after, null, "stale dispatched record should be cleared on resume (#1625)");
 });
 
 // ─── #793: invalidateAllCaches unblocks skip-loop ─────────────────────────
