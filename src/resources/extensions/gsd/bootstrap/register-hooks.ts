@@ -17,6 +17,7 @@ import { isParallelActive, shutdownParallel } from "../parallel-orchestrator.js"
 import { checkToolCallLoop, resetToolCallLoopGuard } from "./tool-call-loop-guard.js";
 import { saveActivityLog } from "../activity-log.js";
 import { startRtkStatusUpdates, stopRtkStatusUpdates } from "../rtk-status.js";
+import { rewriteCommandWithRtk } from "../shared/rtk.js";
 
 // Skip the welcome screen on the very first session_start — cli.ts already
 // printed it before the TUI launched. Only re-print on /clear (subsequent sessions).
@@ -28,6 +29,14 @@ async function syncServiceTierStatus(ctx: ExtensionContext): Promise<void> {
 }
 
 export function registerHooks(pi: ExtensionAPI): void {
+  // Route all agent bash tool commands through RTK rewrite when opted in.
+  // This is a no-op when RTK is disabled or not installed.
+  pi.on("bash_transform", async (event) => {
+    const rewritten = rewriteCommandWithRtk(event.command);
+    if (rewritten === event.command) return undefined;
+    return { command: rewritten };
+  });
+
   pi.on("session_start", async (_event, ctx) => {
     resetWriteGateState();
     resetToolCallLoopGuard();

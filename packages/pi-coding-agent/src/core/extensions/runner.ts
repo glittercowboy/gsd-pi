@@ -634,6 +634,24 @@ export class ExtensionRunner {
 		return result;
 	}
 
+	async emitBashTransform(command: string, cwd: string): Promise<string> {
+		if (!this.hasHandlers("bash_transform")) return command;
+
+		let current = command;
+		await this.invokeHandlers(
+			"bash_transform",
+			() => ({ type: "bash_transform" as const, command: current, cwd }),
+			(handlerResult) => {
+				const result = handlerResult as import("./types.js").BashTransformEventResult | undefined;
+				if (result?.command && result.command.trim()) {
+					current = result.command;
+				}
+				return { done: false }; // chain all handlers
+			},
+		);
+		return current;
+	}
+
 	async emitUserBash(event: UserBashEvent): Promise<UserBashEventResult | undefined> {
 		let result: UserBashEventResult | undefined;
 

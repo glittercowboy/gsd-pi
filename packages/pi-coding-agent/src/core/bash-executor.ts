@@ -31,7 +31,6 @@ function registerTempCleanup(): void {
 }
 import { processStreamChunk, type StreamState } from "@gsd/native";
 import { getShellConfig, getShellEnv, killProcessTree, sanitizeCommand } from "../utils/shell.js";
-import { rewriteCommandForGsd } from "../utils/rtk.js";
 import type { BashOperations } from "./tools/bash.js";
 import { DEFAULT_MAX_BYTES, truncateTail } from "./tools/truncate.js";
 
@@ -80,8 +79,7 @@ export interface BashResult {
 export function executeBash(command: string, options?: BashExecutorOptions): Promise<BashResult> {
 	return new Promise((resolve, reject) => {
 		const { shell, args } = getShellConfig();
-		const rewrittenCommand = rewriteCommandForGsd(command);
-		const child: ChildProcess = spawn(shell, [...args, sanitizeCommand(rewrittenCommand)], {
+		const child: ChildProcess = spawn(shell, [...args, sanitizeCommand(command)], {
 			detached: true,
 			env: getShellEnv(),
 			stdio: ["ignore", "pipe", "pipe"],
@@ -262,10 +260,8 @@ export async function executeBashWithOperations(
 		}
 	};
 
-	const rewrittenCommand = rewriteCommandForGsd(command);
-
 	try {
-		const result = await operations.exec(rewrittenCommand, cwd, {
+		const result = await operations.exec(command, cwd, {
 			onData,
 			signal: options?.signal,
 		});

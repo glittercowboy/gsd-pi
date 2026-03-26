@@ -607,6 +607,25 @@ export interface ModelSelectEvent {
 // User Bash Events
 // ============================================================================
 
+/**
+ * Fired before the bash tool executes a shell command.
+ * Extensions can return a transformed command string.
+ * All registered handlers are called in order; each receives the output of the previous.
+ */
+export interface BashTransformEvent {
+	type: "bash_transform";
+	/** The command string about to be executed */
+	command: string;
+	/** Current working directory */
+	cwd: string;
+}
+
+/** Result from bash_transform event handler */
+export interface BashTransformEventResult {
+	/** Replacement command string. If omitted or empty, the original command is used. */
+	command?: string;
+}
+
 /** Fired when user executes a bash command via ! or !! prefix */
 export interface UserBashEvent {
 	type: "user_bash";
@@ -846,6 +865,7 @@ export type ExtensionEvent =
 	| ToolExecutionUpdateEvent
 	| ToolExecutionEndEvent
 	| ModelSelectEvent
+	| BashTransformEvent
 	| UserBashEvent
 	| InputEvent
 	| ToolCallEvent
@@ -1027,6 +1047,7 @@ export interface ExtensionAPI {
 	on(event: "tool_execution_update", handler: ExtensionHandler<ToolExecutionUpdateEvent>): void;
 	on(event: "tool_execution_end", handler: ExtensionHandler<ToolExecutionEndEvent>): void;
 	on(event: "model_select", handler: ExtensionHandler<ModelSelectEvent>): void;
+	on(event: "bash_transform", handler: ExtensionHandler<BashTransformEvent, BashTransformEventResult>): void;
 	on(event: "tool_call", handler: ExtensionHandler<ToolCallEvent, ToolCallEventResult>): void;
 	on(event: "tool_result", handler: ExtensionHandler<ToolResultEvent, ToolResultEventResult>): void;
 	on(event: "user_bash", handler: ExtensionHandler<UserBashEvent, UserBashEventResult>): void;

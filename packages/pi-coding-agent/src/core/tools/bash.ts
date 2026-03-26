@@ -7,7 +7,6 @@ import type { AgentTool } from "@gsd/pi-agent-core";
 import { type Static, Type } from "@sinclair/typebox";
 import { spawn } from "child_process";
 import { getShellConfig, getShellEnv, killProcessTree, sanitizeCommand } from "../../utils/shell.js";
-import { rewriteCommandForGsd } from "../../utils/rtk.js";
 import { type BashInterceptorRule, compileInterceptor, DEFAULT_BASH_INTERCEPTOR_RULES } from "./bash-interceptor.js";
 import { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, formatSize, type TruncationResult, truncateTail } from "./truncate.js";
 import type { ArtifactManager } from "../artifact-manager.js";
@@ -309,7 +308,7 @@ export function createBashTool(cwd: string, options?: BashToolOptions): AgentToo
 			// Without this, `cmd &` causes the tool to hang because the background
 			// process inherits the piped stdout/stderr and keeps them open indefinitely.
 			const bgResult = rewriteBackgroundCommand(command);
-			const effectiveCommand = rewriteCommandForGsd(bgResult.command);
+			const effectiveCommand = bgResult.command;
 			if (bgResult.rewritten) {
 				// Surface a brief advisory so the LLM knows what happened.
 				// The rewrite is transparent for the common case; explicit detachment
