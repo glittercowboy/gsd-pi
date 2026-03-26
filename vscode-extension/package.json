@@ -360,7 +360,7 @@
         },
         "gsd.showProgressNotifications": {
           "type": "boolean",
-          "default": true,
+          "default": false,
           "description": "Show progress notification while the agent is working"
         },
         "gsd.activityFeedMaxItems": {
