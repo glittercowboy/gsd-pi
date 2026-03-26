@@ -14,6 +14,7 @@ import { tmpdir } from "node:os";
 import { resolveDispatch } from "../auto-dispatch.ts";
 import type { DispatchContext } from "../auto-dispatch.ts";
 import type { GSDState } from "../types.ts";
+import { openDatabase, closeDatabase, insertMilestone, insertSlice } from "../gsd-db.ts";
 
 function makeState(overrides: Partial<GSDState> = {}): GSDState {
   return {
@@ -183,19 +184,12 @@ test("dispatch: completing-milestone with missing S02 SUMMARY → stop error men
     const mDir = join(tmp, ".gsd", "milestones", "M002");
     mkdirSync(mDir, { recursive: true });
 
-    // ROADMAP with two completed slices
-    writeFileSync(
-      join(mDir, "M002-ROADMAP.md"),
-      [
-        "# M002: Test Milestone",
-        "",
-        "## Slices",
-        "",
-        "- [x] **S01: First slice** `risk:low`",
-        "- [x] **S02: Second slice** `risk:low`",
-        "",
-      ].join("\n"),
-    );
+    // SUMMARY guard is now DB-gated — open a DB with both slices so the check fires
+    const dbPath = join(tmp, "gsd.db");
+    openDatabase(dbPath);
+    insertMilestone({ id: "M002", title: "Test Milestone", status: "active" });
+    insertSlice({ id: "S01", milestoneId: "M002", title: "First slice", status: "complete" });
+    insertSlice({ id: "S02", milestoneId: "M002", title: "Second slice", status: "complete" });
 
     // S01 has a SUMMARY, S02 does not
     const s01Dir = join(mDir, "slices", "S01");
@@ -208,16 +202,18 @@ test("dispatch: completing-milestone with missing S02 SUMMARY → stop error men
     const ctx = makeContext(tmp, { phase: "completing-milestone" });
     const result = await resolveDispatch(ctx);
 
-    assert.equal(result.action, "stop", "should stop");
-    assert.ok(
-      result.action === "stop" && result.level === "error",
-      `level should be error, got: ${result.action === "stop" ? result.level : "(dispatch)"}`,
+    assert.equal(result.action, "stop", "should stop when a slice is missing its SUMMARY file");
+    assert.equal(
+      result.action === "stop" ? result.level : null,
+      "error",
+      "stop level should be error",
     );
     assert.ok(
       result.action === "stop" && result.reason.includes("S02"),
-      `reason should mention S02, got: ${result.action === "stop" ? result.reason : "(dispatch)"}`,
+      `stop reason should mention the missing slice S02, got: ${result.action === "stop" ? result.reason : "(dispatch)"}`,
     );
   } finally {
+    closeDatabase();
     rmSync(tmp, { recursive: true, force: true });
   }
 });

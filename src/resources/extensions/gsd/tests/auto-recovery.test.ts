@@ -13,8 +13,6 @@ import {
   buildLoopRemediationSteps,
   selfHealRuntimeRecords,
   hasImplementationArtifacts,
-  writeBlockerPlaceholder,
-  skipExecuteTask,
 } from "../auto-recovery.ts";
 import { parseRoadmap, parsePlan } from "../parsers-legacy.ts";
 import { parseTaskPlanFile, clearParseCache } from "../files.ts";
@@ -1120,113 +1118,6 @@ test("writeBlockerPlaceholder creates file and returns diagnosis for known type"
 
     assert.ok(result!.includes("RESEARCH"), "diagnosis should reference the RESEARCH artifact path");
     assert.ok(result!.includes("M001"), "diagnosis should reference the milestone ID");
-  } finally {
-    cleanup(base);
-  }
-});
-
-// ─── skipExecuteTask ─────────────────────────────────────────────────────
-
-test("skipExecuteTask writes summary and checks task when both missing", () => {
-  const base = makeTmpBase();
-  try {
-    const sliceDir = join(base, ".gsd", "milestones", "M001", "slices", "S01");
-    const tasksDir = join(sliceDir, "tasks");
-    mkdirSync(tasksDir, { recursive: true });
-
-    // PLAN has unchecked T01
-    writeFileSync(join(sliceDir, "S01-PLAN.md"), [
-      "# S01: Test Slice",
-      "",
-      "## Tasks",
-      "",
-      "- [ ] **T01: Implement feature** `est:2h`",
-    ].join("\n"));
-
-    const result = skipExecuteTask(
-      base, "M001", "S01", "T01",
-      { summaryExists: false, taskChecked: false },
-      "idle", 3,
-    );
-
-    assert.equal(result, true, "should return true when both summary and checkbox update succeed");
-
-    // Summary file should be created
-    assert.ok(existsSync(join(tasksDir, "T01-SUMMARY.md")), "T01-SUMMARY.md should be created");
-
-    // PLAN should now have [x]
-    const planContent = readFileSync(join(sliceDir, "S01-PLAN.md"), "utf-8");
-    assert.ok(/- \[x\] \*\*T01:/.test(planContent), "PLAN should have T01 checked with [x]");
-  } finally {
-    cleanup(base);
-  }
-});
-
-test("skipExecuteTask skips summary write when already exists", () => {
-  const base = makeTmpBase();
-  try {
-    const sliceDir = join(base, ".gsd", "milestones", "M001", "slices", "S01");
-    const tasksDir = join(sliceDir, "tasks");
-    mkdirSync(tasksDir, { recursive: true });
-
-    // Pre-existing summary with known content
-    const originalSummaryContent = "# Existing Summary\nDone.";
-    writeFileSync(join(tasksDir, "T01-SUMMARY.md"), originalSummaryContent);
-
-    writeFileSync(join(sliceDir, "S01-PLAN.md"), [
-      "# S01: Test Slice",
-      "",
-      "## Tasks",
-      "",
-      "- [ ] **T01: Implement feature** `est:2h`",
-    ].join("\n"));
-
-    const result = skipExecuteTask(
-      base, "M001", "S01", "T01",
-      { summaryExists: true, taskChecked: false },
-      "idle", 3,
-    );
-
-    assert.equal(result, true, "should return true when plan update succeeds");
-
-    // Summary should remain unchanged (not overwritten)
-    const summaryContent = readFileSync(join(tasksDir, "T01-SUMMARY.md"), "utf-8");
-    assert.equal(summaryContent, originalSummaryContent, "existing summary should not be overwritten");
-
-    // PLAN should now have [x]
-    const planContent = readFileSync(join(sliceDir, "S01-PLAN.md"), "utf-8");
-    assert.ok(/- \[x\] \*\*T01:/.test(planContent), "PLAN should have T01 checked with [x]");
-  } finally {
-    cleanup(base);
-  }
-});
-
-test("skipExecuteTask returns false when plan regex doesn't match", () => {
-  const base = makeTmpBase();
-  try {
-    const sliceDir = join(base, ".gsd", "milestones", "M001", "slices", "S01");
-    const tasksDir = join(sliceDir, "tasks");
-    mkdirSync(tasksDir, { recursive: true });
-
-    // Pre-existing summary so summaryExists=true skips that branch
-    writeFileSync(join(tasksDir, "T01-SUMMARY.md"), "# Existing Summary\nDone.");
-
-    // PLAN does NOT contain the expected "- [ ] **T01:" pattern
-    writeFileSync(join(sliceDir, "S01-PLAN.md"), [
-      "# S01: Test Slice",
-      "",
-      "## Tasks",
-      "",
-      "No tasks here.",
-    ].join("\n"));
-
-    const result = skipExecuteTask(
-      base, "M001", "S01", "T01",
-      { summaryExists: true, taskChecked: false },
-      "idle", 3,
-    );
-
-    assert.equal(result, false, "should return false when plan does not match the expected T01 pattern");
   } finally {
     cleanup(base);
   }
