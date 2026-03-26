@@ -91,6 +91,8 @@ export interface IterationContext {
 export interface LoopState {
   recentUnits: Array<{ key: string; error?: string }>;
   stuckRecoveryAttempts: number;
+  /** Set when stuck-detected fires; consumed by next iteration for causedBy link. */
+  lastStuckRef?: { flowId: string; seq: number };
 }
 
 export interface PreDispatchData {

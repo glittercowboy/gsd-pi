@@ -34,6 +34,28 @@ import { atomicWriteSync } from "../atomic-write.js";
 import { verifyExpectedArtifact } from "../auto-recovery.js";
 import { writeUnitRuntimeRecord } from "../unit-runtime.js";
 
+// ─── Unit-end error classification ───────────────────────────────────────────
+
+type JournalErrorType = "tool-error" | "timeout" | "context-overflow" | "unknown";
+
+const ERROR_PATTERNS: Array<[RegExp, JournalErrorType]> = [
+  [/context.*overflow|token.*limit|context.*window/i, "context-overflow"],
+  [/tool.*(?:error|fail)|permission denied|command failed/i, "tool-error"],
+  [/timeout|timed? out/i, "timeout"],
+];
+
+function classifyMessageError(messages: unknown[]): { detail: string; type: JournalErrorType } | undefined {
+  const RE_INDICATOR = /error|fail|exception/i;
+  let result: { detail: string; type: JournalErrorType } | undefined;
+  for (const msg of messages) {
+    const str = typeof msg === "string" ? msg : JSON.stringify(msg);
+    if (!RE_INDICATOR.test(str)) continue;
+    const type = ERROR_PATTERNS.find(([re]) => re.test(str))?.[1] ?? "unknown";
+    result = { detail: str.slice(0, 200), type };
+  }
+  return result;
+}
+
 // ─── generateMilestoneReport ──────────────────────────────────────────────────
 
 /**
@@ -597,6 +619,9 @@ export async function runDispatch(
       if (loopState.stuckRecoveryAttempts === 0) {
         // Level 1: try verifying the artifact, then cache invalidation + retry
         loopState.stuckRecoveryAttempts++;
+        const stuckSeq1 = ic.nextSeq();
+        deps.emitJournalEvent({ ts: new Date().toISOString(), flowId: ic.flowId, seq: stuckSeq1, eventType: "stuck-detected", data: { unitType, unitId, reason: stuckSignal.reason, level: 1 } });
+        loopState.lastStuckRef = { flowId: ic.flowId, seq: stuckSeq1 };
         const artifactExists = verifyExpectedArtifact(
           unitType,
           unitId,
@@ -622,6 +647,7 @@ export async function runDispatch(
         deps.invalidateAllCaches();
       } else {
         // Level 2: hard stop — genuinely stuck
+        deps.emitJournalEvent({ ts: new Date().toISOString(), flowId: ic.flowId, seq: ic.nextSeq(), eventType: "stuck-detected", data: { unitType, unitId, reason: stuckSignal.reason, level: 2 } });
         debugLog("autoLoop", {
           phase: "stuck-detected",
           unitType,
@@ -916,7 +942,7 @@ export async function runUnitPhase(
 
   s.currentUnit = { type: unitType, id: unitId, startedAt: Date.now() };
   const unitStartSeq = ic.nextSeq();
-  deps.emitJournalEvent({ ts: new Date().toISOString(), flowId: ic.flowId, seq: unitStartSeq, eventType: "unit-start", data: { unitType, unitId } });
+  deps.emitJournalEvent({ ts: new Date().toISOString(), flowId: ic.flowId, seq: unitStartSeq, eventType: "unit-start", data: { unitType, unitId, sessionId: ctx.sessionManager?.getSessionFile?.() ?? "unknown", messageOffset: ctx.sessionManager?.getEntries?.()?.length ?? 0 } });
   deps.captureAvailableSkills();
   writeUnitRuntimeRecord(
     s.basePath,
@@ -1205,7 +1231,26 @@ export async function runUnitPhase(
     s.unitRecoveryCount.delete(`${unitType}/${unitId}`);
   }
 
-  deps.emitJournalEvent({ ts: new Date().toISOString(), flowId: ic.flowId, seq: ic.nextSeq(), eventType: "unit-end", data: { unitType, unitId, status: unitResult.status, artifactVerified, ...(unitResult.errorContext ? { errorContext: unitResult.errorContext } : {}) }, causedBy: { flowId: ic.flowId, seq: unitStartSeq } });
+  // Derive error detail for journal: structured errorContext > status > message regex
+  const errFromCtx = unitResult.errorContext;
+  const errFromMsg = unitResult.event?.messages?.length
+    ? classifyMessageError(unitResult.event.messages)
+    : undefined;
+
+  let errorDetail: string | undefined;
+  let errorType: JournalErrorType | undefined;
+  if (errFromCtx) {
+    errorDetail = errFromCtx.message;
+    errorType = errFromCtx.category === "timeout" || errFromCtx.category === "idle" ? "timeout" : "unknown";
+  } else if (unitResult.status !== "completed") {
+    errorDetail = `${unitResult.status}:${unitType}/${unitId}`;
+    errorType = unitResult.status === "error" ? "unknown" : "timeout";
+  } else if (errFromMsg) {
+    errorDetail = errFromMsg.detail;
+    errorType = errFromMsg.type;
+  }
+
+  deps.emitJournalEvent({ ts: new Date().toISOString(), flowId: ic.flowId, seq: ic.nextSeq(), eventType: "unit-end", data: { unitType, unitId, status: unitResult.status, artifactVerified, durationMs: Date.now() - s.currentUnit.startedAt, ...(errorDetail && { error: errorDetail, errorType }), ...(unitResult.errorContext ? { errorContext: unitResult.errorContext } : {}) }, causedBy: { flowId: ic.flowId, seq: unitStartSeq } });
 
   return { action: "next", data: { unitStartedAt: s.currentUnit?.startedAt } };
 }

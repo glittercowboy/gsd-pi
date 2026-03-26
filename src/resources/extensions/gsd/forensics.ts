@@ -39,7 +39,7 @@ import { ensurePreferencesFile, serializePreferencesToFrontmatter } from "./comm
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 interface ForensicAnomaly {
-  type: "stuck-loop" | "cost-spike" | "timeout" | "missing-artifact" | "crash" | "doctor-issue" | "error-trace" | "journal-stuck" | "journal-guard-block" | "journal-rapid-iterations" | "journal-worktree-failure";
+  type: "stuck-loop" | "cost-spike" | "timeout" | "missing-artifact" | "crash" | "doctor-issue" | "error-trace" | "journal-stuck" | "journal-guard-block" | "journal-rapid-iterations" | "journal-worktree-failure" | "journal-slow-units" | "journal-unit-errors";
   severity: "info" | "warning" | "error";
   unitType?: string;
   unitId?: string;
@@ -85,6 +85,14 @@ interface JournalSummary {
   newestEntry: string | null;
   /** Daily file count */
   fileCount: number;
+  /** Count of unit-end events with durationMs > threshold (from recent files) */
+  slowUnitCount: number;
+  /** Count of unit-end events with error field set (from recent files) */
+  errorUnitCount: number;
+  /** Error type distribution (from recent files) */
+  errorTypes: Record<string, number>;
+  /** Resource info from most recent iteration-start (if available) */
+  latestResource?: { gsdVersion: string; model: string; cwd: string };
 }
 
 interface DbCompletionCounts {
@@ -451,6 +459,9 @@ const MAX_JOURNAL_RECENT_FILES = 3;
 /** Max recent events to extract for the forensic report timeline. */
 const MAX_JOURNAL_RECENT_EVENTS = 20;
 
+/** Units exceeding this duration (ms) are flagged as slow in forensics. */
+const SLOW_UNIT_THRESHOLD_MS = 120_000;
+
 /**
  * Intelligently scan journal files for forensic summary.
  *
@@ -498,6 +509,10 @@ function scanJournalForForensics(basePath: string): JournalSummary | null {
     const flowIds = new Set<string>();
     const recentParsedEntries: { ts: string; flowId: string; eventType: string; rule?: string; unitId?: string }[] = [];
     let recentEntryCount = 0;
+    let slowUnitCount = 0;
+    let errorUnitCount = 0;
+    const errorTypes: Record<string, number> = {};
+    let latestResource: { gsdVersion: string; model: string; cwd: string } | undefined;
 
     for (const file of recentFiles) {
       try {
@@ -523,6 +538,19 @@ function scanJournalForForensics(basePath: string): JournalSummary | null {
             if (recentParsedEntries.length > MAX_JOURNAL_RECENT_EVENTS) {
               recentParsedEntries.shift();
             }
+
+            if (entry.eventType === "unit-end" && entry.data) {
+              const dur = entry.data.durationMs as number | undefined;
+              if (dur !== undefined && dur > SLOW_UNIT_THRESHOLD_MS) slowUnitCount++;
+              if (entry.data.error) {
+                errorUnitCount++;
+                const et = (entry.data.errorType as string) ?? "unknown";
+                errorTypes[et] = (errorTypes[et] ?? 0) + 1;
+              }
+            }
+            if (entry.eventType === "iteration-start" && entry.data?.resource) {
+              latestResource = entry.data.resource as { gsdVersion: string; model: string; cwd: string };
+            }
           } catch { /* skip malformed lines */ }
         }
       } catch { /* skip unreadable files */ }
@@ -543,6 +571,10 @@ function scanJournalForForensics(basePath: string): JournalSummary | null {
       oldestEntry,
       newestEntry,
       fileCount: files.length,
+      slowUnitCount,
+      errorUnitCount,
+      errorTypes,
+      ...(latestResource && { latestResource }),
     };
   } catch {
     return null;
@@ -853,6 +885,29 @@ function detectJournalAnomalies(journal: JournalSummary | null, anomalies: Foren
       severity: "warning",
       summary: `Worktree failures: ${parts.join(", ")}`,
       details: `Journal recorded worktree operation failures. These may indicate git state corruption or conflicting branches.`,
+    });
+  }
+
+  // Detect slow units
+  if (journal.slowUnitCount > 0) {
+    anomalies.push({
+      type: "journal-slow-units",
+      severity: journal.slowUnitCount >= 3 ? "warning" : "info",
+      summary: `${journal.slowUnitCount} unit(s) exceeded 2-minute duration threshold`,
+      details: `Units taking over 2 minutes may indicate complex tasks, model slowness, or hanging tool calls. Query journal for unit-end events with high durationMs values.`,
+    });
+  }
+
+  // Detect error units
+  if (journal.errorUnitCount > 0) {
+    const typeBreakdown = Object.entries(journal.errorTypes)
+      .map(([t, c]) => `${t}: ${c}`)
+      .join(", ");
+    anomalies.push({
+      type: "journal-unit-errors",
+      severity: journal.errorUnitCount >= 3 ? "error" : "warning",
+      summary: `${journal.errorUnitCount} unit(s) ended with errors (${typeBreakdown})`,
+      details: `Unit execution errors detected in the journal. Error types: ${typeBreakdown}. Check unit-end events with error field for details.`,
     });
   }
 }

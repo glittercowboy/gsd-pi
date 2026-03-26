@@ -115,7 +115,9 @@ export async function autoLoop(
       }
 
       const ic: IterationContext = { ctx, pi, s, deps, prefs, iteration, flowId, nextSeq };
-      deps.emitJournalEvent({ ts: new Date().toISOString(), flowId, seq: nextSeq(), eventType: "iteration-start", data: { iteration } });
+      const stuckRef = loopState.lastStuckRef;
+      if (stuckRef) loopState.lastStuckRef = undefined;
+      deps.emitJournalEvent({ ts: new Date().toISOString(), flowId, seq: nextSeq(), eventType: "iteration-start", data: { iteration, resource: { gsdVersion: process.env.GSD_VERSION ?? "0.0.0", model: ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : "unknown", cwd: s.basePath } }, ...(stuckRef && { causedBy: stuckRef }) });
       let iterData: IterationData;
 
       // ── Custom engine path ──────────────────────────────────────────────

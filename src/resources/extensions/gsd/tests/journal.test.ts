@@ -326,6 +326,36 @@ describe("queryJournal", () => {
   });
 });
 
+describe("round-trip serialization", () => {
+  let base: string;
+  beforeEach(() => { base = makeTmpBase(); });
+  afterEach(() => { cleanup(base); });
+
+  test("round-trips iteration-start with resource and causedBy", () => {
+    const entry = makeEntry({
+      eventType: "iteration-start",
+      seq: 1,
+      causedBy: { flowId: "flow-prior", seq: 5 },
+      data: {
+        iteration: 3,
+        resource: { gsdVersion: "2.48.0", model: "anthropic/claude-sonnet-4-20250514", cwd: "/tmp/project" },
+      },
+    });
+    emitJournalEvent(base, entry);
+
+    const results = queryJournal(base);
+    assert.equal(results.length, 1);
+    const r = results[0];
+    assert.equal(r.eventType, "iteration-start");
+    assert.deepEqual(r.causedBy, { flowId: "flow-prior", seq: 5 });
+    const data = r.data as any;
+    assert.equal(data.iteration, 3);
+    assert.equal(data.resource.gsdVersion, "2.48.0");
+    assert.equal(data.resource.model, "anthropic/claude-sonnet-4-20250514");
+    assert.equal(data.resource.cwd, "/tmp/project");
+  });
+});
+
 describe("queryJournal — nonexistent directory", () => {
   let base: string;
   beforeEach(() => {
