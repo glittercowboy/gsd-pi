@@ -322,7 +322,6 @@ test("budget — refreshWorkerStatuses updates worker state from disk", async ()
     const workers = getWorkerStatuses();
     assert.equal(workers.length, 1);
     assert.equal(workers[0]!.state, "paused", "worker state should be updated from disk");
-    assert.equal(workers[0]!.completedUnits, 5, "completedUnits should be updated from disk");
     assert.equal(workers[0]!.cost, 2.5, "cost should be updated from disk");
   } finally {
     resetOrchestrator();

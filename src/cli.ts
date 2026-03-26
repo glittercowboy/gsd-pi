@@ -2,6 +2,7 @@ import {
   AuthStorage,
   DefaultResourceLoader,
   ModelRegistry,
+  runPackageCommand,
   SettingsManager,
   SessionManager,
   createAgentSession,
@@ -28,6 +29,8 @@ import {
 import { stopWebMode } from './web-mode.js'
 import { getProjectSessionsDir } from './project-sessions.js'
 import { markStartup, printStartupTimings } from './startup-timings.js'
+import { bootstrapRtk, GSD_RTK_DISABLED_ENV } from './rtk.js'
+import { loadEffectiveGSDPreferences } from './resources/extensions/gsd/preferences.js'
 
 // ---------------------------------------------------------------------------
 // V8 compile cache — Node 22+ can cache compiled bytecode across runs,
@@ -145,12 +148,47 @@ if (!process.stdin.isTTY && !isPrintMode && !hasSubcommand && !cliFlags.listMode
   process.exit(1)
 }
 
+async function ensureRtkBootstrap(): Promise<void> {
+  if ((ensureRtkBootstrap as { _done?: boolean })._done) return
+
+  // RTK is opt-in via experimental.rtk preference. Default: disabled.
+  // Honor GSD_RTK_DISABLED if already explicitly set in the environment
+  // (env var takes precedence over preferences for manual override).
+  if (!process.env[GSD_RTK_DISABLED_ENV]) {
+    const prefs = loadEffectiveGSDPreferences();
+    const rtkEnabled = prefs?.preferences.experimental?.rtk === true;
+    if (!rtkEnabled) {
+      process.env[GSD_RTK_DISABLED_ENV] = "1";
+    }
+  }
+
+  const rtkStatus = await bootstrapRtk()
+  ;(ensureRtkBootstrap as { _done?: boolean })._done = true
+  markStartup('bootstrapRtk')
+  if (!rtkStatus.available && rtkStatus.supported && rtkStatus.enabled && rtkStatus.reason) {
+    process.stderr.write(`[gsd] Warning: RTK unavailable — continuing without shell-command compression (${rtkStatus.reason}).\n`)
+  }
+}
+
 // `gsd <subcommand> --help` — show subcommand-specific help
 const subcommand = cliFlags.messages[0]
 if (subcommand && process.argv.includes('--help')) {
   if (printSubcommandHelp(subcommand, process.env.GSD_VERSION || '0.0.0')) {
     process.exit(0)
   }
+}
+
+const packageCommand = await runPackageCommand({
+  appName: 'gsd',
+  args: process.argv.slice(2),
+  cwd: process.cwd(),
+  agentDir,
+  stdout: process.stdout,
+  stderr: process.stderr,
+  allowedCommands: new Set(['install', 'remove', 'list']),
+})
+if (packageCommand.handled) {
+  process.exit(packageCommand.exitCode)
 }
 
 // `gsd config` — replay the setup wizard and exit
@@ -184,6 +222,7 @@ if (cliFlags.messages[0] === 'web' && cliFlags.messages[1] === 'stop') {
 
 // `gsd --web [path]` or `gsd web [start] [path]` — launch browser-only web mode
 if (cliFlags.web || (cliFlags.messages[0] === 'web' && cliFlags.messages[1] !== 'stop')) {
+  await ensureRtkBootstrap()
   const webFlags = parseWebCliArgs(process.argv)
   const webBranch = await runWebCliBranch(webFlags, {
     stderr: process.stderr,
@@ -255,6 +294,7 @@ if (cliFlags.messages[0] === 'sessions') {
 
 // `gsd headless` — run auto-mode without TUI
 if (cliFlags.messages[0] === 'headless') {
+  await ensureRtkBootstrap()
   const { runHeadless, parseHeadlessArgs } = await import('./headless.js')
   await runHeadless(parseHeadlessArgs(process.argv))
   process.exit(0)
@@ -401,6 +441,7 @@ if (!settingsManager.getCollapseChangelog()) {
 // Print / subagent mode — single-shot execution, no TTY required
 // ---------------------------------------------------------------------------
 if (isPrintMode) {
+  await ensureRtkBootstrap()
   const sessionManager = cliFlags.noSession
     ? SessionManager.inMemory()
     : SessionManager.create(process.cwd())
@@ -528,6 +569,8 @@ if (!cliFlags.worktree && !isPrintMode) {
 // Interactive mode — normal TTY session
 // ---------------------------------------------------------------------------
 
+await ensureRtkBootstrap()
+
 // Per-directory session storage — same encoding as the upstream SDK so that
 // /resume only shows sessions from the current working directory.
 const cwd = process.cwd()
@@ -645,3 +688,4 @@ const interactiveMode = new InteractiveMode(session)
 markStartup('InteractiveMode')
 printStartupTimings()
 await interactiveMode.run()
+

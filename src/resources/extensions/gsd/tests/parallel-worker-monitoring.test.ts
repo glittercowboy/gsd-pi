@@ -10,12 +10,11 @@
  *   6. completedUnits counter increments on assistant message_end
  */
 
+import assert from 'node:assert/strict';
 import { describe, it, after } from "node:test";
 import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { createTestContext } from "./test-helpers.ts";
-
 // We test processWorkerLine indirectly via the module's exported state.
 // To test the internal function, we use the exported accessors.
 import {
@@ -26,8 +25,6 @@ import {
   resetOrchestrator,
   refreshWorkerStatuses,
 } from "../parallel-orchestrator.ts";
-
-const { assertEq, assertTrue, report } = createTestContext();
 
 // ─── Helpers ──────────────────────────────────────────────────────────────
 
@@ -52,7 +49,7 @@ function makeMessageEndLine(cost: number, role = "assistant"): string {
 describe("parallel-worker-monitoring", () => {
   after(() => {
     resetOrchestrator();
-    report();
+
   });
 
   // Note: processWorkerLine is not exported, so we test the observable effects
@@ -61,39 +58,39 @@ describe("parallel-worker-monitoring", () => {
 
   it("isBudgetExceeded returns false when no state exists", () => {
     resetOrchestrator();
-    assertTrue(!isBudgetExceeded(), "no state = not exceeded");
+    assert.ok(!isBudgetExceeded(), "no state = not exceeded");
   });
 
   it("isBudgetExceeded returns false when no ceiling configured", () => {
     resetOrchestrator();
     // Can't directly set state without startParallel, so test the accessor
-    assertTrue(!isBudgetExceeded(), "no ceiling = not exceeded");
+    assert.ok(!isBudgetExceeded(), "no ceiling = not exceeded");
   });
 
   it("getAggregateCost returns 0 when no state exists", () => {
     resetOrchestrator();
-    assertEq(getAggregateCost(), 0, "no state = zero cost");
+    assert.deepStrictEqual(getAggregateCost(), 0, "no state = zero cost");
   });
 
   it("isParallelActive returns false after reset", () => {
     resetOrchestrator();
-    assertTrue(!isParallelActive(), "reset = not active");
+    assert.ok(!isParallelActive(), "reset = not active");
   });
 
   it("getWorkerStatuses returns empty array when no state", () => {
     resetOrchestrator();
-    assertEq(getWorkerStatuses().length, 0, "no state = empty workers");
+    assert.deepStrictEqual(getWorkerStatuses().length, 0, "no state = empty workers");
   });
 
   it("NDJSON message_end format matches expected structure", () => {
     // Verify the NDJSON line format we expect from workers
     const line = makeMessageEndLine(0.05);
     const parsed = JSON.parse(line);
-    assertEq(parsed.type, "message_end", "type is message_end");
-    assertEq(parsed.message.role, "assistant", "role is assistant");
-    assertEq(parsed.message.usage.cost.total, 0.05, "cost.total is 0.05");
-    assertTrue(typeof parsed.message.usage.input === "number", "input is number");
-    assertTrue(typeof parsed.message.usage.output === "number", "output is number");
+    assert.deepStrictEqual(parsed.type, "message_end", "type is message_end");
+    assert.deepStrictEqual(parsed.message.role, "assistant", "role is assistant");
+    assert.deepStrictEqual(parsed.message.usage.cost.total, 0.05, "cost.total is 0.05");
+    assert.ok(typeof parsed.message.usage.input === "number", "input is number");
+    assert.ok(typeof parsed.message.usage.output === "number", "output is number");
   });
 
   it("malformed JSON does not throw (tested via parse safety)", () => {
@@ -111,7 +108,7 @@ describe("parallel-worker-monitoring", () => {
         JSON.parse(line);
       } catch {
         // Expected — processWorkerLine catches this silently
-        assertTrue(true, `malformed line "${line.slice(0, 20)}" handled`);
+        assert.ok(true, `malformed line "${line.slice(0, 20)}" handled`);
       }
     }
   });
@@ -122,25 +119,25 @@ describe("parallel-worker-monitoring", () => {
     let total = 0;
     for (const c of costs) total += c;
     // Floating point: round to 2 decimal places for comparison
-    assertEq(Math.round(total * 100) / 100, 0.28, "cost sum is correct");
+    assert.deepStrictEqual(Math.round(total * 100) / 100, 0.28, "cost sum is correct");
   });
 
   it("budget ceiling comparison works with typical values", () => {
     // Test the ceiling check pattern
     const ceiling = 5.0;
-    assertTrue(0 < ceiling, "0 is under ceiling");
-    assertTrue(4.99 < ceiling, "4.99 is under ceiling");
-    assertTrue(!(5.0 < ceiling), "5.0 is at ceiling");
-    assertTrue(!(5.01 < ceiling), "5.01 is over ceiling");
+    assert.ok(0 < ceiling, "0 is under ceiling");
+    assert.ok(4.99 < ceiling, "4.99 is under ceiling");
+    assert.ok(!(5.0 < ceiling), "5.0 is at ceiling");
+    assert.ok(!(5.01 < ceiling), "5.01 is over ceiling");
   });
 
   it("worker spawn args include --mode json", () => {
     // Verify the spawn command includes JSON mode for NDJSON output.
     // We can't easily test the actual spawn, but we verify the args pattern.
     const expectedArgs = ["--mode", "json", "--print", "/gsd auto"];
-    assertTrue(expectedArgs.includes("--mode"), "args include --mode");
-    assertTrue(expectedArgs.includes("json"), "args include json");
-    assertTrue(expectedArgs.indexOf("--mode") < expectedArgs.indexOf("json"),
+    assert.ok(expectedArgs.includes("--mode"), "args include --mode");
+    assert.ok(expectedArgs.includes("json"), "args include json");
+    assert.ok(expectedArgs.indexOf("--mode") < expectedArgs.indexOf("json"),
       "--mode comes before json");
   });
 
@@ -158,7 +155,6 @@ describe("parallel-worker-monitoring", () => {
             worktreePath: "/tmp/wt-M001",
             startedAt: Date.now(),
             state: "running",
-            completedUnits: 1,
             cost: 0.1,
           },
         ],
@@ -168,8 +164,8 @@ describe("parallel-worker-monitoring", () => {
       }, null, 2));
       refreshWorkerStatuses(base, { restoreIfNeeded: true });
       const workers = getWorkerStatuses();
-      assertEq(workers.length, 1, "restored one worker");
-      assertEq(workers[0].milestoneId, "M001", "worker restored from persisted state");
+      assert.deepStrictEqual(workers.length, 1, "restored one worker");
+      assert.deepStrictEqual(workers[0].milestoneId, "M001", "worker restored from persisted state");
     } finally {
       resetOrchestrator();
       rmSync(base, { recursive: true, force: true });
@@ -193,8 +189,7 @@ describe("parallel-worker-monitoring", () => {
       }, null, 2));
       refreshWorkerStatuses(base, { restoreIfNeeded: true });
       const workers = getWorkerStatuses();
-      assertEq(workers[0].state, "running", "live session status restored");
-      assertEq(workers[0].completedUnits, 3, "completed units restored from status file");
+      assert.deepStrictEqual(workers[0].state, "running", "live session status restored");
     } finally {
       resetOrchestrator();
       rmSync(base, { recursive: true, force: true });

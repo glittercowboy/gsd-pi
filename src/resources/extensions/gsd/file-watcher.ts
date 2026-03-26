@@ -3,6 +3,7 @@ import type { EventBus } from "@gsd/pi-coding-agent";
 import { relative } from "node:path";
 
 let watcher: FSWatcher | null = null;
+let pending = new Map<string, ReturnType<typeof setTimeout>>();
 
 const EVENT_MAP: Record<string, string> = {
 	"settings.json": "settings-changed",
@@ -36,7 +37,7 @@ export async function startFileWatcher(
 
 	const { watch } = await import("chokidar");
 
-	const pending = new Map<string, ReturnType<typeof setTimeout>>();
+	pending = new Map<string, ReturnType<typeof setTimeout>>();
 
 	function debounceEmit(event: string): void {
 		const existing = pending.get(event);
@@ -90,6 +91,8 @@ export async function startFileWatcher(
  * Stop the file watcher and clean up resources.
  */
 export async function stopFileWatcher(): Promise<void> {
+	for (const timer of pending.values()) clearTimeout(timer);
+	pending.clear();
 	if (watcher) {
 		await watcher.close();
 		watcher = null;

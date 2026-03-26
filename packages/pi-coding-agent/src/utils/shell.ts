@@ -192,7 +192,6 @@ export function killProcessTree(pid: number): void {
 		try {
 			spawn("taskkill", ["/F", "/T", "/PID", String(pid)], {
 				stdio: "ignore",
-				detached: true,
 			});
 		} catch {
 			// Ignore errors if taskkill fails

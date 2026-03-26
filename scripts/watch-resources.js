@@ -37,6 +37,9 @@ process.stderr.write(`[watch-resources] Initial sync done\n`)
 // On Linux (Node <20.13) it throws ERR_FEATURE_UNAVAILABLE_ON_PLATFORM.
 // Fall back to polling on unsupported platforms.
 let timer = null
+let fsWatcher = null
+let pollInterval = null
+
 const onChange = () => {
   if (timer) clearTimeout(timer)
   timer = setTimeout(() => {
@@ -46,13 +49,19 @@ const onChange = () => {
 }
 
 try {
-  watch(src, { recursive: true }, onChange)
+  fsWatcher = watch(src, { recursive: true }, onChange)
 } catch {
   // Fallback: poll every 2s (Linux without recursive watch support)
   process.stderr.write(`[watch-resources] fs.watch recursive not supported, falling back to polling\n`)
-  setInterval(() => {
+  pollInterval = setInterval(() => {
     try { sync() } catch {}
   }, 2000)
 }
+
+process.on('exit', () => {
+  if (timer) clearTimeout(timer)
+  if (fsWatcher) fsWatcher.close()
+  if (pollInterval) clearInterval(pollInterval)
+})
 
 process.stderr.write(`[watch-resources] Watching src/resources/ → dist/resources/\n`)

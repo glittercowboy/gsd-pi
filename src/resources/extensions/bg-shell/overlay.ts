@@ -430,6 +430,10 @@ export class BgManagerOverlay {
 		return this.box(inner, width);
 	}
 
+	dispose(): void {
+		clearInterval(this.refreshTimer);
+	}
+
 	invalidate(): void {
 		this.cachedWidth = undefined;
 		this.cachedLines = undefined;

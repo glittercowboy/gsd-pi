@@ -92,6 +92,19 @@ This milestone is complete only when all are true:
   - Each "After this" line must be truthful about proof level: if only fixtures or tests prove it, say so; do not imply the user can already perform the live end-to-end behavior unless that has actually been exercised
 -->
 
+## Horizontal Checklist
+
+<!-- Cross-cutting concerns across all slices. Check each that was considered.
+     OMIT ENTIRELY for trivial milestones. -->
+
+- [ ] Every active R### re-read against new code — still fully satisfied?
+- [ ] Every D### from prior milestones re-evaluated — still valid at new scope?
+- [ ] Graceful shutdown / cleanup on termination verified
+- [ ] Revenue / billing path impact assessed (or N/A)
+- [ ] Auth boundary documented — what's protected vs public
+- [ ] Shared resource budget confirmed — connection pools, caches, rate limits hold under peak
+- [ ] Reconnection / retry strategy verified for every external dependency
+
 ## Boundary Map
 
 <!-- Be specific. Name concrete outputs: API endpoints, event payloads, shared types/interfaces,

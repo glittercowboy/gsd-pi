@@ -52,8 +52,8 @@ export interface WorkerInfo {
   worktreePath: string;
   startedAt: number;
   state: "running" | "paused" | "stopped" | "error";
-  completedUnits: number;
   cost: number;
+  cleanup?: () => void;
 }
 
 export interface OrchestratorState {
@@ -82,7 +82,6 @@ export interface PersistedState {
     worktreePath: string;
     startedAt: number;
     state: "running" | "paused" | "stopped" | "error";
-    completedUnits: number;
     cost: number;
   }>;
   totalCost: number;
@@ -113,7 +112,6 @@ export function persistState(basePath: string): void {
         worktreePath: w.worktreePath,
         startedAt: w.startedAt,
         state: w.state,
-        completedUnits: w.completedUnits,
         cost: w.cost,
       })),
       totalCost: state.totalCost,
@@ -225,7 +223,6 @@ function restoreRuntimeState(basePath: string): boolean {
         worktreePath: diskStatus?.worktreePath ?? w.worktreePath,
         startedAt: w.startedAt,
         state: diskStatus?.state ?? w.state,
-        completedUnits: diskStatus?.completedUnits ?? w.completedUnits,
         cost: diskStatus?.cost ?? w.cost,
       });
     }
@@ -260,7 +257,6 @@ function restoreRuntimeState(basePath: string): boolean {
       worktreePath: status.worktreePath,
       startedAt: status.startedAt,
       state: status.state,
-      completedUnits: status.completedUnits,
       cost: status.cost,
     });
     state.totalCost += status.cost;
@@ -357,6 +353,16 @@ export async function startParallel(
 
   const config = resolveParallelConfig(prefs);
 
+  // Release any leftover state from a previous session before reassigning
+  if (state) {
+    for (const w of state.workers.values()) {
+      w.cleanup?.();
+      w.cleanup = undefined;
+      w.process = null;
+    }
+    state.workers.clear();
+  }
+
   // Try to restore from a previous crash
   const restored = restoreState(basePath);
   if (restored && restored.workers.length > 0) {
@@ -378,7 +384,6 @@ export async function startParallel(
         worktreePath: w.worktreePath,
         startedAt: w.startedAt,
         state: "running",
-        completedUnits: w.completedUnits,
         cost: w.cost,
       });
       adopted.push(w.milestoneId);
@@ -429,7 +434,6 @@ export async function startParallel(
         worktreePath: wtPath,
         startedAt: now,
         state: "running",
-        completedUnits: 0,
         cost: 0,
       };
 
@@ -591,18 +595,32 @@ export function spawnWorker(
     pid: worker.pid,
     state: "running",
     currentUnit: null,
-    completedUnits: worker.completedUnits,
+    completedUnits: 0,
     cost: worker.cost,
     lastHeartbeat: Date.now(),
     startedAt: worker.startedAt,
     worktreePath: worker.worktreePath,
   });
 
+  // Store cleanup function to remove all listeners from the child process.
+  // This prevents listener accumulation when workers are respawned, since
+  // handler closures capture milestoneId and other data that would otherwise
+  // be retained indefinitely.
+  worker.cleanup = () => {
+    child.stdout?.removeAllListeners();
+    child.stderr?.removeAllListeners();
+    child.removeAllListeners();
+  };
+
   // Handle worker exit
   child.on("exit", (code) => {
     if (!state) return;
     const w = state.workers.get(milestoneId);
     if (!w) return;
+
+    // Remove all stream listeners to release closure references
+    w.cleanup?.();
+    w.cleanup = undefined;
 
     w.process = null;
     if (w.state === "stopped") return; // graceful stop, already handled
@@ -620,7 +638,7 @@ export function spawnWorker(
       pid: w.pid,
       state: w.state,
       currentUnit: null,
-      completedUnits: w.completedUnits,
+      completedUnits: 0,
       cost: w.cost,
       lastHeartbeat: Date.now(),
       startedAt: w.startedAt,
@@ -702,14 +720,6 @@ function processWorkerLine(basePath: string, milestoneId: string, line: string):
       }
     }
 
-    // Track completed units (each message_end from assistant = progress)
-    if (msg.role === "assistant") {
-      const worker = state.workers.get(milestoneId);
-      if (worker) {
-        worker.completedUnits++;
-      }
-    }
-
     // Update session status file so dashboard sees live cost
     const worker = state.workers.get(milestoneId);
     if (worker) {
@@ -718,7 +728,7 @@ function processWorkerLine(basePath: string, milestoneId: string, line: string):
         pid: worker.pid,
         state: worker.state,
         currentUnit: null,
-        completedUnits: worker.completedUnits,
+        completedUnits: 0,
         cost: worker.cost,
         lastHeartbeat: Date.now(),
         startedAt: worker.startedAt,
@@ -737,7 +747,7 @@ function processWorkerLine(basePath: string, milestoneId: string, line: string):
         pid: worker.pid,
         state: worker.state,
         currentUnit: null,
-        completedUnits: worker.completedUnits,
+        completedUnits: 0,
         cost: worker.cost,
         lastHeartbeat: Date.now(),
         startedAt: worker.startedAt,
@@ -794,6 +804,10 @@ export async function stopParallel(
       } catch { /* process may already be dead */ }
       await waitForWorkerExit(worker, 250);
     }
+
+    // Remove stream listeners before releasing the process handle
+    worker.cleanup?.();
+    worker.cleanup = undefined;
 
     // Update in-memory state
     worker.state = "stopped";
@@ -880,6 +894,8 @@ export function refreshWorkerStatuses(
   for (const mid of staleIds) {
     const worker = state.workers.get(mid);
     if (worker) {
+      worker.cleanup?.();
+      worker.cleanup = undefined;
       worker.state = "error";
       worker.process = null;
     }
@@ -897,14 +913,15 @@ export function refreshWorkerStatuses(
     const diskStatus = statusMap.get(mid);
     if (!diskStatus) {
       if (!isPidAlive(worker.pid)) {
-        worker.state = worker.completedUnits > 0 ? "stopped" : "error";
+        worker.cleanup?.();
+        worker.cleanup = undefined;
+        worker.state = "error";
         worker.process = null;
       }
       continue;
     }
 
     worker.state = diskStatus.state;
-    worker.completedUnits = diskStatus.completedUnits;
     worker.cost = diskStatus.cost;
     worker.pid = diskStatus.pid;
   }
@@ -938,5 +955,15 @@ export function isBudgetExceeded(): boolean {
 
 /** Reset orchestrator state. Called on clean shutdown. */
 export function resetOrchestrator(): void {
+  if (state) {
+    // Explicitly release all WorkerInfo references and run any pending
+    // cleanup callbacks so child process stream closures are freed.
+    for (const w of state.workers.values()) {
+      w.cleanup?.();
+      w.cleanup = undefined;
+      w.process = null;
+    }
+    state.workers.clear();
+  }
   state = null;
 }

@@ -26,68 +26,60 @@ function cleanup(base: string): void {
 
 // ─── writeLock / readCrashLock ────────────────────────────────────────────
 
-test("writeLock creates lock file and readCrashLock reads it", () => {
+test("writeLock creates lock file and readCrashLock reads it", (t) => {
   const base = makeTmpBase();
-  try {
-    writeLock(base, "execute-task", "M001/S01/T01", 3, "/tmp/session.jsonl");
-    const lock = readCrashLock(base);
-    assert.ok(lock, "lock should exist");
-    assert.equal(lock!.unitType, "execute-task");
-    assert.equal(lock!.unitId, "M001/S01/T01");
-    assert.equal(lock!.completedUnits, 3);
-    assert.equal(lock!.sessionFile, "/tmp/session.jsonl");
-    assert.equal(lock!.pid, process.pid);
-  } finally {
-    cleanup(base);
-  }
+  t.after(() => cleanup(base));
+
+  writeLock(base, "execute-task", "M001/S01/T01", "/tmp/session.jsonl");
+  const lock = readCrashLock(base);
+  assert.ok(lock, "lock should exist");
+  assert.equal(lock!.unitType, "execute-task");
+  assert.equal(lock!.unitId, "M001/S01/T01");
+  assert.equal(lock!.sessionFile, "/tmp/session.jsonl");
+  assert.equal(lock!.pid, process.pid);
 });
 
-test("readCrashLock returns null when no lock exists", () => {
+test("readCrashLock returns null when no lock exists", (t) => {
   const base = makeTmpBase();
-  try {
-    const lock = readCrashLock(base);
-    assert.equal(lock, null);
-  } finally {
-    cleanup(base);
-  }
+  t.after(() => cleanup(base));
+
+  const lock = readCrashLock(base);
+  assert.equal(lock, null);
 });
 
 // ─── clearLock ────────────────────────────────────────────────────────────
 
-test("clearLock removes existing lock file", () => {
+test("clearLock removes existing lock file", (t) => {
   const base = makeTmpBase();
-  try {
-    writeLock(base, "plan-slice", "M001/S01", 0);
-    assert.ok(readCrashLock(base), "lock should exist before clear");
-    clearLock(base);
-    assert.equal(readCrashLock(base), null, "lock should be gone after clear");
-  } finally {
-    cleanup(base);
-  }
+  t.after(() => cleanup(base));
+
+  writeLock(base, "plan-slice", "M001/S01");
+  assert.ok(readCrashLock(base), "lock should exist before clear");
+  clearLock(base);
+  assert.equal(readCrashLock(base), null, "lock should be gone after clear");
 });
 
-test("clearLock is safe when no lock exists", () => {
+test("clearLock is safe when no lock exists", (t) => {
   const base = makeTmpBase();
-  try {
-    assert.doesNotThrow(() => clearLock(base));
-  } finally {
-    cleanup(base);
-  }
+  t.after(() => cleanup(base));
+
+  assert.doesNotThrow(() => clearLock(base));
 });
 
 // ─── isLockProcessAlive ──────────────────────────────────────────────────
 
-test("isLockProcessAlive returns true for current process (different pid)", () => {
-  // Our own PID is explicitly excluded (recycled PID guard)
+test("#2470: isLockProcessAlive returns true for own PID (we hold the lock)", () => {
+  // Own PID means we ARE the lock holder — alive, not stale. (#2470)
+  // Callers that need recycled-PID detection (e.g. startAuto) already
+  // guard with `crashLock.pid !== process.pid` before calling us.
   const lock: LockData = {
     pid: process.pid,
     startedAt: new Date().toISOString(),
     unitType: "execute-task",
     unitId: "M001/S01/T01",
     unitStartedAt: new Date().toISOString(),
-    completedUnits: 0,
   };
-  assert.equal(isLockProcessAlive(lock), false, "own PID should return false");
+  assert.equal(isLockProcessAlive(lock), true, "own PID should return true — we are alive");
 });
 
 test("isLockProcessAlive returns false for dead PID", () => {
@@ -97,7 +89,6 @@ test("isLockProcessAlive returns false for dead PID", () => {
     unitType: "execute-task",
     unitId: "M001/S01/T01",
     unitStartedAt: new Date().toISOString(),
-    completedUnits: 0,
   };
   assert.equal(isLockProcessAlive(lock), false);
 });
@@ -108,7 +99,6 @@ test("isLockProcessAlive returns false for invalid PIDs", () => {
     unitType: "x",
     unitId: "x",
     unitStartedAt: new Date().toISOString(),
-    completedUnits: 0,
   };
   assert.equal(isLockProcessAlive({ ...base, pid: 0 } as LockData), false);
   assert.equal(isLockProcessAlive({ ...base, pid: -1 } as LockData), false);
@@ -124,11 +114,9 @@ test("formatCrashInfo includes unit type, id, and PID", () => {
     unitType: "complete-slice",
     unitId: "M002/S03",
     unitStartedAt: "2025-01-01T00:01:00.000Z",
-    completedUnits: 7,
   };
   const info = formatCrashInfo(lock);
   assert.ok(info.includes("complete-slice"));
   assert.ok(info.includes("M002/S03"));
   assert.ok(info.includes("12345"));
-  assert.ok(info.includes("7"));
 });

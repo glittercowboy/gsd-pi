@@ -22,7 +22,8 @@ function isPidAlive(pid: number | undefined): boolean {
 // without relying on platform-specific quoting for `node -e "..."`
 const sleeperCommand = "sleep 30";
 
-test("cleanupSessionProcesses reaps only session-scoped processes from the previous session", async () => {
+test("cleanupSessionProcesses reaps only session-scoped processes from the previous session", async (t) => {
+	t.after(cleanupAll);
 	const owned = startProcess({
 		command: sleeperCommand,
 		cwd: process.cwd(),
@@ -40,22 +41,18 @@ test("cleanupSessionProcesses reaps only session-scoped processes from the previ
 		ownerSessionFile: "session-b",
 	});
 
-	try {
-		await new Promise((resolve) => setTimeout(resolve, 150));
-		assert.equal(isPidAlive(owned.proc.pid), true, "owned process should be alive before cleanup");
-		assert.equal(isPidAlive(persistent.proc.pid), true, "persistent process should be alive before cleanup");
-		assert.equal(isPidAlive(foreign.proc.pid), true, "foreign process should be alive before cleanup");
+	await new Promise((resolve) => setTimeout(resolve, 150));
+	assert.equal(isPidAlive(owned.proc.pid), true, "owned process should be alive before cleanup");
+	assert.equal(isPidAlive(persistent.proc.pid), true, "persistent process should be alive before cleanup");
+	assert.equal(isPidAlive(foreign.proc.pid), true, "foreign process should be alive before cleanup");
 
-		const removed = await cleanupSessionProcesses("session-a", { graceMs: 200 });
-		assert.deepEqual(removed.sort(), [owned.id], "only the session-scoped process should be reaped");
+	const removed = await cleanupSessionProcesses("session-a", { graceMs: 200 });
+	assert.deepEqual(removed.sort(), [owned.id], "only the session-scoped process should be reaped");
 
-		await new Promise((resolve) => setTimeout(resolve, 150));
-		assert.equal(isPidAlive(owned.proc.pid), false, "owned process should be terminated");
-		assert.equal(isPidAlive(persistent.proc.pid), true, "persistent process should survive cleanup");
-		assert.equal(isPidAlive(foreign.proc.pid), true, "foreign process should survive cleanup");
-		assert.equal(processes.get(owned.id)?.persistAcrossSessions, false);
-		assert.equal(processes.get(persistent.id)?.persistAcrossSessions, true);
-	} finally {
-		cleanupAll();
-	}
+	await new Promise((resolve) => setTimeout(resolve, 150));
+	assert.equal(isPidAlive(owned.proc.pid), false, "owned process should be terminated");
+	assert.equal(isPidAlive(persistent.proc.pid), true, "persistent process should survive cleanup");
+	assert.equal(isPidAlive(foreign.proc.pid), true, "foreign process should survive cleanup");
+	assert.equal(processes.get(owned.id)?.persistAcrossSessions, false);
+	assert.equal(processes.get(persistent.id)?.persistAcrossSessions, true);
 });

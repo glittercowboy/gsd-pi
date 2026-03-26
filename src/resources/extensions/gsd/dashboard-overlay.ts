@@ -9,7 +9,8 @@
 import type { Theme } from "@gsd/pi-coding-agent";
 import { truncateToWidth, visibleWidth, matchesKey, Key } from "@gsd/pi-tui";
 import { deriveState } from "./state.js";
-import { loadFile, parseRoadmap, parsePlan } from "./files.js";
+import { loadFile } from "./files.js";
+import { isDbAvailable, getMilestoneSlices, getSliceTasks } from "./gsd-db.js";
 import { resolveMilestoneFile, resolveSliceFile } from "./paths.js";
 import { getAutoDashboardData } from "./auto.js";
 import type { AutoDashboardData } from "./auto-dashboard.js";
@@ -98,18 +99,11 @@ export class GSDDashboardOverlay {
     const currentUnit = dashData.currentUnit
       ? `${dashData.currentUnit.type}:${dashData.currentUnit.id}:${dashData.currentUnit.startedAt}`
       : "-";
-    const lastCompleted = dashData.completedUnits.length > 0
-      ? dashData.completedUnits[dashData.completedUnits.length - 1]
-      : null;
-    const completedKey = lastCompleted
-      ? `${dashData.completedUnits.length}:${lastCompleted.type}:${lastCompleted.id}:${lastCompleted.finishedAt}`
-      : "0";
     return [
       base,
       dashData.active ? "1" : "0",
       dashData.paused ? "1" : "0",
       currentUnit,
-      completedKey,
     ].join("|");
   }
 
@@ -159,9 +153,14 @@ export class GSDDashboardOverlay {
 
       const roadmapFile = resolveMilestoneFile(base, mid, "ROADMAP");
       const roadmapContent = roadmapFile ? await loadFile(roadmapFile) : null;
-      if (roadmapContent) {
-        const roadmap = parseRoadmap(roadmapContent);
-        for (const s of roadmap.slices) {
+      // Normalize slices from DB
+      type NormSlice = { id: string; done: boolean; title: string; risk: string };
+      let normSlices: NormSlice[] = [];
+      if (isDbAvailable()) {
+        normSlices = getMilestoneSlices(mid).map(s => ({ id: s.id, done: s.status === "complete", title: s.title, risk: s.risk || "medium" }));
+      }
+
+      for (const s of normSlices) {
           const sliceView: SliceView = {
             id: s.id,
             title: s.title,
@@ -172,19 +171,18 @@ export class GSDDashboardOverlay {
           };
 
           if (sliceView.active) {
-            const planFile = resolveSliceFile(base, mid, s.id, "PLAN");
-            const planContent = planFile ? await loadFile(planFile) : null;
-            if (planContent) {
-              const plan = parsePlan(planContent);
+            // Normalize tasks from DB
+            if (isDbAvailable()) {
+              const dbTasks = getSliceTasks(mid, s.id);
               sliceView.taskProgress = {
-                done: plan.tasks.filter(t => t.done).length,
-                total: plan.tasks.length,
+                done: dbTasks.filter(t => t.status === "complete" || t.status === "done").length,
+                total: dbTasks.length,
               };
-              for (const t of plan.tasks) {
+              for (const t of dbTasks) {
                 sliceView.tasks.push({
                   id: t.id,
                   title: t.title,
-                  done: t.done,
+                  done: t.status === "complete" || t.status === "done",
                   active: state.activeTask?.id === t.id,
                 });
               }
@@ -192,7 +190,6 @@ export class GSDDashboardOverlay {
           }
 
           view.slices.push(sliceView);
-        }
       }
 
       this.milestoneData = view;
@@ -454,49 +451,6 @@ export class GSDDashboardOverlay {
       lines.push(centered(th.fg("dim", "No active milestone.")));
     }
 
-    if (this.dashData.completedUnits.length > 0) {
-      lines.push(blank());
-      lines.push(hr());
-      lines.push(row(th.fg("text", th.bold("Completed"))));
-      lines.push(blank());
-
-      // Build ledger lookup for budget indicators (last entry wins for retries)
-      const ledgerLookup = new Map<string, UnitMetrics>();
-      const currentLedger = getLedger();
-      if (currentLedger) {
-        for (const lu of currentLedger.units) {
-          ledgerLookup.set(`${lu.type}:${lu.id}`, lu);
-        }
-      }
-
-      const recent = [...this.dashData.completedUnits].reverse().slice(0, 10);
-      for (const u of recent) {
-        // Budget indicators from ledger — use warning glyph for pressured units
-        const ledgerEntry = ledgerLookup.get(`${u.type}:${u.id}`);
-        const hadPressure = ledgerEntry?.continueHereFired === true;
-        const hadTruncation = (ledgerEntry?.truncationSections ?? 0) > 0;
-        const unitGlyph = hadPressure
-          ? th.fg(STATUS_COLOR.warning, STATUS_GLYPH.warning)
-          : th.fg(STATUS_COLOR.done, STATUS_GLYPH.done);
-        const left = `  ${unitGlyph} ${th.fg("muted", unitLabel(u.type))} ${th.fg("muted", u.id)}`;
-
-        let budgetMarkers = "";
-        if (hadTruncation) {
-          budgetMarkers += th.fg("warning", ` ▼${ledgerEntry!.truncationSections}`);
-        }
-        if (hadPressure) {
-          budgetMarkers += th.fg("error", " → wrap-up");
-        }
-
-        const right = th.fg("dim", formatDuration(u.finishedAt - u.startedAt));
-        lines.push(row(joinColumns(`${left}${budgetMarkers}`, right, contentWidth)));
-      }
-
-      if (this.dashData.completedUnits.length > 10) {
-        lines.push(row(th.fg("dim", `  ...and ${this.dashData.completedUnits.length - 10} more`)));
-      }
-    }
-
     const ledger = getLedger();
     if (ledger && ledger.units.length > 0) {
       const totals = getProjectTotals(ledger.units);
@@ -602,6 +556,13 @@ export class GSDDashboardOverlay {
       const cacheRate = aggregateCacheHitRate();
       if (cacheRate > 0) {
         lines.push(row(`${th.fg("dim", "cache hit rate:")} ${th.fg("text", `${cacheRate}%`)}`));
+      }
+
+      if (this.dashData.rtkEnabled && this.dashData.rtkSavings && this.dashData.rtkSavings.commands > 0) {
+        const rtk = this.dashData.rtkSavings;
+        lines.push(row(
+          `${th.fg("dim", "rtk saved:")} ${th.fg("text", formatTokenCount(rtk.savedTokens))} ${th.fg("dim", `(${Math.round(rtk.savingsPct)}% · ${rtk.commands} cmd${rtk.commands === 1 ? "" : "s"})`)}`,
+        ));
       }
     }
 

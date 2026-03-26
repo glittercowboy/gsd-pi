@@ -53,43 +53,37 @@ function cleanup(dir: string): void {
 
 // ─── hasGitTrackedGsdFiles ───────────────────────────────────────────
 
-test("hasGitTrackedGsdFiles returns false when .gsd/ does not exist", () => {
+test("hasGitTrackedGsdFiles returns false when .gsd/ does not exist", (t) => {
   const dir = makeTempRepo();
-  try {
-    assert.equal(hasGitTrackedGsdFiles(dir), false);
-  } finally {
-    cleanup(dir);
-  }
+  t.after(() => { cleanup(dir); });
+
+  assert.equal(hasGitTrackedGsdFiles(dir), false);
 });
 
-test("hasGitTrackedGsdFiles returns true when .gsd/ has tracked files", () => {
+test("hasGitTrackedGsdFiles returns true when .gsd/ has tracked files", (t) => {
   const dir = makeTempRepo();
-  try {
-    mkdirSync(join(dir, ".gsd", "milestones"), { recursive: true });
-    writeFileSync(join(dir, ".gsd", "PROJECT.md"), "# Test Project\n");
-    git(dir, "add", ".gsd/PROJECT.md");
-    git(dir, "commit", "-m", "add gsd");
-    assert.equal(hasGitTrackedGsdFiles(dir), true);
-  } finally {
-    cleanup(dir);
-  }
+  t.after(() => { cleanup(dir); });
+
+  mkdirSync(join(dir, ".gsd", "milestones"), { recursive: true });
+  writeFileSync(join(dir, ".gsd", "PROJECT.md"), "# Test Project\n");
+  git(dir, "add", ".gsd/PROJECT.md");
+  git(dir, "commit", "-m", "add gsd");
+  assert.equal(hasGitTrackedGsdFiles(dir), true);
 });
 
-test("hasGitTrackedGsdFiles returns false when .gsd/ exists but is untracked", () => {
+test("hasGitTrackedGsdFiles returns false when .gsd/ exists but is untracked", (t) => {
   const dir = makeTempRepo();
-  try {
-    mkdirSync(join(dir, ".gsd"), { recursive: true });
-    writeFileSync(join(dir, ".gsd", "STATE.md"), "state\n");
-    // Not git-added — should return false
-    assert.equal(hasGitTrackedGsdFiles(dir), false);
-  } finally {
-    cleanup(dir);
-  }
+  t.after(() => { cleanup(dir); });
+
+  mkdirSync(join(dir, ".gsd"), { recursive: true });
+  writeFileSync(join(dir, ".gsd", "STATE.md"), "state\n");
+  // Not git-added — should return false
+  assert.equal(hasGitTrackedGsdFiles(dir), false);
 });
 
 // ─── ensureGitignore — tracked .gsd/ protection ─────────────────────
 
-test("ensureGitignore does NOT add .gsd when .gsd/ has tracked files (#1364)", () => {
+test("ensureGitignore does NOT add .gsd when .gsd/ has tracked files (#1364)", (t) => {
   const dir = makeTempRepo();
   try {
     // Set up .gsd/ with tracked files
@@ -118,7 +112,7 @@ test("ensureGitignore does NOT add .gsd when .gsd/ has tracked files (#1364)", (
   }
 });
 
-test("ensureGitignore adds .gsd when .gsd/ has NO tracked files", () => {
+test("ensureGitignore adds .gsd when .gsd/ has NO tracked files", (t) => {
   const dir = makeTempRepo();
   try {
     // Run ensureGitignore (no .gsd/ at all)
@@ -136,20 +130,18 @@ test("ensureGitignore adds .gsd when .gsd/ has NO tracked files", () => {
   }
 });
 
-test("ensureGitignore respects manageGitignore: false", () => {
+test("ensureGitignore respects manageGitignore: false", (t) => {
   const dir = makeTempRepo();
-  try {
-    const result = ensureGitignore(dir, { manageGitignore: false });
-    assert.equal(result, false);
-    assert.ok(!existsSync(join(dir, ".gitignore")), "Should not create .gitignore");
-  } finally {
-    cleanup(dir);
-  }
+  t.after(() => { cleanup(dir); });
+
+  const result = ensureGitignore(dir, { manageGitignore: false });
+  assert.equal(result, false);
+  assert.ok(!existsSync(join(dir, ".gitignore")), "Should not create .gitignore");
 });
 
 // ─── ensureGitignore — verify no tracked files become invisible ─────
 
-test("ensureGitignore with tracked .gsd/ does not cause git to see files as deleted", () => {
+test("ensureGitignore with tracked .gsd/ does not cause git to see files as deleted", (t) => {
   const dir = makeTempRepo();
   try {
     // Create tracked .gsd/ files
@@ -183,7 +175,7 @@ test("ensureGitignore with tracked .gsd/ does not cause git to see files as dele
   }
 });
 
-test("hasGitTrackedGsdFiles returns true (fail-safe) when git is not available", () => {
+test("hasGitTrackedGsdFiles returns true (fail-safe) when git is not available", (t) => {
   const dir = makeTempRepo();
   try {
     // Create and track .gsd/ files
@@ -207,7 +199,7 @@ test("hasGitTrackedGsdFiles returns true (fail-safe) when git is not available",
 
 // ─── migrateToExternalState — tracked .gsd/ protection ──────────────
 
-test("migrateToExternalState aborts when .gsd/ has tracked files (#1364)", () => {
+test("migrateToExternalState aborts when .gsd/ has tracked files (#1364)", (t) => {
   const dir = makeTempRepo();
   try {
     // Create tracked .gsd/ files
@@ -235,7 +227,7 @@ test("migrateToExternalState aborts when .gsd/ has tracked files (#1364)", () =>
   }
 });
 
-test("migrateToExternalState cleans git index so tracked files don't show as deleted (#1364 path 2)", () => {
+test("migrateToExternalState cleans git index so tracked files don't show as deleted (#1364 path 2)", (t) => {
   const dir = makeTempRepo();
   try {
     // Track .gsd/ files, then untrack them so migration proceeds

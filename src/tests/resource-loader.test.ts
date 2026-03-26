@@ -49,85 +49,81 @@ test("getExtensionKey normalizes top-level .ts and .js entry names to the same k
   );
 });
 
-test("hasStaleCompiledExtensionSiblings only flags top-level .ts/.js sibling pairs", async () => {
+test("hasStaleCompiledExtensionSiblings only flags top-level .ts/.js sibling pairs", async (t) => {
   const { hasStaleCompiledExtensionSiblings } = await import("../resource-loader.ts");
   const tmp = mkdtempSync(join(tmpdir(), "gsd-resource-loader-"));
   const extensionsDir = join(tmp, "extensions");
 
-  try {
-    mkdirSync(join(extensionsDir, "gsd"), { recursive: true });
-    writeFileSync(join(extensionsDir, "gsd", "index.ts"), "export {};\n");
-    assert.equal(hasStaleCompiledExtensionSiblings(extensionsDir), false);
+  t.after(() => { rmSync(tmp, { recursive: true, force: true }); });
 
-    writeFileSync(join(extensionsDir, "ask-user-questions.js"), "export {};\n");
-    assert.equal(hasStaleCompiledExtensionSiblings(extensionsDir), false);
+  mkdirSync(join(extensionsDir, "gsd"), { recursive: true });
+  writeFileSync(join(extensionsDir, "gsd", "index.ts"), "export {};\n");
+  assert.equal(hasStaleCompiledExtensionSiblings(extensionsDir), false);
 
-    writeFileSync(join(extensionsDir, "ask-user-questions.ts"), "export {};\n");
-    assert.equal(hasStaleCompiledExtensionSiblings(extensionsDir), true);
-  } finally {
-    rmSync(tmp, { recursive: true, force: true });
-  }
+  writeFileSync(join(extensionsDir, "ask-user-questions.js"), "export {};\n");
+  assert.equal(hasStaleCompiledExtensionSiblings(extensionsDir), false);
+
+  writeFileSync(join(extensionsDir, "ask-user-questions.ts"), "export {};\n");
+  assert.equal(hasStaleCompiledExtensionSiblings(extensionsDir), true);
 });
 
-test("buildResourceLoader excludes duplicate top-level pi extensions when bundled resources use .js", async () => {
+test("buildResourceLoader excludes duplicate top-level pi extensions when bundled resources use .js", async (t) => {
   const tmp = mkdtempSync(join(tmpdir(), "gsd-resource-loader-home-"));
   const piExtensionsDir = join(tmp, ".pi", "agent", "extensions");
   const fakeAgentDir = join(tmp, ".gsd", "agent");
   const restoreHomeEnv = overrideHomeEnv(tmp);
 
-  try {
-    mkdirSync(piExtensionsDir, { recursive: true });
-    writeFileSync(join(piExtensionsDir, "ask-user-questions.ts"), "export {};\n");
-    writeFileSync(join(piExtensionsDir, "custom-extension.ts"), "export {};\n");
-
-    const { buildResourceLoader } = await import("../resource-loader.ts");
-    const loader = buildResourceLoader(fakeAgentDir) as { additionalExtensionPaths?: string[] };
-    const additionalExtensionPaths = loader.additionalExtensionPaths ?? [];
-
-    assert.equal(
-      additionalExtensionPaths.some((entryPath) => entryPath.endsWith("ask-user-questions.ts")),
-      false,
-      "bundled compiled extensions should suppress duplicate pi top-level .ts siblings",
-    );
-    assert.equal(
-      additionalExtensionPaths.some((entryPath) => entryPath.endsWith("custom-extension.ts")),
-      true,
-      "non-duplicate pi extensions should still load",
-    );
-  } finally {
+  t.after(() => {
     restoreHomeEnv();
     rmSync(tmp, { recursive: true, force: true });
-  }
+  });
+
+  mkdirSync(piExtensionsDir, { recursive: true });
+  writeFileSync(join(piExtensionsDir, "ask-user-questions.ts"), "export {};\n");
+  writeFileSync(join(piExtensionsDir, "custom-extension.ts"), "export {};\n");
+
+  const { buildResourceLoader } = await import("../resource-loader.ts");
+  const loader = buildResourceLoader(fakeAgentDir) as { additionalExtensionPaths?: string[] };
+  const additionalExtensionPaths = loader.additionalExtensionPaths ?? [];
+
+  assert.equal(
+    additionalExtensionPaths.some((entryPath) => entryPath.endsWith("ask-user-questions.ts")),
+    false,
+    "bundled compiled extensions should suppress duplicate pi top-level .ts siblings",
+  );
+  assert.equal(
+    additionalExtensionPaths.some((entryPath) => entryPath.endsWith("custom-extension.ts")),
+    true,
+    "non-duplicate pi extensions should still load",
+  );
 });
 
-test("initResources prunes stale top-level extension siblings next to bundled compiled extensions", async () => {
+test("initResources prunes stale top-level extension siblings next to bundled compiled extensions", async (t) => {
   const { initResources } = await import("../resource-loader.ts");
   const tmp = mkdtempSync(join(tmpdir(), "gsd-resource-loader-sync-"));
   const fakeAgentDir = join(tmp, "agent");
   const bundledTsPath = join(fakeAgentDir, "extensions", "ask-user-questions.ts");
   const bundledJsPath = join(fakeAgentDir, "extensions", "ask-user-questions.js");
 
-  try {
-    initResources(fakeAgentDir);
+  t.after(() => { rmSync(tmp, { recursive: true, force: true }); });
 
-    const bundledPath = existsSync(bundledJsPath)
-      ? bundledJsPath
-      : bundledTsPath;
-    const staleSiblingPath = bundledPath.endsWith(".js")
-      ? bundledTsPath
-      : bundledJsPath;
+  initResources(fakeAgentDir);
 
-    assert.equal(existsSync(bundledPath), true, "bundled top-level extension should exist");
+  const bundledPath = existsSync(bundledJsPath)
+    ? bundledJsPath
+    : bundledTsPath;
+  const staleSiblingPath = bundledPath.endsWith(".js")
+    ? bundledTsPath
+    : bundledJsPath;
 
-    // Simulate a stale opposite-format sibling left from a previous sync/build mismatch.
-    writeFileSync(staleSiblingPath, "export {};\n");
-    assert.equal(existsSync(staleSiblingPath), true);
+  assert.equal(existsSync(bundledPath), true, "bundled top-level extension should exist");
 
-    initResources(fakeAgentDir);
+  // Simulate a stale opposite-format sibling left from a previous sync/build mismatch.
+  writeFileSync(staleSiblingPath, "export {};\n");
+  assert.equal(existsSync(staleSiblingPath), true);
 
-    assert.equal(existsSync(staleSiblingPath), false, "stale top-level sibling should be removed during sync");
-    assert.equal(existsSync(bundledPath), true, "bundled extension should remain after cleanup");
-  } finally {
-    rmSync(tmp, { recursive: true, force: true });
-  }
+  initResources(fakeAgentDir);
+
+  assert.equal(existsSync(staleSiblingPath), false, "stale top-level sibling should be removed during sync");
+  assert.equal(existsSync(bundledPath), true, "bundled extension should remain after cleanup");
 });

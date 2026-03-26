@@ -94,10 +94,11 @@ export class CompactionOrchestrator {
 				throw new Error("No model selected");
 			}
 
-			const apiKey = await this._deps.modelRegistry.getApiKey(model, this._deps.getSessionId());
-			if (!apiKey) {
+			if (!this._deps.modelRegistry.isProviderRequestReady(model.provider)) {
 				throw new Error(`No API key for ${model.provider}`);
 			}
+			// undefined for externalCli/none providers — stripped at the streamSimple boundary (model-registry.ts)
+			const apiKey = await this._deps.modelRegistry.getApiKey(model, this._deps.getSessionId());
 
 			const pathEntries = this._deps.sessionManager.getBranch();
 			const settings = this._deps.settingsManager.getCompactionSettings();
@@ -299,11 +300,12 @@ export class CompactionOrchestrator {
 				return;
 			}
 
-			const apiKey = await this._deps.modelRegistry.getApiKey(model, this._deps.getSessionId());
-			if (!apiKey) {
+			if (!this._deps.modelRegistry.isProviderRequestReady(model.provider)) {
 				this._deps.emit({ type: "auto_compaction_end", result: undefined, aborted: false, willRetry: false });
 				return;
 			}
+			// undefined for externalCli/none providers — stripped at the streamSimple boundary (model-registry.ts)
+			const apiKey = await this._deps.modelRegistry.getApiKey(model, this._deps.getSessionId());
 
 			const pathEntries = this._deps.sessionManager.getBranch();
 			const preparation = prepareCompaction(pathEntries, settings);

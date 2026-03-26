@@ -15,7 +15,7 @@ import {
   resolveMilestoneFile,
   resolveSliceFile,
 } from "./paths.js";
-import { parseRoadmap, parsePlan } from "./files.js";
+import { isDbAvailable, getMilestoneSlices, getSliceTasks } from "./gsd-db.js";
 import { readFileSync, writeFileSync, existsSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { truncateToWidth, visibleWidth } from "@gsd/pi-tui";
@@ -25,6 +25,12 @@ import { computeProgressScore } from "./progress-score.js";
 import { getActiveWorktreeName } from "./worktree-command.js";
 import { loadEffectiveGSDPreferences, getGlobalGSDPreferencesPath } from "./preferences.js";
 import { resolveServiceTierIcon, getEffectiveServiceTier } from "./service-tier.js";
+import { parseUnitId } from "./unit-id.js";
+import {
+  formatRtkSavingsLabel,
+  getRtkSessionSavings,
+  type RtkSessionSavings,
+} from "../shared/rtk-session-stats.js";
 
 // ─── UAT Slice Extraction ─────────────────────────────────────────────────────
 
@@ -33,8 +39,8 @@ import { resolveServiceTierIcon, getEffectiveServiceTier } from "./service-tier.
  * Returns null if the format doesn't match.
  */
 export function extractUatSliceId(unitId: string): string | null {
-  const parts = unitId.split("/");
-  if (parts.length >= 2 && parts[1]!.startsWith("S")) return parts[1]!;
+  const { slice } = parseUnitId(unitId);
+  if (slice?.startsWith("S")) return slice;
   return null;
 }
 
@@ -48,7 +54,6 @@ export interface AutoDashboardData {
   startTime: number;
   elapsed: number;
   currentUnit: { type: string; id: string; startedAt: number } | null;
-  completedUnits: { type: string; id: string; startedAt: number; finishedAt: number }[];
   basePath: string;
   /** Running cost and token totals from metrics ledger */
   totalCost: number;
@@ -59,6 +64,10 @@ export interface AutoDashboardData {
   profileDowngraded?: boolean;
   /** Number of pending captures awaiting triage (0 if none or file missing) */
   pendingCaptureCount: number;
+  /** RTK token savings for the current session, or null when unavailable. */
+  rtkSavings?: RtkSessionSavings | null;
+  /** Whether RTK is enabled via experimental.rtk preference. False when not opted in. */
+  rtkEnabled?: boolean;
   /** Cross-process: another auto-mode session detected via auto.lock (PID, startedAt) */
   remoteSession?: { pid: number; startedAt: string; unitType: string; unitId: string };
 }
@@ -152,6 +161,8 @@ export function describeNextUnit(state: GSDState): { label: string; description:
       return { label: `Replan ${sid}: ${sTitle}`, description: "Blocker found — replan the slice." };
     case "completing-milestone":
       return { label: "Complete milestone", description: "Write milestone summary." };
+    case "evaluating-gates":
+      return { label: `Evaluate gates for ${sid}: ${sTitle}`, description: "Parallel quality gate assessment before execution." };
     default:
       return { label: "Continue", description: "Execute the next step." };
   }
@@ -248,24 +259,28 @@ let cachedSliceProgress: {
 
 export function updateSliceProgressCache(base: string, mid: string, activeSid?: string): void {
   try {
-    const roadmapFile = resolveMilestoneFile(base, mid, "ROADMAP");
-    if (!roadmapFile) return;
-    const content = readFileSync(roadmapFile, "utf-8");
-    const roadmap = parseRoadmap(content);
+    // Normalize slices: prefer DB, fall back to parser
+    type NormSlice = { id: string; done: boolean; title: string };
+    let normSlices: NormSlice[];
+    if (isDbAvailable()) {
+      normSlices = getMilestoneSlices(mid).map(s => ({ id: s.id, done: s.status === "complete", title: s.title }));
+    } else {
+      normSlices = [];
+    }
 
     let activeSliceTasks: { done: number; total: number } | null = null;
     let taskDetails: CachedTaskDetail[] | null = null;
     if (activeSid) {
       try {
-        const planFile = resolveSliceFile(base, mid, activeSid, "PLAN");
-        if (planFile && existsSync(planFile)) {
-          const planContent = readFileSync(planFile, "utf-8");
-          const plan = parsePlan(planContent);
-          activeSliceTasks = {
-            done: plan.tasks.filter(t => t.done).length,
-            total: plan.tasks.length,
-          };
-          taskDetails = plan.tasks.map(t => ({ id: t.id, title: t.title, done: t.done }));
+        if (isDbAvailable()) {
+          const dbTasks = getSliceTasks(mid, activeSid);
+          if (dbTasks.length > 0) {
+            activeSliceTasks = {
+              done: dbTasks.filter(t => t.status === "complete" || t.status === "done").length,
+              total: dbTasks.length,
+            };
+            taskDetails = dbTasks.map(t => ({ id: t.id, title: t.title, done: t.status === "complete" || t.status === "done" }));
+          }
         }
       } catch {
         // Non-fatal — just omit task count
@@ -273,8 +288,8 @@ export function updateSliceProgressCache(base: string, mid: string, activeSid?: 
     }
 
     cachedSliceProgress = {
-      done: roadmap.slices.filter(s => s.done).length,
-      total: roadmap.slices.length,
+      done: normSlices.filter(s => s.done).length,
+      total: normSlices.length,
       milestoneId: mid,
       activeSliceTasks,
       taskDetails,
@@ -470,6 +485,19 @@ export function updateProgressWidget(
     let pulseBright = true;
     let cachedLines: string[] | undefined;
     let cachedWidth: number | undefined;
+    let cachedRtkLabel: string | null | undefined;
+
+    const refreshRtkLabel = (): void => {
+      try {
+        const sessionId = ctx.sessionManager.getSessionId();
+        const savings = sessionId ? getRtkSessionSavings(accessors.getBasePath(), sessionId) : null;
+        cachedRtkLabel = formatRtkSavingsLabel(savings);
+      } catch {
+        cachedRtkLabel = null;
+      }
+    };
+
+    refreshRtkLabel();
 
     const pulseTimer = setInterval(() => {
       pulseBright = !pulseBright;
@@ -481,12 +509,15 @@ export function updateProgressWidget(
     // task/slice completion mid-unit. Without this, the progress bar only
     // updates at dispatch time, appearing frozen during long-running units.
     // 15s (vs 5s) reduces synchronous file I/O on the hot path.
-    const progressRefreshTimer = mid ? setInterval(() => {
+    const progressRefreshTimer = setInterval(() => {
       try {
-        updateSliceProgressCache(accessors.getBasePath(), mid.id, slice?.id);
+        if (mid) {
+          updateSliceProgressCache(accessors.getBasePath(), mid.id, slice?.id);
+        }
+        refreshRtkLabel();
         cachedLines = undefined;
       } catch { /* non-fatal */ }
-    }, 15_000) : null;
+    }, 15_000);
 
     return {
       render(width: number): string[] {
@@ -769,6 +800,9 @@ export function updateProgressWidget(
             .join(theme.fg("dim", "  "));
           if (statsLine) {
             lines.push(rightAlign("", statsLine, width));
+          }
+          if (cachedRtkLabel) {
+            lines.push(rightAlign("", theme.fg("dim", cachedRtkLabel), width));
           }
         }
         // PWD line with last commit info right-aligned

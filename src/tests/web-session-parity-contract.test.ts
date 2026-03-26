@@ -234,7 +234,7 @@ function configureBridgeFixture(
   })
 }
 
-test("/api/session/browser stays current-project scoped and carries threaded/search metadata outside /api/boot", async () => {
+test("/api/session/browser stays current-project scoped and carries threaded/search metadata outside /api/boot", async (t) => {
   const fixture = makeWorkspaceFixture()
   const rootPath = createSessionFile({
     projectCwd: fixture.projectCwd,
@@ -313,48 +313,48 @@ test("/api/session/browser stays current-project scoped and carries threaded/sea
 
   configureBridgeFixture(fixture, harness)
 
-  try {
-    const response = await browserRoute.GET(new Request("http://localhost/api/session/browser"))
-    assert.equal(response.status, 200)
-    const payload = await response.json() as any
-
-    assert.equal(payload.project.scope, "current_project")
-    assert.equal(payload.project.cwd, fixture.projectCwd)
-    assert.equal(payload.project.sessionsDir, fixture.sessionsDir)
-    assert.equal(payload.project.activeSessionPath, childPath)
-    assert.equal(payload.totalSessions, 3)
-    assert.equal(payload.returnedSessions, 3)
-    assert.equal(payload.sessions.some((session: any) => session.path === outsidePath), false)
-
-    const child = payload.sessions.find((session: any) => session.id === "sess-child")
-    assert.ok(child)
-    assert.equal(child.parentSessionPath, rootPath)
-    assert.equal(child.firstMessage, "Investigate the branch rename")
-    assert.equal(child.isActive, true)
-    assert.equal(child.depth, 1)
-    assert.deepEqual(child.ancestorHasNextSibling, [false])
-    assert.equal("allMessagesText" in child, false)
-
-    const searchResponse = await browserRoute.GET(
-      new Request("http://localhost/api/session/browser?query=api-session-browser&sortMode=relevance&nameFilter=named"),
-    )
-    assert.equal(searchResponse.status, 200)
-    const searchPayload = await searchResponse.json() as any
-
-    assert.equal(searchPayload.totalSessions, 3)
-    assert.equal(searchPayload.returnedSessions, 1)
-    assert.equal(searchPayload.query.sortMode, "relevance")
-    assert.equal(searchPayload.query.nameFilter, "named")
-    assert.equal(searchPayload.sessions[0].id, "sess-named")
-    assert.equal(searchPayload.sessions[0].name, "Release Notes")
-  } finally {
+  t.after(async () => {
     await bridge.resetBridgeServiceForTests()
     onboarding.resetOnboardingServiceForTests()
     fixture.cleanup()
-  }
+  });
+
+  const response = await browserRoute.GET(new Request("http://localhost/api/session/browser"))
+  assert.equal(response.status, 200)
+  const payload = await response.json() as any
+
+  assert.equal(payload.project.scope, "current_project")
+  assert.equal(payload.project.cwd, fixture.projectCwd)
+  assert.equal(payload.project.sessionsDir, fixture.sessionsDir)
+  assert.equal(payload.project.activeSessionPath, childPath)
+  assert.equal(payload.totalSessions, 3)
+  assert.equal(payload.returnedSessions, 3)
+  assert.equal(payload.sessions.some((session: any) => session.path === outsidePath), false)
+
+  const child = payload.sessions.find((session: any) => session.id === "sess-child")
+  assert.ok(child)
+  assert.equal(child.parentSessionPath, rootPath)
+  assert.equal(child.firstMessage, "Investigate the branch rename")
+  assert.equal(child.isActive, true)
+  assert.equal(child.depth, 1)
+  assert.deepEqual(child.ancestorHasNextSibling, [false])
+  assert.equal("allMessagesText" in child, false)
+
+  const searchResponse = await browserRoute.GET(
+    new Request("http://localhost/api/session/browser?query=api-session-browser&sortMode=relevance&nameFilter=named"),
+  )
+  assert.equal(searchResponse.status, 200)
+  const searchPayload = await searchResponse.json() as any
+
+  assert.equal(searchPayload.totalSessions, 3)
+  assert.equal(searchPayload.returnedSessions, 1)
+  assert.equal(searchPayload.query.sortMode, "relevance")
+  assert.equal(searchPayload.query.nameFilter, "named")
+  assert.equal(searchPayload.sessions[0].id, "sess-named")
+  assert.equal(searchPayload.sessions[0].name, "Release Notes")
 })
 
-test("/api/session/manage renames the active session through bridge-aware RPC instead of mutating the file directly", async () => {
+test("/api/session/manage renames the active session through bridge-aware RPC instead of mutating the file directly", async (t) => {
   const fixture = makeWorkspaceFixture()
   const activePath = createSessionFile({
     projectCwd: fixture.projectCwd,
@@ -415,35 +415,35 @@ test("/api/session/manage renames the active session through bridge-aware RPC in
     } as any),
   })
 
-  try {
-    const response = await manageRoute.POST(
-      new Request("http://localhost/api/session/manage", {
-        method: "POST",
-        body: JSON.stringify({
-          action: "rename",
-          sessionPath: activePath,
-          name: "Active Renamed",
-        }),
-      }),
-    )
-    const payload = await response.json() as any
-    await waitForMicrotasks()
-
-    assert.equal(response.status, 200)
-    assert.equal(payload.success, true)
-    assert.equal(payload.sessionPath, activePath)
-    assert.equal(payload.isActiveSession, true)
-    assert.equal(payload.mutation, "rpc")
-    assert.ok(harness.commands.some((command) => command.type === "set_session_name" && command.name === "Active Renamed"))
-    assert.equal(getLatestSessionName(activePath), "Before Active Rename")
-  } finally {
+  t.after(async () => {
     await bridge.resetBridgeServiceForTests()
     onboarding.resetOnboardingServiceForTests()
     fixture.cleanup()
-  }
+  });
+
+  const response = await manageRoute.POST(
+    new Request("http://localhost/api/session/manage", {
+      method: "POST",
+      body: JSON.stringify({
+        action: "rename",
+        sessionPath: activePath,
+        name: "Active Renamed",
+      }),
+    }),
+  )
+  const payload = await response.json() as any
+  await waitForMicrotasks()
+
+  assert.equal(response.status, 200)
+  assert.equal(payload.success, true)
+  assert.equal(payload.sessionPath, activePath)
+  assert.equal(payload.isActiveSession, true)
+  assert.equal(payload.mutation, "rpc")
+  assert.ok(harness.commands.some((command) => command.type === "set_session_name" && command.name === "Active Renamed"))
+  assert.equal(getLatestSessionName(activePath), "Before Active Rename")
 })
 
-test("/api/session/manage renames inactive sessions via authoritative session-file mutation and rejects out-of-scope paths", async () => {
+test("/api/session/manage renames inactive sessions via authoritative session-file mutation and rejects out-of-scope paths", async (t) => {
   const fixture = makeWorkspaceFixture()
   const activePath = createSessionFile({
     projectCwd: fixture.projectCwd,
@@ -520,122 +520,118 @@ test("/api/session/manage renames inactive sessions via authoritative session-fi
     } as any),
   })
 
-  try {
-    const renameResponse = await manageRoute.POST(
-      new Request("http://localhost/api/session/manage", {
-        method: "POST",
-        body: JSON.stringify({
-          action: "rename",
-          sessionPath: inactivePath,
-          name: "Inactive Renamed",
-        }),
-      }),
-    )
-    const renamePayload = await renameResponse.json() as any
-
-    assert.equal(renameResponse.status, 200)
-    assert.equal(renamePayload.success, true)
-    assert.equal(renamePayload.isActiveSession, false)
-    assert.equal(renamePayload.mutation, "session_file")
-    assert.equal(getLatestSessionName(inactivePath), "Inactive Renamed")
-    assert.equal(harness.commands.some((command) => command.type === "set_session_name"), false)
-
-    const outsideResponse = await manageRoute.POST(
-      new Request("http://localhost/api/session/manage", {
-        method: "POST",
-        body: JSON.stringify({
-          action: "rename",
-          sessionPath: outsidePath,
-          name: "Should Fail",
-        }),
-      }),
-    )
-    const outsidePayload = await outsideResponse.json() as any
-
-    assert.equal(outsideResponse.status, 404)
-    assert.equal(outsidePayload.success, false)
-    assert.equal(outsidePayload.code, "not_found")
-    assert.equal(getLatestSessionName(outsidePath), "Outside Session")
-  } finally {
+  t.after(async () => {
     await bridge.resetBridgeServiceForTests()
     onboarding.resetOnboardingServiceForTests()
     fixture.cleanup()
-  }
+  });
+
+  const renameResponse = await manageRoute.POST(
+    new Request("http://localhost/api/session/manage", {
+      method: "POST",
+      body: JSON.stringify({
+        action: "rename",
+        sessionPath: inactivePath,
+        name: "Inactive Renamed",
+      }),
+    }),
+  )
+  const renamePayload = await renameResponse.json() as any
+
+  assert.equal(renameResponse.status, 200)
+  assert.equal(renamePayload.success, true)
+  assert.equal(renamePayload.isActiveSession, false)
+  assert.equal(renamePayload.mutation, "session_file")
+  assert.equal(getLatestSessionName(inactivePath), "Inactive Renamed")
+  assert.equal(harness.commands.some((command) => command.type === "set_session_name"), false)
+
+  const outsideResponse = await manageRoute.POST(
+    new Request("http://localhost/api/session/manage", {
+      method: "POST",
+      body: JSON.stringify({
+        action: "rename",
+        sessionPath: outsidePath,
+        name: "Should Fail",
+      }),
+    }),
+  )
+  const outsidePayload = await outsideResponse.json() as any
+
+  assert.equal(outsideResponse.status, 404)
+  assert.equal(outsidePayload.success, false)
+  assert.equal(outsidePayload.code, "not_found")
+  assert.equal(getLatestSessionName(outsidePath), "Outside Session")
 })
 
-test("/api/git returns a current-project-scoped repo summary and ignores changes outside the current project subtree", async () => {
+test("/api/git returns a current-project-scoped repo summary and ignores changes outside the current project subtree", async (t) => {
   const root = mkdtempSync(join(tmpdir(), "gsd-web-git-summary-"))
   const repoRoot = join(root, "repo")
   const projectCwd = join(repoRoot, "apps", "current-project")
   const docsDir = join(repoRoot, "docs")
 
-  try {
-    mkdirSync(projectCwd, { recursive: true })
-    mkdirSync(docsDir, { recursive: true })
+  t.after(() => { rmSync(root, { recursive: true, force: true }) });
 
-    writeFileSync(join(projectCwd, "staged.txt"), "baseline staged\n")
-    writeFileSync(join(projectCwd, "dirty.txt"), "baseline dirty\n")
-    writeFileSync(join(docsDir, "outside.txt"), "baseline outside\n")
+  mkdirSync(projectCwd, { recursive: true })
+  mkdirSync(docsDir, { recursive: true })
 
-    git(repoRoot, ["init"])
-    git(repoRoot, ["config", "user.name", "GSD Test"])
-    git(repoRoot, ["config", "user.email", "gsd-test@example.com"])
-    git(repoRoot, ["add", "."])
-    git(repoRoot, ["commit", "-m", "initial"])
+  writeFileSync(join(projectCwd, "staged.txt"), "baseline staged\n")
+  writeFileSync(join(projectCwd, "dirty.txt"), "baseline dirty\n")
+  writeFileSync(join(docsDir, "outside.txt"), "baseline outside\n")
 
-    writeFileSync(join(projectCwd, "staged.txt"), "baseline staged\nnext staged line\n")
-    git(repoRoot, ["add", "apps/current-project/staged.txt"])
-    writeFileSync(join(projectCwd, "dirty.txt"), "baseline dirty\nnext dirty line\n")
-    writeFileSync(join(projectCwd, "untracked.txt"), "brand new\n")
-    writeFileSync(join(docsDir, "outside.txt"), "baseline outside\noutside change\n")
+  git(repoRoot, ["init"])
+  git(repoRoot, ["config", "user.name", "GSD Test"])
+  git(repoRoot, ["config", "user.email", "gsd-test@example.com"])
+  git(repoRoot, ["add", "."])
+  git(repoRoot, ["commit", "-m", "initial"])
 
-    const authoritativeRepoRoot = resolve(git(projectCwd, ["rev-parse", "--show-toplevel"]))
+  writeFileSync(join(projectCwd, "staged.txt"), "baseline staged\nnext staged line\n")
+  git(repoRoot, ["add", "apps/current-project/staged.txt"])
+  writeFileSync(join(projectCwd, "dirty.txt"), "baseline dirty\nnext dirty line\n")
+  writeFileSync(join(projectCwd, "untracked.txt"), "brand new\n")
+  writeFileSync(join(docsDir, "outside.txt"), "baseline outside\noutside change\n")
 
-    await withProjectGitEnv(projectCwd, async () => {
-      const response = await gitRoute.GET()
-      assert.equal(response.status, 200)
+  const authoritativeRepoRoot = resolve(git(projectCwd, ["rev-parse", "--show-toplevel"]))
 
-      const payload = await response.json() as any
-      assert.equal(payload.kind, "repo")
-      assert.equal(payload.project.scope, "current_project")
-      assert.equal(payload.project.cwd, projectCwd)
-      assert.equal(payload.project.repoRoot, authoritativeRepoRoot)
-      assert.equal(payload.project.repoRelativePath, "apps/current-project")
-      assert.equal(payload.hasChanges, true)
-      assert.equal(payload.counts.changed, 3)
-      assert.equal(payload.counts.staged, 1)
-      assert.equal(payload.counts.dirty, 1)
-      assert.equal(payload.counts.untracked, 1)
-      assert.equal(payload.counts.conflicts, 0)
-      assert.equal(payload.changedFiles.some((file: any) => file.repoPath === "docs/outside.txt"), false)
-      assert.deepEqual(
-        payload.changedFiles.map((file: any) => file.path).sort(),
-        ["dirty.txt", "staged.txt", "untracked.txt"],
-      )
-    })
-  } finally {
-    rmSync(root, { recursive: true, force: true })
-  }
+  await withProjectGitEnv(projectCwd, async () => {
+    const response = await gitRoute.GET()
+    assert.equal(response.status, 200)
+
+    const payload = await response.json() as any
+    assert.equal(payload.kind, "repo")
+    assert.equal(payload.project.scope, "current_project")
+    assert.equal(payload.project.cwd, projectCwd)
+    assert.equal(payload.project.repoRoot, authoritativeRepoRoot)
+    assert.equal(payload.project.repoRelativePath, "apps/current-project")
+    assert.equal(payload.hasChanges, true)
+    assert.equal(payload.counts.changed, 3)
+    assert.equal(payload.counts.staged, 1)
+    assert.equal(payload.counts.dirty, 1)
+    assert.equal(payload.counts.untracked, 1)
+    assert.equal(payload.counts.conflicts, 0)
+    assert.equal(payload.changedFiles.some((file: any) => file.repoPath === "docs/outside.txt"), false)
+    assert.deepEqual(
+      payload.changedFiles.map((file: any) => file.path).sort(),
+      ["dirty.txt", "staged.txt", "untracked.txt"],
+    )
+  })
 })
 
-test("/api/git exposes an explicit not-a-repo state instead of failing silently", async () => {
+test("/api/git exposes an explicit not-a-repo state instead of failing silently", async (t) => {
   const projectCwd = mkdtempSync(join(tmpdir(), "gsd-web-not-repo-"))
 
-  try {
-    await withProjectGitEnv(projectCwd, async () => {
-      const response = await gitRoute.GET()
-      assert.equal(response.status, 200)
+  t.after(() => { rmSync(projectCwd, { recursive: true, force: true }) });
 
-      const payload = await response.json() as any
-      assert.equal(payload.kind, "not_repo")
-      assert.equal(payload.project.scope, "current_project")
-      assert.equal(payload.project.cwd, projectCwd)
-      assert.equal(payload.project.repoRoot, null)
-      assert.match(payload.message, /not inside a Git repository/i)
-    })
-  } finally {
-    rmSync(projectCwd, { recursive: true, force: true })
-  }
+  await withProjectGitEnv(projectCwd, async () => {
+    const response = await gitRoute.GET()
+    assert.equal(response.status, 200)
+
+    const payload = await response.json() as any
+    assert.equal(payload.kind, "not_repo")
+    assert.equal(payload.project.scope, "current_project")
+    assert.equal(payload.project.cwd, projectCwd)
+    assert.equal(payload.project.repoRoot, null)
+    assert.match(payload.message, /not inside a Git repository/i)
+  })
 })
 
 test("browser session, settings, and git surfaces keep inspectable browse/manage/state markers on the shared surface", () => {

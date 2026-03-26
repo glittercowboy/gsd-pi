@@ -151,6 +151,7 @@ export interface Settings {
 	fallback?: FallbackSettings;
 	modelDiscovery?: ModelDiscoverySettings;
 	editMode?: "standard" | "hashline"; // Edit tool mode: "standard" (text match) or "hashline" (LINE#ID anchors). Default: "standard"
+	timestampFormat?: "date-time-iso" | "date-time-us"; // Timestamp display format for messages. Default: "date-time-iso"
 }
 
 /** Deep merge settings: project/overrides take precedence, nested objects merge recursively */
@@ -1086,5 +1087,13 @@ export class SettingsManager {
 
 	setEditMode(mode: "standard" | "hashline"): void {
 		this.setGlobalSetting("editMode", mode);
+	}
+
+	getTimestampFormat(): "date-time-iso" | "date-time-us" {
+		return this.settings.timestampFormat ?? "date-time-iso";
+	}
+
+	setTimestampFormat(format: "date-time-iso" | "date-time-us"): void {
+		this.setGlobalSetting("timestampFormat", format);
 	}
 }

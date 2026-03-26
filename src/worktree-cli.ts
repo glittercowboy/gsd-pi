@@ -207,7 +207,7 @@ async function doMerge(ext: ExtensionModules, basePath: string, name: string): P
   }
 
   const commitType = ext.inferCommitType(name)
-  const commitMessage = `${commitType}(${name}): merge worktree ${name}`
+  const commitMessage = `${commitType}: merge worktree ${name}\n\nGSD-Worktree: ${name}`
 
   process.stderr.write(`\nMerging ${chalk.bold.cyan(name)} → ${chalk.magenta(ext.nativeDetectMainBranch(basePath))}\n`)
   process.stderr.write(chalk.dim(`  ${status.filesChanged} files, ${chalk.green(`+${status.linesAdded}`)} ${chalk.red(`-${status.linesRemoved}`)}\n\n`))

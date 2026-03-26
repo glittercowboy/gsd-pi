@@ -65,7 +65,7 @@ test('parseCliArgs does not set network flags when not provided', () => {
 
 // ─── launchWebMode env forwarding ────────────────────────────────────
 
-test('launchWebMode forwards custom host, port, and allowed origins to subprocess env', async () => {
+test('launchWebMode forwards custom host, port, and allowed origins to subprocess env', async (t) => {
   const tmp = mkdtempSync(join(tmpdir(), 'gsd-web-net-'))
   const standaloneRoot = join(tmp, 'dist', 'web', 'standalone')
   const serverPath = join(standaloneRoot, 'server.js')
@@ -74,47 +74,45 @@ test('launchWebMode forwards custom host, port, and allowed origins to subproces
 
   let spawnEnv: Record<string, string> | undefined
 
-  try {
-    const status = await webMode.launchWebMode(
-      {
-        cwd: '/tmp/project',
-        projectSessionsDir: '/tmp/.gsd/sessions',
-        agentDir: '/tmp/.gsd/agent',
-        packageRoot: tmp,
-        host: '0.0.0.0',
-        port: 8080,
-        allowedOrigins: ['http://192.168.1.10:8080', 'http://tailscale-host:8080'],
-      },
-      {
-        initResources: () => {},
-        spawn: (_command, _args, options) => {
-          spawnEnv = (options as { env: Record<string, string> }).env
-          return { pid: 99999, once: () => undefined, unref: () => {} } as any
-        },
-        waitForBootReady: async () => undefined,
-        openBrowser: () => {},
-        stderr: { write: () => true },
-      },
-    )
+  t.after(() => { rmSync(tmp, { recursive: true, force: true }) });
 
-    assert.equal(status.ok, true)
-    if (!status.ok) throw new Error('expected success')
-    assert.equal(status.host, '0.0.0.0')
-    assert.equal(status.port, 8080)
-    assert.equal(status.url, 'http://0.0.0.0:8080')
+  const status = await webMode.launchWebMode(
+    {
+      cwd: '/tmp/project',
+      projectSessionsDir: '/tmp/.gsd/sessions',
+      agentDir: '/tmp/.gsd/agent',
+      packageRoot: tmp,
+      host: '0.0.0.0',
+      port: 8080,
+      allowedOrigins: ['http://192.168.1.10:8080', 'http://tailscale-host:8080'],
+    },
+    {
+      initResources: () => {},
+      spawn: (_command, _args, options) => {
+        spawnEnv = (options as { env: Record<string, string> }).env
+        return { pid: 99999, once: () => undefined, unref: () => {} } as any
+      },
+      waitForBootReady: async () => undefined,
+      openBrowser: () => {},
+      stderr: { write: () => true },
+    },
+  )
 
-    assert.ok(spawnEnv)
-    assert.equal(spawnEnv!.HOSTNAME, '0.0.0.0')
-    assert.equal(spawnEnv!.PORT, '8080')
-    assert.equal(spawnEnv!.GSD_WEB_HOST, '0.0.0.0')
-    assert.equal(spawnEnv!.GSD_WEB_PORT, '8080')
-    assert.equal(spawnEnv!.GSD_WEB_ALLOWED_ORIGINS, 'http://192.168.1.10:8080,http://tailscale-host:8080')
-  } finally {
-    rmSync(tmp, { recursive: true, force: true })
-  }
+  assert.equal(status.ok, true)
+  if (!status.ok) throw new Error('expected success')
+  assert.equal(status.host, '0.0.0.0')
+  assert.equal(status.port, 8080)
+  assert.equal(status.url, 'http://0.0.0.0:8080')
+
+  assert.ok(spawnEnv)
+  assert.equal(spawnEnv!.HOSTNAME, '0.0.0.0')
+  assert.equal(spawnEnv!.PORT, '8080')
+  assert.equal(spawnEnv!.GSD_WEB_HOST, '0.0.0.0')
+  assert.equal(spawnEnv!.GSD_WEB_PORT, '8080')
+  assert.equal(spawnEnv!.GSD_WEB_ALLOWED_ORIGINS, 'http://192.168.1.10:8080,http://tailscale-host:8080')
 })
 
-test('launchWebMode omits GSD_WEB_ALLOWED_ORIGINS when none provided', async () => {
+test('launchWebMode omits GSD_WEB_ALLOWED_ORIGINS when none provided', async (t) => {
   const tmp = mkdtempSync(join(tmpdir(), 'gsd-web-no-origins-'))
   const standaloneRoot = join(tmp, 'dist', 'web', 'standalone')
   const serverPath = join(standaloneRoot, 'server.js')
@@ -123,79 +121,75 @@ test('launchWebMode omits GSD_WEB_ALLOWED_ORIGINS when none provided', async () 
 
   let spawnEnv: Record<string, string> | undefined
 
-  try {
-    await webMode.launchWebMode(
-      {
-        cwd: '/tmp/project',
-        projectSessionsDir: '/tmp/.gsd/sessions',
-        agentDir: '/tmp/.gsd/agent',
-        packageRoot: tmp,
-      },
-      {
-        initResources: () => {},
-        resolvePort: async () => 45000,
-        env: { CLEAN_ENV: '1' },
-        spawn: (_command, _args, options) => {
-          spawnEnv = (options as { env: Record<string, string> }).env
-          return { pid: 99999, once: () => undefined, unref: () => {} } as any
-        },
-        waitForBootReady: async () => undefined,
-        openBrowser: () => {},
-        stderr: { write: () => true },
-      },
-    )
+  t.after(() => { rmSync(tmp, { recursive: true, force: true }) });
 
-    assert.ok(spawnEnv)
-    assert.equal(spawnEnv!.GSD_WEB_ALLOWED_ORIGINS, undefined)
-  } finally {
-    rmSync(tmp, { recursive: true, force: true })
-  }
+  await webMode.launchWebMode(
+    {
+      cwd: '/tmp/project',
+      projectSessionsDir: '/tmp/.gsd/sessions',
+      agentDir: '/tmp/.gsd/agent',
+      packageRoot: tmp,
+    },
+    {
+      initResources: () => {},
+      resolvePort: async () => 45000,
+      env: { CLEAN_ENV: '1' },
+      spawn: (_command, _args, options) => {
+        spawnEnv = (options as { env: Record<string, string> }).env
+        return { pid: 99999, once: () => undefined, unref: () => {} } as any
+      },
+      waitForBootReady: async () => undefined,
+      openBrowser: () => {},
+      stderr: { write: () => true },
+    },
+  )
+
+  assert.ok(spawnEnv)
+  assert.equal(spawnEnv!.GSD_WEB_ALLOWED_ORIGINS, undefined)
 })
 
 // ─── runWebCliBranch end-to-end forwarding ───────────────────────────
 
-test('runWebCliBranch forwards --host, --port, --allowed-origins to launchWebMode', async () => {
+test('runWebCliBranch forwards --host, --port, --allowed-origins to launchWebMode', async (t) => {
   const tmp = mkdtempSync(join(tmpdir(), 'gsd-web-branch-flags-'))
   const projectDir = join(tmp, 'project')
   mkdirSync(projectDir, { recursive: true })
 
   let receivedOptions: Record<string, unknown> | undefined
 
-  try {
-    const flags = cliWeb.parseCliArgs([
-      'node', 'dist/loader.js', '--web', projectDir,
-      '--host', '0.0.0.0',
-      '--port', '9000',
-      '--allowed-origins', 'http://my-host:9000',
-    ])
+  t.after(() => { rmSync(tmp, { recursive: true, force: true }) });
 
-    const result = await cliWeb.runWebCliBranch(flags, {
-      runWebMode: async (options) => {
-        receivedOptions = options as unknown as Record<string, unknown>
-        return {
-          mode: 'web' as const,
-          ok: true as const,
-          cwd: options.cwd,
-          projectSessionsDir: options.projectSessionsDir,
-          host: '0.0.0.0',
-          port: 9000,
-          url: 'http://0.0.0.0:9000',
-          hostKind: 'source-dev' as const,
-          hostPath: '/tmp/fake-web/package.json',
-          hostRoot: '/tmp/fake-web',
-        }
-      },
-      stderr: { write: () => true },
-    })
+  const flags = cliWeb.parseCliArgs([
+    'node', 'dist/loader.js', '--web', projectDir,
+    '--host', '0.0.0.0',
+    '--port', '9000',
+    '--allowed-origins', 'http://my-host:9000',
+  ])
 
-    assert.equal(result.handled, true)
-    if (!result.handled) throw new Error('expected handled')
-    assert.equal(result.exitCode, 0)
-    assert.ok(receivedOptions)
-    assert.equal(receivedOptions!.host, '0.0.0.0')
-    assert.equal(receivedOptions!.port, 9000)
-    assert.deepEqual(receivedOptions!.allowedOrigins, ['http://my-host:9000'])
-  } finally {
-    rmSync(tmp, { recursive: true, force: true })
-  }
+  const result = await cliWeb.runWebCliBranch(flags, {
+    runWebMode: async (options) => {
+      receivedOptions = options as unknown as Record<string, unknown>
+      return {
+        mode: 'web' as const,
+        ok: true as const,
+        cwd: options.cwd,
+        projectSessionsDir: options.projectSessionsDir,
+        host: '0.0.0.0',
+        port: 9000,
+        url: 'http://0.0.0.0:9000',
+        hostKind: 'source-dev' as const,
+        hostPath: '/tmp/fake-web/package.json',
+        hostRoot: '/tmp/fake-web',
+      }
+    },
+    stderr: { write: () => true },
+  })
+
+  assert.equal(result.handled, true)
+  if (!result.handled) throw new Error('expected handled')
+  assert.equal(result.exitCode, 0)
+  assert.ok(receivedOptions)
+  assert.equal(receivedOptions!.host, '0.0.0.0')
+  assert.equal(receivedOptions!.port, 9000)
+  assert.deepEqual(receivedOptions!.allowedOrigins, ['http://my-host:9000'])
 })

@@ -20,11 +20,11 @@ import {
   parseSliceBranch,
 } from '../worktree.ts';
 import { clearPathCache } from '../paths.ts';
-import { createTestContext } from './test-helpers.ts';
+import { describe, test, beforeEach, afterEach } from 'node:test';
+import assert from 'node:assert/strict';
 
 // ─── Assertion Helpers ────────────────────────────────────────────────────
 
-const { assertEq, assertTrue, assertMatch, report } = createTestContext();
 // ─── Fixture Helpers ──────────────────────────────────────────────────────
 
 function createFixtureBase(): string {
@@ -79,11 +79,9 @@ function createGitRepo(): string {
 // Test Groups
 // ═══════════════════════════════════════════════════════════════════════════
 
-async function main(): Promise<void> {
-
   // ─── Group 1: deriveState with new-format-only milestones ─────────────
-  console.log('\n=== Group 1: deriveState with new-format-only milestones ===');
-  {
+
+test('Group 1: deriveState with new-format-only milestones', async () => {
     const base = createFixtureBase();
     try {
       // Create M001-abc123 with roadmap + 2 slices (S01 complete, S02 in-progress)
@@ -125,32 +123,32 @@ async function main(): Promise<void> {
       const state = await deriveState(base);
 
       // Phase should be executing (active milestone with incomplete slice + plan + tasks)
-      assertEq(state.phase, 'executing', 'G1: phase is executing');
-      assertTrue(state.activeMilestone !== null, 'G1: activeMilestone is not null');
-      assertEq(state.activeMilestone?.id, 'M001-abc123', 'G1: activeMilestone id is M001-abc123');
-      assertEq(state.activeMilestone?.title, 'Test Feature', 'G1: title stripped to Test Feature');
+      assert.deepStrictEqual(state.phase, 'executing', 'G1: phase is executing');
+      assert.ok(state.activeMilestone !== null, 'G1: activeMilestone is not null');
+      assert.deepStrictEqual(state.activeMilestone?.id, 'M001-abc123', 'G1: activeMilestone id is M001-abc123');
+      assert.deepStrictEqual(state.activeMilestone?.title, 'Test Feature', 'G1: title stripped to Test Feature');
 
       // Registry
-      assertEq(state.registry.length, 1, 'G1: registry has 1 entry');
-      assertEq(state.registry[0]?.id, 'M001-abc123', 'G1: registry entry id');
-      assertEq(state.registry[0]?.status, 'active', 'G1: registry entry status is active');
-      assertEq(state.registry[0]?.title, 'Test Feature', 'G1: registry title stripped');
+      assert.deepStrictEqual(state.registry.length, 1, 'G1: registry has 1 entry');
+      assert.deepStrictEqual(state.registry[0]?.id, 'M001-abc123', 'G1: registry entry id');
+      assert.deepStrictEqual(state.registry[0]?.status, 'active', 'G1: registry entry status is active');
+      assert.deepStrictEqual(state.registry[0]?.title, 'Test Feature', 'G1: registry title stripped');
 
       // Active slice
-      assertTrue(state.activeSlice !== null, 'G1: activeSlice is not null');
-      assertEq(state.activeSlice?.id, 'S02', 'G1: activeSlice is S02');
+      assert.ok(state.activeSlice !== null, 'G1: activeSlice is not null');
+      assert.deepStrictEqual(state.activeSlice?.id, 'S02', 'G1: activeSlice is S02');
 
       // Progress
-      assertEq(state.progress?.milestones?.done, 0, 'G1: milestones done = 0');
-      assertEq(state.progress?.milestones?.total, 1, 'G1: milestones total = 1');
+      assert.deepStrictEqual(state.progress?.milestones?.done, 0, 'G1: milestones done = 0');
+      assert.deepStrictEqual(state.progress?.milestones?.total, 1, 'G1: milestones total = 1');
     } finally {
       cleanup(base);
     }
-  }
+});
 
   // ─── Group 2: deriveState with mixed-format milestones ────────────────
-  console.log('\n=== Group 2: deriveState with mixed old+new format milestones ===');
-  {
+
+test('Group 2: deriveState with mixed old+new format milestones', async () => {
     const base = createFixtureBase();
     try {
       // M001 — complete milestone (all slices done + summary)
@@ -217,40 +215,40 @@ Everything worked.
       const state = await deriveState(base);
 
       // Registry — should have 2 entries sorted by seq number
-      assertEq(state.registry.length, 2, 'G2: registry has 2 entries');
-      assertEq(state.registry[0]?.id, 'M001', 'G2: registry[0] is M001 (sorted first)');
-      assertEq(state.registry[1]?.id, 'M002-abc123', 'G2: registry[1] is M002-abc123 (sorted second)');
+      assert.deepStrictEqual(state.registry.length, 2, 'G2: registry has 2 entries');
+      assert.deepStrictEqual(state.registry[0]?.id, 'M001', 'G2: registry[0] is M001 (sorted first)');
+      assert.deepStrictEqual(state.registry[1]?.id, 'M002-abc123', 'G2: registry[1] is M002-abc123 (sorted second)');
 
       // M001 is complete
-      assertEq(state.registry[0]?.status, 'complete', 'G2: M001 status is complete');
-      assertEq(state.registry[0]?.title, 'Legacy Feature', 'G2: M001 title stripped');
+      assert.deepStrictEqual(state.registry[0]?.status, 'complete', 'G2: M001 status is complete');
+      assert.deepStrictEqual(state.registry[0]?.title, 'Legacy Feature', 'G2: M001 title stripped');
 
       // M002-abc123 is active
-      assertEq(state.registry[1]?.status, 'active', 'G2: M002-abc123 status is active');
-      assertEq(state.registry[1]?.title, 'New Feature', 'G2: M002-abc123 title stripped');
+      assert.deepStrictEqual(state.registry[1]?.status, 'active', 'G2: M002-abc123 status is active');
+      assert.deepStrictEqual(state.registry[1]?.title, 'New Feature', 'G2: M002-abc123 title stripped');
 
       // Active milestone
-      assertTrue(state.activeMilestone !== null, 'G2: activeMilestone is not null');
-      assertEq(state.activeMilestone?.id, 'M002-abc123', 'G2: activeMilestone is M002-abc123');
-      assertEq(state.activeMilestone?.title, 'New Feature', 'G2: activeMilestone title stripped');
+      assert.ok(state.activeMilestone !== null, 'G2: activeMilestone is not null');
+      assert.deepStrictEqual(state.activeMilestone?.id, 'M002-abc123', 'G2: activeMilestone is M002-abc123');
+      assert.deepStrictEqual(state.activeMilestone?.title, 'New Feature', 'G2: activeMilestone title stripped');
 
       // Phase
-      assertEq(state.phase, 'executing', 'G2: phase is executing');
+      assert.deepStrictEqual(state.phase, 'executing', 'G2: phase is executing');
 
       // Active slice
-      assertEq(state.activeSlice?.id, 'S02', 'G2: activeSlice is S02');
+      assert.deepStrictEqual(state.activeSlice?.id, 'S02', 'G2: activeSlice is S02');
 
       // Progress
-      assertEq(state.progress?.milestones?.done, 1, 'G2: milestones done = 1');
-      assertEq(state.progress?.milestones?.total, 2, 'G2: milestones total = 2');
+      assert.deepStrictEqual(state.progress?.milestones?.done, 1, 'G2: milestones done = 1');
+      assert.deepStrictEqual(state.progress?.milestones?.total, 2, 'G2: milestones total = 2');
     } finally {
       cleanup(base);
     }
-  }
+});
 
   // ─── Group 3: indexWorkspace with mixed-format milestones ─────────────
-  console.log('\n=== Group 3: indexWorkspace with mixed-format milestones ===');
-  {
+
+test('Group 3: indexWorkspace with mixed-format milestones', async () => {
     const base = createFixtureBase();
     try {
       // Same fixture as Group 2: M001 (complete) + M002-abc123 (active)
@@ -304,39 +302,39 @@ Everything worked.
       const index = await indexWorkspace(base);
 
       // Both milestones indexed
-      assertEq(index.milestones.length, 2, 'G3: 2 milestones in index');
-      assertEq(index.milestones[0]?.id, 'M001', 'G3: index[0] is M001');
-      assertEq(index.milestones[1]?.id, 'M002-abc123', 'G3: index[1] is M002-abc123');
+      assert.deepStrictEqual(index.milestones.length, 2, 'G3: 2 milestones in index');
+      assert.deepStrictEqual(index.milestones[0]?.id, 'M001', 'G3: index[0] is M001');
+      assert.deepStrictEqual(index.milestones[1]?.id, 'M002-abc123', 'G3: index[1] is M002-abc123');
 
       // Titles stripped from both formats
-      assertEq(index.milestones[0]?.title, 'Legacy Feature', 'G3: M001 title stripped');
-      assertEq(index.milestones[1]?.title, 'New Feature', 'G3: M002-abc123 title stripped');
+      assert.deepStrictEqual(index.milestones[0]?.title, 'Legacy Feature', 'G3: M001 title stripped');
+      assert.deepStrictEqual(index.milestones[1]?.title, 'New Feature', 'G3: M002-abc123 title stripped');
 
       // Active state
-      assertEq(index.active.milestoneId, 'M002-abc123', 'G3: active milestone is M002-abc123');
-      assertEq(index.active.sliceId, 'S01', 'G3: active slice is S01');
+      assert.deepStrictEqual(index.active.milestoneId, 'M002-abc123', 'G3: active milestone is M002-abc123');
+      assert.deepStrictEqual(index.active.sliceId, 'S01', 'G3: active slice is S01');
 
       // Scopes include new-format paths
-      assertTrue(
+      assert.ok(
         index.scopes.some(s => s.scope === 'M002-abc123'),
         'G3: scope includes M002-abc123 milestone',
       );
-      assertTrue(
+      assert.ok(
         index.scopes.some(s => s.scope === 'M002-abc123/S01'),
         'G3: scope includes M002-abc123/S01 slice',
       );
-      assertTrue(
+      assert.ok(
         index.scopes.some(s => s.scope === 'M002-abc123/S01/T01'),
         'G3: scope includes M002-abc123/S01/T01 task',
       );
     } finally {
       cleanup(base);
     }
-  }
+});
 
   // ─── Group 4: inlinePriorMilestoneSummary with mixed formats ──────────
-  console.log('\n=== Group 4: inlinePriorMilestoneSummary with mixed formats ===');
-  {
+
+test('Group 4: inlinePriorMilestoneSummary with mixed formats', async () => {
     const base = createFixtureBase();
     try {
       // M001 — completed with summary
@@ -358,21 +356,21 @@ Built the legacy feature successfully.
       const result = await inlinePriorMilestoneSummary('M002-abc123', base);
 
       // Result should be non-null (M001 is before M002-abc123)
-      assertTrue(result !== null, 'G4: result is non-null');
-      assertTrue(typeof result === 'string', 'G4: result is a string');
+      assert.ok(result !== null, 'G4: result is non-null');
+      assert.ok(typeof result === 'string', 'G4: result is a string');
 
       // Should contain the M001 summary content
-      assertTrue(result!.includes('Prior Milestone Summary'), 'G4: contains Prior Milestone Summary header');
-      assertTrue(result!.includes('Built the legacy feature successfully'), 'G4: contains M001 summary content');
-      assertTrue(result!.includes('Used old format for milestone IDs'), 'G4: contains M001 key decisions');
+      assert.ok(result!.includes('Prior Milestone Summary'), 'G4: contains Prior Milestone Summary header');
+      assert.ok(result!.includes('Built the legacy feature successfully'), 'G4: contains M001 summary content');
+      assert.ok(result!.includes('Used old format for milestone IDs'), 'G4: contains M001 key decisions');
     } finally {
       cleanup(base);
     }
-  }
+});
 
   // ─── Group 5: dispatch-guard with new-format milestones ──────────────
-  console.log('\n=== Group 5: dispatch-guard with new-format milestones ===');
-  {
+
+test('Group 5: dispatch-guard with new-format milestones', () => {
     const base = createGitRepo();
     try {
       // M001-abc123: all slices complete
@@ -403,28 +401,28 @@ Built the legacy feature successfully.
       run('git commit -m init', base);
 
       // No blocker: M001-abc123 is complete, dispatching M002-abc123/S01
-      assertEq(
+      assert.deepStrictEqual(
         getPriorSliceCompletionBlocker(base, 'main', 'plan-slice', 'M002-abc123/S01'),
         null,
         'G5: no blocker for M002-abc123/S01 when M001-abc123 all complete',
       );
 
       // No blocker for first slice of first milestone
-      assertEq(
+      assert.deepStrictEqual(
         getPriorSliceCompletionBlocker(base, 'main', 'execute-task', 'M001-abc123/S01/T01'),
         null,
         'G5: no blocker for M001-abc123/S01/T01 (first milestone first slice)',
       );
 
       // Blocker: trying to dispatch M002-abc123/S02 when S01 is incomplete
-      assertMatch(
+      assert.match(
         getPriorSliceCompletionBlocker(base, 'main', 'execute-task', 'M002-abc123/S02/T01') ?? '',
         /M002-abc123\/S01 is not complete/,
         'G5: blocks M002-abc123/S02 when S01 incomplete',
       );
 
       // Non-slice dispatch type should not be blocked
-      assertEq(
+      assert.deepStrictEqual(
         getPriorSliceCompletionBlocker(base, 'main', 'plan-milestone', 'M002-abc123'),
         null,
         'G5: non-slice dispatch type not blocked',
@@ -447,7 +445,7 @@ Built the legacy feature successfully.
 
       // M001 (seq=1) < M001-abc123 (seq=1) — but M001 has incomplete S02
       // Since M001 seq=1 and M002-abc123 seq=2, blocker should reference M001/S02
-      assertMatch(
+      assert.match(
         getPriorSliceCompletionBlocker(base, 'main', 'plan-slice', 'M002-abc123/S01') ?? '',
         /earlier slice M001\/S02 is not complete/,
         'G5: mixed-format blocker references M001/S02',
@@ -468,7 +466,7 @@ Built the legacy feature successfully.
       run('git commit -m complete-m001', base);
       clearPathCache();
 
-      assertEq(
+      assert.deepStrictEqual(
         getPriorSliceCompletionBlocker(base, 'main', 'plan-slice', 'M002-abc123/S01'),
         null,
         'G5: no blocker after M001 completed (mixed format)',
@@ -476,7 +474,7 @@ Built the legacy feature successfully.
 
       // M001-abc123 still has all complete, M002-abc123/S01 still incomplete
       // Check that S02 of M002-abc123 is still blocked by its own S01
-      assertMatch(
+      assert.match(
         getPriorSliceCompletionBlocker(base, 'main', 'execute-task', 'M002-abc123/S02/T01') ?? '',
         /M002-abc123\/S01 is not complete/,
         'G5: intra-milestone blocker still works in mixed-format context',
@@ -508,7 +506,7 @@ Built the legacy feature successfully.
       run('git commit -m add-m003', base);
       clearPathCache();
 
-      assertMatch(
+      assert.match(
         getPriorSliceCompletionBlocker(base, 'main', 'execute-task', 'M003-xyz789/S02/T01') ?? '',
         /earlier slice M003-xyz789\/S01 is not complete/,
         'G5: positional path produces "earlier slice" message with new-format milestone ID',
@@ -516,13 +514,13 @@ Built the legacy feature successfully.
     } finally {
       cleanup(base);
     }
-  }
+});
 
   // ─── Group 6: Branch name helpers with new-format IDs ───────────────
-  console.log('\n=== Group 6: Branch name helpers with new-format IDs ===');
-  {
+
+test('Group 6: Branch name helpers with new-format IDs', () => {
     // Test getSliceBranchName with new-format ID
-    assertEq(
+    assert.deepStrictEqual(
       getSliceBranchName('M001-abc123', 'S01'),
       'gsd/M001-abc123/S01',
       'G6: getSliceBranchName returns gsd/M001-abc123/S01',
@@ -530,26 +528,12 @@ Built the legacy feature successfully.
 
     // Test parseSliceBranch with new-format branch name
     const parsed = parseSliceBranch('gsd/M001-abc123/S01');
-    assertTrue(parsed !== null, 'G6: parseSliceBranch returns non-null for new-format');
-    assertEq(parsed?.milestoneId, 'M001-abc123', 'G6: parsed milestoneId is M001-abc123');
-    assertEq(parsed?.sliceId, 'S01', 'G6: parsed sliceId is S01');
-    assertEq(parsed?.worktreeName, null, 'G6: parsed worktreeName is null (no worktree)');
-  }
+    assert.ok(parsed !== null, 'G6: parseSliceBranch returns non-null for new-format');
+    assert.deepStrictEqual(parsed?.milestoneId, 'M001-abc123', 'G6: parsed milestoneId is M001-abc123');
+    assert.deepStrictEqual(parsed?.sliceId, 'S01', 'G6: parsed sliceId is S01');
+    assert.deepStrictEqual(parsed?.worktreeName, null, 'G6: parsed worktreeName is null (no worktree)');
+});
 
   // ─── Summary ──────────────────────────────────────────────────────────
-  report();
-}
 
 // When run via vitest, wrap in test(); when run via tsx, call directly.
-const isVitest = typeof globalThis !== 'undefined' && (globalThis as any).__vitest_worker__?.config?.defines != null && 'vitest' in (globalThis as any).__vitest_worker__.config.defines || process.env.VITEST;
-if (isVitest) {
-  const { test } = await import('node:test');
-  test('integration-mixed-milestones: all groups pass', async () => {
-    await main();
-  });
-} else {
-  main().catch((error) => {
-    console.error(error);
-    process.exit(1);
-  });
-}

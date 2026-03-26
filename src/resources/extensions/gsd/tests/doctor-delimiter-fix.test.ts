@@ -12,7 +12,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { runGSDDoctor } from "../doctor.js";
 
-test("doctor fix=true sanitizes em-dash in milestone title", async () => {
+test("doctor fix=true sanitizes em-dash in milestone title", async (t) => {
   const tmpBase = mkdtempSync(join(tmpdir(), "gsd-doctor-delim-"));
   const gsd = join(tmpBase, ".gsd");
   const mDir = join(gsd, "milestones", "M001");
@@ -34,33 +34,31 @@ test("doctor fix=true sanitizes em-dash in milestone title", async () => {
   writeFileSync(join(sDir, "S01-PLAN.md"), `# S01: Initial Setup\n\n## Tasks\n- [ ] **T01: Scaffold** \`est:15m\`\n`);
   writeFileSync(join(tDir, "T01-PLAN.md"), "# T01: Scaffold\n");
 
-  try {
-    // Run doctor with fix=true
-    const report = await runGSDDoctor(tmpBase, { fix: true });
+  t.after(() => rmSync(tmpBase, { recursive: true, force: true }));
 
-    // The em-dash should have been replaced
-    const fixed = readFileSync(join(mDir, "M001-ROADMAP.md"), "utf-8");
-    const h1 = fixed.split("\n").find(l => l.startsWith("# "))!;
-    assert.ok(h1, "H1 line should exist");
-    assert.ok(!h1.includes("\u2014"), "em-dash should be replaced");
-    assert.ok(!h1.includes("\u2013"), "en-dash should be replaced");
-    assert.ok(h1.includes("-"), "should contain ASCII hyphen as replacement");
+  // Run doctor with fix=true
+  const report = await runGSDDoctor(tmpBase, { fix: true });
 
-    // Should have recorded the fix
-    assert.ok(
-      report.fixesApplied.some(f => f.includes("sanitized")),
-      `fixesApplied should mention sanitization, got: ${JSON.stringify(report.fixesApplied)}`,
-    );
+  // The em-dash should have been replaced
+  const fixed = readFileSync(join(mDir, "M001-ROADMAP.md"), "utf-8");
+  const h1 = fixed.split("\n").find(l => l.startsWith("# "))!;
+  assert.ok(h1, "H1 line should exist");
+  assert.ok(!h1.includes("\u2014"), "em-dash should be replaced");
+  assert.ok(!h1.includes("\u2013"), "en-dash should be replaced");
+  assert.ok(h1.includes("-"), "should contain ASCII hyphen as replacement");
 
-    // The issue should NOT appear in the report (it was fixed)
-    const delimIssues = report.issues.filter(i => i.code === "delimiter_in_title" && i.unitId === "M001");
-    assert.equal(delimIssues.length, 0, "fixed issue should not appear in issues list");
-  } finally {
-    rmSync(tmpBase, { recursive: true, force: true });
-  }
+  // Should have recorded the fix
+  assert.ok(
+    report.fixesApplied.some(f => f.includes("sanitized")),
+    `fixesApplied should mention sanitization, got: ${JSON.stringify(report.fixesApplied)}`,
+  );
+
+  // The issue should NOT appear in the report (it was fixed)
+  const delimIssues = report.issues.filter(i => i.code === "delimiter_in_title" && i.unitId === "M001");
+  assert.equal(delimIssues.length, 0, "fixed issue should not appear in issues list");
 });
 
-test("doctor fix=false still reports delimiter_in_title as warning", async () => {
+test("doctor fix=false still reports delimiter_in_title as warning", async (t) => {
   const tmpBase = mkdtempSync(join(tmpdir(), "gsd-doctor-delim-nf-"));
   const gsd = join(tmpBase, ".gsd");
   const mDir = join(gsd, "milestones", "M001");
@@ -72,16 +70,14 @@ test("doctor fix=false still reports delimiter_in_title as warning", async () =>
   writeFileSync(join(sDir, "S01-PLAN.md"), `# S01: Setup\n\n## Tasks\n- [ ] **T01: Init** \`est:10m\`\n`);
   writeFileSync(join(tDir, "T01-PLAN.md"), "# T01: Init\n");
 
-  try {
-    const report = await runGSDDoctor(tmpBase, { fix: false });
-    const delimIssues = report.issues.filter(i => i.code === "delimiter_in_title");
-    assert.ok(delimIssues.length > 0, "should report delimiter_in_title as issue when fix=false");
-    assert.equal(delimIssues[0].severity, "warning");
+  t.after(() => rmSync(tmpBase, { recursive: true, force: true }));
 
-    // File should be unchanged
-    const content = readFileSync(join(mDir, "M001-ROADMAP.md"), "utf-8");
-    assert.ok(content.includes("\u2014"), "file should not be modified when fix=false");
-  } finally {
-    rmSync(tmpBase, { recursive: true, force: true });
-  }
+  const report = await runGSDDoctor(tmpBase, { fix: false });
+  const delimIssues = report.issues.filter(i => i.code === "delimiter_in_title");
+  assert.ok(delimIssues.length > 0, "should report delimiter_in_title as issue when fix=false");
+  assert.equal(delimIssues[0].severity, "warning");
+
+  // File should be unchanged
+  const content = readFileSync(join(mDir, "M001-ROADMAP.md"), "utf-8");
+  assert.ok(content.includes("\u2014"), "file should not be modified when fix=false");
 });

@@ -9,8 +9,7 @@ import {
   Circle,
   Play,
   GitBranch,
-  Loader2,
-  Milestone,
+  TrendingDown,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import {
@@ -83,11 +82,11 @@ function MetricCard({ label, value, subtext, icon }: MetricCardProps) {
 function taskStatusIcon(status: ItemStatus) {
   switch (status) {
     case "done":
-      return <CheckCircle2 className="h-4 w-4 text-foreground/70" />
+      return <CheckCircle2 className="h-4 w-4 text-muted-foreground" />
     case "in-progress":
       return <Play className="h-4 w-4 text-foreground" />
     case "pending":
-      return <Circle className="h-4 w-4 text-muted-foreground/50" />
+      return <Circle className="h-4 w-4 text-muted-foreground" />
   }
 }
 
@@ -114,12 +113,13 @@ export function Dashboard({ onSwitchView, onExpandTerminal }: DashboardProps = {
   const workspace = getLiveWorkspaceIndex(state)
   const auto = getLiveAutoDashboard(state)
   const bridge = boot?.bridge ?? null
-  const projectCwd = boot?.project.cwd ?? null
   const freshness = state.live.freshness
 
   const elapsed = auto?.elapsed ?? 0
   const totalCost = auto?.totalCost ?? 0
   const totalTokens = auto?.totalTokens ?? 0
+  const rtkSavings = auto?.rtkSavings ?? null
+  const rtkEnabled = auto?.rtkEnabled === true
 
   const currentSlice = getCurrentSlice(workspace)
   const doneTasks = currentSlice?.tasks.filter((t) => t.done).length ?? 0
@@ -157,6 +157,13 @@ export function Dashboard({ onSwitchView, onExpandTerminal }: DashboardProps = {
   const recentLines: WorkspaceTerminalLine[] = (state.terminalLines ?? []).slice(-6)
   const isConnecting = state.bootStatus === "idle" || state.bootStatus === "loading"
 
+  const rtkValue = isConnecting ? null : formatTokens(rtkSavings?.savedTokens ?? 0)
+  const rtkSubtext = isConnecting
+    ? null
+    : rtkSavings && rtkSavings.commands > 0
+      ? `${Math.round(rtkSavings.savingsPct)}% saved • ${rtkSavings.commands} cmd${rtkSavings.commands === 1 ? "" : "s"}`
+      : "Waiting for shell usage"
+
   // ─── Project Welcome Gate ───────────────────────────────────────────
   // Show welcome screen for projects that aren't initialized with GSD yet
   const detection = boot?.projectDetection
@@ -181,18 +188,18 @@ export function Dashboard({ onSwitchView, onExpandTerminal }: DashboardProps = {
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
-      <div className="flex items-center justify-between border-b border-border px-6 py-3">
-        <div className="flex items-center gap-2">
-          <h1 className="text-lg font-semibold">Dashboard</h1>
+      <div className="flex items-center justify-between border-b border-border px-3 py-2 md:px-6 md:py-3">
+        <div className="flex items-center gap-2 min-w-0">
+          <h1 className="text-base md:text-lg font-semibold shrink-0">Dashboard</h1>
           {!isConnecting && scopeLabel && (
             <>
-              <span className="text-lg font-thin text-muted-foreground/40 select-none">/</span>
-              <ScopeBadge label={scopeLabel} size="sm" />
+              <span className="hidden sm:inline text-lg font-thin text-muted-foreground select-none">/</span>
+              <span className="hidden sm:inline"><ScopeBadge label={scopeLabel} size="sm" /></span>
             </>
           )}
           {isConnecting && <Skeleton className="h-4 w-40" />}
         </div>
-        <div className="flex items-center gap-3" data-testid="dashboard-action-bar">
+        <div className="flex items-center gap-2 md:gap-3" data-testid="dashboard-action-bar">
           {isConnecting ? (
             <>
               <Skeleton className="h-8 w-40 rounded-md" />
@@ -220,8 +227,8 @@ export function Dashboard({ onSwitchView, onExpandTerminal }: DashboardProps = {
         </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto p-6">
-        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+      <div className="flex-1 overflow-y-auto p-3 md:p-6">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 md:grid-cols-2 xl:grid-cols-4 2xl:grid-cols-5">
           <div className="rounded-md border border-border bg-card p-4" data-testid="dashboard-current-unit">
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
@@ -262,6 +269,14 @@ export function Dashboard({ onSwitchView, onExpandTerminal }: DashboardProps = {
             value={isConnecting ? null : formatTokens(totalTokens)}
             icon={<Zap className="h-5 w-5" />}
           />
+          {rtkEnabled && (
+            <MetricCard
+              label="RTK Saved"
+              value={rtkValue}
+              subtext={rtkSubtext}
+              icon={<TrendingDown className="h-5 w-5" />}
+            />
+          )}
 
         </div>
 
@@ -336,7 +351,7 @@ export function Dashboard({ onSwitchView, onExpandTerminal }: DashboardProps = {
                             {task.title}
                           </span>
                           {status === "in-progress" && (
-                            <span className="shrink-0 rounded-sm bg-foreground/10 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-foreground/70">
+                            <span className="shrink-0 rounded-sm bg-foreground/10 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
                               active
                             </span>
                           )}

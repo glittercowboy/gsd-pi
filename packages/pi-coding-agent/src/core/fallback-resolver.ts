@@ -149,9 +149,8 @@ export class FallbackResolver {
 			const model = this.modelRegistry.find(entry.provider, entry.model);
 			if (!model) continue;
 
-			// Check if API key is available
-			const hasAuth = this.authStorage.hasAuth(entry.provider);
-			if (!hasAuth) continue;
+			// Check if provider is request-ready for fallback (authMode-aware)
+			if (!this.modelRegistry.isProviderRequestReady(entry.provider)) continue;
 
 			return {
 				model,

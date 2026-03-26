@@ -4,29 +4,14 @@ import { join } from "node:path"
 import { pathToFileURL } from "node:url"
 
 import { resolveBridgeRuntimeConfig } from "./bridge-service.ts"
-import { resolveTypeStrippingFlag } from "./ts-subprocess-flags.ts"
+import { resolveTypeStrippingFlag, resolveSubprocessModule, buildSubprocessPrefixArgs } from "./ts-subprocess-flags.ts"
 import type { DoctorReport, DoctorFixResult } from "../../web/lib/diagnostics-types.ts"
 
 const DOCTOR_MAX_BUFFER = 2 * 1024 * 1024
 const DOCTOR_MODULE_ENV = "GSD_DOCTOR_MODULE"
 
-function resolveDoctorModulePath(packageRoot: string): string {
-  return join(packageRoot, "src", "resources", "extensions", "gsd", "doctor.ts")
-}
-
 function resolveTsLoaderPath(packageRoot: string): string {
   return join(packageRoot, "src", "resources", "extensions", "gsd", "tests", "resolve-ts.mjs")
-}
-
-function validateModulePaths(
-  resolveTsLoader: string,
-  doctorModulePath: string,
-): void {
-  if (!existsSync(resolveTsLoader) || !existsSync(doctorModulePath)) {
-    throw new Error(
-      `doctor data provider not found; checked=${resolveTsLoader},${doctorModulePath}`,
-    )
-  }
 }
 
 function runDoctorChild(
@@ -35,16 +20,15 @@ function runDoctorChild(
   script: string,
   resolveTsLoader: string,
   doctorModulePath: string,
+  moduleResolution: { modulePath: string; useCompiledJs: boolean },
   scope?: string,
 ): Promise<string> {
+  const prefixArgs = buildSubprocessPrefixArgs(packageRoot, moduleResolution, pathToFileURL(resolveTsLoader).href)
   return new Promise<string>((resolveResult, reject) => {
     execFile(
       process.execPath,
       [
-        "--import",
-        pathToFileURL(resolveTsLoader).href,
-        resolveTypeStrippingFlag(packageRoot),
-        "--input-type=module",
+        ...prefixArgs,
         "--eval",
         script,
       ],
@@ -78,8 +62,17 @@ export async function collectDoctorData(scope?: string, projectCwdOverride?: str
   const { packageRoot, projectCwd } = config
 
   const resolveTsLoader = resolveTsLoaderPath(packageRoot)
-  const doctorModulePath = resolveDoctorModulePath(packageRoot)
-  validateModulePaths(resolveTsLoader, doctorModulePath)
+  const moduleResolution = resolveSubprocessModule(packageRoot, "resources/extensions/gsd/doctor.ts")
+  const doctorModulePath = moduleResolution.modulePath
+
+  if (!moduleResolution.useCompiledJs && (!existsSync(resolveTsLoader) || !existsSync(doctorModulePath))) {
+    throw new Error(
+      `doctor data provider not found; checked=${resolveTsLoader},${doctorModulePath}`,
+    )
+  }
+  if (moduleResolution.useCompiledJs && !existsSync(doctorModulePath)) {
+    throw new Error(`doctor data provider not found; checked=${doctorModulePath}`)
+  }
 
   const script = [
     'const { pathToFileURL } = await import("node:url");',
@@ -98,7 +91,7 @@ export async function collectDoctorData(scope?: string, projectCwdOverride?: str
   ].join(" ")
 
   const stdout = await runDoctorChild(
-    packageRoot, projectCwd, script, resolveTsLoader, doctorModulePath, scope,
+    packageRoot, projectCwd, script, resolveTsLoader, doctorModulePath, moduleResolution, scope,
   )
 
   try {
@@ -119,8 +112,17 @@ export async function applyDoctorFixes(scope?: string, projectCwdOverride?: stri
   const { packageRoot, projectCwd } = config
 
   const resolveTsLoader = resolveTsLoaderPath(packageRoot)
-  const doctorModulePath = resolveDoctorModulePath(packageRoot)
-  validateModulePaths(resolveTsLoader, doctorModulePath)
+  const moduleResolution = resolveSubprocessModule(packageRoot, "resources/extensions/gsd/doctor.ts")
+  const doctorModulePath = moduleResolution.modulePath
+
+  if (!moduleResolution.useCompiledJs && (!existsSync(resolveTsLoader) || !existsSync(doctorModulePath))) {
+    throw new Error(
+      `doctor data provider not found; checked=${resolveTsLoader},${doctorModulePath}`,
+    )
+  }
+  if (moduleResolution.useCompiledJs && !existsSync(doctorModulePath)) {
+    throw new Error(`doctor data provider not found; checked=${doctorModulePath}`)
+  }
 
   const script = [
     'const { pathToFileURL } = await import("node:url");',
@@ -136,7 +138,7 @@ export async function applyDoctorFixes(scope?: string, projectCwdOverride?: stri
   ].join(" ")
 
   const stdout = await runDoctorChild(
-    packageRoot, projectCwd, script, resolveTsLoader, doctorModulePath, scope,
+    packageRoot, projectCwd, script, resolveTsLoader, doctorModulePath, moduleResolution, scope,
   )
 
   try {

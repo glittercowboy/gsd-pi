@@ -49,6 +49,14 @@ completed_at: {{date}}
 
 - {{requirementId}}: {{fromStatus}} → {{toStatus}} — {{evidence}}
 
+## Decision Re-evaluation
+
+<!-- Review decisions from this milestone. OMIT if no decisions need re-evaluation. -->
+
+| Decision | Original Rationale | Still Valid? | Action |
+|----------|-------------------|-------------|--------|
+| {{decisionId}} | {{originalRationale}} | {{yes/no/partially}} | {{keep/revise/supersede}} |
+
 ## Forward Intelligence
 
 <!-- Write what you wish you'd known at the start of this milestone.

@@ -266,7 +266,7 @@ describe("AuthStorage — areAllCredentialsBackedOff", () => {
 // ─── mismatched oauth credential for non-OAuth provider (#2083) ───────────────
 
 describe("AuthStorage — oauth credential for non-OAuth provider (#2083)", () => {
-	it("returns undefined when openrouter has type:oauth (no registered OAuth provider)", async () => {
+	it("returns undefined when openrouter has type:oauth (no registered OAuth provider)", async (t) => {
 		// Simulates the bug: OpenRouter credential stored as type:"oauth"
 		// but OpenRouter is not a registered OAuth provider.
 		const storage = inMemory({
@@ -278,16 +278,29 @@ describe("AuthStorage — oauth credential for non-OAuth provider (#2083)", () =
 			},
 		});
 
+		// Isolate from any real OPENROUTER_API_KEY in the environment so the
+		// fall-through to env / fallback finds nothing and returns undefined.
+		const origEnv = process.env.OPENROUTER_API_KEY;
+		delete process.env.OPENROUTER_API_KEY;
+		t.after(() => {
+			if (origEnv === undefined) {
+				delete process.env.OPENROUTER_API_KEY;
+			} else {
+				process.env.OPENROUTER_API_KEY = origEnv;
+			}
+		});
+
 		// Before the fix, getApiKey returns undefined because
 		// resolveCredentialApiKey calls getOAuthProvider("openrouter") → null → undefined.
 		// The key in the oauth credential is never extracted.
 		const key = await storage.getApiKey("openrouter");
 		// After the fix, the oauth credential with an unrecognised provider
 		// should be skipped, and getApiKey should fall through to env / fallback.
+		// With no env var and no fallback resolver configured, the result is undefined.
 		assert.equal(key, undefined);
 	});
 
-	it("falls through to env var when openrouter has type:oauth credential", async () => {
+	it("falls through to env var when openrouter has type:oauth credential", async (t) => {
 		const storage = inMemory({
 			openrouter: {
 				type: "oauth",
@@ -299,20 +312,20 @@ describe("AuthStorage — oauth credential for non-OAuth provider (#2083)", () =
 
 		// Simulate OPENROUTER_API_KEY being set via env
 		const origEnv = process.env.OPENROUTER_API_KEY;
-		try {
-			process.env.OPENROUTER_API_KEY = "sk-or-v1-env-key";
-			const key = await storage.getApiKey("openrouter");
-			assert.equal(key, "sk-or-v1-env-key");
-		} finally {
+		t.after(() => {
 			if (origEnv === undefined) {
 				delete process.env.OPENROUTER_API_KEY;
 			} else {
 				process.env.OPENROUTER_API_KEY = origEnv;
 			}
-		}
+		});
+
+		process.env.OPENROUTER_API_KEY = "sk-or-v1-env-key";
+		const key = await storage.getApiKey("openrouter");
+		assert.equal(key, "sk-or-v1-env-key");
 	});
 
-	it("falls through to fallback resolver when openrouter has type:oauth credential", async () => {
+	it("falls through to fallback resolver when openrouter has type:oauth credential", async (t) => {
 		const storage = inMemory({
 			openrouter: {
 				type: "oauth",
@@ -320,6 +333,18 @@ describe("AuthStorage — oauth credential for non-OAuth provider (#2083)", () =
 				refresh_token: "rt-fake",
 				expires: Date.now() + 3_600_000,
 			},
+		});
+
+		// Isolate from any real OPENROUTER_API_KEY so env fallback is skipped
+		// and the fallback resolver is reached.
+		const origEnv = process.env.OPENROUTER_API_KEY;
+		delete process.env.OPENROUTER_API_KEY;
+		t.after(() => {
+			if (origEnv === undefined) {
+				delete process.env.OPENROUTER_API_KEY;
+			} else {
+				process.env.OPENROUTER_API_KEY = origEnv;
+			}
 		});
 
 		storage.setFallbackResolver((provider) =>

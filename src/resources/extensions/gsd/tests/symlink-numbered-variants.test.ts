@@ -23,15 +23,15 @@ import { tmpdir } from "node:os";
 import { execSync } from "node:child_process";
 
 import { ensureGsdSymlink, externalGsdRoot } from "../repo-identity.ts";
-import { createTestContext } from "./test-helpers.ts";
+import { describe, test } from 'node:test';
+import assert from 'node:assert/strict';
 
-const { assertEq, assertTrue, report } = createTestContext();
 
 function run(command: string, cwd: string): string {
   return execSync(command, { cwd, stdio: ["ignore", "pipe", "pipe"], encoding: "utf-8" }).trim();
 }
 
-async function main(): Promise<void> {
+describe('symlink-numbered-variants', async () => {
   const base = realpathSync(mkdtempSync(join(tmpdir(), "gsd-symlink-variants-")));
   const stateDir = realpathSync(mkdtempSync(join(tmpdir(), "gsd-state-variants-")));
 
@@ -58,14 +58,14 @@ async function main(): Promise<void> {
       mkdirSync(join(base, ".gsd 4"), { recursive: true });
 
       const result = ensureGsdSymlink(base);
-      assertEq(result, externalPath, "ensureGsdSymlink returns external path");
-      assertTrue(existsSync(join(base, ".gsd")), ".gsd exists after ensureGsdSymlink");
-      assertTrue(lstatSync(join(base, ".gsd")).isSymbolicLink(), ".gsd is a symlink");
+      assert.deepStrictEqual(result, externalPath, "ensureGsdSymlink returns external path");
+      assert.ok(existsSync(join(base, ".gsd")), ".gsd exists after ensureGsdSymlink");
+      assert.ok(lstatSync(join(base, ".gsd")).isSymbolicLink(), ".gsd is a symlink");
 
       // The numbered variants must have been removed
-      assertTrue(!existsSync(join(base, ".gsd 2")), '".gsd 2" directory was cleaned up');
-      assertTrue(!existsSync(join(base, ".gsd 3")), '".gsd 3" directory was cleaned up');
-      assertTrue(!existsSync(join(base, ".gsd 4")), '".gsd 4" directory was cleaned up');
+      assert.ok(!existsSync(join(base, ".gsd 2")), '".gsd 2" directory was cleaned up');
+      assert.ok(!existsSync(join(base, ".gsd 3")), '".gsd 3" directory was cleaned up');
+      assert.ok(!existsSync(join(base, ".gsd 4")), '".gsd 4" directory was cleaned up');
     }
 
     // ── Test: numbered variant symlinks are cleaned up ─────────────────
@@ -82,12 +82,12 @@ async function main(): Promise<void> {
       symlinkSync(staleTarget, join(base, ".gsd 3"), "junction");
 
       const result = ensureGsdSymlink(base);
-      assertEq(result, externalPath, "ensureGsdSymlink returns external path when variants exist");
-      assertTrue(existsSync(join(base, ".gsd")), ".gsd exists");
-      assertTrue(lstatSync(join(base, ".gsd")).isSymbolicLink(), ".gsd is a symlink");
+      assert.deepStrictEqual(result, externalPath, "ensureGsdSymlink returns external path when variants exist");
+      assert.ok(existsSync(join(base, ".gsd")), ".gsd exists");
+      assert.ok(lstatSync(join(base, ".gsd")).isSymbolicLink(), ".gsd is a symlink");
 
-      assertTrue(!existsSync(join(base, ".gsd 2")), '".gsd 2" symlink variant was cleaned up');
-      assertTrue(!existsSync(join(base, ".gsd 3")), '".gsd 3" symlink variant was cleaned up');
+      assert.ok(!existsSync(join(base, ".gsd 2")), '".gsd 2" symlink variant was cleaned up');
+      assert.ok(!existsSync(join(base, ".gsd 3")), '".gsd 3" symlink variant was cleaned up');
     }
 
     // ── Test: real .gsd directory blocks symlink, but variants still cleaned ──
@@ -104,12 +104,12 @@ async function main(): Promise<void> {
 
       const result = ensureGsdSymlink(base);
       // When .gsd is a real directory, ensureGsdSymlink preserves it
-      assertEq(result, join(base, ".gsd"), "real .gsd directory preserved");
-      assertTrue(lstatSync(join(base, ".gsd")).isDirectory(), ".gsd remains a directory");
+      assert.deepStrictEqual(result, join(base, ".gsd"), "real .gsd directory preserved");
+      assert.ok(lstatSync(join(base, ".gsd")).isDirectory(), ".gsd remains a directory");
 
       // But the numbered variants should still be cleaned up
-      assertTrue(!existsSync(join(base, ".gsd 2")), '".gsd 2" cleaned even when .gsd is a directory');
-      assertTrue(!existsSync(join(base, ".gsd 3")), '".gsd 3" cleaned even when .gsd is a directory');
+      assert.ok(!existsSync(join(base, ".gsd 2")), '".gsd 2" cleaned even when .gsd is a directory');
+      assert.ok(!existsSync(join(base, ".gsd 3")), '".gsd 3" cleaned even when .gsd is a directory');
     }
 
     // ── Test: only numeric-suffixed variants are removed ───────────────
@@ -127,10 +127,10 @@ async function main(): Promise<void> {
 
       ensureGsdSymlink(base);
 
-      assertTrue(existsSync(join(base, ".gsd-backup")), ".gsd-backup is NOT removed");
-      assertTrue(existsSync(join(base, ".gsd_old")), ".gsd_old is NOT removed");
-      assertTrue(!existsSync(join(base, ".gsd 2")), '".gsd 2" removed');
-      assertTrue(!existsSync(join(base, ".gsd 10")), '".gsd 10" removed');
+      assert.ok(existsSync(join(base, ".gsd-backup")), ".gsd-backup is NOT removed");
+      assert.ok(existsSync(join(base, ".gsd_old")), ".gsd_old is NOT removed");
+      assert.ok(!existsSync(join(base, ".gsd 2")), '".gsd 2" removed');
+      assert.ok(!existsSync(join(base, ".gsd 10")), '".gsd 10" removed');
 
       // Cleanup non-variant dirs
       rmSync(join(base, ".gsd-backup"), { recursive: true, force: true });
@@ -141,11 +141,5 @@ async function main(): Promise<void> {
     delete process.env.GSD_STATE_DIR;
     try { rmSync(base, { recursive: true, force: true }); } catch { /* ignore */ }
     try { rmSync(stateDir, { recursive: true, force: true }); } catch { /* ignore */ }
-    report();
   }
-}
-
-main().catch((error) => {
-  console.error(error);
-  process.exit(1);
 });

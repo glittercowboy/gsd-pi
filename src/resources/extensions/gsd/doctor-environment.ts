@@ -37,6 +37,29 @@ const CMD_TIMEOUT = 5_000;
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
+/** Worktree sentinel — path segment that marks an auto-worktree directory. */
+const WORKTREE_PATH_SEGMENT = `${join(".gsd", "worktrees")}/`;
+
+/**
+ * Resolve the project root when running inside a `.gsd/worktrees/<name>/`
+ * auto-worktree. Returns `null` if not in a worktree.
+ *
+ * Detection order:
+ *   1. `GSD_WORKTREE` env var (set by the worktree launcher)
+ *   2. `.gsd/worktrees/` segment in basePath
+ */
+function resolveWorktreeProjectRoot(basePath: string): string | null {
+  const envRoot = process.env.GSD_WORKTREE;
+  if (envRoot) return envRoot;
+
+  const normalised = basePath.replace(/\\/g, "/");
+  const idx = normalised.indexOf(WORKTREE_PATH_SEGMENT.replace(/\\/g, "/"));
+  if (idx === -1) return null;
+
+  // Everything before `.gsd/worktrees/` is the project root
+  return basePath.slice(0, idx);
+}
+
 function tryExec(cmd: string, cwd: string): string | null {
   try {
     return execSync(cmd, {
@@ -111,6 +134,14 @@ function checkDependenciesInstalled(basePath: string): EnvironmentCheckResult | 
 
   const nodeModules = join(basePath, "node_modules");
   if (!existsSync(nodeModules)) {
+    // In auto-worktrees node_modules is absent by design — the worktree
+    // symlinks to (or expects) the project root's copy.  Fall back to
+    // checking the project root before reporting an error (#2303).
+    const projectRoot = resolveWorktreeProjectRoot(basePath);
+    if (projectRoot && existsSync(join(projectRoot, "node_modules"))) {
+      return { name: "dependencies", status: "ok", message: "Dependencies installed (project root)" };
+    }
+
     return {
       name: "dependencies",
       status: "error",
@@ -118,21 +149,44 @@ function checkDependenciesInstalled(basePath: string): EnvironmentCheckResult | 
     };
   }
 
-  // Check if lockfile is newer than node_modules
-  const lockfiles = ["package-lock.json", "yarn.lock", "pnpm-lock.yaml"];
-  for (const lockfile of lockfiles) {
-    const lockPath = join(basePath, lockfile);
+  // Check if lockfile is newer than the last install.
+  //
+  // Each package manager writes a metadata marker inside node_modules on
+  // every install. Comparing the lockfile mtime against the marker is
+  // reliable; comparing against the node_modules *directory* mtime is not,
+  // because directory mtime only changes when entries are added or removed
+  // — not when files inside it are updated. (#1974)
+  const lockfiles: Array<{ lock: string; markers: string[] }> = [
+    { lock: "package-lock.json", markers: ["node_modules/.package-lock.json"] },
+    { lock: "yarn.lock",         markers: ["node_modules/.yarn-integrity"] },
+    { lock: "pnpm-lock.yaml",    markers: ["node_modules/.modules.yaml"] },
+  ];
+
+  for (const { lock, markers } of lockfiles) {
+    const lockPath = join(basePath, lock);
     if (!existsSync(lockPath)) continue;
 
     try {
       const lockMtime = statSync(lockPath).mtimeMs;
-      const nmMtime = statSync(nodeModules).mtimeMs;
 
-      if (lockMtime > nmMtime) {
+      // Prefer the package manager's marker file; fall back to directory mtime
+      // only when no marker exists (e.g., manually created node_modules).
+      let installMtime = 0;
+      for (const marker of markers) {
+        const markerPath = join(basePath, marker);
+        if (existsSync(markerPath)) {
+          installMtime = Math.max(installMtime, statSync(markerPath).mtimeMs);
+        }
+      }
+      if (installMtime === 0) {
+        installMtime = statSync(nodeModules).mtimeMs;
+      }
+
+      if (lockMtime > installMtime) {
         return {
           name: "dependencies",
           status: "warning",
-          message: `${lockfile} is newer than node_modules — dependencies may be stale`,
+          message: `${lock} is newer than node_modules — dependencies may be stale`,
           detail: `Run npm install / yarn / pnpm install to update`,
         };
       }

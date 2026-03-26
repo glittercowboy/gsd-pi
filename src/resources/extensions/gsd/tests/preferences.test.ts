@@ -15,6 +15,7 @@ import {
   applyModeDefaults,
   getIsolationMode,
   parsePreferencesMarkdown,
+  _resetParseWarningFlag,
 } from "../preferences.ts";
 import type { GSDPreferences, GSDModelConfigV2, GSDPhaseModelConfig } from "../preferences.ts";
 
@@ -40,18 +41,16 @@ test("git.merge_to_main produces deprecation warning", () => {
 });
 
 
-test("getIsolationMode defaults to worktree when preferences have no isolation setting", () => {
+test("getIsolationMode defaults to none when preferences have no isolation setting", () => {
   // Validate the default via validatePreferences: when no isolation is set,
-  // preferences.git.isolation is undefined, and getIsolationMode returns "worktree".
-  // We test the function's logic by verifying its documented default.
+  // preferences.git.isolation is undefined, and getIsolationMode returns "none".
+  // Default changed from "worktree" to "none" so GSD works out of the box
+  // without PREFERENCES.md (#2480).
   const { preferences } = validatePreferences({});
   assert.equal(preferences.git?.isolation, undefined, "no isolation in empty prefs");
-  // The function returns "worktree" when prefs?.git?.isolation is not "none" or "branch"
-  // This is a compile-time-verifiable truth from the function body — test it directly
-  // by constructing the same conditions getIsolationMode checks.
   const isolation = preferences.git?.isolation;
-  const expected = isolation === "none" ? "none" : isolation === "branch" ? "branch" : "worktree";
-  assert.equal(expected, "worktree", "default isolation mode is worktree");
+  const expected = isolation === "worktree" ? "worktree" : isolation === "branch" ? "branch" : "none";
+  assert.equal(expected, "none", "default isolation mode is none");
 });
 
 // ── Mode defaults ────────────────────────────────────────────────────────────
@@ -62,7 +61,7 @@ test("solo mode applies correct defaults", () => {
   assert.equal(result.git?.push_branches, false);
   assert.equal(result.git?.pre_merge_check, false);
   assert.equal(result.git?.merge_strategy, "squash");
-  assert.equal(result.git?.isolation, "worktree");
+  assert.equal(result.git?.isolation, "none");
   assert.equal(result.unique_milestone_ids, false);
 });
 
@@ -351,4 +350,80 @@ test("handles empty models config", () => {
   const prefs = parsePreferencesMarkdown("---\nversion: 1\n---\n");
   assert.notEqual(prefs, null);
   assert.equal(prefs!.models, undefined);
+});
+
+// ── Warn-once for unrecognized format (#2373) ────────────────────────────────
+
+test("unrecognized format warning is emitted at most once (#2373)", () => {
+  const warnings: string[] = [];
+  const origWarn = console.warn;
+  console.warn = (...args: unknown[]) => warnings.push(args.join(" "));
+  try {
+    // Reset internal warned flag so the test starts clean
+    _resetParseWarningFlag();
+
+    const unrecognized = "This is just plain text with no frontmatter or headings.";
+
+    // Call multiple times — simulates repeated preference loads
+    parsePreferencesMarkdown(unrecognized);
+    parsePreferencesMarkdown(unrecognized);
+    parsePreferencesMarkdown(unrecognized);
+
+    const relevant = warnings.filter(w => w.includes("unrecognized format"));
+    assert.equal(relevant.length, 1, `expected exactly 1 warning, got ${relevant.length}: ${JSON.stringify(relevant)}`);
+  } finally {
+    console.warn = origWarn;
+    // Reset so other tests aren't affected by the flag state
+    _resetParseWarningFlag();
+  }
+});
+
+// ── Experimental preferences ─────────────────────────────────────────────────
+
+test("experimental.rtk: true is accepted and stored", () => {
+  const result = validatePreferences({ experimental: { rtk: true } });
+  assert.deepEqual(result.errors, []);
+  assert.equal(result.preferences.experimental?.rtk, true);
+});
+
+test("experimental.rtk: false is accepted and stored", () => {
+  const result = validatePreferences({ experimental: { rtk: false } });
+  assert.deepEqual(result.errors, []);
+  assert.equal(result.preferences.experimental?.rtk, false);
+});
+
+test("experimental.rtk: non-boolean produces error", () => {
+  const result = validatePreferences({ experimental: { rtk: "yes" } } as unknown as GSDPreferences);
+  assert.ok(result.errors.some(e => e.includes("experimental.rtk")), `expected rtk error in: ${JSON.stringify(result.errors)}`);
+});
+
+test("experimental: non-object produces error", () => {
+  const result = validatePreferences({ experimental: true } as unknown as GSDPreferences);
+  assert.ok(result.errors.some(e => e.includes("experimental must be an object")));
+});
+
+test("experimental: unknown key produces warning", () => {
+  const result = validatePreferences({ experimental: { rtk: true, future_flag: true } } as unknown as GSDPreferences);
+  assert.ok(result.warnings.some(w => w.includes("future_flag")), `expected unknown-key warning in: ${JSON.stringify(result.warnings)}`);
+  assert.equal(result.preferences.experimental?.rtk, true);
+});
+
+test("experimental: omitting rtk defaults to undefined (opt-in)", () => {
+  const result = validatePreferences({ version: 1 });
+  assert.equal(result.preferences.experimental, undefined);
+});
+
+test("experimental.rtk parses correctly from preferences markdown", () => {
+  const content = "---\nversion: 1\nexperimental:\n  rtk: true\n---\n";
+  const prefs = parsePreferencesMarkdown(content);
+  assert.notEqual(prefs, null);
+  assert.equal(prefs!.experimental?.rtk, true);
+});
+
+test("experimental.rtk defaults to off in new project preferences", () => {
+  // No experimental key → feature is disabled
+  const content = "---\nversion: 1\n---\n";
+  const prefs = parsePreferencesMarkdown(content);
+  assert.notEqual(prefs, null);
+  assert.equal(prefs!.experimental?.rtk, undefined);
 });

@@ -193,6 +193,16 @@ export interface AgentLoopConfig extends SimpleStreamOptions {
 	 * The hook receives the agent abort signal and is responsible for honoring it.
 	 */
 	afterToolCall?: (context: AfterToolCallContext, signal?: AbortSignal) => Promise<AfterToolCallResult | undefined>;
+
+	/**
+	 * When true, tool calls in assistant messages are rendered in the TUI
+	 * but NOT executed locally. Used for providers that handle tool execution
+	 * internally (e.g., Claude Code CLI via Agent SDK).
+	 *
+	 * The agent loop emits tool_execution_start/end events for TUI rendering
+	 * but skips tool.execute() and does not add tool results to context.
+	 */
+	externalToolExecution?: boolean;
 }
 
 /**

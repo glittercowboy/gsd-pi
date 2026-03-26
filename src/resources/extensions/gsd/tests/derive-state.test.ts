@@ -1,11 +1,10 @@
+import { describe, test } from 'node:test';
+import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
 import { deriveState, isSliceComplete, isMilestoneComplete, isGhostMilestone } from '../state.ts';
-import { createTestContext } from './test-helpers.ts';
-
-const { assertEq, assertTrue, report } = createTestContext();
 // ─── Fixture Helpers ───────────────────────────────────────────────────────
 
 function createFixtureBase(): string {
@@ -65,30 +64,28 @@ function cleanup(base: string): void {
 // Test Groups
 // ═══════════════════════════════════════════════════════════════════════════
 
-async function main(): Promise<void> {
+describe('derive-state', async () => {
 
   // ─── Test 1: empty milestones dir → pre-planning ───────────────────────
-  console.log('\n=== empty milestones dir → pre-planning ===');
-  {
+  test('empty milestones dir → pre-planning', async () => {
     const base = createFixtureBase();
     try {
       const state = await deriveState(base);
 
-      assertEq(state.phase, 'pre-planning', 'phase is pre-planning');
-      assertEq(state.activeMilestone, null, 'activeMilestone is null');
-      assertEq(state.activeSlice, null, 'activeSlice is null');
-      assertEq(state.activeTask, null, 'activeTask is null');
-      assertEq(state.registry, [], 'registry is empty');
-      assertEq(state.progress?.milestones?.done, 0, 'milestones done = 0');
-      assertEq(state.progress?.milestones?.total, 0, 'milestones total = 0');
+      assert.deepStrictEqual(state.phase, 'pre-planning', 'phase is pre-planning');
+      assert.deepStrictEqual(state.activeMilestone, null, 'activeMilestone is null');
+      assert.deepStrictEqual(state.activeSlice, null, 'activeSlice is null');
+      assert.deepStrictEqual(state.activeTask, null, 'activeTask is null');
+      assert.deepStrictEqual(state.registry, [], 'registry is empty');
+      assert.deepStrictEqual(state.progress?.milestones?.done, 0, 'milestones done = 0');
+      assert.deepStrictEqual(state.progress?.milestones?.total, 0, 'milestones total = 0');
     } finally {
       cleanup(base);
     }
-  }
+  });
 
   // ─── Test 2: milestone dir exists but no roadmap → pre-planning ────────
-  console.log('\n=== milestone dir exists but no roadmap → pre-planning ===');
-  {
+  test('milestone dir exists but no roadmap → pre-planning', async () => {
     const base = createFixtureBase();
     try {
       // Create M001 directory with CONTEXT but no roadmap file
@@ -97,21 +94,20 @@ async function main(): Promise<void> {
 
       const state = await deriveState(base);
 
-      assertEq(state.phase, 'pre-planning', 'phase is pre-planning');
-      assertTrue(state.activeMilestone !== null, 'activeMilestone is not null');
-      assertEq(state.activeMilestone?.id, 'M001', 'activeMilestone id is M001');
-      assertEq(state.activeSlice, null, 'activeSlice is null');
-      assertEq(state.activeTask, null, 'activeTask is null');
-      assertEq(state.registry.length, 1, 'registry has 1 entry');
-      assertEq(state.registry[0]?.status, 'active', 'registry entry status is active');
+      assert.deepStrictEqual(state.phase, 'pre-planning', 'phase is pre-planning');
+      assert.ok(state.activeMilestone !== null, 'activeMilestone is not null');
+      assert.deepStrictEqual(state.activeMilestone?.id, 'M001', 'activeMilestone id is M001');
+      assert.deepStrictEqual(state.activeSlice, null, 'activeSlice is null');
+      assert.deepStrictEqual(state.activeTask, null, 'activeTask is null');
+      assert.deepStrictEqual(state.registry.length, 1, 'registry has 1 entry');
+      assert.deepStrictEqual(state.registry[0]?.status, 'active', 'registry entry status is active');
     } finally {
       cleanup(base);
     }
-  }
+  });
 
   // ─── Test 3: roadmap with incomplete slice, no plan → planning ─────────
-  console.log('\n=== roadmap with incomplete slice, no plan → planning ===');
-  {
+  test('roadmap with incomplete slice, no plan → planning', async () => {
     const base = createFixtureBase();
     try {
       writeRoadmap(base, 'M001', `# M001: Test Milestone
@@ -126,20 +122,19 @@ async function main(): Promise<void> {
 
       const state = await deriveState(base);
 
-      assertEq(state.phase, 'planning', 'phase is planning');
-      assertTrue(state.activeSlice !== null, 'activeSlice is not null');
-      assertEq(state.activeSlice?.id, 'S01', 'activeSlice id is S01');
-      assertEq(state.activeTask, null, 'activeTask is null');
-      assertEq(state.progress?.slices?.done, 0, 'slices done = 0');
-      assertEq(state.progress?.slices?.total, 1, 'slices total = 1');
+      assert.deepStrictEqual(state.phase, 'planning', 'phase is planning');
+      assert.ok(state.activeSlice !== null, 'activeSlice is not null');
+      assert.deepStrictEqual(state.activeSlice?.id, 'S01', 'activeSlice id is S01');
+      assert.deepStrictEqual(state.activeTask, null, 'activeTask is null');
+      assert.deepStrictEqual(state.progress?.slices?.done, 0, 'slices done = 0');
+      assert.deepStrictEqual(state.progress?.slices?.total, 1, 'slices total = 1');
     } finally {
       cleanup(base);
     }
-  }
+  });
 
   // ─── Test 4: roadmap + plan with incomplete tasks → executing ──────────
-  console.log('\n=== roadmap + plan with incomplete tasks → executing ===');
-  {
+  test('roadmap + plan with incomplete tasks → executing', async () => {
     const base = createFixtureBase();
     try {
       writeRoadmap(base, 'M001', `# M001: Test Milestone
@@ -168,19 +163,18 @@ async function main(): Promise<void> {
 
       const state = await deriveState(base);
 
-      assertEq(state.phase, 'executing', 'phase is executing');
-      assertTrue(state.activeTask !== null, 'activeTask is not null');
-      assertEq(state.activeTask?.id, 'T01', 'activeTask id is T01');
-      assertEq(state.progress?.tasks?.done, 0, 'tasks done = 0');
-      assertEq(state.progress?.tasks?.total, 2, 'tasks total = 2');
+      assert.deepStrictEqual(state.phase, 'executing', 'phase is executing');
+      assert.ok(state.activeTask !== null, 'activeTask is not null');
+      assert.deepStrictEqual(state.activeTask?.id, 'T01', 'activeTask id is T01');
+      assert.deepStrictEqual(state.progress?.tasks?.done, 0, 'tasks done = 0');
+      assert.deepStrictEqual(state.progress?.tasks?.total, 2, 'tasks total = 2');
     } finally {
       cleanup(base);
     }
-  }
+  });
 
   // ─── Test 5: executing + continue file → resume message ─────────────
-  console.log('\n=== executing + continue file → resume message ===');
-  {
+  test('executing + continue file → resume message', async () => {
     const base = createFixtureBase();
     try {
       writeRoadmap(base, 'M001', `# M001: Test Milestone
@@ -228,21 +222,20 @@ Continue from step 2.
 
       const state = await deriveState(base);
 
-      assertEq(state.phase, 'executing', 'interrupted: phase is executing');
-      assertTrue(state.activeTask !== null, 'interrupted: activeTask is not null');
-      assertEq(state.activeTask?.id, 'T01', 'interrupted: activeTask id is T01');
-      assertTrue(
+      assert.deepStrictEqual(state.phase, 'executing', 'interrupted: phase is executing');
+      assert.ok(state.activeTask !== null, 'interrupted: activeTask is not null');
+      assert.deepStrictEqual(state.activeTask?.id, 'T01', 'interrupted: activeTask id is T01');
+      assert.ok(
         state.nextAction.includes('Resume') || state.nextAction.includes('resume') || state.nextAction.includes('continue.md'),
         'interrupted: nextAction mentions Resume/resume/continue.md'
       );
     } finally {
       cleanup(base);
     }
-  }
+  });
 
   // ─── Test 6: all tasks done, slice not [x] → summarizing ──────────────
-  console.log('\n=== all tasks done, slice not [x] → summarizing ===');
-  {
+  test('all tasks done, slice not [x] → summarizing', async () => {
     const base = createFixtureBase();
     try {
       writeRoadmap(base, 'M001', `# M001: Test Milestone
@@ -271,24 +264,23 @@ Continue from step 2.
 
       const state = await deriveState(base);
 
-      assertEq(state.phase, 'summarizing', 'summarizing: phase is summarizing');
-      assertTrue(state.activeSlice !== null, 'summarizing: activeSlice is not null');
-      assertEq(state.activeSlice?.id, 'S01', 'summarizing: activeSlice id is S01');
-      assertEq(state.activeTask, null, 'summarizing: activeTask is null');
-      assertTrue(
+      assert.deepStrictEqual(state.phase, 'summarizing', 'summarizing: phase is summarizing');
+      assert.ok(state.activeSlice !== null, 'summarizing: activeSlice is not null');
+      assert.deepStrictEqual(state.activeSlice?.id, 'S01', 'summarizing: activeSlice id is S01');
+      assert.deepStrictEqual(state.activeTask, null, 'summarizing: activeTask is null');
+      assert.ok(
         state.nextAction.toLowerCase().includes('summary') || state.nextAction.toLowerCase().includes('complete'),
         'summarizing: nextAction mentions summary or complete'
       );
-      assertEq(state.progress?.tasks?.done, 2, 'summarizing: tasks done = 2');
-      assertEq(state.progress?.tasks?.total, 2, 'summarizing: tasks total = 2');
+      assert.deepStrictEqual(state.progress?.tasks?.done, 2, 'summarizing: tasks done = 2');
+      assert.deepStrictEqual(state.progress?.tasks?.total, 2, 'summarizing: tasks total = 2');
     } finally {
       cleanup(base);
     }
-  }
+  });
 
   // ─── Test 7: all milestones complete → complete ────────────────────────
-  console.log('\n=== all milestones complete → complete ===');
-  {
+  test('all milestones complete → complete', async () => {
     const base = createFixtureBase();
     try {
       writeRoadmap(base, 'M001', `# M001: Test Milestone
@@ -306,23 +298,22 @@ Continue from step 2.
 
       const state = await deriveState(base);
 
-      assertEq(state.phase, 'complete', 'complete: phase is complete');
-      assertEq(state.activeSlice, null, 'complete: activeSlice is null');
-      assertEq(state.activeTask, null, 'complete: activeTask is null');
-      assertTrue(
+      assert.deepStrictEqual(state.phase, 'complete', 'complete: phase is complete');
+      assert.deepStrictEqual(state.activeSlice, null, 'complete: activeSlice is null');
+      assert.deepStrictEqual(state.activeTask, null, 'complete: activeTask is null');
+      assert.ok(
         state.nextAction.toLowerCase().includes('complete'),
         'complete: nextAction mentions complete'
       );
-      assertEq(state.registry.length, 1, 'complete: registry has 1 entry');
-      assertEq(state.registry[0]?.status, 'complete', 'complete: registry[0] status is complete');
+      assert.deepStrictEqual(state.registry.length, 1, 'complete: registry has 1 entry');
+      assert.deepStrictEqual(state.registry[0]?.status, 'complete', 'complete: registry[0] status is complete');
     } finally {
       cleanup(base);
     }
-  }
+  });
 
   // ─── Test 7b: complete with active requirements → surfaces unmapped reqs ──
-  console.log('\n=== complete with active requirements → surfaces unmapped reqs ===');
-  {
+  test('complete with active requirements → surfaces unmapped reqs', async () => {
     const base = createFixtureBase();
     try {
       writeRoadmap(base, 'M001', `# M001: Test Milestone
@@ -355,23 +346,22 @@ Continue from step 2.
 
       const state = await deriveState(base);
 
-      assertEq(state.phase, 'complete', 'complete-with-reqs: phase is complete');
-      assertTrue(
+      assert.deepStrictEqual(state.phase, 'complete', 'complete-with-reqs: phase is complete');
+      assert.ok(
         state.nextAction.includes('2 active requirements'),
         'complete-with-reqs: nextAction mentions 2 active requirements'
       );
-      assertTrue(
+      assert.ok(
         state.nextAction.includes('REQUIREMENTS.md'),
         'complete-with-reqs: nextAction mentions REQUIREMENTS.md'
       );
     } finally {
       cleanup(base);
     }
-  }
+  });
 
   // ─── Test 7c: complete with no active requirements → standard message ──
-  console.log('\n=== complete with no active requirements → standard message ===');
-  {
+  test('complete with no active requirements → standard message', async () => {
     const base = createFixtureBase();
     try {
       writeRoadmap(base, 'M001', `# M001: Test Milestone
@@ -396,16 +386,15 @@ Continue from step 2.
 
       const state = await deriveState(base);
 
-      assertEq(state.phase, 'complete', 'complete-no-active-reqs: phase is complete');
-      assertEq(state.nextAction, 'All milestones complete.', 'complete-no-active-reqs: standard completion message');
+      assert.deepStrictEqual(state.phase, 'complete', 'complete-no-active-reqs: phase is complete');
+      assert.deepStrictEqual(state.nextAction, 'All milestones complete.', 'complete-no-active-reqs: standard completion message');
     } finally {
       cleanup(base);
     }
-  }
+  });
 
   // ─── Test 8: blocked dependencies ──────────────────────────────────────
-  console.log('\n=== blocked dependencies ===');
-  {
+  test('blocked dependencies', async () => {
     // Case A: S01 active (deps satisfied), S02 blocked on S01
     const base1 = createFixtureBase();
     try {
@@ -436,8 +425,8 @@ Continue from step 2.
 
       const state1 = await deriveState(base1);
 
-      assertEq(state1.phase, 'executing', 'blocked-A: phase is executing (S01 active)');
-      assertEq(state1.activeSlice?.id, 'S01', 'blocked-A: activeSlice is S01');
+      assert.deepStrictEqual(state1.phase, 'executing', 'blocked-A: phase is executing (S01 active)');
+      assert.deepStrictEqual(state1.activeSlice?.id, 'S01', 'blocked-A: activeSlice is S01');
     } finally {
       cleanup(base1);
     }
@@ -457,17 +446,16 @@ Continue from step 2.
 
       const state2 = await deriveState(base2);
 
-      assertEq(state2.phase, 'blocked', 'blocked-B: phase is blocked');
-      assertEq(state2.activeSlice, null, 'blocked-B: activeSlice is null');
-      assertTrue(state2.blockers.length > 0, 'blocked-B: blockers array is non-empty');
+      assert.deepStrictEqual(state2.phase, 'blocked', 'blocked-B: phase is blocked');
+      assert.deepStrictEqual(state2.activeSlice, null, 'blocked-B: activeSlice is null');
+      assert.ok(state2.blockers.length > 0, 'blocked-B: blockers array is non-empty');
     } finally {
       cleanup(base2);
     }
-  }
+  });
 
   // ─── Test 9: multi-milestone registry ──────────────────────────────────
-  console.log('\n=== multi-milestone registry ===');
-  {
+  test('multi-milestone registry', async () => {
     const base = createFixtureBase();
     try {
       // M001: complete (all slices done)
@@ -501,24 +489,23 @@ Continue from step 2.
 
       const state = await deriveState(base);
 
-      assertEq(state.registry.length, 3, 'multi-ms: registry has 3 entries');
-      assertEq(state.registry[0]?.id, 'M001', 'multi-ms: registry[0] is M001');
-      assertEq(state.registry[0]?.status, 'complete', 'multi-ms: M001 is complete');
-      assertEq(state.registry[1]?.id, 'M002', 'multi-ms: registry[1] is M002');
-      assertEq(state.registry[1]?.status, 'active', 'multi-ms: M002 is active');
-      assertEq(state.registry[2]?.id, 'M003', 'multi-ms: registry[2] is M003');
-      assertEq(state.registry[2]?.status, 'pending', 'multi-ms: M003 is pending');
-      assertEq(state.activeMilestone?.id, 'M002', 'multi-ms: activeMilestone is M002');
-      assertEq(state.progress?.milestones?.done, 1, 'multi-ms: milestones done = 1');
-      assertEq(state.progress?.milestones?.total, 3, 'multi-ms: milestones total = 3');
+      assert.deepStrictEqual(state.registry.length, 3, 'multi-ms: registry has 3 entries');
+      assert.deepStrictEqual(state.registry[0]?.id, 'M001', 'multi-ms: registry[0] is M001');
+      assert.deepStrictEqual(state.registry[0]?.status, 'complete', 'multi-ms: M001 is complete');
+      assert.deepStrictEqual(state.registry[1]?.id, 'M002', 'multi-ms: registry[1] is M002');
+      assert.deepStrictEqual(state.registry[1]?.status, 'active', 'multi-ms: M002 is active');
+      assert.deepStrictEqual(state.registry[2]?.id, 'M003', 'multi-ms: registry[2] is M003');
+      assert.deepStrictEqual(state.registry[2]?.status, 'pending', 'multi-ms: M003 is pending');
+      assert.deepStrictEqual(state.activeMilestone?.id, 'M002', 'multi-ms: activeMilestone is M002');
+      assert.deepStrictEqual(state.progress?.milestones?.done, 1, 'multi-ms: milestones done = 1');
+      assert.deepStrictEqual(state.progress?.milestones?.total, 3, 'multi-ms: milestones total = 3');
     } finally {
       cleanup(base);
     }
-  }
+  });
 
   // ─── Test 10: requirements integration ─────────────────────────────────
-  console.log('\n=== requirements integration ===');
-  {
+  test('requirements integration', async () => {
     const base = createFixtureBase();
     try {
       writeRequirements(base, `# Requirements
@@ -559,20 +546,19 @@ Continue from step 2.
       // Need at least an empty milestones dir for deriveState
       const state = await deriveState(base);
 
-      assertTrue(state.requirements !== undefined, 'requirements: requirements object exists');
-      assertEq(state.requirements?.active, 2, 'requirements: active = 2');
-      assertEq(state.requirements?.validated, 1, 'requirements: validated = 1');
-      assertEq(state.requirements?.deferred, 2, 'requirements: deferred = 2');
-      assertEq(state.requirements?.outOfScope, 1, 'requirements: outOfScope = 1');
-      assertEq(state.requirements?.total, 6, 'requirements: total = 6 (sum of all)');
+      assert.ok(state.requirements !== undefined, 'requirements: requirements object exists');
+      assert.deepStrictEqual(state.requirements?.active, 2, 'requirements: active = 2');
+      assert.deepStrictEqual(state.requirements?.validated, 1, 'requirements: validated = 1');
+      assert.deepStrictEqual(state.requirements?.deferred, 2, 'requirements: deferred = 2');
+      assert.deepStrictEqual(state.requirements?.outOfScope, 1, 'requirements: outOfScope = 1');
+      assert.deepStrictEqual(state.requirements?.total, 6, 'requirements: total = 6 (sum of all)');
     } finally {
       cleanup(base);
     }
-  }
+  });
 
   // ─── Test 11: all slices [x], no summary → completing-milestone ────────
-  console.log('\n=== all slices [x], no summary → completing-milestone ===');
-  {
+  test('all slices [x], no summary → completing-milestone', async () => {
     const base = createFixtureBase();
     try {
       writeRoadmap(base, 'M001', `# M001: Test Milestone
@@ -592,27 +578,26 @@ Continue from step 2.
 
       const state = await deriveState(base);
 
-      assertEq(state.phase, 'completing-milestone', 'completing-ms: phase is completing-milestone');
-      assertTrue(state.activeMilestone !== null, 'completing-ms: activeMilestone is not null');
-      assertEq(state.activeMilestone?.id, 'M001', 'completing-ms: activeMilestone id is M001');
-      assertEq(state.activeSlice, null, 'completing-ms: activeSlice is null');
-      assertEq(state.activeTask, null, 'completing-ms: activeTask is null');
-      assertEq(state.registry.length, 1, 'completing-ms: registry has 1 entry');
-      assertEq(state.registry[0]?.status, 'active', 'completing-ms: registry[0] status is active (not complete)');
-      assertEq(state.progress?.slices?.done, 2, 'completing-ms: slices done = 2');
-      assertEq(state.progress?.slices?.total, 2, 'completing-ms: slices total = 2');
-      assertTrue(
+      assert.deepStrictEqual(state.phase, 'completing-milestone', 'completing-ms: phase is completing-milestone');
+      assert.ok(state.activeMilestone !== null, 'completing-ms: activeMilestone is not null');
+      assert.deepStrictEqual(state.activeMilestone?.id, 'M001', 'completing-ms: activeMilestone id is M001');
+      assert.deepStrictEqual(state.activeSlice, null, 'completing-ms: activeSlice is null');
+      assert.deepStrictEqual(state.activeTask, null, 'completing-ms: activeTask is null');
+      assert.deepStrictEqual(state.registry.length, 1, 'completing-ms: registry has 1 entry');
+      assert.deepStrictEqual(state.registry[0]?.status, 'active', 'completing-ms: registry[0] status is active (not complete)');
+      assert.deepStrictEqual(state.progress?.slices?.done, 2, 'completing-ms: slices done = 2');
+      assert.deepStrictEqual(state.progress?.slices?.total, 2, 'completing-ms: slices total = 2');
+      assert.ok(
         state.nextAction.toLowerCase().includes('summary') || state.nextAction.toLowerCase().includes('complete'),
         'completing-ms: nextAction mentions summary or complete'
       );
     } finally {
       cleanup(base);
     }
-  }
+  });
 
   // ─── Test 12: all slices [x], summary exists → complete ───────────────
-  console.log('\n=== all slices [x], summary exists → complete ===');
-  {
+  test('all slices [x], summary exists → complete', async () => {
     const base = createFixtureBase();
     try {
       writeRoadmap(base, 'M001', `# M001: Test Milestone
@@ -630,19 +615,18 @@ Continue from step 2.
 
       const state = await deriveState(base);
 
-      assertEq(state.phase, 'complete', 'summary-exists: phase is complete');
-      assertEq(state.registry.length, 1, 'summary-exists: registry has 1 entry');
-      assertEq(state.registry[0]?.status, 'complete', 'summary-exists: registry[0] status is complete');
-      assertEq(state.activeSlice, null, 'summary-exists: activeSlice is null');
-      assertEq(state.activeTask, null, 'summary-exists: activeTask is null');
+      assert.deepStrictEqual(state.phase, 'complete', 'summary-exists: phase is complete');
+      assert.deepStrictEqual(state.registry.length, 1, 'summary-exists: registry has 1 entry');
+      assert.deepStrictEqual(state.registry[0]?.status, 'complete', 'summary-exists: registry[0] status is complete');
+      assert.deepStrictEqual(state.activeSlice, null, 'summary-exists: activeSlice is null');
+      assert.deepStrictEqual(state.activeTask, null, 'summary-exists: activeTask is null');
     } finally {
       cleanup(base);
     }
-  }
+  });
 
   // ─── Test 13: multi-milestone completing-milestone ─────────────────────
-  console.log('\n=== multi-milestone completing-milestone ===');
-  {
+  test('multi-milestone completing-milestone', async () => {
     const base = createFixtureBase();
     try {
       // M001: all slices done + summary exists → complete
@@ -687,29 +671,28 @@ Continue from step 2.
 
       const state = await deriveState(base);
 
-      assertEq(state.phase, 'completing-milestone', 'multi-completing: phase is completing-milestone');
-      assertEq(state.activeMilestone?.id, 'M002', 'multi-completing: activeMilestone is M002');
-      assertEq(state.activeSlice, null, 'multi-completing: activeSlice is null');
-      assertEq(state.activeTask, null, 'multi-completing: activeTask is null');
-      assertEq(state.registry.length, 3, 'multi-completing: registry has 3 entries');
-      assertEq(state.registry[0]?.id, 'M001', 'multi-completing: registry[0] is M001');
-      assertEq(state.registry[0]?.status, 'complete', 'multi-completing: M001 is complete');
-      assertEq(state.registry[1]?.id, 'M002', 'multi-completing: registry[1] is M002');
-      assertEq(state.registry[1]?.status, 'active', 'multi-completing: M002 is active (completing-milestone)');
-      assertEq(state.registry[2]?.id, 'M003', 'multi-completing: registry[2] is M003');
-      assertEq(state.registry[2]?.status, 'pending', 'multi-completing: M003 is pending');
-      assertEq(state.progress?.milestones?.done, 1, 'multi-completing: milestones done = 1');
-      assertEq(state.progress?.milestones?.total, 3, 'multi-completing: milestones total = 3');
-      assertEq(state.progress?.slices?.done, 2, 'multi-completing: slices done = 2');
-      assertEq(state.progress?.slices?.total, 2, 'multi-completing: slices total = 2');
+      assert.deepStrictEqual(state.phase, 'completing-milestone', 'multi-completing: phase is completing-milestone');
+      assert.deepStrictEqual(state.activeMilestone?.id, 'M002', 'multi-completing: activeMilestone is M002');
+      assert.deepStrictEqual(state.activeSlice, null, 'multi-completing: activeSlice is null');
+      assert.deepStrictEqual(state.activeTask, null, 'multi-completing: activeTask is null');
+      assert.deepStrictEqual(state.registry.length, 3, 'multi-completing: registry has 3 entries');
+      assert.deepStrictEqual(state.registry[0]?.id, 'M001', 'multi-completing: registry[0] is M001');
+      assert.deepStrictEqual(state.registry[0]?.status, 'complete', 'multi-completing: M001 is complete');
+      assert.deepStrictEqual(state.registry[1]?.id, 'M002', 'multi-completing: registry[1] is M002');
+      assert.deepStrictEqual(state.registry[1]?.status, 'active', 'multi-completing: M002 is active (completing-milestone)');
+      assert.deepStrictEqual(state.registry[2]?.id, 'M003', 'multi-completing: registry[2] is M003');
+      assert.deepStrictEqual(state.registry[2]?.status, 'pending', 'multi-completing: M003 is pending');
+      assert.deepStrictEqual(state.progress?.milestones?.done, 1, 'multi-completing: milestones done = 1');
+      assert.deepStrictEqual(state.progress?.milestones?.total, 3, 'multi-completing: milestones total = 3');
+      assert.deepStrictEqual(state.progress?.slices?.done, 2, 'multi-completing: slices done = 2');
+      assert.deepStrictEqual(state.progress?.slices?.total, 2, 'multi-completing: slices total = 2');
     } finally {
       cleanup(base);
     }
-  }
+  });
 
   // ═══ Milestone with summary but no roadmap → complete ═══════════════════
   {
-    console.log('\n=== milestone with summary and no roadmap → complete ===');
     const base = createFixtureBase();
     try {
       // M001, M002: completed milestones with summaries but no roadmaps
@@ -726,17 +709,17 @@ Continue from step 2.
 
       const state = await deriveState(base);
 
-      assertEq(state.phase, 'planning', 'summary-no-roadmap: phase is planning (active is M003)');
-      assertEq(state.activeMilestone?.id, 'M003', 'summary-no-roadmap: active milestone is M003');
-      assertEq(state.activeMilestone?.title, 'Polish', 'summary-no-roadmap: active title is Polish');
-      assertEq(state.registry.length, 3, 'summary-no-roadmap: registry has 3 entries');
-      assertEq(state.registry[0]?.status, 'complete', 'summary-no-roadmap: M001 is complete');
-      assertEq(state.registry[0]?.title, 'Bootstrap', 'summary-no-roadmap: M001 title from summary');
-      assertEq(state.registry[1]?.status, 'complete', 'summary-no-roadmap: M002 is complete');
-      assertEq(state.registry[1]?.title, 'Core Features', 'summary-no-roadmap: M002 title from summary');
-      assertEq(state.registry[2]?.status, 'active', 'summary-no-roadmap: M003 is active');
-      assertEq(state.progress?.milestones?.done, 2, 'summary-no-roadmap: milestones done = 2');
-      assertEq(state.progress?.milestones?.total, 3, 'summary-no-roadmap: milestones total = 3');
+      assert.deepStrictEqual(state.phase, 'planning', 'summary-no-roadmap: phase is planning (active is M003)');
+      assert.deepStrictEqual(state.activeMilestone?.id, 'M003', 'summary-no-roadmap: active milestone is M003');
+      assert.deepStrictEqual(state.activeMilestone?.title, 'Polish', 'summary-no-roadmap: active title is Polish');
+      assert.deepStrictEqual(state.registry.length, 3, 'summary-no-roadmap: registry has 3 entries');
+      assert.deepStrictEqual(state.registry[0]?.status, 'complete', 'summary-no-roadmap: M001 is complete');
+      assert.deepStrictEqual(state.registry[0]?.title, 'Bootstrap', 'summary-no-roadmap: M001 title from summary');
+      assert.deepStrictEqual(state.registry[1]?.status, 'complete', 'summary-no-roadmap: M002 is complete');
+      assert.deepStrictEqual(state.registry[1]?.title, 'Core Features', 'summary-no-roadmap: M002 title from summary');
+      assert.deepStrictEqual(state.registry[2]?.status, 'active', 'summary-no-roadmap: M003 is active');
+      assert.deepStrictEqual(state.progress?.milestones?.done, 2, 'summary-no-roadmap: milestones done = 2');
+      assert.deepStrictEqual(state.progress?.milestones?.total, 3, 'summary-no-roadmap: milestones total = 3');
     } finally {
       cleanup(base);
     }
@@ -744,7 +727,6 @@ Continue from step 2.
 
   // ═══ All milestones have summary but no roadmap → complete ═════════════
   {
-    console.log('\n=== all milestones summary-only → complete ===');
     const base = createFixtureBase();
     try {
       const m1dir = join(base, '.gsd', 'milestones', 'M001');
@@ -752,16 +734,15 @@ Continue from step 2.
       writeFileSync(join(m1dir, 'M001-SUMMARY.md'), '---\ntitle: Done\n---\nAll done.');
 
       const state = await deriveState(base);
-      assertEq(state.phase, 'complete', 'all-summary-only: phase is complete');
-      assertEq(state.registry[0]?.status, 'complete', 'all-summary-only: M001 is complete');
+      assert.deepStrictEqual(state.phase, 'complete', 'all-summary-only: phase is complete');
+      assert.deepStrictEqual(state.registry[0]?.status, 'complete', 'all-summary-only: M001 is complete');
     } finally {
       cleanup(base);
     }
   }
 
   // ─── Empty plan (zero tasks) stays in planning, not summarizing (#454) ──
-  console.log('\n=== empty plan → planning (not summarizing) ===');
-  {
+  test('empty plan → planning (not summarizing)', async () => {
     const base = createFixtureBase();
     try {
       writeRoadmap(base, 'M001', `---
@@ -786,17 +767,16 @@ slice: S01
 ## Tasks
 `);
       const state = await deriveState(base);
-      assertEq(state.phase, 'planning', 'empty plan stays in planning');
-      assertEq(state.activeSlice?.id, 'S01', 'active slice is S01');
-      assertEq(state.activeTask, null, 'no active task');
+      assert.deepStrictEqual(state.phase, 'planning', 'empty plan stays in planning');
+      assert.deepStrictEqual(state.activeSlice?.id, 'S01', 'active slice is S01');
+      assert.deepStrictEqual(state.activeTask, null, 'no active task');
     } finally {
       cleanup(base);
     }
-  }
+  });
 
   // ─── Test: completed M001 (summary, no validation) skipped for active M003 (#864) ────
-  console.log('\n=== completed milestone with summary but no validation is not active (#864) ===');
-  {
+  test('completed milestone with summary but no validation is not active (#864)', async () => {
     const base = createFixtureBase();
     try {
       // M001: all slices done, has summary, no validation
@@ -806,17 +786,16 @@ slice: S01
       writeRoadmap(base, 'M003', `# M003: Active Milestone\n\n**Vision:** Do stuff.\n\n## Slices\n\n- [ ] **S01: Work slice** \`risk:low\` \`depends:[]\`\n  > Needs work.\n`);
 
       const state = await deriveState(base);
-      assertEq(state.activeMilestone?.id, 'M003', 'active milestone is M003, not completed M001');
+      assert.deepStrictEqual(state.activeMilestone?.id, 'M003', 'active milestone is M003, not completed M001');
       const m001Entry = state.registry.find(e => e.id === 'M001');
-      assertEq(m001Entry?.status, 'complete', 'M001 is marked complete despite no validation');
+      assert.deepStrictEqual(m001Entry?.status, 'complete', 'M001 is marked complete despite no validation');
     } finally {
       cleanup(base);
     }
-  }
+  });
 
   // ─── Test: completed M001 with summary AND validation is complete (#864) ────
-  console.log('\n=== completed milestone with summary and validation is complete ===');
-  {
+  test('completed milestone with summary and validation is complete', async () => {
     const base = createFixtureBase();
     try {
       writeRoadmap(base, 'M001', `# M001: First Milestone\n\n**Vision:** Done.\n\n## Slices\n\n- [x] **S01: Done slice** \`risk:low\` \`depends:[]\`\n  > Completed.\n`);
@@ -825,32 +804,30 @@ slice: S01
       writeRoadmap(base, 'M003', `# M003: Active Milestone\n\n**Vision:** Do stuff.\n\n## Slices\n\n- [ ] **S01: Work slice** \`risk:low\` \`depends:[]\`\n  > Needs work.\n`);
 
       const state = await deriveState(base);
-      assertEq(state.activeMilestone?.id, 'M003', 'active milestone is M003');
+      assert.deepStrictEqual(state.activeMilestone?.id, 'M003', 'active milestone is M003');
       const m001Entry = state.registry.find(e => e.id === 'M001');
-      assertEq(m001Entry?.status, 'complete', 'M001 with both summary and validation is complete');
+      assert.deepStrictEqual(m001Entry?.status, 'complete', 'M001 with both summary and validation is complete');
     } finally {
       cleanup(base);
     }
-  }
+  });
 
   // ─── Test: all slices done, no summary, no validation → needs validation (#864) ────
-  console.log('\n=== all slices done, no summary, no validation → validating-milestone ===');
-  {
+  test('all slices done, no summary, no validation → validating-milestone', async () => {
     const base = createFixtureBase();
     try {
       writeRoadmap(base, 'M001', `# M001: First Milestone\n\n**Vision:** Validate me.\n\n## Slices\n\n- [x] **S01: Done slice** \`risk:low\` \`depends:[]\`\n  > Completed.\n`);
       // No summary, no validation — this should be active for validation
 
       const state = await deriveState(base);
-      assertEq(state.activeMilestone?.id, 'M001', 'M001 is active for validation');
+      assert.deepStrictEqual(state.activeMilestone?.id, 'M001', 'M001 is active for validation');
     } finally {
       cleanup(base);
     }
-  }
+  });
 
   // ─── Test: all slices done, validation pass, no summary → needs completion (#864) ────
-  console.log('\n=== all slices done, validation pass, no summary → completing-milestone ===');
-  {
+  test('all slices done, validation pass, no summary → completing-milestone', async () => {
     const base = createFixtureBase();
     try {
       writeRoadmap(base, 'M001', `# M001: First Milestone\n\n**Vision:** Complete me.\n\n## Slices\n\n- [x] **S01: Done slice** \`risk:low\` \`depends:[]\`\n  > Completed.\n`);
@@ -858,15 +835,14 @@ slice: S01
       // No summary — validated but not yet completed
 
       const state = await deriveState(base);
-      assertEq(state.activeMilestone?.id, 'M001', 'M001 is active for completion');
+      assert.deepStrictEqual(state.activeMilestone?.id, 'M001', 'M001 is active for completion');
     } finally {
       cleanup(base);
     }
-  }
+  });
 
   // ─── Test: unchecked roadmap slices + summary → complete (summary is terminal) ────
-  console.log('\n=== unchecked roadmap slices + summary → complete (summary is terminal) ===');
-  {
+  test('unchecked roadmap slices + summary → complete (summary is terminal)', async () => {
     const base = createFixtureBase();
     try {
       // M001: roadmap has unchecked slices but a summary exists — should be complete
@@ -877,16 +853,15 @@ slice: S01
 
       const state = await deriveState(base);
       const m001Entry = state.registry.find(e => e.id === 'M001');
-      assertEq(m001Entry?.status, 'complete', 'M001 with unchecked roadmap + summary is complete');
-      assertEq(state.activeMilestone?.id, 'M002', 'active milestone is M002, not M001');
+      assert.deepStrictEqual(m001Entry?.status, 'complete', 'M001 with unchecked roadmap + summary is complete');
+      assert.deepStrictEqual(state.activeMilestone?.id, 'M002', 'active milestone is M002, not M001');
     } finally {
       cleanup(base);
     }
-  }
+  });
 
   // ─── Test: unchecked roadmap + summary counts toward completeMilestoneIds (deps) ────
-  console.log('\n=== unchecked roadmap + summary satisfies dependency ===');
-  {
+  test('unchecked roadmap + summary satisfies dependency', async () => {
     const base = createFixtureBase();
     try {
       // M001: unchecked roadmap + summary → complete
@@ -899,17 +874,16 @@ slice: S01
       writeFileSync(join(contextDir, 'M002-CONTEXT.md'), '---\ndepends_on:\n  - M001\n---\n\n# M002 Context\n\nDepends on M001.');
 
       const state = await deriveState(base);
-      assertEq(state.activeMilestone?.id, 'M002', 'M002 is active — M001 dependency satisfied via summary');
+      assert.deepStrictEqual(state.activeMilestone?.id, 'M002', 'M002 is active — M001 dependency satisfied via summary');
       const m002Entry = state.registry.find(e => e.id === 'M002');
-      assertEq(m002Entry?.status, 'active', 'M002 status is active, not pending');
+      assert.deepStrictEqual(m002Entry?.status, 'active', 'M002 status is active, not pending');
     } finally {
       cleanup(base);
     }
-  }
+  });
 
   // ─── Test: ghost milestone (only META.json) is skipped ───────────────
-  console.log('\n=== ghost milestone (only META.json) is skipped ===');
-  {
+  test('ghost milestone (only META.json) is skipped', async () => {
     const base = createFixtureBase();
     try {
       // Create a ghost milestone directory with only META.json
@@ -918,21 +892,20 @@ slice: S01
       writeFileSync(join(ghostDir, 'META.json'), JSON.stringify({ id: 'M001' }));
 
       // isGhostMilestone should detect it
-      assertTrue(isGhostMilestone(base, 'M001'), 'M001 is a ghost milestone');
+      assert.ok(isGhostMilestone(base, 'M001'), 'M001 is a ghost milestone');
 
       // deriveState should treat this as pre-planning (no real milestones)
       const state = await deriveState(base);
-      assertEq(state.phase, 'pre-planning', 'ghost-only: phase is pre-planning');
-      assertEq(state.activeMilestone, null, 'ghost-only: no active milestone');
-      assertEq(state.registry.length, 0, 'ghost-only: registry is empty');
+      assert.deepStrictEqual(state.phase, 'pre-planning', 'ghost-only: phase is pre-planning');
+      assert.deepStrictEqual(state.activeMilestone, null, 'ghost-only: no active milestone');
+      assert.deepStrictEqual(state.registry.length, 0, 'ghost-only: registry is empty');
     } finally {
       cleanup(base);
     }
-  }
+  });
 
   // ─── Test: ghost milestone skipped when real milestones exist ──────────
-  console.log('\n=== ghost milestone skipped alongside real milestones ===');
-  {
+  test('ghost milestone skipped alongside real milestones', async () => {
     const base = createFixtureBase();
     try {
       // M001: ghost (only META.json)
@@ -946,20 +919,19 @@ slice: S01
       writeFileSync(join(realDir, 'M002-CONTEXT.md'), '# Real Milestone\n\nThis has content.');
 
       const state = await deriveState(base);
-      assertEq(state.activeMilestone?.id, 'M002', 'ghost+real: active milestone is M002');
+      assert.deepStrictEqual(state.activeMilestone?.id, 'M002', 'ghost+real: active milestone is M002');
       // Ghost M001 should not appear in the registry
       const m001Entry = state.registry.find(e => e.id === 'M001');
-      assertEq(m001Entry, undefined, 'ghost+real: M001 not in registry');
-      assertEq(state.registry.length, 1, 'ghost+real: registry has 1 entry');
-      assertEq(state.registry[0]?.status, 'active', 'ghost+real: M002 is active');
+      assert.deepStrictEqual(m001Entry, undefined, 'ghost+real: M001 not in registry');
+      assert.deepStrictEqual(state.registry.length, 1, 'ghost+real: registry has 1 entry');
+      assert.deepStrictEqual(state.registry[0]?.status, 'active', 'ghost+real: M002 is active');
     } finally {
       cleanup(base);
     }
-  }
+  });
 
   // ─── Test: zero-slice roadmap → pre-planning, not blocked (#1785) ────
-  console.log('\n=== zero-slice roadmap → pre-planning, not blocked (#1785) ===');
-  {
+  test('zero-slice roadmap → pre-planning, not blocked (#1785)', async () => {
     const base = createFixtureBase();
     try {
       // Write a stub roadmap with zero slices (placeholder text, no slice definitions)
@@ -967,22 +939,15 @@ slice: S01
 
       const state = await deriveState(base);
 
-      assertEq(state.phase, 'pre-planning', 'phase is pre-planning when roadmap has zero slices');
-      assertTrue(state.activeMilestone !== null, 'activeMilestone is set');
-      assertEq(state.activeMilestone?.id, 'M001', 'activeMilestone is M001');
-      assertEq(state.activeSlice, null, 'activeSlice is null');
-      assertEq(state.activeTask, null, 'activeTask is null');
-      assertEq(state.blockers.length, 0, 'no blockers reported');
-      assertTrue(state.nextAction.includes('M001'), 'nextAction references M001');
+      assert.deepStrictEqual(state.phase, 'pre-planning', 'phase is pre-planning when roadmap has zero slices');
+      assert.ok(state.activeMilestone !== null, 'activeMilestone is set');
+      assert.deepStrictEqual(state.activeMilestone?.id, 'M001', 'activeMilestone is M001');
+      assert.deepStrictEqual(state.activeSlice, null, 'activeSlice is null');
+      assert.deepStrictEqual(state.activeTask, null, 'activeTask is null');
+      assert.deepStrictEqual(state.blockers.length, 0, 'no blockers reported');
+      assert.ok(state.nextAction.includes('M001'), 'nextAction references M001');
     } finally {
       cleanup(base);
     }
-  }
-
-  report();
-}
-
-main().catch((error) => {
-  console.error(error);
-  process.exit(1);
+  });
 });

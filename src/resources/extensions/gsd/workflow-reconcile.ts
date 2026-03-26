@@ -1,0 +1,503 @@
+import { join } from "node:path";
+import { mkdirSync, existsSync, readFileSync, unlinkSync } from "node:fs";
+import { readEvents, findForkPoint, appendEvent, getSessionId } from "./workflow-events.js";
+import type { WorkflowEvent } from "./workflow-events.js";
+import {
+  transaction,
+  updateTaskStatus,
+  updateSliceStatus,
+  insertVerificationEvidence,
+  upsertDecision,
+  openDatabase,
+} from "./gsd-db.js";
+import { writeManifest } from "./workflow-manifest.js";
+import { atomicWriteSync } from "./atomic-write.js";
+import { acquireSyncLock, releaseSyncLock } from "./sync-lock.js";
+
+// ─── Public Types ─────────────────────────────────────────────────────────────
+
+export interface ConflictEntry {
+  entityType: string;
+  entityId: string;
+  mainSideEvents: WorkflowEvent[];
+  worktreeSideEvents: WorkflowEvent[];
+}
+
+export interface ReconcileResult {
+  autoMerged: number;
+  conflicts: ConflictEntry[];
+}
+
+// ─── replayEvents ─────────────────────────────────────────────────────────────
+
+/**
+ * Replay a list of WorkflowEvents by dispatching each to the appropriate
+ * gsd-db function.  This replaces the old engine.replayAll() pattern with
+ * direct DB calls.
+ */
+function replayEvents(events: WorkflowEvent[]): void {
+  transaction(() => {
+  for (const event of events) {
+    const p = event.params;
+    switch (event.cmd) {
+      case "complete_task": {
+        const milestoneId = p["milestoneId"] as string;
+        const sliceId = p["sliceId"] as string;
+        const taskId = p["taskId"] as string;
+        updateTaskStatus(milestoneId, sliceId, taskId, "done", event.ts);
+        break;
+      }
+      case "start_task": {
+        const milestoneId = p["milestoneId"] as string;
+        const sliceId = p["sliceId"] as string;
+        const taskId = p["taskId"] as string;
+        updateTaskStatus(milestoneId, sliceId, taskId, "in-progress", event.ts);
+        break;
+      }
+      case "report_blocker": {
+        // report_blocker marks the task with blocker_discovered = 1
+        // The DB helper updateTaskStatus doesn't handle blockers,
+        // so we just update status to "blocked" as a best-effort replay.
+        const milestoneId = p["milestoneId"] as string;
+        const sliceId = p["sliceId"] as string;
+        const taskId = p["taskId"] as string;
+        updateTaskStatus(milestoneId, sliceId, taskId, "blocked");
+        break;
+      }
+      case "record_verification": {
+        const milestoneId = p["milestoneId"] as string;
+        const sliceId = p["sliceId"] as string;
+        const taskId = p["taskId"] as string;
+        insertVerificationEvidence({
+          taskId,
+          sliceId,
+          milestoneId,
+          command: (p["command"] as string) ?? "",
+          exitCode: (p["exitCode"] as number) ?? 0,
+          verdict: (p["verdict"] as string) ?? "",
+          durationMs: (p["durationMs"] as number) ?? 0,
+        });
+        break;
+      }
+      case "complete_slice": {
+        const milestoneId = p["milestoneId"] as string;
+        const sliceId = p["sliceId"] as string;
+        updateSliceStatus(milestoneId, sliceId, "done", event.ts);
+        break;
+      }
+      case "plan_slice": {
+        // plan_slice events are informational — slice should already exist.
+        // No DB mutation needed during replay (the slice was inserted at plan time).
+        break;
+      }
+      case "save_decision": {
+        upsertDecision({
+          id: (p["id"] as string) ?? `${p["scope"]}:${p["decision"]}`,
+          when_context: (p["when_context"] as string) ?? (p["whenContext"] as string) ?? "",
+          scope: (p["scope"] as string) ?? "",
+          decision: (p["decision"] as string) ?? "",
+          choice: (p["choice"] as string) ?? "",
+          rationale: (p["rationale"] as string) ?? "",
+          revisable: (p["revisable"] as string) ?? "yes",
+          made_by: ((p["made_by"] as string) ?? (p["madeBy"] as string) ?? "agent") as "agent",
+          superseded_by: (p["superseded_by"] as string) ?? (p["supersededBy"] as string) ?? null,
+        });
+        break;
+      }
+      default:
+        // Unknown commands are silently skipped during replay
+        break;
+    }
+  }
+  }); // end transaction
+}
+
+// ─── extractEntityKey ─────────────────────────────────────────────────────────
+
+/**
+ * Map a WorkflowEvent command to its affected entity type and ID.
+ * Returns null for commands that don't touch a named entity
+ * (e.g. unknown or future cmds).
+ */
+export function extractEntityKey(
+  event: WorkflowEvent,
+): { type: string; id: string } | null {
+  const p = event.params;
+
+  switch (event.cmd) {
+    case "complete_task":
+    case "start_task":
+    case "report_blocker":
+    case "record_verification":
+      return typeof p["taskId"] === "string"
+        ? { type: "task", id: p["taskId"] }
+        : null;
+
+    case "complete_slice":
+      return typeof p["sliceId"] === "string"
+        ? { type: "slice", id: p["sliceId"] }
+        : null;
+
+    case "plan_slice":
+      return typeof p["sliceId"] === "string"
+        ? { type: "slice_plan", id: p["sliceId"] }
+        : null;
+
+    case "save_decision":
+      if (typeof p["scope"] === "string" && typeof p["decision"] === "string") {
+        return { type: "decision", id: `${p["scope"]}:${p["decision"]}` };
+      }
+      return null;
+
+    default:
+      return null;
+  }
+}
+
+// ─── detectConflicts ──────────────────────────────────────────────────────────
+
+/**
+ * Compare two sets of diverged events. Returns conflict entries for any
+ * entity touched by both sides.
+ *
+ * Entity-level granularity: if both sides touched task T01 (with any cmd),
+ * that is one conflict regardless of field-level differences.
+ */
+export function detectConflicts(
+  mainDiverged: WorkflowEvent[],
+  wtDiverged: WorkflowEvent[],
+): ConflictEntry[] {
+  // Group each side's events by entity key
+  const mainByEntity = new Map<string, WorkflowEvent[]>();
+  for (const event of mainDiverged) {
+    const key = extractEntityKey(event);
+    if (!key) continue;
+    const bucket = mainByEntity.get(`${key.type}:${key.id}`) ?? [];
+    bucket.push(event);
+    mainByEntity.set(`${key.type}:${key.id}`, bucket);
+  }
+
+  const wtByEntity = new Map<string, WorkflowEvent[]>();
+  for (const event of wtDiverged) {
+    const key = extractEntityKey(event);
+    if (!key) continue;
+    const bucket = wtByEntity.get(`${key.type}:${key.id}`) ?? [];
+    bucket.push(event);
+    wtByEntity.set(`${key.type}:${key.id}`, bucket);
+  }
+
+  // Find entities touched by both sides
+  const conflicts: ConflictEntry[] = [];
+  for (const [entityKey, mainEvents] of mainByEntity) {
+    const wtEvents = wtByEntity.get(entityKey);
+    if (!wtEvents) continue;
+
+    const colonIdx = entityKey.indexOf(":");
+    const entityType = entityKey.slice(0, colonIdx);
+    const entityId = entityKey.slice(colonIdx + 1);
+
+    conflicts.push({
+      entityType,
+      entityId,
+      mainSideEvents: mainEvents,
+      worktreeSideEvents: wtEvents,
+    });
+  }
+
+  return conflicts;
+}
+
+// ─── writeConflictsFile ───────────────────────────────────────────────────────
+
+/**
+ * Write a human-readable CONFLICTS.md to basePath/.gsd/CONFLICTS.md.
+ * Lists each conflict with both sides' event payloads and resolution instructions.
+ */
+export function writeConflictsFile(
+  basePath: string,
+  conflicts: ConflictEntry[],
+  worktreePath: string,
+): void {
+  const timestamp = new Date().toISOString();
+  const lines: string[] = [
+    `# Merge Conflicts — ${timestamp}`,
+    "",
+    `Conflicts detected merging worktree \`${worktreePath}\` into \`${basePath}\`.`,
+    `Run \`gsd resolve-conflict\` to resolve each conflict.`,
+    "",
+  ];
+
+  conflicts.forEach((conflict, idx) => {
+    lines.push(`## Conflict ${idx + 1}: ${conflict.entityType} ${conflict.entityId}`);
+    lines.push("");
+    lines.push("**Main side events:**");
+    for (const event of conflict.mainSideEvents) {
+      lines.push(`- ${event.cmd} at ${event.ts} (hash: ${event.hash})`);
+      lines.push(`  params: ${JSON.stringify(event.params)}`);
+    }
+    lines.push("");
+    lines.push("**Worktree side events:**");
+    for (const event of conflict.worktreeSideEvents) {
+      lines.push(`- ${event.cmd} at ${event.ts} (hash: ${event.hash})`);
+      lines.push(`  params: ${JSON.stringify(event.params)}`);
+    }
+    lines.push("");
+    lines.push(`**Resolve with:** \`gsd resolve-conflict --entity ${conflict.entityType}:${conflict.entityId} --pick [main|worktree]\``);
+    lines.push("");
+  });
+
+  const content = lines.join("\n");
+  const dir = join(basePath, ".gsd");
+  mkdirSync(dir, { recursive: true });
+  atomicWriteSync(join(dir, "CONFLICTS.md"), content);
+}
+
+// ─── reconcileWorktreeLogs ────────────────────────────────────────────────────
+
+/**
+ * Event-log-based reconciliation algorithm:
+ *
+ * 1. Read both event logs
+ * 2. Find fork point (last common event by hash)
+ * 3. Slice diverged sets from each side
+ * 4. If no divergence on either side → return autoMerged: 0, conflicts: []
+ * 5. detectConflicts() — if any, writeConflictsFile + return early (D-04 all-or-nothing)
+ * 6. If clean: sort merged = mainDiverged + wtDiverged by timestamp, replayAll
+ * 7. Write merged event log (base + merged in timestamp order)
+ * 8. writeManifest
+ * 9. Return { autoMerged: merged.length, conflicts: [] }
+ */
+export function reconcileWorktreeLogs(
+  mainBasePath: string,
+  worktreeBasePath: string,
+): ReconcileResult {
+  // Acquire advisory lock to prevent concurrent reconcile + append races
+  const lock = acquireSyncLock(mainBasePath);
+  if (!lock.acquired) {
+    process.stderr.write(
+      `[gsd] reconcile: could not acquire sync lock — another reconciliation may be in progress\n`,
+    );
+    return { autoMerged: 0, conflicts: [] };
+  }
+
+  try {
+    return _reconcileWorktreeLogsInner(mainBasePath, worktreeBasePath);
+  } finally {
+    releaseSyncLock(mainBasePath);
+  }
+}
+
+function _reconcileWorktreeLogsInner(
+  mainBasePath: string,
+  worktreeBasePath: string,
+): ReconcileResult {
+  // Step 1: Read both logs
+  const mainLogPath = join(mainBasePath, ".gsd", "event-log.jsonl");
+  const wtLogPath = join(worktreeBasePath, ".gsd", "event-log.jsonl");
+
+  const mainEvents = readEvents(mainLogPath);
+  const wtEvents = readEvents(wtLogPath);
+
+  // Step 2: Find fork point
+  const forkPoint = findForkPoint(mainEvents, wtEvents);
+
+  // Step 3: Slice diverged sets
+  const mainDiverged = mainEvents.slice(forkPoint + 1);
+  const wtDiverged = wtEvents.slice(forkPoint + 1);
+
+  // Step 4: No divergence on either side
+  if (mainDiverged.length === 0 && wtDiverged.length === 0) {
+    return { autoMerged: 0, conflicts: [] };
+  }
+
+  // Step 5: Detect conflicts (entity-level)
+  const conflicts = detectConflicts(mainDiverged, wtDiverged);
+  if (conflicts.length > 0) {
+    // D-04: atomic all-or-nothing — block entire merge
+    writeConflictsFile(mainBasePath, conflicts, worktreeBasePath);
+    process.stderr.write(
+      `[gsd] reconcile: ${conflicts.length} conflict(s) detected — see ${join(mainBasePath, ".gsd", "CONFLICTS.md")}\n`,
+    );
+    return { autoMerged: 0, conflicts };
+  }
+
+  // Step 6: Clean merge — stable sort by timestamp (index-based tiebreaker)
+  const indexed = [...mainDiverged, ...wtDiverged].map((e, i) => ({ e, i }));
+  indexed.sort((a, b) => a.e.ts.localeCompare(b.e.ts) || a.i - b.i);
+  const merged = indexed.map(({ e }) => e);
+
+  // Step 7: Write merged event log FIRST (so crash recovery can re-derive DB state)
+  const baseEvents = mainEvents.slice(0, forkPoint + 1);
+  const mergedLog = baseEvents.concat(merged);
+  const logContent = mergedLog.map((e) => JSON.stringify(e)).join("\n") + (mergedLog.length > 0 ? "\n" : "");
+  mkdirSync(join(mainBasePath, ".gsd"), { recursive: true });
+  atomicWriteSync(join(mainBasePath, ".gsd", "event-log.jsonl"), logContent);
+
+  // Step 8: Replay into DB (wrapped in a transaction by replayEvents)
+  openDatabase(join(mainBasePath, ".gsd", "gsd.db"));
+  replayEvents(merged);
+
+  // Step 9: Write manifest
+  try {
+    writeManifest(mainBasePath);
+  } catch (err) {
+    process.stderr.write(
+      `[gsd] reconcile: manifest write failed (non-fatal): ${(err as Error).message}\n`,
+    );
+  }
+
+  return { autoMerged: merged.length, conflicts: [] };
+}
+
+// ─── Conflict Resolution (D-06) ─────────────────────────────────────────────
+
+/**
+ * Parse CONFLICTS.md and return structured ConflictEntry[].
+ * Returns empty array when CONFLICTS.md does not exist.
+ *
+ * Parses the format written by writeConflictsFile:
+ *   ## Conflict N: {entityType} {entityId}
+ *   **Main side events:**
+ *   - {cmd} at {ts} (hash: {hash})
+ *     params: {JSON}
+ *   **Worktree side events:**
+ *   - {cmd} at {ts} (hash: {hash})
+ *     params: {JSON}
+ */
+export function listConflicts(basePath: string): ConflictEntry[] {
+  const conflictsPath = join(basePath, ".gsd", "CONFLICTS.md");
+  if (!existsSync(conflictsPath)) return [];
+
+  const content = readFileSync(conflictsPath, "utf-8");
+  const conflicts: ConflictEntry[] = [];
+
+  // Split into per-conflict sections on "## Conflict N:" headings
+  const sections = content.split(/^## Conflict \d+:/m).slice(1);
+
+  for (const section of sections) {
+    // Extract entity type and id from first line: " {entityType} {entityId}"
+    const headingMatch = section.match(/^\s+(\S+)\s+(\S+)/);
+    if (!headingMatch) continue;
+    const entityType = headingMatch[1]!;
+    const entityId = headingMatch[2]!;
+
+    // Split into main/worktree blocks
+    const mainMatch = section.split("**Main side events:**")[1];
+    const wtMatch = mainMatch?.split("**Worktree side events:**");
+
+    const mainBlock = wtMatch?.[0] ?? "";
+    const wtBlock = wtMatch?.[1] ?? "";
+
+    const mainSideEvents = parseEventBlock(mainBlock);
+    const worktreeSideEvents = parseEventBlock(wtBlock);
+
+    conflicts.push({ entityType, entityId, mainSideEvents, worktreeSideEvents });
+  }
+
+  return conflicts;
+}
+
+/**
+ * Parse a block of event lines from CONFLICTS.md into WorkflowEvent[].
+ * Each event spans two lines:
+ *   - {cmd} at {ts} (hash: {hash})
+ *     params: {JSON}
+ */
+function parseEventBlock(block: string): WorkflowEvent[] {
+  const events: WorkflowEvent[] = [];
+  // Find lines starting with "- " (event lines)
+  const lines = block.split("\n");
+  let i = 0;
+  while (i < lines.length) {
+    const line = lines[i]!.trim();
+    if (line.startsWith("- ")) {
+      // Parse: - {cmd} at {ts} (hash: {hash})
+      const eventMatch = line.match(/^-\s+(\S+)\s+at\s+(\S+)\s+\(hash:\s+(\S+)\)$/);
+      if (eventMatch) {
+        const cmd = eventMatch[1]!;
+        const ts = eventMatch[2]!;
+        const hash = eventMatch[3]!;
+
+        // Next line: "  params: {JSON}"
+        let params: Record<string, unknown> = {};
+        const nextLine = lines[i + 1];
+        if (nextLine) {
+          const paramsMatch = nextLine.trim().match(/^params:\s+(.+)$/);
+          if (paramsMatch) {
+            try {
+              params = JSON.parse(paramsMatch[1]!) as Record<string, unknown>;
+            } catch {
+              // Keep empty params on parse error
+            }
+            i++; // consume params line
+          }
+        }
+
+        events.push({ cmd, params, ts, hash, actor: "agent", session_id: getSessionId() });
+      }
+    }
+    i++;
+  }
+  return events;
+}
+
+/**
+ * Resolve a single conflict by picking one side's events.
+ * Replays the picked events through the DB helpers, appends them to the event log,
+ * and updates or removes CONFLICTS.md.
+ *
+ * When the last conflict is resolved, non-conflicting events from both sides
+ * are also replayed (they were blocked by the all-or-nothing D-04 rule).
+ */
+export function resolveConflict(
+  basePath: string,
+  worktreeBasePath: string,
+  entityKey: string,  // e.g. "task:T01"
+  pick: "main" | "worktree",
+): void {
+  const conflicts = listConflicts(basePath);
+  const colonIdx = entityKey.indexOf(":");
+  const entityType = entityKey.slice(0, colonIdx);
+  const entityId = entityKey.slice(colonIdx + 1);
+
+  const idx = conflicts.findIndex((c) => c.entityType === entityType && c.entityId === entityId);
+  if (idx === -1) throw new Error(`No conflict found for entity ${entityKey}`);
+
+  const conflict = conflicts[idx]!;
+  const eventsToReplay = pick === "main" ? conflict.mainSideEvents : conflict.worktreeSideEvents;
+
+  // Replay resolved events through the DB (updates DB state)
+  openDatabase(join(basePath, ".gsd", "gsd.db"));
+  replayEvents(eventsToReplay);
+
+  // Append resolved events to the event log
+  for (const event of eventsToReplay) {
+    appendEvent(basePath, { cmd: event.cmd, params: event.params, ts: event.ts, actor: event.actor });
+  }
+
+  // Remove resolved conflict from list
+  conflicts.splice(idx, 1);
+
+  if (conflicts.length === 0) {
+    // All conflicts resolved — remove CONFLICTS.md and re-run reconciliation
+    // to pick up non-conflicting events that were blocked by D-04 all-or-nothing.
+    removeConflictsFile(basePath);
+    if (worktreeBasePath) {
+      reconcileWorktreeLogs(basePath, worktreeBasePath);
+    }
+  } else {
+    // Re-write CONFLICTS.md with remaining conflicts
+    writeConflictsFile(basePath, conflicts, worktreeBasePath);
+  }
+}
+
+/**
+ * Remove CONFLICTS.md — called when all conflicts are resolved.
+ * No-op if CONFLICTS.md does not exist.
+ */
+export function removeConflictsFile(basePath: string): void {
+  const conflictsPath = join(basePath, ".gsd", "CONFLICTS.md");
+  if (existsSync(conflictsPath)) {
+    unlinkSync(conflictsPath);
+  }
+}

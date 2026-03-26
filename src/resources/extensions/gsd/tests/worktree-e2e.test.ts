@@ -22,9 +22,9 @@ import {
 import { getSliceBranchName } from "../worktree.ts";
 import { abortAndReset } from "../git-self-heal.ts";
 import { runGSDDoctor } from "../doctor.ts";
-import { createTestContext } from "./test-helpers.ts";
+import { describe, test } from 'node:test';
+import assert from 'node:assert/strict';
 
-const { assertEq, assertTrue, assertMatch, report } = createTestContext();
 
 // ---- Helpers ----
 
@@ -80,7 +80,7 @@ function addSliceToMilestone(
   run(`git merge --no-ff ${sliceBranch} -m "merge ${sliceId}"`, wtPath);
 }
 
-async function main(): Promise<void> {
+describe('worktree-e2e', async () => {
   const savedCwd = process.cwd();
   const tempDirs: string[] = [];
 
@@ -100,7 +100,7 @@ async function main(): Promise<void> {
       // Create worktree for M001
       const wtPath = createAutoWorktree(repo, "M001");
       tempDirs.push(wtPath);
-      assertTrue(existsSync(wtPath), "worktree directory created");
+      assert.ok(existsSync(wtPath), "worktree directory created");
 
       // Add two slices with commits
       addSliceToMilestone(repo, wtPath, "M001", "S01", "Add auth", [
@@ -124,19 +124,19 @@ async function main(): Promise<void> {
       // Assert exactly one new commit on main
       const mainLogAfter = run("git log --oneline main", repo);
       const commitCountAfter = mainLogAfter.split("\n").length;
-      assertEq(commitCountAfter, commitCountBefore + 1, "exactly one new commit on main");
+      assert.deepStrictEqual(commitCountAfter, commitCountBefore + 1, "exactly one new commit on main");
 
       // Commit message contains both slice titles
       const lastCommitMsg = run("git log -1 --format=%B main", repo);
-      assertMatch(lastCommitMsg, /Add auth/, "commit message contains S01 title");
-      assertMatch(lastCommitMsg, /Add dashboard/, "commit message contains S02 title");
+      assert.match(lastCommitMsg, /Add auth/, "commit message contains S01 title");
+      assert.match(lastCommitMsg, /Add dashboard/, "commit message contains S02 title");
 
       // Worktree directory removed
-      assertTrue(!existsSync(wtPath), "worktree directory removed after merge");
+      assert.ok(!existsSync(wtPath), "worktree directory removed after merge");
 
       // Milestone branch deleted
       const branches = run("git branch", repo);
-      assertTrue(!branches.includes("milestone/M001"), "milestone branch deleted");
+      assert.ok(!branches.includes("milestone/M001"), "milestone branch deleted");
     }
 
     // ================================================================
@@ -159,11 +159,11 @@ async function main(): Promise<void> {
 
       // Trigger merge conflict
       try { run("git merge feature", repo); } catch { /* expected */ }
-      assertTrue(existsSync(join(repo, ".git", "MERGE_HEAD")), "MERGE_HEAD exists before abort");
+      assert.ok(existsSync(join(repo, ".git", "MERGE_HEAD")), "MERGE_HEAD exists before abort");
 
       const abortResult = abortAndReset(repo);
-      assertTrue(!existsSync(join(repo, ".git", "MERGE_HEAD")), "MERGE_HEAD removed after abort");
-      assertTrue(abortResult.cleaned.length > 0, "abortAndReset reports cleaned items");
+      assert.ok(!existsSync(join(repo, ".git", "MERGE_HEAD")), "MERGE_HEAD removed after abort");
+      assert.ok(abortResult.cleaned.length > 0, "abortAndReset reports cleaned items");
     }
 
     // ================================================================
@@ -211,19 +211,19 @@ _None_
       // Detect
       const detect = await runGSDDoctor(repo, { isolationMode: "worktree" });
       const orphanIssues = detect.issues.filter(i => i.code === "orphaned_auto_worktree");
-      assertTrue(orphanIssues.length > 0, "doctor detects orphaned worktree");
-      assertEq(orphanIssues[0]?.unitId, "M001", "orphaned worktree unitId is M001");
+      assert.ok(orphanIssues.length > 0, "doctor detects orphaned worktree");
+      assert.deepStrictEqual(orphanIssues[0]?.unitId, "M001", "orphaned worktree unitId is M001");
 
       // Fix
       const fixed = await runGSDDoctor(repo, { fix: true, isolationMode: "worktree" });
-      assertTrue(
+      assert.ok(
         fixed.fixesApplied.some(f => f.includes("removed orphaned worktree")),
         "doctor fix removes orphaned worktree",
       );
 
       // Verify gone
       const wtList = run("git worktree list", repo);
-      assertTrue(!wtList.includes("milestone/M001"), "worktree gone after doctor fix");
+      assert.ok(!wtList.includes("milestone/M001"), "worktree gone after doctor fix");
     }
     } else {
       console.log("\n=== Doctor: orphaned worktree detection (skipped on Windows) ===");
@@ -234,8 +234,4 @@ _None_
       try { rmSync(d, { recursive: true, force: true }); } catch { /* ignore */ }
     }
   }
-
-  report();
-}
-
-main();
+});

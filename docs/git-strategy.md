@@ -36,10 +36,10 @@ Use this for hot-reload workflows where file isolation breaks dev tooling (e.g.,
 main ─────────────────────────────────────────────────────────
   │                                                     ↑
   └── milestone/M001 (worktree) ────────────────────────┘
-       commit: feat(S01/T01): core types
-       commit: feat(S01/T02): markdown parser
-       commit: feat(S01/T03): file writer
-       commit: docs(M001/S01): workflow docs
+       commit: feat: core types
+       commit: feat: markdown parser
+       commit: feat: file writer
+       commit: docs: workflow docs
        ...
        → squash-merged to main as single commit
 ```
@@ -56,13 +56,13 @@ With [parallel orchestration](./parallel-orchestration.md) enabled, multiple mil
 main ──────────────────────────────────────────────────────────
   │                                      ↑              ↑
   ├── milestone/M002 (worktree) ─────────┘              │
-  │    commit: feat(S01/T01): auth types                │
-  │    commit: feat(S01/T02): JWT middleware             │
+  │    commit: feat: auth types                         │
+  │    commit: feat: JWT middleware                     │
   │    → squash-merged first                            │
   │                                                     │
   └── milestone/M003 (worktree) ────────────────────────┘
-       commit: feat(S01/T01): dashboard layout
-       commit: feat(S01/T02): chart components
+       commit: feat: dashboard layout
+       commit: feat: chart components
        → squash-merged second
 ```
 
@@ -75,13 +75,16 @@ Each worktree operates on its own branch with its own commit history. Merges hap
 
 ### Commit Format
 
-Commits use conventional commit format with scope:
+Commits use conventional commit format with GSD metadata in trailers:
 
 ```
-feat(S01/T01): core type definitions
-feat(S01/T02): markdown parser for plan files
-fix(M001/S03): bug fixes and doc corrections
-docs(M001/S04): workflow documentation
+feat: core type definitions
+
+GSD-Task: M001/S01/T01
+
+feat: markdown parser for plan files
+
+GSD-Task: M001/S01/T02
 ```
 
 ## Worktree Management

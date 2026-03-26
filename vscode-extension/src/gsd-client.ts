@@ -87,6 +87,7 @@ export class GsdClient implements vscode.Disposable {
 	private buffer = "";
 	private restartCount = 0;
 	private restartTimestamps: number[] = [];
+	private _autoRetryEnabled = false;
 
 	private readonly _onEvent = new vscode.EventEmitter<AgentEvent>();
 	readonly onEvent = this._onEvent.event;
@@ -110,6 +111,10 @@ export class GsdClient implements vscode.Disposable {
 		return this.process !== null && this.process.exitCode === null;
 	}
 
+	get autoRetryEnabled(): boolean {
+		return this._autoRetryEnabled;
+	}
+
 	/**
 	 * Spawn the GSD agent in RPC mode.
 	 */
@@ -118,28 +123,78 @@ export class GsdClient implements vscode.Disposable {
 			return;
 		}
 
-		this.process = spawn(this.binaryPath, ["--mode", "rpc", "--no-session"], {
+		const proc = spawn(this.binaryPath, ["--mode", "rpc", "--no-session"], {
 			cwd: this.cwd,
 			stdio: ["pipe", "pipe", "pipe"],
 			env: { ...process.env },
 		});
+		this.process = proc;
 
 		this.buffer = "";
 
-		this.process.stdout?.on("data", (chunk: Buffer) => {
+		proc.stdout?.on("data", (chunk: Buffer) => {
 			this.buffer += chunk.toString("utf8");
 			this.drainBuffer();
 		});
 
-		this.process.stderr?.on("data", (chunk: Buffer) => {
+		proc.stderr?.on("data", (chunk: Buffer) => {
 			const text = chunk.toString("utf8").trim();
 			if (text) {
 				this._onError.fire(text);
 			}
 		});
 
-		this.process.on("exit", (code, signal) => {
-			this.process = null;
+		let startupSettled = false;
+		const startupResult = new Promise<void>((resolve, reject) => {
+			const cleanup = () => {
+				proc.off("spawn", handleSpawn);
+				proc.off("error", handleStartupError);
+			};
+			const handleSpawn = () => {
+				if (startupSettled) return;
+				startupSettled = true;
+				cleanup();
+				this._onConnectionChange.fire(true);
+				this.restartCount = 0;
+				resolve();
+			};
+			const handleStartupError = (err: NodeJS.ErrnoException) => {
+				if (startupSettled) return;
+				startupSettled = true;
+				cleanup();
+				if (this.process === proc) {
+					this.process = null;
+				}
+				const hint = err.code === "ENOENT"
+					? ` Make sure GSD is installed ("npm install -g gsd-pi") and set "gsd.binaryPath" to the absolute path if it is not on PATH.`
+					: "";
+				const message = `Failed to start GSD process: ${err.message}.${hint}`;
+				this._onError.fire(message);
+				reject(new Error(message));
+			};
+
+			proc.once("spawn", handleSpawn);
+			proc.once("error", handleStartupError);
+		});
+
+		proc.on("error", (err: NodeJS.ErrnoException) => {
+			if (!startupSettled) {
+				return;
+			}
+			if (this.process === proc) {
+				this.process = null;
+			}
+			this._onConnectionChange.fire(false);
+			const hint = err.code === "ENOENT"
+				? ` Make sure GSD is installed ("npm install -g gsd-pi") and set "gsd.binaryPath" to the absolute path if it is not on PATH.`
+				: "";
+			this._onError.fire(`GSD process error: ${err.message}.${hint}`);
+		});
+
+		proc.on("exit", (code, signal) => {
+			if (this.process === proc) {
+				this.process = null;
+			}
 			this.rejectAllPending(`GSD process exited (code=${code}, signal=${signal})`);
 			this._onConnectionChange.fire(false);
 
@@ -161,8 +216,7 @@ export class GsdClient implements vscode.Disposable {
 			}
 		});
 
-		this._onConnectionChange.fire(true);
-		this.restartCount = 0;
+		await startupResult;
 	}
 
 	/**
@@ -328,6 +382,7 @@ export class GsdClient implements vscode.Disposable {
 	async setAutoRetry(enabled: boolean): Promise<void> {
 		const response = await this.send({ type: "set_auto_retry", enabled });
 		this.assertSuccess(response);
+		this._autoRetryEnabled = enabled;
 	}
 
 	/**
@@ -369,6 +424,7 @@ export class GsdClient implements vscode.Disposable {
 	async newSession(): Promise<void> {
 		const response = await this.send({ type: "new_session" });
 		this.assertSuccess(response);
+		this._autoRetryEnabled = false;
 	}
 
 	/**

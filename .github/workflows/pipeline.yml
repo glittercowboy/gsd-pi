@@ -7,7 +7,7 @@ on:
     branches: [main]
 
 concurrency:
-  group: pipeline-${{ github.sha }}
+  group: pipeline-main
   cancel-in-progress: false
 
 permissions:
@@ -18,7 +18,7 @@ jobs:
   dev-publish:
     name: Dev Publish
     if: ${{ github.event.workflow_run.conclusion == 'success' }}
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     container:
       image: ghcr.io/gsd-build/gsd-ci-builder:latest
       credentials:
@@ -71,7 +71,7 @@ jobs:
   test-verify:
     name: Test & Verify
     needs: dev-publish
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     steps:
       - uses: actions/checkout@v6
 
@@ -81,8 +81,15 @@ jobs:
           registry-url: https://registry.npmjs.org
           cache: 'npm'
 
-      - name: Install gsd-pi@dev globally
-        run: npm install -g gsd-pi@dev
+      - name: Install gsd-pi@dev globally (with registry propagation retry)
+        run: |
+          for i in 1 2 3 4 5 6; do
+            npm install -g gsd-pi@dev && exit 0
+            echo "Attempt $i failed — waiting 10s for npm registry propagation..."
+            sleep 10
+          done
+          echo "Failed to install gsd-pi@dev after 6 attempts"
+          exit 1
 
       - name: Run smoke tests (against installed binary)
         run: |
@@ -129,7 +136,7 @@ jobs:
   prod-release:
     name: Production Release
     needs: [dev-publish, test-verify]
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     environment: prod
     steps:
       - uses: actions/checkout@v6
@@ -180,6 +187,7 @@ jobs:
           git add package.json package-lock.json CHANGELOG.md native/npm/*/package.json pkg/package.json packages/pi-coding-agent/package.json
           git commit -m "release: v${RELEASE_VERSION}"
           git tag "v${RELEASE_VERSION}"
+          git pull --rebase origin main
           git push origin main
           git push origin "v${RELEASE_VERSION}"
 
@@ -240,7 +248,7 @@ jobs:
   update-builder:
     name: Update CI Builder Image
     if: ${{ github.event.workflow_run.conclusion == 'success' }}
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     steps:
       - uses: actions/checkout@v6
         with:

@@ -6,9 +6,10 @@
  * progress to stderr.
  *
  * Exit codes:
- *   0 — complete (command finished successfully)
- *   1 — error or timeout
- *   2 — blocked (command reported a blocker)
+ *   0  — complete (command finished successfully)
+ *   1  — error or timeout
+ *   10 — blocked (command reported a blocker)
+ *   11 — cancelled (SIGINT/SIGTERM received)
  */
 
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
@@ -27,7 +28,15 @@ import {
   FIRE_AND_FORGET_METHODS,
   IDLE_TIMEOUT_MS,
   NEW_MILESTONE_IDLE_TIMEOUT_MS,
+  EXIT_SUCCESS,
+  EXIT_ERROR,
+  EXIT_BLOCKED,
+  EXIT_CANCELLED,
+  mapStatusToExitCode,
 } from './headless-events.js'
+
+import type { OutputFormat } from './headless-types.js'
+import { VALID_OUTPUT_FORMATS } from './headless-types.js'
 
 import {
   handleExtensionUIRequest,
@@ -48,6 +57,7 @@ import {
 export interface HeadlessOptions {
   timeout: number
   json: boolean
+  outputFormat: OutputFormat
   model?: string
   command: string
   commandArgs: string[]
@@ -60,6 +70,8 @@ export interface HeadlessOptions {
   responseTimeout?: number // timeout for orchestrator response (default 30000ms)
   answers?: string       // path to answers JSON file
   eventFilter?: Set<string>  // filter JSONL output to specific event types
+  resumeSession?: string // session ID to resume (--resume <id>)
+  bare?: boolean         // --bare: suppress CLAUDE.md/AGENTS.md, user skills, project preferences
 }
 
 interface TrackedEvent {
@@ -76,6 +88,7 @@ export function parseHeadlessArgs(argv: string[]): HeadlessOptions {
   const options: HeadlessOptions = {
     timeout: 300_000,
     json: false,
+    outputFormat: 'text',
     command: 'auto',
     commandArgs: [],
   }
@@ -90,12 +103,23 @@ export function parseHeadlessArgs(argv: string[]): HeadlessOptions {
     if (!positionalStarted && arg.startsWith('--')) {
       if (arg === '--timeout' && i + 1 < args.length) {
         options.timeout = parseInt(args[++i], 10)
-        if (Number.isNaN(options.timeout) || options.timeout <= 0) {
-          process.stderr.write('[headless] Error: --timeout must be a positive integer (milliseconds)\n')
+        if (Number.isNaN(options.timeout) || options.timeout < 0) {
+          process.stderr.write('[headless] Error: --timeout must be a non-negative integer (milliseconds, 0 to disable)\n')
           process.exit(1)
         }
       } else if (arg === '--json') {
         options.json = true
+        options.outputFormat = 'stream-json'
+      } else if (arg === '--output-format' && i + 1 < args.length) {
+        const fmt = args[++i]
+        if (!VALID_OUTPUT_FORMATS.has(fmt)) {
+          process.stderr.write(`[headless] Error: --output-format must be one of: text, json, stream-json (got '${fmt}')\n`)
+          process.exit(1)
+        }
+        options.outputFormat = fmt as OutputFormat
+        if (fmt === 'stream-json' || fmt === 'json') {
+          options.json = true
+        }
       } else if (arg === '--model' && i + 1 < args.length) {
         // --model can also be passed from the main CLI; headless-specific takes precedence
         options.model = args[++i]
@@ -118,15 +142,25 @@ export function parseHeadlessArgs(argv: string[]): HeadlessOptions {
       } else if (arg === '--events' && i + 1 < args.length) {
         options.eventFilter = new Set(args[++i].split(','))
         options.json = true  // --events implies --json
+        if (options.outputFormat === 'text') {
+          options.outputFormat = 'stream-json'
+        }
       } else if (arg === '--supervised') {
         options.supervised = true
         options.json = true  // supervised implies json
+        if (options.outputFormat === 'text') {
+          options.outputFormat = 'stream-json'
+        }
       } else if (arg === '--response-timeout' && i + 1 < args.length) {
         options.responseTimeout = parseInt(args[++i], 10)
         if (Number.isNaN(options.responseTimeout) || options.responseTimeout <= 0) {
           process.stderr.write('[headless] Error: --response-timeout must be a positive integer (milliseconds)\n')
           process.exit(1)
         }
+      } else if (arg === '--resume' && i + 1 < args.length) {
+        options.resumeSession = args[++i]
+      } else if (arg === '--bare') {
+        options.bare = true
       }
     } else if (!positionalStarted) {
       positionalStarted = true
@@ -151,7 +185,7 @@ export async function runHeadless(options: HeadlessOptions): Promise<void> {
     const result = await runHeadlessOnce(options, restartCount)
 
     // Success or blocked — exit normally
-    if (result.exitCode === 0 || result.exitCode === 2) {
+    if (result.exitCode === EXIT_SUCCESS || result.exitCode === EXIT_BLOCKED) {
       process.exit(result.exitCode)
     }
 
@@ -181,6 +215,14 @@ async function runHeadlessOnce(options: HeadlessOptions, restartCount: number): 
   // new-milestone involves codebase investigation + artifact writing — needs more time
   if (isNewMilestone && options.timeout === 300_000) {
     options.timeout = 600_000 // 10 minutes
+  }
+
+  // auto-mode sessions are long-running (minutes to hours) with their own internal
+  // per-unit timeout via auto-supervisor. Disable the overall timeout unless the
+  // user explicitly set --timeout.
+  const isAutoMode = options.command === 'auto'
+  if (isAutoMode && options.timeout === 300_000) {
+    options.timeout = 0
   }
 
   // Supervised mode cannot share stdin with --context -
@@ -267,6 +309,10 @@ async function runHeadlessOnce(options: HeadlessOptions, restartCount: number): 
   if (injector) {
     clientOptions.env = injector.getSecretEnvVars()
   }
+  // Propagate --bare to the child process
+  if (options.bare) {
+    clientOptions.args = [...((clientOptions.args as string[]) || []), '--bare']
+  }
 
   const client = new RpcClient(clientOptions)
 
@@ -337,12 +383,14 @@ async function runHeadlessOnce(options: HeadlessOptions, restartCount: number): 
   // Precompute supervised response timeout
   const responseTimeout = options.responseTimeout ?? 30_000
 
-  // Overall timeout
-  const timeoutTimer = setTimeout(() => {
-    process.stderr.write(`[headless] Timeout after ${options.timeout / 1000}s\n`)
-    exitCode = 1
-    resolveCompletion()
-  }, options.timeout)
+  // Overall timeout (disabled when options.timeout === 0, e.g. auto-mode)
+  const timeoutTimer = options.timeout > 0
+    ? setTimeout(() => {
+        process.stderr.write(`[headless] Timeout after ${options.timeout / 1000}s\n`)
+        exitCode = EXIT_ERROR
+        resolveCompletion()
+      }, options.timeout)
+    : null
 
   // Event handler
   client.onEvent((event) => {
@@ -385,7 +433,7 @@ async function runHeadlessOnce(options: HeadlessOptions, restartCount: number): 
       if (injector && !FIRE_AND_FORGET_METHODS.has(String(eventObj.method ?? ''))) {
         if (injector.tryHandle(eventObj, stdinWriter)) {
           if (completed) {
-            exitCode = blocked ? 2 : 0
+            exitCode = blocked ? EXIT_BLOCKED : EXIT_SUCCESS
             resolveCompletion()
           }
           return
@@ -411,7 +459,7 @@ async function runHeadlessOnce(options: HeadlessOptions, restartCount: number): 
 
       // If we detected a terminal notification, resolve after responding
       if (completed) {
-        exitCode = blocked ? 2 : 0
+        exitCode = blocked ? EXIT_BLOCKED : EXIT_SUCCESS
         resolveCompletion()
         return
       }
@@ -432,9 +480,9 @@ async function runHeadlessOnce(options: HeadlessOptions, restartCount: number): 
   const signalHandler = () => {
     process.stderr.write('\n[headless] Interrupted, stopping child process...\n')
     interrupted = true
-    exitCode = 1
+    exitCode = EXIT_CANCELLED
     client.stop().finally(() => {
-      clearTimeout(timeoutTimer)
+      if (timeoutTimer) clearTimeout(timeoutTimer)
       if (idleTimer) clearTimeout(idleTimer)
       process.exit(exitCode)
     })
@@ -447,7 +495,7 @@ async function runHeadlessOnce(options: HeadlessOptions, restartCount: number): 
     await client.start()
   } catch (err) {
     process.stderr.write(`[headless] Error: Failed to start RPC session: ${err instanceof Error ? err.message : String(err)}\n`)
-    clearTimeout(timeoutTimer)
+    if (timeoutTimer) clearTimeout(timeoutTimer)
     process.exit(1)
   }
 
@@ -456,7 +504,7 @@ async function runHeadlessOnce(options: HeadlessOptions, restartCount: number): 
   if (!internalProcess?.stdin) {
     process.stderr.write('[headless] Error: Cannot access child process stdin\n')
     await client.stop()
-    clearTimeout(timeoutTimer)
+    if (timeoutTimer) clearTimeout(timeoutTimer)
     process.exit(1)
   }
 
@@ -482,10 +530,9 @@ async function runHeadlessOnce(options: HeadlessOptions, restartCount: number): 
     if (!completed) {
       const msg = `[headless] Child process exited unexpectedly with code ${code ?? 'null'}\n`
       process.stderr.write(msg)
-      exitCode = 1
+      exitCode = EXIT_ERROR
       resolveCompletion()
-    }
-  })
+    }  })
 
   if (!options.json) {
     process.stderr.write(`[headless] Running /gsd ${options.command}${options.commandArgs.length > 0 ? ' ' + options.commandArgs.join(' ') : ''}...\n`)
@@ -497,21 +544,23 @@ async function runHeadlessOnce(options: HeadlessOptions, restartCount: number): 
     await client.prompt(command)
   } catch (err) {
     process.stderr.write(`[headless] Error: Failed to send prompt: ${err instanceof Error ? err.message : String(err)}\n`)
-    exitCode = 1
+    exitCode = EXIT_ERROR
   }
 
   // Wait for completion
-  if (exitCode === 0 || exitCode === 2) {
+  if (exitCode === EXIT_SUCCESS || exitCode === EXIT_BLOCKED) {
     await completionPromise
   }
 
   // Auto-mode chaining: if --auto and milestone creation succeeded, send /gsd auto
-  if (isNewMilestone && options.auto && milestoneReady && !blocked && exitCode === 0) {
+  if (isNewMilestone && options.auto && milestoneReady && !blocked && exitCode === EXIT_SUCCESS) {
     if (!options.json) {
       process.stderr.write('[headless] Milestone ready — chaining into auto-mode...\n')
     }
 
-    // Reset completion state for the auto-mode phase
+    // Reset completion state for the auto-mode phase.
+    // Disable the overall timeout — auto-mode has its own internal supervisor.
+    if (timeoutTimer) clearTimeout(timeoutTimer)
     completed = false
     milestoneReady = false
     blocked = false
@@ -523,16 +572,16 @@ async function runHeadlessOnce(options: HeadlessOptions, restartCount: number): 
       await client.prompt('/gsd auto')
     } catch (err) {
       process.stderr.write(`[headless] Error: Failed to start auto-mode: ${err instanceof Error ? err.message : String(err)}\n`)
-      exitCode = 1
+      exitCode = EXIT_ERROR
     }
 
-    if (exitCode === 0 || exitCode === 2) {
+    if (exitCode === EXIT_SUCCESS || exitCode === EXIT_BLOCKED) {
       await autoCompletionPromise
     }
   }
 
   // Cleanup
-  clearTimeout(timeoutTimer)
+  if (timeoutTimer) clearTimeout(timeoutTimer)
   if (idleTimer) clearTimeout(idleTimer)
   pendingResponseTimers.forEach((timer) => clearTimeout(timer))
   pendingResponseTimers.clear()
@@ -545,7 +594,7 @@ async function runHeadlessOnce(options: HeadlessOptions, restartCount: number): 
 
   // Summary
   const duration = ((Date.now() - startTime) / 1000).toFixed(1)
-  const status = blocked ? 'blocked' : exitCode === 1 ? (totalEvents === 0 ? 'error' : 'timeout') : 'complete'
+  const status = blocked ? 'blocked' : exitCode === EXIT_CANCELLED ? 'cancelled' : exitCode === EXIT_ERROR ? (totalEvents === 0 ? 'error' : 'timeout') : 'complete'
 
   process.stderr.write(`[headless] Status: ${status}\n`)
   process.stderr.write(`[headless] Duration: ${duration}s\n`)

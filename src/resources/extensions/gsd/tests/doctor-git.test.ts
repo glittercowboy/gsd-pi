@@ -1,3 +1,5 @@
+import { describe, test } from 'node:test';
+import assert from 'node:assert/strict';
 /**
  * doctor-git.test.ts — Integration tests for doctor git health checks.
  *
@@ -14,10 +16,6 @@ import { tmpdir } from "node:os";
 import { execSync } from "node:child_process";
 
 import { runGSDDoctor } from "../doctor.ts";
-import { createTestContext } from "./test-helpers.ts";
-
-const { assertEq, assertTrue, report } = createTestContext();
-
 function run(cmd: string, cwd: string): string {
   return execSync(cmd, { cwd, stdio: ["ignore", "pipe", "pipe"], encoding: "utf-8" }).trim();
 }
@@ -66,11 +64,11 @@ _None_
   return dir;
 }
 
-/** Write a .gsd/preferences.md with the given git isolation mode. */
+/** Write a .gsd/PREFERENCES.md with the given git isolation mode. */
 function writePreferencesFile(dir: string, isolation: "none" | "worktree" | "branch"): void {
   const gsdDir = join(dir, ".gsd");
   mkdirSync(gsdDir, { recursive: true });
-  writeFileSync(join(gsdDir, "preferences.md"), `---\ngit:\n  isolation: "${isolation}"\n---\n`);
+  writeFileSync(join(gsdDir, "PREFERENCES.md"), `---\ngit:\n  isolation: "${isolation}"\n---\n`);
 }
 
 /** Create a repo with an in-progress milestone. */
@@ -114,7 +112,7 @@ _None_
   return dir;
 }
 
-async function main(): Promise<void> {
+describe('doctor-git', async () => {
   const cleanups: string[] = [];
 
   try {
@@ -124,8 +122,7 @@ async function main(): Promise<void> {
     // logic is correct (tested on macOS/Linux) — the test infra doesn't
     // produce matching paths on Windows CI.
     if (process.platform !== "win32") {
-    console.log("\n=== orphaned_auto_worktree ===");
-    {
+    test('orphaned_auto_worktree', async () => {
       const dir = createRepoWithCompletedMilestone();
       cleanups.push(dir);
 
@@ -135,26 +132,74 @@ async function main(): Promise<void> {
 
       const detect = await runGSDDoctor(dir, { isolationMode: "worktree" });
       const orphanIssues = detect.issues.filter(i => i.code === "orphaned_auto_worktree");
-      assertTrue(orphanIssues.length > 0, "detects orphaned worktree");
-      assertEq(orphanIssues[0]?.unitId, "M001", "orphaned worktree unitId is M001");
+      assert.ok(orphanIssues.length > 0, "detects orphaned worktree");
+      assert.deepStrictEqual(orphanIssues[0]?.unitId, "M001", "orphaned worktree unitId is M001");
 
       const fixed = await runGSDDoctor(dir, { fix: true, isolationMode: "worktree" });
-      assertTrue(fixed.fixesApplied.some(f => f.includes("removed orphaned worktree")), "fix removes orphaned worktree");
+      assert.ok(fixed.fixesApplied.some(f => f.includes("removed orphaned worktree")), "fix removes orphaned worktree");
 
       // Verify worktree is gone
       const wtList = run("git worktree list", dir);
-      assertTrue(!wtList.includes("milestone/M001"), "worktree no longer listed after fix");
+      assert.ok(!wtList.includes("milestone/M001"), "worktree no longer listed after fix");
+    });
+    } else {
+    }
+
+    // ─── Test 1b: Orphaned worktree fix when cwd is inside worktree (#1946) ──
+    // Reproduces the deadlock: if process.cwd() is inside the orphaned worktree,
+    // the doctor must chdir out before removing it — not skip the removal.
+    if (process.platform !== "win32") {
+    console.log("\n=== orphaned_auto_worktree (cwd inside worktree) ===");
+    {
+      const dir = createRepoWithCompletedMilestone();
+      cleanups.push(dir);
+
+      // Create worktree with milestone/M001 branch under .gsd/worktrees/
+      mkdirSync(join(dir, ".gsd", "worktrees"), { recursive: true });
+      run("git worktree add -b milestone/M001 .gsd/worktrees/M001", dir);
+
+      const wtPath = realpathSync(join(dir, ".gsd", "worktrees", "M001"));
+
+      // Simulate the deadlock: set cwd inside the orphaned worktree
+      const previousCwd = process.cwd();
+      process.chdir(wtPath);
+      try {
+        const fixed = await runGSDDoctor(dir, { fix: true, isolationMode: "worktree" });
+
+        // The fix must NOT skip removal — it should chdir out and remove
+        assert.ok(
+          !fixed.fixesApplied.some(f => f.includes("skipped removing worktree")),
+          "does NOT skip removal when cwd is inside worktree",
+        );
+        assert.ok(
+          fixed.fixesApplied.some(f => f.includes("removed orphaned worktree")),
+          "removes orphaned worktree even when cwd was inside it",
+        );
+
+        // Verify worktree is gone
+        const wtList = run("git worktree list", dir);
+        assert.ok(!wtList.includes("milestone/M001"), "worktree removed after fix with cwd inside");
+
+        // Verify cwd was moved out (should be basePath, not still inside worktree)
+        const newCwd = process.cwd();
+        assert.ok(
+          !newCwd.startsWith(wtPath),
+          "cwd moved out of worktree after fix",
+        );
+      } finally {
+        // Restore cwd — the worktree dir may be gone, so chdir to previousCwd
+        try { process.chdir(previousCwd); } catch { process.chdir(dir); }
+      }
     }
     } else {
-      console.log("\n=== orphaned_auto_worktree (skipped on Windows) ===");
+      console.log("\n=== orphaned_auto_worktree (cwd inside worktree — skipped on Windows) ===");
     }
 
     // ─── Test 2: Stale milestone branch detection & fix ────────────────
     // Skip on Windows: git branch glob matching and path resolution
     // behave differently in Windows temp dirs.
     if (process.platform !== "win32") {
-    console.log("\n=== stale_milestone_branch ===");
-    {
+    test('stale_milestone_branch', async () => {
       const dir = createRepoWithCompletedMilestone();
       cleanups.push(dir);
 
@@ -163,23 +208,21 @@ async function main(): Promise<void> {
 
       const detect = await runGSDDoctor(dir, { isolationMode: "worktree" });
       const staleIssues = detect.issues.filter(i => i.code === "stale_milestone_branch");
-      assertTrue(staleIssues.length > 0, "detects stale milestone branch");
-      assertEq(staleIssues[0]?.unitId, "M001", "stale branch unitId is M001");
+      assert.ok(staleIssues.length > 0, "detects stale milestone branch");
+      assert.deepStrictEqual(staleIssues[0]?.unitId, "M001", "stale branch unitId is M001");
 
       const fixed = await runGSDDoctor(dir, { fix: true, isolationMode: "worktree" });
-      assertTrue(fixed.fixesApplied.some(f => f.includes("deleted stale branch")), "fix deletes stale branch");
+      assert.ok(fixed.fixesApplied.some(f => f.includes("deleted stale branch")), "fix deletes stale branch");
 
       // Verify branch is gone
       const branches = run("git branch --list milestone/*", dir);
-      assertTrue(!branches.includes("milestone/M001"), "branch gone after fix");
-    }
+      assert.ok(!branches.includes("milestone/M001"), "branch gone after fix");
+    });
     } else {
-      console.log("\n=== stale_milestone_branch (skipped on Windows) ===");
     }
 
     // ─── Test 3: Corrupt merge state detection & fix ───────────────────
-    console.log("\n=== corrupt_merge_state ===");
-    {
+    test('corrupt_merge_state', async () => {
       const dir = createRepoWithCompletedMilestone();
       cleanups.push(dir);
 
@@ -189,18 +232,17 @@ async function main(): Promise<void> {
 
       const detect = await runGSDDoctor(dir);
       const mergeIssues = detect.issues.filter(i => i.code === "corrupt_merge_state");
-      assertTrue(mergeIssues.length > 0, "detects corrupt merge state");
+      assert.ok(mergeIssues.length > 0, "detects corrupt merge state");
 
       const fixed = await runGSDDoctor(dir, { fix: true });
-      assertTrue(fixed.fixesApplied.some(f => f.includes("cleaned merge state")), "fix cleans merge state");
+      assert.ok(fixed.fixesApplied.some(f => f.includes("cleaned merge state")), "fix cleans merge state");
 
       // Verify MERGE_HEAD is gone
-      assertTrue(!existsSync(join(dir, ".git", "MERGE_HEAD")), "MERGE_HEAD removed after fix");
-    }
+      assert.ok(!existsSync(join(dir, ".git", "MERGE_HEAD")), "MERGE_HEAD removed after fix");
+    });
 
     // ─── Test 4: Tracked runtime files detection & fix ─────────────────
-    console.log("\n=== tracked_runtime_files ===");
-    {
+    test('tracked_runtime_files', async () => {
       const dir = createRepoWithCompletedMilestone();
       cleanups.push(dir);
 
@@ -213,19 +255,18 @@ async function main(): Promise<void> {
 
       const detect = await runGSDDoctor(dir);
       const trackedIssues = detect.issues.filter(i => i.code === "tracked_runtime_files");
-      assertTrue(trackedIssues.length > 0, "detects tracked runtime files");
+      assert.ok(trackedIssues.length > 0, "detects tracked runtime files");
 
       const fixed = await runGSDDoctor(dir, { fix: true });
-      assertTrue(fixed.fixesApplied.some(f => f.includes("untracked")), "fix untracks runtime files");
+      assert.ok(fixed.fixesApplied.some(f => f.includes("untracked")), "fix untracks runtime files");
 
       // Verify file is no longer tracked
       const tracked = run("git ls-files .gsd/activity/", dir);
-      assertEq(tracked, "", "runtime file untracked after fix");
-    }
+      assert.deepStrictEqual(tracked, "", "runtime file untracked after fix");
+    });
 
     // ─── Test 5: Non-git directory — graceful degradation ──────────────
-    console.log("\n=== non-git directory ===");
-    {
+    test('non-git directory', async () => {
       const dir = realpathSync(mkdtempSync(join(tmpdir(), "doc-git-test-")));
       cleanups.push(dir);
 
@@ -236,15 +277,14 @@ async function main(): Promise<void> {
       const gitIssues = result.issues.filter(i =>
         ["orphaned_auto_worktree", "stale_milestone_branch", "corrupt_merge_state", "tracked_runtime_files"].includes(i.code)
       );
-      assertEq(gitIssues.length, 0, "no git issues in non-git directory");
+      assert.deepStrictEqual(gitIssues.length, 0, "no git issues in non-git directory");
       // Should not throw — reaching here means no crash
-      assertTrue(true, "non-git directory does not crash");
-    }
+      assert.ok(true, "non-git directory does not crash");
+    });
 
     // ─── Test 6: Active worktree NOT flagged (false positive prevention) ─
     if (process.platform !== "win32") {
-    console.log("\n=== active worktree safety ===");
-    {
+    test('active worktree safety', async () => {
       const dir = createRepoWithActiveMilestone();
       cleanups.push(dir);
 
@@ -254,19 +294,17 @@ async function main(): Promise<void> {
 
       const detect = await runGSDDoctor(dir, { isolationMode: "worktree" });
       const orphanIssues = detect.issues.filter(i => i.code === "orphaned_auto_worktree");
-      assertEq(orphanIssues.length, 0, "active worktree NOT flagged as orphaned");
-    }
+      assert.deepStrictEqual(orphanIssues.length, 0, "active worktree NOT flagged as orphaned");
+    });
     } else {
-      console.log("\n=== active worktree safety (skipped on Windows) ===");
     }
 
     // ─── Test 7: none-mode skips orphaned worktree check ───────────────
     // NOTE: loadEffectiveGSDPreferences() resolves PROJECT_PREFERENCES_PATH
     // at module load time from process.cwd(). We write the prefs file to
-    // the test runner's cwd .gsd/preferences.md and clean up afterwards.
+    // the test runner's cwd .gsd/PREFERENCES.md and clean up afterwards.
     if (process.platform !== "win32") {
-    console.log("\n=== none-mode skips orphaned worktree ===");
-    {
+    test('none-mode skips orphaned worktree', async () => {
       const dir = createRepoWithCompletedMilestone();
       cleanups.push(dir);
 
@@ -276,16 +314,14 @@ async function main(): Promise<void> {
 
       const result = await runGSDDoctor(dir, { isolationMode: "none" });
       const orphanIssues = result.issues.filter(i => i.code === "orphaned_auto_worktree");
-      assertEq(orphanIssues.length, 0, "none-mode: orphaned worktree NOT detected");
-    }
+      assert.deepStrictEqual(orphanIssues.length, 0, "none-mode: orphaned worktree NOT detected");
+    });
     } else {
-      console.log("\n=== none-mode skips orphaned worktree (skipped on Windows) ===");
     }
 
     // ─── Test 8: none-mode skips stale branch check ────────────────────
     if (process.platform !== "win32") {
-    console.log("\n=== none-mode skips stale branch ===");
-    {
+    test('none-mode skips stale branch', async () => {
       const dir = createRepoWithCompletedMilestone();
       cleanups.push(dir);
 
@@ -294,16 +330,14 @@ async function main(): Promise<void> {
 
       const result = await runGSDDoctor(dir, { isolationMode: "none" });
       const staleIssues = result.issues.filter(i => i.code === "stale_milestone_branch");
-      assertEq(staleIssues.length, 0, "none-mode: stale branch NOT detected");
-    }
+      assert.deepStrictEqual(staleIssues.length, 0, "none-mode: stale branch NOT detected");
+    });
     } else {
-      console.log("\n=== none-mode skips stale branch (skipped on Windows) ===");
     }
 
     // ─── Test: Integration branch missing ──────────────────────────────
     if (process.platform !== "win32") {
-    console.log("\n=== integration_branch_missing ===");
-    {
+    test('integration_branch_missing', async () => {
       const dir = createRepoWithActiveMilestone();
       cleanups.push(dir);
 
@@ -313,22 +347,20 @@ async function main(): Promise<void> {
 
       const detect = await runGSDDoctor(dir);
       const missingBranchIssues = detect.issues.filter(i => i.code === "integration_branch_missing");
-      assertTrue(missingBranchIssues.length > 0, "detects missing integration branch");
-      assertTrue(
+      assert.ok(missingBranchIssues.length > 0, "detects missing integration branch");
+      assert.ok(
         missingBranchIssues[0]?.message.includes("feat/does-not-exist"),
         "message includes the missing branch name",
       );
-      assertEq(missingBranchIssues[0]?.fixable, true, "integration_branch_missing is auto-fixable via fallback");
-      assertEq(missingBranchIssues[0]?.severity, "warning", "severity is warning (fallback available)");
-    }
+      assert.deepStrictEqual(missingBranchIssues[0]?.fixable, true, "integration_branch_missing is auto-fixable via fallback");
+      assert.deepStrictEqual(missingBranchIssues[0]?.severity, "warning", "severity is warning (fallback available)");
+    });
     } else {
-      console.log("\n=== integration_branch_missing (skipped on Windows) ===");
     }
 
     // ─── Test: Integration branch present — no false positive ──────────
     if (process.platform !== "win32") {
-    console.log("\n=== integration_branch_missing (no false positive) ===");
-    {
+    test('integration_branch_missing (no false positive)', async () => {
       const dir = createRepoWithActiveMilestone();
       cleanups.push(dir);
 
@@ -338,15 +370,13 @@ async function main(): Promise<void> {
 
       const detect = await runGSDDoctor(dir);
       const missingBranchIssues = detect.issues.filter(i => i.code === "integration_branch_missing");
-      assertEq(missingBranchIssues.length, 0, "existing integration branch NOT flagged");
-    }
+      assert.deepStrictEqual(missingBranchIssues.length, 0, "existing integration branch NOT flagged");
+    });
     } else {
-      console.log("\n=== integration_branch_missing (no false positive — skipped on Windows) ===");
     }
 
     // ─── Test: Orphaned worktree directory ─────────────────────────────
-    console.log("\n=== integration_branch_missing: stale metadata with detected fallback ===");
-    {
+    test('integration_branch_missing: stale metadata with detected fallback', async () => {
       const dir = createRepoWithActiveMilestone();
       cleanups.push(dir);
 
@@ -355,32 +385,31 @@ async function main(): Promise<void> {
 
       const detect = await runGSDDoctor(dir);
       const missingBranchIssues = detect.issues.filter(i => i.code === "integration_branch_missing");
-      assertEq(missingBranchIssues.length, 1, "reports one stale integration branch issue");
-      assertEq(missingBranchIssues[0]?.severity, "warning", "stale metadata is warning when a fallback branch exists");
-      assertEq(missingBranchIssues[0]?.fixable, true, "stale metadata becomes auto-fixable when fallback exists");
-      assertTrue(
+      assert.deepStrictEqual(missingBranchIssues.length, 1, "reports one stale integration branch issue");
+      assert.deepStrictEqual(missingBranchIssues[0]?.severity, "warning", "stale metadata is warning when a fallback branch exists");
+      assert.deepStrictEqual(missingBranchIssues[0]?.fixable, true, "stale metadata becomes auto-fixable when fallback exists");
+      assert.ok(
         missingBranchIssues[0]?.message.includes("feat/does-not-exist") &&
         missingBranchIssues[0]?.message.includes("main"),
         "warning mentions stale recorded branch and detected fallback branch",
       );
 
       const fixed = await runGSDDoctor(dir, { fix: true });
-      assertTrue(
+      assert.ok(
         fixed.fixesApplied.some(f => f.includes('updated integration branch for M001 to "main"')),
         "doctor fix rewrites stale integration branch metadata to detected fallback branch",
       );
 
       const repairedMeta = JSON.parse(readFileSync(metaPath, "utf-8"));
-      assertEq(repairedMeta.integrationBranch, "main", "metadata rewritten to detected fallback branch");
-    }
+      assert.deepStrictEqual(repairedMeta.integrationBranch, "main", "metadata rewritten to detected fallback branch");
+    });
 
-    console.log("\n=== integration_branch_missing: stale metadata with configured fallback ===");
-    {
+    test('integration_branch_missing: stale metadata with configured fallback', async () => {
       const dir = createRepoWithActiveMilestone();
       cleanups.push(dir);
 
       run("git branch trunk", dir);
-      writeFileSync(join(dir, ".gsd", "preferences.md"), `---\ngit:\n  isolation: "worktree"\n  main_branch: "trunk"\n---\n`);
+      writeFileSync(join(dir, ".gsd", "PREFERENCES.md"), `---\ngit:\n  isolation: "worktree"\n  main_branch: "trunk"\n---\n`);
 
       const metaPath = join(dir, ".gsd", "milestones", "M001", "M001-META.json");
       writeFileSync(metaPath, JSON.stringify({ integrationBranch: "feat/does-not-exist" }, null, 2));
@@ -390,17 +419,17 @@ async function main(): Promise<void> {
       try {
         const detect = await runGSDDoctor(dir);
         const missingBranchIssues = detect.issues.filter(i => i.code === "integration_branch_missing");
-        assertEq(missingBranchIssues.length, 1, "configured fallback still reports one stale integration branch issue");
-        assertEq(missingBranchIssues[0]?.severity, "warning", "configured fallback keeps stale metadata at warning severity");
-        assertEq(missingBranchIssues[0]?.fixable, true, "configured fallback remains auto-fixable");
-        assertTrue(
+        assert.deepStrictEqual(missingBranchIssues.length, 1, "configured fallback still reports one stale integration branch issue");
+        assert.deepStrictEqual(missingBranchIssues[0]?.severity, "warning", "configured fallback keeps stale metadata at warning severity");
+        assert.deepStrictEqual(missingBranchIssues[0]?.fixable, true, "configured fallback remains auto-fixable");
+        assert.ok(
           missingBranchIssues[0]?.message.includes("feat/does-not-exist") &&
           missingBranchIssues[0]?.message.includes("trunk"),
           "warning mentions stale recorded branch and configured fallback branch",
         );
 
         const fixed = await runGSDDoctor(dir, { fix: true });
-        assertTrue(
+        assert.ok(
           fixed.fixesApplied.some(f => f.includes('updated integration branch for M001 to "trunk"')),
           "doctor fix rewrites stale metadata to configured fallback branch",
         );
@@ -409,12 +438,11 @@ async function main(): Promise<void> {
       }
 
       const repairedMeta = JSON.parse(readFileSync(metaPath, "utf-8"));
-      assertEq(repairedMeta.integrationBranch, "trunk", "metadata rewritten to configured fallback branch");
-    }
+      assert.deepStrictEqual(repairedMeta.integrationBranch, "trunk", "metadata rewritten to configured fallback branch");
+    });
 
     if (process.platform !== "win32") {
-    console.log("\n=== worktree_directory_orphaned ===");
-    {
+    test('worktree_directory_orphaned', async () => {
       const dir = createRepoWithActiveMilestone();
       cleanups.push(dir);
 
@@ -425,28 +453,26 @@ async function main(): Promise<void> {
 
       const detect = await runGSDDoctor(dir);
       const orphanDirIssues = detect.issues.filter(i => i.code === "worktree_directory_orphaned");
-      assertTrue(orphanDirIssues.length > 0, "detects orphaned worktree directory");
-      assertTrue(
+      assert.ok(orphanDirIssues.length > 0, "detects orphaned worktree directory");
+      assert.ok(
         orphanDirIssues[0]?.message.includes("orphan-feature"),
         "message includes the orphaned directory name",
       );
-      assertTrue(orphanDirIssues[0]?.fixable === true, "worktree_directory_orphaned is fixable");
+      assert.ok(orphanDirIssues[0]?.fixable === true, "worktree_directory_orphaned is fixable");
 
       const fixed = await runGSDDoctor(dir, { fix: true });
-      assertTrue(
+      assert.ok(
         fixed.fixesApplied.some(f => f.includes("removed orphaned worktree directory")),
         "fix removes orphaned worktree directory",
       );
-      assertTrue(!existsSync(orphanDir), "orphaned directory removed after fix");
-    }
+      assert.ok(!existsSync(orphanDir), "orphaned directory removed after fix");
+    });
     } else {
-      console.log("\n=== worktree_directory_orphaned (skipped on Windows) ===");
     }
 
     // ─── Test: Registered worktree NOT flagged as orphaned ─────────────
     if (process.platform !== "win32") {
-    console.log("\n=== worktree_directory_orphaned (registered worktree not flagged) ===");
-    {
+    test('worktree_directory_orphaned (registered worktree not flagged)', async () => {
       const dir = createRepoWithActiveMilestone();
       cleanups.push(dir);
 
@@ -456,15 +482,13 @@ async function main(): Promise<void> {
 
       const detect = await runGSDDoctor(dir);
       const orphanDirIssues = detect.issues.filter(i => i.code === "worktree_directory_orphaned");
-      assertEq(orphanDirIssues.length, 0, "registered worktree NOT flagged as orphaned");
-    }
+      assert.deepStrictEqual(orphanDirIssues.length, 0, "registered worktree NOT flagged as orphaned");
+    });
     } else {
-      console.log("\n=== worktree_directory_orphaned (registered worktree not flagged — skipped on Windows) ===");
     }
 
     // ─── Test 9: none-mode still detects corrupt merge state ───────────
-    console.log("\n=== none-mode keeps corrupt merge state ===");
-    {
+    test('none-mode keeps corrupt merge state', async () => {
       const dir = createRepoWithCompletedMilestone();
       cleanups.push(dir);
 
@@ -474,12 +498,11 @@ async function main(): Promise<void> {
 
       const result = await runGSDDoctor(dir, { isolationMode: "none" });
       const mergeIssues = result.issues.filter(i => i.code === "corrupt_merge_state");
-      assertTrue(mergeIssues.length > 0, "none-mode: corrupt merge state IS detected");
-    }
+      assert.ok(mergeIssues.length > 0, "none-mode: corrupt merge state IS detected");
+    });
 
     // ─── Test 10: none-mode still detects tracked runtime files ────────
-    console.log("\n=== none-mode keeps tracked runtime files ===");
-    {
+    test('none-mode keeps tracked runtime files', async () => {
       const dir = createRepoWithCompletedMilestone();
       cleanups.push(dir);
 
@@ -492,13 +515,12 @@ async function main(): Promise<void> {
 
       const result = await runGSDDoctor(dir, { isolationMode: "none" });
       const trackedIssues = result.issues.filter(i => i.code === "tracked_runtime_files");
-      assertTrue(trackedIssues.length > 0, "none-mode: tracked runtime files IS detected");
-    }
+      assert.ok(trackedIssues.length > 0, "none-mode: tracked runtime files IS detected");
+    });
 
     // ─── Test: Symlinked .gsd does not cause false orphan detection ────
     if (process.platform !== "win32") {
-    console.log("\n=== worktree_directory_orphaned (symlinked .gsd not false-positive) ===");
-    {
+    test('worktree_directory_orphaned (symlinked .gsd not false-positive)', async () => {
       const dir = createRepoWithActiveMilestone();
       cleanups.push(dir);
 
@@ -515,16 +537,14 @@ async function main(): Promise<void> {
 
       const detect = await runGSDDoctor(dir);
       const orphanDirIssues = detect.issues.filter(i => i.code === "worktree_directory_orphaned");
-      assertEq(orphanDirIssues.length, 0, "registered worktree via symlinked .gsd NOT flagged as orphaned");
-    }
+      assert.deepStrictEqual(orphanDirIssues.length, 0, "registered worktree via symlinked .gsd NOT flagged as orphaned");
+    });
     } else {
-      console.log("\n=== worktree_directory_orphaned (symlinked .gsd — skipped on Windows) ===");
     }
 
     // ─── Test: worktree_branch_merged detection & fix ──────────────────
     if (process.platform !== "win32") {
-    console.log("\n=== worktree_branch_merged ===");
-    {
+    test('worktree_branch_merged', async () => {
       const dir = createRepoWithActiveMilestone();
       cleanups.push(dir);
 
@@ -541,23 +561,21 @@ async function main(): Promise<void> {
 
       const detect = await runGSDDoctor(dir);
       const mergedIssues = detect.issues.filter(i => i.code === "worktree_branch_merged");
-      assertTrue(mergedIssues.length > 0, "detects merged worktree branch");
-      assertTrue(mergedIssues[0]?.message.includes("safe to remove"), "message says safe to remove");
-      assertTrue(mergedIssues[0]?.fixable === true, "merged worktree is fixable");
+      assert.ok(mergedIssues.length > 0, "detects merged worktree branch");
+      assert.ok(mergedIssues[0]?.message.includes("safe to remove"), "message says safe to remove");
+      assert.ok(mergedIssues[0]?.fixable === true, "merged worktree is fixable");
 
       // Fix should remove the worktree
       const fixed = await runGSDDoctor(dir, { fix: true });
-      assertTrue(fixed.fixesApplied.some(f => f.includes("removed merged worktree")), "fix removes merged worktree");
-      assertTrue(!existsSync(wtPath), "worktree directory removed after fix");
-    }
+      assert.ok(fixed.fixesApplied.some(f => f.includes("removed merged worktree")), "fix removes merged worktree");
+      assert.ok(!existsSync(wtPath), "worktree directory removed after fix");
+    });
     } else {
-      console.log("\n=== worktree_branch_merged (skipped on Windows) ===");
     }
 
     // ─── Test: merged milestone/* worktree removes milestone branch ────
     if (process.platform !== "win32") {
-    console.log("\n=== worktree_branch_merged (milestone branch cleanup) ===");
-    {
+    test('worktree_branch_merged (milestone branch cleanup)', async () => {
       const dir = createRepoWithActiveMilestone();
       cleanups.push(dir);
 
@@ -570,20 +588,18 @@ async function main(): Promise<void> {
       run("git merge milestone/M001 --no-edit", dir);
 
       const fixed = await runGSDDoctor(dir, { fix: true });
-      assertTrue(fixed.fixesApplied.some(f => f.includes("removed merged worktree")), "fix removes merged milestone worktree");
-      assertTrue(!existsSync(wtPath), "milestone worktree directory removed after fix");
+      assert.ok(fixed.fixesApplied.some(f => f.includes("removed merged worktree")), "fix removes merged milestone worktree");
+      assert.ok(!existsSync(wtPath), "milestone worktree directory removed after fix");
 
       const branches = run("git branch --list milestone/M001", dir);
-      assertEq(branches, "", "milestone/M001 branch deleted after merged worktree cleanup");
-    }
+      assert.deepStrictEqual(branches, "", "milestone/M001 branch deleted after merged worktree cleanup");
+    });
     } else {
-      console.log("\n=== worktree_branch_merged (milestone branch cleanup — skipped on Windows) ===");
     }
 
     // ─── Test: worktree_branch_merged NOT flagged for unmerged worktree ─
     if (process.platform !== "win32") {
-    console.log("\n=== worktree_branch_merged (no false positive) ===");
-    {
+    test('worktree_branch_merged (no false positive)', async () => {
       const dir = createRepoWithActiveMilestone();
       cleanups.push(dir);
 
@@ -597,16 +613,14 @@ async function main(): Promise<void> {
       // Do NOT merge — branch is ahead of main
       const detect = await runGSDDoctor(dir);
       const mergedIssues = detect.issues.filter(i => i.code === "worktree_branch_merged");
-      assertEq(mergedIssues.length, 0, "unmerged worktree NOT flagged as merged");
-    }
+      assert.deepStrictEqual(mergedIssues.length, 0, "unmerged worktree NOT flagged as merged");
+    });
     } else {
-      console.log("\n=== worktree_branch_merged (no false positive — skipped on Windows) ===");
     }
 
     // ─── Test: legacy_slice_branches now fixable ───────────────────────
     if (process.platform !== "win32") {
-    console.log("\n=== legacy_slice_branches (fixable) ===");
-    {
+    test('legacy_slice_branches (fixable)', async () => {
       const dir = createRepoWithActiveMilestone();
       cleanups.push(dir);
 
@@ -618,18 +632,17 @@ async function main(): Promise<void> {
 
       const detect = await runGSDDoctor(dir);
       const legacyIssues = detect.issues.filter(i => i.code === "legacy_slice_branches");
-      assertTrue(legacyIssues.length > 0, "detects legacy slice branches");
-      assertTrue(legacyIssues[0]?.fixable === true, "legacy branches are fixable");
+      assert.ok(legacyIssues.length > 0, "detects legacy slice branches");
+      assert.ok(legacyIssues[0]?.fixable === true, "legacy branches are fixable");
 
       const fixed = await runGSDDoctor(dir, { fix: true });
-      assertTrue(fixed.fixesApplied.some(f => f.includes("legacy slice branch")), "fix deletes legacy branches");
+      assert.ok(fixed.fixesApplied.some(f => f.includes("legacy slice branch")), "fix deletes legacy branches");
 
       // Verify branches are gone
       const remaining = run("git branch --list gsd/*/*", dir);
-      assertEq(remaining, "gsd/quick/1-fix-typo", "quick branch preserved; legacy branches removed");
-    }
+      assert.deepStrictEqual(remaining, "gsd/quick/1-fix-typo", "quick branch preserved; legacy branches removed");
+    });
     } else {
-      console.log("\n=== legacy_slice_branches (fixable — skipped on Windows) ===");
     }
 
   } finally {
@@ -637,8 +650,4 @@ async function main(): Promise<void> {
       try { rmSync(dir, { recursive: true, force: true }); } catch { /* ignore */ }
     }
   }
-
-  report();
-}
-
-main();
+});

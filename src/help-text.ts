@@ -32,6 +32,30 @@ const SUBCOMMAND_HELP: Record<string, string> = {
     'Compare with --continue (-c) which always resumes the most recent session.',
   ].join('\n'),
 
+  install: [
+    'Usage: gsd install <source> [-l, --local]',
+    '',
+    'Install a package/extension source and run post-install validation (dependency checks, setup).',
+    '',
+    'Examples:',
+    '  gsd install npm:@foo/bar',
+    '  gsd install git:github.com/user/repo',
+    '  gsd install https://github.com/user/repo',
+    '  gsd install ./local/path',
+  ].join('\n'),
+
+  remove: [
+    'Usage: gsd remove <source> [-l, --local]',
+    '',
+    'Remove an installed package source and its settings entry.',
+  ].join('\n'),
+
+  list: [
+    'Usage: gsd list',
+    '',
+    'List installed package sources from user and project settings.',
+  ].join('\n'),
+
   worktree: [
     'Usage: gsd worktree <command> [args]',
     '',
@@ -70,9 +94,12 @@ const SUBCOMMAND_HELP: Record<string, string> = {
     'Run /gsd commands without the TUI. Default command: auto',
     '',
     'Flags:',
-    '  --timeout N          Overall timeout in ms (default: 300000)',
-    '  --json               JSONL event stream to stdout',
-    '  --model ID           Override model',
+    '  --timeout N            Overall timeout in ms (default: 300000)',
+    '  --json                 JSONL event stream to stdout (alias for --output-format stream-json)',
+    '  --output-format <fmt>  Output format: text (default), json (structured result), stream-json (JSONL events)',
+    '  --bare                 Minimal context: skip CLAUDE.md, AGENTS.md, user settings, user skills',
+    '  --resume <id>          Resume a prior headless session by ID',
+    '  --model ID             Override model',
     '  --supervised           Forward interactive UI requests to orchestrator via stdout/stdin',
     '  --response-timeout N   Timeout (ms) for orchestrator response (default: 30000)',
     '  --answers <path>       Pre-supply answers and secrets (JSON file)',
@@ -91,11 +118,19 @@ const SUBCOMMAND_HELP: Record<string, string> = {
     '  --auto               Start auto-mode after milestone creation',
     '  --verbose            Show tool calls in progress output',
     '',
+    'Output formats:',
+    '  text         Human-readable progress on stderr (default)',
+    '  json         Collect events silently, emit structured HeadlessJsonResult on stdout at exit',
+    '  stream-json  Stream JSONL events to stdout in real time (same as --json)',
+    '',
     'Examples:',
     '  gsd headless                                    Run /gsd auto',
     '  gsd headless next                               Run one unit',
-    '  gsd headless --json status                      Machine-readable status',
+    '  gsd headless --output-format json auto           Structured JSON result on stdout',
+    '  gsd headless --json status                      Machine-readable JSONL stream',
     '  gsd headless --timeout 60000                    With 1-minute timeout',
+    '  gsd headless --bare auto                        Minimal context (CI/ecosystem use)',
+    '  gsd headless --resume abc123 auto               Resume a prior session',
     '  gsd headless new-milestone --context spec.md    Create milestone from file',
     '  cat spec.md | gsd headless new-milestone --context -   From stdin',
     '  gsd headless new-milestone --context spec.md --auto    Create + auto-execute',
@@ -104,7 +139,7 @@ const SUBCOMMAND_HELP: Record<string, string> = {
     '  gsd headless --events agent_end,extension_ui_request auto   Filtered event stream',
     '  gsd headless query                              Instant JSON state snapshot',
     '',
-    'Exit codes: 0 = complete, 1 = error/timeout, 2 = blocked',
+    'Exit codes: 0 = success, 1 = error/timeout, 10 = blocked, 11 = cancelled',
   ].join('\n'),
 }
 
@@ -128,6 +163,9 @@ export function printHelp(version: string): void {
   process.stdout.write('  --help, -h               Print this help and exit\n')
   process.stdout.write('\nSubcommands:\n')
   process.stdout.write('  config                   Re-run the setup wizard\n')
+  process.stdout.write('  install <source>         Install a package/extension source\n')
+  process.stdout.write('  remove <source>          Remove an installed package source\n')
+  process.stdout.write('  list                     List installed package sources\n')
   process.stdout.write('  update                   Update GSD to the latest version\n')
   process.stdout.write('  sessions                 List and resume a past session\n')
   process.stdout.write('  worktree <cmd>           Manage worktrees (list, merge, clean, remove)\n')

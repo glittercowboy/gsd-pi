@@ -20,20 +20,19 @@ import type {
 import { resolvePostUnitHooks, resolvePreDispatchHooks } from "./preferences.js";
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
+import { parseUnitId } from "./unit-id.js";
 
 // ─── Artifact Path Resolution ──────────────────────────────────────────────
 
 export function resolveHookArtifactPath(basePath: string, unitId: string, artifactName: string): string {
-  const parts = unitId.split("/");
-  if (parts.length === 3) {
-    const [mid, sid, tid] = parts;
-    return join(basePath, ".gsd", "milestones", mid, "slices", sid, "tasks", `${tid}-${artifactName}`);
+  const { milestone, slice, task } = parseUnitId(unitId);
+  if (task !== undefined && slice !== undefined) {
+    return join(basePath, ".gsd", "milestones", milestone, "slices", slice, "tasks", `${task}-${artifactName}`);
   }
-  if (parts.length === 2) {
-    const [mid, sid] = parts;
-    return join(basePath, ".gsd", "milestones", mid, "slices", sid, artifactName);
+  if (slice !== undefined) {
+    return join(basePath, ".gsd", "milestones", milestone, "slices", slice, artifactName);
   }
-  return join(basePath, ".gsd", "milestones", parts[0], artifactName);
+  return join(basePath, ".gsd", "milestones", milestone, artifactName);
 }
 
 // ─── Dispatch Rule Conversion ──────────────────────────────────────────────
@@ -212,7 +211,7 @@ export class RuleRegistry {
       };
 
       // Build prompt with variable substitution
-      const [mid, sid, tid] = triggerUnitId.split("/");
+      const { milestone: mid, slice: sid, task: tid } = parseUnitId(triggerUnitId);
       let prompt = config.prompt
         .replace(/\{milestoneId\}/g, mid ?? "")
         .replace(/\{sliceId\}/g, sid ?? "")
@@ -291,7 +290,7 @@ export class RuleRegistry {
       return { action: "proceed", prompt, firedHooks: [] };
     }
 
-    const [mid, sid, tid] = unitId.split("/");
+    const { milestone: mid, slice: sid, task: tid } = parseUnitId(unitId);
     const substitute = (text: string): string =>
       text
         .replace(/\{milestoneId\}/g, mid ?? "")
@@ -506,7 +505,7 @@ export class RuleRegistry {
     this.cycleCounts.set(cycleKey, currentCycle);
     this.activeHook.cycle = currentCycle;
 
-    const [mid, sid, tid] = unitId.split("/");
+    const { milestone: mid, slice: sid, task: tid } = parseUnitId(unitId);
     const prompt = hook.prompt
       .replace(/\{milestoneId\}/g, mid ?? "")
       .replace(/\{sliceId\}/g, sid ?? "")
@@ -525,7 +524,7 @@ export class RuleRegistry {
   formatHookStatus(): string {
     const entries = this.getHookStatus();
     if (entries.length === 0) {
-      return "No hooks configured. Add post_unit_hooks or pre_dispatch_hooks to .gsd/preferences.md";
+      return "No hooks configured. Add post_unit_hooks or pre_dispatch_hooks to .gsd/PREFERENCES.md";
     }
 
     const lines: string[] = ["Configured Hooks:", ""];

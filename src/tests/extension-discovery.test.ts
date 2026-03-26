@@ -12,110 +12,89 @@ function makeTempDir(): string {
 }
 
 describe('resolveExtensionEntries', () => {
-  test('returns index.ts when no package.json exists', () => {
+  test('returns index.ts when no package.json exists', (t) => {
     const dir = makeTempDir()
-    try {
-      writeFileSync(join(dir, 'index.ts'), 'export default function() {}')
-      const entries = resolveExtensionEntries(dir)
-      assert.equal(entries.length, 1)
-      assert.ok(entries[0].endsWith('index.ts'))
-    } finally {
-      rmSync(dir, { recursive: true, force: true })
-    }
+    t.after(() => rmSync(dir, { recursive: true, force: true }));
+    writeFileSync(join(dir, 'index.ts'), 'export default function() {}')
+    const entries = resolveExtensionEntries(dir)
+    assert.equal(entries.length, 1)
+    assert.ok(entries[0].endsWith('index.ts'))
   })
 
-  test('returns index.js when no package.json and no index.ts', () => {
+  test('returns index.js when no package.json and no index.ts', (t) => {
     const dir = makeTempDir()
-    try {
-      writeFileSync(join(dir, 'index.js'), 'module.exports = function() {}')
-      const entries = resolveExtensionEntries(dir)
-      assert.equal(entries.length, 1)
-      assert.ok(entries[0].endsWith('index.js'))
-    } finally {
-      rmSync(dir, { recursive: true, force: true })
-    }
+    t.after(() => rmSync(dir, { recursive: true, force: true }));
+    writeFileSync(join(dir, 'index.js'), 'module.exports = function() {}')
+    const entries = resolveExtensionEntries(dir)
+    assert.equal(entries.length, 1)
+    assert.ok(entries[0].endsWith('index.js'))
   })
 
-  test('returns declared extensions from pi.extensions array', () => {
+  test('returns declared extensions from pi.extensions array', (t) => {
     const dir = makeTempDir()
-    try {
-      writeFileSync(join(dir, 'package.json'), JSON.stringify({
-        pi: { extensions: ['main.js'] }
-      }))
-      writeFileSync(join(dir, 'main.js'), 'module.exports = function() {}')
-      writeFileSync(join(dir, 'index.js'), 'should not be returned')
-      const entries = resolveExtensionEntries(dir)
-      assert.equal(entries.length, 1)
-      assert.ok(entries[0].endsWith('main.js'))
-    } finally {
-      rmSync(dir, { recursive: true, force: true })
-    }
+    t.after(() => rmSync(dir, { recursive: true, force: true }));
+    writeFileSync(join(dir, 'package.json'), JSON.stringify({
+      pi: { extensions: ['main.js'] }
+    }))
+    writeFileSync(join(dir, 'main.js'), 'module.exports = function() {}')
+    writeFileSync(join(dir, 'index.js'), 'should not be returned')
+    const entries = resolveExtensionEntries(dir)
+    assert.equal(entries.length, 1)
+    assert.ok(entries[0].endsWith('main.js'))
   })
 
-  test('returns empty array when pi manifest has no extensions (library opt-out)', () => {
+  test('returns empty array when pi manifest has no extensions (library opt-out)', (t) => {
     const dir = makeTempDir()
-    try {
-      writeFileSync(join(dir, 'package.json'), JSON.stringify({
-        name: '@gsd/cmux',
-        pi: {}
-      }))
-      writeFileSync(join(dir, 'index.js'), 'export function utility() {}')
-      const entries = resolveExtensionEntries(dir)
-      assert.equal(entries.length, 0, 'pi: {} should opt out of extension discovery')
-    } finally {
-      rmSync(dir, { recursive: true, force: true })
-    }
+    t.after(() => rmSync(dir, { recursive: true, force: true }));
+    writeFileSync(join(dir, 'package.json'), JSON.stringify({
+      name: '@gsd/cmux',
+      pi: {}
+    }))
+    writeFileSync(join(dir, 'index.js'), 'export function utility() {}')
+    const entries = resolveExtensionEntries(dir)
+    assert.equal(entries.length, 0, 'pi: {} should opt out of extension discovery')
   })
 
-  test('returns empty array when pi.extensions is an empty array', () => {
+  test('returns empty array when pi.extensions is an empty array', (t) => {
     const dir = makeTempDir()
-    try {
-      writeFileSync(join(dir, 'package.json'), JSON.stringify({
-        pi: { extensions: [] }
-      }))
-      writeFileSync(join(dir, 'index.js'), 'should not be returned')
-      const entries = resolveExtensionEntries(dir)
-      assert.equal(entries.length, 0)
-    } finally {
-      rmSync(dir, { recursive: true, force: true })
-    }
+    t.after(() => rmSync(dir, { recursive: true, force: true }));
+    writeFileSync(join(dir, 'package.json'), JSON.stringify({
+      pi: { extensions: [] }
+    }))
+    writeFileSync(join(dir, 'index.js'), 'should not be returned')
+    const entries = resolveExtensionEntries(dir)
+    assert.equal(entries.length, 0)
   })
 
-  test('falls back to index.ts when package.json has no pi field', () => {
+  test('falls back to index.ts when package.json has no pi field', (t) => {
     const dir = makeTempDir()
-    try {
-      writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: 'some-pkg' }))
-      writeFileSync(join(dir, 'index.ts'), 'export default function() {}')
-      const entries = resolveExtensionEntries(dir)
-      assert.equal(entries.length, 1)
-      assert.ok(entries[0].endsWith('index.ts'))
-    } finally {
-      rmSync(dir, { recursive: true, force: true })
-    }
+    t.after(() => rmSync(dir, { recursive: true, force: true }));
+    writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: 'some-pkg' }))
+    writeFileSync(join(dir, 'index.ts'), 'export default function() {}')
+    const entries = resolveExtensionEntries(dir)
+    assert.equal(entries.length, 1)
+    assert.ok(entries[0].endsWith('index.ts'))
   })
 })
 
 describe('discoverExtensionEntryPaths', () => {
-  test('skips library directories with pi: {} opt-out', () => {
+  test('skips library directories with pi: {} opt-out', (t) => {
     const root = makeTempDir()
-    try {
-      // Real extension
-      const extDir = join(root, 'my-ext')
-      mkdirSync(extDir)
-      writeFileSync(join(extDir, 'index.js'), 'module.exports = function() {}')
+    t.after(() => rmSync(root, { recursive: true, force: true }));
+    // Real extension
+    const extDir = join(root, 'my-ext')
+    mkdirSync(extDir)
+    writeFileSync(join(extDir, 'index.js'), 'module.exports = function() {}')
 
-      // Library with opt-out (like cmux)
-      const libDir = join(root, 'cmux')
-      mkdirSync(libDir)
-      writeFileSync(join(libDir, 'package.json'), JSON.stringify({ pi: {} }))
-      writeFileSync(join(libDir, 'index.js'), 'export function utility() {}')
+    // Library with opt-out (like cmux)
+    const libDir = join(root, 'cmux')
+    mkdirSync(libDir)
+    writeFileSync(join(libDir, 'package.json'), JSON.stringify({ pi: {} }))
+    writeFileSync(join(libDir, 'index.js'), 'export function utility() {}')
 
-      const paths = discoverExtensionEntryPaths(root)
-      assert.equal(paths.length, 1, 'should discover my-ext but skip cmux')
-      assert.ok(paths[0].includes('my-ext'))
-      assert.ok(!paths.some(p => p.includes('cmux')), 'cmux should not be discovered')
-    } finally {
-      rmSync(root, { recursive: true, force: true })
-    }
+    const paths = discoverExtensionEntryPaths(root)
+    assert.equal(paths.length, 1, 'should discover my-ext but skip cmux')
+    assert.ok(paths[0].includes('my-ext'))
+    assert.ok(!paths.some(p => p.includes('cmux')), 'cmux should not be discovered')
   })
 })

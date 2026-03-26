@@ -8,7 +8,6 @@
  * `/plugin marketplace add ...` source model.
  */
 
-
 import { describe, it, before, after, mock } from 'node:test';
 import assert from 'node:assert';
 import { existsSync, mkdtempSync, rmSync, writeFileSync, readFileSync, mkdirSync } from 'node:fs';
@@ -127,7 +126,7 @@ describe(
 
 		before(() => {
 			tempDir = mkdtempSync(join(tmpdir(), 'gsd-tui-test-'));
-			prefsPath = join(tempDir, 'preferences.md');
+			prefsPath = join(tempDir, 'PREFERENCES.md');
 			prefs = { version: 1 };
 		});
 
@@ -306,45 +305,45 @@ describe(
 				});
 			});
 
-			it('should not persist marketplace agent directories into package sources', async () => {
+			it('should not persist marketplace agent directories into package sources', async (t) => {
 				const isolatedAgentDir = join(tempDir, '.gsd', 'agent');
 				const settingsPath = join(isolatedAgentDir, 'settings.json');
 				rmSync(isolatedAgentDir, { recursive: true, force: true });
 				process.env.GSD_CODING_AGENT_DIR = isolatedAgentDir;
 
-				try {
-					mkdirSync(isolatedAgentDir, { recursive: true });
-					const tempSettings: Record<string, unknown> = { packages: [] };
-					writeFileSync(settingsPath, JSON.stringify(tempSettings, null, 2));
-
-					const { ctx } = createMockContext([
-						'Plugins only',
-						'Yes - discover plugins and select components',
-						'Import all components',
-						'Yes, continue',
-					]);
-
-					const readPrefs = () => ({ ...prefs });
-					const writePrefs = async (p: Record<string, unknown>) => {
-						Object.assign(prefs, p);
-					};
-
-					await runClaudeImportFlow(ctx, 'global', readPrefs, writePrefs);
-
-					const settings = JSON.parse(readFileSync(settingsPath, 'utf8')) as { packages?: unknown[] };
-					const packageEntries = Array.isArray(settings.packages) ? settings.packages : [];
-					const hasAgentsDirPackage = packageEntries.some((entry) => {
-						const source = typeof entry === 'string'
-							? entry
-							: (entry && typeof entry === 'object' ? (entry as { source?: unknown }).source : undefined);
-						return typeof source === 'string' && source.endsWith('/agents');
-					});
-
-					assert.strictEqual(hasAgentsDirPackage, false, 'Marketplace agent directories should not be persisted as package sources');
-				} finally {
+				t.after(() => {
 					delete process.env.GSD_CODING_AGENT_DIR;
 					rmSync(isolatedAgentDir, { recursive: true, force: true });
-				}
+				});
+
+				mkdirSync(isolatedAgentDir, { recursive: true });
+				const tempSettings: Record<string, unknown> = { packages: [] };
+				writeFileSync(settingsPath, JSON.stringify(tempSettings, null, 2));
+
+				const { ctx } = createMockContext([
+					'Plugins only',
+					'Yes - discover plugins and select components',
+					'Import all components',
+					'Yes, continue',
+				]);
+
+				const readPrefs = () => ({ ...prefs });
+				const writePrefs = async (p: Record<string, unknown>) => {
+					Object.assign(prefs, p);
+				};
+
+				await runClaudeImportFlow(ctx, 'global', readPrefs, writePrefs);
+
+				const settings = JSON.parse(readFileSync(settingsPath, 'utf8')) as { packages?: unknown[] };
+				const packageEntries = Array.isArray(settings.packages) ? settings.packages : [];
+				const hasAgentsDirPackage = packageEntries.some((entry) => {
+					const source = typeof entry === 'string'
+						? entry
+						: (entry && typeof entry === 'object' ? (entry as { source?: unknown }).source : undefined);
+					return typeof source === 'string' && source.endsWith('/agents');
+				});
+
+				assert.strictEqual(hasAgentsDirPackage, false, 'Marketplace agent directories should not be persisted as package sources');
 			});
 		});
 	}

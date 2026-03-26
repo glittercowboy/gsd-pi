@@ -94,6 +94,11 @@ export type {
 	MessageRenderOptions,
 	ProviderConfig,
 	ProviderModelConfig,
+	LifecycleHookContext,
+	LifecycleHookHandler,
+	LifecycleHookMap,
+	LifecycleHookPhase,
+	LifecycleHookScope,
 	ReadToolCallEvent,
 	RegisteredCommand,
 	RegisteredTool,
@@ -120,6 +125,8 @@ export type {
 	TurnStartEvent,
 	UserBashEvent,
 	UserBashEventResult,
+	BashTransformEvent,
+	BashTransformEventResult,
 	WidgetPlacement,
 	WriteToolCallEvent,
 } from "./core/extensions/index.js";
@@ -152,6 +159,8 @@ export type {
 	ResolvedResource,
 } from "./core/package-manager.js";
 export { DefaultPackageManager } from "./core/package-manager.js";
+export type { PackageCommand, PackageCommandOptions, PackageCommandRunnerOptions, PackageCommandRunnerResult } from "./core/package-commands.js";
+export { getPackageCommandUsage, parsePackageCommand, runPackageCommand } from "./core/package-commands.js";
 export type { ResourceCollision, ResourceDiagnostic, ResourceLoader } from "./core/resource-loader.js";
 export { DefaultResourceLoader } from "./core/resource-loader.js";
 // SDK for programmatic usage
@@ -212,6 +221,8 @@ export {
 } from "./core/settings-manager.js";
 // Skills
 export {
+	ECOSYSTEM_SKILLS_DIR,
+	ECOSYSTEM_PROJECT_SKILLS_DIR,
 	formatSkillsForPrompt,
 	getLoadedSkills,
 	type LoadSkillsFromDirOptions,
@@ -303,8 +314,11 @@ export {
 	type RpcClientOptions,
 	type RpcEventListener,
 	type RpcCommand,
+	type RpcInitResult,
+	type RpcProtocolVersion,
 	type RpcResponse,
 	type RpcSessionState,
+	type RpcV2Event,
 } from "./modes/index.js";
 // RPC JSONL utilities
 export { attachJsonlLineReader, serializeJsonLine } from "./modes/rpc/jsonl.js";

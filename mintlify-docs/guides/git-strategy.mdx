@@ -1,0 +1,157 @@
+---
+title: "Git strategy"
+description: "Isolation modes, branching model, and merge behavior for milestone work."
+---
+
+GSD uses git for milestone isolation and sequential commits. You choose an **isolation mode** that controls where work happens. The strategy is fully automated — no manual branch management needed.
+
+## Isolation modes
+
+Configure via the `git.isolation` preference:
+
+| Mode | Working directory | Branch | Best for |
+|------|-------------------|--------|----------|
+| `none` (default) | Project root | Current branch | Most projects — no isolation overhead |
+| `worktree` | `.gsd/worktrees/<MID>/` | `milestone/<MID>` | Full file isolation |
+| `branch` | Project root | `milestone/<MID>` | Submodule-heavy repos |
+
+### `none` mode (default)
+
+Work happens directly on your current branch. No worktree, no milestone branch. GSD still commits sequentially with conventional commit messages, but there's no branch isolation. This is the simplest mode and works well for most projects.
+
+### `worktree` mode
+
+Each milestone gets its own git worktree on a `milestone/<MID>` branch. All execution happens inside the worktree. On completion, the worktree is squash-merged to main as one clean commit. The worktree and branch are cleaned up.
+
+### `branch` mode
+
+Work happens in the project root on a `milestone/<MID>` branch. No worktree is created. On completion, the branch is merged to main.
+
+<Note>
+**Changed in v2.45.0:** The default isolation mode changed from `worktree` to `none`. If your workflow relies on worktree isolation, set `git.isolation: worktree` explicitly in your preferences.
+</Note>
+
+## Branching model
+
+```
+main ─────────────────────────────────────────────────────────
+  │                                                     ↑
+  └── milestone/M001 (worktree) ────────────────────────┘
+       commit: feat: core types
+       commit: feat: markdown parser
+       commit: feat: file writer
+       → squash-merged to main as single commit
+```
+
+### Parallel worktrees
+
+With [parallel orchestration](/guides/parallel-orchestration) enabled, multiple milestones run in separate worktrees simultaneously:
+
+```
+main ──────────────────────────────────────────────────────────
+  │                                      ↑              ↑
+  ├── milestone/M002 (worktree) ─────────┘              │
+  │    → squash-merged first                            │
+  │                                                     │
+  └── milestone/M003 (worktree) ────────────────────────┘
+       → squash-merged second
+```
+
+Merges happen sequentially to avoid conflicts.
+
+### Commit format
+
+Conventional commit format with GSD metadata in trailers:
+
+```
+feat: core type definitions
+
+GSD-Task: M001/S01/T01
+
+feat: markdown parser for plan files
+
+GSD-Task: M001/S01/T02
+```
+
+## Workflow modes
+
+Set `mode` to get sensible defaults:
+
+```yaml
+mode: solo    # personal projects
+mode: team    # shared repos
+```
+
+| Setting | `solo` | `team` |
+|---|---|---|
+| `git.auto_push` | `true` | `false` |
+| `git.push_branches` | `false` | `true` |
+| `git.pre_merge_check` | `false` | `true` |
+| `git.merge_strategy` | `"squash"` | `"squash"` |
+| `unique_milestone_ids` | `false` | `true` |
+
+Mode defaults are the lowest priority — any explicit preference overrides them.
+
+## Git preferences
+
+```yaml
+git:
+  auto_push: false
+  push_branches: false
+  remote: origin
+  snapshots: false
+  pre_merge_check: false
+  commit_type: feat
+  main_branch: main
+  merge_strategy: squash    # "squash" or "merge"
+  isolation: none           # "none" (default), "worktree", or "branch"
+  commit_docs: true
+  auto_pr: false
+  pr_target_branch: develop
+```
+
+### Automatic pull requests
+
+For teams using Gitflow or branch-based workflows:
+
+```yaml
+git:
+  auto_push: true
+  auto_pr: true
+  pr_target_branch: develop
+```
+
+Pushes the milestone branch and creates a PR targeting your specified branch. Requires `gh` CLI installed and authenticated.
+
+### `commit_docs: false`
+
+Adds `.gsd/` to `.gitignore` and keeps all planning artifacts local-only. Useful for teams where only some members use GSD.
+
+## Worktree management
+
+### Automatic (auto mode)
+
+1. Milestone starts → worktree created at `.gsd/worktrees/<MID>/`
+2. Planning artifacts copied into the worktree
+3. All execution happens inside the worktree
+4. Milestone completes → squash-merged to main
+5. Worktree and branch cleaned up
+
+### Manual
+
+```
+/worktree create
+/worktree switch
+/worktree merge
+/worktree remove
+```
+
+## Self-healing
+
+GSD includes automatic recovery for common git issues:
+
+- **Detached HEAD** — automatically reattaches to the correct branch
+- **Stale lock files** — removes `index.lock` files from crashed processes
+- **Orphaned worktrees** — detects and offers cleanup
+
+Run `/gsd doctor` to check git health manually.

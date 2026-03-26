@@ -20,11 +20,11 @@ import {
   _getRegisteredLockDirs,
 } from '../session-lock.ts';
 import { gsdRoot } from '../paths.ts';
-import { createTestContext } from './test-helpers.ts';
+import { describe, test } from 'node:test';
+import assert from 'node:assert/strict';
 
-const { assertEq, assertTrue, report } = createTestContext();
 
-async function main(): Promise<void> {
+describe('session-lock-multipath', async () => {
 
   // ─── 1. Lock dir registry tracks gsdDir on acquisition ──────────────────
   console.log('\n=== 1. Lock dir registry tracks gsdDir on acquisition ===');
@@ -34,17 +34,17 @@ async function main(): Promise<void> {
 
     try {
       const result = acquireSessionLock(base);
-      assertTrue(result.acquired, 'lock acquired');
+      assert.ok(result.acquired, 'lock acquired');
 
       const registered = _getRegisteredLockDirs();
       const gsdDir = gsdRoot(base);
-      assertTrue(registered.includes(gsdDir), 'gsdDir is registered in lock dir registry');
+      assert.ok(registered.includes(gsdDir), 'gsdDir is registered in lock dir registry');
 
       releaseSessionLock(base);
 
       // After release, registry should be cleared
       const afterRelease = _getRegisteredLockDirs();
-      assertEq(afterRelease.length, 0, 'lock dir registry cleared after release');
+      assert.deepStrictEqual(afterRelease.length, 0, 'lock dir registry cleared after release');
     } finally {
       rmSync(base, { recursive: true, force: true });
     }
@@ -62,7 +62,7 @@ async function main(): Promise<void> {
 
     try {
       const result = acquireSessionLock(base);
-      assertTrue(result.acquired, 'lock acquired');
+      assert.ok(result.acquired, 'lock acquired');
 
       // Manually plant a stale lock file at the secondary path to simulate
       // multi-path lock accumulation
@@ -72,8 +72,8 @@ async function main(): Promise<void> {
       mkdirSync(secondaryLockDir, { recursive: true });
 
       // Verify they exist before release
-      assertTrue(existsSync(secondaryLockFile), 'secondary lock file exists before release');
-      assertTrue(existsSync(secondaryLockDir), 'secondary lock dir exists before release');
+      assert.ok(existsSync(secondaryLockFile), 'secondary lock file exists before release');
+      assert.ok(existsSync(secondaryLockDir), 'secondary lock dir exists before release');
 
       // Manually add the secondary dir to the registry (simulating ensureExitHandler call)
       // We do this by acquiring knowledge of internals — the registry is populated
@@ -83,10 +83,10 @@ async function main(): Promise<void> {
 
       // Primary lock artifacts should be cleaned
       const primaryLockFile = join(gsdRoot(base), 'auto.lock');
-      assertTrue(!existsSync(primaryLockFile), 'primary auto.lock removed after release');
+      assert.ok(!existsSync(primaryLockFile), 'primary auto.lock removed after release');
 
       const primaryLockDir = gsdRoot(base) + '.lock';
-      assertTrue(!existsSync(primaryLockDir), 'primary .gsd.lock/ removed after release');
+      assert.ok(!existsSync(primaryLockDir), 'primary .gsd.lock/ removed after release');
     } finally {
       rmSync(base, { recursive: true, force: true });
     }
@@ -106,7 +106,7 @@ async function main(): Promise<void> {
       const gsdDir = gsdRoot(base);
       // Should only appear once (Set deduplication)
       const count = registered.filter(d => d === gsdDir).length;
-      assertEq(count, 1, 'gsdDir registered exactly once after re-entrant acquisition');
+      assert.deepStrictEqual(count, 1, 'gsdDir registered exactly once after re-entrant acquisition');
 
       releaseSessionLock(base);
     } finally {
@@ -124,17 +124,17 @@ async function main(): Promise<void> {
 
     try {
       const r1 = acquireSessionLock(base1);
-      assertTrue(r1.acquired, 'first base lock acquired');
+      assert.ok(r1.acquired, 'first base lock acquired');
 
       // Release first to acquire second (module state is single-lock)
       releaseSessionLock(base1);
 
       const r2 = acquireSessionLock(base2);
-      assertTrue(r2.acquired, 'second base lock acquired');
+      assert.ok(r2.acquired, 'second base lock acquired');
 
       const registered = _getRegisteredLockDirs();
       const gsd2 = gsdRoot(base2);
-      assertTrue(registered.includes(gsd2), 'second gsdDir is registered');
+      assert.ok(registered.includes(gsd2), 'second gsdDir is registered');
 
       releaseSessionLock(base2);
     } finally {
@@ -156,18 +156,11 @@ async function main(): Promise<void> {
       // Verify everything is clean
       const lockFile = join(gsdRoot(base), 'auto.lock');
       const lockDir = gsdRoot(base) + '.lock';
-      assertTrue(!existsSync(lockFile), 'auto.lock cleaned');
-      assertTrue(!existsSync(lockDir), '.gsd.lock/ cleaned');
-      assertEq(_getRegisteredLockDirs().length, 0, 'registry empty');
+      assert.ok(!existsSync(lockFile), 'auto.lock cleaned');
+      assert.ok(!existsSync(lockDir), '.gsd.lock/ cleaned');
+      assert.deepStrictEqual(_getRegisteredLockDirs().length, 0, 'registry empty');
     } finally {
       rmSync(base, { recursive: true, force: true });
     }
   }
-
-  report();
-}
-
-main().catch((error) => {
-  console.error(error);
-  process.exit(1);
 });

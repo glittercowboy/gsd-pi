@@ -230,7 +230,7 @@ function createHarness(sessionId: string) {
 // Tests — multi-project bridge coexistence
 // ---------------------------------------------------------------------------
 
-test("multi-project: getProjectBridgeServiceForCwd returns distinct instances for different project paths", async () => {
+test("multi-project: getProjectBridgeServiceForCwd returns distinct instances for different project paths", async (t) => {
   const fixtureA = makeWorkspaceFixture("A");
   const fixtureB = makeWorkspaceFixture("B");
 
@@ -247,23 +247,23 @@ test("multi-project: getProjectBridgeServiceForCwd returns distinct instances fo
     getOnboardingNeeded: () => false,
   });
 
-  try {
-    const bridgeA = bridge.getProjectBridgeServiceForCwd(fixtureA.projectCwd);
-    const bridgeB = bridge.getProjectBridgeServiceForCwd(fixtureB.projectCwd);
-    assert.notStrictEqual(bridgeA, bridgeB, "bridges for different paths must be distinct instances");
-
-    const snapA = bridgeA.getSnapshot();
-    const snapB = bridgeB.getSnapshot();
-    assert.equal(snapA.projectCwd, fixtureA.projectCwd);
-    assert.equal(snapB.projectCwd, fixtureB.projectCwd);
-  } finally {
+  t.after(async () => {
     await bridge.resetBridgeServiceForTests();
     fixtureA.cleanup();
     fixtureB.cleanup();
-  }
+  });
+
+  const bridgeA = bridge.getProjectBridgeServiceForCwd(fixtureA.projectCwd);
+  const bridgeB = bridge.getProjectBridgeServiceForCwd(fixtureB.projectCwd);
+  assert.notStrictEqual(bridgeA, bridgeB, "bridges for different paths must be distinct instances");
+
+  const snapA = bridgeA.getSnapshot();
+  const snapB = bridgeB.getSnapshot();
+  assert.equal(snapA.projectCwd, fixtureA.projectCwd);
+  assert.equal(snapB.projectCwd, fixtureB.projectCwd);
 });
 
-test("multi-project: getProjectBridgeServiceForCwd returns same instance for same path", async () => {
+test("multi-project: getProjectBridgeServiceForCwd returns same instance for same path", async (t) => {
   const fixtureA = makeWorkspaceFixture("idempotent");
 
   bridge.configureBridgeServiceForTests({
@@ -279,17 +279,17 @@ test("multi-project: getProjectBridgeServiceForCwd returns same instance for sam
     getOnboardingNeeded: () => false,
   });
 
-  try {
-    const first = bridge.getProjectBridgeServiceForCwd(fixtureA.projectCwd);
-    const second = bridge.getProjectBridgeServiceForCwd(fixtureA.projectCwd);
-    assert.strictEqual(first, second, "same path must return the same instance");
-  } finally {
+  t.after(async () => {
     await bridge.resetBridgeServiceForTests();
     fixtureA.cleanup();
-  }
+  });
+
+  const first = bridge.getProjectBridgeServiceForCwd(fixtureA.projectCwd);
+  const second = bridge.getProjectBridgeServiceForCwd(fixtureA.projectCwd);
+  assert.strictEqual(first, second, "same path must return the same instance");
 });
 
-test("multi-project: each bridge receives commands independently", async () => {
+test("multi-project: each bridge receives commands independently", async (t) => {
   const fixtureA = makeWorkspaceFixture("cmd-A");
   const fixtureB = makeWorkspaceFixture("cmd-B");
   const sessionPathA = createSessionFile(fixtureA.projectCwd, fixtureA.sessionsDir, "sess-A", "Session A");
@@ -320,43 +320,43 @@ test("multi-project: each bridge receives commands independently", async () => {
     getOnboardingNeeded: () => false,
   });
 
-  try {
-    const bridgeA = bridge.getProjectBridgeServiceForCwd(fixtureA.projectCwd);
-    const bridgeB = bridge.getProjectBridgeServiceForCwd(fixtureB.projectCwd);
-
-    // Start both bridges
-    await bridgeA.ensureStarted();
-    await bridgeB.ensureStarted();
-
-    // Send get_state to bridge A
-    const responseA = await bridgeA.sendInput({ type: "get_state" } as any);
-    assert.equal(responseA?.success, true);
-    assert.equal((responseA as any).data.sessionId, "sess-A");
-
-    // Send get_state to bridge B
-    const responseB = await bridgeB.sendInput({ type: "get_state" } as any);
-    assert.equal(responseB?.success, true);
-    assert.equal((responseB as any).data.sessionId, "sess-B");
-
-    // Each harness only got its own commands
-    assert.ok(harnessA.commands.length >= 1, "harness A received commands");
-    assert.ok(harnessB.commands.length >= 1, "harness B received commands");
-    assert.ok(
-      harnessA.commands.every((c: any) => c.type === "get_state"),
-      "harness A only got get_state commands",
-    );
-    assert.ok(
-      harnessB.commands.every((c: any) => c.type === "get_state"),
-      "harness B only got get_state commands",
-    );
-  } finally {
+  t.after(async () => {
     await bridge.resetBridgeServiceForTests();
     fixtureA.cleanup();
     fixtureB.cleanup();
-  }
+  });
+
+  const bridgeA = bridge.getProjectBridgeServiceForCwd(fixtureA.projectCwd);
+  const bridgeB = bridge.getProjectBridgeServiceForCwd(fixtureB.projectCwd);
+
+  // Start both bridges
+  await bridgeA.ensureStarted();
+  await bridgeB.ensureStarted();
+
+  // Send get_state to bridge A
+  const responseA = await bridgeA.sendInput({ type: "get_state" } as any);
+  assert.equal(responseA?.success, true);
+  assert.equal((responseA as any).data.sessionId, "sess-A");
+
+  // Send get_state to bridge B
+  const responseB = await bridgeB.sendInput({ type: "get_state" } as any);
+  assert.equal(responseB?.success, true);
+  assert.equal((responseB as any).data.sessionId, "sess-B");
+
+  // Each harness only got its own commands
+  assert.ok(harnessA.commands.length >= 1, "harness A received commands");
+  assert.ok(harnessB.commands.length >= 1, "harness B received commands");
+  assert.ok(
+    harnessA.commands.every((c: any) => c.type === "get_state"),
+    "harness A only got get_state commands",
+  );
+  assert.ok(
+    harnessB.commands.every((c: any) => c.type === "get_state"),
+    "harness B only got get_state commands",
+  );
 });
 
-test("multi-project: SSE subscribers are isolated per bridge", async () => {
+test("multi-project: SSE subscribers are isolated per bridge", async (t) => {
   const fixtureA = makeWorkspaceFixture("sse-A");
   const fixtureB = makeWorkspaceFixture("sse-B");
 
@@ -375,52 +375,52 @@ test("multi-project: SSE subscribers are isolated per bridge", async () => {
     getOnboardingNeeded: () => false,
   });
 
-  try {
-    const bridgeA = bridge.getProjectBridgeServiceForCwd(fixtureA.projectCwd);
-    const bridgeB = bridge.getProjectBridgeServiceForCwd(fixtureB.projectCwd);
-
-    const eventsA: any[] = [];
-    const eventsB: any[] = [];
-
-    const unsubA = bridgeA.subscribe((event) => eventsA.push(event));
-    const unsubB = bridgeB.subscribe((event) => eventsB.push(event));
-
-    // Subscribe fires an initial bridge_status event for each
-    const initialA = eventsA.length;
-    const initialB = eventsB.length;
-
-    // Start bridge A so it has a child process
-    await bridgeA.ensureStarted();
-    await waitForMicrotasks();
-
-    // Filter to only non-bridge_status events that we emit manually
-    const agentEventsA: any[] = [];
-    const agentEventsB: any[] = [];
-
-    const unsubA2 = bridgeA.subscribe((event) => {
-      if (event.type !== "bridge_status") agentEventsA.push(event);
-    });
-    const unsubB2 = bridgeB.subscribe((event) => {
-      if (event.type !== "bridge_status") agentEventsB.push(event);
-    });
-
-    // Emit an agent event on bridge A's child process
-    harnessA.emit({ type: "agent_start" });
-    await waitForMicrotasks();
-
-    // Bridge A's subscriber should see it; bridge B's should not
-    assert.ok(agentEventsA.length > 0, "bridge A subscriber should see agent_start");
-    assert.equal(agentEventsB.length, 0, "bridge B subscriber should NOT see events from bridge A");
-
-    unsubA();
-    unsubB();
-    unsubA2();
-    unsubB2();
-  } finally {
+  t.after(async () => {
     await bridge.resetBridgeServiceForTests();
     fixtureA.cleanup();
     fixtureB.cleanup();
-  }
+  });
+
+  const bridgeA = bridge.getProjectBridgeServiceForCwd(fixtureA.projectCwd);
+  const bridgeB = bridge.getProjectBridgeServiceForCwd(fixtureB.projectCwd);
+
+  const eventsA: any[] = [];
+  const eventsB: any[] = [];
+
+  const unsubA = bridgeA.subscribe((event) => eventsA.push(event));
+  const unsubB = bridgeB.subscribe((event) => eventsB.push(event));
+
+  // Subscribe fires an initial bridge_status event for each
+  const initialA = eventsA.length;
+  const initialB = eventsB.length;
+
+  // Start bridge A so it has a child process
+  await bridgeA.ensureStarted();
+  await waitForMicrotasks();
+
+  // Filter to only non-bridge_status events that we emit manually
+  const agentEventsA: any[] = [];
+  const agentEventsB: any[] = [];
+
+  const unsubA2 = bridgeA.subscribe((event) => {
+    if (event.type !== "bridge_status") agentEventsA.push(event);
+  });
+  const unsubB2 = bridgeB.subscribe((event) => {
+    if (event.type !== "bridge_status") agentEventsB.push(event);
+  });
+
+  // Emit an agent event on bridge A's child process
+  harnessA.emit({ type: "agent_start" });
+  await waitForMicrotasks();
+
+  // Bridge A's subscriber should see it; bridge B's should not
+  assert.ok(agentEventsA.length > 0, "bridge A subscriber should see agent_start");
+  assert.equal(agentEventsB.length, 0, "bridge B subscriber should NOT see events from bridge A");
+
+  unsubA();
+  unsubB();
+  unsubA2();
+  unsubB2();
 });
 
 test("multi-project: resolveProjectCwd reads ?project= from request URL", () => {
@@ -430,7 +430,7 @@ test("multi-project: resolveProjectCwd reads ?project= from request URL", () => 
   assert.equal(result, "/tmp/my-project");
 });
 
-test("multi-project: resolveProjectCwd falls back to GSD_WEB_PROJECT_CWD when no ?project= present", () => {
+test("multi-project: resolveProjectCwd falls back to GSD_WEB_PROJECT_CWD when no ?project= present", (t) => {
   bridge.configureBridgeServiceForTests({
     env: {
       ...process.env,
@@ -443,17 +443,15 @@ test("multi-project: resolveProjectCwd falls back to GSD_WEB_PROJECT_CWD when no
     getOnboardingNeeded: () => false,
   });
 
-  try {
-    const result = bridge.resolveProjectCwd(
-      new Request("http://localhost/api/boot"),
-    );
-    assert.equal(result, "/fallback/path");
-  } finally {
-    bridge.configureBridgeServiceForTests(null);
-  }
+  t.after(() => { bridge.configureBridgeServiceForTests(null); });
+
+  const result = bridge.resolveProjectCwd(
+    new Request("http://localhost/api/boot"),
+  );
+  assert.equal(result, "/fallback/path");
 });
 
-test("multi-project: getProjectBridgeService backward compat shim works", async () => {
+test("multi-project: getProjectBridgeService backward compat shim works", async (t) => {
   const fixture = makeWorkspaceFixture("compat");
   const harness = createHarness("sess-compat");
 
@@ -470,23 +468,23 @@ test("multi-project: getProjectBridgeService backward compat shim works", async 
     getOnboardingNeeded: () => false,
   });
 
-  try {
-    const service = bridge.getProjectBridgeService();
-    assert.ok(service, "getProjectBridgeService() should return a BridgeService");
-    const snapshot = service.getSnapshot();
-    assert.equal(snapshot.projectCwd, fixture.projectCwd, "backward compat shim should use env-resolved projectCwd");
-    assert.equal(snapshot.phase, "idle");
-
-    // Same instance as getProjectBridgeServiceForCwd with the same path
-    const directService = bridge.getProjectBridgeServiceForCwd(fixture.projectCwd);
-    assert.strictEqual(service, directService, "backward compat shim should return same instance as direct lookup");
-  } finally {
+  t.after(async () => {
     await bridge.resetBridgeServiceForTests();
     fixture.cleanup();
-  }
+  });
+
+  const service = bridge.getProjectBridgeService();
+  assert.ok(service, "getProjectBridgeService() should return a BridgeService");
+  const snapshot = service.getSnapshot();
+  assert.equal(snapshot.projectCwd, fixture.projectCwd, "backward compat shim should use env-resolved projectCwd");
+  assert.equal(snapshot.phase, "idle");
+
+  // Same instance as getProjectBridgeServiceForCwd with the same path
+  const directService = bridge.getProjectBridgeServiceForCwd(fixture.projectCwd);
+  assert.strictEqual(service, directService, "backward compat shim should return same instance as direct lookup");
 });
 
-test("multi-project: resetBridgeServiceForTests clears all registry entries", async () => {
+test("multi-project: resetBridgeServiceForTests clears all registry entries", async (t) => {
   const fixtureA = makeWorkspaceFixture("reset-A");
   const fixtureB = makeWorkspaceFixture("reset-B");
 
@@ -503,38 +501,38 @@ test("multi-project: resetBridgeServiceForTests clears all registry entries", as
     getOnboardingNeeded: () => false,
   });
 
-  try {
-    // Create two bridge instances
-    const beforeA = bridge.getProjectBridgeServiceForCwd(fixtureA.projectCwd);
-    const beforeB = bridge.getProjectBridgeServiceForCwd(fixtureB.projectCwd);
-    assert.notStrictEqual(beforeA, beforeB);
-
-    // Reset clears the registry
-    await bridge.resetBridgeServiceForTests();
-
-    // Re-configure after reset (reset clears overrides too)
-    bridge.configureBridgeServiceForTests({
-      env: {
-        ...process.env,
-        GSD_WEB_PROJECT_CWD: fixtureA.projectCwd,
-        GSD_WEB_PROJECT_SESSIONS_DIR: fixtureA.sessionsDir,
-        GSD_WEB_PACKAGE_ROOT: repoRoot,
-      },
-      spawn: createHarness("unused").spawn,
-      indexWorkspace: async () => fakeWorkspaceIndex(),
-      getAutoDashboardData: () => fakeAutoDashboardData(),
-      getOnboardingNeeded: () => false,
-    });
-
-    // Should get new instances
-    const afterA = bridge.getProjectBridgeServiceForCwd(fixtureA.projectCwd);
-    const afterB = bridge.getProjectBridgeServiceForCwd(fixtureB.projectCwd);
-    assert.notStrictEqual(afterA, beforeA, "reset must create fresh instances for path A");
-    assert.notStrictEqual(afterB, beforeB, "reset must create fresh instances for path B");
-    assert.notStrictEqual(afterA, afterB, "new instances should still be distinct");
-  } finally {
+  t.after(async () => {
     await bridge.resetBridgeServiceForTests();
     fixtureA.cleanup();
     fixtureB.cleanup();
-  }
+  });
+
+  // Create two bridge instances
+  const beforeA = bridge.getProjectBridgeServiceForCwd(fixtureA.projectCwd);
+  const beforeB = bridge.getProjectBridgeServiceForCwd(fixtureB.projectCwd);
+  assert.notStrictEqual(beforeA, beforeB);
+
+  // Reset clears the registry
+  await bridge.resetBridgeServiceForTests();
+
+  // Re-configure after reset (reset clears overrides too)
+  bridge.configureBridgeServiceForTests({
+    env: {
+      ...process.env,
+      GSD_WEB_PROJECT_CWD: fixtureA.projectCwd,
+      GSD_WEB_PROJECT_SESSIONS_DIR: fixtureA.sessionsDir,
+      GSD_WEB_PACKAGE_ROOT: repoRoot,
+    },
+    spawn: createHarness("unused").spawn,
+    indexWorkspace: async () => fakeWorkspaceIndex(),
+    getAutoDashboardData: () => fakeAutoDashboardData(),
+    getOnboardingNeeded: () => false,
+  });
+
+  // Should get new instances
+  const afterA = bridge.getProjectBridgeServiceForCwd(fixtureA.projectCwd);
+  const afterB = bridge.getProjectBridgeServiceForCwd(fixtureB.projectCwd);
+  assert.notStrictEqual(afterA, beforeA, "reset must create fresh instances for path A");
+  assert.notStrictEqual(afterB, beforeB, "reset must create fresh instances for path B");
+  assert.notStrictEqual(afterA, afterB, "new instances should still be distinct");
 });

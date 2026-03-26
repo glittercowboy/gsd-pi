@@ -36,176 +36,156 @@ function makeTempDir(prefix: string): string {
 
 // ─── appendCapture ────────────────────────────────────────────────────────────
 
-test("captures: appendCapture creates CAPTURES.md on first call", () => {
+test("captures: appendCapture creates CAPTURES.md on first call", (t) => {
   const tmp = makeTempDir("cap-create");
-  try {
-    const id = appendCapture(tmp, "first thought");
-    assert.ok(id.startsWith("CAP-"), "ID should start with CAP-");
-    assert.ok(
-      existsSync(join(tmp, ".gsd", "CAPTURES.md")),
-      "CAPTURES.md should exist",
-    );
-    const content = readFileSync(join(tmp, ".gsd", "CAPTURES.md"), "utf-8");
-    assert.ok(content.includes("# Captures"), "should have header");
-    assert.ok(content.includes(`### ${id}`), "should have entry heading");
-    assert.ok(
-      content.includes("**Text:** first thought"),
-      "should have text field",
-    );
-    assert.ok(
-      content.includes("**Status:** pending"),
-      "should have pending status",
-    );
-  } finally {
-    rmSync(tmp, { recursive: true, force: true });
-  }
+  t.after(() => rmSync(tmp, { recursive: true, force: true }));
+
+  const id = appendCapture(tmp, "first thought");
+  assert.ok(id.startsWith("CAP-"), "ID should start with CAP-");
+  assert.ok(
+    existsSync(join(tmp, ".gsd", "CAPTURES.md")),
+    "CAPTURES.md should exist",
+  );
+  const content = readFileSync(join(tmp, ".gsd", "CAPTURES.md"), "utf-8");
+  assert.ok(content.includes("# Captures"), "should have header");
+  assert.ok(content.includes(`### ${id}`), "should have entry heading");
+  assert.ok(
+    content.includes("**Text:** first thought"),
+    "should have text field",
+  );
+  assert.ok(
+    content.includes("**Status:** pending"),
+    "should have pending status",
+  );
 });
 
-test("captures: appendCapture appends to existing file", () => {
+test("captures: appendCapture appends to existing file", (t) => {
   const tmp = makeTempDir("cap-append");
-  try {
-    const id1 = appendCapture(tmp, "thought one");
-    const id2 = appendCapture(tmp, "thought two");
-    assert.notStrictEqual(id1, id2, "IDs should be unique");
+  t.after(() => rmSync(tmp, { recursive: true, force: true }));
 
-    const content = readFileSync(join(tmp, ".gsd", "CAPTURES.md"), "utf-8");
-    assert.ok(content.includes(`### ${id1}`), "should have first entry");
-    assert.ok(content.includes(`### ${id2}`), "should have second entry");
-    assert.ok(
-      content.includes("**Text:** thought one"),
-      "should have first text",
-    );
-    assert.ok(
-      content.includes("**Text:** thought two"),
-      "should have second text",
-    );
-  } finally {
-    rmSync(tmp, { recursive: true, force: true });
-  }
+  const id1 = appendCapture(tmp, "thought one");
+  const id2 = appendCapture(tmp, "thought two");
+  assert.notStrictEqual(id1, id2, "IDs should be unique");
+
+  const content = readFileSync(join(tmp, ".gsd", "CAPTURES.md"), "utf-8");
+  assert.ok(content.includes(`### ${id1}`), "should have first entry");
+  assert.ok(content.includes(`### ${id2}`), "should have second entry");
+  assert.ok(
+    content.includes("**Text:** thought one"),
+    "should have first text",
+  );
+  assert.ok(
+    content.includes("**Text:** thought two"),
+    "should have second text",
+  );
 });
 
 // ─── loadAllCaptures / loadPendingCaptures ────────────────────────────────────
 
-test("captures: loadAllCaptures parses entries correctly", () => {
+test("captures: loadAllCaptures parses entries correctly", (t) => {
   const tmp = makeTempDir("cap-load");
-  try {
-    appendCapture(tmp, "alpha");
-    appendCapture(tmp, "beta");
+  t.after(() => rmSync(tmp, { recursive: true, force: true }));
 
-    const all = loadAllCaptures(tmp);
-    assert.strictEqual(all.length, 2, "should have 2 entries");
-    assert.strictEqual(all[0].text, "alpha");
-    assert.strictEqual(all[1].text, "beta");
-    assert.strictEqual(all[0].status, "pending");
-    assert.strictEqual(all[1].status, "pending");
-  } finally {
-    rmSync(tmp, { recursive: true, force: true });
-  }
+  appendCapture(tmp, "alpha");
+  appendCapture(tmp, "beta");
+
+  const all = loadAllCaptures(tmp);
+  assert.strictEqual(all.length, 2, "should have 2 entries");
+  assert.strictEqual(all[0].text, "alpha");
+  assert.strictEqual(all[1].text, "beta");
+  assert.strictEqual(all[0].status, "pending");
+  assert.strictEqual(all[1].status, "pending");
 });
 
-test("captures: loadAllCaptures returns empty array when no file", () => {
+test("captures: loadAllCaptures returns empty array when no file", (t) => {
   const tmp = makeTempDir("cap-nofile");
-  try {
-    const all = loadAllCaptures(tmp);
-    assert.strictEqual(all.length, 0);
-  } finally {
-    rmSync(tmp, { recursive: true, force: true });
-  }
+  t.after(() => rmSync(tmp, { recursive: true, force: true }));
+
+  const all = loadAllCaptures(tmp);
+  assert.strictEqual(all.length, 0);
 });
 
-test("captures: loadPendingCaptures filters resolved entries", () => {
+test("captures: loadPendingCaptures filters resolved entries", (t) => {
   const tmp = makeTempDir("cap-pending");
-  try {
-    const id1 = appendCapture(tmp, "pending one");
-    appendCapture(tmp, "pending two");
+  t.after(() => rmSync(tmp, { recursive: true, force: true }));
 
-    markCaptureResolved(tmp, id1, "note", "acknowledged", "just a note");
+  const id1 = appendCapture(tmp, "pending one");
+  appendCapture(tmp, "pending two");
 
-    const pending = loadPendingCaptures(tmp);
-    assert.strictEqual(pending.length, 1, "should have 1 pending");
-    assert.strictEqual(pending[0].text, "pending two");
-  } finally {
-    rmSync(tmp, { recursive: true, force: true });
-  }
+  markCaptureResolved(tmp, id1, "note", "acknowledged", "just a note");
+
+  const pending = loadPendingCaptures(tmp);
+  assert.strictEqual(pending.length, 1, "should have 1 pending");
+  assert.strictEqual(pending[0].text, "pending two");
 });
 
-test("captures: loadAllCaptures preserves resolved entries", () => {
+test("captures: loadAllCaptures preserves resolved entries", (t) => {
   const tmp = makeTempDir("cap-all-resolved");
-  try {
-    const id1 = appendCapture(tmp, "pending one");
-    appendCapture(tmp, "pending two");
+  t.after(() => rmSync(tmp, { recursive: true, force: true }));
 
-    markCaptureResolved(tmp, id1, "note", "acknowledged", "just a note");
+  const id1 = appendCapture(tmp, "pending one");
+  appendCapture(tmp, "pending two");
 
-    const all = loadAllCaptures(tmp);
-    assert.strictEqual(all.length, 2, "all should still have 2");
-    assert.strictEqual(all[0].status, "resolved");
-    assert.strictEqual(all[1].status, "pending");
-  } finally {
-    rmSync(tmp, { recursive: true, force: true });
-  }
+  markCaptureResolved(tmp, id1, "note", "acknowledged", "just a note");
+
+  const all = loadAllCaptures(tmp);
+  assert.strictEqual(all.length, 2, "all should still have 2");
+  assert.strictEqual(all[0].status, "resolved");
+  assert.strictEqual(all[1].status, "pending");
 });
 
 // ─── hasPendingCaptures ───────────────────────────────────────────────────────
 
-test("captures: hasPendingCaptures returns false when no file", () => {
+test("captures: hasPendingCaptures returns false when no file", (t) => {
   const tmp = makeTempDir("cap-has-nofile");
-  try {
-    assert.strictEqual(hasPendingCaptures(tmp), false);
-  } finally {
-    rmSync(tmp, { recursive: true, force: true });
-  }
+  t.after(() => rmSync(tmp, { recursive: true, force: true }));
+
+  assert.strictEqual(hasPendingCaptures(tmp), false);
 });
 
-test("captures: hasPendingCaptures returns true with pending entries", () => {
+test("captures: hasPendingCaptures returns true with pending entries", (t) => {
   const tmp = makeTempDir("cap-has-true");
-  try {
-    appendCapture(tmp, "something");
-    assert.strictEqual(hasPendingCaptures(tmp), true);
-  } finally {
-    rmSync(tmp, { recursive: true, force: true });
-  }
+  t.after(() => rmSync(tmp, { recursive: true, force: true }));
+
+  appendCapture(tmp, "something");
+  assert.strictEqual(hasPendingCaptures(tmp), true);
 });
 
-test("captures: hasPendingCaptures returns false when all resolved", () => {
+test("captures: hasPendingCaptures returns false when all resolved", (t) => {
   const tmp = makeTempDir("cap-has-false");
-  try {
-    const id = appendCapture(tmp, "will resolve");
-    markCaptureResolved(tmp, id, "note", "done", "resolved it");
-    assert.strictEqual(hasPendingCaptures(tmp), false);
-  } finally {
-    rmSync(tmp, { recursive: true, force: true });
-  }
+  t.after(() => rmSync(tmp, { recursive: true, force: true }));
+
+  const id = appendCapture(tmp, "will resolve");
+  markCaptureResolved(tmp, id, "note", "done", "resolved it");
+  assert.strictEqual(hasPendingCaptures(tmp), false);
 });
 
 // ─── markCaptureResolved ──────────────────────────────────────────────────────
 
-test("captures: markCaptureResolved updates entry in place", () => {
+test("captures: markCaptureResolved updates entry in place", (t) => {
   const tmp = makeTempDir("cap-resolve");
-  try {
-    const id1 = appendCapture(tmp, "keep pending");
-    const id2 = appendCapture(tmp, "will resolve");
-    appendCapture(tmp, "also pending");
+  t.after(() => rmSync(tmp, { recursive: true, force: true }));
 
-    markCaptureResolved(tmp, id2, "quick-task", "executed inline", "small fix");
+  const id1 = appendCapture(tmp, "keep pending");
+  const id2 = appendCapture(tmp, "will resolve");
+  appendCapture(tmp, "also pending");
 
-    const all = loadAllCaptures(tmp);
-    assert.strictEqual(all.length, 3, "should still have 3 entries");
+  markCaptureResolved(tmp, id2, "quick-task", "executed inline", "small fix");
 
-    const resolved = all.find((c) => c.id === id2)!;
-    assert.strictEqual(resolved.status, "resolved");
-    assert.strictEqual(resolved.classification, "quick-task");
-    assert.strictEqual(resolved.resolution, "executed inline");
-    assert.strictEqual(resolved.rationale, "small fix");
-    assert.ok(resolved.resolvedAt, "should have resolved timestamp");
+  const all = loadAllCaptures(tmp);
+  assert.strictEqual(all.length, 3, "should still have 3 entries");
 
-    // Others should be unaffected
-    const kept = all.find((c) => c.id === id1)!;
-    assert.strictEqual(kept.status, "pending");
-    assert.strictEqual(kept.classification, undefined);
-  } finally {
-    rmSync(tmp, { recursive: true, force: true });
-  }
+  const resolved = all.find((c) => c.id === id2)!;
+  assert.strictEqual(resolved.status, "resolved");
+  assert.strictEqual(resolved.classification, "quick-task");
+  assert.strictEqual(resolved.resolution, "executed inline");
+  assert.strictEqual(resolved.rationale, "small fix");
+  assert.ok(resolved.resolvedAt, "should have resolved timestamp");
+
+  // Others should be unaffected
+  const kept = all.find((c) => c.id === id1)!;
+  assert.strictEqual(kept.status, "pending");
+  assert.strictEqual(kept.classification, undefined);
 });
 
 // ─── resolveCapturesPath ──────────────────────────────────────────────────────
@@ -371,58 +351,50 @@ test("triage: parseTriageOutput handles all five classification types", () => {
 
 // ─── Edge Cases ───────────────────────────────────────────────────────────────
 
-test("captures: appendCapture handles special characters in text", () => {
+test("captures: appendCapture handles special characters in text", (t) => {
   const tmp = makeTempDir("cap-special");
-  try {
-    const id = appendCapture(tmp, 'text with "quotes" and **bold** and `code`');
-    const all = loadAllCaptures(tmp);
-    assert.strictEqual(all.length, 1);
-    assert.ok(all[0].text.includes('"quotes"'), "should preserve quotes");
-    assert.ok(all[0].text.includes("**bold**"), "should preserve bold");
-  } finally {
-    rmSync(tmp, { recursive: true, force: true });
-  }
+  t.after(() => rmSync(tmp, { recursive: true, force: true }));
+
+  const id = appendCapture(tmp, 'text with "quotes" and **bold** and `code`');
+  const all = loadAllCaptures(tmp);
+  assert.strictEqual(all.length, 1);
+  assert.ok(all[0].text.includes('"quotes"'), "should preserve quotes");
+  assert.ok(all[0].text.includes("**bold**"), "should preserve bold");
 });
 
-test("captures: markCaptureResolved is no-op for non-existent ID", () => {
+test("captures: markCaptureResolved is no-op for non-existent ID", (t) => {
   const tmp = makeTempDir("cap-noop");
-  try {
-    appendCapture(tmp, "real capture");
-    // Should not throw
-    markCaptureResolved(tmp, "CAP-nonexistent", "note", "test", "test");
-    const all = loadAllCaptures(tmp);
-    assert.strictEqual(all.length, 1);
-    assert.strictEqual(all[0].status, "pending", "original should be unchanged");
-  } finally {
-    rmSync(tmp, { recursive: true, force: true });
-  }
+  t.after(() => rmSync(tmp, { recursive: true, force: true }));
+
+  appendCapture(tmp, "real capture");
+  // Should not throw
+  markCaptureResolved(tmp, "CAP-nonexistent", "note", "test", "test");
+  const all = loadAllCaptures(tmp);
+  assert.strictEqual(all.length, 1);
+  assert.strictEqual(all[0].status, "pending", "original should be unchanged");
 });
 
-test("captures: markCaptureResolved is no-op when no file exists", () => {
+test("captures: markCaptureResolved is no-op when no file exists", (t) => {
   const tmp = makeTempDir("cap-nofile-resolve");
-  try {
-    // Should not throw
-    markCaptureResolved(tmp, "CAP-abc", "note", "test", "test");
-  } finally {
-    rmSync(tmp, { recursive: true, force: true });
-  }
+  t.after(() => rmSync(tmp, { recursive: true, force: true }));
+
+  // Should not throw
+  markCaptureResolved(tmp, "CAP-abc", "note", "test", "test");
 });
 
-test("captures: re-resolving a capture overwrites previous resolution", () => {
+test("captures: re-resolving a capture overwrites previous resolution", (t) => {
   const tmp = makeTempDir("cap-reresolve");
-  try {
-    const id = appendCapture(tmp, "will re-resolve");
-    markCaptureResolved(tmp, id, "note", "first resolution", "first rationale");
-    markCaptureResolved(tmp, id, "inject", "second resolution", "second rationale");
+  t.after(() => rmSync(tmp, { recursive: true, force: true }));
 
-    const all = loadAllCaptures(tmp);
-    assert.strictEqual(all.length, 1);
-    assert.strictEqual(all[0].classification, "inject", "should have updated classification");
-    assert.strictEqual(all[0].resolution, "second resolution");
-    assert.strictEqual(all[0].rationale, "second rationale");
-  } finally {
-    rmSync(tmp, { recursive: true, force: true });
-  }
+  const id = appendCapture(tmp, "will re-resolve");
+  markCaptureResolved(tmp, id, "note", "first resolution", "first rationale");
+  markCaptureResolved(tmp, id, "inject", "second resolution", "second rationale");
+
+  const all = loadAllCaptures(tmp);
+  assert.strictEqual(all.length, 1);
+  assert.strictEqual(all[0].classification, "inject", "should have updated classification");
+  assert.strictEqual(all[0].resolution, "second resolution");
+  assert.strictEqual(all[0].rationale, "second rationale");
 });
 
 test("triage: parseTriageOutput preserves affectedFiles and targetSlice", () => {

@@ -56,7 +56,7 @@ function makeStep(overrides: Partial<GraphStep> & { id: string }): GraphStep {
 // ─── writeGraph + readGraph round-trip ───────────────────────────────────
 
 describe("writeGraph + readGraph round-trip", () => {
-  it("preserves all fields including parentStepId and dependsOn", () => {
+  it("preserves all fields including parentStepId and dependsOn", (t) => {
     const dir = makeTmpDir();
     try {
       const graph = makeGraph([
@@ -89,7 +89,7 @@ describe("writeGraph + readGraph round-trip", () => {
     }
   });
 
-  it("preserves startedAt and finishedAt fields", () => {
+  it("preserves startedAt and finishedAt fields", (t) => {
     const dir = makeTmpDir();
     try {
       const graph = makeGraph([
@@ -110,7 +110,7 @@ describe("writeGraph + readGraph round-trip", () => {
     }
   });
 
-  it("creates directory if it does not exist", () => {
+  it("creates directory if it does not exist", (t) => {
     const base = makeTmpDir();
     const nested = join(base, "sub", "dir");
     try {
@@ -129,59 +129,53 @@ describe("writeGraph + readGraph round-trip", () => {
 // ─── readGraph error paths ───────────────────────────────────────────────
 
 describe("readGraph error paths", () => {
-  it("throws with descriptive error when file is missing", () => {
+  it("throws with descriptive error when file is missing", (t) => {
     const dir = makeTmpDir();
-    try {
-      assert.throws(
-        () => readGraph(dir),
-        (err: Error) => {
-          assert.ok(err.message.includes("GRAPH.yaml not found"));
-          assert.ok(err.message.includes(dir));
-          return true;
-        },
-      );
-    } finally {
-      cleanupDir(dir);
-    }
+    t.after(() => { cleanupDir(dir); });
+
+    assert.throws(
+      () => readGraph(dir),
+      (err: Error) => {
+        assert.ok(err.message.includes("GRAPH.yaml not found"));
+        assert.ok(err.message.includes(dir));
+        return true;
+      },
+    );
   });
 
-  it("throws with descriptive error when YAML is malformed (missing steps)", () => {
+  it("throws with descriptive error when YAML is malformed (missing steps)", (t) => {
     const dir = makeTmpDir();
-    try {
-      writeFileSync(join(dir, "GRAPH.yaml"), "metadata:\n  name: bad\n", "utf-8");
-      assert.throws(
-        () => readGraph(dir),
-        (err: Error) => {
-          assert.ok(err.message.includes("missing or invalid 'steps' array"));
-          return true;
-        },
-      );
-    } finally {
-      cleanupDir(dir);
-    }
+    t.after(() => { cleanupDir(dir); });
+
+    writeFileSync(join(dir, "GRAPH.yaml"), "metadata:\n  name: bad\n", "utf-8");
+    assert.throws(
+      () => readGraph(dir),
+      (err: Error) => {
+        assert.ok(err.message.includes("missing or invalid 'steps' array"));
+        return true;
+      },
+    );
   });
 
-  it("throws when steps is not an array", () => {
+  it("throws when steps is not an array", (t) => {
     const dir = makeTmpDir();
-    try {
-      writeFileSync(join(dir, "GRAPH.yaml"), "steps: not-an-array\nmetadata:\n  name: bad\n", "utf-8");
-      assert.throws(
-        () => readGraph(dir),
-        (err: Error) => {
-          assert.ok(err.message.includes("missing or invalid 'steps' array"));
-          return true;
-        },
-      );
-    } finally {
-      cleanupDir(dir);
-    }
+    t.after(() => { cleanupDir(dir); });
+
+    writeFileSync(join(dir, "GRAPH.yaml"), "steps: not-an-array\nmetadata:\n  name: bad\n", "utf-8");
+    assert.throws(
+      () => readGraph(dir),
+      (err: Error) => {
+        assert.ok(err.message.includes("missing or invalid 'steps' array"));
+        return true;
+      },
+    );
   });
 });
 
 // ─── getNextPendingStep ──────────────────────────────────────────────────
 
 describe("getNextPendingStep", () => {
-  it("returns first step with all deps complete", () => {
+  it("returns first step with all deps complete", (t) => {
     const graph = makeGraph([
       makeStep({ id: "a", status: "complete" }),
       makeStep({ id: "b", dependsOn: ["a"] }),
@@ -192,7 +186,7 @@ describe("getNextPendingStep", () => {
     assert.equal(next?.id, "b");
   });
 
-  it("skips steps with incomplete deps", () => {
+  it("skips steps with incomplete deps", (t) => {
     const graph = makeGraph([
       makeStep({ id: "a" }),
       makeStep({ id: "b", dependsOn: ["a"] }),
@@ -203,7 +197,7 @@ describe("getNextPendingStep", () => {
     assert.equal(next?.id, "a");
   });
 
-  it("returns null when all steps are complete", () => {
+  it("returns null when all steps are complete", (t) => {
     const graph = makeGraph([
       makeStep({ id: "a", status: "complete" }),
       makeStep({ id: "b", status: "complete" }),
@@ -212,7 +206,7 @@ describe("getNextPendingStep", () => {
     assert.equal(getNextPendingStep(graph), null);
   });
 
-  it("returns null when all pending steps are blocked", () => {
+  it("returns null when all pending steps are blocked", (t) => {
     const graph = makeGraph([
       makeStep({ id: "a", status: "active" }), // not complete
       makeStep({ id: "b", dependsOn: ["a"] }),  // blocked
@@ -221,7 +215,7 @@ describe("getNextPendingStep", () => {
     assert.equal(getNextPendingStep(graph), null);
   });
 
-  it("returns first pending step with no deps when root steps exist", () => {
+  it("returns first pending step with no deps when root steps exist", (t) => {
     const graph = makeGraph([
       makeStep({ id: "a" }),
       makeStep({ id: "b" }),
@@ -231,7 +225,7 @@ describe("getNextPendingStep", () => {
     assert.equal(next?.id, "a");
   });
 
-  it("skips expanded steps", () => {
+  it("skips expanded steps", (t) => {
     const graph = makeGraph([
       makeStep({ id: "a", status: "expanded" }),
       makeStep({ id: "b" }),
@@ -245,7 +239,7 @@ describe("getNextPendingStep", () => {
 // ─── markStepComplete ────────────────────────────────────────────────────
 
 describe("markStepComplete", () => {
-  it("returns new graph with step status 'complete' (original unchanged)", () => {
+  it("returns new graph with step status 'complete' (original unchanged)", (t) => {
     const original = makeGraph([
       makeStep({ id: "a" }),
       makeStep({ id: "b" }),
@@ -264,7 +258,7 @@ describe("markStepComplete", () => {
     assert.equal(updated.steps[1].status, "pending");
   });
 
-  it("sets finishedAt timestamp", () => {
+  it("sets finishedAt timestamp", (t) => {
     const graph = makeGraph([makeStep({ id: "a" })]);
     const updated = markStepComplete(graph, "a");
     assert.ok(updated.steps[0].finishedAt);
@@ -272,7 +266,7 @@ describe("markStepComplete", () => {
     assert.ok(!isNaN(Date.parse(updated.steps[0].finishedAt!)));
   });
 
-  it("throws for unknown step ID", () => {
+  it("throws for unknown step ID", (t) => {
     const graph = makeGraph([makeStep({ id: "a" })]);
     assert.throws(
       () => markStepComplete(graph, "nonexistent"),
@@ -284,7 +278,7 @@ describe("markStepComplete", () => {
     );
   });
 
-  it("preserves metadata in returned graph", () => {
+  it("preserves metadata in returned graph", (t) => {
     const graph = makeGraph([makeStep({ id: "a" })], "my-workflow");
     const updated = markStepComplete(graph, "a");
     assert.equal(updated.metadata.name, "my-workflow");
@@ -295,7 +289,7 @@ describe("markStepComplete", () => {
 // ─── expandIteration ─────────────────────────────────────────────────────
 
 describe("expandIteration", () => {
-  it("creates instance steps with correct IDs (stepId--001, stepId--002)", () => {
+  it("creates instance steps with correct IDs (stepId--001, stepId--002)", (t) => {
     const graph = makeGraph([
       makeStep({ id: "iter-step", title: "Process items" }),
       makeStep({ id: "final", dependsOn: ["iter-step"] }),
@@ -317,7 +311,7 @@ describe("expandIteration", () => {
     assert.equal(expanded.steps[3].id, "iter-step--003");
   });
 
-  it("marks parent step as 'expanded'", () => {
+  it("marks parent step as 'expanded'", (t) => {
     const graph = makeGraph([
       makeStep({ id: "iter", title: "Iterate" }),
     ]);
@@ -326,7 +320,7 @@ describe("expandIteration", () => {
     assert.equal(expanded.steps[0].status, "expanded");
   });
 
-  it("instance steps have correct titles, prompts, parentStepId, and deps", () => {
+  it("instance steps have correct titles, prompts, parentStepId, and deps", (t) => {
     const graph = makeGraph([
       makeStep({ id: "pre", status: "complete" }),
       makeStep({ id: "iter", title: "Process", dependsOn: ["pre"] }),
@@ -352,7 +346,7 @@ describe("expandIteration", () => {
     assert.equal(inst2.parentStepId, "iter");
   });
 
-  it("rewrites downstream deps from parent ID to all instance IDs", () => {
+  it("rewrites downstream deps from parent ID to all instance IDs", (t) => {
     const graph = makeGraph([
       makeStep({ id: "iter", title: "Iterate" }),
       makeStep({ id: "after", dependsOn: ["iter"] }),
@@ -370,7 +364,7 @@ describe("expandIteration", () => {
     assert.deepStrictEqual(afterStep.dependsOn, ["iter--001", "iter--002"]);
   });
 
-  it("preserves steps that don't depend on the parent", () => {
+  it("preserves steps that don't depend on the parent", (t) => {
     const graph = makeGraph([
       makeStep({ id: "unrelated" }),
       makeStep({ id: "iter", title: "Iterate" }),
@@ -382,7 +376,7 @@ describe("expandIteration", () => {
     assert.deepStrictEqual(unrelated.dependsOn, []);
   });
 
-  it("throws for non-pending parent step", () => {
+  it("throws for non-pending parent step", (t) => {
     const graph = makeGraph([
       makeStep({ id: "iter", status: "complete" }),
     ]);
@@ -397,7 +391,7 @@ describe("expandIteration", () => {
     );
   });
 
-  it("throws for unknown step ID", () => {
+  it("throws for unknown step ID", (t) => {
     const graph = makeGraph([makeStep({ id: "a" })]);
     assert.throws(
       () => expandIteration(graph, "nonexistent", ["a"], "{{item}}"),
@@ -409,7 +403,7 @@ describe("expandIteration", () => {
     );
   });
 
-  it("does not mutate the input graph", () => {
+  it("does not mutate the input graph", (t) => {
     const graph = makeGraph([
       makeStep({ id: "iter", title: "Iterate" }),
       makeStep({ id: "after", dependsOn: ["iter"] }),
@@ -430,7 +424,7 @@ describe("expandIteration", () => {
 // ─── initializeGraph ─────────────────────────────────────────────────────
 
 describe("initializeGraph", () => {
-  it("converts a valid 3-step definition to graph with all pending steps", () => {
+  it("converts a valid 3-step definition to graph with all pending steps", (t) => {
     const def: WorkflowDefinition = {
       version: 1,
       name: "test-workflow",
@@ -465,7 +459,7 @@ describe("initializeGraph", () => {
     assert.deepStrictEqual(graph.steps[2].dependsOn, ["s1", "s2"]);
   });
 
-  it("is also exported as graphFromDefinition (backward compat)", () => {
+  it("is also exported as graphFromDefinition (backward compat)", (t) => {
     assert.equal(graphFromDefinition, initializeGraph);
   });
 });
@@ -473,7 +467,7 @@ describe("initializeGraph", () => {
 // ─── Atomic write safety ─────────────────────────────────────────────────
 
 describe("atomic write safety", () => {
-  it("final file exists and .tmp file does not exist after write", () => {
+  it("final file exists and .tmp file does not exist after write", (t) => {
     const dir = makeTmpDir();
     try {
       const graph = makeGraph([makeStep({ id: "s1" })]);
@@ -486,7 +480,7 @@ describe("atomic write safety", () => {
     }
   });
 
-  it("YAML content is valid and parseable", () => {
+  it("YAML content is valid and parseable", (t) => {
     const dir = makeTmpDir();
     try {
       const graph = makeGraph([makeStep({ id: "s1" })]);
@@ -507,7 +501,7 @@ describe("atomic write safety", () => {
 // ─── YAML snake_case / camelCase boundary ────────────────────────────────
 
 describe("YAML snake_case / camelCase boundary", () => {
-  it("writes snake_case to disk and reads back as camelCase", () => {
+  it("writes snake_case to disk and reads back as camelCase", (t) => {
     const dir = makeTmpDir();
     try {
       const graph = makeGraph([
@@ -541,7 +535,7 @@ describe("YAML snake_case / camelCase boundary", () => {
     }
   });
 
-  it("omits optional fields from YAML when undefined", () => {
+  it("omits optional fields from YAML when undefined", (t) => {
     const dir = makeTmpDir();
     try {
       const graph = makeGraph([
@@ -565,7 +559,7 @@ describe("YAML snake_case / camelCase boundary", () => {
 // ─── Edge cases ──────────────────────────────────────────────────────────
 
 describe("edge cases", () => {
-  it("handles empty items array in expandIteration", () => {
+  it("handles empty items array in expandIteration", (t) => {
     const graph = makeGraph([
       makeStep({ id: "iter" }),
     ]);
@@ -576,7 +570,7 @@ describe("edge cases", () => {
     assert.equal(expanded.steps[0].status, "expanded");
   });
 
-  it("handles graph with single step", () => {
+  it("handles graph with single step", (t) => {
     const graph = makeGraph([makeStep({ id: "only" })]);
     const next = getNextPendingStep(graph);
     assert.equal(next?.id, "only");
@@ -585,7 +579,7 @@ describe("edge cases", () => {
     assert.equal(getNextPendingStep(completed), null);
   });
 
-  it("initializeGraph handles steps with empty requires", () => {
+  it("initializeGraph handles steps with empty requires", (t) => {
     const def: WorkflowDefinition = {
       version: 1,
       name: "empty-requires",

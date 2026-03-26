@@ -37,7 +37,7 @@ export function determineMergeOrder(
   workers: WorkerInfo[],
   order: MergeOrder = "sequential",
 ): string[] {
-  const completed = workers.filter(w => w.state === "stopped" && w.completedUnits > 0);
+  const completed = workers.filter(w => w.state === "stopped");
   if (order === "by-completion") {
     return completed
       .sort((a, b) => a.startedAt - b.startedAt) // earliest first

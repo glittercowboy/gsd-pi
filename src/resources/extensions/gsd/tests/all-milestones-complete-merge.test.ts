@@ -130,119 +130,119 @@ test("auto-loop 'all milestones complete' path merges before stopping (#962)", (
 
 // ─── Integration: single milestone completes → merged to main ────────────────
 
-test("single milestone worktree is merged to main when all complete (#962)", () => {
+test("single milestone worktree is merged to main when all complete (#962)", (t) => {
   const savedCwd = process.cwd();
   let tempDir = "";
 
-  try {
-    tempDir = createTempRepo();
-
-    // Set up a single milestone
-    createMilestoneArtifacts(tempDir, "M001");
-    run("git add .", tempDir);
-    run('git commit -m "add milestone"', tempDir);
-
-    // Create worktree and simulate work
-    const wt = createAutoWorktree(tempDir, "M001");
-    assert.ok(isInAutoWorktree(tempDir), "should be in auto-worktree");
-
-    writeFileSync(join(wt, "feature.ts"), "export const feature = true;\n");
-    run("git add .", wt);
-    run('git commit -m "feat(M001): add feature"', wt);
-
-    // Simulate the fix: merge before stopping (what the "all complete" path now does)
-    const roadmapPath = join(
-      tempDir,
-      ".gsd",
-      "milestones",
-      "M001",
-      "M001-ROADMAP.md",
-    );
-    const roadmapContent = readFileSync(roadmapPath, "utf-8");
-    const mergeResult = mergeMilestoneToMain(tempDir, "M001", roadmapContent);
-
-    // Verify work is on main
-    assert.ok(
-      existsSync(join(tempDir, "feature.ts")),
-      "feature.ts should be on main after merge",
-    );
-    assert.equal(process.cwd(), tempDir, "cwd restored to project root");
-    assert.ok(!isInAutoWorktree(tempDir), "no longer in auto-worktree");
-    assert.equal(getAutoWorktreeOriginalBase(), null, "originalBase cleared");
-
-    // Verify milestone branch was cleaned up
-    const branches = run("git branch", tempDir);
-    assert.ok(
-      !branches.includes("milestone/M001"),
-      "milestone branch should be deleted",
-    );
-
-    // Verify squash commit on main
-    const log = run("git log --oneline -3", tempDir);
-    assert.ok(
-      log.includes("M001"),
-      "squash commit on main should reference M001",
-    );
-
-    assert.ok(mergeResult.commitMessage.length > 0, "commit message returned");
-  } finally {
+  t.after(() => {
     process.chdir(savedCwd);
     if (tempDir && existsSync(tempDir)) {
-      rmSync(tempDir, { recursive: true, force: true });
+    rmSync(tempDir, { recursive: true, force: true });
     }
-  }
+  });
+
+  tempDir = createTempRepo();
+
+  // Set up a single milestone
+  createMilestoneArtifacts(tempDir, "M001");
+  run("git add .", tempDir);
+  run('git commit -m "add milestone"', tempDir);
+
+  // Create worktree and simulate work
+  const wt = createAutoWorktree(tempDir, "M001");
+  assert.ok(isInAutoWorktree(tempDir), "should be in auto-worktree");
+
+  writeFileSync(join(wt, "feature.ts"), "export const feature = true;\n");
+  run("git add .", wt);
+  run('git commit -m "feat(M001): add feature"', wt);
+
+  // Simulate the fix: merge before stopping (what the "all complete" path now does)
+  const roadmapPath = join(
+    tempDir,
+    ".gsd",
+    "milestones",
+    "M001",
+    "M001-ROADMAP.md",
+  );
+  const roadmapContent = readFileSync(roadmapPath, "utf-8");
+  const mergeResult = mergeMilestoneToMain(tempDir, "M001", roadmapContent);
+
+  // Verify work is on main
+  assert.ok(
+    existsSync(join(tempDir, "feature.ts")),
+    "feature.ts should be on main after merge",
+  );
+  assert.equal(process.cwd(), tempDir, "cwd restored to project root");
+  assert.ok(!isInAutoWorktree(tempDir), "no longer in auto-worktree");
+  assert.equal(getAutoWorktreeOriginalBase(), null, "originalBase cleared");
+
+  // Verify milestone branch was cleaned up
+  const branches = run("git branch", tempDir);
+  assert.ok(
+    !branches.includes("milestone/M001"),
+    "milestone branch should be deleted",
+  );
+
+  // Verify squash commit on main (milestone ID is in trailer, not subject)
+  const log = run("git log -3", tempDir);
+  assert.ok(
+    log.includes("M001"),
+    "squash commit on main should reference M001",
+  );
+
+  assert.ok(mergeResult.commitMessage.length > 0, "commit message returned");
 });
 
 // ─── Integration: last of multiple milestones completes → merged ─────────────
 
-test("last milestone worktree is merged when it's the final one (#962)", () => {
+test("last milestone worktree is merged when it's the final one (#962)", (t) => {
   const savedCwd = process.cwd();
   let tempDir = "";
 
-  try {
-    tempDir = createTempRepo();
-
-    // Set up two milestones
-    createMilestoneArtifacts(tempDir, "M001");
-    createMilestoneArtifacts(tempDir, "M002");
-    run("git add .", tempDir);
-    run('git commit -m "add milestones"', tempDir);
-
-    // Complete M001 first (merge it)
-    const wt1 = createAutoWorktree(tempDir, "M001");
-    writeFileSync(join(wt1, "m001-work.ts"), "export const m001 = true;\n");
-    run("git add .", wt1);
-    run('git commit -m "feat(M001): m001 work"', wt1);
-    const roadmap1 = readFileSync(
-      join(tempDir, ".gsd", "milestones", "M001", "M001-ROADMAP.md"),
-      "utf-8",
-    );
-    mergeMilestoneToMain(tempDir, "M001", roadmap1);
-
-    // Now complete M002 (the LAST milestone — this is the #962 scenario)
-    const wt2 = createAutoWorktree(tempDir, "M002");
-    writeFileSync(join(wt2, "m002-work.ts"), "export const m002 = true;\n");
-    run("git add .", wt2);
-    run('git commit -m "feat(M002): m002 work"', wt2);
-    const roadmap2 = readFileSync(
-      join(tempDir, ".gsd", "milestones", "M002", "M002-ROADMAP.md"),
-      "utf-8",
-    );
-    mergeMilestoneToMain(tempDir, "M002", roadmap2);
-
-    // Both features should now be on main
-    assert.ok(existsSync(join(tempDir, "m001-work.ts")), "M001 work on main");
-    assert.ok(existsSync(join(tempDir, "m002-work.ts")), "M002 work on main");
-    assert.ok(!isInAutoWorktree(tempDir), "not in worktree after final merge");
-
-    // Both milestone branches should be cleaned up
-    const branches = run("git branch", tempDir);
-    assert.ok(!branches.includes("milestone/M001"), "M001 branch deleted");
-    assert.ok(!branches.includes("milestone/M002"), "M002 branch deleted");
-  } finally {
+  t.after(() => {
     process.chdir(savedCwd);
     if (tempDir && existsSync(tempDir)) {
-      rmSync(tempDir, { recursive: true, force: true });
+    rmSync(tempDir, { recursive: true, force: true });
     }
-  }
+  });
+
+  tempDir = createTempRepo();
+
+  // Set up two milestones
+  createMilestoneArtifacts(tempDir, "M001");
+  createMilestoneArtifacts(tempDir, "M002");
+  run("git add .", tempDir);
+  run('git commit -m "add milestones"', tempDir);
+
+  // Complete M001 first (merge it)
+  const wt1 = createAutoWorktree(tempDir, "M001");
+  writeFileSync(join(wt1, "m001-work.ts"), "export const m001 = true;\n");
+  run("git add .", wt1);
+  run('git commit -m "feat(M001): m001 work"', wt1);
+  const roadmap1 = readFileSync(
+    join(tempDir, ".gsd", "milestones", "M001", "M001-ROADMAP.md"),
+    "utf-8",
+  );
+  mergeMilestoneToMain(tempDir, "M001", roadmap1);
+
+  // Now complete M002 (the LAST milestone — this is the #962 scenario)
+  const wt2 = createAutoWorktree(tempDir, "M002");
+  writeFileSync(join(wt2, "m002-work.ts"), "export const m002 = true;\n");
+  run("git add .", wt2);
+  run('git commit -m "feat(M002): m002 work"', wt2);
+  const roadmap2 = readFileSync(
+    join(tempDir, ".gsd", "milestones", "M002", "M002-ROADMAP.md"),
+    "utf-8",
+  );
+  mergeMilestoneToMain(tempDir, "M002", roadmap2);
+
+  // Both features should now be on main
+  assert.ok(existsSync(join(tempDir, "m001-work.ts")), "M001 work on main");
+  assert.ok(existsSync(join(tempDir, "m002-work.ts")), "M002 work on main");
+  assert.ok(!isInAutoWorktree(tempDir), "not in worktree after final merge");
+
+  // Both milestone branches should be cleaned up
+  const branches = run("git branch", tempDir);
+  assert.ok(!branches.includes("milestone/M001"), "M001 branch deleted");
+  assert.ok(!branches.includes("milestone/M002"), "M002 branch deleted");
 });

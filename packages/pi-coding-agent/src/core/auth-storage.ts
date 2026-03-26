@@ -744,7 +744,21 @@ export class AuthStorage {
 	 * @param providerId - The provider to get an API key for
 	 * @param sessionId - Optional session ID for sticky credential selection
 	 */
-	async getApiKey(providerId: string, sessionId?: string): Promise<string | undefined> {
+	async getApiKey(providerId: string, sessionId?: string, options?: { baseUrl?: string }): Promise<string | undefined> {
+		// If the model has a local baseUrl, return a dummy key to avoid auth blocking
+		if (options?.baseUrl) {
+			try {
+				const hostname = new URL(options.baseUrl).hostname;
+				if (hostname === "localhost" || hostname === "127.0.0.1" || hostname === "0.0.0.0" || hostname === "::1") {
+					return "local-no-key-needed";
+				}
+			} catch {
+				if (options.baseUrl.startsWith("unix:")) {
+					return "local-no-key-needed";
+				}
+			}
+		}
+
 		// Runtime override takes highest priority
 		const runtimeKey = this.runtimeOverrides.get(providerId);
 		if (runtimeKey) {

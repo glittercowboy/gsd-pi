@@ -1,0 +1,182 @@
+---
+title: "Commands reference"
+description: "Every GSD command, keyboard shortcut, and CLI flag."
+---
+
+## Session commands
+
+| Command | Description |
+|---------|-------------|
+| `/gsd` | Step mode — execute one unit at a time, pause between each |
+| `/gsd next` | Explicit step mode (same as `/gsd`) |
+| `/gsd auto` | Autonomous mode — research, plan, execute, commit, repeat |
+| `/gsd quick` | Execute a quick task with GSD guarantees without full planning overhead |
+| `/gsd stop` | Stop auto mode gracefully |
+| `/gsd pause` | Pause auto mode (preserves state, `/gsd auto` to resume) |
+| `/gsd steer` | Hard-steer plan documents during execution |
+| `/gsd discuss` | Discuss architecture and decisions (works alongside auto mode) |
+| `/gsd rethink` | Conversational project reorganization |
+| `/gsd mcp` | MCP server status and connectivity |
+| `/gsd status` | Progress dashboard |
+| `/gsd widget` | Cycle dashboard widget: full / small / min / off |
+| `/gsd queue` | Queue and reorder future milestones (safe during auto mode) |
+| `/gsd capture` | Fire-and-forget thought capture (works during auto mode) |
+| `/gsd triage` | Manually trigger triage of pending captures |
+| `/gsd dispatch` | Dispatch a specific phase directly |
+| `/gsd history` | View execution history (supports `--cost`, `--phase`, `--model` filters) |
+| `/gsd forensics` | Full-access debugger for auto-mode failures |
+| `/gsd cleanup` | Clean up GSD state files and stale worktrees |
+| `/gsd visualize` | Open workflow visualizer |
+| `/gsd export --html` | Generate self-contained HTML report |
+| `/gsd export --html --all` | Generate reports for all milestones |
+| `/gsd update` | Update GSD to the latest version in-session |
+| `/gsd knowledge` | Add persistent project knowledge |
+| `/gsd fast` | Toggle service tier for supported models |
+| `/gsd rate` | Rate last unit's model tier (over/ok/under) |
+| `/gsd changelog` | Show categorized release notes |
+| `/gsd logs` | Browse activity logs, debug logs, and metrics |
+| `/gsd remote` | Control remote auto-mode |
+| `/gsd help` | Categorized command reference |
+
+## Configuration and diagnostics
+
+| Command | Description |
+|---------|-------------|
+| `/gsd prefs` | Model selection, timeouts, budget ceiling |
+| `/gsd mode` | Switch workflow mode (solo/team) |
+| `/gsd config` | Re-run the provider setup wizard |
+| `/gsd keys` | API key manager — list, add, remove, test, rotate |
+| `/gsd doctor` | Runtime health checks with auto-fix |
+| `/gsd inspect` | Show SQLite DB diagnostics |
+| `/gsd init` | Project init wizard |
+| `/gsd setup` | Global setup status and configuration |
+| `/gsd skill-health` | Skill lifecycle dashboard |
+| `/gsd hooks` | Show configured post-unit and pre-dispatch hooks |
+| `/gsd run-hook` | Manually trigger a specific hook |
+| `/gsd migrate` | Migrate a v1 `.planning` directory to `.gsd` format |
+
+## Milestone management
+
+| Command | Description |
+|---------|-------------|
+| `/gsd new-milestone` | Create a new milestone |
+| `/gsd skip` | Prevent a unit from auto-mode dispatch |
+| `/gsd undo` | Revert last completed unit |
+| `/gsd undo-task` | Reset a specific task's completion state |
+| `/gsd reset-slice` | Reset a slice and all its tasks |
+| `/gsd park` | Park a milestone — skip without deleting |
+| `/gsd unpark` | Reactivate a parked milestone |
+
+## Parallel orchestration
+
+| Command | Description |
+|---------|-------------|
+| `/gsd parallel start` | Analyze eligibility, confirm, and start workers |
+| `/gsd parallel status` | Show all workers with state, progress, and cost |
+| `/gsd parallel stop [MID]` | Stop all workers or a specific one |
+| `/gsd parallel pause [MID]` | Pause all or a specific worker |
+| `/gsd parallel resume [MID]` | Resume paused workers |
+| `/gsd parallel merge [MID]` | Merge completed milestones to main |
+
+## Workflow templates
+
+| Command | Description |
+|---------|-------------|
+| `/gsd start` | Start a workflow template (bugfix, spike, feature, hotfix, refactor, etc.) |
+| `/gsd start resume` | Resume an in-progress workflow |
+| `/gsd templates` | List available workflow templates |
+| `/gsd templates info <name>` | Show detailed template info |
+
+## Custom workflows
+
+| Command | Description |
+|---------|-------------|
+| `/gsd workflow new` | Create a new workflow definition |
+| `/gsd workflow run <name>` | Create a run and start auto-mode |
+| `/gsd workflow list` | List workflow runs |
+| `/gsd workflow validate <name>` | Validate a workflow definition |
+| `/gsd workflow pause` | Pause custom workflow auto-mode |
+| `/gsd workflow resume` | Resume paused custom workflow auto-mode |
+
+## Extensions
+
+| Command | Description |
+|---------|-------------|
+| `/gsd extensions list` | List all extensions and their status |
+| `/gsd extensions enable <id>` | Enable a disabled extension |
+| `/gsd extensions disable <id>` | Disable an extension |
+| `/gsd extensions info <id>` | Show extension details |
+
+## Keyboard shortcuts
+
+| Shortcut | Action |
+|----------|--------|
+| `Ctrl+Alt+G` | Toggle dashboard overlay |
+| `Ctrl+Alt+V` | Toggle voice transcription |
+| `Ctrl+Alt+B` | Show background shell processes |
+| `Ctrl+V` / `Alt+V` | Paste image from clipboard |
+| `Escape` | Pause auto mode |
+
+<Note>
+In terminals without Kitty keyboard protocol support (macOS Terminal.app, JetBrains IDEs), slash-command fallbacks are shown instead of `Ctrl+Alt` shortcuts.
+</Note>
+
+## CLI flags
+
+| Flag | Description |
+|------|-------------|
+| `gsd` | Start a new interactive session |
+| `gsd --continue` (`-c`) | Resume the most recent session |
+| `gsd --model <id>` | Override the default model |
+| `gsd --print "msg"` (`-p`) | Single-shot prompt mode (no TUI) |
+| `gsd --mode <text\|json\|rpc\|mcp>` | Output mode for non-interactive use |
+| `gsd --list-models [search]` | List available models and exit |
+| `gsd --web [path]` | Start browser-based web interface |
+| `gsd --worktree` (`-w`) `[name]` | Start session in a git worktree |
+| `gsd --no-session` | Disable session persistence |
+| `gsd --extension <path>` | Load an additional extension |
+| `gsd --version` (`-v`) | Print version and exit |
+| `gsd sessions` | Interactive session picker |
+| `gsd config` | Set up global API keys |
+| `gsd update` | Update GSD to the latest version |
+
+## Headless mode
+
+`gsd headless` runs commands without a TUI — designed for CI, cron jobs, and scripted automation.
+
+```bash
+gsd headless              # run auto mode
+gsd headless next         # run a single unit
+gsd headless query        # instant JSON snapshot (~50ms, no LLM)
+gsd headless --timeout 600000 auto   # with timeout
+gsd headless new-milestone --context brief.md --auto
+```
+
+| Flag | Description |
+|------|-------------|
+| `--timeout N` | Overall timeout in milliseconds (default: 300000) |
+| `--max-restarts N` | Auto-restart on crash (default: 3, set 0 to disable) |
+| `--json` | Stream events as JSONL to stdout |
+| `--model ID` | Override the model |
+| `--context <file>` | Context file for `new-milestone` (use `-` for stdin) |
+| `--auto` | Chain into auto-mode after milestone creation |
+
+**Exit codes:** `0` = complete, `1` = error/timeout, `2` = blocked.
+
+### `gsd headless query`
+
+Returns a JSON snapshot of the project state — no LLM session, instant response.
+
+```bash
+gsd headless query | jq '.state.phase'      # "executing"
+gsd headless query | jq '.next'              # next dispatch action
+gsd headless query | jq '.cost.total'        # total spend
+```
+
+## MCP server mode
+
+```bash
+gsd --mode mcp
+```
+
+Runs GSD as a Model Context Protocol server over stdin/stdout, exposing all tools to external AI clients (Claude Desktop, VS Code Copilot, etc.).

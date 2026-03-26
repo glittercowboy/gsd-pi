@@ -381,3 +381,33 @@ This shows which servers are active and, if none are found, diagnoses why — in
 | Go | `go install golang.org/x/tools/gopls@latest` |
 
 After installing, run `lsp reload` to restart detection without restarting GSD.
+
+## Notifications
+
+### Notifications not appearing on macOS
+
+**Symptoms:** `notifications.enabled: true` in preferences, but no desktop notifications appear during auto-mode (no milestone complete alerts, no budget warnings, no error notifications). No error messages logged.
+
+**Cause:** GSD uses `osascript display notification` as a fallback on macOS. This command is attributed to your terminal app (Ghostty, iTerm2, Alacritty, Kitty, Warp, etc.). If that app doesn't have notification permissions in System Settings → Notifications, macOS silently drops the notification — `osascript` exits 0 with no error.
+
+Most terminal apps don't appear in the Notifications settings panel until they've successfully delivered at least one notification, creating a chicken-and-egg problem.
+
+**Fix (recommended):** Install `terminal-notifier`, which registers as its own Notification Center app:
+
+```bash
+brew install terminal-notifier
+```
+
+GSD automatically prefers `terminal-notifier` when available. On first use, macOS will prompt you to allow notifications — this is the expected behavior.
+
+**Fix (alternative):** Go to **System Settings → Notifications** and enable notifications for your terminal app. If your terminal doesn't appear in the list, try sending a test notification from Terminal.app first to register "Script Editor":
+
+```bash
+osascript -e 'display notification "test" with title "GSD"'
+```
+
+**Verify:** After applying either fix, test with:
+
+```bash
+terminal-notifier -title "GSD" -message "working!" -sound Glass
+```

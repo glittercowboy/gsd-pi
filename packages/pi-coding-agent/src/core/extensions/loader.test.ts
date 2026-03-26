@@ -4,6 +4,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { isProjectTrusted, trustProject, getUntrustedExtensionPaths } from "./project-trust.js";
+import { containsTypeScriptSyntax, loadExtensions } from "./loader.js";
 
 // ─── helpers ──────────────────────────────────────────────────────────────────
 
@@ -137,5 +138,100 @@ describe("getUntrustedExtensionPaths", () => {
 		const paths = ["/project/b/.pi/extensions/evil.ts"];
 		const result = getUntrustedExtensionPaths("/project/b", paths, agentDir);
 		assert.deepEqual(result, paths);
+	});
+});
+
+// ─── containsTypeScriptSyntax ─────────────────────────────────────────────────
+
+describe("containsTypeScriptSyntax", () => {
+	it("detects parameter type annotations", () => {
+		assert.ok(containsTypeScriptSyntax(`export default function activate(api: ExtensionAPI) {}`));
+	});
+
+	it("detects interface declarations", () => {
+		assert.ok(containsTypeScriptSyntax(`interface Config { name: string; }`));
+	});
+
+	it("detects type alias declarations", () => {
+		assert.ok(containsTypeScriptSyntax(`type Handler = (event: string) => void;`));
+	});
+
+	it("detects enum declarations", () => {
+		assert.ok(containsTypeScriptSyntax(`enum Direction { Up, Down, Left, Right }`));
+	});
+
+	it("detects return type annotations", () => {
+		assert.ok(containsTypeScriptSyntax(`function foo(): Promise<void> {}`));
+	});
+
+	it("detects generic type parameters on functions", () => {
+		assert.ok(containsTypeScriptSyntax(`function identity<T>(arg) { return arg; }`));
+	});
+
+	it("detects variable type annotations", () => {
+		assert.ok(containsTypeScriptSyntax(`const name: string = "hello";`));
+	});
+
+	it("returns false for plain JavaScript", () => {
+		assert.equal(containsTypeScriptSyntax(`export default function activate(api) { api.on("init", () => {}); }`), false);
+	});
+
+	it("returns false for empty string", () => {
+		assert.equal(containsTypeScriptSyntax(""), false);
+	});
+
+	it("returns false for JSDoc comments with type-like syntax", () => {
+		// JSDoc uses different syntax: @param {string} name
+		assert.equal(containsTypeScriptSyntax(`/** @param {string} name */\nexport default function activate(api) {}`), false);
+	});
+});
+
+// ─── loadExtensions: TypeScript syntax in .js files ───────────────────────────
+
+describe("loadExtensions", () => {
+	let tmpDir: string;
+
+	beforeEach(() => {
+		tmpDir = makeTempDir();
+	});
+
+	afterEach(() => {
+		cleanDir(tmpDir);
+	});
+
+	it("reports helpful error when .js file contains TypeScript syntax", async () => {
+		// Create a .js file that uses TypeScript type annotations
+		const extPath = path.join(tmpDir, "my-extension.js");
+		fs.writeFileSync(
+			extPath,
+			`export default function activate(api: ExtensionAPI) {\n  api.on("init", async () => {});\n}\n`,
+		);
+
+		const result = await loadExtensions([extPath], tmpDir);
+
+		assert.equal(result.errors.length, 1);
+		const errorMsg = result.errors[0].error;
+		// The error should mention TypeScript syntax and suggest .ts extension
+		assert.ok(
+			/TypeScript/.test(errorMsg) && /\.ts\b/.test(errorMsg),
+			`Expected error to mention TypeScript syntax and .ts extension, got: ${errorMsg}`,
+		);
+	});
+
+	it("reports helpful error when .js file contains TS interface declaration", async () => {
+		const extPath = path.join(tmpDir, "typed-ext.js");
+		fs.writeFileSync(
+			extPath,
+			`interface Config { name: string; }\nexport default function activate(api) { return; }\n`,
+		);
+
+		const result = await loadExtensions([extPath], tmpDir);
+
+		assert.equal(result.errors.length, 1);
+		const errorMsg = result.errors[0].error;
+		assert.ok(
+			/TypeScript/.test(errorMsg) && /\.ts\b/.test(errorMsg),
+			`Expected error to mention TypeScript syntax and .ts extension, got: ${errorMsg}`,
+		);
 	});
 });

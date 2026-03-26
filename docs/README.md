@@ -23,7 +23,7 @@ Welcome to the GSD documentation. This covers everything from getting started to
 | [Skills](./skills.md) | Bundled skills, skill discovery, and custom skill authoring |
 | [Migration from v1](./migration.md) | Migrating `.planning` directories from the original GSD |
 | [Troubleshooting](./troubleshooting.md) | Common issues, `/gsd doctor` (real-time visibility v2.40), `/gsd forensics` (full debugger v2.40), and recovery procedures |
-| [Web Interface](./web-interface.md) | Browser-based project management with `pi --web` (v2.41) |
+| [Web Interface](./web-interface.md) | Browser-based project management with `gsd --web` (v2.41) |
 | [VS Code Extension](../vscode-extension/README.md) | Chat participant, sidebar dashboard, and RPC integration for VS Code |
 
 ## Architecture & Internals
@@ -34,6 +34,7 @@ Welcome to the GSD documentation. This covers everything from getting started to
 | [Native Engine](../native/README.md) | Rust N-API modules for performance-critical operations |
 | [ADR-001: Branchless Worktree Architecture](./ADR-001-branchless-worktree-architecture.md) | Decision record for the v2.14 git architecture |
 | [ADR-003: Pipeline Simplification](./ADR-003-pipeline-simplification.md) | Research merged into planning, mechanical completion (v2.30) |
+| [ADR-004: Capability-Aware Model Routing](./ADR-004-capability-aware-model-routing.md) | Extend routing from tier/cost selection to task-capability matching |
 
 ## Pi SDK Documentation
 

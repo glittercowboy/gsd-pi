@@ -257,7 +257,7 @@ models:
 ## How the Pieces Fit Together
 
 ```
-preferences.md
+PREFERENCES.md
   └─ token_profile: balanced
        ├─ resolveProfileDefaults() → model defaults + phase skip defaults
        ├─ resolveInlineLevel() → standard

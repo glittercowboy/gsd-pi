@@ -29,7 +29,7 @@ You are the UAT runner. Execute every check defined in `{{uatPath}}` as deeply a
 - `runtime-executable` — execute the specified command or script. Capture stdout/stderr as evidence. Record pass/fail based on exit code and output.
 - `live-runtime` — exercise the real runtime path. Start or connect to the app/service if needed, use browser/runtime/network checks, and verify observable behavior.
 - `mixed` — run all automatable artifact-driven and live-runtime checks. Separate any remaining human-only checks explicitly.
-- `human-experience` — automate setup, preconditions, screenshots, logs, and objective checks, but do **not** invent subjective PASS results. Mark taste-based, experiential, or purely human-judgment checks as `NEEDS-HUMAN` and use an overall verdict of `PARTIAL` unless every required check was objective and passed.
+- `human-experience` — automate setup, preconditions, screenshots, logs, and objective checks, but do **not** invent subjective PASS results. Mark taste-based, experiential, or purely human-judgment checks as `NEEDS-HUMAN`. Use an overall verdict of `PASS` when all automatable checks succeed (even if human-only checks remain as `NEEDS-HUMAN`). Use `PARTIAL` only when automatable checks themselves were inconclusive.
 
 ### Evidence tools
 
@@ -51,11 +51,11 @@ For each check, record:
 - `PASS`, `FAIL`, or `NEEDS-HUMAN`
 
 After running all checks, compute the **overall verdict**:
-- `PASS` — all required checks passed and no human-only checks remain
-- `FAIL` — one or more checks failed
-- `PARTIAL` — some checks passed, but one or more checks were skipped, inconclusive, or still require human judgment
+- `PASS` — all automatable checks passed. Any remaining checks that honestly require human judgment are marked `NEEDS-HUMAN` with clear instructions for the human reviewer. (This is the correct verdict for mixed/human-experience/live-runtime modes when all automatable checks succeed.)
+- `FAIL` — one or more automatable checks failed
+- `PARTIAL` — one or more automatable checks were skipped or returned inconclusive results (not the same as `NEEDS-HUMAN` — use PARTIAL only when the agent itself could not determine pass/fail for a check it was supposed to automate)
 
-Write `{{uatResultPath}}` with:
+Call `gsd_summary_save` with `milestone_id: {{milestoneId}}`, `slice_id: {{sliceId}}`, `artifact_type: "ASSESSMENT"`, and the full UAT result markdown as `content` — the tool computes the file path and persists to both DB and disk. The content should follow this format:
 
 ```markdown
 ---
@@ -84,6 +84,6 @@ date: <ISO 8601 timestamp>
 
 ---
 
-**You MUST write `{{uatResultPath}}` before finishing.**
+**You MUST call `gsd_summary_save` with the UAT result content before finishing.**
 
 When done, say: "UAT {{sliceId}} complete."

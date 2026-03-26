@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 
 import { runGSDDoctor, selectDoctorScope, filterDoctorIssues } from "../doctor.js";
 
-test("auto-preflight scopes to active milestone, ignoring historical", async () => {
+test("auto-preflight scopes to active milestone, ignoring historical", async (t) => {
   const tmpBase = mkdtempSync(join(tmpdir(), "gsd-auto-preflight-test-"));
   const gsd = join(tmpBase, ".gsd");
 
@@ -23,18 +23,16 @@ test("auto-preflight scopes to active milestone, ignoring historical", async () 
   writeFileSync(join(gsd, "milestones", "M009", "M009-ROADMAP.md"), `# M009: Active\n\n## Slices\n- [ ] **S01: Active Slice** \`risk:low\` \`depends:[]\`\n  > After this: active works\n`);
   writeFileSync(join(gsd, "milestones", "M009", "slices", "S01", "S01-PLAN.md"), `# S01: Active Slice\n\n**Goal:** Active\n**Demo:** Active\n\n## Must-Haves\n- done\n\n## Tasks\n- [ ] **T01: Active Task** \`est:5m\`\n  todo\n`);
 
-  try {
-    const scope = await selectDoctorScope(tmpBase);
-    assert.equal(scope, "M009/S01", "active scope selected instead of historical milestone");
+  t.after(() => rmSync(tmpBase, { recursive: true, force: true }));
 
-    const scopedReport = await runGSDDoctor(tmpBase, { fix: false, scope });
-    const scopedBlocking = filterDoctorIssues(scopedReport.issues, { scope, includeWarnings: false });
-    assert.equal(scopedBlocking.length, 0, "no blocking issues in active scope");
+  const scope = await selectDoctorScope(tmpBase);
+  assert.equal(scope, "M009/S01", "active scope selected instead of historical milestone");
 
-    const historicalReport = await runGSDDoctor(tmpBase, { fix: false });
-    const historicalWarnings = historicalReport.issues.filter(issue => issue.unitId.startsWith("M001/S01") && issue.severity === "warning");
-    assert.ok(historicalWarnings.length > 0, "full repo still contains historical warning drift");
-  } finally {
-    rmSync(tmpBase, { recursive: true, force: true });
-  }
+  const scopedReport = await runGSDDoctor(tmpBase, { fix: false, scope });
+  const scopedBlocking = filterDoctorIssues(scopedReport.issues, { scope, includeWarnings: false });
+  assert.equal(scopedBlocking.length, 0, "no blocking issues in active scope");
+
+  const historicalReport = await runGSDDoctor(tmpBase, { fix: false });
+  const historicalWarnings = historicalReport.issues.filter(issue => issue.unitId.startsWith("M001/S01") && issue.severity === "warning");
+  assert.equal(historicalWarnings.length, 0, "completed historical milestone produces no checkbox/file-mismatch warnings");
 });

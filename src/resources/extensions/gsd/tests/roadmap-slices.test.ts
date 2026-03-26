@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { parseRoadmap } from "../files.ts";
+import { parseRoadmap } from "../parsers-legacy.ts";
 import { parseRoadmapSlices, expandDependencies } from "../roadmap-slices.ts";
 
 const content = `# M003: Current
@@ -234,6 +234,32 @@ test("parseRoadmapSlices: ## Slices with valid checkboxes does NOT invoke prose 
   assert.equal(slices.length, 3);
   assert.equal(slices[0]?.id, "S01");
   assert.equal(slices[0]?.done, true);
+});
+
+// ── Regression test for #1940 ───────────────────────────────────────────────
+// '## Slice Roadmap' header is not recognized by extractSlicesSection, causing
+// checkbox-format slices to be missed and all slices reported as incomplete.
+
+test("parseRoadmapSlices: ## Slice Roadmap heading recognized (#1940)", () => {
+  const roadmapContent = [
+    "# M002: Current Milestone", "",
+    "**Vision:** Ship it.", "",
+    "## Slice Roadmap", "",
+    "- [x] **S01: Foundation** `risk:low` `depends:[]`",
+    "  > After this: base layer works.",
+    "- [x] **S02: Core Logic** `risk:medium` `depends:[S01]`",
+    "- [ ] **S03: Polish** `risk:low` `depends:[S01,S02]`", "",
+    "## Boundary Map",
+  ].join("\n");
+  const slices = parseRoadmapSlices(roadmapContent);
+  assert.equal(slices.length, 3, "should parse 3 slices under '## Slice Roadmap'");
+  assert.equal(slices[0]?.id, "S01");
+  assert.equal(slices[0]?.done, true, "S01 should be marked done");
+  assert.equal(slices[1]?.id, "S02");
+  assert.equal(slices[1]?.done, true, "S02 should be marked done");
+  assert.equal(slices[2]?.id, "S03");
+  assert.equal(slices[2]?.done, false, "S03 should be pending");
+  assert.deepEqual(slices[2]?.depends, ["S01", "S02"]);
 });
 
 test("parseRoadmapSlices: ## Slices with only non-matching lines returns prose fallback results", () => {

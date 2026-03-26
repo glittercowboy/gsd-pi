@@ -9,12 +9,16 @@
 | `/gsd auto` | Autonomous mode — research, plan, execute, commit, repeat |
 | `/gsd quick` | Execute a quick task with GSD guarantees (atomic commits, state tracking) without full planning overhead |
 | `/gsd stop` | Stop auto mode gracefully |
+| `/gsd pause` | Pause auto-mode (preserves state, `/gsd auto` to resume) |
 | `/gsd steer` | Hard-steer plan documents during execution |
 | `/gsd discuss` | Discuss architecture and decisions (works alongside auto mode) |
 | `/gsd status` | Progress dashboard |
+| `/gsd widget` | Cycle dashboard widget: full / small / min / off |
 | `/gsd queue` | Queue and reorder future milestones (safe during auto mode) |
 | `/gsd capture` | Fire-and-forget thought capture (works during auto mode) |
 | `/gsd triage` | Manually trigger triage of pending captures |
+| `/gsd dispatch` | Dispatch a specific phase directly (research, plan, execute, complete, reassess, uat, replan) |
+| `/gsd history` | View execution history (supports `--cost`, `--phase`, `--model` filters) |
 | `/gsd forensics` | Full-access GSD debugger — structured anomaly detection, unit traces, and LLM-guided root-cause analysis for auto-mode failures |
 | `/gsd cleanup` | Clean up GSD state files and stale worktrees |
 | `/gsd visualize` | Open workflow visualizer (progress, deps, metrics, timeline) |
@@ -23,6 +27,10 @@
 | `/gsd update` | Update GSD to the latest version in-session |
 | `/gsd knowledge` | Add persistent project knowledge (rule, pattern, or lesson) |
 | `/gsd fast` | Toggle service tier for supported models (prioritized API routing) |
+| `/gsd rate` | Rate last unit's model tier (over/ok/under) — improves adaptive routing |
+| `/gsd changelog` | Show categorized release notes |
+| `/gsd logs` | Browse activity logs, debug logs, and metrics |
+| `/gsd remote` | Control remote auto-mode |
 | `/gsd help` | Categorized command reference with descriptions for all GSD subcommands |
 
 ## Configuration & Diagnostics
@@ -34,6 +42,9 @@
 | `/gsd config` | Re-run the provider setup wizard (LLM provider + tool keys) |
 | `/gsd keys` | API key manager — list, add, remove, test, rotate, doctor |
 | `/gsd doctor` | Runtime health checks with auto-fix — issues surface in real time across widget, visualizer, and HTML reports (v2.40) |
+| `/gsd inspect` | Show SQLite DB diagnostics |
+| `/gsd init` | Project init wizard — detect, configure, bootstrap `.gsd/` |
+| `/gsd setup` | Global setup status and configuration |
 | `/gsd skill-health` | Skill lifecycle dashboard — usage stats, success rates, token trends, staleness warnings |
 | `/gsd skill-health <name>` | Detailed view for a single skill |
 | `/gsd skill-health --declining` | Show only skills flagged for declining performance |
@@ -49,8 +60,10 @@
 | `/gsd new-milestone` | Create a new milestone |
 | `/gsd skip` | Prevent a unit from auto-mode dispatch |
 | `/gsd undo` | Revert last completed unit |
-| Park milestone | Available via `/gsd` wizard → "Milestone actions" → "Park" |
-| Unpark milestone | Available via `/gsd` wizard → "Milestone actions" → "Unpark" |
+| `/gsd undo-task` | Reset a specific task's completion state (DB + markdown) |
+| `/gsd reset-slice` | Reset a slice and all its tasks (DB + markdown) |
+| `/gsd park` | Park a milestone — skip without deleting |
+| `/gsd unpark` | Reactivate a parked milestone |
 | Discard milestone | Available via `/gsd` wizard → "Milestone actions" → "Discard" |
 
 ## Parallel Orchestration
@@ -65,6 +78,46 @@
 | `/gsd parallel merge [MID]` | Merge completed milestones back to main |
 
 See [Parallel Orchestration](./parallel-orchestration.md) for full documentation.
+
+## Workflow Templates (v2.42)
+
+| Command | Description |
+|---------|-------------|
+| `/gsd start` | Start a workflow template (bugfix, spike, feature, hotfix, refactor, security-audit, dep-upgrade, full-project) |
+| `/gsd start resume` | Resume an in-progress workflow |
+| `/gsd templates` | List available workflow templates |
+| `/gsd templates info <name>` | Show detailed template info |
+
+## Custom Workflows (v2.42)
+
+| Command | Description |
+|---------|-------------|
+| `/gsd workflow new` | Create a new workflow definition (via skill) |
+| `/gsd workflow run <name>` | Create a run and start auto-mode |
+| `/gsd workflow list` | List workflow runs |
+| `/gsd workflow validate <name>` | Validate a workflow definition YAML |
+| `/gsd workflow pause` | Pause custom workflow auto-mode |
+| `/gsd workflow resume` | Resume paused custom workflow auto-mode |
+
+## Extensions
+
+| Command | Description |
+|---------|-------------|
+| `/gsd extensions list` | List all extensions and their status |
+| `/gsd extensions enable <id>` | Enable a disabled extension |
+| `/gsd extensions disable <id>` | Disable an extension |
+| `/gsd extensions info <id>` | Show extension details |
+
+## cmux Integration
+
+| Command | Description |
+|---------|-------------|
+| `/gsd cmux status` | Show cmux detection, prefs, and capabilities |
+| `/gsd cmux on` | Enable cmux integration |
+| `/gsd cmux off` | Disable cmux integration |
+| `/gsd cmux notifications on/off` | Toggle cmux desktop notifications |
+| `/gsd cmux sidebar on/off` | Toggle cmux sidebar metadata |
+| `/gsd cmux splits on/off` | Toggle cmux visual subagent splits |
 
 ## GitHub Sync (v2.39)
 
@@ -117,6 +170,14 @@ Enable with `github.enabled: true` in preferences. Requires `gh` CLI installed a
 | `gsd --print "msg"` (`-p`) | Single-shot prompt mode (no TUI) |
 | `gsd --mode <text\|json\|rpc\|mcp>` | Output mode for non-interactive use |
 | `gsd --list-models [search]` | List available models and exit |
+| `gsd --web [path]` | Start browser-based web interface (optional project path) |
+| `gsd --worktree` (`-w`) [name] | Start session in a git worktree (auto-generates name if omitted) |
+| `gsd --no-session` | Disable session persistence |
+| `gsd --extension <path>` | Load an additional extension (can be repeated) |
+| `gsd --append-system-prompt <text>` | Append text to the system prompt |
+| `gsd --tools <list>` | Comma-separated list of tools to enable |
+| `gsd --version` (`-v`) | Print version and exit |
+| `gsd --help` (`-h`) | Print help and exit |
 | `gsd sessions` | Interactive session picker — list all saved sessions for the current directory and choose one to resume |
 | `gsd --debug` | Enable structured JSONL diagnostic logging for troubleshooting dispatch and state issues |
 | `gsd config` | Set up global API keys for search and docs tools (saved to `~/.gsd/agent/auth.json`, applies to all projects). See [Global API Keys](./configuration.md#global-api-keys-gsd-config). |

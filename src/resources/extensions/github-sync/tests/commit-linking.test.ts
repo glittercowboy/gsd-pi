@@ -10,7 +10,8 @@ describe("commit linking", () => {
       issueNumber: 43,
     });
     assert.ok(msg.includes("Resolves #43"), "should include Resolves trailer");
-    assert.ok(msg.startsWith("feat(S01/T02):"), "subject line unchanged");
+    assert.ok(msg.startsWith("feat:"), "subject line has no scope");
+    assert.ok(msg.includes("GSD-Task: S01/T02"), "GSD-Task trailer present");
   });
 
   it("includes both key files and Resolves #N", () => {
@@ -22,10 +23,13 @@ describe("commit linking", () => {
     });
     assert.ok(msg.includes("- src/auth.ts"), "key files present");
     assert.ok(msg.includes("Resolves #43"), "Resolves trailer present");
-    // Resolves should come after key files
+    assert.ok(msg.includes("GSD-Task: S01/T02"), "GSD-Task trailer present");
+    // GSD-Task should come after key files but before Resolves
     const keyFilesIdx = msg.indexOf("- src/auth.ts");
+    const taskIdx = msg.indexOf("GSD-Task: S01/T02");
     const resolvesIdx = msg.indexOf("Resolves #43");
-    assert.ok(resolvesIdx > keyFilesIdx, "Resolves after key files");
+    assert.ok(taskIdx > keyFilesIdx, "GSD-Task after key files");
+    assert.ok(resolvesIdx > taskIdx, "Resolves after GSD-Task");
   });
 
   it("no Resolves trailer when issueNumber is not set", () => {
@@ -34,6 +38,6 @@ describe("commit linking", () => {
       taskTitle: "implement auth",
     });
     assert.ok(!msg.includes("Resolves"), "no Resolves when no issueNumber");
-    assert.ok(!msg.includes("\n"), "no body when no issueNumber or keyFiles");
+    assert.ok(msg.includes("GSD-Task: S01/T02"), "GSD-Task trailer still present");
   });
 });

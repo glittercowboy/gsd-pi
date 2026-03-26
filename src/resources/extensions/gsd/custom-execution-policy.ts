@@ -14,6 +14,7 @@
 import type { ExecutionPolicy } from "./execution-policy.js";
 import type { RecoveryAction, CloseoutResult } from "./engine-types.js";
 import { runCustomVerification } from "./custom-verification.js";
+import { parseUnitId } from "./unit-id.js";
 
 export class CustomExecutionPolicy implements ExecutionPolicy {
   private readonly runDir: string;
@@ -48,8 +49,8 @@ export class CustomExecutionPolicy implements ExecutionPolicy {
     unitId: string,
     _context: { basePath: string },
   ): Promise<"continue" | "retry" | "pause"> {
-    const parts = unitId.split("/");
-    const stepId = parts[parts.length - 1];
+    const { milestone, slice, task } = parseUnitId(unitId);
+    const stepId = task ?? slice ?? milestone;
     return runCustomVerification(this.runDir, stepId);
   }
 

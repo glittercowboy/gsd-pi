@@ -3,45 +3,6 @@ export type ProviderErrorPauseUI = {
 };
 
 /**
- * Classify a provider error as transient (auto-resume) or permanent (manual resume).
- *
- * Transient: rate limits, server errors (500/502/503), overloaded, internal errors.
- * These are expected to self-resolve and should auto-resume after a delay.
- *
- * Permanent: auth errors, invalid API key, billing issues.
- * These require user intervention and should pause indefinitely.
- */
-export function classifyProviderError(errorMsg: string): {
-  isTransient: boolean;
-  isRateLimit: boolean;
-  suggestedDelayMs: number;
-} {
-  const isRateLimit = /rate.?limit|too many requests|429/i.test(errorMsg);
-  const isServerError = /internal server error|500|502|503|overloaded|server_error|api_error|service.?unavailable/i.test(errorMsg);
-
-  // Permanent errors — never auto-resume
-  const isPermanent = /auth|unauthorized|forbidden|invalid.*key|invalid.*api|billing|quota exceeded|account/i.test(errorMsg);
-
-  if (isPermanent && !isRateLimit) {
-    return { isTransient: false, isRateLimit: false, suggestedDelayMs: 0 };
-  }
-
-  if (isRateLimit) {
-    // Try to extract retry-after from the message
-    const resetMatch = errorMsg.match(/reset in (\d+)s/i);
-    const delayMs = resetMatch ? Number(resetMatch[1]) * 1000 : 60_000; // default 60s for rate limits
-    return { isTransient: true, isRateLimit: true, suggestedDelayMs: delayMs };
-  }
-
-  if (isServerError) {
-    return { isTransient: true, isRateLimit: false, suggestedDelayMs: 30_000 }; // 30s for server errors
-  }
-
-  // Unknown error — treat as permanent (user reviews)
-  return { isTransient: false, isRateLimit: false, suggestedDelayMs: 0 };
-}
-
-/**
  * Pause auto-mode due to a provider error.
  *
  * For transient errors (rate limits, server errors, overloaded), schedules

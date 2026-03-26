@@ -17,89 +17,83 @@ function makeFixture(paths: string[]): string {
   return root;
 }
 
-test("resolveGsdCliEntry prefers the built loader for packaged standalone interactive sessions", () => {
+test("resolveGsdCliEntry prefers the built loader for packaged standalone interactive sessions", (t) => {
   const packageRoot = makeFixture([
     "dist/loader.js",
     "src/loader.ts",
     "src/resources/extensions/gsd/tests/resolve-ts.mjs",
   ]);
 
-  try {
-    const entry = resolveGsdCliEntry({
-      packageRoot,
-      cwd: "/tmp/project-a",
-      execPath: "/custom/node",
-      hostKind: "packaged-standalone",
-      mode: "interactive",
-    });
+  t.after(() => { rmSync(packageRoot, { recursive: true, force: true }); });
 
-    assert.deepEqual(entry, {
-      command: "/custom/node",
-      args: [join(packageRoot, "dist", "loader.js")],
-      cwd: "/tmp/project-a",
-    });
-  } finally {
-    rmSync(packageRoot, { recursive: true, force: true });
-  }
+  const entry = resolveGsdCliEntry({
+    packageRoot,
+    cwd: "/tmp/project-a",
+    execPath: "/custom/node",
+    hostKind: "packaged-standalone",
+    mode: "interactive",
+  });
+
+  assert.deepEqual(entry, {
+    command: "/custom/node",
+    args: [join(packageRoot, "dist", "loader.js")],
+    cwd: "/tmp/project-a",
+  });
 });
 
-test("resolveGsdCliEntry prefers the source loader for source-dev interactive sessions", () => {
+test("resolveGsdCliEntry prefers the source loader for source-dev interactive sessions", (t) => {
   const packageRoot = makeFixture([
     "dist/loader.js",
     "src/loader.ts",
     "src/resources/extensions/gsd/tests/resolve-ts.mjs",
   ]);
 
-  try {
-    const entry = resolveGsdCliEntry({
-      packageRoot,
-      cwd: "/tmp/project-b",
-      execPath: "/custom/node",
-      hostKind: "source-dev",
-      mode: "interactive",
-    });
+  t.after(() => { rmSync(packageRoot, { recursive: true, force: true }); });
 
-    assert.deepEqual(entry, {
-      command: "/custom/node",
-      args: [
-        "--import",
-        pathToFileURL(join(packageRoot, "src", "resources", "extensions", "gsd", "tests", "resolve-ts.mjs")).href,
-        "--experimental-strip-types",
-        join(packageRoot, "src", "loader.ts"),
-      ],
-      cwd: "/tmp/project-b",
-    });
-  } finally {
-    rmSync(packageRoot, { recursive: true, force: true });
-  }
+  const entry = resolveGsdCliEntry({
+    packageRoot,
+    cwd: "/tmp/project-b",
+    execPath: "/custom/node",
+    hostKind: "source-dev",
+    mode: "interactive",
+  });
+
+  assert.deepEqual(entry, {
+    command: "/custom/node",
+    args: [
+      "--import",
+      pathToFileURL(join(packageRoot, "src", "resources", "extensions", "gsd", "tests", "resolve-ts.mjs")).href,
+      "--experimental-strip-types",
+      join(packageRoot, "src", "loader.ts"),
+    ],
+    cwd: "/tmp/project-b",
+  });
 });
 
-test("resolveGsdCliEntry appends rpc arguments for bridge sessions", () => {
+test("resolveGsdCliEntry appends rpc arguments for bridge sessions", (t) => {
   const packageRoot = makeFixture(["dist/loader.js"]);
 
-  try {
-    const entry = resolveGsdCliEntry({
-      packageRoot,
-      cwd: "/tmp/project-c",
-      execPath: "/custom/node",
-      hostKind: "packaged-standalone",
-      mode: "rpc",
-      sessionDir: "/tmp/.gsd/sessions/project-c",
-    });
+  t.after(() => { rmSync(packageRoot, { recursive: true, force: true }); });
 
-    assert.deepEqual(entry, {
-      command: "/custom/node",
-      args: [
-        join(packageRoot, "dist", "loader.js"),
-        "--mode",
-        "rpc",
-        "--continue",
-        "--session-dir",
-        "/tmp/.gsd/sessions/project-c",
-      ],
-      cwd: "/tmp/project-c",
-    });
-  } finally {
-    rmSync(packageRoot, { recursive: true, force: true });
-  }
+  const entry = resolveGsdCliEntry({
+    packageRoot,
+    cwd: "/tmp/project-c",
+    execPath: "/custom/node",
+    hostKind: "packaged-standalone",
+    mode: "rpc",
+    sessionDir: "/tmp/.gsd/sessions/project-c",
+  });
+
+  assert.deepEqual(entry, {
+    command: "/custom/node",
+    args: [
+      join(packageRoot, "dist", "loader.js"),
+      "--mode",
+      "rpc",
+      "--continue",
+      "--session-dir",
+      "/tmp/.gsd/sessions/project-c",
+    ],
+    cwd: "/tmp/project-c",
+  });
 });

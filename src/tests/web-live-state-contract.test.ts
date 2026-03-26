@@ -355,7 +355,7 @@ async function readSseEventsUntil(
   throw new Error("Timed out waiting for the expected SSE contract events");
 }
 
-test("/api/session/events exposes explicit live_state_invalidation events for agent and auto recovery boundaries", async () => {
+test("/api/session/events exposes explicit live_state_invalidation events for agent and auto recovery boundaries", async (t) => {
   const fixture = makeWorkspaceFixture();
   const sessionPath = createSessionFile(
     fixture.projectCwd,
@@ -381,55 +381,55 @@ test("/api/session/events exposes explicit live_state_invalidation events for ag
 
   setupBridge(harness, fixture);
 
-  try {
-    const controller = new AbortController();
-    const response = await eventsRoute.GET(
-      new Request("http://localhost/api/session/events", { signal: controller.signal }),
-    );
-
-    harness.emit({ type: "agent_end" });
-    harness.emit({ type: "auto_retry_start", attempt: 1, maxAttempts: 3, delayMs: 250, errorMessage: "retry me" });
-    harness.emit({ type: "auto_retry_end", success: false, attempt: 1, finalError: "still failing" });
-    harness.emit({ type: "auto_compaction_start", reason: "threshold" });
-    harness.emit({ type: "auto_compaction_end", result: undefined, aborted: false, willRetry: false });
-
-    const events = await readSseEventsUntil(
-      response,
-      (seen) => seen.filter((event) => event.type === "live_state_invalidation").length >= 5,
-    );
-    const invalidations = events.filter((event) => event.type === "live_state_invalidation");
-
-    assert.deepEqual(
-      invalidations.map((event) => ({
-        reason: event.reason,
-        source: event.source,
-        workspaceIndexCacheInvalidated: event.workspaceIndexCacheInvalidated,
-      })),
-      [
-        { reason: "agent_end", source: "bridge_event", workspaceIndexCacheInvalidated: true },
-        { reason: "auto_retry_start", source: "bridge_event", workspaceIndexCacheInvalidated: false },
-        { reason: "auto_retry_end", source: "bridge_event", workspaceIndexCacheInvalidated: false },
-        { reason: "auto_compaction_start", source: "bridge_event", workspaceIndexCacheInvalidated: false },
-        { reason: "auto_compaction_end", source: "bridge_event", workspaceIndexCacheInvalidated: false },
-      ],
-      "live_state_invalidation reasons/sources should stay inspectable on /api/session/events",
-    );
-    assert.deepEqual(invalidations[0].domains, ["auto", "workspace", "recovery"]);
-    assert.deepEqual(invalidations[1].domains, ["auto", "recovery"]);
-    assert.deepEqual(invalidations[2].domains, ["auto", "recovery"]);
-    assert.deepEqual(invalidations[3].domains, ["auto", "recovery"]);
-    assert.deepEqual(invalidations[4].domains, ["auto", "recovery"]);
-
-    controller.abort();
-    await waitForMicrotasks();
-  } finally {
+  t.after(async () => {
     await bridge.resetBridgeServiceForTests();
     onboarding.resetOnboardingServiceForTests();
     fixture.cleanup();
-  }
+  });
+
+  const controller = new AbortController();
+  const response = await eventsRoute.GET(
+    new Request("http://localhost/api/session/events", { signal: controller.signal }),
+  );
+
+  harness.emit({ type: "agent_end" });
+  harness.emit({ type: "auto_retry_start", attempt: 1, maxAttempts: 3, delayMs: 250, errorMessage: "retry me" });
+  harness.emit({ type: "auto_retry_end", success: false, attempt: 1, finalError: "still failing" });
+  harness.emit({ type: "auto_compaction_start", reason: "threshold" });
+  harness.emit({ type: "auto_compaction_end", result: undefined, aborted: false, willRetry: false });
+
+  const events = await readSseEventsUntil(
+    response,
+    (seen) => seen.filter((event) => event.type === "live_state_invalidation").length >= 5,
+  );
+  const invalidations = events.filter((event) => event.type === "live_state_invalidation");
+
+  assert.deepEqual(
+    invalidations.map((event) => ({
+      reason: event.reason,
+      source: event.source,
+      workspaceIndexCacheInvalidated: event.workspaceIndexCacheInvalidated,
+    })),
+    [
+      { reason: "agent_end", source: "bridge_event", workspaceIndexCacheInvalidated: true },
+      { reason: "auto_retry_start", source: "bridge_event", workspaceIndexCacheInvalidated: false },
+      { reason: "auto_retry_end", source: "bridge_event", workspaceIndexCacheInvalidated: false },
+      { reason: "auto_compaction_start", source: "bridge_event", workspaceIndexCacheInvalidated: false },
+      { reason: "auto_compaction_end", source: "bridge_event", workspaceIndexCacheInvalidated: false },
+    ],
+    "live_state_invalidation reasons/sources should stay inspectable on /api/session/events",
+  );
+  assert.deepEqual(invalidations[0].domains, ["auto", "workspace", "recovery"]);
+  assert.deepEqual(invalidations[1].domains, ["auto", "recovery"]);
+  assert.deepEqual(invalidations[2].domains, ["auto", "recovery"]);
+  assert.deepEqual(invalidations[3].domains, ["auto", "recovery"]);
+  assert.deepEqual(invalidations[4].domains, ["auto", "recovery"]);
+
+  controller.abort();
+  await waitForMicrotasks();
 });
 
-test("workspace cache only busts on real boundaries and session mutations emit targeted invalidations", async () => {
+test("workspace cache only busts on real boundaries and session mutations emit targeted invalidations", async (t) => {
   const fixture = makeWorkspaceFixture();
   const activeSessionPath = createSessionFile(
     fixture.projectCwd,
@@ -489,99 +489,99 @@ test("workspace cache only busts on real boundaries and session mutations emit t
     },
   });
 
-  try {
-    const service = bridge.getProjectBridgeService();
-    await service.ensureStarted();
-    const seenEvents: any[] = [];
-    const unsubscribe = service.subscribe((event) => {
-      seenEvents.push(event);
-    });
-
-    await bridge.collectBootPayload();
-    await bridge.collectBootPayload();
-    assert.equal(workspaceIndexCalls, 1, "boot snapshot should stay cached before any invalidation boundary fires");
-
-    harness.emit({ type: "agent_end" });
-    await waitForMicrotasks();
-    await bridge.collectBootPayload();
-    assert.equal(workspaceIndexCalls, 2, "agent_end should invalidate the cached workspace snapshot");
-
-    harness.emit({ type: "auto_retry_start", attempt: 1, maxAttempts: 3, delayMs: 100, errorMessage: "retry me" });
-    await waitForMicrotasks();
-    await bridge.collectBootPayload();
-    assert.equal(workspaceIndexCalls, 2, "auto_retry_start should not invalidate the workspace snapshot cache");
-
-    harness.emit({ type: "auto_compaction_start", reason: "threshold" });
-    await waitForMicrotasks();
-    await bridge.collectBootPayload();
-    assert.equal(workspaceIndexCalls, 2, "auto_compaction_start should not invalidate the workspace snapshot cache");
-
-    const switchResponse = await commandRoute.POST(
-      new Request("http://localhost/api/session/command", {
-        method: "POST",
-        body: JSON.stringify({ type: "switch_session", sessionPath: otherSessionPath }),
-      }),
-    );
-    assert.equal(switchResponse.status, 200);
-
-    const newSessionResponse = await commandRoute.POST(
-      new Request("http://localhost/api/session/command", {
-        method: "POST",
-        body: JSON.stringify({ type: "new_session" }),
-      }),
-    );
-    assert.equal(newSessionResponse.status, 200);
-
-    const forkResponse = await commandRoute.POST(
-      new Request("http://localhost/api/session/command", {
-        method: "POST",
-        body: JSON.stringify({ type: "fork", entryId: "entry-1" }),
-      }),
-    );
-    assert.equal(forkResponse.status, 200);
-
-    const renameResponse = await manageRoute.POST(
-      new Request("http://localhost/api/session/manage", {
-        method: "POST",
-        body: JSON.stringify({
-          action: "rename",
-          sessionPath: otherSessionPath,
-          name: "Renamed Session",
-        }),
-      }),
-    );
-    const renamePayload = await renameResponse.json() as any;
-    assert.equal(renameResponse.status, 200);
-    assert.equal(renamePayload.success, true);
-    assert.equal(renamePayload.mutation, "session_file");
-
-    await waitForMicrotasks();
-
-    const invalidations = seenEvents.filter((event) => event.type === "live_state_invalidation");
-    const reasons = invalidations.map((event) => event.reason);
-    assert.ok(reasons.includes("agent_end"), "missing agent_end live_state_invalidation trigger");
-    assert.ok(reasons.includes("auto_retry_start"), "missing auto_retry_start live_state_invalidation trigger");
-    assert.ok(reasons.includes("auto_compaction_start"), "missing auto_compaction_start live_state_invalidation trigger");
-    assert.ok(reasons.includes("switch_session"), "missing switch_session live_state_invalidation trigger");
-    assert.ok(reasons.includes("new_session"), "missing new_session live_state_invalidation trigger");
-    assert.ok(reasons.includes("fork"), "missing fork live_state_invalidation trigger");
-
-    const switchInvalidation = invalidations.find((event) => event.reason === "switch_session");
-    assert.ok(switchInvalidation, "switch_session should emit a targeted freshness event");
-    assert.deepEqual(switchInvalidation.domains, ["resumable_sessions", "recovery"]);
-    assert.equal(switchInvalidation.workspaceIndexCacheInvalidated, false);
-
-    const renameInvalidation = invalidations.find(
-      (event) => event.reason === "set_session_name" && event.source === "session_manage",
-    );
-    assert.ok(renameInvalidation, "inactive rename should emit an inspectable set_session_name invalidation");
-    assert.deepEqual(renameInvalidation.domains, ["resumable_sessions"]);
-    assert.equal(renameInvalidation.workspaceIndexCacheInvalidated, false);
-
-    unsubscribe();
-  } finally {
+  t.after(async () => {
     await bridge.resetBridgeServiceForTests();
     onboarding.resetOnboardingServiceForTests();
     fixture.cleanup();
-  }
+  });
+
+  const service = bridge.getProjectBridgeService();
+  await service.ensureStarted();
+  const seenEvents: any[] = [];
+  const unsubscribe = service.subscribe((event) => {
+    seenEvents.push(event);
+  });
+
+  await bridge.collectBootPayload();
+  await bridge.collectBootPayload();
+  assert.equal(workspaceIndexCalls, 1, "boot snapshot should stay cached before any invalidation boundary fires");
+
+  harness.emit({ type: "agent_end" });
+  await waitForMicrotasks();
+  await bridge.collectBootPayload();
+  assert.equal(workspaceIndexCalls, 2, "agent_end should invalidate the cached workspace snapshot");
+
+  harness.emit({ type: "auto_retry_start", attempt: 1, maxAttempts: 3, delayMs: 100, errorMessage: "retry me" });
+  await waitForMicrotasks();
+  await bridge.collectBootPayload();
+  assert.equal(workspaceIndexCalls, 2, "auto_retry_start should not invalidate the workspace snapshot cache");
+
+  harness.emit({ type: "auto_compaction_start", reason: "threshold" });
+  await waitForMicrotasks();
+  await bridge.collectBootPayload();
+  assert.equal(workspaceIndexCalls, 2, "auto_compaction_start should not invalidate the workspace snapshot cache");
+
+  const switchResponse = await commandRoute.POST(
+    new Request("http://localhost/api/session/command", {
+      method: "POST",
+      body: JSON.stringify({ type: "switch_session", sessionPath: otherSessionPath }),
+    }),
+  );
+  assert.equal(switchResponse.status, 200);
+
+  const newSessionResponse = await commandRoute.POST(
+    new Request("http://localhost/api/session/command", {
+      method: "POST",
+      body: JSON.stringify({ type: "new_session" }),
+    }),
+  );
+  assert.equal(newSessionResponse.status, 200);
+
+  const forkResponse = await commandRoute.POST(
+    new Request("http://localhost/api/session/command", {
+      method: "POST",
+      body: JSON.stringify({ type: "fork", entryId: "entry-1" }),
+    }),
+  );
+  assert.equal(forkResponse.status, 200);
+
+  const renameResponse = await manageRoute.POST(
+    new Request("http://localhost/api/session/manage", {
+      method: "POST",
+      body: JSON.stringify({
+        action: "rename",
+        sessionPath: otherSessionPath,
+        name: "Renamed Session",
+      }),
+    }),
+  );
+  const renamePayload = await renameResponse.json() as any;
+  assert.equal(renameResponse.status, 200);
+  assert.equal(renamePayload.success, true);
+  assert.equal(renamePayload.mutation, "session_file");
+
+  await waitForMicrotasks();
+
+  const invalidations = seenEvents.filter((event) => event.type === "live_state_invalidation");
+  const reasons = invalidations.map((event) => event.reason);
+  assert.ok(reasons.includes("agent_end"), "missing agent_end live_state_invalidation trigger");
+  assert.ok(reasons.includes("auto_retry_start"), "missing auto_retry_start live_state_invalidation trigger");
+  assert.ok(reasons.includes("auto_compaction_start"), "missing auto_compaction_start live_state_invalidation trigger");
+  assert.ok(reasons.includes("switch_session"), "missing switch_session live_state_invalidation trigger");
+  assert.ok(reasons.includes("new_session"), "missing new_session live_state_invalidation trigger");
+  assert.ok(reasons.includes("fork"), "missing fork live_state_invalidation trigger");
+
+  const switchInvalidation = invalidations.find((event) => event.reason === "switch_session");
+  assert.ok(switchInvalidation, "switch_session should emit a targeted freshness event");
+  assert.deepEqual(switchInvalidation.domains, ["resumable_sessions", "recovery"]);
+  assert.equal(switchInvalidation.workspaceIndexCacheInvalidated, false);
+
+  const renameInvalidation = invalidations.find(
+    (event) => event.reason === "set_session_name" && event.source === "session_manage",
+  );
+  assert.ok(renameInvalidation, "inactive rename should emit an inspectable set_session_name invalidation");
+  assert.deepEqual(renameInvalidation.domains, ["resumable_sessions"]);
+  assert.equal(renameInvalidation.workspaceIndexCacheInvalidated, false);
+
+  unsubscribe();
 });

@@ -62,7 +62,7 @@ function statusIcon(status: "complete" | "active" | "pending" | "done") {
     case "active":
       return <Play className="h-4 w-4 shrink-0 text-info" />
     case "pending":
-      return <Circle className="h-4 w-4 shrink-0 text-muted-foreground/30" />
+      return <Circle className="h-4 w-4 shrink-0 text-muted-foreground/50" />
   }
 }
 
@@ -121,9 +121,9 @@ function SectionLabel({ children }: { children: React.ReactNode }) {
 /** Large empty state with icon */
 function EmptyState({ message, icon: Icon = AlertCircle }: { message: string; icon?: React.ComponentType<{ className?: string }> }) {
   return (
-    <div className="flex flex-col items-center justify-center gap-4 rounded-xl border border-dashed border-border/60 py-16 text-center">
-      <div className="rounded-full border border-border/60 bg-muted/40 p-4">
-        <Icon className="h-6 w-6 text-muted-foreground/50" />
+    <div className="flex flex-col items-center justify-center gap-4 rounded-xl border border-dashed border-border py-16 text-center">
+      <div className="rounded-full border border-border bg-muted/50 p-4">
+        <Icon className="h-6 w-6 text-muted-foreground" />
       </div>
       <p className="text-sm font-medium text-muted-foreground">{message}</p>
     </div>
@@ -182,7 +182,7 @@ function ProgressBar({
   const pct = max > 0 ? Math.max(1, (value / max) * 100) : 0
   const barColor = { sky: "bg-info", emerald: "bg-success", amber: "bg-warning" }[color]
   return (
-    <div className="h-2 w-full overflow-hidden rounded-full bg-muted/60">
+    <div className="h-2 w-full overflow-hidden rounded-full bg-muted">
       <div
         className={cn("h-full rounded-full transition-all duration-700", barColor, animated && "animate-pulse")}
         style={{ width: `${pct}%` }}
@@ -261,7 +261,7 @@ function ProgressTab({ data }: { data: VisualizerData }) {
         {data.milestones.map((ms) => (
           <div key={ms.id} className="overflow-hidden rounded-xl border border-border bg-card">
             {/* Milestone header */}
-            <div className="flex items-center justify-between border-b border-border bg-muted/20 px-5 py-4">
+            <div className="flex items-center justify-between border-b border-border bg-muted/50 px-5 py-4">
               <div className="flex items-center gap-3">
                 {statusIcon(ms.status)}
                 <span className="font-mono text-xs font-semibold text-muted-foreground">{ms.id}</span>
@@ -324,7 +324,7 @@ function ProgressTab({ data }: { data: VisualizerData }) {
                                 "flex items-center gap-2.5 rounded-lg px-3 py-2 transition-colors",
                                 task.active
                                   ? "bg-info/8 border border-info/20"
-                                  : "hover:bg-muted/40",
+                                  : "hover:bg-muted/50",
                               )}
                             >
                               {taskStatusIcon(task)}
@@ -332,7 +332,7 @@ function ProgressTab({ data }: { data: VisualizerData }) {
                               <span
                                 className={cn(
                                   "text-sm",
-                                  task.done && "text-muted-foreground/50 line-through",
+                                  task.done && "text-muted-foreground line-through",
                                   task.active && "font-semibold text-info",
                                   !task.done && !task.active && "text-muted-foreground",
                                 )}
@@ -383,8 +383,8 @@ function DepsTab({ data }: { data: VisualizerData }) {
                     <span className="rounded-lg border border-info/25 bg-info/10 px-3 py-1.5 font-mono text-sm font-semibold text-info">
                       {dep}
                     </span>
-                    <ArrowRight className="h-4 w-4 text-muted-foreground/50" />
-                    <span className="rounded-lg border border-border bg-muted/40 px-3 py-1.5 font-mono text-sm font-medium">
+                    <ArrowRight className="h-4 w-4 text-muted-foreground" />
+                    <span className="rounded-lg border border-border bg-muted/50 px-3 py-1.5 font-mono text-sm font-medium">
                       {ms.id}
                     </span>
                     <span className="text-sm text-muted-foreground">{ms.title}</span>
@@ -415,8 +415,8 @@ function DepsTab({ data }: { data: VisualizerData }) {
                         <span className="rounded-lg border border-info/25 bg-info/10 px-3 py-1.5 font-mono text-sm font-semibold text-info">
                           {dep}
                         </span>
-                        <ArrowRight className="h-4 w-4 text-muted-foreground/50" />
-                        <span className="rounded-lg border border-border bg-muted/40 px-3 py-1.5 font-mono text-sm font-medium">
+                        <ArrowRight className="h-4 w-4 text-muted-foreground" />
+                        <span className="rounded-lg border border-border bg-muted/50 px-3 py-1.5 font-mono text-sm font-medium">
                           {sl.id}
                         </span>
                         <span className="text-sm text-muted-foreground">{sl.title}</span>
@@ -450,7 +450,7 @@ function DepsTab({ data }: { data: VisualizerData }) {
                         {id}
                       </span>
                       {i < cp.milestonePath.length - 1 && (
-                        <ChevronRight className="h-4 w-4 text-muted-foreground/50" />
+                        <ChevronRight className="h-4 w-4 text-muted-foreground" />
                       )}
                     </span>
                   ))}
@@ -467,7 +467,7 @@ function DepsTab({ data }: { data: VisualizerData }) {
                     {data.milestones
                       .filter((m) => !cp.milestonePath.includes(m.id))
                       .map((m) => (
-                        <div key={m.id} className="flex items-center gap-4 rounded-lg bg-muted/30 px-4 py-2.5">
+                        <div key={m.id} className="flex items-center gap-4 rounded-lg bg-muted/50 px-4 py-2.5">
                           <span className="w-16 font-mono text-sm font-semibold">{m.id}</span>
                           <span className="text-sm text-muted-foreground">{m.title}</span>
                           <span className="ml-auto font-mono text-xs text-muted-foreground">
@@ -492,7 +492,7 @@ function DepsTab({ data }: { data: VisualizerData }) {
                           {id}
                         </span>
                         {i < cp.slicePath.length - 1 && (
-                          <ChevronRight className="h-4 w-4 text-muted-foreground/50" />
+                          <ChevronRight className="h-4 w-4 text-muted-foreground" />
                         )}
                       </span>
                     ))}
@@ -530,7 +530,7 @@ function DepsTab({ data }: { data: VisualizerData }) {
                     {Object.entries(cp.sliceSlack).map(([id, slack]) => (
                       <span
                         key={id}
-                        className="rounded-lg border border-border bg-muted/40 px-3 py-1.5 font-mono text-xs text-muted-foreground"
+                        className="rounded-lg border border-border bg-muted/50 px-3 py-1.5 font-mono text-xs text-muted-foreground"
                       >
                         {id}: {slack}
                       </span>
@@ -639,7 +639,7 @@ function MetricsTab({ data }: { data: VisualizerData }) {
               </thead>
               <tbody className="divide-y divide-border/50">
                 {data.bySlice.map((sl) => (
-                  <tr key={sl.sliceId} className="transition-colors hover:bg-muted/30">
+                  <tr key={sl.sliceId} className="transition-colors hover:bg-muted/50">
                     <td className="py-3 pr-5 font-mono text-xs font-semibold">{sl.sliceId}</td>
                     <td className="py-3 pr-5 text-right tabular-nums text-muted-foreground">{sl.units}</td>
                     <td className="py-3 pr-5 text-right tabular-nums font-medium">{formatCost(sl.cost)}</td>
@@ -732,7 +732,7 @@ function TimelineTab({ data }: { data: VisualizerData }) {
     <div className="space-y-4">
       <div className="overflow-hidden rounded-xl border border-border bg-card">
         {/* Header */}
-        <div className="border-b border-border bg-muted/20 px-6 py-4">
+        <div className="border-b border-border bg-muted/50 px-6 py-4">
           <SectionLabel>Execution Timeline</SectionLabel>
           <p className="mt-1.5 text-xs text-muted-foreground">
             Showing {recent.length} of {data.units.length} units — most recent first
@@ -758,7 +758,7 @@ function TimelineTab({ data }: { data: VisualizerData }) {
             return (
               <div
                 key={`${unit.id}-${unit.startedAt}-${i}`}
-                className="grid grid-cols-[3.5rem_1.5rem_5rem_8rem_1fr_4.5rem_5rem] items-center gap-3 px-6 py-3.5 transition-colors hover:bg-muted/30"
+                className="grid grid-cols-[3.5rem_1.5rem_5rem_8rem_1fr_4.5rem_5rem] items-center gap-3 px-6 py-3.5 transition-colors hover:bg-muted/50"
               >
                 <span className="font-mono text-xs text-muted-foreground">
                   {formatTime(unit.startedAt)}
@@ -816,7 +816,7 @@ function AgentTab({ data }: { data: VisualizerData }) {
               "relative flex h-10 w-10 items-center justify-center rounded-full",
               activity.active
                 ? "bg-success/15"
-                : "bg-muted/60",
+                : "bg-muted",
             )}>
               {activity.active && (
                 <div className="absolute inset-0 animate-ping rounded-full bg-success/20" />
@@ -886,7 +886,7 @@ function AgentTab({ data }: { data: VisualizerData }) {
       {/* Recent units */}
       {data.units.filter((u) => u.finishedAt > 0).length > 0 && (
         <div className="overflow-hidden rounded-xl border border-border bg-card">
-          <div className="border-b border-border bg-muted/20 px-6 py-4">
+          <div className="border-b border-border bg-muted/50 px-6 py-4">
             <SectionLabel>Recent Completed Units</SectionLabel>
           </div>
           <div className="divide-y divide-border/40">
@@ -895,7 +895,7 @@ function AgentTab({ data }: { data: VisualizerData }) {
               .slice(-5)
               .reverse()
               .map((u, i) => (
-                <div key={`${u.id}-${i}`} className="flex items-center gap-4 px-6 py-4 transition-colors hover:bg-muted/30">
+                <div key={`${u.id}-${i}`} className="flex items-center gap-4 px-6 py-4 transition-colors hover:bg-muted/50">
                   <span className="w-12 font-mono text-xs text-muted-foreground">{formatTime(u.startedAt)}</span>
                   <CheckCircle2 className="h-4 w-4 shrink-0 text-success" />
                   <span className="flex-1 truncate text-sm font-medium">{u.type}</span>
@@ -927,7 +927,7 @@ function ChangesTab({ data }: { data: VisualizerData }) {
       {sorted.map((entry, i) => (
         <div key={`${entry.milestoneId}-${entry.sliceId}-${i}`} className="overflow-hidden rounded-xl border border-border bg-card">
           {/* Header */}
-          <div className="flex items-center justify-between border-b border-border bg-muted/20 px-6 py-4">
+          <div className="flex items-center justify-between border-b border-border bg-muted/50 px-6 py-4">
             <div className="flex items-center gap-3">
               <CheckCircle2 className="h-4 w-4 shrink-0 text-success" />
               <span className="font-mono text-xs font-bold text-success">
@@ -956,11 +956,11 @@ function ChangesTab({ data }: { data: VisualizerData }) {
                 </p>
                 <div className="space-y-2">
                   {entry.filesModified.map((f, fi) => (
-                    <div key={fi} className="flex items-start gap-3 rounded-lg bg-muted/30 px-4 py-2.5">
+                    <div key={fi} className="flex items-start gap-3 rounded-lg bg-muted/50 px-4 py-2.5">
                       <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-success/70" />
                       <span className="font-mono text-xs font-medium text-muted-foreground">{f.path}</span>
                       {f.description && (
-                        <span className="ml-1 text-xs text-muted-foreground/60">— {f.description}</span>
+                        <span className="ml-1 text-xs text-muted-foreground">— {f.description}</span>
                       )}
                     </div>
                   ))}
@@ -1069,7 +1069,7 @@ function ExportTab({ data }: { data: VisualizerData }) {
         <div className="mt-7 grid gap-4 sm:grid-cols-2">
           <button
             onClick={handleMarkdown}
-            className="group flex items-center gap-5 rounded-xl border border-border bg-muted/20 p-5 text-left transition-all hover:border-info/40 hover:bg-info/5"
+            className="group flex items-center gap-5 rounded-xl border border-border bg-muted/50 p-5 text-left transition-all hover:border-info/40 hover:bg-info/5"
           >
             <div className="rounded-xl border border-info/20 bg-info/10 p-4 transition-colors group-hover:bg-info/15">
               <FileText className="h-6 w-6 text-info" />
@@ -1083,7 +1083,7 @@ function ExportTab({ data }: { data: VisualizerData }) {
 
           <button
             onClick={handleJSON}
-            className="group flex items-center gap-5 rounded-xl border border-border bg-muted/20 p-5 text-left transition-all hover:border-success/40 hover:bg-success/5"
+            className="group flex items-center gap-5 rounded-xl border border-border bg-muted/50 p-5 text-left transition-all hover:border-success/40 hover:bg-success/5"
           >
             <div className="rounded-xl border border-success/20 bg-success/10 p-4 transition-colors group-hover:bg-success/15">
               <FileJson className="h-6 w-6 text-success" />
@@ -1147,10 +1147,10 @@ function VisualizerTabList() {
           />
 
           {/* Hover background */}
-          <span className="absolute inset-x-0 inset-y-1.5 rounded-lg bg-muted/0 transition-colors duration-150 group-hover:bg-muted/60 group-data-[state=active]:bg-transparent" />
+          <span className="absolute inset-x-0 inset-y-1.5 rounded-lg bg-muted/0 transition-colors duration-150 group-hover:bg-muted group-data-[state=active]:bg-transparent" />
 
           {/* Icon */}
-          <Icon className="relative h-4 w-4 shrink-0 transition-colors duration-150 text-muted-foreground/70 group-hover:text-foreground/70 group-data-[state=active]:text-foreground" />
+          <Icon className="relative h-4 w-4 shrink-0 transition-colors duration-150 text-muted-foreground group-hover:text-muted-foreground group-data-[state=active]:text-foreground" />
 
           {/* Label */}
           <span className="relative">{label}</span>

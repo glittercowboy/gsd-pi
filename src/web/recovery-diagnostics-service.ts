@@ -8,7 +8,7 @@ import {
   collectSelectiveLiveStatePayload,
   resolveBridgeRuntimeConfig,
 } from "./bridge-service.ts"
-import { resolveTypeStrippingFlag } from "./ts-subprocess-flags.ts"
+import { resolveTypeStrippingFlag, resolveSubprocessModule, buildSubprocessPrefixArgs } from "./ts-subprocess-flags.ts"
 import type {
   WorkspaceRecoveryBrowserAction,
   WorkspaceRecoveryCodeSummary,
@@ -360,14 +360,6 @@ function resolveTsLoaderPath(packageRoot: string): string {
   return join(packageRoot, "src", "resources", "extensions", "gsd", "tests", "resolve-ts.mjs")
 }
 
-function resolveDoctorModulePath(packageRoot: string): string {
-  return join(packageRoot, "src", "resources", "extensions", "gsd", "doctor.ts")
-}
-
-function resolveSessionForensicsModulePath(packageRoot: string): string {
-  return join(packageRoot, "src", "resources", "extensions", "gsd", "session-forensics.ts")
-}
-
 async function collectRecoveryDiagnosticsChildPayload(
   packageRoot: string,
   basePath: string,
@@ -379,12 +371,19 @@ async function collectRecoveryDiagnosticsChildPayload(
   const env = options.env ?? process.env
   const checkExists = options.existsSync ?? existsSync
   const resolveTsLoader = resolveTsLoaderPath(packageRoot)
-  const doctorModulePath = resolveDoctorModulePath(packageRoot)
-  const sessionForensicsModulePath = resolveSessionForensicsModulePath(packageRoot)
+  const doctorResolution = resolveSubprocessModule(packageRoot, "resources/extensions/gsd/doctor.ts", checkExists)
+  const forensicsResolution = resolveSubprocessModule(packageRoot, "resources/extensions/gsd/session-forensics.ts", checkExists)
+  const doctorModulePath = doctorResolution.modulePath
+  const sessionForensicsModulePath = forensicsResolution.modulePath
 
-  if (!checkExists(resolveTsLoader) || !checkExists(doctorModulePath) || !checkExists(sessionForensicsModulePath)) {
+  if (!doctorResolution.useCompiledJs && (!checkExists(resolveTsLoader) || !checkExists(doctorModulePath) || !checkExists(sessionForensicsModulePath))) {
     throw new Error(
       `recovery diagnostics providers not found; checked=${resolveTsLoader},${doctorModulePath},${sessionForensicsModulePath}`,
+    )
+  }
+  if (doctorResolution.useCompiledJs && (!checkExists(doctorModulePath) || !checkExists(sessionForensicsModulePath))) {
+    throw new Error(
+      `recovery diagnostics providers not found; checked=${doctorModulePath},${sessionForensicsModulePath}`,
     )
   }
 
@@ -468,14 +467,13 @@ async function collectRecoveryDiagnosticsChildPayload(
     '}));',
   ].join(" ")
 
+  const prefixArgs = buildSubprocessPrefixArgs(packageRoot, doctorResolution, pathToFileURL(resolveTsLoader).href)
+
   return await new Promise<RecoveryDiagnosticsChildPayload>((resolveResult, reject) => {
     execFile(
       options.execPath ?? process.execPath,
       [
-        "--import",
-        pathToFileURL(resolveTsLoader).href,
-        resolveTypeStrippingFlag(packageRoot),
-        "--input-type=module",
+        ...prefixArgs,
         "--eval",
         script,
       ],

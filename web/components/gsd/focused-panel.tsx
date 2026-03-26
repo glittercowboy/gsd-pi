@@ -82,7 +82,7 @@ function SelectRenderer({
           {request.options.map((option) => (
             <label
               key={option}
-              className="flex cursor-pointer items-center gap-3 rounded-lg border border-border/70 bg-background/70 px-3 py-2.5 transition-colors hover:bg-accent/40"
+              className="flex cursor-pointer items-center gap-3 rounded-lg border border-border bg-background px-3 py-2.5 transition-colors hover:bg-accent/40"
             >
               <Checkbox
                 checked={multiValues.has(option)}
@@ -115,7 +115,7 @@ function SelectRenderer({
         {request.options.map((option) => (
           <label
             key={option}
-            className="flex cursor-pointer items-center gap-3 rounded-lg border border-border/70 bg-background/70 px-3 py-2.5 transition-colors hover:bg-accent/40"
+            className="flex cursor-pointer items-center gap-3 rounded-lg border border-border bg-background px-3 py-2.5 transition-colors hover:bg-accent/40"
           >
             <RadioGroupItem value={option} id={`select-${option}`} />
             <Label htmlFor={`select-${option}`} className="cursor-pointer text-sm font-normal">
@@ -145,7 +145,7 @@ function ConfirmRenderer({
 }) {
   return (
     <div className="space-y-4">
-      <div className="rounded-lg border border-border/70 bg-background/70 px-4 py-3 text-sm leading-relaxed">
+      <div className="rounded-lg border border-border bg-background px-4 py-3 text-sm leading-relaxed">
         {request.message}
       </div>
       <div className="flex gap-3">

@@ -5,7 +5,8 @@
  * and the hasActiveWorkers() status check.
  */
 
-import { createTestContext } from './test-helpers.ts';
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
 import {
   registerWorker,
   updateWorker,
@@ -15,7 +16,6 @@ import {
   resetWorkerRegistry,
 } from '../../subagent/worker-registry.ts';
 
-const { assertEq, assertTrue, report } = createTestContext();
 
 // ─── Setup ────────────────────────────────────────────────────────────────────
 
@@ -28,15 +28,15 @@ console.log("\n=== Worker Registration ===");
 {
   resetWorkerRegistry();
   const id = registerWorker("scout", "Explore codebase", 0, 3, "batch-1");
-  assertTrue(id.startsWith("worker-"), "worker ID has correct prefix");
+  assert.ok(id.startsWith("worker-"), "worker ID has correct prefix");
   const workers = getActiveWorkers();
-  assertEq(workers.length, 1, "one worker registered");
-  assertEq(workers[0].agent, "scout", "worker agent name correct");
-  assertEq(workers[0].task, "Explore codebase", "worker task correct");
-  assertEq(workers[0].status, "running", "worker starts as running");
-  assertEq(workers[0].index, 0, "worker index correct");
-  assertEq(workers[0].batchSize, 3, "worker batch size correct");
-  assertEq(workers[0].batchId, "batch-1", "worker batch ID correct");
+  assert.deepStrictEqual(workers.length, 1, "one worker registered");
+  assert.deepStrictEqual(workers[0].agent, "scout", "worker agent name correct");
+  assert.deepStrictEqual(workers[0].task, "Explore codebase", "worker task correct");
+  assert.deepStrictEqual(workers[0].status, "running", "worker starts as running");
+  assert.deepStrictEqual(workers[0].index, 0, "worker index correct");
+  assert.deepStrictEqual(workers[0].batchSize, 3, "worker batch size correct");
+  assert.deepStrictEqual(workers[0].batchId, "batch-1", "worker batch ID correct");
 }
 
 // ─── Multiple workers in a batch ──────────────────────────────────────────────
@@ -50,14 +50,14 @@ console.log("\n=== Multiple Workers in a Batch ===");
   const id3 = registerWorker("worker", "Task C", 2, 3, "batch-2");
 
   const workers = getActiveWorkers();
-  assertEq(workers.length, 3, "three workers registered");
-  assertTrue(hasActiveWorkers(), "has active workers");
+  assert.deepStrictEqual(workers.length, 3, "three workers registered");
+  assert.ok(hasActiveWorkers(), "has active workers");
 
   const batches = getWorkerBatches();
-  assertEq(batches.size, 1, "one batch");
+  assert.deepStrictEqual(batches.size, 1, "one batch");
   const batch = batches.get("batch-2");
-  assertTrue(batch !== undefined, "batch-2 exists");
-  assertEq(batch!.length, 3, "batch has 3 workers");
+  assert.ok(batch !== undefined, "batch-2 exists");
+  assert.deepStrictEqual(batch!.length, 3, "batch has 3 workers");
 }
 
 // ─── Worker status updates ────────────────────────────────────────────────────
@@ -72,11 +72,11 @@ console.log("\n=== Worker Status Updates ===");
   updateWorker(id1, "completed");
   const workers = getActiveWorkers();
   const w1 = workers.find(w => w.id === id1);
-  assertEq(w1?.status, "completed", "worker 1 marked completed");
+  assert.deepStrictEqual(w1?.status, "completed", "worker 1 marked completed");
 
   const w2 = workers.find(w => w.id === id2);
-  assertEq(w2?.status, "running", "worker 2 still running");
-  assertTrue(hasActiveWorkers(), "still has active workers (worker 2 running)");
+  assert.deepStrictEqual(w2?.status, "running", "worker 2 still running");
+  assert.ok(hasActiveWorkers(), "still has active workers (worker 2 running)");
 }
 
 // ─── Failed worker ────────────────────────────────────────────────────────────
@@ -88,7 +88,7 @@ console.log("\n=== Failed Worker ===");
   const id = registerWorker("scout", "Task A", 0, 1, "batch-4");
   updateWorker(id, "failed");
   const workers = getActiveWorkers();
-  assertEq(workers[0].status, "failed", "worker marked failed");
+  assert.deepStrictEqual(workers[0].status, "failed", "worker marked failed");
 }
 
 // ─── Multiple batches ─────────────────────────────────────────────────────────
@@ -102,9 +102,9 @@ console.log("\n=== Multiple Batches ===");
   registerWorker("researcher", "Task C", 0, 1, "batch-6");
 
   const batches = getWorkerBatches();
-  assertEq(batches.size, 2, "two batches");
-  assertEq(batches.get("batch-5")!.length, 2, "batch-5 has 2 workers");
-  assertEq(batches.get("batch-6")!.length, 1, "batch-6 has 1 worker");
+  assert.deepStrictEqual(batches.size, 2, "two batches");
+  assert.deepStrictEqual(batches.get("batch-5")!.length, 2, "batch-5 has 2 workers");
+  assert.deepStrictEqual(batches.get("batch-6")!.length, 1, "batch-6 has 1 worker");
 }
 
 // ─── hasActiveWorkers with all completed ──────────────────────────────────────
@@ -117,7 +117,7 @@ console.log("\n=== hasActiveWorkers — all completed ===");
   const id2 = registerWorker("worker", "Task B", 1, 2, "batch-7");
   updateWorker(id1, "completed");
   updateWorker(id2, "completed");
-  assertTrue(!hasActiveWorkers(), "no active workers when all completed");
+  assert.ok(!hasActiveWorkers(), "no active workers when all completed");
 }
 
 // ─── Reset clears everything ─────────────────────────────────────────────────
@@ -126,10 +126,10 @@ console.log("\n=== Reset ===");
 
 {
   registerWorker("scout", "Task", 0, 1, "batch-8");
-  assertTrue(getActiveWorkers().length > 0, "workers exist before reset");
+  assert.ok(getActiveWorkers().length > 0, "workers exist before reset");
   resetWorkerRegistry();
-  assertEq(getActiveWorkers().length, 0, "no workers after reset");
-  assertTrue(!hasActiveWorkers(), "hasActiveWorkers false after reset");
+  assert.deepStrictEqual(getActiveWorkers().length, 0, "no workers after reset");
+  assert.ok(!hasActiveWorkers(), "hasActiveWorkers false after reset");
 }
 
 // ─── Update non-existent worker is no-op ──────────────────────────────────────
@@ -140,9 +140,7 @@ console.log("\n=== Update non-existent worker ===");
   resetWorkerRegistry();
   // Should not throw
   updateWorker("nonexistent-id", "completed");
-  assertEq(getActiveWorkers().length, 0, "no workers created by updating nonexistent");
+  assert.deepStrictEqual(getActiveWorkers().length, 0, "no workers created by updating nonexistent");
 }
 
 // ─── Summary ──────────────────────────────────────────────────────────────────
-
-report();

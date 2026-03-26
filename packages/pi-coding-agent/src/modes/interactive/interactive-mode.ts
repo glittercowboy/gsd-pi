@@ -1989,6 +1989,7 @@ export class InteractiveMode {
 			handleDebugCommand: () => this.handleDebugCommand(),
 			shutdown: () => this.shutdown(),
 			executeCompaction: (instructions, isAuto) => this.executeCompaction(instructions, isAuto),
+			handleBashCommand: (command, options) => this.handleBashCommand(command, options?.excludeFromContext, options?.displayCommand, options?.loginShell),
 		};
 	}
 
@@ -2099,11 +2100,13 @@ export class InteractiveMode {
 							const userComponent = new UserMessageComponent(
 								skillBlock.userMessage,
 								this.getMarkdownThemeWithSettings(),
+								message.timestamp,
+								this.settingsManager.getTimestampFormat(),
 							);
 							this.chatContainer.addChild(userComponent);
 						}
 					} else {
-						const userComponent = new UserMessageComponent(textContent, this.getMarkdownThemeWithSettings());
+						const userComponent = new UserMessageComponent(textContent, this.getMarkdownThemeWithSettings(), message.timestamp, this.settingsManager.getTimestampFormat());
 						this.chatContainer.addChild(userComponent);
 					}
 					if (options?.populateHistory) {
@@ -2117,6 +2120,7 @@ export class InteractiveMode {
 					message,
 					this.hideThinkingBlock,
 					this.getMarkdownThemeWithSettings(),
+					this.settingsManager.getTimestampFormat(),
 				);
 				this.chatContainer.addChild(assistantComponent);
 				break;
@@ -2795,6 +2799,7 @@ export class InteractiveMode {
 					respectGitignoreInPicker: this.settingsManager.getRespectGitignoreInPicker(),
 					quietStartup: this.settingsManager.getQuietStartup(),
 					clearOnShrink: this.settingsManager.getClearOnShrink(),
+					timestampFormat: this.settingsManager.getTimestampFormat(),
 				},
 				{
 					onAutoCompactChange: (enabled) => {
@@ -2897,6 +2902,9 @@ export class InteractiveMode {
 					onRespectGitignoreInPickerChange: (enabled) => {
 						this.settingsManager.setRespectGitignoreInPicker(enabled);
 						this.autocompleteProvider?.setRespectGitignore(enabled);
+					},
+					onTimestampFormatChange: (format) => {
+						this.settingsManager.setTimestampFormat(format);
 					},
 					onCancel: () => {
 						done();
@@ -3421,14 +3429,6 @@ export class InteractiveMode {
 		this.ui.setFocus(dialog);
 		this.ui.requestRender();
 
-		// Promise for manual code input (racing with callback server)
-		let manualCodeResolve: ((code: string) => void) | undefined;
-		let manualCodeReject: ((err: Error) => void) | undefined;
-		const manualCodePromise = new Promise<string>((resolve, reject) => {
-			manualCodeResolve = resolve;
-			manualCodeReject = reject;
-		});
-
 		// Restore editor helper — also disposes the dialog to reject any
 		// dangling promises and prevent the UI from getting stuck.
 		const restoreEditor = () => {
@@ -3444,23 +3444,7 @@ export class InteractiveMode {
 				onAuth: (info: { url: string; instructions?: string }) => {
 					dialog.showAuth(info.url, info.instructions);
 
-					if (usesCallbackServer) {
-						// Show input for manual paste, racing with callback
-						dialog
-							.showManualInput("Paste redirect URL below, or complete login in browser:")
-							.then((value) => {
-								if (value && manualCodeResolve) {
-									manualCodeResolve(value);
-									manualCodeResolve = undefined;
-								}
-							})
-							.catch(() => {
-								if (manualCodeReject) {
-									manualCodeReject(new Error("Login cancelled"));
-									manualCodeReject = undefined;
-								}
-							});
-					} else if (providerId === "github-copilot") {
+					if (!usesCallbackServer && providerId === "github-copilot") {
 						// GitHub Copilot polls after onAuth
 						dialog.showWaiting("Waiting for browser authentication...");
 					}
@@ -3475,7 +3459,12 @@ export class InteractiveMode {
 					dialog.showProgress(message);
 				},
 
-				onManualCodeInput: () => manualCodePromise,
+				// Callback-server providers race browser callback with pasted redirect URL.
+				// Keep manual-input promise ownership inside provider flow to avoid
+				// orphaned rejections when the callback is not consumed.
+				onManualCodeInput: usesCallbackServer
+					? () => dialog.showManualInput("Paste redirect URL below, or complete login in browser:")
+					: undefined,
 
 				signal: dialog.signal,
 			});
@@ -3507,12 +3496,6 @@ export class InteractiveMode {
 			this.showStatus(`Logged in to ${providerName}. Credentials saved to ${getAuthPath()}`);
 		} catch (error: unknown) {
 			restoreEditor();
-			// Also reject the manual code promise if it's still pending
-			if (manualCodeReject) {
-				manualCodeReject(new Error("Login cancelled"));
-				manualCodeReject = undefined;
-				manualCodeResolve = undefined;
-			}
 			const errorMsg = error instanceof Error ? error.message : String(error);
 			if (errorMsg !== "Login cancelled" && !errorMsg.includes("Superseded") && !errorMsg.includes("disposed")) {
 				this.showError(`Failed to login to ${providerName}: ${errorMsg}`);
@@ -3665,8 +3648,9 @@ export class InteractiveMode {
 		}
 	}
 
-	private async handleBashCommand(command: string, excludeFromContext = false): Promise<void> {
+	private async handleBashCommand(command: string, excludeFromContext = false, displayCommand?: string, loginShell?: boolean): Promise<void> {
 		const extensionRunner = this.session.extensionRunner;
+		const label = displayCommand || command;
 
 		// Emit user_bash event to let extensions intercept
 		const eventResult = extensionRunner
@@ -3683,7 +3667,7 @@ export class InteractiveMode {
 			const result = eventResult.result;
 
 			// Create UI component for display
-			this.bashComponent = new BashExecutionComponent(command, this.ui, excludeFromContext);
+			this.bashComponent = new BashExecutionComponent(label, this.ui, excludeFromContext);
 			if (this.session.isStreaming) {
 				this.pendingMessagesContainer.addChild(this.bashComponent);
 				this.pendingBashComponents.push(this.bashComponent);
@@ -3711,7 +3695,7 @@ export class InteractiveMode {
 
 		// Normal execution path (possibly with custom operations)
 		const isDeferred = this.session.isStreaming;
-		this.bashComponent = new BashExecutionComponent(command, this.ui, excludeFromContext);
+		this.bashComponent = new BashExecutionComponent(label, this.ui, excludeFromContext);
 
 		if (isDeferred) {
 			// Show in pending area when agent is streaming
@@ -3732,7 +3716,7 @@ export class InteractiveMode {
 						this.ui.requestRender();
 					}
 				},
-				{ excludeFromContext, operations: eventResult?.operations },
+				{ excludeFromContext, operations: eventResult?.operations, loginShell },
 			);
 
 			if (this.bashComponent) {

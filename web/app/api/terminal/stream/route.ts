@@ -9,6 +9,7 @@
 import {
   getOrCreateSession,
   addListener,
+  isAllowedTerminalCommand,
 } from "../../../../lib/pty-manager";
 import { requireProjectCwd } from "../../../../../src/web/bridge-service.ts";
 
@@ -23,6 +24,13 @@ export async function GET(request: Request): Promise<Response> {
   const command = url.searchParams.get("command") || undefined;
   const commandArgs = url.searchParams.getAll("arg");
   const projectCwd = requireProjectCwd(request);
+
+  if (!isAllowedTerminalCommand(command)) {
+    return Response.json(
+      { error: `Command not allowed: ${command}` },
+      { status: 403 },
+    );
+  }
 
   // Ensure the session exists
   try {

@@ -70,7 +70,6 @@ function makeWorker(overrides: Partial<WorkerInfo> = {}): WorkerInfo {
     worktreePath: "/tmp/test",
     startedAt: Date.now(),
     state: "stopped",
-    completedUnits: 3,
     cost: 1.5,
     ...overrides,
   };
@@ -132,16 +131,16 @@ test("determineMergeOrder — by-completion sorts by startedAt (earliest first)"
   assert.deepEqual(order, ["M003", "M002", "M001"]);
 });
 
-test("determineMergeOrder — only includes stopped workers with completedUnits > 0", () => {
+test("determineMergeOrder — only includes stopped workers", () => {
   const workers = [
-    makeWorker({ milestoneId: "M001", state: "stopped", completedUnits: 3 }),
-    makeWorker({ milestoneId: "M002", state: "running", completedUnits: 2 }),
-    makeWorker({ milestoneId: "M003", state: "stopped", completedUnits: 0 }),
-    makeWorker({ milestoneId: "M004", state: "error", completedUnits: 5 }),
-    makeWorker({ milestoneId: "M005", state: "paused", completedUnits: 1 }),
+    makeWorker({ milestoneId: "M001", state: "stopped" }),
+    makeWorker({ milestoneId: "M002", state: "running" }),
+    makeWorker({ milestoneId: "M003", state: "stopped" }),
+    makeWorker({ milestoneId: "M004", state: "error" }),
+    makeWorker({ milestoneId: "M005", state: "paused" }),
   ];
   const order = determineMergeOrder(workers, "sequential");
-  assert.deepEqual(order, ["M001"]);
+  assert.deepEqual(order, ["M001", "M003"]);
 });
 
 test("determineMergeOrder — empty workers returns empty array", () => {
@@ -169,7 +168,7 @@ test("formatMergeResults — empty results", () => {
 
 test("formatMergeResults — successful merge", () => {
   const results: MergeResult[] = [
-    { milestoneId: "M001", success: true, commitMessage: "feat(M001): Auth", pushed: true },
+    { milestoneId: "M001", success: true, commitMessage: "feat: Auth\n\nGSD-Milestone: M001\nBranch: milestone/M001", pushed: true },
   ];
   const output = formatMergeResults(results);
   assert.ok(output.includes("M001"));
@@ -179,7 +178,7 @@ test("formatMergeResults — successful merge", () => {
 
 test("formatMergeResults — successful merge without push", () => {
   const results: MergeResult[] = [
-    { milestoneId: "M001", success: true, commitMessage: "feat(M001): Auth", pushed: false },
+    { milestoneId: "M001", success: true, commitMessage: "feat: Auth\n\nGSD-Milestone: M001\nBranch: milestone/M001", pushed: false },
   ];
   const output = formatMergeResults(results);
   assert.ok(output.includes("merged successfully"));
@@ -214,7 +213,7 @@ test("formatMergeResults — generic failure without conflict files", () => {
 
 test("formatMergeResults — mixed results", () => {
   const results: MergeResult[] = [
-    { milestoneId: "M001", success: true, commitMessage: "feat(M001): OK", pushed: false },
+    { milestoneId: "M001", success: true, commitMessage: "feat: OK\n\nGSD-Milestone: M001\nBranch: milestone/M001", pushed: false },
     { milestoneId: "M002", success: false, error: "conflict", conflictFiles: ["a.ts"] },
   ];
   const output = formatMergeResults(results);
@@ -282,9 +281,9 @@ test("mergeCompletedMilestone — clean merge, session status cleaned up", async
     // Verify file merged to main
     assert.ok(existsSync(join(repo, "auth.ts")), "auth.ts should be on main");
 
-    // Verify commit on main
-    const log = run("git log --oneline main", repo);
-    assert.ok(log.includes("M010"), "commit message should reference M010");
+    // Verify commit on main (M010 is now in the body as a GSD-Milestone trailer)
+    const log = run("git log -1 --format=%B main", repo);
+    assert.ok(log.includes("GSD-Milestone: M010"), "commit message should reference M010 in trailer");
 
     // Verify session status cleaned up
     const statusAfter = readSessionStatus(repo, "M010");

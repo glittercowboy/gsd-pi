@@ -12,9 +12,9 @@ import { execSync } from "node:child_process";
 
 import { getWorktreeHealth, formatWorktreeStatusLine } from "../worktree-health.ts";
 import { listWorktrees } from "../worktree-manager.ts";
-import { createTestContext } from "./test-helpers.ts";
+import { describe, test } from 'node:test';
+import assert from 'node:assert/strict';
 
-const { assertEq, assertTrue, report } = createTestContext();
 
 function run(cmd: string, cwd: string): string {
   return execSync(cmd, { cwd, stdio: ["ignore", "pipe", "pipe"], encoding: "utf-8" }).trim();
@@ -32,11 +32,10 @@ function createBaseRepo(): string {
   return dir;
 }
 
-async function main(): Promise<void> {
+describe('worktree-health', async () => {
   // Skip all tests on Windows — git worktree path resolution issues
   if (process.platform === "win32") {
     console.log("(all worktree-health tests skipped on Windows)");
-    report();
     return;
   }
 
@@ -59,16 +58,16 @@ async function main(): Promise<void> {
 
       const worktrees = listWorktrees(dir);
       const wt = worktrees.find(w => w.name === "done-feature");
-      assertTrue(!!wt, "worktree found");
+      assert.ok(!!wt, "worktree found");
 
       const health = getWorktreeHealth(dir, wt!);
-      assertTrue(health.mergedIntoMain, "branch detected as merged");
-      assertTrue(!health.dirty, "not dirty");
-      assertTrue(health.safeToRemove, "safe to remove");
+      assert.ok(health.mergedIntoMain, "branch detected as merged");
+      assert.ok(!health.dirty, "not dirty");
+      assert.ok(health.safeToRemove, "safe to remove");
 
       const line = formatWorktreeStatusLine(health);
-      assertTrue(line.includes("merged"), "status line mentions merged");
-      assertTrue(line.includes("safe to remove"), "status line mentions safe to remove");
+      assert.ok(line.includes("merged"), "status line mentions merged");
+      assert.ok(line.includes("safe to remove"), "status line mentions safe to remove");
     }
 
     // ─── Test: unmerged worktree with dirty files ──────────────────────
@@ -89,13 +88,13 @@ async function main(): Promise<void> {
 
       const worktrees = listWorktrees(dir);
       const wt = worktrees.find(w => w.name === "dirty-wip");
-      assertTrue(!!wt, "worktree found");
+      assert.ok(!!wt, "worktree found");
 
       const health = getWorktreeHealth(dir, wt!);
-      assertTrue(!health.mergedIntoMain, "not merged");
-      assertTrue(health.dirty, "dirty detected");
-      assertTrue(health.dirtyFileCount > 0, "dirty file count > 0");
-      assertTrue(!health.safeToRemove, "not safe to remove");
+      assert.ok(!health.mergedIntoMain, "not merged");
+      assert.ok(health.dirty, "dirty detected");
+      assert.ok(health.dirtyFileCount > 0, "dirty file count > 0");
+      assert.ok(!health.safeToRemove, "not safe to remove");
     }
 
     // ─── Test: unmerged worktree with unpushed commits ─────────────────
@@ -113,12 +112,12 @@ async function main(): Promise<void> {
 
       const worktrees = listWorktrees(dir);
       const wt = worktrees.find(w => w.name === "unpushed");
-      assertTrue(!!wt, "worktree found");
+      assert.ok(!!wt, "worktree found");
 
       const health = getWorktreeHealth(dir, wt!);
-      assertTrue(!health.mergedIntoMain, "not merged");
-      assertTrue(health.unpushedCommits > 0, "unpushed commits detected");
-      assertTrue(!health.safeToRemove, "not safe to remove");
+      assert.ok(!health.mergedIntoMain, "not merged");
+      assert.ok(health.unpushedCommits > 0, "unpushed commits detected");
+      assert.ok(!health.safeToRemove, "not safe to remove");
     }
 
     // ─── Test: stale detection with short threshold ────────────────────
@@ -137,17 +136,17 @@ async function main(): Promise<void> {
 
       const worktrees = listWorktrees(dir);
       const wt = worktrees.find(w => w.name === "stale-test");
-      assertTrue(!!wt, "worktree found");
+      assert.ok(!!wt, "worktree found");
 
       // With staleDays=0, any worktree should be stale (commit was just now, but threshold is 0)
       // Actually, a just-created worktree has lastCommitAgeDays ~0 which is >= 0
       const health = getWorktreeHealth(dir, wt!, 0);
-      assertTrue(health.stale, "stale with 0-day threshold");
-      assertTrue(health.lastCommitAgeDays >= 0, "last commit age is non-negative");
+      assert.ok(health.stale, "stale with 0-day threshold");
+      assert.ok(health.lastCommitAgeDays >= 0, "last commit age is non-negative");
 
       // With staleDays=9999, should NOT be stale
       const healthNotStale = getWorktreeHealth(dir, wt!, 9999);
-      assertTrue(!healthNotStale.stale, "not stale with high threshold");
+      assert.ok(!healthNotStale.stale, "not stale with high threshold");
     }
 
     // ─── Test: formatWorktreeStatusLine for clean active worktree ──────
@@ -166,12 +165,12 @@ async function main(): Promise<void> {
 
       const worktrees = listWorktrees(dir);
       const wt = worktrees.find(w => w.name === "clean-active");
-      assertTrue(!!wt, "worktree found");
+      assert.ok(!!wt, "worktree found");
 
       const health = getWorktreeHealth(dir, wt!, 9999); // high threshold so not stale
       const line = formatWorktreeStatusLine(health);
       // Should show last commit age since it's not merged and not stale
-      assertTrue(line.includes("last commit"), "shows last commit age for active worktree");
+      assert.ok(line.includes("last commit"), "shows last commit age for active worktree");
     }
 
   } finally {
@@ -179,8 +178,4 @@ async function main(): Promise<void> {
       try { rmSync(dir, { recursive: true, force: true }); } catch { /* ignore */ }
     }
   }
-
-  report();
-}
-
-main();
+});

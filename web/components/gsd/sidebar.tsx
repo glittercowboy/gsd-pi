@@ -62,7 +62,7 @@ const StatusIcon = ({ status }: { status: ItemStatus }) => {
   if (status === "in-progress") {
     return <Play className="h-4 w-4 shrink-0 text-warning" />
   }
-  return <Circle className="h-4 w-4 shrink-0 text-muted-foreground/50" />
+  return <Circle className="h-4 w-4 shrink-0 text-muted-foreground" />
 }
 
 /* ─── Nav Rail (left icon bar) ─── */
@@ -110,7 +110,7 @@ export function NavRail({ activeView, onViewChange, isConnecting = false }: NavR
           className={cn(
             "flex h-10 w-10 items-center justify-center rounded-md transition-colors",
             isConnecting
-              ? "cursor-not-allowed text-muted-foreground/30"
+              ? "cursor-not-allowed text-muted-foreground/50"
               : activeView === item.id
                 ? "bg-accent text-foreground"
                 : "text-muted-foreground hover:bg-accent/50 hover:text-foreground",
@@ -127,7 +127,7 @@ export function NavRail({ activeView, onViewChange, isConnecting = false }: NavR
           className={cn(
             "flex h-10 w-10 items-center justify-center rounded-md transition-colors",
             isConnecting
-              ? "cursor-not-allowed text-muted-foreground/30"
+              ? "cursor-not-allowed text-muted-foreground/50"
               : "text-muted-foreground hover:bg-accent/50 hover:text-foreground",
           )}
           title={isConnecting ? "Connecting…" : "Projects"}
@@ -698,12 +698,101 @@ interface SidebarProps {
   activeView: string
   onViewChange: (view: string) => void
   isConnecting?: boolean
+  mobile?: boolean
 }
 
-export function Sidebar({ activeView, onViewChange, isConnecting = false }: SidebarProps) {
+export function Sidebar({ activeView, onViewChange, isConnecting = false, mobile = false }: SidebarProps) {
+  if (mobile) {
+    return <MobileNavPanel activeView={activeView} onViewChange={onViewChange} isConnecting={isConnecting} />
+  }
   return (
     <div className="flex h-full">
       <NavRail activeView={activeView} onViewChange={onViewChange} isConnecting={isConnecting} />
+    </div>
+  )
+}
+
+/* ─── Mobile Nav Panel (full-width labels for touch) ─── */
+
+function MobileNavPanel({ activeView, onViewChange, isConnecting = false }: NavRailProps) {
+  const { openCommandSurface } = useGSDWorkspaceActions()
+  const { theme, setTheme } = useTheme()
+
+  const cycleTheme = () => {
+    if (theme === "system") setTheme("light")
+    else if (theme === "light") setTheme("dark")
+    else setTheme("system")
+  }
+
+  const themeLabel = theme === "light" ? "Light" : theme === "dark" ? "Dark" : "System"
+  const ThemeIcon = theme === "light" ? Sun : theme === "dark" ? Moon : Monitor
+
+  const navItems = [
+    { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
+    { id: "power", label: "Power Mode", icon: Columns2 },
+    { id: "chat", label: "Chat", icon: MessagesSquare },
+    { id: "roadmap", label: "Roadmap", icon: MapIcon },
+    { id: "files", label: "Files", icon: Folder },
+    { id: "activity", label: "Activity", icon: Activity },
+    { id: "visualize", label: "Visualize", icon: BarChart3 },
+  ]
+
+  return (
+    <div className="flex h-full flex-col bg-sidebar pt-14" data-testid="mobile-nav-panel">
+      <div className="flex-1 overflow-y-auto px-2 py-2">
+        {navItems.map((item) => (
+          <button
+            key={item.id}
+            onClick={() => onViewChange(item.id)}
+            disabled={isConnecting}
+            className={cn(
+              "flex w-full items-center gap-3 rounded-md px-3 py-3 text-sm font-medium transition-colors min-h-[44px]",
+              isConnecting
+                ? "cursor-not-allowed text-muted-foreground/50"
+                : activeView === item.id
+                  ? "bg-accent text-foreground"
+                  : "text-muted-foreground hover:bg-accent/50 hover:text-foreground",
+            )}
+          >
+            <item.icon className="h-5 w-5 shrink-0" />
+            {item.label}
+          </button>
+        ))}
+      </div>
+      <div className="border-t border-border px-2 py-2 space-y-1">
+        <button
+          onClick={() => window.dispatchEvent(new CustomEvent("gsd:open-projects"))}
+          disabled={isConnecting}
+          className="flex w-full items-center gap-3 rounded-md px-3 py-3 text-sm text-muted-foreground hover:bg-accent/50 hover:text-foreground transition-colors min-h-[44px]"
+        >
+          <FolderKanban className="h-5 w-5 shrink-0" />
+          Projects
+        </button>
+        <button
+          onClick={() => !isConnecting && openCommandSurface("git", { source: "sidebar" })}
+          disabled={isConnecting}
+          className="flex w-full items-center gap-3 rounded-md px-3 py-3 text-sm text-muted-foreground hover:bg-accent/50 hover:text-foreground transition-colors min-h-[44px]"
+        >
+          <GitBranch className="h-5 w-5 shrink-0" />
+          Git
+        </button>
+        <button
+          onClick={() => !isConnecting && openCommandSurface("settings", { source: "sidebar" })}
+          disabled={isConnecting}
+          className="flex w-full items-center gap-3 rounded-md px-3 py-3 text-sm text-muted-foreground hover:bg-accent/50 hover:text-foreground transition-colors min-h-[44px]"
+        >
+          <Settings className="h-5 w-5 shrink-0" />
+          Settings
+        </button>
+        <button
+          onClick={() => !isConnecting && cycleTheme()}
+          disabled={isConnecting}
+          className="flex w-full items-center gap-3 rounded-md px-3 py-3 text-sm text-muted-foreground hover:bg-accent/50 hover:text-foreground transition-colors min-h-[44px]"
+        >
+          <ThemeIcon className="h-5 w-5 shrink-0" />
+          Theme: {themeLabel}
+        </button>
+      </div>
     </div>
   )
 }

@@ -60,26 +60,26 @@ describe("edit-diff", () => {
 		assert.match(result.diff, /CHANGED/);
 	});
 
-	it("computes diffs for preview without native helpers", async () => {
+	it("computes diffs for preview without native helpers", async (t) => {
 		const dir = mkdtempSync(join(tmpdir(), "edit-diff-test-"));
-		try {
-			const file = join(dir, "sample.ts");
-			writeFileSync(file, "const title = “Hello”;\n", "utf-8");
-
-			const result = await computeEditDiff(
-				file,
-				"const title = \"Hello\";\n",
-				"const title = \"Hi\";\n",
-				dir,
-			);
-
-			assert.ok(!("error" in result), "expected a diff result");
-			if (!("error" in result)) {
-				assert.equal(result.firstChangedLine, 1);
-				assert.match(result.diff, /\+1 const title = "Hi";/);
-			}
-		} finally {
+		t.after(() => {
 			rmSync(dir, { recursive: true, force: true });
+		});
+
+		const file = join(dir, "sample.ts");
+		writeFileSync(file, "const title = “Hello”;\n", "utf-8");
+
+		const result = await computeEditDiff(
+			file,
+			"const title = \"Hello\";\n",
+			"const title = \"Hi\";\n",
+			dir,
+		);
+
+		assert.ok(!("error" in result), "expected a diff result");
+		if (!("error" in result)) {
+			assert.equal(result.firstChangedLine, 1);
+			assert.match(result.diff, /\+1 const title = "Hi";/);
 		}
 	});
 });

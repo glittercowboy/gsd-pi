@@ -14,7 +14,7 @@ permissions:
 jobs:
   risk-check:
     name: Classify changed files and assess risk
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
 
     steps:
       # Checkout the BASE branch — our trusted script and map, not fork code.

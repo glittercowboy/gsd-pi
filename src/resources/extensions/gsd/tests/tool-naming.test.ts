@@ -1,13 +1,13 @@
 // tool-naming — Verifies canonical + alias tool registration for GSD DB tools.
 //
-// Each of the 4 DB tools must register under its canonical gsd_concept_action name
-// AND under the old gsd_action_concept name as a backward-compatible alias.
+// Each DB tool must register under its canonical gsd_concept_action name
+// AND under a backward-compatible alias name.
 // The alias must share the exact same execute function reference as the canonical tool.
 
-import { createTestContext } from './test-helpers.ts';
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
 import { registerDbTools } from '../bootstrap/db-tools.ts';
 
-const { assertEq, assertTrue, report } = createTestContext();
 
 // ─── Mock PI ──────────────────────────────────────────────────────────────────
 
@@ -26,6 +26,15 @@ const RENAME_MAP: Array<{ canonical: string; alias: string }> = [
   { canonical: "gsd_requirement_update", alias: "gsd_update_requirement" },
   { canonical: "gsd_summary_save", alias: "gsd_save_summary" },
   { canonical: "gsd_milestone_generate_id", alias: "gsd_generate_milestone_id" },
+  { canonical: "gsd_task_complete", alias: "gsd_complete_task" },
+  { canonical: "gsd_slice_complete", alias: "gsd_complete_slice" },
+  { canonical: "gsd_plan_milestone", alias: "gsd_milestone_plan" },
+  { canonical: "gsd_plan_slice", alias: "gsd_slice_plan" },
+  { canonical: "gsd_plan_task", alias: "gsd_task_plan" },
+  { canonical: "gsd_replan_slice", alias: "gsd_slice_replan" },
+  { canonical: "gsd_reassess_roadmap", alias: "gsd_roadmap_reassess" },
+  { canonical: "gsd_complete_milestone", alias: "gsd_milestone_complete" },
+  { canonical: "gsd_validate_milestone", alias: "gsd_milestone_validate" },
 ];
 
 // ─── Registration count ──────────────────────────────────────────────────────
@@ -35,7 +44,7 @@ console.log('\n── Tool naming: registration count ──');
 const pi = makeMockPi();
 registerDbTools(pi);
 
-assertEq(pi.tools.length, 8, 'Should register exactly 8 tools (4 canonical + 4 aliases)');
+assert.deepStrictEqual(pi.tools.length, 27, 'Should register exactly 27 tools (13 canonical + 13 aliases + 1 gate tool)');
 
 // ─── Both names exist for each pair ──────────────────────────────────────────
 
@@ -45,8 +54,8 @@ for (const { canonical, alias } of RENAME_MAP) {
   const canonicalTool = pi.tools.find((t: any) => t.name === canonical);
   const aliasTool = pi.tools.find((t: any) => t.name === alias);
 
-  assertTrue(canonicalTool !== undefined, `Canonical tool "${canonical}" should be registered`);
-  assertTrue(aliasTool !== undefined, `Alias tool "${alias}" should be registered`);
+  assert.ok(canonicalTool !== undefined, `Canonical tool "${canonical}" should be registered`);
+  assert.ok(aliasTool !== undefined, `Alias tool "${alias}" should be registered`);
 }
 
 // ─── Execute function identity ───────────────────────────────────────────────
@@ -58,7 +67,7 @@ for (const { canonical, alias } of RENAME_MAP) {
   const aliasTool = pi.tools.find((t: any) => t.name === alias);
 
   if (canonicalTool && aliasTool) {
-    assertTrue(
+    assert.ok(
       canonicalTool.execute === aliasTool.execute,
       `"${canonical}" and "${alias}" should share the same execute function reference`,
     );
@@ -73,7 +82,7 @@ for (const { canonical, alias } of RENAME_MAP) {
   const aliasTool = pi.tools.find((t: any) => t.name === alias);
 
   if (aliasTool) {
-    assertTrue(
+    assert.ok(
       aliasTool.description.includes(`alias for ${canonical}`),
       `Alias "${alias}" description should include "alias for ${canonical}"`,
     );
@@ -89,7 +98,7 @@ for (const { canonical } of RENAME_MAP) {
 
   if (canonicalTool) {
     const guidelinesText = canonicalTool.promptGuidelines.join(' ');
-    assertTrue(
+    assert.ok(
       guidelinesText.includes(canonical),
       `Canonical tool "${canonical}" promptGuidelines should reference its own name`,
     );
@@ -105,7 +114,7 @@ for (const { canonical, alias } of RENAME_MAP) {
 
   if (aliasTool) {
     const guidelinesText = aliasTool.promptGuidelines.join(' ');
-    assertTrue(
+    assert.ok(
       guidelinesText.includes(`Alias for ${canonical}`),
       `Alias "${alias}" promptGuidelines should say "Alias for ${canonical}"`,
     );
@@ -113,5 +122,3 @@ for (const { canonical, alias } of RENAME_MAP) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-
-report();

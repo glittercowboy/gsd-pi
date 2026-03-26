@@ -135,7 +135,10 @@ export function agentLoopContinue(
 
 	(async () => {
 		const newMessages: AgentMessage[] = [];
-		const currentContext: AgentContext = { ...context };
+		const currentContext: AgentContext = {
+			...context,
+			messages: [...context.messages],
+		};
 
 		stream.push({ type: "agent_start" });
 		stream.push({ type: "turn_start" });
@@ -233,7 +236,32 @@ async function runLoop(
 			hasMoreToolCalls = toolCalls.length > 0;
 
 			const toolResults: ToolResultMessage[] = [];
-			if (hasMoreToolCalls) {
+			if (hasMoreToolCalls && config.externalToolExecution) {
+				// External execution mode: tools were handled by the provider
+				// (e.g., Claude Code SDK). Emit tool_execution events for each
+				// tool call. The TUI adds these as components after the message.
+				for (const tc of toolCalls as AgentToolCall[]) {
+					stream.push({
+						type: "tool_execution_start",
+						toolCallId: tc.id,
+						toolName: tc.name,
+						args: tc.arguments,
+					});
+					stream.push({
+						type: "tool_execution_end",
+						toolCallId: tc.id,
+						toolName: tc.name,
+						result: {
+							content: [{ type: "text", text: "(executed by Claude Code)" }],
+							details: {},
+						},
+						isError: false,
+					});
+				}
+				// Don't add tool results to context or loop back — the streamSimple
+				// call already ran the full multi-turn agentic loop.
+				hasMoreToolCalls = false;
+			} else if (hasMoreToolCalls) {
 				const toolExecution = await executeToolCalls(
 					currentContext,
 					message,

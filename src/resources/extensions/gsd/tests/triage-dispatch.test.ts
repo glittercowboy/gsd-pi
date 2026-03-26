@@ -119,7 +119,7 @@ test("dispatch: triage dispatch keeps the loop in continue mode", () => {
     postUnitSrc.indexOf("// ── Quick-task dispatch"),
   );
   assert.ok(
-    triageBlock.includes('return "continue"'),
+    triageBlock.includes('return "continue"') || triageBlock.includes("return enqueueSidecar("),
     "triage dispatch should return 'continue' after enqueuing sidecar work",
   );
 });
@@ -320,7 +320,7 @@ test("dispatch: quick-task dispatch keeps the loop in continue mode", () => {
     postUnitSrc.indexOf("if (s.stepMode)"),
   );
   assert.ok(
-    quickTaskSection.includes('return "continue"'),
+    quickTaskSection.includes('return "continue"') || quickTaskSection.includes("return enqueueSidecar("),
     "quick-task dispatch should return 'continue' after enqueuing sidecar work",
   );
 });

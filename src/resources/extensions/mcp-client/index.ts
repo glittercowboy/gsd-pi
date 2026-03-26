@@ -213,6 +213,26 @@ function formatToolList(serverName: string, tools: McpToolSchema[]): string {
 	return lines.join("\n");
 }
 
+// ─── Status helper (consumed by /gsd mcp) ─────────────────────────────────────
+
+/**
+ * Return the live connection status for a named MCP server.
+ * Safe to call even when the server has never been connected.
+ */
+export function getConnectionStatus(name: string): {
+	connected: boolean;
+	tools: string[];
+	error?: string;
+} {
+	const conn = connections.get(name);
+	const cached = toolCache.get(name);
+	return {
+		connected: !!conn,
+		tools: cached ? cached.map((t) => t.name) : [],
+		error: undefined,
+	};
+}
+
 // ─── Extension ────────────────────────────────────────────────────────────────
 
 export default function (pi: ExtensionAPI) {

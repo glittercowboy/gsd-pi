@@ -37,5 +37,6 @@ export const BUILTIN_SLASH_COMMANDS: ReadonlyArray<BuiltinSlashCommand> = [
 	{ name: "reload", description: "Reload extensions, skills, prompts, and themes" },
 	{ name: "thinking", description: "Set thinking level (off/minimal/low/medium/high/xhigh)" },
 	{ name: "edit-mode", description: "Toggle edit mode (standard/hashline)" },
+	{ name: "terminal", description: "Run a shell command directly (e.g. /terminal ping -c3 1.1.1.1)" },
 	{ name: "quit", description: "Quit pi" },
 ];

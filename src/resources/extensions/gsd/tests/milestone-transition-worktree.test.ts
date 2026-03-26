@@ -94,8 +94,8 @@ test("worktree swap on milestone transition: merge old, create new", () => {
     assert.equal(process.cwd(), tempDir, "cwd restored to project root after merge");
     assert.ok(!isInAutoWorktree(tempDir), "no longer in auto-worktree after merge");
 
-    // Verify M001 work was merged to main
-    const mainLog = run("git log --oneline -3", tempDir);
+    // Verify M001 work was merged to main (milestone ID is in trailer, not subject)
+    const mainLog = run("git log -3", tempDir);
     assert.ok(mainLog.includes("M001"), "M001 squash commit should be on main");
 
     // Phase 3: Create new worktree for M002 (simulates new milestone)

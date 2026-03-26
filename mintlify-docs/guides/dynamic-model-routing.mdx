@@ -1,0 +1,94 @@
+---
+title: "Dynamic model routing"
+description: "Automatically select cheaper models for simple work and reserve expensive models for complex tasks."
+---
+
+Dynamic model routing classifies each dispatched unit into a complexity tier and selects an appropriate model. This reduces token consumption by 20-50% without sacrificing quality where it matters.
+
+The key rule: **downgrade-only semantics**. Your configured model is always the ceiling — routing never upgrades beyond what you've configured.
+
+## Enabling
+
+```yaml
+dynamic_routing:
+  enabled: true
+```
+
+## Complexity tiers
+
+| Tier | Typical work | Default model level |
+|------|-------------|-------------------|
+| **Light** | Slice completion, UAT, hooks | Haiku-class |
+| **Standard** | Research, planning, execution | Sonnet-class |
+| **Heavy** | Replanning, roadmap reassessment | Opus-class |
+
+## Configuration
+
+```yaml
+dynamic_routing:
+  enabled: true
+  tier_models:
+    light: claude-haiku-4-5
+    standard: claude-sonnet-4-6
+    heavy: claude-opus-4-6
+  escalate_on_failure: true    # bump tier on task failure
+  budget_pressure: true        # auto-downgrade near budget ceiling
+  cross_provider: true         # consider models from other providers
+```
+
+### `escalate_on_failure`
+
+When a task fails at a given tier, the router escalates: Light → Standard → Heavy. Prevents cheap models from burning retries on work that needs more reasoning.
+
+### `budget_pressure`
+
+Progressive downgrading as budget ceiling approaches:
+
+| Budget used | Effect |
+|------------|--------|
+| < 50% | No adjustment |
+| 50-75% | Standard → Light |
+| 75-90% | More aggressive |
+| > 90% | Nearly everything → Light |
+
+### `cross_provider`
+
+The router may select models from providers other than your primary, using a built-in cost table to find the cheapest model at each tier.
+
+## Task plan analysis
+
+For `execute-task` units, the classifier analyzes the task plan:
+
+| Signal | Simple → Light | Complex → Heavy |
+|--------|---------------|----------------|
+| Step count | ≤ 3 | ≥ 8 |
+| File count | ≤ 3 | ≥ 8 |
+| Description length | < 500 chars | > 2000 chars |
+| Code blocks | — | ≥ 5 |
+| Complexity keywords | None | Present |
+
+## Adaptive learning
+
+The routing history (`.gsd/routing-history.json`) tracks success/failure per tier per unit type. If a tier's failure rate exceeds 20%, future classifications are bumped up.
+
+User feedback (`/gsd rate`) is weighted 2x vs automatic outcomes.
+
+## Cost table
+
+| Model | Input (per M) | Output (per M) |
+|-------|-------|--------|
+| claude-haiku-4-5 | $0.80 | $4.00 |
+| claude-sonnet-4-6 | $3.00 | $15.00 |
+| claude-opus-4-6 | $15.00 | $75.00 |
+| gpt-4o-mini | $0.15 | $0.60 |
+| gpt-4o | $2.50 | $10.00 |
+| gemini-2.0-flash | $0.10 | $0.40 |
+
+The cost table is for comparison only — actual billing comes from your provider.
+
+## Interaction with token profiles
+
+- **Token profiles** control phase skipping and context compression
+- **Dynamic routing** controls per-unit model selection within those constraints
+
+The `budget` profile + dynamic routing provides maximum cost savings.

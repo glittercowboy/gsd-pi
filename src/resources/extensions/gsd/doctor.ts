@@ -1,16 +1,18 @@
 import { existsSync, mkdirSync, lstatSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { loadFile, parsePlan, parseRoadmap, parseSummary, saveFile, parseTaskPlanMustHaves, countMustHavesMentionedInSummary } from "./files.js";
+import { loadFile, parseSummary, saveFile, parseTaskPlanMustHaves, countMustHavesMentionedInSummary } from "./files.js";
+import { parseRoadmap as parseLegacyRoadmap, parsePlan as parseLegacyPlan } from "./parsers-legacy.js";
+import { isDbAvailable, getMilestoneSlices, getSliceTasks } from "./gsd-db.js";
 import { resolveMilestoneFile, resolveMilestonePath, resolveSliceFile, resolveSlicePath, resolveTaskFile, resolveTasksDir, milestonesDir, gsdRoot, relMilestoneFile, relSliceFile, relTaskFile, relSlicePath, relGsdRootFile, resolveGsdRootFile, relMilestonePath } from "./paths.js";
 import { deriveState, isMilestoneComplete } from "./state.js";
 import { invalidateAllCaches } from "./cache.js";
 import { loadEffectiveGSDPreferences, type GSDPreferences } from "./preferences.js";
 
 import type { DoctorIssue, DoctorIssueCode, DoctorReport } from "./doctor-types.js";
-import { COMPLETION_TRANSITION_CODES, GLOBAL_STATE_CODES } from "./doctor-types.js";
+import { GLOBAL_STATE_CODES } from "./doctor-types.js";
 import type { RoadmapSliceEntry } from "./types.js";
-import { checkGitHealth, checkRuntimeHealth, checkGlobalHealth } from "./doctor-checks.js";
+import { checkGitHealth, checkRuntimeHealth, checkGlobalHealth, checkEngineHealth } from "./doctor-checks.js";
 import { checkEnvironmentHealth } from "./doctor-environment.js";
 import { runProviderChecks } from "./doctor-providers.js";
 
@@ -149,167 +151,6 @@ export async function rebuildState(basePath: string): Promise<void> {
   await saveFile(path, buildStateMarkdown(state));
 }
 
-async function ensureSliceSummaryStub(basePath: string, milestoneId: string, sliceId: string, fixesApplied: string[]): Promise<void> {
-  const path = join(resolveSlicePath(basePath, milestoneId, sliceId) ?? relSlicePath(basePath, milestoneId, sliceId), `${sliceId}-SUMMARY.md`);
-  const absolute = resolveSliceFile(basePath, milestoneId, sliceId, "SUMMARY") ?? join(resolveSlicePath(basePath, milestoneId, sliceId)!, `${sliceId}-SUMMARY.md`);
-  const content = [
-    "---",
-    `id: ${sliceId}`,
-    `parent: ${milestoneId}`,
-    `milestone: ${milestoneId}`,
-    "provides: []",
-    "requires: []",
-    "affects: []",
-    "key_files: []",
-    "key_decisions: []",
-    "patterns_established: []",
-    "observability_surfaces:",
-    "  - none yet \u2014 doctor created placeholder summary; replace with real diagnostics before treating as complete",
-    "drill_down_paths: []",
-    "duration: unknown",
-    "verification_result: unknown",
-    `completed_at: ${new Date().toISOString()}`,
-    "---",
-    "",
-    `# ${sliceId}: Recovery placeholder summary`,
-    "",
-    "**Doctor-created placeholder.**",
-    "",
-    "## What Happened",
-    "Doctor detected that all tasks were complete but the slice summary was missing. Replace this with a real compressed slice summary before relying on it.",
-    "",
-    "## Verification",
-    "Not re-run by doctor.",
-    "",
-    "## Deviations",
-    "Recovery placeholder created to restore required artifact shape.",
-    "",
-    "## Known Limitations",
-    "This file is intentionally incomplete and should be replaced by a real summary.",
-    "",
-    "## Follow-ups",
-    "- Regenerate this summary from task summaries.",
-    "",
-    "## Files Created/Modified",
-    `- \`${relSliceFile(basePath, milestoneId, sliceId, "SUMMARY")}\` \u2014 doctor-created placeholder summary`,
-    "",
-    "## Forward Intelligence",
-    "",
-    "### What the next slice should know",
-    "- Doctor had to reconstruct completion artifacts; inspect task summaries before continuing.",
-    "",
-    "### What's fragile",
-    "- Placeholder summary exists solely to unblock invariant checks.",
-    "",
-    "### Authoritative diagnostics",
-    "- Task summaries in the slice tasks/ directory \u2014 they are the actual authoritative source until this summary is rewritten.",
-    "",
-    "### What assumptions changed",
-    "- The system assumed completion would always write a slice summary; in practice doctor may need to restore missing artifacts.",
-    "",
-  ].join("\n");
-  await saveFile(absolute, content);
-  fixesApplied.push(`created placeholder ${absolute}`);
-}
-
-async function ensureSliceUatStub(basePath: string, milestoneId: string, sliceId: string, fixesApplied: string[]): Promise<void> {
-  const sDir = resolveSlicePath(basePath, milestoneId, sliceId);
-  if (!sDir) return;
-  const absolute = join(sDir, `${sliceId}-UAT.md`);
-  const content = [
-    `# ${sliceId}: Recovery placeholder UAT`,
-    "",
-    `**Milestone:** ${milestoneId}`,
-    `**Written:** ${new Date().toISOString()}`,
-    "",
-    "## Preconditions",
-    "- Doctor created this placeholder because the expected UAT file was missing.",
-    "",
-    "## Smoke Test",
-    "- Re-run the slice verification from the slice plan before shipping.",
-    "",
-    "## Test Cases",
-    "### 1. Replace this placeholder",
-    "1. Read the slice plan and task summaries.",
-    "2. Write a real UAT script.",
-    "3. **Expected:** This placeholder is replaced with meaningful human checks.",
-    "",
-    "## Edge Cases",
-    "### Missing completion artifacts",
-    "1. Confirm the summary, roadmap checkbox, and state file are coherent.",
-    "2. **Expected:** GSD doctor reports no remaining completion drift for this slice.",
-    "",
-    "## Failure Signals",
-    "- Placeholder content still present when treating the slice as done",
-    "",
-    "## Notes for Tester",
-    "Doctor created this file only to restore the required artifact shape. Replace it with a real UAT script.",
-    "",
-  ].join("\n");
-  await saveFile(absolute, content);
-  fixesApplied.push(`created placeholder ${absolute}`);
-}
-
-async function markTaskDoneInPlan(basePath: string, milestoneId: string, sliceId: string, taskId: string, fixesApplied: string[]): Promise<void> {
-  const planPath = resolveSliceFile(basePath, milestoneId, sliceId, "PLAN");
-  if (!planPath) return;
-  const content = await loadFile(planPath);
-  if (!content) return;
-  const updated = content.replace(
-    new RegExp(`^(\\s*-\\s+)\\[ \\]\\s+\\*\\*${taskId}:`, "m"),
-    `$1[x] **${taskId}:`,
-  );
-  if (updated !== content) {
-    await saveFile(planPath, updated);
-    fixesApplied.push(`marked ${taskId} done in ${planPath}`);
-  }
-}
-
-async function markTaskUndoneInPlan(basePath: string, milestoneId: string, sliceId: string, taskId: string, fixesApplied: string[]): Promise<void> {
-  const planPath = resolveSliceFile(basePath, milestoneId, sliceId, "PLAN");
-  if (!planPath) return;
-  const content = await loadFile(planPath);
-  if (!content) return;
-  const updated = content.replace(
-    new RegExp(`^(\\s*-\\s+)\\[x\\]\\s+\\*\\*${taskId}:`, "mi"),
-    `$1[ ] **${taskId}:`,
-  );
-  if (updated !== content) {
-    await saveFile(planPath, updated);
-    fixesApplied.push(`unchecked ${taskId} in ${planPath} (missing summary — task will re-execute)`);
-  }
-}
-
-async function markSliceDoneInRoadmap(basePath: string, milestoneId: string, sliceId: string, fixesApplied: string[]): Promise<void> {
-  const roadmapPath = resolveMilestoneFile(basePath, milestoneId, "ROADMAP");
-  if (!roadmapPath) return;
-  const content = await loadFile(roadmapPath);
-  if (!content) return;
-  const updated = content.replace(
-    new RegExp(`^(\\s*-\\s+)\\[ \\]\\s+\\*\\*${sliceId}:`, "m"),
-    `$1[x] **${sliceId}:`,
-  );
-  if (updated !== content) {
-    await saveFile(roadmapPath, updated);
-    fixesApplied.push(`marked ${sliceId} done in ${roadmapPath}`);
-  }
-}
-
-async function markSliceUndoneInRoadmap(basePath: string, milestoneId: string, sliceId: string, fixesApplied: string[]): Promise<void> {
-  const roadmapPath = resolveMilestoneFile(basePath, milestoneId, "ROADMAP");
-  if (!roadmapPath) return;
-  const content = await loadFile(roadmapPath);
-  if (!content) return;
-  const updated = content.replace(
-    new RegExp(`^(\\s*-\\s+)\\[x\\]\\s+\\*\\*${sliceId}:`, "m"),
-    `$1[ ] **${sliceId}:`,
-  );
-  if (updated !== content) {
-    await saveFile(roadmapPath, updated);
-    fixesApplied.push(`unmarked ${sliceId} in ${roadmapPath} (premature completion)`);
-  }
-}
-
 function matchesScope(unitId: string, scope?: string): boolean {
   if (!scope) return true;
   return unitId === scope || unitId.startsWith(`${scope}/`);
@@ -374,8 +215,14 @@ export async function selectDoctorScope(basePath: string, requestedScope?: strin
     const roadmapPath = resolveMilestoneFile(basePath, milestone.id, "ROADMAP");
     const roadmapContent = roadmapPath ? await loadFile(roadmapPath) : null;
     if (!roadmapContent) continue;
-    const roadmap = parseRoadmap(roadmapContent);
-    if (!isMilestoneComplete(roadmap)) return milestone.id;
+    if (isDbAvailable()) {
+      const dbSlices = getMilestoneSlices(milestone.id);
+      const allDone = dbSlices.length > 0 && dbSlices.every(s => s.status === "complete");
+      if (!allDone) return milestone.id;
+    } else {
+      const roadmap = parseLegacyRoadmap(roadmapContent);
+      if (!isMilestoneComplete(roadmap)) return milestone.id;
+    }
   }
 
   return state.registry[0]?.id;
@@ -490,16 +337,8 @@ export async function runGSDDoctor(basePath: string, options?: { fix?: boolean; 
   /** Whether a given issue code should be auto-fixed at the current fixLevel. */
   const shouldFix = (code: DoctorIssueCode): boolean => {
     if (!fix || dryRun) return false;
-    if (fixLevel === "task" && COMPLETION_TRANSITION_CODES.has(code)) return false;
     if (fixLevel === "task" && GLOBAL_STATE_CODES.has(code)) return false;
     return true;
-  };
-
-  /** Log a dry-run "would fix" entry when fix=true but dryRun=true. */
-  const dryRunCanFix = (code: DoctorIssueCode, message: string): void => {
-    if (dryRun && fix && !(fixLevel === "task" && COMPLETION_TRANSITION_CODES.has(code))) {
-      fixesApplied.push(`[dry-run] would fix: ${message}`);
-    }
   };
 
   const prefs = loadEffectiveGSDPreferences();
@@ -521,8 +360,8 @@ export async function runGSDDoctor(basePath: string, options?: { fix?: boolean; 
   // Git health checks — timed
   const t0git = Date.now();
   const isolationMode: "none" | "worktree" | "branch" = options?.isolationMode ??
-    (prefs?.preferences?.git?.isolation === "none" ? "none" :
-    prefs?.preferences?.git?.isolation === "branch" ? "branch" : "worktree");
+    (prefs?.preferences?.git?.isolation === "worktree" ? "worktree" :
+    prefs?.preferences?.git?.isolation === "branch" ? "branch" : "none");
   await checkGitHealth(basePath, issues, fixesApplied, shouldFix, isolationMode);
   const gitMs = Date.now() - t0git;
 
@@ -542,6 +381,9 @@ export async function runGSDDoctor(basePath: string, options?: { fix?: boolean; 
     includeTests: options?.includeTests,
   });
   const envMs = Date.now() - t0env;
+
+  // Engine health checks — DB constraints and projection drift
+  await checkEngineHealth(basePath, issues, fixesApplied);
 
   const milestonesPath = milestonesDir(basePath);
   if (!existsSync(milestonesPath)) {
@@ -629,7 +471,34 @@ export async function runGSDDoctor(basePath: string, options?: { fix?: boolean; 
     const roadmapPath = resolveMilestoneFile(basePath, milestoneId, "ROADMAP");
     const roadmapContent = roadmapPath ? await loadFile(roadmapPath) : null;
     if (!roadmapContent) continue;
-    const roadmap = parseRoadmap(roadmapContent);
+
+    // Normalize slices: prefer DB, fall back to parser
+    type NormSlice = RoadmapSliceEntry & { pending?: boolean };
+    let slices: NormSlice[];
+    if (isDbAvailable()) {
+      const dbSlices = getMilestoneSlices(milestoneId);
+      slices = dbSlices.map(s => ({
+        id: s.id,
+        title: s.title,
+        done: s.status === "complete",
+        pending: s.status === "pending",
+        risk: (s.risk || "medium") as RoadmapSliceEntry["risk"],
+        depends: s.depends,
+        demo: s.demo,
+      }));
+    } else {
+      const activeMilestoneId = state.activeMilestone?.id;
+      const activeSliceId = state.activeSlice?.id;
+      slices = parseLegacyRoadmap(roadmapContent).slices.map(s => ({
+        ...s,
+        // Legacy roadmaps only encode done vs not-done. For doctor's
+        // missing-directory checks, treat every undone slice except the
+        // current active slice as effectively pending/unstarted.
+        pending: !s.done && (milestoneId !== activeMilestoneId || s.id !== activeSliceId),
+      }));
+    }
+    // Wrap in Roadmap-compatible shape for detectCircularDependencies
+    const roadmap = { slices };
 
     // ── Circular dependency detection ──────────────────────────────────────
     for (const cycle of detectCircularDependencies(roadmap.slices)) {
@@ -707,6 +576,9 @@ export async function runGSDDoctor(basePath: string, options?: { fix?: boolean; 
 
       const slicePath = resolveSlicePath(basePath, milestoneId, slice.id);
       if (!slicePath) {
+        // Pending slices haven't been planned yet — directories are created
+        // lazily by ensurePreconditions() at dispatch time. Skip them.
+        if (slice.pending) continue;
         const expectedPath = relSlicePath(basePath, milestoneId, slice.id);
         issues.push({
           severity: slice.done ? "warning" : "error",
@@ -729,6 +601,8 @@ export async function runGSDDoctor(basePath: string, options?: { fix?: boolean; 
 
       const tasksDir = resolveTasksDir(basePath, milestoneId, slice.id);
       if (!tasksDir) {
+        // Pending slices haven't been planned yet — tasks/ is created on demand.
+        if (slice.pending) continue;
         issues.push({
           severity: slice.done ? "warning" : "error",
           code: "missing_tasks_dir",
@@ -748,7 +622,17 @@ export async function runGSDDoctor(basePath: string, options?: { fix?: boolean; 
 
       const planPath = resolveSliceFile(basePath, milestoneId, slice.id, "PLAN");
       const planContent = planPath ? await loadFile(planPath) : null;
-      const plan = planContent ? parsePlan(planContent) : null;
+      // Normalize plan tasks: prefer DB, fall back to parsers-legacy
+      let plan: { tasks: Array<{ id: string; done: boolean; title: string; estimate?: string }> } | null = null;
+      if (isDbAvailable()) {
+        const dbTasks = getSliceTasks(milestoneId, slice.id);
+        if (dbTasks.length > 0) {
+          plan = { tasks: dbTasks.map(t => ({ id: t.id, done: t.status === "complete" || t.status === "done", title: t.title, estimate: t.estimate || undefined })) };
+        }
+      }
+      if (!plan && planContent) {
+        plan = parseLegacyPlan(planContent);
+      }
       if (!plan) {
         if (!slice.done) {
           issues.push({
@@ -792,41 +676,10 @@ export async function runGSDDoctor(basePath: string, options?: { fix?: boolean; 
       } catch { /* non-fatal */ }
 
       let allTasksDone = plan.tasks.length > 0;
-      let taskUncheckedByDoctor = false;
       for (const task of plan.tasks) {
         const taskUnitId = `${unitId}/${task.id}`;
         const summaryPath = resolveTaskFile(basePath, milestoneId, slice.id, task.id, "SUMMARY");
         const hasSummary = !!(summaryPath && await loadFile(summaryPath));
-
-        if (task.done && !hasSummary) {
-          issues.push({
-            severity: "error",
-            code: "task_done_missing_summary",
-            scope: "task",
-            unitId: taskUnitId,
-            message: `Task ${task.id} is marked done but summary is missing — unchecking so it re-executes`,
-            file: relSliceFile(basePath, milestoneId, slice.id, "PLAN"),
-            fixable: true,
-          });
-          dryRunCanFix("task_done_missing_summary", `uncheck ${task.id} in plan for ${taskUnitId}`);
-          if (shouldFix("task_done_missing_summary")) {
-            await markTaskUndoneInPlan(basePath, milestoneId, slice.id, task.id, fixesApplied);
-            taskUncheckedByDoctor = true;
-          }
-        }
-
-        if (!task.done && hasSummary) {
-          issues.push({
-            severity: "warning",
-            code: "task_summary_without_done_checkbox",
-            scope: "task",
-            unitId: taskUnitId,
-            message: `Task ${task.id} has a summary but is not marked done in the slice plan`,
-            file: relSliceFile(basePath, milestoneId, slice.id, "PLAN"),
-            fixable: true,
-          });
-          if (fix) await markTaskDoneInPlan(basePath, milestoneId, slice.id, task.id, fixesApplied);
-        }
 
         // Must-have verification
         if (task.done && hasSummary) {
@@ -875,15 +728,6 @@ export async function runGSDDoctor(basePath: string, options?: { fix?: boolean; 
         allTasksDone = allTasksDone && task.done;
       }
 
-      // ── #1850: cascade slice uncheck when task_done_missing_summary fires ──
-      // When doctor unchecks tasks inside a done slice, the slice must also be
-      // unchecked so the state machine re-enters the executing phase. Without
-      // this, state.ts skips done slices and the unchecked tasks never run,
-      // causing doctor to fire again on every start (infinite loop).
-      if (taskUncheckedByDoctor && slice.done) {
-        await markSliceUndoneInRoadmap(basePath, milestoneId, slice.id, fixesApplied);
-      }
-
       // Blocker-without-replan detection
       const replanPath = resolveSliceFile(basePath, milestoneId, slice.id, "REPLAN");
       if (!replanPath) {
@@ -916,88 +760,11 @@ export async function runGSDDoctor(basePath: string, options?: { fix?: boolean; 
           file: relSliceFile(basePath, milestoneId, slice.id, "REPLAN"), fixable: false });
       }
 
-      const sliceSummaryPath = resolveSliceFile(basePath, milestoneId, slice.id, "SUMMARY");
-      const sliceUatPath = join(slicePath, `${slice.id}-UAT.md`);
-      const hasSliceSummary = !!(sliceSummaryPath && await loadFile(sliceSummaryPath));
-      const hasSliceUat = existsSync(sliceUatPath);
-
-      if (allTasksDone && !hasSliceSummary) {
-        issues.push({
-          severity: "error",
-          code: "all_tasks_done_missing_slice_summary",
-          scope: "slice",
-          unitId,
-          message: `All tasks are done but ${slice.id}-SUMMARY.md is missing`,
-          file: relSliceFile(basePath, milestoneId, slice.id, "SUMMARY"),
-          fixable: true,
-        });
-        dryRunCanFix("all_tasks_done_missing_slice_summary", `create placeholder summary for ${unitId}`);
-        if (shouldFix("all_tasks_done_missing_slice_summary")) await ensureSliceSummaryStub(basePath, milestoneId, slice.id, fixesApplied);
-      }
-
-      if (allTasksDone && !hasSliceUat) {
-        issues.push({
-          severity: "warning",
-          code: "all_tasks_done_missing_slice_uat",
-          scope: "slice",
-          unitId,
-          message: `All tasks are done but ${slice.id}-UAT.md is missing`,
-          file: `${relSlicePath(basePath, milestoneId, slice.id)}/${slice.id}-UAT.md`,
-          fixable: true,
-        });
-        dryRunCanFix("all_tasks_done_missing_slice_uat", `create placeholder UAT for ${unitId}`);
-        if (shouldFix("all_tasks_done_missing_slice_uat")) await ensureSliceUatStub(basePath, milestoneId, slice.id, fixesApplied);
-      }
-
-      if (allTasksDone && !slice.done) {
-        issues.push({
-          severity: "error",
-          code: "all_tasks_done_roadmap_not_checked",
-          scope: "slice",
-          unitId,
-          message: `All tasks are done but roadmap still shows ${slice.id} as incomplete`,
-          file: relMilestoneFile(basePath, milestoneId, "ROADMAP"),
-          fixable: true,
-        });
-        dryRunCanFix("all_tasks_done_roadmap_not_checked", `mark ${slice.id} done in roadmap`);
-        if (shouldFix("all_tasks_done_roadmap_not_checked") && (hasSliceSummary || existsSync(join(slicePath, `${slice.id}-SUMMARY.md`)))) {
-          await markSliceDoneInRoadmap(basePath, milestoneId, slice.id, fixesApplied);
-        }
-      }
-
-      if (slice.done && !hasSliceSummary) {
-        issues.push({
-          severity: "error",
-          code: "slice_checked_missing_summary",
-          scope: "slice",
-          unitId,
-          message: `Roadmap marks ${slice.id} complete but slice summary is missing`,
-          file: relSliceFile(basePath, milestoneId, slice.id, "SUMMARY"),
-          fixable: true,
-        });
-        if (!allTasksDone) {
-          dryRunCanFix("slice_checked_missing_summary", `uncheck ${slice.id} in roadmap (tasks incomplete)`);
-          if (shouldFix("slice_checked_missing_summary")) {
-            await markSliceUndoneInRoadmap(basePath, milestoneId, slice.id, fixesApplied);
-          }
-        }
-      }
-
-      if (slice.done && !hasSliceUat) {
-        issues.push({
-          severity: "warning",
-          code: "slice_checked_missing_uat",
-          scope: "slice",
-          unitId,
-          message: `Roadmap marks ${slice.id} complete but UAT file is missing`,
-          file: `${relSlicePath(basePath, milestoneId, slice.id)}/${slice.id}-UAT.md`,
-          fixable: true,
-        });
-      }
     }
 
     // Milestone-level check: all slices done but no validation file
-    if (isMilestoneComplete(roadmap) && !resolveMilestoneFile(basePath, milestoneId, "VALIDATION") && !resolveMilestoneFile(basePath, milestoneId, "SUMMARY")) {
+    const milestoneComplete = roadmap.slices.length > 0 && roadmap.slices.every(s => s.done);
+    if (milestoneComplete && !resolveMilestoneFile(basePath, milestoneId, "VALIDATION") && !resolveMilestoneFile(basePath, milestoneId, "SUMMARY")) {
       issues.push({
         severity: "info",
         code: "all_slices_done_missing_milestone_validation",
@@ -1010,7 +777,7 @@ export async function runGSDDoctor(basePath: string, options?: { fix?: boolean; 
     }
 
     // Milestone-level check: all slices done but no milestone summary
-    if (isMilestoneComplete(roadmap) && !resolveMilestoneFile(basePath, milestoneId, "SUMMARY")) {
+    if (milestoneComplete && !resolveMilestoneFile(basePath, milestoneId, "SUMMARY")) {
       issues.push({
         severity: "warning",
         code: "all_slices_done_missing_milestone_summary",

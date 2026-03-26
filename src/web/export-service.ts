@@ -4,15 +4,11 @@ import { join } from "node:path"
 import { pathToFileURL } from "node:url"
 
 import { resolveBridgeRuntimeConfig } from "./bridge-service.ts"
-import { resolveTypeStrippingFlag } from "./ts-subprocess-flags.ts"
+import { resolveTypeStrippingFlag, resolveSubprocessModule, buildSubprocessPrefixArgs } from "./ts-subprocess-flags.ts"
 import type { ExportResult } from "../../web/lib/remaining-command-types.ts"
 
 const EXPORT_MAX_BUFFER = 4 * 1024 * 1024
 const EXPORT_MODULE_ENV = "GSD_EXPORT_MODULE"
-
-function resolveExportModulePath(packageRoot: string): string {
-  return join(packageRoot, "src", "resources", "extensions", "gsd", "export.ts")
-}
 
 function resolveTsLoaderPath(packageRoot: string): string {
   return join(packageRoot, "src", "resources", "extensions", "gsd", "tests", "resolve-ts.mjs")
@@ -31,12 +27,16 @@ export async function collectExportData(
   const { packageRoot, projectCwd } = config
 
   const resolveTsLoader = resolveTsLoaderPath(packageRoot)
-  const exportModulePath = resolveExportModulePath(packageRoot)
+  const moduleResolution = resolveSubprocessModule(packageRoot, "resources/extensions/gsd/export.ts")
+  const exportModulePath = moduleResolution.modulePath
 
-  if (!existsSync(resolveTsLoader) || !existsSync(exportModulePath)) {
+  if (!moduleResolution.useCompiledJs && (!existsSync(resolveTsLoader) || !existsSync(exportModulePath))) {
     throw new Error(
       `export data provider not found; checked=${resolveTsLoader},${exportModulePath}`,
     )
+  }
+  if (moduleResolution.useCompiledJs && !existsSync(exportModulePath)) {
+    throw new Error(`export data provider not found; checked=${exportModulePath}`)
   }
 
   const script = [
@@ -55,14 +55,13 @@ export async function collectExportData(
     '}',
   ].join(" ")
 
+  const prefixArgs = buildSubprocessPrefixArgs(packageRoot, moduleResolution, pathToFileURL(resolveTsLoader).href)
+
   return await new Promise<ExportResult>((resolveResult, reject) => {
     execFile(
       process.execPath,
       [
-        "--import",
-        pathToFileURL(resolveTsLoader).href,
-        resolveTypeStrippingFlag(packageRoot),
-        "--input-type=module",
+        ...prefixArgs,
         "--eval",
         script,
       ],

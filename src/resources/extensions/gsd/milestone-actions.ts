@@ -20,6 +20,7 @@ import {
 } from "./paths.js";
 import { invalidateAllCaches } from "./cache.js";
 import { loadQueueOrder, saveQueueOrder } from "./queue-order.js";
+import { isDbAvailable, updateMilestoneStatus } from "./gsd-db.js";
 
 // ─── Park ──────────────────────────────────────────────────────────────────
 
@@ -52,6 +53,14 @@ export function parkMilestone(basePath: string, milestoneId: string, reason: str
   ].join("\n");
 
   writeFileSync(parkedPath, content, "utf-8");
+  // Sync DB status so deriveStateFromDb also skips this milestone (#2694)
+  if (isDbAvailable()) {
+    try {
+      updateMilestoneStatus(milestoneId, "parked");
+    } catch (err) {
+      process.stderr.write(`gsd: parkMilestone DB sync failed for ${milestoneId}: ${(err as Error).message}\n`);
+    }
+  }
   invalidateAllCaches();
   return true;
 }
@@ -70,6 +79,14 @@ export function unparkMilestone(basePath: string, milestoneId: string): boolean 
   if (!existsSync(parkedPath)) return false; // not parked
 
   unlinkSync(parkedPath);
+  // Sync DB status so deriveStateFromDb picks up the unparked milestone (#2694)
+  if (isDbAvailable()) {
+    try {
+      updateMilestoneStatus(milestoneId, "active");
+    } catch (err) {
+      process.stderr.write(`gsd: unparkMilestone DB sync failed for ${milestoneId}: ${(err as Error).message}\n`);
+    }
+  }
   invalidateAllCaches();
   return true;
 }

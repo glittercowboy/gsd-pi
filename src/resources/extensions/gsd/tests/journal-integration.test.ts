@@ -91,12 +91,7 @@ function makeMockDeps(
     runPreDispatchHooks: () => ({ firedHooks: [], action: "proceed" }),
     getPriorSliceCompletionBlocker: () => null,
     getMainBranch: () => "main",
-    collectObservabilityWarnings: async () => [],
-    buildObservabilityRepairBlock: () => null,
     closeoutUnit: async () => {},
-    verifyExpectedArtifact: () => true,
-    clearUnitRuntimeRecord: () => {},
-    writeUnitRuntimeRecord: () => {},
     recordOutcome: () => {},
     writeLock: () => {},
     captureAvailableSkills: () => {},
@@ -287,7 +282,6 @@ test("runUnitPhase emits unit-start and unit-end with causedBy reference", async
     prompt: "do stuff",
     finalPrompt: "do stuff",
     pauseAfterUatDispatch: false,
-    observabilityIssues: [],
     state: { phase: "executing", activeMilestone: { id: "M001" }, activeSlice: { id: "S01" }, registry: [], blockers: [] } as any,
     mid: "M001",
     midTitle: "Test",
@@ -510,4 +504,43 @@ test("milestone-transition event is emitted when milestone changes", async () =>
   assert.equal((transitionEvents[0].data as any).from, "M001");
   assert.equal((transitionEvents[0].data as any).to, "M002");
   assert.equal(transitionEvents[0].flowId, ic.flowId);
+});
+
+test("unit-end event contains errorContext when unit is cancelled with structured error", async () => {
+  const capture = createEventCapture();
+  const { resolveAgentEndCancelled, _resetPendingResolve } = await import("../auto-loop.js");
+  _resetPendingResolve();
+
+  const deps = makeMockDeps(capture);
+  const ic = makeIC(deps);
+  const iterData: IterationData = {
+    unitType: "execute-task",
+    unitId: "M001/S01/T01",
+    prompt: "do stuff",
+    finalPrompt: "do stuff",
+    pauseAfterUatDispatch: false,
+    state: { phase: "executing", activeMilestone: { id: "M001" }, activeSlice: { id: "S01" }, registry: [], blockers: [] } as any,
+    mid: "M001",
+    midTitle: "Test",
+    isRetry: false,
+    previousTier: undefined,
+  };
+  const loopState: LoopState = { recentUnits: [{ key: "execute-task/M001/S01/T01" }], stuckRecoveryAttempts: 0 };
+
+  const unitPromise = runUnitPhase(ic, iterData, loopState);
+  await new Promise(r => setTimeout(r, 50));
+
+  // Resolve with errorContext (simulates a timeout cancel)
+  resolveAgentEndCancelled({ message: "Hard timeout error: exceeded limit", category: "timeout", isTransient: true });
+
+  const result = await unitPromise;
+  // Cancelled units break the loop before emitting unit-end
+  assert.equal(result.action, "break");
+  assert.equal((result as any).reason, "session-failed");
+
+  // Verify error classification used structured errorContext on the window entry
+  const entry = loopState.recentUnits[loopState.recentUnits.length - 1];
+  assert.ok(entry.error, "window entry must have error set");
+  assert.ok(entry.error!.startsWith("timeout:"), "error must start with category from errorContext");
+  assert.ok(entry.error!.includes("Hard timeout error"), "error must include the errorContext message");
 });

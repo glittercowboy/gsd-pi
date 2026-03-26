@@ -15,9 +15,9 @@ import {
   writeGSDDirectory,
 } from '../migrate/index.ts';
 import { deriveState } from '../state.ts';
-import { createTestContext } from './test-helpers.ts';
+import { describe, test, beforeEach, afterEach } from 'node:test';
+import assert from 'node:assert/strict';
 
-const { assertEq, assertTrue, report } = createTestContext();
 // ─── Fixture Helpers ───────────────────────────────────────────────────────
 
 const SAMPLE_PROJECT = `# Integration Test Project
@@ -195,11 +195,9 @@ function createCompleteFixture(): string {
 // Tests
 // ═══════════════════════════════════════════════════════════════════════════
 
-async function main(): Promise<void> {
-
   // ─── Test 1: Path resolution — .planning appended when missing ─────────
-  console.log('\n=== Path resolution: .planning appended when source path lacks it ===');
-  {
+
+test('Path resolution: .planning appended when source path lacks it', () => {
     const base = createCompleteFixture();
     try {
       // Simulate the command's path resolution logic
@@ -207,16 +205,16 @@ async function main(): Promise<void> {
       if (!sourcePath.endsWith('.planning')) {
         sourcePath = join(sourcePath, '.planning');
       }
-      assertTrue(sourcePath.endsWith('.planning'), 'path-resolution: .planning appended');
-      assertTrue(existsSync(sourcePath), 'path-resolution: appended path exists');
+      assert.ok(sourcePath.endsWith('.planning'), 'path-resolution: .planning appended');
+      assert.ok(existsSync(sourcePath), 'path-resolution: appended path exists');
     } finally {
       rmSync(base, { recursive: true, force: true });
     }
-  }
+});
 
   // ─── Test 2: Path resolution — .planning used as-is ────────────────────
-  console.log('\n=== Path resolution: .planning used as-is when already present ===');
-  {
+
+test('Path resolution: .planning used as-is when already present', () => {
     const base = createCompleteFixture();
     try {
       const planningPath = join(base, '.planning');
@@ -224,39 +222,39 @@ async function main(): Promise<void> {
       if (!sourcePath.endsWith('.planning')) {
         sourcePath = join(sourcePath, '.planning');
       }
-      assertEq(sourcePath, resolve(planningPath), 'path-resolution: .planning not double-appended');
-      assertTrue(existsSync(sourcePath), 'path-resolution: direct path exists');
+      assert.deepStrictEqual(sourcePath, resolve(planningPath), 'path-resolution: .planning not double-appended');
+      assert.ok(existsSync(sourcePath), 'path-resolution: direct path exists');
     } finally {
       rmSync(base, { recursive: true, force: true });
     }
-  }
+});
 
   // ─── Test 3: Validation gating — non-existent path ─────────────────────
-  console.log('\n=== Validation gating: non-existent path returns invalid ===');
-  {
+
+test('Validation gating: non-existent path returns invalid', async () => {
     const fakePath = join(tmpdir(), 'gsd-cmd-nonexistent-' + Date.now(), '.planning');
     const result = await validatePlanningDirectory(fakePath);
-    assertEq(result.valid, false, 'validation: non-existent path is invalid');
-    assertTrue(result.issues.length > 0, 'validation: has issues for non-existent path');
+    assert.deepStrictEqual(result.valid, false, 'validation: non-existent path is invalid');
+    assert.ok(result.issues.length > 0, 'validation: has issues for non-existent path');
     const hasFatal = result.issues.some(i => i.severity === 'fatal');
-    assertTrue(hasFatal, 'validation: non-existent path has fatal issue');
-  }
+    assert.ok(hasFatal, 'validation: non-existent path has fatal issue');
+});
 
   // ─── Test 4: Validation gating — valid fixture passes ──────────────────
-  console.log('\n=== Validation gating: valid fixture passes validation ===');
-  {
+
+test('Validation gating: valid fixture passes validation', async () => {
     const base = createCompleteFixture();
     try {
       const result = await validatePlanningDirectory(join(base, '.planning'));
-      assertTrue(result.valid === true, 'validation: valid fixture passes');
+      assert.ok(result.valid === true, 'validation: valid fixture passes');
     } finally {
       rmSync(base, { recursive: true, force: true });
     }
-  }
+});
 
   // ─── Test 5: Full pipeline round-trip ──────────────────────────────────
-  console.log('\n=== Full pipeline: parse → transform → preview → write → deriveState ===');
-  {
+
+test('Full pipeline: parse → transform → preview → write → deriveState', async () => {
     const base = createCompleteFixture();
     const writeTarget = mkdtempSync(join(tmpdir(), 'gsd-cmd-write-'));
     try {
@@ -264,17 +262,17 @@ async function main(): Promise<void> {
 
       // (a) Validate
       const validation = await validatePlanningDirectory(planningPath);
-      assertTrue(validation.valid === true, 'pipeline: validation passes');
+      assert.ok(validation.valid === true, 'pipeline: validation passes');
 
       // (b) Parse
       const parsed = await parsePlanningDirectory(planningPath);
-      assertTrue(parsed.roadmap !== null, 'pipeline: roadmap parsed');
-      assertTrue(Object.keys(parsed.phases).length >= 2, 'pipeline: phases parsed');
+      assert.ok(parsed.roadmap !== null, 'pipeline: roadmap parsed');
+      assert.ok(Object.keys(parsed.phases).length >= 2, 'pipeline: phases parsed');
 
       // (c) Transform
       const project = transformToGSD(parsed);
-      assertTrue(project.milestones.length >= 1, 'pipeline: has milestones');
-      assertTrue(project.milestones[0].slices.length >= 1, 'pipeline: has slices');
+      assert.ok(project.milestones.length >= 1, 'pipeline: has milestones');
+      assert.ok(project.milestones[0].slices.length >= 1, 'pipeline: has slices');
 
       // Count totals for preview verification
       let totalTasks = 0;
@@ -294,76 +292,69 @@ async function main(): Promise<void> {
 
       // (d) Preview — verify counts match project data
       const preview = generatePreview(project);
-      assertEq(preview.milestoneCount, project.milestones.length, 'pipeline: preview milestoneCount');
-      assertEq(preview.totalSlices, totalSlices, 'pipeline: preview totalSlices');
-      assertEq(preview.totalTasks, totalTasks, 'pipeline: preview totalTasks');
-      assertEq(preview.doneSlices, doneSlices, 'pipeline: preview doneSlices');
-      assertEq(preview.doneTasks, doneTasks, 'pipeline: preview doneTasks');
+      assert.deepStrictEqual(preview.milestoneCount, project.milestones.length, 'pipeline: preview milestoneCount');
+      assert.deepStrictEqual(preview.totalSlices, totalSlices, 'pipeline: preview totalSlices');
+      assert.deepStrictEqual(preview.totalTasks, totalTasks, 'pipeline: preview totalTasks');
+      assert.deepStrictEqual(preview.doneSlices, doneSlices, 'pipeline: preview doneSlices');
+      assert.deepStrictEqual(preview.doneTasks, doneTasks, 'pipeline: preview doneTasks');
 
       // Completion percentages
       const expectedSlicePct = totalSlices > 0 ? Math.round((doneSlices / totalSlices) * 100) : 0;
       const expectedTaskPct = totalTasks > 0 ? Math.round((doneTasks / totalTasks) * 100) : 0;
-      assertEq(preview.sliceCompletionPct, expectedSlicePct, 'pipeline: preview sliceCompletionPct');
-      assertEq(preview.taskCompletionPct, expectedTaskPct, 'pipeline: preview taskCompletionPct');
+      assert.deepStrictEqual(preview.sliceCompletionPct, expectedSlicePct, 'pipeline: preview sliceCompletionPct');
+      assert.deepStrictEqual(preview.taskCompletionPct, expectedTaskPct, 'pipeline: preview taskCompletionPct');
 
       // Requirements in preview
-      assertEq(preview.requirements.active, 1, 'pipeline: preview requirements active');
-      assertEq(preview.requirements.validated, 1, 'pipeline: preview requirements validated');
-      assertEq(preview.requirements.total, 2, 'pipeline: preview requirements total');
+      assert.deepStrictEqual(preview.requirements.active, 1, 'pipeline: preview requirements active');
+      assert.deepStrictEqual(preview.requirements.validated, 1, 'pipeline: preview requirements validated');
+      assert.deepStrictEqual(preview.requirements.total, 2, 'pipeline: preview requirements total');
 
       // (e) Write
       const result = await writeGSDDirectory(project, writeTarget);
-      assertTrue(result.paths.length > 0, 'pipeline: files written');
+      assert.ok(result.paths.length > 0, 'pipeline: files written');
 
       // Key files exist
       const gsd = join(writeTarget, '.gsd');
-      assertTrue(existsSync(join(gsd, 'PROJECT.md')), 'pipeline: PROJECT.md written');
-      assertTrue(existsSync(join(gsd, 'STATE.md')), 'pipeline: STATE.md written');
-      assertTrue(existsSync(join(gsd, 'REQUIREMENTS.md')), 'pipeline: REQUIREMENTS.md written');
+      assert.ok(existsSync(join(gsd, 'PROJECT.md')), 'pipeline: PROJECT.md written');
+      assert.ok(existsSync(join(gsd, 'STATE.md')), 'pipeline: STATE.md written');
+      assert.ok(existsSync(join(gsd, 'REQUIREMENTS.md')), 'pipeline: REQUIREMENTS.md written');
 
       const m001 = join(gsd, 'milestones', 'M001');
-      assertTrue(existsSync(join(m001, 'M001-ROADMAP.md')), 'pipeline: M001-ROADMAP.md written');
-      assertTrue(existsSync(join(m001, 'M001-CONTEXT.md')), 'pipeline: M001-CONTEXT.md written');
+      assert.ok(existsSync(join(m001, 'M001-ROADMAP.md')), 'pipeline: M001-ROADMAP.md written');
+      assert.ok(existsSync(join(m001, 'M001-CONTEXT.md')), 'pipeline: M001-CONTEXT.md written');
 
       // At least one slice plan exists
       const s01Plan = join(m001, 'slices', 'S01', 'S01-PLAN.md');
-      assertTrue(existsSync(s01Plan), 'pipeline: S01-PLAN.md written');
+      assert.ok(existsSync(s01Plan), 'pipeline: S01-PLAN.md written');
 
       // (f) deriveState — coherent state from written output
       console.log('  --- deriveState ---');
       const state = await deriveState(writeTarget);
-      assertTrue(state.phase !== undefined, 'pipeline: deriveState returns phase');
-      assertTrue(state.activeMilestone !== null, 'pipeline: deriveState has activeMilestone');
-      assertEq(state.activeMilestone!.id, 'M001', 'pipeline: deriveState activeMilestone is M001');
-      assertTrue(state.progress!.slices !== undefined, 'pipeline: deriveState has slices progress');
-      assertTrue(state.progress!.tasks !== undefined, 'pipeline: deriveState has tasks progress');
+      assert.ok(state.phase !== undefined, 'pipeline: deriveState returns phase');
+      assert.ok(state.activeMilestone !== null, 'pipeline: deriveState has activeMilestone');
+      assert.deepStrictEqual(state.activeMilestone!.id, 'M001', 'pipeline: deriveState activeMilestone is M001');
+      assert.ok(state.progress!.slices !== undefined, 'pipeline: deriveState has slices progress');
+      assert.ok(state.progress!.tasks !== undefined, 'pipeline: deriveState has tasks progress');
 
     } finally {
       rmSync(base, { recursive: true, force: true });
       rmSync(writeTarget, { recursive: true, force: true });
     }
-  }
+});
 
   // ─── Test 6: .gsd/ exists detection ────────────────────────────────────
-  console.log('\n=== .gsd/ exists detection ===');
-  {
+
+test('.gsd/ exists detection', () => {
     const base = mkdtempSync(join(tmpdir(), 'gsd-cmd-exists-'));
     try {
       // No .gsd/ yet
-      assertTrue(!existsSync(join(base, '.gsd')), 'exists-detection: .gsd absent initially');
+      assert.ok(!existsSync(join(base, '.gsd')), 'exists-detection: .gsd absent initially');
 
       // Create .gsd/
       mkdirSync(join(base, '.gsd'), { recursive: true });
-      assertTrue(existsSync(join(base, '.gsd')), 'exists-detection: .gsd detected after creation');
+      assert.ok(existsSync(join(base, '.gsd')), 'exists-detection: .gsd detected after creation');
     } finally {
       rmSync(base, { recursive: true, force: true });
     }
-  }
-
-  report();
-}
-
-main().catch((err) => {
-  console.error('Unhandled error:', err);
-  process.exit(1);
 });
+

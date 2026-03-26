@@ -1,3 +1,5 @@
+import { describe, test } from 'node:test';
+import assert from 'node:assert/strict';
 /**
  * doctor-proactive.test.ts — Tests for proactive healing layer.
  *
@@ -22,10 +24,6 @@ import {
   resetProactiveHealing,
   formatHealthSummary,
 } from "../doctor-proactive.ts";
-import { createTestContext } from "./test-helpers.ts";
-
-const { assertEq, assertTrue, report } = createTestContext();
-
 function run(cmd: string, cwd: string): string {
   return execSync(cmd, { cwd, stdio: ["ignore", "pipe", "pipe"], encoding: "utf-8" }).trim();
 }
@@ -70,44 +68,40 @@ _None_
   return dir;
 }
 
-async function main(): Promise<void> {
+describe('doctor-proactive', async () => {
   const cleanups: string[] = [];
 
   try {
     // ─── Health Score Tracking ─────────────────────────────────────────
-    console.log("\n=== health tracking: initial state ===");
-    {
+    test('health tracking: initial state', () => {
       resetProactiveHealing();
-      assertEq(getHealthTrend(), "unknown", "trend is unknown with no data");
-      assertEq(getConsecutiveErrorUnits(), 0, "no consecutive errors initially");
-      assertEq(getHealthHistory().length, 0, "no history initially");
-    }
+      assert.deepStrictEqual(getHealthTrend(), "unknown", "trend is unknown with no data");
+      assert.deepStrictEqual(getConsecutiveErrorUnits(), 0, "no consecutive errors initially");
+      assert.deepStrictEqual(getHealthHistory().length, 0, "no history initially");
+    });
 
-    console.log("\n=== health tracking: recording snapshots ===");
-    {
+    test('health tracking: recording snapshots', () => {
       resetProactiveHealing();
       recordHealthSnapshot(0, 2, 1);
       recordHealthSnapshot(0, 1, 0);
       recordHealthSnapshot(0, 0, 0);
 
-      assertEq(getHealthHistory().length, 3, "3 snapshots recorded");
-      assertEq(getConsecutiveErrorUnits(), 0, "no consecutive errors after clean units");
-    }
+      assert.deepStrictEqual(getHealthHistory().length, 3, "3 snapshots recorded");
+      assert.deepStrictEqual(getConsecutiveErrorUnits(), 0, "no consecutive errors after clean units");
+    });
 
-    console.log("\n=== health tracking: consecutive error counting ===");
-    {
+    test('health tracking: consecutive error counting', () => {
       resetProactiveHealing();
       recordHealthSnapshot(2, 1, 0); // errors
       recordHealthSnapshot(1, 0, 0); // errors
       recordHealthSnapshot(1, 0, 0); // errors
-      assertEq(getConsecutiveErrorUnits(), 3, "3 consecutive error units");
+      assert.deepStrictEqual(getConsecutiveErrorUnits(), 3, "3 consecutive error units");
 
       recordHealthSnapshot(0, 0, 0); // clean
-      assertEq(getConsecutiveErrorUnits(), 0, "streak reset on clean unit");
-    }
+      assert.deepStrictEqual(getConsecutiveErrorUnits(), 0, "streak reset on clean unit");
+    });
 
-    console.log("\n=== health tracking: trend detection ===");
-    {
+    test('health tracking: trend detection', () => {
       resetProactiveHealing();
       // Record 5 older snapshots with low issues
       for (let i = 0; i < 5; i++) {
@@ -117,11 +111,10 @@ async function main(): Promise<void> {
       for (let i = 0; i < 5; i++) {
         recordHealthSnapshot(3, 5, 0);
       }
-      assertEq(getHealthTrend(), "degrading", "detects degrading trend");
-    }
+      assert.deepStrictEqual(getHealthTrend(), "degrading", "detects degrading trend");
+    });
 
-    console.log("\n=== health tracking: improving trend ===");
-    {
+    test('health tracking: improving trend', () => {
       resetProactiveHealing();
       // Record 5 older snapshots with high issues
       for (let i = 0; i < 5; i++) {
@@ -131,32 +124,29 @@ async function main(): Promise<void> {
       for (let i = 0; i < 5; i++) {
         recordHealthSnapshot(0, 0, 0);
       }
-      assertEq(getHealthTrend(), "improving", "detects improving trend");
-    }
+      assert.deepStrictEqual(getHealthTrend(), "improving", "detects improving trend");
+    });
 
-    console.log("\n=== health tracking: stable trend ===");
-    {
+    test('health tracking: stable trend', () => {
       resetProactiveHealing();
       for (let i = 0; i < 10; i++) {
         recordHealthSnapshot(1, 1, 0);
       }
-      assertEq(getHealthTrend(), "stable", "detects stable trend");
-    }
+      assert.deepStrictEqual(getHealthTrend(), "stable", "detects stable trend");
+    });
 
     // ─── Auto-Heal Escalation ─────────────────────────────────────────
-    console.log("\n=== escalation: below threshold ===");
-    {
+    test('escalation: below threshold', () => {
       resetProactiveHealing();
       recordHealthSnapshot(1, 0, 0);
       recordHealthSnapshot(1, 0, 0);
       recordHealthSnapshot(1, 0, 0);
       const result = checkHealEscalation(1, [{ code: "test", message: "test error", unitId: "M001/S01" }]);
-      assertEq(result.shouldEscalate, false, "no escalation below threshold");
-      assertTrue(result.reason.includes("3/5"), "reason shows progress toward threshold");
-    }
+      assert.deepStrictEqual(result.shouldEscalate, false, "no escalation below threshold");
+      assert.ok(result.reason.includes("3/5"), "reason shows progress toward threshold");
+    });
 
-    console.log("\n=== escalation: at threshold ===");
-    {
+    test('escalation: at threshold', () => {
       resetProactiveHealing();
       // Need 5+ consecutive error units AND degrading/stable trend
       for (let i = 0; i < 5; i++) {
@@ -166,21 +156,19 @@ async function main(): Promise<void> {
         recordHealthSnapshot(2, 1, 0); // recent error snapshots
       }
       const result = checkHealEscalation(2, [{ code: "test", message: "test error", unitId: "M001/S01" }]);
-      assertEq(result.shouldEscalate, true, "escalates at threshold with degrading trend");
-      assertTrue(result.reason.includes("5 consecutive"), "reason mentions consecutive count");
-    }
+      assert.deepStrictEqual(result.shouldEscalate, true, "escalates at threshold with degrading trend");
+      assert.ok(result.reason.includes("5 consecutive"), "reason mentions consecutive count");
+    });
 
-    console.log("\n=== escalation: no double escalation ===");
-    {
+    test('escalation: no double escalation', () => {
       // Don't reset — should already be escalated from previous test
       recordHealthSnapshot(2, 0, 0);
       const result = checkHealEscalation(2, [{ code: "test", message: "test error", unitId: "M001/S01" }]);
-      assertEq(result.shouldEscalate, false, "no double escalation in same session");
-      assertTrue(result.reason.includes("already escalated"), "reason explains why no escalation");
-    }
+      assert.deepStrictEqual(result.shouldEscalate, false, "no double escalation in same session");
+      assert.ok(result.reason.includes("already escalated"), "reason explains why no escalation");
+    });
 
-    console.log("\n=== escalation: deferred when improving ===");
-    {
+    test('escalation: deferred when improving', () => {
       resetProactiveHealing();
       // 5 older snapshots with high errors
       for (let i = 0; i < 5; i++) {
@@ -191,37 +179,34 @@ async function main(): Promise<void> {
         recordHealthSnapshot(1, 0, 0);
       }
       const result = checkHealEscalation(1, [{ code: "test", message: "test error", unitId: "M001/S01" }]);
-      assertEq(result.shouldEscalate, false, "no escalation when trend is improving");
-      assertTrue(result.reason.includes("improving"), "reason mentions improving trend");
-    }
+      assert.deepStrictEqual(result.shouldEscalate, false, "no escalation when trend is improving");
+      assert.ok(result.reason.includes("improving"), "reason mentions improving trend");
+    });
 
     // ─── Health Summary Formatting ────────────────────────────────────
-    console.log("\n=== formatHealthSummary ===");
-    {
+    test('formatHealthSummary', () => {
       resetProactiveHealing();
-      assertEq(formatHealthSummary(), "No health data yet.", "empty summary when no data");
+      assert.deepStrictEqual(formatHealthSummary(), "No health data yet.", "empty summary when no data");
 
       recordHealthSnapshot(2, 3, 1);
       const summary = formatHealthSummary();
-      assertTrue(summary.includes("2 errors") && summary.includes("3 warnings"), "summary includes error/warning counts");
-      assertTrue(summary.includes("1 fix applied"), "summary includes fix count");
-      assertTrue(summary.includes("1 of 5 consecutive errors"), "summary includes error streak");
-    }
+      assert.ok(summary.includes("2 errors") && summary.includes("3 warnings"), "summary includes error/warning counts");
+      assert.ok(summary.includes("1 fix applied"), "summary includes fix count");
+      assert.ok(summary.includes("1 of 5 consecutive errors"), "summary includes error streak");
+    });
 
     // ─── Pre-Dispatch Health Gate ─────────────────────────────────────
-    console.log("\n=== health gate: clean state ===");
-    {
+    test('health gate: clean state', async () => {
       const dir = realpathSync(mkdtempSync(join(tmpdir(), "doc-proactive-")));
       cleanups.push(dir);
       mkdirSync(join(dir, ".gsd"), { recursive: true });
 
       const result = await preDispatchHealthGate(dir);
-      assertTrue(result.proceed, "gate passes on clean state");
-      assertEq(result.issues.length, 0, "no issues on clean state");
-    }
+      assert.ok(result.proceed, "gate passes on clean state");
+      assert.deepStrictEqual(result.issues.length, 0, "no issues on clean state");
+    });
 
-    console.log("\n=== health gate: missing STATE.md does NOT block dispatch (#889) ===");
-    {
+    test('health gate: missing STATE.md does NOT block dispatch (#889)', async () => {
       const dir = realpathSync(mkdtempSync(join(tmpdir(), "doc-proactive-")));
       cleanups.push(dir);
       // Create milestones dir but no STATE.md — mimics fresh worktree
@@ -229,13 +214,12 @@ async function main(): Promise<void> {
       writeFileSync(join(dir, ".gsd", "milestones", "M001", "M001-ROADMAP.md"), "# Roadmap\n");
 
       const result = await preDispatchHealthGate(dir);
-      assertTrue(result.proceed, "gate must NOT block when STATE.md is missing (deadlock #889)");
-      assertEq(result.issues.length, 0, "missing STATE.md is not a blocking issue");
-      assertTrue(result.fixesApplied.some((f: string) => f.includes("STATE.md")), "reports STATE.md status as info");
-    }
+      assert.ok(result.proceed, "gate must NOT block when STATE.md is missing (deadlock #889)");
+      assert.deepStrictEqual(result.issues.length, 0, "missing STATE.md is not a blocking issue");
+      assert.ok(result.fixesApplied.some((f: string) => f.includes("STATE.md")), "reports STATE.md status as info");
+    });
 
-    console.log("\n=== health gate: stale crash lock auto-cleared ===");
-    {
+    test('health gate: stale crash lock auto-cleared', async () => {
       const dir = realpathSync(mkdtempSync(join(tmpdir(), "doc-proactive-")));
       cleanups.push(dir);
       mkdirSync(join(dir, ".gsd"), { recursive: true });
@@ -248,12 +232,12 @@ async function main(): Promise<void> {
       }));
 
       const result = await preDispatchHealthGate(dir);
-      assertTrue(result.proceed, "gate passes after auto-clearing stale lock");
-      assertTrue(result.fixesApplied.some(f => f.includes("cleared stale auto.lock")), "reports lock cleared");
-      assertTrue(!existsSync(join(dir, ".gsd", "auto.lock")), "lock file removed");
-    }
+      assert.ok(result.proceed, "gate passes after auto-clearing stale lock");
+      assert.ok(result.fixesApplied.some(f => f.includes("cleared stale auto.lock")), "reports lock cleared");
+      assert.ok(!existsSync(join(dir, ".gsd", "auto.lock")), "lock file removed");
+    });
 
-    console.log("\n=== health gate: corrupt merge state auto-healed ===");
+    test('health gate: corrupt merge state auto-healed', async () => {
     if (process.platform !== "win32") {
     {
       const dir = createGitRepo();
@@ -264,36 +248,35 @@ async function main(): Promise<void> {
       writeFileSync(join(dir, ".git", "MERGE_HEAD"), headHash + "\n");
 
       const result = await preDispatchHealthGate(dir);
-      assertTrue(result.proceed, "gate passes after auto-healing merge state");
-      assertTrue(result.fixesApplied.some(f => f.includes("cleaned merge state")), "reports merge state cleaned");
-      assertTrue(!existsSync(join(dir, ".git", "MERGE_HEAD")), "MERGE_HEAD removed");
+      assert.ok(result.proceed, "gate passes after auto-healing merge state");
+      assert.ok(result.fixesApplied.some(f => f.includes("cleaned merge state")), "reports merge state cleaned");
+      assert.ok(!existsSync(join(dir, ".git", "MERGE_HEAD")), "MERGE_HEAD removed");
     }
     } else {
       console.log("  (skipped on Windows)");
     }
+    });
 
-    console.log("\n=== health gate: STATE.md missing — auto-healed ===");
-    {
+    test('health gate: STATE.md missing — auto-healed', async () => {
       const dir = realpathSync(mkdtempSync(join(tmpdir(), "doc-proactive-")));
       cleanups.push(dir);
       // Minimal .gsd structure: milestones dir exists but no STATE.md
       mkdirSync(join(dir, ".gsd", "milestones"), { recursive: true });
 
       const stateFile = join(dir, ".gsd", "STATE.md");
-      assertTrue(!existsSync(stateFile), "STATE.md does not exist before gate");
+      assert.ok(!existsSync(stateFile), "STATE.md does not exist before gate");
 
       const result = await preDispatchHealthGate(dir);
-      assertTrue(result.proceed, "gate passes after rebuilding STATE.md");
-      assertTrue(
+      assert.ok(result.proceed, "gate passes after rebuilding STATE.md");
+      assert.ok(
         result.fixesApplied.some(f => f.includes("rebuilt missing STATE.md")),
         "reports STATE.md rebuilt",
       );
-      assertTrue(existsSync(stateFile), "STATE.md created by auto-heal");
-      assertTrue(result.issues.length === 0, "no blocking issues after heal");
-    }
+      assert.ok(existsSync(stateFile), "STATE.md created by auto-heal");
+      assert.ok(result.issues.length === 0, "no blocking issues after heal");
+    });
 
-    console.log("\n=== health gate: stale integration branch uses detected fallback ===");
-    {
+    test('health gate: stale integration branch uses detected fallback', async () => {
       const dir = createRepoWithActiveMilestone();
       cleanups.push(dir);
 
@@ -301,21 +284,20 @@ async function main(): Promise<void> {
       writeFileSync(metaPath, JSON.stringify({ integrationBranch: "feature/missing" }, null, 2));
 
       const result = await preDispatchHealthGate(dir);
-      assertTrue(result.proceed, "gate does not block when stale integration branch has detected fallback");
-      assertEq(result.issues.length, 0, "stale integration branch with fallback is not a blocking issue");
-      assertTrue(
+      assert.ok(result.proceed, "gate does not block when stale integration branch has detected fallback");
+      assert.deepStrictEqual(result.issues.length, 0, "stale integration branch with fallback is not a blocking issue");
+      assert.ok(
         result.fixesApplied.some(f => f.includes('feature/missing') && f.includes('main')),
         "fixesApplied reports stale recorded branch and detected fallback branch",
       );
-    }
+    });
 
-    console.log("\n=== health gate: stale integration branch uses configured fallback ===");
-    {
+    test('health gate: stale integration branch uses configured fallback', async () => {
       const dir = createRepoWithActiveMilestone();
       cleanups.push(dir);
 
       run("git branch trunk", dir);
-      writeFileSync(join(dir, ".gsd", "preferences.md"), `---\ngit:\n  main_branch: "trunk"\n---\n`);
+      writeFileSync(join(dir, ".gsd", "PREFERENCES.md"), `---\ngit:\n  main_branch: "trunk"\n---\n`);
       const metaPath = join(dir, ".gsd", "milestones", "M001", "M001-META.json");
       writeFileSync(metaPath, JSON.stringify({ integrationBranch: "feature/missing" }, null, 2));
 
@@ -323,16 +305,16 @@ async function main(): Promise<void> {
       process.chdir(dir);
       try {
         const result = await preDispatchHealthGate(dir);
-        assertTrue(result.proceed, "gate does not block when configured main_branch can be used as fallback");
-        assertEq(result.issues.length, 0, "configured fallback is not treated as a blocking issue");
-        assertTrue(
+        assert.ok(result.proceed, "gate does not block when configured main_branch can be used as fallback");
+        assert.deepStrictEqual(result.issues.length, 0, "configured fallback is not treated as a blocking issue");
+        assert.ok(
           result.fixesApplied.some(f => f.includes('feature/missing') && f.includes('trunk')),
           "fixesApplied reports stale recorded branch and configured fallback branch",
         );
       } finally {
         process.chdir(previousCwd);
       }
-    }
+    });
 
   } finally {
     resetProactiveHealing();
@@ -340,8 +322,4 @@ async function main(): Promise<void> {
       try { rmSync(dir, { recursive: true, force: true }); } catch { /* ignore */ }
     }
   }
-
-  report();
-}
-
-main();
+});

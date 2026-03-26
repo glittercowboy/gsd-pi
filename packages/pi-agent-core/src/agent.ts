@@ -101,6 +101,13 @@ export interface AgentOptions {
 	 * Default: 60000 (60 seconds). Set to 0 to disable the cap.
 	 */
 	maxRetryDelayMs?: number;
+
+	/**
+	 * Determines whether a model uses external tool execution (tools handled
+	 * by the provider, not dispatched locally). Evaluated per-loop so model
+	 * switches mid-session are handled correctly.
+	 */
+	externalToolExecution?: (model: Model<any>) => boolean;
 }
 
 /**
@@ -144,6 +151,7 @@ export class Agent {
 	private _maxRetryDelayMs?: number;
 	private _beforeToolCall?: AgentLoopConfig["beforeToolCall"];
 	private _afterToolCall?: AgentLoopConfig["afterToolCall"];
+	private _externalToolExecution?: (model: Model<any>) => boolean;
 
 	constructor(opts: AgentOptions = {}) {
 		this._state = { ...this._state, ...opts.initialState };
@@ -158,6 +166,7 @@ export class Agent {
 		this._thinkingBudgets = opts.thinkingBudgets;
 		this._transport = opts.transport ?? "sse";
 		this._maxRetryDelayMs = opts.maxRetryDelayMs;
+		this._externalToolExecution = opts.externalToolExecution;
 	}
 
 	/**
@@ -499,6 +508,7 @@ export class Agent {
 			getFollowUpMessages: async () => this.dequeueFollowUpMessages(),
 			beforeToolCall: this._beforeToolCall,
 			afterToolCall: this._afterToolCall,
+			externalToolExecution: this._externalToolExecution?.(model) ?? false,
 		};
 
 		let partial: AgentMessage | null = null;

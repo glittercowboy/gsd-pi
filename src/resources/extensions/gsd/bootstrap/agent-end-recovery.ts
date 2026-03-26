@@ -2,14 +2,51 @@ import type { ExtensionAPI, ExtensionContext } from "@gsd/pi-coding-agent";
 
 import { checkAutoStartAfterDiscuss } from "../guided-flow.js";
 import { getAutoDashboardData, getAutoModeStartModel, isAutoActive, pauseAuto } from "../auto.js";
-import { getNextFallbackModel, isTransientNetworkError, resolveModelWithFallbacksForUnit } from "../preferences.js";
-import { classifyProviderError, pauseAutoForProviderError } from "../provider-error-pause.js";
+import { getNextFallbackModel, resolveModelWithFallbacksForUnit } from "../preferences.js";
+import { pauseAutoForProviderError } from "../provider-error-pause.js";
 import { isSessionSwitchInFlight, resolveAgentEnd } from "../auto-loop.js";
+import { resolveModelId } from "../auto-model-selection.js";
 import { clearDiscussionFlowState } from "./write-gate.js";
+import {
+  classifyError,
+  createRetryState,
+  resetRetryState,
+  isTransient,
+  type ErrorClass,
+} from "../error-classifier.js";
 
-const networkRetryCounters = new Map<string, number>();
+const retryState = createRetryState();
+const MAX_NETWORK_RETRIES = 2;
 const MAX_TRANSIENT_AUTO_RESUMES = 3;
-let consecutiveTransientErrors = 0;
+
+async function pauseTransientWithBackoff(
+  cls: ErrorClass,
+  pi: ExtensionAPI,
+  ctx: ExtensionContext,
+  errorDetail: string,
+  isRateLimit: boolean,
+): Promise<void> {
+  retryState.consecutiveTransientCount += 1;
+  const baseRetryAfterMs = "retryAfterMs" in cls ? cls.retryAfterMs : 15_000;
+  const retryAfterMs = baseRetryAfterMs * 2 ** Math.max(0, retryState.consecutiveTransientCount - 1);
+  const allowAutoResume = retryState.consecutiveTransientCount <= MAX_TRANSIENT_AUTO_RESUMES;
+  if (!allowAutoResume) {
+    ctx.ui.notify(`Transient provider errors persisted after ${MAX_TRANSIENT_AUTO_RESUMES} auto-resume attempts. Pausing for manual review.`, "warning");
+  }
+  await pauseAutoForProviderError(ctx.ui, errorDetail, () => pauseAuto(ctx, pi), {
+    isRateLimit,
+    isTransient: allowAutoResume,
+    retryAfterMs,
+    resume: allowAutoResume
+      ? () => {
+        pi.sendMessage(
+          { customType: "gsd-auto-timeout-recovery", content: "Continue execution — provider error recovery delay elapsed.", display: false },
+          { triggerTurn: true },
+        );
+      }
+      : undefined,
+  });
+}
 
 export async function handleAgentEnd(
   pi: ExtensionAPI,
@@ -31,17 +68,26 @@ export async function handleAgentEnd(
   if (lastMsg && "stopReason" in lastMsg && lastMsg.stopReason === "error") {
     const errorDetail = "errorMessage" in lastMsg && lastMsg.errorMessage ? `: ${lastMsg.errorMessage}` : "";
     const errorMsg = ("errorMessage" in lastMsg && lastMsg.errorMessage) ? String(lastMsg.errorMessage) : "";
+    const explicitRetryAfterMs = ("retryAfterMs" in lastMsg && typeof lastMsg.retryAfterMs === "number") ? lastMsg.retryAfterMs : undefined;
 
-    if (isTransientNetworkError(errorMsg)) {
+    // ── 1. Classify ──────────────────────────────────────────────────────
+    const cls = classifyError(errorMsg, explicitRetryAfterMs);
+
+    // ── 2. Decide & Act ──────────────────────────────────────────────────
+
+    // --- Network errors: same-model retry with backoff ---
+    if (cls.kind === "network") {
       const currentModelId = ctx.model?.id ?? "unknown";
-      const retryKey = `network-retry:${currentModelId}`;
-      const currentRetries = networkRetryCounters.get(retryKey) ?? 0;
-      const maxRetries = 2;
-      if (currentRetries < maxRetries) {
-        networkRetryCounters.set(retryKey, currentRetries + 1);
-        const attempt = currentRetries + 1;
-        const delayMs = attempt * 3000;
-        ctx.ui.notify(`Network error on ${currentModelId}${errorDetail}. Retry ${attempt}/${maxRetries} in ${delayMs / 1000}s...`, "warning");
+      if (retryState.currentRetryModelId !== currentModelId) {
+        retryState.networkRetryCount = 0;
+        retryState.currentRetryModelId = currentModelId;
+      }
+      if (retryState.networkRetryCount < MAX_NETWORK_RETRIES) {
+        retryState.networkRetryCount += 1;
+        retryState.consecutiveTransientCount += 1;
+        const attempt = retryState.networkRetryCount;
+        const delayMs = attempt * cls.retryAfterMs;
+        ctx.ui.notify(`Network error on ${currentModelId}${errorDetail}. Retry ${attempt}/${MAX_NETWORK_RETRIES} in ${delayMs / 1000}s...`, "warning");
         setTimeout(() => {
           pi.sendMessage(
             { customType: "gsd-auto-timeout-recovery", content: "Continue execution — retrying after transient network error.", display: false },
@@ -50,26 +96,56 @@ export async function handleAgentEnd(
         }, delayMs);
         return;
       }
-      networkRetryCounters.delete(retryKey);
+      // Network retries exhausted — fall through to model fallback
+      retryState.networkRetryCount = 0;
+      retryState.currentRetryModelId = undefined;
       ctx.ui.notify(`Network retries exhausted for ${currentModelId}. Attempting model fallback.`, "warning");
     }
 
-    const dash = getAutoDashboardData();
-    if (dash.currentUnit) {
-      const modelConfig = resolveModelWithFallbacksForUnit(dash.currentUnit.type);
-      if (modelConfig && modelConfig.fallbacks.length > 0) {
-        const availableModels = ctx.modelRegistry.getAvailable();
-        const nextModelId = getNextFallbackModel(ctx.model?.id, modelConfig);
-        if (nextModelId) {
-          networkRetryCounters.clear();
-          const slashIdx = nextModelId.indexOf("/");
-          const modelToSet = slashIdx !== -1
-            ? availableModels.find((m) => m.provider.toLowerCase() === nextModelId.substring(0, slashIdx).toLowerCase() && m.id.toLowerCase() === nextModelId.substring(slashIdx + 1).toLowerCase())
-            : (availableModels.find((m) => m.id === nextModelId && m.provider === ctx.model?.provider) ?? availableModels.find((m) => m.id === nextModelId));
-          if (modelToSet) {
-            const ok = await pi.setModel(modelToSet, { persist: false });
+    // --- Rate limit: skip model fallback, go straight to pause ---
+    // Rate-limiting is a provider issue, not a model issue.
+    // Switching models won't help if the provider is throttling you.
+    if (cls.kind === "rate-limit") {
+      await pauseTransientWithBackoff(cls, pi, ctx, errorDetail, true);
+      return;
+    }
+
+    // --- Server/connection/stream errors: try model fallback first ---
+    if (cls.kind === "network" || cls.kind === "server" || cls.kind === "connection" || cls.kind === "stream") {
+      // Try model fallback
+      const dash = getAutoDashboardData();
+      if (dash.currentUnit) {
+        const modelConfig = resolveModelWithFallbacksForUnit(dash.currentUnit.type);
+        if (modelConfig && modelConfig.fallbacks.length > 0) {
+          const availableModels = ctx.modelRegistry.getAvailable();
+          const nextModelId = getNextFallbackModel(ctx.model?.id, modelConfig);
+          if (nextModelId) {
+            retryState.networkRetryCount = 0;
+            retryState.currentRetryModelId = undefined;
+            const modelToSet = resolveModelId(nextModelId, availableModels, ctx.model?.provider);
+            if (modelToSet) {
+              const ok = await pi.setModel(modelToSet, { persist: false });
+              if (ok) {
+                ctx.ui.notify(`Model error${errorDetail}. Switched to fallback: ${nextModelId} and resuming.`, "warning");
+                pi.sendMessage({ customType: "gsd-auto-timeout-recovery", content: "Continue execution.", display: false }, { triggerTurn: true });
+                return;
+              }
+            }
+          }
+        }
+      }
+
+      // Try restoring session model
+      const sessionModel = getAutoModeStartModel();
+      if (sessionModel) {
+        if (ctx.model?.id !== sessionModel.id || ctx.model?.provider !== sessionModel.provider) {
+          const startModel = ctx.modelRegistry.getAvailable().find((m) => m.provider === sessionModel.provider && m.id === sessionModel.id);
+          if (startModel) {
+            const ok = await pi.setModel(startModel, { persist: false });
             if (ok) {
-              ctx.ui.notify(`Model error${errorDetail}. Switched to fallback: ${nextModelId} and resuming.`, "warning");
+              retryState.networkRetryCount = 0;
+              retryState.currentRetryModelId = undefined;
+              ctx.ui.notify(`Model error${errorDetail}. Restored session model: ${sessionModel.provider}/${sessionModel.id} and resuming.`, "warning");
               pi.sendMessage({ customType: "gsd-auto-timeout-recovery", content: "Continue execution.", display: false }, { triggerTurn: true });
               return;
             }
@@ -78,56 +154,24 @@ export async function handleAgentEnd(
       }
     }
 
-    const sessionModel = getAutoModeStartModel();
-    if (sessionModel) {
-      if (ctx.model?.id !== sessionModel.id || ctx.model?.provider !== sessionModel.provider) {
-        const startModel = ctx.modelRegistry.getAvailable().find((m) => m.provider === sessionModel.provider && m.id === sessionModel.id);
-        if (startModel) {
-          const ok = await pi.setModel(startModel, { persist: false });
-          if (ok) {
-            networkRetryCounters.clear();
-            ctx.ui.notify(`Model error${errorDetail}. Restored session model: ${sessionModel.provider}/${sessionModel.id} and resuming.`, "warning");
-            pi.sendMessage({ customType: "gsd-auto-timeout-recovery", content: "Continue execution.", display: false }, { triggerTurn: true });
-            return;
-          }
-        }
-      }
+    // --- Transient fallback: pause with auto-resume ---
+    if (isTransient(cls)) {
+      await pauseTransientWithBackoff(cls, pi, ctx, errorDetail, false);
+      return;
     }
 
-    const classification = classifyProviderError(errorMsg);
-    const explicitRetryAfterMs = ("retryAfterMs" in lastMsg && typeof lastMsg.retryAfterMs === "number") ? lastMsg.retryAfterMs : undefined;
-    if (classification.isTransient) {
-      consecutiveTransientErrors += 1;
-    } else {
-      consecutiveTransientErrors = 0;
-    }
-    const baseRetryAfterMs = explicitRetryAfterMs ?? classification.suggestedDelayMs;
-    const retryAfterMs = classification.isTransient
-      ? baseRetryAfterMs * 2 ** Math.max(0, consecutiveTransientErrors - 1)
-      : baseRetryAfterMs;
-    const allowAutoResume = classification.isTransient && consecutiveTransientErrors <= MAX_TRANSIENT_AUTO_RESUMES;
-    if (classification.isTransient && !allowAutoResume) {
-      ctx.ui.notify(`Transient provider errors persisted after ${MAX_TRANSIENT_AUTO_RESUMES} auto-resume attempts. Pausing for manual review.`, "warning");
-    }
+    // --- Permanent / unknown: pause indefinitely ---
     await pauseAutoForProviderError(ctx.ui, errorDetail, () => pauseAuto(ctx, pi), {
-      isRateLimit: classification.isRateLimit,
-      isTransient: allowAutoResume,
-      retryAfterMs,
-      resume: allowAutoResume
-        ? () => {
-          pi.sendMessage(
-            { customType: "gsd-auto-timeout-recovery", content: "Continue execution — provider error recovery delay elapsed.", display: false },
-            { triggerTurn: true },
-          );
-        }
-        : undefined,
+      isRateLimit: false,
+      isTransient: false,
+      retryAfterMs: 0,
     });
     return;
   }
 
+  // ── Success path ─────────────────────────────────────────────────────────
   try {
-    consecutiveTransientErrors = 0;
-    networkRetryCounters.clear();
+    resetRetryState(retryState);
     resolveAgentEnd(event);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
@@ -139,4 +183,3 @@ export async function handleAgentEnd(
     }
   }
 }
-

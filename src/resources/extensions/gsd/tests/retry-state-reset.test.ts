@@ -4,10 +4,11 @@
 // consuming code properly resets all completion state so deriveState
 // re-derives the task on the next loop iteration.
 
+import { describe, test } from 'node:test';
+import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync, existsSync, readFileSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { createTestContext } from "./test-helpers.ts";
 import {
   resetHookState,
   consumeRetryTrigger,
@@ -15,8 +16,7 @@ import {
   resolveHookArtifactPath,
 } from "../post-unit-hooks.ts";
 import { uncheckTaskInPlan } from "../undo.ts";
-
-const { assertEq, assertTrue, report } = createTestContext();
+import { parseUnitId } from "../unit-id.ts";
 
 // ─── Fixture Helpers ───────────────────────────────────────────────────────
 
@@ -65,74 +65,65 @@ function createRetryFixture(): { base: string; cleanup: () => void } {
 // Test: consumeRetryTrigger returns retryArtifact field
 // ═══════════════════════════════════════════════════════════════════════════
 
-console.log("\n=== consumeRetryTrigger: returns null when no retry pending ===");
 
-{
+describe('retry-state-reset', () => {
+test('consumeRetryTrigger: returns null when no retry pending', () => {
   resetHookState();
   const trigger = consumeRetryTrigger();
-  assertEq(trigger, null, "returns null when no retry pending");
-}
+  assert.deepStrictEqual(trigger, null, "returns null when no retry pending");
+});
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Test: uncheckTaskInPlan reverses doctor's [x] mark
 // ═══════════════════════════════════════════════════════════════════════════
-
-console.log("\n=== Retry reset step 1: uncheck [x] → [ ] in PLAN.md ===");
-
-{
+test('Retry reset step 1: uncheck [x] → [ ] in PLAN.md', () => {
   const { base, cleanup } = createRetryFixture();
   try {
     const planFile = join(base, ".gsd", "milestones", "M001", "slices", "S01", "S01-PLAN.md");
 
     // Precondition: T01 is checked
     const before = readFileSync(planFile, "utf-8");
-    assertTrue(before.includes("- [x] **T01:"), "precondition: T01 is checked [x]");
+    assert.ok(before.includes("- [x] **T01:"), "precondition: T01 is checked [x]");
 
     // Step 1: Uncheck T01
     const result = uncheckTaskInPlan(base, "M001", "S01", "T01");
-    assertTrue(result, "uncheckTaskInPlan returns true");
+    assert.ok(result, "uncheckTaskInPlan returns true");
 
     // Verify T01 is now unchecked
     const after = readFileSync(planFile, "utf-8");
-    assertTrue(after.includes("- [ ] **T01:"), "T01 is now unchecked [ ]");
-    assertTrue(!after.includes("- [x] **T01:"), "T01 no longer has [x]");
+    assert.ok(after.includes("- [ ] **T01:"), "T01 is now unchecked [ ]");
+    assert.ok(!after.includes("- [x] **T01:"), "T01 no longer has [x]");
 
     // T02 is unaffected
-    assertTrue(after.includes("- [ ] **T02:"), "T02 remains unchanged");
+    assert.ok(after.includes("- [ ] **T02:"), "T02 remains unchanged");
   } finally {
     cleanup();
   }
-}
+});
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Test: Delete SUMMARY.md for the task
 // ═══════════════════════════════════════════════════════════════════════════
-
-console.log("\n=== Retry reset step 2: delete SUMMARY.md ===");
-
-{
+test('Retry reset step 2: delete SUMMARY.md', () => {
   const { base, cleanup } = createRetryFixture();
   try {
     const summaryFile = join(base, ".gsd", "milestones", "M001", "slices", "S01", "tasks", "T01-SUMMARY.md");
 
     // Precondition: SUMMARY exists
-    assertTrue(existsSync(summaryFile), "precondition: SUMMARY.md exists");
+    assert.ok(existsSync(summaryFile), "precondition: SUMMARY.md exists");
 
     // Step 2: Delete SUMMARY.md
     unlinkSync(summaryFile);
-    assertTrue(!existsSync(summaryFile), "SUMMARY.md deleted");
+    assert.ok(!existsSync(summaryFile), "SUMMARY.md deleted");
   } finally {
     cleanup();
   }
-}
+});
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Test: Remove from completedUnits array and flush
 // ═══════════════════════════════════════════════════════════════════════════
-
-console.log("\n=== Retry reset step 3: remove from completedUnits ===");
-
-{
+test('Retry reset step 3: remove from completedUnits', () => {
   const { base, cleanup } = createRetryFixture();
   try {
     // Simulate the completedUnits array (as AutoSession would have it)
@@ -146,8 +137,8 @@ console.log("\n=== Retry reset step 3: remove from completedUnits ===");
       u => !(u.type === "execute-task" && u.id === "M001/S01/T01"),
     );
 
-    assertEq(filtered.length, 1, "one unit removed from completedUnits");
-    assertEq(filtered[0].id, "M001/S01/T02", "T02 still in completedUnits");
+    assert.deepStrictEqual(filtered.length, 1, "one unit removed from completedUnits");
+    assert.deepStrictEqual(filtered[0].id, "M001/S01/T02", "T02 still in completedUnits");
 
     // Flush to completed-units.json
     const completedKeysPath = join(base, ".gsd", "completed-units.json");
@@ -155,42 +146,36 @@ console.log("\n=== Retry reset step 3: remove from completedUnits ===");
     writeFileSync(completedKeysPath, JSON.stringify(keys, null, 2), "utf-8");
 
     const onDisk = JSON.parse(readFileSync(completedKeysPath, "utf-8"));
-    assertEq(onDisk.length, 1, "completed-units.json has one entry");
-    assertEq(onDisk[0], "execute-task/M001/S01/T02", "only T02 remains in completed-units.json");
+    assert.deepStrictEqual(onDisk.length, 1, "completed-units.json has one entry");
+    assert.deepStrictEqual(onDisk[0], "execute-task/M001/S01/T02", "only T02 remains in completed-units.json");
   } finally {
     cleanup();
   }
-}
+});
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Test: Delete the retry_on artifact
 // ═══════════════════════════════════════════════════════════════════════════
-
-console.log("\n=== Retry reset step 4: delete retry_on artifact ===");
-
-{
+test('Retry reset step 4: delete retry_on artifact', () => {
   const { base, cleanup } = createRetryFixture();
   try {
     const retryArtifactPath = resolveHookArtifactPath(base, "M001/S01/T01", "NEEDS-REWORK.md");
 
     // Precondition: artifact exists
-    assertTrue(existsSync(retryArtifactPath), "precondition: retry artifact exists");
+    assert.ok(existsSync(retryArtifactPath), "precondition: retry artifact exists");
 
     // Step 4: Delete retry artifact
     unlinkSync(retryArtifactPath);
-    assertTrue(!existsSync(retryArtifactPath), "retry artifact deleted");
+    assert.ok(!existsSync(retryArtifactPath), "retry artifact deleted");
   } finally {
     cleanup();
   }
-}
+});
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Test: Full retry reset sequence (all steps together)
 // ═══════════════════════════════════════════════════════════════════════════
-
-console.log("\n=== Full retry reset: all steps combined ===");
-
-{
+test('Full retry reset: all steps combined', () => {
   const { base, cleanup } = createRetryFixture();
   try {
     const trigger = {
@@ -199,8 +184,7 @@ console.log("\n=== Full retry reset: all steps combined ===");
       retryArtifact: "NEEDS-REWORK.md",
     };
 
-    const parts = trigger.unitId.split("/");
-    const [mid, sid, tid] = parts;
+    const { milestone: mid, slice: sid, task: tid } = parseUnitId(trigger.unitId);
 
     // Simulate completedUnits
     let completedUnits = [
@@ -242,30 +226,27 @@ console.log("\n=== Full retry reset: all steps combined ===");
     // PLAN.md: T01 unchecked
     const planFile = join(base, ".gsd", "milestones", "M001", "slices", "S01", "S01-PLAN.md");
     const planContent = readFileSync(planFile, "utf-8");
-    assertTrue(planContent.includes("- [ ] **T01:"), "after reset: T01 unchecked in PLAN");
-    assertTrue(!planContent.includes("- [x] **T01:"), "after reset: T01 not checked in PLAN");
+    assert.ok(planContent.includes("- [ ] **T01:"), "after reset: T01 unchecked in PLAN");
+    assert.ok(!planContent.includes("- [x] **T01:"), "after reset: T01 not checked in PLAN");
 
     // SUMMARY.md: deleted
-    assertTrue(!existsSync(summaryFile), "after reset: SUMMARY.md deleted");
+    assert.ok(!existsSync(summaryFile), "after reset: SUMMARY.md deleted");
 
     // completed-units.json: empty
     const onDisk = JSON.parse(readFileSync(completedKeysPath, "utf-8"));
-    assertEq(onDisk.length, 0, "after reset: completed-units.json is empty");
+    assert.deepStrictEqual(onDisk.length, 0, "after reset: completed-units.json is empty");
 
     // Retry artifact: deleted
-    assertTrue(!existsSync(retryArtifactPath), "after reset: retry artifact deleted");
+    assert.ok(!existsSync(retryArtifactPath), "after reset: retry artifact deleted");
   } finally {
     cleanup();
   }
-}
+});
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Test: Reset is idempotent — no crash when artifacts are already missing
 // ═══════════════════════════════════════════════════════════════════════════
-
-console.log("\n=== Retry reset: idempotent when artifacts already missing ===");
-
-{
+test('Retry reset: idempotent when artifacts already missing', () => {
   const base = mkdtempSync(join(tmpdir(), "gsd-retry-idempotent-"));
   try {
     // Create minimal structure — NO summary, NO retry artifact, NO plan
@@ -283,46 +264,42 @@ console.log("\n=== Retry reset: idempotent when artifacts already missing ===");
     };
 
     // These should not throw even with missing files
-    const parts = trigger.unitId.split("/");
-    const [mid, sid, tid] = parts;
+    const { milestone: mid, slice: sid, task: tid } = parseUnitId(trigger.unitId);
 
     // Uncheck — returns false because no PLAN file
-    const uncheckResult = uncheckTaskInPlan(base, mid, sid, tid);
-    assertTrue(!uncheckResult, "uncheck returns false when no PLAN exists");
+    const uncheckResult = uncheckTaskInPlan(base, mid, sid!, tid!);
+    assert.ok(!uncheckResult, "uncheck returns false when no PLAN exists");
 
     // Summary does not exist — no crash
     const summaryFile = join(base, ".gsd", "milestones", "M001", "slices", "S01", "tasks", `${tid}-SUMMARY.md`);
-    assertTrue(!existsSync(summaryFile), "no summary to delete — safe");
+    assert.ok(!existsSync(summaryFile), "no summary to delete — safe");
 
     // Retry artifact does not exist — no crash
     const retryPath = resolveHookArtifactPath(base, trigger.unitId, trigger.retryArtifact);
-    assertTrue(!existsSync(retryPath), "no retry artifact to delete — safe");
+    assert.ok(!existsSync(retryPath), "no retry artifact to delete — safe");
 
     // completed-units.json filter on empty array — safe
     const completedUnits: Array<{ type: string; id: string }> = [];
     const filtered = completedUnits.filter(
       u => !(u.type === trigger.unitType && u.id === trigger.unitId),
     );
-    assertEq(filtered.length, 0, "filter on empty array is safe");
+    assert.deepStrictEqual(filtered.length, 0, "filter on empty array is safe");
   } finally {
     rmSync(base, { recursive: true, force: true });
   }
-}
+});
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Test: resolveHookArtifactPath produces correct path for retry artifacts
 // ═══════════════════════════════════════════════════════════════════════════
-
-console.log("\n=== resolveHookArtifactPath: correct path for retry artifacts ===");
-
-{
+test('resolveHookArtifactPath: correct path for retry artifacts', () => {
   const base = "/project";
   const path = resolveHookArtifactPath(base, "M001/S01/T01", "NEEDS-REWORK.md");
-  assertEq(
+  assert.deepStrictEqual(
     path,
     join(base, ".gsd", "milestones", "M001", "slices", "S01", "tasks", "T01-NEEDS-REWORK.md"),
     "retry artifact path resolves to task directory with task prefix",
   );
-}
+});
 
-report();
+});

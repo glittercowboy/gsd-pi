@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
 import type { AutoDashboardData } from "./bridge-service.ts";
-import { resolveTypeStrippingFlag } from "./ts-subprocess-flags.ts"
+import { resolveSubprocessModule, buildSubprocessPrefixArgs } from "./ts-subprocess-flags.ts";
 
 const AUTO_DASHBOARD_MAX_BUFFER = 1024 * 1024;
 const TEST_AUTO_DASHBOARD_MODULE_ENV = "GSD_WEB_TEST_AUTO_DASHBOARD_MODULE";
@@ -29,11 +29,9 @@ function fallbackAutoDashboardData(): AutoDashboardData {
     basePath: "",
     totalCost: 0,
     totalTokens: 0,
+    rtkSavings: null,
+    rtkEnabled: false,
   };
-}
-
-function resolveAutoDashboardModulePath(packageRoot: string, env: NodeJS.ProcessEnv): string {
-  return env[TEST_AUTO_DASHBOARD_MODULE_ENV] || join(packageRoot, "src", "resources", "extensions", "gsd", "auto.ts");
 }
 
 function resolveTsLoaderPath(packageRoot: string): string {
@@ -55,10 +53,18 @@ export async function collectAuthoritativeAutoDashboardData(
 
   const checkExists = options.existsSync ?? existsSync;
   const resolveTsLoader = resolveTsLoaderPath(packageRoot);
-  const autoModulePath = resolveAutoDashboardModulePath(packageRoot, env);
 
-  if (!checkExists(resolveTsLoader) || !checkExists(autoModulePath)) {
+  const testModulePath = env[TEST_AUTO_DASHBOARD_MODULE_ENV];
+  const moduleResolution = testModulePath
+    ? { modulePath: testModulePath, useCompiledJs: false }
+    : resolveSubprocessModule(packageRoot, "resources/extensions/gsd/auto.ts", checkExists);
+  const autoModulePath = moduleResolution.modulePath;
+
+  if (!moduleResolution.useCompiledJs && (!checkExists(resolveTsLoader) || !checkExists(autoModulePath))) {
     throw new Error(`authoritative auto dashboard provider not found; checked=${resolveTsLoader},${autoModulePath}`);
+  }
+  if (moduleResolution.useCompiledJs && !checkExists(autoModulePath)) {
+    throw new Error(`authoritative auto dashboard provider not found; checked=${autoModulePath}`);
   }
 
   const script = [
@@ -68,14 +74,17 @@ export async function collectAuthoritativeAutoDashboardData(
     'process.stdout.write(JSON.stringify(result));',
   ].join(" ");
 
+  const prefixArgs = buildSubprocessPrefixArgs(
+    packageRoot,
+    moduleResolution,
+    pathToFileURL(resolveTsLoader).href,
+  );
+
   return await new Promise<AutoDashboardData>((resolveResult, reject) => {
     execFile(
       options.execPath ?? process.execPath,
       [
-        "--import",
-        pathToFileURL(resolveTsLoader).href,
-        resolveTypeStrippingFlag(packageRoot),
-        "--input-type=module",
+        ...prefixArgs,
         "--eval",
         script,
       ],

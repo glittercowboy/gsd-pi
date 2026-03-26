@@ -143,7 +143,7 @@ function createHarness(onCommand: (command: any, harness: ReturnType<typeof crea
   return harness;
 }
 
-test("/api/bridge-terminal/stream attaches to the main bridge runtime and forwards native terminal output", async () => {
+test("/api/bridge-terminal/stream attaches to the main bridge runtime and forwards native terminal output", async (t) => {
   const fixture = makeWorkspaceFixture();
   const harness = createHarness((command, current) => {
     if (command.type === "get_state") {
@@ -197,25 +197,25 @@ test("/api/bridge-terminal/stream attaches to the main bridge runtime and forwar
     spawn: harness.spawn,
   });
 
-  try {
-    const response = await streamRoute.GET(
-      new Request("http://localhost/api/bridge-terminal/stream?cols=132&rows=41"),
-    );
-
-    const events = await readSseEvents(response, 2);
-    assert.equal(events[0].type, "connected");
-    assert.equal(events[1].type, "output");
-    assert.match(events[1].data, /native main session/);
-
-    assert.ok(harness.commands.some((command) => command.type === "terminal_resize" && command.cols === 132 && command.rows === 41));
-    assert.ok(harness.commands.some((command) => command.type === "terminal_redraw"));
-  } finally {
+  t.after(async () => {
     await bridge.resetBridgeServiceForTests();
     fixture.cleanup();
-  }
+  });
+
+  const response = await streamRoute.GET(
+    new Request("http://localhost/api/bridge-terminal/stream?cols=132&rows=41"),
+  );
+
+  const events = await readSseEvents(response, 2);
+  assert.equal(events[0].type, "connected");
+  assert.equal(events[1].type, "output");
+  assert.match(events[1].data, /native main session/);
+
+  assert.ok(harness.commands.some((command) => command.type === "terminal_resize" && command.cols === 132 && command.rows === 41));
+  assert.ok(harness.commands.some((command) => command.type === "terminal_redraw"));
 });
 
-test("bridge-terminal input and resize routes forward browser terminal traffic onto the authoritative bridge session", async () => {
+test("bridge-terminal input and resize routes forward browser terminal traffic onto the authoritative bridge session", async (t) => {
   const fixture = makeWorkspaceFixture();
   const harness = createHarness((command, current) => {
     if (command.type === "get_state") {
@@ -266,32 +266,32 @@ test("bridge-terminal input and resize routes forward browser terminal traffic o
     spawn: harness.spawn,
   });
 
-  try {
-    const inputResponse = await inputRoute.POST(
-      new Request("http://localhost/api/bridge-terminal/input", {
-        method: "POST",
-        body: JSON.stringify({ data: "hello from xterm" }),
-      }),
-    );
-    assert.equal(inputResponse.status, 200);
-
-    const resizeResponse = await resizeRoute.POST(
-      new Request("http://localhost/api/bridge-terminal/resize", {
-        method: "POST",
-        body: JSON.stringify({ cols: 140, rows: 48 }),
-      }),
-    );
-    assert.equal(resizeResponse.status, 200);
-
-    assert.ok(harness.commands.some((command) => command.type === "terminal_input" && command.data === "hello from xterm"));
-    assert.ok(harness.commands.some((command) => command.type === "terminal_resize" && command.cols === 140 && command.rows === 48));
-  } finally {
+  t.after(async () => {
     await bridge.resetBridgeServiceForTests();
     fixture.cleanup();
-  }
+  });
+
+  const inputResponse = await inputRoute.POST(
+    new Request("http://localhost/api/bridge-terminal/input", {
+      method: "POST",
+      body: JSON.stringify({ data: "hello from xterm" }),
+    }),
+  );
+  assert.equal(inputResponse.status, 200);
+
+  const resizeResponse = await resizeRoute.POST(
+    new Request("http://localhost/api/bridge-terminal/resize", {
+      method: "POST",
+      body: JSON.stringify({ cols: 140, rows: 48 }),
+    }),
+  );
+  assert.equal(resizeResponse.status, 200);
+
+  assert.ok(harness.commands.some((command) => command.type === "terminal_input" && command.data === "hello from xterm"));
+  assert.ok(harness.commands.some((command) => command.type === "terminal_resize" && command.cols === 140 && command.rows === 48));
 });
 
-test("session_state_changed from the native main-session TUI refreshes bridge state and emits matching live invalidations", async () => {
+test("session_state_changed from the native main-session TUI refreshes bridge state and emits matching live invalidations", async (t) => {
   const fixture = makeWorkspaceFixture();
   const sessionAPath = join(fixture.sessionsDir, "sess-a.jsonl");
   const sessionBPath = join(fixture.sessionsDir, "sess-b.jsonl");
@@ -338,30 +338,30 @@ test("session_state_changed from the native main-session TUI refreshes bridge st
     spawn: harness.spawn,
   });
 
-  try {
-    const service = bridge.getProjectBridgeService();
-    const unsubscribe = service.subscribe((event) => {
-      seenEvents.push(event as { type?: string; reason?: string });
-    });
-
-    await service.ensureStarted();
-    activeSessionId = "sess-b";
-    activeSessionFile = sessionBPath;
-    harness.emit({ type: "session_state_changed", reason: "switch_session" });
-
-    await waitFor(() => {
-      const snapshot = service.getSnapshot();
-      return snapshot.activeSessionId === "sess-b" ? snapshot : null;
-    });
-
-    assert.ok(
-      seenEvents.some((event) => event.type === "live_state_invalidation" && event.reason === "switch_session"),
-      "switch_session live_state_invalidation should be emitted when the native TUI changes the active session",
-    );
-
-    unsubscribe();
-  } finally {
+  t.after(async () => {
     await bridge.resetBridgeServiceForTests();
     fixture.cleanup();
-  }
+  });
+
+  const service = bridge.getProjectBridgeService();
+  const unsubscribe = service.subscribe((event) => {
+    seenEvents.push(event as { type?: string; reason?: string });
+  });
+
+  await service.ensureStarted();
+  activeSessionId = "sess-b";
+  activeSessionFile = sessionBPath;
+  harness.emit({ type: "session_state_changed", reason: "switch_session" });
+
+  await waitFor(() => {
+    const snapshot = service.getSnapshot();
+    return snapshot.activeSessionId === "sess-b" ? snapshot : null;
+  });
+
+  assert.ok(
+    seenEvents.some((event) => event.type === "live_state_invalidation" && event.reason === "switch_session"),
+    "switch_session live_state_invalidation should be emitted when the native TUI changes the active session",
+  );
+
+  unsubscribe();
 });

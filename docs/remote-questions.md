@@ -16,7 +16,7 @@ The setup wizard:
 3. Lists servers the bot belongs to (or lets you pick)
 4. Lists text channels in the selected server
 5. Sends a test message to confirm permissions
-6. Saves the configuration to `~/.gsd/preferences.md`
+6. Saves the configuration to `~/.gsd/PREFERENCES.md`
 
 **Bot requirements:**
 - A Discord bot application with a token (from [Discord Developer Portal](https://discord.com/developers/applications))
@@ -65,7 +65,7 @@ The setup wizard:
 
 ## Configuration
 
-Remote questions are configured in `~/.gsd/preferences.md`:
+Remote questions are configured in `~/.gsd/PREFERENCES.md`:
 
 ```yaml
 remote_questions:

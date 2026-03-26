@@ -23,7 +23,7 @@ function makeTempDir(prefix: string): string {
 // loadAndValidateAnswerFile
 // ---------------------------------------------------------------------------
 
-test('loadAndValidateAnswerFile — valid file', () => {
+test('loadAndValidateAnswerFile — valid file', (t) => {
   const tmp = makeTempDir('answers-valid');
   try {
     const data = {
@@ -43,7 +43,7 @@ test('loadAndValidateAnswerFile — valid file', () => {
   }
 });
 
-test('loadAndValidateAnswerFile — invalid JSON', () => {
+test('loadAndValidateAnswerFile — invalid JSON', (t) => {
   const tmp = makeTempDir('answers-bad-json');
   try {
     const filePath = join(tmp, 'answers.json');
@@ -58,7 +58,7 @@ test('loadAndValidateAnswerFile — invalid JSON', () => {
   }
 });
 
-test('loadAndValidateAnswerFile — wrong types (non-string question value)', () => {
+test('loadAndValidateAnswerFile — wrong types (non-string question value)', (t) => {
   const tmp = makeTempDir('answers-bad-q');
   try {
     const filePath = join(tmp, 'answers.json');
@@ -73,7 +73,7 @@ test('loadAndValidateAnswerFile — wrong types (non-string question value)', ()
   }
 });
 
-test('loadAndValidateAnswerFile — wrong types (non-string secret value)', () => {
+test('loadAndValidateAnswerFile — wrong types (non-string secret value)', (t) => {
   const tmp = makeTempDir('answers-bad-secret');
   try {
     const filePath = join(tmp, 'answers.json');
@@ -116,7 +116,7 @@ function makeSelectEvent(
   };
 }
 
-test('observeEvent stores metadata', () => {
+test('observeEvent stores metadata', (t) => {
   const injector = new AnswerInjector({});
 
   injector.observeEvent(makeToolExecutionStart([{
@@ -140,7 +140,7 @@ test('observeEvent stores metadata', () => {
   assert.strictEqual(injector.getStats().questionsDefaulted, 1);
 });
 
-test('tryHandle matches by question ID — single select', () => {
+test('tryHandle matches by question ID — single select', (t) => {
   const injector = new AnswerInjector({ questions: { deploy_target: 'GCP' } });
 
   injector.observeEvent(makeToolExecutionStart([{
@@ -164,7 +164,7 @@ test('tryHandle matches by question ID — single select', () => {
   assert.strictEqual(injector.getStats().questionsAnswered, 1);
 });
 
-test('tryHandle unknown question deferred — first_option timeout', async () => {
+test('tryHandle unknown question deferred — first_option timeout', async (t) => {
   const injector = new AnswerInjector({ defaults: { strategy: 'first_option' } });
 
   const captured: string[] = [];
@@ -188,7 +188,7 @@ test('tryHandle unknown question deferred — first_option timeout', async () =>
   assert.strictEqual(injector.getStats().questionsDefaulted, 1);
 });
 
-test('tryHandle multi-select', () => {
+test('tryHandle multi-select', (t) => {
   const injector = new AnswerInjector({ questions: { features: ['auth', 'payments'] } });
 
   injector.observeEvent(makeToolExecutionStart([{
@@ -218,7 +218,7 @@ test('tryHandle multi-select', () => {
   assert.strictEqual(injector.getStats().questionsAnswered, 1);
 });
 
-test('tryHandle answer not in options — first_option strategy returns false', () => {
+test('tryHandle answer not in options — first_option strategy returns false', (t) => {
   const injector = new AnswerInjector({ questions: { deploy_target: 'Azure' } });
 
   injector.observeEvent(makeToolExecutionStart([{
@@ -240,7 +240,7 @@ test('tryHandle answer not in options — first_option strategy returns false', 
   assert.strictEqual(injector.getStats().questionsAnswered, 0);
 });
 
-test('tryHandle deferred resolution — observeEvent after tryHandle', async () => {
+test('tryHandle deferred resolution — observeEvent after tryHandle', async (t) => {
   const injector = new AnswerInjector({ questions: { deploy_target: 'GCP' } });
 
   const captured: string[] = [];
@@ -272,7 +272,7 @@ test('tryHandle deferred resolution — observeEvent after tryHandle', async () 
 // AnswerInjector — getSecretEnvVars
 // ---------------------------------------------------------------------------
 
-test('getSecretEnvVars returns secrets map', () => {
+test('getSecretEnvVars returns secrets map', (t) => {
   const secrets = { API_KEY: 'sk-123', DB_URL: 'postgres://localhost/db' };
   const injector = new AnswerInjector({ secrets });
 
@@ -283,7 +283,7 @@ test('getSecretEnvVars returns secrets map', () => {
 // AnswerInjector — getUnusedWarnings
 // ---------------------------------------------------------------------------
 
-test('getUnusedWarnings reports unused question IDs and secret keys', () => {
+test('getUnusedWarnings reports unused question IDs and secret keys', (t) => {
   const injector = new AnswerInjector({
     questions: { q1: 'val1', q2: 'val2' },
     secrets: { KEY1: 'v1' },
@@ -314,7 +314,7 @@ test('getUnusedWarnings reports unused question IDs and secret keys', () => {
 // AnswerInjector — defaults.strategy cancel
 // ---------------------------------------------------------------------------
 
-test('defaults.strategy cancel — sends cancelled response', () => {
+test('defaults.strategy cancel — sends cancelled response', (t) => {
   const injector = new AnswerInjector({ defaults: { strategy: 'cancel' } });
 
   injector.observeEvent(makeToolExecutionStart([{

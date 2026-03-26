@@ -100,6 +100,7 @@ export async function handleAgentEvent(host: InteractiveModeStateHost & {
 					undefined,
 					host.hideThinkingBlock,
 					host.getMarkdownThemeWithSettings(),
+					host.settingsManager.getTimestampFormat(),
 				);
 				host.streamingMessage = event.message;
 				host.chatContainer.addChild(host.streamingComponent);
@@ -144,13 +145,19 @@ export async function handleAgentEvent(host: InteractiveModeStateHost & {
 					} else if (content.type === "webSearchResult") {
 						const component = host.pendingTools.get(content.toolUseId);
 						if (component) {
-							const searchContent = content.content;
-							const isError = searchContent && typeof searchContent === "object" && "type" in (searchContent as any) && (searchContent as any).type === "web_search_tool_result_error";
-							component.updateResult({
-								content: [{ type: "text", text: host.formatWebSearchResult(searchContent) }],
-								isError: !!isError,
-							});
-							host.pendingTools.delete(content.toolUseId);
+							if (process.env.PI_OFFLINE === "1") {
+								component.updateResult({
+									content: [{ type: "text", text: "Web search disabled (offline mode)" }],
+									isError: false,
+								});
+							} else {
+								const searchContent = content.content;
+								const isError = searchContent && typeof searchContent === "object" && "type" in (searchContent as any) && (searchContent as any).type === "web_search_tool_result_error";
+								component.updateResult({
+									content: [{ type: "text", text: host.formatWebSearchResult(searchContent) }],
+									isError: !!isError,
+								});
+							}
 						}
 					}
 				}

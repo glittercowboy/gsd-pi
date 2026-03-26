@@ -69,6 +69,8 @@ describe("diagnostics type exports", () => {
       unitTraces: [],
       completedKeyCount: 0,
       metrics: null,
+      journalSummary: null,
+      activityLogMeta: null,
     }
     assert.equal(typeof report.gsdVersion, "string")
     assert.equal(typeof report.timestamp, "string")
@@ -79,6 +81,8 @@ describe("diagnostics type exports", () => {
     assert.equal(typeof report.doctorIssueCount, "number")
     assert.equal(typeof report.unitTraceCount, "number")
     assert.equal(typeof report.completedKeyCount, "number")
+    assert.equal(report.journalSummary, null)
+    assert.equal(report.activityLogMeta, null)
   })
 
   it("ForensicMetricsSummary has required fields", () => {

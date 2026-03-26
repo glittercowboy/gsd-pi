@@ -105,7 +105,7 @@ export function resolveSearchProvider(overridePreference?: string): SearchProvid
   if (overridePreference && VALID_PREFERENCES.has(overridePreference)) {
     pref = overridePreference as SearchProviderPreference
   } else {
-    // preferences.md takes priority over auth.json
+    // PREFERENCES.md takes priority over auth.json
     const mdPref = resolveSearchProviderFromPreferences()
     if (mdPref && mdPref !== 'auto' && mdPref !== 'native') {
       pref = mdPref as SearchProviderPreference

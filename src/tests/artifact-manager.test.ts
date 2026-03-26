@@ -23,144 +23,117 @@ function makeTmpSession(): { sessionFile: string; cleanup: () => void } {
 // save / getPath
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('save creates artifact file with sequential ID', () => {
+test('save creates artifact file with sequential ID', (t) => {
 	const { sessionFile, cleanup } = makeTmpSession()
-	try {
-		const mgr = new ArtifactManager(sessionFile)
-		const id0 = mgr.save('output 0', 'bash')
-		const id1 = mgr.save('output 1', 'bash')
+	t.after(cleanup);
+	const mgr = new ArtifactManager(sessionFile)
+	const id0 = mgr.save('output 0', 'bash')
+	const id1 = mgr.save('output 1', 'bash')
 
-		assert.equal(id0, '0')
-		assert.equal(id1, '1')
+	assert.equal(id0, '0')
+	assert.equal(id1, '1')
 
-		const path0 = mgr.getPath('0')
-		assert.ok(path0)
-		assert.equal(readFileSync(path0, 'utf-8'), 'output 0')
+	const path0 = mgr.getPath('0')
+	assert.ok(path0)
+	assert.equal(readFileSync(path0, 'utf-8'), 'output 0')
 
-		const path1 = mgr.getPath('1')
-		assert.ok(path1)
-		assert.equal(readFileSync(path1, 'utf-8'), 'output 1')
-	} finally {
-		cleanup()
-	}
+	const path1 = mgr.getPath('1')
+	assert.ok(path1)
+	assert.equal(readFileSync(path1, 'utf-8'), 'output 1')
 })
 
-test('artifact directory is named after session file without .jsonl', () => {
+test('artifact directory is named after session file without .jsonl', (t) => {
 	const { sessionFile, cleanup } = makeTmpSession()
-	try {
-		const mgr = new ArtifactManager(sessionFile)
-		const expectedDir = sessionFile.slice(0, -6) // strip .jsonl
-		assert.equal(mgr.dir, expectedDir)
-	} finally {
-		cleanup()
-	}
+	t.after(cleanup);
+	const mgr = new ArtifactManager(sessionFile)
+	const expectedDir = sessionFile.slice(0, -6) // strip .jsonl
+	assert.equal(mgr.dir, expectedDir)
 })
 
-test('artifact directory is created lazily on first write', () => {
+test('artifact directory is created lazily on first write', (t) => {
 	const { sessionFile, cleanup } = makeTmpSession()
-	try {
-		const mgr = new ArtifactManager(sessionFile)
-		const artifactDir = mgr.dir
+	t.after(cleanup);
+	const mgr = new ArtifactManager(sessionFile)
+	const artifactDir = mgr.dir
 
-		assert.equal(existsSync(artifactDir), false)
-		mgr.save('trigger creation', 'bash')
-		assert.ok(existsSync(artifactDir))
-	} finally {
-		cleanup()
-	}
+	assert.equal(existsSync(artifactDir), false)
+	mgr.save('trigger creation', 'bash')
+	assert.ok(existsSync(artifactDir))
 })
 
 // ═══════════════════════════════════════════════════════════════════════════
 // exists
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('exists returns true for saved artifact', () => {
+test('exists returns true for saved artifact', (t) => {
 	const { sessionFile, cleanup } = makeTmpSession()
-	try {
-		const mgr = new ArtifactManager(sessionFile)
-		const id = mgr.save('content', 'bash')
-		assert.ok(mgr.exists(id))
-	} finally {
-		cleanup()
-	}
+	t.after(cleanup);
+	const mgr = new ArtifactManager(sessionFile)
+	const id = mgr.save('content', 'bash')
+	assert.ok(mgr.exists(id))
 })
 
-test('exists returns false for missing artifact', () => {
+test('exists returns false for missing artifact', (t) => {
 	const { sessionFile, cleanup } = makeTmpSession()
-	try {
-		const mgr = new ArtifactManager(sessionFile)
-		assert.equal(mgr.exists('999'), false)
-	} finally {
-		cleanup()
-	}
+	t.after(cleanup);
+	const mgr = new ArtifactManager(sessionFile)
+	assert.equal(mgr.exists('999'), false)
 })
 
 // ═══════════════════════════════════════════════════════════════════════════
 // allocatePath
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('allocatePath returns path without writing', () => {
+test('allocatePath returns path without writing', (t) => {
 	const { sessionFile, cleanup } = makeTmpSession()
-	try {
-		const mgr = new ArtifactManager(sessionFile)
-		const { id, path } = mgr.allocatePath('fetch')
+	t.after(cleanup);
+	const mgr = new ArtifactManager(sessionFile)
+	const { id, path } = mgr.allocatePath('fetch')
 
-		assert.equal(id, '0')
-		assert.ok(path.endsWith('0.fetch.log'))
-		// File should not exist yet — allocatePath doesn't write
-		assert.equal(existsSync(path), false)
-	} finally {
-		cleanup()
-	}
+	assert.equal(id, '0')
+	assert.ok(path.endsWith('0.fetch.log'))
+	// File should not exist yet — allocatePath doesn't write
+	assert.equal(existsSync(path), false)
 })
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Session resume — ID continuity
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('new manager picks up where previous left off', () => {
+test('new manager picks up where previous left off', (t) => {
 	const { sessionFile, cleanup } = makeTmpSession()
-	try {
-		const mgr1 = new ArtifactManager(sessionFile)
-		mgr1.save('first', 'bash')
-		mgr1.save('second', 'bash')
+	t.after(cleanup);
+	const mgr1 = new ArtifactManager(sessionFile)
+	mgr1.save('first', 'bash')
+	mgr1.save('second', 'bash')
 
-		// Simulate session resume — new manager for same session file
-		const mgr2 = new ArtifactManager(sessionFile)
-		const id = mgr2.save('third', 'bash')
+	// Simulate session resume — new manager for same session file
+	const mgr2 = new ArtifactManager(sessionFile)
+	const id = mgr2.save('third', 'bash')
 
-		assert.equal(id, '2') // continues from 0, 1 → next is 2
-	} finally {
-		cleanup()
-	}
+	assert.equal(id, '2') // continues from 0, 1 → next is 2
 })
 
 // ═══════════════════════════════════════════════════════════════════════════
 // listFiles
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('listFiles returns all artifact filenames', () => {
+test('listFiles returns all artifact filenames', (t) => {
 	const { sessionFile, cleanup } = makeTmpSession()
-	try {
-		const mgr = new ArtifactManager(sessionFile)
-		mgr.save('a', 'bash')
-		mgr.save('b', 'fetch')
+	t.after(cleanup);
+	const mgr = new ArtifactManager(sessionFile)
+	mgr.save('a', 'bash')
+	mgr.save('b', 'fetch')
 
-		const files = mgr.listFiles()
-		assert.equal(files.length, 2)
-		assert.ok(files.some(f => f === '0.bash.log'))
-		assert.ok(files.some(f => f === '1.fetch.log'))
-	} finally {
-		cleanup()
-	}
+	const files = mgr.listFiles()
+	assert.equal(files.length, 2)
+	assert.ok(files.some(f => f === '0.bash.log'))
+	assert.ok(files.some(f => f === '1.fetch.log'))
 })
 
-test('listFiles returns empty for nonexistent dir', () => {
+test('listFiles returns empty for nonexistent dir', (t) => {
 	const { sessionFile, cleanup } = makeTmpSession()
-	try {
-		const mgr = new ArtifactManager(sessionFile)
-		assert.deepEqual(mgr.listFiles(), [])
-	} finally {
-		cleanup()
-	}
+	t.after(cleanup);
+	const mgr = new ArtifactManager(sessionFile)
+	assert.deepEqual(mgr.listFiles(), [])
 })

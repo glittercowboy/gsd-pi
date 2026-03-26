@@ -244,11 +244,21 @@ export async function buildExistingMilestonesContext(
     }
   }
 
-  // For each milestone, include context and status
+  // For each milestone, include context and status.
+  // Completed milestones get a compact summary line only — loading their full
+  // CONTEXT.md + SUMMARY.md files is expensive and triggers 429 rate limits on
+  // projects with many completed milestones (#2379).
   for (const mid of milestoneIds) {
     const registryEntry = state.registry.find(m => m.id === mid);
     const status = registryEntry?.status ?? "unknown";
     const title = registryEntry?.title ?? mid;
+
+    // Completed milestones: emit a one-liner — the LLM only needs to know
+    // they exist for dedup/dependency purposes, not their full content.
+    if (status === "complete") {
+      sections.push(`### ${mid}: ${title}\n**Status:** complete`);
+      continue;
+    }
 
     const parts: string[] = [];
     parts.push(`### ${mid}: ${title}\n**Status:** ${status}`);
@@ -267,17 +277,6 @@ export async function buildExistingMilestonesContext(
         const draftContent = await loadFile(draftFile);
         if (draftContent) {
           parts.push(`\n**Draft context available:**\n${draftContent.trim()}`);
-        }
-      }
-    }
-
-    // For completed milestones, include the summary if it exists
-    if (status === "complete") {
-      const summaryFile = resolveMilestoneFile(basePath, mid, "SUMMARY");
-      if (summaryFile) {
-        const content = await loadFile(summaryFile);
-        if (content) {
-          parts.push(`\n**Summary:**\n${content.trim()}`);
         }
       }
     }

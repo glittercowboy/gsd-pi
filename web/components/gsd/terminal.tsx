@@ -89,24 +89,24 @@ function TerminalWidgetBand({
 
   return (
     <div
-      className="border-t border-border/50 bg-card/20 px-4 py-2"
+      className="border-t border-border/50 bg-card/50 px-4 py-2"
       data-testid={placement === "aboveEditor" ? "terminal-widgets-above-editor" : "terminal-widgets-below-editor"}
     >
       <div className="space-y-2">
         {widgets.map((widget) => (
           <div
             key={`${widget.placement}:${widget.key}`}
-            className="rounded-md border border-border/60 bg-background/40 px-3 py-2"
+            className="rounded-md border border-border bg-background/50 px-3 py-2"
             data-testid="terminal-widget"
             data-widget-key={widget.key}
             data-widget-placement={widget.placement}
             title={widget.fullText}
           >
-            <div className="mb-1 flex items-center justify-between gap-2 text-[10px] uppercase tracking-[0.2em] text-muted-foreground/80">
+            <div className="mb-1 flex items-center justify-between gap-2 text-[10px] uppercase tracking-[0.2em] text-muted-foreground">
               <span className="truncate">{widget.key}</span>
               <span>{widget.placement === "aboveEditor" ? "Above editor" : "Below editor"}</span>
             </div>
-            <div className="space-y-1 text-xs text-foreground/90">
+            <div className="space-y-1 text-xs text-foreground">
               {widget.visibleLines.map((line, index) => (
                 <div key={`${widget.key}:${index}`} className="whitespace-pre-wrap break-words">
                   {line}
@@ -238,7 +238,7 @@ export function Terminal({ className }: TerminalProps) {
       <div className="flex-1 overflow-y-auto p-4">
         {workspace.terminalLines.map((line) => (
           <div key={line.id} className="flex" data-testid="terminal-line">
-            <span className="mr-2 select-none text-muted-foreground/50">{line.timestamp}</span>
+            <span className="mr-2 select-none text-muted-foreground">{line.timestamp}</span>
             <span
               className={cn(
                 "whitespace-pre-wrap",
@@ -260,7 +260,7 @@ export function Terminal({ className }: TerminalProps) {
             {workspace.liveTranscript.map((block, i) => (
               <div
                 key={`transcript-${i}`}
-                className="whitespace-pre-wrap rounded border border-border/30 bg-accent/20 px-3 py-2 text-foreground/90"
+                className="whitespace-pre-wrap rounded border border-border/50 bg-accent/20 px-3 py-2 text-foreground"
               >
                 {block}
               </div>
@@ -271,7 +271,7 @@ export function Terminal({ className }: TerminalProps) {
         {/* Live streaming assistant text */}
         {workspace.streamingAssistantText && (
           <div className="mt-2" data-testid="terminal-streaming-text">
-            <div className="whitespace-pre-wrap rounded border border-foreground/10 bg-foreground/[0.03] px-3 py-2 text-foreground/90">
+            <div className="whitespace-pre-wrap rounded border border-foreground/10 bg-foreground/[0.03] px-3 py-2 text-foreground">
               {workspace.streamingAssistantText}
               <span className="ml-0.5 inline-block h-4 w-1.5 animate-pulse bg-foreground/60" />
             </div>
@@ -328,7 +328,7 @@ export function Terminal({ className }: TerminalProps) {
           type="text"
           value={input}
           onChange={(event) => setInput(event.target.value)}
-          className="flex-1 bg-transparent text-foreground outline-none placeholder:text-muted-foreground/50 disabled:cursor-not-allowed disabled:text-muted-foreground"
+          className="flex-1 bg-transparent text-foreground outline-none placeholder:text-muted-foreground disabled:cursor-not-allowed disabled:text-muted-foreground"
           placeholder={inputModePlaceholder(inputMode, workspace)}
           disabled={isInputDisabled}
           data-testid="terminal-command-input"

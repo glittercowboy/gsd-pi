@@ -16,56 +16,31 @@ All relevant context has been preloaded below — the roadmap, all slice summari
 
 {{inlinedContext}}
 
+{{skillActivation}}
+
 ## Validation Steps
 
 1. For each **success criterion** in `{{roadmapPath}}`, check whether slice summaries and UAT results provide evidence that it was met. Record pass/fail per criterion.
 2. For each **slice** in the roadmap, verify its demo/deliverable claim against its summary. Flag any slice whose summary does not substantiate its claimed output.
 3. Check **cross-slice integration points** — do boundary map entries (produces/consumes) align with what was actually built?
 4. Check **requirement coverage** — are all active requirements addressed by at least one slice?
-5. Determine a verdict:
+5. If **Verification Classes** are provided in the inlined context above, check each non-empty class:
+   - For each verification class (Contract, Integration, Operational, UAT), determine whether slice summaries, UAT results, or observable behavior provide evidence that this verification tier was addressed.
+   - Document the compliance status of each class in your verdict rationale.
+   - If `Operational` verification is non-empty and no evidence of operational verification exists, flag this explicitly — it means planned operational checks (migrations, deployments, runtime verification) were not proven.
+   - A milestone with unaddressed verification classes may still pass if the gaps are minor, but the gaps MUST be documented in the Deferred Work Inventory.
+6. Determine a verdict:
    - `pass` — all criteria met, all slices delivered, no gaps
    - `needs-attention` — minor gaps that do not block completion (document them)
-   - `needs-remediation` — material gaps found; add remediation slices to the roadmap
+   - `needs-remediation` — material gaps found; remediation slices must be added to the roadmap
 
-## Output
+## Persist Validation
 
-Write `{{validationPath}}` with this structure:
-
-```markdown
----
-verdict: <pass|needs-attention|needs-remediation>
-remediation_round: {{remediationRound}}
----
-
-# Milestone Validation: {{milestoneId}}
-
-## Success Criteria Checklist
-- [x] Criterion 1 — evidence: ...
-- [ ] Criterion 2 — gap: ...
-
-## Slice Delivery Audit
-| Slice | Claimed | Delivered | Status |
-|-------|---------|-----------|--------|
-| S01   | ...     | ...       | pass   |
-
-## Cross-Slice Integration
-(any boundary mismatches)
-
-## Requirement Coverage
-(any unaddressed requirements)
-
-## Verdict Rationale
-(why this verdict was chosen)
-
-## Remediation Plan
-(only if verdict is needs-remediation — list new slices to add to the roadmap)
-```
+**Persist validation results through `gsd_validate_milestone`.** Call it with: `milestoneId`, `verdict`, `remediationRound`, `successCriteriaChecklist`, `sliceDeliveryAudit`, `crossSliceIntegration`, `requirementCoverage`, `verdictRationale`, and `remediationPlan` (if verdict is `needs-remediation`). The tool writes the validation to the DB and renders VALIDATION.md to disk.
 
 If verdict is `needs-remediation`:
-- Add new slices to `{{roadmapPath}}` with unchecked `[ ]` status
-- These slices will be planned and executed before validation re-runs
-
-**You MUST write `{{validationPath}}` before finishing.**
+- After calling `gsd_validate_milestone`, use `gsd_reassess_roadmap` to add remediation slices. Pass `milestoneId`, a synthetic `completedSliceId` (e.g. "VALIDATION"), `verdict: "roadmap-adjusted"`, `assessment` text, and `sliceChanges` with the new slices in the `added` array. The tool persists the changes to the DB and re-renders ROADMAP.md.
+- These remediation slices will be planned and executed before validation re-runs.
 
 **File system safety:** When scanning milestone directories for evidence, use `ls` or `find` to list directory contents first — never pass a directory path (e.g. `tasks/`, `slices/`) directly to the `read` tool. The `read` tool only accepts file paths, not directories.
 

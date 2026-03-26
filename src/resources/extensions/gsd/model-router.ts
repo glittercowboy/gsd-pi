@@ -114,6 +114,21 @@ export function resolveModelForComplexity(
   const configuredTier = getModelTier(configuredPrimary);
   const requestedTier = classification.tier;
 
+  // If the configured model is unknown (not in MODEL_CAPABILITY_TIER),
+  // honor the user's explicit choice — don't downgrade based on a guess.
+  // Unknown models default to "heavy" in getModelTier, which makes every
+  // standard/light unit get downgraded to tier_models, silently ignoring
+  // the user's configuration. (#2192)
+  if (!isKnownModel(configuredPrimary)) {
+    return {
+      modelId: configuredPrimary,
+      fallbacks: phaseConfig.fallbacks,
+      tier: requestedTier,
+      wasDowngraded: false,
+      reason: `configured model "${configuredPrimary}" is not in the known tier map — honoring explicit config`,
+    };
+  }
+
   // Downgrade-only: if requested tier >= configured tier, no change
   if (tierOrdinal(requestedTier) >= tierOrdinal(configuredTier)) {
     return {
@@ -200,6 +215,16 @@ function getModelTier(modelId: string): ComplexityTier {
 
   // Unknown models are assumed heavy (safest assumption)
   return "heavy";
+}
+
+/** Check if a model ID has a known capability tier mapping. (#2192) */
+function isKnownModel(modelId: string): boolean {
+  const bareId = modelId.includes("/") ? modelId.split("/").pop()! : modelId;
+  if (MODEL_CAPABILITY_TIER[bareId]) return true;
+  for (const knownId of Object.keys(MODEL_CAPABILITY_TIER)) {
+    if (bareId.includes(knownId) || knownId.includes(bareId)) return true;
+  }
+  return false;
 }
 
 function findModelForTier(

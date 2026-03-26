@@ -1,0 +1,123 @@
+---
+title: "Parallel orchestration"
+description: "Run multiple milestones simultaneously in isolated git worktrees."
+---
+
+Run multiple milestones simultaneously. Each gets its own worker process, branch, and context window — while a coordinator tracks progress, enforces budgets, and keeps everything in sync.
+
+<Note>
+Parallel mode is behind `parallel.enabled: false` by default. Opt-in only.
+</Note>
+
+## Quick start
+
+1. Enable in preferences:
+
+```yaml
+parallel:
+  enabled: true
+  max_workers: 2
+```
+
+2. Start parallel execution:
+
+```
+/gsd parallel start
+```
+
+3. Monitor progress:
+
+```
+/gsd parallel status
+```
+
+## Architecture
+
+```
+┌─────────────────────────────────────────────────────┐
+│  Coordinator (your GSD session)                      │
+│                                                      │
+│  ┌──────────┐  ┌──────────┐  ┌──────────┐           │
+│  │ Worker 1 │  │ Worker 2 │  │ Worker 3 │  ...       │
+│  │ M001     │  │ M003     │  │ M005     │           │
+│  └──────────┘  └──────────┘  └──────────┘           │
+│       │              │              │                │
+│       ▼              ▼              ▼                │
+│  .gsd/worktrees/ .gsd/worktrees/ .gsd/worktrees/    │
+└─────────────────────────────────────────────────────┘
+```
+
+### Worker isolation
+
+| Resource | Isolation method |
+|----------|-----------------|
+| Filesystem | Git worktree — separate checkout |
+| Git branch | `milestone/<MID>` per milestone |
+| State | `GSD_MILESTONE_LOCK` — each worker sees only its milestone |
+| Context | Separate process with its own agent sessions |
+| Metrics | Each worktree has its own `metrics.json` |
+
+## Eligibility analysis
+
+Before starting, GSD checks which milestones can run concurrently:
+
+1. **Not complete** — finished milestones are skipped
+2. **Dependencies satisfied** — all `dependsOn` entries must be complete
+3. **File overlap check** — shared files get a warning (not a blocker)
+
+## Configuration
+
+```yaml
+parallel:
+  enabled: false
+  max_workers: 2
+  budget_ceiling: 50.00
+  merge_strategy: "per-milestone"    # or "per-slice"
+  auto_merge: "confirm"              # "auto", "confirm", or "manual"
+```
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `enabled` | `false` | Master toggle |
+| `max_workers` | `2` | Concurrent workers (1-4) |
+| `budget_ceiling` | none | Aggregate cost limit across all workers |
+| `merge_strategy` | `"per-milestone"` | When to merge back to main |
+| `auto_merge` | `"confirm"` | How merge-back is handled |
+
+## Commands
+
+| Command | Description |
+|---------|-------------|
+| `/gsd parallel start` | Analyze, confirm, and start workers |
+| `/gsd parallel status` | Show workers with state, progress, cost |
+| `/gsd parallel stop [MID]` | Stop all or a specific worker |
+| `/gsd parallel pause [MID]` | Pause all or a specific worker |
+| `/gsd parallel resume [MID]` | Resume paused workers |
+| `/gsd parallel merge [MID]` | Merge completed milestones to main |
+
+## Merge reconciliation
+
+- `.gsd/` state files — auto-resolved (accept milestone branch version)
+- Code conflicts — merge halts, shows conflicting files. Resolve manually and retry.
+
+## Budget management
+
+When `budget_ceiling` is set, aggregate cost is tracked across all workers. Ceiling reached → coordinator signals workers to stop.
+
+## Troubleshooting
+
+### "No milestones are eligible"
+
+All milestones are complete or blocked by dependencies. Check `/gsd queue`.
+
+### Worker crashed
+
+Workers persist state to disk. On restart, the coordinator detects dead PIDs. Run `/gsd doctor --fix` to clean up, then `/gsd parallel start` to spawn new workers.
+
+### Merge conflicts
+
+```
+/gsd parallel merge       # see which milestones conflict
+# resolve in .gsd/worktrees/<MID>/
+/gsd parallel merge MID   # retry
+```

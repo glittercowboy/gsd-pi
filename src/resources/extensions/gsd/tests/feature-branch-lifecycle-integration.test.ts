@@ -1,3 +1,5 @@
+import { describe, test } from 'node:test';
+import assert from 'node:assert/strict';
 /**
  * feature-branch-lifecycle.test.ts — Integration tests for the feature-branch workflow.
  *
@@ -28,10 +30,6 @@ import {
 import { captureIntegrationBranch, getSliceBranchName } from "../worktree.ts";
 import { writeIntegrationBranch, readIntegrationBranch } from "../git-service.ts";
 import { nextMilestoneId, generateMilestoneSuffix } from "../guided-flow.ts";
-
-import { createTestContext } from "./test-helpers.ts";
-
-const { assertEq, assertTrue, assertMatch, report } = createTestContext();
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -137,7 +135,7 @@ function addSliceToMilestone(
 
 // ─── Tests ──────────────────────────────────────────────────────────────────
 
-async function main(): Promise<void> {
+describe('feature-branch-lifecycle-integration', async () => {
   const savedCwd = process.cwd();
   const tempDirs: string[] = [];
 
@@ -154,14 +152,13 @@ async function main(): Promise<void> {
     // Start on f-new-shiny-thing with uncommitted changes, create
     // worktree, add slices, merge back. Assert main is untouched.
     // ================================================================
-    console.log("\n=== Feature-branch lifecycle with unique milestone IDs ===");
-    {
+    test('Feature-branch lifecycle with unique milestone IDs', () => {
       const featureBranch = "f-new-shiny-thing";
       const repo = fresh(featureBranch);
 
       // Generate a unique milestone ID (M001-xxxxxx format)
       const milestoneId = nextMilestoneId([], true);
-      assertMatch(milestoneId, /^M001-[a-z0-9]{6}$/, "unique milestone ID format");
+      assert.match(milestoneId, /^M001-[a-z0-9]{6}$/, "unique milestone ID format");
 
       // Snapshot main before anything happens
       const mainShaBefore = headSha(repo, "main");
@@ -174,8 +171,8 @@ async function main(): Promise<void> {
 
       // Verify files are uncommitted
       const statusBefore = run("git status --short", repo);
-      assertTrue(statusBefore.includes("wip-config.ts"), "wip-config.ts is uncommitted");
-      assertTrue(statusBefore.includes("wip-types.ts"), "wip-types.ts is uncommitted");
+      assert.ok(statusBefore.includes("wip-config.ts"), "wip-config.ts is uncommitted");
+      assert.ok(statusBefore.includes("wip-types.ts"), "wip-types.ts is uncommitted");
 
       // ── Simulate what startAuto does: commit dirty state, capture integration branch ──
       // startAuto bootstraps .gsd/ which commits .gsd/ files. It also calls
@@ -198,7 +195,7 @@ async function main(): Promise<void> {
 
       // Verify integration branch recorded
       const recorded = readIntegrationBranch(repo, milestoneId);
-      assertEq(recorded, featureBranch, "integration branch recorded as feature branch");
+      assert.deepStrictEqual(recorded, featureBranch, "integration branch recorded as feature branch");
 
       // Snapshot feature branch SHA after metadata commit (HEAD may have advanced)
       const featureShaBeforeWorktree = headSha(repo, featureBranch);
@@ -206,28 +203,28 @@ async function main(): Promise<void> {
       // ── Create the auto-worktree ──
       const wtPath = createAutoWorktree(repo, milestoneId);
       tempDirs.push(wtPath);
-      assertTrue(existsSync(wtPath), "worktree directory created");
+      assert.ok(existsSync(wtPath), "worktree directory created");
 
       // Worktree should be on milestone/<unique-id> branch
       const wtBranch = run("git branch --show-current", wtPath);
-      assertEq(wtBranch, `milestone/${milestoneId}`, "worktree is on milestone branch");
+      assert.deepStrictEqual(wtBranch, `milestone/${milestoneId}`, "worktree is on milestone branch");
 
       // Milestone branch should be rooted at the feature branch, not main
       const milestoneBranchBase = headSha(repo, `milestone/${milestoneId}`);
-      assertEq(
+      assert.deepStrictEqual(
         milestoneBranchBase,
         featureShaBeforeWorktree,
         "milestone branch starts from feature branch HEAD",
       );
 
       // Feature-branch-only file should be in the worktree
-      assertTrue(
+      assert.ok(
         existsSync(join(wtPath, "feature-setup.ts")),
         "feature branch file (feature-setup.ts) exists in worktree",
       );
 
       // Main should be completely untouched at this point
-      assertEq(headSha(repo, "main"), mainShaBefore, "main SHA unchanged after worktree creation");
+      assert.deepStrictEqual(headSha(repo, "main"), mainShaBefore, "main SHA unchanged after worktree creation");
 
       // ── Do work in slices ──
       addSliceToMilestone(wtPath, milestoneId, "S01", "Auth module", [
@@ -250,62 +247,62 @@ async function main(): Promise<void> {
 
       // ── Assert: feature branch received the merge ──
       const currentBranch = run("git branch --show-current", repo);
-      assertEq(currentBranch, featureBranch, "repo is on feature branch after merge");
+      assert.deepStrictEqual(currentBranch, featureBranch, "repo is on feature branch after merge");
 
       // Exactly one new commit on feature branch (the squash merge)
       const featureLog = run(`git log --oneline ${featureBranch}`, repo);
-      assertTrue(
-        featureLog.includes(`feat(${milestoneId})`),
+      assert.ok(
+        featureLog.includes("feat:"),
         "feature branch has milestone merge commit",
       );
 
       // Slice files are on the feature branch
-      assertTrue(existsSync(join(repo, "auth.ts")), "auth.ts on feature branch");
-      assertTrue(existsSync(join(repo, "dashboard.ts")), "dashboard.ts on feature branch");
-      assertTrue(existsSync(join(repo, "auth-utils.ts")), "auth-utils.ts on feature branch");
+      assert.ok(existsSync(join(repo, "auth.ts")), "auth.ts on feature branch");
+      assert.ok(existsSync(join(repo, "dashboard.ts")), "dashboard.ts on feature branch");
+      assert.ok(existsSync(join(repo, "auth-utils.ts")), "auth-utils.ts on feature branch");
 
       // Original feature branch file still present
-      assertTrue(existsSync(join(repo, "feature-setup.ts")), "feature-setup.ts still on feature branch");
+      assert.ok(existsSync(join(repo, "feature-setup.ts")), "feature-setup.ts still on feature branch");
 
       // Commit message is well-formed
-      assertTrue(result.commitMessage.includes("New shiny feature"), "commit message has milestone title");
-      assertTrue(result.commitMessage.includes("S01: Auth module"), "commit message lists S01");
-      assertTrue(result.commitMessage.includes("S02: Dashboard"), "commit message lists S02");
-      assertTrue(
+      assert.ok(result.commitMessage.includes("New shiny feature"), "commit message has milestone title");
+      assert.ok(result.commitMessage.includes("S01: Auth module"), "commit message lists S01");
+      assert.ok(result.commitMessage.includes("S02: Dashboard"), "commit message lists S02");
+      assert.ok(
         result.commitMessage.includes(`milestone/${milestoneId}`),
         "commit message references milestone branch with unique ID",
       );
 
       // ── Assert: main is COMPLETELY untouched ──
-      assertEq(headSha(repo, "main"), mainShaBefore, "main SHA unchanged after merge");
-      assertEq(commitCount(repo, "main"), mainCommitsBefore, "main commit count unchanged");
+      assert.deepStrictEqual(headSha(repo, "main"), mainShaBefore, "main SHA unchanged after merge");
+      assert.deepStrictEqual(commitCount(repo, "main"), mainCommitsBefore, "main commit count unchanged");
 
       // Main should NOT have any of the milestone files
       run("git checkout main", repo);
-      assertTrue(!existsSync(join(repo, "auth.ts")), "auth.ts NOT on main");
-      assertTrue(!existsSync(join(repo, "dashboard.ts")), "dashboard.ts NOT on main");
-      assertTrue(!existsSync(join(repo, "feature-setup.ts")), "feature-setup.ts NOT on main");
+      assert.ok(!existsSync(join(repo, "auth.ts")), "auth.ts NOT on main");
+      assert.ok(!existsSync(join(repo, "dashboard.ts")), "dashboard.ts NOT on main");
+      assert.ok(!existsSync(join(repo, "feature-setup.ts")), "feature-setup.ts NOT on main");
       run(`git checkout ${featureBranch}`, repo);
 
       // ── Assert: worktree cleaned up ──
       const worktreeDir = join(repo, ".gsd", "worktrees", milestoneId);
-      assertTrue(!existsSync(worktreeDir), "worktree directory removed");
+      assert.ok(!existsSync(worktreeDir), "worktree directory removed");
 
       // Milestone branch deleted
-      assertTrue(
+      assert.ok(
         !branchExists(repo, `milestone/${milestoneId}`),
         "milestone branch deleted after merge",
       );
 
       // Only expected branches remain
       const branches = allBranches(repo);
-      assertTrue(branches.includes("main"), "main branch exists");
-      assertTrue(branches.includes(featureBranch), "feature branch exists");
-      assertTrue(
+      assert.ok(branches.includes("main"), "main branch exists");
+      assert.ok(branches.includes(featureBranch), "feature branch exists");
+      assert.ok(
         !branches.some(b => b.startsWith("milestone/")),
         "no milestone branches remain",
       );
-    }
+    });
 
     // ================================================================
     // Test 2: Uncommitted .gsd/ planning files are available in worktree
@@ -314,8 +311,7 @@ async function main(): Promise<void> {
     // Planning artifacts should be carried into the worktree even if
     // they weren't committed on the feature branch.
     // ================================================================
-    console.log("\n=== Untracked planning files copied to worktree ===");
-    {
+    test('Untracked planning files copied to worktree', () => {
       const featureBranch = "f-planning-test";
       const repo = fresh(featureBranch);
       const milestoneId = nextMilestoneId([], true);
@@ -334,7 +330,7 @@ async function main(): Promise<void> {
       writeFileSync(join(repo, ".gsd", "DECISIONS.md"), "# Decisions\n\n## D001\nTest decision.\n");
 
       // These files are untracked
-      assertTrue(run("git status --short", repo).length > 0, "repo has untracked files");
+      assert.ok(run("git status --short", repo).length > 0, "repo has untracked files");
 
       // Record integration branch and create worktree
       writeIntegrationBranch(repo, milestoneId, featureBranch);
@@ -344,11 +340,11 @@ async function main(): Promise<void> {
       // With external state, worktree .gsd is a symlink to shared state.
       // Verify symlink was created (planning files are shared, not copied).
       const wtGsd = join(wtPath, ".gsd");
-      assertTrue(existsSync(wtGsd), "worktree .gsd exists (symlink or dir)");
+      assert.ok(existsSync(wtGsd), "worktree .gsd exists (symlink or dir)");
 
       // Clean up: chdir back before teardown
       process.chdir(savedCwd);
-    }
+    });
 
     // ================================================================
     // Test 3: Multiple milestones on the same feature branch
@@ -356,8 +352,7 @@ async function main(): Promise<void> {
     // Proves that unique IDs prevent collision when running successive
     // milestones, and each merge lands on the feature branch.
     // ================================================================
-    console.log("\n=== Multiple unique milestones on same feature branch ===");
-    {
+    test('Multiple unique milestones on same feature branch', () => {
       const featureBranch = "f-multi-milestone";
       const repo = fresh(featureBranch);
 
@@ -377,12 +372,12 @@ async function main(): Promise<void> {
       mergeMilestoneToMain(repo, mid1, makeRoadmap(mid1, "First", [{ id: "S01", title: "First milestone work" }]));
       process.chdir(savedCwd);
 
-      assertTrue(existsSync(join(repo, "m1-feature.ts")), "m1 file on feature branch");
+      assert.ok(existsSync(join(repo, "m1-feature.ts")), "m1 file on feature branch");
 
       // Second milestone — different unique ID
       const mid2 = nextMilestoneId([mid1], true);
-      assertTrue(mid1 !== mid2, "second milestone has different ID");
-      assertMatch(mid2, /^M002-[a-z0-9]{6}$/, "second milestone is M002-xxxxxx");
+      assert.ok(mid1 !== mid2, "second milestone has different ID");
+      assert.match(mid2, /^M002-[a-z0-9]{6}$/, "second milestone is M002-xxxxxx");
 
       mkdirSync(join(repo, ".gsd", "milestones", mid2), { recursive: true });
       writeIntegrationBranch(repo, mid2, featureBranch);
@@ -397,19 +392,19 @@ async function main(): Promise<void> {
       process.chdir(savedCwd);
 
       // Both milestone files on feature branch
-      assertTrue(existsSync(join(repo, "m1-feature.ts")), "m1 file still on feature branch");
-      assertTrue(existsSync(join(repo, "m2-feature.ts")), "m2 file on feature branch");
+      assert.ok(existsSync(join(repo, "m1-feature.ts")), "m1 file still on feature branch");
+      assert.ok(existsSync(join(repo, "m2-feature.ts")), "m2 file on feature branch");
 
       // Main completely untouched
-      assertEq(headSha(repo, "main"), mainShaBefore, "main unchanged after two milestones");
+      assert.deepStrictEqual(headSha(repo, "main"), mainShaBefore, "main unchanged after two milestones");
 
       // No milestone branches remain
       const branches = allBranches(repo);
-      assertTrue(
+      assert.ok(
         !branches.some(b => b.startsWith("milestone/")),
         "no milestone branches remain after two milestones",
       );
-    }
+    });
 
   } finally {
     process.chdir(savedCwd);
@@ -417,8 +412,4 @@ async function main(): Promise<void> {
       try { rmSync(d, { recursive: true, force: true }); } catch { /* ignore */ }
     }
   }
-
-  report();
-}
-
-main();
+});

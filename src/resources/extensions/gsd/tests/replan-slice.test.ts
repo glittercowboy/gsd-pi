@@ -1,3 +1,5 @@
+import { describe, test } from 'node:test';
+import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -22,7 +24,6 @@ function loadPromptFromWorktree(name: string, vars: Record<string, string> = {})
   return content.trim();
 }
 
-const { assertEq, assertTrue, report } = createTestContext();
 // ─── Fixture Helpers ───────────────────────────────────────────────────────
 
 function createFixtureBase(): string {
@@ -161,7 +162,7 @@ Found a blocker.
 `;
 
   const s = parseSummary(content);
-  assertEq(s.frontmatter.blocker_discovered, true, 'blocker_discovered: true (string) extracts as true');
+  assert.deepStrictEqual(s.frontmatter.blocker_discovered, true, 'blocker_discovered: true (string) extracts as true');
 }
 
 console.log('\n=== parseSummary: blocker_discovered false (string) ===');
@@ -184,7 +185,7 @@ No blocker.
 `;
 
   const s = parseSummary(content);
-  assertEq(s.frontmatter.blocker_discovered, false, 'blocker_discovered: false extracts as false');
+  assert.deepStrictEqual(s.frontmatter.blocker_discovered, false, 'blocker_discovered: false extracts as false');
 }
 
 console.log('\n=== parseSummary: blocker_discovered missing (defaults to false) ===');
@@ -206,7 +207,7 @@ No blocker field at all.
 `;
 
   const s = parseSummary(content);
-  assertEq(s.frontmatter.blocker_discovered, false, 'blocker_discovered missing defaults to false');
+  assert.deepStrictEqual(s.frontmatter.blocker_discovered, false, 'blocker_discovered missing defaults to false');
 }
 
 console.log('\n=== parseSummary: blocker_discovered true (boolean from YAML) ===');
@@ -232,7 +233,7 @@ Blocker as boolean.
 `;
 
   const s = parseSummary(content);
-  assertEq(s.frontmatter.blocker_discovered, true, 'blocker_discovered: true (YAML boolean) extracts as true');
+  assert.deepStrictEqual(s.frontmatter.blocker_discovered, true, 'blocker_discovered: true (YAML boolean) extracts as true');
 }
 
 console.log('\n=== parseSummary: blocker_discovered with full frontmatter ===');
@@ -275,10 +276,10 @@ Major deviation from plan.
 `;
 
   const s = parseSummary(content);
-  assertEq(s.frontmatter.blocker_discovered, true, 'blocker_discovered true with full frontmatter');
-  assertEq(s.frontmatter.id, 'T05', 'other fields still parse correctly alongside blocker_discovered');
-  assertEq(s.frontmatter.duration, '15min', 'duration still parsed');
-  assertEq(s.frontmatter.provides[0], 'something', 'provides still parsed');
+  assert.deepStrictEqual(s.frontmatter.blocker_discovered, true, 'blocker_discovered true with full frontmatter');
+  assert.deepStrictEqual(s.frontmatter.id, 'T05', 'other fields still parse correctly alongside blocker_discovered');
+  assert.deepStrictEqual(s.frontmatter.duration, '15min', 'duration still parsed');
+  assert.deepStrictEqual(s.frontmatter.provides[0], 'something', 'provides still parsed');
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -294,11 +295,11 @@ console.log('\n=== deriveState: blocker found, no REPLAN → replanning-slice ==
   writeTaskSummary(base, 'M001', 'S01', 'T01', makeTaskSummary('T01', true));
 
   const state = await deriveState(base);
-  assertEq(state.phase, 'replanning-slice', 'phase is replanning-slice when blocker found and no REPLAN.md');
-  assertTrue(state.nextAction.includes('T01'), 'nextAction mentions blocker task T01');
-  assertTrue(state.nextAction.includes('blocker_discovered'), 'nextAction mentions blocker_discovered');
-  assertEq(state.activeTask?.id, 'T02', 'activeTask is still T02 (the next incomplete task)');
-  assertTrue(state.blockers.length > 0, 'blockers array is non-empty');
+  assert.deepStrictEqual(state.phase, 'replanning-slice', 'phase is replanning-slice when blocker found and no REPLAN.md');
+  assert.ok(state.nextAction.includes('T01'), 'nextAction mentions blocker task T01');
+  assert.ok(state.nextAction.includes('blocker_discovered'), 'nextAction mentions blocker_discovered');
+  assert.deepStrictEqual(state.activeTask?.id, 'T02', 'activeTask is still T02 (the next incomplete task)');
+  assert.ok(state.blockers.length > 0, 'blockers array is non-empty');
   rmSync(base, { recursive: true, force: true });
 }
 
@@ -312,8 +313,8 @@ console.log('\n=== deriveState: blocker found + REPLAN exists → executing (loo
   writeReplanFile(base, 'M001', 'S01', '# Replan\n\nAlready replanned.');
 
   const state = await deriveState(base);
-  assertEq(state.phase, 'executing', 'phase is executing when REPLAN.md exists (loop protection)');
-  assertEq(state.activeTask?.id, 'T02', 'activeTask is T02');
+  assert.deepStrictEqual(state.phase, 'executing', 'phase is executing when REPLAN.md exists (loop protection)');
+  assert.deepStrictEqual(state.activeTask?.id, 'T02', 'activeTask is T02');
   rmSync(base, { recursive: true, force: true });
 }
 
@@ -326,8 +327,8 @@ console.log('\n=== deriveState: no blocker in completed tasks → executing ==='
   writeTaskSummary(base, 'M001', 'S01', 'T01', makeTaskSummary('T01', false));
 
   const state = await deriveState(base);
-  assertEq(state.phase, 'executing', 'phase is executing when no blocker found');
-  assertEq(state.activeTask?.id, 'T02', 'activeTask is T02');
+  assert.deepStrictEqual(state.phase, 'executing', 'phase is executing when no blocker found');
+  assert.deepStrictEqual(state.activeTask?.id, 'T02', 'activeTask is T02');
   rmSync(base, { recursive: true, force: true });
 }
 
@@ -341,9 +342,9 @@ console.log('\n=== deriveState: multiple completed tasks, one blocker → replan
   writeTaskSummary(base, 'M001', 'S01', 'T02', makeTaskSummary('T02', true));
 
   const state = await deriveState(base);
-  assertEq(state.phase, 'replanning-slice', 'phase is replanning-slice when T02 has blocker');
-  assertTrue(state.nextAction.includes('T02'), 'nextAction mentions blocker task T02');
-  assertEq(state.activeTask?.id, 'T03', 'activeTask is T03 (next incomplete)');
+  assert.deepStrictEqual(state.phase, 'replanning-slice', 'phase is replanning-slice when T02 has blocker');
+  assert.ok(state.nextAction.includes('T02'), 'nextAction mentions blocker task T02');
+  assert.deepStrictEqual(state.activeTask?.id, 'T03', 'activeTask is T03 (next incomplete)');
   rmSync(base, { recursive: true, force: true });
 }
 
@@ -356,7 +357,7 @@ console.log('\n=== deriveState: completed task with no summary file → executin
   // No summary file written for T01
 
   const state = await deriveState(base);
-  assertEq(state.phase, 'executing', 'phase is executing when completed task has no summary');
+  assert.deepStrictEqual(state.phase, 'executing', 'phase is executing when completed task has no summary');
   rmSync(base, { recursive: true, force: true });
 }
 
@@ -376,11 +377,11 @@ console.log('\n=== prompt: replan-slice template loads and substitutes variables
     inlinedContext: '## Inlined Context\n\nTest context here.',
   });
 
-  assertTrue(prompt.includes('M001'), 'prompt contains milestoneId');
-  assertTrue(prompt.includes('S01'), 'prompt contains sliceId');
-  assertTrue(prompt.includes('Test Slice'), 'prompt contains sliceTitle');
-  assertTrue(prompt.includes('.gsd/milestones/M001/slices/S01/S01-PLAN.md'), 'prompt contains planPath');
-  assertTrue(prompt.includes('Test context here'), 'prompt contains inlined context');
+  assert.ok(prompt.includes('M001'), 'prompt contains milestoneId');
+  assert.ok(prompt.includes('S01'), 'prompt contains sliceId');
+  assert.ok(prompt.includes('Test Slice'), 'prompt contains sliceTitle');
+  assert.ok(prompt.includes('.gsd/milestones/M001/slices/S01/S01-PLAN.md'), 'prompt contains planPath');
+  assert.ok(prompt.includes('Test context here'), 'prompt contains inlined context');
 }
 
 console.log('\n=== prompt: replan-slice contains preserve-completed-tasks instruction ===');
@@ -397,10 +398,10 @@ console.log('\n=== prompt: replan-slice contains preserve-completed-tasks instru
     inlinedContext: '',
   });
 
-  assertTrue(prompt.includes('Do NOT renumber or remove completed tasks'), 'prompt contains preserve-completed-tasks instruction');
-  assertTrue(prompt.includes('[x]'), 'prompt mentions [x] checkmarks');
-  assertTrue(prompt.includes('REPLAN'), 'prompt references replan output path');
-  assertTrue(prompt.includes('blocker_discovered'), 'prompt mentions blocker_discovered');
+  assert.ok(prompt.includes('Do NOT renumber or remove completed tasks'), 'prompt contains preserve-completed-tasks instruction');
+  assert.ok(prompt.includes('[x]'), 'prompt mentions [x] checkmarks');
+  assert.ok(prompt.includes('REPLAN'), 'prompt references replan output path');
+  assert.ok(prompt.includes('blocker_discovered'), 'prompt mentions blocker_discovered');
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -421,8 +422,8 @@ console.log('\n=== dispatch: diagnoseExpectedArtifact returns REPLAN.md path ===
   writeTaskSummary(base, 'M001', 'S01', 'T01', makeTaskSummary('T01', true));
 
   const state = await deriveState(base);
-  assertEq(state.phase, 'replanning-slice', 'dispatch: state routes to replanning-slice when blocker found');
-  assertTrue(state.activeSlice?.id === 'S01', 'dispatch: activeSlice is S01');
+  assert.deepStrictEqual(state.phase, 'replanning-slice', 'dispatch: state routes to replanning-slice when blocker found');
+  assert.ok(state.activeSlice?.id === 'S01', 'dispatch: activeSlice is S01');
   rmSync(base, { recursive: true, force: true });
 }
 
@@ -443,8 +444,8 @@ console.log('\n=== display: replan-slice prompt template has correct unit header
     inlinedContext: '',
   });
 
-  assertTrue(prompt.includes('UNIT: Replan Slice'), 'prompt has Replan Slice unit header');
-  assertTrue(prompt.includes('Slice S01 replanned'), 'prompt has completion message');
+  assert.ok(prompt.includes('UNIT: Replan Slice'), 'prompt has Replan Slice unit header');
+  assert.ok(prompt.includes('Slice S01 replanned'), 'prompt has completion message');
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -452,8 +453,6 @@ console.log('\n=== display: replan-slice prompt template has correct unit header
 // ═══════════════════════════════════════════════════════════════════════════
 
 import { runGSDDoctor } from '../doctor.ts';
-import { createTestContext } from './test-helpers.ts';
-
 // (a) blocker + no REPLAN.md → issue emitted
 console.log('\n=== doctor: blocker + no REPLAN.md → blocker_discovered_no_replan issue ===');
 {
@@ -464,10 +463,10 @@ console.log('\n=== doctor: blocker + no REPLAN.md → blocker_discovered_no_repl
 
   const report = await runGSDDoctor(base, { fix: false, scope: 'M001/S01' });
   const blockerIssues = report.issues.filter(i => i.code === 'blocker_discovered_no_replan');
-  assertTrue(blockerIssues.length > 0, 'doctor emits blocker_discovered_no_replan when blocker + no REPLAN');
-  assertTrue(blockerIssues[0]?.message.includes('T01'), 'issue message mentions the blocker task T01');
-  assertEq(blockerIssues[0]?.severity, 'warning', 'blocker_discovered_no_replan is warning severity');
-  assertEq(blockerIssues[0]?.scope, 'slice', 'blocker_discovered_no_replan has slice scope');
+  assert.ok(blockerIssues.length > 0, 'doctor emits blocker_discovered_no_replan when blocker + no REPLAN');
+  assert.ok(blockerIssues[0]?.message.includes('T01'), 'issue message mentions the blocker task T01');
+  assert.deepStrictEqual(blockerIssues[0]?.severity, 'warning', 'blocker_discovered_no_replan is warning severity');
+  assert.deepStrictEqual(blockerIssues[0]?.scope, 'slice', 'blocker_discovered_no_replan has slice scope');
   rmSync(base, { recursive: true, force: true });
 }
 
@@ -482,7 +481,7 @@ console.log('\n=== doctor: blocker + REPLAN.md exists → no blocker_discovered_
 
   const report = await runGSDDoctor(base, { fix: false, scope: 'M001/S01' });
   const blockerIssues = report.issues.filter(i => i.code === 'blocker_discovered_no_replan');
-  assertEq(blockerIssues.length, 0, 'no blocker_discovered_no_replan when REPLAN.md exists');
+  assert.deepStrictEqual(blockerIssues.length, 0, 'no blocker_discovered_no_replan when REPLAN.md exists');
   rmSync(base, { recursive: true, force: true });
 }
 
@@ -496,7 +495,7 @@ console.log('\n=== doctor: no blocker → no blocker_discovered_no_replan issue 
 
   const report = await runGSDDoctor(base, { fix: false, scope: 'M001/S01' });
   const blockerIssues = report.issues.filter(i => i.code === 'blocker_discovered_no_replan');
-  assertEq(blockerIssues.length, 0, 'no blocker_discovered_no_replan when no blocker');
+  assert.deepStrictEqual(blockerIssues.length, 0, 'no blocker_discovered_no_replan when no blocker');
   rmSync(base, { recursive: true, force: true });
 }
 
@@ -504,50 +503,48 @@ console.log('\n=== doctor: no blocker → no blocker_discovered_no_replan issue 
 // Artifact Resolution: resolveExpectedArtifactPath for replan-slice (#858)
 // ═══════════════════════════════════════════════════════════════════════════
 
-import { resolveExpectedArtifactPath, verifyExpectedArtifact } from '../auto-recovery.ts';
+import { resolveExpectedArtifactPath } from '../auto-artifact-paths.ts';
+import { verifyExpectedArtifact } from '../auto-recovery.ts';
 
-console.log('\n=== artifact: resolveExpectedArtifactPath returns REPLAN.md path for replan-slice ===');
-{
+
+describe('replan-slice', () => {
+test('artifact: resolveExpectedArtifactPath returns REPLAN.md path for replan-slice', () => {
   const base = createFixtureBase();
   writeRoadmap(base, 'M001', ROADMAP_ONE_SLICE);
   writePlan(base, 'M001', 'S01', makePlanT01DoneT02Pending());
 
   const path = resolveExpectedArtifactPath('replan-slice', 'M001/S01', base);
-  assertTrue(path !== null, 'resolveExpectedArtifactPath returns non-null for replan-slice');
-  assertTrue(path!.endsWith('S01-REPLAN.md'), 'path ends with S01-REPLAN.md');
+  assert.ok(path !== null, 'resolveExpectedArtifactPath returns non-null for replan-slice');
+  assert.ok(path!.endsWith('S01-REPLAN.md'), 'path ends with S01-REPLAN.md');
   rmSync(base, { recursive: true, force: true });
-}
+});
 
-console.log('\n=== artifact: verifyExpectedArtifact fails when REPLAN.md missing (#858) ===');
-{
+test('artifact: verifyExpectedArtifact fails when REPLAN.md missing (#858)', () => {
   const base = createFixtureBase();
   writeRoadmap(base, 'M001', ROADMAP_ONE_SLICE);
   writePlan(base, 'M001', 'S01', makePlanT01DoneT02Pending());
 
   const result = verifyExpectedArtifact('replan-slice', 'M001/S01', base);
-  assertEq(result, false, 'verifyExpectedArtifact returns false when REPLAN.md is missing');
+  assert.deepStrictEqual(result, false, 'verifyExpectedArtifact returns false when REPLAN.md is missing');
   rmSync(base, { recursive: true, force: true });
-}
+});
 
-console.log('\n=== artifact: verifyExpectedArtifact passes when REPLAN.md exists (#858) ===');
-{
+test('artifact: verifyExpectedArtifact passes when REPLAN.md exists (#858)', () => {
   const base = createFixtureBase();
   writeRoadmap(base, 'M001', ROADMAP_ONE_SLICE);
   writePlan(base, 'M001', 'S01', makePlanT01DoneT02Pending());
   writeReplanFile(base, 'M001', 'S01', '# Replan\n\nBlocker addressed.');
 
   const result = verifyExpectedArtifact('replan-slice', 'M001/S01', base);
-  assertEq(result, true, 'verifyExpectedArtifact returns true when REPLAN.md exists');
+  assert.deepStrictEqual(result, true, 'verifyExpectedArtifact returns true when REPLAN.md exists');
   rmSync(base, { recursive: true, force: true });
-}
+});
 
 // ═══════════════════════════════════════════════════════════════════════════
 // REPLAN-TRIGGER.md detection (triage-initiated replan, #1701)
 // ═══════════════════════════════════════════════════════════════════════════
-
 // (a) REPLAN-TRIGGER.md exists + no REPLAN.md → replanning-slice
-console.log('\n=== deriveState: REPLAN-TRIGGER.md exists, no REPLAN → replanning-slice (#1701) ===');
-{
+test('deriveState: REPLAN-TRIGGER.md exists, no REPLAN → replanning-slice (#1701)', async () => {
   const base = createFixtureBase();
   writeRoadmap(base, 'M001', ROADMAP_ONE_SLICE);
   writePlan(base, 'M001', 'S01', makePlanT01DoneT02Pending());
@@ -556,17 +553,16 @@ console.log('\n=== deriveState: REPLAN-TRIGGER.md exists, no REPLAN → replanni
   writeReplanTrigger(base, 'M001', 'S01', '# Replan Trigger\n\n**Source:** Capture C001\n');
 
   const state = await deriveState(base);
-  assertEq(state.phase, 'replanning-slice', 'phase is replanning-slice when REPLAN-TRIGGER.md exists');
-  assertTrue(state.blockers.length > 0, 'blockers array is non-empty for triage replan trigger');
-  assertTrue(state.nextAction.includes('Triage replan'), 'nextAction mentions triage replan');
-  assertEq(state.activeSlice?.id, 'S01', 'activeSlice is S01');
-  assertEq(state.activeTask?.id, 'T02', 'activeTask is T02 (next incomplete task)');
+  assert.deepStrictEqual(state.phase, 'replanning-slice', 'phase is replanning-slice when REPLAN-TRIGGER.md exists');
+  assert.ok(state.blockers.length > 0, 'blockers array is non-empty for triage replan trigger');
+  assert.ok(state.nextAction.includes('Triage replan'), 'nextAction mentions triage replan');
+  assert.deepStrictEqual(state.activeSlice?.id, 'S01', 'activeSlice is S01');
+  assert.deepStrictEqual(state.activeTask?.id, 'T02', 'activeTask is T02 (next incomplete task)');
   rmSync(base, { recursive: true, force: true });
-}
+});
 
 // (b) REPLAN-TRIGGER.md + REPLAN.md both exist → executing (loop protection)
-console.log('\n=== deriveState: REPLAN-TRIGGER.md + REPLAN.md → executing (loop protection, #1701) ===');
-{
+test('deriveState: REPLAN-TRIGGER.md + REPLAN.md → executing (loop protection, #1701)', async () => {
   const base = createFixtureBase();
   writeRoadmap(base, 'M001', ROADMAP_ONE_SLICE);
   writePlan(base, 'M001', 'S01', makePlanT01DoneT02Pending());
@@ -575,27 +571,25 @@ console.log('\n=== deriveState: REPLAN-TRIGGER.md + REPLAN.md → executing (loo
   writeReplanFile(base, 'M001', 'S01', '# Replan\n\nAlready replanned.');
 
   const state = await deriveState(base);
-  assertEq(state.phase, 'executing', 'phase is executing when REPLAN.md exists (loop protection)');
-  assertEq(state.activeTask?.id, 'T02', 'activeTask is T02');
+  assert.deepStrictEqual(state.phase, 'executing', 'phase is executing when REPLAN.md exists (loop protection)');
+  assert.deepStrictEqual(state.activeTask?.id, 'T02', 'activeTask is T02');
   rmSync(base, { recursive: true, force: true });
-}
+});
 
 // (c) No REPLAN-TRIGGER.md, no blocker → executing (no false positive)
-console.log('\n=== deriveState: no REPLAN-TRIGGER.md, no blocker → executing (#1701) ===');
-{
+test('deriveState: no REPLAN-TRIGGER.md, no blocker → executing (#1701)', async () => {
   const base = createFixtureBase();
   writeRoadmap(base, 'M001', ROADMAP_ONE_SLICE);
   writePlan(base, 'M001', 'S01', makePlanT01DoneT02Pending());
   writeTaskSummary(base, 'M001', 'S01', 'T01', makeTaskSummary('T01', false));
 
   const state = await deriveState(base);
-  assertEq(state.phase, 'executing', 'phase is executing when no trigger and no blocker');
+  assert.deepStrictEqual(state.phase, 'executing', 'phase is executing when no trigger and no blocker');
   rmSync(base, { recursive: true, force: true });
-}
+});
 
 // (d) blocker_discovered takes priority over REPLAN-TRIGGER.md
-console.log('\n=== deriveState: blocker_discovered takes priority over REPLAN-TRIGGER.md (#1701) ===');
-{
+test('deriveState: blocker_discovered takes priority over REPLAN-TRIGGER.md (#1701)', async () => {
   const base = createFixtureBase();
   writeRoadmap(base, 'M001', ROADMAP_ONE_SLICE);
   writePlan(base, 'M001', 'S01', makePlanT01DoneT02Pending());
@@ -603,10 +597,10 @@ console.log('\n=== deriveState: blocker_discovered takes priority over REPLAN-TR
   writeReplanTrigger(base, 'M001', 'S01', '# Replan Trigger\n\n**Source:** Capture C001\n');
 
   const state = await deriveState(base);
-  assertEq(state.phase, 'replanning-slice', 'phase is replanning-slice');
+  assert.deepStrictEqual(state.phase, 'replanning-slice', 'phase is replanning-slice');
   // blocker_discovered path should fire first (blockerTaskId is set, so REPLAN-TRIGGER check is skipped)
-  assertTrue(state.nextAction.includes('T01'), 'nextAction mentions blocker task T01 (blocker path, not trigger path)');
+  assert.ok(state.nextAction.includes('T01'), 'nextAction mentions blocker task T01 (blocker path, not trigger path)');
   rmSync(base, { recursive: true, force: true });
-}
+});
 
-report();
+});

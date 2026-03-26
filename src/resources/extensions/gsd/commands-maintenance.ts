@@ -1,7 +1,7 @@
 /**
- * GSD Maintenance — cleanup, skip, and dry-run handlers.
+ * GSD Maintenance — cleanup, skip, dry-run, and recover handlers.
  *
- * Contains: handleCleanupBranches, handleCleanupSnapshots, handleCleanupWorktrees, handleSkip, handleDryRun
+ * Contains: handleCleanupBranches, handleCleanupSnapshots, handleCleanupWorktrees, handleSkip, handleDryRun, handleRecover
  */
 
 import type { ExtensionCommandContext } from "@gsd/pi-coding-agent";
@@ -44,8 +44,10 @@ export async function handleCleanupBranches(ctx: ExtensionCommandContext, basePa
   try {
     const { listWorktrees } = await import("./worktree-manager.js");
     const { resolveMilestoneFile } = await import("./paths.js");
-    const { loadFile, parseRoadmap } = await import("./files.js");
+    const { loadFile } = await import("./files.js");
+    const { parseRoadmap } = await import("./parsers-legacy.js");
     const { isMilestoneComplete } = await import("./state.js");
+    const { isDbAvailable, getMilestone } = await import("./gsd-db.js");
 
     const attachedBranches = new Set(
       listWorktrees(basePath).map((wt) => wt.branch),
@@ -54,6 +56,22 @@ export async function handleCleanupBranches(ctx: ExtensionCommandContext, basePa
     for (const branch of milestoneBranches) {
       if (attachedBranches.has(branch)) continue;
       const milestoneId = branch.replace(/^milestone\//, "");
+
+      // DB-first: check milestone status directly
+      if (isDbAvailable()) {
+        const dbRow = getMilestone(milestoneId);
+        if (dbRow) {
+          if (dbRow.status !== "complete" && dbRow.status !== "done") continue;
+          // Milestone is complete per DB — proceed to delete branch
+          try {
+            nativeBranchDelete(basePath, branch, true);
+            deletedStaleMilestones++;
+          } catch { /* non-fatal */ }
+          continue;
+        }
+      }
+
+      // Filesystem fallback
       const roadmapPath = resolveMilestoneFile(basePath, milestoneId, "ROADMAP");
       if (!roadmapPath) continue;
       let roadmapContent: string | null = null;
@@ -449,4 +467,69 @@ export async function handleCleanupProjects(args: string, ctx: ExtensionCommandC
   }
 
   ctx.ui.notify(lines.join("\n"), "info");
+}
+
+/**
+ * `gsd recover` — Reconstruct DB hierarchy state from rendered markdown on disk.
+ *
+ * Deletes milestones, slices, and tasks table rows (preserves decisions,
+ * requirements, artifacts, memories), re-runs `migrateHierarchyToDb()` to
+ * repopulate from markdown, then calls `deriveState()` to verify sanity.
+ *
+ * Prints counts of recovered items and the resulting project phase.
+ */
+export async function handleRecover(ctx: ExtensionCommandContext, basePath: string): Promise<void> {
+  const { isDbAvailable: dbAvailable, _getAdapter, transaction: dbTransaction } = await import("./gsd-db.js");
+  const { migrateHierarchyToDb } = await import("./md-importer.js");
+  const { invalidateStateCache } = await import("./state.js");
+
+  if (!dbAvailable()) {
+    ctx.ui.notify("gsd recover: No database open. Run a GSD command first to initialize the DB.", "error");
+    return;
+  }
+
+  try {
+    // 1. Delete + re-populate inside a single transaction for atomicity
+    const db = _getAdapter()!;
+    const counts = dbTransaction(() => {
+      db.exec("DELETE FROM tasks");
+      db.exec("DELETE FROM slices");
+      db.exec("DELETE FROM milestones");
+      return migrateHierarchyToDb(basePath);
+    });
+
+    // 3. Invalidate state cache so deriveState() picks up fresh DB data
+    invalidateStateCache();
+
+    // 4. Derive state to verify sanity
+    const state = await deriveState(basePath);
+
+    // 5. Report
+    const lines = [
+      `gsd recover: reconstructed hierarchy from markdown`,
+      `  Milestones: ${counts.milestones}`,
+      `  Slices:     ${counts.slices}`,
+      `  Tasks:      ${counts.tasks}`,
+      ``,
+      `  Phase:      ${state.phase}`,
+    ];
+    if (state.activeMilestone) {
+      lines.push(`  Active:     ${state.activeMilestone.id}: ${state.activeMilestone.title}`);
+    }
+    if (state.activeSlice) {
+      lines.push(`  Slice:      ${state.activeSlice.id}: ${state.activeSlice.title}`);
+    }
+    if (state.activeTask) {
+      lines.push(`  Task:       ${state.activeTask.id}: ${state.activeTask.title}`);
+    }
+
+    process.stderr.write(
+      `gsd-recover: recovered ${counts.milestones}M/${counts.slices}S/${counts.tasks}T hierarchy\n`,
+    );
+    ctx.ui.notify(lines.join("\n"), "success");
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    process.stderr.write(`gsd-recover: failed: ${msg}\n`);
+    ctx.ui.notify(`gsd recover failed: ${msg}`, "error");
+  }
 }

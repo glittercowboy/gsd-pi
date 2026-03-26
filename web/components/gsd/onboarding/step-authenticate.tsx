@@ -228,7 +228,7 @@ export function StepAuthenticate({
 
         {/* ─── API key form ─── */}
         {hasApiKey && !canProceed && (
-          <div className="space-y-3 rounded-xl border border-border/40 bg-card/30 p-4">
+          <div className="space-y-3 rounded-xl border border-border/50 bg-card/50 p-4">
             <div className="text-sm font-medium text-foreground">API key</div>
             <form
               className="space-y-3"
@@ -276,15 +276,15 @@ export function StepAuthenticate({
             {/* Divider between API key and OAuth */}
             {hasApiKey && (
               <div className="flex items-center gap-3 py-1">
-                <div className="h-px flex-1 bg-border/40" />
-                <span className="text-xs text-muted-foreground/50">or</span>
-                <div className="h-px flex-1 bg-border/40" />
+                <div className="h-px flex-1 bg-border/50" />
+                <span className="text-xs text-muted-foreground">or</span>
+                <div className="h-px flex-1 bg-border/50" />
               </div>
             )}
 
             {/* ─── No active flow: show start button ─── */}
             {!flowActive && (
-              <div className="rounded-xl border border-border/40 bg-card/30 p-4">
+              <div className="rounded-xl border border-border/50 bg-card/50 p-4">
                 <div className="flex items-center justify-between gap-3">
                   <div>
                     <div className="text-sm font-medium text-foreground">Browser sign-in</div>
@@ -316,7 +316,7 @@ export function StepAuthenticate({
                 initial={{ opacity: 0, y: 8 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ duration: 0.3 }}
-                className="rounded-xl border border-border/40 bg-card/30 p-4 space-y-4"
+                className="rounded-xl border border-border/50 bg-card/50 p-4 space-y-4"
                 data-testid="onboarding-active-flow"
               >
                 {/* Device code — big and prominent */}
@@ -326,12 +326,12 @@ export function StepAuthenticate({
                     <button
                       type="button"
                       onClick={() => copyCode(deviceCode)}
-                      className="group flex items-center gap-3 rounded-lg border border-border/60 bg-background/50 px-5 py-3 transition-colors hover:border-foreground/20 active:scale-[0.98]"
+                      className="group flex items-center gap-3 rounded-lg border border-border bg-background/50 px-5 py-3 transition-colors hover:border-foreground/20 active:scale-[0.98]"
                     >
                       <span className="font-mono text-2xl font-bold tracking-[0.15em] text-foreground">
                         {deviceCode}
                       </span>
-                      <span className="text-muted-foreground/40 transition-colors group-hover:text-muted-foreground">
+                      <span className="text-muted-foreground transition-colors group-hover:text-muted-foreground">
                         {copied ? (
                           <CheckCircle2 className="h-4 w-4 text-success" />
                         ) : (
@@ -339,7 +339,7 @@ export function StepAuthenticate({
                         )}
                       </span>
                     </button>
-                    <div className="text-[11px] text-muted-foreground/50">
+                    <div className="text-[11px] text-muted-foreground">
                       {copied ? "Copied!" : "Click to copy"}
                     </div>
                   </div>
@@ -402,7 +402,7 @@ export function StepAuthenticate({
                       size="sm"
                       onClick={() => onCancelFlow(activeFlow.flowId)}
                       disabled={isBusy}
-                      className="h-7 text-xs text-muted-foreground/60"
+                      className="h-7 text-xs text-muted-foreground"
                     >
                       Cancel
                     </Button>
@@ -412,7 +412,7 @@ export function StepAuthenticate({
                 {/* Generic prompt input (non-device-code) */}
                 {activeFlow.prompt && !deviceCode && (
                   <form
-                    className="space-y-2 border-t border-border/30 pt-3"
+                    className="space-y-2 border-t border-border/50 pt-3"
                     onSubmit={(e) => {
                       e.preventDefault()
                       if (!activeFlow.prompt?.allowEmpty && !flowInput.trim()) return
@@ -446,9 +446,9 @@ export function StepAuthenticate({
 
                 {/* Progress messages */}
                 {activeFlow.progress.length > 0 && (
-                  <div className="space-y-1 border-t border-border/30 pt-3">
+                  <div className="space-y-1 border-t border-border/50 pt-3">
                     {activeFlow.progress.map((message, i) => (
-                      <div key={`${activeFlow.flowId}-${i}`} className="text-xs text-muted-foreground/60">
+                      <div key={`${activeFlow.flowId}-${i}`} className="text-xs text-muted-foreground">
                         {message}
                       </div>
                     ))}
@@ -461,7 +461,7 @@ export function StepAuthenticate({
 
         {/* OAuth unavailable */}
         {provider.supports.oauth && !provider.supports.oauthAvailable && !hasApiKey && (
-          <div className="rounded-xl border border-border/40 bg-card/30 px-4 py-3.5 text-sm text-muted-foreground">
+          <div className="rounded-xl border border-border/50 bg-card/50 px-4 py-3.5 text-sm text-muted-foreground">
             Browser sign-in is not available in this runtime. Go back and choose a provider with API-key support.
           </div>
         )}

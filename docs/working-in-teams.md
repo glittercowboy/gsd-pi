@@ -9,7 +9,7 @@ GSD supports multi-user workflows where several developers work on the same repo
 The simplest way to configure GSD for team use is to set `mode: team` in your project preferences. This enables unique milestone IDs, push branches, and pre-merge checks in one setting:
 
 ```yaml
-# .gsd/preferences.md (project-level, committed to git)
+# .gsd/PREFERENCES.md (project-level, committed to git)
 ---
 version: 1
 mode: team
@@ -38,7 +38,7 @@ Share planning artifacts (milestones, roadmaps, decisions) while keeping runtime
 ```
 
 **What gets shared** (committed to git):
-- `.gsd/preferences.md` — project preferences
+- `.gsd/PREFERENCES.md` — project preferences
 - `.gsd/PROJECT.md` — living project description
 - `.gsd/REQUIREMENTS.md` — requirement contract
 - `.gsd/DECISIONS.md` — architectural decisions
@@ -50,7 +50,7 @@ Share planning artifacts (milestones, roadmaps, decisions) while keeping runtime
 ### 3. Commit the Preferences
 
 ```bash
-git add .gsd/preferences.md
+git add .gsd/PREFERENCES.md
 git commit -m "chore: enable GSD team workflow"
 ```
 
@@ -71,7 +71,7 @@ If you have an existing project with `.gsd/` blanket-ignored:
 
 1. Ensure no milestones are in progress (clean state)
 2. Update `.gitignore` to use the selective pattern above
-3. Add `unique_milestone_ids: true` to `.gsd/preferences.md`
+3. Add `unique_milestone_ids: true` to `.gsd/PREFERENCES.md`
 4. Optionally rename existing milestones to use unique IDs:
    ```
    I have turned on unique milestone ids, please update all old milestone

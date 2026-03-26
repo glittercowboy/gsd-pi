@@ -640,3 +640,116 @@ test("DiscordAdapter source-level: sendPrompt sets threadUrl in ref", () => {
     "sendPrompt should set threadUrl to the constructed message URL",
   );
 });
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Auth.json Token Hydration Tests
+// ═══════════════════════════════════════════════════════════════════════════
+
+test("config source-level: hydrateRemoteTokensFromAuth is called before env check in resolveRemoteConfig", () => {
+  const configSrc = readFileSync(
+    join(__dirname, "..", "..", "remote-questions", "config.ts"),
+    "utf-8",
+  );
+  // Find the body of resolveRemoteConfig by slicing from its declaration to the next export function.
+  const resolveStart = configSrc.indexOf("export function resolveRemoteConfig()");
+  const resolveEnd = configSrc.indexOf("\nexport function", resolveStart + 1);
+  const resolveFnBody = configSrc.slice(resolveStart, resolveEnd);
+
+  const hydrationIdx = resolveFnBody.indexOf("hydrateRemoteTokensFromAuth()");
+  const envCheckIdx = resolveFnBody.indexOf("process.env[ENV_KEYS[");
+  assert.ok(hydrationIdx !== -1, "hydrateRemoteTokensFromAuth() should be called inside resolveRemoteConfig");
+  assert.ok(envCheckIdx !== -1, "process.env[ENV_KEYS[ lookup should exist inside resolveRemoteConfig");
+  assert.ok(hydrationIdx < envCheckIdx, "hydration call should appear before the process.env env-key lookup");
+});
+
+test("config source-level: hydrateRemoteTokensFromAuth is called in getRemoteConfigStatus", () => {
+  const configSrc = readFileSync(
+    join(__dirname, "..", "..", "remote-questions", "config.ts"),
+    "utf-8",
+  );
+  const statusFnIdx = configSrc.indexOf("export function getRemoteConfigStatus()");
+  const hydrationInStatus = configSrc.indexOf("hydrateRemoteTokensFromAuth()", statusFnIdx);
+  assert.ok(hydrationInStatus > statusFnIdx, "hydrateRemoteTokensFromAuth should be called inside getRemoteConfigStatus");
+});
+
+test("config source-level: AUTH_PROVIDER_ENV_MAP covers all three remote channels", () => {
+  const configSrc = readFileSync(
+    join(__dirname, "..", "..", "remote-questions", "config.ts"),
+    "utf-8",
+  );
+  assert.ok(configSrc.includes("discord_bot"), "AUTH_PROVIDER_ENV_MAP should include discord_bot");
+  assert.ok(configSrc.includes("slack_bot"),   "AUTH_PROVIDER_ENV_MAP should include slack_bot");
+  assert.ok(configSrc.includes("telegram_bot"), "AUTH_PROVIDER_ENV_MAP should include telegram_bot");
+  assert.ok(configSrc.includes("DISCORD_BOT_TOKEN"), "should map discord_bot to DISCORD_BOT_TOKEN");
+  assert.ok(configSrc.includes("SLACK_BOT_TOKEN"),   "should map slack_bot to SLACK_BOT_TOKEN");
+  assert.ok(configSrc.includes("TELEGRAM_BOT_TOKEN"), "should map telegram_bot to TELEGRAM_BOT_TOKEN");
+});
+
+test("config source-level: hydration skips env vars already set", () => {
+  const configSrc = readFileSync(
+    join(__dirname, "..", "..", "remote-questions", "config.ts"),
+    "utf-8",
+  );
+  // The guard that skips already-set vars must be present.
+  assert.ok(
+    configSrc.includes("!process.env[envVar]"),
+    "hydrateRemoteTokensFromAuth should skip env vars that are already populated",
+  );
+});
+
+test("resolveRemoteConfig returns null when preferences are absent (no env side-effects)", () => {
+  // Guard: ensure that with no prefs configured, resolveRemoteConfig returns null cleanly.
+  // This exercises the hydration path without auth.json present (it should no-op silently).
+  const savedHome = process.env.HOME;
+  const savedUserProfile = process.env.USERPROFILE;
+  const savedDiscord = process.env.DISCORD_BOT_TOKEN;
+  const savedSlack = process.env.SLACK_BOT_TOKEN;
+  const savedTelegram = process.env.TELEGRAM_BOT_TOKEN;
+  try {
+    // Point HOME to a nonexistent dir so auth.json lookup finds nothing.
+    process.env.HOME = "/tmp/gsd-no-such-home-for-test";
+    process.env.USERPROFILE = "/tmp/gsd-no-such-home-for-test";
+    delete process.env.DISCORD_BOT_TOKEN;
+    delete process.env.SLACK_BOT_TOKEN;
+    delete process.env.TELEGRAM_BOT_TOKEN;
+
+    const result = resolveRemoteConfig();
+    // With no prefs file, result is null — not an exception.
+    assert.equal(result, null, "resolveRemoteConfig should return null when no preferences are configured");
+  } finally {
+    process.env.HOME = savedHome;
+    process.env.USERPROFILE = savedUserProfile;
+    if (savedDiscord !== undefined) process.env.DISCORD_BOT_TOKEN = savedDiscord;
+    if (savedSlack !== undefined) process.env.SLACK_BOT_TOKEN = savedSlack;
+    if (savedTelegram !== undefined) process.env.TELEGRAM_BOT_TOKEN = savedTelegram;
+  }
+});
+
+test("config source-level: hydration skips api_key entries with empty keys", () => {
+  const configSrc = readFileSync(
+    join(__dirname, "..", "..", "remote-questions", "config.ts"),
+    "utf-8",
+  );
+  // The find() call in hydrateRemoteTokensFromAuth must filter for non-empty keys,
+  // not just match on type === "api_key". This prevents stale empty-key entries
+  // (left by removeProviderToken) from shadowing valid tokens.
+  assert.ok(
+    configSrc.includes('c.type === "api_key" && !!c.key'),
+    "hydrateRemoteTokensFromAuth find() should require a non-empty key",
+  );
+});
+
+test("config source-level: removeProviderToken uses auth.remove not auth.set with empty key", () => {
+  const commandSrc = readFileSync(
+    join(__dirname, "..", "..", "remote-questions", "remote-command.ts"),
+    "utf-8",
+  );
+  // removeProviderToken should call auth.remove(provider), not auth.set(provider, { key: "" }).
+  // Setting an empty key pollutes the credentials array and shadows valid tokens.
+  const fnStart = commandSrc.indexOf("function removeProviderToken");
+  assert.ok(fnStart !== -1, "removeProviderToken should exist");
+  const fnEnd = commandSrc.indexOf("\n}", fnStart);
+  const fnBody = commandSrc.slice(fnStart, fnEnd);
+  assert.ok(fnBody.includes("auth.remove("), "removeProviderToken should call auth.remove()");
+  assert.ok(!fnBody.includes('key: ""'), "removeProviderToken should not set an empty key");
+});

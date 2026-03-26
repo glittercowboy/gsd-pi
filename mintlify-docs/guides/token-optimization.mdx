@@ -1,0 +1,175 @@
+---
+title: "Token optimization"
+description: "Token profiles, context compression, and complexity-based task routing to reduce costs by 40-60%."
+---
+
+GSD's token optimization system has three pillars: **token profiles**, **context compression**, and **complexity-based task routing**.
+
+## Token profiles
+
+A token profile coordinates model selection, phase skipping, and context compression. Set it in preferences:
+
+```yaml
+token_profile: balanced
+```
+
+### `budget` — maximum savings (40-60% reduction)
+
+| Dimension | Setting |
+|-----------|---------|
+| Planning model | Sonnet |
+| Execution model | Sonnet |
+| Simple task model | Haiku |
+| Completion model | Haiku |
+| Milestone research | Skipped |
+| Slice research | Skipped |
+| Reassessment | Skipped |
+| Context level | Minimal |
+
+Best for: prototyping, small projects, well-understood codebases.
+
+### `balanced` — smart defaults
+
+| Dimension | Setting |
+|-----------|---------|
+| All models | User's default |
+| Subagent model | Sonnet |
+| Milestone research | Runs |
+| Slice research | Skipped |
+| Reassessment | Runs |
+| Context level | Standard |
+
+Best for: most projects, day-to-day development.
+
+### `quality` — full context
+
+Every phase runs. Every context artifact is inlined. No shortcuts. Best for: complex architectures, greenfield projects, critical production work.
+
+## Context compression
+
+Each profile maps to an **inline level** controlling how much context is pre-loaded into dispatch prompts:
+
+| Profile | Level | What's included |
+|---------|-------|-----------------|
+| `budget` | Minimal | Task plan, essential prior summaries (truncated). Drops decisions, requirements, templates. |
+| `balanced` | Standard | Task plan, prior summaries, slice plan, roadmap excerpt. |
+| `quality` | Full | Everything — all plans, summaries, decisions, requirements, templates. |
+
+### Prompt compression
+
+GSD can apply deterministic text compression before falling back to section-boundary truncation:
+
+```yaml
+compression_strategy: compress    # or "truncate"
+```
+
+| Strategy | Behavior | Default for |
+|----------|----------|------------|
+| `truncate` | Drop entire sections at boundaries | `quality` |
+| `compress` | Heuristic text compression first, then truncate | `budget`, `balanced` |
+
+### Context selection
+
+```yaml
+context_selection: smart    # or "full"
+```
+
+| Mode | Behavior | Default for |
+|------|----------|------------|
+| `full` | Inline entire files | `balanced`, `quality` |
+| `smart` | TF-IDF semantic chunking for large files | `budget` |
+
+## Complexity-based task routing
+
+GSD classifies each task by complexity and routes it to an appropriate model tier.
+
+<Warning>
+Dynamic routing requires explicit `models` in your preferences. Without a `models` section, routing is skipped.
+</Warning>
+
+### Classification signals
+
+| Signal | Simple | Standard | Complex |
+|--------|--------|----------|---------|
+| Step count | ≤ 3 | 4-7 | ≥ 8 |
+| File count | ≤ 3 | 4-7 | ≥ 8 |
+| Description length | < 500 chars | 500-2000 | > 2000 chars |
+| Code blocks | — | — | ≥ 5 |
+| Complexity keywords | None | Any present | — |
+
+**Complexity keywords:** `research`, `investigate`, `refactor`, `migrate`, `integrate`, `complex`, `architect`, `redesign`, `security`, `performance`, `concurrent`, `parallel`
+
+### Budget pressure
+
+When approaching the budget ceiling, the classifier automatically downgrades tiers:
+
+| Budget used | Effect |
+|------------|--------|
+| < 50% | No adjustment |
+| 50-75% | Standard → Light |
+| 75-90% | More aggressive |
+| > 90% | Everything except Heavy → Light |
+
+## Adaptive learning
+
+GSD tracks success/failure per tier and adjusts classifications over time. User feedback via `/gsd rate` is weighted 2x:
+
+```
+/gsd rate over    # model was overpowered
+/gsd rate ok      # appropriate
+/gsd rate under   # too weak
+```
+
+## Configuration examples
+
+<Tabs>
+  <Tab title="Cost-optimized">
+    ```yaml
+    ---
+    version: 1
+    token_profile: budget
+    budget_ceiling: 25.00
+    models:
+      execution_simple: claude-haiku-4-5-20250414
+    ---
+    ```
+  </Tab>
+  <Tab title="Balanced with custom models">
+    ```yaml
+    ---
+    version: 1
+    token_profile: balanced
+    models:
+      planning:
+        model: claude-opus-4-6
+        fallbacks:
+          - openrouter/z-ai/glm-5
+      execution: claude-sonnet-4-6
+    ---
+    ```
+  </Tab>
+  <Tab title="Full quality">
+    ```yaml
+    ---
+    version: 1
+    token_profile: quality
+    models:
+      planning: claude-opus-4-6
+      execution: claude-opus-4-6
+    ---
+    ```
+  </Tab>
+</Tabs>
+
+Per-phase overrides always win over profile defaults:
+
+```yaml
+---
+version: 1
+token_profile: budget
+phases:
+  skip_research: false       # keep research despite budget profile
+models:
+  planning: claude-opus-4-6  # use Opus for planning despite budget
+---
+```

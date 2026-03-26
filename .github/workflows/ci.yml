@@ -1,3 +1,4 @@
+# CI workflow — builds, tests, and gates merges to main
 name: CI
 
 on:
@@ -25,7 +26,7 @@ concurrency:
 jobs:
   detect-changes:
     timeout-minutes: 2
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     outputs:
       docs-only: ${{ steps.check.outputs.docs-only }}
     steps:
@@ -61,7 +62,7 @@ jobs:
 
   docs-check:
     timeout-minutes: 5
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     needs: detect-changes
     steps:
       - uses: actions/checkout@v6
@@ -74,7 +75,7 @@ jobs:
   lint:
     timeout-minutes: 5
     needs: detect-changes
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     steps:
       - uses: actions/checkout@v6
         with:
@@ -82,6 +83,9 @@ jobs:
 
       - name: Scan for hardcoded secrets
         run: bash scripts/secret-scan.sh --diff origin/main
+
+      - name: Scan for base64-encoded secrets
+        run: bash scripts/base64-scan.sh --diff origin/main
 
       - name: Ensure .gsd/ is not checked in
         run: |
@@ -102,7 +106,7 @@ jobs:
     timeout-minutes: 15
     needs: detect-changes
     if: needs.detect-changes.outputs.docs-only != 'true'
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
 
     steps:
       - name: Checkout repository
@@ -135,6 +139,9 @@ jobs:
       - name: Run unit tests
         run: npm run test:unit
 
+      - name: Run package tests
+        run: npm run test:packages
+
       - name: Run integration tests
         run: npm run test:integration
 
@@ -142,9 +149,8 @@ jobs:
     timeout-minutes: 15
     needs: detect-changes
     if: >-
-      needs.detect-changes.outputs.docs-only != 'true' &&
-      github.event_name == 'push' && github.ref == 'refs/heads/main'
-    runs-on: windows-latest
+      needs.detect-changes.outputs.docs-only != 'true'
+    runs-on: blacksmith-4vcpu-windows-2025
 
     steps:
       - name: Checkout repository
@@ -167,3 +173,70 @@ jobs:
 
       - name: Run unit tests
         run: npm run test:unit
+
+      - name: Run package tests
+        run: npm run test:packages
+
+  rtk-portability:
+    timeout-minutes: 20
+    needs: detect-changes
+    if: needs.detect-changes.outputs.docs-only != 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: linux
+            os: blacksmith-4vcpu-ubuntu-2404
+          - label: windows
+            os: blacksmith-4vcpu-windows-2025
+          - label: macos
+            os: macos-15
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          cache: 'npm'
+
+      - name: Install dependencies
+        env:
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
+        run: npm ci
+
+      - name: Validate managed RTK install
+        run: >-
+          node --experimental-strip-types --input-type=module -e
+          "const mod = await import('./src/rtk.ts');
+          const path = mod.getManagedRtkPath(process.platform);
+          if (!mod.validateRtkBinary(path)) {
+            console.error('Managed RTK validation failed:', path);
+            process.exit(1);
+          }
+          console.log('Managed RTK validated at', path);"
+
+      - name: Run RTK-focused portability tests
+        run: >-
+          node --import ./src/resources/extensions/gsd/tests/resolve-ts.mjs
+          --experimental-strip-types --experimental-test-isolation=process --test
+          src/tests/rtk.test.ts
+          src/tests/rtk-execution-seams.test.ts
+          src/tests/postinstall.test.ts
+          src/tests/app-smoke.test.ts
+          src/resources/extensions/gsd/tests/custom-verification.test.ts
+          src/resources/extensions/gsd/tests/verification-gate.test.ts
+
+      - name: Generate RTK benchmark evidence
+        if: matrix.label == 'linux'
+        run: node scripts/rtk-benchmark.mjs --output .artifacts/rtk-benchmark.md
+
+      - name: Upload RTK benchmark artifact
+        if: matrix.label == 'linux'
+        uses: actions/upload-artifact@v4
+        with:
+          name: rtk-benchmark-linux
+          path: .artifacts/rtk-benchmark.md

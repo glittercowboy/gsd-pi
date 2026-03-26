@@ -6,9 +6,9 @@
  */
 
 import { deriveState } from "./state.js";
-import { parseRoadmap, parsePlan, loadFile } from "./files.js";
 import { resolveMilestoneFile, resolveSliceFile } from "./paths.js";
 import { findMilestoneIds } from "./guided-flow.js";
+import { isDbAvailable, getMilestoneSlices, getSliceTasks } from "./gsd-db.js";
 import type { MilestoneRegistryEntry } from "./types.js";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -36,27 +36,23 @@ async function collectTouchedFiles(
   basePath: string,
   milestoneId: string,
 ): Promise<string[]> {
-  const roadmapPath = resolveMilestoneFile(basePath, milestoneId, "ROADMAP");
-  if (!roadmapPath) return [];
-
-  const roadmapContent = await loadFile(roadmapPath);
-  if (!roadmapContent) return [];
-
-  const roadmap = parseRoadmap(roadmapContent);
   const files = new Set<string>();
 
-  for (const slice of roadmap.slices) {
-    const planPath = resolveSliceFile(basePath, milestoneId, slice.id, "PLAN");
-    if (!planPath) continue;
-
-    const planContent = await loadFile(planPath);
-    if (!planContent) continue;
-
-    const plan = parsePlan(planContent);
-    for (const f of plan.filesLikelyTouched) {
-      files.add(f);
+  if (isDbAvailable()) {
+    // DB path: query slices and their tasks for file lists
+    const slices = getMilestoneSlices(milestoneId);
+    for (const slice of slices) {
+      const tasks = getSliceTasks(milestoneId, slice.id);
+      for (const task of tasks) {
+        if (Array.isArray(task.files)) {
+          for (const f of task.files) {
+            files.add(f);
+          }
+        }
+      }
     }
   }
+  // When DB unavailable, return empty file set — parallel eligibility cannot be determined
 
   return [...files];
 }

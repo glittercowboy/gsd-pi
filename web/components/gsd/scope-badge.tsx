@@ -29,6 +29,8 @@ function phasePresentation(phase: string): { label: string; tone: PhaseTone } {
       return { label: "Replanning", tone: "info" }
     case "completing-milestone":
       return { label: "Completing", tone: "info" }
+    case "evaluating-gates":
+      return { label: "Evaluating Gates", tone: "info" }
     default:
       return { label: phase, tone: "muted" }
   }

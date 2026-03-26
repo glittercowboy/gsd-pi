@@ -48,7 +48,7 @@ Once the user is ready to wrap up:
 
 1. Use the **Slice Context** output template below
 2. `mkdir -p {{sliceDirPath}}`
-3. Write `{{contextPath}}` — use the template structure, filling in:
+3. Call `gsd_summary_save` with `milestone_id: {{milestoneId}}`, `slice_id: {{sliceId}}`, `artifact_type: "CONTEXT"`, and the context as `content` — the tool writes the file to disk and persists to DB. Use the template structure, filling in:
    - **Goal** — one sentence: what this slice delivers
    - **Why this Slice** — why now, what it unblocks
    - **Scope / In Scope** — what was confirmed in scope during the interview

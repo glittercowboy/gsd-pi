@@ -10,9 +10,9 @@ import { parsePlanningDirectory } from '../migrate/parser.ts';
 import { validatePlanningDirectory } from '../migrate/validator.ts';
 
 import type { PlanningProject, ValidationResult } from '../migrate/types.ts';
-import { createTestContext } from './test-helpers.ts';
+import { describe, test, beforeEach, afterEach } from 'node:test';
+import assert from 'node:assert/strict';
 
-const { assertEq, assertTrue, report } = createTestContext();
 // ─── Fixture Helpers ───────────────────────────────────────────────────────
 
 function createFixtureBase(): string {
@@ -241,11 +241,9 @@ Fixed the login button by correcting the touch event handler.
 // Test Groups
 // ═══════════════════════════════════════════════════════════════════════════
 
-async function main(): Promise<void> {
-
   // ─── Test 1: Complete .planning directory ──────────────────────────────
-  console.log('\n=== Complete .planning directory with all file types ===');
-  {
+
+test('Complete .planning directory with all file types', async () => {
     const base = createFixtureBase();
     try {
       const planning = createPlanningDir(base);
@@ -313,86 +311,86 @@ Dashboard needs auth to be complete first.
       const project = await parsePlanningDirectory(planning);
 
       // Top-level structure
-      assertEq(project.path, planning, 'project.path matches');
-      assertTrue(project.project !== null, 'PROJECT.md parsed');
-      assertTrue(project.roadmap !== null, 'ROADMAP.md parsed');
-      assertTrue(project.requirements.length > 0, 'requirements parsed');
-      assertTrue(project.state !== null, 'STATE.md parsed');
-      assertTrue(project.config !== null, 'config.json parsed');
+      assert.deepStrictEqual(project.path, planning, 'project.path matches');
+      assert.ok(project.project !== null, 'PROJECT.md parsed');
+      assert.ok(project.roadmap !== null, 'ROADMAP.md parsed');
+      assert.ok(project.requirements.length > 0, 'requirements parsed');
+      assert.ok(project.state !== null, 'STATE.md parsed');
+      assert.ok(project.config !== null, 'config.json parsed');
 
       // Phases
-      assertTrue('29-auth-system' in project.phases, 'phase 29 present');
-      assertTrue('30-dashboard' in project.phases, 'phase 30 present');
+      assert.ok('29-auth-system' in project.phases, 'phase 29 present');
+      assert.ok('30-dashboard' in project.phases, 'phase 30 present');
 
       const phase29 = project.phases['29-auth-system'];
-      assertEq(phase29?.number, 29, 'phase 29 number');
-      assertEq(phase29?.slug, 'auth-system', 'phase 29 slug');
-      assertTrue('01' in (phase29?.plans ?? {}), 'phase 29 has plan 01');
-      assertTrue('01' in (phase29?.summaries ?? {}), 'phase 29 has summary 01');
-      assertTrue((phase29?.research?.length ?? 0) > 0, 'phase 29 has research');
+      assert.deepStrictEqual(phase29?.number, 29, 'phase 29 number');
+      assert.deepStrictEqual(phase29?.slug, 'auth-system', 'phase 29 slug');
+      assert.ok('01' in (phase29?.plans ?? {}), 'phase 29 has plan 01');
+      assert.ok('01' in (phase29?.summaries ?? {}), 'phase 29 has summary 01');
+      assert.ok((phase29?.research?.length ?? 0) > 0, 'phase 29 has research');
 
       // Plan content (XML-in-markdown)
       const plan29 = phase29?.plans?.['01'];
-      assertTrue(plan29 !== undefined, 'plan 29-01 exists');
-      assertTrue(plan29?.objective?.includes('authentication') ?? false, 'plan objective extracted');
-      assertTrue((plan29?.tasks?.length ?? 0) >= 3, 'plan tasks extracted');
-      assertTrue(plan29?.context?.includes('JWT') ?? false, 'plan context extracted');
-      assertTrue(plan29?.verification !== '', 'plan verification extracted');
-      assertTrue(plan29?.successCriteria !== '', 'plan success criteria extracted');
+      assert.ok(plan29 !== undefined, 'plan 29-01 exists');
+      assert.ok(plan29?.objective?.includes('authentication') ?? false, 'plan objective extracted');
+      assert.ok((plan29?.tasks?.length ?? 0) >= 3, 'plan tasks extracted');
+      assert.ok(plan29?.context?.includes('JWT') ?? false, 'plan context extracted');
+      assert.ok(plan29?.verification !== '', 'plan verification extracted');
+      assert.ok(plan29?.successCriteria !== '', 'plan success criteria extracted');
 
       // Plan frontmatter
-      assertEq(plan29?.frontmatter?.phase, '29-auth-system', 'plan frontmatter phase');
-      assertEq(plan29?.frontmatter?.plan, '01', 'plan frontmatter plan');
-      assertEq(plan29?.frontmatter?.type, 'implementation', 'plan frontmatter type');
-      assertEq(plan29?.frontmatter?.wave, 1, 'plan frontmatter wave');
-      assertEq(plan29?.frontmatter?.autonomous, true, 'plan frontmatter autonomous');
+      assert.deepStrictEqual(plan29?.frontmatter?.phase, '29-auth-system', 'plan frontmatter phase');
+      assert.deepStrictEqual(plan29?.frontmatter?.plan, '01', 'plan frontmatter plan');
+      assert.deepStrictEqual(plan29?.frontmatter?.type, 'implementation', 'plan frontmatter type');
+      assert.deepStrictEqual(plan29?.frontmatter?.wave, 1, 'plan frontmatter wave');
+      assert.deepStrictEqual(plan29?.frontmatter?.autonomous, true, 'plan frontmatter autonomous');
 
       // Summary content
       const summary29 = phase29?.summaries?.['01'];
-      assertTrue(summary29 !== undefined, 'summary 29-01 exists');
-      assertEq(summary29?.frontmatter?.phase, '29-auth-system', 'summary frontmatter phase');
-      assertEq(summary29?.frontmatter?.plan, '01', 'summary frontmatter plan');
-      assertEq(summary29?.frontmatter?.subsystem, 'auth', 'summary frontmatter subsystem');
-      assertTrue((summary29?.frontmatter?.tags?.length ?? 0) >= 2, 'summary frontmatter tags');
-      assertTrue((summary29?.frontmatter?.provides?.length ?? 0) >= 2, 'summary frontmatter provides');
-      assertTrue((summary29?.frontmatter?.affects?.length ?? 0) >= 1, 'summary frontmatter affects');
-      assertTrue((summary29?.frontmatter?.['tech-stack']?.length ?? 0) >= 2, 'summary frontmatter tech-stack');
-      assertTrue((summary29?.frontmatter?.['key-files']?.length ?? 0) >= 2, 'summary frontmatter key-files');
-      assertTrue((summary29?.frontmatter?.['key-decisions']?.length ?? 0) >= 2, 'summary frontmatter key-decisions');
-      assertTrue((summary29?.frontmatter?.['patterns-established']?.length ?? 0) >= 1, 'summary frontmatter patterns-established');
-      assertEq(summary29?.frontmatter?.duration, '2h', 'summary frontmatter duration');
-      assertEq(summary29?.frontmatter?.completed, '2026-01-15', 'summary frontmatter completed');
+      assert.ok(summary29 !== undefined, 'summary 29-01 exists');
+      assert.deepStrictEqual(summary29?.frontmatter?.phase, '29-auth-system', 'summary frontmatter phase');
+      assert.deepStrictEqual(summary29?.frontmatter?.plan, '01', 'summary frontmatter plan');
+      assert.deepStrictEqual(summary29?.frontmatter?.subsystem, 'auth', 'summary frontmatter subsystem');
+      assert.ok((summary29?.frontmatter?.tags?.length ?? 0) >= 2, 'summary frontmatter tags');
+      assert.ok((summary29?.frontmatter?.provides?.length ?? 0) >= 2, 'summary frontmatter provides');
+      assert.ok((summary29?.frontmatter?.affects?.length ?? 0) >= 1, 'summary frontmatter affects');
+      assert.ok((summary29?.frontmatter?.['tech-stack']?.length ?? 0) >= 2, 'summary frontmatter tech-stack');
+      assert.ok((summary29?.frontmatter?.['key-files']?.length ?? 0) >= 2, 'summary frontmatter key-files');
+      assert.ok((summary29?.frontmatter?.['key-decisions']?.length ?? 0) >= 2, 'summary frontmatter key-decisions');
+      assert.ok((summary29?.frontmatter?.['patterns-established']?.length ?? 0) >= 1, 'summary frontmatter patterns-established');
+      assert.deepStrictEqual(summary29?.frontmatter?.duration, '2h', 'summary frontmatter duration');
+      assert.deepStrictEqual(summary29?.frontmatter?.completed, '2026-01-15', 'summary frontmatter completed');
 
       // Quick tasks
-      assertTrue(project.quickTasks.length >= 1, 'quick tasks parsed');
-      assertEq(project.quickTasks[0]?.number, 1, 'quick task number');
-      assertTrue(project.quickTasks[0]?.plan !== null, 'quick task has plan');
-      assertTrue(project.quickTasks[0]?.summary !== null, 'quick task has summary');
+      assert.ok(project.quickTasks.length >= 1, 'quick tasks parsed');
+      assert.deepStrictEqual(project.quickTasks[0]?.number, 1, 'quick task number');
+      assert.ok(project.quickTasks[0]?.plan !== null, 'quick task has plan');
+      assert.ok(project.quickTasks[0]?.summary !== null, 'quick task has summary');
 
       // Milestones
-      assertTrue(project.milestones.length >= 1, 'milestones parsed');
+      assert.ok(project.milestones.length >= 1, 'milestones parsed');
 
       // Root research
-      assertTrue(project.research.length >= 1, 'root research parsed');
+      assert.ok(project.research.length >= 1, 'root research parsed');
 
       // Config
-      assertEq(project.config?.projectName, 'test-project', 'config projectName');
+      assert.deepStrictEqual(project.config?.projectName, 'test-project', 'config projectName');
 
       // State
-      assertTrue(project.state?.currentPhase?.includes('30') ?? false, 'state current phase');
-      assertEq(project.state?.status, 'in-progress', 'state status');
+      assert.ok(project.state?.currentPhase?.includes('30') ?? false, 'state current phase');
+      assert.deepStrictEqual(project.state?.status, 'in-progress', 'state status');
 
       // Validation
-      assertEq(project.validation.valid, true, 'validation passes for complete dir');
-      assertEq(project.validation.issues.length, 0, 'no validation issues');
+      assert.deepStrictEqual(project.validation.valid, true, 'validation passes for complete dir');
+      assert.deepStrictEqual(project.validation.issues.length, 0, 'no validation issues');
     } finally {
       cleanup(base);
     }
-  }
+});
 
   // ─── Test 2: Minimal .planning directory (only ROADMAP.md) ─────────────
-  console.log('\n=== Minimal .planning directory (only ROADMAP.md) ===');
-  {
+
+test('Minimal .planning directory (only ROADMAP.md)', async () => {
     const base = createFixtureBase();
     try {
       const planning = createPlanningDir(base);
@@ -400,42 +398,42 @@ Dashboard needs auth to be complete first.
 
       const project = await parsePlanningDirectory(planning);
 
-      assertEq(project.project, null, 'minimal: PROJECT.md is null');
-      assertTrue(project.roadmap !== null, 'minimal: ROADMAP.md parsed');
-      assertEq(project.requirements.length, 0, 'minimal: no requirements');
-      assertEq(project.state, null, 'minimal: no state');
-      assertEq(project.config, null, 'minimal: no config');
-      assertEq(Object.keys(project.phases).length, 0, 'minimal: no phases');
-      assertEq(project.quickTasks.length, 0, 'minimal: no quick tasks');
-      assertEq(project.milestones.length, 0, 'minimal: no milestones');
-      assertEq(project.research.length, 0, 'minimal: no research');
-      assertEq(project.validation.valid, true, 'minimal: validation passes');
+      assert.deepStrictEqual(project.project, null, 'minimal: PROJECT.md is null');
+      assert.ok(project.roadmap !== null, 'minimal: ROADMAP.md parsed');
+      assert.deepStrictEqual(project.requirements.length, 0, 'minimal: no requirements');
+      assert.deepStrictEqual(project.state, null, 'minimal: no state');
+      assert.deepStrictEqual(project.config, null, 'minimal: no config');
+      assert.deepStrictEqual(Object.keys(project.phases).length, 0, 'minimal: no phases');
+      assert.deepStrictEqual(project.quickTasks.length, 0, 'minimal: no quick tasks');
+      assert.deepStrictEqual(project.milestones.length, 0, 'minimal: no milestones');
+      assert.deepStrictEqual(project.research.length, 0, 'minimal: no research');
+      assert.deepStrictEqual(project.validation.valid, true, 'minimal: validation passes');
     } finally {
       cleanup(base);
     }
-  }
+});
 
   // ─── Test 3: Missing directory → validation fatal error ────────────────
-  console.log('\n=== Missing directory → validation returns fatal error ===');
-  {
+
+test('Missing directory → validation returns fatal error', async () => {
     const base = createFixtureBase();
     try {
       const result = await validatePlanningDirectory(join(base, 'nonexistent'));
 
-      assertEq(result.valid, false, 'missing dir: validation fails');
-      assertTrue(result.issues.length > 0, 'missing dir: has issues');
-      assertTrue(
+      assert.deepStrictEqual(result.valid, false, 'missing dir: validation fails');
+      assert.ok(result.issues.length > 0, 'missing dir: has issues');
+      assert.ok(
         result.issues.some(i => i.severity === 'fatal'),
         'missing dir: has fatal issue'
       );
     } finally {
       cleanup(base);
     }
-  }
+});
 
   // ─── Test 4: Duplicate phase numbers ───────────────────────────────────
-  console.log('\n=== Phase directory with duplicate numbers ===');
-  {
+
+test('Phase directory with duplicate numbers', async () => {
     const base = createFixtureBase();
     try {
       const planning = createPlanningDir(base);
@@ -456,18 +454,18 @@ Dashboard needs auth to be complete first.
 
       const project = await parsePlanningDirectory(planning);
 
-      assertTrue('45-core-infrastructure' in project.phases, 'dup nums: core-infrastructure phase present');
-      assertTrue('45-logging-config' in project.phases, 'dup nums: logging-config phase present');
-      assertEq(project.phases['45-core-infrastructure']?.number, 45, 'dup nums: both have number 45 (a)');
-      assertEq(project.phases['45-logging-config']?.number, 45, 'dup nums: both have number 45 (b)');
+      assert.ok('45-core-infrastructure' in project.phases, 'dup nums: core-infrastructure phase present');
+      assert.ok('45-logging-config' in project.phases, 'dup nums: logging-config phase present');
+      assert.deepStrictEqual(project.phases['45-core-infrastructure']?.number, 45, 'dup nums: both have number 45 (a)');
+      assert.deepStrictEqual(project.phases['45-logging-config']?.number, 45, 'dup nums: both have number 45 (b)');
     } finally {
       cleanup(base);
     }
-  }
+});
 
   // ─── Test 5: XML-in-markdown plan parsing ──────────────────────────────
-  console.log('\n=== Plan file with XML-in-markdown ===');
-  {
+
+test('Plan file with XML-in-markdown', async () => {
     const base = createFixtureBase();
     try {
       const planning = createPlanningDir(base);
@@ -480,21 +478,21 @@ Dashboard needs auth to be complete first.
       const project = await parsePlanningDirectory(planning);
       const plan = project.phases['29-auth-system']?.plans?.['01'];
 
-      assertTrue(plan !== undefined, 'xml plan: plan exists');
-      assertTrue(plan?.objective?.includes('authentication') ?? false, 'xml plan: objective extracted');
-      assertTrue((plan?.tasks?.length ?? 0) === 3, 'xml plan: 3 tasks extracted');
-      assertTrue(plan?.tasks?.[0]?.includes('auth middleware') ?? false, 'xml plan: first task content');
-      assertTrue(plan?.context?.includes('JWT') ?? false, 'xml plan: context extracted');
-      assertTrue(plan?.verification?.includes('Login returns') ?? false, 'xml plan: verification extracted');
-      assertTrue(plan?.successCriteria?.includes('endpoints respond') ?? false, 'xml plan: success criteria extracted');
+      assert.ok(plan !== undefined, 'xml plan: plan exists');
+      assert.ok(plan?.objective?.includes('authentication') ?? false, 'xml plan: objective extracted');
+      assert.ok((plan?.tasks?.length ?? 0) === 3, 'xml plan: 3 tasks extracted');
+      assert.ok(plan?.tasks?.[0]?.includes('auth middleware') ?? false, 'xml plan: first task content');
+      assert.ok(plan?.context?.includes('JWT') ?? false, 'xml plan: context extracted');
+      assert.ok(plan?.verification?.includes('Login returns') ?? false, 'xml plan: verification extracted');
+      assert.ok(plan?.successCriteria?.includes('endpoints respond') ?? false, 'xml plan: success criteria extracted');
     } finally {
       cleanup(base);
     }
-  }
+});
 
   // ─── Test 6: Summary file with YAML frontmatter ───────────────────────
-  console.log('\n=== Summary file with YAML frontmatter ===');
-  {
+
+test('Summary file with YAML frontmatter', async () => {
     const base = createFixtureBase();
     try {
       const planning = createPlanningDir(base);
@@ -507,27 +505,27 @@ Dashboard needs auth to be complete first.
       const project = await parsePlanningDirectory(planning);
       const summary = project.phases['29-auth-system']?.summaries?.['01'];
 
-      assertTrue(summary !== undefined, 'summary fm: summary exists');
-      assertEq(summary?.frontmatter?.phase, '29-auth-system', 'summary fm: phase');
-      assertEq(summary?.frontmatter?.plan, '01', 'summary fm: plan');
-      assertEq(summary?.frontmatter?.subsystem, 'auth', 'summary fm: subsystem');
-      assertEq(summary?.frontmatter?.tags, ['authentication', 'security'], 'summary fm: tags');
-      assertEq(summary?.frontmatter?.provides, ['auth-middleware', 'jwt-validation'], 'summary fm: provides');
-      assertEq(summary?.frontmatter?.affects, ['api-routes'], 'summary fm: affects');
-      assertEq(summary?.frontmatter?.['tech-stack'], ['jsonwebtoken', 'express'], 'summary fm: tech-stack');
-      assertEq(summary?.frontmatter?.['key-files'], ['src/auth.ts', 'src/middleware/auth.ts'], 'summary fm: key-files');
-      assertEq(summary?.frontmatter?.['key-decisions'], ['Use RS256 for JWT signing', 'Store refresh tokens in DB'], 'summary fm: key-decisions');
-      assertEq(summary?.frontmatter?.['patterns-established'], ['Middleware-based auth'], 'summary fm: patterns-established');
-      assertEq(summary?.frontmatter?.duration, '2h', 'summary fm: duration');
-      assertEq(summary?.frontmatter?.completed, '2026-01-15', 'summary fm: completed');
+      assert.ok(summary !== undefined, 'summary fm: summary exists');
+      assert.deepStrictEqual(summary?.frontmatter?.phase, '29-auth-system', 'summary fm: phase');
+      assert.deepStrictEqual(summary?.frontmatter?.plan, '01', 'summary fm: plan');
+      assert.deepStrictEqual(summary?.frontmatter?.subsystem, 'auth', 'summary fm: subsystem');
+      assert.deepStrictEqual(summary?.frontmatter?.tags, ['authentication', 'security'], 'summary fm: tags');
+      assert.deepStrictEqual(summary?.frontmatter?.provides, ['auth-middleware', 'jwt-validation'], 'summary fm: provides');
+      assert.deepStrictEqual(summary?.frontmatter?.affects, ['api-routes'], 'summary fm: affects');
+      assert.deepStrictEqual(summary?.frontmatter?.['tech-stack'], ['jsonwebtoken', 'express'], 'summary fm: tech-stack');
+      assert.deepStrictEqual(summary?.frontmatter?.['key-files'], ['src/auth.ts', 'src/middleware/auth.ts'], 'summary fm: key-files');
+      assert.deepStrictEqual(summary?.frontmatter?.['key-decisions'], ['Use RS256 for JWT signing', 'Store refresh tokens in DB'], 'summary fm: key-decisions');
+      assert.deepStrictEqual(summary?.frontmatter?.['patterns-established'], ['Middleware-based auth'], 'summary fm: patterns-established');
+      assert.deepStrictEqual(summary?.frontmatter?.duration, '2h', 'summary fm: duration');
+      assert.deepStrictEqual(summary?.frontmatter?.completed, '2026-01-15', 'summary fm: completed');
     } finally {
       cleanup(base);
     }
-  }
+});
 
   // ─── Test 7: Orphan summaries (no matching plan) ──────────────────────
-  console.log('\n=== Orphan summaries (no matching plan) ===');
-  {
+
+test('Orphan summaries (no matching plan)', async () => {
     const base = createFixtureBase();
     try {
       const planning = createPlanningDir(base);
@@ -561,19 +559,19 @@ Another orphan.
       const project = await parsePlanningDirectory(planning);
       const phase = project.phases['45-logging-config'];
 
-      assertTrue(phase !== undefined, 'orphan: phase exists');
-      assertEq(Object.keys(phase?.plans ?? {}).length, 0, 'orphan: no plans');
-      assertTrue(Object.keys(phase?.summaries ?? {}).length >= 2, 'orphan: summaries preserved');
-      assertTrue('04' in (phase?.summaries ?? {}), 'orphan: summary 04 present');
-      assertTrue('05' in (phase?.summaries ?? {}), 'orphan: summary 05 present');
+      assert.ok(phase !== undefined, 'orphan: phase exists');
+      assert.deepStrictEqual(Object.keys(phase?.plans ?? {}).length, 0, 'orphan: no plans');
+      assert.ok(Object.keys(phase?.summaries ?? {}).length >= 2, 'orphan: summaries preserved');
+      assert.ok('04' in (phase?.summaries ?? {}), 'orphan: summary 04 present');
+      assert.ok('05' in (phase?.summaries ?? {}), 'orphan: summary 05 present');
     } finally {
       cleanup(base);
     }
-  }
+});
 
   // ─── Test 8: .archive/ directory skipped ──────────────────────────────
-  console.log('\n=== .archive/ directory → skipped by default ===');
-  {
+
+test('.archive/ directory → skipped by default', async () => {
     const base = createFixtureBase();
     try {
       const planning = createPlanningDir(base);
@@ -591,17 +589,17 @@ Another orphan.
 
       const project = await parsePlanningDirectory(planning);
 
-      assertTrue('29-auth-system' in project.phases, 'archive: normal phase present');
+      assert.ok('29-auth-system' in project.phases, 'archive: normal phase present');
       // Archive phases should not appear in the phases map
-      assertTrue(!Object.keys(project.phases).some(k => k.includes('old-auth')), 'archive: archived phase not present');
+      assert.ok(!Object.keys(project.phases).some(k => k.includes('old-auth')), 'archive: archived phase not present');
     } finally {
       cleanup(base);
     }
-  }
+});
 
   // ─── Test 9: Quick tasks ──────────────────────────────────────────────
-  console.log('\n=== Quick tasks parsed ===');
-  {
+
+test('Quick tasks parsed', async () => {
     const base = createFixtureBase();
     try {
       const planning = createPlanningDir(base);
@@ -620,22 +618,22 @@ Another orphan.
 
       const project = await parsePlanningDirectory(planning);
 
-      assertEq(project.quickTasks.length, 2, 'quick: 2 quick tasks');
-      assertEq(project.quickTasks[0]?.number, 1, 'quick: first task number');
-      assertEq(project.quickTasks[0]?.slug, 'fix-login', 'quick: first task slug');
-      assertTrue(project.quickTasks[0]?.plan !== null, 'quick: first task has plan');
-      assertTrue(project.quickTasks[0]?.summary !== null, 'quick: first task has summary');
-      assertEq(project.quickTasks[1]?.number, 2, 'quick: second task number');
-      assertTrue(project.quickTasks[1]?.plan !== null, 'quick: second task has plan');
-      assertEq(project.quickTasks[1]?.summary, null, 'quick: second task has no summary');
+      assert.deepStrictEqual(project.quickTasks.length, 2, 'quick: 2 quick tasks');
+      assert.deepStrictEqual(project.quickTasks[0]?.number, 1, 'quick: first task number');
+      assert.deepStrictEqual(project.quickTasks[0]?.slug, 'fix-login', 'quick: first task slug');
+      assert.ok(project.quickTasks[0]?.plan !== null, 'quick: first task has plan');
+      assert.ok(project.quickTasks[0]?.summary !== null, 'quick: first task has summary');
+      assert.deepStrictEqual(project.quickTasks[1]?.number, 2, 'quick: second task number');
+      assert.ok(project.quickTasks[1]?.plan !== null, 'quick: second task has plan');
+      assert.deepStrictEqual(project.quickTasks[1]?.summary, null, 'quick: second task has no summary');
     } finally {
       cleanup(base);
     }
-  }
+});
 
   // ─── Test 10: Roadmap with milestone sections and <details> ────────────
-  console.log('\n=== Roadmap with milestone sections and <details> blocks ===');
-  {
+
+test('Roadmap with milestone sections and <details> blocks', async () => {
     const base = createFixtureBase();
     try {
       const planning = createPlanningDir(base);
@@ -643,35 +641,35 @@ Another orphan.
 
       const project = await parsePlanningDirectory(planning);
 
-      assertTrue(project.roadmap !== null, 'ms roadmap: roadmap parsed');
-      assertTrue((project.roadmap?.milestones?.length ?? 0) >= 2, 'ms roadmap: has milestone sections');
+      assert.ok(project.roadmap !== null, 'ms roadmap: roadmap parsed');
+      assert.ok((project.roadmap?.milestones?.length ?? 0) >= 2, 'ms roadmap: has milestone sections');
 
       // Check collapsed milestone
       const v20 = project.roadmap?.milestones?.find(m => m.id.includes('2.0'));
-      assertTrue(v20 !== undefined, 'ms roadmap: v2.0 milestone found');
-      assertEq(v20?.collapsed, true, 'ms roadmap: v2.0 is collapsed');
-      assertTrue((v20?.phases?.length ?? 0) >= 2, 'ms roadmap: v2.0 has phases');
-      assertTrue(v20?.phases?.every(p => p.done) ?? false, 'ms roadmap: v2.0 phases all done');
+      assert.ok(v20 !== undefined, 'ms roadmap: v2.0 milestone found');
+      assert.deepStrictEqual(v20?.collapsed, true, 'ms roadmap: v2.0 is collapsed');
+      assert.ok((v20?.phases?.length ?? 0) >= 2, 'ms roadmap: v2.0 has phases');
+      assert.ok(v20?.phases?.every(p => p.done) ?? false, 'ms roadmap: v2.0 phases all done');
 
       // Check active milestone
       const v25 = project.roadmap?.milestones?.find(m => m.id.includes('2.5'));
-      assertTrue(v25 !== undefined, 'ms roadmap: v2.5 milestone found');
-      assertEq(v25?.collapsed, false, 'ms roadmap: v2.5 is not collapsed');
-      assertTrue((v25?.phases?.length ?? 0) >= 3, 'ms roadmap: v2.5 has phases');
+      assert.ok(v25 !== undefined, 'ms roadmap: v2.5 milestone found');
+      assert.deepStrictEqual(v25?.collapsed, false, 'ms roadmap: v2.5 is not collapsed');
+      assert.ok((v25?.phases?.length ?? 0) >= 3, 'ms roadmap: v2.5 has phases');
 
       // Check completion state
       const phase29 = v25?.phases?.find(p => p.number === 29);
-      assertTrue(phase29?.done === true, 'ms roadmap: phase 29 is done');
+      assert.ok(phase29?.done === true, 'ms roadmap: phase 29 is done');
       const phase30 = v25?.phases?.find(p => p.number === 30);
-      assertTrue(phase30?.done === false, 'ms roadmap: phase 30 is not done');
+      assert.ok(phase30?.done === false, 'ms roadmap: phase 30 is not done');
     } finally {
       cleanup(base);
     }
-  }
+});
 
   // ─── Test 11: Non-standard phase files → extra files ──────────────────
-  console.log('\n=== Non-standard phase files → collected as extra files ===');
-  {
+
+test('Non-standard phase files → collected as extra files', async () => {
     const base = createFixtureBase();
     try {
       const planning = createPlanningDir(base);
@@ -687,28 +685,28 @@ Another orphan.
       const project = await parsePlanningDirectory(planning);
       const phase = project.phases['36-attachment-system'];
 
-      assertTrue(phase !== undefined, 'extra: phase exists');
-      assertTrue((phase?.extraFiles?.length ?? 0) >= 3, 'extra: non-standard files collected');
-      assertTrue(
+      assert.ok(phase !== undefined, 'extra: phase exists');
+      assert.ok((phase?.extraFiles?.length ?? 0) >= 3, 'extra: non-standard files collected');
+      assert.ok(
         phase?.extraFiles?.some(f => f.fileName === 'BASELINE.md') ?? false,
         'extra: BASELINE.md collected'
       );
-      assertTrue(
+      assert.ok(
         phase?.extraFiles?.some(f => f.fileName === 'BUNDLE-ANALYSIS.md') ?? false,
         'extra: BUNDLE-ANALYSIS.md collected'
       );
-      assertTrue(
+      assert.ok(
         phase?.extraFiles?.some(f => f.fileName === 'depcheck-results.txt') ?? false,
         'extra: depcheck-results.txt collected'
       );
     } finally {
       cleanup(base);
     }
-  }
+});
 
   // ─── Test 12: Validation — missing ROADMAP.md → warning (not fatal) ───
-  console.log('\n=== Validation: missing ROADMAP.md → warning (not fatal) ===');
-  {
+
+test('Validation: missing ROADMAP.md → warning (not fatal)', async () => {
     const base = createFixtureBase();
     try {
       const planning = createPlanningDir(base);
@@ -717,19 +715,19 @@ Another orphan.
 
       const result = await validatePlanningDirectory(planning);
 
-      assertEq(result.valid, true, 'no roadmap: validation still passes');
-      assertTrue(
+      assert.deepStrictEqual(result.valid, true, 'no roadmap: validation still passes');
+      assert.ok(
         result.issues.some(i => i.severity === 'warning' && i.file.includes('ROADMAP')),
         'no roadmap: warning issue mentions ROADMAP'
       );
     } finally {
       cleanup(base);
     }
-  }
+});
 
   // ─── Test 13: Validation — missing PROJECT.md → warning ───────────────
-  console.log('\n=== Validation: missing PROJECT.md → warning ===');
-  {
+
+test('Validation: missing PROJECT.md → warning', async () => {
     const base = createFixtureBase();
     try {
       const planning = createPlanningDir(base);
@@ -738,20 +736,13 @@ Another orphan.
 
       const result = await validatePlanningDirectory(planning);
 
-      assertEq(result.valid, true, 'no project: validation passes (warning only)');
-      assertTrue(
+      assert.deepStrictEqual(result.valid, true, 'no project: validation passes (warning only)');
+      assert.ok(
         result.issues.some(i => i.severity === 'warning' && i.file.includes('PROJECT')),
         'no project: warning issue mentions PROJECT'
       );
     } finally {
       cleanup(base);
     }
-  }
-
-  report();
-}
-
-main().catch((error) => {
-  console.error(error);
-  process.exit(1);
 });
+

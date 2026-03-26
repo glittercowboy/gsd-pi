@@ -9,9 +9,9 @@ import {
   writeUnitRuntimeRecord,
 } from "../unit-runtime.ts";
 import { clearPathCache } from '../paths.ts';
-import { createTestContext } from './test-helpers.ts';
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
 
-const { assertEq, assertTrue, report } = createTestContext();
 const base = mkdtempSync(join(tmpdir(), "gsd-unit-runtime-test-"));
 const tasksDir = join(base, ".gsd", "milestones", "M100", "slices", "S02", "tasks");
 mkdirSync(tasksDir, { recursive: true });
@@ -25,22 +25,22 @@ writeFileSync(
 console.log("\n=== runtime record write/read/update ===");
 {
   const first = writeUnitRuntimeRecord(base, "execute-task", "M100/S02/T09", 1000, { phase: "dispatched" });
-  assertEq(first.phase, "dispatched", "initial phase");
+  assert.deepStrictEqual(first.phase, "dispatched", "initial phase");
   const second = writeUnitRuntimeRecord(base, "execute-task", "M100/S02/T09", 1000, { phase: "wrapup-warning-sent", wrapupWarningSent: true });
-  assertEq(second.wrapupWarningSent, true, "warning persisted");
+  assert.deepStrictEqual(second.wrapupWarningSent, true, "warning persisted");
   const loaded = readUnitRuntimeRecord(base, "execute-task", "M100/S02/T09");
-  assertTrue(loaded !== null, "record readable");
-  assertEq(loaded!.phase, "wrapup-warning-sent", "updated phase readable");
+  assert.ok(loaded !== null, "record readable");
+  assert.deepStrictEqual(loaded!.phase, "wrapup-warning-sent", "updated phase readable");
 }
 
 console.log("\n=== execute-task durability inspection ===");
 {
   let status = await inspectExecuteTaskDurability(base, "M100/S02/T09");
-  assertTrue(status !== null, "status exists");
-  assertEq(status!.summaryExists, false, "summary initially missing");
-  assertEq(status!.taskChecked, false, "task initially unchecked");
-  assertEq(status!.nextActionAdvanced, false, "next action initially stale");
-  assertTrue(/summary missing/i.test(formatExecuteTaskRecoveryStatus(status!)), "diagnostic mentions summary");
+  assert.ok(status !== null, "status exists");
+  assert.deepStrictEqual(status!.summaryExists, false, "summary initially missing");
+  assert.deepStrictEqual(status!.taskChecked, false, "task initially unchecked");
+  assert.deepStrictEqual(status!.nextActionAdvanced, false, "next action initially stale");
+  assert.ok(/summary missing/i.test(formatExecuteTaskRecoveryStatus(status!)), "diagnostic mentions summary");
 
   writeFileSync(join(tasksDir, "T09-SUMMARY.md"), "# done\n", "utf-8");
   writeFileSync(
@@ -52,17 +52,17 @@ console.log("\n=== execute-task durability inspection ===");
   clearPathCache();
 
   status = await inspectExecuteTaskDurability(base, "M100/S02/T09");
-  assertEq(status!.summaryExists, true, "summary found after write");
-  assertEq(status!.taskChecked, true, "task checked after update");
-  assertEq(status!.nextActionAdvanced, true, "next action advanced after update");
-  assertEq(formatExecuteTaskRecoveryStatus(status!), "all durable task artifacts present", "clean diagnostic when complete");
+  assert.deepStrictEqual(status!.summaryExists, true, "summary found after write");
+  assert.deepStrictEqual(status!.taskChecked, true, "task checked after update");
+  assert.deepStrictEqual(status!.nextActionAdvanced, true, "next action advanced after update");
+  assert.deepStrictEqual(formatExecuteTaskRecoveryStatus(status!), "all durable task artifacts present", "clean diagnostic when complete");
 }
 
 console.log("\n=== runtime record cleanup ===");
 {
   clearUnitRuntimeRecord(base, "execute-task", "M100/S02/T09");
   const loaded = readUnitRuntimeRecord(base, "execute-task", "M100/S02/T09");
-  assertEq(loaded, null, "record removed");
+  assert.deepStrictEqual(loaded, null, "record removed");
 }
 
 console.log("\n=== hook unit type sanitization (slash in unitType) ===");
@@ -70,23 +70,23 @@ console.log("\n=== hook unit type sanitization (slash in unitType) ===");
   // Hook units have unitType like "hook/code-review" with a slash
   // This should NOT create a subdirectory - the slash must be sanitized
   const hookRecord = writeUnitRuntimeRecord(base, "hook/code-review", "M100/S02/T10", 2000, { phase: "dispatched" });
-  assertEq(hookRecord.unitType, "hook/code-review", "unitType preserved in record");
-  assertEq(hookRecord.unitId, "M100/S02/T10", "unitId preserved in record");
+  assert.deepStrictEqual(hookRecord.unitType, "hook/code-review", "unitType preserved in record");
+  assert.deepStrictEqual(hookRecord.unitId, "M100/S02/T10", "unitId preserved in record");
   
   const loaded = readUnitRuntimeRecord(base, "hook/code-review", "M100/S02/T10");
-  assertTrue(loaded !== null, "hook record readable");
-  assertEq(loaded!.phase, "dispatched", "hook phase correct");
+  assert.ok(loaded !== null, "hook record readable");
+  assert.deepStrictEqual(loaded!.phase, "dispatched", "hook phase correct");
   
   // Verify the file is in the units dir, not in a subdirectory
   const unitsDir = join(base, ".gsd", "runtime", "units");
   const files = readdirSync(unitsDir);
   const hookFile = files.find((f: string) => f.includes("hook-code-review"));
-  assertTrue(hookFile !== undefined, "hook file exists with sanitized name");
-  assertTrue(!files.some((f: string) => f === "hook"), "no 'hook' subdirectory created");
+  assert.ok(hookFile !== undefined, "hook file exists with sanitized name");
+  assert.ok(!files.some((f: string) => f === "hook"), "no 'hook' subdirectory created");
   
   clearUnitRuntimeRecord(base, "hook/code-review", "M100/S02/T10");
   const cleared = readUnitRuntimeRecord(base, "hook/code-review", "M100/S02/T10");
-  assertEq(cleared, null, "hook record removed");
+  assert.deepStrictEqual(cleared, null, "hook record removed");
 }
 
 // ─── Must-have durability integration tests ───────────────────────────────
@@ -121,13 +121,13 @@ console.log("\n=== must-haves: all mentioned in summary ===");
   writeFileSync(join(mhBase, ".gsd", "STATE.md"), "## Next Action\nExecute T02 for S01: next thing\n", "utf-8");
 
   const status = await inspectExecuteTaskDurability(mhBase, "M200/S01/T01");
-  assertTrue(status !== null, "mh-all: status exists");
-  assertEq(status!.mustHaveCount, 3, "mh-all: mustHaveCount is 3");
-  assertEq(status!.mustHavesMentionedInSummary, 3, "mh-all: all 3 must-haves mentioned");
-  assertEq(status!.summaryExists, true, "mh-all: summary exists");
-  assertEq(status!.taskChecked, true, "mh-all: task checked");
+  assert.ok(status !== null, "mh-all: status exists");
+  assert.deepStrictEqual(status!.mustHaveCount, 3, "mh-all: mustHaveCount is 3");
+  assert.deepStrictEqual(status!.mustHavesMentionedInSummary, 3, "mh-all: all 3 must-haves mentioned");
+  assert.deepStrictEqual(status!.summaryExists, true, "mh-all: summary exists");
+  assert.deepStrictEqual(status!.taskChecked, true, "mh-all: task checked");
   const diag = formatExecuteTaskRecoveryStatus(status!);
-  assertEq(diag, "all durable task artifacts present", "mh-all: diagnostic is clean when all must-haves met");
+  assert.deepStrictEqual(diag, "all durable task artifacts present", "mh-all: diagnostic is clean when all must-haves met");
 }
 
 console.log("\n=== must-haves: partially mentioned in summary ===");
@@ -156,12 +156,12 @@ console.log("\n=== must-haves: partially mentioned in summary ===");
 
   clearPathCache();
   const status = await inspectExecuteTaskDurability(mhBase, "M200/S02/T01");
-  assertTrue(status !== null, "mh-partial: status exists");
-  assertEq(status!.mustHaveCount, 3, "mh-partial: mustHaveCount is 3");
-  assertEq(status!.mustHavesMentionedInSummary, 1, "mh-partial: only 1 must-have mentioned");
+  assert.ok(status !== null, "mh-partial: status exists");
+  assert.deepStrictEqual(status!.mustHaveCount, 3, "mh-partial: mustHaveCount is 3");
+  assert.deepStrictEqual(status!.mustHavesMentionedInSummary, 1, "mh-partial: only 1 must-have mentioned");
   const diag = formatExecuteTaskRecoveryStatus(status!);
-  assertTrue(diag.includes("must-have gap"), "mh-partial: diagnostic includes 'must-have gap'");
-  assertTrue(diag.includes("1 of 3"), "mh-partial: diagnostic includes '1 of 3'");
+  assert.ok(diag.includes("must-have gap"), "mh-partial: diagnostic includes 'must-have gap'");
+  assert.ok(diag.includes("1 of 3"), "mh-partial: diagnostic includes '1 of 3'");
 }
 
 console.log("\n=== must-haves: no task plan file ===");
@@ -184,9 +184,9 @@ console.log("\n=== must-haves: no task plan file ===");
 
   clearPathCache();
   const status = await inspectExecuteTaskDurability(mhBase, "M200/S03/T01");
-  assertTrue(status !== null, "mh-noplan: status exists");
-  assertEq(status!.mustHaveCount, 0, "mh-noplan: mustHaveCount is 0 when no task plan");
-  assertEq(status!.mustHavesMentionedInSummary, 0, "mh-noplan: mustHavesMentionedInSummary is 0");
+  assert.ok(status !== null, "mh-noplan: status exists");
+  assert.deepStrictEqual(status!.mustHaveCount, 0, "mh-noplan: mustHaveCount is 0 when no task plan");
+  assert.deepStrictEqual(status!.mustHavesMentionedInSummary, 0, "mh-noplan: mustHavesMentionedInSummary is 0");
 }
 
 console.log("\n=== must-haves: present but no summary file ===");
@@ -209,10 +209,10 @@ console.log("\n=== must-haves: present but no summary file ===");
 
   clearPathCache();
   const status = await inspectExecuteTaskDurability(mhBase, "M200/S04/T01");
-  assertTrue(status !== null, "mh-nosummary: status exists");
-  assertEq(status!.mustHaveCount, 2, "mh-nosummary: mustHaveCount is 2");
-  assertEq(status!.mustHavesMentionedInSummary, 0, "mh-nosummary: mustHavesMentionedInSummary is 0 with no summary");
-  assertEq(status!.summaryExists, false, "mh-nosummary: summary doesn't exist");
+  assert.ok(status !== null, "mh-nosummary: status exists");
+  assert.deepStrictEqual(status!.mustHaveCount, 2, "mh-nosummary: mustHaveCount is 2");
+  assert.deepStrictEqual(status!.mustHavesMentionedInSummary, 0, "mh-nosummary: mustHavesMentionedInSummary is 0 with no summary");
+  assert.deepStrictEqual(status!.summaryExists, false, "mh-nosummary: summary doesn't exist");
 }
 
 console.log("\n=== must-haves: substring matching (no backtick tokens) ===");
@@ -241,18 +241,17 @@ console.log("\n=== must-haves: substring matching (no backtick tokens) ===");
 
   clearPathCache();
   const status = await inspectExecuteTaskDurability(mhBase, "M200/S05/T01");
-  assertTrue(status !== null, "mh-substr: status exists");
-  assertEq(status!.mustHaveCount, 3, "mh-substr: mustHaveCount is 3");
+  assert.ok(status !== null, "mh-substr: status exists");
+  assert.deepStrictEqual(status!.mustHaveCount, 3, "mh-substr: mustHaveCount is 3");
   // "heuristic" appears in summary for item 1, "diagnostic" for item 2, 
   // "assertions" appears in summary? No — let's check
   // Item 3: "All assertions pass" — words: "assertions", "pass" (<4 chars excluded)
   // summary doesn't contain "assertions" → not matched
-  assertEq(status!.mustHavesMentionedInSummary, 2, "mh-substr: 2 of 3 matched via substring");
+  assert.deepStrictEqual(status!.mustHavesMentionedInSummary, 2, "mh-substr: 2 of 3 matched via substring");
   const diag = formatExecuteTaskRecoveryStatus(status!);
-  assertTrue(diag.includes("must-have gap"), "mh-substr: diagnostic includes gap info");
-  assertTrue(diag.includes("2 of 3"), "mh-substr: diagnostic includes '2 of 3'");
+  assert.ok(diag.includes("must-have gap"), "mh-substr: diagnostic includes gap info");
+  assert.ok(diag.includes("2 of 3"), "mh-substr: diagnostic includes '2 of 3'");
 }
 
 rmSync(mhBase, { recursive: true, force: true });
 rmSync(base, { recursive: true, force: true });
-report();

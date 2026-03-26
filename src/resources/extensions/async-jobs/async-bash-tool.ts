@@ -14,12 +14,13 @@ import {
 	DEFAULT_MAX_LINES,
 } from "@gsd/pi-coding-agent";
 import { Type } from "@sinclair/typebox";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { createWriteStream } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomBytes } from "node:crypto";
 import type { AsyncJobManager } from "./job-manager.js";
+import { rewriteCommandWithRtk } from "../shared/rtk.js";
 
 const schema = Type.Object({
 	command: Type.String({ description: "Bash command to execute in the background" }),
@@ -37,17 +38,24 @@ function getTempFilePath(): string {
 }
 
 /**
- * Kill a process and its children. Uses process group kill on Unix.
+ * Kill a process and its children (cross-platform).
+ * Uses process group kill on Unix; taskkill /F /T on Windows.
  */
 function killTree(pid: number): void {
-	try {
-		// Kill the process group (negative PID)
-		process.kill(-pid, "SIGTERM");
-	} catch {
+	if (process.platform === "win32") {
 		try {
-			process.kill(pid, "SIGTERM");
+			spawnSync("taskkill", ["/F", "/T", "/PID", String(pid)], {
+				timeout: 5_000,
+				stdio: "ignore",
+			});
 		} catch {
-			// Already exited
+			try { process.kill(pid, "SIGTERM"); } catch { /* already exited */ }
+		}
+	} else {
+		try {
+			process.kill(-pid, "SIGTERM");
+		} catch {
+			try { process.kill(pid, "SIGTERM"); } catch { /* already exited */ }
 		}
 	}
 }
@@ -114,11 +122,16 @@ function executeBashInBackground(
 		const safeReject = (err: unknown) => { if (!settled) { settled = true; reject(err); } };
 
 		const { shell, args } = getShellConfig();
-		const resolvedCommand = sanitizeCommand(command);
+		const rewrittenCommand = rewriteCommandWithRtk(command);
+		const resolvedCommand = sanitizeCommand(rewrittenCommand);
 
+		// On Windows, detached: true sets CREATE_NEW_PROCESS_GROUP which can
+		// cause EINVAL in VSCode/ConPTY terminal contexts.  The bg-shell
+		// extension already guards this (process-manager.ts); align here.
+		// Process-tree cleanup uses taskkill /F /T on Windows regardless.
 		const child = spawn(shell, [...args, resolvedCommand], {
 			cwd,
-			detached: true,
+			detached: process.platform !== "win32",
 			env: { ...process.env },
 			stdio: ["ignore", "pipe", "pipe"],
 		});
@@ -141,8 +154,8 @@ function executeBashInBackground(
 				// If the process ignores SIGTERM, escalate to SIGKILL
 				sigkillHandle = setTimeout(() => {
 					if (child.pid) {
-						try { process.kill(-child.pid, "SIGKILL"); } catch { /* ignore */ }
-						try { process.kill(child.pid, "SIGKILL"); } catch { /* ignore */ }
+						// killTree already uses taskkill /F /T on Windows
+						killTree(child.pid);
 					}
 
 					// Hard deadline: if even SIGKILL doesn't trigger 'close',

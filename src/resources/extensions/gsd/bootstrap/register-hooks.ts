@@ -7,6 +7,7 @@ import { buildMilestoneFileName, resolveMilestonePath, resolveSliceFile, resolve
 import { buildBeforeAgentStartResult } from "./system-context.js";
 import { handleAgentEnd } from "./agent-end-recovery.js";
 import { clearDiscussionFlowState, isDepthVerified, isQueuePhaseActive, markDepthVerified, resetWriteGateState, shouldBlockContextWrite } from "./write-gate.js";
+import { isBlockedStateFile, isBashWriteToStateFile, BLOCKED_WRITE_ERROR } from "../write-intercept.js";
 import { getDiscussionMilestoneId } from "../guided-flow.js";
 import { loadToolApiKeys } from "../commands-config.js";
 import { loadFile, saveFile, formatContinue } from "../files.js";
@@ -15,6 +16,8 @@ import { getAutoDashboardData, isAutoActive, isAutoPaused, markToolEnd, markTool
 import { isParallelActive, shutdownParallel } from "../parallel-orchestrator.js";
 import { checkToolCallLoop, resetToolCallLoopGuard } from "./tool-call-loop-guard.js";
 import { saveActivityLog } from "../activity-log.js";
+import { startRtkStatusUpdates, stopRtkStatusUpdates } from "../rtk-status.js";
+import { rewriteCommandWithRtk } from "../../shared/rtk.js";
 
 // Skip the welcome screen on the very first session_start — cli.ts already
 // printed it before the TUI launched. Only re-print on /clear (subsequent sessions).
@@ -26,10 +29,26 @@ async function syncServiceTierStatus(ctx: ExtensionContext): Promise<void> {
 }
 
 export function registerHooks(pi: ExtensionAPI): void {
+  // Route all agent bash tool commands through RTK rewrite when opted in.
+  // This is a no-op when RTK is disabled or not installed.
+  pi.on("bash_transform", async (event) => {
+    const rewritten = rewriteCommandWithRtk(event.command);
+    if (rewritten === event.command) return undefined;
+    return { command: rewritten };
+  });
+
   pi.on("session_start", async (_event, ctx) => {
     resetWriteGateState();
     resetToolCallLoopGuard();
     await syncServiceTierStatus(ctx);
+    startRtkStatusUpdates(ctx);
+
+    // Apply show_token_cost preference (#1515)
+    try {
+      const { loadEffectiveGSDPreferences } = await import("../preferences.js");
+      const prefs = loadEffectiveGSDPreferences();
+      process.env.GSD_SHOW_TOKEN_COST = prefs?.preferences.show_token_cost ? "1" : "";
+    } catch { /* non-fatal */ }
     if (isFirstSession) {
       isFirstSession = false;
     } else {
@@ -59,6 +78,19 @@ export function registerHooks(pi: ExtensionAPI): void {
     } catch {
       // ignore
     }
+  });
+
+  pi.on("session_switch", async (_event, ctx) => {
+    resetWriteGateState();
+    resetToolCallLoopGuard();
+    clearDiscussionFlowState();
+    await syncServiceTierStatus(ctx);
+    loadToolApiKeys();
+    startRtkStatusUpdates(ctx);
+  });
+
+  pi.on("session_fork", async (_event, ctx) => {
+    startRtkStatusUpdates(ctx);
   });
 
   pi.on("before_agent_start", async (event, ctx: ExtensionContext) => {
@@ -107,6 +139,7 @@ export function registerHooks(pi: ExtensionAPI): void {
   });
 
   pi.on("session_shutdown", async (_event, ctx: ExtensionContext) => {
+    stopRtkStatusUpdates(ctx);
     if (isParallelActive()) {
       try {
         await shutdownParallel(process.cwd());
@@ -128,7 +161,28 @@ export function registerHooks(pi: ExtensionAPI): void {
       return { block: true, reason: loopCheck.reason };
     }
 
+    // ── Single-writer engine: block direct writes to STATE.md ──────────
+    // Covers write, edit, and bash tools to prevent bypass vectors.
+    if (isToolCallEventType("write", event)) {
+      if (isBlockedStateFile(event.input.path)) {
+        return { block: true, reason: BLOCKED_WRITE_ERROR };
+      }
+    }
+
+    if (isToolCallEventType("edit", event)) {
+      if (isBlockedStateFile(event.input.path)) {
+        return { block: true, reason: BLOCKED_WRITE_ERROR };
+      }
+    }
+
+    if (isToolCallEventType("bash", event)) {
+      if (isBashWriteToStateFile(event.input.command)) {
+        return { block: true, reason: BLOCKED_WRITE_ERROR };
+      }
+    }
+
     if (!isToolCallEventType("write", event)) return;
+
     const result = shouldBlockContextWrite(
       event.toolName,
       event.input.path,

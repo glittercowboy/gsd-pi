@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 
 import { registerExitCommand } from "../exit-command.ts";
 
-test("/exit requests graceful shutdown instead of process.exit", async () => {
+test("/exit requests graceful shutdown instead of process.exit", async (t) => {
   const commands = new Map<
     string,
     {
@@ -35,15 +35,13 @@ test("/exit requests graceful shutdown instead of process.exit", async () => {
     throw new Error(`process.exit should not be called: ${code ?? "undefined"}`);
   }) as typeof process.exit;
 
-  try {
-    await exit.handler("", {
-      async shutdown() {
-        shutdownCalls += 1;
-      },
-    });
-  } finally {
-    process.exit = originalExit;
-  }
+  t.after(() => { process.exit = originalExit; });
+
+  await exit.handler("", {
+    async shutdown() {
+      shutdownCalls += 1;
+    },
+  });
 
   assert.equal(stopAutoCalls, 1, "handler should stop auto-mode exactly once before shutdown");
   assert.equal(shutdownCalls, 1, "handler should request graceful shutdown exactly once");
@@ -51,7 +49,7 @@ test("/exit requests graceful shutdown instead of process.exit", async () => {
 
 // ─── #1839 regression: ESM cache mismatch must not crash exit ────────────────
 
-test("/exit still shuts down gracefully when stopAuto throws (ESM module cache mismatch)", async () => {
+test("/exit still shuts down gracefully when stopAuto throws (ESM module cache mismatch)", async (t) => {
   const commands = new Map<string, { description?: string; handler: (args: string, ctx: any) => Promise<void> }>();
 
   const pi = {
@@ -80,20 +78,18 @@ test("/exit still shuts down gracefully when stopAuto throws (ESM module cache m
     throw new Error(`process.exit should not be called: ${code ?? "undefined"}`);
   }) as typeof process.exit;
 
-  try {
-    await exit.handler("", {
-      async shutdown() {
-        shutdownCalls += 1;
+  t.after(() => { process.exit = originalExit; });
+
+  await exit.handler("", {
+    async shutdown() {
+      shutdownCalls += 1;
+    },
+    ui: {
+      notify(msg: string, level: string) {
+        notifications.push({ msg, level });
       },
-      ui: {
-        notify(msg: string, level: string) {
-          notifications.push({ msg, level });
-        },
-      },
-    });
-  } finally {
-    process.exit = originalExit;
-  }
+    },
+  });
 
   assert.equal(shutdownCalls, 1, "shutdown must still be called even when stopAuto throws");
   assert.equal(notifications.length, 1, "should emit exactly one warning notification");

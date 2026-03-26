@@ -21,9 +21,8 @@ import {
   formatRequirementsForPrompt,
 } from '../context-store.ts';
 import { saveDecisionToDb, generateDecisionsMd } from '../db-writer.ts';
-import { createTestContext } from './test-helpers.ts';
-
-const { assertEq, assertTrue, assertMatch, report } = createTestContext();
+import { describe, test, beforeEach, afterEach } from 'node:test';
+import assert from 'node:assert/strict';
 
 // ─── Fixture Generators (duplicated from token-savings.test.ts — file-scoped) ──
 
@@ -119,10 +118,7 @@ const ROADMAP_CONTENT = `# M001: Test Milestone\n\n**Vision:** Integration test 
 // Full Lifecycle Integration Test
 // ═══════════════════════════════════════════════════════════════════════════
 
-async function main(): Promise<void> {
-
-  console.log('\n=== integration-lifecycle: full pipeline ===');
-  {
+test('integration-lifecycle: full pipeline', async () => {
     // ── Step 1: Set up temp dir with realistic .gsd/ structure ──────────
     const base = mkdtempSync(join(tmpdir(), 'gsd-int-lifecycle-'));
     const gsdDir = join(base, '.gsd');
@@ -142,37 +138,37 @@ async function main(): Promise<void> {
     try {
       // ── Step 2: Open file-backed DB + migrateFromMarkdown ──────────────
       openDatabase(dbPath);
-      assertTrue(isDbAvailable(), 'lifecycle: DB is available after open');
+      assert.ok(isDbAvailable(), 'lifecycle: DB is available after open');
 
       const result = migrateFromMarkdown(base);
 
-      assertTrue(result.decisions === DECISIONS_COUNT, `lifecycle: imported ${result.decisions} decisions, expected ${DECISIONS_COUNT}`);
-      assertTrue(result.requirements === REQUIREMENTS_COUNT, `lifecycle: imported ${result.requirements} requirements, expected ${REQUIREMENTS_COUNT}`);
-      assertTrue(result.artifacts >= 1, `lifecycle: imported at least 1 artifact (got ${result.artifacts})`);
+      assert.ok(result.decisions === DECISIONS_COUNT, `lifecycle: imported ${result.decisions} decisions, expected ${DECISIONS_COUNT}`);
+      assert.ok(result.requirements === REQUIREMENTS_COUNT, `lifecycle: imported ${result.requirements} requirements, expected ${REQUIREMENTS_COUNT}`);
+      assert.ok(result.artifacts >= 1, `lifecycle: imported at least 1 artifact (got ${result.artifacts})`);
 
       // Verify file-backed DB uses WAL
       const adapter = _getAdapter()!;
       const mode = adapter.prepare('PRAGMA journal_mode').get();
-      assertEq(mode?.['journal_mode'], 'wal', 'lifecycle: file-backed DB uses WAL mode');
+      assert.deepStrictEqual(mode?.['journal_mode'], 'wal', 'lifecycle: file-backed DB uses WAL mode');
 
       // ── Step 3: Scoped queries — decisions by milestone ────────────────
       const allDecisions = queryDecisions();
       const m001Decisions = queryDecisions({ milestoneId: 'M001' });
       const m002Decisions = queryDecisions({ milestoneId: 'M002' });
 
-      assertTrue(allDecisions.length === DECISIONS_COUNT, `lifecycle: all decisions count = ${DECISIONS_COUNT} (got ${allDecisions.length})`);
-      assertTrue(m001Decisions.length > 0, 'lifecycle: M001 decisions non-empty');
-      assertTrue(m002Decisions.length > 0, 'lifecycle: M002 decisions non-empty');
-      assertTrue(m001Decisions.length < allDecisions.length, 'lifecycle: M001 filtered count < total count');
-      assertTrue(m002Decisions.length < allDecisions.length, 'lifecycle: M002 filtered count < total count');
-      assertEq(m001Decisions.length + m002Decisions.length, allDecisions.length, 'lifecycle: M001 + M002 = total decisions');
+      assert.ok(allDecisions.length === DECISIONS_COUNT, `lifecycle: all decisions count = ${DECISIONS_COUNT} (got ${allDecisions.length})`);
+      assert.ok(m001Decisions.length > 0, 'lifecycle: M001 decisions non-empty');
+      assert.ok(m002Decisions.length > 0, 'lifecycle: M002 decisions non-empty');
+      assert.ok(m001Decisions.length < allDecisions.length, 'lifecycle: M001 filtered count < total count');
+      assert.ok(m002Decisions.length < allDecisions.length, 'lifecycle: M002 filtered count < total count');
+      assert.deepStrictEqual(m001Decisions.length + m002Decisions.length, allDecisions.length, 'lifecycle: M001 + M002 = total decisions');
 
       // Verify scoping correctness
       for (const d of m001Decisions) {
-        assertTrue(d.when_context.includes('M001'), `lifecycle: M001 decision ${d.id} has M001 in when_context`);
+        assert.ok(d.when_context.includes('M001'), `lifecycle: M001 decision ${d.id} has M001 in when_context`);
       }
       for (const d of m002Decisions) {
-        assertTrue(d.when_context.includes('M002'), `lifecycle: M002 decision ${d.id} has M002 in when_context`);
+        assert.ok(d.when_context.includes('M002'), `lifecycle: M002 decision ${d.id} has M002 in when_context`);
       }
 
       // ── Step 4: Scoped queries — requirements by slice ─────────────────
@@ -180,19 +176,19 @@ async function main(): Promise<void> {
       const s01Requirements = queryRequirements({ sliceId: 'S01' });
       const s04Requirements = queryRequirements({ sliceId: 'S04' });
 
-      assertTrue(allRequirements.length === REQUIREMENTS_COUNT, `lifecycle: all requirements count = ${REQUIREMENTS_COUNT} (got ${allRequirements.length})`);
-      assertTrue(s01Requirements.length > 0, 'lifecycle: S01 requirements non-empty');
-      assertTrue(s04Requirements.length > 0, 'lifecycle: S04 requirements non-empty');
-      assertTrue(s01Requirements.length < allRequirements.length, 'lifecycle: S01 filtered count < total count');
+      assert.ok(allRequirements.length === REQUIREMENTS_COUNT, `lifecycle: all requirements count = ${REQUIREMENTS_COUNT} (got ${allRequirements.length})`);
+      assert.ok(s01Requirements.length > 0, 'lifecycle: S01 requirements non-empty');
+      assert.ok(s04Requirements.length > 0, 'lifecycle: S04 requirements non-empty');
+      assert.ok(s01Requirements.length < allRequirements.length, 'lifecycle: S01 filtered count < total count');
 
       // ── Step 5: Format + token savings validation ──────────────────────
       const formattedDecisions = formatDecisionsForPrompt(m001Decisions);
       const formattedRequirements = formatRequirementsForPrompt(s01Requirements);
 
-      assertTrue(formattedDecisions.length > 0, 'lifecycle: formatted M001 decisions non-empty');
-      assertTrue(formattedRequirements.length > 0, 'lifecycle: formatted S01 requirements non-empty');
-      assertMatch(formattedDecisions, /\| D/, 'lifecycle: formatted decisions contains decision rows');
-      assertMatch(formattedRequirements, /### R\d+/, 'lifecycle: formatted requirements has headings');
+      assert.ok(formattedDecisions.length > 0, 'lifecycle: formatted M001 decisions non-empty');
+      assert.ok(formattedRequirements.length > 0, 'lifecycle: formatted S01 requirements non-empty');
+      assert.match(formattedDecisions, /\| D/, 'lifecycle: formatted decisions contains decision rows');
+      assert.match(formattedRequirements, /### R\d+/, 'lifecycle: formatted requirements has headings');
 
       // Token savings: scoped output vs full file content
       const fullDecisionsContent = readFileSync(join(gsdDir, 'DECISIONS.md'), 'utf-8');
@@ -203,24 +199,24 @@ async function main(): Promise<void> {
 
       console.log(`  Token savings: ${savingsPercent.toFixed(1)}% (scoped: ${dbScopedTotal}, full: ${fullTotal})`);
 
-      assertTrue(dbScopedTotal > 0, 'lifecycle: scoped content non-empty');
-      assertTrue(dbScopedTotal < fullTotal, 'lifecycle: scoped content smaller than full content');
-      assertTrue(savingsPercent >= 30, `lifecycle: savings ≥30% (actual: ${savingsPercent.toFixed(1)}%)`);
+      assert.ok(dbScopedTotal > 0, 'lifecycle: scoped content non-empty');
+      assert.ok(dbScopedTotal < fullTotal, 'lifecycle: scoped content smaller than full content');
+      assert.ok(savingsPercent >= 30, `lifecycle: savings ≥30% (actual: ${savingsPercent.toFixed(1)}%)`);
 
       // ── Step 6: Simulate content change → re-import ────────────────────
       const newDecisionRow = `| D${DECISIONS_COUNT + 1} | M001/S01 | testing | new decision added after initial import | choice X | rationale Y | yes |`;
       appendFileSync(join(gsdDir, 'DECISIONS.md'), '\n' + newDecisionRow + '\n');
 
       const result2 = migrateFromMarkdown(base);
-      assertTrue(result2.decisions === DECISIONS_COUNT + 1, `lifecycle: re-import got ${result2.decisions} decisions, expected ${DECISIONS_COUNT + 1}`);
+      assert.ok(result2.decisions === DECISIONS_COUNT + 1, `lifecycle: re-import got ${result2.decisions} decisions, expected ${DECISIONS_COUNT + 1}`);
 
       const afterReimport = queryDecisions();
-      assertTrue(afterReimport.length === DECISIONS_COUNT + 1, `lifecycle: DB has ${DECISIONS_COUNT + 1} decisions after re-import (got ${afterReimport.length})`);
+      assert.ok(afterReimport.length === DECISIONS_COUNT + 1, `lifecycle: DB has ${DECISIONS_COUNT + 1} decisions after re-import (got ${afterReimport.length})`);
 
       // Verify the new decision is queryable
       const newM001 = queryDecisions({ milestoneId: 'M001' });
       const foundNew = newM001.some(d => d.id === `D${DECISIONS_COUNT + 1}`);
-      assertTrue(foundNew, `lifecycle: newly imported D${DECISIONS_COUNT + 1} found in M001 scope`);
+      assert.ok(foundNew, `lifecycle: newly imported D${DECISIONS_COUNT + 1} found in M001 scope`);
 
       // ── Step 7: saveDecisionToDb write-back + round-trip ───────────────
       const saved = await saveDecisionToDb(
@@ -234,44 +230,37 @@ async function main(): Promise<void> {
         base,
       );
 
-      assertTrue(typeof saved.id === 'string', 'lifecycle: saveDecisionToDb returned an id');
-      assertMatch(saved.id, /^D\d+$/, 'lifecycle: saved ID matches D### pattern');
+      assert.ok(typeof saved.id === 'string', 'lifecycle: saveDecisionToDb returned an id');
+      assert.match(saved.id, /^D\d+$/, 'lifecycle: saved ID matches D### pattern');
 
       // Query back from DB
       const allAfterSave = queryDecisions();
       const savedDecision = allAfterSave.find(d => d.id === saved.id);
-      assertTrue(savedDecision !== null && savedDecision !== undefined, `lifecycle: saved decision ${saved.id} found in DB`);
-      assertEq(savedDecision?.decision, 'integration test write-back decision', 'lifecycle: saved decision text matches');
-      assertEq(savedDecision?.choice, 'option Z', 'lifecycle: saved choice matches');
+      assert.ok(savedDecision !== null && savedDecision !== undefined, `lifecycle: saved decision ${saved.id} found in DB`);
+      assert.deepStrictEqual(savedDecision?.decision, 'integration test write-back decision', 'lifecycle: saved decision text matches');
+      assert.deepStrictEqual(savedDecision?.choice, 'option Z', 'lifecycle: saved choice matches');
 
       // Verify DECISIONS.md was regenerated with the new decision
       const regeneratedMd = readFileSync(join(gsdDir, 'DECISIONS.md'), 'utf-8');
-      assertTrue(regeneratedMd.includes(saved.id), `lifecycle: regenerated DECISIONS.md contains ${saved.id}`);
-      assertTrue(regeneratedMd.includes('integration test write-back decision'), 'lifecycle: regenerated md contains write-back text');
+      assert.ok(regeneratedMd.includes(saved.id), `lifecycle: regenerated DECISIONS.md contains ${saved.id}`);
+      assert.ok(regeneratedMd.includes('integration test write-back decision'), 'lifecycle: regenerated md contains write-back text');
 
       // Round-trip: parse regenerated markdown back → verify field fidelity
       const reparsed = parseDecisionsTable(regeneratedMd);
       const reparsedSaved = reparsed.find(d => d.id === saved.id);
-      assertTrue(reparsedSaved !== undefined, `lifecycle: reparsed markdown contains ${saved.id}`);
-      assertEq(reparsedSaved?.choice, 'option Z', 'lifecycle: round-trip choice preserved');
-      assertEq(reparsedSaved?.rationale, 'proves round-trip fidelity', 'lifecycle: round-trip rationale preserved');
+      assert.ok(reparsedSaved !== undefined, `lifecycle: reparsed markdown contains ${saved.id}`);
+      assert.deepStrictEqual(reparsedSaved?.choice, 'option Z', 'lifecycle: round-trip choice preserved');
+      assert.deepStrictEqual(reparsedSaved?.rationale, 'proves round-trip fidelity', 'lifecycle: round-trip rationale preserved');
 
       // ── Step 8: DB consistency — total count sanity ─────────────────────
       const finalCount = queryDecisions().length;
       // Original 14 + 1 re-import + 1 saveDecisionToDb = 16
-      assertTrue(finalCount === DECISIONS_COUNT + 2, `lifecycle: final DB count = ${DECISIONS_COUNT + 2} (got ${finalCount})`);
+      assert.ok(finalCount === DECISIONS_COUNT + 2, `lifecycle: final DB count = ${DECISIONS_COUNT + 2} (got ${finalCount})`);
 
       closeDatabase();
     } finally {
       closeDatabase();
       rmSync(base, { recursive: true, force: true });
     }
-  }
-
-  report();
-}
-
-main().catch((error) => {
-  console.error(error);
-  process.exit(1);
 });
+

@@ -32,7 +32,6 @@ export interface SessionLockData {
   unitType: string;
   unitId: string;
   unitStartedAt: string;
-  completedUnits: number;
   sessionFile?: string;
 }
 
@@ -168,6 +167,56 @@ function ensureExitHandler(_gsdDir: string): void {
   });
 }
 
+// ─── Lock Acquisition Helpers ───────────────────────────────────────────────
+
+/**
+ * Create the onCompromised callback for proper-lockfile.
+ *
+ * proper-lockfile fires onCompromised when it detects mtime drift (system sleep,
+ * event loop stall, etc.). The default handler throws inside setTimeout — an
+ * uncaught exception that crashes or corrupts process state.
+ *
+ * False-positive suppression (#1362): If we're still within the stale window
+ * (30 min since acquisition), the mtime mismatch is from an event loop stall
+ * during a long LLM call — not a real takeover. Log and continue.
+ *
+ * PID ownership check (#1578): Past the stale window, check if the lock file
+ * still contains our PID before declaring compromise. Retry reads tolerate
+ * transient filesystem hiccups (NFS/CIFS latency, APFS snapshots, etc.) (#2324).
+ */
+function createLockCompromisedHandler(lockFilePath: string): () => void {
+  return () => {
+    const elapsed = Date.now() - _lockAcquiredAt;
+    if (elapsed < 1_800_000) {
+      process.stderr.write(
+        `[gsd] Lock heartbeat caught up after ${Math.round(elapsed / 1000)}s — long LLM call, no action needed.\n`,
+      );
+      return;
+    }
+    const existing = readExistingLockDataWithRetry(lockFilePath);
+    if (existing && existing.pid === process.pid) {
+      process.stderr.write(
+        `[gsd] Lock heartbeat mismatch after ${Math.round(elapsed / 1000)}s — lock file still owned by PID ${process.pid}, treating as false positive.\n`,
+      );
+      return;
+    }
+    _lockCompromised = true;
+    _releaseFunction = null;
+  };
+}
+
+/**
+ * Assign module-level lock state after a successful lock acquisition.
+ */
+function assignLockState(basePath: string, release: () => void, lockFilePath: string): void {
+  _releaseFunction = release;
+  _lockedPath = basePath;
+  _lockPid = process.pid;
+  _lockCompromised = false;
+  _lockAcquiredAt = Date.now();
+  _snapshotLockPath = lockFilePath;
+}
+
 // ─── Public API ─────────────────────────────────────────────────────────────
 
 /**
@@ -205,7 +254,6 @@ export function acquireSessionLock(basePath: string): SessionLockResult {
     unitType: "starting",
     unitId: "bootstrap",
     unitStartedAt: new Date().toISOString(),
-    completedUnits: 0,
   };
 
   let lockfile: typeof import("proper-lockfile");
@@ -228,43 +276,10 @@ export function acquireSessionLock(basePath: string): SessionLockResult {
       realpath: false,
       stale: 1_800_000, // 30 minutes — safe for laptop sleep / long event loop stalls
       update: 10_000, // Update lock mtime every 10s to prove liveness
-      onCompromised: () => {
-        // proper-lockfile detected mtime drift (system sleep, event loop stall, etc.).
-        // Default handler throws inside setTimeout — an uncaught exception that crashes
-        // or corrupts process state.
-        //
-        // False-positive suppression (#1362): If we're still within the stale window
-        // (30 min since acquisition), the mtime mismatch is from an event loop stall
-        // during a long LLM call — not a real takeover. Log and continue.
-        const elapsed = Date.now() - _lockAcquiredAt;
-        if (elapsed < 1_800_000) {
-          process.stderr.write(
-            `[gsd] Lock heartbeat caught up after ${Math.round(elapsed / 1000)}s — long LLM call, no action needed.\n`,
-          );
-          return; // Suppress false positive
-        }
-        // Past the stale window — check if the lock file still belongs to us before
-        // declaring compromise (#1578). If our PID still owns the metadata, this is
-        // a false positive from a very long event loop stall (e.g. subagent execution).
-        const existing = readExistingLockData(lp);
-        if (existing && existing.pid === process.pid) {
-          process.stderr.write(
-            `[gsd] Lock heartbeat mismatch after ${Math.round(elapsed / 1000)}s — lock file still owned by PID ${process.pid}, treating as false positive.\n`,
-          );
-          return; // Our PID still owns the lock file — no real takeover
-        }
-        // Lock file is gone or owned by another PID — real compromise
-        _lockCompromised = true;
-        _releaseFunction = null;
-      },
+      onCompromised: createLockCompromisedHandler(lp),
     });
 
-    _releaseFunction = release;
-    _lockedPath = basePath;
-    _lockPid = process.pid;
-    _lockCompromised = false;
-    _lockAcquiredAt = Date.now();
-    _snapshotLockPath = lp; // Snapshot the resolved path for consistent access (#1363)
+    assignLockState(basePath, release, lp);
 
     // Safety net: clean up lock dir on process exit if _releaseFunction
     // wasn't called (e.g., normal exit after clean completion) (#1245).
@@ -292,35 +307,9 @@ export function acquireSessionLock(basePath: string): SessionLockResult {
           realpath: false,
           stale: 1_800_000, // 30 minutes — match primary lock settings
           update: 10_000,
-          onCompromised: () => {
-            // Same false-positive suppression as the primary lock (#1512).
-            // Without this, the retry path fires _lockCompromised unconditionally
-            // on benign mtime drift (laptop sleep, heavy LLM event loop stalls).
-            const elapsed = Date.now() - _lockAcquiredAt;
-            if (elapsed < 1_800_000) {
-              process.stderr.write(
-                `[gsd] Lock heartbeat caught up after ${Math.round(elapsed / 1000)}s — long LLM call, no action needed.\n`,
-              );
-              return;
-            }
-            // Check PID ownership before declaring compromise (#1578)
-            const existing = readExistingLockData(lp);
-            if (existing && existing.pid === process.pid) {
-              process.stderr.write(
-                `[gsd] Lock heartbeat mismatch after ${Math.round(elapsed / 1000)}s — lock file still owned by PID ${process.pid}, treating as false positive.\n`,
-              );
-              return;
-            }
-            _lockCompromised = true;
-            _releaseFunction = null;
-          },
+          onCompromised: createLockCompromisedHandler(lp),
         });
-        _releaseFunction = release;
-        _lockedPath = basePath;
-        _lockPid = process.pid;
-        _lockCompromised = false;
-        _lockAcquiredAt = Date.now();
-        _snapshotLockPath = lp; // Snapshot for retry path too (#1363)
+        assignLockState(basePath, release, lp);
 
         // Safety net — uses centralized handler to avoid double-registration
         ensureExitHandler(gsdDir);
@@ -379,7 +368,6 @@ export function updateSessionLock(
   basePath: string,
   unitType: string,
   unitId: string,
-  completedUnits: number,
   sessionFile?: string,
 ): void {
   if (_lockedPath !== basePath && _lockedPath !== null) return;
@@ -392,7 +380,6 @@ export function updateSessionLock(
       unitType,
       unitId,
       unitStartedAt: new Date().toISOString(),
-      completedUnits,
       sessionFile,
     };
     atomicWriteSync(lp, JSON.stringify(data, null, 2));
@@ -417,7 +404,8 @@ export function getSessionLockStatus(basePath: string): SessionLockStatus {
     // onCompromised fired from benign mtime drift (laptop sleep, event loop stall
     // beyond the stale window). Attempt re-acquisition instead of giving up.
     const lp = lockPath(basePath);
-    const existing = readExistingLockData(lp);
+    // Retry reads to tolerate transient filesystem hiccups (#2324).
+    const existing = readExistingLockDataWithRetry(lp);
     if (existing && existing.pid === process.pid) {
       // Lock file still ours — try to re-acquire the OS lock
       try {
@@ -567,6 +555,42 @@ function readExistingLockData(lp: string): SessionLockData | null {
   } catch {
     return null;
   }
+}
+
+/**
+ * Retry-tolerant variant of readExistingLockData for use in onCompromised and
+ * other paths where a transient filesystem hiccup (NFS/CIFS latency, macOS APFS
+ * snapshot, concurrent process briefly holding the file) should NOT be treated
+ * as "lock file gone" (#2324).
+ *
+ * Retries up to `maxAttempts` times with `delayMs` between each attempt.
+ * Only returns null when ALL retries fail to read valid data.
+ */
+export interface RetryOptions {
+  maxAttempts?: number;
+  delayMs?: number;
+}
+
+export function readExistingLockDataWithRetry(
+  lp: string,
+  options?: RetryOptions,
+): SessionLockData | null {
+  const maxAttempts = options?.maxAttempts ?? 3;
+  const delayMs = options?.delayMs ?? 200;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    const data = readExistingLockData(lp);
+    if (data !== null) return data;
+    if (attempt < maxAttempts) {
+      // Synchronous busy-wait — onCompromised runs in a sync callback context
+      // and the delays are short (200ms default).
+      const start = Date.now();
+      while (Date.now() - start < delayMs) {
+        // busy-wait
+      }
+    }
+  }
+  return null;
 }
 
 function isPidAlive(pid: number): boolean {

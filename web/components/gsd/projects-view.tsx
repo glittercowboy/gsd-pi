@@ -183,7 +183,7 @@ function ProjectCard({
         "active:scale-[0.98]",
         isActive
           ? "border-primary/30 bg-primary/[0.08]"
-          : "border-border/40 bg-card/20 hover:border-foreground/15 hover:bg-card/50",
+          : "border-border/50 bg-card/50 hover:border-foreground/15 hover:bg-card/50",
         disabled && "opacity-40 pointer-events-none",
       )}
     >
@@ -227,7 +227,7 @@ function ProjectCard({
 
         {/* Row 3: progress info */}
         {progress && (
-          <div className="mt-1.5 text-[11px] text-muted-foreground/70">{progress}</div>
+          <div className="mt-1.5 text-[11px] text-muted-foreground">{progress}</div>
         )}
 
         {/* Row 4: milestone progress bar */}
@@ -243,13 +243,13 @@ function ProjectCard({
                 }}
               />
             </div>
-            <span className="text-[10px] tabular-nums text-muted-foreground/60">{milestoneCount}</span>
+            <span className="text-[10px] tabular-nums text-muted-foreground">{milestoneCount}</span>
           </div>
         )}
       </div>
 
       {/* Arrow */}
-      <ArrowRight className="mt-1 h-4 w-4 shrink-0 text-muted-foreground/30 transition-all group-hover:text-muted-foreground/70 group-hover:translate-x-0.5" />
+      <ArrowRight className="mt-1 h-4 w-4 shrink-0 text-muted-foreground/50 transition-all group-hover:text-muted-foreground group-hover:translate-x-0.5" />
     </button>
   )
 }
@@ -317,22 +317,35 @@ export function ProjectsPanel({
 
   const handleDevRootSaved = useCallback(
     async (newRoot: string) => {
-      setDevRoot(newRoot)
       setLoading(true)
       setError(null)
       try {
-        const discovered = await loadProjects(newRoot)
-        setProjects(discovered)
+        // Validate path and persist in a single call
+        const res = await authFetch("/api/switch-root", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ devRoot: newRoot }),
+        })
+
+        if (!res.ok) {
+          const body = await res.json().catch(() => ({}))
+          throw new Error((body as { error?: string }).error ?? `Request failed (${res.status})`)
+        }
+
+        const data = await res.json() as { devRoot: string; projects: ProjectMetadata[] }
+        setDevRoot(data.devRoot)
+        setProjects(data.projects)
       } catch (err) {
-        setError(err instanceof Error ? err.message : "Failed to load projects")
+        setError(err instanceof Error ? err.message : "Failed to switch project root")
       } finally {
         setLoading(false)
       }
     },
-    [loadProjects],
+    [],
   )
 
   const [newProjectOpen, setNewProjectOpen] = useState(false)
+  const [changeRootOpen, setChangeRootOpen] = useState(false)
   const workspaceState = useGSDWorkspaceState()
 
   const handleProjectCreated = useCallback(
@@ -430,7 +443,7 @@ export function ProjectsPanel({
           onClick={() => setNewProjectOpen(true)}
           className={cn(
             "flex w-full items-center gap-3.5 rounded-xl border border-dashed px-4 py-3.5 text-left transition-all duration-200",
-            "border-border/40 text-muted-foreground hover:border-foreground/15 hover:text-foreground",
+            "border-border/50 text-muted-foreground hover:border-foreground/15 hover:text-foreground",
             "active:scale-[0.98]",
           )}
         >
@@ -439,7 +452,7 @@ export function ProjectsPanel({
           </div>
           <div>
             <span className="text-sm font-medium">Create new project</span>
-            <p className="mt-0.5 text-[11px] text-muted-foreground/70">Initialize a new directory with Git</p>
+            <p className="mt-0.5 text-[11px] text-muted-foreground">Initialize a new directory with Git</p>
           </div>
         </button>
 
@@ -464,15 +477,23 @@ export function ProjectsPanel({
         </SheetHeader>
 
         {/* Visible header */}
-        <div className="flex items-center justify-between border-b border-border/40 px-5 py-4">
+        <div className="flex items-center justify-between border-b border-border/50 px-5 py-4">
           <div>
             <h2 className="text-base font-semibold text-foreground">Projects</h2>
             {devRoot && !loading && (
-              <p className="mt-0.5 text-xs text-muted-foreground">
-                <code className="rounded bg-muted px-1 py-0.5 font-mono text-[10px]">{devRoot}</code>
-                <span className="ml-1.5 text-muted-foreground/50">·</span>
-                <span className="ml-1.5">{projects.length} project{projects.length !== 1 ? "s" : ""}</span>
-              </p>
+              <div className="mt-0.5 flex items-center gap-1.5 text-xs text-muted-foreground">
+                <code className="rounded bg-muted px-1 py-0.5 font-mono text-[10px] truncate max-w-[200px]">{devRoot}</code>
+                <button
+                  type="button"
+                  onClick={() => setChangeRootOpen(true)}
+                  className="shrink-0 text-[10px] text-primary hover:text-primary/80 transition-colors font-medium"
+                  data-testid="projects-panel-change-root"
+                >
+                  Change
+                </button>
+                <span className="text-muted-foreground">·</span>
+                <span>{projects.length} project{projects.length !== 1 ? "s" : ""}</span>
+              </div>
             )}
           </div>
           <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0" onClick={() => onOpenChange(false)}>
@@ -484,6 +505,14 @@ export function ProjectsPanel({
         <ScrollArea className="min-h-0 flex-1">
           <div className="px-5 py-4">{content}</div>
         </ScrollArea>
+
+        {/* Folder picker for changing dev root */}
+        <FolderPickerDialog
+          open={changeRootOpen}
+          onOpenChange={setChangeRootOpen}
+          onSelect={(path) => void handleDevRootSaved(path)}
+          initialPath={devRoot}
+        />
       </SheetContent>
     </Sheet>
   )
@@ -508,7 +537,7 @@ function ActiveProjectSummary({ workspaceState }: { workspaceState: ReturnType<t
 
   if (parts.length === 0) return null
 
-  return <div className="mt-1.5 text-[11px] text-muted-foreground/70">{parts.join(" · ")}</div>
+  return <div className="mt-1.5 text-[11px] text-muted-foreground">{parts.join(" · ")}</div>
 }
 
 // ─── New Project Dialog ────────────────────────────────────────────────
@@ -697,7 +726,7 @@ function FolderPickerDialog({
           </DialogDescription>
         </DialogHeader>
 
-        <div className="border-y border-border/40 bg-muted/30 px-5 py-2">
+        <div className="border-y border-border/50 bg-muted/50 px-5 py-2">
           <p className="font-mono text-xs text-muted-foreground truncate" title={currentPath}>
             {currentPath}
           </p>
@@ -733,7 +762,7 @@ function FolderPickerDialog({
                   >
                     <Folder className="h-4 w-4 text-muted-foreground shrink-0" />
                     <span className="text-foreground truncate flex-1">{entry.name}</span>
-                    <ChevronRight className="h-3.5 w-3.5 text-muted-foreground/40 opacity-0 group-hover:opacity-100 transition-opacity shrink-0" />
+                    <ChevronRight className="h-3.5 w-3.5 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity shrink-0" />
                   </button>
                 ))}
 
@@ -745,7 +774,7 @@ function FolderPickerDialog({
           </div>
         </ScrollArea>
 
-        <DialogFooter className="border-t border-border/40 px-5 py-3">
+        <DialogFooter className="border-t border-border/50 px-5 py-3">
           <Button variant="ghost" size="sm" onClick={() => onOpenChange(false)}>
             Cancel
           </Button>
@@ -816,7 +845,7 @@ function DevRootSetup({
     return (
       <div className="space-y-3" data-testid="devroot-settings">
         <div className="flex items-center gap-2">
-          <code className="flex-1 truncate rounded border border-border/40 bg-muted/30 px-3 py-2 font-mono text-xs text-foreground">
+          <code className="flex-1 truncate rounded border border-border/50 bg-muted/50 px-3 py-2 font-mono text-xs text-foreground">
             {currentRoot}
           </code>
           <Button
@@ -916,7 +945,7 @@ export function DevRootSettingsSection() {
     <div className="space-y-3" data-testid="settings-devroot">
       <div className="flex items-center gap-2.5">
         <FolderRoot className="h-3.5 w-3.5 text-muted-foreground" />
-        <h3 className="text-[13px] font-semibold uppercase tracking-[0.08em] text-foreground/70">
+        <h3 className="text-[13px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
           Development Root
         </h3>
       </div>
@@ -943,6 +972,7 @@ export function ProjectSelectionGate() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [newProjectOpen, setNewProjectOpen] = useState(false)
+  const [changeRootOpen, setChangeRootOpen] = useState(false)
   const [filter, setFilter] = useState("")
 
   const loadProjects = useCallback(async (root: string) => {
@@ -989,19 +1019,30 @@ export function ProjectSelectionGate() {
 
   const handleDevRootSaved = useCallback(
     async (newRoot: string) => {
-      setDevRoot(newRoot)
       setLoading(true)
       setError(null)
       try {
-        const discovered = await loadProjects(newRoot)
-        setProjects(discovered)
+        const res = await authFetch("/api/switch-root", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ devRoot: newRoot }),
+        })
+
+        if (!res.ok) {
+          const body = await res.json().catch(() => ({}))
+          throw new Error((body as { error?: string }).error ?? `Request failed (${res.status})`)
+        }
+
+        const data = await res.json() as { devRoot: string; projects: ProjectMetadata[] }
+        setDevRoot(data.devRoot)
+        setProjects(data.projects)
       } catch (err) {
-        setError(err instanceof Error ? err.message : "Failed to load projects")
+        setError(err instanceof Error ? err.message : "Failed to switch project root")
       } finally {
         setLoading(false)
       }
     },
-    [loadProjects],
+    [],
   )
 
   const handleProjectCreated = useCallback(
@@ -1120,20 +1161,36 @@ export function ProjectSelectionGate() {
             {/* ─── Project list ─── */}
             {hasProjects && (
               <div className="space-y-5">
+                {/* Dev root + change button */}
+                {devRoot && (
+                  <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                    <FolderRoot className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                    <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground truncate">{devRoot}</code>
+                    <button
+                      type="button"
+                      onClick={() => setChangeRootOpen(true)}
+                      className="shrink-0 text-[11px] text-primary hover:text-primary/80 transition-colors font-medium"
+                      data-testid="gate-change-root"
+                    >
+                      Change
+                    </button>
+                  </div>
+                )}
+
                 {/* Filter + count */}
                 <div className="flex items-center justify-between gap-4">
-                  <p className="text-xs text-muted-foreground/60 tabular-nums">
+                  <p className="text-xs text-muted-foreground tabular-nums">
                     {sortedProjects.length} project{sortedProjects.length !== 1 ? "s" : ""}
                   </p>
                   {showFilter && (
                     <div className="relative w-48">
-                      <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground/50" />
+                      <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
                       <input
                         type="text"
                         placeholder="Filter…"
                         value={filter}
                         onChange={(e) => setFilter(e.target.value)}
-                        className="h-8 w-full rounded-md border border-border bg-background pl-8 pr-3 text-xs text-foreground placeholder:text-muted-foreground/40 focus:outline-none focus:ring-1 focus:ring-ring"
+                        className="h-8 w-full rounded-md border border-border bg-background pl-8 pr-3 text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring"
                       />
                     </div>
                   )}
@@ -1175,7 +1232,7 @@ export function ProjectSelectionGate() {
                               <span>{stack.join(" · ")}</span>
                             )}
                             {stack.length > 0 && progress && (
-                              <span className="text-muted-foreground/30">—</span>
+                              <span className="text-muted-foreground/50">—</span>
                             )}
                             {progress && (
                               <span className="truncate">{progress}</span>
@@ -1192,7 +1249,7 @@ export function ProjectSelectionGate() {
                                 style={{ width: `${pct}%` }}
                               />
                             </div>
-                            <span className="text-[10px] tabular-nums text-muted-foreground/50 w-6 text-right">
+                            <span className="text-[10px] tabular-nums text-muted-foreground w-6 text-right">
                               {project.progress!.milestonesCompleted}/{project.progress!.milestonesTotal}
                             </span>
                           </div>
@@ -1200,13 +1257,13 @@ export function ProjectSelectionGate() {
 
                         {/* Modified time */}
                         {project.lastModified > 0 && (
-                          <span className="hidden lg:inline text-[10px] text-muted-foreground/40 shrink-0 w-16 text-right tabular-nums">
+                          <span className="hidden lg:inline text-[10px] text-muted-foreground shrink-0 w-16 text-right tabular-nums">
                             {relativeTime(project.lastModified)}
                           </span>
                         )}
 
                         {/* Arrow */}
-                        <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground/20 transition-colors group-hover:text-muted-foreground/60" />
+                        <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground/50 transition-colors group-hover:text-muted-foreground" />
                       </button>
                     )
                   })}
@@ -1240,8 +1297,31 @@ export function ProjectSelectionGate() {
                 )}
               </div>
             )}
+
+            {/* Change root for "no projects" and "no devRoot" states */}
+            {devRoot && !loading && sortedProjects.length === 0 && !error && (
+              <div className="mt-4">
+                <button
+                  type="button"
+                  onClick={() => setChangeRootOpen(true)}
+                  className="flex items-center gap-2 text-xs text-primary hover:text-primary/80 transition-colors font-medium"
+                  data-testid="gate-change-root-empty"
+                >
+                  <FolderOpen className="h-3.5 w-3.5" />
+                  Change project root
+                </button>
+              </div>
+            )}
         </div>
       </div>
+
+      {/* Folder picker for changing dev root */}
+      <FolderPickerDialog
+        open={changeRootOpen}
+        onOpenChange={setChangeRootOpen}
+        onSelect={(path) => void handleDevRootSaved(path)}
+        initialPath={devRoot}
+      />
     </div>
   )
 }

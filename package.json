@@ -1,6 +1,6 @@
 {
   "name": "gsd-pi",
-  "version": "2.42.0",
+  "version": "2.51.0",
   "description": "GSD — Get Shit Done coding agent",
   "license": "MIT",
   "repository": {
@@ -53,10 +53,12 @@
     "copy-resources": "node scripts/copy-resources.cjs",
     "copy-themes": "node scripts/copy-themes.cjs",
     "copy-export-html": "node scripts/copy-export-html.cjs",
-    "test:unit": "node --import ./src/resources/extensions/gsd/tests/resolve-ts.mjs --experimental-strip-types --test src/resources/extensions/gsd/tests/*.test.ts src/resources/extensions/gsd/tests/*.test.mjs src/tests/*.test.ts",
+    "test:unit": "node --import ./src/resources/extensions/gsd/tests/resolve-ts.mjs --experimental-strip-types --experimental-test-isolation=process --test src/resources/extensions/gsd/tests/*.test.ts src/resources/extensions/gsd/tests/*.test.mjs src/tests/*.test.ts",
+    "test:packages": "node --test packages/pi-coding-agent/dist/core/*.test.js",
     "test:marketplace": "GSD_TEST_CLONE_MARKETPLACES=1 node --import ./src/resources/extensions/gsd/tests/resolve-ts.mjs --experimental-strip-types --test src/resources/extensions/gsd/tests/claude-import-tui.test.ts src/resources/extensions/gsd/tests/plugin-importer-live.test.ts src/tests/marketplace-discovery.test.ts",
-    "test:coverage": "c8 --reporter=text --reporter=lcov --exclude='src/resources/extensions/gsd/tests/**' --exclude='src/tests/**' --exclude='scripts/**' --exclude='native/**' --exclude='node_modules/**' --check-coverage --statements=50 --lines=50 --branches=20 --functions=20 node --import ./src/resources/extensions/gsd/tests/resolve-ts.mjs --experimental-strip-types --test src/resources/extensions/gsd/tests/*.test.ts src/resources/extensions/gsd/tests/*.test.mjs src/tests/*.test.ts",
-    "test:integration": "node --import ./src/resources/extensions/gsd/tests/resolve-ts.mjs --experimental-strip-types --test src/resources/extensions/gsd/tests/*integration*.test.ts src/tests/integration/*.test.ts",
+    "test:coverage": "c8 --reporter=text --reporter=lcov --exclude='src/resources/extensions/gsd/tests/**' --exclude='src/tests/**' --exclude='scripts/**' --exclude='native/**' --exclude='node_modules/**' --check-coverage --statements=50 --lines=50 --branches=20 --functions=20 node --import ./src/resources/extensions/gsd/tests/resolve-ts.mjs --experimental-strip-types --experimental-test-isolation=process --test src/resources/extensions/gsd/tests/*.test.ts src/resources/extensions/gsd/tests/*.test.mjs src/tests/*.test.ts",
+    "test:integration": "node --import ./src/resources/extensions/gsd/tests/resolve-ts.mjs --experimental-strip-types --experimental-test-isolation=process --test src/resources/extensions/gsd/tests/*integration*.test.ts src/tests/integration/*.test.ts",
+    "pretest": "npm run typecheck:extensions",
     "test": "npm run test:unit && npm run test:integration",
     "test:smoke": "node --experimental-strip-types tests/smoke/run.ts",
     "test:fixtures": "node --experimental-strip-types tests/fixtures/run.ts",
@@ -138,6 +140,7 @@
     "typescript": "^5.4.0"
   },
   "optionalDependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.2.83",
     "@gsd-build/engine-darwin-arm64": ">=2.10.2",
     "@gsd-build/engine-darwin-x64": ">=2.10.2",
     "@gsd-build/engine-linux-arm64-gnu": ">=2.10.2",

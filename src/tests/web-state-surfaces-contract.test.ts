@@ -26,90 +26,86 @@ function makeGsdFixture(): { root: string; gsdDir: string; cleanup: () => void }
 }
 
 // ─── Group 1: Workspace index — risk/depends/demo fields ─────────────
-test("indexWorkspace extracts risk, depends, and demo from roadmap", async () => {
+test("indexWorkspace extracts risk, depends, and demo from roadmap", async (t) => {
   const { root, gsdDir, cleanup } = makeGsdFixture();
 
-  try {
-    const milestoneDir = join(gsdDir, "milestones", "M001");
-    const sliceDir = join(milestoneDir, "slices", "S01");
-    const tasksDir = join(sliceDir, "tasks");
-    mkdirSync(tasksDir, { recursive: true });
+  t.after(() => { cleanup(); });
 
-    writeFileSync(
-      join(milestoneDir, "M001-ROADMAP.md"),
-      [
-        "# M001: Test Milestone",
-        "",
-        "## Slices",
-        "- [ ] **S01: Feature slice** `risk:high` `depends:[S00]`",
-        "  > After this: users can see the dashboard",
-      ].join("\n"),
-    );
+  const milestoneDir = join(gsdDir, "milestones", "M001");
+  const sliceDir = join(milestoneDir, "slices", "S01");
+  const tasksDir = join(sliceDir, "tasks");
+  mkdirSync(tasksDir, { recursive: true });
 
-    writeFileSync(
-      join(sliceDir, "S01-PLAN.md"),
-      [
-        "# S01: Feature slice",
-        "",
-        "**Goal:** Build the feature",
-        "**Demo:** Dashboard renders",
-        "",
-        "## Tasks",
-        "- [ ] **T01: Build thing** `est:30m`",
-        "  Do the work.",
-      ].join("\n"),
-    );
+  writeFileSync(
+    join(milestoneDir, "M001-ROADMAP.md"),
+    [
+      "# M001: Test Milestone",
+      "",
+      "## Slices",
+      "- [ ] **S01: Feature slice** `risk:high` `depends:[S00]`",
+      "  > After this: users can see the dashboard",
+    ].join("\n"),
+  );
 
-    writeFileSync(join(tasksDir, "T01-PLAN.md"), "# T01: Build thing\n\n## Steps\n- do it\n");
+  writeFileSync(
+    join(sliceDir, "S01-PLAN.md"),
+    [
+      "# S01: Feature slice",
+      "",
+      "**Goal:** Build the feature",
+      "**Demo:** Dashboard renders",
+      "",
+      "## Tasks",
+      "- [ ] **T01: Build thing** `est:30m`",
+      "  Do the work.",
+    ].join("\n"),
+  );
 
-    const index = await workspaceIndex.indexWorkspace(root);
+  writeFileSync(join(tasksDir, "T01-PLAN.md"), "# T01: Build thing\n\n## Steps\n- do it\n");
 
-    assert.equal(index.milestones.length, 1);
-    assert.equal(index.milestones[0].id, "M001");
+  const index = await workspaceIndex.indexWorkspace(root);
 
-    const slice = index.milestones[0].slices[0];
-    assert.equal(slice.id, "S01");
-    assert.equal(slice.risk, "high");
-    assert.deepEqual(slice.depends, ["S00"]);
-    assert.equal(slice.demo, "users can see the dashboard");
-    assert.equal(slice.done, false);
-    assert.equal(slice.tasks.length, 1);
-    assert.equal(slice.tasks[0].id, "T01");
-    assert.equal(slice.tasks[0].done, false);
-  } finally {
-    cleanup();
-  }
+  assert.equal(index.milestones.length, 1);
+  assert.equal(index.milestones[0].id, "M001");
+
+  const slice = index.milestones[0].slices[0];
+  assert.equal(slice.id, "S01");
+  assert.equal(slice.risk, "high");
+  assert.deepEqual(slice.depends, ["S00"]);
+  assert.equal(slice.demo, "users can see the dashboard");
+  assert.equal(slice.done, false);
+  assert.equal(slice.tasks.length, 1);
+  assert.equal(slice.tasks[0].id, "T01");
+  assert.equal(slice.tasks[0].done, false);
 });
 
-test("indexWorkspace handles slices without risk/depends/demo", async () => {
+test("indexWorkspace handles slices without risk/depends/demo", async (t) => {
   const { root, gsdDir, cleanup } = makeGsdFixture();
 
-  try {
-    const milestoneDir = join(gsdDir, "milestones", "M001");
-    const sliceDir = join(milestoneDir, "slices", "S01");
-    mkdirSync(join(sliceDir, "tasks"), { recursive: true });
+  t.after(() => { cleanup(); });
 
-    writeFileSync(
-      join(milestoneDir, "M001-ROADMAP.md"),
-      "# M001: Minimal\n\n## Slices\n- [x] **S01: Done slice**\n",
-    );
+  const milestoneDir = join(gsdDir, "milestones", "M001");
+  const sliceDir = join(milestoneDir, "slices", "S01");
+  mkdirSync(join(sliceDir, "tasks"), { recursive: true });
 
-    writeFileSync(
-      join(sliceDir, "S01-PLAN.md"),
-      "# S01: Done slice\n\n**Goal:** Done\n\n## Tasks\n",
-    );
+  writeFileSync(
+    join(milestoneDir, "M001-ROADMAP.md"),
+    "# M001: Minimal\n\n## Slices\n- [x] **S01: Done slice**\n",
+  );
 
-    const index = await workspaceIndex.indexWorkspace(root);
+  writeFileSync(
+    join(sliceDir, "S01-PLAN.md"),
+    "# S01: Done slice\n\n**Goal:** Done\n\n## Tasks\n",
+  );
 
-    const slice = index.milestones[0].slices[0];
-    // Parser defaults risk to "low" when not specified, demo to "" when no blockquote
-    assert.equal(slice.risk, "low");
-    assert.deepEqual(slice.depends, []);
-    assert.equal(slice.demo, "");
-    assert.equal(slice.done, true);
-  } finally {
-    cleanup();
-  }
+  const index = await workspaceIndex.indexWorkspace(root);
+
+  const slice = index.milestones[0].slices[0];
+  // Parser defaults risk to "low" when not specified, demo to "" when no blockquote
+  assert.equal(slice.risk, "low");
+  assert.deepEqual(slice.depends, []);
+  assert.equal(slice.demo, "");
+  assert.equal(slice.done, true);
 });
 
 // ─── Group 2: Shared status helpers ──────────────────────────────────
@@ -195,174 +191,174 @@ test("getTaskStatus returns correct statuses", () => {
 });
 
 // ─── Group 3: Files API — tree listing ───────────────────────────────
-test("files API returns tree listing of .gsd/ directory", async () => {
+test("files API returns tree listing of .gsd/ directory", async (t) => {
   const { root, gsdDir, cleanup } = makeGsdFixture();
   const origEnv = process.env.GSD_WEB_PROJECT_CWD;
 
-  try {
-    process.env.GSD_WEB_PROJECT_CWD = root;
-
-    // Create some files
-    writeFileSync(join(gsdDir, "STATE.md"), "# State\nactive");
-    writeFileSync(join(gsdDir, "PROJECT.md"), "# Project");
-    const msDir = join(gsdDir, "milestones", "M001");
-    mkdirSync(msDir, { recursive: true });
-    writeFileSync(join(msDir, "M001-ROADMAP.md"), "# Roadmap");
-
-    const request = new Request("http://localhost:3000/api/files");
-    const response = await filesRoute.GET(request);
-    assert.equal(response.status, 200);
-
-    const data = await response.json();
-    assert.ok(Array.isArray(data.tree));
-    assert.ok(data.tree.length > 0);
-
-    // Should have files at root level
-    const names = data.tree.map((n: { name: string }) => n.name);
-    assert.ok(names.includes("STATE.md"), `Expected STATE.md in tree, got: ${names}`);
-    assert.ok(names.includes("PROJECT.md"), `Expected PROJECT.md in tree, got: ${names}`);
-    assert.ok(names.includes("milestones"), `Expected milestones in tree, got: ${names}`);
-
-    // milestones should be a directory with children
-    const milestones = data.tree.find((n: { name: string }) => n.name === "milestones");
-    assert.equal(milestones.type, "directory");
-    assert.ok(Array.isArray(milestones.children));
-    assert.ok(milestones.children.length > 0);
-  } finally {
+  t.after(() => {
     process.env.GSD_WEB_PROJECT_CWD = origEnv;
     cleanup();
-  }
+  });
+
+  process.env.GSD_WEB_PROJECT_CWD = root;
+
+  // Create some files
+  writeFileSync(join(gsdDir, "STATE.md"), "# State\nactive");
+  writeFileSync(join(gsdDir, "PROJECT.md"), "# Project");
+  const msDir = join(gsdDir, "milestones", "M001");
+  mkdirSync(msDir, { recursive: true });
+  writeFileSync(join(msDir, "M001-ROADMAP.md"), "# Roadmap");
+
+  const request = new Request("http://localhost:3000/api/files");
+  const response = await filesRoute.GET(request);
+  assert.equal(response.status, 200);
+
+  const data = await response.json();
+  assert.ok(Array.isArray(data.tree));
+  assert.ok(data.tree.length > 0);
+
+  // Should have files at root level
+  const names = data.tree.map((n: { name: string }) => n.name);
+  assert.ok(names.includes("STATE.md"), `Expected STATE.md in tree, got: ${names}`);
+  assert.ok(names.includes("PROJECT.md"), `Expected PROJECT.md in tree, got: ${names}`);
+  assert.ok(names.includes("milestones"), `Expected milestones in tree, got: ${names}`);
+
+  // milestones should be a directory with children
+  const milestones = data.tree.find((n: { name: string }) => n.name === "milestones");
+  assert.equal(milestones.type, "directory");
+  assert.ok(Array.isArray(milestones.children));
+  assert.ok(milestones.children.length > 0);
 });
 
 // ─── Group 4: Files API — file content ───────────────────────────────
-test("files API returns file content for valid path", async () => {
+test("files API returns file content for valid path", async (t) => {
   const { root, gsdDir, cleanup } = makeGsdFixture();
   const origEnv = process.env.GSD_WEB_PROJECT_CWD;
 
-  try {
-    process.env.GSD_WEB_PROJECT_CWD = root;
-
-    const fileContent = "# State\n\nCurrent milestone: M001";
-    writeFileSync(join(gsdDir, "STATE.md"), fileContent);
-
-    const request = new Request("http://localhost:3000/api/files?path=STATE.md");
-    const response = await filesRoute.GET(request);
-    assert.equal(response.status, 200);
-
-    const data = await response.json();
-    assert.equal(data.content, fileContent);
-  } finally {
+  t.after(() => {
     process.env.GSD_WEB_PROJECT_CWD = origEnv;
     cleanup();
-  }
+  });
+
+  process.env.GSD_WEB_PROJECT_CWD = root;
+
+  const fileContent = "# State\n\nCurrent milestone: M001";
+  writeFileSync(join(gsdDir, "STATE.md"), fileContent);
+
+  const request = new Request("http://localhost:3000/api/files?path=STATE.md");
+  const response = await filesRoute.GET(request);
+  assert.equal(response.status, 200);
+
+  const data = await response.json();
+  assert.equal(data.content, fileContent);
 });
 
-test("files API returns content for nested files", async () => {
+test("files API returns content for nested files", async (t) => {
   const { root, gsdDir, cleanup } = makeGsdFixture();
   const origEnv = process.env.GSD_WEB_PROJECT_CWD;
 
-  try {
-    process.env.GSD_WEB_PROJECT_CWD = root;
-
-    const msDir = join(gsdDir, "milestones", "M001");
-    mkdirSync(msDir, { recursive: true });
-    writeFileSync(join(msDir, "M001-ROADMAP.md"), "# Roadmap content");
-
-    const request = new Request(
-      "http://localhost:3000/api/files?path=milestones/M001/M001-ROADMAP.md",
-    );
-    const response = await filesRoute.GET(request);
-    assert.equal(response.status, 200);
-
-    const data = await response.json();
-    assert.equal(data.content, "# Roadmap content");
-  } finally {
+  t.after(() => {
     process.env.GSD_WEB_PROJECT_CWD = origEnv;
     cleanup();
-  }
+  });
+
+  process.env.GSD_WEB_PROJECT_CWD = root;
+
+  const msDir = join(gsdDir, "milestones", "M001");
+  mkdirSync(msDir, { recursive: true });
+  writeFileSync(join(msDir, "M001-ROADMAP.md"), "# Roadmap content");
+
+  const request = new Request(
+    "http://localhost:3000/api/files?path=milestones/M001/M001-ROADMAP.md",
+  );
+  const response = await filesRoute.GET(request);
+  assert.equal(response.status, 200);
+
+  const data = await response.json();
+  assert.equal(data.content, "# Roadmap content");
 });
 
 // ─── Group 5: Files API — security: path traversal rejection ─────────
-test("files API rejects path traversal with ../", async () => {
+test("files API rejects path traversal with ../", async (t) => {
   const { root, cleanup } = makeGsdFixture();
   const origEnv = process.env.GSD_WEB_PROJECT_CWD;
 
-  try {
-    process.env.GSD_WEB_PROJECT_CWD = root;
-
-    const request = new Request(
-      "http://localhost:3000/api/files?path=../etc/passwd",
-    );
-    const response = await filesRoute.GET(request);
-    assert.equal(response.status, 400);
-
-    const data = await response.json();
-    assert.ok(data.error, "Expected error message in response");
-  } finally {
+  t.after(() => {
     process.env.GSD_WEB_PROJECT_CWD = origEnv;
     cleanup();
-  }
+  });
+
+  process.env.GSD_WEB_PROJECT_CWD = root;
+
+  const request = new Request(
+    "http://localhost:3000/api/files?path=../etc/passwd",
+  );
+  const response = await filesRoute.GET(request);
+  assert.equal(response.status, 400);
+
+  const data = await response.json();
+  assert.ok(data.error, "Expected error message in response");
 });
 
-test("files API rejects absolute paths", async () => {
+test("files API rejects absolute paths", async (t) => {
   const { root, cleanup } = makeGsdFixture();
   const origEnv = process.env.GSD_WEB_PROJECT_CWD;
 
-  try {
-    process.env.GSD_WEB_PROJECT_CWD = root;
-
-    const request = new Request(
-      "http://localhost:3000/api/files?path=/etc/passwd",
-    );
-    const response = await filesRoute.GET(request);
-    assert.equal(response.status, 400);
-
-    const data = await response.json();
-    assert.ok(data.error);
-  } finally {
+  t.after(() => {
     process.env.GSD_WEB_PROJECT_CWD = origEnv;
     cleanup();
-  }
+  });
+
+  process.env.GSD_WEB_PROJECT_CWD = root;
+
+  const request = new Request(
+    "http://localhost:3000/api/files?path=/etc/passwd",
+  );
+  const response = await filesRoute.GET(request);
+  assert.equal(response.status, 400);
+
+  const data = await response.json();
+  assert.ok(data.error);
 });
 
-test("files API returns 404 for missing files", async () => {
+test("files API returns 404 for missing files", async (t) => {
   const { root, cleanup } = makeGsdFixture();
   const origEnv = process.env.GSD_WEB_PROJECT_CWD;
 
-  try {
-    process.env.GSD_WEB_PROJECT_CWD = root;
-
-    const request = new Request(
-      "http://localhost:3000/api/files?path=nonexistent.md",
-    );
-    const response = await filesRoute.GET(request);
-    assert.equal(response.status, 404);
-
-    const data = await response.json();
-    assert.ok(data.error);
-  } finally {
+  t.after(() => {
     process.env.GSD_WEB_PROJECT_CWD = origEnv;
     cleanup();
-  }
+  });
+
+  process.env.GSD_WEB_PROJECT_CWD = root;
+
+  const request = new Request(
+    "http://localhost:3000/api/files?path=nonexistent.md",
+  );
+  const response = await filesRoute.GET(request);
+  assert.equal(response.status, 404);
+
+  const data = await response.json();
+  assert.ok(data.error);
 });
 
-test("files API returns empty tree when .gsd/ does not exist", async () => {
+test("files API returns empty tree when .gsd/ does not exist", async (t) => {
   const root = mkdtempSync(join(tmpdir(), "gsd-state-surfaces-empty-"));
   const origEnv = process.env.GSD_WEB_PROJECT_CWD;
 
-  try {
-    process.env.GSD_WEB_PROJECT_CWD = root;
-
-    const request = new Request("http://localhost:3000/api/files");
-    const response = await filesRoute.GET(request);
-    assert.equal(response.status, 200);
-
-    const data = await response.json();
-    assert.deepEqual(data.tree, []);
-  } finally {
+  t.after(() => {
     process.env.GSD_WEB_PROJECT_CWD = origEnv;
     rmSync(root, { recursive: true, force: true });
-  }
+  });
+
+  process.env.GSD_WEB_PROJECT_CWD = root;
+
+  const request = new Request("http://localhost:3000/api/files");
+  const response = await filesRoute.GET(request);
+  assert.equal(response.status, 200);
+
+  const data = await response.json();
+  assert.deepEqual(data.tree, []);
 });
 
 // ─── Group 6: Mock-free invariant — no static mock data ──────────────

@@ -1,0 +1,181 @@
+---
+title: "Auto mode"
+description: "GSD's autonomous execution engine — run /gsd auto, walk away, come back to built software with clean git history."
+---
+
+Auto mode is a **state machine driven by files on disk**. It reads `.gsd/STATE.md`, determines the next unit of work, creates a fresh agent session with pre-loaded context, and lets the LLM execute. When the LLM finishes, auto mode reads disk state again and dispatches the next unit.
+
+## The loop
+
+```
+Plan → Execute (per task) → Complete → Reassess Roadmap → Next Slice
+                                                            ↓ (all slices done)
+                                                    Validate → Complete Milestone
+```
+
+- **Plan** — scouts the codebase, researches docs, decomposes the slice into tasks
+- **Execute** — runs each task in a fresh context window
+- **Complete** — writes summary, UAT script, marks roadmap, commits
+- **Reassess** — checks if the roadmap still makes sense
+- **Validate** — reconciliation gate after all slices; catches gaps before sealing the milestone
+
+## Key properties
+
+### Fresh session per unit
+
+Every task, research phase, and planning step gets a clean context window. The dispatch prompt includes everything needed — task plans, prior summaries, dependency context, decisions register — so the LLM starts oriented.
+
+### Context pre-loading
+
+| Inlined artifact | Purpose |
+|------------------|---------|
+| Task plan | What to build |
+| Slice plan | Where this task fits |
+| Prior task summaries | What's already done |
+| Dependency summaries | Cross-slice context |
+| Roadmap excerpt | Overall direction |
+| Decisions register | Architectural context |
+
+The amount of context inlined is controlled by your [token profile](/guides/token-optimization). Budget mode inlines minimal context; quality mode inlines everything.
+
+### Git isolation
+
+GSD isolates milestone work using one of three modes (configured via `git.isolation` in preferences):
+
+- **`none`** (default) — work happens on your current branch. No isolation overhead.
+- **`worktree`** — each milestone runs in its own git worktree. Squash-merged to main on completion.
+- **`branch`** — work happens on a `milestone/<MID>` branch in the project root. Useful for submodule-heavy repos.
+
+See [git strategy](/guides/git-strategy) for details.
+
+### Crash recovery
+
+A lock file tracks the current unit. If the session dies, the next `/gsd auto` synthesizes a recovery briefing from tool calls that made it to disk and resumes with full context.
+
+**Headless auto-restart:** When running `gsd headless auto`, crashes trigger automatic restart with exponential backoff (5s → 10s → 30s cap, default 3 attempts). Combined with crash recovery, this enables overnight "run until done" execution.
+
+### Provider error recovery
+
+| Error type | Examples | Action |
+|-----------|----------|--------|
+| Rate limit | 429, "too many requests" | Auto-resume after retry-after header or 60s |
+| Server error | 500, 502, 503, "overloaded" | Auto-resume after 30s |
+| Permanent | "unauthorized", "invalid key" | Pause indefinitely (requires manual resume) |
+
+### Stuck detection
+
+A sliding-window analysis detects stuck loops — catching cycles like A→B→A→B as well as single-unit repeats. On detection, GSD retries once with a diagnostic prompt. If it fails again, auto mode stops with the exact file it expected.
+
+### Timeout supervision
+
+| Timeout | Default | Behavior |
+|---------|---------|----------|
+| Soft | 20 min | Warns the LLM to wrap up |
+| Idle | 10 min | Detects stalls, intervenes |
+| Hard | 30 min | Pauses auto mode |
+
+Configure in preferences:
+
+```yaml
+auto_supervisor:
+  soft_timeout_minutes: 20
+  idle_timeout_minutes: 10
+  hard_timeout_minutes: 30
+```
+
+### Incremental memory
+
+GSD maintains a `KNOWLEDGE.md` file — an append-only register of project-specific rules, patterns, and lessons learned. The agent reads it at the start of every unit and appends when discovering recurring issues or non-obvious patterns.
+
+### Verification enforcement
+
+```yaml
+verification_commands:
+  - npm run lint
+  - npm run test
+verification_auto_fix: true
+verification_max_retries: 2
+```
+
+Failures trigger auto-fix retries — the agent sees the output and attempts to fix issues before advancing.
+
+### HTML reports
+
+After milestone completion, GSD auto-generates a self-contained HTML report with progress tree, dependency graph, cost/token metrics, execution timeline, and changelog.
+
+```yaml
+auto_report: true    # enabled by default
+```
+
+Generate manually with `/gsd export --html`, or for all milestones with `/gsd export --html --all`.
+
+### Reactive task execution
+
+When `reactive_execution: true` is set, GSD derives a dependency graph from IO annotations in task plans. Tasks that don't conflict are dispatched in parallel via subagents.
+
+```yaml
+reactive_execution: true    # disabled by default
+```
+
+## Controlling auto mode
+
+<Steps>
+  <Step title="Start">
+    ```
+    /gsd auto
+    ```
+  </Step>
+  <Step title="Pause">
+    Press **Escape**. The conversation is preserved. You can interact with the agent, inspect state, or resume.
+  </Step>
+  <Step title="Resume">
+    ```
+    /gsd auto
+    ```
+    Auto mode reads disk state and picks up where it left off.
+  </Step>
+  <Step title="Stop">
+    ```
+    /gsd stop
+    ```
+    Stops auto mode gracefully. Can be run from a different terminal.
+  </Step>
+</Steps>
+
+### Steer during execution
+
+```
+/gsd steer
+```
+
+Hard-steer plan documents without stopping the pipeline. Changes are picked up at the next phase boundary.
+
+### Capture thoughts
+
+```
+/gsd capture "add rate limiting to API endpoints"
+```
+
+Fire-and-forget thought capture. Triaged automatically between tasks. See [captures and triage](/guides/captures-triage).
+
+## Dashboard
+
+`Ctrl+Alt+G` or `/gsd status` shows real-time progress:
+
+- Current milestone, slice, and task
+- Auto mode elapsed time and phase
+- Per-unit cost and token breakdown
+- Cost projections
+- Pending capture count
+
+## Phase skipping
+
+Token profiles can skip phases to reduce cost:
+
+| Phase | `budget` | `balanced` | `quality` |
+|-------|----------|------------|-----------|
+| Milestone research | Skipped | Runs | Runs |
+| Slice research | Skipped | Skipped | Runs |
+| Reassess roadmap | Skipped | Runs | Runs |
+
+See [token optimization](/guides/token-optimization) for details.

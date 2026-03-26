@@ -326,12 +326,17 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		transport: settingsManager.getTransport(),
 		thinkingBudgets: settingsManager.getThinkingBudgets(),
 		maxRetryDelayMs: settingsManager.getRetrySettings().maxDelayMs,
+		externalToolExecution: (m) => modelRegistry.getProviderAuthMode(m.provider) === "externalCli",
 		getApiKey: async (provider) => {
 			// Use the provider argument from the in-flight request;
 			// agent.state.model may already be switched mid-turn.
 			const resolvedProvider = provider || agent.state.model?.provider;
 			if (!resolvedProvider) {
 				throw new Error("No model selected");
+			}
+			const authMode = modelRegistry.getProviderAuthMode(resolvedProvider);
+			if (authMode === "externalCli" || authMode === "none") {
+				return undefined;
 			}
 
 			// Retry key resolution with backoff to handle transient network failures

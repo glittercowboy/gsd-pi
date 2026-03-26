@@ -162,7 +162,7 @@ describe("continue-here", () => {
   });
 
   describe("continueHereFired runtime record field", () => {
-    it("AutoUnitRuntimeRecord includes continueHereFired with default false", async () => {
+    it("AutoUnitRuntimeRecord includes continueHereFired with default false", async (t) => {
       // Import writeUnitRuntimeRecord to verify the field is present and defaults
       const { writeUnitRuntimeRecord, readUnitRuntimeRecord, clearUnitRuntimeRecord } = await import("../unit-runtime.js");
       const fs = await import("node:fs");
@@ -171,87 +171,83 @@ describe("continue-here", () => {
 
       // Use a temp directory as basePath
       const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "continue-here-test-"));
-      try {
-        const record = writeUnitRuntimeRecord(tmpDir, "execute-task", "M007/S02/T02", Date.now(), {
-          phase: "dispatched",
-          wrapupWarningSent: false,
-        });
+      t.after(() => fs.rmSync(tmpDir, { recursive: true, force: true }));
 
-        assert.equal(record.continueHereFired, false, "default continueHereFired should be false");
+      const record = writeUnitRuntimeRecord(tmpDir, "execute-task", "M007/S02/T02", Date.now(), {
+        phase: "dispatched",
+        wrapupWarningSent: false,
+      });
 
-        // Verify it persists to disk
-        const read = readUnitRuntimeRecord(tmpDir, "execute-task", "M007/S02/T02");
-        assert.ok(read, "record should be readable");
-        assert.equal(read!.continueHereFired, false);
+      assert.equal(record.continueHereFired, false, "default continueHereFired should be false");
 
-        // Update to true
-        const updated = writeUnitRuntimeRecord(tmpDir, "execute-task", "M007/S02/T02", Date.now(), {
-          continueHereFired: true,
-        });
-        assert.equal(updated.continueHereFired, true, "updated continueHereFired should be true");
+      // Verify it persists to disk
+      const read = readUnitRuntimeRecord(tmpDir, "execute-task", "M007/S02/T02");
+      assert.ok(read, "record should be readable");
+      assert.equal(read!.continueHereFired, false);
 
-        // Verify persistence
-        const readUpdated = readUnitRuntimeRecord(tmpDir, "execute-task", "M007/S02/T02");
-        assert.equal(readUpdated!.continueHereFired, true, "persisted continueHereFired should be true");
+      // Update to true
+      const updated = writeUnitRuntimeRecord(tmpDir, "execute-task", "M007/S02/T02", Date.now(), {
+        continueHereFired: true,
+      });
+      assert.equal(updated.continueHereFired, true, "updated continueHereFired should be true");
 
-        // Clean up
-        clearUnitRuntimeRecord(tmpDir, "execute-task", "M007/S02/T02");
-      } finally {
-        fs.rmSync(tmpDir, { recursive: true, force: true });
-      }
+      // Verify persistence
+      const readUpdated = readUnitRuntimeRecord(tmpDir, "execute-task", "M007/S02/T02");
+      assert.equal(readUpdated!.continueHereFired, true, "persisted continueHereFired should be true");
+
+      // Clean up
+      clearUnitRuntimeRecord(tmpDir, "execute-task", "M007/S02/T02");
     });
   });
 
   describe("context-pressure monitor integration", () => {
-    it("should fire wrap-up when context >= threshold and mark continueHereFired", async () => {
+    it("should fire wrap-up when context >= threshold and mark continueHereFired", async (t) => {
       const { writeUnitRuntimeRecord, readUnitRuntimeRecord, clearUnitRuntimeRecord } = await import("../unit-runtime.js");
       const fs = await import("node:fs");
       const path = await import("node:path");
       const os = await import("node:os");
 
       const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "continue-here-monitor-"));
-      try {
-        // Simulate the monitor's one-shot logic:
-        // 1. Write initial runtime record (continueHereFired=false)
-        const startedAt = Date.now();
-        writeUnitRuntimeRecord(tmpDir, "execute-task", "M001/S01/T01", startedAt, {
-          phase: "dispatched",
-          wrapupWarningSent: false,
-        });
+      t.after(() => fs.rmSync(tmpDir, { recursive: true, force: true }));
 
-        const budget = computeBudgets(128_000);
-        const threshold = budget.continueThresholdPercent;
+      // Simulate the monitor's one-shot logic:
+      // 1. Write initial runtime record (continueHereFired=false)
+      const startedAt = Date.now();
+      writeUnitRuntimeRecord(tmpDir, "execute-task", "M001/S01/T01", startedAt, {
+        phase: "dispatched",
+        wrapupWarningSent: false,
+      });
 
-        // Simulate the monitor poll: context at 75% (above threshold)
-        const contextPercent = 75;
-        const runtime = readUnitRuntimeRecord(tmpDir, "execute-task", "M001/S01/T01");
-        assert.ok(runtime, "runtime record should exist");
-        assert.equal(runtime!.continueHereFired, false, "initially false");
+      const budget = computeBudgets(128_000);
+      const threshold = budget.continueThresholdPercent;
 
-        // Check: should fire
-        const shouldFire = !runtime!.continueHereFired
-          && contextPercent >= threshold;
-        assert.ok(shouldFire, "should fire when context >= threshold and not yet fired");
+      // Simulate the monitor poll: context at 75% (above threshold)
+      const contextPercent = 75;
+      const runtime = readUnitRuntimeRecord(tmpDir, "execute-task", "M001/S01/T01");
+      assert.ok(runtime, "runtime record should exist");
+      assert.equal(runtime!.continueHereFired, false, "initially false");
 
-        // Mark as fired (what the monitor does)
-        writeUnitRuntimeRecord(tmpDir, "execute-task", "M001/S01/T01", startedAt, {
-          continueHereFired: true,
-        });
+      // Check: should fire
+      const shouldFire = !runtime!.continueHereFired
+        && contextPercent >= threshold;
+      assert.ok(shouldFire, "should fire when context >= threshold and not yet fired");
 
-        // Verify one-shot: second poll should NOT fire
-        const runtime2 = readUnitRuntimeRecord(tmpDir, "execute-task", "M001/S01/T01");
-        assert.ok(runtime2, "runtime record should still exist");
-        assert.equal(runtime2!.continueHereFired, true, "should be marked as fired");
+      // Mark as fired (what the monitor does)
+      writeUnitRuntimeRecord(tmpDir, "execute-task", "M001/S01/T01", startedAt, {
+        continueHereFired: true,
+      });
 
-        const shouldFireAgain = !runtime2!.continueHereFired
-          && contextPercent >= threshold;
-        assert.equal(shouldFireAgain, false, "must not fire again — one-shot guard");
+      // Verify one-shot: second poll should NOT fire
+      const runtime2 = readUnitRuntimeRecord(tmpDir, "execute-task", "M001/S01/T01");
+      assert.ok(runtime2, "runtime record should still exist");
+      assert.equal(runtime2!.continueHereFired, true, "should be marked as fired");
 
-        // Clean up
-        clearUnitRuntimeRecord(tmpDir, "execute-task", "M001/S01/T01");
-      } finally {
-        fs.rmSync(tmpDir, { recursive: true, force: true });
-      }
+      const shouldFireAgain = !runtime2!.continueHereFired
+        && contextPercent >= threshold;
+      assert.equal(shouldFireAgain, false, "must not fire again — one-shot guard");
+
+      // Clean up
+      clearUnitRuntimeRecord(tmpDir, "execute-task", "M001/S01/T01");
     });
 
     it("should not fire when context is below threshold", () => {

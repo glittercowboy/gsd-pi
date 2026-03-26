@@ -82,7 +82,7 @@ export async function handleDoctor(args: string, ctx: ExtensionCommandContext, p
       scope: effectiveScope,
       includeWarnings: true,
     });
-    const actionable = unresolved.filter(issue => issue.severity === "error" || issue.code === "all_tasks_done_missing_slice_uat" || issue.code === "slice_checked_missing_uat");
+    const actionable = unresolved.filter(issue => issue.severity === "error");
     if (actionable.length === 0) {
       ctx.ui.notify("Doctor heal found nothing actionable to hand off to the LLM.", "info");
       return;

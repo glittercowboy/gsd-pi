@@ -53,7 +53,7 @@ function PanelHeader({
   return (
     <div className="flex items-center justify-between gap-3 pb-4">
       <div className="flex items-center gap-2.5">
-        <h3 className="text-[13px] font-semibold uppercase tracking-[0.08em] text-foreground/70">{title}</h3>
+        <h3 className="text-[13px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">{title}</h3>
         {status}
         {subtitle && <span className="text-[11px] text-muted-foreground">{subtitle}</span>}
       </div>
@@ -84,7 +84,7 @@ function PanelLoading({ label }: { label: string }) {
 
 function PanelEmpty({ message }: { message: string }) {
   return (
-    <div className="rounded-lg border border-border/30 bg-card/30 px-4 py-5 text-center text-xs text-muted-foreground">
+    <div className="rounded-lg border border-border/50 bg-card/50 px-4 py-5 text-center text-xs text-muted-foreground">
       {message}
     </div>
   )
@@ -97,7 +97,7 @@ function StatPill({ label, value, variant }: { label: string; value: number | st
       variant === "error" && "border-destructive/20 bg-destructive/5 text-destructive",
       variant === "warning" && "border-warning/20 bg-warning/5 text-warning",
       variant === "info" && "border-info/20 bg-info/5 text-info",
-      (!variant || variant === "default") && "border-border/40 bg-card/50 text-foreground/80",
+      (!variant || variant === "default") && "border-border/50 bg-card/50 text-foreground/80",
     )}>
       <span className="text-muted-foreground">{label}</span>
       <span className="font-medium tabular-nums">{value}</span>
@@ -181,12 +181,12 @@ const CLASSIFICATION_OPTIONS: Classification[] = ["quick-task", "inject", "defer
 function KnowledgeEntryRow({ entry }: { entry: KnowledgeEntry }) {
   const badge = knowledgeTypeBadge(entry.type)
   return (
-    <div className="group rounded-lg border border-border/30 bg-card/20 px-3 py-2.5 transition-colors hover:bg-card/40">
+    <div className="group rounded-lg border border-border/50 bg-card/50 px-3 py-2.5 transition-colors hover:bg-card/50">
       <div className="flex items-start gap-2.5">
         <KnowledgeTypeIcon type={entry.type} className="mt-0.5" />
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
-            <span className="text-xs font-medium text-foreground/90 truncate">{entry.title}</span>
+            <span className="text-xs font-medium text-foreground truncate">{entry.title}</span>
             <Badge variant="outline" className={cn("text-[10px] px-1.5 py-0 h-4 shrink-0", badge.className)}>
               {badge.label}
             </Badge>
@@ -231,7 +231,7 @@ function KnowledgeTabContent({
         ))}
       </div>
       {data.lastModified && (
-        <p className="pt-2 text-[10px] text-muted-foreground/60">
+        <p className="pt-2 text-[10px] text-muted-foreground">
           Last modified: {new Date(data.lastModified).toLocaleString()}
         </p>
       )}
@@ -255,7 +255,7 @@ function CaptureEntryRow({
   const status = captureStatusStyle(entry.status)
 
   return (
-    <div className="group rounded-lg border border-border/30 bg-card/20 px-3 py-2.5 transition-colors hover:bg-card/40">
+    <div className="group rounded-lg border border-border/50 bg-card/50 px-3 py-2.5 transition-colors hover:bg-card/50">
       <div className="flex items-start gap-2.5">
         <div className={cn(
           "mt-1 h-2 w-2 shrink-0 rounded-full",
@@ -265,24 +265,24 @@ function CaptureEntryRow({
         )} />
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2 flex-wrap">
-            <span className="text-xs text-foreground/90">{entry.text}</span>
+            <span className="text-xs text-foreground">{entry.text}</span>
             <Badge variant="outline" className={cn("text-[10px] px-1.5 py-0 h-4 shrink-0", status.className)}>
               {status.label}
             </Badge>
             {entry.classification && (
-              <Badge variant="outline" className="text-[10px] px-1.5 py-0 h-4 shrink-0 border-border/40 text-muted-foreground">
+              <Badge variant="outline" className="text-[10px] px-1.5 py-0 h-4 shrink-0 border-border/50 text-muted-foreground">
                 {classificationLabel(entry.classification)}
               </Badge>
             )}
           </div>
           {entry.timestamp && (
-            <div className="mt-1 flex items-center gap-1 text-[10px] text-muted-foreground/60">
+            <div className="mt-1 flex items-center gap-1 text-[10px] text-muted-foreground">
               <Clock className="h-2.5 w-2.5" />
               {entry.timestamp}
             </div>
           )}
           {entry.resolution && (
-            <p className="mt-1 text-[10px] text-muted-foreground/70 italic">{entry.resolution}</p>
+            <p className="mt-1 text-[10px] text-muted-foreground italic">{entry.resolution}</p>
           )}
           {entry.status === "pending" && (
             <div className="mt-2 flex flex-wrap gap-1">
@@ -294,7 +294,7 @@ function CaptureEntryRow({
                   size="sm"
                   disabled={resolvePending}
                   onClick={() => onResolve(entry.id, c)}
-                  className="h-6 gap-1 px-2 text-[10px] font-normal border-border/40 hover:bg-foreground/5"
+                  className="h-6 gap-1 px-2 text-[10px] font-normal border-border/50 hover:bg-foreground/5"
                 >
                   <ClassificationIcon classification={c} />
                   {classificationLabel(c)}
@@ -397,7 +397,7 @@ export function KnowledgeCapturesPanel({ initialTab }: KnowledgeCapturesPanelPro
   return (
     <div className="space-y-0">
       {/* Tab bar */}
-      <div className="flex items-center gap-0.5 border-b border-border/30 px-1">
+      <div className="flex items-center gap-0.5 border-b border-border/50 px-1">
         <button
           type="button"
           onClick={() => setActiveTab("knowledge")}
@@ -405,7 +405,7 @@ export function KnowledgeCapturesPanel({ initialTab }: KnowledgeCapturesPanelPro
             "flex items-center gap-1.5 px-3 py-2 text-xs font-medium transition-all border-b-2 -mb-px",
             activeTab === "knowledge"
               ? "border-foreground/60 text-foreground"
-              : "border-transparent text-muted-foreground hover:text-foreground/70",
+              : "border-transparent text-muted-foreground hover:text-muted-foreground",
           )}
         >
           <BookOpen className="h-3.5 w-3.5" />
@@ -418,7 +418,7 @@ export function KnowledgeCapturesPanel({ initialTab }: KnowledgeCapturesPanelPro
             "flex items-center gap-1.5 px-3 py-2 text-xs font-medium transition-all border-b-2 -mb-px",
             activeTab === "captures"
               ? "border-foreground/60 text-foreground"
-              : "border-transparent text-muted-foreground hover:text-foreground/70",
+              : "border-transparent text-muted-foreground hover:text-muted-foreground",
           )}
         >
           <InboxIcon className="h-3.5 w-3.5" />

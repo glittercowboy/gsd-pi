@@ -12,6 +12,8 @@
  * 8. Discard milestone that has depends_on on others
  */
 
+import { describe, test } from 'node:test';
+import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -20,16 +22,6 @@ import { deriveState, invalidateStateCache } from '../state.ts';
 import { clearPathCache } from '../paths.ts';
 import { parkMilestone, unparkMilestone, discardMilestone } from '../milestone-actions.ts';
 
-let passed = 0;
-let failed = 0;
-
-function assert(condition: boolean, message: string): void {
-  if (condition) { passed++; } else { failed++; console.error(`  FAIL: ${message}`); }
-}
-function assertEq<T>(actual: T, expected: T, message: string): void {
-  if (JSON.stringify(actual) === JSON.stringify(expected)) { passed++; }
-  else { failed++; console.error(`  FAIL: ${message} — expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`); }
-}
 
 function createFixture(): string {
   const b = mkdtempSync(join(tmpdir(), 'gsd-edge-'));
@@ -61,11 +53,10 @@ function createM(b: string, mid: string, opts?: { roadmap?: boolean; summary?: b
 function clear(): void { clearPathCache(); invalidateStateCache(); }
 function cleanup(b: string): void { rmSync(b, { recursive: true, force: true }); }
 
-async function main(): Promise<void> {
-
   // ─── EDGE 1: Discard breaks depends_on → downstream is BLOCKED ────────
-  console.log('\n=== EDGE 1: Discard breaks depends_on chain ===');
-  {
+
+describe('park-edge-cases', () => {
+test('EDGE 1: Discard breaks depends_on chain', async () => {
     const b = createFixture();
     try {
       createM(b, 'M001', { roadmap: true, summary: true }); // complete
@@ -78,17 +69,16 @@ async function main(): Promise<void> {
 
       // M003 depends on M002 which no longer exists.
       // M002 is not in completeMilestoneIds → dep is unmet → M003 stays pending
-      assertEq(s.registry.find(e => e.id === 'M003')?.status, 'pending', 'M003 stays pending after dep discarded');
-      assertEq(s.phase, 'blocked', 'system is blocked (unmet dep on deleted milestone)');
-      assert(s.blockers.length > 0, 'blockers list is not empty');
+      assert.deepStrictEqual(s.registry.find(e => e.id === 'M003')?.status, 'pending', 'M003 stays pending after dep discarded');
+      assert.deepStrictEqual(s.phase, 'blocked', 'system is blocked (unmet dep on deleted milestone)');
+      assert.ok(s.blockers.length > 0, 'blockers list is not empty');
     } finally {
       cleanup(b);
     }
-  }
+});
 
   // ─── EDGE 2: Park blocks depends_on chain ────────────────────────────
-  console.log('\n=== EDGE 2: Park blocks depends_on chain ===');
-  {
+test('EDGE 2: Park blocks depends_on chain', async () => {
     const b = createFixture();
     try {
       createM(b, 'M001', { roadmap: true, summary: true });
@@ -98,17 +88,16 @@ async function main(): Promise<void> {
 
       parkMilestone(b, 'M002', 'testing');
       const s = await deriveState(b);
-      assertEq(s.registry.find(e => e.id === 'M003')?.status, 'pending', 'M003 pending when M002 parked');
+      assert.deepStrictEqual(s.registry.find(e => e.id === 'M003')?.status, 'pending', 'M003 pending when M002 parked');
       // System should be blocked since M003 deps unmet and M002 is parked
-      assert(s.activeMilestone === null, 'no active milestone (M002 parked, M003 dep-blocked)');
+      assert.ok(s.activeMilestone === null, 'no active milestone (M002 parked, M003 dep-blocked)');
     } finally {
       cleanup(b);
     }
-  }
+});
 
   // ─── EDGE 3: Discard active, next (no deps) activates ────────────────
-  console.log('\n=== EDGE 3: Discard active → next activates ===');
-  {
+test('EDGE 3: Discard active → next activates', async () => {
     const b = createFixture();
     try {
       createM(b, 'M001', { roadmap: true });
@@ -117,16 +106,15 @@ async function main(): Promise<void> {
 
       discardMilestone(b, 'M001');
       const s = await deriveState(b);
-      assertEq(s.activeMilestone?.id, 'M002', 'M002 becomes active');
-      assert(s.phase !== 'blocked', 'not blocked');
+      assert.deepStrictEqual(s.activeMilestone?.id, 'M002', 'M002 becomes active');
+      assert.ok(s.phase !== 'blocked', 'not blocked');
     } finally {
       cleanup(b);
     }
-  }
+});
 
   // ─── EDGE 4: Park all + discard all → clean pre-planning ─────────────
-  console.log('\n=== EDGE 4: Park all → discard all → clean state ===');
-  {
+test('EDGE 4: Park all → discard all → clean state', async () => {
     const b = createFixture();
     try {
       createM(b, 'M001', { roadmap: true });
@@ -138,30 +126,28 @@ async function main(): Promise<void> {
       discardMilestone(b, 'M001');
       discardMilestone(b, 'M002');
       const s = await deriveState(b);
-      assertEq(s.activeMilestone, null, 'no active milestone');
-      assertEq(s.phase, 'pre-planning', 'phase is pre-planning');
-      assertEq(s.registry.length, 0, 'empty registry');
-      assert(s.nextAction.includes('No milestones'), 'nextAction mentions no milestones');
+      assert.deepStrictEqual(s.activeMilestone, null, 'no active milestone');
+      assert.deepStrictEqual(s.phase, 'pre-planning', 'phase is pre-planning');
+      assert.deepStrictEqual(s.registry.length, 0, 'empty registry');
+      assert.ok(s.nextAction.includes('No milestones'), 'nextAction mentions no milestones');
     } finally {
       cleanup(b);
     }
-  }
+});
 
   // ─── EDGE 5: Discard non-existent → graceful false ───────────────────
-  console.log('\n=== EDGE 5: Discard non-existent ===');
-  {
+test('EDGE 5: Discard non-existent', () => {
     const b = createFixture();
     try {
       const result = discardMilestone(b, 'M999');
-      assert(!result, 'returns false for non-existent');
+      assert.ok(!result, 'returns false for non-existent');
     } finally {
       cleanup(b);
     }
-  }
+});
 
   // ─── EDGE 6: Queue order survives discards ───────────────────────────
-  console.log('\n=== EDGE 6: Queue order after discard ===');
-  {
+test('EDGE 6: Queue order after discard', async () => {
     const b = createFixture();
     try {
       createM(b, 'M001', { roadmap: true });
@@ -176,24 +162,23 @@ async function main(): Promise<void> {
 
       // With custom queue order, M003 should be active first
       let s = await deriveState(b);
-      assertEq(s.activeMilestone?.id, 'M003', 'M003 active (custom queue order)');
+      assert.deepStrictEqual(s.activeMilestone?.id, 'M003', 'M003 active (custom queue order)');
 
       // Discard M003 → M001 should be next per queue order
       discardMilestone(b, 'M003');
       s = await deriveState(b);
-      assertEq(s.activeMilestone?.id, 'M001', 'M001 active after M003 discarded');
+      assert.deepStrictEqual(s.activeMilestone?.id, 'M001', 'M001 active after M003 discarded');
 
       // Verify queue order file was updated
       const order = JSON.parse(readFileSync(join(b, '.gsd', 'QUEUE-ORDER.json'), 'utf-8'));
-      assert(!order.order.includes('M003'), 'M003 removed from QUEUE-ORDER.json');
+      assert.ok(!order.order.includes('M003'), 'M003 removed from QUEUE-ORDER.json');
     } finally {
       cleanup(b);
     }
-  }
+});
 
   // ─── EDGE 7: Discard milestone that has deps on others ───────────────
-  console.log('\n=== EDGE 7: Discard a milestone that depends on others ===');
-  {
+test('EDGE 7: Discard a milestone that depends on others', async () => {
     const b = createFixture();
     try {
       createM(b, 'M001', { roadmap: true });
@@ -203,23 +188,22 @@ async function main(): Promise<void> {
 
       // M002 depends on M001, so M001 is active, M002 is pending
       let s = await deriveState(b);
-      assertEq(s.activeMilestone?.id, 'M001', 'M001 is active');
-      assertEq(s.registry.find(e => e.id === 'M002')?.status, 'pending', 'M002 pending (dep on M001)');
+      assert.deepStrictEqual(s.activeMilestone?.id, 'M001', 'M001 is active');
+      assert.deepStrictEqual(s.registry.find(e => e.id === 'M002')?.status, 'pending', 'M002 pending (dep on M001)');
 
       // Discard M002 (the one WITH deps) — should be fine, M003 becomes pending
       discardMilestone(b, 'M002');
       s = await deriveState(b);
-      assertEq(s.activeMilestone?.id, 'M001', 'M001 still active');
-      assert(!s.registry.some(e => e.id === 'M002'), 'M002 gone from registry');
-      assertEq(s.registry.find(e => e.id === 'M003')?.status, 'pending', 'M003 is pending (after M001)');
+      assert.deepStrictEqual(s.activeMilestone?.id, 'M001', 'M001 still active');
+      assert.ok(!s.registry.some(e => e.id === 'M002'), 'M002 gone from registry');
+      assert.deepStrictEqual(s.registry.find(e => e.id === 'M003')?.status, 'pending', 'M003 is pending (after M001)');
     } finally {
       cleanup(b);
     }
-  }
+});
 
   // ─── EDGE 8: Park → Discard → state transitions ─────────────────────
-  console.log('\n=== EDGE 8: Park then discard same milestone ===');
-  {
+test('EDGE 8: Park then discard same milestone', async () => {
     const b = createFixture();
     try {
       createM(b, 'M001', { roadmap: true });
@@ -228,22 +212,21 @@ async function main(): Promise<void> {
 
       parkMilestone(b, 'M001', 'temp');
       let s = await deriveState(b);
-      assertEq(s.activeMilestone?.id, 'M002', 'M002 active while M001 parked');
+      assert.deepStrictEqual(s.activeMilestone?.id, 'M002', 'M002 active while M001 parked');
 
       // Now discard the parked milestone
       discardMilestone(b, 'M001');
       s = await deriveState(b);
-      assertEq(s.activeMilestone?.id, 'M002', 'M002 still active');
-      assert(!s.registry.some(e => e.id === 'M001'), 'M001 gone completely');
-      assertEq(s.registry.length, 1, 'only M002 in registry');
+      assert.deepStrictEqual(s.activeMilestone?.id, 'M002', 'M002 still active');
+      assert.ok(!s.registry.some(e => e.id === 'M001'), 'M001 gone completely');
+      assert.deepStrictEqual(s.registry.length, 1, 'only M002 in registry');
     } finally {
       cleanup(b);
     }
-  }
+});
 
   // ─── EDGE 9: Complete + parked + pending coexist ─────────────────────
-  console.log('\n=== EDGE 9: Mixed states — complete + parked + active ===');
-  {
+test('EDGE 9: Mixed states — complete + parked + active', async () => {
     const b = createFixture();
     try {
       createM(b, 'M001', { roadmap: true, summary: true }); // complete
@@ -254,23 +237,17 @@ async function main(): Promise<void> {
 
       parkMilestone(b, 'M002', 'parked');
       const s = await deriveState(b);
-      assertEq(s.registry.find(e => e.id === 'M001')?.status, 'complete', 'M001 complete');
-      assertEq(s.registry.find(e => e.id === 'M002')?.status, 'parked', 'M002 parked');
-      assertEq(s.registry.find(e => e.id === 'M003')?.status, 'active', 'M003 active');
-      assertEq(s.registry.find(e => e.id === 'M004')?.status, 'pending', 'M004 pending');
-      assertEq(s.activeMilestone?.id, 'M003', 'M003 is the active milestone');
-      assertEq(s.progress?.milestones.done, 1, '1 done');
-      assertEq(s.progress?.milestones.total, 4, '4 total');
+      assert.deepStrictEqual(s.registry.find(e => e.id === 'M001')?.status, 'complete', 'M001 complete');
+      assert.deepStrictEqual(s.registry.find(e => e.id === 'M002')?.status, 'parked', 'M002 parked');
+      assert.deepStrictEqual(s.registry.find(e => e.id === 'M003')?.status, 'active', 'M003 active');
+      assert.deepStrictEqual(s.registry.find(e => e.id === 'M004')?.status, 'pending', 'M004 pending');
+      assert.deepStrictEqual(s.activeMilestone?.id, 'M003', 'M003 is the active milestone');
+      assert.deepStrictEqual(s.progress?.milestones.done, 1, '1 done');
+      assert.deepStrictEqual(s.progress?.milestones.total, 4, '4 total');
     } finally {
       cleanup(b);
     }
-  }
+});
 
-  // ═══════════════════════════════════════════════════════════════════════
-  console.log(`\n${'='.repeat(50)}`);
-  console.log(`Results: ${passed} passed, ${failed} failed`);
-  if (failed > 0) process.exit(1);
-  else console.log('All edge cases passed!');
-}
+});
 
-main().catch(e => { console.error(e); process.exit(1); });

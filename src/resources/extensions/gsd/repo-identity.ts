@@ -104,16 +104,17 @@ export function readRepoMeta(externalPath: string): RepoMeta | null {
  * Returns true when ALL of:
  *   1. basePath is inside a git repo (git rev-parse succeeds)
  *   2. The resolved git root is a proper ancestor of basePath
- *   3. There is no `.gsd` directory at the git root (the parent project
- *      has not been initialised with GSD)
+ *   3. There is no *project* `.gsd` directory at the git root or any
+ *      intermediate ancestor (the parent project has not been
+ *      initialised with GSD)
  *
  * When true, the caller should run `git init` at basePath so that
  * `repoIdentity()` produces a hash unique to this directory, preventing
  * cross-project state leaks (#1639).
  *
- * When the git root already has `.gsd`, the directory is a legitimate
- * subdirectory of an existing GSD project — `cd src/ && /gsd` should
- * still load the parent project's milestones.
+ * When the git root already has a project `.gsd`, the directory is a
+ * legitimate subdirectory of an existing GSD project — `cd src/ && /gsd`
+ * should still load the parent project's milestones.
  */
 export function isInheritedRepo(basePath: string): boolean {
   try {
@@ -124,12 +125,15 @@ export function isInheritedRepo(basePath: string): boolean {
 
     // The git root is a proper ancestor. Check whether it already has .gsd
     // (i.e. the parent project was initialised with GSD).
-    if (existsSync(join(root, ".gsd"))) return false;
+    if (isProjectGsd(join(root, ".gsd"))) return false;
 
-    // Also walk up from basePath to the git root checking for .gsd
-    let dir = normalizedBase;
+    // Walk up from basePath's parent to the git root checking for .gsd.
+    // Start at dirname(normalizedBase), NOT normalizedBase itself — finding
+    // .gsd at basePath means GSD state is set up for THIS project, which
+    // says nothing about whether the git repo is inherited from an ancestor.
+    let dir = dirname(normalizedBase);
     while (dir !== normalizedRoot && dir !== dirname(dir)) {
-      if (existsSync(join(dir, ".gsd"))) return false;
+      if (isProjectGsd(join(dir, ".gsd"))) return false;
       dir = dirname(dir);
     }
 
@@ -137,6 +141,44 @@ export function isInheritedRepo(basePath: string): boolean {
   } catch {
     return false;
   }
+}
+
+/**
+ * Distinguish a *project* `.gsd` from the global `~/.gsd` state directory.
+ *
+ * A project `.gsd` is either:
+ *   - A symlink to an external state directory (normal post-migration layout)
+ *   - A legacy real directory that is NOT the global GSD home
+ *
+ * When the user's home directory is itself a git repo (e.g. dotfile managers),
+ * `~/.gsd` exists but is the global state directory — not a project `.gsd`.
+ * Treating it as a project `.gsd` would cause isInheritedRepo() to wrongly
+ * conclude that subdirectories are part of the home "project" (#2393).
+ */
+function isProjectGsd(gsdPath: string): boolean {
+  if (!existsSync(gsdPath)) return false;
+
+  try {
+    const stat = lstatSync(gsdPath);
+
+    // Symlinks are always project .gsd (created by ensureGsdSymlink).
+    if (stat.isSymbolicLink()) return true;
+
+    // For real directories, check that this isn't the global GSD home.
+    // Recompute gsdHome dynamically so env overrides (GSD_HOME) are
+    // picked up at call time, not just at module load time.
+    if (stat.isDirectory()) {
+      const currentGsdHome = process.env.GSD_HOME || join(homedir(), ".gsd");
+      const normalizedGsdPath = canonicalizeExistingPath(gsdPath);
+      const normalizedGsdHome = canonicalizeExistingPath(currentGsdHome);
+      if (normalizedGsdPath === normalizedGsdHome) return false;
+      return true;
+    }
+  } catch {
+    // lstat failed — treat as no .gsd present
+  }
+
+  return false;
 }
 
 // ─── Repo Identity ──────────────────────────────────────────────────────────
@@ -334,6 +376,34 @@ export function ensureGsdSymlink(projectPath: string): string {
   const gsdHomePath = gsdHome.replaceAll("\\", "/");
   if (localGsdNormalized === gsdHomePath) {
     return localGsd;
+  }
+
+  // Guard: If projectPath is a plain subdirectory (not a worktree) of a git
+  // repo that already has a .gsd at the git root, do not create a duplicate
+  // symlink in the subdirectory — that causes `.gsd 2` collision variants on
+  // macOS (#2380). Worktrees are excluded because they legitimately need their
+  // own .gsd symlink pointing at the shared external state dir.
+  if (!inWorktree) {
+    try {
+      const gitRoot = resolveGitRoot(projectPath);
+      const normalizedProject = canonicalizeExistingPath(projectPath);
+      const normalizedRoot = canonicalizeExistingPath(gitRoot);
+      if (normalizedProject !== normalizedRoot) {
+        const rootGsd = join(gitRoot, ".gsd");
+        if (existsSync(rootGsd)) {
+          try {
+            const rootStat = lstatSync(rootGsd);
+            if (rootStat.isSymbolicLink() || rootStat.isDirectory()) {
+              return rootStat.isSymbolicLink() ? realpathSync(rootGsd) : rootGsd;
+            }
+          } catch {
+            // Fall through to normal logic if we can't stat root .gsd
+          }
+        }
+      }
+    } catch {
+      // If git root detection fails, fall through to normal logic
+    }
   }
 
   // Clean up macOS numbered collision variants (.gsd 2, .gsd 3, etc.) before

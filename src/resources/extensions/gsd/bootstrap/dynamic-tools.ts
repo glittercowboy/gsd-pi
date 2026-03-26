@@ -1,10 +1,39 @@
 import { existsSync } from "node:fs";
-import { join } from "node:path";
+import { join, sep } from "node:path";
 
 import type { ExtensionAPI } from "@gsd/pi-coding-agent";
 import { createBashTool, createEditTool, createReadTool, createWriteTool } from "@gsd/pi-coding-agent";
 
 import { DEFAULT_BASH_TIMEOUT_SECS } from "../constants.js";
+import { setLogBasePath } from "../workflow-logger.js";
+
+/**
+ * Resolve the correct DB path for the current working directory.
+ * If `basePath` is inside a `.gsd/worktrees/<MID>/` directory, returns
+ * the project root's `.gsd/gsd.db` (shared WAL — R012). Otherwise
+ * returns `<basePath>/.gsd/gsd.db`.
+ */
+export function resolveProjectRootDbPath(basePath: string): string {
+  // Detect worktree: look for `.gsd/worktrees/` in the path segments.
+  // A worktree path looks like: /project/root/.gsd/worktrees/M001/...
+  // We need to resolve back to /project/root/.gsd/gsd.db
+  const marker = `${sep}.gsd${sep}worktrees${sep}`;
+  const idx = basePath.indexOf(marker);
+  if (idx !== -1) {
+    const projectRoot = basePath.slice(0, idx);
+    return join(projectRoot, ".gsd", "gsd.db");
+  }
+
+  // Also handle forward-slash paths on all platforms
+  const fwdMarker = "/.gsd/worktrees/";
+  const fwdIdx = basePath.indexOf(fwdMarker);
+  if (fwdIdx !== -1) {
+    const projectRoot = basePath.slice(0, fwdIdx);
+    return join(projectRoot, ".gsd", "gsd.db");
+  }
+
+  return join(basePath, ".gsd", "gsd.db");
+}
 
 export async function ensureDbOpen(): Promise<boolean> {
   try {
@@ -12,12 +41,17 @@ export async function ensureDbOpen(): Promise<boolean> {
     if (db.isDbAvailable()) return true;
 
     const basePath = process.cwd();
+    const dbPath = resolveProjectRootDbPath(basePath);
     const gsdDir = join(basePath, ".gsd");
-    const dbPath = join(gsdDir, "gsd.db");
 
-    // Open existing DB file
+    // Derive the project root from the DB path (strip .gsd/gsd.db)
+    const projectRoot = join(dbPath, "..", "..");
+
+    // Open existing DB file (may be at project root for worktrees)
     if (existsSync(dbPath)) {
-      return db.openDatabase(dbPath);
+      const opened = db.openDatabase(dbPath);
+      if (opened) setLogBasePath(projectRoot);
+      return opened;
     }
 
     // No DB file — create + migrate from Markdown if .gsd/ has content
@@ -28,6 +62,7 @@ export async function ensureDbOpen(): Promise<boolean> {
       if (hasDecisions || hasRequirements || hasMilestones) {
         const opened = db.openDatabase(dbPath);
         if (opened) {
+          setLogBasePath(projectRoot);
           try {
             const { migrateFromMarkdown } = await import("../md-importer.js");
             migrateFromMarkdown(basePath);
@@ -39,6 +74,11 @@ export async function ensureDbOpen(): Promise<boolean> {
         }
         return opened;
       }
+
+      // .gsd/ exists but has no Markdown content (fresh project) — create empty DB
+      const opened = db.openDatabase(dbPath);
+      if (opened) setLogBasePath(projectRoot);
+      return opened;
     }
 
     return false;

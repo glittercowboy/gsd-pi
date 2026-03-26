@@ -39,11 +39,12 @@ const EXPECTED_BUILTIN_OUTCOMES = new Map<string, "rpc" | "surface" | "reject">(
   ["reload", "reject"],
   ["thinking", "surface"],
   ["edit-mode", "reject"],
+  ["terminal", "reject"],
   ["quit", "reject"],
 ])
 
 const BUILTIN_DESCRIPTIONS = new Map(BUILTIN_SLASH_COMMANDS.map((command) => [command.name, command.description]))
-const DEFERRED_BROWSER_REJECTS = ["share", "copy", "changelog", "hotkeys", "tree", "provider", "reload", "edit-mode", "quit"] as const
+const DEFERRED_BROWSER_REJECTS = ["share", "copy", "changelog", "hotkeys", "tree", "provider", "reload", "edit-mode", "terminal", "quit"] as const
 
 async function collectRegisteredGsdCommandRoots(): Promise<string[]> {
   const commands = new Map<string, unknown>()

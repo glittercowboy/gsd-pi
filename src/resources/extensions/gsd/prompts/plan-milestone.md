@@ -47,8 +47,8 @@ Then:
 2. {{skillActivation}}
 3. Create the roadmap: decompose into demoable vertical slices — as many as the work genuinely needs, no more. A simple feature might be 1 slice. Don't decompose for decomposition's sake.
 4. Order by risk (high-risk first)
-5. Write `{{outputPath}}` with checkboxes, risk, depends, demo sentences, proof strategy, verification classes, milestone definition of done, **requirement coverage**, and a boundary map. Write success criteria as observable truths, not implementation tasks. If the milestone crosses multiple runtime boundaries, include an explicit final integration slice that proves the assembled system works end-to-end in a real environment
-6. If planning produced structural decisions (e.g. slice ordering rationale, technology choices, scope exclusions), append them to `.gsd/DECISIONS.md` (use the **Decisions** output template from the inlined context above if the file doesn't exist yet)
+5. Call `gsd_plan_milestone` to persist the milestone planning fields, slice rows, and **horizontal checklist** in the DB-backed planning path. Do **not** write `{{outputPath}}`, `ROADMAP.md`, or other planning artifacts manually — the planning tool owns roadmap rendering and persistence.
+6. If planning produced structural decisions (e.g. slice ordering rationale, technology choices, scope exclusions), call `gsd_decision_save` for each decision — the tool auto-assigns IDs and regenerates `.gsd/DECISIONS.md` automatically.
 
 ## Requirement Mapping Rules
 
@@ -64,10 +64,10 @@ Then:
 Apply these when decomposing and ordering slices:
 
 - **Risk-first means proof-first.** The earliest slices should prove the hardest thing works by shipping the real feature through the uncertain path. If auth is the risk, the first slice ships a real login page with real session handling that a user can actually use — not a CLI command that returns "authenticated: true". Proof is the shipped feature working. There is no separate "proof" artifact. Do not plan spikes, proof-of-concept slices, or validation-only slices — the proof is the real feature, built through the risky path.
-- **Every slice is vertical, demoable, and shippable.** Every slice ships real, user-facing functionality. "Demoable" means you could show a stakeholder and they'd see real product progress — not a developer showing a terminal command. If the only way to demonstrate the slice is through a test runner or a curl command, the slice is missing its UI/UX surface. Add it. A slice that only proves something but doesn't ship real working code is not a slice — restructure it.
+- **Every slice is vertical, demoable, and shippable.** Every slice ships real, user-facing functionality. "Demoable" means the intended user can exercise the capability through its real interface — for a web app that's the UI, for a CLI tool that's the terminal, for an API that's a consuming client or curl. The test is: can someone *use* it, not just *assert* it passes. A slice that only proves something but doesn't ship real working code is not a slice — restructure it.
 - **Brownfield bias.** When planning against an existing codebase, ground slices in existing modules, conventions, and seams. Prefer extending real patterns over inventing new ones.
 - **Each slice should establish something downstream slices can depend on.** Think about what stable surface this slice creates for later work — an API, a data shape, a proven integration path.
-- **Avoid foundation-only slices.** If a slice doesn't produce something demoable end-to-end, it's probably a layer, not a vertical slice. Restructure it.
+- **Avoid foundation-only slices.** If a slice doesn't produce something demoable end-to-end, it's probably a layer, not a vertical slice. Restructure it. Exception: if the infrastructure *is* the product surface (a new protocol, extension API, or provider interface), the slice is vertical by definition — the downstream consumer is the demo.
 - **Verification-first.** When planning slices, know what "done" looks like before detailing implementation. Each slice's demo line should describe concrete, verifiable evidence — not vague "it works" claims.
 - **Plan for integrated reality, not just local proof.** Distinguish contract proof from live integration proof. If the milestone involves multiple runtime boundaries, one slice must explicitly prove the assembled system through the real entrypoint or runtime path.
 - **Truthful demo lines only.** If a slice is proven by fixtures or tests only, say so. Do not phrase harness-level proof as if the user can already perform the live end-to-end behavior unless that has actually been exercised.
@@ -80,15 +80,13 @@ Apply these when decomposing and ordering slices:
 
 ## Single-Slice Fast Path
 
-If the roadmap has only one slice, also write the slice plan and task plans inline during this unit — don't leave them for a separate planning session.
+If the roadmap has only one slice, also plan the slice and its tasks inline during this unit — don't leave them for a separate planning session.
 
-1. Use the **Slice Plan** and **Task Plan** output templates from the inlined context above
-2. `mkdir -p {{milestonePath}}/slices/S01/tasks`
-3. Write the S01 plan file at `{{milestonePath}}/slices/S01/S01-PLAN.md`
-4. Write individual task plans at `{{milestonePath}}/slices/S01/tasks/T01-PLAN.md`, etc.
-5. For simple slices, keep the plan lean — omit Proof Level, Integration Closure, and Observability sections if they would all be "none". Executable verification commands are sufficient.
+1. After `gsd_plan_milestone` returns, immediately call `gsd_plan_slice` for S01 with the full task breakdown
+2. Use the **Slice Plan** and **Task Plan** output templates from the inlined context above to structure the tool call parameters
+3. For simple slices, keep the plan lean — omit Proof Level, Integration Closure, and Observability sections if they would all be "none". Executable verification commands are sufficient.
 
-This eliminates a separate research-slice + plan-slice cycle when the work is straightforward.
+Do **not** write plan files manually — use the DB-backed tools so state stays consistent.
 
 ## Secret Forecasting
 
@@ -106,7 +104,5 @@ If this milestone requires any external API keys or secrets:
    - Numbered step-by-step guidance for obtaining the key (navigate to dashboard → create project → generate key → copy)
 
 If this milestone does not require any external API keys or secrets, skip this step entirely — do not create an empty manifest.
-
-**You MUST write the file `{{outputPath}}` before finishing.**
 
 When done, say: "Milestone {{milestoneId}} planned."

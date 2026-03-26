@@ -66,7 +66,7 @@ import type {
 } from "./session-browser-contract"
 import { authFetch, appendAuthParam } from "./auth"
 
-export type WorkspaceStatus = "idle" | "loading" | "ready" | "error"
+export type WorkspaceStatus = "idle" | "loading" | "ready" | "error" | "unauthenticated"
 export type WorkspaceConnectionState =
   | "idle"
   | "connecting"
@@ -180,6 +180,17 @@ export interface WorkspaceIndex {
   validationIssues: WorkspaceValidationIssue[]
 }
 
+export interface RtkSessionSavings {
+  commands: number
+  inputTokens: number
+  outputTokens: number
+  savedTokens: number
+  savingsPct: number
+  totalTimeMs: number
+  avgTimeMs: number
+  updatedAt: string
+}
+
 export interface AutoDashboardData {
   active: boolean
   paused: boolean
@@ -191,6 +202,9 @@ export interface AutoDashboardData {
   basePath: string
   totalCost: number
   totalTokens: number
+  rtkSavings?: RtkSessionSavings | null
+  /** Whether RTK is enabled via experimental.rtk preference. False when not opted in. */
+  rtkEnabled?: boolean
 }
 
 export interface BootResumableSession {
@@ -4121,6 +4135,13 @@ export class GSDWorkspaceStore {
         })
 
         if (!response.ok) {
+          if (response.status === 401) {
+            this.patchState({
+              bootStatus: "unauthenticated",
+              connectionState: "error",
+            })
+            return
+          }
           throw new Error(`Boot request failed with ${response.status}`)
         }
 

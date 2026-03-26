@@ -1,0 +1,101 @@
+---
+title: "GSD — Get Shit Done"
+description: "An autonomous coding agent that researches, plans, executes, and commits code while you focus on what matters."
+---
+
+GSD is an autonomous coding agent. Describe what you want built, run `/gsd auto`, and walk away. Come back to working software with clean git history.
+
+## What GSD does
+
+<CardGroup cols={2}>
+  <Card title="Autonomous execution" icon="robot">
+    A state machine reads your project state, dispatches work to an LLM in fresh context windows, and advances through research, planning, execution, and verification — all without manual intervention.
+  </Card>
+  <Card title="Clean git history" icon="code-branch">
+    Every task produces a conventional commit. Milestones are squash-merged to main. Your `git log` reads like a changelog.
+  </Card>
+  <Card title="Cost control" icon="gauge">
+    Budget ceilings, token profiles, and dynamic model routing keep costs in check. Use Haiku for simple tasks and Opus for architectural work — automatically.
+  </Card>
+  <Card title="Crash recovery" icon="rotate">
+    Sessions recover from crashes, provider errors auto-retry, and headless mode auto-restarts with exponential backoff. Designed for overnight unattended execution.
+  </Card>
+</CardGroup>
+
+## How it works
+
+GSD organizes work into a hierarchy:
+
+```
+Milestone  →  a shippable version (4-10 slices)
+  Slice    →  one demoable vertical capability (1-7 tasks)
+    Task   →  one context-window-sized unit of work
+```
+
+The iron rule: **a task must fit in one context window.** If it can't, it's two tasks.
+
+Auto mode loops through this hierarchy:
+
+```
+Plan → Execute (per task) → Complete → Reassess Roadmap → Next Slice
+                                                            ↓ (all slices done)
+                                                    Validate → Complete Milestone
+```
+
+Every phase gets a fresh context window with pre-loaded context — no accumulated garbage, no degraded quality.
+
+## Two ways to work
+
+<Tabs>
+  <Tab title="Step mode">
+    Type `/gsd` inside a session. GSD executes one unit at a time, pausing between each so you can review.
+
+    ```bash
+    gsd
+    /gsd
+    ```
+  </Tab>
+  <Tab title="Auto mode">
+    Type `/gsd auto` and walk away. GSD autonomously researches, plans, executes, verifies, and commits until the milestone is complete.
+
+    ```bash
+    gsd
+    /gsd auto
+    ```
+  </Tab>
+</Tabs>
+
+The recommended workflow: auto mode in one terminal, steering from another.
+
+**Terminal 1 — let it build:**
+
+```bash
+gsd
+/gsd auto
+```
+
+**Terminal 2 — steer while it works:**
+
+```bash
+gsd
+/gsd discuss    # talk through architecture decisions
+/gsd status     # check progress
+/gsd capture    # fire-and-forget thoughts
+```
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Install GSD" icon="download" href="/getting-started">
+    Get up and running in under a minute.
+  </Card>
+  <Card title="Auto mode deep dive" icon="circle-play" href="/guides/auto-mode">
+    How the autonomous execution engine works.
+  </Card>
+  <Card title="Commands reference" icon="terminal" href="/guides/commands">
+    Every command, shortcut, and CLI flag.
+  </Card>
+  <Card title="Configuration" icon="gear" href="/guides/configuration">
+    Models, budgets, timeouts, and preferences.
+  </Card>
+</CardGroup>

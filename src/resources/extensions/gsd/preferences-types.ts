@@ -18,6 +18,7 @@ import type {
   ParallelConfig,
   ContextSelectionMode,
   ReactiveExecutionConfig,
+  GateEvaluationConfig,
 } from "./types.js";
 import type { DynamicRoutingConfig } from "./model-router.js";
 import type { GitHubSyncConfig } from "../github-sync/types.js";
@@ -34,7 +35,7 @@ export const MODE_DEFAULTS: Record<WorkflowMode, Partial<GSDPreferences>> = {
       push_branches: false,
       pre_merge_check: false,
       merge_strategy: "squash",
-      isolation: "worktree",
+      isolation: "none",
     },
     unique_milestone_ids: false,
   },
@@ -44,7 +45,7 @@ export const MODE_DEFAULTS: Record<WorkflowMode, Partial<GSDPreferences>> = {
       push_branches: true,
       pre_merge_check: true,
       merge_strategy: "squash",
-      isolation: "worktree",
+      isolation: "none",
     },
     unique_milestone_ids: true,
   },
@@ -87,15 +88,18 @@ export const KNOWN_PREFERENCE_KEYS = new Set<string>([
   "context_selection",
   "widget_mode",
   "reactive_execution",
+  "gate_evaluation",
   "github",
   "service_tier",
   "forensics_dedup",
+  "show_token_cost",
+  "experimental",
 ]);
 
 /** Canonical list of all dispatch unit types. */
 export const KNOWN_UNIT_TYPES = [
   "research-milestone", "plan-milestone", "research-slice", "plan-slice",
-  "execute-task", "reactive-execute", "complete-slice", "replan-slice", "reassess-roadmap",
+  "execute-task", "reactive-execute", "gate-evaluate", "complete-slice", "replan-slice", "reassess-roadmap",
   "run-uat", "complete-milestone",
 ] as const;
 export type UnitType = (typeof KNOWN_UNIT_TYPES)[number];
@@ -179,6 +183,20 @@ export interface CmuxPreferences {
   browser?: boolean;
 }
 
+/**
+ * Opt-in experimental features. All features in this block are disabled by
+ * default and must be explicitly enabled. They may change or be removed without
+ * a deprecation cycle while in experimental status.
+ */
+export interface ExperimentalPreferences {
+  /**
+   * Enable RTK (Real-Time Kompression) shell-command compression.
+   * RTK wraps shell commands to reduce token usage during command execution.
+   * Default: false (opt-in required).
+   */
+  rtk?: boolean;
+}
+
 export interface GSDPreferences {
   version?: number;
   mode?: WorkflowMode;
@@ -220,12 +238,21 @@ export interface GSDPreferences {
   widget_mode?: "full" | "small" | "min" | "off";
   /** Reactive (graph-derived parallel) task execution within slices. Disabled by default. */
   reactive_execution?: ReactiveExecutionConfig;
+  /** Parallel quality gate evaluation during slice planning. Disabled by default. */
+  gate_evaluation?: GateEvaluationConfig;
   /** GitHub sync configuration. Opt-in: syncs GSD events to GitHub Issues, Milestones, and PRs. */
   github?: GitHubSyncConfig;
   /** OpenAI service tier preference. "priority" = 2x cost, faster. "flex" = 0.5x cost, slower. Only affects gpt-5.4 models. */
   service_tier?: "priority" | "flex";
   /** Opt-in: search existing issues and PRs before filing from /gsd forensics. Uses additional AI tokens. */
   forensics_dedup?: boolean;
+  /** Opt-in: show per-prompt and cumulative session token cost in the footer. Default: false. */
+  show_token_cost?: boolean;
+  /**
+   * Opt-in experimental features. All features here are disabled by default.
+   * See the preferences reference for details on each feature.
+   */
+  experimental?: ExperimentalPreferences;
 }
 
 export interface LoadedGSDPreferences {

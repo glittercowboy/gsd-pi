@@ -1,0 +1,126 @@
+---
+title: "Custom models"
+description: "Add custom providers and models (Ollama, vLLM, LM Studio, proxies) via models.json."
+---
+
+Define custom models and providers in `~/.gsd/agent/models.json`. This lets you add models not in the default registry — self-hosted endpoints, fine-tuned models, proxies, or new provider releases.
+
+The file reloads each time you open `/model` — no restart needed.
+
+## Minimal example
+
+For local models (Ollama, LM Studio, vLLM):
+
+```json
+{
+  "providers": {
+    "ollama": {
+      "baseUrl": "http://localhost:11434/v1",
+      "api": "openai-completions",
+      "apiKey": "ollama",
+      "models": [
+        { "id": "llama3.1:8b" },
+        { "id": "qwen2.5-coder:7b" }
+      ]
+    }
+  }
+}
+```
+
+The `apiKey` is required but Ollama ignores it — any value works.
+
+## Supported APIs
+
+| API | Description |
+|-----|-------------|
+| `openai-completions` | OpenAI Chat Completions (most compatible) |
+| `openai-responses` | OpenAI Responses API |
+| `anthropic-messages` | Anthropic Messages API |
+| `google-generative-ai` | Google Generative AI |
+
+## Provider configuration
+
+| Field | Description |
+|-------|-------------|
+| `baseUrl` | API endpoint URL |
+| `api` | API type |
+| `apiKey` | API key (supports shell commands, env vars, or literals) |
+| `headers` | Custom headers |
+| `authHeader` | Set `true` to add `Authorization: Bearer` automatically |
+| `models` | Array of model configurations |
+| `modelOverrides` | Per-model overrides for built-in models |
+
+### Value resolution
+
+The `apiKey` and `headers` fields support three formats:
+
+```json
+"apiKey": "!security find-generic-password -ws 'anthropic'"  // shell command
+"apiKey": "MY_API_KEY"                                        // env variable
+"apiKey": "sk-..."                                            // literal value
+```
+
+## Model configuration
+
+| Field | Required | Default | Description |
+|-------|----------|---------|-------------|
+| `id` | Yes | — | Model identifier (passed to the API) |
+| `name` | No | `id` | Human-readable label |
+| `api` | No | provider's `api` | Override per model |
+| `reasoning` | No | `false` | Supports extended thinking |
+| `input` | No | `["text"]` | `["text"]` or `["text", "image"]` |
+| `contextWindow` | No | `128000` | Context window size |
+| `maxTokens` | No | `16384` | Maximum output tokens |
+| `cost` | No | all zeros | Per-million tokens: `input`, `output`, `cacheRead`, `cacheWrite` |
+
+## Overriding built-in providers
+
+Route a built-in provider through a proxy without redefining models:
+
+```json
+{
+  "providers": {
+    "anthropic": {
+      "baseUrl": "https://my-proxy.example.com/v1"
+    }
+  }
+}
+```
+
+All built-in Anthropic models remain available. To add custom models alongside built-in ones, include the `models` array.
+
+## OpenAI compatibility
+
+For providers with partial OpenAI compatibility, use the `compat` field at provider or model level:
+
+```json
+{
+  "providers": {
+    "local-llm": {
+      "baseUrl": "http://localhost:8080/v1",
+      "api": "openai-completions",
+      "compat": {
+        "supportsDeveloperRole": false,
+        "supportsReasoningEffort": false
+      },
+      "models": [...]
+    }
+  }
+}
+```
+
+| Field | Description |
+|-------|-------------|
+| `supportsDeveloperRole` | Use `developer` vs `system` role |
+| `supportsReasoningEffort` | Support for `reasoning_effort` parameter |
+| `supportsUsageInStreaming` | Support for `stream_options: { include_usage: true }` |
+| `maxTokensField` | `max_completion_tokens` or `max_tokens` |
+| `thinkingFormat` | `reasoning_effort`, `zai`, `qwen`, or `qwen-chat-template` |
+| `openRouterRouting` | OpenRouter provider selection config |
+| `vercelGatewayRouting` | Vercel AI Gateway provider selection |
+
+## Community provider extensions
+
+| Extension | Provider | Models | Install |
+|-----------|----------|--------|---------|
+| [`pi-dashscope`](https://www.npmjs.com/package/pi-dashscope) | Alibaba DashScope | Qwen3, GLM-5, MiniMax M2.5, Kimi K2.5 | `gsd install npm:pi-dashscope` |

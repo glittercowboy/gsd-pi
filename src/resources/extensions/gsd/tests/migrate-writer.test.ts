@@ -18,6 +18,8 @@ import {
 import {
   parseRoadmap,
   parsePlan,
+} from '../parsers-legacy.ts';
+import {
   parseSummary,
   parseRequirementCounts,
 } from '../files.ts';
@@ -29,9 +31,9 @@ import type {
   GSDSliceSummaryData,
   GSDTaskSummaryData,
 } from '../migrate/types.ts';
-import { createTestContext } from './test-helpers.ts';
+import { describe, test, beforeEach, afterEach } from 'node:test';
+import assert from 'node:assert/strict';
 
-const { assertEq, assertTrue, report } = createTestContext();
 // ─── Test Data Builders ────────────────────────────────────────────────────
 
 function makeTask(overrides: Partial<GSDTask> = {}): GSDTask {
@@ -101,11 +103,7 @@ function makeTaskSummary(overrides: Partial<GSDTaskSummaryData> = {}): GSDTaskSu
   };
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
-// Scenario A: Roadmap round-trip with 2 slices (1 done, 1 not)
-// ═══════════════════════════════════════════════════════════════════════════
-
-{
+test('Scenario A: Roadmap round-trip with 2 slices (1 done, 1 not)', () => {
   const milestone = makeMilestone({
     slices: [
       makeSlice({
@@ -130,35 +128,31 @@ function makeTaskSummary(overrides: Partial<GSDTaskSummaryData> = {}): GSDTaskSu
   const output = formatRoadmap(milestone);
   const parsed = parseRoadmap(output);
 
-  assertEq(parsed.title, 'M001: Core Platform', 'roadmap: title');
-  assertEq(parsed.vision, 'Build the core platform', 'roadmap: vision');
-  assertEq(parsed.successCriteria.length, 2, 'roadmap: successCriteria count');
-  assertEq(parsed.successCriteria[0], 'All tests pass', 'roadmap: successCriteria[0]');
-  assertEq(parsed.successCriteria[1], 'Deploy to staging', 'roadmap: successCriteria[1]');
-  assertEq(parsed.slices.length, 2, 'roadmap: slices count');
+  assert.deepStrictEqual(parsed.title, 'M001: Core Platform', 'roadmap: title');
+  assert.deepStrictEqual(parsed.vision, 'Build the core platform', 'roadmap: vision');
+  assert.deepStrictEqual(parsed.successCriteria.length, 2, 'roadmap: successCriteria count');
+  assert.deepStrictEqual(parsed.successCriteria[0], 'All tests pass', 'roadmap: successCriteria[0]');
+  assert.deepStrictEqual(parsed.successCriteria[1], 'Deploy to staging', 'roadmap: successCriteria[1]');
+  assert.deepStrictEqual(parsed.slices.length, 2, 'roadmap: slices count');
 
-  assertEq(parsed.slices[0].id, 'S01', 'roadmap: S01 id');
-  assertEq(parsed.slices[0].title, 'Auth System', 'roadmap: S01 title');
-  assertEq(parsed.slices[0].done, true, 'roadmap: S01 done');
-  assertEq(parsed.slices[0].risk, 'high', 'roadmap: S01 risk');
-  assertEq(parsed.slices[0].depends.length, 0, 'roadmap: S01 depends empty');
-  assertEq(parsed.slices[0].demo, 'Login flow works', 'roadmap: S01 demo');
+  assert.deepStrictEqual(parsed.slices[0].id, 'S01', 'roadmap: S01 id');
+  assert.deepStrictEqual(parsed.slices[0].title, 'Auth System', 'roadmap: S01 title');
+  assert.deepStrictEqual(parsed.slices[0].done, true, 'roadmap: S01 done');
+  assert.deepStrictEqual(parsed.slices[0].risk, 'high', 'roadmap: S01 risk');
+  assert.deepStrictEqual(parsed.slices[0].depends.length, 0, 'roadmap: S01 depends empty');
+  assert.deepStrictEqual(parsed.slices[0].demo, 'Login flow works', 'roadmap: S01 demo');
 
-  assertEq(parsed.slices[1].id, 'S02', 'roadmap: S02 id');
-  assertEq(parsed.slices[1].title, 'Dashboard', 'roadmap: S02 title');
-  assertEq(parsed.slices[1].done, false, 'roadmap: S02 done');
-  assertEq(parsed.slices[1].risk, 'low', 'roadmap: S02 risk');
-  assertEq(parsed.slices[1].depends, ['S01'], 'roadmap: S02 depends');
-  assertEq(parsed.slices[1].demo, 'Dashboard renders data', 'roadmap: S02 demo');
+  assert.deepStrictEqual(parsed.slices[1].id, 'S02', 'roadmap: S02 id');
+  assert.deepStrictEqual(parsed.slices[1].title, 'Dashboard', 'roadmap: S02 title');
+  assert.deepStrictEqual(parsed.slices[1].done, false, 'roadmap: S02 done');
+  assert.deepStrictEqual(parsed.slices[1].risk, 'low', 'roadmap: S02 risk');
+  assert.deepStrictEqual(parsed.slices[1].depends, ['S01'], 'roadmap: S02 depends');
+  assert.deepStrictEqual(parsed.slices[1].demo, 'Dashboard renders data', 'roadmap: S02 demo');
 
-  assertEq(parsed.boundaryMap.length, 0, 'roadmap: boundaryMap empty');
-}
+  assert.deepStrictEqual(parsed.boundaryMap.length, 0, 'roadmap: boundaryMap empty');
+});
 
-// ═══════════════════════════════════════════════════════════════════════════
-// Scenario B: Plan round-trip with 3 tasks (mixed done)
-// ═══════════════════════════════════════════════════════════════════════════
-
-{
+test('Scenario B: Plan round-trip with 3 tasks (mixed done)', () => {
   const slice = makeSlice({
     id: 'S01',
     title: 'Auth System',
@@ -174,31 +168,27 @@ function makeTaskSummary(overrides: Partial<GSDTaskSummaryData> = {}): GSDTaskSu
   const output = formatPlan(slice);
   const parsed = parsePlan(output);
 
-  assertEq(parsed.id, 'S01', 'plan: id');
-  assertEq(parsed.title, 'Auth System', 'plan: title');
-  assertEq(parsed.goal, 'Working authentication system', 'plan: goal');
-  assertEq(parsed.demo, 'Login works with valid credentials', 'plan: demo');
-  assertEq(parsed.tasks.length, 3, 'plan: tasks count');
+  assert.deepStrictEqual(parsed.id, 'S01', 'plan: id');
+  assert.deepStrictEqual(parsed.title, 'Auth System', 'plan: title');
+  assert.deepStrictEqual(parsed.goal, 'Working authentication system', 'plan: goal');
+  assert.deepStrictEqual(parsed.demo, 'Login works with valid credentials', 'plan: demo');
+  assert.deepStrictEqual(parsed.tasks.length, 3, 'plan: tasks count');
 
-  assertEq(parsed.tasks[0].id, 'T01', 'plan: T01 id');
-  assertEq(parsed.tasks[0].title, 'Setup Models', 'plan: T01 title');
-  assertEq(parsed.tasks[0].done, true, 'plan: T01 done');
-  assertEq(parsed.tasks[0].estimate, '15m', 'plan: T01 estimate');
+  assert.deepStrictEqual(parsed.tasks[0].id, 'T01', 'plan: T01 id');
+  assert.deepStrictEqual(parsed.tasks[0].title, 'Setup Models', 'plan: T01 title');
+  assert.deepStrictEqual(parsed.tasks[0].done, true, 'plan: T01 done');
+  assert.deepStrictEqual(parsed.tasks[0].estimate, '15m', 'plan: T01 estimate');
 
-  assertEq(parsed.tasks[1].id, 'T02', 'plan: T02 id');
-  assertEq(parsed.tasks[1].done, false, 'plan: T02 done');
-  assertEq(parsed.tasks[1].estimate, '30m', 'plan: T02 estimate');
+  assert.deepStrictEqual(parsed.tasks[1].id, 'T02', 'plan: T02 id');
+  assert.deepStrictEqual(parsed.tasks[1].done, false, 'plan: T02 done');
+  assert.deepStrictEqual(parsed.tasks[1].estimate, '30m', 'plan: T02 estimate');
 
-  assertEq(parsed.tasks[2].id, 'T03', 'plan: T03 id');
-  assertEq(parsed.tasks[2].done, true, 'plan: T03 done');
-  assertEq(parsed.tasks[2].estimate, '20m', 'plan: T03 estimate');
-}
+  assert.deepStrictEqual(parsed.tasks[2].id, 'T03', 'plan: T03 id');
+  assert.deepStrictEqual(parsed.tasks[2].done, true, 'plan: T03 done');
+  assert.deepStrictEqual(parsed.tasks[2].estimate, '20m', 'plan: T03 estimate');
+});
 
-// ═══════════════════════════════════════════════════════════════════════════
-// Scenario C: Slice summary round-trip with full data
-// ═══════════════════════════════════════════════════════════════════════════
-
-{
+test('Scenario C: Slice summary round-trip with full data', () => {
   const slice = makeSlice({
     id: 'S01',
     title: 'Auth System',
@@ -209,28 +199,24 @@ function makeTaskSummary(overrides: Partial<GSDTaskSummaryData> = {}): GSDTaskSu
   const output = formatSliceSummary(slice, 'M001');
   const parsed = parseSummary(output);
 
-  assertEq(parsed.frontmatter.id, 'S01', 'sliceSummary: id');
-  assertEq(parsed.frontmatter.parent, 'M001', 'sliceSummary: parent');
-  assertEq(parsed.frontmatter.milestone, 'M001', 'sliceSummary: milestone');
-  assertEq(parsed.frontmatter.provides, ['auth-flow', 'jwt-tokens'], 'sliceSummary: provides');
-  assertEq(parsed.frontmatter.requires.length, 0, 'sliceSummary: requires empty');
-  assertEq(parsed.frontmatter.affects.length, 0, 'sliceSummary: affects empty');
-  assertEq(parsed.frontmatter.key_files, ['src/auth.ts', 'src/middleware.ts'], 'sliceSummary: key_files');
-  assertEq(parsed.frontmatter.key_decisions, ['Use JWT over sessions'], 'sliceSummary: key_decisions');
-  assertEq(parsed.frontmatter.patterns_established, ['Middleware pattern'], 'sliceSummary: patterns_established');
-  assertEq(parsed.frontmatter.duration, '2h', 'sliceSummary: duration');
-  assertEq(parsed.frontmatter.completed_at, '2026-03-10', 'sliceSummary: completed_at');
-  assertEq(parsed.frontmatter.verification_result, 'passed', 'sliceSummary: verification_result');
-  assertEq(parsed.frontmatter.blocker_discovered, false, 'sliceSummary: blocker_discovered');
-  assertTrue(parsed.whatHappened.includes('Implemented full auth system'), 'sliceSummary: whatHappened content');
-  assertEq(parsed.title, 'S01: Auth System', 'sliceSummary: title');
-}
+  assert.deepStrictEqual(parsed.frontmatter.id, 'S01', 'sliceSummary: id');
+  assert.deepStrictEqual(parsed.frontmatter.parent, 'M001', 'sliceSummary: parent');
+  assert.deepStrictEqual(parsed.frontmatter.milestone, 'M001', 'sliceSummary: milestone');
+  assert.deepStrictEqual(parsed.frontmatter.provides, ['auth-flow', 'jwt-tokens'], 'sliceSummary: provides');
+  assert.deepStrictEqual(parsed.frontmatter.requires.length, 0, 'sliceSummary: requires empty');
+  assert.deepStrictEqual(parsed.frontmatter.affects.length, 0, 'sliceSummary: affects empty');
+  assert.deepStrictEqual(parsed.frontmatter.key_files, ['src/auth.ts', 'src/middleware.ts'], 'sliceSummary: key_files');
+  assert.deepStrictEqual(parsed.frontmatter.key_decisions, ['Use JWT over sessions'], 'sliceSummary: key_decisions');
+  assert.deepStrictEqual(parsed.frontmatter.patterns_established, ['Middleware pattern'], 'sliceSummary: patterns_established');
+  assert.deepStrictEqual(parsed.frontmatter.duration, '2h', 'sliceSummary: duration');
+  assert.deepStrictEqual(parsed.frontmatter.completed_at, '2026-03-10', 'sliceSummary: completed_at');
+  assert.deepStrictEqual(parsed.frontmatter.verification_result, 'passed', 'sliceSummary: verification_result');
+  assert.deepStrictEqual(parsed.frontmatter.blocker_discovered, false, 'sliceSummary: blocker_discovered');
+  assert.ok(parsed.whatHappened.includes('Implemented full auth system'), 'sliceSummary: whatHappened content');
+  assert.deepStrictEqual(parsed.title, 'S01: Auth System', 'sliceSummary: title');
+});
 
-// ═══════════════════════════════════════════════════════════════════════════
-// Scenario D: Task summary round-trip
-// ═══════════════════════════════════════════════════════════════════════════
-
-{
+test('Scenario D: Task summary round-trip', () => {
   const task = makeTask({
     id: 'T01',
     title: 'Setup Auth',
@@ -241,22 +227,18 @@ function makeTaskSummary(overrides: Partial<GSDTaskSummaryData> = {}): GSDTaskSu
   const output = formatTaskSummary(task, 'S01', 'M001');
   const parsed = parseSummary(output);
 
-  assertEq(parsed.frontmatter.id, 'T01', 'taskSummary: id');
-  assertEq(parsed.frontmatter.parent, 'S01', 'taskSummary: parent');
-  assertEq(parsed.frontmatter.milestone, 'M001', 'taskSummary: milestone');
-  assertEq(parsed.frontmatter.provides, ['auth-endpoint'], 'taskSummary: provides');
-  assertEq(parsed.frontmatter.key_files, ['src/auth.ts'], 'taskSummary: key_files');
-  assertEq(parsed.frontmatter.duration, '45m', 'taskSummary: duration');
-  assertEq(parsed.frontmatter.completed_at, '2026-03-09', 'taskSummary: completed_at');
-  assertTrue(parsed.whatHappened.includes('Built the auth endpoint'), 'taskSummary: whatHappened content');
-  assertEq(parsed.title, 'T01: Setup Auth', 'taskSummary: title');
-}
+  assert.deepStrictEqual(parsed.frontmatter.id, 'T01', 'taskSummary: id');
+  assert.deepStrictEqual(parsed.frontmatter.parent, 'S01', 'taskSummary: parent');
+  assert.deepStrictEqual(parsed.frontmatter.milestone, 'M001', 'taskSummary: milestone');
+  assert.deepStrictEqual(parsed.frontmatter.provides, ['auth-endpoint'], 'taskSummary: provides');
+  assert.deepStrictEqual(parsed.frontmatter.key_files, ['src/auth.ts'], 'taskSummary: key_files');
+  assert.deepStrictEqual(parsed.frontmatter.duration, '45m', 'taskSummary: duration');
+  assert.deepStrictEqual(parsed.frontmatter.completed_at, '2026-03-09', 'taskSummary: completed_at');
+  assert.ok(parsed.whatHappened.includes('Built the auth endpoint'), 'taskSummary: whatHappened content');
+  assert.deepStrictEqual(parsed.title, 'T01: Setup Auth', 'taskSummary: title');
+});
 
-// ═══════════════════════════════════════════════════════════════════════════
-// Scenario E: Requirements round-trip with mixed statuses
-// ═══════════════════════════════════════════════════════════════════════════
-
-{
+test('Scenario E: Requirements round-trip with mixed statuses', () => {
   const requirements: GSDRequirement[] = [
     { id: 'R001', title: 'Auth Required', class: 'core-capability', status: 'active', description: 'Must have auth', source: 'spec', primarySlice: 'S01' },
     { id: 'R002', title: 'Logging', class: 'observability', status: 'active', description: 'Must log', source: 'spec', primarySlice: 'S02' },
@@ -268,110 +250,93 @@ function makeTaskSummary(overrides: Partial<GSDTaskSummaryData> = {}): GSDTaskSu
   const output = formatRequirements(requirements);
   const counts = parseRequirementCounts(output);
 
-  assertEq(counts.active, 2, 'requirements: active count');
-  assertEq(counts.validated, 1, 'requirements: validated count');
-  assertEq(counts.deferred, 1, 'requirements: deferred count');
-  assertEq(counts.outOfScope, 1, 'requirements: outOfScope count');
-  assertEq(counts.total, 5, 'requirements: total count');
-}
+  assert.deepStrictEqual(counts.active, 2, 'requirements: active count');
+  assert.deepStrictEqual(counts.validated, 1, 'requirements: validated count');
+  assert.deepStrictEqual(counts.deferred, 1, 'requirements: deferred count');
+  assert.deepStrictEqual(counts.outOfScope, 1, 'requirements: outOfScope count');
+  assert.deepStrictEqual(counts.total, 5, 'requirements: total count');
+});
 
-// ═══════════════════════════════════════════════════════════════════════════
-// Scenario F: Edge cases
-// ═══════════════════════════════════════════════════════════════════════════
-
-// F1: Empty vision → fallback text
-{
+test('F1: Empty vision → fallback text', () => {
   const milestone = makeMilestone({ vision: '' });
   const output = formatRoadmap(milestone);
   const parsed = parseRoadmap(output);
-  assertEq(parsed.vision, '(migrated project)', 'edge: empty vision fallback');
-}
+  assert.deepStrictEqual(parsed.vision, '(migrated project)', 'edge: empty vision fallback');
+});
 
-// F2: Empty successCriteria → empty array
-{
+test('F2: Empty successCriteria → empty array', () => {
   const milestone = makeMilestone({ successCriteria: [] });
   const output = formatRoadmap(milestone);
   const parsed = parseRoadmap(output);
-  assertEq(parsed.successCriteria.length, 0, 'edge: empty successCriteria');
-}
+  assert.deepStrictEqual(parsed.successCriteria.length, 0, 'edge: empty successCriteria');
+});
 
-// F3: Empty tasks → empty array in parsed plan
-{
+test('F3: Empty tasks → empty array in parsed plan', () => {
   const slice = makeSlice({ tasks: [] });
   const output = formatPlan(slice);
   const parsed = parsePlan(output);
-  assertEq(parsed.tasks.length, 0, 'edge: empty tasks');
-}
+  assert.deepStrictEqual(parsed.tasks.length, 0, 'edge: empty tasks');
+});
 
-// F4: Null summary → empty string from formatSliceSummary
-{
+test('F4: Null summary → empty string from formatSliceSummary', () => {
   const slice = makeSlice({ summary: null });
   const output = formatSliceSummary(slice, 'M001');
-  assertEq(output, '', 'edge: null summary returns empty string');
-}
+  assert.deepStrictEqual(output, '', 'edge: null summary returns empty string');
+});
 
-// F5: Done=true checkbox in roadmap
-{
+test('F5: Done=true checkbox in roadmap', () => {
   const milestone = makeMilestone({
     slices: [makeSlice({ id: 'S01', done: true })],
   });
   const output = formatRoadmap(milestone);
   const parsed = parseRoadmap(output);
-  assertEq(parsed.slices[0].done, true, 'edge: done checkbox true');
-}
+  assert.deepStrictEqual(parsed.slices[0].done, true, 'edge: done checkbox true');
+});
 
-// F6: Done=false checkbox in roadmap
-{
+test('F6: Done=false checkbox in roadmap', () => {
   const milestone = makeMilestone({
     slices: [makeSlice({ id: 'S01', done: false })],
   });
   const output = formatRoadmap(milestone);
   const parsed = parseRoadmap(output);
-  assertEq(parsed.slices[0].done, false, 'edge: done checkbox false');
-}
+  assert.deepStrictEqual(parsed.slices[0].done, false, 'edge: done checkbox false');
+});
 
-// F7: Null task summary → empty string from formatTaskSummary
-{
+test('F7: Null task summary → empty string from formatTaskSummary', () => {
   const task = makeTask({ summary: null });
   const output = formatTaskSummary(task, 'S01', 'M001');
-  assertEq(output, '', 'edge: null task summary returns empty string');
-}
+  assert.deepStrictEqual(output, '', 'edge: null task summary returns empty string');
+});
 
-// F8: Empty requirements → all zeros
-{
+test('F8: Empty requirements → all zeros', () => {
   const output = formatRequirements([]);
   const counts = parseRequirementCounts(output);
-  assertEq(counts.total, 0, 'edge: empty requirements total 0');
-}
+  assert.deepStrictEqual(counts.total, 0, 'edge: empty requirements total 0');
+});
 
-// F9: formatProject with empty content → produces valid stub
-{
+test('F9: formatProject with empty content → produces valid stub', () => {
   const output = formatProject('');
-  assertTrue(output.includes('# Project'), 'edge: empty project has heading');
-  assertTrue(output.length > 10, 'edge: empty project not blank');
-}
+  assert.ok(output.includes('# Project'), 'edge: empty project has heading');
+  assert.ok(output.length > 10, 'edge: empty project not blank');
+});
 
-// F10: formatProject with existing content → passes through
-{
+test('F10: formatProject with existing content → passes through', () => {
   const content = '# My Project\n\nDescription here.\n';
   const output = formatProject(content);
-  assertEq(output, content, 'edge: project passthrough');
-}
+  assert.deepStrictEqual(output, content, 'edge: project passthrough');
+});
 
-// F11: formatDecisions with empty content → produces valid stub
-{
+test('F11: formatDecisions with empty content → produces valid stub', () => {
   const output = formatDecisions('');
-  assertTrue(output.includes('# Decisions'), 'edge: empty decisions has heading');
-}
+  assert.ok(output.includes('# Decisions'), 'edge: empty decisions has heading');
+});
 
-// F12: formatContext produces valid content
-{
+test('F12: formatContext produces valid content', () => {
   const output = formatContext('M001');
-  assertTrue(output.includes('M001'), 'edge: context mentions milestone');
-}
+  assert.ok(output.includes('M001'), 'edge: context mentions milestone');
+});
 
-// F13: formatState produces valid content
-{
+test('F13: formatState produces valid content', () => {
   const milestones = [makeMilestone({
     slices: [
       makeSlice({ done: true }),
@@ -379,20 +344,18 @@ function makeTaskSummary(overrides: Partial<GSDTaskSummaryData> = {}): GSDTaskSu
     ],
   })];
   const output = formatState(milestones);
-  assertTrue(output.includes('1/2'), 'edge: state shows slice progress');
-}
+  assert.ok(output.includes('1/2'), 'edge: state shows slice progress');
+});
 
-// F14: Task with no estimate → no est backtick in plan
-{
+test('F14: Task with no estimate → no est backtick in plan', () => {
   const slice = makeSlice({
     tasks: [makeTask({ id: 'T01', title: 'Quick Fix', estimate: '' })],
   });
   const output = formatPlan(slice);
   const parsed = parsePlan(output);
-  assertEq(parsed.tasks[0].id, 'T01', 'edge: task no estimate id');
-  assertEq(parsed.tasks[0].estimate, '', 'edge: task no estimate empty');
-}
+  assert.deepStrictEqual(parsed.tasks[0].id, 'T01', 'edge: task no estimate id');
+  assert.deepStrictEqual(parsed.tasks[0].estimate, '', 'edge: task no estimate empty');
+});
 
 // ═══════════════════════════════════════════════════════════════════════════
 
-report();

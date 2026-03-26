@@ -771,7 +771,7 @@ export async function ensurePreferencesFile(
   scope: "global" | "project",
 ): Promise<void> {
   if (!existsSync(path)) {
-    const template = await loadFile(join(dirname(fileURLToPath(import.meta.url)), "templates", "preferences.md"));
+    const template = await loadFile(join(dirname(fileURLToPath(import.meta.url)), "templates", "PREFERENCES.md"));
     if (!template) {
       ctx.ui.notify("Could not load GSD preferences template.", "error");
       return;

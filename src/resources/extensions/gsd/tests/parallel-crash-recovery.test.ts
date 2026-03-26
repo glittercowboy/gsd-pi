@@ -5,6 +5,8 @@
  * restored after a coordinator crash, with PID liveness filtering.
  */
 
+import { describe, test } from 'node:test';
+import assert from 'node:assert/strict';
 import {
   mkdtempSync,
   mkdirSync,
@@ -24,10 +26,6 @@ import {
   type PersistedState,
 } from "../parallel-orchestrator.ts";
 import { writeSessionStatus, readAllSessionStatuses, removeSessionStatus } from "../session-status-io.ts";
-import { createTestContext } from './test-helpers.ts';
-
-const { assertEq, assertTrue, report } = createTestContext();
-
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function makeTempDir(): string {
@@ -57,8 +55,9 @@ function makePersistedState(overrides: Partial<PersistedState> = {}): PersistedS
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
-// Test 1: persistState writes valid JSON
-{
+
+describe('parallel-crash-recovery', () => {
+test('Test 1: persistState writes valid JSON', () => {
   const basePath = makeTempDir();
   try {
     // We can't call persistState directly without internal state set up,
@@ -72,7 +71,6 @@ function makePersistedState(overrides: Partial<PersistedState> = {}): PersistedS
           worktreePath: "/tmp/wt-M001",
           startedAt: Date.now(),
           state: "running",
-          completedUnits: 3,
           cost: 0.15,
         },
       ],
@@ -82,29 +80,27 @@ function makePersistedState(overrides: Partial<PersistedState> = {}): PersistedS
 
     const raw = readFileSync(stateFilePath(basePath), "utf-8");
     const parsed = JSON.parse(raw) as PersistedState;
-    assertEq(parsed.active, true, "persistState: active field preserved");
-    assertEq(parsed.workers.length, 1, "persistState: worker count preserved");
-    assertEq(parsed.workers[0].milestoneId, "M001", "persistState: milestoneId preserved");
-    assertEq(parsed.workers[0].cost, 0.15, "persistState: cost preserved");
-    assertEq(parsed.totalCost, 0.15, "persistState: totalCost preserved");
+    assert.deepStrictEqual(parsed.active, true, "persistState: active field preserved");
+    assert.deepStrictEqual(parsed.workers.length, 1, "persistState: worker count preserved");
+    assert.deepStrictEqual(parsed.workers[0].milestoneId, "M001", "persistState: milestoneId preserved");
+    assert.deepStrictEqual(parsed.workers[0].cost, 0.15, "persistState: cost preserved");
+    assert.deepStrictEqual(parsed.totalCost, 0.15, "persistState: totalCost preserved");
   } finally {
     rmSync(basePath, { recursive: true, force: true });
   }
-}
+});
 
-// Test 2: restoreState returns null for missing file
-{
+test('Test 2: restoreState returns null for missing file', () => {
   const basePath = makeTempDir();
   try {
     const result = restoreState(basePath);
-    assertEq(result, null, "restoreState: returns null when no state file");
+    assert.deepStrictEqual(result, null, "restoreState: returns null when no state file");
   } finally {
     rmSync(basePath, { recursive: true, force: true });
   }
-}
+});
 
-// Test 3: restoreState filters dead PIDs
-{
+test('Test 3: restoreState filters dead PIDs', () => {
   const basePath = makeTempDir();
   try {
     // PID 99999999 is almost certainly not alive
@@ -117,7 +113,6 @@ function makePersistedState(overrides: Partial<PersistedState> = {}): PersistedS
           worktreePath: "/tmp/wt-M001",
           startedAt: Date.now(),
           state: "running",
-          completedUnits: 0,
           cost: 0,
         },
         {
@@ -127,7 +122,6 @@ function makePersistedState(overrides: Partial<PersistedState> = {}): PersistedS
           worktreePath: "/tmp/wt-M002",
           startedAt: Date.now(),
           state: "running",
-          completedUnits: 0,
           cost: 0,
         },
       ],
@@ -136,15 +130,14 @@ function makePersistedState(overrides: Partial<PersistedState> = {}): PersistedS
 
     const result = restoreState(basePath);
     // Both PIDs are dead, so result should be null and file should be cleaned up
-    assertEq(result, null, "restoreState: returns null when all PIDs dead");
-    assertTrue(!existsSync(stateFilePath(basePath)), "restoreState: cleans up state file when all dead");
+    assert.deepStrictEqual(result, null, "restoreState: returns null when all PIDs dead");
+    assert.ok(!existsSync(stateFilePath(basePath)), "restoreState: cleans up state file when all dead");
   } finally {
     rmSync(basePath, { recursive: true, force: true });
   }
-}
+});
 
-// Test 4: restoreState keeps alive PIDs
-{
+test('Test 4: restoreState keeps alive PIDs', () => {
   const basePath = makeTempDir();
   try {
     // Use current process PID (definitely alive)
@@ -157,7 +150,6 @@ function makePersistedState(overrides: Partial<PersistedState> = {}): PersistedS
           worktreePath: "/tmp/wt-M001",
           startedAt: Date.now(),
           state: "running",
-          completedUnits: 5,
           cost: 0.25,
         },
         {
@@ -167,7 +159,6 @@ function makePersistedState(overrides: Partial<PersistedState> = {}): PersistedS
           worktreePath: "/tmp/wt-M002",
           startedAt: Date.now(),
           state: "running",
-          completedUnits: 0,
           cost: 0,
         },
       ],
@@ -176,18 +167,16 @@ function makePersistedState(overrides: Partial<PersistedState> = {}): PersistedS
     writeStateFile(basePath, state);
 
     const result = restoreState(basePath);
-    assertTrue(result !== null, "restoreState: returns state when alive PID exists");
-    assertEq(result!.workers.length, 1, "restoreState: filters out dead PID");
-    assertEq(result!.workers[0].milestoneId, "M001", "restoreState: keeps alive worker");
-    assertEq(result!.workers[0].pid, process.pid, "restoreState: preserves PID");
-    assertEq(result!.workers[0].completedUnits, 5, "restoreState: preserves progress");
+    assert.ok(result !== null, "restoreState: returns state when alive PID exists");
+    assert.deepStrictEqual(result!.workers.length, 1, "restoreState: filters out dead PID");
+    assert.deepStrictEqual(result!.workers[0].milestoneId, "M001", "restoreState: keeps alive worker");
+    assert.deepStrictEqual(result!.workers[0].pid, process.pid, "restoreState: preserves PID");
   } finally {
     rmSync(basePath, { recursive: true, force: true });
   }
-}
+});
 
-// Test 5: restoreState skips stopped/error workers even with alive PIDs
-{
+test('Test 5: restoreState skips stopped/error workers even with alive PIDs', () => {
   const basePath = makeTempDir();
   try {
     const state = makePersistedState({
@@ -199,7 +188,6 @@ function makePersistedState(overrides: Partial<PersistedState> = {}): PersistedS
           worktreePath: "/tmp/wt-M001",
           startedAt: Date.now(),
           state: "stopped",
-          completedUnits: 10,
           cost: 0.50,
         },
       ],
@@ -207,14 +195,13 @@ function makePersistedState(overrides: Partial<PersistedState> = {}): PersistedS
     writeStateFile(basePath, state);
 
     const result = restoreState(basePath);
-    assertEq(result, null, "restoreState: skips stopped workers");
+    assert.deepStrictEqual(result, null, "restoreState: skips stopped workers");
   } finally {
     rmSync(basePath, { recursive: true, force: true });
   }
-}
+});
 
-// Test 6: orphan detection finds stale sessions
-{
+test('Test 6: orphan detection finds stale sessions', () => {
   const basePath = makeTempDir();
   try {
     // Write a session status with a dead PID
@@ -246,7 +233,7 @@ function makePersistedState(overrides: Partial<PersistedState> = {}): PersistedS
 
     // Read all sessions — both should exist initially
     const before = readAllSessionStatuses(basePath);
-    assertEq(before.length, 2, "orphan: both sessions exist before detection");
+    assert.deepStrictEqual(before.length, 2, "orphan: both sessions exist before detection");
 
     // Now simulate orphan detection logic (same as prepareParallelStart)
     const sessions = readAllSessionStatuses(basePath);
@@ -265,34 +252,33 @@ function makePersistedState(overrides: Partial<PersistedState> = {}): PersistedS
       }
     }
 
-    assertTrue(orphans.length === 2, "orphan: detected both sessions");
+    assert.ok(orphans.length === 2, "orphan: detected both sessions");
     const deadOrphan = orphans.find(o => o.milestoneId === "M001");
-    assertTrue(deadOrphan !== undefined && !deadOrphan.alive, "orphan: M001 detected as dead");
+    assert.ok(deadOrphan !== undefined && !deadOrphan.alive, "orphan: M001 detected as dead");
     const aliveOrphan = orphans.find(o => o.milestoneId === "M002");
-    assertTrue(aliveOrphan !== undefined && aliveOrphan.alive, "orphan: M002 detected as alive");
+    assert.ok(aliveOrphan !== undefined && aliveOrphan.alive, "orphan: M002 detected as alive");
 
     // Dead session should be cleaned up
     const after = readAllSessionStatuses(basePath);
-    assertEq(after.length, 1, "orphan: dead session cleaned up");
-    assertEq(after[0].milestoneId, "M002", "orphan: alive session remains");
+    assert.deepStrictEqual(after.length, 1, "orphan: dead session cleaned up");
+    assert.deepStrictEqual(after[0].milestoneId, "M002", "orphan: alive session remains");
   } finally {
     rmSync(basePath, { recursive: true, force: true });
   }
-}
+});
 
-// Test 7: restoreState handles corrupt JSON gracefully
-{
+test('Test 7: restoreState handles corrupt JSON gracefully', () => {
   const basePath = makeTempDir();
   try {
     writeFileSync(stateFilePath(basePath), "{ not valid json !!!", "utf-8");
     const result = restoreState(basePath);
-    assertEq(result, null, "restoreState: returns null for corrupt JSON");
+    assert.deepStrictEqual(result, null, "restoreState: returns null for corrupt JSON");
   } finally {
     rmSync(basePath, { recursive: true, force: true });
   }
-}
+});
 
 // Clean up module state
 resetOrchestrator();
 
-report();
+});

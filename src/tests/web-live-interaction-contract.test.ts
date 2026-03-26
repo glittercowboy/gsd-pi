@@ -373,7 +373,7 @@ function routeEvent(state: MinimalLiveState, event: any): MinimalLiveState {
 // Tests
 // ---------------------------------------------------------------------------
 
-test("(a) SSE emits extension_ui_request with method 'select' → typed payload with options and allowMultiple", async () => {
+test("(a) SSE emits extension_ui_request with method 'select' → typed payload with options and allowMultiple", async (t) => {
   const fixture = makeWorkspaceFixture();
   const sessionPath = createSessionFile(fixture.projectCwd, fixture.sessionsDir, "sess-ui", "UI Session");
   const harness = createHarness((command, current) => {
@@ -392,46 +392,46 @@ test("(a) SSE emits extension_ui_request with method 'select' → typed payload 
 
   setupBridge(harness, fixture);
 
-  try {
-    const controller = new AbortController();
-    const response = await eventsRoute.GET(
-      new Request("http://localhost/api/session/events", { signal: controller.signal }),
-    );
-
-    harness.emit({
-      type: "extension_ui_request",
-      id: "req-select-1",
-      method: "select",
-      title: "Choose a file",
-      options: ["file-a.ts", "file-b.ts", "file-c.ts"],
-      allowMultiple: true,
-    });
-
-    const events = await readSseEvents(response, 2); // bridge_status + the UI request
-    controller.abort();
-    await waitForMicrotasks();
-
-    const uiEvent = events.find((e) => e.type === "extension_ui_request");
-    assert.ok(uiEvent, "extension_ui_request event received via SSE");
-    assert.equal(uiEvent.id, "req-select-1");
-    assert.equal(uiEvent.method, "select");
-    assert.equal(uiEvent.title, "Choose a file");
-    assert.deepEqual(uiEvent.options, ["file-a.ts", "file-b.ts", "file-c.ts"]);
-    assert.equal(uiEvent.allowMultiple, true);
-
-    // Verify store routing: select is a blocking method → should queue
-    let state = createMinimalLiveState();
-    state = routeEvent(state, uiEvent);
-    assert.equal(state.pendingUiRequests.length, 1);
-    assert.equal(state.pendingUiRequests[0].id, "req-select-1");
-    assert.equal(state.pendingUiRequests[0].method, "select");
-    assert.deepEqual(state.pendingUiRequests[0].options, ["file-a.ts", "file-b.ts", "file-c.ts"]);
-    assert.equal(state.pendingUiRequests[0].allowMultiple, true);
-  } finally {
+  t.after(async () => {
     await bridge.resetBridgeServiceForTests();
     onboarding.resetOnboardingServiceForTests();
     fixture.cleanup();
-  }
+  });
+
+  const controller = new AbortController();
+  const response = await eventsRoute.GET(
+    new Request("http://localhost/api/session/events", { signal: controller.signal }),
+  );
+
+  harness.emit({
+    type: "extension_ui_request",
+    id: "req-select-1",
+    method: "select",
+    title: "Choose a file",
+    options: ["file-a.ts", "file-b.ts", "file-c.ts"],
+    allowMultiple: true,
+  });
+
+  const events = await readSseEvents(response, 2); // bridge_status + the UI request
+  controller.abort();
+  await waitForMicrotasks();
+
+  const uiEvent = events.find((e) => e.type === "extension_ui_request");
+  assert.ok(uiEvent, "extension_ui_request event received via SSE");
+  assert.equal(uiEvent.id, "req-select-1");
+  assert.equal(uiEvent.method, "select");
+  assert.equal(uiEvent.title, "Choose a file");
+  assert.deepEqual(uiEvent.options, ["file-a.ts", "file-b.ts", "file-c.ts"]);
+  assert.equal(uiEvent.allowMultiple, true);
+
+  // Verify store routing: select is a blocking method → should queue
+  let state = createMinimalLiveState();
+  state = routeEvent(state, uiEvent);
+  assert.equal(state.pendingUiRequests.length, 1);
+  assert.equal(state.pendingUiRequests[0].id, "req-select-1");
+  assert.equal(state.pendingUiRequests[0].method, "select");
+  assert.deepEqual(state.pendingUiRequests[0].options, ["file-a.ts", "file-b.ts", "file-c.ts"]);
+  assert.equal(state.pendingUiRequests[0].allowMultiple, true);
 });
 
 test("(b) Multiple concurrent UI requests queue correctly keyed by id", async () => {
@@ -480,7 +480,7 @@ test("(b) Multiple concurrent UI requests queue correctly keyed by id", async ()
   assert.equal(state.pendingUiRequests[3].prefill, "initial text");
 });
 
-test("(c) Responding to a UI request posts extension_ui_response with correct id and value to the bridge", async () => {
+test("(c) Responding to a UI request posts extension_ui_response with correct id and value to the bridge", async (t) => {
   const fixture = makeWorkspaceFixture();
   const sessionPath = createSessionFile(fixture.projectCwd, fixture.sessionsDir, "sess-respond", "Respond Session");
   const harness = createHarness((command, current) => {
@@ -499,33 +499,33 @@ test("(c) Responding to a UI request posts extension_ui_response with correct id
 
   setupBridge(harness, fixture);
 
-  try {
-    // Post an extension_ui_response via the command route
-    const response = await commandRoute.POST(
-      new Request("http://localhost/api/session/command", {
-        method: "POST",
-        body: JSON.stringify({ type: "extension_ui_response", id: "req-42", value: "option-b" }),
-      }),
-    );
-
-    // extension_ui_response returns { ok: true } (202) because it's fire-and-forget
-    assert.equal(response.status, 202);
-
-    await waitForMicrotasks();
-
-    // Verify the command was written to the bridge's stdin
-    const uiResponseCmd = harness.commands.find((c) => c.type === "extension_ui_response");
-    assert.ok(uiResponseCmd, "extension_ui_response was sent to the bridge");
-    assert.equal(uiResponseCmd.id, "req-42");
-    assert.equal(uiResponseCmd.value, "option-b");
-  } finally {
+  t.after(async () => {
     await bridge.resetBridgeServiceForTests();
     onboarding.resetOnboardingServiceForTests();
     fixture.cleanup();
-  }
+  });
+
+  // Post an extension_ui_response via the command route
+  const response = await commandRoute.POST(
+    new Request("http://localhost/api/session/command", {
+      method: "POST",
+      body: JSON.stringify({ type: "extension_ui_response", id: "req-42", value: "option-b" }),
+    }),
+  );
+
+  // extension_ui_response returns { ok: true } (202) because it's fire-and-forget
+  assert.equal(response.status, 202);
+
+  await waitForMicrotasks();
+
+  // Verify the command was written to the bridge's stdin
+  const uiResponseCmd = harness.commands.find((c) => c.type === "extension_ui_response");
+  assert.ok(uiResponseCmd, "extension_ui_response was sent to the bridge");
+  assert.equal(uiResponseCmd.id, "req-42");
+  assert.equal(uiResponseCmd.value, "option-b");
 });
 
-test("(d) Dismissing a UI request posts cancelled: true and removes from pending", async () => {
+test("(d) Dismissing a UI request posts cancelled: true and removes from pending", async (t) => {
   const fixture = makeWorkspaceFixture();
   const sessionPath = createSessionFile(fixture.projectCwd, fixture.sessionsDir, "sess-dismiss", "Dismiss Session");
   const harness = createHarness((command, current) => {
@@ -543,48 +543,48 @@ test("(d) Dismissing a UI request posts cancelled: true and removes from pending
 
   setupBridge(harness, fixture);
 
-  try {
-    // Post a cancel response
-    const response = await commandRoute.POST(
-      new Request("http://localhost/api/session/command", {
-        method: "POST",
-        body: JSON.stringify({ type: "extension_ui_response", id: "req-99", cancelled: true }),
-      }),
-    );
-
-    assert.equal(response.status, 202);
-    await waitForMicrotasks();
-
-    const cancelCmd = harness.commands.find((c) => c.type === "extension_ui_response" && c.cancelled === true);
-    assert.ok(cancelCmd, "cancellation extension_ui_response was sent to the bridge");
-    assert.equal(cancelCmd.id, "req-99");
-    assert.equal(cancelCmd.cancelled, true);
-
-    // Verify store routing: removing from pending queue
-    let state = createMinimalLiveState();
-    state = routeEvent(state, {
-      type: "extension_ui_request",
-      id: "req-99",
-      method: "confirm",
-      title: "Confirm?",
-      message: "Really?",
-    });
-    assert.equal(state.pendingUiRequests.length, 1);
-
-    // Simulate removal (mirrors store's dismissUiRequest behavior)
-    state = {
-      ...state,
-      pendingUiRequests: state.pendingUiRequests.filter((r: any) => r.id !== "req-99"),
-    };
-    assert.equal(state.pendingUiRequests.length, 0);
-  } finally {
+  t.after(async () => {
     await bridge.resetBridgeServiceForTests();
     onboarding.resetOnboardingServiceForTests();
     fixture.cleanup();
-  }
+  });
+
+  // Post a cancel response
+  const response = await commandRoute.POST(
+    new Request("http://localhost/api/session/command", {
+      method: "POST",
+      body: JSON.stringify({ type: "extension_ui_response", id: "req-99", cancelled: true }),
+    }),
+  );
+
+  assert.equal(response.status, 202);
+  await waitForMicrotasks();
+
+  const cancelCmd = harness.commands.find((c) => c.type === "extension_ui_response" && c.cancelled === true);
+  assert.ok(cancelCmd, "cancellation extension_ui_response was sent to the bridge");
+  assert.equal(cancelCmd.id, "req-99");
+  assert.equal(cancelCmd.cancelled, true);
+
+  // Verify store routing: removing from pending queue
+  let state = createMinimalLiveState();
+  state = routeEvent(state, {
+    type: "extension_ui_request",
+    id: "req-99",
+    method: "confirm",
+    title: "Confirm?",
+    message: "Really?",
+  });
+  assert.equal(state.pendingUiRequests.length, 1);
+
+  // Simulate removal (mirrors store's dismissUiRequest behavior)
+  state = {
+    ...state,
+    pendingUiRequests: state.pendingUiRequests.filter((r: any) => r.id !== "req-99"),
+  };
+  assert.equal(state.pendingUiRequests.length, 0);
 });
 
-test("(e) SSE emits message_update with text delta → streamingAssistantText accumulates", async () => {
+test("(e) SSE emits message_update with text delta → streamingAssistantText accumulates", async (t) => {
   let state = createMinimalLiveState();
 
   state = routeEvent(state, {
@@ -625,31 +625,31 @@ test("(e) SSE emits message_update with text delta → streamingAssistantText ac
 
   setupBridge(harness, fixture);
 
-  try {
-    const controller = new AbortController();
-    const response = await eventsRoute.GET(
-      new Request("http://localhost/api/session/events", { signal: controller.signal }),
-    );
-
-    harness.emit({
-      type: "message_update",
-      message: { role: "assistant", content: [] },
-      assistantMessageEvent: { type: "text_delta", delta: "streamed text", contentIndex: 0, partial: {} },
-    });
-
-    const events = await readSseEvents(response, 2); // bridge_status + message_update
-    controller.abort();
-    await waitForMicrotasks();
-
-    const msgEvent = events.find((e) => e.type === "message_update");
-    assert.ok(msgEvent, "message_update event received via SSE");
-    assert.equal(msgEvent.assistantMessageEvent.type, "text_delta");
-    assert.equal(msgEvent.assistantMessageEvent.delta, "streamed text");
-  } finally {
+  t.after(async () => {
     await bridge.resetBridgeServiceForTests();
     onboarding.resetOnboardingServiceForTests();
     fixture.cleanup();
-  }
+  });
+
+  const controller = new AbortController();
+  const response = await eventsRoute.GET(
+    new Request("http://localhost/api/session/events", { signal: controller.signal }),
+  );
+
+  harness.emit({
+    type: "message_update",
+    message: { role: "assistant", content: [] },
+    assistantMessageEvent: { type: "text_delta", delta: "streamed text", contentIndex: 0, partial: {} },
+  });
+
+  const events = await readSseEvents(response, 2); // bridge_status + message_update
+  controller.abort();
+  await waitForMicrotasks();
+
+  const msgEvent = events.find((e) => e.type === "message_update");
+  assert.ok(msgEvent, "message_update event received via SSE");
+  assert.equal(msgEvent.assistantMessageEvent.type, "text_delta");
+  assert.equal(msgEvent.assistantMessageEvent.delta, "streamed text");
 });
 
 test("(f) agent_end moves streaming text to transcript and resets streaming text", async () => {
@@ -813,7 +813,7 @@ test("(g-2) tool_execution_start/end update activeToolExecution", async () => {
   assert.equal(state.activeToolExecution, null);
 });
 
-test("(h) steer and abort commands post the correct RPC command type", async () => {
+test("(h) steer and abort commands post the correct RPC command type", async (t) => {
   const fixture = makeWorkspaceFixture();
   const sessionPath = createSessionFile(fixture.projectCwd, fixture.sessionsDir, "sess-steer", "Steer Session");
   const harness = createHarness((command, current) => {
@@ -853,43 +853,43 @@ test("(h) steer and abort commands post the correct RPC command type", async () 
 
   setupBridge(harness, fixture);
 
-  try {
-    // Send steer command
-    const steerResponse = await commandRoute.POST(
-      new Request("http://localhost/api/session/command", {
-        method: "POST",
-        body: JSON.stringify({ type: "steer", message: "focus on the login flow" }),
-      }),
-    );
-    assert.equal(steerResponse.status, 200);
-    const steerBody = await steerResponse.json() as any;
-    assert.equal(steerBody.success, true);
-    assert.equal(steerBody.command, "steer");
-
-    // Verify steer command reached the bridge with the correct shape
-    const steerCmd = harness.commands.find((c) => c.type === "steer");
-    assert.ok(steerCmd, "steer command was sent to the bridge");
-    assert.equal(steerCmd.message, "focus on the login flow");
-
-    // Send abort command
-    const abortResponse = await commandRoute.POST(
-      new Request("http://localhost/api/session/command", {
-        method: "POST",
-        body: JSON.stringify({ type: "abort" }),
-      }),
-    );
-    assert.equal(abortResponse.status, 200);
-    const abortBody = await abortResponse.json() as any;
-    assert.equal(abortBody.success, true);
-    assert.equal(abortBody.command, "abort");
-
-    const abortCmd = harness.commands.find((c) => c.type === "abort");
-    assert.ok(abortCmd, "abort command was sent to the bridge");
-  } finally {
+  t.after(async () => {
     await bridge.resetBridgeServiceForTests();
     onboarding.resetOnboardingServiceForTests();
     fixture.cleanup();
-  }
+  });
+
+  // Send steer command
+  const steerResponse = await commandRoute.POST(
+    new Request("http://localhost/api/session/command", {
+      method: "POST",
+      body: JSON.stringify({ type: "steer", message: "focus on the login flow" }),
+    }),
+  );
+  assert.equal(steerResponse.status, 200);
+  const steerBody = await steerResponse.json() as any;
+  assert.equal(steerBody.success, true);
+  assert.equal(steerBody.command, "steer");
+
+  // Verify steer command reached the bridge with the correct shape
+  const steerCmd = harness.commands.find((c) => c.type === "steer");
+  assert.ok(steerCmd, "steer command was sent to the bridge");
+  assert.equal(steerCmd.message, "focus on the login flow");
+
+  // Send abort command
+  const abortResponse = await commandRoute.POST(
+    new Request("http://localhost/api/session/command", {
+      method: "POST",
+      body: JSON.stringify({ type: "abort" }),
+    }),
+  );
+  assert.equal(abortResponse.status, 200);
+  const abortBody = await abortResponse.json() as any;
+  assert.equal(abortBody.success, true);
+  assert.equal(abortBody.command, "abort");
+
+  const abortCmd = harness.commands.find((c) => c.type === "abort");
+  assert.ok(abortCmd, "abort command was sent to the bridge");
 });
 
 test("(failure-path) UI response errors are visible as lastClientError and pending requests persist on failure", async () => {
@@ -920,7 +920,7 @@ test("(failure-path) UI response errors are visible as lastClientError and pendi
   assert.equal(successState.pendingUiRequests.length, 0, "request removed on success");
 });
 
-test("(session-controls) browser session RPCs round-trip through /api/session/command", async () => {
+test("(session-controls) browser session RPCs round-trip through /api/session/command", async (t) => {
   const fixture = makeWorkspaceFixture();
   const activeSessionPath = createSessionFile(fixture.projectCwd, fixture.sessionsDir, "sess-session", "Session Surface");
   const nextSessionPath = createSessionFile(fixture.projectCwd, fixture.sessionsDir, "sess-next", "Next Session");
@@ -1036,85 +1036,85 @@ test("(session-controls) browser session RPCs round-trip through /api/session/co
 
   setupBridge(harness, fixture);
 
-  try {
-    const sessionResponse = await commandRoute.POST(
-      new Request("http://localhost/api/session/command", {
-        method: "POST",
-        body: JSON.stringify({ type: "get_session_stats" }),
-      }),
-    );
-    assert.equal(sessionResponse.status, 200);
-    const sessionBody = await sessionResponse.json() as any;
-    assert.equal(sessionBody.success, true);
-    assert.equal(sessionBody.command, "get_session_stats");
-    assert.equal(sessionBody.data.sessionId, "sess-session");
-    assert.equal(sessionBody.data.tokens.total, 4600);
-
-    const exportResponse = await commandRoute.POST(
-      new Request("http://localhost/api/session/command", {
-        method: "POST",
-        body: JSON.stringify({ type: "export_html", outputPath: exportPath }),
-      }),
-    );
-    assert.equal(exportResponse.status, 200);
-    const exportBody = await exportResponse.json() as any;
-    assert.equal(exportBody.success, true);
-    assert.equal(exportBody.data.path, exportPath);
-
-    const switchResponse = await commandRoute.POST(
-      new Request("http://localhost/api/session/command", {
-        method: "POST",
-        body: JSON.stringify({ type: "switch_session", sessionPath: nextSessionPath }),
-      }),
-    );
-    assert.equal(switchResponse.status, 200);
-    const switchBody = await switchResponse.json() as any;
-    assert.equal(switchBody.success, true);
-    assert.equal(switchBody.data.cancelled, false);
-
-    const forkMessagesResponse = await commandRoute.POST(
-      new Request("http://localhost/api/session/command", {
-        method: "POST",
-        body: JSON.stringify({ type: "get_fork_messages" }),
-      }),
-    );
-    assert.equal(forkMessagesResponse.status, 200);
-    const forkMessagesBody = await forkMessagesResponse.json() as any;
-    assert.equal(forkMessagesBody.success, true);
-    assert.deepEqual(forkMessagesBody.data.messages, forkMessages);
-
-    const forkResponse = await commandRoute.POST(
-      new Request("http://localhost/api/session/command", {
-        method: "POST",
-        body: JSON.stringify({ type: "fork", entryId: "entry-2" }),
-      }),
-    );
-    assert.equal(forkResponse.status, 200);
-    const forkBody = await forkResponse.json() as any;
-    assert.equal(forkBody.success, true);
-    assert.equal(forkBody.data.cancelled, false);
-    assert.equal(forkBody.data.text, "Fix the slash-command dispatcher");
-
-    const compactResponse = await commandRoute.POST(
-      new Request("http://localhost/api/session/command", {
-        method: "POST",
-        body: JSON.stringify({ type: "compact", customInstructions: "Preserve blockers and current task state" }),
-      }),
-    );
-    assert.equal(compactResponse.status, 200);
-    const compactBody = await compactResponse.json() as any;
-    assert.equal(compactBody.success, true);
-    assert.equal(compactBody.data.summary, "Compacted summary");
-    assert.equal(compactBody.data.tokensBefore, 14200);
-
-    assert.deepEqual(
-      harness.commands.filter((command) => command.type !== "get_state").map((command) => command.type),
-      ["get_session_stats", "export_html", "switch_session", "get_fork_messages", "fork", "compact"],
-      "browser session controls should hit the live command route with the expected RPC sequence",
-    );
-  } finally {
+  t.after(async () => {
     await bridge.resetBridgeServiceForTests();
     onboarding.resetOnboardingServiceForTests();
     fixture.cleanup();
-  }
+  });
+
+  const sessionResponse = await commandRoute.POST(
+    new Request("http://localhost/api/session/command", {
+      method: "POST",
+      body: JSON.stringify({ type: "get_session_stats" }),
+    }),
+  );
+  assert.equal(sessionResponse.status, 200);
+  const sessionBody = await sessionResponse.json() as any;
+  assert.equal(sessionBody.success, true);
+  assert.equal(sessionBody.command, "get_session_stats");
+  assert.equal(sessionBody.data.sessionId, "sess-session");
+  assert.equal(sessionBody.data.tokens.total, 4600);
+
+  const exportResponse = await commandRoute.POST(
+    new Request("http://localhost/api/session/command", {
+      method: "POST",
+      body: JSON.stringify({ type: "export_html", outputPath: exportPath }),
+    }),
+  );
+  assert.equal(exportResponse.status, 200);
+  const exportBody = await exportResponse.json() as any;
+  assert.equal(exportBody.success, true);
+  assert.equal(exportBody.data.path, exportPath);
+
+  const switchResponse = await commandRoute.POST(
+    new Request("http://localhost/api/session/command", {
+      method: "POST",
+      body: JSON.stringify({ type: "switch_session", sessionPath: nextSessionPath }),
+    }),
+  );
+  assert.equal(switchResponse.status, 200);
+  const switchBody = await switchResponse.json() as any;
+  assert.equal(switchBody.success, true);
+  assert.equal(switchBody.data.cancelled, false);
+
+  const forkMessagesResponse = await commandRoute.POST(
+    new Request("http://localhost/api/session/command", {
+      method: "POST",
+      body: JSON.stringify({ type: "get_fork_messages" }),
+    }),
+  );
+  assert.equal(forkMessagesResponse.status, 200);
+  const forkMessagesBody = await forkMessagesResponse.json() as any;
+  assert.equal(forkMessagesBody.success, true);
+  assert.deepEqual(forkMessagesBody.data.messages, forkMessages);
+
+  const forkResponse = await commandRoute.POST(
+    new Request("http://localhost/api/session/command", {
+      method: "POST",
+      body: JSON.stringify({ type: "fork", entryId: "entry-2" }),
+    }),
+  );
+  assert.equal(forkResponse.status, 200);
+  const forkBody = await forkResponse.json() as any;
+  assert.equal(forkBody.success, true);
+  assert.equal(forkBody.data.cancelled, false);
+  assert.equal(forkBody.data.text, "Fix the slash-command dispatcher");
+
+  const compactResponse = await commandRoute.POST(
+    new Request("http://localhost/api/session/command", {
+      method: "POST",
+      body: JSON.stringify({ type: "compact", customInstructions: "Preserve blockers and current task state" }),
+    }),
+  );
+  assert.equal(compactResponse.status, 200);
+  const compactBody = await compactResponse.json() as any;
+  assert.equal(compactBody.success, true);
+  assert.equal(compactBody.data.summary, "Compacted summary");
+  assert.equal(compactBody.data.tokensBefore, 14200);
+
+  assert.deepEqual(
+    harness.commands.filter((command) => command.type !== "get_state").map((command) => command.type),
+    ["get_session_stats", "export_html", "switch_session", "get_fork_messages", "fork", "compact"],
+    "browser session controls should hit the live command route with the expected RPC sequence",
+  );
 });

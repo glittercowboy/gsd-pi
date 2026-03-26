@@ -45,6 +45,7 @@ export interface SettingsConfig {
 	respectGitignoreInPicker: boolean;
 	quietStartup: boolean;
 	clearOnShrink: boolean;
+	timestampFormat: "date-time-iso" | "date-time-us";
 }
 
 export interface SettingsCallbacks {
@@ -69,6 +70,7 @@ export interface SettingsCallbacks {
 	onRespectGitignoreInPickerChange: (enabled: boolean) => void;
 	onQuietStartupChange: (enabled: boolean) => void;
 	onClearOnShrinkChange: (enabled: boolean) => void;
+	onTimestampFormatChange: (format: "date-time-iso" | "date-time-us") => void;
 	onCancel: () => void;
 }
 
@@ -355,6 +357,16 @@ export class SettingsSelectorComponent extends Container {
 			values: ["true", "false"],
 		});
 
+		// Timestamp format (insert after respect-gitignore-in-picker)
+		const gitignoreIndex = items.findIndex((item) => item.id === "respect-gitignore-in-picker");
+		items.splice(gitignoreIndex + 1, 0, {
+			id: "timestamp-format",
+			label: "Timestamp format",
+			description: "Date/time format for message timestamps",
+			currentValue: config.timestampFormat,
+			values: ["date-time-iso", "date-time-us"],
+		});
+
 		// Add borders
 		this.addChild(new DynamicBorder());
 
@@ -419,6 +431,9 @@ export class SettingsSelectorComponent extends Container {
 						break;
 					case "respect-gitignore-in-picker":
 						callbacks.onRespectGitignoreInPickerChange(newValue === "true");
+						break;
+					case "timestamp-format":
+						callbacks.onTimestampFormatChange(newValue as "date-time-iso" | "date-time-us");
 						break;
 				}
 			},

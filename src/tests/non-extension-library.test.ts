@@ -51,145 +51,124 @@ function isNonExtensionLibrary(resolvedPath: string): boolean {
 }
 
 describe('isNonExtensionLibrary — defense-in-depth for #1709', () => {
-  test('returns true for a file inside a directory with pi: {} (cmux pattern)', () => {
+  test('returns true for a file inside a directory with pi: {} (cmux pattern)', (t) => {
     const root = makeTempDir()
-    try {
-      const libDir = join(root, 'cmux')
-      mkdirSync(libDir)
-      writeFileSync(join(libDir, 'package.json'), JSON.stringify({
-        name: '@gsd/cmux',
-        description: 'cmux integration library — used by other extensions, not an extension itself',
-        pi: {}
-      }))
-      writeFileSync(join(libDir, 'index.js'), 'module.exports.utility = function() {};')
+    t.after(() => rmSync(root, { recursive: true, force: true }));
+    const libDir = join(root, 'cmux')
+    mkdirSync(libDir)
+    writeFileSync(join(libDir, 'package.json'), JSON.stringify({
+      name: '@gsd/cmux',
+      description: 'cmux integration library — used by other extensions, not an extension itself',
+      pi: {}
+    }))
+    writeFileSync(join(libDir, 'index.js'), 'module.exports.utility = function() {};')
 
-      assert.equal(
-        isNonExtensionLibrary(join(libDir, 'index.js')),
-        true,
-        'cmux with pi: {} should be identified as a non-extension library'
-      )
-    } finally {
-      rmSync(root, { recursive: true, force: true })
-    }
+    assert.equal(
+      isNonExtensionLibrary(join(libDir, 'index.js')),
+      true,
+      'cmux with pi: {} should be identified as a non-extension library'
+    )
   })
 
-  test('returns true for pi.extensions as empty array', () => {
+  test('returns true for pi.extensions as empty array', (t) => {
     const root = makeTempDir()
-    try {
-      const libDir = join(root, 'lib-empty')
-      mkdirSync(libDir)
-      writeFileSync(join(libDir, 'package.json'), JSON.stringify({
-        name: 'lib-empty',
-        pi: { extensions: [] }
-      }))
-      writeFileSync(join(libDir, 'index.js'), 'module.exports.helper = function() {};')
+    t.after(() => rmSync(root, { recursive: true, force: true }));
+    const libDir = join(root, 'lib-empty')
+    mkdirSync(libDir)
+    writeFileSync(join(libDir, 'package.json'), JSON.stringify({
+      name: 'lib-empty',
+      pi: { extensions: [] }
+    }))
+    writeFileSync(join(libDir, 'index.js'), 'module.exports.helper = function() {};')
 
-      assert.equal(
-        isNonExtensionLibrary(join(libDir, 'index.js')),
-        true,
-        'pi: { extensions: [] } should be identified as non-extension library'
-      )
-    } finally {
-      rmSync(root, { recursive: true, force: true })
-    }
+    assert.equal(
+      isNonExtensionLibrary(join(libDir, 'index.js')),
+      true,
+      'pi: { extensions: [] } should be identified as non-extension library'
+    )
   })
 
-  test('returns false for a directory without pi manifest (broken extension)', () => {
+  test('returns false for a directory without pi manifest (broken extension)', (t) => {
     const root = makeTempDir()
-    try {
-      const extDir = join(root, 'broken-ext')
-      mkdirSync(extDir)
-      writeFileSync(join(extDir, 'package.json'), JSON.stringify({
-        name: 'broken-ext'
-      }))
-      writeFileSync(join(extDir, 'index.js'), 'module.exports.notAFactory = function() {};')
+    t.after(() => rmSync(root, { recursive: true, force: true }));
+    const extDir = join(root, 'broken-ext')
+    mkdirSync(extDir)
+    writeFileSync(join(extDir, 'package.json'), JSON.stringify({
+      name: 'broken-ext'
+    }))
+    writeFileSync(join(extDir, 'index.js'), 'module.exports.notAFactory = function() {};')
 
-      assert.equal(
-        isNonExtensionLibrary(join(extDir, 'index.js')),
-        false,
-        'directory without pi manifest should NOT be identified as non-extension library'
-      )
-    } finally {
-      rmSync(root, { recursive: true, force: true })
-    }
+    assert.equal(
+      isNonExtensionLibrary(join(extDir, 'index.js')),
+      false,
+      'directory without pi manifest should NOT be identified as non-extension library'
+    )
   })
 
-  test('returns false when pi.extensions declares actual entries', () => {
+  test('returns false when pi.extensions declares actual entries', (t) => {
     const root = makeTempDir()
-    try {
-      const extDir = join(root, 'declared-ext')
-      mkdirSync(extDir)
-      writeFileSync(join(extDir, 'package.json'), JSON.stringify({
-        name: 'declared-ext',
-        pi: { extensions: ['./index.js'] }
-      }))
-      writeFileSync(join(extDir, 'index.js'), 'module.exports.notAFactory = function() {};')
+    t.after(() => rmSync(root, { recursive: true, force: true }));
+    const extDir = join(root, 'declared-ext')
+    mkdirSync(extDir)
+    writeFileSync(join(extDir, 'package.json'), JSON.stringify({
+      name: 'declared-ext',
+      pi: { extensions: ['./index.js'] }
+    }))
+    writeFileSync(join(extDir, 'index.js'), 'module.exports.notAFactory = function() {};')
 
-      assert.equal(
-        isNonExtensionLibrary(join(extDir, 'index.js')),
-        false,
-        'directory with declared extensions should NOT be identified as non-extension library'
-      )
-    } finally {
-      rmSync(root, { recursive: true, force: true })
-    }
+    assert.equal(
+      isNonExtensionLibrary(join(extDir, 'index.js')),
+      false,
+      'directory with declared extensions should NOT be identified as non-extension library'
+    )
   })
 
-  test('returns false when no package.json exists at all', () => {
+  test('returns false when no package.json exists at all', (t) => {
     const root = makeTempDir()
-    try {
-      const noManifest = join(root, 'no-manifest')
-      mkdirSync(noManifest)
-      writeFileSync(join(noManifest, 'index.js'), 'module.exports = {};')
+    t.after(() => rmSync(root, { recursive: true, force: true }));
+    const noManifest = join(root, 'no-manifest')
+    mkdirSync(noManifest)
+    writeFileSync(join(noManifest, 'index.js'), 'module.exports = {};')
 
-      // Should return false since there is no package.json with pi manifest
-      // (it will find the temp dir's absence of package.json and return false)
-      assert.equal(
-        isNonExtensionLibrary(join(noManifest, 'index.js')),
-        false,
-        'directory without any package.json should NOT be identified as non-extension library'
-      )
-    } finally {
-      rmSync(root, { recursive: true, force: true })
-    }
+    // Should return false since there is no package.json with pi manifest
+    // (it will find the temp dir's absence of package.json and return false)
+    assert.equal(
+      isNonExtensionLibrary(join(noManifest, 'index.js')),
+      false,
+      'directory without any package.json should NOT be identified as non-extension library'
+    )
   })
 
-  test('handles malformed package.json gracefully', () => {
+  test('handles malformed package.json gracefully', (t) => {
     const root = makeTempDir()
-    try {
-      const badDir = join(root, 'bad-json')
-      mkdirSync(badDir)
-      writeFileSync(join(badDir, 'package.json'), 'not valid json {{{')
-      writeFileSync(join(badDir, 'index.js'), 'module.exports = {};')
+    t.after(() => rmSync(root, { recursive: true, force: true }));
+    const badDir = join(root, 'bad-json')
+    mkdirSync(badDir)
+    writeFileSync(join(badDir, 'package.json'), 'not valid json {{{')
+    writeFileSync(join(badDir, 'index.js'), 'module.exports = {};')
 
-      assert.equal(
-        isNonExtensionLibrary(join(badDir, 'index.js')),
-        false,
-        'malformed package.json should not cause a crash and should return false'
-      )
-    } finally {
-      rmSync(root, { recursive: true, force: true })
-    }
+    assert.equal(
+      isNonExtensionLibrary(join(badDir, 'index.js')),
+      false,
+      'malformed package.json should not cause a crash and should return false'
+    )
   })
 
-  test('pi manifest with other fields but no extensions still opts out', () => {
+  test('pi manifest with other fields but no extensions still opts out', (t) => {
     const root = makeTempDir()
-    try {
-      const libDir = join(root, 'lib-with-skills')
-      mkdirSync(libDir)
-      writeFileSync(join(libDir, 'package.json'), JSON.stringify({
-        name: 'lib-with-skills',
-        pi: { skills: ['./my-skill.md'] }
-      }))
-      writeFileSync(join(libDir, 'index.js'), 'module.exports.helper = function() {};')
+    t.after(() => rmSync(root, { recursive: true, force: true }));
+    const libDir = join(root, 'lib-with-skills')
+    mkdirSync(libDir)
+    writeFileSync(join(libDir, 'package.json'), JSON.stringify({
+      name: 'lib-with-skills',
+      pi: { skills: ['./my-skill.md'] }
+    }))
+    writeFileSync(join(libDir, 'index.js'), 'module.exports.helper = function() {};')
 
-      assert.equal(
-        isNonExtensionLibrary(join(libDir, 'index.js')),
-        true,
-        'pi manifest with skills but no extensions should be identified as non-extension library'
-      )
-    } finally {
-      rmSync(root, { recursive: true, force: true })
-    }
+    assert.equal(
+      isNonExtensionLibrary(join(libDir, 'index.js')),
+      true,
+      'pi manifest with skills but no extensions should be identified as non-extension library'
+    )
   })
 })

@@ -64,17 +64,12 @@ export async function buildBeforeAgentStartResult(
     }
   }
 
-  let knowledgeBlock = "";
-  const knowledgePath = resolveGsdRootFile(process.cwd(), "KNOWLEDGE");
-  if (existsSync(knowledgePath)) {
-    try {
-      const content = readFileSync(knowledgePath, "utf-8").trim();
-      if (content) {
-        knowledgeBlock = `\n\n[PROJECT KNOWLEDGE — Rules, patterns, and lessons learned]\n\n${content}`;
-      }
-    } catch {
-      // skip
-    }
+  const { block: knowledgeBlock, globalSizeKb } = loadKnowledgeBlock(gsdHome, process.cwd());
+  if (globalSizeKb > 4) {
+    ctx.ui.notify(
+      `GSD: ~/.gsd/agent/KNOWLEDGE.md is ${globalSizeKb.toFixed(1)}KB — consider trimming to keep system prompt lean.`,
+      "warning",
+    );
   }
 
   let memoryBlock = "";
@@ -123,6 +118,48 @@ export async function buildBeforeAgentStartResult(
         },
       }
       : {}),
+  };
+}
+
+export function loadKnowledgeBlock(gsdHomeDir: string, cwd: string): { block: string; globalSizeKb: number } {
+  // 1. Global knowledge (~/.gsd/agent/KNOWLEDGE.md) — cross-project, user-maintained
+  let globalKnowledge = "";
+  let globalSizeKb = 0;
+  const globalKnowledgePath = join(gsdHomeDir, "agent", "KNOWLEDGE.md");
+  if (existsSync(globalKnowledgePath)) {
+    try {
+      const content = readFileSync(globalKnowledgePath, "utf-8").trim();
+      if (content) {
+        globalSizeKb = Buffer.byteLength(content, "utf-8") / 1024;
+        globalKnowledge = content;
+      }
+    } catch {
+      // skip
+    }
+  }
+
+  // 2. Project knowledge (.gsd/KNOWLEDGE.md) — project-specific
+  let projectKnowledge = "";
+  const knowledgePath = resolveGsdRootFile(cwd, "KNOWLEDGE");
+  if (existsSync(knowledgePath)) {
+    try {
+      const content = readFileSync(knowledgePath, "utf-8").trim();
+      if (content) projectKnowledge = content;
+    } catch {
+      // skip
+    }
+  }
+
+  if (!globalKnowledge && !projectKnowledge) {
+    return { block: "", globalSizeKb: 0 };
+  }
+
+  const parts: string[] = [];
+  if (globalKnowledge) parts.push(`## Global Knowledge\n\n${globalKnowledge}`);
+  if (projectKnowledge) parts.push(`## Project Knowledge\n\n${projectKnowledge}`);
+  return {
+    block: `\n\n[KNOWLEDGE — Rules, patterns, and lessons learned]\n\n${parts.join("\n\n")}`,
+    globalSizeKb,
   };
 }
 

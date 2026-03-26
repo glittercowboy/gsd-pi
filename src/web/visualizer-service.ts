@@ -4,7 +4,7 @@ import { join } from "node:path"
 import { pathToFileURL } from "node:url"
 
 import { resolveBridgeRuntimeConfig } from "./bridge-service.ts"
-import { resolveTypeStrippingFlag } from "./ts-subprocess-flags.ts"
+import { resolveTypeStrippingFlag, resolveSubprocessModule, buildSubprocessPrefixArgs } from "./ts-subprocess-flags.ts"
 
 const VISUALIZER_MAX_BUFFER = 2 * 1024 * 1024
 const VISUALIZER_MODULE_ENV = "GSD_VISUALIZER_MODULE"
@@ -35,10 +35,6 @@ export interface SerializedVisualizerData {
   changelog: unknown
 }
 
-function resolveVisualizerModulePath(packageRoot: string): string {
-  return join(packageRoot, "src", "resources", "extensions", "gsd", "visualizer-data.ts")
-}
-
 function resolveTsLoaderPath(packageRoot: string): string {
   return join(packageRoot, "src", "resources", "extensions", "gsd", "tests", "resolve-ts.mjs")
 }
@@ -54,12 +50,16 @@ export async function collectVisualizerData(projectCwdOverride?: string): Promis
   const { packageRoot, projectCwd } = config
 
   const resolveTsLoader = resolveTsLoaderPath(packageRoot)
-  const visualizerModulePath = resolveVisualizerModulePath(packageRoot)
+  const moduleResolution = resolveSubprocessModule(packageRoot, "resources/extensions/gsd/visualizer-data.ts")
+  const visualizerModulePath = moduleResolution.modulePath
 
-  if (!existsSync(resolveTsLoader) || !existsSync(visualizerModulePath)) {
+  if (!moduleResolution.useCompiledJs && (!existsSync(resolveTsLoader) || !existsSync(visualizerModulePath))) {
     throw new Error(
       `visualizer data provider not found; checked=${resolveTsLoader},${visualizerModulePath}`,
     )
+  }
+  if (moduleResolution.useCompiledJs && !existsSync(visualizerModulePath)) {
+    throw new Error(`visualizer data provider not found; checked=${visualizerModulePath}`)
   }
 
   // The child script loads the upstream module, calls loadVisualizerData(),
@@ -80,14 +80,13 @@ export async function collectVisualizerData(projectCwdOverride?: string): Promis
     'process.stdout.write(JSON.stringify(result));',
   ].join(" ")
 
+  const prefixArgs = buildSubprocessPrefixArgs(packageRoot, moduleResolution, pathToFileURL(resolveTsLoader).href)
+
   return await new Promise<SerializedVisualizerData>((resolveResult, reject) => {
     execFile(
       process.execPath,
       [
-        "--import",
-        pathToFileURL(resolveTsLoader).href,
-        resolveTypeStrippingFlag(packageRoot),
-        "--input-type=module",
+        ...prefixArgs,
         "--eval",
         script,
       ],

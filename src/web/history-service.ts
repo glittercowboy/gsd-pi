@@ -4,15 +4,11 @@ import { join } from "node:path"
 import { pathToFileURL } from "node:url"
 
 import { resolveBridgeRuntimeConfig } from "./bridge-service.ts"
-import { resolveTypeStrippingFlag } from "./ts-subprocess-flags.ts"
+import { resolveTypeStrippingFlag, resolveSubprocessModule, buildSubprocessPrefixArgs } from "./ts-subprocess-flags.ts"
 import type { HistoryData } from "../../web/lib/remaining-command-types.ts"
 
 const HISTORY_MAX_BUFFER = 2 * 1024 * 1024
 const HISTORY_MODULE_ENV = "GSD_HISTORY_MODULE"
-
-function resolveHistoryModulePath(packageRoot: string): string {
-  return join(packageRoot, "src", "resources", "extensions", "gsd", "metrics.ts")
-}
 
 function resolveTsLoaderPath(packageRoot: string): string {
   return join(packageRoot, "src", "resources", "extensions", "gsd", "tests", "resolve-ts.mjs")
@@ -28,12 +24,16 @@ export async function collectHistoryData(projectCwdOverride?: string): Promise<H
   const { packageRoot, projectCwd } = config
 
   const resolveTsLoader = resolveTsLoaderPath(packageRoot)
-  const historyModulePath = resolveHistoryModulePath(packageRoot)
+  const moduleResolution = resolveSubprocessModule(packageRoot, "resources/extensions/gsd/metrics.ts")
+  const historyModulePath = moduleResolution.modulePath
 
-  if (!existsSync(resolveTsLoader) || !existsSync(historyModulePath)) {
+  if (!moduleResolution.useCompiledJs && (!existsSync(resolveTsLoader) || !existsSync(historyModulePath))) {
     throw new Error(
       `history data provider not found; checked=${resolveTsLoader},${historyModulePath}`,
     )
+  }
+  if (moduleResolution.useCompiledJs && !existsSync(historyModulePath)) {
+    throw new Error(`history data provider not found; checked=${historyModulePath}`)
   }
 
   const script = [
@@ -48,14 +48,13 @@ export async function collectHistoryData(projectCwdOverride?: string): Promise<H
     'process.stdout.write(JSON.stringify({ units, totals, byPhase, bySlice, byModel }));',
   ].join(" ")
 
+  const prefixArgs = buildSubprocessPrefixArgs(packageRoot, moduleResolution, pathToFileURL(resolveTsLoader).href)
+
   return await new Promise<HistoryData>((resolveResult, reject) => {
     execFile(
       process.execPath,
       [
-        "--import",
-        pathToFileURL(resolveTsLoader).href,
-        resolveTypeStrippingFlag(packageRoot),
-        "--input-type=module",
+        ...prefixArgs,
         "--eval",
         script,
       ],

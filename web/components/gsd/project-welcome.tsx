@@ -156,7 +156,7 @@ export function ProjectWelcome({
 
         {/* Detail note */}
         {variant.detail && (
-          <p className="mt-2 text-xs leading-relaxed text-muted-foreground/70">
+          <p className="mt-2 text-xs leading-relaxed text-muted-foreground">
             {variant.detail}
           </p>
         )}

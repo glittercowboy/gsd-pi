@@ -63,7 +63,7 @@ export async function handleParallelCommand(trimmed: string, _ctx: ExtensionComm
     }
     const lines = ["# Parallel Workers\n"];
     for (const worker of workers) {
-      lines.push(`- **${worker.milestoneId}** (${worker.title}) — ${worker.state} — ${worker.completedUnits} units — $${worker.cost.toFixed(2)}`);
+      lines.push(`- **${worker.milestoneId}** (${worker.title}) — ${worker.state} — $${worker.cost.toFixed(2)}`);
     }
     const state = getOrchestratorState();
     if (state) {

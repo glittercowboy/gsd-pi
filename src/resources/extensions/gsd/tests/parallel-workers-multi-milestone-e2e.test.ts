@@ -13,11 +13,12 @@
  *  - Cost projection with budget ceiling awareness
  */
 
+import { describe, test } from 'node:test';
+import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
-import { createTestContext } from './test-helpers.ts';
 import {
   registerWorker,
   updateWorker,
@@ -42,8 +43,6 @@ import {
   getAverageCostPerUnitType,
   predictRemainingCost,
 } from '../metrics.ts';
-
-const { assertEq, assertTrue, assertMatch, report } = createTestContext();
 
 // ─── Fixture helpers ──────────────────────────────────────────────────────────
 
@@ -83,9 +82,9 @@ function cleanup(base: string): void {
 
 // ─── E2E: Parallel workers across M001 and M002 ──────────────────────────────
 
-console.log("\n=== E2E: Parallel workers across milestones ===");
 
-{
+describe('parallel-workers-multi-milestone-e2e', () => {
+test('E2E: Parallel workers across milestones', () => {
   resetWorkerRegistry();
   const base = createFixtureBase();
 
@@ -99,52 +98,49 @@ console.log("\n=== E2E: Parallel workers across milestones ===");
   const w2 = registerWorker("researcher", "Research M001 APIs", 1, 3, batch1Id);
   const w3 = registerWorker("worker", "Implement M001 feature", 2, 3, batch1Id);
 
-  assertEq(getActiveWorkers().length, 3, "M001: 3 parallel workers registered");
-  assertTrue(hasActiveWorkers(), "M001: has active workers");
+  assert.deepStrictEqual(getActiveWorkers().length, 3, "M001: 3 parallel workers registered");
+  assert.ok(hasActiveWorkers(), "M001: has active workers");
 
   const batches1 = getWorkerBatches();
-  assertEq(batches1.size, 1, "M001: single batch");
-  assertEq(batches1.get(batch1Id)!.length, 3, "M001: batch has 3 workers");
+  assert.deepStrictEqual(batches1.size, 1, "M001: single batch");
+  assert.deepStrictEqual(batches1.get(batch1Id)!.length, 3, "M001: batch has 3 workers");
 
   // Complete M001 workers
   updateWorker(w1, "completed");
   updateWorker(w2, "completed");
   updateWorker(w3, "completed");
-  assertTrue(!hasActiveWorkers(), "M001: no active workers after completion");
+  assert.ok(!hasActiveWorkers(), "M001: no active workers after completion");
 
   // Simulate M002 parallel workers (batch 2) — overlapping with M001 cleanup
   const batch2Id = "batch-m002";
   const w4 = registerWorker("scout", "Explore M002 codebase", 0, 2, batch2Id);
   const w5 = registerWorker("worker", "Implement M002 feature", 1, 2, batch2Id);
 
-  assertTrue(hasActiveWorkers(), "M002: has active workers");
+  assert.ok(hasActiveWorkers(), "M002: has active workers");
   const batches2 = getWorkerBatches();
   // M001 workers may still be in cleanup window (5s timeout), M002 workers are active
-  assertTrue(batches2.has(batch2Id), "M002: batch exists");
-  assertEq(batches2.get(batch2Id)!.length, 2, "M002: batch has 2 workers");
+  assert.ok(batches2.has(batch2Id), "M002: batch exists");
+  assert.deepStrictEqual(batches2.get(batch2Id)!.length, 2, "M002: batch has 2 workers");
 
   // One worker fails in M002
   updateWorker(w4, "completed");
   updateWorker(w5, "failed");
-  assertTrue(!hasActiveWorkers(), "M002: no active workers after all finish");
+  assert.ok(!hasActiveWorkers(), "M002: no active workers after all finish");
 
   // Verify worker statuses reflect correctly
   const allWorkers = getActiveWorkers();
   const m002Workers = allWorkers.filter(w => w.batchId === batch2Id);
   if (m002Workers.length > 0) {
     const failedWorker = m002Workers.find(w => w.status === "failed");
-    assertTrue(failedWorker !== undefined, "M002: failed worker tracked");
-    assertEq(failedWorker?.agent, "worker", "M002: failed worker is 'worker'");
+    assert.ok(failedWorker !== undefined, "M002: failed worker tracked");
+    assert.deepStrictEqual(failedWorker?.agent, "worker", "M002: failed worker is 'worker'");
   }
 
   cleanup(base);
-}
+});
 
 // ─── E2E: Metrics accumulation across milestones ──────────────────────────────
-
-console.log("\n=== E2E: Metrics across milestones ===");
-
-{
+test('E2E: Metrics across milestones', () => {
   const base = createFixtureBase();
 
   // Build a ledger spanning two milestones
@@ -175,90 +171,84 @@ console.log("\n=== E2E: Metrics across milestones ===");
 
   // Verify totals
   const totals = getProjectTotals(loaded.units);
-  assertEq(totals.units, 13, "metrics: 13 total units across M001+M002");
+  assert.deepStrictEqual(totals.units, 13, "metrics: 13 total units across M001+M002");
   const totalCost = loaded.units.reduce((sum, u) => sum + u.cost, 0);
-  assertTrue(Math.abs(totals.cost - totalCost) < 0.001, "metrics: total cost matches sum");
+  assert.ok(Math.abs(totals.cost - totalCost) < 0.001, "metrics: total cost matches sum");
 
   // Verify phase aggregation
   const phases = aggregateByPhase(loaded.units);
   const research = phases.find(p => p.phase === "research");
-  assertTrue(research !== undefined, "metrics: research phase exists");
-  assertEq(research!.units, 2, "metrics: 2 research units (M001 + M002)");
+  assert.ok(research !== undefined, "metrics: research phase exists");
+  assert.deepStrictEqual(research!.units, 2, "metrics: 2 research units (M001 + M002)");
 
   const execution = phases.find(p => p.phase === "execution");
-  assertTrue(execution !== undefined, "metrics: execution phase exists");
-  assertEq(execution!.units, 4, "metrics: 4 execution units across both milestones");
+  assert.ok(execution !== undefined, "metrics: execution phase exists");
+  assert.deepStrictEqual(execution!.units, 4, "metrics: 4 execution units across both milestones");
 
   // Verify slice aggregation
   const slices = aggregateBySlice(loaded.units);
-  assertTrue(slices.length >= 4, "metrics: at least 4 slice aggregates (M001/S01, M001/S02, M002/S01, milestone-level)");
+  assert.ok(slices.length >= 4, "metrics: at least 4 slice aggregates (M001/S01, M001/S02, M002/S01, milestone-level)");
 
   const m001s01 = slices.find(s => s.sliceId === "M001/S01");
-  assertTrue(m001s01 !== undefined, "metrics: M001/S01 slice aggregate exists");
+  assert.ok(m001s01 !== undefined, "metrics: M001/S01 slice aggregate exists");
   // M001/S01 has: plan-slice + T01 + T02 + complete-slice = 4 units
-  assertEq(m001s01!.units, 4, "metrics: M001/S01 has 4 units");
+  assert.deepStrictEqual(m001s01!.units, 4, "metrics: M001/S01 has 4 units");
 
   // Cost projection
   const projLines = formatCostProjection(slices, 3, 2.0);
-  assertTrue(projLines.length >= 1, "metrics: cost projection generated");
-  assertMatch(projLines[0], /Projected remaining/, "metrics: projection line text");
+  assert.ok(projLines.length >= 1, "metrics: cost projection generated");
+  assert.match(projLines[0], /Projected remaining/, "metrics: projection line text");
 
   cleanup(base);
-}
+});
 
 // ─── E2E: Budget alert progression through all thresholds ─────────────────────
-
-console.log("\n=== E2E: Budget alert progression 0→75→80→90→100 ===");
-
-{
+test('E2E: Budget alert progression 0→75→80→90→100', () => {
   // Simulate spending progression against a $10 budget ceiling
   const ceiling = 10.0;
 
   // Start: 50% spent
   let lastLevel = getBudgetAlertLevel(5.0 / ceiling);
-  assertEq(lastLevel, 0, "budget: 50% → level 0");
-  assertEq(getNewBudgetAlertLevel(0, 5.0 / ceiling), null, "budget: no alert at 50%");
+  assert.deepStrictEqual(lastLevel, 0, "budget: 50% → level 0");
+  assert.deepStrictEqual(getNewBudgetAlertLevel(0, 5.0 / ceiling), null, "budget: no alert at 50%");
 
   // Spend to 75%
   let newLevel = getNewBudgetAlertLevel(lastLevel, 7.5 / ceiling);
-  assertEq(newLevel, 75, "budget: alert fires at 75%");
+  assert.deepStrictEqual(newLevel, 75, "budget: alert fires at 75%");
   lastLevel = newLevel!;
 
   // Spend to 78% — no alert (between 75 and 80)
-  assertEq(getNewBudgetAlertLevel(lastLevel, 7.8 / ceiling), null, "budget: no alert at 78%");
+  assert.deepStrictEqual(getNewBudgetAlertLevel(lastLevel, 7.8 / ceiling), null, "budget: no alert at 78%");
 
   // Spend to 80% — 80% approach alert
   newLevel = getNewBudgetAlertLevel(lastLevel, 8.0 / ceiling);
-  assertEq(newLevel, 80, "budget: approach alert fires at 80%");
+  assert.deepStrictEqual(newLevel, 80, "budget: approach alert fires at 80%");
   lastLevel = newLevel!;
 
   // Spend to 85% — no alert (still at 80 level)
-  assertEq(getNewBudgetAlertLevel(lastLevel, 8.5 / ceiling), null, "budget: no alert at 85%");
+  assert.deepStrictEqual(getNewBudgetAlertLevel(lastLevel, 8.5 / ceiling), null, "budget: no alert at 85%");
 
   // Spend to 90%
   newLevel = getNewBudgetAlertLevel(lastLevel, 9.0 / ceiling);
-  assertEq(newLevel, 90, "budget: alert fires at 90%");
+  assert.deepStrictEqual(newLevel, 90, "budget: alert fires at 90%");
   lastLevel = newLevel!;
 
   // Spend to 100%
   newLevel = getNewBudgetAlertLevel(lastLevel, 10.0 / ceiling);
-  assertEq(newLevel, 100, "budget: alert fires at 100%");
+  assert.deepStrictEqual(newLevel, 100, "budget: alert fires at 100%");
   lastLevel = newLevel!;
 
   // Over budget — no re-emission
-  assertEq(getNewBudgetAlertLevel(lastLevel, 12.0 / ceiling), null, "budget: no re-alert over 100%");
+  assert.deepStrictEqual(getNewBudgetAlertLevel(lastLevel, 12.0 / ceiling), null, "budget: no re-alert over 100%");
 
   // Enforcement at 80% — still "none" (enforcement only at 100%)
-  assertEq(getBudgetEnforcementAction("pause", 0.80), "none", "budget: no enforcement at 80%");
-  assertEq(getBudgetEnforcementAction("halt", 0.80), "none", "budget: no enforcement at 80%");
-  assertEq(getBudgetEnforcementAction("warn", 0.80), "none", "budget: no enforcement at 80%");
-}
+  assert.deepStrictEqual(getBudgetEnforcementAction("pause", 0.80), "none", "budget: no enforcement at 80%");
+  assert.deepStrictEqual(getBudgetEnforcementAction("halt", 0.80), "none", "budget: no enforcement at 80%");
+  assert.deepStrictEqual(getBudgetEnforcementAction("warn", 0.80), "none", "budget: no enforcement at 80%");
+});
 
 // ─── E2E: Budget prediction with multi-milestone cost data ────────────────────
-
-console.log("\n=== E2E: Budget prediction across milestones ===");
-
-{
+test('E2E: Budget prediction across milestones', () => {
   const units: UnitMetrics[] = [
     makeUnit({ type: "execute-task", id: "M001/S01/T01", cost: 0.10 }),
     makeUnit({ type: "execute-task", id: "M001/S01/T02", cost: 0.15 }),
@@ -268,30 +258,27 @@ console.log("\n=== E2E: Budget prediction across milestones ===");
   ];
 
   const avgCosts = getAverageCostPerUnitType(units);
-  assertTrue(avgCosts.has("execute-task"), "prediction: has execute-task average");
-  assertTrue(avgCosts.has("plan-slice"), "prediction: has plan-slice average");
+  assert.ok(avgCosts.has("execute-task"), "prediction: has execute-task average");
+  assert.ok(avgCosts.has("plan-slice"), "prediction: has plan-slice average");
 
   // Average execute-task cost: (0.10 + 0.15 + 0.20) / 3 = 0.15
   const execAvg = avgCosts.get("execute-task")!;
-  assertTrue(Math.abs(execAvg - 0.15) < 0.001, `prediction: execute-task avg is $0.15 (got ${execAvg})`);
+  assert.ok(Math.abs(execAvg - 0.15) < 0.001, `prediction: execute-task avg is $0.15 (got ${execAvg})`);
 
   // Average plan-slice cost: (0.05 + 0.08) / 2 = 0.065
   const planAvg = avgCosts.get("plan-slice")!;
-  assertTrue(Math.abs(planAvg - 0.065) < 0.001, `prediction: plan-slice avg is $0.065 (got ${planAvg})`);
+  assert.ok(Math.abs(planAvg - 0.065) < 0.001, `prediction: plan-slice avg is $0.065 (got ${planAvg})`);
 
   // Predict remaining cost for 3 more execute-tasks and 1 plan-slice
   const remaining = predictRemainingCost(avgCosts, [
     "execute-task", "execute-task", "execute-task", "plan-slice",
   ]);
   // Expected: 3 * 0.15 + 1 * 0.065 = 0.515
-  assertTrue(Math.abs(remaining - 0.515) < 0.001, `prediction: remaining cost ~$0.515 (got ${remaining})`);
-}
+  assert.ok(Math.abs(remaining - 0.515) < 0.001, `prediction: remaining cost ~$0.515 (got ${remaining})`);
+});
 
 // ─── E2E: Parallel workers + budget alerts combined scenario ──────────────────
-
-console.log("\n=== E2E: Combined parallel workers + budget monitoring ===");
-
-{
+test('E2E: Combined parallel workers + budget monitoring', () => {
   resetWorkerRegistry();
 
   // Simulate a scenario: 3 parallel workers running while budget is at 78%
@@ -303,34 +290,31 @@ console.log("\n=== E2E: Combined parallel workers + budget monitoring ===");
   // Budget is at 78% — no alert yet (between 75 and 80)
   const ceiling = 10.0;
   let lastLevel: ReturnType<typeof getBudgetAlertLevel> = 75; // already got 75% alert
-  assertEq(getNewBudgetAlertLevel(lastLevel, 7.8 / ceiling), null, "combined: no alert at 78% with workers running");
-  assertTrue(hasActiveWorkers(), "combined: workers running during budget check");
+  assert.deepStrictEqual(getNewBudgetAlertLevel(lastLevel, 7.8 / ceiling), null, "combined: no alert at 78% with workers running");
+  assert.ok(hasActiveWorkers(), "combined: workers running during budget check");
 
   // First worker completes, cost rises to 80%
   updateWorker(w1, "completed");
   const level80 = getNewBudgetAlertLevel(lastLevel, 8.0 / ceiling);
-  assertEq(level80, 80, "combined: 80% approach alert fires after worker completes");
+  assert.deepStrictEqual(level80, 80, "combined: 80% approach alert fires after worker completes");
   lastLevel = level80!;
 
   // Second worker completes, cost rises to 88%
   updateWorker(w2, "completed");
-  assertEq(getNewBudgetAlertLevel(lastLevel, 8.8 / ceiling), null, "combined: no alert at 88%");
+  assert.deepStrictEqual(getNewBudgetAlertLevel(lastLevel, 8.8 / ceiling), null, "combined: no alert at 88%");
 
   // Third worker completes, cost reaches 90%
   updateWorker(w3, "completed");
   const level90 = getNewBudgetAlertLevel(lastLevel, 9.0 / ceiling);
-  assertEq(level90, 90, "combined: 90% alert fires after all workers complete");
+  assert.deepStrictEqual(level90, 90, "combined: 90% alert fires after all workers complete");
 
-  assertTrue(!hasActiveWorkers(), "combined: no active workers at end");
+  assert.ok(!hasActiveWorkers(), "combined: no active workers at end");
 
   resetWorkerRegistry();
-}
+});
 
 // ─── E2E: formatCostProjection with budget ceiling warnings ───────────────────
-
-console.log("\n=== E2E: Cost projection ceiling warnings ===");
-
-{
+test('E2E: Cost projection ceiling warnings', () => {
   const slices = [
     { sliceId: "M001/S01", units: 4, tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 }, cost: 3.0, duration: 10000 },
     { sliceId: "M001/S02", units: 3, tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 }, cost: 4.0, duration: 8000 },
@@ -339,16 +323,15 @@ console.log("\n=== E2E: Cost projection ceiling warnings ===");
 
   // With ceiling NOT yet reached
   const proj1 = formatCostProjection(slices, 2, 20.0);
-  assertTrue(proj1.length >= 1, "projection: has projection line");
-  assertMatch(proj1[0], /Projected remaining/, "projection: shows projection");
-  assertTrue(proj1.length === 1, "projection: no ceiling warning when under budget");
+  assert.ok(proj1.length >= 1, "projection: has projection line");
+  assert.match(proj1[0], /Projected remaining/, "projection: shows projection");
+  assert.ok(proj1.length === 1, "projection: no ceiling warning when under budget");
 
   // With ceiling reached (spent 12.0 >= ceiling 10.0)
   const proj2 = formatCostProjection(slices, 2, 10.0);
-  assertTrue(proj2.length >= 2, "projection: has ceiling warning when over budget");
-  assertMatch(proj2[1], /ceiling/, "projection: ceiling warning text");
-}
+  assert.ok(proj2.length >= 2, "projection: has ceiling warning when over budget");
+  assert.match(proj2[1], /ceiling/, "projection: ceiling warning text");
+});
 
 // ─── Summary ──────────────────────────────────────────────────────────────────
-
-report();
+});

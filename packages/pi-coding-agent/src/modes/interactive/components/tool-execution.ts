@@ -895,7 +895,9 @@ export class ToolExecutionComponent extends Container {
 			// Server-side Anthropic web search
 			text = theme.fg("toolTitle", theme.bold("web search"));
 
-			if (this.result) {
+			if (process.env.PI_OFFLINE === "1") {
+				text += "\n\n" + theme.fg("muted", "\u{1F50C} Offline \u{2014} web search unavailable");
+			} else if (this.result) {
 				const output = this.getTextOutput().trim();
 				if (output) {
 					const lines = output.split("\n");

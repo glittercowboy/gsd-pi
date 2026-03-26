@@ -1,0 +1,9 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "declaration": false,
+    "noEmit": false
+  },
+  "include": ["src/tests/headless-cli-surface.test.ts", "src/headless-events.ts", "src/headless-types.ts"],
+  "exclude": []
+}

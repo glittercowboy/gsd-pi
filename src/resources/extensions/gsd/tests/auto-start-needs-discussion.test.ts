@@ -22,6 +22,8 @@
  *   - The !hasSurvivorBranch block has a needs-discussion handler
  */
 
+import { describe, test, afterEach } from "node:test";
+import assert from "node:assert/strict";
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -30,9 +32,6 @@ import { dirname } from "node:path";
 
 import { deriveState } from "../state.ts";
 import { invalidateAllCaches } from "../cache.ts";
-import { createTestContext } from "./test-helpers.ts";
-
-const { assertEq, assertTrue, report } = createTestContext();
 
 // ─── Fixture Helpers ─────────────────────────────────────────────────────────
 
@@ -76,52 +75,46 @@ function readAutoStartSource(): string {
 // Tests
 // ═══════════════════════════════════════════════════════════════════════════════
 
-async function main(): Promise<void> {
+describe("auto-start-needs-discussion (#1726)", () => {
 
-  // ─── 1. deriveState returns needs-discussion for CONTEXT-DRAFT only ────────
-  console.log("\n=== 1. CONTEXT-DRAFT.md only → needs-discussion phase ===");
-  {
+  test("1. CONTEXT-DRAFT.md only → needs-discussion phase", async () => {
     const base = createBase();
     try {
       writeContextDraft(base, "M001", "# Draft\nSeed discussion.");
       invalidateAllCaches();
       const state = await deriveState(base);
-      assertEq(state.phase, "needs-discussion",
+      assert.strictEqual(state.phase, "needs-discussion",
         "milestone with only CONTEXT-DRAFT should be needs-discussion");
-      assertTrue(!!state.activeMilestone,
+      assert.ok(!!state.activeMilestone,
         "activeMilestone should be set for needs-discussion");
-      assertEq(state.activeMilestone?.id, "M001",
+      assert.strictEqual(state.activeMilestone?.id, "M001",
         "activeMilestone.id should be M001");
     } finally {
       cleanup(base);
     }
-  }
+  });
 
-  // ─── 2. Survivor branch filter excludes needs-discussion (#1726 bug 1) ────
-  console.log("\n=== 2. Survivor branch check excludes needs-discussion ===");
-  {
+  test("2. Survivor branch check excludes needs-discussion", () => {
     const source = readAutoStartSource();
 
     // Find the survivor branch check block (Milestone branch recovery comment)
     const survivorBlock = source.match(
       /\/\/ Milestone branch recovery.*?hasSurvivorBranch = nativeBranchExists/s,
     );
-    assertTrue(!!survivorBlock,
+    assert.ok(!!survivorBlock,
       "found survivor branch check block in auto-start.ts");
 
     if (survivorBlock) {
       const block = survivorBlock[0];
       // The condition should only check pre-planning, NOT needs-discussion
-      assertTrue(!block.includes("needs-discussion"),
+      assert.ok(!block.includes("needs-discussion"),
         "survivor branch filter must NOT include needs-discussion phase");
-      assertTrue(block.includes("pre-planning"),
+      assert.ok(block.includes("pre-planning"),
         "survivor branch filter should include pre-planning phase");
     }
-  }
+  });
 
-  // ─── 3. needs-discussion handler exists in !hasSurvivorBranch block (#1726 bug 2)
-  console.log("\n=== 3. needs-discussion handler exists in bootstrap ===");
-  {
+  test("3. needs-discussion handler exists in bootstrap", () => {
     const source = readAutoStartSource();
 
     // After the pre-planning handler, there should be a needs-discussion handler
@@ -129,30 +122,26 @@ async function main(): Promise<void> {
     const needsDiscussionHandler = source.match(
       /if\s*\(state\.phase\s*===\s*"needs-discussion"\)\s*\{[^}]*showSmartEntry/s,
     );
-    assertTrue(!!needsDiscussionHandler,
+    assert.ok(!!needsDiscussionHandler,
       "needs-discussion handler calling showSmartEntry must exist in !hasSurvivorBranch block");
-  }
+  });
 
-  // ─── 4. needs-discussion handler aborts if discussion doesn't promote draft
-  console.log("\n=== 4. needs-discussion handler has abort path ===");
-  {
+  test("4. needs-discussion handler has abort path", () => {
     const source = readAutoStartSource();
 
     // The handler should check postState.phase !== "needs-discussion" and abort
     // if discussion didn't promote the draft
-    assertTrue(
+    assert.ok(
       source.includes('postState.phase !== "needs-discussion"'),
       "needs-discussion handler must check if phase advanced after showSmartEntry",
     );
-    assertTrue(
+    assert.ok(
       source.includes("milestone draft was not promoted"),
       "needs-discussion handler must have abort message when draft not promoted",
     );
-  }
+  });
 
-  // ─── 5. CONTEXT-DRAFT + CONTEXT + ROADMAP → not needs-discussion ──────────
-  console.log("\n=== 5. Full context + roadmap → not needs-discussion ===");
-  {
+  test("5. Full context + roadmap → not needs-discussion", async () => {
     const base = createBase();
     try {
       writeContextDraft(base, "M001", "# Draft\nSeed discussion.");
@@ -161,16 +150,14 @@ async function main(): Promise<void> {
         "# M001: Test\n\n## Slices\n- [ ] **S01: Test Slice** `risk:low` `depends:[]`\n  > After this: works\n");
       invalidateAllCaches();
       const state = await deriveState(base);
-      assertTrue(state.phase !== "needs-discussion",
+      assert.ok(state.phase !== "needs-discussion",
         "milestone with full context + roadmap should NOT be needs-discussion");
     } finally {
       cleanup(base);
     }
-  }
+  });
 
-  // ─── 6. Verify the two bug conditions cannot produce infinite loop ────────
-  console.log("\n=== 6. No infinite loop: needs-discussion always routes to showSmartEntry ===");
-  {
+  test("6. No infinite loop: needs-discussion always routes to showSmartEntry", () => {
     const source = readAutoStartSource();
 
     // Verify needs-discussion does NOT appear in auto-dispatch trigger conditions
@@ -180,7 +167,7 @@ async function main(): Promise<void> {
       /\/\/ Milestone branch recovery.*?let hasSurvivorBranch = false;[\s\S]*?if\s*\([^)]*state\.phase[^)]*\)\s*\{/,
     );
     if (survivorSection) {
-      assertTrue(
+      assert.ok(
         !survivorSection[0].includes("needs-discussion"),
         "survivor branch phase condition must not mention needs-discussion",
       );
@@ -190,19 +177,17 @@ async function main(): Promise<void> {
     const notSurvivorBlock = source.match(
       /if\s*\(!hasSurvivorBranch\)\s*\{([\s\S]*?)\/\/ Unreachable safety check/,
     );
-    assertTrue(!!notSurvivorBlock,
+    assert.ok(!!notSurvivorBlock,
       "found !hasSurvivorBranch block in auto-start.ts");
     if (notSurvivorBlock) {
-      assertTrue(
+      assert.ok(
         notSurvivorBlock[1].includes('"needs-discussion"'),
         "!hasSurvivorBranch block must handle needs-discussion phase",
       );
     }
-  }
+  });
 
-  // ─── 7. Survivor branch + needs-discussion routes to showSmartEntry (#1726) ─
-  console.log("\n=== 7. Survivor branch + needs-discussion routes to showSmartEntry ===");
-  {
+  test("7. Survivor branch + needs-discussion routes to showSmartEntry", () => {
     const source = readAutoStartSource();
 
     // When hasSurvivorBranch is true AND phase is needs-discussion, the code
@@ -210,31 +195,24 @@ async function main(): Promise<void> {
     const survivorNeedsDiscussion = source.match(
       /if\s*\(hasSurvivorBranch\s*&&\s*state\.phase\s*===\s*"needs-discussion"\)\s*\{[^}]*showSmartEntry/s,
     );
-    assertTrue(!!survivorNeedsDiscussion,
+    assert.ok(!!survivorNeedsDiscussion,
       "hasSurvivorBranch && needs-discussion must route to showSmartEntry");
 
     // Verify the handler checks if the discussion succeeded
     const handlerBlock = source.match(
       /if\s*\(hasSurvivorBranch\s*&&\s*state\.phase\s*===\s*"needs-discussion"\)\s*\{([\s\S]*?)\n    \}/,
     );
-    assertTrue(!!handlerBlock,
+    assert.ok(!!handlerBlock,
       "found survivor + needs-discussion handler block");
     if (handlerBlock) {
-      assertTrue(
+      assert.ok(
         handlerBlock[1].includes('postState.phase !== "needs-discussion"'),
         "handler must check if phase advanced after discussion",
       );
-      assertTrue(
+      assert.ok(
         handlerBlock[1].includes("releaseLockAndReturn"),
         "handler must abort if discussion didn't promote draft",
       );
     }
-  }
-
-  report();
-}
-
-main().catch((err) => {
-  console.error(err);
-  process.exit(1);
+  });
 });

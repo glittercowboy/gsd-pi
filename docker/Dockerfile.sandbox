@@ -1,0 +1,42 @@
+# ──────────────────────────────────────────────
+# GSD Docker Sandbox Template
+# Base: docker/sandbox-templates:shell
+# Purpose: Isolated environment for GSD auto mode
+# Usage: docker sandbox create --template ./docker
+# ──────────────────────────────────────────────
+FROM node:24-bookworm-slim
+
+# System dependencies required by GSD
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git \
+    curl \
+    ca-certificates \
+    openssh-client \
+    gosu \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install GSD globally — version controlled via build arg
+ARG GSD_VERSION=latest
+RUN npm install -g gsd-pi@${GSD_VERSION}
+
+# Create non-root user for sandbox isolation
+RUN groupadd --gid 1000 gsd \
+    && useradd --uid 1000 --gid gsd --shell /bin/bash --create-home gsd
+
+# Persistent GSD state directory
+RUN mkdir -p /home/gsd/.gsd && chown -R gsd:gsd /home/gsd/.gsd
+
+# Workspace directory — synced from host via Docker sandbox
+WORKDIR /workspace
+RUN chown gsd:gsd /workspace
+
+# Entrypoint handles UID/GID remapping, bootstrap, and drops to gsd user
+COPY entrypoint.sh /usr/local/bin/entrypoint.sh
+COPY bootstrap.sh /usr/local/bin/bootstrap.sh
+RUN chmod +x /usr/local/bin/entrypoint.sh /usr/local/bin/bootstrap.sh
+
+# Expose default GSD web UI port
+EXPOSE 3000
+
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
+CMD ["gsd", "--help"]

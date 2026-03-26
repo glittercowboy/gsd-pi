@@ -7,16 +7,15 @@
  * Relates to #1269, #1293.
  */
 
+import { describe, test } from 'node:test';
+import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync, existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { execSync } from "node:child_process";
 
-import { createTestContext } from './test-helpers.ts';
 import { captureIntegrationBranch, getCurrentBranch } from "../worktree.ts";
 import { readIntegrationBranch, QUICK_BRANCH_RE } from "../git-service.ts";
-
-const { assertEq, assertTrue, report } = createTestContext();
 
 function run(command: string, cwd: string): string {
   return execSync(command, { cwd, stdio: ["ignore", "pipe", "pipe"], encoding: "utf-8" }).trim();
@@ -35,68 +34,59 @@ function createTestRepo(): string {
   return repo;
 }
 
-async function main(): Promise<void> {
-
   // ═══════════════════════════════════════════════════════════════════════
   // QUICK_BRANCH_RE
   // ═══════════════════════════════════════════════════════════════════════
 
-  console.log("\n=== QUICK_BRANCH_RE: matches quick-task branches ===");
 
-  assertTrue(QUICK_BRANCH_RE.test("gsd/quick/1-fix-typo"), "matches standard quick branch");
-  assertTrue(QUICK_BRANCH_RE.test("gsd/quick/42-some-long-slug-name"), "matches multi-digit quick branch");
-  assertTrue(!QUICK_BRANCH_RE.test("main"), "rejects main");
-  assertTrue(!QUICK_BRANCH_RE.test("gsd/M001/S01"), "rejects slice branch");
-  assertTrue(!QUICK_BRANCH_RE.test("gsd/quickly-something"), "rejects non-quick prefix");
-  assertTrue(!QUICK_BRANCH_RE.test("feature/gsd/quick/1"), "rejects nested prefix");
+describe('quick-branch-lifecycle', () => {
+test('QUICK_BRANCH_RE: matches quick-task branches', () => {
+  assert.ok(QUICK_BRANCH_RE.test("gsd/quick/1-fix-typo"), "matches standard quick branch");
+});
 
+  assert.ok(QUICK_BRANCH_RE.test("gsd/quick/42-some-long-slug-name"), "matches multi-digit quick branch");
+  assert.ok(!QUICK_BRANCH_RE.test("main"), "rejects main");
+  assert.ok(!QUICK_BRANCH_RE.test("gsd/M001/S01"), "rejects slice branch");
+  assert.ok(!QUICK_BRANCH_RE.test("gsd/quickly-something"), "rejects non-quick prefix");
+  assert.ok(!QUICK_BRANCH_RE.test("feature/gsd/quick/1"), "rejects nested prefix");
   // ═══════════════════════════════════════════════════════════════════════
   // captureIntegrationBranch: guard against quick-task branches
   // ═══════════════════════════════════════════════════════════════════════
-
-  console.log("\n=== captureIntegrationBranch: skips quick-task branches ===");
-
-  {
+test('captureIntegrationBranch: skips quick-task branches', () => {
     const repo = createTestRepo();
 
     // Create and checkout a quick-task branch
     run("git checkout -b gsd/quick/1-fix-typo", repo);
-    assertEq(getCurrentBranch(repo), "gsd/quick/1-fix-typo", "on quick branch");
+    assert.deepStrictEqual(getCurrentBranch(repo), "gsd/quick/1-fix-typo", "on quick branch");
 
     captureIntegrationBranch(repo, "M001");
 
-    assertEq(readIntegrationBranch(repo, "M001"), null,
+    assert.deepStrictEqual(readIntegrationBranch(repo, "M001"), null,
       "captureIntegrationBranch is a no-op on quick-task branches");
 
     rmSync(repo, { recursive: true, force: true });
-  }
+});
 
   // ─── Verify main is still recorded correctly ─────────────────────────
-
-  console.log("\n=== captureIntegrationBranch: records main correctly ===");
-
-  {
+test('captureIntegrationBranch: records main correctly', () => {
     const repo = createTestRepo();
 
     // Capture from main — should work normally
     captureIntegrationBranch(repo, "M001");
-    assertEq(readIntegrationBranch(repo, "M001"), "main",
+    assert.deepStrictEqual(readIntegrationBranch(repo, "M001"), "main",
       "main is recorded as integration branch");
 
     // Switch to quick branch — capture should be no-op (doesn't overwrite main)
     run("git checkout -b gsd/quick/1-fix-typo", repo);
     captureIntegrationBranch(repo, "M001");
-    assertEq(readIntegrationBranch(repo, "M001"), "main",
+    assert.deepStrictEqual(readIntegrationBranch(repo, "M001"), "main",
       "quick branch does not overwrite existing integration branch");
 
     rmSync(repo, { recursive: true, force: true });
-  }
+});
 
   // ─── Sequence: main → quick → back to main → capture ────────────────
-
-  console.log("\n=== captureIntegrationBranch: correct after quick branch round-trip ===");
-
-  {
+test('captureIntegrationBranch: correct after quick branch round-trip', () => {
     const repo = createTestRepo();
 
     // Simulate quick-task lifecycle: branch off, do work, return to main
@@ -111,19 +101,16 @@ async function main(): Promise<void> {
 
     // Now capture — should get main, not the deleted quick branch
     captureIntegrationBranch(repo, "M002");
-    assertEq(readIntegrationBranch(repo, "M002"), "main",
+    assert.deepStrictEqual(readIntegrationBranch(repo, "M002"), "main",
       "after quick round-trip, main is captured correctly");
 
     rmSync(repo, { recursive: true, force: true });
-  }
+});
 
   // ═══════════════════════════════════════════════════════════════════════
   // cleanupQuickBranch: in-memory path (same session)
   // ═══════════════════════════════════════════════════════════════════════
-
-  console.log("\n=== cleanupQuickBranch: merges back and cleans up (same session) ===");
-
-  {
+test('cleanupQuickBranch: merges back and cleans up (same session)', async () => {
     const repo = createTestRepo();
     const origCwd = process.cwd();
 
@@ -155,30 +142,27 @@ async function main(): Promise<void> {
     const { cleanupQuickBranch } = await import("../quick.ts");
     const result = cleanupQuickBranch();
 
-    assertTrue(result, "cleanupQuickBranch returns true");
-    assertEq(getCurrentBranch(repo), "main", "back on main after cleanup");
+    assert.ok(result, "cleanupQuickBranch returns true");
+    assert.deepStrictEqual(getCurrentBranch(repo), "main", "back on main after cleanup");
 
     // Verify merge happened — fix.txt should exist on main
-    assertTrue(existsSync(join(repo, "fix.txt")), "fix.txt merged to main");
+    assert.ok(existsSync(join(repo, "fix.txt")), "fix.txt merged to main");
 
     // Verify quick branch deleted
     const branches = run("git branch", repo);
-    assertTrue(!branches.includes("gsd/quick/1-fix-typo"), "quick branch deleted");
+    assert.ok(!branches.includes("gsd/quick/1-fix-typo"), "quick branch deleted");
 
     // Verify disk state cleaned up
-    assertTrue(!existsSync(join(runtimeDir, "quick-return.json")), "quick-return.json removed");
+    assert.ok(!existsSync(join(runtimeDir, "quick-return.json")), "quick-return.json removed");
 
     process.chdir(origCwd);
     rmSync(repo, { recursive: true, force: true });
-  }
+});
 
   // ═══════════════════════════════════════════════════════════════════════
   // cleanupQuickBranch: cross-session recovery from disk
   // ═══════════════════════════════════════════════════════════════════════
-
-  console.log("\n=== cleanupQuickBranch: recovers from disk state (cross-session) ===");
-
-  {
+test('cleanupQuickBranch: recovers from disk state (cross-session)', async () => {
     const repo = createTestRepo();
     const origCwd = process.cwd();
 
@@ -206,22 +190,19 @@ async function main(): Promise<void> {
     const { cleanupQuickBranch } = await import("../quick.ts");
     const result = cleanupQuickBranch();
 
-    assertTrue(result, "cross-session recovery returns true");
-    assertEq(getCurrentBranch(repo), "main", "back on main after cross-session recovery");
-    assertTrue(existsSync(join(repo, "docs.md")), "docs.md merged to main");
-    assertTrue(!existsSync(join(runtimeDir, "quick-return.json")), "disk state cleaned up");
+    assert.ok(result, "cross-session recovery returns true");
+    assert.deepStrictEqual(getCurrentBranch(repo), "main", "back on main after cross-session recovery");
+    assert.ok(existsSync(join(repo, "docs.md")), "docs.md merged to main");
+    assert.ok(!existsSync(join(runtimeDir, "quick-return.json")), "disk state cleaned up");
 
     process.chdir(origCwd);
     rmSync(repo, { recursive: true, force: true });
-  }
+});
 
   // ═══════════════════════════════════════════════════════════════════════
   // cleanupQuickBranch: no-op when no pending state
   // ═══════════════════════════════════════════════════════════════════════
-
-  console.log("\n=== cleanupQuickBranch: no-op without pending state ===");
-
-  {
+test('cleanupQuickBranch: no-op without pending state', async () => {
     const repo = createTestRepo();
     const origCwd = process.cwd();
     process.chdir(repo);
@@ -229,32 +210,29 @@ async function main(): Promise<void> {
     const { cleanupQuickBranch } = await import("../quick.ts");
     const result = cleanupQuickBranch();
 
-    assertTrue(!result, "returns false when no pending state");
-    assertEq(getCurrentBranch(repo), "main", "stays on main");
+    assert.ok(!result, "returns false when no pending state");
+    assert.deepStrictEqual(getCurrentBranch(repo), "main", "stays on main");
 
     process.chdir(origCwd);
     rmSync(repo, { recursive: true, force: true });
-  }
+});
 
   // ═══════════════════════════════════════════════════════════════════════
   // End-to-end: quick branch does NOT contaminate integration branch
   // ═══════════════════════════════════════════════════════════════════════
-
-  console.log("\n=== E2E: quick branch does not contaminate integration branch ===");
-
-  {
+test('E2E: quick branch does not contaminate integration branch', () => {
     const repo = createTestRepo();
 
     // 1. Record main as integration branch for M001
     captureIntegrationBranch(repo, "M001");
-    assertEq(readIntegrationBranch(repo, "M001"), "main", "M001 integration = main");
+    assert.deepStrictEqual(readIntegrationBranch(repo, "M001"), "main", "M001 integration = main");
 
     // 2. Start a quick task (branch off)
     run("git checkout -b gsd/quick/1-fix-typo", repo);
 
     // 3. Try to capture integration branch for M002 while on quick branch
     captureIntegrationBranch(repo, "M002");
-    assertEq(readIntegrationBranch(repo, "M002"), null,
+    assert.deepStrictEqual(readIntegrationBranch(repo, "M002"), null,
       "M002 integration NOT recorded from quick branch");
 
     // 4. Return to main (simulate cleanupQuickBranch)
@@ -262,20 +240,14 @@ async function main(): Promise<void> {
 
     // 5. Now capture M002 from main — should work
     captureIntegrationBranch(repo, "M002");
-    assertEq(readIntegrationBranch(repo, "M002"), "main",
+    assert.deepStrictEqual(readIntegrationBranch(repo, "M002"), "main",
       "M002 integration = main after returning from quick branch");
 
     // 6. Verify M001 still intact
-    assertEq(readIntegrationBranch(repo, "M001"), "main",
+    assert.deepStrictEqual(readIntegrationBranch(repo, "M001"), "main",
       "M001 integration unchanged");
 
     rmSync(repo, { recursive: true, force: true });
-  }
+});
 
-  report();
-}
-
-main().catch((error) => {
-  console.error(error);
-  process.exit(1);
 });

@@ -48,11 +48,17 @@ export function attachJsonlLineReader(stream: Readable, onLine: (line: string) =
 		}
 	};
 
+	const onError = (_err: Error) => {
+		// Stream errors are non-fatal for JSONL reading
+	};
+
 	stream.on("data", onData);
 	stream.on("end", onEnd);
+	stream.on("error", onError);
 
 	return () => {
 		stream.off("data", onData);
 		stream.off("end", onEnd);
+		stream.off("error", onError);
 	};
 }

@@ -1,0 +1,53 @@
+# ── Build artifacts ──
+dist/
+build/
+coverage/
+*.tsbuildinfo
+
+# ── Dependencies ──
+node_modules/
+packages/*/node_modules/
+
+# ── Environment & secrets ──
+.env
+.env.*
+!.env.example
+.gsd/
+
+# ── IDE & OS ──
+.idea/
+.vscode/
+*.code-workspace
+.DS_Store
+Thumbs.db
+
+# ── Git ──
+.git/
+.github/
+
+# ── Development files ──
+.claude/
+.plans/
+.artifacts/
+.bg-shell/
+.bg_shell
+*.log
+*.swp
+*.swo
+*~
+tmp/
+.cache/
+
+# ── Native build artifacts ──
+native/
+target/
+
+# ── Test fixtures ──
+tests/
+
+# ── Lock files (npm is canonical via package-lock.json) ──
+pnpm-lock.yaml
+bun.lock
+
+# ── Tarballs ──
+*.tgz

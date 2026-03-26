@@ -23,13 +23,6 @@ import type { BudgetAlertLevel } from "../auto-budget.js";
 
 // ─── Exported Types ──────────────────────────────────────────────────────────
 
-export interface CompletedUnit {
-  type: string;
-  id: string;
-  startedAt: number;
-  finishedAt: number;
-}
-
 export interface CurrentUnit {
   type: string;
   id: string;
@@ -106,7 +99,6 @@ export class AutoSession {
   // ── Current unit ─────────────────────────────────────────────────────────
   currentUnit: CurrentUnit | null = null;
   currentUnitRouting: UnitRouting | null = null;
-  completedUnits: CompletedUnit[] = [];
   currentMilestoneId: string | null = null;
 
   // ── Model state ──────────────────────────────────────────────────────────
@@ -125,6 +117,15 @@ export class AutoSession {
 
   // ── Sidecar queue ─────────────────────────────────────────────────────
   sidecarQueue: SidecarItem[] = [];
+
+  // ── Isolation degradation ────────────────────────────────────────────
+  /** Set to true when worktree creation fails; prevents merge of nonexistent branch. */
+  isolationDegraded = false;
+
+  // ── Merge guard ──────────────────────────────────────────────────────
+  /** Set to true after phases.ts successfully calls mergeAndExit, so that
+   *  stopAuto does not attempt the same merge a second time (#2645). */
+  milestoneMergedInPhases = false;
 
   // ── Dispatch circuit breakers ──────────────────────────────────────
   rewriteAttemptCount = 0;
@@ -160,14 +161,6 @@ export class AutoSession {
     return this.originalBasePath || this.basePath;
   }
 
-  completeCurrentUnit(): CompletedUnit | null {
-    if (!this.currentUnit) return null;
-    const done: CompletedUnit = { ...this.currentUnit, finishedAt: Date.now() };
-    this.completedUnits.push(done);
-    this.currentUnit = null;
-    return done;
-  }
-
   reset(): void {
     this.clearTimers();
 
@@ -193,7 +186,6 @@ export class AutoSession {
     // Unit
     this.currentUnit = null;
     this.currentUnitRouting = null;
-    this.completedUnits = [];
     this.currentMilestoneId = null;
 
     // Model
@@ -217,6 +209,8 @@ export class AutoSession {
     this.pendingQuickTasks = [];
     this.sidecarQueue = [];
     this.rewriteAttemptCount = 0;
+    this.isolationDegraded = false;
+    this.milestoneMergedInPhases = false;
 
     // Signal handler
     this.sigtermHandler = null;
@@ -234,7 +228,6 @@ export class AutoSession {
       activeRunDir: this.activeRunDir,
       currentMilestoneId: this.currentMilestoneId,
       currentUnit: this.currentUnit,
-      completedUnits: this.completedUnits.length,
       unitDispatchCount: Object.fromEntries(this.unitDispatchCount),
     };
   }

@@ -29,6 +29,7 @@ gsd --web --host 0.0.0.0 --port 8080 --allowed-origins "https://example.com"
 - **Project management** — view milestones, slices, and tasks in a visual dashboard
 - **Real-time progress** — server-sent events push status updates as auto-mode executes
 - **Multi-project support** — manage multiple projects from a single browser tab via `?project=` URL parameter
+- **Change project root** — switch project directories from the web UI without restarting the server (v2.44)
 - **Onboarding flow** — API key setup and provider configuration through the browser
 - **Model selection** — switch models and providers from the web UI
 

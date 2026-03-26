@@ -66,7 +66,7 @@ function createFixture(): string {
   return base;
 }
 
-test("dispatch uat targets last completed slice, not activeSlice (#1693)", async () => {
+test("dispatch uat targets last completed slice, not activeSlice (#1693)", async (t) => {
   const base = createFixture();
   invalidateStateCache();
 
@@ -88,31 +88,29 @@ test("dispatch uat targets last completed slice, not activeSlice (#1693)", async
     },
   } as any;
 
-  try {
-    await dispatchDirectPhase(ctx, pi, "uat", base);
+  t.after(() => rmSync(base, { recursive: true, force: true }));
 
-    // Should have dispatched (sendMessage called)
-    assert.ok(sentPrompt, "sendMessage should have been called with a prompt");
+  await dispatchDirectPhase(ctx, pi, "uat", base);
 
-    // The dispatch notification should reference M001/S01 (completed), not M001/S02 (active)
-    const dispatchNotification = notifications.find(n => n.message.startsWith("Dispatching"));
-    assert.ok(dispatchNotification, "dispatch notification should be present");
-    assert.match(
-      dispatchNotification.message,
-      /M001\/S01/,
-      "dispatch should target completed slice S01, not active slice S02",
-    );
-    assert.doesNotMatch(
-      dispatchNotification.message,
-      /M001\/S02/,
-      "dispatch should NOT target active (next incomplete) slice S02",
-    );
-  } finally {
-    rmSync(base, { recursive: true, force: true });
-  }
+  // Should have dispatched (sendMessage called)
+  assert.ok(sentPrompt, "sendMessage should have been called with a prompt");
+
+  // The dispatch notification should reference M001/S01 (completed), not M001/S02 (active)
+  const dispatchNotification = notifications.find(n => n.message.startsWith("Dispatching"));
+  assert.ok(dispatchNotification, "dispatch notification should be present");
+  assert.match(
+    dispatchNotification.message,
+    /M001\/S01/,
+    "dispatch should target completed slice S01, not active slice S02",
+  );
+  assert.doesNotMatch(
+    dispatchNotification.message,
+    /M001\/S02/,
+    "dispatch should NOT target active (next incomplete) slice S02",
+  );
 });
 
-test("dispatch uat warns when no completed slices exist", async () => {
+test("dispatch uat warns when no completed slices exist", async (t) => {
   const base = mkdtempSync(join(tmpdir(), "gsd-dispatch-uat-none-"));
   invalidateStateCache();
 
@@ -164,13 +162,11 @@ test("dispatch uat warns when no completed slices exist", async () => {
     },
   } as any;
 
-  try {
-    await dispatchDirectPhase(ctx, pi, "uat", base);
+  t.after(() => rmSync(base, { recursive: true, force: true }));
 
-    const warning = notifications.find(n => n.level === "warning");
-    assert.ok(warning, "should show a warning notification");
-    assert.match(warning.message, /no completed slices/, "warning should mention no completed slices");
-  } finally {
-    rmSync(base, { recursive: true, force: true });
-  }
+  await dispatchDirectPhase(ctx, pi, "uat", base);
+
+  const warning = notifications.find(n => n.level === "warning");
+  assert.ok(warning, "should show a warning notification");
+  assert.match(warning.message, /no completed slices/, "warning should mention no completed slices");
 });

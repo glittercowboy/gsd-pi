@@ -497,7 +497,7 @@ export async function generateSummary(
 	currentMessages: AgentMessage[],
 	model: Model<any>,
 	reserveTokens: number,
-	apiKey: string,
+	apiKey: string | undefined,
 	signal?: AbortSignal,
 	customInstructions?: string,
 	previousSummary?: string,
@@ -660,7 +660,7 @@ Be concise. Focus on what's needed to understand the kept suffix.`;
 export async function compact(
 	preparation: CompactionPreparation,
 	model: Model<any>,
-	apiKey: string,
+	apiKey: string | undefined,
 	customInstructions?: string,
 	signal?: AbortSignal,
 ): Promise<CompactionResult> {
@@ -732,7 +732,7 @@ async function generateTurnPrefixSummary(
 	messages: AgentMessage[],
 	model: Model<any>,
 	reserveTokens: number,
-	apiKey: string,
+	apiKey: string | undefined,
 	signal?: AbortSignal,
 ): Promise<string> {
 	const maxTokens = Math.floor(0.5 * reserveTokens); // Smaller budget for turn prefix

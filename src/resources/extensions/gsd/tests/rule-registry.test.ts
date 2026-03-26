@@ -3,8 +3,8 @@
 // Tests the RuleRegistry class, UnifiedRule types, singleton accessors,
 // and evaluation methods using mock rules.
 
+import assert from 'node:assert/strict';
 import { test, describe, beforeEach } from "node:test";
-import { createTestContext } from "./test-helpers.ts";
 import {
   RuleRegistry,
   getRegistry,
@@ -64,9 +64,7 @@ function makeContext(phase: string): DispatchContext {
 // ─── Tests ────────────────────────────────────────────────────────────────
 
 describe("RuleRegistry", () => {
-  const { assertEq, assertTrue } = createTestContext();
-
-  beforeEach(() => {
+    beforeEach(() => {
     resetRegistry();
   });
 
@@ -81,10 +79,10 @@ describe("RuleRegistry", () => {
 
     // At minimum, dispatch rules are returned (hook rules depend on prefs)
     const dispatchRules = listed.filter(r => r.when === "dispatch");
-    assertEq(dispatchRules.length, 3, "listRules returns 3 dispatch rules");
-    assertEq(dispatchRules[0].name, "rule-a", "first rule name is rule-a");
-    assertEq(dispatchRules[1].name, "rule-b", "second rule name is rule-b");
-    assertEq(dispatchRules[2].name, "rule-c", "third rule name is rule-c");
+    assert.deepStrictEqual(dispatchRules.length, 3, "listRules returns 3 dispatch rules");
+    assert.deepStrictEqual(dispatchRules[0].name, "rule-a", "first rule name is rule-a");
+    assert.deepStrictEqual(dispatchRules[1].name, "rule-b", "second rule name is rule-b");
+    assert.deepStrictEqual(dispatchRules[2].name, "rule-c", "third rule name is rule-c");
   });
 
   test("listRules returns correct fields on each rule", () => {
@@ -95,12 +93,12 @@ describe("RuleRegistry", () => {
     const listed = registry.listRules();
     const rule = listed.find(r => r.name === "check-fields")!;
 
-    assertTrue(rule !== undefined, "rule found by name");
-    assertEq(rule.when, "dispatch", "when field is dispatch");
-    assertEq(rule.evaluation, "first-match", "evaluation is first-match");
-    assertTrue(typeof rule.where === "function", "where is a function");
-    assertTrue(typeof rule.then === "function", "then is a function");
-    assertEq(rule.description, "Mock rule for planning", "description is set");
+    assert.ok(rule !== undefined, "rule found by name");
+    assert.deepStrictEqual(rule.when, "dispatch", "when field is dispatch");
+    assert.deepStrictEqual(rule.evaluation, "first-match", "evaluation is first-match");
+    assert.ok(typeof rule.where === "function", "where is a function");
+    assert.ok(typeof rule.then === "function", "then is a function");
+    assert.deepStrictEqual(rule.description, "Mock rule for planning", "description is set");
   });
 
   test("evaluateDispatch returns first matching rule", async () => {
@@ -113,10 +111,10 @@ describe("RuleRegistry", () => {
     const ctx = makeContext("executing");
     const result = await registry.evaluateDispatch(ctx);
 
-    assertEq(result.action, "dispatch", "result is a dispatch action");
+    assert.deepStrictEqual(result.action, "dispatch", "result is a dispatch action");
     if (result.action === "dispatch") {
-      assertEq(result.unitType, "test-executing", "matched the executing rule");
-      assertEq(result.prompt, "Prompt for executing", "prompt from matched rule");
+      assert.deepStrictEqual(result.unitType, "test-executing", "matched the executing rule");
+      assert.deepStrictEqual(result.prompt, "Prompt for executing", "prompt from matched rule");
     }
   });
 
@@ -128,9 +126,9 @@ describe("RuleRegistry", () => {
     const ctx = makeContext("blocked");
     const result = await registry.evaluateDispatch(ctx);
 
-    assertEq(result.action, "stop", "result is a stop action");
+    assert.deepStrictEqual(result.action, "stop", "result is a stop action");
     if (result.action === "stop") {
-      assertTrue(result.reason.includes("blocked"), "stop reason mentions phase");
+      assert.ok(result.reason.includes("blocked"), "stop reason mentions phase");
     }
   });
 
@@ -159,9 +157,9 @@ describe("RuleRegistry", () => {
     const ctx = makeContext("planning");
     const result = await registry.evaluateDispatch(ctx);
 
-    assertEq(result.action, "dispatch", "async dispatch resolved");
+    assert.deepStrictEqual(result.action, "dispatch", "async dispatch resolved");
     if (result.action === "dispatch") {
-      assertEq(result.unitType, "async-test", "async rule matched");
+      assert.deepStrictEqual(result.unitType, "async-test", "async rule matched");
     }
   });
 
@@ -188,11 +186,11 @@ describe("RuleRegistry", () => {
     // Reset
     registry.resetState();
 
-    assertEq(registry.getActiveHook(), null, "activeHook cleared");
-    assertEq(registry.hookQueue.length, 0, "hookQueue cleared");
-    assertEq(registry.cycleCounts.size, 0, "cycleCounts cleared");
-    assertEq(registry.isRetryPending(), false, "retryPending cleared");
-    assertEq(registry.consumeRetryTrigger(), null, "retryTrigger cleared");
+    assert.deepStrictEqual(registry.getActiveHook(), null, "activeHook cleared");
+    assert.deepStrictEqual(registry.hookQueue.length, 0, "hookQueue cleared");
+    assert.deepStrictEqual(registry.cycleCounts.size, 0, "cycleCounts cleared");
+    assert.deepStrictEqual(registry.isRetryPending(), false, "retryPending cleared");
+    assert.deepStrictEqual(registry.consumeRetryTrigger(), null, "retryTrigger cleared");
   });
 
   test("singleton getRegistry throws when not initialized", () => {
@@ -201,9 +199,9 @@ describe("RuleRegistry", () => {
       getRegistry();
     } catch (e: any) {
       threw = true;
-      assertTrue(e.message.includes("not initialized"), "error mentions not initialized");
+      assert.ok(e.message.includes("not initialized"), "error mentions not initialized");
     }
-    assertTrue(threw, "getRegistry threw");
+    assert.ok(threw, "getRegistry threw");
   });
 
   test("setRegistry / getRegistry round-trips", () => {
@@ -211,20 +209,20 @@ describe("RuleRegistry", () => {
     setRegistry(registry);
 
     const retrieved = getRegistry();
-    assertEq(retrieved, registry, "getRegistry returns the same instance");
+    assert.deepStrictEqual(retrieved, registry, "getRegistry returns the same instance");
 
     const listed = retrieved.listRules().filter(r => r.when === "dispatch");
-    assertEq(listed.length, 1, "singleton has 1 dispatch rule");
-    assertEq(listed[0].name, "singleton-test", "rule name matches");
+    assert.deepStrictEqual(listed.length, 1, "singleton has 1 dispatch rule");
+    assert.deepStrictEqual(listed[0].name, "singleton-test", "rule name matches");
   });
 
   test("initRegistry creates and sets singleton", () => {
     const rules = [mockDispatchRule("init-test", "executing")];
     const registry = initRegistry(rules);
 
-    assertEq(getRegistry(), registry, "initRegistry sets the singleton");
+    assert.deepStrictEqual(getRegistry(), registry, "initRegistry sets the singleton");
     const listed = getRegistry().listRules().filter(r => r.when === "dispatch");
-    assertEq(listed.length, 1, "singleton has the rule");
+    assert.deepStrictEqual(listed.length, 1, "singleton has the rule");
   });
 
   test("evaluateDispatch respects rule order (first match wins)", async () => {
@@ -258,9 +256,9 @@ describe("RuleRegistry", () => {
     const ctx = makeContext("planning");
     const result = await registry.evaluateDispatch(ctx);
 
-    assertEq(result.action, "dispatch", "dispatch action returned");
+    assert.deepStrictEqual(result.action, "dispatch", "dispatch action returned");
     if (result.action === "dispatch") {
-      assertEq(result.unitType, "first-wins", "first rule won over second");
+      assert.deepStrictEqual(result.unitType, "first-wins", "first rule won over second");
     }
   });
 
@@ -268,18 +266,18 @@ describe("RuleRegistry", () => {
 
   test("convertDispatchRules produces correct count of UnifiedRule objects", () => {
     const converted = convertDispatchRules(DISPATCH_RULES);
-    assertEq(converted.length, DISPATCH_RULES.length, `convertDispatchRules produces ${DISPATCH_RULES.length} rules`);
+    assert.deepStrictEqual(converted.length, DISPATCH_RULES.length, `convertDispatchRules produces ${DISPATCH_RULES.length} rules`);
   });
 
   test("each converted rule has correct when, evaluation, and original name", () => {
     const converted = convertDispatchRules(DISPATCH_RULES);
     for (let i = 0; i < converted.length; i++) {
       const rule = converted[i];
-      assertEq(rule.when, "dispatch", `rule ${i} has when:"dispatch"`);
-      assertEq(rule.evaluation, "first-match", `rule ${i} has evaluation:"first-match"`);
-      assertEq(rule.name, DISPATCH_RULES[i].name, `rule ${i} preserves name "${DISPATCH_RULES[i].name}"`);
-      assertTrue(typeof rule.where === "function", `rule ${i} has a where function`);
-      assertTrue(typeof rule.then === "function", `rule ${i} has a then function`);
+      assert.deepStrictEqual(rule.when, "dispatch", `rule ${i} has when:"dispatch"`);
+      assert.deepStrictEqual(rule.evaluation, "first-match", `rule ${i} has evaluation:"first-match"`);
+      assert.deepStrictEqual(rule.name, DISPATCH_RULES[i].name, `rule ${i} preserves name "${DISPATCH_RULES[i].name}"`);
+      assert.ok(typeof rule.where === "function", `rule ${i} has a where function`);
+      assert.ok(typeof rule.then === "function", `rule ${i} has a then function`);
     }
   });
 
@@ -287,7 +285,7 @@ describe("RuleRegistry", () => {
     const converted = convertDispatchRules(DISPATCH_RULES);
     const registry = new RuleRegistry(converted);
     const listed = registry.listRules().filter(r => r.when === "dispatch");
-    assertEq(listed.length, DISPATCH_RULES.length, `listRules returns ${DISPATCH_RULES.length} dispatch rules`);
+    assert.deepStrictEqual(listed.length, DISPATCH_RULES.length, `listRules returns ${DISPATCH_RULES.length} dispatch rules`);
   });
 
   test("rule names from listRules match getDispatchRuleNames in exact order", () => {
@@ -298,9 +296,9 @@ describe("RuleRegistry", () => {
       .map(r => r.name);
     const originalNames = getDispatchRuleNames();
 
-    assertEq(listedNames.length, originalNames.length, "same number of names");
+    assert.deepStrictEqual(listedNames.length, originalNames.length, "same number of names");
     for (let i = 0; i < originalNames.length; i++) {
-      assertEq(listedNames[i], originalNames[i], `name at index ${i} matches: "${originalNames[i]}"`);
+      assert.deepStrictEqual(listedNames[i], originalNames[i], `name at index ${i} matches: "${originalNames[i]}"`);
     }
   });
 
@@ -309,18 +307,18 @@ describe("RuleRegistry", () => {
   test("getOrCreateRegistry lazily creates a registry with empty dispatch rules", () => {
     // After resetRegistry(), getRegistry() would throw. getOrCreateRegistry() should not.
     const registry = getOrCreateRegistry();
-    assertTrue(registry instanceof RuleRegistry, "returns a RuleRegistry instance");
+    assert.ok(registry instanceof RuleRegistry, "returns a RuleRegistry instance");
     const dispatchRules = registry.listRules().filter(r => r.when === "dispatch");
-    assertEq(dispatchRules.length, 0, "lazily-created registry has 0 dispatch rules");
+    assert.deepStrictEqual(dispatchRules.length, 0, "lazily-created registry has 0 dispatch rules");
   });
 
   test("getOrCreateRegistry returns existing registry when initialized", () => {
     const rules = [mockDispatchRule("explicit-init", "planning")];
     const explicit = initRegistry(rules);
     const lazy = getOrCreateRegistry();
-    assertEq(lazy, explicit, "getOrCreateRegistry returns the same singleton as initRegistry");
+    assert.deepStrictEqual(lazy, explicit, "getOrCreateRegistry returns the same singleton as initRegistry");
     const dispatchRules = lazy.listRules().filter(r => r.when === "dispatch");
-    assertEq(dispatchRules.length, 1, "singleton has the explicitly initialized dispatch rule");
+    assert.deepStrictEqual(dispatchRules.length, 1, "singleton has the explicitly initialized dispatch rule");
   });
 
   // ── Hook-derived rules in listRules ────────────────────────────────
@@ -333,9 +331,9 @@ describe("RuleRegistry", () => {
     const preDispatchRules = allRules.filter(r => r.when === "pre-dispatch");
 
     // No preferences file = no hooks
-    assertEq(postUnitRules.length, 0, "no post-unit rules when no hooks configured");
-    assertEq(preDispatchRules.length, 0, "no pre-dispatch rules when no hooks configured");
-    assertEq(allRules.length, DISPATCH_RULES.length, "total rules equals dispatch rules only");
+    assert.deepStrictEqual(postUnitRules.length, 0, "no post-unit rules when no hooks configured");
+    assert.deepStrictEqual(preDispatchRules.length, 0, "no pre-dispatch rules when no hooks configured");
+    assert.deepStrictEqual(allRules.length, DISPATCH_RULES.length, "total rules equals dispatch rules only");
   });
 
   test("listRules dispatch rules appear first, hooks after", () => {
@@ -345,8 +343,8 @@ describe("RuleRegistry", () => {
 
     // Verify dispatch rules come first (indices 0..N-1)
     for (let i = 0; i < converted.length; i++) {
-      assertEq(allRules[i].when, "dispatch", `rule at index ${i} is a dispatch rule`);
-      assertEq(allRules[i].name, converted[i].name, `dispatch rule at index ${i} has correct name`);
+      assert.deepStrictEqual(allRules[i].when, "dispatch", `rule at index ${i} is a dispatch rule`);
+      assert.deepStrictEqual(allRules[i].name, converted[i].name, `dispatch rule at index ${i} has correct name`);
     }
   });
 
@@ -355,34 +353,34 @@ describe("RuleRegistry", () => {
   test("evaluatePostUnit returns null for hook-on-hook prevention", () => {
     const registry = new RuleRegistry([]);
     const result = registry.evaluatePostUnit("hook/code-review", "M001/S01/T01", "/tmp/test");
-    assertEq(result, null, "hook units don't trigger other hooks");
+    assert.deepStrictEqual(result, null, "hook units don't trigger other hooks");
   });
 
   test("evaluatePostUnit returns null for triage-captures", () => {
     const registry = new RuleRegistry([]);
     const result = registry.evaluatePostUnit("triage-captures", "M001/S01/T01", "/tmp/test");
-    assertEq(result, null, "triage-captures skipped");
+    assert.deepStrictEqual(result, null, "triage-captures skipped");
   });
 
   test("evaluatePostUnit returns null for quick-task", () => {
     const registry = new RuleRegistry([]);
     const result = registry.evaluatePostUnit("quick-task", "M001/S01/T01", "/tmp/test");
-    assertEq(result, null, "quick-task skipped");
+    assert.deepStrictEqual(result, null, "quick-task skipped");
   });
 
   test("evaluatePreDispatch bypasses hook units", () => {
     const registry = new RuleRegistry([]);
     const result = registry.evaluatePreDispatch("hook/review", "M001/S01/T01", "prompt", "/tmp/test");
-    assertEq(result.action, "proceed", "hook units always proceed");
-    assertEq(result.prompt, "prompt", "prompt unchanged");
-    assertEq(result.firedHooks.length, 0, "no hooks fired");
+    assert.deepStrictEqual(result.action, "proceed", "hook units always proceed");
+    assert.deepStrictEqual(result.prompt, "prompt", "prompt unchanged");
+    assert.deepStrictEqual(result.firedHooks.length, 0, "no hooks fired");
   });
 
   test("evaluatePreDispatch proceeds with empty hooks", () => {
     const registry = new RuleRegistry([]);
     const result = registry.evaluatePreDispatch("execute-task", "M001/S01/T01", "original prompt", "/tmp/test");
-    assertEq(result.action, "proceed", "proceeds when no hooks");
-    assertEq(result.prompt, "original prompt", "prompt unchanged");
+    assert.deepStrictEqual(result.action, "proceed", "proceeds when no hooks");
+    assert.deepStrictEqual(result.prompt, "original prompt", "prompt unchanged");
   });
 
   // ── matchedRule provenance (S02 journal support) ───────────────────
@@ -395,8 +393,8 @@ describe("RuleRegistry", () => {
     const ctx = makeContext("planning");
     const result = await registry.evaluateDispatch(ctx);
 
-    assertEq(result.action, "dispatch", "result is a dispatch action");
-    assertEq(result.matchedRule, "my-planning-rule", "matchedRule is the rule name");
+    assert.deepStrictEqual(result.action, "dispatch", "result is a dispatch action");
+    assert.deepStrictEqual(result.matchedRule, "my-planning-rule", "matchedRule is the rule name");
   });
 
   test("evaluateDispatch result includes matchedRule '<no-match>' on fallback stop", async () => {
@@ -407,7 +405,7 @@ describe("RuleRegistry", () => {
     const ctx = makeContext("some-unknown-phase");
     const result = await registry.evaluateDispatch(ctx);
 
-    assertEq(result.action, "stop", "result is a stop action");
-    assertEq(result.matchedRule, "<no-match>", "matchedRule is '<no-match>' on fallback");
+    assert.deepStrictEqual(result.action, "stop", "result is a stop action");
+    assert.deepStrictEqual(result.matchedRule, "<no-match>", "matchedRule is '<no-match>' on fallback");
   });
 });

@@ -419,7 +419,7 @@ test("runProviderChecks uses provider-qualified anthropic-vertex model IDs", () 
   const repo = realpathSync(mkdtempSync(join(tmpdir(), "gsd-providers-vertex-prefix-repo-")));
   mkdirSync(join(repo, ".gsd"), { recursive: true });
   writeFileSync(
-    join(repo, ".gsd", "preferences.md"),
+    join(repo, ".gsd", "PREFERENCES.md"),
     [
       "---",
       "models:",
@@ -454,7 +454,7 @@ test("runProviderChecks uses object provider field for anthropic-vertex models",
   const repo = realpathSync(mkdtempSync(join(tmpdir(), "gsd-providers-vertex-provider-repo-")));
   mkdirSync(join(repo, ".gsd"), { recursive: true });
   writeFileSync(
-    join(repo, ".gsd", "preferences.md"),
+    join(repo, ".gsd", "PREFERENCES.md"),
     [
       "---",
       "models:",

@@ -226,8 +226,6 @@ describe("verification-gate: execution", () => {
 
   test("all commands pass → gate passes", () => {
     const result = runVerificationGate({
-      basePath: tmp,
-      unitId: "T01",
       cwd: tmp,
       preferenceCommands: ["echo hello", "echo world"],
     });
@@ -243,8 +241,6 @@ describe("verification-gate: execution", () => {
 
   test("one command fails → gate fails with exit code + stderr", () => {
     const result = runVerificationGate({
-      basePath: tmp,
-      unitId: "T01",
       cwd: tmp,
       preferenceCommands: ["echo ok", "sh -c 'echo err >&2; exit 1'"],
     });
@@ -257,8 +253,6 @@ describe("verification-gate: execution", () => {
 
   test("no commands discovered → gate passes with 0 checks", () => {
     const result = runVerificationGate({
-      basePath: tmp,
-      unitId: "T01",
       cwd: tmp,
     });
     assert.equal(result.passed, true);
@@ -268,8 +262,6 @@ describe("verification-gate: execution", () => {
 
   test("command not found → exit code 127", () => {
     const result = runVerificationGate({
-      basePath: tmp,
-      unitId: "T01",
       cwd: tmp,
       preferenceCommands: ["__nonexistent_command_xyz_42__"],
     });
@@ -289,8 +281,6 @@ describe("verification-gate: execution", () => {
     const script = [
       `import { runVerificationGate } from ${JSON.stringify(pathToFileURL(gatePath).href)};`,
       `runVerificationGate({`,
-      `  basePath: ${JSON.stringify(tmp)},`,
-      `  unitId: "T-DEP",`,
       `  cwd: ${JSON.stringify(tmp)},`,
       `  preferenceCommands: ["echo dep0190-check"],`,
       `});`,
@@ -317,8 +307,6 @@ describe("verification-gate: execution", () => {
 
   test("each check has durationMs", () => {
     const result = runVerificationGate({
-      basePath: tmp,
-      unitId: "T01",
       cwd: tmp,
       preferenceCommands: ["echo fast"],
     });
@@ -330,8 +318,6 @@ describe("verification-gate: execution", () => {
   test("one command fails — remaining commands still run (non-short-circuit)", () => {
     // First fails, second and third should still execute
     const result = runVerificationGate({
-      basePath: tmp,
-      unitId: "T02",
       cwd: tmp,
       preferenceCommands: [
         "sh -c 'exit 1'",
@@ -351,8 +337,6 @@ describe("verification-gate: execution", () => {
   test("gate execution uses cwd for spawnSync", () => {
     // pwd should report the temp dir
     const result = runVerificationGate({
-      basePath: tmp,
-      unitId: "T02",
       cwd: tmp,
       preferenceCommands: ["pwd"],
     });

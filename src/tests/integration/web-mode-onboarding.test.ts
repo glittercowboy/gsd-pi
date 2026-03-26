@@ -295,7 +295,7 @@ function configureBridgeRuntime(
 }
 
 
-test("successful browser onboarding restarts the stale bridge child and unlocks the first prompt", async () => {
+test("successful browser onboarding restarts the stale bridge child and unlocks the first prompt", async (t) => {
   const fixture = makeWorkspaceFixture();
   const authStorage = AuthStorage.inMemory({});
   const harness = configureBridgeRuntime(fixture, authStorage);
@@ -304,65 +304,65 @@ test("successful browser onboarding restarts the stale bridge child and unlocks 
     validateApiKey: async () => ({ ok: true, message: "openai credentials validated" }),
   });
 
-  try {
-    const bootResponse = await bootRoute.GET();
-    assert.equal(bootResponse.status, 200);
-    const bootPayload = (await bootResponse.json()) as any;
-    assert.equal(bootPayload.onboarding.locked, true);
-    assert.equal(bootPayload.onboarding.lockReason, "required_setup");
-    assert.equal(harness.spawnCalls, 1);
-    assert.equal(harness.generations[0]?.authVisibleAtStart, false);
-
-    const blockedPrompt = await commandRoute.POST(
-      new Request("http://localhost/api/session/command", {
-        method: "POST",
-        body: JSON.stringify({ type: "prompt", message: "should stay locked" }),
-      }),
-    );
-    assert.equal(blockedPrompt.status, 423);
-    const blockedPayload = (await blockedPrompt.json()) as any;
-    assert.equal(blockedPayload.code, "onboarding_locked");
-    assert.equal(blockedPayload.details.reason, "required_setup");
-    assert.equal(harness.promptCount, 0);
-
-    const validationResponse = await onboardingRoute.POST(
-      new Request("http://localhost/api/onboarding", {
-        method: "POST",
-        body: JSON.stringify({
-          action: "save_api_key",
-          providerId: "openai",
-          apiKey: "sk-valid-123456",
-        }),
-      }),
-    );
-    assert.equal(validationResponse.status, 200);
-    const validationPayload = (await validationResponse.json()) as any;
-    assert.equal(validationPayload.onboarding.locked, false);
-    assert.equal(validationPayload.onboarding.lockReason, null);
-    assert.equal(validationPayload.onboarding.bridgeAuthRefresh.phase, "succeeded");
-    assert.equal(harness.spawnCalls, 2);
-    assert.equal(harness.generations[1]?.authVisibleAtStart, true);
-
-    const firstPrompt = await commandRoute.POST(
-      new Request("http://localhost/api/session/command", {
-        method: "POST",
-        body: JSON.stringify({ type: "prompt", message: "first unlocked prompt" }),
-      }),
-    );
-    assert.equal(firstPrompt.status, 200);
-    const firstPromptPayload = (await firstPrompt.json()) as any;
-    assert.equal(firstPromptPayload.success, true);
-    assert.equal(firstPromptPayload.command, "prompt");
-    assert.equal(harness.promptCount, 1);
-    assert.deepEqual(harness.generations[1]?.promptMessages, ["first unlocked prompt"]);
-  } finally {
+  t.after(async () => {
     onboarding.resetOnboardingServiceForTests();
     await bridge.resetBridgeServiceForTests();
     fixture.cleanup();
-  }
+  });
+
+  const bootResponse = await bootRoute.GET();
+  assert.equal(bootResponse.status, 200);
+  const bootPayload = (await bootResponse.json()) as any;
+  assert.equal(bootPayload.onboarding.locked, true);
+  assert.equal(bootPayload.onboarding.lockReason, "required_setup");
+  assert.equal(harness.spawnCalls, 1);
+  assert.equal(harness.generations[0]?.authVisibleAtStart, false);
+
+  const blockedPrompt = await commandRoute.POST(
+    new Request("http://localhost/api/session/command", {
+      method: "POST",
+      body: JSON.stringify({ type: "prompt", message: "should stay locked" }),
+    }),
+  );
+  assert.equal(blockedPrompt.status, 423);
+  const blockedPayload = (await blockedPrompt.json()) as any;
+  assert.equal(blockedPayload.code, "onboarding_locked");
+  assert.equal(blockedPayload.details.reason, "required_setup");
+  assert.equal(harness.promptCount, 0);
+
+  const validationResponse = await onboardingRoute.POST(
+    new Request("http://localhost/api/onboarding", {
+      method: "POST",
+      body: JSON.stringify({
+        action: "save_api_key",
+        providerId: "openai",
+        apiKey: "sk-valid-123456",
+      }),
+    }),
+  );
+  assert.equal(validationResponse.status, 200);
+  const validationPayload = (await validationResponse.json()) as any;
+  assert.equal(validationPayload.onboarding.locked, false);
+  assert.equal(validationPayload.onboarding.lockReason, null);
+  assert.equal(validationPayload.onboarding.bridgeAuthRefresh.phase, "succeeded");
+  assert.equal(harness.spawnCalls, 2);
+  assert.equal(harness.generations[1]?.authVisibleAtStart, true);
+
+  const firstPrompt = await commandRoute.POST(
+    new Request("http://localhost/api/session/command", {
+      method: "POST",
+      body: JSON.stringify({ type: "prompt", message: "first unlocked prompt" }),
+    }),
+  );
+  assert.equal(firstPrompt.status, 200);
+  const firstPromptPayload = (await firstPrompt.json()) as any;
+  assert.equal(firstPromptPayload.success, true);
+  assert.equal(firstPromptPayload.command, "prompt");
+  assert.equal(harness.promptCount, 1);
+  assert.deepEqual(harness.generations[1]?.promptMessages, ["first unlocked prompt"]);
 });
 
-test("refresh failures keep the workspace locked and expose the failed bridge-refresh reason", async () => {
+test("refresh failures keep the workspace locked and expose the failed bridge-refresh reason", async (t) => {
   const fixture = makeWorkspaceFixture();
   const authStorage = AuthStorage.inMemory({});
   const harness = configureBridgeRuntime(fixture, authStorage, { failRestart: true });
@@ -371,56 +371,56 @@ test("refresh failures keep the workspace locked and expose the failed bridge-re
     validateApiKey: async () => ({ ok: true, message: "openai credentials validated" }),
   });
 
-  try {
-    const bootResponse = await bootRoute.GET();
-    assert.equal(bootResponse.status, 200);
-    assert.equal(harness.spawnCalls, 1);
-
-    const validationResponse = await onboardingRoute.POST(
-      new Request("http://localhost/api/onboarding", {
-        method: "POST",
-        body: JSON.stringify({
-          action: "save_api_key",
-          providerId: "openai",
-          apiKey: "sk-valid-123456",
-        }),
-      }),
-    );
-    assert.equal(validationResponse.status, 503);
-    const validationPayload = (await validationResponse.json()) as any;
-    assert.equal(validationPayload.onboarding.required.satisfied, true);
-    assert.equal(validationPayload.onboarding.locked, true);
-    assert.equal(validationPayload.onboarding.lockReason, "bridge_refresh_failed");
-    assert.equal(validationPayload.onboarding.lastValidation.status, "succeeded");
-    assert.equal(validationPayload.onboarding.bridgeAuthRefresh.phase, "failed");
-    assert.match(validationPayload.onboarding.bridgeAuthRefresh.error, /could not attach/i);
-    assert.equal(harness.spawnCalls, 2);
-    assert.equal(harness.generations[1]?.authVisibleAtStart, true);
-
-    const blockedPrompt = await commandRoute.POST(
-      new Request("http://localhost/api/session/command", {
-        method: "POST",
-        body: JSON.stringify({ type: "prompt", message: "still locked after failed refresh" }),
-      }),
-    );
-    assert.equal(blockedPrompt.status, 423);
-    const blockedPayload = (await blockedPrompt.json()) as any;
-    assert.equal(blockedPayload.code, "onboarding_locked");
-    assert.equal(blockedPayload.details.reason, "bridge_refresh_failed");
-    assert.equal(harness.promptCount, 0);
-
-    const failedBootResponse = await bootRoute.GET();
-    assert.equal(failedBootResponse.status, 200);
-    const failedBootPayload = (await failedBootResponse.json()) as any;
-    assert.equal(failedBootPayload.onboarding.locked, true);
-    assert.equal(failedBootPayload.onboarding.lockReason, "bridge_refresh_failed");
-    assert.equal(failedBootPayload.onboarding.bridgeAuthRefresh.phase, "failed");
-    assert.match(failedBootPayload.onboarding.bridgeAuthRefresh.error, /could not attach/i);
-  } finally {
+  t.after(async () => {
     onboarding.resetOnboardingServiceForTests();
     await bridge.resetBridgeServiceForTests();
     fixture.cleanup();
-  }
+  });
+
+  const bootResponse = await bootRoute.GET();
+  assert.equal(bootResponse.status, 200);
+  assert.equal(harness.spawnCalls, 1);
+
+  const validationResponse = await onboardingRoute.POST(
+    new Request("http://localhost/api/onboarding", {
+      method: "POST",
+      body: JSON.stringify({
+        action: "save_api_key",
+        providerId: "openai",
+        apiKey: "sk-valid-123456",
+      }),
+    }),
+  );
+  assert.equal(validationResponse.status, 503);
+  const validationPayload = (await validationResponse.json()) as any;
+  assert.equal(validationPayload.onboarding.required.satisfied, true);
+  assert.equal(validationPayload.onboarding.locked, true);
+  assert.equal(validationPayload.onboarding.lockReason, "bridge_refresh_failed");
+  assert.equal(validationPayload.onboarding.lastValidation.status, "succeeded");
+  assert.equal(validationPayload.onboarding.bridgeAuthRefresh.phase, "failed");
+  assert.match(validationPayload.onboarding.bridgeAuthRefresh.error, /could not attach/i);
+  assert.equal(harness.spawnCalls, 2);
+  assert.equal(harness.generations[1]?.authVisibleAtStart, true);
+
+  const blockedPrompt = await commandRoute.POST(
+    new Request("http://localhost/api/session/command", {
+      method: "POST",
+      body: JSON.stringify({ type: "prompt", message: "still locked after failed refresh" }),
+    }),
+  );
+  assert.equal(blockedPrompt.status, 423);
+  const blockedPayload = (await blockedPrompt.json()) as any;
+  assert.equal(blockedPayload.code, "onboarding_locked");
+  assert.equal(blockedPayload.details.reason, "bridge_refresh_failed");
+  assert.equal(harness.promptCount, 0);
+
+  const failedBootResponse = await bootRoute.GET();
+  assert.equal(failedBootResponse.status, 200);
+  const failedBootPayload = (await failedBootResponse.json()) as any;
+  assert.equal(failedBootPayload.onboarding.locked, true);
+  assert.equal(failedBootPayload.onboarding.lockReason, "bridge_refresh_failed");
+  assert.equal(failedBootPayload.onboarding.bridgeAuthRefresh.phase, "failed");
+  assert.match(failedBootPayload.onboarding.bridgeAuthRefresh.error, /could not attach/i);
 });
 
 test("fresh gsd --web browser onboarding stays locked on failed validation and unlocks after a successful retry", async (t) => {
@@ -434,76 +434,76 @@ test("fresh gsd --web browser onboarding stays locked on failed validation and u
   const browserLogPath = join(tempRoot, "browser-open.log")
   let port: number | null = null
 
-  try {
-    const launch = await launchPackagedWebHost({
-      launchCwd: repoRoot,
-      tempHome,
-      browserLogPath,
-      env: {
-        GSD_WEB_TEST_FAKE_API_KEY_VALIDATION: "1",
-        ANTHROPIC_API_KEY: "",
-        OPENAI_API_KEY: "",
-        GOOGLE_API_KEY: "",
-      },
-    })
-    port = launch.port
-
-    assert.equal(launch.exitCode, 0, `expected the web launcher to exit cleanly:\n${launch.stderr}`)
-    assert.match(launch.stderr, /status=started/, "expected a started diagnostic line on stderr")
-
-    const auth = runtimeAuthHeaders(launch)
-    await waitForHttpOk(`${launch.url}/api/boot`, undefined, auth)
-
-    // 1. Boot reports locked before any credentials are saved
-    const bootBefore = await fetch(`${launch.url}/api/boot`, {
-      method: "GET",
-      headers: { Accept: "application/json", ...auth },
-      signal: AbortSignal.timeout(10_000),
-    })
-    assert.equal(bootBefore.ok, true, `expected boot endpoint to respond successfully: ${bootBefore.status}`)
-    const bootBeforePayload = await bootBefore.json() as any
-    assert.equal(bootBeforePayload.onboarding.locked, true)
-    assert.equal(bootBeforePayload.onboarding.lockReason, "required_setup")
-
-    // 2. Invalid key → stays locked with failed validation
-    const invalidValidation = await fetch(`${launch.url}/api/onboarding`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Accept: "application/json", ...auth },
-      body: JSON.stringify({ action: "save_api_key", providerId: "openai", apiKey: "invalid-demo-key" }),
-      signal: AbortSignal.timeout(10_000),
-    })
-    assert.equal(invalidValidation.status, 422)
-    const invalidPayload = await invalidValidation.json() as any
-    assert.equal(invalidPayload.onboarding.locked, true)
-    assert.equal(invalidPayload.onboarding.lastValidation.status, "failed")
-    assert.match(invalidPayload.onboarding.lastValidation.message ?? "", /rejected/i)
-
-    // 3. Valid key → unlocks
-    const validValidation = await fetch(`${launch.url}/api/onboarding`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Accept: "application/json", ...auth },
-      body: JSON.stringify({ action: "save_api_key", providerId: "openai", apiKey: "valid-demo-key" }),
-      signal: AbortSignal.timeout(60_000),
-    })
-    assert.equal(validValidation.status, 200, `expected successful retry to unlock onboarding: ${validValidation.status}`)
-    const validPayload = await validValidation.json() as any
-    assert.equal(validPayload.onboarding.locked, false)
-    assert.equal(validPayload.onboarding.bridgeAuthRefresh.phase, "succeeded")
-
-    // 4. Boot confirms unlocked
-    const bootAfter = await fetch(`${launch.url}/api/boot`, {
-      method: "GET",
-      headers: { Accept: "application/json", ...auth },
-      signal: AbortSignal.timeout(10_000),
-    })
-    assert.equal(bootAfter.ok, true)
-    const bootAfterPayload = await bootAfter.json() as any
-    assert.equal(bootAfterPayload.onboarding.locked, false)
-    assert.equal(bootAfterPayload.onboarding.lockReason, null)
-  } finally {
+  t.after(async () => {
     if (port !== null) {
-      await killProcessOnPort(port)
+    await killProcessOnPort(port)
     }
     rmSync(tempRoot, { recursive: true, force: true })
-  }
+  });
+
+  const launch = await launchPackagedWebHost({
+    launchCwd: repoRoot,
+    tempHome,
+    browserLogPath,
+    env: {
+      GSD_WEB_TEST_FAKE_API_KEY_VALIDATION: "1",
+      ANTHROPIC_API_KEY: "",
+      OPENAI_API_KEY: "",
+      GOOGLE_API_KEY: "",
+    },
+  })
+  port = launch.port
+
+  assert.equal(launch.exitCode, 0, `expected the web launcher to exit cleanly:\n${launch.stderr}`)
+  assert.match(launch.stderr, /status=started/, "expected a started diagnostic line on stderr")
+
+  const auth = runtimeAuthHeaders(launch)
+  await waitForHttpOk(`${launch.url}/api/boot`, undefined, auth)
+
+  // 1. Boot reports locked before any credentials are saved
+  const bootBefore = await fetch(`${launch.url}/api/boot`, {
+    method: "GET",
+    headers: { Accept: "application/json", ...auth },
+    signal: AbortSignal.timeout(10_000),
+  })
+  assert.equal(bootBefore.ok, true, `expected boot endpoint to respond successfully: ${bootBefore.status}`)
+  const bootBeforePayload = await bootBefore.json() as any
+  assert.equal(bootBeforePayload.onboarding.locked, true)
+  assert.equal(bootBeforePayload.onboarding.lockReason, "required_setup")
+
+  // 2. Invalid key → stays locked with failed validation
+  const invalidValidation = await fetch(`${launch.url}/api/onboarding`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Accept: "application/json", ...auth },
+    body: JSON.stringify({ action: "save_api_key", providerId: "openai", apiKey: "invalid-demo-key" }),
+    signal: AbortSignal.timeout(10_000),
+  })
+  assert.equal(invalidValidation.status, 422)
+  const invalidPayload = await invalidValidation.json() as any
+  assert.equal(invalidPayload.onboarding.locked, true)
+  assert.equal(invalidPayload.onboarding.lastValidation.status, "failed")
+  assert.match(invalidPayload.onboarding.lastValidation.message ?? "", /rejected/i)
+
+  // 3. Valid key → unlocks
+  const validValidation = await fetch(`${launch.url}/api/onboarding`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Accept: "application/json", ...auth },
+    body: JSON.stringify({ action: "save_api_key", providerId: "openai", apiKey: "valid-demo-key" }),
+    signal: AbortSignal.timeout(60_000),
+  })
+  assert.equal(validValidation.status, 200, `expected successful retry to unlock onboarding: ${validValidation.status}`)
+  const validPayload = await validValidation.json() as any
+  assert.equal(validPayload.onboarding.locked, false)
+  assert.equal(validPayload.onboarding.bridgeAuthRefresh.phase, "succeeded")
+
+  // 4. Boot confirms unlocked
+  const bootAfter = await fetch(`${launch.url}/api/boot`, {
+    method: "GET",
+    headers: { Accept: "application/json", ...auth },
+    signal: AbortSignal.timeout(10_000),
+  })
+  assert.equal(bootAfter.ok, true)
+  const bootAfterPayload = await bootAfter.json() as any
+  assert.equal(bootAfterPayload.onboarding.locked, false)
+  assert.equal(bootAfterPayload.onboarding.lockReason, null)
 })

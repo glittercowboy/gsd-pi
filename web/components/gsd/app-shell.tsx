@@ -2,6 +2,7 @@
 
 import Image from "next/image"
 import { useState, useEffect, useCallback, useRef, useSyncExternalStore } from "react"
+import { Menu, X } from "lucide-react"
 import { Sidebar, MilestoneExplorer, CollapsedMilestoneSidebar } from "@/components/gsd/sidebar"
 import { ShellTerminal } from "@/components/gsd/shell-terminal"
 import { Dashboard } from "@/components/gsd/dashboard"
@@ -57,6 +58,8 @@ function WorkspaceChrome() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const [viewRestored, setViewRestored] = useState(false)
   const [projectsPanelOpen, setProjectsPanelOpen] = useState(false)
+  const [mobileNavOpen, setMobileNavOpen] = useState(false)
+  const [mobileMilestoneOpen, setMobileMilestoneOpen] = useState(false)
   const workspace = useGSDWorkspaceState()
   const { refreshBoot } = useGSDWorkspaceActions()
 
@@ -122,8 +125,10 @@ function WorkspaceChrome() {
     document.title = titleOverride ? `${titleOverride} · ${base}` : base
   }, [titleOverride, projectLabel])
 
+  // Close mobile nav on view change
   const handleViewChange = useCallback((view: string) => {
     setActiveView(view)
+    setMobileNavOpen(false)
   }, [])
 
   // Listen for cross-component file navigation events (e.g. sidebar task clicks)
@@ -230,10 +235,54 @@ function WorkspaceChrome() {
     detection.kind !== "active-gsd" &&
     detection.kind !== "empty-gsd"
 
+  // --- Unauthenticated gate ---
+  // Render a clear recovery screen before any workspace chrome is mounted so
+  // users who open a manually-typed URL (no #token= fragment) get actionable
+  // guidance instead of a cascade of 401 errors.
+  if (workspace.bootStatus === "unauthenticated") {
+    return (
+      <div className="flex h-dvh flex-col items-center justify-center gap-6 bg-background p-8 text-center">
+        <Image
+          src="/logo-black.svg"
+          alt="GSD"
+          width={57}
+          height={16}
+          className="shrink-0 h-4 w-auto dark:hidden"
+        />
+        <Image
+          src="/logo-white.svg"
+          alt="GSD"
+          width={57}
+          height={16}
+          className="shrink-0 h-4 w-auto hidden dark:block"
+        />
+        <div className="flex flex-col items-center gap-2">
+          <h1 className="text-lg font-semibold text-foreground">Authentication Required</h1>
+          <p className="max-w-sm text-sm text-muted-foreground">
+            This workspace requires an auth token. Copy the full URL from your terminal
+            (including the{" "}
+            <code className="rounded bg-muted px-1 py-0.5 font-mono text-xs">#token=…</code>{" "}
+            part) or restart with{" "}
+            <code className="rounded bg-muted px-1 py-0.5 font-mono text-xs">gsd --web</code>.
+          </p>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div className="relative flex h-screen flex-col overflow-hidden bg-background text-foreground">
-      <header className="flex h-12 flex-shrink-0 items-center justify-between border-b border-border bg-card px-4">
-        <div className="flex items-center gap-3">
+      <header className="flex h-12 flex-shrink-0 items-center justify-between border-b border-border bg-card px-2 md:px-4">
+        <div className="flex items-center gap-2 md:gap-3 min-w-0">
+          {/* Mobile hamburger menu */}
+          <button
+            className="flex md:hidden h-10 w-10 items-center justify-center rounded-md text-muted-foreground hover:bg-accent/50 hover:text-foreground transition-colors"
+            onClick={() => setMobileNavOpen(!mobileNavOpen)}
+            aria-label={mobileNavOpen ? "Close navigation" : "Open navigation"}
+            data-testid="mobile-nav-toggle"
+          >
+            {mobileNavOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
+          </button>
           <div className="flex items-center gap-2">
             <Image
               src="/logo-black.svg"
@@ -249,12 +298,12 @@ function WorkspaceChrome() {
               height={16}
               className="shrink-0 h-4 w-auto hidden dark:block"
             />
-            <Badge variant="outline" className="text-[10px] rounded-full border-foreground/15 bg-accent/40 text-muted-foreground font-normal">
+            <Badge variant="outline" className="hidden sm:inline-flex text-[10px] rounded-full border-foreground/15 bg-accent/40 text-muted-foreground font-normal">
               beta
             </Badge>
           </div>
-          <span className="text-2xl font-thin text-muted-foreground/50 leading-none select-none">/</span>
-          <span className="text-sm text-muted-foreground" data-testid="workspace-project-cwd" title={projectPath ?? undefined}>
+          <span className="hidden sm:inline text-2xl font-thin text-muted-foreground leading-none select-none">/</span>
+          <span className="hidden sm:inline text-sm text-muted-foreground truncate" data-testid="workspace-project-cwd" title={projectPath ?? undefined}>
             {isConnecting ? (
               <Skeleton className="inline-block h-4 w-28 align-middle" />
             ) : (
@@ -274,11 +323,11 @@ function WorkspaceChrome() {
           </span>
         </div>
 
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2 md:gap-3">
           {/* Hidden status marker for test instrumentation */}
           <span className="sr-only" data-testid="workspace-connection-status">{status.label}</span>
           <span
-            className="text-xs text-muted-foreground"
+            className="hidden sm:inline text-xs text-muted-foreground"
             data-testid="workspace-scope-label"
           >
             {isConnecting ? <Skeleton className="inline-block h-3.5 w-40 align-middle" /> : <ScopeBadge label={scopeLabel} size="sm" />}
@@ -307,8 +356,53 @@ function WorkspaceChrome() {
         </div>
       )}
 
+      {/* Mobile navigation drawer */}
+      {mobileNavOpen && (
+        <div
+          className="fixed inset-0 z-40 bg-black/50 md:hidden"
+          onClick={() => setMobileNavOpen(false)}
+          data-testid="mobile-nav-overlay"
+        />
+      )}
+      <div
+        className={cn(
+          "fixed inset-y-0 left-0 z-50 w-64 transform bg-sidebar border-r border-border transition-transform duration-200 ease-out md:hidden",
+          mobileNavOpen ? "translate-x-0" : "-translate-x-full",
+        )}
+        data-testid="mobile-nav-drawer"
+      >
+        <Sidebar activeView={activeView} onViewChange={isConnecting ? () => {} : handleViewChange} isConnecting={isConnecting} mobile />
+      </div>
+
+      {/* Mobile milestone drawer */}
+      {mobileMilestoneOpen && (
+        <div
+          className="fixed inset-0 z-40 bg-black/50 md:hidden"
+          onClick={() => setMobileMilestoneOpen(false)}
+          data-testid="mobile-milestone-overlay"
+        />
+      )}
+      {!isWelcomeState && (
+        <div
+          className={cn(
+            "fixed inset-y-0 right-0 z-50 w-72 transform bg-sidebar border-l border-border transition-transform duration-200 ease-out md:hidden",
+            mobileMilestoneOpen ? "translate-x-0" : "translate-x-full",
+          )}
+          data-testid="mobile-milestone-drawer"
+        >
+          <MilestoneExplorer
+            isConnecting={isConnecting}
+            width={288}
+            onCollapse={() => setMobileMilestoneOpen(false)}
+          />
+        </div>
+      )}
+
       <div className="flex flex-1 overflow-hidden">
-        <Sidebar activeView={activeView} onViewChange={isConnecting ? () => {} : handleViewChange} isConnecting={isConnecting} />
+        {/* Desktop sidebar — hidden on mobile */}
+        <div className="hidden md:flex">
+          <Sidebar activeView={activeView} onViewChange={isConnecting ? () => {} : handleViewChange} isConnecting={isConnecting} />
+        </div>
 
         <div className="flex flex-1 flex-col overflow-hidden">
           <div
@@ -368,7 +462,7 @@ function WorkspaceChrome() {
               >
                 <div className="flex items-center gap-2 text-muted-foreground">
                   <span className="font-medium text-foreground">Terminal</span>
-                  <span className="text-[10px] text-muted-foreground/50">
+                  <span className="text-[10px] text-muted-foreground">
                     {isTerminalExpanded ? "▼" : "▲"}
                   </span>
                 </div>
@@ -384,10 +478,10 @@ function WorkspaceChrome() {
           )}
         </div>
 
-        {/* Resizable milestone sidebar — hidden during project welcome */}
+        {/* Resizable milestone sidebar — hidden on mobile, hidden during project welcome */}
         {!isWelcomeState && !sidebarCollapsed && (
           <div
-            className="relative flex h-full items-stretch"
+            className="relative hidden md:flex h-full items-stretch"
             style={{ flexShrink: 0 }}
           >
             {/* Thin visible border */}
@@ -399,18 +493,42 @@ function WorkspaceChrome() {
             />
           </div>
         )}
-        {!isWelcomeState && (sidebarCollapsed ? (
-          <CollapsedMilestoneSidebar onExpand={() => setSidebarCollapsed(false)} />
-        ) : (
-          <MilestoneExplorer
-            isConnecting={isConnecting}
-            width={sidebarWidth}
-            onCollapse={() => setSidebarCollapsed(true)}
-          />
-        ))}
+        <div className="hidden md:flex">
+          {!isWelcomeState && (sidebarCollapsed ? (
+            <CollapsedMilestoneSidebar onExpand={() => setSidebarCollapsed(false)} />
+          ) : (
+            <MilestoneExplorer
+              isConnecting={isConnecting}
+              width={sidebarWidth}
+              onCollapse={() => setSidebarCollapsed(true)}
+            />
+          ))}
+        </div>
       </div>
 
-      <StatusBar />
+      {/* Desktop status bar — hidden on mobile */}
+      <div className="hidden md:block">
+        <StatusBar />
+      </div>
+
+      {/* Mobile bottom bar — quick access to milestones + status */}
+      {!isWelcomeState && (
+        <div className="flex md:hidden h-12 items-center justify-between border-t border-border bg-card px-3" data-testid="mobile-bottom-bar">
+          <div className="flex items-center gap-2 text-xs text-muted-foreground truncate">
+            <span className="sr-only" data-testid="workspace-connection-status-mobile">{status.label}</span>
+            <span className={cn("h-2 w-2 rounded-full shrink-0", status.tone === "success" ? "bg-success" : status.tone === "warning" ? "bg-warning" : status.tone === "danger" ? "bg-destructive" : "bg-muted-foreground")} />
+            <span className="truncate">{scopeLabel}</span>
+          </div>
+          <button
+            onClick={() => setMobileMilestoneOpen(!mobileMilestoneOpen)}
+            className="flex h-10 items-center gap-2 rounded-md px-3 text-xs font-medium text-muted-foreground hover:bg-accent/50 hover:text-foreground transition-colors"
+            data-testid="mobile-milestone-toggle"
+          >
+            Milestones
+          </button>
+        </div>
+      )}
+
       <ProjectsPanel open={projectsPanelOpen} onOpenChange={setProjectsPanelOpen} />
       <CommandSurface />
       <FocusedPanel />

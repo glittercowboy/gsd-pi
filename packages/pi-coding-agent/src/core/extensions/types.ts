@@ -607,6 +607,25 @@ export interface ModelSelectEvent {
 // User Bash Events
 // ============================================================================
 
+/**
+ * Fired before the bash tool executes a shell command.
+ * Extensions can return a transformed command string.
+ * All registered handlers are called in order; each receives the output of the previous.
+ */
+export interface BashTransformEvent {
+	type: "bash_transform";
+	/** The command string about to be executed */
+	command: string;
+	/** Current working directory */
+	cwd: string;
+}
+
+/** Result from bash_transform event handler */
+export interface BashTransformEventResult {
+	/** Replacement command string. If omitted or empty, the original command is used. */
+	command?: string;
+}
+
 /** Fired when user executes a bash command via ! or !! prefix */
 export interface UserBashEvent {
 	type: "user_bash";
@@ -846,6 +865,7 @@ export type ExtensionEvent =
 	| ToolExecutionUpdateEvent
 	| ToolExecutionEndEvent
 	| ModelSelectEvent
+	| BashTransformEvent
 	| UserBashEvent
 	| InputEvent
 	| ToolCallEvent
@@ -949,6 +969,33 @@ export interface RegisteredCommand {
 	handler: (args: string, ctx: ExtensionCommandContext) => Promise<void>;
 }
 
+export type LifecycleHookScope = "user" | "project";
+export type LifecycleHookPhase = "beforeInstall" | "afterInstall" | "beforeRemove" | "afterRemove";
+
+export interface LifecycleHookContext {
+	/** Lifecycle phase currently being executed. */
+	phase: LifecycleHookPhase;
+	/** Package source string passed to install (npm:, git:, https://, local path). */
+	source: string;
+	/** Resolved installed package path (or resolved local path), when available for this phase. */
+	installedPath?: string;
+	/** Where the package was installed. */
+	scope: LifecycleHookScope;
+	/** Current working directory for the install invocation. */
+	cwd: string;
+	/** Whether install is running in an interactive TTY. */
+	interactive: boolean;
+	/** Info-level logging sink for install output. */
+	log(message: string): void;
+	/** Warning-level logging sink for install output. */
+	warn(message: string): void;
+	/** Error-level logging sink for install output. */
+	error(message: string): void;
+}
+
+export type LifecycleHookHandler = (ctx: LifecycleHookContext) => Promise<void> | void;
+export type LifecycleHookMap = Record<LifecycleHookPhase, LifecycleHookHandler[]>;
+
 // ============================================================================
 // Extension API
 // ============================================================================
@@ -1000,6 +1047,7 @@ export interface ExtensionAPI {
 	on(event: "tool_execution_update", handler: ExtensionHandler<ToolExecutionUpdateEvent>): void;
 	on(event: "tool_execution_end", handler: ExtensionHandler<ToolExecutionEndEvent>): void;
 	on(event: "model_select", handler: ExtensionHandler<ModelSelectEvent>): void;
+	on(event: "bash_transform", handler: ExtensionHandler<BashTransformEvent, BashTransformEventResult>): void;
 	on(event: "tool_call", handler: ExtensionHandler<ToolCallEvent, ToolCallEventResult>): void;
 	on(event: "tool_result", handler: ExtensionHandler<ToolResultEvent, ToolResultEventResult>): void;
 	on(event: "user_bash", handler: ExtensionHandler<UserBashEvent, UserBashEventResult>): void;
@@ -1018,6 +1066,18 @@ export interface ExtensionAPI {
 
 	/** Register a custom command. */
 	registerCommand(name: string, options: Omit<RegisteredCommand, "name">): void;
+
+	/** Register a lifecycle hook run before package installation starts. */
+	registerBeforeInstall(handler: LifecycleHookHandler): void;
+
+	/** Register a lifecycle hook run after package installation completes. */
+	registerAfterInstall(handler: LifecycleHookHandler): void;
+
+	/** Register a lifecycle hook run before package removal starts. */
+	registerBeforeRemove(handler: LifecycleHookHandler): void;
+
+	/** Register a lifecycle hook run after package removal completes. */
+	registerAfterRemove(handler: LifecycleHookHandler): void;
 
 	/** Register a keyboard shortcut. */
 	registerShortcut(
@@ -1201,6 +1261,11 @@ export interface ExtensionAPI {
 
 /** Configuration for registering a provider via pi.registerProvider(). */
 export interface ProviderConfig {
+	/** Auth behavior for provider availability and request key handling. Defaults to "apiKey". */
+	authMode?: "apiKey" | "oauth" | "externalCli" | "none";
+	/** Optional readiness check. Return false if the provider cannot accept requests (e.g., CLI not authenticated, API key invalid).
+	 * Called before default auth checks. Trusted at the same level as extension code — extensions already have arbitrary code execution. */
+	isReady?: () => boolean;
 	/** Base URL for the API endpoint. Required when defining models. */
 	baseUrl?: string;
 	/** API key or environment variable name. Required when defining models (unless oauth provided). */
@@ -1382,6 +1447,7 @@ export interface Extension {
 	commands: Map<string, RegisteredCommand>;
 	flags: Map<string, ExtensionFlag>;
 	shortcuts: Map<KeyId, ExtensionShortcut>;
+	lifecycleHooks: LifecycleHookMap;
 }
 
 /** Result of loading extensions. */

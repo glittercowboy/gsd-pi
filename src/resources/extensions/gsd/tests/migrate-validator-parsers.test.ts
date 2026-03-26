@@ -15,9 +15,9 @@ import {
   parseOldState,
   parseOldConfig,
 } from '../migrate/parsers.ts';
-import { createTestContext } from './test-helpers.ts';
+import { describe, test, beforeEach, afterEach } from 'node:test';
+import assert from 'node:assert/strict';
 
-const { assertEq, assertTrue, report } = createTestContext();
 function createFixtureBase(): string {
   return mkdtempSync(join(tmpdir(), 'gsd-migrate-t02-'));
 }
@@ -173,55 +173,49 @@ const SAMPLE_STATE = `# State
 **Status:** in-progress
 `;
 
-async function main(): Promise<void> {
-
   // ═══════════════════════════════════════════════════════════════════════
   // Validator Tests
   // ═══════════════════════════════════════════════════════════════════════
 
-  console.log('\n=== Validator: missing directory → fatal ===');
-  {
+test('Validator: missing directory → fatal', async () => {
     const base = createFixtureBase();
     try {
       const result = await validatePlanningDirectory(join(base, 'nonexistent'));
-      assertEq(result.valid, false, 'missing dir: validation fails');
-      assertTrue(result.issues.length > 0, 'missing dir: has issues');
-      assertTrue(result.issues.some(i => i.severity === 'fatal'), 'missing dir: has fatal issue');
+      assert.deepStrictEqual(result.valid, false, 'missing dir: validation fails');
+      assert.ok(result.issues.length > 0, 'missing dir: has issues');
+      assert.ok(result.issues.some(i => i.severity === 'fatal'), 'missing dir: has fatal issue');
     } finally {
       cleanup(base);
     }
-  }
+});
 
-  console.log('\n=== Validator: missing ROADMAP.md → warning (not fatal) ===');
-  {
+test('Validator: missing ROADMAP.md → warning (not fatal)', async () => {
     const base = createFixtureBase();
     try {
       const planning = createPlanningDir(base);
       writeFileSync(join(planning, 'PROJECT.md'), SAMPLE_PROJECT);
       const result = await validatePlanningDirectory(planning);
-      assertEq(result.valid, true, 'no roadmap: validation still passes');
-      assertTrue(result.issues.some(i => i.severity === 'warning' && i.file.includes('ROADMAP')), 'no roadmap: warning issue mentions ROADMAP');
+      assert.deepStrictEqual(result.valid, true, 'no roadmap: validation still passes');
+      assert.ok(result.issues.some(i => i.severity === 'warning' && i.file.includes('ROADMAP')), 'no roadmap: warning issue mentions ROADMAP');
     } finally {
       cleanup(base);
     }
-  }
+});
 
-  console.log('\n=== Validator: missing PROJECT.md → warning ===');
-  {
+test('Validator: missing PROJECT.md → warning', async () => {
     const base = createFixtureBase();
     try {
       const planning = createPlanningDir(base);
       writeFileSync(join(planning, 'ROADMAP.md'), SAMPLE_ROADMAP);
       const result = await validatePlanningDirectory(planning);
-      assertEq(result.valid, true, 'no project: validation passes (warning only)');
-      assertTrue(result.issues.some(i => i.severity === 'warning' && i.file.includes('PROJECT')), 'no project: warning issue mentions PROJECT');
+      assert.deepStrictEqual(result.valid, true, 'no project: validation passes (warning only)');
+      assert.ok(result.issues.some(i => i.severity === 'warning' && i.file.includes('PROJECT')), 'no project: warning issue mentions PROJECT');
     } finally {
       cleanup(base);
     }
-  }
+});
 
-  console.log('\n=== Validator: complete directory → valid with no issues ===');
-  {
+test('Validator: complete directory → valid with no issues', async () => {
     const base = createFixtureBase();
     try {
       const planning = createPlanningDir(base);
@@ -231,78 +225,74 @@ async function main(): Promise<void> {
       writeFileSync(join(planning, 'STATE.md'), SAMPLE_STATE);
       mkdirSync(join(planning, 'phases'), { recursive: true });
       const result = await validatePlanningDirectory(planning);
-      assertEq(result.valid, true, 'complete dir: validation passes');
-      assertEq(result.issues.length, 0, 'complete dir: no issues');
+      assert.deepStrictEqual(result.valid, true, 'complete dir: validation passes');
+      assert.deepStrictEqual(result.issues.length, 0, 'complete dir: no issues');
     } finally {
       cleanup(base);
     }
-  }
+});
 
   // ═══════════════════════════════════════════════════════════════════════
   // Roadmap Parser Tests
   // ═══════════════════════════════════════════════════════════════════════
 
-  console.log('\n=== parseOldRoadmap: flat format ===');
-  {
+test('parseOldRoadmap: flat format', () => {
     const roadmap = parseOldRoadmap(SAMPLE_ROADMAP);
-    assertEq(roadmap.milestones.length, 0, 'flat roadmap: no milestone sections');
-    assertEq(roadmap.phases.length, 3, 'flat roadmap: 3 phases');
-    assertEq(roadmap.phases[0].number, 29, 'flat roadmap: first phase number');
-    assertEq(roadmap.phases[0].title, 'Auth System', 'flat roadmap: first phase title');
-    assertEq(roadmap.phases[0].done, true, 'flat roadmap: first phase done');
-    assertEq(roadmap.phases[1].done, false, 'flat roadmap: second phase not done');
-  }
+    assert.deepStrictEqual(roadmap.milestones.length, 0, 'flat roadmap: no milestone sections');
+    assert.deepStrictEqual(roadmap.phases.length, 3, 'flat roadmap: 3 phases');
+    assert.deepStrictEqual(roadmap.phases[0].number, 29, 'flat roadmap: first phase number');
+    assert.deepStrictEqual(roadmap.phases[0].title, 'Auth System', 'flat roadmap: first phase title');
+    assert.deepStrictEqual(roadmap.phases[0].done, true, 'flat roadmap: first phase done');
+    assert.deepStrictEqual(roadmap.phases[1].done, false, 'flat roadmap: second phase not done');
+});
 
-  console.log('\n=== parseOldRoadmap: milestone-sectioned with <details> ===');
-  {
+test('parseOldRoadmap: milestone-sectioned with <details>', () => {
     const roadmap = parseOldRoadmap(SAMPLE_MILESTONE_SECTIONED_ROADMAP);
-    assertTrue(roadmap.milestones.length >= 2, 'ms roadmap: has milestone sections');
+    assert.ok(roadmap.milestones.length >= 2, 'ms roadmap: has milestone sections');
 
     const v20 = roadmap.milestones.find(m => m.id.includes('2.0'));
-    assertTrue(v20 !== undefined, 'ms roadmap: v2.0 found');
-    assertEq(v20?.collapsed, true, 'ms roadmap: v2.0 collapsed');
-    assertTrue((v20?.phases.length ?? 0) >= 2, 'ms roadmap: v2.0 has phases');
-    assertTrue(v20?.phases.every(p => p.done) ?? false, 'ms roadmap: v2.0 all done');
+    assert.ok(v20 !== undefined, 'ms roadmap: v2.0 found');
+    assert.deepStrictEqual(v20?.collapsed, true, 'ms roadmap: v2.0 collapsed');
+    assert.ok((v20?.phases.length ?? 0) >= 2, 'ms roadmap: v2.0 has phases');
+    assert.ok(v20?.phases.every(p => p.done) ?? false, 'ms roadmap: v2.0 all done');
 
     const v25 = roadmap.milestones.find(m => m.id.includes('2.5'));
-    assertTrue(v25 !== undefined, 'ms roadmap: v2.5 found');
-    assertEq(v25?.collapsed, false, 'ms roadmap: v2.5 not collapsed');
-    assertTrue((v25?.phases.length ?? 0) >= 3, 'ms roadmap: v2.5 has 3 phases');
+    assert.ok(v25 !== undefined, 'ms roadmap: v2.5 found');
+    assert.deepStrictEqual(v25?.collapsed, false, 'ms roadmap: v2.5 not collapsed');
+    assert.ok((v25?.phases.length ?? 0) >= 3, 'ms roadmap: v2.5 has 3 phases');
 
     const p29 = v25?.phases.find(p => p.number === 29);
-    assertEq(p29?.done, true, 'ms roadmap: phase 29 done');
+    assert.deepStrictEqual(p29?.done, true, 'ms roadmap: phase 29 done');
     const p30 = v25?.phases.find(p => p.number === 30);
-    assertEq(p30?.done, false, 'ms roadmap: phase 30 not done');
-  }
+    assert.deepStrictEqual(p30?.done, false, 'ms roadmap: phase 30 not done');
+});
 
   // ═══════════════════════════════════════════════════════════════════════
   // Plan Parser Tests
   // ═══════════════════════════════════════════════════════════════════════
 
-  console.log('\n=== parseOldPlan: XML-in-markdown ===');
-  {
+test('parseOldPlan: XML-in-markdown', () => {
     const plan = parseOldPlan(SAMPLE_PLAN_XML, '29-01-PLAN.md', '01');
-    assertTrue(plan.objective.includes('authentication'), 'plan: objective extracted');
-    assertEq(plan.tasks.length, 3, 'plan: 3 tasks');
-    assertTrue(plan.tasks[0].includes('auth middleware'), 'plan: first task content');
-    assertTrue(plan.context.includes('JWT'), 'plan: context extracted');
-    assertTrue(plan.verification.includes('Login returns'), 'plan: verification extracted');
-    assertTrue(plan.successCriteria.includes('endpoints respond'), 'plan: success criteria extracted');
+    assert.ok(plan.objective.includes('authentication'), 'plan: objective extracted');
+    assert.deepStrictEqual(plan.tasks.length, 3, 'plan: 3 tasks');
+    assert.ok(plan.tasks[0].includes('auth middleware'), 'plan: first task content');
+    assert.ok(plan.context.includes('JWT'), 'plan: context extracted');
+    assert.ok(plan.verification.includes('Login returns'), 'plan: verification extracted');
+    assert.ok(plan.successCriteria.includes('endpoints respond'), 'plan: success criteria extracted');
 
     // Frontmatter
-    assertEq(plan.frontmatter.phase, '29-auth-system', 'plan fm: phase');
-    assertEq(plan.frontmatter.plan, '01', 'plan fm: plan');
-    assertEq(plan.frontmatter.type, 'implementation', 'plan fm: type');
-    assertEq(plan.frontmatter.wave, 1, 'plan fm: wave');
-    assertEq(plan.frontmatter.autonomous, true, 'plan fm: autonomous');
-    assertTrue(plan.frontmatter.files_modified.length >= 2, 'plan fm: files_modified');
-    assertTrue(plan.frontmatter.must_haves !== null, 'plan fm: must_haves parsed');
-    assertTrue((plan.frontmatter.must_haves?.truths.length ?? 0) >= 1, 'plan fm: must_haves truths');
-    assertTrue((plan.frontmatter.must_haves?.artifacts.length ?? 0) >= 1, 'plan fm: must_haves artifacts');
-  }
+    assert.deepStrictEqual(plan.frontmatter.phase, '29-auth-system', 'plan fm: phase');
+    assert.deepStrictEqual(plan.frontmatter.plan, '01', 'plan fm: plan');
+    assert.deepStrictEqual(plan.frontmatter.type, 'implementation', 'plan fm: type');
+    assert.deepStrictEqual(plan.frontmatter.wave, 1, 'plan fm: wave');
+    assert.deepStrictEqual(plan.frontmatter.autonomous, true, 'plan fm: autonomous');
+    assert.ok(plan.frontmatter.files_modified.length >= 2, 'plan fm: files_modified');
+    assert.ok(plan.frontmatter.must_haves !== null, 'plan fm: must_haves parsed');
+    assert.ok((plan.frontmatter.must_haves?.truths.length ?? 0) >= 1, 'plan fm: must_haves truths');
+    assert.ok((plan.frontmatter.must_haves?.artifacts.length ?? 0) >= 1, 'plan fm: must_haves artifacts');
+});
 
-  console.log('\n=== parseOldPlan: plain markdown (no XML tags) ===');
-  {
+test('parseOldPlan: plain markdown (no XML tags)', () => {
     const plainPlan = `# 001: Fix Login Bug
 
 ## Description
@@ -315,100 +305,86 @@ Fix the login button not responding on mobile.
 2. Fix event propagation
 `;
     const plan = parseOldPlan(plainPlan, '001-PLAN.md', '001');
-    assertEq(plan.objective, '', 'plain plan: no objective (no XML)');
-    assertEq(plan.tasks.length, 0, 'plain plan: no tasks (no XML)');
-    assertEq(plan.frontmatter.phase, '', 'plain plan: no frontmatter phase');
-  }
+    assert.deepStrictEqual(plan.objective, '', 'plain plan: no objective (no XML)');
+    assert.deepStrictEqual(plan.tasks.length, 0, 'plain plan: no tasks (no XML)');
+    assert.deepStrictEqual(plan.frontmatter.phase, '', 'plain plan: no frontmatter phase');
+});
 
   // ═══════════════════════════════════════════════════════════════════════
   // Summary Parser Tests
   // ═══════════════════════════════════════════════════════════════════════
 
-  console.log('\n=== parseOldSummary: YAML frontmatter ===');
-  {
+test('parseOldSummary: YAML frontmatter', () => {
     const summary = parseOldSummary(SAMPLE_SUMMARY, '29-01-SUMMARY.md', '01');
-    assertEq(summary.frontmatter.phase, '29-auth-system', 'summary fm: phase');
-    assertEq(summary.frontmatter.plan, '01', 'summary fm: plan');
-    assertEq(summary.frontmatter.subsystem, 'auth', 'summary fm: subsystem');
-    assertEq(summary.frontmatter.tags, ['authentication', 'security'], 'summary fm: tags');
-    assertEq(summary.frontmatter.provides, ['auth-middleware', 'jwt-validation'], 'summary fm: provides');
-    assertEq(summary.frontmatter.affects, ['api-routes'], 'summary fm: affects');
-    assertEq(summary.frontmatter['tech-stack'], ['jsonwebtoken', 'express'], 'summary fm: tech-stack');
-    assertEq(summary.frontmatter['key-files'], ['src/auth.ts', 'src/middleware/auth.ts'], 'summary fm: key-files');
-    assertEq(summary.frontmatter['key-decisions'], ['Use RS256 for JWT signing', 'Store refresh tokens in DB'], 'summary fm: key-decisions');
-    assertEq(summary.frontmatter['patterns-established'], ['Middleware-based auth'], 'summary fm: patterns-established');
-    assertEq(summary.frontmatter.duration, '2h', 'summary fm: duration');
-    assertEq(summary.frontmatter.completed, '2026-01-15', 'summary fm: completed');
-    assertTrue(summary.body.includes('Auth Implementation Summary'), 'summary: body content present');
-  }
+    assert.deepStrictEqual(summary.frontmatter.phase, '29-auth-system', 'summary fm: phase');
+    assert.deepStrictEqual(summary.frontmatter.plan, '01', 'summary fm: plan');
+    assert.deepStrictEqual(summary.frontmatter.subsystem, 'auth', 'summary fm: subsystem');
+    assert.deepStrictEqual(summary.frontmatter.tags, ['authentication', 'security'], 'summary fm: tags');
+    assert.deepStrictEqual(summary.frontmatter.provides, ['auth-middleware', 'jwt-validation'], 'summary fm: provides');
+    assert.deepStrictEqual(summary.frontmatter.affects, ['api-routes'], 'summary fm: affects');
+    assert.deepStrictEqual(summary.frontmatter['tech-stack'], ['jsonwebtoken', 'express'], 'summary fm: tech-stack');
+    assert.deepStrictEqual(summary.frontmatter['key-files'], ['src/auth.ts', 'src/middleware/auth.ts'], 'summary fm: key-files');
+    assert.deepStrictEqual(summary.frontmatter['key-decisions'], ['Use RS256 for JWT signing', 'Store refresh tokens in DB'], 'summary fm: key-decisions');
+    assert.deepStrictEqual(summary.frontmatter['patterns-established'], ['Middleware-based auth'], 'summary fm: patterns-established');
+    assert.deepStrictEqual(summary.frontmatter.duration, '2h', 'summary fm: duration');
+    assert.deepStrictEqual(summary.frontmatter.completed, '2026-01-15', 'summary fm: completed');
+    assert.ok(summary.body.includes('Auth Implementation Summary'), 'summary: body content present');
+});
 
   // ═══════════════════════════════════════════════════════════════════════
   // Requirements Parser Tests
   // ═══════════════════════════════════════════════════════════════════════
 
-  console.log('\n=== parseOldRequirements ===');
-  {
+test('parseOldRequirements', () => {
     const reqs = parseOldRequirements(SAMPLE_REQUIREMENTS);
-    assertEq(reqs.length, 4, 'requirements: 4 entries');
-    assertEq(reqs[0].id, 'R001', 'req 0: id');
-    assertEq(reqs[0].title, 'User Authentication', 'req 0: title');
-    assertEq(reqs[0].status, 'active', 'req 0: status');
-    assertTrue(reqs[0].description.includes('log in'), 'req 0: description');
-    assertEq(reqs[2].id, 'R003', 'req 2: id');
-    assertEq(reqs[2].status, 'validated', 'req 2: status');
-    assertEq(reqs[3].id, 'R004', 'req 3: id');
-    assertEq(reqs[3].status, 'deferred', 'req 3: status');
-  }
+    assert.deepStrictEqual(reqs.length, 4, 'requirements: 4 entries');
+    assert.deepStrictEqual(reqs[0].id, 'R001', 'req 0: id');
+    assert.deepStrictEqual(reqs[0].title, 'User Authentication', 'req 0: title');
+    assert.deepStrictEqual(reqs[0].status, 'active', 'req 0: status');
+    assert.ok(reqs[0].description.includes('log in'), 'req 0: description');
+    assert.deepStrictEqual(reqs[2].id, 'R003', 'req 2: id');
+    assert.deepStrictEqual(reqs[2].status, 'validated', 'req 2: status');
+    assert.deepStrictEqual(reqs[3].id, 'R004', 'req 3: id');
+    assert.deepStrictEqual(reqs[3].status, 'deferred', 'req 3: status');
+});
 
   // ═══════════════════════════════════════════════════════════════════════
   // State Parser Tests
   // ═══════════════════════════════════════════════════════════════════════
 
-  console.log('\n=== parseOldState ===');
-  {
+test('parseOldState', () => {
     const state = parseOldState(SAMPLE_STATE);
-    assertTrue(state.currentPhase?.includes('30') ?? false, 'state: current phase includes 30');
-    assertEq(state.status, 'in-progress', 'state: status');
-    assertTrue(state.raw === SAMPLE_STATE, 'state: raw preserved');
-  }
+    assert.ok(state.currentPhase?.includes('30') ?? false, 'state: current phase includes 30');
+    assert.deepStrictEqual(state.status, 'in-progress', 'state: status');
+    assert.ok(state.raw === SAMPLE_STATE, 'state: raw preserved');
+});
 
   // ═══════════════════════════════════════════════════════════════════════
   // Config Parser Tests
   // ═══════════════════════════════════════════════════════════════════════
 
-  console.log('\n=== parseOldConfig: valid JSON ===');
-  {
+test('parseOldConfig: valid JSON', () => {
     const config = parseOldConfig('{"projectName":"test","version":"1.0"}');
-    assertTrue(config !== null, 'config: parsed');
-    assertEq(config?.projectName, 'test', 'config: projectName');
-  }
+    assert.ok(config !== null, 'config: parsed');
+    assert.deepStrictEqual(config?.projectName, 'test', 'config: projectName');
+});
 
-  console.log('\n=== parseOldConfig: invalid JSON → null ===');
-  {
+test('parseOldConfig: invalid JSON → null', () => {
     const config = parseOldConfig('not json at all {{{');
-    assertEq(config, null, 'config: invalid JSON returns null');
-  }
+    assert.deepStrictEqual(config, null, 'config: invalid JSON returns null');
+});
 
-  console.log('\n=== parseOldConfig: non-object JSON → null ===');
-  {
+test('parseOldConfig: non-object JSON → null', () => {
     const config = parseOldConfig('"just a string"');
-    assertEq(config, null, 'config: non-object returns null');
-  }
+    assert.deepStrictEqual(config, null, 'config: non-object returns null');
+});
 
   // ═══════════════════════════════════════════════════════════════════════
   // Project Parser Tests
   // ═══════════════════════════════════════════════════════════════════════
 
-  console.log('\n=== parseOldProject ===');
-  {
+test('parseOldProject', () => {
     const project = parseOldProject(SAMPLE_PROJECT);
-    assertEq(project, SAMPLE_PROJECT, 'project: returns raw content');
-  }
-
-  report();
-}
-
-main().catch((error) => {
-  console.error(error);
-  process.exit(1);
+    assert.deepStrictEqual(project, SAMPLE_PROJECT, 'project: returns raw content');
 });
+

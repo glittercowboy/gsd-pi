@@ -19,9 +19,9 @@ import { mkdtempSync, mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { recoverTimedOutUnit, type RecoveryContext } from "../auto-timeout-recovery.ts";
-import { createTestContext } from './test-helpers.ts';
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
 
-const { assertTrue, report } = createTestContext();
 
 // Minimal mock for ExtensionContext — only the fields recoverTimedOutUnit touches.
 function makeMockCtx() {
@@ -55,12 +55,12 @@ function makeMockPi() {
     await recoverTimedOutUnit(ctx, pi, "execute-task", "M001/S01/T01", "idle", emptyRctx);
   } catch (err: any) {
     crashed = true;
-    assertTrue(
+    assert.ok(
       err.message.includes("path") || err.message.includes("string") || err.code === "ERR_INVALID_ARG_TYPE",
       `should crash with path/type error, got: ${err.message}`,
     );
   }
-  assertTrue(crashed, "should crash when basePath is undefined (reproduces #1855)");
+  assert.ok(crashed, "should crash when basePath is undefined (reproduces #1855)");
 }
 
 // ═══ #1855: valid RecoveryContext does not crash ═════════════════════════════
@@ -90,13 +90,11 @@ function makeMockPi() {
       crashed = true;
       console.error(`  Unexpected crash: ${err.message}`);
     }
-    assertTrue(!crashed, "should not crash with valid basePath");
+    assert.ok(!crashed, "should not crash with valid basePath");
     // With no runtime record on disk and recoveryAttempts=0, the function
     // should attempt steering recovery (sendMessage) and return "recovered".
-    assertTrue(result === "recovered", `should return 'recovered', got '${result}'`);
+    assert.ok(result === "recovered", `should return 'recovered', got '${result}'`);
   } finally {
     rmSync(base, { recursive: true, force: true });
   }
 }
-
-report();

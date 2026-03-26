@@ -4,7 +4,7 @@ import { StringDecoder } from "node:string_decoder";
 import type { Readable } from "node:stream";
 import { join, resolve, dirname } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { resolveTypeStrippingFlag } from "./ts-subprocess-flags.ts";
+import { resolveTypeStrippingFlag, resolveSubprocessModule, buildSubprocessPrefixArgs } from "./ts-subprocess-flags.ts";
 
 import type { AgentSessionEvent, SessionStateChangeReason } from "../../packages/pi-coding-agent/src/core/agent-session.ts";
 import type {
@@ -39,7 +39,30 @@ import {
 } from "./auto-dashboard-service.ts";
 import { resolveGsdCliEntry } from "./cli-entry.ts";
 
-const DEFAULT_PACKAGE_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
+// Lazily computed fallback — import.meta.url is baked in at build time by
+// webpack, so when the standalone bundle built on Linux CI runs on Windows the
+// literal file:// URL contains a Unix path that fileURLToPath() rejects.
+// Deferring the computation means it only fires when GSD_WEB_PACKAGE_ROOT is
+// absent, and if it does fire we handle the cross-platform failure gracefully.
+let _defaultPackageRoot: string | undefined;
+function getDefaultPackageRoot(): string {
+  if (_defaultPackageRoot !== undefined) return _defaultPackageRoot;
+  try {
+    _defaultPackageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
+  } catch {
+    // Standalone bundle running on a different OS than the builder — the
+    // baked-in import.meta.url is not a valid local file URL.  Fall back to
+    // cwd which is the best available approximation; callers that need the
+    // real package root should set GSD_WEB_PACKAGE_ROOT.
+    _defaultPackageRoot = process.cwd();
+  }
+  return _defaultPackageRoot;
+}
+
+/** @internal — test-only: reset the memoized default package root */
+export function resetDefaultPackageRootForTests(): void {
+  _defaultPackageRoot = undefined;
+}
 const RESPONSE_TIMEOUT_MS = 30_000;
 const START_TIMEOUT_MS = 150_000;
 const MAX_STDERR_BUFFER = 8_000;
@@ -374,6 +397,17 @@ function filterAndSortSessions(
   return scored.map((entry) => entry.session);
 }
 
+export interface RtkSessionSavings {
+  commands: number;
+  inputTokens: number;
+  outputTokens: number;
+  savedTokens: number;
+  savingsPct: number;
+  totalTimeMs: number;
+  avgTimeMs: number;
+  updatedAt: string;
+}
+
 export interface AutoDashboardData {
   active: boolean;
   paused: boolean;
@@ -385,6 +419,9 @@ export interface AutoDashboardData {
   basePath: string;
   totalCost: number;
   totalTokens: number;
+  rtkSavings?: RtkSessionSavings | null;
+  /** Whether RTK is enabled via experimental.rtk preference. False when not opted in. */
+  rtkEnabled?: boolean;
 }
 
 export interface BridgeLastError {
@@ -905,11 +942,19 @@ async function loadCachedWorkspaceIndex(
 
 async function loadWorkspaceIndexViaChildProcess(basePath: string, packageRoot: string): Promise<GSDWorkspaceIndex> {
   const deps = getBridgeDeps();
-  const resolveTsLoader = join(packageRoot, "src", "resources", "extensions", "gsd", "tests", "resolve-ts.mjs");
-  const workspaceModulePath = join(packageRoot, "src", "resources", "extensions", "gsd", "workspace-index.ts");
   const checkExists = deps.existsSync ?? existsSync;
-  if (!checkExists(resolveTsLoader) || !checkExists(workspaceModulePath)) {
+  const resolveTsLoader = join(packageRoot, "src", "resources", "extensions", "gsd", "tests", "resolve-ts.mjs");
+  const moduleResolution = resolveSubprocessModule(
+    packageRoot,
+    "resources/extensions/gsd/workspace-index.ts",
+    checkExists,
+  );
+  const workspaceModulePath = moduleResolution.modulePath;
+  if (!moduleResolution.useCompiledJs && (!checkExists(resolveTsLoader) || !checkExists(workspaceModulePath))) {
     throw new Error(`workspace index loader not found; checked=${resolveTsLoader},${workspaceModulePath}`);
+  }
+  if (moduleResolution.useCompiledJs && !checkExists(workspaceModulePath)) {
+    throw new Error(`workspace index module not found; checked=${workspaceModulePath}`);
   }
 
   const script = [
@@ -919,14 +964,17 @@ async function loadWorkspaceIndexViaChildProcess(basePath: string, packageRoot: 
     'process.stdout.write(JSON.stringify(result));',
   ].join(' ');
 
+  const prefixArgs = buildSubprocessPrefixArgs(
+    packageRoot,
+    moduleResolution,
+    pathToFileURL(resolveTsLoader).href,
+  );
+
   return await new Promise<GSDWorkspaceIndex>((resolveResult, reject) => {
     execFile(
       deps.execPath ?? process.execPath,
       [
-        "--import",
-        pathToFileURL(resolveTsLoader).href,
-        resolveTypeStrippingFlag(packageRoot),
-        "--input-type=module",
+        ...prefixArgs,
         "--eval",
         script,
       ],
@@ -1047,7 +1095,7 @@ async function fallbackWorkspaceIndex(basePath: string): Promise<GSDWorkspaceInd
 export function resolveBridgeRuntimeConfig(env: NodeJS.ProcessEnv = getBridgeDeps().env ?? process.env, projectCwdOverride?: string): BridgeRuntimeConfig {
   const projectCwd = projectCwdOverride || env.GSD_WEB_PROJECT_CWD || process.cwd();
   const projectSessionsDir = env.GSD_WEB_PROJECT_SESSIONS_DIR || getProjectSessionsDir(projectCwd);
-  const packageRoot = env.GSD_WEB_PACKAGE_ROOT || DEFAULT_PACKAGE_ROOT;
+  const packageRoot = env.GSD_WEB_PACKAGE_ROOT || getDefaultPackageRoot();
   return { projectCwd, projectSessionsDir, packageRoot };
 }
 

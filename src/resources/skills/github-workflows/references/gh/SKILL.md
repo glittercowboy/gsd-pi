@@ -103,9 +103,12 @@ gh issue list -R gsd-build/gsd-2
 gh issue list -R gsd-build/gsd-2 --label "priority:p1" --state open
 
 # Create issue with labels and milestone
+# NOTE: Do NOT use labels for issue classification (bug, feature, etc.)
+# Use labels for metadata (priority, status, auto-generated) only.
+# Issue classification uses GitHub Issue Types, set via GraphQL after creation.
 gh issue create -R gsd-build/gsd-2 \
   --title "feat: add feature X" \
-  --label "priority:p1" --label "type:feature" \
+  --label "priority:p1" \
   --milestone "v1.0"
 
 # View issue
@@ -119,6 +122,24 @@ gh issue edit <number> -R gsd-build/gsd-2 \
   --add-label "status:in-progress" \
   --remove-label "status:needs-grooming"
 ```
+
+### Issue Types (Classification)
+
+`gh issue create` has no `--type` flag. Issue types (Bug, Feature Request, etc.) are set via GraphQL after creation:
+
+```bash
+# Step 1: Create the issue (returns URL)
+ISSUE_URL=$(gh issue create -R gsd-build/gsd-2 \
+  --title "..." --body "...")
+
+# Step 2: Set the issue type via GraphQL
+ISSUE_NUM=$(echo "$ISSUE_URL" | grep -oE '[0-9]+$')
+ISSUE_ID=$(gh api graphql -f query='{ repository(owner:"gsd-build",name:"gsd-2") { issue(number:'"$ISSUE_NUM"') { id } } }' --jq '.data.repository.issue.id')
+TYPE_ID=$(gh api graphql -f query='{ repository(owner:"gsd-build",name:"gsd-2") { issueTypes(first:20) { nodes { id name } } } }' --jq '.data.repository.issueTypes.nodes[] | select(.name=="Bug") | .id')
+gh api graphql -f query='mutation { updateIssue(input:{id:"'"$ISSUE_ID"'",issueTypeId:"'"$TYPE_ID"'"}) { issue { number } } }'
+```
+
+Replace `"Bug"` with the appropriate type name (`"Feature Request"`, `"Task"`, etc.).
 
 ### Labels
 

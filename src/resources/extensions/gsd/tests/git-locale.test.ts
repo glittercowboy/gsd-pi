@@ -1,3 +1,5 @@
+import { describe, test } from 'node:test';
+import assert from 'node:assert/strict';
 /**
  * Regression tests for #1997: git locale not forced to C.
  *
@@ -13,10 +15,6 @@ import { execFileSync } from "node:child_process";
 import { GIT_NO_PROMPT_ENV } from "../git-constants.ts";
 import { nativeAddAllWithExclusions } from "../native-git-bridge.ts";
 import { RUNTIME_EXCLUSION_PATHS } from "../git-service.ts";
-import { createTestContext } from "./test-helpers.ts";
-
-const { assertEq, assertTrue, report } = createTestContext();
-
 function git(cwd: string, ...args: string[]): string {
   return execFileSync("git", args, { cwd, stdio: ["ignore", "pipe", "pipe"], encoding: "utf-8" }).trim();
 }
@@ -39,27 +37,24 @@ function createFile(base: string, relPath: string, content: string): void {
   writeFileSync(full, content);
 }
 
-async function main(): Promise<void> {
+describe('git-locale', async () => {
   // ─── GIT_NO_PROMPT_ENV includes LC_ALL=C ─────────────────────────────
 
-  console.log("\n=== GIT_NO_PROMPT_ENV includes LC_ALL=C ===");
 
-  assertEq(
+  assert.deepStrictEqual(
     GIT_NO_PROMPT_ENV.LC_ALL,
     "C",
     "GIT_NO_PROMPT_ENV must set LC_ALL to 'C' to force English git output"
   );
 
-  assertTrue(
+  assert.ok(
     "GIT_TERMINAL_PROMPT" in GIT_NO_PROMPT_ENV,
     "GIT_NO_PROMPT_ENV still contains GIT_TERMINAL_PROMPT"
   );
 
   // ─── nativeAddAllWithExclusions: non-English locale does not throw ───
 
-  console.log("\n=== nativeAddAllWithExclusions: non-English locale does not throw ===");
-
-  {
+  test('nativeAddAllWithExclusions: non-English locale does not throw', () => {
     // Simulate what happens on a German system: .gsd is gitignored,
     // exclusion pathspecs trigger an advisory warning exit code 1.
     // With LC_ALL=C the English stderr guard should match and suppress.
@@ -89,22 +84,20 @@ async function main(): Promise<void> {
     if (origLang !== undefined) process.env.LANG = origLang;
     else delete process.env.LANG;
 
-    assertTrue(
+    assert.ok(
       !threw,
       "nativeAddAllWithExclusions must not throw on non-English locale when .gsd is gitignored (#1997)"
     );
 
     const staged = git(repo, "diff", "--cached", "--name-only");
-    assertTrue(staged.includes("src/app.ts"), "real file staged despite German locale");
+    assert.ok(staged.includes("src/app.ts"), "real file staged despite German locale");
 
     rmSync(repo, { recursive: true, force: true });
-  }
+  });
 
   // ─── nativeMergeSquash: env is passed (merge-squash stderr is English) ─
 
-  console.log("\n=== nativeMergeSquash fallback uses GIT_NO_PROMPT_ENV ===");
-
-  {
+  test('nativeMergeSquash fallback uses GIT_NO_PROMPT_ENV', () => {
     // We verify indirectly: the source code must pass env: GIT_NO_PROMPT_ENV.
     // Read the source and check for the pattern. This is a static check.
     const src = readFileSync(
@@ -114,20 +107,13 @@ async function main(): Promise<void> {
 
     // Find the nativeMergeSquash function and check it uses GIT_NO_PROMPT_ENV
     const fnStart = src.indexOf("export function nativeMergeSquash");
-    assertTrue(fnStart !== -1, "nativeMergeSquash function exists in source");
+    assert.ok(fnStart !== -1, "nativeMergeSquash function exists in source");
 
     const fnBody = src.slice(fnStart, src.indexOf("\nexport function", fnStart + 1));
     const hasEnv = fnBody.includes("env: GIT_NO_PROMPT_ENV");
-    assertTrue(
+    assert.ok(
       hasEnv,
       "nativeMergeSquash fallback must pass env: GIT_NO_PROMPT_ENV to execFileSync (#1997)"
     );
-  }
-
-  report();
-}
-
-main().catch((error) => {
-  console.error(error);
-  process.exit(1);
+  });
 });

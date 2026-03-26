@@ -4,15 +4,11 @@ import { join } from "node:path"
 import { pathToFileURL } from "node:url"
 
 import { resolveBridgeRuntimeConfig } from "./bridge-service.ts"
-import { resolveTypeStrippingFlag } from "./ts-subprocess-flags.ts"
+import { resolveTypeStrippingFlag, resolveSubprocessModule, buildSubprocessPrefixArgs } from "./ts-subprocess-flags.ts"
 import type { CleanupData, CleanupResult } from "../../web/lib/remaining-command-types.ts"
 
 const CLEANUP_MAX_BUFFER = 2 * 1024 * 1024
 const CLEANUP_MODULE_ENV = "GSD_CLEANUP_MODULE"
-
-function resolveCleanupModulePath(packageRoot: string): string {
-  return join(packageRoot, "src", "resources", "extensions", "gsd", "native-git-bridge.ts")
-}
 
 function resolveTsLoaderPath(packageRoot: string): string {
   return join(packageRoot, "src", "resources", "extensions", "gsd", "tests", "resolve-ts.mjs")
@@ -28,12 +24,16 @@ export async function collectCleanupData(projectCwdOverride?: string): Promise<C
   const { packageRoot, projectCwd } = config
 
   const resolveTsLoader = resolveTsLoaderPath(packageRoot)
-  const cleanupModulePath = resolveCleanupModulePath(packageRoot)
+  const moduleResolution = resolveSubprocessModule(packageRoot, "resources/extensions/gsd/native-git-bridge.ts")
+  const cleanupModulePath = moduleResolution.modulePath
 
-  if (!existsSync(resolveTsLoader) || !existsSync(cleanupModulePath)) {
+  if (!moduleResolution.useCompiledJs && (!existsSync(resolveTsLoader) || !existsSync(cleanupModulePath))) {
     throw new Error(
       `cleanup data provider not found; checked=${resolveTsLoader},${cleanupModulePath}`,
     )
+  }
+  if (moduleResolution.useCompiledJs && !existsSync(cleanupModulePath)) {
+    throw new Error(`cleanup data provider not found; checked=${cleanupModulePath}`)
   }
 
   const script = [
@@ -60,14 +60,13 @@ export async function collectCleanupData(projectCwdOverride?: string): Promise<C
     'process.stdout.write(JSON.stringify({ branches: branchList, snapshots: snapshotList }));',
   ].join(" ")
 
+  const prefixArgs = buildSubprocessPrefixArgs(packageRoot, moduleResolution, pathToFileURL(resolveTsLoader).href)
+
   return await new Promise<CleanupData>((resolveResult, reject) => {
     execFile(
       process.execPath,
       [
-        "--import",
-        pathToFileURL(resolveTsLoader).href,
-        resolveTypeStrippingFlag(packageRoot),
-        "--input-type=module",
+        ...prefixArgs,
         "--eval",
         script,
       ],
@@ -114,12 +113,16 @@ export async function executeCleanup(
   const { packageRoot, projectCwd } = config
 
   const resolveTsLoader = resolveTsLoaderPath(packageRoot)
-  const cleanupModulePath = resolveCleanupModulePath(packageRoot)
+  const moduleResolution = resolveSubprocessModule(packageRoot, "resources/extensions/gsd/native-git-bridge.ts")
+  const cleanupModulePath = moduleResolution.modulePath
 
-  if (!existsSync(resolveTsLoader) || !existsSync(cleanupModulePath)) {
+  if (!moduleResolution.useCompiledJs && (!existsSync(resolveTsLoader) || !existsSync(cleanupModulePath))) {
     throw new Error(
       `cleanup service modules not found; checked=${resolveTsLoader},${cleanupModulePath}`,
     )
+  }
+  if (moduleResolution.useCompiledJs && !existsSync(cleanupModulePath)) {
+    throw new Error(`cleanup service modules not found; checked=${cleanupModulePath}`)
   }
 
   const script = [
@@ -147,14 +150,13 @@ export async function executeCleanup(
     'process.stdout.write(JSON.stringify({ deletedBranches, prunedSnapshots, message }));',
   ].join(" ")
 
+  const prefixArgs = buildSubprocessPrefixArgs(packageRoot, moduleResolution, pathToFileURL(resolveTsLoader).href)
+
   return await new Promise<CleanupResult>((resolveResult, reject) => {
     execFile(
       process.execPath,
       [
-        "--import",
-        pathToFileURL(resolveTsLoader).href,
-        resolveTypeStrippingFlag(packageRoot),
-        "--input-type=module",
+        ...prefixArgs,
         "--eval",
         script,
       ],

@@ -29,7 +29,7 @@ test("derivePendingWorkflowCommandLabel falls back to the command type when no i
   assert.equal(label, "/abort")
 })
 
-test("navigateToGSDView dispatches the shared browser navigation event", () => {
+test("navigateToGSDView dispatches the shared browser navigation event", (t) => {
   const originalWindow = (globalThis as { window?: EventTarget }).window
   const fakeWindow = new EventTarget()
   const seen: string[] = []
@@ -40,16 +40,14 @@ test("navigateToGSDView dispatches the shared browser navigation event", () => {
 
   ;(globalThis as { window?: EventTarget }).window = fakeWindow
 
-  try {
-    navigateToGSDView("power")
-  } finally {
-    ;(globalThis as { window?: EventTarget }).window = originalWindow
-  }
+  t.after(() => { ;(globalThis as { window?: EventTarget }).window = originalWindow });
+
+  navigateToGSDView("power")
 
   assert.deepEqual(seen, ["power"])
 })
 
-test("executeWorkflowActionInPowerMode calls dispatch and navigates to the appropriate view", async () => {
+test("executeWorkflowActionInPowerMode calls dispatch and navigates to the appropriate view", async (t) => {
   const originalWindow = (globalThis as { window?: EventTarget }).window
   const originalLocalStorage = (globalThis as any).localStorage
   const fakeWindow = new EventTarget()
@@ -63,18 +61,18 @@ test("executeWorkflowActionInPowerMode calls dispatch and navigates to the appro
   ;(globalThis as { window?: EventTarget }).window = fakeWindow
   ;(globalThis as any).localStorage = { getItem: () => null, setItem: () => {} }
 
-  try {
-    executeWorkflowActionInPowerMode({
-      dispatch: async () => {
-        dispatchCalled = true
-      },
-    })
-    // dispatch is fire-and-forget, give it a tick to resolve
-    await new Promise((resolve) => setTimeout(resolve, 10))
-  } finally {
+  t.after(() => {
     ;(globalThis as { window?: EventTarget }).window = originalWindow
     ;(globalThis as any).localStorage = originalLocalStorage
-  }
+  });
+
+  executeWorkflowActionInPowerMode({
+    dispatch: async () => {
+      dispatchCalled = true
+    },
+  })
+  // dispatch is fire-and-forget, give it a tick to resolve
+  await new Promise((resolve) => setTimeout(resolve, 10))
 
   assert.equal(dispatchCalled, true, "dispatch should have been called")
   assert.ok(seenViews.length > 0, "should navigate to a view")

@@ -17,6 +17,30 @@ skills_used:
 
 {{description}}
 
+## Failure Modes
+
+<!-- Q5: What breaks when dependencies fail? OMIT ENTIRELY for tasks with no external dependencies. -->
+
+| Dependency | On error | On timeout | On malformed response |
+|------------|----------|-----------|----------------------|
+| {{dependency}} | {{errorStrategy}} | {{timeoutStrategy}} | {{malformedStrategy}} |
+
+## Load Profile
+
+<!-- Q6: What breaks at 10x load? OMIT ENTIRELY for tasks with no shared resources or scaling concerns. -->
+
+- **Shared resources**: {{sharedResources — DB connections, caches, rate limiters, or none}}
+- **Per-operation cost**: {{perOpCost — N API calls, M DB queries, K bytes, or trivial}}
+- **10x breakpoint**: {{whatBreaksFirst — pool exhaustion, rate limit, memory, or N/A}}
+
+## Negative Tests
+
+<!-- Q7: What negative tests prove robustness? OMIT ENTIRELY for trivial tasks. -->
+
+- **Malformed inputs**: {{malformedInputTests — empty string, null, oversized, wrong type}}
+- **Error paths**: {{errorPathTests — network timeout, auth failure, 5xx, invalid JSON}}
+- **Boundary conditions**: {{boundaryTests — empty list, max length, zero, off-by-one}}
+
 ## Steps
 
 1. {{step}}

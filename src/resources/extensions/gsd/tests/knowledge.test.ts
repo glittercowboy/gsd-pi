@@ -6,6 +6,7 @@
  * - resolveGsdRootFile resolves KNOWLEDGE paths correctly
  * - inlineGsdRootFile works with the KNOWLEDGE key
  * - before_agent_start hook includes/omits knowledge block appropriately
+ * - loadKnowledgeBlock merges global and project knowledge correctly
  */
 
 import test from 'node:test';
@@ -16,6 +17,7 @@ import { tmpdir } from 'node:os';
 import { GSD_ROOT_FILES, resolveGsdRootFile } from '../paths.ts';
 import { inlineGsdRootFile } from '../auto-prompts.ts';
 import { appendKnowledge } from '../files.ts';
+import { loadKnowledgeBlock } from '../bootstrap/system-context.ts';
 
 // ─── KNOWLEDGE is registered in GSD_ROOT_FILES ─────────────────────────────
 
@@ -156,6 +158,93 @@ test('knowledge: appendKnowledge handles lesson type', async () => {
   const content = readFileSync(join(gsdDir, 'KNOWLEDGE.md'), 'utf-8');
   assert.ok(content.includes('L001'), 'should have L001 id');
   assert.ok(content.includes('API timeout on large payloads'), 'should have lesson text');
+
+  rmSync(tmp, { recursive: true, force: true });
+});
+
+// ─── loadKnowledgeBlock — global + project merge ────────────────────────────
+
+test('loadKnowledgeBlock: returns empty block when neither file exists', () => {
+  const tmp = realpathSync(mkdtempSync(join(tmpdir(), 'gsd-kb-')));
+  const gsdHome = join(tmp, 'home');
+  const cwd = join(tmp, 'project');
+  mkdirSync(join(cwd, '.gsd'), { recursive: true });
+  mkdirSync(join(gsdHome, 'agent'), { recursive: true });
+
+  const result = loadKnowledgeBlock(gsdHome, cwd);
+  assert.strictEqual(result.block, '');
+  assert.strictEqual(result.globalSizeKb, 0);
+
+  rmSync(tmp, { recursive: true, force: true });
+});
+
+test('loadKnowledgeBlock: uses project knowledge alone when no global file', () => {
+  const tmp = realpathSync(mkdtempSync(join(tmpdir(), 'gsd-kb-')));
+  const gsdHome = join(tmp, 'home');
+  const cwd = join(tmp, 'project');
+  mkdirSync(join(cwd, '.gsd'), { recursive: true });
+  mkdirSync(join(gsdHome, 'agent'), { recursive: true });
+  writeFileSync(join(cwd, '.gsd', 'KNOWLEDGE.md'), 'K001: Use real DB');
+
+  const result = loadKnowledgeBlock(gsdHome, cwd);
+  assert.ok(result.block.includes('[KNOWLEDGE — Rules, patterns, and lessons learned]'));
+  assert.ok(result.block.includes('## Project Knowledge'));
+  assert.ok(result.block.includes('K001: Use real DB'));
+  assert.ok(!result.block.includes('## Global Knowledge'));
+  assert.strictEqual(result.globalSizeKb, 0);
+
+  rmSync(tmp, { recursive: true, force: true });
+});
+
+test('loadKnowledgeBlock: uses global knowledge alone when no project file', () => {
+  const tmp = realpathSync(mkdtempSync(join(tmpdir(), 'gsd-kb-')));
+  const gsdHome = join(tmp, 'home');
+  const cwd = join(tmp, 'project');
+  mkdirSync(join(cwd, '.gsd'), { recursive: true });
+  mkdirSync(join(gsdHome, 'agent'), { recursive: true });
+  writeFileSync(join(gsdHome, 'agent', 'KNOWLEDGE.md'), 'G001: Respond in English');
+
+  const result = loadKnowledgeBlock(gsdHome, cwd);
+  assert.ok(result.block.includes('[KNOWLEDGE — Rules, patterns, and lessons learned]'));
+  assert.ok(result.block.includes('## Global Knowledge'));
+  assert.ok(result.block.includes('G001: Respond in English'));
+  assert.ok(!result.block.includes('## Project Knowledge'));
+  assert.ok(result.globalSizeKb > 0);
+
+  rmSync(tmp, { recursive: true, force: true });
+});
+
+test('loadKnowledgeBlock: merges global before project when both exist', () => {
+  const tmp = realpathSync(mkdtempSync(join(tmpdir(), 'gsd-kb-')));
+  const gsdHome = join(tmp, 'home');
+  const cwd = join(tmp, 'project');
+  mkdirSync(join(cwd, '.gsd'), { recursive: true });
+  mkdirSync(join(gsdHome, 'agent'), { recursive: true });
+  writeFileSync(join(gsdHome, 'agent', 'KNOWLEDGE.md'), 'G001: Global rule');
+  writeFileSync(join(cwd, '.gsd', 'KNOWLEDGE.md'), 'K001: Project rule');
+
+  const result = loadKnowledgeBlock(gsdHome, cwd);
+  assert.ok(result.block.includes('## Global Knowledge'));
+  assert.ok(result.block.includes('## Project Knowledge'));
+  assert.ok(result.block.includes('G001: Global rule'));
+  assert.ok(result.block.includes('K001: Project rule'));
+  // Global section appears before project section
+  assert.ok(result.block.indexOf('## Global Knowledge') < result.block.indexOf('## Project Knowledge'));
+
+  rmSync(tmp, { recursive: true, force: true });
+});
+
+test('loadKnowledgeBlock: reports globalSizeKb above 4KB threshold', () => {
+  const tmp = realpathSync(mkdtempSync(join(tmpdir(), 'gsd-kb-')));
+  const gsdHome = join(tmp, 'home');
+  const cwd = join(tmp, 'project');
+  mkdirSync(join(cwd, '.gsd'), { recursive: true });
+  mkdirSync(join(gsdHome, 'agent'), { recursive: true });
+  // Write > 4KB of content
+  writeFileSync(join(gsdHome, 'agent', 'KNOWLEDGE.md'), 'x'.repeat(5000));
+
+  const result = loadKnowledgeBlock(gsdHome, cwd);
+  assert.ok(result.globalSizeKb > 4, `expected > 4KB, got ${result.globalSizeKb}`);
 
   rmSync(tmp, { recursive: true, force: true });
 });

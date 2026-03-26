@@ -1,0 +1,97 @@
+---
+title: "Skills"
+description: "Specialized instruction sets that provide domain-specific guidance to the LLM."
+---
+
+Skills are specialized instruction sets that GSD loads when the task matches. They provide domain-specific guidance — coding patterns, framework idioms, testing strategies, and tool usage.
+
+## Bundled skills
+
+GSD ships with these skills, installed to `~/.gsd/agent/skills/`:
+
+| Skill | Trigger | Description |
+|-------|---------|-------------|
+| `frontend-design` | Web UI work | Production-grade frontend with high design quality |
+| `swiftui` | macOS/iOS apps | Full lifecycle from creation to shipping |
+| `debug-like-expert` | Complex debugging | Methodical investigation with evidence gathering |
+| `rust-core` | Rust code | Idiomatic, safe, performant Rust patterns |
+| `axum-web-framework` | Axum web apps | Complete Axum development guide |
+| `tauri` | Tauri v2 desktop apps | Cross-platform desktop development |
+| `github-workflows` | GitHub Actions | CI/CD, workflow debugging |
+| `security-audit` | Security auditing | Dependency scanning, OWASP |
+| `review` | Code review | Diff-aware quality analysis |
+| `test` | Test generation | Auto-detects frameworks |
+| `lint` | Linting and formatting | ESLint, Biome, Prettier |
+
+## Skill discovery
+
+The `skill_discovery` preference controls how GSD finds skills:
+
+| Mode | Behavior |
+|------|----------|
+| `auto` | Skills found and applied automatically |
+| `suggest` | Skills identified but require confirmation (default) |
+| `off` | No skill discovery |
+
+## Skill preferences
+
+```yaml
+always_use_skills:
+  - debug-like-expert
+prefer_skills:
+  - frontend-design
+avoid_skills:
+  - security-docker
+skill_rules:
+  - when: task involves Clerk authentication
+    use: [clerk]
+  - when: frontend styling work
+    prefer: [frontend-design]
+```
+
+### Resolution order
+
+1. **Bare name** — e.g., `frontend-design` → scans `~/.gsd/agent/skills/` and project skills
+2. **Absolute path** — e.g., `/Users/you/.gsd/agent/skills/my-skill/SKILL.md`
+3. **Directory path** — looks for `SKILL.md` inside
+
+User skills take precedence over project skills.
+
+## Custom skills
+
+Create a directory with a `SKILL.md` file:
+
+```
+~/.gsd/agent/skills/my-skill/
+  SKILL.md           — instructions for the LLM
+  references/        — optional reference files
+```
+
+### Project-local skills
+
+```
+.gsd/agent/skills/my-project-skill/
+  SKILL.md
+```
+
+## Skill health dashboard
+
+```
+/gsd skill-health              # overview table
+/gsd skill-health rust-core    # detailed view
+/gsd skill-health --stale 30   # unused for 30+ days
+/gsd skill-health --declining  # falling success rates
+```
+
+The dashboard flags:
+- Success rate below 70% over the last 10 uses
+- Token usage rising 20%+
+- Skills unused beyond the staleness threshold
+
+### Staleness detection
+
+```yaml
+skill_staleness_days: 60    # default: 60, set 0 to disable
+```
+
+Stale skills are excluded from automatic matching but remain invokable explicitly.

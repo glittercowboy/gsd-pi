@@ -174,7 +174,7 @@ When a skill file references a relative path, resolve it against the skill direc
   <skill>
     <name>commit-outstanding</name>
     <description>Commit all uncommitted files in logical groups</description>
-    <location>/Users/you/.gsd/agent/skills/commit-outstanding/SKILL.md</location>
+    <location>/Users/you/.agents/skills/commit-outstanding/SKILL.md</location>
   </skill>
 </available_skills>
 ```

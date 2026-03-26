@@ -36,18 +36,24 @@ function createGitRepo(): string {
  * Returns true when the directory would PASS the health check (dispatch
  * proceeds), false when it would FAIL (dispatch blocked).
  *
- * This mirrors the fixed logic: .git must exist, AND at least one
- * PROJECT_FILES entry or a src/ directory must exist.
+ * The only hard gate is .git — project files are advisory (greenfield
+ * projects won't have them yet). Returns { pass, greenfield } to
+ * distinguish "pass with project files" from "pass as greenfield".
  */
 function wouldPassHealthCheck(basePath: string, existsSyncFn: (p: string) => boolean): boolean {
   const hasGit = existsSyncFn(join(basePath, ".git"));
   if (!hasGit) return false;
 
+  // .git is sufficient — greenfield projects proceed with a warning
+  return true;
+}
+
+/** Whether the directory has recognized project files (used for greenfield detection). */
+function hasRecognizedProjectFiles(basePath: string, existsSyncFn: (p: string) => boolean): boolean {
   for (const file of PROJECT_FILES) {
     if (existsSyncFn(join(basePath, file))) return true;
   }
   if (existsSyncFn(join(basePath, "src"))) return true;
-
   return false;
 }
 
@@ -118,8 +124,9 @@ describe("health check with git repo", () => {
     assert.ok(wouldPassHealthCheck(dir, existsSync), "src/-only project should pass health check");
   });
 
-  test("health check fails for empty git repo with no project files", () => {
-    assert.ok(!wouldPassHealthCheck(dir, existsSync), "empty git repo should fail health check");
+  test("health check passes for empty git repo (greenfield project)", () => {
+    assert.ok(wouldPassHealthCheck(dir, existsSync), "empty git repo should pass health check (greenfield)");
+    assert.ok(!hasRecognizedProjectFiles(dir, existsSync), "empty git repo has no recognized project files");
   });
 });
 

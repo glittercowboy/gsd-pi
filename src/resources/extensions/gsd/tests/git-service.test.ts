@@ -1,3 +1,5 @@
+import { describe, test } from 'node:test';
+import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync, symlinkSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { tmpdir } from "node:os";
@@ -20,174 +22,170 @@ import {
   type TaskCommitContext,
 } from "../git-service.ts";
 import { nativeAddAllWithExclusions } from "../native-git-bridge.ts";
-import { createTestContext } from './test-helpers.ts';
-
-const { assertEq, assertTrue, report } = createTestContext();
 function run(command: string, cwd: string): string {
   return execSync(command, { cwd, stdio: ["ignore", "pipe", "pipe"], encoding: "utf-8" }).trim();
 }
 
-async function main(): Promise<void> {
+describe('git-service', async () => {
   // ─── inferCommitType ───────────────────────────────────────────────────
 
-  console.log("\n=== inferCommitType ===");
 
-  assertEq(
+  assert.deepStrictEqual(
     inferCommitType("Implement user authentication"),
     "feat",
     "generic feature title → feat"
   );
 
-  assertEq(
+  assert.deepStrictEqual(
     inferCommitType("Add dashboard page"),
     "feat",
     "add-style title → feat"
   );
 
-  assertEq(
+  assert.deepStrictEqual(
     inferCommitType("Fix login redirect bug"),
     "fix",
     "title with 'fix' → fix"
   );
 
-  assertEq(
+  assert.deepStrictEqual(
     inferCommitType("Bug in session handling"),
     "fix",
     "title with 'bug' → fix"
   );
 
-  assertEq(
+  assert.deepStrictEqual(
     inferCommitType("Hotfix for production crash"),
     "fix",
     "title with 'hotfix' → fix"
   );
 
-  assertEq(
+  assert.deepStrictEqual(
     inferCommitType("Patch memory leak"),
     "fix",
     "title with 'patch' → fix"
   );
 
-  assertEq(
+  assert.deepStrictEqual(
     inferCommitType("Refactor state management"),
     "refactor",
     "title with 'refactor' → refactor"
   );
 
-  assertEq(
+  assert.deepStrictEqual(
     inferCommitType("Restructure project layout"),
     "refactor",
     "title with 'restructure' → refactor"
   );
 
-  assertEq(
+  assert.deepStrictEqual(
     inferCommitType("Reorganize module imports"),
     "refactor",
     "title with 'reorganize' → refactor"
   );
 
-  assertEq(
+  assert.deepStrictEqual(
     inferCommitType("Update API documentation"),
     "docs",
     "title with 'documentation' → docs"
   );
 
-  assertEq(
+  assert.deepStrictEqual(
     inferCommitType("Add doc for setup guide"),
     "docs",
     "title with 'doc' → docs"
   );
 
-  assertEq(
+  assert.deepStrictEqual(
     inferCommitType("Add unit tests for auth"),
     "test",
     "title with 'tests' → test"
   );
 
-  assertEq(
+  assert.deepStrictEqual(
     inferCommitType("Testing infrastructure setup"),
     "test",
     "title with 'testing' → test"
   );
 
-  assertEq(
+  assert.deepStrictEqual(
     inferCommitType("Chore: update dependencies"),
     "chore",
     "title with 'chore' → chore"
   );
 
-  assertEq(
+  assert.deepStrictEqual(
     inferCommitType("Cleanup unused imports"),
     "chore",
     "title with 'cleanup' → chore"
   );
 
-  assertEq(
+  assert.deepStrictEqual(
     inferCommitType("Clean up stale branches"),
     "chore",
     "title with 'clean up' → chore"
   );
 
-  assertEq(
+  assert.deepStrictEqual(
     inferCommitType("Archive old milestones"),
     "chore",
     "title with 'archive' → chore"
   );
 
-  assertEq(
+  assert.deepStrictEqual(
     inferCommitType("Remove deprecated endpoints"),
     "chore",
     "title with 'remove' → chore"
   );
 
-  assertEq(
+  assert.deepStrictEqual(
     inferCommitType("Delete temp files"),
     "chore",
     "title with 'delete' → chore"
   );
 
   // Mixed keywords — first match wins
-  assertEq(
+  assert.deepStrictEqual(
     inferCommitType("Fix and refactor the login module"),
     "fix",
     "mixed keywords → first match wins (fix before refactor)"
   );
 
-  assertEq(
+  assert.deepStrictEqual(
     inferCommitType("Refactor test utilities"),
     "refactor",
     "mixed keywords → first match wins (refactor before test)"
   );
 
   // Unknown / unrecognized title → feat
-  assertEq(
+  assert.deepStrictEqual(
     inferCommitType("Build the new pipeline"),
     "feat",
     "unrecognized title → feat"
   );
 
-  assertEq(
+  assert.deepStrictEqual(
     inferCommitType(""),
     "feat",
     "empty title → feat"
   );
 
   // Word boundary: "testify" should NOT match "test"
-  assertEq(
+  assert.deepStrictEqual(
     inferCommitType("Testify integration"),
     "feat",
     "'testify' does not match 'test' — word boundary prevents partial match"
   );
 
   // "documentary" should NOT match "doc" (word boundary)
-  assertEq(
+  assert.deepStrictEqual(
     inferCommitType("Documentary style UI"),
     "feat",
     "'documentary' does not match 'doc' — word boundary prevents partial match"
   );
 
   // "prefix" should NOT match "fix" (word boundary)
-  assertEq(
+  assert.deepStrictEqual(
     inferCommitType("Add prefix to all IDs"),
     "feat",
     "'prefix' does not match 'fix' — word boundary prevents partial match"
@@ -195,15 +193,14 @@ async function main(): Promise<void> {
 
   // ─── inferCommitType with oneLiner ──────────────────────────────────────
 
-  console.log("\n=== inferCommitType with oneLiner ===");
 
-  assertEq(
+  assert.deepStrictEqual(
     inferCommitType("implement dashboard", "Fixed rendering bug in sidebar"),
     "fix",
     "one-liner with 'fixed' overrides generic title → fix"
   );
 
-  assertEq(
+  assert.deepStrictEqual(
     inferCommitType("add search", "Optimized query performance with caching"),
     "perf",
     "one-liner with 'performance' and 'caching' → perf"
@@ -211,29 +208,29 @@ async function main(): Promise<void> {
 
   // ─── buildTaskCommitMessage ─────────────────────────────────────────────
 
-  console.log("\n=== buildTaskCommitMessage ===");
-
-  {
+  test('buildTaskCommitMessage', () => {
     const msg = buildTaskCommitMessage({
       taskId: "S01/T02",
       taskTitle: "implement user authentication",
       oneLiner: "Added JWT-based auth with refresh token rotation",
       keyFiles: ["src/auth.ts", "src/middleware/jwt.ts"],
     });
-    assertTrue(msg.startsWith("feat(S01/T02):"), "message starts with type(scope)");
-    assertTrue(msg.includes("JWT-based auth"), "message includes one-liner content");
-    assertTrue(msg.includes("- src/auth.ts"), "message body includes key files");
-    assertTrue(msg.includes("- src/middleware/jwt.ts"), "message body includes second key file");
-  }
+    assert.ok(msg.startsWith("feat:"), "message starts with type: (no scope)");
+    assert.ok(!msg.includes("(S01/T02)"), "no GSD ID in subject line");
+    assert.ok(msg.includes("JWT-based auth"), "message includes one-liner content");
+    assert.ok(msg.includes("- src/auth.ts"), "message body includes key files");
+    assert.ok(msg.includes("- src/middleware/jwt.ts"), "message body includes second key file");
+    assert.ok(msg.includes("GSD-Task: S01/T02"), "GSD-Task trailer in body");
+  });
 
   {
     const msg = buildTaskCommitMessage({
       taskId: "S02/T01",
       taskTitle: "fix login redirect bug",
     });
-    assertTrue(msg.startsWith("fix(S02/T01):"), "infers fix type from title");
-    assertTrue(msg.includes("fix login redirect bug"), "uses task title when no one-liner");
-    assertTrue(!msg.includes("\n"), "no body when no key files");
+    assert.ok(msg.startsWith("fix:"), "infers fix type from title");
+    assert.ok(msg.includes("fix login redirect bug"), "uses task title when no one-liner");
+    assert.ok(msg.includes("GSD-Task: S02/T01"), "GSD-Task trailer present");
   }
 
   {
@@ -242,17 +239,17 @@ async function main(): Promise<void> {
       taskTitle: "add tests",
       oneLiner: "Unit tests for auth module with coverage",
     });
-    assertTrue(msg.startsWith("test(S01/T03):"), "infers test type");
+    assert.ok(msg.startsWith("test:"), "infers test type");
+    assert.ok(msg.includes("GSD-Task: S01/T03"), "GSD-Task trailer present");
   }
 
   // ─── RUNTIME_EXCLUSION_PATHS ───────────────────────────────────────────
 
-  console.log("\n=== RUNTIME_EXCLUSION_PATHS ===");
 
-  assertEq(
+  assert.deepStrictEqual(
     RUNTIME_EXCLUSION_PATHS.length,
-    9,
-    "exactly 9 runtime exclusion paths"
+    13,
+    "exactly 13 runtime exclusion paths"
   );
 
   const expectedPaths = [
@@ -264,27 +261,30 @@ async function main(): Promise<void> {
     ".gsd/completed-units.json",
     ".gsd/STATE.md",
     ".gsd/gsd.db",
+    ".gsd/gsd.db-shm",
+    ".gsd/gsd.db-wal",
+    ".gsd/journal/",
+    ".gsd/doctor-history.jsonl",
     ".gsd/DISCUSSION-MANIFEST.json",
   ];
 
-  assertEq(
+  assert.deepStrictEqual(
     [...RUNTIME_EXCLUSION_PATHS],
     expectedPaths,
     "paths match expected set in order"
   );
 
-  assertTrue(
+  assert.ok(
     RUNTIME_EXCLUSION_PATHS.includes(".gsd/activity/"),
     "includes .gsd/activity/"
   );
-  assertTrue(
+  assert.ok(
     RUNTIME_EXCLUSION_PATHS.includes(".gsd/STATE.md"),
     "includes .gsd/STATE.md"
   );
 
   // ─── runGit ────────────────────────────────────────────────────────────
 
-  console.log("\n=== runGit ===");
 
   const tempDir = mkdtempSync(join(tmpdir(), "gsd-git-service-test-"));
   run("git init -b main", tempDir);
@@ -293,11 +293,11 @@ async function main(): Promise<void> {
 
   // runGit should work on a valid repo
   const branch = runGit(tempDir, ["branch", "--show-current"]);
-  assertEq(branch, "main", "runGit returns current branch");
+  assert.deepStrictEqual(branch, "main", "runGit returns current branch");
 
   // runGit allowFailure returns empty string on failure
   const result = runGit(tempDir, ["log", "--oneline"], { allowFailure: true });
-  assertEq(result, "", "runGit allowFailure returns empty on error (no commits yet)");
+  assert.deepStrictEqual(result, "", "runGit allowFailure returns empty on error (no commits yet)");
 
   // runGit throws on failure without allowFailure
   let threw = false;
@@ -305,22 +305,21 @@ async function main(): Promise<void> {
     runGit(tempDir, ["log", "--oneline"]);
   } catch (e) {
     threw = true;
-    assertTrue(
+    assert.ok(
       (e as Error).message.includes("git log --oneline failed"),
       "error message includes command and path"
     );
   }
-  assertTrue(threw, "runGit throws without allowFailure on error");
+  assert.ok(threw, "runGit throws without allowFailure on error");
 
   // ─── Type exports compile check ────────────────────────────────────────
 
-  console.log("\n=== Type exports ===");
 
   // These are compile-time checks — if we got here, the types import fine
   const _prefs: GitPreferences = { auto_push: true, remote: "origin" };
   const _opts: CommitOptions = { message: "test" };
-  assertTrue(true, "GitPreferences type exported and usable");
-  assertTrue(true, "CommitOptions type exported and usable");
+  assert.ok(true, "GitPreferences type exported and usable");
+  assert.ok(true, "CommitOptions type exported and usable");
 
   // Cleanup T01 temp dir
   rmSync(tempDir, { recursive: true, force: true });
@@ -347,9 +346,7 @@ async function main(): Promise<void> {
 
   // ─── GitServiceImpl: smart staging ─────────────────────────────────────
 
-  console.log("\n=== GitServiceImpl: smart staging ===");
-
-  {
+  test('GitServiceImpl: smart staging', () => {
     const repo = initTempRepo();
     const svc = new GitServiceImpl(repo);
 
@@ -366,34 +363,32 @@ async function main(): Promise<void> {
 
     const result = svc.commit({ message: "test: smart staging" });
 
-    assertEq(result, "test: smart staging", "commit returns the commit message");
+    assert.deepStrictEqual(result, "test: smart staging", "commit returns the commit message");
 
     // Verify only src/code.ts is in the commit
     const showStat = run("git show --stat --format= HEAD", repo);
-    assertTrue(showStat.includes("src/code.ts"), "src/code.ts is in the commit");
-    assertTrue(!showStat.includes(".gsd/activity"), ".gsd/activity/ excluded from commit");
-    assertTrue(!showStat.includes(".gsd/runtime"), ".gsd/runtime/ excluded from commit");
-    assertTrue(!showStat.includes("STATE.md"), ".gsd/STATE.md excluded from commit");
-    assertTrue(!showStat.includes("auto.lock"), ".gsd/auto.lock excluded from commit");
-    assertTrue(!showStat.includes("metrics.json"), ".gsd/metrics.json excluded from commit");
-    assertTrue(!showStat.includes(".gsd/worktrees"), ".gsd/worktrees/ excluded from commit");
+    assert.ok(showStat.includes("src/code.ts"), "src/code.ts is in the commit");
+    assert.ok(!showStat.includes(".gsd/activity"), ".gsd/activity/ excluded from commit");
+    assert.ok(!showStat.includes(".gsd/runtime"), ".gsd/runtime/ excluded from commit");
+    assert.ok(!showStat.includes("STATE.md"), ".gsd/STATE.md excluded from commit");
+    assert.ok(!showStat.includes("auto.lock"), ".gsd/auto.lock excluded from commit");
+    assert.ok(!showStat.includes("metrics.json"), ".gsd/metrics.json excluded from commit");
+    assert.ok(!showStat.includes(".gsd/worktrees"), ".gsd/worktrees/ excluded from commit");
 
     // Verify runtime files are still untracked
     // git status --short may collapse to "?? .gsd/" or show individual files
     // Use --untracked-files=all to force individual listing
     const statusOut = run("git status --short --untracked-files=all", repo);
-    assertTrue(statusOut.includes(".gsd/activity/"), "activity still untracked after commit");
-    assertTrue(statusOut.includes(".gsd/runtime/"), "runtime still untracked after commit");
-    assertTrue(statusOut.includes(".gsd/STATE.md"), "STATE.md still untracked after commit");
+    assert.ok(statusOut.includes(".gsd/activity/"), "activity still untracked after commit");
+    assert.ok(statusOut.includes(".gsd/runtime/"), "runtime still untracked after commit");
+    assert.ok(statusOut.includes(".gsd/STATE.md"), "STATE.md still untracked after commit");
 
     rmSync(repo, { recursive: true, force: true });
-  }
+  });
 
   // ─── GitServiceImpl: smart staging excludes tracked runtime files ──────
 
-  console.log("\n=== GitServiceImpl: smart staging excludes tracked runtime files ===");
-
-  {
+  test('GitServiceImpl: smart staging excludes tracked runtime files', () => {
     // Reproduces the real bug: .gsd/ runtime files that are already tracked
     // (in the git index) must be excluded from staging even when .gsd/ is
     // in .gitignore. The old pathspec-exclude approach failed silently in
@@ -423,9 +418,9 @@ async function main(): Promise<void> {
 
     // Verify runtime files are tracked (precondition)
     const tracked = run("git ls-files .gsd/", repo);
-    assertTrue(tracked.includes("metrics.json"), "precondition: metrics.json tracked");
-    assertTrue(tracked.includes("completed-units.json"), "precondition: completed-units.json tracked");
-    assertTrue(tracked.includes("activity/log.jsonl"), "precondition: activity log tracked");
+    assert.ok(tracked.includes("metrics.json"), "precondition: metrics.json tracked");
+    assert.ok(tracked.includes("completed-units.json"), "precondition: completed-units.json tracked");
+    assert.ok(tracked.includes("activity/log.jsonl"), "precondition: activity log tracked");
 
     // Now modify both runtime and real files
     createFile(repo, ".gsd/metrics.json", '{"version":2}');
@@ -436,15 +431,15 @@ async function main(): Promise<void> {
     // autoCommit should commit real.ts. The first call also runs auto-cleanup
     // which removes runtime files from the index via a dedicated commit.
     const msg = svc.autoCommit("execute-task", "M001/S01/T01");
-    assertTrue(msg !== null, "autoCommit produces a commit");
+    assert.ok(msg !== null, "autoCommit produces a commit");
 
     const show = run("git show --stat HEAD", repo);
-    assertTrue(show.includes("src/real.ts"), "real files are committed");
+    assert.ok(show.includes("src/real.ts"), "real files are committed");
 
     // After the commit, runtime files must no longer be in the git index.
     // They remain on disk but are untracked (protected by .gitignore).
     const trackedAfter = run("git ls-files .gsd/", repo);
-    assertEq(trackedAfter, "", "no .gsd/ runtime files remain in the index");
+    assert.deepStrictEqual(trackedAfter, "", "no .gsd/ runtime files remain in the index");
 
     // Verify a second autoCommit with changed runtime files does NOT stage them
     createFile(repo, ".gsd/metrics.json", '{"version":3}');
@@ -452,37 +447,33 @@ async function main(): Promise<void> {
     createFile(repo, "src/real.ts", "third version");
 
     const msg2 = svc.autoCommit("execute-task", "M001/S01/T02");
-    assertTrue(msg2 !== null, "second autoCommit produces a commit");
+    assert.ok(msg2 !== null, "second autoCommit produces a commit");
 
     const show2 = run("git show --stat HEAD", repo);
-    assertTrue(show2.includes("src/real.ts"), "real files committed in second commit");
-    assertTrue(!show2.includes("metrics"), "metrics.json not in second commit");
-    assertTrue(!show2.includes("completed-units"), "completed-units.json not in second commit");
-    assertTrue(!show2.includes("activity"), "activity not in second commit");
+    assert.ok(show2.includes("src/real.ts"), "real files committed in second commit");
+    assert.ok(!show2.includes("metrics"), "metrics.json not in second commit");
+    assert.ok(!show2.includes("completed-units"), "completed-units.json not in second commit");
+    assert.ok(!show2.includes("activity"), "activity not in second commit");
 
     rmSync(repo, { recursive: true, force: true });
-  }
+  });
 
   // ─── GitServiceImpl: autoCommit on clean repo ──────────────────────────
 
-  console.log("\n=== GitServiceImpl: autoCommit ===");
-
-  {
+  test('GitServiceImpl: autoCommit', () => {
     const repo = initTempRepo();
     const svc = new GitServiceImpl(repo);
 
     // Clean repo — autoCommit should return null
     const cleanResult = svc.autoCommit("task", "T01");
-    assertEq(cleanResult, null, "autoCommit on clean repo returns null");
+    assert.deepStrictEqual(cleanResult, null, "autoCommit on clean repo returns null");
 
     rmSync(repo, { recursive: true, force: true });
-  }
+  });
 
   // ─── GitServiceImpl: autoCommit on dirty repo ──────────────────────────
 
-  console.log("\n=== GitServiceImpl: autoCommit on dirty repo ===");
-
-  {
+  test('GitServiceImpl: autoCommit on dirty repo', () => {
     const repo = initTempRepo();
     const svc = new GitServiceImpl(repo);
 
@@ -490,10 +481,10 @@ async function main(): Promise<void> {
 
     // Without task context, autoCommit uses generic chore message
     const msg = svc.autoCommit("task", "T01");
-    assertEq(msg, "chore(T01): auto-commit after task", "autoCommit returns generic format without task context");
+    assert.deepStrictEqual(msg, "chore: auto-commit after task\n\nGSD-Unit: T01", "autoCommit returns generic format with trailer");
 
     const log = run("git log --oneline -1", repo);
-    assertTrue(log.includes("chore(T01): auto-commit after task"), "generic commit message is in git log");
+    assert.ok(log.includes("chore: auto-commit after task"), "generic commit message is in git log");
 
     // With task context, autoCommit uses meaningful message
     createFile(repo, "src/auth.ts", "export function login() {}");
@@ -503,18 +494,17 @@ async function main(): Promise<void> {
       oneLiner: "Added JWT-based auth with refresh token rotation",
       keyFiles: ["src/auth.ts"],
     });
-    assertTrue(msg2 !== null, "autoCommit with task context returns a message");
-    assertTrue(msg2!.startsWith("feat(S01/T02):"), "meaningful commit uses feat type and scope");
-    assertTrue(msg2!.includes("JWT-based auth"), "meaningful commit includes one-liner content");
+    assert.ok(msg2 !== null, "autoCommit with task context returns a message");
+    assert.ok(msg2!.startsWith("feat:"), "meaningful commit uses feat type without scope");
+    assert.ok(msg2!.includes("JWT-based auth"), "meaningful commit includes one-liner content");
+    assert.ok(msg2!.includes("GSD-Task: S01/T02"), "meaningful commit has GSD-Task trailer");
 
     rmSync(repo, { recursive: true, force: true });
-  }
+  });
 
   // ─── GitServiceImpl: empty-after-staging guard ─────────────────────────
 
-  console.log("\n=== GitServiceImpl: empty-after-staging guard ===");
-
-  {
+  test('GitServiceImpl: empty-after-staging guard', () => {
     const repo = initTempRepo();
     const svc = new GitServiceImpl(repo);
 
@@ -522,20 +512,18 @@ async function main(): Promise<void> {
     createFile(repo, ".gsd/activity/x.jsonl", "data");
 
     const result = svc.autoCommit("task", "T02");
-    assertEq(result, null, "autoCommit returns null when only runtime files are dirty");
+    assert.deepStrictEqual(result, null, "autoCommit returns null when only runtime files are dirty");
 
     // Verify no new commit was created (should still be at init commit)
     const logCount = run("git rev-list --count HEAD", repo);
-    assertEq(logCount, "1", "no new commit created when only runtime files changed");
+    assert.deepStrictEqual(logCount, "1", "no new commit created when only runtime files changed");
 
     rmSync(repo, { recursive: true, force: true });
-  }
+  });
 
   // ─── GitServiceImpl: autoCommit with extraExclusions ───────────────────
 
-  console.log("\n=== GitServiceImpl: autoCommit with extraExclusions ===");
-
-  {
+  test('GitServiceImpl: autoCommit with extraExclusions', () => {
     const repo = initTempRepo();
     const svc = new GitServiceImpl(repo);
 
@@ -545,21 +533,19 @@ async function main(): Promise<void> {
 
     // Auto-commit with .gsd/ excluded (simulates pre-switch)
     const msg = svc.autoCommit("pre-switch", "main", [".gsd/"]);
-    assertEq(msg, "chore(main): auto-commit after pre-switch", "pre-switch autoCommit with .gsd/ exclusion commits");
+    assert.deepStrictEqual(msg, "chore: auto-commit after pre-switch\n\nGSD-Unit: main", "pre-switch autoCommit with .gsd/ exclusion commits");
 
     // Verify .gsd/ file was NOT committed
     const show = run("git show --stat HEAD", repo);
-    assertTrue(!show.includes("ROADMAP"), ".gsd/ files excluded from pre-switch auto-commit");
-    assertTrue(show.includes("feature.ts"), "non-.gsd/ files included in pre-switch auto-commit");
+    assert.ok(!show.includes("ROADMAP"), ".gsd/ files excluded from pre-switch auto-commit");
+    assert.ok(show.includes("feature.ts"), "non-.gsd/ files included in pre-switch auto-commit");
 
     rmSync(repo, { recursive: true, force: true });
-  }
+  });
 
   // ─── GitServiceImpl: autoCommit extraExclusions — only .gsd/ dirty ────
 
-  console.log("\n=== GitServiceImpl: autoCommit extraExclusions — only .gsd/ dirty ===");
-
-  {
+  test('GitServiceImpl: autoCommit extraExclusions — only .gsd/ dirty', () => {
     const repo = initTempRepo();
     const svc = new GitServiceImpl(repo);
 
@@ -569,25 +555,23 @@ async function main(): Promise<void> {
 
     // Auto-commit with .gsd/ excluded — nothing else to commit
     const result = svc.autoCommit("pre-switch", "main", [".gsd/"]);
-    assertEq(result, null, "autoCommit returns null when only .gsd/ files are dirty and excluded");
+    assert.deepStrictEqual(result, null, "autoCommit returns null when only .gsd/ files are dirty and excluded");
 
     rmSync(repo, { recursive: true, force: true });
-  }
+  });
 
   // ─── GitServiceImpl: commit returns null when nothing staged ───────────
 
-  console.log("\n=== GitServiceImpl: commit empty ===");
-
-  {
+  test('GitServiceImpl: commit empty', () => {
     const repo = initTempRepo();
     const svc = new GitServiceImpl(repo);
 
     // Nothing dirty, commit should return null
     const result = svc.commit({ message: "should not commit" });
-    assertEq(result, null, "commit returns null when nothing to stage");
+    assert.deepStrictEqual(result, null, "commit returns null when nothing to stage");
 
     rmSync(repo, { recursive: true, force: true });
-  }
+  });
 
   // ─── Helper: create repo for branch tests ────────────────────────────
 
@@ -604,36 +588,32 @@ async function main(): Promise<void> {
 
   // ─── getCurrentBranch ────────────────────────────────────────────────
 
-  console.log("\n=== Branch queries ===");
-
-  {
+  test('Branch queries', () => {
     const repo = initBranchTestRepo();
     const svc = new GitServiceImpl(repo);
 
-    assertEq(svc.getCurrentBranch(), "main", "getCurrentBranch returns main on main branch");
+    assert.deepStrictEqual(svc.getCurrentBranch(), "main", "getCurrentBranch returns main on main branch");
 
     run("git checkout -b gsd/M001/S01", repo);
-    assertEq(svc.getCurrentBranch(), "gsd/M001/S01", "getCurrentBranch returns slice branch name");
+    assert.deepStrictEqual(svc.getCurrentBranch(), "gsd/M001/S01", "getCurrentBranch returns slice branch name");
 
     run("git checkout -b feature/foo", repo);
-    assertEq(svc.getCurrentBranch(), "feature/foo", "getCurrentBranch returns feature branch name");
+    assert.deepStrictEqual(svc.getCurrentBranch(), "feature/foo", "getCurrentBranch returns feature branch name");
 
     rmSync(repo, { recursive: true, force: true });
-  }
+  });
 
   // ─── getMainBranch ────────────────────────────────────────────────────
 
-  console.log("\n=== getMainBranch ===");
-
-  {
+  test('getMainBranch', () => {
     const repo = initBranchTestRepo();
     const svc = new GitServiceImpl(repo);
 
     // Basic case: repo has "main" branch
-    assertEq(svc.getMainBranch(), "main", "getMainBranch returns main when main exists");
+    assert.deepStrictEqual(svc.getMainBranch(), "main", "getMainBranch returns main when main exists");
 
     rmSync(repo, { recursive: true, force: true });
-  }
+  });
 
   {
     // master-only repo
@@ -646,7 +626,7 @@ async function main(): Promise<void> {
     run('git commit -m "init"', repo);
 
     const svc = new GitServiceImpl(repo);
-    assertEq(svc.getMainBranch(), "master", "getMainBranch returns master when only master exists");
+    assert.deepStrictEqual(svc.getMainBranch(), "master", "getMainBranch returns master when only master exists");
 
     rmSync(repo, { recursive: true, force: true });
   }
@@ -657,9 +637,7 @@ async function main(): Promise<void> {
 
   // ─── createSnapshot: prefs enabled ─────────────────────────────────────
 
-  console.log("\n=== createSnapshot: enabled ===");
-
-  {
+  test('createSnapshot: enabled', () => {
     const repo = initBranchTestRepo();
     const svc = new GitServiceImpl(repo, { snapshots: true });
 
@@ -673,16 +651,14 @@ async function main(): Promise<void> {
 
     // Verify ref exists under refs/gsd/snapshots/
     const refs = run("git for-each-ref refs/gsd/snapshots/", repo);
-    assertTrue(refs.includes("refs/gsd/snapshots/gsd/M001/S01/"), "snapshot ref created under refs/gsd/snapshots/");
+    assert.ok(refs.includes("refs/gsd/snapshots/gsd/M001/S01/"), "snapshot ref created under refs/gsd/snapshots/");
 
     rmSync(repo, { recursive: true, force: true });
-  }
+  });
 
   // ─── createSnapshot: prefs disabled ────────────────────────────────────
 
-  console.log("\n=== createSnapshot: disabled ===");
-
-  {
+  test('createSnapshot: disabled', () => {
     const repo = initBranchTestRepo();
     const svc = new GitServiceImpl(repo, { snapshots: false });
 
@@ -694,16 +670,14 @@ async function main(): Promise<void> {
     svc.createSnapshot("gsd/M001/S01");
 
     const refs = run("git for-each-ref refs/gsd/snapshots/", repo);
-    assertEq(refs, "", "no snapshot ref created when prefs.snapshots is false");
+    assert.deepStrictEqual(refs, "", "no snapshot ref created when prefs.snapshots is false");
 
     rmSync(repo, { recursive: true, force: true });
-  }
+  });
 
   // ─── runPreMergeCheck: pass ────────────────────────────────────────────
 
-  console.log("\n=== runPreMergeCheck: pass ===");
-
-  {
+  test('runPreMergeCheck: pass', () => {
     const repo = initBranchTestRepo();
     // Create package.json with passing test script
     createFile(repo, "package.json", JSON.stringify({
@@ -716,17 +690,15 @@ async function main(): Promise<void> {
     const svc = new GitServiceImpl(repo, { pre_merge_check: true });
     const result: PreMergeCheckResult = svc.runPreMergeCheck();
 
-    assertEq(result.passed, true, "runPreMergeCheck returns passed:true when tests pass");
-    assertTrue(!result.skipped, "runPreMergeCheck is not skipped when enabled");
+    assert.deepStrictEqual(result.passed, true, "runPreMergeCheck returns passed:true when tests pass");
+    assert.ok(!result.skipped, "runPreMergeCheck is not skipped when enabled");
 
     rmSync(repo, { recursive: true, force: true });
-  }
+  });
 
   // ─── runPreMergeCheck: fail ────────────────────────────────────────────
 
-  console.log("\n=== runPreMergeCheck: fail ===");
-
-  {
+  test('runPreMergeCheck: fail', () => {
     const repo = initBranchTestRepo();
     // Create package.json with failing test script
     createFile(repo, "package.json", JSON.stringify({
@@ -739,17 +711,15 @@ async function main(): Promise<void> {
     const svc = new GitServiceImpl(repo, { pre_merge_check: true });
     const result: PreMergeCheckResult = svc.runPreMergeCheck();
 
-    assertEq(result.passed, false, "runPreMergeCheck returns passed:false when tests fail");
-    assertTrue(!result.skipped, "runPreMergeCheck is not skipped when enabled");
+    assert.deepStrictEqual(result.passed, false, "runPreMergeCheck returns passed:false when tests fail");
+    assert.ok(!result.skipped, "runPreMergeCheck is not skipped when enabled");
 
     rmSync(repo, { recursive: true, force: true });
-  }
+  });
 
   // ─── runPreMergeCheck: disabled ────────────────────────────────────────
 
-  console.log("\n=== runPreMergeCheck: disabled ===");
-
-  {
+  test('runPreMergeCheck: disabled', () => {
     const repo = initBranchTestRepo();
     createFile(repo, "package.json", JSON.stringify({
       name: "test-disabled",
@@ -761,98 +731,86 @@ async function main(): Promise<void> {
     const svc = new GitServiceImpl(repo, { pre_merge_check: false });
     const result: PreMergeCheckResult = svc.runPreMergeCheck();
 
-    assertEq(result.skipped, true, "runPreMergeCheck skipped when pre_merge_check is false");
-    assertEq(result.passed, true, "runPreMergeCheck returns passed:true when skipped (no block)");
+    assert.deepStrictEqual(result.skipped, true, "runPreMergeCheck skipped when pre_merge_check is false");
+    assert.deepStrictEqual(result.passed, true, "runPreMergeCheck returns passed:true when skipped (no block)");
 
     rmSync(repo, { recursive: true, force: true });
-  }
+  });
 
   // ─── runPreMergeCheck: custom command ──────────────────────────────────
 
-  console.log("\n=== runPreMergeCheck: custom command ===");
-
-  {
+  test('runPreMergeCheck: custom command', () => {
     const repo = initBranchTestRepo();
     // Custom command string overrides auto-detection
     const svc = new GitServiceImpl(repo, { pre_merge_check: 'node -e "process.exit(0)"' });
     const result: PreMergeCheckResult = svc.runPreMergeCheck();
 
-    assertEq(result.passed, true, "runPreMergeCheck passes with custom command that exits 0");
-    assertTrue(!result.skipped, "custom command is not skipped");
+    assert.deepStrictEqual(result.passed, true, "runPreMergeCheck passes with custom command that exits 0");
+    assert.ok(!result.skipped, "custom command is not skipped");
 
     rmSync(repo, { recursive: true, force: true });
-  }
+  });
 
   // ─── VALID_BRANCH_NAME regex ──────────────────────────────────────────
 
-  console.log("\n=== VALID_BRANCH_NAME regex ===");
-
-  {
+  test('VALID_BRANCH_NAME regex', () => {
     // Valid branch names
-    assertTrue(VALID_BRANCH_NAME.test("main"), "VALID_BRANCH_NAME accepts 'main'");
-    assertTrue(VALID_BRANCH_NAME.test("master"), "VALID_BRANCH_NAME accepts 'master'");
-    assertTrue(VALID_BRANCH_NAME.test("develop"), "VALID_BRANCH_NAME accepts 'develop'");
-    assertTrue(VALID_BRANCH_NAME.test("feature/foo"), "VALID_BRANCH_NAME accepts 'feature/foo'");
-    assertTrue(VALID_BRANCH_NAME.test("release-1.0"), "VALID_BRANCH_NAME accepts 'release-1.0'");
-    assertTrue(VALID_BRANCH_NAME.test("my_branch"), "VALID_BRANCH_NAME accepts 'my_branch'");
-    assertTrue(VALID_BRANCH_NAME.test("v2.0.1"), "VALID_BRANCH_NAME accepts 'v2.0.1'");
+    assert.ok(VALID_BRANCH_NAME.test("main"), "VALID_BRANCH_NAME accepts 'main'");
+    assert.ok(VALID_BRANCH_NAME.test("master"), "VALID_BRANCH_NAME accepts 'master'");
+    assert.ok(VALID_BRANCH_NAME.test("develop"), "VALID_BRANCH_NAME accepts 'develop'");
+    assert.ok(VALID_BRANCH_NAME.test("feature/foo"), "VALID_BRANCH_NAME accepts 'feature/foo'");
+    assert.ok(VALID_BRANCH_NAME.test("release-1.0"), "VALID_BRANCH_NAME accepts 'release-1.0'");
+    assert.ok(VALID_BRANCH_NAME.test("my_branch"), "VALID_BRANCH_NAME accepts 'my_branch'");
+    assert.ok(VALID_BRANCH_NAME.test("v2.0.1"), "VALID_BRANCH_NAME accepts 'v2.0.1'");
 
     // Invalid / injection attempts
-    assertTrue(!VALID_BRANCH_NAME.test("main; rm -rf /"), "VALID_BRANCH_NAME rejects shell injection");
-    assertTrue(!VALID_BRANCH_NAME.test("main && echo pwned"), "VALID_BRANCH_NAME rejects && injection");
-    assertTrue(!VALID_BRANCH_NAME.test(""), "VALID_BRANCH_NAME rejects empty string");
-    assertTrue(!VALID_BRANCH_NAME.test("branch name"), "VALID_BRANCH_NAME rejects spaces");
-    assertTrue(!VALID_BRANCH_NAME.test("branch`cmd`"), "VALID_BRANCH_NAME rejects backticks");
-    assertTrue(!VALID_BRANCH_NAME.test("branch$(cmd)"), "VALID_BRANCH_NAME rejects $() subshell");
-  }
+    assert.ok(!VALID_BRANCH_NAME.test("main; rm -rf /"), "VALID_BRANCH_NAME rejects shell injection");
+    assert.ok(!VALID_BRANCH_NAME.test("main && echo pwned"), "VALID_BRANCH_NAME rejects && injection");
+    assert.ok(!VALID_BRANCH_NAME.test(""), "VALID_BRANCH_NAME rejects empty string");
+    assert.ok(!VALID_BRANCH_NAME.test("branch name"), "VALID_BRANCH_NAME rejects spaces");
+    assert.ok(!VALID_BRANCH_NAME.test("branch`cmd`"), "VALID_BRANCH_NAME rejects backticks");
+    assert.ok(!VALID_BRANCH_NAME.test("branch$(cmd)"), "VALID_BRANCH_NAME rejects $() subshell");
+  });
 
   // ─── getMainBranch: configured main_branch preference ──────────────────
 
-  console.log("\n=== getMainBranch: configured main_branch ===");
-
-  {
+  test('getMainBranch: configured main_branch', () => {
     const repo = initBranchTestRepo();
     const svc = new GitServiceImpl(repo, { main_branch: "trunk" });
 
-    assertEq(svc.getMainBranch(), "trunk", "getMainBranch returns configured main_branch preference");
+    assert.deepStrictEqual(svc.getMainBranch(), "trunk", "getMainBranch returns configured main_branch preference");
 
     rmSync(repo, { recursive: true, force: true });
-  }
+  });
 
   // ─── getMainBranch: falls back to auto-detection when not set ──────────
 
-  console.log("\n=== getMainBranch: fallback to auto-detection ===");
-
-  {
+  test('getMainBranch: fallback to auto-detection', () => {
     const repo = initBranchTestRepo();
     const svc = new GitServiceImpl(repo, {});
 
-    assertEq(svc.getMainBranch(), "main", "getMainBranch falls back to auto-detection when main_branch not set");
+    assert.deepStrictEqual(svc.getMainBranch(), "main", "getMainBranch falls back to auto-detection when main_branch not set");
 
     rmSync(repo, { recursive: true, force: true });
-  }
+  });
 
   // ─── getMainBranch: ignores invalid branch names ───────────────────────
 
-  console.log("\n=== getMainBranch: ignores invalid branch name ===");
-
-  {
+  test('getMainBranch: ignores invalid branch name', () => {
     const repo = initBranchTestRepo();
     const svc = new GitServiceImpl(repo, { main_branch: "main; rm -rf /" });
 
-    assertEq(svc.getMainBranch(), "main", "getMainBranch ignores invalid branch name and falls back to auto-detection");
+    assert.deepStrictEqual(svc.getMainBranch(), "main", "getMainBranch ignores invalid branch name and falls back to auto-detection");
 
     rmSync(repo, { recursive: true, force: true });
-  }
+  });
 
   // ─── PreMergeCheckResult type export compile check ─────────────────────
 
-  console.log("\n=== PreMergeCheckResult type export ===");
-
-  {
+  test('PreMergeCheckResult type export', () => {
     const _checkResult: PreMergeCheckResult = { passed: true, skipped: false };
-    assertTrue(true, "PreMergeCheckResult type exported and usable");
-  }
+    assert.ok(true, "PreMergeCheckResult type exported and usable");
+  });
 
   // ═══════════════════════════════════════════════════════════════════════
   // Integration branch — feature-branch workflow support
@@ -860,82 +818,119 @@ async function main(): Promise<void> {
 
   // ─── writeIntegrationBranch / readIntegrationBranch: round-trip ────────
 
-  console.log("\n=== Integration branch: write and read ===");
-
-  {
+  test('Integration branch: write and read', () => {
     const repo = initBranchTestRepo();
 
     // Initially no integration branch
-    assertEq(readIntegrationBranch(repo, "M001"), null, "readIntegrationBranch returns null when no metadata");
+    assert.deepStrictEqual(readIntegrationBranch(repo, "M001"), null, "readIntegrationBranch returns null when no metadata");
 
     // Write integration branch
     writeIntegrationBranch(repo, "M001", "f-123-new-thing");
-    assertEq(readIntegrationBranch(repo, "M001"), "f-123-new-thing", "readIntegrationBranch returns written branch");
+    assert.deepStrictEqual(readIntegrationBranch(repo, "M001"), "f-123-new-thing", "readIntegrationBranch returns written branch");
 
     rmSync(repo, { recursive: true, force: true });
-  }
+  });
 
   // ─── writeIntegrationBranch: updates when branch changes (#300) ──────
 
-  console.log("\n=== Integration branch: updates on branch change ===");
-
-  {
+  test('Integration branch: updates on branch change', () => {
     const repo = initBranchTestRepo();
 
     writeIntegrationBranch(repo, "M001", "f-123-first");
     writeIntegrationBranch(repo, "M001", "f-456-second"); // updates to new branch (#300)
 
-    assertEq(readIntegrationBranch(repo, "M001"), "f-456-second", "second write updates integration branch to new value");
+    assert.deepStrictEqual(readIntegrationBranch(repo, "M001"), "f-456-second", "second write updates integration branch to new value");
 
     rmSync(repo, { recursive: true, force: true });
-  }
+  });
 
   // ─── writeIntegrationBranch: same branch is idempotent ─────────────────
 
-  console.log("\n=== Integration branch: same branch is idempotent ===");
-
-  {
+  test('Integration branch: same branch is idempotent', () => {
     const repo = initBranchTestRepo();
 
     writeIntegrationBranch(repo, "M001", "f-123-first");
     writeIntegrationBranch(repo, "M001", "f-123-first"); // same branch — no-op
 
-    assertEq(readIntegrationBranch(repo, "M001"), "f-123-first", "same branch write is idempotent");
+    assert.deepStrictEqual(readIntegrationBranch(repo, "M001"), "f-123-first", "same branch write is idempotent");
 
     rmSync(repo, { recursive: true, force: true });
-  }
+  });
 
   // ─── writeIntegrationBranch: rejects slice branches ───────────────────
 
-  console.log("\n=== Integration branch: rejects slice branches ===");
-
-  {
+  test('Integration branch: rejects slice branches', () => {
     const repo = initBranchTestRepo();
 
     writeIntegrationBranch(repo, "M001", "gsd/M001/S01");
-    assertEq(readIntegrationBranch(repo, "M001"), null, "slice branches are not recorded as integration branch");
+    assert.deepStrictEqual(readIntegrationBranch(repo, "M001"), null, "slice branches are not recorded as integration branch");
 
     rmSync(repo, { recursive: true, force: true });
-  }
+  });
+
+  // ─── writeIntegrationBranch: rejects workflow-template branches (#2498) ─
+
+  test('Integration branch: rejects workflow-template branches', () => {
+    const repo = initBranchTestRepo();
+
+    // All 8 registered workflow templates should be rejected
+    writeIntegrationBranch(repo, "M001", "gsd/hotfix/fix-login");
+    assert.deepStrictEqual(readIntegrationBranch(repo, "M001"), null, "hotfix branch is not recorded");
+
+    writeIntegrationBranch(repo, "M001", "gsd/bugfix/null-pointer");
+    assert.deepStrictEqual(readIntegrationBranch(repo, "M001"), null, "bugfix branch is not recorded");
+
+    writeIntegrationBranch(repo, "M001", "gsd/small-feature/add-button");
+    assert.deepStrictEqual(readIntegrationBranch(repo, "M001"), null, "small-feature branch is not recorded");
+
+    writeIntegrationBranch(repo, "M001", "gsd/refactor/rename-module");
+    assert.deepStrictEqual(readIntegrationBranch(repo, "M001"), null, "refactor branch is not recorded");
+
+    writeIntegrationBranch(repo, "M001", "gsd/spike/evaluate-lib");
+    assert.deepStrictEqual(readIntegrationBranch(repo, "M001"), null, "spike branch is not recorded");
+
+    writeIntegrationBranch(repo, "M001", "gsd/security-audit/owasp-scan");
+    assert.deepStrictEqual(readIntegrationBranch(repo, "M001"), null, "security-audit branch is not recorded");
+
+    writeIntegrationBranch(repo, "M001", "gsd/dep-upgrade/bump-react");
+    assert.deepStrictEqual(readIntegrationBranch(repo, "M001"), null, "dep-upgrade branch is not recorded");
+
+    writeIntegrationBranch(repo, "M001", "gsd/full-project/new-app");
+    assert.deepStrictEqual(readIntegrationBranch(repo, "M001"), null, "full-project branch is not recorded");
+
+    rmSync(repo, { recursive: true, force: true });
+  });
+
+  // ─── writeIntegrationBranch: still records legitimate branches ────────
+
+  test('Integration branch: records non-ephemeral gsd branches', () => {
+    const repo = initBranchTestRepo();
+
+    // A normal feature branch should still be recorded
+    writeIntegrationBranch(repo, "M001", "feature/new-thing");
+    assert.deepStrictEqual(readIntegrationBranch(repo, "M001"), "feature/new-thing", "normal branches are recorded");
+
+    // The main branch should be recorded
+    writeIntegrationBranch(repo, "M002", "main");
+    assert.deepStrictEqual(readIntegrationBranch(repo, "M002"), "main", "main branch is recorded");
+
+    rmSync(repo, { recursive: true, force: true });
+  });
 
   // ─── writeIntegrationBranch: rejects invalid branch names ─────────────
 
-  console.log("\n=== Integration branch: rejects invalid names ===");
-
-  {
+  test('Integration branch: rejects invalid names', () => {
     const repo = initBranchTestRepo();
 
     writeIntegrationBranch(repo, "M001", "bad; rm -rf /");
-    assertEq(readIntegrationBranch(repo, "M001"), null, "invalid branch name is not recorded");
+    assert.deepStrictEqual(readIntegrationBranch(repo, "M001"), null, "invalid branch name is not recorded");
 
     rmSync(repo, { recursive: true, force: true });
-  }
+  });
 
   // ─── getMainBranch: uses integration branch when milestone set ────────
 
-  console.log("\n=== getMainBranch: integration branch from milestone metadata ===");
-
-  {
+  test('getMainBranch: integration branch from milestone metadata', () => {
     const repo = initBranchTestRepo();
 
     // Create a feature branch
@@ -947,20 +942,18 @@ async function main(): Promise<void> {
 
     // Without milestone set, getMainBranch returns "main"
     const svc = new GitServiceImpl(repo);
-    assertEq(svc.getMainBranch(), "main", "getMainBranch returns main when no milestone set");
+    assert.deepStrictEqual(svc.getMainBranch(), "main", "getMainBranch returns main when no milestone set");
 
     // With milestone set, getMainBranch returns the integration branch
     svc.setMilestoneId("M001");
-    assertEq(svc.getMainBranch(), "f-123-feature", "getMainBranch returns integration branch when milestone set");
+    assert.deepStrictEqual(svc.getMainBranch(), "f-123-feature", "getMainBranch returns integration branch when milestone set");
 
     rmSync(repo, { recursive: true, force: true });
-  }
+  });
 
   // ─── getMainBranch: main_branch pref still takes priority ─────────────
 
-  console.log("\n=== getMainBranch: main_branch pref overrides integration branch ===");
-
-  {
+  test('getMainBranch: main_branch pref overrides integration branch', () => {
     const repo = initBranchTestRepo();
 
     run("git checkout -b f-123-feature", repo);
@@ -972,16 +965,14 @@ async function main(): Promise<void> {
     // Explicit preference still wins
     const svc = new GitServiceImpl(repo, { main_branch: "trunk" });
     svc.setMilestoneId("M001");
-    assertEq(svc.getMainBranch(), "trunk", "main_branch preference overrides integration branch");
+    assert.deepStrictEqual(svc.getMainBranch(), "trunk", "main_branch preference overrides integration branch");
 
     rmSync(repo, { recursive: true, force: true });
-  }
+  });
 
   // ─── getMainBranch: falls back when integration branch deleted ────────
 
-  console.log("\n=== getMainBranch: fallback when integration branch deleted ===");
-
-  {
+  test('getMainBranch: fallback when integration branch deleted', () => {
     const repo = initBranchTestRepo();
 
     // Write metadata pointing to a branch that doesn't exist
@@ -989,75 +980,67 @@ async function main(): Promise<void> {
 
     const svc = new GitServiceImpl(repo);
     svc.setMilestoneId("M001");
-    assertEq(svc.getMainBranch(), "main", "getMainBranch falls back to main when integration branch no longer exists");
+    assert.deepStrictEqual(svc.getMainBranch(), "main", "getMainBranch falls back to main when integration branch no longer exists");
 
     rmSync(repo, { recursive: true, force: true });
-  }
+  });
 
   // ─── resolveMilestoneIntegrationBranch: recorded branch wins when it exists ───
 
-  console.log("\n=== Integration branch: resolver prefers recorded branch ===");
-
-  {
+  test('Integration branch: resolver prefers recorded branch', () => {
     const repo = initBranchTestRepo();
     run("git checkout -b feature/live", repo);
     run("git checkout main", repo);
     writeIntegrationBranch(repo, "M001", "feature/live");
 
     const resolved = resolveMilestoneIntegrationBranch(repo, "M001");
-    assertEq(resolved.status, "recorded", "resolver reports recorded branch when metadata branch exists");
-    assertEq(resolved.recordedBranch, "feature/live", "resolver includes recorded branch");
-    assertEq(resolved.effectiveBranch, "feature/live", "resolver uses recorded branch as effective branch");
+    assert.deepStrictEqual(resolved.status, "recorded", "resolver reports recorded branch when metadata branch exists");
+    assert.deepStrictEqual(resolved.recordedBranch, "feature/live", "resolver includes recorded branch");
+    assert.deepStrictEqual(resolved.effectiveBranch, "feature/live", "resolver uses recorded branch as effective branch");
 
     rmSync(repo, { recursive: true, force: true });
-  }
+  });
 
   // ─── resolveMilestoneIntegrationBranch: falls back to detected default ────────
 
-  console.log("\n=== Integration branch: resolver falls back to detected default ===");
-
-  {
+  test('Integration branch: resolver falls back to detected default', () => {
     const repo = initBranchTestRepo();
     writeIntegrationBranch(repo, "M001", "deleted-branch");
 
     const resolved = resolveMilestoneIntegrationBranch(repo, "M001");
-    assertEq(resolved.status, "fallback", "resolver reports fallback when recorded branch is stale");
-    assertEq(resolved.recordedBranch, "deleted-branch", "resolver preserves stale recorded branch for diagnostics");
-    assertEq(resolved.effectiveBranch, "main", "resolver falls back to detected default branch");
-    assertTrue(
+    assert.deepStrictEqual(resolved.status, "fallback", "resolver reports fallback when recorded branch is stale");
+    assert.deepStrictEqual(resolved.recordedBranch, "deleted-branch", "resolver preserves stale recorded branch for diagnostics");
+    assert.deepStrictEqual(resolved.effectiveBranch, "main", "resolver falls back to detected default branch");
+    assert.ok(
       resolved.reason.includes("deleted-branch") && resolved.reason.includes("main"),
       "resolver reason mentions stale recorded branch and fallback branch",
     );
 
     rmSync(repo, { recursive: true, force: true });
-  }
+  });
 
   // ─── resolveMilestoneIntegrationBranch: configured main_branch is fallback ─────
 
-  console.log("\n=== Integration branch: resolver uses configured fallback branch ===");
-
-  {
+  test('Integration branch: resolver uses configured fallback branch', () => {
     const repo = initBranchTestRepo();
     run("git checkout -b trunk", repo);
     run("git checkout main", repo);
     writeIntegrationBranch(repo, "M001", "deleted-branch");
 
     const resolved = resolveMilestoneIntegrationBranch(repo, "M001", { main_branch: "trunk" });
-    assertEq(resolved.status, "fallback", "resolver reports fallback when using configured main_branch");
-    assertEq(resolved.effectiveBranch, "trunk", "resolver prefers configured main_branch as fallback");
-    assertTrue(
+    assert.deepStrictEqual(resolved.status, "fallback", "resolver reports fallback when using configured main_branch");
+    assert.deepStrictEqual(resolved.effectiveBranch, "trunk", "resolver prefers configured main_branch as fallback");
+    assert.ok(
       resolved.reason.includes("deleted-branch") && resolved.reason.includes("trunk"),
       "configured fallback reason mentions stale branch and configured branch",
     );
 
     rmSync(repo, { recursive: true, force: true });
-  }
+  });
 
   // ─── Per-milestone isolation: different milestones, different targets ──
 
-  console.log("\n=== Integration branch: per-milestone isolation ===");
-
-  {
+  test('Integration branch: per-milestone isolation', () => {
     const repo = initBranchTestRepo();
 
     run("git checkout -b feature-a", repo);
@@ -1070,37 +1053,33 @@ async function main(): Promise<void> {
     const svc = new GitServiceImpl(repo);
 
     svc.setMilestoneId("M001");
-    assertEq(svc.getMainBranch(), "feature-a", "M001 integration branch is feature-a");
+    assert.deepStrictEqual(svc.getMainBranch(), "feature-a", "M001 integration branch is feature-a");
 
     svc.setMilestoneId("M002");
-    assertEq(svc.getMainBranch(), "feature-b", "M002 integration branch is feature-b");
+    assert.deepStrictEqual(svc.getMainBranch(), "feature-b", "M002 integration branch is feature-b");
 
     svc.setMilestoneId(null);
-    assertEq(svc.getMainBranch(), "main", "no milestone set → falls back to main");
+    assert.deepStrictEqual(svc.getMainBranch(), "main", "no milestone set → falls back to main");
 
     rmSync(repo, { recursive: true, force: true });
-  }
+  });
 
   // ─── Backward compatibility: no metadata → existing behavior ──────────
 
-  console.log("\n=== Integration branch: backward compat ===");
-
-  {
+  test('Integration branch: backward compat', () => {
     const repo = initBranchTestRepo();
     const svc = new GitServiceImpl(repo);
 
     // Set milestone but no metadata file exists
     svc.setMilestoneId("M001");
-    assertEq(svc.getMainBranch(), "main", "backward compat: no metadata file → falls back to main");
+    assert.deepStrictEqual(svc.getMainBranch(), "main", "backward compat: no metadata file → falls back to main");
 
     rmSync(repo, { recursive: true, force: true });
-  }
+  });
 
   // ─── untrackRuntimeFiles: removes tracked runtime files from index ───
 
-  console.log("\n=== untrackRuntimeFiles ===");
-
-  {
+  test('untrackRuntimeFiles', async () => {
     const { untrackRuntimeFiles } = await import("../gitignore.ts");
     const repo = mkdtempSync(join(tmpdir(), "gsd-untrack-"));
     run("git init -b main", repo);
@@ -1121,38 +1100,36 @@ async function main(): Promise<void> {
 
     // Precondition: runtime files are tracked
     const trackedBefore = run("git ls-files .gsd/", repo);
-    assertTrue(trackedBefore.includes("completed-units.json"), "untrack: precondition — completed-units tracked");
-    assertTrue(trackedBefore.includes("metrics.json"), "untrack: precondition — metrics tracked");
+    assert.ok(trackedBefore.includes("completed-units.json"), "untrack: precondition — completed-units tracked");
+    assert.ok(trackedBefore.includes("metrics.json"), "untrack: precondition — metrics tracked");
 
     // Run untrackRuntimeFiles
     untrackRuntimeFiles(repo);
 
     // Runtime files should be removed from the index
     const trackedAfter = run("git ls-files .gsd/", repo);
-    assertEq(trackedAfter, "", "untrack: all runtime files removed from index");
+    assert.deepStrictEqual(trackedAfter, "", "untrack: all runtime files removed from index");
 
     // Non-runtime files remain tracked
     const srcTracked = run("git ls-files src.ts", repo);
-    assertTrue(srcTracked.includes("src.ts"), "untrack: non-runtime files remain tracked");
+    assert.ok(srcTracked.includes("src.ts"), "untrack: non-runtime files remain tracked");
 
     // Files still exist on disk
-    assertTrue(existsSync(join(repo, ".gsd", "completed-units.json")),
+    assert.ok(existsSync(join(repo, ".gsd", "completed-units.json")),
       "untrack: completed-units.json still on disk");
-    assertTrue(existsSync(join(repo, ".gsd", "metrics.json")),
+    assert.ok(existsSync(join(repo, ".gsd", "metrics.json")),
       "untrack: metrics.json still on disk");
 
     // Idempotent — running again doesn't error
     untrackRuntimeFiles(repo);
-    assertTrue(true, "untrack: second call is idempotent (no error)");
+    assert.ok(true, "untrack: second call is idempotent (no error)");
 
     rmSync(repo, { recursive: true, force: true });
-  }
+  });
 
   // ─── smartStage excludes runtime files but allows milestone artifacts ──
 
-  console.log("\n=== smartStage excludes runtime files, allows milestone artifacts ===");
-
-  {
+  test('smartStage excludes runtime files, allows milestone artifacts', () => {
     const repo = mkdtempSync(join(tmpdir(), "gsd-smart-stage-excludes-"));
     run("git init -b main", repo);
     run("git config user.email test@test.com", repo);
@@ -1165,7 +1142,7 @@ async function main(): Promise<void> {
     mkdirSync(join(repo, ".gsd", "runtime"), { recursive: true });
     mkdirSync(join(repo, ".gsd", "activity"), { recursive: true });
     writeFileSync(join(repo, ".gsd", "milestones", "M001", "ROADMAP.md"), "# Roadmap");
-    writeFileSync(join(repo, ".gsd", "preferences.md"), "---\nversion: 1\n---");
+    writeFileSync(join(repo, ".gsd", "PREFERENCES.md"), "---\nversion: 1\n---");
     writeFileSync(join(repo, ".gsd", "STATE.md"), "# State");
     writeFileSync(join(repo, ".gsd", "runtime", "units.json"), "{}");
     writeFileSync(join(repo, ".gsd", "activity", "log.jsonl"), "{}");
@@ -1174,71 +1151,65 @@ async function main(): Promise<void> {
     // smartStage excludes only runtime paths, not all of .gsd/ (#1326)
     const svc = new GitServiceImpl(repo);
     const msg = svc.commit({ message: "test commit" });
-    assertTrue(msg !== null, "smartStage: commit succeeds");
+    assert.ok(msg !== null, "smartStage: commit succeeds");
 
     const committed = run("git show --name-only HEAD", repo);
-    assertTrue(committed.includes("src.ts"), "smartStage: source files ARE in commit");
+    assert.ok(committed.includes("src.ts"), "smartStage: source files ARE in commit");
     // Runtime files should NOT be committed
-    assertTrue(!committed.includes(".gsd/STATE.md"), "smartStage: STATE.md excluded (runtime)");
-    assertTrue(!committed.includes(".gsd/runtime/"), "smartStage: runtime/ excluded");
-    assertTrue(!committed.includes(".gsd/activity/"), "smartStage: activity/ excluded");
+    assert.ok(!committed.includes(".gsd/STATE.md"), "smartStage: STATE.md excluded (runtime)");
+    assert.ok(!committed.includes(".gsd/runtime/"), "smartStage: runtime/ excluded");
+    assert.ok(!committed.includes(".gsd/activity/"), "smartStage: activity/ excluded");
     // Milestone artifacts SHOULD be committed when not gitignored (#1326)
-    assertTrue(committed.includes(".gsd/milestones/"), "smartStage: milestone artifacts ARE committed");
+    assert.ok(committed.includes(".gsd/milestones/"), "smartStage: milestone artifacts ARE committed");
 
     rmSync(repo, { recursive: true, force: true });
-  }
+  });
 
   // ─── writeIntegrationBranch: no commit (metadata in external storage) ──
 
-  console.log("\n=== writeIntegrationBranch: no commit ===");
-
-  {
+  test('writeIntegrationBranch: no commit', () => {
     const repo = initBranchTestRepo();
     const commitsBefore = run("git rev-list --count HEAD", repo);
 
     writeIntegrationBranch(repo, "M001", "f-123-new-thing");
 
     // File should still be written to disk
-    assertEq(readIntegrationBranch(repo, "M001"), "f-123-new-thing",
+    assert.deepStrictEqual(readIntegrationBranch(repo, "M001"), "f-123-new-thing",
       "writeIntegrationBranch: metadata file exists on disk");
 
     // No commit — .gsd/ is managed externally
     const commitsAfter = run("git rev-list --count HEAD", repo);
-    assertEq(commitsBefore, commitsAfter,
+    assert.deepStrictEqual(commitsBefore, commitsAfter,
       "writeIntegrationBranch: no git commit created for integration branch");
 
     rmSync(repo, { recursive: true, force: true });
-  }
+  });
 
   // ─── ensureGitignore: always adds .gsd to gitignore ──────────────────
 
-  console.log("\n=== ensureGitignore: adds .gsd entry ===");
-
-  {
+  test('ensureGitignore: adds .gsd entry', async () => {
     const { ensureGitignore } = await import("../gitignore.ts");
     const repo = mkdtempSync(join(tmpdir(), "gsd-gitignore-external-state-"));
 
     // Should add .gsd to gitignore (external state dir is a symlink)
     const modified = ensureGitignore(repo);
-    assertTrue(modified, "ensureGitignore: gitignore was modified");
+    assert.ok(modified, "ensureGitignore: gitignore was modified");
 
     const { readFileSync } = await import("node:fs");
     const content = readFileSync(join(repo, ".gitignore"), "utf-8");
     const lines = content.split("\n").map(l => l.trim()).filter(l => l && !l.startsWith("#"));
-    assertTrue(lines.includes(".gsd"), "ensureGitignore: .gitignore contains .gsd");
+    assert.ok(lines.includes(".gsd"), "ensureGitignore: .gitignore contains .gsd");
 
     // Idempotent — calling again doesn't add duplicates
     const modified2 = ensureGitignore(repo);
-    assertTrue(!modified2, "ensureGitignore: second call is idempotent");
+    assert.ok(!modified2, "ensureGitignore: second call is idempotent");
 
     rmSync(repo, { recursive: true, force: true });
-  }
+  });
 
   // ─── nativeAddAllWithExclusions: symlinked .gsd fallback ───────────────
 
-  console.log("\n=== nativeAddAllWithExclusions: symlinked .gsd fallback ===");
-
-  {
+  test('nativeAddAllWithExclusions: symlinked .gsd fallback', () => {
     // When .gsd is a symlink, git rejects `:!.gsd/...` pathspecs with
     // "fatal: pathspec '...' is beyond a symbolic link". The fix falls
     // back to plain `git add -A`, which respects .gitignore.
@@ -1267,22 +1238,20 @@ async function main(): Promise<void> {
       threw = true;
       console.error("  unexpected error:", e);
     }
-    assertTrue(!threw, "nativeAddAllWithExclusions does not throw with symlinked .gsd");
+    assert.ok(!threw, "nativeAddAllWithExclusions does not throw with symlinked .gsd");
 
     // Verify the real file was staged
     const staged = run("git diff --cached --name-only", repo);
-    assertTrue(staged.includes("src/app.ts"), "real file staged despite symlinked .gsd");
-    assertTrue(!staged.includes(".gsd"), ".gsd content not staged");
+    assert.ok(staged.includes("src/app.ts"), "real file staged despite symlinked .gsd");
+    assert.ok(!staged.includes(".gsd"), ".gsd content not staged");
 
     rmSync(repo, { recursive: true, force: true });
     rmSync(externalGsd, { recursive: true, force: true });
-  }
+  });
 
   // ─── nativeAddAllWithExclusions: non-symlinked .gsd still works ───────
 
-  console.log("\n=== nativeAddAllWithExclusions: non-symlinked .gsd still works ===");
-
-  {
+  test('nativeAddAllWithExclusions: non-symlinked .gsd still works', () => {
     // Verify the normal (non-symlink) case still works with pathspec exclusions
     const repo = initTempRepo();
 
@@ -1296,96 +1265,96 @@ async function main(): Promise<void> {
     } catch {
       threw = true;
     }
-    assertTrue(!threw, "nativeAddAllWithExclusions works with normal .gsd directory");
+    assert.ok(!threw, "nativeAddAllWithExclusions works with normal .gsd directory");
 
     const staged = run("git diff --cached --name-only", repo);
-    assertTrue(staged.includes("src/code.ts"), "real file staged with normal .gsd");
+    assert.ok(staged.includes("src/code.ts"), "real file staged with normal .gsd");
 
     rmSync(repo, { recursive: true, force: true });
-  }
+  });
 
   // ─── MergeConflictError: constructor fields ───────────────────────────────
 
-  console.log("\n=== MergeConflictError: constructor fields ===");
-  {
+  test('MergeConflictError: constructor fields', () => {
     const err = new MergeConflictError(
       ["src/foo.ts", "src/bar.ts"],
       "squash",
       "gsd/M001/S01",
       "main",
     );
-    assertEq(err.conflictedFiles, ["src/foo.ts", "src/bar.ts"], "MergeConflictError.conflictedFiles populated");
-    assertEq(err.strategy, "squash", "MergeConflictError.strategy set");
-    assertEq(err.branch, "gsd/M001/S01", "MergeConflictError.branch set");
-    assertEq(err.mainBranch, "main", "MergeConflictError.mainBranch set");
-    assertEq(err.name, "MergeConflictError", "MergeConflictError.name is MergeConflictError");
-    assertTrue(err.message.includes("src/foo.ts"), "MergeConflictError message lists conflicted files");
-    assertTrue(err.message.toLowerCase().includes("squash"), "MergeConflictError message mentions strategy");
-    assertTrue(err instanceof MergeConflictError, "MergeConflictError is an instanceof MergeConflictError");
-    assertTrue(err instanceof Error, "MergeConflictError is an Error instance");
-  }
+    assert.deepStrictEqual(err.conflictedFiles, ["src/foo.ts", "src/bar.ts"], "MergeConflictError.conflictedFiles populated");
+    assert.deepStrictEqual(err.strategy, "squash", "MergeConflictError.strategy set");
+    assert.deepStrictEqual(err.branch, "gsd/M001/S01", "MergeConflictError.branch set");
+    assert.deepStrictEqual(err.mainBranch, "main", "MergeConflictError.mainBranch set");
+    assert.deepStrictEqual(err.name, "MergeConflictError", "MergeConflictError.name is MergeConflictError");
+    assert.ok(err.message.includes("src/foo.ts"), "MergeConflictError message lists conflicted files");
+    assert.ok(err.message.toLowerCase().includes("squash"), "MergeConflictError message mentions strategy");
+    assert.ok(err instanceof MergeConflictError, "MergeConflictError is an instanceof MergeConflictError");
+    assert.ok(err instanceof Error, "MergeConflictError is an Error instance");
+  });
 
   // ─── Integration branch: rejects gsd/quick/* branches ────────────────────
 
-  console.log("\n=== Integration branch: rejects gsd/quick/* branches ===");
-  {
+  test('Integration branch: rejects gsd/quick/* branches', () => {
     const repo = initBranchTestRepo();
 
     writeIntegrationBranch(repo, "M001", "gsd/quick/1234-some-task");
-    assertEq(readIntegrationBranch(repo, "M001"), null, "gsd/quick/* branches are not recorded as integration branch");
+    assert.deepStrictEqual(readIntegrationBranch(repo, "M001"), null, "gsd/quick/* branches are not recorded as integration branch");
 
     rmSync(repo, { recursive: true, force: true });
-  }
+  });
 
   // ─── Integration branch: resolver returns missing when no metadata ────────
 
-  console.log("\n=== Integration branch: resolver returns missing when no metadata ===");
-  {
+  test('Integration branch: resolver returns missing when no metadata', () => {
     const repo = initBranchTestRepo();
 
     // No writeIntegrationBranch call — no metadata file exists
     const resolved = resolveMilestoneIntegrationBranch(repo, "M999");
-    assertEq(resolved.status, "missing", "resolver reports missing when no metadata file");
-    assertEq(resolved.recordedBranch, null, "resolver recordedBranch is null when no metadata");
-    assertEq(resolved.effectiveBranch, null, "resolver effectiveBranch is null when no metadata");
-    assertTrue(resolved.reason.includes("M999"), "resolver reason mentions the milestone ID");
+    assert.deepStrictEqual(resolved.status, "missing", "resolver reports missing when no metadata file");
+    assert.deepStrictEqual(resolved.recordedBranch, null, "resolver recordedBranch is null when no metadata");
+    assert.deepStrictEqual(resolved.effectiveBranch, null, "resolver effectiveBranch is null when no metadata");
+    assert.ok(resolved.reason.includes("M999"), "resolver reason mentions the milestone ID");
 
     rmSync(repo, { recursive: true, force: true });
-  }
+  });
 
   // ─── Integration branch: resolver missing when both recorded and configured branches gone ───
 
-  console.log("\n=== Integration branch: resolver missing when both recorded and configured branches gone ===");
-  {
+  test('Integration branch: resolver missing when both recorded and configured branches gone', () => {
     const repo = initBranchTestRepo();
 
     // Record a branch that doesn't exist
     writeIntegrationBranch(repo, "M001", "deleted-feature");
     // configured main_branch also doesn't exist
     const resolved = resolveMilestoneIntegrationBranch(repo, "M001", { main_branch: "nonexistent-branch" });
-    assertEq(resolved.status, "missing", "resolver reports missing when recorded branch and configured main_branch both absent");
-    assertEq(resolved.recordedBranch, "deleted-feature", "resolver preserves stale recorded branch");
-    assertEq(resolved.effectiveBranch, null, "resolver effectiveBranch is null when no safe fallback");
-    assertTrue(
+    assert.deepStrictEqual(resolved.status, "missing", "resolver reports missing when recorded branch and configured main_branch both absent");
+    assert.deepStrictEqual(resolved.recordedBranch, "deleted-feature", "resolver preserves stale recorded branch");
+    assert.deepStrictEqual(resolved.effectiveBranch, null, "resolver effectiveBranch is null when no safe fallback");
+    assert.ok(
       resolved.reason.includes("deleted-feature") && resolved.reason.includes("nonexistent-branch"),
       "reason mentions both stale branch and unavailable configured branch",
     );
 
     rmSync(repo, { recursive: true, force: true });
-  }
+  });
 
   // ─── buildTaskCommitMessage: issueNumber appends Resolves trailer ─────────
 
-  console.log("\n=== buildTaskCommitMessage: issueNumber appends Resolves trailer ===");
-  {
+  test('buildTaskCommitMessage: issueNumber appends Resolves trailer', () => {
     const msg = buildTaskCommitMessage({
       taskId: "S01/T03",
       taskTitle: "fix login redirect",
       issueNumber: 42,
     });
-    assertTrue(msg.includes("Resolves #42"), "buildTaskCommitMessage includes Resolves #N trailer when issueNumber is set");
-    assertTrue(msg.startsWith("fix(S01/T03):"), "buildTaskCommitMessage infers fix type");
-  }
+    assert.ok(msg.includes("Resolves #42"), "buildTaskCommitMessage includes Resolves #N trailer when issueNumber is set");
+    assert.ok(msg.startsWith("fix:"), "buildTaskCommitMessage infers fix type");
+    assert.ok(msg.includes("GSD-Task: S01/T03"), "GSD-Task trailer present");
+    // GSD-Task should come before Resolves
+    const taskIdx = msg.indexOf("GSD-Task: S01/T03");
+    const resolvesIdx = msg.indexOf("Resolves #42");
+    assert.ok(taskIdx < resolvesIdx, "GSD-Task trailer before Resolves trailer");
+  });
 
   {
     // No issueNumber — no Resolves trailer
@@ -1393,29 +1362,27 @@ async function main(): Promise<void> {
       taskId: "S01/T04",
       taskTitle: "add dashboard widget",
     });
-    assertTrue(!msg.includes("Resolves"), "buildTaskCommitMessage omits Resolves trailer when issueNumber is absent");
+    assert.ok(!msg.includes("Resolves"), "buildTaskCommitMessage omits Resolves trailer when issueNumber is absent");
+    assert.ok(msg.includes("GSD-Task: S01/T04"), "GSD-Task trailer still present");
   }
 
   // ─── runPreMergeCheck: skips when no package.json ────────────────────────
 
-  console.log("\n=== runPreMergeCheck: skips when no package.json ===");
-  {
+  test('runPreMergeCheck: skips when no package.json', () => {
     const repo = initBranchTestRepo();
     // No package.json created — auto-detect should skip gracefully
     const svc = new GitServiceImpl(repo, { pre_merge_check: true });
     const result: PreMergeCheckResult = svc.runPreMergeCheck();
 
-    assertEq(result.passed, true, "runPreMergeCheck passes when no package.json (skip)");
-    assertEq(result.skipped, true, "runPreMergeCheck skips when no package.json found");
+    assert.deepStrictEqual(result.passed, true, "runPreMergeCheck passes when no package.json (skip)");
+    assert.deepStrictEqual(result.skipped, true, "runPreMergeCheck skips when no package.json found");
 
     rmSync(repo, { recursive: true, force: true });
-  }
+  });
 
   // ─── autoCommit: symlinked .gsd does NOT stage milestone artifacts (#2247) ──
 
-  console.log("\n=== autoCommit: symlinked .gsd does NOT stage milestone artifacts (#2247) ===");
-
-  {
+  test('autoCommit: symlinked .gsd does NOT stage milestone artifacts (#2247)', () => {
     // When .gsd is a symlink (external state project), .gsd/ files live outside
     // the repo by design. smartStage() must NOT force-stage them into git — the
     // .gitignore exclusion is correct and intentional.
@@ -1444,21 +1411,14 @@ async function main(): Promise<void> {
 
     const svc = new GitServiceImpl(repo);
     const msg = svc.autoCommit("complete-milestone", "M009");
-    assertTrue(msg !== null, "symlink autoCommit: commit succeeds");
+    assert.ok(msg !== null, "symlink autoCommit: commit succeeds");
 
     const committed = run("git show --name-only HEAD", repo);
-    assertTrue(committed.includes("src/feature.ts"), "symlink autoCommit: source file committed");
-    assertTrue(!committed.includes(".gsd/milestones/"),
+    assert.ok(committed.includes("src/feature.ts"), "symlink autoCommit: source file committed");
+    assert.ok(!committed.includes(".gsd/milestones/"),
       "symlink autoCommit: .gsd/milestones/ files are NOT staged (external state stays external)");
 
     try { rmSync(repo, { recursive: true, force: true }); } catch {}
     try { rmSync(externalGsd, { recursive: true, force: true }); } catch {}
-  }
-
-  report();
-}
-
-main().catch((error) => {
-  console.error(error);
-  process.exit(1);
+  });
 });

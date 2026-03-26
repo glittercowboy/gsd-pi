@@ -2,6 +2,7 @@
  * Remote Questions — configuration resolution and validation
  */
 
+import { AuthStorage } from "@gsd/pi-coding-agent";
 import { loadEffectiveGSDPreferences, type RemoteQuestionsConfig } from "../gsd/preferences.js";
 import type { RemoteChannel } from "./types.js";
 
@@ -33,7 +34,48 @@ const MAX_TIMEOUT_MINUTES = 30;
 const MIN_POLL_INTERVAL_SECONDS = 2;
 const MAX_POLL_INTERVAL_SECONDS = 30;
 
+// Provider IDs in auth.json that correspond to remote channel env vars.
+const AUTH_PROVIDER_ENV_MAP: Record<string, string> = {
+  discord_bot: "DISCORD_BOT_TOKEN",
+  slack_bot: "SLACK_BOT_TOKEN",
+  telegram_bot: "TELEGRAM_BOT_TOKEN",
+};
+
+/**
+ * Populate remote channel env vars from auth.json when they are not already
+ * set in the environment. Called before every config resolution so that tokens
+ * saved via `/gsd remote discord` (or `/gsd keys add discord_bot`) survive
+ * process restarts without requiring the user to export env vars manually.
+ *
+ * Silently no-ops if auth.json is absent, unreadable, or malformed.
+ */
+function hydrateRemoteTokensFromAuth(): void {
+  const needed = Object.entries(AUTH_PROVIDER_ENV_MAP).filter(([, envVar]) => !process.env[envVar]);
+  if (needed.length === 0) return;
+
+  try {
+    const auth = AuthStorage.create();
+
+    for (const [providerId, envVar] of needed) {
+      try {
+        const creds = auth.getCredentialsForProvider(providerId);
+        const apiKeyCred = creds.find((c: { type: string; key?: string }) => c.type === "api_key" && !!c.key) as
+          | { type: "api_key"; key: string }
+          | undefined;
+        if (apiKeyCred?.key) {
+          process.env[envVar] = apiKeyCred.key;
+        }
+      } catch {
+        // Per-provider failure is non-fatal — skip and move on.
+      }
+    }
+  } catch {
+    // AuthStorage unavailable or auth.json missing/unreadable — skip silently.
+  }
+}
+
 export function resolveRemoteConfig(): ResolvedConfig | null {
+  hydrateRemoteTokensFromAuth();
   const prefs = loadEffectiveGSDPreferences();
   const rq: RemoteQuestionsConfig | undefined = prefs?.preferences.remote_questions;
   if (!rq || !rq.channel || !rq.channel_id) return null;
@@ -58,6 +100,7 @@ export function resolveRemoteConfig(): ResolvedConfig | null {
 }
 
 export function getRemoteConfigStatus(): string {
+  hydrateRemoteTokensFromAuth();
   const prefs = loadEffectiveGSDPreferences();
   const rq: RemoteQuestionsConfig | undefined = prefs?.preferences.remote_questions;
   if (!rq || !rq.channel || !rq.channel_id) return "Remote questions: not configured";
