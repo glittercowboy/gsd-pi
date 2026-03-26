@@ -333,6 +333,8 @@ export async function runPreDispatch(
       if (s.currentMilestoneId) {
         try {
           deps.resolver.mergeAndExit(s.currentMilestoneId, ctx.ui);
+          // Prevent stopAuto from attempting the same merge (#2645)
+          s.milestoneMergedInPhases = true;
         } catch (mergeErr) {
           if (mergeErr instanceof MergeConflictError) {
             ctx.ui.notify(
@@ -428,6 +430,8 @@ export async function runPreDispatch(
     if (s.currentMilestoneId) {
       try {
         deps.resolver.mergeAndExit(s.currentMilestoneId, ctx.ui);
+        // Prevent stopAuto from attempting the same merge (#2645)
+        s.milestoneMergedInPhases = true;
       } catch (mergeErr) {
         if (mergeErr instanceof MergeConflictError) {
           ctx.ui.notify(

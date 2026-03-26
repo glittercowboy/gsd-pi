@@ -590,8 +590,11 @@ export async function stopAuto(
     // When the milestone is complete (has a SUMMARY), merge the worktree branch
     // back to main so code isn't stranded on the worktree branch (#2317).
     // For incomplete milestones, preserve the branch for later resumption.
+    //
+    // Skip if phases.ts already merged this milestone — avoids the double
+    // mergeAndExit that fails because the branch was already deleted (#2645).
     try {
-      if (s.currentMilestoneId) {
+      if (s.currentMilestoneId && !s.milestoneMergedInPhases) {
         const notifyCtx = ctx
           ? { notify: ctx.ui.notify.bind(ctx.ui) }
           : { notify: () => {} };
