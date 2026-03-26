@@ -8,7 +8,7 @@
  * Imports from: auto/types
  */
 
-import type { UnitResult, AgentEndEvent } from "./types.js";
+import type { UnitResult, AgentEndEvent, ErrorContext } from "./types.js";
 import type { AutoSession } from "./session.js";
 import { debugLog } from "../debug-logger.js";
 
@@ -77,12 +77,12 @@ export function isSessionSwitchInFlight(): boolean {
  * blocks to ensure the autoLoop is never stuck awaiting a promise that
  * will never resolve. Safe to call when no resolver is pending (no-op).
  */
-export function resolveAgentEndCancelled(): void {
+export function resolveAgentEndCancelled(errorContext?: ErrorContext): void {
   if (_currentResolve) {
     debugLog("resolveAgentEndCancelled", { status: "resolving-cancelled" });
     const r = _currentResolve;
     _currentResolve = null;
-    r({ status: "cancelled" });
+    r({ status: "cancelled", ...(errorContext ? { errorContext } : {}) });
   }
 }
 

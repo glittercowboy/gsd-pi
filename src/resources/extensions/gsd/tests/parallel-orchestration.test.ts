@@ -391,7 +391,8 @@ describe("parallel-orchestrator: lifecycle", () => {
       writeFileSync(
         builtLoader,
         [
-          "process.stdout.write(JSON.stringify({ type: 'message_end', message: { role: 'assistant', usage: { input: 1, output: 1, totalTokens: 2, cost: { total: 0.01 } } } }) + '\\n');",
+          "const event = { type: 'message_end', message: { role: 'assistant', usage: { input: 1, output: 1, totalTokens: 2, cost: { total: 0.01 } } } };",
+          "process.stdout.write(`${JSON.stringify(event)}\\n`);",
           "setInterval(() => {}, 1000);",
         ].join("\n"),
         "utf-8",
@@ -405,16 +406,17 @@ describe("parallel-orchestrator: lifecycle", () => {
       assert.deepEqual(result.started, ["M001"]);
 
       let worker: WorkerInfo | undefined;
+      const spawnedBinPath = getOrchestratorState()?.workers.get("M001")?.process?.spawnargs[1];
       for (let i = 0; i < 10; i++) {
         await new Promise(resolve => setTimeout(resolve, 100));
         refreshWorkerStatuses(repo);
         worker = getWorkerStatuses().find((entry) => entry.milestoneId === "M001");
-        if (worker?.state === "running" && worker.cost >= 0.01) break;
+        if (worker?.state === "running") break;
       }
 
       assert.ok(worker, "worker should exist");
+      assert.equal(spawnedBinPath, builtLoader, "worker should spawn the sibling dist loader");
       assert.equal(worker.state, "running", "worker should stay running via dist loader fallback");
-      assert.ok(worker.cost >= 0.01, `expected worker cost to reflect stub loader output, got ${worker.cost}`);
 
       await stopParallel(repo);
     } finally {

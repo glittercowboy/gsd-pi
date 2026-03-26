@@ -1,6 +1,6 @@
 import { MODELS } from "./models.generated.js";
 import { CUSTOM_MODELS } from "./models.custom.js";
-import type { Api, KnownProvider, Model, Usage } from "./types.js";
+import type { Api, KnownProvider, Model, ModelCapabilities, Usage } from "./types.js";
 
 const modelRegistry: Map<string, Map<string, Model<Api>>> = new Map();
 
@@ -24,6 +24,71 @@ for (const [provider, models] of Object.entries(CUSTOM_MODELS)) {
 	for (const [id, model] of Object.entries(models)) {
 		if (!providerModels.has(id)) {
 			providerModels.set(id, model as Model<Api>);
+		}
+	}
+}
+
+// ─── Capability Patches ───────────────────────────────────────────────────────
+//
+// Declare capabilities for models that pre-date the `capabilities` field or
+// that live in the auto-generated catalog (models.generated.ts) which we
+// cannot edit directly. Pattern-matching on model IDs is acceptable HERE
+// because this is the single source of truth — call sites must never repeat it.
+//
+// Add new entries as additional capabilities emerge. Existing models that
+// define `capabilities` in their model definition take precedence (the patch
+// only fills in fields that are not already set).
+
+type CapabilityPatch = { match: (m: Model<Api>) => boolean; caps: ModelCapabilities };
+
+const CAPABILITY_PATCHES: CapabilityPatch[] = [
+	// GPT-5.x supports xhigh thinking and OpenAI service tiers
+	{
+		match: (m) => m.id.includes("gpt-5.2") || m.id.includes("gpt-5.3") || m.id.includes("gpt-5.4"),
+		caps: { supportsXhigh: true, supportsServiceTier: true },
+	},
+	// Anthropic Opus 4.6 supports xhigh thinking
+	{
+		match: (m) => m.api === "anthropic-messages" && (m.id.includes("opus-4-6") || m.id.includes("opus-4.6")),
+		caps: { supportsXhigh: true },
+	},
+];
+
+/**
+ * Apply capability patches to a list of models.
+ *
+ * Models constructed outside the static pi-ai registry (custom models from
+ * models.json, extension-registered models, discovered models) do not pass
+ * through the module-init patch loop. Call this function after assembling
+ * any model list to ensure capabilities are set correctly.
+ *
+ * Explicit `capabilities` already set on a model take precedence over patches.
+ */
+export function applyCapabilityPatches(models: Model<Api>[]): Model<Api>[] {
+	return models.map((model) => {
+		for (const patch of CAPABILITY_PATCHES) {
+			if (patch.match(model)) {
+				return {
+					...model,
+					capabilities: { ...patch.caps, ...model.capabilities },
+				};
+			}
+		}
+		return model;
+	});
+}
+
+// Apply patches to the static registry at module load
+for (const [, providerModels] of modelRegistry) {
+	for (const [id, model] of providerModels) {
+		for (const patch of CAPABILITY_PATCHES) {
+			if (patch.match(model)) {
+				providerModels.set(id, {
+					...model,
+					capabilities: { ...patch.caps, ...model.capabilities },
+				});
+				break;
+			}
 		}
 	}
 }
@@ -67,20 +132,12 @@ export function calculateCost<TApi extends Api>(model: Model<TApi>, usage: Usage
 /**
  * Check if a model supports xhigh thinking level.
  *
- * Supported today:
- * - GPT-5.2 / GPT-5.3 / GPT-5.4 model families
- * - Anthropic Messages API Opus 4.6 models (xhigh maps to adaptive effort "max")
+ * Reads from `model.capabilities.supportsXhigh` — set via CAPABILITY_PATCHES
+ * for generated models or declared directly in custom model definitions.
+ * Do not add model-ID or provider-name checks here; update CAPABILITY_PATCHES instead.
  */
 export function supportsXhigh<TApi extends Api>(model: Model<TApi>): boolean {
-	if (model.id.includes("gpt-5.2") || model.id.includes("gpt-5.3") || model.id.includes("gpt-5.4")) {
-		return true;
-	}
-
-	if (model.api === "anthropic-messages") {
-		return model.id.includes("opus-4-6") || model.id.includes("opus-4.6");
-	}
-
-	return false;
+	return model.capabilities?.supportsXhigh ?? false;
 }
 
 /**

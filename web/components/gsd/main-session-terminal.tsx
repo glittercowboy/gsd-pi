@@ -451,7 +451,7 @@ export function MainSessionTerminal({ className, fontSize, projectCwd }: MainSes
       )}
       {/* Drop overlay */}
       {isDragOver && (
-        <div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-2 bg-background/80 backdrop-blur-sm border-2 border-dashed border-primary rounded-md pointer-events-none">
+        <div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-2 bg-background backdrop-blur-sm border-2 border-dashed border-primary rounded-md pointer-events-none">
           <ImagePlus className="h-8 w-8 text-primary" />
           <span className="text-sm font-medium text-primary">Drop image here</span>
         </div>

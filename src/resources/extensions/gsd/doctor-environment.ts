@@ -149,21 +149,44 @@ function checkDependenciesInstalled(basePath: string): EnvironmentCheckResult | 
     };
   }
 
-  // Check if lockfile is newer than node_modules
-  const lockfiles = ["package-lock.json", "yarn.lock", "pnpm-lock.yaml"];
-  for (const lockfile of lockfiles) {
-    const lockPath = join(basePath, lockfile);
+  // Check if lockfile is newer than the last install.
+  //
+  // Each package manager writes a metadata marker inside node_modules on
+  // every install. Comparing the lockfile mtime against the marker is
+  // reliable; comparing against the node_modules *directory* mtime is not,
+  // because directory mtime only changes when entries are added or removed
+  // — not when files inside it are updated. (#1974)
+  const lockfiles: Array<{ lock: string; markers: string[] }> = [
+    { lock: "package-lock.json", markers: ["node_modules/.package-lock.json"] },
+    { lock: "yarn.lock",         markers: ["node_modules/.yarn-integrity"] },
+    { lock: "pnpm-lock.yaml",    markers: ["node_modules/.modules.yaml"] },
+  ];
+
+  for (const { lock, markers } of lockfiles) {
+    const lockPath = join(basePath, lock);
     if (!existsSync(lockPath)) continue;
 
     try {
       const lockMtime = statSync(lockPath).mtimeMs;
-      const nmMtime = statSync(nodeModules).mtimeMs;
 
-      if (lockMtime > nmMtime) {
+      // Prefer the package manager's marker file; fall back to directory mtime
+      // only when no marker exists (e.g., manually created node_modules).
+      let installMtime = 0;
+      for (const marker of markers) {
+        const markerPath = join(basePath, marker);
+        if (existsSync(markerPath)) {
+          installMtime = Math.max(installMtime, statSync(markerPath).mtimeMs);
+        }
+      }
+      if (installMtime === 0) {
+        installMtime = statSync(nodeModules).mtimeMs;
+      }
+
+      if (lockMtime > installMtime) {
         return {
           name: "dependencies",
           status: "warning",
-          message: `${lockfile} is newer than node_modules — dependencies may be stale`,
+          message: `${lock} is newer than node_modules — dependencies may be stale`,
           detail: `Run npm install / yarn / pnpm install to update`,
         };
       }

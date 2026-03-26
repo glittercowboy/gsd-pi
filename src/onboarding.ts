@@ -669,10 +669,12 @@ async function runRemoteQuestionsStep(
   pc: PicoModule,
   authStorage: AuthStorage,
 ): Promise<string | null> {
-  // Check existing config
-  const hasDiscord = authStorage.has('discord_bot') && !!(authStorage.get('discord_bot') as any)?.key
-  const hasSlack = authStorage.has('slack_bot') && !!(authStorage.get('slack_bot') as any)?.key
-  const hasTelegram = authStorage.has('telegram_bot') && !!(authStorage.get('telegram_bot') as any)?.key
+  // Check existing config — use getCredentialsForProvider to skip empty-key entries
+  const hasValidKey = (provider: string) =>
+    authStorage.getCredentialsForProvider(provider).some((c: any) => c.type === 'api_key' && c.key)
+  const hasDiscord = hasValidKey('discord_bot')
+  const hasSlack = hasValidKey('slack_bot')
+  const hasTelegram = hasValidKey('telegram_bot')
   const existingChannel = hasDiscord ? 'Discord' : hasSlack ? 'Slack' : hasTelegram ? 'Telegram' : null
 
   type RemoteOption = { value: string; label: string; hint?: string }

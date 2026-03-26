@@ -98,6 +98,7 @@ export async function collectSettingsData(projectCwdOverride?: string): Promise<
     '    scope: loaded.scope,',
     '    path: loaded.path,',
     '    warnings: loaded.warnings,',
+    '    experimental: p.experimental ? { rtk: p.experimental.rtk } : undefined,',
     '  };',
     '}',
 

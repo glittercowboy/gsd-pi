@@ -40,9 +40,18 @@ export function handleExtensionUIRequest(
   let response: Record<string, unknown>
 
   switch (method) {
-    case 'select':
-      response = { type: 'extension_ui_response', id, value: event.options?.[0] ?? '' }
+    case 'select': {
+      // Lock-guard prompts list "View status" first, but headless needs "Force start"
+      // to proceed. Detect by title and pick the force option.
+      const title = String(event.title ?? '')
+      let selected = event.options?.[0] ?? ''
+      if (title.includes('Auto-mode is running') && event.options) {
+        const forceOption = event.options.find(o => o.toLowerCase().includes('force start'))
+        if (forceOption) selected = forceOption
+      }
+      response = { type: 'extension_ui_response', id, value: selected }
       break
+    }
     case 'confirm':
       response = { type: 'extension_ui_response', id, confirmed: true }
       break

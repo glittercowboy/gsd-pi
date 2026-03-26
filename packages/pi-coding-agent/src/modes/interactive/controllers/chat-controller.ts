@@ -150,7 +150,6 @@ export async function handleAgentEvent(host: InteractiveModeStateHost & {
 									content: [{ type: "text", text: "Web search disabled (offline mode)" }],
 									isError: false,
 								});
-								host.pendingTools.delete(content.toolUseId);
 							} else {
 								const searchContent = content.content;
 								const isError = searchContent && typeof searchContent === "object" && "type" in (searchContent as any) && (searchContent as any).type === "web_search_tool_result_error";
@@ -158,7 +157,6 @@ export async function handleAgentEvent(host: InteractiveModeStateHost & {
 									content: [{ type: "text", text: host.formatWebSearchResult(searchContent) }],
 									isError: !!isError,
 								});
-								host.pendingTools.delete(content.toolUseId);
 							}
 						}
 					}

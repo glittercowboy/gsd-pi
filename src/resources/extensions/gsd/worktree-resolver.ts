@@ -150,6 +150,18 @@ export class WorktreeResolver {
    */
   enterMilestone(milestoneId: string, ctx: NotifyCtx): void {
     this.validateMilestoneId(milestoneId);
+
+    // If worktree creation failed earlier this session, skip all future attempts
+    if (this.s.isolationDegraded) {
+      debugLog("WorktreeResolver", {
+        action: "enterMilestone",
+        milestoneId,
+        skipped: true,
+        reason: "isolation-degraded",
+      });
+      return;
+    }
+
     if (!this.deps.shouldUseWorktreeIsolation()) {
       debugLog("WorktreeResolver", {
         action: "enterMilestone",
@@ -220,6 +232,9 @@ export class WorktreeResolver {
         `Auto-worktree creation for ${milestoneId} failed: ${msg}. Continuing in project root.`,
         "warning",
       );
+      // Degrade isolation for the rest of this session so mergeAndExit
+      // doesn't try to merge a nonexistent worktree branch (#2483)
+      this.s.isolationDegraded = true;
       // Do NOT update s.basePath — stay in project root
     }
   }
@@ -304,6 +319,22 @@ export class WorktreeResolver {
    */
   mergeAndExit(milestoneId: string, ctx: NotifyCtx): void {
     this.validateMilestoneId(milestoneId);
+
+    // If worktree creation failed earlier, skip merge — work is on current branch (#2483)
+    if (this.s.isolationDegraded) {
+      debugLog("WorktreeResolver", {
+        action: "mergeAndExit",
+        milestoneId,
+        skipped: true,
+        reason: "isolation-degraded",
+      });
+      ctx.notify(
+        `Skipping worktree merge for ${milestoneId} — isolation was degraded (worktree creation failed earlier). Work is on the current branch.`,
+        "info",
+      );
+      return;
+    }
+
     const mode = this.deps.getIsolationMode();
     debugLog("WorktreeResolver", {
       action: "mergeAndExit",

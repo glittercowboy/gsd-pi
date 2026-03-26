@@ -868,6 +868,55 @@ describe('git-service', async () => {
     rmSync(repo, { recursive: true, force: true });
   });
 
+  // ─── writeIntegrationBranch: rejects workflow-template branches (#2498) ─
+
+  test('Integration branch: rejects workflow-template branches', () => {
+    const repo = initBranchTestRepo();
+
+    // All 8 registered workflow templates should be rejected
+    writeIntegrationBranch(repo, "M001", "gsd/hotfix/fix-login");
+    assert.deepStrictEqual(readIntegrationBranch(repo, "M001"), null, "hotfix branch is not recorded");
+
+    writeIntegrationBranch(repo, "M001", "gsd/bugfix/null-pointer");
+    assert.deepStrictEqual(readIntegrationBranch(repo, "M001"), null, "bugfix branch is not recorded");
+
+    writeIntegrationBranch(repo, "M001", "gsd/small-feature/add-button");
+    assert.deepStrictEqual(readIntegrationBranch(repo, "M001"), null, "small-feature branch is not recorded");
+
+    writeIntegrationBranch(repo, "M001", "gsd/refactor/rename-module");
+    assert.deepStrictEqual(readIntegrationBranch(repo, "M001"), null, "refactor branch is not recorded");
+
+    writeIntegrationBranch(repo, "M001", "gsd/spike/evaluate-lib");
+    assert.deepStrictEqual(readIntegrationBranch(repo, "M001"), null, "spike branch is not recorded");
+
+    writeIntegrationBranch(repo, "M001", "gsd/security-audit/owasp-scan");
+    assert.deepStrictEqual(readIntegrationBranch(repo, "M001"), null, "security-audit branch is not recorded");
+
+    writeIntegrationBranch(repo, "M001", "gsd/dep-upgrade/bump-react");
+    assert.deepStrictEqual(readIntegrationBranch(repo, "M001"), null, "dep-upgrade branch is not recorded");
+
+    writeIntegrationBranch(repo, "M001", "gsd/full-project/new-app");
+    assert.deepStrictEqual(readIntegrationBranch(repo, "M001"), null, "full-project branch is not recorded");
+
+    rmSync(repo, { recursive: true, force: true });
+  });
+
+  // ─── writeIntegrationBranch: still records legitimate branches ────────
+
+  test('Integration branch: records non-ephemeral gsd branches', () => {
+    const repo = initBranchTestRepo();
+
+    // A normal feature branch should still be recorded
+    writeIntegrationBranch(repo, "M001", "feature/new-thing");
+    assert.deepStrictEqual(readIntegrationBranch(repo, "M001"), "feature/new-thing", "normal branches are recorded");
+
+    // The main branch should be recorded
+    writeIntegrationBranch(repo, "M002", "main");
+    assert.deepStrictEqual(readIntegrationBranch(repo, "M002"), "main", "main branch is recorded");
+
+    rmSync(repo, { recursive: true, force: true });
+  });
+
   // ─── writeIntegrationBranch: rejects invalid branch names ─────────────
 
   test('Integration branch: rejects invalid names', () => {
@@ -1093,7 +1142,7 @@ describe('git-service', async () => {
     mkdirSync(join(repo, ".gsd", "runtime"), { recursive: true });
     mkdirSync(join(repo, ".gsd", "activity"), { recursive: true });
     writeFileSync(join(repo, ".gsd", "milestones", "M001", "ROADMAP.md"), "# Roadmap");
-    writeFileSync(join(repo, ".gsd", "preferences.md"), "---\nversion: 1\n---");
+    writeFileSync(join(repo, ".gsd", "PREFERENCES.md"), "---\nversion: 1\n---");
     writeFileSync(join(repo, ".gsd", "STATE.md"), "# State");
     writeFileSync(join(repo, ".gsd", "runtime", "units.json"), "{}");
     writeFileSync(join(repo, ".gsd", "activity", "log.jsonl"), "{}");

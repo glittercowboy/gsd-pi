@@ -33,6 +33,7 @@ import {
 } from "./graph.js";
 import { injectContext } from "./context-injector.js";
 import type { WorkflowDefinition, StepDefinition } from "./definition-loader.js";
+import { parseUnitId } from "./unit-id.js";
 
 /** Read and parse the frozen DEFINITION.yaml from a run directory. */
 export function readFrozenDefinition(runDir: string): WorkflowDefinition {
@@ -181,8 +182,8 @@ export class CustomWorkflowEngine implements WorkflowEngine {
     const graph = state.raw as WorkflowGraph;
 
     // Extract stepId from "<workflowName>/<stepId>"
-    const parts = completedStep.unitId.split("/");
-    const stepId = parts[parts.length - 1];
+    const { milestone, slice, task } = parseUnitId(completedStep.unitId);
+    const stepId = task ?? slice ?? milestone;
 
     const updatedGraph = markStepComplete(graph, stepId);
     writeGraph(this.runDir, updatedGraph);

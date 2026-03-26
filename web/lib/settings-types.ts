@@ -107,6 +107,9 @@ export interface SettingsPreferencesData {
     timeoutMinutes?: number
     pollIntervalSeconds?: number
   }
+  experimental?: {
+    rtk?: boolean
+  }
   scope: "global" | "project"
   path: string
   warnings?: string[]

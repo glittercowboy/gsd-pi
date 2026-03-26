@@ -126,7 +126,7 @@ describe(
 
 		before(() => {
 			tempDir = mkdtempSync(join(tmpdir(), 'gsd-tui-test-'));
-			prefsPath = join(tempDir, 'preferences.md');
+			prefsPath = join(tempDir, 'PREFERENCES.md');
 			prefs = { version: 1 };
 		});
 

@@ -15,6 +15,7 @@ import { tmpdir } from "node:os";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { runGSDDoctor } from "../doctor.ts";
+import { closeDatabase } from "../gsd-db.ts";
 
 function makeTmp(name: string): string {
   const dir = join(tmpdir(), `doctor-fixlevel-${name}-${Date.now()}-${Math.random().toString(36).slice(2)}`);
@@ -112,6 +113,70 @@ test("fixLevel:all — no reconciliation issue codes are reported", async (t) =>
   assert.ok(roadmapContent.includes("- [ ] **S01"), "roadmap should remain unchecked");
 });
 
+test("legacy roadmap fallback: future slices are treated as pending, active slice is not", async (t) => {
+  const tmp = makeTmp("legacy-pending-fallback");
+  t.after(() => {
+    try { closeDatabase(); } catch { /* noop */ }
+    rmSync(tmp, { recursive: true, force: true });
+  });
+
+  // Force the legacy parser branch.
+  try { closeDatabase(); } catch { /* noop */ }
+
+  const gsd = join(tmp, ".gsd");
+  const m = join(gsd, "milestones", "M001");
+  const s01 = join(m, "slices", "S01", "tasks");
+  mkdirSync(s01, { recursive: true });
+
+  writeFileSync(join(m, "M001-ROADMAP.md"), `# M001: Test
+
+## Slices
+
+- [x] **S01: Done Slice** \`risk:low\` \`depends:[]\`
+  > Done
+- [ ] **S02: Active Slice** \`risk:medium\` \`depends:[S01]\`
+  > In progress
+- [ ] **S03: Future Slice** \`risk:low\` \`depends:[S02]\`
+  > Later
+- [ ] **S04: Future Slice Two** \`risk:low\` \`depends:[S03]\`
+  > Later
+`);
+
+  writeFileSync(join(m, "slices", "S01", "S01-PLAN.md"), `# S01: Done Slice
+
+**Goal:** done
+
+## Tasks
+
+- [x] **T01: Done task** \`est:5m\`
+`);
+
+  // Active slice exists in state/registry but has no directory yet — this should
+  // still be reported as a real error, while future untouched slices should be skipped.
+  const report = await runGSDDoctor(tmp, { scope: "M001" });
+  const missingSliceDirUnits = report.issues
+    .filter(i => i.code === "missing_slice_dir")
+    .map(i => i.unitId)
+    .sort();
+
+  assert.deepStrictEqual(
+    missingSliceDirUnits,
+    ["M001/S02"],
+    "legacy fallback should only report the active slice, not future unstarted slices",
+  );
+
+  const missingTasksDirUnits = report.issues
+    .filter(i => i.code === "missing_tasks_dir")
+    .map(i => i.unitId)
+    .sort();
+
+  assert.deepStrictEqual(
+    missingTasksDirUnits,
+    [],
+    "future slices without directories should be skipped before missing_tasks_dir checks",
+  );
+});
+
 test("fixLevel:all — delimiter_in_title still fixable", async (t) => {
   const tmp = makeTmp("delimiter-fix");
   t.after(() => rmSync(tmp, { recursive: true, force: true }));
@@ -141,7 +206,6 @@ test("fixLevel:all — delimiter_in_title still fixable", async (t) => {
 
   const report = await runGSDDoctor(tmp, { fix: true });
 
-  const delimiterIssues = report.issues.filter(i => i.code === "delimiter_in_title");
   // The milestone-level delimiter is auto-fixed, but the report may or may not include it
   // depending on whether it was fixed successfully. Just verify it ran without crashing.
   assert.ok(report.issues !== undefined, "doctor produces a report");

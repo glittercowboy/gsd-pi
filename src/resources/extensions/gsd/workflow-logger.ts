@@ -199,7 +199,6 @@ export function readAuditLog(basePath?: string): LogEntry[] {
  */
 export function _resetLogs(): void {
   _buffer = [];
-  _auditBasePath = null;
 }
 
 // ─── Internal ───────────────────────────────────────────────────────────

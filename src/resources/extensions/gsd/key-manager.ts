@@ -150,22 +150,13 @@ export interface KeyStatus {
  */
 export function getAllKeyStatuses(auth: AuthStorage): KeyStatus[] {
   return PROVIDER_REGISTRY.map((provider) => {
-    const creds = auth.getCredentialsForProvider(provider.id);
+    const rawCreds = auth.getCredentialsForProvider(provider.id);
+    // Filter out empty-key entries (left by legacy removeProviderToken or skipped onboarding)
+    const creds = rawCreds.filter((c) => !(c.type === "api_key" && !(c as ApiKeyCredential).key));
     const envKey = provider.envVar ? process.env[provider.envVar] : undefined;
 
     if (creds.length > 0) {
       const firstCred = creds[0];
-      // Skip empty keys (from skipped onboarding)
-      if (firstCred.type === "api_key" && !(firstCred as ApiKeyCredential).key) {
-        return {
-          provider,
-          configured: false,
-          source: "none" as const,
-          credentialCount: 0,
-          description: "empty key (skipped setup)",
-          backedOff: false,
-        };
-      }
       const desc =
         creds.length > 1
           ? `${creds.length} keys (round-robin)`
@@ -275,7 +266,7 @@ export async function handleAddKey(
   } else {
     // Interactive provider picker
     const options = PROVIDER_REGISTRY.map((p) => {
-      const creds = auth.getCredentialsForProvider(p.id);
+      const creds = auth.getCredentialsForProvider(p.id).filter((c) => !(c.type === "api_key" && !(c as ApiKeyCredential).key));
       const existing = creds.length > 0 ? " (configured)" : "";
       return `[${p.category}] ${p.label}${existing}`;
     });
@@ -360,7 +351,7 @@ export async function handleRemoveKey(
   } else {
     // Show only configured providers
     const configured = PROVIDER_REGISTRY.filter((p) => {
-      const creds = auth.getCredentialsForProvider(p.id);
+      const creds = auth.getCredentialsForProvider(p.id).filter((c) => !(c.type === "api_key" && !(c as ApiKeyCredential).key));
       return creds.length > 0;
     });
 
@@ -619,7 +610,7 @@ export async function handleRotateKey(
     // Show only configured API key providers
     const configured = PROVIDER_REGISTRY.filter((p) => {
       const creds = auth.getCredentialsForProvider(p.id);
-      return creds.some((c) => c.type === "api_key");
+      return creds.some((c) => c.type === "api_key" && (c as ApiKeyCredential).key);
     });
 
     if (configured.length === 0) {
@@ -788,7 +779,7 @@ export function runKeyDoctor(auth: AuthStorage): DoctorFinding[] {
     if (!envValue) continue;
 
     const creds = auth.getCredentialsForProvider(provider.id);
-    const apiKey = creds.find((c) => c.type === "api_key") as ApiKeyCredential | undefined;
+    const apiKey = creds.find((c) => c.type === "api_key" && (c as ApiKeyCredential).key) as ApiKeyCredential | undefined;
     if (apiKey?.key && apiKey.key !== envValue) {
       findings.push({
         severity: "warning",

@@ -189,27 +189,34 @@ export async function handlePlanMilestone(
     return { error: `validation failed: ${(err as Error).message}` };
   }
 
-  // ── State machine preconditions ─────────────────────────────────────────
-  const existingMilestone = getMilestone(params.milestoneId);
-  if (existingMilestone && (existingMilestone.status === "complete" || existingMilestone.status === "done")) {
-    return { error: `cannot re-plan milestone ${params.milestoneId}: it is already complete` };
-  }
-
-  // Validate depends_on: all dependencies must exist and be complete
-  if (params.dependsOn && params.dependsOn.length > 0) {
-    for (const depId of params.dependsOn) {
-      const dep = getMilestone(depId);
-      if (!dep) {
-        return { error: `depends_on references unknown milestone: ${depId}` };
-      }
-      if (dep.status !== "complete" && dep.status !== "done") {
-        return { error: `depends_on milestone ${depId} is not yet complete (status: ${dep.status})` };
-      }
-    }
-  }
+  // ── Guards + DB writes inside a single transaction (prevents TOCTOU) ───
+  // Guards must be inside the transaction so the state they check cannot
+  // change between the read and the write (#2723).
+  let guardError: string | null = null;
 
   try {
     transaction(() => {
+      const existingMilestone = getMilestone(params.milestoneId);
+      if (existingMilestone && (existingMilestone.status === "complete" || existingMilestone.status === "done")) {
+        guardError = `cannot re-plan milestone ${params.milestoneId}: it is already complete`;
+        return;
+      }
+
+      // Validate depends_on: all dependencies must exist and be complete
+      if (params.dependsOn && params.dependsOn.length > 0) {
+        for (const depId of params.dependsOn) {
+          const dep = getMilestone(depId);
+          if (!dep) {
+            guardError = `depends_on references unknown milestone: ${depId}`;
+            return;
+          }
+          if (dep.status !== "complete" && dep.status !== "done") {
+            guardError = `depends_on milestone ${depId} is not yet complete (status: ${dep.status})`;
+            return;
+          }
+        }
+      }
+
       insertMilestone({
         id: params.milestoneId,
         title: params.title,
@@ -252,6 +259,10 @@ export async function handlePlanMilestone(
     });
   } catch (err) {
     return { error: `db write failed: ${(err as Error).message}` };
+  }
+
+  if (guardError) {
+    return { error: guardError };
   }
 
   let roadmapPath: string;

@@ -63,13 +63,13 @@ test("show_token_cost defaults to undefined (disabled) when not set", () => {
   assert.equal(preferences.show_token_cost, undefined);
 });
 
-test("empty preferences.md does not enable show_token_cost", () => {
+test("empty PREFERENCES.md does not enable show_token_cost", () => {
   const prefs = parsePreferencesMarkdown("---\nversion: 1\n---\n");
   assert.ok(prefs);
   assert.equal(prefs.show_token_cost, undefined);
 });
 
-test("preferences.md with show_token_cost: true enables the preference", () => {
+test("PREFERENCES.md with show_token_cost: true enables the preference", () => {
   const prefs = parsePreferencesMarkdown("---\nshow_token_cost: true\n---\n");
   assert.ok(prefs);
   assert.equal(prefs.show_token_cost, true);

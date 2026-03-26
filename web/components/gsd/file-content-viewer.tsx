@@ -204,7 +204,7 @@ function PlainViewer({ content }: { content: string }) {
           {lines.map((line, i) => (
             <tr key={i} className="hover:bg-accent/20">
               <td
-                className="select-none pr-4 text-right text-muted-foreground/40 align-top"
+                className="select-none pr-4 text-right text-muted-foreground align-top"
                 style={{ minWidth: `${gutterWidth + 1}ch` }}
               >
                 {i + 1}
@@ -313,7 +313,7 @@ function MarkdownViewer({ content, filepath, shikiTheme = "github-dark-default" 
             },
             img({ src, alt }) {
               return (
-                <span className="my-2 block rounded border border-border bg-muted/20 px-3 py-2 text-xs text-muted-foreground italic">
+                <span className="my-2 block rounded border border-border bg-muted/50 px-3 py-2 text-xs text-muted-foreground italic">
                   🖼 {alt || (typeof src === "string" ? src : "") || "image"}
                 </span>
               )
@@ -485,7 +485,7 @@ function InlineDiffViewer({ before, after, onDismiss }: { before: string; after:
                   "select-none pr-3 text-right align-top min-w-[3ch]",
                   line.type === "add" ? "text-emerald-400/40" :
                   line.type === "remove" ? "text-red-400/40" :
-                  "text-muted-foreground/30",
+                  "text-muted-foreground/50",
                 )}
               >
                 {line.lineNum ?? ""}
@@ -495,8 +495,8 @@ function InlineDiffViewer({ before, after, onDismiss }: { before: string; after:
                   "whitespace-pre pr-4",
                   line.type === "add" && "text-emerald-300",
                   line.type === "remove" && "text-red-300 line-through decoration-red-400/30",
-                  line.type === "context" && line.text === "···" && "text-muted-foreground/30 text-center italic",
-                  line.type === "context" && line.text !== "···" && "text-muted-foreground/70",
+                  line.type === "context" && line.text === "···" && "text-muted-foreground/50 text-center italic",
+                  line.type === "context" && line.text !== "···" && "text-muted-foreground",
                 )}
               >
                 {line.text || " "}

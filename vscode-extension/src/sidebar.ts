@@ -19,9 +19,17 @@ export class GsdSidebarProvider implements vscode.WebviewViewProvider {
 		this.disposables.push(
 			client.onConnectionChange(() => this.refresh()),
 			client.onEvent((evt) => {
-				// Refresh on streaming state changes
-				if (evt.type === "agent_start" || evt.type === "agent_end") {
-					this.refresh();
+				switch (evt.type) {
+					case "agent_start":
+					case "agent_end":
+					case "model_switched":
+					case "compaction_start":
+					case "compaction_end":
+					case "retry_start":
+					case "retry_end":
+					case "retry_error":
+						this.refresh();
+						break;
 				}
 			}),
 		);
@@ -85,6 +93,18 @@ export class GsdSidebarProvider implements vscode.WebviewViewProvider {
 						}
 					}
 					break;
+				case "toggleAutoRetry":
+					if (this.client.isConnected) {
+						await this.client.setAutoRetry(!this.client.autoRetryEnabled).catch(() => {});
+						this.refresh();
+					}
+					break;
+				case "setSessionName":
+					await vscode.commands.executeCommand("gsd.setSessionName");
+					break;
+				case "copyLastResponse":
+					await vscode.commands.executeCommand("gsd.copyLastResponse");
+					break;
 			}
 		});
 
@@ -107,13 +127,16 @@ export class GsdSidebarProvider implements vscode.WebviewViewProvider {
 		let sessionId = "N/A";
 		let sessionName = "";
 		let messageCount = 0;
+		let pendingMessageCount = 0;
 		let thinkingLevel: ThinkingLevel = "off";
 		let isStreaming = false;
 		let isCompacting = false;
 		let autoCompaction = false;
+		let autoRetry = false;
 		let stats: SessionStats | null = null;
 
 		if (this.client.isConnected) {
+			autoRetry = this.client.autoRetryEnabled;
 			try {
 				const state = await this.client.getState();
 				modelName = state.model
@@ -122,6 +145,7 @@ export class GsdSidebarProvider implements vscode.WebviewViewProvider {
 				sessionId = state.sessionId;
 				sessionName = state.sessionName ?? "";
 				messageCount = state.messageCount;
+				pendingMessageCount = state.pendingMessageCount;
 				thinkingLevel = state.thinkingLevel as ThinkingLevel;
 				isStreaming = state.isStreaming;
 				isCompacting = state.isCompacting;
@@ -145,10 +169,12 @@ export class GsdSidebarProvider implements vscode.WebviewViewProvider {
 			sessionId,
 			sessionName,
 			messageCount,
+			pendingMessageCount,
 			thinkingLevel,
 			isStreaming,
 			isCompacting,
 			autoCompaction,
+			autoRetry,
 			stats,
 		});
 	}
@@ -168,10 +194,12 @@ export class GsdSidebarProvider implements vscode.WebviewViewProvider {
 		sessionId: string;
 		sessionName: string;
 		messageCount: number;
+		pendingMessageCount: number;
 		thinkingLevel: ThinkingLevel;
 		isStreaming: boolean;
 		isCompacting: boolean;
 		autoCompaction: boolean;
+		autoRetry: boolean;
 		stats: SessionStats | null;
 	}): string {
 		const statusColor = info.connected ? "#4ec9b0" : "#f44747";
@@ -185,6 +213,12 @@ export class GsdSidebarProvider implements vscode.WebviewViewProvider {
 
 		const inputTokens = info.stats?.inputTokens?.toLocaleString() ?? "-";
 		const outputTokens = info.stats?.outputTokens?.toLocaleString() ?? "-";
+		const cacheRead = info.stats?.cacheReadTokens?.toLocaleString() ?? "-";
+		const cacheWrite = info.stats?.cacheWriteTokens?.toLocaleString() ?? "-";
+		const turnCount = info.stats?.turnCount?.toString() ?? "-";
+		const duration = info.stats?.duration !== undefined
+			? `${Math.round(info.stats.duration / 1000)}s`
+			: "-";
 		const cost = info.stats?.totalCost !== undefined ? `$${info.stats.totalCost.toFixed(4)}` : "-";
 
 		const thinkingBadge = info.thinkingLevel !== "off"
@@ -192,6 +226,10 @@ export class GsdSidebarProvider implements vscode.WebviewViewProvider {
 			: `<span class="badge muted">off</span>`;
 
 		const autoCompBadge = info.autoCompaction
+			? `<span class="badge">on</span>`
+			: `<span class="badge muted">off</span>`;
+
+		const autoRetryBadge = info.autoRetry
 			? `<span class="badge">on</span>`
 			: `<span class="badge muted">off</span>`;
 
@@ -352,8 +390,14 @@ export class GsdSidebarProvider implements vscode.WebviewViewProvider {
 		<div class="section-title">Session</div>
 		<table class="info-table">
 			<tr><td>Model</td><td>${escapeHtml(info.modelName)}</td></tr>
-			<tr><td>Session</td><td>${escapeHtml(info.sessionName || info.sessionId)}</td></tr>
-			<tr><td>Messages</td><td>${info.messageCount}</td></tr>
+			<tr>
+				<td>Session</td>
+				<td>
+					${escapeHtml(info.sessionName || info.sessionId)}
+					${info.connected ? `<span class="badge clickable" data-command="setSessionName" title="Rename session" style="margin-left:4px">✎</span>` : ""}
+				</td>
+			</tr>
+			<tr><td>Messages</td><td>${info.messageCount}${info.pendingMessageCount > 0 ? ` <span class="badge muted">+${info.pendingMessageCount} pending</span>` : ""}</td></tr>
 			<tr>
 				<td>Thinking</td>
 				<td>${thinkingBadge}</td>
@@ -361,6 +405,10 @@ export class GsdSidebarProvider implements vscode.WebviewViewProvider {
 			<tr>
 				<td>Auto-compact</td>
 				<td>${autoCompBadge}</td>
+			</tr>
+			<tr>
+				<td>Auto-retry</td>
+				<td>${autoRetryBadge}</td>
 			</tr>
 		</table>
 	</div>
@@ -373,6 +421,14 @@ export class GsdSidebarProvider implements vscode.WebviewViewProvider {
 			<span class="value">${inputTokens}</span>
 			<span class="label">Output</span>
 			<span class="value">${outputTokens}</span>
+			<span class="label">Cache read</span>
+			<span class="value">${cacheRead}</span>
+			<span class="label">Cache write</span>
+			<span class="value">${cacheWrite}</span>
+			<span class="label">Turns</span>
+			<span class="value">${turnCount}</span>
+			<span class="label">Duration</span>
+			<span class="value">${duration}</span>
 			<span class="label">Cost</span>
 			<span class="value">${cost}</span>
 		</div>
@@ -391,6 +447,10 @@ export class GsdSidebarProvider implements vscode.WebviewViewProvider {
 				   <div class="btn-row">
 				     <button class="secondary" data-command="cycleThinking">Thinking</button>
 				     <button class="secondary" data-command="toggleAutoCompaction">Auto-Compact</button>
+				   </div>
+				   <div class="btn-row">
+				     <button class="secondary" data-command="toggleAutoRetry">Auto-Retry</button>
+				     <button class="secondary" data-command="copyLastResponse">Copy Response</button>
 				   </div>`
 				: `<button data-command="start">Start Agent</button>`
 			}

@@ -269,6 +269,8 @@ function _parseSummaryImpl(content: string): Summary {
       whatHappened: nativeResult.whatHappened,
       deviations: nativeResult.deviations,
       filesModified: nativeResult.filesModified,
+      followUps: extractSection(content, 'Follow-ups') ?? '',
+      knownLimitations: extractSection(content, 'Known Limitations') ?? '',
     };
   }
 
@@ -330,7 +332,10 @@ function _parseSummaryImpl(content: string): Summary {
     }
   }
 
-  return { frontmatter, title, oneLiner, whatHappened, deviations, filesModified };
+  const followUps = extractSection(body, 'Follow-ups') ?? '';
+  const knownLimitations = extractSection(body, 'Known Limitations') ?? '';
+
+  return { frontmatter, title, oneLiner, whatHappened, deviations, filesModified, followUps, knownLimitations };
 }
 
 // ─── Continue Parser ───────────────────────────────────────────────────────

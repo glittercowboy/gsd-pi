@@ -51,7 +51,7 @@ export function StepReady({ providerLabel, onFinish }: StepReadyProps) {
         initial={{ opacity: 0, y: 12 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ delay: 0.26, duration: 0.4 }}
-        className="mt-8 flex items-center gap-4 rounded-xl border border-border/40 bg-card/30 px-5 py-3"
+        className="mt-8 flex items-center gap-4 rounded-xl border border-border/50 bg-card/50 px-5 py-3"
       >
         <div className="flex items-center gap-2 text-xs text-muted-foreground">
           <Image
@@ -70,7 +70,7 @@ export function StepReady({ providerLabel, onFinish }: StepReadyProps) {
           />
           <span>Shell unlocked</span>
         </div>
-        <div className="h-3 w-px bg-border/60" />
+        <div className="h-3 w-px bg-border" />
         <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
           <span className="h-1.5 w-1.5 rounded-full bg-success" />
           <span>{providerLabel}</span>

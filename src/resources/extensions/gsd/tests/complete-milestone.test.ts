@@ -5,6 +5,7 @@ import { join, dirname } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { invalidateAllCaches } from '../cache.ts';
+import { parseUnitId } from "../unit-id.ts";
 
 // loadPrompt reads from ~/.gsd/agent/extensions/gsd/prompts/ (main checkout).
 // In a worktree the file may not exist there yet, so we resolve prompts
@@ -222,8 +223,7 @@ describe("complete-milestone", () => {
 
       const unitType = "complete-milestone";
       const unitId = "M001";
-      const parts = unitId.split("/");
-      const mid = parts[0]!;
+      const { milestone: mid } = parseUnitId(unitId);
 
       // This is the exact logic from diagnoseExpectedArtifact for "complete-milestone"
       const result = `${relMilestoneFile(base, mid, "SUMMARY")} (milestone summary)`;

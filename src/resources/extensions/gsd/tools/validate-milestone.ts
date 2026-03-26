@@ -14,6 +14,7 @@ import {
 import { resolveMilestonePath, clearPathCache } from "../paths.js";
 import { saveFile, clearParseCache } from "../files.js";
 import { invalidateStateCache } from "../state.js";
+import { VALIDATION_VERDICTS, isValidMilestoneVerdict } from "../verdict-parser.js";
 
 export interface ValidateMilestoneParams {
   milestoneId: string;
@@ -71,12 +72,11 @@ export async function handleValidateMilestone(
   if (!params.milestoneId || typeof params.milestoneId !== "string" || params.milestoneId.trim() === "") {
     return { error: "milestoneId is required and must be a non-empty string" };
   }
-  const validVerdicts = ["pass", "needs-attention", "needs-remediation"];
-  if (!validVerdicts.includes(params.verdict)) {
-    return { error: `verdict must be one of: ${validVerdicts.join(", ")}` };
+  if (!isValidMilestoneVerdict(params.verdict)) {
+    return { error: `verdict must be one of: ${VALIDATION_VERDICTS.join(", ")}` };
   }
 
-  // ── Filesystem render ──────────────────────────────────────────────────
+  // ── Resolve paths and render markdown ────────────────────────────────
   const validationMd = renderValidationMarkdown(params);
 
   let validationPath: string;
@@ -89,16 +89,11 @@ export async function handleValidateMilestone(
     validationPath = join(manualDir, `${params.milestoneId}-VALIDATION.md`);
   }
 
-  try {
-    await saveFile(validationPath, validationMd);
-  } catch (renderErr) {
-    process.stderr.write(
-      `gsd-db: validate_milestone — disk render failed: ${(renderErr as Error).message}\n`,
-    );
-    return { error: `disk render failed: ${(renderErr as Error).message}` };
-  }
-
-  // ── DB write — store in assessments table ──────────────────────────────
+  // ── DB write first — matches complete-task/complete-slice pattern ───
+  // Write DB before disk so a crash between the two leaves a recoverable
+  // state: the DB row exists but the file is missing, which projection
+  // rendering can regenerate. The inverse (file exists, no DB row) is
+  // harder to detect and recover from (#2725).
   const validatedAt = new Date().toISOString();
 
   transaction(() => {
@@ -114,6 +109,23 @@ export async function handleValidateMilestone(
       ":created_at": validatedAt,
     });
   });
+
+  // ── Filesystem render (outside transaction) ────────────────────────────
+  // If disk render fails, roll back the DB row so state stays consistent.
+  try {
+    await saveFile(validationPath, validationMd);
+  } catch (renderErr) {
+    process.stderr.write(
+      `gsd-db: validate_milestone — disk render failed, rolling back DB row: ${(renderErr as Error).message}\n`,
+    );
+    const rollbackAdapter = _getAdapter();
+    if (rollbackAdapter) {
+      rollbackAdapter.prepare(
+        `DELETE FROM assessments WHERE milestone_id = :mid AND scope = 'milestone-validation'`,
+      ).run({ ":mid": params.milestoneId });
+    }
+    return { error: `disk render failed: ${(renderErr as Error).message}` };
+  }
 
   invalidateStateCache();
   clearPathCache();

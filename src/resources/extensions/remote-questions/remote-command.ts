@@ -312,7 +312,7 @@ function saveProviderToken(provider: string, token: string): void {
 
 function removeProviderToken(provider: string): void {
   const auth = getAuthStorage();
-  auth.set(provider, { type: "api_key", key: "" });
+  auth.remove(provider);
 }
 
 export function saveRemoteQuestionsConfig(channel: "slack" | "discord" | "telegram", channelId: string): void {

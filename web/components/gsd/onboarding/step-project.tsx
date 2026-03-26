@@ -248,7 +248,7 @@ export function StepProject({ onFinish, onBack, onBeforeSwitch }: StepProjectPro
         )}
 
         {noDevRoot && (
-          <div className="rounded-xl border border-border/40 bg-card/30 px-4 py-6 text-center text-sm text-muted-foreground">
+          <div className="rounded-xl border border-border/50 bg-card/50 px-4 py-6 text-center text-sm text-muted-foreground">
             No dev root configured. Go back and set one, or finish setup to configure later.
           </div>
         )}
@@ -278,7 +278,7 @@ export function StepProject({ onFinish, onBack, onBeforeSwitch }: StepProjectPro
                     "active:scale-[0.98]",
                     isSwitching
                       ? "border-foreground/30 bg-foreground/[0.06]"
-                      : "border-border/40 bg-card/20 hover:border-foreground/15 hover:bg-card/50",
+                      : "border-border/50 bg-card/50 hover:border-foreground/15 hover:bg-card/50",
                     switchingTo && !isSwitching && "opacity-40 pointer-events-none",
                   )}
                 >
@@ -288,7 +288,7 @@ export function StepProject({ onFinish, onBack, onBeforeSwitch }: StepProjectPro
                     project.kind === "active-gsd" ? "bg-success/10" : "bg-foreground/[0.04]",
                   )}>
                     {isSwitching ? (
-                      <Loader2 className="h-4 w-4 animate-spin text-foreground/60" />
+                      <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
                     ) : (
                       <KindIcon className={cn("h-4 w-4", style.color)} />
                     )}
@@ -310,7 +310,7 @@ export function StepProject({ onFinish, onBack, onBeforeSwitch }: StepProjectPro
                         {stack.map((tag) => (
                           <span
                             key={tag}
-                            className="rounded bg-foreground/[0.04] px-1.5 py-0.5 text-[10px] text-muted-foreground/60"
+                            className="rounded bg-foreground/[0.04] px-1.5 py-0.5 text-[10px] text-muted-foreground"
                           >
                             {tag}
                           </span>
@@ -320,7 +320,7 @@ export function StepProject({ onFinish, onBack, onBeforeSwitch }: StepProjectPro
 
                     {/* Row 3: progress info (for active-gsd projects) */}
                     {progress && (
-                      <div className="mt-1.5 text-[11px] text-muted-foreground/50">
+                      <div className="mt-1.5 text-[11px] text-muted-foreground">
                         {progress}
                       </div>
                     )}
@@ -336,7 +336,7 @@ export function StepProject({ onFinish, onBack, onBeforeSwitch }: StepProjectPro
                             }}
                           />
                         </div>
-                        <span className="text-[10px] tabular-nums text-muted-foreground/40">
+                        <span className="text-[10px] tabular-nums text-muted-foreground">
                           {milestoneCount}
                         </span>
                       </div>
@@ -344,7 +344,7 @@ export function StepProject({ onFinish, onBack, onBeforeSwitch }: StepProjectPro
                   </div>
 
                   {/* Arrow */}
-                  <ArrowRight className="mt-1 h-4 w-4 shrink-0 text-muted-foreground/20 transition-all group-hover:text-muted-foreground/60 group-hover:translate-x-0.5" />
+                  <ArrowRight className="mt-1 h-4 w-4 shrink-0 text-muted-foreground/50 transition-all group-hover:text-muted-foreground group-hover:translate-x-0.5" />
                 </button>
               )
             })}
@@ -352,7 +352,7 @@ export function StepProject({ onFinish, onBack, onBeforeSwitch }: StepProjectPro
         )}
 
         {!loading && devRoot && projects.length === 0 && !error && (
-          <div className="rounded-xl border border-border/40 bg-card/30 px-4 py-6 text-center text-sm text-muted-foreground">
+          <div className="rounded-xl border border-border/50 bg-card/50 px-4 py-6 text-center text-sm text-muted-foreground">
             No projects found in {devRoot}
           </div>
         )}
@@ -367,7 +367,7 @@ export function StepProject({ onFinish, onBack, onBeforeSwitch }: StepProjectPro
                 disabled={!!switchingTo}
                 className={cn(
                   "flex w-full items-center gap-3.5 rounded-xl border border-dashed px-4 py-3.5 text-left transition-all duration-200",
-                  "border-border/40 text-muted-foreground hover:border-foreground/15 hover:text-foreground",
+                  "border-border/50 text-muted-foreground hover:border-foreground/15 hover:text-foreground",
                   "active:scale-[0.98]",
                   switchingTo && "opacity-40 pointer-events-none",
                 )}
@@ -377,7 +377,7 @@ export function StepProject({ onFinish, onBack, onBeforeSwitch }: StepProjectPro
                 </div>
                 <div>
                   <span className="text-sm font-medium">Create new project</span>
-                  <p className="mt-0.5 text-[11px] text-muted-foreground/50">Initialize a new directory with Git</p>
+                  <p className="mt-0.5 text-[11px] text-muted-foreground">Initialize a new directory with Git</p>
                 </div>
               </button>
             ) : (
@@ -385,7 +385,7 @@ export function StepProject({ onFinish, onBack, onBeforeSwitch }: StepProjectPro
                 initial={{ opacity: 0, height: 0 }}
                 animate={{ opacity: 1, height: "auto" }}
                 transition={{ duration: 0.2 }}
-                className="rounded-xl border border-border/40 bg-card/30 p-4 space-y-3"
+                className="rounded-xl border border-border/50 bg-card/50 p-4 space-y-3"
               >
                 <div className="text-sm font-medium text-foreground">New project</div>
                 <form
@@ -411,7 +411,7 @@ export function StepProject({ onFinish, onBack, onBeforeSwitch }: StepProjectPro
                     <p className="text-xs text-destructive">{createError}</p>
                   )}
                   {newName && nameValid && !nameConflict && (
-                    <p className="font-mono text-xs text-muted-foreground/40">{devRoot}/{newName}</p>
+                    <p className="font-mono text-xs text-muted-foreground">{devRoot}/{newName}</p>
                   )}
                   <div className="flex items-center gap-2 pt-1">
                     <Button

@@ -90,52 +90,61 @@ export async function handleReplanSlice(
     return { error: `validation failed: ${(err as Error).message}` };
   }
 
-  // ── Verify parent slice exists and is not closed ─────────────────
-  const parentSlice = getSlice(params.milestoneId, params.sliceId);
-  if (!parentSlice) {
-    return { error: `missing parent slice: ${params.milestoneId}/${params.sliceId}` };
-  }
-  if (parentSlice.status === "complete" || parentSlice.status === "done") {
-    return { error: `cannot replan a closed slice: ${params.sliceId} (status: ${parentSlice.status})` };
-  }
-
-  // ── Verify blocker task exists and is complete ────────────────────
-  const blockerTask = getTask(params.milestoneId, params.sliceId, params.blockerTaskId);
-  if (!blockerTask) {
-    return { error: `blockerTaskId not found: ${params.milestoneId}/${params.sliceId}/${params.blockerTaskId}` };
-  }
-  if (blockerTask.status !== "complete" && blockerTask.status !== "done") {
-    return { error: `blockerTaskId ${params.blockerTaskId} is not complete (status: ${blockerTask.status}) — the blocker task must be finished before a replan is triggered` };
-  }
-
-  // ── Structural enforcement ────────────────────────────────────────
-  const existingTasks = getSliceTasks(params.milestoneId, params.sliceId);
-  const completedTaskIds = new Set<string>();
-  for (const task of existingTasks) {
-    if (task.status === "complete" || task.status === "done") {
-      completedTaskIds.add(task.id);
-    }
-  }
-
-  // Reject updates to completed tasks
-  for (const updatedTask of params.updatedTasks) {
-    if (completedTaskIds.has(updatedTask.taskId)) {
-      return { error: `cannot modify completed task ${updatedTask.taskId}` };
-    }
-  }
-
-  // Reject removal of completed tasks
-  for (const removedId of params.removedTaskIds) {
-    if (completedTaskIds.has(removedId)) {
-      return { error: `cannot remove completed task ${removedId}` };
-    }
-  }
-
-  // ── Transaction: DB mutations ─────────────────────────────────────
-  const existingTaskIds = new Set(existingTasks.map((t) => t.id));
+  // ── Guards + DB writes inside a single transaction (prevents TOCTOU) ───
+  // Guards must be inside the transaction so the state they check cannot
+  // change between the read and the write (#2723).
+  let guardError: string | null = null;
+  let existingTaskIds: Set<string> = new Set();
 
   try {
     transaction(() => {
+      // Verify parent slice exists and is not closed
+      const parentSlice = getSlice(params.milestoneId, params.sliceId);
+      if (!parentSlice) {
+        guardError = `missing parent slice: ${params.milestoneId}/${params.sliceId}`;
+        return;
+      }
+      if (parentSlice.status === "complete" || parentSlice.status === "done") {
+        guardError = `cannot replan a closed slice: ${params.sliceId} (status: ${parentSlice.status})`;
+        return;
+      }
+
+      // Verify blocker task exists and is complete
+      const blockerTask = getTask(params.milestoneId, params.sliceId, params.blockerTaskId);
+      if (!blockerTask) {
+        guardError = `blockerTaskId not found: ${params.milestoneId}/${params.sliceId}/${params.blockerTaskId}`;
+        return;
+      }
+      if (blockerTask.status !== "complete" && blockerTask.status !== "done") {
+        guardError = `blockerTaskId ${params.blockerTaskId} is not complete (status: ${blockerTask.status}) — the blocker task must be finished before a replan is triggered`;
+        return;
+      }
+
+      // Structural enforcement — reject modifications/removal of completed tasks
+      const existingTasks = getSliceTasks(params.milestoneId, params.sliceId);
+      const completedTaskIds = new Set<string>();
+      for (const task of existingTasks) {
+        if (task.status === "complete" || task.status === "done") {
+          completedTaskIds.add(task.id);
+        }
+      }
+
+      for (const updatedTask of params.updatedTasks) {
+        if (completedTaskIds.has(updatedTask.taskId)) {
+          guardError = `cannot modify completed task ${updatedTask.taskId}`;
+          return;
+        }
+      }
+
+      for (const removedId of params.removedTaskIds) {
+        if (completedTaskIds.has(removedId)) {
+          guardError = `cannot remove completed task ${removedId}`;
+          return;
+        }
+      }
+
+      existingTaskIds = new Set(existingTasks.map((t) => t.id));
+
       // Record replan history
       insertReplanHistory({
         milestoneId: params.milestoneId,
@@ -187,6 +196,10 @@ export async function handleReplanSlice(
     });
   } catch (err) {
     return { error: `db write failed: ${(err as Error).message}` };
+  }
+
+  if (guardError) {
+    return { error: guardError };
   }
 
   // ── Render artifacts ──────────────────────────────────────────────

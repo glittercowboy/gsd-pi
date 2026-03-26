@@ -378,6 +378,34 @@ export function ensureGsdSymlink(projectPath: string): string {
     return localGsd;
   }
 
+  // Guard: If projectPath is a plain subdirectory (not a worktree) of a git
+  // repo that already has a .gsd at the git root, do not create a duplicate
+  // symlink in the subdirectory — that causes `.gsd 2` collision variants on
+  // macOS (#2380). Worktrees are excluded because they legitimately need their
+  // own .gsd symlink pointing at the shared external state dir.
+  if (!inWorktree) {
+    try {
+      const gitRoot = resolveGitRoot(projectPath);
+      const normalizedProject = canonicalizeExistingPath(projectPath);
+      const normalizedRoot = canonicalizeExistingPath(gitRoot);
+      if (normalizedProject !== normalizedRoot) {
+        const rootGsd = join(gitRoot, ".gsd");
+        if (existsSync(rootGsd)) {
+          try {
+            const rootStat = lstatSync(rootGsd);
+            if (rootStat.isSymbolicLink() || rootStat.isDirectory()) {
+              return rootStat.isSymbolicLink() ? realpathSync(rootGsd) : rootGsd;
+            }
+          } catch {
+            // Fall through to normal logic if we can't stat root .gsd
+          }
+        }
+      }
+    } catch {
+      // If git root detection fails, fall through to normal logic
+    }
+  }
+
   // Clean up macOS numbered collision variants (.gsd 2, .gsd 3, etc.) before
   // any existence checks — otherwise they accumulate and confuse state (#2205).
   cleanNumberedGsdVariants(projectPath);

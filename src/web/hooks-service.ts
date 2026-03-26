@@ -38,7 +38,7 @@ export async function collectHooksData(projectCwdOverride?: string): Promise<Hoo
   }
 
   // getHookStatus() internally calls resolvePostUnitHooks() and resolvePreDispatchHooks()
-  // from preferences.ts, which read from process.cwd()/.gsd/preferences.md.
+  // from preferences.ts, which read from process.cwd()/.gsd/PREFERENCES.md.
   // We set cwd to projectCwd so preferences resolution finds the right files.
   // In a cold child process, cycleCounts is empty, so activeCycles will be {}.
   const script = [

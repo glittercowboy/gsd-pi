@@ -129,7 +129,7 @@ interface DashboardSkeletonProps {
 
 export function DashboardMetricsSkeleton({ icons }: DashboardSkeletonProps) {
   return (
-    <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
+    <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4 2xl:grid-cols-5">
       <CurrentUnitCardSkeleton icon={icons.Activity} />
       <MetricCardSkeleton label="Elapsed Time" icon={icons.Clock} />
       <MetricCardSkeleton label="Total Cost" icon={icons.DollarSign} />

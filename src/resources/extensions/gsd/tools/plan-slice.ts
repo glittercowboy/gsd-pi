@@ -6,8 +6,10 @@ import {
   insertTask,
   upsertSlicePlanning,
   upsertTaskPlanning,
+  insertGateRow,
   _getAdapter,
 } from "../gsd-db.js";
+import type { GateId } from "../types.js";
 import { invalidateStateCache } from "../state.js";
 import { renderPlanFromDb } from "../markdown-renderer.js";
 import { renderAllProjections } from "../workflow-projections.js";
@@ -144,24 +146,33 @@ export async function handlePlanSlice(
     return { error: `validation failed: ${(err as Error).message}` };
   }
 
-  const parentMilestone = getMilestone(params.milestoneId);
-  if (!parentMilestone) {
-    return { error: `milestone not found: ${params.milestoneId}` };
-  }
-  if (parentMilestone.status === "complete" || parentMilestone.status === "done") {
-    return { error: `cannot plan slice in a closed milestone: ${params.milestoneId} (status: ${parentMilestone.status})` };
-  }
-
-  const parentSlice = getSlice(params.milestoneId, params.sliceId);
-  if (!parentSlice) {
-    return { error: `missing parent slice: ${params.milestoneId}/${params.sliceId}` };
-  }
-  if (parentSlice.status === "complete" || parentSlice.status === "done") {
-    return { error: `cannot re-plan slice ${params.sliceId}: it is already complete — use gsd_slice_reopen first` };
-  }
+  // ── Guards + DB writes inside a single transaction (prevents TOCTOU) ───
+  // Guards must be inside the transaction so the state they check cannot
+  // change between the read and the write (#2723).
+  let guardError: string | null = null;
 
   try {
     transaction(() => {
+      const parentMilestone = getMilestone(params.milestoneId);
+      if (!parentMilestone) {
+        guardError = `milestone not found: ${params.milestoneId}`;
+        return;
+      }
+      if (parentMilestone.status === "complete" || parentMilestone.status === "done") {
+        guardError = `cannot plan slice in a closed milestone: ${params.milestoneId} (status: ${parentMilestone.status})`;
+        return;
+      }
+
+      const parentSlice = getSlice(params.milestoneId, params.sliceId);
+      if (!parentSlice) {
+        guardError = `missing parent slice: ${params.milestoneId}/${params.sliceId}`;
+        return;
+      }
+      if (parentSlice.status === "complete" || parentSlice.status === "done") {
+        guardError = `cannot re-plan slice ${params.sliceId}: it is already complete — use gsd_slice_reopen first`;
+        return;
+      }
+
       upsertSlicePlanning(params.milestoneId, params.sliceId, {
         goal: params.goal,
         successCriteria: params.successCriteria,
@@ -190,9 +201,27 @@ export async function handlePlanSlice(
           fullPlanMd: task.fullPlanMd,
         });
       }
+
+      // Seed quality gate rows inside the transaction — all-or-nothing with
+      // the plan data so a crash can't leave orphaned gates without tasks.
+      const sliceGates: GateId[] = ["Q3", "Q4"];
+      for (const gid of sliceGates) {
+        insertGateRow({ milestoneId: params.milestoneId, sliceId: params.sliceId, gateId: gid, scope: "slice" });
+      }
+      const taskGates: GateId[] = ["Q5", "Q6", "Q7"];
+      for (const task of params.tasks) {
+        for (const gid of taskGates) {
+          insertGateRow({ milestoneId: params.milestoneId, sliceId: params.sliceId, gateId: gid, scope: "task", taskId: task.taskId });
+        }
+      }
+      insertGateRow({ milestoneId: params.milestoneId, sliceId: params.sliceId, gateId: "Q8", scope: "slice" });
     });
   } catch (err) {
     return { error: `db write failed: ${(err as Error).message}` };
+  }
+
+  if (guardError) {
+    return { error: guardError };
   }
 
   try {

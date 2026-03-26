@@ -16,6 +16,7 @@ import {
   resolveHookArtifactPath,
 } from "../post-unit-hooks.ts";
 import { uncheckTaskInPlan } from "../undo.ts";
+import { parseUnitId } from "../unit-id.ts";
 
 // ─── Fixture Helpers ───────────────────────────────────────────────────────
 
@@ -183,8 +184,7 @@ test('Full retry reset: all steps combined', () => {
       retryArtifact: "NEEDS-REWORK.md",
     };
 
-    const parts = trigger.unitId.split("/");
-    const [mid, sid, tid] = parts;
+    const { milestone: mid, slice: sid, task: tid } = parseUnitId(trigger.unitId);
 
     // Simulate completedUnits
     let completedUnits = [
@@ -264,11 +264,10 @@ test('Retry reset: idempotent when artifacts already missing', () => {
     };
 
     // These should not throw even with missing files
-    const parts = trigger.unitId.split("/");
-    const [mid, sid, tid] = parts;
+    const { milestone: mid, slice: sid, task: tid } = parseUnitId(trigger.unitId);
 
     // Uncheck — returns false because no PLAN file
-    const uncheckResult = uncheckTaskInPlan(base, mid, sid, tid);
+    const uncheckResult = uncheckTaskInPlan(base, mid, sid!, tid!);
     assert.ok(!uncheckResult, "uncheck returns false when no PLAN exists");
 
     // Summary does not exist — no crash

@@ -38,18 +38,21 @@ Then:
    - Correct: `command > /dev/null 2>&1 &` or `nohup command > /dev/null 2>&1 &`
    - Example: `python -m http.server 8080 > /dev/null 2>&1 &` (NOT `python -m http.server 8080 &`)
    - Preferred: use the `bg_shell` tool if available — it manages process lifecycle correctly without stream-inheritance issues
-6. Verify must-haves are met by running concrete checks (tests, commands, observable behaviors)
-7. Run the slice-level verification checks defined in the slice plan's Verification section. Track which pass. On the final task of the slice, all must pass before marking done. On intermediate tasks, partial passes are expected — note which ones pass in the summary.
-8. After the verification gate runs (you'll see gate results in stderr/notify output), populate the `## Verification Evidence` table in your task summary with the check results. Use the `formatEvidenceTable` format: one row per check with command, exit code, verdict (✅ pass / ❌ fail), and duration. If no verification commands were discovered, note that in the section.
-9. If the task touches UI, browser flows, DOM behavior, or user-visible web state:
+6. If the task plan includes a **Failure Modes** section (Q5), implement the error/timeout/malformed handling specified. Verify each dependency's failure path is handled. Skip if the section is absent.
+7. If the task plan includes a **Load Profile** section (Q6), implement protections for the identified 10x breakpoint (connection pooling, rate limiting, pagination, etc.). Skip if absent.
+8. If the task plan includes a **Negative Tests** section (Q7), write the specified negative test cases alongside the happy-path tests — malformed inputs, error paths, and boundary conditions. Skip if absent.
+9. Verify must-haves are met by running concrete checks (tests, commands, observable behaviors)
+10. Run the slice-level verification checks defined in the slice plan's Verification section. Track which pass. On the final task of the slice, all must pass before marking done. On intermediate tasks, partial passes are expected — note which ones pass in the summary.
+11. After the verification gate runs (you'll see gate results in stderr/notify output), populate the `## Verification Evidence` table in your task summary with the check results. Use the `formatEvidenceTable` format: one row per check with command, exit code, verdict (✅ pass / ❌ fail), and duration. If no verification commands were discovered, note that in the section.
+12. If the task touches UI, browser flows, DOM behavior, or user-visible web state:
    - exercise the real flow in the browser
    - prefer `browser_batch` when the next few actions are obvious and sequential
    - prefer `browser_assert` for explicit pass/fail verification of the intended outcome
    - use `browser_diff` when an action's effect is ambiguous
    - use console/network/dialog diagnostics when validating async, stateful, or failure-prone UI
    - record verification in terms of explicit checks passed/failed, not only prose interpretation
-10. If the task plan includes an Observability Impact section, verify those signals directly. Skip this step if the task plan omits the section.
-11. **If execution is running long or verification fails:**
+13. If the task plan includes an Observability Impact section, verify those signals directly. Skip this step if the task plan omits the section.
+14. **If execution is running long or verification fails:**
 
     **Context budget:** You have approximately **{{verificationBudget}}** reserved for verification context. If you've used most of your context and haven't finished all steps, stop implementing and prioritize writing the task summary with clear notes on what's done and what remains. A partial summary that enables clean resumption is more valuable than one more half-finished step with no documentation. Never sacrifice summary quality for one more implementation step.
 
@@ -60,13 +63,13 @@ Then:
     - Distinguish "I know" from "I assume." Observable facts (the error says X) are strong evidence. Assumptions (this library should work this way) need verification.
     - Know when to stop. If you've tried 3+ fixes without progress, your mental model is probably wrong. Stop. List what you know for certain. List what you've ruled out. Form fresh hypotheses from there.
     - Don't fix symptoms. Understand *why* something fails before changing code. A test that passes after a change you don't understand is luck, not a fix.
-11. **Blocker discovery:** If execution reveals that the remaining slice plan is fundamentally invalid — not just a bug or minor deviation, but a plan-invalidating finding like a wrong API, missing capability, or architectural mismatch — set `blocker_discovered: true` in the task summary frontmatter and describe the blocker clearly in the summary narrative. Do NOT set `blocker_discovered: true` for ordinary debugging, minor deviations, or issues that can be fixed within the current task or the remaining plan. This flag triggers an automatic replan of the slice.
-12. If you made an architectural, pattern, library, or observability decision during this task that downstream work should know about, append it to `.gsd/DECISIONS.md` (read the template at `~/.gsd/agent/extensions/gsd/templates/decisions.md` if the file doesn't exist yet). Not every task produces decisions — only append when a meaningful choice was made.
-13. If you discover a non-obvious rule, recurring gotcha, or useful pattern during execution, append it to `.gsd/KNOWLEDGE.md`. Only add entries that would save future agents from repeating your investigation. Don't add obvious things.
-14. Read the template at `~/.gsd/agent/extensions/gsd/templates/task-summary.md`
-15. Write `{{taskSummaryPath}}`
-16. Call `gsd_complete_task` with milestone_id, slice_id, task_id, and a summary of what was accomplished. This is your final required step — do NOT manually edit PLAN.md checkboxes. The tool marks the task complete, updates the DB, and renders PLAN.md automatically.
-17. Do not run git commands — the system reads your task summary after completion and creates a meaningful commit from it (type inferred from title, message from your one-liner, key files from frontmatter). Write a clear, specific one-liner in the summary — it becomes the commit message.
+15. **Blocker discovery:** If execution reveals that the remaining slice plan is fundamentally invalid — not just a bug or minor deviation, but a plan-invalidating finding like a wrong API, missing capability, or architectural mismatch — set `blocker_discovered: true` in the task summary frontmatter and describe the blocker clearly in the summary narrative. Do NOT set `blocker_discovered: true` for ordinary debugging, minor deviations, or issues that can be fixed within the current task or the remaining plan. This flag triggers an automatic replan of the slice.
+16. If you made an architectural, pattern, library, or observability decision during this task that downstream work should know about, append it to `.gsd/DECISIONS.md` (read the template at `~/.gsd/agent/extensions/gsd/templates/decisions.md` if the file doesn't exist yet). Not every task produces decisions — only append when a meaningful choice was made.
+17. If you discover a non-obvious rule, recurring gotcha, or useful pattern during execution, append it to `.gsd/KNOWLEDGE.md`. Only add entries that would save future agents from repeating your investigation. Don't add obvious things.
+18. Read the template at `~/.gsd/agent/extensions/gsd/templates/task-summary.md`
+19. Write `{{taskSummaryPath}}`
+20. Call `gsd_complete_task` with milestone_id, slice_id, task_id, and a summary of what was accomplished. This is your final required step — do NOT manually edit PLAN.md checkboxes. The tool marks the task complete, updates the DB, and renders PLAN.md automatically.
+21. Do not run git commands — the system reads your task summary after completion and creates a meaningful commit from it (type inferred from title, message from your one-liner, key files from frontmatter). Write a clear, specific one-liner in the summary — it becomes the commit message.
 
 All work stays in your working directory: `{{workingDirectory}}`.
 

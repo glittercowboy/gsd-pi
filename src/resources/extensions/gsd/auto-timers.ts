@@ -15,6 +15,7 @@ import { computeBudgets, resolveExecutorContextWindow } from "./context-budget.j
 import {
   getInFlightToolCount,
   getOldestInFlightToolStart,
+  clearInFlightTools,
 } from "./auto-tool-tracking.js";
 import { detectWorkingTreeActivity } from "./auto-supervisor.js";
 import { closeoutUnit, type CloseoutOptions } from "./auto-unit-closeout.js";
@@ -146,6 +147,7 @@ export function startUnitSupervision(sctx: SupervisionContext): void {
 
       // Agent has tool calls currently executing — not idle, just waiting.
       // But only suppress recovery if the tool started recently.
+      let stalledToolDetected = false;
       if (getInFlightToolCount() > 0) {
         const oldestStart = getOldestInFlightToolStart()!;
         const toolAgeMs = Date.now() - oldestStart;
@@ -156,6 +158,12 @@ export function startUnitSupervision(sctx: SupervisionContext): void {
           });
           return;
         }
+        // Tool has been in-flight longer than idle timeout — treat as hung.
+        // Clear the stale entries so subsequent ticks don't re-detect them,
+        // and set the flag so the filesystem-activity check below does not
+        // override the stall verdict (#2527).
+        stalledToolDetected = true;
+        clearInFlightTools();
         ctx.ui.notify(
           `Stalled tool detected: a tool has been in-flight for ${Math.round(toolAgeMs / 60000)}min. Treating as hung — attempting idle recovery.`,
           "warning",
@@ -163,7 +171,9 @@ export function startUnitSupervision(sctx: SupervisionContext): void {
       }
 
       // Check if the agent is producing work on disk.
-      if (detectWorkingTreeActivity(s.basePath)) {
+      // Skip this when a stalled tool was just detected — filesystem changes
+      // from earlier in the task should not override the stall verdict (#2527).
+      if (!stalledToolDetected && detectWorkingTreeActivity(s.basePath)) {
         writeUnitRuntimeRecord(s.basePath, unitType, unitId, s.currentUnit.startedAt, {
           lastProgressAt: Date.now(),
           lastProgressKind: "filesystem-activity",
@@ -180,6 +190,10 @@ export function startUnitSupervision(sctx: SupervisionContext): void {
       const recovery = await recoverTimedOutUnit(ctx, pi, unitType, unitId, "idle", buildRecoveryContext());
       if (recovery === "recovered") return;
 
+      // Guard: recoverTimedOutUnit is async — pauseAuto/stopAuto may have
+      // set s.currentUnit = null during the await (#2527).
+      if (!s.currentUnit) return;
+
       writeUnitRuntimeRecord(s.basePath, unitType, unitId, s.currentUnit.startedAt, {
         phase: "paused",
       });
@@ -192,7 +206,7 @@ export function startUnitSupervision(sctx: SupervisionContext): void {
       const message = err instanceof Error ? err.message : String(err);
       console.error(`[idle-watchdog] Unhandled error: ${message}`);
       // Unblock any pending unit promise so the auto-loop is not orphaned.
-      resolveAgentEndCancelled();
+      resolveAgentEndCancelled({ message: `Idle watchdog error: ${message}`, category: "idle", isTransient: true });
       try {
         ctx.ui.notify(`Idle watchdog error: ${message}`, "warning");
       } catch { /* best effort */ }
@@ -226,7 +240,7 @@ export function startUnitSupervision(sctx: SupervisionContext): void {
       const message = err instanceof Error ? err.message : String(err);
       console.error(`[hard-timeout] Unhandled error: ${message}`);
       // Unblock any pending unit promise so the auto-loop is not orphaned.
-      resolveAgentEndCancelled();
+      resolveAgentEndCancelled({ message: `Hard timeout error: ${message}`, category: "timeout", isTransient: true });
       try {
         ctx.ui.notify(`Hard timeout error: ${message}`, "warning");
       } catch { /* best effort */ }

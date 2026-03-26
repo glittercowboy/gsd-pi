@@ -22,6 +22,12 @@ export const TOOL_KEYS = [
   { id: "groq",     env: "GROQ_API_KEY",      label: "Groq Voice",        hint: "console.groq.com" },
 ] as const;
 
+function getStoredToolKey(auth: AuthStorage, providerId: string): string | undefined {
+  const creds = auth.getCredentialsForProvider(providerId);
+  const cred = creds.find((c) => c.type === "api_key" && c.key);
+  return cred?.type === "api_key" ? cred.key : undefined;
+}
+
 /**
  * Load tool API keys from auth.json into environment variables.
  * Called at session startup to ensure tools have access to their credentials.
@@ -33,9 +39,9 @@ export function loadToolApiKeys(): void {
 
     const auth = AuthStorage.create(authPath);
     for (const tool of TOOL_KEYS) {
-      const cred = auth.get(tool.id);
-      if (cred && cred.type === "api_key" && cred.key && !process.env[tool.env]) {
-        process.env[tool.env] = cred.key;
+      const key = getStoredToolKey(auth, tool.id);
+      if (key && !process.env[tool.env]) {
+        process.env[tool.env] = key;
       }
     }
   } catch {
@@ -55,14 +61,14 @@ export async function handleConfig(ctx: ExtensionCommandContext): Promise<void> 
   // Show current status
   const statusLines = ["GSD Tool Configuration\n"];
   for (const tool of TOOL_KEYS) {
-    const hasKey = !!process.env[tool.env] || !!(auth.get(tool.id) as { key?: string })?.key;
+    const hasKey = !!process.env[tool.env] || !!getStoredToolKey(auth, tool.id);
     statusLines.push(`  ${hasKey ? "\u2713" : "\u2717"} ${tool.label}${hasKey ? "" : ` \u2014 get key at ${tool.hint}`}`);
   }
   ctx.ui.notify(statusLines.join("\n"), "info");
 
   // Ask which tools to configure
   const options = TOOL_KEYS.map(t => {
-    const hasKey = !!process.env[t.env] || !!(auth.get(t.id) as { key?: string })?.key;
+    const hasKey = !!process.env[t.env] || !!getStoredToolKey(auth, t.id);
     return `${t.label} ${hasKey ? "(configured \u2713)" : "(not set)"}`;
   });
   options.push("(done)");

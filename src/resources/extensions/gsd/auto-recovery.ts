@@ -10,10 +10,9 @@
 import type { ExtensionContext } from "@gsd/pi-coding-agent";
 import { parseUnitId } from "./unit-id.js";
 import { atomicWriteSync } from "./atomic-write.js";
-import { clearUnitRuntimeRecord } from "./unit-runtime.js";
 import { clearParseCache } from "./files.js";
 import { parseRoadmap as parseLegacyRoadmap, parsePlan as parseLegacyPlan } from "./parsers-legacy.js";
-import { isDbAvailable, getTask, getSlice, getSliceTasks } from "./gsd-db.js";
+import { isDbAvailable, getTask, getSlice, getSliceTasks, updateTaskStatus } from "./gsd-db.js";
 import { isValidationTerminal } from "./state.js";
 import {
   nativeConflictFiles,
@@ -24,18 +23,13 @@ import {
   nativeResetHard,
 } from "./native-git-bridge.js";
 import {
-  resolveMilestonePath,
   resolveSlicePath,
   resolveSliceFile,
   resolveTasksDir,
   resolveTaskFiles,
   relMilestoneFile,
   relSliceFile,
-  relSlicePath,
-  relTaskFile,
-  buildMilestoneFileName,
   buildSliceFileName,
-  buildTaskFileName,
   resolveMilestoneFile,
   clearPathCache,
   resolveGsdRootFile,
@@ -49,81 +43,15 @@ import {
 } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { dirname, join } from "node:path";
+import {
+  resolveExpectedArtifactPath,
+  diagnoseExpectedArtifact,
+} from "./auto-artifact-paths.js";
+
+// Re-export so existing consumers of auto-recovery.ts keep working.
+export { resolveExpectedArtifactPath, diagnoseExpectedArtifact };
 
 // ─── Artifact Resolution & Verification ───────────────────────────────────────
-
-/**
- * Resolve the expected artifact for a unit to an absolute path.
- */
-export function resolveExpectedArtifactPath(
-  unitType: string,
-  unitId: string,
-  base: string,
-): string | null {
-  const parts = unitId.split("/");
-  const mid = parts[0]!;
-  const sid = parts[1];
-  switch (unitType) {
-    case "discuss-milestone": {
-      const dir = resolveMilestonePath(base, mid);
-      return dir ? join(dir, buildMilestoneFileName(mid, "CONTEXT")) : null;
-    }
-    case "research-milestone": {
-      const dir = resolveMilestonePath(base, mid);
-      return dir ? join(dir, buildMilestoneFileName(mid, "RESEARCH")) : null;
-    }
-    case "plan-milestone": {
-      const dir = resolveMilestonePath(base, mid);
-      return dir ? join(dir, buildMilestoneFileName(mid, "ROADMAP")) : null;
-    }
-    case "research-slice": {
-      const dir = resolveSlicePath(base, mid, sid!);
-      return dir ? join(dir, buildSliceFileName(sid!, "RESEARCH")) : null;
-    }
-    case "plan-slice": {
-      const dir = resolveSlicePath(base, mid, sid!);
-      return dir ? join(dir, buildSliceFileName(sid!, "PLAN")) : null;
-    }
-    case "reassess-roadmap": {
-      const dir = resolveSlicePath(base, mid, sid!);
-      return dir ? join(dir, buildSliceFileName(sid!, "ASSESSMENT")) : null;
-    }
-    case "run-uat": {
-      const dir = resolveSlicePath(base, mid, sid!);
-      return dir ? join(dir, buildSliceFileName(sid!, "UAT-RESULT")) : null;
-    }
-    case "execute-task": {
-      const tid = parts[2];
-      const dir = resolveSlicePath(base, mid, sid!);
-      return dir && tid
-        ? join(dir, "tasks", buildTaskFileName(tid, "SUMMARY"))
-        : null;
-    }
-    case "complete-slice": {
-      const dir = resolveSlicePath(base, mid, sid!);
-      return dir ? join(dir, buildSliceFileName(sid!, "SUMMARY")) : null;
-    }
-    case "validate-milestone": {
-      const dir = resolveMilestonePath(base, mid);
-      return dir ? join(dir, buildMilestoneFileName(mid, "VALIDATION")) : null;
-    }
-    case "complete-milestone": {
-      const dir = resolveMilestonePath(base, mid);
-      return dir ? join(dir, buildMilestoneFileName(mid, "SUMMARY")) : null;
-    }
-    case "replan-slice": {
-      const dir = resolveSlicePath(base, mid, sid!);
-      return dir ? join(dir, buildSliceFileName(sid!, "REPLAN")) : null;
-    }
-    case "rewrite-docs":
-      return null;
-    case "reactive-execute":
-      // Reactive execute produces multiple task summaries — verified separately
-      return null;
-    default:
-      return null;
-  }
-}
 
 /**
  * Check whether a milestone produced implementation artifacts (non-`.gsd/` files)
@@ -267,13 +195,8 @@ export function verifyExpectedArtifact(
   // Reactive-execute: verify that each dispatched task's summary exists.
   // The unitId encodes the batch: "{mid}/{sid}/reactive+T02,T03"
   if (unitType === "reactive-execute") {
-    const parts = unitId.split("/");
-    const mid = parts[0];
-    const sidAndBatch = parts[1];
-    const batchPart = parts[2]; // "reactive+T02,T03"
-    if (!mid || !sidAndBatch || !batchPart) return false;
-
-    const sid = sidAndBatch;
+    const { milestone: mid, slice: sid, task: batchPart } = parseUnitId(unitId);
+    if (!mid || !sid || !batchPart) return false;
     const plusIdx = batchPart.indexOf("+");
     if (plusIdx === -1) {
       // Legacy format "reactive" without batch IDs — fall back to "any summary"
@@ -298,6 +221,32 @@ export function verifyExpectedArtifact(
     // Every dispatched task must have a summary file
     for (const tid of batchIds) {
       if (!existingSummaries.has(tid.toUpperCase())) return false;
+    }
+    return true;
+  }
+
+  // Gate-evaluate: verify that each dispatched gate has been resolved in the DB.
+  // The unitId encodes the batch: "{mid}/{sid}/gates+Q3,Q4"
+  if (unitType === "gate-evaluate") {
+    const { milestone: mid, slice: sid, task: batchPart } = parseUnitId(unitId);
+    if (!mid || !sid || !batchPart) return false;
+
+    const plusIdx = batchPart.indexOf("+");
+    if (plusIdx === -1) return true; // no specific gates encoded — pass
+
+    const gateIds = batchPart.slice(plusIdx + 1).split(",").filter(Boolean);
+    if (gateIds.length === 0) return true;
+
+    try {
+      const { getPendingGates: getPending } = require("./gsd-db.js");
+      const pending = getPending(mid, sid, "slice");
+      const pendingIds = new Set(pending.map((g: any) => g.gate_id));
+      // All dispatched gates must no longer be pending
+      for (const gid of gateIds) {
+        if (pendingIds.has(gid)) return false;
+      }
+    } catch {
+      // DB unavailable — treat as verified to avoid blocking
     }
     return true;
   }
@@ -329,10 +278,7 @@ export function verifyExpectedArtifact(
   // execute-task: DB status is authoritative. Fall back to heading-style plan
   // detection when the DB is unavailable (unmigrated projects).
   if (unitType === "execute-task") {
-    const parts = unitId.split("/");
-    const mid = parts[0];
-    const sid = parts[1];
-    const tid = parts[2];
+    const { milestone: mid, slice: sid, task: tid } = parseUnitId(unitId);
     if (mid && sid && tid) {
       const dbTask = getTask(mid, sid, tid);
       if (dbTask) {
@@ -362,9 +308,7 @@ export function verifyExpectedArtifact(
   // but omitted T{tid}-PLAN.md files would be marked complete, causing execute-task
   // to dispatch with a missing task plan (see issue #739).
   if (unitType === "plan-slice") {
-    const parts = unitId.split("/");
-    const mid = parts[0];
-    const sid = parts[1];
+    const { milestone: mid, slice: sid } = parseUnitId(unitId);
     if (mid && sid) {
       try {
         // DB primary path — get task IDs to verify task plan files exist
@@ -399,9 +343,7 @@ export function verifyExpectedArtifact(
   // complete-slice: DB status is authoritative for whether the slice is done.
   // Fall back to file-based check (roadmap [x]) when DB is unavailable.
   if (unitType === "complete-slice") {
-    const parts = unitId.split("/");
-    const mid = parts[0];
-    const sid = parts[1];
+    const { milestone: mid, slice: sid } = parseUnitId(unitId);
     if (mid && sid) {
       const dir = resolveSlicePath(base, mid, sid);
       if (dir) {
@@ -468,52 +410,50 @@ export function writeBlockerPlaceholder(
     `Review and replace this file before relying on downstream artifacts.`,
   ].join("\n");
   writeFileSync(absPath, content, "utf-8");
+
+  // Mark the task as complete in the DB so verifyExpectedArtifact passes.
+  // Without this, the DB status stays "pending" and the dispatch loop
+  // re-derives the same task indefinitely (#2531).
+  if (unitType === "execute-task" && isDbAvailable()) {
+    const { milestone: mid, slice: sid, task: tid } = parseUnitId(unitId);
+    if (mid && sid && tid) {
+      try { updateTaskStatus(mid, sid, tid, "complete", new Date().toISOString()); } catch { /* non-fatal */ }
+    }
+  }
+
   return diagnoseExpectedArtifact(unitType, unitId, base);
 }
 
-export function diagnoseExpectedArtifact(
-  unitType: string,
-  unitId: string,
-  base: string,
-): string | null {
-  const parts = unitId.split("/");
-  const mid = parts[0];
-  const sid = parts[1];
-  switch (unitType) {
-    case "discuss-milestone":
-      return `${relMilestoneFile(base, mid!, "CONTEXT")} (milestone context from discussion)`;
-    case "research-milestone":
-      return `${relMilestoneFile(base, mid!, "RESEARCH")} (milestone research)`;
-    case "plan-milestone":
-      return `${relMilestoneFile(base, mid!, "ROADMAP")} (milestone roadmap)`;
-    case "research-slice":
-      return `${relSliceFile(base, mid!, sid!, "RESEARCH")} (slice research)`;
-    case "plan-slice":
-      return `${relSliceFile(base, mid!, sid!, "PLAN")} (slice plan)`;
-    case "execute-task": {
-      const tid = parts[2];
-      return `Task ${tid} marked [x] in ${relSliceFile(base, mid!, sid!, "PLAN")} + summary written`;
+// ─── Merge State Reconciliation ───────────────────────────────────────────────
+
+/**
+ * Best-effort abort of a pending merge/squash and hard-reset to HEAD.
+ * Handles both real merges (MERGE_HEAD) and squash merges (SQUASH_MSG).
+ */
+function abortAndResetMerge(
+  basePath: string,
+  hasMergeHead: boolean,
+  squashMsgPath: string,
+): void {
+  if (hasMergeHead) {
+    try {
+      nativeMergeAbort(basePath);
+    } catch {
+      /* best-effort */
     }
-    case "complete-slice":
-      return `Slice ${sid} marked [x] in ${relMilestoneFile(base, mid!, "ROADMAP")} + summary + UAT written`;
-    case "replan-slice":
-      return `${relSliceFile(base, mid!, sid!, "REPLAN")} + updated ${relSliceFile(base, mid!, sid!, "PLAN")}`;
-    case "rewrite-docs":
-      return "Active overrides resolved in .gsd/OVERRIDES.md + plan documents updated";
-    case "reassess-roadmap":
-      return `${relSliceFile(base, mid!, sid!, "ASSESSMENT")} (roadmap reassessment)`;
-    case "run-uat":
-      return `${relSliceFile(base, mid!, sid!, "UAT-RESULT")} (UAT result)`;
-    case "validate-milestone":
-      return `${relMilestoneFile(base, mid!, "VALIDATION")} (milestone validation report)`;
-    case "complete-milestone":
-      return `${relMilestoneFile(base, mid!, "SUMMARY")} (milestone summary)`;
-    default:
-      return null;
+  } else if (squashMsgPath) {
+    try {
+      unlinkSync(squashMsgPath);
+    } catch {
+      /* best-effort */
+    }
+  }
+  try {
+    nativeResetHard(basePath);
+  } catch {
+    /* best-effort */
   }
 }
-
-// ─── Merge State Reconciliation ───────────────────────────────────────────────
 
 /**
  * Detect leftover merge state from a prior session and reconcile it.
@@ -571,24 +511,7 @@ export function reconcileMergeState(
         }
       }
       if (!resolved) {
-        if (hasMergeHead) {
-          try {
-            nativeMergeAbort(basePath);
-          } catch {
-            /* best-effort */
-          }
-        } else if (hasSquashMsg) {
-          try {
-            unlinkSync(squashMsgPath);
-          } catch {
-            /* best-effort */
-          }
-        }
-        try {
-          nativeResetHard(basePath);
-        } catch {
-          /* best-effort */
-        }
+        abortAndResetMerge(basePath, hasMergeHead, squashMsgPath);
         ctx.ui.notify(
           "Detected leftover merge state — auto-resolve failed, cleaned up. Re-deriving state.",
           "warning",
@@ -596,24 +519,7 @@ export function reconcileMergeState(
       }
     } else {
       // Code conflicts present — abort and reset
-      if (hasMergeHead) {
-        try {
-          nativeMergeAbort(basePath);
-        } catch {
-          /* best-effort */
-        }
-      } else if (hasSquashMsg) {
-        try {
-          unlinkSync(squashMsgPath);
-        } catch {
-          /* best-effort */
-        }
-      }
-      try {
-        nativeResetHard(basePath);
-      } catch {
-        /* best-effort */
-      }
+      abortAndResetMerge(basePath, hasMergeHead, squashMsgPath);
       ctx.ui.notify(
         "Detected leftover merge state with unresolved conflicts — cleaned up. Re-deriving state.",
         "warning",
@@ -621,50 +527,6 @@ export function reconcileMergeState(
     }
   }
   return true;
-}
-
-// ─── Self-Heal Runtime Records ────────────────────────────────────────────────
-
-/**
- * Self-heal: scan runtime records in .gsd/ and clear stale ones.
- * Clears dispatched records older than 1 hour (process crashed before
- * completing the unit). deriveState() handles re-derivation — no need
- * for completion key persistence here.
- */
-export async function selfHealRuntimeRecords(
-  base: string,
-  ctx: ExtensionContext,
-): Promise<void> {
-  try {
-    const { listUnitRuntimeRecords } = await import("./unit-runtime.js");
-    const records = listUnitRuntimeRecords(base);
-    let healed = 0;
-    const STALE_THRESHOLD_MS = 60 * 60 * 1000; // 1 hour
-    const now = Date.now();
-    for (const record of records) {
-      const { unitType, unitId } = record;
-
-      // Case 0 removed — roadmap checkbox auto-fix is no longer needed.
-      // With DB-as-truth, stale checkboxes are fixed by repairStaleRenders().
-
-      // Clear stale dispatched records (dispatched > 1h ago, process crashed)
-      const age = now - (record.startedAt ?? 0);
-      if (record.phase === "dispatched" && age > STALE_THRESHOLD_MS) {
-        clearUnitRuntimeRecord(base, unitType, unitId);
-        healed++;
-        continue;
-      }
-    }
-    if (healed > 0) {
-      ctx.ui.notify(
-        `Self-heal: cleared ${healed} stale runtime record(s).`,
-        "info",
-      );
-    }
-  } catch (e) {
-    // Non-fatal — self-heal should never block auto-mode start
-    void e;
-  }
 }
 
 // ─── Loop Remediation ─────────────────────────────────────────────────────────
@@ -678,10 +540,7 @@ export function buildLoopRemediationSteps(
   unitId: string,
   base: string,
 ): string | null {
-  const parts = unitId.split("/");
-  const mid = parts[0];
-  const sid = parts[1];
-  const tid = parts[2];
+  const { milestone: mid, slice: sid, task: tid } = parseUnitId(unitId);
   switch (unitType) {
     case "execute-task": {
       if (!mid || !sid || !tid) break;

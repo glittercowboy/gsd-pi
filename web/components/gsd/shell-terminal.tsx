@@ -74,7 +74,7 @@ const XTERM_LIGHT_THEME = {
   black: "#1a1a1a",
   red: "#dc2626",
   green: "#16a34a",
-  yellow: "#ca8a04",
+  yellow: "#a16207",        
   blue: "#2563eb",
   magenta: "#9333ea",
   cyan: "#0891b2",
@@ -82,7 +82,7 @@ const XTERM_LIGHT_THEME = {
   brightBlack: "#71717a",
   brightRed: "#ef4444",
   brightGreen: "#22c55e",
-  brightYellow: "#eab308",
+  brightYellow: "#92400e",  
   brightBlue: "#3b82f6",
   brightMagenta: "#a855f7",
   brightCyan: "#06b6d4",
@@ -711,7 +711,7 @@ export function ShellTerminal({
 
         {/* Drop overlay */}
         {isDragOver && (
-          <div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-2 bg-background/80 backdrop-blur-sm border-2 border-dashed border-primary rounded-md pointer-events-none">
+          <div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-2 bg-background backdrop-blur-sm border-2 border-dashed border-primary rounded-md pointer-events-none">
             <ImagePlus className="h-8 w-8 text-primary" />
             <span className="text-sm font-medium text-primary">Drop image here</span>
           </div>
@@ -719,7 +719,7 @@ export function ShellTerminal({
       </div>
 
       {!hideSidebar && (
-        <div className="flex w-[34px] flex-shrink-0 flex-col border-l border-border/40 bg-terminal">
+        <div className="flex w-[34px] flex-shrink-0 flex-col border-l border-border/50 bg-terminal">
           {/* New terminal button */}
           <button
             onClick={createTab}
@@ -729,7 +729,7 @@ export function ShellTerminal({
             <Plus className="h-3 w-3" />
           </button>
 
-          <div className="h-px bg-border/40" />
+          <div className="h-px bg-border/50" />
 
           {/* Tab list */}
           <div className="flex-1 overflow-y-auto">

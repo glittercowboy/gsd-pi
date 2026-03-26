@@ -57,6 +57,15 @@ completed_at: {{date}}
 
 - {{requirementIdOr_none}} — {{what changed}}
 
+## Operational Readiness
+
+<!-- Q8: How will ops know it's healthy/broken? OMIT ENTIRELY for simple slices with no runtime concerns. -->
+
+- **Health signal**: {{howToConfirmHealthy — health endpoint, heartbeat log, metric, or N/A}}
+- **Failure signal**: {{howToDetectBroken — error rate spike, alert, log pattern, or N/A}}
+- **Recovery**: {{selfRecoverOrRestart — auto-reconnect, circuit breaker, manual restart, or N/A}}
+- **Monitoring gaps**: {{silentFailureModes — background jobs, cache eviction, memory pressure, or none}}
+
 ## Deviations
 
 <!-- Deviations are unplanned changes to the written plan, not ordinary debugging inside the plan's intended scope. -->

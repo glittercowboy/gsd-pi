@@ -62,7 +62,7 @@ const StatusIcon = ({ status }: { status: ItemStatus }) => {
   if (status === "in-progress") {
     return <Play className="h-4 w-4 shrink-0 text-warning" />
   }
-  return <Circle className="h-4 w-4 shrink-0 text-muted-foreground/50" />
+  return <Circle className="h-4 w-4 shrink-0 text-muted-foreground" />
 }
 
 /* ─── Nav Rail (left icon bar) ─── */
@@ -110,7 +110,7 @@ export function NavRail({ activeView, onViewChange, isConnecting = false }: NavR
           className={cn(
             "flex h-10 w-10 items-center justify-center rounded-md transition-colors",
             isConnecting
-              ? "cursor-not-allowed text-muted-foreground/30"
+              ? "cursor-not-allowed text-muted-foreground/50"
               : activeView === item.id
                 ? "bg-accent text-foreground"
                 : "text-muted-foreground hover:bg-accent/50 hover:text-foreground",
@@ -127,7 +127,7 @@ export function NavRail({ activeView, onViewChange, isConnecting = false }: NavR
           className={cn(
             "flex h-10 w-10 items-center justify-center rounded-md transition-colors",
             isConnecting
-              ? "cursor-not-allowed text-muted-foreground/30"
+              ? "cursor-not-allowed text-muted-foreground/50"
               : "text-muted-foreground hover:bg-accent/50 hover:text-foreground",
           )}
           title={isConnecting ? "Connecting…" : "Projects"}
@@ -748,7 +748,7 @@ function MobileNavPanel({ activeView, onViewChange, isConnecting = false }: NavR
             className={cn(
               "flex w-full items-center gap-3 rounded-md px-3 py-3 text-sm font-medium transition-colors min-h-[44px]",
               isConnecting
-                ? "cursor-not-allowed text-muted-foreground/30"
+                ? "cursor-not-allowed text-muted-foreground/50"
                 : activeView === item.id
                   ? "bg-accent text-foreground"
                   : "text-muted-foreground hover:bg-accent/50 hover:text-foreground",

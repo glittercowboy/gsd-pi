@@ -4,6 +4,7 @@
 
 import {
 	type Api,
+	applyCapabilityPatches,
 	type AssistantMessageEventStream,
 	type Context,
 	getApiProvider,
@@ -304,7 +305,10 @@ export class ModelRegistry {
 			}
 		}
 
-		this.models = combined;
+		// Apply capability patches so custom/discovered/extension models get
+		// capabilities (supportsXhigh, supportsServiceTier, etc.) that the
+		// static pi-ai registry applies at module load for built-in models.
+		this.models = applyCapabilityPatches(combined);
 	}
 
 	/** Load built-in models and apply provider/model overrides */
@@ -748,6 +752,9 @@ export class ModelRegistry {
 					this.models = config.oauth.modifyModels(this.models, cred);
 				}
 			}
+
+			// Ensure newly added extension models get capability patches
+			this.models = applyCapabilityPatches(this.models);
 		} else if (config.baseUrl) {
 			// Override-only: update baseUrl/headers for existing models
 			const resolvedHeaders = resolveHeaders(config.headers);
@@ -808,8 +815,8 @@ export class ModelRegistry {
 			}
 		}
 
-		// Convert and merge discovered models
-		this.discoveredModels = this.convertDiscoveredModels(results);
+		// Convert and merge discovered models, then apply capability patches
+		this.discoveredModels = applyCapabilityPatches(this.convertDiscoveredModels(results));
 		return results;
 	}
 

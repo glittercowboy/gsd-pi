@@ -15,7 +15,7 @@ import assert from 'node:assert/strict';
  *   - Report formatting
  */
 
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, utimesSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -101,6 +101,120 @@ describe('doctor-environment', async () => {
       assert.ok(depsCheck !== undefined, "dependencies check runs");
       assert.deepStrictEqual(depsCheck!.status, "ok", "existing node_modules is ok");
     });
+
+    // ── Stale Dependencies: marker file check (#1974) ──────────────────
+    console.log("\n=== env: npm marker file newer than lockfile → ok (#1974) ===");
+    {
+      // Simulate the exact bug scenario:
+      // 1. node_modules dir mtime is old (no entries added/removed recently)
+      // 2. package-lock.json mtime is recent (npm rewrote it)
+      // 3. node_modules/.package-lock.json mtime is between dir and lockfile
+      //    (npm wrote it during the same install that rewrote the lockfile)
+      //
+      // The bug: code compares lockfile mtime vs dir mtime → false positive warning
+      // The fix: compare lockfile mtime vs marker file mtime → correctly ok
+      const dir = createProjectDir({
+        "package.json": JSON.stringify({ name: "test" }),
+      });
+      mkdirSync(join(dir, "node_modules"), { recursive: true });
+
+      // Simulate the exact bug: npm install with "up to date" rewrites the
+      // lockfile and the marker, but no packages are added/removed so the
+      // directory mtime should be old. We write the marker first (which
+      // bumps dir mtime), then force the dir mtime back to the past.
+      //
+      // Timeline: dir(T-120s) < lockfile(T-5s) ≈ marker(T-5s)
+      // Bug: code compares lockfile vs dir → false positive stale warning
+      // Fix: code compares lockfile vs marker → correctly reports ok
+      const dirTime = new Date(Date.now() - 120_000);
+      const installTime = new Date(Date.now() - 5_000);
+
+      // Write marker file (this bumps dir mtime as a side effect)
+      writeFileSync(join(dir, "node_modules", ".package-lock.json"), "{}");
+      utimesSync(join(dir, "node_modules", ".package-lock.json"), installTime, installTime);
+
+      // Force dir mtime back to the past — simulates no top-level entries changed
+      utimesSync(join(dir, "node_modules"), dirTime, dirTime);
+
+      // Lockfile written at install time (same as marker, or slightly after)
+      writeFileSync(join(dir, "package-lock.json"), "{}");
+      utimesSync(join(dir, "package-lock.json"), installTime, installTime);
+
+      cleanups.push(dir);
+      const results = runEnvironmentChecks(dir);
+      const depsCheck = results.find(r => r.name === "dependencies");
+      assert.ok(depsCheck !== undefined, "dependencies check runs");
+      assert.equal(depsCheck!.status, "ok", "npm marker newer than lockfile → not stale");
+    }
+
+    console.log("\n=== env: yarn marker file newer than lockfile → ok (#1974) ===");
+    {
+      const dir = createProjectDir({
+        "package.json": JSON.stringify({ name: "test" }),
+      });
+      mkdirSync(join(dir, "node_modules"), { recursive: true });
+
+      const dirTime = new Date(Date.now() - 120_000);
+      const installTime = new Date(Date.now() - 5_000);
+
+      writeFileSync(join(dir, "node_modules", ".yarn-integrity"), "{}");
+      utimesSync(join(dir, "node_modules", ".yarn-integrity"), installTime, installTime);
+      utimesSync(join(dir, "node_modules"), dirTime, dirTime);
+
+      writeFileSync(join(dir, "yarn.lock"), "");
+      utimesSync(join(dir, "yarn.lock"), installTime, installTime);
+
+      cleanups.push(dir);
+      const results = runEnvironmentChecks(dir);
+      const depsCheck = results.find(r => r.name === "dependencies");
+      assert.ok(depsCheck !== undefined, "dependencies check runs");
+      assert.equal(depsCheck!.status, "ok", "yarn marker newer than lockfile → not stale");
+    }
+
+    console.log("\n=== env: pnpm marker file newer than lockfile → ok (#1974) ===");
+    {
+      const dir = createProjectDir({
+        "package.json": JSON.stringify({ name: "test" }),
+      });
+      mkdirSync(join(dir, "node_modules"), { recursive: true });
+
+      const dirTime = new Date(Date.now() - 120_000);
+      const installTime = new Date(Date.now() - 5_000);
+
+      writeFileSync(join(dir, "node_modules", ".modules.yaml"), "{}");
+      utimesSync(join(dir, "node_modules", ".modules.yaml"), installTime, installTime);
+      utimesSync(join(dir, "node_modules"), dirTime, dirTime);
+
+      writeFileSync(join(dir, "pnpm-lock.yaml"), "");
+      utimesSync(join(dir, "pnpm-lock.yaml"), installTime, installTime);
+
+      cleanups.push(dir);
+      const results = runEnvironmentChecks(dir);
+      const depsCheck = results.find(r => r.name === "dependencies");
+      assert.ok(depsCheck !== undefined, "dependencies check runs");
+      assert.equal(depsCheck!.status, "ok", "pnpm marker newer than lockfile → not stale");
+    }
+
+    console.log("\n=== env: no marker file falls back to dir mtime → stale warning (#1974) ===");
+    {
+      // No marker file exists, lockfile newer than dir → should still warn
+      const dir = createProjectDir({
+        "package.json": JSON.stringify({ name: "test" }),
+      });
+      mkdirSync(join(dir, "node_modules"), { recursive: true });
+
+      const past = new Date(Date.now() - 60_000);
+      utimesSync(join(dir, "node_modules"), past, past);
+
+      writeFileSync(join(dir, "package-lock.json"), "{}");
+      // No marker file written — fallback to dir mtime comparison
+
+      cleanups.push(dir);
+      const results = runEnvironmentChecks(dir);
+      const depsCheck = results.find(r => r.name === "dependencies");
+      assert.ok(depsCheck !== undefined, "dependencies check runs");
+      assert.equal(depsCheck!.status, "warning", "no marker + lockfile newer → stale warning");
+    }
 
     // ── Env File Check ─────────────────────────────────────────────────
     test('env: .env.example without .env detected', () => {

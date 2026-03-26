@@ -41,8 +41,8 @@ export function expandDependencies(deps: string[]): string[] {
 }
 
 function extractSlicesSection(content: string): string {
-  // Match "## Slices", "## Slice Overview", "## Slice Table", etc.
-  const headingMatch = /^## Slice(?:s| Overview| Table| Summary| Status)\b.*$/m.exec(content);
+  // Match "## Slices", "## Slice Overview", "## Slice Table", "## Slice Roadmap", etc.
+  const headingMatch = /^## Slice(?:s| Overview| Table| Summary| Status| Roadmap)\b.*$/m.exec(content);
   if (!headingMatch || headingMatch.index == null) return "";
 
   const start = headingMatch.index + headingMatch[0].length;

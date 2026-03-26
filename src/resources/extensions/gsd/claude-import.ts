@@ -103,16 +103,47 @@ function isMarketplacePath(pluginPath: string): boolean {
 
 /**
  * Detect which plugin roots are marketplaces and which are legacy flat paths.
+ *
+ * Claude Code stores marketplace sources under ~/.claude/plugins/marketplaces/.
+ * Each subdirectory (e.g. marketplaces/confluent/) is a marketplace repo that
+ * contains .claude-plugin/marketplace.json. The parent directory itself does not
+ * have a marketplace.json, so we scan one level deeper when the root isn't
+ * directly a marketplace.
  */
-function categorizePluginRoots(pluginRoots: string[]): { marketplaces: string[]; flat: string[] } {
+export function categorizePluginRoots(pluginRoots: string[]): { marketplaces: string[]; flat: string[] } {
   const marketplaces: string[] = [];
   const flat: string[] = [];
+  const seen = new Set<string>();
 
   for (const root of pluginRoots) {
     if (isMarketplacePath(root)) {
-      marketplaces.push(root);
+      if (!seen.has(root)) {
+        marketplaces.push(root);
+        seen.add(root);
+      }
     } else {
-      flat.push(root);
+      // The root itself isn't a marketplace — check if it's a container of
+      // marketplaces (e.g. ~/.claude/plugins/marketplaces/ contains subdirs
+      // like confluent/, claude-hud/, each with their own marketplace.json).
+      let foundChild = false;
+      try {
+        const entries = readdirSync(root, { withFileTypes: true });
+        for (const entry of entries) {
+          if (!entry.isDirectory()) continue;
+          if (SKIP_DIRS.has(entry.name)) continue;
+          const childPath = join(root, entry.name);
+          if (isMarketplacePath(childPath) && !seen.has(childPath)) {
+            marketplaces.push(childPath);
+            seen.add(childPath);
+            foundChild = true;
+          }
+        }
+      } catch {
+        // Can't read directory — fall through to flat
+      }
+      if (!foundChild) {
+        flat.push(root);
+      }
     }
   }
 
@@ -170,18 +201,36 @@ export function discoverClaudePlugins(cwd: string): ClaudePluginCandidate[] {
 
   for (const root of pluginRoots) {
     walkDirs(root, (dir) => {
+      // Recognize both npm-style plugins (package.json) and Claude Code plugins
+      // (.claude-plugin/plugin.json). Claude marketplace-installed plugins use
+      // the latter format exclusively.
       const pkgPath = join(dir, "package.json");
-      if (!existsSync(pkgPath)) return;
+      const claudePluginPath = join(dir, ".claude-plugin", "plugin.json");
+      const hasPkg = existsSync(pkgPath);
+      const hasClaudePlugin = existsSync(claudePluginPath);
+      if (!hasPkg && !hasClaudePlugin) return;
+
       const resolvedDir = resolve(dir);
       if (seen.has(resolvedDir)) return;
       seen.add(resolvedDir);
+
       let packageName: string | undefined;
-      try {
-        const pkg = JSON.parse(readFileSync(pkgPath, "utf8")) as { name?: string };
-        packageName = pkg.name;
-      } catch {
-        packageName = undefined;
+      if (hasPkg) {
+        try {
+          const pkg = JSON.parse(readFileSync(pkgPath, "utf8")) as { name?: string };
+          packageName = pkg.name;
+        } catch {
+          packageName = undefined;
+        }
+      } else if (hasClaudePlugin) {
+        try {
+          const manifest = JSON.parse(readFileSync(claudePluginPath, "utf8")) as { name?: string };
+          packageName = manifest.name;
+        } catch {
+          packageName = undefined;
+        }
       }
+
       results.push({
         type: "plugin",
         name: packageName || basename(dir),

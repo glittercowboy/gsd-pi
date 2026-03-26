@@ -136,7 +136,7 @@ export class RetryHandler {
 		// Try credential fallback before counting against retry budget.
 		if (this._deps.getModel() && message.errorMessage) {
 			const errorType = this._classifyErrorType(message.errorMessage);
-			const isCredentialError = errorType !== "unknown";
+			const isCredentialError = errorType === "rate_limit" || errorType === "quota_exhausted";
 			const hasAlternate =
 				isCredentialError &&
 				this._deps.modelRegistry.authStorage.markUsageLimitReached(

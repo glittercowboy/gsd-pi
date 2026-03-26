@@ -235,8 +235,9 @@ export function getSliceBranchName(milestoneId: string, sliceId: string, worktre
   return `gsd/${milestoneId}/${sliceId}`;
 }
 
-/** Regex that matches both plain and worktree-namespaced slice branches. */
-export const SLICE_BRANCH_RE = /^gsd\/(?:([a-zA-Z0-9_-]+)\/)?(M\d+(?:-[a-z0-9]{6})?)\/(S\d+)$/;
+/** Re-export for backward compatibility — canonical definition in branch-patterns.ts */
+export { SLICE_BRANCH_RE } from "./branch-patterns.js";
+import { SLICE_BRANCH_RE } from "./branch-patterns.js";
 
 /**
  * Parse a slice branch name into its components.

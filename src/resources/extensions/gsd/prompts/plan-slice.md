@@ -57,14 +57,18 @@ Then:
    - Include `Observability / Diagnostics` for backend, integration, async, stateful, or UI slices where failure diagnosis matters.
    - Fill `Proof Level` and `Integration Closure` when the slice crosses runtime boundaries or has meaningful integration concerns.
    - **Omit these sections entirely for simple slices** where they would all be "none" or trivially obvious.
-5. Decompose the slice into tasks, each fitting one context window. Each task needs:
+5. **Quality gates** — for non-trivial slices, fill the Threat Surface (Q3) and Requirement Impact (Q4) sections in the slice plan:
+   - **Threat Surface:** Identify abuse scenarios, data exposure risks, and input trust boundaries. Required when the slice handles user input, authentication, authorization, or sensitive data. Omit entirely for internal refactoring or simple changes.
+   - **Requirement Impact:** List which existing requirements this slice touches, what must be re-verified after shipping, and which prior decisions should be reconsidered. Omit entirely if no existing requirements are affected.
+   - For each task in a non-trivial slice, fill Failure Modes (Q5), Load Profile (Q6), and Negative Tests (Q7) in the task plan when the task has external dependencies, shared resources, or non-trivial input handling. Omit for simple tasks.
+6. Decompose the slice into tasks, each fitting one context window. Each task needs:
    - a concrete, action-oriented title
    - the inline task entry fields defined in the plan.md template (Why / Files / Do / Verify / Done when)
    - a matching task plan file with description, steps, must-haves, verification, inputs, and expected output
    - **Inputs and Expected Output must list concrete backtick-wrapped file paths** (e.g. `` `src/types.ts` ``). These are machine-parsed to derive task dependencies — vague prose without paths breaks parallel execution. Every task must have at least one output file path.
    - Observability Impact section **only if the task touches runtime boundaries, async flows, or error paths** — omit it otherwise
-6. **Persist planning state through `gsd_plan_slice`.** Call it with the full slice planning payload (goal, demo, must-haves, verification, tasks, and metadata). The tool inserts all tasks in the same transaction, writes to the DB, and renders `{{outputPath}}` and `{{slicePath}}/tasks/T##-PLAN.md` files automatically. Do **not** call `gsd_plan_task` separately — `gsd_plan_slice` handles task persistence. Do **not** rely on direct `PLAN.md` writes as the source of truth; the DB-backed tool is the canonical write path for slice and task planning state.
-7. **Self-audit the plan.** Walk through each check — if any fail, fix the plan files before moving on:
+7. **Persist planning state through `gsd_plan_slice`.** Call it with the full slice planning payload (goal, demo, must-haves, verification, tasks, and metadata). The tool inserts all tasks in the same transaction, writes to the DB, and renders `{{outputPath}}` and `{{slicePath}}/tasks/T##-PLAN.md` files automatically. Do **not** call `gsd_plan_task` separately — `gsd_plan_slice` handles task persistence. Do **not** rely on direct `PLAN.md` writes as the source of truth; the DB-backed tool is the canonical write path for slice and task planning state.
+8. **Self-audit the plan.** Walk through each check — if any fail, fix the plan files before moving on:
     - **Completion semantics:** If every task were completed exactly as written, the slice goal/demo should actually be true.
     - **Requirement coverage:** Every must-have in the slice maps to at least one task. No must-have is orphaned. If `REQUIREMENTS.md` exists, every Active requirement this slice owns maps to at least one task.
     - **Task completeness:** Every task has steps, must-haves, verification, inputs, and expected output — none are blank or vague. Inputs and Expected Output list backtick-wrapped file paths, not prose descriptions.
@@ -72,6 +76,7 @@ Then:
     - **Key links planned:** For every pair of artifacts that must connect, there is an explicit step that wires them.
     - **Scope sanity:** Target 2–5 steps and 3–8 files per task. 10+ steps or 12+ files — must split. Each task must be completable in a single fresh context window.
     - **Feature completeness:** Every task produces real, user-facing progress — not just internal scaffolding.
+    - **Quality gate coverage:** For non-trivial slices, Threat Surface and Requirement Impact sections are present and specific (not placeholder text). For non-trivial tasks, Failure Modes, Load Profile, and Negative Tests are addressed in the task plan.
 10. If planning produced structural decisions, append them to `.gsd/DECISIONS.md`
 11. {{commitInstruction}}
 

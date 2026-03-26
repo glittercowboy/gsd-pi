@@ -2,6 +2,7 @@
 
 import { resolveMilestoneFile } from "./paths.js";
 import { findMilestoneIds } from "./guided-flow.js";
+import { parseUnitId } from "./unit-id.js";
 import { isDbAvailable, getMilestoneSlices } from "./gsd-db.js";
 import { parseRoadmap } from "./parsers-legacy.js";
 import { readFileSync } from "node:fs";
@@ -22,7 +23,7 @@ export function getPriorSliceCompletionBlocker(
 ): string | null {
   if (!SLICE_DISPATCH_TYPES.has(unitType)) return null;
 
-  const [targetMid, targetSid] = unitId.split("/");
+  const { milestone: targetMid, slice: targetSid } = parseUnitId(unitId);
   if (!targetMid || !targetSid) return null;
 
   // Use findMilestoneIds to respect custom queue order.

@@ -724,3 +724,32 @@ test("resolveRemoteConfig returns null when preferences are absent (no env side-
     if (savedTelegram !== undefined) process.env.TELEGRAM_BOT_TOKEN = savedTelegram;
   }
 });
+
+test("config source-level: hydration skips api_key entries with empty keys", () => {
+  const configSrc = readFileSync(
+    join(__dirname, "..", "..", "remote-questions", "config.ts"),
+    "utf-8",
+  );
+  // The find() call in hydrateRemoteTokensFromAuth must filter for non-empty keys,
+  // not just match on type === "api_key". This prevents stale empty-key entries
+  // (left by removeProviderToken) from shadowing valid tokens.
+  assert.ok(
+    configSrc.includes('c.type === "api_key" && !!c.key'),
+    "hydrateRemoteTokensFromAuth find() should require a non-empty key",
+  );
+});
+
+test("config source-level: removeProviderToken uses auth.remove not auth.set with empty key", () => {
+  const commandSrc = readFileSync(
+    join(__dirname, "..", "..", "remote-questions", "remote-command.ts"),
+    "utf-8",
+  );
+  // removeProviderToken should call auth.remove(provider), not auth.set(provider, { key: "" }).
+  // Setting an empty key pollutes the credentials array and shadows valid tokens.
+  const fnStart = commandSrc.indexOf("function removeProviderToken");
+  assert.ok(fnStart !== -1, "removeProviderToken should exist");
+  const fnEnd = commandSrc.indexOf("\n}", fnStart);
+  const fnBody = commandSrc.slice(fnStart, fnEnd);
+  assert.ok(fnBody.includes("auth.remove("), "removeProviderToken should call auth.remove()");
+  assert.ok(!fnBody.includes('key: ""'), "removeProviderToken should not set an empty key");
+});

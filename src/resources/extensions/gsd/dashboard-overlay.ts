@@ -557,6 +557,13 @@ export class GSDDashboardOverlay {
       if (cacheRate > 0) {
         lines.push(row(`${th.fg("dim", "cache hit rate:")} ${th.fg("text", `${cacheRate}%`)}`));
       }
+
+      if (this.dashData.rtkEnabled && this.dashData.rtkSavings && this.dashData.rtkSavings.commands > 0) {
+        const rtk = this.dashData.rtkSavings;
+        lines.push(row(
+          `${th.fg("dim", "rtk saved:")} ${th.fg("text", formatTokenCount(rtk.savedTokens))} ${th.fg("dim", `(${Math.round(rtk.savingsPct)}% · ${rtk.commands} cmd${rtk.commands === 1 ? "" : "s"})`)}`,
+        ));
+      }
     }
 
     // Environment health section (#1221) — only show issues

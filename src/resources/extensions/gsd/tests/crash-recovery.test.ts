@@ -68,8 +68,10 @@ test("clearLock is safe when no lock exists", (t) => {
 
 // ─── isLockProcessAlive ──────────────────────────────────────────────────
 
-test("isLockProcessAlive returns true for current process (different pid)", () => {
-  // Our own PID is explicitly excluded (recycled PID guard)
+test("#2470: isLockProcessAlive returns true for own PID (we hold the lock)", () => {
+  // Own PID means we ARE the lock holder — alive, not stale. (#2470)
+  // Callers that need recycled-PID detection (e.g. startAuto) already
+  // guard with `crashLock.pid !== process.pid` before calling us.
   const lock: LockData = {
     pid: process.pid,
     startedAt: new Date().toISOString(),
@@ -77,7 +79,7 @@ test("isLockProcessAlive returns true for current process (different pid)", () =
     unitId: "M001/S01/T01",
     unitStartedAt: new Date().toISOString(),
   };
-  assert.equal(isLockProcessAlive(lock), false, "own PID should return false");
+  assert.equal(isLockProcessAlive(lock), true, "own PID should return true — we are alive");
 });
 
 test("isLockProcessAlive returns false for dead PID", () => {

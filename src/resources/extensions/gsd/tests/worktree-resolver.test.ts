@@ -846,3 +846,70 @@ test("GitService is rebuilt with originalBasePath after exitMilestone", () => {
 
   assert.equal(gitServiceBasePath, "/project"); // project root, not worktree
 });
+
+// ─── Isolation Degradation Tests (#2483) ──────────────────────────────────
+
+test("enterMilestone sets isolationDegraded when worktree creation throws (#2483)", () => {
+  const s = makeSession();
+  const deps = makeDeps({
+    getAutoWorktreePath: () => null,
+    createAutoWorktree: () => {
+      throw new Error("empty repo");
+    },
+  });
+  const ctx = makeNotifyCtx();
+  const resolver = new WorktreeResolver(s, deps);
+
+  resolver.enterMilestone("M001", ctx);
+
+  assert.equal(s.isolationDegraded, true);
+  assert.equal(s.basePath, "/project"); // unchanged — error recovery
+});
+
+test("enterMilestone is no-op when isolationDegraded is true (#2483)", () => {
+  const s = makeSession();
+  s.isolationDegraded = true;
+  const deps = makeDeps();
+  const ctx = makeNotifyCtx();
+  const resolver = new WorktreeResolver(s, deps);
+
+  resolver.enterMilestone("M001", ctx);
+
+  assert.equal(s.basePath, "/project"); // unchanged
+  assert.equal(findCalls(deps.calls, "createAutoWorktree").length, 0);
+  assert.equal(findCalls(deps.calls, "enterAutoWorktree").length, 0);
+  assert.equal(findCalls(deps.calls, "shouldUseWorktreeIsolation").length, 0);
+});
+
+test("mergeAndExit is no-op when isolationDegraded is true (#2483)", () => {
+  const s = makeSession({
+    basePath: "/project",
+    originalBasePath: "/project",
+  });
+  s.isolationDegraded = true;
+  const deps = makeDeps({
+    getIsolationMode: () => "worktree",
+  });
+  const ctx = makeNotifyCtx();
+  const resolver = new WorktreeResolver(s, deps);
+
+  resolver.mergeAndExit("M001", ctx);
+
+  assert.equal(findCalls(deps.calls, "mergeMilestoneToMain").length, 0);
+  assert.equal(findCalls(deps.calls, "teardownAutoWorktree").length, 0);
+  assert.equal(findCalls(deps.calls, "getIsolationMode").length, 0);
+  assert.ok(
+    ctx.messages.some(
+      (m) => m.level === "info" && m.msg.includes("isolation was degraded"),
+    ),
+  );
+});
+
+test("isolationDegraded is reset by session.reset() (#2483)", () => {
+  const s = new AutoSession();
+  s.isolationDegraded = true;
+
+  s.reset();
+
+  assert.equal(s.isolationDegraded, false);
+});

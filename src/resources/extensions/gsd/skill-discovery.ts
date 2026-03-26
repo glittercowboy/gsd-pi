@@ -10,9 +10,10 @@
 
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { getAgentDir } from "@gsd/pi-coding-agent";
+import { homedir } from "node:os";
 
-const SKILLS_DIR = join(getAgentDir(), "skills");
+/** Industry-standard skills.sh global skills directory */
+const SKILLS_DIR = join(homedir(), ".agents", "skills");
 
 export interface DiscoveredSkill {
   name: string;

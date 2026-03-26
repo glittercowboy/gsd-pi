@@ -109,9 +109,9 @@ console.log('\n=== complete-task: schema v5 migration ===');
 
   const adapter = _getAdapter()!;
 
-  // Verify schema version is current (v11 after state machine migration)
+  // Verify schema version is current (v12 after quality gates table)
   const versionRow = adapter.prepare('SELECT MAX(version) as v FROM schema_version').get();
-  assertEq(versionRow?.['v'], 11, 'schema version should be 11');
+  assertEq(versionRow?.['v'], 12, 'schema version should be 12');
 
   // Verify all 4 new tables exist
   const tables = adapter.prepare(

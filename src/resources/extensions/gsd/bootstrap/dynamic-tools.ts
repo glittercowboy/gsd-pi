@@ -5,6 +5,7 @@ import type { ExtensionAPI } from "@gsd/pi-coding-agent";
 import { createBashTool, createEditTool, createReadTool, createWriteTool } from "@gsd/pi-coding-agent";
 
 import { DEFAULT_BASH_TIMEOUT_SECS } from "../constants.js";
+import { setLogBasePath } from "../workflow-logger.js";
 
 /**
  * Resolve the correct DB path for the current working directory.
@@ -43,9 +44,14 @@ export async function ensureDbOpen(): Promise<boolean> {
     const dbPath = resolveProjectRootDbPath(basePath);
     const gsdDir = join(basePath, ".gsd");
 
+    // Derive the project root from the DB path (strip .gsd/gsd.db)
+    const projectRoot = join(dbPath, "..", "..");
+
     // Open existing DB file (may be at project root for worktrees)
     if (existsSync(dbPath)) {
-      return db.openDatabase(dbPath);
+      const opened = db.openDatabase(dbPath);
+      if (opened) setLogBasePath(projectRoot);
+      return opened;
     }
 
     // No DB file — create + migrate from Markdown if .gsd/ has content
@@ -56,6 +62,7 @@ export async function ensureDbOpen(): Promise<boolean> {
       if (hasDecisions || hasRequirements || hasMilestones) {
         const opened = db.openDatabase(dbPath);
         if (opened) {
+          setLogBasePath(projectRoot);
           try {
             const { migrateFromMarkdown } = await import("../md-importer.js");
             migrateFromMarkdown(basePath);
@@ -69,7 +76,9 @@ export async function ensureDbOpen(): Promise<boolean> {
       }
 
       // .gsd/ exists but has no Markdown content (fresh project) — create empty DB
-      return db.openDatabase(dbPath);
+      const opened = db.openDatabase(dbPath);
+      if (opened) setLogBasePath(projectRoot);
+      return opened;
     }
 
     return false;

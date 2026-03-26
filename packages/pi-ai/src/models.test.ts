@@ -1,6 +1,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { getProviders, getModels, getModel } from "./models.js";
+import { getProviders, getModels, getModel, supportsXhigh, applyCapabilityPatches } from "./models.js";
+import type { Api, Model } from "./types.js";
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Custom provider preservation (regression: #2339)
@@ -81,5 +82,117 @@ describe("model registry — custom models do not collide with generated models"
 		// Spot-check a few generated providers
 		assert.ok(providers.includes("openai"), "openai should be in providers");
 		assert.ok(providers.includes("anthropic"), "anthropic should be in providers");
+	});
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Capability patches (regression: #2546)
+//
+// CAPABILITY_PATCHES must apply capabilities to models in the static
+// registry AND to models constructed outside of it (custom, extension,
+// discovered). supportsXhigh() reads model.capabilities — not model IDs.
+// ═══════════════════════════════════════════════════════════════════════════
+
+/** Helper: build a minimal synthetic model for testing */
+function syntheticModel(overrides: Partial<Model<Api>>): Model<Api> {
+	return {
+		id: "test-model",
+		name: "Test Model",
+		api: "openai-completions" as Api,
+		provider: "test-provider",
+		baseUrl: "https://example.com",
+		reasoning: false,
+		input: ["text"],
+		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+		contextWindow: 128000,
+		maxTokens: 16384,
+		...overrides,
+	} as Model<Api>;
+}
+
+describe("supportsXhigh — registry models", () => {
+	it("returns true for GPT-5.4 from the registry", () => {
+		const model = getModel("openai", "gpt-5.4" as any);
+		if (!model) return; // skip if model not in generated catalog
+		assert.equal(supportsXhigh(model), true);
+	});
+
+	it("returns false for a non-reasoning model", () => {
+		const models = getModels("openai");
+		const nonXhigh = models.find((m) => !m.id.includes("gpt-5."));
+		if (!nonXhigh) return;
+		assert.equal(supportsXhigh(nonXhigh), false);
+	});
+});
+
+describe("supportsXhigh — synthetic models (regression: custom/extension models)", () => {
+	it("returns false for a model without capabilities", () => {
+		const model = syntheticModel({ id: "my-custom-model" });
+		assert.equal(supportsXhigh(model), false);
+	});
+
+	it("returns true when capabilities.supportsXhigh is explicitly set", () => {
+		const model = syntheticModel({
+			id: "my-custom-model",
+			capabilities: { supportsXhigh: true },
+		});
+		assert.equal(supportsXhigh(model), true);
+	});
+});
+
+describe("applyCapabilityPatches", () => {
+	it("patches a GPT-5.4 model that has no capabilities", () => {
+		const model = syntheticModel({ id: "gpt-5.4-custom" });
+		assert.equal(model.capabilities, undefined);
+
+		const [patched] = applyCapabilityPatches([model]);
+		assert.equal(patched.capabilities?.supportsXhigh, true);
+		assert.equal(patched.capabilities?.supportsServiceTier, true);
+	});
+
+	it("patches a GPT-5.2 model", () => {
+		const model = syntheticModel({ id: "gpt-5.2" });
+		const [patched] = applyCapabilityPatches([model]);
+		assert.equal(patched.capabilities?.supportsXhigh, true);
+	});
+
+	it("patches an Anthropic Opus 4.6 model", () => {
+		const model = syntheticModel({
+			id: "claude-opus-4-6-20260301",
+			api: "anthropic-messages" as Api,
+		});
+		const [patched] = applyCapabilityPatches([model]);
+		assert.equal(patched.capabilities?.supportsXhigh, true);
+		// Opus should not get supportsServiceTier
+		assert.equal(patched.capabilities?.supportsServiceTier, undefined);
+	});
+
+	it("preserves explicit capabilities over patches", () => {
+		const model = syntheticModel({
+			id: "gpt-5.4-custom",
+			capabilities: { supportsXhigh: false, charsPerToken: 3 },
+		});
+		const [patched] = applyCapabilityPatches([model]);
+		// Explicit supportsXhigh: false wins over patch's true
+		assert.equal(patched.capabilities?.supportsXhigh, false);
+		// Patch fills in supportsServiceTier since it wasn't explicitly set
+		assert.equal(patched.capabilities?.supportsServiceTier, true);
+		// Explicit charsPerToken is preserved
+		assert.equal(patched.capabilities?.charsPerToken, 3);
+	});
+
+	it("does not modify models that match no patches", () => {
+		const model = syntheticModel({ id: "gemini-2.5-pro" });
+		const [patched] = applyCapabilityPatches([model]);
+		assert.equal(patched.capabilities, undefined);
+		// Should return the same reference when unpatched
+		assert.equal(patched, model);
+	});
+
+	it("is idempotent — re-applying patches produces the same result", () => {
+		const model = syntheticModel({ id: "gpt-5.3" });
+		const first = applyCapabilityPatches([model]);
+		const second = applyCapabilityPatches(first);
+		assert.deepEqual(first[0].capabilities, second[0].capabilities);
 	});
 });

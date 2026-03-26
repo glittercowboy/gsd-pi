@@ -123,7 +123,7 @@ test("init-wizard: v2 .gsd/ preferences detected", (t) => {
   const dir = makeTempDir("prefs-detect");
   try {
     mkdirSync(join(dir, ".gsd", "milestones"), { recursive: true });
-    writeFileSync(join(dir, ".gsd", "preferences.md"), "---\nversion: 1\nmode: solo\n---\n", "utf-8");
+    writeFileSync(join(dir, ".gsd", "PREFERENCES.md"), "---\nversion: 1\nmode: solo\n---\n", "utf-8");
 
     const detection = detectProjectState(dir);
     assert.ok(detection.v2);

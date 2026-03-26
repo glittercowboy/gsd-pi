@@ -7,6 +7,7 @@ import { enableDebug } from "../../debug-logger.js";
 import { getAutoDashboardData, isAutoActive, isAutoPaused, pauseAuto, startAuto, stopAuto, stopAutoRemote } from "../../auto.js";
 import { handleRate } from "../../commands-rate.js";
 import { guardRemoteSession, projectRoot } from "../context.js";
+import { findMilestoneIds } from "../../milestone-id-utils.js";
 
 /**
  * Parse --yolo flag and optional file path from the auto command string.
@@ -28,6 +29,39 @@ function parseYoloFlag(trimmed: string): { yoloSeedFile: string | null; rest: st
   return { yoloSeedFile: filePath, rest };
 }
 
+/**
+ * Extract a milestone ID (e.g. M016 or M001-a3b4c5) from the command string.
+ * Returns the matched ID and the remaining string with the ID removed.
+ * The milestone ID pattern matches the format used by findMilestoneIds: M\d+ with
+ * an optional -[a-z0-9]{6} suffix for unique milestone IDs.
+ */
+export function parseMilestoneTarget(input: string): { milestoneId: string | null; rest: string } {
+  const match = input.match(/\b(M\d+(?:-[a-z0-9]{6})?)\b/);
+  if (!match) return { milestoneId: null, rest: input };
+  const rest = input.replace(match[0], "").replace(/\s+/g, " ").trim();
+  return { milestoneId: match[1], rest };
+}
+
+/**
+ * Set GSD_MILESTONE_LOCK to target a specific milestone, then run `fn`.
+ * Clears the env var when `fn` resolves or rejects, so the lock does not
+ * leak into subsequent commands in the same process.
+ */
+async function withMilestoneLock(milestoneId: string, fn: () => Promise<void>): Promise<void> {
+  const previous = process.env.GSD_MILESTONE_LOCK;
+  process.env.GSD_MILESTONE_LOCK = milestoneId;
+  try {
+    await fn();
+  } finally {
+    // Restore previous value (undefined → delete, else restore).
+    if (previous === undefined) {
+      delete process.env.GSD_MILESTONE_LOCK;
+    } else {
+      process.env.GSD_MILESTONE_LOCK = previous;
+    }
+  }
+}
+
 export async function handleAutoCommand(trimmed: string, ctx: ExtensionCommandContext, pi: ExtensionAPI): Promise<boolean> {
   if (trimmed === "next" || trimmed.startsWith("next ")) {
     if (trimmed.includes("--dry-run")) {
@@ -35,20 +69,47 @@ export async function handleAutoCommand(trimmed: string, ctx: ExtensionCommandCo
       await handleDryRun(ctx, projectRoot());
       return true;
     }
-    const verboseMode = trimmed.includes("--verbose");
-    const debugMode = trimmed.includes("--debug");
+    const { milestoneId, rest: afterMilestone } = parseMilestoneTarget(trimmed);
+    const verboseMode = afterMilestone.includes("--verbose");
+    const debugMode = afterMilestone.includes("--debug");
     if (debugMode) enableDebug(projectRoot());
     if (!(await guardRemoteSession(ctx, pi))) return true;
-    await startAuto(ctx, pi, projectRoot(), verboseMode, { step: true });
+
+    // Validate the milestone target exists and is not already complete.
+    if (milestoneId) {
+      const allIds = findMilestoneIds(projectRoot());
+      if (!allIds.includes(milestoneId)) {
+        ctx.ui.notify(`Milestone ${milestoneId} does not exist. Available: ${allIds.join(", ") || "(none)"}`, "error");
+        return true;
+      }
+    }
+
+    if (milestoneId) {
+      await withMilestoneLock(milestoneId, () =>
+        startAuto(ctx, pi, projectRoot(), verboseMode, { step: true }),
+      );
+    } else {
+      await startAuto(ctx, pi, projectRoot(), verboseMode, { step: true });
+    }
     return true;
   }
 
   if (trimmed === "auto" || trimmed.startsWith("auto ")) {
-    const { yoloSeedFile, rest } = parseYoloFlag(trimmed);
-    const verboseMode = rest.includes("--verbose");
-    const debugMode = rest.includes("--debug");
+    const { yoloSeedFile, rest: afterYolo } = parseYoloFlag(trimmed);
+    const { milestoneId, rest: afterMilestone } = parseMilestoneTarget(afterYolo);
+    const verboseMode = afterMilestone.includes("--verbose");
+    const debugMode = afterMilestone.includes("--debug");
     if (debugMode) enableDebug(projectRoot());
     if (!(await guardRemoteSession(ctx, pi))) return true;
+
+    // Validate the milestone target exists and is not already complete.
+    if (milestoneId) {
+      const allIds = findMilestoneIds(projectRoot());
+      if (!allIds.includes(milestoneId)) {
+        ctx.ui.notify(`Milestone ${milestoneId} does not exist. Available: ${allIds.join(", ") || "(none)"}`, "error");
+        return true;
+      }
+    }
 
     if (yoloSeedFile) {
       const resolved = resolve(projectRoot(), yoloSeedFile);
@@ -66,6 +127,12 @@ export async function handleAutoCommand(trimmed: string, ctx: ExtensionCommandCo
       // when the LLM says "Milestone X ready."
       const { showHeadlessMilestoneCreation } = await import("../../guided-flow.js");
       await showHeadlessMilestoneCreation(ctx, pi, projectRoot(), seedContent);
+    } else if (milestoneId) {
+      // Target a specific milestone — use GSD_MILESTONE_LOCK so state
+      // derivation only sees this milestone (#2521).
+      await withMilestoneLock(milestoneId, () =>
+        startAuto(ctx, pi, projectRoot(), verboseMode),
+      );
     } else {
       await startAuto(ctx, pi, projectRoot(), verboseMode);
     }

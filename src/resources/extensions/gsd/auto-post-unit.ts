@@ -23,6 +23,7 @@ import {
   buildTaskFileName,
 } from "./paths.js";
 import { invalidateAllCaches } from "./cache.js";
+import { parseUnitId } from "./unit-id.js";
 import { closeoutUnit, type CloseoutOptions } from "./auto-unit-closeout.js";
 import {
   autoCommitCurrentBranch,
@@ -33,7 +34,7 @@ import {
   resolveExpectedArtifactPath,
 } from "./auto-recovery.js";
 import { regenerateIfMissing } from "./workflow-projections.js";
-import { syncStateToProjectRoot } from "./auto-worktree-sync.js";
+import { syncStateToProjectRoot } from "./auto-worktree.js";
 import { isDbAvailable, getTask, getSlice, getMilestone, updateTaskStatus, _getAdapter } from "./gsd-db.js";
 import { renderPlanCheckboxes } from "./markdown-renderer.js";
 import { consumeSignal } from "./session-status-io.js";
@@ -46,8 +47,29 @@ import {
 } from "./post-unit-hooks.js";
 import { hasPendingCaptures, loadPendingCaptures } from "./captures.js";
 import { debugLog } from "./debug-logger.js";
-import type { AutoSession } from "./auto/session.js";
+import { runSafely } from "./auto-utils.js";
+import type { AutoSession, SidecarItem } from "./auto/session.js";
 
+
+/** Enqueue a sidecar item (hook, triage, or quick-task) for the main loop to
+ *  drain via runUnit. Logs the enqueue event and notifies the UI. */
+function enqueueSidecar(
+  s: AutoSession,
+  ctx: ExtensionContext,
+  entry: SidecarItem,
+  debugExtra: Record<string, unknown>,
+  notification?: string,
+): "continue" {
+  s.sidecarQueue.push(entry);
+  debugLog("postUnitPostVerification", {
+    phase: "sidecar-enqueue",
+    kind: entry.kind,
+    unitId: entry.unitId,
+    ...debugExtra,
+  });
+  if (notification) ctx.ui.notify(notification, "info");
+  return "continue";
+}
 /** Unit types that only touch `.gsd/` internal state files (no code changes).
  *  Auto-commit is skipped for these — their state files are picked up by the
  *  next actual task commit via `smartStage()`. */
@@ -84,6 +106,15 @@ export interface RogueFileWrite {
  * in postUnitPostVerification() eventually ingests rogue files, but explicit
  * detection provides immediate diagnostics so operators know the prompt failed.
  */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function hasNonEmptyFields(row: Record<string, any> | null, fields: string[]): boolean {
+  if (!row) return false;
+  return fields.some(f => String(row[f] || "").trim().length > 0);
+}
+
+const MILESTONE_PLANNING_FIELDS = ["title", "vision", "requirement_coverage", "boundary_map_markdown"];
+const SLICE_PLANNING_FIELDS = ["title", "demo", "risk", "depends"];
+
 export function detectRogueFileWrites(
   unitType: string,
   unitId: string,
@@ -91,11 +122,10 @@ export function detectRogueFileWrites(
 ): RogueFileWrite[] {
   if (!isDbAvailable()) return [];
 
-  const parts = unitId.split("/");
+  const { milestone: mid, slice: sid, task: tid } = parseUnitId(unitId);
   const rogues: RogueFileWrite[] = [];
 
   if (unitType === "execute-task") {
-    const [mid, sid, tid] = parts;
     if (!mid || !sid || !tid) return [];
 
     const summaryPath = resolveTaskFile(basePath, mid, sid, tid, "SUMMARY");
@@ -106,7 +136,6 @@ export function detectRogueFileWrites(
       rogues.push({ path: summaryPath, unitType, unitId });
     }
   } else if (unitType === "complete-slice") {
-    const [mid, sid] = parts;
     if (!mid || !sid) return [];
 
     const summaryPath = resolveSliceFile(basePath, mid, sid, "SUMMARY");
@@ -117,37 +146,25 @@ export function detectRogueFileWrites(
       rogues.push({ path: summaryPath, unitType, unitId });
     }
   } else if (unitType === "plan-milestone") {
-    const [mid] = parts;
     if (!mid) return [];
 
     const roadmapPath = resolveMilestoneFile(basePath, mid, "ROADMAP");
     if (!roadmapPath || !existsSync(roadmapPath)) return [];
 
     const dbRow = getMilestone(mid);
-    const hasPlanningState = !!dbRow && (
-      String(dbRow.title || "").trim().length > 0 ||
-      String(dbRow.vision || "").trim().length > 0 ||
-      String(dbRow.requirement_coverage || "").trim().length > 0 ||
-      String(dbRow.boundary_map_markdown || "").trim().length > 0
-    );
+    const hasPlanningState = hasNonEmptyFields(dbRow, MILESTONE_PLANNING_FIELDS);
 
     if (!hasPlanningState) {
       rogues.push({ path: roadmapPath, unitType, unitId });
     }
   } else if (unitType === "plan-slice" || unitType === "replan-slice") {
-    const [mid, sid] = parts;
     if (!mid || !sid) return [];
 
     const planPath = resolveSliceFile(basePath, mid, sid, "PLAN");
     if (!planPath || !existsSync(planPath)) return [];
 
     const dbRow = getSlice(mid, sid);
-    const hasPlanningState = !!dbRow && (
-      String(dbRow.title || "").trim().length > 0 ||
-      String(dbRow.demo || "").trim().length > 0 ||
-      String(dbRow.risk || "").trim().length > 0 ||
-      String(dbRow.depends || "").trim().length > 0
-    );
+    const hasPlanningState = hasNonEmptyFields(dbRow, SLICE_PLANNING_FIELDS);
 
     if (!hasPlanningState) {
       rogues.push({ path: planPath, unitType, unitId });
@@ -159,7 +176,6 @@ export function detectRogueFileWrites(
       rogues.push({ path: replanPath, unitType, unitId });
     }
   } else if (unitType === "reassess-roadmap") {
-    const [mid, sid] = parts;
     if (!mid || !sid) return [];
 
     const assessPath = resolveSliceFile(basePath, mid, sid, "ASSESSMENT");
@@ -176,7 +192,6 @@ export function detectRogueFileWrites(
       }
     }
   } else if (unitType === "plan-task") {
-    const [mid, sid, tid] = parts;
     if (!mid || !sid || !tid) return [];
 
     const taskPlanPath = resolveTaskFile(basePath, mid, sid, tid, "PLAN");
@@ -245,12 +260,12 @@ export async function postUnitPreVerification(pctx: PostUnitContext, opts?: PreV
 
   // Auto-commit
   if (s.currentUnit) {
+    const unit = s.currentUnit;
     try {
       let taskContext: TaskCommitContext | undefined;
 
       if (s.currentUnit.type === "execute-task") {
-        const parts = s.currentUnit.id.split("/");
-        const [mid, sid, tid] = parts;
+        const { milestone: mid, slice: sid, task: tid } = parseUnitId(s.currentUnit.id);
         if (mid && sid && tid) {
           const summaryPath = resolveTaskFile(s.basePath, mid, sid, tid, "SUMMARY");
           if (summaryPath) {
@@ -304,65 +319,56 @@ export async function postUnitPreVerification(pctx: PostUnitContext, opts?: PreV
     }
 
     // GitHub sync (non-blocking, opt-in)
-    try {
+    await runSafely("postUnit", "github-sync", async () => {
       const { runGitHubSync } = await import("../github-sync/sync.js");
-      await runGitHubSync(s.basePath, s.currentUnit.type, s.currentUnit.id);
-    } catch (e) {
-      debugLog("postUnit", { phase: "github-sync", error: String(e) });
-    }
+      await runGitHubSync(s.basePath, unit.type, unit.id);
+    });
 
     // Prune dead bg-shell processes
-    try {
+    await runSafely("postUnit", "prune-bg-shell", async () => {
       const { pruneDeadProcesses } = await import("../bg-shell/process-manager.js");
       pruneDeadProcesses();
-    } catch (e) {
-      debugLog("postUnit", { phase: "prune-bg-shell", error: String(e) });
-    }
+    });
 
     // Tear down browser between units to prevent Chrome process accumulation (#1733)
-    try {
+    await runSafely("postUnit", "browser-teardown", async () => {
       const { getBrowser } = await import("../browser-tools/state.js");
       if (getBrowser()) {
         const { closeBrowser } = await import("../browser-tools/lifecycle.js");
         await closeBrowser();
         debugLog("postUnit", { phase: "browser-teardown", status: "closed" });
       }
-    } catch (e) {
-      debugLog("postUnit", { phase: "browser-teardown", error: String(e) });
-    }
+    });
 
     // Sync worktree state back to project root (skipped for lightweight sidecars)
     if (!opts?.skipWorktreeSync && s.originalBasePath && s.originalBasePath !== s.basePath) {
-      try {
-        syncStateToProjectRoot(s.basePath, s.originalBasePath, s.currentMilestoneId);
-      } catch (e) {
-        debugLog("postUnit", { phase: "worktree-sync", error: String(e) });
-      }
+      await runSafely("postUnit", "worktree-sync", () => {
+        syncStateToProjectRoot(s.basePath, s.originalBasePath!, s.currentMilestoneId);
+      });
     }
 
     // Rewrite-docs completion
     if (s.currentUnit.type === "rewrite-docs") {
-      try {
+      await runSafely("postUnit", "rewrite-docs-resolve", async () => {
         await resolveAllOverrides(s.basePath);
+        // Reset both disk and in-memory counters. Disk counter is authoritative
+        // (survives restarts); in-memory is kept in sync for the current session.
+        const { setRewriteCount } = await import("./auto-dispatch.js");
+        setRewriteCount(s.basePath, 0);
         s.rewriteAttemptCount = 0;
         ctx.ui.notify("Override(s) resolved — rewrite-docs completed.", "info");
-      } catch (e) {
-        debugLog("postUnit", { phase: "rewrite-docs-resolve", error: String(e) });
-      }
+      });
     }
 
     // Reactive state cleanup on slice completion
     if (s.currentUnit.type === "complete-slice") {
-      try {
-        const parts = s.currentUnit.id.split("/");
-        const [mid, sid] = parts;
+      await runSafely("postUnit", "reactive-state-cleanup", async () => {
+        const { milestone: mid, slice: sid } = parseUnitId(unit.id);
         if (mid && sid) {
           const { clearReactiveState } = await import("./reactive-graph.js");
           clearReactiveState(s.basePath, mid, sid);
         }
-      } catch (e) {
-        debugLog("postUnit", { phase: "reactive-state-cleanup", error: String(e) });
-      }
+      });
     }
 
     // Post-triage: execute actionable resolutions
@@ -440,8 +446,7 @@ export async function postUnitPreVerification(pctx: PostUnitContext, opts?: PreV
       // from DB data before giving up (e.g. research-slice produces PLAN from engine).
       if (!triggerArtifactVerified) {
         try {
-          const parts = s.currentUnit.id.split("/");
-          const [mid, sid] = parts;
+          const { milestone: mid, slice: sid } = parseUnitId(s.currentUnit.id);
           if (mid && sid) {
             const regenerated = regenerateIfMissing(s.basePath, mid, sid, "PLAN");
             if (regenerated) {
@@ -511,23 +516,11 @@ export async function postUnitPostVerification(pctx: PostUnitContext): Promise<"
       }
       persistHookState(s.basePath);
 
-      s.sidecarQueue.push({
-        kind: "hook",
-        unitType: hookUnit.unitType,
-        unitId: hookUnit.unitId,
-        prompt: hookUnit.prompt,
-        model: hookUnit.model,
-      });
-
-      debugLog("postUnitPostVerification", {
-        phase: "sidecar-enqueue",
-        kind: "hook",
-        unitType: hookUnit.unitType,
-        unitId: hookUnit.unitId,
-        hookName: hookUnit.hookName,
-      });
-
-      return "continue";
+      return enqueueSidecar(
+        s, ctx,
+        { kind: "hook", unitType: hookUnit.unitType, unitId: hookUnit.unitId, prompt: hookUnit.prompt, model: hookUnit.model },
+        { hookName: hookUnit.hookName },
+      );
     }
 
     // Check if a hook requested a retry of the trigger unit
@@ -541,8 +534,7 @@ export async function postUnitPostVerification(pctx: PostUnitContext): Promise<"
 
         // ── State reset: undo the completion so deriveState re-derives the unit ──
         try {
-          const parts = trigger.unitId.split("/");
-          const [mid, sid, tid] = parts;
+          const { milestone: mid, slice: sid, task: tid } = parseUnitId(trigger.unitId);
 
           // 1. Reset task status in DB and re-render plan checkboxes
           if (mid && sid && tid) {
@@ -627,26 +619,12 @@ export async function postUnitPostVerification(pctx: PostUnitContext): Promise<"
             }
 
             const triageUnitId = `${mid}/${sid}/triage`;
-            s.sidecarQueue.push({
-              kind: "triage",
-              unitType: "triage-captures",
-              unitId: triageUnitId,
-              prompt,
-            });
-
-            debugLog("postUnitPostVerification", {
-              phase: "sidecar-enqueue",
-              kind: "triage",
-              unitId: triageUnitId,
-              pendingCount: pending.length,
-            });
-
-            ctx.ui.notify(
+            return enqueueSidecar(
+              s, ctx,
+              { kind: "triage", unitType: "triage-captures", unitId: triageUnitId, prompt },
+              { pendingCount: pending.length },
               `Triaging ${pending.length} pending capture${pending.length === 1 ? "" : "s"}...`,
-              "info",
             );
-
-            return "continue";
           }
         }
       }
@@ -675,27 +653,12 @@ export async function postUnitPostVerification(pctx: PostUnitContext): Promise<"
       markCaptureExecuted(s.basePath, capture.id);
 
       const qtUnitId = `${s.currentMilestoneId}/${capture.id}`;
-      s.sidecarQueue.push({
-        kind: "quick-task",
-        unitType: "quick-task",
-        unitId: qtUnitId,
-        prompt,
-        captureId: capture.id,
-      });
-
-      debugLog("postUnitPostVerification", {
-        phase: "sidecar-enqueue",
-        kind: "quick-task",
-        unitId: qtUnitId,
-        captureId: capture.id,
-      });
-
-      ctx.ui.notify(
+      return enqueueSidecar(
+        s, ctx,
+        { kind: "quick-task", unitType: "quick-task", unitId: qtUnitId, prompt, captureId: capture.id },
+        { captureId: capture.id },
         `Executing quick-task: ${capture.id} — "${capture.text}"`,
-        "info",
       );
-
-      return "continue";
     } catch (e) {
       debugLog("postUnit", { phase: "quick-task-dispatch", error: String(e) });
     }

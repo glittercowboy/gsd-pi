@@ -78,7 +78,7 @@ const darkTheme = createTheme({
     selection: "oklch(0.2 0 0)",
     lineHighlight: "oklch(0.12 0 0)",
     gutterBackground: "oklch(0.09 0 0)",
-    gutterForeground: "oklch(0.35 0 0)",
+    gutterForeground: "oklch(0.42 0 0)",
     gutterBorder: "transparent",
   },
   styles: darkStyles,

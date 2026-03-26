@@ -82,7 +82,7 @@ export function StepMode({ selected, onSelect, onNext, onBack }: StepModeProps) 
                 "active:scale-[0.98]",
                 isSelected
                   ? "border-foreground/30 bg-foreground/[0.06] shadow-[0_0_0_1px_rgba(255,255,255,0.06)]"
-                  : "border-border/50 bg-card/30 hover:border-foreground/15 hover:bg-card/60",
+                  : "border-border/50 bg-card/50 hover:border-foreground/15 hover:bg-card/50",
               )}
               data-testid={`onboarding-mode-${opt.id}`}
             >
@@ -141,7 +141,7 @@ export function StepMode({ selected, onSelect, onNext, onBack }: StepModeProps) 
                 <span
                   className={cn(
                     "ml-2 text-xs font-medium transition-colors duration-200",
-                    isSelected ? "text-foreground/50" : "text-muted-foreground/50",
+                    isSelected ? "text-muted-foreground" : "text-muted-foreground",
                   )}
                 >
                   {opt.tagline}
@@ -149,7 +149,7 @@ export function StepMode({ selected, onSelect, onNext, onBack }: StepModeProps) 
               </div>
 
               {/* Description */}
-              <p className="mt-2 text-[13px] leading-relaxed text-muted-foreground/80">
+              <p className="mt-2 text-[13px] leading-relaxed text-muted-foreground">
                 {opt.description}
               </p>
             </button>

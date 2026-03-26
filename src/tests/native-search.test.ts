@@ -855,6 +855,51 @@ test("MAX_NATIVE_SEARCHES_PER_SESSION is exported and equals 15", () => {
   assert.equal(MAX_NATIVE_SEARCHES_PER_SESSION, 15, "Session budget should be 15 (#1309)");
 });
 
+test("session search budget: survives context compaction (high-water mark)", async () => {
+  const pi = createMockPI();
+  registerNativeSearchHooks(pi);
+
+  await pi.fire("model_select", {
+    type: "model_select",
+    model: { provider: "anthropic", name: "claude-sonnet-4-6" },
+    previousModel: undefined,
+    source: "set",
+  });
+
+  // First request: history has 12 web_search_tool_result blocks
+  const searchBlocks = Array.from({ length: 12 }, (_, i) => ({
+    type: "web_search_tool_result",
+    tool_use_id: `ws${i}`,
+    content: [],
+  }));
+
+  let payload: Record<string, unknown> = {
+    model: "claude-sonnet-4-6-20250514",
+    tools: [{ name: "bash", type: "custom" }],
+    messages: [{ role: "user", content: [{ type: "text", text: "search" }, ...searchBlocks] }],
+  };
+
+  await pi.fire("before_provider_request", { type: "before_provider_request", payload });
+  let tools = payload.tools as any[];
+  let nativeTool = tools.find((t: any) => t.type === "web_search_20250305");
+  assert.ok(nativeTool, "Should still inject web_search with 12/15 used");
+  assert.equal(nativeTool.max_uses, 3, "Should have 3 remaining (15 - 12)");
+
+  // Second request: context was compacted — search blocks gone from history.
+  // Without high-water mark, the budget would reset to 15.
+  payload = {
+    model: "claude-sonnet-4-6-20250514",
+    tools: [{ name: "bash", type: "custom" }],
+    messages: [{ role: "user", content: "compacted context — no search blocks" }],
+  };
+
+  await pi.fire("before_provider_request", { type: "before_provider_request", payload });
+  tools = payload.tools as any[];
+  nativeTool = tools.find((t: any) => t.type === "web_search_20250305");
+  assert.ok(nativeTool, "Should still inject web_search with 12/15 used (high-water mark)");
+  assert.equal(nativeTool.max_uses, 3, "High-water mark should preserve 12 — only 3 remaining");
+});
+
 // ─── stripThinkingFromHistory tests ─────────────────────────────────────────
 
 test("stripThinkingFromHistory removes thinking from earlier assistant messages", () => {

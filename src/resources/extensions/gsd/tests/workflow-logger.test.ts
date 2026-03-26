@@ -1,8 +1,11 @@
 // GSD Extension — Workflow Logger Tests
 // Tests for the centralized warning/error accumulator.
 
-import { describe, test, beforeEach } from "node:test";
+import { describe, test, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
+import { makeTempDir, cleanup } from "./test-utils.ts";
 import {
   logWarning,
   logError,
@@ -14,6 +17,7 @@ import {
   hasAnyIssues,
   summarizeLogs,
   formatForNotification,
+  setLogBasePath,
   _resetLogs,
 } from "../workflow-logger.ts";
 
@@ -222,6 +226,44 @@ describe("workflow-logger", () => {
     });
   });
 
+  describe("audit log persistence", () => {
+    let dir: string;
+
+    beforeEach(() => {
+      dir = makeTempDir("wl-audit-");
+    });
+
+    afterEach(() => {
+      setLogBasePath("");
+      cleanup(dir);
+    });
+
+    test("writes entry to .gsd/audit-log.jsonl after setLogBasePath", () => {
+      setLogBasePath(dir);
+      logWarning("engine", "audit test entry");
+
+      const auditPath = join(dir, ".gsd", "audit-log.jsonl");
+      assert.ok(existsSync(auditPath), "audit-log.jsonl should exist");
+      const content = readFileSync(auditPath, "utf-8");
+      const entry = JSON.parse(content.trim());
+      assert.equal(entry.severity, "warn");
+      assert.equal(entry.component, "engine");
+      assert.equal(entry.message, "audit test entry");
+    });
+
+    test("_resetLogs does not clear the audit base path", () => {
+      setLogBasePath(dir);
+      _resetLogs();
+      logWarning("engine", "post-reset entry");
+
+      const auditPath = join(dir, ".gsd", "audit-log.jsonl");
+      assert.ok(existsSync(auditPath), "audit-log.jsonl should exist after _resetLogs");
+      const content = readFileSync(auditPath, "utf-8");
+      const entry = JSON.parse(content.trim());
+      assert.equal(entry.message, "post-reset entry");
+    });
+  });
+
   describe("buffer limit", () => {
     test("caps at MAX_BUFFER entries, dropping oldest", () => {
       const OVER = 110;
@@ -234,6 +276,44 @@ describe("workflow-logger", () => {
       // First MAX entries dropped; oldest surviving = msg-(OVER-MAX)
       assert.equal(entries[0].message, `msg-${OVER - MAX}`);
       assert.equal(entries[MAX - 1].message, `msg-${OVER - 1}`);
+    });
+  });
+
+  describe("audit log persistence", () => {
+    let dir: string;
+
+    beforeEach(() => {
+      dir = makeTempDir("wl-audit-");
+    });
+
+    afterEach(() => {
+      setLogBasePath("");
+      cleanup(dir);
+    });
+
+    test("writes entry to .gsd/audit-log.jsonl after setLogBasePath", () => {
+      setLogBasePath(dir);
+      logWarning("engine", "audit test entry");
+
+      const auditPath = join(dir, ".gsd", "audit-log.jsonl");
+      assert.ok(existsSync(auditPath), "audit-log.jsonl should exist");
+      const content = readFileSync(auditPath, "utf-8");
+      const entry = JSON.parse(content.trim());
+      assert.equal(entry.severity, "warn");
+      assert.equal(entry.component, "engine");
+      assert.equal(entry.message, "audit test entry");
+    });
+
+    test("_resetLogs does not clear the audit base path", () => {
+      setLogBasePath(dir);
+      _resetLogs();
+      logWarning("engine", "post-reset entry");
+
+      const auditPath = join(dir, ".gsd", "audit-log.jsonl");
+      assert.ok(existsSync(auditPath), "audit-log.jsonl should exist after _resetLogs");
+      const content = readFileSync(auditPath, "utf-8");
+      const entry = JSON.parse(content.trim());
+      assert.equal(entry.message, "post-reset entry");
     });
   });
 

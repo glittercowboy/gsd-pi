@@ -64,11 +64,11 @@ _None_
   return dir;
 }
 
-/** Write a .gsd/preferences.md with the given git isolation mode. */
+/** Write a .gsd/PREFERENCES.md with the given git isolation mode. */
 function writePreferencesFile(dir: string, isolation: "none" | "worktree" | "branch"): void {
   const gsdDir = join(dir, ".gsd");
   mkdirSync(gsdDir, { recursive: true });
-  writeFileSync(join(gsdDir, "preferences.md"), `---\ngit:\n  isolation: "${isolation}"\n---\n`);
+  writeFileSync(join(gsdDir, "PREFERENCES.md"), `---\ngit:\n  isolation: "${isolation}"\n---\n`);
 }
 
 /** Create a repo with an in-progress milestone. */
@@ -143,6 +143,56 @@ describe('doctor-git', async () => {
       assert.ok(!wtList.includes("milestone/M001"), "worktree no longer listed after fix");
     });
     } else {
+    }
+
+    // ─── Test 1b: Orphaned worktree fix when cwd is inside worktree (#1946) ──
+    // Reproduces the deadlock: if process.cwd() is inside the orphaned worktree,
+    // the doctor must chdir out before removing it — not skip the removal.
+    if (process.platform !== "win32") {
+    console.log("\n=== orphaned_auto_worktree (cwd inside worktree) ===");
+    {
+      const dir = createRepoWithCompletedMilestone();
+      cleanups.push(dir);
+
+      // Create worktree with milestone/M001 branch under .gsd/worktrees/
+      mkdirSync(join(dir, ".gsd", "worktrees"), { recursive: true });
+      run("git worktree add -b milestone/M001 .gsd/worktrees/M001", dir);
+
+      const wtPath = realpathSync(join(dir, ".gsd", "worktrees", "M001"));
+
+      // Simulate the deadlock: set cwd inside the orphaned worktree
+      const previousCwd = process.cwd();
+      process.chdir(wtPath);
+      try {
+        const fixed = await runGSDDoctor(dir, { fix: true, isolationMode: "worktree" });
+
+        // The fix must NOT skip removal — it should chdir out and remove
+        assert.ok(
+          !fixed.fixesApplied.some(f => f.includes("skipped removing worktree")),
+          "does NOT skip removal when cwd is inside worktree",
+        );
+        assert.ok(
+          fixed.fixesApplied.some(f => f.includes("removed orphaned worktree")),
+          "removes orphaned worktree even when cwd was inside it",
+        );
+
+        // Verify worktree is gone
+        const wtList = run("git worktree list", dir);
+        assert.ok(!wtList.includes("milestone/M001"), "worktree removed after fix with cwd inside");
+
+        // Verify cwd was moved out (should be basePath, not still inside worktree)
+        const newCwd = process.cwd();
+        assert.ok(
+          !newCwd.startsWith(wtPath),
+          "cwd moved out of worktree after fix",
+        );
+      } finally {
+        // Restore cwd — the worktree dir may be gone, so chdir to previousCwd
+        try { process.chdir(previousCwd); } catch { process.chdir(dir); }
+      }
+    }
+    } else {
+      console.log("\n=== orphaned_auto_worktree (cwd inside worktree — skipped on Windows) ===");
     }
 
     // ─── Test 2: Stale milestone branch detection & fix ────────────────
@@ -252,7 +302,7 @@ describe('doctor-git', async () => {
     // ─── Test 7: none-mode skips orphaned worktree check ───────────────
     // NOTE: loadEffectiveGSDPreferences() resolves PROJECT_PREFERENCES_PATH
     // at module load time from process.cwd(). We write the prefs file to
-    // the test runner's cwd .gsd/preferences.md and clean up afterwards.
+    // the test runner's cwd .gsd/PREFERENCES.md and clean up afterwards.
     if (process.platform !== "win32") {
     test('none-mode skips orphaned worktree', async () => {
       const dir = createRepoWithCompletedMilestone();
@@ -359,7 +409,7 @@ describe('doctor-git', async () => {
       cleanups.push(dir);
 
       run("git branch trunk", dir);
-      writeFileSync(join(dir, ".gsd", "preferences.md"), `---\ngit:\n  isolation: "worktree"\n  main_branch: "trunk"\n---\n`);
+      writeFileSync(join(dir, ".gsd", "PREFERENCES.md"), `---\ngit:\n  isolation: "worktree"\n  main_branch: "trunk"\n---\n`);
 
       const metaPath = join(dir, ".gsd", "milestones", "M001", "M001-META.json");
       writeFileSync(metaPath, JSON.stringify({ integrationBranch: "feat/does-not-exist" }, null, 2));

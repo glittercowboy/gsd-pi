@@ -419,11 +419,13 @@ export async function main(args: string[]) {
 		additionalPromptTemplatePaths: firstPass.promptTemplates,
 		additionalThemePaths: firstPass.themes,
 		noExtensions: firstPass.noExtensions,
-		noSkills: firstPass.noSkills,
-		noPromptTemplates: firstPass.noPromptTemplates,
-		noThemes: firstPass.noThemes,
+		noSkills: firstPass.noSkills || firstPass.bare,
+		noPromptTemplates: firstPass.noPromptTemplates || firstPass.bare,
+		noThemes: firstPass.noThemes || firstPass.bare,
 		systemPrompt: firstPass.systemPrompt,
 		appendSystemPrompt: firstPass.appendSystemPrompt,
+		// --bare: suppress CLAUDE.md/AGENTS.md ancestor walk
+		...(firstPass.bare ? { agentsFilesOverride: () => ({ agentsFiles: [] }) } : {}),
 	});
 	await resourceLoader.reload();
 	time("resourceLoader.reload");

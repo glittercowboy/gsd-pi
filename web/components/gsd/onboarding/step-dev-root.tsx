@@ -72,9 +72,9 @@ function InlineFolderBrowser({
   }, [browse])
 
   return (
-    <div className="rounded-xl border border-border/40 bg-card/20 overflow-hidden">
+    <div className="rounded-xl border border-border/50 bg-card/50 overflow-hidden">
       {/* Current path */}
-      <div className="flex items-center justify-between gap-2 border-b border-border/30 px-4 py-2.5">
+      <div className="flex items-center justify-between gap-2 border-b border-border/50 px-4 py-2.5">
         <p className="min-w-0 truncate font-mono text-xs text-muted-foreground" title={currentPath}>
           {currentPath}
         </p>
@@ -123,7 +123,7 @@ function InlineFolderBrowser({
                 >
                   <Folder className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
                   <span className="min-w-0 flex-1 truncate text-foreground">{entry.name}</span>
-                  <ChevronRight className="h-3 w-3 shrink-0 text-muted-foreground/30 opacity-0 transition-opacity group-hover:opacity-100" />
+                  <ChevronRight className="h-3 w-3 shrink-0 text-muted-foreground/50 opacity-0 transition-opacity group-hover:opacity-100" />
                 </button>
               ))}
 
@@ -138,7 +138,7 @@ function InlineFolderBrowser({
       </ScrollArea>
 
       {/* Cancel */}
-      <div className="border-t border-border/30 px-4 py-2">
+      <div className="border-t border-border/50 px-4 py-2">
         <Button
           type="button"
           variant="ghost"
@@ -306,7 +306,7 @@ export function StepDevRoot({ onNext, onBack }: StepDevRootProps) {
                       "active:scale-[0.96]",
                       path === suggestion
                         ? "border-foreground/25 bg-foreground/10 text-foreground"
-                        : "border-border/40 text-muted-foreground hover:border-foreground/15 hover:text-foreground",
+                        : "border-border/50 text-muted-foreground hover:border-foreground/15 hover:text-foreground",
                     )}
                   >
                     {suggestion}
@@ -337,7 +337,7 @@ export function StepDevRoot({ onNext, onBack }: StepDevRootProps) {
           <Button
             variant="ghost"
             onClick={onNext}
-            className="gap-1.5 text-muted-foreground/70 transition-transform active:scale-[0.96]"
+            className="gap-1.5 text-muted-foreground transition-transform active:scale-[0.96]"
             data-testid="onboarding-devroot-skip"
           >
             Skip

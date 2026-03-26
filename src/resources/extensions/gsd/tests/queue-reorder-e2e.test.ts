@@ -292,4 +292,44 @@ test('E2E: depends_on inline format preserved after partial removal', () => {
   }
 });
 
+test('E2E: DB-backed path respects queue order (#2556)', async () => {
+    // Regression test for #2556: getActiveMilestoneId and deriveStateFromDb
+    // used lexicographic sort instead of queue order, causing a deadlock when
+    // the dispatch guard (which respects queue order) blocked completion.
+    const base = createFixtureBase();
+    try {
+      const { openDatabase, closeDatabase, insertMilestone, isDbAvailable } = await import('../gsd-db.ts');
+      const dbPath = join(base, '.gsd', 'gsd.db');
+
+      // Create milestone directories (required for findMilestoneIds)
+      writeMilestoneDir(base, 'M006');
+      writeContext(base, 'M006', '', 'Earlier milestone');
+      writeMilestoneDir(base, 'M008');
+      writeContext(base, 'M008', '', 'Later milestone');
+
+      // Open DB and insert milestones
+      openDatabase(dbPath);
+      try {
+        insertMilestone({ id: 'M006', title: 'Earlier', status: 'active' });
+        insertMilestone({ id: 'M008', title: 'Later', status: 'active' });
+
+        // Set queue order: M008 should come FIRST (user reordered via /gsd queue)
+        saveQueueOrder(base, ['M008', 'M006']);
+
+        // deriveState should pick M008 (queue-first), not M006 (ID-first)
+        invalidateStateCache();
+        const state = await deriveState(base);
+        assert.equal(
+          state.activeMilestone?.id,
+          'M008',
+          'DB-backed deriveState must respect queue order — M008 is queued first',
+        );
+      } finally {
+        if (isDbAvailable()) closeDatabase();
+      }
+    } finally {
+      cleanup(base);
+    }
+});
+
 });

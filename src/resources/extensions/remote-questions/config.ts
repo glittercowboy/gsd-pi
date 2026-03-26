@@ -2,7 +2,7 @@
  * Remote Questions — configuration resolution and validation
  */
 
-import { join } from "node:path";
+import { AuthStorage } from "@gsd/pi-coding-agent";
 import { loadEffectiveGSDPreferences, type RemoteQuestionsConfig } from "../gsd/preferences.js";
 import type { RemoteChannel } from "./types.js";
 
@@ -54,14 +54,12 @@ function hydrateRemoteTokensFromAuth(): void {
   if (needed.length === 0) return;
 
   try {
-    const { AuthStorage } = require("@gsd/pi-coding-agent") as typeof import("@gsd/pi-coding-agent");
-    const authPath = join(process.env.HOME ?? "~", ".gsd", "agent", "auth.json");
-    const auth = AuthStorage.create(authPath);
+    const auth = AuthStorage.create();
 
     for (const [providerId, envVar] of needed) {
       try {
         const creds = auth.getCredentialsForProvider(providerId);
-        const apiKeyCred = creds.find((c: { type: string }) => c.type === "api_key") as
+        const apiKeyCred = creds.find((c: { type: string; key?: string }) => c.type === "api_key" && !!c.key) as
           | { type: "api_key"; key: string }
           | undefined;
         if (apiKeyCred?.key) {
@@ -72,7 +70,7 @@ function hydrateRemoteTokensFromAuth(): void {
       }
     }
   } catch {
-    // AuthStorage unavailable (unit tests, stripped build) — skip silently.
+    // AuthStorage unavailable or auth.json missing/unreadable — skip silently.
   }
 }
 

@@ -6,6 +6,134 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [2.51.0] - 2026-03-26
+
+### Added
+- add /terminal slash command for direct shell execution (#2349)
+- **auto**: check verification class compliance before milestone completion (#2623)
+- **validate**: extract followUps and knownLimitations in parseSummary (#2622)
+- managed RTK integration with opt-in preference and web UI toggle (#2620)
+- **validate**: inject verification classes into milestone validation prompt (#2621)
+- **skills**: add 19 wshobson/agents packs with 40 curated skills
+- **skills**: add 11 new skill packs covering major frameworks and languages
+- **skills**: add SQLite/SQL detection, SQL optimization pack, and Redis pack
+- **skills**: add Prisma and Supabase/Postgres database packs
+- **skills**: add cloud platform packs (Firebase, Azure, AWS) and improve detection
+- **skills**: curate catalog — add top ecosystem skills, drop low-quality bundled ones
+- **skills**: parse SDKROOT from pbxproj for platform-aware iOS skill matching
+- **skills**: use ~/.agents/skills/ as primary skills directory with curated catalog
+
+### Fixed
+- improve light theme warning contrast (#2674)
+- honor explicit model config when model is not in known tier map (#2643)
+- exclude lastReasoning from retry diagnostic to prevent hallucination loops (#2663)
+- persist rewrite-docs attempt counter to disk for session restart survival (#2671)
+- add non-null assertions for parseUnitId optional fields in tests
+- update triage-dispatch static analysis tests for enqueueSidecar helper
+- **notifications**: prefer terminal-notifier over osascript on macOS (#2633)
+- classify stream-truncation JSON parse errors as transient (#2636)
+- call ensureDbOpen() before slice queries in /gsd discuss (#2640)
+- **prompts**: use --body-file for forensics issue creation (#2641)
+- isLockProcessAlive should return true for own PID (#2642)
+- check ASSESSMENT file for UAT verdict in checkNeedsRunUat (#2646)
+- use pauseAuto instead of stopAuto for warning-level dispatch stops (#2666)
+- signal malformed tool arguments in toolcall_end event (#2647)
+- prevent double mergeAndExit on milestone completion (#2648)
+- respect queue-order.json in DB-backed state derivation (#2649)
+- **vscode**: support Remote SSH by adding extensionKind and error handler (#2650)
+- update DB task status in writeBlockerPlaceholder for execute-task (#2657)
+- normalize path separators in matchesProjectFileMarker for Windows
+- **tests**: remove obsolete doctor filesystem test
+- **tests**: update doctor issue code to db_done_task_no_summary
+- restore PR files lost during merge conflict resolution
+- **skills**: address QA round 3
+- **skills**: address QA round 2
+- **skills**: address QA round 1
+- **skills**: prioritize ecosystem dir and skip legacy after migration
+- **skills**: address QA round 23
+- **skills**: address QA round 22
+- **skills**: address QA round 21
+- **skills**: address QA round 20
+- **skills**: address QA round 19
+- **skills**: address QA round 18
+- **skills**: address QA round 17
+- **skills**: address QA round 16
+- **skills**: address QA round 15
+- **skills**: address QA round 14
+- **skills**: address QA round 13
+- **skills**: address QA round 12
+- **skills**: address QA round 11
+- **skills**: address QA round 10
+- **skills**: address QA round 8
+- **skills**: detect FastAPI via dependency scanning
+- **skills**: address QA round 6
+- **skills**: address QA round 5
+- **skills**: address QA round 4
+- **skills**: address QA round 3
+- **skills**: address QA round 2
+- **skills**: defer greenfield skill selection to post-design phase
+- **skills**: add migration from ~/.gsd/agent/skills/ to ~/.agents/skills/
+- **gsd extension**: detect initialized projects in health widget
+- **gsd extension**: detect initialized projects in health widget
+
+### Changed
+- consolidate docs, remove stale artifacts, and repo hygiene (#2665)
+- extract runSafely helper for try-catch-debug-continue pattern (#2611)
+
+## [2.50.0] - 2026-03-26
+
+### Added
+- **gsd**: wire structured error propagation through UnitResult
+- add parallel quality gate evaluation with evaluating-gates phase
+- add 8-question quality gates to planning and completion templates
+
+### Fixed
+- reconcile stale task status in filesystem-based state derivation (#2514)
+- merge duplicate extractUatType imports in auto-dispatch
+- use Record<string, any> for hasNonEmptyFields to accept typed DB rows
+- **tests**: replace undefined assertTrue/assertEq with assert.ok/assert.equal
+- **tests**: replace undefined assertTrue/assertEq with assert.ok/deepStrictEqual
+- **gsd**: handle session_switch event so /resume restores GSD state (#2587)
+- use GitHub Issue Types via GraphQL instead of classification labels
+- **headless**: disable overall timeout for auto-mode, fix lock-guard auto-select (#2586)
+- **auto**: align UAT artifact suffix with gsd_slice_complete output (#2592)
+- **retry-handler**: stop treating 5xx server errors as credential-level failures
+- **test**: replace stale completedUnits with sessionFile in session-lock test
+- **session-lock**: retry lock file reads before declaring compromise
+- **gsd**: prevent ensureGsdSymlink from creating subdirectory .gsd when git-root .gsd exists
+- **auto**: add EAGAIN to INFRA_ERROR_CODES to stop budget-burning retries
+- **search**: enforce hard search budget and survive context compaction
+- **remote-questions**: use static ESM import for AuthStorage hydration
+- add SAFE_SKILL_NAME guard to reject prompt-injection via crafted skill names
+- **gsd**: use explicit parameter syntax in skill activation prompts
+- guard writeIntegrationBranch against workflow-template branches
+- preserve doctor missing-dir checks for active legacy slices
+- **gsd**: downgrade isolation mode when worktree creation fails
+- **gsd**: skip loading files for completed milestones in queue context builder
+- resolve race conditions in blob-store, discovery-cache, and agent-loop
+- **ai**: resolve WebSocket listener leaks and bound session cache
+- **rpc**: resolve double-set race, missing error ID, and stream handler
+- **pi-coding-agent**: prevent crash when login is cancelled
+- **doctor**: compare lockfile mtime against install marker, not directory mtime (#1974)
+- **doctor**: chdir out of orphaned worktree before removal (#1946)
+- **roadmap**: recognize '## Slice Roadmap' header in extractSlicesSection
+- prevent worktree sync from overwriting state and forward-sync completed-units.json
+- **web**: lazily compute default package root to avoid Windows standalone crash
+
+### Changed
+- adopt parseUnitId utility across all auto-* modules
+- flatten syncMilestoneDir nesting with shared helper
+- extract merge-state cleanup helper in reconcileMergeState
+- extract planning-state validation helpers in detectRogueFileWrites
+- split doctor-checks into focused modules
+- merge auto-worktree-sync into auto-worktree
+- deduplicate artifact path functions into single module
+- remove dead selfHealRuntimeRecords function from auto-recovery
+- decouple session-forensics from auto-worktree
+- remove dead worktree code and unused methods
+- consolidate branch name patterns into single module
+- deduplicate session-lock compromise handler and state assignment
+
 ## [2.49.0] - 2026-03-25
 
 ### Added
@@ -1879,7 +2007,9 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Changed
 - License updated to MIT
 
-[Unreleased]: https://github.com/gsd-build/gsd-2/compare/v2.49.0...HEAD
+[Unreleased]: https://github.com/gsd-build/gsd-2/compare/v2.51.0...HEAD
+[2.51.0]: https://github.com/gsd-build/gsd-2/compare/v2.50.0...v2.51.0
+[2.50.0]: https://github.com/gsd-build/gsd-2/compare/v2.49.0...v2.50.0
 [2.49.0]: https://github.com/gsd-build/gsd-2/compare/v2.48.0...v2.49.0
 [2.48.0]: https://github.com/gsd-build/gsd-2/compare/v2.47.0...v2.48.0
 [2.47.0]: https://github.com/gsd-build/gsd-2/compare/v2.46.1...v2.47.0

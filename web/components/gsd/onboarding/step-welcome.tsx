@@ -54,7 +54,7 @@ export function StepWelcome({ onNext }: StepWelcomeProps) {
         initial={{ opacity: 0, y: 12 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ delay: 0.24, duration: 0.4 }}
-        className="mt-10 flex items-center gap-3 text-xs text-muted-foreground/60"
+        className="mt-10 flex items-center gap-3 text-xs text-muted-foreground"
       >
         {["Mode", "Provider", "Auth", "Workspace"].map((label, i) => (
           <span key={label} className="flex items-center gap-3">

@@ -487,7 +487,15 @@ export async function runGSDDoctor(basePath: string, options?: { fix?: boolean; 
         demo: s.demo,
       }));
     } else {
-      slices = parseLegacyRoadmap(roadmapContent).slices;
+      const activeMilestoneId = state.activeMilestone?.id;
+      const activeSliceId = state.activeSlice?.id;
+      slices = parseLegacyRoadmap(roadmapContent).slices.map(s => ({
+        ...s,
+        // Legacy roadmaps only encode done vs not-done. For doctor's
+        // missing-directory checks, treat every undone slice except the
+        // current active slice as effectively pending/unstarted.
+        pending: !s.done && (milestoneId !== activeMilestoneId || s.id !== activeSliceId),
+      }));
     }
     // Wrap in Roadmap-compatible shape for detectCircularDependencies
     const roadmap = { slices };

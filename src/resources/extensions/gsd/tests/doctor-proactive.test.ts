@@ -297,7 +297,7 @@ describe('doctor-proactive', async () => {
       cleanups.push(dir);
 
       run("git branch trunk", dir);
-      writeFileSync(join(dir, ".gsd", "preferences.md"), `---\ngit:\n  main_branch: "trunk"\n---\n`);
+      writeFileSync(join(dir, ".gsd", "PREFERENCES.md"), `---\ngit:\n  main_branch: "trunk"\n---\n`);
       const metaPath = join(dir, ".gsd", "milestones", "M001", "M001-META.json");
       writeFileSync(metaPath, JSON.stringify({ integrationBranch: "feature/missing" }, null, 2));
 

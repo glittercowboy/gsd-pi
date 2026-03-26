@@ -58,13 +58,13 @@ export async function runUnit(
       unitId,
       error: msg,
     });
-    return { status: "cancelled" };
+    return { status: "cancelled", errorContext: { message: `Session creation failed: ${msg}`, category: "session-failed", isTransient: true } };
   }
   if (sessionTimeoutHandle) clearTimeout(sessionTimeoutHandle);
 
   if (sessionResult.cancelled) {
     debugLog("runUnit-session-timeout", { unitType, unitId });
-    return { status: "cancelled" };
+    return { status: "cancelled", errorContext: { message: "Session creation timed out", category: "timeout", isTransient: true } };
   }
 
   if (!s.active) {

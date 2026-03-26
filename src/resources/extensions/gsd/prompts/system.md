@@ -92,7 +92,7 @@ Titles live inside file content (headings, frontmatter), not in file or director
 
 ### Isolation Model
 
-Auto-mode supports three isolation modes (configured in `.gsd/preferences.md` under `taskIsolation.mode`):
+Auto-mode supports three isolation modes (configured in `.gsd/PREFERENCES.md` under `taskIsolation.mode`):
 
 - **worktree** (default): Work happens in `.gsd/worktrees/<MID>/`, a full git worktree on the `milestone/<MID>` branch. Each worktree has its own working copy and `.gsd/` directory. Squash-merged back to the integration branch on milestone completion.
 - **branch**: Work happens in the project root on a `milestone/<MID>` branch. No worktree directory — files are checked out in-place.

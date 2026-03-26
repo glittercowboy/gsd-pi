@@ -6,7 +6,7 @@
  * provides automatic deduplication across sessions.
  */
 import { createHash } from "node:crypto";
-import { mkdirSync, readdirSync, readFileSync, writeFileSync, existsSync, accessSync, unlinkSync, statSync } from "node:fs";
+import { mkdirSync, readdirSync, readFileSync, writeFileSync, accessSync, unlinkSync, statSync } from "node:fs";
 import { join } from "node:path";
 
 const BLOB_PREFIX = "blob:sha256:";
@@ -37,8 +37,11 @@ export class BlobStore {
 			},
 		};
 
-		if (!existsSync(blobPath)) {
-			writeFileSync(blobPath, data);
+		try {
+			writeFileSync(blobPath, data, { flag: "wx" }); // Atomic: fails if file exists
+		} catch (err: any) {
+			if (err.code !== "EEXIST") throw err;
+			// File already exists — expected for content-addressed storage
 		}
 		return result;
 	}

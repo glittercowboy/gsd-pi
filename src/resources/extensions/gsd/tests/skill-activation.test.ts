@@ -75,7 +75,7 @@ test("buildSkillActivationBlock activates skills via prefer_skills when context 
       prefer_skills: ["react"],
     });
 
-    assert.match(result, /Call Skill\('react'\)/);
+    assert.match(result, /Call Skill\(\{ skill: 'react' \}\)/);
     assert.doesNotMatch(result, /swiftui/);
   } finally {
     cleanup(base);
@@ -92,7 +92,7 @@ test("buildSkillActivationBlock includes always_use_skills from preferences usin
       always_use_skills: ["swift-testing"],
     });
 
-    assert.equal(result, "<skill_activation>Call Skill('swift-testing').</skill_activation>");
+    assert.equal(result, "<skill_activation>Call Skill({ skill: 'swift-testing' }).</skill_activation>");
   } finally {
     cleanup(base);
   }
@@ -120,8 +120,8 @@ test("buildSkillActivationBlock includes skill_rules matches and task-plan skill
       skill_rules: [{ when: "prisma database schema", use: ["prisma"] }],
     });
 
-    assert.match(result, /Call Skill\('accessibility'\)/);
-    assert.match(result, /Call Skill\('prisma'\)/);
+    assert.match(result, /Call Skill\(\{ skill: 'accessibility' \}\)/);
+    assert.match(result, /Call Skill\(\{ skill: 'prisma' \}\)/);
   } finally {
     cleanup(base);
   }
@@ -187,6 +187,46 @@ test("buildSkillActivationBlock does not activate skills from extraContext or ta
     // None of these skills should activate — extraContext and taskPlanContent body
     // must not be used for heuristic matching.
     assert.equal(result, "");
+  } finally {
+    cleanup(base);
+  }
+});
+
+test("buildSkillActivationBlock rejects skill names with special characters", () => {
+  const base = makeTempBase();
+  try {
+    // Skill names with quotes, braces, or other non-alphanumeric characters are
+    // rejected by the SAFE_SKILL_NAME guard to prevent prompt injection.
+    writeSkill(base, "my-skill's", "Skill with apostrophe in name.");
+    loadOnlyTestSkills(base);
+
+    const result = buildBlock(base, {}, {
+      always_use_skills: ["my-skill's"],
+    });
+
+    // Unsafe skill name is filtered out — empty result
+    assert.equal(result, "");
+  } finally {
+    cleanup(base);
+  }
+});
+
+test("buildSkillActivationBlock allows valid skill names and rejects invalid ones", () => {
+  const base = makeTempBase();
+  try {
+    writeSkill(base, "react", "React skill.");
+    writeSkill(base, "bad'name", "Injection attempt.");
+    writeSkill(base, "good-skill-2", "Another valid skill.");
+    loadOnlyTestSkills(base);
+
+    const result = buildBlock(base, {}, {
+      always_use_skills: ["react", "bad'name", "good-skill-2"],
+    });
+
+    assert.match(result, /skill_activation/);
+    assert.match(result, /Call Skill\(\{ skill: 'react' \}\)/);
+    assert.match(result, /Call Skill\(\{ skill: 'good-skill-2' \}\)/);
+    assert.doesNotMatch(result, /bad'name/);
   } finally {
     cleanup(base);
   }

@@ -250,6 +250,16 @@ export async function handleCompleteTask(
     );
     const rollbackAdapter = _getAdapter();
     if (rollbackAdapter) {
+      // Delete orphaned verification_evidence rows first (FK constraint
+      // references tasks, so evidence must go before status change).
+      // Without this, retries accumulate duplicate evidence rows (#2724).
+      rollbackAdapter.prepare(
+        `DELETE FROM verification_evidence WHERE milestone_id = :mid AND slice_id = :sid AND task_id = :tid`,
+      ).run({
+        ":mid": params.milestoneId,
+        ":sid": params.sliceId,
+        ":tid": params.taskId,
+      });
       rollbackAdapter.prepare(
         `UPDATE tasks SET status = 'pending' WHERE milestone_id = :mid AND slice_id = :sid AND id = :tid`,
       ).run({

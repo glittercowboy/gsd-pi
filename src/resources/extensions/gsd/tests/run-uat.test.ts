@@ -171,7 +171,7 @@ test('(k) run-uat prompt template', () => {
   const milestoneId = 'M001';
   const sliceId = 'S01';
   const uatPath = '.gsd/milestones/M001/slices/S01/S01-UAT.md';
-  const uatResultPath = '.gsd/milestones/M001/slices/S01/S01-UAT-RESULT.md';
+  const uatResultPath = '.gsd/milestones/M001/slices/S01/S01-UAT.md';
   const uatType = 'live-runtime';
   const inlinedContext = '<!-- no context -->';
   let promptResult: string | undefined;
@@ -234,7 +234,7 @@ test('(k2) run-uat prompt references gsd_summary_save, not direct write', () => 
     milestoneId: 'M001',
     sliceId: 'S01',
     uatPath: '.gsd/milestones/M001/slices/S01/S01-UAT.md',
-    uatResultPath: '.gsd/milestones/M001/slices/S01/S01-UAT-RESULT.md',
+    uatResultPath: '.gsd/milestones/M001/slices/S01/S01-UAT.md',
     uatType: 'artifact-driven',
     inlinedContext: '<!-- no context -->',
   });
@@ -265,14 +265,13 @@ test('(l) dispatch preconditions via resolveSliceFile', () => {
         'resolveSliceFile(..., "UAT") returns non-null when UAT file exists (dispatch trigger state)',
       );
 
-      const uatResultFilePath = resolveSliceFile(base, 'M001', 'S01', 'UAT-RESULT');
-      assert.deepStrictEqual(
-        uatResultFilePath,
-        null,
-        'resolveSliceFile(..., "UAT-RESULT") returns null when result file missing (dispatch trigger state)',
+      // UAT spec without a verdict line means UAT has not been run yet
+      const rawContent = readFileSync(uatFilePath!, 'utf-8');
+      assert.ok(
+        !/verdict:\s*[\w-]+/i.test(rawContent),
+        'UAT file without verdict indicates UAT has not been run (dispatch trigger state)',
       );
 
-      const rawContent = readFileSync(uatFilePath!, 'utf-8');
       assert.deepStrictEqual(
         extractUatType(rawContent),
         'artifact-driven',
@@ -286,13 +285,18 @@ test('(l) dispatch preconditions via resolveSliceFile', () => {
 test('test block at line 307', () => {
     const base = createFixtureBase();
     try {
-      writeSliceFile(base, 'M001', 'S01', 'UAT', makeUatContent('artifact-driven'));
-      writeSliceFile(base, 'M001', 'S01', 'UAT-RESULT', '# UAT Result\n\nverdict: PASS\n');
+      // Write UAT file with a verdict — simulates completed UAT
+      writeSliceFile(base, 'M001', 'S01', 'UAT', '# UAT Result\n\nverdict: PASS\n');
 
-      const uatResultFilePath = resolveSliceFile(base, 'M001', 'S01', 'UAT-RESULT');
+      const uatFilePath = resolveSliceFile(base, 'M001', 'S01', 'UAT');
       assert.ok(
-        uatResultFilePath !== null,
-        'resolveSliceFile(..., "UAT-RESULT") returns non-null when result file exists (idempotent skip state)',
+        uatFilePath !== null,
+        'resolveSliceFile(..., "UAT") returns non-null when UAT file exists',
+      );
+      const content = readFileSync(uatFilePath!, 'utf-8');
+      assert.ok(
+        /verdict:\s*[\w-]+/i.test(content),
+        'UAT file with verdict indicates UAT has been completed (idempotent skip state)',
       );
     } finally {
       cleanup(base);
@@ -390,7 +394,7 @@ test('(p) run-uat prompt allows PASS when human-only checks remain as NEEDS-HUMA
       milestoneId: 'M001',
       sliceId: 'S01',
       uatPath: '.gsd/milestones/M001/slices/S01/S01-UAT.md',
-      uatResultPath: '.gsd/milestones/M001/slices/S01/S01-UAT-RESULT.md',
+      uatResultPath: '.gsd/milestones/M001/slices/S01/S01-UAT.md',
       uatType: 'mixed',
       inlinedContext: '<!-- no context -->',
     });
@@ -432,7 +436,7 @@ test('(n) stale replay guard', async () => {
       );
 
       writeSliceFile(base, 'M001', 'S01', 'UAT', makeUatContent('artifact-driven'));
-      writeSliceFile(base, 'M001', 'S01', 'UAT-RESULT', '---\nverdict: FAIL\n---\n');
+      writeSliceFile(base, 'M001', 'S01', 'UAT', '---\nverdict: FAIL\n---\n');
 
       const state = {
         activeMilestone: { id: 'M001', title: 'Test roadmap' },
@@ -449,7 +453,153 @@ test('(n) stale replay guard', async () => {
       assert.deepStrictEqual(
         result,
         null,
-        'existing UAT-RESULT with FAIL verdict does not re-dispatch; verdict gate owns blocking',
+        'existing UAT with FAIL verdict does not re-dispatch; verdict gate owns blocking',
+      );
+    } finally {
+      cleanup(base);
+    }
+});
+
+test('(q) verdict in ASSESSMENT file skips UAT dispatch (file-based path)', async () => {
+    // Regression test for #2644: run-uat prompt writes the verdict to
+    // S{sid}-ASSESSMENT.md (via gsd_summary_save artifact_type:"ASSESSMENT"),
+    // but checkNeedsRunUat only checked S{sid}-UAT.md — causing a stuck loop.
+    const base = createFixtureBase();
+    try {
+      const roadmapDir = join(base, '.gsd', 'milestones', 'M001');
+      mkdirSync(roadmapDir, { recursive: true });
+      writeFileSync(
+        join(roadmapDir, 'M001-ROADMAP.md'),
+        [
+          '# M001: Test roadmap',
+          '',
+          '## Slices',
+          '',
+          '- [x] **S01: First slice** `risk:low` `depends:[]`',
+          '- [ ] **S02: Next slice** `risk:low` `depends:[S01]`',
+          '',
+          '## Boundary Map',
+          '',
+        ].join('\n'),
+      );
+
+      // UAT spec file WITHOUT a verdict (the spec never gets one)
+      writeSliceFile(base, 'M001', 'S01', 'UAT', makeUatContent('artifact-driven'));
+      // ASSESSMENT file WITH a verdict (where run-uat actually writes it)
+      writeSliceFile(base, 'M001', 'S01', 'ASSESSMENT', '---\nverdict: PASS\n---\n# UAT Assessment\n');
+
+      const state = {
+        activeMilestone: { id: 'M001', title: 'Test roadmap' },
+        activeSlice: { id: 'S02', title: 'Next slice' },
+        activeTask: null,
+        phase: 'planning',
+        recentDecisions: [],
+        blockers: [],
+        nextAction: 'Plan S02',
+        registry: [],
+      } as const;
+
+      const result = await checkNeedsRunUat(base, 'M001', state as any, { uat_dispatch: true } as any);
+      assert.deepStrictEqual(
+        result,
+        null,
+        'verdict in ASSESSMENT file should prevent re-dispatch of run-uat',
+      );
+    } finally {
+      cleanup(base);
+    }
+});
+
+test('(r) no ASSESSMENT file still dispatches UAT (no false skip)', async () => {
+    // Guard: when there is no ASSESSMENT file at all, UAT should still dispatch
+    // normally. The ASSESSMENT check must not cause a false-negative skip.
+    const base = createFixtureBase();
+    try {
+      const roadmapDir = join(base, '.gsd', 'milestones', 'M001');
+      mkdirSync(roadmapDir, { recursive: true });
+      writeFileSync(
+        join(roadmapDir, 'M001-ROADMAP.md'),
+        [
+          '# M001: Test roadmap',
+          '',
+          '## Slices',
+          '',
+          '- [x] **S01: First slice** `risk:low` `depends:[]`',
+          '- [ ] **S02: Next slice** `risk:low` `depends:[S01]`',
+          '',
+          '## Boundary Map',
+          '',
+        ].join('\n'),
+      );
+
+      // UAT spec file WITHOUT a verdict, and NO ASSESSMENT file
+      writeSliceFile(base, 'M001', 'S01', 'UAT', makeUatContent('artifact-driven'));
+
+      const state = {
+        activeMilestone: { id: 'M001', title: 'Test roadmap' },
+        activeSlice: { id: 'S02', title: 'Next slice' },
+        activeTask: null,
+        phase: 'planning',
+        recentDecisions: [],
+        blockers: [],
+        nextAction: 'Plan S02',
+        registry: [],
+      } as const;
+
+      const result = await checkNeedsRunUat(base, 'M001', state as any, { uat_dispatch: true } as any);
+      assert.deepStrictEqual(
+        result,
+        { sliceId: 'S01', uatType: 'artifact-driven' },
+        'without ASSESSMENT file, UAT still dispatches normally',
+      );
+    } finally {
+      cleanup(base);
+    }
+});
+
+test('(s) ASSESSMENT without verdict does not skip UAT dispatch', async () => {
+    // Guard: an ASSESSMENT file that exists but has no verdict line should
+    // NOT suppress UAT dispatch — only a file with an actual verdict should.
+    const base = createFixtureBase();
+    try {
+      const roadmapDir = join(base, '.gsd', 'milestones', 'M001');
+      mkdirSync(roadmapDir, { recursive: true });
+      writeFileSync(
+        join(roadmapDir, 'M001-ROADMAP.md'),
+        [
+          '# M001: Test roadmap',
+          '',
+          '## Slices',
+          '',
+          '- [x] **S01: First slice** `risk:low` `depends:[]`',
+          '- [ ] **S02: Next slice** `risk:low` `depends:[S01]`',
+          '',
+          '## Boundary Map',
+          '',
+        ].join('\n'),
+      );
+
+      // UAT spec WITHOUT verdict
+      writeSliceFile(base, 'M001', 'S01', 'UAT', makeUatContent('artifact-driven'));
+      // ASSESSMENT file WITHOUT verdict (partial/incomplete assessment)
+      writeSliceFile(base, 'M001', 'S01', 'ASSESSMENT', '# UAT Assessment\n\nStill running checks...\n');
+
+      const state = {
+        activeMilestone: { id: 'M001', title: 'Test roadmap' },
+        activeSlice: { id: 'S02', title: 'Next slice' },
+        activeTask: null,
+        phase: 'planning',
+        recentDecisions: [],
+        blockers: [],
+        nextAction: 'Plan S02',
+        registry: [],
+      } as const;
+
+      const result = await checkNeedsRunUat(base, 'M001', state as any, { uat_dispatch: true } as any);
+      assert.deepStrictEqual(
+        result,
+        { sliceId: 'S01', uatType: 'artifact-driven' },
+        'ASSESSMENT without verdict should not suppress UAT dispatch',
       );
     } finally {
       cleanup(base);

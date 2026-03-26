@@ -221,8 +221,9 @@ export class FooterComponent implements Component {
 				.sort(([a], [b]) => a.localeCompare(b))
 				.map(([, text]) => sanitizeStatusText(text));
 			const statusLine = sortedStatuses.join(" ");
-			// Truncate to terminal width with dim ellipsis for consistency with footer style
-			lines.push(truncateToWidth(statusLine, width, theme.fg("dim", "...")));
+			// Match the rest of the footer styling: extension statuses should render
+			// in the same dim color as pwd/stats, with a dim ellipsis on truncation.
+			lines.push(truncateToWidth(theme.fg("dim", statusLine), width, theme.fg("dim", "...")));
 		}
 
 		return lines;

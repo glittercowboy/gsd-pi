@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
 import type { AutoDashboardData } from "./bridge-service.ts";
-import { resolveTypeStrippingFlag, resolveSubprocessModule, buildSubprocessPrefixArgs } from "./ts-subprocess-flags.ts"
+import { resolveSubprocessModule, buildSubprocessPrefixArgs } from "./ts-subprocess-flags.ts";
 
 const AUTO_DASHBOARD_MAX_BUFFER = 1024 * 1024;
 const TEST_AUTO_DASHBOARD_MODULE_ENV = "GSD_WEB_TEST_AUTO_DASHBOARD_MODULE";
@@ -29,6 +29,8 @@ function fallbackAutoDashboardData(): AutoDashboardData {
     basePath: "",
     totalCost: 0,
     totalTokens: 0,
+    rtkSavings: null,
+    rtkEnabled: false,
   };
 }
 
@@ -52,7 +54,6 @@ export async function collectAuthoritativeAutoDashboardData(
   const checkExists = options.existsSync ?? existsSync;
   const resolveTsLoader = resolveTsLoaderPath(packageRoot);
 
-  // Use test override if provided; otherwise resolve via resolveSubprocessModule
   const testModulePath = env[TEST_AUTO_DASHBOARD_MODULE_ENV];
   const moduleResolution = testModulePath
     ? { modulePath: testModulePath, useCompiledJs: false }

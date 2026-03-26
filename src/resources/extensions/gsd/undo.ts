@@ -7,6 +7,7 @@ import type { ExtensionCommandContext, ExtensionAPI } from "@gsd/pi-coding-agent
 import { existsSync, readFileSync, writeFileSync, unlinkSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { nativeRevertCommit, nativeRevertAbort } from "./native-git-bridge.js";
+import { parseUnitId } from "./unit-id.js";
 import { deriveState } from "./state.js";
 import { invalidateAllCaches } from "./cache.js";
 import { gsdRoot, resolveTasksDir, resolveSlicePath, resolveTaskFile, buildTaskFileName, buildSliceFileName } from "./paths.js";
@@ -65,11 +66,11 @@ export async function handleUndo(args: string, ctx: ExtensionCommandContext, _pi
   }
 
   // 1. Delete summary artifact
-  const parts = unitId.split("/");
+  const { milestone, slice, task } = parseUnitId(unitId);
   let summaryRemoved = false;
-  if (parts.length === 3) {
+  if (task !== undefined && slice !== undefined) {
     // Task-level: M001/S01/T01
-    const [mid, sid, tid] = parts;
+    const [mid, sid, tid] = [milestone, slice, task];
     const tasksDir = resolveTasksDir(basePath, mid, sid);
     if (tasksDir) {
       const summaryFile = join(tasksDir, buildTaskFileName(tid, "SUMMARY"));
@@ -78,9 +79,9 @@ export async function handleUndo(args: string, ctx: ExtensionCommandContext, _pi
         summaryRemoved = true;
       }
     }
-  } else if (parts.length === 2) {
+  } else if (slice !== undefined) {
     // Slice-level: M001/S01
-    const [mid, sid] = parts;
+    const [mid, sid] = [milestone, slice];
     const slicePath = resolveSlicePath(basePath, mid, sid);
     if (slicePath) {
       for (const suffix of ["SUMMARY", "COMPLETE"]) {
@@ -95,8 +96,8 @@ export async function handleUndo(args: string, ctx: ExtensionCommandContext, _pi
 
   // 2. Uncheck task in PLAN if execute-task
   let planUpdated = false;
-  if (unitType === "execute-task" && parts.length === 3) {
-    const [mid, sid, tid] = parts;
+  if (unitType === "execute-task" && task !== undefined && slice !== undefined) {
+    const [mid, sid, tid] = [milestone, slice, task];
     planUpdated = uncheckTaskInPlan(basePath, mid, sid, tid);
   }
 

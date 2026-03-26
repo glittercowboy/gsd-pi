@@ -9,6 +9,7 @@ import {
   DollarSign,
   Eye,
   EyeOff,
+  FlaskConical,
   KeyRound,
   LoaderCircle,
   Radio,
@@ -57,7 +58,7 @@ function SettingsHeader({
     <div className="flex items-center justify-between gap-3 pb-4">
       <div className="flex items-center gap-2.5">
         <span className="text-muted-foreground">{icon}</span>
-        <h3 className="text-[13px] font-semibold uppercase tracking-[0.08em] text-foreground/70">{title}</h3>
+        <h3 className="text-[13px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">{title}</h3>
         {subtitle && <span className="text-[11px] text-muted-foreground">{subtitle}</span>}
       </div>
       <Button type="button" variant="ghost" size="sm" onClick={onRefresh} disabled={refreshing} className="h-7 gap-1.5 text-xs">
@@ -87,7 +88,7 @@ function SettingsLoading({ label }: { label: string }) {
 
 function SettingsEmpty({ message }: { message: string }) {
   return (
-    <div className="rounded-lg border border-border/30 bg-card/30 px-4 py-5 text-center text-xs text-muted-foreground">
+    <div className="rounded-lg border border-border/50 bg-card/50 px-4 py-5 text-center text-xs text-muted-foreground">
       {message}
     </div>
   )
@@ -100,7 +101,7 @@ function Pill({ label, value, variant }: { label: string; value: string | number
       variant === "info" && "border-info/20 bg-info/5 text-info",
       variant === "warning" && "border-warning/20 bg-warning/5 text-warning",
       variant === "success" && "border-success/20 bg-success/5 text-success",
-      (!variant || variant === "default") && "border-border/40 bg-card/50 text-foreground/80",
+      (!variant || variant === "default") && "border-border/50 bg-card/50 text-foreground/80",
     )}>
       <span className="text-muted-foreground">{label}</span>
       <span className="font-medium tabular-nums">{value}</span>
@@ -214,7 +215,7 @@ export function PrefsPanel() {
           </div>
 
           {/* Toggles */}
-          <div className="grid grid-cols-2 gap-x-6 gap-y-1.5 rounded-lg border border-border/30 bg-card/30 px-3 py-2.5">
+          <div className="grid grid-cols-2 gap-x-6 gap-y-1.5 rounded-lg border border-border/50 bg-card/50 px-3 py-2.5">
             <KvRow label="Auto-Supervisor">
               {prefs.autoSupervisor?.enabled ? (
                 <span className="text-success">
@@ -342,8 +343,8 @@ export function ModelRoutingPanel() {
 
           {/* Tier assignments */}
           {routingConfig?.tier_models && (
-            <div className="rounded-lg border border-border/30 bg-card/30 px-3 py-2.5 space-y-1.5">
-              <h4 className="text-[11px] font-medium text-foreground/70 uppercase tracking-wide">Tier Assignments</h4>
+            <div className="rounded-lg border border-border/50 bg-card/50 px-3 py-2.5 space-y-1.5">
+              <h4 className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide">Tier Assignments</h4>
               <TierModelRow tier="light" modelId={routingConfig.tier_models.light} />
               <TierModelRow tier="standard" modelId={routingConfig.tier_models.standard} />
               <TierModelRow tier="heavy" modelId={routingConfig.tier_models.heavy} />
@@ -369,10 +370,10 @@ export function ModelRoutingPanel() {
               {/* Top patterns table */}
               {Object.keys(routingHistory.patterns).length > 0 && (
                 <div className="space-y-1.5">
-                  <h4 className="text-[11px] font-medium text-foreground/70">Top Patterns</h4>
+                  <h4 className="text-[11px] font-medium text-muted-foreground">Top Patterns</h4>
                   <div className="space-y-2">
                     {topPatterns(routingHistory).map(({ name, total, pattern }) => (
-                      <div key={name} className="rounded-lg border border-border/30 bg-card/30 px-3 py-2 space-y-1">
+                      <div key={name} className="rounded-lg border border-border/50 bg-card/50 px-3 py-2 space-y-1">
                         <div className="flex items-center justify-between gap-2">
                           <span className="text-xs font-mono text-foreground/80 truncate">{name}</span>
                           <span className="text-[10px] text-muted-foreground tabular-nums shrink-0">{total} attempts</span>
@@ -454,8 +455,8 @@ export function BudgetPanel() {
 
           {/* Context budget allocations */}
           {budget && (
-            <div className="rounded-lg border border-border/30 bg-card/30 px-3 py-2.5 space-y-1.5">
-              <h4 className="text-[11px] font-medium text-foreground/70 uppercase tracking-wide">Context Budget Allocations</h4>
+            <div className="rounded-lg border border-border/50 bg-card/50 px-3 py-2.5 space-y-1.5">
+              <h4 className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide">Context Budget Allocations</h4>
               <KvRow label="Summary Budget">{formatChars(budget.summaryBudgetChars)} chars</KvRow>
               <KvRow label="Inline Context">{formatChars(budget.inlineContextBudgetChars)} chars</KvRow>
               <KvRow label="Verification">{formatChars(budget.verificationBudgetChars)} chars</KvRow>
@@ -467,7 +468,7 @@ export function BudgetPanel() {
           {/* Project cost totals */}
           {totals ? (
             <div className="space-y-3">
-              <h4 className="text-[11px] font-medium text-foreground/70 uppercase tracking-wide">Project Cost Totals</h4>
+              <h4 className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide">Project Cost Totals</h4>
 
               {/* Summary pills */}
               <div className="flex flex-wrap gap-2">
@@ -477,8 +478,8 @@ export function BudgetPanel() {
               </div>
 
               {/* Token breakdown */}
-              <div className="rounded-lg border border-border/30 bg-card/30 px-3 py-2.5 space-y-1.5">
-                <h4 className="text-[11px] font-medium text-foreground/70 uppercase tracking-wide">Token Breakdown</h4>
+              <div className="rounded-lg border border-border/50 bg-card/50 px-3 py-2.5 space-y-1.5">
+                <h4 className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide">Token Breakdown</h4>
                 <KvRow label="Input">{formatTokens(totals.tokens.input)}</KvRow>
                 <KvRow label="Output">{formatTokens(totals.tokens.output)}</KvRow>
                 <KvRow label="Cache Read">{formatTokens(totals.tokens.cacheRead)}</KvRow>
@@ -763,7 +764,7 @@ export function RemoteQuestionsPanel() {
 
       {/* ── Channel picker (card-based) ──────────────────────────── */}
       <div className="space-y-2">
-        <div className="text-xs font-medium text-muted-foreground/60">
+        <div className="text-xs font-medium text-muted-foreground">
           {isConfigured ? "Switch channel" : "Choose a channel"}
         </div>
         <div className="grid grid-cols-3 gap-2">
@@ -782,11 +783,11 @@ export function RemoteQuestionsPanel() {
                 "active:scale-[0.97]",
                 channel === opt.value
                   ? "border-foreground/30 bg-foreground/[0.06]"
-                  : "border-border/40 bg-card/20 hover:border-foreground/15 hover:bg-card/50",
+                  : "border-border/50 bg-card/50 hover:border-foreground/15 hover:bg-card/50",
               )}
             >
               <div className="text-sm font-medium text-foreground">{opt.label}</div>
-              <div className="mt-0.5 text-[11px] text-muted-foreground/60">{opt.description}</div>
+              <div className="mt-0.5 text-[11px] text-muted-foreground">{opt.description}</div>
             </button>
           ))}
         </div>
@@ -794,7 +795,7 @@ export function RemoteQuestionsPanel() {
 
       {/* ── Channel ID input ─────────────────────────────────────── */}
       <div className="space-y-2">
-        <div className="text-xs font-medium text-muted-foreground/60">Channel ID</div>
+        <div className="text-xs font-medium text-muted-foreground">Channel ID</div>
         <input
           type="text"
           value={channelId}
@@ -802,13 +803,13 @@ export function RemoteQuestionsPanel() {
           placeholder={selectedChannelOption.idPlaceholder}
           disabled={saving}
           className={cn(
-            "w-full rounded-xl border bg-card/20 px-4 py-2.5 font-mono text-sm text-foreground",
-            "placeholder:text-muted-foreground/40",
+            "w-full rounded-xl border bg-card/50 px-4 py-2.5 font-mono text-sm text-foreground",
+            "placeholder:text-muted-foreground",
             "focus:outline-none focus:ring-2 focus:ring-ring focus:border-transparent",
             "transition-colors",
             channelId.trim().length > 0 && !CHANNEL_ID_PATTERNS[channel].test(channelId.trim())
               ? "border-destructive/40"
-              : "border-border/40",
+              : "border-border/50",
           )}
           onKeyDown={(e) => { if (e.key === "Enter" && canSave) void handleSave() }}
         />
@@ -823,7 +824,7 @@ export function RemoteQuestionsPanel() {
       <button
         type="button"
         onClick={() => setShowAdvanced((v) => !v)}
-        className="flex items-center gap-1.5 text-[11px] text-muted-foreground/60 hover:text-muted-foreground transition-colors"
+        className="flex items-center gap-1.5 text-[11px] text-muted-foreground hover:text-muted-foreground transition-colors"
       >
         <svg
           className={cn("h-3 w-3 transition-transform", showAdvanced && "rotate-90")}
@@ -838,7 +839,7 @@ export function RemoteQuestionsPanel() {
       {showAdvanced && (
         <div className="grid grid-cols-2 gap-3 pl-4">
           <div className="space-y-1.5">
-            <label className="text-[11px] text-muted-foreground/60" htmlFor="rq-timeout">
+            <label className="text-[11px] text-muted-foreground" htmlFor="rq-timeout">
               Timeout (min)
             </label>
             <input
@@ -848,11 +849,11 @@ export function RemoteQuestionsPanel() {
               max={30}
               value={timeoutMinutes}
               onChange={(e) => setTimeoutMinutes(Math.max(1, Math.min(30, Number(e.target.value) || 1)))}
-              className="w-full rounded-lg border border-border/40 bg-card/20 px-3 py-2 text-xs text-foreground tabular-nums focus:outline-none focus:ring-2 focus:ring-ring"
+              className="w-full rounded-lg border border-border/50 bg-card/50 px-3 py-2 text-xs text-foreground tabular-nums focus:outline-none focus:ring-2 focus:ring-ring"
             />
           </div>
           <div className="space-y-1.5">
-            <label className="text-[11px] text-muted-foreground/60" htmlFor="rq-poll">
+            <label className="text-[11px] text-muted-foreground" htmlFor="rq-poll">
               Poll interval (sec)
             </label>
             <input
@@ -862,7 +863,7 @@ export function RemoteQuestionsPanel() {
               max={30}
               value={pollIntervalSeconds}
               onChange={(e) => setPollIntervalSeconds(Math.max(2, Math.min(30, Number(e.target.value) || 2)))}
-              className="w-full rounded-lg border border-border/40 bg-card/20 px-3 py-2 text-xs text-foreground tabular-nums focus:outline-none focus:ring-2 focus:ring-ring"
+              className="w-full rounded-lg border border-border/50 bg-card/50 px-3 py-2 text-xs text-foreground tabular-nums focus:outline-none focus:ring-2 focus:ring-ring"
             />
           </div>
         </div>
@@ -887,7 +888,7 @@ export function RemoteQuestionsPanel() {
 
       {/* ── Bot token ─────────────────────────────────────────── */}
       <div className="space-y-3">
-        <div className="text-xs font-medium text-muted-foreground/60">Bot token</div>
+        <div className="text-xs font-medium text-muted-foreground">Bot token</div>
 
         {tokenSuccess && (
           <div className="flex items-center gap-2.5 rounded-xl border border-success/15 bg-success/[0.04] px-4 py-2.5 text-xs text-muted-foreground">
@@ -919,8 +920,8 @@ export function RemoteQuestionsPanel() {
               placeholder={`Paste your ${selectedChannelOption.label} bot token`}
               disabled={savingToken}
               className={cn(
-                "w-full rounded-xl border border-border/40 bg-card/20 pl-4 pr-10 py-2.5 font-mono text-sm text-foreground",
-                "placeholder:text-muted-foreground/40",
+                "w-full rounded-xl border border-border/50 bg-card/50 pl-4 pr-10 py-2.5 font-mono text-sm text-foreground",
+                "placeholder:text-muted-foreground",
                 "focus:outline-none focus:ring-2 focus:ring-ring focus:border-transparent",
                 "transition-colors",
               )}
@@ -929,7 +930,7 @@ export function RemoteQuestionsPanel() {
             <button
               type="button"
               onClick={() => setShowToken((v) => !v)}
-              className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground/50 hover:text-muted-foreground transition-colors"
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-muted-foreground transition-colors"
             >
               {showToken ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
             </button>
@@ -975,7 +976,7 @@ function FontSizeControl({
   previewFont: "mono" | "sans"
 }) {
   return (
-    <div className="rounded-lg border border-border/30 bg-card/30 px-3 py-3 space-y-3">
+    <div className="rounded-lg border border-border/50 bg-card/50 px-3 py-3 space-y-3">
       <div>
         <div className="text-xs font-medium text-foreground">{label}</div>
         <div className="text-[11px] text-muted-foreground mt-0.5">{description}</div>
@@ -991,12 +992,12 @@ function FontSizeControl({
               "rounded-md border px-3 py-1.5 text-xs font-medium tabular-nums transition-colors",
               currentSize === size
                 ? "border-foreground/30 bg-foreground/10 text-foreground shadow-sm"
-                : "border-border/40 bg-card/50 text-muted-foreground hover:border-foreground/20 hover:text-foreground",
+                : "border-border/50 bg-card/50 text-muted-foreground hover:border-foreground/20 hover:text-foreground",
             )}
           >
             {size}px
             {size === defaultSize && (
-              <span className="ml-1 text-[10px] text-muted-foreground/60">(default)</span>
+              <span className="ml-1 text-[10px] text-muted-foreground">(default)</span>
             )}
           </button>
         ))}
@@ -1004,7 +1005,7 @@ function FontSizeControl({
 
       <div
         className={cn(
-          "mt-2 rounded-md border border-border/20 bg-terminal px-3 py-2 text-foreground/80",
+          "mt-2 rounded-md border border-border/50 bg-terminal px-3 py-2 text-foreground/80",
           previewFont === "mono" ? "font-mono" : "font-sans",
         )}
         style={{ fontSize: `${currentSize}px`, lineHeight: 1.35 }}
@@ -1051,6 +1052,165 @@ export function GeneralPanel() {
     </div>
   )
 }
+
+// ═══════════════════════════════════════════════════════════════════════
+// EXPERIMENTAL PANEL
+// ═══════════════════════════════════════════════════════════════════════
+
+interface ExperimentalFlag {
+  key: string
+  label: string
+  description: string
+  warning?: string
+}
+
+const EXPERIMENTAL_FLAGS: ExperimentalFlag[] = [
+  {
+    key: "rtk",
+    label: "RTK Shell Compression",
+    description:
+      "Wraps shell commands through the RTK binary to reduce token usage during command execution. RTK is downloaded automatically on first use.",
+    warning: "Experimental — may change or be removed without notice.",
+  },
+]
+
+export function ExperimentalPanel() {
+  const { state, data, busy, refresh } = useSettingsData()
+  const prefs = data?.preferences ?? null
+
+  const [flags, setFlags] = useState<Record<string, boolean>>({})
+  const [saving, setSaving] = useState<Record<string, boolean>>({})
+  const [saveError, setSaveError] = useState<string | null>(null)
+
+  // Trigger a settings load if data hasn't been fetched yet (e.g. navigating
+  // directly to the Experimental tab without going through gsd-prefs first).
+  useEffect(() => {
+    if (!data && !busy && state.phase === "idle") {
+      refresh()
+    }
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Sync local state from loaded prefs
+  useEffect(() => {
+    if (!prefs) return
+    setFlags({ rtk: prefs.experimental?.rtk === true })
+  }, [prefs])
+
+  async function toggle(flagKey: string, next: boolean) {
+    setSaving((s) => ({ ...s, [flagKey]: true }))
+    setSaveError(null)
+    try {
+      const res = await authFetch("/api/experimental", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ flag: flagKey, enabled: next }),
+      })
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({})) as { error?: string }
+        throw new Error(body.error ?? `HTTP ${res.status}`)
+      }
+      setFlags((f) => ({ ...f, [flagKey]: next }))
+      // Refresh settings data so PrefsPanel reflects the change
+      refresh()
+    } catch (err) {
+      setSaveError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setSaving((s) => ({ ...s, [flagKey]: false }))
+    }
+  }
+
+  return (
+    <div className="space-y-4" data-testid="settings-experimental">
+      <SettingsHeader
+        title="Experimental"
+        icon={<FlaskConical className="h-3.5 w-3.5" />}
+        subtitle="Opt-in features — may change without notice"
+        onRefresh={refresh}
+        refreshing={busy}
+      />
+
+      {state.error && <SettingsError message={state.error} />}
+      {saveError && <SettingsError message={saveError} />}
+      {busy && !data && <SettingsLoading label="Loading preferences…" />}
+
+      <div className="space-y-3">
+        {EXPERIMENTAL_FLAGS.map((flag) => {
+          const enabled = flags[flag.key] ?? false
+          const isSaving = saving[flag.key] ?? false
+
+          return (
+            <div
+              key={flag.key}
+              className="rounded-lg border border-border/50 bg-card/50 px-3 py-3 space-y-2"
+            >
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0 flex-1 space-y-1">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-medium text-foreground">{flag.label}</span>
+                    <span
+                      className={cn(
+                        "rounded-full px-1.5 py-0.5 text-[10px] font-medium",
+                        enabled
+                          ? "bg-success/10 text-success"
+                          : "bg-muted text-muted-foreground",
+                      )}
+                    >
+                      {enabled ? "on" : "off"}
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-muted-foreground leading-relaxed">
+                    {flag.description}
+                  </p>
+                  {flag.warning && (
+                    <div className="flex items-center gap-1 text-[10px] text-warning">
+                      <AlertTriangle className="h-3 w-3 shrink-0" />
+                      <span>{flag.warning}</span>
+                    </div>
+                  )}
+                </div>
+                <button
+                  onClick={() => toggle(flag.key, !enabled)}
+                  disabled={isSaving || busy || !data}
+                  className={cn(
+                    "shrink-0 relative inline-flex h-5 w-9 items-center rounded-full transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50 disabled:cursor-not-allowed",
+                    enabled ? "bg-success" : "bg-muted-foreground/30",
+                  )}
+                  role="switch"
+                  aria-checked={enabled}
+                  aria-label={`Toggle ${flag.label}`}
+                >
+                  <span
+                    className={cn(
+                      "inline-block h-3.5 w-3.5 rounded-full bg-white shadow-sm transition-transform",
+                      enabled ? "translate-x-4" : "translate-x-0.5",
+                    )}
+                  />
+                  {isSaving && (
+                    <span className="absolute inset-0 flex items-center justify-center">
+                      <LoaderCircle className="h-3 w-3 animate-spin text-white" />
+                    </span>
+                  )}
+                </button>
+              </div>
+            </div>
+          )
+        })}
+      </div>
+
+      {data && (
+        <p className="text-[11px] text-muted-foreground">
+          Changes are written to{" "}
+          <span className="font-mono">{prefs?.path ?? "~/.gsd/PREFERENCES.md"}</span>
+          {" "}and take effect on the next session.
+        </p>
+      )}
+    </div>
+  )
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// LEGACY EXPORTS
+// ═══════════════════════════════════════════════════════════════════════
 
 // Legacy exports for backward compatibility with gsd-prefs mega-scroll
 export const TerminalSizePanel = GeneralPanel

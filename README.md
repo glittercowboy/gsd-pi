@@ -19,6 +19,8 @@ One command. Walk away. Come back to a built project with clean git history.
 
 <pre><code>npm install -g gsd-pi@latest</code></pre>
 
+> GSD now provisions a managed [RTK](https://github.com/rtk-ai/rtk) binary on supported macOS, Linux, and Windows installs to compress shell-command output in `bash`, `async_bash`, `bg_shell`, and verification flows. GSD forces `RTK_TELEMETRY_DISABLED=1` for all managed invocations. Set `GSD_RTK_DISABLED=1` to disable the integration.
+
 > **📋 NOTICE: New to Node on Mac?** If you installed Node.js via Homebrew, you may be running a development release instead of LTS. **[Read this guide](./docs/node-lts-macos.md)** to pin Node 24 LTS and avoid compatibility issues.
 
 </div>
@@ -519,7 +521,7 @@ An auto-generated `index.html` shows all reports with progression metrics across
 
 ### Preferences
 
-GSD preferences live in `~/.gsd/preferences.md` (global) or `.gsd/preferences.md` (project). Manage with `/gsd prefs`.
+GSD preferences live in `~/.gsd/PREFERENCES.md` (global) or `.gsd/PREFERENCES.md` (project). Manage with `/gsd prefs`.
 
 ```yaml
 ---
@@ -670,7 +672,7 @@ The best practice for working in teams is to ensure unique milestone names acros
 
 ### Unique Milestone Names
 
-Create or amend your `.gsd/preferences.md` file within the repo to include `unique_milestone_ids: true` e.g.
+Create or amend your `.gsd/PREFERENCES.md` file within the repo to include `unique_milestone_ids: true` e.g.
 
 ```markdown
 ---
@@ -679,7 +681,7 @@ unique_milestone_ids: true
 ---
 ```
 
-With the above `.gitignore` set up, the `.gsd/preferences.md` file is checked into the repo ensuring all teammates use unique milestone names to avoid collisions.
+With the above `.gitignore` set up, the `.gsd/PREFERENCES.md` file is checked into the repo ensuring all teammates use unique milestone names to avoid collisions.
 
 Milestone names will now be generated with a 6 char random string appended e.g. instead of `M001` you'll get something like `M001-ush8s3`
 
@@ -687,7 +689,7 @@ Milestone names will now be generated with a 6 char random string appended e.g. 
 
 1. Ensure you are not in the middle of any milestones (clean state)
 2. Update the `.gsd/` related entries in your `.gitignore` to follow the `Suggested .gitignore setup` section under `Working in teams` (ensure you are no longer blanket ignoring the whole `.gsd/` directory)
-3. Update your `.gsd/preferences.md` file within the repo as per section `Unique Milestone Names`
+3. Update your `.gsd/PREFERENCES.md` file within the repo as per section `Unique Milestone Names`
 4. If you want to update all your existing milestones use this prompt in GSD: `I have turned on unique milestone ids, please update all old milestone ids to use this new format e.g. M001-abc123 where abc123 is a random 6 char lowercase alpha numeric string. Update all references in all .gsd file contents, file names and directory names. Validate your work once done to ensure referential integrity.`
 5. Commit to git
 

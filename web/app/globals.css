@@ -60,12 +60,12 @@
   --secondary: oklch(0.18 0 0);
   --secondary-foreground: oklch(0.85 0 0);
   --muted: oklch(0.15 0 0);
-  --muted-foreground: oklch(0.55 0 0);
+  --muted-foreground: oklch(0.60 0 0);
   --accent: oklch(0.2 0 0);
   --accent-foreground: oklch(0.9 0 0);
   --destructive: oklch(0.5 0.15 25);
   --destructive-foreground: oklch(0.95 0 0);
-  --border: oklch(0.22 0 0);
+  --border: oklch(0.28 0 0);
   --input: oklch(0.15 0 0);
   --ring: oklch(0.4 0 0);
   --chart-1: oklch(0.7 0 0);
@@ -79,7 +79,7 @@
   --sidebar-primary-foreground: oklch(0.09 0 0);
   --sidebar-accent: oklch(0.15 0 0);
   --sidebar-accent-foreground: oklch(0.9 0 0);
-  --sidebar-border: oklch(0.18 0 0);
+  --sidebar-border: oklch(0.24 0 0);
   --sidebar-ring: oklch(0.35 0 0);
 
   /* Custom tokens */
@@ -88,7 +88,7 @@
   --info: oklch(0.6 0.1 250);
   --terminal: oklch(0.06 0 0);
   --terminal-foreground: oklch(0.75 0 0);
-  --code-line-number: oklch(0.35 0 0);
+  --code-line-number: oklch(0.42 0 0);
 }
 
 @theme inline {
@@ -210,7 +210,7 @@
   width: 3.5ch;
   margin-right: 1.5ch;
   text-align: right;
-  color: oklch(0.35 0 0);
+  color: var(--code-line-number);
   user-select: none;
 }
 
@@ -228,7 +228,7 @@
   margin-top: 0;
   margin-bottom: 1rem;
   padding-bottom: 0.5rem;
-  border-bottom: 1px solid oklch(0.22 0 0);
+  border-bottom: 1px solid var(--border);
 }
 
 .markdown-body h2 {
@@ -237,7 +237,7 @@
   margin-top: 1.75rem;
   margin-bottom: 0.75rem;
   padding-bottom: 0.35rem;
-  border-bottom: 1px solid oklch(0.22 0 0);
+  border-bottom: 1px solid var(--border);
 }
 
 .markdown-body h3 {
@@ -289,14 +289,14 @@
 .markdown-body blockquote {
   margin: 0.75rem 0;
   padding: 0.25rem 1rem;
-  border-left: 3px solid oklch(0.3 0 0);
+  border-left: 3px solid oklch(0.38 0 0);
   color: oklch(0.6 0 0);
 }
 
 .markdown-body hr {
   margin: 1.5rem 0;
   border: none;
-  border-top: 1px solid oklch(0.22 0 0);
+  border-top: 1px solid var(--border);
 }
 
 .markdown-body strong {
@@ -310,7 +310,7 @@
 
 .markdown-body del {
   text-decoration: line-through;
-  color: oklch(0.5 0 0);
+  color: oklch(0.55 0 0);
 }
 
 /* Task list checkboxes */

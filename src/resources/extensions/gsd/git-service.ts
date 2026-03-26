@@ -18,8 +18,8 @@ import { loadEffectiveGSDPreferences } from "./preferences.js";
 
 import {
   detectWorktreeName,
-  SLICE_BRANCH_RE,
 } from "./worktree.js";
+import { SLICE_BRANCH_RE, QUICK_BRANCH_RE, WORKFLOW_BRANCH_RE } from "./branch-patterns.js";
 import {
   nativeGetCurrentBranch,
   nativeDetectMainBranch,
@@ -243,8 +243,8 @@ export function readIntegrationBranch(basePath: string, milestoneId: string): st
  *
  * The file is committed immediately so the metadata is persisted in git.
  */
-/** Regex matching GSD quick-task branches: gsd/quick/<num>-<slug> */
-export const QUICK_BRANCH_RE = /^gsd\/quick\//;
+/** Re-export for backward compatibility — canonical definitions in branch-patterns.ts */
+export { QUICK_BRANCH_RE, WORKFLOW_BRANCH_RE } from "./branch-patterns.js";
 
 export function writeIntegrationBranch(
   basePath: string,
@@ -257,6 +257,10 @@ export function writeIntegrationBranch(
   // to their origin branch on completion. Recording one as the integration
   // target causes milestone merges to land on the wrong branch (#1293).
   if (QUICK_BRANCH_RE.test(branch)) return;
+  // Don't record workflow-template branches (hotfix, bugfix, spike, etc.) —
+  // same root cause as quick-task branches (#2498). All templates create
+  // gsd/<templateId>/<slug> branches that are ephemeral.
+  if (WORKFLOW_BRANCH_RE.test(branch)) return;
   // Validate
   if (!VALID_BRANCH_NAME.test(branch)) return;
   // Skip if already recorded with the same branch (idempotent across restarts).
@@ -441,11 +445,6 @@ export class GitServiceImpl {
     this._milestoneId = milestoneId;
   }
 
-  /** Convenience wrapper: run git in this repo's basePath. */
-  private git(args: string[], options: { allowFailure?: boolean; input?: string } = {}): string {
-    return runGit(this.basePath, args, options);
-  }
-
   /**
    * Smart staging: `git add -A` excluding GSD runtime paths via pathspec.
    * Falls back to plain `git add -A` if the exclusion pathspec fails.
@@ -604,11 +603,6 @@ export class GitServiceImpl {
     return nativeGetCurrentBranch(this.basePath);
   }
 
-  /** True if currently on a GSD slice branch. */
-  // ─── Branch Lifecycle ──────────────────────────────────────────────────
-
-  // ─── S05 Features ─────────────────────────────────────────────────────
-
   /**
    * Create a snapshot ref for the given label (typically a slice branch name).
    * Gated on prefs.snapshots === true. Ref path: refs/gsd/snapshots/<label>/<timestamp>
@@ -668,8 +662,6 @@ export class GitServiceImpl {
       return { passed: false, skipped: false, command, error: msg };
     }
   }
-
-  // ─── Merge ─────────────────────────────────────────────────────────────
 
 }
 
