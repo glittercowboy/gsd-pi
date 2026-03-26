@@ -450,7 +450,10 @@ async function buildDiscussSlicePrompt(
   }
 
   // Completed slice summaries — what was already built that this slice builds on
+  // Ensure DB is open so getMilestoneSlices returns real data (#2560).
   {
+    const { ensureDbOpen } = await import("./bootstrap/dynamic-tools.js");
+    await ensureDbOpen();
     type NormSlice = { id: string; done: boolean };
     let normSlices: NormSlice[] = [];
     if (isDbAvailable()) {
@@ -587,6 +590,14 @@ export async function showDiscuss(
     }
     return;
   }
+
+  // Ensure DB is open before querying slices (#2560).
+  // showDiscuss() is a command handler — unlike tool handlers, it has no
+  // automatic ensureDbOpen() call. Without this, isDbAvailable() returns
+  // false on cold-start sessions and normSlices falls to [] → false
+  // "All slices complete" exit.
+  const { ensureDbOpen } = await import("./bootstrap/dynamic-tools.js");
+  await ensureDbOpen();
 
   // Guard: no roadmap yet (unless DB has slices)
   const roadmapFile = resolveMilestoneFile(basePath, mid, "ROADMAP");
