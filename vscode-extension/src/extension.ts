@@ -11,11 +11,9 @@ import { GsdCodeLensProvider } from "./code-lens.js";
 import { GsdActivityFeedProvider } from "./activity-feed.js";
 import { GsdChangeTracker } from "./change-tracker.js";
 import { GsdScmProvider } from "./scm-provider.js";
-import { GsdCheckpointProvider } from "./checkpoints.js";
 import { GsdDiagnosticBridge } from "./diagnostics.js";
 import { GsdLineDecorationManager } from "./line-decorations.js";
 import { GsdGitIntegration } from "./git-integration.js";
-import { GsdPlanViewerProvider } from "./plan-viewer.js";
 import { GsdPermissionManager } from "./permissions.js";
 
 let client: GsdClient | undefined;
@@ -25,11 +23,9 @@ let sessionTreeProvider: GsdSessionTreeProvider | undefined;
 let activityFeedProvider: GsdActivityFeedProvider | undefined;
 let changeTracker: GsdChangeTracker | undefined;
 let scmProvider: GsdScmProvider | undefined;
-let checkpointProvider: GsdCheckpointProvider | undefined;
 let diagnosticBridge: GsdDiagnosticBridge | undefined;
 let lineDecorations: GsdLineDecorationManager | undefined;
 let gitIntegration: GsdGitIntegration | undefined;
-let planViewer: GsdPlanViewerProvider | undefined;
 let permissionManager: GsdPermissionManager | undefined;
 
 function requireConnected(): boolean {
@@ -152,14 +148,6 @@ export function activate(context: vscode.ExtensionContext): void {
 	scmProvider = new GsdScmProvider(changeTracker, cwd);
 	context.subscriptions.push(scmProvider);
 
-	// -- Checkpoints -------------------------------------------------------
-
-	checkpointProvider = new GsdCheckpointProvider(changeTracker);
-	context.subscriptions.push(
-		checkpointProvider,
-		vscode.window.registerTreeDataProvider(GsdCheckpointProvider.viewId, checkpointProvider),
-	);
-
 	// -- Diagnostics -------------------------------------------------------
 
 	diagnosticBridge = new GsdDiagnosticBridge(client);
@@ -174,14 +162,6 @@ export function activate(context: vscode.ExtensionContext): void {
 
 	gitIntegration = new GsdGitIntegration(changeTracker!, cwd);
 	context.subscriptions.push(gitIntegration);
-
-	// -- Plan viewer -------------------------------------------------------
-
-	planViewer = new GsdPlanViewerProvider(client);
-	context.subscriptions.push(
-		planViewer,
-		vscode.window.registerTreeDataProvider(GsdPlanViewerProvider.viewId, planViewer),
-	);
 
 	// -- Permissions -------------------------------------------------------
 
@@ -944,14 +924,6 @@ export function activate(context: vscode.ExtensionContext): void {
 		}),
 	);
 
-	// -- Plan viewer commands -----------------------------------------------
-
-	context.subscriptions.push(
-		vscode.commands.registerCommand("gsd.clearPlan", () => {
-			planViewer?.clear();
-		}),
-	);
-
 	// -- Permission commands ------------------------------------------------
 
 	context.subscriptions.push(
@@ -1001,11 +973,9 @@ export function deactivate(): void {
 	activityFeedProvider?.dispose();
 	changeTracker?.dispose();
 	scmProvider?.dispose();
-	checkpointProvider?.dispose();
 	diagnosticBridge?.dispose();
 	lineDecorations?.dispose();
 	gitIntegration?.dispose();
-	planViewer?.dispose();
 	permissionManager?.dispose();
 	client = undefined;
 	sidebarProvider = undefined;
@@ -1014,10 +984,8 @@ export function deactivate(): void {
 	activityFeedProvider = undefined;
 	changeTracker = undefined;
 	scmProvider = undefined;
-	checkpointProvider = undefined;
 	diagnosticBridge = undefined;
 	lineDecorations = undefined;
 	gitIntegration = undefined;
-	planViewer = undefined;
 	permissionManager = undefined;
 }

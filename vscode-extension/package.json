@@ -285,14 +285,6 @@
         {
           "id": "gsd-activity",
           "name": "Activity"
-        },
-        {
-          "id": "gsd-checkpoints",
-          "name": "Checkpoints"
-        },
-        {
-          "id": "gsd-plan",
-          "name": "Execution Plan"
         }
       ]
     },
@@ -306,11 +298,6 @@
         {
           "command": "gsd.clearActivity",
           "when": "view == gsd-activity",
-          "group": "navigation"
-        },
-        {
-          "command": "gsd.clearPlan",
-          "when": "view == gsd-plan",
           "group": "navigation"
         }
       ],

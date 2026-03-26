@@ -728,8 +728,6 @@ export class GsdSidebarProvider implements vscode.WebviewViewProvider {
 				<button class="action-btn" data-command="nextUnit">Next</button>
 				<button class="action-btn" data-command="quickTask">Quick</button>
 				<button class="action-btn" data-command="capture">Capture</button>
-				<button class="action-btn" data-command="status">Status</button>
-				<button class="action-btn" data-command="forkSession">Fork</button>
 			</div>
 		</div>
 	</div>
@@ -744,8 +742,26 @@ export class GsdSidebarProvider implements vscode.WebviewViewProvider {
 	</div>
 	` : ""}
 
-	<!-- Settings -->
-	<div class="section" data-section="settings">
+	<!-- Actions -->
+	<div class="section" data-section="actions">
+		<div class="section-header"><span class="chevron">&#9660;</span> Actions</div>
+		<div class="section-body">
+			<div class="actions three-col">
+				<button class="action-btn" data-command="newSession">New</button>
+				<button class="action-btn" data-command="compact">Compact</button>
+				<button class="action-btn" data-command="copyLastResponse">Copy</button>
+				<button class="action-btn" data-command="status">Status</button>
+				<button class="action-btn" data-command="showHistory">History</button>
+				<button class="action-btn" data-command="forkSession">Fork</button>
+			</div>
+			<div style="margin-top:6px">
+				<button class="action-btn danger full" data-command="stop">Stop Agent</button>
+			</div>
+		</div>
+	</div>
+
+	<!-- Settings (collapsed by default) -->
+	<div class="section collapsed" data-section="settings">
 		<div class="section-header"><span class="chevron">&#9660;</span> Settings</div>
 		<div class="section-body">
 			<div class="toggle-row">
@@ -763,24 +779,6 @@ export class GsdSidebarProvider implements vscode.WebviewViewProvider {
 			<div class="toggle-row">
 				<span class="toggle-label">Follow-up</span>
 				<span class="toggle-pill ${info.followUpMode === "one-at-a-time" ? "on" : "off"}" data-command="toggleFollowUpMode">${info.followUpMode === "one-at-a-time" ? "1-at-a-time" : "all"}</span>
-			</div>
-		</div>
-	</div>
-
-	<!-- Actions -->
-	<div class="section" data-section="actions">
-		<div class="section-header"><span class="chevron">&#9660;</span> Actions</div>
-		<div class="section-body">
-			<div class="actions three-col">
-				<button class="action-btn" data-command="newSession">New</button>
-				<button class="action-btn" data-command="compact">Compact</button>
-				<button class="action-btn" data-command="copyLastResponse">Copy</button>
-				<button class="action-btn" data-command="exportHtml">Export</button>
-				<button class="action-btn" data-command="showHistory">History</button>
-				<button class="action-btn" data-command="listCommands">Cmds</button>
-			</div>
-			<div style="margin-top:6px">
-				<button class="action-btn danger full" data-command="stop">Stop Agent</button>
 			</div>
 		</div>
 	</div>`;
