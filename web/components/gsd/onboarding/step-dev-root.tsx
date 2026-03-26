@@ -123,7 +123,7 @@ function InlineFolderBrowser({
                 >
                   <Folder className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
                   <span className="min-w-0 flex-1 truncate text-foreground">{entry.name}</span>
-                  <ChevronRight className="h-3 w-3 shrink-0 text-muted-foreground/30 opacity-0 transition-opacity group-hover:opacity-100" />
+                  <ChevronRight className="h-3 w-3 shrink-0 text-muted-foreground/50 opacity-0 transition-opacity group-hover:opacity-100" />
                 </button>
               ))}
 
@@ -337,7 +337,7 @@ export function StepDevRoot({ onNext, onBack }: StepDevRootProps) {
           <Button
             variant="ghost"
             onClick={onNext}
-            className="gap-1.5 text-muted-foreground/70 transition-transform active:scale-[0.96]"
+            className="gap-1.5 text-muted-foreground transition-transform active:scale-[0.96]"
             data-testid="onboarding-devroot-skip"
           >
             Skip

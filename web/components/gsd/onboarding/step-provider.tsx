@@ -79,7 +79,7 @@ export function StepProvider({ providers, selectedId, onSelect, onNext, onBack }
       >
         {groups.map((group) => (
           <div key={group.label}>
-            <div className="mb-2 px-0.5 text-[11px] font-medium uppercase tracking-widest text-muted-foreground/50">
+            <div className="mb-2 px-0.5 text-[11px] font-medium uppercase tracking-widest text-muted-foreground">
               {group.label}
             </div>
             <div className="grid gap-2 sm:grid-cols-2">
@@ -116,7 +116,7 @@ export function StepProvider({ providers, selectedId, onSelect, onNext, onBack }
                       <div className="flex items-center gap-2">
                         <span className="text-sm font-semibold text-foreground">{provider.label}</span>
                         {provider.recommended && (
-                          <Badge variant="outline" className="border-foreground/10 bg-foreground/[0.03] text-[9px] text-foreground/50">
+                          <Badge variant="outline" className="border-foreground/10 bg-foreground/[0.03] text-[9px] text-muted-foreground">
                             Recommended
                           </Badge>
                         )}
@@ -129,7 +129,7 @@ export function StepProvider({ providers, selectedId, onSelect, onNext, onBack }
                             <span>{configuredViaLabel(provider.configuredVia)}</span>
                           </>
                         ) : (
-                          <span className="text-muted-foreground/50">Not configured</span>
+                          <span className="text-muted-foreground">Not configured</span>
                         )}
                       </div>
                     </div>
@@ -138,7 +138,7 @@ export function StepProvider({ providers, selectedId, onSelect, onNext, onBack }
                       {capabilityBadges(provider).map((cap) => (
                         <Tooltip key={cap}>
                           <TooltipTrigger asChild>
-                            <Badge variant="outline" className="border-border/50 text-[10px] text-muted-foreground/60">
+                            <Badge variant="outline" className="border-border/50 text-[10px] text-muted-foreground">
                               {cap}
                             </Badge>
                           </TooltipTrigger>

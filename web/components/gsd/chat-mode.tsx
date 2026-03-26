@@ -695,7 +695,7 @@ function TuiTextPrompt({
             "flex h-8 items-center justify-center rounded-lg px-3 text-xs font-medium transition-all",
             value.trim()
               ? "bg-primary text-primary-foreground hover:bg-primary/90 active:scale-95 shadow-sm"
-              : "bg-muted text-muted-foreground/40 cursor-not-allowed",
+              : "bg-muted text-muted-foreground cursor-not-allowed",
           )}
         >
           Submit
@@ -796,7 +796,7 @@ function TuiPasswordPrompt({
             onClick={() => setShowPassword((s) => !s)}
             tabIndex={-1}
             aria-label={showPassword ? "Hide input" : "Show input"}
-            className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground/50 hover:text-muted-foreground transition-colors"
+            className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-muted-foreground transition-colors"
           >
             {showPassword ? (
               <EyeOff className="h-3.5 w-3.5" />
@@ -812,13 +812,13 @@ function TuiPasswordPrompt({
             "flex h-8 items-center justify-center rounded-lg px-3 text-xs font-medium transition-all",
             value
               ? "bg-primary text-primary-foreground hover:bg-primary/90 active:scale-95 shadow-sm"
-              : "bg-muted text-muted-foreground/40 cursor-not-allowed",
+              : "bg-muted text-muted-foreground cursor-not-allowed",
           )}
         >
           Submit
         </button>
       </div>
-      <p className="mt-1.5 text-[10px] text-muted-foreground/50">
+      <p className="mt-1.5 text-[10px] text-muted-foreground">
         Value is transmitted securely and not stored in chat history.
       </p>
     </div>
@@ -922,21 +922,21 @@ function InlineThinking({ content, isStreaming }: { content: string; isStreaming
             </span>
           ) : (
             <span className="flex h-4 w-4 flex-shrink-0 items-center justify-center rounded bg-muted-foreground/10">
-              <span className="text-[9px] text-muted-foreground/50">💭</span>
+              <span className="text-[9px] text-muted-foreground">💭</span>
             </span>
           )}
-          <span className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground/50">
+          <span className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
             {isStreaming ? "Thinking…" : "Thought process"}
           </span>
           {hasMore && !expanded && (
-            <span className="ml-1 rounded-full bg-muted/60 px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground/40">
+            <span className="ml-1 rounded-full bg-muted/60 px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
               {lines.length} lines
             </span>
           )}
           <span className="ml-auto flex-shrink-0">
             {expanded
-              ? <ChevronDown className="h-3 w-3 text-muted-foreground/40 transition-transform" />
-              : <ChevronRight className="h-3 w-3 text-muted-foreground/40 transition-transform group-hover:text-muted-foreground/60" />
+              ? <ChevronDown className="h-3 w-3 text-muted-foreground transition-transform" />
+              : <ChevronRight className="h-3 w-3 text-muted-foreground transition-transform group-hover:text-muted-foreground" />
             }
           </span>
         </div>
@@ -945,7 +945,7 @@ function InlineThinking({ content, isStreaming }: { content: string; isStreaming
         {!expanded && (
           <div className="mt-2 space-y-0.5 border-l-2 border-muted-foreground/10 pl-3">
             {previewLines.map((line, i) => (
-              <p key={i} className="text-[12px] leading-relaxed text-muted-foreground/50 line-clamp-1">
+              <p key={i} className="text-[12px] leading-relaxed text-muted-foreground line-clamp-1">
                 {line}
               </p>
             ))}
@@ -957,7 +957,7 @@ function InlineThinking({ content, isStreaming }: { content: string; isStreaming
         {expanded && (
           <div
             ref={scrollRef}
-            className="mt-2 max-h-[400px] overflow-y-auto overscroll-contain rounded-lg border border-border/50 bg-background/40 p-3 text-[12px] leading-[1.7] text-muted-foreground/60 whitespace-pre-wrap scrollbar-thin scrollbar-thumb-border scrollbar-track-transparent"
+            className="mt-2 max-h-[400px] overflow-y-auto overscroll-contain rounded-lg border border-border/50 bg-background/40 p-3 text-[12px] leading-[1.7] text-muted-foreground whitespace-pre-wrap scrollbar-thin scrollbar-thumb-border scrollbar-track-transparent"
           >
             {content}
             {isStreaming && <StreamingCursor />}
@@ -991,7 +991,7 @@ function ChatBubble({
   if (message.role === "system") {
     return (
       <div className="flex items-center justify-center py-1">
-        <span className="text-[11px] text-muted-foreground/60 italic px-3">
+        <span className="text-[11px] text-muted-foreground italic px-3">
           {message.content}
         </span>
       </div>
@@ -1055,7 +1055,7 @@ function ChatBubble({
               <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-muted-foreground/30" />
               <span className="relative inline-flex h-2 w-2 rounded-full bg-muted-foreground/50" />
             </span>
-            <span className="text-[10px] font-medium text-muted-foreground/40 uppercase tracking-wider">
+            <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">
               Thinking…
             </span>
           </div>
@@ -1367,7 +1367,7 @@ function ChatInputBar({
                 </div>
               ))}
               {imageNotice && (
-                <span className="text-[10px] text-muted-foreground/70 italic">{imageNotice}</span>
+                <span className="text-[10px] text-muted-foreground italic">{imageNotice}</span>
               )}
             </div>
           )}
@@ -1386,12 +1386,12 @@ function ChatInputBar({
                 ? "Message…"
                 : "Connecting…"
             }
-            className="min-h-[40px] flex-1 resize-none bg-transparent px-3 py-2.5 text-sm text-foreground placeholder:text-muted-foreground/50 focus:outline-none disabled:cursor-not-allowed disabled:text-muted-foreground"
+            className="min-h-[40px] flex-1 resize-none bg-transparent px-3 py-2.5 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none disabled:cursor-not-allowed disabled:text-muted-foreground"
             style={{ height: "40px", maxHeight: "160px", overflowY: "auto" }}
           />
           <div className="flex flex-shrink-0 items-end pb-1.5 pr-1.5 gap-1">
             {!connected && (
-              <span className="px-2 py-1 text-[10px] font-medium text-muted-foreground/60 uppercase tracking-wide">
+              <span className="px-2 py-1 text-[10px] font-medium text-muted-foreground uppercase tracking-wide">
                 Disconnected
               </span>
             )}
@@ -1403,7 +1403,7 @@ function ChatInputBar({
                 "flex h-7 w-7 items-center justify-center rounded-lg transition-all",
                 hasContent && connected
                   ? "bg-primary text-primary-foreground shadow-sm hover:bg-primary/90 active:scale-95"
-                  : "bg-muted text-muted-foreground/40 cursor-not-allowed",
+                  : "bg-muted text-muted-foreground cursor-not-allowed",
               )}
             >
               <SendHorizonal className="h-3.5 w-3.5" />
@@ -1476,7 +1476,7 @@ function ChatInputBar({
                 {overflowGroups.map((group, gi) => (
                   <div key={group.category}>
                     {gi > 0 && <div className="my-1.5 border-t border-border/50" />}
-                    <p className="px-2 py-1 text-[10px] font-semibold text-muted-foreground/60 uppercase tracking-wider">
+                    <p className="px-2 py-1 text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">
                       {group.label}
                     </p>
                     {group.items.map((action) => {
@@ -1542,9 +1542,9 @@ function PlaceholderState({
     <div className="flex flex-1 flex-col items-center justify-center text-center py-16">
       <div className="flex h-12 w-12 items-center justify-center rounded-full border border-border bg-card">
         {showSpinner ? (
-          <Loader2 className="h-5 w-5 animate-spin text-muted-foreground/70" />
+          <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
         ) : (
-          <MessagesSquare className="h-6 w-6 text-muted-foreground/50" />
+          <MessagesSquare className="h-6 w-6 text-muted-foreground" />
         )}
       </div>
       <div className="mt-3 space-y-1">
@@ -1714,7 +1714,7 @@ function InlineSelect({
           "mt-2 flex w-full items-center justify-center rounded-lg px-3 py-2 text-xs font-medium transition-all",
           canSubmit && !disabled
             ? "bg-primary text-primary-foreground hover:bg-primary/90 active:scale-[0.98] shadow-sm"
-            : "bg-muted text-muted-foreground/40 cursor-not-allowed",
+            : "bg-muted text-muted-foreground cursor-not-allowed",
         )}
       >
         {isMulti ? `Submit (${multiValues.size})` : "Submit"}
@@ -1816,7 +1816,7 @@ function InlineInput({
           "flex h-8 items-center justify-center rounded-lg px-3 text-xs font-medium transition-all",
           value.trim() && !disabled
             ? "bg-primary text-primary-foreground hover:bg-primary/90 active:scale-95 shadow-sm"
-            : "bg-muted text-muted-foreground/40 cursor-not-allowed",
+            : "bg-muted text-muted-foreground cursor-not-allowed",
         )}
       >
         Submit
@@ -1932,7 +1932,7 @@ function ToolExecutionBlock({ tool }: { tool: CompletedToolExecution }) {
         >
           {/* Header */}
           <div className="flex items-center gap-2">
-            <span className={cn("flex-shrink-0", isError ? "text-destructive" : "text-muted-foreground/60")}>
+            <span className={cn("flex-shrink-0", isError ? "text-destructive" : "text-muted-foreground")}>
               {icon}
             </span>
             <span className={cn("font-mono font-medium", isError ? "text-destructive" : "text-muted-foreground")}>
@@ -1942,9 +1942,9 @@ function ToolExecutionBlock({ tool }: { tool: CompletedToolExecution }) {
               <span className="truncate font-mono text-info/80">{shortPath}</span>
             )}
             {bashCommand && !shortPath && (
-              <span className="truncate font-mono text-muted-foreground/70">{bashCommand.length > 60 ? bashCommand.slice(0, 60) + "…" : bashCommand}</span>
+              <span className="truncate font-mono text-muted-foreground">{bashCommand.length > 60 ? bashCommand.slice(0, 60) + "…" : bashCommand}</span>
             )}
-            <span className="ml-auto flex-shrink-0 text-muted-foreground/40">
+            <span className="ml-auto flex-shrink-0 text-muted-foreground">
               {expanded ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
             </span>
           </div>
@@ -1963,8 +1963,8 @@ function ToolExecutionBlock({ tool }: { tool: CompletedToolExecution }) {
                       "whitespace-pre",
                       isAdd && "bg-success/10 text-success",
                       isRemove && "bg-destructive/10 text-destructive",
-                      isContext && "text-muted-foreground/60",
-                      !isAdd && !isRemove && !isContext && "text-muted-foreground/40",
+                      isContext && "text-muted-foreground",
+                      !isAdd && !isRemove && !isContext && "text-muted-foreground",
                     )}
                   >
                     {line}
@@ -1976,7 +1976,7 @@ function ToolExecutionBlock({ tool }: { tool: CompletedToolExecution }) {
 
           {/* Expanded: bash output or other result */}
           {expanded && !diff && resultText && (
-            <div className="mt-2 max-h-[200px] overflow-y-auto rounded-md border border-border/50 bg-background/80 p-2 font-mono text-[11px] leading-relaxed text-muted-foreground/70 whitespace-pre-wrap">
+            <div className="mt-2 max-h-[200px] overflow-y-auto rounded-md border border-border/50 bg-background/80 p-2 font-mono text-[11px] leading-relaxed text-muted-foreground whitespace-pre-wrap">
               {resultText.length > 2000 ? resultText.slice(0, 2000) + "\n…" : resultText}
             </div>
           )}
@@ -2292,7 +2292,7 @@ export function ChatPane({ className, onOpenAction }: ChatPaneProps) {
                       <div className="w-7 flex-shrink-0" />
                       <div className="max-w-[82%] min-w-0">
                         <div className="flex items-center gap-2 rounded-lg border border-border/50 bg-muted/20 px-3.5 py-2">
-                          <Loader2 className="h-3 w-3 animate-spin text-muted-foreground/60" />
+                          <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />
                           <span className="font-mono text-xs text-muted-foreground">
                             {item.tool.name}
                           </span>

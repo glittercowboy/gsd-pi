@@ -74,7 +74,7 @@ export function StepOptional({ sections, onBack, onNext }: StepOptionalProps) {
                 "mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full",
                 section.configured
                   ? "bg-success/15 text-success"
-                  : "bg-foreground/[0.05] text-muted-foreground/40",
+                  : "bg-foreground/[0.05] text-muted-foreground",
               )}
             >
               {section.configured ? (
@@ -95,7 +95,7 @@ export function StepOptional({ sections, onBack, onNext }: StepOptionalProps) {
                         "text-[10px]",
                         section.configured
                           ? "border-success/15 text-success/70"
-                          : "border-border/50 text-muted-foreground/50",
+                          : "border-border/50 text-muted-foreground",
                       )}
                     >
                       {section.configured ? "Ready" : "Skipped"}
@@ -115,7 +115,7 @@ export function StepOptional({ sections, onBack, onNext }: StepOptionalProps) {
                     <Badge
                       key={item}
                       variant="outline"
-                      className="border-border/50 text-[10px] text-muted-foreground/60"
+                      className="border-border/50 text-[10px] text-muted-foreground"
                     >
                       {item}
                     </Badge>
@@ -124,7 +124,7 @@ export function StepOptional({ sections, onBack, onNext }: StepOptionalProps) {
               )}
 
               {section.configuredItems.length === 0 && (
-                <p className="mt-0.5 text-xs text-muted-foreground/50">
+                <p className="mt-0.5 text-xs text-muted-foreground">
                   Not configured — add later from settings.
                 </p>
               )}

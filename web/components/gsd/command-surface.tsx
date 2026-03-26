@@ -224,7 +224,7 @@ function SectionHeader({
   return (
     <div className="flex items-center justify-between gap-3 pb-4">
       <div className="flex items-center gap-2.5">
-        <h3 className="text-[13px] font-semibold uppercase tracking-[0.08em] text-foreground/70">{title}</h3>
+        <h3 className="text-[13px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">{title}</h3>
         {status}
       </div>
       {action}
@@ -673,7 +673,7 @@ export function CommandSurface() {
         <div className="space-y-4">
           {Array.from(groupedModels.entries()).map(([provider, models]) => (
             <div key={provider}>
-              <div className="mb-1.5 px-1 text-[10px] font-semibold uppercase tracking-widest text-muted-foreground/60">
+              <div className="mb-1.5 px-1 text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">
                 {provider}
               </div>
               <div className="space-y-0.5">
@@ -720,10 +720,10 @@ export function CommandSurface() {
                       {/* Badges */}
                       <div className="flex shrink-0 items-center gap-1.5">
                         {model.isCurrent && (
-                          <span className="rounded bg-foreground/10 px-1.5 py-0.5 text-[10px] font-medium text-foreground/70">Active</span>
+                          <span className="rounded bg-foreground/10 px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">Active</span>
                         )}
                         {model.reasoning && (
-                          <span className="rounded bg-foreground/10 px-1.5 py-0.5 text-[10px] font-medium text-foreground/70">Thinking</span>
+                          <span className="rounded bg-foreground/10 px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">Thinking</span>
                         )}
                       </div>
                     </button>
@@ -1117,7 +1117,7 @@ export function CommandSurface() {
                       <Badge variant={issue.severity === "error" ? "destructive" : "outline"} className="text-[10px]">{issue.code}</Badge>
                     </div>
                     <p className="mt-1 text-xs text-muted-foreground">{issue.message}</p>
-                    {issue.suggestion && <p className="mt-0.5 text-[11px] text-muted-foreground/70">→ {issue.suggestion}</p>}
+                    {issue.suggestion && <p className="mt-0.5 text-[11px] text-muted-foreground">→ {issue.suggestion}</p>}
                   </div>
                 ))}
               </div>
@@ -1259,7 +1259,7 @@ export function CommandSurface() {
               <span className="font-mono">{shortenPath(result.project.repoRoot, 3)}</span>
               {result.project.repoRelativePath && (
                 <>
-                  <ChevronRight className="h-3 w-3 text-foreground/20" />
+                  <ChevronRight className="h-3 w-3 text-muted-foreground" />
                   <span className="font-mono">{result.project.repoRelativePath}</span>
                 </>
               )}
@@ -1279,11 +1279,11 @@ export function CommandSurface() {
                 )}>
                   <div className={cn(
                     "text-base font-semibold tabular-nums leading-none",
-                    active ? color : "text-foreground/25",
+                    active ? color : "text-muted-foreground",
                   )}>{count}</div>
                   <div className={cn(
                     "mt-1.5 text-[10px] leading-none",
-                    active ? "text-muted-foreground" : "text-muted-foreground/50",
+                    active ? "text-muted-foreground" : "text-muted-foreground",
                   )}>{label}</div>
                 </div>
               ))}
@@ -1293,10 +1293,10 @@ export function CommandSurface() {
             {result.changedFiles.length > 0 && (
               <div data-testid="command-surface-git-files">
                 <div className="mb-2 flex items-center justify-between">
-                  <span className="text-[11px] font-medium uppercase tracking-[0.06em] text-muted-foreground/70">
+                  <span className="text-[11px] font-medium uppercase tracking-[0.06em] text-muted-foreground">
                     Changes
                   </span>
-                  <span className="text-[11px] tabular-nums text-muted-foreground/50">
+                  <span className="text-[11px] tabular-nums text-muted-foreground">
                     {result.changedFiles.length}{result.truncatedFileCount > 0 ? `+${result.truncatedFileCount}` : ""} files
                   </span>
                 </div>
@@ -1324,7 +1324,7 @@ export function CommandSurface() {
                   ))}
                 </div>
                 {result.truncatedFileCount > 0 && (
-                  <p className="mt-1.5 text-center text-[11px] text-muted-foreground/50">
+                  <p className="mt-1.5 text-center text-[11px] text-muted-foreground">
                     +{result.truncatedFileCount} more files not shown
                   </p>
                 )}
@@ -1452,7 +1452,7 @@ export function CommandSurface() {
                     {session.name && session.firstMessage && (
                       <p className="mt-0.5 truncate text-xs text-muted-foreground">{session.firstMessage}</p>
                     )}
-                    <div className="mt-0.5 flex gap-3 text-[11px] text-muted-foreground/70">
+                    <div className="mt-0.5 flex gap-3 text-[11px] text-muted-foreground">
                       <span>{session.messageCount} msgs</span>
                       <span>{formatRelativeTime(session.modifiedAt)}</span>
                     </div>
@@ -1563,7 +1563,7 @@ export function CommandSurface() {
                   {selected && <Check className="h-2.5 w-2.5 text-background" />}
                 </div>
                 <div className="min-w-0 flex-1">
-                  <div className="font-mono text-[10px] text-muted-foreground/60">{message.entryId}</div>
+                  <div className="font-mono text-[10px] text-muted-foreground">{message.entryId}</div>
                   <p className="mt-0.5 text-sm text-foreground">{message.text}</p>
                 </div>
               </button>
@@ -1779,7 +1779,7 @@ export function CommandSurface() {
                   </span>
                 </div>
                 {provider.recommended && (
-                  <span className="rounded bg-foreground/10 px-1.5 py-0.5 text-[10px] font-medium text-foreground/70">Recommended</span>
+                  <span className="rounded bg-foreground/10 px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">Recommended</span>
                 )}
               </button>
             )
@@ -2206,7 +2206,7 @@ export function CommandSurface() {
                   {branchName ?? "Git"}
                 </h2>
                 {branchName && mainBranch && branchName !== mainBranch && (
-                  <span className="text-[11px] text-muted-foreground/50">from {mainBranch}</span>
+                  <span className="text-[11px] text-muted-foreground">from {mainBranch}</span>
                 )}
               </div>
               {gitResult?.kind === "repo" && (

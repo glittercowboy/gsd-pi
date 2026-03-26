@@ -207,7 +207,7 @@ export function StepRemote({ onBack, onNext }: StepRemoteProps) {
         {/* Channel picker */}
         {!loading && (
           <div className="space-y-2">
-            <div className="text-xs font-medium text-muted-foreground/60">Channel</div>
+            <div className="text-xs font-medium text-muted-foreground">Channel</div>
             <div className="grid grid-cols-3 gap-2">
               {CHANNEL_OPTIONS.map((opt) => (
                 <button
@@ -229,7 +229,7 @@ export function StepRemote({ onBack, onNext }: StepRemoteProps) {
                   )}
                 >
                   <div className="text-sm font-medium text-foreground">{opt.label}</div>
-                  <div className="mt-0.5 text-[11px] text-muted-foreground/60">{opt.description}</div>
+                  <div className="mt-0.5 text-[11px] text-muted-foreground">{opt.description}</div>
                 </button>
               ))}
             </div>
@@ -239,7 +239,7 @@ export function StepRemote({ onBack, onNext }: StepRemoteProps) {
         {/* Channel ID input */}
         {channel && !loading && (
           <div className="space-y-2">
-            <div className="text-xs font-medium text-muted-foreground/60">Channel ID</div>
+            <div className="text-xs font-medium text-muted-foreground">Channel ID</div>
             <Input
               value={channelId}
               onChange={(e) => {
@@ -266,7 +266,7 @@ export function StepRemote({ onBack, onNext }: StepRemoteProps) {
         {/* Bot token input */}
         {channel && !loading && (
           <div className="space-y-2">
-            <div className="text-xs font-medium text-muted-foreground/60">
+            <div className="text-xs font-medium text-muted-foreground">
               Bot token
               {tokenSet && (
                 <span className="ml-2 text-success">✓ configured</span>
@@ -296,7 +296,7 @@ export function StepRemote({ onBack, onNext }: StepRemoteProps) {
                 <button
                   type="button"
                   onClick={() => setShowToken((v) => !v)}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground/50 hover:text-muted-foreground transition-colors"
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-muted-foreground transition-colors"
                 >
                   {showToken ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
                 </button>
@@ -365,7 +365,7 @@ export function StepRemote({ onBack, onNext }: StepRemoteProps) {
             <Button
               variant="ghost"
               onClick={onNext}
-              className="gap-1.5 text-muted-foreground/70 transition-transform active:scale-[0.96]"
+              className="gap-1.5 text-muted-foreground transition-transform active:scale-[0.96]"
             >
               Skip
               <SkipForward className="h-3.5 w-3.5" />

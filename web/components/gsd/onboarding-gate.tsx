@@ -180,7 +180,7 @@ export function OnboardingGate() {
 
         {/* Right — step label */}
         <div className="flex w-24 justify-end">
-          <span className="text-xs text-muted-foreground/60">{stepLabel}</span>
+          <span className="text-xs text-muted-foreground">{stepLabel}</span>
         </div>
       </header>
 

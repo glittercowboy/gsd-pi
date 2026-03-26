@@ -58,7 +58,7 @@ function SettingsHeader({
     <div className="flex items-center justify-between gap-3 pb-4">
       <div className="flex items-center gap-2.5">
         <span className="text-muted-foreground">{icon}</span>
-        <h3 className="text-[13px] font-semibold uppercase tracking-[0.08em] text-foreground/70">{title}</h3>
+        <h3 className="text-[13px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">{title}</h3>
         {subtitle && <span className="text-[11px] text-muted-foreground">{subtitle}</span>}
       </div>
       <Button type="button" variant="ghost" size="sm" onClick={onRefresh} disabled={refreshing} className="h-7 gap-1.5 text-xs">
@@ -344,7 +344,7 @@ export function ModelRoutingPanel() {
           {/* Tier assignments */}
           {routingConfig?.tier_models && (
             <div className="rounded-lg border border-border/50 bg-card/30 px-3 py-2.5 space-y-1.5">
-              <h4 className="text-[11px] font-medium text-foreground/70 uppercase tracking-wide">Tier Assignments</h4>
+              <h4 className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide">Tier Assignments</h4>
               <TierModelRow tier="light" modelId={routingConfig.tier_models.light} />
               <TierModelRow tier="standard" modelId={routingConfig.tier_models.standard} />
               <TierModelRow tier="heavy" modelId={routingConfig.tier_models.heavy} />
@@ -370,7 +370,7 @@ export function ModelRoutingPanel() {
               {/* Top patterns table */}
               {Object.keys(routingHistory.patterns).length > 0 && (
                 <div className="space-y-1.5">
-                  <h4 className="text-[11px] font-medium text-foreground/70">Top Patterns</h4>
+                  <h4 className="text-[11px] font-medium text-muted-foreground">Top Patterns</h4>
                   <div className="space-y-2">
                     {topPatterns(routingHistory).map(({ name, total, pattern }) => (
                       <div key={name} className="rounded-lg border border-border/50 bg-card/30 px-3 py-2 space-y-1">
@@ -456,7 +456,7 @@ export function BudgetPanel() {
           {/* Context budget allocations */}
           {budget && (
             <div className="rounded-lg border border-border/50 bg-card/30 px-3 py-2.5 space-y-1.5">
-              <h4 className="text-[11px] font-medium text-foreground/70 uppercase tracking-wide">Context Budget Allocations</h4>
+              <h4 className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide">Context Budget Allocations</h4>
               <KvRow label="Summary Budget">{formatChars(budget.summaryBudgetChars)} chars</KvRow>
               <KvRow label="Inline Context">{formatChars(budget.inlineContextBudgetChars)} chars</KvRow>
               <KvRow label="Verification">{formatChars(budget.verificationBudgetChars)} chars</KvRow>
@@ -468,7 +468,7 @@ export function BudgetPanel() {
           {/* Project cost totals */}
           {totals ? (
             <div className="space-y-3">
-              <h4 className="text-[11px] font-medium text-foreground/70 uppercase tracking-wide">Project Cost Totals</h4>
+              <h4 className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide">Project Cost Totals</h4>
 
               {/* Summary pills */}
               <div className="flex flex-wrap gap-2">
@@ -479,7 +479,7 @@ export function BudgetPanel() {
 
               {/* Token breakdown */}
               <div className="rounded-lg border border-border/50 bg-card/30 px-3 py-2.5 space-y-1.5">
-                <h4 className="text-[11px] font-medium text-foreground/70 uppercase tracking-wide">Token Breakdown</h4>
+                <h4 className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide">Token Breakdown</h4>
                 <KvRow label="Input">{formatTokens(totals.tokens.input)}</KvRow>
                 <KvRow label="Output">{formatTokens(totals.tokens.output)}</KvRow>
                 <KvRow label="Cache Read">{formatTokens(totals.tokens.cacheRead)}</KvRow>
@@ -764,7 +764,7 @@ export function RemoteQuestionsPanel() {
 
       {/* ── Channel picker (card-based) ──────────────────────────── */}
       <div className="space-y-2">
-        <div className="text-xs font-medium text-muted-foreground/60">
+        <div className="text-xs font-medium text-muted-foreground">
           {isConfigured ? "Switch channel" : "Choose a channel"}
         </div>
         <div className="grid grid-cols-3 gap-2">
@@ -787,7 +787,7 @@ export function RemoteQuestionsPanel() {
               )}
             >
               <div className="text-sm font-medium text-foreground">{opt.label}</div>
-              <div className="mt-0.5 text-[11px] text-muted-foreground/60">{opt.description}</div>
+              <div className="mt-0.5 text-[11px] text-muted-foreground">{opt.description}</div>
             </button>
           ))}
         </div>
@@ -795,7 +795,7 @@ export function RemoteQuestionsPanel() {
 
       {/* ── Channel ID input ─────────────────────────────────────── */}
       <div className="space-y-2">
-        <div className="text-xs font-medium text-muted-foreground/60">Channel ID</div>
+        <div className="text-xs font-medium text-muted-foreground">Channel ID</div>
         <input
           type="text"
           value={channelId}
@@ -804,7 +804,7 @@ export function RemoteQuestionsPanel() {
           disabled={saving}
           className={cn(
             "w-full rounded-xl border bg-card/20 px-4 py-2.5 font-mono text-sm text-foreground",
-            "placeholder:text-muted-foreground/40",
+            "placeholder:text-muted-foreground",
             "focus:outline-none focus:ring-2 focus:ring-ring focus:border-transparent",
             "transition-colors",
             channelId.trim().length > 0 && !CHANNEL_ID_PATTERNS[channel].test(channelId.trim())
@@ -824,7 +824,7 @@ export function RemoteQuestionsPanel() {
       <button
         type="button"
         onClick={() => setShowAdvanced((v) => !v)}
-        className="flex items-center gap-1.5 text-[11px] text-muted-foreground/60 hover:text-muted-foreground transition-colors"
+        className="flex items-center gap-1.5 text-[11px] text-muted-foreground hover:text-muted-foreground transition-colors"
       >
         <svg
           className={cn("h-3 w-3 transition-transform", showAdvanced && "rotate-90")}
@@ -839,7 +839,7 @@ export function RemoteQuestionsPanel() {
       {showAdvanced && (
         <div className="grid grid-cols-2 gap-3 pl-4">
           <div className="space-y-1.5">
-            <label className="text-[11px] text-muted-foreground/60" htmlFor="rq-timeout">
+            <label className="text-[11px] text-muted-foreground" htmlFor="rq-timeout">
               Timeout (min)
             </label>
             <input
@@ -853,7 +853,7 @@ export function RemoteQuestionsPanel() {
             />
           </div>
           <div className="space-y-1.5">
-            <label className="text-[11px] text-muted-foreground/60" htmlFor="rq-poll">
+            <label className="text-[11px] text-muted-foreground" htmlFor="rq-poll">
               Poll interval (sec)
             </label>
             <input
@@ -888,7 +888,7 @@ export function RemoteQuestionsPanel() {
 
       {/* ── Bot token ─────────────────────────────────────────── */}
       <div className="space-y-3">
-        <div className="text-xs font-medium text-muted-foreground/60">Bot token</div>
+        <div className="text-xs font-medium text-muted-foreground">Bot token</div>
 
         {tokenSuccess && (
           <div className="flex items-center gap-2.5 rounded-xl border border-success/15 bg-success/[0.04] px-4 py-2.5 text-xs text-muted-foreground">
@@ -921,7 +921,7 @@ export function RemoteQuestionsPanel() {
               disabled={savingToken}
               className={cn(
                 "w-full rounded-xl border border-border/50 bg-card/20 pl-4 pr-10 py-2.5 font-mono text-sm text-foreground",
-                "placeholder:text-muted-foreground/40",
+                "placeholder:text-muted-foreground",
                 "focus:outline-none focus:ring-2 focus:ring-ring focus:border-transparent",
                 "transition-colors",
               )}
@@ -930,7 +930,7 @@ export function RemoteQuestionsPanel() {
             <button
               type="button"
               onClick={() => setShowToken((v) => !v)}
-              className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground/50 hover:text-muted-foreground transition-colors"
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-muted-foreground transition-colors"
             >
               {showToken ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
             </button>
@@ -997,7 +997,7 @@ function FontSizeControl({
           >
             {size}px
             {size === defaultSize && (
-              <span className="ml-1 text-[10px] text-muted-foreground/60">(default)</span>
+              <span className="ml-1 text-[10px] text-muted-foreground">(default)</span>
             )}
           </button>
         ))}

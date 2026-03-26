@@ -288,7 +288,7 @@ export function StepProject({ onFinish, onBack, onBeforeSwitch }: StepProjectPro
                     project.kind === "active-gsd" ? "bg-success/10" : "bg-foreground/[0.04]",
                   )}>
                     {isSwitching ? (
-                      <Loader2 className="h-4 w-4 animate-spin text-foreground/60" />
+                      <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
                     ) : (
                       <KindIcon className={cn("h-4 w-4", style.color)} />
                     )}
@@ -310,7 +310,7 @@ export function StepProject({ onFinish, onBack, onBeforeSwitch }: StepProjectPro
                         {stack.map((tag) => (
                           <span
                             key={tag}
-                            className="rounded bg-foreground/[0.04] px-1.5 py-0.5 text-[10px] text-muted-foreground/60"
+                            className="rounded bg-foreground/[0.04] px-1.5 py-0.5 text-[10px] text-muted-foreground"
                           >
                             {tag}
                           </span>
@@ -320,7 +320,7 @@ export function StepProject({ onFinish, onBack, onBeforeSwitch }: StepProjectPro
 
                     {/* Row 3: progress info (for active-gsd projects) */}
                     {progress && (
-                      <div className="mt-1.5 text-[11px] text-muted-foreground/50">
+                      <div className="mt-1.5 text-[11px] text-muted-foreground">
                         {progress}
                       </div>
                     )}
@@ -336,7 +336,7 @@ export function StepProject({ onFinish, onBack, onBeforeSwitch }: StepProjectPro
                             }}
                           />
                         </div>
-                        <span className="text-[10px] tabular-nums text-muted-foreground/40">
+                        <span className="text-[10px] tabular-nums text-muted-foreground">
                           {milestoneCount}
                         </span>
                       </div>
@@ -344,7 +344,7 @@ export function StepProject({ onFinish, onBack, onBeforeSwitch }: StepProjectPro
                   </div>
 
                   {/* Arrow */}
-                  <ArrowRight className="mt-1 h-4 w-4 shrink-0 text-muted-foreground/20 transition-all group-hover:text-muted-foreground/60 group-hover:translate-x-0.5" />
+                  <ArrowRight className="mt-1 h-4 w-4 shrink-0 text-muted-foreground/50 transition-all group-hover:text-muted-foreground group-hover:translate-x-0.5" />
                 </button>
               )
             })}
@@ -377,7 +377,7 @@ export function StepProject({ onFinish, onBack, onBeforeSwitch }: StepProjectPro
                 </div>
                 <div>
                   <span className="text-sm font-medium">Create new project</span>
-                  <p className="mt-0.5 text-[11px] text-muted-foreground/50">Initialize a new directory with Git</p>
+                  <p className="mt-0.5 text-[11px] text-muted-foreground">Initialize a new directory with Git</p>
                 </div>
               </button>
             ) : (
@@ -411,7 +411,7 @@ export function StepProject({ onFinish, onBack, onBeforeSwitch }: StepProjectPro
                     <p className="text-xs text-destructive">{createError}</p>
                   )}
                   {newName && nameValid && !nameConflict && (
-                    <p className="font-mono text-xs text-muted-foreground/40">{devRoot}/{newName}</p>
+                    <p className="font-mono text-xs text-muted-foreground">{devRoot}/{newName}</p>
                   )}
                   <div className="flex items-center gap-2 pt-1">
                     <Button

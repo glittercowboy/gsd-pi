@@ -19,7 +19,7 @@ const StatusIcon = ({
   if (status === "in-progress") {
     return <Play className={cn(sizeClass, "text-warning")} />
   }
-  return <Circle className={cn(sizeClass, "text-muted-foreground/40")} />
+  return <Circle className={cn(sizeClass, "text-muted-foreground")} />
 }
 
 const RiskBadge = ({ risk }: { risk: RiskLevel }) => {

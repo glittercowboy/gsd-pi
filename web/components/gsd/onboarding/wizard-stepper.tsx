@@ -61,8 +61,8 @@ export function WizardStepper({ steps, currentIndex, onStepClick, className }: W
                 className={cn(
                   "hidden text-sm font-medium transition-colors duration-200 sm:inline",
                   isCurrent && "text-foreground",
-                  isComplete && "text-foreground/70",
-                  !isComplete && !isCurrent && "text-muted-foreground/60",
+                  isComplete && "text-muted-foreground",
+                  !isComplete && !isCurrent && "text-muted-foreground",
                 )}
               >
                 {step.shortLabel ?? step.label}

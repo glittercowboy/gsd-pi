@@ -227,7 +227,7 @@ function ProjectCard({
 
         {/* Row 3: progress info */}
         {progress && (
-          <div className="mt-1.5 text-[11px] text-muted-foreground/70">{progress}</div>
+          <div className="mt-1.5 text-[11px] text-muted-foreground">{progress}</div>
         )}
 
         {/* Row 4: milestone progress bar */}
@@ -243,13 +243,13 @@ function ProjectCard({
                 }}
               />
             </div>
-            <span className="text-[10px] tabular-nums text-muted-foreground/60">{milestoneCount}</span>
+            <span className="text-[10px] tabular-nums text-muted-foreground">{milestoneCount}</span>
           </div>
         )}
       </div>
 
       {/* Arrow */}
-      <ArrowRight className="mt-1 h-4 w-4 shrink-0 text-muted-foreground/30 transition-all group-hover:text-muted-foreground/70 group-hover:translate-x-0.5" />
+      <ArrowRight className="mt-1 h-4 w-4 shrink-0 text-muted-foreground/50 transition-all group-hover:text-muted-foreground group-hover:translate-x-0.5" />
     </button>
   )
 }
@@ -452,7 +452,7 @@ export function ProjectsPanel({
           </div>
           <div>
             <span className="text-sm font-medium">Create new project</span>
-            <p className="mt-0.5 text-[11px] text-muted-foreground/70">Initialize a new directory with Git</p>
+            <p className="mt-0.5 text-[11px] text-muted-foreground">Initialize a new directory with Git</p>
           </div>
         </button>
 
@@ -491,7 +491,7 @@ export function ProjectsPanel({
                 >
                   Change
                 </button>
-                <span className="text-muted-foreground/50">·</span>
+                <span className="text-muted-foreground">·</span>
                 <span>{projects.length} project{projects.length !== 1 ? "s" : ""}</span>
               </div>
             )}
@@ -537,7 +537,7 @@ function ActiveProjectSummary({ workspaceState }: { workspaceState: ReturnType<t
 
   if (parts.length === 0) return null
 
-  return <div className="mt-1.5 text-[11px] text-muted-foreground/70">{parts.join(" · ")}</div>
+  return <div className="mt-1.5 text-[11px] text-muted-foreground">{parts.join(" · ")}</div>
 }
 
 // ─── New Project Dialog ────────────────────────────────────────────────
@@ -762,7 +762,7 @@ function FolderPickerDialog({
                   >
                     <Folder className="h-4 w-4 text-muted-foreground shrink-0" />
                     <span className="text-foreground truncate flex-1">{entry.name}</span>
-                    <ChevronRight className="h-3.5 w-3.5 text-muted-foreground/40 opacity-0 group-hover:opacity-100 transition-opacity shrink-0" />
+                    <ChevronRight className="h-3.5 w-3.5 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity shrink-0" />
                   </button>
                 ))}
 
@@ -945,7 +945,7 @@ export function DevRootSettingsSection() {
     <div className="space-y-3" data-testid="settings-devroot">
       <div className="flex items-center gap-2.5">
         <FolderRoot className="h-3.5 w-3.5 text-muted-foreground" />
-        <h3 className="text-[13px] font-semibold uppercase tracking-[0.08em] text-foreground/70">
+        <h3 className="text-[13px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
           Development Root
         </h3>
       </div>
@@ -1164,7 +1164,7 @@ export function ProjectSelectionGate() {
                 {/* Dev root + change button */}
                 {devRoot && (
                   <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                    <FolderRoot className="h-3.5 w-3.5 shrink-0 text-muted-foreground/50" />
+                    <FolderRoot className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
                     <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground truncate">{devRoot}</code>
                     <button
                       type="button"
@@ -1179,18 +1179,18 @@ export function ProjectSelectionGate() {
 
                 {/* Filter + count */}
                 <div className="flex items-center justify-between gap-4">
-                  <p className="text-xs text-muted-foreground/60 tabular-nums">
+                  <p className="text-xs text-muted-foreground tabular-nums">
                     {sortedProjects.length} project{sortedProjects.length !== 1 ? "s" : ""}
                   </p>
                   {showFilter && (
                     <div className="relative w-48">
-                      <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground/50" />
+                      <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
                       <input
                         type="text"
                         placeholder="Filter…"
                         value={filter}
                         onChange={(e) => setFilter(e.target.value)}
-                        className="h-8 w-full rounded-md border border-border bg-background pl-8 pr-3 text-xs text-foreground placeholder:text-muted-foreground/40 focus:outline-none focus:ring-1 focus:ring-ring"
+                        className="h-8 w-full rounded-md border border-border bg-background pl-8 pr-3 text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring"
                       />
                     </div>
                   )}
@@ -1232,7 +1232,7 @@ export function ProjectSelectionGate() {
                               <span>{stack.join(" · ")}</span>
                             )}
                             {stack.length > 0 && progress && (
-                              <span className="text-muted-foreground/30">—</span>
+                              <span className="text-muted-foreground/50">—</span>
                             )}
                             {progress && (
                               <span className="truncate">{progress}</span>
@@ -1249,7 +1249,7 @@ export function ProjectSelectionGate() {
                                 style={{ width: `${pct}%` }}
                               />
                             </div>
-                            <span className="text-[10px] tabular-nums text-muted-foreground/50 w-6 text-right">
+                            <span className="text-[10px] tabular-nums text-muted-foreground w-6 text-right">
                               {project.progress!.milestonesCompleted}/{project.progress!.milestonesTotal}
                             </span>
                           </div>
@@ -1257,13 +1257,13 @@ export function ProjectSelectionGate() {
 
                         {/* Modified time */}
                         {project.lastModified > 0 && (
-                          <span className="hidden lg:inline text-[10px] text-muted-foreground/40 shrink-0 w-16 text-right tabular-nums">
+                          <span className="hidden lg:inline text-[10px] text-muted-foreground shrink-0 w-16 text-right tabular-nums">
                             {relativeTime(project.lastModified)}
                           </span>
                         )}
 
                         {/* Arrow */}
-                        <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground/20 transition-colors group-hover:text-muted-foreground/60" />
+                        <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground/50 transition-colors group-hover:text-muted-foreground" />
                       </button>
                     )
                   })}

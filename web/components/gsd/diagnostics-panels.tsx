@@ -58,7 +58,7 @@ function DiagHeader({
   return (
     <div className="flex items-center justify-between gap-3 pb-4">
       <div className="flex items-center gap-2.5">
-        <h3 className="text-[13px] font-semibold uppercase tracking-[0.08em] text-foreground/70">{title}</h3>
+        <h3 className="text-[13px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">{title}</h3>
         {status}
         {subtitle && <span className="text-[11px] text-muted-foreground">{subtitle}</span>}
       </div>
@@ -125,7 +125,7 @@ function AnomalyRow({ anomaly }: { anomaly: ForensicAnomaly }) {
           <span className="text-[10px] text-muted-foreground font-mono truncate">{anomaly.unitType}/{anomaly.unitId}</span>
         )}
       </div>
-      <p className="text-xs text-foreground/90">{anomaly.summary}</p>
+      <p className="text-xs text-foreground">{anomaly.summary}</p>
       {anomaly.details && anomaly.details !== anomaly.summary && (
         <p className="text-[11px] text-muted-foreground leading-relaxed">{anomaly.details}</p>
       )}
@@ -196,7 +196,7 @@ export function ForensicsPanel() {
           {/* Anomalies */}
           {data.anomalies.length > 0 ? (
             <div className="space-y-2">
-              <h4 className="text-xs font-medium text-foreground/70">Anomalies ({data.anomalies.length})</h4>
+              <h4 className="text-xs font-medium text-muted-foreground">Anomalies ({data.anomalies.length})</h4>
               {data.anomalies.map((a, i) => <AnomalyRow key={i} anomaly={a} />)}
             </div>
           ) : (
@@ -206,7 +206,7 @@ export function ForensicsPanel() {
           {/* Recent units */}
           {data.recentUnits.length > 0 && (
             <div className="space-y-2">
-              <h4 className="text-xs font-medium text-foreground/70">Recent Units ({data.recentUnits.length})</h4>
+              <h4 className="text-xs font-medium text-muted-foreground">Recent Units ({data.recentUnits.length})</h4>
               <div className="overflow-x-auto rounded-lg border border-border/50">
                 <table className="w-full text-[11px]">
                   <thead>
@@ -261,7 +261,7 @@ function IssueRow({ issue }: { issue: DoctorIssue }) {
           </Badge>
         )}
       </div>
-      <p className="text-xs text-foreground/90">{issue.message}</p>
+      <p className="text-xs text-foreground">{issue.message}</p>
       {issue.file && <p className="text-[10px] font-mono text-muted-foreground truncate">{issue.file}</p>}
     </div>
   )
@@ -349,7 +349,7 @@ export function DoctorPanel() {
           {/* Issue list */}
           {data.issues.length > 0 ? (
             <div className="space-y-2">
-              <h4 className="text-xs font-medium text-foreground/70">Issues ({data.issues.length})</h4>
+              <h4 className="text-xs font-medium text-muted-foreground">Issues ({data.issues.length})</h4>
               {data.issues.map((issue, i) => <IssueRow key={i} issue={issue} />)}
             </div>
           ) : (
@@ -386,7 +386,7 @@ function SuggestionRow({ suggestion }: { suggestion: SkillHealSuggestion }) {
         <span className="text-[11px] font-medium text-foreground/80">{suggestion.skillName}</span>
         <Badge variant="outline" className="text-[10px] px-1.5 py-0 font-mono">{suggestion.trigger.replace(/_/g, " ")}</Badge>
       </div>
-      <p className="text-xs text-foreground/90">{suggestion.message}</p>
+      <p className="text-xs text-foreground">{suggestion.message}</p>
     </div>
   )
 }
@@ -429,7 +429,7 @@ export function SkillHealthPanel() {
           {/* Skill table */}
           {data.skills.length > 0 && (
             <div className="space-y-2">
-              <h4 className="text-xs font-medium text-foreground/70">Skills ({data.skills.length})</h4>
+              <h4 className="text-xs font-medium text-muted-foreground">Skills ({data.skills.length})</h4>
               <div className="overflow-x-auto rounded-lg border border-border/50">
                 <table className="w-full text-[11px]">
                   <thead>
@@ -484,7 +484,7 @@ export function SkillHealthPanel() {
           {/* Stale skills */}
           {data.staleSkills.length > 0 && (
             <div className="space-y-1.5">
-              <h4 className="text-xs font-medium text-foreground/70">Stale Skills</h4>
+              <h4 className="text-xs font-medium text-muted-foreground">Stale Skills</h4>
               <div className="flex flex-wrap gap-1.5">
                 {data.staleSkills.map((name) => (
                   <Badge key={name} variant="secondary" className="text-[10px] font-mono">{name}</Badge>
@@ -496,7 +496,7 @@ export function SkillHealthPanel() {
           {/* Declining skills */}
           {data.decliningSkills.length > 0 && (
             <div className="space-y-1.5">
-              <h4 className="text-xs font-medium text-foreground/70">Declining Skills</h4>
+              <h4 className="text-xs font-medium text-muted-foreground">Declining Skills</h4>
               <div className="flex flex-wrap gap-1.5">
                 {data.decliningSkills.map((name) => (
                   <Badge key={name} variant="destructive" className="text-[10px] font-mono">{name}</Badge>
@@ -508,7 +508,7 @@ export function SkillHealthPanel() {
           {/* Suggestions */}
           {data.suggestions.length > 0 && (
             <div className="space-y-2">
-              <h4 className="text-xs font-medium text-foreground/70">Suggestions ({data.suggestions.length})</h4>
+              <h4 className="text-xs font-medium text-muted-foreground">Suggestions ({data.suggestions.length})</h4>
               {data.suggestions.map((s, i) => <SuggestionRow key={i} suggestion={s} />)}
             </div>
           )}

@@ -277,7 +277,7 @@ export function StepAuthenticate({
             {hasApiKey && (
               <div className="flex items-center gap-3 py-1">
                 <div className="h-px flex-1 bg-border/40" />
-                <span className="text-xs text-muted-foreground/50">or</span>
+                <span className="text-xs text-muted-foreground">or</span>
                 <div className="h-px flex-1 bg-border/40" />
               </div>
             )}
@@ -331,7 +331,7 @@ export function StepAuthenticate({
                       <span className="font-mono text-2xl font-bold tracking-[0.15em] text-foreground">
                         {deviceCode}
                       </span>
-                      <span className="text-muted-foreground/40 transition-colors group-hover:text-muted-foreground">
+                      <span className="text-muted-foreground transition-colors group-hover:text-muted-foreground">
                         {copied ? (
                           <CheckCircle2 className="h-4 w-4 text-success" />
                         ) : (
@@ -339,7 +339,7 @@ export function StepAuthenticate({
                         )}
                       </span>
                     </button>
-                    <div className="text-[11px] text-muted-foreground/50">
+                    <div className="text-[11px] text-muted-foreground">
                       {copied ? "Copied!" : "Click to copy"}
                     </div>
                   </div>
@@ -402,7 +402,7 @@ export function StepAuthenticate({
                       size="sm"
                       onClick={() => onCancelFlow(activeFlow.flowId)}
                       disabled={isBusy}
-                      className="h-7 text-xs text-muted-foreground/60"
+                      className="h-7 text-xs text-muted-foreground"
                     >
                       Cancel
                     </Button>
@@ -448,7 +448,7 @@ export function StepAuthenticate({
                 {activeFlow.progress.length > 0 && (
                   <div className="space-y-1 border-t border-border/50 pt-3">
                     {activeFlow.progress.map((message, i) => (
-                      <div key={`${activeFlow.flowId}-${i}`} className="text-xs text-muted-foreground/60">
+                      <div key={`${activeFlow.flowId}-${i}`} className="text-xs text-muted-foreground">
                         {message}
                       </div>
                     ))}

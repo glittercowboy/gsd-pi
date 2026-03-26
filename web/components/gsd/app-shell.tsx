@@ -267,7 +267,7 @@ function WorkspaceChrome() {
               beta
             </Badge>
           </div>
-          <span className="hidden sm:inline text-2xl font-thin text-muted-foreground/50 leading-none select-none">/</span>
+          <span className="hidden sm:inline text-2xl font-thin text-muted-foreground leading-none select-none">/</span>
           <span className="hidden sm:inline text-sm text-muted-foreground truncate" data-testid="workspace-project-cwd" title={projectPath ?? undefined}>
             {isConnecting ? (
               <Skeleton className="inline-block h-4 w-28 align-middle" />
@@ -427,7 +427,7 @@ function WorkspaceChrome() {
               >
                 <div className="flex items-center gap-2 text-muted-foreground">
                   <span className="font-medium text-foreground">Terminal</span>
-                  <span className="text-[10px] text-muted-foreground/50">
+                  <span className="text-[10px] text-muted-foreground">
                     {isTerminalExpanded ? "▼" : "▲"}
                   </span>
                 </div>

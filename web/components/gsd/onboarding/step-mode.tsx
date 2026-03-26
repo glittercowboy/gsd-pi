@@ -141,7 +141,7 @@ export function StepMode({ selected, onSelect, onNext, onBack }: StepModeProps) 
                 <span
                   className={cn(
                     "ml-2 text-xs font-medium transition-colors duration-200",
-                    isSelected ? "text-foreground/50" : "text-muted-foreground/50",
+                    isSelected ? "text-muted-foreground" : "text-muted-foreground",
                   )}
                 >
                   {opt.tagline}
@@ -149,7 +149,7 @@ export function StepMode({ selected, onSelect, onNext, onBack }: StepModeProps) 
               </div>
 
               {/* Description */}
-              <p className="mt-2 text-[13px] leading-relaxed text-muted-foreground/80">
+              <p className="mt-2 text-[13px] leading-relaxed text-muted-foreground">
                 {opt.description}
               </p>
             </button>

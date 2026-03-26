@@ -53,7 +53,7 @@ function PanelHeader({
   return (
     <div className="flex items-center justify-between gap-3 pb-4">
       <div className="flex items-center gap-2.5">
-        <h3 className="text-[13px] font-semibold uppercase tracking-[0.08em] text-foreground/70">{title}</h3>
+        <h3 className="text-[13px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">{title}</h3>
         {status}
         {subtitle && <span className="text-[11px] text-muted-foreground">{subtitle}</span>}
       </div>
@@ -186,7 +186,7 @@ function KnowledgeEntryRow({ entry }: { entry: KnowledgeEntry }) {
         <KnowledgeTypeIcon type={entry.type} className="mt-0.5" />
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
-            <span className="text-xs font-medium text-foreground/90 truncate">{entry.title}</span>
+            <span className="text-xs font-medium text-foreground truncate">{entry.title}</span>
             <Badge variant="outline" className={cn("text-[10px] px-1.5 py-0 h-4 shrink-0", badge.className)}>
               {badge.label}
             </Badge>
@@ -231,7 +231,7 @@ function KnowledgeTabContent({
         ))}
       </div>
       {data.lastModified && (
-        <p className="pt-2 text-[10px] text-muted-foreground/60">
+        <p className="pt-2 text-[10px] text-muted-foreground">
           Last modified: {new Date(data.lastModified).toLocaleString()}
         </p>
       )}
@@ -265,7 +265,7 @@ function CaptureEntryRow({
         )} />
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2 flex-wrap">
-            <span className="text-xs text-foreground/90">{entry.text}</span>
+            <span className="text-xs text-foreground">{entry.text}</span>
             <Badge variant="outline" className={cn("text-[10px] px-1.5 py-0 h-4 shrink-0", status.className)}>
               {status.label}
             </Badge>
@@ -276,13 +276,13 @@ function CaptureEntryRow({
             )}
           </div>
           {entry.timestamp && (
-            <div className="mt-1 flex items-center gap-1 text-[10px] text-muted-foreground/60">
+            <div className="mt-1 flex items-center gap-1 text-[10px] text-muted-foreground">
               <Clock className="h-2.5 w-2.5" />
               {entry.timestamp}
             </div>
           )}
           {entry.resolution && (
-            <p className="mt-1 text-[10px] text-muted-foreground/70 italic">{entry.resolution}</p>
+            <p className="mt-1 text-[10px] text-muted-foreground italic">{entry.resolution}</p>
           )}
           {entry.status === "pending" && (
             <div className="mt-2 flex flex-wrap gap-1">
@@ -405,7 +405,7 @@ export function KnowledgeCapturesPanel({ initialTab }: KnowledgeCapturesPanelPro
             "flex items-center gap-1.5 px-3 py-2 text-xs font-medium transition-all border-b-2 -mb-px",
             activeTab === "knowledge"
               ? "border-foreground/60 text-foreground"
-              : "border-transparent text-muted-foreground hover:text-foreground/70",
+              : "border-transparent text-muted-foreground hover:text-muted-foreground",
           )}
         >
           <BookOpen className="h-3.5 w-3.5" />
@@ -418,7 +418,7 @@ export function KnowledgeCapturesPanel({ initialTab }: KnowledgeCapturesPanelPro
             "flex items-center gap-1.5 px-3 py-2 text-xs font-medium transition-all border-b-2 -mb-px",
             activeTab === "captures"
               ? "border-foreground/60 text-foreground"
-              : "border-transparent text-muted-foreground hover:text-foreground/70",
+              : "border-transparent text-muted-foreground hover:text-muted-foreground",
           )}
         >
           <InboxIcon className="h-3.5 w-3.5" />

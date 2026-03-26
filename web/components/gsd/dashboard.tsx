@@ -82,11 +82,11 @@ function MetricCard({ label, value, subtext, icon }: MetricCardProps) {
 function taskStatusIcon(status: ItemStatus) {
   switch (status) {
     case "done":
-      return <CheckCircle2 className="h-4 w-4 text-foreground/70" />
+      return <CheckCircle2 className="h-4 w-4 text-muted-foreground" />
     case "in-progress":
       return <Play className="h-4 w-4 text-foreground" />
     case "pending":
-      return <Circle className="h-4 w-4 text-muted-foreground/50" />
+      return <Circle className="h-4 w-4 text-muted-foreground" />
   }
 }
 
@@ -193,7 +193,7 @@ export function Dashboard({ onSwitchView, onExpandTerminal }: DashboardProps = {
           <h1 className="text-base md:text-lg font-semibold shrink-0">Dashboard</h1>
           {!isConnecting && scopeLabel && (
             <>
-              <span className="hidden sm:inline text-lg font-thin text-muted-foreground/40 select-none">/</span>
+              <span className="hidden sm:inline text-lg font-thin text-muted-foreground select-none">/</span>
               <span className="hidden sm:inline"><ScopeBadge label={scopeLabel} size="sm" /></span>
             </>
           )}
@@ -351,7 +351,7 @@ export function Dashboard({ onSwitchView, onExpandTerminal }: DashboardProps = {
                             {task.title}
                           </span>
                           {status === "in-progress" && (
-                            <span className="shrink-0 rounded-sm bg-foreground/10 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-foreground/70">
+                            <span className="shrink-0 rounded-sm bg-foreground/10 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
                               active
                             </span>
                           )}

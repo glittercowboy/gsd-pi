@@ -76,7 +76,7 @@ function PanelHeader({
     <div className="flex items-center justify-between gap-3 pb-4">
       <div className="flex items-center gap-2.5">
         <span className="text-muted-foreground">{icon}</span>
-        <h3 className="text-[13px] font-semibold uppercase tracking-[0.08em] text-foreground/70">{title}</h3>
+        <h3 className="text-[13px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">{title}</h3>
         {status}
         {subtitle && <span className="text-[11px] text-muted-foreground">{subtitle}</span>}
       </div>
@@ -156,20 +156,20 @@ export function QuickPanel() {
       />
 
       <div className="rounded-lg border border-border/50 bg-card/30 px-4 py-4 space-y-3">
-        <p className="text-xs text-foreground/90">
+        <p className="text-xs text-foreground">
           Create a quick one-off task outside the current plan. Useful for small fixes, experiments, or ad-hoc work that
           doesn&apos;t fit into the milestone structure.
         </p>
 
         <div className="space-y-2">
-          <h4 className="text-[11px] font-medium text-foreground/70 uppercase tracking-wide">Usage</h4>
+          <h4 className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide">Usage</h4>
           <div className="rounded-md border border-border/50 bg-background/50 px-3 py-2 font-mono text-[11px] text-foreground/80">
             /gsd quick &lt;description&gt;
           </div>
         </div>
 
         <div className="space-y-2">
-          <h4 className="text-[11px] font-medium text-foreground/70 uppercase tracking-wide">Examples</h4>
+          <h4 className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide">Examples</h4>
           <div className="space-y-1.5">
             {[
               "Fix the typo in README.md header",
@@ -178,8 +178,8 @@ export function QuickPanel() {
               "Run prettier on the whole project",
             ].map((example) => (
               <div key={example} className="flex items-center gap-2 text-[11px]">
-                <span className="text-muted-foreground/50">$</span>
-                <code className="font-mono text-foreground/70">/gsd quick {example}</code>
+                <span className="text-muted-foreground">$</span>
+                <code className="font-mono text-muted-foreground">/gsd quick {example}</code>
               </div>
             ))}
           </div>
@@ -241,7 +241,7 @@ export function HistoryPanel() {
                   "flex-1 rounded-md px-2.5 py-1 text-[11px] font-medium capitalize transition-colors",
                   activeTab === tab
                     ? "bg-card/80 text-foreground shadow-sm"
-                    : "text-muted-foreground hover:text-foreground/70",
+                    : "text-muted-foreground hover:text-muted-foreground",
                 )}
               >
                 {tab === "units" ? "Recent" : `By ${tab}`}
@@ -418,7 +418,7 @@ export function UndoPanel() {
             {result.success ? <CheckCircle2 className="h-3.5 w-3.5" /> : <XCircle className="h-3.5 w-3.5" />}
             <span className="font-medium">{result.success ? "Undo Successful" : "Undo Failed"}</span>
           </div>
-          <p className="mt-1 text-[11px] text-foreground/70">{result.message}</p>
+          <p className="mt-1 text-[11px] text-muted-foreground">{result.message}</p>
         </div>
       )}
 
@@ -428,7 +428,7 @@ export function UndoPanel() {
             <>
               {/* Last unit info */}
               <div className="rounded-lg border border-border/50 bg-card/30 px-3 py-2.5 space-y-1.5">
-                <h4 className="text-[11px] font-medium text-foreground/70 uppercase tracking-wide">Last Completed Unit</h4>
+                <h4 className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide">Last Completed Unit</h4>
                 <div className="grid grid-cols-2 gap-x-4 gap-y-0.5 text-[11px]">
                   <span className="text-muted-foreground">Type</span>
                   <span className="font-mono text-foreground/80">{data.lastUnitType}</span>
@@ -449,7 +449,7 @@ export function UndoPanel() {
               {/* Commit SHAs */}
               {data.commits.length > 0 && (
                 <div className="space-y-1.5">
-                  <h4 className="text-[11px] font-medium text-foreground/70">Associated Commits</h4>
+                  <h4 className="text-[11px] font-medium text-muted-foreground">Associated Commits</h4>
                   <div className="flex flex-wrap gap-1">
                     {data.commits.map((sha) => (
                       <Badge key={sha} variant="outline" className="text-[10px] px-1.5 py-0 font-mono">
@@ -565,7 +565,7 @@ export function SteerPanel() {
 
       {/* Current overrides */}
       <div className="space-y-2">
-        <h4 className="text-[11px] font-medium text-foreground/70 uppercase tracking-wide">Current Overrides</h4>
+        <h4 className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide">Current Overrides</h4>
         {data?.overridesContent ? (
           <div className="rounded-lg border border-border/50 bg-background/50 px-3 py-2.5 text-[11px] font-mono text-foreground/80 whitespace-pre-wrap max-h-[200px] overflow-y-auto leading-relaxed">
             {data.overridesContent}
@@ -579,7 +579,7 @@ export function SteerPanel() {
 
       {/* Steer message form */}
       <div className="space-y-2">
-        <h4 className="text-[11px] font-medium text-foreground/70 uppercase tracking-wide">Send Steering Message</h4>
+        <h4 className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide">Send Steering Message</h4>
         <Textarea
           value={message}
           onChange={(e) => setMessage(e.target.value)}
@@ -684,7 +684,7 @@ export function HooksPanel() {
 
           {/* Formatted status */}
           {data.formattedStatus && (
-            <div className="rounded-lg border border-border/50 bg-background/50 px-3 py-2.5 text-[11px] font-mono text-foreground/70 whitespace-pre-wrap leading-relaxed">
+            <div className="rounded-lg border border-border/50 bg-background/50 px-3 py-2.5 text-[11px] font-mono text-muted-foreground whitespace-pre-wrap leading-relaxed">
               {data.formattedStatus}
             </div>
           )}
@@ -730,7 +730,7 @@ export function InspectPanel() {
           {/* Recent decisions */}
           {data.recentDecisions.length > 0 && (
             <div className="space-y-2">
-              <h4 className="text-xs font-medium text-foreground/70">Recent Decisions ({data.recentDecisions.length})</h4>
+              <h4 className="text-xs font-medium text-muted-foreground">Recent Decisions ({data.recentDecisions.length})</h4>
               <div className="overflow-x-auto rounded-lg border border-border/50">
                 <table className="w-full text-[11px]">
                   <thead>
@@ -757,7 +757,7 @@ export function InspectPanel() {
           {/* Recent requirements */}
           {data.recentRequirements.length > 0 && (
             <div className="space-y-2">
-              <h4 className="text-xs font-medium text-foreground/70">Recent Requirements ({data.recentRequirements.length})</h4>
+              <h4 className="text-xs font-medium text-muted-foreground">Recent Requirements ({data.recentRequirements.length})</h4>
               <div className="overflow-x-auto rounded-lg border border-border/50">
                 <table className="w-full text-[11px]">
                   <thead>
@@ -843,7 +843,7 @@ export function ExportPanel() {
 
       {/* Format selector */}
       <div className="space-y-2">
-        <h4 className="text-[11px] font-medium text-foreground/70 uppercase tracking-wide">Format</h4>
+        <h4 className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide">Format</h4>
         <div className="flex gap-1 rounded-lg border border-border/50 bg-card/20 p-0.5">
           {(["markdown", "json"] as const).map((f) => (
             <button
@@ -854,7 +854,7 @@ export function ExportPanel() {
                 "flex-1 rounded-md px-3 py-1.5 text-[11px] font-medium capitalize transition-colors",
                 format === f
                   ? "bg-card/80 text-foreground shadow-sm"
-                  : "text-muted-foreground hover:text-foreground/70",
+                  : "text-muted-foreground hover:text-muted-foreground",
               )}
             >
               {f === "markdown" ? "Markdown" : "JSON"}
@@ -884,7 +884,7 @@ export function ExportPanel() {
             <span className="font-medium">Export Ready</span>
           </div>
           <div className="flex items-center justify-between gap-2">
-            <span className="text-[11px] font-mono text-foreground/70">{data.filename}</span>
+            <span className="text-[11px] font-mono text-muted-foreground">{data.filename}</span>
             <Button
               type="button"
               variant="ghost"
@@ -952,7 +952,7 @@ export function CleanupPanel() {
             <CheckCircle2 className="h-3.5 w-3.5" />
             <span className="font-medium">Cleanup Complete</span>
           </div>
-          <p className="mt-1 text-[11px] text-foreground/70">{result.message}</p>
+          <p className="mt-1 text-[11px] text-muted-foreground">{result.message}</p>
         </div>
       )}
 
@@ -961,7 +961,7 @@ export function CleanupPanel() {
           {/* Branches table */}
           <div className="space-y-2">
             <div className="flex items-center justify-between">
-              <h4 className="text-xs font-medium text-foreground/70">Branches ({data.branches.length})</h4>
+              <h4 className="text-xs font-medium text-muted-foreground">Branches ({data.branches.length})</h4>
               {mergedBranches.length > 0 && (
                 <Button
                   type="button"
@@ -1018,7 +1018,7 @@ export function CleanupPanel() {
           {/* Snapshots table */}
           <div className="space-y-2">
             <div className="flex items-center justify-between">
-              <h4 className="text-xs font-medium text-foreground/70">Snapshots ({data.snapshots.length})</h4>
+              <h4 className="text-xs font-medium text-muted-foreground">Snapshots ({data.snapshots.length})</h4>
               {oldSnapshots.length > 0 && (
                 <Button
                   type="button"
@@ -1107,7 +1107,7 @@ export function QueuePanel() {
                 <div className="flex items-center justify-between gap-2">
                   <div className="flex items-center gap-2">
                     <span className="text-xs font-mono font-medium text-foreground/80">{m.id}</span>
-                    <span className="text-xs text-foreground/90 truncate">{m.title}</span>
+                    <span className="text-xs text-foreground truncate">{m.title}</span>
                     {isActive && (
                       <Badge variant="secondary" className="text-[10px] px-1.5 py-0 border-info/30 text-info">
                         active
@@ -1195,7 +1195,7 @@ export function StatusPanel() {
 
       {/* Active context card */}
       <div className="rounded-lg border border-border/50 bg-card/30 px-3 py-3 space-y-2">
-        <h4 className="text-[11px] font-medium text-foreground/70 uppercase tracking-wide">Active Context</h4>
+        <h4 className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide">Active Context</h4>
         <div className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-[11px]">
           <span className="text-muted-foreground">Phase</span>
           <span className="font-mono text-foreground/80">

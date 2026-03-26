@@ -62,7 +62,7 @@ function statusIcon(status: "complete" | "active" | "pending" | "done") {
     case "active":
       return <Play className="h-4 w-4 shrink-0 text-info" />
     case "pending":
-      return <Circle className="h-4 w-4 shrink-0 text-muted-foreground/30" />
+      return <Circle className="h-4 w-4 shrink-0 text-muted-foreground/50" />
   }
 }
 
@@ -123,7 +123,7 @@ function EmptyState({ message, icon: Icon = AlertCircle }: { message: string; ic
   return (
     <div className="flex flex-col items-center justify-center gap-4 rounded-xl border border-dashed border-border py-16 text-center">
       <div className="rounded-full border border-border bg-muted/40 p-4">
-        <Icon className="h-6 w-6 text-muted-foreground/50" />
+        <Icon className="h-6 w-6 text-muted-foreground" />
       </div>
       <p className="text-sm font-medium text-muted-foreground">{message}</p>
     </div>
@@ -332,7 +332,7 @@ function ProgressTab({ data }: { data: VisualizerData }) {
                               <span
                                 className={cn(
                                   "text-sm",
-                                  task.done && "text-muted-foreground/50 line-through",
+                                  task.done && "text-muted-foreground line-through",
                                   task.active && "font-semibold text-info",
                                   !task.done && !task.active && "text-muted-foreground",
                                 )}
@@ -383,7 +383,7 @@ function DepsTab({ data }: { data: VisualizerData }) {
                     <span className="rounded-lg border border-info/25 bg-info/10 px-3 py-1.5 font-mono text-sm font-semibold text-info">
                       {dep}
                     </span>
-                    <ArrowRight className="h-4 w-4 text-muted-foreground/50" />
+                    <ArrowRight className="h-4 w-4 text-muted-foreground" />
                     <span className="rounded-lg border border-border bg-muted/40 px-3 py-1.5 font-mono text-sm font-medium">
                       {ms.id}
                     </span>
@@ -415,7 +415,7 @@ function DepsTab({ data }: { data: VisualizerData }) {
                         <span className="rounded-lg border border-info/25 bg-info/10 px-3 py-1.5 font-mono text-sm font-semibold text-info">
                           {dep}
                         </span>
-                        <ArrowRight className="h-4 w-4 text-muted-foreground/50" />
+                        <ArrowRight className="h-4 w-4 text-muted-foreground" />
                         <span className="rounded-lg border border-border bg-muted/40 px-3 py-1.5 font-mono text-sm font-medium">
                           {sl.id}
                         </span>
@@ -450,7 +450,7 @@ function DepsTab({ data }: { data: VisualizerData }) {
                         {id}
                       </span>
                       {i < cp.milestonePath.length - 1 && (
-                        <ChevronRight className="h-4 w-4 text-muted-foreground/50" />
+                        <ChevronRight className="h-4 w-4 text-muted-foreground" />
                       )}
                     </span>
                   ))}
@@ -492,7 +492,7 @@ function DepsTab({ data }: { data: VisualizerData }) {
                           {id}
                         </span>
                         {i < cp.slicePath.length - 1 && (
-                          <ChevronRight className="h-4 w-4 text-muted-foreground/50" />
+                          <ChevronRight className="h-4 w-4 text-muted-foreground" />
                         )}
                       </span>
                     ))}
@@ -960,7 +960,7 @@ function ChangesTab({ data }: { data: VisualizerData }) {
                       <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-success/70" />
                       <span className="font-mono text-xs font-medium text-muted-foreground">{f.path}</span>
                       {f.description && (
-                        <span className="ml-1 text-xs text-muted-foreground/60">— {f.description}</span>
+                        <span className="ml-1 text-xs text-muted-foreground">— {f.description}</span>
                       )}
                     </div>
                   ))}
@@ -1150,7 +1150,7 @@ function VisualizerTabList() {
           <span className="absolute inset-x-0 inset-y-1.5 rounded-lg bg-muted/0 transition-colors duration-150 group-hover:bg-muted/60 group-data-[state=active]:bg-transparent" />
 
           {/* Icon */}
-          <Icon className="relative h-4 w-4 shrink-0 transition-colors duration-150 text-muted-foreground/70 group-hover:text-foreground/70 group-data-[state=active]:text-foreground" />
+          <Icon className="relative h-4 w-4 shrink-0 transition-colors duration-150 text-muted-foreground group-hover:text-muted-foreground group-data-[state=active]:text-foreground" />
 
           {/* Label */}
           <span className="relative">{label}</span>
