@@ -77,21 +77,29 @@ export async function handlePlanTask(
     return { error: `validation failed: ${(err as Error).message}` };
   }
 
-  const parentSlice = getSlice(params.milestoneId, params.sliceId);
-  if (!parentSlice) {
-    return { error: `missing parent slice: ${params.milestoneId}/${params.sliceId}` };
-  }
-  if (parentSlice.status === "complete" || parentSlice.status === "done") {
-    return { error: `cannot plan task in a closed slice: ${params.sliceId} (status: ${parentSlice.status})` };
-  }
-
-  const existingTask = getTask(params.milestoneId, params.sliceId, params.taskId);
-  if (existingTask && (existingTask.status === "complete" || existingTask.status === "done")) {
-    return { error: `cannot re-plan task ${params.taskId}: it is already complete — use gsd_task_reopen first` };
-  }
+  // ── Guards + DB writes inside a single transaction (prevents TOCTOU) ───
+  // Guards must be inside the transaction so the state they check cannot
+  // change between the read and the write (#2723).
+  let guardError: string | null = null;
 
   try {
     transaction(() => {
+      const parentSlice = getSlice(params.milestoneId, params.sliceId);
+      if (!parentSlice) {
+        guardError = `missing parent slice: ${params.milestoneId}/${params.sliceId}`;
+        return;
+      }
+      if (parentSlice.status === "complete" || parentSlice.status === "done") {
+        guardError = `cannot plan task in a closed slice: ${params.sliceId} (status: ${parentSlice.status})`;
+        return;
+      }
+
+      const existingTask = getTask(params.milestoneId, params.sliceId, params.taskId);
+      if (existingTask && (existingTask.status === "complete" || existingTask.status === "done")) {
+        guardError = `cannot re-plan task ${params.taskId}: it is already complete — use gsd_task_reopen first`;
+        return;
+      }
+
       if (!existingTask) {
         insertTask({
           id: params.taskId,
@@ -115,6 +123,10 @@ export async function handlePlanTask(
     });
   } catch (err) {
     return { error: `db write failed: ${(err as Error).message}` };
+  }
+
+  if (guardError) {
+    return { error: guardError };
   }
 
   try {
