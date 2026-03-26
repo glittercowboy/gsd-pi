@@ -88,6 +88,19 @@ function missingSliceStop(mid: string, phase: string): DispatchAction {
   };
 }
 
+/**
+ * Check for milestone slices missing SUMMARY files.
+ * Returns array of missing slice IDs, or empty array if all present or DB unavailable.
+ */
+function findMissingSummaries(basePath: string, mid: string): string[] {
+  if (!isDbAvailable()) return [];
+  const sliceIds = getMilestoneSlices(mid).map(s => s.id);
+  return sliceIds.filter(sid => {
+    const summaryPath = resolveSliceFile(basePath, mid, sid, "SUMMARY");
+    return !summaryPath || !existsSync(summaryPath);
+  });
+}
+
 // ─── Rewrite Circuit Breaker ──────────────────────────────────────────────
 
 const MAX_REWRITE_ATTEMPTS = 3;
@@ -543,30 +556,14 @@ export const DISPATCH_RULES: DispatchRule[] = [
       if (state.phase !== "validating-milestone") return null;
 
       // Safety guard (#1368): verify all roadmap slices have SUMMARY files before
-      // allowing milestone validation. If any slice lacks a summary, the milestone
-      // is not genuinely complete — something skipped earlier slices.
-      let sliceIds: string[];
-      if (isDbAvailable()) {
-        sliceIds = getMilestoneSlices(mid).map(s => s.id);
-      } else {
-        sliceIds = [];
-      }
-
-      if (sliceIds.length > 0) {
-        const missingSlices: string[] = [];
-        for (const sid of sliceIds) {
-          const summaryPath = resolveSliceFile(basePath, mid, sid, "SUMMARY");
-          if (!summaryPath || !existsSync(summaryPath)) {
-            missingSlices.push(sid);
-          }
-        }
-        if (missingSlices.length > 0) {
-          return {
-            action: "stop",
-            reason: `Cannot validate milestone ${mid}: slices ${missingSlices.join(", ")} are missing SUMMARY files. These slices may have been skipped.`,
-            level: "error",
-          };
-        }
+      // allowing milestone validation.
+      const missingSlices = findMissingSummaries(basePath, mid);
+      if (missingSlices.length > 0) {
+        return {
+          action: "stop",
+          reason: `Cannot validate milestone ${mid}: slices ${missingSlices.join(", ")} are missing SUMMARY files. These slices may have been skipped.`,
+          level: "error",
+        };
       }
 
       // Skip preference: write a minimal pass-through VALIDATION file
@@ -606,28 +603,13 @@ export const DISPATCH_RULES: DispatchRule[] = [
       if (state.phase !== "completing-milestone") return null;
 
       // Safety guard (#1368): verify all roadmap slices have SUMMARY files.
-      let sliceIds: string[];
-      if (isDbAvailable()) {
-        sliceIds = getMilestoneSlices(mid).map(s => s.id);
-      } else {
-        sliceIds = [];
-      }
-
-      if (sliceIds.length > 0) {
-        const missingSlices: string[] = [];
-        for (const sid of sliceIds) {
-          const summaryPath = resolveSliceFile(basePath, mid, sid, "SUMMARY");
-          if (!summaryPath || !existsSync(summaryPath)) {
-            missingSlices.push(sid);
-          }
-        }
-        if (missingSlices.length > 0) {
-          return {
-            action: "stop",
-            reason: `Cannot complete milestone ${mid}: slices ${missingSlices.join(", ")} are missing SUMMARY files. Run /gsd doctor to diagnose.`,
-            level: "error",
-          };
-        }
+      const missingSlices = findMissingSummaries(basePath, mid);
+      if (missingSlices.length > 0) {
+        return {
+          action: "stop",
+          reason: `Cannot complete milestone ${mid}: slices ${missingSlices.join(", ")} are missing SUMMARY files. Run /gsd doctor to diagnose.`,
+          level: "error",
+        };
       }
 
       // Safety guard (#1703): verify the milestone produced implementation
