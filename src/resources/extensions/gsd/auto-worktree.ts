@@ -416,6 +416,22 @@ export function syncGsdStateToWorktree(
     }
   }
 
+  // Forward-sync preferences.md from project root to worktree (additive only).
+  // NOT in ROOT_STATE_FILES because syncWorktreeStateBack() must never overwrite
+  // the project root's preferences — the project root is authoritative (#2684).
+  {
+    const src = join(mainGsd, "preferences.md");
+    const dst = join(wtGsd, "preferences.md");
+    if (existsSync(src) && !existsSync(dst)) {
+      try {
+        cpSync(src, dst);
+        synced.push("preferences.md");
+      } catch {
+        /* non-fatal */
+      }
+    }
+  }
+
   // Sync milestones: copy entire milestone directories that are missing
   const mainMilestonesDir = join(mainGsd, "milestones");
   const wtMilestonesDir = join(wtGsd, "milestones");
@@ -946,6 +962,7 @@ function copyPlanningArtifacts(srcBase: string, wtPath: string): void {
     "STATE.md",
     "KNOWLEDGE.md",
     "OVERRIDES.md",
+    "preferences.md",
   ]) {
     safeCopy(join(srcGsd, file), join(dstGsd, file), { force: true });
   }
