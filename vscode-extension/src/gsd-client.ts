@@ -138,6 +138,15 @@ export class GsdClient implements vscode.Disposable {
 			}
 		});
 
+		this.process.on("error", (err: NodeJS.ErrnoException) => {
+			this.process = null;
+			this._onConnectionChange.fire(false);
+			const hint = err.code === "ENOENT"
+				? ` Make sure GSD is installed ("npm install -g gsd-pi") and set "gsd.binaryPath" to the absolute path if it is not on PATH.`
+				: "";
+			this._onError.fire(`Failed to start GSD process: ${err.message}.${hint}`);
+		});
+
 		this.process.on("exit", (code, signal) => {
 			this.process = null;
 			this.rejectAllPending(`GSD process exited (code=${code}, signal=${signal})`);

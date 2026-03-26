@@ -29,6 +29,7 @@
     "color": "#1a1a2e",
     "theme": "dark"
   },
+  "extensionKind": ["workspace"],
   "engines": {
     "vscode": "^1.95.0"
   },
