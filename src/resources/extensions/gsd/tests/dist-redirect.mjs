@@ -7,21 +7,22 @@ const require = createRequire(import.meta.url);
 const ROOT = new URL("../../../../../", import.meta.url);
 
 export function resolve(specifier, context, nextResolve) {
-  // 1. Redirect the workspace package that portability tests import directly
-  //    from source. CI portability runs don't guarantee packages/pi-coding-agent
-  //    has been built, so bare imports must not depend on dist/index.js.
+  // 1. Redirect all workspace package bare imports to source.
+  //    CI portability runs don't build any packages/ dist artifacts, so every
+  //    @gsd/* specifier (including transitive ones pulled in by pi-coding-agent
+  //    source itself) must resolve to the TypeScript source entrypoint.
   if (specifier === "../../packages/pi-coding-agent/src/index.js") {
     specifier = new URL("packages/pi-coding-agent/src/index.ts", ROOT).href;
   } else if (specifier === "@gsd/pi-coding-agent") {
     specifier = new URL("packages/pi-coding-agent/src/index.ts", ROOT).href;
   } else if (specifier === "@gsd/pi-ai/oauth") {
-    specifier = new URL("packages/pi-ai/dist/utils/oauth/index.js", ROOT).href;
+    specifier = new URL("packages/pi-ai/src/utils/oauth/index.ts", ROOT).href;
   } else if (specifier === "@gsd/pi-ai") {
-    specifier = new URL("packages/pi-ai/dist/index.js", ROOT).href;
+    specifier = new URL("packages/pi-ai/src/index.ts", ROOT).href;
   } else if (specifier === "@gsd/pi-agent-core") {
-    specifier = new URL("packages/pi-agent-core/dist/index.js", ROOT).href;
+    specifier = new URL("packages/pi-agent-core/src/index.ts", ROOT).href;
   } else if (specifier === "@gsd/pi-tui") {
-    specifier = new URL("packages/pi-tui/dist/index.js", ROOT).href;
+    specifier = new URL("packages/pi-tui/src/index.ts", ROOT).href;
   }
   // 2. Redirect packages/*/dist/ → packages/*/src/ with .js→.ts for strip-types
   //    Also handles local imports — skip rewrite for dist/ paths that are real compiled artifacts.
@@ -58,12 +59,13 @@ export function resolve(specifier, context, nextResolve) {
 }
 
 export function load(url, context, nextLoad) {
-  // Node's --experimental-strip-types handles many .ts files, but not .tsx and
-  // not all TypeScript syntax used by workspace packages (for example parameter
-  // properties in pi-coding-agent source). Transpile those files explicitly.
+  // Node's --experimental-strip-types handles plain .ts but not .tsx and not
+  // all TypeScript syntax used by workspace packages (parameter properties,
+  // decorators, etc.). Transpile all workspace package source files and .tsx
+  // files through TypeScript's transpileModule to avoid those crashes.
   const shouldTranspileWithTypeScript =
     url.endsWith('.tsx') ||
-    (url.endsWith('.ts') && url.includes('/packages/pi-coding-agent/src/'));
+    (url.endsWith('.ts') && url.includes('/packages/') && url.includes('/src/'));
 
   if (shouldTranspileWithTypeScript) {
     const ts = require('typescript');
