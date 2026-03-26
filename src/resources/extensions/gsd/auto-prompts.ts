@@ -1328,6 +1328,24 @@ export async function buildValidateMilestonePrompt(
   const inlined: string[] = [];
   inlined.push(await inlineFile(roadmapPath, roadmapRel, "Milestone Roadmap"));
 
+  // Inline verification classes from planning (if available in DB)
+  try {
+    const { isDbAvailable, getMilestone } = await import("./gsd-db.js");
+    if (isDbAvailable()) {
+      const milestone = getMilestone(mid);
+      if (milestone) {
+        const classes: string[] = [];
+        if (milestone.verification_contract) classes.push(`- **Contract:** ${milestone.verification_contract}`);
+        if (milestone.verification_integration) classes.push(`- **Integration:** ${milestone.verification_integration}`);
+        if (milestone.verification_operational) classes.push(`- **Operational:** ${milestone.verification_operational}`);
+        if (milestone.verification_uat) classes.push(`- **UAT:** ${milestone.verification_uat}`);
+        if (classes.length > 0) {
+          inlined.push(`### Verification Classes (from planning)\n\nThese verification tiers were defined during milestone planning. Each non-empty class must be checked for evidence during validation.\n\n${classes.join("\n")}`);
+        }
+      }
+    }
+  } catch { /* fall through */ }
+
   // Inline all slice summaries and UAT results
   let valSliceIds: string[] = [];
   try {
