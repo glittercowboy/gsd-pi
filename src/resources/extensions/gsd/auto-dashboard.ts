@@ -25,7 +25,11 @@ import { computeProgressScore } from "./progress-score.js";
 import { getActiveWorktreeName } from "./worktree-command.js";
 import { loadEffectiveGSDPreferences, getGlobalGSDPreferencesPath } from "./preferences.js";
 import { resolveServiceTierIcon, getEffectiveServiceTier } from "./service-tier.js";
-import type { RtkSessionSavings } from "../shared/rtk-session-stats.js";
+import {
+  formatRtkSavingsLabel,
+  getRtkSessionSavings,
+  type RtkSessionSavings,
+} from "../shared/rtk-session-stats.js";
 
 // ─── UAT Slice Extraction ─────────────────────────────────────────────────────
 
@@ -476,6 +480,19 @@ export function updateProgressWidget(
     let pulseBright = true;
     let cachedLines: string[] | undefined;
     let cachedWidth: number | undefined;
+    let cachedRtkLabel: string | null | undefined;
+
+    const refreshRtkLabel = (): void => {
+      try {
+        const sessionId = ctx.sessionManager.getSessionId();
+        const savings = sessionId ? getRtkSessionSavings(accessors.getBasePath(), sessionId) : null;
+        cachedRtkLabel = formatRtkSavingsLabel(savings);
+      } catch {
+        cachedRtkLabel = null;
+      }
+    };
+
+    refreshRtkLabel();
 
     const pulseTimer = setInterval(() => {
       pulseBright = !pulseBright;
@@ -487,12 +504,15 @@ export function updateProgressWidget(
     // task/slice completion mid-unit. Without this, the progress bar only
     // updates at dispatch time, appearing frozen during long-running units.
     // 15s (vs 5s) reduces synchronous file I/O on the hot path.
-    const progressRefreshTimer = mid ? setInterval(() => {
+    const progressRefreshTimer = setInterval(() => {
       try {
-        updateSliceProgressCache(accessors.getBasePath(), mid.id, slice?.id);
+        if (mid) {
+          updateSliceProgressCache(accessors.getBasePath(), mid.id, slice?.id);
+        }
+        refreshRtkLabel();
         cachedLines = undefined;
       } catch { /* non-fatal */ }
-    }, 15_000) : null;
+    }, 15_000);
 
     return {
       render(width: number): string[] {
@@ -775,6 +795,9 @@ export function updateProgressWidget(
             .join(theme.fg("dim", "  "));
           if (statsLine) {
             lines.push(rightAlign("", statsLine, width));
+          }
+          if (cachedRtkLabel) {
+            lines.push(rightAlign("", theme.fg("dim", cachedRtkLabel), width));
           }
         }
         // PWD line with last commit info right-aligned

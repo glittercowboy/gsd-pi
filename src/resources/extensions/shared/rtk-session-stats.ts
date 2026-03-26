@@ -240,5 +240,8 @@ export function clearRtkSessionBaseline(basePath: string, sessionId: string): vo
 export function formatRtkSavingsLabel(savings: RtkSessionSavings | null | undefined): string | null {
   if (!savings) return null;
   if (savings.commands <= 0) return "rtk: waiting for shell usage";
+  if (savings.inputTokens <= 0 && savings.outputTokens <= 0) {
+    return `rtk: active (${savings.commands} cmd${savings.commands === 1 ? "" : "s"})`;
+  }
   return `rtk: ${formatTokenCount(savings.savedTokens)} saved (${Math.round(savings.savingsPct)}%)`;
 }

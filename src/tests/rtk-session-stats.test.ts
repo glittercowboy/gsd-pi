@@ -149,6 +149,19 @@ test("formatRtkSavingsLabel produces a compact footer string", () => {
     }),
     "rtk: 3.0k saved (51%)",
   );
+  assert.equal(
+    formatRtkSavingsLabel({
+      commands: 2,
+      inputTokens: 0,
+      outputTokens: 0,
+      savedTokens: 0,
+      savingsPct: 0,
+      totalTimeMs: 120,
+      avgTimeMs: 60,
+      updatedAt: new Date().toISOString(),
+    }),
+    "rtk: active (2 cmds)",
+  );
   assert.equal(formatRtkSavingsLabel(null), null);
 });
 
