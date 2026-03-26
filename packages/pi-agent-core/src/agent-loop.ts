@@ -135,7 +135,10 @@ export function agentLoopContinue(
 
 	(async () => {
 		const newMessages: AgentMessage[] = [];
-		const currentContext: AgentContext = { ...context };
+		const currentContext: AgentContext = {
+			...context,
+			messages: [...context.messages],
+		};
 
 		stream.push({ type: "agent_start" });
 		stream.push({ type: "turn_start" });
