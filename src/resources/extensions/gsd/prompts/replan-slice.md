@@ -33,6 +33,7 @@ All relevant context has been preloaded below — the roadmap, current slice pla
    - Keep all `[x]` tasks exactly as they were (same IDs, same descriptions, same checkmarks)
    - Update the `[ ]` tasks to address the blocker
    - Ensure the slice Goal and Demo sections are still achievable with the new tasks, or update them if the blocker fundamentally changes what the slice can deliver
+   - Preserve or update the Threat Surface and Requirement Impact sections if the replan changes the slice's security posture or requirement coverage
    - Update the Files Likely Touched section if the replan changes which files are affected
 5. If any incomplete task had a `T0x-PLAN.md`, remove or rewrite it to match the new task description.
 6. Do not commit manually — the system auto-commits your changes after this unit completes.
