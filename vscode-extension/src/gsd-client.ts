@@ -87,6 +87,7 @@ export class GsdClient implements vscode.Disposable {
 	private buffer = "";
 	private restartCount = 0;
 	private restartTimestamps: number[] = [];
+	private _autoRetryEnabled = false;
 
 	private readonly _onEvent = new vscode.EventEmitter<AgentEvent>();
 	readonly onEvent = this._onEvent.event;
@@ -108,6 +109,10 @@ export class GsdClient implements vscode.Disposable {
 
 	get isConnected(): boolean {
 		return this.process !== null && this.process.exitCode === null;
+	}
+
+	get autoRetryEnabled(): boolean {
+		return this._autoRetryEnabled;
 	}
 
 	/**
@@ -377,6 +382,7 @@ export class GsdClient implements vscode.Disposable {
 	async setAutoRetry(enabled: boolean): Promise<void> {
 		const response = await this.send({ type: "set_auto_retry", enabled });
 		this.assertSuccess(response);
+		this._autoRetryEnabled = enabled;
 	}
 
 	/**
@@ -418,6 +424,7 @@ export class GsdClient implements vscode.Disposable {
 	async newSession(): Promise<void> {
 		const response = await this.send({ type: "new_session" });
 		this.assertSuccess(response);
+		this._autoRetryEnabled = false;
 	}
 
 	/**

@@ -1,7 +1,7 @@
 {
   "name": "gsd-2",
   "displayName": "GSD-2",
-  "description": "VS Code integration for the GSD-2 coding agent — sidebar dashboard, @gsd chat participant, and 15 commands",
+  "description": "VS Code integration for the GSD-2 coding agent — sidebar dashboard, @gsd chat participant, conversation history, code lens, slash command completion, and 25 commands",
   "publisher": "FluxLabs",
   "version": "0.1.0",
   "icon": "logo.jpg",
@@ -102,6 +102,43 @@
       {
         "command": "gsd.listCommands",
         "title": "GSD: List Available Commands"
+      },
+      {
+        "command": "gsd.toggleAutoRetry",
+        "title": "GSD: Toggle Auto-Retry"
+      },
+      {
+        "command": "gsd.abortRetry",
+        "title": "GSD: Abort Retry"
+      },
+      {
+        "command": "gsd.setSessionName",
+        "title": "GSD: Set Session Name"
+      },
+      {
+        "command": "gsd.copyLastResponse",
+        "title": "GSD: Copy Last Response"
+      },
+      {
+        "command": "gsd.switchSession",
+        "title": "GSD: Switch Session"
+      },
+      {
+        "command": "gsd.refreshSessions",
+        "title": "GSD: Refresh Sessions",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "gsd.clearFileDecorations",
+        "title": "GSD: Clear File Decorations"
+      },
+      {
+        "command": "gsd.showHistory",
+        "title": "GSD: Show Conversation History"
+      },
+      {
+        "command": "gsd.askAboutSymbol",
+        "title": "GSD: Ask About Symbol"
       }
     ],
     "keybindings": [
@@ -119,6 +156,21 @@
         "command": "gsd.cycleThinking",
         "key": "ctrl+shift+g ctrl+shift+t",
         "mac": "cmd+shift+g cmd+shift+t"
+      },
+      {
+        "command": "gsd.abort",
+        "key": "ctrl+shift+g ctrl+shift+a",
+        "mac": "cmd+shift+g cmd+shift+a"
+      },
+      {
+        "command": "gsd.steer",
+        "key": "ctrl+shift+g ctrl+shift+i",
+        "mac": "cmd+shift+g cmd+shift+i"
+      },
+      {
+        "command": "gsd.sendMessage",
+        "key": "ctrl+shift+g ctrl+shift+p",
+        "mac": "cmd+shift+g cmd+shift+p"
       }
     ],
     "viewsContainers": {
@@ -136,6 +188,19 @@
           "type": "webview",
           "id": "gsd-sidebar",
           "name": "GSD Agent"
+        },
+        {
+          "id": "gsd-sessions",
+          "name": "Sessions"
+        }
+      ]
+    },
+    "menus": {
+      "view/title": [
+        {
+          "command": "gsd.refreshSessions",
+          "when": "view == gsd-sessions",
+          "group": "navigation"
         }
       ]
     },
@@ -165,6 +230,11 @@
           "type": "boolean",
           "default": true,
           "description": "Enable automatic context compaction"
+        },
+        "gsd.codeLens": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show 'Ask GSD' code lens above functions and classes"
         }
       }
     }

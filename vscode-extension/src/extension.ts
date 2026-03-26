@@ -2,9 +2,17 @@ import * as vscode from "vscode";
 import { GsdClient, ThinkingLevel } from "./gsd-client.js";
 import { registerChatParticipant } from "./chat-participant.js";
 import { GsdSidebarProvider } from "./sidebar.js";
+import { GsdFileDecorationProvider } from "./file-decorations.js";
+import { GsdBashTerminal } from "./bash-terminal.js";
+import { GsdSessionTreeProvider } from "./session-tree.js";
+import { GsdConversationHistoryPanel } from "./conversation-history.js";
+import { GsdSlashCompletionProvider } from "./slash-completion.js";
+import { GsdCodeLensProvider } from "./code-lens.js";
 
 let client: GsdClient | undefined;
 let sidebarProvider: GsdSidebarProvider | undefined;
+let fileDecorations: GsdFileDecorationProvider | undefined;
+let sessionTreeProvider: GsdSessionTreeProvider | undefined;
 
 function requireConnected(): boolean {
 	if (!client?.isConnected) {
@@ -35,7 +43,43 @@ export function activate(context: vscode.ExtensionContext): void {
 		outputChannel.appendLine(`[stderr] ${msg}`);
 	});
 
-	client.onConnectionChange((connected) => {
+	// -- Persistent status bar item ----------------------------------------
+
+	const statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 0);
+	statusBarItem.command = "workbench.view.extension.gsd";
+	statusBarItem.text = "$(hubot) GSD";
+	statusBarItem.tooltip = "GSD Agent — click to open";
+	statusBarItem.show();
+	context.subscriptions.push(statusBarItem);
+
+	async function refreshStatusBar(): Promise<void> {
+		if (!client?.isConnected) {
+			statusBarItem.text = "$(hubot) GSD";
+			statusBarItem.tooltip = "GSD: Disconnected";
+			return;
+		}
+		try {
+			const [state, stats] = await Promise.all([
+				client.getState().catch(() => null),
+				client.getSessionStats().catch(() => null),
+			]);
+			const modelId = state?.model?.id ?? "";
+			const costPart = stats?.totalCost !== undefined ? ` | $${stats.totalCost.toFixed(4)}` : "";
+			const streamPart = state?.isStreaming ? " $(sync~spin)" : "";
+			statusBarItem.text = `$(hubot) GSD${modelId ? ` | ${modelId}` : ""}${costPart}${streamPart}`;
+			statusBarItem.tooltip = state?.model
+				? `GSD: Connected — ${state.model.provider}/${state.model.id}`
+				: "GSD: Connected";
+		} catch {
+			// ignore fetch errors
+		}
+	}
+
+	const statusBarTimer = setInterval(() => refreshStatusBar(), 10_000);
+	context.subscriptions.push({ dispose: () => clearInterval(statusBarTimer) });
+
+	client.onConnectionChange(async (connected) => {
+		await refreshStatusBar();
 		if (connected) {
 			vscode.window.setStatusBarMessage("$(hubot) GSD connected", 3000);
 		} else {
@@ -53,9 +97,72 @@ export function activate(context: vscode.ExtensionContext): void {
 		),
 	);
 
+	// -- File decorations --------------------------------------------------
+
+	fileDecorations = new GsdFileDecorationProvider(client);
+	context.subscriptions.push(
+		fileDecorations,
+		vscode.window.registerFileDecorationProvider(fileDecorations),
+	);
+
+	// -- Bash terminal -----------------------------------------------------
+
+	const bashTerminal = new GsdBashTerminal(client);
+	context.subscriptions.push(bashTerminal);
+
+	// -- Session tree view -------------------------------------------------
+
+	sessionTreeProvider = new GsdSessionTreeProvider(client);
+	context.subscriptions.push(
+		sessionTreeProvider,
+		vscode.window.registerTreeDataProvider(GsdSessionTreeProvider.viewId, sessionTreeProvider),
+	);
+
 	// -- Chat participant ---------------------------------------------------
 
 	context.subscriptions.push(registerChatParticipant(context, client));
+
+	// -- Conversation history panel ----------------------------------------
+
+	// (panel is created on demand via gsd.showHistory command)
+
+	// -- Slash command completion ------------------------------------------
+
+	const slashCompletion = new GsdSlashCompletionProvider(client);
+	context.subscriptions.push(
+		slashCompletion,
+		vscode.languages.registerCompletionItemProvider(
+			[
+				{ language: "markdown" },
+				{ language: "plaintext" },
+				{ language: "typescript" },
+				{ language: "typescriptreact" },
+				{ language: "javascript" },
+				{ language: "javascriptreact" },
+			],
+			slashCompletion,
+			"/",
+		),
+	);
+
+	// -- Code lens "Ask GSD" -----------------------------------------------
+
+	const codeLensProvider = new GsdCodeLensProvider(client);
+	context.subscriptions.push(
+		codeLensProvider,
+		vscode.languages.registerCodeLensProvider(
+			[
+				{ language: "typescript" },
+				{ language: "typescriptreact" },
+				{ language: "javascript" },
+				{ language: "javascriptreact" },
+				{ language: "python" },
+				{ language: "go" },
+				{ language: "rust" },
+			],
+			codeLensProvider,
+		),
+	);
 
 	// -- Commands -----------------------------------------------------------
 
@@ -68,6 +175,7 @@ export function activate(context: vscode.ExtensionContext): void {
 				const autoCompaction = vscode.workspace.getConfiguration("gsd").get<boolean>("autoCompaction", true);
 				await client!.setAutoCompaction(autoCompaction).catch(() => {});
 				sidebarProvider?.refresh();
+				refreshStatusBar();
 				vscode.window.showInformationMessage("GSD agent started.");
 			} catch (err) {
 				handleError(err, "Failed to start GSD");
@@ -91,6 +199,8 @@ export function activate(context: vscode.ExtensionContext): void {
 			try {
 				await client!.newSession();
 				sidebarProvider?.refresh();
+				sessionTreeProvider?.refresh();
+				fileDecorations?.clear();
 				vscode.window.showInformationMessage("New GSD session started.");
 			} catch (err) {
 				handleError(err, "Failed to start new session");
@@ -344,6 +454,132 @@ export function activate(context: vscode.ExtensionContext): void {
 		}),
 	);
 
+	// Switch Session
+	context.subscriptions.push(
+		vscode.commands.registerCommand("gsd.switchSession", async (sessionFile?: string) => {
+			if (!requireConnected()) return;
+			const file = sessionFile ?? await (async () => {
+				const input = await vscode.window.showInputBox({
+					prompt: "Enter session file path",
+					placeHolder: "/path/to/session.jsonl",
+				});
+				return input;
+			})();
+			if (!file) return;
+			try {
+				await client!.switchSession(file);
+				sidebarProvider?.refresh();
+				sessionTreeProvider?.refresh();
+				vscode.window.showInformationMessage("Switched session.");
+			} catch (err) {
+				handleError(err, "Failed to switch session");
+			}
+		}),
+	);
+
+	// Refresh Sessions
+	context.subscriptions.push(
+		vscode.commands.registerCommand("gsd.refreshSessions", () => {
+			sessionTreeProvider?.refresh();
+		}),
+	);
+
+	// Show Conversation History
+	context.subscriptions.push(
+		vscode.commands.registerCommand("gsd.showHistory", () => {
+			if (!requireConnected()) return;
+			GsdConversationHistoryPanel.createOrShow(context.extensionUri, client!);
+		}),
+	);
+
+	// Ask About Symbol (triggered by code lens)
+	context.subscriptions.push(
+		vscode.commands.registerCommand(
+			"gsd.askAboutSymbol",
+			async (symbolName: string, fileName: string, lineNumber: number) => {
+				if (!requireConnected()) return;
+				try {
+					const prompt = `Explain the \`${symbolName}\` function/class in ${fileName} (line ${lineNumber}). Be concise.`;
+					await client!.sendPrompt(prompt);
+				} catch (err) {
+					handleError(err, "Failed to send Ask GSD request");
+				}
+			},
+		),
+	);
+
+	// Clear File Decorations
+	context.subscriptions.push(
+		vscode.commands.registerCommand("gsd.clearFileDecorations", () => {
+			fileDecorations?.clear();
+		}),
+	);
+
+	// Toggle Auto-Retry
+	context.subscriptions.push(
+		vscode.commands.registerCommand("gsd.toggleAutoRetry", async () => {
+			if (!requireConnected()) return;
+			try {
+				const next = !client!.autoRetryEnabled;
+				await client!.setAutoRetry(next);
+				vscode.window.showInformationMessage(`Auto-retry ${next ? "enabled" : "disabled"}.`);
+				sidebarProvider?.refresh();
+			} catch (err) {
+				handleError(err, "Failed to toggle auto-retry");
+			}
+		}),
+	);
+
+	// Abort Retry
+	context.subscriptions.push(
+		vscode.commands.registerCommand("gsd.abortRetry", async () => {
+			if (!requireConnected()) return;
+			try {
+				await client!.abortRetry();
+				vscode.window.showInformationMessage("Retry aborted.");
+			} catch (err) {
+				handleError(err, "Failed to abort retry");
+			}
+		}),
+	);
+
+	// Set Session Name
+	context.subscriptions.push(
+		vscode.commands.registerCommand("gsd.setSessionName", async () => {
+			if (!requireConnected()) return;
+			const name = await vscode.window.showInputBox({
+				prompt: "Enter a name for this session",
+				placeHolder: "e.g. auth-refactor",
+			});
+			if (!name) return;
+			try {
+				await client!.setSessionName(name);
+				sidebarProvider?.refresh();
+				vscode.window.showInformationMessage(`Session named "${name}".`);
+			} catch (err) {
+				handleError(err, "Failed to set session name");
+			}
+		}),
+	);
+
+	// Copy Last Response
+	context.subscriptions.push(
+		vscode.commands.registerCommand("gsd.copyLastResponse", async () => {
+			if (!requireConnected()) return;
+			try {
+				const text = await client!.getLastAssistantText();
+				if (!text) {
+					vscode.window.showInformationMessage("No response to copy.");
+					return;
+				}
+				await vscode.env.clipboard.writeText(text);
+				vscode.window.showInformationMessage("Last response copied to clipboard.");
+			} catch (err) {
+				handleError(err, "Failed to copy last response");
+			}
+		}),
+	);
+
 	// -- Auto-start ---------------------------------------------------------
 
 	if (config.get<boolean>("autoStart", false)) {
@@ -354,6 +590,10 @@ export function activate(context: vscode.ExtensionContext): void {
 export function deactivate(): void {
 	client?.dispose();
 	sidebarProvider?.dispose();
+	fileDecorations?.dispose();
+	sessionTreeProvider?.dispose();
 	client = undefined;
 	sidebarProvider = undefined;
+	fileDecorations = undefined;
+	sessionTreeProvider = undefined;
 }
