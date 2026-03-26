@@ -1,11 +1,11 @@
 // GSD Extension — Workflow Logger Tests
 // Tests for the centralized warning/error accumulator.
 
-import { describe, test, beforeEach, after } from "node:test";
+import { describe, test, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, existsSync, readFileSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { makeTempDir, cleanup } from "./test-utils.ts";
 import {
   logWarning,
   logError,
@@ -227,10 +227,18 @@ describe("workflow-logger", () => {
   });
 
   describe("audit log persistence", () => {
-    test("writes entry to .gsd/audit-log.jsonl after setLogBasePath", () => {
-      const dir = mkdtempSync(join(tmpdir(), "wl-audit-"));
-      after(() => rmSync(dir, { recursive: true, force: true }));
+    let dir: string;
 
+    beforeEach(() => {
+      dir = makeTempDir("wl-audit-");
+    });
+
+    afterEach(() => {
+      setLogBasePath("");
+      cleanup(dir);
+    });
+
+    test("writes entry to .gsd/audit-log.jsonl after setLogBasePath", () => {
       setLogBasePath(dir);
       logWarning("engine", "audit test entry");
 
@@ -244,12 +252,8 @@ describe("workflow-logger", () => {
     });
 
     test("_resetLogs does not clear the audit base path", () => {
-      const dir = mkdtempSync(join(tmpdir(), "wl-reset-"));
-      after(() => rmSync(dir, { recursive: true, force: true }));
-
       setLogBasePath(dir);
       _resetLogs();
-      // After reset, logging should still write to disk
       logWarning("engine", "post-reset entry");
 
       const auditPath = join(dir, ".gsd", "audit-log.jsonl");
