@@ -104,6 +104,35 @@ test("profile: resolveProfileDefaults exists and handles all 3 tiers", () => {
   );
 });
 
+test("profile: PROFILE_TIER_MAP defines tier intentions for all profiles", () => {
+  assert.ok(
+    preferencesSrc.includes("PROFILE_TIER_MAP"),
+    "PROFILE_TIER_MAP should exist",
+  );
+  // Verify all profiles define all phases as tier names, not model IDs
+  for (const profile of ["budget", "balanced", "quality"]) {
+    assert.ok(
+      preferencesSrc.includes(`${profile}:`),
+      `PROFILE_TIER_MAP should include ${profile}`,
+    );
+  }
+  // No hardcoded Anthropic model IDs in PROFILE_TIER_MAP
+  const tierMapIdx = preferencesSrc.indexOf("PROFILE_TIER_MAP");
+  const tierMapEnd = preferencesSrc.indexOf("};", tierMapIdx);
+  const tierMapBlock = preferencesSrc.slice(tierMapIdx, tierMapEnd);
+  assert.ok(
+    !tierMapBlock.includes("claude-"),
+    "PROFILE_TIER_MAP should use tier names, not hardcoded model IDs",
+  );
+});
+
+test("profile: resolveProfileDefaults uses resolveModelForTier, not hardcoded IDs", () => {
+  assert.ok(
+    preferencesSrc.includes("resolveModelForTier"),
+    "resolveProfileDefaults should use resolveModelForTier for provider-agnostic resolution",
+  );
+});
+
 test("profile: budget profile sets phase skips to true", () => {
   // Extract the budget case block
   const budgetIdx = preferencesSrc.indexOf('case "budget":');
@@ -125,7 +154,7 @@ test("profile: balanced profile skips research, reassess, and slice research (AD
 
 test("profile: quality profile skips research, slice research, and reassess (ADR-003)", () => {
   const qualityIdx = preferencesSrc.indexOf('case "quality":');
-  const qualityBlock = preferencesSrc.slice(qualityIdx, qualityIdx + 300);
+  const qualityBlock = preferencesSrc.slice(qualityIdx, qualityIdx + 600);
   assert.ok(qualityBlock.includes("skip_research: true"), "quality should skip research");
   assert.ok(qualityBlock.includes("skip_slice_research: true"), "quality should skip slice research");
   assert.ok(qualityBlock.includes("skip_reassess: true"), "quality should skip reassess");
@@ -212,11 +241,14 @@ test("merge: mergePreferences handles phases with spread", () => {
 // Subagent Model Routing
 // ═══════════════════════════════════════════════════════════════════════════
 
-test("subagent: budget profile sets subagent model", () => {
-  const budgetIdx = preferencesSrc.indexOf('case "budget":');
-  const balancedIdx = preferencesSrc.indexOf('case "balanced":');
+test("subagent: budget profile assigns light tier for subagent", () => {
+  // PROFILE_TIER_MAP.budget.subagent should be "light"
+  const tierMapIdx = preferencesSrc.indexOf("PROFILE_TIER_MAP");
+  const budgetIdx = preferencesSrc.indexOf("budget:", tierMapIdx);
+  const balancedIdx = preferencesSrc.indexOf("balanced:", tierMapIdx);
   const budgetBlock = preferencesSrc.slice(budgetIdx, balancedIdx);
-  assert.ok(budgetBlock.includes("subagent:"), "budget profile should set subagent model");
+  assert.ok(budgetBlock.includes("subagent:"), "budget profile should define subagent tier");
+  assert.ok(budgetBlock.includes('"light"'), "budget subagent should use light tier");
 });
 
 test("subagent: resolveModelWithFallbacksForUnit handles subagent unit types", () => {

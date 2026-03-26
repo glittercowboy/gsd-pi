@@ -409,12 +409,34 @@ export function resolveModelForComplexity(
 
   // Downgrade-only: if requested tier >= configured tier, no change
   if (tierOrdinal(requestedTier) >= tierOrdinal(configuredTier)) {
+    // If the configured primary is directly available, use it
+    if (isModelAvailable(configuredPrimary, availableModelIds)) {
+      return {
+        modelId: configuredPrimary,
+        fallbacks: phaseConfig.fallbacks,
+        tier: requestedTier,
+        wasDowngraded: false,
+        reason: `tier ${requestedTier} >= configured ${configuredTier}`,
+        selectionMethod: "tier-only",
+      };
+    }
+
+    // Configured primary is unavailable (e.g. Anthropic model configured but
+    // running on a non-Anthropic provider). Find the best available model at
+    // the same capability tier so routing still works cross-provider.
+    const crossProviderEligible = getEligibleModels(configuredTier, availableModelIds, routingConfig);
+    const crossProviderEquivalent = crossProviderEligible.length > 0 ? crossProviderEligible[0] : null;
+
     return {
-      modelId: configuredPrimary,
-      fallbacks: phaseConfig.fallbacks,
+      modelId: crossProviderEquivalent ?? configuredPrimary,
+      fallbacks: crossProviderEquivalent
+        ? [...phaseConfig.fallbacks.filter(f => f !== crossProviderEquivalent), configuredPrimary]
+        : phaseConfig.fallbacks,
       tier: requestedTier,
       wasDowngraded: false,
-      reason: `tier ${requestedTier} >= configured ${configuredTier}`,
+      reason: crossProviderEquivalent
+        ? `cross-provider ${configuredTier}-tier equivalent`
+        : `tier ${requestedTier} >= configured ${configuredTier}`,
       selectionMethod: "tier-only",
     };
   }
@@ -498,7 +520,70 @@ export function defaultRoutingConfig(): DynamicRoutingConfig {
   };
 }
 
+// ─── Tier-Based Model Resolution (for profile defaults) ─────────────────────
+
+/**
+ * Canonical Anthropic model IDs per tier. Used as the reference defaults
+ * when the user's available models include Anthropic models.
+ */
+const CANONICAL_TIER_MODELS: Record<ComplexityTier, string> = {
+  light: "claude-haiku-4-5",
+  standard: "claude-sonnet-4-6",
+  heavy: "claude-opus-4-6",
+};
+
+/**
+ * Resolve a concrete model ID for a given capability tier using the
+ * available model list. Provider-agnostic: picks the best available
+ * model at the requested tier, falling back to the canonical Anthropic
+ * ID when no available models can be inspected (e.g., at preferences
+ * load time before the model registry is populated).
+ *
+ * @param tier              The capability tier to resolve
+ * @param availableModelIds List of available model IDs, or empty if unknown
+ * @param crossProvider     Whether to consider models from other providers
+ */
+export function resolveModelForTier(
+  tier: ComplexityTier,
+  availableModelIds: string[],
+  crossProvider = true,
+): string {
+  // If no available models known, return canonical Anthropic default
+  if (availableModelIds.length === 0) {
+    return CANONICAL_TIER_MODELS[tier];
+  }
+
+  // Check if canonical model is available first (fast path)
+  const canonical = CANONICAL_TIER_MODELS[tier];
+  if (isModelAvailable(canonical, availableModelIds)) {
+    return canonical;
+  }
+
+  // Find the best available model at this tier using cost-based selection
+  const eligible = getEligibleModels(tier, availableModelIds, defaultRoutingConfig());
+
+  if (eligible.length > 0) {
+    return eligible[0];
+  }
+
+  return CANONICAL_TIER_MODELS[tier];
+}
+
 // ─── Internal ────────────────────────────────────────────────────────────────
+
+/**
+ * Check whether a model ID is present in the available models list.
+ * Handles bare IDs ("claude-opus-4-6") and provider-prefixed IDs ("anthropic/claude-opus-4-6").
+ */
+function isModelAvailable(modelId: string, availableModelIds: string[]): boolean {
+  if (availableModelIds.includes(modelId)) return true;
+  // Strip provider prefix for comparison
+  const bare = modelId.includes("/") ? modelId.split("/").pop()! : modelId;
+  return availableModelIds.some(id => {
+    const availBare = id.includes("/") ? id.split("/").pop()! : id;
+    return availBare === bare;
+  });
+}
 
 function getModelTier(modelId: string): ComplexityTier {
   // Strip provider prefix if present

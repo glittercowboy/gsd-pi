@@ -77,6 +77,7 @@ export {
   resolveDynamicRoutingConfig,
   resolveAutoSupervisorConfig,
   resolveProfileDefaults,
+  getProfileTierMap,
   resolveEffectiveProfile,
   resolveInlineLevel,
   resolveContextSelection,

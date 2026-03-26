@@ -8,7 +8,8 @@
 
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import type { DynamicRoutingConfig } from "./model-router.js";
-import { defaultRoutingConfig } from "./model-router.js";
+import { defaultRoutingConfig, resolveModelForTier } from "./model-router.js";
+import type { ComplexityTier } from "./complexity-classifier.js";
 import type { TokenProfile, InlineLevel } from "./types.js";
 
 import type {
@@ -317,21 +318,72 @@ export function resolveAutoSupervisorConfig(): AutoSupervisorConfig {
 const VALID_TOKEN_PROFILES = new Set<TokenProfile>(["budget", "balanced", "quality"]);
 
 /**
+ * Per-phase tier intentions for each token profile.
+ * Profiles express capability tiers, not model IDs. Concrete model
+ * resolution happens at runtime via resolveModelForTier() which is
+ * provider-agnostic — it picks the best available model at each tier.
+ */
+const PROFILE_TIER_MAP: Record<TokenProfile, Record<string, ComplexityTier>> = {
+  budget: {
+    planning: "standard",
+    research: "light",
+    execution: "standard",
+    execution_simple: "light",
+    completion: "light",
+    subagent: "light",
+  },
+  balanced: {
+    planning: "standard",
+    research: "standard",
+    execution: "standard",
+    execution_simple: "light",
+    completion: "light",
+    subagent: "light",
+  },
+  quality: {
+    planning: "heavy",
+    research: "standard",
+    execution: "standard",
+    execution_simple: "light",
+    completion: "light",
+    subagent: "standard",
+  },
+};
+
+/**
  * Resolve profile defaults for a given token profile tier.
  * Returns a partial GSDPreferences that is used as the base layer --
  * explicit user preferences always override these defaults.
+ *
+ * Model IDs are resolved from capability tiers, not hardcoded to any
+ * provider. When available models are known (runtime), the resolver picks
+ * the best match across all configured providers. When not known (e.g.,
+ * early startup), falls back to canonical Anthropic model IDs.
+ *
+ * @param profile           The token profile to resolve
+ * @param availableModelIds Optional list of available model IDs for cross-provider resolution
  */
-export function resolveProfileDefaults(profile: TokenProfile): Partial<GSDPreferences> {
+export function resolveProfileDefaults(
+  profile: TokenProfile,
+  availableModelIds: string[] = [],
+): Partial<GSDPreferences> {
+  const tierMap = PROFILE_TIER_MAP[profile];
+  const resolve = (phase: string): string =>
+    resolveModelForTier(tierMap[phase], availableModelIds);
+
+  const models: GSDModelConfigV2 = {
+    planning: resolve("planning"),
+    research: resolve("research"),
+    execution: resolve("execution"),
+    execution_simple: resolve("execution_simple"),
+    completion: resolve("completion"),
+    subagent: resolve("subagent"),
+  };
+
   switch (profile) {
     case "budget":
       return {
-        models: {
-          planning: "claude-sonnet-4-5-20250514",
-          execution: "claude-sonnet-4-5-20250514",
-          execution_simple: "claude-haiku-4-5-20250414",
-          completion: "claude-haiku-4-5-20250414",
-          subagent: "claude-haiku-4-5-20250414",
-        },
+        models,
         phases: {
           skip_research: true,
           skip_reassess: true,
@@ -341,9 +393,7 @@ export function resolveProfileDefaults(profile: TokenProfile): Partial<GSDPrefer
       };
     case "balanced":
       return {
-        models: {
-          subagent: "claude-sonnet-4-5-20250514",
-        },
+        models,
         phases: {
           skip_research: true,
           skip_reassess: true,
@@ -352,7 +402,7 @@ export function resolveProfileDefaults(profile: TokenProfile): Partial<GSDPrefer
       };
     case "quality":
       return {
-        models: {},
+        models,
         phases: {
           skip_research: true,
           skip_slice_research: true,
@@ -360,6 +410,14 @@ export function resolveProfileDefaults(profile: TokenProfile): Partial<GSDPrefer
         },
       };
   }
+}
+
+/**
+ * Get the tier intentions for a profile without resolving to model IDs.
+ * Useful for display, debugging, and testing.
+ */
+export function getProfileTierMap(profile: TokenProfile): Record<string, ComplexityTier> {
+  return { ...PROFILE_TIER_MAP[profile] };
 }
 
 /**

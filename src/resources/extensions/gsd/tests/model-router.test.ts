@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 
 import {
   resolveModelForComplexity,
+  resolveModelForTier,
   escalateTier,
   defaultRoutingConfig,
   scoreModel,
@@ -755,4 +756,93 @@ describe("getModelTier unknown default", () => {
     assert.equal(lightModels.length, 0, "Unknown model should NOT be in light tier");
     assert.equal(heavyModels.length, 0, "Unknown model should NOT be in heavy tier");
   });
+});
+
+// ─── Cross-provider fallback ──────────────────────────────────────────────────
+
+test("uses cross-provider equivalent when configured primary is unavailable", () => {
+  const config = { ...defaultRoutingConfig(), enabled: true };
+  // Profile default says claude-opus-4-6 for planning, but user is on GPT only
+  const result = resolveModelForComplexity(
+    makeClassification("heavy"),
+    { primary: "claude-opus-4-6", fallbacks: [] },
+    config,
+    ["gpt-4o", "gpt-4o-mini", "o1"],
+  );
+  // o1 is the heavy-tier GPT model — should be selected as cross-provider equivalent
+  assert.equal(result.modelId, "o1");
+  assert.equal(result.wasDowngraded, false);
+  assert.match(result.reason, /cross-provider/);
+});
+
+test("cross-provider: selects standard-tier equivalent when primary unavailable", () => {
+  const config = { ...defaultRoutingConfig(), enabled: true };
+  const result = resolveModelForComplexity(
+    makeClassification("heavy"),
+    { primary: "claude-opus-4-6", fallbacks: [] },
+    config,
+    ["gpt-4o", "gpt-4o-mini"],
+  );
+  // gpt-4o is standard tier, not heavy — no heavy-tier model available
+  assert.ok(result.modelId === "gpt-4o" || result.modelId === "claude-opus-4-6");
+  assert.equal(result.wasDowngraded, false);
+});
+
+test("cross-provider: configured primary available by bare ID wins over equivalent", () => {
+  const config = { ...defaultRoutingConfig(), enabled: true };
+  // Provider-prefixed ID — bare match should find it
+  const result = resolveModelForComplexity(
+    makeClassification("heavy"),
+    { primary: "claude-opus-4-6", fallbacks: [] },
+    config,
+    ["anthropic/claude-opus-4-6", "o1"],
+  );
+  assert.equal(result.modelId, "claude-opus-4-6");
+  assert.equal(result.wasDowngraded, false);
+});
+
+// ─── resolveModelForTier (provider-agnostic tier resolution) ────────────────
+
+test("resolveModelForTier: returns canonical Anthropic model when no available models", () => {
+  assert.equal(resolveModelForTier("heavy", []), "claude-opus-4-6");
+  assert.equal(resolveModelForTier("standard", []), "claude-sonnet-4-6");
+  assert.equal(resolveModelForTier("light", []), "claude-haiku-4-5");
+});
+
+test("resolveModelForTier: returns canonical model when it is available", () => {
+  assert.equal(
+    resolveModelForTier("heavy", ["claude-opus-4-6", "claude-sonnet-4-6"]),
+    "claude-opus-4-6",
+  );
+});
+
+test("resolveModelForTier: picks cross-provider equivalent when Anthropic unavailable", () => {
+  const result = resolveModelForTier("heavy", ["gpt-4o", "gpt-4o-mini", "o1"]);
+  assert.equal(result, "o1");
+});
+
+test("resolveModelForTier: picks standard-tier cross-provider model", () => {
+  const result = resolveModelForTier("standard", ["gpt-4o", "gpt-4o-mini"]);
+  assert.equal(result, "gpt-4o");
+});
+
+test("resolveModelForTier: picks light-tier cross-provider model", () => {
+  const result = resolveModelForTier("light", ["gpt-4o", "gpt-4o-mini"]);
+  assert.equal(result, "gpt-4o-mini");
+});
+
+test("resolveModelForTier: falls back to canonical when no tier match available", () => {
+  const result = resolveModelForTier("heavy", ["some-custom-model"]);
+  // Unknown models default to standard tier (D-15), so no heavy-tier match → canonical fallback
+  assert.equal(result, "claude-opus-4-6");
+});
+
+test("resolveModelForTier: handles provider-prefixed available models", () => {
+  const result = resolveModelForTier("heavy", ["anthropic/claude-opus-4-6"]);
+  assert.equal(result, "claude-opus-4-6");
+});
+
+test("resolveModelForTier: picks Gemini models when only Google available", () => {
+  const result = resolveModelForTier("light", ["gemini-2.5-pro", "gemini-2.0-flash"]);
+  assert.equal(result, "gemini-2.0-flash");
 });
