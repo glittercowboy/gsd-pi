@@ -183,7 +183,7 @@ function ProjectCard({
         "active:scale-[0.98]",
         isActive
           ? "border-primary/30 bg-primary/[0.08]"
-          : "border-border/40 bg-card/20 hover:border-foreground/15 hover:bg-card/50",
+          : "border-border/50 bg-card/20 hover:border-foreground/15 hover:bg-card/50",
         disabled && "opacity-40 pointer-events-none",
       )}
     >
@@ -443,7 +443,7 @@ export function ProjectsPanel({
           onClick={() => setNewProjectOpen(true)}
           className={cn(
             "flex w-full items-center gap-3.5 rounded-xl border border-dashed px-4 py-3.5 text-left transition-all duration-200",
-            "border-border/40 text-muted-foreground hover:border-foreground/15 hover:text-foreground",
+            "border-border/50 text-muted-foreground hover:border-foreground/15 hover:text-foreground",
             "active:scale-[0.98]",
           )}
         >
@@ -477,7 +477,7 @@ export function ProjectsPanel({
         </SheetHeader>
 
         {/* Visible header */}
-        <div className="flex items-center justify-between border-b border-border/40 px-5 py-4">
+        <div className="flex items-center justify-between border-b border-border/50 px-5 py-4">
           <div>
             <h2 className="text-base font-semibold text-foreground">Projects</h2>
             {devRoot && !loading && (
@@ -726,7 +726,7 @@ function FolderPickerDialog({
           </DialogDescription>
         </DialogHeader>
 
-        <div className="border-y border-border/40 bg-muted/30 px-5 py-2">
+        <div className="border-y border-border/50 bg-muted/30 px-5 py-2">
           <p className="font-mono text-xs text-muted-foreground truncate" title={currentPath}>
             {currentPath}
           </p>
@@ -774,7 +774,7 @@ function FolderPickerDialog({
           </div>
         </ScrollArea>
 
-        <DialogFooter className="border-t border-border/40 px-5 py-3">
+        <DialogFooter className="border-t border-border/50 px-5 py-3">
           <Button variant="ghost" size="sm" onClick={() => onOpenChange(false)}>
             Cancel
           </Button>
@@ -845,7 +845,7 @@ function DevRootSetup({
     return (
       <div className="space-y-3" data-testid="devroot-settings">
         <div className="flex items-center gap-2">
-          <code className="flex-1 truncate rounded border border-border/40 bg-muted/30 px-3 py-2 font-mono text-xs text-foreground">
+          <code className="flex-1 truncate rounded border border-border/50 bg-muted/30 px-3 py-2 font-mono text-xs text-foreground">
             {currentRoot}
           </code>
           <Button

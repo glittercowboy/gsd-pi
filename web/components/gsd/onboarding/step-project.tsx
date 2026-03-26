@@ -248,7 +248,7 @@ export function StepProject({ onFinish, onBack, onBeforeSwitch }: StepProjectPro
         )}
 
         {noDevRoot && (
-          <div className="rounded-xl border border-border/40 bg-card/30 px-4 py-6 text-center text-sm text-muted-foreground">
+          <div className="rounded-xl border border-border/50 bg-card/30 px-4 py-6 text-center text-sm text-muted-foreground">
             No dev root configured. Go back and set one, or finish setup to configure later.
           </div>
         )}
@@ -278,7 +278,7 @@ export function StepProject({ onFinish, onBack, onBeforeSwitch }: StepProjectPro
                     "active:scale-[0.98]",
                     isSwitching
                       ? "border-foreground/30 bg-foreground/[0.06]"
-                      : "border-border/40 bg-card/20 hover:border-foreground/15 hover:bg-card/50",
+                      : "border-border/50 bg-card/20 hover:border-foreground/15 hover:bg-card/50",
                     switchingTo && !isSwitching && "opacity-40 pointer-events-none",
                   )}
                 >
@@ -352,7 +352,7 @@ export function StepProject({ onFinish, onBack, onBeforeSwitch }: StepProjectPro
         )}
 
         {!loading && devRoot && projects.length === 0 && !error && (
-          <div className="rounded-xl border border-border/40 bg-card/30 px-4 py-6 text-center text-sm text-muted-foreground">
+          <div className="rounded-xl border border-border/50 bg-card/30 px-4 py-6 text-center text-sm text-muted-foreground">
             No projects found in {devRoot}
           </div>
         )}
@@ -367,7 +367,7 @@ export function StepProject({ onFinish, onBack, onBeforeSwitch }: StepProjectPro
                 disabled={!!switchingTo}
                 className={cn(
                   "flex w-full items-center gap-3.5 rounded-xl border border-dashed px-4 py-3.5 text-left transition-all duration-200",
-                  "border-border/40 text-muted-foreground hover:border-foreground/15 hover:text-foreground",
+                  "border-border/50 text-muted-foreground hover:border-foreground/15 hover:text-foreground",
                   "active:scale-[0.98]",
                   switchingTo && "opacity-40 pointer-events-none",
                 )}
@@ -385,7 +385,7 @@ export function StepProject({ onFinish, onBack, onBeforeSwitch }: StepProjectPro
                 initial={{ opacity: 0, height: 0 }}
                 animate={{ opacity: 1, height: "auto" }}
                 transition={{ duration: 0.2 }}
-                className="rounded-xl border border-border/40 bg-card/30 p-4 space-y-3"
+                className="rounded-xl border border-border/50 bg-card/30 p-4 space-y-3"
               >
                 <div className="text-sm font-medium text-foreground">New project</div>
                 <form

@@ -89,7 +89,7 @@ function DiagLoading({ label }: { label: string }) {
 
 function DiagEmpty({ message }: { message: string }) {
   return (
-    <div className="rounded-lg border border-border/30 bg-card/30 px-4 py-5 text-center text-xs text-muted-foreground">
+    <div className="rounded-lg border border-border/50 bg-card/30 px-4 py-5 text-center text-xs text-muted-foreground">
       {message}
     </div>
   )
@@ -102,7 +102,7 @@ function StatPill({ label, value, variant }: { label: string; value: number | st
       variant === "error" && "border-destructive/20 bg-destructive/5 text-destructive",
       variant === "warning" && "border-warning/20 bg-warning/5 text-warning",
       variant === "info" && "border-info/20 bg-info/5 text-info",
-      (!variant || variant === "default") && "border-border/40 bg-card/50 text-foreground/80",
+      (!variant || variant === "default") && "border-border/50 bg-card/50 text-foreground/80",
     )}>
       <span className="text-muted-foreground">{label}</span>
       <span className="font-medium tabular-nums">{value}</span>
@@ -116,7 +116,7 @@ function StatPill({ label, value, variant }: { label: string; value: number | st
 
 function AnomalyRow({ anomaly }: { anomaly: ForensicAnomaly }) {
   return (
-    <div className="rounded-lg border border-border/30 bg-card/30 px-3 py-2.5 space-y-1">
+    <div className="rounded-lg border border-border/50 bg-card/30 px-3 py-2.5 space-y-1">
       <div className="flex items-center gap-2">
         <SeverityIcon severity={anomaly.severity} />
         <Badge variant={severityBadgeVariant(anomaly.severity)} className="text-[10px] px-1.5 py-0">{anomaly.severity}</Badge>
@@ -187,7 +187,7 @@ export function ForensicsPanel() {
               </div>
             </div>
           ) : (
-            <div className="flex items-center gap-2 rounded-lg border border-border/30 bg-card/30 px-3 py-2 text-xs text-muted-foreground">
+            <div className="flex items-center gap-2 rounded-lg border border-border/50 bg-card/30 px-3 py-2 text-xs text-muted-foreground">
               <CheckCircle2 className="h-3.5 w-3.5 text-success" />
               No crash lock
             </div>
@@ -207,10 +207,10 @@ export function ForensicsPanel() {
           {data.recentUnits.length > 0 && (
             <div className="space-y-2">
               <h4 className="text-xs font-medium text-foreground/70">Recent Units ({data.recentUnits.length})</h4>
-              <div className="overflow-x-auto rounded-lg border border-border/30">
+              <div className="overflow-x-auto rounded-lg border border-border/50">
                 <table className="w-full text-[11px]">
                   <thead>
-                    <tr className="border-b border-border/30 bg-card/40">
+                    <tr className="border-b border-border/50 bg-card/40">
                       <th className="px-2.5 py-1.5 text-left font-medium text-muted-foreground">Type</th>
                       <th className="px-2.5 py-1.5 text-left font-medium text-muted-foreground">ID</th>
                       <th className="px-2.5 py-1.5 text-left font-medium text-muted-foreground">Model</th>
@@ -220,7 +220,7 @@ export function ForensicsPanel() {
                   </thead>
                   <tbody>
                     {data.recentUnits.map((u, i) => (
-                      <tr key={i} className="border-b border-border/20 last:border-0">
+                      <tr key={i} className="border-b border-border/50 last:border-0">
                         <td className="px-2.5 py-1.5 font-mono text-foreground/80">{u.type}</td>
                         <td className="px-2.5 py-1.5 font-mono text-foreground/80 truncate max-w-[120px]">{u.id}</td>
                         <td className="px-2.5 py-1.5 text-muted-foreground">{u.model}</td>
@@ -249,7 +249,7 @@ function humanizeCode(code: string): string {
 
 function IssueRow({ issue }: { issue: DoctorIssue }) {
   return (
-    <div className="rounded-lg border border-border/30 bg-card/30 px-3 py-2.5 space-y-1">
+    <div className="rounded-lg border border-border/50 bg-card/30 px-3 py-2.5 space-y-1">
       <div className="flex items-center gap-2 flex-wrap">
         <SeverityIcon severity={issue.severity} />
         <Badge variant={severityBadgeVariant(issue.severity)} className="text-[10px] px-1.5 py-0">{issue.severity}</Badge>
@@ -379,7 +379,7 @@ function trendColor(trend: "stable" | "rising" | "declining"): string {
 
 function SuggestionRow({ suggestion }: { suggestion: SkillHealSuggestion }) {
   return (
-    <div className="rounded-lg border border-border/30 bg-card/30 px-3 py-2.5 space-y-1">
+    <div className="rounded-lg border border-border/50 bg-card/30 px-3 py-2.5 space-y-1">
       <div className="flex items-center gap-2 flex-wrap">
         <SeverityIcon severity={suggestion.severity} />
         <Badge variant={severityBadgeVariant(suggestion.severity)} className="text-[10px] px-1.5 py-0">{suggestion.severity}</Badge>
@@ -430,10 +430,10 @@ export function SkillHealthPanel() {
           {data.skills.length > 0 && (
             <div className="space-y-2">
               <h4 className="text-xs font-medium text-foreground/70">Skills ({data.skills.length})</h4>
-              <div className="overflow-x-auto rounded-lg border border-border/30">
+              <div className="overflow-x-auto rounded-lg border border-border/50">
                 <table className="w-full text-[11px]">
                   <thead>
-                    <tr className="border-b border-border/30 bg-card/40">
+                    <tr className="border-b border-border/50 bg-card/40">
                       <th className="px-2.5 py-1.5 text-left font-medium text-muted-foreground">Skill</th>
                       <th className="px-2.5 py-1.5 text-right font-medium text-muted-foreground">Uses</th>
                       <th className="px-2.5 py-1.5 text-right font-medium text-muted-foreground">Success</th>
@@ -446,7 +446,7 @@ export function SkillHealthPanel() {
                   <tbody>
                     {data.skills.map((skill) => (
                       <tr key={skill.name} className={cn(
-                        "border-b border-border/20 last:border-0",
+                        "border-b border-border/50 last:border-0",
                         skill.flagged && "bg-destructive/3",
                       )}>
                         <td className="px-2.5 py-1.5 font-mono text-foreground/80">

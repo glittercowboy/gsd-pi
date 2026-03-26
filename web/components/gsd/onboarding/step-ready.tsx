@@ -51,7 +51,7 @@ export function StepReady({ providerLabel, onFinish }: StepReadyProps) {
         initial={{ opacity: 0, y: 12 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ delay: 0.26, duration: 0.4 }}
-        className="mt-8 flex items-center gap-4 rounded-xl border border-border/40 bg-card/30 px-5 py-3"
+        className="mt-8 flex items-center gap-4 rounded-xl border border-border/50 bg-card/30 px-5 py-3"
       >
         <div className="flex items-center gap-2 text-xs text-muted-foreground">
           <Image

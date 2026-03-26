@@ -96,7 +96,7 @@ export function StepProvider({ providers, selectedId, onSelect, onNext, onBack }
                       "active:scale-[0.98]",
                       selected
                         ? "border-foreground/30 bg-foreground/[0.06]"
-                        : "border-border/40 bg-card/20 hover:border-foreground/15 hover:bg-card/50",
+                        : "border-border/50 bg-card/20 hover:border-foreground/15 hover:bg-card/50",
                     )}
                     data-testid={`onboarding-provider-${provider.id}`}
                   >
@@ -138,7 +138,7 @@ export function StepProvider({ providers, selectedId, onSelect, onNext, onBack }
                       {capabilityBadges(provider).map((cap) => (
                         <Tooltip key={cap}>
                           <TooltipTrigger asChild>
-                            <Badge variant="outline" className="border-border/30 text-[10px] text-muted-foreground/60">
+                            <Badge variant="outline" className="border-border/50 text-[10px] text-muted-foreground/60">
                               {cap}
                             </Badge>
                           </TooltipTrigger>

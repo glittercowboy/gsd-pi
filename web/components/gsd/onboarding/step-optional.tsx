@@ -64,7 +64,7 @@ export function StepOptional({ sections, onBack, onNext }: StepOptionalProps) {
               "flex items-start gap-3.5 rounded-xl border px-4 py-3.5 transition-colors",
               section.configured
                 ? "border-success/15 bg-success/[0.03]"
-                : "border-border/40 bg-card/20",
+                : "border-border/50 bg-card/20",
             )}
             data-testid={`onboarding-optional-${section.id}`}
           >
@@ -95,7 +95,7 @@ export function StepOptional({ sections, onBack, onNext }: StepOptionalProps) {
                         "text-[10px]",
                         section.configured
                           ? "border-success/15 text-success/70"
-                          : "border-border/40 text-muted-foreground/50",
+                          : "border-border/50 text-muted-foreground/50",
                       )}
                     >
                       {section.configured ? "Ready" : "Skipped"}
@@ -115,7 +115,7 @@ export function StepOptional({ sections, onBack, onNext }: StepOptionalProps) {
                     <Badge
                       key={item}
                       variant="outline"
-                      className="border-border/30 text-[10px] text-muted-foreground/60"
+                      className="border-border/50 text-[10px] text-muted-foreground/60"
                     >
                       {item}
                     </Badge>

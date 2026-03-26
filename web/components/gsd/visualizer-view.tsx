@@ -121,8 +121,8 @@ function SectionLabel({ children }: { children: React.ReactNode }) {
 /** Large empty state with icon */
 function EmptyState({ message, icon: Icon = AlertCircle }: { message: string; icon?: React.ComponentType<{ className?: string }> }) {
   return (
-    <div className="flex flex-col items-center justify-center gap-4 rounded-xl border border-dashed border-border/60 py-16 text-center">
-      <div className="rounded-full border border-border/60 bg-muted/40 p-4">
+    <div className="flex flex-col items-center justify-center gap-4 rounded-xl border border-dashed border-border py-16 text-center">
+      <div className="rounded-full border border-border bg-muted/40 p-4">
         <Icon className="h-6 w-6 text-muted-foreground/50" />
       </div>
       <p className="text-sm font-medium text-muted-foreground">{message}</p>

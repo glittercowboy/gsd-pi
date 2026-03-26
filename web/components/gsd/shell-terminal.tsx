@@ -719,7 +719,7 @@ export function ShellTerminal({
       </div>
 
       {!hideSidebar && (
-        <div className="flex w-[34px] flex-shrink-0 flex-col border-l border-border/40 bg-terminal">
+        <div className="flex w-[34px] flex-shrink-0 flex-col border-l border-border/50 bg-terminal">
           {/* New terminal button */}
           <button
             onClick={createTab}

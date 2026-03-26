@@ -96,7 +96,7 @@ function TerminalWidgetBand({
         {widgets.map((widget) => (
           <div
             key={`${widget.placement}:${widget.key}`}
-            className="rounded-md border border-border/60 bg-background/40 px-3 py-2"
+            className="rounded-md border border-border bg-background/40 px-3 py-2"
             data-testid="terminal-widget"
             data-widget-key={widget.key}
             data-widget-placement={widget.placement}
@@ -260,7 +260,7 @@ export function Terminal({ className }: TerminalProps) {
             {workspace.liveTranscript.map((block, i) => (
               <div
                 key={`transcript-${i}`}
-                className="whitespace-pre-wrap rounded border border-border/30 bg-accent/20 px-3 py-2 text-foreground/90"
+                className="whitespace-pre-wrap rounded border border-border/50 bg-accent/20 px-3 py-2 text-foreground/90"
               >
                 {block}
               </div>

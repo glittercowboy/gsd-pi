@@ -88,7 +88,7 @@ function SettingsLoading({ label }: { label: string }) {
 
 function SettingsEmpty({ message }: { message: string }) {
   return (
-    <div className="rounded-lg border border-border/30 bg-card/30 px-4 py-5 text-center text-xs text-muted-foreground">
+    <div className="rounded-lg border border-border/50 bg-card/30 px-4 py-5 text-center text-xs text-muted-foreground">
       {message}
     </div>
   )
@@ -101,7 +101,7 @@ function Pill({ label, value, variant }: { label: string; value: string | number
       variant === "info" && "border-info/20 bg-info/5 text-info",
       variant === "warning" && "border-warning/20 bg-warning/5 text-warning",
       variant === "success" && "border-success/20 bg-success/5 text-success",
-      (!variant || variant === "default") && "border-border/40 bg-card/50 text-foreground/80",
+      (!variant || variant === "default") && "border-border/50 bg-card/50 text-foreground/80",
     )}>
       <span className="text-muted-foreground">{label}</span>
       <span className="font-medium tabular-nums">{value}</span>
@@ -215,7 +215,7 @@ export function PrefsPanel() {
           </div>
 
           {/* Toggles */}
-          <div className="grid grid-cols-2 gap-x-6 gap-y-1.5 rounded-lg border border-border/30 bg-card/30 px-3 py-2.5">
+          <div className="grid grid-cols-2 gap-x-6 gap-y-1.5 rounded-lg border border-border/50 bg-card/30 px-3 py-2.5">
             <KvRow label="Auto-Supervisor">
               {prefs.autoSupervisor?.enabled ? (
                 <span className="text-success">
@@ -343,7 +343,7 @@ export function ModelRoutingPanel() {
 
           {/* Tier assignments */}
           {routingConfig?.tier_models && (
-            <div className="rounded-lg border border-border/30 bg-card/30 px-3 py-2.5 space-y-1.5">
+            <div className="rounded-lg border border-border/50 bg-card/30 px-3 py-2.5 space-y-1.5">
               <h4 className="text-[11px] font-medium text-foreground/70 uppercase tracking-wide">Tier Assignments</h4>
               <TierModelRow tier="light" modelId={routingConfig.tier_models.light} />
               <TierModelRow tier="standard" modelId={routingConfig.tier_models.standard} />
@@ -373,7 +373,7 @@ export function ModelRoutingPanel() {
                   <h4 className="text-[11px] font-medium text-foreground/70">Top Patterns</h4>
                   <div className="space-y-2">
                     {topPatterns(routingHistory).map(({ name, total, pattern }) => (
-                      <div key={name} className="rounded-lg border border-border/30 bg-card/30 px-3 py-2 space-y-1">
+                      <div key={name} className="rounded-lg border border-border/50 bg-card/30 px-3 py-2 space-y-1">
                         <div className="flex items-center justify-between gap-2">
                           <span className="text-xs font-mono text-foreground/80 truncate">{name}</span>
                           <span className="text-[10px] text-muted-foreground tabular-nums shrink-0">{total} attempts</span>
@@ -455,7 +455,7 @@ export function BudgetPanel() {
 
           {/* Context budget allocations */}
           {budget && (
-            <div className="rounded-lg border border-border/30 bg-card/30 px-3 py-2.5 space-y-1.5">
+            <div className="rounded-lg border border-border/50 bg-card/30 px-3 py-2.5 space-y-1.5">
               <h4 className="text-[11px] font-medium text-foreground/70 uppercase tracking-wide">Context Budget Allocations</h4>
               <KvRow label="Summary Budget">{formatChars(budget.summaryBudgetChars)} chars</KvRow>
               <KvRow label="Inline Context">{formatChars(budget.inlineContextBudgetChars)} chars</KvRow>
@@ -478,7 +478,7 @@ export function BudgetPanel() {
               </div>
 
               {/* Token breakdown */}
-              <div className="rounded-lg border border-border/30 bg-card/30 px-3 py-2.5 space-y-1.5">
+              <div className="rounded-lg border border-border/50 bg-card/30 px-3 py-2.5 space-y-1.5">
                 <h4 className="text-[11px] font-medium text-foreground/70 uppercase tracking-wide">Token Breakdown</h4>
                 <KvRow label="Input">{formatTokens(totals.tokens.input)}</KvRow>
                 <KvRow label="Output">{formatTokens(totals.tokens.output)}</KvRow>
@@ -783,7 +783,7 @@ export function RemoteQuestionsPanel() {
                 "active:scale-[0.97]",
                 channel === opt.value
                   ? "border-foreground/30 bg-foreground/[0.06]"
-                  : "border-border/40 bg-card/20 hover:border-foreground/15 hover:bg-card/50",
+                  : "border-border/50 bg-card/20 hover:border-foreground/15 hover:bg-card/50",
               )}
             >
               <div className="text-sm font-medium text-foreground">{opt.label}</div>
@@ -809,7 +809,7 @@ export function RemoteQuestionsPanel() {
             "transition-colors",
             channelId.trim().length > 0 && !CHANNEL_ID_PATTERNS[channel].test(channelId.trim())
               ? "border-destructive/40"
-              : "border-border/40",
+              : "border-border/50",
           )}
           onKeyDown={(e) => { if (e.key === "Enter" && canSave) void handleSave() }}
         />
@@ -849,7 +849,7 @@ export function RemoteQuestionsPanel() {
               max={30}
               value={timeoutMinutes}
               onChange={(e) => setTimeoutMinutes(Math.max(1, Math.min(30, Number(e.target.value) || 1)))}
-              className="w-full rounded-lg border border-border/40 bg-card/20 px-3 py-2 text-xs text-foreground tabular-nums focus:outline-none focus:ring-2 focus:ring-ring"
+              className="w-full rounded-lg border border-border/50 bg-card/20 px-3 py-2 text-xs text-foreground tabular-nums focus:outline-none focus:ring-2 focus:ring-ring"
             />
           </div>
           <div className="space-y-1.5">
@@ -863,7 +863,7 @@ export function RemoteQuestionsPanel() {
               max={30}
               value={pollIntervalSeconds}
               onChange={(e) => setPollIntervalSeconds(Math.max(2, Math.min(30, Number(e.target.value) || 2)))}
-              className="w-full rounded-lg border border-border/40 bg-card/20 px-3 py-2 text-xs text-foreground tabular-nums focus:outline-none focus:ring-2 focus:ring-ring"
+              className="w-full rounded-lg border border-border/50 bg-card/20 px-3 py-2 text-xs text-foreground tabular-nums focus:outline-none focus:ring-2 focus:ring-ring"
             />
           </div>
         </div>
@@ -920,7 +920,7 @@ export function RemoteQuestionsPanel() {
               placeholder={`Paste your ${selectedChannelOption.label} bot token`}
               disabled={savingToken}
               className={cn(
-                "w-full rounded-xl border border-border/40 bg-card/20 pl-4 pr-10 py-2.5 font-mono text-sm text-foreground",
+                "w-full rounded-xl border border-border/50 bg-card/20 pl-4 pr-10 py-2.5 font-mono text-sm text-foreground",
                 "placeholder:text-muted-foreground/40",
                 "focus:outline-none focus:ring-2 focus:ring-ring focus:border-transparent",
                 "transition-colors",
@@ -976,7 +976,7 @@ function FontSizeControl({
   previewFont: "mono" | "sans"
 }) {
   return (
-    <div className="rounded-lg border border-border/30 bg-card/30 px-3 py-3 space-y-3">
+    <div className="rounded-lg border border-border/50 bg-card/30 px-3 py-3 space-y-3">
       <div>
         <div className="text-xs font-medium text-foreground">{label}</div>
         <div className="text-[11px] text-muted-foreground mt-0.5">{description}</div>
@@ -992,7 +992,7 @@ function FontSizeControl({
               "rounded-md border px-3 py-1.5 text-xs font-medium tabular-nums transition-colors",
               currentSize === size
                 ? "border-foreground/30 bg-foreground/10 text-foreground shadow-sm"
-                : "border-border/40 bg-card/50 text-muted-foreground hover:border-foreground/20 hover:text-foreground",
+                : "border-border/50 bg-card/50 text-muted-foreground hover:border-foreground/20 hover:text-foreground",
             )}
           >
             {size}px
@@ -1005,7 +1005,7 @@ function FontSizeControl({
 
       <div
         className={cn(
-          "mt-2 rounded-md border border-border/20 bg-terminal px-3 py-2 text-foreground/80",
+          "mt-2 rounded-md border border-border/50 bg-terminal px-3 py-2 text-foreground/80",
           previewFont === "mono" ? "font-mono" : "font-sans",
         )}
         style={{ fontSize: `${currentSize}px`, lineHeight: 1.35 }}
@@ -1141,7 +1141,7 @@ export function ExperimentalPanel() {
           return (
             <div
               key={flag.key}
-              className="rounded-lg border border-border/40 bg-card/30 px-3 py-3 space-y-2"
+              className="rounded-lg border border-border/50 bg-card/30 px-3 py-3 space-y-2"
             >
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0 flex-1 space-y-1">

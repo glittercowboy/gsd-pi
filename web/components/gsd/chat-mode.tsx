@@ -337,7 +337,7 @@ function MarkdownContent({ content }: { content: string }) {
                 })
                 return (
                   <div
-                    className="chat-code-block my-3 rounded-xl overflow-x-auto text-sm shadow-sm border border-border/40"
+                    className="chat-code-block my-3 rounded-xl overflow-x-auto text-sm shadow-sm border border-border/50"
                     dangerouslySetInnerHTML={{ __html: highlighted }}
                   />
                 )
@@ -357,7 +357,7 @@ function MarkdownContent({ content }: { content: string }) {
             }
 
             return (
-              <pre className={cn("my-3 overflow-x-auto rounded-xl p-4 text-sm border border-border/40", isDark ? "bg-[#0d1117]" : "bg-[#f6f8fa]")}>
+              <pre className={cn("my-3 overflow-x-auto rounded-xl p-4 text-sm border border-border/50", isDark ? "bg-[#0d1117]" : "bg-[#f6f8fa]")}>
                 <code className="font-mono">{children}</code>
               </pre>
             )
@@ -559,7 +559,7 @@ function TuiSelectPrompt({
       data-testid="tui-select-prompt"
       tabIndex={0}
       onKeyDown={handleKeyDown}
-      className="mt-2 rounded-xl border border-border/60 bg-background/60 p-1.5 shadow-sm outline-none focus-visible:ring-1 focus-visible:ring-border"
+      className="mt-2 rounded-xl border border-border bg-background/60 p-1.5 shadow-sm outline-none focus-visible:ring-1 focus-visible:ring-border"
       aria-label={`Select: ${prompt.label}`}
       role="listbox"
       aria-activedescendant={`tui-select-option-${localIndex}`}
@@ -671,7 +671,7 @@ function TuiTextPrompt({
   return (
     <div
       data-testid="tui-text-prompt"
-      className="mt-2 rounded-xl border border-border/60 bg-background/60 p-3 shadow-sm"
+      className="mt-2 rounded-xl border border-border bg-background/60 p-3 shadow-sm"
     >
       {prompt.label && (
         <p className="mb-2 text-[11px] font-medium text-muted-foreground uppercase tracking-wide">
@@ -771,7 +771,7 @@ function TuiPasswordPrompt({
   return (
     <div
       data-testid="tui-password-prompt"
-      className="mt-2 rounded-xl border border-border/60 bg-background/60 p-3 shadow-sm"
+      className="mt-2 rounded-xl border border-border bg-background/60 p-3 shadow-sm"
     >
       {prompt.label && (
         <p className="mb-2 text-[11px] font-medium text-muted-foreground uppercase tracking-wide">
@@ -910,7 +910,7 @@ function InlineThinking({ content, isStreaming }: { content: string; isStreaming
         onClick={() => setExpanded((e) => !e)}
         className={cn(
           "group w-full rounded-xl border px-3.5 py-2.5 text-left transition-all",
-          "border-border/40 bg-muted/20 hover:bg-muted/30",
+          "border-border/50 bg-muted/20 hover:bg-muted/30",
         )}
       >
         {/* Header row */}
@@ -957,7 +957,7 @@ function InlineThinking({ content, isStreaming }: { content: string; isStreaming
         {expanded && (
           <div
             ref={scrollRef}
-            className="mt-2 max-h-[400px] overflow-y-auto overscroll-contain rounded-lg border border-border/30 bg-background/40 p-3 text-[12px] leading-[1.7] text-muted-foreground/60 whitespace-pre-wrap scrollbar-thin scrollbar-thumb-border scrollbar-track-transparent"
+            className="mt-2 max-h-[400px] overflow-y-auto overscroll-contain rounded-lg border border-border/50 bg-background/40 p-3 text-[12px] leading-[1.7] text-muted-foreground/60 whitespace-pre-wrap scrollbar-thin scrollbar-thumb-border scrollbar-track-transparent"
           >
             {content}
             {isStreaming && <StreamingCursor />}
@@ -1047,7 +1047,7 @@ function ChatBubble({
       <div className="mt-1 flex-shrink-0 flex h-7 w-7 items-center justify-center rounded-full bg-card border border-border">
         <PlatformLogoIcon className="h-3.5 w-auto" />
       </div>
-      <div className="max-w-[82%] min-w-0 rounded-2xl rounded-tl-md border border-border/60 bg-card px-4 py-3 shadow-sm">
+      <div className="max-w-[82%] min-w-0 rounded-2xl rounded-tl-md border border-border bg-card px-4 py-3 shadow-sm">
         {/* Minimal waiting indicator — shown when streaming starts but no content yet */}
         {isThinking && !message.content && (
           <div className="flex items-center gap-2 py-1">
@@ -1339,8 +1339,8 @@ function ChatInputBar({
           className={cn(
             "flex flex-1 flex-col rounded-xl border bg-background transition-colors",
             connected
-              ? "border-border focus-within:border-border/80 focus-within:ring-1 focus-within:ring-border/30"
-              : "border-border/40 opacity-60",
+              ? "border-border focus-within:ring-1 focus-within:ring-border/30"
+              : "border-border/50 opacity-60",
             isDragging && connected && "border-primary/60 ring-2 ring-primary/20 bg-primary/5",
           )}
         >
@@ -1608,7 +1608,7 @@ function InlineUiRequest({ request }: { request: PendingUiRequest }) {
       <div className="mt-1 flex-shrink-0 flex h-7 w-7 items-center justify-center rounded-full bg-card border border-border">
         <PlatformLogoIcon className="h-3.5 w-auto" />
       </div>
-      <div className="max-w-[82%] min-w-0 rounded-2xl rounded-tl-md border border-border/60 bg-card px-4 py-3 shadow-sm">
+      <div className="max-w-[82%] min-w-0 rounded-2xl rounded-tl-md border border-border bg-card px-4 py-3 shadow-sm">
         {request.title && (
           <p className="mb-2.5 text-sm font-medium text-foreground">{request.title}</p>
         )}
@@ -1927,7 +1927,7 @@ function ToolExecutionBlock({ tool }: { tool: CompletedToolExecution }) {
             "w-full rounded-lg border px-3 py-2 text-left text-xs transition-colors",
             isError
               ? "border-destructive/30 bg-destructive/5 hover:bg-destructive/10"
-              : "border-border/40 bg-muted/20 hover:bg-muted/30",
+              : "border-border/50 bg-muted/20 hover:bg-muted/30",
           )}
         >
           {/* Header */}
@@ -1951,7 +1951,7 @@ function ToolExecutionBlock({ tool }: { tool: CompletedToolExecution }) {
 
           {/* Expanded content */}
           {expanded && diff && (
-            <div className="mt-2 overflow-x-auto rounded-md border border-border/30 bg-background/80 p-2 font-mono text-[11px] leading-relaxed">
+            <div className="mt-2 overflow-x-auto rounded-md border border-border/50 bg-background/80 p-2 font-mono text-[11px] leading-relaxed">
               {diff.split("\n").map((line, i) => {
                 const isAdd = line.startsWith("+")
                 const isRemove = line.startsWith("-")
@@ -1976,7 +1976,7 @@ function ToolExecutionBlock({ tool }: { tool: CompletedToolExecution }) {
 
           {/* Expanded: bash output or other result */}
           {expanded && !diff && resultText && (
-            <div className="mt-2 max-h-[200px] overflow-y-auto rounded-md border border-border/30 bg-background/80 p-2 font-mono text-[11px] leading-relaxed text-muted-foreground/70 whitespace-pre-wrap">
+            <div className="mt-2 max-h-[200px] overflow-y-auto rounded-md border border-border/50 bg-background/80 p-2 font-mono text-[11px] leading-relaxed text-muted-foreground/70 whitespace-pre-wrap">
               {resultText.length > 2000 ? resultText.slice(0, 2000) + "\n…" : resultText}
             </div>
           )}
@@ -2291,7 +2291,7 @@ export function ChatPane({ className, onOpenAction }: ChatPaneProps) {
                     <div key={`active-${item.tool.id}`} className="flex justify-start gap-3">
                       <div className="w-7 flex-shrink-0" />
                       <div className="max-w-[82%] min-w-0">
-                        <div className="flex items-center gap-2 rounded-lg border border-border/40 bg-muted/20 px-3.5 py-2">
+                        <div className="flex items-center gap-2 rounded-lg border border-border/50 bg-muted/20 px-3.5 py-2">
                           <Loader2 className="h-3 w-3 animate-spin text-muted-foreground/60" />
                           <span className="font-mono text-xs text-muted-foreground">
                             {item.tool.name}

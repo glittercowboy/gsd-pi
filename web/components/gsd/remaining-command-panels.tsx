@@ -109,7 +109,7 @@ function PanelLoading({ label }: { label: string }) {
 
 function PanelEmpty({ message }: { message: string }) {
   return (
-    <div className="rounded-lg border border-border/30 bg-card/30 px-4 py-5 text-center text-xs text-muted-foreground">
+    <div className="rounded-lg border border-border/50 bg-card/30 px-4 py-5 text-center text-xs text-muted-foreground">
       {message}
     </div>
   )
@@ -123,7 +123,7 @@ function InfoPill({ label, value, variant }: { label: string; value: string | nu
       variant === "warning" && "border-warning/20 bg-warning/5 text-warning",
       variant === "success" && "border-success/20 bg-success/5 text-success",
       variant === "error" && "border-destructive/20 bg-destructive/5 text-destructive",
-      (!variant || variant === "default") && "border-border/40 bg-card/50 text-foreground/80",
+      (!variant || variant === "default") && "border-border/50 bg-card/50 text-foreground/80",
     )}>
       <span className="text-muted-foreground">{label}</span>
       <span className="font-medium tabular-nums">{value}</span>
@@ -155,7 +155,7 @@ export function QuickPanel() {
         icon={<Zap className="h-3.5 w-3.5" />}
       />
 
-      <div className="rounded-lg border border-border/30 bg-card/30 px-4 py-4 space-y-3">
+      <div className="rounded-lg border border-border/50 bg-card/30 px-4 py-4 space-y-3">
         <p className="text-xs text-foreground/90">
           Create a quick one-off task outside the current plan. Useful for small fixes, experiments, or ad-hoc work that
           doesn&apos;t fit into the milestone structure.
@@ -163,7 +163,7 @@ export function QuickPanel() {
 
         <div className="space-y-2">
           <h4 className="text-[11px] font-medium text-foreground/70 uppercase tracking-wide">Usage</h4>
-          <div className="rounded-md border border-border/20 bg-background/50 px-3 py-2 font-mono text-[11px] text-foreground/80">
+          <div className="rounded-md border border-border/50 bg-background/50 px-3 py-2 font-mono text-[11px] text-foreground/80">
             /gsd quick &lt;description&gt;
           </div>
         </div>
@@ -231,7 +231,7 @@ export function HistoryPanel() {
           </div>
 
           {/* Tab switcher */}
-          <div className="flex gap-1 rounded-lg border border-border/30 bg-card/20 p-0.5">
+          <div className="flex gap-1 rounded-lg border border-border/50 bg-card/20 p-0.5">
             {(["phase", "slice", "model", "units"] as const).map((tab) => (
               <button
                 key={tab}
@@ -251,10 +251,10 @@ export function HistoryPanel() {
 
           {/* By Phase */}
           {activeTab === "phase" && data.byPhase.length > 0 && (
-            <div className="overflow-x-auto rounded-lg border border-border/30">
+            <div className="overflow-x-auto rounded-lg border border-border/50">
               <table className="w-full text-[11px]">
                 <thead>
-                  <tr className="border-b border-border/30 bg-card/40">
+                  <tr className="border-b border-border/50 bg-card/40">
                     <th className="px-2.5 py-1.5 text-left font-medium text-muted-foreground">Phase</th>
                     <th className="px-2.5 py-1.5 text-right font-medium text-muted-foreground">Units</th>
                     <th className="px-2.5 py-1.5 text-right font-medium text-muted-foreground">Cost</th>
@@ -263,7 +263,7 @@ export function HistoryPanel() {
                 </thead>
                 <tbody>
                   {data.byPhase.map((row: HistoryPhaseAggregate) => (
-                    <tr key={row.phase} className="border-b border-border/20 last:border-0">
+                    <tr key={row.phase} className="border-b border-border/50 last:border-0">
                       <td className="px-2.5 py-1.5 font-mono text-foreground/80 capitalize">{row.phase}</td>
                       <td className="px-2.5 py-1.5 text-right tabular-nums text-foreground/80">{row.units}</td>
                       <td className="px-2.5 py-1.5 text-right tabular-nums text-foreground/80">{formatCost(row.cost)}</td>
@@ -277,10 +277,10 @@ export function HistoryPanel() {
 
           {/* By Slice */}
           {activeTab === "slice" && data.bySlice.length > 0 && (
-            <div className="overflow-x-auto rounded-lg border border-border/30">
+            <div className="overflow-x-auto rounded-lg border border-border/50">
               <table className="w-full text-[11px]">
                 <thead>
-                  <tr className="border-b border-border/30 bg-card/40">
+                  <tr className="border-b border-border/50 bg-card/40">
                     <th className="px-2.5 py-1.5 text-left font-medium text-muted-foreground">Slice</th>
                     <th className="px-2.5 py-1.5 text-right font-medium text-muted-foreground">Units</th>
                     <th className="px-2.5 py-1.5 text-right font-medium text-muted-foreground">Cost</th>
@@ -289,7 +289,7 @@ export function HistoryPanel() {
                 </thead>
                 <tbody>
                   {data.bySlice.map((row: HistorySliceAggregate) => (
-                    <tr key={row.sliceId} className="border-b border-border/20 last:border-0">
+                    <tr key={row.sliceId} className="border-b border-border/50 last:border-0">
                       <td className="px-2.5 py-1.5 font-mono text-foreground/80">{row.sliceId}</td>
                       <td className="px-2.5 py-1.5 text-right tabular-nums text-foreground/80">{row.units}</td>
                       <td className="px-2.5 py-1.5 text-right tabular-nums text-foreground/80">{formatCost(row.cost)}</td>
@@ -303,10 +303,10 @@ export function HistoryPanel() {
 
           {/* By Model */}
           {activeTab === "model" && data.byModel.length > 0 && (
-            <div className="overflow-x-auto rounded-lg border border-border/30">
+            <div className="overflow-x-auto rounded-lg border border-border/50">
               <table className="w-full text-[11px]">
                 <thead>
-                  <tr className="border-b border-border/30 bg-card/40">
+                  <tr className="border-b border-border/50 bg-card/40">
                     <th className="px-2.5 py-1.5 text-left font-medium text-muted-foreground">Model</th>
                     <th className="px-2.5 py-1.5 text-right font-medium text-muted-foreground">Units</th>
                     <th className="px-2.5 py-1.5 text-right font-medium text-muted-foreground">Cost</th>
@@ -314,7 +314,7 @@ export function HistoryPanel() {
                 </thead>
                 <tbody>
                   {data.byModel.map((row: HistoryModelAggregate) => (
-                    <tr key={row.model} className="border-b border-border/20 last:border-0">
+                    <tr key={row.model} className="border-b border-border/50 last:border-0">
                       <td className="px-2.5 py-1.5 font-mono text-foreground/80 truncate max-w-[180px]">{row.model}</td>
                       <td className="px-2.5 py-1.5 text-right tabular-nums text-foreground/80">{row.units}</td>
                       <td className="px-2.5 py-1.5 text-right tabular-nums text-foreground/80">{formatCost(row.cost)}</td>
@@ -329,10 +329,10 @@ export function HistoryPanel() {
           {activeTab === "units" && (
             <>
               {data.units.length > 0 ? (
-                <div className="overflow-x-auto rounded-lg border border-border/30">
+                <div className="overflow-x-auto rounded-lg border border-border/50">
                   <table className="w-full text-[11px]">
                     <thead>
-                      <tr className="border-b border-border/30 bg-card/40">
+                      <tr className="border-b border-border/50 bg-card/40">
                         <th className="px-2.5 py-1.5 text-left font-medium text-muted-foreground">Type</th>
                         <th className="px-2.5 py-1.5 text-left font-medium text-muted-foreground">ID</th>
                         <th className="px-2.5 py-1.5 text-left font-medium text-muted-foreground">Model</th>
@@ -342,7 +342,7 @@ export function HistoryPanel() {
                     </thead>
                     <tbody>
                       {data.units.slice(0, 20).map((u, i) => (
-                        <tr key={i} className="border-b border-border/20 last:border-0">
+                        <tr key={i} className="border-b border-border/50 last:border-0">
                           <td className="px-2.5 py-1.5 font-mono text-foreground/80">{u.type}</td>
                           <td className="px-2.5 py-1.5 font-mono text-foreground/80 truncate max-w-[120px]">{u.id}</td>
                           <td className="px-2.5 py-1.5 text-muted-foreground truncate max-w-[120px]">{u.model}</td>
@@ -427,7 +427,7 @@ export function UndoPanel() {
           {data.lastUnitType ? (
             <>
               {/* Last unit info */}
-              <div className="rounded-lg border border-border/30 bg-card/30 px-3 py-2.5 space-y-1.5">
+              <div className="rounded-lg border border-border/50 bg-card/30 px-3 py-2.5 space-y-1.5">
                 <h4 className="text-[11px] font-medium text-foreground/70 uppercase tracking-wide">Last Completed Unit</h4>
                 <div className="grid grid-cols-2 gap-x-4 gap-y-0.5 text-[11px]">
                   <span className="text-muted-foreground">Type</span>
@@ -567,11 +567,11 @@ export function SteerPanel() {
       <div className="space-y-2">
         <h4 className="text-[11px] font-medium text-foreground/70 uppercase tracking-wide">Current Overrides</h4>
         {data?.overridesContent ? (
-          <div className="rounded-lg border border-border/30 bg-background/50 px-3 py-2.5 text-[11px] font-mono text-foreground/80 whitespace-pre-wrap max-h-[200px] overflow-y-auto leading-relaxed">
+          <div className="rounded-lg border border-border/50 bg-background/50 px-3 py-2.5 text-[11px] font-mono text-foreground/80 whitespace-pre-wrap max-h-[200px] overflow-y-auto leading-relaxed">
             {data.overridesContent}
           </div>
         ) : (
-          <div className="rounded-lg border border-border/30 bg-card/30 px-3 py-2.5 text-[11px] text-muted-foreground italic">
+          <div className="rounded-lg border border-border/50 bg-card/30 px-3 py-2.5 text-[11px] text-muted-foreground italic">
             No active overrides
           </div>
         )}
@@ -633,10 +633,10 @@ export function HooksPanel() {
       {data && (
         <>
           {data.entries.length > 0 ? (
-            <div className="overflow-x-auto rounded-lg border border-border/30">
+            <div className="overflow-x-auto rounded-lg border border-border/50">
               <table className="w-full text-[11px]">
                 <thead>
-                  <tr className="border-b border-border/30 bg-card/40">
+                  <tr className="border-b border-border/50 bg-card/40">
                     <th className="px-2.5 py-1.5 text-left font-medium text-muted-foreground">Name</th>
                     <th className="px-2.5 py-1.5 text-left font-medium text-muted-foreground">Type</th>
                     <th className="px-2.5 py-1.5 text-center font-medium text-muted-foreground">Status</th>
@@ -648,7 +648,7 @@ export function HooksPanel() {
                   {data.entries.map((entry: HookStatusEntry) => {
                     const totalCycles = Object.values(entry.activeCycles).reduce((sum, n) => sum + n, 0)
                     return (
-                      <tr key={entry.name} className="border-b border-border/20 last:border-0">
+                      <tr key={entry.name} className="border-b border-border/50 last:border-0">
                         <td className="px-2.5 py-1.5 font-mono text-foreground/80">{entry.name}</td>
                         <td className="px-2.5 py-1.5">
                           <Badge variant="outline" className="text-[10px] px-1.5 py-0">
@@ -684,7 +684,7 @@ export function HooksPanel() {
 
           {/* Formatted status */}
           {data.formattedStatus && (
-            <div className="rounded-lg border border-border/30 bg-background/50 px-3 py-2.5 text-[11px] font-mono text-foreground/70 whitespace-pre-wrap leading-relaxed">
+            <div className="rounded-lg border border-border/50 bg-background/50 px-3 py-2.5 text-[11px] font-mono text-foreground/70 whitespace-pre-wrap leading-relaxed">
               {data.formattedStatus}
             </div>
           )}
@@ -731,10 +731,10 @@ export function InspectPanel() {
           {data.recentDecisions.length > 0 && (
             <div className="space-y-2">
               <h4 className="text-xs font-medium text-foreground/70">Recent Decisions ({data.recentDecisions.length})</h4>
-              <div className="overflow-x-auto rounded-lg border border-border/30">
+              <div className="overflow-x-auto rounded-lg border border-border/50">
                 <table className="w-full text-[11px]">
                   <thead>
-                    <tr className="border-b border-border/30 bg-card/40">
+                    <tr className="border-b border-border/50 bg-card/40">
                       <th className="px-2.5 py-1.5 text-left font-medium text-muted-foreground">ID</th>
                       <th className="px-2.5 py-1.5 text-left font-medium text-muted-foreground">Decision</th>
                       <th className="px-2.5 py-1.5 text-left font-medium text-muted-foreground">Choice</th>
@@ -742,7 +742,7 @@ export function InspectPanel() {
                   </thead>
                   <tbody>
                     {data.recentDecisions.map((d) => (
-                      <tr key={d.id} className="border-b border-border/20 last:border-0">
+                      <tr key={d.id} className="border-b border-border/50 last:border-0">
                         <td className="px-2.5 py-1.5 font-mono text-foreground/80">{d.id}</td>
                         <td className="px-2.5 py-1.5 text-foreground/80 max-w-[200px] truncate">{d.decision}</td>
                         <td className="px-2.5 py-1.5 text-muted-foreground max-w-[150px] truncate">{d.choice}</td>
@@ -758,10 +758,10 @@ export function InspectPanel() {
           {data.recentRequirements.length > 0 && (
             <div className="space-y-2">
               <h4 className="text-xs font-medium text-foreground/70">Recent Requirements ({data.recentRequirements.length})</h4>
-              <div className="overflow-x-auto rounded-lg border border-border/30">
+              <div className="overflow-x-auto rounded-lg border border-border/50">
                 <table className="w-full text-[11px]">
                   <thead>
-                    <tr className="border-b border-border/30 bg-card/40">
+                    <tr className="border-b border-border/50 bg-card/40">
                       <th className="px-2.5 py-1.5 text-left font-medium text-muted-foreground">ID</th>
                       <th className="px-2.5 py-1.5 text-left font-medium text-muted-foreground">Status</th>
                       <th className="px-2.5 py-1.5 text-left font-medium text-muted-foreground">Description</th>
@@ -769,7 +769,7 @@ export function InspectPanel() {
                   </thead>
                   <tbody>
                     {data.recentRequirements.map((r) => (
-                      <tr key={r.id} className="border-b border-border/20 last:border-0">
+                      <tr key={r.id} className="border-b border-border/50 last:border-0">
                         <td className="px-2.5 py-1.5 font-mono text-foreground/80">{r.id}</td>
                         <td className="px-2.5 py-1.5">
                           <Badge
@@ -844,7 +844,7 @@ export function ExportPanel() {
       {/* Format selector */}
       <div className="space-y-2">
         <h4 className="text-[11px] font-medium text-foreground/70 uppercase tracking-wide">Format</h4>
-        <div className="flex gap-1 rounded-lg border border-border/30 bg-card/20 p-0.5">
+        <div className="flex gap-1 rounded-lg border border-border/50 bg-card/20 p-0.5">
           {(["markdown", "json"] as const).map((f) => (
             <button
               key={f}
@@ -977,17 +977,17 @@ export function CleanupPanel() {
               )}
             </div>
             {data.branches.length > 0 ? (
-              <div className="overflow-x-auto rounded-lg border border-border/30">
+              <div className="overflow-x-auto rounded-lg border border-border/50">
                 <table className="w-full text-[11px]">
                   <thead>
-                    <tr className="border-b border-border/30 bg-card/40">
+                    <tr className="border-b border-border/50 bg-card/40">
                       <th className="px-2.5 py-1.5 text-left font-medium text-muted-foreground">Branch</th>
                       <th className="px-2.5 py-1.5 text-center font-medium text-muted-foreground">Status</th>
                     </tr>
                   </thead>
                   <tbody>
                     {data.branches.map((b: CleanupBranch) => (
-                      <tr key={b.name} className="border-b border-border/20 last:border-0">
+                      <tr key={b.name} className="border-b border-border/50 last:border-0">
                         <td className="px-2.5 py-1.5 font-mono text-foreground/80 truncate max-w-[250px]">
                           <span className="flex items-center gap-1.5">
                             <GitBranch className="h-3 w-3 text-muted-foreground shrink-0" />
@@ -1034,17 +1034,17 @@ export function CleanupPanel() {
               )}
             </div>
             {data.snapshots.length > 0 ? (
-              <div className="overflow-x-auto rounded-lg border border-border/30">
+              <div className="overflow-x-auto rounded-lg border border-border/50">
                 <table className="w-full text-[11px]">
                   <thead>
-                    <tr className="border-b border-border/30 bg-card/40">
+                    <tr className="border-b border-border/50 bg-card/40">
                       <th className="px-2.5 py-1.5 text-left font-medium text-muted-foreground">Ref</th>
                       <th className="px-2.5 py-1.5 text-right font-medium text-muted-foreground">Date</th>
                     </tr>
                   </thead>
                   <tbody>
                     {data.snapshots.map((s: CleanupSnapshot) => (
-                      <tr key={s.ref} className="border-b border-border/20 last:border-0">
+                      <tr key={s.ref} className="border-b border-border/50 last:border-0">
                         <td className="px-2.5 py-1.5 font-mono text-foreground/80 truncate max-w-[200px]">{s.ref}</td>
                         <td className="px-2.5 py-1.5 text-right text-muted-foreground">{s.date}</td>
                       </tr>
@@ -1101,7 +1101,7 @@ export function QueuePanel() {
                   "rounded-lg border px-3 py-2.5 space-y-1.5",
                   isActive
                     ? "border-info/25 bg-info/5"
-                    : "border-border/30 bg-card/30",
+                    : "border-border/50 bg-card/30",
                 )}
               >
                 <div className="flex items-center justify-between gap-2">
@@ -1194,7 +1194,7 @@ export function StatusPanel() {
       />
 
       {/* Active context card */}
-      <div className="rounded-lg border border-border/30 bg-card/30 px-3 py-3 space-y-2">
+      <div className="rounded-lg border border-border/50 bg-card/30 px-3 py-3 space-y-2">
         <h4 className="text-[11px] font-medium text-foreground/70 uppercase tracking-wide">Active Context</h4>
         <div className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-[11px]">
           <span className="text-muted-foreground">Phase</span>

@@ -225,7 +225,7 @@ export function StepRemote({ onBack, onNext }: StepRemoteProps) {
                     "active:scale-[0.97]",
                     channel === opt.value
                       ? "border-foreground/30 bg-foreground/[0.06]"
-                      : "border-border/40 bg-card/20 hover:border-foreground/15 hover:bg-card/50",
+                      : "border-border/50 bg-card/20 hover:border-foreground/15 hover:bg-card/50",
                   )}
                 >
                   <div className="text-sm font-medium text-foreground">{opt.label}</div>
