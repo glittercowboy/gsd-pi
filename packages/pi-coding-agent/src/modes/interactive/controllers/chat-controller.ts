@@ -6,6 +6,9 @@ import { AssistantMessageComponent } from "../components/assistant-message.js";
 import { ToolExecutionComponent } from "../components/tool-execution.js";
 import { appKey } from "../components/keybinding-hints.js";
 
+// Tracks the last processed content index to avoid re-scanning all blocks on every message_update
+let lastProcessedContentIndex = 0;
+
 export async function handleAgentEvent(host: InteractiveModeStateHost & {
 	init: () => Promise<void>;
 	getMarkdownThemeWithSettings: () => any;
@@ -27,6 +30,11 @@ export async function handleAgentEvent(host: InteractiveModeStateHost & {
 	}
 
 	host.footer.invalidate();
+
+	// Reset content index tracker when a new assistant message starts
+	if (event.type === "message_start" && event.message.role === "assistant") {
+		lastProcessedContentIndex = 0;
+	}
 
 	switch (event.type) {
 		case "session_state_changed":
@@ -113,7 +121,9 @@ export async function handleAgentEvent(host: InteractiveModeStateHost & {
 			if (host.streamingComponent && event.message.role === "assistant") {
 				host.streamingMessage = event.message;
 				host.streamingComponent.updateContent(host.streamingMessage);
-				for (const content of host.streamingMessage.content) {
+				const contentBlocks = host.streamingMessage.content;
+				for (let i = lastProcessedContentIndex; i < contentBlocks.length; i++) {
+					const content = contentBlocks[i];
 					if (content.type === "toolCall") {
 						if (!host.pendingTools.has(content.id)) {
 							const component = new ToolExecutionComponent(
@@ -162,6 +172,12 @@ export async function handleAgentEvent(host: InteractiveModeStateHost & {
 							}
 						}
 					}
+				}
+				// Update index: fully processed blocks won't need re-scanning.
+				// Keep the last block's index (it may still be accumulating data),
+				// so we re-check it next time but skip all earlier ones.
+				if (contentBlocks.length > 0) {
+					lastProcessedContentIndex = Math.max(0, contentBlocks.length - 1);
 				}
 				host.ui.requestRender();
 			}

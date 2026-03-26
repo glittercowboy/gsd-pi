@@ -236,6 +236,13 @@ export async function dispatchSlashCommand(
 		return true;
 	}
 
+	// If input starts with "/" but no command matched, show unknown command feedback
+	if (text.startsWith("/")) {
+		const command = text.split(/\s/)[0];
+		ctx.showError(`Unknown command: ${command}. Type /help for available commands.`);
+		return true;
+	}
+
 	return false;
 }
 

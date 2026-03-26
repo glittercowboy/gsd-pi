@@ -46,7 +46,12 @@ export function setupEditorSubmitHandler(host: InteractiveModeStateHost & {
 			if (host.isExtensionCommand(text)) {
 				host.editor.addToHistory?.(text);
 				host.editor.setText("");
-				await host.session.prompt(text);
+				try {
+					await host.session.prompt(text);
+				} catch (error: unknown) {
+					const errorMessage = error instanceof Error ? error.message : "Unknown error occurred";
+					host.showError(errorMessage);
+				}
 			} else {
 				host.queueCompactionMessage(text, "steer");
 			}
@@ -82,5 +87,13 @@ export function setupEditorSubmitHandler(host: InteractiveModeStateHost & {
 		}
 
 		host.editor.addToHistory?.(text);
+		// submitPromptsDirectly is false — still dispatch via session.prompt so user input
+		// is not silently discarded.
+		try {
+			await host.session.prompt(text);
+		} catch (error: unknown) {
+			const errorMessage = error instanceof Error ? error.message : "Unknown error occurred";
+			host.showError(errorMessage);
+		}
 	};
 }

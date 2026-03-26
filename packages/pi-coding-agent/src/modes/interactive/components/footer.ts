@@ -110,25 +110,33 @@ export class FooterComponent implements Component {
 			pwd = `${pwd} • ${sessionName}`;
 		}
 
-		// Build stats line
-		const statsParts = [];
-		if (totalInput) statsParts.push(`↑${formatTokens(totalInput)}`);
-		if (totalOutput) statsParts.push(`↓${formatTokens(totalOutput)}`);
-		if (totalCacheRead) statsParts.push(`R${formatTokens(totalCacheRead)}`);
-		if (totalCacheWrite) statsParts.push(`W${formatTokens(totalCacheWrite)}`);
+		// Build stats line as separate groups joined by a dim middle-dot separator
+		const sep = ` ${theme.fg("dim", "\u00B7")} `;
 
-		// Show cost with "(sub)" indicator if using OAuth subscription
+		// Group 1: token I/O
+		const tokenGroup: string[] = [];
+		if (totalInput) tokenGroup.push(`↑${formatTokens(totalInput)}`);
+		if (totalOutput) tokenGroup.push(`↓${formatTokens(totalOutput)}`);
+
+		// Group 2: cache metrics
+		const cacheGroup: string[] = [];
+		if (totalCacheRead) cacheGroup.push(`cr:${formatTokens(totalCacheRead)}`);
+		if (totalCacheWrite) cacheGroup.push(`cw:${formatTokens(totalCacheWrite)}`);
+
+		// Group 3: cost
+		const costGroup: string[] = [];
 		const usingSubscription = displayModel ? this.session.modelRegistry.isUsingOAuth(displayModel) : false;
 		if (totalCost || usingSubscription) {
 			const costStr = `$${totalCost.toFixed(3)}${usingSubscription ? " (sub)" : ""}`;
-			statsParts.push(costStr);
+			costGroup.push(costStr);
 		}
 
+		// Group 4: context percentage (colorized)
 		// Per-prompt cost annotation (opt-in via show_token_cost preference, #1515)
 		if (process.env.GSD_SHOW_TOKEN_COST === "1") {
 			const lastTurnCost = this.session.getLastTurnCost();
 			if (lastTurnCost > 0) {
-				statsParts.push(`(last: ${formatPromptCost(lastTurnCost)})`);
+				costGroup.push(`(last: ${formatPromptCost(lastTurnCost)})`);
 			}
 		}
 
@@ -146,9 +154,16 @@ export class FooterComponent implements Component {
 		} else {
 			contextPercentStr = contextPercentDisplay;
 		}
-		statsParts.push(contextPercentStr);
 
-		let statsLeft = statsParts.join(" ");
+		// Assemble groups: items within a group are space-separated,
+		// groups are separated by a dim middle-dot
+		const groups: string[] = [];
+		if (tokenGroup.length > 0) groups.push(tokenGroup.join(" "));
+		if (cacheGroup.length > 0) groups.push(cacheGroup.join(" "));
+		if (costGroup.length > 0) groups.push(costGroup.join(" "));
+		groups.push(contextPercentStr);
+
+		let statsLeft = groups.join(sep);
 
 		// Add model name on the right side, plus thinking level if model supports it
 		const modelName = displayModel?.id || "no-model";

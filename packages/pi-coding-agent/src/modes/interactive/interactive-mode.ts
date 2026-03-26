@@ -107,6 +107,7 @@ import {
 	getThemeByName,
 	initTheme,
 	onThemeChange,
+	stopThemeWatcher,
 	setRegisteredThemes,
 	setTheme,
 	setThemeInstance,
@@ -201,6 +202,9 @@ export class InteractiveMode {
 
 	// Agent subscription unsubscribe function
 	private unsubscribe?: () => void;
+
+	// Branch change listener unsubscribe function
+	private _branchChangeUnsub?: () => void;
 
 	// Track if editor is in bash mode (text starts with !)
 	private isBashMode = false;
@@ -511,7 +515,7 @@ export class InteractiveMode {
 		});
 
 		// Set up git branch watcher (uses provider instead of footer)
-		this.footerDataProvider.onBranchChange(() => {
+		this._branchChangeUnsub = this.footerDataProvider.onBranchChange(() => {
 			this.ui.requestRender();
 		});
 
@@ -1998,8 +2002,9 @@ export class InteractiveMode {
 	}
 
 	private subscribeToAgent(): void {
-		this.unsubscribe = this.session.subscribe(async (event) => {
-			await this.handleEvent(event);
+		let eventQueue: Promise<void> = Promise.resolve();
+		this.unsubscribe = this.session.subscribe((event) => {
+			eventQueue = eventQueue.then(() => this.handleEvent(event)).catch(() => {});
 		});
 	}
 
@@ -3805,6 +3810,33 @@ export class InteractiveMode {
 			this.loadingAnimation = undefined;
 		}
 		this.clearExtensionTerminalInputListeners();
+
+		// Clean up branch change listener (Fix 1)
+		this._branchChangeUnsub?.();
+		this._branchChangeUnsub = undefined;
+
+		// Clean up theme change listener and watcher (Fix 2)
+		onThemeChange(() => {});
+		stopThemeWatcher();
+
+		// Resolve any pending getUserInput promise so the run() loop can exit (Fix 3)
+		if (this.onInputCallback) {
+			this.onInputCallback("");
+			this.onInputCallback = undefined;
+		}
+
+		// Dispose extension widgets, custom footer, and custom header (Fix 4)
+		this.clearExtensionWidgets();
+		if (this.customFooter?.dispose) {
+			this.customFooter.dispose();
+		}
+		this.customFooter = undefined;
+		if (this.customHeader?.dispose) {
+			this.customHeader.dispose();
+		}
+		this.customHeader = undefined;
+		this.autocompleteProvider = undefined;
+
 		this.footer.dispose();
 		this.footerDataProvider.dispose();
 		if (this.unsubscribe) {

@@ -41,6 +41,8 @@ export class ProviderManagerComponent extends Container implements Focusable {
 	private modelRegistry: ModelRegistry;
 	private onDone: () => void;
 	private onDiscover: (provider: string) => void;
+	private confirmingRemove = false;
+	private hintsContainer: Container;
 
 	constructor(
 		tui: TUI,
@@ -62,12 +64,9 @@ export class ProviderManagerComponent extends Container implements Focusable {
 		this.addChild(new Spacer(1));
 
 		// Hints
-		const hints = [
-			rawKeyHint("d", "discover"),
-			rawKeyHint("r", "remove auth"),
-			rawKeyHint("esc", "close"),
-		].join("  ");
-		this.addChild(new Text(hints, 0, 0));
+		this.hintsContainer = new Container();
+		this.addChild(this.hintsContainer);
+		this.updateHints();
 		this.addChild(new Spacer(1));
 
 		// List
@@ -102,6 +101,24 @@ export class ProviderManagerComponent extends Container implements Focusable {
 				supportsDiscovery: discoverableSet.has(name),
 				modelCount: providerModelCounts.get(name) ?? 0,
 			}));
+	}
+
+	private updateHints(): void {
+		this.hintsContainer.clear();
+		if (this.confirmingRemove) {
+			const hints = [
+				rawKeyHint("r", "confirm removal"),
+				rawKeyHint("esc", "cancel"),
+			].join("  ");
+			this.hintsContainer.addChild(new Text(hints, 0, 0));
+		} else {
+			const hints = [
+				rawKeyHint("d", "discover"),
+				rawKeyHint("r", "remove auth"),
+				rawKeyHint("esc", "close"),
+			].join("  ");
+			this.hintsContainer.addChild(new Text(hints, 0, 0));
+		}
 	}
 
 	private updateList(): void {
@@ -144,7 +161,13 @@ export class ProviderManagerComponent extends Container implements Focusable {
 			this.updateList();
 			this.tui.requestRender();
 		} else if (kb.matches(keyData, "selectCancel")) {
-			this.onDone();
+			if (this.confirmingRemove) {
+				this.confirmingRemove = false;
+				this.updateHints();
+				this.tui.requestRender();
+			} else {
+				this.onDone();
+			}
 		} else if (keyData === "d" || keyData === "D") {
 			const provider = this.providers[this.selectedIndex];
 			if (provider?.supportsDiscovery) {
@@ -153,10 +176,18 @@ export class ProviderManagerComponent extends Container implements Focusable {
 		} else if (keyData === "r" || keyData === "R") {
 			const provider = this.providers[this.selectedIndex];
 			if (provider?.hasAuth) {
-				this.authStorage.remove(provider.name);
-				this.loadProviders();
-				this.updateList();
-				this.tui.requestRender();
+				if (this.confirmingRemove) {
+					this.confirmingRemove = false;
+					this.authStorage.remove(provider.name);
+					this.loadProviders();
+					this.updateHints();
+					this.updateList();
+					this.tui.requestRender();
+				} else {
+					this.confirmingRemove = true;
+					this.updateHints();
+					this.tui.requestRender();
+				}
 			}
 		}
 	}

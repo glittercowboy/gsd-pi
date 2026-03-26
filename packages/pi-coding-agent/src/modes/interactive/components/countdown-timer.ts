@@ -7,6 +7,7 @@ import type { TUI } from "@gsd/pi-tui";
 export class CountdownTimer {
 	private intervalId: ReturnType<typeof setInterval> | undefined;
 	private remainingSeconds: number;
+	private _disposed = false;
 
 	constructor(
 		timeoutMs: number,
@@ -18,6 +19,7 @@ export class CountdownTimer {
 		this.onTick(this.remainingSeconds);
 
 		this.intervalId = setInterval(() => {
+			if (this._disposed) return;
 			this.remainingSeconds--;
 			this.onTick(this.remainingSeconds);
 			this.tui?.requestRender();
@@ -30,6 +32,7 @@ export class CountdownTimer {
 	}
 
 	dispose(): void {
+		this._disposed = true;
 		if (this.intervalId) {
 			clearInterval(this.intervalId);
 			this.intervalId = undefined;
