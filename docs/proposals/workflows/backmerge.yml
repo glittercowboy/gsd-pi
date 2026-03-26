@@ -1,0 +1,62 @@
+# ⚠️ SCAFFOLD ONLY — not active. See docs/proposals/rfc-gitops-branching-strategy.md
+
+name: Back-merge Release Fixes
+
+on:
+  push:
+    branches:
+      - "release/**"
+
+jobs:
+  backmerge:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.RELEASE_PAT }}
+
+      - name: Back-merge to next
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          RELEASE_BRANCH="${GITHUB_REF#refs/heads/}"
+          echo "Back-merging $RELEASE_BRANCH → next"
+
+          git fetch origin next || {
+            echo "::warning::next branch does not exist — skipping back-merge"
+            exit 0
+          }
+
+          git checkout next
+
+          if git merge "origin/${RELEASE_BRANCH}" --no-edit; then
+            git push origin next
+            echo "## ✅ Back-merged \`$RELEASE_BRANCH\` → \`next\`" >> "$GITHUB_STEP_SUMMARY"
+          else
+            # Conflict — open a PR for manual resolution
+            git merge --abort
+            gh pr create \
+              --base next \
+              --head "${RELEASE_BRANCH}" \
+              --title "backmerge: ${RELEASE_BRANCH} → next (conflict)" \
+              --body "Automated back-merge from \`${RELEASE_BRANCH}\` to \`next\` has a merge conflict.
+
+          **Action required:** Resolve the conflict manually by checking out \`next\` and merging \`${RELEASE_BRANCH}\`:
+
+          \`\`\`bash
+          git checkout next
+          git merge origin/${RELEASE_BRANCH}
+          # resolve conflicts
+          git commit
+          git push origin next
+          \`\`\`" \
+              || echo "::warning::PR creation failed"
+            echo "## ⚠️ Conflict merging \`$RELEASE_BRANCH\` → \`next\` — PR opened" >> "$GITHUB_STEP_SUMMARY"
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_PAT }}

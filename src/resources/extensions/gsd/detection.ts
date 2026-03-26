@@ -6,7 +6,7 @@
  * flow to show when entering a project directory.
  */
 
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { existsSync, openSync, readSync, closeSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import { gsdRoot } from "./paths.js";
@@ -48,6 +48,9 @@ export interface V2Detection {
   hasContext: boolean;
 }
 
+/** Apple platform SDKROOTs found in Xcode project.pbxproj files. */
+export type XcodePlatform = "iphoneos" | "macosx" | "watchos" | "appletvos" | "xros";
+
 export interface ProjectSignals {
   /** Detected project/package files */
   detectedFiles: string[];
@@ -57,6 +60,8 @@ export interface ProjectSignals {
   isMonorepo: boolean;
   /** Primary language hint */
   primaryLanguage?: string;
+  /** Apple platform SDKROOTs detected from *.xcodeproj/project.pbxproj */
+  xcodePlatforms: XcodePlatform[];
   /** Has existing CI configuration? */
   hasCI: boolean;
   /** Has existing test setup? */
@@ -97,9 +102,80 @@ export const PROJECT_FILES = [
   "project.yml",
   ".xcodeproj",
   ".xcworkspace",
-  // Docker
+  // Cloud platform config files
+  "firebase.json",
+  "cdk.json",
+  "samconfig.toml",
+  "serverless.yml",
+  "serverless.yaml",
+  "azure-pipelines.yml",
+  // Database / ORM config files
+  "prisma/schema.prisma",
+  "supabase/config.toml",
+  "drizzle.config.ts",
+  "drizzle.config.js",
+  "redis.conf",
+  // React Native markers
+  "metro.config.js",
+  "metro.config.ts",
+  "react-native.config.js",
+  // Frontend framework config files
+  "angular.json",
+  "next.config.js",
+  "next.config.ts",
+  "next.config.mjs",
+  "nuxt.config.ts",
+  "nuxt.config.js",
+  "svelte.config.js",
+  "svelte.config.ts",
+  // Vue CLI config files
+  "vue.config.js",
+  "vue.config.ts",
+  // Frontend tooling
+  "tailwind.config.js",
+  "tailwind.config.ts",
+  "tailwind.config.mjs",
+  "tailwind.config.cjs",
+  // Android project markers
+  "app/build.gradle",
+  "app/build.gradle.kts",
+  // Container / DevOps config files
   "Dockerfile",
+  "docker-compose.yml",
+  "docker-compose.yaml",
+  // Infrastructure as Code
+  "main.tf",
+  // Kubernetes / Helm markers
+  "Chart.yaml",
+  "kustomization.yaml",
+  // CI/CD markers
+  ".github/workflows",
+  // Blockchain / Web3 markers
+  "hardhat.config.js",
+  "hardhat.config.ts",
+  "foundry.toml",
+  // Data engineering markers
+  "dbt_project.yml",
+  "airflow.cfg",
+  // Game engine markers
+  "ProjectSettings/ProjectVersion.txt",
+  "project.godot",
+  // Python framework markers
+  "manage.py",
+  "requirements.txt",
 ] as const;
+
+/** File extensions that indicate SQLite databases in the project. */
+const SQLITE_EXTENSIONS = [".sqlite", ".sqlite3", ".db"] as const;
+
+/** File extensions that indicate SQL usage (migrations, schemas, seeds). */
+const SQL_EXTENSIONS = [".sql"] as const;
+
+/** File extensions that indicate .NET / C# projects. */
+const DOTNET_EXTENSIONS = [".csproj", ".sln", ".fsproj"] as const;
+
+/** File extensions that indicate Vue.js single-file components. */
+const VUE_EXTENSIONS = [".vue"] as const;
 
 const LANGUAGE_MAP: Record<string, string> = {
   "package.json": "javascript/typescript",
@@ -111,6 +187,8 @@ const LANGUAGE_MAP: Record<string, string> = {
   "pom.xml": "java",
   "build.gradle": "java/kotlin",
   "build.gradle.kts": "kotlin",
+  "app/build.gradle": "java/kotlin",
+  "app/build.gradle.kts": "kotlin",
   "CMakeLists.txt": "c/c++",
   "composer.json": "php",
   "pubspec.yaml": "dart/flutter",
@@ -125,6 +203,8 @@ const LANGUAGE_MAP: Record<string, string> = {
   ".xcodeproj": "swift/xcode",
   ".xcworkspace": "swift/xcode",
   "Dockerfile": "docker",
+  "manage.py": "python",
+  "requirements.txt": "python",
 };
 
 const MONOREPO_MARKERS = [
@@ -158,6 +238,44 @@ const TEST_MARKERS = [
   "conftest.py",
   "phpunit.xml",
 ] as const;
+
+/** Directories skipped during bounded recursive project scans. */
+const RECURSIVE_SCAN_IGNORED_DIRS = new Set([
+  ".git",
+  "node_modules",
+  ".venv",
+  "venv",
+  "dist",
+  "build",
+  "coverage",
+  ".next",
+  ".nuxt",
+  "target",
+  "vendor",
+  ".turbo",
+  "Pods",
+  "bin",
+  "obj",
+  ".gradle",
+  "DerivedData",
+  "out",
+]) as ReadonlySet<string>;
+
+/** Project file markers safe to detect recursively via suffix matching. */
+const ROOT_ONLY_PROJECT_FILES = new Set<string>([
+  ".github/workflows",
+  "package.json",
+  "Gemfile",
+  "Makefile",
+  "CMakeLists.txt",
+  "build.gradle",
+  "build.gradle.kts",
+  "deno.json",
+  "deno.jsonc",
+]);
+
+const MAX_RECURSIVE_SCAN_FILES = 2000;
+const MAX_RECURSIVE_SCAN_DEPTH = 6;
 
 // ─── Core Detection ─────────────────────────────────────────────────────────────
 
@@ -280,8 +398,87 @@ export function detectProjectSignals(basePath: string): ProjectSignals {
     }
   }
 
+  // Bounded recursive scan for nested markers and dependency files.
+  // This covers common brownfield layouts like src/App/App.csproj,
+  // db/migrations/*.sql, src/components/*.vue, and services/api/pyproject.toml
+  // without walking the entire repo or diving into heavyweight folders.
+  const scannedFiles = scanProjectFiles(basePath);
+
+  for (const file of PROJECT_FILES) {
+    if (detectedFiles.includes(file) || ROOT_ONLY_PROJECT_FILES.has(file)) continue;
+    const hasMatch = file === "requirements.txt"
+      ? scannedFiles.some(isPythonRequirementsFile)
+      : scannedFiles.some((scannedFile) => matchesProjectFileMarker(scannedFile, file));
+    if (hasMatch) {
+      pushUnique(detectedFiles, file);
+      if (!primaryLanguage && LANGUAGE_MAP[file]) {
+        primaryLanguage = LANGUAGE_MAP[file];
+      }
+    }
+  }
+
+  if (scannedFiles.some((file) => SQLITE_EXTENSIONS.some((ext) => file.endsWith(ext)))) {
+    pushUnique(detectedFiles, "*.sqlite");
+  }
+  if (scannedFiles.some((file) => SQL_EXTENSIONS.some((ext) => file.endsWith(ext)))) {
+    pushUnique(detectedFiles, "*.sql");
+  }
+
+  const hasCsproj = scannedFiles.some((file) => file.endsWith(".csproj"));
+  const hasFsproj = scannedFiles.some((file) => file.endsWith(".fsproj"));
+  const hasSln = scannedFiles.some((file) => file.endsWith(".sln"));
+
+  if (hasCsproj) {
+    pushUnique(detectedFiles, "*.csproj");
+    if (!primaryLanguage) primaryLanguage = "csharp";
+  }
+  if (hasFsproj) {
+    pushUnique(detectedFiles, "*.fsproj");
+    if (!primaryLanguage) primaryLanguage = "fsharp";
+  }
+  if (hasSln) {
+    pushUnique(detectedFiles, "*.sln");
+    if (!primaryLanguage) primaryLanguage = "dotnet";
+  }
+
+  if (scannedFiles.some((file) => VUE_EXTENSIONS.some((ext) => file.endsWith(ext)))) {
+    pushUnique(detectedFiles, "*.vue");
+  }
+
+  // Python framework detection — scan dependency files for framework-specific packages.
+  // Adds synthetic markers (e.g. "dep:fastapi") so skill catalog matchFiles can reference them.
+  const dependencyFiles = scannedFiles.filter((file) =>
+    isPythonRequirementsFile(file) || file.endsWith("pyproject.toml"),
+  );
+  if (containsFastapiDependency(basePath, dependencyFiles)) {
+    pushUnique(detectedFiles, "dep:fastapi");
+  }
+
+  const springBootBuildFiles = scannedFiles.filter((file) =>
+    file.endsWith("pom.xml") || file.endsWith("build.gradle") || file.endsWith("build.gradle.kts"),
+  );
+  const springBootVersionCatalogs = scannedFiles.filter((file) => file.endsWith(".versions.toml"));
+  const springBootSettingsFiles = scannedFiles.filter((file) =>
+    file.endsWith("settings.gradle") || file.endsWith("settings.gradle.kts"),
+  );
+  if (containsSpringBootMarker(basePath, springBootBuildFiles, springBootVersionCatalogs, springBootSettingsFiles)) {
+    pushUnique(detectedFiles, "dep:spring-boot");
+    if (!primaryLanguage) {
+      primaryLanguage = "java/kotlin";
+    }
+  }
+
   // Git repo detection
   const isGitRepo = existsSync(join(basePath, ".git"));
+
+  // Xcode platform detection — parse SDKROOT from project.pbxproj
+  const xcodePlatforms = detectXcodePlatforms(basePath);
+
+  // Set primaryLanguage to swift when an Xcode project is found but no
+  // Package.swift was detected (CocoaPods or SPM-less projects).
+  if (!primaryLanguage && xcodePlatforms.length > 0) {
+    primaryLanguage = "swift";
+  }
 
   // Monorepo detection
   let isMonorepo = false;
@@ -325,11 +522,106 @@ export function detectProjectSignals(basePath: string): ProjectSignals {
     isGitRepo,
     isMonorepo,
     primaryLanguage,
+    xcodePlatforms,
     hasCI,
     hasTests,
     packageManager,
     verificationCommands,
   };
+}
+
+// ─── Xcode Platform Detection ───────────────────────────────────────────────────
+
+/** Known SDKROOT values → canonical platform names. */
+const SDKROOT_MAP: Record<string, XcodePlatform> = {
+  iphoneos: "iphoneos",
+  iphonesimulator: "iphoneos",      // simulator builds still target iOS
+  macosx: "macosx",
+  watchos: "watchos",
+  watchsimulator: "watchos",
+  appletvos: "appletvos",
+  appletvsimulator: "appletvos",
+  xros: "xros",
+  xrsimulator: "xros",
+};
+
+/** Regex for SUPPORTED_PLATFORMS — fallback when SDKROOT = auto (Xcode 15+). */
+const SUPPORTED_PLATFORMS_RE = /SUPPORTED_PLATFORMS\s*=\s*"([^"]+)"/gi;
+
+/** Read at most `maxBytes` from a file without loading the full file into memory. */
+function readBounded(filePath: string, maxBytes: number): string {
+  const buf = Buffer.alloc(maxBytes);
+  const fd = openSync(filePath, "r");
+  try {
+    const bytesRead = readSync(fd, buf, 0, maxBytes, 0);
+    return buf.toString("utf-8", 0, bytesRead);
+  } finally {
+    closeSync(fd);
+  }
+}
+
+/** Common subdirectories where .xcodeproj may live in monorepos / standard layouts. */
+const XCODE_SUBDIRS = ["ios", "macos", "app", "apps"] as const;
+
+/**
+ * Scan *.xcodeproj directories for project.pbxproj and extract SDKROOT values.
+ * Returns deduplicated, canonical platform list (e.g. ["iphoneos"]).
+ *
+ * Reading the pbxproj is a lightweight regex scan — no full plist parsing needed.
+ * We read at most 1 MB per file to keep detection fast.
+ * Searches both the project root and common subdirectories (ios/, macos/, app/).
+ */
+function detectXcodePlatforms(basePath: string): XcodePlatform[] {
+  const platforms = new Set<XcodePlatform>();
+
+  // Directories to scan: project root + common subdirs
+  const dirsToScan = [basePath];
+  for (const sub of XCODE_SUBDIRS) {
+    const subPath = join(basePath, sub);
+    if (existsSync(subPath)) dirsToScan.push(subPath);
+  }
+
+  for (const dir of dirsToScan) {
+    try {
+      const entries = readdirSync(dir, { withFileTypes: true });
+      for (const entry of entries) {
+        if (!entry.isDirectory() || !entry.name.endsWith(".xcodeproj")) continue;
+        const pbxprojPath = join(dir, entry.name, "project.pbxproj");
+        try {
+          const content = readBounded(pbxprojPath, 1024 * 1024);
+          // Match SDKROOT = <value>; — both quoted and unquoted forms
+          const sdkRe = /SDKROOT\s*=\s*"?([a-z]+)"?\s*;/gi;
+          let m: RegExpExecArray | null;
+          let foundExplicit = false;
+          while ((m = sdkRe.exec(content)) !== null) {
+            const val = m[1].toLowerCase();
+            if (val === "auto") continue; // handled below via SUPPORTED_PLATFORMS
+            const canonical = SDKROOT_MAP[val];
+            if (canonical) {
+              platforms.add(canonical);
+              foundExplicit = true;
+            }
+          }
+          // Xcode 15+ defaults SDKROOT to "auto"; fall back to SUPPORTED_PLATFORMS
+          if (!foundExplicit) {
+            let sp: RegExpExecArray | null;
+            while ((sp = SUPPORTED_PLATFORMS_RE.exec(content)) !== null) {
+              for (const tok of sp[1].split(/\s+/)) {
+                const canonical = SDKROOT_MAP[tok.toLowerCase()];
+                if (canonical) platforms.add(canonical);
+              }
+            }
+            SUPPORTED_PLATFORMS_RE.lastIndex = 0;
+          }
+        } catch {
+          // unreadable pbxproj — skip
+        }
+      }
+    } catch {
+      // unreadable directory
+    }
+  }
+  return [...platforms];
 }
 
 // ─── Package Manager Detection ──────────────────────────────────────────────────
@@ -392,7 +684,7 @@ function detectVerificationCommands(
     commands.push("go vet ./...");
   }
 
-  if (detectedFiles.includes("pyproject.toml") || detectedFiles.includes("setup.py")) {
+  if (detectedFiles.includes("pyproject.toml") || detectedFiles.includes("setup.py") || detectedFiles.includes("requirements.txt")) {
     commands.push("pytest");
   }
 
@@ -486,4 +778,371 @@ function readMakefileTargets(basePath: string): string[] {
   } catch {
     return [];
   }
+}
+
+function pushUnique(arr: string[], value: string): void {
+  if (!arr.includes(value)) arr.push(value);
+}
+
+function matchesProjectFileMarker(scannedFile: string, marker: string): boolean {
+  const normalized = scannedFile.replaceAll("\\", "/");
+  return (
+    normalized === marker ||
+    normalized.endsWith(`/${marker}`)
+  );
+}
+
+function isPythonRequirementsFile(relativePath: string): boolean {
+  const normalized = relativePath.replaceAll("\\", "/");
+  const basename = normalized.slice(normalized.lastIndexOf("/") + 1);
+  return (
+    basename === "requirements.txt" ||
+    basename === "requirements.in" ||
+    /^requirements([-.].+)?\.(txt|in)$/i.test(basename) ||
+    /(^|\/)requirements\/.+\.(txt|in)$/i.test(normalized)
+  );
+}
+
+function containsFastapiDependency(basePath: string, relativePaths: string[]): boolean {
+  for (const relativePath of relativePaths) {
+    try {
+      const raw = readBounded(join(basePath, relativePath), 64 * 1024);
+      const content = extractDependencyContent(relativePath, raw);
+      if (isPythonRequirementsFile(relativePath)) {
+        for (const line of content.split("\n")) {
+          if (extractRequirementName(line) === "fastapi") return true;
+        }
+        continue;
+      }
+
+      if (relativePath.endsWith("pyproject.toml")) {
+        if (containsFastapiInPyproject(content)) return true;
+      }
+    } catch {
+      // unreadable file — continue scanning other candidate files
+    }
+  }
+
+  return false;
+}
+
+function containsSpringBootMarker(
+  basePath: string,
+  buildFiles: string[],
+  versionCatalogFiles: string[],
+  settingsFiles: string[],
+): boolean {
+  const usedPluginAliases = new Set<string>();
+  const usedLibraryAliases = new Set<string>();
+  const catalogAccessors = resolveVersionCatalogAccessors(basePath, versionCatalogFiles, settingsFiles);
+
+  for (const relativePath of buildFiles) {
+    try {
+      const raw = readBounded(join(basePath, relativePath), 64 * 1024);
+      const content = stripDependencyComments(relativePath, raw);
+      if (containsDirectSpringBootReference(relativePath, content)) {
+        return true;
+      }
+
+      const normalized = content.toLowerCase();
+      let match: RegExpExecArray | null;
+      for (const accessor of catalogAccessors) {
+        const aliasRe = new RegExp(`alias\\(\\s*${accessor}\\.plugins\\.([a-z0-9_.-]+)\\s*\\)`, "gi");
+        while ((match = aliasRe.exec(normalized)) !== null) {
+          usedPluginAliases.add(normalizePluginAlias(match[1]));
+        }
+
+        const libraryAliasRe = new RegExp(`\\b${accessor}\\.((?!plugins\\b)[a-z0-9_.-]+)`, "gi");
+        while ((match = libraryAliasRe.exec(normalized)) !== null) {
+          usedLibraryAliases.add(normalizePluginAlias(match[1]));
+        }
+      }
+    } catch {
+      // unreadable build file — continue scanning others
+    }
+  }
+
+  if (usedPluginAliases.size === 0 && usedLibraryAliases.size === 0) {
+    return false;
+  }
+  if (versionCatalogFiles.length === 0) {
+    return false;
+  }
+
+  const springBootAliases = new Set<string>();
+  const springBootLibraries = new Set<string>();
+  const pendingSpringBootBundles: Array<{ bundleAlias: string; referencedAliases: string[] }> = [];
+  for (const relativePath of versionCatalogFiles) {
+    try {
+      const raw = readBounded(join(basePath, relativePath), 64 * 1024);
+      const content = stripDependencyComments(relativePath, raw);
+      const aliasRe = /^\s*([A-Za-z0-9_.-]+)\s*=\s*\{[^\n}]*\bid\s*=\s*["']org\.springframework\.boot["'][^\n}]*\}/gm;
+      let match: RegExpExecArray | null;
+      while ((match = aliasRe.exec(content)) !== null) {
+        springBootAliases.add(normalizePluginAlias(match[1]));
+      }
+
+      const libraryRe = /^\s*([A-Za-z0-9_.-]+)\s*=\s*\{[^\n}]*\b(module\s*=\s*["']org\.springframework\.boot:[^"']+["']|group\s*=\s*["']org\.springframework\.boot["'][^\n}]*\bname\s*=\s*["']spring-boot[^"']*["'])[^\n}]*\}/gm;
+      while ((match = libraryRe.exec(content)) !== null) {
+        springBootLibraries.add(normalizePluginAlias(match[1]));
+      }
+
+      const bundleRe = /^\s*([A-Za-z0-9_.-]+)\s*=\s*\[([\s\S]*?)\]/gm;
+      while ((match = bundleRe.exec(content)) !== null) {
+        pendingSpringBootBundles.push({
+          bundleAlias: normalizePluginAlias(`bundles.${match[1]}`),
+          referencedAliases: match[2]
+            .split(",")
+            .map((part) => normalizePluginAlias(part.replace(/["'\s]/g, "")))
+            .filter(Boolean),
+        });
+      }
+    } catch {
+      // unreadable version catalog — continue scanning others
+    }
+  }
+
+  const springBootBundles = new Set<string>();
+  for (const pendingBundle of pendingSpringBootBundles) {
+    if (pendingBundle.referencedAliases.some((alias) => springBootLibraries.has(alias))) {
+      springBootBundles.add(pendingBundle.bundleAlias);
+    }
+  }
+
+  for (const alias of usedPluginAliases) {
+    if (springBootAliases.has(alias)) return true;
+  }
+  for (const alias of usedLibraryAliases) {
+    if (springBootLibraries.has(alias) || springBootBundles.has(alias)) return true;
+  }
+
+  return false;
+}
+
+function stripDependencyComments(relativePath: string, content: string): string {
+  if (relativePath.endsWith("requirements.txt")) {
+    return content.replace(/(^|\s)#.*$/gm, "");
+  }
+  if (relativePath.endsWith("pyproject.toml")) {
+    return content.replace(/(^|\s)#.*$/gm, "");
+  }
+  if (relativePath.endsWith(".versions.toml")) {
+    return content.replace(/(^|\s)#.*$/gm, "");
+  }
+  if (relativePath.endsWith("settings.gradle") || relativePath.endsWith("settings.gradle.kts")) {
+    return content
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .replace(/\/\/.*$/gm, "");
+  }
+  if (relativePath.endsWith("pom.xml")) {
+    return content.replace(/<!--[\s\S]*?-->/g, "");
+  }
+  if (relativePath.endsWith("build.gradle") || relativePath.endsWith("build.gradle.kts")) {
+    return content
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .replace(/\/\/.*$/gm, "");
+  }
+  return content;
+}
+
+function extractDependencyContent(relativePath: string, content: string): string {
+  const stripped = stripDependencyComments(relativePath, content);
+  if (relativePath.endsWith("pyproject.toml")) {
+    return extractPyprojectDependencySections(stripped);
+  }
+  return stripped;
+}
+
+function extractRequirementName(spec: string): string | null {
+  const trimmed = spec.trim().replace(/^["']|["']$/g, "");
+  if (!trimmed) return null;
+
+  const match = trimmed.match(/^([A-Za-z0-9_.-]+)(?:\[[^\]]+\])?(?=\s*(?:@|[<>=!~;]|$))/);
+  if (!match) return null;
+  return normalizePackageName(match[1]);
+}
+
+function containsFastapiInPyproject(content: string): boolean {
+  for (const line of content.split("\n")) {
+    const keyMatch = line.match(/^\s*([A-Za-z0-9_.-]+)\s*=/);
+    if (keyMatch) {
+      const key = normalizePackageName(keyMatch[1]);
+      if (key === "fastapi") {
+        return true;
+      }
+      if (key !== "dependencies") {
+        continue;
+      }
+    }
+
+    const quotedSpecRe = /["']([^"']+)["']/g;
+    let match: RegExpExecArray | null;
+    while ((match = quotedSpecRe.exec(line)) !== null) {
+      if (extractRequirementName(match[1]) === "fastapi") {
+        return true;
+      }
+    }
+  }
+
+  return false;
+}
+
+function containsDirectSpringBootReference(relativePath: string, content: string): boolean {
+  if (relativePath.endsWith("pom.xml")) {
+    return /<groupId>\s*org\.springframework\.boot\s*<\/groupId>/i.test(content);
+  }
+
+  if (relativePath.endsWith("build.gradle") || relativePath.endsWith("build.gradle.kts")) {
+    return /(id\s*\(?\s*["']org\.springframework\.boot["']|apply\s*\(?\s*plugin\s*[:=]\s*["']org\.springframework\.boot["']|(?:implementation|api|compileOnly|runtimeOnly|testImplementation|annotationProcessor|kapt)\s*\(?\s*["'][^"']*org\.springframework\.boot:[^"']*spring-boot[^"']*["'])/i.test(content);
+  }
+
+  return false;
+}
+
+function extractPyprojectDependencySections(content: string): string {
+  const lines = content.split("\n");
+  const collected: string[] = [];
+  let section = "";
+  let collectingProjectDeps = false;
+  let collectingOptionalDeps = false;
+  let bracketDepth = 0;
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+
+    if (collectingProjectDeps) {
+      collected.push(line);
+      bracketDepth += countChar(line, "[") - countChar(line, "]");
+      if (bracketDepth <= 0) {
+        collectingProjectDeps = false;
+      }
+      continue;
+    }
+
+    if (collectingOptionalDeps) {
+      collected.push(line);
+      bracketDepth += countChar(line, "[") - countChar(line, "]");
+      if (bracketDepth <= 0) {
+        collectingOptionalDeps = false;
+      }
+      continue;
+    }
+
+    const sectionMatch = trimmed.match(/^\[([^\]]+)\]$/);
+    if (sectionMatch) {
+      section = sectionMatch[1].trim();
+      continue;
+    }
+
+    if (section === "project" && /^dependencies\s*=\s*\[/.test(trimmed)) {
+      collected.push(line);
+      bracketDepth = countChar(line, "[") - countChar(line, "]");
+      collectingProjectDeps = bracketDepth > 0;
+      continue;
+    }
+
+    if (
+      section === "project.optional-dependencies" ||
+      section === "tool.poetry.dependencies"
+    ) {
+      if (section === "project.optional-dependencies") {
+        const equalsIndex = line.indexOf("=");
+        if (equalsIndex !== -1) {
+          const value = line.slice(equalsIndex + 1);
+          collected.push(value);
+          bracketDepth = countChar(value, "[") - countChar(value, "]");
+          collectingOptionalDeps = bracketDepth > 0;
+        }
+      } else {
+        collected.push(line);
+      }
+    }
+  }
+
+  return collected.join("\n");
+}
+
+function countChar(text: string, char: string): number {
+  return [...text].filter((c) => c === char).length;
+}
+
+function normalizePackageName(name: string): string {
+  return name.toLowerCase().replace(/[_.]/g, "-");
+}
+
+function normalizePluginAlias(alias: string): string {
+  return alias.toLowerCase().replace(/[-_]/g, ".");
+}
+
+function versionCatalogAccessorName(relativePath: string): string {
+  const normalized = relativePath.replaceAll("\\", "/");
+  const basename = normalized.slice(normalized.lastIndexOf("/") + 1);
+  return basename.replace(/\.versions\.toml$/i, "").toLowerCase();
+}
+
+function resolveVersionCatalogAccessors(
+  basePath: string,
+  versionCatalogFiles: string[],
+  settingsFiles: string[],
+): Set<string> {
+  const accessors = new Set(versionCatalogFiles.map(versionCatalogAccessorName).filter(Boolean));
+  if (versionCatalogFiles.length === 0 || settingsFiles.length === 0) {
+    return accessors;
+  }
+
+  for (const settingsFile of settingsFiles) {
+    try {
+      const raw = readBounded(join(basePath, settingsFile), 64 * 1024);
+      const content = stripDependencyComments(settingsFile, raw);
+      const createRe = /create\(\s*["']([A-Za-z0-9_]+)["']\s*\)\s*\{[\s\S]*?([A-Za-z0-9_.-]+\.versions\.toml)["']?\s*\)\s*\)/g;
+      let match: RegExpExecArray | null;
+      while ((match = createRe.exec(content)) !== null) {
+        const accessor = match[1].toLowerCase();
+        const catalogBasename = match[2].replaceAll("\\", "/").split("/").pop()!;
+        if (versionCatalogFiles.some((file) => {
+          const normalized = file.replaceAll("\\", "/");
+          return normalized === catalogBasename || normalized.endsWith(`/${catalogBasename}`);
+        })) {
+          accessors.add(accessor);
+        }
+      }
+    } catch {
+      // unreadable settings file — ignore
+    }
+  }
+
+  return accessors;
+}
+
+function scanProjectFiles(basePath: string): string[] {
+  const files: string[] = [];
+  const queue: Array<{ path: string; depth: number }> = [{ path: basePath, depth: 0 }];
+
+  while (queue.length > 0 && files.length < MAX_RECURSIVE_SCAN_FILES) {
+    const current = queue.shift()!;
+    let entries: Array<{ name: string; isDirectory(): boolean; isFile(): boolean }>;
+    try {
+      entries = readdirSync(current.path, { withFileTypes: true, encoding: "utf8" });
+    } catch {
+      continue;
+    }
+
+    for (const entry of entries) {
+      const entryPath = join(current.path, entry.name);
+      const relativePath = entryPath.slice(basePath.length + 1);
+
+      if (entry.isDirectory()) {
+        if (current.depth < MAX_RECURSIVE_SCAN_DEPTH && !RECURSIVE_SCAN_IGNORED_DIRS.has(entry.name)) {
+          queue.push({ path: entryPath, depth: current.depth + 1 });
+        }
+        continue;
+      }
+
+      if (!entry.isFile()) continue;
+      files.push(relativePath);
+      if (files.length >= MAX_RECURSIVE_SCAN_FILES) break;
+    }
+  }
+
+  return files;
 }

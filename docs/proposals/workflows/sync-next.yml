@@ -1,0 +1,53 @@
+# ⚠️ SCAFFOLD ONLY — not active. See docs/proposals/rfc-gitops-branching-strategy.md
+
+name: Sync Next Branch
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  sync-next:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.RELEASE_PAT }}
+
+      - name: Ensure next branch exists and is synced with main
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          TAG="${GITHUB_REF#refs/tags/}"
+          echo "Syncing next branch after release $TAG"
+
+          git fetch origin next 2>/dev/null || true
+
+          if git show-ref --verify --quiet refs/remotes/origin/next; then
+            git checkout next
+            git merge origin/main --no-edit --strategy-option theirs || {
+              echo "::warning::Merge conflict merging main into next after $TAG."
+              echo "::warning::Manual resolution required: git checkout next && git merge main"
+              # Open a PR for manual resolution
+              git merge --abort
+              gh pr create \
+                --base next \
+                --head main \
+                --title "sync: merge main ($TAG) → next (conflict)" \
+                --body "Automated sync from main to next after $TAG release has a merge conflict. Please resolve manually." \
+                || echo "::warning::PR creation failed — resolve manually"
+              exit 0
+            }
+          else
+            git checkout -b next origin/main
+          fi
+
+          git push origin next
+          echo "## Synced \`next\` with \`main\` after \`$TAG\`" >> "$GITHUB_STEP_SUMMARY"
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_PAT }}

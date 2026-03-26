@@ -578,7 +578,7 @@ prefer_skills:
 avoid_skills: []
 ```
 
-Skills can be bare names (looked up in `~/.gsd/agent/skills/`) or absolute paths.
+Skills can be bare names (looked up in `~/.agents/skills/` and `.agents/skills/`) or absolute paths.
 
 ### `skill_rules`
 

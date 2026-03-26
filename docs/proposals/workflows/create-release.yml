@@ -1,0 +1,69 @@
+# ⚠️ SCAFFOLD ONLY — not active. See docs/proposals/rfc-gitops-branching-strategy.md
+
+name: Create Release Branch
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version (e.g., 2.34)"
+        required: true
+        type: string
+
+jobs:
+  create-release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: next
+          fetch-depth: 0
+          token: ${{ secrets.RELEASE_PAT }}
+
+      - name: Validate version format
+        run: |
+          if ! echo "${{ inputs.version }}" | grep -qE '^[0-9]+\.[0-9]+$'; then
+            echo "::error::Version must be X.Y format (e.g., 2.34)"
+            exit 1
+          fi
+          if git show-ref --verify --quiet "refs/remotes/origin/release/${{ inputs.version }}"; then
+            echo "::error::release/${{ inputs.version }} already exists"
+            exit 1
+          fi
+
+      - name: Create release branch
+        run: |
+          BRANCH="release/${{ inputs.version }}"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$BRANCH"
+          git push origin "$BRANCH"
+          echo "## Created \`$BRANCH\` from \`next\` at $(git rev-parse --short HEAD)" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Open tracking issue
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh issue create \
+            --title "Release v${{ inputs.version }}.0" \
+            --label "release" \
+            --body "## Release v${{ inputs.version }}.0
+
+          **Release branch:** \`release/${{ inputs.version }}\`
+          **Created from:** \`next\` at \`$(git rev-parse --short HEAD)\`
+          **Created by:** @${{ github.actor }}
+
+          ### Checklist
+          - [ ] All targeted fixes merged to \`release/${{ inputs.version }}\`
+          - [ ] RC published and smoke-tested (\`npm i gsd-pi@rc\`)
+          - [ ] CHANGELOG reviewed
+          - [ ] Production deployment approved
+
+          ### Post-Release
+          - [ ] \`release/${{ inputs.version }}\` merged to \`main\`
+          - [ ] Tag \`v${{ inputs.version }}.0\` created
+          - [ ] \`@latest\` promoted
+          - [ ] Back-merged to \`next\`"
