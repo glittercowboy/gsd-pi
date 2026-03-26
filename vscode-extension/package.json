@@ -167,6 +167,42 @@
       {
         "command": "gsd.generateTestsSymbol",
         "title": "GSD: Generate Tests for Symbol"
+      },
+      {
+        "command": "gsd.acceptAllChanges",
+        "title": "GSD: Accept All Agent Changes",
+        "icon": "$(check-all)"
+      },
+      {
+        "command": "gsd.discardAllChanges",
+        "title": "GSD: Discard All Agent Changes",
+        "icon": "$(discard)"
+      },
+      {
+        "command": "gsd.acceptFileChanges",
+        "title": "Accept Changes",
+        "icon": "$(check)"
+      },
+      {
+        "command": "gsd.discardFileChanges",
+        "title": "Discard Changes",
+        "icon": "$(discard)"
+      },
+      {
+        "command": "gsd.restoreCheckpoint",
+        "title": "GSD: Restore Checkpoint"
+      },
+      {
+        "command": "gsd.fixProblemsInFile",
+        "title": "GSD: Fix Problems in File"
+      },
+      {
+        "command": "gsd.fixAllProblems",
+        "title": "GSD: Fix All Problems"
+      },
+      {
+        "command": "gsd.clearDiagnostics",
+        "title": "GSD: Clear Agent Diagnostics"
       }
     ],
     "keybindings": [
@@ -224,6 +260,10 @@
         {
           "id": "gsd-activity",
           "name": "Activity"
+        },
+        {
+          "id": "gsd-checkpoints",
+          "name": "Checkpoints"
         }
       ]
     },
@@ -238,6 +278,30 @@
           "command": "gsd.clearActivity",
           "when": "view == gsd-activity",
           "group": "navigation"
+        }
+      ],
+      "scm/title": [
+        {
+          "command": "gsd.acceptAllChanges",
+          "group": "navigation",
+          "when": "scmProvider == gsd"
+        },
+        {
+          "command": "gsd.discardAllChanges",
+          "group": "navigation",
+          "when": "scmProvider == gsd"
+        }
+      ],
+      "scm/resourceState/context": [
+        {
+          "command": "gsd.acceptFileChanges",
+          "group": "inline",
+          "when": "scmProvider == gsd"
+        },
+        {
+          "command": "gsd.discardFileChanges",
+          "group": "inline",
+          "when": "scmProvider == gsd"
         }
       ]
     },

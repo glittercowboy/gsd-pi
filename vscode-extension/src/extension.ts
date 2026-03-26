@@ -9,12 +9,20 @@ import { GsdConversationHistoryPanel } from "./conversation-history.js";
 import { GsdSlashCompletionProvider } from "./slash-completion.js";
 import { GsdCodeLensProvider } from "./code-lens.js";
 import { GsdActivityFeedProvider } from "./activity-feed.js";
+import { GsdChangeTracker } from "./change-tracker.js";
+import { GsdScmProvider } from "./scm-provider.js";
+import { GsdCheckpointProvider } from "./checkpoints.js";
+import { GsdDiagnosticBridge } from "./diagnostics.js";
 
 let client: GsdClient | undefined;
 let sidebarProvider: GsdSidebarProvider | undefined;
 let fileDecorations: GsdFileDecorationProvider | undefined;
 let sessionTreeProvider: GsdSessionTreeProvider | undefined;
 let activityFeedProvider: GsdActivityFeedProvider | undefined;
+let changeTracker: GsdChangeTracker | undefined;
+let scmProvider: GsdScmProvider | undefined;
+let checkpointProvider: GsdCheckpointProvider | undefined;
+let diagnosticBridge: GsdDiagnosticBridge | undefined;
 
 function requireConnected(): boolean {
 	if (!client?.isConnected) {
@@ -127,6 +135,27 @@ export function activate(context: vscode.ExtensionContext): void {
 		activityFeedProvider,
 		vscode.window.registerTreeDataProvider(GsdActivityFeedProvider.viewId, activityFeedProvider),
 	);
+
+	// -- Change tracker & SCM provider -------------------------------------
+
+	changeTracker = new GsdChangeTracker(client);
+	context.subscriptions.push(changeTracker);
+
+	scmProvider = new GsdScmProvider(changeTracker, cwd);
+	context.subscriptions.push(scmProvider);
+
+	// -- Checkpoints -------------------------------------------------------
+
+	checkpointProvider = new GsdCheckpointProvider(changeTracker);
+	context.subscriptions.push(
+		checkpointProvider,
+		vscode.window.registerTreeDataProvider(GsdCheckpointProvider.viewId, checkpointProvider),
+	);
+
+	// -- Diagnostics -------------------------------------------------------
+
+	diagnosticBridge = new GsdDiagnosticBridge(client);
+	context.subscriptions.push(diagnosticBridge);
 
 	// -- Progress notifications --------------------------------------------
 
@@ -789,6 +818,101 @@ export function activate(context: vscode.ExtensionContext): void {
 		}),
 	);
 
+	// -- SCM commands -------------------------------------------------------
+
+	context.subscriptions.push(
+		vscode.commands.registerCommand("gsd.acceptAllChanges", () => {
+			changeTracker?.acceptAll();
+			vscode.window.showInformationMessage("All agent changes accepted.");
+		}),
+	);
+
+	context.subscriptions.push(
+		vscode.commands.registerCommand("gsd.discardAllChanges", async () => {
+			if (!changeTracker?.hasChanges) {
+				vscode.window.showInformationMessage("No agent changes to discard.");
+				return;
+			}
+			const confirm = await vscode.window.showWarningMessage(
+				`Discard all agent changes (${changeTracker.modifiedFiles.length} files)?`,
+				{ modal: true },
+				"Discard",
+			);
+			if (confirm === "Discard") {
+				const count = await changeTracker.discardAll();
+				vscode.window.showInformationMessage(`Reverted ${count} file${count !== 1 ? "s" : ""}.`);
+			}
+		}),
+	);
+
+	context.subscriptions.push(
+		vscode.commands.registerCommand("gsd.discardFileChanges", async (resourceState: vscode.SourceControlResourceState) => {
+			if (!changeTracker || !resourceState?.resourceUri) return;
+			const filePath = resourceState.resourceUri.fsPath;
+			const success = await changeTracker.discardFile(filePath);
+			if (success) {
+				vscode.window.showInformationMessage(`Reverted ${vscode.workspace.asRelativePath(filePath)}`);
+			}
+		}),
+	);
+
+	context.subscriptions.push(
+		vscode.commands.registerCommand("gsd.acceptFileChanges", (resourceState: vscode.SourceControlResourceState) => {
+			if (!changeTracker || !resourceState?.resourceUri) return;
+			changeTracker.acceptFile(resourceState.resourceUri.fsPath);
+		}),
+	);
+
+	// -- Checkpoint commands ------------------------------------------------
+
+	context.subscriptions.push(
+		vscode.commands.registerCommand("gsd.restoreCheckpoint", async (checkpointId: number) => {
+			if (!changeTracker) return;
+			const checkpoint = changeTracker.checkpoints.find((c) => c.id === checkpointId);
+			if (!checkpoint) return;
+
+			const confirm = await vscode.window.showWarningMessage(
+				`Restore to "${checkpoint.label}"? This will revert files to their state at ${new Date(checkpoint.timestamp).toLocaleTimeString()}.`,
+				{ modal: true },
+				"Restore",
+			);
+			if (confirm === "Restore") {
+				const count = await changeTracker.restoreCheckpoint(checkpointId);
+				vscode.window.showInformationMessage(`Restored ${count} file${count !== 1 ? "s" : ""} to checkpoint.`);
+			}
+		}),
+	);
+
+	// -- Diagnostic commands ------------------------------------------------
+
+	context.subscriptions.push(
+		vscode.commands.registerCommand("gsd.fixProblemsInFile", async () => {
+			if (!requireConnected()) return;
+			try {
+				await diagnosticBridge!.fixProblemsInFile();
+			} catch (err) {
+				handleError(err, "Failed to fix problems");
+			}
+		}),
+	);
+
+	context.subscriptions.push(
+		vscode.commands.registerCommand("gsd.fixAllProblems", async () => {
+			if (!requireConnected()) return;
+			try {
+				await diagnosticBridge!.fixAllProblems();
+			} catch (err) {
+				handleError(err, "Failed to fix problems");
+			}
+		}),
+	);
+
+	context.subscriptions.push(
+		vscode.commands.registerCommand("gsd.clearDiagnostics", () => {
+			diagnosticBridge?.clearFindings();
+		}),
+	);
+
 	// -- Auto-start ---------------------------------------------------------
 
 	if (config.get<boolean>("autoStart", false)) {
@@ -802,9 +926,17 @@ export function deactivate(): void {
 	fileDecorations?.dispose();
 	sessionTreeProvider?.dispose();
 	activityFeedProvider?.dispose();
+	changeTracker?.dispose();
+	scmProvider?.dispose();
+	checkpointProvider?.dispose();
+	diagnosticBridge?.dispose();
 	client = undefined;
 	sidebarProvider = undefined;
 	fileDecorations = undefined;
 	sessionTreeProvider = undefined;
 	activityFeedProvider = undefined;
+	changeTracker = undefined;
+	scmProvider = undefined;
+	checkpointProvider = undefined;
+	diagnosticBridge = undefined;
 }
