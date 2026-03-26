@@ -494,6 +494,14 @@ notifications:
   on_attention: true          # notify when manual attention needed
 ```
 
+**macOS delivery:** GSD uses [`terminal-notifier`](https://github.com/julienXX/terminal-notifier) when available, falling back to `osascript`. We recommend installing `terminal-notifier` for reliable notification delivery:
+
+```bash
+brew install terminal-notifier
+```
+
+Why: `osascript display notification` is attributed to your terminal app (Ghostty, iTerm2, etc.), which may not have notification permissions in System Settings → Notifications. `terminal-notifier` registers as its own app and prompts for permission on first use. See [Troubleshooting: Notifications not appearing on macOS](troubleshooting.md#notifications-not-appearing-on-macos) if notifications aren't working.
+
 ### `remote_questions`
 
 Route interactive questions to Slack or Discord for headless auto mode:
