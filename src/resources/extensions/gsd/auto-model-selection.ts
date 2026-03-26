@@ -83,7 +83,14 @@ export async function selectAndApplyModel(
           }
         }
 
-        const routingResult = resolveModelForComplexity(classification, modelConfig, routingConfig, availableModelIds);
+        const routingResult = resolveModelForComplexity(
+          classification,
+          modelConfig,
+          routingConfig,
+          availableModelIds,
+          unitType,
+          classification.taskMetadata,
+        );
 
         if (routingResult.wasDowngraded) {
           effectiveModelConfig = {
