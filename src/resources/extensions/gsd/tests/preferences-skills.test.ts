@@ -48,8 +48,10 @@ test("resolveSkillReference resolves bare skill names from ~/.agents/skills", as
 
   const savedEnv = saveAgentDirEnv();
   const previousHome = process.env.HOME;
+  const previousUserProfile = process.env.USERPROFILE;
   setAgentDirEnv(agentDir);
   process.env.HOME = homeDir;
+  process.env.USERPROFILE = homeDir; // Windows: os.homedir() reads USERPROFILE
 
   try {
     makeSkillDir(homeDir, ".agents/skills", "cmux");
@@ -61,6 +63,8 @@ test("resolveSkillReference resolves bare skill names from ~/.agents/skills", as
     restoreAgentDirEnv(savedEnv);
     if (previousHome === undefined) delete process.env.HOME;
     else process.env.HOME = previousHome;
+    if (previousUserProfile === undefined) delete process.env.USERPROFILE;
+    else process.env.USERPROFILE = previousUserProfile;
     rmSync(root, { recursive: true, force: true });
   }
 });
@@ -76,8 +80,10 @@ test("resolveSkillReference prefers ~/.gsd/agent/skills over ~/.agents/skills fo
 
   const savedEnv = saveAgentDirEnv();
   const previousHome = process.env.HOME;
+  const previousUserProfile = process.env.USERPROFILE;
   setAgentDirEnv(agentDir);
   process.env.HOME = homeDir;
+  process.env.USERPROFILE = homeDir; // Windows: os.homedir() reads USERPROFILE
 
   try {
     makeSkillDir(agentDir, "skills", "cmux");
@@ -90,6 +96,8 @@ test("resolveSkillReference prefers ~/.gsd/agent/skills over ~/.agents/skills fo
     restoreAgentDirEnv(savedEnv);
     if (previousHome === undefined) delete process.env.HOME;
     else process.env.HOME = previousHome;
+    if (previousUserProfile === undefined) delete process.env.USERPROFILE;
+    else process.env.USERPROFILE = previousUserProfile;
     rmSync(root, { recursive: true, force: true });
   }
 });
