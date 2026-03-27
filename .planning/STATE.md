@@ -2,24 +2,24 @@
 gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: milestone
-current_phase: 02
+current_phase: 03
 current_plan: 1
 status: executing
-stopped_at: Completed 02-03-PLAN.md
-last_updated: "2026-03-27T04:44:59.947Z"
+stopped_at: Completed 03-01-PLAN.md
+last_updated: "2026-03-27T05:40:23.288Z"
 last_activity: 2026-03-27
 progress:
   total_phases: 4
   completed_phases: 1
-  total_plans: 3
-  completed_plans: 3
+  total_plans: 5
+  completed_plans: 4
 ---
 
 # Project State
 
-**Current Phase:** 02
+**Current Phase:** 03
 **Current Plan:** 1
-**Status:** Executing Phase 02
+**Status:** Executing Phase 03
 **Last activity:** 2026-03-27
 
 ## Project Reference
@@ -27,7 +27,7 @@ progress:
 See: .planning/PROJECT.md (updated 2026-03-26)
 
 **Core value:** Developers can see and track their project progress in real-time without leaving their terminal workflow.
-**Current focus:** Phase 02 — foundation
+**Current focus:** Phase 03 — core-renderer
 
 ## Progress Bar
 
@@ -65,6 +65,9 @@ Phases complete: 0/4 | Plans complete: 0/?
 - [Phase 02-foundation]: Exported resetQuitState() for test beforeEach isolation instead of module re-loading
 - [Phase 02-02]: Dynamic import used for watch orchestrator in core.ts to avoid loading at startup (matches cmux pattern)
 - [Phase 02-02]: Watch lock stored in .gsd/watch.lock; isWatchPidAlive uses EPERM-aware process.kill(pid,0) pattern from crash-recovery.ts
+- [Phase 03]: readMilestoneLabel extracts text after em/en-dash from ROADMAP.md heading for concise label
+- [Phase 03]: derivePhaseStatus ignores badges — status derived from plan files only
+- [Phase 03]: scanPlans filters /^\d{2}-\d{2}-PLAN\.md$/ strictly — plan files only in plans array
 
 ## Critical Pitfalls (from research)
 
@@ -83,5 +86,5 @@ None.
 
 ## Last Session
 
-**Stopped at:** Completed 02-02-PLAN.md
+**Stopped at:** Completed 03-01-PLAN.md
 **Timestamp:** 2026-03-27T04:40:43Z

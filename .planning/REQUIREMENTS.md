@@ -9,14 +9,14 @@ Requirements for GSD Watch milestone. Each maps to roadmap phases.
 
 ### Tmux Pane Management
 
-- [ ] **TMUX-01**: `/gsd watch` detects non-tmux sessions and displays a clear error message
-- [ ] **TMUX-02**: `/gsd watch` opens a 35%-width right-side tmux split pane
+- [x] **TMUX-01**: `/gsd watch` detects non-tmux sessions and displays a clear error message
+- [x] **TMUX-02**: `/gsd watch` opens a 35%-width right-side tmux split pane
 - [x] **TMUX-03**: Watch pane exits cleanly on qq, Esc Esc, or Ctrl+C with proper SIGHUP/SIGINT/SIGTERM handling
 
 ### Display
 
-- [ ] **DISP-01**: Sidebar renders a hierarchical tree of milestones, phases, and plans with status icons
-- [ ] **DISP-02**: Each phase displays 7 lifecycle badges (flat icons, no color) derived from file presence (CONTEXT, RESEARCH, UI-SPEC, PLAN, SUMMARY, VERIFICATION, HUMAN-UAT)
+- [x] **DISP-01**: Sidebar renders a hierarchical tree of milestones, phases, and plans with status icons
+- [x] **DISP-02**: Each phase displays 7 lifecycle badges (flat icons, no color) derived from file presence (CONTEXT, RESEARCH, UI-SPEC, PLAN, SUMMARY, VERIFICATION, HUMAN-UAT)
 - [x] **DISP-03**: Sidebar auto-refreshes on `.planning/` file changes via chokidar with 300ms debounce
 - [ ] **DISP-04**: Sidebar supports viewport scrolling when tree exceeds terminal height
 
@@ -60,12 +60,12 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| TMUX-01 | Phase 2 | Pending |
-| TMUX-02 | Phase 2 | Pending |
+| TMUX-01 | Phase 2 | Complete |
+| TMUX-02 | Phase 2 | Complete |
 | TMUX-03 | Phase 2 | Complete |
 | DISP-03 | Phase 2 | Complete |
-| DISP-01 | Phase 3 | Pending |
-| DISP-02 | Phase 3 | Pending |
+| DISP-01 | Phase 3 | Complete |
+| DISP-02 | Phase 3 | Complete |
 | DISP-04 | Phase 4 | Pending |
 | NAV-01 | Phase 5 | Pending |
 | NAV-02 | Phase 5 | Pending |

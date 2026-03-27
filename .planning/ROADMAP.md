@@ -38,10 +38,10 @@ Plans:
   2. Each phase row displays exactly 7 lifecycle badge slots (CONTEXT, RESEARCH, UI-SPEC, PLAN, SUMMARY, VERIFICATION, HUMAN-UAT) as flat icons with no color — filled when the corresponding file is present, empty otherwise.
   3. Status icons (done/active/pending/blocked) appear next to each node, matching the current state derived from plan files.
   4. No ANSI rendering artifacts or line overflow occur in a pane as narrow as 30 columns.
-**Plans:** 2 plans
+**Plans:** 1/2 plans executed
 
 Plans:
-- [ ] 03-01-PLAN.md — Tree data types, filesystem scanner, badge detection, and status derivation (DISP-01, DISP-02)
+- [x] 03-01-PLAN.md — Tree data types, filesystem scanner, badge detection, and status derivation (DISP-01, DISP-02)
 - [ ] 03-02-PLAN.md — Tree renderer layout engine, badge formatting, and renderer-entry integration (DISP-01, DISP-02)
 
 ### Phase 4: Renderer Entry + Command Integration
@@ -70,7 +70,7 @@ Plans:
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 2. Foundation | 3/3 | Complete   | 2026-03-27 |
-| 3. Core Renderer | 0/2 | Not started | — |
+| 3. Core Renderer | 1/2 | In Progress|  |
 | 4. Renderer Entry + Command Integration | 0/? | Not started | — |
 | 5. Navigation | 0/? | Not started | — |
 
