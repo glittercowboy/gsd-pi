@@ -196,6 +196,11 @@ export function syncProjectRootToWorktree(
   const prGsd = join(projectRoot, ".gsd");
   const wtGsd = join(worktreePath_, ".gsd");
 
+  // When .gsd is a symlink to the same external directory in both locations,
+  // cpSync rejects the copy because source === destination (ERR_FS_CP_EINVAL).
+  // Compare realpaths and skip when they resolve to the same physical path (#2184).
+  if (isSamePath(prGsd, wtGsd)) return;
+
   // Copy milestone directory from project root to worktree — additive only.
   // force:false prevents cpSync from overwriting existing worktree files.
   // Without this, worktree-authoritative files (e.g. VALIDATION.md written
@@ -244,6 +249,11 @@ export function syncStateToProjectRoot(
 
   const wtGsd = join(worktreePath_, ".gsd");
   const prGsd = join(projectRoot, ".gsd");
+
+  // When .gsd is a symlink to the same external directory in both locations,
+  // cpSync rejects the copy because source === destination (ERR_FS_CP_EINVAL).
+  // Compare realpaths and skip when they resolve to the same physical path (#2184).
+  if (isSamePath(wtGsd, prGsd)) return;
 
   // 1. STATE.md — the quick-glance status used by initial deriveState()
   safeCopy(join(wtGsd, "STATE.md"), join(prGsd, "STATE.md"), { force: true });
