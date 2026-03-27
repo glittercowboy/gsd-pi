@@ -1,4 +1,7 @@
 
+# ── Compiled test output ──
+dist-test/
+
 # ── GSD project state (development-only, lives in worktree branches) ──
 package-lock.json
 .claude/

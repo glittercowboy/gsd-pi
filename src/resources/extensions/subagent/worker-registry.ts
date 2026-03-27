@@ -54,9 +54,10 @@ export function updateWorker(id: string, status: "completed" | "failed"): void {
   if (entry) {
     entry.status = status;
     // Remove after a brief display window (5 seconds)
+    // unref() so the timer doesn't keep the process alive in test environments
     setTimeout(() => {
       activeWorkers.delete(id);
-    }, 5000);
+    }, 5000).unref();
   }
 }
 
