@@ -145,6 +145,16 @@ export function renderRoadmapProjection(basePath: string, milestoneId: string): 
  * Pure function — no side effects.
  */
 export function renderSummaryContent(taskRow: TaskRow, sliceId: string, milestoneId: string): string {
+  // If the task already has a fully rendered summary (written by handleCompleteTask's
+  // renderSummaryMarkdown), use it as-is. That content already includes frontmatter,
+  // heading, and all sections. Re-wrapping it inside a second frontmatter/heading
+  // envelope produces double frontmatter and duplicate sections.
+  if (taskRow.full_summary_md && taskRow.full_summary_md.trimStart().startsWith("---")) {
+    return taskRow.full_summary_md;
+  }
+
+  // Fallback: synthesize summary from individual DB columns when full_summary_md
+  // is absent or doesn't contain frontmatter (e.g. older tasks, manual DB entries).
   const lines: string[] = [];
 
   // Frontmatter
@@ -189,7 +199,7 @@ export function renderSummaryContent(taskRow: TaskRow, sliceId: string, mileston
   }
 
   lines.push("## What Happened");
-  lines.push(taskRow.full_summary_md || taskRow.narrative || "No summary recorded.");
+  lines.push(taskRow.narrative || "No summary recorded.");
   lines.push("");
 
   // Deviations (if present)
