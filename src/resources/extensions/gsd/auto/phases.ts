@@ -1007,6 +1007,9 @@ export async function runUnitPhase(
   s.currentUnitRouting =
     modelResult.routing as AutoSession["currentUnitRouting"];
 
+  // ADR-005: Capture prior tools for restore after dispatch (prevents session drift).
+  const priorTools = modelResult.priorTools;
+
   // Apply sidecar/pre-dispatch hook model override (takes priority over standard model selection)
   const hookModelOverride = sidecarItem?.model ?? iterData.hookModelOverride;
   if (hookModelOverride) {
@@ -1064,14 +1067,23 @@ export async function runUnitPhase(
     unitType,
     unitId,
   });
-  const unitResult = await runUnit(
-    ctx,
-    pi,
-    s,
-    unitType,
-    unitId,
-    finalPrompt,
-  );
+  let unitResult;
+  try {
+    unitResult = await runUnit(
+      ctx,
+      pi,
+      s,
+      unitType,
+      unitId,
+      finalPrompt,
+    );
+  } finally {
+    // ADR-005: Restore prior tool set after dispatch to prevent session drift.
+    // Must be in finally to handle both success and error paths.
+    if (priorTools) {
+      pi.setActiveTools(priorTools);
+    }
+  }
   debugLog("autoLoop", {
     phase: "runUnit-end",
     iteration: ic.iteration,
