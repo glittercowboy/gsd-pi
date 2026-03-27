@@ -13,6 +13,13 @@
  *
  * Skipped in CI (where the full build pipeline handles this) and when
  * installing as an end-user dependency (no packages/ directory).
+ *
+ * Note: packages/ IS included in the npm tarball (via the "files" field), so
+ * the packages/ existence check does not distinguish npm installs from git
+ * clones. Staleness checking is gated on .git presence instead — npm-installed
+ * packages have pre-built dist/ that is always current; mtime comparisons are
+ * unreliable after tarball extraction (extraction order can leave src/ files
+ * with a newer timestamp than dist/).
  */
 const { existsSync, statSync, readdirSync } = require('fs')
 const { resolve, join } = require('path')
@@ -21,7 +28,7 @@ const { execSync } = require('child_process')
 const root = resolve(__dirname, '..')
 const packagesDir = join(root, 'packages')
 
-// Skip if packages/ doesn't exist (published tarball / end-user install)
+// Skip if packages/ doesn't exist
 if (!existsSync(packagesDir)) process.exit(0)
 
 // Skip in CI — the pipeline runs `npm run build` explicitly
@@ -56,6 +63,11 @@ function newestSrcMtime(dir) {
   return newest
 }
 
+// Staleness detection is only reliable in a git checkout.
+// After npm tarball extraction, file mtimes are set by extraction order and may
+// make src/ appear newer than dist/ even though dist/ was correctly pre-built.
+const isGitRepo = existsSync(join(root, '.git'))
+
 const stale = []
 for (const pkg of WORKSPACE_PACKAGES) {
   const distIndex = join(packagesDir, pkg, 'dist', 'index.js')
@@ -63,10 +75,12 @@ for (const pkg of WORKSPACE_PACKAGES) {
     stale.push(pkg)
     continue
   }
-  const distMtime = statSync(distIndex).mtimeMs
-  const srcMtime = newestSrcMtime(join(packagesDir, pkg, 'src'))
-  if (srcMtime > distMtime) {
-    stale.push(pkg)
+  if (isGitRepo) {
+    const distMtime = statSync(distIndex).mtimeMs
+    const srcMtime = newestSrcMtime(join(packagesDir, pkg, 'src'))
+    if (srcMtime > distMtime) {
+      stale.push(pkg)
+    }
   }
 }
 
