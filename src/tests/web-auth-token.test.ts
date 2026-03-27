@@ -16,33 +16,33 @@ const projectRoot = process.cwd()
 
 const authSource = readFileSync(join(projectRoot, 'web', 'lib', 'auth.ts'), 'utf-8')
 
-test('auth.ts persists token to sessionStorage on extraction', () => {
-  assert.match(authSource, /sessionStorage\.setItem/, 'should persist token to sessionStorage after extracting from hash')
+test('auth.ts persists token to localStorage on extraction', () => {
+  assert.match(authSource, /localStorage\.setItem/, 'should persist token to localStorage after extracting from hash')
 })
 
-test('auth.ts falls back to sessionStorage when hash is absent', () => {
-  assert.match(authSource, /sessionStorage\.getItem/, 'should read from sessionStorage when URL hash is empty')
+test('auth.ts falls back to localStorage when hash is absent', () => {
+  assert.match(authSource, /localStorage\.getItem/, 'should read from localStorage when URL hash is empty')
 })
 
-test('auth.ts defines a sessionStorage key constant', () => {
-  assert.match(authSource, /SESSION_STORAGE_KEY/, 'should use a named constant for the sessionStorage key')
+test('auth.ts defines an auth storage key constant', () => {
+  assert.match(authSource, /AUTH_STORAGE_KEY/, 'should use a named constant for the localStorage key')
 })
 
 test('auth.ts clears the URL fragment after token extraction', () => {
   assert.match(authSource, /replaceState/, 'should clear the hash from the address bar')
 })
 
-test('auth.ts wraps sessionStorage calls in try/catch for private browsing', () => {
-  // sessionStorage can throw in private browsing when quota is exceeded
-  const setItemIndex = authSource.indexOf('sessionStorage.setItem')
-  const getItemIndex = authSource.indexOf('sessionStorage.getItem')
+test('auth.ts wraps localStorage calls in try/catch for private browsing', () => {
+  // localStorage can throw in private browsing when quota is exceeded
+  const setItemIndex = authSource.indexOf('localStorage.setItem')
+  const getItemIndex = authSource.indexOf('localStorage.getItem')
   assert.ok(setItemIndex > -1)
   assert.ok(getItemIndex > -1)
-  // Both sessionStorage accesses should be inside try blocks
+  // Both localStorage accesses should be inside try blocks
   const beforeSetItem = authSource.slice(Math.max(0, setItemIndex - 200), setItemIndex)
   const beforeGetItem = authSource.slice(Math.max(0, getItemIndex - 200), getItemIndex)
-  assert.match(beforeSetItem, /try\s*\{/, 'sessionStorage.setItem should be inside a try block')
-  assert.match(beforeGetItem, /try\s*\{/, 'sessionStorage.getItem should be inside a try block')
+  assert.match(beforeSetItem, /try\s*\{/, 'localStorage.setItem should be inside a try block')
+  assert.match(beforeGetItem, /try\s*\{/, 'localStorage.getItem should be inside a try block')
 })
 
 // ─── sendBeacon auth token tests ────────────────────────────────────────────
