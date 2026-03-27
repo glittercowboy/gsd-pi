@@ -21,6 +21,7 @@ import {
 	handleStreamError,
 } from "./openai-shared.js";
 import { buildBaseOptions, clampReasoning } from "./simple-options.js";
+import { clampThinkingLevel } from "./capabilities.js";
 
 let _AzureOpenAIClass: typeof AzureOpenAI | undefined;
 async function getAzureOpenAIClass(): Promise<typeof AzureOpenAI> {
@@ -222,7 +223,7 @@ function buildParams(
 
 	if (model.reasoning) {
 		if (options?.reasoningEffort || options?.reasoningSummary) {
-			const effort = clampReasoningForModel(model.name, options?.reasoningEffort || "medium") as typeof options.reasoningEffort;
+			const effort = clampThinkingLevel(model.api, clampReasoningForModel(model.name, options?.reasoningEffort || "medium")) as typeof options.reasoningEffort;
 			params.reasoning = {
 				effort: effort || "medium",
 				summary: options?.reasoningSummary || "auto",

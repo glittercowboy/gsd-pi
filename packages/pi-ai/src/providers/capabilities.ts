@@ -32,6 +32,12 @@ export interface ProviderCapabilities {
 	thinkingPersistence: "full" | "text-only" | "none";
 	/** Schema features NOT supported (tools using these get filtered) */
 	unsupportedSchemaFeatures: string[];
+	/**
+	 * Supported thinking/reasoning effort levels for this provider.
+	 * Used to clamp unsupported levels to the nearest valid level.
+	 * Empty array means no thinking support. Null/undefined means all levels supported.
+	 */
+	supportedThinkingLevels?: string[];
 }
 
 /**
@@ -63,6 +69,7 @@ const PROVIDER_CAPABILITIES: Record<string, ProviderCapabilities> = {
 		toolCallIdFormat: { maxLength: 64, allowedChars: /^[a-zA-Z0-9_-]+$/ },
 		thinkingPersistence: "full",
 		unsupportedSchemaFeatures: [],
+		supportedThinkingLevels: ["minimal", "low", "medium", "high", "xhigh"],
 	},
 	"openai-responses": {
 		toolCalling: true,
@@ -72,6 +79,8 @@ const PROVIDER_CAPABILITIES: Record<string, ProviderCapabilities> = {
 		toolCallIdFormat: { maxLength: 512, allowedChars: /^.+$/ },
 		thinkingPersistence: "text-only",
 		unsupportedSchemaFeatures: [],
+		// OpenAI gpt-5.x doesn't support "minimal" — use "low" as minimum
+		supportedThinkingLevels: ["none", "low", "medium", "high", "xhigh"],
 	},
 	"google-generative-ai": {
 		toolCalling: true,
@@ -81,6 +90,7 @@ const PROVIDER_CAPABILITIES: Record<string, ProviderCapabilities> = {
 		toolCallIdFormat: { maxLength: 64, allowedChars: /^[a-zA-Z0-9_-]+$/ },
 		thinkingPersistence: "text-only",
 		unsupportedSchemaFeatures: ["patternProperties"],
+		supportedThinkingLevels: ["minimal", "low", "medium", "high"],
 	},
 	"mistral-conversations": {
 		toolCalling: true,
@@ -90,6 +100,7 @@ const PROVIDER_CAPABILITIES: Record<string, ProviderCapabilities> = {
 		toolCallIdFormat: { maxLength: 9, allowedChars: /^[a-zA-Z0-9]+$/ },
 		thinkingPersistence: "none",
 		unsupportedSchemaFeatures: [],
+		supportedThinkingLevels: [],
 	},
 	"bedrock-converse-stream": {
 		toolCalling: true,
@@ -99,6 +110,7 @@ const PROVIDER_CAPABILITIES: Record<string, ProviderCapabilities> = {
 		toolCallIdFormat: { maxLength: 64, allowedChars: /^[a-zA-Z0-9_-]+$/ },
 		thinkingPersistence: "text-only",
 		unsupportedSchemaFeatures: [],
+		supportedThinkingLevels: ["minimal", "low", "medium", "high"],
 	},
 };
 
@@ -220,6 +232,65 @@ export function getProviderCapabilities(api: Api): ProviderCapabilities {
 		}
 	}
 	return merged as ProviderCapabilities;
+}
+
+/**
+ * Ordered thinking levels from lowest to highest effort.
+ * Used by clampThinkingLevel to find the nearest supported level.
+ */
+const THINKING_LEVEL_ORDER = ["none", "minimal", "low", "medium", "high", "xhigh"];
+
+/**
+ * Clamp a thinking/reasoning level to the nearest supported level for a provider.
+ *
+ * If the requested level is not in the provider's supportedThinkingLevels,
+ * returns the nearest higher supported level, or the highest supported level
+ * if no higher level exists.
+ *
+ * Returns the original level unchanged if:
+ * - supportedThinkingLevels is undefined/null (all levels supported)
+ * - The requested level is already supported
+ *
+ * @param api - The provider API string (e.g., "openai-responses")
+ * @param level - The requested thinking level (e.g., "minimal")
+ * @returns The clamped thinking level safe for this provider
+ */
+export function clampThinkingLevel(api: Api, level: string): string {
+	const caps = getProviderCapabilities(api);
+	const supported = caps.supportedThinkingLevels;
+
+	// No restriction declared — all levels assumed supported
+	if (!supported || supported.length === 0) {
+		// Empty array means no thinking support — return "none" if available, otherwise original
+		if (supported && supported.length === 0 && caps.thinkingPersistence === "none") {
+			return "none";
+		}
+		if (!supported) return level; // undefined = all supported
+		return level;
+	}
+
+	// Already supported
+	if (supported.includes(level)) return level;
+
+	// Find the nearest higher supported level
+	const requestedIdx = THINKING_LEVEL_ORDER.indexOf(level);
+	if (requestedIdx === -1) return level; // Unknown level — pass through
+
+	// Look upward first (prefer slightly more thinking over less)
+	for (let i = requestedIdx + 1; i < THINKING_LEVEL_ORDER.length; i++) {
+		if (supported.includes(THINKING_LEVEL_ORDER[i])) {
+			return THINKING_LEVEL_ORDER[i];
+		}
+	}
+
+	// No higher level available — fall back to highest supported
+	for (let i = requestedIdx - 1; i >= 0; i--) {
+		if (supported.includes(THINKING_LEVEL_ORDER[i])) {
+			return THINKING_LEVEL_ORDER[i];
+		}
+	}
+
+	return level; // No match at all — pass through (fail-open)
 }
 
 /**

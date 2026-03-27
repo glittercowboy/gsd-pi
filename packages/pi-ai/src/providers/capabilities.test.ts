@@ -12,6 +12,7 @@ import {
 	getApiVariantAliases,
 	setProviderCapabilityOverrides,
 	clearProviderCapabilityOverrides,
+	clampThinkingLevel,
 	PERMISSIVE_CAPABILITIES,
 } from "./capabilities.js";
 
@@ -310,6 +311,46 @@ describe("Provider Capability Registry", () => {
 			// Call again with same reference — should be a no-op (cached)
 			setProviderCapabilityOverrides(overrides);
 			assert.equal(getProviderCapabilities("openai-responses").imageToolResults, true);
+		});
+	});
+
+	describe("clampThinkingLevel", () => {
+		afterEach(() => {
+			clearProviderCapabilityOverrides();
+		});
+
+		test("minimal is clamped to low for OpenAI (gpt-5.3-codex fix)", () => {
+			const result = clampThinkingLevel("openai-responses", "minimal");
+			assert.equal(result, "low");
+		});
+
+		test("minimal is clamped to low for OpenAI codex variant", () => {
+			const result = clampThinkingLevel("openai-codex-responses", "minimal");
+			assert.equal(result, "low");
+		});
+
+		test("minimal is supported for Anthropic (no clamping)", () => {
+			const result = clampThinkingLevel("anthropic-messages", "minimal");
+			assert.equal(result, "minimal");
+		});
+
+		test("xhigh is clamped to high for Google (not supported)", () => {
+			const result = clampThinkingLevel("google-generative-ai", "xhigh");
+			assert.equal(result, "high");
+		});
+
+		test("supported level passes through unchanged", () => {
+			assert.equal(clampThinkingLevel("openai-responses", "medium"), "medium");
+			assert.equal(clampThinkingLevel("anthropic-messages", "high"), "high");
+			assert.equal(clampThinkingLevel("google-generative-ai", "low"), "low");
+		});
+
+		test("unknown provider returns level unchanged (fail-open)", () => {
+			assert.equal(clampThinkingLevel("some-unknown-api", "minimal"), "minimal");
+		});
+
+		test("unknown level passes through unchanged", () => {
+			assert.equal(clampThinkingLevel("openai-responses", "turbo"), "turbo");
 		});
 	});
 });

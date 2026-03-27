@@ -29,6 +29,7 @@ import type {
 import { AssistantMessageEventStream } from "../utils/event-stream.js";
 import { convertResponsesMessages, convertResponsesTools, processResponsesStream } from "./openai-responses-shared.js";
 import { buildBaseOptions, clampReasoning } from "./simple-options.js";
+import { clampThinkingLevel } from "./capabilities.js";
 
 // ============================================================================
 // Configuration
@@ -326,9 +327,13 @@ function buildRequestBody(
 }
 
 function clampReasoningEffort(modelId: string, effort: string): string {
+	// ADR-005: Use centralized capability registry for thinking level clamping.
+	// Falls back to per-model overrides for model-specific quirks.
+	const clamped = clampThinkingLevel("openai-codex-responses", effort);
+	if (clamped !== effort) return clamped;
+
+	// Per-model overrides for quirks not captured at the provider level
 	const id = modelId.includes("/") ? modelId.split("/").pop()! : modelId;
-	if ((id.startsWith("gpt-5.2") || id.startsWith("gpt-5.3") || id.startsWith("gpt-5.4")) && effort === "minimal")
-		return "low";
 	if (id === "gpt-5.1" && effort === "xhigh") return "high";
 	if (id === "gpt-5.1-codex-mini") return effort === "high" || effort === "xhigh" ? "high" : "medium";
 	return effort;

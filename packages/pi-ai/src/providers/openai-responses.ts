@@ -23,6 +23,7 @@ import {
 	handleStreamError,
 } from "./openai-shared.js";
 import { buildBaseOptions, clampReasoning } from "./simple-options.js";
+import { clampThinkingLevel } from "./capabilities.js";
 
 const OPENAI_TOOL_CALL_PROVIDERS = new Set(["openai", "openai-codex", "opencode"]);
 
@@ -158,7 +159,7 @@ function buildParams(model: Model<"openai-responses">, context: Context, options
 	if (model.reasoning) {
 		params.include = ["reasoning.encrypted_content"];
 		if (options?.reasoningEffort || options?.reasoningSummary) {
-			const effort = clampReasoningForModel(model.name, options?.reasoningEffort || "medium") as typeof options.reasoningEffort;
+			const effort = clampThinkingLevel(model.api, clampReasoningForModel(model.name, options?.reasoningEffort || "medium")) as typeof options.reasoningEffort;
 			params.reasoning = {
 				effort: effort || "medium",
 				summary: options?.reasoningSummary || "auto",
