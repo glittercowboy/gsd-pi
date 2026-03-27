@@ -314,6 +314,7 @@ export interface ProjectDetectionSignals {
   hasPlanningFolder: boolean
   hasGitRepo: boolean
   hasPackageJson: boolean
+  isMonorepo?: boolean
   fileCount: number
 }
 

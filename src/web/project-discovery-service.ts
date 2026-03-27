@@ -1,7 +1,7 @@
 import { readdirSync, readFileSync, statSync } from "node:fs";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import type { ProjectDetectionKind, ProjectDetectionSignals } from "./bridge-service.ts";
-import { detectProjectKind } from "./bridge-service.ts";
+import { detectMonorepo, detectProjectKind } from "./bridge-service.ts";
 
 // ─── Project Discovery ─────────────────────────────────────────────────────
 
@@ -72,11 +72,35 @@ export function readProjectProgress(projectPath: string): ProjectProgressInfo | 
  * discovered project directory. Hidden dirs (starting with `.`), `node_modules`,
  * and `.git` are excluded.
  *
+ * **Monorepo detection:** If `devRootPath` itself looks like a project root
+ * (has `.git`, `package.json`, monorepo markers like `pnpm-workspace.yaml` /
+ * `lerna.json` / `workspaces` in `package.json`), it is returned as a single
+ * project entry instead of scanning its children. This prevents monorepo
+ * subdirectories from being listed as independent projects.
+ *
  * Returns an empty array if `devRootPath` doesn't exist or isn't readable.
  * Results are sorted alphabetically by name.
  */
 export function discoverProjects(devRootPath: string, includeProgress?: boolean): ProjectMetadata[] {
   try {
+    // ── Check if the root itself is a project/monorepo ──────────────
+    // If the devRoot has a .git repo AND looks like a monorepo (pnpm-workspace,
+    // lerna, workspaces, etc.) or looks like a standalone project root (has
+    // .gsd, or is a recognizable project), return it as a single entry.
+    const rootDetection = detectProjectKind(devRootPath);
+    if (rootDetection.signals.isMonorepo) {
+      const stat = statSync(devRootPath);
+      return [{
+        name: basename(devRootPath),
+        path: devRootPath,
+        kind: rootDetection.kind,
+        signals: rootDetection.signals,
+        lastModified: stat.mtimeMs,
+        ...(includeProgress ? { progress: readProjectProgress(devRootPath) } : {}),
+      }];
+    }
+
+    // ── Standard multi-project scan ─────────────────────────────────
     const entries = readdirSync(devRootPath, { withFileTypes: true });
     const projects: ProjectMetadata[] = [];
 
