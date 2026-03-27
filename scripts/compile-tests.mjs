@@ -130,6 +130,9 @@ async function main() {
   // Copy web/lib/ assets (tests import from ../../web/lib/ relative to dist-test/src/tests/)
   await copyAssets(join(ROOT, 'web', 'lib'), join(ROOT, 'dist-test', 'web', 'lib'));
 
+  // Copy web/components/ source files for tests that inspect component code directly.
+  await copyAssets(join(ROOT, 'web', 'components'), join(ROOT, 'dist-test', 'web', 'components'));
+
   // Copy scripts/ non-TS files (.cjs etc) — some tests require() scripts directly
   await copyAssets(join(ROOT, 'scripts'), join(ROOT, 'dist-test', 'scripts'));
 
