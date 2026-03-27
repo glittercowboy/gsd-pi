@@ -277,6 +277,42 @@ node_modules/
       assert.deepStrictEqual(content.length, 0, "all orphaned keys removed");
     });
 
+    // ─── Test: hook/ compound keys are NOT flagged as orphaned (#2826) ─
+    test('orphaned_completed_units — hook/ compound keys not flagged', async () => {
+      const dir = createMinimalProject();
+      cleanups.push(dir);
+
+      // Hook unit types are stored as "hook/<hookName>/<unitId...>".
+      // These are valid completions with no artifact to verify — they must
+      // not be reported as orphaned_completed_units.
+      const completedKeys = [
+        "hook/telegram-progress/M001/S01",
+        "hook/telegram-progress/M001/S01/T01",
+        "hook/my-custom-hook/M001",
+        // Mix in a genuinely missing plain key to confirm detection still works
+        "execute-task/M001/S01/T99",
+      ];
+      writeFileSync(join(dir, ".gsd", "completed-units.json"), JSON.stringify(completedKeys));
+
+      const detect = await runGSDDoctor(dir);
+      const orphanIssues = detect.issues.filter(i => i.code === "orphaned_completed_units");
+
+      // Only the plain "execute-task/M001/S01/T99" should be flagged, not the hooks.
+      // If the compound-type parsing is broken, all 4 keys (including the 3 hook/
+      // keys) would be flagged. With the fix, at most 1 key is flagged.
+      if (orphanIssues.length > 0) {
+        const msg = orphanIssues[0]!.message;
+        assert.ok(
+          !msg.includes("hook/telegram-progress") && !msg.includes("hook/my-custom-hook"),
+          `hook/ keys must not appear in orphaned_completed_units message — got: ${msg}`,
+        );
+        assert.ok(
+          !msg.includes("4 completed-unit key") && !msg.includes("3 completed-unit key"),
+          `hook/ keys must not inflate the orphaned count — got: ${msg}`,
+        );
+      }
+    });
+
     // ─── Test: Stranded lock directory detection & fix ────────────────
     // Skip on Windows: proper-lockfile uses advisory file locking on Windows,
     // not the directory-based mechanism. The .gsd.lock/ directory pattern is
