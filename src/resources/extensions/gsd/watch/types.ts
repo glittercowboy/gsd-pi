@@ -23,3 +23,33 @@ export const IGNORED_PATTERNS: string[] = [
 
 /** Lock file name for watch singleton guard. Placed in .gsd/ to avoid feedback loop. */
 export const WATCH_LOCK_FILE = "watch.lock";
+
+// ─── Tree Model Types (Phase 3: Core Renderer) ─────────────────────────────
+
+/** Status of a tree node: done, active, pending, or blocked. Per D-09. */
+export type NodeStatus = "done" | "active" | "pending" | "blocked";
+
+/** A single plan within a phase. */
+export interface PlanNode {
+  id: string;          // e.g. "03-01"
+  label: string;       // derived from filename, e.g. "Plan 01"
+  status: NodeStatus;
+  hasSummary: boolean;
+}
+
+/** A phase containing plans and lifecycle badges. */
+export interface PhaseNode {
+  number: number;       // numeric prefix, e.g. 3
+  dirName: string;      // e.g. "03-core-renderer"
+  label: string;        // humanized, e.g. "3. Core Renderer" (per D-03)
+  status: NodeStatus;
+  badges: boolean[];    // 7 booleans: [CONTEXT, RESEARCH, UI-SPEC, PLAN, SUMMARY, VERIFICATION, HUMAN-UAT] (per D-05)
+  plans: PlanNode[];
+}
+
+/** Root node: a milestone containing phases. */
+export interface MilestoneNode {
+  label: string;        // e.g. "v1.1 — GSD Watch" from PROJECT.md or ROADMAP.md
+  status: NodeStatus;   // worst-case roll-up from phases (per D-11)
+  phases: PhaseNode[];
+}
