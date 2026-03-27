@@ -4,6 +4,22 @@
 import { visibleWidth, truncateToWidth } from "@gsd/pi-tui";
 import type { MilestoneNode, PhaseNode, PlanNode, NodeStatus } from "./types.js";
 
+// ─── VisibleNode Types ────────────────────────────────────────────────────────
+
+/** Identifies the type of tree node that a rendered line represents. */
+export type VisibleNodeKind = "milestone" | "phase" | "plan";
+
+/**
+ * Metadata for a single rendered line — maps line index to tree node identity.
+ * Used by cursor navigation to identify collapsible phases and track cursor
+ * position across file-change refreshes.
+ */
+export interface VisibleNode {
+  kind: VisibleNodeKind;
+  dirName?: string;   // defined when kind === "phase"
+  planId?: string;    // defined when kind === "plan"
+}
+
 // ─── Constants ────────────────────────────────────────────────────────────────
 
 const STATUS_ICON: Record<NodeStatus, string> = {
@@ -21,6 +37,9 @@ const MIN_WIDTH_FOR_PLANS = 30;
 
 /** Minimum name characters to show when fitting badges. Below this, drop badges. */
 const MIN_NAME_WITH_BADGES = 4;
+
+/** Collapsed indicator appended to collapsed phase lines. Per D-08. */
+const COLLAPSED_INDICATOR = " ▸";
 
 // ─── Badge Formatting ─────────────────────────────────────────────────────────
 
@@ -98,28 +117,64 @@ function formatPlanLine(plan: PlanNode, prefix: string, width: number): string {
 // ─── Main Export ─────────────────────────────────────────────────────────────
 
 /**
- * Render the milestone tree as an array of terminal-safe strings.
+ * Render the milestone tree as an array of terminal-safe strings, alongside
+ * a parallel VisibleNode array identifying each line's tree node.
  *
  * Uses box-drawing characters (├──, └──, │) for the tree hierarchy.
  * Status icons: ✓ done, ◆ active, ○ pending, ✘ blocked.
  * Lifecycle badges appear on phase lines as ●/○ circles.
  * Width-aware: drops badges before truncating names (D-12).
  * Plan lines hidden below MIN_WIDTH_FOR_PLANS (D-13).
+ *
+ * @param milestone - The root milestone node to render.
+ * @param width - Terminal column width for truncation.
+ * @param collapsedPhases - Optional set of phase dirName values that are collapsed.
+ *   Collapsed phases skip their plan lines and append ▸ to the phase line (D-08).
+ *   Defaults to empty Set (all phases expanded) for backward compatibility.
+ * @returns Object with parallel `lines` (string[]) and `nodes` (VisibleNode[]) arrays.
  */
-export function renderTreeLines(milestone: MilestoneNode, width: number): string[] {
+export function renderTreeLines(
+  milestone: MilestoneNode,
+  width: number,
+  collapsedPhases: Set<string> = new Set()
+): { lines: string[]; nodes: VisibleNode[] } {
   const lines: string[] = [];
+  const nodes: VisibleNode[] = [];
 
   // Milestone header (root node — no tree prefix)
   lines.push(formatMilestoneLine(milestone, width));
+  nodes.push({ kind: "milestone" });
 
   const phases = milestone.phases;
   for (let pi = 0; pi < phases.length; pi++) {
     const phase = phases[pi];
     const isLastPhase = pi === phases.length - 1;
+    const isCollapsed = collapsedPhases.has(phase.dirName);
 
     // Phase prefix: ├── for non-last, └── for last
     const phasePrefix = isLastPhase ? "└── " : "├── ";
-    lines.push(formatPhaseLine(phase, phasePrefix, width));
+    let phaseLine = formatPhaseLine(phase, phasePrefix, width);
+
+    if (isCollapsed) {
+      // Append ▸ indicator to collapsed phase lines (D-08).
+      // Ensure the indicator fits within width — truncate if necessary.
+      const indicatorWidth = visibleWidth(COLLAPSED_INDICATOR);
+      const currentWidth = visibleWidth(phaseLine);
+      if (currentWidth + indicatorWidth > width) {
+        // Truncate the phase line to make room for ▸
+        phaseLine = truncateToWidth(phaseLine, width - indicatorWidth, "…") + COLLAPSED_INDICATOR;
+      } else {
+        phaseLine = phaseLine + COLLAPSED_INDICATOR;
+      }
+    }
+
+    lines.push(phaseLine);
+    nodes.push({ kind: "phase", dirName: phase.dirName });
+
+    // Skip plan lines for collapsed phases (D-07, D-08)
+    if (isCollapsed) {
+      continue;
+    }
 
     // Plans are only shown when width is sufficient (D-13)
     if (width >= MIN_WIDTH_FOR_PLANS) {
@@ -138,9 +193,10 @@ export function renderTreeLines(milestone: MilestoneNode, width: number): string
         const planPrefix = continuation + connector;
 
         lines.push(formatPlanLine(plan, planPrefix, width));
+        nodes.push({ kind: "plan", planId: plan.id });
       }
     }
   }
 
-  return lines;
+  return { lines, nodes };
 }
