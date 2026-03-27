@@ -26,9 +26,20 @@ export function getPriorSliceCompletionBlocker(
   const { milestone: targetMid, slice: targetSid } = parseUnitId(unitId);
   if (!targetMid || !targetSid) return null;
 
+  // Parallel worker isolation: when GSD_MILESTONE_LOCK is set, this worker
+  // is scoped to a single milestone. Skip the cross-milestone dependency
+  // check — other milestones are being handled by their own workers.
+  // Without this, the dispatch guard sees incomplete slices in M010/M011
+  // (cloned into the worktree DB) and blocks M012 from ever starting. #2797
+  const milestoneLock = process.env.GSD_MILESTONE_LOCK;
+
   // Use findMilestoneIds to respect custom queue order.
   // Only check milestones that come BEFORE the target in queue order.
-  const allIds = findMilestoneIds(base);
+  // When locked to a specific milestone, only check that milestone's
+  // intra-slice dependencies — skip all cross-milestone checks.
+  const allIds = milestoneLock && targetMid === milestoneLock
+    ? [targetMid]
+    : findMilestoneIds(base);
   const targetIdx = allIds.indexOf(targetMid);
   if (targetIdx < 0) return null;
   const milestoneIds = allIds.slice(0, targetIdx + 1);

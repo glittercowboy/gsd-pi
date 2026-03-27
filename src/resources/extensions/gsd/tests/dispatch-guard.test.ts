@@ -216,3 +216,50 @@ test("dispatch guard works without git repo", (t) => {
 
   assert.equal(getPriorSliceCompletionBlocker(repo, "main", "plan-slice", "M001/S02"), null);
 });
+
+test("dispatch guard skips cross-milestone check when GSD_MILESTONE_LOCK is set (#2797)", (t) => {
+  const repo = setupRepo();
+  t.after(() => {
+    delete process.env.GSD_MILESTONE_LOCK;
+    teardownRepo(repo);
+  });
+
+  mkdirSync(join(repo, ".gsd", "milestones", "M010"), { recursive: true });
+  mkdirSync(join(repo, ".gsd", "milestones", "M011"), { recursive: true });
+  mkdirSync(join(repo, ".gsd", "milestones", "M012"), { recursive: true });
+
+  // M010 and M011 have incomplete slices
+  insertMilestone({ id: "M010", title: "Analytics" });
+  insertSlice({ id: "S01", milestoneId: "M010", title: "Data Quality", status: "pending", depends: [], sequence: 1 });
+
+  insertMilestone({ id: "M011", title: "Builder Onboarding" });
+  insertSlice({ id: "S01", milestoneId: "M011", title: "Schema", status: "pending", depends: [], sequence: 1 });
+
+  insertMilestone({ id: "M012", title: "Shared Components" });
+  insertSlice({ id: "S01", milestoneId: "M012", title: "Foundation", status: "pending", depends: [], sequence: 1 });
+  insertSlice({ id: "S02", milestoneId: "M012", title: "Migrate Pages", status: "pending", depends: ["S01"], sequence: 2 });
+
+  writeFileSync(join(repo, ".gsd", "milestones", "M010", "M010-ROADMAP.md"), "# M010\n");
+  writeFileSync(join(repo, ".gsd", "milestones", "M011", "M011-ROADMAP.md"), "# M011\n");
+  writeFileSync(join(repo, ".gsd", "milestones", "M012", "M012-ROADMAP.md"), "# M012\n");
+
+  // Without lock: M012 blocked by M010's incomplete S01
+  delete process.env.GSD_MILESTONE_LOCK;
+  assert.match(
+    getPriorSliceCompletionBlocker(repo, "main", "execute-task", "M012/S01/T01") ?? "",
+    /earlier slice M010\/S01 is not complete/,
+  );
+
+  // With lock: M012 only checks its own intra-milestone deps — S01 has none, so unblocked
+  process.env.GSD_MILESTONE_LOCK = "M012";
+  assert.equal(
+    getPriorSliceCompletionBlocker(repo, "main", "execute-task", "M012/S01/T01"),
+    null,
+  );
+
+  // With lock: M012/S02 still blocked by M012/S01 (intra-milestone dep preserved)
+  assert.equal(
+    getPriorSliceCompletionBlocker(repo, "main", "execute-task", "M012/S02/T01"),
+    "Cannot dispatch execute-task M012/S02/T01: dependency slice M012/S01 is not complete.",
+  );
+});

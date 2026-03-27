@@ -131,14 +131,15 @@ describe("parallel-worker-monitoring", () => {
     assert.ok(!(5.01 < ceiling), "5.01 is over ceiling");
   });
 
-  it("worker spawn args include --mode json", () => {
-    // Verify the spawn command includes JSON mode for NDJSON output.
-    // We can't easily test the actual spawn, but we verify the args pattern.
-    const expectedArgs = ["--mode", "json", "--print", "/gsd auto"];
-    assert.ok(expectedArgs.includes("--mode"), "args include --mode");
-    assert.ok(expectedArgs.includes("json"), "args include json");
-    assert.ok(expectedArgs.indexOf("--mode") < expectedArgs.indexOf("json"),
-      "--mode comes before json");
+  it("worker spawn args use headless --json auto (#2792)", () => {
+    // Verify the spawn command uses headless mode (not --print which exits
+    // before auto-mode can run). See #2792.
+    const expectedArgs = ["headless", "--json", "auto"];
+    assert.ok(expectedArgs.includes("headless"), "args include headless");
+    assert.ok(expectedArgs.includes("--json"), "args include --json");
+    assert.ok(expectedArgs.includes("auto"), "args include auto");
+    assert.ok(expectedArgs.indexOf("headless") < expectedArgs.indexOf("auto"),
+      "headless comes before auto");
   });
 
   it("refreshWorkerStatuses restores persisted workers from disk", () => {
