@@ -287,9 +287,9 @@ describe('git-service', async () => {
 
 
   const tempDir = mkdtempSync(join(tmpdir(), "gsd-git-service-test-"));
-  run("git init -b main", tempDir);
-  run('git config user.name "Pi Test"', tempDir);
-  run('git config user.email "pi@example.com"', tempDir);
+  runGit(tempDir, ["init", "-b", "main"]);
+  runGit(tempDir, ["config", "user.name", "Pi Test"]);
+  runGit(tempDir, ["config", "user.email", "pi@example.com"]);
 
   // runGit should work on a valid repo
   const branch = runGit(tempDir, ["branch", "--show-current"]);
@@ -334,13 +334,13 @@ describe('git-service', async () => {
 
   function initTempRepo(): string {
     const dir = mkdtempSync(join(tmpdir(), "gsd-git-t02-"));
-    run("git init -b main", dir);
-    run('git config user.name "Pi Test"', dir);
-    run('git config user.email "pi@example.com"', dir);
+    runGit(dir, ["init", "-b", "main"]);
+    runGit(dir, ["config", "user.name", "Pi Test"]);
+    runGit(dir, ["config", "user.email", "pi@example.com"]);
     // Need an initial commit so HEAD exists
     createFile(dir, ".gitkeep", "");
-    run("git add -A", dir);
-    run('git commit -m "init"', dir);
+    runGit(dir, ["add", "-A"]);
+    runGit(dir, ["commit", "-m", "init"]);
     return dir;
   }
 
@@ -577,12 +577,12 @@ describe('git-service', async () => {
 
   function initBranchTestRepo(): string {
     const dir = mkdtempSync(join(tmpdir(), "gsd-git-t03-"));
-    run("git init -b main", dir);
-    run('git config user.name "Pi Test"', dir);
-    run('git config user.email "pi@example.com"', dir);
+    runGit(dir, ["init", "-b", "main"]);
+    runGit(dir, ["config", "user.name", "Pi Test"]);
+    runGit(dir, ["config", "user.email", "pi@example.com"]);
     createFile(dir, ".gitkeep", "");
-    run("git add -A", dir);
-    run('git commit -m "init"', dir);
+    runGit(dir, ["add", "-A"]);
+    runGit(dir, ["commit", "-m", "init"]);
     return dir;
   }
 
@@ -618,12 +618,12 @@ describe('git-service', async () => {
   {
     // master-only repo
     const repo = mkdtempSync(join(tmpdir(), "gsd-git-t03-master-"));
-    run("git init -b master", repo);
-    run('git config user.name "Pi Test"', repo);
-    run('git config user.email "pi@example.com"', repo);
+    runGit(repo, ["init", "-b", "master"]);
+    runGit(repo, ["config", "user.name", "Pi Test"]);
+    runGit(repo, ["config", "user.email", "pi@example.com"]);
     createFile(repo, ".gitkeep", "");
-    run("git add -A", repo);
-    run('git commit -m "init"', repo);
+    runGit(repo, ["add", "-A"]);
+    runGit(repo, ["commit", "-m", "init"]);
 
     const svc = new GitServiceImpl(repo);
     assert.deepStrictEqual(svc.getMainBranch(), "master", "getMainBranch returns master when only master exists");
@@ -1115,9 +1115,9 @@ describe('git-service', async () => {
   test('untrackRuntimeFiles', async () => {
     const { untrackRuntimeFiles } = await import("../gitignore.ts");
     const repo = mkdtempSync(join(tmpdir(), "gsd-untrack-"));
-    run("git init -b main", repo);
-    run("git config user.email test@test.com", repo);
-    run("git config user.name Test", repo);
+    runGit(repo, ["init", "-b", "main"]);
+    runGit(repo, ["config", "user.email", "test@test.com"]);
+    runGit(repo, ["config", "user.name", "Test"]);
 
     // Create and track runtime files (simulates pre-.gitignore state)
     mkdirSync(join(repo, ".gsd", "activity"), { recursive: true });
@@ -1128,8 +1128,8 @@ describe('git-service', async () => {
     writeFileSync(join(repo, ".gsd", "activity", "log.jsonl"), "{}");
     writeFileSync(join(repo, ".gsd", "runtime", "data.json"), "{}");
     writeFileSync(join(repo, "src.ts"), "code");
-    run("git add -A", repo);
-    run("git commit -m init", repo);
+    runGit(repo, ["add", "-A"]);
+    runGit(repo, ["commit", "-m", "init"]);
 
     // Precondition: runtime files are tracked
     const trackedBefore = run("git ls-files .gsd/", repo);
@@ -1164,11 +1164,12 @@ describe('git-service', async () => {
 
   test('smartStage excludes runtime files, allows milestone artifacts', () => {
     const repo = mkdtempSync(join(tmpdir(), "gsd-smart-stage-excludes-"));
-    run("git init -b main", repo);
-    run("git config user.email test@test.com", repo);
-    run("git config user.name Test", repo);
+    runGit(repo, ["init", "-b", "main"]);
+    runGit(repo, ["config", "user.email", "test@test.com"]);
+    runGit(repo, ["config", "user.name", "Test"]);
     writeFileSync(join(repo, "README.md"), "init");
-    run("git add -A && git commit -m init", repo);
+    runGit(repo, ["add", "-A"]);
+    runGit(repo, ["commit", "-m", "init"]);
 
     // Create .gsd/ runtime files + milestone artifacts + a normal source file
     mkdirSync(join(repo, ".gsd", "milestones", "M001"), { recursive: true });
