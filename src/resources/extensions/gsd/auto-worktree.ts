@@ -1518,7 +1518,7 @@ export function mergeMilestoneToMain(
       } else {
         // Non-.gsd conflicts remain — leave stash for manual resolution
         logWarning("reconcile", "Stash pop conflict on non-.gsd files after merge", {
-          files: nonGsdUU,
+          files: nonGsdUU.join(", "),
         });
       }
     }
