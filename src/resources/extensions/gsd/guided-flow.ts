@@ -517,8 +517,9 @@ export async function showDiscuss(
 
   const state = await deriveState(basePath);
 
-  // No active milestone — check for pending milestones to discuss instead
-  if (!state.activeMilestone) {
+  // No active milestone (or corrupted milestone with undefined id) —
+  // check for pending milestones to discuss instead
+  if (!state.activeMilestone?.id) {
     const pendingMilestones = state.registry.filter(m => m.status === "pending");
     if (pendingMilestones.length === 0) {
       ctx.ui.notify("No active milestone. Run /gsd to create one first.", "warning");
@@ -1043,7 +1044,7 @@ export async function showSmartEntry(
 
   const state = await deriveState(basePath);
 
-  if (!state.activeMilestone) {
+  if (!state.activeMilestone?.id) {
     // Guard: if a discuss session is already in flight, don't re-inject the prompt.
     // Both /gsd and /gsd auto reach this branch when no milestone exists yet.
     // Without this guard, every subsequent /gsd call overwrites pendingAutoStart

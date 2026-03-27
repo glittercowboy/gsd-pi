@@ -71,7 +71,7 @@ export async function handleQuery(basePath: string): Promise<QueryResult> {
 
   // Derive next dispatch action
   let next: QuerySnapshot['next']
-  if (!state.activeMilestone) {
+  if (!state.activeMilestone?.id) {
     next = {
       action: 'stop',
       reason: state.phase === 'complete' ? 'All milestones complete.' : state.nextAction,
