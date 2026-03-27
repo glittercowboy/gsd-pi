@@ -66,7 +66,11 @@ Plans:
   2. Pressing ? displays a help overlay listing all keybindings; pressing ? again or Esc dismisses it.
   3. Collapsing a parent node, then triggering a file-change refresh, leaves that node in its collapsed state — the user's expand/collapse choices are not reset by automatic refreshes.
   4. Deleting a phase directory that was previously collapsed causes no crash or visual corruption on the next refresh.
-**Plans**: TBD
+**Plans:** 2 plans
+
+Plans:
+- [ ] 05-01-PLAN.md — VisibleNode type, collapse-aware renderTreeLines, collapsed indicator (NAV-01, NAV-03)
+- [ ] 05-02-PLAN.md — Navigation state, key parsing, cursor highlight, help overlay, cursor-sticky refresh (NAV-01, NAV-02, NAV-03)
 
 ## Progress
 
@@ -75,7 +79,7 @@ Plans:
 | 2. Foundation | 3/3 | Complete   | 2026-03-27 |
 | 3. Core Renderer | 2/2 | Complete   | 2026-03-27 |
 | 4. Renderer Entry + Command Integration | 1/1 | Complete   | 2026-03-27 |
-| 5. Navigation | 0/? | Not started | — |
+| 5. Navigation | 0/2 | Planning | — |
 
 ---
 *Roadmap created: 2026-03-26 for milestone v1.1 GSD Watch*
