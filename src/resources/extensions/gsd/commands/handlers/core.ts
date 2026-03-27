@@ -26,6 +26,7 @@ export function showHelp(ctx: ExtensionCommandContext): void {
     "VISIBILITY",
     "  /gsd status         Show progress dashboard  (Ctrl+Alt+G)",
     "  /gsd visualize      Interactive 10-tab TUI (progress, timeline, deps, metrics, health, agent, changes, knowledge, captures, export)",
+    "  /gsd watch          Live tmux sidebar showing project progress",
     "  /gsd queue          Show queued/dispatched units and execution order",
     "  /gsd history        View execution history  [--cost] [--phase] [--model] [N]",
     "  /gsd changelog      Show categorized release notes  [version]",
@@ -215,6 +216,11 @@ export async function handleCoreCommand(trimmed: string, ctx: ExtensionCommandCo
   }
   if (trimmed === "setup" || trimmed.startsWith("setup ")) {
     await handleSetup(trimmed.replace(/^setup\s*/, "").trim(), ctx);
+    return true;
+  }
+  if (trimmed === "watch" || trimmed.startsWith("watch ")) {
+    const { handleWatch } = await import("../../watch/orchestrator.js");
+    await handleWatch(trimmed.replace(/^watch\s*/, "").trim(), ctx);
     return true;
   }
   return false;
