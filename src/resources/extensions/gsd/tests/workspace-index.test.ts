@@ -36,3 +36,25 @@ test("workspace index: indexes active milestone/slice/task and suggests commands
     rmSync(base, { recursive: true, force: true });
   }
 });
+
+test("workspace index exposes authoritative milestone status and validation verdict", async () => {
+  const base = mkdtempSync(join(tmpdir(), "gsd-workspace-index-status-test-"));
+  const gsd = join(base, ".gsd");
+  const mDir = join(gsd, "milestones", "M001");
+  const sDir = join(mDir, "slices", "S01");
+  mkdirSync(join(sDir, "tasks"), { recursive: true });
+
+  writeFileSync(join(mDir, "M001-ROADMAP.md"), `# M001: Demo Milestone\n\n## Slices\n- [x] **S01: Done Slice** \`risk:low\` \`depends:[]\`\n  > Demo works\n`);
+  writeFileSync(join(sDir, "S01-PLAN.md"), `# S01: Done Slice\n\n**Goal:** Demo\n**Demo:** Demo\n\n## Tasks\n- [x] **T01: Implement thing** \`est:10m\`\n  Done.\n`);
+  writeFileSync(join(sDir, "tasks", "T01-PLAN.md"), `# T01: Implement thing\n\n## Steps\n- done\n`);
+  writeFileSync(join(mDir, "M001-VALIDATION.md"), `---\nverdict: needs-attention\nremediation_round: 0\n---\n\n# Validation\nNeeds follow-up notes.\n`);
+  writeFileSync(join(mDir, "M001-SUMMARY.md"), `# M001: Demo Milestone Summary\n\nDone.\n`);
+
+  try {
+    const index = await indexWorkspace(base);
+    assert.equal(index.milestones[0]?.status, "complete");
+    assert.equal(index.milestones[0]?.validationVerdict, "needs-attention");
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});

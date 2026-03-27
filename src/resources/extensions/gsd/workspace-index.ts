@@ -13,6 +13,7 @@ import {
 import { deriveState } from "./state.js";
 import { milestoneIdSort, findMilestoneIds } from "./guided-flow.js";
 import type { RiskLevel } from "./types.js";
+import { extractVerdict, isValidMilestoneVerdict, type ValidationVerdict } from "./verdict-parser.js";
 import { getSliceBranchName, detectWorktreeName } from "./worktree.js";
 
 export interface WorkspaceTaskTarget {
@@ -42,6 +43,8 @@ export interface WorkspaceMilestoneTarget {
   id: string;
   title: string;
   roadmapPath?: string;
+  status: "complete" | "active" | "pending" | "parked";
+  validationVerdict?: ValidationVerdict;
   slices: WorkspaceSliceTarget[];
 }
 
@@ -69,6 +72,15 @@ function titleFromRoadmapHeader(content: string, fallbackId: string): string {
   // Parse the "# M001: Title" header directly
   const match = content.match(/^#\s+M\d+(?:-[a-z0-9]{6})?[^:]*:\s*(.+)/m);
   return match?.[1]?.trim() || fallbackId;
+}
+
+async function loadMilestoneValidationVerdict(basePath: string, milestoneId: string): Promise<ValidationVerdict | undefined> {
+  const validationPath = resolveMilestoneFile(basePath, milestoneId, "VALIDATION");
+  if (!validationPath) return undefined;
+  const validationContent = await loadFile(validationPath);
+  if (!validationContent) return undefined;
+  const verdict = extractVerdict(validationContent);
+  return verdict && isValidMilestoneVerdict(verdict) ? verdict : undefined;
 }
 
 async function indexSlice(basePath: string, milestoneId: string, sliceId: string, fallbackTitle: string, done: boolean, roadmapMeta?: { risk?: RiskLevel; depends?: string[]; demo?: string }): Promise<WorkspaceSliceTarget> {
@@ -138,6 +150,8 @@ export interface IndexWorkspaceOptions {
 export async function indexWorkspace(basePath: string, opts: IndexWorkspaceOptions = {}): Promise<GSDWorkspaceIndex> {
   const milestoneIds = findMilestoneIds(basePath);
   const milestones: WorkspaceMilestoneTarget[] = [];
+  const state = await deriveState(basePath);
+  const registryById = new Map(state.registry.map((entry) => [entry.id, entry]));
 
   for (const milestoneId of milestoneIds) {
     const roadmapPath = resolveMilestoneFile(basePath, milestoneId, "ROADMAP") ?? undefined;
@@ -181,10 +195,16 @@ export async function indexWorkspace(basePath: string, opts: IndexWorkspaceOptio
       }
     }
 
-    milestones.push({ id: milestoneId, title, roadmapPath, slices });
+    milestones.push({
+      id: milestoneId,
+      title,
+      roadmapPath,
+      status: registryById.get(milestoneId)?.status ?? "pending",
+      validationVerdict: await loadMilestoneValidationVerdict(basePath, milestoneId),
+      slices,
+    });
   }
 
-  const state = await deriveState(basePath);
   const active = {
     milestoneId: state.activeMilestone?.id,
     sliceId: state.activeSlice?.id,

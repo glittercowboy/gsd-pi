@@ -10,6 +10,10 @@ export function getMilestoneStatus(
   milestone: WorkspaceMilestoneTarget,
   active: { milestoneId?: string },
 ): ItemStatus {
+  if (milestone.status === "complete") return "done"
+  if (milestone.status === "active") return "in-progress"
+  if (milestone.status === "pending" || milestone.status === "parked") return "pending"
+
   if (milestone.slices.length > 0 && milestone.slices.every((slice) => slice.done)) {
     return "done"
   }
