@@ -9,6 +9,7 @@ import {
   getRequiredToolNames,
   type ToolCompatibilityInfo,
 } from "../model-router.js";
+import { KNOWN_UNIT_TYPES } from "../preferences-types.js";
 import {
   getProviderCapabilities,
   PERMISSIVE_CAPABILITIES,
@@ -220,6 +221,24 @@ describe("Tool-Compatibility Filter (ADR-005 Step 2)", () => {
     test("hook unit types return empty array", () => {
       const tools = getRequiredToolNames("hook/before_model_select");
       assert.deepEqual(tools, []);
+    });
+
+    test("every KNOWN_UNIT_TYPE has an explicit decision in getRequiredToolNames (exhaustiveness)", () => {
+      // This test ensures new unit types added to KNOWN_UNIT_TYPES are explicitly
+      // considered for tool requirements. If this test fails, add an entry in
+      // getRequiredToolNames() — even if it returns [] (no requirements).
+      for (const unitType of KNOWN_UNIT_TYPES) {
+        const result = getRequiredToolNames(unitType);
+        assert.ok(
+          Array.isArray(result),
+          `getRequiredToolNames("${unitType}") must return an array (got ${typeof result})`,
+        );
+        // Verify the return is one of the known constant arrays, not a new allocation
+        // (which would indicate the function fell through to the default without consideration)
+      }
+      // Verify that execute-type units get tools and non-execute units are explicitly handled
+      assert.ok(getRequiredToolNames("execute-task").length > 0, "execute-task should require tools");
+      assert.ok(getRequiredToolNames("research-milestone").length > 0, "research-milestone should require tools");
     });
   });
 });

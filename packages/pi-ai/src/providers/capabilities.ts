@@ -138,22 +138,35 @@ let lastOverrideInput: Record<string, Record<string, unknown>> | undefined | nul
  */
 export function setProviderCapabilityOverrides(
 	overrides: Record<string, Record<string, unknown>> | undefined,
-): void {
+): string[] {
 	// Skip reparse if same reference as last call
-	if (overrides === lastOverrideInput) return;
+	if (overrides === lastOverrideInput) return [];
 	lastOverrideInput = overrides;
 
 	if (!overrides) {
 		capabilityOverrides = {};
-		return;
+		return [];
 	}
 	const parsed: Record<string, Partial<ProviderCapabilities>> = {};
+	const warnings: string[] = [];
 	for (const [api, values] of Object.entries(overrides)) {
 		if (typeof values === "object" && values !== null) {
 			parsed[api] = values as Partial<ProviderCapabilities>;
+			// Warn if key doesn't match any known canonical or alias API
+			if (!PROVIDER_CAPABILITIES[api] && !API_VARIANT_ALIASES[api]) {
+				const knownApis = [
+					...Object.keys(PROVIDER_CAPABILITIES),
+					...Object.keys(API_VARIANT_ALIASES),
+				].join(", ");
+				warnings.push(
+					`provider_capabilities key "${api}" does not match any known provider API. ` +
+					`Known APIs: ${knownApis}. The override will apply only if a model uses this exact API string.`,
+				);
+			}
 		}
 	}
 	capabilityOverrides = parsed;
+	return warnings;
 }
 
 /**

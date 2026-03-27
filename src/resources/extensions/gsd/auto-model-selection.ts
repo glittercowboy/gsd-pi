@@ -73,7 +73,12 @@ export async function selectAndApplyModel(
   // ADR-005 Phase 6: Apply provider capability overrides from preferences.
   // Only update when prefs are available — preserve prior overrides when prefs are transiently undefined.
   if (prefs) {
-    setProviderCapabilityOverrides(prefs.provider_capabilities);
+    const overrideWarnings = setProviderCapabilityOverrides(prefs.provider_capabilities);
+    if (verbose && overrideWarnings.length > 0) {
+      for (const warn of overrideWarnings) {
+        ctx.ui.notify(warn, "warning");
+      }
+    }
   }
 
   const modelConfig = resolvePreferredModelConfig(unitType, autoModeStartModel);
