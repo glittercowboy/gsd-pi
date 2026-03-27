@@ -75,3 +75,12 @@ All 28 renderer-entry tests also pass after deviation fix.
 ## Known Stubs
 
 None — all new exports are fully implemented and tested.
+
+## Self-Check: PASSED
+
+- FOUND: src/resources/extensions/gsd/watch/tree-renderer.ts
+- FOUND: src/resources/extensions/gsd/tests/watch-tree-renderer.test.ts
+- FOUND: .planning/phases/05-navigation/05-01-SUMMARY.md
+- FOUND: aa73642f (test RED commit)
+- FOUND: 8d4af3a8 (feat GREEN commit)
+- FOUND: 9e541598 (fix deviation commit)
