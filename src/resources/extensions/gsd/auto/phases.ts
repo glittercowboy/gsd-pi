@@ -37,6 +37,15 @@ import { writeUnitRuntimeRecord } from "../unit-runtime.js";
 // ─── generateMilestoneReport ──────────────────────────────────────────────────
 
 /**
+ * Resolve the base path for milestone reports.
+ * Prefers originalBasePath (project root) over basePath (which may be a worktree).
+ * Exported for testing as _resolveReportBasePath.
+ */
+export function _resolveReportBasePath(s: Pick<AutoSession, "originalBasePath" | "basePath">): string {
+  return s.originalBasePath || s.basePath;
+}
+
+/**
  * Generate and write an HTML milestone report snapshot.
  * Extracted from the milestone-transition block in autoLoop.
  */
@@ -50,7 +59,7 @@ async function generateMilestoneReport(
   const { writeReportSnapshot } = await importExtensionModule<typeof import("../reports.js")>(import.meta.url, "../reports.js");
   const { basename } = await import("node:path");
 
-  const reportBasePath = s.originalBasePath || s.basePath;
+  const reportBasePath = _resolveReportBasePath(s);
 
   const snapData = await loadVisualizerData(reportBasePath);
   const completedMs = snapData.milestones.find(
