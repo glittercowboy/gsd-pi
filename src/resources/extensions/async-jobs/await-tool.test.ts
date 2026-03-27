@@ -20,6 +20,8 @@ test("await_job returns immediately when no running jobs exist", async () => {
 	const result = await tool.execute("tc1", {}, noopSignal, () => {}, undefined as never);
 	const text = getTextFromResult(result);
 	assert.match(text, /No running background jobs/);
+
+	manager.shutdown();
 });
 
 test("await_job returns immediately when all watched jobs are already completed", async () => {
@@ -36,6 +38,8 @@ test("await_job returns immediately when all watched jobs are already completed"
 	const text = getTextFromResult(result);
 	assert.match(text, /fast-job/);
 	assert.match(text, /completed/);
+
+	manager.shutdown();
 });
 
 test("await_job returns on timeout when jobs are still running", async () => {
