@@ -22,10 +22,10 @@
   2. Running `/gsd watch` inside tmux opens a right-side split pane at 35% of terminal width and the sidebar process is running in it.
   3. The sidebar process exits cleanly (no zombie, no orphan) when the user presses qq, Esc Esc, or Ctrl+C, and also when tmux kills the pane directly.
   4. Editing any file under `.planning/` triggers a sidebar refresh within 400ms; rapid sequential writes coalesce into a single refresh (no event flood).
-**Plans:** 3 plans
+**Plans:** 1/3 plans executed
 
 Plans:
-- [ ] 02-01-PLAN.md — Shared types and chokidar file watcher with coalescing debounce (DISP-03)
+- [x] 02-01-PLAN.md — Shared types and chokidar file watcher with coalescing debounce (DISP-03)
 - [ ] 02-02-PLAN.md — Tmux orchestrator, singleton guard, pane creation, and command registration (TMUX-01, TMUX-02)
 - [ ] 02-03-PLAN.md — Renderer entry subprocess with signal handling and quit key detection (TMUX-03)
 
@@ -65,7 +65,7 @@ Plans:
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 2. Foundation | 0/3 | Planning complete | — |
+| 2. Foundation | 1/3 | In Progress|  |
 | 3. Core Renderer | 0/? | Not started | — |
 | 4. Renderer Entry + Command Integration | 0/? | Not started | — |
 | 5. Navigation | 0/? | Not started | — |
