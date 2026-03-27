@@ -20,7 +20,7 @@ import {
   enterAutoWorktree,
   getAutoWorktreeOriginalBase,
   getActiveAutoWorktreeContext,
-} from "../auto-worktree.ts";
+} from "../../auto-worktree.ts";
 
 // Note: execSync is used intentionally in tests for git operations with
 // controlled, hardcoded inputs (no user input). This is safe and matches
@@ -150,7 +150,7 @@ describe("auto-worktree lifecycle", () => {
     run("git commit -m \"add milestone\"", tempDir);
 
     // Import createWorktree directly for manual worktree
-    const { createWorktree } = await import("../worktree-manager.ts");
+    const { createWorktree } = await import("../../worktree-manager.ts");
 
     // Create manual worktree (uses worktree/<name> branch)
     const manualWt = createWorktree(tempDir, "feature-x");
@@ -164,7 +164,7 @@ describe("auto-worktree lifecycle", () => {
 
     // Cleanup both
     teardownAutoWorktree(tempDir, "M003");
-    const { removeWorktree } = await import("../worktree-manager.ts");
+    const { removeWorktree } = await import("../../worktree-manager.ts");
     removeWorktree(tempDir, "feature-x");
   });
 
@@ -190,7 +190,7 @@ describe("auto-worktree lifecycle", () => {
     run("git add .", tempDir);
     run("git commit -m \"add milestone\"", tempDir);
 
-    const { GitServiceImpl } = await import("../git-service.ts");
+    const { GitServiceImpl } = await import("../../git-service.ts");
 
     // Create worktree
     const wtPath = createAutoWorktree(tempDir, "M005");
@@ -215,7 +215,7 @@ describe("auto-worktree lifecycle", () => {
     run("git commit -m \"add milestone\"", tempDir);
 
     // Simulate a crash leaving a stale directory with no .git file.
-    const { worktreePath } = await import("../worktree-manager.ts");
+    const { worktreePath } = await import("../../worktree-manager.ts");
     const staleDir = worktreePath(tempDir, "M010");
     mkdirSync(staleDir, { recursive: true });
     writeFileSync(join(staleDir, "orphan.txt"), "stale leftover\n");

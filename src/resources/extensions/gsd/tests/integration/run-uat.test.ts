@@ -5,9 +5,9 @@ import { join, dirname } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 
-import { extractUatType } from '../files.ts';
-import { resolveSliceFile } from '../paths.ts';
-import { checkNeedsRunUat } from '../auto-prompts.ts';
+import { extractUatType } from '../../files.ts';
+import { resolveSliceFile } from '../../paths.ts';
+import { checkNeedsRunUat } from '../../auto-prompts.ts';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const worktreePromptsDir = join(__dirname, '..', 'prompts');

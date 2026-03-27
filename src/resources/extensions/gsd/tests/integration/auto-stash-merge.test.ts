@@ -12,8 +12,8 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { execSync } from "node:child_process";
 
-import { createAutoWorktree, mergeMilestoneToMain } from "../auto-worktree.ts";
-import { nativeMergeSquash } from "../native-git-bridge.ts";
+import { createAutoWorktree, mergeMilestoneToMain } from "../../auto-worktree.ts";
+import { nativeMergeSquash } from "../../native-git-bridge.ts";
 
 function run(cmd: string, cwd: string): string {
   return execSync(cmd, { cwd, stdio: ["ignore", "pipe", "pipe"], encoding: "utf-8" }).trim();
@@ -88,7 +88,7 @@ test("#2151 bug 1: auto-stash unblocks merge when unrelated files are dirty", ()
 });
 
 test("#2151 bug 2: nativeMergeSquash returns dirty filenames", async () => {
-  const { nativeMergeSquash } = await import("../native-git-bridge.ts");
+  const { nativeMergeSquash } = await import("../../native-git-bridge.ts");
   const repo = createTempRepo();
   try {
     run("git checkout -b milestone/M210", repo);

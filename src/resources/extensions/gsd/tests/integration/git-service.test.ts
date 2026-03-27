@@ -20,8 +20,8 @@ import {
   type CommitOptions,
   type PreMergeCheckResult,
   type TaskCommitContext,
-} from "../git-service.ts";
-import { nativeAddAllWithExclusions } from "../native-git-bridge.ts";
+} from "../../git-service.ts";
+import { nativeAddAllWithExclusions } from "../../native-git-bridge.ts";
 function run(command: string, cwd: string): string {
   return execSync(command, { cwd, stdio: ["ignore", "pipe", "pipe"], encoding: "utf-8" }).trim();
 }
@@ -1113,7 +1113,7 @@ describe('git-service', async () => {
   // ─── untrackRuntimeFiles: removes tracked runtime files from index ───
 
   test('untrackRuntimeFiles', async () => {
-    const { untrackRuntimeFiles } = await import("../gitignore.ts");
+    const { untrackRuntimeFiles } = await import("../../gitignore.ts");
     const repo = mkdtempSync(join(tmpdir(), "gsd-untrack-"));
     runGit(repo, ["init", "-b", "main"]);
     runGit(repo, ["config", "user.email", "test@test.com"]);
@@ -1222,7 +1222,7 @@ describe('git-service', async () => {
   // ─── ensureGitignore: always adds .gsd to gitignore ──────────────────
 
   test('ensureGitignore: adds .gsd entry', async () => {
-    const { ensureGitignore } = await import("../gitignore.ts");
+    const { ensureGitignore } = await import("../../gitignore.ts");
     const repo = mkdtempSync(join(tmpdir(), "gsd-gitignore-external-state-"));
 
     // Should add .gsd to gitignore (external state dir is a symlink)

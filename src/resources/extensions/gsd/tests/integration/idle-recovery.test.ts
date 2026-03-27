@@ -7,7 +7,7 @@ import {
   writeBlockerPlaceholder,
   verifyExpectedArtifact,
   buildLoopRemediationSteps,
-} from "../auto-recovery.ts";
+} from "../../auto-recovery.ts";
 import { describe, test, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 
@@ -299,7 +299,7 @@ test('writeBlockerPlaceholder: updates DB task status for execute-task (#2531)',
   const base = createFixtureBase();
   try {
     const { openDatabase, closeDatabase, insertMilestone, insertSlice, insertTask, getTask, isDbAvailable } =
-      await import("../gsd-db.ts");
+      await import("../../gsd-db.ts");
 
     const dbPath = join(base, ".gsd", "gsd.db");
     // Create the tasks directory (required for artifact path resolution)
@@ -334,7 +334,7 @@ test('writeBlockerPlaceholder: does NOT update DB for non-execute-task types', a
   const base = createFixtureBase();
   try {
     const { openDatabase, closeDatabase, insertMilestone, insertSlice, getSlice, isDbAvailable } =
-      await import("../gsd-db.ts");
+      await import("../../gsd-db.ts");
 
     const dbPath = join(base, ".gsd", "gsd.db");
     mkdirSync(join(base, ".gsd", "milestones", "M001", "slices", "S01"), { recursive: true });

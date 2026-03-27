@@ -4,8 +4,8 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync, existsSync } from "node:
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
-import { runGSDDoctor } from "../doctor.js";
-import { formatDoctorReportJson } from "../doctor-format.js";
+import { runGSDDoctor } from "../../doctor.js";
+import { formatDoctorReportJson } from "../../doctor-format.js";
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
 function makeBase(): { base: string; gsd: string; mDir: string } {
@@ -230,7 +230,7 @@ describe('doctor-enhancements', async () => {
     const historyPath = join(gsd, "doctor-history.jsonl");
     assert.ok(existsSync(historyPath), "doctor-history.jsonl is created after run");
 
-    const { readDoctorHistory } = await import("../doctor.js");
+    const { readDoctorHistory } = await import("../../doctor.js");
     const history = await readDoctorHistory(base);
     assert.ok(history.length >= 1, "history has at least one entry");
     assert.ok(typeof history[0]?.ts === "string", "history entry has ts field");

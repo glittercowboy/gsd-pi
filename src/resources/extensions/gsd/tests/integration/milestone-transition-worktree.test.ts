@@ -24,7 +24,7 @@ import {
   isInAutoWorktree,
   getAutoWorktreeOriginalBase,
   mergeMilestoneToMain,
-} from "../auto-worktree.ts";
+} from "../../auto-worktree.ts";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 

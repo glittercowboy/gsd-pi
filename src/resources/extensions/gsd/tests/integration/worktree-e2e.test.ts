@@ -18,10 +18,10 @@ import { execSync } from "node:child_process";
 import {
   createAutoWorktree,
   mergeMilestoneToMain,
-} from "../auto-worktree.ts";
-import { getSliceBranchName } from "../worktree.ts";
-import { abortAndReset } from "../git-self-heal.ts";
-import { runGSDDoctor } from "../doctor.ts";
+} from "../../auto-worktree.ts";
+import { getSliceBranchName } from "../../worktree.ts";
+import { abortAndReset } from "../../git-self-heal.ts";
+import { runGSDDoctor } from "../../doctor.ts";
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 

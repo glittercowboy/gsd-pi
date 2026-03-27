@@ -20,7 +20,7 @@ import {
   runEnvironmentChecks,
   environmentResultsToDoctorIssues,
   checkEnvironmentHealth,
-} from "../doctor-environment.ts";
+} from "../../doctor-environment.ts";
 /** Create a directory tree with files. */
 function createDir(files: Record<string, string> = {}): string {
   const dir = mkdtempSync(join(tmpdir(), "gsd-wt-env-"));

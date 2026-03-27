@@ -26,10 +26,10 @@ import {
   createAutoWorktree,
   mergeMilestoneToMain,
   autoWorktreeBranch,
-} from "../auto-worktree.ts";
-import { captureIntegrationBranch, getSliceBranchName } from "../worktree.ts";
-import { writeIntegrationBranch, readIntegrationBranch } from "../git-service.ts";
-import { nextMilestoneId, generateMilestoneSuffix } from "../guided-flow.ts";
+} from "../../auto-worktree.ts";
+import { captureIntegrationBranch, getSliceBranchName } from "../../worktree.ts";
+import { writeIntegrationBranch, readIntegrationBranch } from "../../git-service.ts";
+import { nextMilestoneId, generateMilestoneSuffix } from "../../guided-flow.ts";
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 

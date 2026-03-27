@@ -10,14 +10,14 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync } from 'nod
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
-import { openDatabase, closeDatabase } from '../gsd-db.ts';
-import { migrateFromMarkdown } from '../md-importer.ts';
+import { openDatabase, closeDatabase } from '../../gsd-db.ts';
+import { migrateFromMarkdown } from '../../md-importer.ts';
 import {
   queryDecisions,
   queryRequirements,
   formatDecisionsForPrompt,
   formatRequirementsForPrompt,
-} from '../context-store.ts';
+} from '../../context-store.ts';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 

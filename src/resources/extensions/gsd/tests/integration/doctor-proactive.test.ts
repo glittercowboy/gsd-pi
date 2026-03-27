@@ -23,7 +23,7 @@ import {
   checkHealEscalation,
   resetProactiveHealing,
   formatHealthSummary,
-} from "../doctor-proactive.ts";
+} from "../../doctor-proactive.ts";
 function run(cmd: string, cwd: string): string {
   return execSync(cmd, { cwd, stdio: ["ignore", "pipe", "pipe"], encoding: "utf-8" }).trim();
 }

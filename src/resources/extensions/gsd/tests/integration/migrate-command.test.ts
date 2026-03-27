@@ -13,8 +13,8 @@ import {
   transformToGSD,
   generatePreview,
   writeGSDDirectory,
-} from '../migrate/index.ts';
-import { deriveState } from '../state.ts';
+} from '../../migrate/index.ts';
+import { deriveState } from '../../state.ts';
 import { describe, test, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 

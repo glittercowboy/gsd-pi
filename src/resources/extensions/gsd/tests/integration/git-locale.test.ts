@@ -12,9 +12,9 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { execFileSync } from "node:child_process";
 
-import { GIT_NO_PROMPT_ENV } from "../git-constants.ts";
-import { nativeAddAllWithExclusions } from "../native-git-bridge.ts";
-import { RUNTIME_EXCLUSION_PATHS } from "../git-service.ts";
+import { GIT_NO_PROMPT_ENV } from "../../git-constants.ts";
+import { nativeAddAllWithExclusions } from "../../native-git-bridge.ts";
+import { RUNTIME_EXCLUSION_PATHS } from "../../git-service.ts";
 function git(cwd: string, ...args: string[]): string {
   return execFileSync("git", args, { cwd, stdio: ["ignore", "pipe", "pipe"], encoding: "utf-8" }).trim();
 }

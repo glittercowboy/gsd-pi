@@ -26,7 +26,7 @@ import {
   formatEnvironmentReport,
   checkEnvironmentHealth,
   type EnvironmentCheckResult,
-} from "../doctor-environment.ts";
+} from "../../doctor-environment.ts";
 function createProjectDir(files: Record<string, string> = {}): string {
   const dir = mkdtempSync(join(tmpdir(), "gsd-env-test-"));
   for (const [name, content] of Object.entries(files)) {

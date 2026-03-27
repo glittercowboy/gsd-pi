@@ -10,7 +10,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { runGSDDoctor } from "../doctor.js";
+import { runGSDDoctor } from "../../doctor.js";
 
 test("doctor fix=true sanitizes em-dash in milestone title", async (t) => {
   const tmpBase = mkdtempSync(join(tmpdir(), "gsd-doctor-delim-"));

@@ -14,7 +14,7 @@ import assert from "node:assert/strict";
 import {
   abortAndReset,
   formatGitError,
-} from "../git-self-heal.js";
+} from "../../git-self-heal.js";
 
 // ─── Helpers ─────────────────────────────────────────────────────────
 

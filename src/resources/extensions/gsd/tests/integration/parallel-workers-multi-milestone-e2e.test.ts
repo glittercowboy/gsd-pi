@@ -26,12 +26,12 @@ import {
   getWorkerBatches,
   hasActiveWorkers,
   resetWorkerRegistry,
-} from '../../subagent/worker-registry.ts';
+} from '../../../subagent/worker-registry.ts';
 import {
   getBudgetAlertLevel,
   getNewBudgetAlertLevel,
   getBudgetEnforcementAction,
-} from '../auto-budget.ts';
+} from '../../auto-budget.ts';
 import {
   type UnitMetrics,
   type MetricsLedger,
@@ -42,7 +42,7 @@ import {
   formatCostProjection,
   getAverageCostPerUnitType,
   predictRemainingCost,
-} from '../metrics.ts';
+} from '../../metrics.ts';
 
 // ─── Fixture helpers ──────────────────────────────────────────────────────────
 

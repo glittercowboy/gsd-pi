@@ -15,9 +15,9 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
-import { buildExistingMilestonesContext } from "../guided-flow-queue.ts";
-import type { GSDState, MilestoneRegistryEntry } from "../types.ts";
-import { createTestContext } from "./test-helpers.ts";
+import { buildExistingMilestonesContext } from "../../guided-flow-queue.ts";
+import type { GSDState, MilestoneRegistryEntry } from "../../types.ts";
+import { createTestContext } from "../test-helpers.ts";
 
 const { assertTrue, assertEq, report } = createTestContext();
 

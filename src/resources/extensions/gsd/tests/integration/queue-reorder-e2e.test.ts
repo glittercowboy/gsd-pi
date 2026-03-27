@@ -17,10 +17,10 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync, existsSync
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
-import { deriveState, invalidateStateCache } from '../state.ts';
-import { findMilestoneIds } from '../guided-flow.ts';
-import { saveQueueOrder, loadQueueOrder } from '../queue-order.ts';
-import { parseContextDependsOn } from '../files.ts';
+import { deriveState, invalidateStateCache } from '../../state.ts';
+import { findMilestoneIds } from '../../guided-flow.ts';
+import { saveQueueOrder, loadQueueOrder } from '../../queue-order.ts';
+import { parseContextDependsOn } from '../../files.ts';
 // ─── Fixture Helpers ───────────────────────────────────────────────────────
 
 function createFixtureBase(): string {
@@ -298,7 +298,7 @@ test('E2E: DB-backed path respects queue order (#2556)', async () => {
     // the dispatch guard (which respects queue order) blocked completion.
     const base = createFixtureBase();
     try {
-      const { openDatabase, closeDatabase, insertMilestone, isDbAvailable } = await import('../gsd-db.ts');
+      const { openDatabase, closeDatabase, insertMilestone, isDbAvailable } = await import('../../gsd-db.ts');
       const dbPath = join(base, '.gsd', 'gsd.db');
 
       // Create milestone directories (required for findMilestoneIds)

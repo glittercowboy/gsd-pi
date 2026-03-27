@@ -14,8 +14,8 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { execSync } from "node:child_process";
 
-import { captureIntegrationBranch, getCurrentBranch } from "../worktree.ts";
-import { readIntegrationBranch, QUICK_BRANCH_RE } from "../git-service.ts";
+import { captureIntegrationBranch, getCurrentBranch } from "../../worktree.ts";
+import { readIntegrationBranch, QUICK_BRANCH_RE } from "../../git-service.ts";
 
 function run(command: string, cwd: string): string {
   return execSync(command, { cwd, stdio: ["ignore", "pipe", "pipe"], encoding: "utf-8" }).trim();
@@ -139,7 +139,7 @@ test('cleanupQuickBranch: merges back and cleans up (same session)', async () =>
     // Import and call cleanupQuickBranch
     // Use dynamic import to get a fresh module scope — the in-memory state
     // won't be set, so it will fall through to disk recovery
-    const { cleanupQuickBranch } = await import("../quick.ts");
+    const { cleanupQuickBranch } = await import("../../quick.ts");
     const result = cleanupQuickBranch();
 
     assert.ok(result, "cleanupQuickBranch returns true");
@@ -187,7 +187,7 @@ test('cleanupQuickBranch: recovers from disk state (cross-session)', async () =>
 
     process.chdir(repo);
 
-    const { cleanupQuickBranch } = await import("../quick.ts");
+    const { cleanupQuickBranch } = await import("../../quick.ts");
     const result = cleanupQuickBranch();
 
     assert.ok(result, "cross-session recovery returns true");
@@ -207,7 +207,7 @@ test('cleanupQuickBranch: no-op without pending state', async () => {
     const origCwd = process.cwd();
     process.chdir(repo);
 
-    const { cleanupQuickBranch } = await import("../quick.ts");
+    const { cleanupQuickBranch } = await import("../../quick.ts");
     const result = cleanupQuickBranch();
 
     assert.ok(!result, "returns false when no pending state");

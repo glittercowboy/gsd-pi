@@ -12,15 +12,15 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync, appendFile
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
-import { openDatabase, closeDatabase, isDbAvailable, _getAdapter } from '../gsd-db.ts';
-import { migrateFromMarkdown, parseDecisionsTable } from '../md-importer.ts';
+import { openDatabase, closeDatabase, isDbAvailable, _getAdapter } from '../../gsd-db.ts';
+import { migrateFromMarkdown, parseDecisionsTable } from '../../md-importer.ts';
 import {
   queryDecisions,
   queryRequirements,
   formatDecisionsForPrompt,
   formatRequirementsForPrompt,
-} from '../context-store.ts';
-import { saveDecisionToDb, generateDecisionsMd } from '../db-writer.ts';
+} from '../../context-store.ts';
+import { saveDecisionToDb, generateDecisionsMd } from '../../db-writer.ts';
 import { describe, test, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 

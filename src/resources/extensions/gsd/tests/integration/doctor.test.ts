@@ -4,7 +4,7 @@ import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync, existsSync
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
-import { formatDoctorReport, runGSDDoctor, summarizeDoctorIssues, filterDoctorIssues, selectDoctorScope, validateTitle } from "../doctor.js";
+import { formatDoctorReport, runGSDDoctor, summarizeDoctorIssues, filterDoctorIssues, selectDoctorScope, validateTitle } from "../../doctor.js";
 const tmpBase = mkdtempSync(join(tmpdir(), "gsd-doctor-test-"));
 const gsd = join(tmpBase, ".gsd");
 const mDir = join(gsd, "milestones", "M001");

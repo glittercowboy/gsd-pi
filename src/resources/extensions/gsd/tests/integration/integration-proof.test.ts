@@ -50,11 +50,11 @@ import {
   transaction,
   isDbAvailable,
   _getAdapter,
-} from "../gsd-db.ts";
+} from "../../gsd-db.ts";
 
 // ── Tool handlers ─────────────────────────────────────────────────────────
-import { handleCompleteTask } from "../tools/complete-task.ts";
-import { handleCompleteSlice } from "../tools/complete-slice.ts";
+import { handleCompleteTask } from "../../tools/complete-task.ts";
+import { handleCompleteSlice } from "../../tools/complete-slice.ts";
 
 // ── Markdown renderer ─────────────────────────────────────────────────────
 import {
@@ -63,32 +63,32 @@ import {
   renderAllFromDb,
   detectStaleRenders,
   repairStaleRenders,
-} from "../markdown-renderer.ts";
+} from "../../markdown-renderer.ts";
 
 // ── State derivation ──────────────────────────────────────────────────────
 import {
   deriveStateFromDb,
   _deriveStateImpl,
   invalidateStateCache,
-} from "../state.ts";
+} from "../../state.ts";
 
 // ── Auto-migration ───────────────────────────────────────────────────────
 import {
   migrateHierarchyToDb,
   migrateFromMarkdown,
-} from "../md-importer.ts";
+} from "../../md-importer.ts";
 
 // ── Post-unit diagnostics ─────────────────────────────────────────────────
-import { detectRogueFileWrites } from "../auto-post-unit.ts";
+import { detectRogueFileWrites } from "../../auto-post-unit.ts";
 
 // ── Doctor ────────────────────────────────────────────────────────────────
-import { runGSDDoctor } from "../doctor.ts";
+import { runGSDDoctor } from "../../doctor.ts";
 
 // ── Undo/reset ────────────────────────────────────────────────────────────
-import { handleUndoTask, handleResetSlice } from "../undo.ts";
+import { handleUndoTask, handleResetSlice } from "../../undo.ts";
 
 // ── Cache invalidation ───────────────────────────────────────────────────
-import { invalidateAllCaches } from "../cache.ts";
+import { invalidateAllCaches } from "../../cache.ts";
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Helpers
@@ -400,7 +400,7 @@ test("full lifecycle: migration through completion through doctor", async (t) =>
     writeFileSync(join(rogueDir, "T99-SUMMARY.md"), "# Rogue Summary\n", "utf-8");
 
     // Clear path cache so resolveTaskFile sees the newly written file
-    const { clearPathCache } = await import("../paths.ts");
+    const { clearPathCache } = await import("../../paths.ts");
     clearPathCache();
 
     const rogues = detectRogueFileWrites("execute-task", "M001/S01/T99", base);
@@ -458,7 +458,7 @@ test("recovery: DB loss → migrateFromMarkdown restores state, stale render det
     assert.equal(existsSync(dbPath), false, "DB file should be deleted");
 
     // Clear path caches so gsdRoot re-probes after DB deletion
-    const { clearPathCache: clearPaths } = await import("../paths.ts");
+    const { clearPathCache: clearPaths } = await import("../../paths.ts");
     clearPaths();
     invalidateAllCaches();
 

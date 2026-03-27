@@ -12,7 +12,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 
-import { computeBudgets } from "../context-budget.js";
+import { computeBudgets } from "../../context-budget.js";
 
 // ─── Pure threshold / pipeline tests ──────────────────────────────────────────
 // These test the budget engine outputs that the continue-here monitor relies on.
@@ -164,7 +164,7 @@ describe("continue-here", () => {
   describe("continueHereFired runtime record field", () => {
     it("AutoUnitRuntimeRecord includes continueHereFired with default false", async (t) => {
       // Import writeUnitRuntimeRecord to verify the field is present and defaults
-      const { writeUnitRuntimeRecord, readUnitRuntimeRecord, clearUnitRuntimeRecord } = await import("../unit-runtime.js");
+      const { writeUnitRuntimeRecord, readUnitRuntimeRecord, clearUnitRuntimeRecord } = await import("../../unit-runtime.js");
       const fs = await import("node:fs");
       const path = await import("node:path");
       const os = await import("node:os");
@@ -202,7 +202,7 @@ describe("continue-here", () => {
 
   describe("context-pressure monitor integration", () => {
     it("should fire wrap-up when context >= threshold and mark continueHereFired", async (t) => {
-      const { writeUnitRuntimeRecord, readUnitRuntimeRecord, clearUnitRuntimeRecord } = await import("../unit-runtime.js");
+      const { writeUnitRuntimeRecord, readUnitRuntimeRecord, clearUnitRuntimeRecord } = await import("../../unit-runtime.js");
       const fs = await import("node:fs");
       const path = await import("node:path");
       const os = await import("node:os");

@@ -11,8 +11,8 @@
 
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert';
-import { PluginImporter, type DiscoveryResult, type ImportManifest } from '../plugin-importer.js';
-import { getMarketplaceFixtures } from './marketplace-test-fixtures.js';
+import { PluginImporter, type DiscoveryResult, type ImportManifest } from '../../plugin-importer.js';
+import { getMarketplaceFixtures } from '../marketplace-test-fixtures.ts';
 
 // ============================================================================
 // Live Test Configuration

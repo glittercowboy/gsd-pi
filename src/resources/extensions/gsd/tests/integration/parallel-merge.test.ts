@@ -32,12 +32,12 @@ import {
   mergeAllCompleted,
   formatMergeResults,
   type MergeResult,
-} from "../parallel-merge.ts";
-import type { WorkerInfo } from "../parallel-orchestrator.ts";
+} from "../../parallel-merge.ts";
+import type { WorkerInfo } from "../../parallel-orchestrator.ts";
 import {
   writeSessionStatus,
   readSessionStatus,
-} from "../session-status-io.ts";
+} from "../../session-status-io.ts";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 

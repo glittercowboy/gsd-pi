@@ -21,9 +21,9 @@ import {
   createAutoWorktree,
   mergeMilestoneToMain,
   getAutoWorktreeOriginalBase,
-} from "../auto-worktree.ts";
-import { getSliceBranchName } from "../worktree.ts";
-import { nativeMergeSquash } from "../native-git-bridge.ts";
+} from "../../auto-worktree.ts";
+import { getSliceBranchName } from "../../worktree.ts";
+import { nativeMergeSquash } from "../../native-git-bridge.ts";
 
 function run(cmd: string, cwd: string): string {
   // Safe: all inputs are hardcoded test strings, not user input
@@ -329,7 +329,7 @@ describe("auto-worktree-milestone-merge", { timeout: 300_000 }, () => {
   });
 
   test("#1738 bug 1: nativeMergeSquash detects dirty working tree", async () => {
-    const { nativeMergeSquash } = await import("../native-git-bridge.ts");
+    const { nativeMergeSquash } = await import("../../native-git-bridge.ts");
     const repo = freshRepo();
 
     run("git checkout -b milestone/M070", repo);

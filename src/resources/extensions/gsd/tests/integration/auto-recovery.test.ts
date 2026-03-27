@@ -11,19 +11,19 @@ import {
   diagnoseExpectedArtifact,
   buildLoopRemediationSteps,
   hasImplementationArtifacts,
-} from "../auto-recovery.ts";
-import { parseRoadmap, parsePlan } from "../parsers-legacy.ts";
-import { parseTaskPlanFile, clearParseCache } from "../files.ts";
-import { invalidateAllCaches } from "../cache.ts";
-import { deriveState, invalidateStateCache } from "../state.ts";
+} from "../../auto-recovery.ts";
+import { parseRoadmap, parsePlan } from "../../parsers-legacy.ts";
+import { parseTaskPlanFile, clearParseCache } from "../../files.ts";
+import { invalidateAllCaches } from "../../cache.ts";
+import { deriveState, invalidateStateCache } from "../../state.ts";
 import {
   openDatabase,
   closeDatabase,
   insertMilestone,
   insertSlice,
   insertTask,
-} from "../gsd-db.ts";
-import { renderPlanFromDb } from "../markdown-renderer.ts";
+} from "../../gsd-db.ts";
+import { renderPlanFromDb } from "../../markdown-renderer.ts";
 
 function makeTmpBase(): string {
   const base = join(tmpdir(), `gsd-test-${randomUUID()}`);

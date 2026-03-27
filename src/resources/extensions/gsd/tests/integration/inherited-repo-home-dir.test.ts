@@ -24,7 +24,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { execFileSync } from "node:child_process";
 
-import { isInheritedRepo } from "../repo-identity.ts";
+import { isInheritedRepo } from "../../repo-identity.ts";
 
 function run(cmd: string, args: string[], cwd: string): string {
   return execFileSync(cmd, args, {

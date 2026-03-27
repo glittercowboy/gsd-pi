@@ -16,8 +16,8 @@ import assert from 'node:assert/strict';
 import { mkdirSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { getManifestStatus } from '../files.ts';
-import { collectSecretsFromManifest } from '../../get-secrets-from-user.ts';
+import { getManifestStatus } from '../../files.ts';
+import { collectSecretsFromManifest } from '../../../get-secrets-from-user.ts';
 
 function makeTempDir(prefix: string): string {
   const dir = join(tmpdir(), `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2)}`);

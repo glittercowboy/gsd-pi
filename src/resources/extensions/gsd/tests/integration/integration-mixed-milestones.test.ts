@@ -11,15 +11,15 @@ import { execSync } from 'node:child_process';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
-import { deriveState } from '../state.ts';
-import { indexWorkspace } from '../workspace-index.ts';
-import { inlinePriorMilestoneSummary } from '../files.ts';
-import { getPriorSliceCompletionBlocker } from '../dispatch-guard.ts';
+import { deriveState } from '../../state.ts';
+import { indexWorkspace } from '../../workspace-index.ts';
+import { inlinePriorMilestoneSummary } from '../../files.ts';
+import { getPriorSliceCompletionBlocker } from '../../dispatch-guard.ts';
 import {
   getSliceBranchName,
   parseSliceBranch,
-} from '../worktree.ts';
-import { clearPathCache } from '../paths.ts';
+} from '../../worktree.ts';
+import { clearPathCache } from '../../paths.ts';
 import { describe, test, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 
