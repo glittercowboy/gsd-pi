@@ -66,6 +66,10 @@ function makeTmpBase(): string {
   return base;
 }
 
+function rmTreeRobust(path: string): void {
+  rmSync(path, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+}
+
 function run(command: string, cwd: string): string {
   return execSync(command, { cwd, stdio: ["ignore", "pipe", "pipe"], encoding: "utf-8" }).trim();
 }
@@ -422,8 +426,8 @@ describe("parallel-orchestrator: lifecycle", () => {
     } finally {
       process.env.GSD_BIN_PATH = originalBinPath;
       resetOrchestrator();
-      rmSync(repo, { recursive: true, force: true });
-      rmSync(loaderRoot, { recursive: true, force: true });
+      rmTreeRobust(repo);
+      rmTreeRobust(loaderRoot);
     }
   });
 
