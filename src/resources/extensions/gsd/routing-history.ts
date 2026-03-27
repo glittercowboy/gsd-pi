@@ -1,11 +1,13 @@
 // GSD Extension — Routing History (Adaptive Learning)
 // Tracks success/failure per tier per unit-type pattern to improve
 // classification accuracy over time.
+// Copyright (c) 2026 Jeremy McSpadden <jeremy@fluxlabs.net>
 
 import { join } from "node:path";
 import { gsdRoot } from "./paths.js";
 import type { ComplexityTier } from "./types.js";
 import { loadJsonFile, saveJsonFile } from "./json-persistence.js";
+import type { ProviderSwitchReport } from "@gsd/pi-ai";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -26,8 +28,16 @@ export interface RoutingHistoryData {
   patterns: Record<string, PatternHistory>;
   /** User feedback entries (from /gsd:rate-unit) */
   feedback: FeedbackEntry[];
+  /** Recent provider switch reports (ADR-005) */
+  switchReports?: ProviderSwitchReportEntry[];
   /** Last updated timestamp */
   updatedAt: string;
+}
+
+export interface ProviderSwitchReportEntry {
+  unitType: string;
+  report: ProviderSwitchReport;
+  timestamp: string;
 }
 
 export interface FeedbackEntry {
@@ -81,6 +91,7 @@ export function recordOutcome(
   tier: ComplexityTier,
   success: boolean,
   tags?: string[],
+  switchReport?: ProviderSwitchReport,
 ): void {
   if (!history) return;
 
@@ -112,6 +123,20 @@ export function recordOutcome(
         p[t].success = Math.round(p[t].success * scale);
         p[t].fail = Math.round(p[t].fail * scale);
       }
+    }
+  }
+
+  // Store provider switch report if present (ADR-005)
+  if (switchReport) {
+    if (!history.switchReports) history.switchReports = [];
+    history.switchReports.push({
+      unitType,
+      report: switchReport,
+      timestamp: new Date().toISOString(),
+    });
+    // Cap at 50 entries
+    if (history.switchReports.length > 50) {
+      history.switchReports = history.switchReports.slice(-50);
     }
   }
 

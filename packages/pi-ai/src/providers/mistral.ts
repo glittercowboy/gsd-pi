@@ -79,7 +79,7 @@ export const streamMistral: StreamFunction<"mistral-conversations", MistralOptio
 			});
 
 			const normalizeMistralToolCallId = createMistralToolCallIdNormalizer();
-			const transformedMessages = transformMessages(context.messages, model, (id) => normalizeMistralToolCallId(id));
+			const { messages: transformedMessages } = transformMessages(context.messages, model, (id) => normalizeMistralToolCallId(id));
 
 			let payload = buildChatPayload(model, context, transformedMessages, options);
 			const nextPayload = await options?.onPayload?.(payload, model);

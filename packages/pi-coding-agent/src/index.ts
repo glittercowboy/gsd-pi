@@ -118,6 +118,7 @@ export type {
 	SlashCommandSource,
 	TerminalInputHandler,
 	ToolCallEvent,
+	ToolCompatibility,
 	ToolDefinition,
 	ToolInfo,
 	SortResult,

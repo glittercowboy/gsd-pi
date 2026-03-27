@@ -332,6 +332,19 @@ export interface ToolRenderResultOptions {
 }
 
 /**
+ * Optional compatibility metadata for tool definitions.
+ * Tools without this metadata are assumed universally compatible (no filtering).
+ */
+export interface ToolCompatibility {
+	/** Tool requires image content in results */
+	producesImages?: boolean;
+	/** Tool requires schema features that some providers don't support */
+	schemaFeatures?: string[];
+	/** Tool is effective only with models above a minimum capability threshold */
+	minCapabilityTier?: "light" | "standard" | "heavy";
+}
+
+/**
  * Tool definition for registerTool().
  */
 export interface ToolDefinition<TParams extends TSchema = TSchema, TDetails = unknown> {
@@ -356,6 +369,11 @@ export interface ToolDefinition<TParams extends TSchema = TSchema, TDetails = un
 		onUpdate: AgentToolUpdateCallback<TDetails> | undefined,
 		ctx: ExtensionContext,
 	): Promise<AgentToolResult<TDetails>>;
+
+	/** Optional provider compatibility metadata. Tools without this are universally compatible. */
+	compatibility?: ToolCompatibility;
+	/** Priority for tool pruning when exceeding maxTools (1-10, higher = keep). Defaults to 1. */
+	priority?: number;
 
 	/** Custom rendering for tool call display */
 	renderCall?: (args: Static<TParams>, theme: Theme) => Component | undefined;
@@ -1348,8 +1366,8 @@ export interface ExtensionShortcut {
 
 type HandlerFn = (...args: unknown[]) => Promise<unknown>;
 
-/** Tool info with name, description, and parameter schema */
-export type ToolInfo = Pick<ToolDefinition, "name" | "description" | "parameters">;
+/** Tool info with name, description, parameter schema, and optional compatibility metadata */
+export type ToolInfo = Pick<ToolDefinition, "name" | "description" | "parameters" | "compatibility" | "priority">;
 
 /**
  * Shared state created by loader, used during registration and runtime.

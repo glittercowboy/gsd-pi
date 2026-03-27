@@ -441,7 +441,7 @@ export function convertMessages(
 		return id;
 	};
 
-	const transformedMessages = transformMessages(context.messages, model, (id) => normalizeToolCallId(id));
+	const { messages: transformedMessages } = transformMessages(context.messages, model, (id) => normalizeToolCallId(id));
 
 	if (context.systemPrompt) {
 		const useDeveloperRole = model.reasoning && compat.supportsDeveloperRole;

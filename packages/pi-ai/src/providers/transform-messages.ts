@@ -1,17 +1,49 @@
 import type { Api, AssistantMessage, Message, Model, ToolCall, ToolResultMessage } from "../types.js";
 
 /**
+ * Report of transformations applied during a cross-provider message conversion.
+ * Only emitted when fromApi !== toApi. See ADR-005.
+ */
+export interface ProviderSwitchReport {
+	fromApi: string;
+	toApi: string;
+	thinkingBlocksDropped: number;
+	thinkingBlocksDowngraded: number;
+	toolCallIdsRemapped: number;
+	syntheticToolResultsInserted: number;
+	thoughtSignaturesDropped: number;
+}
+
+export interface TransformResult {
+	messages: Message[];
+	switchReport?: ProviderSwitchReport;
+}
+
+/**
  * Normalize tool call ID for cross-provider compatibility.
  * OpenAI Responses API generates IDs that are 450+ chars with special characters like `|`.
  * Anthropic APIs require IDs matching ^[a-zA-Z0-9_-]+$ (max 64 chars).
+ *
+ * Returns transformed messages and an optional ProviderSwitchReport when
+ * cross-provider transformations are detected.
  */
 export function transformMessages<TApi extends Api>(
 	messages: Message[],
 	model: Model<TApi>,
 	normalizeToolCallId?: (id: string, model: Model<TApi>, source: AssistantMessage) => string,
-): Message[] {
+): TransformResult {
 	// Build a map of original tool call IDs to normalized IDs
 	const toolCallIdMap = new Map<string, string>();
+
+	// ADR-005: Track cross-provider transformation counts for ProviderSwitchReport.
+	// Detect if ANY message comes from a different provider/api — if so, we're in a switch scenario.
+	let hasCrossProviderMessages = false;
+	let thinkingBlocksDropped = 0;
+	let thinkingBlocksDowngraded = 0;
+	let toolCallIdsRemapped = 0;
+	let thoughtSignaturesDropped = 0;
+	let syntheticToolResultsInserted = 0;
+	let crossProviderFromApi: string | undefined;
 
 	// First pass: transform messages (thinking blocks, tool call ID normalization)
 	const transformed = messages.map((msg) => {
@@ -37,11 +69,18 @@ export function transformMessages<TApi extends Api>(
 				assistantMsg.api === model.api &&
 				assistantMsg.model === model.id;
 
+			// Track cross-provider source for the report
+			if (!isSameModel && assistantMsg.api && assistantMsg.api !== model.api) {
+				hasCrossProviderMessages = true;
+				if (!crossProviderFromApi) crossProviderFromApi = assistantMsg.api;
+			}
+
 			const transformedContent = assistantMsg.content.flatMap((block) => {
 				if (block.type === "thinking") {
 					// Redacted thinking is opaque encrypted content, only valid for the same model.
 					// Drop it for cross-model to avoid API errors.
 					if (block.redacted) {
+						if (!isSameModel) thinkingBlocksDropped++;
 						return isSameModel ? block : [];
 					}
 					// For same model: keep thinking blocks with signatures (needed for replay)
@@ -50,6 +89,7 @@ export function transformMessages<TApi extends Api>(
 					// Skip empty thinking blocks, convert others to plain text
 					if (!block.thinking || block.thinking.trim() === "") return [];
 					if (isSameModel) return block;
+					thinkingBlocksDowngraded++;
 					return {
 						type: "text" as const,
 						text: block.thinking,
@@ -69,6 +109,7 @@ export function transformMessages<TApi extends Api>(
 					let normalizedToolCall: ToolCall = toolCall;
 
 					if (!isSameModel && toolCall.thoughtSignature) {
+						thoughtSignaturesDropped++;
 						normalizedToolCall = { ...toolCall };
 						delete (normalizedToolCall as { thoughtSignature?: string }).thoughtSignature;
 					}
@@ -76,6 +117,7 @@ export function transformMessages<TApi extends Api>(
 					if (!isSameModel && normalizeToolCallId) {
 						const normalizedId = normalizeToolCallId(toolCall.id, model, assistantMsg);
 						if (normalizedId !== toolCall.id) {
+							toolCallIdsRemapped++;
 							toolCallIdMap.set(toolCall.id, normalizedId);
 							normalizedToolCall = { ...normalizedToolCall, id: normalizedId };
 						}
@@ -109,6 +151,7 @@ export function transformMessages<TApi extends Api>(
 			if (pendingToolCalls.length > 0) {
 				for (const tc of pendingToolCalls) {
 					if (!existingToolResultIds.has(tc.id)) {
+						syntheticToolResultsInserted++;
 						result.push({
 							role: "toolResult",
 							toolCallId: tc.id,
@@ -149,6 +192,7 @@ export function transformMessages<TApi extends Api>(
 			if (pendingToolCalls.length > 0) {
 				for (const tc of pendingToolCalls) {
 					if (!existingToolResultIds.has(tc.id)) {
+						syntheticToolResultsInserted++;
 						result.push({
 							role: "toolResult",
 							toolCallId: tc.id,
@@ -168,5 +212,19 @@ export function transformMessages<TApi extends Api>(
 		}
 	}
 
-	return result;
+	// Build the switch report only when cross-provider transformations occurred (ADR-005 Pitfall 7)
+	let switchReport: ProviderSwitchReport | undefined;
+	if (hasCrossProviderMessages && crossProviderFromApi) {
+		switchReport = {
+			fromApi: crossProviderFromApi,
+			toApi: model.api,
+			thinkingBlocksDropped,
+			thinkingBlocksDowngraded,
+			toolCallIdsRemapped,
+			syntheticToolResultsInserted,
+			thoughtSignaturesDropped,
+		};
+	}
+
+	return { messages: result, switchReport };
 }

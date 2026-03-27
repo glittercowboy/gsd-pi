@@ -235,7 +235,7 @@ export function convertMessages(
 ): MessageParam[] {
 	const params: MessageParam[] = [];
 
-	const transformedMessages = transformMessages(messages, model, normalizeToolCallId);
+	const { messages: transformedMessages } = transformMessages(messages, model, normalizeToolCallId);
 
 	for (let i = 0; i < transformedMessages.length; i++) {
 		const msg = transformedMessages[i];

@@ -10,15 +10,29 @@ import type { GSDPreferences } from "./preferences.js";
 import { resolveModelWithFallbacksForUnit, resolveDynamicRoutingConfig } from "./preferences.js";
 import type { ComplexityTier } from "./complexity-classifier.js";
 import { classifyUnitComplexity, tierLabel, extractTaskMetadata } from "./complexity-classifier.js";
-import { resolveModelForComplexity, escalateTier } from "./model-router.js";
+import {
+  resolveModelForComplexity,
+  escalateTier,
+  getRequiredToolNames,
+  filterModelsByToolCompatibility,
+  type ToolCompatibilityInfo,
+} from "./model-router.js";
 import { getLedger, getProjectTotals } from "./metrics.js";
 import { unitPhaseLabel } from "./auto-dashboard.js";
+import { getProviderCapabilities, type ProviderCapabilities } from "@gsd/pi-ai";
+import { isToolCompatibleWithProvider } from "./model-router.js";
 
 export interface ModelSelectionResult {
   /** Routing metadata for metrics recording */
   routing: { tier: string; modelDowngraded: boolean } | null;
   /** Concrete model applied before dispatch so it can be restored after a fresh session. */
   appliedModel: Model<Api> | null;
+  /**
+   * Prior active tools saved before adjustToolSet filtering.
+   * Caller MUST restore these in a finally block after dispatch to prevent session drift.
+   * Undefined when no tool adjustment was applied.
+   */
+  priorTools?: string[];
 }
 
 export function resolvePreferredModelConfig(
@@ -112,8 +126,38 @@ export async function selectAndApplyModel(
           ? extractTaskMetadata(unitId, basePath)
           : undefined;
 
+        // ADR-005 Step 2: Filter models by tool compatibility BEFORE scoring.
+        // Build a lookup from model ID → API string for the compatibility filter.
+        const modelApiLookup: Record<string, string> = {};
+        for (const m of availableModels) {
+          modelApiLookup[m.id] = m.api;
+        }
+
+        // Get required tools for this unit type, enriched with compatibility metadata
+        const requiredToolNames = getRequiredToolNames(unitType);
+        const allToolInfos = pi.getAllTools();
+        const requiredTools: ToolCompatibilityInfo[] = requiredToolNames
+          .map(name => {
+            const toolInfo = allToolInfos.find(t => t.name === name);
+            return toolInfo ? { name: toolInfo.name, compatibility: (toolInfo as any).compatibility } : { name };
+          });
+
+        const compatibleModelIds = filterModelsByToolCompatibility(
+          availableModelIds,
+          requiredTools,
+          modelApiLookup,
+        );
+
+        if (verbose && compatibleModelIds.length < availableModelIds.length) {
+          const filtered = availableModelIds.length - compatibleModelIds.length;
+          ctx.ui.notify(
+            `Tool compatibility: filtered ${filtered} model(s) incompatible with ${unitType} tools`,
+            "info",
+          );
+        }
+
         const routingResult = resolveModelForComplexity(
-          classification, modelConfig, routingConfig, availableModelIds,
+          classification, modelConfig, routingConfig, compatibleModelIds,
           unitType, taskMeta,
         );
 
@@ -165,6 +209,25 @@ export async function selectAndApplyModel(
           : ` (fallback from ${effectiveModelConfig.primary})`;
         const phase = unitPhaseLabel(unitType);
         ctx.ui.notify(`Model [${phase}]${routingTierLabel}: ${model.provider}/${model.id}${fallbackNote}`, "info");
+
+        // ADR-005: Adjust tool set for selected model's provider capabilities.
+        // Save prior tools so caller can restore after dispatch (prevents session drift).
+        const modelApi = (model as any).api as string | undefined;
+        if (modelApi) {
+          const priorToolNames = pi.getActiveTools();
+          const providerCaps = getProviderCapabilities(modelApi);
+          const allTools = pi.getAllTools();
+          const adjusted = adjustToolSet(allTools, providerCaps);
+          if (adjusted.length < allTools.length) {
+            pi.setActiveTools(adjusted.map(t => t.name));
+            if (verbose) {
+              const removed = allTools.length - adjusted.length;
+              ctx.ui.notify(`Tool adjustment: ${removed} tool(s) filtered for ${modelApi}`, "info");
+            }
+            return { routing, priorTools: priorToolNames };
+          }
+        }
+
         break;
       } else {
         const nextModel = modelsToTry[modelsToTry.indexOf(modelId) + 1];
@@ -197,6 +260,35 @@ export async function selectAndApplyModel(
   }
 
   return { routing, appliedModel };
+}
+
+/**
+ * Filter the active tool set based on provider capabilities.
+ * Pure function — does not call pi API, returns filtered tool list.
+ *
+ * - Tools without compatibility metadata always pass (fail-open)
+ * - Tools with producesImages that the provider can't handle are removed
+ * - Tools with unsupported schema features are removed
+ * - If maxTools exceeded, lowest-priority tools are pruned
+ */
+export function adjustToolSet(
+  registeredTools: Array<{ name: string; compatibility?: { producesImages?: boolean; schemaFeatures?: string[] }; priority?: number }>,
+  providerCaps: ProviderCapabilities,
+): Array<{ name: string; compatibility?: { producesImages?: boolean; schemaFeatures?: string[] }; priority?: number }> {
+  let filtered = registeredTools.filter(tool => {
+    return isToolCompatibleWithProvider(
+      { name: tool.name, compatibility: tool.compatibility as any },
+      providerCaps,
+    );
+  });
+
+  // Prune if exceeding maxTools (0 = unlimited)
+  if (providerCaps.maxTools > 0 && filtered.length > providerCaps.maxTools) {
+    filtered.sort((a, b) => (b.priority ?? 1) - (a.priority ?? 1));
+    filtered = filtered.slice(0, providerCaps.maxTools);
+  }
+
+  return filtered;
 }
 
 /**

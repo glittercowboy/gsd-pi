@@ -12,6 +12,8 @@ export * from "./providers/google-vertex.js";
 export * from "./providers/mistral.js";
 export * from "./providers/openai-completions.js";
 export * from "./providers/openai-responses.js";
+export * from "./providers/capabilities.js";
+export type { ProviderSwitchReport, TransformResult } from "./providers/transform-messages.js";
 export * from "./providers/register-builtins.js";
 export * from "./stream.js";
 export * from "./types.js";
