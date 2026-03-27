@@ -2,6 +2,7 @@ import type { DaemonConfig, ProjectInfo } from './types.js';
 import type { Logger } from './logger.js';
 import { SessionManager } from './session-manager.js';
 import { scanForProjects } from './project-scanner.js';
+import { DiscordBot, validateDiscordConfig } from './discord-bot.js';
 
 /**
  * Core daemon class — ties config + logger together with lifecycle management.
@@ -13,6 +14,7 @@ export class Daemon {
   private readonly onSigterm: () => void;
   private readonly onSigint: () => void;
   private sessionManager: SessionManager | undefined;
+  private discordBot: DiscordBot | undefined;
 
   constructor(
     private readonly config: DaemonConfig,
@@ -38,6 +40,25 @@ export class Daemon {
     // Keep the event loop alive. The write stream alone doesn't hold a ref
     // when there's no pending I/O, so we need an explicit timer.
     this.keepaliveTimer = setInterval(() => {}, 60_000);
+
+    // Conditionally start Discord bot if config is present and valid
+    if (this.config.discord?.token) {
+      try {
+        validateDiscordConfig(this.config.discord);
+        this.discordBot = new DiscordBot({
+          config: this.config.discord,
+          logger: this.logger,
+          sessionManager: this.sessionManager,
+        });
+        await this.discordBot.login();
+      } catch (err) {
+        // Log error but don't abort daemon startup — bot is optional
+        this.logger.error('discord bot login failed', {
+          error: err instanceof Error ? err.message : String(err),
+        });
+        this.discordBot = undefined;
+      }
+    }
   }
 
   /** Scan configured project roots for project directories. */
@@ -68,6 +89,12 @@ export class Daemon {
     if (this.keepaliveTimer) {
       clearInterval(this.keepaliveTimer);
       this.keepaliveTimer = undefined;
+    }
+
+    // Destroy Discord bot before session cleanup
+    if (this.discordBot) {
+      await this.discordBot.destroy();
+      this.discordBot = undefined;
     }
 
     // Clean up active sessions before closing logger
