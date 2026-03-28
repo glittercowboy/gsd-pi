@@ -89,6 +89,7 @@ import { ToolExecutionComponent } from "./components/tool-execution.js";
 import { TreeSelectorComponent } from "./components/tree-selector.js";
 import { UserMessageComponent } from "./components/user-message.js";
 import { UserMessageSelectorComponent } from "./components/user-message-selector.js";
+import { replaceClipboardImageMarkers } from "./clipboard-markers.js";
 import { type SlashCommandContext, dispatchSlashCommand, getAppKeyDisplay } from "./slash-command-handlers.js";
 import { handleAgentEvent } from "./controllers/chat-controller.js";
 import { createExtensionUIContext as buildExtensionUIContext } from "./controllers/extension-ui-controller.js";
@@ -214,6 +215,10 @@ export class InteractiveMode {
 	// Auto-compaction state
 	private autoCompactionLoader: Loader | undefined = undefined;
 	private autoCompactionEscapeHandler?: () => void;
+
+	// Clipboard image tracking: display [image #N] in editor, expand to path on submit
+	private clipboardImages = new Map<number, string>();
+	private clipboardImageCounter = 0;
 
 	// Auto-retry state
 	private retryLoader: Loader | undefined = undefined;
@@ -592,7 +597,7 @@ export class InteractiveMode {
 
 		// Main interactive loop
 		while (true) {
-			const userInput = await this.getUserInput();
+			const userInput = this.consumeClipboardImageMarkers(await this.getUserInput());
 			try {
 				await this.session.prompt(userInput);
 			} catch (error: unknown) {
@@ -1945,12 +1950,28 @@ export class InteractiveMode {
 			const filePath = path.join(tmpDir, fileName);
 			fs.writeFileSync(filePath, Buffer.from(image.bytes));
 
-			// Insert file path directly
-			this.editor.insertTextAtCursor?.(filePath);
+			// Track the image and insert a short marker instead of the full path
+			this.clipboardImageCounter++;
+			const imageId = this.clipboardImageCounter;
+			this.clipboardImages.set(imageId, filePath);
+
+			this.editor.insertTextAtCursor?.(`[image #${imageId}]`);
 			this.ui.requestRender();
 		} catch {
 			// Silently ignore clipboard errors (may not have permission, etc.)
 		}
+	}
+
+	/**
+	 * Expand [image #N] markers back to file paths before sending to the model.
+	 * Clears tracked images after expansion.
+	 */
+	private consumeClipboardImageMarkers(text: string): string {
+		if (this.clipboardImages.size === 0) return text;
+		const result = replaceClipboardImageMarkers(text, this.clipboardImages);
+		this.clipboardImages.clear();
+		this.clipboardImageCounter = 0;
+		return result;
 	}
 
 	private getSlashCommandContext(): SlashCommandContext {
@@ -2363,8 +2384,9 @@ export class InteractiveMode {
 	}
 
 	private async handleFollowUp(): Promise<void> {
-		const text = (this.editor.getExpandedText?.() ?? this.editor.getText()).trim();
-		if (!text) return;
+		const rawText = (this.editor.getExpandedText?.() ?? this.editor.getText()).trim();
+		if (!rawText) return;
+		const text = this.consumeClipboardImageMarkers(rawText);
 
 		// Queue input during compaction (extension commands execute immediately)
 		if (this.session.isCompacting) {

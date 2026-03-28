@@ -18,6 +18,15 @@ function isPidAlive(pid: number | undefined): boolean {
 	}
 }
 
+async function waitFor(predicate: () => boolean, timeoutMs: number, intervalMs = 50): Promise<boolean> {
+	const deadline = Date.now() + timeoutMs;
+	while (Date.now() < deadline) {
+		if (predicate()) return true;
+		await new Promise((resolve) => setTimeout(resolve, intervalMs));
+	}
+	return predicate();
+}
+
 // Use a shell-native sleeper so the test exercises bg_shell's real spawn path
 // without relying on platform-specific quoting for `node -e "..."`
 const sleeperCommand = "sleep 30";
@@ -49,8 +58,9 @@ test("cleanupSessionProcesses reaps only session-scoped processes from the previ
 	const removed = await cleanupSessionProcesses("session-a", { graceMs: 200 });
 	assert.deepEqual(removed.sort(), [owned.id], "only the session-scoped process should be reaped");
 
-	await new Promise((resolve) => setTimeout(resolve, 150));
+	const ownedExited = await waitFor(() => !isPidAlive(owned.proc.pid), 1500);
 	assert.equal(isPidAlive(owned.proc.pid), false, "owned process should be terminated");
+	assert.equal(ownedExited, true, "owned process should exit within the cleanup window");
 	assert.equal(isPidAlive(persistent.proc.pid), true, "persistent process should survive cleanup");
 	assert.equal(isPidAlive(foreign.proc.pid), true, "foreign process should survive cleanup");
 	assert.equal(processes.get(owned.id)?.persistAcrossSessions, false);
