@@ -668,11 +668,14 @@ export const DISPATCH_RULES: DispatchRule[] = [
 
       // Verification class compliance: if operational verification was planned,
       // ensure the validation output documents it before allowing completion.
+      // (#2931) Tolerate common not-applicable phrases beyond the literal "none".
+      const isNotApplicableVerification = (text: string) =>
+        /^(?:none|n\/a|not[\s-]*applicable|none[\s-]*required|no[\s-]*operational[\s-]*verification[\s-]*required)$/i.test(text.trim());
       try {
         if (isDbAvailable()) {
           const milestone = getMilestone(mid);
           if (milestone?.verification_operational &&
-              milestone.verification_operational.toLowerCase() !== "none") {
+              !isNotApplicableVerification(milestone.verification_operational)) {
             const validationPath = resolveMilestoneFile(basePath, mid, "VALIDATION");
             if (validationPath) {
               const validationContent = await loadFile(validationPath);
