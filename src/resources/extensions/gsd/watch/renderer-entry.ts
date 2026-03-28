@@ -207,9 +207,10 @@ export function ensureCursorInViewport(cursor: number, totalNodes: number, conte
 export function renderHelpOverlayLines(width: number): string[] {
   const KEY_COL_WIDTH = 14;
   const KEYBINDINGS: [string, string][] = [
-    ["j / k",        "Move cursor down / up"],
-    ["h / l",        "Collapse / expand phase"],
-    ["↑ / ↓",        "Scroll viewport"],
+    ["↑ / ↓",        "Move cursor up / down"],
+    ["← / →",        "Collapse / expand node"],
+    ["j / k",        "Move cursor (vim)"],
+    ["h / l",        "Collapse / expand (vim)"],
     ["g / G",        "Jump to top / bottom"],
     ["?",            "Toggle this help overlay"],
     ["qq / EscEsc",  "Quit"],
@@ -248,11 +249,11 @@ export function renderHelpOverlayLines(width: number): string[] {
 
 // ─── Arrow Key Parser ─────────────────────────────────────────────────────────
 
-export type ArrowDirection = "up" | "down" | null;
+export type ArrowDirection = "up" | "down" | "left" | "right" | null;
 
 /**
  * Parse a raw keypress chunk and detect ANSI arrow key sequences.
- * Returns "up", "down", or null for non-arrow input.
+ * Returns "up", "down", "left", "right", or null for non-arrow input.
  *
  * Per Pattern 3: run BEFORE parseQuitSequence in the stdin data handler so that
  * the \x1b prefix of arrow sequences never reaches the quit state machine.
@@ -260,6 +261,8 @@ export type ArrowDirection = "up" | "down" | null;
 export function parseArrowKey(chunk: string): ArrowDirection {
   if (chunk === "\x1b[A") return "up";
   if (chunk === "\x1b[B") return "down";
+  if (chunk === "\x1b[D") return "left";
+  if (chunk === "\x1b[C") return "right";
   return null;
 }
 
@@ -439,17 +442,33 @@ export function renderTree(projectRoot: string): void {
   // Auto-collapse on first render: collapse completed milestones and done phases
   if (!autoCollapseApplied && milestones.length > 1) {
     autoCollapseApplied = true;
+    let activeMilestoneIdx = -1;
     for (let mi = 0; mi < milestones.length; mi++) {
       const m = milestones[mi];
       if (m.status === "done") {
         collapsedMilestones.add(mi);
       } else {
+        if (activeMilestoneIdx === -1) activeMilestoneIdx = mi;
         // For active milestones, collapse done phases so focus is on active work
         for (const phase of m.phases) {
           if (phase.status === "done") {
             collapsedPhases.add(phase.dirName);
           }
         }
+      }
+    }
+    // Position cursor on the active milestone (last non-done, at bottom in chronological order)
+    if (activeMilestoneIdx >= 0) {
+      // Render once to get node positions, then find the active milestone node
+      const preview = renderTreeLines(milestones, width, collapsedPhases, collapsedMilestones);
+      const targetIdx = preview.nodes.findIndex(
+        n => n.kind === "milestone" && n.milestoneIdx === activeMilestoneIdx
+      );
+      if (targetIdx >= 0) {
+        cursorIndex = targetIdx;
+        const scrollable = preview.lines.length > height;
+        const contentHeight = scrollable ? height - 1 : height;
+        ensureCursorInViewport(cursorIndex, preview.lines.length, contentHeight);
       }
     }
   }
@@ -705,15 +724,38 @@ if (isMainModule) {
         return; // consumed — do NOT pass to arrow key or quit handler
       }
 
-      // 3. Arrow keys MUST be checked before parseQuitSequence — their \x1b prefix must NOT reach quit state machine (Phase 4 Pattern)
+      // 3. Arrow keys — cursor movement (up/down) and collapse/expand (left/right)
+      // MUST be checked before parseQuitSequence — their \x1b prefix must NOT reach quit state machine
       const arrow = parseArrowKey(chunk);
       if (arrow !== null) {
         const height = getEffectiveHeight();
-        const total = lastRenderedLines.length;
+        const total = lastRenderedNodes.length;
         const scrollable = total > height;
         const contentHeight = scrollable ? height - 1 : height;
-        scrollViewport(arrow === "up" ? -1 : 1, total, contentHeight);
+
+        if (arrow === "up") {
+          cursorIndex = Math.max(cursorIndex - 1, 0);
+          ensureCursorInViewport(cursorIndex, total, contentHeight);
+        } else if (arrow === "down") {
+          cursorIndex = Math.min(cursorIndex + 1, total - 1);
+          ensureCursorInViewport(cursorIndex, total, contentHeight);
+        } else if (arrow === "left") {
+          const node = lastRenderedNodes[cursorIndex];
+          if (node?.kind === "milestone" && node.milestoneIdx !== undefined) {
+            collapsedMilestones.add(node.milestoneIdx);
+          } else if (node?.kind === "phase" && node.dirName !== undefined) {
+            collapsedPhases.add(node.dirName);
+          }
+        } else if (arrow === "right") {
+          const node = lastRenderedNodes[cursorIndex];
+          if (node?.kind === "milestone" && node.milestoneIdx !== undefined) {
+            collapsedMilestones.delete(node.milestoneIdx);
+          } else if (node?.kind === "phase" && node.dirName !== undefined) {
+            collapsedPhases.delete(node.dirName);
+          }
+        }
         renderTree(projectRoot);
+        cursorIndex = Math.max(0, Math.min(cursorIndex, lastRenderedNodes.length - 1));
         return; // consumed — do NOT pass to parseQuitSequence
       }
 

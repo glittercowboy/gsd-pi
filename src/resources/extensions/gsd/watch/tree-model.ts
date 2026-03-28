@@ -311,12 +311,10 @@ export function buildProjectTreeFromDb(
   const phaseDirMap = buildPhaseDirMap(phasesDir);
   const allMilestones = queries.getAllMilestones();
 
-  // Sort: active milestones first, then completed in reverse order
-  const active = allMilestones.filter(m => m.status !== "complete" && m.status !== "done");
-  const completed = allMilestones.filter(m => m.status === "complete" || m.status === "done");
-  const sorted = [...active, ...completed.reverse()];
+  // Chronological order: completed milestones first, active at bottom
+  // Natural reading order — history flows downward, active work is always last
 
-  return sorted.map((m) => {
+  return allMilestones.map((m) => {
     const slices = queries.getMilestoneSlices(m.id);
     const phases: PhaseNode[] = slices.map((s, idx) => {
       const tasks = queries.getSliceTasks(m.id, s.id);
