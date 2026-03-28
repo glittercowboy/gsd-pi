@@ -13,7 +13,7 @@ import type {
   ExtensionAPI,
   ExtensionCommandContext,
 } from "@gsd/pi-coding-agent";
-import { deriveState } from "./state.js";
+import { deriveState, reconcileDbMilestones } from "./state.js";
 import { loadFile, getManifestStatus } from "./files.js";
 import {
   loadEffectiveGSDPreferences,
@@ -286,6 +286,24 @@ export async function bootstrapAutoSession(
         cwd: base,
       });
       ctx.ui.notify(`Debug logging enabled → ${getDebugLogPath()}`, "info");
+    }
+
+    // Open the project DB before the first derive so resume uses DB truth
+    // immediately on cold starts instead of falling back to markdown (#2841).
+    await openProjectDbIfPresent(base);
+
+    // Sync any milestone directories created outside the DB write path
+    // (manual mkdir, /gsd queue, complete-milestone) into the DB now,
+    // before the first read. This is the single authoritative write point
+    // for disk→DB reconciliation (CQS: reads must not write).
+    // Best-effort: a DB write failure here is not fatal — reconciliation will
+    // be re-attempted by deriveState()'s _reconciledPaths guard on first read.
+    try {
+      reconcileDbMilestones(base);
+    } catch (err) {
+      process.stderr.write(
+        `gsd-db: reconcileDbMilestones failed at session start: ${(err as Error).message}\n`,
+      );
     }
 
     // Invalidate caches before initial state derivation

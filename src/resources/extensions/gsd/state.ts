@@ -52,10 +52,8 @@ import {
   getReplanHistory,
   getSlice,
   insertMilestone,
-  insertSlice,
   updateTaskStatus,
   getPendingSliceGateCount,
-  type MilestoneRow,
   type SliceRow,
   type TaskRow,
 } from './gsd-db.js';
@@ -121,6 +119,32 @@ export function isValidationTerminal(validationContent: string): boolean {
   return extractVerdict(validationContent) != null;
 }
 
+// ─── DB Reconciliation ────────────────────────────────────────────────────
+
+/**
+ * Sync milestone directories on disk into the DB milestones table.
+ *
+ * Any directory under .gsd/milestones/ that exists on disk but is absent from
+ * the DB (and is not a ghost milestone) is inserted with status 'active'.
+ * `insertMilestone` uses INSERT OR IGNORE, so calling this repeatedly is safe.
+ *
+ * This is a command — it has side effects (DB writes).  It must NOT be called
+ * from inside read-only functions like deriveState() or deriveStateFromDb().
+ * Call it once at session start, after the DB is opened.
+ */
+export function reconcileDbMilestones(basePath: string): void {
+  if (!isDbAvailable()) return;
+
+  const allMilestones = getAllMilestones();
+  const dbIdSet = new Set(allMilestones.map(m => m.id));
+  const diskIds = findMilestoneIds(basePath);
+  for (const diskId of diskIds) {
+    if (!dbIdSet.has(diskId) && !isGhostMilestone(basePath, diskId)) {
+      insertMilestone({ id: diskId, status: 'active' });
+    }
+  }
+}
+
 // ─── State Derivation ──────────────────────────────────────────────────────
 
 // ── deriveState memoization ─────────────────────────────────────────────────
@@ -148,6 +172,20 @@ export function resetDeriveTelemetry() { _telemetry = { dbDeriveCount: 0, markdo
  */
 export function invalidateStateCache(): void {
   _stateCache = null;
+}
+
+/**
+ * Track which basePaths have had reconcileDbMilestones() run in this process.
+ * Ensures disk→DB sync happens at most once per basePath per process, regardless
+ * of how many times deriveState() is called or from which entry point.
+ */
+const _reconciledPaths = new Set<string>();
+
+/**
+ * Reset the reconciled-paths guard (used in tests to simulate a fresh process).
+ */
+export function resetReconciledPaths(): void {
+  _reconciledPaths.clear();
 }
 
 /**
@@ -227,6 +265,16 @@ export async function deriveState(basePath: string): Promise<GSDState> {
   const stopTimer = debugTime("derive-state-impl");
   let result: GSDState;
 
+  // Ensure disk→DB reconciliation has run for this basePath before any read.
+  // This is the single authoritative reconciliation point for all entry points
+  // (auto-start, CLI commands, headless-query) that use the DB. Auto-start runs
+  // reconcileDbMilestones() explicitly before this and _reconciledPaths will
+  // already contain basePath — this guard is a no-op for that path.
+  if (isDbAvailable() && !_reconciledPaths.has(basePath)) {
+    reconcileDbMilestones(basePath);
+    _reconciledPaths.add(basePath);
+  }
+
   // Dual-path: try DB-backed derivation first when hierarchy tables are populated
   if (isDbAvailable()) {
     const dbMilestones = getAllMilestones();
@@ -293,73 +341,12 @@ export async function deriveStateFromDb(basePath: string): Promise<GSDState> {
 
   let allMilestones = getAllMilestones();
 
-  // Incremental disk→DB sync: milestone directories created outside the DB
-  // write path (via /gsd queue, manual mkdir, or complete-milestone writing the
-  // next CONTEXT.md) are never inserted by the initial migration guard in
-  // auto-start.ts because that guard only runs when gsd.db doesn't exist yet.
-  // Reconcile here so deriveStateFromDb never silently misses queued milestones.
-  // insertMilestone uses INSERT OR IGNORE, so this is safe to call every time.
-  const dbIdSet = new Set(allMilestones.map(m => m.id));
-  const diskIds = findMilestoneIds(basePath);
-  let synced = false;
-  for (const diskId of diskIds) {
-    if (!dbIdSet.has(diskId) && !isGhostMilestone(basePath, diskId)) {
-      insertMilestone({ id: diskId, status: 'active' });
-      synced = true;
-    }
-  }
-  if (synced) allMilestones = getAllMilestones();
-
-  // Disk→DB slice reconciliation (#2533): slices defined in ROADMAP.md but
-  // missing from the DB cause permanent "No slice eligible" blocks because
-  // the dependency resolver only sees DB rows. Parse each milestone's roadmap
-  // and insert any missing slices, checking SUMMARY files to set correct status.
-  // insertSlice uses INSERT OR IGNORE, so existing rows are never overwritten.
-  for (const mid of diskIds) {
-    if (isGhostMilestone(basePath, mid)) continue;
-    const roadmapPath = resolveMilestoneFile(basePath, mid, "ROADMAP");
-    if (!roadmapPath) continue;
-
-    const dbSlices = getMilestoneSlices(mid);
-    const dbSliceIds = new Set(dbSlices.map(s => s.id));
-
-    let roadmapContent: string;
-    try { roadmapContent = readFileSync(roadmapPath, "utf-8"); }
-    catch { continue; }
-
-    const parsed = parseRoadmap(roadmapContent);
-    for (const s of parsed.slices) {
-      if (dbSliceIds.has(s.id)) continue;
-      const summaryPath = resolveSliceFile(basePath, mid, s.id, "SUMMARY");
-      const sliceStatus = (s.done || summaryPath) ? "complete" : "pending";
-      insertSlice({
-        id: s.id, milestoneId: mid, title: s.title,
-        status: sliceStatus, risk: s.risk,
-        depends: s.depends, demo: s.demo,
-      });
-    }
-  }
-
-  // Reconcile: discover milestones that exist on disk but are missing from
-  // the DB. This happens when milestones were created before the DB migration
-  // or were manually added to the filesystem. Without this, disk-only
-  // milestones are invisible after migration (#2416).
-  const dbMilestoneIds = new Set(allMilestones.map(m => m.id));
-  const diskMilestoneIds = findMilestoneIds(basePath);
-  for (const diskId of diskMilestoneIds) {
-    if (!dbMilestoneIds.has(diskId)) {
-      // Synthesize a minimal MilestoneRow for the disk-only milestone.
-      // Title and status will be resolved from disk files in the loop below.
-      allMilestones.push({
-        id: diskId,
-        title: diskId,
-        status: 'active',
-        depends_on: [] as string[],
-        created_at: new Date().toISOString(),
-      } as MilestoneRow);
-    }
-  }
   // Re-sort so milestones follow queue order (same as dispatch guard) (#2556)
+  // reconcileDbMilestones() is the authoritative disk→DB sync; it runs before
+  // any call that reaches this function (via deriveState()'s _reconciledPaths
+  // guard or auto-start's explicit call). Do NOT re-add disk-only milestones
+  // here — that was a CQS violation (a read function writing to the DB in-memory
+  // as compensation for stale state). The DB is authoritative post-reconcile.
   const customOrder = loadQueueOrder(basePath);
   const sortedIds = sortByQueueOrder(allMilestones.map(m => m.id), customOrder);
   const byId = new Map(allMilestones.map(m => [m.id, m]));
