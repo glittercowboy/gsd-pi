@@ -93,10 +93,10 @@ export function parseTailscaleStatus(statusJson: unknown): TailscaleInfo | null 
 
 /**
  * Returns the args array for `tailscale serve --bg` for the given local port.
- * Example: buildServeCommand(3456) → ["serve", "--bg", "--https", "443", "https+insecure://127.0.0.1:3456"]
+ * Example: buildServeCommand(3456) → ["serve", "--bg", "--https", "443", "http://127.0.0.1:3456"]
  */
 export function buildServeCommand(localPort: number): string[] {
-  return ['serve', '--bg', '--https', '443', `https+insecure://127.0.0.1:${localPort}`];
+  return ['serve', '--bg', '--https', '443', `http://127.0.0.1:${localPort}`];
 }
 
 /**
