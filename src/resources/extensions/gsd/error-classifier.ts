@@ -47,8 +47,10 @@ const RATE_LIMIT_RE = /rate.?limit|too many requests|429/i;
 const NETWORK_RE = /network|ECONNRESET|ETIMEDOUT|ECONNREFUSED|socket hang up|fetch failed|connection.*reset|dns/i;
 const SERVER_RE = /internal server error|500|502|503|overloaded|server_error|api_error|service.?unavailable/i;
 // ECONNRESET/ECONNREFUSED are in NETWORK_RE (same-model retry first).
-const CONNECTION_RE = /terminated|connection.?refused|other side closed|EPIPE|network.?(?:is\s+)?unavailable|stream_exhausted(?:_without_result)?/i;
-const STREAM_RE = /Unexpected end of JSON|Unexpected token.*JSON|Expected double-quoted property name|SyntaxError.*JSON/i;
+const CONNECTION_RE = /\bterminated\b|connection.?refused|other side closed|EPIPE|network.?(?:is\s+)?unavailable|stream_exhausted(?:_without_result)?/i;
+// Match V8 JSON parse variants that usually mean a provider stream was cut
+// mid-object, while keeping the broader patterns anchored to JSON-specific text.
+const STREAM_RE = /Unexpected end of JSON|Unexpected token.*JSON|Expected .* in JSON|Unterminated .* in JSON|SyntaxError.*JSON/i;
 const RESET_DELAY_RE = /reset in (\d+)s/i;
 
 /**

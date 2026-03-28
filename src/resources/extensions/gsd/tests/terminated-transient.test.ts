@@ -65,6 +65,22 @@ test("#2572: 'Expected double-quoted property name' (truncated stream) is transi
   assert.equal("retryAfterMs" in result && result.retryAfterMs, 15_000, "should use 15s backoff");
 });
 
+const streamVariantCases = [
+  "Expected ',' or '}' after property value in JSON at position 2056 (line 1 column 2057)",
+  "Expected ':' after property name in JSON at position 42 (line 1 column 43)",
+  "Expected property name or '}' in JSON at position 0 (line 1 column 1)",
+  "Unterminated string in JSON at position 100 (line 1 column 101)",
+];
+
+for (const errorMsg of streamVariantCases) {
+  test(`#2916: '${errorMsg}' is transient`, () => {
+    const result = classifyError(errorMsg);
+    assert.equal(isTransient(result), true, `'${errorMsg}' should be transient`);
+    assert.equal(result.kind, "stream", `'${errorMsg}' should be stream`);
+    assert.equal("retryAfterMs" in result && result.retryAfterMs, 15_000, "should use 15s backoff");
+  });
+}
+
 test("#2572: 'Unexpected end of JSON input' (truncated stream) is transient", () => {
   const result = classifyError("Unexpected end of JSON input");
   assert.equal(isTransient(result), true, "'Unexpected end of JSON input' should be transient");
@@ -82,3 +98,18 @@ test("#2572: 'SyntaxError' with JSON context (truncated stream) is transient", (
   assert.equal(isTransient(result), true, "'SyntaxError...JSON' should be transient");
   assert.equal(result.kind, "stream", "JSON parse errors are stream kind");
 });
+
+const nonJsonGuardCases = [
+  "Expected ',' or '}' after property value at position 2056 (line 1 column 2057)",
+  "Expected ':' after property name at position 42 (line 1 column 43)",
+  "Unterminated string at position 100 (line 1 column 101)",
+  "SyntaxError: unexpected character at line 1 column 1",
+];
+
+for (const errorMsg of nonJsonGuardCases) {
+  test(`#2916: '${errorMsg}' stays non-transient without JSON context`, () => {
+    const result = classifyError(errorMsg);
+    assert.equal(isTransient(result), false, `'${errorMsg}' should not be transient`);
+    assert.equal(result.kind, "unknown", `'${errorMsg}' should stay unknown`);
+  });
+}
