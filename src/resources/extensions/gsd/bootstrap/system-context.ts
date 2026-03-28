@@ -17,6 +17,12 @@ import { toPosixPath } from "../../shared/mod.js";
 import { markCmuxPromptShown, shouldPromptToEnableCmux } from "../../cmux/index.js";
 
 const gsdHome = process.env.GSD_HOME || join(homedir(), ".gsd");
+const AUTO_MODE_INTERACTIVE_TOOL_GUARD = [
+  "",
+  "[AUTO-MODE PROMPT GUARD]",
+  "This is auto-mode. Do not call `ask_user_questions` or `secure_env_collect`.",
+  "If you need human input or secrets, stop and surface the blocker through the normal auto-mode recovery path instead of trying to open an interactive prompt.",
+].join("\n");
 
 function warnDeprecatedAgentInstructions(): void {
   const paths = [
@@ -98,7 +104,8 @@ export async function buildBeforeAgentStartResult(
 
   const injection = await buildGuidedExecuteContextInjection(event.prompt, process.cwd());
   const worktreeBlock = buildWorktreeContextBlock();
-  const fullSystem = `${event.systemPrompt}\n\n[SYSTEM CONTEXT — GSD]\n\n${systemContent}${preferenceBlock}${knowledgeBlock}${memoryBlock}${newSkillsBlock}${worktreeBlock}`;
+  const autoModeGuard = buildAutoModePromptGuard(event.prompt);
+  const fullSystem = `${event.systemPrompt}\n\n[SYSTEM CONTEXT — GSD]\n\n${systemContent}${autoModeGuard}${preferenceBlock}${knowledgeBlock}${memoryBlock}${newSkillsBlock}${worktreeBlock}`;
 
   stopContextTimer({
     systemPromptSize: fullSystem.length,
@@ -119,6 +126,14 @@ export async function buildBeforeAgentStartResult(
       }
       : {}),
   };
+}
+
+export function isAutoModePrompt(prompt: string): boolean {
+  return prompt.includes("You are executing GSD auto-mode.");
+}
+
+export function buildAutoModePromptGuard(prompt: string): string {
+  return isAutoModePrompt(prompt) ? AUTO_MODE_INTERACTIVE_TOOL_GUARD : "";
 }
 
 export function loadKnowledgeBlock(gsdHomeDir: string, cwd: string): { block: string; globalSizeKb: number } {
@@ -374,4 +389,3 @@ function escapeRegExp(value: string): string {
 function oneLine(text: string): string {
   return text.replace(/\s+/g, " ").trim();
 }
-
