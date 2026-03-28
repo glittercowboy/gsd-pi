@@ -2307,6 +2307,10 @@ export function ChatPane({ className, onOpenAction }: ChatPaneProps) {
                   )
                 case "ui-request":
                   return <InlineUiRequest key={item.request.id} request={item.request} />
+                default: {
+                  const _exhaustive: never = item;
+                  throw new Error(`Unhandled timeline item kind: ${JSON.stringify(_exhaustive)}`);
+                }
               }
             })}
             <div className="h-2" />

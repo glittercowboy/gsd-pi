@@ -13,6 +13,12 @@ import type { ErrorContext } from "./types.js";
 
 // ─── Shared types ─────────────────────────────────────────────────────────────
 
+/** A reference to a specific journal event by flow + sequence number. */
+export interface FlowRef {
+  flowId: string;
+  seq: number;
+}
+
 /** Resource descriptor stamped on every iteration-start event. */
 export interface JournalResource {
   gsdVersion: string;
@@ -105,7 +111,7 @@ export interface IterationStartParams {
   seq: number;
   iteration: number;
   resource: JournalResource;
-  causedBy?: { flowId: string; seq: number };
+  causedBy?: FlowRef;
 }
 
 export function buildIterationStartEvent(p: IterationStartParams): JournalEntry {
@@ -158,7 +164,7 @@ export interface UnitEndParams {
   error?: string;
   errorType?: JournalErrorType;
   errorContext?: ErrorContext;
-  causedBy: { flowId: string; seq: number };
+  causedBy: FlowRef;
 }
 
 export function buildUnitEndEvent(p: UnitEndParams): JournalEntry {

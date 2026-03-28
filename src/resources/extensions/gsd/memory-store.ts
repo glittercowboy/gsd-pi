@@ -396,6 +396,10 @@ export function applyMemoryActions(
           case 'SUPERSEDE':
             supersedeMemory(action.id, action.superseded_by);
             break;
+          default: {
+            const _exhaustive: never = action;
+            throw new Error(`Unhandled memory action: ${JSON.stringify(_exhaustive)}`);
+          }
         }
       }
       enforceMemoryCap();
