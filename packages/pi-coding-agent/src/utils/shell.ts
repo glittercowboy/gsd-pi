@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs";
+import { release } from "node:os";
 import { delimiter } from "node:path";
-import { spawn, spawnSync } from "child_process";
+import { type ChildProcess, type SpawnOptions, spawn, spawnSync } from "child_process";
 import { getBinDir, getSettingsPath } from "../config.js";
 import { SettingsManager } from "../core/settings-manager.js";
 
@@ -94,11 +95,11 @@ export function getShellConfig(): { shell: string; args: string[] } {
 		}
 
 		throw new Error(
-			`No bash shell found. Options:\n` +
+			`No bash shell found. Option/mnt/s/n` +
 				`  1. Install Git for Windows: https://git-scm.com/download/win\n` +
 				`  2. Add your bash to PATH (Cygwin, MSYS2, etc.)\n` +
 				`  3. Set shellPath in ${getSettingsPath()}\n\n` +
-				`Searched Git Bash in:\n${paths.map((p) => `  ${p}`).join("\n")}`,
+				`Searched Git Bash i/mnt/n/n${paths.map((p) => `  ${p}`).join("\n")}`,
 		);
 	}
 
@@ -116,6 +117,108 @@ export function getShellConfig(): { shell: string; args: string[] } {
 
 	cachedShellConfig = { shell: "sh", args: ["-c"] };
 	return cachedShellConfig;
+}
+
+/**
+ * Get a fallback shell configuration for Windows when bash spawning fails.
+ * Tries PowerShell Core, Windows PowerShell, and cmd.exe in order.
+ * Returns null on non-Windows or if no fallback works.
+ */
+export function getFallbackShellConfig(): { shell: string; args: string[] } | null {
+	if (process.platform !== "win32") return null;
+
+	const candidates: Array<{ shell: string; args: string[]; testArgs: string[] }> = [
+		{ shell: "pwsh.exe", args: ["-NoProfile", "-Command"], testArgs: ["-NoProfile", "-Command", "echo ok"] },
+		{ shell: "powershell.exe", args: ["-NoProfile", "-Command"], testArgs: ["-NoProfile", "-Command", "echo ok"] },
+		{ shell: "cmd.exe", args: ["/c"], testArgs: ["/c", "echo ok"] },
+	];
+
+	for (const candidate of candidates) {
+		try {
+			const result = spawnSync(candidate.shell, candidate.testArgs, {
+				encoding: "utf-8",
+				timeout: 5000,
+				stdio: "pipe",
+			});
+			if (result.status === 0) {
+				return { shell: candidate.shell, args: candidate.args };
+			}
+		} catch {
+			continue;
+		}
+	}
+	return null;
+}
+
+/**
+ * Format diagnostic information for spawn errors.
+ * Helps users and maintainers understand what went wrong.
+ */
+export function formatSpawnDiagnostics(shell: string, cwd?: string): string {
+	const shellExists = (() => {
+		try { return existsSync(shell); } catch { return "unknown"; }
+	})();
+
+	return [
+		`Shell: ${shell} (exists: ${shellExists})`,
+		`CWD: ${cwd ?? process.cwd()}`,
+		`Node: ${process.version}`,
+		`Platform: ${process.platform} ${process.arch}`,
+		`OS: ${release()}`,
+		`Hint: Set shellPath in settings (${getSettingsPath()}) to override shell resolution`,
+	].join("\n  ");
+}
+
+/**
+ * Spawn a child process with EINVAL resilience on Windows.
+ *
+ * On Windows, spawn() can fail with EINVAL for multiple reasons beyond the
+ * known detached:true / CREATE_NEW_PROCESS_GROUP cause (which is already
+ * guarded). Additional triggers include Node.js version regressions,
+ * ConPTY changes in recent Windows builds, and specific terminal contexts.
+ *
+ * This wrapper catches synchronous EINVAL errors and retries with fallback
+ * shell configurations (cmd.exe, PowerShell) to keep the session functional.
+ */
+export function spawnWithEinvalRecovery(
+	file: string,
+	args: readonly string[],
+	options: SpawnOptions,
+): ChildProcess {
+	try {
+		return spawn(file, args as string[], options);
+	} catch (err: any) {
+		if (err?.code === "EINVAL" && process.platform === "win32") {
+			// Retry 1: same shell but wrapped via cmd.exe (shell: true)
+			try {
+				return spawn(file, args as string[], { ...options, shell: true });
+			} catch {
+				// Retry 2: use a Windows-native fallback shell entirely
+				const fallback = getFallbackShellConfig();
+				if (fallback) {
+					// The last arg is the command — extract it and rewrap
+					const command = args[args.length - 1];
+					return spawn(fallback.shell, [...fallback.args, command as string], {
+						...options,
+						shell: false,
+					});
+				}
+			}
+
+			// All retries exhausted — throw with diagnostics
+			const cwd = typeof options.cwd === "string" ? options.cwd : undefined;
+			throw new Error(
+				`spawn EINVAL: All shell fallbacks exhausted on Windows.\n` +
+				`  ${formatSpawnDiagnostics(file, cwd)}\n\n` +
+				`Possible cause/mnt/s/n` +
+				`  - Node.js ${process.version} spawn regression on Windows\n` +
+				`  - ConPTY conflict with terminal host (Windows ${release()})\n` +
+				`  - Shell binary inaccessible or corrupted\n\n` +
+				`Workaround: Set shellPath to cmd.exe or powershell.exe in ${getSettingsPath()}`,
+			);
+		}
+		throw err;
+	}
 }
 
 /**

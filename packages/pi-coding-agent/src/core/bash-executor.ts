@@ -10,7 +10,7 @@ import { randomBytes } from "node:crypto";
 import { createWriteStream, unlinkSync, type WriteStream } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { type ChildProcess, spawn } from "child_process";
+import { type ChildProcess } from "child_process";
 
 /** Track temp files created by bash execution for cleanup on exit. */
 const bashTempFiles = new Set<string>();
@@ -30,7 +30,7 @@ function registerTempCleanup(): void {
 	});
 }
 import { processStreamChunk, type StreamState } from "@gsd/native";
-import { getShellConfig, getShellEnv, killProcessTree, sanitizeCommand } from "../utils/shell.js";
+import { getShellConfig, getShellEnv, killProcessTree, sanitizeCommand, spawnWithEinvalRecovery } from "../utils/shell.js";
 import type { BashOperations } from "./tools/bash.js";
 import { DEFAULT_MAX_BYTES, truncateTail } from "./tools/truncate.js";
 
@@ -91,11 +91,21 @@ export function executeBash(command: string, options?: BashExecutorOptions & { l
 		// cause EINVAL in VSCode/ConPTY terminal contexts.  The bg-shell
 		// extension already guards this (process-manager.ts); align here.
 		// Process-tree cleanup uses taskkill /F /T on Windows regardless.
-		const child: ChildProcess = spawn(shell, [...args, sanitizeCommand(command)], {
-			detached: process.platform !== "win32",
-			env: getShellEnv(),
-			stdio: ["ignore", "pipe", "pipe"],
-		});
+		//
+		// spawnWithEinvalRecovery provides additional resilience: if spawn
+		// still fails with EINVAL (Node.js regressions, ConPTY changes),
+		// it retries with cmd.exe/PowerShell fallbacks.
+		let child: ChildProcess;
+		try {
+			child = spawnWithEinvalRecovery(shell, [...args, sanitizeCommand(command)], {
+				detached: process.platform !== "win32",
+				env: getShellEnv(),
+				stdio: ["ignore", "pipe", "pipe"],
+			});
+		} catch (err) {
+			reject(err);
+			return;
+		}
 
 		// Track sanitized output for truncation
 		const outputChunks: string[] = [];

@@ -6,7 +6,7 @@ import { join } from "node:path";
 import type { AgentTool } from "@gsd/pi-agent-core";
 import { type Static, Type } from "@sinclair/typebox";
 import { spawn } from "child_process";
-import { getShellConfig, getShellEnv, killProcessTree, sanitizeCommand } from "../../utils/shell.js";
+import { getShellConfig, getShellEnv, killProcessTree, sanitizeCommand, spawnWithEinvalRecovery, formatSpawnDiagnostics, getFallbackShellConfig } from "../../utils/shell.js";
 import { type BashInterceptorRule, compileInterceptor, DEFAULT_BASH_INTERCEPTOR_RULES } from "./bash-interceptor.js";
 import { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, formatSize, type TruncationResult, truncateTail } from "./truncate.js";
 import type { ArtifactManager } from "../artifact-manager.js";
@@ -146,7 +146,9 @@ export interface BashOperations {
 }
 
 /**
- * Default bash operations using local shell
+ * Default bash operations using local shell.
+ * Uses spawnWithEinvalRecovery for Windows resilience — if bash.exe spawn
+ * fails with EINVAL, automatically retries with cmd.exe/PowerShell fallback.
  */
 const defaultBashOperations: BashOperations = {
 	exec: (command, cwd, { onData, signal, timeout, env }) => {
@@ -162,12 +164,22 @@ const defaultBashOperations: BashOperations = {
 			// cause EINVAL in VSCode/ConPTY terminal contexts.  The bg-shell
 			// extension already guards this (process-manager.ts); align here.
 			// Process-tree cleanup uses taskkill /F /T on Windows regardless.
-			const child = spawn(shell, [...args, command], {
-				cwd,
-				detached: process.platform !== "win32",
-				env: env ?? getShellEnv(),
-				stdio: ["ignore", "pipe", "pipe"],
-			});
+			//
+			// spawnWithEinvalRecovery adds a second safety net: if spawn still
+			// fails with EINVAL (Node.js regressions, new ConPTY behaviors),
+			// it retries with cmd.exe or PowerShell as a fallback shell.
+			let child;
+			try {
+				child = spawnWithEinvalRecovery(shell, [...args, command], {
+					cwd,
+					detached: process.platform !== "win32",
+					env: env ?? getShellEnv(),
+					stdio: ["ignore", "pipe", "pipe"],
+				});
+			} catch (spawnErr) {
+				reject(spawnErr);
+				return;
+			}
 
 			let timedOut = false;
 
