@@ -32,6 +32,16 @@ export function resolveProjectRootDbPath(basePath: string): string {
     return join(projectRoot, ".gsd", "gsd.db");
   }
 
+  // Symlink-resolved external-state layout: /.gsd/projects/<hash>/worktrees/<MID>
+  // Use the match index against the original path so the returned path preserves
+  // the caller's original separator style.
+  const normalizedPath = basePath.replaceAll("\\", "/");
+  const externalWorktreeMatch = /^(.*\/\.gsd\/projects\/[a-f0-9]+)\/worktrees\//.exec(normalizedPath);
+  if (externalWorktreeMatch?.[1]) {
+    const projectStateRoot = basePath.slice(0, externalWorktreeMatch[1].length);
+    return join(projectStateRoot, "gsd.db");
+  }
+
   return join(basePath, ".gsd", "gsd.db");
 }
 
@@ -154,4 +164,3 @@ export function registerDynamicTools(pi: ExtensionAPI): void {
     },
   } as any);
 }
-
