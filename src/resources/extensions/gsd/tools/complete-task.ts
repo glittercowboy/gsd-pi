@@ -203,9 +203,9 @@ export async function handleCompleteTask(
         sliceId: params.sliceId,
         milestoneId: params.milestoneId,
         command: evidence.command,
-        exitCode: evidence.exitCode,
+        exitCode: typeof evidence.exitCode === "number" ? evidence.exitCode : parseInt(String(evidence.exitCode), 10) || 0,
         verdict: evidence.verdict,
-        durationMs: evidence.durationMs,
+        durationMs: typeof evidence.durationMs === "number" ? evidence.durationMs : Math.max(0, parseInt(String(evidence.durationMs), 10) || 0),
       });
     }
   });

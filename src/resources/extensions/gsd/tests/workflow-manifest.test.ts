@@ -12,6 +12,8 @@ import {
   insertMilestone,
   insertSlice,
   insertTask,
+  insertVerificationEvidence,
+  _getAdapter,
 } from '../gsd-db.ts';
 import {
   writeManifest,
@@ -181,6 +183,105 @@ test('workflow-manifest: readManifest throws on unsupported version', () => {
       'should throw on version mismatch',
     );
   } finally {
+    cleanupDir(base);
+  }
+});
+
+// ─── toIntOrNull: string numerics in SQLite columns ───────────────────────
+//
+// SQLite has dynamic typing. If the LLM passes a string for a numeric column
+// (e.g. "-" as a markdown-table placeholder for durationMs), SQLite stores it
+// as TEXT. snapshotState() must coerce these back to number|null before
+// serializing, so JSON.stringify doesn't emit bare "-" which then breaks
+// JSON.parse with "No number after minus sign in JSON at position N".
+
+test('workflow-manifest: snapshotState coerces string "-" in duration_ms to null (prevents JSON parse error)', () => {
+  const base = tempDir();
+  openDatabase(path.join(base, 'test.db'));
+  try {
+    // Set up valid FK chain: milestone → slice → task
+    insertMilestone({ id: 'M001' });
+    insertSlice({ id: 'S01', milestoneId: 'M001' });
+    insertTask({ id: 'T01', sliceId: 'S01', milestoneId: 'M001', title: 'Do thing', status: 'complete' });
+
+    // Insert a well-formed evidence row, then corrupt duration_ms to the string
+    // "-" via raw SQL — this simulates the LLM passing a markdown placeholder.
+    insertVerificationEvidence({
+      taskId: 'T01', sliceId: 'S01', milestoneId: 'M001',
+      command: 'npm test', exitCode: 0, verdict: '✅ pass', durationMs: 4352,
+    });
+    const db = _getAdapter()!;
+    db.prepare("UPDATE verification_evidence SET duration_ms = '-' WHERE task_id = 'T01'").run();
+
+    // snapshotState must NOT throw and duration_ms must come back as null
+    let snap: ReturnType<typeof snapshotState>;
+    assert.doesNotThrow(() => { snap = snapshotState(); }, 'snapshotState must not throw on string "-"');
+    const ev = snap!.verification_evidence[0];
+    assert.ok(ev !== undefined, 'evidence row should be present');
+    assert.strictEqual(ev.duration_ms, null, 'duration_ms "-" must coerce to null');
+
+    // writeManifest must not produce invalid JSON (the original crash path)
+    assert.doesNotThrow(() => writeManifest(base), 'writeManifest must not throw');
+    const raw = fs.readFileSync(path.join(base, '.gsd', 'state-manifest.json'), 'utf-8');
+    // This was the original failure: "No number after minus sign in JSON at position N"
+    assert.doesNotThrow(() => JSON.parse(raw), 'manifest JSON must be parseable after fix');
+    const parsed = JSON.parse(raw);
+    assert.strictEqual(parsed.verification_evidence[0].duration_ms, null,
+      'serialized duration_ms must be null, not the string "-"');
+  } finally {
+    closeDatabase();
+    cleanupDir(base);
+  }
+});
+
+test('workflow-manifest: snapshotState coerces numeric-string exit_code and duration_ms to numbers', () => {
+  const base = tempDir();
+  openDatabase(path.join(base, 'test.db'));
+  try {
+    insertMilestone({ id: 'M001' });
+    insertSlice({ id: 'S01', milestoneId: 'M001' });
+    insertTask({ id: 'T01', sliceId: 'S01', milestoneId: 'M001', title: 'Do thing', status: 'complete' });
+    insertVerificationEvidence({
+      taskId: 'T01', sliceId: 'S01', milestoneId: 'M001',
+      command: 'npm test', exitCode: 0, verdict: '✅ pass', durationMs: 0,
+    });
+
+    // Corrupt both numeric columns to their string representations
+    const db = _getAdapter()!;
+    db.prepare("UPDATE verification_evidence SET exit_code = '0', duration_ms = '4352' WHERE task_id = 'T01'").run();
+
+    const snap = snapshotState();
+    const ev = snap.verification_evidence[0];
+    assert.ok(ev !== undefined);
+    assert.strictEqual(ev.exit_code, 0, 'string "0" exit_code must coerce to number 0');
+    assert.strictEqual(ev.duration_ms, 4352, 'string "4352" duration_ms must coerce to number 4352');
+  } finally {
+    closeDatabase();
+    cleanupDir(base);
+  }
+});
+
+test('workflow-manifest: snapshotState coerces empty string duration_ms to null', () => {
+  const base = tempDir();
+  openDatabase(path.join(base, 'test.db'));
+  try {
+    insertMilestone({ id: 'M001' });
+    insertSlice({ id: 'S01', milestoneId: 'M001' });
+    insertTask({ id: 'T01', sliceId: 'S01', milestoneId: 'M001', title: 'Do thing', status: 'complete' });
+    insertVerificationEvidence({
+      taskId: 'T01', sliceId: 'S01', milestoneId: 'M001',
+      command: 'npm test', exitCode: 0, verdict: '✅ pass', durationMs: 0,
+    });
+
+    const db = _getAdapter()!;
+    db.prepare("UPDATE verification_evidence SET duration_ms = '' WHERE task_id = 'T01'").run();
+
+    const snap = snapshotState();
+    const ev = snap.verification_evidence[0];
+    assert.ok(ev !== undefined);
+    assert.strictEqual(ev.duration_ms, null, 'empty string duration_ms must coerce to null');
+  } finally {
+    closeDatabase();
     cleanupDir(base);
   }
 });

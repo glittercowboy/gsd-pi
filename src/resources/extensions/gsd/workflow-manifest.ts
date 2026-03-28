@@ -42,6 +42,31 @@ function requireDb() {
   return db;
 }
 
+/**
+ * Coerce a raw SQLite value to a JS integer or null.
+ *
+ * SQLite has dynamic typing -- an INTEGER column faithfully stores whatever was
+ * bound to it, including strings. If the LLM passes a non-numeric value (e.g.
+ * "-" as a markdown-table placeholder) for a numeric field, SQLite stores it as
+ * TEXT. When read back and serialized via JSON.stringify the string is emitted
+ * verbatim: `"duration_ms": "-"`. V8's JSON parser then chokes trying to parse
+ * that bare `-` as a number: "No number after minus sign in JSON at position N".
+ *
+ * This is the read-side guard: always returns a safe number|null
+ * regardless of what SQLite gives back.
+ */
+function toIntOrNull(value: unknown): number | null {
+  if (value === null || value === undefined) return null;
+  if (typeof value === "number") return Number.isFinite(value) ? Math.trunc(value) : null;
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (trimmed === "" || trimmed === "-") return null;
+    const n = parseInt(trimmed, 10);
+    return Number.isFinite(n) ? n : null;
+  }
+  return null;
+}
+
 // ─── snapshotState ───────────────────────────────────────────────────────
 
 /**
@@ -99,7 +124,7 @@ export function snapshotState(): StateManifest {
     proof_level: (r["proof_level"] as string) ?? "",
     integration_closure: (r["integration_closure"] as string) ?? "",
     observability_impact: (r["observability_impact"] as string) ?? "",
-    sequence: (r["sequence"] as number) ?? 0,
+    sequence: toIntOrNull(r["sequence"]) ?? 0,
     replan_triggered_at: (r["replan_triggered_at"] as string) ?? null,
   }));
 
@@ -129,7 +154,7 @@ export function snapshotState(): StateManifest {
     expected_output: JSON.parse((r["expected_output"] as string) || "[]"),
     observability_impact: (r["observability_impact"] as string) ?? "",
     full_plan_md: (r["full_plan_md"] as string) ?? "",
-    sequence: (r["sequence"] as number) ?? 0,
+    sequence: toIntOrNull(r["sequence"]) ?? 0,
   }));
 
   const rawDecisions = db.prepare("SELECT * FROM decisions ORDER BY seq").all() as Record<string, unknown>[];
@@ -153,9 +178,9 @@ export function snapshotState(): StateManifest {
     slice_id: r["slice_id"] as string,
     milestone_id: r["milestone_id"] as string,
     command: r["command"] as string,
-    exit_code: (r["exit_code"] as number) ?? null,
+    exit_code: toIntOrNull(r["exit_code"]),
     verdict: (r["verdict"] as string) ?? "",
-    duration_ms: (r["duration_ms"] as number) ?? null,
+    duration_ms: toIntOrNull(r["duration_ms"]),
     created_at: r["created_at"] as string,
   }));
 
