@@ -1,4 +1,5 @@
 import { existsSync } from "node:fs";
+import { homedir } from "node:os";
 import { join, sep } from "node:path";
 
 import type { ExtensionAPI } from "@gsd/pi-coding-agent";
@@ -34,38 +35,38 @@ export function resolveProjectRootDbPath(basePath: string): string {
 
   // Symlink-resolved layout: /.gsd/projects/<hash>/worktrees/M001/...
   // The project root is everything before /.gsd/projects/ (#2517)
+  const normalizedPath = basePath.replaceAll("\\", "/");
   const symlinkMarker = `${sep}.gsd${sep}projects${sep}`;
-  const symlinkIdx = basePath.indexOf(symlinkMarker);
+  const symlinkIdx = normalizedPath.indexOf("/.gsd/projects/");
   if (symlinkIdx !== -1) {
-    const afterProjects = basePath.slice(symlinkIdx + symlinkMarker.length);
+    const afterProjects = normalizedPath.slice(symlinkIdx + "/.gsd/projects/".length);
     // Expect: <hash>/worktrees/...
-    const worktreeSeg = `${sep}worktrees${sep}`;
-    if (afterProjects.includes(worktreeSeg)) {
-      const projectRoot = basePath.slice(0, symlinkIdx);
-      return join(projectRoot, ".gsd", "gsd.db");
-    }
-  }
-
-  // Forward-slash variant for symlink-resolved layout
-  const fwdSymlinkMarker = "/.gsd/projects/";
-  const fwdSymlinkIdx = basePath.indexOf(fwdSymlinkMarker);
-  if (fwdSymlinkIdx !== -1) {
-    const afterProjects = basePath.slice(fwdSymlinkIdx + fwdSymlinkMarker.length);
     if (afterProjects.includes("/worktrees/")) {
-      const projectRoot = basePath.slice(0, fwdSymlinkIdx);
-      return join(projectRoot, ".gsd", "gsd.db");
+      const projectRoot = basePath.slice(0, symlinkIdx);
+      const normalizedGsdHome = (process.env.GSD_HOME || join(homedir(), ".gsd"))
+        .replaceAll("\\", "/")
+        .replace(/\/+$/, "");
+      const candidateGsdPath = join(projectRoot, ".gsd")
+        .replaceAll("\\", "/")
+        .replace(/\/+$/, "");
+
+      // When the candidate points at the user-level GSD home, this is the
+      // external-state layout and should fall through to the project-state
+      // DB resolver below instead of returning ~/.gsd/gsd.db (#2952).
+      if (
+        candidateGsdPath !== normalizedGsdHome
+        && !candidateGsdPath.startsWith(normalizedGsdHome + "/")
+      ) {
+        return join(projectRoot, ".gsd", "gsd.db");
+      }
     }
   }
-
-  // External-state layout: ~/.gsd/projects/<hash>/worktrees/<MID>/...
-  // Resolve to ~/.gsd/projects/<hash>/gsd.db (the canonical project DB) (#2952).
-  const extRe = /[/\\]\.gsd[/\\]projects[/\\][a-f0-9]+[/\\]worktrees(?:[/\\]|$)/;
-  const extMatch = extRe.exec(basePath);
-  if (extMatch) {
-    const matchStr = extMatch[0];
-    // Find the "/worktrees" portion within the match and slice up to it
-    const wtIdx = matchStr.search(/[/\\]worktrees(?:[/\\]|$)/);
-    const projectStateRoot = basePath.slice(0, extMatch.index + wtIdx);
+  // Symlink-resolved external-state layout: /.gsd/projects/<hash>/worktrees/<MID>
+  // Use the match index against the original path so the returned path preserves
+  // the caller's original separator style.
+  const externalWorktreeMatch = /^(.*\/\.gsd\/projects\/[a-f0-9]+)\/worktrees\//.exec(normalizedPath);
+  if (externalWorktreeMatch?.[1]) {
+    const projectStateRoot = basePath.slice(0, externalWorktreeMatch[1].length);
     return join(projectStateRoot, "gsd.db");
   }
 
@@ -191,4 +192,3 @@ export function registerDynamicTools(pi: ExtensionAPI): void {
     },
   } as any);
 }
-

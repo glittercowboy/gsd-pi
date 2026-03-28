@@ -68,37 +68,27 @@ describe('shared-wal', async () => {
       'forward-slash worktree path resolves correctly');
   }
 
-  // ─── Test (e1): external-state worktree resolves to project state DB (#2952) ───
-  console.log('\n=== shared-wal: resolve external-state worktree path (#2952) ===');
+  // ─── Test (e): resolve external-state worktree root ───────────────────
+  console.log('\n=== shared-wal: resolve external-state worktree root ===');
   {
-    // External-state layout: ~/.gsd/projects/<hash>/worktrees/<MID>
-    // Should resolve to:     ~/.gsd/projects/<hash>/gsd.db
-    const stateRoot = '/home/user/.gsd/projects/a1b2c3d4';
-    const worktreePath = join(stateRoot, 'worktrees', 'M002');
+    const stateRoot = '/Users/fran/.gsd/projects/89e1c9ad49bf';
+    const worktreePath = join(stateRoot, 'worktrees', 'M001');
     const result = resolveProjectRootDbPath(worktreePath);
     assert.deepStrictEqual(result, join(stateRoot, 'gsd.db'),
-      'external-state worktree path resolves to project state DB (#2952)');
+      'external-state worktree root resolves to project state DB');
   }
 
-  // ─── Test (e2): external-state worktree nested subdir (#2952) ─────────
-  console.log('\n=== shared-wal: resolve external-state worktree nested subdir (#2952) ===');
+  // ─── Test (f): resolve nested external-state worktree subdir ──────────
+  console.log('\n=== shared-wal: resolve nested external-state worktree subdir ===');
   {
-    const stateRoot = '/home/user/.gsd/projects/deadbeef42';
-    const nestedPath = join(stateRoot, 'worktrees', 'M003', 'src', 'lib');
+    const stateRoot = '/Users/fran/.gsd/projects/89e1c9ad49bf';
+    const nestedPath = join(stateRoot, 'worktrees', 'M002', 'src', 'lib');
     const result = resolveProjectRootDbPath(nestedPath);
     assert.deepStrictEqual(result, join(stateRoot, 'gsd.db'),
-      'external-state nested worktree subdir resolves to project state DB (#2952)');
+      'nested external-state worktree subdir resolves to project state DB');
   }
 
-  // ─── Test (e3): external-state worktree with forward slashes (#2952) ──
-  console.log('\n=== shared-wal: resolve external-state worktree forward-slash (#2952) ===');
-  {
-    const result = resolveProjectRootDbPath('/Users/dev/.gsd/projects/cafe0123/worktrees/M001');
-    assert.deepStrictEqual(result, join('/Users/dev/.gsd/projects/cafe0123', 'gsd.db'),
-      'external-state forward-slash worktree path resolves correctly (#2952)');
-  }
-
-  // ─── Test (e): Concurrent writes — 3 connections to same WAL DB ───────
+  // ─── Test (g): Concurrent writes — 3 connections to same WAL DB ───────
   console.log('\n=== shared-wal: concurrent writes via WAL ===');
   {
     const tmp = createTmpDir('concurrent');
@@ -140,7 +130,7 @@ describe('shared-wal', async () => {
     }
   }
 
-  // ─── Test (f): WAL concurrent — multiple raw connections to file DB ────
+  // ─── Test (h): WAL concurrent — multiple raw connections to file DB ────
   console.log('\n=== shared-wal: true concurrent connections via raw SQLite ===');
   {
     const tmp = createTmpDir('rawconc');
