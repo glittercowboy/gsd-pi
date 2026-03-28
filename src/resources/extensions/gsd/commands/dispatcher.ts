@@ -31,7 +31,7 @@ export async function handleGSDCommand(
   } catch (err) {
     if (err instanceof GSDNoProjectError) {
       ctx.ui.notify(
-        "No project found in this directory. `cd` into a project directory or run `/gsd new-project` to initialize one.",
+        `${err.message} \`cd\` into a project directory first.`,
         "warning",
       );
       return;
