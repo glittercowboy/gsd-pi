@@ -553,6 +553,8 @@ export interface WidgetContent {
 export interface WorkspaceStoreState {
   bootStatus: WorkspaceStatus
   connectionState: WorkspaceConnectionState
+  /** True while the stream is replaying missed events from the event log on reconnect */
+  isCatchingUp: boolean
   boot: WorkspaceBootPayload | null
   live: WorkspaceLiveState
   terminalLines: WorkspaceTerminalLine[]
@@ -1818,6 +1820,7 @@ function createInitialState(): WorkspaceStoreState {
   return {
     bootStatus: "idle",
     connectionState: "idle",
+    isCatchingUp: false,
     boot: null,
     live: createInitialWorkspaceLiveState(),
     terminalLines: [createTerminalLine("system", "Preparing the live GSD workspace…")],
@@ -1848,6 +1851,51 @@ function createInitialState(): WorkspaceStoreState {
   }
 }
 
+// ---------------------------------------------------------------------------
+// SSE cursor tracking — project-scoped localStorage helpers
+// ---------------------------------------------------------------------------
+
+function seqStorageKey(projectCwd: string): string {
+  return `gsd-last-seq:${projectCwd}`
+}
+
+function getStoredSeq(projectCwd: string): number {
+  if (typeof window === "undefined") return -1
+  const stored = localStorage.getItem(seqStorageKey(projectCwd))
+  if (stored === null) return -1
+  const parsed = parseInt(stored, 10)
+  return isNaN(parsed) ? -1 : parsed
+}
+
+function storeSeq(projectCwd: string, seq: number): void {
+  if (typeof window === "undefined") return
+  localStorage.setItem(seqStorageKey(projectCwd), String(seq))
+}
+
+function clearStoredSeq(projectCwd: string): void {
+  if (typeof window === "undefined") return
+  localStorage.removeItem(seqStorageKey(projectCwd))
+}
+
+// ---------------------------------------------------------------------------
+// Replay-safe event filtering
+// Control events that must NOT be replayed — they trigger live side effects
+// (state reloads, blocking UI prompts, extension auth refreshes, etc.)
+// ---------------------------------------------------------------------------
+
+const REPLAY_UNSAFE_EVENT_TYPES = new Set([
+  "live_state_invalidation", // calls reloadLiveState() — would re-fetch stale data
+  "extension_ui_request",    // queues blocking UI prompts in pendingUiRequests
+])
+
+function isReplayableEvent(event: WorkspaceEvent): boolean {
+  const eventType = (event as { type?: string }).type
+  if (eventType && REPLAY_UNSAFE_EVENT_TYPES.has(eventType)) return false
+  return true
+}
+
+// ---------------------------------------------------------------------------
+
 export function buildProjectUrl(path: string, projectCwd?: string): string {
   if (!projectCwd) return path
   const url = new URL(path, "http://localhost")
@@ -1874,6 +1922,8 @@ export class GSDWorkspaceStore {
   private commandTimeoutTimer: ReturnType<typeof setTimeout> | null = null
   private lastBootRefreshAt = 0
   private visibilityHandler: (() => void) | null = null
+  /** Per-tab monotonic dedupe — prevents duplicate event application even when localStorage is shared across tabs */
+  private lastAppliedSeq = -1
 
   subscribe = (listener: () => void): (() => void) => {
     this.listeners.add(listener)
@@ -4850,7 +4900,23 @@ export class GSDWorkspaceStore {
   private ensureEventStream(): void {
     if (this.eventSource || this.disposed || this.state.boot?.onboarding.locked) return
 
-    const stream = new EventSource(appendAuthParam(this.buildUrl("/api/session/events")))
+    // Get project identifier for cursor scoping
+    const projectCwd = this.projectCwd ?? ""
+
+    // Read stored cursor and set catching-up state IMMEDIATELY before EventSource creation (D-01)
+    const storedSeq = getStoredSeq(projectCwd)
+    if (storedSeq >= 0) {
+      this.patchState({ isCatchingUp: true })
+    }
+
+    // Build EventSource URL — append ?since= when a stored cursor exists
+    let eventUrl = appendAuthParam(this.buildUrl("/api/session/events"))
+    if (storedSeq >= 0) {
+      const separator = eventUrl.includes("?") ? "&" : "?"
+      eventUrl = `${eventUrl}${separator}since=${storedSeq}`
+    }
+
+    const stream = new EventSource(eventUrl)
     this.eventSource = stream
 
     stream.onopen = () => {
@@ -4863,11 +4929,99 @@ export class GSDWorkspaceStore {
       }
       this.lastStreamState = "connected"
       this.patchState({ connectionState: "connected", lastClientError: null })
-      if (wasDisconnected) {
+      if (wasDisconnected && storedSeq < 0) {
+        // Only soft-refresh on reconnect when NOT doing a replay (replay provides the missed state)
         void this.refreshBoot({ soft: true })
       }
     }
 
+    // Handle replay events (missed events from log) — filter unsafe control events
+    stream.addEventListener("replay", (msg: MessageEvent) => {
+      try {
+        const parsed: unknown = JSON.parse(msg.data)
+        if (!isWorkspaceEvent(parsed)) return
+
+        // Monotonic dedupe: skip events at or below last applied seq
+        const seq = (parsed as { _seq?: number })._seq
+        if (typeof seq === "number") {
+          if (seq <= this.lastAppliedSeq) return // dedupe
+          this.lastAppliedSeq = seq
+          storeSeq(projectCwd, seq)
+        }
+
+        // Only replay safe events — skip control events that would trigger side effects
+        if (!isReplayableEvent(parsed)) return
+
+        // D-02: Replay events go through handleEvent() which triggers the same
+        // scroll-to-bottom behavior as live events — no special handling needed.
+        this.handleEvent(parsed)
+      } catch {
+        // Skip malformed replay events
+      }
+    })
+
+    // Handle live events (real-time + stream_live sentinel)
+    stream.addEventListener("live", (msg: MessageEvent) => {
+      try {
+        const parsed: unknown = JSON.parse(msg.data)
+        // Check for stream_live sentinel — marks end of replay, dismiss catching-up banner
+        if (parsed && typeof parsed === "object" && (parsed as { type?: string }).type === "stream_live") {
+          this.patchState({ isCatchingUp: false })
+          return
+        }
+        if (!isWorkspaceEvent(parsed)) return
+
+        // Monotonic dedupe for live events too
+        const seq = (parsed as { _seq?: number })._seq
+        if (typeof seq === "number") {
+          if (seq <= this.lastAppliedSeq) return // dedupe
+          this.lastAppliedSeq = seq
+          storeSeq(projectCwd, seq)
+        }
+
+        this.handleEvent(parsed)
+      } catch (error) {
+        const text = normalizeClientError(error)
+        this.patchState({
+          lastClientError: text,
+          terminalLines: withTerminalLine(this.state.terminalLines, createTerminalLine("error", `Failed to parse stream event — ${text}`)),
+        })
+      }
+    })
+
+    // Handle snapshot events (stale cursor or buffer overflow)
+    stream.addEventListener("snapshot", (msg: MessageEvent) => {
+      try {
+        const parsed: unknown = JSON.parse(msg.data)
+        const reason = (parsed as { reason?: string })?.reason
+        if (reason === "cursor_expired" || reason === "buffer_overflow" || reason === "replay_error") {
+          // Close the current stream before refreshing state
+          this.closeEventStream()
+          this.patchState({ isCatchingUp: false })
+
+          // D-04: Show appropriate message to user
+          const message =
+            reason === "cursor_expired"
+              ? "Session too old — showing current state."
+              : "Replay interrupted — showing current state."
+          this.patchState({
+            terminalLines: withTerminalLine(this.state.terminalLines, createTerminalLine("system", message)),
+          })
+
+          // Clear stored cursor — next stream will be pure live (no replay)
+          clearStoredSeq(projectCwd)
+
+          // Refresh full state via refreshBoot(), then reopen stream with no cursor
+          void this.refreshBoot().then(() => {
+            if (!this.disposed) this.ensureEventStream()
+          })
+        }
+      } catch {
+        // Skip malformed snapshot events
+      }
+    })
+
+    // Backward-compat fallback: handle unnamed events from servers without named-event support
     stream.onmessage = (message) => {
       try {
         const parsed: unknown = JSON.parse(message.data)
@@ -4877,6 +5031,12 @@ export class GSDWorkspaceStore {
             terminalLines: withTerminalLine(this.state.terminalLines, createTerminalLine("error", "Malformed event received from stream")),
           })
           return
+        }
+        const seq = (parsed as { _seq?: number })._seq
+        if (typeof seq === "number") {
+          if (seq <= this.lastAppliedSeq) return // dedupe
+          this.lastAppliedSeq = seq
+          storeSeq(projectCwd, seq)
         }
         this.handleEvent(parsed)
       } catch (error) {
@@ -4907,12 +5067,20 @@ export class GSDWorkspaceStore {
         this.patchState({ connectionState: nextConnectionState })
       }
       this.lastStreamState = nextConnectionState
+
+      // Pitfall 5: Close the stale EventSource and recreate it with the LATEST cursor
+      // (browser auto-reconnect would reuse the original URL with the original ?since= value)
+      this.closeEventStream()
+      setTimeout(() => {
+        if (!this.disposed) this.ensureEventStream()
+      }, 2000)
     }
   }
 
   private closeEventStream(): void {
     this.eventSource?.close()
     this.eventSource = null
+    this.patchState({ isCatchingUp: false })
   }
 
   private handleEvent(event: WorkspaceEvent): void {

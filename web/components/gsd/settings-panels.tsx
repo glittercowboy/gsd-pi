@@ -1,26 +1,35 @@
 "use client"
 
-import { useState, useEffect, useCallback } from "react"
+import { useState, useEffect, useCallback, useRef } from "react"
 
 import {
   AlertTriangle,
   CheckCircle2,
+  Copy,
   Cpu,
   DollarSign,
   Eye,
   EyeOff,
   FlaskConical,
+  Globe,
   KeyRound,
   LoaderCircle,
+  Power,
   Radio,
   RefreshCw,
   Settings,
+  Shield,
   SlidersHorizontal,
+  Terminal,
   Type,
+  Wifi,
 } from "lucide-react"
+
+import { toast } from "sonner"
 
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
 import type {
   SettingsData,
   SettingsPatternHistory,
@@ -1203,6 +1212,459 @@ export function ExperimentalPanel() {
           <span className="font-mono">{prefs?.path ?? "~/.gsd/PREFERENCES.md"}</span>
           {" "}and take effect on the next session.
         </p>
+      )}
+    </div>
+  )
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// REMOTE ACCESS PANEL
+// ═══════════════════════════════════════════════════════════════════════
+
+interface TailscaleStatusData {
+  installed: boolean
+  connected: boolean
+  hostname: string
+  tailnetUrl: string
+  dnsName: string
+}
+
+type SetupStep = "detect" | "install" | "connect" | "verify"
+type SetupStepState = "idle" | "running" | "done" | "error"
+
+interface SetupStepInfo {
+  step: SetupStep
+  label: string
+  state: SetupStepState
+  output: string[]
+  error?: string
+  authUrl?: string
+}
+
+function CopyableUrl({ url }: { url: string }) {
+  const [copied, setCopied] = useState(false)
+
+  async function handleCopy() {
+    await navigator.clipboard.writeText(url)
+    setCopied(true)
+    setTimeout(() => setCopied(false), 2000)
+  }
+
+  return (
+    <div className="flex items-center gap-2 rounded-md border border-border/50 bg-card/50 px-3 py-2 text-xs">
+      <a href={url} target="_blank" rel="noopener noreferrer"
+         className="flex-1 font-mono text-foreground hover:text-primary truncate">
+        {url}
+      </a>
+      <Button variant="ghost" size="sm" className="h-6 px-2" onClick={handleCopy}>
+        {copied ? <CheckCircle2 className="h-3 w-3 text-green-500" /> : <Copy className="h-3 w-3" />}
+      </Button>
+    </div>
+  )
+}
+
+function PasswordSubsection({ onPasswordChange }: { onPasswordChange: () => void }) {
+  const [password, setPassword] = useState("")
+  const [showPassword, setShowPassword] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [configured, setConfigured] = useState<boolean | null>(null)
+
+  useEffect(() => {
+    void checkConfigured()
+  }, [])
+
+  async function checkConfigured() {
+    try {
+      const res = await authFetch("/api/auth/status")
+      if (res.ok) {
+        const data = await res.json() as { configured: boolean; authenticated: boolean }
+        setConfigured(data.configured)
+      }
+    } catch { /* ignore */ }
+  }
+
+  async function handleSave(e: React.FormEvent) {
+    e.preventDefault()
+    if (password.length < 4) { setError("Minimum 4 characters"); return }
+    setSaving(true)
+    setError(null)
+    try {
+      const res = await authFetch("/api/settings/password", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ newPassword: password }),
+      })
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({ error: "Failed to save" })) as { error?: string }
+        setError(data.error ?? "Failed to save password")
+        return
+      }
+      toast.success("Password updated. Other devices have been logged out.")
+      setPassword("")
+      setConfigured(true)
+      onPasswordChange()
+    } catch {
+      setError("Network error")
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center gap-2">
+        <KeyRound className="h-4 w-4 text-muted-foreground" />
+        <h4 className="text-sm font-medium">{configured ? "Change Password" : "Set Password"}</h4>
+      </div>
+      <p className="text-xs text-muted-foreground">
+        {configured
+          ? "Changing your password will log out all other devices."
+          : "Set a password to enable remote access via Tailscale."}
+      </p>
+      <form onSubmit={handleSave} className="flex items-end gap-2">
+        <div className="relative flex-1">
+          <Input
+            type={showPassword ? "text" : "password"}
+            placeholder="New password"
+            value={password}
+            onChange={(e) => { setPassword(e.target.value); setError(null) }}
+            minLength={4}
+            className="pr-9 text-sm"
+          />
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="absolute right-1 top-1/2 -translate-y-1/2 h-7 w-7 p-0"
+            onClick={() => setShowPassword(!showPassword)}
+          >
+            {showPassword ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+          </Button>
+        </div>
+        <Button type="submit" size="sm" disabled={saving || password.length < 4}>
+          {saving ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : "Save"}
+        </Button>
+      </form>
+      {error && <p className="text-xs text-destructive">{error}</p>}
+    </div>
+  )
+}
+
+function TailscaleStatusSubsection({
+  status,
+  loading,
+  onRefresh,
+  passwordConfigured,
+}: {
+  status: TailscaleStatusData | null
+  loading: boolean
+  onRefresh: () => void
+  passwordConfigured: boolean
+}) {
+  const [toggling, setToggling] = useState(false)
+
+  async function handleToggle() {
+    if (!status?.installed) return
+    setToggling(true)
+    try {
+      const step = status.connected ? "disconnect" : "connect"
+      const res = await authFetch("/api/tailscale/setup", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ step }),
+      })
+      if (res.ok && res.body) {
+        const reader = res.body.getReader()
+        while (true) {
+          const { done } = await reader.read()
+          if (done) break
+        }
+      }
+      onRefresh()
+    } catch { /* ignore */ } finally {
+      setToggling(false)
+    }
+  }
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <Wifi className="h-4 w-4 text-muted-foreground" />
+          <h4 className="text-sm font-medium">Tailscale</h4>
+          {status?.connected ? (
+            <Badge variant="outline" className="border-green-500/30 text-green-500 text-[10px] px-1.5 py-0">
+              Connected
+            </Badge>
+          ) : status !== null ? (
+            <Badge variant="outline" className="text-muted-foreground text-[10px] px-1.5 py-0">
+              {status.installed ? "Not connected" : "Not installed"}
+            </Badge>
+          ) : null}
+          {status?.connected && status.hostname && (
+            <span className="text-xs text-muted-foreground font-mono">{status.hostname}</span>
+          )}
+        </div>
+        <div className="flex items-center gap-1.5">
+          {status?.installed && passwordConfigured && (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={handleToggle}
+              disabled={toggling || loading}
+              className="h-7 gap-1.5 text-xs"
+              title={status.connected ? "Disconnect Tailscale" : "Connect Tailscale"}
+            >
+              <Power className={cn("h-3 w-3", status.connected ? "text-green-500" : "text-muted-foreground")} />
+              {toggling ? "..." : status.connected ? "Disconnect" : "Connect"}
+            </Button>
+          )}
+          <Button variant="ghost" size="sm" onClick={onRefresh} disabled={loading} className="h-7 gap-1.5 text-xs">
+            <RefreshCw className={cn("h-3 w-3", loading && "animate-spin")} />
+            Refresh
+          </Button>
+        </div>
+      </div>
+
+      {!passwordConfigured && (
+        <div className="rounded-md border border-amber-500/20 bg-amber-500/5 px-3 py-2 text-xs text-amber-600 dark:text-amber-400">
+          Set a password above before enabling Tailscale remote access.
+        </div>
+      )}
+
+      {status?.connected && status.tailnetUrl && (
+        <CopyableUrl url={status.tailnetUrl} />
+      )}
+    </div>
+  )
+}
+
+function TailscaleSetupAssistant({ onComplete }: { onComplete: () => void }) {
+  const [steps, setSteps] = useState<SetupStepInfo[]>([
+    { step: "detect", label: "Detecting environment...", state: "idle", output: [] },
+    { step: "install", label: "Install Tailscale", state: "idle", output: [] },
+    { step: "connect", label: "Connect to tailnet", state: "idle", output: [] },
+    { step: "verify", label: "Verify connection", state: "idle", output: [] },
+  ])
+  const [activeStep, setActiveStep] = useState(0)
+  const [started, setStarted] = useState(false)
+  const abortRef = useRef<AbortController | null>(null)
+  const skipInstallRef = useRef(false)
+
+  useEffect(() => {
+    if (!started) {
+      setStarted(true)
+      void runStep(0)
+    }
+  }, [started])
+
+  useEffect(() => {
+    return () => { abortRef.current?.abort() }
+  }, [])
+
+  async function runStep(index: number) {
+    const stepNames: SetupStep[] = ["detect", "install", "connect", "verify"]
+    const currentStep = stepNames[index]
+    if (!currentStep) return
+
+    setSteps(prev => prev.map((s, i) =>
+      i === index ? { ...s, state: "running", output: [], error: undefined, authUrl: undefined } : s
+    ))
+    setActiveStep(index)
+
+    const abort = new AbortController()
+    abortRef.current = abort
+
+    try {
+      const res = await authFetch("/api/tailscale/setup", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ step: currentStep }),
+        signal: abort.signal,
+      })
+
+      if (!res.ok || !res.body) {
+        setSteps(prev => prev.map((s, i) =>
+          i === index ? { ...s, state: "error", error: "Request failed" } : s
+        ))
+        return
+      }
+
+      const reader = res.body.getReader()
+      const decoder = new TextDecoder()
+      let buffer = ""
+
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+
+        buffer += decoder.decode(value, { stream: true })
+        const lines = buffer.split("\n")
+        buffer = lines.pop() ?? ""
+
+        for (const line of lines) {
+          if (!line.startsWith("data: ")) continue
+          const json = line.slice(6)
+          try {
+            const event = JSON.parse(json)
+
+            if (event.type === "output") {
+              setSteps(prev => prev.map((s, i) =>
+                i === index ? { ...s, output: [...s.output, event.line] } : s
+              ))
+            } else if (event.type === "auth-url") {
+              setSteps(prev => prev.map((s, i) =>
+                i === index ? { ...s, authUrl: event.url } : s
+              ))
+            } else if (event.type === "detect") {
+              if (event.installed) {
+                skipInstallRef.current = true
+                setSteps(prev => prev.map((s, i) =>
+                  i === 1 ? { ...s, state: "done", output: ["Tailscale already installed"] } : s
+                ))
+              }
+            } else if (event.type === "done") {
+              setSteps(prev => prev.map((s, i) =>
+                i === index ? { ...s, state: "done" } : s
+              ))
+              const nextIndex = currentStep === "detect" && skipInstallRef.current
+                ? 2
+                : index + 1
+              if (nextIndex < stepNames.length) {
+                setTimeout(() => void runStep(nextIndex), 500)
+              } else {
+                onComplete()
+              }
+            } else if (event.type === "error") {
+              setSteps(prev => prev.map((s, i) =>
+                i === index ? { ...s, state: "error", error: event.message } : s
+              ))
+            } else if (event.type === "verify") {
+              if (event.connected) {
+                setSteps(prev => prev.map((s, i) =>
+                  i === index ? { ...s, output: [...s.output, `Connected as ${event.hostname}`, event.tailnetUrl ?? ""] } : s
+                ))
+              }
+            }
+          } catch { /* ignore malformed events */ }
+        }
+      }
+    } catch (err) {
+      if (!(err instanceof DOMException && err.name === "AbortError")) {
+        setSteps(prev => prev.map((s, i) =>
+          i === index ? { ...s, state: "error", error: "Connection lost" } : s
+        ))
+      }
+    }
+  }
+
+  return (
+    <div className="space-y-3 rounded-md border border-border/50 bg-card/30 p-3">
+      <div className="flex items-center gap-2 text-sm font-medium">
+        <Terminal className="h-4 w-4 text-muted-foreground" />
+        Tailscale Setup
+      </div>
+      {steps.map((s, i) => (
+        <div key={s.step} className={cn("space-y-1.5", i > activeStep && s.state === "idle" && "opacity-40")}>
+          <div className="flex items-center gap-2 text-xs">
+            {s.state === "running" && <LoaderCircle className="h-3 w-3 animate-spin text-primary" />}
+            {s.state === "done" && <CheckCircle2 className="h-3 w-3 text-green-500" />}
+            {s.state === "error" && <AlertTriangle className="h-3 w-3 text-destructive" />}
+            {s.state === "idle" && <div className="h-3 w-3 rounded-full border border-border" />}
+            <span className={cn(s.state === "running" && "font-medium")}>{s.label}</span>
+          </div>
+          {s.output.length > 0 && (
+            <pre className="max-h-32 overflow-auto rounded bg-black/20 p-2 text-[10px] font-mono text-muted-foreground leading-relaxed">
+              {s.output.join("\n")}
+            </pre>
+          )}
+          {s.authUrl && (
+            <div className="rounded-md border border-blue-500/20 bg-blue-500/5 px-3 py-2 text-xs">
+              Open this URL to authenticate:{" "}
+              <a href={s.authUrl} target="_blank" rel="noopener noreferrer" className="text-blue-500 underline break-all">
+                {s.authUrl}
+              </a>
+            </div>
+          )}
+          {s.state === "error" && s.error && (
+            <div className="flex items-center gap-2">
+              <p className="flex-1 text-xs text-destructive">{s.error}</p>
+              <Button variant="outline" size="sm" className="h-6 text-xs" onClick={() => void runStep(i)}>
+                Retry
+              </Button>
+            </div>
+          )}
+        </div>
+      ))}
+    </div>
+  )
+}
+
+export function RemoteAccessPanel() {
+  const [tailscaleStatus, setTailscaleStatus] = useState<TailscaleStatusData | null>(null)
+  const [statusLoading, setStatusLoading] = useState(false)
+  const [showSetup, setShowSetup] = useState(false)
+  const [passwordConfigured, setPasswordConfigured] = useState(false)
+
+  const loadStatus = useCallback(async () => {
+    setStatusLoading(true)
+    try {
+      const authRes = await authFetch("/api/auth/status")
+      if (authRes.ok) {
+        const authData = await authRes.json() as { configured: boolean }
+        setPasswordConfigured(authData.configured)
+      }
+      const res = await authFetch("/api/tailscale/status")
+      if (res.ok) {
+        const data = await res.json() as TailscaleStatusData
+        setTailscaleStatus(data)
+      }
+    } catch { /* ignore */ } finally {
+      setStatusLoading(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    void loadStatus()
+  }, [loadStatus])
+
+  return (
+    <div className="space-y-6">
+      <SettingsHeader
+        title="Remote Access"
+        icon={<Shield className="h-4 w-4" />}
+        onRefresh={loadStatus}
+        refreshing={statusLoading}
+      />
+
+      <PasswordSubsection onPasswordChange={loadStatus} />
+
+      <div className="border-t border-border/50" />
+
+      <TailscaleStatusSubsection
+        status={tailscaleStatus}
+        loading={statusLoading}
+        onRefresh={loadStatus}
+        passwordConfigured={passwordConfigured}
+      />
+
+      {!tailscaleStatus?.connected && tailscaleStatus?.installed !== undefined && passwordConfigured && (
+        <div>
+          {showSetup ? (
+            <TailscaleSetupAssistant onComplete={() => { setShowSetup(false); void loadStatus() }} />
+          ) : (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setShowSetup(true)}
+              className="gap-1.5 text-xs"
+            >
+              <Globe className="h-3.5 w-3.5" />
+              Set up Tailscale
+            </Button>
+          )}
+        </div>
       )}
     </div>
   )

@@ -40,6 +40,7 @@ export type CommandSurfaceSection =
   | "compact"
   | "workspace"
   | "integrations"
+  | "remote-access"
   | "experimental"
   // GSD subcommand surfaces (S02)
   | "gsd-status"

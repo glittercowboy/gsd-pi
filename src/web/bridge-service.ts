@@ -38,6 +38,7 @@ import {
   collectTestOnlyFallbackAutoDashboardData,
 } from "./auto-dashboard-service.ts";
 import { resolveGsdCliEntry } from "./cli-entry.ts";
+import { EventLog, getEventLogDir } from "./event-log.ts";
 
 // Lazily computed fallback — import.meta.url is baked in at build time by
 // webpack, so when the standalone bundle built on Linux CI runs on Windows the
@@ -1392,6 +1393,9 @@ export class BridgeService {
   private authRefreshPromise: Promise<void> | null = null;
   private requestCounter = 0;
   private stderrBuffer = "";
+  private seq = 0;
+  private eventLog: EventLog | null = null;
+  private rotationInterval: ReturnType<typeof setInterval> | null = null;
   private snapshot: BridgeRuntimeSnapshot;
 
   constructor(config: BridgeRuntimeConfig, deps: BridgeServiceDeps) {
@@ -1417,6 +1421,21 @@ export class BridgeService {
     return structuredClone(this.snapshot);
   }
 
+  async initEventLog(): Promise<void> {
+    const logDir = getEventLogDir(this.config.projectCwd);
+    this.eventLog = new EventLog(logDir);
+    await this.eventLog.init();
+    this.seq = this.eventLog.currentSeq;
+    // Hourly rotation is a fallback sweep — primary rotation triggered inline in EventLog.append()
+    this.rotationInterval = setInterval(() => {
+      void this.eventLog?.rotateIfNeeded();
+    }, 60 * 60 * 1000);
+  }
+
+  getEventLog(): EventLog | null {
+    return this.eventLog;
+  }
+
   publishLiveStateInvalidation(
     descriptor: BridgeLiveStateInvalidationDescriptor,
   ): BridgeLiveStateInvalidationEvent {
@@ -1429,6 +1448,9 @@ export class BridgeService {
   }
 
   async ensureStarted(): Promise<void> {
+    if (!this.eventLog) {
+      await this.initEventLog();
+    }
     if (this.process && this.snapshot.phase === "ready") return;
     if (this.startPromise) return await this.startPromise;
 
@@ -1586,6 +1608,12 @@ export class BridgeService {
       this.process.kill("SIGTERM");
       this.process = null;
     }
+    if (this.rotationInterval) {
+      clearInterval(this.rotationInterval);
+      this.rotationInterval = null;
+    }
+    this.eventLog?.dispose();
+    this.eventLog = null;
     this.snapshot.phase = "idle";
     this.snapshot.connectionCount = 0;
     this.snapshot.updatedAt = nowIso();
@@ -1811,9 +1839,12 @@ export class BridgeService {
   }
 
   private emit(event: BridgeEvent): void {
+    this.seq++;
+    const seqEvent = { ...event, _seq: this.seq };
+    this.eventLog?.append(seqEvent);
     for (const subscriber of this.subscribers) {
       try {
-        subscriber(event);
+        subscriber(seqEvent as BridgeEvent);
       } catch {
         // Subscriber failures should not break delivery.
       }

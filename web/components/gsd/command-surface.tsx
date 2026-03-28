@@ -23,6 +23,7 @@ import {
   Radio,
   RefreshCw,
   Search,
+  Shield,
   ShieldCheck,
   SlidersHorizontal,
   SquareTerminal,
@@ -57,7 +58,7 @@ import {
 } from "@/lib/dev-overrides"
 import { DoctorPanel, ForensicsPanel, SkillHealthPanel } from "./diagnostics-panels"
 import { KnowledgeCapturesPanel } from "./knowledge-captures-panel"
-import { PrefsPanel, ModelRoutingPanel, BudgetPanel, RemoteQuestionsPanel, GeneralPanel, ExperimentalPanel } from "./settings-panels"
+import { PrefsPanel, ModelRoutingPanel, BudgetPanel, RemoteQuestionsPanel, GeneralPanel, ExperimentalPanel, RemoteAccessPanel } from "./settings-panels"
 import { DevRootSettingsSection } from "./projects-view"
 import {
   QuickPanel,
@@ -83,7 +84,7 @@ import {
 
 // ─── Section metadata ────────────────────────────────────────────────
 
-const SETTINGS_SURFACE_SECTIONS = ["general", "model", "session-behavior", "recovery", "auth", "integrations", "workspace", "experimental"] as const
+const SETTINGS_SURFACE_SECTIONS = ["general", "model", "session-behavior", "recovery", "auth", "integrations", "workspace", "remote-access", "experimental"] as const
 const ADMIN_SECTION: CommandSurfaceSection = "admin"
 const GIT_SURFACE_SECTIONS = ["git"] as const
 const SESSION_SURFACE_SECTIONS = ["resume", "name", "fork", "session", "compact"] as const
@@ -126,6 +127,7 @@ function sectionLabel(section: CommandSurfaceSection): string {
     compact: "Compact",
     workspace: "Workspace",
     integrations: "Integrations",
+    "remote-access": "Remote Access",
     experimental: "Experimental",
   }
   return labels[section] ?? section
@@ -151,6 +153,7 @@ function sectionIcon(section: CommandSurfaceSection) {
     compact: <Archive className="h-4 w-4" />,
     workspace: <FolderRoot className="h-4 w-4" />,
     integrations: <Radio className="h-4 w-4" />,
+    "remote-access": <Shield className="h-4 w-4" />,
     experimental: <FlaskConical className="h-4 w-4" />,
   }
   return icons[section] ?? null
@@ -2130,6 +2133,7 @@ export function CommandSurface() {
       case "compact": return renderCompactSection()
       case "workspace": return <DevRootSettingsSection />
       case "integrations": return <RemoteQuestionsPanel />
+      case "remote-access": return <RemoteAccessPanel />
       case "gsd-forensics": return <ForensicsPanel />
       case "gsd-doctor": return <DoctorPanel />
       case "gsd-skill-health": return <SkillHealthPanel />

@@ -34,6 +34,7 @@ import { ScopeBadge } from "@/components/gsd/scope-badge"
 import { Badge } from "@/components/ui/badge"
 import { ProjectsPanel, ProjectSelectionGate } from "@/components/gsd/projects-view"
 import { UpdateBanner } from "@/components/gsd/update-banner"
+import { CatchingUpBanner } from "@/lib/components/catching-up-banner"
 import { getAuthToken } from "@/lib/auth"
 
 const KNOWN_VIEWS = new Set(["dashboard", "power", "chat", "roadmap", "files", "activity", "visualize"])
@@ -272,6 +273,7 @@ function WorkspaceChrome() {
 
   return (
     <div className="relative flex h-screen flex-col overflow-hidden bg-background text-foreground">
+      <CatchingUpBanner visible={workspace.isCatchingUp} />
       <header className="flex h-12 flex-shrink-0 items-center justify-between border-b border-border bg-card px-2 md:px-4">
         <div className="flex items-center gap-2 md:gap-3 min-w-0">
           {/* Mobile hamburger menu */}

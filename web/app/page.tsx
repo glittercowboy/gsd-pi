@@ -1,6 +1,7 @@
 "use client"
 
 import dynamic from "next/dynamic"
+import { LoginGate } from "@/components/gsd/login-gate"
 
 const GSDAppShell = dynamic(
   () => import("@/components/gsd/app-shell").then((mod) => mod.GSDAppShell),
@@ -15,5 +16,9 @@ const GSDAppShell = dynamic(
 )
 
 export default function Page() {
-  return <GSDAppShell />
+  return (
+    <LoginGate>
+      <GSDAppShell />
+    </LoginGate>
+  )
 }
