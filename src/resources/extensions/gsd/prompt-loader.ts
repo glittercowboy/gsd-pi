@@ -134,7 +134,9 @@ export function loadPrompt(name: string, vars: Record<string, string> = {}): str
   }
 
   for (const [key, value] of Object.entries(effectiveVars)) {
-    content = content.replaceAll(`{{${key}}}`, value);
+    // Use literal split/join substitution so replacement strings like `$'`
+    // from shell snippets are not interpreted as replace-pattern metacharacters.
+    content = content.split(`{{${key}}}`).join(value);
   }
 
   return content.trim();
