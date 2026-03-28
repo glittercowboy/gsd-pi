@@ -20,6 +20,8 @@ import type { MemoryAction } from './memory-store.js';
 
 export type LLMCallFn = (system: string, user: string) => Promise<string>;
 
+type MemoryExtractorContext = Pick<ExtensionContext, 'modelRegistry'>;
+
 // ─── Concurrency Guard ──────────────────────────────────────────────────────
 
 let _extracting = false;
@@ -89,13 +91,11 @@ export function buildMemoryLLMCall(ctx: ExtensionContext): LLMCallFn | null {
 
     return async (system: string, user: string): Promise<string> => {
       const { completeSimple } = await import('@gsd/pi-ai');
+      const resolvedApiKey = await resolveMemoryExtractionApiKey(ctx, selectedModel);
       const result: AssistantMessage = await completeSimple(selectedModel, {
         systemPrompt: system,
         messages: [{ role: 'user', content: [{ type: 'text', text: user }], timestamp: Date.now() }],
-      }, {
-        maxTokens: 2048,
-        temperature: 0,
-      });
+      }, buildMemoryCallOptions(resolvedApiKey));
 
       // Extract text from response
       const textParts = result.content
@@ -106,6 +106,29 @@ export function buildMemoryLLMCall(ctx: ExtensionContext): LLMCallFn | null {
   } catch {
     return null;
   }
+}
+
+export async function resolveMemoryExtractionApiKey(
+  ctx: MemoryExtractorContext,
+  model: Model<Api>,
+): Promise<string | undefined> {
+  try {
+    return await ctx.modelRegistry.getApiKey(model);
+  } catch {
+    return undefined;
+  }
+}
+
+export function buildMemoryCallOptions(apiKey?: string): {
+  maxTokens: number;
+  temperature: number;
+  apiKey?: string;
+} {
+  return {
+    maxTokens: 2048,
+    temperature: 0,
+    ...(apiKey ? { apiKey } : {}),
+  };
 }
 
 // ─── Extraction Prompts ─────────────────────────────────────────────────────
@@ -156,7 +179,23 @@ function buildExtractionUserPrompt(
  * Extract assistant message text from activity JSONL.
  * Returns concatenated text content from assistant role entries.
  */
-function extractTranscriptFromActivity(raw: string, maxChars = 30_000): string {
+type ActivityMessageLike = {
+  role?: string;
+  content?: unknown;
+};
+
+function unwrapActivityMessage(entry: unknown): ActivityMessageLike | null {
+  if (!entry || typeof entry !== 'object') return null;
+
+  const wrapped = entry as { type?: unknown; message?: unknown };
+  if (wrapped.type === 'message' && wrapped.message && typeof wrapped.message === 'object') {
+    return wrapped.message as ActivityMessageLike;
+  }
+
+  return entry as ActivityMessageLike;
+}
+
+export function extractTranscriptFromActivity(raw: string, maxChars = 30_000): string {
   const lines = raw.split('\n');
   const parts: string[] = [];
   let totalChars = 0;
@@ -165,11 +204,12 @@ function extractTranscriptFromActivity(raw: string, maxChars = 30_000): string {
     if (!line.trim()) continue;
     try {
       const entry = JSON.parse(line);
-      if (entry.role !== 'assistant') continue;
+      const msg = unwrapActivityMessage(entry);
+      if (!msg || msg.role !== 'assistant') continue;
 
       // Handle content array or direct text
-      if (Array.isArray(entry.content)) {
-        for (const block of entry.content) {
+      if (Array.isArray(msg.content)) {
+        for (const block of msg.content) {
           if (block.type === 'text' && block.text) {
             const text = block.text;
             if (totalChars + text.length > maxChars) {
@@ -180,8 +220,8 @@ function extractTranscriptFromActivity(raw: string, maxChars = 30_000): string {
             totalChars += text.length;
           }
         }
-      } else if (typeof entry.content === 'string') {
-        const text = entry.content;
+      } else if (typeof msg.content === 'string') {
+        const text = msg.content;
         if (totalChars + text.length > maxChars) {
           parts.push(text.substring(0, maxChars - totalChars));
           return parts.join('\n\n');
