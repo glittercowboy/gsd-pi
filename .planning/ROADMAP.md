@@ -48,7 +48,7 @@ Plans:
 **Plans**: 2 plans
 Plans:
 - [x] 02-01-PLAN.md — Tailscale CLI wrapper module (pure functions + I/O) with unit tests
-- [ ] 02-02-PLAN.md — CLI flag parsing + web-mode.ts Tailscale lifecycle integration + tests
+- [x] 02-02-PLAN.md — CLI flag parsing + web-mode.ts Tailscale lifecycle integration + tests
 
 ### Phase 3: SSE Cursor-Based Event Replay
 **Goal**: Reconnecting browsers recover all agent output that occurred while the browser was closed, with a visible "Catching up..." indicator during replay, and stale cursors trigger a full state refresh rather than missed or duplicate events

@@ -22,14 +22,14 @@ Requirements for initial release. Each maps to roadmap phases.
 
 ### Tailscale Integration
 
-- [ ] **TAIL-01**: `gsd --web --tailscale` flag activates Tailscale Serve mode
+- [x] **TAIL-01**: `gsd --web --tailscale` flag activates Tailscale Serve mode
 - [x] **TAIL-02**: Preflight checks verify Tailscale CLI installed, connected, and password configured
 - [x] **TAIL-03**: Auto-detects Tailscale hostname via `tailscale status --json` and configures allowed origins
 - [x] **TAIL-04**: Runs `tailscale serve --bg` to expose the app via HTTPS within the tailnet
-- [ ] **TAIL-05**: Prints the Tailscale URL (`https://<hostname>.<tailnet>.ts.net`) on startup
+- [x] **TAIL-05**: Prints the Tailscale URL (`https://<hostname>.<tailnet>.ts.net`) on startup
 - [x] **TAIL-06**: Runs `tailscale serve reset` on startup (clean orphaned config from prior crashes)
-- [ ] **TAIL-07**: Runs `tailscale serve reset` on graceful shutdown (SIGTERM/SIGINT)
-- [ ] **TAIL-08**: `--tailscale` implies daemon mode (server stays alive when browser closes)
+- [x] **TAIL-07**: Runs `tailscale serve reset` on graceful shutdown (SIGTERM/SIGINT)
+- [x] **TAIL-08**: `--tailscale` implies daemon mode (server stays alive when browser closes)
 - [ ] **TAIL-09**: Setup assistant detects Tailscale installation and guides install (brew on macOS, official script on Linux)
 - [ ] **TAIL-10**: Setup assistant runs `tailscale up` and surfaces auth URL if browser login required
 - [ ] **TAIL-11**: Setup assistant verifies connection and displays hostname/tailnet info
@@ -52,7 +52,7 @@ Requirements for initial release. Each maps to roadmap phases.
 - [ ] **SETT-02**: Tailscale enable/disable toggle with connection status display
 - [ ] **SETT-03**: "Set up Tailscale" button launches guided setup assistant
 - [ ] **SETT-04**: Displays Tailscale URL (copyable) when connected
-- [ ] **SETT-05**: `gsd --web --tailscale` refuses to start without a password configured
+- [x] **SETT-05**: `gsd --web --tailscale` refuses to start without a password configured
 
 ## v2 Requirements
 
@@ -94,14 +94,14 @@ Deferred to future release. Tracked but not in current roadmap.
 | AUTH-08 | Phase 1 | Complete |
 | AUTH-09 | Phase 1 | Complete |
 | AUTH-10 | Phase 1 | Complete |
-| TAIL-01 | Phase 2 | Pending |
+| TAIL-01 | Phase 2 | Complete |
 | TAIL-02 | Phase 2 | Complete |
 | TAIL-03 | Phase 2 | Complete |
 | TAIL-04 | Phase 2 | Complete |
-| TAIL-05 | Phase 2 | Pending |
+| TAIL-05 | Phase 2 | Complete |
 | TAIL-06 | Phase 2 | Complete |
-| TAIL-07 | Phase 2 | Pending |
-| TAIL-08 | Phase 2 | Pending |
+| TAIL-07 | Phase 2 | Complete |
+| TAIL-08 | Phase 2 | Complete |
 | TAIL-09 | Phase 4 | Pending |
 | TAIL-10 | Phase 4 | Pending |
 | TAIL-11 | Phase 4 | Pending |
@@ -118,7 +118,7 @@ Deferred to future release. Tracked but not in current roadmap.
 | SETT-02 | Phase 4 | Pending |
 | SETT-03 | Phase 4 | Pending |
 | SETT-04 | Phase 4 | Pending |
-| SETT-05 | Phase 2 | Pending |
+| SETT-05 | Phase 2 | Complete |
 
 **Coverage:**
 - v1 requirements: 35 total
