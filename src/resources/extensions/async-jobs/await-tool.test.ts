@@ -36,6 +36,11 @@ test("await_job returns immediately when all watched jobs are already completed"
 	const text = getTextFromResult(result);
 	assert.match(text, /fast-job/);
 	assert.match(text, /completed/);
+
+	const evictionTimer = (manager as any).evictionTimers.get(jobId) as { hasRef?: () => boolean } | undefined;
+	assert.equal(evictionTimer?.hasRef?.(), false, "completed-job eviction timer should be unrefed");
+
+	manager.shutdown();
 });
 
 test("await_job returns on timeout when jobs are still running", async () => {

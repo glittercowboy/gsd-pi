@@ -37,7 +37,7 @@ import { showConfirm } from "../shared/tui.js";
 import { debugLog } from "./debug-logger.js";
 import { findMilestoneIds, nextMilestoneId, reserveMilestoneId, getReservedMilestoneIds, clearReservedMilestoneIds } from "./milestone-ids.js";
 import { parkMilestone, discardMilestone } from "./milestone-actions.js";
-import { resolveModelWithFallbacksForUnit } from "./preferences-models.js";
+import { selectAndApplyModel } from "./auto-model-selection.js";
 
 // ─── Re-exports (preserve public API for existing importers) ────────────────
 export {
@@ -211,10 +211,8 @@ type UIContext = ExtensionContext;
  * Read GSD-WORKFLOW.md and dispatch it to the LLM with a contextual note.
  * This is the only way the wizard triggers work — everything else is the LLM's job.
  *
- * When a unitType is provided, resolves the user's model preference for that
- * phase (e.g., models.planning → "plan-milestone", models.discuss → "discuss-milestone") and applies it before
- * dispatching. This ensures guided-flow dispatches respect the same
- * per-phase model preferences that auto-mode uses.
+ * When a unitType is provided, guided-flow uses the same shared selector as
+ * auto-mode so per-phase preferences and dynamic routing stay aligned.
  */
 async function dispatchWorkflow(
   pi: ExtensionAPI,
@@ -222,25 +220,20 @@ async function dispatchWorkflow(
   customType = "gsd-run",
   ctx?: ExtensionContext,
   unitType?: string,
+  unitId = "",
+  basePath = process.cwd(),
 ): Promise<void> {
-  // Apply model preference for this unit type (if configured)
+  // Delegate to the shared auto-mode selector so guided-flow respects the
+  // same dynamic routing pipeline instead of re-implementing model choice.
   if (ctx && unitType) {
-    const modelConfig = resolveModelWithFallbacksForUnit(unitType);
-    if (modelConfig) {
-      const availableModels = ctx.modelRegistry.getAvailable();
-      const modelsToTry = [modelConfig.primary, ...modelConfig.fallbacks];
-
-      for (const modelId of modelsToTry) {
-        // Resolve model from available models (same logic as auto-model-selection)
-        const model = resolveAvailableModel(modelId, availableModels, ctx.model?.provider);
-        if (!model) continue;
-
-        const ok = await pi.setModel(model, { persist: false });
-        if (ok) {
-          debugLog("guided-flow-model-applied", { unitType, model: `${model.provider}/${model.id}` });
-          break;
-        }
-      }
+    const prefs = loadEffectiveGSDPreferences()?.preferences;
+    const result = await selectAndApplyModel(ctx, pi, unitType, unitId, basePath, prefs, false, null);
+    if (result.appliedModel) {
+      debugLog("guided-flow-model-applied", {
+        unitType,
+        unitId,
+        model: `${result.appliedModel.provider}/${result.appliedModel.id}`,
+      });
     }
   }
 
@@ -255,45 +248,6 @@ async function dispatchWorkflow(
     },
     { triggerTurn: true },
   );
-}
-
-/**
- * Resolve a model ID string to a model object from available models.
- * Handles "provider/model" and bare ID formats.
- */
-function resolveAvailableModel<T extends { id: string; provider: string }>(
-  modelId: string,
-  availableModels: T[],
-  currentProvider: string | undefined,
-): T | undefined {
-  const slashIdx = modelId.indexOf("/");
-
-  if (slashIdx !== -1) {
-    const maybeProvider = modelId.substring(0, slashIdx);
-    const id = modelId.substring(slashIdx + 1);
-
-    const knownProviders = new Set(availableModels.map(m => m.provider.toLowerCase()));
-    if (knownProviders.has(maybeProvider.toLowerCase())) {
-      const match = availableModels.find(
-        m => m.provider.toLowerCase() === maybeProvider.toLowerCase()
-          && m.id.toLowerCase() === id.toLowerCase(),
-      );
-      if (match) return match;
-    }
-
-    // Try matching the full string as a model ID (OpenRouter-style)
-    const lower = modelId.toLowerCase();
-    return availableModels.find(
-      m => m.id.toLowerCase() === lower
-        || `${m.provider}/${m.id}`.toLowerCase() === lower,
-    );
-  }
-
-  // Bare ID — prefer current provider, then first available
-  const exactProviderMatch = availableModels.find(
-    m => m.id === modelId && m.provider === currentProvider,
-  );
-  return exactProviderMatch ?? availableModels.find(m => m.id === modelId);
 }
 
 /**

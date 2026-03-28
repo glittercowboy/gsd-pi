@@ -118,6 +118,17 @@ test("#2865: no guided-discuss-milestone loadPrompt dispatches with plan-milesto
   }
 });
 
+test("guided-flow dispatchWorkflow delegates model selection to the shared auto selector", () => {
+  assert.ok(
+    guidedFlowSrc.includes("selectAndApplyModel(ctx, pi, unitType"),
+    "guided-flow dispatchWorkflow should call selectAndApplyModel",
+  );
+  assert.ok(
+    !guidedFlowSrc.includes("resolveModelWithFallbacksForUnit"),
+    "guided-flow should no longer resolve models with its own phase-only helper",
+  );
+});
+
 // ═══════════════════════════════════════════════════════════════════════════
 // preferences-models.ts: resolveModelWithFallbacksForUnit coverage
 // ═══════════════════════════════════════════════════════════════════════════
