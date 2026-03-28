@@ -169,6 +169,7 @@ Setting `prefer_skills: []` does **not** disable skill discovery — it just mea
 
 - `notifications`: configures desktop notification behavior during auto-mode. Keys:
   - `enabled`: boolean — master toggle for all notifications. Default: `true`.
+  - `kind`: `"toast"` or `"sound"` — notification delivery mode. `"toast"` shows a desktop notification with sound (default). `"sound"` plays a system sound only — faster, no visual notification. Cross-platform: macOS uses `terminal-notifier`/`osascript` or `afplay`, Linux uses `notify-send` or `paplay`/`aplay`, Windows uses WinRT toast or `System.Media.SystemSounds`.
   - `on_complete`: boolean — notify when a unit completes. Default: `true`.
   - `on_error`: boolean — notify on errors. Default: `true`.
   - `on_budget`: boolean — notify when budget thresholds are reached. Default: `true`.

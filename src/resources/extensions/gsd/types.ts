@@ -338,6 +338,8 @@ export interface PhaseSkipPreferences {
 
 export interface NotificationPreferences {
   enabled?: boolean; // default true
+  /** Notification delivery mode. "toast" (default) shows a desktop notification with sound. "sound" plays a system beep only. */
+  kind?: "sound" | "toast";
   on_complete?: boolean; // notify on each unit completion
   on_error?: boolean; // notify on errors
   on_budget?: boolean; // notify on budget thresholds
