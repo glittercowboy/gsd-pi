@@ -73,6 +73,10 @@ console.log("\n=== Level 2: Prompts reference quality gates ===");
 
   const completeSlice = loadPrompt("complete-slice");
   assertTrue(completeSlice.includes("Operational Readiness"), "complete-slice.md mentions Operational Readiness");
+  assertTrue(
+    completeSlice.includes("never pass `{{slicePath}}` or any other directory path directly to the `read` tool"),
+    "complete-slice.md includes filesystem safety guard for directory reads",
+  );
 
   const guidedCompleteSlice = loadPrompt("guided-complete-slice");
   assertTrue(
