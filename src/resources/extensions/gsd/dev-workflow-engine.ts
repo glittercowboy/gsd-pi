@@ -48,10 +48,6 @@ export function bridgeDispatchAction(da: DispatchAction): EngineDispatchAction {
       };
     case "skip":
       return { action: "skip" };
-    default: {
-      const _exhaustive: never = da;
-      throw new Error(`Unhandled dispatch action: ${JSON.stringify(_exhaustive)}`);
-    }
   }
 }
 

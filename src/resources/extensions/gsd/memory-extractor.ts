@@ -254,9 +254,6 @@ export function parseMemoryResponse(raw: string): MemoryAction[] {
             });
           }
           break;
-        default:
-          console.warn(`[memory-extractor] Unknown action from LLM: ${JSON.stringify(item.action)}, skipping`);
-          break;
       }
     }
 
