@@ -38,6 +38,26 @@ const RiskBadge = ({ risk }: { risk: RiskLevel }) => {
   )
 }
 
+const ValidationVerdictBadge = ({
+  verdict,
+}: {
+  verdict: "pass" | "needs-attention" | "needs-remediation"
+}) => {
+  const label = verdict.replace(/-/g, " ")
+  return (
+    <span
+      className={cn(
+        "inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-medium uppercase",
+        verdict === "pass" && "bg-success/15 text-success",
+        verdict === "needs-attention" && "bg-warning/20 text-warning",
+        verdict === "needs-remediation" && "bg-destructive/15 text-destructive",
+      )}
+    >
+      {label}
+    </span>
+  )
+}
+
 export function Roadmap() {
   const workspace = useGSDWorkspaceState()
   const liveWorkspace = getLiveWorkspaceIndex(workspace)
@@ -89,6 +109,9 @@ export function Roadmap() {
                       <span className="font-mono text-xs text-muted-foreground">{milestone.id}</span>
                       <ChevronRight className="h-3 w-3 text-muted-foreground" />
                       <span className="font-semibold">{milestone.title}</span>
+                      {milestone.validationVerdict && (
+                        <ValidationVerdictBadge verdict={milestone.validationVerdict} />
+                      )}
                     </div>
                   </div>
                   <div className="text-right">

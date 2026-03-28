@@ -134,6 +134,8 @@ export interface WorkspaceTaskTarget {
 }
 
 export type RiskLevel = "low" | "medium" | "high"
+export type WorkspaceMilestoneLifecycleStatus = "complete" | "active" | "pending" | "parked"
+export type WorkspaceMilestoneValidationVerdict = "pass" | "needs-attention" | "needs-remediation"
 
 export interface WorkspaceSliceTarget {
   id: string
@@ -154,6 +156,8 @@ export interface WorkspaceMilestoneTarget {
   id: string
   title: string
   roadmapPath?: string
+  status: WorkspaceMilestoneLifecycleStatus
+  validationVerdict?: WorkspaceMilestoneValidationVerdict
   slices: WorkspaceSliceTarget[]
 }
 

@@ -112,37 +112,61 @@ test("indexWorkspace handles slices without risk/depends/demo", async (t) => {
 test("getMilestoneStatus returns correct statuses", () => {
   const { getMilestoneStatus } = workspaceStatus;
 
-  // All slices done → done
-  const doneMilestone = {
+  // Authoritative complete status wins even if slices are mixed.
+  const completeMilestone = {
     id: "M001",
-    title: "Done",
-    slices: [
-      { id: "S01", title: "S01", done: true, tasks: [] },
-      { id: "S02", title: "S02", done: true, tasks: [] },
-    ],
-  };
-  assert.equal(getMilestoneStatus(doneMilestone, {}), "done");
-
-  // Active milestone with some done slices → in-progress
-  const activeMilestone = {
-    id: "M001",
-    title: "Active",
+    title: "Complete",
+    status: "complete",
     slices: [
       { id: "S01", title: "S01", done: true, tasks: [] },
       { id: "S02", title: "S02", done: false, tasks: [] },
     ],
   };
-  assert.equal(getMilestoneStatus(activeMilestone, { milestoneId: "M001" }), "in-progress");
+  assert.equal(getMilestoneStatus(completeMilestone, {}), "done");
 
-  // Not active, no done slices → pending
+  // Authoritative active status wins even when no slices are done yet.
+  const activeMilestone = {
+    id: "M001",
+    title: "Active",
+    status: "active",
+    slices: [
+      { id: "S01", title: "S01", done: false, tasks: [] },
+      { id: "S02", title: "S02", done: false, tasks: [] },
+    ],
+  };
+  assert.equal(getMilestoneStatus(activeMilestone, {}), "in-progress");
+
+  // Pending and parked both map to a pending roadmap bucket.
   const pendingMilestone = {
     id: "M002",
     title: "Pending",
+    status: "pending",
     slices: [
       { id: "S01", title: "S01", done: false, tasks: [] },
     ],
   };
   assert.equal(getMilestoneStatus(pendingMilestone, { milestoneId: "M001" }), "pending");
+
+  const parkedMilestone = {
+    id: "M003",
+    title: "Parked",
+    status: "parked",
+    slices: [
+      { id: "S01", title: "S01", done: true, tasks: [] },
+    ],
+  };
+  assert.equal(getMilestoneStatus(parkedMilestone, { milestoneId: "M003" }), "pending");
+
+  // Legacy payloads without milestone.status still fall back to heuristics.
+  const legacyMilestone = {
+    id: "M004",
+    title: "Legacy",
+    slices: [
+      { id: "S01", title: "S01", done: true, tasks: [] },
+      { id: "S02", title: "S02", done: true, tasks: [] },
+    ],
+  };
+  assert.equal(getMilestoneStatus(legacyMilestone, {}), "done");
 });
 
 test("getSliceStatus returns correct statuses", () => {
