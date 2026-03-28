@@ -5,8 +5,18 @@ import { request as httpRequest } from 'node:http'
 import { createServer } from 'node:net'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { appRoot, webPidFilePath as defaultWebPidFilePath } from './app-paths.js'
+import { appRoot, webPidFilePath as defaultWebPidFilePath, webPreferencesPath as defaultWebPreferencesPath } from './app-paths.js'
 import { getOrCreateSessionSecret } from './web/web-session-auth.js'
+import {
+  isTailscaleInstalled as defaultIsTailscaleInstalled,
+  getTailscaleStatus as defaultGetTailscaleStatus,
+  startTailscaleServe as defaultStartTailscaleServe,
+  stopTailscaleServe as defaultStopTailscaleServe,
+  stopTailscaleServeSync as defaultStopTailscaleServeSync,
+  getInstallCommand,
+  TailscaleServeError,
+  type TailscaleInfo,
+} from './web/tailscale.js'
 
 const DEFAULT_HOST = '127.0.0.1'
 const DEFAULT_PACKAGE_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
@@ -39,6 +49,8 @@ export interface WebModeLaunchOptions {
   port?: number
   /** Additional allowed origins for CORS (forwarded as GSD_WEB_ALLOWED_ORIGINS). */
   allowedOrigins?: string[]
+  /** Activate Tailscale Serve mode: `--tailscale` */
+  tailscale?: boolean
 }
 
 export interface ResolvedWebHostBootstrap {
@@ -105,6 +117,13 @@ export interface WebModeDeps {
   deletePidFile?: (path: string) => void
   /** Path to the multi-instance registry JSON (for testing). */
   registryPath?: string
+  /** Tailscale wrapper functions (for testing) */
+  isTailscaleInstalled?: () => boolean
+  getTailscaleStatus?: () => import('./web/tailscale.js').TailscaleStatusResult
+  startTailscaleServe?: (port: number) => Promise<void>
+  stopTailscaleServe?: (options?: { strict?: boolean }) => Promise<void>
+  stopTailscaleServeSync?: () => void
+  readPasswordHash?: () => string | null
 }
 
 export interface WebModeStopResult {
@@ -122,6 +141,8 @@ export interface WebInstanceEntry {
   url: string
   cwd: string
   startedAt: string
+  /** Tailscale URL when instance was started with --tailscale */
+  tailscaleUrl?: string
 }
 
 export type WebInstanceRegistry = Record<string, WebInstanceEntry>
@@ -541,6 +562,31 @@ function cleanupStaleInstance(cwd: string, stderr: WritableLike, registryPath?: 
   unregisterInstance(cwd, registryPath)
 }
 
+// ─── Tailscale helpers ───────────────────────────────────────────────────────
+
+function readPasswordHashFromPrefs(prefsPath = defaultWebPreferencesPath): string | null {
+  try {
+    const data = JSON.parse(readFileSync(prefsPath, 'utf-8')) as Record<string, unknown>
+    return typeof data.passwordHash === 'string' && data.passwordHash.length > 0 ? data.passwordHash : null
+  } catch {
+    return null
+  }
+}
+
+function findActiveTailscaleInstance(registryPath?: string): WebInstanceEntry | null {
+  const registry = readInstanceRegistry(registryPath)
+  for (const entry of Object.values(registry)) {
+    if (!entry.tailscaleUrl) continue
+    try {
+      process.kill(entry.pid, 0) // signal 0 = existence check
+      return entry
+    } catch {
+      // Process is dead — stale entry, ignore
+    }
+  }
+  return null
+}
+
 export async function launchWebMode(
   options: WebModeLaunchOptions,
   deps: WebModeDeps = {},
@@ -578,6 +624,132 @@ export async function launchWebMode(
   // without a clean shutdown (e.g. terminal closed, crash).
   cleanupStaleInstance(options.cwd, stderr, deps.registryPath)
 
+  // -- Tailscale Serve lifecycle -----------------------------------------------
+  let tailscaleInfo: TailscaleInfo | undefined
+  let cleanupFired = false
+  let tailscaleServeStop: ((options?: { strict?: boolean }) => Promise<void>) | undefined
+  let tailscaleServeStopSync: (() => void) | undefined
+
+  if (options.tailscale) {
+    const checkInstalled = deps.isTailscaleInstalled ?? defaultIsTailscaleInstalled
+    const checkStatus = deps.getTailscaleStatus ?? defaultGetTailscaleStatus
+    const serveStop = deps.stopTailscaleServe ?? defaultStopTailscaleServe
+    const serveStopSync = deps.stopTailscaleServeSync ?? defaultStopTailscaleServeSync
+    const checkPassword = deps.readPasswordHash ?? readPasswordHashFromPrefs
+
+    // Capture for cleanup handlers (defined after vars are assigned)
+    tailscaleServeStop = serveStop
+    tailscaleServeStopSync = serveStopSync
+
+    // Singleton guard: Tailscale Serve binds port 443 globally — only one instance allowed
+    const existing = findActiveTailscaleInstance(deps.registryPath)
+    if (existing) {
+      const failure: WebModeLaunchFailure = {
+        mode: 'web', ok: false, cwd: options.cwd,
+        projectSessionsDir: options.projectSessionsDir,
+        host, port: null, url: null,
+        hostKind: resolution.ok ? resolution.kind : 'unresolved',
+        hostPath: resolution.ok ? resolution.entryPath : null,
+        hostRoot: resolution.ok ? resolution.hostRoot : null,
+        failureReason: 'tailscale:already-running',
+      }
+      stderr.write(`[gsd] Error: Tailscale Serve is already active (pid=${existing.pid}, url=${existing.tailscaleUrl}).\n`)
+      stderr.write(`[gsd] Stop it first: gsd web stop --all\n`)
+      emitLaunchStatus(stderr, failure)
+      return failure
+    }
+
+    // Step 1: Preflight checks
+    if (!checkInstalled()) {
+      const installCmd = getInstallCommand(deps.platform ?? process.platform)
+      const failure: WebModeLaunchFailure = {
+        mode: 'web', ok: false, cwd: options.cwd,
+        projectSessionsDir: options.projectSessionsDir,
+        host, port: null, url: null,
+        hostKind: resolution.ok ? resolution.kind : 'unresolved',
+        hostPath: resolution.ok ? resolution.entryPath : null,
+        hostRoot: resolution.ok ? resolution.hostRoot : null,
+        failureReason: 'tailscale:cli-not-found',
+      }
+      stderr.write(`[gsd] Error: Tailscale CLI not found.\n`)
+      stderr.write(`[gsd] Install it: ${installCmd}\n`)
+      emitLaunchStatus(stderr, failure)
+      return failure
+    }
+
+    const statusResult = checkStatus()
+    if (!statusResult.ok) {
+      let message: string
+      let hint: string
+      switch (statusResult.reason) {
+        case 'not-connected':
+          message = 'Tailscale is not connected.'
+          hint = 'Run: tailscale up'
+          break
+        case 'invalid-status':
+          message = 'Tailscale status returned unexpected data.'
+          hint = 'Check: tailscale status'
+          break
+        case 'cli-error':
+          message = `Tailscale CLI error${statusResult.stderr ? `: ${statusResult.stderr}` : ''}.`
+          hint = 'Check that tailscaled is running: tailscale status'
+          break
+      }
+      const failure: WebModeLaunchFailure = {
+        mode: 'web', ok: false, cwd: options.cwd,
+        projectSessionsDir: options.projectSessionsDir,
+        host, port: null, url: null,
+        hostKind: resolution.ok ? resolution.kind : 'unresolved',
+        hostPath: resolution.ok ? resolution.entryPath : null,
+        hostRoot: resolution.ok ? resolution.hostRoot : null,
+        failureReason: `tailscale:${statusResult.reason}`,
+      }
+      stderr.write(`[gsd] Error: ${message}\n`)
+      stderr.write(`[gsd] ${hint}\n`)
+      emitLaunchStatus(stderr, failure)
+      return failure
+    }
+    tailscaleInfo = statusResult.info
+
+    if (!checkPassword()) {
+      const failure: WebModeLaunchFailure = {
+        mode: 'web', ok: false, cwd: options.cwd,
+        projectSessionsDir: options.projectSessionsDir,
+        host, port: null, url: null,
+        hostKind: resolution.ok ? resolution.kind : 'unresolved',
+        hostPath: resolution.ok ? resolution.entryPath : null,
+        hostRoot: resolution.ok ? resolution.hostRoot : null,
+        failureReason: 'tailscale:no-password',
+      }
+      stderr.write(`[gsd] Error: Remote access requires a password.\n`)
+      stderr.write(`[gsd] Set one in GSD settings or run: gsd settings\n`)
+      emitLaunchStatus(stderr, failure)
+      return failure
+    }
+
+    // Step 2: Register cleanup handlers early
+    const asyncCleanup = async () => {
+      if (cleanupFired) return
+      cleanupFired = true
+      try { await serveStop() } catch { /* best-effort */ }
+      process.exit(0)
+    }
+    process.once('SIGINT', () => { asyncCleanup(); })
+    process.once('SIGTERM', () => { asyncCleanup(); })
+    process.once('exit', () => {
+      if (!cleanupFired) {
+        serveStopSync()
+      }
+    })
+
+    // Step 3: Unconditional startup reset with strict: true
+    try {
+      await serveStop({ strict: true })
+    } catch (error) {
+      stderr.write(`[gsd] Warning: tailscale serve reset failed: ${error instanceof Error ? error.message : String(error)}\n`)
+    }
+  }
+
   const port = options.port ?? await (deps.resolvePort ?? reserveWebPort)(host)
   const authToken = randomBytes(32).toString('hex')
   const url = `http://${host}:${port}`
@@ -604,6 +776,15 @@ export async function launchWebMode(
     GSD_WEB_HOST_KIND: resolution.kind,
     ...(resolution.kind === 'source-dev' ? { NEXT_PUBLIC_GSD_DEV: '1' } : {}),
     ...(options.allowedOrigins?.length ? { GSD_WEB_ALLOWED_ORIGINS: options.allowedOrigins.join(',') } : {}),
+  }
+
+  // Tailscale: inject daemon mode + allowed origins
+  if (options.tailscale && tailscaleInfo) {
+    env.GSD_WEB_DAEMON_MODE = '1'
+    const existingOrigins = env.GSD_WEB_ALLOWED_ORIGINS
+    env.GSD_WEB_ALLOWED_ORIGINS = existingOrigins
+      ? `${existingOrigins},${tailscaleInfo.url}`
+      : tailscaleInfo.url
   }
 
   try {
@@ -644,8 +825,8 @@ export async function launchWebMode(
     spawnSpec.args,
     {
       cwd: spawnSpec.cwd,
-      detached: true,
-      stdio: 'ignore',
+      detached: !options.tailscale, // attached in tailscale mode so parent stays alive
+      stdio: options.tailscale ? 'inherit' : 'ignore', // pass through output in foreground mode
       env,
     },
   )
@@ -689,20 +870,72 @@ export async function launchWebMode(
     return failure
   }
 
+  // Step 7: Start Tailscale Serve after boot-ready
+  if (options.tailscale && tailscaleInfo) {
+    try {
+      const serveStart = deps.startTailscaleServe ?? defaultStartTailscaleServe
+      await serveStart(port)
+    } catch (error) {
+      // Rollback: kill the spawned child, unregister, clean up
+      const childPid = spawnResult.child.pid
+      if (childPid !== undefined) {
+        killPid(childPid)
+        unregisterInstance(options.cwd, deps.registryPath)
+        const pidFilePath = deps.pidFilePath ?? defaultWebPidFilePath
+        ;(deps.deletePidFile ?? deletePidFile)(pidFilePath)
+      }
+
+      const stderrMsg = error instanceof TailscaleServeError ? error.stderr : ''
+      const failure: WebModeLaunchFailure = {
+        mode: 'web', ok: false, cwd: options.cwd,
+        projectSessionsDir: options.projectSessionsDir,
+        host, port, url,
+        hostKind: resolution.kind,
+        hostPath: resolution.entryPath,
+        hostRoot: resolution.hostRoot,
+        failureReason: `tailscale:serve-failed`,
+      }
+      stderr.write(`[gsd] Error: tailscale serve failed.\n`)
+      if (stderrMsg) {
+        stderr.write(`[gsd] tailscale stderr: ${stderrMsg}\n`)
+      }
+      stderr.write(`[gsd] Check: tailscale serve status\n`)
+      emitLaunchStatus(stderr, failure)
+      return failure
+    }
+  }
+
   try {
-    spawnResult.child.unref?.()
+    if (!options.tailscale) {
+      spawnResult.child.unref?.()
+    }
     const pid = spawnResult.child.pid
     if (pid !== undefined) {
       const pidFilePath = deps.pidFilePath ?? defaultWebPidFilePath
       ;(deps.writePidFile ?? writePidFile)(pidFilePath, pid)
       // Register in multi-instance registry
-      registerInstance(options.cwd, { pid, port, url }, deps.registryPath)
+      registerInstance(
+        options.cwd,
+        {
+          pid,
+          port,
+          url,
+          ...(options.tailscale && tailscaleInfo ? { tailscaleUrl: tailscaleInfo.url } : {}),
+        },
+        deps.registryPath,
+      )
     }
-    const authenticatedUrl = `${url}/#token=${authToken}`
-    try {
-      ;(deps.openBrowser ?? openBrowser)(authenticatedUrl)
-    } catch (browserError) {
-      stderr.write(`[gsd] Could not open browser: ${browserError instanceof Error ? browserError.message : String(browserError)}\n`)
+
+    if (options.tailscale && tailscaleInfo) {
+      // Tailscale mode: print remote URL, skip local browser
+      stderr.write(`\nAccessible at: ${tailscaleInfo.url}\n\n`)
+    } else {
+      const authenticatedUrl = `${url}/#token=${authToken}`
+      try {
+        ;(deps.openBrowser ?? openBrowser)(authenticatedUrl)
+      } catch (browserError) {
+        stderr.write(`[gsd] Could not open browser: ${browserError instanceof Error ? browserError.message : String(browserError)}\n`)
+      }
     }
   } catch (error) {
     const failure: WebModeLaunchFailure = {
@@ -735,7 +968,11 @@ export async function launchWebMode(
     hostPath: resolution.entryPath,
     hostRoot: resolution.hostRoot,
   }
-  stderr.write(`[gsd] Ready → ${authenticatedUrl}\n`)
+  if (options.tailscale && tailscaleInfo) {
+    stderr.write(`[gsd] Ready → ${tailscaleInfo.url}\n`)
+  } else {
+    stderr.write(`[gsd] Ready → ${authenticatedUrl}\n`)
+  }
   emitLaunchStatus(stderr, success)
   return success
 }
