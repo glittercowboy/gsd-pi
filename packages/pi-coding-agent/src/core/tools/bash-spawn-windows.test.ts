@@ -36,11 +36,13 @@ import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
+const packageRoot = join(__dirname, "..", "..", "..");
+const sourceRoot = join(packageRoot, "src");
 
 const SPAWN_FILES = [
-	join(__dirname, "bash.ts"),
-	join(__dirname, "..", "bash-executor.ts"),
-	join(__dirname, "..", "..", "utils", "shell.ts"),
+	join(sourceRoot, "core", "tools", "bash.ts"),
+	join(sourceRoot, "core", "bash-executor.ts"),
+	join(sourceRoot, "utils", "shell.ts"),
 ];
 
 test("spawn calls use platform-guarded detached flag (no unconditional detached: true)", () => {
@@ -53,7 +55,7 @@ test("spawn calls use platform-guarded detached flag (no unconditional detached:
 			// Skip comments
 			if (line.trim().startsWith("//") || line.trim().startsWith("*")) continue;
 			// Check for unconditional `detached: true`
-			if (/detache/mnt/d/s*true/b/.test(line)) {
+			if (/detached:\s*true\b/.test(line)) {
 				assert.fail(
 					`${file}:${i + 1} has unconditional 'detached: true' — ` +
 					`must use 'detached: process.platform !== "win32"' ` +
@@ -65,14 +67,14 @@ test("spawn calls use platform-guarded detached flag (no unconditional detached:
 });
 
 test("killProcessTree does not use detached: true for taskkill on Windows", () => {
-	const shellFile = join(__dirname, "..", "..", "utils", "shell.ts");
+	const shellFile = join(sourceRoot, "utils", "shell.ts");
 	const content = readFileSync(shellFile, "utf-8");
 
 	// Find the taskkill spawn call and ensure it doesn't have detached: true
 	const taskkillRegion = content.match(/spawn\("taskkill"[\s\S]*?\}\)/);
 	if (taskkillRegion) {
 		assert.ok(
-			!/detache/mnt/d/s*true/.test(taskkillRegion[0]),
+			!/detached:\s*true/.test(taskkillRegion[0]),
 			"taskkill spawn should not use detached: true — " +
 			"it can cause EINVAL on Windows and is unnecessary for a utility process",
 		);
@@ -201,7 +203,7 @@ test("spawn succeeds with spaces in cwd path", async () => {
 
 // Structural test: shell.ts exports the EINVAL recovery functions
 test("shell.ts exports spawnWithEinvalRecovery and getFallbackShellConfig", () => {
-	const shellFile = join(__dirname, "..", "..", "utils", "shell.ts");
+	const shellFile = join(sourceRoot, "utils", "shell.ts");
 	const content = readFileSync(shellFile, "utf-8");
 
 	assert.ok(
@@ -220,8 +222,8 @@ test("shell.ts exports spawnWithEinvalRecovery and getFallbackShellConfig", () =
 
 // Structural test: bash.ts and bash-executor.ts use spawnWithEinvalRecovery
 test("spawn sites use spawnWithEinvalRecovery instead of raw spawn for command execution", () => {
-	const bashFile = join(__dirname, "bash.ts");
-	const executorFile = join(__dirname, "..", "bash-executor.ts");
+	const bashFile = join(sourceRoot, "core", "tools", "bash.ts");
+	const executorFile = join(sourceRoot, "core", "bash-executor.ts");
 
 	for (const file of [bashFile, executorFile]) {
 		const content = readFileSync(file, "utf-8");
