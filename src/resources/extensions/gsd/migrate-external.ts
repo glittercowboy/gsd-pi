@@ -9,7 +9,7 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, lstatSync, mkdirSync, readdirSync, realpathSync, renameSync, cpSync, rmSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
-import { externalGsdRoot } from "./repo-identity.js";
+import { externalGsdRoot, isInsideWorktree } from "./repo-identity.js";
 import { getErrorMessage } from "./error-utils.js";
 import { hasGitTrackedGsdFiles } from "./gitignore.js";
 import { GIT_NO_PROMPT_ENV } from "./git-constants.js";
@@ -57,6 +57,15 @@ export function migrateToExternalState(basePath: string): MigrationResult {
   // Skip if .gsd/ contains git-tracked files — the project intentionally
   // keeps .gsd/ in version control and migration would destroy that.
   if (hasGitTrackedGsdFiles(basePath)) {
+    return { migrated: false };
+  }
+
+  // Skip if basePath is a git worktree (not the main repo). Worktrees get
+  // their .gsd/ populated via syncGsdStateToWorktree(), not migration.
+  // externalGsdRoot() returns the same hash for worktrees and the main repo
+  // (both resolve to the same git root), so migrating here would create a
+  // junction to the shared project-root state dir — wrong isolation. (#2970)
+  if (isInsideWorktree(basePath)) {
     return { migrated: false };
   }
 

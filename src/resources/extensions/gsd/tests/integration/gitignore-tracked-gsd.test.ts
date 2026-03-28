@@ -254,3 +254,35 @@ test("migrateToExternalState cleans git index so tracked files don't show as del
     cleanup(dir);
   }
 });
+
+test("migrateToExternalState skips when basePath is a git worktree (#2970)", (t) => {
+  const dir = makeTempRepo();
+  const wtDir = join(dir, "wt");
+  try {
+    // Create a real git worktree
+    git(dir, "worktree", "add", wtDir, "-b", "test-wt");
+
+    // Create a .gsd directory inside the worktree (simulates syncGsdStateToWorktree)
+    mkdirSync(join(wtDir, ".gsd"), { recursive: true });
+    writeFileSync(join(wtDir, ".gsd", "STATE.md"), "# state\n");
+
+    // Attempt migration — should skip because it's a worktree
+    const result = migrateToExternalState(wtDir);
+
+    assert.equal(result.migrated, false, "Should NOT migrate inside a worktree");
+    assert.equal(result.error, undefined, "Should not report an error — just skip");
+
+    // .gsd/ should still be a real directory, not a symlink or junction
+    assert.ok(existsSync(join(wtDir, ".gsd", "STATE.md")), ".gsd/STATE.md should still exist");
+
+    // No .gsd.migrating should exist
+    assert.ok(
+      !existsSync(join(wtDir, ".gsd.migrating")),
+      ".gsd.migrating should not exist — migration should not have started",
+    );
+  } finally {
+    // Remove worktree before cleanup to avoid git lock issues
+    try { git(dir, "worktree", "remove", wtDir, "--force"); } catch { /* best-effort */ }
+    cleanup(dir);
+  }
+});
