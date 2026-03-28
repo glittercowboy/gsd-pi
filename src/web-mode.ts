@@ -5,7 +5,7 @@ import { request as httpRequest } from 'node:http'
 import { createServer } from 'node:net'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { appRoot, webPidFilePath as defaultWebPidFilePath, webPreferencesPath as defaultWebPreferencesPath } from './app-paths.js'
+import { appRoot, webPidFilePath as defaultWebPidFilePath, webPreferencesPath as defaultWebPreferencesPath, webAuthPath as defaultWebAuthPath } from './app-paths.js'
 import { getOrCreateSessionSecret } from './web/web-session-auth.js'
 import {
   isTailscaleInstalled as defaultIsTailscaleInstalled,
@@ -564,7 +564,7 @@ function cleanupStaleInstance(cwd: string, stderr: WritableLike, registryPath?: 
 
 // ─── Tailscale helpers ───────────────────────────────────────────────────────
 
-function readPasswordHashFromPrefs(prefsPath = defaultWebPreferencesPath): string | null {
+function readPasswordHashFromPrefs(prefsPath = defaultWebAuthPath): string | null {
   try {
     const data = JSON.parse(readFileSync(prefsPath, 'utf-8')) as Record<string, unknown>
     return typeof data.passwordHash === 'string' && data.passwordHash.length > 0 ? data.passwordHash : null
