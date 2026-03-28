@@ -125,6 +125,12 @@ test("complete-slice prompt preserves decisions and knowledge review steps", () 
   assert.match(prompt, /KNOWLEDGE\.md/);
 });
 
+test("complete-slice prompt tells the model to refresh PROJECT.md with write", () => {
+  const prompt = readPrompt("complete-slice");
+  assert.match(prompt, /use the `write` tool with `path: "\.gsd\/PROJECT\.md"` and `content`/i);
+  assert.match(prompt, /Do not guess with `edit`/i);
+});
+
 test("complete-slice prompt still contains template variables for context", () => {
   const prompt = readPrompt("complete-slice");
   assert.match(prompt, /\{\{sliceSummaryPath\}\}/);
@@ -186,6 +192,12 @@ test("validate-milestone prompt persists verification classes through gsd_valida
   assert.match(prompt, /verification classes section/i);
   assert.match(prompt, /verificationClasses/);
   assert.match(prompt, /gsd_validate_milestone/);
+});
+
+test("complete-milestone prompt tells the model to refresh PROJECT.md with write", () => {
+  const prompt = readPrompt("complete-milestone");
+  assert.match(prompt, /use the `write` tool with `path: "\.gsd\/PROJECT\.md"` and `content`/i);
+  assert.match(prompt, /Do not guess with `edit`/i);
 });
 
 // ─── Prompt migration: replan-slice → gsd_replan_slice ────────────────
