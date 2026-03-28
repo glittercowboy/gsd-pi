@@ -458,6 +458,53 @@ test("collectOneSecret: no guidance provided — render output has no guidance s
 	assert.ok(!output.match(/^\s*1\.\s/m), "should not have numbered guidance steps when no guidance provided");
 });
 
+test("collectOneSecret: undefined custom result is normalized to null", async () => {
+	const { collectOneSecretWithGuidance } = await loadGuidanceExport();
+
+	const mockCtx = {
+		hasUI: true,
+		ui: {
+			custom: async (_factory: any) => undefined,
+		},
+	};
+
+	const result = await collectOneSecretWithGuidance(mockCtx, 0, 1, "SOME_KEY", "hint text", undefined);
+	assert.equal(result, null, "undefined custom results should be treated as skipped");
+});
+
+test("collectSecretsFromManifest: undefined secret values are treated as skipped", async (t) => {
+	const { collectSecretsFromManifest } = await loadOrchestrator();
+
+	const tmp = makeTempDir("manifest-undefined-skip");
+	t.after(() => rmSync(tmp, { recursive: true, force: true }));
+
+	const manifest = makeManifest([
+		{ key: "UNDEFINED_SECRET", status: "pending" },
+	]);
+	const manifestPath = await writeManifestFile(tmp, manifest);
+
+	let callIndex = 0;
+	const mockCtx = {
+		cwd: tmp,
+		hasUI: true,
+		ui: {
+			custom: async (_factory: any) => {
+				callIndex++;
+				if (callIndex <= 1) return null; // summary dismiss
+				return undefined;
+			},
+		},
+	};
+
+	const result = await collectSecretsFromManifest(tmp, "M001", mockCtx as any);
+	assert.deepEqual(result.applied, [], "undefined input should not be written");
+	assert.ok(result.skipped.includes("UNDEFINED_SECRET"), "undefined input should be treated as skipped");
+
+	const { parseSecretsManifest } = await loadFilesExports();
+	const updated = parseSecretsManifest(readFileSync(manifestPath, "utf8"));
+	assert.equal(updated.entries[0]?.status, "skipped", "manifest should record the skipped status");
+});
+
 // ─── collectSecretsFromManifest: returns structured result ────────────────────
 
 test("collectSecretsFromManifest: returns result with applied, skipped, and existingSkipped arrays", async (t) => {

@@ -23,7 +23,7 @@ import type { SecretsManifestEntry } from "./gsd/types.js";
 
 interface CollectedSecret {
 	key: string;
-	value: string | null; // null = skipped
+	value: string | null | undefined; // null/undefined = skipped
 }
 
 interface ToolResultDetails {
@@ -59,6 +59,9 @@ async function writeEnvKey(filePath: string, key: string, value: string): Promis
 		content = await readFile(filePath, "utf8");
 	} catch {
 		content = "";
+	}
+	if (typeof value !== "string") {
+		throw new TypeError(`Secret ${key} must be a string before writing to ${filePath}`);
 	}
 	const escaped = value.replace(/\\/g, "\\\\").replace(/\n/g, "\\n").replace(/\r/g, "");
 	const line = `${key}=${escaped}`;
@@ -112,10 +115,10 @@ async function collectOneSecret(
 	keyName: string,
 	hint: string | undefined,
 	guidance?: string[],
-): Promise<string | null> {
+) : Promise<string | null> {
 	if (!ctx.hasUI) return null;
 
-	return ctx.ui.custom((tui: any, theme: any, _kb: any, done: (r: string | null) => void) => {
+	const result = await ctx.ui.custom((tui: any, theme: any, _kb: any, done: (r: string | null) => void) => {
 		let value = "";
 		let cachedLines: string[] | undefined;
 
@@ -212,6 +215,7 @@ async function collectOneSecret(
 			handleInput,
 		};
 	});
+	return result ?? null;
 }
 
 /**
@@ -419,7 +423,7 @@ export async function collectSecretsFromManifest(
 	for (const { key, value } of collected) {
 		const entry = manifest.entries.find((e) => e.key === key);
 		if (entry) {
-			entry.status = value !== null ? "collected" : "skipped";
+			entry.status = value != null ? "collected" : "skipped";
 		}
 	}
 
@@ -427,14 +431,14 @@ export async function collectSecretsFromManifest(
 	await writeFile(manifestPath, formatSecretsManifest(manifest), "utf8");
 
 	// (j) Apply collected values to destination
-	const provided = collected.filter((c) => c.value !== null) as Array<{ key: string; value: string }>;
+	const provided = collected.filter((c) => c.value != null) as Array<{ key: string; value: string }>;
 	const { applied } = await applySecrets(provided, destination, {
 		envFilePath: resolve(ctx.cwd, ".env"),
 	});
 
 	const skipped = [
 		...alreadySkipped,
-		...collected.filter((c) => c.value === null).map((c) => c.key),
+		...collected.filter((c) => c.value == null).map((c) => c.key),
 	];
 
 	return { applied, skipped, existingSkipped };
@@ -505,8 +509,8 @@ export default function secureEnv(pi: ExtensionAPI) {
 				collected.push({ key: item.key, value });
 			}
 
-			const provided = collected.filter((c) => c.value !== null) as Array<{ key: string; value: string }>;
-			const skipped = collected.filter((c) => c.value === null).map((c) => c.key);
+			const provided = collected.filter((c) => c.value != null) as Array<{ key: string; value: string }>;
+			const skipped = collected.filter((c) => c.value == null).map((c) => c.key);
 
 			// Apply to destination via shared helper
 			const { applied, errors } = await applySecrets(provided, destination, {
