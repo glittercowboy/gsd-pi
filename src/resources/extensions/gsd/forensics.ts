@@ -30,7 +30,7 @@ import { loadPrompt } from "./prompt-loader.js";
 import { gsdRoot } from "./paths.js";
 import { isDbAvailable, getAllMilestones, getMilestoneSlices, getSliceTasks } from "./gsd-db.js";
 import { isClosedStatus } from "./status-guards.js";
-import { type JournalResource, isJournalResource, type JournalErrorType } from "./auto/journal-events.js";
+import { type JournalResource, isJournalResource } from "./auto/journal-events.js";
 import { formatDuration } from "../shared/format-utils.js";
 import { getAutoWorktreePath } from "./auto-worktree.js";
 import { loadEffectiveGSDPreferences, loadGlobalGSDPreferences, getGlobalGSDPreferencesPath } from "./preferences.js";
@@ -91,7 +91,7 @@ interface JournalSummary {
   /** Count of unit-end events with error field set (from recent files) */
   errorUnitCount: number;
   /** Error type distribution (from recent files) */
-  errorTypes: Partial<Record<JournalErrorType, number>>;
+  errorTypes: Record<string, number>;
   /** Resource info from most recent iteration-start (if available) */
   latestResource?: JournalResource;
 }
@@ -512,7 +512,7 @@ function scanJournalForForensics(basePath: string): JournalSummary | null {
     let recentEntryCount = 0;
     let slowUnitCount = 0;
     let errorUnitCount = 0;
-    const errorTypes: Partial<Record<JournalErrorType, number>> = {};
+    const errorTypes: Record<string, number> = {};
     // recentFiles is in oldest-first order (sorted by filename, which encodes date).
     // Iterating oldest-to-newest means each iteration-start overwrites the previous,
     // so latestResource ends up as the most recent iteration-start in the window — correct.
@@ -548,7 +548,7 @@ function scanJournalForForensics(basePath: string): JournalSummary | null {
               if (dur !== undefined && dur > SLOW_UNIT_THRESHOLD_MS) slowUnitCount++;
               if (entry.data.error) {
                 errorUnitCount++;
-                const et = typeof entry.data.errorType === "string" ? entry.data.errorType as JournalErrorType : "unknown";
+                const et = typeof entry.data.errorType === "string" ? entry.data.errorType : "unknown";
                 errorTypes[et] = (errorTypes[et] ?? 0) + 1;
               }
             }

@@ -1226,6 +1226,10 @@ export async function runUnitPhase(
   }
 
   const errFromCtx = unitResult.errorContext;
+  const errFromMsg = unitResult.event?.messages?.length
+    ? classifyMessageError(unitResult.event.messages)
+    : undefined;
+
   let errorDetail: string | undefined;
   let errorType: JournalErrorType | undefined;
   if (errFromCtx) {
@@ -1234,14 +1238,9 @@ export async function runUnitPhase(
   } else if (unitResult.status !== "completed") {
     errorDetail = `${unitResult.status}:${unitType}/${unitId}`;
     errorType = unitResult.status === "error" ? "unknown" : "aborted";
-  } else {
-    const errFromMsg = unitResult.event?.messages?.length
-      ? classifyMessageError(unitResult.event.messages)
-      : undefined;
-    if (errFromMsg) {
-      errorDetail = errFromMsg.detail;
-      errorType = errFromMsg.type;
-    }
+  } else if (errFromMsg) {
+    errorDetail = errFromMsg.detail;
+    errorType = errFromMsg.type;
   }
 
   deps.emitJournalEvent(buildUnitEndEvent({
