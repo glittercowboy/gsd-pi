@@ -6,17 +6,15 @@ import { createServer } from 'node:net'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { appRoot, webPidFilePath as defaultWebPidFilePath, webPreferencesPath as defaultWebPreferencesPath, webAuthPath as defaultWebAuthPath } from './app-paths.js'
-import { getOrCreateSessionSecret } from './web/web-session-auth.js'
-import {
-  isTailscaleInstalled as defaultIsTailscaleInstalled,
-  getTailscaleStatus as defaultGetTailscaleStatus,
-  startTailscaleServe as defaultStartTailscaleServe,
-  stopTailscaleServe as defaultStopTailscaleServe,
-  stopTailscaleServeSync as defaultStopTailscaleServeSync,
-  getInstallCommand,
-  TailscaleServeError,
-  type TailscaleInfo,
-} from './web/tailscale.js'
+
+// src/web/ is excluded from tsc compilation (runs with Node.js type-stripping).
+// Use dynamic imports resolved from source directory to avoid dist/ path mismatch.
+const _srcDir = dirname(fileURLToPath(import.meta.url))
+const _webSessionAuthPath = join(_srcDir, 'web', 'web-session-auth.ts')
+const _tailscalePath = join(_srcDir, 'web', 'tailscale.ts')
+
+type TailscaleInfo = { hostname: string; tailnet: string; fqdn: string; url: string }
+class TailscaleServeError extends Error { exitCode: number; stderr: string; constructor(msg: string, exitCode: number, stderr: string) { super(msg); this.exitCode = exitCode; this.stderr = stderr } }
 
 const DEFAULT_HOST = '127.0.0.1'
 const DEFAULT_PACKAGE_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
@@ -631,10 +629,11 @@ export async function launchWebMode(
   let tailscaleServeStopSync: (() => void) | undefined
 
   if (options.tailscale) {
-    const checkInstalled = deps.isTailscaleInstalled ?? defaultIsTailscaleInstalled
-    const checkStatus = deps.getTailscaleStatus ?? defaultGetTailscaleStatus
-    const serveStop = deps.stopTailscaleServe ?? defaultStopTailscaleServe
-    const serveStopSync = deps.stopTailscaleServeSync ?? defaultStopTailscaleServeSync
+    const _ts = await import(_tailscalePath)
+    const checkInstalled = deps.isTailscaleInstalled ?? _ts.isTailscaleInstalled
+    const checkStatus = deps.getTailscaleStatus ?? _ts.getTailscaleStatus
+    const serveStop = deps.stopTailscaleServe ?? _ts.stopTailscaleServe
+    const serveStopSync = deps.stopTailscaleServeSync ?? _ts.stopTailscaleServeSync
     const checkPassword = deps.readPasswordHash ?? readPasswordHashFromPrefs
 
     // Capture for cleanup handlers (defined after vars are assigned)
@@ -661,7 +660,7 @@ export async function launchWebMode(
 
     // Step 1: Preflight checks
     if (!checkInstalled()) {
-      const installCmd = getInstallCommand(deps.platform ?? process.platform)
+      const installCmd = _ts.getInstallCommand(deps.platform ?? process.platform)
       const failure: WebModeLaunchFailure = {
         mode: 'web', ok: false, cwd: options.cwd,
         projectSessionsDir: options.projectSessionsDir,
@@ -679,8 +678,8 @@ export async function launchWebMode(
 
     const statusResult = checkStatus()
     if (!statusResult.ok) {
-      let message: string
-      let hint: string
+      let message = 'Unknown Tailscale error.'
+      let hint = 'Check: tailscale status'
       switch (statusResult.reason) {
         case 'not-connected':
           message = 'Tailscale is not connected.'
@@ -757,7 +756,8 @@ export async function launchWebMode(
   // Read or create session secret for cookie auth verification in proxy.ts (Edge Runtime)
   let sessionSecret = ''
   try {
-    sessionSecret = await getOrCreateSessionSecret()
+    const _sessionAuth = await import(_webSessionAuthPath)
+    sessionSecret = await _sessionAuth.getOrCreateSessionSecret()
   } catch {
     // Non-fatal — cookie auth will be disabled, bearer token auth still works
   }
@@ -873,7 +873,8 @@ export async function launchWebMode(
   // Step 7: Start Tailscale Serve after boot-ready
   if (options.tailscale && tailscaleInfo) {
     try {
-      const serveStart = deps.startTailscaleServe ?? defaultStartTailscaleServe
+      const _ts2 = await import(_tailscalePath)
+      const serveStart = deps.startTailscaleServe ?? _ts2.startTailscaleServe
       await serveStart(port)
     } catch (error) {
       // Rollback: kill the spawned child, unregister, clean up
@@ -885,7 +886,7 @@ export async function launchWebMode(
         ;(deps.deletePidFile ?? deletePidFile)(pidFilePath)
       }
 
-      const stderrMsg = error instanceof TailscaleServeError ? error.stderr : ''
+      const stderrMsg = (error as any)?.stderr ?? ''
       const failure: WebModeLaunchFailure = {
         mode: 'web', ok: false, cwd: options.cwd,
         projectSessionsDir: options.projectSessionsDir,
