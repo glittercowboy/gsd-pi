@@ -59,7 +59,7 @@ export interface WorktreeResolverDeps {
   ) => string | null;
   readFileSync: (path: string, encoding: string) => string;
   GitServiceImpl: new (basePath: string, gitConfig: unknown) => unknown;
-  loadEffectiveGSDPreferences: () =>
+  loadEffectiveGSDPreferences: (projectRoot?: string) =>
     | { preferences?: { git?: Record<string, unknown> } }
     | undefined;
   invalidateAllCaches: () => void;
@@ -110,7 +110,7 @@ export class WorktreeResolver {
 
   private rebuildGitService(): void {
     const gitConfig =
-      this.deps.loadEffectiveGSDPreferences()?.preferences?.git ?? {};
+      this.deps.loadEffectiveGSDPreferences(this.projectRoot)?.preferences?.git ?? {};
     this.s.gitService = new this.deps.GitServiceImpl(
       this.s.basePath,
       gitConfig,

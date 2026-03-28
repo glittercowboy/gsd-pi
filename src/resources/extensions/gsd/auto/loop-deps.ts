@@ -55,7 +55,7 @@ export interface LoopDeps {
   invalidateAllCaches: () => void;
   deriveState: (basePath: string) => Promise<GSDState>;
   rebuildState: (basePath: string) => Promise<void>;
-  loadEffectiveGSDPreferences: () =>
+  loadEffectiveGSDPreferences: (projectRoot?: string) =>
     | { preferences?: GSDPreferences }
     | undefined;
 

@@ -94,16 +94,16 @@ function legacyGlobalPreferencesPath(): string {
   return join(homedir(), ".pi", "agent", "gsd-preferences.md");
 }
 
-function projectPreferencesPath(): string {
-  return join(gsdRoot(process.cwd()), "PREFERENCES.md");
+function projectPreferencesPath(projectRoot?: string): string {
+  return join(gsdRoot(projectRoot ?? process.cwd()), "PREFERENCES.md");
 }
 // Legacy: older versions used lowercase preferences.md.
 // Check lowercase as a fallback so those files aren't silently ignored.
 function globalPreferencesPathLegacy(): string {
   return join(gsdHome(), "preferences.md");
 }
-function projectPreferencesPathLegacy(): string {
-  return join(gsdRoot(process.cwd()), "preferences.md");
+function projectPreferencesPathLegacy(projectRoot?: string): string {
+  return join(gsdRoot(projectRoot ?? process.cwd()), "preferences.md");
 }
 
 export function getGlobalGSDPreferencesPath(): string {
@@ -126,14 +126,14 @@ export function loadGlobalGSDPreferences(): LoadedGSDPreferences | null {
     ?? loadPreferencesFile(legacyGlobalPreferencesPath(), "global");
 }
 
-export function loadProjectGSDPreferences(): LoadedGSDPreferences | null {
-  return loadPreferencesFile(projectPreferencesPath(), "project")
-    ?? loadPreferencesFile(projectPreferencesPathLegacy(), "project");
+export function loadProjectGSDPreferences(projectRoot?: string): LoadedGSDPreferences | null {
+  return loadPreferencesFile(projectPreferencesPath(projectRoot), "project")
+    ?? loadPreferencesFile(projectPreferencesPathLegacy(projectRoot), "project");
 }
 
-export function loadEffectiveGSDPreferences(): LoadedGSDPreferences | null {
+export function loadEffectiveGSDPreferences(projectRoot?: string): LoadedGSDPreferences | null {
   const globalPreferences = loadGlobalGSDPreferences();
-  const projectPreferences = loadProjectGSDPreferences();
+  const projectPreferences = loadProjectGSDPreferences(projectRoot);
 
   if (!globalPreferences && !projectPreferences) return null;
 

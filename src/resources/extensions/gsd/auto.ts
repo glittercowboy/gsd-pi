@@ -309,7 +309,7 @@ export function getAutoDashboardData(): AutoDashboardData {
   const rtkSavings = sessionId && s.basePath
     ? getRtkSessionSavings(s.basePath, sessionId)
     : null;
-  const rtkEnabled = loadEffectiveGSDPreferences()?.preferences.experimental?.rtk === true;
+  const rtkEnabled = loadEffectiveGSDPreferences(s.basePath || undefined)?.preferences.experimental?.rtk === true;
   // Pending capture count — lazy check, non-fatal
   let pendingCaptureCount = 0;
   try {
@@ -524,7 +524,7 @@ function handleLostSessionLock(
   s.paused = false;
   clearUnitTimeout();
   deregisterSigtermHandler();
-  clearCmuxSidebar(loadEffectiveGSDPreferences()?.preferences);
+  clearCmuxSidebar(loadEffectiveGSDPreferences(s.basePath || undefined)?.preferences);
   const base = lockBase();
   const lockFilePath = base ? join(gsdRoot(base), "auto.lock") : "unknown";
   const recoverySuggestion = "\nTo recover, run: gsd doctor --fix";
@@ -590,7 +590,7 @@ export async function stopAuto(
   reason?: string,
 ): Promise<void> {
   if (!s.active && !s.paused) return;
-  const loadedPreferences = loadEffectiveGSDPreferences()?.preferences;
+  const loadedPreferences = loadEffectiveGSDPreferences(s.originalBasePath || s.basePath || undefined)?.preferences;
   const reasonSuffix = reason ? ` — ${reason}` : "";
 
   try {
@@ -1164,7 +1164,7 @@ export async function startAuto(
     restoreHookState(s.basePath);
     try {
       await rebuildState(s.basePath);
-      syncCmuxSidebar(loadEffectiveGSDPreferences()?.preferences, await deriveState(s.basePath));
+      syncCmuxSidebar(loadEffectiveGSDPreferences(s.originalBasePath || s.basePath || undefined)?.preferences, await deriveState(s.basePath));
     } catch (e) {
       debugLog("resume-rebuild-state-failed", {
         error: e instanceof Error ? e.message : String(e),
@@ -1214,7 +1214,7 @@ export async function startAuto(
       "resuming",
       s.currentMilestoneId ?? "unknown",
     );
-    logCmuxEvent(loadEffectiveGSDPreferences()?.preferences, s.stepMode ? "Step-mode resumed." : "Auto-mode resumed.", "progress");
+    logCmuxEvent(loadEffectiveGSDPreferences(s.originalBasePath || s.basePath || undefined)?.preferences, s.stepMode ? "Step-mode resumed." : "Auto-mode resumed.", "progress");
 
     await autoLoop(ctx, pi, s, buildLoopDeps());
     cleanupAfterLoopExit(ctx);
@@ -1227,6 +1227,7 @@ export async function startAuto(
     registerSigtermHandler,
     lockBase,
     buildResolver,
+    onAutoStart: startAuto,
   };
 
   const ready = await bootstrapAutoSession(
@@ -1241,11 +1242,11 @@ export async function startAuto(
   if (!ready) return;
 
   try {
-    syncCmuxSidebar(loadEffectiveGSDPreferences()?.preferences, await deriveState(s.basePath));
+    syncCmuxSidebar(loadEffectiveGSDPreferences(s.originalBasePath || s.basePath || undefined)?.preferences, await deriveState(s.basePath));
   } catch {
     // Best-effort only — sidebar sync must never block auto-mode startup
   }
-  logCmuxEvent(loadEffectiveGSDPreferences()?.preferences, requestedStepMode ? "Step-mode started." : "Auto-mode started.", "progress");
+  logCmuxEvent(loadEffectiveGSDPreferences(s.originalBasePath || s.basePath || undefined)?.preferences, requestedStepMode ? "Step-mode started." : "Auto-mode started.", "progress");
 
   // Dispatch the first unit
   await autoLoop(ctx, pi, s, buildLoopDeps());
