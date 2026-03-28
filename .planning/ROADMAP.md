@@ -60,7 +60,11 @@ Plans:
   2. The UI displays a "Catching up..." indicator from the moment of reconnect until live streaming resumes, then the indicator disappears
   3. Leaving the browser closed for an extended period (log rotation occurs) and then reconnecting triggers a full state refresh rather than an error or partial replay
   4. The JSONL event log on disk never exceeds ~60 MB in steady state — log rotation keeps the most recent 10 MB after exceeding 50 MB
-**Plans**: TBD
+**Plans**: 3 plans
+Plans:
+- [ ] 03-01-PLAN.md — EventLog module + bridge-service _seq wrapping and event persistence
+- [ ] 03-02-PLAN.md — SSE endpoint cursor-based replay with live buffering and stale cursor handling
+- [ ] 03-03-PLAN.md — Client cursor tracking in localStorage + catching-up banner UI
 
 ### Phase 4: Remote Access Settings UI
 **Goal**: Users can manage their Remote Access configuration entirely within the GSD web UI — setting or changing their password, viewing Tailscale connection status and the tailnet URL, toggling Tailscale on/off, and following a guided assistant to install and connect Tailscale for the first time
@@ -87,5 +91,5 @@ Phases execute in numeric order: 1 → 2 → 3 → 4
 |-------|----------------|--------|-----------|
 | 1. Password Auth and Cookie Sessions | 0/4 | Planning complete | - |
 | 2. Tailscale Serve Integration | 0/2 | Planning complete | - |
-| 3. SSE Cursor-Based Event Replay | 0/? | Not started | - |
+| 3. SSE Cursor-Based Event Replay | 0/3 | Planning complete | - |
 | 4. Remote Access Settings UI | 0/3 | Planning complete | - |
