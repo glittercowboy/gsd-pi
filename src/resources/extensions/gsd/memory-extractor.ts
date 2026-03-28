@@ -20,6 +20,8 @@ import type { MemoryAction } from './memory-store.js';
 
 export type LLMCallFn = (system: string, user: string) => Promise<string>;
 
+type MemoryExtractorContext = Pick<ExtensionContext, 'modelRegistry'>;
+
 // ─── Concurrency Guard ──────────────────────────────────────────────────────
 
 let _extracting = false;
@@ -89,13 +91,11 @@ export function buildMemoryLLMCall(ctx: ExtensionContext): LLMCallFn | null {
 
     return async (system: string, user: string): Promise<string> => {
       const { completeSimple } = await import('@gsd/pi-ai');
+      const resolvedApiKey = await resolveMemoryExtractionApiKey(ctx, selectedModel);
       const result: AssistantMessage = await completeSimple(selectedModel, {
         systemPrompt: system,
         messages: [{ role: 'user', content: [{ type: 'text', text: user }], timestamp: Date.now() }],
-      }, {
-        maxTokens: 2048,
-        temperature: 0,
-      });
+      }, buildMemoryCallOptions(resolvedApiKey));
 
       // Extract text from response
       const textParts = result.content
@@ -106,6 +106,29 @@ export function buildMemoryLLMCall(ctx: ExtensionContext): LLMCallFn | null {
   } catch {
     return null;
   }
+}
+
+export async function resolveMemoryExtractionApiKey(
+  ctx: MemoryExtractorContext,
+  model: Model<Api>,
+): Promise<string | undefined> {
+  try {
+    return await ctx.modelRegistry.getApiKey(model);
+  } catch {
+    return undefined;
+  }
+}
+
+export function buildMemoryCallOptions(apiKey?: string): {
+  maxTokens: number;
+  temperature: number;
+  apiKey?: string;
+} {
+  return {
+    maxTokens: 2048,
+    temperature: 0,
+    ...(apiKey ? { apiKey } : {}),
+  };
 }
 
 // ─── Extraction Prompts ─────────────────────────────────────────────────────

@@ -1,4 +1,9 @@
-import { parseMemoryResponse, _resetExtractionState } from '../memory-extractor.ts';
+import {
+  buildMemoryCallOptions,
+  parseMemoryResponse,
+  resolveMemoryExtractionApiKey,
+  _resetExtractionState,
+} from '../memory-extractor.ts';
 import {
   openDatabase,
   closeDatabase,
@@ -169,3 +174,40 @@ test('memory-extractor: reset extraction state', () => {
   assert.ok(true, '_resetExtractionState should not throw');
 });
 
+test('memory-extractor: buildMemoryCallOptions includes resolved api key when present', () => {
+  assert.deepStrictEqual(buildMemoryCallOptions('oauth-token'), {
+    maxTokens: 2048,
+    temperature: 0,
+    apiKey: 'oauth-token',
+  });
+  assert.deepStrictEqual(buildMemoryCallOptions(undefined), {
+    maxTokens: 2048,
+    temperature: 0,
+  });
+});
+
+test('memory-extractor: resolveMemoryExtractionApiKey uses modelRegistry credentials and swallows lookup failures', async () => {
+  const model = {
+    provider: 'anthropic',
+    id: 'claude-haiku-4-5',
+  } as any;
+
+  const ok = await resolveMemoryExtractionApiKey({
+    modelRegistry: {
+      getApiKey: async (arg: unknown) => {
+        assert.equal(arg, model, 'passes the selected model to modelRegistry.getApiKey');
+        return 'oauth-token';
+      },
+    },
+  } as any, model);
+  assert.equal(ok, 'oauth-token');
+
+  const failed = await resolveMemoryExtractionApiKey({
+    modelRegistry: {
+      getApiKey: async () => {
+        throw new Error('lookup failed');
+      },
+    },
+  } as any, model);
+  assert.equal(failed, undefined);
+});
