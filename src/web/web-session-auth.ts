@@ -7,7 +7,7 @@
 import { randomBytes, scryptSync, timingSafeEqual, createHmac } from "node:crypto";
 import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { join } from "node:path";
-import { appRoot } from "../app-paths.ts";
+import { appRoot } from "../app-paths.js";
 
 // ---------------------------------------------------------------------------
 // Types

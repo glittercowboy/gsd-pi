@@ -780,7 +780,7 @@ export async function launchWebMode(
 
   // Tailscale: inject daemon mode + allowed origins
   if (options.tailscale && tailscaleInfo) {
-    env.GSD_WEB_DAEMON_MODE = '1'
+    ;(env as Record<string, string>).GSD_WEB_DAEMON_MODE = '1'
     const existingOrigins = env.GSD_WEB_ALLOWED_ORIGINS
     env.GSD_WEB_ALLOWED_ORIGINS = existingOrigins
       ? `${existingOrigins},${tailscaleInfo.url}`
