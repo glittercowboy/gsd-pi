@@ -122,6 +122,7 @@
     "playwright": "^1.58.2",
     "proper-lockfile": "^4.1.2",
     "proxy-agent": "^6.5.0",
+    "semver": "^7.7.4",
     "sharp": "^0.34.5",
     "sql.js": "^1.14.1",
     "strip-ansi": "^7.1.0",
