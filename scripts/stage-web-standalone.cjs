@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-const { cpSync, existsSync, mkdirSync, readdirSync, rmSync } = require('node:fs')
+const { cpSync, existsSync, mkdirSync, readdirSync, realpathSync, rmSync } = require('node:fs')
 const { join, resolve } = require('node:path')
 
 const root = resolve(__dirname, '..')
@@ -26,8 +26,10 @@ function overlayNodePty(targetRoot) {
   const hydrated = []
   const directTarget = join(targetRoot, 'node_modules', 'node-pty')
   mkdirSync(join(targetRoot, 'node_modules'), { recursive: true })
-  cpSync(sourceNodePtyRoot, directTarget, COPY_OPTIONS)
-  hydrated.push(directTarget)
+  if (!isSameResolvedPath(sourceNodePtyRoot, directTarget)) {
+    cpSync(sourceNodePtyRoot, directTarget, COPY_OPTIONS)
+    hydrated.push(directTarget)
+  }
 
   const hashedNodeModulesRoot = join(targetRoot, '.next', 'node_modules')
   if (!existsSync(hashedNodeModulesRoot)) return hydrated
@@ -35,11 +37,20 @@ function overlayNodePty(targetRoot) {
   for (const entry of readdirSync(hashedNodeModulesRoot, { withFileTypes: true })) {
     if (!entry.isDirectory() || !entry.name.startsWith('node-pty-')) continue
     const target = join(hashedNodeModulesRoot, entry.name)
+    if (isSameResolvedPath(sourceNodePtyRoot, target)) continue
     cpSync(sourceNodePtyRoot, target, COPY_OPTIONS)
     hydrated.push(target)
   }
 
   return hydrated
+}
+
+function isSameResolvedPath(sourcePath, targetPath) {
+  try {
+    return realpathSync(sourcePath) === realpathSync(targetPath)
+  } catch {
+    return false
+  }
 }
 
 if (!existsSync(standaloneAppRoot)) {
