@@ -60,3 +60,5 @@ export {
 	type TurnStartEvent,
 	wrapToolsWithExtensions,
 } from "./extensions/index.js";
+
+export { ContextualTips, type TipContext } from "./contextual-tips.js";

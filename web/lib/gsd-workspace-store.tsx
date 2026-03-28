@@ -65,6 +65,7 @@ import type {
   SessionManageResponse,
 } from "./session-browser-contract"
 import { authFetch, appendAuthParam } from "./auth"
+import { ContextualTips } from "../../packages/pi-coding-agent/src/core/contextual-tips.ts"
 
 export type WorkspaceStatus = "idle" | "loading" | "ready" | "error" | "unauthenticated"
 export type WorkspaceConnectionState =
@@ -1864,6 +1865,7 @@ export class GSDWorkspaceStore {
 
   private state = createInitialState()
   private readonly listeners = new Set<() => void>()
+  private readonly contextualTips = new ContextualTips()
   private bootPromise: Promise<void> | null = null
   private eventSource: EventSource | null = null
   private onboardingPollTimer: ReturnType<typeof setInterval> | null = null
@@ -4041,6 +4043,26 @@ export class GSDWorkspaceStore {
       lastSlashCommandOutcome: trimmed.startsWith("/") ? outcome : null,
     })
 
+    // Evaluate contextual tips before sending to agent
+    if (outcome.kind === "prompt") {
+      const sessionState = this.state.boot?.bridge.sessionState
+      const tip = this.contextualTips.evaluate({
+        input: trimmed,
+        isStreaming: Boolean(sessionState?.isStreaming),
+        thinkingLevel: sessionState?.thinkingLevel,
+        // contextPercent not available in web — compaction nudge won't fire here
+        contextPercent: undefined,
+      })
+      if (tip) {
+        this.patchState({
+          terminalLines: withTerminalLine(
+            this.state.terminalLines,
+            createTerminalLine("system", `💡 ${tip}`),
+          ),
+        })
+      }
+    }
+
     switch (outcome.kind) {
       case "prompt":
       case "rpc": {
@@ -4681,6 +4703,11 @@ export class GSDWorkspaceStore {
           lastBridgeError: nextBridge.lastError,
           sessionAttached: hasAttachedSession(nextBridge),
         })
+      }
+
+      // Reset contextual tips on new session
+      if (payload.command === "new_session" && payload.success) {
+        this.contextualTips.reset()
       }
 
       if (payload.code === "onboarding_locked" && payload.details?.onboarding && this.state.boot) {
