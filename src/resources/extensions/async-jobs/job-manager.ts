@@ -186,6 +186,9 @@ export class AsyncJobManager {
 			this.evictionTimers.delete(id);
 			this.jobs.delete(id);
 		}, this.evictionMs);
+		// Completed jobs should not pin the host process until their eviction TTL
+		// expires; the timer is only best-effort background cleanup.
+		if (typeof timer === "object" && "unref" in timer) timer.unref();
 
 		this.evictionTimers.set(id, timer);
 	}
