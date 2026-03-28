@@ -105,7 +105,7 @@ interface ForensicReport {
 
 // ─── Duplicate Detection ──────────────────────────────────────────────────────
 
-const DEDUP_PROMPT_SECTION = `
+export const DEDUP_PROMPT_SECTION = `
 ## Duplicate Detection (REQUIRED before issue creation)
 
 Before offering to create a GitHub issue, you MUST search for existing issues and PRs that may already address this bug. This step uses the user's AI tokens for analysis.
@@ -144,6 +144,11 @@ If you find potential matches, present them to the user:
 
 Only proceed to issue creation if no matches were found OR the user explicitly chooses "Create new issue anyway".
 `;
+
+/** Pure helper: returns the dedup prompt section based on the preference value. */
+export function resolveDedupSection(forensicsDedup: boolean | undefined): string {
+  return forensicsDedup === true ? DEDUP_PROMPT_SECTION : "";
+}
 
 async function writeForensicsDedupPref(ctx: ExtensionCommandContext, enabled: boolean): Promise<void> {
   const prefsPath = getGlobalGSDPreferencesPath();
@@ -220,7 +225,7 @@ export async function handleForensics(
     }
   }
 
-  const dedupSection = dedupEnabled ? DEDUP_PROMPT_SECTION : "";
+  const dedupSection = resolveDedupSection(dedupEnabled);
 
   ctx.ui.notify("Building forensic report...", "info");
 
