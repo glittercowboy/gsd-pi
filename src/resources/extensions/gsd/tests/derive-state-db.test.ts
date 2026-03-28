@@ -4,7 +4,7 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
-import { deriveState, invalidateStateCache, _deriveStateImpl, deriveStateFromDb } from '../state.ts';
+import { deriveState, invalidateStateCache, _deriveStateImpl, deriveStateFromDb, reconcileDbMilestones } from '../state.ts';
 import {
   openDatabase,
   closeDatabase,
@@ -1005,12 +1005,15 @@ describe('derive-state-db', async () => {
       // Only insert M001 — simulates the state after migration guard ran then /gsd queue added M002
       insertMilestone({ id: 'M001', title: 'First', status: 'complete' });
 
+      // reconcileDbMilestones is the authoritative disk→DB sync; must run before any read.
+      // deriveStateFromDb() no longer performs in-memory compensation (CQS fix).
+      reconcileDbMilestones(base);
       invalidateStateCache();
       const state = await deriveStateFromDb(base);
 
-      // Before the fix, M002 was invisible: getAllMilestones() returned only M001
+      // Without reconciliation, M002 was invisible: getAllMilestones() returned only M001
       // (complete) → phase='complete' → auto-mode stopped.
-      // After the fix, deriveStateFromDb reconciles disk dirs and inserts M002.
+      // With reconcileDbMilestones() called first, M002 is in the DB before the read.
       assert.deepStrictEqual(state.phase, 'pre-planning', 'disk-sync-2416: phase is pre-planning, not complete');
       assert.deepStrictEqual(state.registry.length, 2, 'disk-sync-2416: both milestones visible in registry');
       assert.deepStrictEqual(state.registry[0]?.id, 'M001', 'disk-sync-2416: registry[0] is M001');

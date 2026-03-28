@@ -11,7 +11,7 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
-import { deriveStateFromDb, invalidateStateCache } from "../state.ts";
+import { deriveStateFromDb, invalidateStateCache, reconcileDbMilestones } from "../state.ts";
 import {
   openDatabase,
   closeDatabase,
@@ -78,6 +78,10 @@ async function main(): Promise<void> {
     writeFile(base, "milestones/M002/CONTEXT.md", CONTEXT_CONTENT);
     writeFile(base, "milestones/M002/ROADMAP.md", ROADMAP_CONTENT);
 
+    // reconcileDbMilestones must run before any read — it is the authoritative
+    // disk→DB sync point. deriveStateFromDb() no longer performs in-memory
+    // compensation for unreconciled milestones (CQS fix).
+    reconcileDbMilestones(base);
     invalidateStateCache();
     const state = await deriveStateFromDb(base);
 

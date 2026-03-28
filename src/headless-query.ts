@@ -67,6 +67,12 @@ export interface QueryResult {
 
 export async function handleQuery(basePath: string): Promise<QueryResult> {
   const { deriveState, resolveDispatch, readAllSessionStatuses, loadEffectiveGSDPreferences } = await loadExtensionModules()
+  // Intentionally does not call openProjectDbIfPresent() here.
+  // headless-query is a read-only snapshot path invoked by external tooling.
+  // If no DB is open, deriveState() falls back to filesystem parsing.
+  // If a DB is already open (e.g. from a concurrent session), deriveState()
+  // will use it — and its _reconciledPaths guard ensures reconciliation runs
+  // at most once per process, so disk-only milestones are visible either way.
   const state = await deriveState(basePath)
 
   // Derive next dispatch action
