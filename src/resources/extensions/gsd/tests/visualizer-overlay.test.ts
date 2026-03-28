@@ -1,235 +1,268 @@
-// Tests for GSD visualizer overlay.
-// Verifies filter mode, tab switching, mouse support, page scroll, help overlay, and 10-tab config.
+// Behavioral unit tests for GSDVisualizerOverlay.
+// Tests exercise handleInput() and assert on state — no source-reading.
 
-import { readFileSync } from "node:fs";
-import { join, dirname } from "node:path";
-import { fileURLToPath } from "node:url";
-import { test } from 'node:test';
-import assert from 'node:assert/strict';
+import { describe, it, beforeEach, afterEach } from "node:test";
+import assert from "node:assert/strict";
+import { GSDVisualizerOverlay } from "../visualizer-overlay.ts";
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
+describe("GSDVisualizerOverlay", () => {
+  let overlay: GSDVisualizerOverlay;
+  let renderCalls: number;
+  let closed: boolean;
 
-const overlaySrc = readFileSync(join(__dirname, "..", "visualizer-overlay.ts"), "utf-8");
+  beforeEach(() => {
+    renderCalls = 0;
+    closed = false;
+    const tui = { requestRender: () => { renderCalls++; } };
+    const theme = { fg: (_: string, s: string) => s, bold: (s: string) => s } as any;
+    overlay = new GSDVisualizerOverlay(tui, theme, () => { closed = true; });
+  });
 
-console.log("\n=== Overlay: Tab Configuration ===");
+  afterEach(() => {
+    if (!overlay.disposed) overlay.dispose();
+  });
 
-assert.ok(
-  overlaySrc.includes("TAB_COUNT = 10"),
-  "TAB_COUNT is 10",
-);
+  // ─── 1. Tab switching via number keys ──────────────────────────────────────
 
-assert.ok(
-  overlaySrc.includes('"1 Progress"'),
-  "has Progress tab label",
-);
+  it("key '1' sets activeTab to 0 and calls requestRender", () => {
+    overlay.activeTab = 5;
+    const before = renderCalls;
+    overlay.handleInput("1");
+    assert.equal(overlay.activeTab, 0);
+    assert.ok(renderCalls > before);
+  });
 
-assert.ok(
-  overlaySrc.includes('"2 Timeline"'),
-  "has Timeline tab label",
-);
+  it("key '2' sets activeTab to 1", () => {
+    overlay.handleInput("2");
+    assert.equal(overlay.activeTab, 1);
+  });
 
-assert.ok(
-  overlaySrc.includes('"3 Deps"'),
-  "has Deps tab label",
-);
+  it("key '9' sets activeTab to 8", () => {
+    overlay.handleInput("9");
+    assert.equal(overlay.activeTab, 8);
+  });
 
-assert.ok(
-  overlaySrc.includes('"5 Health"'),
-  "has Health tab label",
-);
+  it("key '0' sets activeTab to 9", () => {
+    overlay.handleInput("0");
+    assert.equal(overlay.activeTab, 9);
+  });
 
-assert.ok(
-  overlaySrc.includes('"6 Agent"'),
-  "has Agent tab label",
-);
+  it("each number key triggers requestRender", () => {
+    const before = renderCalls;
+    for (const k of "1234567890") overlay.handleInput(k);
+    assert.ok(renderCalls > before);
+  });
 
-assert.ok(
-  overlaySrc.includes('"7 Changes"'),
-  "has Changes tab label",
-);
+  // ─── 2. Tab cycling via Tab / Shift+Tab ────────────────────────────────────
 
-assert.ok(
-  overlaySrc.includes('"8 Knowledge"'),
-  "has Knowledge tab label",
-);
+  it("Tab key advances activeTab by 1", () => {
+    overlay.activeTab = 0;
+    overlay.handleInput("\t");
+    assert.equal(overlay.activeTab, 1);
+  });
 
-assert.ok(
-  overlaySrc.includes('"9 Captures"'),
-  "has Captures tab label",
-);
+  it("Tab key wraps from tab 9 to tab 0", () => {
+    overlay.activeTab = 9;
+    overlay.handleInput("\t");
+    assert.equal(overlay.activeTab, 0);
+  });
 
-assert.ok(
-  overlaySrc.includes('"0 Export"'),
-  "has Export tab label",
-);
+  it("Shift+Tab wraps from tab 0 to tab 9", () => {
+    overlay.activeTab = 0;
+    overlay.handleInput("\x1b[Z");
+    assert.equal(overlay.activeTab, 9);
+  });
 
-console.log("\n=== Overlay: Filter Mode ===");
+  it("Shift+Tab decrements activeTab from 3 to 2", () => {
+    overlay.activeTab = 3;
+    overlay.handleInput("\x1b[Z");
+    assert.equal(overlay.activeTab, 2);
+  });
 
-assert.ok(
-  overlaySrc.includes('filterMode = false'),
-  "filterMode initialized to false",
-);
+  // ─── 3. Filter mode entry and text editing ─────────────────────────────────
 
-assert.ok(
-  overlaySrc.includes('filterText = ""'),
-  "filterText initialized to empty string",
-);
+  it("'/' enters filter mode with empty filterText", () => {
+    overlay.handleInput("/");
+    assert.equal(overlay.filterMode, true);
+    assert.equal(overlay.filterText, "");
+  });
 
-assert.ok(
-  overlaySrc.includes('filterField:'),
-  "has filterField state",
-);
+  it("typing while in filter mode accumulates filterText", () => {
+    overlay.handleInput("/");
+    for (const ch of "hello") overlay.handleInput(ch);
+    assert.equal(overlay.filterText, "hello");
+  });
 
-// Filter mode entry via "/"
-assert.ok(
-  overlaySrc.includes('data === "/"') || overlaySrc.includes("data === '/'"),
-  "/ key enters filter mode",
-);
+  it("backspace in filter mode removes last character", () => {
+    overlay.handleInput("/");
+    overlay.handleInput("a");
+    overlay.handleInput("b");
+    overlay.handleInput("\x7f");
+    assert.equal(overlay.filterText, "a");
+  });
 
-// Filter field cycling via "f"
-assert.ok(
-  overlaySrc.includes('data === "f"') || overlaySrc.includes("data === 'f'"),
-  "f key cycles filter field",
-);
+  it("escape in filter mode clears filterMode and filterText", () => {
+    overlay.handleInput("/");
+    overlay.handleInput("x");
+    overlay.handleInput("\x1b");
+    assert.equal(overlay.filterMode, false);
+    assert.equal(overlay.filterText, "");
+  });
 
-console.log("\n=== Overlay: Tab Switching ===");
+  it("enter in filter mode exits filter mode but preserves filterText", () => {
+    overlay.handleInput("/");
+    for (const ch of "test") overlay.handleInput(ch);
+    overlay.handleInput("\r");
+    assert.equal(overlay.filterMode, false);
+    assert.equal(overlay.filterText, "test");
+  });
 
-// Supports 1-9,0 keys
-assert.ok(
-  overlaySrc.includes('"1234567890"'),
-  "supports keys 1-9,0 for tab switching",
-);
+  // ─── 4. Filter field cycling with "f" ──────────────────────────────────────
 
-// Tab wraps with TAB_COUNT
-assert.ok(
-  overlaySrc.includes("% TAB_COUNT"),
-  "tab key wraps around TAB_COUNT",
-);
+  it("'f' on tab 0 cycles: all → status → risk → keyword → all", () => {
+    overlay.activeTab = 0;
+    assert.equal(overlay.filterField, "all");
+    overlay.handleInput("f");
+    assert.equal(overlay.filterField, "status");
+    overlay.handleInput("f");
+    assert.equal(overlay.filterField, "risk");
+    overlay.handleInput("f");
+    assert.equal(overlay.filterField, "keyword");
+    overlay.handleInput("f");
+    assert.equal(overlay.filterField, "all");
+  });
 
-assert.ok(
-  overlaySrc.includes('Key.shift("tab")') || overlaySrc.includes("Key.shift('tab')"),
-  "supports Shift+Tab for reverse tab switching",
-);
+  it("'f' on tab 1 cycles: all → keyword → all", () => {
+    overlay.activeTab = 1;
+    assert.equal(overlay.filterField, "all");
+    overlay.handleInput("f");
+    assert.equal(overlay.filterField, "keyword");
+    overlay.handleInput("f");
+    assert.equal(overlay.filterField, "all");
+  });
 
-console.log("\n=== Overlay: Page/Half-Page Scroll ===");
+  it("'f' on tab 5 cycles: all → keyword → all", () => {
+    overlay.activeTab = 5;
+    overlay.handleInput("f");
+    assert.equal(overlay.filterField, "keyword");
+    overlay.handleInput("f");
+    assert.equal(overlay.filterField, "all");
+  });
 
-assert.ok(
-  overlaySrc.includes("Key.pageUp"),
-  "has Key.pageUp handler",
-);
+  // ─── 5. Help overlay ───────────────────────────────────────────────────────
 
-assert.ok(
-  overlaySrc.includes("Key.pageDown"),
-  "has Key.pageDown handler",
-);
+  it("'?' sets showHelp to true", () => {
+    overlay.handleInput("?");
+    assert.equal(overlay.showHelp, true);
+  });
 
-assert.ok(
-  overlaySrc.includes('Key.ctrl("u")'),
-  "has Ctrl+U half-page scroll",
-);
+  it("'?' while showHelp is true sets showHelp to false", () => {
+    overlay.showHelp = true;
+    overlay.handleInput("?");
+    assert.equal(overlay.showHelp, false);
+  });
 
-assert.ok(
-  overlaySrc.includes('Key.ctrl("d")'),
-  "has Ctrl+D half-page scroll",
-);
+  it("escape while showHelp is true sets showHelp to false", () => {
+    overlay.showHelp = true;
+    overlay.handleInput("\x1b");
+    assert.equal(overlay.showHelp, false);
+  });
 
-console.log("\n=== Overlay: Mouse Support ===");
+  it("other keys while showHelp is true are absorbed (activeTab unchanged)", () => {
+    overlay.activeTab = 2;
+    overlay.showHelp = true;
+    overlay.handleInput("1");
+    assert.equal(overlay.activeTab, 2);
+  });
 
-assert.ok(
-  overlaySrc.includes("parseSGRMouse"),
-  "has parseSGRMouse method",
-);
+  // ─── 6. Scroll clamp — never below 0 ──────────────────────────────────────
 
-assert.ok(
-  overlaySrc.includes("?1003h"),
-  "enables mouse tracking in constructor",
-);
+  it("pageUp at offset 0 stays at 0", () => {
+    overlay.scrollOffsets[overlay.activeTab] = 0;
+    overlay.handleInput("\x1b[5~");
+    assert.equal(overlay.scrollOffsets[overlay.activeTab], 0);
+  });
 
-assert.ok(
-  overlaySrc.includes("?1003l"),
-  "disables mouse tracking in dispose",
-);
+  it("ctrl+u at offset 0 stays at 0", () => {
+    overlay.scrollOffsets[overlay.activeTab] = 0;
+    overlay.handleInput("\x15");
+    assert.equal(overlay.scrollOffsets[overlay.activeTab], 0);
+  });
 
-console.log("\n=== Overlay: Collapsible Milestones ===");
+  it("up arrow at offset 0 stays at 0", () => {
+    overlay.scrollOffsets[overlay.activeTab] = 0;
+    overlay.handleInput("\x1b[A");
+    assert.equal(overlay.scrollOffsets[overlay.activeTab], 0);
+  });
 
-assert.ok(
-  overlaySrc.includes("collapsedMilestones"),
-  "has collapsedMilestones state",
-);
+  it("'k' at offset 0 stays at 0", () => {
+    overlay.scrollOffsets[overlay.activeTab] = 0;
+    overlay.handleInput("k");
+    assert.equal(overlay.scrollOffsets[overlay.activeTab], 0);
+  });
 
-console.log("\n=== Overlay: Help Overlay ===");
+  // ─── 7. Scroll down then up ────────────────────────────────────────────────
 
-assert.ok(
-  overlaySrc.includes("showHelp"),
-  "has showHelp state",
-);
+  it("pageDown increases scroll offset", () => {
+    const tab = overlay.activeTab;
+    overlay.scrollOffsets[tab] = 0;
+    overlay.handleInput("\x1b[6~");
+    assert.ok(overlay.scrollOffsets[tab] > 0);
+  });
 
-assert.ok(
-  overlaySrc.includes('data === "?"'),
-  "? key toggles help",
-);
+  it("pageDown then pageUp returns offset to 0", () => {
+    const tab = overlay.activeTab;
+    overlay.scrollOffsets[tab] = 0;
+    overlay.handleInput("\x1b[6~");
+    overlay.handleInput("\x1b[5~");
+    assert.equal(overlay.scrollOffsets[tab], 0);
+  });
 
-console.log("\n=== Overlay: Export Key Interception ===");
+  // ─── 8. Close on escape / ctrl+c ───────────────────────────────────────────
 
-assert.ok(
-  overlaySrc.includes("activeTab === 9"),
-  "export key handling checks for tab 0 (index 9)",
-);
+  it("escape when not in filter mode and not in help calls onClose", () => {
+    assert.equal(closed, false);
+    overlay.handleInput("\x1b");
+    assert.equal(closed, true);
+  });
 
-assert.ok(
-  overlaySrc.includes('handleExportKey'),
-  "has handleExportKey method",
-);
+  it("ctrl+c calls onClose", () => {
+    overlay.handleInput("\x03");
+    assert.equal(closed, true);
+  });
 
-assert.ok(
-  overlaySrc.includes('"m"') && overlaySrc.includes('"j"') && overlaySrc.includes('"s"'),
-  "handles m, j, s keys for export",
-);
+  // ─── 9. Filter mode blocks global keys ────────────────────────────────────
 
-console.log("\n=== Overlay: Footer ===");
+  it("tab key in filter mode does not change activeTab", () => {
+    overlay.activeTab = 0;
+    overlay.handleInput("/");
+    overlay.handleInput("\t");
+    assert.equal(overlay.activeTab, 0);
+  });
 
-assert.ok(
-  overlaySrc.includes("1-9,0"),
-  "footer hint shows 1-9,0 tab range",
-);
+  it("number keys in filter mode append to filterText, not switch tab", () => {
+    overlay.activeTab = 0;
+    overlay.handleInput("/");
+    overlay.handleInput("3");
+    assert.equal(overlay.filterText, "3");
+    assert.equal(overlay.activeTab, 0);
+  });
 
-assert.ok(
-  overlaySrc.includes("PgUp/PgDn"),
-  "footer hint mentions PgUp/PgDn",
-);
+  // ─── 10. Tab-specific scroll state ────────────────────────────────────────
 
-assert.ok(
-  overlaySrc.includes("? help"),
-  "footer hint mentions ? for help",
-);
+  it("scrolling on tab 0 does not affect tab 1 scroll offset", () => {
+    overlay.activeTab = 0;
+    overlay.handleInput("\x1b[6~");
+    assert.ok(overlay.scrollOffsets[0] > 0);
+    assert.equal(overlay.scrollOffsets[1], 0);
+  });
 
-console.log("\n=== Overlay: Scroll Offsets ===");
-
-assert.ok(
-  overlaySrc.includes(`new Array(TAB_COUNT).fill(0)`),
-  "scroll offsets sized to TAB_COUNT",
-);
-
-console.log("\n=== Overlay: Terminal Resize Handling ===");
-
-assert.ok(
-  overlaySrc.includes('resizeHandler'),
-  "has resizeHandler property",
-);
-
-assert.ok(
-  overlaySrc.includes('"resize"'),
-  "listens for resize events",
-);
-
-assert.ok(
-  overlaySrc.includes('removeListener("resize"'),
-  "removes resize listener on dispose",
-);
-
-console.log("\n=== Overlay: Shared Imports ===");
-
-assert.ok(
-  overlaySrc.includes('from "../shared/mod.js"'),
-  "imports from shared barrel",
-);
+  it("each tab maintains independent scroll state", () => {
+    overlay.activeTab = 0;
+    overlay.handleInput("\x1b[6~");
+    overlay.handleInput("\x1b[6~");
+    overlay.handleInput("2"); // switch to tab index 1
+    overlay.handleInput("\x1b[6~");
+    assert.ok(overlay.scrollOffsets[0] > overlay.scrollOffsets[1]);
+  });
+});
