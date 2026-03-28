@@ -171,5 +171,6 @@ describe("saveActivityLog", () => {
 test("complete-slice.md contains refresh state instruction", () => {
   const promptPath = join(__dirname, "..", "prompts", "complete-slice.md");
   const content = readFileSync(promptPath, "utf-8");
-  assert.ok(content.includes("refresh current state if needed"));
+  assert.ok(content.includes('use the `write` tool with `path: ".gsd/PROJECT.md"`'));
+  assert.ok(content.includes("rewrite the full file through `write`"));
 });

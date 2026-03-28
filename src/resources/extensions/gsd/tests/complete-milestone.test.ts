@@ -150,6 +150,27 @@ describe("complete-milestone", () => {
     );
   });
 
+  test("prompt tells the model to refresh PROJECT.md with write, not a guessed edit call", () => {
+    const prompt = loadPromptFromWorktree("complete-milestone", {
+      workingDirectory: "/tmp/test-project",
+      milestoneId: "M001",
+      milestoneTitle: "Project State Test",
+      roadmapPath: ".gsd/milestones/M001/M001-ROADMAP.md",
+      inlinedContext: "context",
+    });
+
+    assert.match(
+      prompt,
+      /use the `write` tool with `path: "\.gsd\/PROJECT\.md"` and `content`/i,
+      "prompt should name the write tool and required PROJECT.md parameters",
+    );
+    assert.match(
+      prompt,
+      /Do not guess with `edit`/i,
+      "prompt should explicitly steer away from guessed edit calls",
+    );
+  });
+
   test("handleCompleteMilestone rejects when verificationPassed is false", async () => {
     const { handleCompleteMilestone } = await import("../tools/complete-milestone.ts");
     const base = createFixtureBase();
