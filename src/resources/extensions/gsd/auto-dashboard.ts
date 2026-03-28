@@ -12,11 +12,10 @@ import { getCurrentBranch } from "./worktree.js";
 import { getActiveHook } from "./post-unit-hooks.js";
 import { getLedger, getProjectTotals } from "./metrics.js";
 import {
-  gsdRoot,
   resolveMilestoneFile,
   resolveSliceFile,
+  resolveRtkRuntimeDir,
 } from "./paths.js";
-import { join } from "node:path";
 import { isDbAvailable, getMilestoneSlices, getSliceTasks } from "./gsd-db.js";
 import { readFileSync, writeFileSync, existsSync } from "node:fs";
 import { execFileSync } from "node:child_process";
@@ -492,7 +491,7 @@ export function updateProgressWidget(
     let cachedWidth: number | undefined;
     let cachedRtkLabel: string | null | undefined;
 
-    const rtkRuntimeDir = join(gsdRoot(accessors.getBasePath()), "runtime");
+    const rtkRuntimeDir = resolveRtkRuntimeDir(accessors.getBasePath());
     const refreshRtkLabel = (): void => {
       try {
         const sessionId = ctx.sessionManager.getSessionId();

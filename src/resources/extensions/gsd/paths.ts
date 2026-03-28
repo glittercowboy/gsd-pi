@@ -360,6 +360,10 @@ export function resolveRuntimeFile(basePath: string): string {
   return join(gsdRoot(basePath), "RUNTIME.md");
 }
 
+export function resolveRtkRuntimeDir(basePath: string): string {
+  return join(gsdRoot(basePath), "runtime");
+}
+
 export function resolveGsdRootFile(basePath: string, key: GSDRootFileKey): string {
   const root = gsdRoot(basePath);
   const canonical = join(root, GSD_ROOT_FILES[key]);

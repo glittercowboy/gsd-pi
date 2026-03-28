@@ -24,6 +24,7 @@ export { inlinePriorMilestoneSummary } from "./files.js";
 import { collectSecretsFromManifest } from "../get-secrets-from-user.js";
 import {
   gsdRoot,
+  resolveRtkRuntimeDir,
   resolveMilestoneFile,
   resolveSliceFile,
   resolveSlicePath,
@@ -307,7 +308,7 @@ export function getAutoDashboardData(): AutoDashboardData {
   const totals = ledger ? getProjectTotals(ledger.units) : null;
   const sessionId = s.cmdCtx?.sessionManager?.getSessionId?.() ?? null;
   const rtkSavings = sessionId && s.basePath
-    ? getRtkSessionSavings(join(gsdRoot(s.basePath), "runtime"), sessionId)
+    ? getRtkSessionSavings(resolveRtkRuntimeDir(s.basePath), sessionId)
     : null;
   const rtkEnabled = loadEffectiveGSDPreferences()?.preferences.experimental?.rtk === true;
   // Pending capture count — lazy check, non-fatal
