@@ -29,8 +29,10 @@ export function renderPlanContent(sliceRow: SliceRow, taskRows: TaskRow[]): stri
 
   lines.push(`# ${sliceRow.id}: ${sliceRow.title}`);
   lines.push("");
-  lines.push(`**Goal:** ${sliceRow.goal || sliceRow.full_summary_md || "TBD"}`);
-  lines.push(`**Demo:** After this: ${sliceRow.demo || sliceRow.full_uat_md || "TBD"}`);
+  // #2945: never use full_summary_md/full_uat_md as display fallbacks —
+  // they contain multi-line rendered markdown that corrupts single-line fields.
+  lines.push(`**Goal:** ${sliceRow.goal || "TBD"}`);
+  lines.push(`**Demo:** After this: ${sliceRow.demo || "TBD"}`);
   lines.push("");
   lines.push("## Tasks");
 
@@ -113,7 +115,10 @@ export function renderRoadmapContent(milestoneRow: MilestoneRow, sliceRows: Slic
     }
 
     const risk = (slice.risk || "low").toLowerCase();
-    const demo = slice.demo || slice.full_uat_md || "TBD";
+    // #2945 Bug 1: never use full_uat_md as a table cell fallback — it contains
+    // multi-line UAT content (preconditions, steps, expected results) that
+    // corrupts the markdown table and makes subsequent slices invisible.
+    const demo = slice.demo || "TBD";
 
     lines.push(`| ${slice.id} | ${slice.title} | ${risk} | ${depends} | ${done} | ${demo} |`);
   }

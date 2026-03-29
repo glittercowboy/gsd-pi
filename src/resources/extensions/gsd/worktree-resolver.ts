@@ -432,6 +432,20 @@ export class WorktreeResolver {
           milestoneId,
           roadmapContent,
         );
+
+        // #2945 Bug 3: mergeMilestoneToMain performs best-effort worktree
+        // cleanup internally (step 12), but it can silently fail on Windows
+        // or when the worktree directory is locked. Perform a secondary
+        // teardown here to ensure the worktree is properly cleaned up.
+        // This is idempotent — if the worktree was already removed,
+        // teardownAutoWorktree handles the no-op case gracefully.
+        try {
+          this.deps.teardownAutoWorktree(originalBase, milestoneId);
+        } catch {
+          // Best-effort — the primary cleanup in mergeMilestoneToMain may
+          // have already removed the worktree.
+        }
+
         if (mergeResult.codeFilesChanged) {
           ctx.notify(
             `Milestone ${milestoneId} merged to main.${mergeResult.pushed ? " Pushed to remote." : ""}`,

@@ -6,13 +6,46 @@ import {
   transaction,
   updateTaskStatus,
   updateSliceStatus,
+  getSliceTasks,
   insertVerificationEvidence,
   upsertDecision,
   openDatabase,
 } from "./gsd-db.js";
+import { isClosedStatus } from "./status-guards.js";
 import { writeManifest } from "./workflow-manifest.js";
 import { atomicWriteSync } from "./atomic-write.js";
 import { acquireSyncLock, releaseSyncLock } from "./sync-lock.js";
+
+// ─── Replay Helpers ──────────────────────────────────────────────────────────
+
+/**
+ * Replay a complete_slice event with task validation.
+ *
+ * #2945 Bug 2: The original replay blindly called updateSliceStatus("done")
+ * without checking whether all tasks in the slice are actually complete.
+ * During API overload or partial execution, a complete_slice event could
+ * be logged even when tasks were skipped, causing the milestone completion
+ * guard to see the slice as "done" and allow premature milestone completion.
+ *
+ * This function validates that every task in the slice has a closed status
+ * before marking the slice as done. If any task is still pending, the slice
+ * status is left unchanged.
+ */
+export function replaySliceComplete(milestoneId: string, sliceId: string, ts: string): void {
+  const tasks = getSliceTasks(milestoneId, sliceId);
+  // If there are tasks and any are not closed, skip the status update
+  if (tasks.length > 0) {
+    const incompleteTasks = tasks.filter(t => !isClosedStatus(t.status));
+    if (incompleteTasks.length > 0) {
+      process.stderr.write(
+        `[gsd] reconcile: skipping complete_slice replay for ${sliceId} — ` +
+        `${incompleteTasks.length} task(s) still pending\n`,
+      );
+      return;
+    }
+  }
+  updateSliceStatus(milestoneId, sliceId, "done", ts);
+}
 
 // ─── Public Types ─────────────────────────────────────────────────────────────
 
@@ -82,7 +115,8 @@ function replayEvents(events: WorkflowEvent[]): void {
       case "complete_slice": {
         const milestoneId = p["milestoneId"] as string;
         const sliceId = p["sliceId"] as string;
-        updateSliceStatus(milestoneId, sliceId, "done", event.ts);
+        // #2945 Bug 2: validate tasks before marking slice done
+        replaySliceComplete(milestoneId, sliceId, event.ts);
         break;
       }
       case "plan_slice": {

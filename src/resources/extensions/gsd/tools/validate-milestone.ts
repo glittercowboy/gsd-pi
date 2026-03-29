@@ -1,8 +1,12 @@
 /**
  * validate-milestone handler — the core operation behind gsd_validate_milestone.
  *
- * Persists milestone validation results to the assessments table,
- * renders VALIDATION.md to disk, and invalidates caches.
+ * Persists milestone validation results to the assessments table and
+ * quality_gates table, renders VALIDATION.md to disk, and invalidates caches.
+ *
+ * #2945 Bug 4: Previously only wrote to assessments — quality_gates records
+ * were never persisted, causing M002+ milestones to have zero gate records
+ * despite passing validation.
  */
 
 import { join } from "node:path";
@@ -11,11 +15,13 @@ import {
   transaction,
   insertAssessment,
   deleteAssessmentByScope,
+  getMilestoneSlices,
 } from "../gsd-db.js";
 import { resolveMilestonePath, clearPathCache } from "../paths.js";
 import { saveFile, clearParseCache } from "../files.js";
 import { invalidateStateCache } from "../state.js";
 import { VALIDATION_VERDICTS, isValidMilestoneVerdict } from "../verdict-parser.js";
+import { insertMilestoneValidationGates } from "../milestone-validation-gates.js";
 
 export interface ValidateMilestoneParams {
   milestoneId: string;
@@ -112,6 +118,18 @@ export async function handleValidateMilestone(
       scope: 'milestone-validation',
       fullContent: validationMd,
     });
+
+    // #2945 Bug 4: persist quality_gates records alongside the assessment.
+    // Previously only the assessment was written, leaving M002+ milestones
+    // with zero quality_gate records despite passing validation.
+    const slices = getMilestoneSlices(params.milestoneId);
+    const sliceId = slices.length > 0 ? slices[0].id : "_milestone";
+    insertMilestoneValidationGates(
+      params.milestoneId,
+      sliceId,
+      params.verdict,
+      validatedAt,
+    );
   });
 
   // ── Filesystem render (outside transaction) ────────────────────────────
