@@ -124,6 +124,27 @@ export function removeSessionStatus(basePath: string, milestoneId: string): void
   } catch { /* non-fatal */ }
 }
 
+/**
+ * Remove ALL parallel artifacts for a milestone: status, signal, and logs.
+ * Called during stop/cleanup to prevent stale log files from causing the
+ * monitor overlay's discoverWorkers() to show ghost workers from prior runs.
+ */
+export function removeSessionArtifacts(basePath: string, milestoneId: string): void {
+  const dir = parallelDir(basePath);
+  const files = [
+    `${milestoneId}${STATUS_SUFFIX}`,
+    `${milestoneId}${SIGNAL_SUFFIX}`,
+    `${milestoneId}.stdout.log`,
+    `${milestoneId}.stderr.log`,
+  ];
+  for (const file of files) {
+    try {
+      const p = join(dir, file);
+      if (existsSync(p)) unlinkSync(p);
+    } catch { /* non-fatal */ }
+  }
+}
+
 // ─── Signal I/O ────────────────────────────────────────────────────────────
 
 /** Write a signal file for a worker to consume. */
@@ -165,12 +186,7 @@ export function cleanupStaleSessions(
 
   for (const status of statuses) {
     if (isSessionStale(status, timeoutMs)) {
-      removeSessionStatus(basePath, status.milestoneId);
-      // Also clean up any lingering signal file
-      try {
-        const sig = signalPath(basePath, status.milestoneId);
-        if (existsSync(sig)) unlinkSync(sig);
-      } catch { /* non-fatal */ }
+      removeSessionArtifacts(basePath, status.milestoneId);
       removed.push(status.milestoneId);
     }
   }

@@ -32,6 +32,7 @@ import {
   readAllSessionStatuses,
   readSessionStatus,
   removeSessionStatus,
+  removeSessionArtifacts,
   sendSignal,
   cleanupStaleSessions,
   type SessionStatus,
@@ -336,8 +337,9 @@ export async function prepareParallelStart(
     const alive = isPidAlive(session.pid);
     orphans.push({ milestoneId: session.milestoneId, pid: session.pid, alive });
     if (!alive) {
-      // Clean up dead session
-      removeSessionStatus(basePath, session.milestoneId);
+      // Clean up dead session — remove all artifacts (status, signal, logs)
+      // to prevent stale log files from showing ghost workers in the monitor.
+      removeSessionArtifacts(basePath, session.milestoneId);
     }
   }
 
@@ -845,8 +847,8 @@ export async function stopParallel(
     worker.state = "stopped";
     worker.process = null;
 
-    // Clean up session status file
-    removeSessionStatus(basePath, mid);
+    // Clean up all session artifacts (status, signal, logs)
+    removeSessionArtifacts(basePath, mid);
   }
 
   // If stopping all workers, deactivate the orchestrator
