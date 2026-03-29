@@ -4,15 +4,82 @@
  * Migrates legacy in-project `.gsd/` directories to the external
  * `~/.gsd/projects/<hash>/` state directory. After migration, a
  * symlink replaces the original directory so all paths remain valid.
+ *
+ * Copyright (c) 2026 Jeremy McSpadden <jeremy@fluxlabs.net>
  */
 
 import { execFileSync } from "node:child_process";
 import { existsSync, lstatSync, mkdirSync, readdirSync, realpathSync, renameSync, cpSync, rmSync, symlinkSync } from "node:fs";
-import { join } from "node:path";
+import { homedir } from "node:os";
+import { join, resolve } from "node:path";
 import { externalGsdRoot, isInsideWorktree } from "./repo-identity.js";
 import { getErrorMessage } from "./error-utils.js";
 import { hasGitTrackedGsdFiles } from "./gitignore.js";
 import { GIT_NO_PROMPT_ENV } from "./git-constants.js";
+
+// ─── Retry helpers for transient EBUSY/EPERM from external processes ────────
+
+const TRANSIENT_LOCK_CODES = new Set(["EBUSY", "EPERM"]);
+const MAX_REMOVE_RETRIES = 5;
+const SYNC_SLEEP_BUFFER = new SharedArrayBuffer(4);
+const SYNC_SLEEP_VIEW = new Int32Array(SYNC_SLEEP_BUFFER);
+
+function sleepSync(ms: number): void {
+  Atomics.wait(SYNC_SLEEP_VIEW, 0, 0, ms);
+}
+
+function retryDelayMs(attempt: number): number {
+  return 10 * (2 ** attempt);
+}
+
+function isTransientLockError(err: unknown): boolean {
+  if (err && typeof err === "object" && "code" in err) {
+    const code = (err as { code?: unknown }).code;
+    return typeof code === "string" && TRANSIENT_LOCK_CODES.has(code);
+  }
+  return false;
+}
+
+/**
+ * Attempt rmSync with retries for transient EBUSY/EPERM errors from
+ * external processes (VS Code watchers, antivirus, cloud sync).
+ * Returns true on success, throws the last error if all retries exhausted.
+ */
+function rmSyncWithRetry(target: string): void {
+  let lastErr: unknown;
+  for (let attempt = 0; attempt <= MAX_REMOVE_RETRIES; attempt++) {
+    try {
+      rmSync(target, { recursive: true, force: true });
+      return;
+    } catch (err) {
+      lastErr = err;
+      if (!isTransientLockError(err) || attempt === MAX_REMOVE_RETRIES) {
+        throw err;
+      }
+      sleepSync(retryDelayMs(attempt));
+    }
+  }
+  throw lastErr;
+}
+
+// ─── Home directory guard ───────────────────────────────────────────────────
+
+/**
+ * Check whether `localGsd` is the user-level GSD home directory (`~/.gsd`).
+ * Migration must never touch the global state dir — it is not a project `.gsd`.
+ */
+function isGlobalGsdHome(localGsd: string): boolean {
+  const gsdHome = process.env.GSD_HOME || join(homedir(), ".gsd");
+  try {
+    const normalizedLocal = resolve(localGsd);
+    const normalizedHome = resolve(gsdHome);
+    return normalizedLocal === normalizedHome;
+  } catch {
+    return false;
+  }
+}
+
+// ─── Migration ──────────────────────────────────────────────────────────────
 
 export interface MigrationResult {
   migrated: boolean;
@@ -24,14 +91,15 @@ export interface MigrationResult {
  *
  * Algorithm:
  * 1. If `<project>/.gsd` is a symlink or doesn't exist -> skip
- * 2. If `<project>/.gsd` is a real directory:
+ * 2. If `<project>/.gsd` is the global `~/.gsd` home -> skip (#3147)
+ * 3. If `<project>/.gsd` is a real directory:
  *    a. Compute external path from repoIdentity
  *    b. mkdir -p external dir
  *    c. Rename `.gsd` -> `.gsd.migrating` (atomic on same FS, acts as lock)
  *    d. Copy contents to external dir (skip `worktrees/` subdirectory)
  *    e. Create symlink `.gsd -> external path`
  *    f. Remove `.gsd.migrating`
- * 3. On failure: rename `.gsd.migrating` back to `.gsd` (rollback)
+ * 4. On failure: rename `.gsd.migrating` back to `.gsd` (rollback)
  */
 export function migrateToExternalState(basePath: string): MigrationResult {
   // Worktrees get their .gsd via syncGsdStateToWorktree(), not migration.
@@ -60,6 +128,13 @@ export function migrateToExternalState(basePath: string): MigrationResult {
     }
   } catch (err) {
     return { migrated: false, error: `Cannot stat .gsd: ${getErrorMessage(err)}` };
+  }
+
+  // Guard: never migrate the user-level ~/.gsd directory (#3147).
+  // When the home directory is itself a git repo (dotfile managers),
+  // ~/.gsd is the global state dir, not a project .gsd.
+  if (isGlobalGsdHome(localGsd)) {
+    return { migrated: false };
   }
 
   // Skip if .gsd/ contains git-tracked files — the project intentionally
@@ -94,16 +169,21 @@ export function migrateToExternalState(basePath: string): MigrationResult {
     // Rename .gsd -> .gsd.migrating (atomic lock).
     // On Windows, NTFS may reject rename with EPERM if file descriptors are
     // open (VS Code watchers, antivirus on-access scan). Fall back to
-    // copy+delete (#1292).
+    // copy+delete with retry (#1292, #3147).
     try {
       renameSync(localGsd, migratingPath);
     } catch (renameErr: any) {
-      if (renameErr?.code === "EPERM" || renameErr?.code === "EBUSY") {
+      if (isTransientLockError(renameErr)) {
+        // Copy first, then retry removal with backoff. External processes
+        // (VS Code, antivirus, cloud sync) may transiently lock files.
+        cpSync(localGsd, migratingPath, { recursive: true, force: true });
         try {
-          cpSync(localGsd, migratingPath, { recursive: true, force: true });
-          rmSync(localGsd, { recursive: true, force: true });
-        } catch (copyErr) {
-          return { migrated: false, error: `Migration rename/copy failed: ${copyErr instanceof Error ? copyErr.message : String(copyErr)}` };
+          rmSyncWithRetry(localGsd);
+        } catch (rmErr) {
+          // Removal failed after retries — clean up .gsd.migrating and
+          // skip migration rather than leaving inconsistent state (#3147).
+          try { rmSync(migratingPath, { recursive: true, force: true }); } catch { /* best-effort */ }
+          return { migrated: false, error: `Migration skipped: cannot remove .gsd after copy (${rmErr instanceof Error ? rmErr.message : String(rmErr)}). Will retry next startup.` };
         }
       } else {
         throw renameErr;
@@ -208,3 +288,6 @@ export function recoverFailedMigration(basePath: string): boolean {
     return false;
   }
 }
+
+// Exported for testing
+export { isGlobalGsdHome as _isGlobalGsdHome, rmSyncWithRetry as _rmSyncWithRetry, isTransientLockError as _isTransientLockError };
