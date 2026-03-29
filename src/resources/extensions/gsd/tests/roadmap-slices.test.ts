@@ -133,6 +133,19 @@ test("parseRoadmapSlices: table with glyph completion markers (#2841)", () => {
   assert.equal(slices[3]?.done, true);
 });
 
+test("parseRoadmapSlices: table with heavy check mark U+2714 (#2940)", () => {
+  const tableContent = [
+    "# M003: Heavy Check", "", "## Slices", "",
+    "| Slice | Title | Risk | Status |", "|---|---|---|---|",
+    "| S01 | First | Low | \u2714 |",
+    "| S02 | Second | High | Pending |", "",
+  ].join("\n");
+  const slices = parseRoadmapSlices(tableContent);
+  assert.equal(slices.length, 2);
+  assert.equal(slices[0]?.done, true, "U+2714 heavy check mark should mark slice as done");
+  assert.equal(slices[1]?.done, false);
+});
+
 test("parseRoadmapSlices: table with dependencies column (#1736)", () => {
   const tableContent = [
     "# M004: Deps", "", "## Slices", "",
