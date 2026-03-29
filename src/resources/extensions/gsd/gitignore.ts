@@ -41,6 +41,7 @@ const GSD_RUNTIME_PATTERNS = [
 const BASELINE_PATTERNS = [
   // ── GSD state directory (symlink to external storage) ──
   ".gsd",
+  ".gsd-id",
 
   // ── OS junk ──
   ".DS_Store",
