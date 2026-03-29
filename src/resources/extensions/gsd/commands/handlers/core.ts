@@ -51,6 +51,7 @@ export function showHelp(ctx: ExtensionCommandContext): void {
     "  /gsd cmux           Manage cmux integration  [status|on|off|notifications|sidebar|splits|browser]",
     "  /gsd config         Set API keys for external tools",
     "  /gsd keys           API key manager  [list|add|remove|test|rotate|doctor]",
+    "  /gsd show-config    Show effective configuration (models, routing, toggles)",
     "  /gsd hooks          Show post-unit hook configuration",
     "  /gsd extensions     Manage extensions  [list|enable|disable|info]",
     "  /gsd fast           Toggle OpenAI service tier  [on|off|flex|status]",
@@ -211,6 +212,25 @@ export async function handleCoreCommand(trimmed: string, ctx: ExtensionCommandCo
   }
   if (trimmed === "cmux" || trimmed.startsWith("cmux ")) {
     await handleCmux(trimmed.replace(/^cmux\s*/, "").trim(), ctx);
+    return true;
+  }
+  if (trimmed === "show-config") {
+    const { GSDConfigOverlay, formatConfigText } = await import("../../config-overlay.js");
+    const result = await ctx.ui.custom<void>(
+      (tui, theme, _kb, done) => new GSDConfigOverlay(tui, theme, () => done()),
+      {
+        overlay: true,
+        overlayOptions: {
+          width: "65%",
+          minWidth: 55,
+          maxHeight: "85%",
+          anchor: "center",
+        },
+      },
+    );
+    if (result === undefined) {
+      ctx.ui.notify(formatConfigText(), "info");
+    }
     return true;
   }
   if (trimmed === "setup" || trimmed.startsWith("setup ")) {
