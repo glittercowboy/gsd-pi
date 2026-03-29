@@ -11,3 +11,16 @@
 export function isClosedStatus(status: string): boolean {
   return status === "complete" || status === "done";
 }
+
+/** Returns true when a slice status indicates it was deferred by a decision. */
+export function isDeferredStatus(status: string): boolean {
+  return status === "deferred";
+}
+
+/**
+ * Returns true when a slice should be skipped during active-slice selection.
+ * This includes both closed (complete/done) and deferred slices.
+ */
+export function isInactiveStatus(status: string): boolean {
+  return isClosedStatus(status) || isDeferredStatus(status);
+}

@@ -36,6 +36,7 @@ import {
 
 import { findMilestoneIds } from './milestone-ids.js';
 import { loadQueueOrder, sortByQueueOrder } from './queue-order.js';
+import { isClosedStatus, isDeferredStatus } from './status-guards.js';
 import { nativeBatchParseGsdFiles, type BatchParsedFile } from './native-parser-bridge.js';
 
 import { join, resolve } from 'path';
@@ -657,6 +658,10 @@ export async function deriveStateFromDb(basePath: string): Promise<GSDState> {
 
   for (const s of activeMilestoneSlices) {
     if (isStatusDone(s.status)) continue;
+    // #2661: Skip deferred slices — a decision explicitly deferred this work.
+    // Without this guard the dispatcher would keep dispatching deferred slices
+    // because DECISIONS.md is only contextual, not authoritative for dispatch.
+    if (isDeferredStatus(s.status)) continue;
     if (s.depends.every(dep => doneSliceIds.has(dep))) {
       activeSlice = { id: s.id, title: s.title };
       activeSliceRow = s;
