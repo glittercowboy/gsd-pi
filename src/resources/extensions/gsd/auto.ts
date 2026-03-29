@@ -960,7 +960,7 @@ function buildLoopDeps(pi: ExtensionAPI): LoopDeps {
     clearUnitTimeout,
     updateProgressWidget,
     ...cmux,
-    handleLostSessionLock: (ctx, lockStatus) => {
+    handleLostSessionLock: (ctx: ExtensionContext | undefined, lockStatus: SessionLockStatus | undefined) => {
       cmux.clearCmuxSidebar(loadEffectiveGSDPreferences()?.preferences);
       handleLostSessionLock(ctx, lockStatus);
     },
