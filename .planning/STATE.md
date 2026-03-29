@@ -2,15 +2,15 @@
 gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: Active Session Indicators
-status: executing
-stopped_at: Completed 05-01-PLAN.md
-last_updated: "2026-03-29T08:34:02.809Z"
+status: verifying
+stopped_at: Completed 05-02-PLAN.md
+last_updated: "2026-03-29T08:40:59.773Z"
 last_activity: 2026-03-29
 progress:
   total_phases: 2
-  completed_phases: 0
+  completed_phases: 1
   total_plans: 2
-  completed_plans: 1
+  completed_plans: 2
   percent: 0
 ---
 
@@ -27,7 +27,7 @@ See: .planning/PROJECT.md (updated 2026-03-29)
 
 Phase: 05 (session-state-api) — EXECUTING
 Plan: 2 of 2
-Status: Ready to execute
+Status: Phase complete — ready for verification
 Last activity: 2026-03-29
 
 Progress: [░░░░░░░░░░] 0%
@@ -53,6 +53,7 @@ Progress: [░░░░░░░░░░] 0%
 
 *Updated after each plan completion*
 | Phase 05-session-state-api P01 | 5 | 2 tasks | 2 files |
+| Phase 05 P02 | 8 | 2 tasks | 2 files |
 
 ## Accumulated Context
 
@@ -67,6 +68,8 @@ Recent decisions affecting current work:
 - [v1.1 Research]: `auto?.active` in workspace store does not reflect real BridgeService state — new API endpoint needed to query actual RPC subprocess mode
 - [Phase 05-session-state-api]: collectSelectiveLiveStatePayload(["auto"]) is source of truth for session state — not stale workspace store boot payload
 - [Phase 05-session-state-api]: GET /api/session/state returns 9-field payload: bridgePhase, isStreaming, isCompacting, retryInProgress, sessionId, autoActive, autoPaused, currentUnit, updatedAt
+- [Phase 05]: Emit session_state asynchronously in subscribe callback — avoids blocking synchronous event queue
+- [Phase 05]: SSE session_state event order: bridge_status (sync), live_state_invalidation (sync), session_state x2 (async after await)
 
 ### Pending Todos
 
@@ -79,6 +82,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-03-29T08:34:02.806Z
-Stopped at: Completed 05-01-PLAN.md
+Last session: 2026-03-29T08:40:59.771Z
+Stopped at: Completed 05-02-PLAN.md
 Resume file: None

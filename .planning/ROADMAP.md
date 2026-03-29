@@ -69,7 +69,7 @@ Plans:
 
 Plans:
 - [x] 05-01-PLAN.md — GET /api/session/state endpoint and test scaffold
-- [ ] 05-02-PLAN.md — SSE session_state events extension and full integration test
+- [x] 05-02-PLAN.md — SSE session_state events extension and full integration test
 
 ### Phase 6: Active Session UI
 **Goal**: Project selector shows running sessions with details and dashboard controls accurately reflect auto-mode state
@@ -92,5 +92,5 @@ Plans:
 | 2. Tailscale Serve Integration | v1.0 | 2/2 | Complete | 2026-03-28 |
 | 3. SSE Cursor-Based Event Replay | v1.0 | 3/3 | Complete | 2026-03-28 |
 | 4. Remote Access Settings UI | v1.0 | 4/4 | Complete | 2026-03-28 |
-| 5. Session State API | v1.1 | 1/2 | In Progress|  |
+| 5. Session State API | v1.1 | 2/2 | Complete   | 2026-03-29 |
 | 6. Active Session UI | v1.1 | 0/? | Not started | - |
