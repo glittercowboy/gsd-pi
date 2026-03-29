@@ -95,6 +95,7 @@ export async function collectAuthoritativeAutoDashboardData(
           [AUTO_DASHBOARD_MODULE_ENV]: autoModulePath,
         },
         maxBuffer: AUTO_DASHBOARD_MAX_BUFFER,
+        windowsHide: true,
       },
       (error, stdout, stderr) => {
         if (error) {

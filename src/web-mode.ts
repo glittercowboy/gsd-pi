@@ -14,7 +14,7 @@ const DEFAULT_PACKAGE_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '.
 function openBrowser(url: string): void {
   if (process.platform === 'win32') {
     // PowerShell's Start-Process handles URLs with '&' safely; cmd /c start does not.
-    execFile('powershell', ['-c', `Start-Process '${url.replace(/'/g, "''")}'`], () => {})
+    execFile('powershell', ['-c', `Start-Process '${url.replace(/'/g, "''")}'`], { windowsHide: true }, () => {})
   } else {
     const cmd = process.platform === 'darwin' ? 'open' : 'xdg-open'
     execFile(cmd, [url], () => {})
@@ -635,6 +635,7 @@ export async function launchWebMode(
       cwd: spawnSpec.cwd,
       detached: true,
       stdio: 'ignore',
+      windowsHide: true,
       env,
     },
   )
