@@ -22,6 +22,7 @@ import {
   loadActionableCaptures,
   markCaptureResolved,
   markCaptureExecuted,
+  stampCaptureMilestone,
 } from "./captures.js";
 
 // ─── Resolution Executors ─────────────────────────────────────────────────────
@@ -271,11 +272,15 @@ export function buildQuickTaskPrompt(capture: CaptureEntry): string {
     ``,
     `## Instructions`,
     ``,
-    `1. Execute this task as a small, self-contained change.`,
-    `2. Do NOT modify any \`.gsd/\` plan files — this is a one-off, not a planned task.`,
-    `3. Commit your changes with a descriptive message.`,
-    `4. Keep changes minimal and focused on the capture text.`,
-    `5. When done, say: "Quick task complete."`,
+    `1. **Verify the issue still exists.** Before making any changes, inspect the`,
+    `   relevant code to confirm the problem described above is actually present in`,
+    `   the current codebase. If the issue has already been fixed (e.g., by planned`,
+    `   milestone work), report "Already resolved — no changes needed." and stop.`,
+    `2. Execute this task as a small, self-contained change.`,
+    `3. Do NOT modify any \`.gsd/\` plan files — this is a one-off, not a planned task.`,
+    `4. Commit your changes with a descriptive message.`,
+    `5. Keep changes minimal and focused on the capture text.`,
+    `6. When done, say: "Quick task complete."`,
   ].join("\n");
 }
 
@@ -324,7 +329,19 @@ export function executeTriageResolutions(
     actions: [],
   };
 
-  const actionable = loadActionableCaptures(basePath);
+  const actionable = loadActionableCaptures(basePath, mid || undefined);
+
+  // Reconciliation: stamp actionable captures that are missing the Milestone field
+  // with the current milestone ID.  This covers captures resolved by the triage LLM
+  // before the prompt included the Milestone instruction, and acts as a safety net
+  // when the LLM omits the field (#2872).
+  if (mid) {
+    for (const capture of actionable) {
+      if (!capture.resolvedInMilestone) {
+        stampCaptureMilestone(basePath, capture.id, mid);
+      }
+    }
+  }
 
   // Also process deferred captures that target milestone IDs — create
   // milestone directories so deriveState() discovers them.

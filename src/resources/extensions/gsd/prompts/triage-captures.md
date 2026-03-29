@@ -54,6 +54,7 @@ For each capture, classify it as one of:
    - Add `**Resolution:** <brief description of what will happen>`
    - Add `**Rationale:** <why this classification>`
    - Add `**Resolved:** <current ISO timestamp>`
+   - Add `**Milestone:** <current milestone ID>` (e.g., `**Milestone:** M003`)
 
 4. **Summarize** what was triaged: how many captures, what classifications were assigned, and what actions are pending (e.g., "2 quick-tasks ready for execution, 1 deferred to S03").
 

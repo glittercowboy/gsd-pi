@@ -212,6 +212,14 @@ test("resolution: buildQuickTaskPrompt includes capture text and ID", () => {
   assert.ok(prompt.includes("add retry logic to OAuth"), "should include capture text");
   assert.ok(prompt.includes("Quick Task"), "should have Quick Task header");
   assert.ok(prompt.includes("Do NOT modify"), "should warn about plan files");
+  assert.ok(
+    prompt.includes("Verify the issue still exists"),
+    "should instruct agent to verify issue still exists (#2872)",
+  );
+  assert.ok(
+    prompt.includes("Already resolved"),
+    "should instruct agent to report already resolved if fixed (#2872)",
+  );
 });
 
 // ─── markCaptureExecuted ─────────────────────────────────────────────────────
