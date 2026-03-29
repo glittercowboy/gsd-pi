@@ -20,7 +20,7 @@ import { resolveMilestonePath, clearPathCache } from "../paths.js";
 import { isClosedStatus } from "../status-guards.js";
 import { saveFile, clearParseCache } from "../files.js";
 import { invalidateStateCache } from "../state.js";
-import { renderAllProjections } from "../workflow-projections.js";
+import { renderAllProjections, stripIdPrefix } from "../workflow-projections.js";
 import { writeManifest } from "../workflow-manifest.js";
 import { appendEvent } from "../workflow-events.js";
 
@@ -51,6 +51,7 @@ export interface CompleteMilestoneResult {
 
 function renderMilestoneSummaryMarkdown(params: CompleteMilestoneParams): string {
   const now = new Date().toISOString();
+  const displayTitle = stripIdPrefix(params.title, params.milestoneId);
 
   const keyDecisionsYaml = params.keyDecisions.length > 0
     ? params.keyDecisions.map(d => `  - ${d}`).join("\n")
@@ -66,7 +67,7 @@ function renderMilestoneSummaryMarkdown(params: CompleteMilestoneParams): string
 
   return `---
 id: ${params.milestoneId}
-title: "${params.title}"
+title: "${displayTitle}"
 status: complete
 completed_at: ${now}
 key_decisions:
@@ -77,7 +78,7 @@ lessons_learned:
 ${lessonsYaml}
 ---
 
-# ${params.milestoneId}: ${params.title}
+# ${params.milestoneId}: ${displayTitle}
 
 **${params.oneLiner}**
 
