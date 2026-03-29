@@ -97,16 +97,47 @@ export function authHeaders(extra?: Record<string, string>): Record<string, stri
 }
 
 /**
+ * Returns true when running in a browser context over HTTPS (i.e. Tailscale
+ * Serve). Cookie auth is only relevant on HTTPS — localhost uses bearer tokens.
+ */
+function isHttps(): boolean {
+  return typeof window !== "undefined" && window.location.protocol === "https:"
+}
+
+/**
  * Wrapper around `fetch()` that automatically injects the auth token.
  *
- * When no token is available (missing `#token=` fragment and no localStorage
- * entry), returns a synthetic 401 Response instead of making an unauthenticated
- * request that will fail server-side anyway. This lets callers handle the
- * missing-token case uniformly rather than silently cascading 401s.
+ * Dual-mode operation:
+ * - HTTP (localhost): bearer token required. If absent, return synthetic 401.
+ * - HTTPS (Tailscale): no bearer token present; the browser sends the session
+ *   cookie automatically. Make the request as-is. On 401, the cookie has
+ *   expired — clear client auth state and reload to the login page (D-04, D-05).
  */
 export async function authFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
   const token = getAuthToken()
+
   if (!token) {
+    if (isHttps()) {
+      // HTTPS mode (Tailscale): no bearer token, but the browser sends the
+      // session cookie automatically. Make the request without an Authorization
+      // header and let the server validate the cookie.
+      const response = await fetch(input, init)
+
+      // D-04 + D-05: Expired session or cross-tab logout detection.
+      // When the server returns 401, the cookie is invalid — clear client auth
+      // state and redirect to the login page.
+      if (response.status === 401) {
+        clearAuth()
+        window.location.reload()
+        // Return the response anyway so callers don't hang
+        return response
+      }
+
+      return response
+    }
+
+    // HTTP/localhost mode: no token means auth is broken — return synthetic 401
+    // instead of making an unauthenticated request that will fail server-side.
     return new Response(JSON.stringify({ error: "No auth token available" }), {
       status: 401,
       headers: { "Content-Type": "application/json" },
@@ -119,6 +150,33 @@ export async function authFetch(input: RequestInfo | URL, init?: RequestInit): P
   }
 
   return fetch(input, { ...init, headers })
+}
+
+/**
+ * Clear stored auth token. Used when the session is invalidated
+ * (logout, password change, expired cookie detected).
+ */
+export function clearAuth(): void {
+  cachedToken = null
+  try {
+    localStorage.removeItem(AUTH_STORAGE_KEY)
+  } catch {
+    // Storage unavailable
+  }
+}
+
+/**
+ * Log out of the cookie session by calling the logout endpoint,
+ * then clear client-side auth state and reload to the login page.
+ */
+export async function logout(): Promise<void> {
+  try {
+    await fetch("/api/auth/logout", { method: "POST" })
+  } catch {
+    // Best-effort — cookie may already be gone
+  }
+  clearAuth()
+  window.location.reload()
 }
 
 /**
