@@ -222,9 +222,30 @@ export function resolveModelId<T extends { id: string; provider: string }>(
     );
   }
 
-  // Bare ID — prefer current provider, then first available
-  const exactProviderMatch = availableModels.find(
-    m => m.id === modelId && m.provider === currentProvider,
-  );
-  return exactProviderMatch ?? availableModels.find(m => m.id === modelId);
+  // Bare ID — resolve with provider precedence to avoid silent misrouting.
+  // Extension providers (e.g. claude-code) expose the same model IDs as their
+  // upstream API providers but route through a subprocess with different
+  // context, tool visibility, and cost characteristics (#2905).  Bare IDs in
+  // PREFERENCES.md must resolve to the canonical API provider, not to an
+  // extension wrapper that happens to be the current session provider.
+  const candidates = availableModels.filter(m => m.id === modelId);
+  if (candidates.length === 0) return undefined;
+  if (candidates.length === 1) return candidates[0];
+
+  // Extension / CLI-wrapper providers that should never win bare-ID resolution
+  // when a first-class API provider also offers the same model.
+  const EXTENSION_PROVIDERS = new Set(["claude-code"]);
+
+  // Prefer currentProvider only when it is a first-class API provider
+  if (currentProvider && !EXTENSION_PROVIDERS.has(currentProvider)) {
+    const providerMatch = candidates.find(m => m.provider === currentProvider);
+    if (providerMatch) return providerMatch;
+  }
+
+  // Prefer "anthropic" as the canonical provider for Anthropic models
+  const anthropicMatch = candidates.find(m => m.provider === "anthropic");
+  if (anthropicMatch) return anthropicMatch;
+
+  // Fall back to first non-extension candidate, or any candidate
+  return candidates.find(m => !EXTENSION_PROVIDERS.has(m.provider)) ?? candidates[0];
 }
