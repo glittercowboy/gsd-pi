@@ -102,4 +102,32 @@ describe("PartialMessageBuilder — malformed tool arguments (#2574)", () => {
 			"non-JSON content should set malformedArguments: true",
 		);
 	});
+
+	test("YAML bullet lists repaired to JSON arrays (#2660)", () => {
+		const builder = new PartialMessageBuilder("claude-sonnet-4-20250514");
+		const malformedJson =
+			'{"milestoneId": "M005", "keyDecisions": - Used Web Notification API, "keyFiles": - src/lib.rs, "title": "done"}';
+		const event = feedToolCall(builder, [malformedJson]);
+
+		assert.ok(event, "event should not be null");
+		assert.equal(event!.type, "toolcall_end");
+		// Repaired YAML bullets should NOT set malformedArguments
+		assert.equal(
+			(event as any).malformedArguments,
+			undefined,
+			"repaired YAML bullets should not set malformedArguments",
+		);
+		if (event!.type === "toolcall_end") {
+			assert.equal(event!.toolCall.arguments.milestoneId, "M005");
+			assert.ok(
+				Array.isArray(event!.toolCall.arguments.keyDecisions),
+				"keyDecisions should be repaired to an array",
+			);
+			assert.ok(
+				Array.isArray(event!.toolCall.arguments.keyFiles),
+				"keyFiles should be repaired to an array",
+			);
+			assert.equal(event!.toolCall.arguments.title, "done");
+		}
+	});
 });
