@@ -45,6 +45,8 @@ function createNpmSandbox(prefix: string): NpmSandbox {
       NPM_CONFIG_CACHE: cacheDir,
       npm_config_cache: cacheDir,
       PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1",
+      // Keep pack/install verification focused on package integrity, not RTK network install.
+      GSD_SKIP_RTK_INSTALL: "1",
     },
   };
 }
