@@ -16,7 +16,8 @@ import { agentDir, sessionsDir, authFilePath } from './app-paths.js'
 import { initResources, buildResourceLoader, getNewerManagedResourceVersion } from './resource-loader.js'
 import { ensureManagedTools } from './tool-bootstrap.js'
 import { loadStoredEnvKeys } from './wizard.js'
-import { getPiDefaultModelAndProvider, migratePiCredentials } from './pi-migration.js'
+import { migratePiCredentials } from './pi-migration.js'
+import { validateConfiguredModel } from './startup-model-validation.js'
 import { shouldRunOnboarding, runOnboarding } from './onboarding.js'
 import chalk from 'chalk'
 import { checkForUpdates } from './update-check.js'
@@ -391,42 +392,6 @@ if (cliFlags.listModels !== undefined) {
   process.exit(0)
 }
 
-// Validate configured model on startup — catches stale settings from prior installs
-// (e.g. grok-2 which no longer exists) and fresh installs with no settings.
-// Only resets the default when the configured model no longer exists in the registry;
-// never overwrites a valid user choice.
-const configuredProvider = settingsManager.getDefaultProvider()
-const configuredModel = settingsManager.getDefaultModel()
-const allModels = modelRegistry.getAll()
-const availableModels = modelRegistry.getAvailable()
-const configuredExists = configuredProvider && configuredModel &&
-  allModels.some((m) => m.provider === configuredProvider && m.id === configuredModel)
-const configuredAvailable = configuredProvider && configuredModel &&
-  availableModels.some((m) => m.provider === configuredProvider && m.id === configuredModel)
-
-if (!configuredModel || !configuredExists) {
-  // Model not configured at all, or removed from registry — pick a fallback.
-  // Only fires when the model is genuinely unknown (not just temporarily unavailable).
-  const piDefault = getPiDefaultModelAndProvider()
-  const preferred =
-    (piDefault
-      ? availableModels.find((m) => m.provider === piDefault.provider && m.id === piDefault.model)
-      : undefined) ||
-    availableModels.find((m) => m.provider === 'openai' && m.id === 'gpt-5.4') ||
-    availableModels.find((m) => m.provider === 'openai') ||
-    availableModels.find((m) => m.provider === 'anthropic' && m.id === 'claude-opus-4-6') ||
-    availableModels.find((m) => m.provider === 'anthropic' && m.id.includes('opus')) ||
-    availableModels.find((m) => m.provider === 'anthropic') ||
-    availableModels[0]
-  if (preferred) {
-    settingsManager.setDefaultModelAndProvider(preferred.provider, preferred.id)
-  }
-}
-
-if (settingsManager.getDefaultThinkingLevel() !== 'off' && !configuredExists) {
-  settingsManager.setDefaultThinkingLevel('off')
-}
-
 // GSD always uses quiet startup — the gsd extension renders its own branded header
 if (!settingsManager.getQuietStartup()) {
   settingsManager.setQuietStartup(true)
@@ -476,6 +441,11 @@ if (isPrintMode) {
     resourceLoader,
   })
   markStartup('createAgentSession')
+
+  // Validate configured model AFTER extensions have registered their models (#2626).
+  // Before this, extension-provided models (e.g. claude-code/*) were not yet in the
+  // registry, causing the user's valid choice to be silently overwritten.
+  validateConfiguredModel(modelRegistry, settingsManager)
 
   if (extensionsResult.errors.length > 0) {
     for (const err of extensionsResult.errors) {
@@ -610,6 +580,11 @@ const { session, extensionsResult } = await createAgentSession({
   resourceLoader,
 })
 markStartup('createAgentSession')
+
+// Validate configured model AFTER extensions have registered their models (#2626).
+// Before this, extension-provided models (e.g. claude-code/*) were not yet in the
+// registry, causing the user's valid choice to be silently overwritten.
+validateConfiguredModel(modelRegistry, settingsManager)
 
 if (extensionsResult.errors.length > 0) {
   for (const err of extensionsResult.errors) {
