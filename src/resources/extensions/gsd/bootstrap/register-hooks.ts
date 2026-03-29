@@ -8,6 +8,7 @@ import { buildBeforeAgentStartResult } from "./system-context.js";
 import { handleAgentEnd } from "./agent-end-recovery.js";
 import { clearDiscussionFlowState, isDepthVerified, isQueuePhaseActive, markDepthVerified, resetWriteGateState, shouldBlockContextWrite } from "./write-gate.js";
 import { isBlockedStateFile, isBashWriteToStateFile, BLOCKED_WRITE_ERROR } from "../write-intercept.js";
+import { cleanupQuickBranch } from "../quick.js";
 import { getDiscussionMilestoneId } from "../guided-flow.js";
 import { loadToolApiKeys } from "../commands-config.js";
 import { loadFile, saveFile, formatContinue } from "../files.js";
@@ -100,6 +101,17 @@ export function registerHooks(pi: ExtensionAPI): void {
   pi.on("agent_end", async (event, ctx: ExtensionContext) => {
     resetToolCallLoopGuard();
     await handleAgentEnd(pi, event, ctx);
+  });
+
+  // Squash-merge quick-task branch back to the original branch after the
+  // agent turn completes (#2668). cleanupQuickBranch is a no-op when no
+  // quick-return state is pending, so this is safe to call on every turn.
+  pi.on("turn_end", async () => {
+    try {
+      cleanupQuickBranch();
+    } catch {
+      // Best-effort: don't break the turn lifecycle if cleanup fails.
+    }
   });
 
   pi.on("session_before_compact", async () => {
