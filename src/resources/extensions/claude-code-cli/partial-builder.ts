@@ -16,6 +16,7 @@ import type {
 	Usage,
 	WebSearchResultContent,
 } from "@gsd/pi-ai";
+import { repairToolJson } from "@gsd/pi-ai";
 import type { BetaContentBlock, BetaRawMessageStreamEvent, NonNullableUsage } from "./sdk-types.js";
 
 // ---------------------------------------------------------------------------
@@ -244,12 +245,18 @@ export class PartialMessageBuilder {
 					try {
 						block.arguments = JSON.parse(jsonStr);
 					} catch {
-						// Stream was truncated mid-tool-call — JSON is garbage.
-						// Preserve the raw string for diagnostics but signal the
-						// malformation explicitly so downstream consumers can
-						// distinguish this from a healthy tool completion (#2574).
-						block.arguments = { _raw: jsonStr };
-						return { type: "toolcall_end", contentIndex, toolCall: block, partial: this.partial, malformedArguments: true };
+						// JSON.parse failed — attempt repair for YAML-style bullet
+						// lists that LLMs copy from template formatting (#2660).
+						try {
+							block.arguments = JSON.parse(repairToolJson(jsonStr));
+						} catch {
+							// Repair also failed — stream was truncated or garbage.
+							// Preserve the raw string for diagnostics but signal the
+							// malformation explicitly so downstream consumers can
+							// distinguish this from a healthy tool completion (#2574).
+							block.arguments = { _raw: jsonStr };
+							return { type: "toolcall_end", contentIndex, toolCall: block, partial: this.partial, malformedArguments: true };
+						}
 					}
 					return { type: "toolcall_end", contentIndex, toolCall: block, partial: this.partial };
 				}
