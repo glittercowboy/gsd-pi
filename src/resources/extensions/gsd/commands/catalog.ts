@@ -15,7 +15,7 @@ export interface GsdCommandDefinition {
 type CompletionMap = Record<string, readonly GsdCommandDefinition[]>;
 
 export const GSD_COMMAND_DESCRIPTION =
-  "GSD — Get Shit Done: /gsd help|start|templates|next|auto|stop|pause|status|widget|visualize|queue|quick|discuss|capture|triage|dispatch|history|undo|undo-task|reset-slice|rate|skip|export|cleanup|mode|prefs|config|keys|hooks|run-hook|skill-health|doctor|logs|forensics|changelog|migrate|remote|steer|knowledge|new-milestone|parallel|cmux|park|unpark|init|setup|inspect|extensions|update|fast|mcp|rethink";
+  "GSD — Get Shit Done: /gsd help|start|templates|next|auto|stop|pause|status|widget|visualize|queue|quick|discuss|capture|triage|dispatch|history|undo|undo-task|reset-slice|rate|skip|export|cleanup|mode|prefs|config|keys|hooks|run-hook|skill-health|doctor|logs|forensics|changelog|migrate|remote|steer|knowledge|new-milestone|parallel|cmux|park|unpark|init|setup|inspect|extensions|update|fast|mcp|rethink|ship|do|session-report|backlog|pr-branch|add-tests";
 
 export const TOP_LEVEL_SUBCOMMANDS: readonly GsdCommandDefinition[] = [
   { cmd: "help", desc: "Categorized command reference with descriptions" },
@@ -71,6 +71,12 @@ export const TOP_LEVEL_SUBCOMMANDS: readonly GsdCommandDefinition[] = [
   { cmd: "mcp", desc: "MCP server status and connectivity check (status, check <server>)" },
   { cmd: "rethink", desc: "Conversational project reorganization — reorder, park, discard, add milestones" },
   { cmd: "workflow", desc: "Custom workflow lifecycle (new, run, list, validate, pause, resume)" },
+  { cmd: "ship", desc: "Create PR from milestone artifacts and open for review" },
+  { cmd: "do", desc: "Route freeform text to the right GSD command" },
+  { cmd: "session-report", desc: "Session cost, tokens, and work summary" },
+  { cmd: "backlog", desc: "Manage backlog items (add, promote, remove, list)" },
+  { cmd: "pr-branch", desc: "Create clean PR branch filtering .gsd/ commits" },
+  { cmd: "add-tests", desc: "Generate tests for completed slices" },
 ];
 
 const NESTED_COMPLETIONS: CompletionMap = {
@@ -224,6 +230,25 @@ const NESTED_COMPLETIONS: CompletionMap = {
     { cmd: "validate", desc: "Validate a workflow definition YAML" },
     { cmd: "pause", desc: "Pause custom workflow auto-mode" },
     { cmd: "resume", desc: "Resume paused custom workflow auto-mode" },
+  ],
+  ship: [
+    { cmd: "--dry-run", desc: "Preview PR without creating" },
+    { cmd: "--draft", desc: "Open as draft PR" },
+    { cmd: "--base", desc: "Override target branch (default: main)" },
+    { cmd: "--force", desc: "Ship even with pending tasks" },
+  ],
+  "session-report": [
+    { cmd: "--json", desc: "Machine-readable JSON output" },
+    { cmd: "--save", desc: "Save report to .gsd/reports/" },
+  ],
+  backlog: [
+    { cmd: "add", desc: "Add item to backlog" },
+    { cmd: "promote", desc: "Promote backlog item to active slice" },
+    { cmd: "remove", desc: "Remove backlog item" },
+  ],
+  "pr-branch": [
+    { cmd: "--dry-run", desc: "Preview what would be filtered" },
+    { cmd: "--name", desc: "Custom branch name" },
   ],
 };
 

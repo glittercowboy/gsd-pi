@@ -11,6 +11,9 @@ import { handleExport } from "../../export.js";
 import { handleHistory } from "../../history.js";
 import { handleUndo } from "../../undo.js";
 import { handleRemote } from "../../../remote-questions/mod.js";
+import { handleShip } from "../../commands-ship.js";
+import { handleSessionReport } from "../../commands-session-report.js";
+import { handlePrBranch } from "../../commands-pr-branch.js";
 import { projectRoot } from "../context.js";
 
 export async function handleOpsCommand(trimmed: string, ctx: ExtensionCommandContext, pi: ExtensionAPI): Promise<boolean> {
@@ -204,6 +207,23 @@ Examples:
   if (trimmed === "rethink") {
     const { handleRethink } = await import("../../rethink.js");
     await handleRethink(trimmed, ctx, pi);
+    return true;
+  }
+  if (trimmed === "ship" || trimmed.startsWith("ship ")) {
+    await handleShip(trimmed.replace(/^ship\s*/, "").trim(), ctx, pi);
+    return true;
+  }
+  if (trimmed === "session-report" || trimmed.startsWith("session-report ")) {
+    await handleSessionReport(trimmed.replace(/^session-report\s*/, "").trim(), ctx);
+    return true;
+  }
+  if (trimmed === "pr-branch" || trimmed.startsWith("pr-branch ")) {
+    await handlePrBranch(trimmed.replace(/^pr-branch\s*/, "").trim(), ctx);
+    return true;
+  }
+  if (trimmed === "add-tests" || trimmed.startsWith("add-tests ")) {
+    const { handleAddTests } = await import("../../commands-add-tests.js");
+    await handleAddTests(trimmed.replace(/^add-tests\s*/, "").trim(), ctx, pi);
     return true;
   }
   return false;
