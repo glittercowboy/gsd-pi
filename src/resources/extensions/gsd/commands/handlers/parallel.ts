@@ -101,11 +101,10 @@ export async function handleParallelCommand(trimmed: string, _ctx: ExtensionComm
       emitParallelMessage(pi, formatMergeResults([result]));
       return true;
     }
+    // Pass workers if available, but always let mergeAllCompleted run —
+    // it discovers completed milestones from worktree DBs as a fallback
+    // when orchestrator state is stale or missing.
     const workers = getWorkerStatuses(projectRoot());
-    if (workers.length === 0) {
-      emitParallelMessage(pi, "No parallel workers to merge.");
-      return true;
-    }
     const results = await mergeAllCompleted(projectRoot(), workers);
     emitParallelMessage(pi, formatMergeResults(results));
     return true;

@@ -983,6 +983,44 @@ export function _resetProvider(): void {
   providerName = null;
 }
 
+/**
+ * Open a separate read-only database connection, run a single parameterized
+ * query, close the connection, and return the result rows.
+ *
+ * This does NOT touch the singleton database — it creates an independent
+ * short-lived connection. Designed for peeking at worktree databases from
+ * the orchestrator process without disturbing the main DB session.
+ *
+ * @param dbPath  Absolute path to the .db file
+ * @param sql     SQL with positional `?` placeholders
+ * @param params  Values bound to the placeholders (prevents SQL injection)
+ * @returns       Array of row objects, or empty array on any error
+ */
+export function queryExternalDb(
+  dbPath: string,
+  sql: string,
+  params: unknown[] = [],
+): Record<string, unknown>[] {
+  loadProvider();
+  if (!providerModule || !providerName) return [];
+  if (!existsSync(dbPath)) return [];
+
+  let rawDb: unknown;
+  try {
+    rawDb = openRawDb(dbPath);
+    if (!rawDb) return [];
+    const adapter = createAdapter(rawDb);
+    try {
+      const rows = adapter.prepare(sql).all(...params);
+      return rows;
+    } finally {
+      adapter.close();
+    }
+  } catch {
+    return [];
+  }
+}
+
 export function upsertDecision(d: Omit<Decision, "seq">): void {
   if (!currentDb) throw new GSDError(GSD_STALE_STATE, "gsd-db: No database open");
   currentDb.prepare(

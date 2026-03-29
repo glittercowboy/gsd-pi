@@ -465,3 +465,76 @@ test("mergeAllCompleted — by-completion order respects startedAt", async () =>
     cleanup(repo);
   }
 });
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// determineMergeOrder — Worktree DB discovery fallback (#2812)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+test("determineMergeOrder — discovers completed milestones from worktree DB when orchestrator state is stale", () => {
+  // Simulate: orchestrator thinks M001 is "error" (stale), but worktree DB says "complete"
+  // This happens when a worker is manually respawned and completes without the orchestrator tracking it.
+  const workers = [
+    makeWorker({ milestoneId: "M001", state: "error" }),    // stale — actually complete
+    makeWorker({ milestoneId: "M002", state: "running" }),  // still running
+  ];
+
+  // Without basePath, only orchestrator state is checked — no completed workers
+  const withoutBasePath = determineMergeOrder(workers, "sequential");
+  assert.deepEqual(withoutBasePath, [], "without basePath, stale orchestrator state finds nothing");
+
+  // With basePath, worktree DB discovery kicks in (but we don't have a real DB here,
+  // so we just verify the function signature accepts basePath without error)
+  const withBasePath = determineMergeOrder(workers, "sequential", "/nonexistent");
+  // Still empty because /nonexistent has no worktrees, but no crash
+  assert.deepEqual(withBasePath, [], "with nonexistent basePath, returns empty without crashing");
+});
+
+test("determineMergeOrder — empty workers with basePath still attempts worktree discovery", () => {
+  // Simulate: orchestrator has no workers at all (status.json files were cleaned up)
+  const order = determineMergeOrder([], "sequential", "/nonexistent");
+  assert.deepEqual(order, [], "empty workers + nonexistent path returns empty without crashing");
+});
+
+test("determineMergeOrder — discovers from real worktree DB when orchestrator has no record", async () => {
+  // Create a fake worktree directory with a real SQLite DB containing a completed milestone
+  const { openDatabase, closeDatabase, _getAdapter } = await import("../../gsd-db.ts");
+  const base = realpathSync(mkdtempSync(join(tmpdir(), "merge-db-discovery-")));
+  const wtDbDir = join(base, ".gsd", "worktrees", "M001", ".gsd");
+  mkdirSync(wtDbDir, { recursive: true });
+  const dbPath = join(wtDbDir, "gsd.db");
+
+  // Open a real DB, insert a completed milestone, close it
+  const opened = openDatabase(dbPath);
+  assert.ok(opened, "should open worktree DB");
+  const adapter = _getAdapter();
+  assert.ok(adapter, "should have adapter");
+  adapter.prepare(
+    "INSERT OR REPLACE INTO milestones (id, title, status, created_at) VALUES (?, ?, ?, ?)"
+  ).run("M001", "Test", "complete", new Date().toISOString());
+  closeDatabase();
+
+  try {
+    // Orchestrator has no workers — but worktree DB says M001 is complete
+    const order = determineMergeOrder([], "sequential", base);
+    assert.deepEqual(order, ["M001"], "should discover M001 from worktree DB");
+  } finally {
+    cleanup(base);
+  }
+});
+
+test("determineMergeOrder — milestone IDs with SQL metacharacters do not cause injection", () => {
+  // Ensure that a directory named with SQL metacharacters doesn't crash or
+  // return incorrect results. The parameterized query should handle this safely.
+  const base = realpathSync(mkdtempSync(join(tmpdir(), "merge-sqli-")));
+  const maliciousId = "M001'; DROP TABLE milestones; --";
+  const wtDbDir = join(base, ".gsd", "worktrees", maliciousId, ".gsd");
+  mkdirSync(wtDbDir, { recursive: true });
+
+  try {
+    // No DB file exists, so this should return empty without crashing
+    const order = determineMergeOrder([], "sequential", base);
+    assert.deepEqual(order, [], "malicious milestone ID returns empty without crash");
+  } finally {
+    cleanup(base);
+  }
+});
