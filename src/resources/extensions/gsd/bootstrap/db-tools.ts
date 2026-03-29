@@ -894,8 +894,12 @@ export function registerDbTools(pi: ExtensionAPI): void {
       };
     }
     try {
+      // ── Input sanitization: normalize markdown parameters (#3013) ──────
+      const { sanitizeCompleteMilestoneParams } = await import("./sanitize-complete-milestone.js");
+      const sanitized = sanitizeCompleteMilestoneParams(params);
+
       const { handleCompleteMilestone } = await import("../tools/complete-milestone.js");
-      const result = await handleCompleteMilestone(params, process.cwd());
+      const result = await handleCompleteMilestone(sanitized, process.cwd());
       if ("error" in result) {
         return {
           content: [{ type: "text" as const, text: `Error completing milestone: ${result.error}` }],
