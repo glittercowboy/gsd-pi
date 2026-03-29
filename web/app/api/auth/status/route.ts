@@ -1,4 +1,5 @@
 import { cookies } from "next/headers";
+import { timingSafeEqual } from "node:crypto";
 import { verifySessionToken, getOrCreateSessionSecret } from "../../../../../src/web/web-session-auth.ts";
 import { getPasswordHash } from "../../../../../src/web/web-password-storage.ts";
 
@@ -17,7 +18,8 @@ export async function GET(request: Request): Promise<Response> {
   const expectedToken = process.env.GSD_WEB_AUTH_TOKEN;
   if (authHeader?.startsWith("Bearer ") && expectedToken) {
     const bearerToken = authHeader.slice(7);
-    if (bearerToken === expectedToken) {
+    if (bearerToken.length === expectedToken.length &&
+        timingSafeEqual(Buffer.from(bearerToken), Buffer.from(expectedToken))) {
       return Response.json({ configured: true, authenticated: true });
     }
   }
