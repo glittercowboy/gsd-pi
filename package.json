@@ -14,7 +14,8 @@
   "type": "module",
   "workspaces": [
     "packages/*",
-    "studio"
+    "studio",
+    "extensions/*"
   ],
   "bin": {
     "gsd": "dist/loader.js",

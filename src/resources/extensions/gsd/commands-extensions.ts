@@ -8,7 +8,7 @@
 
 import type { ExtensionCommandContext } from "@gsd/pi-coding-agent";
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { homedir } from "node:os";
 
 const gsdHome = process.env.GSD_HOME || join(homedir(), ".gsd");
@@ -100,6 +100,64 @@ function readManifest(dir: string): ExtensionManifest | null {
   }
 }
 
+// ─── Package Validation (mirrored — D-14, no src/ imports) ────────────────
+
+export interface ValidationResult {
+  valid: boolean;
+  errors: string[];
+  warnings: string[];
+}
+
+export function validateExtensionPackage(packageDir: string): ValidationResult {
+  const errors: string[] = [];
+  const warnings: string[] = [];
+
+  // Check package.json exists
+  const pkgPath = join(packageDir, "package.json");
+  if (!existsSync(pkgPath)) {
+    return { valid: false, errors: ["package.json not found"], warnings };
+  }
+
+  let pkg: Record<string, unknown>;
+  try {
+    pkg = JSON.parse(readFileSync(pkgPath, "utf-8"));
+  } catch {
+    return { valid: false, errors: ["package.json is invalid JSON"], warnings };
+  }
+
+  // (a) gsd.extension: true marker (D-12a)
+  const gsdField = pkg.gsd as Record<string, unknown> | undefined;
+  if (gsdField?.extension !== true) {
+    errors.push('package.json missing "gsd": { "extension": true }');
+  }
+
+  // (b) pi.extensions entry paths exist and are resolvable (D-12b)
+  const piField = pkg.pi as Record<string, unknown> | undefined;
+  const piExtensions = piField?.extensions;
+  if (!Array.isArray(piExtensions) || piExtensions.length === 0) {
+    errors.push('package.json missing "pi": { "extensions": [...] }');
+  } else {
+    for (const entry of piExtensions) {
+      if (typeof entry === "string") {
+        const resolved = join(packageDir, entry);
+        if (!existsSync(resolved)) {
+          errors.push(`pi.extensions entry not found: ${entry}`);
+        }
+      }
+    }
+  }
+
+  // (c) @gsd/* packages must be in peerDependencies, not dependencies (D-12c)
+  const deps = (pkg.dependencies as Record<string, unknown> | undefined) ?? {};
+  for (const dep of Object.keys(deps)) {
+    if (dep.startsWith("@gsd/")) {
+      errors.push(`"${dep}" must be in peerDependencies, not dependencies`);
+    }
+  }
+
+  return { valid: errors.length === 0, errors, warnings };
+}
+
 function discoverManifests(): Map<string, ExtensionManifest> {
   const extDir = getAgentExtensionsDir();
   const manifests = new Map<string, ExtensionManifest>();
@@ -138,8 +196,13 @@ export async function handleExtensions(args: string, ctx: ExtensionCommandContex
     return;
   }
 
+  if (subCmd === "validate") {
+    handleValidate(parts[1], ctx);
+    return;
+  }
+
   ctx.ui.notify(
-    `Unknown: /gsd extensions ${subCmd}. Usage: /gsd extensions [list|enable|disable|info]`,
+    `Unknown: /gsd extensions ${subCmd}. Usage: /gsd extensions [list|enable|disable|info|validate]`,
     "warning",
   );
 }
@@ -323,6 +386,28 @@ function handleInfo(id: string | undefined, ctx: ExtensionCommandContext): void 
   }
 
   ctx.ui.notify(lines.join("\n"), "info");
+}
+
+function handleValidate(path: string | undefined, ctx: ExtensionCommandContext): void {
+  if (!path) {
+    ctx.ui.notify("Usage: /gsd extensions validate <path>", "warning");
+    return;
+  }
+  const resolved = resolve(path);
+  if (!existsSync(resolved)) {
+    ctx.ui.notify(`Path not found: ${resolved}`, "warning");
+    return;
+  }
+  const result = validateExtensionPackage(resolved);
+  if (result.valid) {
+    ctx.ui.notify(`Valid extension package: ${resolved}`, "info");
+  } else {
+    ctx.ui.notify(
+      `Invalid extension package: ${resolved}\n` +
+      result.errors.map(e => `  - ${e}`).join("\n"),
+      "warning",
+    );
+  }
 }
 
 function padRight(str: string, len: number): string {
