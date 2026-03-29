@@ -12,7 +12,7 @@ import { parseUnitId } from "./unit-id.js";
 import { atomicWriteSync } from "./atomic-write.js";
 import { clearParseCache } from "./files.js";
 import { parseRoadmap as parseLegacyRoadmap, parsePlan as parseLegacyPlan } from "./parsers-legacy.js";
-import { isDbAvailable, getTask, getSlice, getSliceTasks, updateTaskStatus } from "./gsd-db.js";
+import { isDbAvailable, getTask, getSlice, getSliceTasks, updateTaskStatus, updateSliceStatus } from "./gsd-db.js";
 import { isValidationTerminal } from "./state.js";
 import {
   nativeConflictFiles,
@@ -411,13 +411,16 @@ export function writeBlockerPlaceholder(
   ].join("\n");
   writeFileSync(absPath, content, "utf-8");
 
-  // Mark the task as complete in the DB so verifyExpectedArtifact passes.
+  // Mark the task/slice as complete in the DB so verifyExpectedArtifact passes.
   // Without this, the DB status stays "pending" and the dispatch loop
-  // re-derives the same task indefinitely (#2531).
-  if (unitType === "execute-task" && isDbAvailable()) {
+  // re-derives the same unit indefinitely (#2531, #2653).
+  if (isDbAvailable()) {
     const { milestone: mid, slice: sid, task: tid } = parseUnitId(unitId);
-    if (mid && sid && tid) {
+    if (unitType === "execute-task" && mid && sid && tid) {
       try { updateTaskStatus(mid, sid, tid, "complete", new Date().toISOString()); } catch { /* non-fatal */ }
+    }
+    if (unitType === "complete-slice" && mid && sid) {
+      try { updateSliceStatus(mid, sid, "complete", new Date().toISOString()); } catch { /* non-fatal */ }
     }
   }
 

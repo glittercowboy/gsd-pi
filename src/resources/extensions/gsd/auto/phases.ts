@@ -1151,11 +1151,13 @@ export async function runUnitPhase(
     deps.buildSnapshotOpts(unitType, unitId),
   );
 
-  // ── Zero tool-call guard (#1833) ──────────────────────────────────
-  // An execute-task agent that completes with 0 tool calls made no
-  // real changes — its summary is hallucinated. Treat as failed so
-  // the task is retried instead of silently marked complete.
-  if (unitType === "execute-task") {
+  // ── Zero tool-call guard (#1833, #2653) ──────────────────────────
+  // Any unit that completes with 0 tool calls made no real progress —
+  // likely context exhaustion where all tool calls errored out. Treat
+  // as failed so the unit is retried in a fresh context instead of
+  // silently passing through to artifact verification (which loops
+  // forever when the unit never produced its artifact).
+  {
     const currentLedger = deps.getLedger() as { units: Array<{ type: string; id: string; startedAt: number; toolCalls: number }> } | null;
     if (currentLedger?.units) {
       const lastUnit = [...currentLedger.units].reverse().find(
@@ -1166,14 +1168,14 @@ export async function runUnitPhase(
           phase: "zero-tool-calls",
           unitType,
           unitId,
-          warning: "Task completed with 0 tool calls — likely hallucinated, marking as failed",
+          warning: "Unit completed with 0 tool calls — likely context exhaustion, marking as failed",
         });
         ctx.ui.notify(
-          `${unitType} ${unitId} completed with 0 tool calls — hallucinated summary, will retry`,
+          `${unitType} ${unitId} completed with 0 tool calls — context exhaustion, will retry`,
           "warning",
         );
         // Fall through to next iteration where dispatch will re-derive
-        // and re-dispatch this task.
+        // and re-dispatch this unit.
         return { action: "next", data: { unitStartedAt: s.currentUnit.startedAt } };
       }
     }

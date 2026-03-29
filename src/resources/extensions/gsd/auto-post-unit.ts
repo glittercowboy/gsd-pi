@@ -32,6 +32,7 @@ import {
 import {
   verifyExpectedArtifact,
   resolveExpectedArtifactPath,
+  writeBlockerPlaceholder,
 } from "./auto-recovery.js";
 import { regenerateIfMissing } from "./workflow-projections.js";
 import { syncStateToProjectRoot } from "./auto-worktree.js";
@@ -49,6 +50,9 @@ import { hasPendingCaptures, loadPendingCaptures } from "./captures.js";
 import { debugLog } from "./debug-logger.js";
 import { runSafely } from "./auto-utils.js";
 import type { AutoSession, SidecarItem } from "./auto/session.js";
+
+/** Maximum verification retry attempts before escalating to blocker placeholder (#2653). */
+const MAX_VERIFICATION_RETRIES = 3;
 
 
 /** Enqueue a sidecar item (hook, triage, or quick-task) for the main loop to
@@ -465,23 +469,49 @@ export async function postUnitPreVerification(pctx: PostUnitContext, opts?: PreV
       // When artifact verification fails for a unit type that has a known expected
       // artifact, return "retry" so the caller re-dispatches with failure context
       // instead of blindly re-dispatching the same unit (#1571).
+      // After MAX_VERIFICATION_RETRIES, escalate to writeBlockerPlaceholder so the
+      // pipeline can advance instead of looping forever (#2653).
       if (!triggerArtifactVerified) {
         const hasExpectedArtifact = resolveExpectedArtifactPath(s.currentUnit.type, s.currentUnit.id, s.basePath) !== null;
         if (hasExpectedArtifact) {
           const retryKey = `${s.currentUnit.type}:${s.currentUnit.id}`;
           const attempt = (s.verificationRetryCount.get(retryKey) ?? 0) + 1;
           s.verificationRetryCount.set(retryKey, attempt);
-          s.pendingVerificationRetry = {
-            unitId: s.currentUnit.id,
-            failureContext: `Artifact verification failed: expected artifact for ${s.currentUnit.type} "${s.currentUnit.id}" was not found on disk after unit execution (attempt ${attempt}).`,
-            attempt,
-          };
-          debugLog("postUnit", { phase: "artifact-verify-retry", unitType: s.currentUnit.type, unitId: s.currentUnit.id, attempt });
-          ctx.ui.notify(
-            `Artifact missing for ${s.currentUnit.type} ${s.currentUnit.id} — retrying (attempt ${attempt})`,
-            "warning",
-          );
-          return "retry";
+
+          if (attempt > MAX_VERIFICATION_RETRIES) {
+            // Retries exhausted — write a blocker placeholder so the pipeline
+            // can advance past this stuck unit (#2653).
+            debugLog("postUnit", {
+              phase: "artifact-verify-escalate",
+              unitType: s.currentUnit.type,
+              unitId: s.currentUnit.id,
+              attempt,
+              maxRetries: MAX_VERIFICATION_RETRIES,
+            });
+            const reason = `Artifact verification failed after ${MAX_VERIFICATION_RETRIES} retries for ${s.currentUnit.type} "${s.currentUnit.id}".`;
+            writeBlockerPlaceholder(s.currentUnit.type, s.currentUnit.id, s.basePath, reason);
+            ctx.ui.notify(
+              `${s.currentUnit.type} ${s.currentUnit.id} — verification retries exhausted (${MAX_VERIFICATION_RETRIES}), wrote blocker placeholder to advance pipeline`,
+              "warning",
+            );
+            // Reset retry count and fall through to "continue" so the loop
+            // re-derives state with the placeholder in place.
+            s.verificationRetryCount.delete(retryKey);
+            s.pendingVerificationRetry = null;
+            // Do NOT return "retry" — fall through to "continue" below.
+          } else {
+            s.pendingVerificationRetry = {
+              unitId: s.currentUnit.id,
+              failureContext: `Artifact verification failed: expected artifact for ${s.currentUnit.type} "${s.currentUnit.id}" was not found on disk after unit execution (attempt ${attempt}).`,
+              attempt,
+            };
+            debugLog("postUnit", { phase: "artifact-verify-retry", unitType: s.currentUnit.type, unitId: s.currentUnit.id, attempt });
+            ctx.ui.notify(
+              `Artifact missing for ${s.currentUnit.type} ${s.currentUnit.id} — retrying (attempt ${attempt})`,
+              "warning",
+            );
+            return "retry";
+          }
         }
       }
     } else {
