@@ -1,0 +1,18 @@
+{
+  "claimId": "C005",
+  "text": "The zero-knowledge proofs use PLONK curves",
+  "source": "src/zkp/circuits.ts",
+  "verdict": "unresolved",
+  "citations": [],
+  "impact": "none",
+  "checkedBy": "scout-concept",
+  "timestamp": "2026-03-19T14:00:00Z",
+  "confidence": 0.20,
+  "notes": "Unable to verify: source file references external WASM module not available in repository. Requires domain expert to inspect compiled artifacts. Blocker: missing cryptographic specification document.",
+  "scoutTokens": 800,
+  "blocker": {
+    "type": "missing-information",
+    "description": "External WASM dependency prevents static verification",
+    "requiredAction": "Domain expert consultation needed"
+  }
+}

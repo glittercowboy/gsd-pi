@@ -1,0 +1,13 @@
+{
+  "claimId": "C004",
+  "text": "The event system supports transactional outbox pattern",
+  "source": "src/events/outbox.ts",
+  "verdict": "inconclusive",
+  "citations": [],
+  "impact": "none",
+  "checkedBy": "scout-concept",
+  "timestamp": "2026-03-19T12:20:00Z",
+  "confidence": 0.55,
+  "notes": "Found an outbox table in the schema but no active polling mechanism. The code structure suggests outbox pattern was planned but may not be fully implemented. Requires investigation of background worker configuration to confirm.",
+  "scoutTokens": 820
+}

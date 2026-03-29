@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "cycleKey": "M003-CONCEPT/S01/cycle-1",
+  "overallStatus": "complete",
+  "planImpacting": true,
+  "counts": {
+    "total": 4,
+    "confirmed": 2,
+    "refuted": 1,
+    "inconclusive": 1,
+    "unverified": 0
+  },
+  "maxCycles": 5,
+  "currentCycle": 1,
+  "claimIds": ["C001", "C002", "C003", "C004"],
+  "planImpactingClaims": ["C003"],
+  "checkedAt": "2026-03-19T12:00:00Z"
+}

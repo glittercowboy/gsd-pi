@@ -1,0 +1,73 @@
+{
+  "id": "concept-mixed-confidence-v1",
+  "scenarioDescription": "A moderately understood domain with a balanced mix of verification outcomes. Simulates a project with some established patterns and some areas requiring investigation, yielding both confirmations and corrections.",
+  "milestoneId": "M003-CONCEPT",
+  "sliceId": "S01",
+  "createdAt": "2026-03-19T00:00:00Z",
+  "version": 1,
+  "claimMix": {
+    "total": 4,
+    "confirmed": 2,
+    "refuted": 1,
+    "inconclusive": 1,
+    "unresolved": 0
+  },
+  "expectedTelemetryShape": {
+    "interventions": {
+      "expected": false
+    },
+    "factCheck": {
+      "claimsChecked": 4,
+      "verified": 2,
+      "refuted": 1,
+      "inconclusive": 1
+    },
+    "wallClockMs": true
+  },
+  "successCriteria": {
+    "maxInterventions": 0,
+    "minVerifiedRatio": 0.4
+  },
+  "claims": [
+    {
+      "claimId": "C001",
+      "text": "The authentication middleware validates JWT tokens with RS256",
+      "source": "src/auth/middleware.ts",
+      "verdict": "confirmed",
+      "confidence": 0.92
+    },
+    {
+      "claimId": "C002",
+      "text": "Rate limiting is implemented using a sliding window algorithm",
+      "source": "src/rate-limiter/window.ts",
+      "verdict": "confirmed",
+      "confidence": 0.88
+    },
+    {
+      "claimId": "C003",
+      "text": "The WebSocket connection pool maintains up to 50 concurrent connections",
+      "source": "src/ws/pool.ts",
+      "verdict": "refuted",
+      "confidence": 0.95
+    },
+    {
+      "claimId": "C004",
+      "text": "The event system supports transactional outbox pattern",
+      "source": "src/events/outbox.ts",
+      "verdict": "inconclusive",
+      "confidence": 0.55
+    }
+  ],
+  "requiredFiles": [
+    "state/slices/S01/factcheck/FACTCHECK-STATUS.json",
+    "state/slices/S01/factcheck/claims/C001.json",
+    "state/slices/S01/factcheck/claims/C002.json",
+    "state/slices/S01/factcheck/claims/C003.json",
+    "state/slices/S01/factcheck/claims/C004.json"
+  ],
+  "redactionConstraints": {
+    "secretsPresent": false,
+    "personalDataPresent": false,
+    "syntheticOnly": true
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "claimId": "C003",
+  "text": "The API rate limiter allows 100 requests per minute",
+  "source": "src/api/rate-limit.ts",
+  "verdict": "confirmed",
+  "citations": [
+    "src/api/rate-limit.ts:10-25",
+    "config/rate-limits.yaml"
+  ],
+  "impact": "none",
+  "checkedBy": "scout-concept",
+  "timestamp": "2026-03-19T11:55:00Z",
+  "confidence": 0.85,
+  "notes": "Rate limiter config shows 100 req/min per IP. Uses sliding window algorithm for smoother throttling.",
+  "scoutTokens": 900
+}

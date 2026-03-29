@@ -13,6 +13,7 @@
  *   4. On crash recovery or fresh start, the ledger is loaded from disk
  */
 
+import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import type { ExtensionContext } from "@gsd/pi-coding-agent";
 import { gsdRoot } from "./paths.js";
@@ -56,6 +57,10 @@ export interface UnitMetrics {
   tier?: string;           // complexity tier (light/standard/heavy) if dynamic routing active
   modelDowngraded?: boolean; // true if dynamic routing used a cheaper model
   skills?: string[];       // skill names available/loaded during this unit (#599)
+  // Intervention & fact-check metrics (optional — M007+)
+  interventions?: InterventionCounts;
+  factCheck?: FactCheckMetrics;
+  wallClockMs?: number;    // derived as finishedAt - startedAt when not explicit
   cacheHitRate?: number;       // percentage 0-100, computed from cacheRead/(cacheRead+input)
   compressionSavings?: number; // percentage 0-100, char savings from prompt compression
 }
@@ -65,6 +70,25 @@ export interface BudgetInfo {
   contextWindowTokens?: number;
   truncationSections?: number;
   continueHereFired?: boolean;
+}
+
+/** Types of user interventions during auto-mode execution. */
+export type InterventionType = "blocker" | "correction" | "redirect";
+
+/** Counts of each intervention type for a unit. */
+export interface InterventionCounts {
+  blocker: number;
+  correction: number;
+  redirect: number;
+}
+
+/** Fact-check metrics extracted from fact-check artifacts. */
+export interface FactCheckMetrics {
+  claimsChecked: number;
+  verified: number;
+  refuted: number;
+  inconclusive: number;
+  scoutTokens: number;
 }
 
 export interface MetricsLedger {
@@ -96,6 +120,93 @@ export function classifyUnitPhase(unitType: string): MetricsPhase {
       return "reassessment";
     default:
       return "execution";
+  }
+}
+
+// ─── Intervention classification ──────────────────────────────────────────────
+
+const BLOCKER_PATTERNS = /\b(stop|block|don't|do not|halt|abort|wait)\b/i;
+const CORRECTION_PATTERNS = /\b(wrong|incorrect|actually|mistake|error|fix)\b/i;
+const REDIRECT_PATTERNS = /\b(instead|switch|different approach|try .* instead|pivot|change direction)\b/i;
+
+/**
+ * Classify a user message as a blocker, correction, redirect, or null.
+ * Returns the first matching intervention type in priority order.
+ */
+export function classifyIntervention(entry: { role: string; content?: string | unknown[] }): InterventionType | null {
+  if (entry.role !== "user") return null;
+
+  // Extract text content from string or array content blocks
+  let text: string;
+  if (typeof entry.content === "string") {
+    text = entry.content;
+  } else if (Array.isArray(entry.content)) {
+    text = entry.content
+      .filter((block): block is { text?: string } => typeof block === "object" && block !== null && "text" in block)
+      .map(block => block.text ?? "")
+      .join(" ");
+  } else {
+    return null;
+  }
+
+  // Check in priority order: blocker > correction > redirect
+  if (BLOCKER_PATTERNS.test(text)) return "blocker";
+  if (CORRECTION_PATTERNS.test(text)) return "correction";
+  if (REDIRECT_PATTERNS.test(text)) return "redirect";
+
+  return null;
+}
+
+// ─── Fact-check metrics extraction ────────────────────────────────────────────
+
+/**
+ * Extract fact-check metrics from a slice's factcheck directory.
+ * Reads FACTCHECK-STATUS.json for counts and sums scoutTokens from claim files.
+ * Returns null when: no factcheck directory, no status file, invalid JSON,
+ * or status.counts is absent.
+ */
+export function extractFactCheckMetrics(sliceDir: string): FactCheckMetrics | null {
+  const factcheckDir = join(sliceDir, "factcheck");
+  const statusPath = join(factcheckDir, "FACTCHECK-STATUS.json");
+
+  try {
+    const statusRaw = readFileSync(statusPath, "utf-8");
+    const status = JSON.parse(statusRaw);
+
+    if (!status.counts) return null;
+
+    const metrics: FactCheckMetrics = {
+      claimsChecked: status.counts.total ?? 0,
+      verified: status.counts.confirmed ?? 0,
+      refuted: status.counts.refuted ?? 0,
+      inconclusive: status.counts.inconclusive ?? 0,
+      scoutTokens: 0,
+    };
+
+    // Sum scoutTokens from claim files
+    const claimsDir = join(factcheckDir, "claims");
+    try {
+      const claimFiles = readdirSync(claimsDir);
+      for (const file of claimFiles) {
+        if (!file.endsWith(".json")) continue;
+        try {
+          const claimRaw = readFileSync(join(claimsDir, file), "utf-8");
+          const claim = JSON.parse(claimRaw);
+          if (typeof claim.scoutTokens === "number") {
+            metrics.scoutTokens += claim.scoutTokens;
+          }
+        } catch {
+          // Ignore individual claim file errors
+        }
+      }
+    } catch {
+      // claims directory doesn't exist — scoutTokens stays 0
+    }
+
+    return metrics;
+  } catch {
+    // FACTCHECK-STATUS.json doesn't exist or is invalid
+    return null;
   }
 }
 
@@ -133,7 +244,18 @@ export function snapshotUnitMetrics(
   unitId: string,
   startedAt: number,
   model: string,
-  opts?: { tier?: string; modelDowngraded?: boolean; contextWindowTokens?: number; truncationSections?: number; continueHereFired?: boolean; promptCharCount?: number; baselineCharCount?: number },
+  opts?: {
+    tier?: string;
+    modelDowngraded?: boolean;
+    contextWindowTokens?: number;
+    truncationSections?: number;
+    continueHereFired?: boolean;
+    promptCharCount?: number;
+    baselineCharCount?: number;
+    interventions?: InterventionCounts;
+    factCheck?: FactCheckMetrics;
+    wallClockMs?: number;
+  },
 ): UnitMetrics | null {
   if (!ledger) return null;
 
@@ -194,6 +316,11 @@ export function snapshotUnitMetrics(
     ...(opts?.continueHereFired !== undefined ? { continueHereFired: opts.continueHereFired } : {}),
     ...(opts?.promptCharCount != null ? { promptCharCount: opts.promptCharCount } : {}),
     ...(opts?.baselineCharCount != null ? { baselineCharCount: opts.baselineCharCount } : {}),
+    // M007: intervention & fact-check metrics
+    ...(opts?.interventions ? { interventions: opts.interventions } : {}),
+    ...(opts?.factCheck ? { factCheck: opts.factCheck } : {}),
+    // wallClockMs: explicit value, or derived from timestamps
+    wallClockMs: opts?.wallClockMs ?? (Date.now() - startedAt),
   };
 
   // Auto-capture skill telemetry (#599)
@@ -271,10 +398,21 @@ export interface ProjectTotals {
   apiRequests: number;
   totalTruncationSections: number;
   continueHereFiredCount: number;
+  // M007: intervention & fact-check aggregations
+  totalInterventions: InterventionCounts;
+  totalFactChecks: FactCheckMetrics;
 }
 
 function emptyTokens(): TokenCounts {
   return { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 };
+}
+
+function emptyInterventionCounts(): InterventionCounts {
+  return { blocker: 0, correction: 0, redirect: 0 };
+}
+
+function emptyFactCheckMetrics(): FactCheckMetrics {
+  return { claimsChecked: 0, verified: 0, refuted: 0, inconclusive: 0, scoutTokens: 0 };
 }
 
 function addTokens(a: TokenCounts, b: TokenCounts): TokenCounts {
@@ -284,6 +422,24 @@ function addTokens(a: TokenCounts, b: TokenCounts): TokenCounts {
     cacheRead: a.cacheRead + b.cacheRead,
     cacheWrite: a.cacheWrite + b.cacheWrite,
     total: a.total + b.total,
+  };
+}
+
+function addInterventions(a: InterventionCounts, b: InterventionCounts): InterventionCounts {
+  return {
+    blocker: a.blocker + b.blocker,
+    correction: a.correction + b.correction,
+    redirect: a.redirect + b.redirect,
+  };
+}
+
+function addFactChecks(a: FactCheckMetrics, b: FactCheckMetrics): FactCheckMetrics {
+  return {
+    claimsChecked: a.claimsChecked + b.claimsChecked,
+    verified: a.verified + b.verified,
+    refuted: a.refuted + b.refuted,
+    inconclusive: a.inconclusive + b.inconclusive,
+    scoutTokens: a.scoutTokens + b.scoutTokens,
   };
 }
 
@@ -354,6 +510,8 @@ export function getProjectTotals(units: UnitMetrics[]): ProjectTotals {
     apiRequests: 0,
     totalTruncationSections: 0,
     continueHereFiredCount: 0,
+    totalInterventions: emptyInterventionCounts(),
+    totalFactChecks: emptyFactCheckMetrics(),
   };
   for (const u of units) {
     totals.tokens = addTokens(totals.tokens, u.tokens);
@@ -365,6 +523,13 @@ export function getProjectTotals(units: UnitMetrics[]): ProjectTotals {
     totals.apiRequests += u.apiRequests ?? u.assistantMessages; // fallback for pre-existing data
     totals.totalTruncationSections += u.truncationSections ?? 0;
     if (u.continueHereFired) totals.continueHereFiredCount++;
+    // M007: aggregate interventions and fact-checks
+    if (u.interventions) {
+      totals.totalInterventions = addInterventions(totals.totalInterventions, u.interventions);
+    }
+    if (u.factCheck) {
+      totals.totalFactChecks = addFactChecks(totals.totalFactChecks, u.factCheck);
+    }
   }
   return totals;
 }

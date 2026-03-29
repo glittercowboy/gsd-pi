@@ -1,0 +1,82 @@
+{
+  "id": "concept-high-unknown-v1",
+  "scenarioDescription": "A novel domain with many unverifiable claims requiring human intervention. Simulates emerging technology or poorly documented systems where fact-checking encounters blockers and inconclusive results.",
+  "milestoneId": "M002-CONCEPT",
+  "sliceId": "S01",
+  "createdAt": "2026-03-19T00:00:00Z",
+  "version": 1,
+  "claimMix": {
+    "total": 5,
+    "confirmed": 1,
+    "refuted": 2,
+    "inconclusive": 1,
+    "unresolved": 1
+  },
+  "expectedTelemetryShape": {
+    "interventions": {
+      "expected": true,
+      "minBlockers": 1
+    },
+    "factCheck": {
+      "claimsChecked": 5,
+      "verified": 1,
+      "refuted": 2,
+      "inconclusive": 1
+    },
+    "wallClockMs": true
+  },
+  "successCriteria": {
+    "maxInterventions": 3,
+    "minVerifiedRatio": 0.2
+  },
+  "claims": [
+    {
+      "claimId": "C001",
+      "text": "The quantum encryption module uses post-quantum KEM",
+      "source": "src/crypto/quantum.ts",
+      "verdict": "confirmed",
+      "confidence": 0.80
+    },
+    {
+      "claimId": "C002",
+      "text": "The neural inference engine supports FP16 quantization",
+      "source": "src/ml/inference.ts",
+      "verdict": "refuted",
+      "confidence": 0.92
+    },
+    {
+      "claimId": "C003",
+      "text": "The distributed ledger achieves 10k TPS",
+      "source": "docs/architecture.md",
+      "verdict": "refuted",
+      "confidence": 0.88
+    },
+    {
+      "claimId": "C004",
+      "text": "The consensus algorithm is BFT-compliant",
+      "source": "src/consensus/bft.ts",
+      "verdict": "inconclusive",
+      "confidence": 0.45
+    },
+    {
+      "claimId": "C005",
+      "text": "The zero-knowledge proofs use PLONK curves",
+      "source": "src/zkp/circuits.ts",
+      "verdict": "unresolved",
+      "confidence": 0.20
+    }
+  ],
+  "requiredFiles": [
+    "state/slices/S01/factcheck/FACTCHECK-STATUS.json",
+    "state/slices/S01/factcheck/claims/C001.json",
+    "state/slices/S01/factcheck/claims/C002.json",
+    "state/slices/S01/factcheck/claims/C003.json",
+    "state/slices/S01/factcheck/claims/C004.json",
+    "state/slices/S01/factcheck/claims/C005.json"
+  ],
+  "redactionConstraints": {
+    "secretsPresent": false,
+    "personalDataPresent": false,
+    "syntheticOnly": true
+  }
+}

@@ -1,0 +1,53 @@
+{
+  "fixtureId": "factcheck-runtime-proof-v1",
+  "description": "Deterministic fixture for live fact-check runtime proof. Contains a synthetic research output with a known false claim that should produce a plan-impacting refutation.",
+  "milestoneId": "M999-PROOF",
+  "sliceId": "S01",
+  "createdAt": "2026-03-18T00:00:00Z",
+  "version": 1,
+  "expectedClaimCount": 3,
+  "expectedRefutationClaimId": "C001",
+  "expectedImpact": "slice",
+  "expectedCorrectedValue": "5.2.0",
+  "expectedOverallStatus": "has-refutations",
+  "expectedPlanImpacting": true,
+  "claims": [
+    {
+      "claimId": "C001",
+      "description": "@synthetic/lib version is 4.1.0",
+      "evidenceBasis": "training-data recall",
+      "resolutionPath": "Check npm registry for @synthetic/lib",
+      "expectedVerdict": "refuted",
+      "correctedValue": "5.2.0",
+      "impact": "slice"
+    },
+    {
+      "claimId": "C002",
+      "description": "The configure() method accepts { timeout: number }",
+      "evidenceBasis": "inferred from type signatures",
+      "resolutionPath": "Read @synthetic/lib API documentation",
+      "expectedVerdict": "confirmed",
+      "impact": "none"
+    },
+    {
+      "claimId": "C003",
+      "description": "The library is actively maintained",
+      "evidenceBasis": "assumption based on popularity",
+      "resolutionPath": "Check GitHub repository activity",
+      "expectedVerdict": "inconclusive",
+      "impact": "none"
+    }
+  ],
+  "requiredFiles": [
+    "M999-PROOF/slices/S01/S01-RESEARCH.md",
+    "M999-PROOF/slices/S01/factcheck/claims/C001.json",
+    "M999-PROOF/slices/S01/factcheck/claims/C002.json",
+    "M999-PROOF/slices/S01/factcheck/claims/C003.json",
+    "M999-PROOF/slices/S01/factcheck/FACTCHECK-STATUS.json"
+  ],
+  "redactionConstraints": {
+    "secretsPresent": false,
+    "personalDataPresent": false,
+    "syntheticOnly": true
+  }
+}

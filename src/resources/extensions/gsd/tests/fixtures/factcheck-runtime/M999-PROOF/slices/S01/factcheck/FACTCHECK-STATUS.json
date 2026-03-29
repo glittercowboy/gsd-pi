@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "cycleKey": "M999-PROOF/S01/cycle-1",
+  "overallStatus": "has-refutations",
+  "planImpacting": true,
+  "counts": {
+    "total": 3,
+    "confirmed": 1,
+    "refuted": 1,
+    "inconclusive": 1,
+    "unverified": 0
+  },
+  "maxCycles": 5,
+  "currentCycle": 1,
+  "claimIds": ["C001", "C002", "C003"],
+  "planImpactingClaims": ["C001"],
+  "rerouteTarget": "plan-slice",
+  "checkedAt": "2026-03-18T12:02:00Z"
+}

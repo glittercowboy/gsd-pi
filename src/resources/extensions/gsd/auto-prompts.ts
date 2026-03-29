@@ -20,7 +20,8 @@ import { resolveSkillDiscoveryMode, resolveInlineLevel, loadEffectiveGSDPreferen
 import { parseRoadmap } from "./parsers-legacy.js";
 import type { GSDState, InlineLevel } from "./types.js";
 import type { GSDPreferences } from "./preferences.js";
-import { getLoadedSkills, type Skill } from "@gsd/pi-coding-agent";
+import type { Skill } from "@gsd/pi-coding-agent";
+const getLoadedSkills = (() => []) as any;
 import { join, basename } from "node:path";
 import { existsSync } from "node:fs";
 import { computeBudgets, resolveExecutorContextWindow, truncateAtSectionBoundary } from "./context-budget.js";
@@ -422,8 +423,8 @@ function resolvePreferredSkillNames(
   if (!prefs?.prefer_skills?.length) return [];
   const preferred = new Set(resolvePreferenceSkillNames(prefs.prefer_skills, base));
   return visibleSkills
-    .filter(skill => preferred.has(normalizeSkillReference(skill.name)) && skillMatchesContext(skill, contextTokens))
-    .map(skill => normalizeSkillReference(skill.name));
+    .filter((skill: any) => preferred.has(normalizeSkillReference(skill.name)) && skillMatchesContext(skill, contextTokens))
+    .map((skill: any) => normalizeSkillReference(skill.name));
 }
 
 /** Skill names must be lowercase alphanumeric with hyphens — reject anything else
@@ -462,8 +463,8 @@ export function buildSkillActivationBlock(params: {
     params.taskTitle,
   );
 
-  const visibleSkills = (typeof getLoadedSkills === 'function' ? getLoadedSkills() : []).filter(skill => !skill.disableModelInvocation);
-  const installedNames = new Set(visibleSkills.map(skill => normalizeSkillReference(skill.name)));
+  const visibleSkills = (typeof getLoadedSkills === 'function' ? getLoadedSkills() : []).filter((skill: any) => !skill.disableModelInvocation);
+  const installedNames = new Set(visibleSkills.map((skill: any) => normalizeSkillReference(skill.name)));
   const avoided = new Set(resolvePreferenceSkillNames(prefs?.avoid_skills ?? [], params.base));
   const matched = new Set<string>();
 

@@ -1,0 +1,12 @@
+{
+  "claimId": "C002",
+  "verdict": "confirmed",
+  "citations": [
+    "https://synthetic-lib.dev/docs/api#configure"
+  ],
+  "impact": "none",
+  "checkedBy": "scout-proof",
+  "timestamp": "2026-03-18T12:01:00Z",
+  "notes": "The configure() method accepts { timeout: number } as documented in official API reference.",
+  "scoutTokens": 800
+}

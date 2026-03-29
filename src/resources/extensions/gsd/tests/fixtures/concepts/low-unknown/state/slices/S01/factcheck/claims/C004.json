@@ -1,0 +1,13 @@
+{
+  "claimId": "C004",
+  "text": "The logging system supports structured JSON output",
+  "source": "src/log/format.ts",
+  "verdict": "inconclusive",
+  "citations": [],
+  "impact": "none",
+  "checkedBy": "scout-concept",
+  "timestamp": "2026-03-19T12:00:00Z",
+  "confidence": 0.50,
+  "notes": "Found a JSON formatter implementation but no configuration showing it as the default output. Further investigation needed to determine if structured JSON is actively used in production.",
+  "scoutTokens": 750
+}

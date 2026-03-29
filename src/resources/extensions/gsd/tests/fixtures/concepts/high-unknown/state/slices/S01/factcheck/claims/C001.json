@@ -1,0 +1,16 @@
+{
+  "claimId": "C001",
+  "text": "The quantum encryption module uses post-quantum KEM",
+  "source": "src/crypto/quantum.ts",
+  "verdict": "confirmed",
+  "citations": [
+    "src/crypto/quantum.ts:20-40",
+    "https://csrc.nist.gov/projects/post-quantum-cryptography"
+  ],
+  "impact": "none",
+  "checkedBy": "scout-concept",
+  "timestamp": "2026-03-19T13:30:00Z",
+  "confidence": 0.80,
+  "notes": "Module implements CRYSTALS-Kyber KEM. Code aligns with NIST post-quantum standard draft.",
+  "scoutTokens": 1400
+}

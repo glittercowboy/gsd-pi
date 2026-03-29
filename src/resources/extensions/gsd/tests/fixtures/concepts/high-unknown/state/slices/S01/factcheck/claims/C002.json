@@ -1,0 +1,17 @@
+{
+  "claimId": "C002",
+  "text": "The neural inference engine supports FP16 quantization",
+  "source": "src/ml/inference.ts",
+  "verdict": "refuted",
+  "citations": [
+    "src/ml/inference.ts:50-80",
+    "https://github.com/ml-inference/docs/issues/42"
+  ],
+  "correctedValue": "INT8 only - FP16 support deprecated in v2.0",
+  "impact": "slice",
+  "checkedBy": "scout-concept",
+  "timestamp": "2026-03-19T13:40:00Z",
+  "confidence": 0.92,
+  "notes": "Found explicit deprecation notice for FP16. Current version only supports INT8 quantization. Documentation contradicts claim.",
+  "scoutTokens": 1250
+}

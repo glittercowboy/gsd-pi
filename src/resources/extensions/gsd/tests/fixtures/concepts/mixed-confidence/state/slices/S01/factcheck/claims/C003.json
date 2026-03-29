@@ -1,0 +1,17 @@
+{
+  "claimId": "C003",
+  "text": "The WebSocket connection pool maintains up to 50 concurrent connections",
+  "source": "src/ws/pool.ts",
+  "verdict": "refuted",
+  "citations": [
+    "src/ws/pool.ts:10-35",
+    "docs/architecture/websocket.md"
+  ],
+  "correctedValue": "Maximum 20 concurrent connections - pool was reduced after load testing revealed memory pressure at scale",
+  "impact": "slice",
+  "checkedBy": "scout-concept",
+  "timestamp": "2026-03-19T12:10:00Z",
+  "confidence": 0.95,
+  "notes": "Found MAX_CONNECTIONS constant set to 20. Documentation at docs/architecture/websocket.md confirms this was reduced from original 50 after performance testing. Claim is outdated.",
+  "scoutTokens": 1350
+}

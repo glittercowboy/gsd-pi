@@ -1,0 +1,15 @@
+{
+  "claimId": "C001",
+  "text": "The cache module uses LRU eviction policy",
+  "source": "src/cache/eviction.ts",
+  "verdict": "confirmed",
+  "citations": [
+    "src/cache/eviction.ts:15-30"
+  ],
+  "impact": "none",
+  "checkedBy": "scout-concept",
+  "timestamp": "2026-03-19T11:45:00Z",
+  "confidence": 0.95,
+  "notes": "Code review confirms LRU eviction with configurable max size. Keys are evicted based on access time with tie-breaker on insertion order.",
+  "scoutTokens": 1100
+}

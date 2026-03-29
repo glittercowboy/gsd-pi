@@ -1,0 +1,15 @@
+{
+  "claimId": "C001",
+  "text": "The authentication middleware validates JWT tokens with RS256",
+  "source": "src/auth/middleware.ts",
+  "verdict": "confirmed",
+  "citations": [
+    "src/auth/middleware.ts:45-68"
+  ],
+  "impact": "none",
+  "checkedBy": "scout-concept",
+  "timestamp": "2026-03-19T11:30:00Z",
+  "confidence": 0.92,
+  "notes": "Code confirms RS256 algorithm with public key verification. Token validation includes standard claims (iss, sub, exp, iat) and custom role-based permissions.",
+  "scoutTokens": 980
+}

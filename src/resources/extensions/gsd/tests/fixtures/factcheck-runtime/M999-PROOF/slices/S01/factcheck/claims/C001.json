@@ -1,0 +1,14 @@
+{
+  "claimId": "C001",
+  "verdict": "refuted",
+  "citations": [
+    "https://www.npmjs.com/package/@synthetic/lib",
+    "https://github.com/synthetic-org/lib/releases"
+  ],
+  "correctedValue": "5.2.0",
+  "impact": "slice",
+  "checkedBy": "scout-proof",
+  "timestamp": "2026-03-18T12:00:00Z",
+  "notes": "The npm registry shows the latest stable version is 5.2.0, not 4.1.0. The 4.x line is deprecated.",
+  "scoutTokens": 1200
+}

@@ -1,0 +1,17 @@
+{
+  "claimId": "C003",
+  "text": "The distributed ledger achieves 10k TPS",
+  "source": "docs/architecture.md",
+  "verdict": "refuted",
+  "citations": [
+    "benchmarks/throughput-report.md",
+    "test/integration/tps_test.go"
+  ],
+  "correctedValue": "~2.5k TPS in realistic conditions",
+  "impact": "slice",
+  "checkedBy": "scout-concept",
+  "timestamp": "2026-03-19T13:50:00Z",
+  "confidence": 0.88,
+  "notes": "Benchmark shows 10k TPS only achievable in synthetic lab conditions. Realistic network conditions yield ~2.5k TPS with current architecture.",
+  "scoutTokens": 1100
+}

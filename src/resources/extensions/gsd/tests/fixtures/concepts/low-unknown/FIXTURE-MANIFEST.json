@@ -1,0 +1,73 @@
+{
+  "id": "concept-low-unknown-v1",
+  "scenarioDescription": "A well-understood domain where most claims are verifiable with high confidence. Simulates a mature codebase with established patterns and clear documentation.",
+  "milestoneId": "M001-CONCEPT",
+  "sliceId": "S01",
+  "createdAt": "2026-03-19T00:00:00Z",
+  "version": 1,
+  "claimMix": {
+    "total": 4,
+    "confirmed": 3,
+    "refuted": 0,
+    "inconclusive": 1,
+    "unresolved": 0
+  },
+  "expectedTelemetryShape": {
+    "interventions": {
+      "expected": false
+    },
+    "factCheck": {
+      "claimsChecked": 4,
+      "verified": 3,
+      "refuted": 0,
+      "inconclusive": 1
+    },
+    "wallClockMs": true
+  },
+  "successCriteria": {
+    "maxInterventions": 0,
+    "minVerifiedRatio": 0.7
+  },
+  "claims": [
+    {
+      "claimId": "C001",
+      "text": "The cache module uses LRU eviction policy",
+      "source": "src/cache/eviction.ts",
+      "verdict": "confirmed",
+      "confidence": 0.95
+    },
+    {
+      "claimId": "C002",
+      "text": "Database connections are pooled with max 10 connections",
+      "source": "src/db/pool.ts",
+      "verdict": "confirmed",
+      "confidence": 0.90
+    },
+    {
+      "claimId": "C003",
+      "text": "The API rate limiter allows 100 requests per minute",
+      "source": "src/api/rate-limit.ts",
+      "verdict": "confirmed",
+      "confidence": 0.85
+    },
+    {
+      "claimId": "C004",
+      "text": "The logging system supports structured JSON output",
+      "source": "src/log/format.ts",
+      "verdict": "inconclusive",
+      "confidence": 0.50
+    }
+  ],
+  "requiredFiles": [
+    "state/slices/S01/factcheck/FACTCHECK-STATUS.json",
+    "state/slices/S01/factcheck/claims/C001.json",
+    "state/slices/S01/factcheck/claims/C002.json",
+    "state/slices/S01/factcheck/claims/C003.json",
+    "state/slices/S01/factcheck/claims/C004.json"
+  ],
+  "redactionConstraints": {
+    "secretsPresent": false,
+    "personalDataPresent": false,
+    "syntheticOnly": true
+  }
+}

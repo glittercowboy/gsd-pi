@@ -388,9 +388,11 @@ console.log("\n=== renderMetricsView ===");
       toolCalls: 15,
       assistantMessages: 10,
       userMessages: 5,
+      apiRequests: 5,
       totalTruncationSections: 0,
       continueHereFiredCount: 0,
-      apiRequests: 5,
+      totalInterventions: { blocker: 0, correction: 0, redirect: 0 },
+      totalFactChecks: { claimsChecked: 0, verified: 0, refuted: 0, inconclusive: 0, scoutTokens: 0 },
     },
     byPhase: [
       {
@@ -660,7 +662,10 @@ console.log("\n=== renderHealthView ===");
       units: 10, tokens: { input: 5000, output: 2000, cacheRead: 1000, cacheWrite: 500, total: 8500 },
       cost: 5.00, duration: 120000, toolCalls: 50,
       assistantMessages: 30, userMessages: 15,
-      totalTruncationSections: 3, continueHereFiredCount: 1, apiRequests: 30,
+      apiRequests: 30,
+      totalTruncationSections: 3, continueHereFiredCount: 1,
+      totalInterventions: { blocker: 0, correction: 0, redirect: 0 },
+      totalFactChecks: { claimsChecked: 0, verified: 0, refuted: 0, inconclusive: 0, scoutTokens: 0 },
     },
     health: {
       budgetCeiling: 20.00,

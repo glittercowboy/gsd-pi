@@ -1,0 +1,15 @@
+{
+  "claimId": "C004",
+  "text": "The consensus algorithm is BFT-compliant",
+  "source": "src/consensus/bft.ts",
+  "verdict": "inconclusive",
+  "citations": [
+    "src/consensus/bft.ts:1-200"
+  ],
+  "impact": "none",
+  "checkedBy": "scout-concept",
+  "timestamp": "2026-03-19T13:55:00Z",
+  "confidence": 0.45,
+  "notes": "Algorithm appears to implement PBFT variant but formal verification is incomplete. Cannot confirm full BFT compliance without security audit.",
+  "scoutTokens": 950
+}

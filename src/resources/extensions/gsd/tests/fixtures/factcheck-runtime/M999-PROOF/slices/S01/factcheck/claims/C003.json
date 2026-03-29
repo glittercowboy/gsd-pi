@@ -1,0 +1,10 @@
+{
+  "claimId": "C003",
+  "verdict": "inconclusive",
+  "citations": [],
+  "impact": "none",
+  "checkedBy": "scout-proof",
+  "timestamp": "2026-03-18T12:02:00Z",
+  "notes": "GitHub repository shows mixed activity: recent releases but low issue engagement. Cannot definitively confirm or refute active maintenance status.",
+  "scoutTokens": 950
+}

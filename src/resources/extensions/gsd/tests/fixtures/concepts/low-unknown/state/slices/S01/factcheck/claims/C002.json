@@ -1,0 +1,16 @@
+{
+  "claimId": "C002",
+  "text": "Database connections are pooled with max 10 connections",
+  "source": "src/db/pool.ts",
+  "verdict": "confirmed",
+  "citations": [
+    "src/db/pool.ts:5-20",
+    "docs/database.md#pooling"
+  ],
+  "impact": "none",
+  "checkedBy": "scout-concept",
+  "timestamp": "2026-03-19T11:50:00Z",
+  "confidence": 0.90,
+  "notes": "Pool configuration explicitly sets max: 10. Min connections set to 2 with idle timeout of 30 seconds.",
+  "scoutTokens": 950
+}
