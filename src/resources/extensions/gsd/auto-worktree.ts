@@ -102,6 +102,67 @@ function isSamePath(a: string, b: string): boolean {
   }
 }
 
+// ─── ASSESSMENT Force-Sync Helper (#2821) ─────────────────────────────────
+
+/** Regex matching YAML frontmatter `verdict:` field. */
+const VERDICT_RE = /verdict:\s*[\w-]+/i;
+
+/**
+ * Walk a milestone directory and force-overwrite ASSESSMENT files in the
+ * destination when the source copy contains a `verdict:` field.
+ *
+ * This is the targeted fix for the UAT stuck-loop (#2821): the main
+ * safeCopyRecursive uses force:false to protect worktree-authoritative
+ * files (#1886), but ASSESSMENT files written by run-uat must be
+ * forward-synced when the project root has a verdict. Without this,
+ * the worktree retains a stale FAIL or missing ASSESSMENT and
+ * checkNeedsRunUat re-dispatches run-uat indefinitely.
+ *
+ * Only overwrites when the source has a verdict — never clobbers a
+ * worktree ASSESSMENT with a verdictless project-root copy.
+ */
+function forceOverwriteAssessmentsWithVerdict(
+  srcMilestoneDir: string,
+  dstMilestoneDir: string,
+): void {
+  if (!existsSync(srcMilestoneDir)) return;
+
+  // Walk slices/<SID>/ looking for *-ASSESSMENT.md files
+  const slicesDir = join(srcMilestoneDir, "slices");
+  if (!existsSync(slicesDir)) return;
+
+  try {
+    for (const sliceEntry of readdirSync(slicesDir, { withFileTypes: true })) {
+      if (!sliceEntry.isDirectory()) continue;
+      const srcSliceDir = join(slicesDir, sliceEntry.name);
+      const dstSliceDir = join(dstMilestoneDir, "slices", sliceEntry.name);
+
+      try {
+        for (const fileEntry of readdirSync(srcSliceDir, { withFileTypes: true })) {
+          if (!fileEntry.isFile()) continue;
+          if (!fileEntry.name.endsWith("-ASSESSMENT.md")) continue;
+
+          const srcFile = join(srcSliceDir, fileEntry.name);
+          try {
+            const srcContent = readFileSync(srcFile, "utf-8");
+            if (!VERDICT_RE.test(srcContent)) continue; // no verdict in source — skip
+
+            // Source has a verdict — force-copy into worktree
+            mkdirSync(dstSliceDir, { recursive: true });
+            safeCopy(srcFile, join(dstSliceDir, fileEntry.name), { force: true });
+          } catch {
+            /* non-fatal per file */
+          }
+        }
+      } catch {
+        /* non-fatal per slice */
+      }
+    }
+  } catch {
+    /* non-fatal */
+  }
+}
+
 // ─── Module State ──────────────────────────────────────────────────────────
 
 /** Original project root before chdir into auto-worktree. */
@@ -212,6 +273,19 @@ export function syncProjectRootToWorktree(
     join(prGsd, "milestones", milestoneId),
     join(wtGsd, "milestones", milestoneId),
     { force: false },
+  );
+
+  // Force-sync ASSESSMENT files that have a verdict from project root (#2821).
+  // The additive-only copy above preserves worktree-authoritative files, but
+  // ASSESSMENT files are special: after run-uat writes a verdict and post-unit
+  // syncs it to the project root, the worktree may retain a stale copy (e.g.
+  // verdict:fail while the project root has verdict:pass from a retry). On
+  // session resume the DB is rebuilt from disk, and if the stale ASSESSMENT
+  // persists, checkNeedsRunUat finds no passing verdict → re-dispatches
+  // run-uat indefinitely (stuck-loop ×9).
+  forceOverwriteAssessmentsWithVerdict(
+    join(prGsd, "milestones", milestoneId),
+    join(wtGsd, "milestones", milestoneId),
   );
 
   // Forward-sync completed-units.json from project root to worktree.
