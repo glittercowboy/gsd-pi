@@ -14,7 +14,6 @@ import { getActiveWorktreeName, getWorktreeOriginalCwd } from "../worktree-comma
 import { deriveState } from "../state.js";
 import { formatOverridesSection, loadActiveOverrides, loadFile, parseContinue, parseSummary } from "../files.js";
 import { toPosixPath } from "../../shared/mod.js";
-import { markCmuxPromptShown, shouldPromptToEnableCmux } from "../../cmux/index.js";
 
 const gsdHome = process.env.GSD_HOME || join(homedir(), ".gsd");
 
@@ -43,6 +42,7 @@ export async function buildBeforeAgentStartResult(
   const stopContextTimer = debugTime("context-inject");
   const systemContent = loadPrompt("system");
   const loadedPreferences = loadEffectiveGSDPreferences();
+  const { markCmuxPromptShown, shouldPromptToEnableCmux } = await import("../../cmux/index.js");
   if (shouldPromptToEnableCmux(loadedPreferences?.preferences)) {
     markCmuxPromptShown();
     ctx.ui.notify(

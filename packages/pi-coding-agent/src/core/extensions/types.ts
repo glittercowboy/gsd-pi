@@ -1450,10 +1450,18 @@ export interface Extension {
 	lifecycleHooks: LifecycleHookMap;
 }
 
+/** Warning from extension dependency sort (missing deps, cycles). */
+export interface ExtensionLoadWarning {
+	declaringId: string;
+	missingId: string;
+	message: string;
+}
+
 /** Result of loading extensions. */
 export interface LoadExtensionsResult {
 	extensions: Extension[];
 	errors: Array<{ path: string; error: string }>;
+	warnings: ExtensionLoadWarning[];
 	/** Shared runtime - actions are throwing stubs until runner.initialize() */
 	runtime: ExtensionRuntime;
 }

@@ -38,6 +38,8 @@ import type { ExecOptions } from "../exec.js";
 import { execCommand } from "../exec.js";
 import { getUntrustedExtensionPaths } from "./project-trust.js";
 export { isProjectTrusted, trustProject, getUntrustedExtensionPaths } from "./project-trust.js";
+import { mergeExtensionEntryPaths } from "./extension-discovery.js";
+import { sortExtensionPaths } from "./extension-sort.js";
 import type {
 	Extension,
 	ExtensionAPI,
@@ -822,6 +824,7 @@ export async function loadExtensions(paths: string[], cwd: string, eventBus?: Ev
 	return {
 		extensions,
 		errors,
+		warnings: [],
 		runtime,
 	};
 }
@@ -978,7 +981,12 @@ export async function discoverAndLoadExtensions(
 
 	// 2. Global extensions: agentDir/extensions/
 	const globalExtDir = path.join(agentDir, "extensions");
-	addPaths(discoverExtensionsInDir(globalExtDir));
+	// 2b. Installed extensions: ~/.gsd/extensions/ merged with bundled (D-14, D-15)
+	// Discovery handles ID-based merge — loader stays dumb.
+	const installedExtDir = path.join(path.dirname(agentDir), "extensions");
+	const globalPaths = discoverExtensionsInDir(globalExtDir);
+	const mergedPaths = mergeExtensionEntryPaths(globalPaths, installedExtDir);
+	addPaths(mergedPaths);
 
 	// 3. Explicitly configured paths
 	for (const p of configuredPaths) {
@@ -998,5 +1006,13 @@ export async function discoverAndLoadExtensions(
 		addPaths([resolved]);
 	}
 
-	return loadExtensions(allPaths, cwd, eventBus);
+	// Topological sort: ensure declared dependencies load first (D-06, D-07)
+	const { sortedPaths, warnings: sortWarnings } = sortExtensionPaths(allPaths)
+	// Emit warnings to stderr immediately — loader runs before ctx.ui is ready (D-08)
+	for (const w of sortWarnings) {
+		process.stderr.write(`[gsd] ${w.message}\n`)
+	}
+	const result = await loadExtensions(sortedPaths, cwd, eventBus)
+	result.warnings.push(...sortWarnings)
+	return result
 }

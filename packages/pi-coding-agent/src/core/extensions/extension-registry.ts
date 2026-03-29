@@ -7,7 +7,7 @@
  */
 
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, writeFileSync } from "node:fs";
-import { appRoot } from "./app-paths.js";
+import { getAgentDir } from "../../config.js";
 import { dirname, join } from "node:path";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
@@ -69,7 +69,7 @@ function isManifest(data: unknown): data is ExtensionManifest {
 // ─── Registry Path ──────────────────────────────────────────────────────────
 
 export function getRegistryPath(): string {
-  return join(appRoot, "extensions", "registry.json");
+  return join(dirname(getAgentDir()), "extensions", "registry.json");
 }
 
 // ─── Registry I/O ───────────────────────────────────────────────────────────

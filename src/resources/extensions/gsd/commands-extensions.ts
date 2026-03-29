@@ -1,15 +1,17 @@
 /**
  * GSD Extensions Command — /gsd extensions
  *
- * Manage the extension registry: list, enable, disable, info.
+ * Manage the extension registry: list, enable, disable, info, install.
  * Self-contained — no imports outside the extensions tree (extensions are loaded
  * via jiti at runtime from ~/.gsd/agent/, not compiled by tsc).
  */
 
 import type { ExtensionCommandContext } from "@gsd/pi-coding-agent";
-import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { homedir } from "node:os";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
+import { homedir, tmpdir } from "node:os";
+import { execFileSync } from "node:child_process";
+import semver from "semver";
 
 const gsdHome = process.env.GSD_HOME || join(homedir(), ".gsd");
 
@@ -40,6 +42,9 @@ interface ExtensionRegistryEntry {
   source: "bundled" | "user" | "project";
   disabledAt?: string;
   disabledReason?: string;
+  version?: string;
+  installedFrom?: string;
+  installType?: "npm" | "git" | "local";
 }
 
 interface ExtensionRegistry {
@@ -112,6 +117,472 @@ function discoverManifests(): Map<string, ExtensionManifest> {
   return manifests;
 }
 
+function getInstalledExtDir(): string {
+  return join(gsdHome, "extensions");
+}
+
+// Source: derived from npm/git URL conventions (from RESEARCH.md)
+function detectInstallType(specifier: string): "npm" | "git" | "local" {
+  if (
+    specifier.startsWith("/") ||
+    specifier.startsWith("./") ||
+    specifier.startsWith("../") ||
+    specifier.startsWith("~/")
+  ) return "local";
+  if (
+    specifier.startsWith("git+") ||
+    specifier.startsWith("git://") ||
+    specifier.startsWith("github:") ||
+    specifier.startsWith("gitlab:") ||
+    specifier.startsWith("bitbucket:") ||
+    (specifier.startsWith("https://") && specifier.endsWith(".git")) ||
+    (specifier.startsWith("http://") && specifier.endsWith(".git"))
+  ) return "git";
+  return "npm";
+}
+
+// ─── Validation (mirrored from extension-validator.ts) ──────────────────────
+
+interface ValidationError {
+  code: string;
+  message: string;
+  field?: string;
+}
+
+interface ValidationResult {
+  valid: boolean;
+  errors: ValidationError[];
+}
+
+function validateExtensionPackage(pkg: unknown, opts: { extensionId?: string; allowGsdNamespace?: boolean } = {}): ValidationResult {
+  const errors: ValidationError[] = [];
+
+  // Check gsd.extension === true (strict)
+  if (typeof pkg !== "object" || pkg === null) {
+    errors.push({ code: "MISSING_GSD_MARKER", message: 'package.json must declare "gsd": { "extension": true } to be recognized as a GSD extension.', field: "gsd.extension" });
+  } else {
+    const obj = pkg as Record<string, unknown>;
+    const gsd = obj.gsd;
+    if (typeof gsd !== "object" || gsd === null || (gsd as Record<string, unknown>).extension !== true) {
+      errors.push({ code: "MISSING_GSD_MARKER", message: 'package.json must declare "gsd": { "extension": true } to be recognized as a GSD extension.', field: "gsd.extension" });
+    }
+  }
+
+  // Check namespace reservation
+  if (opts.extensionId && opts.extensionId.startsWith("gsd.") && opts.allowGsdNamespace !== true) {
+    errors.push({ code: "RESERVED_NAMESPACE", message: `Extension ID "${opts.extensionId}" is reserved for GSD core extensions. Use a different namespace for community extensions.`, field: "extensionId" });
+  }
+
+  // Check dependency placement
+  if (typeof pkg === "object" && pkg !== null) {
+    const obj = pkg as Record<string, unknown>;
+    for (const field of ["dependencies", "devDependencies"] as const) {
+      const deps = obj[field];
+      if (typeof deps === "object" && deps !== null) {
+        for (const pkgName of Object.keys(deps as Record<string, unknown>)) {
+          if (pkgName.startsWith("@gsd/")) {
+            errors.push({ code: "WRONG_DEP_FIELD", message: `"${pkgName}" must not appear in "${field}". Move it to "peerDependencies".`, field });
+          }
+        }
+      }
+    }
+  }
+
+  return { valid: errors.length === 0, errors };
+}
+
+// ─── Post-install convergence ────────────────────────────────────────────────
+
+/**
+ * Post-install convergence: validate package, read manifest, write registry entry.
+ * All three install types (npm, git, local) call this after files are in place.
+ * Returns the extension ID on success, or null on failure (with error notified).
+ */
+function postInstallValidate(
+  destPath: string,
+  specifier: string,
+  installType: "npm" | "git" | "local",
+  ctx: ExtensionCommandContext,
+): string | null {
+  // Read package.json
+  const pkgJsonPath = join(destPath, "package.json");
+  if (!existsSync(pkgJsonPath)) {
+    ctx.ui.notify(`Cannot install "${specifier}": no package.json found.`, "error");
+    return null;
+  }
+  let pkgJson: Record<string, unknown>;
+  try {
+    pkgJson = JSON.parse(readFileSync(pkgJsonPath, "utf-8"));
+  } catch {
+    ctx.ui.notify(`Cannot install "${specifier}": malformed package.json.`, "error");
+    return null;
+  }
+
+  // Read extension-manifest.json for the ID
+  const manifest = readManifest(destPath);
+  const extensionId = manifest?.id;
+
+  // Validate
+  const validation = validateExtensionPackage(pkgJson, { extensionId });
+  if (!validation.valid) {
+    const msgs = validation.errors.map(e => e.message).join("\n");
+    ctx.ui.notify(`Cannot install "${specifier}": ${msgs}`, "error");
+    return null;
+  }
+
+  if (!manifest || !extensionId) {
+    ctx.ui.notify(`Cannot install "${specifier}": no extension-manifest.json with valid id found.`, "error");
+    return null;
+  }
+
+  // Write registry entry with source: "user" and Phase 8 fields
+  const registry = loadRegistry();
+  registry.entries[extensionId] = {
+    id: extensionId,
+    enabled: true,
+    source: "user",
+    version: manifest.version,
+    installedFrom: specifier,
+    installType,
+  };
+  saveRegistry(registry);
+
+  return extensionId;
+}
+
+// ─── Uninstall helpers ───────────────────────────────────────────────────────
+
+/**
+ * Scan installed extensions to find which ones depend on the target ID.
+ * Used for dependency warning on uninstall (D-06).
+ */
+function findDependents(targetId: string, installedExtDir: string): string[] {
+  const dependents: string[] = [];
+  if (!existsSync(installedExtDir)) return dependents;
+  for (const entry of readdirSync(installedExtDir, { withFileTypes: true })) {
+    if (!entry.isDirectory()) continue;
+    const manifest = readManifest(join(installedExtDir, entry.name));
+    if (!manifest) continue;
+    if (manifest.dependencies?.extensions?.includes(targetId)) {
+      dependents.push(manifest.id);
+    }
+  }
+  return dependents;
+}
+
+function handleUninstall(id: string | undefined, ctx: ExtensionCommandContext): void {
+  if (!id) {
+    ctx.ui.notify("Usage: /gsd extensions uninstall <id>", "warning");
+    return;
+  }
+
+  const registry = loadRegistry();
+  const entry = registry.entries[id];
+
+  // Check if extension exists and is user-installed
+  if (!entry || entry.source !== "user") {
+    ctx.ui.notify(
+      `Extension "${id}" not found in registry. Run /gsd extensions list to see installed extensions.`,
+      "warning",
+    );
+    return;
+  }
+
+  const installedExtDir = getInstalledExtDir();
+  const extDir = join(installedExtDir, id);
+
+  // Check for dependents and warn (D-06: warn-then-proceed)
+  const dependents = findDependents(id, installedExtDir);
+  if (dependents.length > 0) {
+    ctx.ui.notify(
+      `Warning: the following installed extensions depend on "${id}": ${dependents.join(", ")}. Removing anyway.`,
+      "warning",
+    );
+  }
+
+  // Remove directory first, then registry entry (Pitfall 4 from RESEARCH.md)
+  // If rm fails, do NOT remove registry entry — leaves a recoverable state
+  try {
+    if (existsSync(extDir)) {
+      rmSync(extDir, { recursive: true, force: true });
+    }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    ctx.ui.notify(`Failed to remove extension directory for "${id}": ${msg}`, "error");
+    return; // Do NOT remove registry entry — directory still exists
+  }
+
+  // Remove registry entry (D-07)
+  delete registry.entries[id];
+  saveRegistry(registry);
+
+  ctx.ui.notify(`Uninstalled "${id}". Restart GSD to deactivate.`, "info");
+}
+
+// ─── Update subcommand ───────────────────────────────────────────────────────
+
+async function getLatestNpmVersion(packageName: string): Promise<string | null> {
+  try {
+    const res = await fetch(`https://registry.npmjs.org/${packageName}/latest`, {
+      signal: AbortSignal.timeout(5000),
+    });
+    if (!res.ok) return null;
+    const data = await res.json() as { version?: string };
+    return data.version ?? null;
+  } catch {
+    return null;
+  }
+}
+
+async function handleUpdate(id: string | undefined, ctx: ExtensionCommandContext): Promise<void> {
+  const registry = loadRegistry();
+
+  if (id) {
+    // Update single extension (D-12)
+    await updateSingleExtension(id, registry, ctx);
+  } else {
+    // Update all installed extensions (D-11)
+    await updateAllExtensions(registry, ctx);
+  }
+}
+
+async function updateSingleExtension(
+  id: string,
+  registry: ExtensionRegistry,
+  ctx: ExtensionCommandContext,
+): Promise<void> {
+  const entry = registry.entries[id];
+
+  if (!entry || entry.source !== "user") {
+    ctx.ui.notify(
+      `Extension "${id}" not found in registry. Run /gsd extensions list to see installed extensions.`,
+      "warning",
+    );
+    return;
+  }
+
+  // Git and local installs: "reinstall to update" hint (D-10, D-12)
+  if (entry.installType !== "npm") {
+    const source = entry.installType ?? "unknown";
+    const hint = entry.installedFrom ? `gsd extensions install ${entry.installedFrom}` : `gsd extensions install <specifier>`;
+    ctx.ui.notify(
+      `"${id}" was installed from ${source}. Reinstall to update: ${hint}`,
+      "warning",
+    );
+    return;
+  }
+
+  // npm extension: check for newer version (D-09)
+  const current = entry.version ?? "0.0.0";
+  const packageName = entry.installedFrom;
+  if (!packageName) {
+    ctx.ui.notify(`"${id}" has no recorded install source. Reinstall manually.`, "warning");
+    return;
+  }
+
+  const latest = await getLatestNpmVersion(packageName);
+  if (!latest) {
+    ctx.ui.notify(`Could not fetch latest version for "${id}".`, "warning");
+    return;
+  }
+
+  if (semver.gt(latest, current)) {
+    ctx.ui.notify(`Updating "${id}": v${current} → v${latest}...`, "info");
+    await handleInstall(packageName, ctx);
+  } else {
+    ctx.ui.notify(`"${id}" is already at the latest version (v${current}).`, "info");
+  }
+}
+
+async function updateAllExtensions(
+  registry: ExtensionRegistry,
+  ctx: ExtensionCommandContext,
+): Promise<void> {
+  // Find all user-installed extensions
+  const userEntries = Object.values(registry.entries).filter(e => e.source === "user");
+
+  if (userEntries.length === 0) {
+    ctx.ui.notify("No user-installed extensions found. Use: gsd extensions install <package> to add one.", "warning");
+    return;
+  }
+
+  ctx.ui.notify(`Checking ${userEntries.length} installed extension(s) for updates...`, "info");
+
+  let updated = 0;
+  let skipped = 0;
+
+  for (const entry of userEntries) {
+    // Skip non-npm installs (D-11)
+    if (entry.installType !== "npm") {
+      const source = entry.installType ?? "unknown";
+      ctx.ui.notify(`  ${entry.id}: installed from ${source} — reinstall to update`, "info");
+      skipped++;
+      continue;
+    }
+
+    const current = entry.version ?? "0.0.0";
+    const packageName = entry.installedFrom;
+    if (!packageName) {
+      ctx.ui.notify(`  ${entry.id}: no recorded install source — skip`, "info");
+      skipped++;
+      continue;
+    }
+
+    const latest = await getLatestNpmVersion(packageName);
+    if (!latest) {
+      ctx.ui.notify(`  ${entry.id}: could not fetch latest version — skip`, "info");
+      skipped++;
+      continue;
+    }
+
+    if (semver.gt(latest, current)) {
+      ctx.ui.notify(`  ${entry.id}: v${current} → v${latest} (updating)`, "info");
+      await handleInstall(packageName, ctx);
+      updated++;
+    } else {
+      ctx.ui.notify(`  ${entry.id}: v${current} (already up to date)`, "info");
+    }
+  }
+
+  ctx.ui.notify(`Updated ${updated} extension(s). ${skipped} skipped (git/local — reinstall to update).`, "info");
+}
+
+// ─── Install subcommand ──────────────────────────────────────────────────────
+
+async function handleInstall(specifier: string | undefined, ctx: ExtensionCommandContext): Promise<void> {
+  if (!specifier) {
+    ctx.ui.notify("Usage: /gsd extensions install <npm-package|git-url|local-path>", "warning");
+    return;
+  }
+
+  const installType = detectInstallType(specifier);
+  const installedExtDir = getInstalledExtDir();
+  mkdirSync(installedExtDir, { recursive: true });
+
+  process.stderr.write(`Installing ${specifier}...\n`);
+
+  if (installType === "npm") {
+    installFromNpm(specifier, installedExtDir, ctx);
+  } else if (installType === "git") {
+    installFromGit(specifier, installedExtDir, ctx);
+  } else {
+    installFromLocal(specifier, installedExtDir, ctx);
+  }
+}
+
+function installFromNpm(specifier: string, installedExtDir: string, ctx: ExtensionCommandContext): void {
+  const packDir = mkdtempSync(join(tmpdir(), "gsd-install-"));
+  try {
+    // Step 1: npm pack to tmpdir (D-01, D-05)
+    execFileSync("npm", ["pack", specifier, "--pack-destination", packDir, "--ignore-scripts"], {
+      stdio: "pipe",
+      encoding: "utf-8",
+    });
+
+    // Step 2: Find the tarball
+    const tgzFile = readdirSync(packDir).find(f => f.endsWith(".tgz"));
+    if (!tgzFile) throw new Error("npm pack produced no tarball");
+
+    // Step 3: Extract via tar with --strip-components=1 (flat dir, no package/ wrapper)
+    const extractDir = join(packDir, "extracted");
+    mkdirSync(extractDir, { recursive: true });
+    execFileSync("tar", ["xzf", join(packDir, tgzFile), "-C", extractDir, "--strip-components=1"], { stdio: "pipe" });
+
+    // Step 4: Validate and get extension ID
+    const extensionId = postInstallValidate(extractDir, specifier, "npm", ctx);
+    if (!extensionId) {
+      return; // Error already notified
+    }
+
+    // Step 5: Move to final destination
+    const destPath = join(installedExtDir, extensionId);
+    if (existsSync(destPath)) {
+      rmSync(destPath, { recursive: true, force: true });
+    }
+    renameSync(extractDir, destPath);
+
+    // Step 6: Re-read manifest for version display
+    const manifest = readManifest(destPath);
+    const version = manifest?.version ?? "unknown";
+    ctx.ui.notify(`Installed "${extensionId}" v${version}. Restart GSD to activate.`, "info");
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    ctx.ui.notify(`Failed to install "${specifier}": ${msg}`, "error");
+  } finally {
+    rmSync(packDir, { recursive: true, force: true });
+  }
+}
+
+function installFromGit(gitUrl: string, installedExtDir: string, ctx: ExtensionCommandContext): void {
+  // Clone into temp dir, validate, then rename to real ID (D-02)
+  const tmpDir = join(installedExtDir, `__installing-${Date.now()}`);
+  try {
+    execFileSync("git", ["clone", "--depth=1", gitUrl, tmpDir], { stdio: "pipe" });
+
+    // Remove .git directory — not needed after clone
+    const dotGit = join(tmpDir, ".git");
+    if (existsSync(dotGit)) {
+      rmSync(dotGit, { recursive: true, force: true });
+    }
+
+    const extensionId = postInstallValidate(tmpDir, gitUrl, "git", ctx);
+    if (!extensionId) {
+      rmSync(tmpDir, { recursive: true, force: true });
+      return;
+    }
+
+    const destPath = join(installedExtDir, extensionId);
+    if (existsSync(destPath)) {
+      rmSync(destPath, { recursive: true, force: true });
+    }
+    renameSync(tmpDir, destPath);
+
+    const manifest = readManifest(destPath);
+    const version = manifest?.version ?? "unknown";
+    ctx.ui.notify(`Installed "${extensionId}" v${version}. Restart GSD to activate.`, "info");
+  } catch (err) {
+    if (existsSync(tmpDir)) rmSync(tmpDir, { recursive: true, force: true });
+    const msg = err instanceof Error ? err.message : String(err);
+    ctx.ui.notify(`Failed to install "${gitUrl}": ${msg}`, "error");
+  }
+}
+
+function installFromLocal(localPath: string, installedExtDir: string, ctx: ExtensionCommandContext): void {
+  // Resolve path and copy (not symlink) per D-03
+  const sourcePath = resolve(localPath.startsWith("~/") ? join(homedir(), localPath.slice(2)) : localPath);
+
+  if (!existsSync(sourcePath)) {
+    ctx.ui.notify(`Cannot install "${localPath}": path does not exist.`, "error");
+    return;
+  }
+
+  // Copy to temp dir first, validate, then rename
+  const tmpDir = join(installedExtDir, `__installing-${Date.now()}`);
+  try {
+    cpSync(sourcePath, tmpDir, { recursive: true });
+
+    const extensionId = postInstallValidate(tmpDir, localPath, "local", ctx);
+    if (!extensionId) {
+      rmSync(tmpDir, { recursive: true, force: true });
+      return;
+    }
+
+    const destPath = join(installedExtDir, extensionId);
+    if (existsSync(destPath)) {
+      rmSync(destPath, { recursive: true, force: true });
+    }
+    renameSync(tmpDir, destPath);
+
+    const manifest = readManifest(destPath);
+    const version = manifest?.version ?? "unknown";
+    ctx.ui.notify(`Installed "${extensionId}" v${version}. Restart GSD to activate.`, "info");
+  } catch (err) {
+    if (existsSync(tmpDir)) rmSync(tmpDir, { recursive: true, force: true });
+    const msg = err instanceof Error ? err.message : String(err);
+    ctx.ui.notify(`Failed to install "${localPath}": ${msg}`, "error");
+  }
+}
+
 // ─── Command Handler ────────────────────────────────────────────────────────
 
 export async function handleExtensions(args: string, ctx: ExtensionCommandContext): Promise<void> {
@@ -138,8 +609,23 @@ export async function handleExtensions(args: string, ctx: ExtensionCommandContex
     return;
   }
 
+  if (subCmd === "install") {
+    await handleInstall(parts[1], ctx);
+    return;
+  }
+
+  if (subCmd === "uninstall") {
+    handleUninstall(parts[1], ctx);
+    return;
+  }
+
+  if (subCmd === "update") {
+    await handleUpdate(parts[1], ctx);
+    return;
+  }
+
   ctx.ui.notify(
-    `Unknown: /gsd extensions ${subCmd}. Usage: /gsd extensions [list|enable|disable|info]`,
+    `Unknown: /gsd extensions ${subCmd}. Usage: /gsd extensions [list|enable|disable|info|install|uninstall|update]`,
     "warning",
   );
 }
@@ -179,6 +665,19 @@ function handleList(ctx: ExtensionCommandContext): void {
       padRight(String(toolCount), 7) +
       String(cmdCount),
     );
+
+    // Show source indicator and install info for user-installed extensions
+    const regEntry = registry.entries[m.id];
+    if (regEntry?.source === "user") {
+      // Append [user] tag to the last line
+      const lastLine = lines[lines.length - 1];
+      lines[lines.length - 1] = lastLine + "      [user]";
+      if (regEntry.installedFrom) {
+        const typePrefix = regEntry.installType ? `${regEntry.installType}:` : "";
+        const versionSuffix = regEntry.version ? `@${regEntry.version}` : "";
+        lines.push(`  installed from: ${typePrefix}${regEntry.installedFrom}${versionSuffix}`);
+      }
+    }
 
     if (!enabled) {
       lines.push(`  ↳ gsd extensions enable ${m.id}`);
@@ -292,6 +791,16 @@ function handleInfo(id: string | undefined, ctx: ExtensionCommandContext): void 
   }
   if (entry?.disabledReason) {
     lines.push(`  Reason:      ${entry.disabledReason}`);
+  }
+
+  // Phase 8 fields for user-installed extensions (per UI-SPEC)
+  if (entry?.source === "user") {
+    if (entry.installedFrom) {
+      lines.push(`  Installed from: ${entry.installedFrom}`);
+    }
+    if (entry.installType) {
+      lines.push(`  Install type:   ${entry.installType}`);
+    }
   }
 
   if (manifest.provides) {
