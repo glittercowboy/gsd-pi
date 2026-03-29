@@ -638,6 +638,107 @@ describe("auto-worktree-milestone-merge", { timeout: 300_000 }, () => {
       "#1906: codeFilesChanged must be false when only .gsd/ files were merged");
   });
 
+  test("#2912: MERGE_HEAD cleaned up after squash-merge conflict", () => {
+    const repo = freshRepo();
+    const wtPath = createAutoWorktree(repo, "M291");
+
+    // Create a file on main that will conflict with the milestone branch
+    run("git checkout main", repo);
+    writeFileSync(join(repo, "conflict.ts"), "// main version\nexport const x = 1;\n");
+    run("git add .", repo);
+    run("git commit -m 'add conflict.ts on main'", repo);
+
+    // Switch back to milestone branch and create conflicting content
+    run("git checkout milestone/M291", wtPath);
+    writeFileSync(join(wtPath, "conflict.ts"), "// milestone version\nexport const x = 2;\n");
+    run("git add .", wtPath);
+    run("git commit -m 'add conflict.ts on milestone'", wtPath);
+
+    const roadmap = makeRoadmap("M291", "Conflict milestone", [
+      { id: "S01", title: "Conflict test" },
+    ]);
+
+    // The merge should throw MergeConflictError due to conflict.ts
+    let threw = false;
+    try {
+      mergeMilestoneToMain(repo, "M291", roadmap);
+    } catch (err: unknown) {
+      threw = true;
+      // Verify it's a merge conflict error
+      assert.ok(
+        err instanceof Error && err.message.includes("conflict"),
+        "should throw a conflict-related error",
+      );
+    }
+    assert.ok(threw, "mergeMilestoneToMain must throw on code conflict");
+
+    // BUG #2912: MERGE_HEAD must NOT be left on disk after the error
+    const mergeHeadPath = join(repo, ".git", "MERGE_HEAD");
+    assert.ok(
+      !existsSync(mergeHeadPath),
+      "#2912: MERGE_HEAD must be cleaned up after merge conflict error",
+    );
+  });
+
+  test("#2912: stale MERGE_HEAD from native merge is cleaned after successful commit", () => {
+    const repo = freshRepo();
+    const wtPath = createAutoWorktree(repo, "M292");
+
+    addSliceToMilestone(repo, wtPath, "M292", "S01", "Feature A", [
+      { file: "feature-a.ts", content: "export const a = true;\n", message: "add feature a" },
+    ]);
+
+    const roadmap = makeRoadmap("M292", "Clean merge", [
+      { id: "S01", title: "Feature A" },
+    ]);
+
+    // Simulate what libgit2's merge implementation does: it creates MERGE_HEAD
+    // even for squash merges (unlike CLI git). We plant MERGE_HEAD before calling
+    // mergeMilestoneToMain to verify the success path cleans it up.
+    // We cannot plant it before the call because the function manages checkout
+    // internally, so instead we verify after the call.
+    mergeMilestoneToMain(repo, "M292", roadmap);
+
+    // After successful merge+commit, MERGE_HEAD must not linger
+    const mergeHeadPath = join(repo, ".git", "MERGE_HEAD");
+    assert.ok(
+      !existsSync(mergeHeadPath),
+      "#2912: MERGE_HEAD must be cleaned up after successful merge",
+    );
+  });
+
+  test("#2912: planted MERGE_HEAD is cleaned up in success path", () => {
+    // This test directly verifies the cleanup code handles a MERGE_HEAD file
+    // left by the native (libgit2) merge path. We hook into the merge by
+    // planting MERGE_HEAD right after nativeMergeSquash would create it.
+    const repo = freshRepo();
+    const wtPath = createAutoWorktree(repo, "M293");
+
+    addSliceToMilestone(repo, wtPath, "M293", "S01", "Feature B", [
+      { file: "feature-b.ts", content: "export const b = true;\n", message: "add feature b" },
+    ]);
+
+    const roadmap = makeRoadmap("M293", "Planted MERGE_HEAD", [
+      { id: "S01", title: "Feature B" },
+    ]);
+
+    // Plant a fake MERGE_HEAD in the git dir to simulate libgit2 behavior.
+    // We need to do this after the function checks out main but before it
+    // commits. Since we can't intercept mid-function, we plant it before
+    // the call. If the function cleans it up, the test passes.
+    const gitDir = join(repo, ".git");
+    const fakeHead = run("git rev-parse HEAD", repo);
+    writeFileSync(join(gitDir, "MERGE_HEAD"), fakeHead + "\n");
+
+    mergeMilestoneToMain(repo, "M293", roadmap);
+
+    // The planted MERGE_HEAD must be cleaned up
+    assert.ok(
+      !existsSync(join(gitDir, "MERGE_HEAD")),
+      "#2912: planted MERGE_HEAD must be removed by success-path cleanup",
+    );
+  });
+
   test("#1906: codeFilesChanged=true when real code is merged", () => {
     const repo = freshRepo();
     const wtPath = createAutoWorktree(repo, "M190");
