@@ -170,6 +170,7 @@ const hasSubcommand = cliFlags.messages.length > 0
 if (!process.stdin.isTTY && !isPrintMode && !hasSubcommand && !cliFlags.listModels && !cliFlags.web) {
   process.stderr.write('[gsd] Error: Interactive mode requires a terminal (TTY).\n')
   process.stderr.write('[gsd] Non-interactive alternatives:\n')
+  process.stderr.write('[gsd]   gsd auto                       Auto-mode (pipeable, no TUI)\n')
   process.stderr.write('[gsd]   gsd --print "your message"     Single-shot prompt\n')
   process.stderr.write('[gsd]   gsd --mode rpc                 JSON-RPC over stdin/stdout\n')
   process.stderr.write('[gsd]   gsd --mode mcp                 MCP server over stdin/stdout\n')
@@ -297,6 +298,23 @@ if (cliFlags.messages[0] === 'headless') {
   await ensureRtkBootstrap()
   const { runHeadless, parseHeadlessArgs } = await import('./headless.js')
   await runHeadless(parseHeadlessArgs(process.argv))
+  process.exit(0)
+}
+
+// `gsd auto [args...]` — shorthand for `gsd headless auto [args...]` (#2732)
+// Without this, `gsd auto` falls through to the interactive TUI which hangs
+// when stdin/stdout are piped (non-TTY environments).
+if (cliFlags.messages[0] === 'auto') {
+  await ensureRtkBootstrap()
+  const { runHeadless, parseHeadlessArgs } = await import('./headless.js')
+  // Rewrite argv so parseHeadlessArgs sees: [node, gsd, headless, auto, ...rest]
+  const rewrittenArgv = [
+    process.argv[0],
+    process.argv[1],
+    'headless',
+    ...cliFlags.messages,   // ['auto', ...extra args]
+  ]
+  await runHeadless(parseHeadlessArgs(rewrittenArgv))
   process.exit(0)
 }
 
@@ -665,6 +683,7 @@ if (enabledModelPatterns && enabledModelPatterns.length > 0) {
 if (!process.stdin.isTTY) {
   process.stderr.write('[gsd] Error: Interactive mode requires a terminal (TTY).\n')
   process.stderr.write('[gsd] Non-interactive alternatives:\n')
+  process.stderr.write('[gsd]   gsd auto                       Auto-mode (pipeable, no TUI)\n')
   process.stderr.write('[gsd]   gsd --print "your message"     Single-shot prompt\n')
   process.stderr.write('[gsd]   gsd --web [path]               Browser-only web mode\n')
   process.stderr.write('[gsd]   gsd --mode rpc                 JSON-RPC over stdin/stdout\n')
