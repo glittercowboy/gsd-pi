@@ -112,14 +112,16 @@ export class GSDDashboardOverlay {
   private async refreshDashboard(initial = false): Promise<void> {
     if (this.disposed) return;
     this.dashData = getAutoDashboardData();
-    const nextIdentity = this.computeDashboardIdentity(this.dashData);
 
-    if (initial || nextIdentity !== this.loadedDashboardIdentity) {
-      const loaded = await this.loadData();
-      if (this.disposed) return;
-      if (loaded) {
-        this.loadedDashboardIdentity = nextIdentity;
-      }
+    // Always call loadData() on every tick (#2561). In a passive terminal
+    // (where auto-mode is running in another process), the in-memory
+    // dashData identity never changes, but the on-disk state (DB, files)
+    // may have been updated by the active terminal. Without this,
+    // /gsd status shows stale milestone/slice/task progress.
+    const loaded = await this.loadData();
+    if (this.disposed) return;
+    if (loaded) {
+      this.loadedDashboardIdentity = this.computeDashboardIdentity(this.dashData);
     }
 
     if (initial) {

@@ -282,6 +282,29 @@ export function syncStateToProjectRoot(
     join(prGsd, "runtime", "units"),
     { force: true },
   );
+
+  // 5. Database reconciliation (#2561) — sync worktree-local DB state back
+  // to the project root DB. Without this, a second terminal reading the
+  // project root DB via deriveState sees stale milestone/slice/task progress
+  // even though metrics and STATE.md are fresh.
+  const wtDbPath = join(wtGsd, "gsd.db");
+  const prDbPath = join(prGsd, "gsd.db");
+  if (existsSync(wtDbPath) && existsSync(prDbPath)) {
+    try {
+      // Avoid reconciling a database against itself when both paths
+      // resolve to the same physical file (symlink dedup).
+      if (!isSamePath(wtDbPath, prDbPath)) {
+        reconcileWorktreeDb(prDbPath, wtDbPath);
+      }
+    } catch (e) {
+      // Non-fatal — log and continue. DB reconciliation failure should
+      // never block dispatch or crash the auto-mode loop.
+      debugLog("syncStateToProjectRoot", {
+        phase: "db-reconcile",
+        error: e instanceof Error ? e.message : String(e),
+      });
+    }
+  }
 }
 
 // ─── Resource Staleness ───────────────────────────────────────────────────

@@ -32,6 +32,32 @@ export function resolveProjectRootDbPath(basePath: string): string {
     return join(projectRoot, ".gsd", "gsd.db");
   }
 
+  // Handle symlink-resolved worktree layout (#2561):
+  // When .gsd is a symlink to an external directory, the resolved path
+  // looks like: ~/.gsd/projects/<hash>/worktrees/M001/...
+  // Detect the /projects/<hash>/worktrees/ pattern and resolve to the
+  // external project directory's gsd.db.
+  const symlinkRe = new RegExp(
+    `(.*?)\\${sep}\\.gsd\\${sep}projects\\${sep}[a-f0-9]+\\${sep}worktrees\\${sep}`,
+  );
+  const symlinkMatch = basePath.match(symlinkRe);
+  if (symlinkMatch) {
+    const externalGsdRoot = basePath.slice(
+      0,
+      basePath.indexOf(`${sep}worktrees${sep}`, symlinkMatch[1]!.length),
+    );
+    return join(externalGsdRoot, "gsd.db");
+  }
+
+  // Also handle forward-slash variant of symlink layout
+  const fwdSymlinkRe = /(.+?)\/.gsd\/projects\/[a-f0-9]+\/worktrees\//;
+  const fwdSymlinkMatch = basePath.match(fwdSymlinkRe);
+  if (fwdSymlinkMatch) {
+    const fwdWorktreesIdx = basePath.indexOf("/worktrees/", fwdSymlinkMatch[1]!.length);
+    const externalGsdRoot = basePath.slice(0, fwdWorktreesIdx);
+    return join(externalGsdRoot, "gsd.db");
+  }
+
   return join(basePath, ".gsd", "gsd.db");
 }
 
