@@ -111,7 +111,51 @@ test("resolveExpectedArtifactPath returns correct path for all slice-level types
 
   const uatResult = resolveExpectedArtifactPath("run-uat", "M001/S01", base);
   assert.ok(uatResult);
-  assert.ok(uatResult!.includes("UAT"));
+  assert.ok(uatResult!.includes("ASSESSMENT"));
+});
+
+// ─── run-uat artifact path contract (#2873) ──────────────────────────────
+
+test("resolveExpectedArtifactPath for run-uat returns ASSESSMENT path, not UAT (#2873)", (t) => {
+  // The run-uat prompt instructs the agent to call gsd_summary_save with
+  // artifact_type: "ASSESSMENT", which writes S##-ASSESSMENT.md. The artifact
+  // verification path must match — otherwise verification fails and auto-mode
+  // retries the unit in an infinite loop.
+  const base = makeTmpBase();
+  t.after(() => cleanup(base));
+
+  const result = resolveExpectedArtifactPath("run-uat", "M001/S01", base);
+  assert.ok(result, "run-uat should resolve to a non-null artifact path");
+  assert.ok(
+    result!.endsWith("S01-ASSESSMENT.md"),
+    `run-uat artifact path should end with S01-ASSESSMENT.md, got: ${result}`,
+  );
+});
+
+test("diagnoseExpectedArtifact for run-uat references ASSESSMENT (#2873)", (t) => {
+  const base = makeTmpBase();
+  t.after(() => cleanup(base));
+
+  const diag = diagnoseExpectedArtifact("run-uat", "M001/S01", base);
+  assert.ok(diag, "run-uat should have a diagnostic message");
+  assert.ok(
+    diag!.includes("ASSESSMENT"),
+    `run-uat diagnostic should reference ASSESSMENT, got: ${diag}`,
+  );
+});
+
+test("verifyExpectedArtifact passes for run-uat when ASSESSMENT file exists (#2873)", (t) => {
+  // Regression test: run-uat writes S##-ASSESSMENT.md via gsd_summary_save,
+  // but verification looked for S##-UAT.md, causing false stuck retries.
+  const base = makeTmpBase();
+  t.after(() => cleanup(base));
+
+  // Write the ASSESSMENT file (what gsd_summary_save actually produces)
+  const assessPath = join(base, ".gsd", "milestones", "M001", "slices", "S01", "S01-ASSESSMENT.md");
+  writeFileSync(assessPath, "---\nverdict: PASS\n---\n# UAT Assessment\n");
+
+  const verified = verifyExpectedArtifact("run-uat", "M001/S01", base);
+  assert.ok(verified, "verifyExpectedArtifact should pass when ASSESSMENT file exists");
 });
 
 // ─── diagnoseExpectedArtifact ─────────────────────────────────────────────

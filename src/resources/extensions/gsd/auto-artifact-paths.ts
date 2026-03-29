@@ -56,7 +56,7 @@ export function resolveExpectedArtifactPath(
     }
     case "run-uat": {
       const dir = resolveSlicePath(base, mid, sid!);
-      return dir ? join(dir, buildSliceFileName(sid!, "UAT")) : null;
+      return dir ? join(dir, buildSliceFileName(sid!, "ASSESSMENT")) : null;
     }
     case "execute-task": {
       const dir = resolveSlicePath(base, mid, sid!);
@@ -124,7 +124,7 @@ export function diagnoseExpectedArtifact(
     case "reassess-roadmap":
       return `${relSliceFile(base, mid, sid!, "ASSESSMENT")} (roadmap reassessment)`;
     case "run-uat":
-      return `${relSliceFile(base, mid, sid!, "UAT")} (UAT result)`;
+      return `${relSliceFile(base, mid, sid!, "ASSESSMENT")} (UAT assessment result)`;
     case "validate-milestone":
       return `${relMilestoneFile(base, mid, "VALIDATION")} (milestone validation report)`;
     case "complete-milestone":

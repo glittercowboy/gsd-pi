@@ -1568,7 +1568,7 @@ export async function buildRunUatPrompt(
 
   const inlinedContext = capPreamble(`## Inlined Context (preloaded — do not re-read these files)\n\n${inlined.join("\n\n---\n\n")}`);
 
-  const uatResultPath = join(base, relSliceFile(base, mid, sliceId, "UAT"));
+  const uatResultPath = join(base, relSliceFile(base, mid, sliceId, "ASSESSMENT"));
   const uatType = getUatType(uatContent);
 
   return loadPrompt("run-uat", {
