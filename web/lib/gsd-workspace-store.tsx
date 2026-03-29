@@ -442,6 +442,19 @@ export interface TurnEndEvent {
   [key: string]: unknown
 }
 
+export interface SessionStatePayload {
+  type: "session_state"
+  bridgePhase: BridgePhase
+  isStreaming: boolean
+  isCompacting: boolean
+  retryInProgress: boolean
+  sessionId: string | null
+  autoActive: boolean
+  autoPaused: boolean
+  currentUnit: { type: string; id: string; startedAt: number } | null
+  updatedAt: string
+}
+
 export type WorkspaceEvent =
   | BridgeStatusEvent
   | LiveStateInvalidationEvent
@@ -453,7 +466,8 @@ export type WorkspaceEvent =
   | ToolExecutionEndEvent
   | AgentEndEvent
   | TurnEndEvent
-  | ({ type: Exclude<string, "bridge_status" | "live_state_invalidation" | "extension_ui_request" | "extension_error" | "message_update" | "tool_execution_start" | "tool_execution_update" | "tool_execution_end" | "agent_end" | "turn_end">; [key: string]: unknown } & Record<string, unknown>)
+  | SessionStatePayload
+  | ({ type: Exclude<string, "bridge_status" | "live_state_invalidation" | "extension_ui_request" | "extension_error" | "message_update" | "tool_execution_start" | "tool_execution_update" | "tool_execution_end" | "agent_end" | "turn_end" | "session_state">; [key: string]: unknown } & Record<string, unknown>)
 
 export function isWorkspaceEvent(value: unknown): value is WorkspaceEvent {
   return value !== null && typeof value === "object" && typeof (value as Record<string, unknown>).type === "string"
