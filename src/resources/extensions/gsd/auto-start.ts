@@ -105,7 +105,7 @@ export interface BootstrapDeps {
 let _consecutiveCompleteBootstraps = 0;
 const MAX_CONSECUTIVE_COMPLETE_BOOTSTRAPS = 2;
 
-async function openProjectDbIfPresent(basePath: string): Promise<void> {
+export async function openProjectDbIfPresent(basePath: string): Promise<void> {
   const gsdDbPath = resolveProjectRootDbPath(basePath);
   if (!existsSync(gsdDbPath) || isDbAvailable()) return;
 

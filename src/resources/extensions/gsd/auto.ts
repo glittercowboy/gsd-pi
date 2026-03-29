@@ -185,7 +185,7 @@ import {
   postUnitPreVerification,
   postUnitPostVerification,
 } from "./auto-post-unit.js";
-import { bootstrapAutoSession, type BootstrapDeps } from "./auto-start.js";
+import { bootstrapAutoSession, openProjectDbIfPresent, type BootstrapDeps } from "./auto-start.js";
 import { autoLoop, resolveAgentEnd, resolveAgentEndCancelled, _resetPendingResolve, isSessionSwitchInFlight, type LoopDeps, type ErrorContext } from "./auto-loop.js";
 import {
   WorktreeResolver,
@@ -1162,6 +1162,9 @@ export async function startAuto(
       "info",
     );
     restoreHookState(s.basePath);
+    // Open the project DB before rebuild/derive so resume uses DB-backed
+    // state instead of falling back to stale markdown parsing (#2940).
+    await openProjectDbIfPresent(s.basePath);
     try {
       await rebuildState(s.basePath);
       syncCmuxSidebar(loadEffectiveGSDPreferences()?.preferences, await deriveState(s.basePath));
