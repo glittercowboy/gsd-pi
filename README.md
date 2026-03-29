@@ -672,8 +672,10 @@ The best practice for working in teams is to ensure unique milestone names acros
 # ── GSD: Runtime / Ephemeral (per-developer, per-session) ──────────────────
 # Crash detection sentinel — PID lock, written per auto-mode session
 .gsd/auto.lock
-# Auto-mode dispatch tracker — prevents re-running completed units
-.gsd/completed-units.json
+# Auto-mode dispatch tracker — prevents re-running completed units (includes archived per-milestone files)
+.gsd/completed-units*.json
+# State manifest — workflow state for recovery
+.gsd/state-manifest.json
 # Derived state cache — regenerated from plan/roadmap files on disk
 .gsd/STATE.md
 # Per-developer token/cost accumulator
@@ -686,6 +688,14 @@ The best practice for working in teams is to ensure unique milestone names acros
 .gsd/worktrees/
 # Parallel orchestration IPC and worker status
 .gsd/parallel/
+# SQLite database and WAL sidecars — checkpoint state, forensics data
+.gsd/gsd.db*
+# Daily-rotated event journal — structured event log for forensics
+.gsd/journal/
+# Doctor run history — diagnostic check results
+.gsd/doctor-history.jsonl
+# Workflow event log — structured event stream
+.gsd/event-log.jsonl
 # Generated HTML reports (regenerable via /gsd export --html)
 .gsd/reports/
 # Session-specific interrupted-work markers

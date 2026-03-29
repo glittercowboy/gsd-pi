@@ -185,22 +185,25 @@ export interface PreMergeCheckResult {
 /**
  * GSD runtime paths that should be excluded from smart staging.
  * These are transient/generated artifacts that should never be committed.
- * Matches the union of SKIP_PATHS + SKIP_EXACT in worktree-manager.ts
- * and the first 7 entries in gitignore.ts BASELINE_PATTERNS.
+ *
+ * NOTE: GSD_RUNTIME_PATTERNS in gitignore.ts is the canonical source of truth.
+ * This array must stay synchronized with it.
  */
 export const RUNTIME_EXCLUSION_PATHS: readonly string[] = [
   ".gsd/activity/",
+  ".gsd/forensics/",
   ".gsd/runtime/",
   ".gsd/worktrees/",
+  ".gsd/parallel/",
   ".gsd/auto.lock",
   ".gsd/metrics.json",
-  ".gsd/completed-units.json",
+  ".gsd/completed-units*.json", // covers completed-units.json and archived completed-units-{MID}.json
+  ".gsd/state-manifest.json",
   ".gsd/STATE.md",
-  ".gsd/gsd.db",
-  ".gsd/gsd.db-shm",   // SQLite WAL sidecar — always created alongside gsd.db (#2296)
-  ".gsd/gsd.db-wal",   // SQLite WAL sidecar — always created alongside gsd.db (#2296)
-  ".gsd/journal/",     // daily-rotated JSONL event journal (#2296)
-  ".gsd/doctor-history.jsonl", // doctor run history (#2296)
+  ".gsd/gsd.db*",
+  ".gsd/journal/",
+  ".gsd/doctor-history.jsonl",
+  ".gsd/event-log.jsonl",
   ".gsd/DISCUSSION-MANIFEST.json",
 ];
 
