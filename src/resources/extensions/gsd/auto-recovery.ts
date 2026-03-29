@@ -14,6 +14,7 @@ import { clearParseCache } from "./files.js";
 import { parseRoadmap as parseLegacyRoadmap, parsePlan as parseLegacyPlan } from "./parsers-legacy.js";
 import { isDbAvailable, getTask, getSlice, getSliceTasks, updateTaskStatus } from "./gsd-db.js";
 import { isValidationTerminal } from "./state.js";
+import { getErrorMessage } from "./error-utils.js";
 import {
   nativeConflictFiles,
   nativeCommit,
@@ -476,11 +477,17 @@ export function reconcileMergeState(
   if (conflictedFiles.length === 0) {
     // All conflicts resolved — finalize the merge/squash commit
     try {
-      nativeCommit(basePath, ""); // --no-edit equivalent: use empty message placeholder
-      const mode = hasMergeHead ? "merge" : "squash commit";
-      ctx.ui.notify(`Finalized leftover ${mode} from prior session.`, "info");
-    } catch {
-      // Commit may already exist; non-fatal
+      const commitSha = nativeCommit(basePath, ""); // --no-edit equivalent: use empty message placeholder
+      if (commitSha) {
+        const mode = hasMergeHead ? "merge" : "squash commit";
+        ctx.ui.notify(`Finalized leftover ${mode} from prior session.`, "info");
+      } else {
+        ctx.ui.notify("No new commit needed for leftover merge/squash state — already committed.", "info");
+      }
+    } catch (err) {
+      const errorMessage = getErrorMessage(err);
+      ctx.ui.notify(`Failed to finalize leftover merge/squash commit: ${errorMessage}`, "error");
+      return false;
     }
   } else {
     // Still conflicted — try auto-resolving .gsd/ state file conflicts (#530)

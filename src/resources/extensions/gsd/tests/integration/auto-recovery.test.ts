@@ -697,6 +697,72 @@ test("verifyExpectedArtifact complete-milestone fails with only .gsd/ files (#17
   assert.equal(result, false, "complete-milestone should fail verification when only .gsd/ files present");
 });
 
+// ─── reconcileMergeState: silent nativeCommit failure (#2542) ─────────────
+
+import { reconcileMergeState } from "../../auto-recovery.ts";
+import { chmodSync } from "node:fs";
+
+function makeMockCtx(): { ctx: any; notifications: Array<{ msg: string; level: string }> } {
+  const notifications: Array<{ msg: string; level: string }> = [];
+  const ctx = {
+    ui: {
+      notify(msg: string, level: string) {
+        notifications.push({ msg, level });
+      },
+    },
+  };
+  return { ctx, notifications };
+}
+
+test("reconcileMergeState returns false and notifies error when nativeCommit fails (#2542)", (t) => {
+  const base = makeGitBase();
+  t.after(() => cleanup(base));
+
+  // Create a second branch with a commit, then start a merge on main
+  execFileSync("git", ["checkout", "-b", "feature"], { cwd: base, stdio: "ignore" });
+  writeFileSync(join(base, "feature.txt"), "feature content");
+  execFileSync("git", ["add", "."], { cwd: base, stdio: "ignore" });
+  execFileSync("git", ["commit", "-m", "add feature"], { cwd: base, stdio: "ignore" });
+  execFileSync("git", ["checkout", "main"], { cwd: base, stdio: "ignore" });
+
+  // Start merge (no conflicts — fast path with MERGE_HEAD)
+  execFileSync("git", ["merge", "--no-ff", "--no-commit", "feature"], { cwd: base, stdio: "ignore" });
+
+  // Verify MERGE_HEAD exists
+  assert.ok(existsSync(join(base, ".git", "MERGE_HEAD")), "MERGE_HEAD should exist");
+
+  // Make .git/objects read-only so git cannot write the commit object,
+  // causing nativeCommit to throw a non-"nothing to commit" error.
+  const objectsDir = join(base, ".git", "objects");
+  chmodSync(objectsDir, 0o444);
+  t.after(() => { try { chmodSync(objectsDir, 0o755); } catch { /* cleanup */ } });
+
+  const { ctx, notifications } = makeMockCtx();
+  const result = reconcileMergeState(base, ctx);
+
+  // The function should return false to signal reconciliation failure
+  // (Currently it silently swallows the error and returns true — this test should FAIL before the fix)
+  assert.equal(result, false, "reconcileMergeState should return false when nativeCommit fails");
+  const errorNotifications = notifications.filter(n => n.level === "error");
+  assert.ok(errorNotifications.length > 0, "should notify an error when nativeCommit fails");
+  assert.ok(
+    errorNotifications[0].msg.includes("Failed to finalize"),
+    "error notification should describe the commit failure",
+  );
+});
+
+test("reconcileMergeState returns true when no merge state present", (t) => {
+  // When there's no MERGE_HEAD or SQUASH_MSG, reconcileMergeState returns false (no dirty state)
+  const base = makeGitBase();
+  t.after(() => cleanup(base));
+
+  const { ctx, notifications } = makeMockCtx();
+  const result = reconcileMergeState(base, ctx);
+
+  assert.equal(result, false, "should return false when no merge state exists");
+  assert.equal(notifications.length, 0, "should not notify when no merge state present");
+});
+
 test("verifyExpectedArtifact complete-milestone passes with impl files (#1703)", (t) => {
   const base = makeGitBase();
   t.after(() => cleanup(base));
