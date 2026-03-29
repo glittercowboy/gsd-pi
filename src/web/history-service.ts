@@ -66,6 +66,7 @@ export async function collectHistoryData(projectCwdOverride?: string): Promise<H
           GSD_HISTORY_BASE: projectCwd,
         },
         maxBuffer: HISTORY_MAX_BUFFER,
+        windowsHide: true,
       },
       (error, stdout, stderr) => {
         if (error) {

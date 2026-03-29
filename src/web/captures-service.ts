@@ -64,6 +64,7 @@ export async function collectCapturesData(projectCwdOverride?: string): Promise<
           GSD_CAPTURES_BASE: projectCwd,
         },
         maxBuffer: CAPTURES_MAX_BUFFER,
+        windowsHide: true,
       },
       (error, stdout, stderr) => {
         if (error) {
@@ -136,6 +137,7 @@ export async function resolveCaptureAction(request: CaptureResolveRequest, proje
           GSD_CAPTURES_BASE: projectCwd,
         },
         maxBuffer: CAPTURES_MAX_BUFFER,
+        windowsHide: true,
       },
       (error, stdout, stderr) => {
         if (error) {
