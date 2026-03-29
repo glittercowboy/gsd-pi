@@ -9,8 +9,9 @@ import {
   getMilestone,
   getMilestoneSlices,
   getSliceTasks,
+  getVerificationEvidence,
 } from "./gsd-db.js";
-import type { MilestoneRow, SliceRow, TaskRow } from "./gsd-db.js";
+import type { MilestoneRow, SliceRow, TaskRow, VerificationEvidenceRow } from "./gsd-db.js";
 import { atomicWriteSync } from "./atomic-write.js";
 import { join } from "node:path";
 import { mkdirSync, existsSync } from "node:fs";
@@ -142,71 +143,93 @@ export function renderRoadmapProjection(basePath: string, milestoneId: string): 
 
 /**
  * Render SUMMARY.md content from a task row.
- * Pure function — no side effects.
+ * Single source of truth for summary rendering — used both at completion
+ * time and at projection regeneration time (#2720).
+ *
+ * @param evidence - Optional verification evidence rows. When called from
+ *   complete-task, these are passed directly. When called from projection
+ *   regeneration, they are queried from the DB by renderSummaryProjection.
  */
-export function renderSummaryContent(taskRow: TaskRow, sliceId: string, milestoneId: string): string {
-  const lines: string[] = [];
+export function renderSummaryContent(
+  taskRow: TaskRow,
+  sliceId: string,
+  milestoneId: string,
+  evidence?: Array<{ command: string; exitCode?: number; exit_code?: number; verdict: string; durationMs?: number; duration_ms?: number }>,
+): string {
+  // ── Frontmatter (YAML list format, matches parseSummary() expectations) ──
+  const keyFilesYaml = taskRow.key_files && taskRow.key_files.length > 0
+    ? taskRow.key_files.map(f => `  - ${f}`).join("\n")
+    : "  - (none)";
+  const keyDecisionsYaml = taskRow.key_decisions && taskRow.key_decisions.length > 0
+    ? taskRow.key_decisions.map(d => `  - ${d}`).join("\n")
+    : "  - (none)";
 
-  // Frontmatter
-  lines.push("---");
-  lines.push(`id: ${taskRow.id}`);
-  lines.push(`parent: ${sliceId}`);
-  lines.push(`milestone: ${milestoneId}`);
-  lines.push("provides: []");
-  lines.push("requires: []");
-  lines.push("affects: []");
+  // Derive verification_result from evidence if available
+  const evidenceList = evidence ?? [];
+  const allPassed = evidenceList.length > 0 &&
+    evidenceList.every(e => {
+      const code = e.exitCode ?? e.exit_code ?? -1;
+      return code === 0 || e.verdict.includes("\u2705") || e.verdict.toLowerCase().includes("pass");
+    });
+  const verificationResult = taskRow.verification_result
+    ? (allPassed ? "passed" : (evidenceList.length === 0 ? "untested" : "mixed"))
+    : (allPassed ? "passed" : (evidenceList.length === 0 ? "untested" : "mixed"));
 
-  // key_files is already parsed to string[]
-  if (taskRow.key_files && taskRow.key_files.length > 0) {
-    lines.push(`key_files: [${taskRow.key_files.map(f => `"${f}"`).join(", ")}]`);
+  // Build verification evidence table
+  let evidenceTable = "| # | Command | Exit Code | Verdict | Duration |\n|---|---------|-----------|---------|----------|\n";
+  if (evidenceList.length > 0) {
+    evidenceList.forEach((e, i) => {
+      const code = e.exitCode ?? e.exit_code ?? 0;
+      const dur = e.durationMs ?? e.duration_ms ?? 0;
+      evidenceTable += `| ${i + 1} | \`${e.command}\` | ${code} | ${e.verdict} | ${dur}ms |\n`;
+    });
   } else {
-    lines.push("key_files: []");
+    evidenceTable += "| \u2014 | No verification commands discovered | \u2014 | \u2014 | \u2014 |\n";
   }
 
-  // key_decisions is already parsed to string[]
-  if (taskRow.key_decisions && taskRow.key_decisions.length > 0) {
-    lines.push(`key_decisions: [${taskRow.key_decisions.map(d => `"${d}"`).join(", ")}]`);
-  } else {
-    lines.push("key_decisions: []");
-  }
+  const title = taskRow.one_liner || taskRow.title || taskRow.id;
 
-  lines.push("patterns_established: []");
-  lines.push("drill_down_paths: []");
-  lines.push("observability_surfaces: []");
-  lines.push(`duration: "${taskRow.duration || ""}"`);
-  lines.push(`verification_result: "${taskRow.verification_result || ""}"`);
-  lines.push(`completed_at: ${taskRow.completed_at || ""}`);
-  lines.push(`blocker_discovered: ${taskRow.blocker_discovered ? "true" : "false"}`);
-  lines.push("---");
-  lines.push("");
-  lines.push(`# ${taskRow.id}: ${taskRow.title}`);
-  lines.push("");
+  return `---
+id: ${taskRow.id}
+parent: ${sliceId}
+milestone: ${milestoneId}
+key_files:
+${keyFilesYaml}
+key_decisions:
+${keyDecisionsYaml}
+duration: ${taskRow.duration || ""}
+verification_result: ${verificationResult}
+completed_at: ${taskRow.completed_at || ""}
+blocker_discovered: ${taskRow.blocker_discovered ? "true" : "false"}
+---
 
-  // One-liner (if present)
-  if (taskRow.one_liner) {
-    lines.push(`> ${taskRow.one_liner}`);
-    lines.push("");
-  }
+# ${taskRow.id}: ${title}
 
-  lines.push("## What Happened");
-  lines.push(taskRow.full_summary_md || taskRow.narrative || "No summary recorded.");
-  lines.push("");
+**${taskRow.one_liner || ""}**
 
-  // Deviations (if present)
-  if (taskRow.deviations) {
-    lines.push("## Deviations");
-    lines.push(taskRow.deviations);
-    lines.push("");
-  }
+## What Happened
 
-  // Known issues (if present)
-  if (taskRow.known_issues) {
-    lines.push("## Known Issues");
-    lines.push(taskRow.known_issues);
-    lines.push("");
-  }
+${taskRow.narrative || "No summary recorded."}
 
-  return lines.join("\n");
+## Verification
+
+${taskRow.verification_result || "No verification recorded."}
+
+## Verification Evidence
+
+${evidenceTable}
+## Deviations
+
+${taskRow.deviations || "None."}
+
+## Known Issues
+
+${taskRow.known_issues || "None."}
+
+## Files Created/Modified
+
+${taskRow.key_files && taskRow.key_files.length > 0 ? taskRow.key_files.map(f => `- \`${f}\``).join("\n") : "None."}
+`;
 }
 
 /**
@@ -218,7 +241,8 @@ export function renderSummaryProjection(basePath: string, milestoneId: string, s
   const taskRow = taskRows.find(t => t.id === taskId);
   if (!taskRow) return;
 
-  const content = renderSummaryContent(taskRow, sliceId, milestoneId);
+  const evidenceRows = getVerificationEvidence(milestoneId, sliceId, taskId);
+  const content = renderSummaryContent(taskRow, sliceId, milestoneId, evidenceRows);
   const dir = join(basePath, ".gsd", "milestones", milestoneId, "slices", sliceId, "tasks");
   mkdirSync(dir, { recursive: true });
   atomicWriteSync(join(dir, `${taskId}-SUMMARY.md`), content);

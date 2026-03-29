@@ -1519,6 +1519,26 @@ export function insertVerificationEvidence(e: {
   });
 }
 
+export interface VerificationEvidenceRow {
+  id: number;
+  task_id: string;
+  slice_id: string;
+  milestone_id: string;
+  command: string;
+  exit_code: number;
+  verdict: string;
+  duration_ms: number;
+  created_at: string;
+}
+
+export function getVerificationEvidence(milestoneId: string, sliceId: string, taskId: string): VerificationEvidenceRow[] {
+  if (!currentDb) return [];
+  const rows = currentDb.prepare(
+    "SELECT * FROM verification_evidence WHERE milestone_id = :mid AND slice_id = :sid AND task_id = :tid ORDER BY id",
+  ).all({ ":mid": milestoneId, ":sid": sliceId, ":tid": taskId });
+  return rows as VerificationEvidenceRow[];
+}
+
 export interface MilestoneRow {
   id: string;
   title: string;

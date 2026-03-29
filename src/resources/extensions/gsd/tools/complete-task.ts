@@ -30,7 +30,7 @@ import { checkOwnership, taskUnitKey } from "../unit-ownership.js";
 import { saveFile, clearParseCache } from "../files.js";
 import { invalidateStateCache } from "../state.js";
 import { renderPlanCheckboxes } from "../markdown-renderer.js";
-import { renderAllProjections } from "../workflow-projections.js";
+import { renderAllProjections, renderSummaryContent } from "../workflow-projections.js";
 import { writeManifest } from "../workflow-manifest.js";
 import { appendEvent } from "../workflow-events.js";
 
@@ -41,79 +41,40 @@ export interface CompleteTaskResult {
   summaryPath: string;
 }
 
+import type { TaskRow } from "../gsd-db.js";
+
 /**
- * Render task summary markdown matching the template format.
- * YAML frontmatter uses snake_case keys for parseSummary() compatibility.
+ * Build a TaskRow-shaped object from CompleteTaskParams so the unified
+ * renderSummaryContent() can be used at completion time (#2720).
  */
-function renderSummaryMarkdown(params: CompleteTaskParams): string {
-  const now = new Date().toISOString();
-  const keyFilesYaml = params.keyFiles.length > 0
-    ? params.keyFiles.map(f => `  - ${f}`).join("\n")
-    : "  - (none)";
-  const keyDecisionsYaml = params.keyDecisions.length > 0
-    ? params.keyDecisions.map(d => `  - ${d}`).join("\n")
-    : "  - (none)";
-
-  // Build verification evidence table rows
-  let evidenceTable = "| # | Command | Exit Code | Verdict | Duration |\n|---|---------|-----------|---------|----------|\n";
-  if (params.verificationEvidence.length > 0) {
-    params.verificationEvidence.forEach((e, i) => {
-      evidenceTable += `| ${i + 1} | \`${e.command}\` | ${e.exitCode} | ${e.verdict} | ${e.durationMs}ms |\n`;
-    });
-  } else {
-    evidenceTable += "| — | No verification commands discovered | — | — | — |\n";
-  }
-
-  // Determine verification_result from evidence
-  const allPassed = params.verificationEvidence.length > 0 &&
-    params.verificationEvidence.every(e => e.exitCode === 0 || e.verdict.includes("✅") || e.verdict.toLowerCase().includes("pass"));
-  const verificationResult = allPassed ? "passed" : (params.verificationEvidence.length === 0 ? "untested" : "mixed");
-
-  // Extract a title from the oneLiner or taskId
-  const title = params.oneLiner || params.taskId;
-
-  return `---
-id: ${params.taskId}
-parent: ${params.sliceId}
-milestone: ${params.milestoneId}
-key_files:
-${keyFilesYaml}
-key_decisions:
-${keyDecisionsYaml}
-duration: ""
-verification_result: ${verificationResult}
-completed_at: ${now}
-blocker_discovered: ${params.blockerDiscovered}
----
-
-# ${params.taskId}: ${title}
-
-**${params.oneLiner}**
-
-## What Happened
-
-${params.narrative}
-
-## Verification
-
-${params.verification}
-
-## Verification Evidence
-
-${evidenceTable}
-
-## Deviations
-
-${params.deviations || "None."}
-
-## Known Issues
-
-${params.knownIssues || "None."}
-
-## Files Created/Modified
-
-${params.keyFiles.map(f => `- \`${f}\``).join("\n") || "None."}
-`;
+function paramsToTaskRow(params: CompleteTaskParams, completedAt: string): TaskRow {
+  return {
+    milestone_id: params.milestoneId,
+    slice_id: params.sliceId,
+    id: params.taskId,
+    title: params.oneLiner || params.taskId,
+    status: "complete",
+    one_liner: params.oneLiner,
+    narrative: params.narrative,
+    verification_result: params.verification,
+    duration: "",
+    completed_at: completedAt,
+    blocker_discovered: params.blockerDiscovered,
+    deviations: params.deviations,
+    known_issues: params.knownIssues,
+    key_files: params.keyFiles,
+    key_decisions: params.keyDecisions,
+    full_summary_md: "",
+    description: "",
+    estimate: "",
+    files: [],
+    verify: "",
+    inputs: [],
+    expected_output: [],
+    observability_impact: "",
+    full_plan_md: "",
+    sequence: 0,
+  };
 }
 
 /**
@@ -218,8 +179,9 @@ export async function handleCompleteTask(
   // If disk render fails, roll back the DB status so deriveState() and
   // verifyExpectedArtifact() stay consistent (both say "not done").
 
-  // Render summary markdown
-  const summaryMd = renderSummaryMarkdown(params);
+  // Render summary markdown via the single source of truth (#2720)
+  const taskRow = paramsToTaskRow(params, completedAt);
+  const summaryMd = renderSummaryContent(taskRow, params.sliceId, params.milestoneId, params.verificationEvidence);
 
   // Resolve and write summary to disk
   let summaryPath: string;
