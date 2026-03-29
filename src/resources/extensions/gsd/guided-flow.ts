@@ -38,6 +38,7 @@ import { debugLog } from "./debug-logger.js";
 import { findMilestoneIds, nextMilestoneId, reserveMilestoneId, getReservedMilestoneIds, clearReservedMilestoneIds } from "./milestone-ids.js";
 import { parkMilestone, discardMilestone } from "./milestone-actions.js";
 import { resolveModelWithFallbacksForUnit } from "./preferences-models.js";
+import { DISCUSS_TOOLS_ALLOWLIST } from "./constants.js";
 
 // ─── Re-exports (preserve public API for existing importers) ────────────────
 export {
@@ -242,6 +243,27 @@ async function dispatchWorkflow(
         }
       }
     }
+  }
+
+  // Scope tools for discuss flows (#2949).
+  // Providers with grammar-based constrained decoding (xAI/Grok) return
+  // "Grammar is too complex" when the combined tool schema is too large.
+  // Discuss flows only need a small subset of GSD tools — strip the heavy
+  // planning/execution/completion tools to keep the grammar within limits.
+  if (unitType?.startsWith("discuss-")) {
+    const currentTools = pi.getActiveTools();
+    // Keep all non-GSD tools (builtins, other extensions) and only the
+    // GSD tools on the discuss allowlist.
+    const scopedTools = currentTools.filter(
+      (t) => !t.startsWith("gsd_") || DISCUSS_TOOLS_ALLOWLIST.includes(t),
+    );
+    pi.setActiveTools(scopedTools);
+    debugLog("discuss-tool-scoping", {
+      unitType,
+      before: currentTools.length,
+      after: scopedTools.length,
+      removed: currentTools.length - scopedTools.length,
+    });
   }
 
   const workflowPath = process.env.GSD_WORKFLOW_PATH ?? join(process.env.HOME ?? "~", ".gsd", "agent", "GSD-WORKFLOW.md");
