@@ -62,6 +62,7 @@ import {
   nativeDiffNumstat,
   nativeUpdateRef,
   nativeIsAncestor,
+  nativeMergeAbort,
 } from "./native-git-bridge.js";
 
 const gsdHome = process.env.GSD_HOME || join(homedir(), ".gsd");
@@ -1434,6 +1435,16 @@ export function mergeMilestoneToMain(
     // untracked .gsd/ files left by syncStateToProjectRoot).  Preserve the
     // milestone branch so commits are not lost.
     if (mergeResult.conflicts.includes("__dirty_working_tree__")) {
+      // Defensively clean merge state — the native path may leave MERGE_HEAD
+      // even when the merge is rejected (#2912).
+      try {
+        const gitDir_ = resolveGitDir(originalBasePath_);
+        for (const f of ["SQUASH_MSG", "MERGE_MSG", "MERGE_HEAD"]) {
+          const p = join(gitDir_, f);
+          if (existsSync(p)) unlinkSync(p);
+        }
+      } catch { /* best-effort */ }
+
       // Pop stash before throwing so local work is not lost.
       if (stashed) {
         try {
@@ -1490,6 +1501,18 @@ export function mergeMilestoneToMain(
 
       // If there are still real code conflicts, escalate
       if (codeConflicts.length > 0) {
+        // Abort merge state so MERGE_HEAD is not left on disk (#2912).
+        // libgit2's merge creates MERGE_HEAD even for squash merges; if left
+        // dangling, subsequent merges fail and doctor reports corrupt state.
+        try { nativeMergeAbort(originalBasePath_); } catch { /* best-effort */ }
+        try {
+          const gitDir_ = resolveGitDir(originalBasePath_);
+          for (const f of ["SQUASH_MSG", "MERGE_MSG", "MERGE_HEAD"]) {
+            const p = join(gitDir_, f);
+            if (existsSync(p)) unlinkSync(p);
+          }
+        } catch { /* best-effort */ }
+
         // Pop stash before throwing so local work is not lost (#2151).
         if (stashed) {
           try {
@@ -1515,14 +1538,18 @@ export function mergeMilestoneToMain(
   const commitResult = nativeCommit(originalBasePath_, commitMessage);
   const nothingToCommit = commitResult === null;
 
-  // 9a. Clean up SQUASH_MSG left by git merge --squash (#1853).
+  // 9a. Clean up merge state files left by git merge --squash (#1853, #2912).
   // git only removes SQUASH_MSG when the commit reads it directly (plain
   // `git commit`).  nativeCommit uses `-F -` (stdin) or libgit2, neither
-  // of which trigger git's SQUASH_MSG cleanup.  If left on disk, doctor
-  // reports `corrupt_merge_state` on every subsequent run.
+  // of which trigger git's SQUASH_MSG cleanup.  MERGE_HEAD is created by
+  // libgit2's merge even in squash mode and is not removed by nativeCommit.
+  // If left on disk, doctor reports `corrupt_merge_state` on every subsequent run.
   try {
-    const squashMsgPath = join(resolveGitDir(originalBasePath_), "SQUASH_MSG");
-    if (existsSync(squashMsgPath)) unlinkSync(squashMsgPath);
+    const gitDir_ = resolveGitDir(originalBasePath_);
+    for (const f of ["SQUASH_MSG", "MERGE_MSG", "MERGE_HEAD"]) {
+      const p = join(gitDir_, f);
+      if (existsSync(p)) unlinkSync(p);
+    }
   } catch { /* best-effort */ }
 
   // 9a-ii. Restore stashed files now that the merge+commit is complete (#2151).
