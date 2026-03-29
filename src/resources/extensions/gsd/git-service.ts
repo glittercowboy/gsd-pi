@@ -192,7 +192,9 @@ export interface PreMergeCheckResult {
 /**
  * GSD runtime paths that should be excluded from smart staging.
  * These are transient/generated artifacts that should never be committed.
- * Superset of SKIP_PATHS + SKIP_EXACT + SKIP_PREFIXES in worktree-manager.ts.
+ *
+ * NOTE: GSD_RUNTIME_PATTERNS in gitignore.ts is the canonical source of truth.
+ * This array must stay synchronized with it.
  */
 export const RUNTIME_EXCLUSION_PATHS: readonly string[] = [
   ".gsd/activity/",

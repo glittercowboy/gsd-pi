@@ -303,7 +303,9 @@ export async function checkRuntimeHealth(
         content.split("\n").map(l => l.trim()).filter(l => l && !l.startsWith("#")),
       );
 
-      // Check for critical runtime patterns that must be present
+      // Check for critical runtime patterns that must be present.
+      // NOTE: GSD_RUNTIME_PATTERNS in gitignore.ts is the canonical source of truth.
+      // This is a minimal subset for the doctor check.
       const criticalPatterns = [
         ".gsd/activity/",
         ".gsd/runtime/",

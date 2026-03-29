@@ -544,7 +544,13 @@ export function removeWorktree(
   }
 }
 
-/** Paths to skip in all worktree diffs (internal/runtime artifacts). */
+/**
+ * Paths to skip in all worktree diffs (internal/runtime artifacts).
+ *
+ * NOTE: These arrays must stay synchronized with GSD_RUNTIME_PATTERNS in gitignore.ts.
+ * That file is the canonical source of truth for runtime ignore patterns.
+ * This module uses a split representation (paths/exact/prefixes) for efficient matching.
+ */
 const SKIP_PATHS = [
   ".gsd/worktrees/",
   ".gsd/runtime/",
