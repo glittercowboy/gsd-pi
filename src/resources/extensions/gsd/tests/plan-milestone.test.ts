@@ -4,7 +4,7 @@ import { mkdtempSync, mkdirSync, rmSync, readFileSync, existsSync, writeFileSync
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
-import { openDatabase, closeDatabase, getMilestone, getMilestoneSlices } from '../gsd-db.ts';
+import { openDatabase, closeDatabase, getMilestone, getMilestoneSlices, updateSliceStatus } from '../gsd-db.ts';
 import { handlePlanMilestone } from '../tools/plan-milestone.ts';
 import { parseRoadmap } from '../parsers-legacy.ts';
 
@@ -193,6 +193,38 @@ test('handlePlanMilestone reruns idempotently and updates existing planning stat
     assert.equal(slices.length, 2);
     assert.equal(slices[0]?.goal, 'Updated goal');
     assert.equal(slices[0]?.observability_impact, 'Updated observability');
+  } finally {
+    cleanup(base);
+  }
+});
+
+// Regression: #2960 — plan-milestone must refuse to overwrite completed slices
+test('handlePlanMilestone refuses to re-plan a milestone with completed slices (#2960)', async () => {
+  const base = makeTmpBase();
+  const dbPath = join(base, '.gsd', 'gsd.db');
+  openDatabase(dbPath);
+
+  try {
+    // First plan succeeds
+    const first = await handlePlanMilestone(validParams(), base);
+    assert.ok(!('error' in first), `initial plan should succeed: ${'error' in first ? first.error : ''}`);
+
+    // Mark S01 as complete
+    updateSliceStatus('M001', 'S01', 'complete');
+
+    // Second plan should fail — S01 is already complete
+    const second = await handlePlanMilestone({
+      ...validParams(),
+      vision: 'Should not overwrite',
+    }, base);
+    assert.ok('error' in second, 'should refuse to re-plan when slices are completed');
+    assert.match(second.error, /cannot re-plan/i);
+    assert.match(second.error, /S01/);
+
+    // Verify the completed slice was not overwritten
+    const slices = getMilestoneSlices('M001');
+    const s01 = slices.find(s => s.id === 'S01');
+    assert.equal(s01?.status, 'complete', 'S01 should still be complete');
   } finally {
     cleanup(base);
   }

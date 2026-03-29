@@ -20,13 +20,28 @@ import type { UatType } from "./files.js";
  * Returns `undefined` when frontmatter is absent or has no `verdict` field.
  */
 export function extractVerdict(content: string): string | undefined {
+  // Primary: YAML frontmatter verdict (canonical format)
   const fmMatch = content.match(/^---\n([\s\S]*?)\n---/);
-  if (!fmMatch) return undefined;
-  const verdictMatch = fmMatch[1].match(/verdict:\s*([\w-]+)/i);
-  if (!verdictMatch) return undefined;
-  let v = verdictMatch[1].toLowerCase();
-  if (v === "passed") v = "pass";
-  return v;
+  if (fmMatch) {
+    const verdictMatch = fmMatch[1].match(/verdict:\s*([\w-]+)/i);
+    if (verdictMatch) {
+      let v = verdictMatch[1].toLowerCase();
+      if (v === "passed") v = "pass";
+      return v;
+    }
+    return undefined;
+  }
+
+  // Fallback: detect verdict in markdown body (LLM manual writes, #2960).
+  // Matches patterns like: **Verdict:** PASS, **Verdict:** ✅ PASS, **Verdict** needs-remediation
+  const bodyMatch = content.match(/\*\*Verdict:?\*\*\s*(?:✅\s*)?(\w[\w-]*)/i);
+  if (bodyMatch) {
+    let v = bodyMatch[1].toLowerCase();
+    if (v === "passed") v = "pass";
+    return v;
+  }
+
+  return undefined;
 }
 
 /**
