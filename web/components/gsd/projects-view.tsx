@@ -85,6 +85,13 @@ interface ProjectMetadata {
   progress?: ProjectProgressInfo | null
 }
 
+interface ProjectSessionState {
+  bridgePhase: "idle" | "starting" | "ready" | "failed"
+  autoActive: boolean
+  autoPaused: boolean
+  currentUnit: { type: string; id: string; startedAt: number } | null
+}
+
 // ─── Kind style config ─────────────────────────────────────────────────
 
 const KIND_STYLE: Record<ProjectDetectionKind, { label: string; color: string; bgClass: string; icon: typeof Layers }> = {
@@ -153,6 +160,33 @@ function relativeTime(timestamp: number): string {
   return new Date(timestamp).toLocaleDateString(undefined, { month: "short", day: "numeric" })
 }
 
+// ─── Session badge sub-component ──────────────────────────────────────
+
+function SessionBadge({ session }: { session: ProjectSessionState }) {
+  const isRunning = session.autoActive && !session.autoPaused
+  const isPaused = session.autoPaused
+  const hasSession = session.bridgePhase === "ready" || session.autoActive || session.autoPaused
+
+  if (!hasSession) return null
+
+  const dotClass = isRunning
+    ? "h-2 w-2 shrink-0 rounded-full bg-success animate-pulse"
+    : isPaused
+    ? "h-2 w-2 shrink-0 rounded-full bg-amber-500"
+    : "h-2 w-2 shrink-0 rounded-full bg-muted-foreground/50"
+
+  const mode = session.autoActive ? "Auto" : "Interactive"
+  const unitLabel = session.currentUnit?.id ?? null
+  const subtitle = unitLabel ? `${mode} - ${unitLabel}` : mode
+
+  return (
+    <div className="mt-0.5 flex items-center gap-1.5">
+      <span className={dotClass} />
+      <span className="text-[10px] text-muted-foreground">{subtitle}</span>
+    </div>
+  )
+}
+
 // ─── Shared project card component ─────────────────────────────────────
 
 function ProjectCard({
@@ -160,11 +194,13 @@ function ProjectCard({
   isActive = false,
   onClick,
   disabled = false,
+  sessionState = null,
 }: {
   project: ProjectMetadata
   isActive?: boolean
   onClick: () => void
   disabled?: boolean
+  sessionState?: ProjectSessionState | null
 }) {
   const style = KIND_STYLE[project.kind]
   const KindIcon = style.icon
@@ -212,6 +248,9 @@ function ProjectCard({
             {isActive ? "Current" : style.label}
           </span>
         </div>
+
+        {/* Session badge */}
+        {sessionState && <SessionBadge session={sessionState} />}
 
         {/* Row 2: tech stack tags */}
         {stack.length > 0 && (
