@@ -317,6 +317,35 @@ test("auto/resolve.ts one-shot pattern: _currentResolve is nulled before calling
   );
 });
 
+test("auto/phases.ts: selectAndApplyModel called exactly once and before updateProgressWidget (#2907)", () => {
+  const src = readFileSync(
+    resolve(import.meta.dirname, "..", "auto", "phases.ts"),
+    "utf-8",
+  );
+  // Extract the runUnitPhase function body
+  const fnStart = src.indexOf("export async function runUnitPhase");
+  assert.ok(fnStart > 0, "runUnitPhase should exist in phases.ts");
+  const fnBody = src.slice(fnStart, fnStart + 8000);
+
+  // selectAndApplyModel must appear exactly once
+  const allOccurrences = [...fnBody.matchAll(/selectAndApplyModel\(/g)];
+  assert.equal(
+    allOccurrences.length,
+    1,
+    `selectAndApplyModel should be called exactly once in runUnitPhase, found ${allOccurrences.length} calls`,
+  );
+
+  // selectAndApplyModel must appear BEFORE updateProgressWidget
+  const modelIdx = fnBody.indexOf("selectAndApplyModel(");
+  const widgetIdx = fnBody.indexOf("updateProgressWidget(");
+  assert.ok(modelIdx > 0, "selectAndApplyModel should exist in runUnitPhase");
+  assert.ok(widgetIdx > 0, "updateProgressWidget should exist in runUnitPhase");
+  assert.ok(
+    modelIdx < widgetIdx,
+    "selectAndApplyModel must be called BEFORE updateProgressWidget (#2899/#2907)",
+  );
+});
+
 // ─── autoLoop tests (T02) ─────────────────────────────────────────────────
 
 /**
