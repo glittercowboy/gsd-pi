@@ -22,7 +22,6 @@ import { normalizeStringArray } from "../shared/format-utils.js";
 import { resolveProfileDefaults as _resolveProfileDefaults } from "./preferences-models.js";
 
 import {
-  KNOWN_PREFERENCE_KEYS,
   MODE_DEFAULTS,
   type WorkflowMode,
   type GSDPreferences,
@@ -69,6 +68,7 @@ export {
   resolveModelForUnit,
   resolveModelWithFallbacksForUnit,
   getNextFallbackModel,
+  isTransientNetworkError,
   validateModelId,
   updatePreferencesModels,
   resolveDynamicRoutingConfig,
@@ -87,23 +87,23 @@ function gsdHome(): string {
 }
 
 function globalPreferencesPath(): string {
-  return join(gsdHome(), "PREFERENCES.md");
+  return join(gsdHome(), "preferences.md");
 }
 
 function legacyGlobalPreferencesPath(): string {
   return join(homedir(), ".pi", "agent", "gsd-preferences.md");
 }
 
-function projectPreferencesPath(projectRoot?: string): string {
-  return join(gsdRoot(projectRoot ?? process.cwd()), "PREFERENCES.md");
+function projectPreferencesPath(): string {
+  return join(gsdRoot(process.cwd()), "preferences.md");
 }
-// Legacy: older versions used lowercase preferences.md.
-// Check lowercase as a fallback so those files aren't silently ignored.
-function globalPreferencesPathLegacy(): string {
-  return join(gsdHome(), "preferences.md");
+// Bootstrap in gitignore.ts historically created PREFERENCES.md (uppercase) by mistake.
+// Check uppercase as a fallback so those files aren't silently ignored.
+function globalPreferencesPathUppercase(): string {
+  return join(gsdHome(), "PREFERENCES.md");
 }
-function projectPreferencesPathLegacy(projectRoot?: string): string {
-  return join(gsdRoot(projectRoot ?? process.cwd()), "preferences.md");
+function projectPreferencesPathUppercase(): string {
+  return join(gsdRoot(process.cwd()), "PREFERENCES.md");
 }
 
 export function getGlobalGSDPreferencesPath(): string {
@@ -114,26 +114,26 @@ export function getLegacyGlobalGSDPreferencesPath(): string {
   return legacyGlobalPreferencesPath();
 }
 
-export function getProjectGSDPreferencesPath(projectRoot?: string): string {
-  return projectPreferencesPath(projectRoot);
+export function getProjectGSDPreferencesPath(): string {
+  return projectPreferencesPath();
 }
 
 // ─── Loading ────────────────────────────────────────────────────────────────
 
 export function loadGlobalGSDPreferences(): LoadedGSDPreferences | null {
   return loadPreferencesFile(globalPreferencesPath(), "global")
-    ?? loadPreferencesFile(globalPreferencesPathLegacy(), "global")
+    ?? loadPreferencesFile(globalPreferencesPathUppercase(), "global")
     ?? loadPreferencesFile(legacyGlobalPreferencesPath(), "global");
 }
 
-export function loadProjectGSDPreferences(projectRoot?: string): LoadedGSDPreferences | null {
-  return loadPreferencesFile(projectPreferencesPath(projectRoot), "project")
-    ?? loadPreferencesFile(projectPreferencesPathLegacy(projectRoot), "project");
+export function loadProjectGSDPreferences(): LoadedGSDPreferences | null {
+  return loadPreferencesFile(projectPreferencesPath(), "project")
+    ?? loadPreferencesFile(projectPreferencesPathUppercase(), "project");
 }
 
-export function loadEffectiveGSDPreferences(projectRoot?: string): LoadedGSDPreferences | null {
+export function loadEffectiveGSDPreferences(): LoadedGSDPreferences | null {
   const globalPreferences = loadGlobalGSDPreferences();
-  const projectPreferences = loadProjectGSDPreferences(projectRoot);
+  const projectPreferences = loadProjectGSDPreferences();
 
   if (!globalPreferences && !projectPreferences) return null;
 
@@ -223,7 +223,7 @@ export function parsePreferencesMarkdown(content: string): GSDPreferences | null
 
   if (!_warnedUnrecognizedFormat) {
     _warnedUnrecognizedFormat = true;
-    console.warn("[parsePreferencesMarkdown] PREFERENCES.md exists but uses an unrecognized format — skipping.");
+    console.warn("[parsePreferencesMarkdown] preferences.md exists but uses an unrecognized format — skipping.");
   }
   return null;
 }
@@ -251,7 +251,7 @@ function parseFrontmatterBlock(frontmatter: string): GSDPreferences {
  *   - planner: sonnet
  */
 function parseHeadingListFormat(content: string): GSDPreferences {
-  const result: Record<string, string[]> = {};
+  const result: Record<string, Record<string, string>> = {};
   let currentSection: string | null = null;
 
   for (const rawLine of content.split('\n')) {
@@ -259,44 +259,27 @@ function parseHeadingListFormat(content: string): GSDPreferences {
     const headingMatch = line.match(/^##\s+(.+)$/);
     if (headingMatch) {
       currentSection = headingMatch[1].trim().toLowerCase().replace(/\s+/g, '_');
-      if (!result[currentSection]) result[currentSection] = [];
       continue;
     }
-    if (currentSection && line.trim() && !line.trimStart().startsWith('#')) {
-      result[currentSection].push(line);
+    if (currentSection) {
+      const itemMatch = line.match(/^-\s+([^:]+):\s*(.*)$/);
+      if (itemMatch) {
+        if (!result[currentSection]) result[currentSection] = {};
+        const value = itemMatch[2].trim();
+        // Coerce "true"/"false" strings and numbers
+        result[currentSection][itemMatch[1].trim()] = value;
+      }
     }
   }
 
+  // Convert string values to appropriate types via YAML parser for each section
   const typed: Record<string, unknown> = {};
-  for (const [section, lines] of Object.entries(result)) {
-    if (lines.length === 0) continue;
-
-    const usesLegacyListItems = lines.every((line) => /^\s*-\s+[^:]+:\s*.*$/.test(line));
-    const yamlBlock = usesLegacyListItems
-      ? lines.map((line) => line.replace(/^\s*-\s+/, '')).join('\n')
-      : lines.join('\n');
-
+  for (const [section, entries] of Object.entries(result)) {
+    const yamlLines = Object.entries(entries).map(([k, v]) => `${k}: ${v}`).join('\n');
     try {
-      const parsed = parseYaml(yamlBlock);
-      if (typeof parsed !== 'object' || parsed === null) continue;
-
-      let targetSection = section;
-      let value: unknown = parsed;
-
-      if (!Array.isArray(parsed)) {
-        const keys = Object.keys(parsed);
-        if (keys.length === 1) {
-          const [onlyKey] = keys;
-          if (onlyKey === section || (!KNOWN_PREFERENCE_KEYS.has(section) && KNOWN_PREFERENCE_KEYS.has(onlyKey))) {
-            targetSection = onlyKey;
-            value = (parsed as Record<string, unknown>)[onlyKey];
-          }
-        }
-      }
-
-      typed[targetSection] = value;
+      typed[section] = parseYaml(yamlLines);
     } catch {
-      /* malformed section — skip */
+      typed[section] = entries;
     }
   }
 
@@ -370,9 +353,6 @@ function mergePreferences(base: GSDPreferences, override: GSDPreferences): GSDPr
     service_tier: override.service_tier ?? base.service_tier,
     forensics_dedup: override.forensics_dedup ?? base.forensics_dedup,
     show_token_cost: override.show_token_cost ?? base.show_token_cost,
-    experimental: (base.experimental || override.experimental)
-      ? { ...(base.experimental ?? {}), ...(override.experimental ?? {}) }
-      : undefined,
   };
 }
 
@@ -519,7 +499,7 @@ export function resolvePreDispatchHooks(): PreDispatchHookConfig[] {
  * Resolve the effective git isolation mode from preferences.
  * Returns "none" (default), "worktree", or "branch".
  *
- * Default is "none" so GSD works out of the box without PREFERENCES.md.
+ * Default is "none" so GSD works out of the box without preferences.md.
  * Worktree isolation requires explicit opt-in because it depends on git
  * branch infrastructure that must be set up before use.
  */

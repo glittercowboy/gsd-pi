@@ -12,7 +12,7 @@ import { loadFile } from "./files.js";
 import { isDbAvailable, getMilestoneSlices } from "./gsd-db.js";
 import { loadPrompt, inlineTemplate } from "./prompt-loader.js";
 import { buildSkillActivationBlock } from "./auto-prompts.js";
-import { deriveState, reconcileDiskMilestonesToDb } from "./state.js";
+import { deriveState } from "./state.js";
 import { invalidateAllCaches } from "./cache.js";
 import { startAuto } from "./auto.js";
 import { readCrashLock, clearLock, formatCrashInfo } from "./crash-recovery.js";
@@ -563,9 +563,6 @@ export async function showDiscuss(
   // Invalidate caches to pick up artifacts written by a just-completed discuss/plan
   invalidateAllCaches();
 
-  // Disk→DB reconciliation before reading state (#2985)
-  reconcileDiskMilestonesToDb(basePath);
-
   const state = await deriveState(basePath);
 
   // No active milestone (or corrupted milestone with undefined id) —
@@ -1092,9 +1089,6 @@ export async function showSmartEntry(
       }
     }
   }
-
-  // Disk→DB reconciliation before reading state (#2985)
-  reconcileDiskMilestonesToDb(basePath);
 
   const state = await deriveState(basePath);
 

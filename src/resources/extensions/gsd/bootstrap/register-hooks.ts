@@ -11,13 +11,11 @@ import { isBlockedStateFile, isBashWriteToStateFile, BLOCKED_WRITE_ERROR } from 
 import { getDiscussionMilestoneId } from "../guided-flow.js";
 import { loadToolApiKeys } from "../commands-config.js";
 import { loadFile, saveFile, formatContinue } from "../files.js";
-import { deriveState, reconcileDiskMilestonesToDb } from "../state.js";
+import { deriveState } from "../state.js";
 import { getAutoDashboardData, isAutoActive, isAutoPaused, markToolEnd, markToolStart } from "../auto.js";
 import { isParallelActive, shutdownParallel } from "../parallel-orchestrator.js";
 import { checkToolCallLoop, resetToolCallLoopGuard } from "./tool-call-loop-guard.js";
 import { saveActivityLog } from "../activity-log.js";
-import { startRtkStatusUpdates, stopRtkStatusUpdates } from "../rtk-status.js";
-import { rewriteCommandWithRtk } from "../../shared/rtk.js";
 
 // Skip the welcome screen on the very first session_start — cli.ts already
 // printed it before the TUI launched. Only re-print on /clear (subsequent sessions).
@@ -29,19 +27,10 @@ async function syncServiceTierStatus(ctx: ExtensionContext): Promise<void> {
 }
 
 export function registerHooks(pi: ExtensionAPI): void {
-  // Route all agent bash tool commands through RTK rewrite when opted in.
-  // This is a no-op when RTK is disabled or not installed.
-  pi.on("bash_transform", async (event) => {
-    const rewritten = rewriteCommandWithRtk(event.command);
-    if (rewritten === event.command) return undefined;
-    return { command: rewritten };
-  });
-
   pi.on("session_start", async (_event, ctx) => {
     resetWriteGateState();
     resetToolCallLoopGuard();
     await syncServiceTierStatus(ctx);
-    startRtkStatusUpdates(ctx);
 
     // Apply show_token_cost preference (#1515)
     try {
@@ -86,11 +75,6 @@ export function registerHooks(pi: ExtensionAPI): void {
     clearDiscussionFlowState();
     await syncServiceTierStatus(ctx);
     loadToolApiKeys();
-    startRtkStatusUpdates(ctx);
-  });
-
-  pi.on("session_fork", async (_event, ctx) => {
-    startRtkStatusUpdates(ctx);
   });
 
   pi.on("before_agent_start", async (event, ctx: ExtensionContext) => {
@@ -107,7 +91,6 @@ export function registerHooks(pi: ExtensionAPI): void {
       return { cancel: true };
     }
     const basePath = process.cwd();
-    reconcileDiskMilestonesToDb(basePath);
     const state = await deriveState(basePath);
     if (!state.activeMilestone || !state.activeSlice || !state.activeTask) return;
     if (state.phase !== "executing") return;
@@ -140,7 +123,6 @@ export function registerHooks(pi: ExtensionAPI): void {
   });
 
   pi.on("session_shutdown", async (_event, ctx: ExtensionContext) => {
-    stopRtkStatusUpdates(ctx);
     if (isParallelActive()) {
       try {
         await shutdownParallel(process.cwd());
@@ -246,7 +228,7 @@ export function registerHooks(pi: ExtensionAPI): void {
 
   pi.on("tool_execution_start", async (event) => {
     if (!isAutoActive()) return;
-    markToolStart(event.toolCallId, event.toolName);
+    markToolStart(event.toolCallId);
   });
 
   pi.on("tool_execution_end", async (event) => {

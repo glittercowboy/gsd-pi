@@ -13,7 +13,7 @@ import type {
   ExtensionAPI,
   ExtensionCommandContext,
 } from "@gsd/pi-coding-agent";
-import { deriveState, reconcileDiskMilestonesToDb } from "./state.js";
+import { deriveState } from "./state.js";
 import { loadFile, getManifestStatus } from "./files.js";
 import {
   loadEffectiveGSDPreferences,
@@ -58,9 +58,8 @@ import { initRoutingHistory } from "./routing-history.js";
 import { restoreHookState, resetHookState } from "./post-unit-hooks.js";
 import { resetProactiveHealing, setLevelChangeCallback } from "./doctor-proactive.js";
 import { snapshotSkills } from "./skill-discovery.js";
-import { isDbAvailable, getMilestone, openDatabase } from "./gsd-db.js";
+import { isDbAvailable, getMilestone } from "./gsd-db.js";
 import { hideFooter } from "./auto-dashboard.js";
-import { resolveProjectRootDbPath } from "./bootstrap/dynamic-tools.js";
 import {
   debugLog,
   enableDebug,
@@ -68,7 +67,6 @@ import {
   getDebugLogPath,
 } from "./debug-logger.js";
 import { parseUnitId } from "./unit-id.js";
-import { setLogBasePath } from "./workflow-logger.js";
 import type { AutoSession } from "./auto/session.js";
 import {
   existsSync,
@@ -104,20 +102,6 @@ export interface BootstrapDeps {
  *  cycles indefinitely when the discuss workflow doesn't produce a milestone. */
 let _consecutiveCompleteBootstraps = 0;
 const MAX_CONSECUTIVE_COMPLETE_BOOTSTRAPS = 2;
-
-async function openProjectDbIfPresent(basePath: string): Promise<void> {
-  const gsdDbPath = resolveProjectRootDbPath(basePath);
-  if (!existsSync(gsdDbPath) || isDbAvailable()) return;
-
-  try {
-    openDatabase(gsdDbPath);
-  } catch (err) {
-    process.stderr.write(
-      `gsd-db: failed to open existing database: ${(err as Error).message}\n`,
-    );
-  }
-}
-
 export async function bootstrapAutoSession(
   s: AutoSession,
   ctx: ExtensionCommandContext,
@@ -145,15 +129,6 @@ export async function bootstrapAutoSession(
     clearLock(base);
     return false;
   }
-
-  // Capture the user's session model before guided-flow dispatch can apply a
-  // phase-specific planning model for a discuss turn (#2829).
-  const startModelSnapshot = ctx.model
-    ? {
-        provider: ctx.model.provider,
-        id: ctx.model.id,
-      }
-    : null;
 
   try {
     // Validate GSD_PROJECT_ID early so the user gets immediate feedback
@@ -280,10 +255,6 @@ export async function bootstrapAutoSession(
       ctx.ui.notify(`Debug logging enabled → ${getDebugLogPath()}`, "info");
     }
 
-    // Open the project DB before the first derive so resume uses DB truth
-    // immediately on cold starts instead of falling back to markdown (#2841).
-    await openProjectDbIfPresent(base);
-
     // Invalidate caches before initial state derivation
     invalidateAllCaches();
 
@@ -292,11 +263,6 @@ export async function bootstrapAutoSession(
       gsdRoot(base),
       (mid) => !!resolveMilestoneFile(base, mid, "SUMMARY"),
     );
-
-    // Disk→DB reconciliation: ensure disk-only milestones are in the DB
-    // before reading state.  Previously this was hidden inside deriveState()
-    // and deriveStateFromDb() as a side-effect, violating CQS (#2985).
-    reconcileDiskMilestonesToDb(base);
 
     let state = await deriveState(base);
 
@@ -495,7 +461,6 @@ export async function bootstrapAutoSession(
     s.verbose = verboseMode;
     s.cmdCtx = ctx;
     s.basePath = base;
-    setLogBasePath(base);
     s.unitDispatchCount.clear();
     s.unitRecoveryCount.clear();
     s.lastBudgetAlertLevel = 0;
@@ -559,14 +524,15 @@ export async function bootstrapAutoSession(
     }
 
     // ── DB lifecycle ──
-    const gsdDbPath = resolveProjectRootDbPath(s.basePath);
+    const gsdDbPath = join(s.basePath, ".gsd", "gsd.db");
     const gsdDirPath = join(s.basePath, ".gsd");
     if (existsSync(gsdDirPath) && !existsSync(gsdDbPath)) {
       const hasDecisions = existsSync(join(gsdDirPath, "DECISIONS.md"));
       const hasRequirements = existsSync(join(gsdDirPath, "REQUIREMENTS.md"));
       const hasMilestones = existsSync(join(gsdDirPath, "milestones"));
       try {
-        openDatabase(gsdDbPath);
+        const { openDatabase: openDb } = await import("./gsd-db.js");
+        openDb(gsdDbPath);
         if (hasDecisions || hasRequirements || hasMilestones) {
           const { migrateFromMarkdown } = await import("./md-importer.js");
           migrateFromMarkdown(s.basePath);
@@ -579,7 +545,8 @@ export async function bootstrapAutoSession(
     }
     if (existsSync(gsdDbPath) && !isDbAvailable()) {
       try {
-        openDatabase(gsdDbPath);
+        const { openDatabase: openDb } = await import("./gsd-db.js");
+        openDb(gsdDbPath);
       } catch (err) {
         process.stderr.write(
           `gsd-db: failed to open existing database: ${(err as Error).message}\n`,
@@ -607,11 +574,12 @@ export async function bootstrapAutoSession(
     // Initialize routing history
     initRoutingHistory(s.basePath);
 
-    // Restore the model that was active when auto bootstrap began (#650, #2829).
-    if (startModelSnapshot) {
+    // Capture session's model at auto-mode start (#650)
+    const currentModel = ctx.model;
+    if (currentModel) {
       s.autoModeStartModel = {
-        provider: startModelSnapshot.provider,
-        id: startModelSnapshot.id,
+        provider: currentModel.provider,
+        id: currentModel.id,
       };
     }
 
