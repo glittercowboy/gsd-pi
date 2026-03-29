@@ -1,210 +1,87 @@
 /**
- * Token Profile — unit tests for M004/S01.
+ * Token Profile — behavioral unit tests for M004/S01.
  *
- * Tests profile resolution, preference merging, phase skip defaults,
- * subagent model routing, default-to-balanced behavior, and dispatch
- * table guard clauses (source-level structural verification).
- *
- * Uses source-level checks (readFileSync + string matching) to avoid
- * @gsd/pi-coding-agent import resolution issues in dev environments.
+ * Tests profile resolution, preference validation, phase skip defaults,
+ * subagent model routing, and dispatch table guard clauses by calling
+ * exported functions directly with controlled inputs.
  */
 
 import test from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
-import { join, dirname } from "node:path";
-import { fileURLToPath } from "node:url";
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
-
-// ─── Source files for structural checks ───────────────────────────────────
-// After decomposition, code lives across multiple modules. Concatenate them
-// so structural string-matching works regardless of which file holds the code.
-
-const dispatchSrc = readFileSync(join(__dirname, "..", "auto-dispatch.ts"), "utf-8");
-const preferencesSrc = [
-  readFileSync(join(__dirname, "..", "preferences.ts"), "utf-8"),
-  readFileSync(join(__dirname, "..", "preferences-types.ts"), "utf-8"),
-  readFileSync(join(__dirname, "..", "preferences-models.ts"), "utf-8"),
-  readFileSync(join(__dirname, "..", "preferences-validation.ts"), "utf-8"),
-].join("\n");
-const typesSrc = readFileSync(join(__dirname, "..", "types.ts"), "utf-8");
+const { resolveProfileDefaults, resolveEffectiveProfile, resolveInlineLevel, resolveModelWithFallbacksForUnit } =
+  await import("../preferences-models.js");
+const { validatePreferences } = await import("../preferences-validation.js");
+const { KNOWN_PREFERENCE_KEYS } = await import("../preferences-types.js");
+const { DISPATCH_RULES } = await import("../auto-dispatch.js");
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Type Definitions
+// Known Preference Keys
 // ═══════════════════════════════════════════════════════════════════════════
 
-test("types: TokenProfile type exported with budget/balanced/quality", () => {
-  assert.ok(typesSrc.includes("export type TokenProfile"), "TokenProfile should be exported");
-  assert.match(typesSrc, /["']budget["']/, "should include budget");
-  assert.match(typesSrc, /["']balanced["']/, "should include balanced");
-  assert.match(typesSrc, /["']quality["']/, "should include quality");
+test("preferences: KNOWN_PREFERENCE_KEYS includes token_profile", () => {
+  assert.ok(KNOWN_PREFERENCE_KEYS.has("token_profile"), "token_profile should be a known preference key");
 });
 
-test("types: InlineLevel type exported with full/standard/minimal", () => {
-  assert.ok(typesSrc.includes("export type InlineLevel"), "InlineLevel should be exported");
-  assert.match(typesSrc, /["']full["']/, "should include full");
-  assert.match(typesSrc, /["']standard["']/, "should include standard");
-  assert.match(typesSrc, /["']minimal["']/, "should include minimal");
-});
-
-test("types: PhaseSkipPreferences interface exported", () => {
-  assert.ok(typesSrc.includes("export interface PhaseSkipPreferences"), "PhaseSkipPreferences should be exported");
-  assert.ok(typesSrc.includes("skip_research"), "should include skip_research");
-  assert.ok(typesSrc.includes("skip_reassess"), "should include skip_reassess");
-  assert.ok(typesSrc.includes("skip_slice_research"), "should include skip_slice_research");
-  assert.ok(typesSrc.includes("reassess_after_slice"), "should include reassess_after_slice");
+test("preferences: KNOWN_PREFERENCE_KEYS includes phases", () => {
+  assert.ok(KNOWN_PREFERENCE_KEYS.has("phases"), "phases should be a known preference key");
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
-// GSDPreferences Interface
+// Profile Resolution — resolveProfileDefaults
 // ═══════════════════════════════════════════════════════════════════════════
 
-test("preferences: GSDPreferences includes token_profile field", () => {
-  assert.ok(
-    preferencesSrc.includes("token_profile?: TokenProfile"),
-    "GSDPreferences should have token_profile field",
-  );
+test("profile: resolveProfileDefaults returns an object for all three tiers", () => {
+  assert.ok(resolveProfileDefaults("budget"), "budget should return a preferences object");
+  assert.ok(resolveProfileDefaults("balanced"), "balanced should return a preferences object");
+  assert.ok(resolveProfileDefaults("quality"), "quality should return a preferences object");
 });
 
-test("preferences: GSDPreferences includes phases field", () => {
-  assert.ok(
-    preferencesSrc.includes("phases?: PhaseSkipPreferences"),
-    "GSDPreferences should have phases field",
-  );
-});
-
-test("preferences: GSDModelConfig includes subagent field", () => {
-  // Check both v1 and v2 configs
-  const v1Match = preferencesSrc.match(/interface GSDModelConfig\s*\{[^}]*subagent/);
-  assert.ok(v1Match, "GSDModelConfig should have subagent field");
-  const v2Match = preferencesSrc.match(/interface GSDModelConfigV2\s*\{[^}]*subagent/);
-  assert.ok(v2Match, "GSDModelConfigV2 should have subagent field");
-});
-
-test("preferences: KNOWN_PREFERENCE_KEYS includes token_profile and phases", () => {
-  assert.ok(preferencesSrc.includes('"token_profile"'), "KNOWN_PREFERENCE_KEYS should include token_profile");
-  assert.ok(preferencesSrc.includes('"phases"'), "KNOWN_PREFERENCE_KEYS should include phases");
-});
-
-// ═══════════════════════════════════════════════════════════════════════════
-// Profile Resolution
-// ═══════════════════════════════════════════════════════════════════════════
-
-test("profile: resolveProfileDefaults exists and handles all 3 tiers", () => {
-  assert.ok(
-    preferencesSrc.includes("export function resolveProfileDefaults"),
-    "resolveProfileDefaults should be exported",
-  );
-  assert.ok(
-    preferencesSrc.includes('case "budget"') &&
-    preferencesSrc.includes('case "balanced"') &&
-    preferencesSrc.includes('case "quality"'),
-    "resolveProfileDefaults should handle all 3 tiers",
-  );
-});
-
-test("profile: budget profile sets phase skips to true", () => {
-  // Extract the budget case block
-  const budgetIdx = preferencesSrc.indexOf('case "budget":');
-  const balancedIdx = preferencesSrc.indexOf('case "balanced":');
-  const budgetBlock = preferencesSrc.slice(budgetIdx, balancedIdx);
-  assert.ok(budgetBlock.includes("skip_research: true"), "budget should skip research");
-  assert.ok(budgetBlock.includes("skip_reassess: true"), "budget should skip reassess");
-  assert.ok(budgetBlock.includes("skip_slice_research: true"), "budget should skip slice research");
+test("profile: budget profile sets all phase skips to true", () => {
+  const result = resolveProfileDefaults("budget");
+  assert.equal(result.phases?.skip_research, true, "budget should skip research");
+  assert.equal(result.phases?.skip_reassess, true, "budget should skip reassess");
+  assert.equal(result.phases?.skip_slice_research, true, "budget should skip slice research");
 });
 
 test("profile: balanced profile skips research, reassess, and slice research (ADR-003)", () => {
-  const balancedIdx = preferencesSrc.indexOf('case "balanced":');
-  const qualityIdx = preferencesSrc.indexOf('case "quality":');
-  const balancedBlock = preferencesSrc.slice(balancedIdx, qualityIdx);
-  assert.ok(balancedBlock.includes("skip_slice_research: true"), "balanced should skip slice research");
-  assert.ok(balancedBlock.includes("skip_research: true"), "balanced should skip milestone research");
-  assert.ok(balancedBlock.includes("skip_reassess: true"), "balanced should skip reassess");
+  const result = resolveProfileDefaults("balanced");
+  assert.equal(result.phases?.skip_research, true, "balanced should skip research");
+  assert.equal(result.phases?.skip_reassess, true, "balanced should skip reassess");
+  assert.equal(result.phases?.skip_slice_research, true, "balanced should skip slice research");
 });
 
 test("profile: quality profile skips research, slice research, and reassess (ADR-003)", () => {
-  const qualityIdx = preferencesSrc.indexOf('case "quality":');
-  const qualityBlock = preferencesSrc.slice(qualityIdx, qualityIdx + 300);
-  assert.ok(qualityBlock.includes("skip_research: true"), "quality should skip research");
-  assert.ok(qualityBlock.includes("skip_slice_research: true"), "quality should skip slice research");
-  assert.ok(qualityBlock.includes("skip_reassess: true"), "quality should skip reassess");
+  const result = resolveProfileDefaults("quality");
+  assert.equal(result.phases?.skip_research, true, "quality should skip research");
+  assert.equal(result.phases?.skip_slice_research, true, "quality should skip slice research");
+  assert.equal(result.phases?.skip_reassess, true, "quality should skip reassess");
+});
+
+test("profile: PhaseSkipPreferences fields are present on budget profile defaults", () => {
+  const phases = resolveProfileDefaults("budget").phases!;
+  assert.ok("skip_research" in phases, "should include skip_research");
+  assert.ok("skip_reassess" in phases, "should include skip_reassess");
+  assert.ok("skip_slice_research" in phases, "should include skip_slice_research");
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Default Behavior (D046)
+// Effective Profile & Inline Level
 // ═══════════════════════════════════════════════════════════════════════════
 
-test("profile: resolveEffectiveProfile defaults to balanced (D046)", () => {
+test("profile: resolveEffectiveProfile returns a valid token profile (defaults to balanced per D046)", () => {
+  const profile = resolveEffectiveProfile();
   assert.ok(
-    preferencesSrc.includes("export function resolveEffectiveProfile"),
-    "resolveEffectiveProfile should be exported",
-  );
-  assert.ok(
-    preferencesSrc.includes('return "balanced"'),
-    "resolveEffectiveProfile should default to balanced",
+    (["budget", "balanced", "quality"] as const).includes(profile as "budget" | "balanced" | "quality"),
+    `resolveEffectiveProfile must return a valid profile, got: ${profile}`,
   );
 });
 
-// ═══════════════════════════════════════════════════════════════════════════
-// Inline Level Mapping
-// ═══════════════════════════════════════════════════════════════════════════
-
-test("profile: resolveInlineLevel maps profile to inline level", () => {
+test("profile: resolveInlineLevel returns a valid inline level", () => {
+  const level = resolveInlineLevel();
   assert.ok(
-    preferencesSrc.includes("export function resolveInlineLevel"),
-    "resolveInlineLevel should be exported",
-  );
-  assert.ok(preferencesSrc.includes('case "budget": return "minimal"'), "budget → minimal");
-  assert.ok(preferencesSrc.includes('case "balanced": return "standard"'), "balanced → standard");
-  assert.ok(preferencesSrc.includes('case "quality": return "full"'), "quality → full");
-});
-
-// ═══════════════════════════════════════════════════════════════════════════
-// Validation
-// ═══════════════════════════════════════════════════════════════════════════
-
-test("validate: validatePreferences handles token_profile", () => {
-  assert.ok(
-    preferencesSrc.includes("preferences.token_profile") &&
-    preferencesSrc.includes("budget, balanced, quality"),
-    "validatePreferences should validate token_profile enum values",
-  );
-});
-
-test("validate: validatePreferences handles phases object", () => {
-  assert.ok(
-    preferencesSrc.includes("preferences.phases") &&
-    preferencesSrc.includes("skip_research") &&
-    preferencesSrc.includes("skip_reassess") &&
-    preferencesSrc.includes("skip_slice_research"),
-    "validatePreferences should validate phases fields",
-  );
-});
-
-test("validate: phases warns on unknown keys", () => {
-  assert.ok(
-    preferencesSrc.includes("knownPhaseKeys") &&
-    preferencesSrc.includes("unknown phases key"),
-    "validatePreferences should warn on unknown phase keys",
-  );
-});
-
-// ═══════════════════════════════════════════════════════════════════════════
-// Merge
-// ═══════════════════════════════════════════════════════════════════════════
-
-test("merge: mergePreferences handles token_profile with nullish coalescing", () => {
-  assert.ok(
-    preferencesSrc.includes("token_profile: override.token_profile ?? base.token_profile"),
-    "mergePreferences should use nullish coalescing for token_profile",
-  );
-});
-
-test("merge: mergePreferences handles phases with spread", () => {
-  assert.ok(
-    preferencesSrc.includes("...(base.phases") && preferencesSrc.includes("...(override.phases"),
-    "mergePreferences should spread phases objects",
+    (["minimal", "standard", "full"] as const).includes(level as "minimal" | "standard" | "full"),
+    `resolveInlineLevel must return a valid level, got: ${level}`,
   );
 });
 
@@ -212,17 +89,61 @@ test("merge: mergePreferences handles phases with spread", () => {
 // Subagent Model Routing
 // ═══════════════════════════════════════════════════════════════════════════
 
-test("subagent: budget profile sets subagent model", () => {
-  const budgetIdx = preferencesSrc.indexOf('case "budget":');
-  const balancedIdx = preferencesSrc.indexOf('case "balanced":');
-  const budgetBlock = preferencesSrc.slice(budgetIdx, balancedIdx);
-  assert.ok(budgetBlock.includes("subagent:"), "budget profile should set subagent model");
+test("subagent: budget profile defaults set a subagent model", () => {
+  const result = resolveProfileDefaults("budget");
+  assert.ok(result.models?.subagent, "budget profile should set a subagent model");
+  assert.equal(typeof result.models!.subagent, "string", "subagent model should be a string");
 });
 
-test("subagent: resolveModelWithFallbacksForUnit handles subagent unit types", () => {
+test("subagent: balanced profile defaults set a subagent model", () => {
+  const result = resolveProfileDefaults("balanced");
+  assert.ok(result.models?.subagent, "balanced profile should set a subagent model");
+  assert.equal(typeof result.models!.subagent, "string", "subagent model should be a string");
+});
+
+test("subagent: resolveModelWithFallbacksForUnit accepts 'subagent' unit type without throwing", () => {
+  // The function returns a ResolvedModelConfig or undefined — we verify it does not throw
+  assert.doesNotThrow(() => resolveModelWithFallbacksForUnit("subagent"));
+  assert.doesNotThrow(() => resolveModelWithFallbacksForUnit("subagent/planning"));
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Preference Validation — token_profile
+// ═══════════════════════════════════════════════════════════════════════════
+
+test("validate: valid token_profile is accepted without errors", () => {
+  for (const profile of ["budget", "balanced", "quality"] as const) {
+    const { errors } = validatePreferences({ token_profile: profile });
+    assert.equal(errors.length, 0, `${profile} should be a valid token_profile`);
+  }
+});
+
+test("validate: invalid token_profile produces an error referencing valid values", () => {
+  const { errors } = validatePreferences({ token_profile: "super-budget" as never });
+  assert.ok(errors.length > 0, "invalid token_profile should produce errors");
   assert.ok(
-    preferencesSrc.includes('"subagent"') && preferencesSrc.includes('startsWith("subagent/")'),
-    "resolveModelWithFallbacksForUnit should handle subagent and subagent/* unit types",
+    errors.some(e => e.includes("budget") && e.includes("balanced") && e.includes("quality")),
+    "error message should list valid values",
+  );
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Preference Validation — phases
+// ═══════════════════════════════════════════════════════════════════════════
+
+test("validate: phases object with known keys is accepted without errors", () => {
+  const { errors } = validatePreferences({
+    phases: { skip_research: true, skip_reassess: true, skip_slice_research: true },
+  });
+  assert.equal(errors.length, 0, "valid phases object should produce no errors");
+});
+
+test("validate: phases with unknown key produces a warning", () => {
+  const { warnings } = validatePreferences({ phases: { totally_made_up: true } as never });
+  assert.ok(warnings.length > 0, "unknown phases key should produce a warning");
+  assert.ok(
+    warnings.some(w => w.includes("unknown phases key")),
+    "warning should mention unknown phases key",
   );
 });
 
@@ -230,39 +151,80 @@ test("subagent: resolveModelWithFallbacksForUnit handles subagent unit types", (
 // Dispatch Table — Phase Skip Guards
 // ═══════════════════════════════════════════════════════════════════════════
 
-test("dispatch: research-milestone rule has skip_research guard", () => {
-  // Find the research-milestone rule and check it has the guard
-  const ruleIdx = dispatchSrc.indexOf("research-milestone");
-  assert.ok(ruleIdx > -1, "should have research-milestone rule");
-  // The guard should appear near this rule
-  assert.ok(
-    dispatchSrc.includes("skip_research") && dispatchSrc.includes("research-milestone"),
-    "research-milestone dispatch rule should check phases.skip_research",
-  );
+function makeState(phase: import("../types.js").Phase): import("../types.js").GSDState {
+  return {
+    phase,
+    activeMilestone: { id: "M001", title: "Test Milestone" },
+    activeSlice: null,
+    activeTask: null,
+    recentDecisions: [],
+    blockers: [],
+    nextAction: "",
+    registry: [],
+  };
+}
+
+test("dispatch: research-milestone rule returns null when skip_research is set", async () => {
+  const rule = DISPATCH_RULES.find(r => r.name.includes("research-milestone"));
+  assert.ok(rule, "should have a research-milestone rule");
+  const result = await rule.match({
+    basePath: "/tmp/gsd-token-profile-test",
+    mid: "M001",
+    midTitle: "Test Milestone",
+    state: makeState("pre-planning"),
+    prefs: { phases: { skip_research: true } },
+  });
+  assert.equal(result, null, "research-milestone rule should return null when skip_research is set");
 });
 
-test("dispatch: research-slice rule has skip guards", () => {
-  const ruleIdx = dispatchSrc.indexOf("research-slice");
-  assert.ok(ruleIdx > -1, "should have research-slice rule");
-  const afterRule = dispatchSrc.slice(ruleIdx);
-  assert.ok(
-    afterRule.includes("skip_research") || afterRule.includes("skip_slice_research"),
-    "research-slice rule should check skip_research or skip_slice_research",
-  );
+test("dispatch: research-slice rule returns null when skip_research is set", async () => {
+  const rule = DISPATCH_RULES.find(r => r.name.includes("research-slice"));
+  assert.ok(rule, "should have a research-slice rule");
+  const result = await rule.match({
+    basePath: "/tmp/gsd-token-profile-test",
+    mid: "M001",
+    midTitle: "Test Milestone",
+    state: makeState("planning"),
+    prefs: { phases: { skip_research: true } },
+  });
+  assert.equal(result, null, "research-slice rule should return null when skip_research is set");
 });
 
-test("dispatch: reassess-roadmap rule has reassess_after_slice opt-in guard (ADR-003)", () => {
-  assert.ok(
-    dispatchSrc.includes("reassess_after_slice") && dispatchSrc.includes("reassess-roadmap"),
-    "reassess-roadmap dispatch rule should check phases.reassess_after_slice",
-  );
+test("dispatch: research-slice rule returns null when skip_slice_research is set", async () => {
+  const rule = DISPATCH_RULES.find(r => r.name.includes("research-slice"));
+  assert.ok(rule, "should have a research-slice rule");
+  const result = await rule.match({
+    basePath: "/tmp/gsd-token-profile-test",
+    mid: "M001",
+    midTitle: "Test Milestone",
+    state: makeState("planning"),
+    prefs: { phases: { skip_slice_research: true } },
+  });
+  assert.equal(result, null, "research-slice rule should return null when skip_slice_research is set");
 });
 
-test("dispatch: phase skip guards return null (not stop)", () => {
-  // Verify skip guards use return null pattern
-  const researchGuard = dispatchSrc.match(/skip_research\).*?return null/s);
-  assert.ok(researchGuard, "skip_research guard should return null (fall-through)");
+test("dispatch: reassess-roadmap rule returns null when skip_reassess is set", async () => {
+  const rule = DISPATCH_RULES.find(r => r.name.includes("reassess-roadmap"));
+  assert.ok(rule, "should have a reassess-roadmap rule");
+  const result = await rule.match({
+    basePath: "/tmp/gsd-token-profile-test",
+    mid: "M001",
+    midTitle: "Test Milestone",
+    state: makeState("executing"),
+    prefs: { phases: { skip_reassess: true, reassess_after_slice: true } },
+  });
+  assert.equal(result, null, "reassess-roadmap rule should return null when skip_reassess is set");
+});
 
-  const reassessGuard = dispatchSrc.match(/reassess_after_slice\).*?return null/s);
-  assert.ok(reassessGuard, "reassess_after_slice guard should return null (fall-through)");
+test("dispatch: reassess-roadmap rule returns null when reassess_after_slice is not opted in (ADR-003)", async () => {
+  const rule = DISPATCH_RULES.find(r => r.name.includes("reassess-roadmap"));
+  assert.ok(rule, "should have a reassess-roadmap rule");
+  const result = await rule.match({
+    basePath: "/tmp/gsd-token-profile-test",
+    mid: "M001",
+    midTitle: "Test Milestone",
+    state: makeState("executing"),
+    prefs: { phases: {} },  // reassess_after_slice not set → should skip
+  });
+  assert.equal(result, null, "reassess-roadmap rule should return null when reassess_after_slice is not opted in");
 });

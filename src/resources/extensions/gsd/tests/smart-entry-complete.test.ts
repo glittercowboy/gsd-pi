@@ -1,18 +1,21 @@
-import test from "node:test";
+import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
 const { deriveState } = await import("../state.js");
+const { findMilestoneIds, nextMilestoneId, clearReservedMilestoneIds } = await import("../milestone-ids.js");
 
-test("deriveState reports complete when all milestone slices are done", async () => {
-  const base = mkdtempSync(join(tmpdir(), "gsd-smart-entry-complete-"));
+// ─── deriveState ────────────────────────────────────────────────────────────
 
-  try {
+describe("deriveState: complete phase", () => {
+  let base: string;
+
+  before(() => {
+    base = mkdtempSync(join(tmpdir(), "gsd-smart-entry-complete-"));
     const milestoneDir = join(base, ".gsd", "milestones", "M001");
     mkdirSync(milestoneDir, { recursive: true });
-
     writeFileSync(
       join(milestoneDir, "M001-ROADMAP.md"),
       [
@@ -23,31 +26,92 @@ test("deriveState reports complete when all milestone slices are done", async ()
         "  > Done.",
       ].join("\n"),
     );
+    writeFileSync(join(milestoneDir, "M001-SUMMARY.md"), "# M001 Summary\n\nComplete.");
+  });
 
-    writeFileSync(
-      join(milestoneDir, "M001-SUMMARY.md"),
-      "# M001 Summary\n\nComplete.",
-    );
+  after(() => {
+    rmSync(base, { recursive: true, force: true });
+  });
 
+  it("reports complete when all milestone slices are done", async () => {
     const state = await deriveState(base);
     assert.equal(state.phase, "complete");
     assert.equal(state.activeMilestone?.id, "M001");
-  } finally {
-    rmSync(base, { recursive: true, force: true });
-  }
+  });
 });
 
-test("guided-flow complete branch offers a chooser for next milestone or status", () => {
-  const guidedFlowSource = readFileSync(join(import.meta.dirname, "..", "guided-flow.ts"), "utf-8");
-  const branchIdx = guidedFlowSource.indexOf('state.phase === "complete"');
+// ─── findMilestoneIds ────────────────────────────────────────────────────────
 
-  assert.ok(branchIdx > -1, "guided-flow.ts should have a complete-phase smart-entry branch");
+describe("findMilestoneIds", () => {
+  let base: string;
 
-  const nextBranchIdx = guidedFlowSource.indexOf('state.phase === "needs-discussion"', branchIdx);
-  const branchChunk = guidedFlowSource.slice(branchIdx, nextBranchIdx === -1 ? branchIdx + 1600 : nextBranchIdx);
+  before(() => {
+    base = mkdtempSync(join(tmpdir(), "gsd-milestone-ids-"));
+    const milestonesDir = join(base, ".gsd", "milestones");
+    mkdirSync(join(milestonesDir, "M001"), { recursive: true });
+    mkdirSync(join(milestonesDir, "M002"), { recursive: true });
+    mkdirSync(join(milestonesDir, "M003"), { recursive: true });
+  });
 
-  assert.match(branchChunk, /showNextAction\(/, "complete branch should present a chooser");
-  assert.match(branchChunk, /findMilestoneIds\(basePath\)/, "complete branch should compute the next milestone id");
-  assert.match(branchChunk, /nextMilestoneId(?:Reserved)?\(milestoneIds, uniqueMilestoneIds\)/, "complete branch should derive the next milestone id");
-  assert.match(branchChunk, /dispatchWorkflow\(pi, buildDiscussPrompt\(/, "complete branch should dispatch the discuss prompt");
+  after(() => {
+    rmSync(base, { recursive: true, force: true });
+  });
+
+  it("returns milestone IDs found in the milestones directory", () => {
+    const ids = findMilestoneIds(base);
+    assert.deepEqual(ids, ["M001", "M002", "M003"]);
+  });
+
+  it("returns empty array when milestones directory does not exist", () => {
+    const emptyBase = mkdtempSync(join(tmpdir(), "gsd-milestone-ids-empty-"));
+    try {
+      assert.deepEqual(findMilestoneIds(emptyBase), []);
+    } finally {
+      rmSync(emptyBase, { recursive: true, force: true });
+    }
+  });
+});
+
+// ─── nextMilestoneId ─────────────────────────────────────────────────────────
+
+describe("nextMilestoneId", () => {
+  before(() => {
+    clearReservedMilestoneIds();
+  });
+
+  it("returns M001 when no existing milestones", () => {
+    assert.equal(nextMilestoneId([]), "M001");
+  });
+
+  it("returns M002 after M001", () => {
+    assert.equal(nextMilestoneId(["M001"]), "M002");
+  });
+
+  it("returns M004 after M001–M003", () => {
+    assert.equal(nextMilestoneId(["M001", "M002", "M003"]), "M004");
+  });
+});
+
+// ─── complete phase: next ID derivation ──────────────────────────────────────
+
+describe("complete phase: next milestone ID derivation", () => {
+  let base: string;
+
+  before(() => {
+    clearReservedMilestoneIds();
+    base = mkdtempSync(join(tmpdir(), "gsd-complete-next-id-"));
+    const milestonesDir = join(base, ".gsd", "milestones");
+    mkdirSync(join(milestonesDir, "M001"), { recursive: true });
+    writeFileSync(join(milestonesDir, "M001", "M001-SUMMARY.md"), "# M001 Summary\n\nComplete.");
+  });
+
+  after(() => {
+    rmSync(base, { recursive: true, force: true });
+  });
+
+  it("proposes M002 after M001 completes", () => {
+    const milestoneIds = findMilestoneIds(base);
+    const nextId = nextMilestoneId(milestoneIds);
+    assert.equal(nextId, "M002");
+  });
 });

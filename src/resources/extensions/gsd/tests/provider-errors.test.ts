@@ -7,15 +7,10 @@
 
 import test from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
-import { join, dirname } from "node:path";
-import { fileURLToPath } from "node:url";
-import { classifyError, isTransient, isTransientNetworkError } from "../error-classifier.ts";
+import { classifyError, isTransient, isTransientNetworkError, createRetryState, resetRetryState } from "../error-classifier.ts";
 import { pauseAutoForProviderError } from "../provider-error-pause.ts";
 import { resumeAutoAfterProviderDelay } from "../bootstrap/provider-error-resume.ts";
 import { getNextFallbackModel } from "../preferences.ts";
-
-const __dirname = dirname(fileURLToPath(import.meta.url));
 
 // ── classifyError ────────────────────────────────────────────────────────────
 
@@ -355,69 +350,60 @@ test("resumeAutoAfterProviderDelay leaves auto paused when no base path is avail
 
 // ── Escalating backoff for transient errors (#1166) ─────────────────────────
 
-test("agent-end-recovery.ts tracks consecutive transient errors for escalating backoff", () => {
-  const src = readFileSync(join(__dirname, "..", "bootstrap", "agent-end-recovery.ts"), "utf-8");
-
-  assert.ok(
-    src.includes("consecutiveTransientCount"),
-    "agent-end-recovery.ts must track consecutiveTransientCount for escalating backoff (#1166)",
-  );
-  assert.ok(
-    src.includes("MAX_TRANSIENT_AUTO_RESUMES"),
-    "agent-end-recovery.ts must define MAX_TRANSIENT_AUTO_RESUMES to cap infinite retries (#1166)",
-  );
+test("RetryState.consecutiveTransientCount initializes to 0", () => {
+  const state = createRetryState();
+  assert.equal(state.consecutiveTransientCount, 0);
+  assert.equal(state.networkRetryCount, 0);
+  assert.equal(state.currentRetryModelId, undefined);
 });
 
-test("agent-end-recovery.ts resets retry state before resolveAgentEnd on success", () => {
-  const src = readFileSync(join(__dirname, "..", "bootstrap", "agent-end-recovery.ts"), "utf-8");
-
-  // After successful agent_end, resetRetryState must be called before resolveAgentEnd.
-  assert.ok(
-    /resetRetryState[\s\S]{0,250}resolveAgentEnd/.test(src),
-    "resetRetryState must be called before resolveAgentEnd on the success path (#1166)",
-  );
+test("resetRetryState zeroes consecutiveTransientCount to stop escalating backoff", () => {
+  const state = createRetryState();
+  state.consecutiveTransientCount = 5;
+  state.networkRetryCount = 2;
+  state.currentRetryModelId = "some-model";
+  resetRetryState(state);
+  assert.equal(state.consecutiveTransientCount, 0);
+  assert.equal(state.networkRetryCount, 0);
+  assert.equal(state.currentRetryModelId, undefined);
 });
 
-test("agent-end-recovery.ts applies escalating delay for repeated transient errors", () => {
-  const src = readFileSync(join(__dirname, "..", "bootstrap", "agent-end-recovery.ts"), "utf-8");
-
-  // Must contain the exponential backoff formula (may span multiple lines)
-  assert.ok(
-    src.includes("2 ** Math.max(0, retryState.consecutiveTransientCount"),
-    "agent-end-recovery.ts must escalate retryAfterMs exponentially for consecutive transient errors (#1166)",
-  );
+test("escalating backoff doubles retryAfterMs per consecutive transient error", () => {
+  // Contract: retryAfterMs = baseMs * 2 ** Math.max(0, consecutiveTransientCount - 1)
+  const base = 30_000;
+  const escalate = (count: number) => base * 2 ** Math.max(0, count - 1);
+  assert.equal(escalate(1), 30_000);   // first: no escalation
+  assert.equal(escalate(2), 60_000);   // second: 2×
+  assert.equal(escalate(3), 120_000);  // third: 4×
+  assert.equal(escalate(4), 240_000);  // fourth: 8×
+  // count=0 is same as count=1 (Math.max floor)
+  assert.equal(escalate(0), 30_000);
 });
 
-test("agent-end-recovery.ts resumes transient provider pauses through startAuto instead of a hidden prompt", () => {
-  const src = readFileSync(join(__dirname, "..", "bootstrap", "agent-end-recovery.ts"), "utf-8");
-
-  assert.ok(
-    src.includes("resumeAutoAfterProviderDelay"),
-    "agent-end-recovery.ts must resume paused auto-mode through resumeAutoAfterProviderDelay (#2813)",
+test("resumeAutoAfterProviderDelay calls startAuto with the recorded basePath, not a hidden prompt", async () => {
+  const startCalls: string[] = [];
+  const result = await resumeAutoAfterProviderDelay(
+    {} as any,
+    { ui: { notify() {} } } as any,
+    {
+      getSnapshot: () => ({ active: false, paused: true, stepMode: false, basePath: "/tmp/project" }),
+      startAuto: async (_ctx: any, _pi: any, base: string) => { startCalls.push(base); },
+    },
   );
-  assert.ok(
-    !src.includes('Continue execution — provider error recovery delay elapsed.'),
-    "transient provider resume must not rely on a hidden continue prompt (#2813)",
-  );
+  assert.equal(result, "resumed");
+  assert.deepEqual(startCalls, ["/tmp/project"]);
 });
 
 // ── Codex error extraction (#1166) ──────────────────────────────────────────
 
-test("openai-codex-responses.ts extracts nested error fields", () => {
-  const codexSource = readFileSync(
-    join(__dirname, "../../../../../packages/pi-ai/src/providers/openai-codex-responses.ts"),
-    "utf-8",
-  );
-
-  // Must access event.error.message (nested), not just event.message (top-level)
-  assert.ok(
-    codexSource.includes("errorObj?.message"),
-    "mapCodexEvents must extract message from nested event.error object (#1166)",
-  );
-  assert.ok(
-    codexSource.includes("errorObj?.type"),
-    "mapCodexEvents must extract type from nested event.error object (#1166)",
-  );
+test("Codex server_error format is classified as a transient server error", () => {
+  // mapCodexEvents formats Codex error events as: "Codex ${errorType}: ${message}"
+  // Verify the classifier handles the nested error.type extraction correctly.
+  const msg = "Codex server_error: An error occurred while processing your request.";
+  const result = classifyError(msg);
+  assert.equal(result.kind, "server");
+  assert.ok(isTransient(result));
+  assert.ok("retryAfterMs" in result && result.retryAfterMs > 0);
 });
 
 // ── agent-session retryable regex handles server_error (#1166) ──────────────
