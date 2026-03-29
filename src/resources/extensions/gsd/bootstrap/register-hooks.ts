@@ -11,7 +11,7 @@ import { isBlockedStateFile, isBashWriteToStateFile, BLOCKED_WRITE_ERROR } from 
 import { getDiscussionMilestoneId } from "../guided-flow.js";
 import { loadToolApiKeys } from "../commands-config.js";
 import { loadFile, saveFile, formatContinue } from "../files.js";
-import { deriveState } from "../state.js";
+import { deriveState, reconcileDiskMilestonesToDb } from "../state.js";
 import { getAutoDashboardData, isAutoActive, isAutoPaused, markToolEnd, markToolStart } from "../auto.js";
 import { isParallelActive, shutdownParallel } from "../parallel-orchestrator.js";
 import { checkToolCallLoop, resetToolCallLoopGuard } from "./tool-call-loop-guard.js";
@@ -107,6 +107,7 @@ export function registerHooks(pi: ExtensionAPI): void {
       return { cancel: true };
     }
     const basePath = process.cwd();
+    reconcileDiskMilestonesToDb(basePath);
     const state = await deriveState(basePath);
     if (!state.activeMilestone || !state.activeSlice || !state.activeTask) return;
     if (state.phase !== "executing") return;

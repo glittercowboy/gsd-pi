@@ -73,6 +73,34 @@ export function isGhostMilestone(basePath: string, mid: string): boolean {
   return !context && !draft && !roadmap && !summary;
 }
 
+// ─── Disk→DB Reconciliation ──────────────────────────────────────────────
+
+/**
+ * Synchronize milestone directories from disk into the DB.
+ *
+ * Call this explicitly before reading state when you know disk milestones
+ * may have been created outside the DB write path (e.g. /gsd queue, manual
+ * mkdir, complete-milestone writing the next CONTEXT.md).
+ *
+ * Separated from deriveState()/deriveStateFromDb() to enforce CQS — read
+ * functions must not produce write side effects (#2985).
+ *
+ * insertMilestone uses INSERT OR IGNORE, so this is idempotent.
+ */
+export function reconcileDiskMilestonesToDb(basePath: string): void {
+  if (!isDbAvailable()) return;
+
+  const dbMilestones = getAllMilestones();
+  const dbIdSet = new Set(dbMilestones.map(m => m.id));
+  const diskIds = findMilestoneIds(basePath);
+
+  for (const diskId of diskIds) {
+    if (!dbIdSet.has(diskId) && !isGhostMilestone(basePath, diskId)) {
+      insertMilestone({ id: diskId, status: 'active' });
+    }
+  }
+}
+
 // ─── Query Functions ───────────────────────────────────────────────────────
 
 /**
@@ -207,23 +235,7 @@ export async function deriveState(basePath: string): Promise<GSDState> {
 
   // Dual-path: try DB-backed derivation first when hierarchy tables are populated
   if (isDbAvailable()) {
-    let dbMilestones = getAllMilestones();
-
-    // Disk→DB reconciliation (#2631): when the milestones table is empty
-    // (e.g. failed initial migration per #2529), the reconciliation code
-    // inside deriveStateFromDb is unreachable. Populate from disk here so
-    // the DB path activates correctly.
-    if (dbMilestones.length === 0) {
-      const diskIds = findMilestoneIds(basePath);
-      let synced = false;
-      for (const diskId of diskIds) {
-        if (!isGhostMilestone(basePath, diskId)) {
-          insertMilestone({ id: diskId, status: 'active' });
-          synced = true;
-        }
-      }
-      if (synced) dbMilestones = getAllMilestones();
-    }
+    const dbMilestones = getAllMilestones();
 
     if (dbMilestones.length > 0) {
       const stopDbTimer = debugTime("derive-state-db");
@@ -280,23 +292,6 @@ export async function deriveStateFromDb(basePath: string): Promise<GSDState> {
   const requirements = parseRequirementCounts(await loadFile(resolveGsdRootFile(basePath, "REQUIREMENTS")));
 
   let allMilestones = getAllMilestones();
-
-  // Incremental disk→DB sync: milestone directories created outside the DB
-  // write path (via /gsd queue, manual mkdir, or complete-milestone writing the
-  // next CONTEXT.md) are never inserted by the initial migration guard in
-  // auto-start.ts because that guard only runs when gsd.db doesn't exist yet.
-  // Reconcile here so deriveStateFromDb never silently misses queued milestones.
-  // insertMilestone uses INSERT OR IGNORE, so this is safe to call every time.
-  const dbIdSet = new Set(allMilestones.map(m => m.id));
-  const diskIds = findMilestoneIds(basePath);
-  let synced = false;
-  for (const diskId of diskIds) {
-    if (!dbIdSet.has(diskId) && !isGhostMilestone(basePath, diskId)) {
-      insertMilestone({ id: diskId, status: 'active' });
-      synced = true;
-    }
-  }
-  if (synced) allMilestones = getAllMilestones();
 
   // Reconcile: discover milestones that exist on disk but are missing from
   // the DB. This happens when milestones were created before the DB migration

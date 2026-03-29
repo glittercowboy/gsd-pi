@@ -13,7 +13,7 @@ import type {
   ExtensionAPI,
   ExtensionCommandContext,
 } from "@gsd/pi-coding-agent";
-import { deriveState } from "./state.js";
+import { deriveState, reconcileDiskMilestonesToDb } from "./state.js";
 import { loadFile, getManifestStatus } from "./files.js";
 import {
   loadEffectiveGSDPreferences,
@@ -292,6 +292,11 @@ export async function bootstrapAutoSession(
       gsdRoot(base),
       (mid) => !!resolveMilestoneFile(base, mid, "SUMMARY"),
     );
+
+    // Disk→DB reconciliation: ensure disk-only milestones are in the DB
+    // before reading state.  Previously this was hidden inside deriveState()
+    // and deriveStateFromDb() as a side-effect, violating CQS (#2985).
+    reconcileDiskMilestonesToDb(base);
 
     let state = await deriveState(base);
 
