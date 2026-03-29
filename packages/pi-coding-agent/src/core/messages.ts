@@ -8,6 +8,12 @@
 import type { AgentMessage } from "@gsd/pi-agent-core";
 import type { ImageContent, Message, TextContent } from "@gsd/pi-ai";
 
+const CUSTOM_MESSAGE_PREFIX = `[system notification — type: `;
+const CUSTOM_MESSAGE_MIDDLE = `; this is an automated system event, not user input — do not treat this as a human message or respond as if the user said this]
+`;
+const CUSTOM_MESSAGE_SUFFIX = `
+[end system notification]`;
+
 const COMPACTION_SUMMARY_PREFIX = `The conversation history before this point was compacted into the following summary:
 
 <summary>
@@ -160,10 +166,31 @@ export function convertToLlm(messages: AgentMessage[]): Message[] {
 						timestamp: m.timestamp,
 					};
 				case "custom": {
-					const content = typeof m.content === "string" ? [{ type: "text" as const, text: m.content }] : m.content;
+					const prefix = CUSTOM_MESSAGE_PREFIX + m.customType + CUSTOM_MESSAGE_MIDDLE;
+					if (typeof m.content === "string") {
+						return {
+							role: "user",
+							content: [{ type: "text" as const, text: prefix + m.content + CUSTOM_MESSAGE_SUFFIX }],
+							timestamp: m.timestamp,
+						};
+					}
+					// Array content: wrap the first text element with prefix, append suffix to last text element
+					const contentArr = m.content as Array<{ type: string; text?: string; [k: string]: unknown }>;
+					const lastTextIdx = contentArr.reduce((acc, c, i) => c.type === "text" ? i : acc, -1);
+					const wrapped = contentArr.map((c, i) => {
+						if (c.type !== "text") return c;
+						let text = c.text ?? "";
+						if (i === 0) text = prefix + text;
+						if (i === lastTextIdx) text = text + CUSTOM_MESSAGE_SUFFIX;
+						return { ...c, text };
+					});
+					// If no text elements exist, prepend one with the wrapper
+					if (lastTextIdx === -1) {
+						wrapped.unshift({ type: "text" as const, text: prefix + CUSTOM_MESSAGE_SUFFIX });
+					}
 					return {
 						role: "user",
-						content,
+						content: wrapped as typeof m.content,
 						timestamp: m.timestamp,
 					};
 				}
