@@ -69,6 +69,7 @@ export function resolveModelWithFallbacksForUnit(unitType: string): ResolvedMode
       break;
     case "complete-slice":
     case "complete-milestone":
+    case "worktree-merge":
     case "run-uat":
       phaseConfig = m.completion;
       break;

@@ -100,7 +100,8 @@ export const KNOWN_PREFERENCE_KEYS = new Set<string>([
 export const KNOWN_UNIT_TYPES = [
   "research-milestone", "plan-milestone", "research-slice", "plan-slice",
   "execute-task", "reactive-execute", "gate-evaluate", "complete-slice", "replan-slice", "reassess-roadmap",
-  "run-uat", "complete-milestone",
+  "run-uat", "complete-milestone", "validate-milestone", "rewrite-docs",
+  "discuss-milestone", "discuss-slice", "worktree-merge",
 ] as const;
 export type UnitType = (typeof KNOWN_UNIT_TYPES)[number];
 

@@ -155,6 +155,34 @@ test("all auto-dispatch unitTypes have preference mapping or subagent handling",
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
+// #2900: worktree-merge must map to completion phase
+// ═══════════════════════════════════════════════════════════════════════════
+
+test("#2900: resolveModelWithFallbacksForUnit handles worktree-merge", () => {
+  assert.ok(preferencesSrc.includes('"worktree-merge"'), "missing worktree-merge case in switch");
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// #2900: KNOWN_UNIT_TYPES must include all dispatched unit types
+// ═══════════════════════════════════════════════════════════════════════════
+
+const preferenceTypesSrc = readSrc("preferences-types.ts");
+
+test("#2900: KNOWN_UNIT_TYPES includes all auto-dispatch unit types", () => {
+  const missing: string[] = [];
+  for (const ut of ALL_KNOWN_UNIT_TYPES) {
+    if (!preferenceTypesSrc.includes(`"${ut}"`)) {
+      missing.push(ut);
+    }
+  }
+  assert.deepEqual(missing, [], `Missing from KNOWN_UNIT_TYPES: ${missing.join(", ")}`);
+});
+
+test("#2900: KNOWN_UNIT_TYPES includes worktree-merge", () => {
+  assert.ok(preferenceTypesSrc.includes('"worktree-merge"'), "worktree-merge missing from KNOWN_UNIT_TYPES");
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
 // metrics.ts: classifyUnitPhase coverage
 // ═══════════════════════════════════════════════════════════════════════════
 
