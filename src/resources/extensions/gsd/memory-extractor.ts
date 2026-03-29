@@ -89,12 +89,19 @@ export function buildMemoryLLMCall(ctx: ExtensionContext): LLMCallFn | null {
 
     return async (system: string, user: string): Promise<string> => {
       const { completeSimple } = await import('@gsd/pi-ai');
+
+      // Resolve API key via modelRegistry so OAuth tokens (auth.json) are used.
+      // Without this, OAuth users (Claude Max / Claude Pro) get no API key —
+      // getEnvApiKey() only checks env vars, which are not set for OAuth.
+      const resolvedApiKey = await ctx.modelRegistry.getApiKey(selectedModel).catch(() => undefined);
+
       const result: AssistantMessage = await completeSimple(selectedModel, {
         systemPrompt: system,
         messages: [{ role: 'user', content: [{ type: 'text', text: user }], timestamp: Date.now() }],
       }, {
         maxTokens: 2048,
         temperature: 0,
+        ...(resolvedApiKey ? { apiKey: resolvedApiKey } : {}),
       });
 
       // Extract text from response

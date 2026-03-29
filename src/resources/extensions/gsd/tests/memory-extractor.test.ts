@@ -1,4 +1,4 @@
-import { parseMemoryResponse, _resetExtractionState } from '../memory-extractor.ts';
+import { parseMemoryResponse, _resetExtractionState, buildMemoryLLMCall } from '../memory-extractor.ts';
 import {
   openDatabase,
   closeDatabase,
@@ -9,7 +9,7 @@ import {
   getActiveMemoriesRanked,
 } from '../memory-store.ts';
 import type { MemoryAction } from '../memory-store.ts';
-import { describe, test, beforeEach, afterEach } from 'node:test';
+import { describe, test, beforeEach, afterEach, mock } from 'node:test';
 import assert from 'node:assert/strict';
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -167,5 +167,64 @@ test('memory-extractor: reset extraction state', () => {
   // Just verify it doesn't throw
   _resetExtractionState();
   assert.ok(true, '_resetExtractionState should not throw');
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// buildMemoryLLMCall: resolves OAuth API key via modelRegistry.getApiKey
+// ═══════════════════════════════════════════════════════════════════════════
+
+test('buildMemoryLLMCall: calls modelRegistry.getApiKey for OAuth credential resolution', async () => {
+  // For OAuth users, the API key is not in env vars — it must be resolved
+  // from auth.json via modelRegistry.getApiKey(). This test verifies that
+  // buildMemoryLLMCall calls getApiKey on the selected model.
+
+  const oauthToken = 'sk-ant-oat-test-oauth-token-12345';
+  let getApiKeyCalled = false;
+  let getApiKeyCalledWithModel: any = null;
+
+  const fakeModel = {
+    id: 'claude-3-5-haiku-20241022',
+    name: 'Haiku',
+    provider: 'anthropic',
+    api: 'anthropic-messages' as const,
+    cost: { input: 0.25, output: 1.25 },
+    maxTokens: 8192,
+    contextWindow: 200000,
+  };
+
+  const ctx = {
+    modelRegistry: {
+      getAvailable: () => [fakeModel],
+      getApiKey: async (model: any) => {
+        getApiKeyCalled = true;
+        getApiKeyCalledWithModel = model;
+        return oauthToken;
+      },
+    },
+  } as any;
+
+  const llmFn = buildMemoryLLMCall(ctx);
+  assert.ok(llmFn !== null, 'buildMemoryLLMCall should return a function');
+
+  // Invoke the LLM call — the function should resolve the API key from
+  // modelRegistry.getApiKey() before calling completeSimple. Even if
+  // completeSimple fails (no real provider), we need to verify getApiKey
+  // was called.
+  try {
+    await llmFn('test system prompt', 'test user prompt');
+  } catch {
+    // Expected: completeSimple will fail in test env (no real Anthropic provider).
+    // That's fine — we only care whether getApiKey was called.
+  }
+
+  assert.ok(
+    getApiKeyCalled,
+    'buildMemoryLLMCall must call modelRegistry.getApiKey() to resolve OAuth tokens from auth.json',
+  );
+  assert.deepStrictEqual(
+    getApiKeyCalledWithModel?.id,
+    fakeModel.id,
+    'getApiKey must be called with the selected model',
+  );
 });
 
