@@ -447,8 +447,8 @@ function checkGitRemote(basePath: string): EnvironmentCheckResult | null {
   const remote = tryExec("git remote get-url origin", basePath);
   if (!remote) return null;
 
-  // Quick connectivity check with short timeout
-  const result = tryExec("git ls-remote --exit-code -h origin HEAD", basePath);
+  // Quick connectivity check — list heads, any non-empty output means reachable
+  const result = tryExec("git ls-remote -h origin", basePath);
   if (result === null) {
     return {
       name: "git_remote",
