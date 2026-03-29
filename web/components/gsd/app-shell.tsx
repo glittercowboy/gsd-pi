@@ -23,6 +23,7 @@ import { toast } from "sonner"
 import {
   GSDWorkspaceProvider,
   getCurrentScopeLabel,
+  getLiveWorkspaceIndex,
   getProjectDisplayName,
   getStatusPresentation,
   getVisibleWorkspaceError,
@@ -67,7 +68,7 @@ function WorkspaceChrome() {
   const projectPath = workspace.boot?.project.cwd
   const projectLabel = getProjectDisplayName(projectPath)
   const titleOverride = workspace.titleOverride?.trim() || null
-  const scopeLabel = getCurrentScopeLabel(workspace.boot?.workspace)
+  const scopeLabel = getCurrentScopeLabel(getLiveWorkspaceIndex(workspace))
   const visibleError = getVisibleWorkspaceError(workspace)
 
   // Restore persisted view once boot provides projectCwd
