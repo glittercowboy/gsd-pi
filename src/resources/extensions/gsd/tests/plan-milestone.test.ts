@@ -4,7 +4,7 @@ import { mkdtempSync, mkdirSync, rmSync, readFileSync, existsSync, writeFileSync
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
-import { openDatabase, closeDatabase, getMilestone, getMilestoneSlices } from '../gsd-db.ts';
+import { openDatabase, closeDatabase, getMilestone, getMilestoneSlices, insertMilestone } from '../gsd-db.ts';
 import { handlePlanMilestone } from '../tools/plan-milestone.ts';
 import { parseRoadmap } from '../parsers-legacy.ts';
 
@@ -193,6 +193,31 @@ test('handlePlanMilestone reruns idempotently and updates existing planning stat
     assert.equal(slices.length, 2);
     assert.equal(slices[0]?.goal, 'Updated goal');
     assert.equal(slices[0]?.observability_impact, 'Updated observability');
+  } finally {
+    cleanup(base);
+  }
+});
+
+test('handlePlanMilestone promotes pre-existing queued milestone to active (#3022)', async () => {
+  const base = makeTmpBase();
+  const dbPath = join(base, '.gsd', 'gsd.db');
+  openDatabase(dbPath);
+
+  try {
+    // Simulate ensureMilestoneDbRow: pre-create row with status "queued"
+    // (this is what gsd_milestone_generate_id does)
+    insertMilestone({ id: 'M001', status: 'queued' });
+
+    const before = getMilestone('M001');
+    assert.equal(before?.status, 'queued', 'pre-condition: milestone should start as queued');
+
+    // Now plan the milestone — status should be promoted to "active"
+    const result = await handlePlanMilestone(validParams(), base);
+    assert.ok(!('error' in result), `unexpected error: ${'error' in result ? result.error : ''}`);
+
+    const after = getMilestone('M001');
+    assert.equal(after?.status, 'active', 'milestone status should be promoted from queued to active');
+    assert.equal(after?.title, 'DB-backed planning', 'milestone title should be set');
   } finally {
     cleanup(base);
   }

@@ -212,6 +212,8 @@ export async function handlePlanMilestone(
       });
 
       upsertMilestonePlanning(params.milestoneId, {
+        title: params.title,
+        status: params.status ?? "active",
         vision: params.vision,
         successCriteria: params.successCriteria,
         keyRisks: params.keyRisks,
