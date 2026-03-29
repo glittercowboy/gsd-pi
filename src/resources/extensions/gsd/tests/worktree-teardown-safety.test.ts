@@ -24,11 +24,14 @@ import {
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { execSync } from "node:child_process";
+import { describe, it, after } from "node:test";
 
 import { createWorktree, removeWorktree, worktreePath, isInsideWorktreesDir } from "../worktree-manager.ts";
 import { createTestContext } from "./test-helpers.ts";
 
 const { assertEq, assertTrue, report } = createTestContext();
+
+// ─── Helpers ──────────────────────────────────────────────────────────────
 
 function run(command: string, cwd: string): string {
   return execSync(command, { cwd, stdio: ["ignore", "pipe", "pipe"], encoding: "utf-8" }).trim();
@@ -46,15 +49,19 @@ function createTempRepo(): string {
   return dir;
 }
 
-async function main(): Promise<void> {
-  const savedCwd = process.cwd();
-  let tempDir = "";
+// ─── Tests ────────────────────────────────────────────────────────────────
 
-  try {
-    tempDir = createTempRepo();
+describe("worktree-teardown-safety", () => {
+  const dirs: string[] = [];
 
-    // ─── Test 1: removeWorktree does not delete sibling data directories ──
-    console.log("\n=== worktree teardown does not destroy sibling data dirs ===");
+  after(() => {
+    for (const d of dirs) rmSync(d, { recursive: true, force: true });
+    report();
+  });
+
+  it("removeWorktree does not delete sibling data directories", () => {
+    const tempDir = createTempRepo();
+    dirs.push(tempDir);
 
     // Create a project data directory that lives alongside .gsd/
     const dataDir = join(tempDir, "project-data");
@@ -77,12 +84,12 @@ async function main(): Promise<void> {
       existsSync(join(dataDir, "important.db")),
       "project data files survive teardown",
     );
+  });
 
-    // ─── Test 2: path validation rejects paths outside .gsd/worktrees/ ──
-    console.log("\n=== path validation rejects external paths ===");
+  it("path validation rejects paths outside .gsd/worktrees/", () => {
+    const tempDir = createTempRepo();
+    dirs.push(tempDir);
 
-    // Create a worktree, then tamper with what git reports as its path
-    // by directly testing that removeWorktree validates paths before deletion
     const externalDir = join(tempDir, "external-state");
     mkdirSync(externalDir, { recursive: true });
     writeFileSync(join(externalDir, "state.json"), '{"critical": true}');
@@ -101,18 +108,22 @@ async function main(): Promise<void> {
       '{"critical": true}',
       "external directory contents intact after teardown",
     );
+  });
 
-    // ─── Test 3: worktreePath always returns paths under .gsd/worktrees/ ──
-    console.log("\n=== worktreePath containment ===");
+  it("worktreePath always returns paths under .gsd/worktrees/", () => {
+    const tempDir = createTempRepo();
+    dirs.push(tempDir);
 
     const wtPathResult = worktreePath(tempDir, "anything");
     assertTrue(
       wtPathResult.startsWith(join(tempDir, ".gsd", "worktrees")),
       "worktreePath returns path under .gsd/worktrees/",
     );
+  });
 
-    // ─── Test 4: isInsideWorktreesDir validates paths correctly ──
-    console.log("\n=== path traversal rejection ===");
+  it("isInsideWorktreesDir rejects path traversal attempts", () => {
+    const tempDir = createTempRepo();
+    dirs.push(tempDir);
 
     assertTrue(
       isInsideWorktreesDir(tempDir, join(tempDir, ".gsd", "worktrees", "my-wt")),
@@ -133,14 +144,5 @@ async function main(): Promise<void> {
       !isInsideWorktreesDir(tempDir, "/tmp/some-other-dir"),
       "completely external path is rejected",
     );
-
-    report();
-  } finally {
-    process.chdir(savedCwd);
-    if (tempDir && existsSync(tempDir)) {
-      rmSync(tempDir, { recursive: true, force: true });
-    }
-  }
-}
-
-main();
+  });
+});
