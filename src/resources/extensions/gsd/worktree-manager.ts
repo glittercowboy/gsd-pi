@@ -15,7 +15,7 @@
  *   4. remove()  — git worktree remove + branch cleanup
  */
 
-import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { join, resolve, sep } from "node:path";
 import { GSDError, GSD_PARSE_ERROR, GSD_STALE_STATE, GSD_LOCK_HELD, GSD_GIT_ERROR, GSD_MERGE_CONFLICT } from "./errors.js";
@@ -277,6 +277,78 @@ export function listWorktrees(basePath: string): WorktreeInfo[] {
   return worktrees;
 }
 
+// ─── Nested .git Detection (#2616) ──────────────────────────────────────
+//
+// Scaffolding tools (create-next-app, cargo init, etc.) create nested .git
+// directories inside worktrees. Git records these as gitlinks (mode 160000)
+// without a .gitmodules entry — so worktree cleanup destroys the only copy
+// of their object database, causing permanent silent data loss.
+
+/** Directories to skip when scanning for nested .git dirs. */
+const NESTED_GIT_SKIP_DIRS = new Set([
+  ".git", ".gsd", "node_modules", ".next", ".nuxt", "dist", "build",
+  "__pycache__", ".tox", ".venv", "venv", "target", "vendor",
+]);
+
+/**
+ * Recursively find nested .git directories inside a worktree root.
+ * Returns paths to directories that contain their own .git (directory, not file).
+ * Skips node_modules, .gsd, and other non-project directories for performance.
+ *
+ * A nested .git *directory* (not a .git file — which is a legitimate worktree
+ * pointer) indicates a scaffolded repo that will become an orphaned gitlink.
+ */
+export function findNestedGitDirs(rootPath: string): string[] {
+  const results: string[] = [];
+
+  function walk(dir: string, depth: number): void {
+    // Cap recursion depth to avoid runaway scanning
+    if (depth > 10) return;
+
+    let entries: string[];
+    try {
+      entries = readdirSync(dir);
+    } catch {
+      return; // Permission denied, broken symlink, etc.
+    }
+
+    for (const entry of entries) {
+      if (NESTED_GIT_SKIP_DIRS.has(entry)) continue;
+
+      const fullPath = join(dir, entry);
+
+      // Only follow real directories, not symlinks
+      let stat;
+      try {
+        stat = lstatSync(fullPath);
+      } catch {
+        continue;
+      }
+      if (!stat.isDirectory()) continue;
+
+      // Check if this directory contains a .git *directory* (not a .git file).
+      // A .git file is a worktree pointer and is legitimate.
+      // A .git directory is a standalone repo created by scaffolding.
+      const innerGit = join(fullPath, ".git");
+      try {
+        const innerStat = lstatSync(innerGit);
+        if (innerStat.isDirectory()) {
+          results.push(fullPath);
+          // Don't recurse into the nested repo — we found what we need
+          continue;
+        }
+      } catch {
+        // No .git here — continue scanning
+      }
+
+      walk(fullPath, depth + 1);
+    }
+  }
+
+  walk(rootPath, 0);
+  return results;
+}
+
 /**
  * Remove a worktree and optionally delete its branch.
  * If the process is currently inside the worktree, chdir out first.
@@ -352,6 +424,30 @@ export function removeWorktree(
       }
     } catch {
       // submodule status failed — proceed with normal removal
+    }
+  }
+
+  // Nested .git safety (#2616): detect nested .git directories created by
+  // scaffolding tools (create-next-app, cargo init, etc.). These produce
+  // gitlink entries (mode 160000) without .gitmodules — cleanup would destroy
+  // the only copy of the nested object database, causing permanent data loss.
+  // Fix: remove the nested .git dirs so git tracks the files as regular content.
+  const nestedGitDirs = findNestedGitDirs(resolvedWtPath);
+  if (nestedGitDirs.length > 0) {
+    for (const nestedDir of nestedGitDirs) {
+      const nestedGitPath = join(nestedDir, ".git");
+      try {
+        rmSync(nestedGitPath, { recursive: true, force: true });
+        logWarning("reconcile",
+          `Removed nested .git directory from scaffolded project to prevent data loss (#2616)`,
+          { worktree: name, nestedRepo: nestedDir },
+        );
+      } catch {
+        logWarning("reconcile",
+          `Failed to remove nested .git directory — files may be lost as orphaned gitlink`,
+          { worktree: name, nestedRepo: nestedDir },
+        );
+      }
     }
   }
 
