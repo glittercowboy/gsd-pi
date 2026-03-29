@@ -24,6 +24,8 @@ export interface CliFlags {
   webPort?: number
   /** Additional allowed origins for CORS: `--allowed-origins http://192.168.1.10:8080` */
   webAllowedOrigins?: string[]
+  /** Expose via Tailscale Serve: `--tailscale` */
+  tailscale?: boolean
   help?: boolean
   version?: boolean
 }
@@ -71,6 +73,8 @@ export function parseCliArgs(argv: string[]): CliFlags {
     } else if (arg === '--allowed-origins' && i + 1 < args.length) {
       const origins = args[++i].split(',').map(o => o.trim()).filter(Boolean)
       flags.webAllowedOrigins = (flags.webAllowedOrigins ?? []).concat(origins)
+    } else if (arg === '--tailscale') {
+      flags.tailscale = true
     } else if (arg === '--model' && i + 1 < args.length) {
       flags.model = args[++i]
     } else if (arg === '--extension' && i + 1 < args.length) {
@@ -286,6 +290,7 @@ export async function runWebCliBranch(
     host: flags.webHost,
     port: flags.webPort,
     allowedOrigins: flags.webAllowedOrigins,
+    tailscale: flags.tailscale,
   })
 
   if (!status.ok) {
