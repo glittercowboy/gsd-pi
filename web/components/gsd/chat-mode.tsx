@@ -2204,6 +2204,12 @@ export function ChatPane({ className, onOpenAction }: ChatPaneProps) {
 
   const showPlaceholder = timeline.length === 0 && !isStreaming
 
+  // Show an "awaiting input" indicator when the session is idle (connected,
+  // not streaming, has timeline content) so the UI does not appear stuck (#2707).
+  const showAwaitingInput = connected && !isStreaming && timeline.length > 0
+    && !state.activeToolExecution
+    && state.pendingUiRequests.length === 0
+
   // Auto-scroll ref
   const scrollRef = useRef<HTMLDivElement>(null)
   const isNearBottomRef = useRef(true)
@@ -2309,6 +2315,12 @@ export function ChatPane({ className, onOpenAction }: ChatPaneProps) {
                   return <InlineUiRequest key={item.request.id} request={item.request} />
               }
             })}
+            {showAwaitingInput && (
+              <div className="flex items-center gap-2 px-1 py-1 text-xs text-muted-foreground animate-in fade-in duration-500">
+                <span className="inline-block h-2 w-2 rounded-full bg-emerald-500/70 animate-pulse" />
+                Ready for your input
+              </div>
+            )}
             <div className="h-2" />
           </div>
         )}

@@ -5081,10 +5081,16 @@ export class GSDWorkspaceStore {
       const nextThinking = [...this.state.liveThinkingTranscript, ""]
       const nextSegments = [...this.state.completedTurnSegments, finalSegments]
       const overflow = nextTranscript.length > MAX_TRANSCRIPT_BLOCKS ? nextTranscript.length - MAX_TRANSCRIPT_BLOCKS : 0
+      // When overflow trims the front of parallel arrays, also trim
+      // chatUserMessages to keep index-based interleaving aligned (#2707).
+      const trimmedUserMsgs = overflow > 0
+        ? this.state.chatUserMessages.slice(overflow)
+        : undefined
       this.patchState({
         liveTranscript: overflow > 0 ? nextTranscript.slice(overflow) : nextTranscript,
         liveThinkingTranscript: overflow > 0 ? nextThinking.slice(overflow) : nextThinking,
         completedTurnSegments: overflow > 0 ? nextSegments.slice(overflow) : nextSegments,
+        ...(trimmedUserMsgs !== undefined ? { chatUserMessages: trimmedUserMsgs } : {}),
         streamingAssistantText: "",
         streamingThinkingText: "",
         currentTurnSegments: [],
