@@ -5,6 +5,7 @@ export {
   isQueuePhaseActive,
   setQueuePhaseActive,
   shouldBlockContextWrite,
+  shouldBlockQueueExecution,
 } from "./bootstrap/write-gate.js";
 
 export default async function registerExtension(pi: ExtensionAPI) {
