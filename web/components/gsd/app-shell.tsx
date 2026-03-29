@@ -554,9 +554,18 @@ function ProjectAwareWorkspace() {
   const activeProjectCwd = useSyncExternalStore(manager.subscribe, manager.getSnapshot, manager.getSnapshot)
   const activeStore = activeProjectCwd ? manager.getActiveStore() : null
 
-  // Shut down all projects when the tab actually closes
+  // Shut down all projects when the tab actually closes.
+  // IMPORTANT: pagehide fires both on real page unload AND on mobile/Safari
+  // tab switches (bfcache entry).  When event.persisted is true the page is
+  // being cached for later reuse — the server must stay alive.  Only send
+  // the shutdown beacon when the page is truly being discarded.
   useEffect(() => {
-    const handlePageHide = () => {
+    const handlePageHide = (event: PageTransitionEvent) => {
+      if (event.persisted) {
+        // Page is entering bfcache (tab switch, app backgrounding) — keep
+        // the server alive so PTY sessions survive.
+        return
+      }
       // sendBeacon cannot set custom headers, so pass the auth token as a
       // query parameter instead (the proxy accepts `_token` as a fallback).
       const token = getAuthToken()
