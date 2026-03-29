@@ -6,7 +6,7 @@ import { isToolCallEventType } from "@gsd/pi-coding-agent";
 import { buildMilestoneFileName, resolveMilestonePath, resolveSliceFile, resolveSlicePath } from "../paths.js";
 import { buildBeforeAgentStartResult } from "./system-context.js";
 import { handleAgentEnd } from "./agent-end-recovery.js";
-import { clearDiscussionFlowState, isDepthVerified, isQueuePhaseActive, markDepthVerified, resetWriteGateState, shouldBlockContextWrite } from "./write-gate.js";
+import { clearDiscussionFlowState, isDepthVerified, isQueuePhaseActive, markDepthVerified, resetWriteGateState, shouldBlockContextWrite, shouldBlockQueueExecution } from "./write-gate.js";
 import { isBlockedStateFile, isBashWriteToStateFile, BLOCKED_WRITE_ERROR } from "../write-intercept.js";
 import { getDiscussionMilestoneId } from "../guided-flow.js";
 import { loadToolApiKeys } from "../commands-config.js";
@@ -159,6 +159,23 @@ export function registerHooks(pi: ExtensionAPI): void {
     const loopCheck = checkToolCallLoop(event.toolName, event.input as Record<string, unknown>);
     if (loopCheck.block) {
       return { block: true, reason: loopCheck.reason };
+    }
+
+    // ── Queue-mode execution guard (#2545): block source-code mutations ──
+    // When /gsd queue is active, the agent should only create milestones,
+    // not execute work. Block write/edit to non-.gsd/ paths and bash commands
+    // that would modify files.
+    if (isQueuePhaseActive()) {
+      let queueInput = "";
+      if (isToolCallEventType("write", event)) {
+        queueInput = event.input.path;
+      } else if (isToolCallEventType("edit", event)) {
+        queueInput = event.input.path;
+      } else if (isToolCallEventType("bash", event)) {
+        queueInput = event.input.command;
+      }
+      const queueGuard = shouldBlockQueueExecution(event.toolName, queueInput, true);
+      if (queueGuard.block) return queueGuard;
     }
 
     // ── Single-writer engine: block direct writes to STATE.md ──────────
