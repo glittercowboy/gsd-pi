@@ -34,7 +34,7 @@ import {
 	mergeDeltaPatches,
 	readIsolationMode,
 } from "./isolation.js";
-import { registerWorker, updateWorker, getWaveSummary } from "./worker-registry.js";
+import { registerWorker, updateWorker } from "./worker-registry.js";
 import { ParallelIPC } from "./parallel-ipc.js";
 import { loadEffectiveGSDPreferences } from "../gsd/preferences.js";
 import { CmuxClient, shellEscape } from "../cmux/index.js";
@@ -824,17 +824,6 @@ export default function (pi: ExtensionAPI) {
 					: [];
 				const parallelConcurrency = Math.min(params.concurrency ?? MAX_CONCURRENCY, MAX_PARALLEL_TASKS);
 
-				// Load GSD preferences to check for a subagent model override
-				const prefs = loadEffectiveGSDPreferences();
-				const subagentModelOverride = prefs?.preferences?.reactive_execution?.subagent_model;
-
-				// If a subagent_model override is configured, create a shallow copy of
-				// each agent config with the overridden model so that
-				// buildSubagentProcessArgs picks it up automatically.
-				const effectiveAgents: AgentConfig[] = subagentModelOverride
-					? agents.map((a) => ({ ...a, model: subagentModelOverride }))
-					: agents;
-
 				// File-based IPC — write worker state + NDJSON event stream to .gsd/parallel/<batchId>/
 				const ipc = new ParallelIPC(ctx.cwd, batchId);
 				ipc.init(batchSize);
@@ -867,7 +856,7 @@ export default function (pi: ExtensionAPI) {
 							cmuxClient,
 							gridSurfaces[index] ?? (index % 2 === 0 ? "right" : "down"),
 							ctx.cwd,
-							effectiveAgents,
+							agents,
 							t.agent,
 							t.task,
 							effectiveCwd,
@@ -883,7 +872,7 @@ export default function (pi: ExtensionAPI) {
 						)
 						: runSingleAgent(
 							ctx.cwd,
-							effectiveAgents,
+							agents,
 							t.agent,
 							t.task,
 							effectiveCwd,
