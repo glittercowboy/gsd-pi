@@ -50,8 +50,8 @@ export function sanitizeCompleteMilestoneParams(raw: Record<string, unknown>): C
     keyDecisions: toStrArray(raw.keyDecisions),
     keyFiles: toStrArray(raw.keyFiles),
     lessonsLearned: toStrArray(raw.lessonsLearned),
-    followUps: raw.followUps != null ? toStr(raw.followUps) : undefined,
-    deviations: raw.deviations != null ? toStr(raw.deviations) : undefined,
+    followUps: toStr(raw.followUps),
+    deviations: toStr(raw.deviations),
     verificationPassed: raw.verificationPassed === true || raw.verificationPassed === "true",
   };
 }
