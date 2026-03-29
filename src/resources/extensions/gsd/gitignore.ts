@@ -85,6 +85,38 @@ const BASELINE_PATTERNS = [
 ];
 
 /**
+ * Check whether `.gsd` is covered by the project's `.gitignore`.
+ *
+ * Uses `git check-ignore` for accurate evaluation — this respects nested
+ * .gitignore files, global gitignore, and negation patterns. Returns true
+ * only when git would actually ignore `.gsd/`.
+ *
+ * Returns false (not ignored) if:
+ *   - No `.gitignore` exists
+ *   - `.gsd` is not listed in any active ignore rule
+ *   - Not a git repo or git is unavailable
+ */
+export function isGsdGitignored(basePath: string): boolean {
+  // Check both `.gsd` and `.gsd/` because `.gsd/` in .gitignore (trailing
+  // slash = directory-only pattern) only matches the directory form. Using
+  // both paths covers all gitignore pattern variants.
+  for (const path of [".gsd", ".gsd/"]) {
+    try {
+      // git check-ignore exits 0 when the path IS ignored, 1 when it is NOT.
+      execFileSync("git", ["check-ignore", "-q", path], {
+        cwd: basePath,
+        stdio: "pipe",
+        env: GIT_NO_PROMPT_ENV,
+      });
+      return true; // exit 0 → .gsd is ignored
+    } catch {
+      // exit 1 → this form is NOT ignored, try the other
+    }
+  }
+  return false; // neither form is ignored (or git unavailable)
+}
+
+/**
  * Check whether `.gsd/` contains files tracked by git.
  * If so, the project intentionally keeps `.gsd/` in version control
  * and we must NOT add `.gsd` to `.gitignore` or attempt migration.

@@ -80,4 +80,4 @@ If a proposed order would violate constraints, explain the issue and suggest alt
 - Do NOT park completed milestones — it would corrupt dependency satisfaction
 - Park is preferred over discard when a milestone has any completed work
 - Always persist queue order changes to `.gsd/QUEUE-ORDER.json`
-- After changes, run `git add .gsd/ && git commit -m "docs(gsd): rethink milestone plan"` to persist (rethink runs interactively outside auto-mode, so no system auto-commit)
+- {{commitInstruction}}
