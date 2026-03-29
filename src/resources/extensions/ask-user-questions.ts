@@ -162,9 +162,27 @@ export default function AskUserQuestions(pi: ExtensionAPI) {
 					if (selected === undefined) {
 						return errorResult("ask_user_questions was cancelled", params.questions);
 					}
-					answers[q.id] = {
-						answers: Array.isArray(selected) ? selected : [selected],
-					};
+
+					// When the user picks "None of the above" on a single-select
+					// question, prompt for a free-text explanation so they are not
+					// trapped in a re-asking loop (bug #2715).
+					let freeTextNote = "";
+					const selectedStr = Array.isArray(selected) ? selected[0] : selected;
+					if (!q.allowMultiple && selectedStr === OTHER_OPTION_LABEL) {
+						const note = await ctx.ui.input(
+							`${q.header}: Please explain in your own words`,
+							"Type your answer here…",
+						);
+						if (note) {
+							freeTextNote = note;
+						}
+					}
+
+					const answerList = Array.isArray(selected) ? selected : [selected];
+					if (freeTextNote) {
+						answerList.push(`user_note: ${freeTextNote}`);
+					}
+					answers[q.id] = { answers: answerList };
 				}
 				const roundResult: RoundResult = {
 					endInterview: false,
