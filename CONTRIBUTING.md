@@ -195,7 +195,7 @@ import { describe, test, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
 ```
 
-Do not use `createTestContext()` from `test-helpers.ts` (legacy, being removed). Do not introduce Jest, Vitest, or other test frameworks.
+Do not introduce Jest, Vitest, or other test frameworks.
 
 ### Use `beforeEach`/`afterEach` or `t.after()` for cleanup — never `try`/`finally`
 
