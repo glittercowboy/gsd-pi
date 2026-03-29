@@ -430,6 +430,8 @@ export interface WidgetStateAccessors {
   isVerbose(): boolean;
   /** True while newSession() is in-flight — render must not access session state. */
   isSessionSwitching(): boolean;
+  /** Fully-qualified dispatched model ID (provider/id) set after model selection + hook overrides (#2899). */
+  getCurrentDispatchedModelId(): string | null;
 }
 
 export function updateProgressWidget(
@@ -609,9 +611,15 @@ export function updateProgressWidget(
         const cxPctVal = cxUsage?.percent ?? 0;
         const cxPct = cxUsage?.percent !== null ? cxPctVal.toFixed(1) : "?";
 
-        // Model display — shown in context section, not stats
-        const modelId = cmdCtx?.model?.id ?? "";
-        const modelProvider = cmdCtx?.model?.provider ?? "";
+        // Model display — prefer dispatched model ID (set after selectAndApplyModel
+        // + hook overrides) over cmdCtx?.model which can be stale (#2899).
+        const dispatchedModelId = accessors.getCurrentDispatchedModelId();
+        const modelId = dispatchedModelId
+          ? dispatchedModelId.split("/").slice(1).join("/") || dispatchedModelId
+          : (cmdCtx?.model?.id ?? "");
+        const modelProvider = dispatchedModelId
+          ? dispatchedModelId.split("/")[0] || ""
+          : (cmdCtx?.model?.provider ?? "");
         const tierIcon = resolveServiceTierIcon(effectiveServiceTier, modelId);
         const modelDisplay = (modelProvider && modelId
           ? `${modelProvider}/${modelId}`

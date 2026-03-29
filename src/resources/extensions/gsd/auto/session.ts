@@ -105,6 +105,8 @@ export class AutoSession {
   // ── Model state ──────────────────────────────────────────────────────────
   autoModeStartModel: StartModel | null = null;
   currentUnitModel: Model<Api> | null = null;
+  /** Fully-qualified model ID (provider/id) set after selectAndApplyModel + hook overrides (#2899). */
+  currentDispatchedModelId: string | null = null;
   originalModelId: string | null = null;
   originalModelProvider: string | null = null;
   lastBudgetAlertLevel: BudgetAlertLevel = 0;
@@ -193,6 +195,7 @@ export class AutoSession {
     // Model
     this.autoModeStartModel = null;
     this.currentUnitModel = null;
+    this.currentDispatchedModelId = null;
     this.originalModelId = null;
     this.originalModelProvider = null;
     this.lastBudgetAlertLevel = 0;
