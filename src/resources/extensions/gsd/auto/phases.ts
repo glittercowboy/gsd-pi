@@ -929,13 +929,10 @@ export async function runUnitPhase(
     },
   );
 
-  // Status bar + progress widget
+  // Status bar (widget + preconditions deferred until after model selection — see #2899)
   ctx.ui.setStatus("gsd-auto", "auto");
   if (mid)
     deps.updateSliceProgressCache(s.basePath, mid, state.activeSlice?.id);
-  deps.updateProgressWidget(ctx, unitType, unitId, state);
-
-  deps.ensurePreconditions(unitType, unitId, s.basePath, state);
 
   // Prompt injection
   let finalPrompt = prompt;
@@ -1042,6 +1039,17 @@ export async function runUnitPhase(
       );
     }
   }
+
+  // Store the final dispatched model ID so the dashboard can read it (#2899).
+  // This accounts for hook model overrides applied after selectAndApplyModel.
+  s.currentDispatchedModelId = s.currentUnitModel
+    ? `${(s.currentUnitModel as any).provider ?? ""}/${(s.currentUnitModel as any).id ?? ""}`
+    : null;
+
+  // Progress widget + preconditions — deferred to after model selection so the
+  // widget's first render tick shows the correct model (#2899).
+  deps.updateProgressWidget(ctx, unitType, unitId, state);
+  deps.ensurePreconditions(unitType, unitId, s.basePath, state);
 
   // Start unit supervision
   deps.clearUnitTimeout();
