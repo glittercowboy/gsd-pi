@@ -86,7 +86,7 @@ test("auto.ts buildLoopDeps wires rebuildState", () => {
   );
 
   // rebuildState should be in the LoopDeps object literal
-  const buildLoopDepsIdx = autoSrc.indexOf("function buildLoopDeps()");
+  const buildLoopDepsIdx = autoSrc.indexOf("function buildLoopDeps(");
   assert.ok(buildLoopDepsIdx > 0, "buildLoopDeps function should exist");
 
   const afterBuild = autoSrc.slice(buildLoopDepsIdx);
