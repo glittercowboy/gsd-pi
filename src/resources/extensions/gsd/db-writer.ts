@@ -316,6 +316,23 @@ export async function saveDecisionToDb(
       adapter?.prepare('DELETE FROM decisions WHERE id = :id').run({ ':id': id });
       throw diskErr;
     }
+    // #2661: When a decision defers a slice, update the slice status in the DB
+    // so the dispatcher skips it. Without this, STATE.md and DECISIONS.md are
+    // in split-brain: the decision says "deferred" but the state still says
+    // "active", causing auto-mode to keep dispatching the deferred work.
+    try {
+      const sliceRef = extractDeferredSliceRef(fields);
+      if (sliceRef) {
+        db.updateSliceStatus(sliceRef.milestoneId, sliceRef.sliceId, 'deferred');
+      }
+    } catch (deferErr) {
+      // Non-fatal — log but don't fail the decision save
+      logError('manifest', 'failed to update deferred slice status', {
+        fn: 'saveDecisionToDb',
+        error: String((deferErr as Error).message),
+      });
+    }
+
     // Invalidate file-read caches so deriveState() sees the updated markdown.
     // Do NOT clear the artifacts table — we just wrote to it intentionally.
     invalidateStateCache();
@@ -327,6 +344,39 @@ export async function saveDecisionToDb(
     logError('manifest', 'saveDecisionToDb failed', { fn: 'saveDecisionToDb', error: String((err as Error).message) });
     throw err;
   }
+}
+
+/**
+ * Extract a milestone/slice reference from a deferral decision.
+ *
+ * Detects deferrals by checking:
+ *   - scope contains "defer" (e.g., "deferral", "defer")
+ *   - choice or decision contains "defer" + an M###/S## pattern
+ *
+ * Returns { milestoneId, sliceId } if found, null otherwise.
+ */
+export function extractDeferredSliceRef(
+  fields: Pick<SaveDecisionFields, 'scope' | 'decision' | 'choice'>,
+): { milestoneId: string; sliceId: string } | null {
+  const isDeferral =
+    /\bdefer(?:ral|red)?\b/i.test(fields.scope) ||
+    /\bdefer(?:ral|red|ring|s)?\b/i.test(fields.choice) ||
+    /\bdefer(?:ral|red|ring|s)?\b/i.test(fields.decision);
+
+  if (!isDeferral) return null;
+
+  // Look for M###/S## pattern in choice first, then decision
+  const slicePattern = /\b(M\d{3,4})\/(S\d{2,3})\b/;
+  const choiceMatch = fields.choice.match(slicePattern);
+  if (choiceMatch) {
+    return { milestoneId: choiceMatch[1], sliceId: choiceMatch[2] };
+  }
+  const decisionMatch = fields.decision.match(slicePattern);
+  if (decisionMatch) {
+    return { milestoneId: decisionMatch[1], sliceId: decisionMatch[2] };
+  }
+
+  return null;
 }
 
 // ─── Update Requirement in DB + Regenerate Markdown ───────────────────────
