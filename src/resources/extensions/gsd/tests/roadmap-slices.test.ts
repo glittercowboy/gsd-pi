@@ -296,3 +296,100 @@ Do the second thing.
   assert.equal(slices[0]?.id, "S01");
   assert.equal(slices[1]?.id, "S02");
 });
+
+// ── Regression tests for #2567 ─────────────────────────────────────────────
+// Prose H3 parser fails on common LLM-generated patterns: numbered prefixes,
+// parenthetical numbering, bracketed IDs, and indented headings.
+
+test("parseRoadmapSlices: numbered H3 headers under ## Slices (#2567)", () => {
+  const numberedContent = `# M002: My Milestone
+
+**Vision:** Ship the product.
+
+## Slices
+
+### 1. S01: Setup Environment
+Set up the dev environment and tooling.
+
+### 2. S02: Build Core
+Implement the core logic.
+**Depends on:** S01
+
+### 3. S03: Polish UI
+Final polish and theming.
+**Depends on:** S01, S02
+`;
+  const slices = parseRoadmapSlices(numberedContent);
+  assert.equal(slices.length, 3, "should parse 3 slices from numbered H3 headers");
+  assert.equal(slices[0]?.id, "S01");
+  assert.equal(slices[0]?.title, "Setup Environment");
+  assert.equal(slices[1]?.id, "S02");
+  assert.deepEqual(slices[1]?.depends, ["S01"]);
+  assert.equal(slices[2]?.id, "S03");
+  assert.deepEqual(slices[2]?.depends, ["S01", "S02"]);
+});
+
+test("parseRoadmapSlices: parenthetical-numbered H3 headers (#2567)", () => {
+  const parenContent = `# M002: Milestone
+
+**Vision:** Ship.
+
+## Slices
+
+### (1) S01: Setup
+Setup work.
+
+### (2) S02: Build
+Build work.
+**Depends on:** S01
+`;
+  const slices = parseRoadmapSlices(parenContent);
+  assert.equal(slices.length, 2, "should parse slices with parenthetical numbering");
+  assert.equal(slices[0]?.id, "S01");
+  assert.equal(slices[0]?.title, "Setup");
+  assert.equal(slices[1]?.id, "S02");
+  assert.deepEqual(slices[1]?.depends, ["S01"]);
+});
+
+test("parseRoadmapSlices: bracketed slice IDs in H3 headers (#2567)", () => {
+  const bracketContent = `# M002: Milestone
+
+**Vision:** Ship.
+
+## Slices
+
+### [S01] Setup Environment
+Setup work.
+
+### [S02] Build Core
+Build work.
+**Depends on:** S01
+`;
+  const slices = parseRoadmapSlices(bracketContent);
+  assert.equal(slices.length, 2, "should parse slices with bracketed IDs");
+  assert.equal(slices[0]?.id, "S01");
+  assert.equal(slices[0]?.title, "Setup Environment");
+  assert.equal(slices[1]?.id, "S02");
+  assert.deepEqual(slices[1]?.depends, ["S01"]);
+});
+
+test("parseRoadmapSlices: indented H3 headers under ## Slices (#2567)", () => {
+  const indentedContent = `# M002: Milestone
+
+**Vision:** Ship.
+
+## Slices
+
+  ### S01: Setup
+  Setup work.
+
+  ### S02: Build
+  Build work.
+`;
+  const slices = parseRoadmapSlices(indentedContent);
+  assert.equal(slices.length, 2, "should parse slices from indented H3 headers");
+  assert.equal(slices[0]?.id, "S01");
+  assert.equal(slices[0]?.title, "Setup");
+  assert.equal(slices[1]?.id, "S02");
+  assert.equal(slices[1]?.title, "Build");
+});

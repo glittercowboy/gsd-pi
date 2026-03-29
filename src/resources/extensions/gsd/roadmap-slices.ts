@@ -219,13 +219,14 @@ export function parseRoadmapSlices(content: string): RoadmapSliceEntry[] {
 function parseProseSliceHeaders(content: string): RoadmapSliceEntry[] {
   const slices: RoadmapSliceEntry[] = [];
   // Match H1-H4 headers containing S<digits> with optional "Slice" prefix, bold markers,
-  // and optional checkmark completion marker before the slice ID.
+  // numeric prefixes (e.g., "1.", "(1)"), bracketed IDs (e.g., "[S01]"),
+  // optional checkmark completion marker, and optional leading indentation.
   // Separator after the ID is flexible: colon, dash, em/en dash, dot, or just whitespace.
-  const headerPattern = /^#{1,4}\s+\*{0,2}(?:\u2713\s+)?(?:Slice\s+)?(S\d+)\*{0,2}[:\s.\u2014\u2013-]*\s*(.+)/gm;
+  const headerPattern = /^\s*#{1,4}\s+\*{0,2}(?:\u2713\s+)?(?:\d+[.)]\s+)?(?:\(\d+\)\s+)?(?:Slice\s+)?\[?(S\d+)\]?\*{0,2}[:\s.\u2014\u2013-]*\s*(.+)/gm;
   let match: RegExpExecArray | null;
 
   // Check for checkmark before the slice ID (e.g., "## checkmark S01: Title")
-  const prefixCheckPattern = /^#{1,4}\s+\*{0,2}\u2713\s+/;
+  const prefixCheckPattern = /^\s*#{1,4}\s+\*{0,2}\u2713\s+/;
 
   while ((match = headerPattern.exec(content)) !== null) {
     const id = match[1]!;
@@ -251,7 +252,7 @@ function parseProseSliceHeaders(content: string): RoadmapSliceEntry[] {
 
     // Try to extract depends from prose: "Depends on: S01" or "**Depends on:** S01, S02"
     const afterHeader = content.slice(match.index + match[0].length);
-    const nextHeader = afterHeader.search(/^#{1,4}\s/m);
+    const nextHeader = afterHeader.search(/^\s*#{1,4}\s/m);
     const section = nextHeader !== -1 ? afterHeader.slice(0, nextHeader) : afterHeader.slice(0, 500);
 
     const depsMatch = section.match(/\*{0,2}Depends\s+on:?\*{0,2}\s*(.+)/i);
