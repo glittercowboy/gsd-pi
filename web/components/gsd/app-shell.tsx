@@ -87,6 +87,16 @@ function WorkspaceChrome() {
     return () => window.clearTimeout(restoreTimer)
   }, [projectPath, viewRestored])
 
+  // Reset viewRestored when projectPath changes so the restore effect can
+  // fire for the newly-selected project (fixes #2711: tab reset on switch).
+  const prevProjectPath = useRef(projectPath)
+  useEffect(() => {
+    if (prevProjectPath.current !== projectPath) {
+      prevProjectPath.current = projectPath
+      setViewRestored(false)
+    }
+  }, [projectPath])
+
   // Persist view changes to sessionStorage
   useEffect(() => {
     if (!projectPath) return
