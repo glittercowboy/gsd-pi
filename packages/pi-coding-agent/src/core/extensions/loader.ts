@@ -38,8 +38,8 @@ import type { ExecOptions } from "../exec.js";
 import { execCommand } from "../exec.js";
 import { getUntrustedExtensionPaths } from "./project-trust.js";
 export { isProjectTrusted, trustProject, getUntrustedExtensionPaths } from "./project-trust.js";
-import { mergeExtensionEntryPaths } from "../../../../../dist/extension-discovery.js";
-import { sortExtensionPaths } from "../../../../../dist/extension-sort.js";
+import { mergeExtensionEntryPaths } from "./extension-discovery.js";
+import { sortExtensionPaths } from "./extension-sort.js";
 import type {
 	Extension,
 	ExtensionAPI,
