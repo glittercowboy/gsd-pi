@@ -18,6 +18,22 @@ import { logWarning } from "./workflow-logger.js";
 import { deriveState } from "./state.js";
 import type { GSDState } from "./types.js";
 
+// ─── Helpers ─────────────────────────────────────────────────────────────
+
+/**
+ * Strip a leading ID prefix (e.g. "M001: " or "S04: ") from a title
+ * to prevent double-prefixing when the renderer adds its own prefix.
+ * Handles repeated prefixes (e.g. "M001: M001: M001: Title" → "Title").
+ */
+export function stripIdPrefix(title: string, id: string): string {
+  const prefix = `${id}: `;
+  let result = title;
+  while (result.startsWith(prefix)) {
+    result = result.slice(prefix.length);
+  }
+  return result.trim() || title;
+}
+
 // ─── PLAN.md Projection ──────────────────────────────────────────────────
 
 /**
@@ -30,7 +46,7 @@ export function renderPlanContent(sliceRow: SliceRow, taskRows: TaskRow[]): stri
   lines.push(`# ${sliceRow.id}: ${sliceRow.title}`);
   lines.push("");
   lines.push(`**Goal:** ${sliceRow.goal || sliceRow.full_summary_md || "TBD"}`);
-  lines.push(`**Demo:** After this: ${sliceRow.demo || sliceRow.full_uat_md || "TBD"}`);
+  lines.push(`**Demo:** After this: ${sliceRow.demo || "TBD"}`);
   lines.push("");
   lines.push("## Tasks");
 
@@ -94,7 +110,8 @@ export function renderPlanProjection(basePath: string, milestoneId: string, slic
 export function renderRoadmapContent(milestoneRow: MilestoneRow, sliceRows: SliceRow[]): string {
   const lines: string[] = [];
 
-  lines.push(`# ${milestoneRow.id}: ${milestoneRow.title}`);
+  const displayTitle = stripIdPrefix(milestoneRow.title, milestoneRow.id);
+  lines.push(`# ${milestoneRow.id}: ${displayTitle}`);
   lines.push("");
   lines.push("## Vision");
   lines.push(milestoneRow.vision || milestoneRow.title || "TBD");
@@ -113,7 +130,7 @@ export function renderRoadmapContent(milestoneRow: MilestoneRow, sliceRows: Slic
     }
 
     const risk = (slice.risk || "low").toLowerCase();
-    const demo = slice.demo || slice.full_uat_md || "TBD";
+    const demo = slice.demo || "TBD";
 
     lines.push(`| ${slice.id} | ${slice.title} | ${risk} | ${depends} | ${done} | ${demo} |`);
   }
@@ -236,10 +253,10 @@ export function renderStateContent(state: GSDState): string {
   lines.push("# GSD State", "");
 
   const activeMilestone = state.activeMilestone
-    ? `${state.activeMilestone.id}: ${state.activeMilestone.title}`
+    ? `${state.activeMilestone.id}: ${stripIdPrefix(state.activeMilestone.title, state.activeMilestone.id)}`
     : "None";
   const activeSlice = state.activeSlice
-    ? `${state.activeSlice.id}: ${state.activeSlice.title}`
+    ? `${state.activeSlice.id}: ${stripIdPrefix(state.activeSlice.title, state.activeSlice.id)}`
     : "None";
 
   lines.push(`**Active Milestone:** ${activeMilestone}`);
@@ -253,7 +270,7 @@ export function renderStateContent(state: GSDState): string {
 
   for (const entry of state.registry) {
     const glyph = entry.status === "complete" ? "\u2705" : entry.status === "active" ? "\uD83D\uDD04" : entry.status === "parked" ? "\u23F8\uFE0F" : "\u2B1C";
-    lines.push(`- ${glyph} **${entry.id}:** ${entry.title}`);
+    lines.push(`- ${glyph} **${entry.id}:** ${stripIdPrefix(entry.title, entry.id)}`);
   }
 
   lines.push("");
