@@ -44,6 +44,8 @@ export function formatPromptCost(cost: number): string {
  */
 export class FooterComponent implements Component {
 	private autoCompactEnabled = true;
+	private temporaryRightText: string | undefined = undefined;
+	private temporaryRightTimer: ReturnType<typeof setTimeout> | undefined = undefined;
 
 	constructor(
 		private session: AgentSession,
@@ -52,6 +54,24 @@ export class FooterComponent implements Component {
 
 	setAutoCompactEnabled(enabled: boolean): void {
 		this.autoCompactEnabled = enabled;
+	}
+
+	/**
+	 * Temporarily replace the right-side model text with a message.
+	 * Auto-clears after the specified duration (default 2s).
+	 */
+	setTemporaryRightText(text: string | undefined, durationMs = 2000): void {
+		if (this.temporaryRightTimer) {
+			clearTimeout(this.temporaryRightTimer);
+			this.temporaryRightTimer = undefined;
+		}
+		this.temporaryRightText = text;
+		if (text !== undefined && durationMs > 0) {
+			this.temporaryRightTimer = setTimeout(() => {
+				this.temporaryRightText = undefined;
+				this.temporaryRightTimer = undefined;
+			}, durationMs);
+		}
 	}
 
 	/**
@@ -172,13 +192,19 @@ export class FooterComponent implements Component {
 				thinkingLevel === "off" ? `${modelName} • thinking off` : `${modelName} • ${thinkingLevel}`;
 		}
 
-		// Prepend the provider in parentheses if there are multiple providers and there's enough room
-		let rightSide = rightSideWithoutProvider;
-		if (this.footerData.getAvailableProviderCount() > 1 && displayModel) {
-			rightSide = `(${displayModel.provider}) ${rightSideWithoutProvider}`;
-			if (statsLeftWidth + minPadding + visibleWidth(rightSide) > width) {
-				// Too wide, fall back
-				rightSide = rightSideWithoutProvider;
+		// Use temporary right text if set (e.g. "Press Escape again to clear input")
+		let rightSide: string;
+		if (this.temporaryRightText !== undefined) {
+			rightSide = this.temporaryRightText;
+		} else {
+			// Prepend the provider in parentheses if there are multiple providers and there's enough room
+			rightSide = rightSideWithoutProvider;
+			if (this.footerData.getAvailableProviderCount() > 1 && displayModel) {
+				rightSide = `(${displayModel.provider}) ${rightSideWithoutProvider}`;
+				if (statsLeftWidth + minPadding + visibleWidth(rightSide) > width) {
+					// Too wide, fall back
+					rightSide = rightSideWithoutProvider;
+				}
 			}
 		}
 

@@ -177,6 +177,8 @@ export class InteractiveMode {
 
 	private lastSigintTime = 0;
 	private lastEscapeTime = 0;
+	private escapePendingClear = false;
+	private escapePendingTimer: ReturnType<typeof setTimeout> | undefined = undefined;
 	private changelogMarkdown: string | undefined = undefined;
 
 	// Status line tracking (for mutating immediately-sequential status updates)
@@ -1877,7 +1879,27 @@ export class InteractiveMode {
 				this.editor.setText("");
 				this.isBashMode = false;
 				this.updateEditorBorderColor();
-			} else if (!this.editor.getText().trim()) {
+			} else if (this.editor.getText().trim()) {
+				// Double-escape with text in editor clears the input
+				if (this.escapePendingClear) {
+					if (this.escapePendingTimer) {
+						clearTimeout(this.escapePendingTimer);
+						this.escapePendingTimer = undefined;
+					}
+					this.editor.setText("");
+					this.footer.setTemporaryRightText(undefined);
+					this.escapePendingClear = false;
+				} else {
+					this.escapePendingClear = true;
+					this.footer.setTemporaryRightText("Press Escape again to clear input", 1500);
+					this.escapePendingTimer = setTimeout(() => {
+						this.escapePendingClear = false;
+						this.escapePendingTimer = undefined;
+						this.ui.requestRender();
+					}, 1500);
+				}
+				this.ui.requestRender();
+			} else {
 				// Double-escape with empty editor triggers /tree, /fork, or nothing based on setting
 				const action = this.settingsManager.getDoubleEscapeAction();
 				if (action !== "none") {
@@ -1922,6 +1944,16 @@ export class InteractiveMode {
 			this.isBashMode = text.trimStart().startsWith("!");
 			if (wasBashMode !== this.isBashMode) {
 				this.updateEditorBorderColor();
+			}
+			// Reset escape-to-clear flag when user resumes typing
+			if (this.escapePendingClear) {
+				this.escapePendingClear = false;
+				if (this.escapePendingTimer) {
+					clearTimeout(this.escapePendingTimer);
+					this.escapePendingTimer = undefined;
+				}
+				this.footer.setTemporaryRightText(undefined);
+				this.ui.requestRender();
 			}
 		};
 
