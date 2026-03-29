@@ -929,6 +929,23 @@ export async function runUnitPhase(
     },
   );
 
+  // Select and apply model (with tier escalation on retry — normal units only)
+  const modelResult = await deps.selectAndApplyModel(
+    ctx,
+    pi,
+    unitType,
+    unitId,
+    s.basePath,
+    prefs,
+    s.verbose,
+    s.autoModeStartModel,
+    sidecarItem ? undefined : { isRetry, previousTier },
+  );
+  s.currentUnitRouting =
+    modelResult.routing as AutoSession["currentUnitRouting"];
+  s.currentUnitModel =
+    modelResult.appliedModel as AutoSession["currentUnitModel"];
+
   // Status bar + progress widget
   ctx.ui.setStatus("gsd-auto", "auto");
   if (mid)
@@ -1000,23 +1017,6 @@ export async function runUnitPhase(
       reorderErr instanceof Error ? reorderErr.message : String(reorderErr);
     logWarning("engine", "Prompt reorder failed", { error: msg });
   }
-
-  // Select and apply model (with tier escalation on retry — normal units only)
-  const modelResult = await deps.selectAndApplyModel(
-    ctx,
-    pi,
-    unitType,
-    unitId,
-    s.basePath,
-    prefs,
-    s.verbose,
-    s.autoModeStartModel,
-    sidecarItem ? undefined : { isRetry, previousTier },
-  );
-  s.currentUnitRouting =
-    modelResult.routing as AutoSession["currentUnitRouting"];
-  s.currentUnitModel =
-    modelResult.appliedModel as AutoSession["currentUnitModel"];
 
   // Apply sidecar/pre-dispatch hook model override (takes priority over standard model selection)
   const hookModelOverride = sidecarItem?.model ?? iterData.hookModelOverride;
