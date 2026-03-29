@@ -329,7 +329,7 @@ describe("Tool-Compatibility Filter (ADR-005 Step 2)", () => {
 
       // Step 2: Route with the filtered model set
       const routingResult = resolveModelForComplexity(
-        { tier: "light", reason: "simple task", confidence: 0.9 },
+        { tier: "light", reason: "simple task", downgraded: false },
         { primary: "claude-haiku-4-5", fallbacks: [] },
         { enabled: true, cross_provider: true },
         compatibleModelIds, // <-- filtered set, NOT allModelIds
@@ -364,7 +364,7 @@ describe("Tool-Compatibility Filter (ADR-005 Step 2)", () => {
 
       // Routing should still work with the remaining compatible models
       const routingResult = resolveModelForComplexity(
-        { tier: "standard", reason: "moderate task", confidence: 0.8 },
+        { tier: "standard", reason: "moderate task", downgraded: false },
         { primary: "claude-sonnet-4-6", fallbacks: ["gpt-4o"] },
         { enabled: true, cross_provider: true },
         compatibleModelIds,
