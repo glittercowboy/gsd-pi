@@ -913,3 +913,49 @@ test("isolationDegraded is reset by session.reset() (#2483)", () => {
 
   assert.equal(s.isolationDegraded, false);
 });
+
+// ─── #2625 — Default isolation mode change must not orphan worktree commits ──
+
+test("mergeAndExit still merges when mode is 'none' but session is in a worktree (#2625)", () => {
+  // Scenario: user upgraded from a version where default was "worktree" to one
+  // where default is "none". They have an active worktree with committed work.
+  // mergeAndExit must detect the active worktree and merge regardless of config.
+  const s = makeSession({
+    basePath: "/project/.gsd/worktrees/M001",
+    originalBasePath: "/project",
+  });
+  const deps = makeDeps({
+    isInAutoWorktree: () => true,
+    getIsolationMode: () => "none", // config says "none" — but we ARE in a worktree
+  });
+  const ctx = makeNotifyCtx();
+  const resolver = new WorktreeResolver(s, deps);
+
+  resolver.mergeAndExit("M001", ctx);
+
+  // Must still merge — not skip silently
+  assert.equal(findCalls(deps.calls, "mergeMilestoneToMain").length, 1,
+    "must call mergeMilestoneToMain even when isolation mode is 'none' but we are in a worktree");
+  assert.equal(s.basePath, "/project", "basePath must be restored to project root");
+  assert.ok(ctx.messages.some((m) => m.msg.includes("merged to main")),
+    "must notify about the merge");
+});
+
+test("mergeAndExit in none mode remains a no-op when NOT in a worktree (#2625)", () => {
+  // When mode is "none" and we are genuinely not in a worktree, it should still be a no-op.
+  const s = makeSession({
+    basePath: "/project",
+    originalBasePath: "/project",
+  });
+  const deps = makeDeps({
+    isInAutoWorktree: () => false,
+    getIsolationMode: () => "none",
+  });
+  const ctx = makeNotifyCtx();
+  const resolver = new WorktreeResolver(s, deps);
+
+  resolver.mergeAndExit("M001", ctx);
+
+  assert.equal(findCalls(deps.calls, "mergeMilestoneToMain").length, 0,
+    "must NOT merge when not in a worktree and mode is none");
+});

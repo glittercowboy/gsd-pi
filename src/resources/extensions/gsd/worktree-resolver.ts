@@ -350,7 +350,13 @@ export class WorktreeResolver {
       data: { milestoneId, mode },
     });
 
-    if (mode === "none") {
+    // #2625: If we are physically inside an auto-worktree, we MUST merge
+    // regardless of the current isolation config. This prevents data loss when
+    // the default isolation mode changes between versions (e.g., "worktree" ->
+    // "none"): the worktree branch still holds real commits that need merging.
+    const inWorktree = this.deps.isInAutoWorktree(this.s.basePath) && this.s.originalBasePath;
+
+    if (mode === "none" && !inWorktree) {
       debugLog("WorktreeResolver", {
         action: "mergeAndExit",
         milestoneId,
@@ -361,8 +367,7 @@ export class WorktreeResolver {
     }
 
     if (
-      mode === "worktree" ||
-      (this.deps.isInAutoWorktree(this.s.basePath) && this.s.originalBasePath)
+      mode === "worktree" || inWorktree
     ) {
       this._mergeWorktreeMode(milestoneId, ctx);
     } else if (mode === "branch") {

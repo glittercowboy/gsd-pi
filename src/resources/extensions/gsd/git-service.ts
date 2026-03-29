@@ -50,9 +50,9 @@ export interface GitPreferences {
   main_branch?: string;
   merge_strategy?: "squash" | "merge";
   /** Controls auto-mode git isolation strategy.
-   *  - "worktree": (default) creates a milestone worktree for isolated work
+   *  - "worktree": creates a milestone worktree for isolated work
    *  - "branch": works directly in the project root (for submodule-heavy repos)
-   *  - "none": no git isolation — commits land on the user's current branch directly
+   *  - "none": (default) no git isolation — commits land on the user's current branch directly
    */
   isolation?: "worktree" | "branch" | "none";
   /** When false, GSD will not modify .gitignore at all — no baseline patterns
