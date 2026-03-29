@@ -45,58 +45,73 @@ export interface CompleteSliceResult {
 function renderSliceSummaryMarkdown(params: CompleteSliceParams): string {
   const now = new Date().toISOString();
 
-  const providesYaml = params.provides.length > 0
-    ? params.provides.map(p => `  - ${p}`).join("\n")
+  // Apply defaults for optional enrichment arrays (#2771)
+  const provides = params.provides ?? [];
+  const requires = params.requires ?? [];
+  const affects = params.affects ?? [];
+  const keyFiles = params.keyFiles ?? [];
+  const keyDecisions = params.keyDecisions ?? [];
+  const patternsEstablished = params.patternsEstablished ?? [];
+  const observabilitySurfaces = params.observabilitySurfaces ?? [];
+  const drillDownPaths = params.drillDownPaths ?? [];
+  const requirementsAdvanced = params.requirementsAdvanced ?? [];
+  const requirementsValidated = params.requirementsValidated ?? [];
+  const requirementsSurfaced = params.requirementsSurfaced ?? [];
+  const requirementsInvalidated = params.requirementsInvalidated ?? [];
+  const filesModified = params.filesModified ?? [];
+
+  const providesYaml = provides.length > 0
+    ? provides.map(p => `  - ${p}`).join("\n")
     : "  - (none)";
 
-  const requiresYaml = params.requires.length > 0
-    ? params.requires.map(r => `  - slice: ${r.slice}\n    provides: ${r.provides}`).join("\n")
+  const requiresYaml = requires.length > 0
+    ? requires.map(r => `  - slice: ${r.slice}\n    provides: ${r.provides}`).join("\n")
     : "  []";
 
-  const affectsYaml = params.affects.length > 0
-    ? params.affects.map(a => `  - ${a}`).join("\n")
+  const affectsYaml = affects.length > 0
+    ? affects.map(a => `  - ${a}`).join("\n")
     : "  []";
 
-  const keyFilesYaml = params.keyFiles.length > 0
-    ? params.keyFiles.map(f => `  - ${f}`).join("\n")
+  const keyFilesYaml = keyFiles.length > 0
+    ? keyFiles.map(f => `  - ${f}`).join("\n")
     : "  - (none)";
 
-  const keyDecisionsYaml = params.keyDecisions.length > 0
-    ? params.keyDecisions.map(d => `  - ${d}`).join("\n")
+  const keyDecisionsYaml = keyDecisions.length > 0
+    ? keyDecisions.map(d => `  - ${d}`).join("\n")
     : "  - (none)";
 
-  const patternsYaml = params.patternsEstablished.length > 0
-    ? params.patternsEstablished.map(p => `  - ${p}`).join("\n")
+  const patternsYaml = patternsEstablished.length > 0
+    ? patternsEstablished.map(p => `  - ${p}`).join("\n")
     : "  - (none)";
 
-  const observabilityYaml = params.observabilitySurfaces.length > 0
-    ? params.observabilitySurfaces.map(o => `  - ${o}`).join("\n")
+  const observabilityYaml = observabilitySurfaces.length > 0
+    ? observabilitySurfaces.map(o => `  - ${o}`).join("\n")
     : "  - none";
 
-  const drillDownYaml = params.drillDownPaths.length > 0
-    ? params.drillDownPaths.map(d => `  - ${d}`).join("\n")
+  const drillDownYaml = drillDownPaths.length > 0
+    ? drillDownPaths.map(d => `  - ${d}`).join("\n")
     : "  []";
 
   // Requirements sections
-  const reqAdvanced = params.requirementsAdvanced.length > 0
-    ? params.requirementsAdvanced.map(r => `- ${r.id} — ${r.how}`).join("\n")
+  const reqAdvanced = requirementsAdvanced.length > 0
+    ? requirementsAdvanced.map(r => `- ${r.id} — ${r.how}`).join("\n")
     : "None.";
 
-  const reqValidated = params.requirementsValidated.length > 0
-    ? params.requirementsValidated.map(r => `- ${r.id} — ${r.proof}`).join("\n")
+  const reqValidated = requirementsValidated.length > 0
+    ? requirementsValidated.map(r => `- ${r.id} — ${r.proof}`).join("\n")
     : "None.";
 
-  const reqSurfaced = params.requirementsSurfaced.length > 0
-    ? params.requirementsSurfaced.map(r => `- ${r}`).join("\n")
+  const reqSurfaced = requirementsSurfaced.length > 0
+    ? requirementsSurfaced.map(r => `- ${r}`).join("\n")
     : "None.";
 
-  const reqInvalidated = params.requirementsInvalidated.length > 0
-    ? params.requirementsInvalidated.map(r => `- ${r.id} — ${r.what}`).join("\n")
+  const reqInvalidated = requirementsInvalidated.length > 0
+    ? requirementsInvalidated.map(r => `- ${r.id} — ${r.what}`).join("\n")
     : "None.";
 
   // Files modified
-  const filesMod = params.filesModified.length > 0
-    ? params.filesModified.map(f => `- \`${f.path}\` — ${f.description}`).join("\n")
+  const filesMod = filesModified.length > 0
+    ? filesModified.map(f => `- \`${f.path}\` — ${f.description}`).join("\n")
     : "None.";
 
   return `---

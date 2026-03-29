@@ -31,24 +31,34 @@ export interface PlanMilestoneSliceInput {
 export interface PlanMilestoneParams {
   milestoneId: string;
   title: string;
+  vision: string;
+  slices: PlanMilestoneSliceInput[];
   status?: string;
   dependsOn?: string[];
   /** Optional caller-provided identity for audit trail */
   actorName?: string;
   /** Optional caller-provided reason this action was triggered */
   triggerReason?: string;
-  vision: string;
-  successCriteria: string[];
-  keyRisks: Array<{ risk: string; whyItMatters: string }>;
-  proofStrategy: Array<{ riskOrUnknown: string; retireIn: string; whatWillBeProven: string }>;
-  verificationContract: string;
-  verificationIntegration: string;
-  verificationOperational: string;
-  verificationUat: string;
-  definitionOfDone: string[];
-  requirementCoverage: string;
-  boundaryMapMarkdown: string;
-  slices: PlanMilestoneSliceInput[];
+  /** @optional — defaults to [] when omitted by models with limited tool-calling */
+  successCriteria?: string[];
+  /** @optional — defaults to [] when omitted */
+  keyRisks?: Array<{ risk: string; whyItMatters: string }>;
+  /** @optional — defaults to [] when omitted */
+  proofStrategy?: Array<{ riskOrUnknown: string; retireIn: string; whatWillBeProven: string }>;
+  /** @optional — defaults to "Not provided." when omitted */
+  verificationContract?: string;
+  /** @optional — defaults to "Not provided." when omitted */
+  verificationIntegration?: string;
+  /** @optional — defaults to "Not provided." when omitted */
+  verificationOperational?: string;
+  /** @optional — defaults to "Not provided." when omitted */
+  verificationUat?: string;
+  /** @optional — defaults to [] when omitted */
+  definitionOfDone?: string[];
+  /** @optional — defaults to "Not provided." when omitted */
+  requirementCoverage?: string;
+  /** @optional — defaults to "Not provided." when omitted */
+  boundaryMapMarkdown?: string;
 }
 
 export interface PlanMilestoneResult {
@@ -147,20 +157,21 @@ function validateParams(params: PlanMilestoneParams): PlanMilestoneParams {
   if (!isNonEmptyString(params?.milestoneId)) throw new Error("milestoneId is required");
   if (!isNonEmptyString(params?.title)) throw new Error("title is required");
   if (!isNonEmptyString(params?.vision)) throw new Error("vision is required");
-  if (!isNonEmptyString(params?.verificationContract)) throw new Error("verificationContract is required");
-  if (!isNonEmptyString(params?.verificationIntegration)) throw new Error("verificationIntegration is required");
-  if (!isNonEmptyString(params?.verificationOperational)) throw new Error("verificationOperational is required");
-  if (!isNonEmptyString(params?.verificationUat)) throw new Error("verificationUat is required");
-  if (!isNonEmptyString(params?.requirementCoverage)) throw new Error("requirementCoverage is required");
-  if (!isNonEmptyString(params?.boundaryMapMarkdown)) throw new Error("boundaryMapMarkdown is required");
 
   return {
     ...params,
     dependsOn: params.dependsOn ? validateStringArray(params.dependsOn, "dependsOn") : [],
-    successCriteria: validateStringArray(params.successCriteria, "successCriteria"),
-    keyRisks: validateRiskEntries(params.keyRisks),
-    proofStrategy: validateProofStrategy(params.proofStrategy),
-    definitionOfDone: validateStringArray(params.definitionOfDone, "definitionOfDone"),
+    // Apply defaults for optional enrichment fields (#2771)
+    successCriteria: params.successCriteria ? validateStringArray(params.successCriteria, "successCriteria") : [],
+    keyRisks: params.keyRisks ? validateRiskEntries(params.keyRisks) : [],
+    proofStrategy: params.proofStrategy ? validateProofStrategy(params.proofStrategy) : [],
+    verificationContract: params.verificationContract ?? "Not provided.",
+    verificationIntegration: params.verificationIntegration ?? "Not provided.",
+    verificationOperational: params.verificationOperational ?? "Not provided.",
+    verificationUat: params.verificationUat ?? "Not provided.",
+    definitionOfDone: params.definitionOfDone ? validateStringArray(params.definitionOfDone, "definitionOfDone") : [],
+    requirementCoverage: params.requirementCoverage ?? "Not provided.",
+    boundaryMapMarkdown: params.boundaryMapMarkdown ?? "Not provided.",
     slices: validateSlices(params.slices),
   };
 }

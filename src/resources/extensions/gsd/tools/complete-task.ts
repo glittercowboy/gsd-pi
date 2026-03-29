@@ -47,17 +47,24 @@ export interface CompleteTaskResult {
  */
 function renderSummaryMarkdown(params: CompleteTaskParams): string {
   const now = new Date().toISOString();
-  const keyFilesYaml = params.keyFiles.length > 0
-    ? params.keyFiles.map(f => `  - ${f}`).join("\n")
+
+  // Apply defaults for optional enrichment fields (#2771)
+  const keyFiles = params.keyFiles ?? [];
+  const keyDecisions = params.keyDecisions ?? [];
+  const verificationEvidence = params.verificationEvidence ?? [];
+  const blockerDiscovered = params.blockerDiscovered ?? false;
+
+  const keyFilesYaml = keyFiles.length > 0
+    ? keyFiles.map(f => `  - ${f}`).join("\n")
     : "  - (none)";
-  const keyDecisionsYaml = params.keyDecisions.length > 0
-    ? params.keyDecisions.map(d => `  - ${d}`).join("\n")
+  const keyDecisionsYaml = keyDecisions.length > 0
+    ? keyDecisions.map(d => `  - ${d}`).join("\n")
     : "  - (none)";
 
   // Build verification evidence table rows
   let evidenceTable = "| # | Command | Exit Code | Verdict | Duration |\n|---|---------|-----------|---------|----------|\n";
-  if (params.verificationEvidence.length > 0) {
-    params.verificationEvidence.forEach((e, i) => {
+  if (verificationEvidence.length > 0) {
+    verificationEvidence.forEach((e, i) => {
       evidenceTable += `| ${i + 1} | \`${e.command}\` | ${e.exitCode} | ${e.verdict} | ${e.durationMs}ms |\n`;
     });
   } else {
@@ -65,9 +72,9 @@ function renderSummaryMarkdown(params: CompleteTaskParams): string {
   }
 
   // Determine verification_result from evidence
-  const allPassed = params.verificationEvidence.length > 0 &&
-    params.verificationEvidence.every(e => e.exitCode === 0 || e.verdict.includes("✅") || e.verdict.toLowerCase().includes("pass"));
-  const verificationResult = allPassed ? "passed" : (params.verificationEvidence.length === 0 ? "untested" : "mixed");
+  const allPassed = verificationEvidence.length > 0 &&
+    verificationEvidence.every(e => e.exitCode === 0 || e.verdict.includes("✅") || e.verdict.toLowerCase().includes("pass"));
+  const verificationResult = allPassed ? "passed" : (verificationEvidence.length === 0 ? "untested" : "mixed");
 
   // Extract a title from the oneLiner or taskId
   const title = params.oneLiner || params.taskId;
@@ -83,7 +90,7 @@ ${keyDecisionsYaml}
 duration: ""
 verification_result: ${verificationResult}
 completed_at: ${now}
-blocker_discovered: ${params.blockerDiscovered}
+blocker_discovered: ${blockerDiscovered}
 ---
 
 # ${params.taskId}: ${title}
@@ -112,7 +119,7 @@ ${params.knownIssues || "None."}
 
 ## Files Created/Modified
 
-${params.keyFiles.map(f => `- \`${f}\``).join("\n") || "None."}
+${keyFiles.map(f => `- \`${f}\``).join("\n") || "None."}
 `;
 }
 
@@ -190,14 +197,14 @@ export async function handleCompleteTask(
       narrative: params.narrative,
       verificationResult: params.verification,
       duration: "",
-      blockerDiscovered: params.blockerDiscovered,
-      deviations: params.deviations,
-      knownIssues: params.knownIssues,
-      keyFiles: params.keyFiles,
-      keyDecisions: params.keyDecisions,
+      blockerDiscovered: params.blockerDiscovered ?? false,
+      deviations: params.deviations ?? "None.",
+      knownIssues: params.knownIssues ?? "None.",
+      keyFiles: params.keyFiles ?? [],
+      keyDecisions: params.keyDecisions ?? [],
     });
 
-    for (const evidence of params.verificationEvidence) {
+    for (const evidence of (params.verificationEvidence ?? [])) {
       insertVerificationEvidence({
         taskId: params.taskId,
         sliceId: params.sliceId,

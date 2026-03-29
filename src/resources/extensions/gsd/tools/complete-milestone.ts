@@ -29,15 +29,23 @@ export interface CompleteMilestoneParams {
   title: string;
   oneLiner: string;
   narrative: string;
-  successCriteriaResults: string;
-  definitionOfDoneResults: string;
-  requirementOutcomes: string;
-  keyDecisions: string[];
-  keyFiles: string[];
-  lessonsLearned: string[];
-  followUps: string;
-  deviations: string;
   verificationPassed: boolean;
+  /** @optional — defaults to "Not provided." when omitted by models with limited tool-calling */
+  successCriteriaResults?: string;
+  /** @optional — defaults to "Not provided." when omitted */
+  definitionOfDoneResults?: string;
+  /** @optional — defaults to "Not provided." when omitted */
+  requirementOutcomes?: string;
+  /** @optional — defaults to [] when omitted */
+  keyDecisions?: string[];
+  /** @optional — defaults to [] when omitted */
+  keyFiles?: string[];
+  /** @optional — defaults to [] when omitted */
+  lessonsLearned?: string[];
+  /** @optional — defaults to "None." when omitted */
+  followUps?: string;
+  /** @optional — defaults to "None." when omitted */
+  deviations?: string;
   /** Optional caller-provided identity for audit trail */
   actorName?: string;
   /** Optional caller-provided reason this action was triggered */
@@ -52,16 +60,21 @@ export interface CompleteMilestoneResult {
 function renderMilestoneSummaryMarkdown(params: CompleteMilestoneParams): string {
   const now = new Date().toISOString();
 
-  const keyDecisionsYaml = params.keyDecisions.length > 0
-    ? params.keyDecisions.map(d => `  - ${d}`).join("\n")
+  // Apply defaults for optional enrichment fields (#2771)
+  const keyDecisions = params.keyDecisions ?? [];
+  const keyFiles = params.keyFiles ?? [];
+  const lessonsLearned = params.lessonsLearned ?? [];
+
+  const keyDecisionsYaml = keyDecisions.length > 0
+    ? keyDecisions.map(d => `  - ${d}`).join("\n")
     : "  - (none)";
 
-  const keyFilesYaml = params.keyFiles.length > 0
-    ? params.keyFiles.map(f => `  - ${f}`).join("\n")
+  const keyFilesYaml = keyFiles.length > 0
+    ? keyFiles.map(f => `  - ${f}`).join("\n")
     : "  - (none)";
 
-  const lessonsYaml = params.lessonsLearned.length > 0
-    ? params.lessonsLearned.map(l => `  - ${l}`).join("\n")
+  const lessonsYaml = lessonsLearned.length > 0
+    ? lessonsLearned.map(l => `  - ${l}`).join("\n")
     : "  - (none)";
 
   return `---
@@ -87,15 +100,15 @@ ${params.narrative}
 
 ## Success Criteria Results
 
-${params.successCriteriaResults}
+${params.successCriteriaResults ?? "Not provided."}
 
 ## Definition of Done Results
 
-${params.definitionOfDoneResults}
+${params.definitionOfDoneResults ?? "Not provided."}
 
 ## Requirement Outcomes
 
-${params.requirementOutcomes}
+${params.requirementOutcomes ?? "Not provided."}
 
 ## Deviations
 
