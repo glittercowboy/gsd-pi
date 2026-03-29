@@ -82,7 +82,7 @@ function parseTableSlices(section: string): RoadmapSliceEntry[] {
     const fullRow = line.toLowerCase();
     const done =
       /\[x\]/i.test(line) ||
-      /[✅☑✓]/.test(line) ||
+      /[✅☑✓✔]/.test(line) ||
       /\bdone\b/.test(fullRow) ||
       /\bcomplete(?:d)?\b/.test(fullRow);
 

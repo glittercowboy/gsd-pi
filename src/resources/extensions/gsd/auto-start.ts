@@ -58,7 +58,7 @@ import { initRoutingHistory } from "./routing-history.js";
 import { restoreHookState, resetHookState } from "./post-unit-hooks.js";
 import { resetProactiveHealing, setLevelChangeCallback } from "./doctor-proactive.js";
 import { snapshotSkills } from "./skill-discovery.js";
-import { isDbAvailable, getMilestone } from "./gsd-db.js";
+import { isDbAvailable, getMilestone, openDatabase } from "./gsd-db.js";
 import { hideFooter } from "./auto-dashboard.js";
 import {
   debugLog,
@@ -126,6 +126,20 @@ async function openProjectDbIfPresent(basePath: string): Promise<void> {
  *  cycles indefinitely when the discuss workflow doesn't produce a milestone. */
 let _consecutiveCompleteBootstraps = 0;
 const MAX_CONSECUTIVE_COMPLETE_BOOTSTRAPS = 2;
+
+export async function openProjectDbIfPresent(basePath: string): Promise<void> {
+  const gsdDbPath = resolveProjectRootDbPath(basePath);
+  if (!existsSync(gsdDbPath) || isDbAvailable()) return;
+
+  try {
+    openDatabase(gsdDbPath);
+  } catch (err) {
+    process.stderr.write(
+      `gsd-db: failed to open existing database: ${(err as Error).message}\n`,
+    );
+  }
+}
+
 export async function bootstrapAutoSession(
   s: AutoSession,
   ctx: ExtensionCommandContext,
