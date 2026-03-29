@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, lstatSync, readdirSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, lstatSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 
 import { loadFile, parseSummary, saveFile, parseTaskPlanMustHaves, countMustHavesMentionedInSummary } from "./files.js";
@@ -544,18 +544,33 @@ export async function runGSDDoctor(basePath: string, options?: { fix?: boolean; 
       // Validate slice title for delimiter characters.
       const sliceTitleIssue = validateTitle(slice.title);
       if (sliceTitleIssue) {
-        // Slice titles live inside the roadmap H1/checkbox lines — the milestone-level
-        // fix above already sanitizes the roadmap file. For slices we only report, because
-        // the title comes from the checkbox text and requires careful regex to fix safely.
-        issues.push({
-          severity: "warning",
-          code: "delimiter_in_title",
-          scope: "slice",
-          unitId,
-          message: `Slice ${unitId} ${sliceTitleIssue}. Rename the slice to remove these characters to prevent state corruption.`,
-          file: relMilestoneFile(basePath, milestoneId, "ROADMAP"),
-          fixable: false,
-        });
+        let wasFixed = false;
+        if (shouldFix("delimiter_in_title") && roadmapPath) {
+          try {
+            const raw = readFileSync(roadmapPath, "utf-8");
+            // Replace em/en dashes only on slice checkbox lines (- [ ] **Sxx: ...)
+            const sanitized = raw.replace(
+              /^(- \[[ xX]\] \*\*S\d+:[^*]*)(\*\*.*)?$/gm,
+              (line) => line.replace(/[\u2014\u2013]/g, "-"),
+            );
+            if (sanitized !== raw) {
+              await saveFile(roadmapPath, sanitized);
+              fixesApplied.push(`sanitized delimiter characters in ${unitId} slice title`);
+              wasFixed = true;
+            }
+          } catch { /* non-fatal */ }
+        }
+        if (!wasFixed) {
+          issues.push({
+            severity: "warning",
+            code: "delimiter_in_title",
+            scope: "slice",
+            unitId,
+            message: `Slice ${unitId} ${sliceTitleIssue}. Rename the slice to remove these characters to prevent state corruption.`,
+            file: relMilestoneFile(basePath, milestoneId, "ROADMAP"),
+            fixable: true,
+          });
+        }
       }
 
       // Check for unresolvable dependency IDs
@@ -667,9 +682,23 @@ export async function runGSDDoctor(basePath: string, options?: { fix?: boolean; 
             if (!f.endsWith("-SUMMARY.md")) continue;
             const diskTaskId = f.replace(/-SUMMARY\.md$/, "");
             if (!planTaskIds.has(diskTaskId)) {
-              issues.push({ severity: "info", code: "task_file_not_in_plan", scope: "slice", unitId,
-                message: `Task summary "${f}" exists on disk but "${diskTaskId}" is not in ${slice.id}-PLAN.md`,
-                file: relTaskFile(basePath, milestoneId, slice.id, diskTaskId, "SUMMARY"), fixable: false });
+              const summaryFile = relTaskFile(basePath, milestoneId, slice.id, diskTaskId, "SUMMARY");
+              const planFile = relTaskFile(basePath, milestoneId, slice.id, diskTaskId, "PLAN");
+              let wasFixed = false;
+              if (shouldFix("task_file_not_in_plan") && tasksDir) {
+                try {
+                  const summaryAbs = join(tasksDir, f);
+                  if (existsSync(summaryAbs)) { rmSync(summaryAbs); fixesApplied.push(`removed orphan ${summaryAbs}`); }
+                  const planAbs = join(tasksDir, `${diskTaskId}-PLAN.md`);
+                  if (existsSync(planAbs)) { rmSync(planAbs); fixesApplied.push(`removed orphan ${planAbs}`); }
+                  wasFixed = true;
+                } catch { /* non-fatal */ }
+              }
+              if (!wasFixed) {
+                issues.push({ severity: "info", code: "task_file_not_in_plan", scope: "slice", unitId,
+                  message: `Task summary "${f}" exists on disk but "${diskTaskId}" is not in ${slice.id}-PLAN.md`,
+                  file: summaryFile, fixable: true });
+              }
             }
           }
         }
