@@ -502,11 +502,15 @@ function buildSnapshotOpts(
   continueHereFired?: boolean;
   promptCharCount?: number;
   baselineCharCount?: number;
+  model?: string;
 } & Record<string, unknown> {
   return {
     promptCharCount: s.lastPromptCharCount,
     baselineCharCount: s.lastBaselineCharCount,
     ...(s.currentUnitRouting ?? {}),
+    ...(s.currentUnitModel
+      ? { model: `${s.currentUnitModel.provider}/${s.currentUnitModel.id}` }
+      : {}),
   };
 }
 
@@ -859,7 +863,14 @@ export async function pauseAuto(
   // Close out the current unit so its runtime record doesn't stay at "dispatched"
   if (s.currentUnit && ctx) {
     try {
-      await closeoutUnit(ctx, s.basePath, s.currentUnit.type, s.currentUnit.id, s.currentUnit.startedAt);
+      await closeoutUnit(
+        ctx,
+        s.basePath,
+        s.currentUnit.type,
+        s.currentUnit.id,
+        s.currentUnit.startedAt,
+        buildSnapshotOpts(s.currentUnit.type, s.currentUnit.id),
+      );
     } catch {
       // Non-fatal — best-effort closeout on pause
     }

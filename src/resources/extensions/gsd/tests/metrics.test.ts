@@ -22,8 +22,10 @@ import {
   initMetrics,
   resetMetrics,
   getLedger,
+  loadLedgerFromDisk,
   snapshotUnitMetrics,
 } from "../metrics.js";
+import { closeoutUnit } from "../auto-unit-closeout.js";
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -246,6 +248,39 @@ test("initMetrics creates ledger, snapshotUnitMetrics persists across resets", (
     const emptyUnit = snapshotUnitMetrics(mockCtx([]), "plan-slice", "M001/S01", Date.now(), "test-model");
     assert.equal(emptyUnit, null);
     assert.equal(getLedger()!.units.length, 1);
+  } finally {
+    resetMetrics();
+    rmSync(tmpBase, { recursive: true, force: true });
+  }
+});
+
+test("closeoutUnit prefers explicit per-unit model over ctx.model when snapshotting metrics", async () => {
+  const tmpBase = mkdtempSync(join(tmpdir(), "gsd-closeout-model-"));
+  mkdirSync(join(tmpBase, ".gsd"), { recursive: true });
+
+  try {
+    resetMetrics();
+    initMetrics(tmpBase);
+
+    const ctx = mockCtx([
+      {
+        role: "assistant",
+        content: [{ type: "toolCall", name: "Read", input: { file: "foo.ts" } }],
+        usage: {
+          input: 1000, output: 500, cacheRead: 0, cacheWrite: 0, totalTokens: 1500,
+          cost: 0.01,
+        },
+      },
+    ]);
+
+    await closeoutUnit(ctx, tmpBase, "execute-task", "M001/S01/T01", Date.now() - 3000, {
+      model: "openai-codex/gpt-5.3-codex",
+    });
+
+    const ledger = loadLedgerFromDisk(tmpBase);
+    assert.ok(ledger);
+    assert.equal(ledger!.units.length, 1);
+    assert.equal(ledger!.units[0].model, "openai-codex/gpt-5.3-codex");
   } finally {
     resetMetrics();
     rmSync(tmpBase, { recursive: true, force: true });

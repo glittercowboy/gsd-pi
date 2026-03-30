@@ -14,6 +14,7 @@ export interface CloseoutOptions {
   tier?: string;
   modelDowngraded?: boolean;
   continueHereFired?: boolean;
+  model?: string;
 }
 
 /**
@@ -28,7 +29,8 @@ export async function closeoutUnit(
   startedAt: number,
   opts?: CloseoutOptions,
 ): Promise<string | undefined> {
-  const modelId = ctx.model?.id ?? "unknown";
+  const modelId = opts?.model
+    ?? (ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : "unknown");
   snapshotUnitMetrics(ctx, unitType, unitId, startedAt, modelId, opts);
   const activityFile = saveActivityLog(ctx, basePath, unitType, unitId);
 
