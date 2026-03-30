@@ -566,6 +566,20 @@ if (!cliFlags.worktree && !isPrintMode) {
 }
 
 // ---------------------------------------------------------------------------
+// Auto-redirect: `gsd auto` with piped stdout → headless mode (#2732)
+// When stdout is not a TTY (e.g. `gsd auto | cat`, `gsd auto > file`),
+// the TUI cannot render and the process hangs. Redirect to headless mode
+// which handles non-interactive output gracefully.
+// ---------------------------------------------------------------------------
+if (cliFlags.messages[0] === 'auto' && !process.stdout.isTTY) {
+  await ensureRtkBootstrap()
+  const { runHeadless, parseHeadlessArgs } = await import('./headless.js')
+  process.stderr.write('[gsd] stdout is not a terminal — running auto-mode in headless mode.\n')
+  await runHeadless(parseHeadlessArgs(['node', 'gsd', 'headless', ...cliFlags.messages.slice(1)]))
+  process.exit(0)
+}
+
+// ---------------------------------------------------------------------------
 // Interactive mode — normal TTY session
 // ---------------------------------------------------------------------------
 
@@ -662,14 +676,20 @@ if (enabledModelPatterns && enabledModelPatterns.length > 0) {
   }
 }
 
-if (!process.stdin.isTTY) {
-  process.stderr.write('[gsd] Error: Interactive mode requires a terminal (TTY).\n')
+if (!process.stdin.isTTY || !process.stdout.isTTY) {
+  const missing = !process.stdin.isTTY && !process.stdout.isTTY
+    ? 'stdin and stdout are'
+    : !process.stdin.isTTY
+      ? 'stdin is'
+      : 'stdout is'
+  process.stderr.write(`[gsd] Error: Interactive mode requires a terminal (TTY) but ${missing} not a TTY.\n`)
   process.stderr.write('[gsd] Non-interactive alternatives:\n')
   process.stderr.write('[gsd]   gsd --print "your message"     Single-shot prompt\n')
   process.stderr.write('[gsd]   gsd --web [path]               Browser-only web mode\n')
   process.stderr.write('[gsd]   gsd --mode rpc                 JSON-RPC over stdin/stdout\n')
   process.stderr.write('[gsd]   gsd --mode mcp                 MCP server over stdin/stdout\n')
   process.stderr.write('[gsd]   gsd --mode text "message"      Text output mode\n')
+  process.stderr.write('[gsd]   gsd headless                   Auto-mode without TUI\n')
   process.exit(1)
 }
 
