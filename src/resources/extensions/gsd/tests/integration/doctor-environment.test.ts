@@ -18,6 +18,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, utimesSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { tmpdir } from "node:os";
+import { execSync } from "node:child_process";
 
 import {
   runEnvironmentChecks,
@@ -25,6 +26,7 @@ import {
   environmentResultsToDoctorIssues,
   formatEnvironmentReport,
   checkEnvironmentHealth,
+  checkGitRemote,
   type EnvironmentCheckResult,
 } from "../../doctor-environment.ts";
 function createProjectDir(files: Record<string, string> = {}): string {
@@ -394,6 +396,46 @@ describe('doctor-environment', async () => {
       // Just verify it ran without error
       assert.ok(true, "port check with script-detected ports runs without error");
     }
+
+    // ── Git Remote Reachability ────────────────────────────────────────
+    test('git_remote: returns null for non-git directory', () => {
+      const dir = createProjectDir();
+      cleanups.push(dir);
+      const result = checkGitRemote(dir);
+      assert.strictEqual(result, null, "no remote check for non-git dir");
+    });
+
+    test('git_remote: returns null for git repo with no remote', () => {
+      const dir = createProjectDir();
+      cleanups.push(dir);
+      execSync("git init", { cwd: dir, stdio: "ignore" });
+      const result = checkGitRemote(dir);
+      assert.strictEqual(result, null, "no remote check when origin not set");
+    });
+
+    test('git_remote: reachable remote returns ok status', () => {
+      const dir = createProjectDir();
+      cleanups.push(dir);
+      const remoteDir = mkdtempSync(join(tmpdir(), "gsd-remote-test-"));
+      cleanups.push(remoteDir);
+      execSync("git init --bare", { cwd: remoteDir, stdio: "ignore" });
+      execSync("git init", { cwd: dir, stdio: "ignore" });
+      execSync(`git remote add origin ${remoteDir}`, { cwd: dir, stdio: "ignore" });
+      const result = checkGitRemote(dir);
+      assert.ok(result !== null, "should return a result for repo with remote");
+      assert.strictEqual(result!.status, "ok", "local bare remote should be reachable");
+    });
+
+    test('git_remote: unreachable remote returns warning status', () => {
+      const dir = createProjectDir();
+      cleanups.push(dir);
+      execSync("git init", { cwd: dir, stdio: "ignore" });
+      execSync("git remote add origin git://localhost:1/nonexistent.git", { cwd: dir, stdio: "ignore" });
+      const result = checkGitRemote(dir);
+      assert.ok(result !== null, "should return a result for unreachable remote");
+      assert.strictEqual(result!.status, "warning", "unreachable remote should warn");
+      assert.ok(result!.message.includes("unreachable"), "message should mention unreachable");
+    });
 
   } finally {
     for (const dir of cleanups) {

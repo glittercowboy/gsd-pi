@@ -609,4 +609,100 @@ Discovered an issue.
 
     rmSync(base, { recursive: true, force: true });
   });
+
+  // ─── task_file_not_in_plan: orphan summary detected and fixed ──────────
+  test('doctor: orphan task SUMMARY reported with fixable:true', async () => {
+    const base = mkdtempSync(join(tmpdir(), "gsd-doctor-orphan-"));
+    const m = join(base, ".gsd", "milestones", "M001");
+    const s = join(m, "slices", "S01");
+    const t = join(s, "tasks");
+    mkdirSync(t, { recursive: true });
+    writeFileSync(join(m, "M001-ROADMAP.md"), "# M001: Test\n\n## Slices\n- [ ] **S01: Slice** `risk:low` `depends:[]`\n  > After this: done\n");
+    writeFileSync(join(s, "S01-PLAN.md"), "# S01\n\n**Goal:** g\n**Demo:** d\n\n## Tasks\n- [x] **T01: t** `est:5m`\n");
+    writeFileSync(join(t, "T01-SUMMARY.md"), "---\nid: T01\n---\n# T01\n## What Happened\nDone.\n");
+    // Orphan: T02-SUMMARY exists but T02 is not in plan
+    writeFileSync(join(t, "T02-SUMMARY.md"), "---\nid: T02\n---\n# T02\n## What Happened\nOld work.\n");
+
+    const r = await runGSDDoctor(base, { fix: false });
+    const orphanIssues = r.issues.filter(i => i.code === "task_file_not_in_plan");
+    assert.ok(orphanIssues.length >= 1, "orphan SUMMARY should be reported");
+    assert.ok(orphanIssues[0].fixable, "task_file_not_in_plan should be fixable:true");
+
+    rmSync(base, { recursive: true, force: true });
+  });
+
+  test('doctor: --fix removes orphan task SUMMARY files', async () => {
+    const base = mkdtempSync(join(tmpdir(), "gsd-doctor-orphan-fix-"));
+    const m = join(base, ".gsd", "milestones", "M001");
+    const s = join(m, "slices", "S01");
+    const t = join(s, "tasks");
+    mkdirSync(t, { recursive: true });
+    writeFileSync(join(m, "M001-ROADMAP.md"), "# M001: Test\n\n## Slices\n- [ ] **S01: Slice** `risk:low` `depends:[]`\n  > After this: done\n");
+    writeFileSync(join(s, "S01-PLAN.md"), "# S01\n\n**Goal:** g\n**Demo:** d\n\n## Tasks\n- [x] **T01: t** `est:5m`\n");
+    writeFileSync(join(t, "T01-SUMMARY.md"), "---\nid: T01\n---\n# T01\n## What Happened\nDone.\n");
+    writeFileSync(join(t, "T02-SUMMARY.md"), "---\nid: T02\n---\n# T02\n## What Happened\nOld.\n");
+    writeFileSync(join(t, "T02-PLAN.md"), "# T02\n\n**Goal:** old\n");
+
+    await runGSDDoctor(base, { fix: true });
+    assert.ok(!existsSync(join(t, "T02-SUMMARY.md")), "T02-SUMMARY.md should be removed");
+    assert.ok(!existsSync(join(t, "T02-PLAN.md")), "T02-PLAN.md should be removed");
+    assert.ok(existsSync(join(t, "T01-SUMMARY.md")), "T01-SUMMARY.md should be preserved");
+
+    rmSync(base, { recursive: true, force: true });
+  });
+
+  // ─── must-have: no-signal items do not cause false positives ──────────
+  test('doctor: must-have with no significant words counts as addressed', async () => {
+    const base = mkdtempSync(join(tmpdir(), "gsd-doctor-mh-"));
+    const m = join(base, ".gsd", "milestones", "M001");
+    const s = join(m, "slices", "S01");
+    const t = join(s, "tasks");
+    mkdirSync(t, { recursive: true });
+    writeFileSync(join(m, "M001-ROADMAP.md"), "# M001: Test\n\n## Slices\n- [ ] **S01: Slice** `risk:low` `depends:[]`\n  > After this: done\n");
+    writeFileSync(join(s, "S01-PLAN.md"), "# S01\n\n**Goal:** g\n**Demo:** d\n\n## Tasks\n- [x] **T01: t** `est:5m`\n");
+    // Task plan with 2 must-haves: one with a clear keyword, one with only common/short words
+    writeFileSync(join(t, "T01-PLAN.md"), "# T01\n\n## Must-Haves\n- [ ] Implement the new fix\n- [ ] Run it\n");
+    // Summary only mentions "fix" (the matchable word from item 1); item 2 has no signal
+    writeFileSync(join(t, "T01-SUMMARY.md"), "---\nid: T01\ncompleted_at: 2026-03-09T00:00:00Z\n---\n# T01\n## What Happened\nImplemented the fix successfully.\n");
+
+    const r = await runGSDDoctor(base, { fix: false });
+    const mhIssues = r.issues.filter(i => i.code === "task_done_must_haves_not_verified");
+    assert.deepStrictEqual(mhIssues.length, 0, "no false positive when must-have has no significant words");
+
+    rmSync(base, { recursive: true, force: true });
+  });
+
+  // ─── delimiter_in_title: slice title fix ──────────────────────────────
+  test('doctor: --fix sanitizes em dash in slice title', async () => {
+    const base = mkdtempSync(join(tmpdir(), "gsd-doctor-dash-"));
+    const m = join(base, ".gsd", "milestones", "M001");
+    const s = join(m, "slices", "S01");
+    mkdirSync(s, { recursive: true });
+    const roadmap = join(m, "M001-ROADMAP.md");
+    writeFileSync(roadmap, "# M001: Clean\n\n## Slices\n- [ ] **S01: Database Layer \u2014 Core Models** `risk:low` `depends:[]`\n  > After this: done\n");
+    writeFileSync(join(s, "S01-PLAN.md"), "# S01\n\n**Goal:** g\n**Demo:** d\n\n## Tasks\n- [ ] **T01: t** `est:5m`\n");
+
+    await runGSDDoctor(base, { fix: true });
+    const content = readFileSync(roadmap, "utf-8");
+    assert.ok(!content.includes("\u2014"), "em dash should be removed from slice title");
+    assert.ok(content.includes("Database Layer - Core Models"), "dash replaced with hyphen");
+
+    rmSync(base, { recursive: true, force: true });
+  });
+
+  test('doctor: slice title with em dash reports fixable:true without --fix', async () => {
+    const base = mkdtempSync(join(tmpdir(), "gsd-doctor-dash-report-"));
+    const m = join(base, ".gsd", "milestones", "M001");
+    const s = join(m, "slices", "S01");
+    mkdirSync(s, { recursive: true });
+    writeFileSync(join(m, "M001-ROADMAP.md"), "# M001: Clean\n\n## Slices\n- [ ] **S01: Layer \u2014 Models** `risk:low` `depends:[]`\n  > After this: done\n");
+    writeFileSync(join(s, "S01-PLAN.md"), "# S01\n\n**Goal:** g\n**Demo:** d\n\n## Tasks\n- [ ] **T01: t** `est:5m`\n");
+
+    const r = await runGSDDoctor(base, { fix: false });
+    const dashIssues = r.issues.filter(i => i.code === "delimiter_in_title" && i.scope === "slice");
+    assert.ok(dashIssues.length >= 1, "em dash in slice title should be reported");
+    assert.ok(dashIssues[0].fixable, "delimiter_in_title for slice should be fixable:true");
+
+    rmSync(base, { recursive: true, force: true });
+  });
 });

@@ -255,6 +255,15 @@ async function dispatchWorkflow(
     },
     { triggerTurn: true },
   );
+
+  // sendMessage is fire-and-forget — the agent schedules the turn asynchronously.
+  // Yield one microtask tick so the agent can set runningPrompt before any
+  // waitForIdle() call at the callsite checks it. Without this, waitForIdle()
+  // sees runningPrompt===undefined and resolves immediately, causing the caller
+  // to loop back before the discuss session has actually started.
+  if (ctx) {
+    await new Promise<void>(resolve => setImmediate(resolve));
+  }
 }
 
 /**

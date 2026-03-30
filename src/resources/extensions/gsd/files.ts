@@ -573,6 +573,10 @@ export function countMustHavesMentionedInSummary(
       const words = mh.text.replace(/[^\w\s]/g, ' ').split(/\s+/).filter(w =>
         w.length >= 4 && !COMMON_WORDS.has(w.toLowerCase())
       );
+      // If no significant words remain, this must-have has no matchable signal —
+      // skip it rather than counting as unmentioned (avoids false positives on
+      // short/generic descriptions like "Run tests" or "Add types").
+      if (words.length === 0) { count++; continue; }
       const found = words.some(word => summaryLower.includes(word.toLowerCase()));
       if (found) count++;
     }
