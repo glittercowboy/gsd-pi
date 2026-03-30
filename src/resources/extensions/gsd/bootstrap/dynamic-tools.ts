@@ -57,6 +57,18 @@ export function resolveProjectRootDbPath(basePath: string): string {
     }
   }
 
+  // External-state layout: ~/.gsd/projects/<hash>/worktrees/<MID>/...
+  // Resolve to ~/.gsd/projects/<hash>/gsd.db (the canonical project DB) (#2952).
+  const extRe = /[/\\]\.gsd[/\\]projects[/\\][a-f0-9]+[/\\]worktrees(?:[/\\]|$)/;
+  const extMatch = extRe.exec(basePath);
+  if (extMatch) {
+    const matchStr = extMatch[0];
+    // Find the "/worktrees" portion within the match and slice up to it
+    const wtIdx = matchStr.search(/[/\\]worktrees(?:[/\\]|$)/);
+    const projectStateRoot = basePath.slice(0, extMatch.index + wtIdx);
+    return join(projectStateRoot, "gsd.db");
+  }
+
   return join(basePath, ".gsd", "gsd.db");
 }
 
