@@ -107,7 +107,7 @@ export class RetryHandler {
 		if (isContextOverflow(message, contextWindow)) return false;
 
 		const err = message.errorMessage;
-		return /overloaded|rate.?limit|too many requests|429|500|502|503|504|service.?unavailable|server.?error|internal.?error|connection.?error|connection.?refused|other side closed|fetch failed|upstream.?connect|reset before headers|terminated|retry delay|network.?(?:is\s+)?unavailable|credentials.*expired|temporarily backed off/i.test(
+		return /overloaded|rate.?limit|too many requests|429|500|502|503|504|service.?unavailable|server.?error|internal.?error|connection.?error|connection.?refused|other side closed|fetch failed|upstream.?connect|reset before headers|terminated|retry delay|network.?(?:is\s+)?unavailable|credentials.*expired|temporarily backed off|extra usage is required/i.test(
 			err,
 		);
 	}
@@ -202,6 +202,10 @@ export class RetryHandler {
 
 				// No fallback available either
 				if (errorType === "quota_exhausted") {
+					// Try long-context model downgrade ([1m] → base) before giving up
+					const downgraded = this._tryLongContextDowngrade(message);
+					if (downgraded) return true;
+
 					this._deps.emit({
 						type: "fallback_chain_exhausted",
 						reason: `All providers exhausted for ${this._deps.getModel()!.provider}/${this._deps.getModel()!.id}`,
@@ -343,10 +347,57 @@ export class RetryHandler {
 	 */
 	private _classifyErrorType(errorMessage: string): UsageLimitErrorType {
 		const err = errorMessage.toLowerCase();
+		// Long-context entitlement errors are billing gates, not transient rate limits.
+		// Must be checked before the generic 429/rate_limit regex.
+		if (/extra usage is required|long context required/i.test(err)) return "quota_exhausted";
 		if (/quota|billing|exceeded.*limit|usage.*limit/i.test(err)) return "quota_exhausted";
 		if (/rate.?limit|too many requests|429/i.test(err)) return "rate_limit";
 		if (/500|502|503|504|server.?error|internal.?error|service.?unavailable/i.test(err)) return "server_error";
 		return "unknown";
+	}
+
+	/**
+	 * Attempt to downgrade a long-context model (e.g. claude-opus-4-6[1m]) to its
+	 * base model (claude-opus-4-6) when the account lacks the long-context billing
+	 * entitlement. Returns true if the downgrade was initiated.
+	 */
+	private _tryLongContextDowngrade(message: AssistantMessage): boolean {
+		const currentModel = this._deps.getModel();
+		if (!currentModel) return false;
+
+		// Only attempt downgrade for [1m] (or similar long-context) model IDs
+		const match = currentModel.id.match(/^(.+)\[\d+m\]$/);
+		if (!match) return false;
+
+		const baseModelId = match[1];
+		const baseModel = this._deps.modelRegistry.find(currentModel.provider, baseModelId);
+		if (!baseModel) return false;
+
+		const previousId = currentModel.id;
+		this._deps.agent.setModel(baseModel);
+		this._deps.onModelChange(baseModel);
+		this._removeLastAssistantError();
+
+		this._deps.emit({
+			type: "fallback_provider_switch",
+			from: `${currentModel.provider}/${previousId}`,
+			to: `${baseModel.provider}/${baseModel.id}`,
+			reason: `long context downgrade: ${previousId} → ${baseModel.id}`,
+		});
+
+		this._deps.emit({
+			type: "auto_retry_start",
+			attempt: this._retryAttempt + 1,
+			maxAttempts: this._deps.settingsManager.getRetrySettings().maxRetries,
+			delayMs: 0,
+			errorMessage: `${message.errorMessage} (long context downgrade)`,
+		});
+
+		setTimeout(() => {
+			this._deps.agent.continue().catch(() => {});
+		}, 0);
+
+		return true;
 	}
 
 	/** Remove the last assistant error message from agent state */
