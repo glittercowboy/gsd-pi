@@ -4,9 +4,10 @@ import { join } from "node:path";
 
 import type { ExtensionContext } from "@gsd/pi-coding-agent";
 
-import { debugTime } from "../debug-logger.js";
+import { debugTime, debugLog } from "../debug-logger.js";
 import { loadPrompt } from "../prompt-loader.js";
 import { resolveAllSkillReferences, renderPreferencesForSystemPrompt, loadEffectiveGSDPreferences } from "../preferences.js";
+import { section, optimizeForCaching, type PromptSection } from "../prompt-cache-optimizer.js";
 import { resolveGsdRootFile, resolveSliceFile, resolveSlicePath, resolveTaskFile, resolveTaskFiles, resolveTasksDir, relSliceFile, relSlicePath, relTaskFile } from "../paths.js";
 import { hasSkillSnapshot, detectNewSkills, formatSkillsXml } from "../skill-discovery.js";
 import { getActiveAutoWorktreeContext } from "../auto-worktree.js";
@@ -98,7 +99,28 @@ export async function buildBeforeAgentStartResult(
 
   const injection = await buildGuidedExecuteContextInjection(event.prompt, process.cwd());
   const worktreeBlock = buildWorktreeContextBlock();
-  const fullSystem = `${event.systemPrompt}\n\n[SYSTEM CONTEXT — GSD]\n\n${systemContent}${preferenceBlock}${knowledgeBlock}${memoryBlock}${newSkillsBlock}${worktreeBlock}`;
+
+  // Assemble system prompt sections with cache-aware ordering.
+  // Static content first (cached by providers), dynamic content last.
+  const sections: PromptSection[] = [
+    section("system-prompt", event.systemPrompt, "static"),
+    section("base-instructions", `[SYSTEM CONTEXT — GSD]\n\n${systemContent}`, "static"),
+  ];
+  if (preferenceBlock) sections.push(section("preferences", preferenceBlock, "semi-static"));
+  if (knowledgeBlock) sections.push(section("knowledge", knowledgeBlock, "semi-static"));
+  if (memoryBlock) sections.push(section("memories", memoryBlock, "dynamic"));
+  if (newSkillsBlock) sections.push(section("new-skills", newSkillsBlock, "dynamic"));
+  if (worktreeBlock) sections.push(section("worktree-context", worktreeBlock, "dynamic"));
+
+  const optimized = optimizeForCaching(sections);
+  const fullSystem = optimized.prompt;
+
+  debugLog("prompt-cache-stats", {
+    cacheEfficiency: `${(optimized.cacheEfficiency * 100).toFixed(1)}%`,
+    cacheablePrefixChars: optimized.cacheablePrefixChars,
+    totalChars: optimized.totalChars,
+    sections: optimized.sectionCounts,
+  });
 
   stopContextTimer({
     systemPromptSize: fullSystem.length,
