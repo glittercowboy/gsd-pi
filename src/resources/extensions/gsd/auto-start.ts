@@ -99,27 +99,6 @@ export interface BootstrapDeps {
  * concurrent session detected). Returns true when ready to dispatch.
  */
 
-/**
- * Open the project-root DB before the first deriveState call (#2841).
- * When auto-mode starts cold (no prior DB handle), state derivation that
- * touches DB-backed helpers (queue-order, task status) silently falls back
- * to markdown-only data, producing stale or incomplete state.  Opening the
- * DB first ensures deriveState sees the full picture on its very first run.
- */
-async function openProjectDbIfPresent(basePath: string): Promise<void> {
-  const gsdDbPath = resolveProjectRootDbPath(basePath);
-  if (!existsSync(gsdDbPath)) return;
-  if (isDbAvailable()) return;
-
-  try {
-    const { openDatabase } = await import("./gsd-db.js");
-    openDatabase(gsdDbPath);
-  } catch (err) {
-    /* non-fatal — DB lifecycle block below will retry */
-    logWarning("engine", `DB open failed: ${err instanceof Error ? err.message : String(err)}`);
-  }
-}
-
 /** Guard: tracks consecutive bootstrap attempts that found phase === "complete".
  *  Prevents the recursive dialog loop described in #1348 where
  *  bootstrapAutoSession → showSmartEntry → checkAutoStartAfterDiscuss → startAuto
