@@ -5,6 +5,9 @@
  * with safety checks for parallel execution context.
  */
 
+import { existsSync, readdirSync } from "node:fs";
+import { join } from "node:path";
+import { spawnSync } from "node:child_process";
 import { loadFile } from "./files.js";
 import { resolveMilestoneFile } from "./paths.js";
 import { mergeMilestoneToMain } from "./auto-worktree.js";
@@ -29,21 +32,101 @@ export type MergeOrder = "sequential" | "by-completion";
 // ─── Merge Queue ───────────────────────────────────────────────────────────
 
 /**
+ * Check whether a milestone is complete by querying its worktree SQLite DB.
+ * Uses a subprocess to avoid disrupting the global DB singleton.
+ * Returns true when milestones.status = 'complete' in the worktree's gsd.db.
+ */
+export function isMilestoneCompleteInWorktreeDb(basePath: string, mid: string): boolean {
+  const dbPath = join(basePath, ".gsd", "worktrees", mid, ".gsd", "gsd.db");
+  if (!existsSync(dbPath)) return false;
+
+  try {
+    const result = spawnSync(
+      "sqlite3",
+      [dbPath, `SELECT status FROM milestones WHERE id='${mid}' LIMIT 1`],
+      { timeout: 3000, encoding: "utf-8" },
+    );
+    return (result.stdout || "").trim() === "complete";
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Discover milestone IDs with status='complete' in their worktree DB,
+ * scanning .gsd/worktrees/<MID>/.gsd/gsd.db for each worktree directory.
+ */
+function discoverDbCompletedMilestones(basePath: string): Set<string> {
+  const completed = new Set<string>();
+  const worktreeDir = join(basePath, ".gsd", "worktrees");
+  try {
+    for (const entry of readdirSync(worktreeDir)) {
+      if (entry.startsWith("M") && isMilestoneCompleteInWorktreeDb(basePath, entry)) {
+        completed.add(entry);
+      }
+    }
+  } catch {
+    // worktrees dir may not exist
+  }
+  return completed;
+}
+
+/**
  * Determine safe merge order for completed milestones.
  * Sequential: merge in milestone ID order (M001 before M002).
  * By-completion: merge in the order milestones finished.
+ *
+ * When basePath is provided, also checks worktree SQLite DBs as the
+ * source of truth — workers with stale orchestrator state (e.g. "error")
+ * are included if their worktree DB shows status='complete'.
+ * See: https://github.com/gsd-build/gsd-2/issues/2812
  */
 export function determineMergeOrder(
   workers: WorkerInfo[],
   order: MergeOrder = "sequential",
+  basePath?: string,
 ): string[] {
-  const completed = workers.filter(w => w.state === "stopped");
+  // Start with workers the orchestrator already knows are stopped
+  const stoppedIds = new Set(
+    workers.filter(w => w.state === "stopped").map(w => w.milestoneId),
+  );
+
+  // When basePath is available, also check worktree DBs for milestones
+  // whose orchestrator state is stale but are actually complete (#2812)
+  const dbCompleted = basePath ? discoverDbCompletedMilestones(basePath) : new Set<string>();
+
+  // Union: milestone is mergeable if stopped OR DB-complete
+  const mergeableIds = new Set([...stoppedIds, ...dbCompleted]);
+
+  // Build the list from tracked workers + any DB-discovered milestones
+  // not tracked by the orchestrator at all
+  const workerMap = new Map(workers.map(w => [w.milestoneId, w]));
+  const allMergeable: WorkerInfo[] = [];
+  for (const mid of mergeableIds) {
+    const w = workerMap.get(mid);
+    if (w) {
+      allMergeable.push(w);
+    } else {
+      // Milestone discovered from worktree DB but not in workers list
+      allMergeable.push({
+        milestoneId: mid,
+        title: mid,
+        pid: 0,
+        process: null,
+        worktreePath: basePath ? join(basePath, ".gsd", "worktrees", mid) : "",
+        startedAt: 0,
+        state: "stopped",
+        cost: 0,
+      });
+    }
+  }
+
   if (order === "by-completion") {
-    return completed
+    return allMergeable
       .sort((a, b) => a.startedAt - b.startedAt) // earliest first
       .map(w => w.milestoneId);
   }
-  return completed
+  return allMergeable
     .sort((a, b) => a.milestoneId.localeCompare(b.milestoneId))
     .map(w => w.milestoneId);
 }
@@ -114,7 +197,7 @@ export async function mergeAllCompleted(
   workers: WorkerInfo[],
   order: MergeOrder = "sequential",
 ): Promise<MergeResult[]> {
-  const mergeOrder = determineMergeOrder(workers, order);
+  const mergeOrder = determineMergeOrder(workers, order, basePath);
   const results: MergeResult[] = [];
 
   for (const mid of mergeOrder) {
