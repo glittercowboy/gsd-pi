@@ -35,32 +35,18 @@ export function registerBgShellTool(pi: ExtensionAPI, state: BgShellSharedState)
 		name: "bg_shell",
 		label: "Background Shell",
 		description:
-			"Run shell commands in the background without blocking. Manages persistent background processes with intelligent lifecycle tracking. " +
-			"Actions: start (launch with auto-classification & readiness detection), digest (structured summary ~30 tokens vs ~2000 raw), " +
-			"output (raw lines with incremental delivery), wait_for_ready (block until process signals readiness), " +
-			"send (write stdin), send_and_wait (expect-style: send + wait for output pattern), " +
-			"run (execute a command on a persistent shell session, block until done, return output + exit code), " +
-			"env (query shell cwd and environment variables), " +
-			"signal (send OS signal), list (all processes with status), kill (terminate), restart (kill + relaunch), " +
-			"group_status (health of a process group), highlights (significant output lines only).",
+			"Manage persistent background processes. " +
+			"Actions: start, digest (~30 token summary), output (raw lines), highlights (errors/URLs only), " +
+			"wait_for_ready, send, send_and_wait, run (blocking exec), env, signal, list, kill, restart, group_status.",
 
 		promptGuidelines: [
-			"Use bg_shell to start long-running processes (servers, watchers, builds) that should not block the agent.",
-			"After starting a server, use 'wait_for_ready' to efficiently block until it's listening — avoids polling loops entirely.",
-			"Use 'digest' instead of 'output' when you just need status — it returns a structured ~30-token summary instead of ~2000 tokens of raw output.",
-			"Use 'highlights' to see only significant output (errors, URLs, results) — typically 5-15 lines instead of hundreds.",
-			"Use 'output' only when you need raw lines for debugging — add filter:'error|warning' to narrow results.",
-			"The 'output' action returns only new output since the last check (incremental). Repeated calls are cheap on context.",
-			"Set type:'server' and ready_port:3000 for dev servers so readiness detection is automatic.",
-			"Set group:'my-stack' on related processes to manage them together with 'group_status'.",
-			"Use 'run' to execute a command on a persistent shell session and block until it completes — returns structured output + exit code. Shell state (env vars, cwd, virtualenvs) persists across runs.",
-			"Use 'send_and_wait' for interactive CLIs: send input and wait for expected output pattern.",
-			"Use 'env' to check the current working directory and active environment variables of a shell session — useful after cd, source, or export commands.",
-			"Background processes are session-scoped by default: a new session reaps them unless you set persist_across_sessions:true.",
-			"Use 'restart' to kill and relaunch with the same config — preserves restart count.",
-			"Background processes are auto-classified (server/build/test/watcher) based on the command.",
-			"Process crashes and errors are automatically surfaced as alerts at the start of your next turn — you don't need to poll.",
-			"To create a persistent shell session: bg_shell start with type:'shell'. The session stays alive for interactive use with 'send', 'send_and_wait', or 'run'.",
+			"Use bg_shell for long-running processes (servers, watchers, builds) that should not block.",
+			"Prefer 'digest' over 'output' for status checks (~30 tokens vs ~2000). Use 'highlights' for errors/URLs only.",
+			"Use 'output' only for debugging raw lines — add filter:'error|warning' to narrow. Output is incremental (only new lines).",
+			"After starting a server, use 'wait_for_ready' to block until listening. Set type:'server' + ready_port for auto-detection.",
+			"Use 'run' for blocking shell commands with persistent state (env, cwd). Use 'send_and_wait' for interactive CLIs.",
+			"Set group:'name' on related processes for 'group_status'. Crashes auto-surface as alerts — no polling needed.",
+			"For persistent shell sessions: start with type:'shell', then use 'send', 'send_and_wait', or 'run'.",
 		],
 
 		parameters: Type.Object({

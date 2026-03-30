@@ -338,7 +338,7 @@ export function registerIntentTools(pi: ExtensionAPI, deps: ToolDeps): void {
 		name: "browser_find_best",
 		label: "Find Best",
 		description:
-			"Find the best-matching element for a semantic intent. Returns up to 5 scored candidates (0-1) ranked by structural position, role, text signals, and visibility. Use this to discover which element the agent should interact with for a given goal — e.g. intent=\"submit_form\" finds submit buttons, intent=\"close_dialog\" finds close/dismiss buttons inside dialogs. Each candidate includes a CSS selector usable with browser_click.",
+			"Find best element for a semantic intent (e.g. submit_form, close_dialog). Returns up to 5 scored candidates with CSS selectors for browser_click.",
 		parameters: Type.Object({
 			intent: StringEnum(INTENTS, {
 				description:

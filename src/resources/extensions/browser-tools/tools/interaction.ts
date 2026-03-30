@@ -19,7 +19,7 @@ export function registerInteractionTools(pi: ExtensionAPI, deps: ToolDeps): void
 		name: "browser_click",
 		label: "Browser Click",
 		description:
-			"Click an element on the page by CSS selector or by x,y coordinates. Returns a compact page summary plus lightweight verification details after clicking. Provide either selector or both x and y. Prefer selector over coordinates — selectors are more reliable because they handle shadow DOM via getByRole fallbacks. Use coordinates only when you have no other option.",
+			"Click an element by CSS selector or x,y coordinates. Prefer selector (handles shadow DOM via getByRole fallbacks). Returns page diff after click.",
 		parameters: Type.Object({
 			selector: Type.Optional(
 				Type.String({ description: "CSS selector of the element to click. The tool will try getByRole fallbacks if the CSS selector fails (handles shadow DOM)." })

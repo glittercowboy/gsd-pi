@@ -328,7 +328,7 @@ export function registerFormTools(pi: ExtensionAPI, deps: ToolDeps): void {
 		name: "browser_analyze_form",
 		label: "Analyze Form",
 		description:
-			"Analyze a form on the current page and return a structured field inventory. Auto-detects the form if no selector is provided (picks the single <form>, or the form with most visible inputs, or falls back to document.body). Returns field types, labels (resolved via aria-labelledby → aria-label → label[for] → wrapping label → placeholder → title → name), values, validation state, and submit buttons.",
+			"Analyze a form and return structured field inventory. Auto-detects form if no selector given. Returns field types, labels, values, validation state, and submit buttons.",
 		parameters: Type.Object({
 			selector: Type.Optional(
 				Type.String({
@@ -462,7 +462,7 @@ export function registerFormTools(pi: ExtensionAPI, deps: ToolDeps): void {
 		name: "browser_fill_form",
 		label: "Fill Form",
 		description:
-			"Fill a form on the current page using a values mapping. Keys are field identifiers (label text, name attribute, placeholder, or aria-label). Resolves fields by label → name → placeholder → aria-label (exact first, then case-insensitive). Uses fill() for text inputs, selectOption() for selects, setChecked() for checkboxes/radios. Skips file and hidden inputs. Optionally submits the form.",
+			"Fill form fields using a {identifier: value} mapping. Keys: label text, name, placeholder, or aria-label. Auto-detects form if no selector. Optionally submits after filling.",
 		parameters: Type.Object({
 			selector: Type.Optional(
 				Type.String({

@@ -311,16 +311,11 @@ export function registerSearchTool(pi: ExtensionAPI) {
     name: "search-the-web",
     label: "Web Search",
     description:
-      "Search the web using Brave Search API. Returns top results with titles, URLs, descriptions, " +
-      "extra contextual snippets, result ages, and optional AI summary. " +
-      "Supports freshness filtering, domain filtering, and auto-detects recency-sensitive queries.",
+      "Search the web. Returns results with titles, URLs, snippets, and optional AI summary. Supports freshness and domain filtering.",
     promptSnippet: "Search the web for information",
     promptGuidelines: [
-      "Use this tool when the user asks about current events, facts, or external knowledge not in the codebase.",
-      "Always provide the search query to the user in your response.",
-      "Limit to 3-5 results unless more context is needed.",
-      "Use freshness='week' or 'month' for queries about recent events, releases, or updates.",
-      "Use the fetch_page tool to read the full content of promising URLs from search results.",
+      "Use for current events, facts, or external knowledge not in the codebase.",
+      "Use freshness='week'/'month' for recent events. Use fetch_page for full content of promising URLs.",
     ],
     parameters: Type.Object({
       query: Type.String({ description: "Search query (e.g., 'latest AI news')" }),
@@ -329,18 +324,17 @@ export function registerSearchTool(pi: ExtensionAPI) {
       ),
       freshness: Type.Optional(
         StringEnum(["auto", "day", "week", "month", "year"] as const, {
-          description:
-            "Filter by recency. 'auto' (default) detects from query. 'day'=past 24h, 'week'=past 7d, 'month'=past 30d, 'year'=past 365d.",
+          description: "Recency filter. 'auto' detects from query. day/week/month/year.",
         })
       ),
       domain: Type.Optional(
         Type.String({
-          description: "Limit results to a specific domain (e.g., 'stackoverflow.com', 'github.com')",
+          description: "Limit to domain (e.g., 'stackoverflow.com')",
         })
       ),
       summary: Type.Optional(
         Type.Boolean({
-          description: "Request an AI-generated summary of the search results (default: false). Adds latency but provides a concise answer.",
+          description: "Request AI summary (adds latency)",
           default: false,
         })
       ),

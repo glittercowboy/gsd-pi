@@ -278,17 +278,11 @@ export function registerLLMContextTool(pi: ExtensionAPI) {
     name: "search_and_read",
     label: "Search & Read",
     description:
-      "Search the web AND read page content in a single call. Returns pre-extracted, " +
-      "relevance-scored text from multiple pages — no separate fetch_page needed. " +
-      "Best when you need content, not just links. " +
-      "For selective URL browsing, use search-the-web + fetch_page instead.",
+      "Search and read web pages in one call. Returns relevance-scored content from multiple pages. Use search-the-web + fetch_page for selective browsing.",
     promptSnippet: "Search and read web page content in one step",
     promptGuidelines: [
-      "Use search_and_read when you need actual page content about a topic — it searches and extracts in one call.",
-      "Prefer search_and_read over search-the-web + fetch_page when you just need to learn about something.",
-      "Use search-the-web when you need to browse specific URLs, control which pages to read, or want just links.",
-      "Start with the default maxTokens (8192). Use smaller values (2048-4096) for simple factual queries.",
-      "Use threshold='strict' for focused, high-relevance results. Use 'lenient' for broad coverage.",
+      "Prefer over search-the-web + fetch_page when you need content, not just links.",
+      "Use threshold='strict' for focused results, 'lenient' for broad coverage. Default maxTokens (8192) suits most queries.",
     ],
     parameters: Type.Object({
       query: Type.String({ description: "Search query — what you want to learn about" }),

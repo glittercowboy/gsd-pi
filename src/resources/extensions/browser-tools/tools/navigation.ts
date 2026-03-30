@@ -17,7 +17,7 @@ export function registerNavigationTools(pi: ExtensionAPI, deps: ToolDeps): void 
 		name: "browser_navigate",
 		label: "Browser Navigate",
 		description:
-			"Open the browser (if not already open) and navigate to a URL. Waits for network idle. Returns page title and current URL. Use ONLY for visually verifying locally-running web apps (e.g. http://localhost:3000). Do NOT use for documentation sites, GitHub, search results, or any external URL — use web_search instead. Screenshots are only captured when the `screenshot` parameter is set to true.",
+			"Navigate browser to a URL. For local web apps only (e.g. http://localhost:3000) — use web_search for external URLs. Returns page title, URL, and diff.",
 		parameters: Type.Object({
 			url: Type.String({ description: "URL to navigate to, e.g. http://localhost:3000" }),
 			screenshot: Type.Optional(Type.Boolean({ description: "Capture and return a screenshot (default: false)", default: false })),

@@ -362,16 +362,11 @@ export function registerFetchPageTool(pi: ExtensionAPI) {
     name: "fetch_page",
     label: "Fetch Page",
     description:
-      "Fetch a web page and extract its content as clean markdown. " +
-      "Use this to read the full content of URLs found via search-the-web. " +
-      "Uses Jina Reader for high-quality markdown extraction. " +
-      "Control the amount of content returned with maxChars (default: 8000, max: 30000).",
-    promptSnippet: "Fetch and extract clean content from a web page URL as markdown",
+      "Fetch a web page and extract content as clean markdown. Use to read full content of URLs from search results.",
+    promptSnippet: "Fetch and extract clean content from a web page URL",
     promptGuidelines: [
-      "Use fetch_page to read the content of URLs found via search-the-web when you need more detail than snippets provide.",
-      "Start with the default maxChars (8000). Increase only if the first fetch lacks the detail you need.",
-      "For very long pages, use a smaller maxChars and increase if needed — this saves context tokens.",
-      "The extracted content is already clean markdown — no HTML tags, no navigation, no ads.",
+      "Use fetch_page when search snippets lack detail. Start with default maxChars (8000), increase only if needed.",
+      "Use selector param to extract specific sections (e.g., 'main', 'article') — reduces noise and tokens.",
     ],
     parameters: Type.Object({
       url: Type.String({ description: "URL to fetch and extract content from" }),
@@ -380,18 +375,18 @@ export function registerFetchPageTool(pi: ExtensionAPI) {
           minimum: 1000,
           maximum: 30000,
           default: 8000,
-          description: "Maximum characters of content to return (default: 8000, max: 30000). Controls context token usage.",
+          description: "Max characters to return (default: 8000, max: 30000)",
         })
       ),
       offset: Type.Optional(
         Type.Number({
           minimum: 0,
-          description: "Character offset to start reading from (for continuation of truncated pages). Use the nextOffset value from a previous fetch_page result.",
+          description: "Character offset for continuation (use nextOffset from previous result)",
         })
       ),
       selector: Type.Optional(
         Type.String({
-          description: "CSS selector to extract only a specific section of the page (e.g., 'main', 'article', '.api-docs'). Reduces noise and token usage.",
+          description: "CSS selector to extract specific section (e.g., 'main', 'article')",
         })
       ),
     }),
