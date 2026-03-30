@@ -82,7 +82,7 @@ export async function tryRemoteQuestions(
   // Best-effort acknowledgement gives remote users a visible receipt signal.
   try {
     await adapter.acknowledgeAnswer?.(dispatch.ref);
-  } catch { /* best-effort */ }
+  } catch (err) { if (process.env.GSD_DEBUG) console.error('[remote-questions] acknowledge failed:', (err as Error).message); }
 
   return {
     content: [{ type: "text", text: JSON.stringify({ answers: formatForTool(answer) }) }],

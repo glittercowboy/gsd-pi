@@ -89,7 +89,7 @@ export class TelegramAdapter implements ChannelAdapter {
           // Dismiss the loading spinner on the button
           try {
             await this.telegramApi("answerCallbackQuery", { callback_query_id: cq.id });
-          } catch { /* best-effort */ }
+          } catch (err) { if (process.env.GSD_DEBUG) console.error('[telegram] answerCallbackQuery failed:', (err as Error).message); }
 
           return parseTelegramResponse(cq.data ?? null, null, prompt.questions, prompt.id);
         }

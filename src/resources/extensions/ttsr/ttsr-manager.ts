@@ -289,7 +289,7 @@ export class TtsrManager {
 		if (this.#nativeHandle !== null) {
 			try {
 				nativeTtsr.ttsrFreeRules(this.#nativeHandle);
-			} catch { /* ignore */ }
+			} catch (err) { if (process.env.GSD_DEBUG) console.error('[ttsr] native handle free failed:', (err as Error).message); }
 			this.#nativeHandle = null;
 		}
 

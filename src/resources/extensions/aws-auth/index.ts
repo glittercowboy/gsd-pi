@@ -68,7 +68,7 @@ function getAwsAuthRefreshCommand(): string | undefined {
 		try {
 			const settings = JSON.parse(readFileSync(settingsPath, "utf-8"));
 			if (settings.awsAuthRefresh) return settings.awsAuthRefresh;
-		} catch {}
+		} catch (err) { if (process.env.GSD_DEBUG) console.error(`[aws-auth] parse settings failed (${settingsPath}):`, (err as Error).message); }
 	}
 	return undefined;
 }

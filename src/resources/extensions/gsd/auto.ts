@@ -1453,7 +1453,7 @@ export async function dispatchHookUnit(
   ctx.ui.notify(`Running post-unit hook: ${hookName}`, "info");
 
   // Ensure cwd matches basePath before hook dispatch (#1389)
-  try { if (process.cwd() !== s.basePath) process.chdir(s.basePath); } catch {}
+  try { if (process.cwd() !== s.basePath) process.chdir(s.basePath); } catch (err) { debugLog("chdir-failed", { target: s.basePath, error: String(err) }); }
 
   debugLog("dispatchHookUnit", {
     phase: "send-message",

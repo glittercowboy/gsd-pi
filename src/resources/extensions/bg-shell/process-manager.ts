@@ -449,7 +449,7 @@ export function persistManifest(cwd: string): void {
 				pid: p.proc.pid,
 			}));
 		writeFileSync(getManifestPath(cwd), JSON.stringify(manifest, null, 2));
-	} catch { /* best effort */ }
+	} catch (err) { if (process.env.GSD_DEBUG) console.error('[bg-shell] write manifest failed:', (err as Error).message); }
 }
 
 export function loadManifest(cwd: string): ProcessManifest[] {
@@ -458,6 +458,6 @@ export function loadManifest(cwd: string): ProcessManifest[] {
 		if (existsSync(path)) {
 			return JSON.parse(readFileSync(path, "utf-8"));
 		}
-	} catch { /* best effort */ }
+	} catch (err) { if (process.env.GSD_DEBUG) console.error('[bg-shell] load manifest failed:', (err as Error).message); }
 	return [];
 }

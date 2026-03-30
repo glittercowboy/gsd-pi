@@ -29,7 +29,7 @@ export function restoreWindowsVTInput(): void {
 		if (!(mode[0] & ENABLE_VIRTUAL_TERMINAL_INPUT)) {
 			_vtHandles.SetConsoleMode(_vtHandles.handle, mode[0] | ENABLE_VIRTUAL_TERMINAL_INPUT);
 		}
-	} catch { /* koffi not available on non-Windows */ }
+	} catch (err) { if (process.env.GSD_DEBUG) console.error('[bg-shell] VT input setup skipped:', (err as Error).message); }
 }
 
 // ── Time Formatting ────────────────────────────────────────────────────────
