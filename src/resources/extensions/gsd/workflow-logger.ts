@@ -31,7 +31,9 @@ export type LogComponent =
   | "state"         // deriveState fallback/degradation
   | "tool"          // Tool handler errors
   | "compaction"    // Event compaction
-  | "reconcile";    // Worktree reconciliation
+  | "reconcile"     // Worktree reconciliation
+  | "db"            // Database operations (gsd-db)
+  | "dispatch";     // Auto-dispatch rule evaluation
 
 export interface LogEntry {
   ts: string;

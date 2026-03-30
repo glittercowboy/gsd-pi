@@ -10,6 +10,7 @@ import { existsSync, copyFileSync, mkdirSync, realpathSync } from "node:fs";
 import { dirname } from "node:path";
 import type { Decision, Requirement, GateRow, GateId, GateScope, GateStatus, GateVerdict } from "./types.js";
 import { GSDError, GSD_STALE_STATE } from "./errors.js";
+import { logError } from "./workflow-logger.js";
 
 const _require = createRequire(import.meta.url);
 
@@ -1738,7 +1739,7 @@ export function copyWorktreeDb(srcDbPath: string, destDbPath: string): boolean {
     copyFileSync(srcDbPath, destDbPath);
     return true;
   } catch (err) {
-    process.stderr.write(`gsd-db: failed to copy DB to worktree: ${(err as Error).message}\n`);
+    logError("db", "failed to copy DB to worktree", { error: (err as Error).message });
     return false;
   }
 }
@@ -1770,13 +1771,13 @@ export function reconcileWorktreeDb(
   // ATTACH DATABASE doesn't support parameterized paths in all providers,
   // so we use strict allowlist validation instead.
   if (/['";\x00]/.test(worktreeDbPath)) {
-    process.stderr.write("gsd-db: worktree DB reconciliation failed: path contains unsafe characters\n");
+    logError("db", "worktree DB reconciliation failed: path contains unsafe characters");
     return zero;
   }
   if (!currentDb) {
     const opened = openDatabase(mainDbPath);
     if (!opened) {
-      process.stderr.write("gsd-db: worktree DB reconciliation failed: cannot open main DB\n");
+      logError("db", "worktree DB reconciliation failed: cannot open main DB");
       return zero;
     }
   }
@@ -1910,7 +1911,7 @@ export function reconcileWorktreeDb(
       try { adapter.exec("DETACH DATABASE wt"); } catch { /* best effort */ }
     }
   } catch (err) {
-    process.stderr.write(`gsd-db: worktree DB reconciliation failed: ${(err as Error).message}\n`);
+    logError("db", "worktree DB reconciliation failed", { error: (err as Error).message });
     return { ...zero, conflicts };
   }
 }
