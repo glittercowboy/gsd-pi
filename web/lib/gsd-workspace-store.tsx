@@ -349,6 +349,7 @@ export type LiveStateInvalidationDomain = "auto" | "workspace" | "recovery" | "r
 export type LiveStateInvalidationSource = "bridge_event" | "rpc_command" | "session_manage"
 export type LiveStateInvalidationReason =
   | "agent_end"
+  | "turn_end"
   | "auto_retry_start"
   | "auto_retry_end"
   | "auto_compaction_start"
