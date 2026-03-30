@@ -27,6 +27,12 @@ export function handleRecoverableExtensionProcessError(err: Error): boolean {
       return true;
     }
   }
+  // Absorb ERR_INVALID_ARG_TYPE from MCP server stdout writes during paste (#3206).
+  // Re-throwing this non-fatal error crashes the process; log and survive instead.
+  if ((err as NodeJS.ErrnoException).code === "ERR_INVALID_ARG_TYPE") {
+    process.stderr.write(`[gsd] ERR_INVALID_ARG_TYPE (non-fatal, likely MCP/paste): ${err.message}\n`);
+    return true;
+  }
   return false;
 }
 
