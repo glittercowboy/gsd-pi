@@ -1,4 +1,5 @@
 import { join } from "node:path";
+import { existsSync, unlinkSync } from "node:fs";
 import { clearParseCache } from "../files.js";
 import { isClosedStatus } from "../status-guards.js";
 import { isNonEmptyString } from "../validation.js";
@@ -10,6 +11,7 @@ import {
   insertSlice,
   updateSliceFields,
   insertAssessment,
+  deleteAssessmentByScope,
   deleteSlice,
 } from "../gsd-db.js";
 import { invalidateStateCache } from "../state.js";
@@ -200,6 +202,21 @@ export async function handleReassessRoadmap(
       for (const removedId of params.sliceChanges.removed) {
         deleteSlice(params.milestoneId, removedId);
       }
+
+      // ── Invalidate stale milestone validation (#2957) ──────────────
+      // When roadmap structure changes (slices added/modified/removed),
+      // any prior milestone-validation verdict is stale. Delete the DB
+      // row so deriveState() returns phase: 'validating-milestone' once
+      // the new slices complete, rather than advancing directly to
+      // 'completing-milestone' with a stale needs-remediation verdict.
+      const hasStructuralChanges =
+        params.sliceChanges.added.length > 0 ||
+        params.sliceChanges.modified.length > 0 ||
+        params.sliceChanges.removed.length > 0;
+
+      if (hasStructuralChanges) {
+        deleteAssessmentByScope(params.milestoneId, "milestone-validation");
+      }
     });
   } catch (err) {
     return { error: `db write failed: ${(err as Error).message}` };
@@ -217,6 +234,25 @@ export async function handleReassessRoadmap(
       assessment: params.assessment,
       completedSliceId: params.completedSliceId,
     });
+
+    // ── Remove stale VALIDATION file from disk (#2957) ────────────
+    const hasStructuralChanges =
+      params.sliceChanges.added.length > 0 ||
+      params.sliceChanges.modified.length > 0 ||
+      params.sliceChanges.removed.length > 0;
+
+    if (hasStructuralChanges) {
+      const validationFile = join(
+        basePath, ".gsd", "milestones", params.milestoneId,
+        `${params.milestoneId}-VALIDATION.md`,
+      );
+      try {
+        if (existsSync(validationFile)) unlinkSync(validationFile);
+      } catch {
+        // Best-effort: DB row is already deleted, so state derivation
+        // will not see the file-based verdict as authoritative.
+      }
+    }
 
     // ── Invalidate caches ─────────────────────────────────────────
     invalidateStateCache();
