@@ -216,7 +216,6 @@
 
 /* ── File viewer: Markdown rendering ── */
 .markdown-body {
-  color: oklch(0.85 0 0);
   font-family: var(--font-sans);
   font-size: 0.9rem;
   line-height: 1.7;
@@ -301,7 +300,6 @@
 
 .markdown-body strong {
   font-weight: 600;
-  color: oklch(0.92 0 0);
 }
 
 .markdown-body em {
