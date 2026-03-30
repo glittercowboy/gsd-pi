@@ -3,7 +3,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-// TODO: export needed — Task 2 will add handleUncaughtExtensionError to register-extension.ts
 import { handleUncaughtExtensionError, handleRecoverableExtensionProcessError } from "../bootstrap/register-extension.ts";
 
 // ---------------------------------------------------------------------------
