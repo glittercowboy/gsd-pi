@@ -31,19 +31,13 @@ Decide the approach based on the actual scope:
 
 ## Mandatory Investigation
 
-Do a mandatory investigation pass before making any decisions. This is not optional.
+Before making any decisions, do a mandatory investigation pass:
 
-1. **Scout the codebase** — `ls`, `find`, `rg`, or `scout` for broad unfamiliar areas. Understand what already exists, what patterns are established, what constraints current code imposes.
-2. **Check library docs** — `resolve_library` / `get_library_docs` for any tech mentioned in the spec. Get current facts about capabilities, constraints, API shapes, version-specific behavior.
-3. **Web search** — `search-the-web` if the domain is unfamiliar, if you need current best practices, or if the spec references external services/APIs you need facts about. Use `fetch_page` for full content when snippets aren't enough.
+1. **Scout codebase** — understand what exists, patterns established, constraints
+2. **Check library docs** — `resolve_library`/`get_library_docs` for mentioned tech
+3. **Web search** — for unfamiliar domains, best practices, external APIs
 
-**Web search budget:** Budget carefully across investigation + focused research:
-- Prefer `resolve_library` / `get_library_docs` over `web_search` for library documentation.
-- Prefer `search_and_read` for one-shot topic research.
-- Target 2-3 web searches in this investigation pass. Save remaining budget for focused research.
-- Do NOT repeat the same or similar queries.
-
-The goal: your decisions should reflect what's actually true in the codebase and ecosystem, not what you assume.
+**Search budget:** Prefer `resolve_library` over web search for docs. Use `search_and_read` for one-shot research. Target 2-3 searches here, save rest for focused research. Don't repeat queries.
 
 ## Autonomous Decision-Making
 
@@ -94,39 +88,13 @@ For multi-milestone visions, research should cover the full landscape, not just 
 
 ## Capability Contract
 
-Before writing a roadmap, produce `.gsd/REQUIREMENTS.md`.
+Before writing a roadmap, produce `.gsd/REQUIREMENTS.md` as the explicit capability contract.
 
-Use it as the project's explicit capability contract.
+Organize into: Active, Validated, Deferred, Out of Scope, Traceability. Each requirement: stable ID (`R###`), title, class, status, description, why, source (`spec`/`inferred`/`research`/`execution`), primary owning slice, supporting slices, validation status, notes.
 
-Requirements must be organized into:
-- Active
-- Validated
-- Deferred
-- Out of Scope
-- Traceability
+Rules: capability-oriented (not feature inventory), every Active requirement mapped/deferred/blocked/out-of-scope, multi-milestone spans full vision with provisional ownership.
 
-Each requirement should include:
-- stable ID (`R###`)
-- title
-- class
-- status
-- description
-- why it matters
-- source (`spec`, `inferred`, `research`, or `execution`)
-- primary owning slice
-- supporting slices
-- validation status
-- notes
-
-Rules:
-- Keep requirements capability-oriented, not a giant feature inventory
-- Every Active requirement must either be mapped to a roadmap owner, explicitly deferred, blocked with reason, or moved out of scope
-- Product-facing work should capture launchability, primary user loop, continuity, and failure visibility when relevant
-- Later milestones may have provisional ownership, but the first planned milestone should map requirements to concrete slices wherever possible
-
-For multi-milestone projects, requirements should span the full vision. Requirements owned by later milestones get provisional ownership. The full requirement set captures the spec's complete vision — milestones are the sequencing strategy, not the scope boundary.
-
-**Print the requirements in chat before writing the roadmap.** Print a markdown table with columns: ID, Title, Status, Owner, Source. Group by status (Active, Deferred, Out of Scope).
+**Print requirements in chat** as markdown table (ID, Title, Status, Owner, Source) grouped by status.
 
 ## Scope Assessment
 
@@ -211,24 +179,7 @@ Each context file (full or draft) should be rich enough that a future agent enco
 
 #### Milestone Gate Tracking (MANDATORY for multi-milestone)
 
-After deciding each milestone's readiness, immediately write or update `.gsd/DISCUSSION-MANIFEST.json`:
-
-```json
-{
-  "primary": "M001",
-  "milestones": {
-    "M001": { "gate": "discussed", "context": "full" },
-    "M002": { "gate": "discussed", "context": "full" },
-    "M003": { "gate": "queued",    "context": "none" }
-  },
-  "total": 3,
-  "gates_completed": 3
-}
-```
-
-Write this file AFTER each gate decision, not just at the end. Update `gates_completed` incrementally. The system reads this file and BLOCKS auto-start if `gates_completed < total`.
-
-For single-milestone projects, do NOT write this file.
+After each milestone decision, write/update `.gsd/DISCUSSION-MANIFEST.json`: `{ "primary": "M001", "milestones": { "M001": {"gate":"discussed","context":"full"}, ... }, "total": N, "gates_completed": N }`. Write incrementally after each gate. System BLOCKS auto-start if `gates_completed < total`. Single-milestone: do NOT write this file.
 
 #### Phase 4: Finalize
 
