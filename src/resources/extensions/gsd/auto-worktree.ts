@@ -1348,9 +1348,9 @@ export function ensureCleanWorkingTree(
     if (afterStash && afterStash !== beforeStash) {
       stashed = true;
       stashRef = afterStash;
-      cleaned.push("stashed tracked dirty files");
+      cleaned.push("stashed dirty files");
     } else {
-      cleaned.push("stash reported no tracked changes");
+      cleaned.push("stash reported no changes");
     }
   } catch (stashErr) {
     // Stash can fail when conflict markers exist — escalate to abort+reset

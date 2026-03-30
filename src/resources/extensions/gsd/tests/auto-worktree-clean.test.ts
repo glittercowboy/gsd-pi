@@ -122,7 +122,7 @@ describe("ensureCleanWorkingTree", () => {
     assert.ok(stashList.includes("gsd:"), "stash should contain the gsd pre-merge entry");
   });
 
-  test("does not mark stashed=true when only untracked files are dirty", () => {
+  test("stashes untracked-only dirtiness and preserves pre-existing stash entries", () => {
     // Create a pre-existing stash entry that should remain untouched.
     writeFileSync(join(repoDir, "README.md"), "# Stashed baseline\n", "utf-8");
     run("git stash push -m \"preexisting stash\"", repoDir);
@@ -133,19 +133,19 @@ describe("ensureCleanWorkingTree", () => {
     const result = ensureCleanWorkingTree(repoDir);
     assert.strictEqual(
       result.stashed,
-      false,
-      "untracked-only changes should not be reported as a created stash",
+      true,
+      "untracked-only changes should produce a new stash with --include-untracked",
     );
-    assert.strictEqual(
-      result.stashRef,
-      null,
-      "stashRef should remain null when no new stash entry is created",
-    );
+    assert.ok(result.stashRef, "stashRef should be set for the new stash entry");
 
     const stashList = run("git stash list", repoDir);
     assert.ok(
+      stashList.includes("gsd: pre-merge clean state"),
+      "new pre-merge stash entry should be present",
+    );
+    assert.ok(
       stashList.includes("preexisting stash"),
-      "pre-existing stash should still exist and remain untouched",
+      "pre-existing stash should remain in the stack",
     );
   });
 
