@@ -15,6 +15,7 @@ import {
   realpathSync,
   rmSync,
   unlinkSync,
+  statSync,
   lstatSync as lstatSyncFn,
 } from "node:fs";
 import { isAbsolute, join, sep as pathSep } from "node:path";
@@ -223,12 +224,18 @@ export function syncProjectRootToWorktree(
     { force: true },
   );
 
-  // Delete worktree gsd.db so it rebuilds from the freshly synced files.
-  // Stale DB rows are the root cause of the infinite skip loop (#853).
+  // Delete worktree gsd.db ONLY if it is empty (0 bytes).
+  // An empty DB is stale/corrupt and should be rebuilt (#853).
+  // A non-empty DB was populated by gsd-migrate on respawn and must be
+  // preserved — deleting it truncates the file to 0 bytes when
+  // openDatabase re-creates it, causing "no such table" failures (#2815).
   try {
     const wtDb = join(wtGsd, "gsd.db");
     if (existsSync(wtDb)) {
-      unlinkSync(wtDb);
+      const size = statSync(wtDb).size;
+      if (size === 0) {
+        unlinkSync(wtDb);
+      }
     }
   } catch {
     /* non-fatal */

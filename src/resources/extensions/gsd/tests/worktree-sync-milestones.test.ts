@@ -100,8 +100,8 @@ describe('worktree-sync-milestones', async () => {
     }
   }
 
-  // ─── 3. gsd.db deleted in worktree after sync ─────────────────────────
-  console.log('\n=== 3. gsd.db deleted in worktree after sync ===');
+  // ─── 3. empty gsd.db deleted in worktree after sync ────────────────────
+  console.log('\n=== 3. empty gsd.db deleted in worktree after sync ===');
   {
     const mainBase = createBase('main');
     const wtBase = createBase('wt');
@@ -111,13 +111,37 @@ describe('worktree-sync-milestones', async () => {
       mkdirSync(m001Dir, { recursive: true });
       writeFileSync(join(m001Dir, 'M001-ROADMAP.md'), '# Roadmap');
 
-      // Worktree has a stale gsd.db
-      writeFileSync(join(wtBase, '.gsd', 'gsd.db'), 'stale data');
+      // Worktree has an empty (0-byte) gsd.db — stale/corrupt
+      writeFileSync(join(wtBase, '.gsd', 'gsd.db'), '');
       assert.ok(existsSync(join(wtBase, '.gsd', 'gsd.db')), 'gsd.db exists before sync');
 
       syncProjectRootToWorktree(mainBase, wtBase, 'M001');
 
-      assert.ok(!existsSync(join(wtBase, '.gsd', 'gsd.db')), '#853: gsd.db deleted after sync');
+      assert.ok(!existsSync(join(wtBase, '.gsd', 'gsd.db')), '#853: empty gsd.db deleted after sync');
+    } finally {
+      cleanup(mainBase);
+      cleanup(wtBase);
+    }
+  }
+
+  // ─── 3b. non-empty gsd.db preserved in worktree after sync (#2815) ───
+  console.log('\n=== 3b. non-empty gsd.db preserved in worktree after sync (#2815) ===');
+  {
+    const mainBase = createBase('main');
+    const wtBase = createBase('wt');
+
+    try {
+      const m001Dir = join(mainBase, '.gsd', 'milestones', 'M001');
+      mkdirSync(m001Dir, { recursive: true });
+      writeFileSync(join(m001Dir, 'M001-ROADMAP.md'), '# Roadmap');
+
+      // Worktree has a populated gsd.db (e.g. from gsd-migrate on respawn)
+      writeFileSync(join(wtBase, '.gsd', 'gsd.db'), 'migrated-db-content');
+      assert.ok(existsSync(join(wtBase, '.gsd', 'gsd.db')), 'gsd.db exists before sync');
+
+      syncProjectRootToWorktree(mainBase, wtBase, 'M001');
+
+      assert.ok(existsSync(join(wtBase, '.gsd', 'gsd.db')), '#2815: non-empty gsd.db preserved after sync');
     } finally {
       cleanup(mainBase);
       cleanup(wtBase);
