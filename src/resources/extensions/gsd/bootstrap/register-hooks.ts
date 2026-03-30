@@ -43,10 +43,10 @@ async function syncServiceTierStatus(ctx: ExtensionContext): Promise<void> {
  */
 export function buildBeforeCompactHandler(
   isActiveOverride: () => boolean = isAutoActive,
-  _isPausedOverride: () => boolean = isAutoPaused,
+  _isPausedOverride?: () => boolean,
 ): () => Promise<{ cancel: true } | undefined> {
   return async () => {
-    if (isActiveOverride() || _isPausedOverride()) {
+    if (isActiveOverride()) {
       return { cancel: true };
     }
     return undefined;
