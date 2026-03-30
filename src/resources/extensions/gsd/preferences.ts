@@ -22,6 +22,7 @@ import { normalizeStringArray } from "../shared/format-utils.js";
 import { resolveProfileDefaults as _resolveProfileDefaults } from "./preferences-models.js";
 
 import {
+  KNOWN_PREFERENCE_KEYS,
   MODE_DEFAULTS,
   type WorkflowMode,
   type GSDPreferences,
@@ -251,7 +252,7 @@ function parseFrontmatterBlock(frontmatter: string): GSDPreferences {
  *   - planner: sonnet
  */
 function parseHeadingListFormat(content: string): GSDPreferences {
-  const result: Record<string, Record<string, string>> = {};
+  const result: Record<string, string[]> = {};
   let currentSection: string | null = null;
 
   for (const rawLine of content.split('\n')) {
@@ -259,27 +260,44 @@ function parseHeadingListFormat(content: string): GSDPreferences {
     const headingMatch = line.match(/^##\s+(.+)$/);
     if (headingMatch) {
       currentSection = headingMatch[1].trim().toLowerCase().replace(/\s+/g, '_');
+      if (!result[currentSection]) result[currentSection] = [];
       continue;
     }
-    if (currentSection) {
-      const itemMatch = line.match(/^-\s+([^:]+):\s*(.*)$/);
-      if (itemMatch) {
-        if (!result[currentSection]) result[currentSection] = {};
-        const value = itemMatch[2].trim();
-        // Coerce "true"/"false" strings and numbers
-        result[currentSection][itemMatch[1].trim()] = value;
-      }
+    if (currentSection && line.trim() && !line.trimStart().startsWith('#')) {
+      result[currentSection].push(line);
     }
   }
 
-  // Convert string values to appropriate types via YAML parser for each section
   const typed: Record<string, unknown> = {};
-  for (const [section, entries] of Object.entries(result)) {
-    const yamlLines = Object.entries(entries).map(([k, v]) => `${k}: ${v}`).join('\n');
+  for (const [section, lines] of Object.entries(result)) {
+    if (lines.length === 0) continue;
+
+    const usesLegacyListItems = lines.every((line) => /^\s*-\s+[^:]+:\s*.*$/.test(line));
+    const yamlBlock = usesLegacyListItems
+      ? lines.map((line) => line.replace(/^\s*-\s+/, '')).join('\n')
+      : lines.join('\n');
+
     try {
-      typed[section] = parseYaml(yamlLines);
+      const parsed = parseYaml(yamlBlock);
+      if (typeof parsed !== 'object' || parsed === null) continue;
+
+      let targetSection = section;
+      let value: unknown = parsed;
+
+      if (!Array.isArray(parsed)) {
+        const keys = Object.keys(parsed);
+        if (keys.length === 1) {
+          const [onlyKey] = keys;
+          if (onlyKey === section || (!KNOWN_PREFERENCE_KEYS.has(section) && KNOWN_PREFERENCE_KEYS.has(onlyKey))) {
+            targetSection = onlyKey;
+            value = (parsed as Record<string, unknown>)[onlyKey];
+          }
+        }
+      }
+
+      typed[targetSection] = value;
     } catch {
-      typed[section] = entries;
+      /* malformed section — skip */
     }
   }
 

@@ -130,6 +130,15 @@ export async function bootstrapAutoSession(
     return false;
   }
 
+  // Capture the user's session model before guided-flow dispatch can apply a
+  // phase-specific planning model for a discuss turn (#2829).
+  const startModelSnapshot = ctx.model
+    ? {
+        provider: ctx.model.provider,
+        id: ctx.model.id,
+      }
+    : null;
+
   try {
     // Validate GSD_PROJECT_ID early so the user gets immediate feedback
     const customProjectId = process.env.GSD_PROJECT_ID;
@@ -574,12 +583,11 @@ export async function bootstrapAutoSession(
     // Initialize routing history
     initRoutingHistory(s.basePath);
 
-    // Capture session's model at auto-mode start (#650)
-    const currentModel = ctx.model;
-    if (currentModel) {
+    // Restore the model that was active when auto bootstrap began (#650, #2829).
+    if (startModelSnapshot) {
       s.autoModeStartModel = {
-        provider: currentModel.provider,
-        id: currentModel.id,
+        provider: startModelSnapshot.provider,
+        id: startModelSnapshot.id,
       };
     }
 

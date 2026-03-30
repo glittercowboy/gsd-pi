@@ -89,18 +89,13 @@ export function isMilestoneComplete(roadmap: Roadmap): boolean {
 }
 
 /**
- * Check whether a VALIDATION file's verdict is terminal (pass or needs-attention).
- * A non-terminal verdict (needs-remediation) means validation must re-run
- * after remediation slices are executed.
+ * Check whether a VALIDATION file's verdict is terminal.
+ * Any successfully extracted verdict (pass, needs-attention, needs-remediation,
+ * fail, etc.) means validation completed. Only return false when no verdict
+ * could be parsed — i.e. extractVerdict() returns undefined (#2769).
  */
 export function isValidationTerminal(validationContent: string): boolean {
-  const v = extractVerdict(validationContent);
-  if (!v) return false;
-  // 'pass' and 'needs-attention' are always terminal.
-  // 'needs-remediation' is treated as terminal to prevent infinite loops
-  // when no remediation slices exist in the roadmap (#832). The validation
-  // report is preserved on disk for manual review.
-  return v === 'pass' || v === 'needs-attention' || v === 'needs-remediation';
+  return extractVerdict(validationContent) != null;
 }
 
 // ─── State Derivation ──────────────────────────────────────────────────────
