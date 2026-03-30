@@ -778,8 +778,21 @@ export function openDatabase(path: string): boolean {
   try {
     initSchema(adapter, fileBacked);
   } catch (err) {
-    try { adapter.close(); } catch { /* swallow */ }
-    throw err;
+    // Corrupt freelist: DDL fails with "malformed" but VACUUM can rebuild.
+    // Attempt VACUUM recovery before giving up (see #2519).
+    if (fileBacked && err instanceof Error && err.message?.includes("malformed")) {
+      try {
+        adapter.exec("VACUUM");
+        initSchema(adapter, fileBacked);
+        process.stderr.write("gsd-db: recovered corrupt database via VACUUM\n");
+      } catch (retryErr) {
+        try { adapter.close(); } catch { /* swallow */ }
+        throw retryErr;
+      }
+    } else {
+      try { adapter.close(); } catch { /* swallow */ }
+      throw err;
+    }
   }
 
   currentDb = adapter;

@@ -119,10 +119,11 @@ export async function checkRuntimeHealth(
 
       for (const key of keys) {
         // Key format: "unitType/unitId" e.g. "execute-task/M001/S01/T01"
-        const slashIdx = key.indexOf("/");
-        if (slashIdx === -1) continue;
-        const unitType = key.slice(0, slashIdx);
-        const unitId = key.slice(slashIdx + 1);
+        // Hook units have compound types: "hook/<hookName>/unitId"
+        const { splitCompletedKey } = await import("./forensics.js");
+        const parsed = splitCompletedKey(key);
+        if (!parsed) continue;
+        const { unitType, unitId } = parsed;
 
         // Only validate artifact-producing unit types
         const { verifyExpectedArtifact } = await import("./auto-recovery.js");

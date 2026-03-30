@@ -23,9 +23,6 @@ import type {
 	SDKMessage,
 	SDKPartialAssistantMessage,
 	SDKResultMessage,
-	SDKSystemMessage,
-	SDKStatusMessage,
-	SDKUserMessage,
 } from "./sdk-types.js";
 
 // ---------------------------------------------------------------------------
@@ -71,28 +68,47 @@ function getClaudePath(): string {
 }
 
 // ---------------------------------------------------------------------------
-// Prompt extraction
+// Prompt construction
 // ---------------------------------------------------------------------------
 
 /**
- * Extract the last user prompt text from GSD's context messages.
- * The SDK manages its own conversation history — we only send
- * the latest user message as the prompt.
+ * Extract text content from a single message regardless of content shape.
  */
-function extractLastUserPrompt(context: Context): string {
-	for (let i = context.messages.length - 1; i >= 0; i--) {
-		const msg = context.messages[i];
-		if (msg.role === "user") {
-			if (typeof msg.content === "string") return msg.content;
-			if (Array.isArray(msg.content)) {
-				const textParts = msg.content
-					.filter((part: any) => part.type === "text")
-					.map((part: any) => part.text);
-				if (textParts.length > 0) return textParts.join("\n");
-			}
-		}
+function extractMessageText(msg: { role: string; content: unknown }): string {
+	if (typeof msg.content === "string") return msg.content;
+	if (Array.isArray(msg.content)) {
+		const textParts = msg.content
+			.filter((part: any) => part.type === "text")
+			.map((part: any) => part.text ?? part.thinking ?? "");
+		if (textParts.length > 0) return textParts.join("\n");
 	}
 	return "";
+}
+
+/**
+ * Build a full conversational prompt from GSD's context messages.
+ *
+ * Previous behaviour sent only the last user message, making every SDK
+ * call effectively stateless. This version serialises the complete
+ * conversation history (system prompt + all user/assistant turns) so
+ * Claude Code has full context for multi-turn continuity.
+ */
+export function buildPromptFromContext(context: Context): string {
+	const parts: string[] = [];
+
+	if (context.systemPrompt) {
+		parts.push(`[System]\n${context.systemPrompt}`);
+	}
+
+	for (const msg of context.messages) {
+		const text = extractMessageText(msg);
+		if (!text) continue;
+
+		const label = msg.role === "user" ? "User" : msg.role === "assistant" ? "Assistant" : "System";
+		parts.push(`[${label}]\n${text}`);
+	}
+
+	return parts.join("\n\n");
 }
 
 // ---------------------------------------------------------------------------
@@ -125,6 +141,31 @@ export function makeStreamExhaustedErrorMessage(model: string, lastTextContent: 
 		message.content = [{ type: "text", text: lastTextContent }];
 	}
 	return message;
+}
+
+// ---------------------------------------------------------------------------
+// SDK options builder
+// ---------------------------------------------------------------------------
+
+/**
+ * Build the options object passed to the Claude Agent SDK's `query()` call.
+ *
+ * Extracted for testability — callers can verify session persistence,
+ * beta flags, and other configuration without mocking the full SDK.
+ */
+export function buildSdkOptions(modelId: string, prompt: string): Record<string, unknown> {
+	return {
+		pathToClaudeCodeExecutable: getClaudePath(),
+		model: modelId,
+		includePartialMessages: true,
+		persistSession: true,
+		cwd: process.cwd(),
+		permissionMode: "bypassPermissions",
+		allowDangerouslySkipPermissions: true,
+		settingSources: ["project"],
+		systemPrompt: { type: "preset", preset: "claude_code" },
+		betas: modelId.includes("sonnet") ? ["context-1m-2025-08-07"] : [],
+	};
 }
 
 // ---------------------------------------------------------------------------
@@ -180,22 +221,14 @@ async function pumpSdkMessages(
 			options.signal.addEventListener("abort", () => controller.abort(), { once: true });
 		}
 
-		const prompt = extractLastUserPrompt(context);
+		const prompt = buildPromptFromContext(context);
+		const sdkOpts = buildSdkOptions(modelId, prompt);
 
 		const queryResult = sdk.query({
 			prompt,
 			options: {
-				pathToClaudeCodeExecutable: getClaudePath(),
-				model: modelId,
-				includePartialMessages: true,
-				persistSession: false,
+				...sdkOpts,
 				abortController: controller,
-				cwd: process.cwd(),
-				permissionMode: "bypassPermissions",
-				allowDangerouslySkipPermissions: true,
-				settingSources: ["project"],
-				systemPrompt: { type: "preset", preset: "claude_code" },
-				betas: modelId.includes("sonnet") ? ["context-1m-2025-08-07"] : [],
 			},
 		});
 
@@ -225,7 +258,6 @@ async function pumpSdkMessages(
 				// -- Streaming partial messages --
 				case "stream_event": {
 					const partial = msg as SDKPartialAssistantMessage;
-					if (partial.parent_tool_use_id !== null) break; // skip subagent
 
 					const event = partial.event;
 
@@ -256,7 +288,6 @@ async function pumpSdkMessages(
 				// -- Complete assistant message (non-streaming fallback) --
 				case "assistant": {
 					const sdkAssistant = msg as SDKAssistantMessage;
-					if (sdkAssistant.parent_tool_use_id !== null) break;
 
 					// Capture text content from complete messages
 					for (const block of sdkAssistant.message.content) {
@@ -271,9 +302,6 @@ async function pumpSdkMessages(
 
 				// -- User message (synthetic tool result — signals turn boundary) --
 				case "user": {
-					const userMsg = msg as SDKUserMessage;
-					if (userMsg.parent_tool_use_id !== null) break;
-
 					// Capture content from the completed turn before resetting
 					if (builder) {
 						for (const block of builder.message.content) {

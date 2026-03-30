@@ -399,6 +399,12 @@ export class TUI extends Container {
 
 	start(): void {
 		this.stopped = false;
+		// Non-TTY stdout (pipe) — skip TUI entirely to avoid burning CPU.
+		// RPC bridge processes have piped stdio; rendering ANSI escape codes
+		// to a pipe is pure waste and causes a runaway render loop. (issue #3095)
+		if (!this.terminal.isTTY) {
+			return;
+		}
 		this.terminal.start(
 			(data) => this.handleInput(data),
 			() => this.requestRender(),
@@ -458,6 +464,8 @@ export class TUI extends Container {
 	}
 
 	requestRender(force = false): void {
+		// Skip rendering on non-TTY stdout to prevent CPU burn (issue #3095)
+		if (!this.terminal.isTTY) return;
 		if (force) {
 			this.previousLines = [];
 			this.previousWidth = -1; // -1 triggers widthChanged, forcing a full clear

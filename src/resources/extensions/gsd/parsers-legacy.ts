@@ -196,18 +196,28 @@ function _parsePlanImpl(content: string): SlicePlan {
   const mhSection = extractSection(body, 'Must-Haves');
   const mustHaves = mhSection ? parseBullets(mhSection) : [];
 
+  // Parse tasks from ## Tasks section first, then scan the full body for any
+  // task checkboxes that were missed. Multi-task plans can interleave T01 detail
+  // headings (## Steps, ## Must-Haves) before T02's checkbox, which causes
+  // extractSection("Tasks") to stop at the first ## heading and miss T02+ (#3105).
   const tasksSection = extractSection(body, 'Tasks');
   const tasks: TaskPlanEntry[] = [];
 
-  if (tasksSection) {
-    const taskLines = tasksSection.split('\n');
+  // Parse task entries from a set of lines, appending to `tasks`.
+  const parseTaskLines = (lines: string[], knownIds: Set<string>): void => {
     let currentTask: TaskPlanEntry | null = null;
 
-    for (const line of taskLines) {
+    for (const line of lines) {
       const cbMatch = line.match(/^-\s+\[([ xX])\]\s+\*\*([\w.]+):\s+(.+?)\*\*\s*(.*)/);
       // Heading-style: ### T01 -- Title, ### T01: Title, ### T01 — Title
       const hdMatch = !cbMatch ? line.match(/^#{2,4}\s+([\w.]+)\s*(?:--|—|:)\s*(.+)/) : null;
       if (cbMatch || hdMatch) {
+        const taskId = cbMatch ? cbMatch[2] : hdMatch![1];
+        // Skip tasks already found in the Tasks section
+        if (knownIds.has(taskId)) {
+          currentTask = null;
+          continue;
+        }
         if (currentTask) tasks.push(currentTask);
 
         if (cbMatch) {
@@ -259,7 +269,16 @@ function _parsePlanImpl(content: string): SlicePlan {
       }
     }
     if (currentTask) tasks.push(currentTask);
+  };
+
+  if (tasksSection) {
+    parseTaskLines(tasksSection.split('\n'), new Set());
   }
+
+  // Second pass: scan the full body for task checkboxes outside ## Tasks.
+  // This handles interleaved plans where T02+ appear after T01's detail headings.
+  const foundIds = new Set(tasks.map(t => t.id));
+  parseTaskLines(body.split('\n'), foundIds);
 
   const filesSection = extractSection(body, 'Files Likely Touched');
   const filesLikelyTouched = filesSection ? parseBullets(filesSection) : [];

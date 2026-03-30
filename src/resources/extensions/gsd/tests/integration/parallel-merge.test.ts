@@ -38,6 +38,12 @@ import {
   writeSessionStatus,
   readSessionStatus,
 } from "../../session-status-io.ts";
+import {
+  openDatabase,
+  closeDatabase,
+  insertMilestone,
+  updateMilestoneStatus,
+} from "../../gsd-db.ts";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -460,6 +466,110 @@ test("mergeAllCompleted — by-completion order respects startedAt", async () =>
     assert.equal(results.length, 2);
     assert.equal(results[0]!.milestoneId, "M002", "M002 merged first (earlier startedAt)");
     assert.equal(results[1]!.milestoneId, "M001", "M001 merged second");
+  } finally {
+    process.chdir(savedCwd);
+    cleanup(repo);
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Bug #2812 — determineMergeOrder should use worktree DB as source of truth
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/** Set up a worktree DB with a milestone marked complete */
+function setupWorktreeDb(basePath: string, mid: string): void {
+  const wtGsdDir = join(basePath, ".gsd", "worktrees", mid, ".gsd");
+  mkdirSync(wtGsdDir, { recursive: true });
+  const dbPath = join(wtGsdDir, "gsd.db");
+  openDatabase(dbPath);
+  insertMilestone({ id: mid, title: `Milestone ${mid}`, status: "complete" });
+  updateMilestoneStatus(mid, "complete", new Date().toISOString());
+  closeDatabase();
+}
+
+test("determineMergeOrder — finds milestones completed in worktree DB even when worker state is 'error' (#2812)", () => {
+  const base = realpathSync(mkdtempSync(join(tmpdir(), "merge-db-bug-")));
+  try {
+    // Simulate the bug scenario: orchestrator has stale "error" state
+    // but the worktree DB shows milestone is actually complete.
+    setupWorktreeDb(base, "M011");
+
+    const workers = [
+      makeWorker({ milestoneId: "M010", state: "error" }),
+      makeWorker({ milestoneId: "M011", state: "error" }),  // stale — actually complete in DB
+      makeWorker({ milestoneId: "M012", state: "running" }),
+    ];
+
+    const order = determineMergeOrder(workers, "sequential", base);
+
+    // M011 should be included because its worktree DB says status='complete'
+    assert.ok(
+      order.includes("M011"),
+      `Expected M011 in merge order (worktree DB says complete), got: [${order}]`,
+    );
+    // M010 and M012 should NOT be included (no worktree DB with complete status)
+    assert.ok(!order.includes("M010"), "M010 should not be in merge order (error, no DB)");
+    assert.ok(!order.includes("M012"), "M012 should not be in merge order (running, no DB)");
+  } finally {
+    cleanup(base);
+  }
+});
+
+test("determineMergeOrder — workers with state='stopped' still included without basePath", () => {
+  // Backward compatibility: existing behavior still works when basePath is omitted
+  const workers = [
+    makeWorker({ milestoneId: "M001", state: "stopped" }),
+    makeWorker({ milestoneId: "M002", state: "error" }),
+  ];
+  const order = determineMergeOrder(workers, "sequential");
+  assert.deepEqual(order, ["M001"]);
+});
+
+test("determineMergeOrder — combines stopped workers and DB-complete milestones without duplicates", () => {
+  const base = realpathSync(mkdtempSync(join(tmpdir(), "merge-dedup-")));
+  try {
+    // M001 is stopped in orchestrator AND complete in worktree DB
+    setupWorktreeDb(base, "M001");
+
+    const workers = [
+      makeWorker({ milestoneId: "M001", state: "stopped" }),
+      makeWorker({ milestoneId: "M002", state: "running" }),
+    ];
+
+    const order = determineMergeOrder(workers, "sequential", base);
+    // M001 should appear exactly once
+    assert.deepEqual(order, ["M001"]);
+  } finally {
+    cleanup(base);
+  }
+});
+
+test("mergeAllCompleted — discovers DB-complete milestones when workers show error (#2812)", async () => {
+  const savedCwd = process.cwd();
+  const repo = createTempRepo();
+
+  try {
+    // Create milestone branch with a file
+    createMilestoneBranch(repo, "M011", [
+      { name: "feature.ts", content: "export const feature = true;\n" },
+    ]);
+    setupRoadmap(repo, "M011", "Feature System", ["S01: Feature module"]);
+
+    // Set up worktree DB showing M011 is complete
+    setupWorktreeDb(repo, "M011");
+
+    // Orchestrator thinks M011 is in error (stale state)
+    const workers = [
+      makeWorker({ milestoneId: "M011", state: "error" }),
+    ];
+
+    process.chdir(repo);
+    const results = await mergeAllCompleted(repo, workers, "sequential");
+
+    // Should find and merge M011 despite orchestrator "error" state
+    assert.equal(results.length, 1, "should have one result");
+    assert.equal(results[0]!.milestoneId, "M011");
+    assert.equal(results[0]!.success, true, `M011 merge should succeed: ${results[0]!.error}`);
   } finally {
     process.chdir(savedCwd);
     cleanup(repo);

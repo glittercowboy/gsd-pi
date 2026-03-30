@@ -40,7 +40,7 @@ import { isClosedStatus } from './status-guards.js';
 import { nativeBatchParseGsdFiles, type BatchParsedFile } from './native-parser-bridge.js';
 
 import { join, resolve } from 'path';
-import { existsSync, readdirSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { debugCount, debugTime } from './debug-logger.js';
 import { extractVerdict } from './verdict-parser.js';
 
@@ -52,6 +52,7 @@ import {
   getReplanHistory,
   getSlice,
   insertMilestone,
+  insertSlice,
   updateTaskStatus,
   getPendingSliceGateCount,
   type MilestoneRow,
@@ -297,6 +298,36 @@ export async function deriveStateFromDb(basePath: string): Promise<GSDState> {
     }
   }
   if (synced) allMilestones = getAllMilestones();
+
+  // Disk→DB slice reconciliation (#2533): slices defined in ROADMAP.md but
+  // missing from the DB cause permanent "No slice eligible" blocks because
+  // the dependency resolver only sees DB rows. Parse each milestone's roadmap
+  // and insert any missing slices, checking SUMMARY files to set correct status.
+  // insertSlice uses INSERT OR IGNORE, so existing rows are never overwritten.
+  for (const mid of diskIds) {
+    if (isGhostMilestone(basePath, mid)) continue;
+    const roadmapPath = resolveMilestoneFile(basePath, mid, "ROADMAP");
+    if (!roadmapPath) continue;
+
+    const dbSlices = getMilestoneSlices(mid);
+    const dbSliceIds = new Set(dbSlices.map(s => s.id));
+
+    let roadmapContent: string;
+    try { roadmapContent = readFileSync(roadmapPath, "utf-8"); }
+    catch { continue; }
+
+    const parsed = parseRoadmap(roadmapContent);
+    for (const s of parsed.slices) {
+      if (dbSliceIds.has(s.id)) continue;
+      const summaryPath = resolveSliceFile(basePath, mid, s.id, "SUMMARY");
+      const sliceStatus = (s.done || summaryPath) ? "complete" : "pending";
+      insertSlice({
+        id: s.id, milestoneId: mid, title: s.title,
+        status: sliceStatus, risk: s.risk,
+        depends: s.depends, demo: s.demo,
+      });
+    }
+  }
 
   // Reconcile: discover milestones that exist on disk but are missing from
   // the DB. This happens when milestones were created before the DB migration

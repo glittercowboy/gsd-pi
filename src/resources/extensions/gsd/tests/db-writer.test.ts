@@ -416,23 +416,18 @@ describe('db-writer', () => {
     }
   });
 
-  test('updateRequirementInDb — not found', async () => {
+  test('updateRequirementInDb — upserts when not found (#2919)', async () => {
     const tmpDir = makeTmpDir();
     const dbPath = path.join(tmpDir, '.gsd', 'gsd.db');
     openDatabase(dbPath);
 
     try {
-      let threw = false;
-      try {
-        await updateRequirementInDb('R999', { status: 'validated' }, tmpDir);
-      } catch (err) {
-        threw = true;
-        assert.ok(
-          (err as Error).message.includes('R999'),
-          'error message mentions the missing ID',
-        );
-      }
-      assert.ok(threw, 'throws when requirement not found');
+      // Previously threw; now upserts a skeleton requirement with the provided updates
+      await updateRequirementInDb('R999', { status: 'validated' }, tmpDir);
+      const created = getRequirementById('R999');
+      assert.ok(created !== null, 'R999 should be created by upsert');
+      assert.deepStrictEqual(created!.status, 'validated', 'Upserted requirement should have validated status');
+      assert.deepStrictEqual(created!.id, 'R999', 'Upserted requirement should keep the provided ID');
     } finally {
       closeDatabase();
       cleanupDir(tmpDir);

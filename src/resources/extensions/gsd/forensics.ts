@@ -106,13 +106,15 @@ interface ForensicReport {
 // ─── Duplicate Detection ──────────────────────────────────────────────────────
 
 const DEDUP_PROMPT_SECTION = `
-## Duplicate Detection (REQUIRED before issue creation)
+## Pre-Investigation: Duplicate Check (REQUIRED)
 
-Before offering to create a GitHub issue, you MUST search for existing issues and PRs that may already address this bug. This step uses the user's AI tokens for analysis.
+Before reading GSD source code or performing deep analysis, you MUST search for existing issues and PRs that may already address this bug. This avoids wasting tokens on already-fixed bugs.
 
 ### Search Steps
 
-1. **Search closed issues** for similar keywords from your diagnosis:
+Use keywords from the user's problem description and the anomaly summaries in the forensic report above.
+
+1. **Search closed issues** for similar keywords:
    \`\`\`
    gh issue list --repo gsd-build/gsd-2 --state closed --search "<keywords from root cause>" --limit 20
    \`\`\`
@@ -129,20 +131,16 @@ Before offering to create a GitHub issue, you MUST search for existing issues an
 
 ### Analysis
 
-For each result, compare it against your root-cause diagnosis:
+For each result, compare it against the user's reported symptoms and the forensic anomalies:
 - Does the issue describe the same code path or file?
-- Does the PR modify the same file:line you identified?
+- Does the PR modify the area related to the reported symptoms?
 - Is the symptom description semantically similar even if keywords differ?
 
-### Present Findings
+### Decision Gate
 
-If you find potential matches, present them to the user:
-
-1. **"Already fixed by PR #X — skip issue creation"** — when a merged PR or closed issue clearly addresses the same root cause. Explain why you believe it matches.
-2. **"Add my findings to existing issue #Y"** — when an open issue exists for the same bug. Use \`gh issue comment #Y --repo gsd-build/gsd-2\` to add forensic evidence.
-3. **"Create new issue anyway"** — when existing results do not cover this specific failure.
-
-Only proceed to issue creation if no matches were found OR the user explicitly chooses "Create new issue anyway".
+- **Merged PR clearly fixes the described symptom** → Report "Already fixed by PR #X" with brief explanation. Skip full investigation.
+- **Open issue matches** → Report "Existing issue #Y covers this." Offer to add forensic evidence. Skip full investigation unless user asks for deeper analysis.
+- **No matches** → Proceed to full investigation below.
 `;
 
 async function writeForensicsDedupPref(ctx: ExtensionCommandContext, enabled: boolean): Promise<void> {
@@ -250,6 +248,9 @@ export async function handleForensics(
     { customType: "gsd-forensics", content, display: false },
     { triggerTurn: true },
   );
+
+  // Persist forensics context so follow-up turns can re-inject it (#2941)
+  writeForensicsMarker(basePath, savedPath, content);
 }
 
 // ─── Report Builder ───────────────────────────────────────────────────────────
@@ -649,15 +650,42 @@ function detectTimeouts(traces: UnitTrace[], anomalies: ForensicAnomaly[]): void
   }
 }
 
+/**
+ * Parse a completed-unit key into its unitType and unitId.
+ *
+ * Hook units use a compound slash-delimited type ("hook/<hookName>"), so a
+ * naive `key.indexOf("/")` would split "hook/telegram-progress/M007/S01" into
+ * unitType="hook" (wrong) instead of "hook/telegram-progress".
+ *
+ * Returns `null` for malformed keys that cannot be split.
+ */
+export function splitCompletedKey(key: string): { unitType: string; unitId: string } | null {
+  if (key.startsWith("hook/")) {
+    // Hook unit types are two segments: "hook/<hookName>/<unitId...>"
+    const secondSlash = key.indexOf("/", 5); // skip past "hook/"
+    if (secondSlash === -1) return null;     // malformed — no unitId after hook name
+    return {
+      unitType: key.slice(0, secondSlash),
+      unitId: key.slice(secondSlash + 1),
+    };
+  }
+
+  const slashIdx = key.indexOf("/");
+  if (slashIdx === -1) return null;
+  return {
+    unitType: key.slice(0, slashIdx),
+    unitId: key.slice(slashIdx + 1),
+  };
+}
+
 function detectMissingArtifacts(completedKeys: string[], basePath: string, activeMilestone: string | null, anomalies: ForensicAnomaly[]): void {
   // Also check the worktree path for artifacts — they may exist there but not at root
   const wtBasePath = activeMilestone ? getAutoWorktreePath(basePath, activeMilestone) : null;
 
   for (const key of completedKeys) {
-    const slashIdx = key.indexOf("/");
-    if (slashIdx === -1) continue;
-    const unitType = key.slice(0, slashIdx);
-    const unitId = key.slice(slashIdx + 1);
+    const parsed = splitCompletedKey(key);
+    if (!parsed) continue;
+    const { unitType, unitId } = parsed;
 
     const rootHasArtifact = verifyExpectedArtifact(unitType, unitId, basePath);
     const wtHasArtifact = wtBasePath ? verifyExpectedArtifact(unitType, unitId, wtBasePath) : false;
@@ -894,6 +922,42 @@ function saveForensicReport(basePath: string, report: ForensicReport, problemDes
 
   writeFileSync(filePath, sections.join("\n"), "utf-8");
   return filePath;
+}
+
+// ─── Forensics Session Marker ────────────────────────────────────────────────
+
+export interface ForensicsMarker {
+  reportPath: string;
+  promptContent: string;
+  createdAt: string;
+}
+
+/**
+ * Write a marker file so that buildBeforeAgentStartResult() can re-inject
+ * the forensics prompt on follow-up turns.  (#2941)
+ */
+export function writeForensicsMarker(basePath: string, reportPath: string, promptContent: string): void {
+  const dir = join(gsdRoot(basePath), "runtime");
+  mkdirSync(dir, { recursive: true });
+  const marker: ForensicsMarker = {
+    reportPath,
+    promptContent,
+    createdAt: new Date().toISOString(),
+  };
+  writeFileSync(join(dir, "active-forensics.json"), JSON.stringify(marker), "utf-8");
+}
+
+/**
+ * Read the active forensics marker, or null if none exists.
+ */
+export function readForensicsMarker(basePath: string): ForensicsMarker | null {
+  const markerPath = join(gsdRoot(basePath), "runtime", "active-forensics.json");
+  if (!existsSync(markerPath)) return null;
+  try {
+    return JSON.parse(readFileSync(markerPath, "utf-8")) as ForensicsMarker;
+  } catch {
+    return null;
+  }
 }
 
 // ─── Prompt Formatter ─────────────────────────────────────────────────────────

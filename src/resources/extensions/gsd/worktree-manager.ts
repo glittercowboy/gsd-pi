@@ -365,6 +365,29 @@ export function removeWorktree(
     try { nativeWorktreeRemove(basePath, resolvedWtPath, true); } catch { /* may fail */ }
   }
 
+  // (#2821) If the worktree directory STILL exists after both native removal
+  // attempts (e.g. untracked files like ASSESSMENT/UAT-RESULT prevent git
+  // worktree remove), force-remove the git internal worktree metadata first,
+  // then remove the filesystem directory. Without this, the .git/worktrees/<name>
+  // lock prevents rmSync from cleaning up, and the orphaned worktree directory
+  // causes every subsequent `/gsd auto` to re-enter the stale worktree.
+  if (existsSync(resolvedWtPath)) {
+    try {
+      const wtInternalDir = join(basePath, ".git", "worktrees", name);
+      if (existsSync(wtInternalDir)) {
+        rmSync(wtInternalDir, { recursive: true, force: true });
+      }
+      rmSync(resolvedWtPath, { recursive: true, force: true });
+    } catch {
+      logWarning(
+        "reconcile",
+        `Worktree directory could not be removed after git internal cleanup: ${resolvedWtPath}. ` +
+          `Manual cleanup: rm -rf "${resolvedWtPath.replaceAll("\\", "/")}"`,
+        { worktree: name },
+      );
+    }
+  }
+
   // Prune stale entries so git knows the worktree is gone
   nativeWorktreePrune(basePath);
 

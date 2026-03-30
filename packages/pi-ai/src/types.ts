@@ -192,7 +192,7 @@ export interface Usage {
 	};
 }
 
-export type StopReason = "stop" | "length" | "toolUse" | "error" | "aborted";
+export type StopReason = "stop" | "length" | "toolUse" | "pauseTurn" | "error" | "aborted";
 
 export interface UserMessage {
 	role: "user";
@@ -253,7 +253,7 @@ export type AssistantMessageEvent =
 	| { type: "toolcall_end"; contentIndex: number; toolCall: ToolCall; partial: AssistantMessage; malformedArguments?: boolean }
 	| { type: "server_tool_use"; contentIndex: number; partial: AssistantMessage }
 	| { type: "web_search_result"; contentIndex: number; partial: AssistantMessage }
-	| { type: "done"; reason: Extract<StopReason, "stop" | "length" | "toolUse">; message: AssistantMessage }
+	| { type: "done"; reason: Extract<StopReason, "stop" | "length" | "toolUse" | "pauseTurn">; message: AssistantMessage }
 	| { type: "error"; reason: Extract<StopReason, "aborted" | "error">; error: AssistantMessage };
 
 /**

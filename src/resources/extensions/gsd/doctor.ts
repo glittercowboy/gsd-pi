@@ -729,8 +729,10 @@ export async function runGSDDoctor(basePath: string, options?: { fix?: boolean; 
       }
 
       // Blocker-without-replan detection
+      // Skip when all tasks are done — the blocker was implicitly resolved
+      // within the task and the slice is not stuck (#3105 Bug 2).
       const replanPath = resolveSliceFile(basePath, milestoneId, slice.id, "REPLAN");
-      if (!replanPath) {
+      if (!replanPath && !allTasksDone) {
         for (const task of plan.tasks) {
           if (!task.done) continue;
           const summaryPath = resolveTaskFile(basePath, milestoneId, slice.id, task.id, "SUMMARY");

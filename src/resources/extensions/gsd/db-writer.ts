@@ -227,6 +227,122 @@ export async function nextDecisionId(): Promise<string> {
   }
 }
 
+// ─── Next Requirement ID ─────────────────────────────────────────────────
+
+/**
+ * Compute the next requirement ID from the current DB state.
+ * Queries MAX(CAST(SUBSTR(id, 2) AS INTEGER)) from requirements table.
+ * Returns R001 if no requirements exist. Zero-pads to 3 digits.
+ */
+export async function nextRequirementId(): Promise<string> {
+  try {
+    const db = await import('./gsd-db.js');
+    const adapter = db._getAdapter();
+    if (!adapter) return 'R001';
+
+    const row = adapter
+      .prepare('SELECT MAX(CAST(SUBSTR(id, 2) AS INTEGER)) as max_num FROM requirements')
+      .get();
+
+    const maxNum = row ? (row['max_num'] as number | null) : null;
+    if (maxNum == null || isNaN(maxNum)) return 'R001';
+
+    const next = maxNum + 1;
+    return `R${String(next).padStart(3, '0')}`;
+  } catch (err) {
+    logError('manifest', 'nextRequirementId failed', { fn: 'nextRequirementId', error: String((err as Error).message) });
+    return 'R001';
+  }
+}
+
+// ─── Save Requirement to DB + Regenerate Markdown ────────────────────────
+
+export interface SaveRequirementFields {
+  class: string;
+  status?: string;
+  description: string;
+  why: string;
+  source: string;
+  primary_owner?: string;
+  supporting_slices?: string;
+  validation?: string;
+  notes?: string;
+}
+
+/**
+ * Save a new requirement to DB and regenerate REQUIREMENTS.md.
+ * Auto-assigns the next ID via nextRequirementId().
+ * Returns the assigned ID.
+ */
+export async function saveRequirementToDb(
+  fields: SaveRequirementFields,
+  basePath: string,
+): Promise<{ id: string }> {
+  try {
+    const db = await import('./gsd-db.js');
+
+    const id = await nextRequirementId();
+
+    const requirement: Requirement = {
+      id,
+      class: fields.class,
+      status: fields.status ?? 'active',
+      description: fields.description,
+      why: fields.why,
+      source: fields.source,
+      primary_owner: fields.primary_owner ?? '',
+      supporting_slices: fields.supporting_slices ?? '',
+      validation: fields.validation ?? '',
+      notes: fields.notes ?? '',
+      full_content: '',
+      superseded_by: null,
+    };
+
+    db.upsertRequirement(requirement);
+
+    // Fetch all requirements for full file regeneration
+    const adapter = db._getAdapter();
+    let allRequirements: Requirement[] = [];
+    if (adapter) {
+      const rows = adapter.prepare('SELECT * FROM requirements ORDER BY id').all();
+      allRequirements = rows.map(row => ({
+        id: row['id'] as string,
+        class: row['class'] as string,
+        status: row['status'] as string,
+        description: row['description'] as string,
+        why: row['why'] as string,
+        source: row['source'] as string,
+        primary_owner: row['primary_owner'] as string,
+        supporting_slices: row['supporting_slices'] as string,
+        validation: row['validation'] as string,
+        notes: row['notes'] as string,
+        full_content: row['full_content'] as string,
+        superseded_by: (row['superseded_by'] as string) ?? null,
+      }));
+    }
+
+    const nonSuperseded = allRequirements.filter(r => r.superseded_by == null);
+    const md = generateRequirementsMd(nonSuperseded);
+    const filePath = resolveGsdRootFile(basePath, 'REQUIREMENTS');
+    try {
+      await saveFile(filePath, md);
+    } catch (diskErr) {
+      logError('manifest', 'disk write failed, rolling back DB row', { fn: 'saveRequirementToDb', error: String((diskErr as Error).message) });
+      const rollbackAdapter = db._getAdapter();
+      rollbackAdapter?.prepare('DELETE FROM requirements WHERE id = :id').run({ ':id': id });
+      throw diskErr;
+    }
+    invalidateStateCache();
+    clearPathCache();
+    clearParseCache();
+
+    return { id };
+  } catch (err) {
+    logError('manifest', 'saveRequirementToDb failed', { fn: 'saveRequirementToDb', error: String((err as Error).message) });
+    throw err;
+  }
+}
+
 // ─── Save Decision to DB + Regenerate Markdown ────────────────────────────
 
 export interface SaveDecisionFields {
@@ -344,15 +460,30 @@ export async function updateRequirementInDb(
     const db = await import('./gsd-db.js');
 
     const existing = db.getRequirementById(id);
-    if (!existing) {
-      throw new GSDError(GSD_STALE_STATE, `Requirement ${id} not found`);
-    }
 
-    // Merge updates into existing
+    // If requirement doesn't exist in DB, create a skeleton and merge updates.
+    // This handles the case where requirements were written to REQUIREMENTS.md
+    // but never imported into the database (see #2919).
+    const base: Requirement = existing ?? {
+      id,
+      class: '',
+      status: 'active',
+      description: '',
+      why: '',
+      source: '',
+      primary_owner: '',
+      supporting_slices: '',
+      validation: '',
+      notes: '',
+      full_content: '',
+      superseded_by: null,
+    };
+
+    // Merge updates into existing (or skeleton)
     const merged: Requirement = {
-      ...existing,
+      ...base,
       ...updates,
-      id: existing.id, // ID cannot be changed
+      id: base.id, // ID cannot be changed
     };
 
     db.upsertRequirement(merged);
@@ -388,7 +519,9 @@ export async function updateRequirementInDb(
       await saveFile(filePath, md);
     } catch (diskErr) {
       logError('manifest', 'disk write failed, reverting DB row', { fn: 'updateRequirementInDb', error: String((diskErr as Error).message) });
-      db.upsertRequirement(existing);
+      if (existing) {
+        db.upsertRequirement(existing);
+      }
       throw diskErr;
     }
     // Invalidate file-read caches so deriveState() sees the updated markdown.

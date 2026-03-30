@@ -79,7 +79,7 @@ async function searchWithOAuth(
 	signal?: AbortSignal,
 ): Promise<SearchResult> {
 	const model = process.env.GEMINI_SEARCH_MODEL || "gemini-2.5-flash";
-	const url = `https://cloudcode-pa.googleapis.com/v1internal:streamGenerateContent`;
+	const url = `https://cloudcode-pa.googleapis.com/v1internal:streamGenerateContent?alt=sse`;
 
 	const GEMINI_CLI_HEADERS = {
 	        ideType: "IDE_UNSPECIFIED",
@@ -104,6 +104,7 @@ async function searchWithOAuth(
 	                                contents: [{ parts: [{ text: query }] }],
 	                                tools: [{ googleSearch: {} }],
 	                        },
+	                        userAgent: "pi-coding-agent",
 	                }),
 	                signal,
 	        });

@@ -32,6 +32,31 @@ export function resolveProjectRootDbPath(basePath: string): string {
     return join(projectRoot, ".gsd", "gsd.db");
   }
 
+  // Symlink-resolved layout: /.gsd/projects/<hash>/worktrees/M001/...
+  // The project root is everything before /.gsd/projects/ (#2517)
+  const symlinkMarker = `${sep}.gsd${sep}projects${sep}`;
+  const symlinkIdx = basePath.indexOf(symlinkMarker);
+  if (symlinkIdx !== -1) {
+    const afterProjects = basePath.slice(symlinkIdx + symlinkMarker.length);
+    // Expect: <hash>/worktrees/...
+    const worktreeSeg = `${sep}worktrees${sep}`;
+    if (afterProjects.includes(worktreeSeg)) {
+      const projectRoot = basePath.slice(0, symlinkIdx);
+      return join(projectRoot, ".gsd", "gsd.db");
+    }
+  }
+
+  // Forward-slash variant for symlink-resolved layout
+  const fwdSymlinkMarker = "/.gsd/projects/";
+  const fwdSymlinkIdx = basePath.indexOf(fwdSymlinkMarker);
+  if (fwdSymlinkIdx !== -1) {
+    const afterProjects = basePath.slice(fwdSymlinkIdx + fwdSymlinkMarker.length);
+    if (afterProjects.includes("/worktrees/")) {
+      const projectRoot = basePath.slice(0, fwdSymlinkIdx);
+      return join(projectRoot, ".gsd", "gsd.db");
+    }
+  }
+
   return join(basePath, ".gsd", "gsd.db");
 }
 
@@ -81,8 +106,20 @@ export async function ensureDbOpen(): Promise<boolean> {
       return opened;
     }
 
+    process.stderr.write(
+      `gsd-db: ensureDbOpen failed — no .gsd directory found (resolvedPath=${resolveProjectRootDbPath(basePath)}, cwd=${basePath})\n`,
+    );
     return false;
-  } catch {
+  } catch (err) {
+    const basePath = process.cwd();
+    const diagnostic = {
+      resolvedPath: resolveProjectRootDbPath(basePath),
+      cwd: basePath,
+      error: (err as Error).message ?? String(err),
+    };
+    process.stderr.write(
+      `gsd-db: ensureDbOpen failed — ${JSON.stringify(diagnostic)}\n`,
+    );
     return false;
   }
 }

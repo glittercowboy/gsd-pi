@@ -14,6 +14,28 @@ import { nativeIsRepo, nativeWorktreeList, nativeWorktreeRemove, nativeBranchLis
 import { getAllWorktreeHealth } from "./worktree-health.js";
 import { loadEffectiveGSDPreferences } from "./preferences.js";
 
+/**
+ * Returns true if the directory contains only doctor artifacts
+ * (e.g. `.gsd/doctor-history.jsonl`). These dirs are created by
+ * appendDoctorHistory() writing to worktree-scoped paths during the audit
+ * and should not be flagged as orphaned worktrees (#3105).
+ */
+function isDoctorArtifactOnly(dirPath: string): boolean {
+  try {
+    const entries = readdirSync(dirPath);
+    // Empty dir — not a doctor artifact, still orphaned
+    if (entries.length === 0) return false;
+    // Only a .gsd subdirectory
+    if (entries.length === 1 && entries[0] === ".gsd") {
+      const gsdEntries = readdirSync(join(dirPath, ".gsd"));
+      return gsdEntries.length <= 1 && gsdEntries.every(e => e === "doctor-history.jsonl");
+    }
+    return false;
+  } catch {
+    return false;
+  }
+}
+
 export async function checkGitHealth(
   basePath: string,
   issues: DoctorIssue[],
@@ -314,6 +336,10 @@ export async function checkGitHealth(
         } catch { continue; }
         const normalizedFullPath = normalizePath(fullPath);
         if (!registeredPaths.has(normalizedFullPath)) {
+          // Skip directories that only contain doctor artifacts (.gsd/doctor-history.jsonl).
+          // appendDoctorHistory() can recreate these dirs during the audit itself,
+          // causing a circular false positive (#3105 Bug 1).
+          if (isDoctorArtifactOnly(fullPath)) continue;
           issues.push({
             severity: "warning",
             code: "worktree_directory_orphaned",

@@ -231,9 +231,10 @@ async function runLoop(
 				return;
 			}
 
-			// Check for tool calls
+			// Check for tool calls or paused server turn
 			const toolCalls = message.content.filter((c) => c.type === "toolCall");
-			hasMoreToolCalls = toolCalls.length > 0;
+			hasMoreToolCalls =
+				toolCalls.length > 0 || message.stopReason === "pauseTurn";
 
 			const toolResults: ToolResultMessage[] = [];
 			if (hasMoreToolCalls && config.externalToolExecution) {

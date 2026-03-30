@@ -659,6 +659,7 @@ export type BridgeLiveStateDomain = "auto" | "workspace" | "recovery" | "resumab
 export type BridgeLiveStateInvalidationSource = "bridge_event" | "rpc_command" | "session_manage";
 export type BridgeLiveStateInvalidationReason =
   | "agent_end"
+  | "turn_end"
   | "auto_retry_start"
   | "auto_retry_end"
   | "auto_compaction_start"
@@ -1251,6 +1252,13 @@ function createLiveStateInvalidationFromBridgeEvent(
         domains: ["auto", "workspace", "recovery"],
         workspaceIndexCacheInvalidated: true,
       };
+    case "turn_end":
+      return {
+        reason: "turn_end",
+        source: "bridge_event",
+        domains: ["workspace"],
+        workspaceIndexCacheInvalidated: true,
+      };
     case "auto_retry_start":
       return {
         reason: "auto_retry_start",
@@ -1771,6 +1779,7 @@ export class BridgeService {
       const eventType = (event as { type?: string }).type;
       if (
         eventType === "agent_end" ||
+        eventType === "turn_end" ||
         eventType === "auto_retry_start" ||
         eventType === "auto_retry_end" ||
         eventType === "auto_compaction_start" ||

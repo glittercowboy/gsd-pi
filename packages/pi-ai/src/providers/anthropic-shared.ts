@@ -502,7 +502,7 @@ export function mapStopReason(reason: string): StopReason {
 		case "refusal":
 			return "error";
 		case "pause_turn":
-			return "stop";
+			return "pauseTurn";
 		case "stop_sequence":
 			return "stop";
 		case "sensitive":
