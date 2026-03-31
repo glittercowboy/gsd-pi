@@ -13,89 +13,93 @@
 
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { createTestContext } from "./test-helpers.ts";
-
-const { assertTrue, report } = createTestContext();
+import { test } from "node:test";
+import assert from "node:assert/strict";
 
 const srcPath = join(import.meta.dirname, "..", "worktree-manager.ts");
 const src = readFileSync(srcPath, "utf-8");
 
-console.log("\n=== #2616: Worktree cleanup detects nested .git directories ===");
+test("#2616: removeWorktree scans for nested .git directories", () => {
+  const removeWorktreeIdx = src.indexOf("export function removeWorktree");
+  assert.ok(removeWorktreeIdx > 0, "worktree-manager.ts exports removeWorktree");
 
-// ── Test 1: removeWorktree scans for nested .git directories ─────────
+  const fnBody = src.slice(removeWorktreeIdx, removeWorktreeIdx + 5000);
 
-const removeWorktreeIdx = src.indexOf("export function removeWorktree");
-assertTrue(removeWorktreeIdx > 0, "worktree-manager.ts exports removeWorktree");
+  const detectsNestedGit =
+    fnBody.includes("nested") && fnBody.includes(".git") ||
+    fnBody.includes("gitlink") ||
+    fnBody.includes("160000") ||
+    fnBody.includes("findNestedGitDirs") ||
+    fnBody.includes("nestedGitDirs");
 
-const fnBody = src.slice(removeWorktreeIdx, removeWorktreeIdx + 5000);
+  assert.ok(
+    detectsNestedGit,
+    "removeWorktree detects nested .git directories or gitlinks (#2616)",
+  );
+});
 
-const detectsNestedGit =
-  fnBody.includes("nested") && fnBody.includes(".git") ||
-  fnBody.includes("gitlink") ||
-  fnBody.includes("160000") ||
-  fnBody.includes("findNestedGitDirs") ||
-  fnBody.includes("nestedGitDirs");
+test("#2616: worktree-manager has a helper to find nested .git directories", () => {
+  const hasNestedGitHelper =
+    src.includes("findNestedGitDirs") ||
+    src.includes("detectNestedGitDirs") ||
+    src.includes("scanNestedGit") ||
+    src.includes("absorbNestedGit") ||
+    src.includes("nestedGitDirs");
 
-assertTrue(
-  detectsNestedGit,
-  "removeWorktree detects nested .git directories or gitlinks (#2616)",
-);
+  assert.ok(
+    hasNestedGitHelper,
+    "worktree-manager has a helper to find nested .git directories (#2616)",
+  );
+});
 
-// ── Test 2: A helper function exists to find nested .git directories ──
+test("#2616: removeWorktree absorbs or removes nested .git dirs before cleanup", () => {
+  const removeWorktreeIdx = src.indexOf("export function removeWorktree");
+  assert.ok(removeWorktreeIdx > 0, "worktree-manager.ts exports removeWorktree");
 
-const hasNestedGitHelper =
-  src.includes("findNestedGitDirs") ||
-  src.includes("detectNestedGitDirs") ||
-  src.includes("scanNestedGit") ||
-  src.includes("absorbNestedGit") ||
-  src.includes("nestedGitDirs");
+  const fnBody = src.slice(removeWorktreeIdx, removeWorktreeIdx + 5000);
 
-assertTrue(
-  hasNestedGitHelper,
-  "worktree-manager has a helper to find nested .git directories (#2616)",
-);
+  const absorbsOrRemoves =
+    fnBody.includes("absorb") ||
+    fnBody.includes("rmSync") && fnBody.includes("nested") ||
+    (fnBody.includes("nestedGitDirs") || fnBody.includes("findNestedGitDirs")) &&
+      (fnBody.includes("rm") || fnBody.includes("absorb") || fnBody.includes("remove"));
 
-// ── Test 3: Nested .git dirs are absorbed or removed before cleanup ───
+  assert.ok(
+    absorbsOrRemoves,
+    "removeWorktree absorbs or removes nested .git dirs before cleanup (#2616)",
+  );
+});
 
-const absorbsOrRemoves =
-  fnBody.includes("absorb") ||
-  fnBody.includes("rmSync") && fnBody.includes("nested") ||
-  (fnBody.includes("nestedGitDirs") || fnBody.includes("findNestedGitDirs")) &&
-    (fnBody.includes("rm") || fnBody.includes("absorb") || fnBody.includes("remove"));
+test("#2616: removeWorktree warns when nested .git directories are detected", () => {
+  const removeWorktreeIdx = src.indexOf("export function removeWorktree");
+  assert.ok(removeWorktreeIdx > 0, "worktree-manager.ts exports removeWorktree");
 
-assertTrue(
-  absorbsOrRemoves,
-  "removeWorktree absorbs or removes nested .git dirs before cleanup (#2616)",
-);
+  const fnBody = src.slice(removeWorktreeIdx, removeWorktreeIdx + 5000);
 
-// ── Test 4: A warning is logged when nested .git dirs are found ───────
+  const warnsAboutNestedGit =
+    fnBody.includes("nested") && fnBody.includes("logWarning") ||
+    fnBody.includes("gitlink") && fnBody.includes("logWarning") ||
+    fnBody.includes("scaffold") && fnBody.includes("logWarning");
 
-const warnsAboutNestedGit =
-  fnBody.includes("nested") && fnBody.includes("logWarning") ||
-  fnBody.includes("gitlink") && fnBody.includes("logWarning") ||
-  fnBody.includes("scaffold") && fnBody.includes("logWarning");
+  assert.ok(
+    warnsAboutNestedGit,
+    "removeWorktree warns when nested .git directories are detected (#2616)",
+  );
+});
 
-assertTrue(
-  warnsAboutNestedGit,
-  "removeWorktree warns when nested .git directories are detected (#2616)",
-);
+test("#2616: findNestedGitDirs skips node_modules and other excluded directories", () => {
+  const helperBody = src.includes("findNestedGitDirs")
+    ? src.slice(src.indexOf("findNestedGitDirs"))
+    : "";
 
-// ── Test 5: The findNestedGitDirs helper correctly identifies nested repos ──
-// Verify the helper scans subdirectories but skips .gsd/, node_modules/, .git/
+  const skipsExcludedDirs =
+    helperBody.includes("node_modules") ||
+    helperBody.includes(".gsd") ||
+    helperBody.includes("skip") ||
+    helperBody.includes("exclude");
 
-const helperBody = src.includes("findNestedGitDirs")
-  ? src.slice(src.indexOf("findNestedGitDirs"))
-  : "";
-
-const skipsExcludedDirs =
-  helperBody.includes("node_modules") ||
-  helperBody.includes(".gsd") ||
-  helperBody.includes("skip") ||
-  helperBody.includes("exclude");
-
-assertTrue(
-  skipsExcludedDirs,
-  "findNestedGitDirs skips node_modules and other excluded directories (#2616)",
-);
-
-report();
+  assert.ok(
+    skipsExcludedDirs,
+    "findNestedGitDirs skips node_modules and other excluded directories (#2616)",
+  );
+});
