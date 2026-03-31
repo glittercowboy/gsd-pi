@@ -387,10 +387,10 @@ export function loadDefinition(defsDir: string, name: string): WorkflowDefinitio
 // ─── Parameter Substitution ──────────────────────────────────────────────
 
 /** Regex matching `{{key}}` and `{{ key }}` placeholders — captures the key name. */
-const PARAM_PATTERN = /\{\{\s*(\w+)\s*\}\}/g;
+const PARAM_PATTERN = /\{\{[ \t]*(\w+)[ \t]*\}\}/g;
 
 /**
- * Replace `{{key}}` placeholders in a single prompt string.
+ * Replace `{{key}}` and `{{ key }}` placeholders in a single prompt string.
  *
  * Exported for use by the engine on iteration-instance prompts that live
  * in GRAPH.yaml (outside the definition's step list).
@@ -408,7 +408,7 @@ export function substitutePromptString(
 }
 
 /**
- * Replace `{{key}}` placeholders in all step prompts with param values.
+ * Replace `{{key}}` and `{{ key }}` placeholders in all step prompts with param values.
  *
  * Merge order: `definition.params` (defaults) ← `overrides` (CLI wins).
  * Returns a **new** WorkflowDefinition — the input is never mutated.

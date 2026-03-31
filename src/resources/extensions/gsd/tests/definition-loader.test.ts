@@ -709,6 +709,14 @@ test("substitutePromptString: unchanged behaviour for {{key}} without spaces (#3
   assert.equal(result, "Write about AI targeting engineers");
 });
 
+test("substitutePromptString: replaces asymmetric {{ key}} and {{key }} spacing (#3189)", () => {
+  const result = substitutePromptString(
+    "Write about {{ topic}} targeting {{audience }}",
+    { topic: "AI", audience: "engineers" },
+  );
+  assert.equal(result, "Write about AI targeting engineers");
+});
+
 test("substituteParams: replaces spaced {{ key }} placeholders with defaults (#3189)", () => {
   const def: WorkflowDefinition = {
     version: 1,
