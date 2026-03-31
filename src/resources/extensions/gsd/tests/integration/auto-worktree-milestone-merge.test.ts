@@ -707,10 +707,10 @@ describe("auto-worktree-milestone-merge", { timeout: 300_000 }, () => {
     );
   });
 
-  test("#2912: planted MERGE_HEAD is cleaned up in success path", () => {
-    // This test directly verifies the cleanup code handles a MERGE_HEAD file
-    // left by the native (libgit2) merge path. We hook into the merge by
-    // planting MERGE_HEAD right after nativeMergeSquash would create it.
+  test("#2912: stale MERGE_HEAD from a prior merge does not block success path", () => {
+    // Simulate a stale MERGE_HEAD left behind by a prior native/libgit2 merge.
+    // The next squash merge must clear that marker before invoking the CLI
+    // fallback, then still clean up the merge state after the successful commit.
     const repo = freshRepo();
     const wtPath = createAutoWorktree(repo, "M293");
 
@@ -722,20 +722,18 @@ describe("auto-worktree-milestone-merge", { timeout: 300_000 }, () => {
       { id: "S01", title: "Feature B" },
     ]);
 
-    // Plant a fake MERGE_HEAD in the git dir to simulate libgit2 behavior.
-    // We need to do this after the function checks out main but before it
-    // commits. Since we can't intercept mid-function, we plant it before
-    // the call. If the function cleans it up, the test passes.
+    // Plant a fake MERGE_HEAD before the merge starts. Without the defensive
+    // pre-merge cleanup, CLI git aborts with "You have not concluded your merge".
     const gitDir = join(repo, ".git");
     const fakeHead = run("git rev-parse HEAD", repo);
     writeFileSync(join(gitDir, "MERGE_HEAD"), fakeHead + "\n");
 
     mergeMilestoneToMain(repo, "M293", roadmap);
 
-    // The planted MERGE_HEAD must be cleaned up
+    // The stale MERGE_HEAD must not survive the successful merge.
     assert.ok(
       !existsSync(join(gitDir, "MERGE_HEAD")),
-      "#2912: planted MERGE_HEAD must be removed by success-path cleanup",
+      "#2912: stale MERGE_HEAD must be removed before and after success-path cleanup",
     );
   });
 

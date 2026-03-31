@@ -1567,6 +1567,17 @@ export function mergeMilestoneToMain(
   }
 
   // 8. Squash merge — auto-resolve .gsd/ state file conflicts (#530)
+  // Defensively clear stale merge markers from a prior native/libgit2 merge
+  // before starting the new squash merge. If MERGE_HEAD lingers, the CLI
+  // fallback rejects immediately before our success-path cleanup can run (#2912).
+  try {
+    const gitDir_ = resolveGitDir(originalBasePath_);
+    for (const f of ["SQUASH_MSG", "MERGE_MSG", "MERGE_HEAD"]) {
+      const p = join(gitDir_, f);
+      if (existsSync(p)) unlinkSync(p);
+    }
+  } catch { /* best-effort */ }
+
   const mergeResult = nativeMergeSquash(originalBasePath_, milestoneBranch);
 
   if (!mergeResult.success) {
