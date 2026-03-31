@@ -59,47 +59,9 @@ function runtimePath(basePath: string, unitType: string, unitId: string): string
 
 // ── In-memory cache for runtime records ─────────────────────────────────────
 // Eliminates redundant readFileSync + JSON.parse on every write (read-modify-write
-// pattern was called ~6x per 15s supervision cycle). Disk writes still happen for
-// durability, but reads hit the cache after the first access.
+// pattern was called ~6x per 15s supervision cycle). Writes still go to disk
+// synchronously for durability, but reads hit the cache after the first access.
 const _runtimeCache = new Map<string, AutoUnitRuntimeRecord>();
-
-// ── Debounced disk flush ────────────────────────────────────────────────────
-// Multiple writes within a 500ms window are coalesced into a single writeFileSync.
-// The in-memory cache is always authoritative, so reads see latest data immediately.
-const _dirtyPaths = new Set<string>();
-let _flushTimer: ReturnType<typeof setTimeout> | null = null;
-
-function scheduleDiskFlush(path: string): void {
-  _dirtyPaths.add(path);
-  if (!_flushTimer) {
-    _flushTimer = setTimeout(flushDirtyRecords, 500);
-  }
-}
-
-function flushDirtyRecords(): void {
-  _flushTimer = null;
-  for (const path of _dirtyPaths) {
-    const record = _runtimeCache.get(path);
-    if (record) {
-      try {
-        writeFileSync(path, JSON.stringify(record, null, 2) + "\n", "utf-8");
-      } catch { /* best effort — directory may have been cleaned up */ }
-    }
-  }
-  _dirtyPaths.clear();
-}
-
-/** Flush all pending writes immediately. Also registered as a process exit handler. */
-export function flushAllRuntimeRecords(): void {
-  if (_flushTimer) {
-    clearTimeout(_flushTimer);
-    _flushTimer = null;
-  }
-  flushDirtyRecords();
-}
-
-// Ensure pending writes are flushed on process exit
-process.on("exit", () => { try { flushAllRuntimeRecords(); } catch {} });
 
 export function writeUnitRuntimeRecord(
   basePath: string,
@@ -130,7 +92,7 @@ export function writeUnitRuntimeRecord(
     lastRecoveryReason: updates.lastRecoveryReason ?? prev?.lastRecoveryReason,
   };
   _runtimeCache.set(path, next);
-  scheduleDiskFlush(path);
+  writeFileSync(path, JSON.stringify(next, null, 2) + "\n", "utf-8");
   return next;
 }
 
