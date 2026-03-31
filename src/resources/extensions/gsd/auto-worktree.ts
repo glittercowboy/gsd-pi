@@ -1567,6 +1567,15 @@ export function mergeMilestoneToMain(
   }
 
   // 8. Squash merge — auto-resolve .gsd/ state file conflicts (#530)
+  // Pre-clean any stale MERGE_HEAD left by a previous aborted merge (#2912).
+  // git refuses to start a new merge if MERGE_HEAD already exists.
+  try {
+    const gitDir_ = resolveGitDir(originalBasePath_);
+    for (const f of ["SQUASH_MSG", "MERGE_MSG", "MERGE_HEAD"]) {
+      const p = join(gitDir_, f);
+      if (existsSync(p)) unlinkSync(p);
+    }
+  } catch { /* best-effort */ }
   const mergeResult = nativeMergeSquash(originalBasePath_, milestoneBranch);
 
   if (!mergeResult.success) {
