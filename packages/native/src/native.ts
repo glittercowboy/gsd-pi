@@ -98,21 +98,25 @@ function loadNative(): Record<string, unknown> {
   const errors: string[] = [];
   const runtimeTag = resolveNativeRuntimeTag();
 
-  // 1. Try the platform-specific npm optional dependencies
-  for (const packageSuffix of resolveNativePackageCandidates()) {
-    const loaded = tryRequire(`@gsd-build/engine-${packageSuffix}`, errors);
-    if (loaded) return loaded;
+  if (process.env.GSD_FORCE_NO_NATIVE === "1") {
+    errors.push("native loading disabled via GSD_FORCE_NO_NATIVE=1");
+  } else {
+    // 1. Try the platform-specific npm optional dependencies
+    for (const packageSuffix of resolveNativePackageCandidates()) {
+      const loaded = tryRequire(`@gsd-build/engine-${packageSuffix}`, errors);
+      if (loaded) return loaded;
+    }
+
+    // 2. Try local release build (native/addon/gsd_engine.{platform}.node)
+    const releasePath = path.join(addonDir, `gsd_engine.${platformTag}.node`);
+    const releaseLoaded = tryRequire(releasePath, errors);
+    if (releaseLoaded) return releaseLoaded;
+
+    // 3. Try local dev build (native/addon/gsd_engine.dev.node)
+    const devPath = path.join(addonDir, "gsd_engine.dev.node");
+    const devLoaded = tryRequire(devPath, errors);
+    if (devLoaded) return devLoaded;
   }
-
-  // 2. Try local release build (native/addon/gsd_engine.{platform}.node)
-  const releasePath = path.join(addonDir, `gsd_engine.${platformTag}.node`);
-  const releaseLoaded = tryRequire(releasePath, errors);
-  if (releaseLoaded) return releaseLoaded;
-
-  // 3. Try local dev build (native/addon/gsd_engine.dev.node)
-  const devPath = path.join(addonDir, "gsd_engine.dev.node");
-  const devLoaded = tryRequire(devPath, errors);
-  if (devLoaded) return devLoaded;
 
   // Graceful fallback: on unsupported platforms (e.g., win32-arm64), return a
   // proxy that throws on individual function calls rather than crashing the
