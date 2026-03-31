@@ -4,7 +4,7 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
-import { deriveState, invalidateStateCache, _deriveStateImpl, deriveStateFromDb, reconcileDbMilestones } from '../state.ts';
+import { deriveState, invalidateStateCache, _deriveStateImpl, deriveStateFromDb, reconcileDbMilestones, isGhostMilestone } from '../state.ts';
 import {
   openDatabase,
   closeDatabase,
