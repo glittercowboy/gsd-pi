@@ -34,7 +34,7 @@ Read the code files relevant to this slice. Confirm the roadmap's description of
 
 If slice research exists (inlined above), trust those findings and skip redundant exploration.
 
-After you finish, **executor agents** implement each task in isolated fresh context windows. They see only their task plan, the slice plan excerpt (goal/demo/verification), and compressed summaries of prior tasks. They do not see the research doc, the roadmap, or REQUIREMENTS.md. Everything an executor needs must be in the task plan itself — file paths, specific steps, expected inputs and outputs.
+After you finish, **executor agents** implement each task in isolated fresh context windows. They see only their task plan, the slice plan excerpt (goal/demo/verification), and compressed summaries of prior tasks. They do not see the research doc, the slice context, the roadmap, or REQUIREMENTS.md. Everything an executor needs must be in the task plan itself — file paths, specific steps, expected inputs and outputs.
 
 Narrate your decomposition reasoning — why you're grouping work this way, what risks are driving the order, what verification strategy you're choosing and why. Keep the narration proportional to the work — a simple slice doesn't need a long justification — but write in complete sentences, not planner shorthand.
 
