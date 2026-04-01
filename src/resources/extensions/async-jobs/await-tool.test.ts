@@ -36,6 +36,8 @@ test("await_job returns immediately when all watched jobs are already completed"
 	const text = getTextFromResult(result);
 	assert.match(text, /fast-job/);
 	assert.match(text, /completed/);
+
+	manager.shutdown();
 });
 
 test("await_job returns on timeout when jobs are still running", async () => {
@@ -162,6 +164,26 @@ test("unawaited jobs still get follow-up delivery (#2248)", async () => {
 
 	assert.equal(followUps.length, 1, "onJobComplete should deliver follow-up for unawaited jobs");
 	assert.equal(followUps[0], jobId);
+
+	manager.shutdown();
+});
+
+test("completed jobs use unref'd eviction timers so await-tool tests can exit cleanly", async () => {
+	const manager = new AsyncJobManager();
+
+	const jobId = manager.register("bash", "completed-job", async () => "done");
+	const job = manager.getJob(jobId)!;
+	await job.promise;
+
+	const timers = (manager as unknown as {
+		evictionTimers: Map<string, ReturnType<typeof setTimeout>>;
+	}).evictionTimers;
+	const timer = timers.get(jobId);
+
+	assert.ok(timer, "Expected eviction timer for completed job");
+	if (typeof timer === "object" && "hasRef" in timer) {
+		assert.equal(timer.hasRef(), false, "Eviction timer should not keep the process alive");
+	}
 
 	manager.shutdown();
 });
