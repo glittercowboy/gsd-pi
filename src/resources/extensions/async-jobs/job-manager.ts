@@ -186,6 +186,7 @@ export class AsyncJobManager {
 			this.evictionTimers.delete(id);
 			this.jobs.delete(id);
 		}, this.evictionMs);
+		if (typeof timer === "object" && "unref" in timer) timer.unref();
 
 		this.evictionTimers.set(id, timer);
 	}
