@@ -984,6 +984,11 @@ export async function buildResearchSlicePrompt(
   inlined.push(await inlineFile(roadmapPath, roadmapRel, "Milestone Roadmap"));
   const contextInline = await inlineFileOptional(contextPath, contextRel, "Milestone Context");
   if (contextInline) inlined.push(contextInline);
+  // Slice CONTEXT from /gsd discuss — contains user decisions and scope constraints
+  const sliceContextPath = resolveSliceFile(base, mid, sid, "CONTEXT");
+  const sliceContextRel = relSliceFile(base, mid, sid, "CONTEXT");
+  const sliceContextInline = await inlineFileOptional(sliceContextPath, sliceContextRel, "Slice Context (from discussion)");
+  if (sliceContextInline) inlined.push(sliceContextInline);
   const researchInline = await inlineFileOptional(milestoneResearchPath, milestoneResearchRel, "Milestone Research");
   if (researchInline) inlined.push(researchInline);
   const decisionsInline = await inlineDecisionsFromDb(base, mid);
@@ -1034,6 +1039,11 @@ export async function buildPlanSlicePrompt(
 
   const inlined: string[] = [];
   inlined.push(await inlineFile(roadmapPath, roadmapRel, "Milestone Roadmap"));
+  // Slice CONTEXT from /gsd discuss — contains user decisions and scope constraints
+  const sliceContextPath = resolveSliceFile(base, mid, sid, "CONTEXT");
+  const sliceContextRel = relSliceFile(base, mid, sid, "CONTEXT");
+  const sliceContextInline = await inlineFileOptional(sliceContextPath, sliceContextRel, "Slice Context (from discussion)");
+  if (sliceContextInline) inlined.push(sliceContextInline);
   const researchInline = await inlineFileOptional(researchPath, researchRel, "Slice Research");
   if (researchInline) inlined.push(researchInline);
   if (inlineLevel !== "minimal") {
