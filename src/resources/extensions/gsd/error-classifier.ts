@@ -51,6 +51,7 @@ const CONNECTION_RE = /terminated|connection.?refused|other side closed|EPIPE|ne
 // Catch-all for V8 JSON.parse errors: all modern variants end with "in JSON at position \d+".
 // This eliminates the need to enumerate every error message variant individually.
 const STREAM_RE = /in JSON at position \d+|Unexpected end of JSON|SyntaxError.*JSON/i;
+const MODEL_NOT_FOUND_RE = /not_found_error|model[^.\n]*does\s+not\s+exist|model[^.\n]*not\s+found|404[^.\n]*model|message"\s*:\s*"model:/i;
 const RESET_DELAY_RE = /reset in (\d+)s/i;
 
 /**
@@ -107,7 +108,12 @@ export function classifyError(errorMsg: string, retryAfterMs?: number): ErrorCla
     return { kind: "connection", retryAfterMs: retryAfterMs ?? 15_000 };
   }
 
-  // 7. Unknown
+  // 7. Model-specific permanent errors — try fallback model, then pause
+  if (MODEL_NOT_FOUND_RE.test(errorMsg)) {
+    return { kind: "model-error" };
+  }
+
+  // 8. Unknown
   return { kind: "unknown" };
 }
 

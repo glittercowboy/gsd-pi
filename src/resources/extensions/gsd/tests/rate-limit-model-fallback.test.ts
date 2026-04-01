@@ -77,6 +77,14 @@ test("other transient errors (server, connection, stream) still attempt model fa
   }
 });
 
+test("model-not-found errors also attempt model fallback before permanent pause", () => {
+  const src = getRecoverySource();
+  assert.ok(
+    src.includes('cls.kind === "model-error"'),
+    'model-not-found errors must enter the model fallback branch before permanent pause (#3359)',
+  );
+});
+
 test("permanent errors still bypass model fallback and pause indefinitely", () => {
   const src = getRecoverySource();
 

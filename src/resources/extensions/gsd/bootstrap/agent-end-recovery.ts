@@ -142,7 +142,7 @@ export async function handleAgentEnd(
 
     // --- Transient errors: try model fallback first, then pause ---
     // Rate limits are often per-model, so switching models can bypass them.
-    if (cls.kind === "rate-limit" || cls.kind === "network" || cls.kind === "server" || cls.kind === "connection" || cls.kind === "stream") {
+    if (cls.kind === "rate-limit" || cls.kind === "network" || cls.kind === "server" || cls.kind === "connection" || cls.kind === "stream" || cls.kind === "model-error") {
       // Try model fallback
       const dash = getAutoDashboardData();
       if (dash.currentUnit) {

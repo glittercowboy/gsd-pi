@@ -85,6 +85,12 @@ test("classifyError detects 502 bad gateway", () => {
   assert.ok(isTransient(result));
 });
 
+test("classifyError detects model-not-found errors as model-error", () => {
+  const result = classifyError('404 {"type":"error","error":{"type":"not_found_error","message":"model: claude-3-opus-20240229"}}');
+  assert.equal(result.kind, "model-error");
+  assert.ok(!isTransient(result));
+});
+
 test("classifyError detects auth error as permanent", () => {
   const result = classifyError("unauthorized: invalid API key");
   assert.ok(!isTransient(result));
