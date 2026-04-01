@@ -29,6 +29,12 @@ function isBlockedNotification(event: Record<string, unknown>): boolean {
   return message.includes('blocked:')
 }
 
+function isStuckNotification(event: Record<string, unknown>): boolean {
+  if (event.type !== 'extension_ui_request' || event.method !== 'notify') return false
+  const message = String(event.message ?? '').toLowerCase()
+  return message.includes('stuck:')
+}
+
 function makeNotify(message: string): Record<string, unknown> {
   return { type: 'extension_ui_request', method: 'notify', message }
 }
@@ -96,6 +102,14 @@ test("detects inline 'Blocked:' message", () => {
   assert.ok(isBlockedNotification(makeNotify("Blocked: no active milestone. Fix and run /gsd auto.")))
 })
 
+test("detects stuck notification with 'Stuck:' prefix", () => {
+  assert.ok(isStuckNotification(makeNotify("Auto-mode stopped (Stuck: roadmap still empty after retry).")))
+})
+
 test("does NOT match 'blocked' without colon (avoids false positives)", () => {
   assert.ok(!isBlockedNotification(makeNotify("The request was blocked by the firewall")))
+})
+
+test("does NOT match 'stuck' without colon (avoids false positives)", () => {
+  assert.ok(!isStuckNotification(makeNotify("The process got stuck behind a firewall rule")))
 })

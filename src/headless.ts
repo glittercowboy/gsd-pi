@@ -25,6 +25,7 @@ import { loadAndValidateAnswerFile, AnswerInjector } from './headless-answers.js
 import {
   isTerminalNotification,
   isBlockedNotification,
+  isStuckNotification,
   isMilestoneReadyNotification,
   isQuickCommand,
   FIRE_AND_FORGET_METHODS,
@@ -362,6 +363,7 @@ async function runHeadlessOnce(options: HeadlessOptions, restartCount: number): 
   let toolCallCount = 0
   let blocked = false
   let completed = false
+  let terminalError = false
   let exitCode = 0
   let milestoneReady = false  // tracks "Milestone X ready." for auto-chaining
   const recentEvents: TrackedEvent[] = []
@@ -388,7 +390,7 @@ async function runHeadlessOnce(options: HeadlessOptions, restartCount: number): 
     const duration = Date.now() - startTime
     const status: HeadlessJsonResult['status'] = blocked ? 'blocked'
       : exitCode === EXIT_CANCELLED ? 'cancelled'
-      : exitCode === EXIT_ERROR ? (totalEvents === 0 ? 'error' : 'timeout')
+      : exitCode === EXIT_ERROR ? (terminalError || totalEvents === 0 ? 'error' : 'timeout')
       : 'success'
     const result: HeadlessJsonResult = {
       status,
@@ -652,6 +654,9 @@ async function runHeadlessOnce(options: HeadlessOptions, restartCount: number): 
       if (isBlockedNotification(eventObj)) {
         blocked = true
       }
+      if (isStuckNotification(eventObj)) {
+        terminalError = true
+      }
 
       // Detect "Milestone X ready." for auto-mode chaining
       if (isMilestoneReadyNotification(eventObj)) {
@@ -666,7 +671,7 @@ async function runHeadlessOnce(options: HeadlessOptions, restartCount: number): 
       if (injector && !FIRE_AND_FORGET_METHODS.has(String(eventObj.method ?? ''))) {
         if (injector.tryHandle(eventObj, injectorStdinAdapter)) {
           if (completed) {
-            exitCode = blocked ? EXIT_BLOCKED : EXIT_SUCCESS
+            exitCode = blocked ? EXIT_BLOCKED : terminalError ? EXIT_ERROR : EXIT_SUCCESS
             resolveCompletion()
           }
           return
@@ -692,7 +697,7 @@ async function runHeadlessOnce(options: HeadlessOptions, restartCount: number): 
 
       // If we detected a terminal notification, resolve after responding
       if (completed) {
-        exitCode = blocked ? EXIT_BLOCKED : EXIT_SUCCESS
+        exitCode = blocked ? EXIT_BLOCKED : terminalError ? EXIT_ERROR : EXIT_SUCCESS
         resolveCompletion()
         return
       }
@@ -870,7 +875,7 @@ async function runHeadlessOnce(options: HeadlessOptions, restartCount: number): 
 
   // Summary
   const duration = ((Date.now() - startTime) / 1000).toFixed(1)
-  const status = blocked ? 'blocked' : exitCode === EXIT_CANCELLED ? 'cancelled' : exitCode === EXIT_ERROR ? (totalEvents === 0 ? 'error' : 'timeout') : 'complete'
+  const status = blocked ? 'blocked' : exitCode === EXIT_CANCELLED ? 'cancelled' : exitCode === EXIT_ERROR ? (terminalError || totalEvents === 0 ? 'error' : 'timeout') : 'complete'
 
   process.stderr.write(`[headless] Status: ${status}\n`)
   process.stderr.write(`[headless] Duration: ${duration}s\n`)

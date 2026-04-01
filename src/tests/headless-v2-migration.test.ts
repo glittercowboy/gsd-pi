@@ -48,6 +48,12 @@ function isBlockedNotification(event: Record<string, unknown>): boolean {
   return message.includes('blocked:')
 }
 
+function isStuckNotification(event: Record<string, unknown>): boolean {
+  if (event.type !== 'extension_ui_request' || event.method !== 'notify') return false
+  const message = String(event.message ?? '').toLowerCase()
+  return message.includes('stuck:')
+}
+
 // ─── Mock RpcClient ─────────────────────────────────────────────────────────
 
 interface SendUICall {
@@ -130,6 +136,7 @@ function handleExtensionUIRequest(
 interface EventHandlerState {
   completed: boolean
   blocked: boolean
+  terminalError: boolean
   exitCode: number
   v2Enabled: boolean
   isMultiTurnCommand?: boolean
@@ -156,6 +163,9 @@ function handleEvent(
     if (isBlockedNotification(eventObj)) {
       state.blocked = true
     }
+    if (isStuckNotification(eventObj)) {
+      state.terminalError = true
+    }
 
     if (isTerminalNotification(eventObj)) {
       state.completed = true
@@ -164,7 +174,7 @@ function handleEvent(
     handleExtensionUIRequest(eventObj as unknown as ExtensionUIRequest, client)
 
     if (state.completed) {
-      state.exitCode = state.blocked ? EXIT_BLOCKED : EXIT_SUCCESS
+      state.exitCode = state.blocked ? EXIT_BLOCKED : state.terminalError ? EXIT_ERROR : EXIT_SUCCESS
       return
     }
   }
@@ -174,7 +184,7 @@ function handleEvent(
 
 test('execution_complete with status success triggers completion with EXIT_SUCCESS', () => {
   const client = new MockRpcClient()
-  const state: EventHandlerState = { completed: false, blocked: false, exitCode: -1, v2Enabled: true }
+  const state: EventHandlerState = { completed: false, blocked: false, terminalError: false, exitCode: -1, v2Enabled: true }
 
   handleEvent({ type: 'execution_complete', status: 'success' }, state, client)
 
@@ -185,7 +195,7 @@ test('execution_complete with status success triggers completion with EXIT_SUCCE
 
 test('execution_complete with status blocked sets blocked flag and EXIT_BLOCKED', () => {
   const client = new MockRpcClient()
-  const state: EventHandlerState = { completed: false, blocked: false, exitCode: -1, v2Enabled: true }
+  const state: EventHandlerState = { completed: false, blocked: false, terminalError: false, exitCode: -1, v2Enabled: true }
 
   handleEvent({ type: 'execution_complete', status: 'blocked' }, state, client)
 
@@ -196,7 +206,7 @@ test('execution_complete with status blocked sets blocked flag and EXIT_BLOCKED'
 
 test('execution_complete with status error maps to EXIT_ERROR', () => {
   const client = new MockRpcClient()
-  const state: EventHandlerState = { completed: false, blocked: false, exitCode: -1, v2Enabled: true }
+  const state: EventHandlerState = { completed: false, blocked: false, terminalError: false, exitCode: -1, v2Enabled: true }
 
   handleEvent({ type: 'execution_complete', status: 'error' }, state, client)
 
@@ -206,7 +216,7 @@ test('execution_complete with status error maps to EXIT_ERROR', () => {
 
 test('execution_complete with missing status defaults to success', () => {
   const client = new MockRpcClient()
-  const state: EventHandlerState = { completed: false, blocked: false, exitCode: -1, v2Enabled: true }
+  const state: EventHandlerState = { completed: false, blocked: false, terminalError: false, exitCode: -1, v2Enabled: true }
 
   handleEvent({ type: 'execution_complete' }, state, client)
 
@@ -216,7 +226,7 @@ test('execution_complete with missing status defaults to success', () => {
 
 test('execution_complete ignored if already completed', () => {
   const client = new MockRpcClient()
-  const state: EventHandlerState = { completed: true, blocked: false, exitCode: EXIT_SUCCESS, v2Enabled: true }
+  const state: EventHandlerState = { completed: true, blocked: false, terminalError: false, exitCode: EXIT_SUCCESS, v2Enabled: true }
 
   handleEvent({ type: 'execution_complete', status: 'error' }, state, client)
 
@@ -228,7 +238,7 @@ test('execution_complete ignored if already completed', () => {
 
 test('v1 fallback: terminal notification still triggers completion', () => {
   const client = new MockRpcClient()
-  const state: EventHandlerState = { completed: false, blocked: false, exitCode: -1, v2Enabled: false }
+  const state: EventHandlerState = { completed: false, blocked: false, terminalError: false, exitCode: -1, v2Enabled: false }
 
   handleEvent(
     { type: 'extension_ui_request', method: 'notify', id: 'n1', message: 'Auto-mode stopped — all slices complete' },
@@ -242,7 +252,7 @@ test('v1 fallback: terminal notification still triggers completion', () => {
 
 test('v1 fallback: blocked notification sets blocked flag', () => {
   const client = new MockRpcClient()
-  const state: EventHandlerState = { completed: false, blocked: false, exitCode: -1, v2Enabled: false }
+  const state: EventHandlerState = { completed: false, blocked: false, terminalError: false, exitCode: -1, v2Enabled: false }
 
   handleEvent(
     { type: 'extension_ui_request', method: 'notify', id: 'n1', message: 'Auto-mode stopped (Blocked: plan invalid)' },
@@ -257,7 +267,25 @@ test('v1 fallback: blocked notification sets blocked flag', () => {
 
 test('string-matching fallback works when execution_complete never received', () => {
   const client = new MockRpcClient()
-  const state: EventHandlerState = { completed: false, blocked: false, exitCode: -1, v2Enabled: false }
+  const state: EventHandlerState = { completed: false, blocked: false, terminalError: false, exitCode: -1, v2Enabled: false }
+
+  // Simulate a normal session without execution_complete
+  handleEvent({ type: 'extension_ui_request', method: 'select', id: 'q1', options: ['option1'] }, state, client)
+  assert.equal(state.completed, false)
+
+  handleEvent(
+    { type: 'extension_ui_request', method: 'notify', id: 'n1', message: 'Auto-mode stopped (Stuck: roadmap still empty after retry)' },
+    state,
+    client,
+  )
+  assert.equal(state.completed, true)
+  assert.equal(state.terminalError, true)
+  assert.equal(state.exitCode, EXIT_ERROR)
+})
+
+test('v1 fallback: stuck notification exits as error', () => {
+  const client = new MockRpcClient()
+  const state: EventHandlerState = { completed: false, blocked: false, terminalError: false, exitCode: -1, v2Enabled: false }
 
   // Simulate a normal session without execution_complete
   handleEvent({ type: 'extension_ui_request', method: 'select', id: 'q1', options: ['option1'] }, state, client)
@@ -468,7 +496,7 @@ test('injector adapter handles multi-select values', () => {
 
 test('execution_complete is ignored for multi-turn commands (auto)', () => {
   const client = new MockRpcClient()
-  const state: EventHandlerState = { completed: false, blocked: false, exitCode: -1, v2Enabled: true, isMultiTurnCommand: true }
+  const state: EventHandlerState = { completed: false, blocked: false, terminalError: false, exitCode: -1, v2Enabled: true, isMultiTurnCommand: true }
 
   handleEvent({ type: 'execution_complete', status: 'success' }, state, client)
 
@@ -478,7 +506,7 @@ test('execution_complete is ignored for multi-turn commands (auto)', () => {
 
 test('execution_complete is ignored for multi-turn commands even with error status', () => {
   const client = new MockRpcClient()
-  const state: EventHandlerState = { completed: false, blocked: false, exitCode: -1, v2Enabled: true, isMultiTurnCommand: true }
+  const state: EventHandlerState = { completed: false, blocked: false, terminalError: false, exitCode: -1, v2Enabled: true, isMultiTurnCommand: true }
 
   handleEvent({ type: 'execution_complete', status: 'error' }, state, client)
 
@@ -488,7 +516,7 @@ test('execution_complete is ignored for multi-turn commands even with error stat
 
 test('multi-turn commands still complete via terminal notification', () => {
   const client = new MockRpcClient()
-  const state: EventHandlerState = { completed: false, blocked: false, exitCode: -1, v2Enabled: true, isMultiTurnCommand: true }
+  const state: EventHandlerState = { completed: false, blocked: false, terminalError: false, exitCode: -1, v2Enabled: true, isMultiTurnCommand: true }
 
   // First, execution_complete fires (should be ignored)
   handleEvent({ type: 'execution_complete', status: 'success' }, state, client)
@@ -506,7 +534,7 @@ test('multi-turn commands still complete via terminal notification', () => {
 
 test('multi-turn commands detect blocked via terminal notification', () => {
   const client = new MockRpcClient()
-  const state: EventHandlerState = { completed: false, blocked: false, exitCode: -1, v2Enabled: true, isMultiTurnCommand: true }
+  const state: EventHandlerState = { completed: false, blocked: false, terminalError: false, exitCode: -1, v2Enabled: true, isMultiTurnCommand: true }
 
   // execution_complete is ignored
   handleEvent({ type: 'execution_complete', status: 'success' }, state, client)
@@ -525,7 +553,7 @@ test('multi-turn commands detect blocked via terminal notification', () => {
 
 test('non-multi-turn commands still complete on execution_complete', () => {
   const client = new MockRpcClient()
-  const state: EventHandlerState = { completed: false, blocked: false, exitCode: -1, v2Enabled: true, isMultiTurnCommand: false }
+  const state: EventHandlerState = { completed: false, blocked: false, terminalError: false, exitCode: -1, v2Enabled: true, isMultiTurnCommand: false }
 
   handleEvent({ type: 'execution_complete', status: 'success' }, state, client)
 

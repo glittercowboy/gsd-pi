@@ -287,6 +287,52 @@ test("verifyExpectedArtifact rejects plan-slice with empty scaffold", (t) => {
   );
 });
 
+test("verifyExpectedArtifact rejects plan-milestone roadmap stubs with zero slices", (t) => {
+  const base = makeTmpBase();
+  t.after(() => cleanup(base));
+
+  const milestoneDir = join(base, ".gsd", "milestones", "M001");
+  mkdirSync(milestoneDir, { recursive: true });
+  writeFileSync(join(milestoneDir, "M001-ROADMAP.md"), [
+    "# M001:",
+    "",
+    "## Vision",
+    "TBD",
+    "",
+    "## Slice Overview",
+    "| ID | Slice | Risk | Depends | Done | After this |",
+    "|----|-------|------|---------|------|------------|",
+  ].join("\n"));
+
+  assert.equal(
+    verifyExpectedArtifact("plan-milestone", "M001", base),
+    false,
+    "empty roadmap stubs must not count as completed milestone plans",
+  );
+});
+
+test("verifyExpectedArtifact accepts plan-milestone roadmaps with real slices", (t) => {
+  const base = makeTmpBase();
+  t.after(() => cleanup(base));
+
+  const milestoneDir = join(base, ".gsd", "milestones", "M001");
+  mkdirSync(milestoneDir, { recursive: true });
+  writeFileSync(join(milestoneDir, "M001-ROADMAP.md"), [
+    "# M001: Test Milestone",
+    "",
+    "## Slices",
+    "",
+    "- [ ] **S01: First slice** `risk:low` `depends:[]`",
+    "  > After this: milestone has a real starting point.",
+  ].join("\n"));
+
+  assert.equal(
+    verifyExpectedArtifact("plan-milestone", "M001", base),
+    true,
+    "roadmaps with real slices should still verify successfully",
+  );
+});
+
 test("verifyExpectedArtifact accepts plan-slice with actual tasks", (t) => {
   const base = makeTmpBase();
   t.after(() => cleanup(base));

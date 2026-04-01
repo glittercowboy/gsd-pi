@@ -84,6 +84,12 @@ export function isBlockedNotification(event: Record<string, unknown>): boolean {
   return message.includes('blocked:')
 }
 
+export function isStuckNotification(event: Record<string, unknown>): boolean {
+  if (event.type !== 'extension_ui_request' || event.method !== 'notify') return false
+  const message = String(event.message ?? '').toLowerCase()
+  return message.includes('stuck:')
+}
+
 export function isMilestoneReadyNotification(event: Record<string, unknown>): boolean {
   if (event.type !== 'extension_ui_request' || event.method !== 'notify') return false
   return /milestone\s+m\d+.*ready/i.test(String(event.message ?? ''))

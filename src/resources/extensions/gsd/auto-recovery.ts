@@ -263,6 +263,20 @@ export function verifyExpectedArtifact(
     if (!isValidationTerminal(validationContent)) return false;
   }
 
+  // plan-milestone must produce a roadmap with real slice entries, not just
+  // the empty stub created during milestone/bootstrap setup. Without this
+  // check, an untouched roadmap scaffold is treated as complete, the unit is
+  // marked done, and the dispatch loop re-enters pre-planning indefinitely.
+  if (unitType === "plan-milestone") {
+    try {
+      const roadmapContent = readFileSync(absPath, "utf-8");
+      const roadmap = parseLegacyRoadmap(roadmapContent);
+      if (roadmap.slices.length === 0) return false;
+    } catch {
+      return false;
+    }
+  }
+
   // plan-slice must produce a plan with actual task entries, not just a scaffold.
   // The plan file may exist from a prior discussion/context step with only headings
   // but no tasks. Without this check the artifact is considered "complete" and the
