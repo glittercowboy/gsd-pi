@@ -24,6 +24,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 
 import {
+  syncProjectRootToWorktree,
   syncGsdStateToWorktree,
   syncWorktreeStateBack,
 } from "../auto-worktree.ts";
@@ -151,5 +152,52 @@ test("#2684: syncWorktreeStateBack does NOT overwrite project root PREFERENCES.m
     readFileSync(join(mainBase, ".gsd", "PREFERENCES.md"), "utf-8"),
     rootPrefs,
     "project root PREFERENCES.md must NOT be overwritten by worktree copy",
+  );
+});
+
+test("#3412: syncProjectRootToWorktree force-refreshes root preferences into an existing worktree", (t) => {
+  const mainBase = makeTempDir("main");
+  const wtBase = makeTempDir("wt");
+  t.after(() => cleanup(mainBase, wtBase));
+
+  const rootPrefs = "# Root preferences\nexecution_model: claude-sonnet-4-6";
+  const staleWtPrefs = "# Worktree preferences\nexecution_model: openai-codex/gpt-5.3-codex";
+
+  writeFile(mainBase, ".gsd/PREFERENCES.md", rootPrefs);
+  writeFile(mainBase, ".gsd/milestones/M001/M001-ROADMAP.md", "# M001: Roadmap\n\n## Slices\n");
+  writeFile(wtBase, ".gsd/PREFERENCES.md", staleWtPrefs);
+
+  syncProjectRootToWorktree(mainBase, wtBase, "M001");
+
+  assert.equal(
+    readFileSync(join(wtBase, ".gsd", "PREFERENCES.md"), "utf-8"),
+    rootPrefs,
+    "existing worktree PREFERENCES.md should be refreshed from the project root",
+  );
+});
+
+test("#3412: syncProjectRootToWorktree refreshes stale lowercase preferences shadowing uppercase root prefs", (t) => {
+  const mainBase = makeTempDir("main");
+  const wtBase = makeTempDir("wt");
+  t.after(() => cleanup(mainBase, wtBase));
+
+  const rootPrefs = "# Root preferences\nexecution_model: claude-sonnet-4-6";
+  const staleLowercase = "# Worktree preferences\nexecution_model: openai-codex/gpt-5.3-codex";
+
+  writeFile(mainBase, ".gsd/PREFERENCES.md", rootPrefs);
+  writeFile(mainBase, ".gsd/milestones/M001/M001-ROADMAP.md", "# M001: Roadmap\n\n## Slices\n");
+  writeFile(wtBase, ".gsd/preferences.md", staleLowercase);
+
+  syncProjectRootToWorktree(mainBase, wtBase, "M001");
+
+  const uppercasePath = join(wtBase, ".gsd", "PREFERENCES.md");
+  const lowercasePath = join(wtBase, ".gsd", "preferences.md");
+  const refreshedPath = existsSync(uppercasePath) ? uppercasePath : lowercasePath;
+
+  assert.ok(existsSync(refreshedPath), "worktree should still have a readable preferences file after sync");
+  assert.equal(
+    readFileSync(refreshedPath, "utf-8"),
+    rootPrefs,
+    "the shadowing worktree preferences file should be refreshed from the authoritative root copy",
   );
 });

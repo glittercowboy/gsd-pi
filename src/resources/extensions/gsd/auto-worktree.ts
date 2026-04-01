@@ -121,6 +121,57 @@ function cleanupMergeStateFiles(basePath: string): void {
   }
 }
 
+function syncProjectPreferencesFile(
+  srcGsd: string,
+  dstGsd: string,
+  options: { force: boolean; synced?: string[] },
+): void {
+  let sourceFile: typeof PROJECT_PREFERENCES_FILE | typeof LEGACY_PROJECT_PREFERENCES_FILE | null = null;
+  try {
+    const entries = new Set(readdirSync(srcGsd));
+    if (entries.has(LEGACY_PROJECT_PREFERENCES_FILE)) {
+      sourceFile = LEGACY_PROJECT_PREFERENCES_FILE;
+    } else if (entries.has(PROJECT_PREFERENCES_FILE)) {
+      sourceFile = PROJECT_PREFERENCES_FILE;
+    }
+  } catch {
+    /* fall back to existsSync below */
+  }
+  if (!sourceFile) {
+    sourceFile = existsSync(join(srcGsd, LEGACY_PROJECT_PREFERENCES_FILE))
+      ? LEGACY_PROJECT_PREFERENCES_FILE
+      : existsSync(join(srcGsd, PROJECT_PREFERENCES_FILE))
+        ? PROJECT_PREFERENCES_FILE
+        : null;
+  }
+  if (!sourceFile) return;
+
+  const alternateFile = sourceFile === PROJECT_PREFERENCES_FILE
+    ? LEGACY_PROJECT_PREFERENCES_FILE
+    : PROJECT_PREFERENCES_FILE;
+  const dst = join(dstGsd, sourceFile);
+
+  if (!options.force && existsSync(dst)) return;
+
+  try {
+    safeCopy(join(srcGsd, sourceFile), dst, { force: options.force });
+    options.synced?.push(sourceFile);
+  } catch {
+    /* non-fatal */
+  }
+
+  if (!options.force) return;
+
+  try {
+    const destEntries = new Set(readdirSync(dstGsd));
+    if (destEntries.has(alternateFile)) {
+      rmSync(join(dstGsd, alternateFile), { force: true });
+    }
+  } catch {
+    /* non-fatal */
+  }
+}
+
 // ─── ASSESSMENT Force-Sync Helper (#2821) ─────────────────────────────────
 
 /** Regex matching YAML frontmatter `verdict:` field. */
@@ -321,6 +372,11 @@ export function syncProjectRootToWorktree(
     join(wtGsd, "completed-units.json"),
     { force: true },
   );
+
+  // Project root preferences are authoritative during auto-mode dispatch.
+  // Force-refresh them here so existing worktrees cannot keep routing against
+  // a stale local copy after `/gsd prefs` changed the root configuration.
+  syncProjectPreferencesFile(prGsd, wtGsd, { force: true });
 
   // Delete worktree gsd.db ONLY if it is empty (0 bytes).
   // An empty DB is stale/corrupt and should be rebuilt (#853).
@@ -587,20 +643,7 @@ export function syncGsdStateToWorktree(
     const worktreeHasPreferences = existsSync(join(wtGsd, PROJECT_PREFERENCES_FILE))
       || existsSync(join(wtGsd, LEGACY_PROJECT_PREFERENCES_FILE));
     if (!worktreeHasPreferences) {
-      for (const file of [PROJECT_PREFERENCES_FILE, LEGACY_PROJECT_PREFERENCES_FILE] as const) {
-        const src = join(mainGsd, file);
-        const dst = join(wtGsd, file);
-        if (existsSync(src)) {
-          try {
-            cpSync(src, dst);
-            synced.push(file);
-          } catch (err) {
-            /* non-fatal */
-            logWarning("worktree", `preferences copy failed (${file}): ${err instanceof Error ? err.message : String(err)}`);
-          }
-          break;
-        }
-      }
+      syncProjectPreferencesFile(mainGsd, wtGsd, { force: false, synced });
     }
   }
 
