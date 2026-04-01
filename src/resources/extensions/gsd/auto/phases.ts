@@ -1326,13 +1326,14 @@ export async function runUnitPhase(
     );
   }
 
-  // ── Zero tool-call guard (#1833, #2653) ──────────────────────────
-  // Any unit that completes with 0 tool calls made no real progress —
-  // likely context exhaustion where all tool calls errored out. Treat
-  // as failed so the unit is retried in a fresh context instead of
-  // silently passing through to artifact verification (which loops
-  // forever when the unit never produced its artifact).
-  {
+  // ── Zero tool-call guard (#1833, #2653) ───────────────────────────
+  // Some units must mutate real project state to be meaningful. If they
+  // complete with 0 successful tool calls, the summary is untrustworthy:
+  // - execute-task likely hallucinated implementation work
+  // - complete-slice likely exhausted context before it could update DB/files
+  // Let the loop retry/re-derive instead of entering post-unit verification
+  // with a no-op result that can dead-end downstream dispatch.
+  if (unitType === "execute-task" || unitType === "complete-slice") {
     const currentLedger = deps.getLedger() as { units: Array<{ type: string; id: string; startedAt: number; toolCalls: number }> } | null;
     if (currentLedger?.units) {
       const lastUnit = [...currentLedger.units].reverse().find(
@@ -1343,10 +1344,10 @@ export async function runUnitPhase(
           phase: "zero-tool-calls",
           unitType,
           unitId,
-          warning: "Unit completed with 0 tool calls — likely context exhaustion, marking as failed",
+          warning: "Unit completed with 0 tool calls — likely context exhaustion or no-op result, marking for retry",
         });
         ctx.ui.notify(
-          `${unitType} ${unitId} completed with 0 tool calls — context exhaustion, will retry`,
+          `${unitType} ${unitId} completed with 0 tool calls — likely context exhaustion or no-op result, will retry`,
           "warning",
         );
         // Fall through to next iteration where dispatch will re-derive
@@ -1556,4 +1557,3 @@ export async function runFinalize(
 
   return { action: "next", data: undefined as void };
 }
-

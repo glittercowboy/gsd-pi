@@ -2107,11 +2107,11 @@ test("autoLoop rejects execute-task with 0 tool calls as hallucinated (#1833)", 
   // The task should NOT have been added to completedUnits on the first iteration
   // (0 tool calls), but SHOULD be added on the second iteration (5 tool calls)
   const warningNotification = notifications.find(
-    (n) => n.includes("0 tool calls") && n.includes("context exhaustion"),
+    (n) => n.includes("0 tool calls") && n.includes("will retry"),
   );
   assert.ok(
     warningNotification,
-    "should notify about 0 tool calls context exhaustion",
+    "should notify about 0 tool calls retry",
   );
 
   // Verify deriveState was called at least twice (two iterations)
@@ -2122,7 +2122,7 @@ test("autoLoop rejects execute-task with 0 tool calls as hallucinated (#1833)", 
   );
 });
 
-test("autoLoop rejects complete-slice with 0 tool calls as context-exhausted (#2653)", async () => {
+test("autoLoop rejects complete-slice units with 0 tool calls (#2653)", async () => {
   _resetPendingResolve();
 
   const ctx = makeMockCtx();
@@ -2164,7 +2164,6 @@ test("autoLoop rejects complete-slice with 0 tool calls as context-exhausted (#2
       };
     },
     closeoutUnit: async () => {
-      // complete-slice with 0 tool calls — context exhausted, no progress
       mockLedger.units.push({
         type: "complete-slice",
         id: "M001/S01",
@@ -2179,7 +2178,6 @@ test("autoLoop rejects complete-slice with 0 tool calls as context-exhausted (#2
     postUnitPostVerification: async () => {
       deps.callLog.push("postUnitPostVerification");
       iterationCount++;
-      // Deactivate after 2nd iteration
       s.active = iterationCount < 2;
       return "continue" as const;
     },
@@ -2191,7 +2189,6 @@ test("autoLoop rejects complete-slice with 0 tool calls as context-exhausted (#2
   await new Promise((r) => setTimeout(r, 50));
   resolveAgentEnd(makeEvent());
 
-  // Second iteration: re-dispatched, this time with tool calls
   await new Promise((r) => setTimeout(r, 50));
   mockLedger.units.length = 0;
   (deps as any).closeoutUnit = async () => {
@@ -2199,30 +2196,33 @@ test("autoLoop rejects complete-slice with 0 tool calls as context-exhausted (#2
       type: "complete-slice",
       id: "M001/S01",
       startedAt: s.currentUnit?.startedAt ?? Date.now(),
-      toolCalls: 3,
-      assistantMessages: 2,
-      tokens: { input: 200, output: 400, total: 600, cacheRead: 0, cacheWrite: 0 },
-      cost: 0.30,
+      toolCalls: 2,
+      assistantMessages: 1,
+      tokens: { input: 50, output: 100, total: 150, cacheRead: 0, cacheWrite: 0 },
+      cost: 0.10,
     });
   };
   resolveAgentEnd(makeEvent());
 
   await loopPromise;
 
-  // Should have a warning about 0 tool calls for complete-slice
   const warningNotification = notifications.find(
-    (n) => n.includes("0 tool calls"),
+    (n) => n.includes("0 tool calls") && n.includes("will retry"),
   );
   assert.ok(
     warningNotification,
-    "should flag complete-slice with 0 tool calls as failed (#2653)",
+    "should warn when complete-slice completes with 0 tool calls",
   );
 
-  // Verify deriveState was called at least twice (two iterations: rejected + retry)
   const deriveCount = deps.callLog.filter((c) => c === "deriveState").length;
   assert.ok(
     deriveCount >= 2,
     `deriveState should be called at least 2 times for retry (got ${deriveCount})`,
+  );
+
+  assert.ok(
+    deps.callLog.includes("postUnitPostVerification"),
+    "post-unit pipeline should run once the retried complete-slice records tool calls",
   );
 });
 
