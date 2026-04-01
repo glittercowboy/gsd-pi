@@ -432,6 +432,31 @@ test("agent-end-recovery.ts applies escalating delay for repeated transient erro
   );
 });
 
+test("agent-end-recovery.ts picks a provider-local recovery model for removed models before pausing", () => {
+  const src = readFileSync(join(__dirname, "..", "bootstrap", "agent-end-recovery.ts"), "utf-8");
+
+  assert.ok(
+    src.includes("pickProviderRecoveryModel"),
+    "agent-end-recovery.ts must pick a provider-local recovery model for removed models (#3359)",
+  );
+  assert.ok(
+    src.includes('if (cls.kind === "model-error")'),
+    'agent-end-recovery.ts must keep a dedicated model-error recovery step before indefinite pause (#3359)',
+  );
+  assert.ok(
+    src.includes('model.id === "claude-opus-4-6"'),
+    "removed Anthropic models should prefer claude-opus-4-6 as the recovery target when available (#3359)",
+  );
+  assert.ok(
+    src.includes('model.id === "gpt-5.4"'),
+    "removed OpenAI models should prefer gpt-5.4 as the recovery target when available (#3359)",
+  );
+  assert.ok(
+    src.includes("and resuming."),
+    "successful removed-model recovery must resume auto-mode after switching models (#3359)",
+  );
+});
+
 test("agent-end-recovery.ts resumes transient provider pauses through startAuto instead of a hidden prompt", () => {
   const src = readFileSync(join(__dirname, "..", "bootstrap", "agent-end-recovery.ts"), "utf-8");
 
