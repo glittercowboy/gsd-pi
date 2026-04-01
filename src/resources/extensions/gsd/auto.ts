@@ -1304,6 +1304,9 @@ const widgetStateAccessors: WidgetStateAccessors = {
   getAutoStartTime: () => s.autoStartTime,
   isStepMode: () => s.stepMode,
   getCmdCtx: () => s.cmdCtx,
+  getCurrentUnitModel: () => s.currentUnitModel
+    ? { provider: s.currentUnitModel.provider, id: s.currentUnitModel.id }
+    : null,
   getBasePath: () => s.basePath,
   isVerbose: () => s.verbose,
   isSessionSwitching: isSessionSwitchInFlight,

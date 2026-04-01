@@ -915,6 +915,9 @@ export async function runUnitPhase(
   const previousTier = s.currentUnitRouting?.tier;
 
   s.currentUnit = { type: unitType, id: unitId, startedAt: Date.now() };
+  // Reset per-unit model snapshot before routing so stale model labels do not
+  // leak from the previous unit if model selection fails early.
+  s.currentUnitModel = null;
   const unitStartSeq = ic.nextSeq();
   deps.emitJournalEvent({ ts: new Date().toISOString(), flowId: ic.flowId, seq: unitStartSeq, eventType: "unit-start", data: { unitType, unitId } });
   deps.captureAvailableSkills();
@@ -951,11 +954,10 @@ export async function runUnitPhase(
   s.currentUnitModel =
     modelResult.appliedModel as AutoSession["currentUnitModel"];
 
-  // Status bar + progress widget
+  // Status bar + preconditions
   ctx.ui.setStatus("gsd-auto", "auto");
   if (mid)
     deps.updateSliceProgressCache(s.basePath, mid, state.activeSlice?.id);
-  deps.updateProgressWidget(ctx, unitType, unitId, state);
 
   deps.ensurePreconditions(unitType, unitId, s.basePath, state);
 
@@ -1047,6 +1049,10 @@ export async function runUnitPhase(
       );
     }
   }
+
+  // Render progress widget after model selection so the model label reflects
+  // the actual dispatched unit model from the first frame.
+  deps.updateProgressWidget(ctx, unitType, unitId, state);
 
   // Start unit supervision
   deps.clearUnitTimeout();
