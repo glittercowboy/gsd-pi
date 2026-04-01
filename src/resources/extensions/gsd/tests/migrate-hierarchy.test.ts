@@ -220,6 +220,57 @@ Depends on M001 completion.
     }
 });
 
+test('migrate-hier: all-slices-done roadmap imports milestone as complete without summary', () => {
+    const base = createFixtureBase();
+    try {
+      const completedRoadmap = `# M001: Imported Complete
+
+**Vision:** Completed outside auto-mode.
+
+## Slices
+
+- [x] **S01: Done Slice** \`risk:low\` \`depends:[]\`
+  > After this: Done.
+
+- [x] **S02: Also Done** \`risk:medium\` \`depends:[S01]\`
+  > After this: Still done.
+`;
+      const nextRoadmap = `# M002: Next Milestone
+
+**Vision:** Still active.
+
+## Slices
+
+- [ ] **S01: Active Slice** \`risk:low\` \`depends:[]\`
+  > After this: In progress.
+`;
+
+      writeFile(base, 'milestones/M001/M001-ROADMAP.md', completedRoadmap);
+      writeFile(base, 'milestones/M002/M002-ROADMAP.md', nextRoadmap);
+
+      openDatabase(':memory:');
+      const counts = migrateHierarchyToDb(base);
+
+      assert.deepStrictEqual(counts.milestones, 2, 'all-done-import: 2 milestones inserted');
+
+      const m001 = getMilestone('M001');
+      assert.ok(m001 !== null, 'all-done-import: M001 exists');
+      assert.deepStrictEqual(m001!.status, 'complete', 'all-done-import: all-[x] roadmap imports as complete without SUMMARY');
+
+      const m002 = getMilestone('M002');
+      assert.ok(m002 !== null, 'all-done-import: M002 exists');
+      assert.deepStrictEqual(m002!.status, 'active', 'all-done-import: incomplete roadmap stays active');
+
+      const active = getActiveMilestoneFromDb();
+      assert.deepStrictEqual(active?.id, 'M002', 'all-done-import: next incomplete milestone remains active');
+
+      closeDatabase();
+    } finally {
+      closeDatabase();
+      cleanup(base);
+    }
+});
+
   // ─── Test (c): Partially-completed slice — some tasks [x], some [ ] ───
 
 test('migrate-hier: partially-completed slice', () => {
@@ -426,4 +477,3 @@ test('migrate-hier: demo text extracted', () => {
       cleanup(base);
     }
 });
-

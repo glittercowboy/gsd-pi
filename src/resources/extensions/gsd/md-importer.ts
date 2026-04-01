@@ -530,11 +530,6 @@ export function migrateHierarchyToDb(basePath: string): {
     // Ghost milestone: no CONTEXT, ROADMAP, or SUMMARY → skip
     if (!hasRoadmap && !hasContext && !hasSummary) continue;
 
-    // Determine milestone status
-    let milestoneStatus = 'active';
-    if (hasSummary) milestoneStatus = 'complete';
-    else if (hasParked) milestoneStatus = 'parked';
-
     // Determine milestone title from roadmap H1 or CONTEXT heading
     let milestoneTitle = '';
     let roadmapContent: string | null = null;
@@ -555,6 +550,16 @@ export function migrateHierarchyToDb(basePath: string): {
     if (hasContext) {
       const contextContent = readFileSync(contextPath!, 'utf-8');
       dependsOn = parseContextDependsOn(contextContent);
+    }
+
+    // Treat an all-[x] roadmap as complete during import even when SUMMARY.md
+    // was never written. Manual completion should not be re-imported as active
+    // and re-planned on the next auto bootstrap.
+    let milestoneStatus = 'active';
+    if (hasSummary) milestoneStatus = 'complete';
+    else if (hasParked) milestoneStatus = 'parked';
+    else if (roadmap && roadmap.slices.length > 0 && roadmap.slices.every((slice) => slice.done)) {
+      milestoneStatus = 'complete';
     }
 
     // Extract raw "## Boundary Map" section from roadmap markdown for planning column
