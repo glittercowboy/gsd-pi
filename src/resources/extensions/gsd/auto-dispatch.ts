@@ -145,6 +145,11 @@ export function isVerificationNotApplicable(value: string): boolean {
   return /^(?:none[\s._-]*(?:required|needed|planned)?|n\/?a|not[\s._-]+(?:applicable|required|needed)|no[\s._-]+operational[\s\S]*)$/i.test(v);
 }
 
+export function wasValidationSkippedByPreference(validationContent: string): boolean {
+  return /skipped by preference/i.test(validationContent)
+    || /skip_milestone_validation/i.test(validationContent);
+}
+
 // ─── Rules ────────────────────────────────────────────────────────────────
 
 export const DISPATCH_RULES: DispatchRule[] = [
@@ -693,6 +698,14 @@ export const DISPATCH_RULES: DispatchRule[] = [
             if (validationPath) {
               const validationContent = await loadFile(validationPath);
               if (validationContent) {
+                if (wasValidationSkippedByPreference(validationContent)) {
+                  return {
+                    action: "dispatch",
+                    unitType: "complete-milestone",
+                    unitId: mid,
+                    prompt: await buildCompleteMilestonePrompt(mid, midTitle, basePath),
+                  };
+                }
                 // Accept either the structured template format (table with MET/N/A/SATISFIED)
                 // or prose evidence patterns the validation agent may emit.
                 const structuredMatch =

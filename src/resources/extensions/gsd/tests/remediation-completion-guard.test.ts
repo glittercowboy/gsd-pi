@@ -12,7 +12,8 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
-import { DISPATCH_RULES } from "../auto-dispatch.ts";
+import { DISPATCH_RULES, wasValidationSkippedByPreference } from "../auto-dispatch.ts";
+import { closeDatabase, insertMilestone, openDatabase } from "../gsd-db.ts";
 
 /** Find the completing-milestone dispatch rule */
 const completingRule = DISPATCH_RULES.find(r => r.name === "completing-milestone → complete-milestone");
@@ -105,6 +106,66 @@ test("completing-milestone proceeds normally when VALIDATION verdict is pass (#2
       );
     }
   } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test("wasValidationSkippedByPreference detects skip_milestone_validation closures", () => {
+  const content = [
+    "---",
+    "verdict: pass",
+    "---",
+    "",
+    "# Milestone Validation (skipped by preference)",
+    "",
+    "Milestone validation was skipped via `skip_milestone_validation` preference.",
+  ].join("\n");
+
+  assert.equal(wasValidationSkippedByPreference(content), true);
+});
+
+test("completing-milestone allows skip-by-preference validation with operational requirements", async () => {
+  const base = mkdtempSync(join(tmpdir(), "gsd-skip-validation-"));
+  mkdirSync(join(base, ".gsd", "milestones", "M001"), { recursive: true });
+  writeFileSync(join(base, "app.js"), "console.log('impl');\n");
+
+  try {
+    assert.ok(openDatabase(join(base, ".gsd", "state.db")), "temp DB should open");
+    insertMilestone({
+      id: "M001",
+      title: "Test Milestone",
+      planning: { verificationOperational: "Smoke app startup and runtime behavior" },
+    });
+
+    writeFileSync(
+      join(base, ".gsd", "milestones", "M001", "M001-VALIDATION.md"),
+      [
+        "---",
+        "verdict: pass",
+        "remediation_round: 0",
+        "---",
+        "",
+        "# Milestone Validation (skipped by preference)",
+        "",
+        "Milestone validation was skipped via `skip_milestone_validation` preference.",
+      ].join("\n"),
+    );
+
+    const ctx = {
+      mid: "M001",
+      midTitle: "Test Milestone",
+      basePath: base,
+      state: { phase: "completing-milestone" } as any,
+      prefs: {} as any,
+      session: undefined,
+    };
+
+    const result = await completingRule!.match(ctx);
+
+    assert.ok(result !== null, "rule should match");
+    assert.equal(result?.action, "dispatch", "skip-by-preference validation should allow completion dispatch");
+  } finally {
+    closeDatabase();
     rmSync(base, { recursive: true, force: true });
   }
 });
