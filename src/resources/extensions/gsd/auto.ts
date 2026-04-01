@@ -588,9 +588,12 @@ function cleanupAfterLoopExit(ctx: ExtensionContext): void {
     logWarning("session", `lock cleanup failed: ${err instanceof Error ? err.message : String(err)}`, { file: "auto.ts" });
   }
 
-  ctx.ui.setStatus("gsd-auto", undefined);
-  ctx.ui.setWidget("gsd-progress", undefined);
-  ctx.ui.setFooter(undefined);
+  // Preserve the paused auto-mode indicator while a timed auto-resume is pending.
+  if (!s.paused) {
+    ctx.ui.setStatus("gsd-auto", undefined);
+    ctx.ui.setWidget("gsd-progress", undefined);
+    ctx.ui.setFooter(undefined);
+  }
 
   // Restore CWD out of worktree back to original project root
   if (s.originalBasePath) {

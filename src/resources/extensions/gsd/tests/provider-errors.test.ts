@@ -439,6 +439,15 @@ test("agent-end-recovery.ts resumes transient provider pauses through startAuto 
   );
 });
 
+test("cleanupAfterLoopExit preserves paused auto UI while auto-resume is pending (#3370)", () => {
+  const autoSource = readFileSync(join(__dirname, "..", "auto.ts"), "utf-8");
+
+  assert.ok(
+    /if\s*\(\s*!s\.paused\s*\)\s*\{[\s\S]*setStatus\("gsd-auto", undefined\)[\s\S]*setWidget\("gsd-progress", undefined\)[\s\S]*setFooter\(undefined\)/.test(autoSource),
+    "cleanupAfterLoopExit must guard UI cleanup behind !s.paused so transient provider pauses keep their paused indicator",
+  );
+});
+
 // ── Codex error extraction (#1166) ──────────────────────────────────────────
 
 test("openai-codex-responses.ts extracts nested error fields", () => {
