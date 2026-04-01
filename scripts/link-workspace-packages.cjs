@@ -16,7 +16,7 @@
  * cpSync (directory copy) which works universally.
  */
 const { existsSync, mkdirSync, symlinkSync, cpSync, lstatSync, readlinkSync, unlinkSync } = require('fs')
-const { resolve, join } = require('path')
+const { resolve, join, dirname, relative } = require('path')
 
 const root = resolve(__dirname, '..')
 const packagesDir = join(root, 'packages')
@@ -44,16 +44,25 @@ for (const [dir, name] of Object.entries(packageMap)) {
 
   if (!existsSync(source)) continue
 
+  // existsSync follows symlinks, so broken links look "missing" and would later
+  // make symlinkSync fail with EEXIST. Inspect the path entry itself first.
+  let existing = null
+  try {
+    existing = lstatSync(target)
+  } catch {
+    existing = null
+  }
+
   // Skip if already correctly linked or is a real directory (bundled)
-  if (existsSync(target)) {
+  if (existing) {
     try {
-      const stat = lstatSync(target)
-      if (stat.isSymbolicLink()) {
+      if (existing.isSymbolicLink()) {
         const linkTarget = readlinkSync(target)
-        if (resolve(join(nodeModulesGsd, linkTarget)) === source || linkTarget === source) {
+        const resolvedTarget = resolve(dirname(target), linkTarget)
+        if (resolvedTarget === source) {
           continue // Already correct
         }
-        unlinkSync(target) // Wrong target, relink
+        unlinkSync(target) // Wrong or stale target, relink
       } else {
         continue // Real directory (e.g., copied or from bundleDependencies), don't touch
       }
@@ -64,7 +73,10 @@ for (const [dir, name] of Object.entries(packageMap)) {
 
   let symlinkOk = false
   try {
-    symlinkSync(source, target, 'junction') // junction works on Windows too
+    const linkTarget = process.platform === 'win32'
+      ? source
+      : relative(dirname(target), source)
+    symlinkSync(linkTarget, target, 'junction') // junction works on Windows too
     symlinkOk = true
     linked++
   } catch {
