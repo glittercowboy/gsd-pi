@@ -43,6 +43,16 @@ function getService(basePath: string): GitServiceImpl {
 }
 
 /**
+ * Clear the cached GitServiceImpl. For testing only — forces the next
+ * getService() call to re-read preferences and create a fresh instance.
+ * @internal
+ */
+export function _resetServiceCache(): void {
+  cachedService = null;
+  cachedBasePath = null;
+}
+
+/**
  * Set the active milestone ID on the cached GitServiceImpl.
  * This enables integration branch resolution in getMainBranch().
  */

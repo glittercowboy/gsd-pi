@@ -14,9 +14,11 @@ import {
   resolveProjectRoot,
   setActiveMilestoneId,
   SLICE_BRANCH_RE,
+  _resetServiceCache,
 } from "../worktree.ts";
 import { readIntegrationBranch } from "../git-service.ts";
 import { _resetHasChangesCache } from "../native-git-bridge.ts";
+import { _clearGsdRootCache } from "../paths.ts";
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 
@@ -165,15 +167,30 @@ describe('worktree', async () => {
     run("git checkout -b my-feature", repo);
     captureIntegrationBranch(repo, "M001");
 
-    // Without milestone set, getMainBranch returns "main"
-    setActiveMilestoneId(repo, null);
-    assert.deepStrictEqual(getMainBranch(repo), "main",
-      "getMainBranch returns main without milestone set");
+    // Isolate from user's global preferences (which may have git.main_branch set).
+    // Reset caches so getService() creates a fresh instance with empty preferences.
+    const originalHome = process.env.HOME;
+    const fakeHome = mkdtempSync(join(tmpdir(), "gsd-fake-home-"));
+    process.env.HOME = fakeHome;
+    _clearGsdRootCache();
+    _resetServiceCache();
 
-    // With milestone set, getMainBranch returns feature branch
-    setActiveMilestoneId(repo, "M001");
-    assert.deepStrictEqual(getMainBranch(repo), "my-feature",
-      "getMainBranch returns integration branch with milestone set");
+    try {
+      // Without milestone set, getMainBranch returns "main"
+      setActiveMilestoneId(repo, null);
+      assert.deepStrictEqual(getMainBranch(repo), "main",
+        "getMainBranch returns main without milestone set");
+
+      // With milestone set, getMainBranch returns feature branch
+      setActiveMilestoneId(repo, "M001");
+      assert.deepStrictEqual(getMainBranch(repo), "my-feature",
+        "getMainBranch returns integration branch with milestone set");
+    } finally {
+      process.env.HOME = originalHome;
+      _clearGsdRootCache();
+      _resetServiceCache();
+      rmSync(fakeHome, { recursive: true, force: true });
+    }
 
     rmSync(repo, { recursive: true, force: true });
   }
