@@ -71,7 +71,8 @@ async function probeAndRegister(pi: ExtensionAPI): Promise<boolean> {
 	const baseUrl = getOllamaOpenAIBaseUrl();
 
 	pi.registerProvider("ollama", {
-		authMode: "none",
+		authMode: "apiKey",
+		apiKey: "ollama", // Ollama ignores auth keys; dummy value avoids the streamSimple requirement for authMode:"none"
 		baseUrl,
 		api: "openai-completions",
 		isReady: () => true,
