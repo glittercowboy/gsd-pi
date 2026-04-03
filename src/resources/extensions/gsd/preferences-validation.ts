@@ -428,6 +428,10 @@ export function validatePreferences(preferences: GSDPreferences): {
         if (typeof dr.hooks === "boolean") validDr.hooks = dr.hooks;
         else errors.push("dynamic_routing.hooks must be a boolean");
       }
+      if (dr.capability_routing !== undefined) {
+        if (typeof dr.capability_routing === "boolean") validDr.capability_routing = dr.capability_routing;
+        else errors.push("dynamic_routing.capability_routing must be a boolean");
+      }
       if (dr.tier_models !== undefined) {
         if (typeof dr.tier_models === "object" && dr.tier_models !== null) {
           const tm = dr.tier_models as Record<string, unknown>;
@@ -449,6 +453,40 @@ export function validatePreferences(preferences: GSDPreferences): {
       }
     } else {
       errors.push("dynamic_routing must be an object");
+    }
+  }
+
+  // ─── Context Management ──────────────────────────────────────────────
+  if (preferences.context_management !== undefined) {
+    if (typeof preferences.context_management === "object" && preferences.context_management !== null) {
+      const cm = preferences.context_management as unknown as Record<string, unknown>;
+      const validCm: Record<string, unknown> = {};
+
+      if (cm.observation_masking !== undefined) {
+        if (typeof cm.observation_masking === "boolean") validCm.observation_masking = cm.observation_masking;
+        else errors.push("context_management.observation_masking must be a boolean");
+      }
+      if (cm.observation_mask_turns !== undefined) {
+        const turns = cm.observation_mask_turns;
+        if (typeof turns === "number" && turns >= 1 && turns <= 50) validCm.observation_mask_turns = turns;
+        else errors.push("context_management.observation_mask_turns must be a number between 1 and 50");
+      }
+      if (cm.compaction_threshold_percent !== undefined) {
+        const pct = cm.compaction_threshold_percent;
+        if (typeof pct === "number" && pct >= 0.5 && pct <= 0.95) validCm.compaction_threshold_percent = pct;
+        else errors.push("context_management.compaction_threshold_percent must be a number between 0.5 and 0.95");
+      }
+      if (cm.tool_result_max_chars !== undefined) {
+        const chars = cm.tool_result_max_chars;
+        if (typeof chars === "number" && chars >= 200 && chars <= 10000) validCm.tool_result_max_chars = chars;
+        else errors.push("context_management.tool_result_max_chars must be a number between 200 and 10000");
+      }
+
+      if (Object.keys(validCm).length > 0) {
+        validated.context_management = validCm as any;
+      }
+    } else {
+      errors.push("context_management must be an object");
     }
   }
 
