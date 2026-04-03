@@ -266,9 +266,7 @@ export async function runPostUnitVerification(
           }
         } catch (postExecErr) {
           // Post-execution check errors are non-fatal — log and continue
-          process.stderr.write(
-            `gsd-post-exec: error — ${(postExecErr as Error).message}\n`
-          );
+          logWarning("engine", `gsd-post-exec: error — ${(postExecErr as Error).message}`);
         }
       }
     }
@@ -297,9 +295,7 @@ export async function runPostUnitVerification(
           );
         }
       } catch (evidenceErr) {
-        process.stderr.write(
-          `verification-evidence: post-exec write error — ${(evidenceErr as Error).message}\n`
-        );
+        logWarning("engine", `verification-evidence: post-exec write error — ${(evidenceErr as Error).message}`);
       }
     }
 
