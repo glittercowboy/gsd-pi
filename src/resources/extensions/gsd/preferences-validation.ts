@@ -471,11 +471,6 @@ export function validatePreferences(preferences: GSDPreferences): {
         if (typeof turns === "number" && turns >= 1 && turns <= 50) validCm.observation_mask_turns = turns;
         else errors.push("context_management.observation_mask_turns must be a number between 1 and 50");
       }
-      if (cm.compaction_threshold_percent !== undefined) {
-        const pct = cm.compaction_threshold_percent;
-        if (typeof pct === "number" && pct >= 0.5 && pct <= 0.95) validCm.compaction_threshold_percent = pct;
-        else errors.push("context_management.compaction_threshold_percent must be a number between 0.5 and 0.95");
-      }
       if (cm.tool_result_max_chars !== undefined) {
         const chars = cm.tool_result_max_chars;
         if (typeof chars === "number" && chars >= 200 && chars <= 10000) validCm.tool_result_max_chars = chars;

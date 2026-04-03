@@ -285,8 +285,18 @@ export function registerHooks(pi: ExtensionAPI): void {
         const messages = payload.messages;
         if (Array.isArray(messages)) {
           for (const msg of messages) {
-            if (typeof msg?.content === "string" && (msg.type === "toolResult" || msg.role === "tool") && msg.content.length > maxChars) {
+            if (!msg) continue;
+            const isToolMsg = msg.type === "toolResult" || msg.type === "tool_result" || msg.role === "tool";
+            if (isToolMsg && typeof msg.content === "string" && msg.content.length > maxChars) {
               msg.content = msg.content.slice(0, maxChars) + "\n…[truncated]";
+            }
+            // Handle content arrays (Anthropic API format)
+            if (Array.isArray(msg.content)) {
+              for (const block of msg.content) {
+                if (block?.type === "tool_result" && typeof block.content === "string" && block.content.length > maxChars) {
+                  block.content = block.content.slice(0, maxChars) + "\n…[truncated]";
+                }
+              }
             }
           }
         }

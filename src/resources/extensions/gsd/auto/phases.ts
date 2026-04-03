@@ -1201,14 +1201,18 @@ export async function runUnitPhase(
   if (artifactVerified && mid && anchorPhases.has(unitType)) {
     try {
       const { writePhaseAnchor } = await import("../phase-anchor.js");
+      const { extractHandoffData } = await import("../phase-anchor.js");
+      const sliceId = state.activeSlice?.id;
+      const handoff = extractHandoffData(s.basePath, mid, unitType, unitId, sliceId);
       writePhaseAnchor(s.basePath, mid, {
         phase: unitType,
         milestoneId: mid,
+        sliceId: sliceId,
         generatedAt: new Date().toISOString(),
-        intent: `Completed ${unitType} for ${unitId}`,
-        decisions: [],
-        blockers: [],
-        nextSteps: [],
+        intent: handoff.intent,
+        decisions: handoff.decisions,
+        blockers: handoff.blockers,
+        nextSteps: handoff.nextSteps,
       });
     } catch { /* non-fatal — anchor is advisory */ }
   }

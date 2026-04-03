@@ -350,6 +350,9 @@ function mergePreferences(base: GSDPreferences, override: GSDPreferences): GSDPr
     dynamic_routing: (base.dynamic_routing || override.dynamic_routing)
       ? { ...(base.dynamic_routing ?? {}), ...(override.dynamic_routing ?? {}) } as DynamicRoutingConfig
       : undefined,
+    context_management: (base.context_management || override.context_management)
+      ? { ...(base.context_management ?? {}), ...(override.context_management ?? {}) }
+      : undefined,
     token_profile: override.token_profile ?? base.token_profile,
     phases: (base.phases || override.phases)
       ? { ...(base.phases ?? {}), ...(override.phases ?? {}) }

@@ -97,3 +97,44 @@ test("returns same array length", () => {
   const result = mask(messages as any);
   assert.equal(result.length, messages.length);
 });
+
+test("masks tool_result type (API format)", () => {
+  const mask = createObservationMask(1);
+  const messages = [
+    userMsg("turn 1"),
+    { role: "user", content: "old result", type: "tool_result" },
+    assistantMsg("response 1"),
+    userMsg("turn 2"),
+    assistantMsg("response 2"),
+  ];
+  const result = mask(messages as any);
+  assert.ok(typeof result[1].content === "string" && result[1].content.includes("[result masked"));
+});
+
+test("masks role=tool messages (OpenAI format)", () => {
+  const mask = createObservationMask(1);
+  const messages = [
+    userMsg("turn 1"),
+    { role: "tool", content: "tool output" },
+    assistantMsg("response 1"),
+    userMsg("turn 2"),
+    assistantMsg("response 2"),
+  ];
+  const result = mask(messages as any);
+  assert.ok(typeof result[1].content === "string" && result[1].content.includes("[result masked"));
+});
+
+test("masks content array blocks (Anthropic API format)", () => {
+  const mask = createObservationMask(1);
+  const messages = [
+    userMsg("turn 1"),
+    { role: "user", content: [{ type: "tool_result", content: "old output", tool_use_id: "t1" }] },
+    assistantMsg("response 1"),
+    { role: "user", content: "turn 2", type: "user" },
+    assistantMsg("response 2"),
+  ];
+  const result = mask(messages as any);
+  assert.ok(Array.isArray(result[1].content));
+  const block = (result[1].content as { content: string }[])[0];
+  assert.ok(block.content.includes("[result masked"));
+});

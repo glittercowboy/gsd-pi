@@ -1041,7 +1041,7 @@ export async function buildPlanSlicePrompt(
   const inlined: string[] = [];
 
   // Inject phase handoff anchor from research phase (if available)
-  const researchSliceAnchor = readPhaseAnchor(base, mid, "research-slice");
+  const researchSliceAnchor = readPhaseAnchor(base, mid, "research-slice", sid);
   if (researchSliceAnchor) inlined.push(formatAnchorForPrompt(researchSliceAnchor));
 
   inlined.push(await inlineFile(roadmapPath, roadmapRel, "Milestone Roadmap"));
@@ -1112,7 +1112,7 @@ export async function buildExecuteTaskPrompt(
   const inlineLevel = opts.level ?? resolveInlineLevel();
 
   // Inject phase handoff anchor from planning phase (if available)
-  const planAnchor = readPhaseAnchor(base, mid, "plan-slice");
+  const planAnchor = readPhaseAnchor(base, mid, "plan-slice", sid);
 
   const priorSummaries = opts.carryForwardPaths ?? await getPriorTaskSummaryPaths(mid, sid, tid, base);
   const priorLines = priorSummaries.length > 0

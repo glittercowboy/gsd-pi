@@ -25,7 +25,6 @@ import type { DynamicRoutingConfig } from "./model-router.js";
 export interface ContextManagementConfig {
   observation_masking?: boolean;          // default: true
   observation_mask_turns?: number;        // default: 8, range: 1-50
-  compaction_threshold_percent?: number;  // default: 0.70, range: 0.5-0.95
   tool_result_max_chars?: number;         // default: 800, range: 200-10000
 }
 import type { GitHubSyncConfig } from "../github-sync/types.js";
@@ -100,6 +99,7 @@ export const KNOWN_PREFERENCE_KEYS = new Set<string>([
   "service_tier",
   "forensics_dedup",
   "show_token_cost",
+  "context_management",
   "experimental",
 ]);
 
