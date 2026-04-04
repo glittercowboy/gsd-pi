@@ -161,7 +161,7 @@ export async function bootstrapAutoSession(
   // (#3517).  The session model (ctx.model) comes from findInitialModel() which
   // reads defaultProvider/defaultModel from ~/.gsd/agent/settings.json.  When
   // the user has explicit model preferences in PREFERENCES.md, those should win.
-  const preferredModel = resolveDefaultSessionModel();
+  const preferredModel = resolveDefaultSessionModel(ctx.model?.provider);
   const startModelSnapshot = preferredModel
     ?? (ctx.model
       ? { provider: ctx.model.provider, id: ctx.model.id }

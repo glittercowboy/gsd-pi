@@ -200,6 +200,19 @@ describe("GSD preferences override settings.json for session model (#3517)", () 
       "should be null when neither preferences nor ctx.model exist");
   });
 
+  it("bare model ID uses session provider when available", () => {
+    // Simulates: PREFERENCES.md has "gpt-5.4" (no provider), session is openai-codex
+    const preferredModel = { provider: "openai-codex", id: "gpt-5.4" }; // from resolveDefaultSessionModel("openai-codex")
+    const ctxModel = { provider: "openai-codex", id: "claude-sonnet-4-6" };
+
+    const startModelSnapshot = preferredModel
+      ?? { provider: ctxModel.provider, id: ctxModel.id };
+
+    assert.equal(startModelSnapshot.provider, "openai-codex");
+    assert.equal(startModelSnapshot.id, "gpt-5.4",
+      "bare model ID from preferences should still override ctx.model");
+  });
+
   it("stale settings.json does not leak when preferences are set", () => {
     // Scenario: settings.json has claude-code, PREFERENCES.md has openai-codex
     const settingsJsonDefault = { provider: "claude-code", id: "claude-sonnet-4-6" };

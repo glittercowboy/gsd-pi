@@ -31,8 +31,12 @@ test("bootstrapAutoSession restores autoModeStartModel from the early snapshot (
 
 test("bootstrapAutoSession prefers GSD PREFERENCES.md over settings.json for start model (#3517)", () => {
   // resolveDefaultSessionModel() should be called before the snapshot is built
-  const preferredIdx = source.indexOf("const preferredModel = resolveDefaultSessionModel()");
+  const preferredIdx = source.indexOf("const preferredModel = resolveDefaultSessionModel(");
   assert.ok(preferredIdx > -1, "auto-start.ts should call resolveDefaultSessionModel()");
+
+  // Session provider should be passed for bare model ID resolution
+  const withProviderIdx = source.indexOf("resolveDefaultSessionModel(ctx.model?.provider)");
+  assert.ok(withProviderIdx > -1, "auto-start.ts should pass ctx.model?.provider for bare ID resolution");
 
   const snapshotIdx = source.indexOf("const startModelSnapshot = preferredModel");
   assert.ok(snapshotIdx > -1, "startModelSnapshot should use preferredModel when available");
