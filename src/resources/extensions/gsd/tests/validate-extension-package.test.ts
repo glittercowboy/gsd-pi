@@ -135,13 +135,12 @@ test("validateExtensionPackage: invalid JSON in package.json returns error", (t)
   assert.ok(result.errors.some(e => e.toLowerCase().includes("json")), `Expected JSON error, got: ${JSON.stringify(result.errors)}`);
 });
 
-test("validateExtensionPackage: extracted google-search stub fails validation (no package.json)", (_t) => {
-  // google-search was extracted to @gsd-extensions/google-search (ADR-006);
-  // the in-tree stub no longer ships a package.json.
+test("validateExtensionPackage: extracted google-search package passes validation (PKG-05)", (_t) => {
+  // This test runs against the actual extensions/google-search/ directory
+  // Resolve relative to the project root (3 levels up from tests/)
   const projectRoot = join(new URL(import.meta.url).pathname, "..", "..", "..", "..", "..", "..");
   const googleSearchDir = join(projectRoot, "extensions", "google-search");
 
   const result = validateExtensionPackage(googleSearchDir);
-  assert.equal(result.valid, false, `extensions/google-search/ stub should not pass validation`);
-  assert.ok(result.errors.some(e => e.toLowerCase().includes("package.json")), `Expected package.json error, got: ${JSON.stringify(result.errors)}`);
+  assert.equal(result.valid, true, `extensions/google-search/ should be valid, errors: ${JSON.stringify(result.errors)}`);
 });
