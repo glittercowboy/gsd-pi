@@ -112,8 +112,11 @@ function buildRethinkData(
     if (dbAvailable && status !== "complete") {
       const slices = getMilestoneSlices(mid);
       if (slices.length > 0) {
-        const done = slices.filter(s => s.status === "complete").length;
-        sliceInfo = `${done}/${slices.length} complete`;
+        const done = slices.filter(s => s.status === "complete" || s.status === "done").length;
+        const skipped = slices.filter(s => s.status === "skipped").length;
+        sliceInfo = skipped > 0
+          ? `${done}/${slices.length} complete, ${skipped} skipped`
+          : `${done}/${slices.length} complete`;
       }
     }
 

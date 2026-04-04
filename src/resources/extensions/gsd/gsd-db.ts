@@ -1661,11 +1661,11 @@ export function getActiveSliceFromDb(milestoneId: string): SliceRow | null {
   const row = currentDb.prepare(
     `SELECT s.* FROM slices s
      WHERE s.milestone_id = :mid
-       AND s.status NOT IN ('complete', 'done')
+       AND s.status NOT IN ('complete', 'done', 'skipped')
        AND NOT EXISTS (
          SELECT 1 FROM json_each(s.depends) AS dep
          WHERE dep.value NOT IN (
-           SELECT id FROM slices WHERE milestone_id = :mid AND status IN ('complete', 'done')
+           SELECT id FROM slices WHERE milestone_id = :mid AND status IN ('complete', 'done', 'skipped')
          )
        )
      ORDER BY s.sequence, s.id

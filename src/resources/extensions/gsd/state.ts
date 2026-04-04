@@ -295,7 +295,7 @@ function extractContextTitle(content: string | null, fallback: string): string {
  * Helper: check if a DB status counts as "done" (handles K002 ambiguity).
  */
 function isStatusDone(status: string): boolean {
-  return status === 'complete' || status === 'done';
+  return status === 'complete' || status === 'done' || status === 'skipped';
 }
 
 /**

@@ -15,6 +15,7 @@ import assert from "node:assert/strict";
 import { mkdirSync, readFileSync, writeFileSync, rmSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { isClosedStatus } from "../status-guards.ts";
 import {
   appendCapture,
   loadAllCaptures,
@@ -202,4 +203,14 @@ test("readBacktrackTrigger returns null when no trigger exists", () => {
   const trigger = readBacktrackTrigger(tmp);
   assert.equal(trigger, null);
   rmSync(tmp, { recursive: true, force: true });
+});
+
+// ─── Slice Skip Status (#3477) ──────────────────────────────────────────────
+
+test("isClosedStatus treats 'skipped' as closed", () => {
+  assert.equal(isClosedStatus("skipped"), true);
+  assert.equal(isClosedStatus("complete"), true);
+  assert.equal(isClosedStatus("done"), true);
+  assert.equal(isClosedStatus("pending"), false);
+  assert.equal(isClosedStatus("active"), false);
 });

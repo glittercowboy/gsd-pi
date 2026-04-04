@@ -883,6 +883,84 @@ export function registerDbTools(pi: ExtensionAPI): void {
   pi.registerTool(sliceCompleteTool);
   registerAlias(pi, sliceCompleteTool, "gsd_complete_slice", "gsd_slice_complete");
 
+  // ─── gsd_skip_slice (#3477 / #3487) ───────────────────────────────────
+
+  const skipSliceExecute = async (_toolCallId: string, params: any, _signal: AbortSignal | undefined, _onUpdate: unknown, _ctx: unknown) => {
+    const dbAvailable = await ensureDbOpen();
+    if (!dbAvailable) {
+      return {
+        content: [{ type: "text" as const, text: "Error: GSD database is not available. Cannot skip slice." }],
+        details: { operation: "skip_slice", error: "db_unavailable" } as any,
+      };
+    }
+    try {
+      const { getSlice, updateSliceStatus } = await import("../gsd-db.js");
+      const { invalidateStateCache } = await import("../state.js");
+
+      const slice = getSlice(params.milestoneId, params.sliceId);
+      if (!slice) {
+        return {
+          content: [{ type: "text" as const, text: `Error: Slice ${params.sliceId} not found in milestone ${params.milestoneId}` }],
+          details: { operation: "skip_slice", error: "slice_not_found" } as any,
+        };
+      }
+
+      if (slice.status === "complete" || slice.status === "done") {
+        return {
+          content: [{ type: "text" as const, text: `Error: Slice ${params.sliceId} is already complete — cannot skip.` }],
+          details: { operation: "skip_slice", error: "already_complete" } as any,
+        };
+      }
+
+      if (slice.status === "skipped") {
+        return {
+          content: [{ type: "text" as const, text: `Slice ${params.sliceId} is already skipped.` }],
+          details: { operation: "skip_slice", sliceId: params.sliceId, milestoneId: params.milestoneId } as any,
+        };
+      }
+
+      updateSliceStatus(params.milestoneId, params.sliceId, "skipped");
+      invalidateStateCache();
+
+      return {
+        content: [{ type: "text" as const, text: `Skipped slice ${params.sliceId} (${params.milestoneId}). Reason: ${params.reason ?? "User-directed skip"}. Auto-mode will advance past this slice.` }],
+        details: {
+          operation: "skip_slice",
+          sliceId: params.sliceId,
+          milestoneId: params.milestoneId,
+          reason: params.reason,
+        } as any,
+      };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      logError("tool", `skip_slice tool failed: ${msg}`, { tool: "gsd_skip_slice", error: String(err) });
+      return {
+        content: [{ type: "text" as const, text: `Error skipping slice: ${msg}` }],
+        details: { operation: "skip_slice", error: msg } as any,
+      };
+    }
+  };
+
+  pi.registerTool({
+    name: "gsd_skip_slice",
+    label: "Skip Slice",
+    description:
+      "Mark a slice as skipped so auto-mode advances past it without executing. " +
+      "The slice data is preserved for reference. The state machine treats skipped slices like completed ones for dependency satisfaction.",
+    promptSnippet: "Skip a GSD slice (mark as skipped, auto-mode will advance past it)",
+    promptGuidelines: [
+      "Use gsd_skip_slice when a slice should be bypassed — descoped, superseded, or no longer relevant.",
+      "Cannot skip a slice that is already complete.",
+      "Skipped slices satisfy downstream dependencies just like completed slices.",
+    ],
+    parameters: Type.Object({
+      sliceId: Type.String({ description: "Slice ID (e.g. S02)" }),
+      milestoneId: Type.String({ description: "Milestone ID (e.g. M003)" }),
+      reason: Type.Optional(Type.String({ description: "Reason for skipping this slice" })),
+    }),
+    execute: skipSliceExecute,
+  });
+
   // ─── gsd_complete_milestone ────────────────────────────────────────────
 
   const milestoneCompleteExecute = async (_toolCallId: string, params: any, _signal: AbortSignal | undefined, _onUpdate: unknown, _ctx: unknown) => {
