@@ -686,6 +686,7 @@ Complexity-based model routing. See [Dynamic Model Routing](./dynamic-model-rout
 ```yaml
 dynamic_routing:
   enabled: true
+  capability_routing: true          # score models by task capability (v2.59)
   tier_models:
     light: claude-haiku-4-5
     standard: claude-sonnet-4-6
@@ -693,6 +694,18 @@ dynamic_routing:
   escalate_on_failure: true
   budget_pressure: true
   cross_provider: true
+```
+
+### `context_management` (v2.59)
+
+Controls observation masking and tool result truncation during auto-mode sessions. Reduces context bloat between compactions with zero LLM overhead.
+
+```yaml
+context_management:
+  observation_masking: true          # replace old tool results with placeholders (default: true)
+  observation_mask_turns: 8          # keep results from last N user turns (1-50, default: 8)
+  compaction_threshold_percent: 0.70 # target compaction at 70% context usage (0.5-0.95, default: 0.70)
+  tool_result_max_chars: 800         # cap individual tool result content (200-10000, default: 800)
 ```
 
 ### `service_tier` (v2.42)

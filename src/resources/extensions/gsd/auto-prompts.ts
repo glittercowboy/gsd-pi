@@ -26,6 +26,7 @@ import { existsSync } from "node:fs";
 import { computeBudgets, resolveExecutorContextWindow, truncateAtSectionBoundary } from "./context-budget.js";
 import { getPendingGates } from "./gsd-db.js";
 import { formatDecisionsCompact, formatRequirementsCompact } from "./structured-data-formatter.js";
+import { readPhaseAnchor, formatAnchorForPrompt } from "./phase-anchor.js";
 
 // ─── Preamble Cap ─────────────────────────────────────────────────────────────
 
@@ -906,6 +907,11 @@ export async function buildPlanMilestonePrompt(mid: string, midTitle: string, ba
   const researchRel = relMilestoneFile(base, mid, "RESEARCH");
 
   const inlined: string[] = [];
+
+  // Inject phase handoff anchor from research phase (if available)
+  const researchAnchor = readPhaseAnchor(base, mid, "research-milestone");
+  if (researchAnchor) inlined.push(formatAnchorForPrompt(researchAnchor));
+
   inlined.push(await inlineFile(contextPath, contextRel, "Milestone Context"));
   const researchInline = await inlineFileOptional(researchPath, researchRel, "Milestone Research");
   if (researchInline) inlined.push(researchInline);
@@ -1033,6 +1039,11 @@ export async function buildPlanSlicePrompt(
   const researchRel = relSliceFile(base, mid, sid, "RESEARCH");
 
   const inlined: string[] = [];
+
+  // Inject phase handoff anchor from research phase (if available)
+  const researchSliceAnchor = readPhaseAnchor(base, mid, "research-slice");
+  if (researchSliceAnchor) inlined.push(formatAnchorForPrompt(researchSliceAnchor));
+
   inlined.push(await inlineFile(roadmapPath, roadmapRel, "Milestone Roadmap"));
   const researchInline = await inlineFileOptional(researchPath, researchRel, "Slice Research");
   if (researchInline) inlined.push(researchInline);
@@ -1099,6 +1110,9 @@ export async function buildExecuteTaskPrompt(
     ? level
     : { level: level as InlineLevel | undefined };
   const inlineLevel = opts.level ?? resolveInlineLevel();
+
+  // Inject phase handoff anchor from planning phase (if available)
+  const planAnchor = readPhaseAnchor(base, mid, "plan-slice");
 
   const priorSummaries = opts.carryForwardPaths ?? await getPriorTaskSummaryPaths(mid, sid, tid, base);
   const priorLines = priorSummaries.length > 0
@@ -1190,9 +1204,12 @@ export async function buildExecuteTaskPrompt(
     ? `### Runtime Context\nSource: \`.gsd/RUNTIME.md\`\n\n${runtimeContent.trim()}`
     : "";
 
+  const phaseAnchorSection = planAnchor ? formatAnchorForPrompt(planAnchor) : "";
+
   return loadPrompt("execute-task", {
     overridesSection,
     runtimeContext,
+    phaseAnchorSection,
     workingDirectory: base,
     milestoneId: mid, sliceId: sid, sliceTitle: sTitle, taskId: tid, taskTitle: tTitle,
     planPath: join(base, relSliceFile(base, mid, sid, "PLAN")),

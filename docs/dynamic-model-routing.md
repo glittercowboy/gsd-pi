@@ -70,6 +70,36 @@ When approaching the budget ceiling, the router progressively downgrades:
 
 When enabled, the router may select models from providers other than your primary. This uses the built-in cost table to find the cheapest model at each tier. Requires the target provider to be configured.
 
+## Capability-Aware Scoring
+
+*Introduced in v2.59.0 (ADR-004 Phase 2)*
+
+When `capability_routing` is enabled, the router goes beyond tier classification and scores models against task-specific capability requirements. Each known model has a 7-dimension profile:
+
+| Dimension | What It Measures |
+|-----------|-----------------|
+| `coding` | Code generation, refactoring, implementation quality |
+| `debugging` | Error diagnosis, fix accuracy |
+| `research` | Information gathering, codebase exploration |
+| `reasoning` | Multi-step logic, architectural decisions |
+| `speed` | Response latency (inverse of cost) |
+| `longContext` | Performance with large context windows |
+| `instruction` | Adherence to structured instructions and templates |
+
+Each unit type maps to a weighted requirement vector. For example, `execute-task` weights `coding: 0.9, reasoning: 0.6, debugging: 0.5` while `research-slice` weights `research: 0.9, reasoning: 0.7, longContext: 0.5`.
+
+For `execute-task` units, the classifier also inspects task metadata (tags, description) to refine requirements. Documentation tasks boost `instruction` and lower `coding`; test tasks boost `debugging`.
+
+Enable capability routing:
+
+```yaml
+dynamic_routing:
+  enabled: true
+  capability_routing: true
+```
+
+When enabled, models within the target tier are ranked by capability score rather than selected arbitrarily. When disabled (the default), the existing tier-only selection applies.
+
 ## Complexity Classification
 
 Units are classified using pure heuristics — no LLM calls, sub-millisecond:

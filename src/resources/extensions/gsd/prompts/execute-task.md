@@ -12,6 +12,8 @@ A researcher explored the codebase and a planner decomposed the work — you are
 
 {{runtimeContext}}
 
+{{phaseAnchorSection}}
+
 {{resumeSection}}
 
 {{carryForwardSection}}

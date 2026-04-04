@@ -1205,6 +1205,23 @@ export async function runUnitPhase(
     s.unitRecoveryCount.delete(`${unitType}/${unitId}`);
   }
 
+  // Write phase handoff anchor after successful research/planning completion
+  const anchorPhases = new Set(["research-milestone", "research-slice", "plan-milestone", "plan-slice"]);
+  if (artifactVerified && mid && anchorPhases.has(unitType)) {
+    try {
+      const { writePhaseAnchor } = await import("../phase-anchor.js");
+      writePhaseAnchor(s.basePath, mid, {
+        phase: unitType,
+        milestoneId: mid,
+        generatedAt: new Date().toISOString(),
+        intent: `Completed ${unitType} for ${unitId}`,
+        decisions: [],
+        blockers: [],
+        nextSteps: [],
+      });
+    } catch { /* non-fatal — anchor is advisory */ }
+  }
+
   deps.emitJournalEvent({ ts: new Date().toISOString(), flowId: ic.flowId, seq: ic.nextSeq(), eventType: "unit-end", data: { unitType, unitId, status: unitResult.status, artifactVerified, ...(unitResult.errorContext ? { errorContext: unitResult.errorContext } : {}) }, causedBy: { flowId: ic.flowId, seq: unitStartSeq } });
 
   return { action: "next", data: { unitStartedAt: s.currentUnit?.startedAt } };

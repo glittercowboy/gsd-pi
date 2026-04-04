@@ -262,14 +262,58 @@ PREFERENCES.md
        ├─ resolveProfileDefaults() → model defaults + phase skip defaults
        ├─ resolveInlineLevel() → standard
        │    └─ prompt builders gate context inclusion by level
-       └─ classifyUnitComplexity() → routes to execution/execution_simple model
-            ├─ task plan analysis (steps, files, signals)
-            ├─ unit type defaults
-            ├─ budget pressure adjustment
-            └─ adaptive learning from routing-history.json
+       ├─ classifyUnitComplexity() → routes to execution/execution_simple model
+       │    ├─ task plan analysis (steps, files, signals)
+       │    ├─ unit type defaults
+       │    ├─ budget pressure adjustment
+       │    ├─ adaptive learning from routing-history.json
+       │    └─ capability scoring (when capability_routing: true)
+       │         └─ 7-dimension model profiles × task requirement vectors
+       └─ context_management
+            ├─ observation masking (before_provider_request hook)
+            ├─ tool result truncation (tool_result_max_chars)
+            └─ phase handoff anchors (injected into prompt builders)
 ```
 
 The profile is resolved once and flows through the entire dispatch pipeline. Explicit preferences override profile defaults at every layer.
+
+## Observation Masking
+
+*Introduced in v2.59.0*
+
+During auto-mode sessions, tool results accumulate in the conversation history and consume context window space. Observation masking replaces tool result content older than N user turns with a lightweight placeholder before each LLM call. This reduces token usage with zero LLM overhead — no summarization calls, no latency.
+
+Masking is enabled by default during auto-mode. Configure via preferences:
+
+```yaml
+context_management:
+  observation_masking: true     # default: true (set false to disable)
+  observation_mask_turns: 8     # keep results from last 8 user turns (range: 1-50)
+  tool_result_max_chars: 800    # truncate individual tool results beyond this length
+```
+
+### How It Works
+
+1. Before each provider request, the `before_provider_request` hook inspects the messages array
+2. Tool results (`toolResult`, `bashExecution`) older than the configured turn threshold are replaced with `[result masked — within summarized history]`
+3. Recent tool results (within the keep window) are preserved in full
+4. All assistant and user messages are always preserved — only tool result content is masked
+
+This pairs with the existing compaction system: masking reduces context pressure between compactions, and compaction handles the full context reset when the window fills.
+
+### Tool Result Truncation
+
+Individual tool results that exceed `tool_result_max_chars` (default: 800) are truncated with a `…[truncated]` marker. This prevents a single large tool output from dominating the context window.
+
+## Phase Handoff Anchors
+
+*Introduced in v2.59.0*
+
+When auto-mode transitions between phases (research → planning → execution), structured JSON anchors are written to `.gsd/milestones/<mid>/anchors/<phase>.json`. Downstream prompt builders inject these anchors so the next phase inherits intent, decisions, blockers, and next steps without re-inferring from artifact files.
+
+This reduces context drift — the 65% of enterprise agent failures caused by agents losing track of prior decisions across phase boundaries.
+
+Anchors are written automatically after successful completion of `research-milestone`, `research-slice`, `plan-milestone`, and `plan-slice` units. No configuration needed.
 
 ## Prompt Compression
 

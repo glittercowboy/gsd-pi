@@ -10,6 +10,7 @@ import type { ResolvedModelConfig } from "./preferences.js";
 
 export interface DynamicRoutingConfig {
   enabled?: boolean;
+  capability_routing?: boolean;    // default: false — enable capability profile scoring
   tier_models?: {
     light?: string;
     standard?: string;
@@ -32,6 +33,12 @@ export interface RoutingDecision {
   wasDowngraded: boolean;
   /** Human-readable reason for this decision */
   reason: string;
+  /** How the model was selected. */
+  selectionMethod?: "tier-only" | "capability-scored";
+  /** Capability scores per model (when capability-scored). */
+  capabilityScores?: Record<string, number>;
+  /** Task requirement vector (when capability-scored). */
+  taskRequirements?: Partial<Record<string, number>>;
 }
 
 // ─── Known Model Tiers ───────────────────────────────────────────────────────
@@ -114,6 +121,91 @@ const MODEL_COST_PER_1K_INPUT: Record<string, number> = {
   "deepseek-chat": 0.00014,
 };
 
+// ─── Capability Profiles (ADR-004 Phase 2) ──────────────────────────────────
+// 7-dimension profiles, 0–100 normalized. Models without a profile
+// score 50 uniformly — capability scoring is a no-op for them.
+
+export interface ModelCapabilities {
+  coding: number;
+  debugging: number;
+  research: number;
+  reasoning: number;
+  speed: number;
+  longContext: number;
+  instruction: number;
+}
+
+export const MODEL_CAPABILITY_PROFILES: Record<string, ModelCapabilities> = {
+  "claude-opus-4-6":     { coding: 95, debugging: 90, research: 85, reasoning: 95, speed: 30, longContext: 80, instruction: 90 },
+  "claude-sonnet-4-6":   { coding: 85, debugging: 80, research: 75, reasoning: 80, speed: 60, longContext: 75, instruction: 85 },
+  "claude-haiku-4-5":    { coding: 60, debugging: 50, research: 45, reasoning: 50, speed: 95, longContext: 50, instruction: 75 },
+  "gpt-4o":              { coding: 80, debugging: 75, research: 70, reasoning: 75, speed: 65, longContext: 70, instruction: 80 },
+  "gpt-4o-mini":         { coding: 55, debugging: 45, research: 40, reasoning: 45, speed: 90, longContext: 45, instruction: 70 },
+  "gemini-2.5-pro":      { coding: 75, debugging: 70, research: 85, reasoning: 75, speed: 55, longContext: 90, instruction: 75 },
+  "gemini-2.0-flash":    { coding: 50, debugging: 40, research: 50, reasoning: 40, speed: 95, longContext: 60, instruction: 65 },
+  "deepseek-chat":       { coding: 75, debugging: 65, research: 55, reasoning: 70, speed: 70, longContext: 55, instruction: 65 },
+  "o3":                  { coding: 80, debugging: 85, research: 80, reasoning: 92, speed: 25, longContext: 70, instruction: 85 },
+};
+
+const BASE_REQUIREMENTS: Record<string, Partial<Record<keyof ModelCapabilities, number>>> = {
+  "execute-task":       { coding: 0.9, instruction: 0.7, speed: 0.3 },
+  "research-milestone": { research: 0.9, longContext: 0.7, reasoning: 0.5 },
+  "research-slice":     { research: 0.9, longContext: 0.7, reasoning: 0.5 },
+  "plan-milestone":     { reasoning: 0.9, coding: 0.5 },
+  "plan-slice":         { reasoning: 0.9, coding: 0.5 },
+  "replan-slice":       { reasoning: 0.9, debugging: 0.6, coding: 0.5 },
+  "reassess-roadmap":   { reasoning: 0.9, research: 0.5 },
+  "complete-slice":     { instruction: 0.8, speed: 0.7 },
+  "run-uat":            { instruction: 0.7, speed: 0.8 },
+  "discuss-milestone":  { reasoning: 0.6, instruction: 0.7 },
+  "complete-milestone": { instruction: 0.8, reasoning: 0.5 },
+};
+
+/**
+ * Compute a task requirement vector from unit type and optional metadata.
+ */
+export function computeTaskRequirements(
+  unitType: string,
+  metadata?: { tags?: string[]; complexityKeywords?: string[]; fileCount?: number; estimatedLines?: number },
+): Partial<Record<keyof ModelCapabilities, number>> {
+  const base = { ...(BASE_REQUIREMENTS[unitType] ?? { reasoning: 0.5 }) };
+
+  if (unitType === "execute-task" && metadata) {
+    if (metadata.tags?.some(t => /^(docs?|readme|comment|config|typo|rename)$/i.test(t))) {
+      return { ...base, instruction: 0.9, coding: 0.3, speed: 0.7 };
+    }
+    if (metadata.complexityKeywords?.some(k => k === "concurrency" || k === "compatibility")) {
+      return { ...base, debugging: 0.9, reasoning: 0.8 };
+    }
+    if (metadata.complexityKeywords?.some(k => k === "migration" || k === "architecture")) {
+      return { ...base, reasoning: 0.9, coding: 0.8 };
+    }
+    if ((metadata.fileCount ?? 0) >= 6 || (metadata.estimatedLines ?? 0) >= 500) {
+      return { ...base, coding: 0.9, reasoning: 0.7 };
+    }
+  }
+
+  return base;
+}
+
+/**
+ * Score a model against a task requirement vector.
+ * Returns weighted average in range 0–100. Returns 50 for empty requirements.
+ */
+export function scoreModel(
+  capabilities: ModelCapabilities,
+  requirements: Partial<Record<keyof ModelCapabilities, number>>,
+): number {
+  let weightedSum = 0;
+  let weightSum = 0;
+  for (const [dim, weight] of Object.entries(requirements)) {
+    const capability = capabilities[dim as keyof ModelCapabilities] ?? 50;
+    weightedSum += weight * capability;
+    weightSum += weight;
+  }
+  return weightSum > 0 ? weightedSum / weightSum : 50;
+}
+
 // ─── Public API ──────────────────────────────────────────────────────────────
 
 /**
@@ -132,6 +224,8 @@ export function resolveModelForComplexity(
   phaseConfig: ResolvedModelConfig | undefined,
   routingConfig: DynamicRoutingConfig,
   availableModelIds: string[],
+  unitType?: string,
+  metadata?: { tags?: string[]; complexityKeywords?: string[]; fileCount?: number; estimatedLines?: number },
 ): RoutingDecision {
   // If no phase config or routing disabled, pass through
   if (!phaseConfig || !routingConfig.enabled) {
@@ -175,25 +269,40 @@ export function resolveModelForComplexity(
   }
 
   // Find the best model for the requested tier
-  const targetModelId = findModelForTier(
-    requestedTier,
-    routingConfig,
-    availableModelIds,
-    routingConfig.cross_provider !== false,
-  );
+  const useCapabilityScoring = routingConfig.capability_routing && unitType;
+
+  let targetModelId: string | null;
+  let capabilityScores: Record<string, number> | undefined;
+  let taskRequirements: Partial<Record<string, number>> | undefined;
+  let selectionMethod: "tier-only" | "capability-scored" = "tier-only";
+
+  if (useCapabilityScoring) {
+    const result = findModelForTierWithCapability(
+      requestedTier, routingConfig, availableModelIds,
+      routingConfig.cross_provider !== false, unitType, metadata,
+    );
+    targetModelId = result.modelId;
+    capabilityScores = Object.keys(result.scores).length > 0 ? result.scores : undefined;
+    taskRequirements = Object.keys(result.requirements).length > 0 ? result.requirements : undefined;
+    selectionMethod = capabilityScores ? "capability-scored" : "tier-only";
+  } else {
+    targetModelId = findModelForTier(
+      requestedTier, routingConfig, availableModelIds,
+      routingConfig.cross_provider !== false,
+    );
+  }
 
   if (!targetModelId) {
-    // No suitable model found — use configured primary
     return {
       modelId: configuredPrimary,
       fallbacks: phaseConfig.fallbacks,
       tier: requestedTier,
       wasDowngraded: false,
       reason: `no ${requestedTier}-tier model available`,
+      selectionMethod,
     };
   }
 
-  // Build fallback chain: [downgraded_model, ...configured_fallbacks, configured_primary]
   const fallbacks = [
     ...phaseConfig.fallbacks.filter(f => f !== targetModelId),
     configuredPrimary,
@@ -205,6 +314,9 @@ export function resolveModelForComplexity(
     tier: requestedTier,
     wasDowngraded: true,
     reason: classification.reason,
+    selectionMethod,
+    capabilityScores,
+    taskRequirements,
   };
 }
 
@@ -226,6 +338,7 @@ export function escalateTier(currentTier: ComplexityTier): ComplexityTier | null
 export function defaultRoutingConfig(): DynamicRoutingConfig {
   return {
     enabled: true,
+    capability_routing: false,
     escalate_on_failure: true,
     budget_pressure: true,
     cross_provider: true,
@@ -296,6 +409,56 @@ function findModelForTier(
     });
 
   return candidates[0] ?? null;
+}
+
+function findModelForTierWithCapability(
+  tier: ComplexityTier,
+  config: DynamicRoutingConfig,
+  availableModelIds: string[],
+  crossProvider: boolean,
+  unitType: string,
+  metadata?: { tags?: string[]; complexityKeywords?: string[]; fileCount?: number; estimatedLines?: number },
+): { modelId: string | null; scores: Record<string, number>; requirements: Partial<Record<string, number>> } {
+  const explicitModel = config.tier_models?.[tier];
+  if (explicitModel) {
+    const match = availableModelIds.find(id => {
+      const bareAvail = id.includes("/") ? id.split("/").pop()! : id;
+      const bareExplicit = explicitModel.includes("/") ? explicitModel.split("/").pop()! : explicitModel;
+      return bareAvail === bareExplicit || id === explicitModel;
+    });
+    if (match) return { modelId: match, scores: {}, requirements: {} };
+  }
+
+  const requirements = computeTaskRequirements(unitType, metadata);
+  const candidates = availableModelIds.filter(id => getModelTier(id) === tier);
+  if (candidates.length === 0) return { modelId: null, scores: {}, requirements };
+
+  const scores: Record<string, number> = {};
+  for (const id of candidates) {
+    const bareId = id.includes("/") ? id.split("/").pop()! : id;
+    const profile = getModelProfile(bareId);
+    scores[id] = scoreModel(profile, requirements);
+  }
+
+  candidates.sort((a, b) => {
+    const scoreDiff = scores[b] - scores[a];
+    if (Math.abs(scoreDiff) > 2) return scoreDiff;
+    if (crossProvider) {
+      const costDiff = getModelCost(a) - getModelCost(b);
+      if (costDiff !== 0) return costDiff;
+    }
+    return a.localeCompare(b);
+  });
+
+  return { modelId: candidates[0], scores, requirements };
+}
+
+function getModelProfile(bareId: string): ModelCapabilities {
+  if (MODEL_CAPABILITY_PROFILES[bareId]) return MODEL_CAPABILITY_PROFILES[bareId];
+  for (const [knownId, profile] of Object.entries(MODEL_CAPABILITY_PROFILES)) {
+    if (bareId.includes(knownId) || knownId.includes(bareId)) return profile;
+  }
+  return { coding: 50, debugging: 50, research: 50, reasoning: 50, speed: 50, longContext: 50, instruction: 50 };
 }
 
 function getModelCost(modelId: string): number {

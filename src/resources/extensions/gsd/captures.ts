@@ -15,7 +15,7 @@ import { gsdRoot } from "./paths.js";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-export type Classification = "quick-task" | "inject" | "defer" | "replan" | "note";
+export type Classification = "quick-task" | "inject" | "defer" | "replan" | "note" | "stop" | "backtrack";
 
 export interface CaptureEntry {
   id: string;
@@ -42,7 +42,7 @@ export interface TriageResult {
 
 const CAPTURES_FILENAME = "CAPTURES.md";
 const VALID_CLASSIFICATIONS: readonly string[] = [
-  "quick-task", "inject", "defer", "replan", "note",
+  "quick-task", "inject", "defer", "replan", "note", "stop", "backtrack",
 ];
 
 // ─── Path Resolution ──────────────────────────────────────────────────────────
