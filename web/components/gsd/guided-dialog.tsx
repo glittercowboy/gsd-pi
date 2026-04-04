@@ -1,5 +1,6 @@
 "use client"
 
+import { useTranslations } from "next-intl"
 import {
   Dialog,
   DialogContent,
@@ -22,16 +23,16 @@ export interface GuidedDialogProps {
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
-function getDialogTitle(detectionKind?: string): string {
+function getDialogTitleKey(detectionKind?: string): string {
   switch (detectionKind) {
     case "v1-legacy":
-      return "Migrating to GSD v2"
+      return "titles.migrating"
     case "brownfield":
-      return "Mapping Your Project"
+      return "titles.mapping"
     case "blank":
-      return "Setting Up Your Project"
+      return "titles.settingUp"
     default:
-      return "Getting Started"
+      return "titles.gettingStarted"
   }
 }
 
@@ -49,6 +50,8 @@ export function GuidedDialog({
   onOpenChange,
   detectionKind,
 }: GuidedDialogProps) {
+  const t = useTranslations("guidedDialog")
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
@@ -57,10 +60,10 @@ export function GuidedDialog({
       >
         <DialogHeader className="px-6 py-4 border-b border-border shrink-0">
           <DialogTitle className="text-base font-semibold">
-            {getDialogTitle(detectionKind)}
+            {t(getDialogTitleKey(detectionKind))}
           </DialogTitle>
           <DialogDescription className="sr-only">
-            Interactive guided setup — responses stream below as they are generated.
+            {t("subtitle")}
           </DialogDescription>
         </DialogHeader>
 

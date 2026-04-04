@@ -1,5 +1,6 @@
 "use client"
 
+import { useTranslations } from "next-intl"
 import { CheckCircle2, Circle, Play, AlertTriangle, ChevronRight } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { getLiveWorkspaceIndex, useGSDWorkspaceState, type RiskLevel } from "@/lib/gsd-workspace-store"
@@ -39,6 +40,7 @@ const RiskBadge = ({ risk }: { risk: RiskLevel }) => {
 }
 
 export function Roadmap() {
+  const t = useTranslations("roadmap")
   const workspace = useGSDWorkspaceState()
   const liveWorkspace = getLiveWorkspaceIndex(workspace)
   const milestones = liveWorkspace?.milestones ?? []
@@ -48,23 +50,25 @@ export function Roadmap() {
   return (
     <div className="flex h-full flex-col overflow-hidden">
       <div className="border-b border-border px-6 py-3">
-        <h1 className="text-lg font-semibold">Roadmap</h1>
+        <h1 className="text-lg font-semibold">{t("title")}</h1>
         <p className="text-sm text-muted-foreground">
-          Project milestone structure with slices and dependencies
+          {t("subtitle")}
         </p>
         <p className="mt-1 text-xs text-muted-foreground" data-testid="roadmap-workspace-freshness">
-          Workspace freshness: {workspaceFreshness}
+          {t("workspaceFreshness", { workspaceFreshness })}
         </p>
       </div>
 
       <div className="flex-1 overflow-y-auto p-6">
         {workspace.bootStatus === "loading" && (
-          <div className="py-8 text-center text-sm text-muted-foreground">Loading workspace…</div>
+          <div className="py-8 text-center text-sm text-muted-foreground">{t("loading")}</div>
         )}
 
         {workspace.bootStatus === "ready" && milestones.length === 0 && (
           <div className="py-8 text-center text-sm text-muted-foreground">
-            No milestones found. Create a milestone with <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-xs">/gsd</code> to get started.
+            {t.rich("noMilestones", {
+              command: (chunks) => <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-xs">{chunks}</code>,
+            })}
           </div>
         )}
 
@@ -93,10 +97,10 @@ export function Roadmap() {
                   </div>
                   <div className="text-right">
                     <div className="text-sm font-medium">
-                      {doneSlices}/{milestone.slices.length} slices
+                      {doneSlices}/{milestone.slices.length} {t("labels.slices")}
                     </div>
                     <div className="text-xs text-muted-foreground">
-                      {doneTasks}/{totalTasks} tasks
+                      {doneTasks}/{totalTasks} {t("labels.tasks")}
                     </div>
                   </div>
                 </div>

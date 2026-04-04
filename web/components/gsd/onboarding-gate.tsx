@@ -1,6 +1,7 @@
 "use client"
 
 import { useCallback, useEffect, useMemo, useState } from "react"
+import { useTranslations } from "next-intl"
 import { AnimatePresence, motion } from "motion/react"
 import Image from "next/image"
 import {
@@ -26,15 +27,15 @@ import { StepProject } from "./onboarding/step-project"
 // ─── Constants ──────────────────────────────────────────────────────
 
 const WIZARD_STEPS = [
-  { id: "welcome", label: "Welcome" },
-  { id: "mode", label: "Mode" },
-  { id: "provider", label: "Provider" },
-  { id: "authenticate", label: "Auth" },
-  { id: "devRoot", label: "Root" },
-  { id: "optional", label: "Extras" },
-  { id: "remote", label: "Remote" },
-  { id: "ready", label: "Ready" },
-  { id: "project", label: "Project" },
+  { id: "welcome", labelKey: "welcome" },
+  { id: "mode", labelKey: "mode" },
+  { id: "provider", labelKey: "provider" },
+  { id: "authenticate", labelKey: "auth" },
+  { id: "devRoot", labelKey: "root" },
+  { id: "optional", labelKey: "integrations" },
+  { id: "remote", labelKey: "remote" },
+  { id: "ready", labelKey: "ready" },
+  { id: "project", labelKey: "project" },
 ] as const
 
 const TOTAL_STEPS = WIZARD_STEPS.length
@@ -104,6 +105,7 @@ export function OnboardingGate() {
   const [dismissedAfterSuccess, setDismissedAfterSuccess] = useState(false)
   const [userMode, setUserMode] = useUserMode()
   const [selectedMode, setSelectedMode] = useState<UserMode | null>(userMode)
+  const onboardingT = useTranslations("onboarding.stepLabels")
 
   const providers = onboarding?.required.providers ?? EMPTY_PROVIDERS
   const effectiveSelectedProviderId = useMemo(() => {
@@ -159,7 +161,7 @@ export function OnboardingGate() {
       (onboarding.bridgeAuthRefresh.phase === "succeeded" || onboarding.bridgeAuthRefresh.phase === "idle"))
   if (!forceVisible && (onboardingSettled || shouldHideAfterSuccess)) return null
 
-  const stepLabel = WIZARD_STEPS[stepIndex]?.label ?? ""
+  const stepLabel = onboardingT(WIZARD_STEPS[stepIndex]?.labelKey ?? "")
 
   return (
     <div className="pointer-events-auto absolute inset-0 z-30 flex flex-col bg-background" data-testid="onboarding-gate">

@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react"
 import { useTheme } from "next-themes"
+import { useTranslations } from "next-intl"
 import { Loader2, ImagePlus } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { validateImageFile } from "@/lib/image-utils"
@@ -84,6 +85,7 @@ async function settleTerminalLayout(
 
 export function MainSessionTerminal({ className, fontSize, projectCwd }: MainSessionTerminalProps) {
   const { resolvedTheme } = useTheme()
+  const t = useTranslations("terminal")
   const isDark = resolvedTheme !== "light"
   const wrapperRef = useRef<HTMLDivElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
@@ -377,7 +379,7 @@ export function MainSessionTerminal({ className, fontSize, projectCwd }: MainSes
         <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 bg-terminal">
           <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
           <span className="text-xs text-muted-foreground">
-            {connectionState === "error" ? "Reconnecting main session terminal…" : "Connecting to main session…"}
+            {connectionState === "error" ? t("reconnectingMain") : t("connectingMain")}
           </span>
         </div>
       )}
@@ -385,7 +387,7 @@ export function MainSessionTerminal({ className, fontSize, projectCwd }: MainSes
       {isDragOver && (
         <div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-2 bg-background backdrop-blur-sm border-2 border-dashed border-primary rounded-md pointer-events-none">
           <ImagePlus className="h-8 w-8 text-primary" />
-          <span className="text-sm font-medium text-primary">Drop image here</span>
+          <span className="text-sm font-medium text-primary">{t("dropImage")}</span>
         </div>
       )}
       <div ref={containerRef} className="h-full w-full" style={{ padding: "8px 4px 4px 8px" }} />

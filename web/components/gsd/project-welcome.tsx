@@ -12,34 +12,30 @@ import {
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import type { ProjectDetection } from "@/lib/gsd-workspace-store"
+import { useTranslations } from "next-intl"
 
 // ─── Variant Config ─────────────────────────────────────────────────────────
 
-interface WelcomeVariant {
+type VariantNs = "existing" | "legacy" | "empty" | "fallback"
+
+type WelcomeVariantConfig = {
   icon: React.ReactNode
-  headline: string
-  body: string
-  detail?: string
-  primaryLabel: string
+  ns: VariantNs
   primaryCommand: string
   secondary?: {
-    label: string
     action: "files-view" | "command"
     command?: string
   }
 }
 
-function getVariant(detection: ProjectDetection): WelcomeVariant {
+function getVariantConfig(detection: ProjectDetection): WelcomeVariantConfig {
   switch (detection.kind) {
     case "brownfield":
       return {
         icon: <FolderOpen className="h-8 w-8 text-foreground" strokeWidth={1.5} />,
-        headline: "Existing project detected",
-        body: "GSD will map your codebase and ask a few questions about what you want to build. From there it generates structured milestones and deliverable slices.",
-        primaryLabel: "Map & Initialize",
+        ns: "existing",
         primaryCommand: "/gsd",
         secondary: {
-          label: "Browse files first",
           action: "files-view",
         },
       }
@@ -47,13 +43,9 @@ function getVariant(detection: ProjectDetection): WelcomeVariant {
     case "v1-legacy":
       return {
         icon: <ArrowUpCircle className="h-8 w-8 text-foreground" strokeWidth={1.5} />,
-        headline: "GSD v1 project found",
-        body: "This project has a .planning/ folder from an earlier GSD version. Migration converts your existing planning data into the new .gsd/ format.",
-        detail: "Your original files will be preserved — migration creates the new structure alongside them.",
-        primaryLabel: "Migrate to v2",
+        ns: "legacy",
         primaryCommand: "/gsd migrate",
         secondary: {
-          label: "Start fresh instead",
           action: "command",
           command: "/gsd",
         },
@@ -62,9 +54,7 @@ function getVariant(detection: ProjectDetection): WelcomeVariant {
     case "blank":
       return {
         icon: <Sparkles className="h-8 w-8 text-foreground" strokeWidth={1.5} />,
-        headline: "Start a new project",
-        body: "This folder is empty. GSD will ask what you want to build, then generate a structured plan — milestones broken into deliverable slices with risk-ordered execution.",
-        primaryLabel: "Start Project Setup",
+        ns: "empty",
         primaryCommand: "/gsd",
       }
 
@@ -72,9 +62,7 @@ function getVariant(detection: ProjectDetection): WelcomeVariant {
     default:
       return {
         icon: <Folder className="h-8 w-8 text-foreground" strokeWidth={1.5} />,
-        headline: "Set up your project",
-        body: "Run the GSD wizard to get started.",
-        primaryLabel: "Get Started",
+        ns: "fallback",
         primaryCommand: "/gsd",
       }
   }
@@ -91,19 +79,20 @@ function SignalChip({ icon, label }: { icon: React.ReactNode; label: string }) {
   )
 }
 
-function SignalChips({ signals }: { signals: ProjectDetection["signals"] }) {
+function SignalChips({ signals, fileCountLabel }: { signals: ProjectDetection["signals"]; fileCountLabel: string }) {
+  const t = useTranslations("projectWelcome.chip")
   const chips: { icon: React.ReactNode; label: string }[] = []
 
   if (signals.hasGitRepo) {
-    chips.push({ icon: <GitBranch className="h-3 w-3" />, label: "Git repository" })
+    chips.push({ icon: <GitBranch className="h-3 w-3" />, label: t("gitRepo") })
   }
   if (signals.hasPackageJson) {
-    chips.push({ icon: <Package className="h-3 w-3" />, label: "Node.js project" })
+    chips.push({ icon: <Package className="h-3 w-3" />, label: t("nodejs") })
   }
   if (signals.fileCount > 0) {
     chips.push({
       icon: <FileCode className="h-3 w-3" />,
-      label: `${signals.fileCount} file${signals.fileCount === 1 ? "" : "s"}`,
+      label: fileCountLabel,
     })
   }
 
@@ -133,62 +122,66 @@ export function ProjectWelcome({
   onSwitchView,
   disabled = false,
 }: ProjectWelcomeProps) {
-  const variant = getVariant(detection)
+  const t = useTranslations("projectWelcome")
+  const config = getVariantConfig(detection)
   const showSignals = detection.kind === "brownfield" || detection.kind === "v1-legacy"
+  const fileCountLabel = t("labels.fileCount", { count: detection.signals.fileCount })
+  const whatsNextKind: "blank" | "brownfield" | null =
+    detection.kind === "blank" || detection.kind === "brownfield" ? detection.kind : null
 
   return (
     <div className="flex h-full items-center justify-center p-8">
       <div className="w-full max-w-lg">
         {/* Icon */}
         <div className="mb-6 flex h-16 w-16 items-center justify-center rounded-xl border border-border bg-card">
-          {variant.icon}
+          {config.icon}
         </div>
 
         {/* Headline */}
         <h2 className="text-2xl font-bold tracking-tight text-foreground">
-          {variant.headline}
+          {t(`${config.ns}.heading`)}
         </h2>
 
         {/* Body */}
         <p className="mt-3 text-sm leading-relaxed text-muted-foreground">
-          {variant.body}
+          {t(`${config.ns}.description`)}
         </p>
 
-        {/* Detail note */}
-        {variant.detail && (
+        {/* Detail note — legacy variant only */}
+        {config.ns === "legacy" && (
           <p className="mt-2 text-xs leading-relaxed text-muted-foreground">
-            {variant.detail}
+            {t(`${config.ns}.detail`)}
           </p>
         )}
 
         {/* Detected signals */}
         {showSignals && (
           <div className="mt-5">
-            <SignalChips signals={detection.signals} />
+            <SignalChips signals={detection.signals} fileCountLabel={fileCountLabel} />
           </div>
         )}
 
         {/* Actions */}
         <div className="mt-8 flex items-center gap-3">
           <button
-            onClick={() => onCommand(variant.primaryCommand)}
+            onClick={() => onCommand(config.primaryCommand)}
             disabled={disabled}
             className={cn(
               "inline-flex items-center gap-2 rounded-md bg-foreground px-5 py-2.5 text-sm font-medium text-background transition-colors hover:bg-foreground/90",
               disabled && "cursor-not-allowed opacity-50",
             )}
           >
-            {variant.primaryLabel}
+            {t(`${config.ns}.primary`)}
             <ArrowRight className="h-3.5 w-3.5" />
           </button>
 
-          {variant.secondary && (
+          {config.secondary && (
             <button
               onClick={() => {
-                if (variant.secondary!.action === "files-view") {
+                if (config.secondary!.action === "files-view") {
                   onSwitchView("files")
-                } else if (variant.secondary!.command) {
-                  onCommand(variant.secondary!.command)
+                } else if (config.secondary!.command) {
+                  onCommand(config.secondary!.command)
                 }
               }}
               disabled={disabled}
@@ -197,51 +190,24 @@ export function ProjectWelcome({
                 disabled && "cursor-not-allowed opacity-50",
               )}
             >
-              {variant.secondary.label}
+              {t(`${config.ns}.secondary`)}
             </button>
           )}
         </div>
 
-        {/* What happens next — for blank projects */}
-        {detection.kind === "blank" && (
+        {/* What happens next — for blank and brownfield projects */}
+        {whatsNextKind && (
           <div className="mt-8 rounded-lg border border-border/50 bg-card/50 p-4">
             <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
-              What happens next
+              {t("whatsNext.heading")}
             </p>
             <ul className="mt-2.5 space-y-2">
-              {[
-                "A few questions about what you're building",
-                "Codebase analysis and context gathering",
-                "Structured milestone and slice generation",
-              ].map((step, i) => (
-                <li key={i} className="flex items-start gap-2.5 text-xs text-muted-foreground">
+              {(["1", "2", "3"] as const).map((key) => (
+                <li key={key} className="flex items-start gap-2.5 text-xs text-muted-foreground">
                   <span className="mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full border border-border text-[10px] font-medium text-muted-foreground">
-                    {i + 1}
+                    {Number(key)}
                   </span>
-                  {step}
-                </li>
-              ))}
-            </ul>
-          </div>
-        )}
-
-        {/* What happens next — for brownfield */}
-        {detection.kind === "brownfield" && (
-          <div className="mt-8 rounded-lg border border-border/50 bg-card/50 p-4">
-            <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
-              What happens next
-            </p>
-            <ul className="mt-2.5 space-y-2">
-              {[
-                "GSD scans your codebase and asks about your goals",
-                "You discuss scope, constraints, and priorities",
-                "A milestone with risk-ordered slices is generated",
-              ].map((step, i) => (
-                <li key={i} className="flex items-start gap-2.5 text-xs text-muted-foreground">
-                  <span className="mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full border border-border text-[10px] font-medium text-muted-foreground">
-                    {i + 1}
-                  </span>
-                  {step}
+                  {t(`whatsNext.${whatsNextKind}.${key}`)}
                 </li>
               ))}
             </ul>

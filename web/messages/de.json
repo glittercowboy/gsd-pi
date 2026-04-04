@@ -216,10 +216,14 @@
   },
   "roadmap": {
     "title": "Roadmap",
-    "subtitle": "Project milestone structure with slices and dependencies",
-    "workspaceFreshness": "Workspace freshness: {workspaceFreshness}",
-    "loading": "Loading workspace…",
-    "noMilestones": "No milestones found. Create a milestone with {command} to get started."
+    "subtitle": "Projektmeilenstein-Struktur mit Slices und Abhängigkeiten",
+    "workspaceFreshness": "Workspace-Aktualität: {workspaceFreshness}",
+    "loading": "Workspace wird geladen…",
+    "noMilestones": "Keine Meilensteine gefunden. Erstelle einen Meilenstein mit {command} um zu beginnen.",
+    "labels": {
+      "slices": "Slices",
+      "tasks": "Tasks"
+    }
   },
   "settings": {
     "section": {
@@ -552,6 +556,8 @@
     "dropImage": "Bild hier ablegen",
     "loading": "Lade Terminal…",
     "waitingForSession": "Warte auf Live-Sitzung…",
+    "connectingMain": "Verbindung zur Hauptsitzung…",
+    "reconnectingMain": "Hauptsitzung wird erneut verbunden…",
     "aboveEditor": "Über dem Editor",
     "belowEditor": "Unter dem Editor",
     "moreLines": "+{count} weitere Zeile(n)",
@@ -650,7 +656,13 @@
     }
   },
   "guidedDialog": {
-    "subtitle": "Interactive guided setup — responses stream below as they are generated."
+    "subtitle": "Interaktives Setup — Antworten werden unten live eingeblendet.",
+    "titles": {
+      "migrating": "Migration zu GSD v2",
+      "mapping": "Dein Projekt wird analysiert",
+      "settingUp": "Projekt wird eingerichtet",
+      "gettingStarted": "Erste Schritte"
+    }
   },
   "scopeBadge": {
     "pending": "Scope pending…"

@@ -219,7 +219,11 @@
     "subtitle": "Project milestone structure with slices and dependencies",
     "workspaceFreshness": "Workspace freshness: {workspaceFreshness}",
     "loading": "Loading workspace…",
-    "noMilestones": "No milestones found. Create a milestone with {command} to get started."
+    "noMilestones": "No milestones found. Create a milestone with {command} to get started.",
+    "labels": {
+      "slices": "slices",
+      "tasks": "tasks"
+    }
   },
   "settings": {
     "section": {
@@ -677,6 +681,8 @@
     "streaming": "{commandName}…",
     "loading": "Loading terminal…",
     "waitingForSession": "Waiting for live session…",
+    "connectingMain": "Connecting to main session…",
+    "reconnectingMain": "Reconnecting main session terminal…",
     "aboveEditor": "Above editor",
     "belowEditor": "Below editor",
     "moreLines": "+{count} more line(s)",
@@ -734,6 +740,14 @@
     "delete": "Delete",
     "highlighting": "Highlighting…"
   },
+  "fileViewer": {
+    "rendering": "Rendering…",
+    "changed": "Changed",
+    "dismiss": "Dismiss",
+    "save": "Save",
+    "view": "View",
+    "edit": "Edit"
+  },
   "projectWelcome": {
     "existing": {
       "heading": "Existing project detected",
@@ -767,9 +781,23 @@
       "discussion": "You discuss scope, constraints, and priorities"
     },
     "whatsNext": {
+      "heading": "What happens next",
       "browse": "Browse files",
       "description": "Browse the codebase to understand its structure, then decide what you want to build.",
-      "empty": "You'll start from a clean slate and let GSD guide you through setting up a new project."
+      "empty": "You'll start from a clean slate and let GSD guide you through setting up a new project.",
+      "blank": {
+        "1": "A few questions about what you're building",
+        "2": "Codebase analysis and context gathering",
+        "3": "Structured milestone and slice generation"
+      },
+      "brownfield": {
+        "1": "GSD scans your codebase and asks about your goals",
+        "2": "You discuss scope, constraints, and priorities",
+        "3": "A milestone with risk-ordered slices is generated"
+      }
+    },
+    "labels": {
+      "fileCount": "{count, plural, =1 {# file} other {# files}}"
     }
   },
   "activity": {
@@ -801,7 +829,13 @@
     }
   },
   "guidedDialog": {
-    "subtitle": "Interactive guided setup — responses stream below as they are generated."
+    "subtitle": "Interactive guided setup — responses stream below as they are generated.",
+    "titles": {
+      "migrating": "Migrating to GSD v2",
+      "mapping": "Mapping Your Project",
+      "settingUp": "Setting Up Your Project",
+      "gettingStarted": "Getting Started"
+    }
   },
   "scopeBadge": {
     "pending": "Scope pending…"
