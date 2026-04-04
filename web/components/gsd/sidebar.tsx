@@ -28,6 +28,7 @@ import {
   Moon,
   PanelRightClose,
   PanelRightOpen,
+  Globe,
 } from "lucide-react"
 import {
   Dialog,
@@ -41,6 +42,7 @@ import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 import { useTheme } from "next-themes"
 import { useTranslations } from "next-intl"
+import { useLocaleManager } from "@/components/i18n/locale-provider"
 import {
   getCurrentScopeLabel,
   getLiveWorkspaceIndex,
@@ -82,6 +84,7 @@ export function NavRail({ activeView, onViewChange, isConnecting = false }: NavR
   const activeProjectCwd = useSyncExternalStore(manager.subscribe, manager.getSnapshot, manager.getSnapshot)
   const [exitDialogOpen, setExitDialogOpen] = useState(false)
   const { theme, setTheme } = useTheme()
+  const { locale, setLocale } = useLocaleManager()
 
   const cycleTheme = () => {
     if (theme === "system") setTheme("light")
@@ -90,8 +93,11 @@ export function NavRail({ activeView, onViewChange, isConnecting = false }: NavR
   }
 
   const themeIcon = theme === "light" ? Sun : theme === "dark" ? Moon : Monitor
-  const themeLabel = theme === "light" ? t("theme.light") : theme === "dark" ? t("theme.dark") : t("theme.system")
   const ThemeIcon = themeIcon
+
+  const languageLabel = locale === "en" ? "EN" : "DE"
+  const languageTooltip = t("tooltip.language", { language: languageLabel })
+  const themeLabel = theme === "light" ? t("theme.light") : theme === "dark" ? t("theme.dark") : t("theme.system")
 
   const navItems = [
     { id: "dashboard", label: t("nav.dashboard"), icon: LayoutDashboard },
@@ -164,6 +170,20 @@ export function NavRail({ activeView, onViewChange, isConnecting = false }: NavR
           data-testid="sidebar-settings-button"
         >
           <Settings className="h-5 w-5" />
+        </button>
+        <button
+          className={cn(
+            "flex h-10 w-10 items-center justify-center rounded-md text-muted-foreground transition-colors",
+            isConnecting
+              ? "cursor-not-allowed opacity-30"
+              : "hover:bg-accent/50 hover:text-foreground",
+          )}
+          title={languageTooltip}
+          disabled={isConnecting}
+          onClick={() => !isConnecting && setLocale(locale === "en" ? "de" : "en")}
+          data-testid="sidebar-language-toggle"
+        >
+          <Globe className="h-5 w-5" />
         </button>
         <button
           className={cn(
@@ -729,6 +749,7 @@ function MobileNavPanel({ activeView, onViewChange, isConnecting = false }: NavR
   const t = useTranslations("sidebar")
   const { openCommandSurface } = useGSDWorkspaceActions()
   const { theme, setTheme } = useTheme()
+  const { locale, setLocale } = useLocaleManager()
 
   const cycleTheme = () => {
     if (theme === "system") setTheme("light")
@@ -738,6 +759,7 @@ function MobileNavPanel({ activeView, onViewChange, isConnecting = false }: NavR
 
   const themeLabel = theme === "light" ? t("theme.light") : theme === "dark" ? t("theme.dark") : t("theme.system")
   const ThemeIcon = theme === "light" ? Sun : theme === "dark" ? Moon : Monitor
+  const languageLabel = locale === "en" ? "English" : "Deutsch"
 
   const navItems = [
     { id: "dashboard", label: t("nav.dashboard"), icon: LayoutDashboard },
@@ -803,6 +825,15 @@ function MobileNavPanel({ activeView, onViewChange, isConnecting = false }: NavR
         >
           <ThemeIcon className="h-5 w-5 shrink-0" />
           {themeLabel}
+        </button>
+        <button
+          onClick={() => !isConnecting && setLocale(locale === "en" ? "de" : "en")}
+          disabled={isConnecting}
+          className="flex w-full items-center gap-3 rounded-md px-3 py-3 text-sm text-muted-foreground hover:bg-accent/50 hover:text-foreground transition-colors min-h-[44px]"
+          data-testid="mobile-language-toggle"
+        >
+          <Globe className="h-5 w-5 shrink-0" />
+          {languageLabel}
         </button>
       </div>
     </div>

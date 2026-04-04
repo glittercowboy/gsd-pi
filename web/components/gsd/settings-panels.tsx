@@ -17,6 +17,7 @@ import {
   Settings,
   SlidersHorizontal,
   Type,
+  Globe,
 } from "lucide-react"
 
 import { Badge } from "@/components/ui/badge"
@@ -37,6 +38,14 @@ import { useTerminalFontSize } from "@/lib/use-terminal-font-size"
 import { useEditorFontSize } from "@/lib/use-editor-font-size"
 import { authFetch } from "@/lib/auth"
 import { useTranslations } from "next-intl"
+import { useLocaleManager, type SupportedLocale } from "@/components/i18n/locale-provider"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
 
 // ═══════════════════════════════════════════════════════════════════════
 // SHARED INFRASTRUCTURE
@@ -1020,6 +1029,8 @@ function FontSizeControl({
 export function GeneralPanel() {
   const [terminalFontSize, setTerminalFontSize] = useTerminalFontSize()
   const [editorFontSize, setEditorFontSize] = useEditorFontSize()
+  const { locale, setLocale } = useLocaleManager()
+  const t = useTranslations("settings")
 
   return (
     <div className="space-y-5" data-testid="settings-general">
@@ -1030,6 +1041,37 @@ export function GeneralPanel() {
         onRefresh={() => {}}
         refreshing={false}
       />
+
+      {/* Language */}
+      <div className="rounded-lg border border-border/50 bg-card/50 px-3 py-3 space-y-3">
+        <div>
+          <div className="text-xs font-medium text-foreground">{t("language.title")}</div>
+          <div className="text-[11px] text-muted-foreground mt-0.5">{t("language.description")}</div>
+        </div>
+
+        <Select value={locale} onValueChange={(val) => setLocale(val as SupportedLocale)}>
+          <SelectTrigger data-testid="settings-language-select" className="w-fit">
+            <SelectValue>
+              <div className="flex items-center gap-2">
+                <Globe className="h-4 w-4" />
+                {locale === "en" ? t("language.english") : t("language.german")}
+              </div>
+            </SelectValue>
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="en">
+              <div className="flex items-center gap-2">
+                {t("language.english")}
+              </div>
+            </SelectItem>
+            <SelectItem value="de">
+              <div className="flex items-center gap-2">
+                {t("language.german")}
+              </div>
+            </SelectItem>
+          </SelectContent>
+        </Select>
+      </div>
 
       <FontSizeControl
         label="Terminal font size"
