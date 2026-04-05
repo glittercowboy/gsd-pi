@@ -254,7 +254,7 @@ export async function handlePlanMilestone(
         definitionOfDone: params.definitionOfDone,
         requirementCoverage: params.requirementCoverage,
         boundaryMapMarkdown: params.boundaryMapMarkdown,
-      }, params.title);
+      });
 
       for (const slice of params.slices) {
         // Preserve completed/done status on re-plan (#2558).
