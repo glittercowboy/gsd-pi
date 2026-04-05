@@ -23,7 +23,7 @@ import { Type } from "@sinclair/typebox";
 import { Client } from "@modelcontextprotocol/sdk/client";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
-import { readFileSync, existsSync } from "node:fs";
+import { readFileSync, existsSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { buildHttpTransportOpts } from "./auth.js";
 import type { McpHttpAuthConfig } from "./auth.js";
@@ -60,65 +60,92 @@ interface ManagedConnection {
 const connections = new Map<string, ManagedConnection>();
 let configCache: McpServerConfig[] | null = null;
 const toolCache = new Map<string, McpToolSchema[]>();
+const configMtimes = new Map<string, number>();
 
-function readConfigs(): McpServerConfig[] {
-	if (configCache) return configCache;
+export function readConfigs(refresh = false, baseDir = process.cwd()): McpServerConfig[] {
+  if (!refresh && configCache !== null) {
+      // Auto-detect changes via mtime so .gsd/mcp.json updates don't require manual refresh.
+      // Uses single statSync() call to avoid TOCTOU race between existsSync() + statSync().
+      const configPaths = [
+          join(baseDir, ".mcp.json"),
+          join(baseDir, ".gsd", "mcp.json"),
+      ];
+      let needsRefresh = false;
+      for (const p of configPaths) {
+          try {
+              const stats = statSync(p);
+              const current = stats.mtimeMs;
+              const cached = configMtimes.get(p) || 0;
+              if (current > cached) {
+                  needsRefresh = true;
+                  break;
+              }
+          } catch {
+              // File doesn't exist or can't be read — treat as no change for cache check
+          }
+      }
+      if (!needsRefresh) return configCache!;
+  }
 
-	const servers: McpServerConfig[] = [];
-	const seen = new Set<string>();
-	const configPaths = [
-		join(process.cwd(), ".mcp.json"),
-		join(process.cwd(), ".gsd", "mcp.json"),
-	];
+    const servers: McpServerConfig[] = [];
+    const seen = new Set<string>();
+    const configPaths = [
+        join(baseDir, ".mcp.json"),
+        join(baseDir, ".gsd", "mcp.json"),
+    ];
 
-	for (const configPath of configPaths) {
-		try {
-			if (!existsSync(configPath)) continue;
-			const raw = readFileSync(configPath, "utf-8");
-			const data = JSON.parse(raw) as Record<string, unknown>;
-			const mcpServers = (data.mcpServers ?? data.servers) as
-				| Record<string, Record<string, unknown>>
-				| undefined;
-			if (!mcpServers || typeof mcpServers !== "object") continue;
+    configMtimes.clear();
 
-			for (const [name, config] of Object.entries(mcpServers)) {
-				if (seen.has(name)) continue;
-				seen.add(name);
+    for (const configPath of configPaths) {
+        try {
+            const stats = statSync(configPath);
+            configMtimes.set(configPath, stats.mtimeMs);
 
-				const hasCommand = typeof config.command === "string";
-				const hasUrl = typeof config.url === "string";
-				const transport: McpServerConfig["transport"] = hasCommand
-					? "stdio"
-					: hasUrl
-						? "http"
-						: "unknown";
+            const raw = readFileSync(configPath, "utf-8");
+            const data = JSON.parse(raw) as Record<string, unknown>;
+            const mcpServers = (data.mcpServers ?? data.servers) as
+                | Record<string, Record<string, unknown>>
+                | undefined;
+            if (!mcpServers || typeof mcpServers !== "object") continue;
 
-				const hasHeaders = hasUrl && config.headers && typeof config.headers === "object";
-				const hasOAuth = hasUrl && config.oauth && typeof config.oauth === "object";
+            for (const [name, config] of Object.entries(mcpServers)) {
+                if (seen.has(name)) continue;
+                seen.add(name);
 
-				servers.push({
-					name,
-					transport,
-					...(hasCommand && {
-						command: config.command as string,
-						args: Array.isArray(config.args) ? (config.args as string[]) : undefined,
-						env: config.env && typeof config.env === "object"
-							? (config.env as Record<string, string>)
-							: undefined,
-						cwd: typeof config.cwd === "string" ? config.cwd : undefined,
-					}),
-					...(hasUrl && { url: config.url as string }),
-					headers: hasHeaders ? config.headers as Record<string, string> : undefined,
-					oauth: hasOAuth ? config.oauth as McpHttpAuthConfig["oauth"] : undefined,
-				});
-			}
-		} catch {
-			// Non-fatal — config file may not exist or be malformed
-		}
-	}
+                const hasCommand = typeof config.command === "string";
+                const hasUrl = typeof config.url === "string";
+                const transport: McpServerConfig["transport"] = hasCommand
+                    ? "stdio"
+                    : hasUrl
+                        ? "http"
+                        : "unknown";
 
-	configCache = servers;
-	return servers;
+                servers.push({
+                    name,
+                    transport,
+                    ...(hasCommand && {
+                        command: config.command as string,
+                        args: Array.isArray(config.args) ? (config.args as string[]) : undefined,
+                        env: config.env && typeof config.env === "object"
+                            ? (config.env as Record<string, string>)
+                            : undefined,
+                        cwd: typeof config.cwd === "string" ? config.cwd : undefined,
+                    }),
+                    ...(hasUrl && { url: config.url as string }),
+                });
+            }
+        } catch (e) {
+            const err = e as NodeJS.ErrnoException;
+            if (err.code !== 'ENOENT') {
+                // Only warn for errors other than "file not found"
+                console.warn(`[MCP] Failed to read ${configPath}:`, e);
+            }
+            configMtimes.set(configPath, 0);
+        }
+    }
+
+    configCache = servers;
+    return servers;
 }
 
 function getServerConfig(name: string): McpServerConfig | undefined {
