@@ -408,7 +408,7 @@ export function removeWorktree(
     );
     // Still tell git to unregister the worktree entry via its reported path,
     // but do NOT use force and do NOT fall back to rmSync on this path.
-    try { nativeWorktreeRemove(basePath, gitReportedPath, false); } catch { /* best-effort */ }
+    try { nativeWorktreeRemove(basePath, gitReportedPath, false); } catch (e) { logWarning("worktree", `non-force worktree remove failed for ${gitReportedPath}: ${e instanceof Error ? e.message : String(e)}`); }
   }
 
   const resolvedWtPath = existsSync(wtPath) ? realpathSync(wtPath) : wtPath;
@@ -531,7 +531,7 @@ export function removeWorktree(
       `[GSD] WARNING: Resolved worktree path is outside .gsd/worktrees/: ${resolvedWtPath}\n` +
         `  Skipping forced removal to prevent data loss.`,
     );
-    try { nativeWorktreeRemove(basePath, resolvedWtPath, false); } catch { /* may fail */ }
+    try { nativeWorktreeRemove(basePath, resolvedWtPath, false); } catch (e) { logWarning("worktree", `non-force worktree remove failed for ${resolvedWtPath}: ${e instanceof Error ? e.message : String(e)}`); }
   }
 
   // Prune stale entries so git knows the worktree is gone
