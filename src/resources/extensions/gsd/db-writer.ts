@@ -546,11 +546,35 @@ export async function updateRequirementInDb(
   try {
     const db = await import('./gsd-db.js');
 
-    const existing = db.getRequirementById(id);
+    let existing = db.getRequirementById(id);
 
-    // If requirement doesn't exist in DB, create a skeleton and merge updates.
-    // This handles the case where requirements were written to REQUIREMENTS.md
-    // but never imported into the database (see #2919).
+    // If requirement doesn't exist in DB, seed the entire requirements table
+    // from REQUIREMENTS.md first (#3346). This handles the standard workflow
+    // where requirements are authored in markdown during discussion but never
+    // imported into the database — making gsd_requirement_update always fail
+    // with "not_found" at milestone completion.
+    if (!existing) {
+      const reqFilePath = resolveGsdRootFile(basePath, 'REQUIREMENTS');
+      try {
+        const content = readFileSync(reqFilePath, 'utf-8');
+        const { parseRequirementsSections } = await import('./md-importer.js');
+        const parsed = parseRequirementsSections(content);
+        if (parsed.length > 0) {
+          logWarning('manifest', `Seeding ${parsed.length} requirements from REQUIREMENTS.md into DB (first update triggers import)`, { fn: 'updateRequirementInDb' });
+          for (const req of parsed) {
+            // Only seed if not already in DB (avoid overwriting concurrent inserts)
+            if (!db.getRequirementById(req.id)) {
+              db.upsertRequirement(req);
+            }
+          }
+          // Re-check after seeding
+          existing = db.getRequirementById(id);
+        }
+      } catch {
+        // REQUIREMENTS.md missing or unparseable — fall through to skeleton
+      }
+    }
+
     const base: Requirement = existing ?? {
       id,
       class: '',

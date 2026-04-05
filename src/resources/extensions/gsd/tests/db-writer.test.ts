@@ -476,6 +476,71 @@ describe('db-writer', () => {
     }
   });
 
+  test('updateRequirementInDb — seeds from REQUIREMENTS.md when DB empty (#3346)', async () => {
+    const tmpDir = makeTmpDir();
+    const dbPath = path.join(tmpDir, '.gsd', 'gsd.db');
+    openDatabase(dbPath);
+
+    try {
+      // Write a REQUIREMENTS.md with real content (simulating discussion phase output)
+      const reqContent = [
+        '# Requirements',
+        '',
+        '## Active',
+        '',
+        '### R005 — User authentication',
+        '- Class: functional',
+        '- Why: Users need secure access',
+        '- Source: user-research',
+        '- Primary owner: M001/S02',
+        '',
+        '### R007 — API rate limiting',
+        '- Class: non-functional',
+        '- Why: Prevent abuse',
+        '- Source: architecture',
+        '- Primary owner: M001/S03',
+        '',
+        '## Validated',
+        '',
+        '### R001 — Database schema',
+        '- Class: functional',
+        '- Why: Foundation for storage',
+        '- Source: design',
+        '- Validation: S01 verified',
+      ].join('\n');
+      fs.writeFileSync(path.join(tmpDir, '.gsd', 'REQUIREMENTS.md'), reqContent);
+
+      // DB is empty — no requirements seeded. Update R005 to "validated".
+      // Before #3346 fix: this would create a skeleton with empty fields.
+      // After fix: this seeds all 3 requirements from REQUIREMENTS.md first.
+      await updateRequirementInDb('R005', {
+        status: 'validated',
+        validation: 'S02 — auth flow verified',
+      }, tmpDir);
+
+      // R005 should have the update AND the original content from markdown
+      const r005 = getRequirementById('R005');
+      assert.ok(r005, 'R005 should exist');
+      assert.equal(r005!.status, 'validated', 'status should be updated');
+      assert.equal(r005!.validation, 'S02 — auth flow verified', 'validation should be updated');
+      assert.equal(r005!.class, 'functional', 'class should be preserved from REQUIREMENTS.md');
+      assert.ok(r005!.description?.includes('authentication') || r005!.full_content?.includes('authentication'),
+        'original content should be preserved');
+
+      // R007 and R001 should also be seeded (not just the one being updated)
+      const r007 = getRequirementById('R007');
+      assert.ok(r007, 'R007 should be seeded from REQUIREMENTS.md');
+      assert.equal(r007!.status, 'active', 'R007 status should be active');
+
+      const r001 = getRequirementById('R001');
+      assert.ok(r001, 'R001 should be seeded from REQUIREMENTS.md');
+      assert.equal(r001!.status, 'validated', 'R001 status should be validated (from section heading)');
+    } finally {
+      closeDatabase();
+      cleanupDir(tmpDir);
+    }
+  });
+
   // ═══════════════════════════════════════════════════════════════════════════
   // saveArtifactToDb Tests
   // ═══════════════════════════════════════════════════════════════════════════
