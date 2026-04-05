@@ -39,7 +39,6 @@ import { debugLog } from "./debug-logger.js";
 import { findMilestoneIds, nextMilestoneId, reserveMilestoneId, getReservedMilestoneIds, clearReservedMilestoneIds } from "./milestone-ids.js";
 import { parkMilestone, discardMilestone } from "./milestone-actions.js";
 import { selectAndApplyModel } from "./auto-model-selection.js";
-import { resolveModelWithFallbacksForUnit } from "./preferences-models.js";
 import { DISCUSS_TOOLS_ALLOWLIST } from "./constants.js";
 
 // ─── Re-exports (preserve public API for existing importers) ────────────────
