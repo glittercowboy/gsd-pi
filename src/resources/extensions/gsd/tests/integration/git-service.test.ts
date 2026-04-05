@@ -1448,13 +1448,20 @@ describe('git-service', async () => {
     run('git add .gitignore', repo);
     run('git commit -m "add gitignore"', repo);
 
+    // Pre-commit a tracked source file so git add -u can stage modifications.
+    // The symlink fallback uses git add -u (tracked files only), so the file
+    // must be tracked before the autoCommit scenario runs.
+    createFile(repo, "src/feature.ts", "export const feature = true;");
+    run('git add src/feature.ts', repo);
+    run('git commit -m "add feature"', repo);
+
     // Simulate new milestone artifacts created during execution
     writeFileSync(join(externalGsd, "milestones", "M009", "M009-SUMMARY.md"), "# M009 Summary");
     writeFileSync(join(externalGsd, "milestones", "M009", "S01-SUMMARY.md"), "# S01 Summary");
     writeFileSync(join(externalGsd, "milestones", "M009", "T01-VERIFY.json"), '{"passed":true}');
 
-    // Also create a normal source file change
-    createFile(repo, "src/feature.ts", "export const feature = true;");
+    // Modify the tracked source file — git add -u will stage this change
+    writeFileSync(join(repo, "src/feature.ts"), "export const feature = false; // updated");
 
     const svc = new GitServiceImpl(repo);
     const msg = svc.autoCommit("complete-milestone", "M009");
