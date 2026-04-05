@@ -32,6 +32,20 @@ export function resolveProjectRootDbPath(basePath: string): string {
     return join(projectRoot, ".gsd", "gsd.db");
   }
 
+  // External-state layout: ~/.gsd/projects/<hash>/worktrees/<MID>/...
+  // Resolve to ~/.gsd/projects/<hash>/gsd.db (the canonical project DB) (#2952).
+  // Must be checked before the generic symlink-resolved handler: both match
+  // /.gsd/projects/<hash>/worktrees/ but require different resolution targets.
+  const extRe = /[/\\]\.gsd[/\\]projects[/\\][a-f0-9]+[/\\]worktrees(?:[/\\]|$)/;
+  const extMatch = extRe.exec(basePath);
+  if (extMatch) {
+    const matchStr = extMatch[0];
+    // Find the "/worktrees" portion within the match and slice up to it
+    const wtIdx = matchStr.search(/[/\\]worktrees(?:[/\\]|$)/);
+    const projectStateRoot = basePath.slice(0, extMatch.index + wtIdx);
+    return join(projectStateRoot, "gsd.db");
+  }
+
   // Symlink-resolved layout: /.gsd/projects/<hash>/worktrees/M001/...
   // The project root is everything before /.gsd/projects/ (#2517)
   const symlinkMarker = `${sep}.gsd${sep}projects${sep}`;
@@ -57,17 +71,6 @@ export function resolveProjectRootDbPath(basePath: string): string {
     }
   }
 
-  // External-state layout: ~/.gsd/projects/<hash>/worktrees/<MID>/...
-  // Resolve to ~/.gsd/projects/<hash>/gsd.db (the canonical project DB) (#2952).
-  const extRe = /[/\\]\.gsd[/\\]projects[/\\][a-f0-9]+[/\\]worktrees(?:[/\\]|$)/;
-  const extMatch = extRe.exec(basePath);
-  if (extMatch) {
-    const matchStr = extMatch[0];
-    // Find the "/worktrees" portion within the match and slice up to it
-    const wtIdx = matchStr.search(/[/\\]worktrees(?:[/\\]|$)/);
-    const projectStateRoot = basePath.slice(0, extMatch.index + wtIdx);
-    return join(projectStateRoot, "gsd.db");
-  }
 
   return join(basePath, ".gsd", "gsd.db");
 }
