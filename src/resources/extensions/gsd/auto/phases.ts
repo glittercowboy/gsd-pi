@@ -33,9 +33,7 @@ import { gsdRoot } from "../paths.js";
 import { atomicWriteSync } from "../atomic-write.js";
 import { verifyExpectedArtifact } from "../auto-recovery.js";
 import { writeUnitRuntimeRecord } from "../unit-runtime.js";
-import { PROJECT_FILES } from "../detection.js";
 import { withTimeout, FINALIZE_POST_TIMEOUT_MS } from "./finalize-timeout.js";
-import { join } from "node:path";
 
 // ─── generateMilestoneReport ──────────────────────────────────────────────────
 
