@@ -16,6 +16,16 @@ import { createHash } from "node:crypto";
 
 const MAX_CONSECUTIVE_IDENTICAL_CALLS = 4;
 
+/**
+ * Interactive tools that prompt the user should never fire more than once
+ * with the same arguments. Even 2 duplicates confuse users on remote
+ * channels (Discord, Slack, Telegram).
+ */
+const INTERACTIVE_TOOLS = new Set([
+  "ask_user_questions",
+]);
+const MAX_CONSECUTIVE_INTERACTIVE = 1;
+
 let consecutiveCount = 0;
 let lastSignature = "";
 let enabled = true;
@@ -57,7 +67,11 @@ export function checkToolCallLoop(
     lastSignature = sig;
   }
 
-  if (consecutiveCount > MAX_CONSECUTIVE_IDENTICAL_CALLS) {
+  const threshold = INTERACTIVE_TOOLS.has(toolName)
+    ? MAX_CONSECUTIVE_INTERACTIVE
+    : MAX_CONSECUTIVE_IDENTICAL_CALLS;
+
+  if (consecutiveCount > threshold) {
     return {
       block: true,
       reason:

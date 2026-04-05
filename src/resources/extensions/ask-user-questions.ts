@@ -104,9 +104,39 @@ function formatForLLM(result: RoundResult): string {
 	return JSON.stringify({ answers });
 }
 
+// ─── Per-turn deduplication cache (#3513) ─────────────────────────────────────
+//
+// When the LLM generates multiple identical ask_user_questions calls in a
+// single turn, each fires independently — the user sees duplicate questions
+// on Discord/Slack/TUI. This cache returns the previous result when the
+// same question set is asked again within the same agent turn.
+
+import { createHash } from "node:crypto";
+
+let _dedupCache: Map<string, unknown> = new Map();
+
+function questionsHash(questions: Question[]): string {
+	const h = createHash("sha256");
+	for (const q of questions) {
+		h.update(q.id);
+		h.update(q.question);
+		for (const o of q.options) h.update(o.label);
+	}
+	return h.digest("hex").slice(0, 16);
+}
+
+/** Clear the dedup cache. Call at agent turn boundaries. */
+export function resetAskUserQuestionsCache(): void {
+	_dedupCache.clear();
+}
+
 // ─── Extension ────────────────────────────────────────────────────────────────
 
 export default function AskUserQuestions(pi: ExtensionAPI) {
+	// Reset dedup cache on each new agent turn
+	pi.on("agent_start", () => { _dedupCache.clear(); });
+	pi.on("session_start", () => { _dedupCache.clear(); });
+
 	pi.registerTool({
 		name: "ask_user_questions",
 		label: "Request User Input",
@@ -121,6 +151,15 @@ export default function AskUserQuestions(pi: ExtensionAPI) {
 		parameters: AskUserQuestionsParams,
 
 		async execute(_toolCallId, params, signal, _onUpdate, ctx) {
+			// ── Per-turn deduplication (#3513) ──
+			// If the same questions were already asked this turn, return the cached result
+			// instead of prompting the user again.
+			const cacheKey = questionsHash(params.questions);
+			const cached = _dedupCache.get(cacheKey);
+			if (cached) {
+				return cached as any;
+			}
+
 			// Validation
 			if (params.questions.length === 0 || params.questions.length > 3) {
 				return errorResult("Error: questions must contain 1-3 items", params.questions);
@@ -140,7 +179,11 @@ export default function AskUserQuestions(pi: ExtensionAPI) {
 			// this is a no-op when the user has not set up Slack/Discord/Telegram.
 			const { tryRemoteQuestions } = await import("./remote-questions/manager.js");
 			const remoteResult = await tryRemoteQuestions(params.questions, signal);
-			if (remoteResult) return { ...remoteResult, details: remoteResult.details as unknown };
+			if (remoteResult) {
+				const result = { ...remoteResult, details: remoteResult.details as unknown };
+				_dedupCache.set(cacheKey, result);
+				return result;
+			}
 
 			if (!ctx.hasUI) {
 				return errorResult("Error: UI not available (non-interactive mode)", params.questions);
@@ -197,7 +240,7 @@ export default function AskUserQuestions(pi: ExtensionAPI) {
 						]),
 					),
 				};
-				return {
+				const fallbackResult = {
 					content: [{ type: "text" as const, text: JSON.stringify({ answers }) }],
 					details: {
 						questions: params.questions,
@@ -205,6 +248,8 @@ export default function AskUserQuestions(pi: ExtensionAPI) {
 						cancelled: false,
 					} satisfies LocalResultDetails,
 				};
+				_dedupCache.set(cacheKey, fallbackResult);
+				return fallbackResult;
 			}
 
 			// Check if cancelled (empty answers = user exited)
@@ -216,10 +261,12 @@ export default function AskUserQuestions(pi: ExtensionAPI) {
 				};
 			}
 
-			return {
-				content: [{ type: "text", text: formatForLLM(result) }],
+			const successResult = {
+				content: [{ type: "text" as const, text: formatForLLM(result) }],
 				details: { questions: params.questions, response: result, cancelled: false } satisfies LocalResultDetails,
 			};
+			_dedupCache.set(cacheKey, successResult);
+			return successResult;
 		},
 
 		// ─── Rendering ────────────────────────────────────────────────────────
