@@ -77,7 +77,7 @@ function createComponent(options: {
     },
   } as any;
 
-  const component = new ProviderManagerComponent(tui, authStorage, modelRegistry, () => {}, () => {});
+  const component = new ProviderManagerComponent(tui, authStorage, modelRegistry, () => {}, () => {}, () => {});
   return {
     component,
     removedProviders,

@@ -3378,6 +3378,10 @@ export class InteractiveMode {
 					done();
 					this.ui.requestRender();
 				},
+				async (provider: string) => {
+					done();
+					await this.showLoginDialog(provider);
+				},
 			);
 			return { component, focus: component };
 		});
