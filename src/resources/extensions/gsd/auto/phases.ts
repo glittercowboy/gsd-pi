@@ -33,6 +33,7 @@ import { gsdRoot } from "../paths.js";
 import { atomicWriteSync } from "../atomic-write.js";
 import { verifyExpectedArtifact, diagnoseExpectedArtifact, buildLoopRemediationSteps } from "../auto-recovery.js";
 import { writeUnitRuntimeRecord } from "../unit-runtime.js";
+import { withTimeout, FINALIZE_POST_TIMEOUT_MS } from "./finalize-timeout.js";
 
 // ─── generateMilestoneReport ──────────────────────────────────────────────────
 
@@ -1385,7 +1386,30 @@ export async function runFinalize(
   }
 
   // Post-verification processing (DB dual-write, hooks, triage, quick-tasks)
-  const postResult = await deps.postUnitPostVerification(postUnitCtx);
+  // Timeout guard: if postUnitPostVerification hangs (e.g., module import
+  // deadlock, SQLite transaction hang), force-continue after timeout so the
+  // auto-loop is not permanently frozen (#2344).
+  const postResultGuard = await withTimeout(
+    deps.postUnitPostVerification(postUnitCtx),
+    FINALIZE_POST_TIMEOUT_MS,
+    "postUnitPostVerification",
+  );
+
+  if (postResultGuard.timedOut) {
+    debugLog("autoLoop", {
+      phase: "post-verification-timeout",
+      iteration: ic.iteration,
+      unitType: iterData.unitType,
+      unitId: iterData.unitId,
+    });
+    ctx.ui.notify(
+      `postUnitPostVerification timed out after ${FINALIZE_POST_TIMEOUT_MS / 1000}s for ${iterData.unitType} ${iterData.unitId} — continuing to next iteration`,
+      "warning",
+    );
+    return { action: "next", data: undefined as void };
+  }
+
+  const postResult = postResultGuard.value;
 
   if (postResult === "stopped") {
     debugLog("autoLoop", {
