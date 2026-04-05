@@ -298,9 +298,9 @@ export async function showInterviewRound(
 			// Auto-open the notes field when "None of the above" is selected
 			// so the user can immediately provide a free-text explanation
 			// instead of being trapped in a re-asking loop (bug #2715).
-			// Only auto-open if the user hasn't already provided notes —
-			// otherwise Enter from notes mode loops back here endlessly.
-			if (!isMultiSelect(currentIdx) && states[currentIdx].cursorIndex === noneOrDoneIdx(currentIdx) && !states[currentIdx].notes) {
+			// Only auto-open if notes are not already visible — otherwise
+			// Enter from notes mode loops back here endlessly (#3449).
+			if (!isMultiSelect(currentIdx) && states[currentIdx].cursorIndex === noneOrDoneIdx(currentIdx) && !states[currentIdx].notesVisible) {
 				states[currentIdx].notesVisible = true;
 				focusNotes = true;
 				loadStateToEditor();
@@ -385,7 +385,12 @@ export async function showInterviewRound(
 				if (matchesKey(data, Key.enter)) {
 					saveEditorToState();
 					focusNotes = false;
-					if (!multiSel && st.committedIndex === null) st.committedIndex = noneOrDoneIdx(currentIdx);
+					// Only default to "None of the above" if the cursor is actually
+					// on that option — otherwise Tab→Enter from a normal option would
+					// silently change the selection (#3449).
+					if (!multiSel && st.committedIndex === null) {
+						st.committedIndex = st.cursorIndex;
+					}
 					goNextOrSubmit();
 					return;
 				}

@@ -109,25 +109,22 @@ describe("interview-ui notes loop regression (#3502)", () => {
 		assert.equal(answer.selected, "None of the above");
 	});
 
-	it("still auto-opens notes when selecting 'None of the above' with no prior notes", async () => {
-		// Press Down twice to "None of the above", Enter to select
-		// Then immediately Enter again (empty notes) — this should re-open notes
-		// because the guard only skips when notes are non-empty.
-		// Type something on second open, then Enter to proceed.
+	it("empty notes on 'None of the above' advances instead of looping (#3449)", async () => {
+		// Press Down twice to "None of the above", Enter to select → auto-opens notes.
+		// Then immediately Enter (empty notes) → should advance to review, NOT re-open.
+		// The notesVisible guard prevents the loop even with empty notes.
 		const result = await runWithInputs(questions, [
 			DOWN,        // cursor → 1
 			DOWN,        // cursor → 2 (None of the above)
-			ENTER,       // commit → auto-opens notes
-			ENTER,       // empty notes → goNextOrSubmit → should re-open notes (empty guard)
-			"o", "k",    // type "ok"
-			ENTER,       // now notes = "ok" → should advance to review
+			ENTER,       // commit → auto-opens notes (notesVisible was false)
+			ENTER,       // empty notes → notesVisible is true → skip auto-open → advance to review
 			ENTER,       // submit
 		]);
 
 		assert.ok(result, "should return a result");
 		const answer = result.answers.q1;
 		assert.ok(answer, "answer for q1 should exist");
-		assert.equal(answer.notes, "ok");
+		assert.equal(answer.selected, "None of the above");
 	});
 
 	it("normal option selection is unaffected", async () => {
