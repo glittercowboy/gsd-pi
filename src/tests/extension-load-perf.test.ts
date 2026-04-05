@@ -17,12 +17,14 @@ import assert from "node:assert/strict";
 import { mkdtempSync, writeFileSync, mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { fileURLToPath } from "node:url";
 
 // Import loadExtensions from the compiled dist (it IS re-exported from the
 // core/extensions barrel but not from the top-level index).
+// Use process.cwd() rather than import.meta.url-relative navigation — the
+// compiled test lands in dist-test/src/tests/, so relative paths differ between
+// source and compiled contexts. process.cwd() is always the repo root in CI.
 const loaderPath = join(
-  fileURLToPath(import.meta.url), "..", "..", "..",
+  process.cwd(),
   "packages", "pi-coding-agent", "dist", "core", "extensions", "loader.js",
 );
 
