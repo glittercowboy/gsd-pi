@@ -26,7 +26,7 @@ import { runUnit } from "./run-unit.js";
 import { debugLog } from "../debug-logger.js";
 import { PROJECT_FILES } from "../detection.js";
 import { MergeConflictError } from "../git-service.js";
-import { join, basename } from "node:path";
+import { join, basename, dirname, parse as parsePath } from "node:path";
 import { existsSync, cpSync } from "node:fs";
 import { logWarning, logError } from "../workflow-logger.js";
 import { gsdRoot } from "../paths.js";
