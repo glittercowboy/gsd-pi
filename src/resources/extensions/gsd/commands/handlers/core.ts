@@ -20,6 +20,7 @@ export function showHelp(ctx: ExtensionCommandContext): void {
     "  /gsd auto           Run all queued units continuously  [--verbose]",
     "  /gsd stop           Stop auto-mode gracefully",
     "  /gsd pause          Pause auto-mode (preserves state, /gsd auto to resume)",
+    "  /gsd resume         Resume interrupted work without prompting",
     "  /gsd discuss        Start guided milestone/slice discussion",
     "  /gsd new-milestone  Create milestone from headless context (used by gsd headless)",
     "",

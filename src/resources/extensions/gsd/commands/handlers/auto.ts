@@ -168,6 +168,22 @@ export async function handleAutoCommand(trimmed: string, ctx: ExtensionCommandCo
     return true;
   }
 
+  if (trimmed === "resume") {
+    if (!(await guardRemoteSession(ctx, pi))) return true;
+    const { deriveState } = await import("../../state.js");
+    const state = await deriveState(projectRoot());
+    if (!state.activeTask || !state.nextAction.startsWith("Resume interrupted work")) {
+      if (!state.activeTask) {
+        ctx.ui.notify("No active task to resume. Run /gsd to start working on the next task.", "info");
+      } else {
+        ctx.ui.notify("No interrupted work found. Run /gsd to execute the next task.", "info");
+      }
+      return true;
+    }
+    await startAuto(ctx, pi, projectRoot(), false, { step: true });
+    return true;
+  }
+
   if (trimmed === "rate" || trimmed.startsWith("rate ")) {
     await handleRate(trimmed.replace(/^rate\s*/, "").trim(), ctx, projectRoot());
     return true;
