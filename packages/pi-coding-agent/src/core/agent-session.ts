@@ -1767,9 +1767,15 @@ export class AgentSession {
 		this.agent.setThinkingLevel(effectiveLevel);
 
 		if (isChanging) {
-			this.sessionManager.appendThinkingLevelChange(effectiveLevel);
-			if (options?.persist !== false && (this.supportsThinking() || effectiveLevel !== "off")) {
-				this.settingsManager.setDefaultThinkingLevel(effectiveLevel);
+			// Only record in session history when persisting — transient switches
+			// (auto-mode dispatches with persist:false) must not leave durable
+			// thinking_level_change entries, because session resume replays them
+			// via the public setThinkingLevel() path which always persists.
+			if (options?.persist !== false) {
+				this.sessionManager.appendThinkingLevelChange(effectiveLevel);
+				if (this.supportsThinking() || effectiveLevel !== "off") {
+					this.settingsManager.setDefaultThinkingLevel(effectiveLevel);
+				}
 			}
 			this._emitSessionStateChanged("set_thinking_level");
 		}

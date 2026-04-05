@@ -34,10 +34,35 @@ test("agent-session: transient model switches pass persist options into thinking
 test("agent-session: transient model switches do not persist thinking level defaults", () => {
 	const start = source.indexOf("private _applyThinkingLevel(");
 	assert.ok(start >= 0, "missing _applyThinkingLevel");
-	const window = source.slice(start, start + 900);
+	const window = source.slice(start, start + 1200);
 
 	assert.ok(
-		window.includes("options?.persist !== false && (this.supportsThinking() || effectiveLevel !== \"off\")"),
-		"_applyThinkingLevel should skip settings persistence when persist:false is used for transient model switches",
+		window.includes("if (options?.persist !== false)"),
+		"_applyThinkingLevel should gate all persistence (settings AND session history) behind persist check",
+	);
+	assert.ok(
+		window.includes("this.settingsManager.setDefaultThinkingLevel(effectiveLevel)"),
+		"settings persistence should be inside the persist guard",
+	);
+});
+
+test("agent-session: transient thinking-level changes do not leak into session history (#3486 review)", () => {
+	// Verifies jeremymcs' review finding: appendThinkingLevelChange must NOT run
+	// when persist:false, because session resume replays these entries via the
+	// public setThinkingLevel() which always persists — defeating the isolation.
+	const start = source.indexOf("private _applyThinkingLevel(");
+	assert.ok(start >= 0, "missing _applyThinkingLevel");
+	const window = source.slice(start, start + 900);
+
+	// appendThinkingLevelChange must be INSIDE the persist guard, not before it
+	const persistGuardIdx = window.indexOf("if (options?.persist !== false)");
+	const appendIdx = window.indexOf("this.sessionManager.appendThinkingLevelChange(effectiveLevel)");
+	assert.ok(persistGuardIdx >= 0, "missing persist guard in _applyThinkingLevel");
+	assert.ok(appendIdx >= 0, "missing appendThinkingLevelChange call");
+	assert.ok(
+		appendIdx > persistGuardIdx,
+		"appendThinkingLevelChange must be inside the persist:false guard — " +
+		"otherwise transient thinking-level changes survive in session history " +
+		"and get replayed on resume via setThinkingLevel() which always persists",
 	);
 });
