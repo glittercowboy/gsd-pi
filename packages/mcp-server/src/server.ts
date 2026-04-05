@@ -274,5 +274,99 @@ export async function createMcpServer(sessionManager: SessionManager): Promise<{
     },
   );
 
+  // ─── Read-only project state tools (#3515) ────────────────────────────
+  // These parse .gsd/ directly — no session needed, no DB dependency.
+
+  const { readProgress } = await import('./readers/progress.js');
+  const { readRoadmap } = await import('./readers/roadmap.js');
+  const { readHistory } = await import('./readers/history.js');
+  const { readDoctor } = await import('./readers/doctor.js');
+  const { readCaptures } = await import('./readers/captures.js');
+  const { readKnowledge } = await import('./readers/knowledge.js');
+
+  server.tool(
+    'gsd_progress',
+    'Get active milestone, slice, task, phase, completion counts, blockers, and next action. No session needed.',
+    { projectDir: z.string().describe('Absolute path to the project directory') },
+    async (args: Record<string, unknown>) => {
+      try {
+        return jsonContent(await readProgress(args.projectDir as string));
+      } catch (err) {
+        return errorContent(err instanceof Error ? err.message : String(err));
+      }
+    },
+  );
+
+  server.tool(
+    'gsd_roadmap',
+    'Get full project structure with milestones, slices, tasks, status, risk, and dependencies. No session needed.',
+    { projectDir: z.string().describe('Absolute path to the project directory') },
+    async (args: Record<string, unknown>) => {
+      try {
+        return jsonContent(await readRoadmap(args.projectDir as string));
+      } catch (err) {
+        return errorContent(err instanceof Error ? err.message : String(err));
+      }
+    },
+  );
+
+  server.tool(
+    'gsd_history',
+    'Get execution history — cost, tokens, model, duration per unit. No session needed.',
+    {
+      projectDir: z.string().describe('Absolute path to the project directory'),
+      limit: z.number().optional().describe('Max entries to return (default: 50)'),
+    },
+    async (args: Record<string, unknown>) => {
+      try {
+        return jsonContent(await readHistory(args.projectDir as string, (args.limit as number) ?? 50));
+      } catch (err) {
+        return errorContent(err instanceof Error ? err.message : String(err));
+      }
+    },
+  );
+
+  server.tool(
+    'gsd_doctor',
+    'Lightweight structural health check — verifies .gsd/ directory, milestones, roadmaps, and required files. No session needed.',
+    { projectDir: z.string().describe('Absolute path to the project directory') },
+    async (args: Record<string, unknown>) => {
+      try {
+        return jsonContent(await readDoctor(args.projectDir as string));
+      } catch (err) {
+        return errorContent(err instanceof Error ? err.message : String(err));
+      }
+    },
+  );
+
+  server.tool(
+    'gsd_captures',
+    'Get pending ideas and captures with filtering. No session needed.',
+    {
+      projectDir: z.string().describe('Absolute path to the project directory'),
+      filter: z.enum(['all', 'pending', 'actionable']).optional().describe('Filter captures (default: all)'),
+    },
+    async (args: Record<string, unknown>) => {
+      try {
+        return jsonContent(await readCaptures(args.projectDir as string, (args.filter as 'all' | 'pending' | 'actionable') ?? 'all'));
+      } catch (err) {
+        return errorContent(err instanceof Error ? err.message : String(err));
+      }
+    },
+  );
+
+  server.tool(
+    'gsd_knowledge',
+    'Get project knowledge base — rules, patterns, and lessons learned. No session needed.',
+    { projectDir: z.string().describe('Absolute path to the project directory') },
+    async (args: Record<string, unknown>) => {
+      try {
+        return jsonContent(await readKnowledge(args.projectDir as string));
+      } catch (err) {
+        return errorContent(err instanceof Error ? err.message : String(err));
+      }
+    },
+  );
+
   return { server };
 }
