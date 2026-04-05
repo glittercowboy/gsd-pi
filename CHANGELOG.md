@@ -6,6 +6,12 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [2.62.1] - 2026-04-05
+
+### Fixed
+- **gsd**: gate steer worktree routing on active session, fix messaging
+- **gsd**: resolve steer overrides to worktree path when worktree is active
+
 ## [2.62.0] - 2026-04-04
 
 ### Added
@@ -2314,7 +2320,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Changed
 - License updated to MIT
 
-[Unreleased]: https://github.com/gsd-build/gsd-2/compare/v2.62.0...HEAD
+[Unreleased]: https://github.com/gsd-build/gsd-2/compare/v2.62.1...HEAD
+[2.62.1]: https://github.com/gsd-build/gsd-2/compare/v2.62.0...v2.62.1
 [2.62.0]: https://github.com/gsd-build/gsd-2/compare/v2.61.0...v2.62.0
 [2.61.0]: https://github.com/gsd-build/gsd-2/compare/v2.60.0...v2.61.0
 [2.60.0]: https://github.com/gsd-build/gsd-2/compare/v2.59.0...v2.60.0
