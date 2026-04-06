@@ -460,9 +460,12 @@ export function initResources(agentDir: string): void {
     try { copyFileSync(workflowSrc, join(agentDir, 'GSD-WORKFLOW.md')) } catch { /* non-fatal */ }
   }
 
-  // Ensure all newly copied files are owner-writable so the next run can
-  // overwrite them (covers extensions, agents, and skills in one walk).
-  makeTreeWritable(agentDir)
+  // makeTreeWritable is NOT called on agentDir here — syncResourceDir() already
+  // makes each destination writable before and after copying (pre-copy unlocks
+  // read-only Nix store copies, post-copy ensures next upgrade can overwrite).
+  // Calling it on the full agentDir would redundantly walk node_modules (33k+
+  // files via symlink), blobs, compile-cache, skills, and sessions — adding
+  // 60+ seconds to every boot that triggers a resource sync.
 
   writeManagedResourceManifest(agentDir)
   ensureRegistryEntries(join(agentDir, 'extensions'))
