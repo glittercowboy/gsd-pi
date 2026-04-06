@@ -95,8 +95,8 @@ export function resolveGitDir(basePath: string): string {
     if (content.startsWith("gitdir: ")) {
       return resolve(basePath, content.slice(8));
     }
-  } catch {
-    // Not a file or unreadable — fall through to default
+  } catch (e) {
+    logWarning("worktree", `.git file read failed: ${(e as Error).message}`);
   }
   return join(basePath, ".git");
 }
@@ -111,6 +111,22 @@ export function worktreePath(basePath: string, name: string): string {
 
 export function worktreeBranchName(name: string): string {
   return `worktree/${name}`;
+}
+
+/**
+ * Validate that a path is inside the .gsd/worktrees/ directory.
+ * Resolves symlinks and normalizes ".." traversals before comparison
+ * so that a symlink-resolved or crafted path cannot escape containment.
+ *
+ * Used as a safety gate before any destructive operation (rmSync,
+ * nativeWorktreeRemove --force) to prevent #2365-style data loss.
+ */
+export function isInsideWorktreesDir(basePath: string, targetPath: string): boolean {
+  const wtDir = resolve(worktreesDir(basePath));
+  const resolved = resolve(targetPath);
+  // The resolved path must start with the worktrees dir followed by a separator,
+  // not merely be a prefix match (e.g. ".gsd/worktrees-extra" must not match).
+  return resolved === wtDir || resolved.startsWith(wtDir + sep);
 }
 
 // ─── Core Operations ───────────────────────────────────────────────────────
@@ -308,8 +324,9 @@ export function findNestedGitDirs(rootPath: string): string[] {
     let entries: string[];
     try {
       entries = readdirSync(dir);
-    } catch {
-      return; // Permission denied, broken symlink, etc.
+    } catch (e) {
+      logWarning("worktree", `readdirSync failed: ${(e as Error).message}`);
+      return;
     }
 
     for (const entry of entries) {
@@ -321,7 +338,8 @@ export function findNestedGitDirs(rootPath: string): string[] {
       let stat;
       try {
         stat = lstatSync(fullPath);
-      } catch {
+      } catch (e) {
+        logWarning("worktree", `lstatSync failed for ${fullPath}: ${(e as Error).message}`);
         continue;
       }
       if (!stat.isDirectory()) continue;
@@ -337,8 +355,8 @@ export function findNestedGitDirs(rootPath: string): string[] {
           // Don't recurse into the nested repo — we found what we need
           continue;
         }
-      } catch {
-        // No .git here — continue scanning
+      } catch (e) {
+        logWarning("worktree", `existsSync/.git check failed for ${fullPath}: ${(e as Error).message}`);
       }
 
       walk(fullPath, depth + 1);
@@ -368,15 +386,36 @@ export function removeWorktree(
   // time, so its registered path points to the resolved external location.
   // If syncStateToProjectRoot later creates a real .gsd/ directory that
   // shadows the symlink, the computed path diverges from git's record.
+  let gitReportedPath: string | null = null;
   try {
     const entries = nativeWorktreeList(basePath);
     const entry = entries.find(e => e.branch === branch);
     if (entry?.path) {
-      wtPath = entry.path;
+      gitReportedPath = entry.path;
     }
-  } catch { /* fall back to computed path */ }
+  } catch (e) { logWarning("worktree", `nativeWorktreeList parse failed: ${(e as Error).message}`); }
+
+  // Safety gate (#2365): only use the git-reported path if it is actually
+  // inside .gsd/worktrees/.  When .gsd/ was a symlink, git may have resolved
+  // it to an external directory (e.g. a project data folder).  Using that
+  // path for removal would destroy user data.
+  if (gitReportedPath && isInsideWorktreesDir(basePath, gitReportedPath)) {
+    wtPath = gitReportedPath;
+  } else if (gitReportedPath) {
+    console.error(
+      `[GSD] WARNING: git worktree list reported path outside .gsd/worktrees/: ${gitReportedPath}\n` +
+        `  Refusing to use it for removal — falling back to computed path: ${wtPath}`,
+    );
+    // Still tell git to unregister the worktree entry via its reported path,
+    // but do NOT use force and do NOT fall back to rmSync on this path.
+    try { nativeWorktreeRemove(basePath, gitReportedPath, false); } catch (e) { logWarning("worktree", `non-force worktree remove failed for ${gitReportedPath}: ${e instanceof Error ? e.message : String(e)}`); }
+  }
 
   const resolvedWtPath = existsSync(wtPath) ? realpathSync(wtPath) : wtPath;
+
+  // Double-check: the resolved path (after symlink resolution) must also be
+  // inside .gsd/worktrees/ — a symlink inside the directory could point out.
+  const resolvedPathSafe = isInsideWorktreesDir(basePath, resolvedWtPath);
 
   // If we're inside the worktree, move out first — git can't remove an in-use directory
   const cwd = process.cwd();
@@ -388,7 +427,7 @@ export function removeWorktree(
   if (!existsSync(wtPath)) {
     nativeWorktreePrune(basePath);
     if (deleteBranch) {
-      try { nativeBranchDelete(basePath, branch, true); } catch { /* branch may not exist */ }
+      try { nativeBranchDelete(basePath, branch, true); } catch (e) { logWarning("worktree", `nativeBranchDelete failed: ${(e as Error).message}`); }
     }
     return;
   }
@@ -422,8 +461,8 @@ export function removeWorktree(
           logWarning("reconcile", `Submodule changes detected — stash failed, changes may be lost during force removal`, { worktree: name, path: resolvedWtPath });
         }
       }
-    } catch {
-      // submodule status failed — proceed with normal removal
+    } catch (e) {
+      logWarning("worktree", `submodule status check failed: ${(e as Error).message}`);
     }
   }
 
@@ -451,44 +490,55 @@ export function removeWorktree(
     }
   }
 
-  // Remove worktree: try non-force first when submodules have changes,
-  // falling back to force only after submodule state has been preserved.
-  const useForce = hasSubmoduleChanges ? false : force;
-  try { nativeWorktreeRemove(basePath, resolvedWtPath, useForce); } catch { /* may fail */ }
+  // Remove worktree — only use force/rmSync when the path is safely contained
+  if (resolvedPathSafe) {
+    // Remove worktree: try non-force first when submodules have changes,
+    // falling back to force only after submodule state has been preserved.
+    const useForce = hasSubmoduleChanges ? false : force;
+    try { nativeWorktreeRemove(basePath, resolvedWtPath, useForce); } catch (e) { logWarning("worktree", `nativeWorktreeRemove failed: ${(e as Error).message}`); }
 
-  // If the directory is still there (e.g. locked), try harder with force
-  if (existsSync(resolvedWtPath)) {
-    try { nativeWorktreeRemove(basePath, resolvedWtPath, true); } catch { /* may fail */ }
-  }
-
-  // (#2821) If the worktree directory STILL exists after both native removal
-  // attempts (e.g. untracked files like ASSESSMENT/UAT-RESULT prevent git
-  // worktree remove), force-remove the git internal worktree metadata first,
-  // then remove the filesystem directory. Without this, the .git/worktrees/<name>
-  // lock prevents rmSync from cleaning up, and the orphaned worktree directory
-  // causes every subsequent `/gsd auto` to re-enter the stale worktree.
-  if (existsSync(resolvedWtPath)) {
-    try {
-      const wtInternalDir = join(basePath, ".git", "worktrees", name);
-      if (existsSync(wtInternalDir)) {
-        rmSync(wtInternalDir, { recursive: true, force: true });
-      }
-      rmSync(resolvedWtPath, { recursive: true, force: true });
-    } catch {
-      logWarning(
-        "reconcile",
-        `Worktree directory could not be removed after git internal cleanup: ${resolvedWtPath}. ` +
-          `Manual cleanup: rm -rf "${resolvedWtPath.replaceAll("\\", "/")}"`,
-        { worktree: name },
-      );
+    // If the directory is still there (e.g. locked), try harder with force
+    if (existsSync(resolvedWtPath)) {
+      try { nativeWorktreeRemove(basePath, resolvedWtPath, true); } catch (e) { logWarning("worktree", `nativeWorktreeRemove (force) failed: ${(e as Error).message}`); }
     }
+
+    // (#2821) If the worktree directory STILL exists after both native removal
+    // attempts (e.g. untracked files like ASSESSMENT/UAT-RESULT prevent git
+    // worktree remove), force-remove the git internal worktree metadata first,
+    // then remove the filesystem directory. Without this, the .git/worktrees/<name>
+    // lock prevents rmSync from cleaning up, and the orphaned worktree directory
+    // causes every subsequent `/gsd auto` to re-enter the stale worktree.
+    if (existsSync(resolvedWtPath)) {
+      try {
+        const wtInternalDir = join(basePath, ".git", "worktrees", name);
+        if (existsSync(wtInternalDir)) {
+          rmSync(wtInternalDir, { recursive: true, force: true });
+        }
+        rmSync(resolvedWtPath, { recursive: true, force: true });
+      } catch {
+        logWarning(
+          "reconcile",
+          `Worktree directory could not be removed after git internal cleanup: ${resolvedWtPath}. ` +
+            `Manual cleanup: rm -rf "${resolvedWtPath.replaceAll("\\", "/")}"`,
+          { worktree: name },
+        );
+      }
+    }
+  } else {
+    // Path is outside containment — only do a non-force git worktree remove
+    // (which refuses to delete dirty worktrees) and never fall back to rmSync.
+    console.error(
+      `[GSD] WARNING: Resolved worktree path is outside .gsd/worktrees/: ${resolvedWtPath}\n` +
+        `  Skipping forced removal to prevent data loss.`,
+    );
+    try { nativeWorktreeRemove(basePath, resolvedWtPath, false); } catch (e) { logWarning("worktree", `non-force worktree remove failed for ${resolvedWtPath}: ${e instanceof Error ? e.message : String(e)}`); }
   }
 
   // Prune stale entries so git knows the worktree is gone
   nativeWorktreePrune(basePath);
 
   if (deleteBranch) {
-    try { nativeBranchDelete(basePath, branch, true); } catch { /* branch may not exist */ }
+    try { nativeBranchDelete(basePath, branch, true); } catch (e) { logWarning("worktree", `final branch delete failed: ${(e as Error).message}`); }
   }
 }
 

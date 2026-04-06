@@ -15,7 +15,7 @@ const MCP_PKG = '@modelcontextprotocol/sdk';
 async function main(): Promise<void> {
   const sessionManager = new SessionManager();
 
-  // Create the configured MCP server with all 6 tools
+  // Create the configured MCP server with all 12 tools (6 session + 6 read-only)
   const { server } = await createMcpServer(sessionManager);
 
   // Dynamic import for StdioServerTransport (same TS subpath workaround)

@@ -146,9 +146,14 @@ The codebase is organized into these areas. All are open to contributions:
 | AI/LLM layer | `packages/pi-ai` | Provider integrations, model handling |
 | Agent core | `packages/pi-agent-core` | Agent orchestration — RFC required for changes |
 | Coding agent | `packages/pi-coding-agent` | The main coding agent |
+| MCP server | `packages/mcp-server` | Project state tools and MCP protocol |
 | GSD extension | `src/resources/extensions/gsd/` | GSD workflow — RFC required for auto-mode |
-| Native bindings | `native/` | Platform-specific native code |
+| Other extensions | `src/resources/extensions/` | Browser, search, voice, MCP client, etc. |
+| Native engine | `native/` | Rust N-API modules (grep, git, AST, etc.) |
+| VS Code extension | `vscode-extension/` | Chat participant, sidebar, RPC integration |
+| Web interface | `web/` | Browser-based dashboard |
 | CI/Build | `.github/`, `scripts/` | Workflows, build scripts |
+| Documentation | `docs/` | User guides, ADRs, SDK docs |
 
 ## Review process
 

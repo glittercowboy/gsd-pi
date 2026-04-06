@@ -22,7 +22,7 @@ Do **not** go deep — just enough that your questions reflect what's actually t
 
 ### Question rounds
 
-Ask **1–3 questions per round** using `ask_user_questions`. Keep each question focused on one of:
+Ask **1–3 questions per round** using `ask_user_questions`. **Call `ask_user_questions` exactly once per turn — never make multiple calls with the same or overlapping questions. Wait for the user's response before asking the next round.** Keep each question focused on one of:
 - **UX and user-facing behaviour** — what does the user see, click, trigger, or experience?
 - **Edge cases and failure states** — what happens when things go wrong or are in unusual states?
 - **Scope boundaries** — what is explicitly in vs out for this slice? What deferred to later?

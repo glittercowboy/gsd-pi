@@ -9,8 +9,8 @@ import type { ExtensionAPI, ExtensionContext } from "@gsd/pi-coding-agent";
 import type { GSDPreferences } from "./preferences.js";
 import { resolveModelWithFallbacksForUnit, resolveDynamicRoutingConfig } from "./preferences.js";
 import type { ComplexityTier } from "./complexity-classifier.js";
-import { classifyUnitComplexity, tierLabel, extractTaskMetadata } from "./complexity-classifier.js";
-import { resolveModelForComplexity, escalateTier } from "./model-router.js";
+import { classifyUnitComplexity, tierLabel } from "./complexity-classifier.js";
+import { resolveModelForComplexity, escalateTier, getEligibleModels, loadCapabilityOverrides } from "./model-router.js";
 import { getLedger, getProjectTotals } from "./metrics.js";
 import { unitPhaseLabel } from "./auto-dashboard.js";
 
@@ -30,6 +30,9 @@ export function resolvePreferredModelConfig(
 
   const routingConfig = resolveDynamicRoutingConfig();
   if (!routingConfig.enabled || !routingConfig.tier_models) return undefined;
+
+  // Don't synthesize a routing config for flat-rate providers (#3453).
+  if (autoModeStartModel && isFlatRateProvider(autoModeStartModel.provider)) return undefined;
 
   const ceilingModel = routingConfig.tier_models.heavy
     ?? (autoModeStartModel ? `${autoModeStartModel.provider}/${autoModeStartModel.id}` : undefined);
@@ -71,6 +74,27 @@ export async function selectAndApplyModel(
     let effectiveModelConfig = modelConfig;
     let routingTierLabel = "";
 
+    // Disable routing for flat-rate providers like GitHub Copilot (#3453).
+    // All models cost the same per request, so downgrading to a cheaper
+    // model provides no cost benefit — it only degrades quality.
+    // Fail-closed: if primary model can't be resolved, fall back to
+    // provider-level signals rather than allowing unwanted downgrades.
+    if (routingConfig.enabled) {
+      const primaryModel = resolveModelId(modelConfig.primary, availableModels, ctx.model?.provider);
+      if (primaryModel) {
+        if (isFlatRateProvider(primaryModel.provider)) {
+          routingConfig.enabled = false;
+        }
+      } else if (
+        (autoModeStartModel && isFlatRateProvider(autoModeStartModel.provider))
+        || (ctx.model?.provider && isFlatRateProvider(ctx.model.provider))
+      ) {
+        // Primary model unresolvable but provider signals indicate flat-rate —
+        // disable routing to prevent quality degradation.
+        routingConfig.enabled = false;
+      }
+    }
+
     if (routingConfig.enabled) {
       let budgetPct: number | undefined;
       if (routingConfig.budget_pressure !== false) {
@@ -107,15 +131,65 @@ export async function selectAndApplyModel(
           }
         }
 
-        // Extract task metadata for capability scoring
-        const taskMeta = unitType === "execute-task"
-          ? extractTaskMetadata(unitId, basePath)
-          : undefined;
-
-        const routingResult = resolveModelForComplexity(
-          classification, modelConfig, routingConfig, availableModelIds,
-          unitType, taskMeta,
+        // Load user capability overrides from preferences (D-17: deep-merged with built-in profiles)
+        const capabilityOverrides = loadCapabilityOverrides(
+          (prefs as { modelOverrides?: Record<string, { capabilities?: Record<string, number> }> } | undefined) ?? {},
         );
+
+        // Fire before_model_select hook (ADR-004, D-03)
+        // Hook can override model selection entirely by returning { modelId }
+        let hookOverride: string | undefined;
+        if (routingConfig.hooks !== false) {
+          const eligible = getEligibleModels(
+            classification.tier,
+            availableModelIds,
+            routingConfig,
+          );
+          const hookResult = await pi.emitBeforeModelSelect({
+            unitType,
+            unitId,
+            classification: {
+              tier: classification.tier,
+              reason: classification.reason,
+              downgraded: classification.downgraded,
+            },
+            taskMetadata: classification.taskMetadata as Record<string, unknown> | undefined,
+            eligibleModels: eligible,
+            phaseConfig: modelConfig ? {
+              primary: modelConfig.primary,
+              fallbacks: modelConfig.fallbacks ?? [],
+            } : undefined,
+          });
+          if (hookResult?.modelId) {
+            hookOverride = hookResult.modelId;
+          }
+        }
+
+        let routingResult: ReturnType<typeof resolveModelForComplexity>;
+        if (hookOverride) {
+          // Hook override bypasses capability scoring entirely
+          routingResult = {
+            modelId: hookOverride,
+            fallbacks: [
+              ...(modelConfig?.fallbacks ?? []).filter(f => f !== hookOverride),
+              ...(modelConfig?.primary && modelConfig.primary !== hookOverride ? [modelConfig.primary] : []),
+            ],
+            tier: classification.tier,
+            wasDowngraded: hookOverride !== modelConfig?.primary,
+            reason: `hook override: ${hookOverride}`,
+            selectionMethod: "tier-only",
+          };
+        } else {
+          routingResult = resolveModelForComplexity(
+            classification,
+            modelConfig,
+            routingConfig,
+            availableModelIds,
+            unitType,
+            classification.taskMetadata,
+            capabilityOverrides,
+          );
+        }
 
         if (routingResult.wasDowngraded) {
           effectiveModelConfig = {
@@ -123,11 +197,23 @@ export async function selectAndApplyModel(
             fallbacks: routingResult.fallbacks,
           };
           if (verbose) {
-            const method = routingResult.selectionMethod === "capability-scored" ? "capability-scored" : "tier-only";
-            ctx.ui.notify(
-              `Dynamic routing [${tierLabel(classification.tier)}]: ${routingResult.modelId} (${method} — ${classification.reason})`,
-              "info",
-            );
+            if (routingResult.selectionMethod === "capability-scored" && routingResult.capabilityScores) {
+              // Verbose scoring breakdown for capability-scored decisions (D-20)
+              const tierLbl = tierLabel(classification.tier);
+              const scores = Object.entries(routingResult.capabilityScores)
+                .sort(([, a], [, b]) => b - a)
+                .map(([id, score]) => `${id}: ${score.toFixed(1)}`)
+                .join(", ");
+              ctx.ui.notify(
+                `Dynamic routing [${tierLbl}]: ${routingResult.modelId} (capability-scored) — ${scores}`,
+                "info",
+              );
+            } else {
+              ctx.ui.notify(
+                `Dynamic routing [${tierLabel(classification.tier)}]: ${routingResult.modelId} (${classification.reason})`,
+                "info",
+              );
+            }
           }
         }
         routingTierLabel = ` [${tierLabel(classification.tier)}]`;
@@ -257,4 +343,16 @@ export function resolveModelId<T extends { id: string; provider: string }>(
 
   // Fall back to first non-extension candidate, or any candidate
   return candidates.find(m => !EXTENSION_PROVIDERS.has(m.provider)) ?? candidates[0];
+}
+
+/**
+ * Flat-rate providers charge the same per request regardless of model.
+ * Dynamic routing provides no cost benefit — it only degrades quality (#3453).
+ * Uses case-insensitive matching with alias support to prevent fail-open on
+ * provider naming variations (e.g. "copilot" vs "github-copilot").
+ */
+const FLAT_RATE_PROVIDERS = new Set(["github-copilot", "copilot"]);
+
+export function isFlatRateProvider(provider: string): boolean {
+  return FLAT_RATE_PROVIDERS.has(provider.toLowerCase());
 }

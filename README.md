@@ -27,152 +27,59 @@ One command. Walk away. Come back to a built project with clean git history.
 
 ---
 
-## What's New in v2.52.0
+## What's New in v2.63.0
 
-### VS Code Extension & Web UI
+### MCP Server & Integrations
 
-- **VS Code integration** — status bar, file decorations, bash terminal, session tree, conversation history, and code lens. (#2651)
-- **Dark mode contrast** — raised token floor and flattened opacity tier system for better readability. (#2734)
-- **Auth token gate** — synthetic 401 on missing token, unauthenticated boot state, and recovery screen. (#2740)
+- **MCP server** — 6 read-only project state tools for external integrations, auto-wrapup guard, and question dedup.
+- **Ollama extension** — first-class local LLM support via Ollama, with dynamic routing enabled by default.
+- **Discord bot & daemon** — dedicated daemon package, Discord bot with 6 discord.js shard event listeners, and headless text mode with tool calls.
 
-### Capability Metadata & Model Routing
+### Intelligent Model Routing
 
-- **Capability-based model selection** — replaced model-ID pattern matching with capability metadata, making custom provider integration more reliable. (#2548)
+- **Capability-aware model routing (ADR-004)** — capability scoring, `before_model_select` hook, and task metadata extraction replace pattern-based model selection.
+- **Stop/backtrack capture classifications** — context optimization with model routing and masking.
 
-### Key Changes
+### VS Code & TUI
 
-- **`--bare` mode** — wired across headless, pi-coding-agent, and resource-loader for minimal-output operation.
-- **RPC protocol v2** — new types, init handshake with version detection, and runId generation on prompt/steer/follow_up commands.
-- **PREFERENCES.md rename** — `preferences.md` renamed to `PREFERENCES.md` for consistency. (#2700, #2738)
-- **Comprehensive SQLite audit** — indexes, caching, safety, and reconciliation fixes across gsd-db.
-- **Unified error classifier** — three overlapping error classifiers consolidated into a single classify-decide-act pipeline.
+- **VS Code sidebar redesign** — SCM provider, checkpoints, diagnostics panel, activity feed, workflow controls, session forking, and enhanced code lens.
+- **`/gsd parallel watch`** — native TUI overlay for real-time worker monitoring.
+- **Real-time TUI monitor dashboard** — self-healing dashboard with colorized headless verbose output.
 
-### Key Fixes
+### Agent & Auto-Mode
 
-- **Auto-mode stops on provider errors** — auto loop now halts after provider errors instead of retrying indefinitely. (#2762, #2764)
-- **Transaction safety** — state machine guards moved inside transactions in 5 tool handlers (#2752), and `transaction()` made re-entrant.
-- **Worktree seeding** — `preferences.md` seeded into auto-mode worktrees and included in worktree sync. (#2693)
-- **Idle watchdog** — interactive tools exempted from stall detection (#2676), and filesystem activity no longer overrides stalled-tool detection. (#2697)
-- **Milestone guards** — `allSlicesDone` guarded against vacuous truth on empty slice arrays (#2679), and `complete-milestone` dispatch blocked when validation is `needs-remediation`. (#2682)
-- **Docker overhaul** — fragile setup replaced with proven container patterns. (#2716)
-- **Windows** — EINVAL prevented by disabling detached process groups on Win32. (#2744)
-- **Audit log** — `setLogBasePath` wired into engine init to resurrect audit logging. (#2745)
+- **`/btw` skill** — ephemeral side questions without interrupting the main workflow.
+- **Codebase map** — automatic codebase map injection for fresh agent contexts.
+- **`--resume` flag** — resume previous sessions from the CLI.
+- **Concurrent invocation guard** — prevents overlapping auto-mode runs with parallel worker reliability improvements.
+- **Safety mechanisms on by default** — snapshots and pre-merge checks enabled out of the box.
 
-### v2.51.0 — Skills, RTK, and Verification
+### Infrastructure & Performance
 
-- **`/terminal` command** — direct shell execution from the slash command interface. (#2349)
-- **Managed RTK integration** — RTK binary auto-provisioned with opt-in preference and web UI toggle. (#2620)
-- **Verification classes** — compliance checked before milestone completion, with classes injected into validation prompts. (#2621, #2623)
-- **Skills overhaul** — 30+ new skill packs covering major frameworks, databases, and cloud platforms; curated catalog with `~/.agents/skills/` as primary directory.
+- **Topological sort for extensions** — correct load ordering for dependent extensions.
+- **Headless integration hardening** — real-time streaming, verbose output, and observability improvements across v2.54–v2.55.
+- **GLM-5.1 model** — new model support added.
+- **80+ bug fixes** — worktree safety, parallel mode scoping, state corruption, and more.
 
-### v2.50.0 — Quality Gates
+See the full [Changelog](./CHANGELOG.md) for details on every release.
 
-- **Quality gates** — 8-question quality gates added to planning and completion templates, with parallel evaluation via `evaluating-gates` phase.
-- **Structured error propagation** — errors wired through `UnitResult` for better diagnostics.
+<details>
+<summary>Previous highlights (v2.52 and earlier)</summary>
 
-### v2.49.0 — Git Trailers & Yolo Mode
-
-- **`--yolo` flag** — `/gsd auto --yolo` for non-interactive project init.
-- **Git trailers** — GSD metadata moved from commit subject scopes to git trailers.
-
-### v2.48.0 — Forensics & Discussion
-
-- **`/gsd discuss` for queued milestones** — target milestones still in the queue. (#2349)
-- **Enhanced forensics** — journal and activity log awareness added to `/gsd forensics`.
-
-### v2.47.0 — External Providers
-
-- **External tool execution mode** — `externalToolExecution` mode for external providers in agent-core.
-- **Claude Code CLI provider** — new provider extension for Claude Code CLI. (#2382)
-
-### Previous highlights (v2.42–v2.46)
-
-- **Single-writer state engine** — disciplined state transitions with machine guards, actor identity, reversibility, and TOCTOU hardening. (#2494)
-- **`/gsd rethink`** — conversational project reorganization. (#2459)
-- **`/gsd mcp`** — MCP server status and connectivity. (#2362)
-- **Complete offline mode** — fully offline with local models. (#2429)
-- **Global KNOWLEDGE.md injection** — cross-project knowledge via `~/.gsd/agent/KNOWLEDGE.md`. (#2331)
-- **Mobile-responsive web UI** — browser interface works on phones and tablets. (#2354)
-- **Default isolation mode changed to `none`** — set `git.isolation: worktree` explicitly if needed. (#2481)
-- **Non-API-key provider extensions** — support for Claude Code CLI and similar providers. (#2382)
-- **Docker sandbox template** — official Docker template for isolated auto mode. (#2360)
-- **DB-backed planning tools** — write-side state transitions use atomic SQLite tool calls. (#2141)
-- **Declarative workflow engine** — YAML workflows through auto-loop. (#2024)
-- **`/gsd fast`** — toggle service tier for prioritized API routing. (#1862)
-
----
-
-## What's New in v2.41.0
-
-### New Features
-
-- **Browser-based web interface** — run GSD from the browser with `gsd --web`. Full project management, real-time progress, and multi-project support via server-sent events. (#1717)
-- **Doctor: worktree lifecycle checks** — `/gsd doctor` now validates worktree health, detects orphaned worktrees, consolidates cleanup, and enhances `/worktree list` with lifecycle status. (#1814)
-- **CI: docs-only PR detection** — PRs that only change documentation skip build and test steps, with a new prompt injection scan for security. (#1699)
-- **Custom Models guide** — new documentation for adding custom providers (Ollama, vLLM, LM Studio, proxies) via `models.json`. (#1670)
-
-### Data Loss Prevention (Critical Fixes)
-
-This release includes 7 fixes preventing silent data loss in auto-mode:
-
-- **Hallucination guard** — execute-task agents that complete with zero tool calls are now rejected as hallucinated. Previously, agents could produce detailed but fabricated summaries without writing any code, wasting ~$25/milestone. (#1838)
-- **Merge anchor verification** — before deleting a milestone worktree/branch, GSD now verifies the code is actually on the integration branch. Prevents orphaning commits when squash-merge produces an empty diff. (#1829)
-- **Dirty working tree detection** — `nativeMergeSquash` now distinguishes dirty-tree rejections from content conflicts, preventing silent commit loss when synced `.gsd/` files block the merge. (#1752)
-- **Doctor cleanup safety** — the `orphaned_completed_units` check no longer auto-fixes during post-task health checks. Previously, timing races could cause the doctor to remove valid completion keys, reverting users to earlier tasks. (#1825)
-- **Root file reverse-sync** — worktree teardown now syncs root-level `.gsd/` files (PROJECT.md, REQUIREMENTS.md, completed-units.json) back to the project root. Previously these were lost on milestone closeout. (#1831)
-- **Empty merge guard** — milestone branches with unanchored code changes are preserved instead of deleted when squash-merge produces nothing to commit. (#1755)
-- **Crash-safe task closeout** — orphaned checkboxes in PLAN.md are unchecked on retry, preventing phantom task completion. (#1759)
-
-### Auto-Mode Stability
-
-- **Terminal hang fix** — `stopAuto()` now resolves pending promises, preventing the terminal from freezing permanently after stopping auto-mode. (#1818)
-- **Signal handler coverage** — SIGHUP and SIGINT now clean up lock files, not just SIGTERM. Prevents stranded locks on VS-Code crash. (#1821)
-- **Needs-discussion routing** — milestones in `needs-discussion` phase now route to the smart entry UI instead of hard-stopping, breaking the infinite loop. (#1820)
-- **Infrastructure error handling** — auto-mode stops immediately on ENOSPC, ENOMEM, and similar unrecoverable errors instead of retrying. (#1780)
-- **Dependency-aware dispatch** — slice dispatch now uses declared `depends_on` instead of positional ordering. (#1770)
-- **Queue mode depth verification** — the write gate now processes depth verification in queue mode, fixing a deadlock where CONTEXT.md writes were permanently blocked. (#1823)
-
-### Roadmap Parser Improvements
-
-- **Table format support** — roadmaps using markdown tables (`| S01 | Title | Risk | Status |`) are now parsed correctly. (#1741)
-- **Prose header fallback** — when `## Slices` contains H3 headers instead of checkboxes, the prose parser is invoked as a fallback. (#1744)
-- **Completion marker detection** — prose headers with `✓` or `(Complete)` markers are correctly identified as done. (#1816)
-- **Zero-slice stub handling** — stub roadmaps from `/gsd queue` return `pre-planning` instead of `blocked`. (#1826)
-- **Immediate roadmap fix** — roadmap checkbox and UAT stub are fixed immediately after last task instead of deferring to `complete-slice`. (#1819)
-
-### State & Git Improvements
-
-- **CONTEXT-DRAFT.md fallback** — `depends_on` is read from CONTEXT-DRAFT.md when CONTEXT.md doesn't exist, preventing draft milestones from being promoted past dependency constraints. (#1743)
-- **Unborn branch support** — `nativeBranchExists` handles repos with zero commits, preventing dispatch deadlock on new repos. (#1815)
-- **Ghost milestone detection** — empty `.gsd/milestones/` directories are skipped instead of crashing `deriveState()`. (#1817)
-- **Default branch detection** — milestone merge detects `master` vs `main` instead of hardcoding. (#1669)
-- **Milestone title extraction** — titles are pulled from CONTEXT.md headings when no ROADMAP exists. (#1729)
-
-### Windows & Platform
-
-- **Windows path handling** — 8.3 short paths, `pathToFileURL` for ESM imports, and `realpathSync.native` fixes across the test suite and verification gate. (#1804)
-- **DEP0190 fix** — `spawnSync` deprecation warning eliminated by passing commands to shell explicitly. (#1827)
-- **Web build skip on Windows** — Next.js webpack EPERM errors on system directories are handled gracefully.
-
-### Developer Experience
-
-- **@ file finder fix** — typing `@` no longer freezes the TUI. The fix adds debounce, dedup, and empty-query short-circuit. (#1832)
-- **Tool-call loop guard** — detects and breaks infinite tool-call loops within a single unit, preventing stack overflow. (#1801)
-- **Completion deferral fix** — roadmap checkbox and UAT stub are fixed at task level, closing the fragile handoff window between last task and `complete-slice`. (#1819)
-
-See the full [Changelog](./CHANGELOG.md) for all 70+ fixes in this release.
-
-### Previous highlights (v2.39–v2.41)
-
+- **VS Code integration** — status bar, file decorations, bash terminal, session tree, conversation history, and code lens
+- **Capability-based model selection** — replaced model-ID pattern matching with capability metadata
+- **Skills overhaul** — 30+ skill packs covering major frameworks, databases, and cloud platforms
+- **Quality gates** — 8-question quality gates for planning and completion templates
+- **Single-writer state engine** — disciplined state transitions with machine guards and TOCTOU hardening
+- **`/gsd rethink`** — conversational project reorganization
+- **Complete offline mode** — fully offline with local models
 - **Browser-based web interface** — run GSD from the browser with `gsd --web`
-- **GitHub sync extension** — auto-sync milestones to GitHub Issues, PRs, and Milestones
-- **Skill tool resolution** — skills auto-activate in dispatched prompts
-- **Health check phase 2** — real-time doctor issues in dashboard and visualizer
-- **Forensics upgrade** — full-access GSD debugger with anomaly detection
+- **DB-backed planning tools** — atomic SQLite tool calls for state transitions
+- **Declarative workflow engine** — YAML workflows through auto-loop
 - **7 data-loss prevention fixes** — hallucination guard, merge anchor verification, dirty tree detection, and more
-- **Pipeline decomposition** — auto-loop rewritten as linear phase pipeline
-- **Sliding-window stuck detection** — pattern-aware, fewer false positives
-- **Data-loss recovery** — automatic detection and recovery from v2.30–v2.38 migration issues
+- **Doctor: worktree lifecycle checks** — validates worktree health, detects orphans, consolidates cleanup
+
+</details>
 
 ---
 
@@ -626,7 +533,7 @@ See the full [Token Optimization Guide](./docs/token-optimization.md) for detail
 
 ### Bundled Tools
 
-GSD ships with 19 extensions, all loaded automatically:
+GSD ships with 24 extensions, all loaded automatically:
 
 | Extension              | What it provides                                                                                                       |
 | ---------------------- | ---------------------------------------------------------------------------------------------------------------------- |
@@ -648,7 +555,12 @@ GSD ships with 19 extensions, all loaded automatically:
 | **Remote Questions**   | Route decisions to Slack/Discord when human input is needed in headless/CI mode                                         |
 | **Universal Config**   | Discover and import MCP servers and rules from other AI coding tools                                                    |
 | **AWS Auth**           | Automatic Bedrock credential refresh for AWS-hosted models                                                              |
-| **TTSR**               | Tool-use type-safe runtime validation                                                                                   |
+| **Ollama**             | First-class local LLM support via Ollama                                                                                |
+| **Claude Code CLI**    | External provider extension for Claude Code CLI                                                                         |
+| **cmux**               | Claude multiplexer integration — desktop notifications, sidebar metadata, visual subagent splits                        |
+| **GitHub Sync**        | Auto-sync milestones to GitHub Issues, PRs, and Milestones                                                              |
+| **LSP**                | Language Server Protocol — diagnostics, definitions, references, hover, rename                                          |
+| **TTSR**               | Tool-triggered system rules — conditional context injection based on tool usage                                         |
 
 ### Bundled Agents
 
@@ -733,7 +645,7 @@ gsd (CLI binary)
           ├─ resource-loader.ts  Syncs bundled extensions + agents to ~/.gsd/agent/
           └─ src/resources/
               ├─ extensions/gsd/    Core GSD extension (auto, state, commands, ...)
-              ├─ extensions/...     18 supporting extensions
+              ├─ extensions/...     23 supporting extensions
               ├─ agents/            scout, researcher, worker
               ├─ AGENTS.md          Agent routing instructions
               └─ GSD-WORKFLOW.md    Manual bootstrap protocol

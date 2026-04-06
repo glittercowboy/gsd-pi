@@ -25,6 +25,8 @@ import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
+import { buildHttpTransportOpts } from "./auth.js";
+import type { McpHttpAuthConfig } from "./auth.js";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -36,6 +38,10 @@ interface McpServerConfig {
 	env?: Record<string, string>;
 	url?: string;
 	cwd?: string;
+	/** Static headers for HTTP transport (supports ${VAR} env resolution). */
+	headers?: Record<string, string>;
+	/** OAuth config for HTTP transport. */
+	oauth?: McpHttpAuthConfig["oauth"];
 }
 
 interface McpToolSchema {
@@ -87,6 +93,9 @@ function readConfigs(): McpServerConfig[] {
 						? "http"
 						: "unknown";
 
+				const hasHeaders = hasUrl && config.headers && typeof config.headers === "object";
+				const hasOAuth = hasUrl && config.oauth && typeof config.oauth === "object";
+
 				servers.push({
 					name,
 					transport,
@@ -99,6 +108,8 @@ function readConfigs(): McpServerConfig[] {
 						cwd: typeof config.cwd === "string" ? config.cwd : undefined,
 					}),
 					...(hasUrl && { url: config.url as string }),
+					headers: hasHeaders ? config.headers as Record<string, string> : undefined,
+					oauth: hasOAuth ? config.oauth as McpHttpAuthConfig["oauth"] : undefined,
 				});
 			}
 		} catch {
@@ -159,7 +170,11 @@ async function getOrConnect(name: string, signal?: AbortSignal): Promise<Client>
 			/\$\{([^}]+)\}/g,
 			(_, varName) => process.env[varName] ?? "",
 		);
-		transport = new StreamableHTTPClientTransport(new URL(resolvedUrl));
+		const httpOpts = buildHttpTransportOpts({
+			headers: config.headers,
+			oauth: config.oauth,
+		});
+		transport = new StreamableHTTPClientTransport(new URL(resolvedUrl), httpOpts);
 	} else {
 		throw new Error(`Server "${config.name}" has unsupported transport: ${config.transport}`);
 	}

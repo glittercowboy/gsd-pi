@@ -450,5 +450,44 @@ console.log('\n=== complete-task: handler with missing plan file ===');
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// complete-task: minimal params — no optional fields (#2771 regression)
+// ═══════════════════════════════════════════════════════════════════════════
+
+console.log('\n=== complete-task: minimal params (no keyFiles, keyDecisions, verificationEvidence, blockerDiscovered) ===');
+{
+  const dbPath = tempDbPath();
+  openDatabase(dbPath);
+
+  const { basePath, planPath } = createTempProject();
+
+  insertMilestone({ id: 'M001', title: 'Test Milestone' });
+  insertSlice({ id: 'S01', milestoneId: 'M001', title: 'Test Slice' });
+
+  // Minimal params — only required fields, all optional enrichment fields omitted
+  const minimalParams = {
+    taskId: 'T01',
+    sliceId: 'S01',
+    milestoneId: 'M001',
+    oneLiner: 'Basic task',
+    narrative: 'Did the work.',
+    verification: 'Looks good.',
+    // keyFiles, keyDecisions, verificationEvidence, blockerDiscovered intentionally omitted
+  };
+
+  const result = await handleCompleteTask(minimalParams as any, basePath);
+
+  assertTrue(!('error' in result), 'handler should not crash with minimal params (no optional fields)');
+  if (!('error' in result)) {
+    assertTrue(fs.existsSync(result.summaryPath), 'summary file should be written with minimal params');
+    const summaryContent = fs.readFileSync(result.summaryPath, 'utf-8');
+    assertMatch(summaryContent, /blocker_discovered:\s*false/, 'blocker_discovered should default to false');
+    assertMatch(summaryContent, /\(none\)/, 'key_files/key_decisions should show (none) placeholder');
+  }
+
+  cleanupDir(basePath);
+  cleanup(dbPath);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 
 report();

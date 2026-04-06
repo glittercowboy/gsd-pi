@@ -19,6 +19,22 @@ import { logWarning } from "./workflow-logger.js";
 import { deriveState } from "./state.js";
 import type { GSDState } from "./types.js";
 
+// ─── Helpers ─────────────────────────────────────────────────────────────
+
+/**
+ * Strip a leading ID prefix (e.g. "M001: " or "S04: ") from a title
+ * to prevent double-prefixing when the renderer adds its own prefix.
+ * Handles repeated prefixes (e.g. "M001: M001: M001: Title" → "Title").
+ */
+export function stripIdPrefix(title: string, id: string): string {
+  const prefix = `${id}: `;
+  let result = title;
+  while (result.startsWith(prefix)) {
+    result = result.slice(prefix.length);
+  }
+  return result.trim() || title;
+}
+
 // ─── PLAN.md Projection ──────────────────────────────────────────────────
 
 /**
@@ -28,7 +44,8 @@ import type { GSDState } from "./types.js";
 export function renderPlanContent(sliceRow: SliceRow, taskRows: TaskRow[]): string {
   const lines: string[] = [];
 
-  lines.push(`# ${sliceRow.id}: ${sliceRow.title}`);
+  const displayTitle = stripIdPrefix(sliceRow.title, sliceRow.id);
+  lines.push(`# ${sliceRow.id}: ${displayTitle}`);
   lines.push("");
   // #2945: never use full_summary_md/full_uat_md as display fallbacks —
   // they contain multi-line rendered markdown that corrupts single-line fields.
@@ -97,7 +114,8 @@ export function renderPlanProjection(basePath: string, milestoneId: string, slic
 export function renderRoadmapContent(milestoneRow: MilestoneRow, sliceRows: SliceRow[]): string {
   const lines: string[] = [];
 
-  lines.push(`# ${milestoneRow.id}: ${milestoneRow.title}`);
+  const displayTitle = stripIdPrefix(milestoneRow.title, milestoneRow.id);
+  lines.push(`# ${milestoneRow.id}: ${displayTitle}`);
   lines.push("");
   lines.push("## Vision");
   lines.push(milestoneRow.vision || milestoneRow.title || "TBD");
@@ -265,14 +283,14 @@ export function renderStateContent(state: GSDState): string {
   lines.push("# GSD State", "");
 
   const activeSlice = state.activeSlice
-    ? `${state.activeSlice.id}: ${state.activeSlice.title}`
+    ? `${state.activeSlice.id}: ${stripIdPrefix(state.activeSlice.title, state.activeSlice.id)}`
     : "None";
 
   if (state.phase === 'complete' && state.lastCompletedMilestone) {
     lines.push(`**Last Completed Milestone:** ${state.lastCompletedMilestone.id}: ${state.lastCompletedMilestone.title}`);
   } else {
     const activeMilestone = state.activeMilestone
-      ? `${state.activeMilestone.id}: ${state.activeMilestone.title}`
+      ? `${state.activeMilestone.id}: ${stripIdPrefix(state.activeMilestone.title, state.activeMilestone.id)}`
       : "None";
     lines.push(`**Active Milestone:** ${activeMilestone}`);
   }
@@ -286,7 +304,7 @@ export function renderStateContent(state: GSDState): string {
 
   for (const entry of state.registry) {
     const glyph = entry.status === "complete" ? "\u2705" : entry.status === "active" ? "\uD83D\uDD04" : entry.status === "parked" ? "\u23F8\uFE0F" : "\u2B1C";
-    lines.push(`- ${glyph} **${entry.id}:** ${entry.title}`);
+    lines.push(`- ${glyph} **${entry.id}:** ${stripIdPrefix(entry.title, entry.id)}`);
   }
 
   lines.push("");
@@ -423,7 +441,7 @@ export function regenerateIfMissing(
           renderSummaryProjection(basePath, milestoneId, sliceId, task.id);
           regenerated++;
         } catch (err) {
-          console.error(`[projections] regenerateIfMissing SUMMARY failed for ${task.id}:`, err);
+          logWarning("projection", `regenerateIfMissing SUMMARY failed for ${task.id}: ${(err as Error).message}`);
         }
       }
     }
@@ -452,7 +470,7 @@ export function regenerateIfMissing(
     }
     return true;
   } catch (err) {
-    console.error(`[projections] regenerateIfMissing ${fileType} failed:`, err);
+    logWarning("projection", `regenerateIfMissing ${fileType} failed: ${(err as Error).message}`);
     return false;
   }
 }

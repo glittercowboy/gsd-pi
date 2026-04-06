@@ -298,6 +298,10 @@ if (cliFlags.messages[0] === 'sessions') {
 // `gsd headless` — run auto-mode without TUI
 if (cliFlags.messages[0] === 'headless') {
   await ensureRtkBootstrap()
+  // Sync bundled resources before headless runs (#3471). Without this,
+  // headless-query loads from src/resources/ while auto/interactive load
+  // from ~/.gsd/agent/extensions/ — different extension copies diverge.
+  initResources(agentDir)
   const { runHeadless, parseHeadlessArgs } = await import('./headless.js')
   await runHeadless(parseHeadlessArgs(process.argv))
   process.exit(0)
@@ -453,7 +457,7 @@ if (isPrintMode) {
   await resourceLoader.reload()
   markStartup('resourceLoader.reload')
 
-  const { session, extensionsResult } = await createAgentSession({
+  const { session, extensionsResult, modelFallbackMessage } = await createAgentSession({
     authStorage,
     modelRegistry,
     settingsManager,
@@ -467,11 +471,30 @@ if (isPrintMode) {
   // registry, causing the user's valid choice to be silently overwritten.
   validateConfiguredModel(modelRegistry, settingsManager)
 
+  // Re-apply the validated model to the session only when findInitialModel() used a
+  // fallback (not when restoring an existing session's model). This prevents silently
+  // overriding the persisted model of resumed conversations (#3534).
+  if (modelFallbackMessage) {
+    const validatedProvider = settingsManager.getDefaultProvider()
+    const validatedModelId = settingsManager.getDefaultModel()
+    if (validatedProvider && validatedModelId) {
+      const correctModel = modelRegistry.getAvailable()
+        .find((m) => m.provider === validatedProvider && m.id === validatedModelId)
+      if (correctModel) {
+        try {
+          await session.setModel(correctModel)
+        } catch {
+          // Provider not ready — leave session on its current model
+        }
+      }
+    }
+  }
+
   if (extensionsResult.errors.length > 0) {
     for (const err of extensionsResult.errors) {
       // Downgrade conflicts with built-in tools to warnings (#1347)
-      const isSuperseded = err.error.includes("supersedes");
-      const prefix = isSuperseded ? "Extension conflict" : "Extension load error";
+      const isConflict = err.error.includes("supersedes") || err.error.includes("conflicts with");
+      const prefix = isConflict ? "Extension conflict" : "Extension load error";
       process.stderr.write(`[gsd] ${prefix}: ${err.error}\n`)
     }
   }
@@ -606,7 +629,7 @@ const resourceLoadPromise = resourceLoader.reload()
 await resourceLoadPromise
 markStartup('resourceLoader.reload')
 
-const { session, extensionsResult } = await createAgentSession({
+const { session, extensionsResult, modelFallbackMessage: interactiveFallbackMsg } = await createAgentSession({
   authStorage,
   modelRegistry,
   settingsManager,
@@ -620,10 +643,29 @@ markStartup('createAgentSession')
 // registry, causing the user's valid choice to be silently overwritten.
 validateConfiguredModel(modelRegistry, settingsManager)
 
+// Re-apply the validated model to the session only when findInitialModel() used a
+// fallback (not when restoring an existing session's model). This prevents silently
+// overriding the persisted model of resumed conversations (#3534).
+if (interactiveFallbackMsg) {
+  const validatedProvider = settingsManager.getDefaultProvider()
+  const validatedModelId = settingsManager.getDefaultModel()
+  if (validatedProvider && validatedModelId) {
+    const correctModel = modelRegistry.getAvailable()
+      .find((m) => m.provider === validatedProvider && m.id === validatedModelId)
+    if (correctModel) {
+      try {
+        await session.setModel(correctModel)
+      } catch {
+        // Provider not ready — leave session on its current model
+      }
+    }
+  }
+}
+
 if (extensionsResult.errors.length > 0) {
   for (const err of extensionsResult.errors) {
-    const isSuperseded = err.error.includes("supersedes");
-    const prefix = isSuperseded ? "Extension conflict" : "Extension load error";
+    const isConflict = err.error.includes("supersedes") || err.error.includes("conflicts with");
+    const prefix = isConflict ? "Extension conflict" : "Extension load error";
     process.stderr.write(`[gsd] ${prefix}: ${err.error}\n`)
   }
 }

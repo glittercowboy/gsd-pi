@@ -136,17 +136,30 @@ console.log('\n── Loop guard: nested args are not stripped ──');
     assert.deepStrictEqual(getToolCallLoopCount(), 1, `Each unique nested call should reset count to 1`);
   }
 
-  // Truly identical nested calls should still be detected
+  // Truly identical nested calls should still be detected.
+  // ask_user_questions has a strict threshold of 1, so the 2nd identical call is blocked.
   resetToolCallLoopGuard();
-  for (let i = 1; i <= 4; i++) {
-    checkToolCallLoop('ask_user_questions', {
-      questions: [{ id: 'same', question: 'Same?' }],
-    });
-  }
+  const first = checkToolCallLoop('ask_user_questions', {
+    questions: [{ id: 'same', question: 'Same?' }],
+  });
+  assert.ok(first.block === false, 'First ask_user_questions call should be allowed');
   const blocked = checkToolCallLoop('ask_user_questions', {
     questions: [{ id: 'same', question: 'Same?' }],
   });
-  assert.ok(blocked.block === true, 'Identical nested calls should still be blocked');
+  assert.ok(blocked.block === true, '2nd identical ask_user_questions call should be blocked (strict threshold)');
+
+  // Non-strict tools still allow up to 4 identical calls
+  resetToolCallLoopGuard();
+  for (let i = 1; i <= 4; i++) {
+    const r = checkToolCallLoop('web_search', {
+      questions: [{ id: 'same', question: 'Same?' }],
+    });
+    assert.ok(r.block === false, `web_search call ${i} should be allowed (normal threshold)`);
+  }
+  const blockedNormal = checkToolCallLoop('web_search', {
+    questions: [{ id: 'same', question: 'Same?' }],
+  });
+  assert.ok(blockedNormal.block === true, '5th identical web_search call should be blocked');
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

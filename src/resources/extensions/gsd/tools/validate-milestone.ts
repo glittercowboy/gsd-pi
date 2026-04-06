@@ -22,6 +22,7 @@ import { saveFile, clearParseCache } from "../files.js";
 import { invalidateStateCache } from "../state.js";
 import { VALIDATION_VERDICTS, isValidMilestoneVerdict } from "../verdict-parser.js";
 import { insertMilestoneValidationGates } from "../milestone-validation-gates.js";
+import { logWarning } from "../workflow-logger.js";
 
 export interface ValidateMilestoneParams {
   milestoneId: string;
@@ -137,9 +138,7 @@ export async function handleValidateMilestone(
   try {
     await saveFile(validationPath, validationMd);
   } catch (renderErr) {
-    process.stderr.write(
-      `gsd-db: validate_milestone — disk render failed, rolling back DB row: ${(renderErr as Error).message}\n`,
-    );
+    logWarning("tool", `validate_milestone — disk render failed, rolling back DB row: ${(renderErr as Error).message}`);
     deleteAssessmentByScope(params.milestoneId, 'milestone-validation');
     return { error: `disk render failed: ${(renderErr as Error).message}` };
   }

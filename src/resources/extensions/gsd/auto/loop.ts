@@ -48,6 +48,7 @@ export async function autoLoop(
   let iteration = 0;
   const loopState: LoopState = { recentUnits: [], stuckRecoveryAttempts: 0 };
   let consecutiveErrors = 0;
+  const recentErrorMessages: string[] = [];
 
   while (s.active) {
     iteration++;
@@ -202,6 +203,7 @@ export async function autoLoop(
 
         deps.clearUnitTimeout();
         consecutiveErrors = 0;
+        recentErrorMessages.length = 0;
         deps.emitJournalEvent({ ts: new Date().toISOString(), flowId, seq: nextSeq(), eventType: "iteration-end", data: { iteration } });
         debugLog("autoLoop", { phase: "iteration-complete", iteration });
         continue;
@@ -250,11 +252,17 @@ export async function autoLoop(
       if (finalizeResult.action === "continue") continue;
 
       consecutiveErrors = 0; // Iteration completed successfully
+      recentErrorMessages.length = 0;
       deps.emitJournalEvent({ ts: new Date().toISOString(), flowId, seq: nextSeq(), eventType: "iteration-end", data: { iteration } });
       debugLog("autoLoop", { phase: "iteration-complete", iteration });
     } catch (loopErr) {
       // ── Blanket catch: absorb unexpected exceptions, apply graduated recovery ──
       const msg = loopErr instanceof Error ? loopErr.message : String(loopErr);
+
+      // Always emit iteration-end on error so the journal records iteration
+      // completion even on failure (#2344). Without this, errors in
+      // runFinalize leave the journal incomplete, making diagnosis harder.
+      deps.emitJournalEvent({ ts: new Date().toISOString(), flowId, seq: nextSeq(), eventType: "iteration-end", data: { iteration, error: msg } });
 
       // ── Infrastructure errors: immediate stop, no retry ──
       // These are unrecoverable (disk full, OOM, etc.). Retrying just burns
@@ -280,6 +288,7 @@ export async function autoLoop(
       }
 
       consecutiveErrors++;
+      recentErrorMessages.push(msg.length > 120 ? msg.slice(0, 120) + "..." : msg);
       debugLog("autoLoop", {
         phase: "iteration-error",
         iteration,
@@ -289,8 +298,11 @@ export async function autoLoop(
 
       if (consecutiveErrors >= 3) {
         // 3+ consecutive: hard stop — something is fundamentally broken
+        const errorHistory = recentErrorMessages
+          .map((m, i) => `  ${i + 1}. ${m}`)
+          .join("\n");
         ctx.ui.notify(
-          `Auto-mode stopped: ${consecutiveErrors} consecutive iteration failures. Last: ${msg}`,
+          `Auto-mode stopped: ${consecutiveErrors} consecutive iteration failures:\n${errorHistory}`,
           "error",
         );
         await deps.stopAuto(

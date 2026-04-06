@@ -4,10 +4,12 @@ import { join } from "node:path";
 
 import type { ExtensionContext } from "@gsd/pi-coding-agent";
 
+import { logWarning } from "../workflow-logger.js";
 import { debugTime } from "../debug-logger.js";
-import { loadPrompt } from "../prompt-loader.js";
+import { loadPrompt, getTemplatesDir } from "../prompt-loader.js";
 import { readForensicsMarker } from "../forensics.js";
 import { resolveAllSkillReferences, renderPreferencesForSystemPrompt, loadEffectiveGSDPreferences } from "../preferences.js";
+import { resolveSkillReference } from "../preferences-skills.js";
 import { resolveGsdRootFile, resolveSliceFile, resolveSlicePath, resolveTaskFile, resolveTaskFiles, resolveTasksDir, relSliceFile, relSlicePath, relTaskFile } from "../paths.js";
 import { hasSkillSnapshot, detectNewSkills, formatSkillsXml } from "../skill-discovery.js";
 import { getActiveAutoWorktreeContext } from "../auto-worktree.js";
@@ -18,6 +20,31 @@ import { toPosixPath } from "../../shared/mod.js";
 import { markCmuxPromptShown, shouldPromptToEnableCmux } from "../../cmux/index.js";
 
 const gsdHome = process.env.GSD_HOME || join(homedir(), ".gsd");
+
+/**
+ * Bundled skill triggers — resolved dynamically at runtime instead of
+ * hardcoding absolute paths in the system prompt template. Only skills
+ * that actually exist on disk are included in the table. (#3575)
+ */
+const BUNDLED_SKILL_TRIGGERS: Array<{ trigger: string; skill: string }> = [
+  { trigger: "Frontend UI - web components, pages, landing pages, dashboards, React/HTML/CSS, styling", skill: "frontend-design" },
+  { trigger: "macOS or iOS apps - SwiftUI, Xcode, App Store", skill: "swiftui" },
+  { trigger: "Debugging - complex bugs, failing tests, root-cause investigation after standard approaches fail", skill: "debug-like-expert" },
+];
+
+function buildBundledSkillsTable(): string {
+  const cwd = process.cwd();
+  const rows: string[] = [];
+  for (const { trigger, skill } of BUNDLED_SKILL_TRIGGERS) {
+    const resolution = resolveSkillReference(skill, cwd);
+    if (resolution.method === "unresolved") continue; // skill not installed — omit from prompt
+    rows.push(`| ${trigger} | \`${resolution.resolvedPath}\` |`);
+  }
+  if (rows.length === 0) {
+    return "*No bundled skills found. Install skills to `~/.agents/skills/` or `~/.claude/skills/`.*";
+  }
+  return `| Trigger | Skill to load |\n|---|---|\n${rows.join("\n")}`;
+}
 
 function warnDeprecatedAgentInstructions(): void {
   const paths = [
@@ -42,7 +69,10 @@ export async function buildBeforeAgentStartResult(
   if (!existsSync(join(process.cwd(), ".gsd"))) return undefined;
 
   const stopContextTimer = debugTime("context-inject");
-  const systemContent = loadPrompt("system");
+  const systemContent = loadPrompt("system", {
+    bundledSkillsTable: buildBundledSkillsTable(),
+    templatesDir: getTemplatesDir(),
+  });
   const loadedPreferences = loadEffectiveGSDPreferences();
   if (shouldPromptToEnableCmux(loadedPreferences?.preferences)) {
     markCmuxPromptShown();
@@ -83,8 +113,8 @@ export async function buildBeforeAgentStartResult(
         memoryBlock = `\n\n${formatted}`;
       }
     }
-  } catch {
-    // non-fatal
+  } catch (e) {
+    logWarning("bootstrap", `memory block fetch failed: ${(e as Error).message}`);
   }
 
   let newSkillsBlock = "";
@@ -111,8 +141,8 @@ export async function buildBeforeAgentStartResult(
           : rawContent;
         codebaseBlock = `\n\n[PROJECT CODEBASE — File structure and descriptions (generated ${generatedAt}, may be stale — run /gsd codebase update to refresh)]\n\n${content}`;
       }
-    } catch {
-      // skip
+    } catch (e) {
+      logWarning("bootstrap", `CODEBASE file read failed: ${(e as Error).message}`);
     }
   }
 
@@ -158,8 +188,8 @@ export function loadKnowledgeBlock(gsdHomeDir: string, cwd: string): { block: st
         globalSizeKb = Buffer.byteLength(content, "utf-8") / 1024;
         globalKnowledge = content;
       }
-    } catch {
-      // skip
+    } catch (e) {
+      logWarning("bootstrap", `global knowledge file read failed: ${(e as Error).message}`);
     }
   }
 
@@ -170,8 +200,8 @@ export function loadKnowledgeBlock(gsdHomeDir: string, cwd: string): { block: st
     try {
       const content = readFileSync(knowledgePath, "utf-8").trim();
       if (content) projectKnowledge = content;
-    } catch {
-      // skip
+    } catch (e) {
+      logWarning("bootstrap", `project knowledge file read failed: ${(e as Error).message}`);
     }
   }
 
@@ -429,8 +459,8 @@ export function clearForensicsMarker(basePath: string): void {
   if (existsSync(markerPath)) {
     try {
       unlinkSync(markerPath);
-    } catch {
-      // non-fatal
+    } catch (e) {
+      logWarning("bootstrap", `unlinkSync forensics marker failed: ${(e as Error).message}`);
     }
   }
 }

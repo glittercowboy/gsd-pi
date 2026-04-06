@@ -31,6 +31,7 @@ import {
 import { findMilestoneIds } from './guided-flow.js';
 import { parseRoadmap, parsePlan } from './parsers-legacy.js';
 import { parseContextDependsOn } from './files.js';
+import { logWarning } from './workflow-logger.js';
 
 // ─── DECISIONS.md Parser ───────────────────────────────────────────────────
 
@@ -712,25 +713,25 @@ export function migrateFromMarkdown(gsdDir: string): {
     try {
       decisions = importDecisions(gsdDir);
     } catch (err) {
-      process.stderr.write(`gsd-migrate: skipping decisions import: ${(err as Error).message}\n`);
+      logWarning("migration", `skipping decisions import: ${(err as Error).message}`);
     }
 
     try {
       requirements = importRequirements(gsdDir);
     } catch (err) {
-      process.stderr.write(`gsd-migrate: skipping requirements import: ${(err as Error).message}\n`);
+      logWarning("migration", `skipping requirements import: ${(err as Error).message}`);
     }
 
     try {
       artifacts = importHierarchyArtifacts(gsdDir);
     } catch (err) {
-      process.stderr.write(`gsd-migrate: skipping artifacts import: ${(err as Error).message}\n`);
+      logWarning("migration", `skipping artifacts import: ${(err as Error).message}`);
     }
 
     try {
       hierarchy = migrateHierarchyToDb(gsdDir);
     } catch (err) {
-      process.stderr.write(`gsd-migrate: skipping hierarchy migration: ${(err as Error).message}\n`);
+      logWarning("migration", `skipping hierarchy migration: ${(err as Error).message}`);
     }
   });
 

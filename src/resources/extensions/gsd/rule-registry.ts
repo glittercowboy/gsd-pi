@@ -6,6 +6,7 @@
 //
 // A module-level singleton accessor allows existing code to migrate incrementally.
 
+import { logWarning } from "./workflow-logger.js";
 import type { UnifiedRule, RulePhase } from "./rule-types.js";
 import type { DispatchAction, DispatchContext, DispatchRule } from "./auto-dispatch.js";
 import type {
@@ -387,8 +388,8 @@ export class RuleRegistry {
       const dir = join(basePath, ".gsd");
       if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
       writeFileSync(this._hookStatePath(basePath), JSON.stringify(state, null, 2), "utf-8");
-    } catch {
-      // Non-fatal — state is recreatable from artifacts
+    } catch (e) {
+      logWarning("registry", `failed to persist hook state: ${(e as Error).message}`);
     }
   }
 
@@ -407,8 +408,8 @@ export class RuleRegistry {
           }
         }
       }
-    } catch {
-      // Non-fatal — fresh state is fine
+    } catch (e) {
+      logWarning("registry", `failed to restore hook state: ${(e as Error).message}`);
     }
   }
 
@@ -423,8 +424,8 @@ export class RuleRegistry {
           "utf-8",
         );
       }
-    } catch {
-      // Non-fatal
+    } catch (e) {
+      logWarning("registry", `failed to clear hook state: ${(e as Error).message}`);
     }
   }
 

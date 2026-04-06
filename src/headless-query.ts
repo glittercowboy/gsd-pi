@@ -16,12 +16,22 @@
 
 import { createJiti } from '@mariozechner/jiti'
 import { fileURLToPath } from 'node:url'
+import { join } from 'node:path'
+import { homedir } from 'node:os'
 import type { GSDState } from './resources/extensions/gsd/types.js'
 import { resolveBundledSourceResource } from './bundled-resource-path.js'
 
 const jiti = createJiti(fileURLToPath(import.meta.url), { interopDefault: true, debug: false })
+// Resolve extensions from the synced agent directory so headless-query
+// loads the same extension copy as interactive/auto modes (#3471).
+// Falls back to bundled source for source-tree dev workflows.
+const agentExtensionsDir = join(process.env.GSD_AGENT_DIR || join(homedir(), '.gsd', 'agent'), 'extensions', 'gsd')
+const { existsSync } = await import('node:fs')
+const useAgentDir = existsSync(join(agentExtensionsDir, 'state.ts'))
 const gsdExtensionPath = (...segments: string[]) =>
-  resolveBundledSourceResource(import.meta.url, 'extensions', 'gsd', ...segments)
+  useAgentDir
+    ? join(agentExtensionsDir, ...segments)
+    : resolveBundledSourceResource(import.meta.url, 'extensions', 'gsd', ...segments)
 
 async function loadExtensionModules() {
   const stateModule = await jiti.import(gsdExtensionPath('state.ts'), {}) as any

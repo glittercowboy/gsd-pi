@@ -30,7 +30,7 @@ Ask **1–3 questions per round**. Keep each question focused on one of:
 - **The biggest technical unknowns / risks** — what could fail, what hasn't been proven
 - **What external systems/services this touches** — APIs, databases, third-party services
 
-**If `{{structuredQuestionsAvailable}}` is `true`:** use `ask_user_questions` for each round. 1–3 questions per call, each as a separate question object. Keep option labels short (3–5 words). Always include a freeform "Other / let me explain" option. When the user picks that option or writes a long freeform answer, switch to plain text follow-up for that thread before resuming structured questions.
+**If `{{structuredQuestionsAvailable}}` is `true`:** use `ask_user_questions` for each round. 1–3 questions per call, each as a separate question object. Keep option labels short (3–5 words). Always include a freeform "Other / let me explain" option. When the user picks that option or writes a long freeform answer, switch to plain text follow-up for that thread before resuming structured questions. **IMPORTANT: Call `ask_user_questions` exactly once per turn. Never make multiple calls with the same or overlapping questions — wait for the user's response before asking the next round.**
 
 **If `{{structuredQuestionsAvailable}}` is `false`:** ask questions in plain text. Keep each round to 1–3 focused questions. Wait for answers before asking the next round.
 

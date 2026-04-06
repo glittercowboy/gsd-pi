@@ -35,6 +35,8 @@ Then:
 
 **Autonomous execution:** Do not call `ask_user_questions` or `secure_env_collect`. You are running in auto-mode — there is no human available to answer questions. Make reasonable assumptions and document them in the slice summary. If a decision genuinely requires human input, note it in the summary and proceed with the best available option.
 
+**File system safety:** Task summaries are preloaded in the inlined context above. If you need to re-read any of them, use `find .gsd/milestones/{{milestoneId}}/slices/{{sliceId}}/tasks -name "*-SUMMARY.md"` to list file paths first — never pass `{{slicePath}}` or any other directory path directly to the `read` tool. The `read` tool only accepts file paths, not directories.
+
 **You MUST call `gsd_complete_slice` with the slice summary and UAT content before finishing. The tool persists to both DB and disk and renders `{{sliceSummaryPath}}` and `{{sliceUatPath}}` automatically.**
 
 When done, say: "Slice {{sliceId}} complete."

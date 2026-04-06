@@ -10,12 +10,13 @@
  * triggers a follow-up free-text input prompt via ctx.ui.input().
  */
 
-import { describe, it } from "node:test";
+import { describe, it, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 
 // The ask-user-questions extension registers a tool via pi.registerTool().
 // We capture that registration and call execute() directly with a mock context.
 import AskUserQuestions from "../../ask-user-questions.js";
+import { resetAskUserQuestionsCache } from "../../ask-user-questions.js";
 
 interface CapturedTool {
 	name: string;
@@ -73,6 +74,10 @@ function makeMockCtx(opts: {
 }
 
 describe("ask-user-questions RPC fallback free-text", () => {
+	beforeEach(() => {
+		resetAskUserQuestionsCache();
+	});
+
 	it("prompts for free-text input when user selects 'None of the above'", async () => {
 		const tool = captureTool();
 		const { ctx, selectCalls, inputCalls } = makeMockCtx({

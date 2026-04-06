@@ -16,6 +16,7 @@ import { gsdRoot } from "./paths.js";
 import { assertSafeDirectory } from "./validate-directory.js";
 import type { ProjectDetection, ProjectSignals } from "./detection.js";
 import { runSkillInstallStep } from "./skill-catalog.js";
+import { generateCodebaseMap, writeCodebaseMap } from "./codebase-generator.js";
 
 // ─── Types ──────────────────────────────────────────────────────────────────────
 
@@ -237,6 +238,17 @@ export async function showProjectInit(
   // Ensure .gitignore
   ensureGitignore(basePath);
   untrackRuntimeFiles(basePath);
+
+  // Auto-generate codebase map for instant agent orientation
+  try {
+    const result = generateCodebaseMap(basePath);
+    if (result.fileCount > 0) {
+      writeCodebaseMap(basePath, result.content);
+      ctx.ui.notify(`Codebase map generated: ${result.fileCount} files`, "info");
+    }
+  } catch {
+    // Non-fatal — codebase map generation failure should never block project init
+  }
 
   ctx.ui.notify("GSD initialized. Starting your first milestone...", "info");
 

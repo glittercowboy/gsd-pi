@@ -14,7 +14,7 @@ gsd (CLI binary)
           ├─ resource-loader.ts  Syncs bundled extensions + agents to ~/.gsd/agent/
           └─ src/resources/
               ├─ extensions/gsd/    Core GSD extension
-              ├─ extensions/...     12 supporting extensions
+              ├─ extensions/...     23 supporting extensions
               ├─ agents/            scout, researcher, worker
               ├─ AGENTS.md          Agent routing instructions
               └─ GSD-WORKFLOW.md    Manual bootstrap protocol
@@ -73,6 +73,12 @@ Every dispatch creates a new agent session. The LLM starts with a clean context 
 | **Remote Questions** | Discord, Slack, and Telegram integration for headless question routing |
 | **TTSR** | Tool-triggered system rules — conditional context injection based on tool usage |
 | **Universal Config** | Discovery of existing AI tool configurations (Claude Code, Cursor, Windsurf, etc.) |
+| **AWS Auth** | AWS credential management and authentication |
+| **Claude Code CLI** | Claude Code CLI integration |
+| **cmux** | Context multiplexing for multi-session coordination |
+| **GitHub Sync** | GitHub issue and PR synchronization |
+| **Ollama** | Local Ollama model integration |
+| **Shared** | Shared utilities across extensions |
 
 ## Bundled Agents
 
@@ -122,7 +128,7 @@ The auto mode dispatch pipeline:
 
 Phase skipping (from token profile) gates steps 2-3: if a phase is skipped, the corresponding unit type is never dispatched.
 
-## Key Modules (v2.33)
+## Key Modules (v2.63)
 
 | Module | Purpose |
 |--------|---------|
@@ -160,3 +166,11 @@ Phase skipping (from token profile) gates steps 2-3: if a phase is skipped, the 
 | `memory-extractor.ts` | Extract reusable knowledge from session transcripts |
 | `memory-store.ts` | Persistent memory store for cross-session knowledge |
 | `queue-order.ts` | Milestone queue ordering |
+| `context-masker.ts` | Context masking for model routing optimization |
+| `phase-anchor.ts` | Phase anchoring for dispatch pipeline |
+| `slice-parallel-orchestrator.ts` | Slice-level parallelism with dependency-aware dispatch |
+| `slice-parallel-eligibility.ts` | Slice parallel eligibility checks |
+| `slice-parallel-conflict.ts` | Slice parallel conflict detection |
+| `preferences-models.ts` | Model preferences configuration |
+| `preferences-validation.ts` | Preferences validation |
+| `preferences-types.ts` | Preferences type definitions |

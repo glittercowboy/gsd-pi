@@ -14,14 +14,21 @@ import {
   getCodebaseMapStats,
   readCodebaseMap,
 } from "./codebase-generator.js";
+import { loadEffectiveGSDPreferences } from "./preferences.js";
+import type { CodebaseMapOptions } from "./codebase-generator.js";
 
 const USAGE =
   "Usage: /gsd codebase [generate|update|stats]\n\n" +
-  "  generate [--max-files N]  — Generate or regenerate CODEBASE.md\n" +
-  "  update                    — Incremental update (preserves descriptions)\n" +
-  "  stats                     — Show file count, coverage, and generation time\n" +
-  "  help                      — Show this help\n\n" +
-  "With no subcommand, shows stats if a map exists or help if not.";
+  "  generate [--max-files N] [--collapse-threshold N]  — Generate or regenerate CODEBASE.md\n" +
+  "  update [--max-files N] [--collapse-threshold N]    — Incremental update (preserves descriptions)\n" +
+  "  stats                                              — Show file count, coverage, and generation time\n" +
+  "  help                                               — Show this help\n\n" +
+  "With no subcommand, shows stats if a map exists or help if not.\n\n" +
+  "Configure defaults via preferences.md:\n" +
+  "  codebase:\n" +
+  "    exclude_patterns: [\"docs/\", \"fixtures/\"]\n" +
+  "    max_files: 1000\n" +
+  "    collapse_threshold: 15";
 
 export async function handleCodebase(
   args: string,
@@ -34,15 +41,15 @@ export async function handleCodebase(
 
   switch (sub) {
     case "generate": {
-      const maxFiles = parseMaxFiles(args, ctx);
-      if (maxFiles === false) return; // validation failed, message already shown
+      const options = resolveCodebaseOptions(args, ctx);
+      if (options === false) return; // validation failed, message already shown
 
       const existing = readCodebaseMap(basePath);
       const existingDescriptions = existing
         ? (await import("./codebase-generator.js")).parseCodebaseMap(existing)
         : undefined;
 
-      const result = generateCodebaseMap(basePath, { maxFiles: maxFiles ?? undefined }, existingDescriptions);
+      const result = generateCodebaseMap(basePath, options, existingDescriptions);
 
       if (result.fileCount === 0) {
         ctx.ui.notify(
@@ -73,10 +80,10 @@ export async function handleCodebase(
         return;
       }
 
-      const maxFiles = parseMaxFiles(args, ctx);
-      if (maxFiles === false) return;
+      const options = resolveCodebaseOptions(args, ctx);
+      if (options === false) return;
 
-      const result = updateCodebaseMap(basePath, { maxFiles: maxFiles ?? undefined });
+      const result = updateCodebaseMap(basePath, options);
       writeCodebaseMap(basePath, result.content);
 
       ctx.ui.notify(
@@ -141,19 +148,44 @@ function showStats(basePath: string, ctx: ExtensionCommandContext): void {
 }
 
 /**
- * Parse and validate --max-files flag.
- * Returns the parsed number, undefined if flag not present, or false if invalid.
+ * Resolve codebase map options by merging preferences with CLI flags.
+ * CLI flags override preferences; preferences override built-in defaults.
+ * Returns false if validation failed (error already shown to user).
  */
-function parseMaxFiles(args: string, ctx: ExtensionCommandContext): number | undefined | false {
-  const maxFilesStr = extractFlag(args, "--max-files");
-  if (!maxFilesStr) return undefined;
+function resolveCodebaseOptions(args: string, ctx: ExtensionCommandContext): CodebaseMapOptions | false {
+  // Load preferences defaults
+  const prefs = loadEffectiveGSDPreferences()?.preferences?.codebase;
 
-  const maxFiles = parseInt(maxFilesStr, 10);
-  if (isNaN(maxFiles) || maxFiles < 1) {
-    ctx.ui.notify("--max-files must be a positive integer (e.g. --max-files 200).", "warning");
-    return false;
+  // Parse CLI flags
+  const maxFilesStr = extractFlag(args, "--max-files");
+  const collapseStr = extractFlag(args, "--collapse-threshold");
+
+  // Validate --max-files
+  let maxFiles: number | undefined;
+  if (maxFilesStr) {
+    maxFiles = parseInt(maxFilesStr, 10);
+    if (isNaN(maxFiles) || maxFiles < 1) {
+      ctx.ui.notify("--max-files must be a positive integer (e.g. --max-files 200).", "warning");
+      return false;
+    }
   }
-  return maxFiles;
+
+  // Validate --collapse-threshold
+  let collapseThreshold: number | undefined;
+  if (collapseStr) {
+    collapseThreshold = parseInt(collapseStr, 10);
+    if (isNaN(collapseThreshold) || collapseThreshold < 1) {
+      ctx.ui.notify("--collapse-threshold must be a positive integer (e.g. --collapse-threshold 15).", "warning");
+      return false;
+    }
+  }
+
+  return {
+    // CLI flags override preferences
+    maxFiles: maxFiles ?? prefs?.max_files,
+    collapseThreshold: collapseThreshold ?? prefs?.collapse_threshold,
+    excludePatterns: prefs?.exclude_patterns,
+  };
 }
 
 function extractFlag(args: string, flag: string): string | undefined {

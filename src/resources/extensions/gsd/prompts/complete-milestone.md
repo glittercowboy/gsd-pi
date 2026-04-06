@@ -24,6 +24,8 @@ Then:
 7. Fill the **Decision Re-evaluation** table in the milestone summary. For each key decision from `.gsd/DECISIONS.md` made during this milestone, evaluate whether it is still valid given what was actually built. Flag decisions that should be revisited next milestone.
 8. Validate **requirement status transitions**. For each requirement that changed status during this milestone, confirm the transition is supported by evidence. Requirements can move between Active, Validated, Deferred, Blocked, or Out of Scope — but only with proof.
 
+**DB access safety:** Do NOT query `.gsd/gsd.db` directly via `sqlite3` or `node -e require('better-sqlite3')` — the engine owns the WAL connection. Use `gsd_milestone_status` to read milestone and slice state. All data you need is already inlined in the context above or accessible via the `gsd_*` tools — never via direct SQL.
+
 ### Verification Gate — STOP if verification failed
 
 **If ANY verification failure was recorded in steps 3, 4, or 5, you MUST follow the failure path below. Do NOT proceed to step 9.**

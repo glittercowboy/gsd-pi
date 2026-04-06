@@ -325,7 +325,7 @@ test("auto/phases.ts: selectAndApplyModel called exactly once and before updateP
   // Extract the runUnitPhase function body
   const fnStart = src.indexOf("export async function runUnitPhase");
   assert.ok(fnStart > 0, "runUnitPhase should exist in phases.ts");
-  const fnBody = src.slice(fnStart, fnStart + 8000);
+  const fnBody = src.slice(fnStart, fnStart + 12000);
 
   // selectAndApplyModel must appear exactly once
   const allOccurrences = [...fnBody.matchAll(/selectAndApplyModel\(/g)];
@@ -2107,11 +2107,11 @@ test("autoLoop rejects execute-task with 0 tool calls as hallucinated (#1833)", 
   // The task should NOT have been added to completedUnits on the first iteration
   // (0 tool calls), but SHOULD be added on the second iteration (5 tool calls)
   const warningNotification = notifications.find(
-    (n) => n.includes("0 tool calls") && n.includes("hallucinated"),
+    (n) => n.includes("0 tool calls") && n.includes("context exhaustion"),
   );
   assert.ok(
     warningNotification,
-    "should notify about 0 tool calls hallucination",
+    "should notify about 0 tool calls context exhaustion",
   );
 
   // Verify deriveState was called at least twice (two iterations)
@@ -2122,7 +2122,7 @@ test("autoLoop rejects execute-task with 0 tool calls as hallucinated (#1833)", 
   );
 });
 
-test("autoLoop does NOT reject non-execute-task units with 0 tool calls (#1833)", async () => {
+test("autoLoop rejects complete-slice with 0 tool calls as context-exhausted (#2653)", async () => {
   _resetPendingResolve();
 
   const ctx = makeMockCtx();
@@ -2130,6 +2130,7 @@ test("autoLoop does NOT reject non-execute-task units with 0 tool calls (#1833)"
   ctx.sessionManager = { getSessionFile: () => "/tmp/session.json" };
   const pi = makeMockPi();
 
+  let iterationCount = 0;
   const notifications: string[] = [];
   ctx.ui.notify = (msg: string) => { notifications.push(msg); };
 
@@ -2163,7 +2164,7 @@ test("autoLoop does NOT reject non-execute-task units with 0 tool calls (#1833)"
       };
     },
     closeoutUnit: async () => {
-      // complete-slice with 0 tool calls is fine (e.g. it may just update status)
+      // complete-slice with 0 tool calls — context exhausted, no progress
       mockLedger.units.push({
         type: "complete-slice",
         id: "M001/S01",
@@ -2177,31 +2178,51 @@ test("autoLoop does NOT reject non-execute-task units with 0 tool calls (#1833)"
     getLedger: () => mockLedger,
     postUnitPostVerification: async () => {
       deps.callLog.push("postUnitPostVerification");
-      s.active = false;
+      iterationCount++;
+      // Deactivate after 2nd iteration
+      s.active = iterationCount < 2;
       return "continue" as const;
     },
   });
 
   const loopPromise = autoLoop(ctx, pi, s, deps);
 
+  // First iteration: complete-slice with 0 tool calls → rejected
   await new Promise((r) => setTimeout(r, 50));
+  resolveAgentEnd(makeEvent());
+
+  // Second iteration: re-dispatched, this time with tool calls
+  await new Promise((r) => setTimeout(r, 50));
+  mockLedger.units.length = 0;
+  (deps as any).closeoutUnit = async () => {
+    mockLedger.units.push({
+      type: "complete-slice",
+      id: "M001/S01",
+      startedAt: s.currentUnit?.startedAt ?? Date.now(),
+      toolCalls: 3,
+      assistantMessages: 2,
+      tokens: { input: 200, output: 400, total: 600, cacheRead: 0, cacheWrite: 0 },
+      cost: 0.30,
+    });
+  };
   resolveAgentEnd(makeEvent());
 
   await loopPromise;
 
-  // Should NOT have a hallucination warning for non-execute-task units
+  // Should have a warning about 0 tool calls for complete-slice
   const warningNotification = notifications.find(
-    (n) => n.includes("0 tool calls") && n.includes("hallucinated"),
+    (n) => n.includes("0 tool calls"),
   );
   assert.ok(
-    !warningNotification,
-    "should NOT flag non-execute-task units with 0 tool calls",
+    warningNotification,
+    "should flag complete-slice with 0 tool calls as failed (#2653)",
   );
 
-  // Verify the loop ran to completion (postUnitPostVerification was called)
+  // Verify deriveState was called at least twice (two iterations: rejected + retry)
+  const deriveCount = deps.callLog.filter((c) => c === "deriveState").length;
   assert.ok(
-    deps.callLog.includes("postUnitPostVerification"),
-    "complete-slice with 0 tool calls should still complete the post-unit pipeline",
+    deriveCount >= 2,
+    `deriveState should be called at least 2 times for retry (got ${deriveCount})`,
   );
 });
 

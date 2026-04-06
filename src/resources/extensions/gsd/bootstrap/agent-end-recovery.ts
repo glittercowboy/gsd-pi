@@ -1,5 +1,6 @@
 import type { ExtensionAPI, ExtensionContext } from "@gsd/pi-coding-agent";
 
+import { logWarning } from "../workflow-logger.js";
 import { checkAutoStartAfterDiscuss } from "../guided-flow.js";
 import { getAutoDashboardData, getAutoModeStartModel, isAutoActive, pauseAuto } from "../auto.js";
 import { getNextFallbackModel, resolveModelWithFallbacksForUnit } from "../preferences.js";
@@ -85,7 +86,7 @@ export async function handleAgentEnd(
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         ctx.ui.notify(`Auto-mode error after empty-content abort: ${message}. Stopping auto-mode.`, "error");
-        try { await pauseAuto(ctx, pi); } catch { /* best-effort */ }
+        try { await pauseAuto(ctx, pi); } catch (e) { logWarning("bootstrap", `pauseAuto failed after empty-content abort: ${(e as Error).message}`); }
       }
       return;
     }
@@ -212,8 +213,8 @@ export async function handleAgentEnd(
     ctx.ui.notify(`Auto-mode error in agent_end handler: ${message}. Stopping auto-mode.`, "error");
     try {
       await pauseAuto(ctx, pi);
-    } catch {
-      // best-effort
+    } catch (e) {
+      logWarning("bootstrap", `pauseAuto failed in agent_end handler: ${(e as Error).message}`);
     }
   }
 }

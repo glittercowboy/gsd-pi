@@ -1,5 +1,6 @@
 /**
- * Tests for model config isolation between concurrent instances (#650, #1065).
+ * Tests for model config isolation between concurrent instances (#650, #1065)
+ * and GSD preferences override of settings.json defaults (#3517).
  */
 
 import { describe, it, beforeEach, afterEach } from "node:test";
@@ -153,5 +154,78 @@ describe("session model recovery on error (#1065)", () => {
     const shouldAttemptRecovery = sessionModel !== null;
     assert.ok(!shouldAttemptRecovery,
       "Recovery should be skipped when no session model was captured");
+  });
+});
+
+// ─── GSD Preferences override settings.json (#3517) ─────────────────────────
+
+describe("GSD preferences override settings.json for session model (#3517)", () => {
+  it("preferredModel takes priority over ctx.model when both are available", () => {
+    // Simulates auto-start.ts logic: preferredModel ?? ctx.model snapshot
+    const preferredModel = { provider: "openai-codex", id: "gpt-5.4" };
+    const ctxModel = { provider: "claude-code", id: "claude-sonnet-4-6" };
+
+    const startModelSnapshot = preferredModel
+      ?? { provider: ctxModel.provider, id: ctxModel.id };
+
+    assert.equal(startModelSnapshot.provider, "openai-codex",
+      "preferredModel provider should win over ctx.model");
+    assert.equal(startModelSnapshot.id, "gpt-5.4",
+      "preferredModel id should win over ctx.model");
+  });
+
+  it("falls back to ctx.model when no GSD preferences are configured", () => {
+    const preferredModel: { provider: string; id: string } | undefined = undefined;
+    const ctxModel = { provider: "claude-code", id: "claude-sonnet-4-6" };
+
+    const startModelSnapshot = preferredModel
+      ?? { provider: ctxModel.provider, id: ctxModel.id };
+
+    assert.equal(startModelSnapshot.provider, "claude-code",
+      "should fall back to ctx.model provider when no preferences");
+    assert.equal(startModelSnapshot.id, "claude-sonnet-4-6",
+      "should fall back to ctx.model id when no preferences");
+  });
+
+  it("handles null ctx.model with no preferences gracefully", () => {
+    const preferredModel: { provider: string; id: string } | undefined = undefined;
+    // Use a function to prevent TS from narrowing to `never` in the ternary
+    function getCtxModel(): { provider: string; id: string } | null { return null; }
+    const ctxModel = getCtxModel();
+
+    const startModelSnapshot = preferredModel
+      ?? (ctxModel ? { provider: ctxModel.provider, id: ctxModel.id } : null);
+
+    assert.equal(startModelSnapshot, null,
+      "should be null when neither preferences nor ctx.model exist");
+  });
+
+  it("bare model ID uses session provider when available", () => {
+    // Simulates: PREFERENCES.md has "gpt-5.4" (no provider), session is openai-codex
+    const preferredModel = { provider: "openai-codex", id: "gpt-5.4" }; // from resolveDefaultSessionModel("openai-codex")
+    const ctxModel = { provider: "openai-codex", id: "claude-sonnet-4-6" };
+
+    const startModelSnapshot = preferredModel
+      ?? { provider: ctxModel.provider, id: ctxModel.id };
+
+    assert.equal(startModelSnapshot.provider, "openai-codex");
+    assert.equal(startModelSnapshot.id, "gpt-5.4",
+      "bare model ID from preferences should still override ctx.model");
+  });
+
+  it("stale settings.json does not leak when preferences are set", () => {
+    // Scenario: settings.json has claude-code, PREFERENCES.md has openai-codex
+    const settingsJsonDefault = { provider: "claude-code", id: "claude-sonnet-4-6" };
+    const preferencesModel = { provider: "openai-codex", id: "gpt-5.4" };
+
+    // auto-start.ts captures preferredModel first, which preempts settingsJsonDefault
+    const startModelSnapshot = preferencesModel ?? settingsJsonDefault;
+
+    assert.equal(startModelSnapshot.provider, "openai-codex",
+      "PREFERENCES.md must override stale settings.json provider");
+    assert.equal(startModelSnapshot.id, "gpt-5.4",
+      "PREFERENCES.md must override stale settings.json model");
+    assert.notEqual(startModelSnapshot.provider, settingsJsonDefault.provider,
+      "settings.json provider must NOT leak through");
   });
 });

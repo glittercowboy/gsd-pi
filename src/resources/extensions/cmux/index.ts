@@ -1,12 +1,9 @@
-import { execFile, execFileSync } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { promisify } from "node:util";
 import type { GSDPreferences } from "../gsd/preferences.js";
 import type { GSDState, Phase } from "../gsd/types.js";
-
-const execFileAsync = promisify(execFile);
 const DEFAULT_SOCKET_PATH = "/tmp/cmux.sock";
 const STATUS_KEY = "gsd";
 const lastSidebarSnapshots = new Map<string, string>();
@@ -200,6 +197,7 @@ export class CmuxClient {
       return execFileSync("cmux", args, {
         encoding: "utf-8",
         timeout: 3000,
+        stdio: ["ignore", "pipe", "pipe"],
         env: process.env,
       });
     } catch {
@@ -209,16 +207,24 @@ export class CmuxClient {
 
   private async runAsync(args: string[]): Promise<string | null> {
     if (!this.canRun()) return null;
-    try {
-      const result = await execFileAsync("cmux", args, {
-        encoding: "utf-8",
-        timeout: 5000,
+    return new Promise<string | null>((resolve) => {
+      const child = spawn("cmux", args, {
+        stdio: ["ignore", "pipe", "pipe"],
         env: process.env,
       });
-      return result.stdout;
-    } catch {
-      return null;
-    }
+      const chunks: Buffer[] = [];
+      let settled = false;
+      const done = (result: string | null) => {
+        if (!settled) { settled = true; resolve(result); }
+      };
+      const timer = setTimeout(() => { child.kill(); done(null); }, 5000);
+      child.stdout!.on("data", (chunk: Buffer) => chunks.push(chunk));
+      child.on("close", (code) => {
+        clearTimeout(timer);
+        done(code === 0 ? Buffer.concat(chunks).toString("utf-8") : null);
+      });
+      child.on("error", () => { clearTimeout(timer); done(null); });
+    });
   }
 
   getCapabilities(): unknown | null {

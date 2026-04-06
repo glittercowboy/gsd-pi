@@ -24,6 +24,7 @@ import { isClosedStatus } from "../status-guards.js";
 import { renderAllProjections } from "../workflow-projections.js";
 import { writeManifest } from "../workflow-manifest.js";
 import { appendEvent } from "../workflow-events.js";
+import { logWarning } from "../workflow-logger.js";
 
 export interface ReopenSliceParams {
   milestoneId: string;
@@ -113,9 +114,7 @@ export async function handleReopenSlice(
       trigger_reason: params.triggerReason,
     });
   } catch (hookErr) {
-    process.stderr.write(
-      `gsd: reopen-slice post-mutation hook warning: ${(hookErr as Error).message}\n`,
-    );
+    logWarning("tool", `reopen-slice post-mutation hook warning: ${(hookErr as Error).message}`);
   }
 
   return {

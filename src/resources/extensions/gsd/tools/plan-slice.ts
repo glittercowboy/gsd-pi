@@ -16,6 +16,7 @@ import { renderPlanFromDb } from "../markdown-renderer.js";
 import { renderAllProjections } from "../workflow-projections.js";
 import { writeManifest } from "../workflow-manifest.js";
 import { appendEvent } from "../workflow-events.js";
+import { logWarning } from "../workflow-logger.js";
 
 export interface PlanSliceTaskInput {
   taskId: string;
@@ -34,11 +35,15 @@ export interface PlanSliceParams {
   milestoneId: string;
   sliceId: string;
   goal: string;
-  successCriteria: string;
-  proofLevel: string;
-  integrationClosure: string;
-  observabilityImpact: string;
   tasks: PlanSliceTaskInput[];
+  /** @optional — defaults to "Not provided." when omitted by models with limited tool-calling */
+  successCriteria?: string;
+  /** @optional — defaults to "Not provided." when omitted */
+  proofLevel?: string;
+  /** @optional — defaults to "Not provided." when omitted */
+  integrationClosure?: string;
+  /** @optional — defaults to "Not provided." when omitted */
+  observabilityImpact?: string;
   /** Optional caller-provided identity for audit trail */
   actorName?: string;
   /** Optional caller-provided reason this action was triggered */
@@ -111,13 +116,14 @@ function validateParams(params: PlanSliceParams): PlanSliceParams {
   if (!isNonEmptyString(params?.milestoneId)) throw new Error("milestoneId is required");
   if (!isNonEmptyString(params?.sliceId)) throw new Error("sliceId is required");
   if (!isNonEmptyString(params?.goal)) throw new Error("goal is required");
-  if (!isNonEmptyString(params?.successCriteria)) throw new Error("successCriteria is required");
-  if (!isNonEmptyString(params?.proofLevel)) throw new Error("proofLevel is required");
-  if (!isNonEmptyString(params?.integrationClosure)) throw new Error("integrationClosure is required");
-  if (!isNonEmptyString(params?.observabilityImpact)) throw new Error("observabilityImpact is required");
 
   return {
     ...params,
+    // Apply defaults for optional enrichment fields (#2771)
+    successCriteria: params.successCriteria ?? "Not provided.",
+    proofLevel: params.proofLevel ?? "Not provided.",
+    integrationClosure: params.integrationClosure ?? "Not provided.",
+    observabilityImpact: params.observabilityImpact ?? "Not provided.",
     tasks: validateTasks(params.tasks),
   };
 }
@@ -229,9 +235,7 @@ export async function handlePlanSlice(
         trigger_reason: params.triggerReason,
       });
     } catch (hookErr) {
-      process.stderr.write(
-        `gsd: plan-slice post-mutation hook warning: ${(hookErr as Error).message}\n`,
-      );
+      logWarning("tool", `plan-slice post-mutation hook warning: ${(hookErr as Error).message}`);
     }
 
     return {
@@ -241,9 +245,7 @@ export async function handlePlanSlice(
       taskPlanPaths: renderResult.taskPlanPaths,
     };
   } catch (renderErr) {
-    process.stderr.write(
-      `gsd-db: plan_slice — render failed (DB rows preserved for debugging): ${(renderErr as Error).message}\n`,
-    );
+    logWarning("tool", `plan_slice — render failed (DB rows preserved for debugging): ${(renderErr as Error).message}`);
     invalidateStateCache();
     return { error: `render failed: ${(renderErr as Error).message}` };
   }

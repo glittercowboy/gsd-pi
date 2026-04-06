@@ -29,6 +29,7 @@ export function showHelp(ctx: ExtensionCommandContext): void {
     "  /gsd queue          Show queued/dispatched units and execution order",
     "  /gsd history        View execution history  [--cost] [--phase] [--model] [N]",
     "  /gsd changelog      Show categorized release notes  [version]",
+    "  /gsd notifications  View persistent notification history  [clear|tail|filter]  (Ctrl+Alt+N)",
     "",
     "COURSE CORRECTION",
     "  /gsd steer <desc>   Apply user override to active work",

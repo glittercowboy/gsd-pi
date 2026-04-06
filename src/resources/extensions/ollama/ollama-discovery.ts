@@ -8,14 +8,14 @@
  * Returns models in the format expected by pi.registerProvider().
  */
 
-import { listModels, getOllamaHost } from "./ollama-client.js";
+import { listModels } from "./ollama-client.js";
 import {
 	estimateContextFromParams,
 	formatModelSize,
 	getModelCapabilities,
 	humanizeModelName,
 } from "./model-capabilities.js";
-import type { OllamaModelInfo } from "./types.js";
+import type { OllamaChatOptions, OllamaModelInfo } from "./types.js";
 
 export interface DiscoveredOllamaModel {
 	id: string;
@@ -29,6 +29,8 @@ export interface DiscoveredOllamaModel {
 	sizeBytes: number;
 	/** Parameter size string from Ollama (e.g. "7B") */
 	parameterSize: string;
+	/** Ollama-specific inference options for this model */
+	ollamaOptions?: OllamaChatOptions;
 }
 
 const ZERO_COST = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
@@ -64,6 +66,7 @@ function enrichModel(info: OllamaModelInfo): DiscoveredOllamaModel {
 		maxTokens,
 		sizeBytes: info.size,
 		parameterSize,
+		ollamaOptions: caps.ollamaOptions,
 	};
 }
 
@@ -98,9 +101,3 @@ export function formatModelForDisplay(model: DiscoveredOllamaModel): string {
 	return parts.join(" ");
 }
 
-/**
- * Build the OpenAI-compat base URL for Ollama.
- */
-export function getOllamaOpenAIBaseUrl(): string {
-	return `${getOllamaHost()}/v1`;
-}

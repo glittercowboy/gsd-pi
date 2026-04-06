@@ -31,6 +31,7 @@ import {
   getRtkSessionSavings,
   type RtkSessionSavings,
 } from "../shared/rtk-session-stats.js";
+import { logWarning } from "./workflow-logger.js";
 
 // ─── UAT Slice Extraction ─────────────────────────────────────────────────────
 
@@ -285,8 +286,9 @@ export function updateSliceProgressCache(base: string, mid: string, activeSid?: 
             taskDetails = dbTasks.map(t => ({ id: t.id, title: t.title, done: t.status === "complete" || t.status === "done" }));
           }
         }
-      } catch {
+      } catch (err) {
         // Non-fatal — just omit task count
+        logWarning("dashboard", `operation failed: ${err instanceof Error ? err.message : String(err)}`);
       }
     }
 
@@ -297,8 +299,9 @@ export function updateSliceProgressCache(base: string, mid: string, activeSid?: 
       activeSliceTasks,
       taskDetails,
     };
-  } catch {
+  } catch (err) {
     // Non-fatal — widget just won't show progress bar
+    logWarning("dashboard", `operation failed: ${err instanceof Error ? err.message : String(err)}`);
   }
 }
 
@@ -332,8 +335,9 @@ function refreshLastCommit(basePath: string): void {
       };
     }
     lastCommitFetchedAt = Date.now();
-  } catch {
+  } catch (err) {
     // Non-fatal — just skip last commit display
+    logWarning("dashboard", `operation failed: ${err instanceof Error ? err.message : String(err)}`);
   }
 }
 
@@ -376,7 +380,9 @@ function ensureWidgetModeLoaded(): void {
     if (saved && WIDGET_MODES.includes(saved as WidgetMode)) {
       widgetMode = saved as WidgetMode;
     }
-  } catch { /* non-fatal — use default */ }
+  } catch (err) { /* non-fatal — use default */
+    logWarning("dashboard", `operation failed: ${err instanceof Error ? err.message : String(err)}`);
+  }
 }
 
 /** Persist widget mode to global preferences YAML. */
@@ -395,7 +401,9 @@ function persistWidgetMode(mode: WidgetMode): void {
       content = content.trimEnd() + "\n" + line + "\n";
     }
     writeFileSync(prefsPath, content, "utf-8");
-  } catch { /* non-fatal — mode still set in memory */ }
+  } catch (err) { /* non-fatal — mode still set in memory */
+    logWarning("dashboard", `file write failed: ${err instanceof Error ? err.message : String(err)}`);
+  }
 }
 
 /** Cycle to the next widget mode. Returns the new mode. */
@@ -430,6 +438,8 @@ export interface WidgetStateAccessors {
   isVerbose(): boolean;
   /** True while newSession() is in-flight — render must not access session state. */
   isSessionSwitching(): boolean;
+  /** Fully-qualified dispatched model ID (provider/id) set after model selection + hook overrides (#2899). */
+  getCurrentDispatchedModelId(): string | null;
 }
 
 export function updateProgressWidget(
@@ -458,7 +468,9 @@ export function updateProgressWidget(
 
   // Cache git branch at widget creation time (not per render)
   let cachedBranch: string | null = null;
-  try { cachedBranch = getCurrentBranch(accessors.getBasePath()); } catch { /* not in git repo */ }
+  try { cachedBranch = getCurrentBranch(accessors.getBasePath()); } catch (err) { /* not in git repo */
+    logWarning("dashboard", `git branch detection failed: ${err instanceof Error ? err.message : String(err)}`);
+  }
 
   // Cache short pwd (last 2 path segments only) + worktree/branch info
   let widgetPwd: string;
@@ -495,7 +507,8 @@ export function updateProgressWidget(
         const sessionId = ctx.sessionManager.getSessionId();
         const savings = sessionId ? getRtkSessionSavings(accessors.getBasePath(), sessionId) : null;
         cachedRtkLabel = formatRtkSavingsLabel(savings);
-      } catch {
+      } catch (err) {
+        logWarning("dashboard", `RTK savings lookup failed: ${err instanceof Error ? (err as Error).message : String(err)}`);
         cachedRtkLabel = null;
       }
     };
@@ -519,7 +532,9 @@ export function updateProgressWidget(
         }
         refreshRtkLabel();
         cachedLines = undefined;
-      } catch { /* non-fatal */ }
+      } catch (err) { /* non-fatal */
+        logWarning("dashboard", `DB status update failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
     }, 15_000);
 
     return {
@@ -570,10 +585,11 @@ export function updateProgressWidget(
         lines.push(rightAlign(headerLeft, headerRight, width));
 
         // Worktree/branch right-aligned below header
-        if (worktreeName && cachedBranch) {
-          lines.push(rightAlign("", theme.fg("dim", `${worktreeName} (${cachedBranch})`), width));
-        } else if (cachedBranch) {
-          lines.push(rightAlign("", theme.fg("dim", cachedBranch), width));
+        const branchLabel = worktreeName && cachedBranch
+          ? `${worktreeName} (${cachedBranch})`
+          : cachedBranch ?? "";
+        if (branchLabel) {
+          lines.push(rightAlign("", theme.fg("dim", branchLabel), width));
         }
 
         // Show health signal details when degraded (yellow/red)
@@ -616,9 +632,15 @@ export function updateProgressWidget(
         const cxPctVal = cxUsage?.percent ?? 0;
         const cxPct = cxUsage?.percent !== null ? cxPctVal.toFixed(1) : "?";
 
-        // Model display — shown in context section, not stats
-        const modelId = cmdCtx?.model?.id ?? "";
-        const modelProvider = cmdCtx?.model?.provider ?? "";
+        // Model display — prefer dispatched model ID (set after selectAndApplyModel
+        // + hook overrides) over cmdCtx?.model which can be stale (#2899).
+        const dispatchedModelId = accessors.getCurrentDispatchedModelId();
+        const modelId = dispatchedModelId
+          ? dispatchedModelId.split("/").slice(1).join("/") || dispatchedModelId
+          : (cmdCtx?.model?.id ?? "");
+        const modelProvider = dispatchedModelId
+          ? dispatchedModelId.split("/")[0] || ""
+          : (cmdCtx?.model?.provider ?? "");
         const tierIcon = resolveServiceTierIcon(effectiveServiceTier, modelId);
         const modelDisplay = (modelProvider && modelId
           ? `${modelProvider}/${modelId}`
@@ -878,3 +900,4 @@ function padToWidth(s: string, colWidth: number): string {
   if (vis >= colWidth) return truncateToWidth(s, colWidth, "…");
   return s + " ".repeat(colWidth - vis);
 }
+

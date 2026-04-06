@@ -22,6 +22,7 @@ import { isClosedStatus } from "../status-guards.js";
 import { renderAllProjections } from "../workflow-projections.js";
 import { writeManifest } from "../workflow-manifest.js";
 import { appendEvent } from "../workflow-events.js";
+import { logWarning } from "../workflow-logger.js";
 
 export interface ReopenTaskParams {
   milestoneId: string;
@@ -117,9 +118,7 @@ export async function handleReopenTask(
       trigger_reason: params.triggerReason,
     });
   } catch (hookErr) {
-    process.stderr.write(
-      `gsd: reopen-task post-mutation hook warning: ${(hookErr as Error).message}\n`,
-    );
+    logWarning("tool", `reopen-task post-mutation hook warning: ${(hookErr as Error).message}`);
   }
 
   return {

@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { appendFileSync, readFileSync, existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { atomicWriteSync } from "./atomic-write.js";
+import { logWarning } from "./workflow-logger.js";
 
 // ─── Session ID ───────────────────────────────────────────────────────────
 
@@ -74,7 +75,7 @@ export function readEvents(logPath: string): WorkflowEvent[] {
     try {
       events.push(JSON.parse(line) as WorkflowEvent);
     } catch {
-      process.stderr.write(`workflow-events: skipping corrupted event line: ${line.slice(0, 80)}\n`);
+      logWarning("event-log", `skipping corrupted event line (${line.length} bytes)`);
     }
   }
 

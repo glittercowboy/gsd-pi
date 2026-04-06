@@ -7,6 +7,7 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { _getAdapter, transaction } from "./gsd-db.js";
 import { parseRoadmap, parsePlan } from "./parsers-legacy.js";
+import { logWarning } from "./workflow-logger.js";
 
 // ─── needsAutoMigration ───────────────────────────────────────────────────
 
@@ -23,8 +24,8 @@ export function needsAutoMigration(basePath: string): boolean {
   try {
     const row = db.prepare("SELECT COUNT(*) as cnt FROM milestones").get();
     if (row && (row["cnt"] as number) > 0) return false;
-  } catch {
-    // Table might not exist yet — that's fine, we can still migrate
+  } catch (e) {
+    logWarning("migration", `DB probe failed: ${(e as Error).message}`);
     return false;
   }
 
@@ -71,7 +72,7 @@ export function migrateFromMarkdown(basePath: string): void {
       .filter(e => e.isDirectory())
       .map(e => e.name);
   } catch {
-    process.stderr.write("workflow-migration: failed to read milestones directory\n");
+    logWarning("migration", "failed to read milestones directory");
     return;
   }
 
@@ -141,7 +142,7 @@ export function migrateFromMarkdown(basePath: string): void {
           risk: s.risk || "low",
         }));
       } catch (err) {
-        process.stderr.write(`workflow-migration: failed to parse ROADMAP.md for ${mId}: ${(err as Error).message}\n`);
+        logWarning("migration", `failed to parse ROADMAP.md for ${mId}: ${(err as Error).message}`);
         // Still add milestone with ID as title
         milestoneInserts.push({ id: mId, title: mId, status: milestoneStatus });
       }
@@ -191,7 +192,7 @@ export function migrateFromMarkdown(basePath: string): void {
             });
           }
         } catch (err) {
-          process.stderr.write(`workflow-migration: failed to parse ${slice.id}-PLAN.md for ${mId}: ${(err as Error).message}\n`);
+          logWarning("migration", `failed to parse ${slice.id}-PLAN.md for ${mId}: ${(err as Error).message}`);
         }
       }
     }
@@ -206,8 +207,8 @@ export function migrateFromMarkdown(basePath: string): void {
           process.stderr.write(`workflow-migration: orphaned summary file ${summaryFile} in ${mId} (slice not found in ROADMAP.md), skipping\n`);
         }
       }
-    } catch {
-      // Non-fatal
+    } catch (e) {
+      logWarning("migration", `Orphaned summary check failed for ${mId}: ${(e as Error).message}`);
     }
   }
 
@@ -308,17 +309,18 @@ export function validateMigration(basePath: string): { discrepancies: string[] }
                 const planContent = readFileSync(planPath, "utf-8");
                 const plan = parsePlan(planContent);
                 mdTaskCount += plan.tasks.length;
-              } catch {
-                // Skip unreadable plan
+              } catch (e) {
+                logWarning("migration", `Failed to read plan ${slice.id}-PLAN.md: ${(e as Error).message}`);
               }
             }
           }
-        } catch {
-          // Skip unreadable roadmap
+        } catch (e) {
+          logWarning("migration", `Failed to read roadmap for ${mId}: ${(e as Error).message}`);
         }
       }
     }
-  } catch {
+  } catch (e) {
+    logWarning("migration", `Validation failed to read markdown: ${(e as Error).message}`);
     return { discrepancies: ["Failed to read markdown for validation"] };
   }
 

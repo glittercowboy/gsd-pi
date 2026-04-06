@@ -36,6 +36,7 @@ import {
   removeWorktree,
   resolveGitDir,
   worktreePath,
+  isInsideWorktreesDir,
 } from "./worktree-manager.js";
 import {
   detectWorktreeName,
@@ -44,7 +45,7 @@ import {
 } from "./worktree.js";
 import { MergeConflictError, readIntegrationBranch, RUNTIME_EXCLUSION_PATHS } from "./git-service.js";
 import { debugLog } from "./debug-logger.js";
-import { logWarning } from "./workflow-logger.js";
+import { logWarning, logError } from "./workflow-logger.js";
 import { loadEffectiveGSDPreferences } from "./preferences.js";
 import {
   nativeGetCurrentBranch,
@@ -100,7 +101,8 @@ const ROOT_STATE_FILES = [
 function isSamePath(a: string, b: string): boolean {
   try {
     return realpathSync(a) === realpathSync(b);
-  } catch {
+  } catch (e) {
+    logWarning("worktree", `isSamePath failed: ${(e as Error).message}`);
     return false;
   }
 }
@@ -153,16 +155,19 @@ function forceOverwriteAssessmentsWithVerdict(
             // Source has a verdict — force-copy into worktree
             mkdirSync(dstSliceDir, { recursive: true });
             safeCopy(srcFile, join(dstSliceDir, fileEntry.name), { force: true });
-          } catch {
+          } catch (err) {
             /* non-fatal per file */
+            logWarning("worktree", `assessment force-copy failed: ${err instanceof Error ? err.message : String(err)}`);
           }
         }
-      } catch {
+      } catch (err) {
         /* non-fatal per slice */
+        logWarning("worktree", `assessment slice scan failed: ${err instanceof Error ? err.message : String(err)}`);
       }
     }
-  } catch {
+  } catch (err) {
     /* non-fatal */
+    logWarning("worktree", `assessment sync failed: ${err instanceof Error ? err.message : String(err)}`);
   }
 }
 
@@ -182,8 +187,9 @@ function clearProjectRootStateFiles(basePath: string, milestoneId: string): void
   for (const file of transientFiles) {
     try {
       unlinkSync(file);
-    } catch {
+    } catch (err) {
       /* non-fatal — file may not exist */
+      logWarning("worktree", `file unlink failed: ${err instanceof Error ? err.message : String(err)}`);
     }
   }
 
@@ -211,14 +217,16 @@ function clearProjectRootStateFiles(basePath: string, milestoneId: string): void
           for (const f of untrackedOutput.split("\n").filter(Boolean)) {
             try {
               unlinkSync(join(basePath, f));
-            } catch {
+            } catch (err) {
               /* non-fatal */
+              logWarning("worktree", `untracked file unlink failed: ${err instanceof Error ? err.message : String(err)}`);
             }
           }
         }
       }
-    } catch {
+    } catch (err) {
       /* non-fatal — git command may fail if not in repo */
+      logWarning("worktree", `untracked file cleanup failed: ${err instanceof Error ? err.message : String(err)}`);
     }
   }
 }
@@ -307,14 +315,33 @@ export function syncProjectRootToWorktree(
   // openDatabase re-creates it, causing "no such table" failures (#2815).
   try {
     const wtDb = join(wtGsd, "gsd.db");
+    let deleteSidecars = false;
     if (existsSync(wtDb)) {
       const size = statSync(wtDb).size;
       if (size === 0) {
         unlinkSync(wtDb);
+        deleteSidecars = true;
+      }
+    } else {
+      // Main DB already missing — sidecars are orphaned from a previous
+      // partial cleanup and must still be removed.
+      deleteSidecars = true;
+    }
+    // Always clean up WAL/SHM sidecar files when the main DB was deleted
+    // or is already missing. Orphaned WAL/SHM files cause SQLite WAL
+    // recovery on next open, which triggers a CPU spin on Node 24's
+    // node:sqlite DatabaseSync implementation (#2478).
+    if (deleteSidecars) {
+      for (const suffix of ["-wal", "-shm"]) {
+        const f = wtDb + suffix;
+        if (existsSync(f)) {
+          unlinkSync(f);
+        }
       }
     }
-  } catch {
+  } catch (err) {
     /* non-fatal */
+    logWarning("worktree", `worktree DB cleanup failed: ${err instanceof Error ? err.message : String(err)}`);
   }
 }
 
@@ -383,7 +410,8 @@ export function readResourceVersion(): string | null {
     return typeof manifest?.gsdVersion === "string"
       ? manifest.gsdVersion
       : null;
-  } catch {
+  } catch (e) {
+    logWarning("worktree", `readResourceVersion failed: ${(e as Error).message}`);
     return null;
   }
 }
@@ -449,8 +477,9 @@ export function escapeStaleWorktree(base: string): string {
 
   try {
     process.chdir(projectRoot);
-  } catch {
+  } catch (e) {
     // If chdir fails, return the original — caller will handle errors downstream
+    logWarning("worktree", `escapeStaleWorktree chdir failed: ${(e as Error).message}`);
     return base;
   }
   return projectRoot;
@@ -480,13 +509,15 @@ export function cleanStaleRuntimeUnits(
         try {
           unlinkSync(join(runtimeUnitsDir, file));
           cleaned++;
-        } catch {
+        } catch (err) {
           /* non-fatal */
+          logWarning("worktree", `stale runtime unit unlink failed (${file}): ${err instanceof Error ? err.message : String(err)}`);
         }
       }
     }
-  } catch {
+  } catch (err) {
     /* non-fatal */
+    logWarning("worktree", `stale runtime unit cleanup failed: ${err instanceof Error ? err.message : String(err)}`);
   }
   return cleaned;
 }
@@ -528,8 +559,9 @@ export function syncGsdStateToWorktree(
       try {
         cpSync(src, dst);
         synced.push(f);
-      } catch {
+      } catch (err) {
         /* non-fatal */
+        logWarning("worktree", `file copy failed (${f}): ${err instanceof Error ? err.message : String(err)}`);
       }
     }
   }
@@ -548,8 +580,9 @@ export function syncGsdStateToWorktree(
           try {
             cpSync(src, dst);
             synced.push(file);
-          } catch {
+          } catch (err) {
             /* non-fatal */
+            logWarning("worktree", `preferences copy failed (${file}): ${err instanceof Error ? err.message : String(err)}`);
           }
           break;
         }
@@ -578,8 +611,9 @@ export function syncGsdStateToWorktree(
           try {
             cpSync(srcDir, dstDir, { recursive: true });
             synced.push(`milestones/${mid}/`);
-          } catch {
+          } catch (err) {
             /* non-fatal */
+            logWarning("worktree", `milestone copy failed (${mid}): ${err instanceof Error ? err.message : String(err)}`);
           }
         } else {
           // Milestone directory exists but may be missing files (stale snapshot).
@@ -598,8 +632,9 @@ export function syncGsdStateToWorktree(
                     cpSync(srcFile, dstFile);
                     synced.push(`milestones/${mid}/${f}`);
                   }
-                } catch {
+                } catch (err) {
                   /* non-fatal */
+                  logWarning("worktree", `milestone file copy failed (${mid}/${f}): ${err instanceof Error ? err.message : String(err)}`);
                 }
               }
             }
@@ -611,8 +646,9 @@ export function syncGsdStateToWorktree(
               try {
                 cpSync(srcSlicesDir, dstSlicesDir, { recursive: true });
                 synced.push(`milestones/${mid}/slices/`);
-              } catch {
+              } catch (err) {
                 /* non-fatal */
+                logWarning("worktree", `slices copy failed (${mid}): ${err instanceof Error ? err.message : String(err)}`);
               }
             } else if (existsSync(srcSlicesDir) && existsSync(dstSlicesDir)) {
               // Both exist — sync missing slice directories
@@ -628,19 +664,22 @@ export function syncGsdStateToWorktree(
                   try {
                     cpSync(srcSlice, dstSlice, { recursive: true });
                     synced.push(`milestones/${mid}/slices/${sid}/`);
-                  } catch {
+                  } catch (err) {
                     /* non-fatal */
+                    logWarning("worktree", `slice copy failed (${mid}/${sid}): ${err instanceof Error ? err.message : String(err)}`);
                   }
                 }
               }
             }
-          } catch {
+          } catch (err) {
             /* non-fatal */
+            logWarning("worktree", `milestone file sync failed: ${err instanceof Error ? err.message : String(err)}`);
           }
         }
       }
-    } catch {
+    } catch (err) {
       /* non-fatal */
+      logWarning("worktree", `milestone directory sync failed: ${err instanceof Error ? err.message : String(err)}`);
     }
   }
 
@@ -692,8 +731,9 @@ export function syncWorktreeStateBack(
     try {
       reconcileWorktreeDb(mainDb, wtLocalDb);
       synced.push("gsd.db (pre-upgrade reconcile)");
-    } catch {
+    } catch (err) {
       // Non-fatal — file sync below is the fallback
+      logError("worktree", `DB reconciliation failed: ${err instanceof Error ? err.message : String(err)}`);
     }
   }
 
@@ -710,8 +750,9 @@ export function syncWorktreeStateBack(
       try {
         cpSync(src, dst, { force: true });
         synced.push(f);
-      } catch {
+      } catch (err) {
         /* non-fatal */
+        logWarning("worktree", `state file copy-back failed (${f}): ${err instanceof Error ? err.message : String(err)}`);
       }
     }
   }
@@ -731,8 +772,9 @@ export function syncWorktreeStateBack(
     for (const mid of wtMilestones) {
       syncMilestoneDir(wtGsd, mainGsd, mid, synced);
     }
-  } catch {
+  } catch (err) {
     /* non-fatal */
+    logWarning("worktree", `milestone sync-back failed: ${err instanceof Error ? err.message : String(err)}`);
   }
 
   return { synced };
@@ -756,12 +798,14 @@ function syncDirFiles(
       try {
         cpSync(join(srcDir, entry.name), join(dstDir, entry.name), { force: true });
         synced.push(`${prefix}${entry.name}`);
-      } catch {
+      } catch (err) {
         /* non-fatal */
+        logWarning("worktree", `file copy failed (${prefix}${entry.name}): ${err instanceof Error ? err.message : String(err)}`);
       }
     }
-  } catch {
+  } catch (err) {
     /* non-fatal — srcDir may not be readable */
+    logWarning("worktree", `directory read failed: ${err instanceof Error ? err.message : String(err)}`);
   }
 }
 
@@ -804,8 +848,9 @@ function syncMilestoneDir(
         syncDirFiles(wtTasksDir, mainTasksDir, isMd, synced, `milestones/${mid}/slices/${sid}/tasks/`);
       }
     }
-  } catch {
+  } catch (err) {
     /* non-fatal */
+    logWarning("worktree", `milestone slice sync failed (${mid}): ${err instanceof Error ? err.message : String(err)}`);
   }
 }
 // ─── Worktree Post-Create Hook (#597) ────────────────────────────────────────
@@ -837,7 +882,9 @@ export function runWorktreePostCreateHook(
     return `Worktree post-create hook not found: ${resolved}`;
   }
   if (process.platform === "win32") {
-    try { resolved = realpathSync.native(resolved); } catch { /* keep original */ }
+    try { resolved = realpathSync.native(resolved); } catch (err) { /* keep original */
+      logWarning("worktree", `realpath failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
   }
 
   try {
@@ -921,8 +968,9 @@ function reconcilePlanCheckboxes(
           results.push(full);
         }
       }
-    } catch {
+    } catch (err) {
       /* non-fatal */
+      logWarning("worktree", `walkMd directory read failed: ${err instanceof Error ? err.message : String(err)}`);
     }
     return results;
   }
@@ -937,7 +985,8 @@ function reconcilePlanCheckboxes(
     try {
       srcContent = readFileSync(srcFile, "utf-8");
       dstContent = readFileSync(dstFile, "utf-8");
-    } catch {
+    } catch (e) {
+      logWarning("worktree", `reconcilePlanCheckboxes read failed: ${(e as Error).message}`);
       continue;
     }
 
@@ -972,8 +1021,9 @@ function reconcilePlanCheckboxes(
     if (changed) {
       try {
         atomicWriteSync(dstFile, updated, "utf-8");
-      } catch {
+      } catch (err) {
         /* non-fatal */
+        logWarning("worktree", `plan checkbox reconcile write failed: ${err instanceof Error ? err.message : String(err)}`);
       }
     }
   }
@@ -1155,11 +1205,19 @@ export function teardownAutoWorktree(
         `Remove it manually with: rm -rf "${wtDir.replaceAll("\\", "/")}"`,
       { worktree: milestoneId },
     );
-    // Attempt a direct filesystem removal as a fallback
-    try {
-      rmSync(wtDir, { recursive: true, force: true });
-    } catch {
-      // Non-fatal — the warning above tells the user how to clean up
+    // Attempt a direct filesystem removal as a fallback — but ONLY if the
+    // path is safely inside .gsd/worktrees/ to prevent #2365 data loss.
+    if (isInsideWorktreesDir(originalBasePath, wtDir)) {
+      try {
+        rmSync(wtDir, { recursive: true, force: true });
+      } catch (err) {
+        // Non-fatal — the warning above tells the user how to clean up
+        logWarning("worktree", `worktree directory removal failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    } else {
+      console.error(
+        `[GSD] REFUSING fallback rmSync — path is outside .gsd/worktrees/: ${wtDir}`,
+      );
     }
   }
 }
@@ -1200,7 +1258,8 @@ export function getAutoWorktreePath(
   try {
     const content = readFileSync(gitPath, "utf8").trim();
     if (!content.startsWith("gitdir: ")) return null;
-  } catch {
+  } catch (e) {
+    logWarning("worktree", `getAutoWorktreePath .git read failed: ${(e as Error).message}`);
     return null;
   }
 
@@ -1359,8 +1418,9 @@ export function mergeMilestoneToMain(
       if (!isSamePath(worktreeDbPath, mainDbPath)) {
         reconcileWorktreeDb(mainDbPath, worktreeDbPath);
       }
-    } catch {
+    } catch (err) {
       /* non-fatal */
+      logError("worktree", `DB reconciliation failed: ${err instanceof Error ? err.message : String(err)}`);
     }
   }
 
@@ -1515,9 +1575,10 @@ export function mergeMilestoneToMain(
       );
       stashed = true;
     }
-  } catch {
+  } catch (err) {
     // Stash failure is non-fatal — proceed without stash and let the merge
     // report the dirty tree if it fails.
+    logWarning("worktree", `git stash failed: ${err instanceof Error ? err.message : String(err)}`);
   }
 
   // 7a. Shelter queued milestone directories before the squash merge (#2505).
@@ -1538,9 +1599,13 @@ export function mergeMilestoneToMain(
       try {
         mkdirSync(milestonesDir, { recursive: true });
         cpSync(join(shelterDir, dirName), join(milestonesDir, dirName), { recursive: true, force: true });
-      } catch { /* best-effort */ }
+      } catch (err) { /* best-effort */
+        logError("worktree", `shelter restore failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
     }
-    try { rmSync(shelterDir, { recursive: true, force: true }); } catch { /* best-effort */ }
+    try { rmSync(shelterDir, { recursive: true, force: true }); } catch (err) { /* best-effort */
+      logWarning("worktree", `shelter cleanup failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
   };
 
   try {
@@ -1557,13 +1622,15 @@ export function mergeMilestoneToMain(
           cpSync(srcDir, dstDir, { recursive: true, force: true });
           rmSync(srcDir, { recursive: true, force: true });
           shelteredDirs.push(entry.name);
-        } catch {
+        } catch (err) {
           // Non-fatal — if shelter fails, the merge may still succeed
+          logWarning("worktree", `milestone shelter failed (${entry.name}): ${err instanceof Error ? err.message : String(err)}`);
         }
       }
     }
-  } catch {
+  } catch (err) {
     // Non-fatal — proceed with merge; untracked files may block it
+    logWarning("worktree", `milestone shelter operation failed: ${err instanceof Error ? err.message : String(err)}`);
   }
 
   // 7b. Clean up stale merge state before attempting squash merge (#2912).
@@ -1577,7 +1644,9 @@ export function mergeMilestoneToMain(
       const p = join(gitDir_, f);
       if (existsSync(p)) unlinkSync(p);
     }
-  } catch { /* best-effort */ }
+  } catch (err) { /* best-effort */
+    logError("worktree", `merge state cleanup failed: ${err instanceof Error ? err.message : String(err)}`);
+  }
 
   // 8. Squash merge — auto-resolve .gsd/ state file conflicts (#530)
   const mergeResult = nativeMergeSquash(originalBasePath_, milestoneBranch);
@@ -1595,7 +1664,9 @@ export function mergeMilestoneToMain(
           const p = join(gitDir_, f);
           if (existsSync(p)) unlinkSync(p);
         }
-      } catch { /* best-effort */ }
+      } catch (err) { /* best-effort */
+        logError("worktree", `merge state cleanup failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
 
       // Pop stash before throwing so local work is not lost.
       if (stashed) {
@@ -1605,7 +1676,9 @@ export function mergeMilestoneToMain(
             stdio: ["ignore", "pipe", "pipe"],
             encoding: "utf-8",
           });
-        } catch { /* stash pop conflict is non-fatal */ }
+        } catch (err) { /* stash pop conflict is non-fatal */
+          logWarning("worktree", `git stash pop failed: ${err instanceof Error ? err.message : String(err)}`);
+        }
       }
       restoreShelter();
       // Restore cwd so the caller is not stranded on the integration branch
@@ -1644,9 +1717,10 @@ export function mergeMilestoneToMain(
           try {
             nativeCheckoutTheirs(originalBasePath_, [safeFile]);
             nativeAddPaths(originalBasePath_, [safeFile]);
-          } catch {
+          } catch (e) {
             // If checkout --theirs fails, try removing the file from the merge
             // (it's a runtime file that shouldn't be committed anyway)
+            logWarning("worktree", `checkout --theirs failed for ${safeFile}, removing: ${(e as Error).message}`);
             nativeRmForce(originalBasePath_, [safeFile]);
           }
         }
@@ -1657,14 +1731,18 @@ export function mergeMilestoneToMain(
         // Abort merge state so MERGE_HEAD is not left on disk (#2912).
         // libgit2's merge creates MERGE_HEAD even for squash merges; if left
         // dangling, subsequent merges fail and doctor reports corrupt state.
-        try { nativeMergeAbort(originalBasePath_); } catch { /* best-effort */ }
+        try { nativeMergeAbort(originalBasePath_); } catch (err) { /* best-effort */
+          logError("worktree", `git merge-abort failed: ${err instanceof Error ? err.message : String(err)}`);
+        }
         try {
           const gitDir_ = resolveGitDir(originalBasePath_);
           for (const f of ["SQUASH_MSG", "MERGE_MSG", "MERGE_HEAD"]) {
             const p = join(gitDir_, f);
             if (existsSync(p)) unlinkSync(p);
           }
-        } catch { /* best-effort */ }
+        } catch (err) { /* best-effort */
+          logError("worktree", `merge state file cleanup failed: ${err instanceof Error ? err.message : String(err)}`);
+        }
 
         // Pop stash before throwing so local work is not lost (#2151).
         if (stashed) {
@@ -1674,7 +1752,9 @@ export function mergeMilestoneToMain(
               stdio: ["ignore", "pipe", "pipe"],
               encoding: "utf-8",
             });
-          } catch { /* stash pop conflict is non-fatal */ }
+          } catch (err) { /* stash pop conflict is non-fatal */
+            logWarning("worktree", `git stash pop failed: ${err instanceof Error ? err.message : String(err)}`);
+          }
         }
         restoreShelter();
         throw new MergeConflictError(
@@ -1704,7 +1784,9 @@ export function mergeMilestoneToMain(
       const p = join(gitDir_, f);
       if (existsSync(p)) unlinkSync(p);
     }
-  } catch { /* best-effort */ }
+  } catch (err) { /* best-effort */
+    logError("worktree", `post-commit merge state cleanup failed: ${err instanceof Error ? err.message : String(err)}`);
+  }
 
   // 9a-ii. Restore stashed files now that the merge+commit is complete (#2151).
   // Pop after commit so stashed changes do not interfere with the squash merge
@@ -1717,7 +1799,8 @@ export function mergeMilestoneToMain(
         stdio: ["ignore", "pipe", "pipe"],
         encoding: "utf-8",
       });
-    } catch {
+    } catch (e) {
+      logWarning("worktree", `git stash pop failed, attempting conflict resolution: ${(e as Error).message}`);
       // Stash pop after squash merge can conflict on .gsd/ state files that
       // diverged between branches.  Left unresolved, these UU entries block
       // every subsequent merge.  Auto-resolve them the same way we handle
@@ -1737,8 +1820,9 @@ export function mergeMilestoneToMain(
               encoding: "utf-8",
             });
             nativeAddPaths(originalBasePath_, [f]);
-          } catch {
+          } catch (e) {
             // Last resort: remove the conflicted state file
+            logWarning("worktree", `checkout HEAD failed for ${f}, removing: ${(e as Error).message}`);
             nativeRmForce(originalBasePath_, [f]);
           }
         }
@@ -1752,7 +1836,9 @@ export function mergeMilestoneToMain(
             stdio: ["ignore", "pipe", "pipe"],
             encoding: "utf-8",
           });
-        } catch { /* stash may already be consumed */ }
+        } catch (err) { /* stash may already be consumed */
+          logWarning("worktree", `git stash drop failed: ${err instanceof Error ? err.message : String(err)}`);
+        }
       } else {
         // Non-.gsd conflicts remain — leave stash for manual resolution
         logWarning("reconcile", "Stash pop conflict on non-.gsd files after merge", {
@@ -1805,8 +1891,9 @@ export function mergeMilestoneToMain(
       codeFilesChanged = mergedFiles.some(
         (entry) => !entry.path.startsWith(".gsd/"),
       );
-    } catch {
+    } catch (e) {
       // If HEAD~1 doesn't exist (first commit), assume code was changed
+      logWarning("worktree", `diff numstat failed (assuming code changed): ${(e as Error).message}`);
       codeFilesChanged = true;
     }
   }
@@ -1822,8 +1909,9 @@ export function mergeMilestoneToMain(
         encoding: "utf-8",
       });
       pushed = true;
-    } catch {
+    } catch (err) {
       // Push failure is non-fatal
+      logWarning("worktree", `git push failed: ${err instanceof Error ? err.message : String(err)}`);
     }
   }
 
@@ -1852,8 +1940,9 @@ export function mergeMilestoneToMain(
         encoding: "utf-8",
       });
       prCreated = true;
-    } catch {
+    } catch (err) {
       // PR creation failure is non-fatal — gh may not be installed or authenticated
+      logWarning("worktree", `PR creation failed: ${err instanceof Error ? err.message : String(err)}`);
     }
   }
 
@@ -1891,15 +1980,17 @@ export function mergeMilestoneToMain(
       branch: null as unknown as string,
       deleteBranch: false,
     });
-  } catch {
+  } catch (err) {
     // Best-effort -- worktree dir may already be gone
+    logWarning("worktree", `worktree removal failed: ${err instanceof Error ? err.message : String(err)}`);
   }
 
   // 13. Delete milestone branch (after worktree removal so ref is unlocked)
   try {
     nativeBranchDelete(originalBasePath_, milestoneBranch);
-  } catch {
+  } catch (err) {
     // Best-effort
+    logWarning("worktree", `git branch-delete failed: ${err instanceof Error ? err.message : String(err)}`);
   }
 
   // 14. Clear module state
@@ -1908,3 +1999,4 @@ export function mergeMilestoneToMain(
 
   return { commitMessage, pushed, prCreated, codeFilesChanged };
 }
+

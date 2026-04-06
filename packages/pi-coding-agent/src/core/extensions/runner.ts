@@ -13,6 +13,8 @@ import type { SessionManager } from "../session-manager.js";
 import type {
 	BeforeAgentStartEvent,
 	BeforeAgentStartEventResult,
+	BeforeModelSelectEvent,
+	BeforeModelSelectResult,
 	BeforeProviderRequestEvent,
 	CompactOptions,
 	ContextEvent,
@@ -230,6 +232,8 @@ export class ExtensionRunner {
 		this.cwd = cwd;
 		this.sessionManager = sessionManager;
 		this.modelRegistry = modelRegistry;
+		// Bind emit methods into the shared runtime so createExtensionAPI can delegate to them.
+		this.runtime.emitBeforeModelSelect = (event) => this.emitBeforeModelSelect(event);
 	}
 
 	bindCore(actions: ExtensionActions, contextActions: ExtensionContextActions): void {
@@ -692,6 +696,21 @@ export class ExtensionRunner {
 		});
 
 		return currentPayload;
+	}
+
+	async emitBeforeModelSelect(event: Omit<BeforeModelSelectEvent, "type">): Promise<BeforeModelSelectResult | undefined> {
+		let result: BeforeModelSelectResult | undefined;
+		await this.invokeHandlers("before_model_select", () => ({
+			type: "before_model_select" as const,
+			...event,
+		} satisfies BeforeModelSelectEvent), (handlerResult) => {
+			if (handlerResult) {
+				result = handlerResult as BeforeModelSelectResult;
+				return { done: true }; // first override wins
+			}
+			return { done: false };
+		});
+		return result;
 	}
 
 	async emitBeforeAgentStart(

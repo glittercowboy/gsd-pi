@@ -24,13 +24,9 @@ Leave the project in a state where the next agent can immediately understand wha
 
 ## Skills
 
-GSD ships with bundled skills. Load the relevant skill file with the `read` tool before starting work when the task matches.
+GSD ships with bundled skills. Load the relevant skill file with the `read` tool before starting work when the task matches. Use bare skill names — GSD resolves them to the correct path automatically.
 
-| Trigger | Skill to load |
-|---|---|
-| Frontend UI - web components, pages, landing pages, dashboards, React/HTML/CSS, styling | `~/.gsd/agent/skills/frontend-design/SKILL.md` |
-| macOS or iOS apps - SwiftUI, Xcode, App Store | `~/.gsd/agent/skills/swiftui/SKILL.md` |
-| Debugging - complex bugs, failing tests, root-cause investigation after standard approaches fail | `~/.gsd/agent/skills/debug-like-expert/SKILL.md` |
+{{bundledSkillsTable}}
 
 ## Hard Rules
 
@@ -119,7 +115,7 @@ In all modes, slices commit sequentially on the active branch; there are no per-
 ### Artifact Templates
 
 Templates showing the expected format for each artifact type are in:
-`~/.gsd/agent/extensions/gsd/templates/`
+`{{templatesDir}}`
 
 **Always read the relevant template before writing an artifact** to match the expected structure exactly. The parsers that read these files depend on specific formatting:
 
@@ -175,6 +171,7 @@ Templates showing the expected format for each artifact type are in:
 - Never guess at library APIs from training data — use `get_library_docs`.
 - Never ask the user to run a command, set a variable, or check something you can check yourself.
 - Never await stale async jobs after editing source — `cancel_job` them first, then re-run.
+- Never query `.gsd/gsd.db` directly via `sqlite3`, `better-sqlite3`, or `node -e require('better-sqlite3')` — the database uses a single-writer WAL connection managed by the engine. Direct access causes reader/writer conflicts and bypasses validation logic. Use `gsd_milestone_status`, `gsd_journal_query`, or other `gsd_*` tools exclusively for all DB reads and writes.
 
 ### Ask vs infer
 

@@ -87,9 +87,13 @@ function writeManagedResourceManifest(agentDir: string): void {
       installedExtensionDirs = entries
         .filter(e => e.isDirectory())
         .filter(e => {
-          // Only track directories that are actual extensions (contain index.js or index.ts)
+          // Track directories that are actual extensions — identified by an
+          // index.js/index.ts entry point OR an extension-manifest.json (e.g.
+          // remote-questions which uses mod.ts instead of index.ts).
           const dirPath = join(bundledExtensionsDir, e.name)
-          return existsSync(join(dirPath, 'index.js')) || existsSync(join(dirPath, 'index.ts'))
+          return existsSync(join(dirPath, 'index.js'))
+            || existsSync(join(dirPath, 'index.ts'))
+            || existsSync(join(dirPath, 'extension-manifest.json'))
         })
         .map(e => e.name)
     }
@@ -369,6 +373,16 @@ function pruneRemovedBundledExtensions(
     }
   }
 
+  // Sweep-based: also remove any installed extension subdirectory not in the current bundle,
+  // even if it was never tracked in the manifest (e.g. installed by a pre-manifest version).
+  try {
+    if (existsSync(extensionsDir)) {
+      for (const e of readdirSync(extensionsDir, { withFileTypes: true })) {
+        if (e.isDirectory()) removeDirIfStale(e.name)
+      }
+    }
+  } catch { /* non-fatal */ }
+
   // Always remove known stale files regardless of manifest state.
   // These were installed by pre-manifest versions so they may not appear in
   // installedExtensionRootFiles even when a manifest exists.
@@ -602,7 +616,7 @@ export function buildResourceLoader(agentDir: string): DefaultResourceLoader {
   return new DefaultResourceLoader({
     agentDir,
     additionalExtensionPaths: piExtensionPaths,
-    bundledExtensionNames: bundledKeys,
+    bundledExtensionKeys: bundledKeys,
     extensionPathsTransform: (paths: string[]) => {
       // 1. Filter community extensions through the GSD registry
       const filteredPaths = paths.filter((entryPath) => {

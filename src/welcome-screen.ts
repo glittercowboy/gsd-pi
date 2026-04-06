@@ -54,7 +54,7 @@ export function printWelcomeScreen(opts: WelcomeScreenOptions): void {
   const { version, modelName, provider, remoteChannel } = opts
   const shortCwd = getShortCwd()
   const branch = getGitBranch()
-  const termWidth = Math.min((process.stderr.columns || 80) - 1, 200)
+  const termWidth = (process.stderr.columns || 80) - 1
 
   // Narrow terminal fallback
   if (termWidth < 70) {

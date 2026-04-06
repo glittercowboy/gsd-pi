@@ -217,12 +217,26 @@ describe("workflow-logger", () => {
       assert.ok(formatted.includes("\n"));
     });
 
-    test("does not include context in formatted output", () => {
+    test("includes context fields in formatted output", () => {
       logError("tool", "failed", { cmd: "complete_task" });
       const entries = drainLogs();
       const formatted = formatForNotification(entries);
-      assert.equal(formatted, "[tool] failed");
-      assert.ok(!formatted.includes("complete_task"));
+      assert.equal(formatted, "[tool] failed (cmd: complete_task)");
+    });
+
+    test("excludes error key from context to avoid redundancy", () => {
+      logError("tool", "disk write failed", { error: "ENOSPC", path: "/tmp/foo" });
+      const entries = drainLogs();
+      const formatted = formatForNotification(entries);
+      assert.ok(formatted.includes("path: /tmp/foo"));
+      assert.ok(!formatted.includes("error: ENOSPC"));
+    });
+
+    test("formats entry without context unchanged", () => {
+      logError("intercept", "blocked write");
+      const entries = drainLogs();
+      const formatted = formatForNotification(entries);
+      assert.equal(formatted, "[intercept] blocked write");
     });
   });
 
@@ -240,13 +254,13 @@ describe("workflow-logger", () => {
 
     test("writes entry to .gsd/audit-log.jsonl after setLogBasePath", () => {
       setLogBasePath(dir);
-      logWarning("engine", "audit test entry");
+      logError("engine", "audit test entry");
 
       const auditPath = join(dir, ".gsd", "audit-log.jsonl");
       assert.ok(existsSync(auditPath), "audit-log.jsonl should exist");
       const content = readFileSync(auditPath, "utf-8");
       const entry = JSON.parse(content.trim());
-      assert.equal(entry.severity, "warn");
+      assert.equal(entry.severity, "error");
       assert.equal(entry.component, "engine");
       assert.equal(entry.message, "audit test entry");
     });
@@ -254,7 +268,7 @@ describe("workflow-logger", () => {
     test("_resetLogs does not clear the audit base path", () => {
       setLogBasePath(dir);
       _resetLogs();
-      logWarning("engine", "post-reset entry");
+      logError("engine", "post-reset entry");
 
       const auditPath = join(dir, ".gsd", "audit-log.jsonl");
       assert.ok(existsSync(auditPath), "audit-log.jsonl should exist after _resetLogs");
@@ -276,44 +290,6 @@ describe("workflow-logger", () => {
       // First MAX entries dropped; oldest surviving = msg-(OVER-MAX)
       assert.equal(entries[0].message, `msg-${OVER - MAX}`);
       assert.equal(entries[MAX - 1].message, `msg-${OVER - 1}`);
-    });
-  });
-
-  describe("audit log persistence", () => {
-    let dir: string;
-
-    beforeEach(() => {
-      dir = makeTempDir("wl-audit-");
-    });
-
-    afterEach(() => {
-      setLogBasePath("");
-      cleanup(dir);
-    });
-
-    test("writes entry to .gsd/audit-log.jsonl after setLogBasePath", () => {
-      setLogBasePath(dir);
-      logWarning("engine", "audit test entry");
-
-      const auditPath = join(dir, ".gsd", "audit-log.jsonl");
-      assert.ok(existsSync(auditPath), "audit-log.jsonl should exist");
-      const content = readFileSync(auditPath, "utf-8");
-      const entry = JSON.parse(content.trim());
-      assert.equal(entry.severity, "warn");
-      assert.equal(entry.component, "engine");
-      assert.equal(entry.message, "audit test entry");
-    });
-
-    test("_resetLogs does not clear the audit base path", () => {
-      setLogBasePath(dir);
-      _resetLogs();
-      logWarning("engine", "post-reset entry");
-
-      const auditPath = join(dir, ".gsd", "audit-log.jsonl");
-      assert.ok(existsSync(auditPath), "audit-log.jsonl should exist after _resetLogs");
-      const content = readFileSync(auditPath, "utf-8");
-      const entry = JSON.parse(content.trim());
-      assert.equal(entry.message, "post-reset entry");
     });
   });
 

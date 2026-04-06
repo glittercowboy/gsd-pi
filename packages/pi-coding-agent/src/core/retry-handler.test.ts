@@ -61,6 +61,11 @@ function createMockDeps(overrides?: {
 	markUsageLimitReachedResult?: boolean;
 	fallbackResult?: any;
 	findModelResult?: (provider: string, modelId: string) => Model<Api> | undefined;
+	retrySettings?: {
+		maxRetries?: number;
+		baseDelayMs?: number;
+		maxDelayMs?: number;
+	};
 }): MockDeps {
 	const model = overrides?.model ?? createMockModel("anthropic", "claude-opus-4-6[1m]");
 	const emittedEvents: Array<Record<string, any>> = [];
@@ -90,9 +95,9 @@ function createMockDeps(overrides?: {
 			getRetryEnabled: () => overrides?.retryEnabled ?? true,
 			getRetrySettings: () => ({
 				enabled: overrides?.retryEnabled ?? true,
-				maxRetries: 5,
-				baseDelayMs: 1000,
-				maxDelayMs: 30000,
+				maxRetries: overrides?.retrySettings?.maxRetries ?? 5,
+				baseDelayMs: overrides?.retrySettings?.baseDelayMs ?? 1000,
+				maxDelayMs: overrides?.retrySettings?.maxDelayMs ?? 30000,
 			}),
 		} as unknown as SettingsManager,
 		modelRegistry: {
@@ -241,6 +246,28 @@ describe("RetryHandler — long-context entitlement 429 (#2803)", () => {
 			// No downgrade switch should occur
 			const switchEvent = emittedEvents.find((e) => e.type === "fallback_provider_switch");
 			assert.equal(switchEvent, undefined, "Should not switch for non-[1m] models");
+		});
+	});
+
+	describe("retry cancellation", () => {
+		it("cancels queued immediate continue callbacks when retry is aborted", async () => {
+			const { deps, emittedEvents, continueFn } = createMockDeps({
+				markUsageLimitReachedResult: true,
+			});
+
+			const handler = new RetryHandler(deps);
+			const msg = errorMessage("429 Too Many Requests");
+
+			const result = await handler.handleRetryableError(msg);
+			assert.equal(result, true, "retry should be initiated");
+
+			handler.abortRetry();
+			await new Promise((resolve) => setTimeout(resolve, 10));
+
+			assert.equal(continueFn.mock.calls.length, 0, "cancelled retry must not continue after explicit abort");
+			const endEvents = emittedEvents.filter((e) => e.type === "auto_retry_end");
+			assert.equal(endEvents.length, 1, "retry cancellation should emit a single auto_retry_end event");
+			assert.equal(endEvents[0]?.finalError, "Retry cancelled");
 		});
 	});
 

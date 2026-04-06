@@ -38,6 +38,8 @@ All relevant context has been preloaded below — the roadmap, all slice summari
 
 **Persist validation results through `gsd_validate_milestone`.** Call it with: `milestoneId`, `verdict`, `remediationRound`, `successCriteriaChecklist`, `sliceDeliveryAudit`, `crossSliceIntegration`, `requirementCoverage`, `verificationClasses` (when non-empty), `verdictRationale`, and `remediationPlan` (if verdict is `needs-remediation`). The tool writes the validation to the DB and renders VALIDATION.md to disk.
 
+**DB access safety:** Do NOT query `.gsd/gsd.db` directly via `sqlite3` or `node -e require('better-sqlite3')` — the engine owns the WAL connection. Use `gsd_milestone_status` to read milestone and slice state. All data you need is already inlined in the context above or accessible via the `gsd_*` tools. Direct DB access corrupts the WAL and bypasses tool-level validation.
+
 If verdict is `needs-remediation`:
 - After calling `gsd_validate_milestone`, use `gsd_reassess_roadmap` to add remediation slices. Pass `milestoneId`, a synthetic `completedSliceId` (e.g. "VALIDATION"), `verdict: "roadmap-adjusted"`, `assessment` text, and `sliceChanges` with the new slices in the `added` array. The tool persists the changes to the DB and re-renders ROADMAP.md.
 - These remediation slices will be planned and executed before validation re-runs.

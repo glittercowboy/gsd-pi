@@ -83,3 +83,22 @@ export function hasInteractiveToolInFlight(): boolean {
 export function clearInFlightTools(): void {
   inFlightTools.clear();
 }
+
+// ─── Tool invocation error classification (#2883) ────────────────────────
+
+/**
+ * Patterns that indicate a tool invocation failed due to malformed or truncated
+ * JSON arguments — as opposed to a normal business-logic error from the tool
+ * handler. When these errors occur, retrying the same unit will produce the same
+ * failure, so the retry loop must be broken.
+ */
+const TOOL_INVOCATION_ERROR_RE = /Validation failed for tool|Expected ',' or '\}' in JSON|Unexpected end of JSON|Unexpected token.*in JSON/i;
+
+/**
+ * Returns true if the error message indicates a tool invocation failure due to
+ * malformed/truncated arguments (as opposed to a normal tool execution error).
+ */
+export function isToolInvocationError(errorMsg: string): boolean {
+  if (!errorMsg) return false;
+  return TOOL_INVOCATION_ERROR_RE.test(errorMsg);
+}

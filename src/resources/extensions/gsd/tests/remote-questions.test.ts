@@ -739,6 +739,27 @@ test("config source-level: hydration skips api_key entries with empty keys", () 
   );
 });
 
+test("ask-user-questions source-level: tryRemoteQuestions is called before the hasUI guard", () => {
+  // Regression test for #3480 — remote questions were silently skipped in interactive
+  // mode because tryRemoteQuestions was gated behind `if (!ctx.hasUI)`.
+  // The fix moved the remote call before that guard so configured channels
+  // (Telegram/Slack/Discord) fire regardless of UI availability.
+  const src = readFileSync(
+    join(__dirname, "..", "..", "ask-user-questions.ts"),
+    "utf-8",
+  );
+
+  const remoteCallIdx = src.indexOf("tryRemoteQuestions(params.questions");
+  const hasUIGuardIdx = src.indexOf("if (!ctx.hasUI)");
+
+  assert.ok(remoteCallIdx !== -1, "tryRemoteQuestions call should exist in ask-user-questions.ts");
+  assert.ok(hasUIGuardIdx !== -1, "!ctx.hasUI guard should exist in ask-user-questions.ts");
+  assert.ok(
+    remoteCallIdx < hasUIGuardIdx,
+    "tryRemoteQuestions must be called before the !ctx.hasUI guard — otherwise remote questions are skipped in interactive mode",
+  );
+});
+
 test("config source-level: removeProviderToken uses auth.remove not auth.set with empty key", () => {
   const commandSrc = readFileSync(
     join(__dirname, "..", "..", "remote-questions", "remote-command.ts"),

@@ -12,6 +12,11 @@ import type { ServerConfig } from "./types.js";
 const require = createRequire(import.meta.url);
 const DEFAULTS = require("./defaults.json") as Record<string, Partial<ServerConfig>>;
 
+/** Map legacy server keys to their current names so user overrides still merge. */
+const LEGACY_ALIASES: Record<string, string> = {
+	"kotlin-language-server": "kotlin-lsp",
+};
+
 export interface LspConfig {
 	servers: Record<string, ServerConfig>;
 	/** Idle timeout in milliseconds. If set, LSP clients will be shutdown after this period of inactivity. Disabled by default. */
@@ -109,7 +114,8 @@ function mergeServers(
 	overrides: Record<string, Partial<ServerConfig>>,
 ): Record<string, ServerConfig> {
 	const merged: Record<string, ServerConfig> = { ...base };
-	for (const [name, config] of Object.entries(overrides)) {
+	for (const [rawName, config] of Object.entries(overrides)) {
+		const name = LEGACY_ALIASES[rawName] ?? rawName;
 		if (merged[name]) {
 			const candidate = { ...merged[name], ...config };
 			const normalized = normalizeServerConfig(name, candidate);

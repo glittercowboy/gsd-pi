@@ -37,6 +37,8 @@ export class RetryHandler {
 	private _retryAttempt = 0;
 	private _retryPromise: Promise<void> | undefined = undefined;
 	private _retryResolve: (() => void) | undefined = undefined;
+	private _retryGeneration = 0;
+	private _continueTimeout: ReturnType<typeof setTimeout> | undefined = undefined;
 
 	constructor(private readonly _deps: RetryHandlerDeps) {}
 
@@ -134,6 +136,7 @@ export class RetryHandler {
 		}
 
 		// Try credential fallback before counting against retry budget.
+		const retryGeneration = this._retryGeneration;
 		if (this._deps.getModel() && message.errorMessage) {
 			const errorType = this._classifyErrorType(message.errorMessage);
 			const isCredentialError = errorType === "rate_limit" || errorType === "quota_exhausted";
@@ -157,9 +160,7 @@ export class RetryHandler {
 				});
 
 				// Retry immediately with the next credential - don't increment _retryAttempt
-				setTimeout(() => {
-					this._deps.agent.continue().catch(() => {});
-				}, 0);
+				this._scheduleContinue(retryGeneration);
 
 				return true;
 			}
@@ -193,9 +194,7 @@ export class RetryHandler {
 					});
 
 					// Retry immediately with fallback provider - don't increment _retryAttempt
-					setTimeout(() => {
-						this._deps.agent.continue().catch(() => {});
-					}, 0);
+					this._scheduleContinue(retryGeneration);
 
 					return true;
 				}
@@ -203,7 +202,7 @@ export class RetryHandler {
 				// No fallback available either
 				if (errorType === "quota_exhausted") {
 					// Try long-context model downgrade ([1m] → base) before giving up
-					const downgraded = this._tryLongContextDowngrade(message);
+					const downgraded = this._tryLongContextDowngrade(message, retryGeneration);
 					if (downgraded) return true;
 
 					this._deps.emit({
@@ -274,7 +273,12 @@ export class RetryHandler {
 		try {
 			await sleep(delayMs, this._retryAbortController.signal);
 		} catch {
-			// Aborted during sleep
+			// Aborted during sleep. If the retry generation already advanced, this
+			// cancellation was handled externally (e.g. explicit model switch).
+			if (retryGeneration !== this._retryGeneration) {
+				this._retryAbortController = undefined;
+				return false;
+			}
 			const attempt = this._retryAttempt;
 			this._retryAttempt = 0;
 			this._retryAbortController = undefined;
@@ -290,16 +294,36 @@ export class RetryHandler {
 		this._retryAbortController = undefined;
 
 		// Retry via continue() - use setTimeout to break out of event handler chain
-		setTimeout(() => {
-			this._deps.agent.continue().catch(() => {});
-		}, 0);
+		this._scheduleContinue(retryGeneration);
 
 		return true;
 	}
 
 	/** Cancel in-progress retry */
 	abortRetry(): void {
-		this._retryAbortController?.abort();
+		const hadRetry =
+			this._retryPromise !== undefined
+			|| this._retryAbortController !== undefined
+			|| this._continueTimeout !== undefined;
+		if (!hadRetry) return;
+
+		const attempt = this._retryAttempt > 0 ? this._retryAttempt : 1;
+		this._retryGeneration++;
+		if (this._continueTimeout) {
+			clearTimeout(this._continueTimeout);
+			this._continueTimeout = undefined;
+		}
+		if (this._retryAbortController) {
+			this._retryAbortController.abort();
+			this._retryAbortController = undefined;
+		}
+		this._retryAttempt = 0;
+		this._deps.emit({
+			type: "auto_retry_end",
+			success: false,
+			attempt,
+			finalError: "Retry cancelled",
+		});
 		this._resolveRetry();
 	}
 
@@ -328,6 +352,17 @@ export class RetryHandler {
 			this._retryResolve = undefined;
 			this._retryPromise = undefined;
 		}
+	}
+
+	private _scheduleContinue(retryGeneration: number): void {
+		if (this._continueTimeout) {
+			clearTimeout(this._continueTimeout);
+		}
+		this._continueTimeout = setTimeout(() => {
+			this._continueTimeout = undefined;
+			if (retryGeneration !== this._retryGeneration) return;
+			this._deps.agent.continue().catch(() => {});
+		}, 0);
 	}
 
 	private _findLastAssistantInMessages(
@@ -361,7 +396,7 @@ export class RetryHandler {
 	 * base model (claude-opus-4-6) when the account lacks the long-context billing
 	 * entitlement. Returns true if the downgrade was initiated.
 	 */
-	private _tryLongContextDowngrade(message: AssistantMessage): boolean {
+	private _tryLongContextDowngrade(message: AssistantMessage, retryGeneration: number): boolean {
 		const currentModel = this._deps.getModel();
 		if (!currentModel) return false;
 
@@ -393,9 +428,7 @@ export class RetryHandler {
 			errorMessage: `${message.errorMessage} (long context downgrade)`,
 		});
 
-		setTimeout(() => {
-			this._deps.agent.continue().catch(() => {});
-		}, 0);
+		this._scheduleContinue(retryGeneration);
 
 		return true;
 	}

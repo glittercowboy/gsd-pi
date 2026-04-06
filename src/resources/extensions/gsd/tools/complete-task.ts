@@ -33,6 +33,7 @@ import { renderPlanCheckboxes } from "../markdown-renderer.js";
 import { renderAllProjections, renderSummaryContent } from "../workflow-projections.js";
 import { writeManifest } from "../workflow-manifest.js";
 import { appendEvent } from "../workflow-events.js";
+import { logWarning } from "../workflow-logger.js";
 
 export interface CompleteTaskResult {
   taskId: string;
@@ -59,11 +60,11 @@ function paramsToTaskRow(params: CompleteTaskParams, completedAt: string): TaskR
     verification_result: params.verification,
     duration: "",
     completed_at: completedAt,
-    blocker_discovered: params.blockerDiscovered,
-    deviations: params.deviations,
-    known_issues: params.knownIssues,
-    key_files: params.keyFiles,
-    key_decisions: params.keyDecisions,
+    blocker_discovered: params.blockerDiscovered ?? false,
+    deviations: params.deviations ?? "",
+    known_issues: params.knownIssues ?? "",
+    key_files: params.keyFiles ?? [],
+    key_decisions: params.keyDecisions ?? [],
     full_summary_md: "",
     description: "",
     estimate: "",
@@ -151,14 +152,14 @@ export async function handleCompleteTask(
       narrative: params.narrative,
       verificationResult: params.verification,
       duration: "",
-      blockerDiscovered: params.blockerDiscovered,
-      deviations: params.deviations,
-      knownIssues: params.knownIssues,
-      keyFiles: params.keyFiles,
-      keyDecisions: params.keyDecisions,
+      blockerDiscovered: params.blockerDiscovered ?? false,
+      deviations: params.deviations ?? "None.",
+      knownIssues: params.knownIssues ?? "None.",
+      keyFiles: params.keyFiles ?? [],
+      keyDecisions: params.keyDecisions ?? [],
     });
 
-    for (const evidence of params.verificationEvidence) {
+    for (const evidence of (params.verificationEvidence ?? [])) {
       insertVerificationEvidence({
         taskId: params.taskId,
         sliceId: params.sliceId,
@@ -181,7 +182,7 @@ export async function handleCompleteTask(
 
   // Render summary markdown via the single source of truth (#2720)
   const taskRow = paramsToTaskRow(params, completedAt);
-  const summaryMd = renderSummaryContent(taskRow, params.sliceId, params.milestoneId, params.verificationEvidence);
+  const summaryMd = renderSummaryContent(taskRow, params.sliceId, params.milestoneId, params.verificationEvidence ?? []);
 
   // Resolve and write summary to disk
   let summaryPath: string;
@@ -210,9 +211,7 @@ export async function handleCompleteTask(
     }
   } catch (renderErr) {
     // Disk render failed — roll back DB status so state stays consistent
-    process.stderr.write(
-      `gsd-db: complete_task — disk render failed, rolling back DB status: ${(renderErr as Error).message}\n`,
-    );
+    logWarning("tool", `complete_task — disk render failed, rolling back DB status: ${(renderErr as Error).message}`);
     // Delete orphaned verification_evidence rows first (FK constraint
     // references tasks, so evidence must go before status change).
     // Without this, retries accumulate duplicate evidence rows (#2724).
@@ -243,9 +242,7 @@ export async function handleCompleteTask(
       trigger_reason: params.triggerReason,
     });
   } catch (hookErr) {
-    process.stderr.write(
-      `gsd: complete-task post-mutation hook warning: ${(hookErr as Error).message}\n`,
-    );
+    logWarning("tool", `complete-task post-mutation hook warning: ${(hookErr as Error).message}`);
   }
 
   return {

@@ -8,12 +8,15 @@
  */
 
 import type {
+	OllamaChatRequest,
+	OllamaChatResponse,
 	OllamaPsResponse,
 	OllamaPullProgress,
 	OllamaShowResponse,
 	OllamaTagsResponse,
 	OllamaVersionResponse,
 } from "./types.js";
+import { parseNDJsonStream } from "./ndjson-stream.js";
 
 const DEFAULT_HOST = "http://localhost:11434";
 const PROBE_TIMEOUT_MS = 1500;
@@ -130,39 +133,36 @@ export async function pullModel(
 		throw new Error("Ollama /api/pull returned no body");
 	}
 
-	const reader = response.body.getReader();
-	const decoder = new TextDecoder();
-	let buffer = "";
+	for await (const progress of parseNDJsonStream<OllamaPullProgress>(response.body, signal)) {
+		onProgress?.(progress);
+	}
+}
 
-	while (true) {
-		const { done, value } = await reader.read();
-		if (done) break;
+/**
+ * Stream a chat completion via /api/chat.
+ * Returns an async generator yielding each NDJSON response chunk.
+ */
+export async function* chat(
+	request: OllamaChatRequest,
+	signal?: AbortSignal,
+): AsyncGenerator<OllamaChatResponse> {
+	const response = await fetch(`${getOllamaHost()}/api/chat`, {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify(request),
+		signal,
+	});
 
-		buffer += decoder.decode(value, { stream: true });
-		const lines = buffer.split("\n");
-		buffer = lines.pop() ?? "";
-
-		for (const line of lines) {
-			const trimmed = line.trim();
-			if (!trimmed) continue;
-			try {
-				const progress = JSON.parse(trimmed) as OllamaPullProgress;
-				onProgress?.(progress);
-			} catch {
-				// Skip malformed lines
-			}
-		}
+	if (!response.ok) {
+		const text = await response.text();
+		throw new Error(`Ollama /api/chat returned ${response.status}: ${text}`);
 	}
 
-	// Process remaining buffer
-	if (buffer.trim()) {
-		try {
-			const progress = JSON.parse(buffer.trim()) as OllamaPullProgress;
-			onProgress?.(progress);
-		} catch {
-			// Ignore
-		}
+	if (!response.body) {
+		throw new Error("Ollama /api/chat returned no body");
 	}
+
+	yield* parseNDJsonStream<OllamaChatResponse>(response.body, signal, true);
 }
 
 /**

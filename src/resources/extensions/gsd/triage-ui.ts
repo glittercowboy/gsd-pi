@@ -51,11 +51,11 @@ const CLASSIFICATION_LABELS: Record<Classification, { label: string; description
   },
   "stop": {
     label: "Stop",
-    description: "Halt current execution — a blocking issue requires resolution.",
+    description: "Halt auto-mode immediately — user directive to cease execution.",
   },
   "backtrack": {
     label: "Backtrack",
-    description: "Undo recent steps and retry from an earlier checkpoint.",
+    description: "Abandon current milestone and return to a previous one.",
   },
 };
 
@@ -91,8 +91,9 @@ export async function showTriageConfirmation(
     const capture = captureMap.get(result.captureId);
     if (!capture) continue;
 
-    // Auto-confirm note and defer — low-impact, no plan modification
-    if (result.classification === "note" || result.classification === "defer") {
+    // Auto-confirm note, defer, stop, and backtrack — low-impact or urgent directives
+    if (result.classification === "note" || result.classification === "defer"
+      || result.classification === "stop" || result.classification === "backtrack") {
       const resolution = result.classification === "note"
         ? "acknowledged as note"
         : `deferred${result.targetSlice ? ` to ${result.targetSlice}` : ""}`;

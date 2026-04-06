@@ -15,7 +15,7 @@ export interface GsdCommandDefinition {
 type CompletionMap = Record<string, readonly GsdCommandDefinition[]>;
 
 export const GSD_COMMAND_DESCRIPTION =
-  "GSD — Get Shit Done: /gsd help|start|templates|next|auto|stop|pause|status|widget|visualize|queue|quick|discuss|capture|triage|dispatch|history|undo|undo-task|reset-slice|rate|skip|export|cleanup|mode|prefs|config|keys|hooks|run-hook|skill-health|doctor|logs|forensics|changelog|migrate|remote|steer|knowledge|new-milestone|parallel|cmux|park|unpark|init|setup|inspect|extensions|update|fast|mcp|rethink|codebase";
+  "GSD — Get Shit Done: /gsd help|start|templates|next|auto|stop|pause|status|widget|visualize|queue|quick|discuss|capture|triage|dispatch|history|undo|undo-task|reset-slice|rate|skip|export|cleanup|mode|prefs|config|keys|hooks|run-hook|skill-health|doctor|logs|forensics|changelog|migrate|remote|steer|knowledge|new-milestone|parallel|cmux|park|unpark|init|setup|inspect|extensions|update|fast|mcp|rethink|codebase|notifications";
 
 export const TOP_LEVEL_SUBCOMMANDS: readonly GsdCommandDefinition[] = [
   { cmd: "help", desc: "Categorized command reference with descriptions" },
@@ -48,6 +48,7 @@ export const TOP_LEVEL_SUBCOMMANDS: readonly GsdCommandDefinition[] = [
   { cmd: "hooks", desc: "Show configured post-unit and pre-dispatch hooks" },
   { cmd: "run-hook", desc: "Manually trigger a specific hook" },
   { cmd: "skill-health", desc: "Skill lifecycle dashboard" },
+  { cmd: "notifications", desc: "View, filter, and clear persistent notification history" },
   { cmd: "doctor", desc: "Runtime health checks with auto-fix" },
   { cmd: "logs", desc: "Browse activity logs, debug logs, and metrics" },
   { cmd: "forensics", desc: "Examine execution logs" },
@@ -109,6 +110,11 @@ const NESTED_COMPLETIONS: CompletionMap = {
     { cmd: "remote", desc: "Configure remote integrations" },
     { cmd: "keys", desc: "Manage API keys" },
     { cmd: "prefs", desc: "Configure global preferences" },
+  ],
+  notifications: [
+    { cmd: "clear", desc: "Clear all notifications" },
+    { cmd: "tail", desc: "Show last N notifications (default: 20)" },
+    { cmd: "filter", desc: "Filter by severity (error|warning|info|success)" },
   ],
   logs: [
     { cmd: "debug", desc: "List or view debug log files" },
@@ -229,8 +235,10 @@ const NESTED_COMPLETIONS: CompletionMap = {
   codebase: [
     { cmd: "generate", desc: "Generate or regenerate CODEBASE.md" },
     { cmd: "generate --max-files", desc: "Generate with custom file limit (default: 500)" },
+    { cmd: "generate --collapse-threshold", desc: "Generate with custom collapse threshold (default: 20)" },
     { cmd: "update", desc: "Incremental update (preserves descriptions)" },
     { cmd: "update --max-files", desc: "Update with custom file limit" },
+    { cmd: "update --collapse-threshold", desc: "Update with custom collapse threshold" },
     { cmd: "stats", desc: "Show file count, description coverage, and generation time" },
     { cmd: "help", desc: "Show usage and available subcommands" },
   ],

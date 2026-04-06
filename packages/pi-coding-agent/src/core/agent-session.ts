@@ -1577,6 +1577,16 @@ export class AgentSession {
 				activeToolNames: this.getActiveToolNames(),
 				includeAllExtensionTools: true,
 			});
+		} else {
+			// Even when cwd hasn't changed, restore the full tool set (#3616).
+			// Extensions (e.g., discuss flows) may narrow the active tool list
+			// via setActiveTools() during a session. Without this refresh, the
+			// narrowed set persists into the next session — causing tools like
+			// gsd_plan_slice to be missing from auto-mode subagent sessions.
+			this._refreshToolRegistry({
+				activeToolNames: this.getActiveToolNames(),
+				includeAllExtensionTools: true,
+			});
 		}
 
 		// Run setup callback if provided (e.g., to append initial messages)
@@ -1633,6 +1643,10 @@ export class AgentSession {
 		options?: { persist?: boolean },
 	): Promise<void> {
 		const previousModel = this.model;
+		// Explicit model switches must cancel any in-flight retry loop from the
+		// previous provider/model. Otherwise stale provider backoff errors can
+		// continue to land after the user or runtime has already switched models.
+		this._retryHandler.abortRetry();
 		this.agent.setModel(model);
 		this.sessionManager.appendModelChange(model.provider, model.id);
 		if (options?.persist !== false) {

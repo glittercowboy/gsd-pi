@@ -486,3 +486,66 @@ test("getCodebaseMapStats: reads total file count from header for accuracy with 
     cleanup(base);
   }
 });
+
+// ─── excludePatterns from options ────────────────────────────────────────
+
+test("generateCodebaseMap: custom excludePatterns filters additional directories", () => {
+  const base = makeTmpRepo();
+  try {
+    addFile(base, "src/main.ts");
+    addFile(base, "src/utils.ts");
+    addFile(base, ".cache-data/data/index.lance");
+    addFile(base, "docs/guide.md");
+
+    const result = generateCodebaseMap(base, {
+      excludePatterns: [".cache-data/", "docs/"],
+    });
+    assert.ok(result.content.includes("`src/main.ts`"));
+    assert.ok(result.content.includes("`src/utils.ts`"));
+    assert.ok(!result.content.includes(".cache-data"));
+    assert.ok(!result.content.includes("guide.md"));
+    assert.equal(result.fileCount, 2);
+  } finally {
+    cleanup(base);
+  }
+});
+
+test("generateCodebaseMap: collapseThreshold option overrides default", () => {
+  const base = makeTmpRepo();
+  try {
+    // Create 10 files in one directory — below default threshold (20)
+    // but above a custom threshold of 5
+    for (let i = 0; i < 10; i++) {
+      addFile(base, `src/comp${i}.ts`);
+    }
+
+    // With default threshold (20), files should NOT collapse
+    const expanded = generateCodebaseMap(base);
+    assert.ok(expanded.content.includes("`src/comp0.ts`"));
+
+    // With custom threshold (5), files SHOULD collapse
+    const collapsed = generateCodebaseMap(base, { collapseThreshold: 5 });
+    assert.ok(collapsed.content.includes("10 files"));
+    assert.ok(!collapsed.content.includes("`src/comp0.ts`\n"));
+  } finally {
+    cleanup(base);
+  }
+});
+
+test("updateCodebaseMap: respects excludePatterns option", () => {
+  const base = makeTmpRepo();
+  try {
+    addFile(base, "src/main.ts");
+    addFile(base, "vendor-extra/lib.js");
+
+    const initial = generateCodebaseMap(base);
+    writeCodebaseMap(base, initial.content);
+
+    // Update with exclusion should remove vendor-extra files
+    const result = updateCodebaseMap(base, { excludePatterns: ["vendor-extra/"] });
+    assert.ok(result.content.includes("`src/main.ts`"));
+    assert.ok(!result.content.includes("vendor-extra"));
+  } finally {
+    cleanup(base);
+  }
+});

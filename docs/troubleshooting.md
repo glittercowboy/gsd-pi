@@ -97,6 +97,8 @@ models:
 
 **Headless mode:** `gsd headless auto` auto-restarts the entire process on crash (default 3 attempts with exponential backoff). Combined with provider error auto-resume, this enables true overnight unattended execution.
 
+For common provider setup issues (role errors, streaming errors, model ID mismatches), see the [Provider Setup Guide — Common Pitfalls](./providers.md#common-pitfalls).
+
 ### Budget ceiling reached
 
 **Symptoms:** Auto mode pauses with "Budget ceiling reached."

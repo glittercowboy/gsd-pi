@@ -18,6 +18,7 @@ import { loadFile, parseSummary, resolveAllOverrides } from "./files.js";
 import { loadPrompt } from "./prompt-loader.js";
 import {
   resolveSliceFile,
+  resolveSlicePath,
   resolveTaskFile,
   resolveMilestoneFile,
   resolveTasksDir,
@@ -33,6 +34,8 @@ import {
 import {
   verifyExpectedArtifact,
   resolveExpectedArtifactPath,
+  writeBlockerPlaceholder,
+  diagnoseExpectedArtifact,
 } from "./auto-recovery.js";
 import { regenerateIfMissing } from "./workflow-projections.js";
 import { syncStateToProjectRoot } from "./auto-worktree.js";
@@ -46,10 +49,24 @@ import {
   persistHookState,
   resolveHookArtifactPath,
 } from "./post-unit-hooks.js";
-import { hasPendingCaptures, loadPendingCaptures } from "./captures.js";
+import { hasPendingCaptures, loadPendingCaptures, revertExecutorResolvedCaptures } from "./captures.js";
 import { debugLog } from "./debug-logger.js";
 import { runSafely } from "./auto-utils.js";
 import type { AutoSession, SidecarItem } from "./auto/session.js";
+import { getEvidence } from "./safety/evidence-collector.js";
+import { validateFileChanges } from "./safety/file-change-validator.js";
+// crossReferenceEvidence available for future use when verification_evidence is stored in DB
+// import { crossReferenceEvidence, type ClaimedEvidence } from "./safety/evidence-cross-ref.js";
+import { validateContent } from "./safety/content-validator.js";
+import { resolveSafetyHarnessConfig } from "./safety/safety-harness.js";
+import { resolveExpectedArtifactPath as resolveArtifactForContent } from "./auto-artifact-paths.js";
+import { loadEffectiveGSDPreferences } from "./preferences.js";
+import { getSliceTasks } from "./gsd-db.js";
+import { runPreExecutionChecks, type PreExecutionResult } from "./pre-execution-checks.js";
+import { writePreExecutionEvidence } from "./verification-evidence.js";
+
+/** Maximum verification retry attempts before escalating to blocker placeholder (#2653). */
+const MAX_VERIFICATION_RETRIES = 3;
 
 
 /** Enqueue a sidecar item (hook, triage, or quick-task) for the main loop to
@@ -279,8 +296,9 @@ export async function postUnitPreVerification(pctx: PostUnitContext, opts?: PreV
                 try {
                   const { getTaskIssueNumberForCommit } = await import("../github-sync/sync.js");
                   ghIssueNumber = getTaskIssueNumberForCommit(s.basePath, mid, sid, tid) ?? undefined;
-                } catch {
+                } catch (err) {
                   // GitHub sync not available — skip
+                  logWarning("engine", `GitHub issue lookup failed: ${err instanceof Error ? err.message : String(err)}`);
                 }
 
                 taskContext = {
@@ -431,6 +449,87 @@ export async function postUnitPreVerification(pctx: PostUnitContext, opts?: PreV
       debugLog("postUnit", { phase: "rogue-detection", error: String(e) });
     }
 
+    // ── Safety harness: post-unit validation ──
+    try {
+      const { loadEffectiveGSDPreferences } = await import("./preferences.js");
+      const prefs = loadEffectiveGSDPreferences()?.preferences;
+      const safetyConfig = resolveSafetyHarnessConfig(
+        prefs?.safety_harness as Record<string, unknown> | undefined,
+      );
+
+      if (safetyConfig.enabled) {
+        const { milestone: sMid, slice: sSid, task: sTid } = parseUnitId(s.currentUnit.id);
+
+        // File change validation (execute-task only, after auto-commit)
+        if (safetyConfig.file_change_validation && s.currentUnit.type === "execute-task" && sMid && sSid && sTid && isDbAvailable()) {
+          try {
+            const taskRow = getTask(sMid, sSid, sTid);
+            if (taskRow) {
+              const expectedOutput = taskRow.expected_output ?? [];
+              const plannedFiles = taskRow.files ?? [];
+              const audit = validateFileChanges(s.basePath, expectedOutput, plannedFiles);
+              if (audit && audit.violations.length > 0) {
+                const warnings = audit.violations.filter(v => v.severity === "warning");
+                for (const v of warnings) {
+                  logWarning("safety", `file-change: ${v.file} — ${v.reason}`);
+                }
+                if (warnings.length > 0) {
+                  ctx.ui.notify(
+                    `Safety: ${warnings.length} unexpected file change(s) outside task plan`,
+                    "warning",
+                  );
+                }
+              }
+            }
+          } catch (e) {
+            debugLog("postUnit", { phase: "safety-file-change", error: String(e) });
+          }
+        }
+
+        // Evidence cross-reference (execute-task only)
+        // Verification evidence is passed via the complete-task tool call and
+        // stored in the SUMMARY.md on disk — not available as structured data
+        // in the DB. The evidence collector tracks actual bash tool calls, so
+        // we can still detect units that claimed success but ran no commands.
+        if (safetyConfig.evidence_cross_reference && s.currentUnit.type === "execute-task") {
+          try {
+            const actual = getEvidence();
+            const bashCalls = actual.filter(e => e.kind === "bash");
+            // If the task is marked complete but zero bash commands were run,
+            // it's suspicious — the LLM may have fabricated results.
+            if (sMid && sSid && sTid && isDbAvailable()) {
+              const taskRow = getTask(sMid, sSid, sTid);
+              if (taskRow?.status === "complete" && taskRow.verify && bashCalls.length === 0) {
+                logWarning("safety", "task marked complete with verification commands but no bash calls were executed");
+                ctx.ui.notify(
+                  `Safety: task ${sTid} has verification commands but no bash calls were recorded`,
+                  "warning",
+                );
+              }
+            }
+          } catch (e) {
+            debugLog("postUnit", { phase: "safety-evidence-xref", error: String(e) });
+          }
+        }
+
+        // Content validation (plan-slice, plan-milestone)
+        if (safetyConfig.content_validation) {
+          try {
+            const artifactPath = resolveArtifactForContent(s.currentUnit.type, s.currentUnit.id, s.basePath);
+            const contentViolations = validateContent(s.currentUnit.type, artifactPath);
+            for (const v of contentViolations) {
+              logWarning("safety", `content: ${v.reason}`);
+              ctx.ui.notify(`Content validation: ${v.reason}`, "warning");
+            }
+          } catch (e) {
+            debugLog("postUnit", { phase: "safety-content-validation", error: String(e) });
+          }
+        }
+      }
+    } catch (e) {
+      debugLog("postUnit", { phase: "safety-harness", error: String(e) });
+    }
+
     // Artifact verification
     let triggerArtifactVerified = false;
     if (!s.currentUnit.type.startsWith("hook/")) {
@@ -466,6 +565,8 @@ export async function postUnitPreVerification(pctx: PostUnitContext, opts?: PreV
       // When artifact verification fails for a unit type that has a known expected
       // artifact, return "retry" so the caller re-dispatches with failure context
       // instead of blindly re-dispatching the same unit (#1571).
+      // After MAX_VERIFICATION_RETRIES, escalate to writeBlockerPlaceholder so the
+      // pipeline can advance instead of looping forever (#2653).
       //
       // HOWEVER, if the DB is unavailable (db_unavailable), the artifact was never
       // written because the completion tool failed at the infra level. Retrying
@@ -475,27 +576,64 @@ export async function postUnitPreVerification(pctx: PostUnitContext, opts?: PreV
         // db_unavailable so the artifact was never written. Retrying would
         // produce an infinite re-dispatch loop (#2517).
         debugLog("postUnit", { phase: "artifact-verify-skip-db-unavailable", unitType: s.currentUnit.type, unitId: s.currentUnit.id });
+        const dbSkipDiag = diagnoseExpectedArtifact(s.currentUnit.type, s.currentUnit.id, s.basePath);
         ctx.ui.notify(
-          `Artifact missing for ${s.currentUnit.type} ${s.currentUnit.id} but DB is unavailable — skipping retry to avoid loop (#2517)`,
+          `Artifact missing for ${s.currentUnit.type} ${s.currentUnit.id} — DB unavailable, skipping retry.${dbSkipDiag ? ` Expected: ${dbSkipDiag}` : ""}`,
           "error",
         );
       } else if (!triggerArtifactVerified) {
+        // #2883: If the artifact is missing because the tool invocation itself
+        // failed (malformed/truncated JSON arguments), retrying will produce the
+        // same failure. Pause auto-mode instead of entering a stuck retry loop.
+        if (s.lastToolInvocationError) {
+          const errMsg = `Tool invocation failed for ${s.currentUnit.type}: ${s.lastToolInvocationError}. Structured argument generation failed — pausing auto-mode.`;
+          debugLog("postUnit", { phase: "tool-invocation-error-pause", unitType: s.currentUnit.type, unitId: s.currentUnit.id, error: s.lastToolInvocationError });
+          ctx.ui.notify(errMsg, "error");
+          s.lastToolInvocationError = null;
+          await pauseAuto(ctx, pi);
+          return "dispatched";
+        }
+
         const hasExpectedArtifact = resolveExpectedArtifactPath(s.currentUnit.type, s.currentUnit.id, s.basePath) !== null;
         if (hasExpectedArtifact) {
           const retryKey = `${s.currentUnit.type}:${s.currentUnit.id}`;
           const attempt = (s.verificationRetryCount.get(retryKey) ?? 0) + 1;
           s.verificationRetryCount.set(retryKey, attempt);
-          s.pendingVerificationRetry = {
-            unitId: s.currentUnit.id,
-            failureContext: `Artifact verification failed: expected artifact for ${s.currentUnit.type} "${s.currentUnit.id}" was not found on disk after unit execution (attempt ${attempt}).`,
-            attempt,
-          };
-          debugLog("postUnit", { phase: "artifact-verify-retry", unitType: s.currentUnit.type, unitId: s.currentUnit.id, attempt });
-          ctx.ui.notify(
-            `Artifact missing for ${s.currentUnit.type} ${s.currentUnit.id} — retrying (attempt ${attempt})`,
-            "warning",
-          );
-          return "retry";
+
+          if (attempt > MAX_VERIFICATION_RETRIES) {
+            // Retries exhausted — write a blocker placeholder so the pipeline
+            // can advance past this stuck unit (#2653).
+            debugLog("postUnit", {
+              phase: "artifact-verify-escalate",
+              unitType: s.currentUnit.type,
+              unitId: s.currentUnit.id,
+              attempt,
+              maxRetries: MAX_VERIFICATION_RETRIES,
+            });
+            const reason = `Artifact verification failed after ${MAX_VERIFICATION_RETRIES} retries for ${s.currentUnit.type} "${s.currentUnit.id}".`;
+            writeBlockerPlaceholder(s.currentUnit.type, s.currentUnit.id, s.basePath, reason);
+            ctx.ui.notify(
+              `${s.currentUnit.type} ${s.currentUnit.id} — verification retries exhausted (${MAX_VERIFICATION_RETRIES}), wrote blocker placeholder to advance pipeline`,
+              "warning",
+            );
+            // Reset retry count and fall through to "continue" so the loop
+            // re-derives state with the placeholder in place.
+            s.verificationRetryCount.delete(retryKey);
+            s.pendingVerificationRetry = null;
+            // Do NOT return "retry" — fall through to "continue" below.
+          } else {
+            s.pendingVerificationRetry = {
+              unitId: s.currentUnit.id,
+              failureContext: `Artifact verification failed: expected artifact for ${s.currentUnit.type} "${s.currentUnit.id}" was not found on disk after unit execution (attempt ${attempt}).`,
+              attempt,
+            };
+            debugLog("postUnit", { phase: "artifact-verify-retry", unitType: s.currentUnit.type, unitId: s.currentUnit.id, attempt });
+            ctx.ui.notify(
+              `Artifact missing for ${s.currentUnit.type} ${s.currentUnit.id} — retrying (attempt ${attempt})`,
+              "warning",
+            );
+            return "retry";
+          }
         }
       }
     } else {
@@ -558,9 +696,7 @@ export async function postUnitPostVerification(pctx: PostUnitContext): Promise<"
             } catch (dbErr) {
               // DB unavailable — fail explicitly rather than silently reverting to markdown mutation.
               // Use 'gsd recover' to rebuild DB state from disk if needed.
-              process.stderr.write(
-                `gsd: retry state-reset failed (DB unavailable): ${(dbErr as Error).message}. Run 'gsd recover' to reconcile.\n`,
-              );
+              logError("engine", `retry state-reset failed (DB unavailable): ${(dbErr as Error).message}. Run 'gsd recover' to reconcile.`);
             }
           }
 
@@ -591,6 +727,170 @@ export async function postUnitPostVerification(pctx: PostUnitContext): Promise<"
 
         // Fall through to normal dispatch — deriveState will re-derive the unit
       }
+    }
+  }
+
+  // ── Fast-path stop detection (#3487) ──
+  // Before waiting for triage, check if any PENDING captures contain explicit
+  // stop/halt language. If so, pause immediately — don't wait for triage.
+  if (s.currentUnit && s.currentUnit.type !== "triage-captures") {
+    try {
+      const pending = loadPendingCaptures(s.basePath);
+      // Match only when the capture text starts with a stop/halt directive word,
+      // or the entire text is short and dominated by such a word. This avoids
+      // false positives on captures like "add a pause button" or "stop the timer
+      // from re-rendering" — those are feature descriptions, not halt directives.
+      const STOP_PATTERN = /^(stop|halt|abort|don'?t continue|pause|cease)\b/i;
+      const stopCapture = pending.find(c => STOP_PATTERN.test(c.text.trim()));
+      if (stopCapture) {
+        ctx.ui.notify(
+          `Stop directive detected in pending capture ${stopCapture.id}: "${stopCapture.text}" — pausing auto-mode.`,
+          "warning",
+        );
+        debugLog("postUnit", { phase: "fast-stop", captureId: stopCapture.id });
+        await pauseAuto(ctx, pi);
+        return "stopped";
+      }
+    } catch (e) {
+      debugLog("postUnit", { phase: "fast-stop-error", error: String(e) });
+    }
+  }
+
+  // ── Capture protection: revert executor-silenced captures (#3487) ──
+  // Non-triage agents can write **Status:** resolved to CAPTURES.md, bypassing
+  // the triage pipeline. Revert those to pending before the triage check.
+  if (
+    s.currentUnit &&
+    s.currentUnit.type !== "triage-captures"
+  ) {
+    try {
+      const reverted = revertExecutorResolvedCaptures(s.basePath);
+      if (reverted > 0) {
+        debugLog("postUnit", { phase: "capture-protection", reverted });
+        ctx.ui.notify(
+          `Reverted ${reverted} capture${reverted === 1 ? "" : "s"} silenced by executor — re-queuing for triage.`,
+          "warning",
+        );
+      }
+    } catch (e) {
+      debugLog("postUnit", { phase: "capture-protection-error", error: String(e) });
+    }
+  }
+
+  // ── Pre-execution checks (after plan-slice completes) ──
+  if (
+    s.currentUnit &&
+    s.currentUnit.type === "plan-slice"
+  ) {
+    let preExecPauseNeeded = false;
+    await runSafely("postUnitPostVerification", "pre-execution-checks", async () => {
+      try {
+        // Check preferences — respect enhanced_verification and enhanced_verification_pre
+        const prefs = loadEffectiveGSDPreferences()?.preferences;
+        const enhancedEnabled = prefs?.enhanced_verification !== false; // default true
+        const preEnabled = prefs?.enhanced_verification_pre !== false;  // default true
+
+        if (!enhancedEnabled || !preEnabled) {
+          debugLog("postUnitPostVerification", {
+            phase: "pre-execution-checks",
+            skipped: true,
+            reason: "disabled by preferences",
+          });
+          return;
+        }
+
+        // Parse the unit ID to get milestone/slice IDs
+        const { milestone: mid, slice: sid } = parseUnitId(s.currentUnit!.id);
+        if (!mid || !sid) {
+          debugLog("postUnitPostVerification", {
+            phase: "pre-execution-checks",
+            skipped: true,
+            reason: "could not parse milestone/slice from unit ID",
+          });
+          return;
+        }
+
+        // Get tasks for this slice from DB
+        const tasks = getSliceTasks(mid, sid);
+        if (tasks.length === 0) {
+          debugLog("postUnitPostVerification", {
+            phase: "pre-execution-checks",
+            skipped: true,
+            reason: "no tasks found for slice",
+          });
+          return;
+        }
+
+        // Run pre-execution checks
+        const result: PreExecutionResult = await runPreExecutionChecks(tasks, s.basePath);
+
+        // Log summary to stderr in existing verification output format
+        const emoji = result.status === "pass" ? "✅" : result.status === "warn" ? "⚠️" : "❌";
+        process.stderr.write(
+          `gsd-pre-exec: ${emoji} Pre-execution checks ${result.status} for ${mid}/${sid} (${result.durationMs}ms)\n`,
+        );
+
+        // Log individual check results
+        for (const check of result.checks) {
+          const checkEmoji = check.passed ? "✓" : check.blocking ? "✗" : "⚠";
+          process.stderr.write(
+            `gsd-pre-exec:   ${checkEmoji} [${check.category}] ${check.target}: ${check.message}\n`,
+          );
+        }
+
+        // Write evidence JSON to slice artifacts directory
+        const slicePath = resolveSlicePath(s.basePath, mid, sid);
+        if (slicePath) {
+          writePreExecutionEvidence(result, slicePath, mid, sid);
+        }
+
+        // Notify UI
+        if (result.status === "fail") {
+          const blockingCount = result.checks.filter(c => !c.passed && c.blocking).length;
+          ctx.ui.notify(
+            `Pre-execution checks failed: ${blockingCount} blocking issue${blockingCount === 1 ? "" : "s"} found`,
+            "error",
+          );
+          preExecPauseNeeded = true;
+        } else if (result.status === "warn") {
+          ctx.ui.notify(
+            `Pre-execution checks passed with warnings`,
+            "warning",
+          );
+          // Strict mode: treat warnings as blocking
+          if (prefs?.enhanced_verification_strict === true) {
+            preExecPauseNeeded = true;
+          }
+        }
+
+        debugLog("postUnitPostVerification", {
+          phase: "pre-execution-checks",
+          status: result.status,
+          checkCount: result.checks.length,
+          durationMs: result.durationMs,
+        });
+      } catch (preExecError) {
+        // Fail-closed: if runPreExecutionChecks throws, pause auto-mode instead of silently continuing
+        const errorMessage = preExecError instanceof Error ? preExecError.message : String(preExecError);
+        debugLog("postUnitPostVerification", {
+          phase: "pre-execution-checks",
+          error: errorMessage,
+          failClosed: true,
+        });
+        logError("engine", `gsd-pre-exec: Pre-execution checks threw an error: ${errorMessage}`);
+        ctx.ui.notify(
+          `Pre-execution checks error: ${errorMessage} — pausing for human review`,
+          "error",
+        );
+        preExecPauseNeeded = true;
+      }
+    });
+
+    // Check for blocking failures after runSafely completes
+    if (preExecPauseNeeded) {
+      debugLog("postUnitPostVerification", { phase: "pre-execution-checks", pausing: true, reason: "blocking failures detected" });
+      await pauseAuto(ctx, pi);
+      return "stopped";
     }
   }
 
@@ -685,3 +985,4 @@ export async function postUnitPostVerification(pctx: PostUnitContext): Promise<"
 
   return "continue";
 }
+

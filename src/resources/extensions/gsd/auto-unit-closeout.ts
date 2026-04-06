@@ -7,6 +7,7 @@
 import type { ExtensionContext } from "@gsd/pi-coding-agent";
 import { snapshotUnitMetrics } from "./metrics.js";
 import { saveActivityLog } from "./activity-log.js";
+import { logWarning } from "./workflow-logger.js";
 
 export interface CloseoutOptions {
   promptCharCount?: number;
@@ -38,11 +39,14 @@ export async function closeoutUnit(
       const llmCallFn = buildMemoryLLMCall(ctx);
       if (llmCallFn) {
         extractMemoriesFromUnit(activityFile, unitType, unitId, llmCallFn).catch((err) => {
-          if (process.env.GSD_DEBUG) console.error(`[gsd] memory extraction failed for ${unitType}/${unitId}:`, err);
+          logWarning("engine", `memory extraction failed for ${unitType}/${unitId}: ${(err as Error).message}`);
         });
       }
-    } catch { /* non-fatal */ }
+    } catch (err) { /* non-fatal */
+      logWarning("engine", `operation failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
   }
 
   return activityFile ?? undefined;
 }
+

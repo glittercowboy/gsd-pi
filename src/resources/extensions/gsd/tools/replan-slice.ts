@@ -16,6 +16,7 @@ import { renderPlanFromDb, renderReplanFromDb } from "../markdown-renderer.js";
 import { renderAllProjections } from "../workflow-projections.js";
 import { writeManifest } from "../workflow-manifest.js";
 import { appendEvent } from "../workflow-events.js";
+import { logWarning } from "../workflow-logger.js";
 
 export interface ReplanSliceTaskInput {
   taskId: string;
@@ -226,9 +227,7 @@ export async function handleReplanSlice(
         trigger_reason: params.triggerReason,
       });
     } catch (hookErr) {
-      process.stderr.write(
-        `gsd: replan-slice post-mutation hook warning: ${(hookErr as Error).message}\n`,
-      );
+      logWarning("tool", `replan-slice post-mutation hook warning: ${(hookErr as Error).message}`);
     }
 
     return {

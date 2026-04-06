@@ -497,10 +497,11 @@ export class WorktreeResolver {
       });
       // Surface a clear, actionable error. The worktree and milestone branch are
       // intentionally preserved — nothing has been deleted. The user can retry
-      // /gsd dispatch complete-milestone or merge manually once the underlying issue is fixed
-      // (e.g. checkout to wrong branch, unresolved conflicts). (#1668)
+      // /gsd dispatch complete-milestone or merge manually once the underlying
+      // issue is fixed (e.g. checkout to wrong branch, unresolved conflicts).
+      // (#1668, #1891)
       ctx.notify(
-        `Milestone merge failed: ${msg}. Your worktree and milestone branch are preserved — retry /gsd dispatch complete-milestone or merge manually.`,
+        `Milestone merge failed: ${msg}. Your worktree and milestone branch are preserved — retry with \`/gsd dispatch complete-milestone\` or merge manually.`,
         "warning",
       );
 

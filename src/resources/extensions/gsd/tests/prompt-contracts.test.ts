@@ -231,6 +231,31 @@ test("complete-slice prompt uses camelCase parameter names matching TypeBox sche
   assert.match(toolCallLine!, /sliceId/);
 });
 
+// ─── File system safety: complete-slice parity with complete-milestone (#2935) ──
+
+test("complete-slice prompt includes filesystem safety guard against EISDIR", () => {
+  const prompt = readPrompt("complete-slice");
+  assert.match(
+    prompt,
+    /File system safety/i,
+    "complete-slice.md must include a 'File system safety' instruction to prevent EISDIR errors when the LLM passes a directory path to the read tool"
+  );
+  assert.match(
+    prompt,
+    /never pass.*directory path.*directly to the.*read.*tool/i,
+    "complete-slice.md must warn against passing directory paths to the read tool"
+  );
+});
+
+test("complete-milestone prompt still has its filesystem safety guard (regression)", () => {
+  const prompt = readPrompt("complete-milestone");
+  assert.match(
+    prompt,
+    /File system safety/i,
+    "complete-milestone.md must keep its filesystem safety guard"
+  );
+});
+
 test("reactive-execute prompt references tool calls instead of checkbox updates", () => {
   const prompt = readPrompt("reactive-execute");
   assert.doesNotMatch(prompt, /checkbox updates/);

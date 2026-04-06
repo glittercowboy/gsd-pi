@@ -72,6 +72,41 @@ const AskUserQuestionsParams = Type.Object({
 	}),
 });
 
+// ─── Per-turn deduplication ──────────────────────────────────────────────────
+// Prevents duplicate question dispatches (especially to remote channels like
+// Discord) when the LLM calls ask_user_questions multiple times with the same
+// questions in a single turn. Keyed by full canonicalized payload (id, header,
+// question, options, allowMultiple) — not just IDs — so that calls with the
+// same IDs but different text/options are treated as distinct.
+
+import { createHash } from "node:crypto";
+
+interface CachedResult {
+	content: { type: "text"; text: string }[];
+	details: AskUserQuestionsDetails;
+}
+
+const turnCache = new Map<string, CachedResult>();
+
+/** @internal Exported for testing only. */
+export function questionSignature(questions: Question[]): string {
+	const canonical = questions
+		.map((q) => ({
+			id: q.id,
+			header: q.header,
+			question: q.question,
+			options: (q.options || []).map((o) => ({ label: o.label, description: o.description })),
+			allowMultiple: !!q.allowMultiple,
+		}))
+		.sort((a, b) => a.id.localeCompare(b.id));
+	return createHash("sha256").update(JSON.stringify(canonical)).digest("hex").slice(0, 16);
+}
+
+/** Reset the dedup cache. Called on session boundaries. */
+export function resetAskUserQuestionsCache(): void {
+	turnCache.clear();
+}
+
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 const OTHER_OPTION_LABEL = "None of the above";
@@ -121,6 +156,16 @@ export default function AskUserQuestions(pi: ExtensionAPI) {
 		parameters: AskUserQuestionsParams,
 
 		async execute(_toolCallId, params, signal, _onUpdate, ctx) {
+			// ── Per-turn dedup: return cached result for identical question sets ──
+			const sig = questionSignature(params.questions);
+			const cached = turnCache.get(sig);
+			if (cached) {
+				return {
+					content: [{ type: "text" as const, text: cached.content[0].text + "\n(Returned cached answer — this question set was already asked this turn.)" }],
+					details: cached.details,
+				};
+			}
+
 			// Validation
 			if (params.questions.length === 0 || params.questions.length > 3) {
 				return errorResult("Error: questions must contain 1-3 items", params.questions);
@@ -135,10 +180,21 @@ export default function AskUserQuestions(pi: ExtensionAPI) {
 				}
 			}
 
+			// Try remote first if configured (works in both interactive and headless modes).
+			// tryRemoteQuestions returns null when no remote channel is configured, so
+			// this is a no-op when the user has not set up Slack/Discord/Telegram.
+			const { tryRemoteQuestions } = await import("./remote-questions/manager.js");
+			const remoteResult = await tryRemoteQuestions(params.questions, signal);
+			if (remoteResult) {
+				// Cache successful remote results to prevent duplicate Discord dispatches
+				const remoteDetails = remoteResult.details as Record<string, unknown> | undefined;
+				if (remoteDetails && !remoteDetails.timed_out && !remoteDetails.error) {
+					turnCache.set(sig, remoteResult as unknown as CachedResult);
+				}
+				return { ...remoteResult, details: remoteResult.details as unknown };
+			}
+
 			if (!ctx.hasUI) {
-				const { tryRemoteQuestions } = await import("./remote-questions/manager.js");
-				const remoteResult = await tryRemoteQuestions(params.questions, signal);
-				if (remoteResult) return { ...remoteResult, details: remoteResult.details as unknown };
 				return errorResult("Error: UI not available (non-interactive mode)", params.questions);
 			}
 
@@ -193,7 +249,7 @@ export default function AskUserQuestions(pi: ExtensionAPI) {
 						]),
 					),
 				};
-				return {
+				const fallbackResult = {
 					content: [{ type: "text" as const, text: JSON.stringify({ answers }) }],
 					details: {
 						questions: params.questions,
@@ -201,6 +257,8 @@ export default function AskUserQuestions(pi: ExtensionAPI) {
 						cancelled: false,
 					} satisfies LocalResultDetails,
 				};
+				turnCache.set(sig, fallbackResult);
+				return fallbackResult;
 			}
 
 			// Check if cancelled (empty answers = user exited)
@@ -212,10 +270,12 @@ export default function AskUserQuestions(pi: ExtensionAPI) {
 				};
 			}
 
-			return {
-				content: [{ type: "text", text: formatForLLM(result) }],
+			const successResult = {
+				content: [{ type: "text" as const, text: formatForLLM(result) }],
 				details: { questions: params.questions, response: result, cancelled: false } satisfies LocalResultDetails,
 			};
+			turnCache.set(sig, successResult);
+			return successResult;
 		},
 
 		// ─── Rendering ────────────────────────────────────────────────────────

@@ -348,7 +348,9 @@ function _reconcileWorktreeLogsInner(
   if (conflicts.length > 0) {
     // D-04: atomic all-or-nothing — block entire merge
     writeConflictsFile(mainBasePath, conflicts, worktreeBasePath);
-    logError("reconcile", `${conflicts.length} conflict(s) detected`, { count: String(conflicts.length), path: join(mainBasePath, ".gsd", "CONFLICTS.md") });
+    const conflictSummary = conflicts.slice(0, 3).map(c => `${c.entityType}:${c.entityId}`).join(", ");
+    const truncated = conflicts.length > 3 ? `... and ${conflicts.length - 3} more` : "";
+    logError("reconcile", `${conflicts.length} conflict(s) detected on ${conflictSummary}${truncated}. Details: .gsd/CONFLICTS.md`, { count: String(conflicts.length), path: join(mainBasePath, ".gsd", "CONFLICTS.md") });
     return { autoMerged: 0, conflicts };
   }
 
@@ -455,8 +457,8 @@ function parseEventBlock(block: string): WorkflowEvent[] {
           if (paramsMatch) {
             try {
               params = JSON.parse(paramsMatch[1]!) as Record<string, unknown>;
-            } catch {
-              // Keep empty params on parse error
+            } catch (e) {
+              logWarning("reconcile", `tool call params parse failed: ${(e as Error).message}`);
             }
             i++; // consume params line
           }

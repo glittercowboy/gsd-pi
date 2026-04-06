@@ -58,7 +58,7 @@ import { initRoutingHistory } from "./routing-history.js";
 import { restoreHookState, resetHookState } from "./post-unit-hooks.js";
 import { resetProactiveHealing, setLevelChangeCallback } from "./doctor-proactive.js";
 import { snapshotSkills } from "./skill-discovery.js";
-import { isDbAvailable, getMilestone } from "./gsd-db.js";
+import { isDbAvailable, getMilestone, openDatabase } from "./gsd-db.js";
 import { hideFooter } from "./auto-dashboard.js";
 import {
   debugLog,
@@ -66,6 +66,7 @@ import {
   isDebugEnabled,
   getDebugLogPath,
 } from "./debug-logger.js";
+import { logWarning, logError } from "./workflow-logger.js";
 import { parseUnitId } from "./unit-id.js";
 import type { AutoSession } from "./auto/session.js";
 import {
@@ -79,6 +80,7 @@ import { join } from "node:path";
 import { sep as pathSep } from "node:path";
 
 import { resolveProjectRootDbPath } from "./bootstrap/dynamic-tools.js";
+import { resolveDefaultSessionModel } from "./preferences-models.js";
 import type { WorktreeResolver } from "./worktree-resolver.js";
 
 export interface BootstrapDeps {
@@ -97,32 +99,24 @@ export interface BootstrapDeps {
  * concurrent session detected). Returns true when ready to dispatch.
  */
 
-/**
- * Open the project-root DB before the first deriveState call (#2841).
- * When auto-mode starts cold (no prior DB handle), state derivation that
- * touches DB-backed helpers (queue-order, task status) silently falls back
- * to markdown-only data, producing stale or incomplete state.  Opening the
- * DB first ensures deriveState sees the full picture on its very first run.
- */
-async function openProjectDbIfPresent(basePath: string): Promise<void> {
-  const gsdDbPath = resolveProjectRootDbPath(basePath);
-  if (!existsSync(gsdDbPath)) return;
-  if (isDbAvailable()) return;
-
-  try {
-    const { openDatabase } = await import("./gsd-db.js");
-    openDatabase(gsdDbPath);
-  } catch {
-    /* non-fatal — DB lifecycle block below will retry */
-  }
-}
-
 /** Guard: tracks consecutive bootstrap attempts that found phase === "complete".
  *  Prevents the recursive dialog loop described in #1348 where
  *  bootstrapAutoSession → showSmartEntry → checkAutoStartAfterDiscuss → startAuto
  *  cycles indefinitely when the discuss workflow doesn't produce a milestone. */
 let _consecutiveCompleteBootstraps = 0;
 const MAX_CONSECUTIVE_COMPLETE_BOOTSTRAPS = 2;
+
+export async function openProjectDbIfPresent(basePath: string): Promise<void> {
+  const gsdDbPath = resolveProjectRootDbPath(basePath);
+  if (!existsSync(gsdDbPath) || isDbAvailable()) return;
+
+  try {
+    openDatabase(gsdDbPath);
+  } catch (err) {
+    logWarning("engine", `gsd-db: failed to open existing database: ${err instanceof Error ? err.message : String(err)}`);
+  }
+}
+
 export async function bootstrapAutoSession(
   s: AutoSession,
   ctx: ExtensionCommandContext,
@@ -153,12 +147,16 @@ export async function bootstrapAutoSession(
 
   // Capture the user's session model before guided-flow dispatch can apply a
   // phase-specific planning model for a discuss turn (#2829).
-  const startModelSnapshot = ctx.model
-    ? {
-        provider: ctx.model.provider,
-        id: ctx.model.id,
-      }
-    : null;
+  //
+  // GSD PREFERENCES.md takes priority over the session model from settings.json
+  // (#3517).  The session model (ctx.model) comes from findInitialModel() which
+  // reads defaultProvider/defaultModel from ~/.gsd/agent/settings.json.  When
+  // the user has explicit model preferences in PREFERENCES.md, those should win.
+  const preferredModel = resolveDefaultSessionModel(ctx.model?.provider);
+  const startModelSnapshot = preferredModel
+    ?? (ctx.model
+      ? { provider: ctx.model.provider, id: ctx.model.id }
+      : null);
 
   try {
     // Validate GSD_PROJECT_ID early so the user gets immediate feedback
@@ -213,8 +211,9 @@ export async function bootstrapAutoSession(
       try {
         nativeAddAll(base);
         nativeCommit(base, "chore: init gsd");
-      } catch {
+      } catch (err) {
         /* nothing to commit */
+        logWarning("engine", `mkdir failed: ${err instanceof Error ? err.message : String(err)}`);
       }
     }
 
@@ -575,9 +574,7 @@ export async function bootstrapAutoSession(
           migrateFromMarkdown(s.basePath);
         }
       } catch (err) {
-        process.stderr.write(
-          `gsd-migrate: auto-migration failed: ${(err as Error).message}\n`,
-        );
+        logError("engine", `auto-migration failed: ${(err as Error).message}`);
       }
     }
     if (existsSync(gsdDbPath) && !isDbAvailable()) {
@@ -585,9 +582,7 @@ export async function bootstrapAutoSession(
         const { openDatabase: openDb } = await import("./gsd-db.js");
         openDb(gsdDbPath);
       } catch (err) {
-        process.stderr.write(
-          `gsd-db: failed to open existing database: ${(err as Error).message}\n`,
-        );
+        logError("engine", `failed to open existing database: ${(err as Error).message}`);
       }
     }
 
@@ -724,8 +719,9 @@ export async function bootstrapAutoSession(
           }
         }
       }
-    } catch {
+    } catch (err) {
       /* non-fatal */
+      logWarning("engine", `preflight validation failed: ${err instanceof Error ? err.message : String(err)}`);
     }
 
     return true;
@@ -735,3 +731,4 @@ export async function bootstrapAutoSession(
     throw err;
   }
 }
+

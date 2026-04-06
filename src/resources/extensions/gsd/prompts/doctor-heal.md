@@ -9,6 +9,7 @@ Rules:
 4. For missing summaries or UAT files, generate the real artifact from existing slice/task context when possible — do not leave placeholders if you can reconstruct the real content.
 5. After each repair cluster, verify the relevant invariant directly from disk.
 6. When done, rerun `/gsd doctor {{doctorCommandSuffix}}` mentally by ensuring the remaining issue set for this scope is reduced or cleared.
+7. Do NOT query `.gsd/gsd.db` directly via `sqlite3` or `node -e require('better-sqlite3')` — use `gsd_milestone_status` to inspect DB state. Direct access bypasses the WAL connection owned by the engine and can corrupt in-flight writes.
 
 ## Doctor Summary
 

@@ -603,6 +603,22 @@ export interface ModelSelectEvent {
 	source: ModelSelectSource;
 }
 
+/** Fired before model selection runs capability scoring. Extensions can override the selected model. */
+export interface BeforeModelSelectEvent {
+	type: "before_model_select";
+	unitType: string;
+	unitId: string;
+	classification: { tier: string; reason: string; downgraded: boolean };
+	taskMetadata?: Record<string, unknown>;
+	eligibleModels: string[];
+	phaseConfig?: { primary: string; fallbacks: string[] };
+}
+
+/** Result from before_model_select event handler. Return { modelId } to override selection. */
+export interface BeforeModelSelectResult {
+	modelId: string;
+}
+
 // ============================================================================
 // User Bash Events
 // ============================================================================
@@ -1052,6 +1068,14 @@ export interface ExtensionAPI {
 	on(event: "tool_result", handler: ExtensionHandler<ToolResultEvent, ToolResultEventResult>): void;
 	on(event: "user_bash", handler: ExtensionHandler<UserBashEvent, UserBashEventResult>): void;
 	on(event: "input", handler: ExtensionHandler<InputEvent, InputEventResult>): void;
+	on(event: "before_model_select", handler: ExtensionHandler<BeforeModelSelectEvent, BeforeModelSelectResult>): void;
+
+	// =========================================================================
+	// Event Emission (for host extensions that orchestrate model selection)
+	// =========================================================================
+
+	/** Emit before_model_select event. Returns override model ID or undefined. */
+	emitBeforeModelSelect(event: Omit<BeforeModelSelectEvent, "type">): Promise<BeforeModelSelectResult | undefined>;
 
 	// =========================================================================
 	// Tool Registration
@@ -1317,6 +1341,8 @@ export interface ProviderModelConfig {
 	headers?: Record<string, string>;
 	/** OpenAI compatibility settings. */
 	compat?: Model<Api>["compat"];
+	/** Opaque provider-specific options (e.g. Ollama keep_alive, num_gpu). */
+	providerOptions?: Record<string, unknown>;
 }
 
 /** Extension factory function type. Supports both sync and async initialization. */
@@ -1367,6 +1393,8 @@ export interface ExtensionRuntimeState {
 	 */
 	registerProvider: (name: string, config: ProviderConfig) => void;
 	unregisterProvider: (name: string) => void;
+	/** Emit before_model_select event to all registered handlers. Bound by ExtensionRunner. */
+	emitBeforeModelSelect: (event: Omit<BeforeModelSelectEvent, "type">) => Promise<BeforeModelSelectResult | undefined>;
 }
 
 /**

@@ -19,6 +19,7 @@ import { renderRoadmapFromDb, renderAssessmentFromDb } from "../markdown-rendere
 import { renderAllProjections } from "../workflow-projections.js";
 import { writeManifest } from "../workflow-manifest.js";
 import { appendEvent } from "../workflow-events.js";
+import { logWarning } from "../workflow-logger.js";
 
 export interface SliceChangeInput {
   sliceId: string;
@@ -248,9 +249,8 @@ export async function handleReassessRoadmap(
       );
       try {
         if (existsSync(validationFile)) unlinkSync(validationFile);
-      } catch {
-        // Best-effort: DB row is already deleted, so state derivation
-        // will not see the file-based verdict as authoritative.
+      } catch (e) {
+        logWarning("tool", `validation file cleanup failed: ${(e as Error).message}`);
       }
     }
 
@@ -271,9 +271,7 @@ export async function handleReassessRoadmap(
         trigger_reason: params.triggerReason,
       });
     } catch (hookErr) {
-      process.stderr.write(
-        `gsd: reassess-roadmap post-mutation hook warning: ${(hookErr as Error).message}\n`,
-      );
+      logWarning("tool", `reassess-roadmap post-mutation hook warning: ${(hookErr as Error).message}`);
     }
 
     return {

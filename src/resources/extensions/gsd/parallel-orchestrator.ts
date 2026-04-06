@@ -41,6 +41,7 @@ import {
   type ParallelCandidates,
 } from "./parallel-eligibility.js";
 import { getErrorMessage } from "./error-utils.js";
+import { logWarning } from "./workflow-logger.js";
 
 // ─── Types ─────────────────────────────────────────────────────────────────
 
@@ -126,7 +127,7 @@ export function persistState(basePath: string): void {
     const tmp = dest + TMP_SUFFIX;
     writeFileSync(tmp, JSON.stringify(persisted, null, 2), "utf-8");
     renameSync(tmp, dest);
-  } catch { /* non-fatal */ }
+  } catch (e) { logWarning("parallel", `persist parallel state failed: ${(e as Error).message}`); }
 }
 
 /**
@@ -136,7 +137,7 @@ function removeStateFile(basePath: string): void {
   try {
     const p = stateFilePath(basePath);
     if (existsSync(p)) unlinkSync(p);
-  } catch { /* non-fatal */ }
+  } catch (e) { logWarning("parallel", `clear parallel state file failed: ${(e as Error).message}`); }
 }
 
 function isPidAlive(pid: number): boolean {
@@ -144,7 +145,8 @@ function isPidAlive(pid: number): boolean {
   try {
     process.kill(pid, 0);
     return true;
-  } catch {
+  } catch (e) {
+    logWarning("parallel", `pid alive check failed for pid ${pid}: ${(e as Error).message}`);
     return false;
   }
 }
@@ -176,7 +178,8 @@ export function restoreState(basePath: string): PersistedState | null {
     }
 
     return persisted;
-  } catch {
+  } catch (e) {
+    logWarning("parallel", `readParallelState JSON parse failed: ${(e as Error).message}`);
     return null;
   }
 }
@@ -190,8 +193,8 @@ function appendWorkerLog(basePath: string, milestoneId: string, chunk: string): 
     const dir = join(gsdRoot(basePath), "parallel");
     if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
     appendFileSync(workerLogPath(basePath, milestoneId), chunk, "utf-8");
-  } catch {
-    // Non-fatal — diagnostics should never break orchestration.
+  } catch (e) {
+    logWarning("parallel", `appendFileSync worker log failed for ${milestoneId}: ${(e as Error).message}`);
   }
 }
 
@@ -430,9 +433,8 @@ export async function startParallel(
       let wtPath: string;
       try {
         wtPath = createMilestoneWorktree(basePath, mid);
-      } catch {
-        // Worktree creation may fail in test environments or when git
-        // is not available. Fall back to a placeholder path.
+      } catch (e) {
+        logWarning("parallel", `createMilestoneWorktree fallback for ${mid}: ${(e as Error).message}`);
         wtPath = worktreePath(basePath, mid);
       }
 
@@ -564,7 +566,8 @@ export function spawnWorker(
       stdio: ["ignore", "pipe", "pipe"],
       detached: false,
     });
-  } catch {
+  } catch (e) {
+    logWarning("parallel", `spawnSync worker failed for ${milestoneId}: ${(e as Error).message}`);
     return false;
   }
 
@@ -694,7 +697,8 @@ function resolveGsdBin(): string | null {
   let thisDir: string;
   try {
     thisDir = dirname(fileURLToPath(import.meta.url));
-  } catch {
+  } catch (e) {
+    logWarning("parallel", `dirname(fileURLToPath) failed: ${(e as Error).message}`);
     thisDir = process.cwd();
   }
   const candidates = [
@@ -722,7 +726,7 @@ function processWorkerLine(basePath: string, milestoneId: string, line: string):
   try {
     event = JSON.parse(line);
   } catch {
-    return; // Not valid JSON — skip (stderr leakage, debug output, etc.)
+    return; // Non-NDJSON lines (progress text, tool output) are expected — silent drop
   }
 
   const type = String(event.type ?? "");
@@ -817,7 +821,7 @@ export async function stopParallel(
         } else if (worker.pid !== process.pid) {
           process.kill(worker.pid, "SIGTERM");
         }
-      } catch { /* process may already be dead */ }
+      } catch (e) { logWarning("parallel", `process.kill SIGTERM failed for pid ${worker.pid}: ${(e as Error).message}`); }
     }
 
     // Wait for the headless process to cascade SIGTERM to its RPC child.
@@ -833,7 +837,7 @@ export async function stopParallel(
         } else if (worker.pid !== process.pid) {
           process.kill(worker.pid, "SIGKILL");
         }
-      } catch { /* process may already be dead */ }
+      } catch (e) { logWarning("parallel", `process.kill SIGKILL failed for pid ${worker.pid}: ${(e as Error).message}`); }
       await waitForWorkerExit(worker, 250);
     }
 

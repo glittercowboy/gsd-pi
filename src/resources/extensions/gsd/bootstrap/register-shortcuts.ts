@@ -5,6 +5,7 @@ import type { ExtensionAPI } from "@gsd/pi-coding-agent";
 import { Key } from "@gsd/pi-tui";
 
 import { GSDDashboardOverlay } from "../dashboard-overlay.js";
+import { GSDNotificationOverlay } from "../notification-overlay.js";
 import { ParallelMonitorOverlay } from "../parallel-monitor-overlay.js";
 import { shortcutDesc } from "../../shared/mod.js";
 
@@ -24,6 +25,24 @@ export function registerShortcuts(pi: ExtensionAPI): void {
             width: "90%",
             minWidth: 80,
             maxHeight: "92%",
+            anchor: "center",
+          },
+        },
+      );
+    },
+  });
+
+  pi.registerShortcut(Key.ctrlAlt("n"), {
+    description: shortcutDesc("Open notification history", "/gsd notifications"),
+    handler: async (ctx) => {
+      await ctx.ui.custom<void>(
+        (tui, theme, _kb, done) => new GSDNotificationOverlay(tui, theme, () => done()),
+        {
+          overlay: true,
+          overlayOptions: {
+            width: "80%",
+            minWidth: 60,
+            maxHeight: "88%",
             anchor: "center",
           },
         },
