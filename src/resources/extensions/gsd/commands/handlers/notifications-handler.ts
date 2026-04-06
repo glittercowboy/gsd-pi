@@ -105,6 +105,7 @@ export async function handleNotificationsCommand(
               minWidth: 60,
               maxHeight: "88%",
               anchor: "center",
+              backdrop: true,
             },
           },
         );

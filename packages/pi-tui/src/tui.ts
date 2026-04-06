@@ -141,6 +141,8 @@ export interface OverlayOptions {
 	visible?: (termWidth: number, termHeight: number) => boolean;
 	/** If true, don't capture keyboard focus when shown */
 	nonCapturing?: boolean;
+	/** If true, dim the background behind the overlay */
+	backdrop?: boolean;
 }
 
 /**

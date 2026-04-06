@@ -44,6 +44,7 @@ export function registerShortcuts(pi: ExtensionAPI): void {
             minWidth: 60,
             maxHeight: "88%",
             anchor: "center",
+            backdrop: true,
           },
         },
       );
