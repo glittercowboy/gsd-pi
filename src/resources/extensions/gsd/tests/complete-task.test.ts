@@ -500,6 +500,7 @@ console.log('\n=== complete-task: minimal params (no keyFiles, keyDecisions, ver
 
   insertMilestone({ id: 'M001', title: 'Test Milestone' });
   insertSlice({ id: 'S01', milestoneId: 'M001', title: 'Test Slice' });
+  insertTask({ id: 'T01', sliceId: 'S01', milestoneId: 'M001', status: 'pending', title: 'Basic task' });
 
   // Minimal params — only required fields, all optional enrichment fields omitted
   const minimalParams = {
