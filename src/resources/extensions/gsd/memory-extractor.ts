@@ -15,6 +15,7 @@ import {
   decayStaleMemories,
 } from './memory-store.js';
 import type { MemoryAction } from './memory-store.js';
+import { logWarning } from './workflow-logger.js';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -138,11 +139,11 @@ function warnMemoryExtractionDisabled(
   try {
     ctx.ui?.notify?.(message, "warning");
   } catch {
-    console.warn(message);
+    logWarning("engine", message);
   }
   if (process.env.GSD_DEBUG && error) {
     const detail = error instanceof Error ? error.message : String(error);
-    console.error(`[gsd] memory extraction model resolution failed: ${detail}`);
+    logWarning("engine", `memory extraction model resolution failed: ${detail}`);
   }
 }
 
