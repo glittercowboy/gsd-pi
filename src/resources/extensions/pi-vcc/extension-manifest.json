@@ -1,0 +1,13 @@
+{
+  "id": "pi-vcc",
+  "name": "pi-vcc — Algorithmic Conversation Compactor",
+  "version": "1.0.0",
+  "description": "Algorithmic session compaction for GSD2. No LLM calls - produces structured, transcript-preserving summaries.",
+  "tier": "bundled",
+  "requires": { "platform": ">=2.29.0" },
+  "provides": {
+    "tools": ["vcc_recall"],
+    "commands": ["pi-vcc"],
+    "hooks": ["session_before_compact"]
+  }
+}

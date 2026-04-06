@@ -1,0 +1,7 @@
+{
+  "name": "@gsd/pi-vcc",
+  "version": "1.0.0",
+  "description": "Algorithmic conversation compactor for GSD2 - no LLM calls",
+  "main": "index.js",
+  "type": "module"
+}
