@@ -8,6 +8,7 @@ import { mkdirSync, writeFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { execFile } from "node:child_process";
 import type { ExtensionAPI } from "@gsd/pi-coding-agent";
+import { recordFire, recordAction } from "./stats.js";
 
 interface ToolUsage {
   name: string;
@@ -105,6 +106,8 @@ export function registerSessionLogger(pi: ExtensionAPI): void {
       summary: buildSummary(turnCount, toolUsage, modified, created, durationMs),
     };
 
+    recordFire("sessionLogger");
+    recordAction("sessionLogger", `Logged ${turnCount} turns, ${modified.length + created.length} files`);
     const logPath = join(logDir, `${sessionId}.json`);
     writeFileSync(logPath, JSON.stringify(log, null, 2));
 

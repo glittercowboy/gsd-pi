@@ -7,6 +7,7 @@ import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { homedir } from "node:os";
 import type { ExtensionAPI } from "@gsd/pi-coding-agent";
+import { recordFire, recordAction } from "./stats.js";
 
 /** Pricing per 1M tokens (USD). Updated for common models as of 2025. */
 const MODEL_PRICING: Record<string, { input: number; output: number }> = {
@@ -139,6 +140,7 @@ export function registerCostTracker(pi: ExtensionAPI): void {
   pi.on("turn_end", async (event, ctx) => {
     if (!currentSession) return;
 
+    recordFire("costTracker");
     currentSession.turns++;
 
     // Extract token usage from the assistant message if available

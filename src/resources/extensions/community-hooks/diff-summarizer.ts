@@ -5,6 +5,7 @@
 
 import { execFile } from "node:child_process";
 import type { ExtensionAPI } from "@gsd/pi-coding-agent";
+import { recordFire, recordAction } from "./stats.js";
 
 interface FileStat {
   file: string;
@@ -94,9 +95,11 @@ export function registerDiffSummarizer(pi: ExtensionAPI): void {
       gitUntrackedFiles(cwd),
     ]);
 
+    recordFire("diffSummarizer");
     const summary = formatSummary(stats, untracked);
     if (!summary) return;
 
+    recordAction("diffSummarizer", `${stats.length} modified, ${untracked.length} new`);
     ctx.ui.notify(`Changes this run:\n${summary}`, "info");
   });
 }

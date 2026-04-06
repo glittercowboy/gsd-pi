@@ -7,6 +7,7 @@
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join, dirname, resolve } from "node:path";
 import type { ExtensionAPI } from "@gsd/pi-coding-agent";
+import { recordFire, recordAction } from "./stats.js";
 
 /** Max size for injected context files (16KB). */
 const MAX_FILE_SIZE = 16 * 1024;
@@ -139,6 +140,8 @@ export function registerContextLoader(pi: ExtensionAPI): void {
 
     if (allContextFiles.size === 0) return;
 
+    recordFire("contextLoader");
+    recordAction("contextLoader", `Injected ${allContextFiles.size} docs`);
     const contextBlock = buildContextBlock(allContextFiles);
     if (!contextBlock) return;
 

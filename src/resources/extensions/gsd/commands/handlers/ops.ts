@@ -119,6 +119,21 @@ export async function handleOpsCommand(trimmed: string, ctx: ExtensionCommandCon
   if (trimmed === "hooks") {
     const { formatHookStatus } = await import("../../post-unit-hooks.js");
     ctx.ui.notify(formatHookStatus(), "info");
+    // Also show community hooks status
+    try {
+      const { routeCommunityHooksCommand } = await import("../../../community-hooks/index.js");
+      routeCommunityHooksCommand("list", ctx);
+    } catch { /* community-hooks extension may not be loaded */ }
+    return true;
+  }
+  if (trimmed.startsWith("hooks ")) {
+    const hookArgs = trimmed.replace(/^hooks\s+/, "").trim();
+    try {
+      const { routeCommunityHooksCommand } = await import("../../../community-hooks/index.js");
+      routeCommunityHooksCommand(hookArgs, ctx);
+    } catch {
+      ctx.ui.notify("Community hooks extension is not loaded.", "warning");
+    }
     return true;
   }
   if (trimmed === "skill-health" || trimmed.startsWith("skill-health ")) {

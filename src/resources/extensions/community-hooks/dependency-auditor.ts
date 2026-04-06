@@ -5,6 +5,7 @@
 
 import { execFile } from "node:child_process";
 import type { ExtensionAPI } from "@gsd/pi-coding-agent";
+import { recordFire, recordAction } from "./stats.js";
 
 /** Maps package manager install patterns to their audit commands. */
 interface PackageManager {
@@ -131,6 +132,7 @@ export function registerDependencyAuditor(pi: ExtensionAPI): void {
     const pm = PACKAGE_MANAGERS.find((p) => p.installPattern.test(command));
     if (!pm) return;
 
+    recordFire("dependencyAuditor");
     const pkgName = extractPackageName(command);
     const label = pkgName ? `${pm.name} package "${pkgName}"` : `${pm.name} packages`;
 
@@ -149,6 +151,7 @@ export function registerDependencyAuditor(pi: ExtensionAPI): void {
     if (pm.name === "npm" || pm.name === "pnpm") {
       const summary = parseNpmAudit(result.stdout);
       if (summary) {
+        recordAction("dependencyAuditor", summary.details);
         if (summary.vulnerabilities === 0) {
           ctx.ui.notify(`${label}: No known vulnerabilities`, "info");
         } else if (summary.critical > 0 || summary.high > 0) {

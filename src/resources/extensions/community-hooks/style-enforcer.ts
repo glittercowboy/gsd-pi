@@ -7,6 +7,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { execFile } from "node:child_process";
 import { join, extname } from "node:path";
 import type { ExtensionAPI } from "@gsd/pi-coding-agent";
+import { recordFire, recordAction } from "./stats.js";
 
 interface LintRunner {
   name: string;
@@ -136,6 +137,8 @@ export function registerStyleEnforcer(pi: ExtensionAPI): void {
     const applicable = linters.filter((l) => l.extensions.has(ext));
     if (applicable.length === 0) return;
 
+    recordFire("styleEnforcer");
+
     // Run all applicable linters in parallel
     const results = await Promise.all(
       applicable.map((l) => runLinter(l, filePath)),
@@ -143,6 +146,8 @@ export function registerStyleEnforcer(pi: ExtensionAPI): void {
 
     const issues = results.filter(Boolean) as string[];
     if (issues.length === 0) return;
+
+    recordAction("styleEnforcer", `${issues.length} issue(s) in ${filePath}`);
 
     // Append lint warnings to the tool result
     const warning = `\n\n--- Style Issues ---\n${issues.join("\n\n")}\n\nPlease fix these style issues.`;

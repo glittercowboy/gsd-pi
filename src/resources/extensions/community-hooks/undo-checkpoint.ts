@@ -6,6 +6,7 @@
 
 import { execFile } from "node:child_process";
 import type { ExtensionAPI } from "@gsd/pi-coding-agent";
+import { recordFire, recordAction } from "./stats.js";
 
 function gitExec(args: string[], cwd: string): Promise<{ stdout: string; exitCode: number }> {
   return new Promise((resolve) => {
@@ -44,6 +45,7 @@ export function registerUndoCheckpoint(pi: ExtensionAPI): void {
   pi.on("before_agent_start", async (_event, ctx) => {
     const cwd = process.cwd();
 
+    recordFire("undoCheckpoint");
     if (!(await isGitRepo(cwd))) return;
     if (!(await hasChanges(cwd))) return;
 
@@ -64,6 +66,7 @@ export function registerUndoCheckpoint(pi: ExtensionAPI): void {
       await gitExec(["stash", "pop", "--index"], cwd);
 
       const stashCount = await getStashCount(cwd);
+      recordAction("undoCheckpoint", `Saved: ${message}`);
       ctx.ui.notify(
         `Checkpoint saved: ${message} (${stashCount} total stashes)`,
         "info",

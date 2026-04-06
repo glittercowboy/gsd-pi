@@ -8,6 +8,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { execFile } from "node:child_process";
 import { join } from "node:path";
 import type { ExtensionAPI } from "@gsd/pi-coding-agent";
+import { recordFire, recordAction } from "./stats.js";
 
 /** Test runner configuration detected from project files. */
 interface TestRunner {
@@ -79,6 +80,7 @@ export function registerAutoTestRunner(pi: ExtensionAPI): void {
     const messages = event.messages as Array<{ role: string; toolCalls?: Array<{ name: string }> }>;
     if (!hasCodeChanges(messages)) return;
 
+    recordFire("autoTestRunner");
     ctx.ui.notify(`Running ${runner.name}...`, "info");
 
     try {
@@ -98,8 +100,10 @@ export function registerAutoTestRunner(pi: ExtensionAPI): void {
       });
 
       if (result.exitCode === 0) {
+        recordAction("autoTestRunner", "All tests passed");
         ctx.ui.notify(`${runner.name}: All tests passed`, "info");
       } else {
+        recordAction("autoTestRunner", "Tests failed");
         // Extract failure summary (last few lines usually have the summary)
         const output = (result.stdout + "\n" + result.stderr).trim();
         const lastLines = output.split("\n").slice(-5).join("\n");

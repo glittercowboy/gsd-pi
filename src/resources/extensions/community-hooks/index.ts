@@ -34,6 +34,8 @@ import { registerCostTracker } from "./cost-tracker.js";
 import { registerContextLoader } from "./context-loader.js";
 import { registerStyleEnforcer } from "./style-enforcer.js";
 import { registerSessionLogger } from "./session-logger.js";
+import { registerHooksCommand } from "./manage.js";
+import { resetStats } from "./stats.js";
 
 interface CommunityHookConfig {
   secretScanner?: boolean;
@@ -109,9 +111,17 @@ export default function (pi: ExtensionAPI) {
     }
   }
 
-  if (enabled.length > 0) {
-    pi.on("session_start", async (_event, ctx) => {
+  // Register the /community-hooks management command
+  registerHooksCommand(pi);
+
+  // Reset stats and show status on session start
+  pi.on("session_start", async (_event, ctx) => {
+    resetStats();
+    if (enabled.length > 0) {
       ctx.ui.setStatus("community-hooks", `Hooks: ${enabled.length} active`);
-    });
-  }
+    }
+  });
 }
+
+// Re-export the route function for integration with /gsd hooks
+export { routeCommand as routeCommunityHooksCommand } from "./manage.js";

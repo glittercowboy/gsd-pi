@@ -9,6 +9,7 @@ import { join, resolve, basename } from "node:path";
 import { homedir } from "node:os";
 import type { ExtensionAPI } from "@gsd/pi-coding-agent";
 import { isToolCallEventType } from "@gsd/pi-coding-agent";
+import { recordFire, recordAction } from "./stats.js";
 
 /** Default files/patterns that should be protected from agent modification. */
 const DEFAULT_PROTECTED: string[] = [
@@ -117,17 +118,19 @@ export function registerFileGuardrails(pi: ExtensionAPI): void {
       return;
     }
 
+    recordFire("fileGuardrails");
     const match = isProtected(filePath, config);
     if (!match) return;
 
+    recordAction("fileGuardrails", `Protected file: ${match}`);
     if (config.strict) {
       return {
         block: true,
-        reason: `🛡️ File Guardrails: Blocked write to protected file/directory "${match}". Configure fileGuardrails in settings.json to adjust protection rules.`,
+        reason: `File Guardrails: Blocked write to protected file/directory "${match}". Configure fileGuardrails in settings.json to adjust protection rules.`,
       };
     }
 
     // Warn-only mode (default)
-    ctx.ui.notify(`⚠️ Writing to protected file: ${match}`, "warning");
+    ctx.ui.notify(`Writing to protected file: ${match}`, "warning");
   });
 }

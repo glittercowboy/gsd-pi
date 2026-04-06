@@ -6,6 +6,7 @@
 
 import type { ExtensionAPI } from "@gsd/pi-coding-agent";
 import { isToolCallEventType } from "@gsd/pi-coding-agent";
+import { recordFire, recordAction } from "./stats.js";
 
 /** Each pattern includes a human-readable label and regex. */
 interface SecretPattern {
@@ -105,13 +106,15 @@ export function registerSecretScanner(pi: ExtensionAPI): void {
 
     if (!content || isSafePath(filePath)) return;
 
+    recordFire("secretScanner");
     const findings = scanForSecrets(content);
     if (findings.length === 0) return;
 
     const labels = findings.map((f) => f.label).join(", ");
+    recordAction("secretScanner", `Blocked ${filePath}: ${labels}`);
     return {
       block: true,
-      reason: `🔒 Secret Scanner: Blocked write to ${filePath} — detected: ${labels}. Remove secrets and use environment variables instead.`,
+      reason: `Secret Scanner: Blocked write to ${filePath} — detected: ${labels}. Remove secrets and use environment variables instead.`,
     };
   });
 }
