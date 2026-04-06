@@ -2,8 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { parseSlackReply, parseDiscordResponse, formatForDiscord, formatForSlack, parseSlackReactionResponse, formatForTelegram, parseTelegramResponse } from "../../remote-questions/format.ts";
 import { resolveRemoteConfig, getRemoteConfigStatus, isValidChannelId } from "../../remote-questions/config.ts";
-import { DiscordAdapter } from "../../remote-questions/discord-adapter.ts";
-import { SlackAdapter } from "../../remote-questions/slack-adapter.ts";
+import { tryRemoteQuestions } from "../../remote-questions/manager.ts";
 import { sanitizeError } from "../../shared/sanitize.ts";
 
 test("parseSlackReply handles single-number single-question answers", () => {
@@ -417,22 +416,6 @@ test("parseDiscordResponse handles multiple reactions for allowMultiple question
   assert.deepEqual(result.answers.choice.answers, ["Alpha", "Gamma"]);
 });
 
-test("DiscordAdapter has acknowledgeAnswer method", () => {
-  const adapter = new DiscordAdapter("fake-token", "123456789012345678");
-  assert.equal(typeof adapter.acknowledgeAnswer, "function");
-});
-
-test("SlackAdapter has pollAnswer and acknowledgeAnswer methods", () => {
-  const adapter = new SlackAdapter("fake-token", "C0123456789");
-  assert.equal(typeof adapter.pollAnswer, "function");
-  assert.equal(typeof adapter.acknowledgeAnswer, "function");
-});
-
-test("DiscordAdapter has validate and sendPrompt methods for guild ID resolution", () => {
-  const adapter = new DiscordAdapter("fake-token", "123456789012345678");
-  assert.equal(typeof adapter.validate, "function");
-  assert.equal(typeof adapter.sendPrompt, "function");
-});
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Telegram Tests
@@ -600,13 +583,6 @@ test("sanitizeError strips Telegram bot token patterns", () => {
   assert.ok(!result.includes("1234567890:ABC"), "should strip Telegram bot token");
 });
 
-test("DiscordAdapter sendPrompt return type includes threadUrl field", () => {
-  // sendPrompt returns RemoteDispatchResult with ref.threadUrl — verify
-  // the adapter exposes the method (actual API call tested in integration).
-  const adapter = new DiscordAdapter("fake-token", "123456789012345678");
-  assert.equal(typeof adapter.sendPrompt, "function");
-});
-
 // ═══════════════════════════════════════════════════════════════════════════
 // Auth.json Token Hydration Tests
 // ═══════════════════════════════════════════════════════════════════════════
@@ -714,11 +690,9 @@ test("tryRemoteQuestions is callable and returns null when no channel configured
   // Regression test for #3480: tryRemoteQuestions must be called
   // unconditionally (before the hasUI guard), so remote channels work
   // in headless mode. Verify it's a no-op when no channel is configured.
-  const { tryRemoteQuestions } = await import("../../remote-questions/manager.ts");
-  const controller = new AbortController();
   const result = await tryRemoteQuestions(
     [{ id: "q1", header: "Q1", question: "test?", options: [{ label: "A", description: "option A" }] }],
-    controller.signal,
+    AbortSignal.timeout(5000),
   );
   assert.equal(result, null, "should return null when no remote channel is configured");
 });

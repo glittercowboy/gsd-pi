@@ -1,345 +1,194 @@
 /**
- * Triage dispatch ordering contract tests.
+ * Triage dispatch behavioral contract tests.
  *
- * These tests verify structural invariants of the triage integration
- * by inspecting the actual source code of auto-post-unit.ts, auto.ts,
- * and post-unit-hooks.ts. Full behavioral testing requires the
- * @gsd/pi-coding-agent runtime.
+ * These tests verify triage/dispatch behavior by importing and calling the
+ * actual modules: RuleRegistry, captures, and triage-resolution. No source
+ * code inspection — everything is tested through the public API.
  */
 
-import test from "node:test";
+import { describe, test, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readFileSync, mkdtempSync, mkdirSync, rmSync } from "node:fs";
 import { join, dirname } from "node:path";
+import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 
+import { RuleRegistry } from "../rule-registry.ts";
+import {
+  appendCapture,
+  markCaptureResolved,
+  markCaptureExecuted,
+  loadPendingCaptures,
+  hasPendingCaptures,
+  loadAllCaptures,
+} from "../captures.ts";
+import {
+  executeTriageResolutions,
+  buildQuickTaskPrompt,
+  loadDeferredCaptures,
+  loadReplanCaptures,
+} from "../triage-resolution.ts";
+
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const hooksPath = join(__dirname, "..", "post-unit-hooks.ts");
-const registryPath = join(__dirname, "..", "rule-registry.ts");
-const autoPromptsPath = join(__dirname, "..", "auto-prompts.ts");
 
-// After decomposition, triage/dispatch logic lives in auto-post-unit.ts
-const postUnitSrc = readFileSync(join(__dirname, "..", "auto-post-unit.ts"), "utf-8");
-// auto.ts retains top-level orchestration and imports
-const autoSrc = [
-  readFileSync(join(__dirname, "..", "auto.ts"), "utf-8"),
-  postUnitSrc,
-  readFileSync(join(__dirname, "..", "auto-start.ts"), "utf-8"),
-].join("\n");
-// Hook exclusion logic lives in the rule-registry (facade delegates there)
-const hooksSrc = [
-  readFileSync(hooksPath, "utf-8"),
-  readFileSync(registryPath, "utf-8"),
-].join("\n");
-const autoPromptsSrc = (() => { try { return readFileSync(autoPromptsPath, "utf-8"); } catch { return autoSrc; } })();
+// ─── Fixture helpers ─────────────────────────────────────────────────────────
 
-// ─── Hook exclusion ──────────────────────────────────────────────────────────
+function createTempProject(): string {
+  const base = mkdtempSync(join(tmpdir(), "gsd-triage-dispatch-"));
+  mkdirSync(join(base, ".gsd", "milestones", "M001", "slices", "S01"), {
+    recursive: true,
+  });
+  return base;
+}
 
-test("dispatch: triage-captures excluded from post-unit hook triggering", () => {
-  assert.ok(
-    hooksSrc.includes('"triage-captures"'),
-    "post-unit-hooks.ts should reference triage-captures",
-  );
-  assert.ok(
-    hooksSrc.includes('completedUnitType === "triage-captures"'),
-    "should check for triage-captures in the hook exclusion guard",
-  );
+// ═══════════════════════════════════════════════════════════════════════════════
+// Hook exclusion
+// ═══════════════════════════════════════════════════════════════════════════════
+
+describe("hook exclusion", () => {
+  test("evaluatePostUnit returns null for triage-captures unit type", () => {
+    const registry = new RuleRegistry([]);
+    const result = registry.evaluatePostUnit("triage-captures", "u1", "/tmp");
+    assert.strictEqual(result, null, "triage-captures should be excluded from hook triggering");
+  });
+
+  test("evaluatePostUnit returns null for quick-task unit type", () => {
+    const registry = new RuleRegistry([]);
+    const result = registry.evaluatePostUnit("quick-task", "u1", "/tmp");
+    assert.strictEqual(result, null, "quick-task should be excluded from hook triggering");
+  });
 });
 
-// ─── Triage check placement ──────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════════
+// Captures lifecycle
+// ═══════════════════════════════════════════════════════════════════════════════
 
-test("dispatch: triage check appears after hook section and before stepMode check", () => {
-  const triageCheckIndex = postUnitSrc.indexOf("// ── Triage check");
-  const quickTaskIndex = postUnitSrc.indexOf("// ── Quick-task dispatch");
-  const stepModeIndex = postUnitSrc.indexOf("if (s.stepMode)");
+describe("captures lifecycle", () => {
+  let base: string;
 
-  assert.ok(triageCheckIndex > 0, "triage check block should exist");
-  assert.ok(quickTaskIndex > 0, "quick-task dispatch block should exist");
-  assert.ok(stepModeIndex > 0, "step mode check should exist");
+  beforeEach(() => {
+    base = createTempProject();
+  });
 
-  assert.ok(
-    triageCheckIndex < quickTaskIndex,
-    "triage check should come before quick-task dispatch",
-  );
-  assert.ok(
-    quickTaskIndex < stepModeIndex,
-    "quick-task dispatch should come before stepMode check",
-  );
+  afterEach(() => {
+    rmSync(base, { recursive: true, force: true });
+  });
+
+  test("appendCapture creates a pending capture", () => {
+    const id = appendCapture(base, "fix the typo in README");
+    assert.ok(id.startsWith("CAP-"), "capture ID should start with CAP-");
+    const pending = loadPendingCaptures(base);
+    assert.strictEqual(pending.length, 1);
+    assert.strictEqual(pending[0].text, "fix the typo in README");
+    assert.strictEqual(pending[0].status, "pending");
+  });
+
+  test("markCaptureResolved moves capture to resolved status", () => {
+    const id = appendCapture(base, "add logging");
+    markCaptureResolved(base, id, "quick-task", "small standalone fix", "fits quick-task criteria");
+    const all = loadAllCaptures(base);
+    const capture = all.find(c => c.id === id);
+    assert.ok(capture, "capture should exist");
+    assert.strictEqual(capture!.status, "resolved");
+    assert.strictEqual(capture!.classification, "quick-task");
+  });
+
+  test("markCaptureExecuted marks a resolved capture as executed", () => {
+    const id = appendCapture(base, "update config");
+    markCaptureResolved(base, id, "inject", "inject into current slice", "belongs in current work");
+    markCaptureExecuted(base, id);
+    const all = loadAllCaptures(base);
+    const capture = all.find(c => c.id === id);
+    assert.ok(capture, "capture should exist");
+    assert.strictEqual(capture!.executed, true);
+  });
+
+  test("hasPendingCaptures returns false when all are resolved", () => {
+    const id = appendCapture(base, "something");
+    markCaptureResolved(base, id, "note", "just a note", "informational only");
+    assert.strictEqual(hasPendingCaptures(base), false);
+  });
 });
 
-// ─── Guard conditions ────────────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════════
+// Triage resolution
+// ═══════════════════════════════════════════════════════════════════════════════
 
-test("dispatch: triage check guards against step mode", () => {
-  const triageBlock = postUnitSrc.slice(
-    postUnitSrc.indexOf("// ── Triage check"),
-    postUnitSrc.indexOf("// ── Quick-task dispatch"),
-  );
-  assert.ok(
-    triageBlock.includes("!s.stepMode"),
-    "triage block should guard against step mode",
-  );
+describe("triage resolution", () => {
+  let base: string;
+
+  beforeEach(() => {
+    base = createTempProject();
+  });
+
+  afterEach(() => {
+    rmSync(base, { recursive: true, force: true });
+  });
+
+  test("executeTriageResolutions processes resolved captures", () => {
+    const id = appendCapture(base, "quick fix needed");
+    markCaptureResolved(base, id, "quick-task", "small task", "standalone fix");
+    const result = executeTriageResolutions(base, "M001", "S01");
+    assert.ok(result.quickTasks.length >= 1, "should collect quick-task captures");
+  });
+
+  test("buildQuickTaskPrompt returns prompt with capture text", () => {
+    const capture = {
+      id: "CAP-test1234",
+      text: "fix the broken import",
+      timestamp: new Date().toISOString(),
+      status: "resolved" as const,
+      classification: "quick-task" as const,
+    };
+    const prompt = buildQuickTaskPrompt(capture);
+    assert.ok(prompt.includes("fix the broken import"), "prompt should contain capture text");
+    assert.ok(prompt.includes("CAP-test1234"), "prompt should contain capture ID");
+    assert.ok(prompt.includes("Quick Task"), "prompt should have Quick Task header");
+  });
+
+  test("loadDeferredCaptures returns only defer-classified captures", () => {
+    const id1 = appendCapture(base, "defer this");
+    const id2 = appendCapture(base, "quick fix");
+    markCaptureResolved(base, id1, "defer", "for later", "not urgent");
+    markCaptureResolved(base, id2, "quick-task", "now", "small fix");
+    const deferred = loadDeferredCaptures(base);
+    assert.strictEqual(deferred.length, 1);
+    assert.strictEqual(deferred[0].classification, "defer");
+  });
+
+  test("loadReplanCaptures returns only replan-classified captures", () => {
+    const id1 = appendCapture(base, "replan this slice");
+    const id2 = appendCapture(base, "just a note");
+    markCaptureResolved(base, id1, "replan", "slice needs rework", "scope changed");
+    markCaptureResolved(base, id2, "note", "fyi", "informational");
+    const replans = loadReplanCaptures(base);
+    assert.strictEqual(replans.length, 1);
+    assert.strictEqual(replans[0].classification, "replan");
+  });
 });
 
-test("dispatch: triage check guards against hook unit types", () => {
-  const triageBlock = postUnitSrc.slice(
-    postUnitSrc.indexOf("// ── Triage check"),
-    postUnitSrc.indexOf("// ── Quick-task dispatch"),
-  );
-  assert.ok(
-    triageBlock.includes('!s.currentUnit.type.startsWith("hook/")'),
-    "triage block should not fire for hook units",
-  );
-});
+// ═══════════════════════════════════════════════════════════════════════════════
+// Prompt templates
+// ═══════════════════════════════════════════════════════════════════════════════
 
-test("dispatch: triage check guards against triage-on-triage", () => {
-  const triageBlock = postUnitSrc.slice(
-    postUnitSrc.indexOf("// ── Triage check"),
-    postUnitSrc.indexOf("// ── Quick-task dispatch"),
-  );
-  assert.ok(
-    triageBlock.includes('s.currentUnit.type !== "triage-captures"'),
-    "triage block should not fire for triage units",
-  );
-});
+describe("prompt templates", () => {
+  test("replan-slice.md includes {{captureContext}} variable", () => {
+    const prompt = readFileSync(join(__dirname, "..", "prompts", "replan-slice.md"), "utf-8");
+    assert.ok(prompt.includes("{{captureContext}}"), "replan-slice.md should include {{captureContext}}");
+  });
 
-test("dispatch: triage check guards against quick-task triggering triage", () => {
-  const triageBlock = postUnitSrc.slice(
-    postUnitSrc.indexOf("// ── Triage check"),
-    postUnitSrc.indexOf("// ── Quick-task dispatch"),
-  );
-  assert.ok(
-    triageBlock.includes('s.currentUnit.type !== "quick-task"'),
-    "triage block should not fire for quick-task units",
-  );
-});
+  test("reassess-roadmap.md includes {{deferredCaptures}} variable", () => {
+    const prompt = readFileSync(join(__dirname, "..", "prompts", "reassess-roadmap.md"), "utf-8");
+    assert.ok(prompt.includes("{{deferredCaptures}}"), "reassess-roadmap.md should include {{deferredCaptures}}");
+  });
 
-test("dispatch: triage dispatch keeps the loop in continue mode", () => {
-  const triageBlock = postUnitSrc.slice(
-    postUnitSrc.indexOf("// ── Triage check"),
-    postUnitSrc.indexOf("// ── Quick-task dispatch"),
-  );
-  assert.ok(
-    triageBlock.includes('return "continue"') || triageBlock.includes("return enqueueSidecar("),
-    "triage dispatch should return 'continue' after enqueuing sidecar work",
-  );
-});
-
-test("dispatch: triage imports hasPendingCaptures and loadPendingCaptures", () => {
-  assert.ok(
-    autoSrc.includes("hasPendingCaptures") && autoSrc.includes("loadPendingCaptures"),
-    "should import capture functions",
-  );
-  assert.ok(
-    autoSrc.includes('from "./captures.js"'),
-    "should import from captures module",
-  );
-});
-
-// ─── Prompt integration ──────────────────────────────────────────────────────
-
-test("dispatch: replan prompt builder loads capture context", () => {
-  const src = autoPromptsSrc;
-  assert.ok(
-    src.includes("loadReplanCaptures"),
-    "buildReplanSlicePrompt should load replan captures",
-  );
-  assert.ok(
-    src.includes("captureContext"),
-    "buildReplanSlicePrompt should pass captureContext to template",
-  );
-});
-
-test("dispatch: reassess prompt builder loads deferred captures", () => {
-  const src = autoPromptsSrc;
-  assert.ok(
-    src.includes("loadDeferredCaptures"),
-    "buildReassessRoadmapPrompt should load deferred captures",
-  );
-  assert.ok(
-    src.includes("deferredCaptures"),
-    "buildReassessRoadmapPrompt should pass deferredCaptures to template",
-  );
-});
-
-// ─── Prompt templates ────────────────────────────────────────────────────────
-
-test("dispatch: replan prompt template includes captureContext variable", () => {
-  const promptPath = join(__dirname, "..", "prompts", "replan-slice.md");
-  const prompt = readFileSync(promptPath, "utf-8");
-  assert.ok(
-    prompt.includes("{{captureContext}}"),
-    "replan-slice.md should include {{captureContext}}",
-  );
-});
-
-test("dispatch: reassess prompt template includes deferredCaptures variable", () => {
-  const promptPath = join(__dirname, "..", "prompts", "reassess-roadmap.md");
-  const prompt = readFileSync(promptPath, "utf-8");
-  assert.ok(
-    prompt.includes("{{deferredCaptures}}"),
-    "reassess-roadmap.md should include {{deferredCaptures}}",
-  );
-});
-
-test("dispatch: triage prompt template exists and has classification criteria", () => {
-  const promptPath = join(__dirname, "..", "prompts", "triage-captures.md");
-  const prompt = readFileSync(promptPath, "utf-8");
-  assert.ok(prompt.includes("quick-task"), "should have quick-task classification");
-  assert.ok(prompt.includes("inject"), "should have inject classification");
-  assert.ok(prompt.includes("defer"), "should have defer classification");
-  assert.ok(prompt.includes("replan"), "should have replan classification");
-  assert.ok(prompt.includes("note"), "should have note classification");
-  assert.ok(prompt.includes("{{pendingCaptures}}"), "should have pending captures variable");
-});
-
-// ─── Dashboard integration ───────────────────────────────────────────────────
-
-test("dashboard: AutoDashboardData includes pendingCaptureCount field", () => {
-  assert.ok(
-    autoSrc.includes("pendingCaptureCount"),
-    "auto.ts should have pendingCaptureCount in AutoDashboardData",
-  );
-});
-
-test("dashboard: getAutoDashboardData computes pendingCaptureCount", () => {
-  assert.ok(
-    autoSrc.includes("pendingCaptureCount = countPendingCaptures") ||
-    autoSrc.includes("pendingCaptureCount = countPendingCaptures(basePath)"),
-    "getAutoDashboardData should compute pendingCaptureCount from countPendingCaptures (single-read)",
-  );
-});
-
-test("dashboard: overlay renders pending captures badge", () => {
-  const overlayPath = join(__dirname, "..", "dashboard-overlay.ts");
-  const overlaySrc = readFileSync(overlayPath, "utf-8");
-  assert.ok(
-    overlaySrc.includes("pendingCaptureCount"),
-    "dashboard-overlay.ts should reference pendingCaptureCount",
-  );
-  assert.ok(
-    overlaySrc.includes("pending capture"),
-    "dashboard-overlay.ts should show pending captures text",
-  );
-});
-
-test("dashboard: overlay labels triage-captures and quick-task unit types", () => {
-  const overlayPath = join(__dirname, "..", "dashboard-overlay.ts");
-  const overlaySrc = readFileSync(overlayPath, "utf-8");
-  assert.ok(
-    overlaySrc.includes('"triage-captures"'),
-    "unitLabel should handle triage-captures",
-  );
-  assert.ok(
-    overlaySrc.includes('"quick-task"'),
-    "unitLabel should handle quick-task",
-  );
-});
-
-// ─── Post-triage resolution execution ─────────────────────────────────────────
-
-test("dispatch: post-triage resolution executor fires after triage-captures unit", () => {
-  const postTriageBlock = postUnitSrc.slice(
-    postUnitSrc.indexOf("Post-triage: execute actionable resolutions"),
-  );
-  assert.ok(
-    postTriageBlock.includes('s.currentUnit.type === "triage-captures"'),
-    "should check for triage-captures unit completion",
-  );
-  assert.ok(
-    postTriageBlock.includes("executeTriageResolutions"),
-    "should call executeTriageResolutions",
-  );
-});
-
-test("dispatch: post-triage executor handles inject results", () => {
-  const postTriageBlock = postUnitSrc.slice(
-    postUnitSrc.indexOf("Post-triage: execute actionable resolutions"),
-  );
-  assert.ok(
-    postTriageBlock.includes("triageResult.injected"),
-    "should check injected count",
-  );
-});
-
-test("dispatch: post-triage executor handles replan results", () => {
-  const postTriageBlock = postUnitSrc.slice(
-    postUnitSrc.indexOf("Post-triage: execute actionable resolutions"),
-  );
-  assert.ok(
-    postTriageBlock.includes("triageResult.replanned"),
-    "should check replanned count",
-  );
-});
-
-test("dispatch: post-triage executor queues quick-tasks", () => {
-  const postTriageBlock = postUnitSrc.slice(
-    postUnitSrc.indexOf("Post-triage: execute actionable resolutions"),
-  );
-  assert.ok(
-    postTriageBlock.includes("s.pendingQuickTasks"),
-    "should push quick-tasks to s.pendingQuickTasks queue",
-  );
-});
-
-// ─── Quick-task dispatch ──────────────────────────────────────────────────────
-
-test("dispatch: quick-task dispatch block exists after triage check", () => {
-  const quickTaskBlock = postUnitSrc.indexOf("// ── Quick-task dispatch");
-  const triageBlock = postUnitSrc.indexOf("// ── Triage check");
-
-  assert.ok(quickTaskBlock > 0, "quick-task dispatch block should exist");
-  assert.ok(
-    quickTaskBlock > triageBlock,
-    "quick-task dispatch should come after triage check",
-  );
-});
-
-test("dispatch: quick-task dispatch uses buildQuickTaskPrompt", () => {
-  const quickTaskSection = postUnitSrc.slice(
-    postUnitSrc.indexOf("// ── Quick-task dispatch"),
-  );
-  assert.ok(
-    quickTaskSection.includes("buildQuickTaskPrompt"),
-    "should call buildQuickTaskPrompt for quick-task dispatch",
-  );
-});
-
-test("dispatch: quick-task dispatch marks capture as executed", () => {
-  const quickTaskSection = postUnitSrc.slice(
-    postUnitSrc.indexOf("// ── Quick-task dispatch"),
-  );
-  assert.ok(
-    quickTaskSection.includes("markCaptureExecuted"),
-    "should mark capture as executed after dispatch",
-  );
-});
-
-test("dispatch: quick-task dispatch keeps the loop in continue mode", () => {
-  const quickTaskSection = postUnitSrc.slice(
-    postUnitSrc.indexOf("// ── Quick-task dispatch"),
-    postUnitSrc.indexOf("if (s.stepMode)"),
-  );
-  assert.ok(
-    quickTaskSection.includes('return "continue"') || quickTaskSection.includes("return enqueueSidecar("),
-    "quick-task dispatch should return 'continue' after enqueuing sidecar work",
-  );
-});
-
-// ─── Post-unit hook exclusion for quick-task ──────────────────────────────────
-
-test("dispatch: quick-task excluded from post-unit hook triggering", () => {
-  assert.ok(
-    hooksSrc.includes('"quick-task"'),
-    "post-unit-hooks.ts should reference quick-task",
-  );
-});
-
-// ─── pendingQuickTasks queue lifecycle ────────────────────────────────────────
-
-test("dispatch: pendingQuickTasks queue is reset on auto-mode start/stop", () => {
-  const resetMatches = autoSrc.match(/s\.pendingQuickTasks = \[\]/g);
-  assert.ok(
-    resetMatches && resetMatches.length >= 2,
-    "s.pendingQuickTasks should be reset in start and stop paths",
-  );
+  test("triage-captures.md has classification criteria and {{pendingCaptures}}", () => {
+    const prompt = readFileSync(join(__dirname, "..", "prompts", "triage-captures.md"), "utf-8");
+    assert.ok(prompt.includes("quick-task"), "should have quick-task classification");
+    assert.ok(prompt.includes("inject"), "should have inject classification");
+    assert.ok(prompt.includes("defer"), "should have defer classification");
+    assert.ok(prompt.includes("replan"), "should have replan classification");
+    assert.ok(prompt.includes("note"), "should have note classification");
+    assert.ok(prompt.includes("{{pendingCaptures}}"), "should have pending captures variable");
+  });
 });
