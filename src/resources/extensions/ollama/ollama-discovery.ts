@@ -8,7 +8,7 @@
  * Returns models in the format expected by pi.registerProvider().
  */
 
-import { listModels } from "./ollama-client.js";
+import { listModels, showModel } from "./ollama-client.js";
 import {
 	estimateContextFromParams,
 	formatModelSize,
@@ -35,13 +35,38 @@ export interface DiscoveredOllamaModel {
 
 const ZERO_COST = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
 
-function enrichModel(info: OllamaModelInfo): DiscoveredOllamaModel {
+/**
+ * Extract context window from /api/show model_info.
+ * Keys follow the pattern "{architecture}.context_length" (e.g. "llama.context_length").
+ */
+function extractContextFromModelInfo(modelInfo: Record<string, unknown>): number | undefined {
+	for (const [key, value] of Object.entries(modelInfo)) {
+		if (key.endsWith(".context_length") && typeof value === "number" && value > 0) {
+			return value;
+		}
+	}
+	return undefined;
+}
+
+async function enrichModel(info: OllamaModelInfo): Promise<DiscoveredOllamaModel> {
 	const caps = getModelCapabilities(info.name);
 	const parameterSize = info.details?.parameter_size ?? "";
 
-	// Determine context window: known table > estimate from param size > default
+	// /api/tags doesn't include context length; /api/show does via "{arch}.context_length" in model_info.
+	let showContextWindow: number | undefined;
+	if (caps.contextWindow === undefined) {
+		try {
+			const showData = await showModel(info.name);
+			showContextWindow = extractContextFromModelInfo(showData.model_info);
+		} catch {
+			// non-fatal: fall through to estimate
+		}
+	}
+
+	// Determine context window: known table > /api/show > estimate from param size > default
 	const contextWindow =
 		caps.contextWindow ??
+		showContextWindow ??
 		(parameterSize ? estimateContextFromParams(parameterSize) : 8192);
 
 	// Determine max tokens: known table > fraction of context > default
@@ -77,7 +102,7 @@ export async function discoverModels(): Promise<DiscoveredOllamaModel[]> {
 	const tags = await listModels();
 	if (!tags.models || tags.models.length === 0) return [];
 
-	return tags.models.map(enrichModel);
+	return Promise.all(tags.models.map(enrichModel));
 }
 
 /**
