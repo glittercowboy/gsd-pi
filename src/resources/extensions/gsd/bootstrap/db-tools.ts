@@ -1000,6 +1000,16 @@ export function registerDbTools(pi: ExtensionAPI): void {
       updateSliceStatus(params.milestoneId, params.sliceId, "skipped");
       invalidateStateCache();
 
+      // Rebuild STATE.md so it reflects the skip immediately (#3477).
+      // Without this, /gsd auto reads stale STATE.md and resumes the skipped slice.
+      try {
+        const basePath = process.cwd();
+        const { rebuildState } = await import("../doctor.js");
+        await rebuildState(basePath);
+      } catch (err) {
+        logError("tool", `skip_slice rebuildState failed: ${(err as Error).message}`, { tool: "gsd_skip_slice" });
+      }
+
       return {
         content: [{ type: "text" as const, text: `Skipped slice ${params.sliceId} (${params.milestoneId}). Reason: ${params.reason ?? "User-directed skip"}. Auto-mode will advance past this slice.` }],
         details: {

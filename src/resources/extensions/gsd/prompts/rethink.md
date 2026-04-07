@@ -46,11 +46,12 @@ reason: "<reason>"
 Remove the `{ID}-PARKED.md` file from the milestone directory to reactivate it.
 
 ### Skip a slice
-Mark a slice as skipped so auto-mode advances past it without executing. Use the `gsd_skip_slice` tool:
+Mark a slice as skipped so auto-mode advances past it without executing. **You MUST call the `gsd_skip_slice` tool** — editing the roadmap markdown alone is NOT sufficient because auto-mode reads slice status from the database, not the roadmap file:
 ```
 gsd_skip_slice({ milestoneId: "M003", sliceId: "S02", reason: "Descoped — feature moved to M005" })
 ```
 Skipped slices are treated as closed by the state machine (like "complete" but distinct). Use when a slice is no longer needed or has been superseded. The slice data is preserved for reference.
+**Do NOT** just check the slice checkbox in the roadmap — this does not update the DB and auto-mode will resume the slice.
 
 ### Discard a milestone
 **Permanently** delete a milestone directory and prune it from QUEUE-ORDER.json. **Always confirm with the user before discarding.** Warn explicitly if the milestone has completed work.
