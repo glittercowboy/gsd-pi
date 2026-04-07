@@ -1393,13 +1393,8 @@ export async function showSmartEntry(
       });
 
       if (choice === "new_milestone") {
-<<<<<<< HEAD
         pendingAutoStartMap.set(basePath, { ctx, pi, basePath, milestoneId: nextId, step: stepMode, createdAt: Date.now() });
-        await dispatchWorkflow(pi, buildDiscussPrompt(nextId,
-=======
-        pendingAutoStartMap.set(basePath, { ctx, pi, basePath, milestoneId: nextId, step: stepMode });
         await dispatchWorkflow(pi, await prepareAndBuildDiscussPrompt(ctx, nextId,
->>>>>>> 179320ad (feat(gsd): add deep evidence-backed discussion system with preparation engine)
           `New milestone ${nextId}.`,
           basePath
         ), "gsd-run", ctx, "discuss-milestone");
