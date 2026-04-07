@@ -48,7 +48,12 @@ function extractContextFromModelInfo(modelInfo: Record<string, unknown>): number
 	return undefined;
 }
 
-async function enrichModel(info: OllamaModelInfo): Promise<DiscoveredOllamaModel> {
+type ClientDeps = {
+	listModels: typeof listModels;
+	showModel: typeof showModel;
+};
+
+async function enrichModel(info: OllamaModelInfo, deps: ClientDeps): Promise<DiscoveredOllamaModel> {
 	const caps = getModelCapabilities(info.name);
 	const parameterSize = info.details?.parameter_size ?? "";
 
@@ -56,7 +61,7 @@ async function enrichModel(info: OllamaModelInfo): Promise<DiscoveredOllamaModel
 	let showContextWindow: number | undefined;
 	if (caps.contextWindow === undefined) {
 		try {
-			const showData = await showModel(info.name);
+			const showData = await deps.showModel(info.name);
 			showContextWindow = extractContextFromModelInfo(showData.model_info);
 		} catch (err) {
 			// non-fatal: fall through to estimate
@@ -99,11 +104,11 @@ async function enrichModel(info: OllamaModelInfo): Promise<DiscoveredOllamaModel
 /**
  * Discover all locally available Ollama models with enriched capabilities.
  */
-export async function discoverModels(): Promise<DiscoveredOllamaModel[]> {
-	const tags = await listModels();
+export async function discoverModels(deps: ClientDeps = { listModels, showModel }): Promise<DiscoveredOllamaModel[]> {
+	const tags = await deps.listModels();
 	if (!tags.models || tags.models.length === 0) return [];
 
-	return Promise.all(tags.models.map(enrichModel));
+	return Promise.all(tags.models.map((m) => enrichModel(m, deps)));
 }
 
 /**
