@@ -530,11 +530,6 @@ export function migrateHierarchyToDb(basePath: string): {
     // Ghost milestone: no CONTEXT, ROADMAP, or SUMMARY → skip
     if (!hasRoadmap && !hasContext && !hasSummary) continue;
 
-    // Determine milestone status
-    let milestoneStatus = 'active';
-    if (hasSummary) milestoneStatus = 'complete';
-    else if (hasParked) milestoneStatus = 'parked';
-
     // Determine milestone title from roadmap H1 or CONTEXT heading
     let milestoneTitle = '';
     let roadmapContent: string | null = null;
@@ -543,6 +538,16 @@ export function migrateHierarchyToDb(basePath: string): {
       roadmapContent = readFileSync(roadmapPath!, 'utf-8');
       roadmap = parseRoadmap(roadmapContent);
       milestoneTitle = roadmap.title;
+    }
+
+    // Determine milestone status
+    let milestoneStatus = 'active';
+    if (hasSummary) milestoneStatus = 'complete';
+    else if (hasParked) milestoneStatus = 'parked';
+    // Import milestones with all-done roadmap slices as complete (#3390, #3379)
+    // even when SUMMARY.md is missing — the roadmap checkboxes are authoritative.
+    else if (roadmap && roadmap.slices.length > 0 && roadmap.slices.every(s => s.done)) {
+      milestoneStatus = 'complete';
     }
     if (!milestoneTitle && hasContext) {
       const contextContent = readFileSync(contextPath!, 'utf-8');
