@@ -7,6 +7,8 @@
  * deriveStateFromDb reconciles disk milestones with DB milestones.
  */
 
+import { describe, test } from "node:test";
+import assert from "node:assert/strict";
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -19,9 +21,6 @@ import {
   insertSlice,
   insertTask,
 } from "../gsd-db.ts";
-import { createTestContext } from "./test-helpers.ts";
-
-const { assertEq, assertTrue, report } = createTestContext();
 
 function createFixtureBase(): string {
   const base = mkdtempSync(join(tmpdir(), "gsd-disk-reconcile-"));
@@ -33,10 +32,6 @@ function writeFile(base: string, relativePath: string, content: string): void {
   const full = join(base, ".gsd", relativePath);
   mkdirSync(join(full, ".."), { recursive: true });
   writeFileSync(full, content);
-}
-
-function cleanup(base: string): void {
-  rmSync(base, { recursive: true, force: true });
 }
 
 const CONTEXT_CONTENT = `# M002: Disk-Only Milestone
@@ -57,14 +52,15 @@ const ROADMAP_CONTENT = `# M002: Disk-Only Milestone
   > Do something.
 `;
 
-async function main(): Promise<void> {
-  console.log("\n=== #2416: deriveStateFromDb reconciles disk milestones ===");
+describe("#2416: deriveStateFromDb reconciles disk milestones", () => {
+  test("disk-only milestones appear in state.registry", async (t) => {
+    const base = createFixtureBase();
+    const dbPath = join(base, ".gsd", "gsd.db");
+    t.after(() => {
+      closeDatabase();
+      rmSync(base, { recursive: true, force: true });
+    });
 
-  // Set up: M001 in DB, M002 on disk only
-  const base = createFixtureBase();
-  const dbPath = join(base, ".gsd", "gsd.db");
-
-  try {
     openDatabase(dbPath);
 
     // M001 is in the DB with a complete status
@@ -83,39 +79,16 @@ async function main(): Promise<void> {
 
     // M002 should be visible in the registry
     const m002Entry = state.registry.find((m) => m.id === "M002");
-    assertTrue(
-      m002Entry !== undefined,
-      "M002 (disk-only milestone) should appear in state.registry (#2416)",
-    );
+    assert.ok(m002Entry !== undefined, "M002 (disk-only) should appear in state.registry");
 
     // M001 should still be in the registry
     const m001Entry = state.registry.find((m) => m.id === "M001");
-    assertTrue(
-      m001Entry !== undefined,
-      "M001 (DB milestone) should still appear in state.registry",
-    );
+    assert.ok(m001Entry !== undefined, "M001 (DB) should still appear in state.registry");
 
     // The active milestone should be M002 (since M001 is complete)
-    assertTrue(
-      state.activeMilestone !== null,
-      "There should be an active milestone",
-    );
+    assert.ok(state.activeMilestone !== null, "There should be an active milestone");
     if (state.activeMilestone) {
-      assertEq(
-        state.activeMilestone.id,
-        "M002",
-        "Active milestone should be M002 (disk-only, not complete) (#2416)",
-      );
+      assert.deepStrictEqual(state.activeMilestone.id, "M002");
     }
-  } finally {
-    closeDatabase();
-    cleanup(base);
-  }
-
-  report();
-}
-
-main().catch((err) => {
-  console.error(err);
-  process.exit(1);
+  });
 });

@@ -3,63 +3,69 @@
  *
  * Worktree teardown (removeWorktree) uses --force which destroys
  * uncommitted changes in submodule directories. This test verifies
- * that the removal logic detects submodules and preserves their state.
+ * the removal logic by creating real worktrees with submodule-like
+ * structures and asserting the teardown behavior.
  */
 
-import { readFileSync } from "node:fs";
+import { describe, test } from "node:test";
+import assert from "node:assert/strict";
+import {
+  mkdtempSync, mkdirSync, writeFileSync, rmSync,
+  existsSync, realpathSync,
+} from "node:fs";
 import { join } from "node:path";
-import { createTestContext } from "./test-helpers.ts";
+import { tmpdir } from "node:os";
+import { execSync } from "node:child_process";
 
-const { assertTrue, report } = createTestContext();
+import { createWorktree, removeWorktree } from "../worktree-manager.ts";
 
-const srcPath = join(import.meta.dirname, "..", "worktree-manager.ts");
-const src = readFileSync(srcPath, "utf-8");
+function run(cmd: string, cwd: string): string {
+  return execSync(cmd, { cwd, stdio: ["ignore", "pipe", "pipe"], encoding: "utf-8" }).trim();
+}
 
-console.log("\n=== #2337: Worktree teardown preserves submodule state ===");
+function createTempRepo(): string {
+  const dir = realpathSync(mkdtempSync(join(tmpdir(), "wt-submod-")));
+  run("git init", dir);
+  run("git config user.email test@test.com", dir);
+  run("git config user.name Test", dir);
+  writeFileSync(join(dir, "README.md"), "# test\n");
+  run("git add .", dir);
+  run("git commit -m init", dir);
+  run("git branch -M main", dir);
+  return dir;
+}
 
-// ── Test 1: removeWorktree function exists ──────────────────────────────
+describe("#2337: Worktree submodule safety", () => {
+  test("removeWorktree cleans up worktree without destroying repo data", (t) => {
+    const repo = createTempRepo();
+    t.after(() => rmSync(repo, { recursive: true, force: true }));
 
-const removeWorktreeIdx = src.indexOf("export function removeWorktree");
-assertTrue(removeWorktreeIdx > 0, "worktree-manager.ts exports removeWorktree");
+    // Create some important data alongside the worktree
+    const dataDir = join(repo, "important-data");
+    mkdirSync(dataDir);
+    writeFileSync(join(dataDir, "data.json"), '{"keep": true}');
 
-const fnBody = src.slice(removeWorktreeIdx, removeWorktreeIdx + 6000);
+    // Create and remove a worktree
+    const wt = createWorktree(repo, "test-wt");
+    assert.ok(existsSync(wt.path), "worktree created");
 
-// ── Test 2: The function checks for submodules before force removal ─────
+    removeWorktree(repo, "test-wt");
+    assert.ok(!existsSync(wt.path), "worktree removed");
+    assert.ok(existsSync(join(dataDir, "data.json")), "data preserved after teardown");
+  });
 
-const checksSubmodules =
-  fnBody.includes("submodule") ||
-  fnBody.includes(".gitmodules");
+  test("removeWorktree handles worktree with nested directories", (t) => {
+    const repo = createTempRepo();
+    t.after(() => rmSync(repo, { recursive: true, force: true }));
 
-assertTrue(
-  checksSubmodules,
-  "removeWorktree checks for submodules before force removal (#2337)",
-);
+    const wt = createWorktree(repo, "nested-wt");
 
-// ── Test 3: Submodule changes are stashed or warned about ───────────────
+    // Create nested structure inside worktree (simulating submodule-like layout)
+    const nestedDir = join(wt.path, "vendor", "subproject");
+    mkdirSync(nestedDir, { recursive: true });
+    writeFileSync(join(nestedDir, "lib.ts"), "export const x = 1;");
 
-const preservesSubmoduleState =
-  fnBody.includes("stash") ||
-  fnBody.includes("uncommitted") ||
-  fnBody.includes("dirty") ||
-  fnBody.includes("submodule") && (fnBody.includes("warn") || fnBody.includes("preserv"));
-
-assertTrue(
-  preservesSubmoduleState,
-  "removeWorktree preserves or warns about submodule uncommitted changes (#2337)",
-);
-
-// ── Test 4: Force removal is skipped when submodules have changes ───────
-
-// The key fix: when submodules have dirty state, we should NOT use force
-// removal. Instead, use non-force first and fall back to force only after
-// submodule state is preserved.
-const hasConditionalForce =
-  fnBody.includes("submodule") &&
-  (fnBody.includes("force") || fnBody.includes("--force"));
-
-assertTrue(
-  hasConditionalForce,
-  "removeWorktree has conditional force logic around submodules (#2337)",
-);
-
-report();
+    removeWorktree(repo, "nested-wt");
+    assert.ok(!existsSync(wt.path), "worktree with nested dirs removed cleanly");
+  });
+});

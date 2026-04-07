@@ -22,7 +22,7 @@ import { resolveExpectedArtifactPath } from "./auto.js";
 import {
   gsdRoot, milestonesDir, resolveMilestoneFile, resolveMilestonePath,
   resolveSliceFile, resolveSlicePath, resolveGsdRootFile, relGsdRootFile,
-  relMilestoneFile, relSliceFile,
+  relMilestoneFile, relSliceFile, hasGsdBootstrapArtifacts,
 } from "./paths.js";
 import { join } from "node:path";
 import { readFileSync, existsSync, mkdirSync, readdirSync, rmSync, unlinkSync } from "node:fs";
@@ -1061,12 +1061,7 @@ export async function showSmartEntry(
   // Check bootstrap completeness, not just .gsd/ directory existence.
   // A zombie .gsd/ state (symlink exists but missing PREFERENCES.md and
   // milestones/) must trigger the init wizard, not skip it (#2942).
-  const gsdPath = gsdRoot(basePath);
-  const hasBootstrapArtifacts = existsSync(gsdPath)
-    && (existsSync(join(gsdPath, "PREFERENCES.md"))
-        || existsSync(join(gsdPath, "milestones")));
-
-  if (!hasBootstrapArtifacts) {
+  if (!hasGsdBootstrapArtifacts(basePath)) {
     const detection = detectProjectState(basePath);
 
     // v1 .planning/ detected — offer migration before anything else

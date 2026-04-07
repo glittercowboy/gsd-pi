@@ -7,86 +7,137 @@
  *   3. Keep mode as "doctor" (the flag is not a positional subcommand)
  */
 
+import { describe, test } from "node:test";
+import assert from "node:assert/strict";
 import { parseDoctorArgs } from "../commands-handlers.js";
-import { createTestContext } from "./test-helpers.ts";
 
-const { assertEq, assertTrue, report } = createTestContext();
+describe("#1919: --fix flag parsing in parseDoctorArgs", () => {
+  describe("bare --fix flag", () => {
+    test("sets fixFlag to true", () => {
+      const r = parseDoctorArgs("--fix");
+      assert.ok(r.fixFlag);
+    });
 
-async function main(): Promise<void> {
-  // ── 1. Bare --fix flag ──────────────────────────────────────────────────────
-  console.log("\n=== bare --fix flag (#1919) ===");
-  {
-    const r = parseDoctorArgs("--fix");
-    assertTrue(r.fixFlag, "--fix sets fixFlag to true");
-    assertEq(r.mode, "doctor", "--fix does not change mode from doctor");
-    assertEq(r.requestedScope, undefined, "--fix is stripped and does not become requestedScope");
-  }
+    test("does not change mode from doctor", () => {
+      const r = parseDoctorArgs("--fix");
+      assert.deepStrictEqual(r.mode, "doctor");
+    });
 
-  // ── 2. --fix with a scope ──────────────────────────────────────────────────
-  console.log("\n=== --fix with scope ===");
-  {
-    const r = parseDoctorArgs("--fix M001/S01");
-    assertTrue(r.fixFlag, "--fix M001/S01 sets fixFlag to true");
-    assertEq(r.mode, "doctor", "--fix M001/S01 keeps mode as doctor");
-    assertEq(r.requestedScope, "M001/S01", "scope is M001/S01 after stripping --fix");
-  }
+    test("is stripped and does not become requestedScope", () => {
+      const r = parseDoctorArgs("--fix");
+      assert.deepStrictEqual(r.requestedScope, undefined);
+    });
+  });
 
-  // ── 3. Positional fix still works ──────────────────────────────────────────
-  console.log("\n=== positional fix subcommand ===");
-  {
-    const r = parseDoctorArgs("fix");
-    assertEq(r.fixFlag, false, "positional fix does not set fixFlag");
-    assertEq(r.mode, "fix", "positional fix sets mode to fix");
-    assertEq(r.requestedScope, undefined, "no scope with bare positional fix");
-  }
+  describe("--fix with scope", () => {
+    test("sets fixFlag to true", () => {
+      const r = parseDoctorArgs("--fix M001/S01");
+      assert.ok(r.fixFlag);
+    });
 
-  // ── 4. Positional fix with scope ───────────────────────────────────────────
-  console.log("\n=== positional fix with scope ===");
-  {
-    const r = parseDoctorArgs("fix M001");
-    assertEq(r.mode, "fix", "fix M001 sets mode to fix");
-    assertEq(r.requestedScope, "M001", "fix M001 parses scope as M001");
-  }
+    test("keeps mode as doctor", () => {
+      const r = parseDoctorArgs("--fix M001/S01");
+      assert.deepStrictEqual(r.mode, "doctor");
+    });
 
-  // ── 5. --fix combined with other flags ─────────────────────────────────────
-  console.log("\n=== --fix combined with --dry-run ===");
-  {
-    const r = parseDoctorArgs("--fix --dry-run");
-    assertTrue(r.fixFlag, "--fix --dry-run sets fixFlag");
-    assertTrue(r.dryRun, "--fix --dry-run sets dryRun");
-    assertEq(r.requestedScope, undefined, "no scope leaked from combined flags");
-  }
+    test("scope is M001/S01 after stripping --fix", () => {
+      const r = parseDoctorArgs("--fix M001/S01");
+      assert.deepStrictEqual(r.requestedScope, "M001/S01");
+    });
+  });
 
-  // ── 6. --fix combined with --json ──────────────────────────────────────────
-  console.log("\n=== --fix with --json ===");
-  {
-    const r = parseDoctorArgs("--fix --json");
-    assertTrue(r.fixFlag, "--fix --json sets fixFlag");
-    assertTrue(r.jsonMode, "--fix --json sets jsonMode");
-    assertEq(r.requestedScope, undefined, "no scope leaked from --fix --json");
-  }
+  describe("positional fix subcommand", () => {
+    test("does not set fixFlag", () => {
+      const r = parseDoctorArgs("fix");
+      assert.deepStrictEqual(r.fixFlag, false);
+    });
 
-  // ── 7. Empty args (baseline) ───────────────────────────────────────────────
-  console.log("\n=== empty args baseline ===");
-  {
-    const r = parseDoctorArgs("");
-    assertEq(r.fixFlag, false, "empty args: fixFlag false");
-    assertEq(r.mode, "doctor", "empty args: mode is doctor");
-    assertEq(r.requestedScope, undefined, "empty args: no scope");
-  }
+    test("sets mode to fix", () => {
+      const r = parseDoctorArgs("fix");
+      assert.deepStrictEqual(r.mode, "fix");
+    });
 
-  // ── 8. heal and audit modes unaffected ─────────────────────────────────────
-  console.log("\n=== heal and audit modes ===");
-  {
-    const rh = parseDoctorArgs("heal M001/S01");
-    assertEq(rh.mode, "heal", "heal mode parsed correctly");
-    assertEq(rh.requestedScope, "M001/S01", "heal scope parsed correctly");
+    test("no scope with bare positional fix", () => {
+      const r = parseDoctorArgs("fix");
+      assert.deepStrictEqual(r.requestedScope, undefined);
+    });
+  });
 
-    const ra = parseDoctorArgs("audit");
-    assertEq(ra.mode, "audit", "audit mode parsed correctly");
-  }
+  describe("positional fix with scope", () => {
+    test("sets mode to fix", () => {
+      const r = parseDoctorArgs("fix M001");
+      assert.deepStrictEqual(r.mode, "fix");
+    });
 
-  report();
-}
+    test("parses scope as M001", () => {
+      const r = parseDoctorArgs("fix M001");
+      assert.deepStrictEqual(r.requestedScope, "M001");
+    });
+  });
 
-main();
+  describe("--fix combined with other flags", () => {
+    test("--fix --dry-run sets fixFlag", () => {
+      const r = parseDoctorArgs("--fix --dry-run");
+      assert.ok(r.fixFlag);
+    });
+
+    test("--fix --dry-run sets dryRun", () => {
+      const r = parseDoctorArgs("--fix --dry-run");
+      assert.ok(r.dryRun);
+    });
+
+    test("no scope leaked from combined flags", () => {
+      const r = parseDoctorArgs("--fix --dry-run");
+      assert.deepStrictEqual(r.requestedScope, undefined);
+    });
+
+    test("--fix --json sets fixFlag", () => {
+      const r = parseDoctorArgs("--fix --json");
+      assert.ok(r.fixFlag);
+    });
+
+    test("--fix --json sets jsonMode", () => {
+      const r = parseDoctorArgs("--fix --json");
+      assert.ok(r.jsonMode);
+    });
+
+    test("no scope leaked from --fix --json", () => {
+      const r = parseDoctorArgs("--fix --json");
+      assert.deepStrictEqual(r.requestedScope, undefined);
+    });
+  });
+
+  describe("empty args baseline", () => {
+    test("fixFlag false", () => {
+      const r = parseDoctorArgs("");
+      assert.deepStrictEqual(r.fixFlag, false);
+    });
+
+    test("mode is doctor", () => {
+      const r = parseDoctorArgs("");
+      assert.deepStrictEqual(r.mode, "doctor");
+    });
+
+    test("no scope", () => {
+      const r = parseDoctorArgs("");
+      assert.deepStrictEqual(r.requestedScope, undefined);
+    });
+  });
+
+  describe("heal and audit modes", () => {
+    test("heal mode parsed correctly", () => {
+      const rh = parseDoctorArgs("heal M001/S01");
+      assert.deepStrictEqual(rh.mode, "heal");
+    });
+
+    test("heal scope parsed correctly", () => {
+      const rh = parseDoctorArgs("heal M001/S01");
+      assert.deepStrictEqual(rh.requestedScope, "M001/S01");
+    });
+
+    test("audit mode parsed correctly", () => {
+      const ra = parseDoctorArgs("audit");
+      assert.deepStrictEqual(ra.mode, "audit");
+    });
+  });
+});

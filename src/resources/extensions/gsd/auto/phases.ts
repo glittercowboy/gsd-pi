@@ -25,6 +25,7 @@ import { detectStuck } from "./detect-stuck.js";
 import { runUnit } from "./run-unit.js";
 import { debugLog } from "../debug-logger.js";
 import { PROJECT_FILES } from "../detection.js";
+import { checkWorktreeHealth } from "./worktree-health.js";
 import { MergeConflictError } from "../git-service.js";
 import { join, basename, dirname, parse as parsePath } from "node:path";
 import { existsSync, cpSync, readdirSync } from "node:fs";
@@ -994,57 +995,19 @@ export async function runUnitPhase(
     unitId,
   });
 
-  // ── Worktree health check (#1833, #1843) ────────────────────────────
-  // Verify the working directory is a valid git checkout with project
-  // files before dispatching work. A broken worktree causes agents to
-  // hallucinate summaries since they cannot read or write any files.
-  // Uses the shared PROJECT_FILES list from detection.ts to support all
-  // ecosystems (Rust, Go, Python, Java, etc.), not just JS.
+  // ── Worktree health check (#1833, #1843, #2347) ────────────────────
   if (s.basePath && unitType === "execute-task") {
-    const gitMarker = join(s.basePath, ".git");
-    const hasGit = deps.existsSync(gitMarker);
-    if (!hasGit) {
-      const msg = `Worktree health check failed: ${s.basePath} has no .git — refusing to dispatch ${unitType} ${unitId}`;
-      debugLog("runUnitPhase", { phase: "worktree-health-fail", basePath: s.basePath, hasGit });
+    const health = checkWorktreeHealth(s.basePath, deps.existsSync);
+    if (health.status === "no-git") {
+      const msg = `Worktree health check failed: ${health.message} — refusing to dispatch ${unitType} ${unitId}`;
+      debugLog("runUnitPhase", { phase: "worktree-health-fail", basePath: s.basePath });
       ctx.ui.notify(msg, "error");
       await deps.stopAuto(ctx, pi, msg);
       return { action: "break", reason: "worktree-invalid" };
     }
-    const hasProjectFile = PROJECT_FILES.some((f) => deps.existsSync(join(s.basePath, f)));
-    const hasSrcDir = deps.existsSync(join(s.basePath, "src"));
-    // Xcode bundles have project-specific names (*.xcodeproj, *.xcworkspace)
-    // that cannot be matched by exact filename — scan the directory by suffix.
-    let hasXcodeBundle = false;
-    try {
-      const entries = deps.existsSync(s.basePath) ? readdirSync(s.basePath) : [];
-      hasXcodeBundle = entries.some((e: string) => e.endsWith(".xcodeproj") || e.endsWith(".xcworkspace"));
-    } catch (err) {
-      debugLog("runUnitPhase", { phase: "xcode-bundle-scan-failed", basePath: s.basePath, error: String(err) });
-    }
-    // Monorepo support (#2347): if no project files in the worktree directory,
-    // walk parent directories up to the filesystem root. In monorepos,
-    // package.json / Cargo.toml etc. live in a parent directory.
-    let hasProjectFileInParent = false;
-    if (!hasProjectFile && !hasSrcDir && !hasXcodeBundle) {
-      let checkDir = dirname(s.basePath);
-      const { root } = parsePath(checkDir);
-      while (checkDir !== root) {
-        // Stop at git repository boundary — ancestors above the repo root
-        // (e.g. ~ or /usr/local) may contain unrelated project files.
-        if (deps.existsSync(join(checkDir, ".git"))) break;
-        if (PROJECT_FILES.some((f) => deps.existsSync(join(checkDir, f)))) {
-          hasProjectFileInParent = true;
-          break;
-        }
-        checkDir = dirname(checkDir);
-      }
-    }
-    if (!hasProjectFile && !hasSrcDir && !hasXcodeBundle && !hasProjectFileInParent) {
-      // Greenfield projects won't have project files yet — the first task creates them.
-      // Log a warning but allow execution to proceed. The .git check above is sufficient
-      // to ensure we're in a valid working directory.
-      debugLog("runUnitPhase", { phase: "worktree-health-warn-greenfield", basePath: s.basePath, hasProjectFile, hasSrcDir, hasXcodeBundle });
-      ctx.ui.notify(`Warning: ${s.basePath} has no recognized project files — proceeding as greenfield project`, "warning");
+    if (health.status === "greenfield") {
+      debugLog("runUnitPhase", { phase: "worktree-health-warn-greenfield", basePath: s.basePath });
+      ctx.ui.notify(`Warning: ${health.message}`, "warning");
     }
   }
 

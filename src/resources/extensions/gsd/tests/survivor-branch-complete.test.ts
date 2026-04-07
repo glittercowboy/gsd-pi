@@ -12,97 +12,50 @@
  * the normal "complete" handling.
  */
 
-import { createTestContext } from "./test-helpers.ts";
+import { describe, test } from "node:test";
+import assert from "node:assert/strict";
 
-const { assertTrue, assertEq, report } = createTestContext();
-
-// ═══ Test: survivor branch detection conditions ══════════════════════════════
-
-// The survivor branch detection block in auto-start.ts checks:
-//   state.activeMilestone &&
-//   state.phase === "pre-planning" &&  // <-- BUG: too restrictive
-//   shouldUseWorktreeIsolation() &&
-//   !detectWorktreeName(base) &&
-//   !base.includes(...)
-//
-// The fix should also include state.phase === "complete".
-
-{
-  console.log("\n=== #2358: survivor branch should be detected in phase=complete ===");
-
-  // Simulate the condition check before the fix (only pre-planning)
+describe("#2358: survivor branch detection conditions", () => {
   const phasesBeforeFix = ["pre-planning"];
   const phasesAfterFix = ["pre-planning", "complete"];
 
-  const testPhase = "complete";
+  test("before fix: phase=complete should NOT trigger survivor detection", () => {
+    assert.deepStrictEqual(phasesBeforeFix.includes("complete"), false);
+  });
 
-  const detectedBefore = phasesBeforeFix.includes(testPhase);
-  assertEq(detectedBefore, false, "before fix: phase=complete should NOT trigger survivor detection");
+  test("after fix: phase=complete SHOULD trigger survivor detection", () => {
+    assert.deepStrictEqual(phasesAfterFix.includes("complete"), true);
+  });
 
-  const detectedAfter = phasesAfterFix.includes(testPhase);
-  assertEq(detectedAfter, true, "after fix: phase=complete SHOULD trigger survivor detection");
-}
+  test("pre-planning should still trigger survivor detection after fix", () => {
+    assert.deepStrictEqual(phasesAfterFix.includes("pre-planning"), true);
+  });
 
-// ═══ Test: pre-planning survivor detection still works ═══════════════════════
+  test("other phases should NOT trigger survivor detection", () => {
+    for (const phase of ["planning", "executing", "blocked", "needs-discussion"]) {
+      assert.deepStrictEqual(phasesAfterFix.includes(phase), false, `phase=${phase}`);
+    }
+  });
+});
 
-{
-  console.log("\n=== #2358: pre-planning survivor detection is not broken ===");
-
-  const phasesAfterFix = ["pre-planning", "complete"];
-  const testPhase = "pre-planning";
-
-  const detected = phasesAfterFix.includes(testPhase);
-  assertEq(detected, true, "pre-planning should still trigger survivor detection after fix");
-}
-
-// ═══ Test: other phases do NOT trigger survivor detection ════════════════════
-
-{
-  console.log("\n=== #2358: other phases should NOT trigger survivor detection ===");
-
-  const phasesAfterFix = ["pre-planning", "complete"];
-
-  for (const phase of ["planning", "executing", "blocked", "needs-discussion"]) {
-    const detected = phasesAfterFix.includes(phase);
-    assertEq(detected, false, `phase=${phase} should NOT trigger survivor detection`);
+describe("#2358: phase=complete + survivor branch triggers finalization path", () => {
+  function decideAction(hasSurvivorBranch: boolean, phase: string): string {
+    if (hasSurvivorBranch && phase === "complete") return "finalize";
+    if (hasSurvivorBranch && phase === "needs-discussion") return "discuss";
+    if (!hasSurvivorBranch && (!phase || phase === "complete")) return "showSmartEntry";
+    return "continue";
   }
-}
-
-// ═══ Test: phase=complete + hasSurvivorBranch should trigger finalization ═════
-
-{
-  console.log("\n=== #2358: phase=complete + survivor branch triggers finalization path ===");
-
-  // Simulate the decision logic after the fix:
-  // if (hasSurvivorBranch && state.phase === "complete") -> finalize
-  // if (hasSurvivorBranch && state.phase === "needs-discussion") -> discuss
-  // if (!hasSurvivorBranch && state.phase === "complete") -> showSmartEntry
 
   const scenarios = [
     { hasSurvivorBranch: true, phase: "complete", expected: "finalize" },
     { hasSurvivorBranch: true, phase: "needs-discussion", expected: "discuss" },
     { hasSurvivorBranch: true, phase: "pre-planning", expected: "continue" },
     { hasSurvivorBranch: false, phase: "complete", expected: "showSmartEntry" },
-  ];
+  ] as const;
 
   for (const { hasSurvivorBranch, phase, expected } of scenarios) {
-    let result: string;
-    if (hasSurvivorBranch && phase === "complete") {
-      result = "finalize";
-    } else if (hasSurvivorBranch && phase === "needs-discussion") {
-      result = "discuss";
-    } else if (!hasSurvivorBranch && (!phase || phase === "complete")) {
-      result = "showSmartEntry";
-    } else {
-      result = "continue";
-    }
-
-    assertEq(
-      result,
-      expected,
-      `hasSurvivorBranch=${hasSurvivorBranch}, phase=${phase} -> expected ${expected}, got ${result}`,
-    );
+    test(`hasSurvivorBranch=${hasSurvivorBranch}, phase=${phase} -> ${expected}`, () => {
+      assert.deepStrictEqual(decideAction(hasSurvivorBranch, phase), expected);
+    });
   }
-}
-
-report();
+});

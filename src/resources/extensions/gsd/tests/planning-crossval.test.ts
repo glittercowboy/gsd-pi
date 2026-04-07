@@ -6,6 +6,8 @@
 import { mkdtempSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
+import { describe, test } from 'node:test';
+import assert from 'node:assert/strict';
 
 import {
   openDatabase,
@@ -22,9 +24,6 @@ import {
 } from '../markdown-renderer.ts';
 import { parseRoadmapSlices } from '../roadmap-slices.ts';
 import { parsePlan } from '../parsers-legacy.ts';
-import { createTestContext } from './test-helpers.ts';
-
-const { assertEq, assertTrue, report } = createTestContext();
 
 // ─── Fixture Helpers ───────────────────────────────────────────────────────
 
@@ -46,16 +45,18 @@ function cleanup(base: string): void {
   rmSync(base, { recursive: true, force: true });
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
-// Test 1: ROADMAP DB→render→parse round-trip parity
-// ═══════════════════════════════════════════════════════════════════════════
+describe("planning-crossval: DB→render→parse round-trip parity", () => {
 
-console.log('\n=== planning-crossval Test 1: ROADMAP round-trip parity ===');
-{
-  const base = createFixtureBase();
-  const dbPath = join(base, '.gsd', 'gsd.db');
-  openDatabase(dbPath);
-  try {
+  // ═══════════════════════════════════════════════════════════════════════════
+  // Test 1: ROADMAP DB→render→parse round-trip parity
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  test("ROADMAP round-trip parity", async (t) => {
+    const base = createFixtureBase();
+    const dbPath = join(base, '.gsd', 'gsd.db');
+    openDatabase(dbPath);
+    t.after(() => { closeDatabase(); cleanup(base); });
+
     scaffoldDirs(base, 'M001', ['S01', 'S02', 'S03', 'S04']);
 
     // Insert milestone
@@ -95,34 +96,30 @@ console.log('\n=== planning-crossval Test 1: ROADMAP round-trip parity ===');
     const parsedSlices = parseRoadmapSlices(content);
 
     // Assert slice count
-    assertEq(parsedSlices.length, dbSlices.length, 'T1: slice count matches');
+    assert.deepStrictEqual(parsedSlices.length, dbSlices.length, 'T1: slice count matches');
 
     // Assert field parity for each slice
     for (let i = 0; i < dbSlices.length; i++) {
       const db = dbSlices[i];
       const parsed = parsedSlices[i];
-      assertEq(parsed.id, db.id, `T1: slice[${i}].id`);
-      assertEq(parsed.title, db.title, `T1: slice[${i}].title`);
-      assertEq(parsed.done, db.status === 'complete', `T1: slice[${i}].done matches status`);
-      assertEq(parsed.risk, db.risk, `T1: slice[${i}].risk`);
-      assertEq(JSON.stringify(parsed.depends), JSON.stringify(db.depends), `T1: slice[${i}].depends`);
+      assert.deepStrictEqual(parsed.id, db.id, `T1: slice[${i}].id`);
+      assert.deepStrictEqual(parsed.title, db.title, `T1: slice[${i}].title`);
+      assert.deepStrictEqual(parsed.done, db.status === 'complete', `T1: slice[${i}].done matches status`);
+      assert.deepStrictEqual(parsed.risk, db.risk, `T1: slice[${i}].risk`);
+      assert.deepStrictEqual(JSON.stringify(parsed.depends), JSON.stringify(db.depends), `T1: slice[${i}].depends`);
     }
-  } finally {
-    closeDatabase();
-    cleanup(base);
-  }
-}
+  });
 
-// ═══════════════════════════════════════════════════════════════════════════
-// Test 2: PLAN DB→render→parse round-trip parity
-// ═══════════════════════════════════════════════════════════════════════════
+  // ═══════════════════════════════════════════════════════════════════════════
+  // Test 2: PLAN DB→render→parse round-trip parity
+  // ═══════════════════════════════════════════════════════════════════════════
 
-console.log('\n=== planning-crossval Test 2: PLAN round-trip parity ===');
-{
-  const base = createFixtureBase();
-  const dbPath = join(base, '.gsd', 'gsd.db');
-  openDatabase(dbPath);
-  try {
+  test("PLAN round-trip parity", async (t) => {
+    const base = createFixtureBase();
+    const dbPath = join(base, '.gsd', 'gsd.db');
+    openDatabase(dbPath);
+    t.after(() => { closeDatabase(); cleanup(base); });
+
     scaffoldDirs(base, 'M001', ['S01']);
 
     insertMilestone({
@@ -203,54 +200,50 @@ console.log('\n=== planning-crossval Test 2: PLAN round-trip parity ===');
     const parsedPlan = parsePlan(content);
 
     // Assert task count
-    assertEq(parsedPlan.tasks.length, 3, 'T2: task count matches');
+    assert.deepStrictEqual(parsedPlan.tasks.length, 3, 'T2: task count matches');
 
     // Assert field parity for each task
     for (let i = 0; i < dbTasks.length; i++) {
       const db = dbTasks[i];
       const parsed = parsedPlan.tasks[i];
-      assertEq(parsed.id, db.id, `T2: task[${i}].id`);
-      assertEq(parsed.title, db.title, `T2: task[${i}].title`);
-      assertEq(parsed.verify, db.verify, `T2: task[${i}].verify`);
-      assertEq(parsed.done, db.status === 'complete', `T2: task[${i}].done matches status`);
+      assert.deepStrictEqual(parsed.id, db.id, `T2: task[${i}].id`);
+      assert.deepStrictEqual(parsed.title, db.title, `T2: task[${i}].title`);
+      assert.deepStrictEqual(parsed.verify, db.verify, `T2: task[${i}].verify`);
+      assert.deepStrictEqual(parsed.done, db.status === 'complete', `T2: task[${i}].done matches status`);
     }
 
     // Assert filesLikelyTouched contains all files from all tasks
     const allFiles = dbTasks.flatMap(t => t.files);
     for (const file of allFiles) {
-      assertTrue(
+      assert.ok(
         parsedPlan.filesLikelyTouched.includes(file),
         `T2: filesLikelyTouched contains ${file}`,
       );
     }
 
     // Assert task order matches sequence ordering (T01, T02, T03)
-    assertEq(parsedPlan.tasks[0].id, 'T01', 'T2: first task is T01 (sequence 1)');
-    assertEq(parsedPlan.tasks[1].id, 'T02', 'T2: second task is T02 (sequence 2)');
-    assertEq(parsedPlan.tasks[2].id, 'T03', 'T2: third task is T03 (sequence 3)');
+    assert.deepStrictEqual(parsedPlan.tasks[0].id, 'T01', 'T2: first task is T01 (sequence 1)');
+    assert.deepStrictEqual(parsedPlan.tasks[1].id, 'T02', 'T2: second task is T02 (sequence 2)');
+    assert.deepStrictEqual(parsedPlan.tasks[2].id, 'T03', 'T2: third task is T03 (sequence 3)');
 
     // Assert task files preserved
-    assertEq(
+    assert.deepStrictEqual(
       JSON.stringify(parsedPlan.tasks[0].files),
       JSON.stringify(dbTasks[0].files),
       'T2: task[0].files match DB',
     );
-  } finally {
-    closeDatabase();
-    cleanup(base);
-  }
-}
+  });
 
-// ═══════════════════════════════════════════════════════════════════════════
-// Test 3: Sequence ordering parity — non-sequential insertion order
-// ═══════════════════════════════════════════════════════════════════════════
+  // ═══════════════════════════════════════════════════════════════════════════
+  // Test 3: Sequence ordering parity — non-sequential insertion order
+  // ═══════════════════════════════════════════════════════════════════════════
 
-console.log('\n=== planning-crossval Test 3: Sequence ordering parity ===');
-{
-  const base = createFixtureBase();
-  const dbPath = join(base, '.gsd', 'gsd.db');
-  openDatabase(dbPath);
-  try {
+  test("Sequence ordering parity", async (t) => {
+    const base = createFixtureBase();
+    const dbPath = join(base, '.gsd', 'gsd.db');
+    openDatabase(dbPath);
+    t.after(() => { closeDatabase(); cleanup(base); });
+
     scaffoldDirs(base, 'M001', ['S01', 'S02', 'S03', 'S04']);
 
     insertMilestone({
@@ -270,11 +263,11 @@ console.log('\n=== planning-crossval Test 3: Sequence ordering parity ===');
 
     // Verify DB query returns sequence-ordered results
     const dbSlices = getMilestoneSlices('M001');
-    assertEq(dbSlices.length, 4, 'T3: DB returns 4 slices');
-    assertEq(dbSlices[0].id, 'S01', 'T3: DB first slice is S01 (sequence 1)');
-    assertEq(dbSlices[1].id, 'S02', 'T3: DB second slice is S02 (sequence 2)');
-    assertEq(dbSlices[2].id, 'S03', 'T3: DB third slice is S03 (sequence 3)');
-    assertEq(dbSlices[3].id, 'S04', 'T3: DB fourth slice is S04 (sequence 4)');
+    assert.deepStrictEqual(dbSlices.length, 4, 'T3: DB returns 4 slices');
+    assert.deepStrictEqual(dbSlices[0].id, 'S01', 'T3: DB first slice is S01 (sequence 1)');
+    assert.deepStrictEqual(dbSlices[1].id, 'S02', 'T3: DB second slice is S02 (sequence 2)');
+    assert.deepStrictEqual(dbSlices[2].id, 'S03', 'T3: DB third slice is S03 (sequence 3)');
+    assert.deepStrictEqual(dbSlices[3].id, 'S04', 'T3: DB fourth slice is S04 (sequence 4)');
 
     // Render ROADMAP from DB — should produce slices in sequence order
     const rendered = await renderRoadmapFromDb(base, 'M001');
@@ -284,22 +277,18 @@ console.log('\n=== planning-crossval Test 3: Sequence ordering parity ===');
     const parsedSlices = parseRoadmapSlices(content);
 
     // Assert parsed order matches sequence order, NOT insertion order
-    assertEq(parsedSlices.length, 4, 'T3: parsed 4 slices');
-    assertEq(parsedSlices[0].id, 'S01', 'T3: parsed first slice is S01 (sequence 1)');
-    assertEq(parsedSlices[1].id, 'S02', 'T3: parsed second slice is S02 (sequence 2)');
-    assertEq(parsedSlices[2].id, 'S03', 'T3: parsed third slice is S03 (sequence 3)');
-    assertEq(parsedSlices[3].id, 'S04', 'T3: parsed fourth slice is S04 (sequence 4)');
+    assert.deepStrictEqual(parsedSlices.length, 4, 'T3: parsed 4 slices');
+    assert.deepStrictEqual(parsedSlices[0].id, 'S01', 'T3: parsed first slice is S01 (sequence 1)');
+    assert.deepStrictEqual(parsedSlices[1].id, 'S02', 'T3: parsed second slice is S02 (sequence 2)');
+    assert.deepStrictEqual(parsedSlices[2].id, 'S03', 'T3: parsed third slice is S03 (sequence 3)');
+    assert.deepStrictEqual(parsedSlices[3].id, 'S04', 'T3: parsed fourth slice is S04 (sequence 4)');
 
     // Assert full parity through DB→render→parse round-trip
     for (let i = 0; i < 4; i++) {
-      assertEq(parsedSlices[i].id, dbSlices[i].id, `T3: round-trip slice[${i}].id`);
-      assertEq(parsedSlices[i].done, dbSlices[i].status === 'complete', `T3: round-trip slice[${i}].done`);
-      assertEq(parsedSlices[i].title, dbSlices[i].title, `T3: round-trip slice[${i}].title`);
+      assert.deepStrictEqual(parsedSlices[i].id, dbSlices[i].id, `T3: round-trip slice[${i}].id`);
+      assert.deepStrictEqual(parsedSlices[i].done, dbSlices[i].status === 'complete', `T3: round-trip slice[${i}].done`);
+      assert.deepStrictEqual(parsedSlices[i].title, dbSlices[i].title, `T3: round-trip slice[${i}].title`);
     }
-  } finally {
-    closeDatabase();
-    cleanup(base);
-  }
-}
+  });
 
-report();
+});

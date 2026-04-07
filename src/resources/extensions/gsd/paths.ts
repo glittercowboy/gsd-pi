@@ -310,6 +310,17 @@ export function gsdRoot(basePath: string): string {
 }
 
 /**
+ * Check if a .gsd/ directory has completed bootstrap (has PREFERENCES.md or milestones/).
+ * A "zombie" .gsd/ state (symlink exists but missing both) must trigger the init wizard (#2942).
+ */
+export function hasGsdBootstrapArtifacts(basePath: string): boolean {
+  const gsd = gsdRoot(basePath);
+  return existsSync(gsd)
+    && (existsSync(join(gsd, "PREFERENCES.md"))
+        || existsSync(join(gsd, "milestones")));
+}
+
+/**
  * Detect if a path is inside a .gsd/worktrees/<name>/ structure.
  *
  * GSD auto-worktrees live at <project>/.gsd/worktrees/<milestoneId>/.

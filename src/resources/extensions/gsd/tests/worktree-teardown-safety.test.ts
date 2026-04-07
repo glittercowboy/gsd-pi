@@ -12,6 +12,8 @@
  * on paths that are actually under .gsd/worktrees/.
  */
 
+import { describe, test, after } from "node:test";
+import assert from "node:assert/strict";
 import {
   mkdtempSync,
   mkdirSync,
@@ -24,14 +26,8 @@ import {
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { execSync } from "node:child_process";
-import { describe, it, after } from "node:test";
 
 import { createWorktree, removeWorktree, worktreePath, isInsideWorktreesDir } from "../worktree-manager.ts";
-import { createTestContext } from "./test-helpers.ts";
-
-const { assertEq, assertTrue, report } = createTestContext();
-
-// ─── Helpers ──────────────────────────────────────────────────────────────
 
 function run(command: string, cwd: string): string {
   return execSync(command, { cwd, stdio: ["ignore", "pipe", "pipe"], encoding: "utf-8" }).trim();
@@ -49,44 +45,32 @@ function createTempRepo(): string {
   return dir;
 }
 
-// ─── Tests ────────────────────────────────────────────────────────────────
-
 describe("worktree-teardown-safety", () => {
   const dirs: string[] = [];
 
   after(() => {
     for (const d of dirs) rmSync(d, { recursive: true, force: true });
-    report();
   });
 
-  it("removeWorktree does not delete sibling data directories", () => {
+  test("removeWorktree does not delete sibling data directories", () => {
     const tempDir = createTempRepo();
     dirs.push(tempDir);
 
-    // Create a project data directory that lives alongside .gsd/
     const dataDir = join(tempDir, "project-data");
     mkdirSync(dataDir, { recursive: true });
     writeFileSync(join(dataDir, "important.db"), "precious data");
 
-    // Create a worktree normally
     const wt = createWorktree(tempDir, "test-wt");
-    assertTrue(existsSync(wt.path), "worktree created successfully");
+    assert.ok(existsSync(wt.path));
 
-    // Remove the worktree
     removeWorktree(tempDir, "test-wt");
 
-    // The worktree directory should be gone
-    assertTrue(!existsSync(wt.path), "worktree directory removed");
-
-    // The project data directory MUST still exist
-    assertTrue(existsSync(dataDir), "project data directory survives teardown");
-    assertTrue(
-      existsSync(join(dataDir, "important.db")),
-      "project data files survive teardown",
-    );
+    assert.ok(!existsSync(wt.path), "worktree directory removed");
+    assert.ok(existsSync(dataDir), "project data directory survives teardown");
+    assert.ok(existsSync(join(dataDir, "important.db")), "project data files survive");
   });
 
-  it("path validation rejects paths outside .gsd/worktrees/", () => {
+  test("path validation rejects paths outside .gsd/worktrees/", () => {
     const tempDir = createTempRepo();
     dirs.push(tempDir);
 
@@ -94,55 +78,34 @@ describe("worktree-teardown-safety", () => {
     mkdirSync(externalDir, { recursive: true });
     writeFileSync(join(externalDir, "state.json"), '{"critical": true}');
 
-    // Create and then remove a worktree that has a legitimate path
     const wt2 = createWorktree(tempDir, "safe-wt");
-    assertTrue(existsSync(wt2.path), "second worktree created");
+    assert.ok(existsSync(wt2.path));
 
     removeWorktree(tempDir, "safe-wt");
-    assertTrue(!existsSync(wt2.path), "second worktree removed cleanly");
+    assert.ok(!existsSync(wt2.path), "second worktree removed cleanly");
 
-    // External directory must be untouched
-    assertTrue(existsSync(externalDir), "external directory survives second teardown");
-    assertEq(
+    assert.ok(existsSync(externalDir), "external directory survives teardown");
+    assert.deepStrictEqual(
       readFileSync(join(externalDir, "state.json"), "utf-8"),
       '{"critical": true}',
-      "external directory contents intact after teardown",
     );
   });
 
-  it("worktreePath always returns paths under .gsd/worktrees/", () => {
+  test("worktreePath always returns paths under .gsd/worktrees/", () => {
     const tempDir = createTempRepo();
     dirs.push(tempDir);
 
     const wtPathResult = worktreePath(tempDir, "anything");
-    assertTrue(
-      wtPathResult.startsWith(join(tempDir, ".gsd", "worktrees")),
-      "worktreePath returns path under .gsd/worktrees/",
-    );
+    assert.ok(wtPathResult.startsWith(join(tempDir, ".gsd", "worktrees")));
   });
 
-  it("isInsideWorktreesDir rejects path traversal attempts", () => {
+  test("isInsideWorktreesDir rejects path traversal attempts", () => {
     const tempDir = createTempRepo();
     dirs.push(tempDir);
 
-    assertTrue(
-      isInsideWorktreesDir(tempDir, join(tempDir, ".gsd", "worktrees", "my-wt")),
-      "path inside .gsd/worktrees/ is accepted",
-    );
-
-    assertTrue(
-      !isInsideWorktreesDir(tempDir, join(tempDir, "project-data")),
-      "path outside .gsd/worktrees/ is rejected",
-    );
-
-    assertTrue(
-      !isInsideWorktreesDir(tempDir, join(tempDir, ".gsd", "worktrees", "..", "..", "project-data")),
-      "path traversal via .. is rejected",
-    );
-
-    assertTrue(
-      !isInsideWorktreesDir(tempDir, "/tmp/some-other-dir"),
-      "completely external path is rejected",
-    );
+    assert.ok(isInsideWorktreesDir(tempDir, join(tempDir, ".gsd", "worktrees", "my-wt")));
+    assert.ok(!isInsideWorktreesDir(tempDir, join(tempDir, "project-data")));
+    assert.ok(!isInsideWorktreesDir(tempDir, join(tempDir, ".gsd", "worktrees", "..", "..", "project-data")));
+    assert.ok(!isInsideWorktreesDir(tempDir, "/tmp/some-other-dir"));
   });
 });

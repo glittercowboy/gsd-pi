@@ -11,11 +11,10 @@
  * silently replaces richer content with a stripped-down version.
  */
 
-import { createTestContext } from './test-helpers.ts';
+import { describe, test } from "node:test";
+import assert from "node:assert/strict";
 import { renderSummaryContent } from '../workflow-projections.ts';
 import type { TaskRow } from '../gsd-db.ts';
-
-const { assertEq, assertTrue, report } = createTestContext();
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Fixtures — same logical data in both shapes
@@ -61,161 +60,129 @@ const verificationEvidence = [
 // Tests
 // ═══════════════════════════════════════════════════════════════════════════
 
-// Test 1: renderSummaryContent includes Verification section
-{
-  const output = renderSummaryContent(taskRow, SLICE_ID, MILESTONE_ID);
-  assertTrue(
-    output.includes("## Verification"),
-    "renderSummaryContent must include a ## Verification section",
-  );
-}
+describe("#2720: summary render parity", () => {
+  test("renderSummaryContent includes Verification section", () => {
+    const output = renderSummaryContent(taskRow, SLICE_ID, MILESTONE_ID);
+    assert.ok(
+      output.includes("## Verification"),
+      "renderSummaryContent must include a ## Verification section",
+    );
+  });
 
-// Test 2: renderSummaryContent includes Verification Evidence table
-{
-  const output = renderSummaryContent(taskRow, SLICE_ID, MILESTONE_ID, verificationEvidence);
-  assertTrue(
-    output.includes("## Verification Evidence"),
-    "renderSummaryContent must include a ## Verification Evidence section",
-  );
-  assertTrue(
-    output.includes("npm test"),
-    "Verification Evidence table must include the command",
-  );
-  assertTrue(
-    output.includes("| Exit Code |") || output.includes("exit_code") || output.includes("Exit Code"),
-    "Verification Evidence table must include exit code column",
-  );
-}
+  test("renderSummaryContent includes Verification Evidence table", () => {
+    const output = renderSummaryContent(taskRow, SLICE_ID, MILESTONE_ID, verificationEvidence);
+    assert.ok(
+      output.includes("## Verification Evidence"),
+      "renderSummaryContent must include a ## Verification Evidence section",
+    );
+    assert.ok(
+      output.includes("npm test"),
+      "Verification Evidence table must include the command",
+    );
+    assert.ok(
+      output.includes("| Exit Code |") || output.includes("exit_code") || output.includes("Exit Code"),
+      "Verification Evidence table must include exit code column",
+    );
+  });
 
-// Test 3: renderSummaryContent includes Files Created/Modified section
-{
-  const output = renderSummaryContent(taskRow, SLICE_ID, MILESTONE_ID);
-  assertTrue(
-    output.includes("## Files Created/Modified"),
-    "renderSummaryContent must include a ## Files Created/Modified section",
-  );
-  assertTrue(
-    output.includes("`src/parser.ts`"),
-    "Files section must list key_files as inline code",
-  );
-}
+  test("renderSummaryContent includes Files Created/Modified section", () => {
+    const output = renderSummaryContent(taskRow, SLICE_ID, MILESTONE_ID);
+    assert.ok(
+      output.includes("## Files Created/Modified"),
+      "renderSummaryContent must include a ## Files Created/Modified section",
+    );
+    assert.ok(
+      output.includes("`src/parser.ts`"),
+      "Files section must list key_files as inline code",
+    );
+  });
 
-// Test 4: one_liner renders as bold (not blockquote) for consistency
-{
-  const output = renderSummaryContent(taskRow, SLICE_ID, MILESTONE_ID);
-  assertTrue(
-    output.includes(`**${taskRow.one_liner}**`),
-    "one_liner must render as bold text (not blockquote)",
-  );
-}
+  test("one_liner renders as bold (not blockquote) for consistency", () => {
+    const output = renderSummaryContent(taskRow, SLICE_ID, MILESTONE_ID);
+    assert.ok(
+      output.includes(`**${taskRow.one_liner}**`),
+      "one_liner must render as bold text (not blockquote)",
+    );
+  });
 
-// Test 5: frontmatter key_files uses YAML list format (not JSON array)
-{
-  const output = renderSummaryContent(taskRow, SLICE_ID, MILESTONE_ID);
-  assertTrue(
-    output.includes("key_files:\n  - src/parser.ts\n  - src/lexer.ts"),
-    "key_files frontmatter must use YAML list format, not JSON array",
-  );
-}
+  test("frontmatter key_files uses YAML list format (not JSON array)", () => {
+    const output = renderSummaryContent(taskRow, SLICE_ID, MILESTONE_ID);
+    assert.ok(
+      output.includes("key_files:\n  - src/parser.ts\n  - src/lexer.ts"),
+      "key_files frontmatter must use YAML list format, not JSON array",
+    );
+  });
 
-// Test 6: frontmatter key_decisions uses YAML list format (not JSON array)
-{
-  const output = renderSummaryContent(taskRow, SLICE_ID, MILESTONE_ID);
-  assertTrue(
-    output.includes("key_decisions:\n  - Hand-rolled parser over PEG for 3x throughput"),
-    "key_decisions frontmatter must use YAML list format, not JSON array",
-  );
-}
+  test("frontmatter key_decisions uses YAML list format (not JSON array)", () => {
+    const output = renderSummaryContent(taskRow, SLICE_ID, MILESTONE_ID);
+    assert.ok(
+      output.includes("key_decisions:\n  - Hand-rolled parser over PEG for 3x throughput"),
+      "key_decisions frontmatter must use YAML list format, not JSON array",
+    );
+  });
 
-// Test 7: Deviations section always present (with "None." fallback)
-{
-  const noDeviations = { ...taskRow, deviations: "" };
-  const output = renderSummaryContent(noDeviations, SLICE_ID, MILESTONE_ID);
-  assertTrue(
-    output.includes("## Deviations"),
-    "Deviations section must always be present even when empty",
-  );
-  assertTrue(
-    output.includes("None."),
-    "Deviations section must show 'None.' when no deviations",
-  );
-}
+  test("Deviations section always present (with 'None.' fallback)", () => {
+    const noDeviations = { ...taskRow, deviations: "" };
+    const output = renderSummaryContent(noDeviations, SLICE_ID, MILESTONE_ID);
+    assert.ok(
+      output.includes("## Deviations"),
+      "Deviations section must always be present even when empty",
+    );
+    assert.ok(
+      output.includes("None."),
+      "Deviations section must show 'None.' when no deviations",
+    );
+  });
 
-// Test 8: Known Issues section always present (with "None." fallback)
-{
-  const noKnownIssues = { ...taskRow, known_issues: "" };
-  const output = renderSummaryContent(noKnownIssues, SLICE_ID, MILESTONE_ID);
-  assertTrue(
-    output.includes("## Known Issues"),
-    "Known Issues section must always be present even when empty",
-  );
-}
+  test("Known Issues section always present (with 'None.' fallback)", () => {
+    const noKnownIssues = { ...taskRow, known_issues: "" };
+    const output = renderSummaryContent(noKnownIssues, SLICE_ID, MILESTONE_ID);
+    assert.ok(
+      output.includes("## Known Issues"),
+      "Known Issues section must always be present even when empty",
+    );
+  });
 
-// Test 9: verification_result frontmatter not double-quoted
-{
-  const output = renderSummaryContent(taskRow, SLICE_ID, MILESTONE_ID);
-  // Should be: verification_result: passed (not "passed")
-  assertTrue(
-    !output.includes('verification_result: "'),
-    "verification_result frontmatter value must not be double-quoted",
-  );
-}
+  test("verification_result frontmatter not double-quoted", () => {
+    const output = renderSummaryContent(taskRow, SLICE_ID, MILESTONE_ID);
+    assert.ok(
+      !output.includes('verification_result: "'),
+      "verification_result frontmatter value must not be double-quoted",
+    );
+  });
 
-// Test 10: duration frontmatter not double-quoted
-{
-  const output = renderSummaryContent(taskRow, SLICE_ID, MILESTONE_ID);
-  assertTrue(
-    !output.includes('duration: "'),
-    "duration frontmatter value must not be double-quoted",
-  );
-}
+  test("duration frontmatter not double-quoted", () => {
+    const output = renderSummaryContent(taskRow, SLICE_ID, MILESTONE_ID);
+    assert.ok(
+      !output.includes('duration: "'),
+      "duration frontmatter value must not be double-quoted",
+    );
+  });
 
-// Test 11: empty key_files renders YAML placeholder, not empty array
-{
-  const noFiles = { ...taskRow, key_files: [] };
-  const output = renderSummaryContent(noFiles, SLICE_ID, MILESTONE_ID);
-  assertTrue(
-    output.includes("key_files:\n  - (none)"),
-    "empty key_files must render as YAML list with (none) placeholder",
-  );
-}
+  test("empty key_files renders YAML placeholder, not empty array", () => {
+    const noFiles = { ...taskRow, key_files: [] };
+    const output = renderSummaryContent(noFiles, SLICE_ID, MILESTONE_ID);
+    assert.ok(
+      output.includes("key_files:\n  - (none)"),
+      "empty key_files must render as YAML list with (none) placeholder",
+    );
+  });
 
-// Test 12: frontmatter does not contain extra projection-only fields
-{
-  const output = renderSummaryContent(taskRow, SLICE_ID, MILESTONE_ID);
-  assertTrue(
-    !output.includes("provides:"),
-    "frontmatter must not contain provides field",
-  );
-  assertTrue(
-    !output.includes("requires:"),
-    "frontmatter must not contain requires field",
-  );
-  assertTrue(
-    !output.includes("affects:"),
-    "frontmatter must not contain affects field",
-  );
-  assertTrue(
-    !output.includes("patterns_established:"),
-    "frontmatter must not contain patterns_established field",
-  );
-  assertTrue(
-    !output.includes("drill_down_paths:"),
-    "frontmatter must not contain drill_down_paths field",
-  );
-  assertTrue(
-    !output.includes("observability_surfaces:"),
-    "frontmatter must not contain observability_surfaces field",
-  );
-}
+  test("frontmatter does not contain extra projection-only fields", () => {
+    const output = renderSummaryContent(taskRow, SLICE_ID, MILESTONE_ID);
+    assert.ok(!output.includes("provides:"), "frontmatter must not contain provides field");
+    assert.ok(!output.includes("requires:"), "frontmatter must not contain requires field");
+    assert.ok(!output.includes("affects:"), "frontmatter must not contain affects field");
+    assert.ok(!output.includes("patterns_established:"), "frontmatter must not contain patterns_established field");
+    assert.ok(!output.includes("drill_down_paths:"), "frontmatter must not contain drill_down_paths field");
+    assert.ok(!output.includes("observability_surfaces:"), "frontmatter must not contain observability_surfaces field");
+  });
 
-// Test 13: no verification evidence renders empty table row
-{
-  const output = renderSummaryContent(taskRow, SLICE_ID, MILESTONE_ID, []);
-  assertTrue(
-    output.includes("No verification commands discovered"),
-    "Empty evidence array must render placeholder row",
-  );
-}
-
-report();
+  test("no verification evidence renders empty table row", () => {
+    const output = renderSummaryContent(taskRow, SLICE_ID, MILESTONE_ID, []);
+    assert.ok(
+      output.includes("No verification commands discovered"),
+      "Empty evidence array must render placeholder row",
+    );
+  });
+});

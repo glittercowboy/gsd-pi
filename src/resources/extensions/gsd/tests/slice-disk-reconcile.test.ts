@@ -15,6 +15,8 @@
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { describe, test } from "node:test";
+import assert from "node:assert/strict";
 
 import { deriveStateFromDb, invalidateStateCache } from "../state.ts";
 import {
@@ -24,9 +26,6 @@ import {
   insertSlice,
   getMilestoneSlices,
 } from "../gsd-db.ts";
-import { createTestContext } from "./test-helpers.ts";
-
-const { assertEq, assertTrue, report } = createTestContext();
 
 function createFixtureBase(): string {
   const base = mkdtempSync(join(tmpdir(), "gsd-slice-reconcile-"));
@@ -69,14 +68,12 @@ const ROADMAP_CONTENT = `# M001: Test Milestone
   > Assemble everything.
 `;
 
-async function testMissingSlicesCauseBlock(): Promise<void> {
-  console.log("\n--- Test: missing DB slices cause permanent block (pre-fix) ---");
-
-  const base = createFixtureBase();
-  const dbPath = join(base, ".gsd", "gsd.db");
-
-  try {
+describe("#2533: deriveStateFromDb reconciles disk slices", () => {
+  test("missing DB slices cause permanent block (pre-fix)", async (t) => {
+    const base = createFixtureBase();
+    const dbPath = join(base, ".gsd", "gsd.db");
     openDatabase(dbPath);
+    t.after(() => { closeDatabase(); cleanup(base); });
 
     // M001 in DB
     insertMilestone({ id: "M001", title: "M001: Test Milestone", status: "active", depends_on: [] });
@@ -98,63 +95,56 @@ async function testMissingSlicesCauseBlock(): Promise<void> {
 
     // After the fix, slices S01-S03 should be reconciled into DB
     const dbSlices = getMilestoneSlices("M001");
-    assertTrue(
+    assert.ok(
       dbSlices.length === 4,
       `All 4 roadmap slices should be in DB after reconciliation, got ${dbSlices.length}`,
     );
 
     // S01 and S02 should be marked complete (have SUMMARY files)
     const s01 = dbSlices.find(s => s.id === "S01");
-    assertTrue(s01 !== undefined, "S01 should exist in DB after reconciliation");
+    assert.ok(s01 !== undefined, "S01 should exist in DB after reconciliation");
     if (s01) {
-      assertEq(s01.status, "complete", "S01 should be 'complete' (has SUMMARY on disk)");
+      assert.deepStrictEqual(s01.status, "complete", "S01 should be 'complete' (has SUMMARY on disk)");
     }
 
     const s02 = dbSlices.find(s => s.id === "S02");
-    assertTrue(s02 !== undefined, "S02 should exist in DB after reconciliation");
+    assert.ok(s02 !== undefined, "S02 should exist in DB after reconciliation");
     if (s02) {
-      assertEq(s02.status, "complete", "S02 should be 'complete' (has SUMMARY on disk)");
+      assert.deepStrictEqual(s02.status, "complete", "S02 should be 'complete' (has SUMMARY on disk)");
     }
 
     // S03 should be pending (no SUMMARY)
     const s03 = dbSlices.find(s => s.id === "S03");
-    assertTrue(s03 !== undefined, "S03 should exist in DB after reconciliation");
+    assert.ok(s03 !== undefined, "S03 should exist in DB after reconciliation");
     if (s03) {
-      assertEq(s03.status, "pending", "S03 should be 'pending' (no SUMMARY on disk)");
+      assert.deepStrictEqual(s03.status, "pending", "S03 should be 'pending' (no SUMMARY on disk)");
     }
 
     // The state should NOT be blocked — S03 should be eligible (S01 dep satisfied)
-    assertTrue(
+    assert.ok(
       state.phase !== "blocked",
       `Phase should not be 'blocked' after reconciliation, got '${state.phase}'`,
     );
 
     // Active slice should be S03 (S01 dep met, S03 is first incomplete with satisfied deps)
-    assertTrue(
+    assert.ok(
       state.activeSlice !== null,
       "There should be an active slice after reconciliation",
     );
     if (state.activeSlice) {
-      assertEq(
+      assert.deepStrictEqual(
         state.activeSlice.id,
         "S03",
         "Active slice should be S03 (its dependency S01 is complete) (#2533)",
       );
     }
-  } finally {
-    closeDatabase();
-    cleanup(base);
-  }
-}
+  });
 
-async function testSliceReconciliationIdempotent(): Promise<void> {
-  console.log("\n--- Test: slice reconciliation is idempotent ---");
-
-  const base = createFixtureBase();
-  const dbPath = join(base, ".gsd", "gsd.db");
-
-  try {
+  test("slice reconciliation is idempotent", async (t) => {
+    const base = createFixtureBase();
+    const dbPath = join(base, ".gsd", "gsd.db");
     openDatabase(dbPath);
+    t.after(() => { closeDatabase(); cleanup(base); });
 
     insertMilestone({ id: "M001", title: "M001: Test", status: "active", depends_on: [] });
     // S01 already in DB with correct status
@@ -173,30 +163,23 @@ async function testSliceReconciliationIdempotent(): Promise<void> {
     // S01 should still be complete (not overwritten)
     const dbSlices = getMilestoneSlices("M001");
     const s01 = dbSlices.find(s => s.id === "S01");
-    assertTrue(s01 !== undefined, "S01 should still exist in DB");
+    assert.ok(s01 !== undefined, "S01 should still exist in DB");
     if (s01) {
-      assertEq(s01.status, "complete", "S01 status should remain 'complete' (not overwritten)");
+      assert.deepStrictEqual(s01.status, "complete", "S01 status should remain 'complete' (not overwritten)");
     }
 
     // S02-S04 should have been added
-    assertTrue(
+    assert.ok(
       dbSlices.length === 4,
       `Should have 4 slices after reconciliation (existing + new), got ${dbSlices.length}`,
     );
-  } finally {
-    closeDatabase();
-    cleanup(base);
-  }
-}
+  });
 
-async function testNoRoadmapSkipsReconciliation(): Promise<void> {
-  console.log("\n--- Test: no ROADMAP file skips slice reconciliation ---");
-
-  const base = createFixtureBase();
-  const dbPath = join(base, ".gsd", "gsd.db");
-
-  try {
+  test("no ROADMAP file skips slice reconciliation", async (t) => {
+    const base = createFixtureBase();
+    const dbPath = join(base, ".gsd", "gsd.db");
     openDatabase(dbPath);
+    t.after(() => { closeDatabase(); cleanup(base); });
 
     insertMilestone({ id: "M001", title: "M001: No Roadmap", status: "active", depends_on: [] });
 
@@ -207,27 +190,9 @@ async function testNoRoadmapSkipsReconciliation(): Promise<void> {
     const state = await deriveStateFromDb(base);
 
     const dbSlices = getMilestoneSlices("M001");
-    assertEq(dbSlices.length, 0, "No slices should be added when no ROADMAP exists");
+    assert.deepStrictEqual(dbSlices.length, 0, "No slices should be added when no ROADMAP exists");
 
     // Should be in pre-planning (no roadmap)
-    assertEq(state.phase, "pre-planning", "Phase should be pre-planning with no roadmap");
-  } finally {
-    closeDatabase();
-    cleanup(base);
-  }
-}
-
-async function main(): Promise<void> {
-  console.log("\n=== #2533: deriveStateFromDb reconciles disk slices ===");
-
-  await testMissingSlicesCauseBlock();
-  await testSliceReconciliationIdempotent();
-  await testNoRoadmapSkipsReconciliation();
-
-  report();
-}
-
-main().catch((err) => {
-  console.error(err);
-  process.exit(1);
+    assert.deepStrictEqual(state.phase, "pre-planning", "Phase should be pre-planning with no roadmap");
+  });
 });

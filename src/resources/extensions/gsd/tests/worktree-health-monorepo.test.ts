@@ -1,73 +1,118 @@
 /**
  * worktree-health-monorepo.test.ts — #2347
  *
- * The worktree health check in auto/phases.ts falsely rejects monorepos
- * where package.json (or other project markers) is in a parent directory.
- * This test verifies that the health check walks parent directories.
+ * Tests that checkWorktreeHealth() correctly handles monorepo layouts
+ * where project files (package.json, etc.) live in parent directories.
  */
 
-import { readFileSync } from "node:fs";
+import { describe, test } from "node:test";
+import assert from "node:assert/strict";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
-import { createTestContext } from "./test-helpers.ts";
+import { tmpdir } from "node:os";
+import { execSync } from "node:child_process";
 
-const { assertTrue, report } = createTestContext();
+import { checkWorktreeHealth } from "../auto/worktree-health.ts";
 
-const srcPath = join(import.meta.dirname, "..", "auto", "phases.ts");
-const src = readFileSync(srcPath, "utf-8");
+function createTempDir(prefix: string): string {
+  return mkdtempSync(join(tmpdir(), `gsd-health-${prefix}-`));
+}
 
-console.log("\n=== #2347: Worktree health check supports monorepos ===");
+function gitInit(dir: string): void {
+  execSync("git init", { cwd: dir, stdio: "ignore" });
+}
 
-// ── Test 1: The health check region exists ──────────────────────────────
+describe("#2347: checkWorktreeHealth monorepo support", () => {
+  test("returns ok for directory with package.json", (t) => {
+    const dir = createTempDir("pkg");
+    t.after(() => rmSync(dir, { recursive: true, force: true }));
+    gitInit(dir);
+    writeFileSync(join(dir, "package.json"), "{}");
 
-const healthCheckIdx = src.indexOf("Worktree health check");
-assertTrue(healthCheckIdx > 0, "auto/phases.ts has worktree health check section");
+    const result = checkWorktreeHealth(dir);
+    assert.deepStrictEqual(result.status, "ok");
+  });
 
-const healthCheckRegion = src.slice(healthCheckIdx, healthCheckIdx + 2000);
+  test("returns ok for directory with src/", (t) => {
+    const dir = createTempDir("src");
+    t.after(() => rmSync(dir, { recursive: true, force: true }));
+    gitInit(dir);
+    mkdirSync(join(dir, "src"));
 
-// ── Test 2: The check walks parent directories for project markers ──────
+    const result = checkWorktreeHealth(dir);
+    assert.deepStrictEqual(result.status, "ok");
+  });
 
-// The fix should check parent directories for project files, not just s.basePath.
-// Look for patterns like: walking up directories, dirname, parent, or a helper
-// function that checks ancestors.
-const checksParentDirs =
-  healthCheckRegion.includes("dirname") ||
-  healthCheckRegion.includes("parent") ||
-  healthCheckRegion.includes("ancestor") ||
-  healthCheckRegion.includes("walk") ||
-  // Or a helper function that's called with the base path
-  /hasProjectFileInAncestor|findProjectRoot|checkParent/i.test(healthCheckRegion);
+  test("returns ok for directory with Cargo.toml", (t) => {
+    const dir = createTempDir("cargo");
+    t.after(() => rmSync(dir, { recursive: true, force: true }));
+    gitInit(dir);
+    writeFileSync(join(dir, "Cargo.toml"), "[package]");
 
-assertTrue(
-  checksParentDirs,
-  "Health check should walk parent directories for project markers (monorepo support) (#2347)",
-);
+    const result = checkWorktreeHealth(dir);
+    assert.deepStrictEqual(result.status, "ok");
+  });
 
-// ── Test 3: The parent walk stops at a .git boundary ──────────────────
+  test("returns no-git for directory without .git", (t) => {
+    const dir = createTempDir("nogit");
+    t.after(() => rmSync(dir, { recursive: true, force: true }));
+    writeFileSync(join(dir, "package.json"), "{}");
 
-// The parent directory walk must not escape the git repository root.
-// Without this guard, ancestor directories like ~ or /usr/local that
-// happen to contain package.json would cause false positive health checks.
-const hasGitBoundary = healthCheckRegion.includes('.git') &&
-  (healthCheckRegion.includes('break') || healthCheckRegion.includes('stop'));
+    const result = checkWorktreeHealth(dir);
+    assert.deepStrictEqual(result.status, "no-git");
+  });
 
-assertTrue(
-  hasGitBoundary,
-  "Parent directory walk must stop at .git repository boundary to prevent false positives",
-);
+  test("returns ok when package.json is in parent directory (monorepo)", (t) => {
+    // Monorepo layout: root has .git + package.json, nested package has .git file (worktree link)
+    // The parent walk from packages/subpkg goes to packages/ (no .git, no pkg.json) then root.
+    // root has .git dir, so the walk stops there. But root also has package.json.
+    // The walk checks .git FIRST — so if root has .git, we never see its package.json.
+    //
+    // Real monorepo layout: .git is at repo root, but package.json is in an intermediate dir
+    // that does NOT have its own .git. E.g.:
+    //   repo/.git
+    //   repo/packages/subpkg/.git (file — worktree pointer)
+    //   repo/packages/package.json  <-- intermediate dir has pkg.json but no .git
+    const root = createTempDir("monorepo");
+    t.after(() => rmSync(root, { recursive: true, force: true }));
+    gitInit(root);
 
-// ── Test 4: The greenfield warning should only trigger when no parent has markers ─
+    const pkgsDir = join(root, "packages");
+    mkdirSync(pkgsDir, { recursive: true });
+    writeFileSync(join(pkgsDir, "package.json"), "{}");
 
-// The original code was:
-//   const hasProjectFile = PROJECT_FILES.some((f) => deps.existsSync(join(s.basePath, f)));
-// The fix should check parents too, so the greenfield warning only fires
-// when NO ancestor directory has project markers either.
-const hasParentCheck = healthCheckRegion.includes("parent") ||
-  healthCheckRegion.includes("dirname") ||
-  /ancestor|walk.*up/i.test(healthCheckRegion);
+    const sub = join(pkgsDir, "subpkg");
+    mkdirSync(sub, { recursive: true });
+    writeFileSync(join(sub, ".git"), "gitdir: ../../.git/worktrees/subpkg");
 
-assertTrue(
-  hasParentCheck,
-  "Greenfield check should consider parent directories before warning (#2347)",
-);
+    const result = checkWorktreeHealth(sub);
+    assert.deepStrictEqual(result.status, "ok");
+  });
 
-report();
+  test("parent walk stops at .git boundary", (t) => {
+    const outer = createTempDir("boundary");
+    t.after(() => rmSync(outer, { recursive: true, force: true }));
+    // Outer repo has package.json — should NOT be found
+    writeFileSync(join(outer, "package.json"), "{}");
+    gitInit(outer);
+
+    // Inner repo has NO project files but its own .git DIRECTORY (standalone repo)
+    const inner = join(outer, "inner");
+    mkdirSync(inner);
+    gitInit(inner);
+
+    const result = checkWorktreeHealth(inner);
+    // Should NOT find outer's package.json because inner has its own .git boundary
+    assert.deepStrictEqual(result.status, "greenfield");
+  });
+
+  test("returns greenfield for empty git repo with no project files", (t) => {
+    const dir = createTempDir("green");
+    t.after(() => rmSync(dir, { recursive: true, force: true }));
+    gitInit(dir);
+
+    const result = checkWorktreeHealth(dir);
+    assert.deepStrictEqual(result.status, "greenfield");
+    assert.ok(result.message.includes("no recognized project files"));
+  });
+});
