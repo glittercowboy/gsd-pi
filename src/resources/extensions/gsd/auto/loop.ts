@@ -29,6 +29,7 @@ import {
 import { debugLog } from "../debug-logger.js";
 import { isInfrastructureError } from "./infra-errors.js";
 import { resolveEngine } from "../engine-resolver.js";
+import { startActiveScope, GSD, SpanStatusCode } from "../tracing/index.js";
 
 /**
  * Main auto-mode execution loop. Iterates: derive → dispatch → guards →
@@ -77,6 +78,15 @@ export async function autoLoop(
       debugLog("autoLoop", { phase: "exit", reason: "no-cmdCtx" });
       break;
     }
+
+    const { span: iterSpan, scope: iterScope } = startActiveScope("gsd.auto.iteration");
+    iterSpan.setAttributes({
+      [GSD.LOOP_ITERATION]: iteration,
+      [GSD.LOOP_FLOW_ID]: flowId,
+      [GSD.CWD]: process.cwd(),
+      [GSD.WORKTREE_PATH]: s.originalBasePath && s.originalBasePath !== s.basePath
+        ? s.basePath : '',
+    });
 
     try {
       // ── Blanket try/catch: one bad iteration must not kill the session
@@ -173,11 +183,11 @@ export async function autoLoop(
         deps.updateProgressWidget(ctx, iterData.unitType, iterData.unitId, iterData.state);
 
         // ── Guards (shared with dev path) ──
-        const guardsResult = await runGuards(ic, s.currentMilestoneId ?? "workflow");
+        const guardsResult = await iterScope(() => runGuards(ic, s.currentMilestoneId ?? "workflow"));
         if (guardsResult.action === "break") break;
 
         // ── Unit execution (shared with dev path) ──
-        const unitPhaseResult = await runUnitPhase(ic, iterData, loopState);
+        const unitPhaseResult = await iterScope(() => runUnitPhase(ic, iterData, loopState));
         if (unitPhaseResult.action === "break") break;
 
         // ── Verify first, then reconcile (only mark complete on pass) ──
@@ -211,18 +221,18 @@ export async function autoLoop(
 
       if (!sidecarItem) {
         // ── Phase 1: Pre-dispatch ─────────────────────────────────────────
-        const preDispatchResult = await runPreDispatch(ic, loopState);
+        const preDispatchResult = await iterScope(() => runPreDispatch(ic, loopState));
         if (preDispatchResult.action === "break") break;
         if (preDispatchResult.action === "continue") continue;
 
         const preData = preDispatchResult.data;
 
         // ── Phase 2: Guards ───────────────────────────────────────────────
-        const guardsResult = await runGuards(ic, preData.mid);
+        const guardsResult = await iterScope(() => runGuards(ic, preData.mid));
         if (guardsResult.action === "break") break;
 
         // ── Phase 3: Dispatch ─────────────────────────────────────────────
-        const dispatchResult = await runDispatch(ic, preData, loopState);
+        const dispatchResult = await iterScope(() => runDispatch(ic, preData, loopState));
         if (dispatchResult.action === "break") break;
         if (dispatchResult.action === "continue") continue;
         iterData = dispatchResult.data;
@@ -242,12 +252,12 @@ export async function autoLoop(
         };
       }
 
-      const unitPhaseResult = await runUnitPhase(ic, iterData, loopState, sidecarItem);
+      const unitPhaseResult = await iterScope(() => runUnitPhase(ic, iterData, loopState, sidecarItem));
       if (unitPhaseResult.action === "break") break;
 
       // ── Phase 5: Finalize ───────────────────────────────────────────────
 
-      const finalizeResult = await runFinalize(ic, iterData, sidecarItem);
+      const finalizeResult = await iterScope(() => runFinalize(ic, iterData, sidecarItem));
       if (finalizeResult.action === "break") break;
       if (finalizeResult.action === "continue") continue;
 
@@ -255,6 +265,7 @@ export async function autoLoop(
       recentErrorMessages.length = 0;
       deps.emitJournalEvent({ ts: new Date().toISOString(), flowId, seq: nextSeq(), eventType: "iteration-end", data: { iteration } });
       debugLog("autoLoop", { phase: "iteration-complete", iteration });
+      iterSpan.setStatus({ code: SpanStatusCode.OK });
     } catch (loopErr) {
       // ── Blanket catch: absorb unexpected exceptions, apply graduated recovery ──
       const msg = loopErr instanceof Error ? loopErr.message : String(loopErr);
@@ -284,6 +295,8 @@ export async function autoLoop(
           pi,
           `Infrastructure error (${infraCode}): not recoverable by retry`,
         );
+        iterSpan.setStatus({ code: SpanStatusCode.ERROR, message: `infra:${infraCode}` });
+        iterSpan.setAttribute(GSD.LOOP_EXIT_REASON, `infrastructure-error:${infraCode}`);
         break;
       }
 
@@ -310,6 +323,8 @@ export async function autoLoop(
           pi,
           `${consecutiveErrors} consecutive iteration failures`,
         );
+        iterSpan.setStatus({ code: SpanStatusCode.ERROR, message: `${consecutiveErrors} consecutive failures` });
+        iterSpan.setAttribute(GSD.LOOP_EXIT_REASON, "consecutive-errors");
         break;
       } else if (consecutiveErrors === 2) {
         // 2nd consecutive: try invalidating caches + re-deriving state
@@ -322,6 +337,10 @@ export async function autoLoop(
         // 1st error: log and retry — transient failures happen
         ctx.ui.notify(`Iteration error: ${msg}. Retrying.`, "warning");
       }
+      iterSpan.setStatus({ code: SpanStatusCode.ERROR, message: msg });
+      iterSpan.setAttribute(GSD.LOOP_ERROR_STREAK, consecutiveErrors);
+    } finally {
+      iterSpan.end();
     }
   }
 

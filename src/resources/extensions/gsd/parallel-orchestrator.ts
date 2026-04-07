@@ -42,6 +42,7 @@ import {
 } from "./parallel-eligibility.js";
 import { getErrorMessage } from "./error-utils.js";
 import { logWarning } from "./workflow-logger.js";
+import { withSpan, GSD } from "./tracing/index.js";
 
 // ─── Types ─────────────────────────────────────────────────────────────────
 
@@ -359,133 +360,150 @@ export async function startParallel(
   milestoneIds: string[],
   prefs: GSDPreferences | undefined,
 ): Promise<{ started: string[]; errors: Array<{ mid: string; error: string }> }> {
-  // Prevent workers from spawning nested parallel sessions
-  if (process.env.GSD_PARALLEL_WORKER) {
-    return { started: [], errors: [{ mid: "all", error: "Cannot start parallel from within a parallel worker" }] };
-  }
+  return withSpan("gsd.parallel.start", async (span) => {
+    span.setAttributes({
+      [GSD.PARALLEL_SCOPE]: "milestone",
+      [GSD.PARALLEL_MILESTONES]: milestoneIds.join(","),
+    });
 
-  const config = resolveParallelConfig(prefs);
-
-  // Release any leftover state from a previous session before reassigning
-  if (state) {
-    for (const w of state.workers.values()) {
-      w.cleanup?.();
-      w.cleanup = undefined;
-      w.process = null;
+    // Prevent workers from spawning nested parallel sessions
+    if (process.env.GSD_PARALLEL_WORKER) {
+      return { started: [], errors: [{ mid: "all", error: "Cannot start parallel from within a parallel worker" }] };
     }
-    state.workers.clear();
-  }
 
-  // Try to restore from a previous crash
-  const restored = restoreState(basePath);
-  if (restored && restored.workers.length > 0) {
-    // Adopt surviving workers instead of starting new ones
+    const config = resolveParallelConfig(prefs);
+    span.setAttributes({
+      [GSD.PARALLEL_MAX_WORKERS]: config.max_workers,
+      ...(config.budget_ceiling != null ? { [GSD.PARALLEL_BUDGET_CEILING]: config.budget_ceiling } : {}),
+    });
+
+    // Release any leftover state from a previous session before reassigning
+    if (state) {
+      for (const w of state.workers.values()) {
+        w.cleanup?.();
+        w.cleanup = undefined;
+        w.process = null;
+      }
+      state.workers.clear();
+    }
+
+    // Try to restore from a previous crash
+    const restored = restoreState(basePath);
+    if (restored && restored.workers.length > 0) {
+      // Adopt surviving workers instead of starting new ones
+      state = {
+        active: true,
+        workers: new Map(),
+        config,
+        totalCost: restored.totalCost,
+        startedAt: restored.startedAt,
+      };
+      const adopted: string[] = [];
+      for (const w of restored.workers) {
+        state.workers.set(w.milestoneId, {
+          milestoneId: w.milestoneId,
+          title: w.title,
+          pid: w.pid,
+          process: null, // no handle for adopted workers
+          worktreePath: w.worktreePath,
+          startedAt: w.startedAt,
+          state: "running",
+          cost: w.cost,
+        });
+        adopted.push(w.milestoneId);
+      }
+      span.setAttribute(GSD.PARALLEL_WORKERS_STARTED, adopted.length);
+      return { started: adopted, errors: [] };
+    }
+
+    const now = Date.now();
+
+    // Initialize orchestrator state
     state = {
       active: true,
       workers: new Map(),
       config,
-      totalCost: restored.totalCost,
-      startedAt: restored.startedAt,
+      totalCost: 0,
+      startedAt: now,
     };
-    const adopted: string[] = [];
-    for (const w of restored.workers) {
-      state.workers.set(w.milestoneId, {
-        milestoneId: w.milestoneId,
-        title: w.title,
-        pid: w.pid,
-        process: null, // no handle for adopted workers
-        worktreePath: w.worktreePath,
-        startedAt: w.startedAt,
-        state: "running",
-        cost: w.cost,
-      });
-      adopted.push(w.milestoneId);
-    }
-    return { started: adopted, errors: [] };
-  }
 
-  const now = Date.now();
+    const started: string[] = [];
+    const errors: Array<{ mid: string; error: string }> = [];
 
-  // Initialize orchestrator state
-  state = {
-    active: true,
-    workers: new Map(),
-    config,
-    totalCost: 0,
-    startedAt: now,
-  };
+    // Cap to max_workers
+    const toStart = milestoneIds.slice(0, config.max_workers);
 
-  const started: string[] = [];
-  const errors: Array<{ mid: string; error: string }> = [];
+    for (const mid of toStart) {
+      // Check budget ceiling before each spawn
+      if (isBudgetExceeded()) {
+        errors.push({ mid, error: `Budget ceiling ($${config.budget_ceiling}) reached — skipping` });
+        continue;
+      }
 
-  // Cap to max_workers
-  const toStart = milestoneIds.slice(0, config.max_workers);
-
-  for (const mid of toStart) {
-    // Check budget ceiling before each spawn
-    if (isBudgetExceeded()) {
-      errors.push({ mid, error: `Budget ceiling ($${config.budget_ceiling}) reached — skipping` });
-      continue;
-    }
-
-    try {
-      // Create the worktree (without chdir — coordinator stays in project root)
-      let wtPath: string;
       try {
-        wtPath = createMilestoneWorktree(basePath, mid);
-      } catch (e) {
-        logWarning("parallel", `createMilestoneWorktree fallback for ${mid}: ${(e as Error).message}`);
-        wtPath = worktreePath(basePath, mid);
+        // Create the worktree (without chdir — coordinator stays in project root)
+        let wtPath: string;
+        try {
+          wtPath = createMilestoneWorktree(basePath, mid);
+        } catch (e) {
+          logWarning("parallel", `createMilestoneWorktree fallback for ${mid}: ${(e as Error).message}`);
+          wtPath = worktreePath(basePath, mid);
+        }
+
+        const worker: WorkerInfo = {
+          milestoneId: mid,
+          title: mid,
+          pid: 0,  // placeholder — real PID set by spawnWorker()
+          process: null,
+          worktreePath: wtPath,
+          startedAt: now,
+          state: "running",
+          cost: 0,
+        };
+
+        state.workers.set(mid, worker);
+
+        // Spawn BEFORE writing session status so the file gets the real worker PID.
+        const spawned = spawnWorker(basePath, mid);
+        if (!spawned) {
+          worker.state = "error";
+        }
+
+        // Write session status with real PID (or 0 if spawn failed)
+        writeSessionStatus(basePath, {
+          milestoneId: mid,
+          pid: worker.pid,
+          state: worker.state,
+          currentUnit: null,
+          completedUnits: 0,
+          cost: 0,
+          lastHeartbeat: now,
+          startedAt: now,
+          worktreePath: wtPath,
+        });
+
+        started.push(mid);
+      } catch (err) {
+        const message = getErrorMessage(err);
+        errors.push({ mid, error: message });
       }
-
-      const worker: WorkerInfo = {
-        milestoneId: mid,
-        title: mid,
-        pid: 0,  // placeholder — real PID set by spawnWorker()
-        process: null,
-        worktreePath: wtPath,
-        startedAt: now,
-        state: "running",
-        cost: 0,
-      };
-
-      state.workers.set(mid, worker);
-
-      // Spawn BEFORE writing session status so the file gets the real worker PID.
-      const spawned = spawnWorker(basePath, mid);
-      if (!spawned) {
-        worker.state = "error";
-      }
-
-      // Write session status with real PID (or 0 if spawn failed)
-      writeSessionStatus(basePath, {
-        milestoneId: mid,
-        pid: worker.pid,
-        state: worker.state,
-        currentUnit: null,
-        completedUnits: 0,
-        cost: 0,
-        lastHeartbeat: now,
-        startedAt: now,
-        worktreePath: wtPath,
-      });
-
-      started.push(mid);
-    } catch (err) {
-      const message = getErrorMessage(err);
-      errors.push({ mid, error: message });
     }
-  }
 
-  // If nothing started successfully, deactivate
-  if (started.length === 0) {
-    state.active = false;
-  }
+    // If nothing started successfully, deactivate
+    if (started.length === 0) {
+      state.active = false;
+    }
 
-  // Persist state for crash recovery
-  persistState(basePath);
+    // Persist state for crash recovery
+    persistState(basePath);
 
-  return { started, errors };
+    span.setAttributes({
+      [GSD.PARALLEL_WORKERS_STARTED]: started.length,
+      [GSD.PARALLEL_WORKERS_ERRORS]: errors.length,
+    });
+
+    return { started, errors };
+  });
 }
 
 // ─── Worktree Creation ────────────────────────────────────────────────────
@@ -539,153 +557,162 @@ export function spawnWorker(
   basePath: string,
   milestoneId: string,
 ): boolean {
-  if (!state) return false;
-  const worker = state.workers.get(milestoneId);
-  if (!worker) return false;
-  if (worker.process) return true; // already spawned
+  return withSpan("gsd.parallel.worker_spawn", (span) => {
+    span.setAttribute(GSD.PARALLEL_WORKER_MID, milestoneId);
 
-  // Resolve the GSD CLI binary path
-  const binPath = resolveGsdBin();
-  if (!binPath) return false;
+    if (!state) return false;
+    const worker = state.workers.get(milestoneId);
+    if (!worker) return false;
+    if (worker.process) return true; // already spawned
 
-  let child: ChildProcess;
-  try {
-    const workerEnv: Record<string, string | undefined> = {
-      ...process.env,
-      GSD_MILESTONE_LOCK: milestoneId,
-      // Pass the real project root so workers don't need to re-derive it.
-      // Without this, process.cwd() resolves symlinks and the worktree
-      // path heuristic can match the user-level ~/.gsd instead of the
-      // project .gsd, causing writes to ~ and corrupting user config.
-      GSD_PROJECT_ROOT: basePath,
-      // Prevent workers from spawning their own parallel sessions
-      GSD_PARALLEL_WORKER: "1",
-    };
+    // Resolve the GSD CLI binary path
+    const binPath = resolveGsdBin();
+    if (!binPath) return false;
 
-    // Apply worker model override if configured, so workers use a cheaper
-    // model (e.g. Haiku) rather than inheriting the coordinator's model.
-    if (state.config.worker_model) {
-      workerEnv.GSD_WORKER_MODEL = state.config.worker_model;
+    let child: ChildProcess;
+    try {
+      const workerEnv: Record<string, string | undefined> = {
+        ...process.env,
+        GSD_MILESTONE_LOCK: milestoneId,
+        // Pass the real project root so workers don't need to re-derive it.
+        // Without this, process.cwd() resolves symlinks and the worktree
+        // path heuristic can match the user-level ~/.gsd instead of the
+        // project .gsd, causing writes to ~ and corrupting user config.
+        GSD_PROJECT_ROOT: basePath,
+        // Prevent workers from spawning their own parallel sessions
+        GSD_PARALLEL_WORKER: "1",
+      };
+
+      // Apply worker model override if configured, so workers use a cheaper
+      // model (e.g. Haiku) rather than inheriting the coordinator's model.
+      if (state.config.worker_model) {
+        workerEnv.GSD_WORKER_MODEL = state.config.worker_model;
+      }
+
+      child = spawn(process.execPath, [binPath, "headless", "--json", "auto"], {
+        cwd: worker.worktreePath,
+        env: workerEnv,
+        stdio: ["ignore", "pipe", "pipe"],
+        detached: false,
+      });
+    } catch (e) {
+      logWarning("parallel", `spawnSync worker failed for ${milestoneId}: ${(e as Error).message}`);
+      return false;
     }
 
-    child = spawn(process.execPath, [binPath, "headless", "--json", "auto"], {
-      cwd: worker.worktreePath,
-      env: workerEnv,
-      stdio: ["ignore", "pipe", "pipe"],
-      detached: false,
-    });
-  } catch (e) {
-    logWarning("parallel", `spawnSync worker failed for ${milestoneId}: ${(e as Error).message}`);
-    return false;
-  }
-
-  // Handle spawn errors (e.g., ENOENT when binary doesn't exist)
-  child.on("error", () => {
-    if (!state) return;
-    const w = state.workers.get(milestoneId);
-    if (w) {
-      w.process = null;
-      // Don't change state — spawn failure is non-fatal, coordinator can retry
-    }
-  });
-
-  worker.process = child;
-  worker.pid = child.pid ?? 0;
-
-  if (!child.pid) {
-    // Spawn returned but no PID — process failed to start
-    worker.process = null;
-    return false;
-  }
-
-  // ── NDJSON stdout monitoring ────────────────────────────────────────
-  // Workers run via `headless --json`, which forwards all RPC events
-  // as NDJSON to stdout. We parse message_end events to extract
-  // cost/token usage, keeping the coordinator's cost tracking in sync
-  // with actual API spend.
-  if (child.stdout) {
-    let stdoutBuffer = "";
-    child.stdout.on("data", (data: Buffer) => {
-      stdoutBuffer += data.toString();
-      const lines = stdoutBuffer.split("\n");
-      stdoutBuffer = lines.pop() || "";
-      for (const line of lines) {
-        processWorkerLine(basePath, milestoneId, line);
+    // Handle spawn errors (e.g., ENOENT when binary doesn't exist)
+    child.on("error", () => {
+      if (!state) return;
+      const w = state.workers.get(milestoneId);
+      if (w) {
+        w.process = null;
+        // Don't change state — spawn failure is non-fatal, coordinator can retry
       }
     });
-    // Flush remaining buffer on close
-    child.stdout.on("close", () => {
-      if (stdoutBuffer.trim()) {
-        processWorkerLine(basePath, milestoneId, stdoutBuffer);
-      }
-    });
-  }
 
-  if (child.stderr) {
-    child.stderr.on("data", (data: Buffer) => {
-      appendWorkerLog(basePath, milestoneId, data.toString());
-    });
-  }
+    worker.process = child;
+    worker.pid = child.pid ?? 0;
 
-  // Update session status with real PID
-  writeSessionStatus(basePath, {
-    milestoneId,
-    pid: worker.pid,
-    state: "running",
-    currentUnit: null,
-    completedUnits: 0,
-    cost: worker.cost,
-    lastHeartbeat: Date.now(),
-    startedAt: worker.startedAt,
-    worktreePath: worker.worktreePath,
-  });
-
-  // Store cleanup function to remove all listeners from the child process.
-  // This prevents listener accumulation when workers are respawned, since
-  // handler closures capture milestoneId and other data that would otherwise
-  // be retained indefinitely.
-  worker.cleanup = () => {
-    child.stdout?.removeAllListeners();
-    child.stderr?.removeAllListeners();
-    child.removeAllListeners();
-  };
-
-  // Handle worker exit
-  child.on("exit", (code) => {
-    if (!state) return;
-    const w = state.workers.get(milestoneId);
-    if (!w) return;
-
-    // Remove all stream listeners to release closure references
-    w.cleanup?.();
-    w.cleanup = undefined;
-
-    w.process = null;
-    if (w.state === "stopped") return; // graceful stop, already handled
-
-    if (code === 0) {
-      w.state = "stopped";
-    } else {
-      w.state = "error";
-      appendWorkerLog(basePath, milestoneId, `\n[orchestrator] worker exited with code ${code ?? "null"}\n`);
+    if (!child.pid) {
+      // Spawn returned but no PID — process failed to start
+      worker.process = null;
+      return false;
     }
 
-    // Update session status and persist orchestrator state for crash recovery
+    // ── NDJSON stdout monitoring ────────────────────────────────────────
+    // Workers run via `headless --json`, which forwards all RPC events
+    // as NDJSON to stdout. We parse message_end events to extract
+    // cost/token usage, keeping the coordinator's cost tracking in sync
+    // with actual API spend.
+    if (child.stdout) {
+      let stdoutBuffer = "";
+      child.stdout.on("data", (data: Buffer) => {
+        stdoutBuffer += data.toString();
+        const lines = stdoutBuffer.split("\n");
+        stdoutBuffer = lines.pop() || "";
+        for (const line of lines) {
+          processWorkerLine(basePath, milestoneId, line);
+        }
+      });
+      // Flush remaining buffer on close
+      child.stdout.on("close", () => {
+        if (stdoutBuffer.trim()) {
+          processWorkerLine(basePath, milestoneId, stdoutBuffer);
+        }
+      });
+    }
+
+    if (child.stderr) {
+      child.stderr.on("data", (data: Buffer) => {
+        appendWorkerLog(basePath, milestoneId, data.toString());
+      });
+    }
+
+    // Update session status with real PID
     writeSessionStatus(basePath, {
       milestoneId,
-      pid: w.pid,
-      state: w.state,
+      pid: worker.pid,
+      state: "running",
       currentUnit: null,
       completedUnits: 0,
-      cost: w.cost,
+      cost: worker.cost,
       lastHeartbeat: Date.now(),
-      startedAt: w.startedAt,
-      worktreePath: w.worktreePath,
+      startedAt: worker.startedAt,
+      worktreePath: worker.worktreePath,
     });
-    persistState(basePath);
-  });
 
-  return true;
+    // Store cleanup function to remove all listeners from the child process.
+    // This prevents listener accumulation when workers are respawned, since
+    // handler closures capture milestoneId and other data that would otherwise
+    // be retained indefinitely.
+    worker.cleanup = () => {
+      child.stdout?.removeAllListeners();
+      child.stderr?.removeAllListeners();
+      child.removeAllListeners();
+    };
+
+    // Handle worker exit
+    child.on("exit", (code) => {
+      if (!state) return;
+      const w = state.workers.get(milestoneId);
+      if (!w) return;
+
+      // Remove all stream listeners to release closure references
+      w.cleanup?.();
+      w.cleanup = undefined;
+
+      w.process = null;
+      if (w.state === "stopped") return; // graceful stop, already handled
+
+      if (code === 0) {
+        w.state = "stopped";
+      } else {
+        w.state = "error";
+        appendWorkerLog(basePath, milestoneId, `\n[orchestrator] worker exited with code ${code ?? "null"}\n`);
+      }
+
+      // Update session status and persist orchestrator state for crash recovery
+      writeSessionStatus(basePath, {
+        milestoneId,
+        pid: w.pid,
+        state: w.state,
+        currentUnit: null,
+        completedUnits: 0,
+        cost: w.cost,
+        lastHeartbeat: Date.now(),
+        startedAt: w.startedAt,
+        worktreePath: w.worktreePath,
+      });
+      persistState(basePath);
+    });
+
+    span.setAttributes({
+      [GSD.PARALLEL_WORKER_PID]: worker.pid,
+      [GSD.WORKTREE_PATH]: worker.worktreePath,
+    });
+
+    return true;
+  }); // withSpan("gsd.parallel.worker_spawn")
 }
 
 /**
@@ -806,68 +833,77 @@ export async function stopParallel(
   basePath: string,
   milestoneId?: string,
 ): Promise<void> {
-  if (!state) return;
+  return withSpan("gsd.parallel.stop", async (span) => {
+    span.setAttributes({
+      [GSD.PARALLEL_SCOPE]: "milestone",
+      ...(milestoneId ? { [GSD.PARALLEL_WORKER_MID]: milestoneId } : {}),
+    });
 
-  const targets = milestoneId
-    ? [milestoneId]
-    : [...state.workers.keys()];
+    if (!state) return;
 
-  for (const mid of targets) {
-    const worker = state.workers.get(mid);
-    if (!worker) continue;
+    const targets = milestoneId
+      ? [milestoneId]
+      : [...state.workers.keys()];
 
-    // Send stop signal via file-based IPC (worker checks on next dispatch)
-    sendSignal(basePath, mid, "stop");
+    for (const mid of targets) {
+      const worker = state.workers.get(mid);
+      if (!worker) continue;
 
-    // Send SIGTERM to the process for immediate response.
-    // Use process handle when available, fall back to PID-based kill
-    // (handles are null after coordinator restart / deserialization).
-    if (worker.pid > 0) {
-      try {
-        if (worker.process) {
-          worker.process.kill("SIGTERM");
-        } else if (worker.pid !== process.pid) {
-          process.kill(worker.pid, "SIGTERM");
-        }
-      } catch (e) { logWarning("parallel", `process.kill SIGTERM failed for pid ${worker.pid}: ${(e as Error).message}`); }
+      // Send stop signal via file-based IPC (worker checks on next dispatch)
+      sendSignal(basePath, mid, "stop");
+
+      // Send SIGTERM to the process for immediate response.
+      // Use process handle when available, fall back to PID-based kill
+      // (handles are null after coordinator restart / deserialization).
+      if (worker.pid > 0) {
+        try {
+          if (worker.process) {
+            worker.process.kill("SIGTERM");
+          } else if (worker.pid !== process.pid) {
+            process.kill(worker.pid, "SIGTERM");
+          }
+        } catch (e) { logWarning("parallel", `process.kill SIGTERM failed for pid ${worker.pid}: ${(e as Error).message}`); }
+      }
+
+      // Wait for the headless process to cascade SIGTERM to its RPC child.
+      // The headless signal handler calls client.stop() which sends SIGTERM
+      // to the RPC child and waits up to 1000ms. The previous 750ms window
+      // was insufficient — the parent got SIGKILL before the child died,
+      // leaving orphaned RPC processes holding auto.lock. See #2798.
+      const exitedAfterTerm = await waitForWorkerExit(worker, 3000);
+      if (!exitedAfterTerm && worker.pid > 0) {
+        try {
+          if (worker.process) {
+            worker.process.kill("SIGKILL");
+          } else if (worker.pid !== process.pid) {
+            process.kill(worker.pid, "SIGKILL");
+          }
+        } catch (e) { logWarning("parallel", `process.kill SIGKILL failed for pid ${worker.pid}: ${(e as Error).message}`); }
+        await waitForWorkerExit(worker, 250);
+      }
+
+      // Remove stream listeners before releasing the process handle
+      worker.cleanup?.();
+      worker.cleanup = undefined;
+
+      // Update in-memory state
+      worker.state = "stopped";
+      worker.process = null;
+
+      // Clean up session status file
+      removeSessionStatus(basePath, mid);
     }
 
-    // Wait for the headless process to cascade SIGTERM to its RPC child.
-    // The headless signal handler calls client.stop() which sends SIGTERM
-    // to the RPC child and waits up to 1000ms. The previous 750ms window
-    // was insufficient — the parent got SIGKILL before the child died,
-    // leaving orphaned RPC processes holding auto.lock. See #2798.
-    const exitedAfterTerm = await waitForWorkerExit(worker, 3000);
-    if (!exitedAfterTerm && worker.pid > 0) {
-      try {
-        if (worker.process) {
-          worker.process.kill("SIGKILL");
-        } else if (worker.pid !== process.pid) {
-          process.kill(worker.pid, "SIGKILL");
-        }
-      } catch (e) { logWarning("parallel", `process.kill SIGKILL failed for pid ${worker.pid}: ${(e as Error).message}`); }
-      await waitForWorkerExit(worker, 250);
+    // If stopping all workers, deactivate the orchestrator
+    if (!milestoneId) {
+      state.active = false;
     }
 
-    // Remove stream listeners before releasing the process handle
-    worker.cleanup?.();
-    worker.cleanup = undefined;
+    // Persist final state and clean up state file
+    removeStateFile(basePath);
 
-    // Update in-memory state
-    worker.state = "stopped";
-    worker.process = null;
-
-    // Clean up session status file
-    removeSessionStatus(basePath, mid);
-  }
-
-  // If stopping all workers, deactivate the orchestrator
-  if (!milestoneId) {
-    state.active = false;
-  }
-
-  // Persist final state and clean up state file
-  removeStateFile(basePath);
+    span.setAttribute(GSD.PARALLEL_WORKERS_STOPPED, targets.length);
+  }); // withSpan("gsd.parallel.stop")
 }
 
 export async function shutdownParallel(basePath: string): Promise<void> {

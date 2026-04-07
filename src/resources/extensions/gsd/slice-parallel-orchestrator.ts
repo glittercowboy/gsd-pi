@@ -32,6 +32,7 @@ import {
 } from "./session-status-io.js";
 import { hasFileConflict } from "./slice-parallel-conflict.js";
 import { getErrorMessage } from "./error-utils.js";
+import { withSpan, GSD } from "./tracing/index.js";
 
 // ─── Types ─────────────────────────────────────────────────────────────────
 
@@ -95,111 +96,135 @@ export async function startSliceParallel(
   eligibleSlices: Array<{ id: string }>,
   opts: StartSliceParallelOpts = {},
 ): Promise<{ started: string[]; errors: Array<{ sid: string; error: string }> }> {
-  // Prevent nesting: if already a parallel worker, refuse
-  if (process.env.GSD_PARALLEL_WORKER) {
-    return { started: [], errors: [{ sid: "all", error: "Cannot start slice-parallel from within a parallel worker" }] };
-  }
+  return withSpan("gsd.parallel.slice_start", async (span) => {
+    span.setAttributes({
+      [GSD.PARALLEL_SCOPE]: "slice",
+      [GSD.PARALLEL_WORKER_MID]: milestoneId,
+      [GSD.PARALLEL_SLICES]: eligibleSlices.map(s => s.id).join(","),
+    });
 
-  const maxWorkers = opts.maxWorkers ?? 2;
-  const budgetCeiling = opts.budgetCeiling;
-
-  // Initialize orchestrator state
-  sliceState = {
-    active: true,
-    workers: new Map(),
-    totalCost: 0,
-    budgetCeiling,
-    maxWorkers,
-    startedAt: Date.now(),
-    basePath,
-  };
-
-  const started: string[] = [];
-  const errors: Array<{ sid: string; error: string }> = [];
-
-  // Filter out conflicting slices (conservative: check all pairs)
-  const safeSlices = filterConflictingSlices(basePath, milestoneId, eligibleSlices);
-
-  // Limit to maxWorkers
-  const toSpawn = safeSlices.slice(0, maxWorkers);
-
-  for (const slice of toSpawn) {
-    try {
-      // Create worktree for this slice
-      const wtBranch = `slice/${milestoneId}/${slice.id}`;
-      const wtName = `${milestoneId}-${slice.id}`;
-      const wtPath = worktreePath(basePath, wtName);
-
-      if (!existsSync(wtPath)) {
-        createWorktree(basePath, wtName, { branch: wtBranch });
-      }
-
-      // Create worker info
-      const worker: SliceWorkerInfo = {
-        milestoneId,
-        sliceId: slice.id,
-        pid: 0,
-        process: null,
-        worktreePath: wtPath,
-        startedAt: Date.now(),
-        state: "running",
-        completedUnits: 0,
-        cost: 0,
-      };
-
-      sliceState.workers.set(slice.id, worker);
-
-      // Spawn worker
-      const spawned = spawnSliceWorker(basePath, milestoneId, slice.id);
-      if (spawned) {
-        started.push(slice.id);
-      } else {
-        errors.push({ sid: slice.id, error: "Failed to spawn worker process" });
-        worker.state = "error";
-      }
-    } catch (err) {
-      errors.push({ sid: slice.id, error: getErrorMessage(err) });
-      // Best-effort cleanup of partially created worktree
-      const wtName = `${milestoneId}-${slice.id}`;
-      try {
-        removeWorktree(basePath, wtName, { deleteBranch: true, force: true });
-      } catch { /* ignore cleanup failures */ }
+    // Prevent nesting: if already a parallel worker, refuse
+    if (process.env.GSD_PARALLEL_WORKER) {
+      return { started: [], errors: [{ sid: "all", error: "Cannot start slice-parallel from within a parallel worker" }] };
     }
-  }
 
-  // If nothing started, deactivate
-  if (started.length === 0) {
-    sliceState.active = false;
-  }
+    const maxWorkers = opts.maxWorkers ?? 2;
+    const budgetCeiling = opts.budgetCeiling;
 
-  return { started, errors };
+    span.setAttributes({
+      [GSD.PARALLEL_MAX_WORKERS]: maxWorkers,
+      ...(budgetCeiling != null ? { [GSD.PARALLEL_BUDGET_CEILING]: budgetCeiling } : {}),
+    });
+
+    // Initialize orchestrator state
+    sliceState = {
+      active: true,
+      workers: new Map(),
+      totalCost: 0,
+      budgetCeiling,
+      maxWorkers,
+      startedAt: Date.now(),
+      basePath,
+    };
+
+    const started: string[] = [];
+    const errors: Array<{ sid: string; error: string }> = [];
+
+    // Filter out conflicting slices (conservative: check all pairs)
+    const safeSlices = filterConflictingSlices(basePath, milestoneId, eligibleSlices);
+
+    // Limit to maxWorkers
+    const toSpawn = safeSlices.slice(0, maxWorkers);
+
+    for (const slice of toSpawn) {
+      try {
+        // Create worktree for this slice
+        const wtBranch = `slice/${milestoneId}/${slice.id}`;
+        const wtName = `${milestoneId}-${slice.id}`;
+        const wtPath = worktreePath(basePath, wtName);
+
+        if (!existsSync(wtPath)) {
+          createWorktree(basePath, wtName, { branch: wtBranch });
+        }
+
+        // Create worker info
+        const worker: SliceWorkerInfo = {
+          milestoneId,
+          sliceId: slice.id,
+          pid: 0,
+          process: null,
+          worktreePath: wtPath,
+          startedAt: Date.now(),
+          state: "running",
+          completedUnits: 0,
+          cost: 0,
+        };
+
+        sliceState.workers.set(slice.id, worker);
+
+        // Spawn worker
+        const spawned = spawnSliceWorker(basePath, milestoneId, slice.id);
+        if (spawned) {
+          started.push(slice.id);
+        } else {
+          errors.push({ sid: slice.id, error: "Failed to spawn worker process" });
+          worker.state = "error";
+        }
+      } catch (err) {
+        errors.push({ sid: slice.id, error: getErrorMessage(err) });
+        // Best-effort cleanup of partially created worktree
+        const wtName = `${milestoneId}-${slice.id}`;
+        try {
+          removeWorktree(basePath, wtName, { deleteBranch: true, force: true });
+        } catch { /* ignore cleanup failures */ }
+      }
+    }
+
+    // If nothing started, deactivate
+    if (started.length === 0) {
+      sliceState.active = false;
+    }
+
+    span.setAttributes({
+      [GSD.PARALLEL_WORKERS_STARTED]: started.length,
+      [GSD.PARALLEL_WORKERS_ERRORS]: errors.length,
+    });
+
+    return { started, errors };
+  }); // withSpan("gsd.parallel.slice_start")
 }
 
 /**
  * Stop all slice-parallel workers and deactivate.
  */
 export function stopSliceParallel(): void {
-  if (!sliceState) return;
+  withSpan("gsd.parallel.slice_stop", (span) => {
+    span.setAttribute(GSD.PARALLEL_SCOPE, "slice");
 
-  for (const worker of sliceState.workers.values()) {
-    if (worker.process) {
+    if (!sliceState) return;
+
+    const workerCount = sliceState.workers.size;
+    for (const worker of sliceState.workers.values()) {
+      if (worker.process) {
+        try {
+          worker.process.kill("SIGTERM");
+        } catch { /* already dead */ }
+      }
+      worker.cleanup?.();
+      worker.cleanup = undefined;
+      worker.process = null;
+      worker.state = "stopped";
+
+      // Clean up worktree created for this worker
+      const wtName = `${worker.milestoneId}-${worker.sliceId}`;
       try {
-        worker.process.kill("SIGTERM");
-      } catch { /* already dead */ }
+        removeWorktree(sliceState.basePath, wtName, { deleteBranch: true, force: true });
+      } catch { /* best-effort cleanup */ }
     }
-    worker.cleanup?.();
-    worker.cleanup = undefined;
-    worker.process = null;
-    worker.state = "stopped";
 
-    // Clean up worktree created for this worker
-    const wtName = `${worker.milestoneId}-${worker.sliceId}`;
-    try {
-      removeWorktree(sliceState.basePath, wtName, { deleteBranch: true, force: true });
-    } catch { /* best-effort cleanup */ }
-  }
-
-  sliceState.active = false;
+    sliceState.active = false;
+    span.setAttribute(GSD.PARALLEL_WORKERS_STOPPED, workerCount);
+  }); // withSpan("gsd.parallel.slice_stop")
 }
 
 /**

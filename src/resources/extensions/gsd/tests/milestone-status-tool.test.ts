@@ -79,7 +79,7 @@ function seedTask(milestoneId: string, sliceId: string, taskId: string, status: 
 test("registerQueryTools registers gsd_milestone_status tool", () => {
   const pi = makeMockPi();
   registerQueryTools(pi);
-  assert.equal(pi.tools.length, 1, "Should register exactly one tool");
+  assert.equal(pi.tools.length, 2, "Should register gsd_milestone_status + gsd_trace_query");
   assert.equal(pi.tools[0].name, "gsd_milestone_status");
 });
 

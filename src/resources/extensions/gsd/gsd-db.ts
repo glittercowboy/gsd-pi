@@ -20,7 +20,8 @@ interface DbStatement {
   all(...params: unknown[]): Record<string, unknown>[];
 }
 
-interface DbAdapter {
+// TODO(#3732): export DbAdapter as a proper public type for tracing/exporter.ts
+export interface DbAdapter {
   exec(sql: string): void;
   prepare(sql: string): DbStatement;
   close(): void;
@@ -160,7 +161,7 @@ function openRawDb(path: string): unknown {
   return new Database(path);
 }
 
-const SCHEMA_VERSION = 14;
+const SCHEMA_VERSION = 15;
 
 function initSchema(db: DbAdapter, fileBacked: boolean): void {
   if (fileBacked) db.exec("PRAGMA journal_mode=WAL");
@@ -400,6 +401,23 @@ function initSchema(db: DbAdapter, fileBacked: boolean): void {
       )
     `);
 
+    // OTel trace spans (v15) — always-on execution tracing
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS spans (
+        trace_id       TEXT NOT NULL,
+        span_id        TEXT NOT NULL PRIMARY KEY,
+        parent_span_id TEXT,
+        name           TEXT NOT NULL,
+        start_time     INTEGER NOT NULL,
+        end_time       INTEGER,
+        duration_ms    REAL,
+        status         TEXT NOT NULL DEFAULT 'ok',
+        unit_type      TEXT,
+        unit_id        TEXT,
+        attributes     TEXT NOT NULL DEFAULT '{}'
+      )
+    `);
+
     db.exec("CREATE INDEX IF NOT EXISTS idx_memories_active ON memories(superseded_by)");
     db.exec("CREATE INDEX IF NOT EXISTS idx_replan_history_milestone ON replan_history(milestone_id, created_at)");
 
@@ -413,6 +431,12 @@ function initSchema(db: DbAdapter, fileBacked: boolean): void {
 
     // v14 index — slice dependency lookups
     db.exec("CREATE INDEX IF NOT EXISTS idx_slice_deps_target ON slice_dependencies(milestone_id, depends_on_slice_id)");
+
+    // v15 indexes — trace span queries
+    db.exec("CREATE INDEX IF NOT EXISTS idx_spans_trace ON spans(trace_id)");
+    db.exec("CREATE INDEX IF NOT EXISTS idx_spans_name ON spans(name)");
+    db.exec("CREATE INDEX IF NOT EXISTS idx_spans_time ON spans(start_time)");
+    db.exec("CREATE INDEX IF NOT EXISTS idx_spans_unit ON spans(unit_type, unit_id)");
 
     db.exec(`CREATE VIEW IF NOT EXISTS active_decisions AS SELECT * FROM decisions WHERE superseded_by IS NULL`);
     db.exec(`CREATE VIEW IF NOT EXISTS active_requirements AS SELECT * FROM requirements WHERE superseded_by IS NULL`);
@@ -744,6 +768,32 @@ function migrateSchema(db: DbAdapter): void {
       db.exec("CREATE INDEX IF NOT EXISTS idx_slice_deps_target ON slice_dependencies(milestone_id, depends_on_slice_id)");
       db.prepare("INSERT INTO schema_version (version, applied_at) VALUES (:version, :applied_at)").run({
         ":version": 14,
+        ":applied_at": new Date().toISOString(),
+      });
+    }
+
+    if (currentVersion < 15) {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS spans (
+          trace_id       TEXT NOT NULL,
+          span_id        TEXT NOT NULL PRIMARY KEY,
+          parent_span_id TEXT,
+          name           TEXT NOT NULL,
+          start_time     INTEGER NOT NULL,
+          end_time       INTEGER,
+          duration_ms    REAL,
+          status         TEXT NOT NULL DEFAULT 'ok',
+          unit_type      TEXT,
+          unit_id        TEXT,
+          attributes     TEXT NOT NULL DEFAULT '{}'
+        )
+      `);
+      db.exec("CREATE INDEX IF NOT EXISTS idx_spans_trace ON spans(trace_id)");
+      db.exec("CREATE INDEX IF NOT EXISTS idx_spans_name ON spans(name)");
+      db.exec("CREATE INDEX IF NOT EXISTS idx_spans_time ON spans(start_time)");
+      db.exec("CREATE INDEX IF NOT EXISTS idx_spans_unit ON spans(unit_type, unit_id)");
+      db.prepare("INSERT INTO schema_version (version, applied_at) VALUES (:version, :applied_at)").run({
+        ":version": 15,
         ":applied_at": new Date().toISOString(),
       });
     }
@@ -2258,4 +2308,50 @@ export function getPendingSliceGateCount(milestoneId: string, sliceId: string): 
      WHERE milestone_id = :mid AND slice_id = :sid AND scope = 'slice' AND status = 'pending'`,
   ).get({ ":mid": milestoneId, ":sid": sliceId });
   return row ? (row["cnt"] as number) : 0;
+}
+
+// ─── Tracing: spans table helpers (#3732) ────────────────────────────────────
+
+/** Check if the spans table exists (for gating trace-dependent features). */
+export function hasSpansTable(): boolean {
+  if (!currentDb) return false;
+  try {
+    const row = currentDb.prepare(
+      "SELECT count(*) as cnt FROM sqlite_master WHERE type='table' AND name='spans'",
+    ).get();
+    return row ? (row["cnt"] as number) > 0 : false;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Prune spans older than `retentionDays`.
+ * Also enforces a hard row cap (default 100K) — if exceeded, drops oldest 20%.
+ */
+export function pruneOldSpans(retentionDays = 7, maxRows = 100_000): number {
+  if (!currentDb) return 0;
+  try {
+    const cutoff = Date.now() - retentionDays * 86_400_000;
+    const result = currentDb.prepare("DELETE FROM spans WHERE start_time < ?").run(cutoff);
+    const deleted = typeof result === "object" && result !== null && "changes" in result
+      ? (result as { changes: number }).changes
+      : 0;
+
+    // Hard row cap safety valve
+    const countRow = currentDb.prepare("SELECT count(*) as cnt FROM spans").get();
+    const total = countRow ? (countRow["cnt"] as number) : 0;
+    if (total > maxRows) {
+      const excess = Math.ceil(total * 0.2);
+      currentDb.prepare(
+        "DELETE FROM spans WHERE span_id IN (SELECT span_id FROM spans ORDER BY start_time ASC LIMIT ?)",
+      ).run(excess);
+      return deleted + excess;
+    }
+
+    return deleted;
+  } catch (e) {
+    logWarning("db", `pruneOldSpans failed: ${(e as Error).message}`);
+    return 0;
+  }
 }

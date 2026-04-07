@@ -78,7 +78,14 @@ export type DoctorIssueCode =
   | "db_orphaned_slice"
   | "db_done_task_no_summary"
   | "db_duplicate_id"
-  | "projection_drift";
+  | "projection_drift"
+  // Trace-based diagnostics (#3732)
+  | "trace_model_downgrade"
+  | "trace_repeated_dispatch"
+  | "trace_guard_blocking"
+  | "trace_fallback_chain_exhausted"
+  | "trace_context_undersized"
+  | "trace_cwd_mismatch";
 
 /**
  * Issue codes that represent global or completion-critical state.

@@ -39,6 +39,11 @@ export async function handleOpsCommand(trimmed: string, ctx: ExtensionCommandCon
     await handleLogs(trimmed.replace(/^logs\s*/, "").trim(), ctx);
     return true;
   }
+  if (trimmed === "traces" || trimmed.startsWith("traces ")) {
+    const { handleTraces } = await import("../../commands-traces.js");
+    await handleTraces(trimmed.replace(/^traces\s*/, "").trim(), ctx);
+    return true;
+  }
   if (trimmed === "forensics" || trimmed.startsWith("forensics ")) {
     const { handleForensics } = await import("../../forensics.js");
     await handleForensics(trimmed.replace(/^forensics\s*/, "").trim(), ctx, pi);

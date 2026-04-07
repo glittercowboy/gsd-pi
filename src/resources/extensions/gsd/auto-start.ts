@@ -61,7 +61,8 @@ import { initRoutingHistory } from "./routing-history.js";
 import { restoreHookState, resetHookState } from "./post-unit-hooks.js";
 import { resetProactiveHealing, setLevelChangeCallback } from "./doctor-proactive.js";
 import { snapshotSkills } from "./skill-discovery.js";
-import { isDbAvailable, getMilestone, openDatabase } from "./gsd-db.js";
+import { isDbAvailable, getMilestone, openDatabase, _getAdapter } from "./gsd-db.js";
+import { initTracing } from "./tracing/index.js";
 import { hideFooter } from "./auto-dashboard.js";
 import {
   debugLog,
@@ -288,6 +289,12 @@ export async function bootstrapAutoSession(
         cwd: base,
       });
       ctx.ui.notify(`Debug logging enabled → ${getDebugLogPath()}`, "info");
+    }
+
+    // ── OTel tracing (#3732) ──
+    const dbAdapter = _getAdapter();
+    if (dbAdapter) {
+      initTracing(dbAdapter);
     }
 
     // Invalidate caches before initial state derivation

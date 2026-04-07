@@ -6,6 +6,7 @@ import type { ExtensionContext } from "@gsd/pi-coding-agent";
 
 import { logWarning } from "../workflow-logger.js";
 import { debugTime } from "../debug-logger.js";
+import { withSpan, GSD } from "../tracing/index.js";
 import { loadPrompt, getTemplatesDir } from "../prompt-loader.js";
 import { readForensicsMarker } from "../forensics.js";
 import { resolveAllSkillReferences, renderPreferencesForSystemPrompt, loadEffectiveGSDPreferences } from "../preferences.js";
@@ -69,111 +70,121 @@ export async function buildBeforeAgentStartResult(
   if (!existsSync(join(process.cwd(), ".gsd"))) return undefined;
 
   const stopContextTimer = debugTime("context-inject");
-  const systemContent = loadPrompt("system", {
-    bundledSkillsTable: buildBundledSkillsTable(),
-    templatesDir: getTemplatesDir(),
-  });
-  const loadedPreferences = loadEffectiveGSDPreferences();
-  if (shouldPromptToEnableCmux(loadedPreferences?.preferences)) {
-    markCmuxPromptShown();
-    ctx.ui.notify(
-      "cmux detected. Run /gsd cmux on to enable sidebar metadata, notifications, and visual subagent splits for this project.",
-      "info",
-    );
-  }
 
-  let preferenceBlock = "";
-  if (loadedPreferences) {
-    const cwd = process.cwd();
-    const report = resolveAllSkillReferences(loadedPreferences.preferences, cwd);
-    preferenceBlock = `\n\n${renderPreferencesForSystemPrompt(loadedPreferences.preferences, report.resolutions)}`;
-    if (report.warnings.length > 0) {
+  return withSpan("gsd.unit.context_assembly", async (span) => {
+    const systemContent = loadPrompt("system", {
+      bundledSkillsTable: buildBundledSkillsTable(),
+      templatesDir: getTemplatesDir(),
+    });
+    const loadedPreferences = loadEffectiveGSDPreferences();
+    if (shouldPromptToEnableCmux(loadedPreferences?.preferences)) {
+      markCmuxPromptShown();
       ctx.ui.notify(
-        `GSD skill preferences: ${report.warnings.length} unresolved skill${report.warnings.length === 1 ? "" : "s"}: ${report.warnings.join(", ")}`,
+        "cmux detected. Run /gsd cmux on to enable sidebar metadata, notifications, and visual subagent splits for this project.",
+        "info",
+      );
+    }
+
+    let preferenceBlock = "";
+    if (loadedPreferences) {
+      const cwd = process.cwd();
+      const report = resolveAllSkillReferences(loadedPreferences.preferences, cwd);
+      preferenceBlock = `\n\n${renderPreferencesForSystemPrompt(loadedPreferences.preferences, report.resolutions)}`;
+      if (report.warnings.length > 0) {
+        ctx.ui.notify(
+          `GSD skill preferences: ${report.warnings.length} unresolved skill${report.warnings.length === 1 ? "" : "s"}: ${report.warnings.join(", ")}`,
+          "warning",
+        );
+      }
+    }
+
+    const { block: knowledgeBlock, globalSizeKb } = loadKnowledgeBlock(gsdHome, process.cwd());
+    if (globalSizeKb > 4) {
+      ctx.ui.notify(
+        `GSD: ~/.gsd/agent/KNOWLEDGE.md is ${globalSizeKb.toFixed(1)}KB — consider trimming to keep system prompt lean.`,
         "warning",
       );
     }
-  }
 
-  const { block: knowledgeBlock, globalSizeKb } = loadKnowledgeBlock(gsdHome, process.cwd());
-  if (globalSizeKb > 4) {
-    ctx.ui.notify(
-      `GSD: ~/.gsd/agent/KNOWLEDGE.md is ${globalSizeKb.toFixed(1)}KB — consider trimming to keep system prompt lean.`,
-      "warning",
-    );
-  }
-
-  let memoryBlock = "";
-  try {
-    const { formatMemoriesForPrompt, getActiveMemoriesRanked } = await import("../memory-store.js");
-    const memories = getActiveMemoriesRanked(30);
-    if (memories.length > 0) {
-      const formatted = formatMemoriesForPrompt(memories, 2000);
-      if (formatted) {
-        memoryBlock = `\n\n${formatted}`;
-      }
-    }
-  } catch (e) {
-    logWarning("bootstrap", `memory block fetch failed: ${(e as Error).message}`);
-  }
-
-  let newSkillsBlock = "";
-  if (hasSkillSnapshot()) {
-    const newSkills = detectNewSkills();
-    if (newSkills.length > 0) {
-      newSkillsBlock = formatSkillsXml(newSkills);
-    }
-  }
-
-  let codebaseBlock = "";
-  const codebasePath = resolveGsdRootFile(process.cwd(), "CODEBASE");
-  if (existsSync(codebasePath)) {
+    let memoryBlock = "";
     try {
-      const rawContent = readFileSync(codebasePath, "utf-8").trim();
-      if (rawContent) {
-        // Cap injection size to ~2 000 tokens to avoid bloating every request.
-        // Full map is always available at .gsd/CODEBASE.md.
-        const MAX_CODEBASE_CHARS = 8_000;
-        const generatedMatch = rawContent.match(/Generated: (\S+)/);
-        const generatedAt = generatedMatch?.[1] ?? "unknown";
-        const content = rawContent.length > MAX_CODEBASE_CHARS
-          ? rawContent.slice(0, MAX_CODEBASE_CHARS) + "\n\n*(truncated — see .gsd/CODEBASE.md for full map)*"
-          : rawContent;
-        codebaseBlock = `\n\n[PROJECT CODEBASE — File structure and descriptions (generated ${generatedAt}, may be stale — run /gsd codebase update to refresh)]\n\n${content}`;
+      const { formatMemoriesForPrompt, getActiveMemoriesRanked } = await import("../memory-store.js");
+      const memories = getActiveMemoriesRanked(30);
+      if (memories.length > 0) {
+        const formatted = formatMemoriesForPrompt(memories, 2000);
+        if (formatted) {
+          memoryBlock = `\n\n${formatted}`;
+        }
       }
     } catch (e) {
-      logWarning("bootstrap", `CODEBASE file read failed: ${(e as Error).message}`);
+      logWarning("bootstrap", `memory block fetch failed: ${(e as Error).message}`);
     }
-  }
 
-  warnDeprecatedAgentInstructions();
+    let newSkillsBlock = "";
+    if (hasSkillSnapshot()) {
+      const newSkills = detectNewSkills();
+      if (newSkills.length > 0) {
+        newSkillsBlock = formatSkillsXml(newSkills);
+      }
+    }
 
-  const injection = await buildGuidedExecuteContextInjection(event.prompt, process.cwd());
+    let codebaseBlock = "";
+    const codebasePath = resolveGsdRootFile(process.cwd(), "CODEBASE");
+    if (existsSync(codebasePath)) {
+      try {
+        const rawContent = readFileSync(codebasePath, "utf-8").trim();
+        if (rawContent) {
+          // Cap injection size to ~2 000 tokens to avoid bloating every request.
+          // Full map is always available at .gsd/CODEBASE.md.
+          const MAX_CODEBASE_CHARS = 8_000;
+          const generatedMatch = rawContent.match(/Generated: (\S+)/);
+          const generatedAt = generatedMatch?.[1] ?? "unknown";
+          const content = rawContent.length > MAX_CODEBASE_CHARS
+            ? rawContent.slice(0, MAX_CODEBASE_CHARS) + "\n\n*(truncated — see .gsd/CODEBASE.md for full map)*"
+            : rawContent;
+          codebaseBlock = `\n\n[PROJECT CODEBASE — File structure and descriptions (generated ${generatedAt}, may be stale — run /gsd codebase update to refresh)]\n\n${content}`;
+        }
+      } catch (e) {
+        logWarning("bootstrap", `CODEBASE file read failed: ${(e as Error).message}`);
+      }
+    }
 
-  // Re-inject forensics context on follow-up turns (#2941)
-  const forensicsInjection = !injection ? buildForensicsContextInjection(process.cwd()) : null;
+    warnDeprecatedAgentInstructions();
 
-  const worktreeBlock = buildWorktreeContextBlock();
-  const fullSystem = `${event.systemPrompt}\n\n[SYSTEM CONTEXT — GSD]\n\n${systemContent}${preferenceBlock}${knowledgeBlock}${codebaseBlock}${memoryBlock}${newSkillsBlock}${worktreeBlock}`;
+    const injection = await buildGuidedExecuteContextInjection(event.prompt, process.cwd());
 
-  stopContextTimer({
-    systemPromptSize: fullSystem.length,
-    injectionSize: injection?.length ?? forensicsInjection?.length ?? 0,
-    hasPreferences: preferenceBlock.length > 0,
-    hasNewSkills: newSkillsBlock.length > 0,
+    // Re-inject forensics context on follow-up turns (#2941)
+    const forensicsInjection = !injection ? buildForensicsContextInjection(process.cwd()) : null;
+
+    const worktreeBlock = buildWorktreeContextBlock();
+    const fullSystem = `${event.systemPrompt}\n\n[SYSTEM CONTEXT — GSD]\n\n${systemContent}${preferenceBlock}${knowledgeBlock}${codebaseBlock}${memoryBlock}${newSkillsBlock}${worktreeBlock}`;
+
+    stopContextTimer({
+      systemPromptSize: fullSystem.length,
+      injectionSize: injection?.length ?? forensicsInjection?.length ?? 0,
+      hasPreferences: preferenceBlock.length > 0,
+      hasNewSkills: newSkillsBlock.length > 0,
+    });
+
+    span.setAttributes({
+      [GSD.CONTEXT_PROMPT_CHARS]: fullSystem.length,
+      [GSD.CONTEXT_KNOWLEDGE]: Buffer.byteLength(knowledgeBlock, "utf-8"),
+      [GSD.CONTEXT_CODEBASE]: Buffer.byteLength(codebaseBlock, "utf-8"),
+      [GSD.CONTEXT_GUIDED]: !!injection,
+    });
+
+    // Determine which context message to inject (guided execute takes priority)
+    const contextMessage = injection
+      ? { customType: "gsd-guided-context", content: injection, display: false as const }
+      : forensicsInjection
+        ? { customType: "gsd-forensics", content: forensicsInjection, display: false as const }
+        : null;
+
+    return {
+      systemPrompt: fullSystem,
+      ...(contextMessage ? { message: contextMessage } : {}),
+    };
   });
-
-  // Determine which context message to inject (guided execute takes priority)
-  const contextMessage = injection
-    ? { customType: "gsd-guided-context", content: injection, display: false as const }
-    : forensicsInjection
-      ? { customType: "gsd-forensics", content: forensicsInjection, display: false as const }
-      : null;
-
-  return {
-    systemPrompt: fullSystem,
-    ...(contextMessage ? { message: contextMessage } : {}),
-  };
 }
 
 export function loadKnowledgeBlock(gsdHomeDir: string, cwd: string): { block: string; globalSizeKb: number } {

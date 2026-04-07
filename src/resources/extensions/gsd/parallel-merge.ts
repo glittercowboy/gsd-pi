@@ -16,6 +16,7 @@ import { removeSessionStatus } from "./session-status-io.js";
 import type { WorkerInfo } from "./parallel-orchestrator.js";
 import { getErrorMessage } from "./error-utils.js";
 import { logWarning } from "./workflow-logger.js";
+import { withSpan, GSD } from "./tracing/index.js";
 
 // ─── Types ─────────────────────────────────────────────────────────────────
 
@@ -141,53 +142,65 @@ export async function mergeCompletedMilestone(
   basePath: string,
   milestoneId: string,
 ): Promise<MergeResult> {
-  try {
-    // Load the roadmap content (needed by mergeMilestoneToMain)
-    const roadmapPath = resolveMilestoneFile(basePath, milestoneId, "ROADMAP");
-    if (!roadmapPath) {
+  return withSpan("gsd.parallel.merge", async (span) => {
+    span.setAttribute(GSD.PARALLEL_WORKER_MID, milestoneId);
+
+    try {
+      // Load the roadmap content (needed by mergeMilestoneToMain)
+      const roadmapPath = resolveMilestoneFile(basePath, milestoneId, "ROADMAP");
+      if (!roadmapPath) {
+        span.setAttribute(GSD.PARALLEL_MERGE_RESULT, "no_roadmap");
+        return {
+          milestoneId,
+          success: false,
+          error: `No roadmap found for ${milestoneId}`,
+        };
+      }
+
+      const roadmapContent = await loadFile(roadmapPath);
+      if (!roadmapContent) {
+        span.setAttribute(GSD.PARALLEL_MERGE_RESULT, "unreadable_roadmap");
+        return {
+          milestoneId,
+          success: false,
+          error: `Could not read roadmap for ${milestoneId}`,
+        };
+      }
+
+      // Attempt the merge
+      const result = mergeMilestoneToMain(basePath, milestoneId, roadmapContent);
+
+      // Clean up parallel session status
+      removeSessionStatus(basePath, milestoneId);
+
+      span.setAttribute(GSD.PARALLEL_MERGE_RESULT, "success");
+      return {
+        milestoneId,
+        success: true,
+        commitMessage: result.commitMessage,
+        pushed: result.pushed,
+      };
+    } catch (err) {
+      if (err instanceof MergeConflictError) {
+        span.setAttributes({
+          [GSD.PARALLEL_MERGE_RESULT]: "conflict",
+          [GSD.PARALLEL_MERGE_CONFLICT]: err.conflictedFiles.join(","),
+        });
+        return {
+          milestoneId,
+          success: false,
+          error: `Merge conflict: ${err.conflictedFiles.length} conflicting file(s)`,
+          conflictFiles: err.conflictedFiles,
+        };
+      }
+      span.setAttribute(GSD.PARALLEL_MERGE_RESULT, "error");
       return {
         milestoneId,
         success: false,
-        error: `No roadmap found for ${milestoneId}`,
+        error: getErrorMessage(err),
       };
     }
-
-    const roadmapContent = await loadFile(roadmapPath);
-    if (!roadmapContent) {
-      return {
-        milestoneId,
-        success: false,
-        error: `Could not read roadmap for ${milestoneId}`,
-      };
-    }
-
-    // Attempt the merge
-    const result = mergeMilestoneToMain(basePath, milestoneId, roadmapContent);
-
-    // Clean up parallel session status
-    removeSessionStatus(basePath, milestoneId);
-
-    return {
-      milestoneId,
-      success: true,
-      commitMessage: result.commitMessage,
-      pushed: result.pushed,
-    };
-  } catch (err) {
-    if (err instanceof MergeConflictError) {
-      return {
-        milestoneId,
-        success: false,
-        error: `Merge conflict: ${err.conflictedFiles.length} conflicting file(s)`,
-        conflictFiles: err.conflictedFiles,
-      };
-    }
-    return {
-      milestoneId,
-      success: false,
-      error: getErrorMessage(err),
-    };
-  }
+  }); // withSpan("gsd.parallel.merge")
 }
 
 /**

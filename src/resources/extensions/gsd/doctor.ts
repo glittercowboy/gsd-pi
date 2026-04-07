@@ -3,7 +3,7 @@ import { join } from "node:path";
 
 import { loadFile, parseSummary, saveFile, parseTaskPlanMustHaves, countMustHavesMentionedInSummary } from "./files.js";
 import { parseRoadmap as parseLegacyRoadmap, parsePlan as parseLegacyPlan } from "./parsers-legacy.js";
-import { isDbAvailable, getMilestoneSlices, getSliceTasks } from "./gsd-db.js";
+import { isDbAvailable, getMilestoneSlices, getSliceTasks, hasSpansTable, _getAdapter } from "./gsd-db.js";
 import { resolveMilestoneFile, resolveMilestonePath, resolveSliceFile, resolveSlicePath, resolveTaskFile, resolveTasksDir, milestonesDir, gsdRoot, relMilestoneFile, relSliceFile, relTaskFile, relSlicePath, relGsdRootFile, resolveGsdRootFile, relMilestonePath } from "./paths.js";
 import { deriveState, isMilestoneComplete } from "./state.js";
 import { invalidateAllCaches } from "./cache.js";
@@ -15,6 +15,7 @@ import type { RoadmapSliceEntry } from "./types.js";
 import { checkGitHealth, checkRuntimeHealth, checkGlobalHealth, checkEngineHealth } from "./doctor-checks.js";
 import { checkEnvironmentHealth } from "./doctor-environment.js";
 import { runProviderChecks } from "./doctor-providers.js";
+import { runTraceChecks } from "./doctor-trace-checks.js";
 
 // ── Re-exports ─────────────────────────────────────────────────────────────
 // All public types and functions from extracted modules are re-exported here
@@ -385,6 +386,18 @@ export async function runGSDDoctor(basePath: string, options?: { fix?: boolean; 
 
   // Engine health checks — DB constraints and projection drift
   await checkEngineHealth(basePath, issues, fixesApplied);
+
+  // Trace-based diagnostics (#3732) — query execution history for operational issues
+  if (hasSpansTable()) {
+    const adapter = _getAdapter();
+    if (adapter) {
+      try {
+        issues.push(...runTraceChecks(adapter));
+      } catch {
+        // Non-fatal — trace checks are informational
+      }
+    }
+  }
 
   const milestonesPath = milestonesDir(basePath);
   if (!existsSync(milestonesPath)) {

@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { gsdRoot } from "./paths.js";
 import { getAdaptiveTierAdjustment } from "./routing-history.js";
 import { parseUnitId } from "./unit-id.js";
+import { withSpan, GSD } from "./tracing/index.js";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -70,46 +71,60 @@ export function classifyUnitComplexity(
   budgetPct?: number,
   metadata?: TaskMetadata,
 ): ClassificationResult {
-  // Hook units default to light
-  if (unitType.startsWith("hook/")) {
-    const result: ClassificationResult = { tier: "light", reason: "hook unit", downgraded: false, taskMetadata: undefined };
-    return applyBudgetPressure(result, budgetPct);
-  }
+  return withSpan("gsd.model.classify_complexity", (span) => {
+    span.setAttributes({
+      [GSD.UNIT_TYPE]: unitType,
+      [GSD.UNIT_ID]: unitId,
+    });
 
-  // Start with the default tier for this unit type
-  let tier = UNIT_TYPE_TIERS[unitType] ?? "standard";
-  let reason = `unit type: ${unitType}`;
-  let taskMeta: TaskMetadata | undefined;
-
-  // For execute-task, analyze task metadata for complexity signals
-  if (unitType === "execute-task") {
-    // Extract metadata once and reuse throughout to avoid double-extraction
-    taskMeta = metadata ?? extractTaskMetadata(unitId, basePath);
-    const taskAnalysis = analyzeTaskComplexity(unitId, basePath, taskMeta);
-    tier = taskAnalysis.tier;
-    reason = taskAnalysis.reason;
-  }
-
-  // For plan-slice, check if the slice has many tasks (complex planning)
-  if (unitType === "plan-slice" || unitType === "plan-milestone") {
-    const planAnalysis = analyzePlanComplexity(unitId, basePath);
-    if (planAnalysis) {
-      tier = planAnalysis.tier;
-      reason = planAnalysis.reason;
+    // Hook units default to light
+    if (unitType.startsWith("hook/")) {
+      const result: ClassificationResult = { tier: "light", reason: "hook unit", downgraded: false, taskMetadata: undefined };
+      return applyBudgetPressure(result, budgetPct);
     }
-  }
 
-  // Adaptive learning: check if history suggests bumping the tier
-  // Use already-extracted taskMeta.tags if available to avoid double-extraction
-  const tags = taskMeta?.tags ?? metadata?.tags;
-  const adaptiveAdjustment = getAdaptiveTierAdjustment(unitType, tier, tags);
-  if (adaptiveAdjustment && tierOrdinal(adaptiveAdjustment) > tierOrdinal(tier)) {
-    reason = `${reason} (adaptive: high failure rate at ${tier})`;
-    tier = adaptiveAdjustment;
-  }
+    // Start with the default tier for this unit type
+    let tier = UNIT_TYPE_TIERS[unitType] ?? "standard";
+    let reason = `unit type: ${unitType}`;
+    let taskMeta: TaskMetadata | undefined;
 
-  const result: ClassificationResult = { tier, reason, downgraded: false, taskMetadata: taskMeta };
-  return applyBudgetPressure(result, budgetPct);
+    // For execute-task, analyze task metadata for complexity signals
+    if (unitType === "execute-task") {
+      // Extract metadata once and reuse throughout to avoid double-extraction
+      taskMeta = metadata ?? extractTaskMetadata(unitId, basePath);
+      const taskAnalysis = analyzeTaskComplexity(unitId, basePath, taskMeta);
+      tier = taskAnalysis.tier;
+      reason = taskAnalysis.reason;
+    }
+
+    // For plan-slice, check if the slice has many tasks (complex planning)
+    if (unitType === "plan-slice" || unitType === "plan-milestone") {
+      const planAnalysis = analyzePlanComplexity(unitId, basePath);
+      if (planAnalysis) {
+        tier = planAnalysis.tier;
+        reason = planAnalysis.reason;
+      }
+    }
+
+    // Adaptive learning: check if history suggests bumping the tier
+    // Use already-extracted taskMeta.tags if available to avoid double-extraction
+    const tags = taskMeta?.tags ?? metadata?.tags;
+    const adaptiveAdjustment = getAdaptiveTierAdjustment(unitType, tier, tags);
+    if (adaptiveAdjustment && tierOrdinal(adaptiveAdjustment) > tierOrdinal(tier)) {
+      reason = `${reason} (adaptive: high failure rate at ${tier})`;
+      tier = adaptiveAdjustment;
+    }
+
+    const result: ClassificationResult = { tier, reason, downgraded: false, taskMetadata: taskMeta };
+    const classified = applyBudgetPressure(result, budgetPct);
+
+    span.setAttributes({
+      [GSD.COMPLEXITY_TIER]: classified.tier,
+      [GSD.COMPLEXITY_REASON]: classified.reason,
+    });
+
+    return classified;
+  });
 }
 
 /**

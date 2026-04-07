@@ -152,6 +152,7 @@ import {
 import { pruneQueueOrder } from "./queue-order.js";
 
 import { debugLog, isDebugEnabled, writeDebugSummary } from "./debug-logger.js";
+import { shutdownTracing } from "./tracing/index.js";
 import {
   buildLoopRemediationSteps,
   reconcileMergeState,
@@ -779,6 +780,13 @@ export async function stopAuto(
       }
     } catch (e) {
       debugLog("stop-cleanup-debug", { error: e instanceof Error ? e.message : String(e) });
+    }
+
+    // ── Step 10b: Flush OTel tracing (#3732) ──
+    try {
+      await shutdownTracing();
+    } catch (e) {
+      debugLog("stop-cleanup-tracing", { error: e instanceof Error ? e.message : String(e) });
     }
 
     // ── Step 11: Reset metrics, routing, hooks ──

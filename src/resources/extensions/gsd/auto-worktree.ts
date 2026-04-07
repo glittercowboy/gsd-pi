@@ -46,6 +46,7 @@ import {
 import { MergeConflictError, readIntegrationBranch, RUNTIME_EXCLUSION_PATHS } from "./git-service.js";
 import { debugLog } from "./debug-logger.js";
 import { logWarning, logError } from "./workflow-logger.js";
+import { withSpan, GSD } from "./tracing/index.js";
 import { loadEffectiveGSDPreferences } from "./preferences.js";
 import {
   nativeGetCurrentBranch,
@@ -1417,344 +1418,275 @@ export function mergeMilestoneToMain(
   milestoneId: string,
   roadmapContent: string,
 ): { commitMessage: string; pushed: boolean; prCreated: boolean; codeFilesChanged: boolean } {
-  const worktreeCwd = process.cwd();
-  const milestoneBranch = autoWorktreeBranch(milestoneId);
-
-  // 1. Auto-commit dirty state in worktree before leaving
-  autoCommitDirtyState(worktreeCwd);
-
-  // Reconcile worktree DB into main DB before leaving worktree context.
-  // Skip when both paths resolve to the same physical file (shared WAL /
-  // symlink layout) — ATTACHing a WAL-mode file to itself corrupts the
-  // database (#2823).
-  if (isDbAvailable()) {
-    try {
-      const worktreeDbPath = join(worktreeCwd, ".gsd", "gsd.db");
-      const mainDbPath = join(originalBasePath_, ".gsd", "gsd.db");
-      if (!isSamePath(worktreeDbPath, mainDbPath)) {
-        reconcileWorktreeDb(mainDbPath, worktreeDbPath);
+  return withSpan("gsd.worktree.merge", (span) => {
+    span.setAttributes({
+      [GSD.WORKTREE_ACTION]: "merge",
+      [GSD.STATE_MILESTONE]: milestoneId,
+      [GSD.CWD]: process.cwd(),
+      [GSD.WORKTREE_PATH]: process.cwd(),
+    });
+    const worktreeCwd = process.cwd();
+    const milestoneBranch = autoWorktreeBranch(milestoneId);
+  
+    // 1. Auto-commit dirty state in worktree before leaving
+    autoCommitDirtyState(worktreeCwd);
+  
+    // Reconcile worktree DB into main DB before leaving worktree context.
+    // Skip when both paths resolve to the same physical file (shared WAL /
+    // symlink layout) — ATTACHing a WAL-mode file to itself corrupts the
+    // database (#2823).
+    if (isDbAvailable()) {
+      try {
+        const worktreeDbPath = join(worktreeCwd, ".gsd", "gsd.db");
+        const mainDbPath = join(originalBasePath_, ".gsd", "gsd.db");
+        if (!isSamePath(worktreeDbPath, mainDbPath)) {
+          reconcileWorktreeDb(mainDbPath, worktreeDbPath);
+        }
+      } catch (err) {
+        /* non-fatal */
+        logError("worktree", `DB reconciliation failed: ${err instanceof Error ? err.message : String(err)}`);
       }
-    } catch (err) {
-      /* non-fatal */
-      logError("worktree", `DB reconciliation failed: ${err instanceof Error ? err.message : String(err)}`);
     }
-  }
-
-  // 2. Get completed slices for commit message
-  let completedSlices: { id: string; title: string }[] = [];
-  if (isDbAvailable()) {
-    completedSlices = getMilestoneSlices(milestoneId)
-      .filter(s => s.status === "complete")
-      .map(s => ({ id: s.id, title: s.title }));
-  }
-  // Fallback: parse roadmap content when DB is unavailable
-  if (completedSlices.length === 0 && roadmapContent) {
-    const sliceRe = /- \[x\] \*\*(\w+):\s*(.+?)\*\*/gi;
-    let m: RegExpExecArray | null;
-    while ((m = sliceRe.exec(roadmapContent)) !== null) {
-      completedSlices.push({ id: m[1], title: m[2] });
+  
+    // 2. Get completed slices for commit message
+    let completedSlices: { id: string; title: string }[] = [];
+    if (isDbAvailable()) {
+      completedSlices = getMilestoneSlices(milestoneId)
+        .filter(s => s.status === "complete")
+        .map(s => ({ id: s.id, title: s.title }));
     }
-  }
-
-  // 3. chdir to original base
-  const previousCwd = process.cwd();
-  process.chdir(originalBasePath_);
-
-  // 4. Resolve integration branch — prefer milestone metadata, then preferences,
-  //    then auto-detect (origin/HEAD → main → master → current). Never hardcode
-  //    "main": repos using "master" or a custom default branch would fail at
-  //    checkout and leave the user with a broken merge state (#1668).
-  const prefs = loadEffectiveGSDPreferences()?.preferences?.git ?? {};
-  const integrationBranch = readIntegrationBranch(
-    originalBasePath_,
-    milestoneId,
-  );
-  // Validate prefs.main_branch exists before using it — a stale preference
-  // (e.g. "master" when repo uses "main") causes merge failure (#3589).
-  const validatedPrefBranch = prefs.main_branch && nativeBranchExists(originalBasePath_, prefs.main_branch)
-    ? prefs.main_branch
-    : undefined;
-  const mainBranch =
-    integrationBranch ?? validatedPrefBranch ?? nativeDetectMainBranch(originalBasePath_);
-
-  // Remove transient project-root state files before any branch or merge
-  // operation. Untracked milestone metadata can otherwise block squash merges.
-  clearProjectRootStateFiles(originalBasePath_, milestoneId);
-
-  // 5. Checkout integration branch (skip if already current — avoids git error
-  //    when main is already checked out in the project-root worktree, #757)
-  const currentBranchAtBase = nativeGetCurrentBranch(originalBasePath_);
-  if (currentBranchAtBase !== mainBranch) {
-    nativeCheckoutBranch(originalBasePath_, mainBranch);
-  }
-
-  // 6. Build rich commit message
-  const dbMilestone = getMilestone(milestoneId);
-  let milestoneTitle =
-    (dbMilestone?.title ?? "").replace(/^M\d+:\s*/, "").trim();
-  // Fallback: parse title from roadmap content header (e.g. "# M020: Backend foundation")
-  if (!milestoneTitle && roadmapContent) {
-    const titleMatch = roadmapContent.match(new RegExp(`^#\\s+${milestoneId}:\\s*(.+)`, "m"));
-    if (titleMatch) milestoneTitle = titleMatch[1].trim();
-  }
-  milestoneTitle = milestoneTitle || milestoneId;
-  const subject = `feat: ${milestoneTitle}`;
-  let body = "";
-  if (completedSlices.length > 0) {
-    const sliceLines = completedSlices
-      .map((s) => `- ${s.id}: ${s.title}`)
-      .join("\n");
-    body = `\n\nCompleted slices:\n${sliceLines}\n\nGSD-Milestone: ${milestoneId}\nBranch: ${milestoneBranch}`;
-  } else {
-    body = `\n\nGSD-Milestone: ${milestoneId}\nBranch: ${milestoneBranch}`;
-  }
-  const commitMessage = subject + body;
-
-  // 6b. Reconcile worktree HEAD with milestone branch ref (#1846).
-  //     When the worktree HEAD detaches and advances past the named branch,
-  //     the branch ref becomes stale. Squash-merging the stale ref silently
-  //     orphans all commits between the branch ref and the actual worktree HEAD.
-  //     Fix: fast-forward the branch ref to the worktree HEAD before merging.
-  //     Only applies when merging from an actual worktree (worktreeCwd differs
-  //     from originalBasePath_).
-  if (worktreeCwd !== originalBasePath_) {
+    // Fallback: parse roadmap content when DB is unavailable
+    if (completedSlices.length === 0 && roadmapContent) {
+      const sliceRe = /- \[x\] \*\*(\w+):\s*(.+?)\*\*/gi;
+      let m: RegExpExecArray | null;
+      while ((m = sliceRe.exec(roadmapContent)) !== null) {
+        completedSlices.push({ id: m[1], title: m[2] });
+      }
+    }
+  
+    // 3. chdir to original base
+    const previousCwd = process.cwd();
+    process.chdir(originalBasePath_);
+  
+    // 4. Resolve integration branch — prefer milestone metadata, then preferences,
+    //    then auto-detect (origin/HEAD → main → master → current). Never hardcode
+    //    "main": repos using "master" or a custom default branch would fail at
+    //    checkout and leave the user with a broken merge state (#1668).
+    const prefs = loadEffectiveGSDPreferences()?.preferences?.git ?? {};
+    const integrationBranch = readIntegrationBranch(
+      originalBasePath_,
+      milestoneId,
+    );
+    // Validate prefs.main_branch exists before using it — a stale preference
+    // (e.g. "master" when repo uses "main") causes merge failure (#3589).
+    const validatedPrefBranch = prefs.main_branch && nativeBranchExists(originalBasePath_, prefs.main_branch)
+      ? prefs.main_branch
+      : undefined;
+    const mainBranch =
+      integrationBranch ?? validatedPrefBranch ?? nativeDetectMainBranch(originalBasePath_);
+  
+    // Remove transient project-root state files before any branch or merge
+    // operation. Untracked milestone metadata can otherwise block squash merges.
+    clearProjectRootStateFiles(originalBasePath_, milestoneId);
+  
+    // 5. Checkout integration branch (skip if already current — avoids git error
+    //    when main is already checked out in the project-root worktree, #757)
+    const currentBranchAtBase = nativeGetCurrentBranch(originalBasePath_);
+    if (currentBranchAtBase !== mainBranch) {
+      nativeCheckoutBranch(originalBasePath_, mainBranch);
+    }
+  
+    // 6. Build rich commit message
+    const dbMilestone = getMilestone(milestoneId);
+    let milestoneTitle =
+      (dbMilestone?.title ?? "").replace(/^M\d+:\s*/, "").trim();
+    // Fallback: parse title from roadmap content header (e.g. "# M020: Backend foundation")
+    if (!milestoneTitle && roadmapContent) {
+      const titleMatch = roadmapContent.match(new RegExp(`^#\\s+${milestoneId}:\\s*(.+)`, "m"));
+      if (titleMatch) milestoneTitle = titleMatch[1].trim();
+    }
+    milestoneTitle = milestoneTitle || milestoneId;
+    const subject = `feat: ${milestoneTitle}`;
+    let body = "";
+    if (completedSlices.length > 0) {
+      const sliceLines = completedSlices
+        .map((s) => `- ${s.id}: ${s.title}`)
+        .join("\n");
+      body = `\n\nCompleted slices:\n${sliceLines}\n\nGSD-Milestone: ${milestoneId}\nBranch: ${milestoneBranch}`;
+    } else {
+      body = `\n\nGSD-Milestone: ${milestoneId}\nBranch: ${milestoneBranch}`;
+    }
+    const commitMessage = subject + body;
+  
+    // 6b. Reconcile worktree HEAD with milestone branch ref (#1846).
+    //     When the worktree HEAD detaches and advances past the named branch,
+    //     the branch ref becomes stale. Squash-merging the stale ref silently
+    //     orphans all commits between the branch ref and the actual worktree HEAD.
+    //     Fix: fast-forward the branch ref to the worktree HEAD before merging.
+    //     Only applies when merging from an actual worktree (worktreeCwd differs
+    //     from originalBasePath_).
+    if (worktreeCwd !== originalBasePath_) {
+      try {
+        const worktreeHead = execFileSync("git", ["rev-parse", "HEAD"], {
+          cwd: worktreeCwd,
+          stdio: ["ignore", "pipe", "pipe"],
+          encoding: "utf-8",
+        }).trim();
+        const branchHead = execFileSync("git", ["rev-parse", milestoneBranch], {
+          cwd: originalBasePath_,
+          stdio: ["ignore", "pipe", "pipe"],
+          encoding: "utf-8",
+        }).trim();
+  
+        if (worktreeHead && branchHead && worktreeHead !== branchHead) {
+          if (nativeIsAncestor(originalBasePath_, branchHead, worktreeHead)) {
+            // Worktree HEAD is strictly ahead — fast-forward the branch ref
+            nativeUpdateRef(
+              originalBasePath_,
+              `refs/heads/${milestoneBranch}`,
+              worktreeHead,
+            );
+            debugLog("mergeMilestoneToMain", {
+              action: "fast-forward-branch-ref",
+              milestoneBranch,
+              oldRef: branchHead.slice(0, 8),
+              newRef: worktreeHead.slice(0, 8),
+            });
+          } else {
+            // Diverged — fail loudly rather than silently losing commits
+            process.chdir(previousCwd);
+            throw new GSDError(
+              GSD_GIT_ERROR,
+              `Worktree HEAD (${worktreeHead.slice(0, 8)}) diverged from ` +
+                `${milestoneBranch} (${branchHead.slice(0, 8)}). ` +
+                `Manual reconciliation required before merge.`,
+            );
+          }
+        }
+      } catch (err) {
+        // Re-throw GSDError (divergence); swallow rev-parse failures
+        // (e.g. worktree dir already removed by external cleanup)
+        if (err instanceof GSDError) throw err;
+        debugLog("mergeMilestoneToMain", {
+          action: "reconcile-skipped",
+          reason: String(err),
+        });
+      }
+    }
+  
+    // 7. Stash any pre-existing dirty files so the squash merge is not
+    //    blocked by unrelated local changes (#2151).  clearProjectRootStateFiles
+    //    only removes untracked .gsd/ files; tracked dirty files elsewhere (e.g.
+    //    .planning/work-state.json with stash conflict markers) are invisible to
+    //    that cleanup but will cause `git merge --squash` to reject.
+    let stashed = false;
     try {
-      const worktreeHead = execFileSync("git", ["rev-parse", "HEAD"], {
-        cwd: worktreeCwd,
-        stdio: ["ignore", "pipe", "pipe"],
-        encoding: "utf-8",
-      }).trim();
-      const branchHead = execFileSync("git", ["rev-parse", milestoneBranch], {
+      const status = execFileSync("git", ["status", "--porcelain"], {
         cwd: originalBasePath_,
         stdio: ["ignore", "pipe", "pipe"],
         encoding: "utf-8",
       }).trim();
-
-      if (worktreeHead && branchHead && worktreeHead !== branchHead) {
-        if (nativeIsAncestor(originalBasePath_, branchHead, worktreeHead)) {
-          // Worktree HEAD is strictly ahead — fast-forward the branch ref
-          nativeUpdateRef(
-            originalBasePath_,
-            `refs/heads/${milestoneBranch}`,
-            worktreeHead,
-          );
-          debugLog("mergeMilestoneToMain", {
-            action: "fast-forward-branch-ref",
-            milestoneBranch,
-            oldRef: branchHead.slice(0, 8),
-            newRef: worktreeHead.slice(0, 8),
-          });
-        } else {
-          // Diverged — fail loudly rather than silently losing commits
-          process.chdir(previousCwd);
-          throw new GSDError(
-            GSD_GIT_ERROR,
-            `Worktree HEAD (${worktreeHead.slice(0, 8)}) diverged from ` +
-              `${milestoneBranch} (${branchHead.slice(0, 8)}). ` +
-              `Manual reconciliation required before merge.`,
-          );
-        }
+      if (status) {
+        // Use --include-untracked to stash untracked files that would block
+        // the squash merge, but EXCLUDE .gsd/milestones/ (#2505).
+        // --include-untracked without exclusion sweeps queued milestone
+        // CONTEXT files into the stash. If stash pop later fails, those files
+        // are permanently trapped in the stash entry and lost on the next
+        // stash push or drop.
+        execFileSync(
+          "git",
+          [
+            "stash", "push", "--include-untracked",
+            "-m", `gsd: pre-merge stash for ${milestoneId}`,
+            "--", ":(exclude).gsd/milestones",
+          ],
+          { cwd: originalBasePath_, stdio: ["ignore", "pipe", "pipe"], encoding: "utf-8" },
+        );
+        stashed = true;
       }
     } catch (err) {
-      // Re-throw GSDError (divergence); swallow rev-parse failures
-      // (e.g. worktree dir already removed by external cleanup)
-      if (err instanceof GSDError) throw err;
-      debugLog("mergeMilestoneToMain", {
-        action: "reconcile-skipped",
-        reason: String(err),
-      });
+      // Stash failure is non-fatal — proceed without stash and let the merge
+      // report the dirty tree if it fails.
+      logWarning("worktree", `git stash failed: ${err instanceof Error ? err.message : String(err)}`);
     }
-  }
-
-  // 7. Stash any pre-existing dirty files so the squash merge is not
-  //    blocked by unrelated local changes (#2151).  clearProjectRootStateFiles
-  //    only removes untracked .gsd/ files; tracked dirty files elsewhere (e.g.
-  //    .planning/work-state.json with stash conflict markers) are invisible to
-  //    that cleanup but will cause `git merge --squash` to reject.
-  let stashed = false;
-  try {
-    const status = execFileSync("git", ["status", "--porcelain"], {
-      cwd: originalBasePath_,
-      stdio: ["ignore", "pipe", "pipe"],
-      encoding: "utf-8",
-    }).trim();
-    if (status) {
-      // Use --include-untracked to stash untracked files that would block
-      // the squash merge, but EXCLUDE .gsd/milestones/ (#2505).
-      // --include-untracked without exclusion sweeps queued milestone
-      // CONTEXT files into the stash. If stash pop later fails, those files
-      // are permanently trapped in the stash entry and lost on the next
-      // stash push or drop.
-      execFileSync(
-        "git",
-        [
-          "stash", "push", "--include-untracked",
-          "-m", `gsd: pre-merge stash for ${milestoneId}`,
-          "--", ":(exclude).gsd/milestones",
-        ],
-        { cwd: originalBasePath_, stdio: ["ignore", "pipe", "pipe"], encoding: "utf-8" },
-      );
-      stashed = true;
-    }
-  } catch (err) {
-    // Stash failure is non-fatal — proceed without stash and let the merge
-    // report the dirty tree if it fails.
-    logWarning("worktree", `git stash failed: ${err instanceof Error ? err.message : String(err)}`);
-  }
-
-  // 7a. Shelter queued milestone directories before the squash merge (#2505).
-  // The milestone branch may contain copies of queued milestone dirs (via
-  // copyPlanningArtifacts), so `git merge --squash` rejects when those same
-  // files exist as untracked in the working tree. Temporarily move them to
-  // a backup location, then restore after the merge+commit.
-  const milestonesDir = join(gsdRoot(originalBasePath_), "milestones");
-  const shelterDir = join(gsdRoot(originalBasePath_), ".milestone-shelter");
-  const shelteredDirs: string[] = [];
-
-  // Helper: restore sheltered milestone directories (#2505).
-  // Called on both success and error paths to ensure queued CONTEXT files
-  // are never permanently lost.
-  const restoreShelter = (): void => {
-    if (shelteredDirs.length === 0) return;
-    for (const dirName of shelteredDirs) {
-      try {
-        mkdirSync(milestonesDir, { recursive: true });
-        cpSync(join(shelterDir, dirName), join(milestonesDir, dirName), { recursive: true, force: true });
-      } catch (err) { /* best-effort */
-        logError("worktree", `shelter restore failed: ${err instanceof Error ? err.message : String(err)}`);
-      }
-    }
-    try { rmSync(shelterDir, { recursive: true, force: true }); } catch (err) { /* best-effort */
-      logWarning("worktree", `shelter cleanup failed: ${err instanceof Error ? err.message : String(err)}`);
-    }
-  };
-
-  try {
-    if (existsSync(milestonesDir)) {
-      const entries = readdirSync(milestonesDir, { withFileTypes: true });
-      for (const entry of entries) {
-        if (!entry.isDirectory()) continue;
-        // Only shelter directories that do NOT belong to the milestone being merged
-        if (entry.name === milestoneId) continue;
-        const srcDir = join(milestonesDir, entry.name);
-        const dstDir = join(shelterDir, entry.name);
+  
+    // 7a. Shelter queued milestone directories before the squash merge (#2505).
+    // The milestone branch may contain copies of queued milestone dirs (via
+    // copyPlanningArtifacts), so `git merge --squash` rejects when those same
+    // files exist as untracked in the working tree. Temporarily move them to
+    // a backup location, then restore after the merge+commit.
+    const milestonesDir = join(gsdRoot(originalBasePath_), "milestones");
+    const shelterDir = join(gsdRoot(originalBasePath_), ".milestone-shelter");
+    const shelteredDirs: string[] = [];
+  
+    // Helper: restore sheltered milestone directories (#2505).
+    // Called on both success and error paths to ensure queued CONTEXT files
+    // are never permanently lost.
+    const restoreShelter = (): void => {
+      if (shelteredDirs.length === 0) return;
+      for (const dirName of shelteredDirs) {
         try {
-          mkdirSync(shelterDir, { recursive: true });
-          cpSync(srcDir, dstDir, { recursive: true, force: true });
-          rmSync(srcDir, { recursive: true, force: true });
-          shelteredDirs.push(entry.name);
-        } catch (err) {
-          // Non-fatal — if shelter fails, the merge may still succeed
-          logWarning("worktree", `milestone shelter failed (${entry.name}): ${err instanceof Error ? err.message : String(err)}`);
+          mkdirSync(milestonesDir, { recursive: true });
+          cpSync(join(shelterDir, dirName), join(milestonesDir, dirName), { recursive: true, force: true });
+        } catch (err) { /* best-effort */
+          logError("worktree", `shelter restore failed: ${err instanceof Error ? err.message : String(err)}`);
         }
       }
-    }
-  } catch (err) {
-    // Non-fatal — proceed with merge; untracked files may block it
-    logWarning("worktree", `milestone shelter operation failed: ${err instanceof Error ? err.message : String(err)}`);
-  }
-
-  // 7b. Clean up stale merge state before attempting squash merge (#2912).
-  // A leftover MERGE_HEAD (from a previous failed merge, libgit2 native path,
-  // or interrupted operation) causes `git merge --squash` to refuse with
-  // "fatal: You have not concluded your merge (MERGE_HEAD exists)".
-  // Defensively remove merge artifacts before starting.
-  try {
-    const gitDir_ = resolveGitDir(originalBasePath_);
-    for (const f of ["SQUASH_MSG", "MERGE_MSG", "MERGE_HEAD"]) {
-      const p = join(gitDir_, f);
-      if (existsSync(p)) unlinkSync(p);
-    }
-  } catch (err) { /* best-effort */
-    logError("worktree", `merge state cleanup failed: ${err instanceof Error ? err.message : String(err)}`);
-  }
-
-  // 8. Squash merge — auto-resolve .gsd/ state file conflicts (#530)
-  const mergeResult = nativeMergeSquash(originalBasePath_, milestoneBranch);
-
-  if (!mergeResult.success) {
-    // Dirty working tree — the merge was rejected before it started (e.g.
-    // untracked .gsd/ files left by syncStateToProjectRoot).  Preserve the
-    // milestone branch so commits are not lost.
-    if (mergeResult.conflicts.includes("__dirty_working_tree__")) {
-      // Defensively clean merge state — the native path may leave MERGE_HEAD
-      // even when the merge is rejected (#2912).
-      try {
-        const gitDir_ = resolveGitDir(originalBasePath_);
-        for (const f of ["SQUASH_MSG", "MERGE_MSG", "MERGE_HEAD"]) {
-          const p = join(gitDir_, f);
-          if (existsSync(p)) unlinkSync(p);
-        }
-      } catch (err) { /* best-effort */
-        logError("worktree", `merge state cleanup failed: ${err instanceof Error ? err.message : String(err)}`);
+      try { rmSync(shelterDir, { recursive: true, force: true }); } catch (err) { /* best-effort */
+        logWarning("worktree", `shelter cleanup failed: ${err instanceof Error ? err.message : String(err)}`);
       }
-
-      // Pop stash before throwing so local work is not lost.
-      if (stashed) {
-        try {
-          execFileSync("git", ["stash", "pop"], {
-            cwd: originalBasePath_,
-            stdio: ["ignore", "pipe", "pipe"],
-            encoding: "utf-8",
-          });
-        } catch (err) { /* stash pop conflict is non-fatal */
-          logWarning("worktree", `git stash pop failed: ${err instanceof Error ? err.message : String(err)}`);
-        }
-      }
-      restoreShelter();
-      // Restore cwd so the caller is not stranded on the integration branch
-      process.chdir(previousCwd);
-      // Surface the actual dirty filenames from git stderr instead of
-      // generically blaming .gsd/ (#2151).
-      const fileList = mergeResult.dirtyFiles?.length
-        ? `Dirty files:\n${mergeResult.dirtyFiles.map((f) => `  ${f}`).join("\n")}`
-        : `Check \`git status\` in the project root for details.`;
-      throw new GSDError(
-        GSD_GIT_ERROR,
-        `Squash merge of ${milestoneBranch} rejected: working tree has dirty or untracked files ` +
-          `that conflict with the merge. ${fileList}`,
-      );
-    }
-
-    // Check for conflicts — use merge result first, fall back to nativeConflictFiles
-    const conflictedFiles =
-      mergeResult.conflicts.length > 0
-        ? mergeResult.conflicts
-        : nativeConflictFiles(originalBasePath_);
-
-    if (conflictedFiles.length > 0) {
-      // Separate auto-resolvable conflicts (GSD state files + build artifacts)
-      // from real code conflicts. GSD state files diverge between branches
-      // during normal operation. Build artifacts are machine-generated and
-      // regenerable. Both are safe to accept from the milestone branch.
-      const autoResolvable = conflictedFiles.filter(isSafeToAutoResolve);
-      const codeConflicts = conflictedFiles.filter(
-        (f) => !isSafeToAutoResolve(f),
-      );
-
-      // Auto-resolve safe conflicts by accepting the milestone branch version
-      if (autoResolvable.length > 0) {
-        for (const safeFile of autoResolvable) {
+    };
+  
+    try {
+      if (existsSync(milestonesDir)) {
+        const entries = readdirSync(milestonesDir, { withFileTypes: true });
+        for (const entry of entries) {
+          if (!entry.isDirectory()) continue;
+          // Only shelter directories that do NOT belong to the milestone being merged
+          if (entry.name === milestoneId) continue;
+          const srcDir = join(milestonesDir, entry.name);
+          const dstDir = join(shelterDir, entry.name);
           try {
-            nativeCheckoutTheirs(originalBasePath_, [safeFile]);
-            nativeAddPaths(originalBasePath_, [safeFile]);
-          } catch (e) {
-            // If checkout --theirs fails, try removing the file from the merge
-            // (it's a runtime file that shouldn't be committed anyway)
-            logWarning("worktree", `checkout --theirs failed for ${safeFile}, removing: ${(e as Error).message}`);
-            nativeRmForce(originalBasePath_, [safeFile]);
+            mkdirSync(shelterDir, { recursive: true });
+            cpSync(srcDir, dstDir, { recursive: true, force: true });
+            rmSync(srcDir, { recursive: true, force: true });
+            shelteredDirs.push(entry.name);
+          } catch (err) {
+            // Non-fatal — if shelter fails, the merge may still succeed
+            logWarning("worktree", `milestone shelter failed (${entry.name}): ${err instanceof Error ? err.message : String(err)}`);
           }
         }
       }
-
-      // If there are still real code conflicts, escalate
-      if (codeConflicts.length > 0) {
-        // Abort merge state so MERGE_HEAD is not left on disk (#2912).
-        // libgit2's merge creates MERGE_HEAD even for squash merges; if left
-        // dangling, subsequent merges fail and doctor reports corrupt state.
-        try { nativeMergeAbort(originalBasePath_); } catch (err) { /* best-effort */
-          logError("worktree", `git merge-abort failed: ${err instanceof Error ? err.message : String(err)}`);
-        }
+    } catch (err) {
+      // Non-fatal — proceed with merge; untracked files may block it
+      logWarning("worktree", `milestone shelter operation failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  
+    // 7b. Clean up stale merge state before attempting squash merge (#2912).
+    // A leftover MERGE_HEAD (from a previous failed merge, libgit2 native path,
+    // or interrupted operation) causes `git merge --squash` to refuse with
+    // "fatal: You have not concluded your merge (MERGE_HEAD exists)".
+    // Defensively remove merge artifacts before starting.
+    try {
+      const gitDir_ = resolveGitDir(originalBasePath_);
+      for (const f of ["SQUASH_MSG", "MERGE_MSG", "MERGE_HEAD"]) {
+        const p = join(gitDir_, f);
+        if (existsSync(p)) unlinkSync(p);
+      }
+    } catch (err) { /* best-effort */
+      logError("worktree", `merge state cleanup failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  
+    // 8. Squash merge — auto-resolve .gsd/ state file conflicts (#530)
+    const mergeResult = nativeMergeSquash(originalBasePath_, milestoneBranch);
+  
+    if (!mergeResult.success) {
+      // Dirty working tree — the merge was rejected before it started (e.g.
+      // untracked .gsd/ files left by syncStateToProjectRoot).  Preserve the
+      // milestone branch so commits are not lost.
+      if (mergeResult.conflicts.includes("__dirty_working_tree__")) {
+        // Defensively clean merge state — the native path may leave MERGE_HEAD
+        // even when the merge is rejected (#2912).
         try {
           const gitDir_ = resolveGitDir(originalBasePath_);
           for (const f of ["SQUASH_MSG", "MERGE_MSG", "MERGE_HEAD"]) {
@@ -1762,10 +1694,10 @@ export function mergeMilestoneToMain(
             if (existsSync(p)) unlinkSync(p);
           }
         } catch (err) { /* best-effort */
-          logError("worktree", `merge state file cleanup failed: ${err instanceof Error ? err.message : String(err)}`);
+          logError("worktree", `merge state cleanup failed: ${err instanceof Error ? err.message : String(err)}`);
         }
-
-        // Pop stash before throwing so local work is not lost (#2151).
+  
+        // Pop stash before throwing so local work is not lost.
         if (stashed) {
           try {
             execFileSync("git", ["stash", "pop"], {
@@ -1778,246 +1710,324 @@ export function mergeMilestoneToMain(
           }
         }
         restoreShelter();
-        throw new MergeConflictError(
-          codeConflicts,
-          "squash",
-          milestoneBranch,
-          mainBranch,
+        // Restore cwd so the caller is not stranded on the integration branch
+        process.chdir(previousCwd);
+        // Surface the actual dirty filenames from git stderr instead of
+        // generically blaming .gsd/ (#2151).
+        const fileList = mergeResult.dirtyFiles?.length
+          ? `Dirty files:\n${mergeResult.dirtyFiles.map((f) => `  ${f}`).join("\n")}`
+          : `Check \`git status\` in the project root for details.`;
+        throw new GSDError(
+          GSD_GIT_ERROR,
+          `Squash merge of ${milestoneBranch} rejected: working tree has dirty or untracked files ` +
+            `that conflict with the merge. ${fileList}`,
         );
       }
-    }
-    // No conflicts detected — possibly "already up to date", fall through to commit
-  }
-
-  // 9. Commit (handle nothing-to-commit gracefully)
-  const commitResult = nativeCommit(originalBasePath_, commitMessage);
-  const nothingToCommit = commitResult === null;
-
-  // 9a. Clean up merge state files left by git merge --squash (#1853, #2912).
-  // git only removes SQUASH_MSG when the commit reads it directly (plain
-  // `git commit`).  nativeCommit uses `-F -` (stdin) or libgit2, neither
-  // of which trigger git's SQUASH_MSG cleanup.  MERGE_HEAD is created by
-  // libgit2's merge even in squash mode and is not removed by nativeCommit.
-  // If left on disk, doctor reports `corrupt_merge_state` on every subsequent run.
-  try {
-    const gitDir_ = resolveGitDir(originalBasePath_);
-    for (const f of ["SQUASH_MSG", "MERGE_MSG", "MERGE_HEAD"]) {
-      const p = join(gitDir_, f);
-      if (existsSync(p)) unlinkSync(p);
-    }
-  } catch (err) { /* best-effort */
-    logError("worktree", `post-commit merge state cleanup failed: ${err instanceof Error ? err.message : String(err)}`);
-  }
-
-  // 9a-ii. Restore stashed files now that the merge+commit is complete (#2151).
-  // Pop after commit so stashed changes do not interfere with the squash merge
-  // or the commit content.  Conflict on pop is non-fatal — the stash entry is
-  // preserved and the user can resolve manually with `git stash pop`.
-  if (stashed) {
-    try {
-      execFileSync("git", ["stash", "pop"], {
-        cwd: originalBasePath_,
-        stdio: ["ignore", "pipe", "pipe"],
-        encoding: "utf-8",
-      });
-    } catch (e) {
-      logWarning("worktree", `git stash pop failed, attempting conflict resolution: ${(e as Error).message}`);
-      // Stash pop after squash merge can conflict on .gsd/ state files that
-      // diverged between branches.  Left unresolved, these UU entries block
-      // every subsequent merge.  Auto-resolve them the same way we handle
-      // .gsd/ conflicts during the merge itself: accept HEAD (the just-committed
-      // version) and drop the now-applied stash.
-      const uu = nativeConflictFiles(originalBasePath_);
-      const gsdUU = uu.filter((f) => f.startsWith(".gsd/"));
-      const nonGsdUU = uu.filter((f) => !f.startsWith(".gsd/"));
-
-      if (gsdUU.length > 0) {
-        for (const f of gsdUU) {
+  
+      // Check for conflicts — use merge result first, fall back to nativeConflictFiles
+      const conflictedFiles =
+        mergeResult.conflicts.length > 0
+          ? mergeResult.conflicts
+          : nativeConflictFiles(originalBasePath_);
+  
+      if (conflictedFiles.length > 0) {
+        // Separate auto-resolvable conflicts (GSD state files + build artifacts)
+        // from real code conflicts. GSD state files diverge between branches
+        // during normal operation. Build artifacts are machine-generated and
+        // regenerable. Both are safe to accept from the milestone branch.
+        const autoResolvable = conflictedFiles.filter(isSafeToAutoResolve);
+        const codeConflicts = conflictedFiles.filter(
+          (f) => !isSafeToAutoResolve(f),
+        );
+  
+        // Auto-resolve safe conflicts by accepting the milestone branch version
+        if (autoResolvable.length > 0) {
+          for (const safeFile of autoResolvable) {
+            try {
+              nativeCheckoutTheirs(originalBasePath_, [safeFile]);
+              nativeAddPaths(originalBasePath_, [safeFile]);
+            } catch (e) {
+              // If checkout --theirs fails, try removing the file from the merge
+              // (it's a runtime file that shouldn't be committed anyway)
+              logWarning("worktree", `checkout --theirs failed for ${safeFile}, removing: ${(e as Error).message}`);
+              nativeRmForce(originalBasePath_, [safeFile]);
+            }
+          }
+        }
+  
+        // If there are still real code conflicts, escalate
+        if (codeConflicts.length > 0) {
+          // Abort merge state so MERGE_HEAD is not left on disk (#2912).
+          // libgit2's merge creates MERGE_HEAD even for squash merges; if left
+          // dangling, subsequent merges fail and doctor reports corrupt state.
+          try { nativeMergeAbort(originalBasePath_); } catch (err) { /* best-effort */
+            logError("worktree", `git merge-abort failed: ${err instanceof Error ? err.message : String(err)}`);
+          }
           try {
-            // Accept the committed (HEAD) version of the state file
-            execFileSync("git", ["checkout", "HEAD", "--", f], {
+            const gitDir_ = resolveGitDir(originalBasePath_);
+            for (const f of ["SQUASH_MSG", "MERGE_MSG", "MERGE_HEAD"]) {
+              const p = join(gitDir_, f);
+              if (existsSync(p)) unlinkSync(p);
+            }
+          } catch (err) { /* best-effort */
+            logError("worktree", `merge state file cleanup failed: ${err instanceof Error ? err.message : String(err)}`);
+          }
+  
+          // Pop stash before throwing so local work is not lost (#2151).
+          if (stashed) {
+            try {
+              execFileSync("git", ["stash", "pop"], {
+                cwd: originalBasePath_,
+                stdio: ["ignore", "pipe", "pipe"],
+                encoding: "utf-8",
+              });
+            } catch (err) { /* stash pop conflict is non-fatal */
+              logWarning("worktree", `git stash pop failed: ${err instanceof Error ? err.message : String(err)}`);
+            }
+          }
+          restoreShelter();
+          throw new MergeConflictError(
+            codeConflicts,
+            "squash",
+            milestoneBranch,
+            mainBranch,
+          );
+        }
+      }
+      // No conflicts detected — possibly "already up to date", fall through to commit
+    }
+  
+    // 9. Commit (handle nothing-to-commit gracefully)
+    const commitResult = nativeCommit(originalBasePath_, commitMessage);
+    const nothingToCommit = commitResult === null;
+  
+    // 9a. Clean up merge state files left by git merge --squash (#1853, #2912).
+    // git only removes SQUASH_MSG when the commit reads it directly (plain
+    // `git commit`).  nativeCommit uses `-F -` (stdin) or libgit2, neither
+    // of which trigger git's SQUASH_MSG cleanup.  MERGE_HEAD is created by
+    // libgit2's merge even in squash mode and is not removed by nativeCommit.
+    // If left on disk, doctor reports `corrupt_merge_state` on every subsequent run.
+    try {
+      const gitDir_ = resolveGitDir(originalBasePath_);
+      for (const f of ["SQUASH_MSG", "MERGE_MSG", "MERGE_HEAD"]) {
+        const p = join(gitDir_, f);
+        if (existsSync(p)) unlinkSync(p);
+      }
+    } catch (err) { /* best-effort */
+      logError("worktree", `post-commit merge state cleanup failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  
+    // 9a-ii. Restore stashed files now that the merge+commit is complete (#2151).
+    // Pop after commit so stashed changes do not interfere with the squash merge
+    // or the commit content.  Conflict on pop is non-fatal — the stash entry is
+    // preserved and the user can resolve manually with `git stash pop`.
+    if (stashed) {
+      try {
+        execFileSync("git", ["stash", "pop"], {
+          cwd: originalBasePath_,
+          stdio: ["ignore", "pipe", "pipe"],
+          encoding: "utf-8",
+        });
+      } catch (e) {
+        logWarning("worktree", `git stash pop failed, attempting conflict resolution: ${(e as Error).message}`);
+        // Stash pop after squash merge can conflict on .gsd/ state files that
+        // diverged between branches.  Left unresolved, these UU entries block
+        // every subsequent merge.  Auto-resolve them the same way we handle
+        // .gsd/ conflicts during the merge itself: accept HEAD (the just-committed
+        // version) and drop the now-applied stash.
+        const uu = nativeConflictFiles(originalBasePath_);
+        const gsdUU = uu.filter((f) => f.startsWith(".gsd/"));
+        const nonGsdUU = uu.filter((f) => !f.startsWith(".gsd/"));
+  
+        if (gsdUU.length > 0) {
+          for (const f of gsdUU) {
+            try {
+              // Accept the committed (HEAD) version of the state file
+              execFileSync("git", ["checkout", "HEAD", "--", f], {
+                cwd: originalBasePath_,
+                stdio: ["ignore", "pipe", "pipe"],
+                encoding: "utf-8",
+              });
+              nativeAddPaths(originalBasePath_, [f]);
+            } catch (e) {
+              // Last resort: remove the conflicted state file
+              logWarning("worktree", `checkout HEAD failed for ${f}, removing: ${(e as Error).message}`);
+              nativeRmForce(originalBasePath_, [f]);
+            }
+          }
+        }
+  
+        if (nonGsdUU.length === 0) {
+          // All conflicts were .gsd/ files — safe to drop the stash
+          try {
+            execFileSync("git", ["stash", "drop"], {
               cwd: originalBasePath_,
               stdio: ["ignore", "pipe", "pipe"],
               encoding: "utf-8",
             });
-            nativeAddPaths(originalBasePath_, [f]);
-          } catch (e) {
-            // Last resort: remove the conflicted state file
-            logWarning("worktree", `checkout HEAD failed for ${f}, removing: ${(e as Error).message}`);
-            nativeRmForce(originalBasePath_, [f]);
+          } catch (err) { /* stash may already be consumed */
+            logWarning("worktree", `git stash drop failed: ${err instanceof Error ? err.message : String(err)}`);
           }
-        }
-      }
-
-      if (nonGsdUU.length === 0) {
-        // All conflicts were .gsd/ files — safe to drop the stash
-        try {
-          execFileSync("git", ["stash", "drop"], {
-            cwd: originalBasePath_,
-            stdio: ["ignore", "pipe", "pipe"],
-            encoding: "utf-8",
+        } else {
+          // Non-.gsd conflicts remain — leave stash for manual resolution
+          logWarning("reconcile", "Stash pop conflict on non-.gsd files after merge", {
+            files: nonGsdUU.join(", "),
           });
-        } catch (err) { /* stash may already be consumed */
-          logWarning("worktree", `git stash drop failed: ${err instanceof Error ? err.message : String(err)}`);
         }
-      } else {
-        // Non-.gsd conflicts remain — leave stash for manual resolution
-        logWarning("reconcile", "Stash pop conflict on non-.gsd files after merge", {
-          files: nonGsdUU.join(", "),
-        });
       }
     }
-  }
-
-  // 9a-iii. Restore sheltered queued milestone directories (#2505).
-  restoreShelter();
-
-  // 9b. Safety check (#1792): if nothing was committed, verify the milestone
-  // work is already on the integration branch before allowing teardown.
-  // Compare only non-.gsd/ paths — .gsd/ state files diverge normally and
-  // are auto-resolved during the squash merge.
-  if (nothingToCommit) {
-    const numstat = nativeDiffNumstat(
-      originalBasePath_,
-      mainBranch,
-      milestoneBranch,
-    );
-    const codeChanges = numstat.filter(
-      (entry) => !entry.path.startsWith(".gsd/"),
-    );
-    if (codeChanges.length > 0) {
-      // Milestone has unanchored code changes — abort teardown.
-      process.chdir(previousCwd);
-      throw new GSDError(
-        GSD_GIT_ERROR,
-        `Squash merge produced nothing to commit but milestone branch "${milestoneBranch}" ` +
-          `has ${codeChanges.length} code file(s) not on "${mainBranch}". ` +
-          `Aborting worktree teardown to prevent data loss.`,
-      );
-    }
-  }
-
-  // 9c. Detect whether any non-.gsd/ code files were actually merged (#1906).
-  // When a milestone only produced .gsd/ metadata (summaries, roadmaps) but no
-  // real code, the user sees "milestone complete" but nothing changed in their
-  // codebase. Surface this so the caller can warn the user.
-  let codeFilesChanged = false;
-  if (!nothingToCommit) {
-    try {
-      const mergedFiles = nativeDiffNumstat(
+  
+    // 9a-iii. Restore sheltered queued milestone directories (#2505).
+    restoreShelter();
+  
+    // 9b. Safety check (#1792): if nothing was committed, verify the milestone
+    // work is already on the integration branch before allowing teardown.
+    // Compare only non-.gsd/ paths — .gsd/ state files diverge normally and
+    // are auto-resolved during the squash merge.
+    if (nothingToCommit) {
+      const numstat = nativeDiffNumstat(
         originalBasePath_,
-        "HEAD~1",
-        "HEAD",
+        mainBranch,
+        milestoneBranch,
       );
-      codeFilesChanged = mergedFiles.some(
+      const codeChanges = numstat.filter(
         (entry) => !entry.path.startsWith(".gsd/"),
       );
-    } catch (e) {
-      // If HEAD~1 doesn't exist (first commit), assume code was changed
-      logWarning("worktree", `diff numstat failed (assuming code changed): ${(e as Error).message}`);
-      codeFilesChanged = true;
-    }
-  }
-
-  // 10. Auto-push if enabled
-  let pushed = false;
-  if (prefs.auto_push === true && !nothingToCommit) {
-    const remote = prefs.remote ?? "origin";
-    try {
-      execFileSync("git", ["push", remote, mainBranch], {
-        cwd: originalBasePath_,
-        stdio: ["ignore", "pipe", "pipe"],
-        encoding: "utf-8",
-      });
-      pushed = true;
-    } catch (err) {
-      // Push failure is non-fatal
-      logWarning("worktree", `git push failed: ${err instanceof Error ? err.message : String(err)}`);
-    }
-  }
-
-  // 9b. Auto-create PR if enabled (#2302: no longer gated on pushed/auto_push)
-  let prCreated = false;
-  if (prefs.auto_pr === true && !nothingToCommit) {
-    const remote = prefs.remote ?? "origin";
-    const prTarget = prefs.pr_target_branch ?? mainBranch;
-    try {
-      // Push the milestone branch to remote first
-      execFileSync("git", ["push", remote, milestoneBranch], {
-        cwd: originalBasePath_,
-        stdio: ["ignore", "pipe", "pipe"],
-        encoding: "utf-8",
-      });
-      // Create PR via gh CLI with explicit --head and --base (#2302)
-      execFileSync("gh", [
-        "pr", "create", "--draft",
-        "--base", prTarget,
-        "--head", milestoneBranch,
-        "--title", `Milestone ${milestoneId} complete`,
-        "--body", "Auto-created by GSD on milestone completion.",
-      ], {
-        cwd: originalBasePath_,
-        stdio: ["ignore", "pipe", "pipe"],
-        encoding: "utf-8",
-      });
-      prCreated = true;
-    } catch (err) {
-      // PR creation failure is non-fatal — gh may not be installed or authenticated
-      logWarning("worktree", `PR creation failed: ${err instanceof Error ? err.message : String(err)}`);
-    }
-  }
-
-  // 11. Guard removed — step 9b (#1792) now handles this with a smarter check:
-  //     throws only when the milestone has unanchored code changes, passes
-  //     through when the code is genuinely already on the integration branch.
-
-  // 11a. Pre-teardown safety net (#1853): if the worktree still has uncommitted
-  // changes (e.g. nativeHasChanges cache returned stale false, or auto-commit
-  // silently failed), force one final commit so code is not destroyed by
-  // `git worktree remove --force`.
-  if (existsSync(worktreeCwd)) {
-    try {
-      const dirtyCheck = nativeWorkingTreeStatus(worktreeCwd);
-      if (dirtyCheck) {
-        debugLog("mergeMilestoneToMain", {
-          phase: "pre-teardown-dirty",
-          worktreeCwd,
-          status: dirtyCheck.slice(0, 200),
-        });
-        nativeAddAllWithExclusions(worktreeCwd, RUNTIME_EXCLUSION_PATHS);
-        nativeCommit(worktreeCwd, "chore: pre-teardown auto-commit of uncommitted worktree changes");
+      if (codeChanges.length > 0) {
+        // Milestone has unanchored code changes — abort teardown.
+        process.chdir(previousCwd);
+        throw new GSDError(
+          GSD_GIT_ERROR,
+          `Squash merge produced nothing to commit but milestone branch "${milestoneBranch}" ` +
+            `has ${codeChanges.length} code file(s) not on "${mainBranch}". ` +
+            `Aborting worktree teardown to prevent data loss.`,
+        );
       }
-    } catch (e) {
-      debugLog("mergeMilestoneToMain", {
-        phase: "pre-teardown-commit-error",
-        error: String(e),
-      });
     }
-  }
-
-  // 12. Remove worktree directory first (must happen before branch deletion)
-  try {
-    removeWorktree(originalBasePath_, milestoneId, {
-      branch: null as unknown as string,
-      deleteBranch: false,
-    });
-  } catch (err) {
-    // Best-effort -- worktree dir may already be gone
-    logWarning("worktree", `worktree removal failed: ${err instanceof Error ? err.message : String(err)}`);
-  }
-
-  // 13. Delete milestone branch (after worktree removal so ref is unlocked)
-  try {
-    nativeBranchDelete(originalBasePath_, milestoneBranch);
-  } catch (err) {
-    // Best-effort
-    logWarning("worktree", `git branch-delete failed: ${err instanceof Error ? err.message : String(err)}`);
-  }
-
-  // 14. Clear module state
-  originalBase = null;
-  nudgeGitBranchCache(previousCwd);
-
-  return { commitMessage, pushed, prCreated, codeFilesChanged };
+  
+    // 9c. Detect whether any non-.gsd/ code files were actually merged (#1906).
+    // When a milestone only produced .gsd/ metadata (summaries, roadmaps) but no
+    // real code, the user sees "milestone complete" but nothing changed in their
+    // codebase. Surface this so the caller can warn the user.
+    let codeFilesChanged = false;
+    if (!nothingToCommit) {
+      try {
+        const mergedFiles = nativeDiffNumstat(
+          originalBasePath_,
+          "HEAD~1",
+          "HEAD",
+        );
+        codeFilesChanged = mergedFiles.some(
+          (entry) => !entry.path.startsWith(".gsd/"),
+        );
+      } catch (e) {
+        // If HEAD~1 doesn't exist (first commit), assume code was changed
+        logWarning("worktree", `diff numstat failed (assuming code changed): ${(e as Error).message}`);
+        codeFilesChanged = true;
+      }
+    }
+  
+    // 10. Auto-push if enabled
+    let pushed = false;
+    if (prefs.auto_push === true && !nothingToCommit) {
+      const remote = prefs.remote ?? "origin";
+      try {
+        execFileSync("git", ["push", remote, mainBranch], {
+          cwd: originalBasePath_,
+          stdio: ["ignore", "pipe", "pipe"],
+          encoding: "utf-8",
+        });
+        pushed = true;
+      } catch (err) {
+        // Push failure is non-fatal
+        logWarning("worktree", `git push failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+  
+    // 9b. Auto-create PR if enabled (#2302: no longer gated on pushed/auto_push)
+    let prCreated = false;
+    if (prefs.auto_pr === true && !nothingToCommit) {
+      const remote = prefs.remote ?? "origin";
+      const prTarget = prefs.pr_target_branch ?? mainBranch;
+      try {
+        // Push the milestone branch to remote first
+        execFileSync("git", ["push", remote, milestoneBranch], {
+          cwd: originalBasePath_,
+          stdio: ["ignore", "pipe", "pipe"],
+          encoding: "utf-8",
+        });
+        // Create PR via gh CLI with explicit --head and --base (#2302)
+        execFileSync("gh", [
+          "pr", "create", "--draft",
+          "--base", prTarget,
+          "--head", milestoneBranch,
+          "--title", `Milestone ${milestoneId} complete`,
+          "--body", "Auto-created by GSD on milestone completion.",
+        ], {
+          cwd: originalBasePath_,
+          stdio: ["ignore", "pipe", "pipe"],
+          encoding: "utf-8",
+        });
+        prCreated = true;
+      } catch (err) {
+        // PR creation failure is non-fatal — gh may not be installed or authenticated
+        logWarning("worktree", `PR creation failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+  
+    // 11. Guard removed — step 9b (#1792) now handles this with a smarter check:
+    //     throws only when the milestone has unanchored code changes, passes
+    //     through when the code is genuinely already on the integration branch.
+  
+    // 11a. Pre-teardown safety net (#1853): if the worktree still has uncommitted
+    // changes (e.g. nativeHasChanges cache returned stale false, or auto-commit
+    // silently failed), force one final commit so code is not destroyed by
+    // `git worktree remove --force`.
+    if (existsSync(worktreeCwd)) {
+      try {
+        const dirtyCheck = nativeWorkingTreeStatus(worktreeCwd);
+        if (dirtyCheck) {
+          debugLog("mergeMilestoneToMain", {
+            phase: "pre-teardown-dirty",
+            worktreeCwd,
+            status: dirtyCheck.slice(0, 200),
+          });
+          nativeAddAllWithExclusions(worktreeCwd, RUNTIME_EXCLUSION_PATHS);
+          nativeCommit(worktreeCwd, "chore: pre-teardown auto-commit of uncommitted worktree changes");
+        }
+      } catch (e) {
+        debugLog("mergeMilestoneToMain", {
+          phase: "pre-teardown-commit-error",
+          error: String(e),
+        });
+      }
+    }
+  
+    // 12. Remove worktree directory first (must happen before branch deletion)
+    try {
+      removeWorktree(originalBasePath_, milestoneId, {
+        branch: null as unknown as string,
+        deleteBranch: false,
+      });
+    } catch (err) {
+      // Best-effort -- worktree dir may already be gone
+      logWarning("worktree", `worktree removal failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  
+    // 13. Delete milestone branch (after worktree removal so ref is unlocked)
+    try {
+      nativeBranchDelete(originalBasePath_, milestoneBranch);
+    } catch (err) {
+      // Best-effort
+      logWarning("worktree", `git branch-delete failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  
+    // 14. Clear module state
+    originalBase = null;
+    nudgeGitBranchCache(previousCwd);
+  
+    span.setAttribute(GSD.WORKTREE_MERGE_OK, true);
+    return { commitMessage, pushed, prCreated, codeFilesChanged };
+  }); // withSpan("gsd.worktree.merge")
 }
 
