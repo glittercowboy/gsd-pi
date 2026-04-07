@@ -29,6 +29,68 @@ import {
 import { debugLog } from "../debug-logger.js";
 import { isInfrastructureError } from "./infra-errors.js";
 import { resolveEngine } from "../engine-resolver.js";
+import { logWarning } from "../workflow-logger.js";
+import { gsdRoot } from "../paths.js";
+import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { join } from "node:path";
+
+// ── Stuck detection persistence (#3704) ──────────────────────────────────
+// Persist stuck detection state to disk so it survives session restarts.
+// Without this, restarting auto-mode resets all counters, allowing the
+// same blocked unit to burn a full retry budget each session.
+function stuckStatePath(basePath: string): string {
+  return join(gsdRoot(basePath), "runtime", "stuck-state.json");
+}
+
+function loadStuckState(basePath: string): { recentUnits: Array<{ key: string }>; stuckRecoveryAttempts: number } {
+  try {
+    const data = JSON.parse(readFileSync(stuckStatePath(basePath), "utf-8"));
+    return {
+      recentUnits: Array.isArray(data.recentUnits) ? data.recentUnits : [],
+      stuckRecoveryAttempts: typeof data.stuckRecoveryAttempts === "number" ? data.stuckRecoveryAttempts : 0,
+    };
+  } catch {
+    return { recentUnits: [], stuckRecoveryAttempts: 0 };
+  }
+}
+
+function saveStuckState(basePath: string, state: LoopState): void {
+  try {
+    const filePath = stuckStatePath(basePath);
+    mkdirSync(join(gsdRoot(basePath), "runtime"), { recursive: true });
+    writeFileSync(filePath, JSON.stringify({
+      recentUnits: state.recentUnits.slice(-20), // keep last 20 entries
+      stuckRecoveryAttempts: state.stuckRecoveryAttempts,
+      updatedAt: new Date().toISOString(),
+    }) + "\n");
+  } catch {
+    // Non-fatal — stuck detection still works within session
+  }
+}
+
+// ── Memory pressure monitoring (#3331) ──────────────────────────────────
+// Check heap usage every N iterations and trigger graceful shutdown before
+// the OS OOM killer sends SIGKILL. The threshold is 90% of the V8 heap
+// limit (--max-old-space-size or default ~1.5-4GB depending on platform).
+const MEMORY_CHECK_INTERVAL = 5; // check every 5 iterations
+const MEMORY_PRESSURE_THRESHOLD = 0.85; // 85% of heap limit
+
+function checkMemoryPressure(): { pressured: boolean; heapMB: number; limitMB: number; pct: number } {
+  const mem = process.memoryUsage();
+  // v8.getHeapStatistics() gives heap_size_limit but requires import
+  // Use a conservative estimate: RSS > 3GB is danger zone on most systems
+  const heapMB = Math.round(mem.heapUsed / 1024 / 1024);
+  const rssMB = Math.round(mem.rss / 1024 / 1024);
+  // Try to get the actual V8 heap limit
+  let limitMB = 4096; // conservative default
+  try {
+    const v8 = require("node:v8");
+    const stats = v8.getHeapStatistics();
+    limitMB = Math.round(stats.heap_size_limit / 1024 / 1024);
+  } catch { /* fallback to default */ }
+  const pct = heapMB / limitMB;
+  return { pressured: pct > MEMORY_PRESSURE_THRESHOLD, heapMB, limitMB, pct };
+}
 
 /**
  * Main auto-mode execution loop. Iterates: derive → dispatch → guards →
@@ -46,7 +108,13 @@ export async function autoLoop(
 ): Promise<void> {
   debugLog("autoLoop", { phase: "enter" });
   let iteration = 0;
-  const loopState: LoopState = { recentUnits: [], stuckRecoveryAttempts: 0, consecutiveFinalizeTimeouts: 0 };
+  // Load persisted stuck state so counters survive session restarts (#3704)
+  const persisted = loadStuckState(s.basePath);
+  const loopState: LoopState = {
+    recentUnits: persisted.recentUnits,
+    stuckRecoveryAttempts: persisted.stuckRecoveryAttempts,
+    consecutiveFinalizeTimeouts: 0,
+  };
   let consecutiveErrors = 0;
   const recentErrorMessages: string[] = [];
 
@@ -71,6 +139,24 @@ export async function autoLoop(
         `Safety: loop exceeded ${MAX_LOOP_ITERATIONS} iterations — possible runaway`,
       );
       break;
+    }
+
+    // ── Memory pressure check (#3331) ──
+    // Graceful shutdown before OOM killer sends SIGKILL.
+    if (iteration % MEMORY_CHECK_INTERVAL === 0) {
+      const mem = checkMemoryPressure();
+      debugLog("autoLoop", { phase: "memory-check", ...mem });
+      if (mem.pressured) {
+        logWarning("autoLoop", `Memory pressure: ${mem.heapMB}MB / ${mem.limitMB}MB (${Math.round(mem.pct * 100)}%) — stopping auto-mode to prevent OOM kill`);
+        await deps.stopAuto(
+          ctx,
+          pi,
+          `Memory pressure: heap at ${mem.heapMB}MB / ${mem.limitMB}MB (${Math.round(mem.pct * 100)}%). ` +
+          `Stopping gracefully to prevent OOM kill after ${iteration} iterations. ` +
+          `Resume with /gsd auto to continue from where you left off.`,
+        );
+        break;
+      }
     }
 
     if (!s.cmdCtx) {
@@ -205,6 +291,7 @@ export async function autoLoop(
         consecutiveErrors = 0;
         recentErrorMessages.length = 0;
         deps.emitJournalEvent({ ts: new Date().toISOString(), flowId, seq: nextSeq(), eventType: "iteration-end", data: { iteration } });
+        saveStuckState(s.basePath, loopState); // persist across session restarts (#3704)
         debugLog("autoLoop", { phase: "iteration-complete", iteration });
         continue;
       }
