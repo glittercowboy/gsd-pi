@@ -454,7 +454,7 @@ test("verifyExpectedArtifact accepts plan-slice with colon-style heading tasks (
   );
 });
 
-test("verifyExpectedArtifact execute-task passes for heading-style plan entry (#1691)", (t) => {
+test("verifyExpectedArtifact execute-task rejects heading-style plan without checked checkbox (#3607)", (t) => {
   const base = makeTmpBase();
   t.after(() => cleanup(base));
 
@@ -471,10 +471,12 @@ test("verifyExpectedArtifact execute-task passes for heading-style plan entry (#
     "Feature description.",
   ].join("\n"));
   writeFileSync(join(tasksDir, "T01-SUMMARY.md"), "# T01 Summary\n\nDone.");
+  // Heading-style entries no longer count as verified — only checked
+  // checkboxes prove gsd_complete_task ran (#3607).
   assert.strictEqual(
     verifyExpectedArtifact("execute-task", "M001/S01/T01", base),
-    true,
-    "execute-task should pass for heading-style plan entry when summary exists",
+    false,
+    "heading-style without checked checkbox should NOT pass verification",
   );
 });
 

@@ -286,7 +286,7 @@ export function verifyExpectedArtifact(
     if (!hasCheckboxTask && !hasHeadingTask) return false;
   }
 
-  // execute-task: DB status is authoritative. Fall back to heading-style plan
+  // execute-task: DB status is authoritative. Fall back to checked-checkbox
   // detection when the DB is unavailable (unmigrated projects).
   if (unitType === "execute-task") {
     const { milestone: mid, slice: sid, task: tid } = parseUnitId(unitId);
@@ -297,20 +297,22 @@ export function verifyExpectedArtifact(
         if (dbTask.status !== "complete" && dbTask.status !== "done") return false;
       } else if (!isDbAvailable()) {
         // LEGACY: Pre-migration fallback for projects without DB.
-        // Fall back to plan heading check (format detection, not reconciliation).
-        // Heading-style entries (### T01 --) count as verified because the
-        // summary file existence (checked above) is the real signal.
+        // Require a CHECKED checkbox — a bare heading or unchecked checkbox
+        // does not prove gsd_complete_task ran. Summary file on disk alone
+        // is not sufficient evidence (could be a rogue write) (#3607).
         const planAbs = resolveSliceFile(base, mid, sid, "PLAN");
         if (planAbs && existsSync(planAbs)) {
           const planContent = readFileSync(planAbs, "utf-8");
           const escapedTid = tid.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-          const hdRe = new RegExp(`^#{2,4}\\s+${escapedTid}\\s*(?:--|—|:)`, "m");
           const cbRe = new RegExp(`^- \\[[xX]\\] \\*\\*${escapedTid}:`, "m");
-          if (!hdRe.test(planContent) && !cbRe.test(planContent)) return false;
+          if (!cbRe.test(planContent)) return false;
+        } else {
+          return false; // no plan file → cannot verify
         }
+      } else {
+        // DB available but task row not found — completion tool never ran (#3607)
+        return false;
       }
-      // else: DB available but task not found — summary file exists (checked above),
-      // so treat as verified (task may not be imported yet)
     }
   }
 
