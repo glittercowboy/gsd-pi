@@ -636,12 +636,15 @@ export async function deriveStateFromDb(basePath: string): Promise<GSDState> {
     const validationFile = resolveMilestoneFile(basePath, activeMilestone.id, "VALIDATION");
     const validationContent = validationFile ? await loadFile(validationFile) : null;
     const validationTerminal = validationContent ? isValidationTerminal(validationContent) : false;
+    const verdict = validationContent ? extractVerdict(validationContent) : undefined;
     const sliceProgress = {
       done: activeMilestoneSlices.length,
       total: activeMilestoneSlices.length,
     };
 
-    if (!validationTerminal) {
+    // Force re-validation when verdict is needs-remediation — remediation slices
+    // may have completed since the stale validation was written (#3596).
+    if (!validationTerminal || verdict === 'needs-remediation') {
       return {
         activeMilestone, activeSlice: null, activeTask: null,
         phase: 'validating-milestone',
@@ -1099,22 +1102,25 @@ export async function _deriveStateImpl(basePath: string): Promise<GSDState> {
       const validationFile = resolveMilestoneFile(basePath, mid, "VALIDATION");
       const validationContent = validationFile ? await cachedLoadFile(validationFile) : null;
       const validationTerminal = validationContent ? isValidationTerminal(validationContent) : false;
+      const verdict = validationContent ? extractVerdict(validationContent) : undefined;
+      // needs-remediation is terminal but requires re-validation (#3596)
+      const needsRevalidation = !validationTerminal || verdict === 'needs-remediation';
 
       if (summaryFile) {
         // Summary exists → milestone is complete regardless of validation state.
         // The summary is the terminal artifact (#864).
         registry.push({ id: mid, title, status: 'complete' });
-      } else if (!validationTerminal && !activeMilestoneFound) {
-        // No summary and no terminal validation → validating-milestone
+      } else if (needsRevalidation && !activeMilestoneFound) {
+        // No summary and needs (re-)validation → validating-milestone
         activeMilestone = { id: mid, title };
         activeRoadmap = roadmap;
         activeMilestoneFound = true;
         registry.push({ id: mid, title, status: 'active' });
-      } else if (!validationTerminal && activeMilestoneFound) {
-        // No summary and no terminal validation, but another milestone is already active
+      } else if (needsRevalidation && activeMilestoneFound) {
+        // Needs (re-)validation, but another milestone is already active
         registry.push({ id: mid, title, status: 'pending' });
       } else if (!activeMilestoneFound) {
-        // Terminal validation but no summary → completing-milestone
+        // Terminal validation (pass/needs-attention) but no summary → completing-milestone
         activeMilestone = { id: mid, title };
         activeRoadmap = roadmap;
         activeMilestoneFound = true;
@@ -1299,12 +1305,15 @@ export async function _deriveStateImpl(basePath: string): Promise<GSDState> {
     const validationFile = resolveMilestoneFile(basePath, activeMilestone.id, "VALIDATION");
     const validationContent = validationFile ? await cachedLoadFile(validationFile) : null;
     const validationTerminal = validationContent ? isValidationTerminal(validationContent) : false;
+    const verdict = validationContent ? extractVerdict(validationContent) : undefined;
     const sliceProgress = {
       done: activeRoadmap.slices.length,
       total: activeRoadmap.slices.length,
     };
 
-    if (!validationTerminal) {
+    // Force re-validation when verdict is needs-remediation — remediation slices
+    // may have completed since the stale validation was written (#3596).
+    if (!validationTerminal || verdict === 'needs-remediation') {
       return {
         activeMilestone,
         activeSlice: null,
