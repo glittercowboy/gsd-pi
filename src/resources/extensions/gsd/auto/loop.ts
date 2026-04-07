@@ -147,7 +147,7 @@ export async function autoLoop(
       const mem = checkMemoryPressure();
       debugLog("autoLoop", { phase: "memory-check", ...mem });
       if (mem.pressured) {
-        logWarning("autoLoop", `Memory pressure: ${mem.heapMB}MB / ${mem.limitMB}MB (${Math.round(mem.pct * 100)}%) — stopping auto-mode to prevent OOM kill`);
+        logWarning("dispatch", `Memory pressure: ${mem.heapMB}MB / ${mem.limitMB}MB (${Math.round(mem.pct * 100)}%) — stopping auto-mode to prevent OOM kill`);
         await deps.stopAuto(
           ctx,
           pi,
