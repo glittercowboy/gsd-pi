@@ -920,8 +920,10 @@ describe("completion and verification failures", () => {
     base = createFullFixture();
     openDatabase(join(base, ".gsd", "gsd.db"));
     insertMilestone({ id: "M001", title: "Active", status: "active" });
-    insertSlice({ id: "S01", milestoneId: "M001", title: "First", status: "complete" });
-    insertSlice({ id: "S02", milestoneId: "M001", title: "Second", status: "complete" });
+    // Use "pending" status — closed slices (complete/done/skipped) are
+    // excluded from SUMMARY checks per #3620.
+    insertSlice({ id: "S01", milestoneId: "M001", title: "First", status: "pending" });
+    insertSlice({ id: "S02", milestoneId: "M001", title: "Second", status: "pending" });
     // No S01-SUMMARY.md or S02-SUMMARY.md on disk
 
     const ctx = buildDispatchCtx(base, "M001", {

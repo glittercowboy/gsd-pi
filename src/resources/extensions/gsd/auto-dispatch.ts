@@ -93,14 +93,22 @@ function missingSliceStop(mid: string, phase: string): DispatchAction {
 /**
  * Check for milestone slices missing SUMMARY files.
  * Returns array of missing slice IDs, or empty array if all present or DB unavailable.
+ *
+ * Excludes skipped slices (intentionally summary-less) and legacy-complete
+ * slices whose DB status is authoritative even without on-disk SUMMARY (#3620).
  */
 function findMissingSummaries(basePath: string, mid: string): string[] {
   if (!isDbAvailable()) return [];
-  const sliceIds = getMilestoneSlices(mid).map(s => s.id);
-  return sliceIds.filter(sid => {
-    const summaryPath = resolveSliceFile(basePath, mid, sid, "SUMMARY");
-    return !summaryPath || !existsSync(summaryPath);
-  });
+  const slices = getMilestoneSlices(mid);
+  // Skipped slices never produce SUMMARYs; legacy-complete slices may lack them
+  const CLOSED_STATUSES = new Set(["skipped", "complete", "done"]);
+  return slices
+    .filter(s => !CLOSED_STATUSES.has(s.status))
+    .filter(s => {
+      const summaryPath = resolveSliceFile(basePath, mid, s.id, "SUMMARY");
+      return !summaryPath || !existsSync(summaryPath);
+    })
+    .map(s => s.id);
 }
 
 // ─── Rewrite Circuit Breaker ──────────────────────────────────────────────
