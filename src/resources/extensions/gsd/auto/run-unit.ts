@@ -28,6 +28,7 @@ export async function runUnit(
   unitType: string,
   unitId: string,
   prompt: string,
+  label?: string,
 ): Promise<UnitResult> {
   debugLog("runUnit", { phase: "start", unitType, unitId });
 
@@ -38,7 +39,7 @@ export async function runUnit(
   let sessionTimeoutHandle: ReturnType<typeof setTimeout> | undefined;
   _setSessionSwitchInFlight(true);
   try {
-    const sessionName = buildSessionName(unitType, unitId, s.currentMilestoneId);
+    const sessionName = buildSessionName(unitType, unitId, s.currentMilestoneId, label);
     const sessionPromise = s.cmdCtx!.newSession({
       setup: async (sm) => { sm.appendSessionInfo(sessionName); },
     }).finally(() => {
@@ -150,9 +151,11 @@ function buildSessionName(
   unitType: string,
   unitId: string,
   milestoneId: string | null,
+  label?: string,
 ): string {
   const parts: string[] = [unitType];
   if (unitId) parts.push(unitId);
   if (milestoneId) parts.push(milestoneId);
+  if (label) parts.push(label);
   return parts.join(" · ");
 }
