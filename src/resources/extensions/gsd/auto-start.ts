@@ -542,8 +542,8 @@ export async function bootstrapAutoSession(
           nativeCheckoutBranch(base, integrationBranch);
           logWarning("bootstrap", `Returned to "${integrationBranch}" — HEAD was on stale milestone branch "${currentBranch}" (isolation: none does not use milestone branches).`);
         }
-      } catch {
-        // Non-fatal — log and continue; user may need to manually checkout
+      } catch (err) {
+        logWarning("bootstrap", `Could not auto-checkout from stale milestone branch: ${err instanceof Error ? err.message : String(err)}`);
       }
     }
 
