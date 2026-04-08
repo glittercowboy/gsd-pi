@@ -291,9 +291,8 @@ export class CmuxClient {
   }
 
   async listSurfaceIds(): Promise<string[]> {
-    const stdout = await this.runAsync(this.appendWorkspace(["list-surfaces", "--json", "--id-format", "both"]));
-    const parsed = stdout ? parseJson(stdout) : null;
-    return extractSurfaceIds(parsed);
+    const stdout = await this.runAsync(this.appendWorkspace(["list-pane-surfaces"]));
+    return stdout ? extractSurfaceIdsFromText(stdout) : [];
   }
 
   async createSplit(direction: "right" | "down" | "left" | "up"): Promise<string | null> {
@@ -305,15 +304,10 @@ export class CmuxClient {
     direction: "right" | "down" | "left" | "up",
   ): Promise<string | null> {
     if (!this.config.splits) return null;
-    const before = new Set(await this.listSurfaceIds());
     const args = ["new-split", direction];
     const scopedArgs = this.appendSurface(this.appendWorkspace(args), sourceSurfaceId);
-    await this.runAsync(scopedArgs);
-    const after = await this.listSurfaceIds();
-    for (const id of after) {
-      if (!before.has(id)) return id;
-    }
-    return null;
+    const stdout = await this.runAsync(scopedArgs);
+    return stdout ? extractFirstSurfaceId(stdout) : null;
   }
 
   /**
@@ -367,7 +361,7 @@ export class CmuxClient {
 
   async sendSurface(surfaceId: string, text: string): Promise<boolean> {
     const payload = text.endsWith("\n") ? text : `${text}\n`;
-    const stdout = await this.runAsync(["send-surface", "--surface", surfaceId, payload]);
+    const stdout = await this.runAsync(["send", "--surface", surfaceId, payload]);
     return stdout !== null;
   }
 }
@@ -445,4 +439,12 @@ function extractSurfaceIds(value: unknown): string[] {
 
   visit(value);
   return Array.from(found);
+}
+
+function extractSurfaceIdsFromText(text: string): string[] {
+  return Array.from(new Set(text.match(/\bsurface:[^\s]+/g) ?? []));
+}
+
+function extractFirstSurfaceId(text: string): string | null {
+  return extractSurfaceIdsFromText(text)[0] ?? null;
 }
