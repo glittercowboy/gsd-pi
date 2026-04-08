@@ -13,6 +13,7 @@ import { RUNTIME_EXCLUSION_PATHS, resolveMilestoneIntegrationBranch, writeIntegr
 import { nativeIsRepo, nativeWorktreeList, nativeWorktreeRemove, nativeBranchList, nativeBranchDelete, nativeLsFiles, nativeRmCached, nativeHasChanges, nativeLastCommitEpoch, nativeGetCurrentBranch, nativeAddTracked, nativeCommit } from "./native-git-bridge.js";
 import { getAllWorktreeHealth } from "./worktree-health.js";
 import { loadEffectiveGSDPreferences } from "./preferences.js";
+import { milestoneIdFromBranch } from "./milestone-id-utils.js";
 
 /**
  * Returns true if the directory contains only doctor artifacts
@@ -63,7 +64,7 @@ export async function checkGitHealth(
 
     for (const wt of milestoneWorktrees) {
       // Extract milestone ID from branch name "milestone/M001" → "M001"
-      const milestoneId = wt.branch.replace(/^milestone\//, "");
+      const milestoneId = milestoneIdFromBranch(wt.branch);
       const milestoneEntry = state.registry.find(m => m.id === milestoneId);
 
       // Check if milestone is complete via roadmap
@@ -127,7 +128,7 @@ export async function checkGitHealth(
           // Skip branches that have a worktree (handled above)
           if (worktreeBranches.has(branch)) continue;
 
-          const milestoneId = branch.replace(/^milestone\//, "");
+          const milestoneId = milestoneIdFromBranch(branch);
           const roadmapPath = resolveMilestoneFile(basePath, milestoneId, "ROADMAP");
           let branchMilestoneComplete = false;
           if (isDbAvailable()) {

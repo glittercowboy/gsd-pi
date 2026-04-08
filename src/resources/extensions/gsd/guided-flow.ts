@@ -205,7 +205,7 @@ export function checkAutoStartAfterDiscuss(): boolean {
           );
         }
       }
-    } catch (e) { logWarning("guided", `PROJECT.md parsing failed: ${(e as Error).message}`); }
+    } catch (e) { logWarning("guided", `PROJECT.md parsing failed: ${getErrorMessage(e)}`); }
   }
 
   // Gate 4: Discussion manifest process verification (multi-milestone only)
@@ -237,7 +237,7 @@ export function checkAutoStartAfterDiscuss(): boolean {
           );
         }
       }
-    } catch (e) { logWarning("guided", `discussion manifest verification failed: ${(e as Error).message}`); }
+    } catch (e) { logWarning("guided", `discussion manifest verification failed: ${getErrorMessage(e)}`); }
   }
 
   // Draft promotion cleanup: if a CONTEXT-DRAFT.md exists alongside the new
@@ -245,10 +245,10 @@ export function checkAutoStartAfterDiscuss(): boolean {
   try {
     const draftFile = resolveMilestoneFile(basePath, milestoneId, "CONTEXT-DRAFT");
     if (draftFile) unlinkSync(draftFile);
-  } catch (e) { logWarning("guided", `CONTEXT-DRAFT.md unlink failed: ${(e as Error).message}`); }
+  } catch (e) { logWarning("guided", `CONTEXT-DRAFT.md unlink failed: ${getErrorMessage(e)}`); }
 
   // Cleanup: remove discussion manifest after auto-start (only needed during discussion)
-  try { unlinkSync(manifestPath); } catch (e) { logWarning("guided", `manifest unlink failed: ${(e as Error).message}`); }
+  try { unlinkSync(manifestPath); } catch (e) { logWarning("guided", `manifest unlink failed: ${getErrorMessage(e)}`); }
 
   pendingAutoStartMap.delete(basePath);
   ctx.ui.notify(`Milestone ${milestoneId} ready.`, "info");
@@ -723,7 +723,7 @@ export async function showDiscuss(
     const { buildStateMarkdown } = await import("./doctor.js");
     await saveFile(resolveGsdRootFile(basePath, "STATE"), buildStateMarkdown(state));
   } catch (err) {
-    logWarning("guided", `STATE.md rebuild failed: ${(err as Error).message}`);
+    logWarning("guided", `STATE.md rebuild failed: ${getErrorMessage(err)}`);
   }
 
   // No active milestone (or corrupted milestone with undefined id) —
@@ -1105,7 +1105,7 @@ function selfHealRuntimeRecords(basePath: string, ctx: ExtensionContext): { clea
     }
     return { cleared };
   } catch (e) {
-    logWarning("guided", `self-heal stale runtime records failed: ${(e as Error).message}`);
+    logWarning("guided", `self-heal stale runtime records failed: ${getErrorMessage(e)}`);
     return { cleared: 0 };
   }
 }
@@ -1328,7 +1328,7 @@ export async function showSmartEntry(
     const { buildStateMarkdown } = await import("./doctor.js");
     await saveFile(resolveGsdRootFile(basePath, "STATE"), buildStateMarkdown(state));
   } catch (err) {
-    logWarning("guided", `STATE.md rebuild failed: ${(err as Error).message}`);
+    logWarning("guided", `STATE.md rebuild failed: ${getErrorMessage(err)}`);
   }
 
   if (!state.activeMilestone?.id) {
@@ -1373,7 +1373,7 @@ export async function showSmartEntry(
             );
             return;
           }
-        } catch (e) { logWarning("guided", `directory read failed: ${(e as Error).message}`); }
+        } catch (e) { logWarning("guided", `directory read failed: ${getErrorMessage(e)}`); }
       }
     }
 

@@ -9,9 +9,9 @@
  * stdout/stderr are intentionally excluded from the JSON to avoid unbounded file sizes.
  */
 
-import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { VerificationResult } from "./types.ts";
+import { saveJsonFile } from "./json-persistence.js";
 
 // ─── JSON Evidence Artifact ──────────────────────────────────────────────────
 
@@ -112,8 +112,6 @@ export function writeVerificationJSON(
   retryAttempt?: number,
   maxRetries?: number,
 ): void {
-  mkdirSync(tasksDir, { recursive: true });
-
   const evidence: EvidenceJSON = {
     schemaVersion: 1,
     taskId,
@@ -151,7 +149,7 @@ export function writeVerificationJSON(
   }
 
   const filePath = join(tasksDir, `${taskId}-VERIFY.json`);
-  writeFileSync(filePath, JSON.stringify(evidence, null, 2) + "\n", "utf-8");
+  saveJsonFile(filePath, evidence);
 }
 
 // ─── Pre-Execution Evidence ──────────────────────────────────────────────────
@@ -176,8 +174,6 @@ export function writePreExecutionEvidence(
   milestoneId: string,
   sliceId: string,
 ): void {
-  mkdirSync(sliceDir, { recursive: true });
-
   const evidence: PreExecutionEvidenceJSON = {
     schemaVersion: 1,
     milestoneId,
@@ -189,7 +185,7 @@ export function writePreExecutionEvidence(
   };
 
   const filePath = join(sliceDir, `${sliceId}-PRE-EXEC-VERIFY.json`);
-  writeFileSync(filePath, JSON.stringify(evidence, null, 2) + "\n", "utf-8");
+  saveJsonFile(filePath, evidence);
 }
 
 // ─── Markdown Evidence Table ─────────────────────────────────────────────────

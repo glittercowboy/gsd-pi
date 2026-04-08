@@ -3,6 +3,7 @@ import type { ExtensionAPI } from "@gsd/pi-coding-agent";
 
 import { queryJournal } from "../journal.js";
 import { logWarning } from "../workflow-logger.js";
+import { getErrorMessage } from "../error-utils.js";
 
 export function registerJournalTools(pi: ExtensionAPI): void {
   pi.registerTool({
@@ -51,7 +52,7 @@ export function registerJournalTools(pi: ExtensionAPI): void {
           details: { operation: "journal_query", count: limited.length } as any,
         };
       } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
+        const msg = getErrorMessage(err);
         logWarning("tool", `gsd_journal_query tool failed: ${msg}`);
         return {
           content: [{ type: "text" as const, text: `Error querying journal: ${msg}` }],

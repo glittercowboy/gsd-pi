@@ -16,6 +16,7 @@ import { loadFile, extractUatType, loadActiveOverrides } from "./files.js";
 import { isDbAvailable, getMilestoneSlices, getPendingGates, markAllGatesOmitted, getMilestone } from "./gsd-db.js";
 import { extractVerdict, isAcceptableUatVerdict } from "./verdict-parser.js";
 
+import { getErrorMessage } from "./error-utils.js";
 import {
   gsdRoot,
   resolveMilestoneFile,
@@ -31,6 +32,7 @@ import { parseRoadmap } from "./parsers-legacy.js";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { logWarning, logError } from "./workflow-logger.js";
 import { join } from "node:path";
+import { saveJsonFile } from "./json-persistence.js";
 import { hasImplementationArtifacts } from "./auto-recovery.js";
 import {
   buildDiscussMilestonePrompt,
@@ -135,9 +137,7 @@ export function getRewriteCount(basePath: string): number {
 }
 
 export function setRewriteCount(basePath: string, count: number): void {
-  const filePath = rewriteCountPath(basePath);
-  mkdirSync(join(gsdRoot(basePath), "runtime"), { recursive: true });
-  writeFileSync(filePath, JSON.stringify({ count, updatedAt: new Date().toISOString() }) + "\n");
+  saveJsonFile(rewriteCountPath(basePath), { count, updatedAt: new Date().toISOString() });
 }
 
 // ─── Run-UAT dispatch counter (per-slice) ────────────────────────────────
@@ -620,7 +620,7 @@ export const DISPATCH_RULES: DispatchRule[] = [
         };
       } catch (err) {
         // Non-fatal — fall through to sequential execution
-        logError("dispatch", "reactive graph derivation failed", { error: (err as Error).message });
+        logError("dispatch", "reactive graph derivation failed", { error: getErrorMessage(err) });
         return null;
       }
     },
@@ -814,7 +814,7 @@ export const DISPATCH_RULES: DispatchRule[] = [
           }
         }
       } catch (err) { /* fall through — don't block on DB errors */
-        logWarning("dispatch", `verification class check failed: ${err instanceof Error ? err.message : String(err)}`);
+        logWarning("dispatch", `verification class check failed: ${getErrorMessage(err)}`);
       }
 
       return {
@@ -859,7 +859,7 @@ export async function resolveDispatch(
     return await registry.evaluateDispatch(ctx);
   } catch (err) {
     // Registry not initialized — fall back to inline loop
-    logWarning("dispatch", `registry dispatch failed, falling back to inline rules: ${err instanceof Error ? err.message : String(err)}`);
+    logWarning("dispatch", `registry dispatch failed, falling back to inline rules: ${getErrorMessage(err)}`);
   }
 
   for (const rule of DISPATCH_RULES) {

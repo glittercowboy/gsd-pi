@@ -9,6 +9,7 @@ import { join, basename } from "node:path";
 import type { AuditWarning, RuntimeError, VerificationCheck, VerificationResult } from "./types.js";
 import { DEFAULT_COMMAND_TIMEOUT_MS } from "./constants.js";
 import { rewriteCommandWithRtk } from "../shared/rtk.js";
+import { getErrorMessage } from "./error-utils.js";
 
 /** Maximum bytes of stdout/stderr to retain per command (10 KB). */
 const MAX_OUTPUT_BYTES = 10 * 1024;
@@ -278,7 +279,7 @@ export function runVerificationGate(options: RunVerificationGateOptions): Verifi
       // Command not found or spawn failure
       exitCode = 127;
       stderr = truncate(
-        (result.stderr || "") + "\n" + (result.error as Error).message,
+        (result.stderr || "") + "\n" + getErrorMessage(result.error),
         MAX_OUTPUT_BYTES,
       );
     } else {

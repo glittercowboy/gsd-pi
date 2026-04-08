@@ -1,4 +1,5 @@
 import { importExtensionModule, type ExtensionAPI, type ExtensionCommandContext } from "@gsd/pi-coding-agent";
+import { getErrorMessage } from "./error-utils.js";
 
 type StopAutoFn = (ctx: ExtensionCommandContext, pi: ExtensionAPI, reason?: string) => Promise<void>;
 
@@ -18,7 +19,7 @@ export function registerExitCommand(
         const stopAuto = deps.stopAuto ?? (await importExtensionModule<typeof import("./auto.js")>(import.meta.url, "./auto.js")).stopAuto;
         await stopAuto(ctx, pi, "Graceful exit");
       } catch (e) {
-        const msg = e instanceof Error ? e.message : String(e);
+        const msg = getErrorMessage(e);
         ctx.ui?.notify?.(
           `Auto-mode cleanup skipped (module version mismatch): ${msg}`,
           "warning",

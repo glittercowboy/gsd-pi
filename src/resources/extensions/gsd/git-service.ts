@@ -9,9 +9,11 @@
  */
 
 import { execFileSync, execSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
+import { safeReadFile } from "./safe-fs.js";
 import { gsdRoot } from "./paths.js";
+import { saveJsonFile } from "./json-persistence.js";
 import { GIT_NO_PROMPT_ENV } from "./git-constants.js";
 import { loadEffectiveGSDPreferences } from "./preferences.js";
 
@@ -228,8 +230,9 @@ function milestoneMetaPath(basePath: string, milestoneId: string): string {
 export function readIntegrationBranch(basePath: string, milestoneId: string): string | null {
   try {
     const metaFile = milestoneMetaPath(basePath, milestoneId);
-    if (!existsSync(metaFile)) return null;
-    const data = JSON.parse(readFileSync(metaFile, "utf-8"));
+    const metaRaw = safeReadFile(metaFile);
+    if (metaRaw === null) return null;
+    const data = JSON.parse(metaRaw);
     const branch = data?.integrationBranch;
     if (typeof branch === "string" && branch.trim() !== "" && VALID_BRANCH_NAME.test(branch)) {
       return branch;
@@ -277,7 +280,6 @@ export function writeIntegrationBranch(
   if (existingBranch === branch) return;
 
   const metaFile = milestoneMetaPath(basePath, milestoneId);
-  mkdirSync(join(gsdRoot(basePath), "milestones", milestoneId), { recursive: true });
 
   // Merge with existing metadata if present
   let existing: Record<string, unknown> = {};
@@ -288,7 +290,7 @@ export function writeIntegrationBranch(
   } catch { /* corrupt file — overwrite */ }
 
   existing.integrationBranch = branch;
-  writeFileSync(metaFile, JSON.stringify(existing, null, 2) + "\n", "utf-8");
+  saveJsonFile(metaFile, existing);
   // .gsd/ is managed externally (symlinked) — metadata is not committed to git.
 }
 

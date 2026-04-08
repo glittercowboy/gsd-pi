@@ -46,6 +46,7 @@ import {
 } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { dirname, join } from "node:path";
+import { safeReadFile } from "./safe-fs.js";
 import {
   resolveExpectedArtifactPath,
   diagnoseExpectedArtifact,
@@ -74,7 +75,7 @@ export function hasImplementationArtifacts(basePath: string): "present" | "absen
         encoding: "utf-8",
       });
     } catch (e) {
-      logWarning("recovery", `git rev-parse check failed: ${(e as Error).message}`);
+      logWarning("recovery", `git rev-parse check failed: ${getErrorMessage(e)}`);
       return "unknown";
     }
 
@@ -95,8 +96,8 @@ export function hasImplementationArtifacts(basePath: string): "present" | "absen
     const implFiles = changedFiles.filter(f => !f.startsWith(".gsd/") && !f.startsWith(".gsd\\"));
     return implFiles.length > 0 ? "present" : "absent";
   } catch (e) {
-    // Non-fatal — if git operations fail, return unknown so callers can decide
-    logWarning("recovery", `implementation artifact check failed: ${(e as Error).message}`);
+    // Non-fatal — if git operations fail, don't block the pipeline
+    logWarning("recovery", `implementation artifact check failed: ${getErrorMessage(e)}`);
     return "unknown";
   }
 }
@@ -153,7 +154,7 @@ function getChangedFilesSinceBranch(basePath: string, targetBranch: string): str
     }
   } catch (err) {
     // merge-base failed — fall back
-    logWarning("recovery", `merge-base detection failed: ${err instanceof Error ? err.message : String(err)}`);
+    logWarning("recovery", `merge-base detection failed: ${getErrorMessage(err)}`);
   }
 
   // Fallback: check last 20 commits
@@ -164,7 +165,7 @@ function getChangedFilesSinceBranch(basePath: string, targetBranch: string): str
     ).trim();
     return result ? [...new Set(result.split("\n").filter(Boolean))] : [];
   } catch (e) {
-    logWarning("recovery", `git log fallback failed: ${(e as Error).message}`);
+    logWarning("recovery", `git log fallback failed: ${getErrorMessage(e)}`);
     return [];
   }
 }
@@ -197,8 +198,8 @@ export function verifyExpectedArtifact(
 
   if (unitType === "rewrite-docs") {
     const overridesPath = resolveGsdRootFile(base, "OVERRIDES");
-    if (!existsSync(overridesPath)) return true;
-    const content = readFileSync(overridesPath, "utf-8");
+    const content = safeReadFile(overridesPath);
+    if (content === null) return true;
     return !content.includes("**Scope:** active");
   }
 
@@ -257,7 +258,7 @@ export function verifyExpectedArtifact(
       }
     } catch (err) {
       // DB unavailable — treat as verified to avoid blocking
-      logWarning("recovery", `gate-evaluate DB check failed: ${err instanceof Error ? err.message : String(err)}`);
+      logWarning("recovery", `gate-evaluate DB check failed: ${getErrorMessage(err)}`);
     }
     return true;
   }
@@ -349,7 +350,7 @@ export function verifyExpectedArtifact(
         }
       } catch (err) {
         // Parse failure — don't block; slice plan may have non-standard format
-        logWarning("recovery", `plan-slice task plan verification failed: ${err instanceof Error ? err.message : String(err)}`);
+        logWarning("recovery", `plan-slice task plan verification failed: ${getErrorMessage(err)}`);
       }
     }
   }
@@ -380,7 +381,7 @@ export function verifyExpectedArtifact(
             const slice = roadmap.slices.find((s) => s.id === sid);
             if (slice && !slice.done) return false;
           } catch (e) {
-            logWarning("recovery", `roadmap parse failed: ${(e as Error).message}`);
+            logWarning("recovery", `roadmap parse failed: ${getErrorMessage(e)}`);
             return false;
           }
         }
@@ -433,13 +434,10 @@ export function writeBlockerPlaceholder(
     const { milestone: mid, slice: sid, task: tid } = parseUnitId(unitId);
     const ts = new Date().toISOString();
     if (unitType === "execute-task" && mid && sid && tid) {
-      try { updateTaskStatus(mid, sid, tid, "complete", ts); } catch (e) { logWarning("recovery", `updateTaskStatus failed during context exhaustion: ${e instanceof Error ? e.message : String(e)}`); }
-      // Append event so worktree reconciliation can replay this recovery completion
-      try { appendEvent(base, { cmd: "complete-task", params: { milestoneId: mid, sliceId: sid, taskId: tid }, ts, actor: "system", trigger_reason: "blocker-placeholder-recovery" }); } catch (e) { logWarning("recovery", `appendEvent failed for task recovery: ${e instanceof Error ? e.message : String(e)}`); }
+      try { updateTaskStatus(mid, sid, tid, "complete", new Date().toISOString()); } catch (e) { logWarning("recovery", `updateTaskStatus failed during context exhaustion: ${getErrorMessage(e)}`); }
     }
     if (unitType === "complete-slice" && mid && sid) {
-      try { updateSliceStatus(mid, sid, "complete", ts); } catch (e) { logWarning("recovery", `updateSliceStatus failed during context exhaustion: ${e instanceof Error ? e.message : String(e)}`); }
-      try { appendEvent(base, { cmd: "complete-slice", params: { milestoneId: mid, sliceId: sid }, ts, actor: "system", trigger_reason: "blocker-placeholder-recovery" }); } catch (e) { logWarning("recovery", `appendEvent failed for slice recovery: ${e instanceof Error ? e.message : String(e)}`); }
+      try { updateSliceStatus(mid, sid, "complete", new Date().toISOString()); } catch (e) { logWarning("recovery", `updateSliceStatus failed during context exhaustion: ${getErrorMessage(e)}`); }
     }
   }
 
@@ -462,21 +460,21 @@ function abortAndResetMerge(
       nativeMergeAbort(basePath);
     } catch (err) {
       /* best-effort */
-      logWarning("recovery", `git merge-abort failed: ${err instanceof Error ? err.message : String(err)}`);
+      logWarning("recovery", `git merge-abort failed: ${getErrorMessage(err)}`);
     }
   } else if (squashMsgPath) {
     try {
       unlinkSync(squashMsgPath);
     } catch (err) {
       /* best-effort */
-      logWarning("recovery", `file unlink failed: ${err instanceof Error ? err.message : String(err)}`);
+      logWarning("recovery", `file unlink failed: ${getErrorMessage(err)}`);
     }
   }
   try {
     nativeResetHard(basePath);
   } catch (err) {
     /* best-effort */
-    logError("recovery", `git reset failed: ${err instanceof Error ? err.message : String(err)}`);
+    logError("recovery", `git reset failed: ${getErrorMessage(err)}`);
   }
 }
 
@@ -525,7 +523,7 @@ export function reconcileMergeState(
         nativeCheckoutTheirs(basePath, gsdConflicts);
         nativeAddPaths(basePath, gsdConflicts);
       } catch (e) {
-        logError("recovery", `auto-resolve .gsd/ conflicts failed: ${(e as Error).message}`);
+        logError("recovery", `auto-resolve .gsd/ conflicts failed: ${getErrorMessage(e)}`);
         resolved = false;
       }
       if (resolved) {
@@ -539,7 +537,7 @@ export function reconcileMergeState(
             "info",
           );
         } catch (e) {
-          logError("recovery", `auto-commit .gsd/ conflict resolution failed: ${(e as Error).message}`);
+          logError("recovery", `auto-commit .gsd/ conflict resolution failed: ${getErrorMessage(e)}`);
           resolved = false;
         }
       }

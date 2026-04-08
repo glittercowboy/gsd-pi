@@ -14,11 +14,13 @@
  * Manual: /gsd export --html
  */
 
-import { writeFileSync, readFileSync, mkdirSync, existsSync } from 'node:fs';
+import { writeFileSync, mkdirSync } from 'node:fs';
 import { join, basename } from 'node:path';
 import { gsdRoot } from './paths.js';
 import { formatCost, formatTokenCount } from './metrics.js';
 import { formatDateShort, formatDuration } from '../shared/format-utils.js';
+import { loadJsonFileOrNull, saveJsonFile } from './json-persistence.js';
+import { makeSafeTimestamp } from './time-utils.js';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -70,20 +72,15 @@ function reportsHtmlIndexPath(basePath: string): string {
 
 // ─── Registry ─────────────────────────────────────────────────────────────────
 
+const isReportsIndex = (d: unknown): d is ReportsIndex =>
+  d !== null && typeof d === "object" && (d as Record<string, unknown>).version === 1 && Array.isArray((d as Record<string, unknown>).entries);
+
 export function loadReportsIndex(basePath: string): ReportsIndex | null {
-  const p = reportsIndexPath(basePath);
-  if (!existsSync(p)) return null;
-  try {
-    return JSON.parse(readFileSync(p, 'utf-8')) as ReportsIndex;
-  } catch {
-    return null;
-  }
+  return loadJsonFileOrNull(reportsIndexPath(basePath), isReportsIndex);
 }
 
 function saveReportsIndex(basePath: string, index: ReportsIndex): void {
-  const dir = reportsDir(basePath);
-  mkdirSync(dir, { recursive: true });
-  writeFileSync(reportsIndexPath(basePath), JSON.stringify(index, null, 2) + '\n', 'utf-8');
+  saveJsonFile(reportsIndexPath(basePath), index);
 }
 
 // ─── Write a report snapshot ──────────────────────────────────────────────────
@@ -116,7 +113,7 @@ export function writeReportSnapshot(args: WriteReportSnapshotArgs): string {
   const dir = reportsDir(args.basePath);
   mkdirSync(dir, { recursive: true });
 
-  const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+  const timestamp = makeSafeTimestamp();
   const prefix = args.milestoneId === 'final' ? 'final' : args.milestoneId;
   const filename = `${prefix}-${timestamp}.html`;
   const filePath = join(dir, filename);

@@ -12,6 +12,7 @@ import type { ExtensionAPI, ExtensionContext } from "@gsd/pi-coding-agent";
 import { randomUUID } from "node:crypto";
 import type { AutoSession, SidecarItem } from "./session.js";
 import type { LoopDeps } from "./loop-deps.js";
+import { getErrorMessage } from "../error-utils.js";
 import {
   MAX_LOOP_ITERATIONS,
   type LoopState,
@@ -257,7 +258,7 @@ export async function autoLoop(
       debugLog("autoLoop", { phase: "iteration-complete", iteration });
     } catch (loopErr) {
       // ── Blanket catch: absorb unexpected exceptions, apply graduated recovery ──
-      const msg = loopErr instanceof Error ? loopErr.message : String(loopErr);
+      const msg = getErrorMessage(loopErr);
 
       // Always emit iteration-end on error so the journal records iteration
       // completion even on failure (#2344). Without this, errors in

@@ -1,8 +1,10 @@
 import { join } from "node:path";
 import { mkdirSync, existsSync, readFileSync, unlinkSync } from "node:fs";
+import { safeReadFile } from "./safe-fs.js";
 import { logWarning, logError } from "./workflow-logger.js";
 import { readEvents, findForkPoint, appendEvent, getSessionId } from "./workflow-events.js";
 import type { WorkflowEvent } from "./workflow-events.js";
+import { getErrorMessage } from "./error-utils.js";
 import {
   transaction,
   updateTaskStatus,
@@ -469,7 +471,7 @@ function _reconcileWorktreeLogsInner(
   try {
     writeManifest(mainBasePath);
   } catch (err) {
-    logWarning("reconcile", "manifest write failed (non-fatal)", { error: (err as Error).message });
+    logWarning("reconcile", "manifest write failed (non-fatal)", { error: getErrorMessage(err) });
   }
 
   // Step 10: Invalidate caches so deriveState() sees post-reconcile DB state.
@@ -498,9 +500,8 @@ function _reconcileWorktreeLogsInner(
  */
 export function listConflicts(basePath: string): ConflictEntry[] {
   const conflictsPath = join(basePath, ".gsd", "CONFLICTS.md");
-  if (!existsSync(conflictsPath)) return [];
-
-  const content = readFileSync(conflictsPath, "utf-8");
+  const content = safeReadFile(conflictsPath);
+  if (content === null) return [];
   const conflicts: ConflictEntry[] = [];
 
   // Split into per-conflict sections on "## Conflict N:" headings
@@ -559,7 +560,7 @@ function parseEventBlock(block: string): WorkflowEvent[] {
             try {
               params = JSON.parse(paramsMatch[1]!) as Record<string, unknown>;
             } catch (e) {
-              logWarning("reconcile", `tool call params parse failed: ${(e as Error).message}`);
+              logWarning("reconcile", `tool call params parse failed: ${getErrorMessage(e)}`);
             }
             i++; // consume params line
           }

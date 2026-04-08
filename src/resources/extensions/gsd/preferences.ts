@@ -13,6 +13,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { safeReadFile } from "./safe-fs.js";
 
 import { gsdRoot } from "./paths.js";
 import { parse as parseYaml } from "yaml";
@@ -30,6 +31,7 @@ import {
   type LoadedGSDPreferences,
   type SkillResolution,
 } from "./preferences-types.js";
+import { getErrorMessage } from "./error-utils.js";
 import { validatePreferences } from "./preferences-validation.js";
 import { formatSkillRef } from "./preferences-skills.js";
 
@@ -182,9 +184,8 @@ export function loadEffectiveGSDPreferences(): LoadedGSDPreferences | null {
 }
 
 function loadPreferencesFile(path: string, scope: "global" | "project"): LoadedGSDPreferences | null {
-  if (!existsSync(path)) return null;
-
-  const raw = readFileSync(path, "utf-8");
+  const raw = safeReadFile(path);
+  if (raw === null) return null;
   const preferences = parsePreferencesMarkdown(raw);
   if (!preferences) return null;
 
@@ -250,7 +251,7 @@ function parseFrontmatterBlock(frontmatter: string): GSDPreferences {
     // Warn at most once per session to avoid flooding TUI (#3376)
     if (!_warnedFrontmatterParse) {
       _warnedFrontmatterParse = true;
-      logWarning("guided", `YAML parse error in preferences frontmatter (suppressing further): ${(e as Error).message}`);
+      logWarning("guided", `YAML parse error in preferences frontmatter (suppressing further): ${getErrorMessage(e)}`);
     }
     return {} as GSDPreferences;
   }
@@ -313,7 +314,7 @@ function parseHeadingListFormat(content: string): GSDPreferences {
     } catch (e) {
       if (!_warnedSectionParse) {
         _warnedSectionParse = true;
-        logWarning("guided", `preferences section parse failed: ${(e as Error).message}`);
+        logWarning("guided", `preferences section parse failed: ${getErrorMessage(e)}`);
       }
     }
   }

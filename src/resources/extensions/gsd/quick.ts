@@ -10,13 +10,15 @@
  */
 
 import type { ExtensionAPI, ExtensionCommandContext } from "@gsd/pi-coding-agent";
-import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { loadPrompt } from "./prompt-loader.js";
 import { gsdRoot } from "./paths.js";
+import { saveJsonFile } from "./json-persistence.js";
 import { GitServiceImpl, runGit } from "./git-service.js";
 import { loadEffectiveGSDPreferences } from "./preferences.js";
 import { nativeHasStagedChanges } from "./native-git-bridge.js";
+import { getErrorMessage } from "./error-utils.js";
 
 interface QuickReturnState {
   basePath: string;
@@ -83,8 +85,7 @@ function quickReturnStatePath(basePath: string): string {
 
 function persistPendingReturn(state: QuickReturnState): void {
   pendingQuickReturn = state;
-  mkdirSync(join(gsdRoot(state.basePath), "runtime"), { recursive: true });
-  writeFileSync(quickReturnStatePath(state.basePath), JSON.stringify(state) + "\n", "utf-8");
+  saveJsonFile(quickReturnStatePath(state.basePath), state);
 }
 
 function readPendingReturn(basePath: string): QuickReturnState | null {
@@ -216,7 +217,7 @@ export async function handleQuick(
       }
     } catch (err) {
       // Branch creation failed — continue on current branch
-      const message = err instanceof Error ? err.message : String(err);
+      const message = getErrorMessage(err);
       ctx.ui.notify(`Could not create branch ${branchName}: ${message}. Working on current branch.`, "warning");
     }
   }

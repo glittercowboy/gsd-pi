@@ -19,6 +19,7 @@
 import { createRequire } from "node:module";
 import { existsSync, readFileSync, readdirSync, mkdirSync, unlinkSync, rmSync, statSync } from "node:fs";
 import { join, dirname } from "node:path";
+import { safeReadFile } from "./safe-fs.js";
 import { gsdRoot } from "./paths.js";
 import { atomicWriteSync } from "./atomic-write.js";
 
@@ -599,8 +600,8 @@ export function _getRegisteredLockDirs(): string[] {
 
 function readExistingLockData(lp: string): SessionLockData | null {
   try {
-    if (!existsSync(lp)) return null;
-    const raw = readFileSync(lp, "utf-8");
+    const raw = safeReadFile(lp);
+    if (raw === null) return null;
     return JSON.parse(raw) as SessionLockData;
   } catch {
     return null;

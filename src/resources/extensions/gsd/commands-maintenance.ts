@@ -8,13 +8,15 @@ import type { ExtensionCommandContext } from "@gsd/pi-coding-agent";
 import { deriveState } from "./state.js";
 import { nativeBranchList, nativeDetectMainBranch, nativeBranchListMerged, nativeBranchDelete, nativeForEachRef, nativeUpdateRef } from "./native-git-bridge.js";
 import { logWarning } from "./workflow-logger.js";
+import { getErrorMessage } from "./error-utils.js";
+import { milestoneIdFromBranch } from "./milestone-id-utils.js";
 
 export async function handleCleanupBranches(ctx: ExtensionCommandContext, basePath: string): Promise<void> {
   let branches: string[];
   try {
     branches = nativeBranchList(basePath, "gsd/*");
   } catch (e) {
-    logWarning("command", `branch list failed: ${(e as Error).message}`);
+    logWarning("command", `branch list failed: ${getErrorMessage(e)}`);
     ctx.ui.notify("No GSD branches to clean up.", "info");
     return;
   }
@@ -26,7 +28,7 @@ export async function handleCleanupBranches(ctx: ExtensionCommandContext, basePa
   try {
     merged = nativeBranchListMerged(basePath, mainBranch, "gsd/*");
   } catch (e) {
-    logWarning("command", `merged branch list failed: ${(e as Error).message}`);
+    logWarning("command", `merged branch list failed: ${getErrorMessage(e)}`);
     merged = [];
   }
 
@@ -37,7 +39,7 @@ export async function handleCleanupBranches(ctx: ExtensionCommandContext, basePa
       nativeBranchDelete(basePath, branch, false);
       deletedMerged++;
     } catch (e) {
-      logWarning("command", `branch delete failed for ${branch}: ${(e as Error).message}`);
+      logWarning("command", `branch delete failed for ${branch}: ${getErrorMessage(e)}`);
     }
   }
 
@@ -58,7 +60,7 @@ export async function handleCleanupBranches(ctx: ExtensionCommandContext, basePa
     const milestoneBranches = nativeBranchList(basePath, "milestone/*");
     for (const branch of milestoneBranches) {
       if (attachedBranches.has(branch)) continue;
-      const milestoneId = branch.replace(/^milestone\//, "");
+      const milestoneId = milestoneIdFromBranch(branch);
 
       // DB-first: check milestone status directly
       if (isDbAvailable()) {
@@ -69,7 +71,7 @@ export async function handleCleanupBranches(ctx: ExtensionCommandContext, basePa
           try {
             nativeBranchDelete(basePath, branch, true);
             deletedStaleMilestones++;
-          } catch (e) { logWarning("command", `stale milestone branch delete failed for ${branch}: ${(e as Error).message}`); }
+          } catch (e) { logWarning("command", `stale milestone branch delete failed for ${branch}: ${getErrorMessage(e)}`); }
           continue;
         }
       }
@@ -81,7 +83,7 @@ export async function handleCleanupBranches(ctx: ExtensionCommandContext, basePa
       try {
         roadmapContent = await loadFile(roadmapPath);
       } catch (e) {
-        logWarning("command", `loadFile failed for ${roadmapPath}: ${(e as Error).message}`);
+        logWarning("command", `loadFile failed for ${roadmapPath}: ${getErrorMessage(e)}`);
         roadmapContent = null;
       }
       if (!roadmapContent) continue;
@@ -90,11 +92,11 @@ export async function handleCleanupBranches(ctx: ExtensionCommandContext, basePa
         nativeBranchDelete(basePath, branch, true);
         deletedStaleMilestones++;
       } catch (e) {
-        logWarning("command", `milestone branch delete failed for ${branch}: ${(e as Error).message}`);
+        logWarning("command", `milestone branch delete failed for ${branch}: ${getErrorMessage(e)}`);
       }
     }
   } catch (e) {
-    logWarning("command", `stale milestone cleanup failed: ${(e as Error).message}`);
+    logWarning("command", `stale milestone cleanup failed: ${getErrorMessage(e)}`);
   }
 
   const summary: string[] = [];
@@ -127,7 +129,7 @@ export async function handleCleanupSnapshots(ctx: ExtensionCommandContext, baseP
   try {
     refs = nativeForEachRef(basePath, "refs/gsd/snapshots/");
   } catch (e) {
-    logWarning("command", `snapshot ref list failed: ${(e as Error).message}`);
+    logWarning("command", `snapshot ref list failed: ${getErrorMessage(e)}`);
     ctx.ui.notify("No snapshot refs to clean up.", "info");
     return;
   }
@@ -153,7 +155,7 @@ export async function handleCleanupSnapshots(ctx: ExtensionCommandContext, baseP
         nativeUpdateRef(basePath, old);
         pruned++;
       } catch (e) {
-        logWarning("command", `snapshot ref update failed for ${old}: ${(e as Error).message}`);
+        logWarning("command", `snapshot ref update failed for ${old}: ${getErrorMessage(e)}`);
       }
     }
   }
@@ -170,7 +172,7 @@ export async function handleCleanupWorktrees(ctx: ExtensionCommandContext, baseP
   try {
     statuses = getAllWorktreeHealth(basePath);
   } catch (e) {
-    logWarning("command", `worktree health inspection failed: ${(e as Error).message}`);
+    logWarning("command", `worktree health inspection failed: ${getErrorMessage(e)}`);
     ctx.ui.notify("Failed to inspect worktrees.", "error");
     return;
   }
@@ -204,7 +206,7 @@ export async function handleCleanupWorktrees(ctx: ExtensionCommandContext, baseP
         lines.push(`  ✓ ${wt.name}  removed (branch ${wt.branch} deleted)`);
         removed++;
       } catch (e) {
-        logWarning("command", `worktree removal failed for ${wt.name}: ${(e as Error).message}`);
+        logWarning("command", `worktree removal failed for ${wt.name}: ${getErrorMessage(e)}`);
         lines.push(`  ✗ ${wt.name}  failed to remove`);
       }
     }
@@ -253,7 +255,7 @@ export async function handleSkip(unitArg: string, ctx: ExtensionCommandContext, 
     if (fileExists(completedKeysFile)) {
       keys = JSON.parse(readFile(completedKeysFile, "utf-8"));
     }
-  } catch (e) { logWarning("command", `completed-units.json parse failed: ${(e as Error).message}`); }
+  } catch (e) { logWarning("command", `completed-units.json parse failed: ${getErrorMessage(e)}`); }
 
   // Normalize: accept "execute-task/M001/S01/T03", "M001/S01/T03", or just "T03"
   let skipKey = unitArg;
@@ -379,7 +381,7 @@ export async function handleCleanupProjects(args: string, ctx: ExtensionCommandC
       .filter(e => e.isDirectory())
       .map(e => e.name);
   } catch (e) {
-    logWarning("command", `readdir failed for project-state directory: ${(e as Error).message}`);
+    logWarning("command", `readdir failed for project-state directory: ${getErrorMessage(e)}`);
     ctx.ui.notify(`Failed to read project-state directory at ${projectsDir}.`, "error");
     return;
   }
@@ -463,7 +465,7 @@ export async function handleCleanupProjects(args: string, ctx: ExtensionCommandC
         fsRmSync(pathJoin(projectsDir, e.hash), { recursive: true, force: true });
         removed++;
       } catch (err) {
-        logWarning("command", `project cleanup rm failed for ${e.hash}: ${(err as Error).message}`);
+        logWarning("command", `project cleanup rm failed for ${e.hash}: ${getErrorMessage(err)}`);
         failed.push(e.hash);
       }
     }
@@ -537,7 +539,7 @@ export async function handleRecover(ctx: ExtensionCommandContext, basePath: stri
     );
     ctx.ui.notify(lines.join("\n"), "success");
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
+    const msg = getErrorMessage(err);
     logWarning("command", `recover failed: ${msg}`);
     ctx.ui.notify(`gsd recover failed: ${msg}`, "error");
   }

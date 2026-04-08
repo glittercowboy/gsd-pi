@@ -11,6 +11,7 @@
 // GSD — reopen-slice tool handler
 // Copyright (c) 2026 Jeremy McSpadden <jeremy@fluxlabs.net>
 
+import { getErrorMessage } from "../error-utils.js";
 import {
   getMilestone,
   getSlice,
@@ -119,7 +120,7 @@ export async function handleReopenSlice(
       if (existsSync(sliceUat)) unlinkSync(sliceUat);
     }
   } catch (cleanupErr) {
-    logWarning("tool", `reopen-slice artifact cleanup warning: ${(cleanupErr as Error).message}`);
+    logWarning("tool", `reopen-slice artifact cleanup warning: ${getErrorMessage(cleanupErr)}`);
   }
   clearPathCache();
 
@@ -141,7 +142,7 @@ export async function handleReopenSlice(
       trigger_reason: params.triggerReason,
     });
   } catch (hookErr) {
-    logWarning("tool", `reopen-slice post-mutation hook warning: ${(hookErr as Error).message}`);
+    logWarning("tool", `reopen-slice post-mutation hook warning: ${getErrorMessage(hookErr)}`);
   }
 
   return {

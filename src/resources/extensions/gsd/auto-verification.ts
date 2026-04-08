@@ -11,11 +11,12 @@
  */
 
 import type { ExtensionContext, ExtensionAPI } from "@gsd/pi-coding-agent";
-import { mkdirSync, writeFileSync } from "node:fs";
 import { resolveSliceFile, resolveSlicePath } from "./paths.js";
+import { saveJsonFile } from "./json-persistence.js";
 import { parseUnitId } from "./unit-id.js";
 import { isDbAvailable, getTask, getSliceTasks, type TaskRow } from "./gsd-db.js";
 import { loadEffectiveGSDPreferences } from "./preferences.js";
+import { getErrorMessage } from "./error-utils.js";
 import {
   runVerificationGate,
   formatFailureContext,
@@ -163,7 +164,7 @@ export async function runPostUnitVerification(
           }
         }
       } catch (evidenceErr) {
-        logWarning("engine", `verification-evidence write error: ${(evidenceErr as Error).message}`);
+        logWarning("engine", `verification-evidence write error: ${getErrorMessage(evidenceErr)}`);
       }
     }
 
@@ -266,7 +267,7 @@ export async function runPostUnitVerification(
           }
         } catch (postExecErr) {
           // Post-execution check errors are non-fatal — log and continue
-          logWarning("engine", `gsd-post-exec: error — ${(postExecErr as Error).message}`);
+          logWarning("engine", `gsd-post-exec: error — ${getErrorMessage(postExecErr)}`);
         }
       }
     }
@@ -295,7 +296,7 @@ export async function runPostUnitVerification(
           );
         }
       } catch (evidenceErr) {
-        logWarning("engine", `verification-evidence: post-exec write error — ${(evidenceErr as Error).message}`);
+        logWarning("engine", `verification-evidence: post-exec write error — ${getErrorMessage(evidenceErr)}`);
       }
     }
 
@@ -359,7 +360,7 @@ export async function runPostUnitVerification(
     }
   } catch (err) {
     // Gate errors are non-fatal
-    logWarning("engine", `verification-gate error: ${(err as Error).message}`);
+    logWarning("engine", `verification-gate error: ${getErrorMessage(err)}`);
     return "continue";
   }
 }
@@ -377,8 +378,6 @@ function writeVerificationJSONWithPostExec(
   retryAttempt?: number,
   maxRetries?: number,
 ): void {
-  mkdirSync(tasksDir, { recursive: true });
-
   const evidence: EvidenceJSON = {
     schemaVersion: 1,
     taskId,
@@ -417,5 +416,5 @@ function writeVerificationJSONWithPostExec(
   }
 
   const filePath = join(tasksDir, `${taskId}-VERIFY.json`);
-  writeFileSync(filePath, JSON.stringify(evidence, null, 2) + "\n", "utf-8");
+  saveJsonFile(filePath, evidence);
 }

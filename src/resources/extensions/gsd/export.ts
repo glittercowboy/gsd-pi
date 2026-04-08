@@ -13,6 +13,8 @@ import type { UnitMetrics } from "./metrics.js";
 import { gsdRoot } from "./paths.js";
 import { formatDuration, fileLink } from "../shared/format-utils.js";
 import { getErrorMessage } from "./error-utils.js";
+import { makeSafeTimestamp } from "./time-utils.js";
+import { shortModelName } from "./display-utils.js";
 
 /**
  * Open a file in the user's default browser.
@@ -55,7 +57,7 @@ export function writeExportFile(
   const projectName = basename(basePath);
   const exportDir = gsdRoot(basePath);
   mkdirSync(exportDir, { recursive: true });
-  const timestamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+  const timestamp = makeSafeTimestamp();
 
   if (format === "json") {
     const report = {
@@ -247,7 +249,7 @@ export async function handleExport(args: string, ctx: ExtensionCommandContext, b
   const projectName = basename(basePath);
   const exportDir = gsdRoot(basePath);
   mkdirSync(exportDir, { recursive: true });
-  const timestamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+  const timestamp = makeSafeTimestamp();
 
   if (format === "json") {
     const report = {
@@ -298,7 +300,7 @@ export async function handleExport(args: string, ctx: ExtensionCommandContext, b
       `| Type | ID | Model | Cost | Tokens | Duration |`,
       `|------|-----|-------|------|--------|----------|`,
       ...units.map(u =>
-        `| ${u.type} | ${u.id} | ${u.model.replace(/^claude-/, "")} | ${formatCost(u.cost)} | ${formatTokenCount(u.tokens.total)} | ${formatDuration(u.finishedAt - u.startedAt)} |`,
+        `| ${u.type} | ${u.id} | ${shortModelName(u.model)} | ${formatCost(u.cost)} | ${formatTokenCount(u.tokens.total)} | ${formatDuration(u.finishedAt - u.startedAt)} |`,
       ),
       ``,
     ].join("\n");

@@ -13,6 +13,7 @@
  */
 
 import { existsSync, readFileSync, realpathSync, utimesSync } from "node:fs";
+import { safeReadFile } from "./safe-fs.js";
 import { join, resolve, sep } from "node:path";
 import { homedir } from "node:os";
 
@@ -313,10 +314,11 @@ export function autoCommitCurrentBranch(
  */
 export function resolveGitHeadPath(dir: string): string | null {
   const gitPath = join(dir, ".git");
-  if (!existsSync(gitPath)) return null;
+  const gitContent = safeReadFile(gitPath);
+  if (gitContent === null) return null;
 
   try {
-    const content = readFileSync(gitPath, "utf8").trim();
+    const content = gitContent.trim();
     if (content.startsWith("gitdir: ")) {
       const gitDir = resolve(dir, content.slice(8));
       const headPath = join(gitDir, "HEAD");

@@ -6,7 +6,9 @@
 
 import { readFileSync, readdirSync, existsSync } from 'node:fs';
 import { join, relative } from 'node:path';
+import { safeReadFile } from './safe-fs.js';
 import type { Decision, Requirement } from './types.js';
+import { getErrorMessage } from "./error-utils.js";
 import {
   upsertDecision,
   upsertRequirement,
@@ -273,9 +275,8 @@ export function parseRequirementsSections(content: string): Requirement[] {
  */
 function importDecisions(gsdDir: string): number {
   const filePath = resolveGsdRootFile(gsdDir, 'DECISIONS');
-  if (!existsSync(filePath)) return 0;
-
-  const content = readFileSync(filePath, 'utf-8');
+  const content = safeReadFile(filePath);
+  if (content === null) return 0;
   const decisions = parseDecisionsTable(content);
 
   for (const d of decisions) {
@@ -290,9 +291,8 @@ function importDecisions(gsdDir: string): number {
  */
 function importRequirements(gsdDir: string): number {
   const filePath = resolveGsdRootFile(gsdDir, 'REQUIREMENTS');
-  if (!existsSync(filePath)) return 0;
-
-  const content = readFileSync(filePath, 'utf-8');
+  const content = safeReadFile(filePath);
+  if (content === null) return 0;
   const requirements = parseRequirementsSections(content);
 
   for (const r of requirements) {
@@ -321,8 +321,8 @@ function importHierarchyArtifacts(gsdDir: string): number {
   const rootFiles = ['PROJECT.md', 'QUEUE.md', 'SECRETS-MANIFEST.md'];
   for (const fileName of rootFiles) {
     const filePath = join(gsdPath, fileName);
-    if (existsSync(filePath)) {
-      const content = readFileSync(filePath, 'utf-8');
+    const rootContent = safeReadFile(filePath);
+    if (rootContent !== null) {
       const artifactType = fileName.replace('.md', '').replace('-', '_');
       insertArtifact({
         path: fileName,
@@ -330,7 +330,7 @@ function importHierarchyArtifacts(gsdDir: string): number {
         milestone_id: null,
         slice_id: null,
         task_id: null,
-        full_content: content,
+        full_content: rootContent,
       });
       count++;
     }
@@ -390,9 +390,8 @@ function importHierarchyArtifacts(gsdDir: string): number {
         for (const taskFileName of taskFiles) {
           const taskId = taskFileName.match(/^(T\d+)/)?.[1] ?? null;
           const taskFilePath = join(tasksDir, taskFileName);
-          if (!existsSync(taskFilePath)) continue;
-
-          const content = readFileSync(taskFilePath, 'utf-8');
+          const taskContent = safeReadFile(taskFilePath);
+          if (taskContent === null) continue;
           const relPath = `milestones/${milestoneDirName}/slices/${sliceDirName}/tasks/${taskFileName}`;
 
           insertArtifact({
@@ -401,7 +400,7 @@ function importHierarchyArtifacts(gsdDir: string): number {
             milestone_id: milestoneId,
             slice_id: sliceId,
             task_id: taskId,
-            full_content: content,
+            full_content: taskContent,
           });
           count++;
         }
@@ -432,9 +431,9 @@ function importFilesAtLevel(
     if (!fileName) continue;
 
     const filePath = join(dirPath, fileName);
-    if (!existsSync(filePath)) continue;
+    const levelContent = safeReadFile(filePath);
+    if (levelContent === null) continue;
 
-    const content = readFileSync(filePath, 'utf-8');
     const relPath = `${relativeBase}/${fileName}`;
 
     insertArtifact({
@@ -443,7 +442,7 @@ function importFilesAtLevel(
       milestone_id: milestoneId,
       slice_id: sliceId,
       task_id: taskId,
-      full_content: content,
+      full_content: levelContent,
     });
     count++;
   }
@@ -720,25 +719,25 @@ export function migrateFromMarkdown(gsdDir: string): {
     try {
       decisions = importDecisions(gsdDir);
     } catch (err) {
-      logWarning("migration", `skipping decisions import: ${(err as Error).message}`);
+      logWarning("migration", `skipping decisions import: ${getErrorMessage(err)}`);
     }
 
     try {
       requirements = importRequirements(gsdDir);
     } catch (err) {
-      logWarning("migration", `skipping requirements import: ${(err as Error).message}`);
+      logWarning("migration", `skipping requirements import: ${getErrorMessage(err)}`);
     }
 
     try {
       artifacts = importHierarchyArtifacts(gsdDir);
     } catch (err) {
-      logWarning("migration", `skipping artifacts import: ${(err as Error).message}`);
+      logWarning("migration", `skipping artifacts import: ${getErrorMessage(err)}`);
     }
 
     try {
       hierarchy = migrateHierarchyToDb(gsdDir);
     } catch (err) {
-      logWarning("migration", `skipping hierarchy migration: ${(err as Error).message}`);
+      logWarning("migration", `skipping hierarchy migration: ${getErrorMessage(err)}`);
     }
   });
 

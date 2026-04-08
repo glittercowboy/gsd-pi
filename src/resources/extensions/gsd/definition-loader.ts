@@ -16,6 +16,7 @@
 import { parse } from "yaml";
 import { readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
+import { getErrorMessage } from "./error-utils.js";
 
 // ─── Public TypeScript Types (camelCase) ─────────────────────────────────
 
@@ -341,7 +342,7 @@ export function loadDefinition(defsDir: string, name: string): WorkflowDefinitio
   try {
     parsed = parse(raw);
   } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e);
+    const msg = getErrorMessage(e);
     throw new Error(`Failed to parse YAML in ${filePath}: ${msg}`);
   }
 

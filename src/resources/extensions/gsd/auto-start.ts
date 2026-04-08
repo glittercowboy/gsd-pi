@@ -9,6 +9,8 @@
  * remains in auto.ts — this module handles only the fresh-start path.
  */
 
+import { getErrorMessage } from "./error-utils.js";
+import { milestoneIdFromBranch } from "./milestone-id-utils.js";
 import type {
   ExtensionAPI,
   ExtensionCommandContext,
@@ -119,7 +121,7 @@ export async function openProjectDbIfPresent(basePath: string): Promise<void> {
   try {
     openDatabase(gsdDbPath);
   } catch (err) {
-    logWarning("engine", `gsd-db: failed to open existing database: ${err instanceof Error ? err.message : String(err)}`);
+    logWarning("engine", `gsd-db: failed to open existing database: ${getErrorMessage(err)}`);
   }
 }
 
@@ -182,7 +184,7 @@ export function auditOrphanedMilestoneBranches(
   }
 
   for (const branch of milestoneBranches) {
-    const milestoneId = branch.replace(/^milestone\//, "");
+    const milestoneId = milestoneIdFromBranch(branch);
     const milestone = getMilestone(milestoneId);
 
     // Only audit completed milestones
@@ -196,7 +198,7 @@ export function auditOrphanedMilestoneBranches(
         nativeBranchDelete(basePath, branch, true);
         recovered.push(`Deleted merged branch ${branch} for completed milestone ${milestoneId}.`);
       } catch (err) {
-        warnings.push(`Failed to delete merged branch ${branch}: ${err instanceof Error ? err.message : String(err)}`);
+        warnings.push(`Failed to delete merged branch ${branch}: ${getErrorMessage(err)}`);
       }
 
       // Clean up orphaned worktree directory if it exists
@@ -207,7 +209,7 @@ export function auditOrphanedMilestoneBranches(
           nativeWorktreeRemove(basePath, wtDir, true);
         } catch (e) {
           // Not a registered worktree — expected for orphaned dirs
-          logWarning("engine", `worktree remove failed (expected for orphaned dirs): ${e instanceof Error ? e.message : String(e)}`);
+          logWarning("engine", `worktree remove failed (expected for orphaned dirs): ${getErrorMessage(e)}`);
         }
 
         // If the directory still exists after git worktree remove (either it
@@ -219,7 +221,7 @@ export function auditOrphanedMilestoneBranches(
               rmSync(wtDir, { recursive: true, force: true });
               recovered.push(`Removed orphaned worktree directory for ${milestoneId}.`);
             } catch (err2) {
-              warnings.push(`Failed to remove worktree directory for ${milestoneId}: ${err2 instanceof Error ? err2.message : String(err2)}`);
+              warnings.push(`Failed to remove worktree directory for ${milestoneId}: ${getErrorMessage(err2)}`);
             }
           } else {
             warnings.push(`Orphaned worktree directory for ${milestoneId} is outside .gsd/worktrees/ — skipping removal for safety.`);
@@ -336,7 +338,7 @@ export async function bootstrapAutoSession(
         nativeCommit(base, "chore: init gsd");
       } catch (err) {
         /* nothing to commit */
-        logWarning("engine", `mkdir failed: ${err instanceof Error ? err.message : String(err)}`);
+        logWarning("engine", `mkdir failed: ${getErrorMessage(err)}`);
       }
     }
 
@@ -440,7 +442,7 @@ export async function bootstrapAutoSession(
       }
     } catch (err) {
       // Non-fatal — the audit is defensive, never block bootstrap
-      logWarning("bootstrap", `orphaned milestone branch audit failed: ${err instanceof Error ? err.message : String(err)}`);
+      logWarning("bootstrap", `orphaned milestone branch audit failed: ${getErrorMessage(err)}`);
     }
 
     let state = await deriveState(base);
@@ -683,7 +685,7 @@ export async function bootstrapAutoSession(
           logWarning("bootstrap", `Returned to "${integrationBranch}" — HEAD was on stale milestone branch "${currentBranch}" (isolation: none does not use milestone branches).`);
         }
       } catch (err) {
-        logWarning("bootstrap", `Could not auto-checkout from stale milestone branch: ${err instanceof Error ? err.message : String(err)}`);
+        logWarning("bootstrap", `Could not auto-checkout from stale milestone branch: ${getErrorMessage(err)}`);
       }
     }
 
@@ -733,7 +735,7 @@ export async function bootstrapAutoSession(
           migrateFromMarkdown(s.basePath);
         }
       } catch (err) {
-        logError("engine", `auto-migration failed: ${(err as Error).message}`);
+        logError("engine", `auto-migration failed: ${getErrorMessage(err)}`);
       }
     }
     if (existsSync(gsdDbPath) && !isDbAvailable()) {
@@ -741,7 +743,7 @@ export async function bootstrapAutoSession(
         const { openDatabase: openDb } = await import("./gsd-db.js");
         openDb(gsdDbPath);
       } catch (err) {
-        logError("engine", `failed to open existing database: ${(err as Error).message}`);
+        logError("engine", `failed to open existing database: ${getErrorMessage(err)}`);
       }
     }
 
@@ -838,7 +840,7 @@ export async function bootstrapAutoSession(
       }
     } catch (err) {
       ctx.ui.notify(
-        `Secrets collection error: ${err instanceof Error ? err.message : String(err)}. Continuing with next task.`,
+        `Secrets collection error: ${getErrorMessage(err)}. Continuing with next task.`,
         "warning",
       );
     }
@@ -858,7 +860,7 @@ export async function bootstrapAutoSession(
       }
     } catch (e) {
       debugLog("git-lock-cleanup-failed", {
-        error: e instanceof Error ? e.message : String(e),
+        error: getErrorMessage(e),
       });
     }
 
@@ -899,7 +901,7 @@ export async function bootstrapAutoSession(
       }
     } catch (err) {
       /* non-fatal */
-      logWarning("engine", `preflight validation failed: ${err instanceof Error ? err.message : String(err)}`);
+      logWarning("engine", `preflight validation failed: ${getErrorMessage(err)}`);
     }
 
     return true;

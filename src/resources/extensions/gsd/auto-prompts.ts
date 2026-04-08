@@ -10,6 +10,7 @@ import { loadFile, parseContinue, parseSummary, loadActiveOverrides, formatOverr
 import type { Override, UatType } from "./files.js";
 import { hasVerdict, getUatType } from "./verdict-parser.js";
 import { loadPrompt, inlineTemplate } from "./prompt-loader.js";
+import { getErrorMessage } from "./error-utils.js";
 import {
   resolveMilestoneFile, resolveSliceFile, resolveSlicePath,
   resolveTasksDir, resolveTaskFiles, resolveTaskFile,
@@ -51,7 +52,7 @@ function formatExecutorConstraints(): string {
     const prefs = loadEffectiveGSDPreferences();
     windowTokens = resolveExecutorContextWindow(undefined, prefs?.preferences);
   } catch (e) {
-    logWarning("prompt", `resolveExecutorContextWindow failed: ${(e as Error).message}`);
+    logWarning("prompt", `resolveExecutorContextWindow failed: ${getErrorMessage(e)}`);
     windowTokens = 200_000; // safe default
   }
   const budgets = computeBudgets(windowTokens);
@@ -201,7 +202,7 @@ export async function inlineDependencySummaries(
       // If slice not found in DB, fall through to file-based parsing
     }
   } catch (err) {
-    logWarning("prompt", `inlineDependencySummaries DB lookup failed: ${err instanceof Error ? err.message : String(err)}`);
+    logWarning("prompt", `inlineDependencySummaries DB lookup failed: ${getErrorMessage(err)}`);
   }
 
   // If DB didn't provide depends, fall back to roadmap parsing
@@ -296,7 +297,7 @@ export async function inlineDecisionsFromDb(
       return null;
     }
   } catch (err) {
-    logWarning("prompt", `inlineDecisionsFromDb failed: ${err instanceof Error ? err.message : String(err)}`);
+    logWarning("prompt", `inlineDecisionsFromDb failed: ${getErrorMessage(err)}`);
   }
   // DB unavailable — fall back to filesystem
   return inlineGsdRootFile(base, "decisions.md", "Decisions");
@@ -324,7 +325,7 @@ export async function inlineRequirementsFromDb(
       }
     }
   } catch (err) {
-    logWarning("prompt", `inlineRequirementsFromDb failed: ${err instanceof Error ? err.message : String(err)}`);
+    logWarning("prompt", `inlineRequirementsFromDb failed: ${getErrorMessage(err)}`);
   }
   return inlineGsdRootFile(base, "requirements.md", "Requirements");
 }
@@ -346,7 +347,7 @@ export async function inlineProjectFromDb(
       }
     }
   } catch (err) {
-    logWarning("prompt", `inlineProjectFromDb failed: ${err instanceof Error ? err.message : String(err)}`);
+    logWarning("prompt", `inlineProjectFromDb failed: ${getErrorMessage(err)}`);
   }
   return inlineGsdRootFile(base, "project.md", "Project");
 }
@@ -632,7 +633,7 @@ export function buildSkillActivationBlock(params: {
         matched.add(normalizeSkillReference(skillName));
       }
     } catch (err) {
-      logWarning("prompt", `parseTaskPlanFile failed: ${err instanceof Error ? err.message : String(err)}`);
+      logWarning("prompt", `parseTaskPlanFile failed: ${getErrorMessage(err)}`);
     }
   }
 
@@ -882,7 +883,7 @@ export async function checkNeedsReassessment(
       }
     }
   } catch (err) {
-    logWarning("prompt", `checkNeedsReassessment DB lookup failed: ${err instanceof Error ? err.message : String(err)}`);
+    logWarning("prompt", `checkNeedsReassessment DB lookup failed: ${getErrorMessage(err)}`);
   }
 
   // File-based fallback using roadmap checkboxes
@@ -950,7 +951,7 @@ export async function checkNeedsRunUat(
       }
     }
   } catch (err) {
-    logWarning("prompt", `checkNeedsRunUat DB lookup failed: ${err instanceof Error ? err.message : String(err)}`);
+    logWarning("prompt", `checkNeedsRunUat DB lookup failed: ${getErrorMessage(err)}`);
   }
 
   // File-based fallback using roadmap checkboxes
@@ -1506,7 +1507,7 @@ export async function buildCompleteMilestonePrompt(
       sliceIds = getMilestoneSlices(mid).map(s => s.id);
     }
   } catch (err) {
-    logWarning("prompt", `buildCompleteMilestonePrompt DB lookup failed: ${err instanceof Error ? err.message : String(err)}`);
+    logWarning("prompt", `buildCompleteMilestonePrompt DB lookup failed: ${getErrorMessage(err)}`);
   }
   // File-based fallback: parse roadmap for slice IDs when DB has no data
   if (sliceIds.length === 0 && roadmapPath) {
@@ -1589,7 +1590,7 @@ export async function buildValidateMilestonePrompt(
       }
     }
   } catch (err) {
-    logWarning("prompt", `buildValidateMilestonePrompt verification classes lookup failed: ${err instanceof Error ? err.message : String(err)}`);
+    logWarning("prompt", `buildValidateMilestonePrompt verification classes lookup failed: ${getErrorMessage(err)}`);
   }
 
   // Inline all slice summaries and UAT results
@@ -1600,7 +1601,7 @@ export async function buildValidateMilestonePrompt(
       valSliceIds = getMilestoneSlices(mid).map(s => s.id);
     }
   } catch (err) {
-    logWarning("prompt", `buildValidateMilestonePrompt slice IDs lookup failed: ${err instanceof Error ? err.message : String(err)}`);
+    logWarning("prompt", `buildValidateMilestonePrompt slice IDs lookup failed: ${getErrorMessage(err)}`);
   }
   // File-based fallback: parse roadmap for slice IDs when DB has no data
   if (valSliceIds.length === 0 && roadmapPath) {
@@ -1745,7 +1746,7 @@ export async function buildReplanSlicePrompt(
       ).join("\n");
     }
   } catch (err) {
-    logWarning("prompt", `loadReplanCaptures failed: ${err instanceof Error ? err.message : String(err)}`);
+    logWarning("prompt", `loadReplanCaptures failed: ${getErrorMessage(err)}`);
   }
 
   return loadPrompt("replan-slice", {
@@ -1850,7 +1851,7 @@ export async function buildReassessRoadmapPrompt(
       ).join("\n");
     }
   } catch (err) {
-    logWarning("prompt", `loadDeferredCaptures failed: ${err instanceof Error ? err.message : String(err)}`);
+    logWarning("prompt", `loadDeferredCaptures failed: ${getErrorMessage(err)}`);
   }
 
   const reassessCommitInstruction = "Do not commit — .gsd/ planning docs are managed externally and not tracked in git.";
@@ -2097,7 +2098,7 @@ export async function buildRewriteDocsPrompt(
               .map(t => ({ id: t.id }));
           }
         } catch (err) {
-          logWarning("prompt", `buildRewriteDocsPrompt DB task lookup failed: ${err instanceof Error ? err.message : String(err)}`);
+          logWarning("prompt", `buildRewriteDocsPrompt DB task lookup failed: ${getErrorMessage(err)}`);
         }
 
         if (!incompleteTasks) {

@@ -16,6 +16,7 @@ import { deriveState } from "./state.js";
 import { logWarning, logError } from "./workflow-logger.js";
 import { loadFile, parseSummary, resolveAllOverrides } from "./files.js";
 import { loadPrompt } from "./prompt-loader.js";
+import { getErrorMessage } from "./error-utils.js";
 import {
   resolveSliceFile,
   resolveSlicePath,
@@ -305,7 +306,7 @@ export async function postUnitPreVerification(pctx: PostUnitContext, opts?: PreV
                   ghIssueNumber = getTaskIssueNumberForCommit(s.basePath, mid, sid, tid) ?? undefined;
                 } catch (err) {
                   // GitHub sync not available — skip
-                  logWarning("engine", `GitHub issue lookup failed: ${err instanceof Error ? err.message : String(err)}`);
+                  logWarning("engine", `GitHub issue lookup failed: ${getErrorMessage(err)}`);
                 }
 
                 taskContext = {
@@ -441,7 +442,7 @@ export async function postUnitPreVerification(pctx: PostUnitContext, opts?: PreV
           logWarning("engine", `triage resolution: ${action}`);
         }
       } catch (err) {
-        logError("engine", "triage resolution failed", { error: (err as Error).message });
+        logError("engine", "triage resolution failed", { error: getErrorMessage(err) });
       }
     }
 
@@ -706,7 +707,7 @@ export async function postUnitPostVerification(pctx: PostUnitContext): Promise<"
             } catch (dbErr) {
               // DB unavailable — fail explicitly rather than silently reverting to markdown mutation.
               // Use 'gsd recover' to rebuild DB state from disk if needed.
-              logError("engine", `retry state-reset failed (DB unavailable): ${(dbErr as Error).message}. Run 'gsd recover' to reconcile.`);
+              logError("engine", `retry state-reset failed (DB unavailable): ${getErrorMessage(dbErr)}. Run 'gsd recover' to reconcile.`);
             }
           }
 
@@ -881,7 +882,7 @@ export async function postUnitPostVerification(pctx: PostUnitContext): Promise<"
         });
       } catch (preExecError) {
         // Fail-closed: if runPreExecutionChecks throws, pause auto-mode instead of silently continuing
-        const errorMessage = preExecError instanceof Error ? preExecError.message : String(preExecError);
+        const errorMessage = getErrorMessage(preExecError);
         debugLog("postUnitPostVerification", {
           phase: "pre-execution-checks",
           error: errorMessage,

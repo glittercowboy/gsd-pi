@@ -11,6 +11,8 @@ import { execFileSync } from "node:child_process";
 import { cpSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
+import { loadJsonFileOrNull, saveJsonFile } from "./json-persistence.js";
+import { safeReadFile } from "./safe-fs.js";
 
 const gsdHome = process.env.GSD_HOME || join(homedir(), ".gsd");
 
@@ -73,7 +75,7 @@ function writeRepoMeta(externalPath: string, remoteUrl: string, gitRoot: string)
       createdAt,
     };
     // Keep file format stable even when refreshing.
-    writeFileSync(metaPath, JSON.stringify(meta, null, 2) + "\n", "utf-8");
+    saveJsonFile(metaPath, meta);
   } catch {
     // Non-fatal — metadata write failure should not block project setup
   }
@@ -84,15 +86,7 @@ function writeRepoMeta(externalPath: string, remoteUrl: string, gitRoot: string)
  * Returns null if the file doesn't exist or can't be parsed.
  */
 export function readRepoMeta(externalPath: string): RepoMeta | null {
-  const metaPath = join(externalPath, "repo-meta.json");
-  try {
-    if (!existsSync(metaPath)) return null;
-    const raw = readFileSync(metaPath, "utf-8");
-    const parsed = JSON.parse(raw);
-    return isRepoMeta(parsed) ? parsed : null;
-  } catch {
-    return null;
-  }
+  return loadJsonFileOrNull(join(externalPath, "repo-meta.json"), isRepoMeta);
 }
 
 // ─── Inherited-Repo Detection ───────────────────────────────────────────────
@@ -396,8 +390,9 @@ function writeGsdIdMarker(projectPath: string, identity: string): void {
 function readGsdIdMarker(projectPath: string): string | null {
   try {
     const markerPath = join(projectPath, ".gsd-id");
-    if (!existsSync(markerPath)) return null;
-    const content = readFileSync(markerPath, "utf-8").trim();
+    const markerContent = safeReadFile(markerPath);
+    if (markerContent === null) return null;
+    const content = markerContent.trim();
     return /^[a-zA-Z0-9_-]+$/.test(content) ? content : null;
   } catch {
     return null;

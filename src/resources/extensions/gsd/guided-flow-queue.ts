@@ -18,6 +18,7 @@ import {
   resolveGsdRootFile, relGsdRootFile, relSliceFile,
 } from "./paths.js";
 import { readFileSync, writeFileSync, existsSync } from "node:fs";
+import { safeReadFile } from "./safe-fs.js";
 import { nativeAddPaths, nativeCommit } from "./native-git-bridge.js";
 import { loadEffectiveGSDPreferences } from "./preferences.js";
 import { loadQueueOrder, sortByQueueOrder, saveQueueOrder } from "./queue-order.js";
@@ -397,9 +398,9 @@ function syncProjectMdSequence(
   newOrder: string[],
 ): void {
   const projectPath = resolveGsdRootFile(basePath, "PROJECT");
-  if (!projectPath || !existsSync(projectPath)) return;
-
-  const content = readFileSync(projectPath, "utf-8");
+  if (!projectPath) return;
+  const content = safeReadFile(projectPath);
+  if (content === null) return;
   const lines = content.split("\n");
 
   const headerIdx = lines.findIndex(l => /^##\s+Milestone Sequence/.test(l));

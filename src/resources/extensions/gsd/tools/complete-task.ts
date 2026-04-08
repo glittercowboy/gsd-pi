@@ -12,6 +12,7 @@ import { mkdirSync, existsSync } from "node:fs";
 
 import type { CompleteTaskParams } from "../types.js";
 import { isClosedStatus } from "../status-guards.js";
+import { getErrorMessage } from "../error-utils.js";
 import {
   transaction,
   insertMilestone,
@@ -223,14 +224,14 @@ export async function handleCompleteTask(
     }
   } catch (renderErr) {
     // Disk render failed — roll back DB status so state stays consistent
-    logWarning("tool", `complete_task — disk render failed, rolling back DB status: ${(renderErr as Error).message}`);
+    logWarning("tool", `complete_task — disk render failed, rolling back DB status: ${getErrorMessage(renderErr)}`);
     // Delete orphaned verification_evidence rows first (FK constraint
     // references tasks, so evidence must go before status change).
     // Without this, retries accumulate duplicate evidence rows (#2724).
     deleteVerificationEvidence(params.milestoneId, params.sliceId, params.taskId);
     updateTaskStatus(params.milestoneId, params.sliceId, params.taskId, 'pending');
     invalidateStateCache();
-    return { error: `disk render failed: ${(renderErr as Error).message}` };
+    return { error: `disk render failed: ${getErrorMessage(renderErr)}` };
   }
 
   // Store rendered markdown in DB for D004 recovery
@@ -247,12 +248,12 @@ export async function handleCompleteTask(
   try {
     await renderAllProjections(basePath, params.milestoneId);
   } catch (projErr) {
-    logWarning("tool", `complete-task projection warning: ${(projErr as Error).message}`);
+    logWarning("tool", `complete-task projection warning: ${getErrorMessage(projErr)}`);
   }
   try {
     writeManifest(basePath);
   } catch (mfErr) {
-    logWarning("tool", `complete-task manifest warning: ${(mfErr as Error).message}`);
+    logWarning("tool", `complete-task manifest warning: ${getErrorMessage(mfErr)}`);
   }
   try {
     appendEvent(basePath, {
@@ -263,8 +264,8 @@ export async function handleCompleteTask(
       actor_name: params.actorName,
       trigger_reason: params.triggerReason,
     });
-  } catch (eventErr) {
-    logError("tool", `complete-task event log FAILED — completion invisible to reconciliation`, { error: (eventErr as Error).message });
+  } catch (hookErr) {
+    logWarning("tool", `complete-task post-mutation hook warning: ${getErrorMessage(hookErr)}`);
   }
 
   return {

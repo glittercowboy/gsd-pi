@@ -103,7 +103,7 @@ export function migrateToExternalState(basePath: string): MigrationResult {
           cpSync(localGsd, migratingPath, { recursive: true, force: true });
           rmSync(localGsd, { recursive: true, force: true });
         } catch (copyErr) {
-          return { migrated: false, error: `Migration rename/copy failed: ${copyErr instanceof Error ? copyErr.message : String(copyErr)}` };
+          return { migrated: false, error: `Migration rename/copy failed: ${getErrorMessage(copyErr)}` };
         }
       } else {
         throw renameErr;

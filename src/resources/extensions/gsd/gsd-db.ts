@@ -11,6 +11,7 @@ import { dirname } from "node:path";
 import type { Decision, Requirement, GateRow, GateId, GateScope, GateStatus, GateVerdict } from "./types.js";
 import { GSDError, GSD_STALE_STATE } from "./errors.js";
 import { logError, logWarning } from "./workflow-logger.js";
+import { getErrorMessage } from "./error-utils.js";
 
 const _require = createRequire(import.meta.url);
 
@@ -466,7 +467,7 @@ function migrateSchema(db: DbAdapter): void {
     } catch (backupErr) {
       // Log but proceed — blocking migration leaves the DB stuck at an old
       // schema version permanently on read-only or full filesystems.
-      logWarning("db", `Pre-migration backup failed: ${backupErr instanceof Error ? backupErr.message : String(backupErr)}`);
+      logWarning("db", `Pre-migration backup failed: ${getErrorMessage(backupErr)}`);
     }
   }
 
@@ -808,11 +809,11 @@ export function openDatabase(path: string): boolean {
         initSchema(adapter, fileBacked);
         process.stderr.write("gsd-db: recovered corrupt database via VACUUM\n");
       } catch (retryErr) {
-        try { adapter.close(); } catch (e) { logWarning("db", `close after VACUUM failed: ${(e as Error).message}`); }
+        try { adapter.close(); } catch (e) { logWarning("db", `close after VACUUM failed: ${getErrorMessage(e)}`); }
         throw retryErr;
       }
     } else {
-      try { adapter.close(); } catch (e) { logWarning("db", `close after VACUUM failed: ${(e as Error).message}`); }
+      try { adapter.close(); } catch (e) { logWarning("db", `close after VACUUM failed: ${getErrorMessage(e)}`); }
       throw err;
     }
   }
@@ -823,7 +824,7 @@ export function openDatabase(path: string): boolean {
 
   if (!_exitHandlerRegistered) {
     _exitHandlerRegistered = true;
-    process.on("exit", () => { try { closeDatabase(); } catch (e) { logWarning("db", `exit handler close failed: ${(e as Error).message}`); } });
+    process.on("exit", () => { try { closeDatabase(); } catch (e) { logWarning("db", `exit handler close failed: ${getErrorMessage(e)}`); } });
   }
 
   return true;
@@ -833,14 +834,14 @@ export function closeDatabase(): void {
   if (currentDb) {
     try {
       currentDb.exec('PRAGMA wal_checkpoint(TRUNCATE)');
-    } catch (e) { logWarning("db", `WAL checkpoint failed: ${(e as Error).message}`); }
+    } catch (e) { logWarning("db", `WAL checkpoint failed: ${getErrorMessage(e)}`); }
     try {
       // Incremental vacuum to reclaim space without blocking
       currentDb.exec('PRAGMA incremental_vacuum(64)');
-    } catch (e) { logWarning("db", `incremental vacuum failed: ${(e as Error).message}`); }
+    } catch (e) { logWarning("db", `incremental vacuum failed: ${getErrorMessage(e)}`); }
     try {
       currentDb.close();
-    } catch (e) { logWarning("db", `database close failed: ${(e as Error).message}`); }
+    } catch (e) { logWarning("db", `database close failed: ${getErrorMessage(e)}`); }
     currentDb = null;
     currentPath = null;
     currentPid = 0;
@@ -852,7 +853,7 @@ export function vacuumDatabase(): void {
   if (!currentDb) return;
   try {
     currentDb.exec('VACUUM');
-  } catch (e) { logWarning("db", `VACUUM failed: ${(e as Error).message}`); }
+  } catch (e) { logWarning("db", `VACUUM failed: ${getErrorMessage(e)}`); }
 }
 
 let _txDepth = 0;
@@ -1069,7 +1070,7 @@ export function upsertRequirement(r: Requirement): void {
 
 export function clearArtifacts(): void {
   if (!currentDb) return;
-  try { currentDb.exec("DELETE FROM artifacts"); } catch (e) { logWarning("db", `clearArtifacts failed: ${(e as Error).message}`); }
+  try { currentDb.exec("DELETE FROM artifacts"); } catch (e) { logWarning("db", `clearArtifacts failed: ${getErrorMessage(e)}`); }
 }
 
 export function insertArtifact(a: {
@@ -1838,7 +1839,7 @@ export function copyWorktreeDb(srcDbPath: string, destDbPath: string): boolean {
     copyFileSync(srcDbPath, destDbPath);
     return true;
   } catch (err) {
-    logError("db", "failed to copy DB to worktree", { error: (err as Error).message });
+    logError("db", "failed to copy DB to worktree", { error: getErrorMessage(err) });
     return false;
   }
 }
@@ -1865,7 +1866,7 @@ export function reconcileWorktreeDb(
   // ATTACHing a WAL-mode DB to itself corrupts the WAL (#2823).
   try {
     if (realpathSync(mainDbPath) === realpathSync(worktreeDbPath)) return zero;
-  } catch (e) { logWarning("db", `realpathSync failed: ${(e as Error).message}`); }
+  } catch (e) { logWarning("db", `realpathSync failed: ${getErrorMessage(e)}`); }
   // Sanitize path: reject any characters that could break ATTACH syntax.
   // ATTACH DATABASE doesn't support parameterized paths in all providers,
   // so we use strict allowlist validation instead.
@@ -2025,15 +2026,15 @@ export function reconcileWorktreeDb(
 
         adapter.exec("COMMIT");
       } catch (txErr) {
-        try { adapter.exec("ROLLBACK"); } catch (e) { logWarning("db", `rollback failed: ${(e as Error).message}`); }
+        try { adapter.exec("ROLLBACK"); } catch (e) { logWarning("db", `rollback failed: ${getErrorMessage(e)}`); }
         throw txErr;
       }
       return { ...merged, conflicts };
     } finally {
-      try { adapter.exec("DETACH DATABASE wt"); } catch (e) { logWarning("db", `detach worktree DB failed: ${(e as Error).message}`); }
+      try { adapter.exec("DETACH DATABASE wt"); } catch (e) { logWarning("db", `detach worktree DB failed: ${getErrorMessage(e)}`); }
     }
   } catch (err) {
-    logError("db", "worktree DB reconciliation failed", { error: (err as Error).message });
+    logError("db", "worktree DB reconciliation failed", { error: getErrorMessage(err) });
     return { ...zero, conflicts };
   }
 }

@@ -12,6 +12,7 @@ import { mkdirSync } from "node:fs";
 
 import type { CompleteSliceParams } from "../types.js";
 import { isClosedStatus } from "../status-guards.js";
+import { getErrorMessage } from "../error-utils.js";
 import {
   transaction,
   insertMilestone,
@@ -321,10 +322,10 @@ export async function handleCompleteSlice(
     }
   } catch (renderErr) {
     // Disk render failed — roll back DB status so state stays consistent
-    logWarning("tool", `complete_slice — disk render failed for ${params.milestoneId}/${params.sliceId}, rolling back DB status`, { error: (renderErr as Error).message });
-    updateSliceStatus(params.milestoneId, params.sliceId, originalSliceStatus);
+    logWarning("tool", `complete_slice — disk render failed for ${params.milestoneId}/${params.sliceId}, rolling back DB status`, { error: getErrorMessage(renderErr) });
+    updateSliceStatus(params.milestoneId, params.sliceId, 'pending');
     invalidateStateCache();
-    return { error: `disk render failed: ${(renderErr as Error).message}` };
+    return { error: `disk render failed: ${getErrorMessage(renderErr)}` };
   }
 
   // Store rendered markdown in DB for D004 recovery
@@ -341,12 +342,12 @@ export async function handleCompleteSlice(
   try {
     await renderAllProjections(basePath, params.milestoneId);
   } catch (projErr) {
-    logWarning("tool", `complete-slice projection warning for ${params.milestoneId}/${params.sliceId}: ${(projErr as Error).message}`);
+    logWarning("tool", `complete-slice projection warning for ${params.milestoneId}/${params.sliceId}: ${getErrorMessage(projErr)}`);
   }
   try {
     writeManifest(basePath);
   } catch (mfErr) {
-    logWarning("tool", `complete-slice manifest warning: ${(mfErr as Error).message}`);
+    logWarning("tool", `complete-slice manifest warning: ${getErrorMessage(mfErr)}`);
   }
   try {
     appendEvent(basePath, {
@@ -357,8 +358,8 @@ export async function handleCompleteSlice(
       actor_name: params.actorName,
       trigger_reason: params.triggerReason,
     });
-  } catch (eventErr) {
-    logError("tool", `complete-slice event log FAILED — completion invisible to reconciliation`, { error: (eventErr as Error).message });
+  } catch (hookErr) {
+    logWarning("tool", `complete-slice post-mutation hook failed for ${params.milestoneId}/${params.sliceId}`, { error: getErrorMessage(hookErr) });
   }
 
   return {

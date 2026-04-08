@@ -12,6 +12,7 @@ import { isDbAvailable, getMilestoneSlices, getSliceTasks } from "./gsd-db.js";
 import { resolveAutoSupervisorConfig } from "./preferences.js";
 import type { GSDPreferences } from "./preferences.js";
 import { computeBudgets, resolveExecutorContextWindow } from "./context-budget.js";
+import { getErrorMessage } from "./error-utils.js";
 import {
   getInFlightToolCount,
   getOldestInFlightToolStart,
@@ -102,7 +103,7 @@ export function startUnitSupervision(sctx: SupervisionContext): void {
       }
     } catch (err) {
       // Non-fatal — fall through with no estimate
-      logWarning("timer", `operation failed: ${err instanceof Error ? err.message : String(err)}`);
+      logWarning("timer", `operation failed: ${getErrorMessage(err)}`);
     }
   }
   const estimateMinutes = taskEstimate ? parseEstimateMinutes(taskEstimate) : null;
@@ -220,14 +221,14 @@ export function startUnitSupervision(sctx: SupervisionContext): void {
       );
       await pauseAuto(ctx, pi);
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      const message = getErrorMessage(err);
       logError("timer", `[idle-watchdog] Unhandled error: ${message}`);
       // Unblock any pending unit promise so the auto-loop is not orphaned.
       resolveAgentEndCancelled({ message: `Idle watchdog error: ${message}`, category: "idle", isTransient: true });
       try {
         ctx.ui.notify(`Idle watchdog error: ${message}`, "warning");
       } catch (err) { /* best effort */
-        logWarning("timer", `notification failed: ${err instanceof Error ? err.message : String(err)}`);
+        logWarning("timer", `notification failed: ${getErrorMessage(err)}`);
       }
     }
   }, 15000);
@@ -256,14 +257,14 @@ export function startUnitSupervision(sctx: SupervisionContext): void {
       );
       await pauseAuto(ctx, pi);
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      const message = getErrorMessage(err);
       logError("timer", `[hard-timeout] Unhandled error: ${message}`);
       // Unblock any pending unit promise so the auto-loop is not orphaned.
       resolveAgentEndCancelled({ message: `Hard timeout error: ${message}`, category: "timeout", isTransient: true });
       try {
         ctx.ui.notify(`Hard timeout error: ${message}`, "warning");
       } catch (err) { /* best effort */
-        logWarning("timer", `notification failed: ${err instanceof Error ? err.message : String(err)}`);
+        logWarning("timer", `notification failed: ${getErrorMessage(err)}`);
       }
     }
   }, hardTimeoutMs);

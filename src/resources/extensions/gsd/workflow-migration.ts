@@ -8,6 +8,7 @@ import { join } from "node:path";
 import { _getAdapter, transaction } from "./gsd-db.js";
 import { parseRoadmap, parsePlan } from "./parsers-legacy.js";
 import { logWarning } from "./workflow-logger.js";
+import { getErrorMessage } from "./error-utils.js";
 
 // ─── needsAutoMigration ───────────────────────────────────────────────────
 
@@ -25,7 +26,7 @@ export function needsAutoMigration(basePath: string): boolean {
     const row = db.prepare("SELECT COUNT(*) as cnt FROM milestones").get();
     if (row && (row["cnt"] as number) > 0) return false;
   } catch (e) {
-    logWarning("migration", `DB probe failed: ${(e as Error).message}`);
+    logWarning("migration", `DB probe failed: ${getErrorMessage(e)}`);
     return false;
   }
 
@@ -142,7 +143,7 @@ export function migrateFromMarkdown(basePath: string): void {
           risk: s.risk || "low",
         }));
       } catch (err) {
-        logWarning("migration", `failed to parse ROADMAP.md for ${mId}: ${(err as Error).message}`);
+        logWarning("migration", `failed to parse ROADMAP.md for ${mId}: ${getErrorMessage(err)}`);
         // Still add milestone with ID as title
         milestoneInserts.push({ id: mId, title: mId, status: milestoneStatus });
       }
@@ -192,7 +193,7 @@ export function migrateFromMarkdown(basePath: string): void {
             });
           }
         } catch (err) {
-          logWarning("migration", `failed to parse ${slice.id}-PLAN.md for ${mId}: ${(err as Error).message}`);
+          logWarning("migration", `failed to parse ${slice.id}-PLAN.md for ${mId}: ${getErrorMessage(err)}`);
         }
       }
     }
@@ -208,7 +209,7 @@ export function migrateFromMarkdown(basePath: string): void {
         }
       }
     } catch (e) {
-      logWarning("migration", `Orphaned summary check failed for ${mId}: ${(e as Error).message}`);
+      logWarning("migration", `Orphaned summary check failed for ${mId}: ${getErrorMessage(e)}`);
     }
   }
 
@@ -310,17 +311,17 @@ export function validateMigration(basePath: string): { discrepancies: string[] }
                 const plan = parsePlan(planContent);
                 mdTaskCount += plan.tasks.length;
               } catch (e) {
-                logWarning("migration", `Failed to read plan ${slice.id}-PLAN.md: ${(e as Error).message}`);
+                logWarning("migration", `Failed to read plan ${slice.id}-PLAN.md: ${getErrorMessage(e)}`);
               }
             }
           }
         } catch (e) {
-          logWarning("migration", `Failed to read roadmap for ${mId}: ${(e as Error).message}`);
+          logWarning("migration", `Failed to read roadmap for ${mId}: ${getErrorMessage(e)}`);
         }
       }
     }
   } catch (e) {
-    logWarning("migration", `Validation failed to read markdown: ${(e as Error).message}`);
+    logWarning("migration", `Validation failed to read markdown: ${getErrorMessage(e)}`);
     return { discrepancies: ["Failed to read markdown for validation"] };
   }
 

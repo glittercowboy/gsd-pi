@@ -49,7 +49,7 @@ export function isMilestoneCompleteInWorktreeDb(basePath: string, mid: string): 
     );
     return (result.stdout || "").trim() === "complete";
   } catch (e) {
-    logWarning("parallel", `spawnSync milestone completion check failed for ${mid}: ${(e as Error).message}`);
+    logWarning("parallel", `spawnSync milestone completion check failed for ${mid}: ${getErrorMessage(e)}`);
     return false;
   }
 }
@@ -68,7 +68,7 @@ function discoverDbCompletedMilestones(basePath: string): Set<string> {
       }
     }
   } catch (e) {
-    logWarning("parallel", `readdirSync for completed set failed: ${(e as Error).message}`);
+    logWarning("parallel", `readdirSync for completed set failed: ${getErrorMessage(e)}`);
   }
   return completed;
 }

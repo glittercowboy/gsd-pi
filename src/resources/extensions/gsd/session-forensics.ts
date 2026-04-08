@@ -20,6 +20,7 @@
 
 import { readFileSync, readdirSync, existsSync, statSync } from "node:fs";
 import { basename, join } from "node:path";
+import { safeReadFile } from "./safe-fs.js";
 import { gsdRoot } from "./paths.js";
 import { truncateWithEllipsis } from "../shared/format-utils.js";
 import { nativeParseJsonlTail } from "./native-parser-bridge.js";
@@ -321,8 +322,8 @@ export function getDeepDiagnostic(basePath: string, worktreePath?: string): stri
 export function readActiveMilestoneId(basePath: string): string | null {
   try {
     const statePath = join(gsdRoot(basePath), "STATE.md");
-    if (!existsSync(statePath)) return null;
-    const content = readFileSync(statePath, "utf-8");
+    const content = safeReadFile(statePath);
+    if (content === null) return null;
     const match = /\*\*Active Milestone:\*\*\s*(\S+)/i.exec(content);
     return match?.[1] ?? null;
   } catch {

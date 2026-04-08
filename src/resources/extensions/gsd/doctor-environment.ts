@@ -10,10 +10,11 @@
  */
 
 import { existsSync, readFileSync, statSync } from "node:fs";
-import { execSync } from "node:child_process";
 import { join } from "node:path";
+import { safeReadFile } from "./safe-fs.js";
 
 import type { DoctorIssue, DoctorIssueCode } from "./doctor-types.js";
+import { tryExec, commandExists } from "./shell-utils.js";
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -31,9 +32,6 @@ const DEFAULT_DEV_PORTS = [3000, 3001, 4000, 5000, 5173, 8000, 8080, 8888];
 
 /** Minimum free disk space in bytes (500MB). */
 const MIN_DISK_BYTES = 500 * 1024 * 1024;
-
-/** Timeout for external commands (ms). */
-const CMD_TIMEOUT = 5_000;
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -60,23 +58,6 @@ function resolveWorktreeProjectRoot(basePath: string): string | null {
   return basePath.slice(0, idx);
 }
 
-function tryExec(cmd: string, cwd: string): string | null {
-  try {
-    return execSync(cmd, {
-      cwd,
-      timeout: CMD_TIMEOUT,
-      stdio: ["ignore", "pipe", "pipe"],
-      encoding: "utf-8",
-    }).trim();
-  } catch {
-    return null;
-  }
-}
-
-function commandExists(name: string, cwd: string): boolean {
-  const whichCmd = process.platform === "win32" ? `where ${name}` : `command -v ${name}`;
-  return tryExec(whichCmd, cwd) !== null;
-}
 
 // ── Individual Checks ──────────────────────────────────────────────────────
 
@@ -85,10 +66,11 @@ function commandExists(name: string, cwd: string): boolean {
  */
 function checkNodeVersion(basePath: string): EnvironmentCheckResult | null {
   const pkgPath = join(basePath, "package.json");
-  if (!existsSync(pkgPath)) return null;
+  const pkgRaw = safeReadFile(pkgPath);
+  if (pkgRaw === null) return null;
 
   try {
-    const pkg = JSON.parse(readFileSync(pkgPath, "utf-8"));
+    const pkg = JSON.parse(pkgRaw);
     const required = pkg.engines?.node;
     if (!required) return null;
 
@@ -367,11 +349,12 @@ function checkDocker(basePath: string): EnvironmentCheckResult | null {
 function checkProjectTools(basePath: string): EnvironmentCheckResult[] {
   const results: EnvironmentCheckResult[] = [];
   const pkgPath = join(basePath, "package.json");
+  const pkgRaw = safeReadFile(pkgPath);
 
-  if (!existsSync(pkgPath)) return results;
+  if (pkgRaw === null) return results;
 
   try {
-    const pkg = JSON.parse(readFileSync(pkgPath, "utf-8"));
+    const pkg = JSON.parse(pkgRaw);
     const allDeps = {
       ...(pkg.dependencies ?? {}),
       ...(pkg.devDependencies ?? {}),
@@ -467,10 +450,11 @@ function checkGitRemote(basePath: string): EnvironmentCheckResult | null {
  */
 function checkBuildHealth(basePath: string): EnvironmentCheckResult | null {
   const pkgPath = join(basePath, "package.json");
-  if (!existsSync(pkgPath)) return null;
+  const buildPkgRaw = safeReadFile(pkgPath);
+  if (buildPkgRaw === null) return null;
 
   try {
-    const pkg = JSON.parse(readFileSync(pkgPath, "utf-8"));
+    const pkg = JSON.parse(buildPkgRaw);
     const buildScript = pkg.scripts?.build;
     if (!buildScript) return null;
 
@@ -495,10 +479,11 @@ function checkBuildHealth(basePath: string): EnvironmentCheckResult | null {
  */
 function checkTestHealth(basePath: string): EnvironmentCheckResult | null {
   const pkgPath = join(basePath, "package.json");
-  if (!existsSync(pkgPath)) return null;
+  const testPkgRaw = safeReadFile(pkgPath);
+  if (testPkgRaw === null) return null;
 
   try {
-    const pkg = JSON.parse(readFileSync(pkgPath, "utf-8"));
+    const pkg = JSON.parse(testPkgRaw);
     const testScript = pkg.scripts?.test;
     // Skip if no test script or the default placeholder
     if (!testScript || testScript.includes("no test specified")) return null;

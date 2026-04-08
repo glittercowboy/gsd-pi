@@ -24,6 +24,7 @@ import { spawnSync } from "node:child_process";
 import type { StepDefinition, VerifyPolicy } from "./definition-loader.js";
 import { readFrozenDefinition } from "./custom-workflow-engine.js";
 import { rewriteCommandWithRtk } from "../shared/rtk.js";
+import { getErrorMessage } from "./error-utils.js";
 
 /** Verification outcome type — matches ExecutionPolicy.verify() return type. */
 export type VerificationOutcome = "continue" | "retry" | "pause";
@@ -132,7 +133,7 @@ function handleContentHeuristic(
           return "pause";
         }
       } catch (e) {
-        logWarning("engine", `content-heuristic regex failed: ${(e as Error).message}`);
+        logWarning("engine", `content-heuristic regex failed: ${getErrorMessage(e)}`);
         return "pause";
       }
     }

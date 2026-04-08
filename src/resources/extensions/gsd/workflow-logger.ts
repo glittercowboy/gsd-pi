@@ -17,9 +17,11 @@
 // Node process.
 
 import { appendFileSync, readFileSync, existsSync, mkdirSync } from "node:fs";
+import { safeReadFile } from "./safe-fs.js";
 import { join } from "node:path";
 
 import { appendNotification } from "./notification-store.js";
+import { getErrorMessage } from "./error-utils.js";
 
 // ─── Types ──────────────────────────────────────────────────────────────
 
@@ -203,9 +205,9 @@ export function readAuditLog(basePath?: string): LogEntry[] {
   const bp = basePath ?? _auditBasePath;
   if (!bp) return [];
   const auditPath = join(bp, ".gsd", "audit-log.jsonl");
-  if (!existsSync(auditPath)) return [];
+  const content = safeReadFile(auditPath);
+  if (content === null) return [];
   try {
-    const content = readFileSync(auditPath, "utf-8");
     return content
       .split("\n")
       .filter((l) => l.length > 0)
@@ -255,7 +257,7 @@ function _push(
       "workflow-logger",
     );
   } catch (notifErr) {
-    process.stderr.write(`[gsd:workflow-logger] notification-store append failed: ${(notifErr as Error).message}\n`);
+    process.stderr.write(`[gsd:workflow-logger] notification-store append failed: ${getErrorMessage(notifErr)}\n`);
   }
 
   // Buffer for auto-loop to drain
@@ -275,7 +277,7 @@ function _push(
       appendFileSync(join(auditDir, "audit-log.jsonl"), JSON.stringify(sanitized) + "\n", "utf-8");
     } catch (auditErr) {
       // Best-effort — never let audit write failures bubble up
-      process.stderr.write(`[gsd:audit] failed to persist log entry: ${(auditErr as Error).message}\n`);
+      process.stderr.write(`[gsd:audit] failed to persist log entry: ${getErrorMessage(auditErr)}\n`);
     }
   }
 }

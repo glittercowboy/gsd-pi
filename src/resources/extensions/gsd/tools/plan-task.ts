@@ -8,6 +8,7 @@ import { renderAllProjections } from "../workflow-projections.js";
 import { writeManifest } from "../workflow-manifest.js";
 import { appendEvent } from "../workflow-events.js";
 import { logWarning } from "../workflow-logger.js";
+import { getErrorMessage } from "../error-utils.js";
 
 export interface PlanTaskParams {
   milestoneId: string;
@@ -63,7 +64,7 @@ export async function handlePlanTask(
   try {
     params = validateParams(rawParams);
   } catch (err) {
-    return { error: `validation failed: ${(err as Error).message}` };
+    return { error: `validation failed: ${getErrorMessage(err)}` };
   }
 
   // ── Guards + DB writes inside a single transaction (prevents TOCTOU) ───
@@ -111,7 +112,7 @@ export async function handlePlanTask(
       });
     });
   } catch (err) {
-    return { error: `db write failed: ${(err as Error).message}` };
+    return { error: `db write failed: ${getErrorMessage(err)}` };
   }
 
   if (guardError) {
@@ -136,7 +137,7 @@ export async function handlePlanTask(
         trigger_reason: params.triggerReason,
       });
     } catch (hookErr) {
-      logWarning("tool", `plan-task post-mutation hook warning: ${(hookErr as Error).message}`);
+      logWarning("tool", `plan-task post-mutation hook warning: ${getErrorMessage(hookErr)}`);
     }
 
     return {
@@ -146,6 +147,6 @@ export async function handlePlanTask(
       taskPlanPath: renderResult.taskPlanPath,
     };
   } catch (err) {
-    return { error: `render failed: ${(err as Error).message}` };
+    return { error: `render failed: ${getErrorMessage(err)}` };
   }
 }

@@ -4,6 +4,7 @@ import { Type } from "@sinclair/typebox";
 import type { ExtensionAPI } from "@gsd/pi-coding-agent";
 
 import { logWarning } from "../workflow-logger.js";
+import { getErrorMessage } from "../error-utils.js";
 
 export function registerQueryTools(pi: ExtensionAPI): void {
   pi.registerTool({
@@ -87,7 +88,7 @@ export function registerQueryTools(pi: ExtensionAPI): void {
           throw txErr;
         }
       } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
+        const msg = getErrorMessage(err);
         logWarning("tool", `gsd_milestone_status tool failed: ${msg}`);
         return {
           content: [{ type: "text" as const, text: `Error querying milestone status: ${msg}` }],

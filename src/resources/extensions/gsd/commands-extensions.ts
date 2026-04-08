@@ -7,9 +7,10 @@
  */
 
 import type { ExtensionCommandContext } from "@gsd/pi-coding-agent";
-import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { existsSync, readdirSync } from "node:fs";
+import { join } from "node:path";
 import { homedir } from "node:os";
+import { loadJsonFile, loadJsonFileOrNull, writeJsonFileAtomic } from "./json-persistence.js";
 
 const gsdHome = process.env.GSD_HOME || join(homedir(), ".gsd");
 
@@ -57,29 +58,15 @@ function getAgentExtensionsDir(): string {
   return join(gsdHome, "agent", "extensions");
 }
 
+const isExtensionRegistry = (d: unknown): d is ExtensionRegistry =>
+  d !== null && typeof d === "object" && (d as Record<string, unknown>).version === 1 && typeof (d as Record<string, unknown>).entries === "object";
+
 function loadRegistry(): ExtensionRegistry {
-  const filePath = getRegistryPath();
-  try {
-    if (!existsSync(filePath)) return { version: 1, entries: {} };
-    const raw = readFileSync(filePath, "utf-8");
-    const parsed = JSON.parse(raw);
-    if (typeof parsed === "object" && parsed !== null && parsed.version === 1 && typeof parsed.entries === "object") {
-      return parsed as ExtensionRegistry;
-    }
-    return { version: 1, entries: {} };
-  } catch {
-    return { version: 1, entries: {} };
-  }
+  return loadJsonFile(getRegistryPath(), isExtensionRegistry, () => ({ version: 1, entries: {} }));
 }
 
 function saveRegistry(registry: ExtensionRegistry): void {
-  const filePath = getRegistryPath();
-  try {
-    mkdirSync(dirname(filePath), { recursive: true });
-    const tmp = filePath + ".tmp";
-    writeFileSync(tmp, JSON.stringify(registry, null, 2), "utf-8");
-    renameSync(tmp, filePath);
-  } catch { /* non-fatal */ }
+  writeJsonFileAtomic(getRegistryPath(), registry);
 }
 
 function isEnabled(registry: ExtensionRegistry, id: string): boolean {
@@ -88,16 +75,11 @@ function isEnabled(registry: ExtensionRegistry, id: string): boolean {
   return entry.enabled;
 }
 
+const isExtensionManifest = (d: unknown): d is ExtensionManifest =>
+  d !== null && typeof d === "object" && typeof (d as Record<string, unknown>).id === "string" && typeof (d as Record<string, unknown>).name === "string";
+
 function readManifest(dir: string): ExtensionManifest | null {
-  const mPath = join(dir, "extension-manifest.json");
-  if (!existsSync(mPath)) return null;
-  try {
-    const raw = JSON.parse(readFileSync(mPath, "utf-8"));
-    if (typeof raw?.id === "string" && typeof raw?.name === "string") return raw as ExtensionManifest;
-    return null;
-  } catch {
-    return null;
-  }
+  return loadJsonFileOrNull(join(dir, "extension-manifest.json"), isExtensionManifest);
 }
 
 function discoverManifests(): Map<string, ExtensionManifest> {

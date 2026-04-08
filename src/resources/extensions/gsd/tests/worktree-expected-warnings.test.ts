@@ -19,11 +19,11 @@ describe("worktree expected-condition warning suppression (#3665)", () => {
   const autoSource = readFileSync(autoWorktreeFile, "utf-8");
 
   test("auto-worktree.ts checks for ENOENT before logging unlink warning", () => {
-    assert.match(autoSource, /code\s*!==\s*["']ENOENT["']/);
+    assert.match(autoSource, /isErrnoCode\(err,\s*["']ENOENT["']\)/);
   });
 
   test("auto-worktree.ts checks for EISDIR before logging unlink warning", () => {
-    assert.match(autoSource, /code\s*!==\s*["']EISDIR["']/);
+    assert.match(autoSource, /isErrnoCode\(err,\s*["']EISDIR["']\)/);
   });
 
   test("auto-worktree.ts references issue #3597", () => {

@@ -4,9 +4,9 @@
  * and intent without re-inferring from scratch.
  */
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { gsdRoot } from "./paths.js";
+import { loadJsonFileOrNull, saveJsonFile } from "./json-persistence.js";
 
 export interface PhaseAnchor {
   phase: string;
@@ -27,21 +27,14 @@ function anchorPath(basePath: string, milestoneId: string, phase: string): strin
 }
 
 export function writePhaseAnchor(basePath: string, milestoneId: string, anchor: PhaseAnchor): void {
-  const dir = anchorsDir(basePath, milestoneId);
-  if (!existsSync(dir)) {
-    mkdirSync(dir, { recursive: true });
-  }
-  writeFileSync(anchorPath(basePath, milestoneId, anchor.phase), JSON.stringify(anchor, null, 2), "utf-8");
+  saveJsonFile(anchorPath(basePath, milestoneId, anchor.phase), anchor);
 }
 
+const isPhaseAnchor = (d: unknown): d is PhaseAnchor =>
+  d !== null && typeof d === "object" && typeof (d as Record<string, unknown>).phase === "string";
+
 export function readPhaseAnchor(basePath: string, milestoneId: string, phase: string): PhaseAnchor | null {
-  const path = anchorPath(basePath, milestoneId, phase);
-  if (!existsSync(path)) return null;
-  try {
-    return JSON.parse(readFileSync(path, "utf-8")) as PhaseAnchor;
-  } catch {
-    return null;
-  }
+  return loadJsonFileOrNull(anchorPath(basePath, milestoneId, phase), isPhaseAnchor);
 }
 
 export function formatAnchorForPrompt(anchor: PhaseAnchor): string {

@@ -8,6 +8,7 @@
 
 import type { ExtensionCommandContext } from "@gsd/pi-coding-agent";
 import { existsSync, readFileSync } from "node:fs";
+import { safeReadFile } from "./safe-fs.js";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -114,8 +115,8 @@ export async function handleImportClaude(ctx: ExtensionCommandContext, scope: "g
   }
 
   const readPrefs = (): Record<string, unknown> => {
-    if (!existsSync(path)) return { version: 1 };
-    const content = readFileSync(path, "utf-8");
+    const content = safeReadFile(path);
+    if (content === null) return { version: 1 };
     const [frontmatterLines] = splitFrontmatter(content);
     return frontmatterLines ? parseFrontmatterMap(frontmatterLines) : { version: 1 };
   };

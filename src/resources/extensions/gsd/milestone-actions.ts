@@ -13,6 +13,7 @@
 
 import { existsSync, rmSync, writeFileSync, readFileSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
+import { getErrorMessage } from "./error-utils.js";
 import {
   resolveMilestonePath,
   resolveMilestoneFile,
@@ -59,7 +60,7 @@ export function parkMilestone(basePath: string, milestoneId: string, reason: str
     try {
       updateMilestoneStatus(milestoneId, "parked");
     } catch (err) {
-      logWarning("engine", `parkMilestone DB sync failed for ${milestoneId}: ${(err as Error).message}`);
+      logWarning("engine", `parkMilestone DB sync failed for ${milestoneId}: ${getErrorMessage(err)}`);
     }
   }
   invalidateAllCaches();
@@ -85,7 +86,7 @@ export function unparkMilestone(basePath: string, milestoneId: string): boolean 
     try {
       updateMilestoneStatus(milestoneId, "active");
     } catch (err) {
-      logWarning("engine", `unparkMilestone DB sync failed for ${milestoneId}: ${(err as Error).message}`);
+      logWarning("engine", `unparkMilestone DB sync failed for ${milestoneId}: ${getErrorMessage(err)}`);
     }
   }
   invalidateAllCaches();

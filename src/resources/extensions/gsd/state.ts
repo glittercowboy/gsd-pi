@@ -2,6 +2,7 @@
 // DB-primary state derivation with filesystem fallback for unmigrated projects.
 // Pure TypeScript, zero Pi dependencies.
 
+import { getErrorMessage } from "./error-utils.js";
 import type {
   GSDState,
   ActiveRef,
@@ -803,7 +804,7 @@ export async function deriveStateFromDb(basePath: string): Promise<GSDState> {
               });
             } catch (insertErr) {
               // Task may already exist from a partial previous import — skip
-              logWarning("reconcile", `failed to insert task ${t.id} from plan file: ${insertErr instanceof Error ? insertErr.message : String(insertErr)}`);
+              logWarning("reconcile", `failed to insert task ${t.id} from plan file: ${getErrorMessage(insertErr)}`);
             }
           }
           tasks = getSliceTasks(activeMilestone.id, activeSlice.id);
@@ -812,7 +813,7 @@ export async function deriveStateFromDb(basePath: string): Promise<GSDState> {
       }
     } catch (err) {
       // Non-fatal — fall through to the existing "empty plan" logic
-      logError("reconcile", `plan-file task import failed for ${activeMilestone.id}/${activeSlice.id}: ${err instanceof Error ? err.message : String(err)}`);
+      logError("reconcile", `plan-file task import failed for ${activeMilestone.id}/${activeSlice.id}: ${getErrorMessage(err)}`);
     }
   }
 
@@ -833,7 +834,7 @@ export async function deriveStateFromDb(basePath: string): Promise<GSDState> {
         reconciled = true;
       } catch (e) {
         // DB write failed — continue with stale status rather than crash
-        logError("reconcile", `failed to update task ${t.id}`, { tid: t.id, error: (e as Error).message });
+        logError("reconcile", `failed to update task ${t.id}`, { tid: t.id, error: getErrorMessage(e) });
       }
     }
   }

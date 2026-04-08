@@ -5,6 +5,7 @@
 import { appendFileSync, mkdirSync, readdirSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import { gsdRoot } from './paths.js';
+import { makeSafeTimestamp } from './time-utils.js';
 
 // ─── State ────────────────────────────────────────────────────────────────────
 
@@ -51,7 +52,7 @@ export function enableDebug(basePath: string): void {
     }
   } catch { /* non-fatal */ }
 
-  const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+  const timestamp = makeSafeTimestamp();
   _logPath = join(debugDir, `debug-${timestamp}.log`);
   _startTime = Date.now();
   _enabled = true;

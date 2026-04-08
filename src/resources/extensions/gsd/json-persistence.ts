@@ -1,6 +1,7 @@
 import { existsSync, readFileSync, writeFileSync, mkdirSync, renameSync, unlinkSync } from "node:fs";
 import { dirname } from "node:path";
 import { randomBytes } from "node:crypto";
+import { safeReadFile } from "./safe-fs.js";
 
 /**
  * Load a JSON file with validation, returning a default on failure.
@@ -12,8 +13,8 @@ export function loadJsonFile<T>(
   defaultFactory: () => T,
 ): T {
   try {
-    if (!existsSync(filePath)) return defaultFactory();
-    const raw = readFileSync(filePath, "utf-8");
+    const raw = safeReadFile(filePath);
+    if (raw === null) return defaultFactory();
     const parsed = JSON.parse(raw);
     return validate(parsed) ? parsed : defaultFactory();
   } catch {
@@ -30,8 +31,8 @@ export function loadJsonFileOrNull<T>(
   validate: (data: unknown) => data is T,
 ): T | null {
   try {
-    if (!existsSync(filePath)) return null;
-    const raw = readFileSync(filePath, "utf-8");
+    const raw = safeReadFile(filePath);
+    if (raw === null) return null;
     const parsed = JSON.parse(raw);
     return validate(parsed) ? parsed : null;
   } catch {

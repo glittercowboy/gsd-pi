@@ -8,6 +8,7 @@
 import { readFileSync, existsSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { safeReadFile } from "./safe-fs.js";
 import { homedir } from "node:os";
 
 const __extensionDir = resolveGsdExtensionDir();
@@ -255,7 +256,5 @@ export function loadWorkflowTemplate(templateId: string): string | null {
   if (!match) return null;
 
   const filePath = join(__extensionDir, "workflow-templates", match.template.file);
-  if (!existsSync(filePath)) return null;
-
-  return readFileSync(filePath, "utf-8");
+  return safeReadFile(filePath);
 }

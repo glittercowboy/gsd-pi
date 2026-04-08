@@ -11,6 +11,7 @@
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { join, resolve, sep } from "node:path";
 import { randomUUID } from "node:crypto";
+import { safeReadFile } from "./safe-fs.js";
 import { gsdRoot } from "./paths.js";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -121,9 +122,9 @@ export function appendCapture(basePath: string, text: string): string {
  */
 export function loadAllCaptures(basePath: string): CaptureEntry[] {
   const filePath = resolveCapturesPath(basePath);
-  if (!existsSync(filePath)) return [];
+  const content = safeReadFile(filePath);
+  if (content === null) return [];
 
-  const content = readFileSync(filePath, "utf-8");
   return parseCapturesContent(content);
 }
 
@@ -141,9 +142,9 @@ export function loadPendingCaptures(basePath: string): CaptureEntry[] {
  */
 export function hasPendingCaptures(basePath: string): boolean {
   const filePath = resolveCapturesPath(basePath);
-  if (!existsSync(filePath)) return false;
+  const content = safeReadFile(filePath);
+  if (content === null) return false;
   try {
-    const content = readFileSync(filePath, "utf-8");
     return /\*\*Status:\*\*\s*pending/i.test(content);
   } catch {
     return false;
@@ -157,9 +158,9 @@ export function hasPendingCaptures(basePath: string): boolean {
  */
 export function countPendingCaptures(basePath: string): number {
   const filePath = resolveCapturesPath(basePath);
-  if (!existsSync(filePath)) return 0;
+  const content = safeReadFile(filePath);
+  if (content === null) return 0;
   try {
-    const content = readFileSync(filePath, "utf-8");
     const matches = content.match(/\*\*Status:\*\*\s*pending/gi);
     return matches ? matches.length : 0;
   } catch {
@@ -180,9 +181,8 @@ export function markCaptureResolved(
   milestoneId?: string,
 ): void {
   const filePath = resolveCapturesPath(basePath);
-  if (!existsSync(filePath)) return;
-
-  const content = readFileSync(filePath, "utf-8");
+  const content = safeReadFile(filePath);
+  if (content === null) return;
   const resolvedAt = new Date().toISOString();
 
   // Find the section for this capture ID and rewrite its fields
@@ -233,9 +233,8 @@ export function markCaptureResolved(
  */
 export function markCaptureExecuted(basePath: string, captureId: string): void {
   const filePath = resolveCapturesPath(basePath);
-  if (!existsSync(filePath)) return;
-
-  const content = readFileSync(filePath, "utf-8");
+  const content = safeReadFile(filePath);
+  if (content === null) return;
   const executedAt = new Date().toISOString();
 
   const sectionRegex = new RegExp(
@@ -320,9 +319,10 @@ export function loadBacktrackCaptures(basePath: string): CaptureEntry[] {
  */
 export function revertExecutorResolvedCaptures(basePath: string): number {
   const filePath = resolveCapturesPath(basePath);
-  if (!existsSync(filePath)) return 0;
+  const capturesRaw = safeReadFile(filePath);
+  if (capturesRaw === null) return 0;
 
-  let content = readFileSync(filePath, "utf-8");
+  let content = capturesRaw;
   let reverted = 0;
 
   const all = loadAllCaptures(basePath);
@@ -364,9 +364,8 @@ export function revertExecutorResolvedCaptures(basePath: string): number {
  */
 export function stampCaptureMilestone(basePath: string, captureId: string, milestoneId: string): void {
   const filePath = resolveCapturesPath(basePath);
-  if (!existsSync(filePath)) return;
-
-  const content = readFileSync(filePath, "utf-8");
+  const content = safeReadFile(filePath);
+  if (content === null) return;
 
   const sectionRegex = new RegExp(
     `(### ${escapeRegex(captureId)}\\n(?:(?!### ).)*?)(?=### |$)`,

@@ -9,6 +9,7 @@
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
 import { existsSync, lstatSync, readFileSync, writeFileSync } from "node:fs";
+import { safeReadFile } from "./safe-fs.js";
 import { nativeRmCached, nativeLsFiles } from "./native-git-bridge.js";
 import { gsdRoot } from "./paths.js";
 import { GIT_NO_PROMPT_ENV } from "./git-constants.js";
@@ -182,10 +183,7 @@ export function ensureGitignore(
 
   const gitignorePath = join(basePath, ".gitignore");
 
-  let existing = "";
-  if (existsSync(gitignorePath)) {
-    existing = readFileSync(gitignorePath, "utf-8");
-  }
+  const existing = safeReadFile(gitignorePath) ?? "";
 
   // Parse existing lines (trimmed, ignoring comments and blanks)
   const existingLines = new Set(

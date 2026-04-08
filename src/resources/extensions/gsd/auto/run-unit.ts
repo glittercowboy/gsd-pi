@@ -12,6 +12,7 @@ import type { UnitResult } from "./types.js";
 import { _setCurrentResolve, _setSessionSwitchInFlight } from "./resolve.js";
 import { debugLog } from "../debug-logger.js";
 import { logWarning, logError } from "../workflow-logger.js";
+import { getErrorMessage } from "../error-utils.js";
 
 /**
  * Execute a single unit: create a new session, send the prompt, and await
@@ -51,7 +52,7 @@ export async function runUnit(
   } catch (sessionErr) {
     if (sessionTimeoutHandle) clearTimeout(sessionTimeoutHandle);
     const msg =
-      sessionErr instanceof Error ? sessionErr.message : String(sessionErr);
+      getErrorMessage(sessionErr);
     debugLog("runUnit", {
       phase: "session-error",
       unitType,

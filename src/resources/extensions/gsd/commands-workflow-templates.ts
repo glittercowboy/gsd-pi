@@ -6,8 +6,10 @@
  */
 
 import type { ExtensionAPI, ExtensionCommandContext } from "@gsd/pi-coding-agent";
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync } from "node:fs";
 import { join } from "node:path";
+import { saveJsonFile } from "./json-persistence.js";
+import { safeReadFile } from "./safe-fs.js";
 import {
   resolveByName,
   autoDetect,
@@ -22,20 +24,10 @@ import { gsdRoot } from "./paths.js";
 import { createGitService, runGit } from "./git-service.js";
 import { isAutoActive, isAutoPaused } from "./auto.js";
 import { getErrorMessage } from "./error-utils.js";
+import { slugify } from "./string-utils.js";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-/**
- * Generate a URL-friendly slug from text.
- */
-function slugify(text: string): string {
-  return text
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-|-$/g, "")
-    .slice(0, 40)
-    .replace(/-$/, "");
-}
 
 /**
  * Get the next workflow task number by scanning existing directories.
@@ -118,7 +110,7 @@ function writeWorkflowState(
     updatedAt: new Date().toISOString(),
     artifactDir,
   };
-  writeFileSync(statePath, JSON.stringify(state, null, 2) + "\n");
+  saveJsonFile(statePath, state);
 }
 
 /**
@@ -139,10 +131,10 @@ function findInProgressWorkflows(basePath: string): WorkflowState[] {
       for (const workflow of readdirSync(categoryDir, { withFileTypes: true })) {
         if (!workflow.isDirectory()) continue;
         const statePath = join(categoryDir, workflow.name, "STATE.json");
-        if (!existsSync(statePath)) continue;
+        const raw = safeReadFile(statePath);
+        if (raw === null) continue;
 
         try {
-          const raw = readFileSync(statePath, "utf-8");
           const state = JSON.parse(raw) as WorkflowState;
           if (!state.completedAt) {
             results.push(state);
@@ -361,7 +353,7 @@ export async function handleStart(
   // ─── Dry-run mode: preview without executing ────────────────────────────
 
   if (dryRun) {
-    const slug = slugify(description || templateId);
+    const slug = slugify(description || templateId, 40);
     const lines = [
       `DRY RUN — ${template.name} (${templateId})\n`,
       `Description: ${description || "(none)"}`,
@@ -414,7 +406,7 @@ export async function handleStart(
 
   let artifactDir = "";
   if (template.artifact_dir) {
-    const slug = slugify(description || templateId);
+    const slug = slugify(description || templateId, 40);
     const prefix = datePrefix();
     const num = getNextWorkflowNum(join(basePath, template.artifact_dir));
     artifactDir = `${template.artifact_dir}${prefix}-${num}-${slug}`;
@@ -425,7 +417,7 @@ export async function handleStart(
 
   const git = createGitService(basePath);
   const skipBranch = git.prefs.isolation === "none";
-  const slug = slugify(description || templateId);
+  const slug = slugify(description || templateId, 40);
   const branchName = `gsd/${templateId}/${slug}`;
   let branchCreated = false;
 

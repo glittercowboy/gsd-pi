@@ -9,6 +9,7 @@
  */
 
 import type { ExtensionAPI, ExtensionCommandContext } from "@gsd/pi-coding-agent";
+import { getErrorMessage } from "./error-utils.js";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -127,7 +128,7 @@ export async function handleChangelog(
 
     releases = (await response.json()) as GitHubRelease[];
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
+    const message = getErrorMessage(err);
     ctx.ui.notify(`Failed to fetch changelog: ${message}`, "error");
     return;
   }

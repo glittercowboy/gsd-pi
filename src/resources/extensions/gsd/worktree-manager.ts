@@ -18,8 +18,10 @@
 import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { join, resolve, sep } from "node:path";
+import { safeReadFile } from "./safe-fs.js";
 import { GSDError, GSD_PARSE_ERROR, GSD_STALE_STATE, GSD_LOCK_HELD, GSD_GIT_ERROR, GSD_MERGE_CONFLICT } from "./errors.js";
 import { logWarning } from "./workflow-logger.js";
+import { getErrorMessage } from "./error-utils.js";
 import {
   nativeBranchDelete,
   nativeBranchExists,
@@ -92,13 +94,15 @@ export function resolveGitDir(basePath: string): string {
   if (!existsSync(gitPath)) return gitPath;
   // In a normal repo .git is a directory — skip the file read (#3597)
   if (lstatSync(gitPath).isDirectory()) return gitPath;
+  const gitRaw = safeReadFile(gitPath);
+  if (gitRaw === null) return gitPath;
   try {
-    const content = readFileSync(gitPath, "utf-8").trim();
+    const content = gitRaw.trim();
     if (content.startsWith("gitdir: ")) {
       return resolve(basePath, content.slice(8));
     }
   } catch (e) {
-    logWarning("worktree", `.git file read failed: ${(e as Error).message}`);
+    logWarning("worktree", `.git file read failed: ${getErrorMessage(e)}`);
   }
   return gitPath;
 }
@@ -327,7 +331,7 @@ export function findNestedGitDirs(rootPath: string): string[] {
     try {
       entries = readdirSync(dir);
     } catch (e) {
-      logWarning("worktree", `readdirSync failed: ${(e as Error).message}`);
+      logWarning("worktree", `readdirSync failed: ${getErrorMessage(e)}`);
       return;
     }
 
@@ -341,7 +345,7 @@ export function findNestedGitDirs(rootPath: string): string[] {
       try {
         stat = lstatSync(fullPath);
       } catch (e) {
-        logWarning("worktree", `lstatSync failed for ${fullPath}: ${(e as Error).message}`);
+        logWarning("worktree", `lstatSync failed for ${fullPath}: ${getErrorMessage(e)}`);
         continue;
       }
       if (!stat.isDirectory()) continue;
@@ -358,7 +362,7 @@ export function findNestedGitDirs(rootPath: string): string[] {
           continue;
         }
       } catch (e) {
-        logWarning("worktree", `existsSync/.git check failed for ${fullPath}: ${(e as Error).message}`);
+        logWarning("worktree", `existsSync/.git check failed for ${fullPath}: ${getErrorMessage(e)}`);
       }
 
       walk(fullPath, depth + 1);
@@ -395,7 +399,7 @@ export function removeWorktree(
     if (entry?.path) {
       gitReportedPath = entry.path;
     }
-  } catch (e) { logWarning("worktree", `nativeWorktreeList parse failed: ${(e as Error).message}`); }
+  } catch (e) { logWarning("worktree", `nativeWorktreeList parse failed: ${getErrorMessage(e)}`); }
 
   // Safety gate (#2365): only use the git-reported path if it is actually
   // inside .gsd/worktrees/.  When .gsd/ was a symlink, git may have resolved
@@ -410,7 +414,7 @@ export function removeWorktree(
     );
     // Still tell git to unregister the worktree entry via its reported path,
     // but do NOT use force and do NOT fall back to rmSync on this path.
-    try { nativeWorktreeRemove(basePath, gitReportedPath, false); } catch (e) { logWarning("worktree", `non-force worktree remove failed for ${gitReportedPath}: ${e instanceof Error ? e.message : String(e)}`); }
+    try { nativeWorktreeRemove(basePath, gitReportedPath, false); } catch (e) { logWarning("worktree", `non-force worktree remove failed for ${gitReportedPath}: ${getErrorMessage(e)}`); }
   }
 
   const resolvedWtPath = existsSync(wtPath) ? realpathSync(wtPath) : wtPath;
@@ -429,7 +433,7 @@ export function removeWorktree(
   if (!existsSync(wtPath)) {
     nativeWorktreePrune(basePath);
     if (deleteBranch) {
-      try { nativeBranchDelete(basePath, branch, true); } catch (e) { logWarning("worktree", `nativeBranchDelete failed: ${(e as Error).message}`); }
+      try { nativeBranchDelete(basePath, branch, true); } catch (e) { logWarning("worktree", `nativeBranchDelete failed: ${getErrorMessage(e)}`); }
     }
     return;
   }
@@ -464,7 +468,7 @@ export function removeWorktree(
         }
       }
     } catch (e) {
-      logWarning("worktree", `submodule status check failed: ${(e as Error).message}`);
+      logWarning("worktree", `submodule status check failed: ${getErrorMessage(e)}`);
     }
   }
 
@@ -497,11 +501,11 @@ export function removeWorktree(
     // Remove worktree: try non-force first when submodules have changes,
     // falling back to force only after submodule state has been preserved.
     const useForce = hasSubmoduleChanges ? false : force;
-    try { nativeWorktreeRemove(basePath, resolvedWtPath, useForce); } catch (e) { logWarning("worktree", `nativeWorktreeRemove failed: ${(e as Error).message}`); }
+    try { nativeWorktreeRemove(basePath, resolvedWtPath, useForce); } catch (e) { logWarning("worktree", `nativeWorktreeRemove failed: ${getErrorMessage(e)}`); }
 
     // If the directory is still there (e.g. locked), try harder with force
     if (existsSync(resolvedWtPath)) {
-      try { nativeWorktreeRemove(basePath, resolvedWtPath, true); } catch (e) { logWarning("worktree", `nativeWorktreeRemove (force) failed: ${(e as Error).message}`); }
+      try { nativeWorktreeRemove(basePath, resolvedWtPath, true); } catch (e) { logWarning("worktree", `nativeWorktreeRemove (force) failed: ${getErrorMessage(e)}`); }
     }
 
     // (#2821) If the worktree directory STILL exists after both native removal
@@ -533,14 +537,14 @@ export function removeWorktree(
       `[GSD] WARNING: Resolved worktree path is outside .gsd/worktrees/: ${resolvedWtPath}\n` +
         `  Skipping forced removal to prevent data loss.`,
     );
-    try { nativeWorktreeRemove(basePath, resolvedWtPath, false); } catch (e) { logWarning("worktree", `non-force worktree remove failed for ${resolvedWtPath}: ${e instanceof Error ? e.message : String(e)}`); }
+    try { nativeWorktreeRemove(basePath, resolvedWtPath, false); } catch (e) { logWarning("worktree", `non-force worktree remove failed for ${resolvedWtPath}: ${getErrorMessage(e)}`); }
   }
 
   // Prune stale entries so git knows the worktree is gone
   nativeWorktreePrune(basePath);
 
   if (deleteBranch) {
-    try { nativeBranchDelete(basePath, branch, true); } catch (e) { logWarning("worktree", `final branch delete failed: ${(e as Error).message}`); }
+    try { nativeBranchDelete(basePath, branch, true); } catch (e) { logWarning("worktree", `final branch delete failed: ${getErrorMessage(e)}`); }
   }
 }
 

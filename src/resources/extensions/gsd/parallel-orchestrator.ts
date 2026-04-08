@@ -19,6 +19,7 @@ import {
 } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { safeReadFile } from "./safe-fs.js";
 import { gsdRoot } from "./paths.js";
 import { createWorktree, worktreePath } from "./worktree-manager.js";
 import { autoWorktreeBranch, runWorktreePostCreateHook, syncGsdStateToWorktree } from "./auto-worktree.js";
@@ -127,7 +128,7 @@ export function persistState(basePath: string): void {
     const tmp = dest + TMP_SUFFIX;
     writeFileSync(tmp, JSON.stringify(persisted, null, 2), "utf-8");
     renameSync(tmp, dest);
-  } catch (e) { logWarning("parallel", `persist parallel state failed: ${(e as Error).message}`); }
+  } catch (e) { logWarning("parallel", `persist parallel state failed: ${getErrorMessage(e)}`); }
 }
 
 /**
@@ -137,7 +138,7 @@ function removeStateFile(basePath: string): void {
   try {
     const p = stateFilePath(basePath);
     if (existsSync(p)) unlinkSync(p);
-  } catch (e) { logWarning("parallel", `clear parallel state file failed: ${(e as Error).message}`); }
+  } catch (e) { logWarning("parallel", `clear parallel state file failed: ${getErrorMessage(e)}`); }
 }
 
 function isPidAlive(pid: number): boolean {
@@ -146,7 +147,7 @@ function isPidAlive(pid: number): boolean {
     process.kill(pid, 0);
     return true;
   } catch (e) {
-    logWarning("parallel", `pid alive check failed for pid ${pid}: ${(e as Error).message}`);
+    logWarning("parallel", `pid alive check failed for pid ${pid}: ${getErrorMessage(e)}`);
     return false;
   }
 }
@@ -161,8 +162,8 @@ function isPidAlive(pid: number): boolean {
 export function restoreState(basePath: string): PersistedState | null {
   try {
     const p = stateFilePath(basePath);
-    if (!existsSync(p)) return null;
-    const raw = readFileSync(p, "utf-8");
+    const raw = safeReadFile(p);
+    if (raw === null) return null;
     const persisted = JSON.parse(raw) as PersistedState;
 
     // Filter to only workers with living PIDs
@@ -179,7 +180,7 @@ export function restoreState(basePath: string): PersistedState | null {
 
     return persisted;
   } catch (e) {
-    logWarning("parallel", `readParallelState JSON parse failed: ${(e as Error).message}`);
+    logWarning("parallel", `readParallelState JSON parse failed: ${getErrorMessage(e)}`);
     return null;
   }
 }
@@ -194,7 +195,7 @@ function appendWorkerLog(basePath: string, milestoneId: string, chunk: string): 
     if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
     appendFileSync(workerLogPath(basePath, milestoneId), chunk, "utf-8");
   } catch (e) {
-    logWarning("parallel", `appendFileSync worker log failed for ${milestoneId}: ${(e as Error).message}`);
+    logWarning("parallel", `appendFileSync worker log failed for ${milestoneId}: ${getErrorMessage(e)}`);
   }
 }
 
@@ -434,7 +435,7 @@ export async function startParallel(
       try {
         wtPath = createMilestoneWorktree(basePath, mid);
       } catch (e) {
-        logWarning("parallel", `createMilestoneWorktree fallback for ${mid}: ${(e as Error).message}`);
+        logWarning("parallel", `createMilestoneWorktree fallback for ${mid}: ${getErrorMessage(e)}`);
         wtPath = worktreePath(basePath, mid);
       }
 
@@ -575,7 +576,7 @@ export function spawnWorker(
       detached: false,
     });
   } catch (e) {
-    logWarning("parallel", `spawnSync worker failed for ${milestoneId}: ${(e as Error).message}`);
+    logWarning("parallel", `spawnSync worker failed for ${milestoneId}: ${getErrorMessage(e)}`);
     return false;
   }
 
@@ -706,7 +707,7 @@ function resolveGsdBin(): string | null {
   try {
     thisDir = dirname(fileURLToPath(import.meta.url));
   } catch (e) {
-    logWarning("parallel", `dirname(fileURLToPath) failed: ${(e as Error).message}`);
+    logWarning("parallel", `dirname(fileURLToPath) failed: ${getErrorMessage(e)}`);
     thisDir = process.cwd();
   }
   const candidates = [
@@ -829,7 +830,7 @@ export async function stopParallel(
         } else if (worker.pid !== process.pid) {
           process.kill(worker.pid, "SIGTERM");
         }
-      } catch (e) { logWarning("parallel", `process.kill SIGTERM failed for pid ${worker.pid}: ${(e as Error).message}`); }
+      } catch (e) { logWarning("parallel", `process.kill SIGTERM failed for pid ${worker.pid}: ${getErrorMessage(e)}`); }
     }
 
     // Wait for the headless process to cascade SIGTERM to its RPC child.
@@ -845,7 +846,7 @@ export async function stopParallel(
         } else if (worker.pid !== process.pid) {
           process.kill(worker.pid, "SIGKILL");
         }
-      } catch (e) { logWarning("parallel", `process.kill SIGKILL failed for pid ${worker.pid}: ${(e as Error).message}`); }
+      } catch (e) { logWarning("parallel", `process.kill SIGKILL failed for pid ${worker.pid}: ${getErrorMessage(e)}`); }
       await waitForWorkerExit(worker, 250);
     }
 

@@ -19,6 +19,7 @@ import { join } from "node:path";
 import { writeExportFile } from "./export.js";
 import { gsdRoot } from "./paths.js";
 import { stripAnsi } from "../shared/mod.js";
+import { makeSafeTimestamp } from "./time-utils.js";
 
 const TAB_COUNT = 10;
 const TAB_LABELS = [
@@ -352,7 +353,7 @@ export class GSDVisualizerOverlay {
     if (format === "snapshot") {
       // Capture current active tab's rendered lines as snapshot
       const snapshotLines = this.renderTabContent(this.activeTab, 80);
-      const timestamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+      const timestamp = makeSafeTimestamp();
       const exportDir = gsdRoot(this.basePath);
       mkdirSync(exportDir, { recursive: true });
       const outPath = join(exportDir, `snapshot-${timestamp}.txt`);

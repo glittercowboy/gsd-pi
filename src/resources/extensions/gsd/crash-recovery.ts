@@ -15,6 +15,7 @@ import { join } from "node:path";
 import { gsdRoot } from "./paths.js";
 import { atomicWriteSync } from "./atomic-write.js";
 import { effectiveLockFile } from "./session-lock.js";
+import { safeReadFile } from "./safe-fs.js";
 
 export interface LockData {
   pid: number;
@@ -63,8 +64,8 @@ export function clearLock(basePath: string): void {
 export function readCrashLock(basePath: string): LockData | null {
   try {
     const p = lockPath(basePath);
-    if (!existsSync(p)) return null;
-    const raw = readFileSync(p, "utf-8");
+    const raw = safeReadFile(p);
+    if (raw === null) return null;
     return JSON.parse(raw) as LockData;
   } catch (e) {
     /* non-fatal: corrupt or unreadable lock file */ void e;

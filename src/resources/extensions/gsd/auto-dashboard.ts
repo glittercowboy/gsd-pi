@@ -11,6 +11,7 @@ import type { GSDState } from "./types.js";
 import { getCurrentBranch } from "./worktree.js";
 import { getActiveHook } from "./post-unit-hooks.js";
 import { getLedger, getProjectTotals } from "./metrics.js";
+import { getErrorMessage } from "./error-utils.js";
 import {
   resolveMilestoneFile,
   resolveSliceFile,
@@ -289,7 +290,7 @@ export function updateSliceProgressCache(base: string, mid: string, activeSid?: 
         }
       } catch (err) {
         // Non-fatal — just omit task count
-        logWarning("dashboard", `operation failed: ${err instanceof Error ? err.message : String(err)}`);
+        logWarning("dashboard", `operation failed: ${getErrorMessage(err)}`);
       }
     }
 
@@ -302,7 +303,7 @@ export function updateSliceProgressCache(base: string, mid: string, activeSid?: 
     };
   } catch (err) {
     // Non-fatal — widget just won't show progress bar
-    logWarning("dashboard", `operation failed: ${err instanceof Error ? err.message : String(err)}`);
+    logWarning("dashboard", `operation failed: ${getErrorMessage(err)}`);
   }
 }
 
@@ -338,7 +339,7 @@ function refreshLastCommit(basePath: string): void {
     lastCommitFetchedAt = Date.now();
   } catch (err) {
     // Non-fatal — just skip last commit display
-    logWarning("dashboard", `operation failed: ${err instanceof Error ? err.message : String(err)}`);
+    logWarning("dashboard", `operation failed: ${getErrorMessage(err)}`);
   }
 }
 
@@ -382,7 +383,7 @@ function ensureWidgetModeLoaded(): void {
       widgetMode = saved as WidgetMode;
     }
   } catch (err) { /* non-fatal — use default */
-    logWarning("dashboard", `operation failed: ${err instanceof Error ? err.message : String(err)}`);
+    logWarning("dashboard", `operation failed: ${getErrorMessage(err)}`);
   }
 }
 
@@ -403,7 +404,7 @@ function persistWidgetMode(mode: WidgetMode): void {
     }
     writeFileSync(prefsPath, content, "utf-8");
   } catch (err) { /* non-fatal — mode still set in memory */
-    logWarning("dashboard", `file write failed: ${err instanceof Error ? err.message : String(err)}`);
+    logWarning("dashboard", `file write failed: ${getErrorMessage(err)}`);
   }
 }
 
@@ -470,7 +471,7 @@ export function updateProgressWidget(
   // Cache git branch at widget creation time (not per render)
   let cachedBranch: string | null = null;
   try { cachedBranch = getCurrentBranch(accessors.getBasePath()); } catch (err) { /* not in git repo */
-    logWarning("dashboard", `git branch detection failed: ${err instanceof Error ? err.message : String(err)}`);
+    logWarning("dashboard", `git branch detection failed: ${getErrorMessage(err)}`);
   }
 
   // Cache short pwd (last 2 path segments only) + worktree/branch info
@@ -509,7 +510,7 @@ export function updateProgressWidget(
         const savings = sessionId ? getRtkSessionSavings(accessors.getBasePath(), sessionId) : null;
         cachedRtkLabel = formatRtkSavingsLabel(savings);
       } catch (err) {
-        logWarning("dashboard", `RTK savings lookup failed: ${err instanceof Error ? (err as Error).message : String(err)}`);
+        logWarning("dashboard", `RTK savings lookup failed: ${getErrorMessage(err)}`);
         cachedRtkLabel = null;
       }
     };
@@ -534,7 +535,7 @@ export function updateProgressWidget(
         refreshRtkLabel();
         cachedLines = undefined;
       } catch (err) { /* non-fatal */
-        logWarning("dashboard", `DB status update failed: ${err instanceof Error ? err.message : String(err)}`);
+        logWarning("dashboard", `DB status update failed: ${getErrorMessage(err)}`);
       }
     }, 15_000);
 

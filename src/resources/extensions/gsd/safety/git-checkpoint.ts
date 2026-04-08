@@ -10,6 +10,7 @@
 
 import { execFileSync } from "node:child_process";
 import { logWarning } from "../workflow-logger.js";
+import { getErrorMessage } from "../error-utils.js";
 
 // ─── Constants ──────────────────────────────────────────────────────────────
 
@@ -41,7 +42,7 @@ export function createCheckpoint(basePath: string, unitId: string): string | nul
 
     return sha;
   } catch (e) {
-    logWarning("safety", `checkpoint creation failed: ${(e as Error).message}`);
+    logWarning("safety", `checkpoint creation failed: ${getErrorMessage(e)}`);
     return null;
   }
 }
@@ -85,7 +86,7 @@ export function rollbackToCheckpoint(
 
     return true;
   } catch (e) {
-    logWarning("safety", `rollback failed: ${(e as Error).message}`);
+    logWarning("safety", `rollback failed: ${getErrorMessage(e)}`);
     return false;
   }
 }

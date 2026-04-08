@@ -9,6 +9,7 @@
 import { logWarning } from "./workflow-logger.js";
 import type { UnifiedRule, RulePhase } from "./rule-types.js";
 import type { DispatchAction, DispatchContext, DispatchRule } from "./auto-dispatch.js";
+import { getErrorMessage } from "./error-utils.js";
 import type {
   PostUnitHookConfig,
   PreDispatchHookConfig,
@@ -20,6 +21,7 @@ import type {
 } from "./types.js";
 import { resolvePostUnitHooks, resolvePreDispatchHooks } from "./preferences.js";
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { safeReadFile } from "./safe-fs.js";
 import { join } from "node:path";
 import { parseUnitId } from "./unit-id.js";
 
@@ -389,7 +391,7 @@ export class RuleRegistry {
       if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
       writeFileSync(this._hookStatePath(basePath), JSON.stringify(state, null, 2), "utf-8");
     } catch (e) {
-      logWarning("registry", `failed to persist hook state: ${(e as Error).message}`);
+      logWarning("registry", `failed to persist hook state: ${getErrorMessage(e)}`);
     }
   }
 
@@ -397,8 +399,8 @@ export class RuleRegistry {
   restoreState(basePath: string): void {
     try {
       const filePath = this._hookStatePath(basePath);
-      if (!existsSync(filePath)) return;
-      const raw = readFileSync(filePath, "utf-8");
+      const raw = safeReadFile(filePath);
+      if (raw === null) return;
       const state: PersistedHookState = JSON.parse(raw);
       if (state.cycleCounts && typeof state.cycleCounts === "object") {
         this.cycleCounts.clear();
@@ -409,7 +411,7 @@ export class RuleRegistry {
         }
       }
     } catch (e) {
-      logWarning("registry", `failed to restore hook state: ${(e as Error).message}`);
+      logWarning("registry", `failed to restore hook state: ${getErrorMessage(e)}`);
     }
   }
 
@@ -425,7 +427,7 @@ export class RuleRegistry {
         );
       }
     } catch (e) {
-      logWarning("registry", `failed to clear hook state: ${(e as Error).message}`);
+      logWarning("registry", `failed to clear hook state: ${getErrorMessage(e)}`);
     }
   }
 

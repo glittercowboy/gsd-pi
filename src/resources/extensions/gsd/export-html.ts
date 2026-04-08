@@ -27,6 +27,7 @@ import type {
 } from './visualizer-data.js';
 import { formatDateShort, formatDuration } from '../shared/format-utils.js';
 import { formatCost, formatTokenCount } from './metrics.js';
+import { shortModelName } from './display-utils.js';
 import type { UnitMetrics } from './metrics.js';
 
 // ─── Public API ────────────────────────────────────────────────────────────────
@@ -607,7 +608,7 @@ function buildMetricsSection(data: VisualizerData): string {
         sub: `${s.units} units`,
       }))) : ''}
       ${data.byModel.length > 0 ? buildBarChart('Cost by model', data.byModel.map(m => ({
-        label: shortModel(m.model), value: m.cost, display: formatCost(m.cost),
+        label: shortModelName(m.model), value: m.cost, display: formatCost(m.cost),
         sub: `${m.units} units`,
       }))) : ''}
       ${data.bySlice.length > 0 ? buildBarChart('Duration by slice', data.bySlice.map(s => ({
@@ -841,7 +842,7 @@ function buildTimelineSection(data: VisualizerData): string {
         <td class="muted">${i + 1}</td>
         <td class="mono">${esc(u.type)}</td>
         <td class="mono muted">${esc(u.id)}</td>
-        <td>${esc(shortModel(u.model))}</td>
+        <td>${esc(shortModelName(u.model))}</td>
         <td class="muted">${formatDateShort(new Date(u.startedAt).toISOString())}</td>
         <td>${dur}</td>
         <td class="num">${formatCost(u.cost)}</td>
@@ -1036,7 +1037,6 @@ function hRow(label: string, value: string, status?: 'ok' | 'caution' | 'warn'):
   return `<tr${cls}><td>${esc(label)}</td><td>${esc(value)}</td></tr>`;
 }
 
-function shortModel(m: string) { return m.replace(/^claude-/, '').replace(/^anthropic\//, ''); }
 function truncStr(s: string, n: number) { return s.length > n ? s.slice(0, n - 1) + '\u2026' : s; }
 
 function formatDateLong(iso: string): string {

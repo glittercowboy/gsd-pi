@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, cpSync, type CopySyncOptions } from "node:fs"
 import { dirname } from "node:path"
 import { logWarning } from "./workflow-logger.js"
+import { getErrorMessage } from "./error-utils.js";
 
 /**
  * Safely reads a file, returning null if it doesn't exist or on error.
@@ -24,7 +25,7 @@ export function ensureParentDir(filePath: string): boolean {
     mkdirSync(dirname(filePath), { recursive: true })
     return true
   } catch (err) {
-    logWarning("fs", `ensureParentDir failed: ${filePath}: ${(err as Error).message}`)
+    logWarning("fs", `ensureParentDir failed: ${filePath}: ${getErrorMessage(err)}`)
     return false
   }
 }
@@ -38,7 +39,7 @@ export function safeMkdir(dirPath: string): boolean {
     mkdirSync(dirPath, { recursive: true })
     return true
   } catch (err) {
-    logWarning("fs", `mkdir failed: ${dirPath}: ${(err as Error).message}`)
+    logWarning("fs", `mkdir failed: ${dirPath}: ${getErrorMessage(err)}`)
     return false
   }
 }
@@ -53,7 +54,7 @@ export function safeCopy(src: string, dst: string, opts?: CopySyncOptions): bool
     cpSync(src, dst, opts)
     return true
   } catch (err) {
-    logWarning("fs", `copy failed: ${src} → ${dst}: ${(err as Error).message}`)
+    logWarning("fs", `copy failed: ${src} → ${dst}: ${getErrorMessage(err)}`)
     return false
   }
 }
@@ -69,7 +70,7 @@ export function safeCopyRecursive(src: string, dst: string, opts?: Omit<CopySync
     cpSync(src, dst, { ...opts, recursive: true })
     return true
   } catch (err) {
-    logWarning("fs", `recursive copy failed: ${src} → ${dst}: ${(err as Error).message}`)
+    logWarning("fs", `recursive copy failed: ${src} → ${dst}: ${getErrorMessage(err)}`)
     return false
   }
 }

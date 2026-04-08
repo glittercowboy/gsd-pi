@@ -8,6 +8,7 @@ import type { ExtensionContext } from "@gsd/pi-coding-agent";
 import { snapshotUnitMetrics } from "./metrics.js";
 import { saveActivityLog } from "./activity-log.js";
 import { logWarning } from "./workflow-logger.js";
+import { getErrorMessage } from "./error-utils.js";
 
 export interface CloseoutOptions {
   promptCharCount?: number;
@@ -39,11 +40,11 @@ export async function closeoutUnit(
       const llmCallFn = buildMemoryLLMCall(ctx);
       if (llmCallFn) {
         extractMemoriesFromUnit(activityFile, unitType, unitId, llmCallFn).catch((err) => {
-          logWarning("engine", `memory extraction failed for ${unitType}/${unitId}: ${(err as Error).message}`);
+          logWarning("engine", `memory extraction failed for ${unitType}/${unitId}: ${getErrorMessage(err)}`);
         });
       }
     } catch (err) { /* non-fatal */
-      logWarning("engine", `operation failed: ${err instanceof Error ? err.message : String(err)}`);
+      logWarning("engine", `operation failed: ${getErrorMessage(err)}`);
     }
   }
 

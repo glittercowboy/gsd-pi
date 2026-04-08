@@ -13,6 +13,7 @@ import { logWarning } from "./workflow-logger.js";
 import { isClosedStatus } from "./status-guards.js";
 import { join, relative } from "node:path";
 import { createRequire } from "node:module";
+import { getErrorMessage } from "./error-utils.js";
 import {
   getAllMilestones,
   getMilestone,
@@ -723,7 +724,7 @@ export async function renderAllFromDb(basePath: string): Promise<RenderAllResult
       if (ok) result.rendered++;
       else result.skipped++;
     } catch (err) {
-      result.errors.push(`roadmap ${milestone.id}: ${(err as Error).message}`);
+      result.errors.push(`roadmap ${milestone.id}: ${getErrorMessage(err)}`);
     }
 
     // Iterate slices
@@ -736,7 +737,7 @@ export async function renderAllFromDb(basePath: string): Promise<RenderAllResult
         else result.skipped++;
       } catch (err) {
         result.errors.push(
-          `plan ${milestone.id}/${slice.id}: ${(err as Error).message}`,
+          `plan ${milestone.id}/${slice.id}: ${getErrorMessage(err)}`,
         );
       }
 
@@ -747,7 +748,7 @@ export async function renderAllFromDb(basePath: string): Promise<RenderAllResult
         else result.skipped++;
       } catch (err) {
         result.errors.push(
-          `slice summary ${milestone.id}/${slice.id}: ${(err as Error).message}`,
+          `slice summary ${milestone.id}/${slice.id}: ${getErrorMessage(err)}`,
         );
       }
 
@@ -765,7 +766,7 @@ export async function renderAllFromDb(basePath: string): Promise<RenderAllResult
           else result.skipped++;
         } catch (err) {
           result.errors.push(
-            `task summary ${milestone.id}/${slice.id}/${task.id}: ${(err as Error).message}`,
+            `task summary ${milestone.id}/${slice.id}/${task.id}: ${getErrorMessage(err)}`,
           );
         }
       }
@@ -802,7 +803,7 @@ export function detectStaleRenders(basePath: string): StaleEntry[] {
     const m = _require("./parsers-legacy.ts");
     parseRoadmap = m.parseRoadmap; parsePlan = m.parsePlan;
   } catch (e) {
-    logWarning("renderer", `parsers-legacy.ts require failed, falling back to .js: ${(e as Error).message}`);
+    logWarning("renderer", `parsers-legacy.ts require failed, falling back to .js: ${getErrorMessage(e)}`);
     const m = _require("./parsers-legacy.js");
     parseRoadmap = m.parseRoadmap; parsePlan = m.parsePlan;
   }
@@ -838,7 +839,7 @@ export function detectStaleRenders(basePath: string): StaleEntry[] {
           }
         }
       } catch (e) {
-        logWarning("renderer", `roadmap parse failed: ${(e as Error).message}`);
+        logWarning("renderer", `roadmap parse failed: ${getErrorMessage(e)}`);
       }
     }
 
@@ -871,7 +872,7 @@ export function detectStaleRenders(basePath: string): StaleEntry[] {
             }
           }
         } catch (e) {
-          logWarning("renderer", `plan parse failed: ${(e as Error).message}`);
+          logWarning("renderer", `plan parse failed: ${getErrorMessage(e)}`);
         }
       }
 
@@ -1021,7 +1022,7 @@ export async function repairStaleRenders(basePath: string): Promise<number> {
         }
       }
     } catch (err) {
-      logWarning("renderer", `repair failed for ${entry.path}: ${(err as Error).message}`);
+      logWarning("renderer", `repair failed for ${entry.path}: ${getErrorMessage(err)}`);
     }
   }
 

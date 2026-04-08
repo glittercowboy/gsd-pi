@@ -7,6 +7,7 @@ import { loadEffectiveGSDPreferences } from "../preferences.js";
 import { ensureDbOpen } from "./dynamic-tools.js";
 import { StringEnum } from "@gsd/pi-ai";
 import { logError } from "../workflow-logger.js";
+import { getErrorMessage } from "../error-utils.js";
 
 /**
  * Register an alias tool that shares the same execute function as its canonical counterpart.
@@ -52,7 +53,7 @@ export function registerDbTools(pi: ExtensionAPI): void {
         details: { operation: "save_decision", id } as any,
       };
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
+      const msg = getErrorMessage(err);
       logError("tool", `gsd_decision_save tool failed: ${msg}`, { tool: "gsd_decision_save", error: String(err) });
       return {
         content: [{ type: "text" as const, text: `Error saving decision: ${msg}` }],
@@ -135,7 +136,7 @@ export function registerDbTools(pi: ExtensionAPI): void {
         details: { operation: "update_requirement", id: params.id } as any,
       };
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
+      const msg = getErrorMessage(err);
       logError("tool", `gsd_requirement_update tool failed: ${msg}`, { tool: "gsd_requirement_update", error: String(err) });
       return {
         content: [{ type: "text" as const, text: `Error updating requirement: ${msg}` }],
@@ -219,7 +220,7 @@ export function registerDbTools(pi: ExtensionAPI): void {
         details: { operation: "save_requirement", id: result.id } as any,
       };
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
+      const msg = getErrorMessage(err);
       logError("tool", `gsd_requirement_save tool failed: ${msg}`, { tool: "gsd_requirement_save", error: String(err) });
       return {
         content: [{ type: "text" as const, text: `Error saving requirement: ${msg}` }],
@@ -316,7 +317,7 @@ export function registerDbTools(pi: ExtensionAPI): void {
         details: { operation: "save_summary", path: relativePath, artifact_type: params.artifact_type } as any,
       };
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
+      const msg = getErrorMessage(err);
       logError("tool", `gsd_summary_save tool failed: ${msg}`, { tool: "gsd_summary_save", error: String(err) });
       return {
         content: [{ type: "text" as const, text: `Error saving artifact: ${msg}` }],
@@ -393,7 +394,7 @@ export function registerDbTools(pi: ExtensionAPI): void {
         details: { operation: "generate_milestone_id", id: newId, existingCount: existingIds.length, uniqueEnabled } as any,
       };
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
+      const msg = getErrorMessage(err);
       return {
         content: [{ type: "text" as const, text: `Error generating milestone ID: ${msg}` }],
         details: { operation: "generate_milestone_id", error: msg } as any,
@@ -414,7 +415,7 @@ export function registerDbTools(pi: ExtensionAPI): void {
       const { insertMilestone } = await import("../gsd-db.js");
       insertMilestone({ id: milestoneId, status: "queued" });
     } catch (e) {
-      logError("tool", `insertMilestone failed for ${milestoneId}: ${(e as Error).message}`);
+      logError("tool", `insertMilestone failed for ${milestoneId}: ${getErrorMessage(e)}`);
     }
   }
 
@@ -479,7 +480,7 @@ export function registerDbTools(pi: ExtensionAPI): void {
         } as any,
       };
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
+      const msg = getErrorMessage(err);
       logError("tool", `plan_milestone tool failed: ${msg}`, { tool: "gsd_plan_milestone", error: String(err) });
       return {
         content: [{ type: "text" as const, text: `Error planning milestone: ${msg}` }],
@@ -574,7 +575,7 @@ export function registerDbTools(pi: ExtensionAPI): void {
         } as any,
       };
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
+      const msg = getErrorMessage(err);
       logError("tool", `plan_slice tool failed: ${msg}`, { tool: "gsd_plan_slice", error: String(err) });
       return {
         content: [{ type: "text" as const, text: `Error planning slice: ${msg}` }],
@@ -653,7 +654,7 @@ export function registerDbTools(pi: ExtensionAPI): void {
         } as any,
       };
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
+      const msg = getErrorMessage(err);
       logError("tool", `plan_task tool failed: ${msg}`, { tool: "gsd_plan_task", error: String(err) });
       return {
         content: [{ type: "text" as const, text: `Error planning task: ${msg}` }],
@@ -729,7 +730,7 @@ export function registerDbTools(pi: ExtensionAPI): void {
         } as any,
       };
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
+      const msg = getErrorMessage(err);
       logError("tool", `complete_task tool failed: ${msg}`, { tool: "gsd_task_complete", error: String(err) });
       return {
         content: [{ type: "text" as const, text: `Error completing task: ${msg}` }],
@@ -861,7 +862,7 @@ export function registerDbTools(pi: ExtensionAPI): void {
         } as any,
       };
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
+      const msg = getErrorMessage(err);
       logError("tool", `complete_slice tool failed: ${msg}`, { tool: "gsd_slice_complete", error: String(err) });
       return {
         content: [{ type: "text" as const, text: `Error completing slice: ${msg}` }],
@@ -1007,7 +1008,7 @@ export function registerDbTools(pi: ExtensionAPI): void {
         const { rebuildState } = await import("../doctor.js");
         await rebuildState(basePath);
       } catch (err) {
-        logError("tool", `skip_slice rebuildState failed: ${(err as Error).message}`, { tool: "gsd_skip_slice" });
+        logError("tool", `skip_slice rebuildState failed: ${getErrorMessage(err)}`, { tool: "gsd_skip_slice" });
       }
 
       return {
@@ -1020,7 +1021,7 @@ export function registerDbTools(pi: ExtensionAPI): void {
         } as any,
       };
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
+      const msg = getErrorMessage(err);
       logError("tool", `skip_slice tool failed: ${msg}`, { tool: "gsd_skip_slice", error: String(err) });
       return {
         content: [{ type: "text" as const, text: `Error skipping slice: ${msg}` }],
@@ -1081,7 +1082,7 @@ export function registerDbTools(pi: ExtensionAPI): void {
         } as any,
       };
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
+      const msg = getErrorMessage(err);
       logError("tool", `complete_milestone tool failed: ${msg}`, { tool: "gsd_complete_milestone", error: String(err) });
       return {
         content: [{ type: "text" as const, text: `Error completing milestone: ${msg}` }],
@@ -1155,7 +1156,7 @@ export function registerDbTools(pi: ExtensionAPI): void {
         } as any,
       };
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
+      const msg = getErrorMessage(err);
       logError("tool", `validate_milestone tool failed: ${msg}`, { tool: "gsd_validate_milestone", error: String(err) });
       return {
         content: [{ type: "text" as const, text: `Error validating milestone: ${msg}` }],
@@ -1225,7 +1226,7 @@ export function registerDbTools(pi: ExtensionAPI): void {
         } as any,
       };
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
+      const msg = getErrorMessage(err);
       logError("tool", `replan_slice tool failed: ${msg}`, { tool: "gsd_replan_slice", error: String(err) });
       return {
         content: [{ type: "text" as const, text: `Error replanning slice: ${msg}` }],
@@ -1305,7 +1306,7 @@ export function registerDbTools(pi: ExtensionAPI): void {
         } as any,
       };
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
+      const msg = getErrorMessage(err);
       logError("tool", `reassess_roadmap tool failed: ${msg}`, { tool: "gsd_reassess_roadmap", error: String(err) });
       return {
         content: [{ type: "text" as const, text: `Error reassessing roadmap: ${msg}` }],
@@ -1405,7 +1406,7 @@ export function registerDbTools(pi: ExtensionAPI): void {
         details: { operation: "save_gate_result", gateId: params.gateId, verdict: params.verdict } as any,
       };
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
+      const msg = getErrorMessage(err);
       logError("tool", `gsd_save_gate_result failed: ${msg}`, { tool: "gsd_save_gate_result", error: String(err) });
       return {
         content: [{ type: "text" as const, text: `Error saving gate result: ${msg}` }],

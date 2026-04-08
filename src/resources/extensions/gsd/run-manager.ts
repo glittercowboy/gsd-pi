@@ -20,6 +20,7 @@ import { loadDefinition, substituteParams } from "./definition-loader.js";
 import { initializeGraph, writeGraph, readGraph } from "./graph.js";
 import type { WorkflowDefinition } from "./definition-loader.js";
 import type { WorkflowGraph } from "./graph.js";
+import { makeSafeTimestamp } from "./time-utils.js";
 
 // ─── Types ───────────────────────────────────────────────────────────────
 
@@ -42,15 +43,6 @@ const RUNS_DIR = "workflow-runs";
 const DEFS_DIR = "workflow-defs";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────
-
-/**
- * Generate a filesystem-safe timestamp: `YYYY-MM-DDTHH-MM-SS`.
- * Replaces colons with hyphens so the string is safe as a directory name
- * on all platforms (Windows forbids colons in paths).
- */
-function makeTimestamp(date: Date = new Date()): string {
-  return date.toISOString().replace(/:/g, "-").replace(/\.\d{3}Z$/, "");
-}
 
 /**
  * Derive overall status from a graph's step statuses.
@@ -97,7 +89,7 @@ export function createRun(
     : substituteParams(rawDef); // still resolve default params if any
 
   // Create the run directory
-  const timestamp = makeTimestamp();
+  const timestamp = makeSafeTimestamp();
   const runDir = join(basePath, ".gsd", RUNS_DIR, defName, timestamp);
   mkdirSync(runDir, { recursive: true });
 

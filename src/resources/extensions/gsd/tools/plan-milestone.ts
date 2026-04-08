@@ -1,6 +1,7 @@
 import { clearParseCache } from "../files.js";
 import { isClosedStatus } from "../status-guards.js";
 import { isNonEmptyString, validateStringArray } from "../validation.js";
+import { getErrorMessage } from "../error-utils.js";
 import {
   transaction,
   getMilestone,
@@ -187,7 +188,7 @@ export async function handlePlanMilestone(
   try {
     params = validateParams(rawParams);
   } catch (err) {
-    return { error: `validation failed: ${(err as Error).message}` };
+    return { error: `validation failed: ${getErrorMessage(err)}` };
   }
 
   // ── Guards + DB writes inside a single transaction (prevents TOCTOU) ───
@@ -285,7 +286,7 @@ export async function handlePlanMilestone(
       }
     });
   } catch (err) {
-    return { error: `db write failed: ${(err as Error).message}` };
+    return { error: `db write failed: ${getErrorMessage(err)}` };
   }
 
   if (guardError) {
@@ -297,9 +298,9 @@ export async function handlePlanMilestone(
     const renderResult = await renderRoadmapFromDb(basePath, params.milestoneId);
     roadmapPath = renderResult.roadmapPath;
   } catch (renderErr) {
-    logWarning("tool", `plan_milestone — render failed (DB rows preserved for debugging): ${(renderErr as Error).message}`);
+    logWarning("tool", `plan_milestone — render failed (DB rows preserved for debugging): ${getErrorMessage(renderErr)}`);
     invalidateStateCache();
-    return { error: `render failed: ${(renderErr as Error).message}` };
+    return { error: `render failed: ${getErrorMessage(renderErr)}` };
   }
 
   invalidateStateCache();
@@ -318,7 +319,7 @@ export async function handlePlanMilestone(
       trigger_reason: params.triggerReason,
     });
   } catch (hookErr) {
-    logWarning("tool", `plan-milestone post-mutation hook warning: ${(hookErr as Error).message}`);
+    logWarning("tool", `plan-milestone post-mutation hook warning: ${getErrorMessage(hookErr)}`);
   }
 
   return {

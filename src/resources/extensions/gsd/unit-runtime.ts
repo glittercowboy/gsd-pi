@@ -1,5 +1,6 @@
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync, unlinkSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
+import { safeReadFile } from "./safe-fs.js";
 import {
   gsdRoot,
   relSliceFile,
@@ -9,6 +10,7 @@ import {
 } from "./paths.js";
 import { loadFile, parseTaskPlanMustHaves, countMustHavesMentionedInSummary } from "./files.js";
 import { parseUnitId } from "./unit-id.js";
+import { loadJsonFileOrNull, saveJsonFile } from "./json-persistence.js";
 
 export type UnitRuntimePhase =
   | "dispatched"
@@ -64,8 +66,6 @@ export function writeUnitRuntimeRecord(
   startedAt: number,
   updates: Partial<AutoUnitRuntimeRecord> = {},
 ): AutoUnitRuntimeRecord {
-  const dir = runtimeDir(basePath);
-  mkdirSync(dir, { recursive: true });
   const path = runtimePath(basePath, unitType, unitId);
   const prev = readUnitRuntimeRecord(basePath, unitType, unitId);
   const next: AutoUnitRuntimeRecord = {
@@ -85,18 +85,15 @@ export function writeUnitRuntimeRecord(
     recoveryAttempts: updates.recoveryAttempts ?? prev?.recoveryAttempts ?? 0,
     lastRecoveryReason: updates.lastRecoveryReason ?? prev?.lastRecoveryReason,
   };
-  writeFileSync(path, JSON.stringify(next, null, 2) + "\n", "utf-8");
+  saveJsonFile(path, next);
   return next;
 }
 
+const isAutoUnitRuntimeRecord = (d: unknown): d is AutoUnitRuntimeRecord =>
+  d !== null && typeof d === "object" && (d as Record<string, unknown>).version === 1 && typeof (d as Record<string, unknown>).unitId === "string";
+
 export function readUnitRuntimeRecord(basePath: string, unitType: string, unitId: string): AutoUnitRuntimeRecord | null {
-  const path = runtimePath(basePath, unitType, unitId);
-  if (!existsSync(path)) return null;
-  try {
-    return JSON.parse(readFileSync(path, "utf-8")) as AutoUnitRuntimeRecord;
-  } catch {
-    return null;
-  }
+  return loadJsonFileOrNull(runtimePath(basePath, unitType, unitId), isAutoUnitRuntimeRecord);
 }
 
 export function clearUnitRuntimeRecord(basePath: string, unitType: string, unitId: string): void {
@@ -140,7 +137,7 @@ export async function inspectExecuteTaskDurability(
   const summaryPath = relTaskFile(basePath, mid, sid, tid, "SUMMARY");
 
   const planContent = planAbs ? await loadFile(planAbs) : null;
-  const stateContent = existsSync(stateAbs) ? readFileSync(stateAbs, "utf-8") : "";
+  const stateContent = safeReadFile(stateAbs) ?? "";
   const summaryExists = !!(summaryAbs && existsSync(summaryAbs));
 
   const escapedTid = tid.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");

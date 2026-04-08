@@ -5,6 +5,7 @@ import { truncateToWidth, visibleWidth } from "@gsd/pi-tui";
 import type { VisualizerData, VisualizerMilestone, SliceVerification, VisualizerSliceActivity, VisualizerStats, VisualizerSliceRef } from "./visualizer-data.js";
 import { formatCost, formatTokenCount, classifyUnitPhase } from "./metrics.js";
 import { formatDuration, padRight, joinColumns, sparkline, STATUS_GLYPH, STATUS_COLOR } from "../shared/mod.js";
+import { shortModelName } from "./display-utils.js";
 
 function formatCompletionDate(input: string): string {
   if (!input) return "unknown";
@@ -613,7 +614,7 @@ export function renderTimelineView(
 }
 
 function shortenModel(model: string): string {
-  return model.replace(/^claude-/, "").slice(0, 12);
+  return shortModelName(model).slice(0, 12);
 }
 
 function renderTimelineList(data: VisualizerData, th: Theme, width: number): string[] {

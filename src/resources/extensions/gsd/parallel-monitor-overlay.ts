@@ -10,6 +10,7 @@
 import { existsSync, statSync, readFileSync, openSync, readSync, closeSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
+import { safeReadFile } from "./safe-fs.js";
 
 import type { Theme } from "@gsd/pi-coding-agent";
 import { truncateToWidth, visibleWidth, matchesKey, Key } from "@gsd/pi-tui";
@@ -143,9 +144,9 @@ function querySliceProgress(basePath: string, mid: string): SliceProgress[] {
 
 function extractCostFromNdjson(basePath: string, mid: string): number {
   const stdoutPath = join(basePath, ".gsd", "parallel", `${mid}.stdout.log`);
-  if (!existsSync(stdoutPath)) return 0;
+  const content = safeReadFile(stdoutPath);
+  if (content === null) return 0;
   try {
-    const content = readFileSync(stdoutPath, "utf-8");
     let total = 0;
     for (const line of content.split("\n")) {
       if (!line.includes("message_end")) continue;

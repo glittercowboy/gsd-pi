@@ -16,6 +16,7 @@ import { autoCommitCurrentBranch, getMainBranch, resolveGitHeadPath, nudgeGitBra
 import { runWorktreePostCreateHook } from "./auto-worktree.js";
 import { showConfirm } from "../shared/tui.js";
 import { gsdRoot, milestonesDir } from "./paths.js";
+import { getErrorMessage } from "./error-utils.js";
 import {
   createWorktree,
   listWorktrees,
@@ -379,7 +380,7 @@ async function handleCreate(
       "info",
     );
   } catch (error) {
-    const msg = error instanceof Error ? error.message : String(error);
+    const msg = getErrorMessage(error);
     ctx.ui.notify(`Failed to create worktree: ${msg}`, "error");
   }
 }
@@ -427,7 +428,7 @@ async function handleSwitch(
       "info",
     );
   } catch (error) {
-    const msg = error instanceof Error ? error.message : String(error);
+    const msg = getErrorMessage(error);
     ctx.ui.notify(`Failed to switch to worktree: ${msg}`, "error");
   }
 }
@@ -558,7 +559,7 @@ async function handleList(
 
     ctx.ui.notify(lines.join("\n"), "info");
   } catch (error) {
-    const msg = error instanceof Error ? error.message : String(error);
+    const msg = getErrorMessage(error);
     ctx.ui.notify(`Failed to list worktrees: ${msg}`, "error");
   }
 }
@@ -686,7 +687,7 @@ async function handleMerge(
       );
       return;
     } catch (mergeErr) {
-      const mergeMsg = mergeErr instanceof Error ? mergeErr.message : String(mergeErr);
+      const mergeMsg = getErrorMessage(mergeErr);
       const isConflict = /conflict/i.test(mergeMsg);
 
       if (isConflict) {
@@ -743,7 +744,7 @@ async function handleMerge(
       "info",
     );
   } catch (error) {
-    const msg = error instanceof Error ? error.message : String(error);
+    const msg = getErrorMessage(error);
     ctx.ui.notify(`Failed to start merge: ${msg}`, "error");
   }
 }
@@ -786,7 +787,7 @@ async function handleRemove(
 
     ctx.ui.notify(`${CLR.ok("✓")} Worktree ${CLR.name(name)} removed ${CLR.muted("(branch deleted)")}.`, "info");
   } catch (error) {
-    const msg = error instanceof Error ? error.message : String(error);
+    const msg = getErrorMessage(error);
     ctx.ui.notify(`Failed to remove worktree: ${msg}`, "error");
   }
 }
@@ -840,7 +841,7 @@ async function handleRemoveAll(
     if (failed.length > 0) lines.push(`${CLR.warn("✗")} Failed: ${failed.map(n => CLR.name(n)).join(", ")}`);
     ctx.ui.notify(lines.join("\n"), failed.length > 0 ? "warning" : "info");
   } catch (error) {
-    const msg = error instanceof Error ? error.message : String(error);
+    const msg = getErrorMessage(error);
     ctx.ui.notify(`Failed to remove worktrees: ${msg}`, "error");
   }
 }

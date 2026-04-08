@@ -15,6 +15,7 @@ import { nextMilestoneId } from "../../milestone-ids.js";
 import { findMilestoneIds } from "../../guided-flow.js";
 import { projectRoot } from "../context.js";
 import { createRun, listRuns } from "../../run-manager.js";
+import { getErrorMessage } from "../../error-utils.js";
 import {
   setActiveEngineId,
   setActiveRunDir,
@@ -82,7 +83,7 @@ async function handleCustomWorkflow(
       // Clean up engine state so a failed workflow run doesn't pollute the next /gsd auto
       setActiveEngineId(null);
       setActiveRunDir(null);
-      const msg = err instanceof Error ? err.message : String(err);
+      const msg = getErrorMessage(err);
       ctx.ui.notify(`Failed to run workflow "${defName}": ${msg}`, "error");
     }
     return true;
@@ -128,7 +129,7 @@ async function handleCustomWorkflow(
         ctx.ui.notify(`✗ "${defName}" has errors:\n  - ${result.errors.join("\n  - ")}`, "error");
       }
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
+      const msg = getErrorMessage(err);
       ctx.ui.notify(`Failed to validate "${defName}": ${msg}`, "error");
     }
     return true;
@@ -161,7 +162,7 @@ async function handleCustomWorkflow(
       await startAuto(ctx, pi, projectRoot(), false);
       ctx.ui.notify("Custom workflow resumed.", "info");
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
+      const msg = getErrorMessage(err);
       ctx.ui.notify(`Failed to resume workflow: ${msg}`, "error");
     }
     return true;

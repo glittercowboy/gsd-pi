@@ -18,6 +18,7 @@ import { deriveState } from "../state.js";
 import { formatOverridesSection, formatShortcut, loadActiveOverrides, loadFile, parseContinue, parseSummary } from "../files.js";
 import { toPosixPath } from "../../shared/mod.js";
 import { markCmuxPromptShown, shouldPromptToEnableCmux } from "../../cmux/index.js";
+import { getErrorMessage } from "../error-utils.js";
 
 const gsdHome = process.env.GSD_HOME || join(homedir(), ".gsd");
 
@@ -116,7 +117,7 @@ export async function buildBeforeAgentStartResult(
       }
     }
   } catch (e) {
-    logWarning("bootstrap", `memory block fetch failed: ${(e as Error).message}`);
+    logWarning("bootstrap", `memory block fetch failed: ${getErrorMessage(e)}`);
   }
 
   let newSkillsBlock = "";
@@ -144,7 +145,7 @@ export async function buildBeforeAgentStartResult(
         codebaseBlock = `\n\n[PROJECT CODEBASE — File structure and descriptions (generated ${generatedAt}, may be stale — run /gsd codebase update to refresh)]\n\n${content}`;
       }
     } catch (e) {
-      logWarning("bootstrap", `CODEBASE file read failed: ${(e as Error).message}`);
+      logWarning("bootstrap", `CODEBASE file read failed: ${getErrorMessage(e)}`);
     }
   }
 
@@ -191,7 +192,7 @@ export function loadKnowledgeBlock(gsdHomeDir: string, cwd: string): { block: st
         globalKnowledge = content;
       }
     } catch (e) {
-      logWarning("bootstrap", `global knowledge file read failed: ${(e as Error).message}`);
+      logWarning("bootstrap", `global knowledge file read failed: ${getErrorMessage(e)}`);
     }
   }
 
@@ -203,7 +204,7 @@ export function loadKnowledgeBlock(gsdHomeDir: string, cwd: string): { block: st
       const content = readFileSync(knowledgePath, "utf-8").trim();
       if (content) projectKnowledge = content;
     } catch (e) {
-      logWarning("bootstrap", `project knowledge file read failed: ${(e as Error).message}`);
+      logWarning("bootstrap", `project knowledge file read failed: ${getErrorMessage(e)}`);
     }
   }
 
@@ -490,7 +491,7 @@ export function clearForensicsMarker(basePath: string): void {
     try {
       unlinkSync(markerPath);
     } catch (e) {
-      logWarning("bootstrap", `unlinkSync forensics marker failed: ${(e as Error).message}`);
+      logWarning("bootstrap", `unlinkSync forensics marker failed: ${getErrorMessage(e)}`);
     }
   }
 }

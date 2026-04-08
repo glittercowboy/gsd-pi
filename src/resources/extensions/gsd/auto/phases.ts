@@ -12,6 +12,7 @@ import { importExtensionModule, type ExtensionAPI, type ExtensionContext } from 
 import type { AutoSession, SidecarItem } from "./session.js";
 import type { LoopDeps } from "./loop-deps.js";
 import type { PostUnitContext, PreVerificationOpts } from "../auto-post-unit.js";
+import { getErrorMessage } from "../error-utils.js";
 import {
   MAX_RECOVERY_CHARS,
   BUDGET_THRESHOLDS,
@@ -277,7 +278,7 @@ export async function runPreDispatch(
     } catch (err) {
       debugLog("autoLoop", {
         phase: "slice-parallel-check-error",
-        error: err instanceof Error ? err.message : String(err),
+        error: getErrorMessage(err),
       });
       // Non-fatal — fall through to sequential dispatch
     }
@@ -312,7 +313,7 @@ export async function runPreDispatch(
         await generateMilestoneReport(s, ctx, s.currentMilestoneId!);
       } catch (err) {
         ctx.ui.notify(
-          `Report generation failed: ${err instanceof Error ? err.message : String(err)}`,
+          `Report generation failed: ${getErrorMessage(err)}`,
           "warning",
         );
       }
@@ -341,7 +342,7 @@ export async function runPreDispatch(
       // Non-conflict merge errors — stop auto to avoid advancing with unmerged work
       logError("engine", "Milestone merge failed with non-conflict error", { milestone: s.currentMilestoneId!, error: String(mergeErr) });
       ctx.ui.notify(
-        `Merge failed: ${mergeErr instanceof Error ? mergeErr.message : String(mergeErr)}. Resolve and run /gsd auto to resume.`,
+        `Merge failed: ${getErrorMessage(mergeErr)}. Resolve and run /gsd auto to resume.`,
         "error",
       );
       await deps.stopAuto(ctx, pi, `Merge error on milestone ${s.currentMilestoneId}: ${String(mergeErr)}`);
@@ -440,7 +441,7 @@ export async function runPreDispatch(
           }
           logError("engine", "Milestone merge failed with non-conflict error", { milestone: s.currentMilestoneId!, error: String(mergeErr) });
           ctx.ui.notify(
-            `Merge failed: ${mergeErr instanceof Error ? mergeErr.message : String(mergeErr)}. Resolve and run /gsd auto to resume.`,
+            `Merge failed: ${getErrorMessage(mergeErr)}. Resolve and run /gsd auto to resume.`,
             "error",
           );
           await deps.stopAuto(ctx, pi, `Merge error on milestone ${s.currentMilestoneId}: ${String(mergeErr)}`);
@@ -545,7 +546,7 @@ export async function runPreDispatch(
         }
         logError("engine", "Milestone merge failed with non-conflict error", { milestone: s.currentMilestoneId!, error: String(mergeErr) });
         ctx.ui.notify(
-          `Merge failed: ${mergeErr instanceof Error ? mergeErr.message : String(mergeErr)}. Resolve and run /gsd auto to resume.`,
+          `Merge failed: ${getErrorMessage(mergeErr)}. Resolve and run /gsd auto to resume.`,
           "error",
         );
         await deps.stopAuto(ctx, pi, `Merge error on milestone ${s.currentMilestoneId}: ${String(mergeErr)}`);
@@ -965,7 +966,7 @@ export async function runGuards(
     }
   } catch (err) {
     ctx.ui.notify(
-      `Secrets collection error: ${err instanceof Error ? err.message : String(err)}. Continuing with next task.`,
+      `Secrets collection error: ${getErrorMessage(err)}. Continuing with next task.`,
       "warning",
     );
   }
@@ -1158,7 +1159,7 @@ export async function runUnitPhase(
     finalPrompt = deps.reorderForCaching(finalPrompt);
   } catch (reorderErr) {
     const msg =
-      reorderErr instanceof Error ? reorderErr.message : String(reorderErr);
+      getErrorMessage(reorderErr);
     logWarning("engine", "Prompt reorder failed", { error: msg });
   }
 
@@ -1407,7 +1408,7 @@ export async function runUnitPhase(
         nextSteps: [],
       });
     } catch (err) { /* non-fatal — anchor is advisory */
-      logWarning("engine", `phase anchor failed: ${err instanceof Error ? err.message : String(err)}`);
+      logWarning("engine", `phase anchor failed: ${getErrorMessage(err)}`);
     }
   }
 

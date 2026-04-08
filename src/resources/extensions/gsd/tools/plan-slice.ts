@@ -1,6 +1,7 @@
 import { clearParseCache } from "../files.js";
 import { isClosedStatus } from "../status-guards.js";
 import { isNonEmptyString, validateStringArray } from "../validation.js";
+import { getErrorMessage } from "../error-utils.js";
 import {
   transaction,
   getMilestone,
@@ -136,7 +137,7 @@ export async function handlePlanSlice(
   try {
     params = validateParams(rawParams);
   } catch (err) {
-    return { error: `validation failed: ${(err as Error).message}` };
+    return { error: `validation failed: ${getErrorMessage(err)}` };
   }
 
   // ── Guards + DB writes inside a single transaction (prevents TOCTOU) ───
@@ -210,7 +211,7 @@ export async function handlePlanSlice(
       insertGateRow({ milestoneId: params.milestoneId, sliceId: params.sliceId, gateId: "Q8", scope: "slice" });
     });
   } catch (err) {
-    return { error: `db write failed: ${(err as Error).message}` };
+    return { error: `db write failed: ${getErrorMessage(err)}` };
   }
 
   if (guardError) {
@@ -235,7 +236,7 @@ export async function handlePlanSlice(
         trigger_reason: params.triggerReason,
       });
     } catch (hookErr) {
-      logWarning("tool", `plan-slice post-mutation hook warning: ${(hookErr as Error).message}`);
+      logWarning("tool", `plan-slice post-mutation hook warning: ${getErrorMessage(hookErr)}`);
     }
 
     return {
@@ -245,8 +246,8 @@ export async function handlePlanSlice(
       taskPlanPaths: renderResult.taskPlanPaths,
     };
   } catch (renderErr) {
-    logWarning("tool", `plan_slice — render failed (DB rows preserved for debugging): ${(renderErr as Error).message}`);
+    logWarning("tool", `plan_slice — render failed (DB rows preserved for debugging): ${getErrorMessage(renderErr)}`);
     invalidateStateCache();
-    return { error: `render failed: ${(renderErr as Error).message}` };
+    return { error: `render failed: ${getErrorMessage(renderErr)}` };
   }
 }

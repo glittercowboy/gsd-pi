@@ -10,6 +10,7 @@
 // GSD — reopen-task tool handler
 // Copyright (c) 2026 Jeremy McSpadden <jeremy@fluxlabs.net>
 
+import { getErrorMessage } from "../error-utils.js";
 import {
   getMilestone,
   getSlice,
@@ -113,7 +114,7 @@ export async function handleReopenTask(
       if (existsSync(summaryPath)) unlinkSync(summaryPath);
     }
   } catch (cleanupErr) {
-    logWarning("tool", `reopen-task artifact cleanup warning: ${(cleanupErr as Error).message}`);
+    logWarning("tool", `reopen-task artifact cleanup warning: ${getErrorMessage(cleanupErr)}`);
   }
   clearPathCache();
 
@@ -135,7 +136,7 @@ export async function handleReopenTask(
       trigger_reason: params.triggerReason,
     });
   } catch (hookErr) {
-    logWarning("tool", `reopen-task post-mutation hook warning: ${(hookErr as Error).message}`);
+    logWarning("tool", `reopen-task post-mutation hook warning: ${getErrorMessage(hookErr)}`);
   }
 
   return {

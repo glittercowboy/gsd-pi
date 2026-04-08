@@ -3,6 +3,7 @@ import { SettingsManager, getAgentDir } from "@gsd/pi-coding-agent";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { basename, dirname, join, relative, resolve } from "node:path";
 import { homedir } from "node:os";
+import { safeReadFile } from "./safe-fs.js";
 import { PluginImporter, type ImportManifestEntry } from "./plugin-importer.js";
 import type { NamespacedComponent } from "./namespaced-registry.js";
 
@@ -206,25 +207,25 @@ export function discoverClaudePlugins(cwd: string): ClaudePluginCandidate[] {
       // the latter format exclusively.
       const pkgPath = join(dir, "package.json");
       const claudePluginPath = join(dir, ".claude-plugin", "plugin.json");
-      const hasPkg = existsSync(pkgPath);
-      const hasClaudePlugin = existsSync(claudePluginPath);
-      if (!hasPkg && !hasClaudePlugin) return;
+      const pkgContent = safeReadFile(pkgPath);
+      const claudePluginContent = safeReadFile(claudePluginPath);
+      if (pkgContent === null && claudePluginContent === null) return;
 
       const resolvedDir = resolve(dir);
       if (seen.has(resolvedDir)) return;
       seen.add(resolvedDir);
 
       let packageName: string | undefined;
-      if (hasPkg) {
+      if (pkgContent !== null) {
         try {
-          const pkg = JSON.parse(readFileSync(pkgPath, "utf8")) as { name?: string };
+          const pkg = JSON.parse(pkgContent) as { name?: string };
           packageName = pkg.name;
         } catch {
           packageName = undefined;
         }
-      } else if (hasClaudePlugin) {
+      } else if (claudePluginContent !== null) {
         try {
-          const manifest = JSON.parse(readFileSync(claudePluginPath, "utf8")) as { name?: string };
+          const manifest = JSON.parse(claudePluginContent) as { name?: string };
           packageName = manifest.name;
         } catch {
           packageName = undefined;
@@ -637,13 +638,14 @@ export async function runClaudeImportFlow(
     for (const root of flat) {
       walkDirs(root, (dir) => {
         const pkgPath = join(dir, "package.json");
-        if (!existsSync(pkgPath)) return;
+        const pkgRaw = safeReadFile(pkgPath);
+        if (pkgRaw === null) return;
         const resolvedDir = resolve(dir);
         if (seen.has(resolvedDir)) return;
         seen.add(resolvedDir);
         let packageName: string | undefined;
         try {
-          const pkg = JSON.parse(readFileSync(pkgPath, "utf8")) as { name?: string };
+          const pkg = JSON.parse(pkgRaw) as { name?: string };
           packageName = pkg.name;
         } catch {
           packageName = undefined;

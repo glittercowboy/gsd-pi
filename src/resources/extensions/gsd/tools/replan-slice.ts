@@ -1,4 +1,5 @@
 import { clearParseCache } from "../files.js";
+import { getErrorMessage } from "../error-utils.js";
 import {
   transaction,
   getSlice,
@@ -86,7 +87,7 @@ export async function handleReplanSlice(
   try {
     params = validateParams(rawParams);
   } catch (err) {
-    return { error: `validation failed: ${(err as Error).message}` };
+    return { error: `validation failed: ${getErrorMessage(err)}` };
   }
 
   // ── Guards + DB writes inside a single transaction (prevents TOCTOU) ───
@@ -194,7 +195,7 @@ export async function handleReplanSlice(
       }
     });
   } catch (err) {
-    return { error: `db write failed: ${(err as Error).message}` };
+    return { error: `db write failed: ${getErrorMessage(err)}` };
   }
 
   if (guardError) {
@@ -227,7 +228,7 @@ export async function handleReplanSlice(
         trigger_reason: params.triggerReason,
       });
     } catch (hookErr) {
-      logWarning("tool", `replan-slice post-mutation hook warning: ${(hookErr as Error).message}`);
+      logWarning("tool", `replan-slice post-mutation hook warning: ${getErrorMessage(hookErr)}`);
     }
 
     return {
@@ -237,6 +238,6 @@ export async function handleReplanSlice(
       planPath: renderResult.planPath,
     };
   } catch (err) {
-    return { error: `render failed: ${(err as Error).message}` };
+    return { error: `render failed: ${getErrorMessage(err)}` };
   }
 }

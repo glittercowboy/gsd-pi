@@ -14,6 +14,7 @@ import { existsSync, mkdirSync, readFileSync, unlinkSync } from "node:fs";
 import { atomicWriteSync } from "./atomic-write.js";
 import { join } from "node:path";
 import { createRequire } from "node:module";
+import { safeReadFile } from "./safe-fs.js";
 import { gsdRoot, milestonesDir } from "./paths.js";
 import { MILESTONE_ID_RE } from "./milestone-ids.js";
 import type { Classification, CaptureEntry } from "./captures.js";
@@ -42,9 +43,8 @@ export function executeInject(
   try {
     // Resolve the plan file path
     const planPath = join(gsdRoot(basePath), "milestones", mid, "slices", sid, `${sid}-PLAN.md`);
-    if (!existsSync(planPath)) return null;
-
-    const content = readFileSync(planPath, "utf-8");
+    const content = safeReadFile(planPath);
+    if (content === null) return null;
 
     // Find the highest existing task ID
     const taskMatches = [...content.matchAll(/- \[[ x]\] \*\*T(\d+):/g)];
@@ -229,10 +229,11 @@ export function readBacktrackTrigger(basePath: string): {
   triggeredAt: string;
 } | null {
   const triggerPath = join(gsdRoot(basePath), "BACKTRACK-TRIGGER.md");
-  if (!existsSync(triggerPath)) return null;
+  const triggerContent = safeReadFile(triggerPath);
+  if (triggerContent === null) return null;
 
   try {
-    const content = readFileSync(triggerPath, "utf-8");
+    const content = triggerContent;
     const target = content.match(/\*\*Target:\*\*\s*(.+)/)?.[1]?.trim() ?? null;
     const from = content.match(/\*\*From:\*\*\s*(.+)/)?.[1]?.trim() ?? null;
     const capture = content.match(/\*\*Capture:\*\*\s*(.+)/)?.[1]?.trim() ?? "";

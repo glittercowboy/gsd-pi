@@ -7,6 +7,7 @@
 
 import { existsSync, readFileSync } from "node:fs";
 import { logWarning } from "../workflow-logger.js";
+import { getErrorMessage } from "../error-utils.js";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -37,7 +38,7 @@ export function validateContent(
     const content = readFileSync(artifactPath, "utf-8");
     return validator(content);
   } catch (e) {
-    logWarning("safety", `content validation read failed: ${(e as Error).message}`);
+    logWarning("safety", `content validation read failed: ${getErrorMessage(e)}`);
     return [];
   }
 }

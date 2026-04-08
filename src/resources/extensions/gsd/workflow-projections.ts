@@ -2,6 +2,7 @@
 // Renders PLAN.md, ROADMAP.md, SUMMARY.md, and STATE.md from database rows.
 // Projections are read-only views of engine state (Layer 3 of the architecture).
 
+import { getErrorMessage } from "./error-utils.js";
 import {
   _getAdapter,
   isDbAvailable,
@@ -349,7 +350,7 @@ export async function renderStateProjection(basePath: string): Promise<void> {
     mkdirSync(dir, { recursive: true });
     atomicWriteSync(join(dir, "STATE.md"), content);
   } catch (err) {
-    logWarning("projection", `renderStateProjection failed: ${(err as Error).message}`);
+    logWarning("projection", `renderStateProjection failed: ${getErrorMessage(err)}`);
   }
 }
 
@@ -364,14 +365,14 @@ export async function renderAllProjections(basePath: string, milestoneId: string
   try {
     renderRoadmapProjection(basePath, milestoneId);
   } catch (err) {
-    logWarning("projection", `renderRoadmapProjection failed for ${milestoneId}: ${(err as Error).message}`);
+    logWarning("projection", `renderRoadmapProjection failed for ${milestoneId}: ${getErrorMessage(err)}`);
   }
 
   // Query all slices for this milestone
   const sliceRows = getMilestoneSlices(milestoneId);
 
   for (const slice of sliceRows) {
-    // PLAN.md is rendered by the authoritative markdown-renderer.js in
+    // PLAN.md is only rendered by the authoritative
     // plan-slice/replan-slice tools. Do NOT overwrite it here — the simplified
     // projection is missing key sections (Must-Haves, Verification, Files
     // Likely Touched) and corrupts multi-line task descriptions (#3651).
@@ -384,7 +385,7 @@ export async function renderAllProjections(basePath: string, milestoneId: string
       try {
         renderSummaryProjection(basePath, milestoneId, slice.id, task.id);
       } catch (err) {
-        logWarning("projection", `renderSummaryProjection failed for ${milestoneId}/${slice.id}/${task.id}: ${(err as Error).message}`);
+        logWarning("projection", `renderSummaryProjection failed for ${milestoneId}/${slice.id}/${task.id}: ${getErrorMessage(err)}`);
       }
     }
   }
@@ -393,7 +394,7 @@ export async function renderAllProjections(basePath: string, milestoneId: string
   try {
     await renderStateProjection(basePath);
   } catch (err) {
-    logWarning("projection", `renderStateProjection failed: ${(err as Error).message}`);
+    logWarning("projection", `renderStateProjection failed: ${getErrorMessage(err)}`);
   }
 }
 
@@ -440,7 +441,7 @@ export function regenerateIfMissing(
           renderSummaryProjection(basePath, milestoneId, sliceId, task.id);
           regenerated++;
         } catch (err) {
-          logWarning("projection", `regenerateIfMissing SUMMARY failed for ${task.id}: ${(err as Error).message}`);
+          logWarning("projection", `regenerateIfMissing SUMMARY failed for ${task.id}: ${getErrorMessage(err)}`);
         }
       }
     }
@@ -469,7 +470,7 @@ export function regenerateIfMissing(
     }
     return true;
   } catch (err) {
-    logWarning("projection", `regenerateIfMissing ${fileType} failed: ${(err as Error).message}`);
+    logWarning("projection", `regenerateIfMissing ${fileType} failed: ${getErrorMessage(err)}`);
     return false;
   }
 }

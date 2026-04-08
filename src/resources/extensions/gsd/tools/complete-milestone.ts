@@ -9,6 +9,7 @@
 import { join } from "node:path";
 import { mkdirSync } from "node:fs";
 
+import { getErrorMessage } from "../error-utils.js";
 import {
   transaction,
   getMilestone,
@@ -206,10 +207,10 @@ export async function handleCompleteMilestone(
     await saveFile(summaryPath, summaryMd);
   } catch (renderErr) {
     // Disk render failed — roll back DB status so state stays consistent
-    logWarning("tool", `complete_milestone — disk render failed, rolling back DB status: ${(renderErr as Error).message}`);
+    logWarning("tool", `complete_milestone — disk render failed, rolling back DB status: ${getErrorMessage(renderErr)}`);
     updateMilestoneStatus(params.milestoneId, 'active', null);
     invalidateStateCache();
-    return { error: `disk render failed: ${(renderErr as Error).message}` };
+    return { error: `disk render failed: ${getErrorMessage(renderErr)}` };
   }
 
   // Invalidate all caches
@@ -223,12 +224,12 @@ export async function handleCompleteMilestone(
   try {
     await renderAllProjections(basePath, params.milestoneId);
   } catch (projErr) {
-    logWarning("tool", `complete-milestone projection warning: ${(projErr as Error).message}`);
+    logWarning("tool", `complete-milestone projection warning: ${getErrorMessage(projErr)}`);
   }
   try {
     writeManifest(basePath);
   } catch (mfErr) {
-    logWarning("tool", `complete-milestone manifest warning: ${(mfErr as Error).message}`);
+    logWarning("tool", `complete-milestone manifest warning: ${getErrorMessage(mfErr)}`);
   }
   try {
     appendEvent(basePath, {
@@ -239,8 +240,8 @@ export async function handleCompleteMilestone(
       actor_name: params.actorName,
       trigger_reason: params.triggerReason,
     });
-  } catch (eventErr) {
-    logError("tool", `complete-milestone event log FAILED — completion invisible to reconciliation`, { error: (eventErr as Error).message });
+  } catch (hookErr) {
+    logWarning("tool", `complete-milestone post-mutation hook warning: ${getErrorMessage(hookErr)}`);
   }
 
   return {

@@ -6,6 +6,8 @@
  * failures that merit retry.
  */
 
+import { getErrorMessage } from "../error-utils.js";
+
 /**
  * Error codes indicating infrastructure failures that cannot be recovered by
  * retrying. Each retry re-dispatches the unit at full LLM cost, so we bail
@@ -37,7 +39,7 @@ export function isInfrastructureError(err: unknown): string | null {
     const code = (err as Record<string, unknown>).code;
     if (typeof code === "string" && INFRA_ERROR_CODES.has(code)) return code;
   }
-  const msg = err instanceof Error ? err.message : String(err);
+  const msg = getErrorMessage(err);
   for (const code of INFRA_ERROR_CODES) {
     if (msg.includes(code)) return code;
   }

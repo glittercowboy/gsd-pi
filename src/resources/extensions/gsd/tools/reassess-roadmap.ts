@@ -3,6 +3,7 @@ import { existsSync, unlinkSync } from "node:fs";
 import { clearParseCache } from "../files.js";
 import { isClosedStatus } from "../status-guards.js";
 import { isNonEmptyString } from "../validation.js";
+import { getErrorMessage } from "../error-utils.js";
 import {
   transaction,
   getMilestone,
@@ -103,7 +104,7 @@ export async function handleReassessRoadmap(
   try {
     params = validateParams(rawParams);
   } catch (err) {
-    return { error: `validation failed: ${(err as Error).message}` };
+    return { error: `validation failed: ${getErrorMessage(err)}` };
   }
 
   // ── Compute assessment artifact path ──────────────────────────────
@@ -223,7 +224,7 @@ export async function handleReassessRoadmap(
       }
     });
   } catch (err) {
-    return { error: `db write failed: ${(err as Error).message}` };
+    return { error: `db write failed: ${getErrorMessage(err)}` };
   }
 
   if (guardError) {
@@ -253,7 +254,7 @@ export async function handleReassessRoadmap(
       try {
         if (existsSync(validationFile)) unlinkSync(validationFile);
       } catch (e) {
-        logWarning("tool", `validation file cleanup failed: ${(e as Error).message}`);
+        logWarning("tool", `validation file cleanup failed: ${getErrorMessage(e)}`);
       }
     }
 
@@ -274,7 +275,7 @@ export async function handleReassessRoadmap(
         trigger_reason: params.triggerReason,
       });
     } catch (hookErr) {
-      logWarning("tool", `reassess-roadmap post-mutation hook warning: ${(hookErr as Error).message}`);
+      logWarning("tool", `reassess-roadmap post-mutation hook warning: ${getErrorMessage(hookErr)}`);
     }
 
     return {
@@ -284,6 +285,6 @@ export async function handleReassessRoadmap(
       roadmapPath: roadmapResult.roadmapPath,
     };
   } catch (err) {
-    return { error: `render failed: ${(err as Error).message}` };
+    return { error: `render failed: ${getErrorMessage(err)}` };
   }
 }

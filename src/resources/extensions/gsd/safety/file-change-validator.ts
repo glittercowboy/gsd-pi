@@ -11,6 +11,7 @@
 
 import { execFileSync } from "node:child_process";
 import { logWarning } from "../workflow-logger.js";
+import { getErrorMessage } from "../error-utils.js";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -102,7 +103,7 @@ function getChangedFilesFromLastCommit(basePath: string): string[] | null {
     ).trim();
     return result ? result.split("\n").filter(Boolean) : [];
   } catch (e) {
-    logWarning("safety", `git diff failed in file-change-validator: ${(e as Error).message}`);
+    logWarning("safety", `git diff failed in file-change-validator: ${getErrorMessage(e)}`);
     return null;
   }
 }

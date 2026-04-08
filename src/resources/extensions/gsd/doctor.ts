@@ -1,5 +1,6 @@
 import { existsSync, mkdirSync, lstatSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { safeReadFile } from "./safe-fs.js";
 
 import { loadFile, parseSummary, saveFile, parseTaskPlanMustHaves, countMustHavesMentionedInSummary } from "./files.js";
 import { parseRoadmap as parseLegacyRoadmap, parsePlan as parseLegacyPlan } from "./parsers-legacy.js";
@@ -307,7 +308,7 @@ async function appendDoctorHistory(basePath: string, report: DoctorReport): Prom
       scope: (report as any).scope as string | undefined,
       summary: summaryParts.join(" · "),
     } satisfies DoctorHistoryEntry);
-    const existing = existsSync(historyPath) ? readFileSync(historyPath, "utf-8") : "";
+    const existing = safeReadFile(historyPath) ?? "";
     await saveFile(historyPath, existing + entry + "\n");
   } catch { /* non-fatal */ }
 }
@@ -316,8 +317,9 @@ async function appendDoctorHistory(basePath: string, report: DoctorReport): Prom
 export async function readDoctorHistory(basePath: string, lastN = 50): Promise<DoctorHistoryEntry[]> {
   try {
     const historyPath = join(gsdRoot(basePath), "doctor-history.jsonl");
-    if (!existsSync(historyPath)) return [];
-    const lines = readFileSync(historyPath, "utf-8").split("\n").filter(l => l.trim());
+    const historyRaw = safeReadFile(historyPath);
+    if (historyRaw === null) return [];
+    const lines = historyRaw.split("\n").filter(l => l.trim());
     return lines.slice(-lastN).reverse().map(l => JSON.parse(l) as DoctorHistoryEntry);
   } catch { return []; }
 }

@@ -11,6 +11,7 @@
 
 import { join } from "node:path";
 
+import { getErrorMessage } from "../error-utils.js";
 import {
   transaction,
   insertAssessment,
@@ -138,9 +139,9 @@ export async function handleValidateMilestone(
   try {
     await saveFile(validationPath, validationMd);
   } catch (renderErr) {
-    logWarning("tool", `validate_milestone — disk render failed, rolling back DB row: ${(renderErr as Error).message}`);
+    logWarning("tool", `validate_milestone — disk render failed, rolling back DB row: ${getErrorMessage(renderErr)}`);
     deleteAssessmentByScope(params.milestoneId, 'milestone-validation');
-    return { error: `disk render failed: ${(renderErr as Error).message}` };
+    return { error: `disk render failed: ${getErrorMessage(renderErr)}` };
   }
 
   invalidateStateCache();

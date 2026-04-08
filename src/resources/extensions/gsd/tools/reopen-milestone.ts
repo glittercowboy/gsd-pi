@@ -9,6 +9,7 @@
  * entities back to "complete".
  */
 
+import { getErrorMessage } from "../error-utils.js";
 import {
   getMilestone,
   getMilestoneSlices,
@@ -141,7 +142,7 @@ export async function handleReopenMilestone(
       trigger_reason: params.triggerReason,
     });
   } catch (hookErr) {
-    logWarning("tool", `reopen-milestone post-mutation hook warning: ${(hookErr as Error).message}`);
+    logWarning("tool", `reopen-milestone post-mutation hook warning: ${getErrorMessage(hookErr)}`);
   }
 
   return {

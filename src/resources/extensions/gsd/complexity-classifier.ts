@@ -4,6 +4,7 @@
 
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { safeReadFile } from "./safe-fs.js";
 import { gsdRoot } from "./paths.js";
 import { getAdaptiveTierAdjustment } from "./routing-history.js";
 import { parseUnitId } from "./unit-id.js";
@@ -224,8 +225,8 @@ export function extractTaskMetadata(unitId: string, basePath: string): TaskMetad
   const taskPlanPath = join(gsdRoot(basePath), mid, "slices", sid, "tasks", `${tid}-PLAN.md`);
 
   try {
-    if (!existsSync(taskPlanPath)) return meta;
-    const content = readFileSync(taskPlanPath, "utf-8");
+    const content = safeReadFile(taskPlanPath);
+    if (content === null) return meta;
     const lines = content.split("\n");
 
     // Count files mentioned in "Files:" or "- Files:" lines

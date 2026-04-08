@@ -18,6 +18,7 @@ import { logWarning, logError } from './workflow-logger.js';
 import { invalidateStateCache } from './state.js';
 import { clearPathCache } from './paths.js';
 import { clearParseCache } from './files.js';
+import { getErrorMessage } from "./error-utils.js";
 
 // ─── Freeform Detection ───────────────────────────────────────────────────
 
@@ -222,7 +223,7 @@ export async function nextDecisionId(): Promise<string> {
     const next = maxNum + 1;
     return `D${String(next).padStart(3, '0')}`;
   } catch (err) {
-    logError('manifest', 'nextDecisionId failed', { fn: 'nextDecisionId', error: String((err as Error).message) });
+    logError('manifest', 'nextDecisionId failed', { fn: 'nextDecisionId', error: getErrorMessage(err) });
     return 'D001';
   }
 }
@@ -250,7 +251,7 @@ export async function nextRequirementId(): Promise<string> {
     const next = maxNum + 1;
     return `R${String(next).padStart(3, '0')}`;
   } catch (err) {
-    logError('manifest', 'nextRequirementId failed', { fn: 'nextRequirementId', error: String((err as Error).message) });
+    logError('manifest', 'nextRequirementId failed', { fn: 'nextRequirementId', error: getErrorMessage(err) });
     return 'R001';
   }
 }
@@ -344,13 +345,9 @@ export async function saveRequirementToDb(
     try {
       await saveFile(filePath, md);
     } catch (diskErr) {
-      logError('manifest', 'disk write failed, rolling back DB row', { fn: 'saveRequirementToDb', error: String((diskErr as Error).message) });
-      try {
-        const rollbackAdapter = db._getAdapter();
-        rollbackAdapter?.prepare('DELETE FROM requirements WHERE id = :id').run({ ':id': id });
-      } catch (rollbackErr) {
-        logError('manifest', 'SPLIT BRAIN: disk write failed AND DB rollback failed — DB has orphaned row', { fn: 'saveRequirementToDb', id, error: String((rollbackErr as Error).message) });
-      }
+      logError('manifest', 'disk write failed, rolling back DB row', { fn: 'saveRequirementToDb', error: getErrorMessage(diskErr) });
+      const rollbackAdapter = db._getAdapter();
+      rollbackAdapter?.prepare('DELETE FROM requirements WHERE id = :id').run({ ':id': id });
       throw diskErr;
     }
     invalidateStateCache();
@@ -359,7 +356,7 @@ export async function saveRequirementToDb(
 
     return { id };
   } catch (err) {
-    logError('manifest', 'saveRequirementToDb failed', { fn: 'saveRequirementToDb', error: String((err as Error).message) });
+    logError('manifest', 'saveRequirementToDb failed', { fn: 'saveRequirementToDb', error: getErrorMessage(err) });
     throw err;
   }
 }
@@ -469,12 +466,8 @@ export async function saveDecisionToDb(
     try {
       await saveFile(filePath, md);
     } catch (diskErr) {
-      logError('manifest', 'disk write failed, rolling back DB row', { fn: 'saveDecisionToDb', error: String((diskErr as Error).message) });
-      try {
-        adapter?.prepare('DELETE FROM decisions WHERE id = :id').run({ ':id': id });
-      } catch (rollbackErr) {
-        logError('manifest', 'SPLIT BRAIN: disk write failed AND DB rollback failed — DB has orphaned row', { fn: 'saveDecisionToDb', id, error: String((rollbackErr as Error).message) });
-      }
+      logError('manifest', 'disk write failed, rolling back DB row', { fn: 'saveDecisionToDb', error: getErrorMessage(diskErr) });
+      adapter?.prepare('DELETE FROM decisions WHERE id = :id').run({ ':id': id });
       throw diskErr;
     }
     // #2661: When a decision defers a slice, update the slice status in the DB
@@ -490,7 +483,7 @@ export async function saveDecisionToDb(
       // Non-fatal — log but don't fail the decision save
       logError('manifest', 'failed to update deferred slice status', {
         fn: 'saveDecisionToDb',
-        error: String((deferErr as Error).message),
+        error: getErrorMessage(deferErr),
       });
     }
 
@@ -502,7 +495,7 @@ export async function saveDecisionToDb(
 
     return { id };
   } catch (err) {
-    logError('manifest', 'saveDecisionToDb failed', { fn: 'saveDecisionToDb', error: String((err as Error).message) });
+    logError('manifest', 'saveDecisionToDb failed', { fn: 'saveDecisionToDb', error: getErrorMessage(err) });
     throw err;
   }
 }
@@ -637,7 +630,7 @@ export async function updateRequirementInDb(
     try {
       await saveFile(filePath, md);
     } catch (diskErr) {
-      logError('manifest', 'disk write failed, reverting DB row', { fn: 'updateRequirementInDb', error: String((diskErr as Error).message) });
+      logError('manifest', 'disk write failed, reverting DB row', { fn: 'updateRequirementInDb', error: getErrorMessage(diskErr) });
       if (existing) {
         db.upsertRequirement(existing);
       }
@@ -649,7 +642,7 @@ export async function updateRequirementInDb(
     clearPathCache();
     clearParseCache();
   } catch (err) {
-    logError('manifest', 'updateRequirementInDb failed', { fn: 'updateRequirementInDb', error: String((err as Error).message) });
+    logError('manifest', 'updateRequirementInDb failed', { fn: 'updateRequirementInDb', error: getErrorMessage(err) });
     throw err;
   }
 }
@@ -713,7 +706,7 @@ export async function saveArtifactToDb(
       try {
         await saveFile(fullPath, opts.content);
       } catch (diskErr) {
-        logError('manifest', 'disk write failed, rolling back DB row', { fn: 'saveArtifactToDb', error: String((diskErr as Error).message) });
+        logError('manifest', 'disk write failed, rolling back DB row', { fn: 'saveArtifactToDb', error: getErrorMessage(diskErr) });
         const rollbackAdapter = db._getAdapter();
         rollbackAdapter?.prepare('DELETE FROM artifacts WHERE path = :path').run({ ':path': opts.path });
         throw diskErr;
@@ -725,7 +718,7 @@ export async function saveArtifactToDb(
     clearPathCache();
     clearParseCache();
   } catch (err) {
-    logError('manifest', 'saveArtifactToDb failed', { fn: 'saveArtifactToDb', error: String((err as Error).message) });
+    logError('manifest', 'saveArtifactToDb failed', { fn: 'saveArtifactToDb', error: getErrorMessage(err) });
     throw err;
   }
 }

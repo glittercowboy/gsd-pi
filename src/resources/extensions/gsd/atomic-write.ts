@@ -1,6 +1,7 @@
 import { writeFileSync, renameSync, unlinkSync, mkdirSync, promises as fs } from "node:fs";
 import { dirname } from "node:path";
 import { randomBytes } from "node:crypto";
+import { getErrorMessage } from "./error-utils.js";
 
 const TRANSIENT_LOCK_ERROR_CODES = new Set(["EBUSY", "EPERM", "EACCES"]);
 const MAX_RENAME_ATTEMPTS = 5;
@@ -61,7 +62,7 @@ function isTransientLockError(error: unknown): boolean {
 
 function buildAtomicWriteError(filePath: string, attempts: number, error: unknown): Error {
   const code = normalizeErrnoCode(error) ?? "UNKNOWN";
-  const message = error instanceof Error ? error.message : String(error);
+  const message = getErrorMessage(error);
   const wrapped = new Error(
     `Atomic write to ${filePath} failed after ${attempts} attempts (last error code: ${code}): ${message}`,
   ) as NodeJS.ErrnoException;

@@ -6,6 +6,7 @@ import { createBashTool, createEditTool, createReadTool, createWriteTool } from 
 
 import { DEFAULT_BASH_TIMEOUT_SECS } from "../constants.js";
 import { setLogBasePath, logWarning } from "../workflow-logger.js";
+import { getErrorMessage } from "../error-utils.js";
 
 /**
  * Resolve the correct DB path for the current working directory.
@@ -107,7 +108,7 @@ export async function ensureDbOpen(): Promise<boolean> {
             const { migrateFromMarkdown } = await import("../md-importer.js");
             migrateFromMarkdown(basePath);
           } catch (err) {
-            logWarning("bootstrap", `ensureDbOpen auto-migration failed: ${(err as Error).message}`);
+            logWarning("bootstrap", `ensureDbOpen auto-migration failed: ${getErrorMessage(err)}`);
           }
         }
         return opened;
@@ -122,7 +123,7 @@ export async function ensureDbOpen(): Promise<boolean> {
     logWarning("bootstrap", "ensureDbOpen failed — no .gsd directory found");
     return false;
   } catch (err) {
-    logWarning("bootstrap", `ensureDbOpen failed: ${(err as Error).message ?? String(err)}`);
+    logWarning("bootstrap", `ensureDbOpen failed: ${getErrorMessage(err)}`);
     return false;
   }
 }

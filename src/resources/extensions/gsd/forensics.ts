@@ -11,8 +11,11 @@
 import type { ExtensionAPI, ExtensionCommandContext } from "@gsd/pi-coding-agent";
 import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { join, dirname, relative } from "node:path";
+import { loadJsonFile, loadJsonFileOrNull, writeJsonFileAtomic } from "./json-persistence.js";
 import { fileURLToPath } from "node:url";
 import { homedir } from "node:os";
+import { safeReadFile } from "./safe-fs.js";
+import { makeSafeTimestamp } from "./time-utils.js";
 
 import { extractTrace, type ExecutionTrace } from "./session-forensics.js";
 import { nativeParseJsonlTail } from "./native-parser-bridge.js";
@@ -164,7 +167,7 @@ async function writeForensicsDedupPref(ctx: ExtensionCommandContext, enabled: bo
   prefs.forensics_dedup = enabled;
 
   const frontmatter = serializePreferencesToFrontmatter(prefs);
-  const raw = existsSync(prefsPath) ? readFileSync(prefsPath, "utf-8") : "";
+  const raw = safeReadFile(prefsPath) ?? "";
   let body = "\n# GSD Skill Preferences\n\nSee `~/.gsd/agent/extensions/gsd/docs/preferences-reference.md` for full field documentation and examples.\n";
   const start = raw.startsWith("---\n") ? 4 : raw.startsWith("---\r\n") ? 5 : -1;
   if (start !== -1) {
@@ -590,14 +593,10 @@ function gatherActivityLogMeta(basePath: string, activeMilestone?: string | null
 
 // ─── Completed Keys Loader ────────────────────────────────────────────────────
 
+const isStringArray = (d: unknown): d is string[] => Array.isArray(d);
+
 function loadCompletedKeys(basePath: string): string[] {
-  const file = join(gsdRoot(basePath), "completed-units.json");
-  try {
-    if (existsSync(file)) {
-      return JSON.parse(readFileSync(file, "utf-8"));
-    }
-  } catch { /* non-fatal */ }
-  return [];
+  return loadJsonFile(join(gsdRoot(basePath), "completed-units.json"), isStringArray, () => []);
 }
 
 // ─── DB Completion Counts ────────────────────────────────────────────────────
@@ -879,7 +878,7 @@ function saveForensicReport(basePath: string, report: ForensicReport, problemDes
   const dir = join(gsdRoot(basePath), "forensics");
   mkdirSync(dir, { recursive: true });
 
-  const ts = new Date().toISOString().replace(/[:.]/g, "-").replace("T", "-").slice(0, 19);
+  const ts = makeSafeTimestamp();
   const filePath = join(dir, `report-${ts}.md`);
 
   const redact = (s: string) => redactForGitHub(s, basePath);
@@ -1005,27 +1004,22 @@ export interface ForensicsMarker {
  * the forensics prompt on follow-up turns.  (#2941)
  */
 export function writeForensicsMarker(basePath: string, reportPath: string, promptContent: string): void {
-  const dir = join(gsdRoot(basePath), "runtime");
-  mkdirSync(dir, { recursive: true });
   const marker: ForensicsMarker = {
     reportPath,
     promptContent,
     createdAt: new Date().toISOString(),
   };
-  writeFileSync(join(dir, "active-forensics.json"), JSON.stringify(marker), "utf-8");
+  writeJsonFileAtomic(join(gsdRoot(basePath), "runtime", "active-forensics.json"), marker);
 }
 
 /**
  * Read the active forensics marker, or null if none exists.
  */
+const isForensicsMarker = (d: unknown): d is ForensicsMarker =>
+  d !== null && typeof d === "object" && typeof (d as Record<string, unknown>).reportPath === "string";
+
 export function readForensicsMarker(basePath: string): ForensicsMarker | null {
-  const markerPath = join(gsdRoot(basePath), "runtime", "active-forensics.json");
-  if (!existsSync(markerPath)) return null;
-  try {
-    return JSON.parse(readFileSync(markerPath, "utf-8")) as ForensicsMarker;
-  } catch {
-    return null;
-  }
+  return loadJsonFileOrNull(join(gsdRoot(basePath), "runtime", "active-forensics.json"), isForensicsMarker);
 }
 
 // ─── Prompt Formatter ─────────────────────────────────────────────────────────

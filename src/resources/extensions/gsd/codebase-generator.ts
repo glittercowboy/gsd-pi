@@ -12,6 +12,7 @@ import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { join, dirname, extname } from "node:path";
 
 import { execSync } from "node:child_process";
+import { safeReadFile } from "./safe-fs.js";
 import { gsdRoot } from "./paths.js";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -313,12 +314,7 @@ export function writeCodebaseMap(basePath: string, content: string): string {
  */
 export function readCodebaseMap(basePath: string): string | null {
   const codebasePath = join(gsdRoot(basePath), "CODEBASE.md");
-  if (!existsSync(codebasePath)) return null;
-  try {
-    return readFileSync(codebasePath, "utf-8");
-  } catch {
-    return null;
-  }
+  return safeReadFile(codebasePath);
 }
 
 /**

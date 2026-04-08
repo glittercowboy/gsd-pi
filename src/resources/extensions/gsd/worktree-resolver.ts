@@ -20,6 +20,7 @@ import type { AutoSession } from "./auto/session.js";
 import { debugLog } from "./debug-logger.js";
 import { MergeConflictError } from "./git-service.js";
 import { emitJournalEvent } from "./journal.js";
+import { getErrorMessage } from "./error-utils.js";
 
 // ─── Dependency Interface ──────────────────────────────────────────────────
 
@@ -214,7 +215,7 @@ export class WorktreeResolver {
       });
       ctx.notify(`Entered worktree for ${milestoneId} at ${wtPath}`, "info");
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
+      const msg = getErrorMessage(err);
       debugLog("WorktreeResolver", {
         action: "enterMilestone",
         milestoneId,
@@ -276,7 +277,7 @@ export class WorktreeResolver {
         action: "exitMilestone",
         milestoneId,
         phase: "auto-commit-failed",
-        error: err instanceof Error ? err.message : String(err),
+        error: getErrorMessage(err),
       });
     }
 
@@ -289,7 +290,7 @@ export class WorktreeResolver {
         action: "exitMilestone",
         milestoneId,
         phase: "teardown-failed",
-        error: err instanceof Error ? err.message : String(err),
+        error: getErrorMessage(err),
       });
     }
 
@@ -480,7 +481,7 @@ export class WorktreeResolver {
         );
       }
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
+      const msg = getErrorMessage(err);
       debugLog("WorktreeResolver", {
         action: "mergeAndExit",
         milestoneId,
@@ -604,7 +605,7 @@ export class WorktreeResolver {
         result: "success",
       });
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
+      const msg = getErrorMessage(err);
       debugLog("WorktreeResolver", {
         action: "mergeAndExit",
         milestoneId,

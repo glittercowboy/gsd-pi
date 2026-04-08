@@ -6,6 +6,7 @@
 import { appendFileSync, existsSync, mkdirSync, openSync, closeSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
+import { safeReadFile } from "./safe-fs.js";
 
 // ─── Types ──────────────────────────────────────────────────────────────
 
@@ -187,9 +188,9 @@ export function _resetNotificationStore(): void {
 
 function _readEntriesFromDisk(basePath: string): NotificationEntry[] {
   const filePath = join(basePath, ".gsd", FILENAME);
-  if (!existsSync(filePath)) return [];
+  const content = safeReadFile(filePath);
+  if (content === null) return [];
   try {
-    const content = readFileSync(filePath, "utf-8");
     return content
       .split("\n")
       .filter((l) => l.length > 0)

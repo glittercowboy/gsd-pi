@@ -9,6 +9,8 @@ import {
   aggregateBySlice, aggregateByPhase, aggregateByModel, loadLedgerFromDisk,
 } from "./metrics.js";
 import type { UnitMetrics } from "./metrics.js";
+import { shortModelName } from "./display-utils.js";
+import { formatRelativeTime } from "./time-utils.js";
 
 /**
  * Show recent unit execution history with cost, tokens, and duration.
@@ -60,7 +62,7 @@ export async function handleHistory(args: string, ctx: ExtensionCommandContext, 
       padRight(formatRelativeTime(u.finishedAt), 14) +
       padRight(u.type, 20) +
       padRight(truncateWithEllipsis(u.id, 15), 16) +
-      padRight(shortModel(u.model), 14) +
+      padRight(shortModelName(u.model), 14) +
       padRight(formatCost(u.cost), 10) +
       padRight(formatTokenCount(u.tokens.total), 10) +
       formatDuration(u.finishedAt - u.startedAt),
@@ -119,7 +121,7 @@ function showModelBreakdown(units: UnitMetrics[], ctx: ExtensionCommandContext):
   ];
   for (const m of models) {
     lines.push(
-      padRight(shortModel(m.model), 24) +
+      padRight(shortModelName(m.model), 24) +
       padRight(String(m.units), 8) +
       padRight(formatCost(m.cost), 10) +
       formatTokenCount(m.tokens.total),
@@ -130,15 +132,5 @@ function showModelBreakdown(units: UnitMetrics[], ctx: ExtensionCommandContext):
 
 // ─── Formatting helpers ──────────────────────────────────────────────────────
 
-function formatRelativeTime(timestamp: number): string {
-  const diff = Date.now() - timestamp;
-  if (diff < 60_000) return "just now";
-  if (diff < 3_600_000) return `${Math.floor(diff / 60_000)}m ago`;
-  if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)}h ago`;
-  return `${Math.floor(diff / 86_400_000)}d ago`;
-}
 
-function shortModel(model: string): string {
-  return model.replace(/^claude-/, "").replace(/^anthropic\//, "");
-}
 

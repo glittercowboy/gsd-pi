@@ -9,6 +9,7 @@ import { isSessionSwitchInFlight, resolveAgentEnd } from "../auto-loop.js";
 import { resolveModelId } from "../auto-model-selection.js";
 import { clearDiscussionFlowState } from "./write-gate.js";
 import { resumeAutoAfterProviderDelay } from "./provider-error-resume.js";
+import { getErrorMessage } from "../error-utils.js";
 import {
   classifyError,
   createRetryState,
@@ -57,7 +58,7 @@ async function pauseTransientWithBackoff(
     resume: allowAutoResume
       ? () => {
         void resumeAutoAfterProviderDelay(pi, ctx).catch((err) => {
-          const message = err instanceof Error ? err.message : String(err);
+          const message = getErrorMessage(err);
           ctx.ui.notify(`Provider error recovery delay elapsed, but auto-mode failed to resume: ${message}`, "error");
         });
       }
@@ -94,9 +95,9 @@ export async function handleAgentEnd(
         resetRetryState(retryState);
         resolveAgentEnd(event);
       } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
+        const message = getErrorMessage(err);
         ctx.ui.notify(`Auto-mode error after empty-content abort: ${message}. Stopping auto-mode.`, "error");
-        try { await pauseAuto(ctx, pi); } catch (e) { logWarning("bootstrap", `pauseAuto failed after empty-content abort: ${(e as Error).message}`); }
+        try { await pauseAuto(ctx, pi); } catch (e) { logWarning("bootstrap", `pauseAuto failed after empty-content abort: ${getErrorMessage(e)}`); }
       }
       return;
     }
@@ -254,12 +255,12 @@ export async function handleAgentEnd(
     resetRetryState(retryState);
     resolveAgentEnd(event);
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
+    const message = getErrorMessage(err);
     ctx.ui.notify(`Auto-mode error in agent_end handler: ${message}. Stopping auto-mode.`, "error");
     try {
       await pauseAuto(ctx, pi);
     } catch (e) {
-      logWarning("bootstrap", `pauseAuto failed in agent_end handler: ${(e as Error).message}`);
+      logWarning("bootstrap", `pauseAuto failed in agent_end handler: ${getErrorMessage(e)}`);
     }
   }
 }
