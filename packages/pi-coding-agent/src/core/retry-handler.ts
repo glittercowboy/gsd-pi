@@ -30,6 +30,9 @@ export interface RetryHandlerDeps {
 	emit: (event: AgentSessionEvent) => void;
 	/** Called when the retry handler switches to a fallback model */
 	onModelChange: (model: Model<any>) => void;
+	/** Optional: check if the claude-code CLI provider is ready (installed + authed).
+	 * Injected from the app layer to preserve package boundary. */
+	isClaudeCodeReady?: () => boolean;
 }
 
 export class RetryHandler {
@@ -113,7 +116,7 @@ export class RetryHandler {
 		// generated error from getApiKey() when credentials are in a backoff window.
 		// Re-entering the retry handler for that message creates a cascade of empty
 		// error entries in the session file, breaking resume (#3429).
-		return /overloaded|rate.?limit|too many requests|429|500|502|503|504|service.?unavailable|server.?error|internal.?error|connection.?error|connection.?refused|other side closed|fetch failed|upstream.?connect|reset before headers|terminated|retry delay|network.?(?:is\s+)?unavailable|credentials.*expired|extra usage is required/i.test(
+		return /overloaded|rate.?limit|too many requests|429|500|502|503|504|service.?unavailable|server.?error|internal.?error|connection.?error|connection.?refused|other side closed|fetch failed|upstream.?connect|reset before headers|terminated|retry delay|network.?(?:is\s+)?unavailable|credentials.*expired|extra usage is required|third.party.*draw from extra|third.party.*not.*available/i.test(
 			err,
 		);
 	}
@@ -142,6 +145,15 @@ export class RetryHandler {
 		// Try credential fallback before counting against retry budget.
 		const retryGeneration = this._retryGeneration;
 		if (this._deps.getModel() && message.errorMessage) {
+			// Third-party subscription block (#3772): Anthropic blocks third-party apps
+			// from using Pro/Max subscription quotas. If the claude-code CLI provider is
+			// available, switch to it immediately — credential rotation won't help.
+			if (this._isThirdPartyBlock(message.errorMessage)) {
+				const switched = this._tryClaudeCodeFallback(message, retryGeneration);
+				if (switched) return true;
+				// CLI not available — fall through to standard error handling
+			}
+
 			const errorType = this._classifyErrorType(message.errorMessage);
 			const isRateLimit = errorType === "rate_limit";
 			const isQuotaError = errorType === "quota_exhausted";
@@ -442,6 +454,58 @@ export class RetryHandler {
 
 		this._scheduleContinue(retryGeneration);
 
+		return true;
+	}
+
+	/**
+	 * Detect the Anthropic third-party subscription block error (#3772).
+	 * This is a hard policy block, not a transient rate limit — credential
+	 * rotation will not help.
+	 */
+	private _isThirdPartyBlock(errorMessage: string): boolean {
+		return /third[- .]party.*(?:draw from extra|not.*available|plan limits|not permitted|cannot be used|not supported)/i.test(errorMessage);
+	}
+
+	/**
+	 * Attempt to switch to the claude-code CLI provider when the current
+	 * Anthropic provider is blocked by the third-party policy (#3772).
+	 * Returns true if the switch was made and retry scheduled.
+	 */
+	private _tryClaudeCodeFallback(message: AssistantMessage, retryGeneration: number): boolean {
+		if (!this._deps.isClaudeCodeReady?.()) return false;
+
+		const currentModel = this._deps.getModel();
+		if (!currentModel) return false;
+
+		// Only attempt claude-code fallback when the current provider is anthropic.
+		// Other providers may produce similar error text but should not be rerouted.
+		if (currentModel.provider !== "anthropic") return false;
+
+		// Find the same model ID under the claude-code provider
+		const ccModel = this._deps.modelRegistry.find("claude-code", currentModel.id);
+		if (!ccModel) return false;
+
+		const previousProvider = currentModel.provider;
+		this._deps.agent.setModel(ccModel);
+		this._deps.onModelChange(ccModel);
+		this._removeLastAssistantError();
+
+		this._deps.emit({
+			type: "fallback_provider_switch",
+			from: `${previousProvider}/${currentModel.id}`,
+			to: `claude-code/${ccModel.id}`,
+			reason: "Anthropic subscription blocked for third-party apps — routing through Claude Code CLI",
+		});
+
+		this._deps.emit({
+			type: "auto_retry_start",
+			attempt: this._retryAttempt + 1,
+			maxAttempts: this._deps.settingsManager.getRetrySettings().maxRetries,
+			delayMs: 0,
+			errorMessage: `${message.errorMessage} (switching to Claude Code CLI)`,
+		});
+
+		this._scheduleContinue(retryGeneration);
 		return true;
 	}
 

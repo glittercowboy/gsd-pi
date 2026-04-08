@@ -75,6 +75,10 @@ export interface CreateAgentSessionOptions {
 
 	/** Settings manager. Default: SettingsManager.create(cwd, agentDir) */
 	settingsManager?: SettingsManager;
+
+	/** Optional: check if the claude-code CLI provider is ready (installed + authed).
+	 * Passed to RetryHandler for third-party block recovery (#3772). */
+	isClaudeCodeReady?: () => boolean;
 }
 
 /** Result from createAgentSession */
@@ -432,6 +436,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		modelRegistry,
 		initialActiveToolNames,
 		extensionRunnerRef,
+		isClaudeCodeReady: options.isClaudeCodeReady,
 	});
 	const extensionsResult = resourceLoader.getExtensions();
 

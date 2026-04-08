@@ -293,6 +293,53 @@ describe("RetryHandler — long-context entitlement 429 (#2803)", () => {
 		});
 	});
 
+	describe("third-party block claude-code fallback (#3772)", () => {
+		it("switches to claude-code provider when current provider is anthropic", async () => {
+			const ccModel = createMockModel("claude-code", "claude-opus-4-6");
+			const { deps, emittedEvents, onModelChangeFn } = createMockDeps({
+				model: createMockModel("anthropic", "claude-opus-4-6"),
+				findModelResult: (provider: string, modelId: string) => {
+					if (provider === "claude-code" && modelId === "claude-opus-4-6") return ccModel;
+					return undefined;
+				},
+			});
+			deps.isClaudeCodeReady = () => true;
+
+			const handler = new RetryHandler(deps);
+			const msg = errorMessage("third-party apps cannot draw from extra usage");
+
+			const result = await handler.handleRetryableError(msg);
+
+			assert.equal(result, true, "should retry via claude-code fallback");
+			const switchEvent = emittedEvents.find((e) => e.type === "fallback_provider_switch");
+			assert.ok(switchEvent, "Expected fallback_provider_switch event");
+			assert.ok(switchEvent!.to.startsWith("claude-code/"), "Should switch to claude-code provider");
+		});
+
+		it("does NOT switch to claude-code when current provider is not anthropic", async () => {
+			const ccModel = createMockModel("claude-code", "gpt-4o");
+			const { deps, emittedEvents } = createMockDeps({
+				model: createMockModel("openai", "gpt-4o"),
+				findModelResult: (provider: string, modelId: string) => {
+					if (provider === "claude-code" && modelId === "gpt-4o") return ccModel;
+					return undefined;
+				},
+			});
+			deps.isClaudeCodeReady = () => true;
+
+			const handler = new RetryHandler(deps);
+			const msg = errorMessage("third-party apps are not supported for this plan");
+
+			const result = await handler.handleRetryableError(msg);
+
+			// Should NOT have triggered the claude-code fallback
+			const switchEvent = emittedEvents.find(
+				(e) => e.type === "fallback_provider_switch" && e.to?.startsWith("claude-code/"),
+			);
+			assert.equal(switchEvent, undefined, "Should NOT switch non-anthropic provider to claude-code");
+		});
+	});
+
 	describe("quota_exhausted credential backoff (#3430)", () => {
 		it("does NOT call markUsageLimitReached for quota_exhausted errors", async () => {
 			// "Extra usage is required" is an account-level billing gate.

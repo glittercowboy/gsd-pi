@@ -353,7 +353,7 @@ export function resolveModelId<T extends { id: string; provider: string }>(
  * Uses case-insensitive matching with alias support to prevent fail-open on
  * provider naming variations (e.g. "copilot" vs "github-copilot").
  */
-const FLAT_RATE_PROVIDERS = new Set(["github-copilot", "copilot"]);
+const FLAT_RATE_PROVIDERS = new Set(["github-copilot", "copilot", "claude-code"]);
 
 export function isFlatRateProvider(provider: string): boolean {
   return FLAT_RATE_PROVIDERS.has(provider.toLowerCase());

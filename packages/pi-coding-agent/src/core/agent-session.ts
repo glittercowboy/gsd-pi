@@ -166,6 +166,9 @@ export interface AgentSessionConfig {
 	baseToolsOverride?: Record<string, AgentTool>;
 	/** Mutable ref used by Agent to access the current ExtensionRunner */
 	extensionRunnerRef?: { current?: ExtensionRunner };
+	/** Optional: check if the claude-code CLI provider is ready (installed + authed).
+	 * Passed through to RetryHandler for third-party block recovery (#3772). */
+	isClaudeCodeReady?: () => boolean;
 }
 
 export interface ExtensionBindings {
@@ -324,6 +327,7 @@ export class AgentSession {
 			getSessionId: () => this.sessionId,
 			emit: (event) => this._emit(event),
 			onModelChange: (model) => this.sessionManager.appendModelChange(model.provider, model.id),
+			isClaudeCodeReady: config.isClaudeCodeReady,
 		});
 
 		this._compactionOrchestrator = new CompactionOrchestrator({
