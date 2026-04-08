@@ -6,6 +6,121 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [2.66.0] - 2026-04-08
+
+### Added
+- **gsd**: add fast path for queued milestone discussion
+- **gsd**: add /gsd show-config command
+- **reactive**: graph diagnostics and subagent_model config
+- **dispatch**: parallel research slices and parallel milestone validation
+- **parallel**: worker model override for parallel milestone workers
+
+### Fixed
+- **gsd**: validate depth verification answer before unlocking write-gate
+- **gsd**: revert unknown artifact check to warn-and-proceed
+- **gsd**: add missing cmd field to test base WorkflowEvent
+- **gsd**: address remaining adversarial review findings for wave 3
+- **gsd**: detect concurrent event log growth during reconcile
+- **gsd**: address adversarial review findings for wave 3
+- **gsd**: address adversarial review findings for wave 2
+- **gsd**: address adversarial review findings for wave 1
+- **gsd**: WAL-safe migration backup + stronger regression tests
+- **gsd**: consistency and cleanup (wave 5/5)
+- **gsd**: write safety — atomic writes and randomized tmp paths (wave 4/5)
+- **gsd**: session and recovery robustness (wave 3/5)
+- **gsd**: event log and reconciliation robustness (wave 2/5)
+- **gsd**: critical state machine data integrity fixes (wave 1/5)
+- **gsd**: critical state machine data integrity fixes (wave 1/5)
+- **gsd**: remove ecosystem research stub and address adversarial review
+- **gsd**: suppress model change notification in auto-mode unless verbose
+- **gsd**: exclude task.files from checkTaskOrdering to prevent false positives
+- **state**: skip ghost check for queued milestones in registry build
+- **ci**: replace empty catch blocks and raw stderr with logWarning
+- **logging**: add debugLog to empty catch in reopen-milestone
+- **state-machine**: 9 resilience fixes + 86 regression tests (#3161)
+- **gsd**: add incremental persistence to discuss prompts
+- replace empty catch with logWarning for silent-catch-diagnostics test
+- **test**: escape regex metacharacters in skip-by-preference pattern test
+- **test**: search for numbered step definitions in prompt ordering test
+- **test**: update notes loop test for notesVisible guard behavior
+- **test**: update action count for note captures now included in results
+- **test**: remove extraneous test file from wrong branch
+- **test**: update worktree sync tests to use separate milestone IDs
+- **gsd**: use valid LogComponent type for stale branch guard warning
+- **test**: update rogue detection test for auto-remediation behavior
+- **test**: update stuck-planning test to expect executing after reconciliation
+- **test**: update file path consistency tests for inputs-only checking
+- **test**: add CONTEXT file to queued milestone ghost detection test
+- **test**: update needs-remediation test to expect validating-milestone phase
+- **gsd**: import all-done milestones as complete during DB migration
+- **gsd**: allow milestone completion when validation skipped by preference
+- **gsd**: set slice sequence at all three insertion sites
+- **gsd**: four prompt/runtime fixes for completion and session stability
+- **gsd**: default insertMilestone status to queued instead of active
+- **gsd**: suppress repeated frontmatter YAML parse warnings
+- **gsd**: normalize list inputs in complete-task + fix roadmap dep parsing
+- **gsd**: open DB before status derivation + respect isolation:none in quick
+- **gsd**: add .bg-shell/ to baseline gitignore patterns
+- **tui**: prevent Enter key infinite loop in interview notes mode
+- **provider**: handle Enter key to initiate auth setup in provider manager
+- **gsd**: cap run-uat dispatch attempts to prevent infinite replay loop
+- **mcp**: use createRequire to resolve SDK wildcard subpath imports
+- **gsd**: mark note captures as executed in executeTriageResolutions
+- **gsd**: validate main_branch preference exists before using in merge
+- **gsd**: handle deleted cwd in projectRoot to prevent ENOENT crash
+- **gsd**: skip current milestone in syncWorktreeStateBack to prevent merge conflicts
+- **gsd**: add structuredQuestionsAvailable conditional to slice discuss
+- **gsd**: restore full tool set after discuss flow scoping
+- **gsd**: tighten verifyExpectedArtifact to prevent rogue-write false positives
+- **gsd**: add verification gate to complete-slice tool
+- **gsd**: fix pre-execution-checks false positives from backticks and task.files
+- **gsd**: stop renderAllProjections from overwriting authoritative PLAN.md
+- **gsd**: auto-checkout to main when isolation:none finds stale milestone branch
+- **gsd**: auto-remediate stale slice DB status when SUMMARY exists on disk
+- **gsd**: open DB on demand in gsd_milestone_status for non-auto sessions
+- **gsd**: detect phantom milestones from abandoned gsd_milestone_generate_id
+- **gsd**: force re-validation when verdict is needs-remediation
+- **gsd**: exclude closed slices from findMissingSummaries check
+- **gsd**: recover from stale lockfile after crash or SIGKILL
+- **gsd**: add createdAt timestamp and 30s age guard to staleness check
+- **gsd**: clear stale pendingAutoStart after /clear interrupts discussion
+- **gsd**: suppress misleading warnings for expected ENOENT/EISDIR conditions
+- **gsd**: extract real error from message content when errorMessage is useless
+- **gsd**: extract real error from message content when errorMessage is useless
+- **gsd**: show accurate pause message for queued-user-message skip
+- **gsd**: treat queued-user-message skip as non-retryable interruption
+- **gsd**: recognize "Not provided." default in isVerificationNotApplicable
+- **gsd**: discoverManifests skips symlinked extension directories
+- **gsd**: recognize "Not provided." default in isVerificationNotApplicable
+- **gsd**: reconcile plan-file tasks into DB when planner skips persistence (#3600)
+- **gsd**: use isClosedStatus() in dispatch guard instead of raw complete check
+- **browser-tools**: make sharp an optional lazy dependency
+- **gsd**: pass required arguments in defer-milestone-stamp test
+- **gsd**: replace remaining empty catch with logWarning
+- **gsd**: use logWarning instead of raw stderr in catch blocks
+- **gsd**: log error instead of empty catch in STATE.md rebuild
+- **gsd**: log error instead of empty catch in skip_slice
+- **gsd**: cast milestone classification to string for type safety
+- **gsd**: treat zero-slice roadmap as pre-planning in guided flow
+- **gsd**: rebuild STATE.md after skip-slice and strengthen rethink prompt
+- **gsd**: use main_branch preference in worktree creation
+- **gsd**: stamp defer and milestone captures as executed after triage
+- **tui**: treat absolute file paths as plain text, not commands
+- **tui**: break infinite re-render loop for images in cmux
+- **gsd**: rebuild STATE.md before guided-flow dispatch
+- **gsd**: defer queued shells in active milestone selection
+- **retry**: prevent 429 quota cascade and 30-min lockout
+- **gsd**: add fastPathInstruction to buildDiscussMilestonePrompt loadPrompt call
+
+### Changed
+- auto-commit after quick-task
+- auto-commit after quick-task
+- auto-commit after quick-task
+- auto-commit after quick-task
+- auto-commit after quick-task
+- auto-commit after quick-task
+- auto-commit after quick-task
+
 ## [2.65.0] - 2026-04-07
 
 ### Added
@@ -2436,7 +2551,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Changed
 - License updated to MIT
 
-[Unreleased]: https://github.com/gsd-build/gsd-2/compare/v2.65.0...HEAD
+[Unreleased]: https://github.com/gsd-build/gsd-2/compare/v2.66.0...HEAD
+[2.66.0]: https://github.com/gsd-build/gsd-2/compare/v2.65.0...v2.66.0
 [2.65.0]: https://github.com/gsd-build/gsd-2/compare/v2.64.0...v2.65.0
 [2.64.0]: https://github.com/gsd-build/gsd-2/compare/v2.63.0...v2.64.0
 [2.63.0]: https://github.com/gsd-build/gsd-2/compare/v2.62.1...v2.63.0
