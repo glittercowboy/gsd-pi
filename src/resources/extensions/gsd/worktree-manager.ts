@@ -17,7 +17,7 @@
 
 import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync } from "node:fs";
 import { execFileSync } from "node:child_process";
-import { join, resolve, sep } from "node:path";
+import { basename, dirname, join, resolve, sep } from "node:path";
 import { safeReadFile } from "./safe-fs.js";
 import { GSDError, GSD_PARSE_ERROR, GSD_STALE_STATE, GSD_LOCK_HELD, GSD_GIT_ERROR, GSD_MERGE_CONFLICT } from "./errors.js";
 import { logWarning } from "./workflow-logger.js";
@@ -128,11 +128,28 @@ export function worktreeBranchName(name: string): string {
  * nativeWorktreeRemove --force) to prevent #2365-style data loss.
  */
 export function isInsideWorktreesDir(basePath: string, targetPath: string): boolean {
-  const wtDir = resolve(worktreesDir(basePath));
-  const resolved = resolve(targetPath);
+  const wtDir = normalizeContainmentPath(worktreesDir(basePath));
+  const resolved = normalizeContainmentPath(targetPath);
   // The resolved path must start with the worktrees dir followed by a separator,
   // not merely be a prefix match (e.g. ".gsd/worktrees-extra" must not match).
   return resolved === wtDir || resolved.startsWith(wtDir + sep);
+}
+
+function normalizeContainmentPath(targetPath: string): string {
+  const resolved = resolve(targetPath);
+  try {
+    return realpathSync(resolved);
+  } catch {
+    const parent = dirname(resolved);
+    if (existsSync(parent)) {
+      try {
+        return join(realpathSync(parent), basename(resolved));
+      } catch {
+        // Fall through to the plain resolved path.
+      }
+    }
+    return resolved;
+  }
 }
 
 // ─── Core Operations ───────────────────────────────────────────────────────

@@ -251,11 +251,6 @@ export function extractEntityKey(
         ? { type: "slice", id: p["sliceId"] }
         : null;
 
-    case "complete_milestone":
-      return typeof p["milestoneId"] === "string"
-        ? { type: "milestone", id: p["milestoneId"] }
-        : null;
-
     case "plan_slice":
       return typeof p["sliceId"] === "string"
         ? { type: "slice_plan", id: p["sliceId"] }

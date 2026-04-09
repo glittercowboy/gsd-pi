@@ -81,9 +81,7 @@ function writeManagedResourceManifest(agentDir: string): void {
   try {
     if (existsSync(bundledExtensionsDir)) {
       const entries = readdirSync(bundledExtensionsDir, { withFileTypes: true })
-      installedExtensionRootFiles = entries
-        .filter(e => e.isFile())
-        .map(e => e.name)
+      installedExtensionRootFiles = getCanonicalRootFileNames(bundledExtensionsDir)
       installedExtensionDirs = entries
         .filter(e => e.isDirectory())
         .filter(e => {
@@ -229,13 +227,26 @@ function syncResourceDir(srcDir: string, destDir: string): void {
         if (existsSync(target)) rmSync(target, { recursive: true, force: true })
       }
     }
-    try {
-      cpSync(srcDir, destDir, { recursive: true, force: true })
-    } catch {
-      // Fallback for Windows paths with non-ASCII characters where cpSync
-      // fails with the \\?\ extended-length prefix (#1178).
-      copyDirRecursive(srcDir, destDir)
+
+    mkdirSync(destDir, { recursive: true })
+    for (const entry of readdirSync(srcDir, { withFileTypes: true })) {
+      const srcPath = join(srcDir, entry.name)
+      const destPath = join(destDir, entry.name)
+
+      if (entry.isDirectory()) {
+        try {
+          cpSync(srcPath, destPath, { recursive: true, force: true })
+        } catch {
+          copyDirRecursive(srcPath, destPath)
+        }
+      }
     }
+
+    for (const fileName of getCanonicalRootFileNames(srcDir)) {
+      copyFileSync(join(srcDir, fileName), join(destDir, fileName))
+    }
+
+    pruneStaleSiblingFiles(srcDir, destDir)
     makeTreeWritable(destDir)
   }
 }
@@ -243,11 +254,7 @@ function syncResourceDir(srcDir: string, destDir: string): void {
 function pruneStaleSiblingFiles(srcDir: string, destDir: string): void {
   if (!existsSync(destDir)) return
 
-  const sourceFiles = new Set(
-    readdirSync(srcDir, { withFileTypes: true })
-      .filter((entry) => entry.isFile())
-      .map((entry) => entry.name),
-  )
+  const sourceFiles = new Set(getCanonicalRootFileNames(srcDir))
 
   for (const entry of readdirSync(destDir, { withFileTypes: true })) {
     if (!entry.isFile()) continue
@@ -340,8 +347,10 @@ function pruneRemovedBundledExtensions(
   const currentSourceDirs = new Set<string>()
   try {
     if (existsSync(bundledExtensionsDir)) {
+      for (const fileName of getCanonicalRootFileNames(bundledExtensionsDir)) {
+        currentSourceFiles.add(fileName)
+      }
       for (const e of readdirSync(bundledExtensionsDir, { withFileTypes: true })) {
-        if (e.isFile()) currentSourceFiles.add(e.name)
         if (e.isDirectory()) currentSourceDirs.add(e.name)
       }
     }
@@ -573,14 +582,40 @@ function migrateSkillsToEcosystemDir(agentDir: string): void {
 
 export function hasStaleCompiledExtensionSiblings(extensionsDir: string): boolean {
   if (!existsSync(extensionsDir)) return false
+  const bundledRootFiles = new Set(getCanonicalRootFileNames(bundledExtensionsDir))
   for (const entry of readdirSync(extensionsDir, { withFileTypes: true })) {
     if (!entry.isFile() || !entry.name.endsWith('.ts')) continue
     const jsName = entry.name.replace(/\.ts$/, '.js')
-    if (existsSync(join(extensionsDir, jsName))) {
+    if (existsSync(join(extensionsDir, jsName)) && !bundledRootFiles.has(entry.name)) {
       return true
     }
   }
   return false
+}
+
+function getCanonicalRootFileNames(srcDir: string): string[] {
+  if (!existsSync(srcDir)) return []
+
+  const preferredByStem = new Map<string, string>()
+  const passthrough: string[] = []
+
+  for (const entry of readdirSync(srcDir, { withFileTypes: true })) {
+    if (!entry.isFile()) continue
+
+    const match = entry.name.match(/^(.*)\.(ts|js)$/)
+    if (!match) {
+      passthrough.push(entry.name)
+      continue
+    }
+
+    const [, stem, ext] = match
+    const current = preferredByStem.get(stem)
+    if (!current || ext === 'js') {
+      preferredByStem.set(stem, entry.name)
+    }
+  }
+
+  return [...passthrough, ...preferredByStem.values()]
 }
 
 /**
