@@ -66,6 +66,11 @@ export function usesAnthropicBearerAuth(provider: Model<"anthropic-messages">["p
 	return provider === "alibaba-coding-plan" || provider === "minimax" || provider === "minimax-cn";
 }
 
+function hasBearerAuthorizationHeader(model: Model<"anthropic-messages">): boolean {
+	const authHeader = model.headers?.Authorization ?? model.headers?.authorization;
+	return typeof authHeader === "string" && authHeader.trim().toLowerCase().startsWith("bearer ");
+}
+
 async function createClient(
 	model: Model<"anthropic-messages">,
 	apiKey: string,
@@ -114,7 +119,7 @@ async function createClient(
 
 	// API key auth (Anthropic OAuth removed per TOS compliance — use API keys or Claude CLI)
 	// Some Anthropic-compatible providers require Bearer auth instead of x-api-key.
-	const usesBearerAuth = usesAnthropicBearerAuth(model.provider);
+	const usesBearerAuth = usesAnthropicBearerAuth(model.provider) || hasBearerAuthorizationHeader(model);
 	const client = new AnthropicClass({
 		apiKey: usesBearerAuth ? null : apiKey,
 		authToken: usesBearerAuth ? apiKey : undefined,
