@@ -16,6 +16,7 @@ import { gsdRoot } from "./paths.js";
 import { atomicWriteSync } from "./atomic-write.js";
 import { effectiveLockFile } from "./session-lock.js";
 import { safeReadFile } from "./safe-fs.js";
+import { nowIso } from "./time-utils.js";
 
 export interface LockData {
   pid: number;
@@ -41,10 +42,10 @@ export function writeLock(
   try {
     const data: LockData = {
       pid: process.pid,
-      startedAt: new Date().toISOString(),
+      startedAt: nowIso(),
       unitType,
       unitId,
-      unitStartedAt: new Date().toISOString(),
+      unitStartedAt: nowIso(),
       sessionFile,
     };
     const lp = lockPath(basePath);

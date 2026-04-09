@@ -2,6 +2,7 @@
 import { parseArgs } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import { resolve, dirname } from 'node:path';
+import { getErrorMessage } from './error-utils.js';
 import { resolveConfigPath, loadConfig } from './config.js';
 import { Logger } from './logger.js';
 import { Daemon } from './daemon.js';
@@ -90,7 +91,6 @@ async function main(): Promise<void> {
 }
 
 main().catch((err: unknown) => {
-  const msg = err instanceof Error ? err.message : String(err);
-  process.stderr.write(`gsd-daemon: fatal: ${msg}\n`);
+  process.stderr.write(`gsd-daemon: fatal: ${getErrorMessage(err)}\n`);
   process.exit(1);
 });

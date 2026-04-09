@@ -2,6 +2,7 @@ import { readFileSync, existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { resolve } from 'node:path';
 import { parse as parseYaml } from 'yaml';
+import { getErrorMessage } from './error-utils.js';
 import type { DaemonConfig, LogLevel } from './types.js';
 
 const VALID_LOG_LEVELS: ReadonlySet<string> = new Set(['debug', 'info', 'warn', 'error']);
@@ -129,8 +130,7 @@ export function loadConfig(configPath: string): DaemonConfig {
   try {
     parsed = parseYaml(raw);
   } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : String(err);
-    throw new Error(`Failed to parse YAML config at ${configPath}: ${msg}`);
+    throw new Error(`Failed to parse YAML config at ${configPath}: ${getErrorMessage(err)}`);
   }
 
   return validateConfig(parsed);

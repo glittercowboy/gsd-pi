@@ -17,6 +17,7 @@ import { APP_NAME, getAgentDir, getModelsPath, VERSION } from "./config.js";
 import { AuthStorage } from "./core/auth-storage.js";
 import { exportFromFile } from "./core/export-html/index.js";
 import type { LoadExtensionsResult } from "./core/extensions/index.js";
+import { getErrorMessage } from "./utils/error.js";
 import { KeybindingsManager } from "./core/keybindings.js";
 import { ModelRegistry } from "./core/model-registry.js";
 import { resolveCliModel, resolveModelScope, type ScopedModel } from "./core/model-resolver.js";
@@ -166,8 +167,7 @@ async function callSessionDirectoryHook(extensions: LoadExtensionsResult, cwd: s
 					customSessionDir = result.sessionDir;
 				}
 			} catch (err) {
-				const message = err instanceof Error ? err.message : String(err);
-				console.error(chalk.red(`Extension "${ext.path}" session_directory handler failed: ${message}`));
+				console.error(chalk.red(`Extension "${ext.path}" session_directory handler failed: ${getErrorMessage(err)}`));
 			}
 		}
 	}

@@ -19,6 +19,7 @@ import { homedir } from "node:os";
 import type { UnitMetrics, MetricsLedger } from "./metrics.js";
 import { formatCost, formatTokenCount, loadLedgerFromDisk } from "./metrics.js";
 import { getSkillLastUsed, detectStaleSkills } from "./skill-telemetry.js";
+import { nowIso } from "./time-utils.js";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -93,7 +94,7 @@ export function generateSkillHealthReport(basePath: string, staleDays?: number):
   const suggestions = generateSuggestions(skills, staleSkills);
 
   return {
-    generatedAt: new Date().toISOString(),
+    generatedAt: nowIso(),
     totalUnitsWithSkills: unitsWithSkills.length,
     skills,
     staleSkills,

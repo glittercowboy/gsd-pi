@@ -16,6 +16,7 @@ import type { RoadmapSliceEntry } from "./types.js";
 import { checkGitHealth, checkRuntimeHealth, checkGlobalHealth, checkEngineHealth } from "./doctor-checks.js";
 import { checkEnvironmentHealth } from "./doctor-environment.js";
 import { runProviderChecks } from "./doctor-providers.js";
+import { nowIso } from "./time-utils.js";
 
 // ── Re-exports ─────────────────────────────────────────────────────────────
 // All public types and functions from extracted modules are re-exported here
@@ -297,7 +298,7 @@ async function appendDoctorHistory(basePath: string, report: DoctorReport): Prom
     }
 
     const entry = JSON.stringify({
-      ts: new Date().toISOString(),
+      ts: nowIso(),
       ok: report.ok,
       errors: errorCount,
       warnings: warningCount,

@@ -30,6 +30,7 @@ import {
 	analyzeCollisions,
 	type ClassifiedDiagnostic,
 } from './collision-diagnostics.js';
+import { nowIso } from './time-utils.js';
 
 // ============================================================================
 // Type Definitions
@@ -353,7 +354,7 @@ export class PluginImporter {
 
 		return {
 			schemaVersion: '1.0',
-			generatedAt: new Date().toISOString(),
+			generatedAt: nowIso(),
 			entries,
 			summary: {
 				total: entries.length,

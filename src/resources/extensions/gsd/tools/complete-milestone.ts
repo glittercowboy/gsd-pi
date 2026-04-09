@@ -10,6 +10,7 @@ import { join } from "node:path";
 import { mkdirSync } from "node:fs";
 
 import { getErrorMessage } from "../error-utils.js";
+import { nowIso } from "../time-utils.js";
 import {
   transaction,
   getMilestone,
@@ -235,7 +236,7 @@ export async function handleCompleteMilestone(
     appendEvent(basePath, {
       cmd: "complete-milestone",
       params: { milestoneId: params.milestoneId },
-      ts: new Date().toISOString(),
+      ts: nowIso(),
       actor: "agent",
       actor_name: params.actorName,
       trigger_reason: params.triggerReason,

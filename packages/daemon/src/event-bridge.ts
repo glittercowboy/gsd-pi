@@ -13,6 +13,7 @@
 import type { Client, Message, TextChannel, MessageComponentInteraction } from 'discord.js';
 import { EmbedBuilder, ComponentType } from 'discord.js';
 import type { SdkAgentEvent } from '@gsd-build/rpc-client';
+import { getErrorMessage } from './error-utils.js';
 import type { Logger } from './logger.js';
 import type { DaemonConfig, PendingBlocker } from './types.js';
 import type { SessionManager } from './session-manager.js';
@@ -207,7 +208,7 @@ export class EventBridge {
       this.logger.error('bridge: channel creation failed', {
         sessionId,
         projectDir,
-        error: err instanceof Error ? err.message : String(err),
+        error: getErrorMessage(err),
       });
     }
   }
@@ -323,7 +324,7 @@ export class EventBridge {
           }).catch(() => {});
           collector.stop('resolved');
         } catch (err) {
-          const errMsg = err instanceof Error ? err.message : String(err);
+          const errMsg = getErrorMessage(err);
           this.logger.error('bridge: blocker resolve failed', { sessionId, error: errMsg });
           await interaction.reply({
             content: `❌ Failed to resolve blocker: ${errMsg}`,
@@ -353,7 +354,7 @@ export class EventBridge {
     } catch (err) {
       this.logger.error('bridge: collector creation failed', {
         sessionId,
-        error: err instanceof Error ? err.message : String(err),
+        error: getErrorMessage(err),
       });
     }
   }
@@ -377,7 +378,7 @@ export class EventBridge {
       // DM failure is non-fatal — channel message is the primary path
       this.logger.warn('bridge: DM send failed', {
         sessionId,
-        error: err instanceof Error ? err.message : String(err),
+        error: getErrorMessage(err),
       });
     }
   }
@@ -410,7 +411,7 @@ export class EventBridge {
           method: session.pendingBlocker.method,
         });
       } catch (err) {
-        const errMsg = err instanceof Error ? err.message : String(err);
+        const errMsg = getErrorMessage(err);
         this.logger.error('bridge: relay blocker resolve failed', { sessionId, error: errMsg });
         await message.reply(`❌ Failed to resolve blocker: ${errMsg}`).catch(() => {});
       }
@@ -431,7 +432,7 @@ export class EventBridge {
         method: session.status === 'running' ? 'steer' : 'prompt',
       });
     } catch (err) {
-      const errMsg = err instanceof Error ? err.message : String(err);
+      const errMsg = getErrorMessage(err);
       this.logger.error('bridge: relay failed', { sessionId, error: errMsg });
       await message.reply(`❌ Failed to relay message: ${errMsg}`).catch(() => {});
     }

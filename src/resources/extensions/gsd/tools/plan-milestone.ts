@@ -2,6 +2,7 @@ import { clearParseCache } from "../files.js";
 import { isClosedStatus } from "../status-guards.js";
 import { isNonEmptyString, validateStringArray } from "../validation.js";
 import { getErrorMessage } from "../error-utils.js";
+import { nowIso } from "../time-utils.js";
 import {
   transaction,
   getMilestone,
@@ -313,7 +314,7 @@ export async function handlePlanMilestone(
     appendEvent(basePath, {
       cmd: "plan-milestone",
       params: { milestoneId: params.milestoneId },
-      ts: new Date().toISOString(),
+      ts: nowIso(),
       actor: "agent",
       actor_name: params.actorName,
       trigger_reason: params.triggerReason,

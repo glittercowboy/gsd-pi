@@ -1,5 +1,6 @@
 import type { DaemonConfig, ProjectInfo } from './types.js';
 import type { Logger } from './logger.js';
+import { getErrorMessage } from './error-utils.js';
 import { SessionManager } from './session-manager.js';
 import { scanForProjects } from './project-scanner.js';
 import { DiscordBot, validateDiscordConfig } from './discord-bot.js';
@@ -102,7 +103,7 @@ export class Daemon {
       } catch (err) {
         // Log error but don't abort daemon startup — bot is optional
         this.logger.error('discord bot login failed', {
-          error: err instanceof Error ? err.message : String(err),
+          error: getErrorMessage(err),
         });
         this.discordBot = undefined;
       }

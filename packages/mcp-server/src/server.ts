@@ -13,6 +13,7 @@ import { readFile, readdir, stat } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { z } from 'zod';
 import type { SessionManager } from './session-manager.js';
+import { getErrorMessage } from './error-utils.js';
 import { readProgress } from './readers/state.js';
 import { readRoadmap } from './readers/roadmap.js';
 import { readHistory } from './readers/metrics.js';
@@ -152,7 +153,7 @@ export async function createMcpServer(sessionManager: SessionManager): Promise<{
         const sessionId = await sessionManager.startSession(projectDir, { command, model, bare });
         return jsonContent({ sessionId, status: 'started' });
       } catch (err) {
-        return errorContent(err instanceof Error ? err.message : String(err));
+        return errorContent(getErrorMessage(err));
       }
     },
   );
@@ -196,7 +197,7 @@ export async function createMcpServer(sessionManager: SessionManager): Promise<{
           durationMs,
         });
       } catch (err) {
-        return errorContent(err instanceof Error ? err.message : String(err));
+        return errorContent(getErrorMessage(err));
       }
     },
   );
@@ -216,7 +217,7 @@ export async function createMcpServer(sessionManager: SessionManager): Promise<{
         const result = sessionManager.getResult(sessionId);
         return jsonContent(result);
       } catch (err) {
-        return errorContent(err instanceof Error ? err.message : String(err));
+        return errorContent(getErrorMessage(err));
       }
     },
   );
@@ -236,7 +237,7 @@ export async function createMcpServer(sessionManager: SessionManager): Promise<{
         await sessionManager.cancelSession(sessionId);
         return jsonContent({ cancelled: true });
       } catch (err) {
-        return errorContent(err instanceof Error ? err.message : String(err));
+        return errorContent(getErrorMessage(err));
       }
     },
   );
@@ -257,7 +258,7 @@ export async function createMcpServer(sessionManager: SessionManager): Promise<{
         const state = await readProjectState(projectDir, query);
         return jsonContent(state);
       } catch (err) {
-        return errorContent(err instanceof Error ? err.message : String(err));
+        return errorContent(getErrorMessage(err));
       }
     },
   );
@@ -278,7 +279,7 @@ export async function createMcpServer(sessionManager: SessionManager): Promise<{
         await sessionManager.resolveBlocker(sessionId, response);
         return jsonContent({ resolved: true });
       } catch (err) {
-        return errorContent(err instanceof Error ? err.message : String(err));
+        return errorContent(getErrorMessage(err));
       }
     },
   );
@@ -301,7 +302,7 @@ export async function createMcpServer(sessionManager: SessionManager): Promise<{
       try {
         return jsonContent(readProgress(projectDir));
       } catch (err) {
-        return errorContent(err instanceof Error ? err.message : String(err));
+        return errorContent(getErrorMessage(err));
       }
     },
   );
@@ -321,7 +322,7 @@ export async function createMcpServer(sessionManager: SessionManager): Promise<{
       try {
         return jsonContent(readRoadmap(projectDir, milestoneId));
       } catch (err) {
-        return errorContent(err instanceof Error ? err.message : String(err));
+        return errorContent(getErrorMessage(err));
       }
     },
   );
@@ -341,7 +342,7 @@ export async function createMcpServer(sessionManager: SessionManager): Promise<{
       try {
         return jsonContent(readHistory(projectDir, limit));
       } catch (err) {
-        return errorContent(err instanceof Error ? err.message : String(err));
+        return errorContent(getErrorMessage(err));
       }
     },
   );
@@ -361,7 +362,7 @@ export async function createMcpServer(sessionManager: SessionManager): Promise<{
       try {
         return jsonContent(runDoctorLite(projectDir, scope));
       } catch (err) {
-        return errorContent(err instanceof Error ? err.message : String(err));
+        return errorContent(getErrorMessage(err));
       }
     },
   );
@@ -381,7 +382,7 @@ export async function createMcpServer(sessionManager: SessionManager): Promise<{
       try {
         return jsonContent(readCaptures(projectDir, filter ?? 'all'));
       } catch (err) {
-        return errorContent(err instanceof Error ? err.message : String(err));
+        return errorContent(getErrorMessage(err));
       }
     },
   );
@@ -400,7 +401,7 @@ export async function createMcpServer(sessionManager: SessionManager): Promise<{
       try {
         return jsonContent(readKnowledge(projectDir));
       } catch (err) {
-        return errorContent(err instanceof Error ? err.message : String(err));
+        return errorContent(getErrorMessage(err));
       }
     },
   );

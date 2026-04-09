@@ -1,5 +1,6 @@
 import { createWriteStream, mkdirSync, type WriteStream } from 'node:fs';
 import { dirname } from 'node:path';
+import { getErrorMessage } from './error-utils.js';
 import type { LogLevel, LogEntry } from './types.js';
 
 const LEVEL_ORDER: Record<LogLevel, number> = {
@@ -31,8 +32,7 @@ export class Logger {
     try {
       mkdirSync(dir, { recursive: true });
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      throw new Error(`Cannot create log directory ${dir}: ${msg}`);
+      throw new Error(`Cannot create log directory ${dir}: ${getErrorMessage(err)}`);
     }
 
     this.stream = createWriteStream(opts.filePath, { flags: 'a' });

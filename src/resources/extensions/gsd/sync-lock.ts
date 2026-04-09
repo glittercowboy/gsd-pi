@@ -6,21 +6,15 @@
 import { existsSync, statSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { atomicWriteSync } from "./atomic-write.js";
+import { sleepSync } from "./sleep-utils.js";
+import { nowIso } from "./time-utils.js";
 
 const STALE_THRESHOLD_MS = 60_000; // 60 seconds
 const DEFAULT_TIMEOUT_MS = 5_000;  // 5 seconds
 const SPIN_INTERVAL_MS = 100;      // 100ms polling interval
 
-// SharedArrayBuffer for synchronous sleep via Atomics.wait
-const SLEEP_BUFFER = new SharedArrayBuffer(4);
-const SLEEP_VIEW = new Int32Array(SLEEP_BUFFER);
-
 function lockFilePath(basePath: string): string {
   return join(basePath, ".gsd", "sync.lock");
-}
-
-function sleepSync(ms: number): void {
-  Atomics.wait(SLEEP_VIEW, 0, 0, ms);
 }
 
 /**
@@ -65,7 +59,7 @@ export function acquireSyncLock(
     try {
       const lockData = {
         pid: process.pid,
-        acquired_at: new Date().toISOString(),
+        acquired_at: nowIso(),
       };
       atomicWriteSync(lp, JSON.stringify(lockData, null, 2));
       return { acquired: true };

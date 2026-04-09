@@ -19,6 +19,7 @@ import { parse, stringify } from "yaml";
 import { readFileSync, writeFileSync, renameSync, existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import type { WorkflowDefinition } from "./definition-loader.js";
+import { nowIso } from "./time-utils.js";
 
 // ─── Types ───────────────────────────────────────────────────────────────
 
@@ -109,7 +110,7 @@ export function readGraph(runDir: string): WorkflowGraph {
     })),
     metadata: {
       name: yaml.metadata?.name ?? "unnamed",
-      createdAt: yaml.metadata?.created_at ?? new Date().toISOString(),
+      createdAt: yaml.metadata?.created_at ?? nowIso(),
     },
   };
 }
@@ -196,7 +197,7 @@ export function markStepComplete(
     ...graph,
     steps: graph.steps.map((s) =>
       s.id === stepId
-        ? { ...s, status: "complete" as const, finishedAt: new Date().toISOString() }
+        ? { ...s, status: "complete" as const, finishedAt: nowIso() }
         : s,
     ),
   };
@@ -303,7 +304,7 @@ export function initializeGraph(def: WorkflowDefinition): WorkflowGraph {
     })),
     metadata: {
       name: def.name,
-      createdAt: new Date().toISOString(),
+      createdAt: nowIso(),
     },
   };
 }

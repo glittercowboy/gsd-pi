@@ -21,6 +21,7 @@ import { debugLog } from "./debug-logger.js";
 import { MergeConflictError } from "./git-service.js";
 import { emitJournalEvent } from "./journal.js";
 import { getErrorMessage } from "./error-utils.js";
+import { nowIso } from "./time-utils.js";
 
 // ─── Dependency Interface ──────────────────────────────────────────────────
 
@@ -171,7 +172,7 @@ export class WorktreeResolver {
         reason: "isolation-disabled",
       });
       emitJournalEvent(this.s.originalBasePath || this.s.basePath, {
-        ts: new Date().toISOString(),
+        ts: nowIso(),
         flowId: randomUUID(),
         seq: 0,
         eventType: "worktree-skip",
@@ -207,7 +208,7 @@ export class WorktreeResolver {
         wtPath,
       });
       emitJournalEvent(this.s.originalBasePath || this.s.basePath, {
-        ts: new Date().toISOString(),
+        ts: nowIso(),
         flowId: randomUUID(),
         seq: 0,
         eventType: "worktree-enter",
@@ -223,7 +224,7 @@ export class WorktreeResolver {
         error: msg,
       });
       emitJournalEvent(this.s.originalBasePath || this.s.basePath, {
-        ts: new Date().toISOString(),
+        ts: nowIso(),
         flowId: randomUUID(),
         seq: 0,
         eventType: "worktree-create-failed",
@@ -344,7 +345,7 @@ export class WorktreeResolver {
       basePath: this.s.basePath,
     });
     emitJournalEvent(this.s.originalBasePath || this.s.basePath, {
-      ts: new Date().toISOString(),
+      ts: nowIso(),
       flowId: randomUUID(),
       seq: 0,
       eventType: "worktree-merge-start",
@@ -490,7 +491,7 @@ export class WorktreeResolver {
         fallback: "chdir-to-project-root",
       });
       emitJournalEvent(this.s.originalBasePath || this.s.basePath, {
-        ts: new Date().toISOString(),
+        ts: nowIso(),
         flowId: randomUUID(),
         seq: 0,
         eventType: "worktree-merge-failed",

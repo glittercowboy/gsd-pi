@@ -14,9 +14,10 @@ import {
 } from "@gsd/pi-coding-agent";
 import { getEnvApiKey } from "@gsd/pi-ai";
 import { existsSync, statSync, chmodSync } from "node:fs";
-import { join, dirname } from "node:path";
-import { mkdirSync } from "node:fs";
+import { join } from "node:path";
+import { ensureParentDir } from "./safe-fs.js";
 import { getErrorMessage } from "./error-utils.js";
+import { formatDuration } from "./time-utils.js";
 
 // ─── Provider Registry ─────────────────────────────────────────────────────────
 
@@ -76,19 +77,8 @@ export function maskKey(key: string): string {
   return key.slice(0, 4) + "***" + key.slice(-4);
 }
 
-/**
- * Format a duration in milliseconds to human-readable.
- */
-export function formatDuration(ms: number): string {
-  if (ms <= 0) return "expired";
-  const seconds = Math.floor(ms / 1000);
-  if (seconds < 60) return `${seconds}s`;
-  const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return `${minutes}m`;
-  const hours = Math.floor(minutes / 60);
-  const remainMinutes = minutes % 60;
-  return remainMinutes > 0 ? `${hours}h ${remainMinutes}m` : `${hours}h`;
-}
+// Re-export formatDuration so existing importers of key-manager continue to work
+export { formatDuration } from "./time-utils.js";
 
 /**
  * Describe a credential's type and status.
@@ -120,7 +110,7 @@ export function getAuthPath(): string {
  */
 export function getKeyManagerAuthStorage(): AuthStorage {
   const authPath = getAuthPath();
-  mkdirSync(dirname(authPath), { recursive: true });
+  ensureParentDir(authPath);
   return AuthStorage.create(authPath);
 }
 

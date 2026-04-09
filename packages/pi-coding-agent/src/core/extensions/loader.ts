@@ -6,6 +6,7 @@
 
 import * as fs from "node:fs";
 import { createRequire } from "node:module";
+import { getErrorMessage } from "../../utils/error.js";
 import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -790,7 +791,7 @@ async function loadExtension(
 
 		return { extension, error: null };
 	} catch (err) {
-		const message = err instanceof Error ? err.message : String(err);
+		const message = getErrorMessage(err);
 		logExtensionTiming(extensionPath, Date.now() - start, "failed");
 
 		// Check if a .js file contains TypeScript syntax — the parse error from

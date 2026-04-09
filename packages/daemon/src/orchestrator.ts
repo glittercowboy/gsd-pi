@@ -11,6 +11,7 @@
  * at the tool execution layer.
  */
 
+import { getErrorMessage } from './error-utils.js';
 import { z } from 'zod';
 import { readFileSync, writeFileSync, chmodSync } from 'node:fs';
 import { join } from 'node:path';
@@ -309,7 +310,7 @@ export class Orchestrator {
         responseLength: responseText.length,
       });
     } catch (err) {
-      const errorMsg = err instanceof Error ? err.message : String(err);
+      const errorMsg = getErrorMessage(err);
 
       // Invalidate cached client on auth errors so next call re-resolves OAuth token
       if (errorMsg.includes('authentication') || errorMsg.includes('apiKey') || errorMsg.includes('authToken') || errorMsg.includes('401')) {
@@ -420,7 +421,7 @@ export class Orchestrator {
           return `Unknown tool: ${name}`;
       }
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
+      const msg = getErrorMessage(err);
       this.deps.logger.error('tool execution error', { tool: name, error: msg });
       return `Error: ${msg}`;
     }

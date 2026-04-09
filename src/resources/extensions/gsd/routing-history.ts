@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { gsdRoot } from "./paths.js";
 import type { ComplexityTier } from "./types.js";
 import { loadJsonFile, saveJsonFile } from "./json-persistence.js";
+import { nowIso } from "./time-utils.js";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -115,7 +116,7 @@ export function recordOutcome(
     }
   }
 
-  history.updatedAt = new Date().toISOString();
+  history.updatedAt = nowIso();
   saveHistory(historyBasePath, history);
 }
 
@@ -135,7 +136,7 @@ export function recordFeedback(
     unitId,
     tier,
     rating,
-    timestamp: new Date().toISOString(),
+    timestamp: nowIso(),
   });
 
   // Cap feedback array at 200 entries
@@ -162,7 +163,7 @@ export function recordFeedback(
   }
   // "ok" = no adjustment needed
 
-  history.updatedAt = new Date().toISOString();
+  history.updatedAt = nowIso();
   saveHistory(historyBasePath, history);
 }
 
@@ -259,7 +260,7 @@ function createEmptyHistory(): RoutingHistoryData {
     version: 1,
     patterns: {},
     feedback: [],
-    updatedAt: new Date().toISOString(),
+    updatedAt: nowIso(),
   };
 }
 

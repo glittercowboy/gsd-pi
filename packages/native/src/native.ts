@@ -9,6 +9,7 @@
  */
 
 import * as path from "node:path";
+import { getErrorMessage } from "./error-utils.js";
 
 // __dirname and require are available in both execution contexts:
 //   - CJS (production build via tsc): provided natively by Node
@@ -39,8 +40,7 @@ function loadNative(): Record<string, unknown> {
     try {
       _loadedSuccessfully = true; return _require(`@gsd-build/engine-${packageSuffix}`) as Record<string, unknown>;
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      errors.push(`@gsd-build/engine-${packageSuffix}: ${message}`);
+      errors.push(`@gsd-build/engine-${packageSuffix}: ${getErrorMessage(err)}`);
     }
   }
 
@@ -49,8 +49,7 @@ function loadNative(): Record<string, unknown> {
   try {
     _loadedSuccessfully = true; return _require(releasePath) as Record<string, unknown>;
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    errors.push(`${releasePath}: ${message}`);
+    errors.push(`${releasePath}: ${getErrorMessage(err)}`);
   }
 
   // 3. Try local dev build (native/addon/gsd_engine.dev.node)
@@ -58,8 +57,7 @@ function loadNative(): Record<string, unknown> {
   try {
     _loadedSuccessfully = true; return _require(devPath) as Record<string, unknown>;
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    errors.push(`${devPath}: ${message}`);
+    errors.push(`${devPath}: ${getErrorMessage(err)}`);
   }
 
   const details = errors.map((e) => `  - ${e}`).join("\n");

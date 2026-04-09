@@ -43,6 +43,7 @@ import {
 } from "./parallel-eligibility.js";
 import { getErrorMessage } from "./error-utils.js";
 import { logWarning } from "./workflow-logger.js";
+import { sleep } from "./sleep-utils.js";
 
 // ─── Types ─────────────────────────────────────────────────────────────────
 
@@ -295,7 +296,7 @@ async function waitForWorkerExit(worker: WorkerInfo, timeoutMs: number): Promise
   const startedAt = Date.now();
   while (Date.now() - startedAt < timeoutMs) {
     if (!isPidAlive(worker.pid)) return true;
-    await new Promise((resolve) => setTimeout(resolve, 50));
+    await sleep(50);
   }
   return !isPidAlive(worker.pid);
 }

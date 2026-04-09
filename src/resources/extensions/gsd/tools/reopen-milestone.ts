@@ -10,6 +10,7 @@
  */
 
 import { getErrorMessage } from "../error-utils.js";
+import { nowIso } from "../time-utils.js";
 import {
   getMilestone,
   getMilestoneSlices,
@@ -136,7 +137,7 @@ export async function handleReopenMilestone(
         slicesReset: slicesResetCount,
         tasksReset: tasksResetCount,
       },
-      ts: new Date().toISOString(),
+      ts: nowIso(),
       actor: "agent",
       actor_name: params.actorName,
       trigger_reason: params.triggerReason,

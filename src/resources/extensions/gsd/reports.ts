@@ -20,7 +20,7 @@ import { gsdRoot } from './paths.js';
 import { formatCost, formatTokenCount } from './metrics.js';
 import { formatDateShort, formatDuration } from '../shared/format-utils.js';
 import { loadJsonFileOrNull, saveJsonFile } from './json-persistence.js';
-import { makeSafeTimestamp } from './time-utils.js';
+import { makeSafeTimestamp, nowIso } from './time-utils.js';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -141,7 +141,7 @@ export function writeReportSnapshot(args: WriteReportSnapshotArgs): string {
 
   const entry: ReportEntry = {
     filename,
-    generatedAt: new Date().toISOString(),
+    generatedAt: nowIso(),
     milestoneId: args.milestoneId,
     milestoneTitle: args.milestoneTitle,
     label,

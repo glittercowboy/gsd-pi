@@ -10,6 +10,7 @@ import { existsSync, mkdirSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { saveJsonFile } from "./json-persistence.js";
 import { safeReadFile } from "./safe-fs.js";
+import { nowIso } from "./time-utils.js";
 import {
   resolveByName,
   autoDetect,
@@ -106,8 +107,8 @@ function writeWorkflowState(
       status: i === 0 ? "active" as const : "pending" as const,
     })),
     currentPhase: 0,
-    startedAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
+    startedAt: nowIso(),
+    updatedAt: nowIso(),
     artifactDir,
   };
   saveJsonFile(statePath, state);

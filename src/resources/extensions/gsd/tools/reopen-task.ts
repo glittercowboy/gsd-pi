@@ -11,6 +11,7 @@
 // Copyright (c) 2026 Jeremy McSpadden <jeremy@fluxlabs.net>
 
 import { getErrorMessage } from "../error-utils.js";
+import { nowIso } from "../time-utils.js";
 import {
   getMilestone,
   getSlice,
@@ -130,7 +131,7 @@ export async function handleReopenTask(
         taskId: params.taskId,
         reason: params.reason ?? null,
       },
-      ts: new Date().toISOString(),
+      ts: nowIso(),
       actor: "agent",
       actor_name: params.actorName,
       trigger_reason: params.triggerReason,

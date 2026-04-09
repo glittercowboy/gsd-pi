@@ -6,8 +6,9 @@
 
 import type { ExtensionCommandContext } from "@gsd/pi-coding-agent";
 import { AuthStorage } from "@gsd/pi-coding-agent";
-import { existsSync, mkdirSync } from "node:fs";
-import { join, dirname } from "node:path";
+import { existsSync } from "node:fs";
+import { join } from "node:path";
+import { ensureParentDir } from "./safe-fs.js";
 
 /**
  * Tool API key configurations.
@@ -51,7 +52,7 @@ export function loadToolApiKeys(): void {
 
 export function getConfigAuthStorage(): AuthStorage {
   const authPath = join(process.env.HOME ?? "", ".gsd", "agent", "auth.json");
-  mkdirSync(dirname(authPath), { recursive: true });
+  ensureParentDir(authPath);
   return AuthStorage.create(authPath);
 }
 

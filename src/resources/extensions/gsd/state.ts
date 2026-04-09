@@ -3,6 +3,7 @@
 // Pure TypeScript, zero Pi dependencies.
 
 import { getErrorMessage } from "./error-utils.js";
+import { nowIso } from "./time-utils.js";
 import type {
   GSDState,
   ActiveRef,
@@ -384,7 +385,7 @@ export async function deriveStateFromDb(basePath: string): Promise<GSDState> {
         title: diskId,
         status: 'active',
         depends_on: [] as string[],
-        created_at: new Date().toISOString(),
+        created_at: nowIso(),
       } as MilestoneRow);
     }
   }

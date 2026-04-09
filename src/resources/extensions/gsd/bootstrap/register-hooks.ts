@@ -18,11 +18,12 @@ import { isParallelActive, shutdownParallel } from "../parallel-orchestrator.js"
 import { checkToolCallLoop, resetToolCallLoopGuard } from "./tool-call-loop-guard.js";
 import { saveActivityLog } from "../activity-log.js";
 import { resetAskUserQuestionsCache } from "../../ask-user-questions.js";
+import { nowIso } from "../time-utils.js";
 import { recordToolCall as safetyRecordToolCall, recordToolResult as safetyRecordToolResult } from "../safety/evidence-collector.js";
 import { classifyCommand } from "../safety/destructive-guard.js";
 import { logWarning as safetyLogWarning } from "../workflow-logger.js";
 import { installNotifyInterceptor } from "./notify-interceptor.js";
-import { initNotificationStore } from "../notification-store.js";
+import { initNotificationStore, markAllRead } from "../notification-store.js";
 import { initNotificationWidget } from "../notification-widget.js";
 
 // Skip the welcome screen on the very first session_start — cli.ts already
@@ -37,6 +38,7 @@ async function syncServiceTierStatus(ctx: ExtensionContext): Promise<void> {
 export function registerHooks(pi: ExtensionAPI): void {
   pi.on("session_start", async (_event, ctx) => {
     initNotificationStore(process.cwd());
+    markAllRead();  // Clear stale notifications from prior sessions
     installNotifyInterceptor(ctx);
     initNotificationWidget(ctx);
     resetWriteGateState();
@@ -136,7 +138,7 @@ export function registerHooks(pi: ExtensionAPI): void {
         step: 0,
         totalSteps: 0,
         status: "compacted" as const,
-        savedAt: new Date().toISOString(),
+        savedAt: nowIso(),
       },
       completedWork: `Task ${state.activeTask.id} (${state.activeTask.title}) was in progress when compaction occurred.`,
       remainingWork: "Check the task plan for remaining steps.",

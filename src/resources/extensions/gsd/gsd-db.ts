@@ -12,6 +12,7 @@ import type { Decision, Requirement, GateRow, GateId, GateScope, GateStatus, Gat
 import { GSDError, GSD_STALE_STATE } from "./errors.js";
 import { logError, logWarning } from "./workflow-logger.js";
 import { getErrorMessage } from "./error-utils.js";
+import { nowIso } from "./time-utils.js";
 
 const _require = createRequire(import.meta.url);
 
@@ -425,7 +426,7 @@ function initSchema(db: DbAdapter, fileBacked: boolean): void {
         "INSERT INTO schema_version (version, applied_at) VALUES (:version, :applied_at)",
       ).run({
         ":version": SCHEMA_VERSION,
-        ":applied_at": new Date().toISOString(),
+        ":applied_at": nowIso(),
       });
     }
 
@@ -487,7 +488,7 @@ function migrateSchema(db: DbAdapter): void {
       `);
       db.prepare("INSERT INTO schema_version (version, applied_at) VALUES (:version, :applied_at)").run({
         ":version": 2,
-        ":applied_at": new Date().toISOString(),
+        ":applied_at": nowIso(),
       });
     }
 
@@ -519,7 +520,7 @@ function migrateSchema(db: DbAdapter): void {
       db.exec("CREATE VIEW active_memories AS SELECT * FROM memories WHERE superseded_by IS NULL");
       db.prepare("INSERT INTO schema_version (version, applied_at) VALUES (:version, :applied_at)").run({
         ":version": 3,
-        ":applied_at": new Date().toISOString(),
+        ":applied_at": nowIso(),
       });
     }
 
@@ -529,7 +530,7 @@ function migrateSchema(db: DbAdapter): void {
       db.exec("CREATE VIEW active_decisions AS SELECT * FROM decisions WHERE superseded_by IS NULL");
       db.prepare("INSERT INTO schema_version (version, applied_at) VALUES (:version, :applied_at)").run({
         ":version": 4,
-        ":applied_at": new Date().toISOString(),
+        ":applied_at": nowIso(),
       });
     }
 
@@ -594,7 +595,7 @@ function migrateSchema(db: DbAdapter): void {
       `);
       db.prepare("INSERT INTO schema_version (version, applied_at) VALUES (:version, :applied_at)").run({
         ":version": 5,
-        ":applied_at": new Date().toISOString(),
+        ":applied_at": nowIso(),
       });
     }
 
@@ -603,7 +604,7 @@ function migrateSchema(db: DbAdapter): void {
       ensureColumn(db, "slices", "full_uat_md", `ALTER TABLE slices ADD COLUMN full_uat_md TEXT NOT NULL DEFAULT ''`);
       db.prepare("INSERT INTO schema_version (version, applied_at) VALUES (:version, :applied_at)").run({
         ":version": 6,
-        ":applied_at": new Date().toISOString(),
+        ":applied_at": nowIso(),
       });
     }
 
@@ -613,7 +614,7 @@ function migrateSchema(db: DbAdapter): void {
       ensureColumn(db, "milestones", "depends_on", `ALTER TABLE milestones ADD COLUMN depends_on TEXT NOT NULL DEFAULT '[]'`);
       db.prepare("INSERT INTO schema_version (version, applied_at) VALUES (:version, :applied_at)").run({
         ":version": 7,
-        ":applied_at": new Date().toISOString(),
+        ":applied_at": nowIso(),
       });
     }
 
@@ -674,7 +675,7 @@ function migrateSchema(db: DbAdapter): void {
 
       db.prepare("INSERT INTO schema_version (version, applied_at) VALUES (:version, :applied_at)").run({
         ":version": 8,
-        ":applied_at": new Date().toISOString(),
+        ":applied_at": nowIso(),
       });
     }
 
@@ -684,7 +685,7 @@ function migrateSchema(db: DbAdapter): void {
 
       db.prepare("INSERT INTO schema_version (version, applied_at) VALUES (:version, :applied_at)").run({
         ":version": 9,
-        ":applied_at": new Date().toISOString(),
+        ":applied_at": nowIso(),
       });
     }
 
@@ -693,7 +694,7 @@ function migrateSchema(db: DbAdapter): void {
 
       db.prepare("INSERT INTO schema_version (version, applied_at) VALUES (:version, :applied_at)").run({
         ":version": 10,
-        ":applied_at": new Date().toISOString(),
+        ":applied_at": nowIso(),
       });
     }
 
@@ -709,7 +710,7 @@ function migrateSchema(db: DbAdapter): void {
 
       db.prepare("INSERT INTO schema_version (version, applied_at) VALUES (:version, :applied_at)").run({
         ":version": 11,
-        ":applied_at": new Date().toISOString(),
+        ":applied_at": nowIso(),
       });
     }
 
@@ -732,7 +733,7 @@ function migrateSchema(db: DbAdapter): void {
       `);
       db.prepare("INSERT INTO schema_version (version, applied_at) VALUES (:version, :applied_at)").run({
         ":version": 12,
-        ":applied_at": new Date().toISOString(),
+        ":applied_at": nowIso(),
       });
     }
 
@@ -746,7 +747,7 @@ function migrateSchema(db: DbAdapter): void {
       db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_verification_evidence_dedup ON verification_evidence(task_id, slice_id, milestone_id, command, verdict)");
       db.prepare("INSERT INTO schema_version (version, applied_at) VALUES (:version, :applied_at)").run({
         ":version": 13,
-        ":applied_at": new Date().toISOString(),
+        ":applied_at": nowIso(),
       });
     }
 
@@ -764,7 +765,7 @@ function migrateSchema(db: DbAdapter): void {
       db.exec("CREATE INDEX IF NOT EXISTS idx_slice_deps_target ON slice_dependencies(milestone_id, depends_on_slice_id)");
       db.prepare("INSERT INTO schema_version (version, applied_at) VALUES (:version, :applied_at)").run({
         ":version": 14,
-        ":applied_at": new Date().toISOString(),
+        ":applied_at": nowIso(),
       });
     }
 
@@ -1092,7 +1093,7 @@ export function insertArtifact(a: {
     ":slice_id": a.slice_id,
     ":task_id": a.task_id,
     ":full_content": a.full_content,
-    ":imported_at": new Date().toISOString(),
+    ":imported_at": nowIso(),
   });
 }
 
@@ -1157,7 +1158,7 @@ export function insertMilestone(m: {
     // Callers that need "active" must pass it explicitly.
     ":status": m.status ?? "queued",
     ":depends_on": JSON.stringify(m.depends_on ?? []),
-    ":created_at": new Date().toISOString(),
+    ":created_at": nowIso(),
     ":vision": m.planning?.vision ?? "",
     ":success_criteria": JSON.stringify(m.planning?.successCriteria ?? []),
     ":key_risks": JSON.stringify(m.planning?.keyRisks ?? []),
@@ -1248,7 +1249,7 @@ export function insertSlice(s: {
     ":risk": s.risk ?? "medium",
     ":depends": JSON.stringify(s.depends ?? []),
     ":demo": s.demo ?? "",
-    ":created_at": new Date().toISOString(),
+    ":created_at": nowIso(),
     ":goal": s.planning?.goal ?? "",
     ":success_criteria": s.planning?.successCriteria ?? "",
     ":proof_level": s.planning?.proofLevel ?? "",
@@ -1353,7 +1354,7 @@ export function insertTask(t: {
     ":narrative": t.narrative ?? "",
     ":verification_result": t.verificationResult ?? "",
     ":duration": t.duration ?? "",
-    ":completed_at": t.status === "done" || t.status === "complete" ? new Date().toISOString() : null,
+    ":completed_at": t.status === "done" || t.status === "complete" ? nowIso() : null,
     ":blocker_discovered": t.blockerDiscovered ? 1 : 0,
     ":deviations": t.deviations ?? "",
     ":known_issues": t.knownIssues ?? "",
@@ -1596,7 +1597,7 @@ export function insertVerificationEvidence(e: {
     ":exit_code": e.exitCode,
     ":verdict": e.verdict,
     ":duration_ms": e.durationMs,
-    ":created_at": new Date().toISOString(),
+    ":created_at": nowIso(),
   });
 }
 
@@ -2062,7 +2063,7 @@ export function insertReplanHistory(entry: {
     ":summary": entry.summary,
     ":previous_artifact_path": entry.previousArtifactPath ?? null,
     ":replacement_artifact_path": entry.replacementArtifactPath ?? null,
-    ":created_at": new Date().toISOString(),
+    ":created_at": nowIso(),
   });
 }
 
@@ -2087,7 +2088,7 @@ export function insertAssessment(entry: {
     ":status": entry.status,
     ":scope": entry.scope,
     ":full_content": entry.fullContent,
-    ":created_at": new Date().toISOString(),
+    ":created_at": nowIso(),
   });
 }
 
@@ -2247,7 +2248,7 @@ export function saveGateResult(g: {
     ":verdict": g.verdict,
     ":rationale": g.rationale,
     ":findings": g.findings,
-    ":evaluated_at": new Date().toISOString(),
+    ":evaluated_at": nowIso(),
   });
 }
 
@@ -2279,7 +2280,7 @@ export function markAllGatesOmitted(milestoneId: string, sliceId: string): void 
   ).run({
     ":mid": milestoneId,
     ":sid": sliceId,
-    ":now": new Date().toISOString(),
+    ":now": nowIso(),
   });
 }
 

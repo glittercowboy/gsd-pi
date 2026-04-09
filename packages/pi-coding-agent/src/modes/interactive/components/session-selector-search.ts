@@ -1,4 +1,5 @@
 import { fuzzyMatch } from "@gsd/pi-tui";
+import { getErrorMessage } from "../../../utils/error.js";
 import type { SessionInfo } from "../../../core/session-manager.js";
 
 export type SortMode = "threaded" | "recent" | "relevance";
@@ -51,8 +52,7 @@ function parseSearchQuery(query: string): ParsedSearchQuery {
 		try {
 			return { mode: "regex", tokens: [], regex: new RegExp(pattern, "i") };
 		} catch (err) {
-			const msg = err instanceof Error ? err.message : String(err);
-			return { mode: "regex", tokens: [], regex: null, error: msg };
+			return { mode: "regex", tokens: [], regex: null, error: getErrorMessage(err) };
 		}
 	}
 

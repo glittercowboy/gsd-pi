@@ -9,6 +9,7 @@
 import { execSync } from 'node:child_process';
 import { resolve } from 'node:path';
 import { RpcClient } from '@gsd-build/rpc-client';
+import { getErrorMessage } from './error-utils.js';
 import type { SdkAgentEvent, RpcInitResult, RpcCostUpdateEvent, RpcExtensionUIRequest } from '@gsd-build/rpc-client';
 import type {
   ManagedSession,
@@ -131,7 +132,7 @@ export class SessionManager {
       return session.sessionId;
     } catch (err) {
       session.status = 'error';
-      session.error = err instanceof Error ? err.message : String(err);
+      session.error = getErrorMessage(err);
 
       // Attempt cleanup
       try { await client.stop(); } catch { /* swallow cleanup errors */ }

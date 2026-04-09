@@ -5,7 +5,7 @@
 import { appendFileSync, mkdirSync, readdirSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import { gsdRoot } from './paths.js';
-import { makeSafeTimestamp } from './time-utils.js';
+import { makeSafeTimestamp, nowIso } from './time-utils.js';
 
 // ─── State ────────────────────────────────────────────────────────────────────
 
@@ -91,7 +91,7 @@ export function debugLog(event: string, data?: Record<string, unknown>): void {
   if (!_enabled || !_logPath) return;
 
   const entry = {
-    ts: new Date().toISOString(),
+    ts: nowIso(),
     event,
     ...data,
   };

@@ -1,4 +1,5 @@
 import type { DoctorIssue, DoctorIssueCode, DoctorReport, DoctorSummary } from "./doctor-types.js";
+import { nowIso } from "./time-utils.js";
 
 function matchesScope(unitId: string, scope?: string): boolean {
   if (!scope) return true;
@@ -86,7 +87,7 @@ export function formatDoctorReportJson(report: DoctorReport): string {
     {
       ok: report.ok,
       basePath: report.basePath,
-      generatedAt: new Date().toISOString(),
+      generatedAt: nowIso(),
       summary: summarizeDoctorIssues(report.issues),
       issues: report.issues,
       fixesApplied: report.fixesApplied,

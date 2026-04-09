@@ -2,11 +2,10 @@ import { writeFileSync, renameSync, unlinkSync, mkdirSync, promises as fs } from
 import { dirname } from "node:path";
 import { randomBytes } from "node:crypto";
 import { getErrorMessage } from "./error-utils.js";
+import { sleep, sleepSync } from "./sleep-utils.js";
 
 const TRANSIENT_LOCK_ERROR_CODES = new Set(["EBUSY", "EPERM", "EACCES"]);
 const MAX_RENAME_ATTEMPTS = 5;
-const SYNC_SLEEP_BUFFER = new SharedArrayBuffer(4);
-const SYNC_SLEEP_VIEW = new Int32Array(SYNC_SLEEP_BUFFER);
 
 type RetryableEncoding = BufferEncoding;
 type MkdirOptions = { recursive: true };
@@ -37,14 +36,6 @@ function computeRetryDelayMs(attempt: number): number {
   const base = 8 * attempt;
   const jitter = randomBytes(1)[0] % 5;
   return base + jitter;
-}
-
-function delay(ms: number): Promise<void> {
-  return new Promise(resolve => setTimeout(resolve, ms));
-}
-
-function sleepSync(ms: number): void {
-  Atomics.wait(SYNC_SLEEP_VIEW, 0, 0, ms);
 }
 
 function normalizeErrnoCode(error: unknown): string | undefined {
@@ -158,7 +149,7 @@ const DEFAULT_ASYNC_OPS: AtomicWriteAsyncOps = {
   writeFile: (path, content, encoding) => fs.writeFile(path, content, encoding),
   rename: (from, to) => fs.rename(from, to),
   unlink: (path) => fs.unlink(path),
-  sleep: delay,
+  sleep: sleep,
 };
 
 const DEFAULT_SYNC_OPS: AtomicWriteSyncOps = {

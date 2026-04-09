@@ -15,7 +15,7 @@ import { loadJsonFile, loadJsonFileOrNull, writeJsonFileAtomic } from "./json-pe
 import { fileURLToPath } from "node:url";
 import { homedir } from "node:os";
 import { safeReadFile } from "./safe-fs.js";
-import { makeSafeTimestamp } from "./time-utils.js";
+import { makeSafeTimestamp, nowIso } from "./time-utils.js";
 
 import { extractTrace, type ExecutionTrace } from "./session-forensics.js";
 import { nativeParseJsonlTail } from "./native-parser-bridge.js";
@@ -344,7 +344,7 @@ export async function buildForensicReport(basePath: string): Promise<ForensicRep
 
   return {
     gsdVersion,
-    timestamp: new Date().toISOString(),
+    timestamp: nowIso(),
     basePath,
     activeMilestone,
     activeSlice,
@@ -1007,7 +1007,7 @@ export function writeForensicsMarker(basePath: string, reportPath: string, promp
   const marker: ForensicsMarker = {
     reportPath,
     promptContent,
-    createdAt: new Date().toISOString(),
+    createdAt: nowIso(),
   };
   writeJsonFileAtomic(join(gsdRoot(basePath), "runtime", "active-forensics.json"), marker);
 }

@@ -13,6 +13,7 @@ import { join } from "node:path";
 import { gsdRoot } from "./paths.js";
 import { milestoneIdSort } from "./milestone-ids.js";
 import { loadJsonFileOrNull, saveJsonFile } from "./json-persistence.js";
+import { nowIso } from "./time-utils.js";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -68,7 +69,7 @@ export function loadQueueOrder(basePath: string): string[] | null {
 export function saveQueueOrder(basePath: string, order: string[]): void {
   const data: QueueOrderFile = {
     order,
-    updatedAt: new Date().toISOString(),
+    updatedAt: nowIso(),
   };
   saveJsonFile(queueOrderPath(basePath), data);
 }

@@ -26,6 +26,7 @@ import {
 import { detectStuck } from "./detect-stuck.js";
 import { runUnit } from "./run-unit.js";
 import { debugLog } from "../debug-logger.js";
+import { nowIso } from "../time-utils.js";
 import { PROJECT_FILES } from "../detection.js";
 import { MergeConflictError } from "../git-service.js";
 import { join, basename, dirname, parse as parsePath } from "node:path";
@@ -286,7 +287,7 @@ export async function runPreDispatch(
 
   // ── Milestone transition ────────────────────────────────────────────
   if (mid && s.currentMilestoneId && mid !== s.currentMilestoneId) {
-    deps.emitJournalEvent({ ts: new Date().toISOString(), flowId: ic.flowId, seq: ic.nextSeq(), eventType: "milestone-transition", data: { from: s.currentMilestoneId, to: mid } });
+    deps.emitJournalEvent({ ts: nowIso(), flowId: ic.flowId, seq: ic.nextSeq(), eventType: "milestone-transition", data: { from: s.currentMilestoneId, to: mid } });
     ctx.ui.notify(
       `Milestone ${s.currentMilestoneId} complete. Advancing to ${mid}: ${midTitle}.`,
       "info",
@@ -495,7 +496,7 @@ export async function runPreDispatch(
       );
     }
     debugLog("autoLoop", { phase: "exit", reason: "no-active-milestone" });
-    deps.emitJournalEvent({ ts: new Date().toISOString(), flowId: ic.flowId, seq: ic.nextSeq(), eventType: "terminal", data: { reason: "no-active-milestone" } });
+    deps.emitJournalEvent({ ts: nowIso(), flowId: ic.flowId, seq: ic.nextSeq(), eventType: "terminal", data: { reason: "no-active-milestone" } });
     return { action: "break", reason: "no-active-milestone" };
   }
 
@@ -569,7 +570,7 @@ export async function runPreDispatch(
     );
     await closeoutAndStop(ctx, pi, s, deps, `Milestone ${mid} complete`);
     debugLog("autoLoop", { phase: "exit", reason: "milestone-complete" });
-    deps.emitJournalEvent({ ts: new Date().toISOString(), flowId: ic.flowId, seq: ic.nextSeq(), eventType: "terminal", data: { reason: "milestone-complete", milestoneId: mid } });
+    deps.emitJournalEvent({ ts: nowIso(), flowId: ic.flowId, seq: ic.nextSeq(), eventType: "terminal", data: { reason: "milestone-complete", milestoneId: mid } });
     return { action: "break", reason: "milestone-complete" };
   }
 
@@ -581,7 +582,7 @@ export async function runPreDispatch(
     deps.sendDesktopNotification("GSD", blockerMsg, "error", "attention", basename(s.originalBasePath || s.basePath));
     deps.logCmuxEvent(prefs, blockerMsg, "error");
     debugLog("autoLoop", { phase: "exit", reason: "blocked" });
-    deps.emitJournalEvent({ ts: new Date().toISOString(), flowId: ic.flowId, seq: ic.nextSeq(), eventType: "terminal", data: { reason: "blocked", blockers: state.blockers } });
+    deps.emitJournalEvent({ ts: nowIso(), flowId: ic.flowId, seq: ic.nextSeq(), eventType: "terminal", data: { reason: "blocked", blockers: state.blockers } });
     return { action: "break", reason: "blocked" };
   }
 
@@ -614,7 +615,7 @@ export async function runDispatch(
   });
 
   if (dispatchResult.action === "stop") {
-    deps.emitJournalEvent({ ts: new Date().toISOString(), flowId: ic.flowId, seq: ic.nextSeq(), eventType: "dispatch-stop", rule: dispatchResult.matchedRule, data: { reason: dispatchResult.reason } });
+    deps.emitJournalEvent({ ts: nowIso(), flowId: ic.flowId, seq: ic.nextSeq(), eventType: "dispatch-stop", rule: dispatchResult.matchedRule, data: { reason: dispatchResult.reason } });
     // Warning-level stops are recoverable human checkpoints (e.g. UAT verdict
     // gate) — pause instead of hard-stopping so the session is resumable with
     // `/gsd auto`. Error/info-level stops remain hard stops for infrastructure
@@ -636,7 +637,7 @@ export async function runDispatch(
     return { action: "continue" };
   }
 
-  deps.emitJournalEvent({ ts: new Date().toISOString(), flowId: ic.flowId, seq: ic.nextSeq(), eventType: "dispatch-match", rule: dispatchResult.matchedRule, data: { unitType: dispatchResult.unitType, unitId: dispatchResult.unitId } });
+  deps.emitJournalEvent({ ts: nowIso(), flowId: ic.flowId, seq: ic.nextSeq(), eventType: "dispatch-match", rule: dispatchResult.matchedRule, data: { unitType: dispatchResult.unitType, unitId: dispatchResult.unitId } });
 
   let unitType = dispatchResult.unitType;
   let unitId = dispatchResult.unitId;
@@ -732,7 +733,7 @@ export async function runDispatch(
       `Pre-dispatch hook${preDispatchResult.firedHooks.length > 1 ? "s" : ""}: ${preDispatchResult.firedHooks.join(", ")}`,
       "info",
     );
-    deps.emitJournalEvent({ ts: new Date().toISOString(), flowId: ic.flowId, seq: ic.nextSeq(), eventType: "pre-dispatch-hook", data: { firedHooks: preDispatchResult.firedHooks, action: preDispatchResult.action } });
+    deps.emitJournalEvent({ ts: nowIso(), flowId: ic.flowId, seq: ic.nextSeq(), eventType: "pre-dispatch-hook", data: { firedHooks: preDispatchResult.firedHooks, action: preDispatchResult.action } });
   }
   if (preDispatchResult.action === "skip") {
     ctx.ui.notify(
@@ -1061,7 +1062,7 @@ export async function runUnitPhase(
   s.currentUnit = { type: unitType, id: unitId, startedAt: Date.now() };
   s.lastToolInvocationError = null; // #2883: clear stale error from previous unit
   const unitStartSeq = ic.nextSeq();
-  deps.emitJournalEvent({ ts: new Date().toISOString(), flowId: ic.flowId, seq: unitStartSeq, eventType: "unit-start", data: { unitType, unitId } });
+  deps.emitJournalEvent({ ts: nowIso(), flowId: ic.flowId, seq: unitStartSeq, eventType: "unit-start", data: { unitType, unitId } });
   deps.captureAvailableSkills();
   writeUnitRuntimeRecord(
     s.basePath,
@@ -1401,7 +1402,7 @@ export async function runUnitPhase(
       writePhaseAnchor(s.basePath, mid, {
         phase: unitType,
         milestoneId: mid,
-        generatedAt: new Date().toISOString(),
+        generatedAt: nowIso(),
         intent: `Completed ${unitType} for ${unitId}`,
         decisions: [],
         blockers: [],
@@ -1412,7 +1413,7 @@ export async function runUnitPhase(
     }
   }
 
-  deps.emitJournalEvent({ ts: new Date().toISOString(), flowId: ic.flowId, seq: ic.nextSeq(), eventType: "unit-end", data: { unitType, unitId, status: unitResult.status, artifactVerified, ...(unitResult.errorContext ? { errorContext: unitResult.errorContext } : {}) }, causedBy: { flowId: ic.flowId, seq: unitStartSeq } });
+  deps.emitJournalEvent({ ts: nowIso(), flowId: ic.flowId, seq: ic.nextSeq(), eventType: "unit-end", data: { unitType, unitId, status: unitResult.status, artifactVerified, ...(unitResult.errorContext ? { errorContext: unitResult.errorContext } : {}) }, causedBy: { flowId: ic.flowId, seq: unitStartSeq } });
 
   // ── Safety harness: checkpoint cleanup or rollback ──
   if (s.checkpointSha) {

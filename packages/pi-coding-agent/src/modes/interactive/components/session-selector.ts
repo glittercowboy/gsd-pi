@@ -13,6 +13,7 @@ import {
 	truncateToWidth,
 	visibleWidth,
 } from "@gsd/pi-tui";
+import { getErrorMessage } from "../../../utils/error.js";
 import { KeybindingsManager } from "../../../core/keybindings.js";
 import type { SessionInfo, SessionListProgress } from "../../../core/session-manager.js";
 import { theme } from "../theme/theme.js";
@@ -642,7 +643,7 @@ async function deleteSessionFile(
 		await unlink(sessionPath);
 		return { ok: true, method: "unlink" };
 	} catch (err) {
-		const unlinkError = err instanceof Error ? err.message : String(err);
+		const unlinkError = getErrorMessage(err);
 		const trashErrorHint = getTrashErrorHint();
 		const error = trashErrorHint ? `${unlinkError} (${trashErrorHint})` : unlinkError;
 		return { ok: false, method: "unlink", error };
@@ -946,9 +947,8 @@ export class SessionSelectorComponent extends Container implements Focusable {
 			if (scope !== this.scope) return;
 			if (seq !== undefined && seq !== this.allLoadSeq) return;
 
-			const message = err instanceof Error ? err.message : String(err);
 			this.header.setLoading(false);
-			this.header.setStatusMessage({ type: "error", message: `Failed to load sessions: ${message}` }, 4000);
+			this.header.setStatusMessage({ type: "error", message: `Failed to load sessions: ${getErrorMessage(err)}` }, 4000);
 
 			if (reason === "initial") {
 				this.sessionList.setSessions([], showCwd);

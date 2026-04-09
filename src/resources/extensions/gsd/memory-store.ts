@@ -4,6 +4,7 @@
 // All functions degrade gracefully: return empty results when DB unavailable, never throw.
 
 import { isDbAvailable, _getAdapter, transaction } from './gsd-db.js';
+import { nowIso } from './time-utils.js';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -234,7 +235,7 @@ export function reinforceMemory(id: string): boolean {
   try {
     adapter.prepare(
       'UPDATE memories SET hit_count = hit_count + 1, updated_at = :updated_at WHERE id = :id',
-    ).run({ ':updated_at': new Date().toISOString(), ':id': id });
+    ).run({ ':updated_at': nowIso(), ':id': id });
     return true;
   } catch {
     return false;
@@ -252,7 +253,7 @@ export function supersedeMemory(oldId: string, newId: string): boolean {
   try {
     adapter.prepare(
       'UPDATE memories SET superseded_by = :new_id, updated_at = :updated_at WHERE id = :old_id',
-    ).run({ ':new_id': newId, ':updated_at': new Date().toISOString(), ':old_id': oldId });
+    ).run({ ':new_id': newId, ':updated_at': nowIso(), ':old_id': oldId });
     return true;
   } catch {
     return false;
@@ -291,7 +292,7 @@ export function markUnitProcessed(unitKey: string, activityFile: string): boolea
     adapter.prepare(
       `INSERT OR IGNORE INTO memory_processed_units (unit_key, activity_file, processed_at)
        VALUES (:key, :file, :at)`,
-    ).run({ ':key': unitKey, ':file': activityFile, ':at': new Date().toISOString() });
+    ).run({ ':key': unitKey, ':file': activityFile, ':at': nowIso() });
     return true;
   } catch {
     return false;
@@ -324,7 +325,7 @@ export function decayStaleMemories(thresholdUnits = 20): void {
       `UPDATE memories
        SET confidence = MAX(0.1, confidence - 0.1), updated_at = :now
        WHERE superseded_by IS NULL AND updated_at < :cutoff AND confidence > 0.1`,
-    ).run({ ':now': new Date().toISOString(), ':cutoff': cutoff });
+    ).run({ ':now': nowIso(), ':cutoff': cutoff });
   } catch {
     // non-fatal
   }
@@ -355,7 +356,7 @@ export function enforceMemoryCap(max = 50): void {
          ORDER BY (confidence * (1.0 + hit_count * 0.1)) ASC
          LIMIT :limit
        )`,
-    ).run({ ':now': new Date().toISOString(), ':limit': excess });
+    ).run({ ':now': nowIso(), ':limit': excess });
   } catch {
     // non-fatal
   }

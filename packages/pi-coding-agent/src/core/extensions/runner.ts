@@ -4,6 +4,7 @@
 
 import type { AgentMessage } from "@gsd/pi-agent-core";
 import type { ImageContent, Model } from "@gsd/pi-ai";
+import { getErrorMessage } from "../../utils/error.js";
 import type { KeyId } from "@gsd/pi-tui";
 import { type Theme, theme } from "../../modes/interactive/theme/theme.js";
 import type { ResourceDiagnostic } from "../diagnostics.js";
@@ -578,7 +579,7 @@ export class ExtensionRunner {
 					const action = processResult(handlerResult, ext.path);
 					if (action.done) return;
 				} catch (err) {
-					const message = err instanceof Error ? err.message : String(err);
+					const message = getErrorMessage(err);
 					const stack = err instanceof Error ? err.stack : undefined;
 					this.emitError({
 						extensionPath: ext.path,

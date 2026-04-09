@@ -5,6 +5,7 @@
  * Registration failures are non-fatal — the bot continues without slash commands.
  */
 
+import { getErrorMessage } from './error-utils.js';
 import {
   SlashCommandBuilder,
   REST,
@@ -76,10 +77,9 @@ export async function registerGuildCommands(
     logger?.info('commands registered', { count: commands.length, guildId });
     return true;
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
     logger?.warn('command registration failed', {
       guildId,
-      error: message,
+      error: getErrorMessage(err),
     });
     return false;
   }

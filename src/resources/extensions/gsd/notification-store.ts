@@ -7,6 +7,7 @@ import { appendFileSync, existsSync, mkdirSync, openSync, closeSync, readFileSyn
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { safeReadFile } from "./safe-fs.js";
+import { nowIso } from "./time-utils.js";
 
 // ─── Types ──────────────────────────────────────────────────────────────
 
@@ -60,7 +61,7 @@ export function appendNotification(
 
   const entry: NotificationEntry = {
     id: randomUUID(),
-    ts: new Date().toISOString(),
+    ts: nowIso(),
     severity,
     message: message.length > 500 ? message.slice(0, 500) + "…" : message,
     source,

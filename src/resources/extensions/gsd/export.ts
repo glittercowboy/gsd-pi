@@ -13,7 +13,7 @@ import type { UnitMetrics } from "./metrics.js";
 import { gsdRoot } from "./paths.js";
 import { formatDuration, fileLink } from "../shared/format-utils.js";
 import { getErrorMessage } from "./error-utils.js";
-import { makeSafeTimestamp } from "./time-utils.js";
+import { makeSafeTimestamp, nowIso } from "./time-utils.js";
 import { shortModelName } from "./display-utils.js";
 
 /**
@@ -61,7 +61,7 @@ export function writeExportFile(
 
   if (format === "json") {
     const report = {
-      exportedAt: new Date().toISOString(),
+      exportedAt: nowIso(),
       project: projectName,
       totals: visualizerData?.totals ?? getProjectTotals(units),
       byPhase: visualizerData?.byPhase ?? aggregateByPhase(units),
@@ -253,7 +253,7 @@ export async function handleExport(args: string, ctx: ExtensionCommandContext, b
 
   if (format === "json") {
     const report = {
-      exportedAt: new Date().toISOString(),
+      exportedAt: nowIso(),
       project: projectName,
       totals: getProjectTotals(units),
       byPhase: aggregateByPhase(units),

@@ -12,6 +12,7 @@ import { mkdirSync, existsSync } from "node:fs";
 
 import type { CompleteTaskParams } from "../types.js";
 import { isClosedStatus } from "../status-guards.js";
+import { nowIso } from "../time-utils.js";
 import { getErrorMessage } from "../error-utils.js";
 import {
   transaction,
@@ -259,7 +260,7 @@ export async function handleCompleteTask(
     appendEvent(basePath, {
       cmd: "complete-task",
       params: { milestoneId: params.milestoneId, sliceId: params.sliceId, taskId: params.taskId },
-      ts: new Date().toISOString(),
+      ts: nowIso(),
       actor: "agent",
       actor_name: params.actorName,
       trigger_reason: params.triggerReason,

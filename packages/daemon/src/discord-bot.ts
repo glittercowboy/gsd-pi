@@ -17,6 +17,7 @@ import {
   type Guild,
   type StringSelectMenuInteraction,
 } from 'discord.js';
+import { getErrorMessage } from './error-utils.js';
 import type { DaemonConfig, VerbosityLevel, ProjectInfo } from './types.js';
 import type { Logger } from './logger.js';
 import type { SessionManager } from './session-manager.js';
@@ -120,7 +121,7 @@ export class DiscordBot {
       ).catch((err) => {
         // Should not reach here — registerGuildCommands catches internally
         this.logger.warn('unexpected command registration error', {
-          error: err instanceof Error ? err.message : String(err),
+          error: getErrorMessage(err),
         });
       });
     });
@@ -217,7 +218,7 @@ export class DiscordBot {
     } catch (err) {
       // Swallow cleanup errors — shutdown must not fail
       this.logger.debug('bot destroy error (swallowed)', {
-        error: err instanceof Error ? err.message : String(err),
+        error: getErrorMessage(err),
       });
     } finally {
       this.client = null;
@@ -291,7 +292,7 @@ export class DiscordBot {
         const content = formatSessionStatus(sessions);
         interaction.reply({ content, ephemeral: true }).catch((err) => {
           this.logger.warn('gsd-status reply failed', {
-            error: err instanceof Error ? err.message : String(err),
+            error: getErrorMessage(err),
           });
         });
         break;
@@ -299,14 +300,14 @@ export class DiscordBot {
       case 'gsd-start':
         this.handleGsdStart(interaction).catch((err) => {
           this.logger.warn('gsd-start handler error', {
-            error: err instanceof Error ? err.message : String(err),
+            error: getErrorMessage(err),
           });
         });
         break;
       case 'gsd-stop':
         this.handleGsdStop(interaction).catch((err) => {
           this.logger.warn('gsd-stop handler error', {
-            error: err instanceof Error ? err.message : String(err),
+            error: getErrorMessage(err),
           });
         });
         break;
@@ -314,7 +315,7 @@ export class DiscordBot {
         if (!this.eventBridge) {
           interaction.reply({ content: 'Event bridge not available.', ephemeral: true }).catch((err) => {
             this.logger.warn('gsd-verbose reply failed', {
-              error: err instanceof Error ? err.message : String(err),
+              error: getErrorMessage(err),
             });
           });
           break;
@@ -324,7 +325,7 @@ export class DiscordBot {
         this.eventBridge.getVerbosityManager().setLevel(channelId, level);
         interaction.reply({ content: `Verbosity set to **${level}** for this channel.`, ephemeral: true }).catch((err) => {
           this.logger.warn('gsd-verbose reply failed', {
-            error: err instanceof Error ? err.message : String(err),
+            error: getErrorMessage(err),
           });
         });
         break;
@@ -332,7 +333,7 @@ export class DiscordBot {
       default:
         interaction.reply({ content: 'Unknown command', ephemeral: true }).catch((err) => {
           this.logger.warn('unknown command reply failed', {
-            error: err instanceof Error ? err.message : String(err),
+            error: getErrorMessage(err),
           });
         });
         break;
@@ -357,7 +358,7 @@ export class DiscordBot {
       projects = await this.scanProjects();
     } catch (err) {
       this.logger.error('gsd-start: scan failed', {
-        error: err instanceof Error ? err.message : String(err),
+        error: getErrorMessage(err),
       });
       await interaction.editReply({ content: 'Failed to scan for projects.' });
       return;
@@ -408,7 +409,7 @@ export class DiscordBot {
           components: [],
         });
       } catch (err) {
-        const errMsg = err instanceof Error ? err.message : String(err);
+        const errMsg = getErrorMessage(err);
         this.logger.error('gsd-start: startSession failed', { error: errMsg, projectPath });
         await interaction.editReply({
           content: `❌ Failed to start session: ${errMsg}`,
@@ -475,7 +476,7 @@ export class DiscordBot {
           components: [],
         });
       } catch (err) {
-        const errMsg = err instanceof Error ? err.message : String(err);
+        const errMsg = getErrorMessage(err);
         this.logger.error('gsd-stop: cancelSession failed', { error: errMsg, sessionId });
         await collected.update({
           content: `❌ Failed to stop session: ${errMsg}`,

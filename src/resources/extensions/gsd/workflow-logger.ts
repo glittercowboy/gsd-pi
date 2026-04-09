@@ -18,7 +18,9 @@
 
 import { appendFileSync, readFileSync, existsSync, mkdirSync } from "node:fs";
 import { safeReadFile } from "./safe-fs.js";
+import { nowIso } from "./time-utils.js";
 import { join } from "node:path";
+import { parseJSONL } from "./jsonl-utils.js";
 
 import { appendNotification } from "./notification-store.js";
 import { getErrorMessage } from "./error-utils.js";
@@ -207,17 +209,7 @@ export function readAuditLog(basePath?: string): LogEntry[] {
   const auditPath = join(bp, ".gsd", "audit-log.jsonl");
   const content = safeReadFile(auditPath);
   if (content === null) return [];
-  try {
-    return content
-      .split("\n")
-      .filter((l) => l.length > 0)
-      .map((l) => {
-        try { return JSON.parse(l) as LogEntry; } catch { return null; }
-      })
-      .filter((e): e is LogEntry => e !== null);
-  } catch {
-    return [];
-  }
+  return parseJSONL(content) as LogEntry[];
 }
 
 /**
@@ -237,7 +229,7 @@ function _push(
   context?: Record<string, string>,
 ): void {
   const entry: LogEntry = {
-    ts: new Date().toISOString(),
+    ts: nowIso(),
     severity,
     component,
     message,

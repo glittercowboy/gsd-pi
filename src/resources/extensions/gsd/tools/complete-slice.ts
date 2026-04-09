@@ -12,6 +12,7 @@ import { mkdirSync } from "node:fs";
 
 import type { CompleteSliceParams } from "../types.js";
 import { isClosedStatus } from "../status-guards.js";
+import { nowIso } from "../time-utils.js";
 import { getErrorMessage } from "../error-utils.js";
 import {
   transaction,
@@ -353,7 +354,7 @@ export async function handleCompleteSlice(
     appendEvent(basePath, {
       cmd: "complete-slice",
       params: { milestoneId: params.milestoneId, sliceId: params.sliceId },
-      ts: new Date().toISOString(),
+      ts: nowIso(),
       actor: "agent",
       actor_name: params.actorName,
       trigger_reason: params.triggerReason,

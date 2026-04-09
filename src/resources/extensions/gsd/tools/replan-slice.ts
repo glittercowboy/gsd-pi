@@ -1,4 +1,5 @@
 import { clearParseCache } from "../files.js";
+import { nowIso } from "../time-utils.js";
 import { getErrorMessage } from "../error-utils.js";
 import {
   transaction,
@@ -222,7 +223,7 @@ export async function handleReplanSlice(
       appendEvent(basePath, {
         cmd: "replan-slice",
         params: { milestoneId: params.milestoneId, sliceId: params.sliceId, blockerTaskId: params.blockerTaskId },
-        ts: new Date().toISOString(),
+        ts: nowIso(),
         actor: "agent",
         actor_name: params.actorName,
         trigger_reason: params.triggerReason,

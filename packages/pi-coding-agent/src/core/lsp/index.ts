@@ -16,6 +16,7 @@ import {
 } from "./client.js";
 import { getServerForFile, getServersForFile, type LspConfig, loadConfig, hasRootMarkers, resolveCommand } from "./config.js";
 import { applyTextEdits, applyWorkspaceEdit } from "./edits.js";
+import { getErrorMessage } from "../../utils/error.js";
 import { ToolAbortError, clampTimeout, throwIfAborted } from "./helpers.js";
 import { detectLspmux } from "./lspmux.js";
 import {
@@ -697,8 +698,7 @@ export function createLspTool(cwd: string): AgentTool<typeof lspSchema, LspToolD
 						if (err instanceof ToolAbortError || signal?.aborted) {
 							throw err;
 						}
-						const errorMessage = err instanceof Error ? err.message : String(err);
-						outputs.push(`Failed to reload ${workspaceServerName}: ${errorMessage}`);
+						outputs.push(`Failed to reload ${workspaceServerName}: ${getErrorMessage(err)}`);
 					}
 				}
 				return {
@@ -1049,9 +1049,8 @@ export function createLspTool(cwd: string): AgentTool<typeof lspSchema, LspToolD
 				if (err instanceof ToolAbortError || signal?.aborted) {
 					throw new ToolAbortError();
 				}
-				const errorMessage = err instanceof Error ? err.message : String(err);
 				return {
-					content: [{ type: "text", text: `LSP error: ${errorMessage}` }],
+					content: [{ type: "text", text: `LSP error: ${getErrorMessage(err)}` }],
 					details: { serverName, action, success: false, request: params },
 				};
 			}

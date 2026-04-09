@@ -7,6 +7,7 @@
 // A module-level singleton accessor allows existing code to migrate incrementally.
 
 import { logWarning } from "./workflow-logger.js";
+import { nowIso } from "./time-utils.js";
 import type { UnifiedRule, RulePhase } from "./rule-types.js";
 import type { DispatchAction, DispatchContext, DispatchRule } from "./auto-dispatch.js";
 import { getErrorMessage } from "./error-utils.js";
@@ -384,7 +385,7 @@ export class RuleRegistry {
   persistState(basePath: string): void {
     const state: PersistedHookState = {
       cycleCounts: Object.fromEntries(this.cycleCounts),
-      savedAt: new Date().toISOString(),
+      savedAt: nowIso(),
     };
     try {
       const dir = join(basePath, ".gsd");
@@ -422,7 +423,7 @@ export class RuleRegistry {
       if (existsSync(filePath)) {
         writeFileSync(
           filePath,
-          JSON.stringify({ cycleCounts: {}, savedAt: new Date().toISOString() }, null, 2),
+          JSON.stringify({ cycleCounts: {}, savedAt: nowIso() }, null, 2),
           "utf-8",
         );
       }

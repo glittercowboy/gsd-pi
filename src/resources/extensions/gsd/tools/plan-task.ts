@@ -9,6 +9,7 @@ import { writeManifest } from "../workflow-manifest.js";
 import { appendEvent } from "../workflow-events.js";
 import { logWarning } from "../workflow-logger.js";
 import { getErrorMessage } from "../error-utils.js";
+import { nowIso } from "../time-utils.js";
 
 export interface PlanTaskParams {
   milestoneId: string;
@@ -131,7 +132,7 @@ export async function handlePlanTask(
       appendEvent(basePath, {
         cmd: "plan-task",
         params: { milestoneId: params.milestoneId, sliceId: params.sliceId, taskId: params.taskId },
-        ts: new Date().toISOString(),
+        ts: nowIso(),
         actor: "agent",
         actor_name: params.actorName,
         trigger_reason: params.triggerReason,

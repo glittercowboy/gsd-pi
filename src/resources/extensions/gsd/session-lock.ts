@@ -19,9 +19,10 @@
 import { createRequire } from "node:module";
 import { existsSync, readFileSync, readdirSync, mkdirSync, unlinkSync, rmSync, statSync } from "node:fs";
 import { join, dirname } from "node:path";
-import { safeReadFile } from "./safe-fs.js";
+import { safeReadFile, ensureParentDir } from "./safe-fs.js";
 import { gsdRoot } from "./paths.js";
 import { atomicWriteSync } from "./atomic-write.js";
+import { nowIso } from "./time-utils.js";
 
 const _require = createRequire(import.meta.url);
 
@@ -264,7 +265,7 @@ export function acquireSessionLock(basePath: string): SessionLockResult {
   }
 
   // Ensure the directory exists
-  mkdirSync(dirname(lp), { recursive: true });
+  ensureParentDir(lp);
 
   // Clean up numbered lock file variants from cloud sync conflicts (#1315)
   cleanupStrayLockFiles(basePath);
@@ -272,10 +273,10 @@ export function acquireSessionLock(basePath: string): SessionLockResult {
   // Write our lock data first (the content is informational; the OS lock is the real guard)
   const lockData: SessionLockData = {
     pid: process.pid,
-    startedAt: new Date().toISOString(),
+    startedAt: nowIso(),
     unitType: "starting",
     unitId: "bootstrap",
-    unitStartedAt: new Date().toISOString(),
+    unitStartedAt: nowIso(),
   };
 
   let lockfile: typeof import("proper-lockfile");
@@ -416,10 +417,10 @@ export function updateSessionLock(
   try {
     const data: SessionLockData = {
       pid: process.pid,
-      startedAt: new Date().toISOString(),
+      startedAt: nowIso(),
       unitType,
       unitId,
-      unitStartedAt: new Date().toISOString(),
+      unitStartedAt: nowIso(),
       sessionFile,
     };
     atomicWriteSync(lp, JSON.stringify(data, null, 2));

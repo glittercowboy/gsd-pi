@@ -9,6 +9,7 @@
 import { createReadStream, existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "fs";
 import { join } from "path";
 import { createInterface } from "readline";
+import { getErrorMessage } from "../../../utils/error.js";
 import type { MemoryStorage } from "./storage.js";
 
 /** Inline concurrency limiter to cap parallel async operations. */
@@ -385,8 +386,7 @@ async function runPhase1(
 			storage.completeStage1Job(job.threadId, redacted);
 			processed++;
 		} catch (err) {
-			const message = err instanceof Error ? err.message : String(err);
-			storage.failStage1Job(job.threadId, message);
+			storage.failStage1Job(job.threadId, getErrorMessage(err));
 			errors++;
 		}
 	}));

@@ -28,6 +28,7 @@ import {
   runFinalize,
 } from "./phases.js";
 import { debugLog } from "../debug-logger.js";
+import { nowIso } from "../time-utils.js";
 import { isInfrastructureError } from "./infra-errors.js";
 import { resolveEngine } from "../engine-resolver.js";
 
@@ -93,7 +94,7 @@ export async function autoLoop(
           unitType: sidecarItem.unitType,
           unitId: sidecarItem.unitId,
         });
-        deps.emitJournalEvent({ ts: new Date().toISOString(), flowId, seq: nextSeq(), eventType: "sidecar-dequeue", data: { kind: sidecarItem.kind, unitType: sidecarItem.unitType, unitId: sidecarItem.unitId } });
+        deps.emitJournalEvent({ ts: nowIso(), flowId, seq: nextSeq(), eventType: "sidecar-dequeue", data: { kind: sidecarItem.kind, unitType: sidecarItem.unitType, unitId: sidecarItem.unitId } });
       }
 
       const sessionLockBase = deps.lockBase();
@@ -117,7 +118,7 @@ export async function autoLoop(
       }
 
       const ic: IterationContext = { ctx, pi, s, deps, prefs, iteration, flowId, nextSeq };
-      deps.emitJournalEvent({ ts: new Date().toISOString(), flowId, seq: nextSeq(), eventType: "iteration-start", data: { iteration } });
+      deps.emitJournalEvent({ ts: nowIso(), flowId, seq: nextSeq(), eventType: "iteration-start", data: { iteration } });
       let iterData: IterationData;
 
       // ── Custom engine path ──────────────────────────────────────────────
@@ -205,7 +206,7 @@ export async function autoLoop(
         deps.clearUnitTimeout();
         consecutiveErrors = 0;
         recentErrorMessages.length = 0;
-        deps.emitJournalEvent({ ts: new Date().toISOString(), flowId, seq: nextSeq(), eventType: "iteration-end", data: { iteration } });
+        deps.emitJournalEvent({ ts: nowIso(), flowId, seq: nextSeq(), eventType: "iteration-end", data: { iteration } });
         debugLog("autoLoop", { phase: "iteration-complete", iteration });
         continue;
       }
@@ -254,7 +255,7 @@ export async function autoLoop(
 
       consecutiveErrors = 0; // Iteration completed successfully
       recentErrorMessages.length = 0;
-      deps.emitJournalEvent({ ts: new Date().toISOString(), flowId, seq: nextSeq(), eventType: "iteration-end", data: { iteration } });
+      deps.emitJournalEvent({ ts: nowIso(), flowId, seq: nextSeq(), eventType: "iteration-end", data: { iteration } });
       debugLog("autoLoop", { phase: "iteration-complete", iteration });
     } catch (loopErr) {
       // ── Blanket catch: absorb unexpected exceptions, apply graduated recovery ──
@@ -263,7 +264,7 @@ export async function autoLoop(
       // Always emit iteration-end on error so the journal records iteration
       // completion even on failure (#2344). Without this, errors in
       // runFinalize leave the journal incomplete, making diagnosis harder.
-      deps.emitJournalEvent({ ts: new Date().toISOString(), flowId, seq: nextSeq(), eventType: "iteration-end", data: { iteration, error: msg } });
+      deps.emitJournalEvent({ ts: nowIso(), flowId, seq: nextSeq(), eventType: "iteration-end", data: { iteration, error: msg } });
 
       // ── Infrastructure errors: immediate stop, no retry ──
       // These are unrecoverable (disk full, OOM, etc.). Retrying just burns

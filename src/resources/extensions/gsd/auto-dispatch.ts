@@ -17,6 +17,7 @@ import { isDbAvailable, getMilestoneSlices, getPendingGates, markAllGatesOmitted
 import { extractVerdict, isAcceptableUatVerdict } from "./verdict-parser.js";
 
 import { getErrorMessage } from "./error-utils.js";
+import { nowIso } from "./time-utils.js";
 import {
   gsdRoot,
   resolveMilestoneFile,
@@ -137,7 +138,7 @@ export function getRewriteCount(basePath: string): number {
 }
 
 export function setRewriteCount(basePath: string, count: number): void {
-  saveJsonFile(rewriteCountPath(basePath), { count, updatedAt: new Date().toISOString() });
+  saveJsonFile(rewriteCountPath(basePath), { count, updatedAt: nowIso() });
 }
 
 // ─── Run-UAT dispatch counter (per-slice) ────────────────────────────────
@@ -162,7 +163,7 @@ export function incrementUatCount(basePath: string, mid: string, sid: string): n
   const count = getUatCount(basePath, mid, sid) + 1;
   const filePath = uatCountPath(basePath, mid, sid);
   mkdirSync(join(gsdRoot(basePath), "runtime"), { recursive: true });
-  writeFileSync(filePath, JSON.stringify({ count, updatedAt: new Date().toISOString() }) + "\n");
+  writeFileSync(filePath, JSON.stringify({ count, updatedAt: nowIso() }) + "\n");
   return count;
 }
 
@@ -598,7 +599,7 @@ export const DISPATCH_RULES: DispatchRule[] = [
           completed: [...completed],
           dispatched: selected,
           graphSnapshot: metrics,
-          updatedAt: new Date().toISOString(),
+          updatedAt: nowIso(),
         });
 
         // Encode selected task IDs in unitId for artifact verification.

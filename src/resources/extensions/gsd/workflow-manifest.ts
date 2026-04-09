@@ -9,6 +9,7 @@ import type { Decision } from "./types.js";
 import { atomicWriteSync } from "./atomic-write.js";
 import { readFileSync, existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
+import { nowIso } from "./time-utils.js";
 
 // ─── Manifest Types ──────────────────────────────────────────────────────
 
@@ -178,7 +179,7 @@ export function snapshotState(): StateManifest {
 
   const result: StateManifest = {
     version: 1,
-    exported_at: new Date().toISOString(),
+    exported_at: nowIso(),
     milestones,
     slices,
     tasks,

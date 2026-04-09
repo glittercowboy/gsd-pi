@@ -3,6 +3,7 @@
  */
 
 import type { AgentTool, AgentToolUpdateCallback } from "@gsd/pi-agent-core";
+import { getErrorMessage } from "../../utils/error.js";
 import type { ExtensionRunner } from "./runner.js";
 import type { RegisteredTool, ToolCallEventResult } from "./types.js";
 
@@ -108,7 +109,7 @@ export function wrapToolWithExtensions<T>(tool: AgentTool<any, T>, runner: Exten
 						toolName: tool.name,
 						toolCallId,
 						input: params,
-						content: [{ type: "text", text: err instanceof Error ? err.message : String(err) }],
+						content: [{ type: "text", text: getErrorMessage(err) }],
 						details: undefined,
 						isError: true,
 					});

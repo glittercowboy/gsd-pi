@@ -9,6 +9,7 @@
 
 import { SessionManager } from './session-manager.js';
 import { createMcpServer } from './server.js';
+import { getErrorMessage } from './error-utils.js';
 
 const MCP_PKG = '@modelcontextprotocol/sdk';
 
@@ -53,7 +54,7 @@ async function main(): Promise<void> {
     process.stderr.write('[gsd-mcp-server] MCP server started on stdio\n');
   } catch (err) {
     process.stderr.write(
-      `[gsd-mcp-server] Fatal: failed to start — ${err instanceof Error ? err.message : String(err)}\n`
+      `[gsd-mcp-server] Fatal: failed to start — ${getErrorMessage(err)}\n`
     );
     await sessionManager.cleanup();
     process.exit(1);
@@ -62,7 +63,7 @@ async function main(): Promise<void> {
 
 main().catch((err) => {
   process.stderr.write(
-    `[gsd-mcp-server] Fatal: ${err instanceof Error ? err.message : String(err)}\n`
+    `[gsd-mcp-server] Fatal: ${getErrorMessage(err)}\n`
   );
   process.exit(1);
 });

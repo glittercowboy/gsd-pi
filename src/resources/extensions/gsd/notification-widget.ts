@@ -39,10 +39,9 @@ const REFRESH_INTERVAL_MS = 5_000;
 export function initNotificationWidget(ctx: ExtensionContext): void {
   if (!ctx.hasUI) return;
 
-  // String-array fallback for RPC mode
-  ctx.ui.setWidget("gsd-notifications", buildNotificationWidgetLines(), { placement: "belowEditor" });
-
-  // Factory-based widget for TUI mode
+  // Factory-based widget for TUI mode — renders on demand and refreshes
+  // periodically. Do NOT call setWidget with a static array first — that
+  // causes a duplicate render before the factory replaces it (#duplication).
   ctx.ui.setWidget("gsd-notifications", (_tui, _theme) => {
     let cachedLines: string[] | undefined;
 

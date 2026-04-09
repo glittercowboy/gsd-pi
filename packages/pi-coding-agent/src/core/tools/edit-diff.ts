@@ -9,6 +9,7 @@
 
 import { constants } from "fs";
 import { access, readFile } from "fs/promises";
+import { getErrorMessage } from "../../utils/error.js";
 import { resolveToCwd, UNICODE_SPACES } from "./path-utils.js";
 
 export function detectLineEnding(content: string): "\r\n" | "\n" {
@@ -397,6 +398,6 @@ export async function computeEditDiff(
 		// Generate the diff
 		return generateDiffString(baseContent, newContent);
 	} catch (err) {
-		return { error: err instanceof Error ? err.message : String(err) };
+		return { error: getErrorMessage(err) };
 	}
 }

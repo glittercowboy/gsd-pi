@@ -36,6 +36,7 @@ import {
 	TUI,
 	visibleWidth,
 } from "@gsd/pi-tui";
+import { getErrorMessage } from "../../utils/error.js";
 import { spawn, spawnSync } from "child_process";
 import {
 	APP_NAME,
@@ -1283,7 +1284,7 @@ export class InteractiveMode {
 				if (matchesKey(data, shortcutStr as KeyId)) {
 					// Run handler async, don't block input
 					Promise.resolve(shortcut.handler(createContext())).catch((err) => {
-						this.showError(`Shortcut handler error: ${err instanceof Error ? err.message : String(err)}`);
+						this.showError(`Shortcut handler error: ${getErrorMessage(err)}`);
 					});
 					return true;
 				}

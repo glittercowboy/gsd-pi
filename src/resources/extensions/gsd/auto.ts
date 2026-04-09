@@ -11,6 +11,7 @@
  */
 
 import { getErrorMessage } from "./error-utils.js";
+import { nowIso } from "./time-utils.js";
 import type {
   ExtensionAPI,
   ExtensionContext,
@@ -893,7 +894,7 @@ export async function pauseAuto(
       worktreePath: isInAutoWorktree(s.basePath) ? s.basePath : null,
       originalBasePath: s.originalBasePath,
       stepMode: s.stepMode,
-      pausedAt: new Date().toISOString(),
+      pausedAt: nowIso(),
       sessionFile: s.pausedSessionFile,
       activeEngineId: s.activeEngineId,
       activeRunDir: s.activeRunDir,

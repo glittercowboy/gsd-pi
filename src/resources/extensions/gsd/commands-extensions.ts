@@ -11,6 +11,7 @@ import { existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import { loadJsonFile, loadJsonFileOrNull, writeJsonFileAtomic } from "./json-persistence.js";
+import { nowIso } from "./time-utils.js";
 
 const gsdHome = process.env.GSD_HOME || join(homedir(), ".gsd");
 
@@ -235,7 +236,7 @@ function handleDisable(id: string | undefined, reason: string, ctx: ExtensionCom
       id,
       enabled: false,
       source: "bundled",
-      disabledAt: new Date().toISOString(),
+      disabledAt: nowIso(),
       disabledReason: reason || undefined,
     };
   }

@@ -10,6 +10,7 @@
  *   - Error isolation: send() failures are logged, never crash the batcher
  */
 
+import { getErrorMessage } from './error-utils.js';
 import type { FormattedEvent } from './types.js';
 
 // ---------------------------------------------------------------------------
@@ -195,8 +196,7 @@ export class MessageBatcher {
     try {
       await this.send(payload);
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      this.logger.error('Batcher send failed', { error: message, batchSize: batch.length });
+      this.logger.error('Batcher send failed', { error: getErrorMessage(err), batchSize: batch.length });
 
       // Retry once after a short delay
       try {
