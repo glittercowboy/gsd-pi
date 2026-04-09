@@ -10,6 +10,7 @@
  */
 
 import { execFileSync } from "node:child_process";
+import { normalizePlannedFileReference } from "../files.js";
 import { logWarning } from "../workflow-logger.js";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
@@ -57,7 +58,9 @@ export function validateFileChanges(
 
   // Normalize expected paths (strip leading ./ or /)
   const normalizedExpected = new Set(
-    [...allExpected].map(f => f.replace(/^\.\//, "").replace(/^\//, "")),
+    [...allExpected].map((f) =>
+      normalizePlannedFileReference(f).replace(/^\.\//, "").replace(/^\//, ""),
+    ),
   );
 
   // Compute symmetric difference

@@ -101,6 +101,25 @@ test("parseTaskPlanIO handles multiple backtick tokens on one line", () => {
   assert.deepEqual(io.outputFiles, ["src/c.ts"]);
 });
 
+test("parseTaskPlanIO strips inline descriptions from backtick-wrapped file references", () => {
+  const content = `# T01: Described Paths
+
+## Inputs
+
+- \`src/config.ts — existing configuration\`
+- \`src/flags.ts - feature flags\`
+
+## Expected Output
+
+- \`definitions/ac-audit.md — current state of AC CRM\`
+- \`docs/runbook.md - update deployment notes\`
+`;
+
+  const io = parseTaskPlanIO(content);
+  assert.deepEqual(io.inputFiles, ["src/config.ts", "src/flags.ts"]);
+  assert.deepEqual(io.outputFiles, ["definitions/ac-audit.md", "docs/runbook.md"]);
+});
+
 // ─── deriveTaskGraph ──────────────────────────────────────────────────────
 
 test("deriveTaskGraph: linear chain T01→T02→T03", () => {

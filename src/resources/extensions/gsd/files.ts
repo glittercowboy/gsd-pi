@@ -132,6 +132,25 @@ function escapeRegex(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
+/**
+ * Normalize a task-plan file reference that may include inline description text
+ * after the path, for example:
+ *   "docs/file.md — explanation"
+ *   "docs/file.md - explanation"
+ */
+export function normalizePlannedFileReference(value: string): string {
+  const trimmed = value.trim().replace(/`/g, "");
+  const match = /^(.*?)(?:\s+(?:—|-)\s+)(.+)$/.exec(trimmed);
+  if (!match) return trimmed;
+
+  const pathCandidate = match[1].trim();
+  if (pathCandidate.includes("/") || pathCandidate.includes("\\") || pathCandidate.includes(".")) {
+    return pathCandidate;
+  }
+
+  return trimmed;
+}
+
 /** Parse bullet list items from a text block. */
 export function parseBullets(text: string): string[] {
   return text.split('\n')
@@ -622,11 +641,11 @@ export function parseTaskPlanIO(content: string): { inputFiles: string[]; output
       let match: RegExpExecArray | null;
       backtickPathRegex.lastIndex = 0;
       while ((match = backtickPathRegex.exec(trimmed)) !== null) {
-        const candidate = match[1];
+        const candidate = normalizePlannedFileReference(match[1]);
         // Filter out things that look like code tokens rather than file paths
         // (e.g. `true`, `false`, `npm run test`). A file path has at least one
         // dot or slash.
-        if (candidate.includes("/") || candidate.includes(".")) {
+        if (candidate.includes("/") || candidate.includes("\\") || candidate.includes(".")) {
           paths.push(candidate);
         }
       }
