@@ -538,6 +538,43 @@ describe("checkTaskOrdering", () => {
     assert.ok(results[0].message.includes("sequence violation"));
   });
 
+  test("passes when input file already exists on disk even if later task also lists it in expected_output", () => {
+    const tempDir = join(tmpdir(), `pre-exec-test-existing-ordering-${Date.now()}`);
+    mkdirSync(join(tempDir, "host", "Ams.Core", "Application", "Pipeline"), { recursive: true });
+    writeFileSync(
+      join(tempDir, "host", "Ams.Core", "Application", "Pipeline", "PipelineRunOptions.cs"),
+      "// existing file\n",
+    );
+
+    try {
+      const tasks = [
+        createTask({
+          id: "T01",
+          sequence: 0,
+          files: [],
+          inputs: ["host/Ams.Core/Application/Pipeline/PipelineRunOptions.cs"],
+          expected_output: [],
+        }),
+        createTask({
+          id: "T03",
+          sequence: 2,
+          files: [],
+          inputs: [],
+          expected_output: ["host/Ams.Core/Application/Pipeline/PipelineRunOptions.cs"],
+        }),
+      ];
+
+      const results = checkTaskOrdering(tasks, tempDir);
+      assert.deepEqual(
+        results,
+        [],
+        "Existing files may be read earlier and modified later without triggering a sequence violation",
+      );
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
   test("detects ordering violation in inputs array", () => {
     const tasks = [
       createTask({
