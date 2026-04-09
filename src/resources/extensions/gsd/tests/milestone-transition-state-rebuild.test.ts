@@ -49,19 +49,18 @@ test("auto/phases.ts milestone transition block resets completed-units.json", ()
     "utf-8",
   );
 
-  // completed-units.json must be cleared during milestone transition
-  // Look for the reset pattern within the transition block
+  // completed-units.json must be archived and cleared during milestone transition
   const transitionStart = phasesSrc.indexOf("Milestone transition");
-  const transitionResetSection = phasesSrc.indexOf(
-    "s.completedUnits = []",
-    transitionStart,
-  );
+  assert.ok(transitionStart > 0, "Milestone transition block should exist");
+
+  // The old file is archived before being cleared (#2313)
+  const archiveSection = phasesSrc.indexOf("completed-units-", transitionStart);
   assert.ok(
-    transitionResetSection > 0,
-    "auto/phases.ts should reset s.completedUnits to [] during milestone transition",
+    archiveSection > 0,
+    "auto/phases.ts should archive completed-units.json during milestone transition",
   );
 
-  // The disk file should also be cleared
+  // The disk file should be cleared to an empty array
   assert.ok(
     phasesSrc.includes('atomicWriteSync(completedKeysPath, JSON.stringify([], null, 2))'),
     "auto/phases.ts should write empty array to completed-units.json during milestone transition",

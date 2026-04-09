@@ -44,6 +44,15 @@ export function wrapToolWithExtensions<T>(tool: AgentTool<any, T>, runner: Exten
 			signal?: AbortSignal,
 			onUpdate?: AgentToolUpdateCallback<T>,
 		) => {
+			// For bash tool calls, let extensions transform the command before execution
+			if (tool.name === "bash" && runner.hasHandlers("bash_transform")) {
+				const input = params as { command?: string; cwd?: string };
+				if (typeof input.command === "string") {
+					const transformed = await runner.emitBashTransform(input.command, input.cwd ?? "");
+					params = { ...params, command: transformed };
+				}
+			}
+
 			// Emit tool_call event - extensions can block execution
 			if (runner.hasHandlers("tool_call")) {
 				try {

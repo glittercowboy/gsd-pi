@@ -1,4 +1,4 @@
-import test from "node:test";
+import { describe, test, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
@@ -73,9 +73,12 @@ test("worktreeBranchName formats branch name", () => {
 
 // ─── createWorktree ───────────────────────────────────────────────────────────
 
-test("createWorktree creates worktree with correct metadata", () => {
-  const base = makeBaseRepo();
-  try {
+describe("createWorktree", () => {
+  let base: string;
+  beforeEach(() => { base = makeBaseRepo(); });
+  afterEach(() => { rmSync(base, { recursive: true, force: true }); });
+
+  test("creates worktree with correct metadata", () => {
     const info = createWorktree(base, "feature-x");
     assert.strictEqual(info.name, "feature-x", "name should match");
     assert.strictEqual(info.branch, "worktree/feature-x", "branch should be prefixed");
@@ -88,33 +91,9 @@ test("createWorktree creates worktree with correct metadata", () => {
     );
     const branches = run("git branch", base);
     assert.ok(branches.includes("worktree/feature-x"), "branch should be created in base repo");
-  } finally {
-    rmSync(base, { recursive: true, force: true });
-  }
-});
+  });
 
-test("createWorktree rejects duplicate name", () => {
-  const { base } = makeRepoWithWorktree("feature-x");
-  try {
-    assert.throws(
-      () => createWorktree(base, "feature-x"),
-      (err: Error) => {
-        assert.ok(
-          err.message.includes("already exists"),
-          `expected "already exists" in error, got: ${err.message}`,
-        );
-        return true;
-      },
-      "should throw on duplicate worktree name",
-    );
-  } finally {
-    rmSync(base, { recursive: true, force: true });
-  }
-});
-
-test("createWorktree rejects invalid name", () => {
-  const base = makeBaseRepo();
-  try {
+  test("rejects invalid name", () => {
     assert.throws(
       () => createWorktree(base, "bad name!"),
       (err: Error) => {
@@ -126,42 +105,68 @@ test("createWorktree rejects invalid name", () => {
       },
       "should throw on invalid worktree name",
     );
-  } finally {
-    rmSync(base, { recursive: true, force: true });
-  }
+  });
+});
+
+describe("createWorktree — duplicate rejection", () => {
+  let base: string;
+  beforeEach(() => {
+    const repo = makeRepoWithWorktree("feature-x");
+    base = repo.base;
+  });
+  afterEach(() => { rmSync(base, { recursive: true, force: true }); });
+
+  test("rejects duplicate name", () => {
+    assert.throws(
+      () => createWorktree(base, "feature-x"),
+      (err: Error) => {
+        assert.ok(
+          err.message.includes("already exists"),
+          `expected "already exists" in error, got: ${err.message}`,
+        );
+        return true;
+      },
+      "should throw on duplicate worktree name",
+    );
+  });
 });
 
 // ─── listWorktrees ────────────────────────────────────────────────────────────
 
-test("listWorktrees returns active worktrees", () => {
-  const { base } = makeRepoWithWorktree("feature-x");
-  try {
+describe("listWorktrees", () => {
+  let base: string;
+  beforeEach(() => {
+    const repo = makeRepoWithWorktree("feature-x");
+    base = repo.base;
+  });
+  afterEach(() => { rmSync(base, { recursive: true, force: true }); });
+
+  test("returns active worktrees", () => {
     const list = listWorktrees(base);
     assert.strictEqual(list.length, 1, "should list exactly one worktree");
     assert.strictEqual(list[0]!.name, "feature-x", "name should match");
     assert.strictEqual(list[0]!.branch, "worktree/feature-x", "branch should match");
     assert.ok(list[0]!.exists, "exists flag should be true");
-  } finally {
-    rmSync(base, { recursive: true, force: true });
-  }
-});
+  });
 
-test("listWorktrees returns empty after removal", () => {
-  const { base } = makeRepoWithWorktree("feature-x");
-  try {
+  test("returns empty after removal", () => {
     removeWorktree(base, "feature-x");
     const list = listWorktrees(base);
     assert.strictEqual(list.length, 0, "should have no worktrees after removal");
-  } finally {
-    rmSync(base, { recursive: true, force: true });
-  }
+  });
 });
 
 // ─── diffWorktreeGSD ─────────────────────────────────────────────────────────
 
-test("diffWorktreeGSD detects added and modified GSD files", () => {
-  const { base } = makeRepoWithChanges("feature-x");
-  try {
+describe("diffWorktreeGSD and getWorktreeGSDDiff", () => {
+  let base: string;
+  beforeEach(() => {
+    const repo = makeRepoWithChanges("feature-x");
+    base = repo.base;
+  });
+  afterEach(() => { rmSync(base, { recursive: true, force: true }); });
+
+  test("detects added and modified GSD files", () => {
     const diff = diffWorktreeGSD(base, "feature-x");
     assert.ok(diff.added.length > 0, "should have added files");
     assert.ok(
@@ -174,58 +179,60 @@ test("diffWorktreeGSD detects added and modified GSD files", () => {
       "M001 roadmap should be in modified files",
     );
     assert.strictEqual(diff.removed.length, 0, "should have no removed files");
-  } finally {
-    rmSync(base, { recursive: true, force: true });
-  }
-});
+  });
 
-// ─── getWorktreeGSDDiff ───────────────────────────────────────────────────────
-
-test("getWorktreeGSDDiff returns patch content", () => {
-  const { base } = makeRepoWithChanges("feature-x");
-  try {
+  test("returns patch content", () => {
     const fullDiff = getWorktreeGSDDiff(base, "feature-x");
     assert.ok(fullDiff.includes("M002"), "diff should mention M002");
     assert.ok(fullDiff.includes("updated"), "diff should mention the update");
-  } finally {
-    rmSync(base, { recursive: true, force: true });
-  }
+  });
 });
 
 // ─── getWorktreeLog ───────────────────────────────────────────────────────────
 
-test("getWorktreeLog shows commits", () => {
-  const { base } = makeRepoWithChanges("feature-x");
-  try {
+describe("getWorktreeLog", () => {
+  let base: string;
+  beforeEach(() => {
+    const repo = makeRepoWithChanges("feature-x");
+    base = repo.base;
+  });
+  afterEach(() => { rmSync(base, { recursive: true, force: true }); });
+
+  test("shows commits", () => {
     const log = getWorktreeLog(base, "feature-x");
     assert.ok(log.includes("add M002"), "log should include the commit message");
-  } finally {
-    rmSync(base, { recursive: true, force: true });
-  }
+  });
 });
 
 // ─── removeWorktree ───────────────────────────────────────────────────────────
 
-test("removeWorktree removes directory and branch", () => {
-  const { base, wtPath } = makeRepoWithWorktree("feature-x");
-  try {
+describe("removeWorktree", () => {
+  let base: string;
+  let wtPath: string;
+  beforeEach(() => {
+    const repo = makeRepoWithWorktree("feature-x");
+    base = repo.base;
+    wtPath = repo.wtPath;
+  });
+  afterEach(() => { rmSync(base, { recursive: true, force: true }); });
+
+  test("removes directory and branch", () => {
     removeWorktree(base, "feature-x", { deleteBranch: true });
     assert.ok(!existsSync(wtPath), "worktree directory should be gone");
     const branches = run("git branch", base);
     assert.ok(!branches.includes("worktree/feature-x"), "branch should be deleted");
-  } finally {
-    rmSync(base, { recursive: true, force: true });
-  }
+  });
 });
 
-test("removeWorktree on missing worktree does not throw", () => {
-  const base = makeBaseRepo();
-  try {
+describe("removeWorktree — missing worktree", () => {
+  let base: string;
+  beforeEach(() => { base = makeBaseRepo(); });
+  afterEach(() => { rmSync(base, { recursive: true, force: true }); });
+
+  test("on missing worktree does not throw", () => {
     assert.doesNotThrow(
       () => removeWorktree(base, "nonexistent"),
       "should not throw when worktree does not exist",
     );
-  } finally {
-    rmSync(base, { recursive: true, force: true });
-  }
+  });
 });

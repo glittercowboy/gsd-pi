@@ -6,7 +6,7 @@
 
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import {
@@ -377,6 +377,121 @@ test("snapshotUnitMetrics counts toolCall blocks correctly (#1713)", () => {
     assert.equal(unit!.toolCalls, 3, "should count 3 toolCall blocks across 2 assistant messages");
     assert.equal(unit!.assistantMessages, 2);
     assert.equal(unit!.userMessages, 1);
+  } finally {
+    resetMetrics();
+    rmSync(tmpBase, { recursive: true, force: true });
+  }
+});
+
+// ── #1943 — Duplicate metrics entries from idle watchdog ──────────────────────
+
+test("#1943 initMetrics deduplicates entries loaded from a corrupted disk ledger", () => {
+  const tmpBase = mkdtempSync(join(tmpdir(), "gsd-metrics-dedup-load-"));
+  mkdirSync(join(tmpBase, ".gsd"), { recursive: true });
+
+  try {
+    resetMetrics();
+
+    // Simulate a corrupted metrics.json with duplicate entries on disk
+    // (same type+id+startedAt but different finishedAt — idle watchdog pattern)
+    const corruptedLedger: MetricsLedger = {
+      version: 1,
+      projectStartedAt: 1700000000000,
+      units: [
+        makeUnit({ type: "research-slice", id: "M009/S02", startedAt: 1774011016218, finishedAt: 1774011031218, cost: 1.50, tokens: { input: 6600000, output: 100000, cacheRead: 0, cacheWrite: 0, total: 6700000 } }),
+        makeUnit({ type: "research-slice", id: "M009/S02", startedAt: 1774011016218, finishedAt: 1774011046218, cost: 1.55, tokens: { input: 6800000, output: 110000, cacheRead: 0, cacheWrite: 0, total: 6910000 } }),
+        makeUnit({ type: "research-slice", id: "M009/S02", startedAt: 1774011016218, finishedAt: 1774011061218, cost: 1.60, tokens: { input: 7000000, output: 120000, cacheRead: 0, cacheWrite: 0, total: 7120000 } }),
+        makeUnit({ type: "research-slice", id: "M009/S02", startedAt: 1774011016218, finishedAt: 1774011076218, cost: 1.65, tokens: { input: 7200000, output: 130000, cacheRead: 0, cacheWrite: 0, total: 7330000 } }),
+        // A different unit — should be preserved
+        makeUnit({ type: "execute-task", id: "M001/S01/T01", startedAt: 1774012000000, finishedAt: 1774012060000, cost: 0.50 }),
+      ],
+    };
+    writeFileSync(
+      join(tmpBase, ".gsd", "metrics.json"),
+      JSON.stringify(corruptedLedger, null, 2),
+    );
+
+    // Load the corrupted ledger — duplicates should be collapsed on load
+    initMetrics(tmpBase);
+    const ledger = getLedger();
+    assert.ok(ledger);
+
+    // The 4 entries with identical (type, id, startedAt) should collapse to 1,
+    // keeping the latest (highest finishedAt). Plus the 1 different unit = 2 total.
+    assert.equal(
+      ledger!.units.length, 2,
+      `expected 2 entries after dedup (1 collapsed group + 1 unique), got ${ledger!.units.length}`,
+    );
+
+    // The surviving duplicate should be the one with the latest finishedAt
+    const researchEntry = ledger!.units.find(u => u.type === "research-slice");
+    assert.ok(researchEntry);
+    assert.equal(researchEntry!.finishedAt, 1774011076218, "should keep the latest finishedAt");
+    assert.equal(researchEntry!.cost, 1.65, "should keep the latest cost");
+
+    // The on-disk file should also be deduplicated
+    const diskRaw = readFileSync(join(tmpBase, ".gsd", "metrics.json"), "utf-8");
+    const diskLedger: MetricsLedger = JSON.parse(diskRaw);
+    assert.equal(diskLedger.units.length, 2, "disk should also have deduplicated entries");
+  } finally {
+    resetMetrics();
+    rmSync(tmpBase, { recursive: true, force: true });
+  }
+});
+
+test("#1943 getProjectTotals reports correct cost after dedup (no 35% inflation)", () => {
+  // Simulate the exact scenario from the issue: 20 entries for a single dispatch
+  // with monotonically increasing token counts and 15s-apart finishedAt values
+  const startedAt = 1774011016218;
+  const baseCost = 1.50;
+  const duplicateUnits: UnitMetrics[] = [];
+
+  for (let i = 0; i < 20; i++) {
+    duplicateUnits.push(makeUnit({
+      type: "research-slice",
+      id: "M009/S02",
+      startedAt,
+      finishedAt: startedAt + (i + 1) * 15000,
+      cost: baseCost + i * 0.05,
+      toolCalls: 0,
+      tokens: {
+        input: 6600000 + i * 200000,
+        output: 100000 + i * 10000,
+        cacheRead: 0,
+        cacheWrite: 0,
+        total: 6700000 + i * 210000,
+      },
+    }));
+  }
+
+  // Without dedup, getProjectTotals would sum all 20 entries' costs
+  const rawTotals = getProjectTotals(duplicateUnits);
+  // With dedup (only last entry should count), cost should be the last entry's cost
+  const lastEntryCost = duplicateUnits[duplicateUnits.length - 1].cost;
+
+  // This test documents the bug: raw totals inflate cost by summing duplicates
+  assert.ok(
+    rawTotals.cost > lastEntryCost * 2,
+    "raw totals with duplicates inflate cost (bug demonstration)",
+  );
+
+  // After loading through initMetrics (which should dedup), totals should be correct
+  const tmpBase = mkdtempSync(join(tmpdir(), "gsd-metrics-cost-inflation-"));
+  mkdirSync(join(tmpBase, ".gsd"), { recursive: true });
+  try {
+    resetMetrics();
+    writeFileSync(
+      join(tmpBase, ".gsd", "metrics.json"),
+      JSON.stringify({ version: 1, projectStartedAt: 1700000000000, units: duplicateUnits }, null, 2),
+    );
+    initMetrics(tmpBase);
+    const ledger = getLedger()!;
+    const dedupedTotals = getProjectTotals(ledger.units);
+    assert.equal(ledger.units.length, 1, "20 duplicates should collapse to 1 entry");
+    assert.equal(
+      dedupedTotals.cost, lastEntryCost,
+      `deduped cost should be ${lastEntryCost}, not ${dedupedTotals.cost}`,
+    );
   } finally {
     resetMetrics();
     rmSync(tmpBase, { recursive: true, force: true });

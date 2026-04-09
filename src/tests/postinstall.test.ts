@@ -9,7 +9,11 @@ const projectRoot = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 test("postinstall respects PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD", () => {
   const result = spawnSync("node", ["scripts/postinstall.js"], {
     cwd: projectRoot,
-    env: { ...process.env, PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1" },
+    env: {
+      ...process.env,
+      PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1",
+      GSD_SKIP_RTK_INSTALL: "1",
+    },
     encoding: "utf-8",
   });
 

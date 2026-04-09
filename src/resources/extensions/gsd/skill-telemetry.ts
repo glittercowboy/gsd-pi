@@ -13,7 +13,7 @@
 
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { getAgentDir } from "@gsd/pi-coding-agent";
+import { homedir } from "node:os";
 
 // ─── In-memory state ──────────────────────────────────────────────────────────
 
@@ -30,8 +30,16 @@ const activelyLoadedSkills = new Set<string>();
  * Called before each unit starts.
  */
 export function captureAvailableSkills(): void {
-  const skillsDir = join(getAgentDir(), "skills");
-  availableSkills = listSkillNames(skillsDir);
+  const skillsDir = join(homedir(), ".agents", "skills");
+  const claudeSkillsDir = join(homedir(), ".claude", "skills");
+  const legacyDir = join(homedir(), ".gsd", "agent", "skills");
+  const names = listSkillNames(skillsDir);
+  const claudeNames = listSkillNames(claudeSkillsDir);
+  // Include skills still in the legacy directory only if migration hasn't completed
+  const legacyMigrated = existsSync(join(legacyDir, ".migrated-to-agents"));
+  const legacyNames = legacyMigrated ? [] : listSkillNames(legacyDir);
+  const all = new Set([...names, ...claudeNames, ...legacyNames]);
+  availableSkills = [...all];
   activelyLoadedSkills.clear();
 }
 
@@ -99,8 +107,13 @@ export function detectStaleSkills(
   const stale: string[] = [];
 
   // Check all installed skills, not just those with usage data
-  const skillsDir = join(getAgentDir(), "skills");
-  const installed = listSkillNames(skillsDir);
+  const skillsDir = join(homedir(), ".agents", "skills");
+  const claudeSkillsDir = join(homedir(), ".claude", "skills");
+  const legacyDir = join(homedir(), ".gsd", "agent", "skills");
+  const legacyMigrated = existsSync(join(legacyDir, ".migrated-to-agents"));
+  const legacyNames = legacyMigrated ? [] : listSkillNames(legacyDir);
+  const installedSet = new Set([...listSkillNames(skillsDir), ...listSkillNames(claudeSkillsDir), ...legacyNames]);
+  const installed = [...installedSet];
 
   for (const skill of installed) {
     const lastTs = lastUsed.get(skill);

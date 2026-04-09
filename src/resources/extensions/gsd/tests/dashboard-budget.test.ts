@@ -1,3 +1,5 @@
+import { describe, test } from 'node:test';
+import assert from 'node:assert/strict';
 /**
  * Tests for dashboard budget indicator rendering.
  *
@@ -18,10 +20,6 @@ import {
   getProjectTotals,
   formatTokenCount,
 } from "../metrics.js";
-import { createTestContext } from './test-helpers.ts';
-
-const { assertEq, assertTrue, assertMatch, assertNoMatch, report } = createTestContext();
-
 // ─── Test helpers ─────────────────────────────────────────────────────────────
 
 function makeUnit(overrides: Partial<UnitMetrics> = {}): UnitMetrics {
@@ -102,245 +100,230 @@ function renderModelContextWindow(units: UnitMetrics[], modelName: string): stri
 
 // ─── Completed section: budget indicators ─────────────────────────────────────
 
-console.log("\n=== Completed section: truncation + continue-here markers ===");
+describe('dashboard-budget', () => {
+  test('Completed section: truncation + continue-here markers', () => {
+    // Unit with truncation and continue-here — both markers appear
+    const ledgerUnits = [
+      makeUnit({ type: "execute-task", id: "M001/S01/T01", truncationSections: 3, continueHereFired: true }),
+    ];
+    const markers = renderCompletedBudgetMarkers(
+      { type: "execute-task", id: "M001/S01/T01" },
+      ledgerUnits,
+    );
+    assert.match(markers, /▼3/, "completed: shows ▼3 for 3 truncation sections");
+    assert.match(markers, /→ wrap-up/, "completed: shows → wrap-up when continueHereFired");
+  });
 
-{
-  // Unit with truncation and continue-here — both markers appear
-  const ledgerUnits = [
-    makeUnit({ type: "execute-task", id: "M001/S01/T01", truncationSections: 3, continueHereFired: true }),
-  ];
-  const markers = renderCompletedBudgetMarkers(
-    { type: "execute-task", id: "M001/S01/T01" },
-    ledgerUnits,
-  );
-  assertMatch(markers, /▼3/, "completed: shows ▼3 for 3 truncation sections");
-  assertMatch(markers, /→ wrap-up/, "completed: shows → wrap-up when continueHereFired");
-}
+  {
+    // Unit with truncation only — no wrap-up marker
+    const ledgerUnits = [
+      makeUnit({ type: "execute-task", id: "M001/S01/T01", truncationSections: 5, continueHereFired: false }),
+    ];
+    const markers = renderCompletedBudgetMarkers(
+      { type: "execute-task", id: "M001/S01/T01" },
+      ledgerUnits,
+    );
+    assert.match(markers, /▼5/, "completed: shows ▼5 truncation only");
+    assert.doesNotMatch(markers, /wrap-up/, "completed: no wrap-up when continueHereFired=false");
+  }
 
-{
-  // Unit with truncation only — no wrap-up marker
-  const ledgerUnits = [
-    makeUnit({ type: "execute-task", id: "M001/S01/T01", truncationSections: 5, continueHereFired: false }),
-  ];
-  const markers = renderCompletedBudgetMarkers(
-    { type: "execute-task", id: "M001/S01/T01" },
-    ledgerUnits,
-  );
-  assertMatch(markers, /▼5/, "completed: shows ▼5 truncation only");
-  assertNoMatch(markers, /wrap-up/, "completed: no wrap-up when continueHereFired=false");
-}
+  {
+    // Unit with continue-here only — no truncation marker
+    const ledgerUnits = [
+      makeUnit({ type: "execute-task", id: "M001/S01/T01", truncationSections: 0, continueHereFired: true }),
+    ];
+    const markers = renderCompletedBudgetMarkers(
+      { type: "execute-task", id: "M001/S01/T01" },
+      ledgerUnits,
+    );
+    assert.doesNotMatch(markers, /▼/, "completed: no ▼ when truncationSections=0");
+    assert.match(markers, /→ wrap-up/, "completed: shows → wrap-up");
+  }
 
-{
-  // Unit with continue-here only — no truncation marker
-  const ledgerUnits = [
-    makeUnit({ type: "execute-task", id: "M001/S01/T01", truncationSections: 0, continueHereFired: true }),
-  ];
-  const markers = renderCompletedBudgetMarkers(
-    { type: "execute-task", id: "M001/S01/T01" },
-    ledgerUnits,
-  );
-  assertNoMatch(markers, /▼/, "completed: no ▼ when truncationSections=0");
-  assertMatch(markers, /→ wrap-up/, "completed: shows → wrap-up");
-}
+  // ─── Completed section: missing ledger match ──────────────────────────────────
 
-// ─── Completed section: missing ledger match ──────────────────────────────────
+  test('Completed section: missing ledger match', () => {
+    // Completed unit with no matching ledger entry — no crash, no markers
+    const ledgerUnits = [
+      makeUnit({ type: "execute-task", id: "M001/S01/T99", truncationSections: 3 }),
+    ];
+    const markers = renderCompletedBudgetMarkers(
+      { type: "execute-task", id: "M001/S01/T01" },
+      ledgerUnits,
+    );
+    assert.deepStrictEqual(markers, "", "missing match: empty markers when no ledger entry matches");
+  });
 
-console.log("\n=== Completed section: missing ledger match ===");
+  {
+    // Empty ledger — no crash, no markers
+    const markers = renderCompletedBudgetMarkers(
+      { type: "execute-task", id: "M001/S01/T01" },
+      [],
+    );
+    assert.deepStrictEqual(markers, "", "empty ledger: empty markers");
+  }
 
-{
-  // Completed unit with no matching ledger entry — no crash, no markers
-  const ledgerUnits = [
-    makeUnit({ type: "execute-task", id: "M001/S01/T99", truncationSections: 3 }),
-  ];
-  const markers = renderCompletedBudgetMarkers(
-    { type: "execute-task", id: "M001/S01/T01" },
-    ledgerUnits,
-  );
-  assertEq(markers, "", "missing match: empty markers when no ledger entry matches");
-}
+  // ─── Completed section: retry handling (last entry wins) ──────────────────────
 
-{
-  // Empty ledger — no crash, no markers
-  const markers = renderCompletedBudgetMarkers(
-    { type: "execute-task", id: "M001/S01/T01" },
-    [],
-  );
-  assertEq(markers, "", "empty ledger: empty markers");
-}
+  test('Completed section: retry handling', () => {
+    // Two ledger entries for same unit (retry) — last entry wins
+    const ledgerUnits = [
+      makeUnit({ type: "execute-task", id: "M001/S01/T01", truncationSections: 1 }),
+      makeUnit({ type: "execute-task", id: "M001/S01/T01", truncationSections: 7 }),
+    ];
+    const markers = renderCompletedBudgetMarkers(
+      { type: "execute-task", id: "M001/S01/T01" },
+      ledgerUnits,
+    );
+    assert.match(markers, /▼7/, "retry: last entry's truncation count (7) wins over first (1)");
+    assert.doesNotMatch(markers, /▼1/, "retry: first entry's count (1) is not shown");
+  });
 
-// ─── Completed section: retry handling (last entry wins) ──────────────────────
+  // ─── By Model section: context window display ─────────────────────────────────
 
-console.log("\n=== Completed section: retry handling ===");
+  test('By Model section: context window', () => {
+    // Model with context window — shows formatted token count
+    const units = [
+      makeUnit({ model: "claude-sonnet-4-20250514", contextWindowTokens: 200000 }),
+    ];
+    const label = renderModelContextWindow(units, "claude-sonnet-4-20250514");
+    assert.deepStrictEqual(label, "[200.0k]", "by model: shows [200.0k] for 200000 context window");
+  });
 
-{
-  // Two ledger entries for same unit (retry) — last entry wins
-  const ledgerUnits = [
-    makeUnit({ type: "execute-task", id: "M001/S01/T01", truncationSections: 1 }),
-    makeUnit({ type: "execute-task", id: "M001/S01/T01", truncationSections: 7 }),
-  ];
-  const markers = renderCompletedBudgetMarkers(
-    { type: "execute-task", id: "M001/S01/T01" },
-    ledgerUnits,
-  );
-  assertMatch(markers, /▼7/, "retry: last entry's truncation count (7) wins over first (1)");
-  assertNoMatch(markers, /▼1/, "retry: first entry's count (1) is not shown");
-}
+  {
+    // Model without context window — no label
+    const units = [
+      makeUnit({ model: "claude-sonnet-4-20250514" }),
+    ];
+    const label = renderModelContextWindow(units, "claude-sonnet-4-20250514");
+    assert.deepStrictEqual(label, null, "by model: null when no contextWindowTokens");
+  }
 
-// ─── By Model section: context window display ─────────────────────────────────
+  {
+    // Multiple models — each gets its own context window
+    const units = [
+      makeUnit({ model: "claude-sonnet-4-20250514", contextWindowTokens: 200000, cost: 0.05 }),
+      makeUnit({ model: "claude-opus-4-20250514", contextWindowTokens: 200000, cost: 0.30 }),
+    ];
+    const sonnetLabel = renderModelContextWindow(units, "claude-sonnet-4-20250514");
+    const opusLabel = renderModelContextWindow(units, "claude-opus-4-20250514");
+    assert.deepStrictEqual(sonnetLabel, "[200.0k]", "by model multi: sonnet has context window");
+    assert.deepStrictEqual(opusLabel, "[200.0k]", "by model multi: opus has context window");
+  }
 
-console.log("\n=== By Model section: context window ===");
+  // ─── By Model section: single model visibility ───────────────────────────────
 
-{
-  // Model with context window — shows formatted token count
-  const units = [
-    makeUnit({ model: "claude-sonnet-4-20250514", contextWindowTokens: 200000 }),
-  ];
-  const label = renderModelContextWindow(units, "claude-sonnet-4-20250514");
-  assertEq(label, "[200.0k]", "by model: shows [200.0k] for 200000 context window");
-}
+  test('By Model section: single model visibility', () => {
+    // With guard changed to >= 1, single model aggregation should produce results
+    const units = [
+      makeUnit({ model: "claude-sonnet-4-20250514" }),
+    ];
+    const models = aggregateByModel(units);
+    assert.ok(models.length >= 1, "single model: aggregateByModel returns >= 1 entry");
+    assert.deepStrictEqual(models.length, 1, "single model: exactly 1 model aggregate");
+    assert.deepStrictEqual(models[0].model, "claude-sonnet-4-20250514", "single model: correct model name");
+    // The guard `models.length >= 1` (changed from > 1) means this section now renders
+    assert.ok(models.length >= 1, "single model: passes >= 1 guard (section will render)");
+  });
 
-{
-  // Model without context window — no label
-  const units = [
-    makeUnit({ model: "claude-sonnet-4-20250514" }),
-  ];
-  const label = renderModelContextWindow(units, "claude-sonnet-4-20250514");
-  assertEq(label, null, "by model: null when no contextWindowTokens");
-}
+  // ─── Cost & Usage: aggregate budget line ──────────────────────────────────────
 
-{
-  // Multiple models — each gets its own context window
-  const units = [
-    makeUnit({ model: "claude-sonnet-4-20250514", contextWindowTokens: 200000, cost: 0.05 }),
-    makeUnit({ model: "claude-opus-4-20250514", contextWindowTokens: 200000, cost: 0.30 }),
-  ];
-  const sonnetLabel = renderModelContextWindow(units, "claude-sonnet-4-20250514");
-  const opusLabel = renderModelContextWindow(units, "claude-opus-4-20250514");
-  assertEq(sonnetLabel, "[200.0k]", "by model multi: sonnet has context window");
-  assertEq(opusLabel, "[200.0k]", "by model multi: opus has context window");
-}
+  test('Cost & Usage: aggregate budget line', () => {
+    // Units with truncation and continue-here — both stats appear
+    const units = [
+      makeUnit({ truncationSections: 3, continueHereFired: true }),
+      makeUnit({ truncationSections: 2, continueHereFired: false }),
+      makeUnit({ truncationSections: 1, continueHereFired: true }),
+    ];
+    const line = renderCostBudgetLine(units);
+    assert.ok(line !== null, "cost budget: line rendered when budget data exists");
+    assert.match(line!, /6 sections truncated/, "cost budget: shows total truncation count (3+2+1=6)");
+    assert.match(line!, /2 continue-here fired/, "cost budget: shows continue-here count");
+  });
 
-// ─── By Model section: single model visibility ───────────────────────────────
+  {
+    // Only truncation, no continue-here
+    const units = [
+      makeUnit({ truncationSections: 4, continueHereFired: false }),
+    ];
+    const line = renderCostBudgetLine(units);
+    assert.ok(line !== null, "cost budget truncation-only: line rendered");
+    assert.match(line!, /4 sections truncated/, "cost budget truncation-only: shows count");
+    assert.doesNotMatch(line!, /continue-here/, "cost budget truncation-only: no continue-here text");
+  }
 
-console.log("\n=== By Model section: single model visibility ===");
+  {
+    // Only continue-here, no truncation
+    const units = [
+      makeUnit({ truncationSections: 0, continueHereFired: true }),
+    ];
+    const line = renderCostBudgetLine(units);
+    assert.ok(line !== null, "cost budget continue-only: line rendered");
+    assert.doesNotMatch(line!, /truncated/, "cost budget continue-only: no truncation text");
+    assert.match(line!, /1 continue-here fired/, "cost budget continue-only: shows count");
+  }
 
-{
-  // With guard changed to >= 1, single model aggregation should produce results
-  const units = [
-    makeUnit({ model: "claude-sonnet-4-20250514" }),
-  ];
-  const models = aggregateByModel(units);
-  assertTrue(models.length >= 1, "single model: aggregateByModel returns >= 1 entry");
-  assertEq(models.length, 1, "single model: exactly 1 model aggregate");
-  assertEq(models[0].model, "claude-sonnet-4-20250514", "single model: correct model name");
-  // The guard `models.length >= 1` (changed from > 1) means this section now renders
-  assertTrue(models.length >= 1, "single model: passes >= 1 guard (section will render)");
-}
+  // ─── Backward compat: no budget fields ────────────────────────────────────────
 
-// ─── Cost & Usage: aggregate budget line ──────────────────────────────────────
+  test('Backward compat: no budget data', () => {
+    // Old-format units without budget fields — no indicators anywhere
+    const oldUnits = [
+      makeUnit(), // no budget fields
+      makeUnit({ id: "M001/S01/T02" }),
+    ];
 
-console.log("\n=== Cost & Usage: aggregate budget line ===");
+    // Completed section: no markers
+    const markers = renderCompletedBudgetMarkers(
+      { type: "execute-task", id: "M001/S01/T01" },
+      oldUnits,
+    );
+    assert.doesNotMatch(markers, /▼/, "backward compat completed: no truncation marker");
+    assert.doesNotMatch(markers, /wrap-up/, "backward compat completed: no wrap-up marker");
+    assert.deepStrictEqual(markers, "", "backward compat completed: empty markers string");
 
-{
-  // Units with truncation and continue-here — both stats appear
-  const units = [
-    makeUnit({ truncationSections: 3, continueHereFired: true }),
-    makeUnit({ truncationSections: 2, continueHereFired: false }),
-    makeUnit({ truncationSections: 1, continueHereFired: true }),
-  ];
-  const line = renderCostBudgetLine(units);
-  assertTrue(line !== null, "cost budget: line rendered when budget data exists");
-  assertMatch(line!, /6 sections truncated/, "cost budget: shows total truncation count (3+2+1=6)");
-  assertMatch(line!, /2 continue-here fired/, "cost budget: shows continue-here count");
-}
+    // By Model section: no context window label
+    const label = renderModelContextWindow(oldUnits, "claude-sonnet-4-20250514");
+    assert.deepStrictEqual(label, null, "backward compat by-model: no context window label");
 
-{
-  // Only truncation, no continue-here
-  const units = [
-    makeUnit({ truncationSections: 4, continueHereFired: false }),
-  ];
-  const line = renderCostBudgetLine(units);
-  assertTrue(line !== null, "cost budget truncation-only: line rendered");
-  assertMatch(line!, /4 sections truncated/, "cost budget truncation-only: shows count");
-  assertNoMatch(line!, /continue-here/, "cost budget truncation-only: no continue-here text");
-}
+    // Cost & Usage: no budget line
+    const line = renderCostBudgetLine(oldUnits);
+    assert.deepStrictEqual(line, null, "backward compat cost: no budget summary line");
 
-{
-  // Only continue-here, no truncation
-  const units = [
-    makeUnit({ truncationSections: 0, continueHereFired: true }),
-  ];
-  const line = renderCostBudgetLine(units);
-  assertTrue(line !== null, "cost budget continue-only: line rendered");
-  assertNoMatch(line!, /truncated/, "cost budget continue-only: no truncation text");
-  assertMatch(line!, /1 continue-here fired/, "cost budget continue-only: shows count");
-}
+    // Aggregation still works
+    const totals = getProjectTotals(oldUnits);
+    assert.deepStrictEqual(totals.totalTruncationSections, 0, "backward compat: truncation total = 0");
+    assert.deepStrictEqual(totals.continueHereFiredCount, 0, "backward compat: continueHere count = 0");
+    assert.deepStrictEqual(totals.units, 2, "backward compat: unit count correct");
+  });
 
-// ─── Backward compat: no budget fields ────────────────────────────────────────
+  // ─── Edge cases ───────────────────────────────────────────────────────────────
 
-console.log("\n=== Backward compat: no budget data ===");
+  test('Edge cases', () => {
+    // formatTokenCount for context window values
+    assert.deepStrictEqual(formatTokenCount(200000), "200.0k", "format: 200000 → 200.0k");
+    assert.deepStrictEqual(formatTokenCount(128000), "128.0k", "format: 128000 → 128.0k");
+    assert.deepStrictEqual(formatTokenCount(1000000), "1.00M", "format: 1000000 → 1.00M");
+    assert.deepStrictEqual(formatTokenCount(32000), "32.0k", "format: 32000 → 32.0k");
+  });
 
-{
-  // Old-format units without budget fields — no indicators anywhere
-  const oldUnits = [
-    makeUnit(), // no budget fields
-    makeUnit({ id: "M001/S01/T02" }),
-  ];
+  {
+    // Completed unit key includes type — different types don't collide
+    const ledgerUnits = [
+      makeUnit({ type: "research-slice", id: "M001/S01", truncationSections: 2 }),
+      makeUnit({ type: "plan-slice", id: "M001/S01", truncationSections: 5 }),
+    ];
+    const researchMarkers = renderCompletedBudgetMarkers(
+      { type: "research-slice", id: "M001/S01" },
+      ledgerUnits,
+    );
+    const planMarkers = renderCompletedBudgetMarkers(
+      { type: "plan-slice", id: "M001/S01" },
+      ledgerUnits,
+    );
+    assert.match(researchMarkers, /▼2/, "type-keying: research unit gets its own truncation count");
+    assert.match(planMarkers, /▼5/, "type-keying: plan unit gets its own truncation count");
+  }
 
-  // Completed section: no markers
-  const markers = renderCompletedBudgetMarkers(
-    { type: "execute-task", id: "M001/S01/T01" },
-    oldUnits,
-  );
-  assertNoMatch(markers, /▼/, "backward compat completed: no truncation marker");
-  assertNoMatch(markers, /wrap-up/, "backward compat completed: no wrap-up marker");
-  assertEq(markers, "", "backward compat completed: empty markers string");
+  // ─── Summary ──────────────────────────────────────────────────────────────────
 
-  // By Model section: no context window label
-  const label = renderModelContextWindow(oldUnits, "claude-sonnet-4-20250514");
-  assertEq(label, null, "backward compat by-model: no context window label");
-
-  // Cost & Usage: no budget line
-  const line = renderCostBudgetLine(oldUnits);
-  assertEq(line, null, "backward compat cost: no budget summary line");
-
-  // Aggregation still works
-  const totals = getProjectTotals(oldUnits);
-  assertEq(totals.totalTruncationSections, 0, "backward compat: truncation total = 0");
-  assertEq(totals.continueHereFiredCount, 0, "backward compat: continueHere count = 0");
-  assertEq(totals.units, 2, "backward compat: unit count correct");
-}
-
-// ─── Edge cases ───────────────────────────────────────────────────────────────
-
-console.log("\n=== Edge cases ===");
-
-{
-  // formatTokenCount for context window values
-  assertEq(formatTokenCount(200000), "200.0k", "format: 200000 → 200.0k");
-  assertEq(formatTokenCount(128000), "128.0k", "format: 128000 → 128.0k");
-  assertEq(formatTokenCount(1000000), "1.00M", "format: 1000000 → 1.00M");
-  assertEq(formatTokenCount(32000), "32.0k", "format: 32000 → 32.0k");
-}
-
-{
-  // Completed unit key includes type — different types don't collide
-  const ledgerUnits = [
-    makeUnit({ type: "research-slice", id: "M001/S01", truncationSections: 2 }),
-    makeUnit({ type: "plan-slice", id: "M001/S01", truncationSections: 5 }),
-  ];
-  const researchMarkers = renderCompletedBudgetMarkers(
-    { type: "research-slice", id: "M001/S01" },
-    ledgerUnits,
-  );
-  const planMarkers = renderCompletedBudgetMarkers(
-    { type: "plan-slice", id: "M001/S01" },
-    ledgerUnits,
-  );
-  assertMatch(researchMarkers, /▼2/, "type-keying: research unit gets its own truncation count");
-  assertMatch(planMarkers, /▼5/, "type-keying: plan unit gets its own truncation count");
-}
-
-// ─── Summary ──────────────────────────────────────────────────────────────────
-
-report();
+});

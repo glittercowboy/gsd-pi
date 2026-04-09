@@ -27,6 +27,7 @@ import type {
 	RpcCommand,
 	RpcExtensionUIRequest,
 	RpcExtensionUIResponse,
+	RpcInitResult,
 	RpcResponse,
 	RpcSessionState,
 	RpcSlashCommand,
@@ -37,8 +38,11 @@ export type {
 	RpcCommand,
 	RpcExtensionUIRequest,
 	RpcExtensionUIResponse,
+	RpcInitResult,
+	RpcProtocolVersion,
 	RpcResponse,
 	RpcSessionState,
+	RpcV2Event,
 } from "./rpc-types.js";
 
 /**
@@ -73,6 +77,16 @@ export async function runRpcMode(session: AgentSession): Promise<never> {
 
 	// Shutdown request flag
 	let shutdownRequested = false;
+
+	// v2 protocol version detection state
+	let protocolVersion: 1 | 2 = 1;
+	let protocolLocked = false;
+
+	// v2 runId threading: tracks the current execution run
+	let currentRunId: string | null = null;
+
+	// v2 event filtering: null = no filter (all events); Set = only listed event types
+	let eventFilter: Set<string> | null = null;
 
 	const embeddedTerminalEnabled = process.env.GSD_WEB_BRIDGE_TUI === "1";
 	const remoteTerminal = embeddedTerminalEnabled
@@ -424,8 +438,56 @@ export async function runRpcMode(session: AgentSession): Promise<never> {
 	void extensionsReadyPromise;
 
 	// Output all agent events as JSON
-	session.subscribe((event) => {
-		output(event);
+	const unsubscribe = session.subscribe((event) => {
+		// v2: emit synthesized events before the regular event
+		if (protocolVersion === 2) {
+			// cost_update on assistant message_end
+			if (event.type === "message_end" && event.message.role === "assistant" && currentRunId) {
+				const stats = session.getSessionStats();
+				const costUpdate = {
+					type: "cost_update" as const,
+					runId: currentRunId,
+					turnCost: session.getLastTurnCost(),
+					cumulativeCost: stats.cost,
+					tokens: {
+						input: stats.tokens.input,
+						output: stats.tokens.output,
+						cacheRead: stats.tokens.cacheRead,
+						cacheWrite: stats.tokens.cacheWrite,
+					},
+				};
+				if (!eventFilter || eventFilter.has("cost_update")) {
+					output(costUpdate);
+				}
+			}
+
+			// execution_complete on agent_end
+			if (event.type === "agent_end" && currentRunId) {
+				const stats = session.getSessionStats();
+				const completionEvent = {
+					type: "execution_complete" as const,
+					runId: currentRunId,
+					status: "completed" as const,
+					stats,
+				};
+				if (!eventFilter || eventFilter.has("execution_complete")) {
+					output(completionEvent);
+				}
+				currentRunId = null;
+			}
+		}
+
+		// Apply event filter (v2 only, applies to agent session events only)
+		if (protocolVersion === 2 && eventFilter && !eventFilter.has(event.type)) {
+			return;
+		}
+
+		// Emit the regular event, with runId injection in v2 mode
+		if (protocolVersion === 2 && currentRunId) {
+			output({ ...event, runId: currentRunId });
+		} else {
+			output(event);
+		}
 	});
 
 	// Handle a single command
@@ -438,6 +500,9 @@ export async function runRpcMode(session: AgentSession): Promise<never> {
 			// =================================================================
 
 			case "prompt": {
+				// v2: generate runId for execution tracking
+				const runId = protocolVersion === 2 ? crypto.randomUUID() : undefined;
+				if (runId) currentRunId = runId;
 				// Don't await - events will stream
 				// Extension commands are executed immediately, file prompt templates are expanded
 				// If streaming and streamingBehavior specified, queues via steer/followUp
@@ -448,17 +513,23 @@ export async function runRpcMode(session: AgentSession): Promise<never> {
 						source: "rpc",
 					})
 					.catch((e) => output(error(id, "prompt", e.message)));
-				return success(id, "prompt");
+				return { id, type: "response", command: "prompt", success: true, ...(runId && { runId }) } as RpcResponse;
 			}
 
 			case "steer": {
+				// v2: generate runId for execution tracking
+				const runId = protocolVersion === 2 ? crypto.randomUUID() : undefined;
+				if (runId) currentRunId = runId;
 				await session.steer(command.message, command.images);
-				return success(id, "steer");
+				return { id, type: "response", command: "steer", success: true, ...(runId && { runId }) } as RpcResponse;
 			}
 
 			case "follow_up": {
+				// v2: generate runId for execution tracking
+				const runId = protocolVersion === 2 ? crypto.randomUUID() : undefined;
+				if (runId) currentRunId = runId;
 				await session.followUp(command.message, command.images);
-				return success(id, "follow_up");
+				return { id, type: "response", command: "follow_up", success: true, ...(runId && { runId }) } as RpcResponse;
 			}
 
 			case "abort": {
@@ -709,9 +780,31 @@ export async function runRpcMode(session: AgentSession): Promise<never> {
 				return success(id, "terminal_redraw");
 			}
 
+			// =================================================================
+			// v2 Protocol: subscribe
+			// =================================================================
+
+			case "subscribe": {
+				if (command.events.includes("*")) {
+					eventFilter = null; // wildcard = all events
+				} else {
+					eventFilter = new Set(command.events);
+				}
+				return success(id, "subscribe");
+			}
+
+			// =================================================================
+			// v2 Protocol: shutdown
+			// =================================================================
+
+			case "shutdown": {
+				shutdownRequested = true;
+				return success(id, "shutdown");
+			}
+
 			default: {
-				const unknownCommand = command as { type: string };
-				return error(undefined, unknownCommand.type, `Unknown command: ${unknownCommand.type}`);
+				const unknownCommand = command as { type: string; id?: string };
+				return error(unknownCommand.id, unknownCommand.type, `Unknown command: ${unknownCommand.type}`);
 			}
 		}
 	};
@@ -730,6 +823,7 @@ export async function runRpcMode(session: AgentSession): Promise<never> {
 			await currentRunner.emit({ type: "session_shutdown" });
 		}
 
+		unsubscribe();
 		embeddedInteractiveMode?.stop();
 		detachInput();
 		process.stdin.pause();
@@ -740,7 +834,7 @@ export async function runRpcMode(session: AgentSession): Promise<never> {
 		try {
 			const parsed = JSON.parse(line);
 
-			// Handle extension UI responses
+			// Handle extension UI responses (bypass protocol detection)
 			if (parsed.type === "extension_ui_response") {
 				const response = parsed as RpcExtensionUIResponse;
 				const pending = pendingExtensionRequests.get(response.id);
@@ -751,8 +845,33 @@ export async function runRpcMode(session: AgentSession): Promise<never> {
 				return;
 			}
 
-			// Handle regular commands
 			const command = parsed as RpcCommand;
+
+			// Protocol version detection: first non-UI-response command locks the version
+			if (!protocolLocked) {
+				protocolLocked = true;
+				if (command.type === "init") {
+					protocolVersion = 2;
+					const initResult: RpcInitResult = {
+						protocolVersion: 2,
+						sessionId: session.sessionId,
+						capabilities: {
+							events: ["execution_complete", "cost_update"],
+							commands: ["init", "shutdown", "subscribe"],
+						},
+					};
+					output(success(command.id, "init", initResult));
+					return;
+				}
+				// Non-init first message: lock to v1, fall through to normal handling
+				protocolVersion = 1;
+			} else if (command.type === "init") {
+				// Already locked — reject re-init
+				output(error(command.id, "init", "Protocol version already locked. init must be the first command."));
+				return;
+			}
+
+			// Handle regular commands
 			const response = await handleCommand(command);
 			output(response);
 

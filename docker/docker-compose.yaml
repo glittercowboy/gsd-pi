@@ -1,0 +1,23 @@
+services:
+  gsd:
+    build:
+      context: .
+      dockerfile: Dockerfile.sandbox
+      args:
+        GSD_VERSION: latest
+    container_name: gsd-sandbox
+    ports:
+      - "3000:3000"
+    volumes:
+      - ../:/workspace
+      - gsd-state:/home/gsd/.gsd
+    env_file:
+      - .env
+    environment:
+      - NODE_ENV=development
+    stdin_open: true
+    tty: true
+
+volumes:
+  gsd-state:
+    driver: local

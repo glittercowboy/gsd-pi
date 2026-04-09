@@ -8,7 +8,7 @@ test("isCmuxTerminal detects cmux env vars", () => {
   assert.equal(isCmuxTerminal({ TERM_PROGRAM: "ghostty" } as NodeJS.ProcessEnv), false);
 });
 
-test("detectCapabilities treats cmux as kitty-capable", () => {
+test("detectCapabilities treats cmux as kitty-capable", (t) => {
   const originalEnv = process.env;
   process.env = {
     ...originalEnv,
@@ -16,15 +16,15 @@ test("detectCapabilities treats cmux as kitty-capable", () => {
     CMUX_SURFACE_ID: "surface:2",
     TERM_PROGRAM: "ghostty",
   };
-  try {
-    resetCapabilitiesCache();
-    assert.deepEqual(detectCapabilities(), {
-      images: "kitty",
-      trueColor: true,
-      hyperlinks: true,
-    });
-  } finally {
+  t.after(() => {
     process.env = originalEnv;
     resetCapabilitiesCache();
-  }
+  });
+
+  resetCapabilitiesCache();
+  assert.deepEqual(detectCapabilities(), {
+    images: "kitty",
+    trueColor: true,
+    hyperlinks: true,
+  });
 });

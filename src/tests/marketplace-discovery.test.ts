@@ -257,60 +257,51 @@ describe('Marketplace Discovery Contract Tests', { skip: skipReason }, () => {
       assert.strictEqual(result.summary.error, 0);
     });
 
-    it('should return error for directory without marketplace.json', () => {
+    it('should return error for directory without marketplace.json', (t) => {
       // Create a temp directory without marketplace.json
       const tmpDir = '/tmp/test-no-marketplace-' + Date.now();
       fs.mkdirSync(tmpDir, { recursive: true });
       
-      try {
-        const result = discoverMarketplace(tmpDir);
-        
-        assert.strictEqual(result.status, 'error');
-        assert.ok(result.error, 'Error message should be present');
-        assert.ok(result.error.includes('not found'),
-          `Error should mention 'not found', got: ${result.error}`);
-      } finally {
-        fs.rmSync(tmpDir, { recursive: true });
-      }
+      t.after(() => fs.rmSync(tmpDir, { recursive: true, force: true }));
+      const result = discoverMarketplace(tmpDir);
+      
+      assert.strictEqual(result.status, 'error');
+      assert.ok(result.error, 'Error message should be present');
+      assert.ok(result.error.includes('not found'),
+        `Error should mention 'not found', got: ${result.error}`);
     });
 
-    it('should return error for malformed marketplace.json', () => {
+    it('should return error for malformed marketplace.json', (t) => {
       const tmpDir = '/tmp/test-malformed-marketplace-' + Date.now();
       fs.mkdirSync(tmpDir + '/.claude-plugin', { recursive: true });
       fs.writeFileSync(tmpDir + '/.claude-plugin/marketplace.json', '{ this is not valid json }');
       
-      try {
-        const result = discoverMarketplace(tmpDir);
-        
-        assert.strictEqual(result.status, 'error');
-        assert.ok(result.error, 'Error message should be present');
-        assert.ok(result.error.includes('Failed to parse'),
-          `Error should mention 'Failed to parse', got: ${result.error}`);
-      } finally {
-        fs.rmSync(tmpDir, { recursive: true });
-      }
+      t.after(() => fs.rmSync(tmpDir, { recursive: true, force: true }));
+      const result = discoverMarketplace(tmpDir);
+      
+      assert.strictEqual(result.status, 'error');
+      assert.ok(result.error, 'Error message should be present');
+      assert.ok(result.error.includes('Failed to parse'),
+        `Error should mention 'Failed to parse', got: ${result.error}`);
     });
 
-    it('should return error for marketplace.json missing required fields', () => {
+    it('should return error for marketplace.json missing required fields', (t) => {
       const tmpDir = '/tmp/test-invalid-marketplace-' + Date.now();
       fs.mkdirSync(tmpDir + '/.claude-plugin', { recursive: true });
       // Valid JSON but missing required 'name' and 'plugins' fields
       fs.writeFileSync(tmpDir + '/.claude-plugin/marketplace.json', JSON.stringify({ description: 'test' }));
       
-      try {
-        const parseResult = parseMarketplaceJson(tmpDir);
-        
-        assert.strictEqual(parseResult.success, false);
-        if (!parseResult.success) {
-          assert.ok(parseResult.error.includes('missing'),
-            `Error should mention missing field, got: ${parseResult.error}`);
-        }
-      } finally {
-        fs.rmSync(tmpDir, { recursive: true });
+      t.after(() => fs.rmSync(tmpDir, { recursive: true, force: true }));
+      const parseResult = parseMarketplaceJson(tmpDir);
+      
+      assert.strictEqual(parseResult.success, false);
+      if (!parseResult.success) {
+        assert.ok(parseResult.error.includes('missing'),
+          `Error should mention missing field, got: ${parseResult.error}`);
       }
     });
 
-    it('should handle missing plugin directory gracefully', () => {
+    it('should handle missing plugin directory gracefully', (t) => {
       const tmpDir = '/tmp/test-missing-plugin-' + Date.now();
       fs.mkdirSync(tmpDir + '/.claude-plugin', { recursive: true });
       fs.writeFileSync(tmpDir + '/.claude-plugin/marketplace.json', JSON.stringify({
@@ -320,21 +311,18 @@ describe('Marketplace Discovery Contract Tests', { skip: skipReason }, () => {
         ]
       }));
       
-      try {
-        const result = discoverMarketplace(tmpDir);
-        
-        // Marketplace should parse ok, but the missing plugin should have error status
-        assert.strictEqual(result.status, 'error'); // Because one plugin has error
-        
-        const missingPlugin = result.plugins.find(p => p.name === 'missing-plugin');
-        assert.ok(missingPlugin, 'Missing plugin should be in results');
-        assert.strictEqual(missingPlugin.status, 'error');
-        assert.ok(missingPlugin.error, 'Missing plugin should have error message');
-        assert.ok(missingPlugin.error.includes('not found'),
-          `Error should mention 'not found', got: ${missingPlugin.error}`);
-      } finally {
-        fs.rmSync(tmpDir, { recursive: true });
-      }
+      t.after(() => fs.rmSync(tmpDir, { recursive: true, force: true }));
+      const result = discoverMarketplace(tmpDir);
+      
+      // Marketplace should parse ok, but the missing plugin should have error status
+      assert.strictEqual(result.status, 'error'); // Because one plugin has error
+      
+      const missingPlugin = result.plugins.find(p => p.name === 'missing-plugin');
+      assert.ok(missingPlugin, 'Missing plugin should be in results');
+      assert.strictEqual(missingPlugin.status, 'error');
+      assert.ok(missingPlugin.error, 'Missing plugin should have error message');
+      assert.ok(missingPlugin.error.includes('not found'),
+        `Error should mention 'not found', got: ${missingPlugin.error}`);
     });
   });
 

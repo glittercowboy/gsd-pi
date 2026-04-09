@@ -6,7 +6,7 @@ import { handleConfig } from "../../commands-config.js";
 import { handleDoctor, handleCapture, handleKnowledge, handleRunHook, handleSkillHealth, handleSteer, handleTriage, handleUpdate } from "../../commands-handlers.js";
 import { handleInspect } from "../../commands-inspect.js";
 import { handleLogs } from "../../commands-logs.js";
-import { handleCleanupBranches, handleCleanupSnapshots, handleSkip, handleCleanupProjects, handleCleanupWorktrees } from "../../commands-maintenance.js";
+import { handleCleanupBranches, handleCleanupSnapshots, handleSkip, handleCleanupProjects, handleCleanupWorktrees, handleRecover } from "../../commands-maintenance.js";
 import { handleExport } from "../../export.js";
 import { handleHistory } from "../../history.js";
 import { handleUndo } from "../../undo.js";
@@ -53,6 +53,16 @@ export async function handleOpsCommand(trimmed: string, ctx: ExtensionCommandCon
     await handleHistory(trimmed.replace(/^history\s*/, "").trim(), ctx, projectRoot());
     return true;
   }
+  if (trimmed === "undo-task" || trimmed.startsWith("undo-task ")) {
+    const { handleUndoTask } = await import("../../undo.js");
+    await handleUndoTask(trimmed.replace(/^undo-task\s*/, "").trim(), ctx, pi, projectRoot());
+    return true;
+  }
+  if (trimmed === "reset-slice" || trimmed.startsWith("reset-slice ")) {
+    const { handleResetSlice } = await import("../../undo.js");
+    await handleResetSlice(trimmed.replace(/^reset-slice\s*/, "").trim(), ctx, pi, projectRoot());
+    return true;
+  }
   if (trimmed === "undo" || trimmed.startsWith("undo ")) {
     await handleUndo(trimmed.replace(/^undo\s*/, "").trim(), ctx, pi, projectRoot());
     return true;
@@ -63,6 +73,10 @@ export async function handleOpsCommand(trimmed: string, ctx: ExtensionCommandCon
   }
   if (trimmed.startsWith("skip ")) {
     await handleSkip(trimmed.replace(/^skip\s*/, "").trim(), ctx, projectRoot());
+    return true;
+  }
+  if (trimmed === "recover") {
+    await handleRecover(ctx, projectRoot());
     return true;
   }
   if (trimmed === "export" || trimmed.startsWith("export ")) {
@@ -164,6 +178,11 @@ Examples:
     await dispatchDirectPhase(ctx, pi, phase, projectRoot());
     return true;
   }
+  if (trimmed === "notifications" || trimmed.startsWith("notifications ")) {
+    const { handleNotificationsCommand } = await import("./notifications-handler.js");
+    await handleNotificationsCommand(trimmed.replace(/^notifications\s*/, "").trim(), ctx, pi);
+    return true;
+  }
   if (trimmed === "inspect") {
     await handleInspect(ctx);
     return true;
@@ -177,9 +196,24 @@ Examples:
     await handleFast(trimmed.replace(/^fast\s*/, "").trim(), ctx);
     return true;
   }
+  if (trimmed === "mcp" || trimmed.startsWith("mcp ")) {
+    const { handleMcpStatus } = await import("../../commands-mcp-status.js");
+    await handleMcpStatus(trimmed.replace(/^mcp\s*/, "").trim(), ctx);
+    return true;
+  }
   if (trimmed === "extensions" || trimmed.startsWith("extensions ")) {
     const { handleExtensions } = await import("../../commands-extensions.js");
     await handleExtensions(trimmed.replace(/^extensions\s*/, "").trim(), ctx);
+    return true;
+  }
+  if (trimmed === "rethink") {
+    const { handleRethink } = await import("../../rethink.js");
+    await handleRethink(trimmed, ctx, pi);
+    return true;
+  }
+  if (trimmed === "codebase" || trimmed.startsWith("codebase ")) {
+    const { handleCodebase } = await import("../../commands-codebase.js");
+    await handleCodebase(trimmed.replace(/^codebase\s*/, "").trim(), ctx, pi);
     return true;
   }
   return false;

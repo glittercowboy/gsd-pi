@@ -49,6 +49,12 @@ export class RemoteTerminal implements Terminal {
 		return this._rows;
 	}
 
+	get isTTY(): boolean {
+		// RemoteTerminal renders to a browser-based terminal emulator via
+		// the RPC bridge — it behaves like a real TTY for rendering purposes.
+		return true;
+	}
+
 	get kittyProtocolActive(): boolean {
 		return false;
 	}

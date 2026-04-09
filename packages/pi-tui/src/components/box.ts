@@ -31,6 +31,16 @@ export class Box implements Component {
 		this.invalidateCache();
 	}
 
+	insertChildBefore(component: Component, before: Component): void {
+		const index = this.children.indexOf(before);
+		if (index !== -1) {
+			this.children.splice(index, 0, component);
+		} else {
+			this.children.push(component);
+		}
+		this.invalidateCache();
+	}
+
 	removeChild(component: Component): void {
 		const index = this.children.indexOf(component);
 		if (index !== -1) {

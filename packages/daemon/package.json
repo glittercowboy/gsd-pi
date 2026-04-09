@@ -1,0 +1,48 @@
+{
+  "name": "@gsd-build/daemon",
+  "version": "0.1.0",
+  "description": "GSD daemon — background process for project monitoring and Discord integration",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/gsd-build/gsd-2.git",
+    "directory": "packages/daemon"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "bin": {
+    "gsd-daemon": "./dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "test": "node --test dist/daemon.test.js"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.52.0",
+    "@gsd-build/rpc-client": "^2.52.0",
+    "discord.js": "^14.25.1",
+    "yaml": "^2.8.0",
+    "zod": "^3.24.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.12.0",
+    "typescript": "^5.4.0"
+  },
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "files": [
+    "dist",
+    "!dist/**/*.test.*"
+  ]
+}

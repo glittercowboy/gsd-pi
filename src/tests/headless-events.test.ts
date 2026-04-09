@@ -149,3 +149,39 @@ test('empty filter blocks all events', () => {
   assert.ok(!shouldEmit('agent_end'))
   assert.ok(!shouldEmit('message_update'))
 })
+
+import { mapStatusToExitCode, EXIT_SUCCESS, EXIT_ERROR, EXIT_BLOCKED, EXIT_CANCELLED } from '../headless-events.js'
+
+// ─── mapStatusToExitCode ─────────────────────────────────────────────────
+
+test('mapStatusToExitCode: "complete" returns EXIT_SUCCESS', () => {
+  assert.equal(mapStatusToExitCode('complete'), EXIT_SUCCESS)
+})
+
+test('mapStatusToExitCode: "completed" returns EXIT_SUCCESS', () => {
+  assert.equal(mapStatusToExitCode('completed'), EXIT_SUCCESS)
+})
+
+test('mapStatusToExitCode: "success" returns EXIT_SUCCESS', () => {
+  assert.equal(mapStatusToExitCode('success'), EXIT_SUCCESS)
+})
+
+test('mapStatusToExitCode: "error" returns EXIT_ERROR', () => {
+  assert.equal(mapStatusToExitCode('error'), EXIT_ERROR)
+})
+
+test('mapStatusToExitCode: "timeout" returns EXIT_ERROR', () => {
+  assert.equal(mapStatusToExitCode('timeout'), EXIT_ERROR)
+})
+
+test('mapStatusToExitCode: "blocked" returns EXIT_BLOCKED', () => {
+  assert.equal(mapStatusToExitCode('blocked'), EXIT_BLOCKED)
+})
+
+test('mapStatusToExitCode: "cancelled" returns EXIT_CANCELLED', () => {
+  assert.equal(mapStatusToExitCode('cancelled'), EXIT_CANCELLED)
+})
+
+test('mapStatusToExitCode: unknown status returns EXIT_ERROR', () => {
+  assert.equal(mapStatusToExitCode('unknown'), EXIT_ERROR)
+})

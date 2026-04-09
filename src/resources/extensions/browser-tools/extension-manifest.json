@@ -29,7 +29,7 @@
       "browser_visual_diff", "browser_zoom_region",
       "browser_generate_test", "browser_action_cache", "browser_check_injection"
     ],
-    "hooks": ["session_shutdown"]
+    "hooks": ["session_start", "session_shutdown"]
   },
   "dependencies": {
     "runtime": ["playwright"]

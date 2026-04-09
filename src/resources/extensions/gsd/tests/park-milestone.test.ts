@@ -1,3 +1,5 @@
+import { describe, test } from 'node:test';
+import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync, existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -6,26 +8,7 @@ import { deriveState, invalidateStateCache, getActiveMilestoneId } from '../stat
 import { clearPathCache } from '../paths.ts';
 import { parkMilestone, unparkMilestone, discardMilestone, isParked, getParkedReason } from '../milestone-actions.ts';
 
-let passed = 0;
-let failed = 0;
 
-function assert(condition: boolean, message: string): void {
-  if (condition) {
-    passed++;
-  } else {
-    failed++;
-    console.error(`  FAIL: ${message}`);
-  }
-}
-
-function assertEq<T>(actual: T, expected: T, message: string): void {
-  if (JSON.stringify(actual) === JSON.stringify(expected)) {
-    passed++;
-  } else {
-    failed++;
-    console.error(`  FAIL: ${message} — expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`);
-  }
-}
 
 // ─── Fixture Helpers ───────────────────────────────────────────────────────
 
@@ -89,30 +72,28 @@ function clearCaches(): void {
 // Tests
 // ═══════════════════════════════════════════════════════════════════════════
 
-async function main(): Promise<void> {
-
   // ─── Test 1: parkMilestone creates PARKED.md ──────────────────────────
-  console.log('\n=== parkMilestone creates PARKED.md ===');
-  {
+
+describe('park-milestone', () => {
+test('parkMilestone creates PARKED.md', () => {
     const base = createFixtureBase();
     try {
       createMilestone(base, 'M001', { withRoadmap: true });
       clearCaches();
 
       const success = parkMilestone(base, 'M001', 'Priority shift');
-      assert(success, 'parkMilestone returns true');
-      assert(isParked(base, 'M001'), 'isParked returns true after parking');
+      assert.ok(success, 'parkMilestone returns true');
+      assert.ok(isParked(base, 'M001'), 'isParked returns true after parking');
 
       const reason = getParkedReason(base, 'M001');
-      assertEq(reason, 'Priority shift', 'reason matches');
+      assert.deepStrictEqual(reason, 'Priority shift', 'reason matches');
     } finally {
       cleanup(base);
     }
-  }
+});
 
   // ─── Test 2: parkMilestone is idempotent — fails if already parked ────
-  console.log('\n=== parkMilestone fails if already parked ===');
-  {
+test('parkMilestone fails if already parked', () => {
     const base = createFixtureBase();
     try {
       createMilestone(base, 'M001', { withRoadmap: true });
@@ -120,50 +101,47 @@ async function main(): Promise<void> {
 
       parkMilestone(base, 'M001', 'First park');
       const secondPark = parkMilestone(base, 'M001', 'Second park');
-      assert(!secondPark, 'second parkMilestone returns false');
-      assertEq(getParkedReason(base, 'M001'), 'First park', 'reason unchanged from first park');
+      assert.ok(!secondPark, 'second parkMilestone returns false');
+      assert.deepStrictEqual(getParkedReason(base, 'M001'), 'First park', 'reason unchanged from first park');
     } finally {
       cleanup(base);
     }
-  }
+});
 
   // ─── Test 3: unparkMilestone removes PARKED.md ────────────────────────
-  console.log('\n=== unparkMilestone removes PARKED.md ===');
-  {
+test('unparkMilestone removes PARKED.md', () => {
     const base = createFixtureBase();
     try {
       createMilestone(base, 'M001', { withRoadmap: true });
       clearCaches();
 
       parkMilestone(base, 'M001', 'Test reason');
-      assert(isParked(base, 'M001'), 'milestone is parked');
+      assert.ok(isParked(base, 'M001'), 'milestone is parked');
 
       const success = unparkMilestone(base, 'M001');
-      assert(success, 'unparkMilestone returns true');
-      assert(!isParked(base, 'M001'), 'isParked returns false after unpark');
+      assert.ok(success, 'unparkMilestone returns true');
+      assert.ok(!isParked(base, 'M001'), 'isParked returns false after unpark');
     } finally {
       cleanup(base);
     }
-  }
+});
 
   // ─── Test 4: unparkMilestone fails if not parked ──────────────────────
-  console.log('\n=== unparkMilestone fails if not parked ===');
-  {
+test('unparkMilestone fails if not parked', () => {
     const base = createFixtureBase();
     try {
       createMilestone(base, 'M001', { withRoadmap: true });
       clearCaches();
 
       const result = unparkMilestone(base, 'M001');
-      assert(!result, 'unparkMilestone returns false when not parked');
+      assert.ok(!result, 'unparkMilestone returns false when not parked');
     } finally {
       cleanup(base);
     }
-  }
+});
 
   // ─── Test 5: deriveState returns 'parked' status ──────────────────────
-  console.log('\n=== deriveState returns parked status ===');
-  {
+test('deriveState returns parked status', async () => {
     const base = createFixtureBase();
     try {
       createMilestone(base, 'M001', { withRoadmap: true });
@@ -173,16 +151,15 @@ async function main(): Promise<void> {
 
       const state = await deriveState(base);
       const entry = state.registry.find(e => e.id === 'M001');
-      assert(!!entry, 'M001 in registry');
-      assertEq(entry?.status, 'parked', 'status is parked');
+      assert.ok(!!entry, 'M001 in registry');
+      assert.deepStrictEqual(entry?.status, 'parked', 'status is parked');
     } finally {
       cleanup(base);
     }
-  }
+});
 
   // ─── Test 6: deriveState skips parked milestone for active ─────────────
-  console.log('\n=== deriveState skips parked milestone ===');
-  {
+test('deriveState skips parked milestone', async () => {
     const base = createFixtureBase();
     try {
       createMilestone(base, 'M001', { withRoadmap: true });
@@ -191,29 +168,28 @@ async function main(): Promise<void> {
 
       // Before park: M001 is active
       const stateBefore = await deriveState(base);
-      assertEq(stateBefore.activeMilestone?.id, 'M001', 'before park: M001 is active');
+      assert.deepStrictEqual(stateBefore.activeMilestone?.id, 'M001', 'before park: M001 is active');
 
       parkMilestone(base, 'M001', 'Testing');
 
       // After park: M002 becomes active
       const stateAfter = await deriveState(base);
-      assertEq(stateAfter.activeMilestone?.id, 'M002', 'after park: M002 is active');
+      assert.deepStrictEqual(stateAfter.activeMilestone?.id, 'M002', 'after park: M002 is active');
 
       // M001 still in registry as parked
       const m001 = stateAfter.registry.find(e => e.id === 'M001');
-      assertEq(m001?.status, 'parked', 'M001 has parked status');
+      assert.deepStrictEqual(m001?.status, 'parked', 'M001 has parked status');
 
       // M002 is active
       const m002 = stateAfter.registry.find(e => e.id === 'M002');
-      assertEq(m002?.status, 'active', 'M002 has active status');
+      assert.deepStrictEqual(m002?.status, 'active', 'M002 has active status');
     } finally {
       cleanup(base);
     }
-  }
+});
 
   // ─── Test 7: getActiveMilestoneId skips parked ────────────────────────
-  console.log('\n=== getActiveMilestoneId skips parked ===');
-  {
+test('getActiveMilestoneId skips parked', async () => {
     const base = createFixtureBase();
     try {
       createMilestone(base, 'M001', { withRoadmap: true });
@@ -223,15 +199,14 @@ async function main(): Promise<void> {
       parkMilestone(base, 'M001', 'Testing');
 
       const activeId = await getActiveMilestoneId(base);
-      assertEq(activeId, 'M002', 'getActiveMilestoneId returns M002');
+      assert.deepStrictEqual(activeId, 'M002', 'getActiveMilestoneId returns M002');
     } finally {
       cleanup(base);
     }
-  }
+});
 
   // ─── Test 8: Parked milestone does NOT satisfy depends_on ─────────────
-  console.log('\n=== Parked milestone does not satisfy depends_on ===');
-  {
+test('Parked milestone does not satisfy depends_on', async () => {
     const base = createFixtureBase();
     try {
       createMilestone(base, 'M001', { withRoadmap: true });
@@ -243,18 +218,17 @@ async function main(): Promise<void> {
       const state = await deriveState(base);
       // M001 is parked, M002 depends on M001 → M002 should be pending, not active
       const m002 = state.registry.find(e => e.id === 'M002');
-      assertEq(m002?.status, 'pending', 'M002 stays pending when M001 is parked');
+      assert.deepStrictEqual(m002?.status, 'pending', 'M002 stays pending when M001 is parked');
 
       // No active milestone (both are blocked/parked)
-      assertEq(state.activeMilestone, null, 'no active milestone');
+      assert.deepStrictEqual(state.activeMilestone, null, 'no active milestone');
     } finally {
       cleanup(base);
     }
-  }
+});
 
   // ─── Test 9: Park then unpark restores correct status ─────────────────
-  console.log('\n=== Park then unpark restores status ===');
-  {
+test('Park then unpark restores status', async () => {
     const base = createFixtureBase();
     try {
       createMilestone(base, 'M001', { withRoadmap: true });
@@ -264,43 +238,41 @@ async function main(): Promise<void> {
       // Park M001
       parkMilestone(base, 'M001', 'Testing');
       const stateParked = await deriveState(base);
-      assertEq(stateParked.activeMilestone?.id, 'M002', 'while parked: M002 is active');
+      assert.deepStrictEqual(stateParked.activeMilestone?.id, 'M002', 'while parked: M002 is active');
 
       // Unpark M001 — M001 should become active again (it's first in queue)
       unparkMilestone(base, 'M001');
       const stateUnparked = await deriveState(base);
-      assertEq(stateUnparked.activeMilestone?.id, 'M001', 'after unpark: M001 is active again');
-      assertEq(stateUnparked.registry.find(e => e.id === 'M001')?.status, 'active', 'M001 is active status');
+      assert.deepStrictEqual(stateUnparked.activeMilestone?.id, 'M001', 'after unpark: M001 is active again');
+      assert.deepStrictEqual(stateUnparked.registry.find(e => e.id === 'M001')?.status, 'active', 'M001 is active status');
     } finally {
       cleanup(base);
     }
-  }
+});
 
   // ─── Test 10: discardMilestone removes directory ──────────────────────
-  console.log('\n=== discardMilestone removes directory ===');
-  {
+test('discardMilestone removes directory', async () => {
     const base = createFixtureBase();
     try {
       createMilestone(base, 'M001', { withRoadmap: true });
       clearCaches();
 
       const mDir = join(base, '.gsd', 'milestones', 'M001');
-      assert(existsSync(mDir), 'milestone dir exists before discard');
+      assert.ok(existsSync(mDir), 'milestone dir exists before discard');
 
       const success = discardMilestone(base, 'M001');
-      assert(success, 'discardMilestone returns true');
-      assert(!existsSync(mDir), 'milestone dir removed after discard');
+      assert.ok(success, 'discardMilestone returns true');
+      assert.ok(!existsSync(mDir), 'milestone dir removed after discard');
 
       const state = await deriveState(base);
-      assert(!state.registry.some(e => e.id === 'M001'), 'M001 not in registry after discard');
+      assert.ok(!state.registry.some(e => e.id === 'M001'), 'M001 not in registry after discard');
     } finally {
       cleanup(base);
     }
-  }
+});
 
   // ─── Test 11: discardMilestone updates queue order ────────────────────
-  console.log('\n=== discardMilestone updates queue order ===');
-  {
+test('discardMilestone updates queue order', () => {
     const base = createFixtureBase();
     try {
       createMilestone(base, 'M001', { withRoadmap: true });
@@ -315,16 +287,15 @@ async function main(): Promise<void> {
 
       // Queue order should no longer include M001
       const queueContent = JSON.parse(readFileSync(queuePath, 'utf-8'));
-      assert(!queueContent.order.includes('M001'), 'M001 removed from queue order');
-      assert(queueContent.order.includes('M002'), 'M002 still in queue order');
+      assert.ok(!queueContent.order.includes('M001'), 'M001 removed from queue order');
+      assert.ok(queueContent.order.includes('M002'), 'M002 still in queue order');
     } finally {
       cleanup(base);
     }
-  }
+});
 
   // ─── Test 12: All milestones parked → no active milestone ─────────────
-  console.log('\n=== All milestones parked → no active ===');
-  {
+test('All milestones parked → no active', async () => {
     const base = createFixtureBase();
     try {
       createMilestone(base, 'M001', { withRoadmap: true });
@@ -333,18 +304,17 @@ async function main(): Promise<void> {
       parkMilestone(base, 'M001', 'Testing');
 
       const state = await deriveState(base);
-      assertEq(state.activeMilestone, null, 'no active milestone when all parked');
-      assertEq(state.phase, 'pre-planning', 'phase is pre-planning');
-      assert(state.registry.length === 1, 'registry still has 1 entry');
-      assertEq(state.registry[0]?.status, 'parked', 'entry is parked');
+      assert.deepStrictEqual(state.activeMilestone, null, 'no active milestone when all parked');
+      assert.deepStrictEqual(state.phase, 'pre-planning', 'phase is pre-planning');
+      assert.ok(state.registry.length === 1, 'registry still has 1 entry');
+      assert.deepStrictEqual(state.registry[0]?.status, 'parked', 'entry is parked');
     } finally {
       cleanup(base);
     }
-  }
+});
 
   // ─── Test 13: Parked milestone without roadmap ────────────────────────
-  console.log('\n=== Park milestone without roadmap ===');
-  {
+test('Park milestone without roadmap', async () => {
     const base = createFixtureBase();
     try {
       createMilestone(base, 'M001'); // No roadmap
@@ -354,16 +324,15 @@ async function main(): Promise<void> {
       parkMilestone(base, 'M001', 'Not ready yet');
 
       const state = await deriveState(base);
-      assertEq(state.activeMilestone?.id, 'M002', 'M002 is active when M001 (no roadmap) is parked');
-      assertEq(state.registry.find(e => e.id === 'M001')?.status, 'parked', 'M001 is parked');
+      assert.deepStrictEqual(state.activeMilestone?.id, 'M002', 'M002 is active when M001 (no roadmap) is parked');
+      assert.deepStrictEqual(state.registry.find(e => e.id === 'M001')?.status, 'parked', 'M001 is parked');
     } finally {
       cleanup(base);
     }
-  }
+});
 
   // ─── Test 14: Progress counts with parked milestone ───────────────────
-  console.log('\n=== Progress counts with parked ===');
-  {
+test('Progress counts with parked', async () => {
     const base = createFixtureBase();
     try {
       createMilestone(base, 'M001', { withRoadmap: true, withSummary: true }); // complete
@@ -374,28 +343,12 @@ async function main(): Promise<void> {
       parkMilestone(base, 'M002', 'Parked');
 
       const state = await deriveState(base);
-      assertEq(state.progress?.milestones.done, 1, '1 complete milestone');
-      assertEq(state.progress?.milestones.total, 3, '3 total milestones (including parked)');
-      assertEq(state.activeMilestone?.id, 'M003', 'M003 is active');
+      assert.deepStrictEqual(state.progress?.milestones.done, 1, '1 complete milestone');
+      assert.deepStrictEqual(state.progress?.milestones.total, 3, '3 total milestones (including parked)');
+      assert.deepStrictEqual(state.activeMilestone?.id, 'M003', 'M003 is active');
     } finally {
       cleanup(base);
     }
-  }
+});
 
-  // ═══════════════════════════════════════════════════════════════════════════
-  // Results
-  // ═══════════════════════════════════════════════════════════════════════════
-
-  console.log(`\n${'='.repeat(40)}`);
-  console.log(`Results: ${passed} passed, ${failed} failed`);
-  if (failed > 0) {
-    process.exit(1);
-  } else {
-    console.log('All tests passed ✓');
-  }
-}
-
-main().catch((error) => {
-  console.error(error);
-  process.exit(1);
 });

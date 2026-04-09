@@ -105,7 +105,7 @@ function discoverManifests(): Map<string, ExtensionManifest> {
   const manifests = new Map<string, ExtensionManifest>();
   if (!existsSync(extDir)) return manifests;
   for (const entry of readdirSync(extDir, { withFileTypes: true })) {
-    if (!entry.isDirectory()) continue;
+    if (!entry.isDirectory() && !entry.isSymbolicLink()) continue;
     const m = readManifest(join(extDir, entry.name));
     if (m) manifests.set(m.id, m);
   }

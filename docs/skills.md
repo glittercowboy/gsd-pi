@@ -2,28 +2,85 @@
 
 Skills are specialized instruction sets that GSD loads when the task matches. They provide domain-specific guidance for the LLM — coding patterns, framework idioms, testing strategies, and tool usage.
 
-## Bundled Skills
+Skills follow the open [Agent Skills standard](https://agentskills.io/) and are **not GSD-specific** — they work with Claude Code, OpenAI Codex, Cursor, GitHub Copilot, Windsurf, and 40+ other agents.
 
-GSD ships with these skills, installed to `~/.gsd/agent/skills/`:
+## Skill Directories
 
-| Skill | Trigger | Description |
-|-------|---------|-------------|
-| `frontend-design` | Web UI work — components, pages, dashboards, styling | Production-grade frontend with high design quality |
-| `swiftui` | macOS/iOS apps — SwiftUI, Xcode, App Store | Full lifecycle from creation to shipping |
-| `debug-like-expert` | Complex debugging — after standard approaches fail | Methodical investigation with evidence gathering |
-| `rust-core` | Rust code — ownership, lifetimes, traits, async | Idiomatic, safe, performant Rust patterns |
-| `axum-web-framework` | Axum web apps — routing, middleware, extractors | Complete Axum development guide |
-| `axum-tests` | Testing Axum apps — integration tests, mock state | Test patterns for Axum applications |
-| `tauri` | Tauri v2 desktop apps — setup, plugins, bundling | Cross-platform desktop app development |
-| `tauri-ipc-developer` | Tauri IPC — React-Rust type-safe communication | Command scaffolding and serialization |
-| `tauri-devtools` | Tauri debugging — CrabNebula DevTools integration | Profiling and monitoring |
-| `github-workflows` | GitHub Actions — CI/CD, workflow debugging | Live syntax, run monitoring, failure diagnosis |
-| `security-audit` | Security auditing — dependency scanning, OWASP | Comprehensive security assessment |
-| `security-review` | Code security review — injection, XSS, auth flaws | Vulnerability-focused code review |
-| `security-docker` | Docker security — Dockerfile, runtime hardening | Container security best practices |
-| `review` | Code review — staged changes, PRs, security, performance | Diff-aware code review with quality analysis |
-| `test` | Test generation and execution — auto-detects frameworks | Generate tests or run existing suites with failure analysis |
-| `lint` | Linting and formatting — ESLint, Biome, Prettier | Auto-detect linter, fix issues, report remaining problems |
+GSD reads skills from two locations, in priority order:
+
+| Location                          | Scope   | Description                                              |
+|-----------------------------------|---------|----------------------------------------------------------|
+| `~/.agents/skills/`              | Global  | Shared across all projects and all compatible agents     |
+| `.agents/skills/` (project root) | Project | Project-specific skills, committable to version control  |
+
+Global skills take precedence over project skills when names collide.
+
+> **Migration from `~/.gsd/agent/skills/`:** On first launch after upgrading, GSD automatically copies skills from the legacy `~/.gsd/agent/skills/` directory to `~/.agents/skills/`. The old directory is preserved for backward compatibility.
+
+## Installing Skills
+
+Skills are installed via the [skills.sh CLI](https://skills.sh):
+
+```bash
+# Interactive — choose skills and target agents
+npx skills add dpearson2699/swift-ios-skills
+
+# Install specific skills non-interactively
+npx skills add dpearson2699/swift-ios-skills --skill swift-concurrency --skill swiftui-patterns -y
+
+# Install all skills from a repo
+npx skills add dpearson2699/swift-ios-skills --all
+
+# Check for updates
+npx skills check
+
+# Update installed skills
+npx skills update
+```
+
+### Onboarding Catalog
+
+During `gsd init`, GSD detects the project's tech stack and recommends relevant skill packs. For brownfield projects, detection is automatic; for greenfield projects, the user picks a tech stack.
+
+The curated catalog is maintained in `src/resources/extensions/gsd/skill-catalog.ts`. Each entry maps a tech stack to a skills.sh repo and specific skill names.
+
+#### Available Skill Packs
+
+**Swift (any Swift project — `Package.swift` or `.xcodeproj` detected):**
+- **SwiftUI** — layout, navigation, animations, gestures, Liquid Glass
+- **Swift Core** — Swift language, concurrency, Codable, Charts, Testing, SwiftData
+
+**iOS (only when `.xcodeproj` targets `iphoneos` via SDKROOT):**
+- **iOS App Frameworks** — App Intents, Widgets, StoreKit, MapKit, Live Activities
+- **iOS Data Frameworks** — CloudKit, HealthKit, MusicKit, WeatherKit, Contacts
+- **iOS AI & ML** — Core ML, Vision, on-device AI, speech recognition
+- **iOS Engineering** — networking, security, accessibility, localization, Instruments
+- **iOS Hardware** — Bluetooth, CoreMotion, NFC, PencilKit, RealityKit
+- **iOS Platform** — CallKit, EnergyKit, HomeKit, SharePlay, PermissionKit
+
+**Web:**
+- **React & Web Frontend** — React best practices, web design, composition patterns
+- **React Native** — cross-platform mobile patterns
+- **Frontend Design & UX** — frontend design, accessibility
+
+**Languages:**
+- **Rust** — Rust patterns and best practices
+- **Python** — Python patterns and best practices
+- **Go** — Go patterns and best practices
+
+**General:**
+- **Document Handling** — PDF, DOCX, XLSX, PPTX creation and manipulation
+
+### Maintaining the Catalog
+
+The skill catalog lives in [`src/resources/extensions/gsd/skill-catalog.ts`](../src/resources/extensions/gsd/skill-catalog.ts). To add or update a pack:
+
+1. Add a `SkillPack` entry to the `SKILL_CATALOG` array with `repo`, `skills`, and matching criteria
+2. For language-detection matching, use `matchLanguages` (values from `detection.ts` `LANGUAGE_MAP`)
+3. For Xcode platform matching, use `matchXcodePlatforms` (e.g., `["iphoneos"]` — parsed from `SDKROOT` in `project.pbxproj`)
+4. For file-presence matching, use `matchFiles` (checked against `PROJECT_FILES` in `detection.ts`)
+5. If the pack should appear in greenfield choices, add it to `GREENFIELD_STACKS`
+6. Packs sharing the same `repo` are batched into a single `npx skills add` invocation
 
 ## Skill Discovery
 
@@ -59,18 +116,18 @@ skill_rules:
 ### Resolution Order
 
 Skills can be referenced by:
-1. **Bare name** — e.g., `frontend-design` → scans `~/.gsd/agent/skills/` and project skills
-2. **Absolute path** — e.g., `/Users/you/.gsd/agent/skills/my-skill/SKILL.md`
+1. **Bare name** — e.g., `frontend-design` → scans `~/.agents/skills/` and project `.agents/skills/`
+2. **Absolute path** — e.g., `/Users/you/.agents/skills/my-skill/SKILL.md`
 3. **Directory path** — e.g., `~/custom-skills/my-skill` → looks for `SKILL.md` inside
 
-User skills (`~/.gsd/agent/skills/`) take precedence over project skills.
+Global skills (`~/.agents/skills/`) take precedence over project skills (`.agents/skills/`).
 
 ## Custom Skills
 
 Create your own skills by adding a directory with a `SKILL.md` file:
 
 ```
-~/.gsd/agent/skills/my-skill/
+~/.agents/skills/my-skill/
   SKILL.md           — instructions for the LLM
   references/        — optional reference files
 ```
@@ -82,9 +139,11 @@ The `SKILL.md` file contains instructions the LLM follows when the skill is acti
 Place skills in your project for project-specific guidance:
 
 ```
-.gsd/agent/skills/my-project-skill/
+.agents/skills/my-project-skill/
   SKILL.md
 ```
+
+Project-local skills can be committed to version control so team members share the same skill set.
 
 ## Skill Lifecycle Management
 

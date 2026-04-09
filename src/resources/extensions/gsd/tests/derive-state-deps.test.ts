@@ -1,11 +1,10 @@
+import { describe, test } from 'node:test';
+import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
 import { deriveState } from '../state.ts';
-import { createTestContext } from './test-helpers.ts';
-
-const { assertEq, assertTrue, report } = createTestContext();
 // ─── Fixture Helpers ───────────────────────────────────────────────────────
 
 function createFixtureBase(): string {
@@ -63,12 +62,11 @@ function cleanup(base: string): void {
 // Test Groups
 // ═══════════════════════════════════════════════════════════════════════════
 
-async function main(): Promise<void> {
+describe('derive-state-deps', async () => {
 
   // ─── Test Group 1: blocked-deps ────────────────────────────────────────
   // M001 is incomplete (no SUMMARY), M002 depends_on M001 → M002 is pending
-  console.log('\n=== blocked-deps ===');
-  {
+  test('blocked-deps', async () => {
     const base = createFixtureBase();
     try {
       // M001: incomplete (one slice, no SUMMARY)
@@ -108,19 +106,18 @@ async function main(): Promise<void> {
 
       const state = await deriveState(base);
 
-      assertEq(state.registry[0]?.status, 'active', 'blocked-deps: M001 is active');
-      assertEq(state.registry[1]?.status, 'pending', 'blocked-deps: M002 is pending (dep-blocked)');
-      assertEq(state.phase, 'executing', 'blocked-deps: phase is executing (M001 is active)');
-      assertEq(state.activeMilestone?.id, 'M001', 'blocked-deps: activeMilestone is M001');
+      assert.deepStrictEqual(state.registry[0]?.status, 'active', 'blocked-deps: M001 is active');
+      assert.deepStrictEqual(state.registry[1]?.status, 'pending', 'blocked-deps: M002 is pending (dep-blocked)');
+      assert.deepStrictEqual(state.phase, 'executing', 'blocked-deps: phase is executing (M001 is active)');
+      assert.deepStrictEqual(state.activeMilestone?.id, 'M001', 'blocked-deps: activeMilestone is M001');
     } finally {
       cleanup(base);
     }
-  }
+  });
 
   // ─── Test Group 2: unblocked-deps ──────────────────────────────────────
   // M001 is complete (all slices [x] + SUMMARY), M002 depends_on M001 → M002 becomes active
-  console.log('\n=== unblocked-deps ===');
-  {
+  test('unblocked-deps', async () => {
     const base = createFixtureBase();
     try {
       // M001: complete (all slices done + SUMMARY present)
@@ -150,19 +147,18 @@ async function main(): Promise<void> {
 
       const state = await deriveState(base);
 
-      assertEq(state.registry[0]?.status, 'complete', 'unblocked-deps: M001 is complete');
-      assertEq(state.registry[1]?.status, 'active', 'unblocked-deps: M002 is active');
-      assertEq(state.activeMilestone?.id, 'M002', 'unblocked-deps: activeMilestone is M002');
-      assertTrue(state.phase !== 'blocked', 'unblocked-deps: phase is not blocked');
+      assert.deepStrictEqual(state.registry[0]?.status, 'complete', 'unblocked-deps: M001 is complete');
+      assert.deepStrictEqual(state.registry[1]?.status, 'active', 'unblocked-deps: M002 is active');
+      assert.deepStrictEqual(state.activeMilestone?.id, 'M002', 'unblocked-deps: activeMilestone is M002');
+      assert.ok(state.phase !== 'blocked', 'unblocked-deps: phase is not blocked');
     } finally {
       cleanup(base);
     }
-  }
+  });
 
   // ─── Test Group 3: all-blocked ─────────────────────────────────────────
   // M001 depends_on M002, M002 depends_on M001 — circular dep, neither can activate
-  console.log('\n=== all-blocked ===');
-  {
+  test('all-blocked', async () => {
     const base = createFixtureBase();
     try {
       // M001: depends on M002
@@ -191,18 +187,17 @@ async function main(): Promise<void> {
 
       const state = await deriveState(base);
 
-      assertEq(state.phase, 'blocked', 'all-blocked: phase is blocked');
-      assertTrue(state.activeMilestone === null || state.activeMilestone !== null, 'all-blocked: state is consistent');
-      assertTrue(state.blockers.length > 0, 'all-blocked: blockers array is non-empty');
+      assert.deepStrictEqual(state.phase, 'blocked', 'all-blocked: phase is blocked');
+      assert.ok(state.activeMilestone === null || state.activeMilestone !== null, 'all-blocked: state is consistent');
+      assert.ok(state.blockers.length > 0, 'all-blocked: blockers array is non-empty');
     } finally {
       cleanup(base);
     }
-  }
+  });
 
   // ─── Test Group 4: absent-context ──────────────────────────────────────
   // Neither M001 nor M002 has a CONTEXT.md → no dep constraints, normal sequential behavior
-  console.log('\n=== absent-context ===');
-  {
+  test('absent-context', async () => {
     const base = createFixtureBase();
     try {
       // M001: incomplete, no CONTEXT.md
@@ -229,19 +224,18 @@ async function main(): Promise<void> {
 
       const state = await deriveState(base);
 
-      assertEq(state.registry[0]?.status, 'active', 'absent-context: M001 is active');
-      assertEq(state.registry[1]?.status, 'pending', 'absent-context: M002 is pending');
-      assertEq(state.activeMilestone?.id, 'M001', 'absent-context: activeMilestone is M001');
-      assertTrue(state.phase !== 'blocked', 'absent-context: phase is not blocked');
+      assert.deepStrictEqual(state.registry[0]?.status, 'active', 'absent-context: M001 is active');
+      assert.deepStrictEqual(state.registry[1]?.status, 'pending', 'absent-context: M002 is pending');
+      assert.deepStrictEqual(state.activeMilestone?.id, 'M001', 'absent-context: activeMilestone is M001');
+      assert.ok(state.phase !== 'blocked', 'absent-context: phase is not blocked');
     } finally {
       cleanup(base);
     }
-  }
+  });
 
   // ─── Test Group 5: forward-dep ─────────────────────────────────────────
   // M001 depends_on M002, but M002 is already complete → M001 can activate
-  console.log('\n=== forward-dep ===');
-  {
+  test('forward-dep', async () => {
     const base = createFixtureBase();
     try {
       // M001: depends on M002, but M002 is complete so M001 is unblocked
@@ -271,18 +265,17 @@ async function main(): Promise<void> {
 
       const state = await deriveState(base);
 
-      assertEq(state.activeMilestone?.id, 'M001', 'forward-dep: activeMilestone is M001');
-      assertEq(state.registry[1]?.status, 'complete', 'forward-dep: M002 is complete');
-      assertTrue(state.phase !== 'blocked', 'forward-dep: phase is not blocked');
+      assert.deepStrictEqual(state.activeMilestone?.id, 'M001', 'forward-dep: activeMilestone is M001');
+      assert.deepStrictEqual(state.registry[1]?.status, 'complete', 'forward-dep: M002 is complete');
+      assert.ok(state.phase !== 'blocked', 'forward-dep: phase is not blocked');
     } finally {
       cleanup(base);
     }
-  }
+  });
 
   // ─── Test Group 6: empty-deps-list ─────────────────────────────────────
   // M002 has `depends_on: []` — empty list means no constraint, normal sequential behavior
-  console.log('\n=== empty-deps-list ===');
-  {
+  test('empty-deps-list', async () => {
     const base = createFixtureBase();
     try {
       // M001: incomplete, no context
@@ -310,20 +303,19 @@ async function main(): Promise<void> {
 
       const state = await deriveState(base);
 
-      assertEq(state.registry[0]?.status, 'active', 'empty-deps-list: M001 is active');
-      assertEq(state.registry[1]?.status, 'pending', 'empty-deps-list: M002 is pending (M001 not done yet)');
-      assertTrue(state.phase !== 'blocked', 'empty-deps-list: phase is not blocked');
+      assert.deepStrictEqual(state.registry[0]?.status, 'active', 'empty-deps-list: M001 is active');
+      assert.deepStrictEqual(state.registry[1]?.status, 'pending', 'empty-deps-list: M002 is pending (M001 not done yet)');
+      assert.ok(state.phase !== 'blocked', 'empty-deps-list: phase is not blocked');
     } finally {
       cleanup(base);
     }
-  }
+  });
 
   // ─── Test Group 7: unique-id-deps ──────────────────────────────────────
   // M004-0zjrg0 is complete, M005-b0m2hl depends_on M004-0zjrg0 → M005 should activate.
   // Regression: parseContextDependsOn() used .toUpperCase(), converting "M004-0zjrg0"
   // to "M004-0ZJRG0", breaking the case-sensitive lookup in completeMilestoneIds.
-  console.log('\n=== unique-id-deps: unique milestone IDs with lowercase hex suffix ===');
-  {
+  test('unique-id-deps: unique milestone IDs with lowercase hex suffix', async () => {
     const base = createFixtureBase();
     try {
       // M004-0zjrg0: complete (all slices done + SUMMARY present)
@@ -344,23 +336,22 @@ async function main(): Promise<void> {
 
       const state = await deriveState(base);
 
-      assertEq(state.registry.find(e => e.id === 'M004-0zjrg0')?.status, 'complete',
+      assert.deepStrictEqual(state.registry.find(e => e.id === 'M004-0zjrg0')?.status, 'complete',
         'unique-id-deps: M004-0zjrg0 is complete');
-      assertEq(state.registry.find(e => e.id === 'M005-b0m2hl')?.status, 'active',
+      assert.deepStrictEqual(state.registry.find(e => e.id === 'M005-b0m2hl')?.status, 'active',
         'unique-id-deps: M005-b0m2hl is active (dep on M004-0zjrg0 met)');
-      assertEq(state.activeMilestone?.id, 'M005-b0m2hl',
+      assert.deepStrictEqual(state.activeMilestone?.id, 'M005-b0m2hl',
         'unique-id-deps: activeMilestone is M005-b0m2hl');
-      assertTrue(state.phase !== 'blocked',
+      assert.ok(state.phase !== 'blocked',
         'unique-id-deps: phase is not blocked');
     } finally {
       cleanup(base);
     }
-  }
+  });
 
   // ─── Test Group 8: unique-id-deps-blocked ─────────────────────────────
   // M004-0zjrg0 is NOT complete, M005-b0m2hl depends_on M004-0zjrg0 → M005 should be pending
-  console.log('\n=== unique-id-deps-blocked: unique ID dep not yet met ===');
-  {
+  test('unique-id-deps-blocked: unique ID dep not yet met', async () => {
     const base = createFixtureBase();
     try {
       // M004-0zjrg0: incomplete (slice not done)
@@ -388,20 +379,19 @@ async function main(): Promise<void> {
 
       const state = await deriveState(base);
 
-      assertEq(state.activeMilestone?.id, 'M004-0zjrg0',
+      assert.deepStrictEqual(state.activeMilestone?.id, 'M004-0zjrg0',
         'unique-id-deps-blocked: activeMilestone is M004-0zjrg0');
-      assertEq(state.registry.find(e => e.id === 'M005-b0m2hl')?.status, 'pending',
+      assert.deepStrictEqual(state.registry.find(e => e.id === 'M005-b0m2hl')?.status, 'pending',
         'unique-id-deps-blocked: M005-b0m2hl is pending (dep not met)');
     } finally {
       cleanup(base);
     }
-  }
+  });
 
   // ─── Test Group 9: draft-context-deps ────────────────────────────────
   // M001 is incomplete, M002 has only CONTEXT-DRAFT.md (no CONTEXT.md) with
   // depends_on: [M001] → M002 should remain pending, not be promoted to active.
-  console.log('\n=== draft-context-deps: depends_on read from CONTEXT-DRAFT.md ===');
-  {
+  test('draft-context-deps: depends_on read from CONTEXT-DRAFT.md', async () => {
     const base = createFixtureBase();
     try {
       // M001: incomplete (one slice, no SUMMARY)
@@ -439,18 +429,17 @@ async function main(): Promise<void> {
 
       const state = await deriveState(base);
 
-      assertEq(state.registry[0]?.status, 'active', 'draft-context-deps: M001 is active');
-      assertEq(state.registry[1]?.status, 'pending', 'draft-context-deps: M002 is pending (dep-blocked via draft)');
-      assertEq(state.activeMilestone?.id, 'M001', 'draft-context-deps: activeMilestone is M001');
+      assert.deepStrictEqual(state.registry[0]?.status, 'active', 'draft-context-deps: M001 is active');
+      assert.deepStrictEqual(state.registry[1]?.status, 'pending', 'draft-context-deps: M002 is pending (dep-blocked via draft)');
+      assert.deepStrictEqual(state.activeMilestone?.id, 'M001', 'draft-context-deps: activeMilestone is M001');
     } finally {
       cleanup(base);
     }
-  }
+  });
 
   // ─── Test Group 10: draft-context-deps-no-roadmap ──────────────────────
   // Same as above but without roadmaps — milestones discovered from directory only.
-  console.log('\n=== draft-context-deps-no-roadmap: depends_on from draft without roadmap ===');
-  {
+  test('draft-context-deps-no-roadmap: depends_on from draft without roadmap', async () => {
     const base = createFixtureBase();
     try {
       // M001: exists as directory only (no roadmap, no summary)
@@ -463,40 +452,38 @@ async function main(): Promise<void> {
       const state = await deriveState(base);
 
       const m002Entry = state.registry.find(e => e.id === 'M002');
-      assertEq(m002Entry?.status, 'pending', 'draft-no-roadmap: M002 is pending (dep-blocked via draft)');
+      assert.deepStrictEqual(m002Entry?.status, 'pending', 'draft-no-roadmap: M002 is pending (dep-blocked via draft)');
     } finally {
       cleanup(base);
     }
-  }
+  });
 
   // ─── Test Group 11: parseContextDependsOn preserves case ──────────────
   // Direct unit test: verify the parsed dep ID matches the input exactly
-  console.log('\n=== parseContextDependsOn: preserves case of unique IDs ===');
-  {
+  test('parseContextDependsOn: preserves case of unique IDs', async () => {
     const { parseContextDependsOn } = await import('../files.ts');
 
     const deps1 = parseContextDependsOn('---\ndepends_on: [M004-0zjrg0]\n---\n');
-    assertEq(deps1[0], 'M004-0zjrg0',
+    assert.deepStrictEqual(deps1[0], 'M004-0zjrg0',
       'parseContextDependsOn preserves lowercase hex suffix');
 
     const deps2 = parseContextDependsOn('---\ndepends_on: [M001, M004-abc123]\n---\n');
-    assertEq(deps2[0], 'M001', 'preserves classic uppercase ID');
-    assertEq(deps2[1], 'M004-abc123', 'preserves mixed-case unique ID');
+    assert.deepStrictEqual(deps2[0], 'M001', 'preserves classic uppercase ID');
+    assert.deepStrictEqual(deps2[1], 'M004-abc123', 'preserves mixed-case unique ID');
 
     const deps3 = parseContextDependsOn('---\ndepends_on: []\n---\n');
-    assertEq(deps3.length, 0, 'empty deps returns empty array');
+    assert.deepStrictEqual(deps3.length, 0, 'empty deps returns empty array');
 
     const deps4 = parseContextDependsOn(null);
-    assertEq(deps4.length, 0, 'null content returns empty array');
-  }
+    assert.deepStrictEqual(deps4.length, 0, 'null content returns empty array');
+  });
 
   // ─── Test Group 10: draft-only-deps-blocked (#1724) ────────────────────
   // M002 has only CONTEXT-DRAFT.md (no CONTEXT.md) with depends_on: [M001].
   // M001 is incomplete → M002 must remain pending, not get promoted to active.
   // Regression: before #1724, parseContextDependsOn received null for draft-only
   // milestones, returning [], which caused dep-blocked milestones to be promoted.
-  console.log('\n=== draft-only-deps-blocked: CONTEXT-DRAFT.md depends_on blocks promotion ===');
-  {
+  test('draft-only-deps-blocked: CONTEXT-DRAFT.md depends_on blocks promotion', async () => {
     const base = createFixtureBase();
     try {
       // M001: incomplete (one slice, no SUMMARY)
@@ -525,22 +512,21 @@ async function main(): Promise<void> {
 
       const state = await deriveState(base);
 
-      assertEq(state.activeMilestone?.id, 'M001',
+      assert.deepStrictEqual(state.activeMilestone?.id, 'M001',
         'draft-only-deps-blocked: activeMilestone is M001');
-      assertEq(state.registry.find(e => e.id === 'M002')?.status, 'pending',
+      assert.deepStrictEqual(state.registry.find(e => e.id === 'M002')?.status, 'pending',
         'draft-only-deps-blocked: M002 is pending (dep on M001 not met, read from CONTEXT-DRAFT)');
-      assertTrue(state.phase !== 'blocked',
+      assert.ok(state.phase !== 'blocked',
         'draft-only-deps-blocked: phase is not blocked (M001 is active)');
     } finally {
       cleanup(base);
     }
-  }
+  });
 
   // ─── Test Group 11: draft-only-deps-unblocked (#1724) ─────────────────
   // M001 is complete, M002 has only CONTEXT-DRAFT.md with depends_on: [M001].
   // M002 should become active because its dep is satisfied.
-  console.log('\n=== draft-only-deps-unblocked: CONTEXT-DRAFT.md dep met → milestone activates ===');
-  {
+  test('draft-only-deps-unblocked: CONTEXT-DRAFT.md dep met → milestone activates', async () => {
     const base = createFixtureBase();
     try {
       // M001: complete
@@ -561,22 +547,21 @@ async function main(): Promise<void> {
 
       const state = await deriveState(base);
 
-      assertEq(state.registry.find(e => e.id === 'M001')?.status, 'complete',
+      assert.deepStrictEqual(state.registry.find(e => e.id === 'M001')?.status, 'complete',
         'draft-only-deps-unblocked: M001 is complete');
-      assertEq(state.registry.find(e => e.id === 'M002')?.status, 'active',
+      assert.deepStrictEqual(state.registry.find(e => e.id === 'M002')?.status, 'active',
         'draft-only-deps-unblocked: M002 is active (dep on M001 met via CONTEXT-DRAFT)');
-      assertEq(state.activeMilestone?.id, 'M002',
+      assert.deepStrictEqual(state.activeMilestone?.id, 'M002',
         'draft-only-deps-unblocked: activeMilestone is M002');
     } finally {
       cleanup(base);
     }
-  }
+  });
 
   // ─── Test Group 12: draft-only-deps-with-roadmap (#1724) ──────────────
   // M002 has a roadmap + only CONTEXT-DRAFT.md with depends_on: [M001].
   // Tests the has-roadmap code path (second occurrence of the fix).
-  console.log('\n=== draft-only-deps-with-roadmap: has-roadmap path reads CONTEXT-DRAFT deps ===');
-  {
+  test('draft-only-deps-with-roadmap: has-roadmap path reads CONTEXT-DRAFT deps', async () => {
     const base = createFixtureBase();
     try {
       // M001: incomplete
@@ -614,20 +599,19 @@ async function main(): Promise<void> {
 
       const state = await deriveState(base);
 
-      assertEq(state.activeMilestone?.id, 'M001',
+      assert.deepStrictEqual(state.activeMilestone?.id, 'M001',
         'draft-only-deps-with-roadmap: activeMilestone is M001');
-      assertEq(state.registry.find(e => e.id === 'M002')?.status, 'pending',
+      assert.deepStrictEqual(state.registry.find(e => e.id === 'M002')?.status, 'pending',
         'draft-only-deps-with-roadmap: M002 is pending (dep read from CONTEXT-DRAFT in has-roadmap path)');
     } finally {
       cleanup(base);
     }
-  }
+  });
 
   // ─── Test Group 13: draft-only-no-deps (#1724) ────────────────────────
   // M002 has only CONTEXT-DRAFT.md with NO depends_on field.
   // Should behave same as no context file — normal sequential behavior.
-  console.log('\n=== draft-only-no-deps: CONTEXT-DRAFT without depends_on → no constraint ===');
-  {
+  test('draft-only-no-deps: CONTEXT-DRAFT without depends_on → no constraint', async () => {
     const base = createFixtureBase();
     try {
       // M001: complete
@@ -648,17 +632,10 @@ async function main(): Promise<void> {
 
       const state = await deriveState(base);
 
-      assertEq(state.registry.find(e => e.id === 'M002')?.status, 'active',
+      assert.deepStrictEqual(state.registry.find(e => e.id === 'M002')?.status, 'active',
         'draft-only-no-deps: M002 is active (no deps constraint in draft)');
     } finally {
       cleanup(base);
     }
-  }
-
-  report();
-}
-
-main().catch((error) => {
-  console.error(error);
-  process.exit(1);
+  });
 });

@@ -663,7 +663,7 @@ function setGlobalTheme(t: Theme): void {
 
 let currentThemeName: string | undefined;
 let themeWatcher: fs.FSWatcher | undefined;
-let onThemeChangeCallback: (() => void) | undefined;
+const onThemeChangeCallbacks = new Set<() => void>();
 const registeredThemes = new Map<string, Theme>();
 
 export function setRegisteredThemes(themes: Theme[]): void {
@@ -698,9 +698,7 @@ export function setTheme(name: string, enableWatcher: boolean = false): { succes
 		if (enableWatcher) {
 			startThemeWatcher();
 		}
-		if (onThemeChangeCallback) {
-			onThemeChangeCallback();
-		}
+		onThemeChangeCallbacks.forEach(cb => cb());
 		return { success: true };
 	} catch (error) {
 		// Theme is invalid - fall back to dark theme
@@ -718,13 +716,12 @@ export function setThemeInstance(themeInstance: Theme): void {
 	setGlobalTheme(themeInstance);
 	currentThemeName = "<in-memory>";
 	stopThemeWatcher(); // Can't watch a direct instance
-	if (onThemeChangeCallback) {
-		onThemeChangeCallback();
-	}
+	onThemeChangeCallbacks.forEach(cb => cb());
 }
 
-export function onThemeChange(callback: () => void): void {
-	onThemeChangeCallback = callback;
+export function onThemeChange(callback: () => void): () => void {
+	onThemeChangeCallbacks.add(callback);
+	return () => { onThemeChangeCallbacks.delete(callback); };
 }
 
 function startThemeWatcher(): void {
@@ -755,10 +752,8 @@ function startThemeWatcher(): void {
 					try {
 						// Reload the theme
 						setGlobalTheme(loadTheme(currentThemeName!));
-						// Notify callback (to invalidate UI)
-						if (onThemeChangeCallback) {
-							onThemeChangeCallback();
-						}
+						// Notify callbacks (to invalidate UI)
+						onThemeChangeCallbacks.forEach(cb => cb());
 					} catch (_error) {
 						// Ignore errors (file might be in invalid state while being edited)
 					}
@@ -773,9 +768,7 @@ function startThemeWatcher(): void {
 							themeWatcher.close();
 							themeWatcher = undefined;
 						}
-						if (onThemeChangeCallback) {
-							onThemeChangeCallback();
-						}
+						onThemeChangeCallbacks.forEach(cb => cb());
 					}
 				}, 100);
 			}

@@ -1,0 +1,84 @@
+---
+title: "Remote questions"
+description: "Discord, Slack, and Telegram integration for headless auto-mode."
+---
+
+Remote questions allow GSD to ask for user input via Slack, Discord, or Telegram when running in headless auto-mode. When GSD encounters a decision point, it posts the question to your configured channel and polls for a response.
+
+## Setup
+
+<Tabs>
+  <Tab title="Discord">
+    ```
+    /gsd remote discord
+    ```
+
+    The setup wizard validates your bot token, picks a server and channel, sends a test message, and saves the config.
+
+    **Bot requirements:**
+    - A Discord bot token from the [Developer Portal](https://discord.com/developers/applications)
+    - Permissions: Send Messages, Read Message History, Add Reactions, View Channel
+  </Tab>
+  <Tab title="Slack">
+    ```
+    /gsd remote slack
+    ```
+
+    The setup wizard validates your bot token, picks a channel, sends a test message, and saves the config.
+
+    **Bot requirements:**
+    - A Slack bot token (`xoxb-...`) from [Slack API](https://api.slack.com/apps)
+    - Scopes: `chat:write`, `reactions:read`, `reactions:write`, `channels:read`, `groups:read`, `channels:history`, `groups:history`
+  </Tab>
+  <Tab title="Telegram">
+    ```
+    /gsd remote telegram
+    ```
+
+    The setup wizard validates your bot token, prompts for a chat ID, sends a test message, and saves the config.
+
+    **Bot requirements:**
+    - A bot token from [@BotFather](https://t.me/BotFather)
+    - Bot must be added to the target group chat
+  </Tab>
+</Tabs>
+
+## Configuration
+
+```yaml
+remote_questions:
+  channel: discord
+  channel_id: "1234567890123456789"
+  timeout_minutes: 5
+  poll_interval_seconds: 5
+```
+
+## How it works
+
+1. GSD encounters a decision point during auto-mode
+2. The question is posted to your channel as a rich embed (Discord) or Block Kit message (Slack)
+3. GSD polls for a response at the configured interval
+4. You respond by reacting with a number emoji or replying with text
+5. GSD picks up the response and continues
+6. A check reaction confirms receipt
+
+### Response formats
+
+**Single question:** React with a number emoji (1️⃣-5️⃣) or reply with a number.
+
+**Multiple questions:** Reply with semicolons (`1;2;custom text`) or one answer per line.
+
+### Timeouts
+
+If no response within `timeout_minutes`, the LLM makes a conservative default choice or pauses auto-mode.
+
+## Commands
+
+| Command | Description |
+|---------|-------------|
+| `/gsd remote` | Show menu and current status |
+| `/gsd remote slack` | Set up Slack |
+| `/gsd remote discord` | Set up Discord |
+| `/gsd remote telegram` | Set up Telegram |
+| `/gsd remote status` | Show current config and last prompt status |
+| `/gsd remote disconnect` | Remove configuration |

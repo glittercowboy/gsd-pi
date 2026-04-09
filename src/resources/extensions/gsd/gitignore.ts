@@ -1,8 +1,8 @@
 /**
- * GSD bootstrappers for .gitignore and preferences.md
+ * GSD bootstrappers for .gitignore and PREFERENCES.md
  *
  * Ensures baseline .gitignore exists with universally-correct patterns.
- * Creates an empty preferences.md template if it doesn't exist.
+ * Creates an empty PREFERENCES.md template if it doesn't exist.
  * Both idempotent — non-destructive if already present.
  */
 
@@ -29,6 +29,10 @@ const GSD_RUNTIME_PATTERNS = [
   ".gsd/completed-units.json",
   ".gsd/STATE.md",
   ".gsd/gsd.db",
+  ".gsd/gsd.db-shm",   // SQLite WAL sidecar — always created alongside gsd.db (#2296)
+  ".gsd/gsd.db-wal",   // SQLite WAL sidecar — always created alongside gsd.db (#2296)
+  ".gsd/journal/",     // daily-rotated JSONL event journal (#2296)
+  ".gsd/doctor-history.jsonl", // doctor run history (#2296)
   ".gsd/DISCUSSION-MANIFEST.json",
   ".gsd/milestones/**/*-CONTINUE.md",
   ".gsd/milestones/**/continue.md",
@@ -37,6 +41,8 @@ const GSD_RUNTIME_PATTERNS = [
 const BASELINE_PATTERNS = [
   // ── GSD state directory (symlink to external storage) ──
   ".gsd",
+  ".gsd-id",
+  ".bg-shell/",
 
   // ── OS junk ──
   ".DS_Store",
@@ -79,6 +85,38 @@ const BASELINE_PATTERNS = [
   ".cache/",
   "tmp/",
 ];
+
+/**
+ * Check whether `.gsd` is covered by the project's `.gitignore`.
+ *
+ * Uses `git check-ignore` for accurate evaluation — this respects nested
+ * .gitignore files, global gitignore, and negation patterns. Returns true
+ * only when git would actually ignore `.gsd/`.
+ *
+ * Returns false (not ignored) if:
+ *   - No `.gitignore` exists
+ *   - `.gsd` is not listed in any active ignore rule
+ *   - Not a git repo or git is unavailable
+ */
+export function isGsdGitignored(basePath: string): boolean {
+  // Check both `.gsd` and `.gsd/` because `.gsd/` in .gitignore (trailing
+  // slash = directory-only pattern) only matches the directory form. Using
+  // both paths covers all gitignore pattern variants.
+  for (const path of [".gsd", ".gsd/"]) {
+    try {
+      // git check-ignore exits 0 when the path IS ignored, 1 when it is NOT.
+      execFileSync("git", ["check-ignore", "-q", path], {
+        cwd: basePath,
+        stdio: "pipe",
+        env: GIT_NO_PROMPT_ENV,
+      });
+      return true; // exit 0 → .gsd is ignored
+    } catch {
+      // exit 1 → this form is NOT ignored, try the other
+    }
+  }
+  return false; // neither form is ignored (or git unavailable)
+}
 
 /**
  * Check whether `.gsd/` contains files tracked by git.
@@ -137,7 +175,7 @@ export function hasGitTrackedGsdFiles(basePath: string): boolean {
  */
 export function ensureGitignore(
   basePath: string,
-  options?: { manageGitignore?: boolean; commitDocs?: boolean },
+  options?: { manageGitignore?: boolean },
 ): boolean {
   // If manage_gitignore is explicitly false, do not touch .gitignore at all
   if (options?.manageGitignore === false) return false;
@@ -212,16 +250,16 @@ export function untrackRuntimeFiles(basePath: string): void {
 }
 
 /**
- * Ensure basePath/.gsd/preferences.md exists as an empty template.
+ * Ensure basePath/.gsd/PREFERENCES.md exists as an empty template.
  * Creates the file with frontmatter only if it doesn't exist.
  * Returns true if created, false if already exists.
  *
- * Checks both lowercase (canonical) and uppercase (legacy) to avoid
- * creating a duplicate when an uppercase file already exists.
+ * Checks both uppercase (canonical) and lowercase (legacy) to avoid
+ * creating a duplicate when a lowercase file already exists.
  */
 export function ensurePreferences(basePath: string): boolean {
-  const preferencesPath = join(gsdRoot(basePath), "preferences.md");
-  const legacyPath = join(gsdRoot(basePath), "PREFERENCES.md");
+  const preferencesPath = join(gsdRoot(basePath), "PREFERENCES.md");
+  const legacyPath = join(gsdRoot(basePath), "preferences.md");
 
   if (existsSync(preferencesPath) || existsSync(legacyPath)) {
     return false;

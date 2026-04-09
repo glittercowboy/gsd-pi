@@ -32,7 +32,12 @@ export type JournalEventType =
   | "milestone-transition"
   | "stuck-detected"
   | "sidecar-dequeue"
-  | "iteration-end";
+  | "iteration-end"
+  | "worktree-enter"
+  | "worktree-create-failed"
+  | "worktree-skip"
+  | "worktree-merge-start"
+  | "worktree-merge-failed";
 
 /** A single structured event in the journal. */
 export interface JournalEntry {

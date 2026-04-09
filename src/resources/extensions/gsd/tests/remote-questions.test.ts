@@ -640,3 +640,235 @@ test("DiscordAdapter source-level: sendPrompt sets threadUrl in ref", () => {
     "sendPrompt should set threadUrl to the constructed message URL",
   );
 });
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Auth.json Token Hydration Tests
+// ═══════════════════════════════════════════════════════════════════════════
+
+test("config source-level: hydrateRemoteTokensFromAuth is called before env check in resolveRemoteConfig", () => {
+  const configSrc = readFileSync(
+    join(__dirname, "..", "..", "remote-questions", "config.ts"),
+    "utf-8",
+  );
+  // Find the body of resolveRemoteConfig by slicing from its declaration to the next export function.
+  const resolveStart = configSrc.indexOf("export function resolveRemoteConfig()");
+  const resolveEnd = configSrc.indexOf("\nexport function", resolveStart + 1);
+  const resolveFnBody = configSrc.slice(resolveStart, resolveEnd);
+
+  const hydrationIdx = resolveFnBody.indexOf("hydrateRemoteTokensFromAuth()");
+  const envCheckIdx = resolveFnBody.indexOf("process.env[ENV_KEYS[");
+  assert.ok(hydrationIdx !== -1, "hydrateRemoteTokensFromAuth() should be called inside resolveRemoteConfig");
+  assert.ok(envCheckIdx !== -1, "process.env[ENV_KEYS[ lookup should exist inside resolveRemoteConfig");
+  assert.ok(hydrationIdx < envCheckIdx, "hydration call should appear before the process.env env-key lookup");
+});
+
+test("config source-level: hydrateRemoteTokensFromAuth is called in getRemoteConfigStatus", () => {
+  const configSrc = readFileSync(
+    join(__dirname, "..", "..", "remote-questions", "config.ts"),
+    "utf-8",
+  );
+  const statusFnIdx = configSrc.indexOf("export function getRemoteConfigStatus()");
+  const hydrationInStatus = configSrc.indexOf("hydrateRemoteTokensFromAuth()", statusFnIdx);
+  assert.ok(hydrationInStatus > statusFnIdx, "hydrateRemoteTokensFromAuth should be called inside getRemoteConfigStatus");
+});
+
+test("config source-level: AUTH_PROVIDER_ENV_MAP covers all three remote channels", () => {
+  const configSrc = readFileSync(
+    join(__dirname, "..", "..", "remote-questions", "config.ts"),
+    "utf-8",
+  );
+  assert.ok(configSrc.includes("discord_bot"), "AUTH_PROVIDER_ENV_MAP should include discord_bot");
+  assert.ok(configSrc.includes("slack_bot"),   "AUTH_PROVIDER_ENV_MAP should include slack_bot");
+  assert.ok(configSrc.includes("telegram_bot"), "AUTH_PROVIDER_ENV_MAP should include telegram_bot");
+  assert.ok(configSrc.includes("DISCORD_BOT_TOKEN"), "should map discord_bot to DISCORD_BOT_TOKEN");
+  assert.ok(configSrc.includes("SLACK_BOT_TOKEN"),   "should map slack_bot to SLACK_BOT_TOKEN");
+  assert.ok(configSrc.includes("TELEGRAM_BOT_TOKEN"), "should map telegram_bot to TELEGRAM_BOT_TOKEN");
+});
+
+test("config source-level: hydration skips env vars already set", () => {
+  const configSrc = readFileSync(
+    join(__dirname, "..", "..", "remote-questions", "config.ts"),
+    "utf-8",
+  );
+  // The guard that skips already-set vars must be present.
+  assert.ok(
+    configSrc.includes("!process.env[envVar]"),
+    "hydrateRemoteTokensFromAuth should skip env vars that are already populated",
+  );
+});
+
+test("resolveRemoteConfig returns null when preferences are absent (no env side-effects)", () => {
+  // Guard: ensure that with no prefs configured, resolveRemoteConfig returns null cleanly.
+  // This exercises the hydration path without auth.json present (it should no-op silently).
+  const savedHome = process.env.HOME;
+  const savedUserProfile = process.env.USERPROFILE;
+  const savedDiscord = process.env.DISCORD_BOT_TOKEN;
+  const savedSlack = process.env.SLACK_BOT_TOKEN;
+  const savedTelegram = process.env.TELEGRAM_BOT_TOKEN;
+  try {
+    // Point HOME to a nonexistent dir so auth.json lookup finds nothing.
+    process.env.HOME = "/tmp/gsd-no-such-home-for-test";
+    process.env.USERPROFILE = "/tmp/gsd-no-such-home-for-test";
+    delete process.env.DISCORD_BOT_TOKEN;
+    delete process.env.SLACK_BOT_TOKEN;
+    delete process.env.TELEGRAM_BOT_TOKEN;
+
+    const result = resolveRemoteConfig();
+    // With no prefs file, result is null — not an exception.
+    assert.equal(result, null, "resolveRemoteConfig should return null when no preferences are configured");
+  } finally {
+    process.env.HOME = savedHome;
+    process.env.USERPROFILE = savedUserProfile;
+    if (savedDiscord !== undefined) process.env.DISCORD_BOT_TOKEN = savedDiscord;
+    if (savedSlack !== undefined) process.env.SLACK_BOT_TOKEN = savedSlack;
+    if (savedTelegram !== undefined) process.env.TELEGRAM_BOT_TOKEN = savedTelegram;
+  }
+});
+
+test("config source-level: hydration skips api_key entries with empty keys", () => {
+  const configSrc = readFileSync(
+    join(__dirname, "..", "..", "remote-questions", "config.ts"),
+    "utf-8",
+  );
+  // The find() call in hydrateRemoteTokensFromAuth must filter for non-empty keys,
+  // not just match on type === "api_key". This prevents stale empty-key entries
+  // (left by removeProviderToken) from shadowing valid tokens.
+  assert.ok(
+    configSrc.includes('c.type === "api_key" && !!c.key'),
+    "hydrateRemoteTokensFromAuth find() should require a non-empty key",
+  );
+});
+
+test("ask-user-questions source-level: tryRemoteQuestions is called before the hasUI guard", () => {
+  // Regression test for #3480 — remote questions were silently skipped in interactive
+  // mode because tryRemoteQuestions was gated behind `if (!ctx.hasUI)`.
+  // The fix moved the remote call before that guard so configured channels
+  // (Telegram/Slack/Discord) fire regardless of UI availability.
+  const src = readFileSync(
+    join(__dirname, "..", "..", "ask-user-questions.ts"),
+    "utf-8",
+  );
+
+  const remoteCallIdx = src.indexOf("tryRemoteQuestions(params.questions");
+  const hasUIGuardIdx = src.indexOf("if (!ctx.hasUI)");
+
+  assert.ok(remoteCallIdx !== -1, "tryRemoteQuestions call should exist in ask-user-questions.ts");
+  assert.ok(hasUIGuardIdx !== -1, "!ctx.hasUI guard should exist in ask-user-questions.ts");
+  assert.ok(
+    remoteCallIdx < hasUIGuardIdx,
+    "tryRemoteQuestions must be called before the !ctx.hasUI guard — otherwise remote questions are skipped in interactive mode",
+  );
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Race model tests (#3810) — local TUI races against remote channel
+// ═══════════════════════════════════════════════════════════════════════════
+
+test("ask-user-questions source-level: raceRemoteAndLocal function exists", () => {
+  const src = readFileSync(
+    join(__dirname, "..", "..", "ask-user-questions.ts"),
+    "utf-8",
+  );
+  assert.ok(
+    src.includes("async function raceRemoteAndLocal("),
+    "raceRemoteAndLocal helper should exist for racing local TUI against remote channel",
+  );
+});
+
+test("ask-user-questions source-level: race path uses isRemoteConfigured for routing", () => {
+  const src = readFileSync(
+    join(__dirname, "..", "..", "ask-user-questions.ts"),
+    "utf-8",
+  );
+  assert.ok(
+    src.includes("isRemoteConfigured()"),
+    "execute() should call isRemoteConfigured() for lightweight routing decision",
+  );
+});
+
+test("ask-user-questions source-level: race path checks both hasRemote and ctx.hasUI", () => {
+  // Regression: #3810 — the race should only activate when BOTH remote and local UI
+  // are available. Headless mode should still use remote-only, and no-remote should
+  // use local-only.
+  const src = readFileSync(
+    join(__dirname, "..", "..", "ask-user-questions.ts"),
+    "utf-8",
+  );
+  assert.ok(
+    src.includes("hasRemote && ctx.hasUI"),
+    "Race path should require both remote configured and local UI available",
+  );
+  assert.ok(
+    src.includes("hasRemote && !ctx.hasUI"),
+    "Headless path should handle remote-only when no local UI",
+  );
+});
+
+test("ask-user-questions source-level: race treats remote timeout as non-win", () => {
+  // Regression: the whole point of the race is that a remote timeout should NOT
+  // block the local TUI. The race helper must filter out timed_out results.
+  const src = readFileSync(
+    join(__dirname, "..", "..", "ask-user-questions.ts"),
+    "utf-8",
+  );
+  const raceFnStart = src.indexOf("async function raceRemoteAndLocal(");
+  const raceFnEnd = src.indexOf("\n}", raceFnStart);
+  const raceFnBody = src.slice(raceFnStart, raceFnEnd);
+  assert.ok(
+    raceFnBody.includes("timed_out"),
+    "raceRemoteAndLocal should check for timed_out in remote results",
+  );
+  assert.ok(
+    raceFnBody.includes("details?.error"),
+    "raceRemoteAndLocal should check for error in remote results",
+  );
+});
+
+test("ask-user-questions source-level: race uses AbortController to cancel loser", () => {
+  const src = readFileSync(
+    join(__dirname, "..", "..", "ask-user-questions.ts"),
+    "utf-8",
+  );
+  assert.ok(
+    src.includes("new AbortController()"),
+    "Race path should create an AbortController for cancellation",
+  );
+  assert.ok(
+    src.includes("controller.abort()"),
+    "raceRemoteAndLocal should abort the controller to cancel the losing side",
+  );
+});
+
+test("manager source-level: isRemoteConfigured export exists", () => {
+  const src = readFileSync(
+    join(__dirname, "..", "..", "remote-questions", "manager.ts"),
+    "utf-8",
+  );
+  assert.ok(
+    src.includes("export function isRemoteConfigured()"),
+    "manager.ts should export isRemoteConfigured for lightweight config checking",
+  );
+  // Must delegate to resolveRemoteConfig — no separate config parsing
+  const fnStart = src.indexOf("export function isRemoteConfigured()");
+  const fnEnd = src.indexOf("\n}", fnStart);
+  const fnBody = src.slice(fnStart, fnEnd);
+  assert.ok(
+    fnBody.includes("resolveRemoteConfig()"),
+    "isRemoteConfigured should delegate to resolveRemoteConfig",
+  );
+});
+
+test("config source-level: removeProviderToken uses auth.remove not auth.set with empty key", () => {
+  const commandSrc = readFileSync(
+    join(__dirname, "..", "..", "remote-questions", "remote-command.ts"),
+    "utf-8",
+  );
+  // removeProviderToken should call auth.remove(provider), not auth.set(provider, { key: "" }).
+  // Setting an empty key pollutes the credentials array and shadows valid tokens.
+  const fnStart = commandSrc.indexOf("function removeProviderToken");
+  assert.ok(fnStart !== -1, "removeProviderToken should exist");
+  const fnEnd = commandSrc.indexOf("\n}", fnStart);
+  const fnBody = commandSrc.slice(fnStart, fnEnd);
+  assert.ok(fnBody.includes("auth.remove("), "removeProviderToken should call auth.remove()");
+  assert.ok(!fnBody.includes('key: ""'), "removeProviderToken should not set an empty key");
+});

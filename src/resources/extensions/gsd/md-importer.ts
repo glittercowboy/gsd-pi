@@ -11,17 +11,27 @@ import {
   upsertDecision,
   upsertRequirement,
   insertArtifact,
+  insertMilestone,
+  insertSlice,
+  insertTask,
   openDatabase,
   transaction,
   _getAdapter,
 } from './gsd-db.js';
 import {
   resolveGsdRootFile,
+  resolveMilestoneFile,
+  resolveSliceFile,
+  resolveSlicePath,
+  resolveTasksDir,
   milestonesDir,
   gsdRoot,
   resolveTaskFiles,
 } from './paths.js';
 import { findMilestoneIds } from './guided-flow.js';
+import { parseRoadmap, parsePlan } from './parsers-legacy.js';
+import { parseContextDependsOn } from './files.js';
+import { logWarning } from './workflow-logger.js';
 
 // ─── DECISIONS.md Parser ───────────────────────────────────────────────────
 
@@ -480,6 +490,205 @@ function findFileByPrefixAndSuffix(dir: string, idPrefix: string, suffix: string
   }
 }
 
+// ─── Hierarchy Migration (milestones/slices/tasks from roadmaps+plans) ────
+
+/**
+ * Walk .gsd/milestones/ dirs, parse roadmaps and plans, and populate
+ * the milestones/slices/tasks DB tables.
+ *
+ * - Milestone title: from roadmap H1 (e.g. "# M001: Title") or CONTEXT.md
+ * - Milestone status: 'complete' if SUMMARY exists, 'parked' if PARKED exists, else 'active'
+ * - Milestone depends_on: from CONTEXT.md frontmatter
+ * - Slice metadata: from parseRoadmap() — id, title, risk, depends, done, demo
+ * - Task metadata: from parsePlan() — id, title, done, estimate
+ *
+ * Uses INSERT OR IGNORE for idempotency. Insert order: milestones → slices → tasks.
+ * Ghost milestones (dirs with no CONTEXT, ROADMAP, or SUMMARY) are skipped.
+ *
+ * Returns count of inserted hierarchy items.
+ */
+export function migrateHierarchyToDb(basePath: string): {
+  milestones: number;
+  slices: number;
+  tasks: number;
+} {
+  const counts = { milestones: 0, slices: 0, tasks: 0 };
+  const milestoneIds = findMilestoneIds(basePath);
+
+  for (const milestoneId of milestoneIds) {
+    // Check for ghost milestones — skip dirs with no meaningful content
+    const roadmapPath = resolveMilestoneFile(basePath, milestoneId, 'ROADMAP');
+    const contextPath = resolveMilestoneFile(basePath, milestoneId, 'CONTEXT');
+    const summaryPath = resolveMilestoneFile(basePath, milestoneId, 'SUMMARY');
+    const parkedPath = resolveMilestoneFile(basePath, milestoneId, 'PARKED');
+
+    const hasRoadmap = roadmapPath !== null && existsSync(roadmapPath);
+    const hasContext = contextPath !== null && existsSync(contextPath);
+    const hasSummary = summaryPath !== null && existsSync(summaryPath);
+    const hasParked = parkedPath !== null && existsSync(parkedPath);
+
+    // Ghost milestone: no CONTEXT, ROADMAP, or SUMMARY → skip
+    if (!hasRoadmap && !hasContext && !hasSummary) continue;
+
+    // Determine milestone title from roadmap H1 or CONTEXT heading
+    let milestoneTitle = '';
+    let roadmapContent: string | null = null;
+    let roadmap: ReturnType<typeof parseRoadmap> | null = null;
+    if (hasRoadmap) {
+      roadmapContent = readFileSync(roadmapPath!, 'utf-8');
+      roadmap = parseRoadmap(roadmapContent);
+      milestoneTitle = roadmap.title;
+    }
+
+    // Determine milestone status
+    let milestoneStatus = 'active';
+    if (hasSummary) milestoneStatus = 'complete';
+    else if (hasParked) milestoneStatus = 'parked';
+    // Import milestones with all-done roadmap slices as complete (#3390, #3379)
+    // even when SUMMARY.md is missing — the roadmap checkboxes are authoritative.
+    else if (roadmap && roadmap.slices.length > 0 && roadmap.slices.every(s => s.done)) {
+      milestoneStatus = 'complete';
+    }
+    if (!milestoneTitle && hasContext) {
+      const contextContent = readFileSync(contextPath!, 'utf-8');
+      const h1Match = contextContent.match(/^#\s+(.+)/m);
+      if (h1Match) milestoneTitle = h1Match[1].trim();
+    }
+
+    // Determine depends_on from CONTEXT frontmatter
+    let dependsOn: string[] = [];
+    if (hasContext) {
+      const contextContent = readFileSync(contextPath!, 'utf-8');
+      dependsOn = parseContextDependsOn(contextContent);
+    }
+
+    // Extract raw "## Boundary Map" section from roadmap markdown for planning column
+    let boundaryMapSection = '';
+    if (roadmapContent) {
+      const bmIdx = roadmapContent.indexOf('## Boundary Map');
+      if (bmIdx >= 0) {
+        const afterBm = roadmapContent.slice(bmIdx);
+        // Take content until next ## heading or EOF
+        const nextHeading = afterBm.indexOf('\n## ', 1);
+        boundaryMapSection = nextHeading >= 0 ? afterBm.slice(0, nextHeading).trim() : afterBm.trim();
+      }
+    }
+
+    // Insert milestone (FK parent — must come first)
+    insertMilestone({
+      id: milestoneId,
+      title: milestoneTitle,
+      status: milestoneStatus,
+      depends_on: dependsOn,
+      planning: {
+        vision: roadmap?.vision ?? '',
+        successCriteria: roadmap?.successCriteria ?? [],
+        boundaryMapMarkdown: boundaryMapSection,
+      },
+    });
+    counts.milestones++;
+
+    // Parse roadmap for slices
+    if (!roadmap) continue;
+
+    for (let si = 0; si < roadmap.slices.length; si++) {
+      const sliceEntry = roadmap.slices[si]!;
+      // Per K002: use 'complete' not 'done'
+      const sliceStatus = sliceEntry.done ? 'complete' : 'pending';
+
+      // Parse slice plan early so goal is available for insertSlice planning column
+      const planPath = resolveSliceFile(basePath, milestoneId, sliceEntry.id, 'PLAN');
+      let plan: ReturnType<typeof parsePlan> | null = null;
+      if (planPath && existsSync(planPath)) {
+        const planContent = readFileSync(planPath, 'utf-8');
+        plan = parsePlan(planContent);
+      }
+
+      insertSlice({
+        id: sliceEntry.id,
+        milestoneId: milestoneId,
+        title: sliceEntry.title,
+        status: sliceStatus,
+        risk: sliceEntry.risk,
+        depends: sliceEntry.depends,
+        demo: sliceEntry.demo,
+        sequence: si + 1, // Preserve roadmap parse order (#3356)
+        planning: {
+          goal: plan?.goal ?? '',
+        },
+      });
+      counts.slices++;
+
+      // Insert tasks from parsed plan
+      if (!plan) continue;
+
+      for (const taskEntry of plan.tasks) {
+        // Per K002: use 'complete' not 'done'
+        let taskStatus: string = taskEntry.done ? 'complete' : 'pending';
+
+        // Pre-migration consistency: if task is marked done in the plan but has
+        // no summary file on disk, import as 'pending' so it gets re-executed
+        // rather than silently importing bad state as the new DB authority.
+        if (taskStatus === 'complete') {
+          const tDir = resolveTasksDir(basePath, milestoneId, sliceEntry.id);
+          if (tDir) {
+            const summaryFile = join(tDir, `${taskEntry.id}-SUMMARY.md`);
+            if (!existsSync(summaryFile)) {
+              taskStatus = 'pending';
+              process.stderr.write(
+                `gsd-migrate: ${milestoneId}/${sliceEntry.id}/${taskEntry.id} marked done but missing summary — importing as pending\n`,
+              );
+            }
+          }
+        }
+
+        insertTask({
+          id: taskEntry.id,
+          sliceId: sliceEntry.id,
+          milestoneId: milestoneId,
+          title: taskEntry.title,
+          status: taskStatus,
+          planning: {
+            files: taskEntry.files ?? [],
+            verify: taskEntry.verify ?? '',
+          },
+        });
+        counts.tasks++;
+      }
+
+      // Pre-migration consistency: if all tasks are done and the slice
+      // summary exists but the roadmap checkbox is unchecked, upgrade the
+      // slice to complete. This handles the common
+      // "all_tasks_done_roadmap_not_checked" inconsistency that the old
+      // doctor would have auto-fixed. Without a slice summary, the slice
+      // is in the "summarizing" phase, not complete.
+      if (!sliceEntry.done) {
+        const sliceSummaryPath = resolveSliceFile(basePath, milestoneId, sliceEntry.id, 'SUMMARY');
+        const hasSliceSummary = sliceSummaryPath !== null && existsSync(sliceSummaryPath);
+        const allTasksDone = plan.tasks.length > 0 && plan.tasks.every(t => {
+          const tDir = resolveTasksDir(basePath, milestoneId, sliceEntry.id);
+          if (!tDir) return t.done;
+          const summaryFile = join(tDir, `${t.id}-SUMMARY.md`);
+          return t.done && existsSync(summaryFile);
+        });
+        if (allTasksDone && hasSliceSummary) {
+          const adapter = _getAdapter();
+          if (adapter) {
+            adapter.prepare(
+              `UPDATE slices SET status = 'complete' WHERE id = :sid AND milestone_id = :mid`,
+            ).run({ ':sid': sliceEntry.id, ':mid': milestoneId });
+            process.stderr.write(
+              `gsd-migrate: ${milestoneId}/${sliceEntry.id} all tasks + slice summary complete — upgrading slice to complete\n`,
+            );
+          }
+        }
+      }
+    }
+  }
+
+  return counts;
+}
+
 // ─── Orchestrator ──────────────────────────────────────────────────────────
 
 /**
@@ -493,6 +702,7 @@ export function migrateFromMarkdown(gsdDir: string): {
   decisions: number;
   requirements: number;
   artifacts: number;
+  hierarchy: { milestones: number; slices: number; tasks: number };
 } {
   const dbPath = join(gsdRoot(gsdDir), 'gsd.db');
 
@@ -504,30 +714,37 @@ export function migrateFromMarkdown(gsdDir: string): {
   let decisions = 0;
   let requirements = 0;
   let artifacts = 0;
+  let hierarchy = { milestones: 0, slices: 0, tasks: 0 };
 
   transaction(() => {
     try {
       decisions = importDecisions(gsdDir);
     } catch (err) {
-      process.stderr.write(`gsd-migrate: skipping decisions import: ${(err as Error).message}\n`);
+      logWarning("migration", `skipping decisions import: ${(err as Error).message}`);
     }
 
     try {
       requirements = importRequirements(gsdDir);
     } catch (err) {
-      process.stderr.write(`gsd-migrate: skipping requirements import: ${(err as Error).message}\n`);
+      logWarning("migration", `skipping requirements import: ${(err as Error).message}`);
     }
 
     try {
       artifacts = importHierarchyArtifacts(gsdDir);
     } catch (err) {
-      process.stderr.write(`gsd-migrate: skipping artifacts import: ${(err as Error).message}\n`);
+      logWarning("migration", `skipping artifacts import: ${(err as Error).message}`);
+    }
+
+    try {
+      hierarchy = migrateHierarchyToDb(gsdDir);
+    } catch (err) {
+      logWarning("migration", `skipping hierarchy migration: ${(err as Error).message}`);
     }
   });
 
   process.stderr.write(
-    `gsd-migrate: imported ${decisions} decisions, ${requirements} requirements, ${artifacts} artifacts\n`,
+    `gsd-migrate: imported ${decisions} decisions, ${requirements} requirements, ${artifacts} artifacts, ${hierarchy.milestones}M/${hierarchy.slices}S/${hierarchy.tasks}T hierarchy\n`,
   );
 
-  return { decisions, requirements, artifacts };
+  return { decisions, requirements, artifacts, hierarchy };
 }

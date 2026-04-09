@@ -10,7 +10,8 @@
 
 import { existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
-import { loadFile, parseRoadmap, parsePlan, parseSummary } from "../gsd/files.js";
+import { loadFile, parseSummary } from "../gsd/files.js";
+import { parseRoadmap, parsePlan } from "../gsd/parsers-legacy.js";
 import {
   resolveMilestoneFile,
   resolveSliceFile,

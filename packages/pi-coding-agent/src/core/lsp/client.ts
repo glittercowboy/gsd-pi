@@ -24,10 +24,24 @@ const clients = new Map<string, LspClient>();
 const clientLocks = new Map<string, Promise<LspClient>>();
 const fileOperationLocks = new Map<string, Promise<void>>();
 
+/** Track stream listeners per client so they can be removed on shutdown. */
+interface StreamHandlers {
+	stdoutData?: (chunk: Buffer) => void;
+	stdoutEnd?: () => void;
+	stdoutError?: () => void;
+	stderrData?: (chunk: Buffer) => void;
+	stderrEnd?: () => void;
+	stderrError?: () => void;
+}
+const clientStreamHandlers = new Map<string, StreamHandlers>();
+
 // Idle timeout configuration (disabled by default)
 let idleTimeoutMs: number | null = null;
 let idleCheckInterval: ReturnType<typeof setInterval> | null = null;
 const IDLE_CHECK_INTERVAL_MS = 60 * 1000;
+
+/** Maximum allowed size for the message buffer (10 MB). */
+const MAX_MESSAGE_BUFFER_SIZE = 10 * 1024 * 1024;
 
 /**
  * Configure the idle timeout for LSP clients.
@@ -51,6 +65,10 @@ function startIdleChecker(): void {
 			if (now - client.lastActivity > idleTimeoutMs) {
 				shutdownClient(key);
 			}
+		}
+		// Stop the checker if there are no more clients to monitor
+		if (clients.size === 0) {
+			stopIdleChecker();
 		}
 	}, IDLE_CHECK_INTERVAL_MS);
 }
@@ -250,8 +268,21 @@ async function startMessageReader(client: LspClient): Promise<void> {
 	}
 
 	return new Promise<void>((resolve) => {
-		stdout.on("data", async (chunk: Buffer) => {
+		const handlers = clientStreamHandlers.get(client.name) ?? {};
+
+		handlers.stdoutData = async (chunk: Buffer) => {
 			const currentBuffer: Buffer = Buffer.concat([client.messageBuffer, chunk]);
+
+			if (currentBuffer.length > MAX_MESSAGE_BUFFER_SIZE) {
+				if (process.env.DEBUG) {
+					console.error(
+						`[lsp] Message buffer exceeded ${MAX_MESSAGE_BUFFER_SIZE} bytes (${currentBuffer.length}), discarding`,
+					);
+				}
+				client.messageBuffer = Buffer.alloc(0);
+				return;
+			}
+
 			client.messageBuffer = currentBuffer;
 
 			let workingBuffer = currentBuffer;
@@ -289,17 +320,22 @@ async function startMessageReader(client: LspClient): Promise<void> {
 			}
 
 			client.messageBuffer = workingBuffer;
-		});
+		};
+		stdout.on("data", handlers.stdoutData);
 
-		stdout.on("end", () => {
+		handlers.stdoutEnd = () => {
 			client.isReading = false;
 			resolve();
-		});
+		};
+		stdout.on("end", handlers.stdoutEnd);
 
-		stdout.on("error", () => {
+		handlers.stdoutError = () => {
 			client.isReading = false;
 			resolve();
-		});
+		};
+		stdout.on("error", handlers.stdoutError);
+
+		clientStreamHandlers.set(client.name, handlers);
 	});
 }
 
@@ -384,21 +420,28 @@ async function startStderrReader(client: LspClient): Promise<void> {
 	if (!stderr) return;
 
 	return new Promise<void>((resolve) => {
-		stderr.on("data", (chunk: Buffer) => {
+		const handlers = clientStreamHandlers.get(client.name) ?? {};
+
+		handlers.stderrData = (chunk: Buffer) => {
 			const text = chunk.toString("utf-8");
 			client.stderrBuffer += text;
 			if (client.stderrBuffer.length > 4096) {
 				client.stderrBuffer = client.stderrBuffer.slice(-4096);
 			}
-		});
+		};
+		stderr.on("data", handlers.stderrData);
 
-		stderr.on("end", () => {
+		handlers.stderrEnd = () => {
 			resolve();
-		});
+		};
+		stderr.on("end", handlers.stderrEnd);
 
-		stderr.on("error", () => {
+		handlers.stderrError = () => {
 			resolve();
-		});
+		};
+		stderr.on("error", handlers.stderrError);
+
+		clientStreamHandlers.set(client.name, handlers);
 	});
 }
 
@@ -689,6 +732,23 @@ export function notifyFileChanged(filePath: string): void {
 }
 
 /**
+ * Remove stdout/stderr stream listeners for a client to prevent leaks.
+ */
+function removeStreamHandlers(client: LspClient): void {
+	const handlers = clientStreamHandlers.get(client.name);
+	if (!handlers) return;
+
+	if (handlers.stdoutData) client.proc.stdout?.removeListener("data", handlers.stdoutData);
+	if (handlers.stdoutEnd) client.proc.stdout?.removeListener("end", handlers.stdoutEnd);
+	if (handlers.stdoutError) client.proc.stdout?.removeListener("error", handlers.stdoutError);
+	if (handlers.stderrData) client.proc.stderr?.removeListener("data", handlers.stderrData);
+	if (handlers.stderrEnd) client.proc.stderr?.removeListener("end", handlers.stderrEnd);
+	if (handlers.stderrError) client.proc.stderr?.removeListener("error", handlers.stderrError);
+
+	clientStreamHandlers.delete(client.name);
+}
+
+/**
  * Shutdown a specific client by key.
  */
 function shutdownClient(key: string): void {
@@ -702,12 +762,23 @@ function shutdownClient(key: string): void {
 
 	sendRequest(client, "shutdown", null).catch(() => {});
 
+	// Remove stream listeners before killing the process
+	removeStreamHandlers(client);
+
 	try {
 		killProcessTree(client.proc.pid);
 	} catch {
 		client.proc.kill();
 	}
 	clients.delete(key);
+	clientLocks.delete(key);
+
+	// Clean up any file operation locks associated with this client
+	for (const lockKey of Array.from(fileOperationLocks.keys())) {
+		if (lockKey.startsWith(`${key}:`)) {
+			fileOperationLocks.delete(lockKey);
+		}
+	}
 }
 
 // =============================================================================
@@ -822,6 +893,9 @@ async function sendNotification(client: LspClient, method: string, params: unkno
 function shutdownAll(): void {
 	const clientsToShutdown = Array.from(clients.values());
 	clients.clear();
+	clientLocks.clear();
+	fileOperationLocks.clear();
+	stopIdleChecker();
 
 	const err = new Error("LSP client shutdown");
 	for (const client of clientsToShutdown) {
@@ -830,6 +904,9 @@ function shutdownAll(): void {
 		for (const pending of reqs) {
 			pending.reject(err);
 		}
+
+		// Remove stream listeners before killing the process
+		removeStreamHandlers(client);
 
 		void (async () => {
 			const timeout = new Promise<void>(resolve => setTimeout(resolve, 5_000));
@@ -864,14 +941,28 @@ export function getActiveClients(): LspServerStatus[] {
 // Process Cleanup
 // =============================================================================
 
+const _beforeExitHandler = () => shutdownAll();
+const _sigintHandler = () => {
+	shutdownAll();
+	process.exit(0);
+};
+const _sigtermHandler = () => {
+	shutdownAll();
+	process.exit(0);
+};
+
 if (typeof process !== "undefined") {
-	process.on("beforeExit", shutdownAll);
-	process.on("SIGINT", () => {
-		shutdownAll();
-		process.exit(0);
-	});
-	process.on("SIGTERM", () => {
-		shutdownAll();
-		process.exit(0);
-	});
+	process.on("beforeExit", _beforeExitHandler);
+	process.on("SIGINT", _sigintHandler);
+	process.on("SIGTERM", _sigtermHandler);
+}
+
+/**
+ * Remove process-level signal handlers registered at module load.
+ * Call this during graceful teardown to prevent leaked listeners.
+ */
+export function removeProcessHandlers(): void {
+	process.off("beforeExit", _beforeExitHandler);
+	process.off("SIGINT", _sigintHandler);
+	process.off("SIGTERM", _sigtermHandler);
 }

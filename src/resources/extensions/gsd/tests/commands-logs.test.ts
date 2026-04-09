@@ -42,22 +42,22 @@ function writeDebugLog(dir: string, name: string, entries: Record<string, unknow
 
 // ─── Tests ──────────────────────────────────────────────────────────────────
 
-test("logs shows empty state message when no logs exist", async () => {
+test("logs shows empty state message when no logs exist", async (t) => {
   const dir = createTestDir();
   const ctx = createMockCtx();
   const origCwd = process.cwd();
   process.chdir(dir);
-  try {
-    await handleLogs("", ctx as any);
-    assert.equal(ctx.notifications.length, 1);
-    assert.ok(ctx.notifications[0].msg.includes("No logs found"));
-  } finally {
+  t.after(() => {
     process.chdir(origCwd);
     rmSync(dir, { recursive: true, force: true });
-  }
+  });
+
+  await handleLogs("", ctx as any);
+  assert.equal(ctx.notifications.length, 1);
+  assert.ok(ctx.notifications[0].msg.includes("No logs found"));
 });
 
-test("logs lists activity logs", async () => {
+test("logs lists activity logs", async (t) => {
   const dir = createTestDir();
   const ctx = createMockCtx();
   const origCwd = process.cwd();
@@ -71,21 +71,21 @@ test("logs lists activity logs", async () => {
     { role: "assistant", content: "Completing slice S01" },
   ]);
 
-  try {
-    await handleLogs("", ctx as any);
-    assert.equal(ctx.notifications.length, 1);
-    const msg = ctx.notifications[0].msg;
-    assert.ok(msg.includes("Activity Logs"), "should show activity logs header");
-    assert.ok(msg.includes("execute-task"), "should show unit type");
-    assert.ok(msg.includes("complete-slice"), "should show second log");
-    assert.ok(msg.includes("/gsd logs <#>"), "should show usage hint");
-  } finally {
+  t.after(() => {
     process.chdir(origCwd);
     rmSync(dir, { recursive: true, force: true });
-  }
+  });
+
+  await handleLogs("", ctx as any);
+  assert.equal(ctx.notifications.length, 1);
+  const msg = ctx.notifications[0].msg;
+  assert.ok(msg.includes("Activity Logs"), "should show activity logs header");
+  assert.ok(msg.includes("execute-task"), "should show unit type");
+  assert.ok(msg.includes("complete-slice"), "should show second log");
+  assert.ok(msg.includes("/gsd logs <#>"), "should show usage hint");
 });
 
-test("logs <N> shows activity log details", async () => {
+test("logs <N> shows activity log details", async (t) => {
   const dir = createTestDir();
   const ctx = createMockCtx();
   const origCwd = process.cwd();
@@ -99,40 +99,40 @@ test("logs <N> shows activity log details", async () => {
     { role: "assistant", content: "I ran the tests and wrote a file" },
   ]);
 
-  try {
-    await handleLogs("1", ctx as any);
-    assert.equal(ctx.notifications.length, 1);
-    const msg = ctx.notifications[0].msg;
-    assert.ok(msg.includes("Activity Log #1"), "should show log number");
-    assert.ok(msg.includes("execute-task"), "should show unit type");
-    assert.ok(msg.includes("Tool calls: 2"), "should count tool calls");
-    assert.ok(msg.includes("Errors: 1"), "should count errors");
-    assert.ok(msg.includes("/tmp/test.ts"), "should show files written");
-    assert.ok(msg.includes("npm test"), "should show commands run");
-  } finally {
+  t.after(() => {
     process.chdir(origCwd);
     rmSync(dir, { recursive: true, force: true });
-  }
+  });
+
+  await handleLogs("1", ctx as any);
+  assert.equal(ctx.notifications.length, 1);
+  const msg = ctx.notifications[0].msg;
+  assert.ok(msg.includes("Activity Log #1"), "should show log number");
+  assert.ok(msg.includes("execute-task"), "should show unit type");
+  assert.ok(msg.includes("Tool calls: 2"), "should count tool calls");
+  assert.ok(msg.includes("Errors: 1"), "should count errors");
+  assert.ok(msg.includes("/tmp/test.ts"), "should show files written");
+  assert.ok(msg.includes("npm test"), "should show commands run");
 });
 
-test("logs <N> shows not found for invalid seq", async () => {
+test("logs <N> shows not found for invalid seq", async (t) => {
   const dir = createTestDir();
   const ctx = createMockCtx();
   const origCwd = process.cwd();
   process.chdir(dir);
 
-  try {
-    await handleLogs("999", ctx as any);
-    assert.equal(ctx.notifications.length, 1);
-    assert.ok(ctx.notifications[0].msg.includes("not found"));
-    assert.equal(ctx.notifications[0].level, "warning");
-  } finally {
+  t.after(() => {
     process.chdir(origCwd);
     rmSync(dir, { recursive: true, force: true });
-  }
+  });
+
+  await handleLogs("999", ctx as any);
+  assert.equal(ctx.notifications.length, 1);
+  assert.ok(ctx.notifications[0].msg.includes("not found"));
+  assert.equal(ctx.notifications[0].level, "warning");
 });
 
-test("logs debug lists debug logs", async () => {
+test("logs debug lists debug logs", async (t) => {
   const dir = createTestDir();
   const ctx = createMockCtx();
   const origCwd = process.cwd();
@@ -143,19 +143,19 @@ test("logs debug lists debug logs", async () => {
     { ts: "2026-03-18T10:35:00Z", event: "debug-summary", dispatches: 5 },
   ]);
 
-  try {
-    await handleLogs("debug", ctx as any);
-    assert.equal(ctx.notifications.length, 1);
-    const msg = ctx.notifications[0].msg;
-    assert.ok(msg.includes("Debug Logs"), "should show debug logs header");
-    assert.ok(msg.includes("debug-2026-03-18T10-30-00.log"), "should show filename");
-  } finally {
+  t.after(() => {
     process.chdir(origCwd);
     rmSync(dir, { recursive: true, force: true });
-  }
+  });
+
+  await handleLogs("debug", ctx as any);
+  assert.equal(ctx.notifications.length, 1);
+  const msg = ctx.notifications[0].msg;
+  assert.ok(msg.includes("Debug Logs"), "should show debug logs header");
+  assert.ok(msg.includes("debug-2026-03-18T10-30-00.log"), "should show filename");
 });
 
-test("logs debug <N> shows debug log summary", async () => {
+test("logs debug <N> shows debug log summary", async (t) => {
   const dir = createTestDir();
   const ctx = createMockCtx();
   const origCwd = process.cwd();
@@ -167,21 +167,21 @@ test("logs debug <N> shows debug log summary", async () => {
     { ts: "2026-03-18T10:35:00Z", event: "debug-summary", dispatches: 5 },
   ]);
 
-  try {
-    await handleLogs("debug 1", ctx as any);
-    assert.equal(ctx.notifications.length, 1);
-    const msg = ctx.notifications[0].msg;
-    assert.ok(msg.includes("Debug Log:"), "should show debug log header");
-    assert.ok(msg.includes("Events: 3"), "should count events");
-    assert.ok(msg.includes("Dispatches: 5"), "should show dispatch count");
-    assert.ok(msg.includes("dispatch-error"), "should show errors");
-  } finally {
+  t.after(() => {
     process.chdir(origCwd);
     rmSync(dir, { recursive: true, force: true });
-  }
+  });
+
+  await handleLogs("debug 1", ctx as any);
+  assert.equal(ctx.notifications.length, 1);
+  const msg = ctx.notifications[0].msg;
+  assert.ok(msg.includes("Debug Log:"), "should show debug log header");
+  assert.ok(msg.includes("Events: 3"), "should count events");
+  assert.ok(msg.includes("Dispatches: 5"), "should show dispatch count");
+  assert.ok(msg.includes("dispatch-error"), "should show errors");
 });
 
-test("logs tail shows recent activity summaries", async () => {
+test("logs tail shows recent activity summaries", async (t) => {
   const dir = createTestDir();
   const ctx = createMockCtx();
   const origCwd = process.cwd();
@@ -195,20 +195,20 @@ test("logs tail shows recent activity summaries", async () => {
     { role: "toolResult", toolCallId: "1", toolName: "bash", isError: true },
   ]);
 
-  try {
-    await handleLogs("tail 2", ctx as any);
-    assert.equal(ctx.notifications.length, 1);
-    const msg = ctx.notifications[0].msg;
-    assert.ok(msg.includes("Last 2 activity log(s)"), "should show count");
-    assert.ok(msg.includes("#1"), "should show first log");
-    assert.ok(msg.includes("#2"), "should show second log");
-  } finally {
+  t.after(() => {
     process.chdir(origCwd);
     rmSync(dir, { recursive: true, force: true });
-  }
+  });
+
+  await handleLogs("tail 2", ctx as any);
+  assert.equal(ctx.notifications.length, 1);
+  const msg = ctx.notifications[0].msg;
+  assert.ok(msg.includes("Last 2 activity log(s)"), "should show count");
+  assert.ok(msg.includes("#1"), "should show first log");
+  assert.ok(msg.includes("#2"), "should show second log");
 });
 
-test("logs clear removes old logs", async () => {
+test("logs clear removes old logs", async (t) => {
   const dir = createTestDir();
   const ctx = createMockCtx();
   const origCwd = process.cwd();
@@ -225,17 +225,17 @@ test("logs clear removes old logs", async () => {
     writeActivityLog(dir, i, "execute-task", `M001/S01/T0${i}`, [{ type: "toolCall" }]);
   }
 
-  try {
-    await handleLogs("clear", ctx as any);
-    assert.equal(ctx.notifications.length, 1);
-    // Old log should be removed, recent ones kept
-    assert.ok(!existsSync(oldFile), "old log should be removed");
-    assert.ok(
-      existsSync(join(dir, ".gsd", "activity", "007-execute-task-M001-S01-T07.jsonl")),
-      "most recent log should be kept",
-    );
-  } finally {
+  t.after(() => {
     process.chdir(origCwd);
     rmSync(dir, { recursive: true, force: true });
-  }
+  });
+
+  await handleLogs("clear", ctx as any);
+  assert.equal(ctx.notifications.length, 1);
+  // Old log should be removed, recent ones kept
+  assert.ok(!existsSync(oldFile), "old log should be removed");
+  assert.ok(
+    existsSync(join(dir, ".gsd", "activity", "007-execute-task-M001-S01-T07.jsonl")),
+    "most recent log should be kept",
+  );
 });

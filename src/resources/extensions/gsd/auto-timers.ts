@@ -8,12 +8,15 @@
 
 import type { ExtensionAPI, ExtensionContext } from "@gsd/pi-coding-agent";
 import { readUnitRuntimeRecord, writeUnitRuntimeRecord } from "./unit-runtime.js";
+import { isDbAvailable, getMilestoneSlices, getSliceTasks } from "./gsd-db.js";
 import { resolveAutoSupervisorConfig } from "./preferences.js";
 import type { GSDPreferences } from "./preferences.js";
 import { computeBudgets, resolveExecutorContextWindow } from "./context-budget.js";
 import {
   getInFlightToolCount,
   getOldestInFlightToolStart,
+  clearInFlightTools,
+  hasInteractiveToolInFlight,
 } from "./auto-tool-tracking.js";
 import { detectWorkingTreeActivity } from "./auto-supervisor.js";
 import { closeoutUnit, type CloseoutOptions } from "./auto-unit-closeout.js";
@@ -21,6 +24,7 @@ import { saveActivityLog } from "./activity-log.js";
 import { recoverTimedOutUnit, type RecoveryContext } from "./auto-timeout-recovery.js";
 import { resolveAgentEndCancelled } from "./auto/resolve.js";
 import type { AutoSession } from "./auto/session.js";
+import { logWarning, logError } from "./workflow-logger.js";
 
 export interface SupervisionContext {
   s: AutoSession;
@@ -32,6 +36,8 @@ export interface SupervisionContext {
   buildSnapshotOpts: () => CloseoutOptions & Record<string, unknown>;
   buildRecoveryContext: () => RecoveryContext;
   pauseAuto: (ctx?: ExtensionContext, pi?: ExtensionAPI) => Promise<void>;
+  /** Optional task estimate string (e.g. "30m", "2h") for timeout scaling (#2243). */
+  taskEstimate?: string;
 }
 
 /**
@@ -41,13 +47,73 @@ export interface SupervisionContext {
  * 3. Hard timeout (pause + recovery)
  * 4. Context-pressure monitor (continue-here)
  */
+
+/**
+ * Parse a task estimate string (e.g. "30m", "2h", "1h30m") into minutes.
+ * Returns null if the string cannot be parsed.
+ */
+export function parseEstimateMinutes(estimate: string): number | null {
+  if (!estimate || typeof estimate !== "string") return null;
+  const trimmed = estimate.trim();
+  if (!trimmed) return null;
+
+  let totalMinutes = 0;
+  let matched = false;
+
+  // Match hours component
+  const hoursMatch = trimmed.match(/(\d+)\s*h/i);
+  if (hoursMatch) {
+    totalMinutes += Number(hoursMatch[1]) * 60;
+    matched = true;
+  }
+
+  // Match minutes component
+  const minutesMatch = trimmed.match(/(\d+)\s*m/i);
+  if (minutesMatch) {
+    totalMinutes += Number(minutesMatch[1]);
+    matched = true;
+  }
+
+  return matched ? totalMinutes : null;
+}
+
 export function startUnitSupervision(sctx: SupervisionContext): void {
   const { s, ctx, pi, unitType, unitId, prefs, buildSnapshotOpts, buildRecoveryContext, pauseAuto } = sctx;
 
   const supervisor = resolveAutoSupervisorConfig();
-  const softTimeoutMs = (supervisor.soft_timeout_minutes ?? 0) * 60 * 1000;
-  const idleTimeoutMs = (supervisor.idle_timeout_minutes ?? 0) * 60 * 1000;
-  const hardTimeoutMs = (supervisor.hard_timeout_minutes ?? 0) * 60 * 1000;
+
+  // Scale timeouts based on task estimate annotations (#2243).
+  // If the task has an est: annotation, use it to extend the hard and soft timeouts
+  // so longer tasks don't get prematurely timed out.
+  let taskEstimate = sctx.taskEstimate;
+  if (!taskEstimate && unitType === "task" && isDbAvailable()) {
+    // Look up the task estimate from the DB (#2243).
+    try {
+      if (s.currentMilestoneId) {
+        const slices = getMilestoneSlices(s.currentMilestoneId);
+        for (const slice of slices) {
+          const tasks = getSliceTasks(s.currentMilestoneId, slice.id);
+          const task = tasks.find(t => t.id === unitId);
+          if (task?.estimate) {
+            taskEstimate = task.estimate;
+            break;
+          }
+        }
+      }
+    } catch (err) {
+      // Non-fatal — fall through with no estimate
+      logWarning("timer", `operation failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+  const estimateMinutes = taskEstimate ? parseEstimateMinutes(taskEstimate) : null;
+  const MAX_TIMEOUT_SCALE = 6; // Cap at 6x (60min task). Prevents 2h+ tasks from creating 120min+ timeout windows.
+  const timeoutScale = estimateMinutes && estimateMinutes > 0
+    ? Math.min(MAX_TIMEOUT_SCALE, Math.max(1, estimateMinutes / 10))
+    : 1;
+
+  const softTimeoutMs = (supervisor.soft_timeout_minutes ?? 0) * 60 * 1000 * timeoutScale;
+  const idleTimeoutMs = (supervisor.idle_timeout_minutes ?? 0) * 60 * 1000;  // idle not scaled — idle is idle
+  const hardTimeoutMs = (supervisor.hard_timeout_minutes ?? 0) * 60 * 1000 * timeoutScale;
 
   // ── 1. Soft timeout warning ──
   s.wrapupWarningHandle = setTimeout(() => {
@@ -57,6 +123,10 @@ export function startUnitSupervision(sctx: SupervisionContext): void {
       phase: "wrapup-warning-sent",
       wrapupWarningSent: true,
     });
+    // Only trigger a new turn if no tools are currently in flight.
+    // Triggering during active tool calls causes tool results to be skipped
+    // with "Skipped due to queued user message", leading to provider errors (#3512).
+    const softTrigger = getInFlightToolCount() === 0;
     pi.sendMessage(
       {
         customType: "gsd-auto-wrapup",
@@ -71,7 +141,7 @@ export function startUnitSupervision(sctx: SupervisionContext): void {
           "4. leave precise resume notes if anything remains unfinished",
         ].join("\n"),
       },
-      { triggerTurn: true },
+      { triggerTurn: softTrigger },
     );
   }, softTimeoutMs);
 
@@ -85,7 +155,17 @@ export function startUnitSupervision(sctx: SupervisionContext): void {
 
       // Agent has tool calls currently executing — not idle, just waiting.
       // But only suppress recovery if the tool started recently.
+      let stalledToolDetected = false;
       if (getInFlightToolCount() > 0) {
+        // User-interactive tools (ask_user_questions, secure_env_collect) block
+        // waiting for human input by design — never treat them as stalled (#2676).
+        if (hasInteractiveToolInFlight()) {
+          writeUnitRuntimeRecord(s.basePath, unitType, unitId, s.currentUnit.startedAt, {
+            lastProgressAt: Date.now(),
+            lastProgressKind: "interactive-tool-waiting",
+          });
+          return;
+        }
         const oldestStart = getOldestInFlightToolStart()!;
         const toolAgeMs = Date.now() - oldestStart;
         if (toolAgeMs < idleTimeoutMs) {
@@ -95,6 +175,12 @@ export function startUnitSupervision(sctx: SupervisionContext): void {
           });
           return;
         }
+        // Tool has been in-flight longer than idle timeout — treat as hung.
+        // Clear the stale entries so subsequent ticks don't re-detect them,
+        // and set the flag so the filesystem-activity check below does not
+        // override the stall verdict (#2527).
+        stalledToolDetected = true;
+        clearInFlightTools();
         ctx.ui.notify(
           `Stalled tool detected: a tool has been in-flight for ${Math.round(toolAgeMs / 60000)}min. Treating as hung — attempting idle recovery.`,
           "warning",
@@ -102,7 +188,9 @@ export function startUnitSupervision(sctx: SupervisionContext): void {
       }
 
       // Check if the agent is producing work on disk.
-      if (detectWorkingTreeActivity(s.basePath)) {
+      // Skip this when a stalled tool was just detected — filesystem changes
+      // from earlier in the task should not override the stall verdict (#2527).
+      if (!stalledToolDetected && detectWorkingTreeActivity(s.basePath)) {
         writeUnitRuntimeRecord(s.basePath, unitType, unitId, s.currentUnit.startedAt, {
           lastProgressAt: Date.now(),
           lastProgressKind: "filesystem-activity",
@@ -119,6 +207,10 @@ export function startUnitSupervision(sctx: SupervisionContext): void {
       const recovery = await recoverTimedOutUnit(ctx, pi, unitType, unitId, "idle", buildRecoveryContext());
       if (recovery === "recovered") return;
 
+      // Guard: recoverTimedOutUnit is async — pauseAuto/stopAuto may have
+      // set s.currentUnit = null during the await (#2527).
+      if (!s.currentUnit) return;
+
       writeUnitRuntimeRecord(s.basePath, unitType, unitId, s.currentUnit.startedAt, {
         phase: "paused",
       });
@@ -129,12 +221,14 @@ export function startUnitSupervision(sctx: SupervisionContext): void {
       await pauseAuto(ctx, pi);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      console.error(`[idle-watchdog] Unhandled error: ${message}`);
+      logError("timer", `[idle-watchdog] Unhandled error: ${message}`);
       // Unblock any pending unit promise so the auto-loop is not orphaned.
-      resolveAgentEndCancelled();
+      resolveAgentEndCancelled({ message: `Idle watchdog error: ${message}`, category: "idle", isTransient: true });
       try {
         ctx.ui.notify(`Idle watchdog error: ${message}`, "warning");
-      } catch { /* best effort */ }
+      } catch (err) { /* best effort */
+        logWarning("timer", `notification failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
     }
   }, 15000);
 
@@ -163,12 +257,14 @@ export function startUnitSupervision(sctx: SupervisionContext): void {
       await pauseAuto(ctx, pi);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      console.error(`[hard-timeout] Unhandled error: ${message}`);
+      logError("timer", `[hard-timeout] Unhandled error: ${message}`);
       // Unblock any pending unit promise so the auto-loop is not orphaned.
-      resolveAgentEndCancelled();
+      resolveAgentEndCancelled({ message: `Hard timeout error: ${message}`, category: "timeout", isTransient: true });
       try {
         ctx.ui.notify(`Hard timeout error: ${message}`, "warning");
-      } catch { /* best effort */ }
+      } catch (err) { /* best effort */
+        logWarning("timer", `notification failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
     }
   }, hardTimeoutMs);
 
@@ -202,6 +298,8 @@ export function startUnitSupervision(sctx: SupervisionContext): void {
       );
     }
 
+    // Only trigger a new turn if no tools are currently in flight (#3512).
+    const contextTrigger = getInFlightToolCount() === 0;
     pi.sendMessage(
       {
         customType: "gsd-auto-wrapup",
@@ -217,7 +315,7 @@ export function startUnitSupervision(sctx: SupervisionContext): void {
           "Do NOT start new sub-tasks or investigations.",
         ].join("\n"),
       },
-      { triggerTurn: true },
+      { triggerTurn: contextTrigger },
     );
 
     if (s.continueHereHandle) {
@@ -226,3 +324,4 @@ export function startUnitSupervision(sctx: SupervisionContext): void {
     }
   }, 15_000);
 }
+

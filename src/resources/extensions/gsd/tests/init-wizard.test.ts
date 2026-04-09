@@ -36,19 +36,17 @@ function cleanup(dir: string): void {
 
 // ─── Detection Integration Tests ────────────────────────────────────────────────
 
-test("init-wizard: clean folder detected as state=none", () => {
+test("init-wizard: clean folder detected as state=none", (t) => {
   const dir = makeTempDir("clean");
-  try {
-    const detection = detectProjectState(dir);
-    assert.equal(detection.state, "none");
-    assert.equal(detection.v1, undefined);
-    assert.equal(detection.v2, undefined);
-  } finally {
-    cleanup(dir);
-  }
+  t.after(() => { cleanup(dir); });
+
+  const detection = detectProjectState(dir);
+  assert.equal(detection.state, "none");
+  assert.equal(detection.v1, undefined);
+  assert.equal(detection.v2, undefined);
 });
 
-test("init-wizard: v1 .planning/ triggers v1-planning state", () => {
+test("init-wizard: v1 .planning/ triggers v1-planning state", (t) => {
   const dir = makeTempDir("v1");
   try {
     mkdirSync(join(dir, ".planning", "phases", "01"), { recursive: true });
@@ -65,7 +63,7 @@ test("init-wizard: v1 .planning/ triggers v1-planning state", () => {
   }
 });
 
-test("init-wizard: existing .gsd/ with milestones skips init", () => {
+test("init-wizard: existing .gsd/ with milestones skips init", (t) => {
   const dir = makeTempDir("existing");
   try {
     mkdirSync(join(dir, ".gsd", "milestones", "M001"), { recursive: true });
@@ -80,7 +78,7 @@ test("init-wizard: existing .gsd/ with milestones skips init", () => {
   }
 });
 
-test("init-wizard: empty .gsd/ (no milestones) returns v2-gsd-empty", () => {
+test("init-wizard: empty .gsd/ (no milestones) returns v2-gsd-empty", (t) => {
   const dir = makeTempDir("empty-gsd");
   try {
     mkdirSync(join(dir, ".gsd", "milestones"), { recursive: true });
@@ -94,7 +92,7 @@ test("init-wizard: empty .gsd/ (no milestones) returns v2-gsd-empty", () => {
   }
 });
 
-test("init-wizard: project signals populate from Node.js project", () => {
+test("init-wizard: project signals populate from Node.js project", (t) => {
   const dir = makeTempDir("node-project");
   try {
     writeFileSync(
@@ -121,11 +119,11 @@ test("init-wizard: project signals populate from Node.js project", () => {
   }
 });
 
-test("init-wizard: v2 .gsd/ preferences detected", () => {
+test("init-wizard: v2 .gsd/ preferences detected", (t) => {
   const dir = makeTempDir("prefs-detect");
   try {
     mkdirSync(join(dir, ".gsd", "milestones"), { recursive: true });
-    writeFileSync(join(dir, ".gsd", "preferences.md"), "---\nversion: 1\nmode: solo\n---\n", "utf-8");
+    writeFileSync(join(dir, ".gsd", "PREFERENCES.md"), "---\nversion: 1\nmode: solo\n---\n", "utf-8");
 
     const detection = detectProjectState(dir);
     assert.ok(detection.v2);
@@ -135,7 +133,7 @@ test("init-wizard: v2 .gsd/ preferences detected", () => {
   }
 });
 
-test("init-wizard: v2 uppercase PREFERENCES.md also detected", () => {
+test("init-wizard: v2 uppercase PREFERENCES.md also detected", (t) => {
   const dir = makeTempDir("prefs-upper");
   try {
     mkdirSync(join(dir, ".gsd", "milestones"), { recursive: true });
@@ -149,7 +147,7 @@ test("init-wizard: v2 uppercase PREFERENCES.md also detected", () => {
   }
 });
 
-test("init-wizard: CONTEXT.md detected in v2", () => {
+test("init-wizard: CONTEXT.md detected in v2", (t) => {
   const dir = makeTempDir("context");
   try {
     mkdirSync(join(dir, ".gsd", "milestones"), { recursive: true });
@@ -163,7 +161,7 @@ test("init-wizard: CONTEXT.md detected in v2", () => {
   }
 });
 
-test("init-wizard: multiple project files detected together", () => {
+test("init-wizard: multiple project files detected together", (t) => {
   const dir = makeTempDir("multi-files");
   try {
     writeFileSync(join(dir, "package.json"), JSON.stringify({ name: "test" }), "utf-8");
@@ -180,7 +178,7 @@ test("init-wizard: multiple project files detected together", () => {
   }
 });
 
-test("init-wizard: v1 with both .planning/ and .gsd/ prioritizes v2", () => {
+test("init-wizard: v1 with both .planning/ and .gsd/ prioritizes v2", (t) => {
   const dir = makeTempDir("both-v1-v2");
   try {
     mkdirSync(join(dir, ".planning", "phases"), { recursive: true });

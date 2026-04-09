@@ -87,6 +87,7 @@ export class GsdClient implements vscode.Disposable {
 	private buffer = "";
 	private restartCount = 0;
 	private restartTimestamps: number[] = [];
+	private _autoRetryEnabled = false;
 
 	private readonly _onEvent = new vscode.EventEmitter<AgentEvent>();
 	readonly onEvent = this._onEvent.event;
@@ -110,6 +111,10 @@ export class GsdClient implements vscode.Disposable {
 		return this.process !== null && this.process.exitCode === null;
 	}
 
+	get autoRetryEnabled(): boolean {
+		return this._autoRetryEnabled;
+	}
+
 	/**
 	 * Spawn the GSD agent in RPC mode.
 	 */
@@ -118,28 +123,78 @@ export class GsdClient implements vscode.Disposable {
 			return;
 		}
 
-		this.process = spawn(this.binaryPath, ["--mode", "rpc", "--no-session"], {
+		const proc = spawn(this.binaryPath, ["--mode", "rpc"], {
 			cwd: this.cwd,
 			stdio: ["pipe", "pipe", "pipe"],
 			env: { ...process.env },
 		});
+		this.process = proc;
 
 		this.buffer = "";
 
-		this.process.stdout?.on("data", (chunk: Buffer) => {
+		proc.stdout?.on("data", (chunk: Buffer) => {
 			this.buffer += chunk.toString("utf8");
 			this.drainBuffer();
 		});
 
-		this.process.stderr?.on("data", (chunk: Buffer) => {
+		proc.stderr?.on("data", (chunk: Buffer) => {
 			const text = chunk.toString("utf8").trim();
 			if (text) {
 				this._onError.fire(text);
 			}
 		});
 
-		this.process.on("exit", (code, signal) => {
-			this.process = null;
+		let startupSettled = false;
+		const startupResult = new Promise<void>((resolve, reject) => {
+			const cleanup = () => {
+				proc.off("spawn", handleSpawn);
+				proc.off("error", handleStartupError);
+			};
+			const handleSpawn = () => {
+				if (startupSettled) return;
+				startupSettled = true;
+				cleanup();
+				this._onConnectionChange.fire(true);
+				this.restartCount = 0;
+				resolve();
+			};
+			const handleStartupError = (err: NodeJS.ErrnoException) => {
+				if (startupSettled) return;
+				startupSettled = true;
+				cleanup();
+				if (this.process === proc) {
+					this.process = null;
+				}
+				const hint = err.code === "ENOENT"
+					? ` Make sure GSD is installed ("npm install -g gsd-pi") and set "gsd.binaryPath" to the absolute path if it is not on PATH.`
+					: "";
+				const message = `Failed to start GSD process: ${err.message}.${hint}`;
+				this._onError.fire(message);
+				reject(new Error(message));
+			};
+
+			proc.once("spawn", handleSpawn);
+			proc.once("error", handleStartupError);
+		});
+
+		proc.on("error", (err: NodeJS.ErrnoException) => {
+			if (!startupSettled) {
+				return;
+			}
+			if (this.process === proc) {
+				this.process = null;
+			}
+			this._onConnectionChange.fire(false);
+			const hint = err.code === "ENOENT"
+				? ` Make sure GSD is installed ("npm install -g gsd-pi") and set "gsd.binaryPath" to the absolute path if it is not on PATH.`
+				: "";
+			this._onError.fire(`GSD process error: ${err.message}.${hint}`);
+		});
+
+		proc.on("exit", (code, signal) => {
+			if (this.process === proc) {
+				this.process = null;
+			}
 			this.rejectAllPending(`GSD process exited (code=${code}, signal=${signal})`);
 			this._onConnectionChange.fire(false);
 
@@ -161,8 +216,7 @@ export class GsdClient implements vscode.Disposable {
 			}
 		});
 
-		this._onConnectionChange.fire(true);
-		this.restartCount = 0;
+		await startupResult;
 	}
 
 	/**
@@ -328,6 +382,7 @@ export class GsdClient implements vscode.Disposable {
 	async setAutoRetry(enabled: boolean): Promise<void> {
 		const response = await this.send({ type: "set_auto_retry", enabled });
 		this.assertSuccess(response);
+		this._autoRetryEnabled = enabled;
 	}
 
 	/**
@@ -369,6 +424,7 @@ export class GsdClient implements vscode.Disposable {
 	async newSession(): Promise<void> {
 		const response = await this.send({ type: "new_session" });
 		this.assertSuccess(response);
+		this._autoRetryEnabled = false;
 	}
 
 	/**
@@ -436,6 +492,48 @@ export class GsdClient implements vscode.Disposable {
 		return (response.data as { commands: SlashCommand[] }).commands;
 	}
 
+	// =========================================================================
+	// Fork
+	// =========================================================================
+
+	/**
+	 * Get messages that can be used as fork points.
+	 */
+	async getForkMessages(): Promise<{ entryId: string; text: string }[]> {
+		const response = await this.send({ type: "get_fork_messages" });
+		this.assertSuccess(response);
+		return (response.data as { messages: { entryId: string; text: string }[] }).messages;
+	}
+
+	/**
+	 * Fork the session at the given entry point.
+	 */
+	async forkSession(entryId: string): Promise<{ text: string; cancelled: boolean }> {
+		const response = await this.send({ type: "fork", entryId });
+		this.assertSuccess(response);
+		return response.data as { text: string; cancelled: boolean };
+	}
+
+	// =========================================================================
+	// Queue Modes
+	// =========================================================================
+
+	/**
+	 * Set steering queue mode.
+	 */
+	async setSteeringMode(mode: "all" | "one-at-a-time"): Promise<void> {
+		const response = await this.send({ type: "set_steering_mode", mode });
+		this.assertSuccess(response);
+	}
+
+	/**
+	 * Set follow-up queue mode.
+	 */
+	async setFollowUpMode(mode: "all" | "one-at-a-time"): Promise<void> {
+		const response = await this.send({ type: "set_follow_up_mode", mode });
+		this.assertSuccess(response);
+	}
+
 	dispose(): void {
 		this.stop();
 		for (const d of this.disposables) {
@@ -481,8 +579,102 @@ export class GsdClient implements vscode.Disposable {
 			return;
 		}
 
+		// Extension UI request — agent needs user input
+		if (data.type === "extension_ui_request" && typeof data.id === "string") {
+			void this.handleUIRequest(data);
+			return;
+		}
+
 		// Streaming event
 		this._onEvent.fire(data as AgentEvent);
+	}
+
+	private async handleUIRequest(request: Record<string, unknown>): Promise<void> {
+		const id = request.id as string;
+		const method = request.method as string;
+
+		try {
+			switch (method) {
+				case "select": {
+					const options = (request.options as string[]) ?? [];
+					const title = String(request.title ?? "Select");
+					const allowMultiple = request.allowMultiple === true;
+
+					if (allowMultiple) {
+						const picked = await vscode.window.showQuickPick(options, {
+							title,
+							canPickMany: true,
+						});
+						if (picked) {
+							this.sendRaw({ type: "extension_ui_response", id, values: picked });
+						} else {
+							this.sendRaw({ type: "extension_ui_response", id, cancelled: true });
+						}
+					} else {
+						const picked = await vscode.window.showQuickPick(options, { title });
+						if (picked) {
+							this.sendRaw({ type: "extension_ui_response", id, value: picked });
+						} else {
+							this.sendRaw({ type: "extension_ui_response", id, cancelled: true });
+						}
+					}
+					break;
+				}
+
+				case "confirm": {
+					const title = String(request.title ?? "Confirm");
+					const message = String(request.message ?? "");
+					const result = await vscode.window.showInformationMessage(
+						`${title}: ${message}`,
+						{ modal: true },
+						"Yes",
+						"No",
+					);
+					this.sendRaw({ type: "extension_ui_response", id, confirmed: result === "Yes" });
+					break;
+				}
+
+				case "input": {
+					const title = String(request.title ?? "Input");
+					const placeholder = String(request.placeholder ?? "");
+					const value = await vscode.window.showInputBox({ title, placeHolder: placeholder });
+					if (value !== undefined) {
+						this.sendRaw({ type: "extension_ui_response", id, value });
+					} else {
+						this.sendRaw({ type: "extension_ui_response", id, cancelled: true });
+					}
+					break;
+				}
+
+				case "notify": {
+					const message = String(request.message ?? "");
+					const notifyType = String(request.notifyType ?? "info");
+					if (notifyType === "error") {
+						vscode.window.showErrorMessage(`GSD: ${message}`);
+					} else if (notifyType === "warning") {
+						vscode.window.showWarningMessage(`GSD: ${message}`);
+					} else {
+						vscode.window.showInformationMessage(`GSD: ${message}`);
+					}
+					// Notify doesn't need a response
+					break;
+				}
+
+				default:
+					// Unknown method — cancel to unblock the agent
+					this.sendRaw({ type: "extension_ui_response", id, cancelled: true });
+					break;
+			}
+		} catch {
+			// On error, cancel to unblock
+			this.sendRaw({ type: "extension_ui_response", id, cancelled: true });
+		}
+	}
+
+	private sendRaw(data: Record<string, unknown>): void {
+		if (this.process?.stdin) {
+			this.process.stdin.write(JSON.stringify(data) + "\n");
+		}
 	}
 
 	private send(command: Record<string, unknown>): Promise<RpcResponse> {

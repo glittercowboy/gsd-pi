@@ -4,9 +4,9 @@ import type { AssistantMessage } from "@gsd/pi-ai";
 import { isKeyRelease, Key, matchesKey, truncateToWidth, visibleWidth } from "@gsd/pi-tui";
 import { spawn, execFileSync, type ChildProcess } from "node:child_process";
 import * as fs from "node:fs";
-import * as os from "node:os";
 import * as path from "node:path";
 import * as readline from "node:readline";
+import { linuxPython, diagnoseSounddeviceError, ensureVoiceVenv, VOICE_VENV_PYTHON } from "./linux-ready.js";
 
 const __extensionDir = import.meta.dirname!;
 const SWIFT_SRC = path.join(__extensionDir, "speech-recognizer.swift");
@@ -15,19 +15,6 @@ const PYTHON_SCRIPT = path.join(__extensionDir, "speech-recognizer.py");
 
 const IS_DARWIN = process.platform === "darwin";
 const IS_LINUX = process.platform === "linux";
-const VOICE_VENV_PYTHON = path.join(
-	process.env.HOME || process.env.USERPROFILE || os.homedir(),
-	".gsd",
-	"voice-venv",
-	"bin",
-	"python3",
-);
-
-/** Return the python3 binary path — prefer venv if it exists, else system. */
-function linuxPython(): string {
-	if (fs.existsSync(VOICE_VENV_PYTHON)) return VOICE_VENV_PYTHON;
-	return "python3";
-}
 
 function ensureBinary(): boolean {
 	if (fs.existsSync(RECOGNIZER_BIN)) return true;
@@ -69,17 +56,20 @@ function ensureLinuxReady(ctx: ExtensionContext): boolean {
 		});
 	} catch (err: unknown) {
 		const stderr = (err as { stderr?: Buffer })?.stderr?.toString() ?? "";
-		if (stderr.includes("sounddevice") || stderr.includes("PortAudio") || stderr.includes("portaudio")) {
-			ctx.ui.notify("Voice: install libportaudio2 with: sudo apt install libportaudio2", "error");
-		} else if (stderr.includes("No module") || stderr.includes("ModuleNotFoundError")) {
-			// Deps missing — the Python script handles auto-install on first run,
-			// so we let it through. The script's own ensure_deps() will pip install.
-			ctx.ui.notify("Voice: installing dependencies on first run — this may take a moment", "info");
+		const diagnosis = diagnoseSounddeviceError(stderr);
+
+		if (diagnosis === "missing-module") {
+			// Module not installed — auto-create venv (handles PEP 668 systems
+			// where system pip is blocked). See #2403.
+			if (!ensureVoiceVenv({ notify: (msg, level) => ctx.ui.notify(msg, level) })) {
+				return false;
+			}
 			linuxReady = true;
 			return true;
+		} else if (diagnosis === "missing-portaudio") {
+			ctx.ui.notify("Voice: install libportaudio2 with: sudo apt install libportaudio2", "error");
 		} else {
 			ctx.ui.notify(`Voice: dependency check failed — ${stderr.split("\n")[0] || "unknown error"}`, "error");
-			return false;
 		}
 		return false;
 	}

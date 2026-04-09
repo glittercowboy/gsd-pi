@@ -1,0 +1,43 @@
+# Regenerates models.generated.ts from live provider APIs weekly.
+# Opens a PR automatically if the model list has changed.
+name: Regenerate model registry
+
+on:
+  schedule:
+    - cron: '0 6 * * 1'  # Every Monday at 06:00 UTC
+  workflow_dispatch:       # Allow manual trigger
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  regenerate:
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Regenerate model registry
+        run: npx tsx packages/pi-ai/scripts/generate-models.ts
+
+      - name: Open PR if changed
+        uses: peter-evans/create-pull-request@v7
+        with:
+          commit-message: 'chore(pi-ai): regenerate model registry from upstream APIs'
+          title: 'chore(pi-ai): regenerate model registry from upstream APIs'
+          body: |
+            Automated weekly regeneration of `models.generated.ts` from live provider APIs.
+
+            Run `packages/pi-ai/scripts/generate-models.ts` — no logic changed, output only.
+          branch: chore/auto-regenerate-models
+          labels: chore
+          delete-branch: true

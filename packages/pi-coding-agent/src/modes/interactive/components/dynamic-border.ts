@@ -11,7 +11,9 @@ import { theme } from "../theme/theme.js";
 export class DynamicBorder implements Component {
 	private color: (str: string) => string;
 
-	constructor(color: (str: string) => string = (str) => theme.fg("border", str)) {
+	constructor(color: (str: string) => string = (str) => {
+		try { return theme.fg("border", str); } catch { return str; }
+	}) {
 		this.color = color;
 	}
 

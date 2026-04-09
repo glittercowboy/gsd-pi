@@ -14,12 +14,13 @@ import {
 	DEFAULT_MAX_LINES,
 } from "@gsd/pi-coding-agent";
 import { Type } from "@sinclair/typebox";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { createWriteStream } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomBytes } from "node:crypto";
 import type { AsyncJobManager } from "./job-manager.js";
+import { rewriteCommandWithRtk } from "../shared/rtk.js";
 
 const schema = Type.Object({
 	command: Type.String({ description: "Bash command to execute in the background" }),
@@ -37,17 +38,24 @@ function getTempFilePath(): string {
 }
 
 /**
- * Kill a process and its children. Uses process group kill on Unix.
+ * Kill a process and its children (cross-platform).
+ * Uses process group kill on Unix; taskkill /F /T on Windows.
  */
 function killTree(pid: number): void {
-	try {
-		// Kill the process group (negative PID)
-		process.kill(-pid, "SIGTERM");
-	} catch {
+	if (process.platform === "win32") {
 		try {
-			process.kill(pid, "SIGTERM");
+			spawnSync("taskkill", ["/F", "/T", "/PID", String(pid)], {
+				timeout: 5_000,
+				stdio: "ignore",
+			});
 		} catch {
-			// Already exited
+			try { process.kill(pid, "SIGTERM"); } catch { /* already exited */ }
+		}
+	} else {
+		try {
+			process.kill(-pid, "SIGTERM");
+		} catch {
+			try { process.kill(pid, "SIGTERM"); } catch { /* already exited */ }
 		}
 	}
 }
@@ -109,23 +117,60 @@ function executeBashInBackground(
 	timeout?: number,
 ): Promise<string> {
 	return new Promise<string>((resolve, reject) => {
-		const { shell, args } = getShellConfig();
-		const resolvedCommand = sanitizeCommand(command);
+		let settled = false;
+		const safeResolve = (value: string) => { if (!settled) { settled = true; resolve(value); } };
+		const safeReject = (err: unknown) => { if (!settled) { settled = true; reject(err); } };
 
+		const { shell, args } = getShellConfig();
+		const rewrittenCommand = rewriteCommandWithRtk(command);
+		const resolvedCommand = sanitizeCommand(rewrittenCommand);
+
+		// On Windows, detached: true sets CREATE_NEW_PROCESS_GROUP which can
+		// cause EINVAL in VSCode/ConPTY terminal contexts.  The bg-shell
+		// extension already guards this (process-manager.ts); align here.
+		// Process-tree cleanup uses taskkill /F /T on Windows regardless.
 		const child = spawn(shell, [...args, resolvedCommand], {
 			cwd,
-			detached: true,
+			detached: process.platform !== "win32",
 			env: { ...process.env },
 			stdio: ["ignore", "pipe", "pipe"],
 		});
 
 		let timedOut = false;
 		let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+		let sigkillHandle: ReturnType<typeof setTimeout> | undefined;
+		let hardDeadlineHandle: ReturnType<typeof setTimeout> | undefined;
+
+		/** Grace period (ms) between SIGTERM and SIGKILL. */
+		const SIGKILL_GRACE_MS = 5_000;
+		/** Hard deadline (ms) after SIGKILL to force-resolve the promise. */
+		const HARD_DEADLINE_MS = 3_000;
 
 		if (timeout !== undefined && timeout > 0) {
 			timeoutHandle = setTimeout(() => {
 				timedOut = true;
 				if (child.pid) killTree(child.pid);
+
+				// If the process ignores SIGTERM, escalate to SIGKILL
+				sigkillHandle = setTimeout(() => {
+					if (child.pid) {
+						// killTree already uses taskkill /F /T on Windows
+						killTree(child.pid);
+					}
+
+					// Hard deadline: if even SIGKILL doesn't trigger 'close',
+					// force-resolve so the job doesn't hang forever (#2186).
+					hardDeadlineHandle = setTimeout(() => {
+						const output = Buffer.concat(chunks).toString("utf-8");
+						safeResolve(
+							output
+								? `${output}\n\nCommand timed out after ${timeout} seconds (force-killed)`
+								: `Command timed out after ${timeout} seconds (force-killed)`,
+						);
+					}, HARD_DEADLINE_MS);
+					if (typeof hardDeadlineHandle === "object" && "unref" in hardDeadlineHandle) hardDeadlineHandle.unref();
+				}, SIGKILL_GRACE_MS);
+				if (typeof sigkillHandle === "object" && "unref" in sigkillHandle) sigkillHandle.unref();
 			}, timeout * 1000);
 		}
 
@@ -168,24 +213,28 @@ function executeBashInBackground(
 
 		child.on("error", (err) => {
 			if (timeoutHandle) clearTimeout(timeoutHandle);
+			if (sigkillHandle) clearTimeout(sigkillHandle);
+			if (hardDeadlineHandle) clearTimeout(hardDeadlineHandle);
 			signal.removeEventListener("abort", onAbort);
-			reject(err);
+			safeReject(err);
 		});
 
 		child.on("close", (code) => {
 			if (timeoutHandle) clearTimeout(timeoutHandle);
+			if (sigkillHandle) clearTimeout(sigkillHandle);
+			if (hardDeadlineHandle) clearTimeout(hardDeadlineHandle);
 			signal.removeEventListener("abort", onAbort);
 			if (spillStream) spillStream.end();
 
 			if (signal.aborted) {
 				const output = Buffer.concat(chunks).toString("utf-8");
-				resolve(output ? `${output}\n\nCommand aborted` : "Command aborted");
+				safeResolve(output ? `${output}\n\nCommand aborted` : "Command aborted");
 				return;
 			}
 
 			if (timedOut) {
 				const output = Buffer.concat(chunks).toString("utf-8");
-				resolve(output ? `${output}\n\nCommand timed out after ${timeout} seconds` : `Command timed out after ${timeout} seconds`);
+				safeResolve(output ? `${output}\n\nCommand timed out after ${timeout} seconds` : `Command timed out after ${timeout} seconds`);
 				return;
 			}
 
@@ -208,7 +257,7 @@ function executeBashInBackground(
 				text += `\n\nCommand exited with code ${code}`;
 			}
 
-			resolve(text);
+			safeResolve(text);
 		});
 	});
 }

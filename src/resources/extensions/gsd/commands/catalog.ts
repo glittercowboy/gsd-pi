@@ -15,7 +15,7 @@ export interface GsdCommandDefinition {
 type CompletionMap = Record<string, readonly GsdCommandDefinition[]>;
 
 export const GSD_COMMAND_DESCRIPTION =
-  "GSD — Get Shit Done: /gsd help|start|templates|next|auto|stop|pause|status|widget|visualize|queue|quick|discuss|capture|triage|dispatch|history|undo|rate|skip|export|cleanup|mode|prefs|config|keys|hooks|run-hook|skill-health|doctor|logs|forensics|changelog|migrate|remote|steer|knowledge|new-milestone|parallel|cmux|park|unpark|init|setup|inspect|extensions|update|fast";
+  "GSD — Get Shit Done: /gsd help|start|templates|next|auto|stop|pause|status|widget|visualize|queue|quick|discuss|capture|triage|dispatch|history|undo|undo-task|reset-slice|rate|skip|export|cleanup|model|mode|prefs|config|keys|hooks|run-hook|skill-health|doctor|logs|forensics|changelog|migrate|remote|steer|knowledge|new-milestone|parallel|cmux|park|unpark|init|setup|inspect|extensions|update|fast|mcp|rethink|codebase|notifications";
 
 export const TOP_LEVEL_SUBCOMMANDS: readonly GsdCommandDefinition[] = [
   { cmd: "help", desc: "Categorized command reference with descriptions" },
@@ -35,10 +35,13 @@ export const TOP_LEVEL_SUBCOMMANDS: readonly GsdCommandDefinition[] = [
   { cmd: "dispatch", desc: "Dispatch a specific phase directly" },
   { cmd: "history", desc: "View execution history" },
   { cmd: "undo", desc: "Revert last completed unit" },
+  { cmd: "undo-task", desc: "Reset a specific task's completion state (DB + markdown)" },
+  { cmd: "reset-slice", desc: "Reset a slice and all its tasks (DB + markdown)" },
   { cmd: "rate", desc: "Rate last unit's model tier (over/ok/under) — improves adaptive routing" },
   { cmd: "skip", desc: "Prevent a unit from auto-mode dispatch" },
   { cmd: "export", desc: "Export milestone/slice results" },
   { cmd: "cleanup", desc: "Remove merged branches or snapshots" },
+  { cmd: "model", desc: "Switch the active session model or open a picker" },
   { cmd: "mode", desc: "Switch workflow mode (solo/team)" },
   { cmd: "prefs", desc: "Manage preferences (model selection, timeouts, etc.)" },
   { cmd: "config", desc: "Set API keys for external tools" },
@@ -46,6 +49,7 @@ export const TOP_LEVEL_SUBCOMMANDS: readonly GsdCommandDefinition[] = [
   { cmd: "hooks", desc: "Show configured post-unit and pre-dispatch hooks" },
   { cmd: "run-hook", desc: "Manually trigger a specific hook" },
   { cmd: "skill-health", desc: "Skill lifecycle dashboard" },
+  { cmd: "notifications", desc: "View, filter, and clear persistent notification history" },
   { cmd: "doctor", desc: "Runtime health checks with auto-fix" },
   { cmd: "logs", desc: "Browse activity logs, debug logs, and metrics" },
   { cmd: "forensics", desc: "Examine execution logs" },
@@ -57,7 +61,7 @@ export const TOP_LEVEL_SUBCOMMANDS: readonly GsdCommandDefinition[] = [
   { cmd: "inspect", desc: "Show SQLite DB diagnostics" },
   { cmd: "knowledge", desc: "Add persistent project knowledge (rule, pattern, or lesson)" },
   { cmd: "new-milestone", desc: "Create a milestone from a specification document (headless)" },
-  { cmd: "parallel", desc: "Parallel milestone orchestration (start, status, stop, merge)" },
+  { cmd: "parallel", desc: "Parallel milestone orchestration (start, status, stop, merge, watch)" },
   { cmd: "cmux", desc: "Manage cmux integration (status, sidebar, notifications, splits)" },
   { cmd: "park", desc: "Park a milestone — skip without deleting" },
   { cmd: "unpark", desc: "Reactivate a parked milestone" },
@@ -66,7 +70,10 @@ export const TOP_LEVEL_SUBCOMMANDS: readonly GsdCommandDefinition[] = [
   { cmd: "templates", desc: "List available workflow templates" },
   { cmd: "extensions", desc: "Manage extensions (list, enable, disable, info)" },
   { cmd: "fast", desc: "Toggle OpenAI service tier (on/off/flex/status)" },
+  { cmd: "mcp", desc: "MCP server status and connectivity check (status, check <server>)" },
+  { cmd: "rethink", desc: "Conversational project reorganization — reorder, park, discard, add milestones" },
   { cmd: "workflow", desc: "Custom workflow lifecycle (new, run, list, validate, pause, resume)" },
+  { cmd: "codebase", desc: "Generate, refresh, and inspect the codebase map cache (.gsd/CODEBASE.md)" },
 ];
 
 const NESTED_COMPLETIONS: CompletionMap = {
@@ -96,6 +103,7 @@ const NESTED_COMPLETIONS: CompletionMap = {
     { cmd: "pause", desc: "Pause a specific worker" },
     { cmd: "resume", desc: "Resume a paused worker" },
     { cmd: "merge", desc: "Merge completed milestone branches" },
+    { cmd: "watch", desc: "Live TUI dashboard monitoring all workers" },
   ],
   setup: [
     { cmd: "llm", desc: "Configure LLM provider settings" },
@@ -103,6 +111,11 @@ const NESTED_COMPLETIONS: CompletionMap = {
     { cmd: "remote", desc: "Configure remote integrations" },
     { cmd: "keys", desc: "Manage API keys" },
     { cmd: "prefs", desc: "Configure global preferences" },
+  ],
+  notifications: [
+    { cmd: "clear", desc: "Clear all notifications" },
+    { cmd: "tail", desc: "Show last N notifications (default: 20)" },
+    { cmd: "filter", desc: "Filter by severity (error|warning|info|success)" },
   ],
   logs: [
     { cmd: "debug", desc: "List or view debug log files" },
@@ -185,6 +198,10 @@ const NESTED_COMPLETIONS: CompletionMap = {
     { cmd: "flex", desc: "Flex tier (0.5x cost, slower)" },
     { cmd: "status", desc: "Show current service tier setting" },
   ],
+  mcp: [
+    { cmd: "status", desc: "Show all MCP server statuses (default)" },
+    { cmd: "check", desc: "Detailed status for a specific server" },
+  ],
   doctor: [
     { cmd: "fix", desc: "Auto-fix detected issues" },
     { cmd: "heal", desc: "AI-driven deep healing" },
@@ -215,6 +232,16 @@ const NESTED_COMPLETIONS: CompletionMap = {
     { cmd: "validate", desc: "Validate a workflow definition YAML" },
     { cmd: "pause", desc: "Pause custom workflow auto-mode" },
     { cmd: "resume", desc: "Resume paused custom workflow auto-mode" },
+  ],
+  codebase: [
+    { cmd: "generate", desc: "Generate or regenerate CODEBASE.md" },
+    { cmd: "generate --max-files", desc: "Generate with custom file limit (default: 500)" },
+    { cmd: "generate --collapse-threshold", desc: "Generate with custom collapse threshold (default: 20)" },
+    { cmd: "update", desc: "Refresh the CODEBASE.md cache immediately (preserves descriptions)" },
+    { cmd: "update --max-files", desc: "Update with custom file limit" },
+    { cmd: "update --collapse-threshold", desc: "Update with custom collapse threshold" },
+    { cmd: "stats", desc: "Show file count, description coverage, and generation time" },
+    { cmd: "help", desc: "Show usage and available subcommands" },
   ],
 };
 

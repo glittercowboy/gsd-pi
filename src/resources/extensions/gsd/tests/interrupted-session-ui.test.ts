@@ -67,7 +67,7 @@ function writePausedSession(base: string, milestoneId = "M001", stepMode = false
   );
 }
 
-function writeLock(base: string, unitType: string, unitId: string, completedUnits = 1): void {
+function writeLock(base: string, unitType: string, unitId: string): void {
   writeFileSync(
     join(base, ".gsd", "auto.lock"),
     JSON.stringify({
@@ -76,7 +76,6 @@ function writeLock(base: string, unitType: string, unitId: string, completedUnit
       unitType,
       unitId,
       unitStartedAt: new Date().toISOString(),
-      completedUnits,
     }, null, 2),
     "utf-8",
   );
@@ -87,7 +86,7 @@ test("guided-flow stale complete scenario classifies as stale so the resume prom
   try {
     writeRoadmap(base, true);
     writeCompleteArtifacts(base);
-    writeLock(base, "execute-task", "M001/S01/T01", 1);
+    writeLock(base, "execute-task", "M001/S01/T01");
 
     const assessment = await assessInterruptedSession(base);
     assert.equal(assessment.classification, "stale");
@@ -102,7 +101,7 @@ test("guided-flow paused-session scenario classifies as recoverable so resume re
   try {
     writeRoadmap(base, false);
     writePausedSession(base);
-    writeLock(base, "execute-task", "M001/S01/T01", 1);
+    writeLock(base, "execute-task", "M001/S01/T01");
 
     const assessment = await assessInterruptedSession(base);
     assert.equal(assessment.classification, "recoverable");
@@ -133,6 +132,5 @@ test("guided-flow source uses step-aware resume and clears stale paused metadata
   assert.ok(source.includes('resumeLabel = interrupted.pausedSession?.stepMode'));
   assert.ok(source.includes('step: interrupted.pausedSession?.stepMode ?? false'));
   assert.ok(source.includes('unlinkSync(join(gsdRoot(basePath), "runtime", "paused-session.json"))'));
-  assert.ok(source.includes('pendingAutoStart = { ctx, pi, basePath, milestoneId: mid, step: false };'));
-  assert.ok(source.includes('pendingAutoStart = { ctx, pi, basePath, milestoneId: nextId, step: false };'));
+  assert.ok(source.includes('pendingAutoStartMap.set(basePath,'));
 });

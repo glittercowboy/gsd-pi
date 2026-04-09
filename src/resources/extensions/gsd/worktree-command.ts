@@ -661,7 +661,7 @@ async function handleMerge(
     // --- Deterministic merge path (preferred) ---
     // Try a direct squash-merge first. Only fall back to LLM on conflict.
     const commitType = inferCommitType(name);
-    const commitMessage = `${commitType}(${name}): merge worktree ${name}`;
+    const commitMessage = `${commitType}: merge worktree ${name}\n\nGSD-Worktree: ${name}`;
 
     // Reconcile worktree DB into main DB before squash merge
     const wtDbPath = join(worktreePath(basePath, name), ".gsd", "gsd.db");

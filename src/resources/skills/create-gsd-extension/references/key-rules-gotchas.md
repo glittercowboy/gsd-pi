@@ -26,11 +26,12 @@ Non-negotiable rules and common gotchas when building GSD extensions.
 </common_patterns>
 
 <gsd_paths>
-**GSD extension paths:**
-- Global: `~/.gsd/agent/extensions/*.ts`
-- Global (subdir): `~/.gsd/agent/extensions/*/index.ts`
+**GSD extension paths (community/user-installed extensions):**
+- Global: `~/.pi/agent/extensions/*.ts`
+- Global (subdir): `~/.pi/agent/extensions/*/index.ts`
 - Project-local: `.gsd/extensions/*.ts`
 - Project-local (subdir): `.gsd/extensions/*/index.ts`
 
-The upstream pi docs reference `~/.pi` paths — GSD uses `~/.gsd` everywhere instead.
+Note: `~/.gsd/agent/extensions/` is reserved for bundled extensions synced from the gsd-pi package.
+Community extensions placed there are silently ignored by the loader.
 </gsd_paths>

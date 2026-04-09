@@ -137,6 +137,7 @@ export function getEnvApiKey(provider: any): string | undefined {
 		"opencode-go": "OPENCODE_API_KEY",
 		"kimi-coding": "KIMI_API_KEY",
 		"alibaba-coding-plan": "ALIBABA_API_KEY",
+		ollama: "OLLAMA_API_KEY",
 		"ollama-cloud": "OLLAMA_API_KEY",
 		"custom-openai": "CUSTOM_OPENAI_API_KEY",
 	};

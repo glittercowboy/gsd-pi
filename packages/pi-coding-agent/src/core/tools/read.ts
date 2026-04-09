@@ -133,13 +133,18 @@ export function createReadTool(cwd: string, options?: ReadToolOptions): AgentToo
 								const totalFileLines = allLines.length;
 
 								// Apply offset if specified (1-indexed to 0-indexed)
-								const startLine = offset ? Math.max(0, offset - 1) : 0;
-								const startLineDisplay = startLine + 1; // For display (1-indexed)
+								let startLine = offset ? Math.max(0, offset - 1) : 0;
 
-								// Check if offset is out of bounds
+								// Clamp offset to file bounds instead of throwing (#3007).
+								// When an agent requests offset:30 on a 13-line file, return
+								// the last line with a notice rather than an error that
+								// propagates as invalid JSON downstream.
+								let offsetClamped = false;
 								if (startLine >= allLines.length) {
-									throw new Error(`Offset ${offset} is beyond end of file (${allLines.length} lines total)`);
+									startLine = Math.max(0, allLines.length - 1);
+									offsetClamped = true;
 								}
+								const startLineDisplay = startLine + 1; // For display (1-indexed)
 
 								// If limit is specified by user, use it; otherwise we'll let truncateHead decide
 								let selectedContent: string;
@@ -185,6 +190,11 @@ export function createReadTool(cwd: string, options?: ReadToolOptions): AgentToo
 								} else {
 									// No truncation, no user limit exceeded
 									outputText = truncation.content;
+								}
+
+								// Prepend clamp notice so the agent knows offset was adjusted
+								if (offsetClamped) {
+									outputText = `[Offset ${offset} beyond end of file (${totalFileLines} lines). Clamped to line ${startLineDisplay}.]\n\n${outputText}`;
 								}
 
 								content = [{ type: "text", text: outputText }];

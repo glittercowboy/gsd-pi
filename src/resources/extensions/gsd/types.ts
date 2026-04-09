@@ -11,6 +11,7 @@ export type Phase =
   | "discussing"
   | "researching"
   | "planning"
+  | "evaluating-gates"
   | "executing"
   | "verifying"
   | "summarizing"
@@ -156,6 +157,8 @@ export interface Summary {
   whatHappened: string;
   deviations: string;
   filesModified: FileModified[];
+  followUps: string;
+  knownLimitations: string;
 }
 
 // ─── Continue-Here ─────────────────────────────────────────────────────────
@@ -246,6 +249,8 @@ export interface GSDState {
     slices?: { done: number; total: number };
     tasks?: { done: number; total: number };
   };
+  /** When phase=complete, holds the last completed milestone (instead of activeMilestone). */
+  lastCompletedMilestone?: ActiveRef | null;
 }
 
 // ─── Post-Unit Hook Types ─────────────────────────────────────────────────
@@ -311,6 +316,7 @@ export interface ClassificationResult {
   tier: ComplexityTier;
   reason: string;
   downgraded: boolean;
+  taskMetadata?: TaskMetadata;
 }
 
 export interface TaskMetadata {
@@ -447,6 +453,8 @@ export interface ParallelConfig {
   budget_ceiling?: number;
   merge_strategy: MergeStrategy;
   auto_merge: AutoMergeMode;
+  /** Optional model override for parallel milestone workers (e.g. "claude-haiku-4-5"). */
+  worker_model?: string;
 }
 
 // ─── Reactive Task Execution Types ───────────────────────────────────────
@@ -473,6 +481,8 @@ export interface ReactiveExecutionConfig {
   max_parallel: number;
   /** Isolation mode for parallel tasks within a slice. Currently only "same-tree" is supported. */
   isolation_mode: "same-tree";
+  /** Optional model override for subagents spawned during parallel execution. */
+  subagent_model?: string;
 }
 
 /** Per-slice reactive execution runtime state, persisted to disk. */
@@ -498,4 +508,113 @@ export interface BrowserFlowResult {
   checksTotal: number;
   checksPassed: number;
   duration: number;
+}
+
+// ─── Complete Task Params (gsd_complete_task tool input) ─────────────────
+
+export interface CompleteTaskParams {
+  taskId: string;
+  sliceId: string;
+  milestoneId: string;
+  oneLiner: string;
+  narrative: string;
+  verification: string;
+  /** @optional — defaults to [] when omitted by models with limited tool-calling */
+  keyFiles?: string[];
+  /** @optional — defaults to [] when omitted by models with limited tool-calling */
+  keyDecisions?: string[];
+  /** @optional — defaults to "None." when omitted */
+  deviations?: string;
+  /** @optional — defaults to "None." when omitted */
+  knownIssues?: string;
+  /** @optional — defaults to false when omitted */
+  blockerDiscovered?: boolean;
+  /** @optional — defaults to [] when omitted by models with limited tool-calling */
+  verificationEvidence?: Array<{
+    command: string;
+    exitCode: number;
+    verdict: string;
+    durationMs: number;
+  }>;
+  /** Optional caller-provided identity for audit trail */
+  actorName?: string;
+  /** Optional caller-provided reason this action was triggered */
+  triggerReason?: string;
+}
+
+// ─── Complete Slice Params (gsd_complete_slice tool input) ───────────────
+
+export interface CompleteSliceParams {
+  sliceId: string;
+  milestoneId: string;
+  sliceTitle: string;
+  oneLiner: string;
+  narrative: string;
+  verification: string;
+  uatContent: string;
+  /** @optional — defaults to [] when omitted by models with limited tool-calling */
+  keyFiles?: string[];
+  /** @optional — defaults to [] when omitted */
+  keyDecisions?: string[];
+  /** @optional — defaults to [] when omitted */
+  patternsEstablished?: string[];
+  /** @optional — defaults to [] when omitted */
+  observabilitySurfaces?: string[];
+  /** @optional — defaults to "None." when omitted */
+  deviations?: string;
+  /** @optional — defaults to "None." when omitted */
+  knownLimitations?: string;
+  /** @optional — defaults to "None." when omitted */
+  followUps?: string;
+  /** @optional — defaults to [] when omitted */
+  requirementsAdvanced?: Array<{ id: string; how: string }>;
+  /** @optional — defaults to [] when omitted */
+  requirementsValidated?: Array<{ id: string; proof: string }>;
+  /** @optional — defaults to [] when omitted */
+  requirementsSurfaced?: string[];
+  /** @optional — defaults to [] when omitted */
+  requirementsInvalidated?: Array<{ id: string; what: string }>;
+  /** @optional — defaults to [] when omitted */
+  filesModified?: Array<{ path: string; description: string }>;
+  /** @optional — defaults to [] when omitted */
+  provides?: string[];
+  /** @optional — defaults to [] when omitted */
+  requires?: Array<{ slice: string; provides: string }>;
+  /** @optional — defaults to [] when omitted */
+  affects?: string[];
+  /** @optional — defaults to [] when omitted */
+  drillDownPaths?: string[];
+  /** Optional caller-provided identity for audit trail */
+  actorName?: string;
+  /** Optional caller-provided reason this action was triggered */
+  triggerReason?: string;
+}
+
+// ─── Quality Gates ───────────────────────────────────────────────────────
+
+export type GateId = "Q3" | "Q4" | "Q5" | "Q6" | "Q7" | "Q8" | "MV01" | "MV02" | "MV03" | "MV04";
+export type GateScope = "slice" | "task" | "milestone";
+export type GateStatus = "pending" | "complete" | "omitted";
+export type GateVerdict = "pass" | "flag" | "omitted" | "";
+
+export interface GateRow {
+  milestone_id: string;
+  slice_id: string;
+  gate_id: GateId;
+  scope: GateScope;
+  task_id: string;
+  status: GateStatus;
+  verdict: GateVerdict;
+  rationale: string;
+  findings: string;
+  evaluated_at: string | null;
+}
+
+/** Configuration for parallel quality gate evaluation during slice planning. */
+export interface GateEvaluationConfig {
+  enabled: boolean;
+  /** Which slice-scoped gates to evaluate in parallel. Default: ['Q3', 'Q4']. */
+  slice_gates?: string[];
+  /** Whether to evaluate task-level gates (Q5/Q6/Q7) via reactive-execute. Default: true when enabled. */
+  task_gates?: boolean;
 }

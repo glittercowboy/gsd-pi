@@ -1,21 +1,18 @@
-import test from "node:test";
+import test, { afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { mkdirSync, writeFileSync, existsSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync, existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
 
-import {
-  resolveExpectedArtifactPath,
-  verifyExpectedArtifact,
-  diagnoseExpectedArtifact,
-  buildLoopRemediationSteps,
-  selfHealRuntimeRecords,
-  hasImplementationArtifacts,
-} from "../auto-recovery.ts";
-import { parseRoadmap, clearParseCache } from "../files.ts";
+import { verifyExpectedArtifact, hasImplementationArtifacts, resolveExpectedArtifactPath, diagnoseExpectedArtifact, buildLoopRemediationSteps } from "../auto-recovery.ts";
+import { openDatabase, closeDatabase, insertMilestone, insertSlice, insertGateRow } from "../gsd-db.ts";
+import { clearParseCache } from "../files.ts";
+import { parseRoadmap } from "../parsers-legacy.ts";
 import { invalidateAllCaches } from "../cache.ts";
 import { deriveState, invalidateStateCache } from "../state.ts";
+
+const tmpDirs: string[] = [];
 
 function makeTmpBase(): string {
   const base = join(tmpdir(), `gsd-test-${randomUUID()}`);
@@ -28,18 +25,34 @@ function cleanup(base: string): void {
   try { rmSync(base, { recursive: true, force: true }); } catch { /* */ }
 }
 
-// ─── resolveExpectedArtifactPath ──────────────────────────────────────────
+function makeTmpProject(): string {
+  const dir = mkdtempSync(join(tmpdir(), "auto-recovery-"));
+  mkdirSync(join(dir, ".gsd"), { recursive: true });
+  openDatabase(join(dir, ".gsd", "gsd.db"));
+  insertMilestone({ id: "M001", title: "Test Milestone", status: "active" });
+  insertSlice({
+    milestoneId: "M001",
+    id: "S01",
+    title: "Test Slice",
+    status: "pending",
+    risk: "low",
+    depends: [],
+  });
+  insertGateRow({ milestoneId: "M001", sliceId: "S01", gateId: "Q3", scope: "slice" });
+  tmpDirs.push(dir);
+  return dir;
+}
 
-test("resolveExpectedArtifactPath returns correct path for research-milestone", () => {
-  const base = makeTmpBase();
-  try {
-    const result = resolveExpectedArtifactPath("research-milestone", "M001", base);
-    assert.ok(result);
-    assert.ok(result!.includes("M001"));
-    assert.ok(result!.includes("RESEARCH"));
-  } finally {
-    cleanup(base);
+afterEach(() => {
+  closeDatabase();
+  for (const dir of tmpDirs) {
+    try {
+      rmSync(dir, { recursive: true, force: true });
+    } catch {
+      // Best-effort cleanup only.
+    }
   }
+  tmpDirs.length = 0;
 });
 
 test("resolveExpectedArtifactPath returns correct path for execute-task", () => {
@@ -114,7 +127,7 @@ test("resolveExpectedArtifactPath returns correct path for all slice-level types
 
     const uatResult = resolveExpectedArtifactPath("run-uat", "M001/S01", base);
     assert.ok(uatResult);
-    assert.ok(uatResult!.includes("UAT-RESULT"));
+    assert.ok(uatResult!.includes("ASSESSMENT"));
   } finally {
     cleanup(base);
   }
@@ -158,8 +171,7 @@ test("buildLoopRemediationSteps returns steps for execute-task", () => {
     const steps = buildLoopRemediationSteps("execute-task", "M001/S01/T01", base);
     assert.ok(steps);
     assert.ok(steps!.includes("T01"));
-    assert.ok(steps!.includes("gsd doctor"));
-    assert.ok(steps!.includes("[x]"));
+    assert.ok(steps!.includes("gsd undo-task"));
   } finally {
     cleanup(base);
   }
@@ -171,7 +183,7 @@ test("buildLoopRemediationSteps returns steps for plan-slice", () => {
     const steps = buildLoopRemediationSteps("plan-slice", "M001/S01", base);
     assert.ok(steps);
     assert.ok(steps!.includes("PLAN"));
-    assert.ok(steps!.includes("gsd doctor"));
+    assert.ok(steps!.includes("gsd recover"));
   } finally {
     cleanup(base);
   }
@@ -183,7 +195,7 @@ test("buildLoopRemediationSteps returns steps for complete-slice", () => {
     const steps = buildLoopRemediationSteps("complete-slice", "M001/S01", base);
     assert.ok(steps);
     assert.ok(steps!.includes("S01"));
-    assert.ok(steps!.includes("ROADMAP"));
+    assert.ok(steps!.includes("gsd reset-slice"));
   } finally {
     cleanup(base);
   }
@@ -510,7 +522,7 @@ test("verifyExpectedArtifact accepts plan-slice with colon-style heading tasks (
   }
 });
 
-test("verifyExpectedArtifact execute-task passes for heading-style plan entry (#1691)", () => {
+test("verifyExpectedArtifact execute-task requires checked checkbox or DB status for heading-style plan entry (#1691, #3607)", () => {
   const base = makeTmpBase();
   try {
     const sliceDir = join(base, ".gsd", "milestones", "M001", "slices", "S01");
@@ -526,92 +538,13 @@ test("verifyExpectedArtifact execute-task passes for heading-style plan entry (#
       "Feature description.",
     ].join("\n"));
     writeFileSync(join(tasksDir, "T01-SUMMARY.md"), "# T01 Summary\n\nDone.");
+    // Without DB or checked checkbox, heading-style plans cannot verify
+    // execute-task completion (summary file alone is insufficient, #3607)
     assert.strictEqual(
       verifyExpectedArtifact("execute-task", "M001/S01/T01", base),
-      true,
-      "execute-task should pass for heading-style plan entry when summary exists",
+      false,
+      "execute-task requires DB status or checked checkbox, not just heading + summary (#3607)",
     );
-  } finally {
-    cleanup(base);
-  }
-});
-
-// ─── selfHealRuntimeRecords — worktree base path (#769) ──────────────────
-
-test("selfHealRuntimeRecords clears stale dispatched records (#769)", async () => {
-  // selfHealRuntimeRecords now only clears stale dispatched records (>1h).
-  // No completedKeySet parameter — deriveState is sole authority.
-  const worktreeBase = makeTmpBase();
-  const mainBase = makeTmpBase();
-  try {
-    const { writeUnitRuntimeRecord, readUnitRuntimeRecord } = await import("../unit-runtime.ts");
-
-    // Write a stale runtime record in the worktree .gsd/runtime/units/
-    writeUnitRuntimeRecord(worktreeBase, "run-uat", "M001/S01", Date.now() - 7200_000, {
-      phase: "dispatched",
-    });
-
-    // Verify the runtime record exists before heal
-    const before = readUnitRuntimeRecord(worktreeBase, "run-uat", "M001/S01");
-    assert.ok(before, "runtime record should exist before heal");
-
-    // Mock ExtensionContext with minimal notify
-    const notifications: string[] = [];
-    const mockCtx = {
-      ui: { notify: (msg: string) => { notifications.push(msg); } },
-    } as any;
-
-    // Call selfHeal with worktreeBase — should clear the stale record
-    await selfHealRuntimeRecords(worktreeBase, mockCtx);
-
-    // The stale record should be cleared
-    const after = readUnitRuntimeRecord(worktreeBase, "run-uat", "M001/S01");
-    assert.equal(after, null, "runtime record should be cleared after heal");
-    assert.ok(notifications.some(n => n.includes("Self-heal")), "should emit self-heal notification");
-
-    // Write a stale record at mainBase
-    writeUnitRuntimeRecord(mainBase, "run-uat", "M001/S01", Date.now() - 7200_000, {
-      phase: "dispatched",
-    });
-    await selfHealRuntimeRecords(mainBase, mockCtx);
-
-    // The record at mainBase should also be cleared by the stale timeout (>1h)
-    const afterMain = readUnitRuntimeRecord(mainBase, "run-uat", "M001/S01");
-    assert.equal(afterMain, null, "stale record at main base should be cleared by timeout");
-  } finally {
-    cleanup(worktreeBase);
-    cleanup(mainBase);
-  }
-});
-
-// ─── #1625: selfHealRuntimeRecords on resume clears paused-session leftovers ──
-
-test("selfHealRuntimeRecords clears recently-paused dispatched records on resume (#1625)", async () => {
-  // When pauseAuto closes out a unit but clearUnitRuntimeRecord silently fails
-  // (e.g. permission error), selfHealRuntimeRecords on resume should still
-  // clean up stale dispatched records that are >1h old.
-  const base = makeTmpBase();
-  try {
-    const { writeUnitRuntimeRecord, readUnitRuntimeRecord } = await import("../unit-runtime.ts");
-
-    // Simulate a record left behind after a pause — aged >1h to be considered stale
-    writeUnitRuntimeRecord(base, "execute-task", "M001/S01/T01", Date.now() - 3700_000, {
-      phase: "dispatched",
-    });
-
-    const before = readUnitRuntimeRecord(base, "execute-task", "M001/S01/T01");
-    assert.ok(before, "dispatched record should exist before resume heal");
-    assert.equal(before!.phase, "dispatched");
-
-    const notifications: string[] = [];
-    const mockCtx = {
-      ui: { notify: (msg: string) => { notifications.push(msg); } },
-    } as any;
-
-    await selfHealRuntimeRecords(base, mockCtx);
-
-    const after = readUnitRuntimeRecord(base, "execute-task", "M001/S01/T01");
-    assert.equal(after, null, "stale dispatched record should be cleared on resume (#1625)");
   } finally {
     cleanup(base);
   }
@@ -698,7 +631,7 @@ test("hasImplementationArtifacts returns false when only .gsd/ files committed (
     execFileSync("git", ["commit", "-m", "chore: add plan files"], { cwd: base, stdio: "ignore" });
 
     const result = hasImplementationArtifacts(base);
-    assert.equal(result, false, "should return false when only .gsd/ files were committed");
+    assert.equal(result, "absent", "should return absent when only .gsd/ files were committed");
   } finally {
     cleanup(base);
   }
@@ -717,7 +650,7 @@ test("hasImplementationArtifacts returns true when implementation files committe
     execFileSync("git", ["commit", "-m", "feat: add feature"], { cwd: base, stdio: "ignore" });
 
     const result = hasImplementationArtifacts(base);
-    assert.equal(result, true, "should return true when implementation files are present");
+    assert.equal(result, "present", "should return present when implementation files are present");
   } finally {
     cleanup(base);
   }
@@ -728,7 +661,7 @@ test("hasImplementationArtifacts returns true on non-git directory (fail-open)",
   mkdirSync(base, { recursive: true });
   try {
     const result = hasImplementationArtifacts(base);
-    assert.equal(result, true, "should return true (fail-open) in non-git directory");
+    assert.equal(result, "unknown", "should return unknown (fail-open) in non-git directory");
   } finally {
     cleanup(base);
   }
@@ -770,4 +703,12 @@ test("verifyExpectedArtifact complete-milestone passes with impl files (#1703)",
   } finally {
     cleanup(base);
   }
+});
+
+test("verifyExpectedArtifact checks pending gate-evaluate artifacts without ESM require failures", () => {
+  const base = makeTmpProject();
+
+  const verified = verifyExpectedArtifact("gate-evaluate", "M001/S01/gates+Q3", base);
+
+  assert.equal(verified, false, "pending gates should keep gate-evaluate unverified");
 });

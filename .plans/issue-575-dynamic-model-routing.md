@@ -11,7 +11,7 @@ Users on capped plans (e.g., Claude Pro) exhaust weekly token limits in 15-20 ho
 ## Current Architecture
 
 ### What Exists
-- **Phase-based model config:** Users can set different models per phase via `preferences.md` (research, planning, execution, completion)
+- **Phase-based model config:** Users can set different models per phase via `PREFERENCES.md` (research, planning, execution, completion)
 - **Fallback chains:** Each phase supports `fallbacks: [model1, model2]` for error recovery
 - **Pre-dispatch hooks:** `PreDispatchResult` has a `model` field but it's **never applied** in `auto.ts` — this is a ready-made extension point
 - **Model registry:** `ModelRegistry.getAvailable()` provides all configured models with metadata

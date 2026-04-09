@@ -14,9 +14,9 @@ import {
   renderHealthView,
 } from "../visualizer-views.js";
 import type { VisualizerData } from "../visualizer-data.js";
-import { createTestContext } from "./test-helpers.ts";
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
 
-const { assertEq, assertTrue, report } = createTestContext();
 
 // ─── Mock theme ─────────────────────────────────────────────────────────────
 
@@ -165,19 +165,19 @@ console.log("\n=== renderProgressView ===");
   });
 
   const lines = renderProgressView(data, mockTheme, 80);
-  assertTrue(lines.length > 0, "progress view produces output");
-  assertTrue(lines.some(l => l.includes("M001")), "shows milestone M001");
-  assertTrue(lines.some(l => l.includes("S01")), "shows slice S01");
-  assertTrue(lines.some(l => l.includes("T01")), "shows task T01 for active slice");
-  assertTrue(lines.some(l => l.includes("M002")), "shows milestone M002");
-  assertTrue(lines.some(l => l.includes("depends on M001")), "shows dependency note");
-  assertTrue(lines.some(l => l.includes("30m")), "shows task estimate");
-  assertTrue(lines.some(l => l.includes("Feature Snapshot")), "shows stats header");
-  assertTrue(lines.some(l => l.includes("Missing slices")), "shows missing slices count");
-  assertTrue(lines.some(l => l.includes("State Engine")), "shows missing slice preview");
-  assertTrue(lines.some(l => l.includes("Updated (last 7 days)")), "shows updated count");
-  assertTrue(lines.some(l => l.includes("Recent completions")), "shows recent completions section");
-  assertTrue(lines.some(l => l.includes("Core structures assembled")), "shows recent one-liner entry");
+  assert.ok(lines.length > 0, "progress view produces output");
+  assert.ok(lines.some(l => l.includes("M001")), "shows milestone M001");
+  assert.ok(lines.some(l => l.includes("S01")), "shows slice S01");
+  assert.ok(lines.some(l => l.includes("T01")), "shows task T01 for active slice");
+  assert.ok(lines.some(l => l.includes("M002")), "shows milestone M002");
+  assert.ok(lines.some(l => l.includes("depends on M001")), "shows dependency note");
+  assert.ok(lines.some(l => l.includes("30m")), "shows task estimate");
+  assert.ok(lines.some(l => l.includes("Feature Snapshot")), "shows stats header");
+  assert.ok(lines.some(l => l.includes("Missing slices")), "shows missing slices count");
+  assert.ok(lines.some(l => l.includes("State Engine")), "shows missing slice preview");
+  assert.ok(lines.some(l => l.includes("Updated (last 7 days)")), "shows updated count");
+  assert.ok(lines.some(l => l.includes("Recent completions")), "shows recent completions section");
+  assert.ok(lines.some(l => l.includes("Core structures assembled")), "shows recent one-liner entry");
 }
 
 {
@@ -211,10 +211,10 @@ console.log("\n=== renderProgressView ===");
   });
 
   const lines = renderProgressView(data, mockTheme, 80);
-  assertTrue(lines.some(l => l.includes("Discussion Status")), "shows discussion section");
-  assertTrue(lines.some(l => l.includes("Discussed: 1")), "counts discussed milestones");
-  assertTrue(lines.some(l => l.includes("Draft")), "shows draft badge");
-  assertTrue(lines.some(l => l.includes("Pending")), "shows pending badge");
+  assert.ok(lines.some(l => l.includes("Discussion Status")), "shows discussion section");
+  assert.ok(lines.some(l => l.includes("Discussed: 1")), "counts discussed milestones");
+  assert.ok(lines.some(l => l.includes("Draft")), "shows draft badge");
+  assert.ok(lines.some(l => l.includes("Pending")), "shows pending badge");
 }
 
 // Verification badges
@@ -239,14 +239,14 @@ console.log("\n=== renderProgressView ===");
 
   const lines = renderProgressView(data, mockTheme, 80);
   // The verification badge should show check mark and warning
-  assertTrue(lines.some(l => l.includes("S01")), "shows slice with verification");
+  assert.ok(lines.some(l => l.includes("S01")), "shows slice with verification");
 }
 
 {
   const data = makeVisualizerData({ milestones: [] });
   const lines = renderProgressView(data, mockTheme, 80);
-  assertTrue(lines.some(l => l.includes("Feature Snapshot")), "shows stats snapshot even when no milestones");
-  assertTrue(lines.some(l => l.includes("Missing slices")), "reports missing slices count");
+  assert.ok(lines.some(l => l.includes("Feature Snapshot")), "shows stats snapshot even when no milestones");
+  assert.ok(lines.some(l => l.includes("Missing slices")), "reports missing slices count");
 }
 
 // ─── Risk Heatmap ───────────────────────────────────────────────────────────
@@ -272,9 +272,9 @@ console.log("\n=== Risk Heatmap ===");
   });
 
   const lines = renderProgressView(data, mockTheme, 80);
-  assertTrue(lines.some(l => l.includes("Risk Heatmap")), "heatmap header present");
-  assertTrue(lines.some(l => l.includes("1 low, 1 med, 2 high")), "risk summary counts");
-  assertTrue(lines.some(l => l.includes("1 high-risk not started")), "high-risk not started warning");
+  assert.ok(lines.some(l => l.includes("Risk Heatmap")), "heatmap header present");
+  assert.ok(lines.some(l => l.includes("1 low, 1 med, 2 high")), "risk summary counts");
+  assert.ok(lines.some(l => l.includes("1 high-risk not started")), "high-risk not started warning");
 }
 
 // ─── Search/Filter ──────────────────────────────────────────────────────────
@@ -305,11 +305,11 @@ console.log("\n=== Search/Filter ===");
   });
 
   const filtered = renderProgressView(data, mockTheme, 80, { text: "auth", field: "all" });
-  assertTrue(filtered.some(l => l.includes("M001")), "filter shows matching milestone");
-  assertTrue(filtered.some(l => l.includes("Filter (all): auth")), "filter indicator present");
+  assert.ok(filtered.some(l => l.includes("M001")), "filter shows matching milestone");
+  assert.ok(filtered.some(l => l.includes("Filter (all): auth")), "filter indicator present");
 
   const riskFiltered = renderProgressView(data, mockTheme, 80, { text: "high", field: "risk" });
-  assertTrue(riskFiltered.some(l => l.includes("M001")), "risk filter shows milestone with high-risk slice");
+  assert.ok(riskFiltered.some(l => l.includes("M001")), "risk filter shows milestone with high-risk slice");
 }
 
 // ─── renderDepsView ─────────────────────────────────────────────────────────
@@ -354,13 +354,13 @@ console.log("\n=== renderDepsView ===");
   });
 
   const lines = renderDepsView(data, mockTheme, 80);
-  assertTrue(lines.length > 0, "deps view produces output");
-  assertTrue(lines.some(l => l.includes("M001") && l.includes("M002")), "shows milestone dep edge");
-  assertTrue(lines.some(l => l.includes("S01") && l.includes("S02")), "shows slice dep edge");
-  assertTrue(lines.some(l => l.includes("Critical Path")), "shows critical path section");
-  assertTrue(lines.some(l => l.includes("[CRITICAL]")), "shows CRITICAL badge");
-  assertTrue(lines.some(l => l.includes("Data Flow")), "shows data flow section");
-  assertTrue(lines.some(l => l.includes("api-types")), "shows provides artifact");
+  assert.ok(lines.length > 0, "deps view produces output");
+  assert.ok(lines.some(l => l.includes("M001") && l.includes("M002")), "shows milestone dep edge");
+  assert.ok(lines.some(l => l.includes("S01") && l.includes("S02")), "shows slice dep edge");
+  assert.ok(lines.some(l => l.includes("Critical Path")), "shows critical path section");
+  assert.ok(lines.some(l => l.includes("[CRITICAL]")), "shows CRITICAL badge");
+  assert.ok(lines.some(l => l.includes("Data Flow")), "shows data flow section");
+  assert.ok(lines.some(l => l.includes("api-types")), "shows provides artifact");
 }
 
 {
@@ -371,7 +371,7 @@ console.log("\n=== renderDepsView ===");
   });
 
   const lines = renderDepsView(data, mockTheme, 80);
-  assertTrue(lines.some(l => l.includes("No milestone dependencies")), "shows no-deps message");
+  assert.ok(lines.some(l => l.includes("No milestone dependencies")), "shows no-deps message");
 }
 
 // ─── renderMetricsView ──────────────────────────────────────────────────────
@@ -422,21 +422,21 @@ console.log("\n=== renderMetricsView ===");
   });
 
   const lines = renderMetricsView(data, mockTheme, 80);
-  assertTrue(lines.length > 0, "metrics view produces output");
-  assertTrue(lines.some(l => l.includes("$2.50")), "shows total cost");
-  assertTrue(lines.some(l => l.includes("execution")), "shows phase name");
-  assertTrue(lines.some(l => l.includes("claude-opus-4-6")), "shows model name");
-  assertTrue(lines.some(l => l.includes("By Tier")), "shows tier breakdown section");
-  assertTrue(lines.some(l => l.includes("standard")), "shows tier name");
-  assertTrue(lines.some(l => l.includes("Dynamic routing")), "shows tier savings line");
-  assertTrue(lines.some(l => l.includes("Tools: 15")), "shows tool call count");
-  assertTrue(lines.some(l => l.includes("10") && l.includes("sent")), "shows message counts");
+  assert.ok(lines.length > 0, "metrics view produces output");
+  assert.ok(lines.some(l => l.includes("$2.50")), "shows total cost");
+  assert.ok(lines.some(l => l.includes("execution")), "shows phase name");
+  assert.ok(lines.some(l => l.includes("claude-opus-4-6")), "shows model name");
+  assert.ok(lines.some(l => l.includes("By Tier")), "shows tier breakdown section");
+  assert.ok(lines.some(l => l.includes("standard")), "shows tier name");
+  assert.ok(lines.some(l => l.includes("Dynamic routing")), "shows tier savings line");
+  assert.ok(lines.some(l => l.includes("Tools: 15")), "shows tool call count");
+  assert.ok(lines.some(l => l.includes("10") && l.includes("sent")), "shows message counts");
 }
 
 {
   const data = makeVisualizerData({ totals: null });
   const lines = renderMetricsView(data, mockTheme, 80);
-  assertTrue(lines.some(l => l.includes("No metrics data")), "shows no-data message");
+  assert.ok(lines.some(l => l.includes("No metrics data")), "shows no-data message");
 }
 
 // ─── renderTimelineView ─────────────────────────────────────────────────────
@@ -464,16 +464,16 @@ console.log("\n=== renderTimelineView ===");
   });
 
   const listLines = renderTimelineView(data, mockTheme, 80);
-  assertTrue(listLines.length >= 1, "list view produces lines");
-  assertTrue(listLines.some(l => l.includes("execute-task")), "shows unit type");
-  assertTrue(listLines.some(l => l.includes("[standard]")), "shows tier in timeline");
-  assertTrue(listLines.some(l => l.includes("opus-4-6")), "shows shortened model");
+  assert.ok(listLines.length >= 1, "list view produces lines");
+  assert.ok(listLines.some(l => l.includes("execute-task")), "shows unit type");
+  assert.ok(listLines.some(l => l.includes("[standard]")), "shows tier in timeline");
+  assert.ok(listLines.some(l => l.includes("opus-4-6")), "shows shortened model");
 }
 
 {
   const data = makeVisualizerData({ units: [] });
   const lines = renderTimelineView(data, mockTheme, 80);
-  assertTrue(lines.some(l => l.includes("No execution history")), "shows empty message");
+  assert.ok(lines.some(l => l.includes("No execution history")), "shows empty message");
 }
 
 // ─── renderAgentView ────────────────────────────────────────────────────────
@@ -514,17 +514,17 @@ console.log("\n=== renderAgentView ===");
   });
 
   const lines = renderAgentView(data, mockTheme, 80);
-  assertTrue(lines.length > 0, "agent view produces output");
-  assertTrue(lines.some(l => l.includes("ACTIVE")), "shows active status");
-  assertTrue(lines.some(l => l.includes("Pressure")), "shows pressure section");
-  assertTrue(lines.some(l => l.includes("15.5%")), "shows truncation rate");
-  assertTrue(lines.some(l => l.includes("Pending captures: 3")), "shows pending captures");
+  assert.ok(lines.length > 0, "agent view produces output");
+  assert.ok(lines.some(l => l.includes("ACTIVE")), "shows active status");
+  assert.ok(lines.some(l => l.includes("Pressure")), "shows pressure section");
+  assert.ok(lines.some(l => l.includes("15.5%")), "shows truncation rate");
+  assert.ok(lines.some(l => l.includes("Pending captures: 3")), "shows pending captures");
 }
 
 {
   const data = makeVisualizerData({ agentActivity: null });
   const lines = renderAgentView(data, mockTheme, 80);
-  assertTrue(lines.some(l => l.includes("No agent activity")), "shows no-activity message");
+  assert.ok(lines.some(l => l.includes("No agent activity")), "shows no-activity message");
 }
 
 // ─── renderChangelogView ────────────────────────────────────────────────────
@@ -559,17 +559,17 @@ console.log("\n=== renderChangelogView ===");
   });
 
   const lines = renderChangelogView(data, mockTheme, 80);
-  assertTrue(lines.some(l => l.includes("M001/S01")), "shows slice reference");
-  assertTrue(lines.some(l => l.includes("Decisions:")), "shows decisions section");
-  assertTrue(lines.some(l => l.includes("RS256")), "shows decision content");
-  assertTrue(lines.some(l => l.includes("Patterns:")), "shows patterns section");
-  assertTrue(lines.some(l => l.includes("Repository pattern")), "shows pattern content");
+  assert.ok(lines.some(l => l.includes("M001/S01")), "shows slice reference");
+  assert.ok(lines.some(l => l.includes("Decisions:")), "shows decisions section");
+  assert.ok(lines.some(l => l.includes("RS256")), "shows decision content");
+  assert.ok(lines.some(l => l.includes("Patterns:")), "shows patterns section");
+  assert.ok(lines.some(l => l.includes("Repository pattern")), "shows pattern content");
 }
 
 {
   const data = makeVisualizerData({ changelog: { entries: [] } });
   const lines = renderChangelogView(data, mockTheme, 80);
-  assertTrue(lines.some(l => l.includes("No completed slices")), "shows empty state");
+  assert.ok(lines.some(l => l.includes("No completed slices")), "shows empty state");
 }
 
 // ─── renderExportView ───────────────────────────────────────────────────────
@@ -579,10 +579,10 @@ console.log("\n=== renderExportView ===");
 {
   const data = makeVisualizerData();
   const lines = renderExportView(data, mockTheme, 80);
-  assertTrue(lines.some(l => l.includes("Export Options")), "shows export header");
-  assertTrue(lines.some(l => l.includes("[m]")), "shows markdown option");
-  assertTrue(lines.some(l => l.includes("[j]")), "shows json option");
-  assertTrue(lines.some(l => l.includes("[s]")), "shows snapshot option");
+  assert.ok(lines.some(l => l.includes("Export Options")), "shows export header");
+  assert.ok(lines.some(l => l.includes("[m]")), "shows markdown option");
+  assert.ok(lines.some(l => l.includes("[j]")), "shows json option");
+  assert.ok(lines.some(l => l.includes("[s]")), "shows snapshot option");
 }
 
 // ─── renderKnowledgeView ────────────────────────────────────────────────────
@@ -600,13 +600,13 @@ console.log("\n=== renderKnowledgeView ===");
   });
 
   const lines = renderKnowledgeView(data, mockTheme, 80);
-  assertTrue(lines.some(l => l.includes("Rules")), "shows rules section");
-  assertTrue(lines.some(l => l.includes("K001")), "shows rule ID");
-  assertTrue(lines.some(l => l.includes("Always use transactions")), "shows rule content");
-  assertTrue(lines.some(l => l.includes("Patterns")), "shows patterns section");
-  assertTrue(lines.some(l => l.includes("P001")), "shows pattern ID");
-  assertTrue(lines.some(l => l.includes("Lessons Learned")), "shows lessons section");
-  assertTrue(lines.some(l => l.includes("L001")), "shows lesson ID");
+  assert.ok(lines.some(l => l.includes("Rules")), "shows rules section");
+  assert.ok(lines.some(l => l.includes("K001")), "shows rule ID");
+  assert.ok(lines.some(l => l.includes("Always use transactions")), "shows rule content");
+  assert.ok(lines.some(l => l.includes("Patterns")), "shows patterns section");
+  assert.ok(lines.some(l => l.includes("P001")), "shows pattern ID");
+  assert.ok(lines.some(l => l.includes("Lessons Learned")), "shows lessons section");
+  assert.ok(lines.some(l => l.includes("L001")), "shows lesson ID");
 }
 
 {
@@ -614,7 +614,7 @@ console.log("\n=== renderKnowledgeView ===");
     knowledge: { exists: false, rules: [], patterns: [], lessons: [] },
   });
   const lines = renderKnowledgeView(data, mockTheme, 80);
-  assertTrue(lines.some(l => l.includes("No KNOWLEDGE.md found")), "shows no-knowledge message");
+  assert.ok(lines.some(l => l.includes("No KNOWLEDGE.md found")), "shows no-knowledge message");
 }
 
 // ─── renderCapturesView ─────────────────────────────────────────────────────
@@ -635,11 +635,11 @@ console.log("\n=== renderCapturesView ===");
   });
 
   const lines = renderCapturesView(data, mockTheme, 80);
-  assertTrue(lines.some(l => l.includes("3") && l.includes("total")), "shows total count");
-  assertTrue(lines.some(l => l.includes("1") && l.includes("pending")), "shows pending count");
-  assertTrue(lines.some(l => l.includes("CAP-abc123")), "shows capture ID");
-  assertTrue(lines.some(l => l.includes("(inject)")), "shows classification badge");
-  assertTrue(lines.some(l => l.includes("[pending]")), "shows status badge");
+  assert.ok(lines.some(l => l.includes("3") && l.includes("total")), "shows total count");
+  assert.ok(lines.some(l => l.includes("1") && l.includes("pending")), "shows pending count");
+  assert.ok(lines.some(l => l.includes("CAP-abc123")), "shows capture ID");
+  assert.ok(lines.some(l => l.includes("(inject)")), "shows classification badge");
+  assert.ok(lines.some(l => l.includes("[pending]")), "shows status badge");
 }
 
 {
@@ -647,7 +647,7 @@ console.log("\n=== renderCapturesView ===");
     captures: { entries: [], pendingCount: 0, totalCount: 0 },
   });
   const lines = renderCapturesView(data, mockTheme, 80);
-  assertTrue(lines.some(l => l.includes("No captures recorded")), "shows empty state");
+  assert.ok(lines.some(l => l.includes("No captures recorded")), "shows empty state");
 }
 
 // ─── renderHealthView ───────────────────────────────────────────────────────
@@ -682,17 +682,17 @@ console.log("\n=== renderHealthView ===");
   });
 
   const lines = renderHealthView(data, mockTheme, 80);
-  assertTrue(lines.some(l => l.includes("Budget")), "shows budget section");
-  assertTrue(lines.some(l => l.includes("Ceiling")), "shows budget ceiling");
-  assertTrue(lines.some(l => l.includes("$20.00")), "shows ceiling amount");
-  assertTrue(lines.some(l => l.includes("Pressure")), "shows pressure section");
-  assertTrue(lines.some(l => l.includes("30.0%")), "shows truncation rate");
-  assertTrue(lines.some(l => l.includes("Routing")), "shows routing section");
-  assertTrue(lines.some(l => l.includes("standard")), "shows tier name");
-  assertTrue(lines.some(l => l.includes("2 downgraded")), "shows downgraded count");
-  assertTrue(lines.some(l => l.includes("Dynamic routing")), "shows savings line");
-  assertTrue(lines.some(l => l.includes("Session")), "shows session section");
-  assertTrue(lines.some(l => l.includes("Tool calls: 50")), "shows tool calls");
+  assert.ok(lines.some(l => l.includes("Budget")), "shows budget section");
+  assert.ok(lines.some(l => l.includes("Ceiling")), "shows budget ceiling");
+  assert.ok(lines.some(l => l.includes("$20.00")), "shows ceiling amount");
+  assert.ok(lines.some(l => l.includes("Pressure")), "shows pressure section");
+  assert.ok(lines.some(l => l.includes("30.0%")), "shows truncation rate");
+  assert.ok(lines.some(l => l.includes("Routing")), "shows routing section");
+  assert.ok(lines.some(l => l.includes("standard")), "shows tier name");
+  assert.ok(lines.some(l => l.includes("2 downgraded")), "shows downgraded count");
+  assert.ok(lines.some(l => l.includes("Dynamic routing")), "shows savings line");
+  assert.ok(lines.some(l => l.includes("Session")), "shows session section");
+  assert.ok(lines.some(l => l.includes("Tool calls: 50")), "shows tool calls");
 }
 
 {
@@ -709,10 +709,8 @@ console.log("\n=== renderHealthView ===");
   });
 
   const lines = renderHealthView(data, mockTheme, 80);
-  assertTrue(lines.some(l => l.includes("No budget ceiling set")), "shows no-ceiling message");
-  assertTrue(lines.some(l => l.includes("compact")), "shows token profile");
+  assert.ok(lines.some(l => l.includes("No budget ceiling set")), "shows no-ceiling message");
+  assert.ok(lines.some(l => l.includes("compact")), "shows token profile");
 }
 
 // ─── Report ─────────────────────────────────────────────────────────────────
-
-report();

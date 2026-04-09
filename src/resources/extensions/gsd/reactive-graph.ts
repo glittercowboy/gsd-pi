@@ -10,7 +10,9 @@
  */
 
 import type { TaskIO, DerivedTaskNode, ReactiveExecutionState } from "./types.js";
-import { loadFile, parsePlan, parseTaskPlanIO } from "./files.js";
+import { loadFile, parseTaskPlanIO } from "./files.js";
+import { isDbAvailable, getSliceTasks } from "./gsd-db.js";
+import { parsePlan } from "./parsers-legacy.js";
 import { resolveTasksDir, resolveTaskFiles } from "./paths.js";
 import { join } from "node:path";
 import { loadJsonFileOrNull, saveJsonFile } from "./json-persistence.js";
@@ -130,6 +132,24 @@ export function isGraphAmbiguous(graph: DerivedTaskNode[]): boolean {
 }
 
 /**
+ * Returns tasks that are missing IO annotations (no inputFiles and no outputFiles).
+ * These tasks prevent parallel dispatch by making the graph ambiguous.
+ * Used to surface actionable diagnostics when parallel execution falls back to sequential.
+ */
+export function getMissingAnnotationTasks(
+  graph: DerivedTaskNode[],
+): Array<{ id: string; title: string }> {
+  return graph
+    .filter(
+      (node) =>
+        !node.done &&
+        node.inputFiles.length === 0 &&
+        node.outputFiles.length === 0,
+    )
+    .map((node) => ({ id: node.id, title: node.title }));
+}
+
+/**
  * Detect deadlock: no tasks are ready and none are in-flight, yet incomplete
  * tasks remain. This indicates a circular dependency or impossible state.
  */
@@ -188,13 +208,41 @@ export async function loadSliceTaskIO(
   const planContent = slicePlanPath ? await loadFile(slicePlanPath) : null;
   if (!planContent) return [];
 
-  const plan = parsePlan(planContent);
+  // DB primary path — get task entries
+  let taskEntries: { id: string; title: string; done: boolean }[] | null = null;
+  try {
+    if (isDbAvailable()) {
+      const tasks = getSliceTasks(mid, sid);
+      if (tasks.length > 0) {
+        taskEntries = tasks.map(t => ({
+          id: t.id,
+          title: t.title,
+          done: t.status === "complete" || t.status === "done",
+        }));
+      }
+    }
+  } catch { /* fall through */ }
+
+  if (!taskEntries) {
+    // File-based fallback: parse slice plan for task entries
+    const parsed = parsePlan(planContent);
+    if (parsed.tasks.length > 0) {
+      taskEntries = parsed.tasks.map(t => ({
+        id: t.id,
+        title: t.title,
+        done: t.done,
+      }));
+    } else {
+      return [];
+    }
+  }
+
   const tDir = resolveTasksDir(basePath, mid, sid);
   if (!tDir) return [];
 
   const results: TaskIO[] = [];
 
-  for (const taskEntry of plan.tasks) {
+  for (const taskEntry of taskEntries) {
     const planFiles = resolveTaskFiles(tDir, "PLAN");
     const taskFileName = planFiles.find((f) =>
       f.toUpperCase().startsWith(taskEntry.id.toUpperCase() + "-"),

@@ -1,13 +1,11 @@
+import { describe, test, before, after } from 'node:test';
+import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync, writeFileSync, existsSync, lstatSync, realpathSync, mkdirSync, symlinkSync, renameSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { execSync } from "node:child_process";
 
 import { repoIdentity, externalGsdRoot, ensureGsdSymlink, validateProjectId, readRepoMeta, isInheritedRepo } from "../repo-identity.ts";
-import { createTestContext } from "./test-helpers.ts";
-
-const { assertEq, assertTrue, report } = createTestContext();
-
 /**
  * Normalize a path for reliable comparison on Windows CI runners.
  * `os.tmpdir()` may return the 8.3 short-path form (e.g. `C:\Users\RUNNER~1`)
@@ -23,11 +21,15 @@ function run(command: string, cwd: string): string {
   return execSync(command, { cwd, stdio: ["ignore", "pipe", "pipe"], encoding: "utf-8" }).trim();
 }
 
-async function main(): Promise<void> {
-  const base = realpathSync(mkdtempSync(join(tmpdir(), "gsd-repo-identity-")));
-  const stateDir = realpathSync(mkdtempSync(join(tmpdir(), "gsd-state-")));
+describe('repo-identity-worktree', () => {
+  let base: string;
+  let stateDir: string;
+  let worktreePath: string;
+  let expectedExternalState: string;
 
-  try {
+  before(() => {
+    base = realpathSync(mkdtempSync(join(tmpdir(), "gsd-repo-identity-")));
+    stateDir = realpathSync(mkdtempSync(join(tmpdir(), "gsd-state-")));
     process.env.GSD_STATE_DIR = stateDir;
 
     run("git init -b main", base);
@@ -38,57 +40,69 @@ async function main(): Promise<void> {
     run("git add README.md", base);
     run('git commit -m "chore: init"', base);
 
-    const worktreePath = join(base, ".gsd", "worktrees", "M001");
+    worktreePath = join(base, ".gsd", "worktrees", "M001");
     run(`git worktree add -b milestone/M001 ${worktreePath}`, base);
 
-    console.log("\n=== ensureGsdSymlink points worktree at main repo external state dir ===");
-    const expectedExternalState = externalGsdRoot(base);
-    const mainState = ensureGsdSymlink(base);
-    assertEq(mainState, realpathSync(join(base, ".gsd")), "ensureGsdSymlink(base) returns the current main repo .gsd target");
-    const worktreeState = ensureGsdSymlink(worktreePath);
-    assertEq(worktreeState, expectedExternalState, "worktree symlink target matches main repo external state dir");
-    assertTrue(existsSync(join(worktreePath, ".gsd")), "worktree .gsd exists");
-    assertTrue(lstatSync(join(worktreePath, ".gsd")).isSymbolicLink(), "worktree .gsd is a symlink");
-    assertEq(realpathSync(join(worktreePath, ".gsd")), realpathSync(expectedExternalState), "worktree .gsd symlink resolves to main repo external state dir");
+    expectedExternalState = externalGsdRoot(base);
+  });
 
-    console.log("\n=== ensureGsdSymlink heals stale worktree symlinks ===");
+  after(() => {
+    delete process.env.GSD_PROJECT_ID;
+    delete process.env.GSD_STATE_DIR;
+    rmSync(base, { recursive: true, force: true });
+    rmSync(stateDir, { recursive: true, force: true });
+  });
+
+test('ensureGsdSymlink points worktree at main repo external state dir', () => {
+    const mainState = ensureGsdSymlink(base);
+    assert.deepStrictEqual(mainState, realpathSync(join(base, ".gsd")), "ensureGsdSymlink(base) returns the current main repo .gsd target");
+    const worktreeState = ensureGsdSymlink(worktreePath);
+    assert.deepStrictEqual(worktreeState, expectedExternalState, "worktree symlink target matches main repo external state dir");
+    assert.ok(existsSync(join(worktreePath, ".gsd")), "worktree .gsd exists");
+    assert.ok(lstatSync(join(worktreePath, ".gsd")).isSymbolicLink(), "worktree .gsd is a symlink");
+    assert.deepStrictEqual(realpathSync(join(worktreePath, ".gsd")), realpathSync(expectedExternalState), "worktree .gsd symlink resolves to main repo external state dir");
+});
+
+test('ensureGsdSymlink heals stale worktree symlinks', () => {
     const staleState = join(stateDir, "projects", "stale-worktree-state");
     mkdirSync(staleState, { recursive: true });
     rmSync(join(worktreePath, ".gsd"), { recursive: true, force: true });
     symlinkSync(staleState, join(worktreePath, ".gsd"), "junction");
     const healedState = ensureGsdSymlink(worktreePath);
-    assertEq(healedState, expectedExternalState, "stale worktree symlink is repaired to canonical external state dir");
-    assertEq(realpathSync(join(worktreePath, ".gsd")), realpathSync(expectedExternalState), "healed worktree symlink resolves to canonical external state dir");
+    assert.deepStrictEqual(healedState, expectedExternalState, "stale worktree symlink is repaired to canonical external state dir");
+    assert.deepStrictEqual(realpathSync(join(worktreePath, ".gsd")), realpathSync(expectedExternalState), "healed worktree symlink resolves to canonical external state dir");
+});
 
-    console.log("\n=== ensureGsdSymlink preserves worktree .gsd directories ===");
+test('ensureGsdSymlink preserves worktree .gsd directories', () => {
     rmSync(join(worktreePath, ".gsd"), { recursive: true, force: true });
     mkdirSync(join(worktreePath, ".gsd", "milestones"), { recursive: true });
     writeFileSync(join(worktreePath, ".gsd", "milestones", "stale.txt"), "stale\n", "utf-8");
     const preservedDirState = ensureGsdSymlink(worktreePath);
-    assertEq(preservedDirState, join(worktreePath, ".gsd"), "worktree .gsd directory is left in place for sync-based refresh");
-    assertTrue(lstatSync(join(worktreePath, ".gsd")).isDirectory(), "worktree .gsd directory remains a directory");
-    assertTrue(existsSync(join(worktreePath, ".gsd", "milestones", "stale.txt")), "existing worktree .gsd directory contents remain available for sync logic");
+    assert.deepStrictEqual(preservedDirState, join(worktreePath, ".gsd"), "worktree .gsd directory is left in place for sync-based refresh");
+    assert.ok(lstatSync(join(worktreePath, ".gsd")).isDirectory(), "worktree .gsd directory remains a directory");
+    assert.ok(existsSync(join(worktreePath, ".gsd", "milestones", "stale.txt")), "existing worktree .gsd directory contents remain available for sync logic");
+});
 
-    console.log("\n=== GSD_PROJECT_ID overrides computed repo hash ===");
+test('GSD_PROJECT_ID overrides computed repo hash', () => {
     process.env.GSD_PROJECT_ID = "my-project";
-    assertEq(repoIdentity(base), "my-project", "repoIdentity returns GSD_PROJECT_ID when set");
-    assertEq(externalGsdRoot(base), join(stateDir, "projects", "my-project"), "externalGsdRoot uses GSD_PROJECT_ID");
+    assert.deepStrictEqual(repoIdentity(base), "my-project", "repoIdentity returns GSD_PROJECT_ID when set");
+    assert.deepStrictEqual(externalGsdRoot(base), join(stateDir, "projects", "my-project"), "externalGsdRoot uses GSD_PROJECT_ID");
     delete process.env.GSD_PROJECT_ID;
+});
 
-    console.log("\n=== GSD_PROJECT_ID falls back to hash when unset ===");
+test('GSD_PROJECT_ID falls back to hash when unset', () => {
     const hashIdentity = repoIdentity(base);
-    assertTrue(/^[0-9a-f]{12}$/.test(hashIdentity), "repoIdentity returns 12-char hex hash when GSD_PROJECT_ID is unset");
+    assert.ok(/^[0-9a-f]{12}$/.test(hashIdentity), "repoIdentity returns 12-char hex hash when GSD_PROJECT_ID is unset");
+});
 
-    console.log("\n=== readRepoMeta returns null for malformed metadata ===");
-    {
+test('readRepoMeta returns null for malformed metadata', () => {
       const malformedPath = join(stateDir, "projects", "malformed");
       mkdirSync(malformedPath, { recursive: true });
       writeFileSync(join(malformedPath, "repo-meta.json"), JSON.stringify({ version: 1 }) + "\n", "utf-8");
-      assertEq(readRepoMeta(malformedPath), null, "malformed repo-meta.json is treated as unknown metadata");
-    }
+      assert.deepStrictEqual(readRepoMeta(malformedPath), null, "malformed repo-meta.json is treated as unknown metadata");
+});
 
-    console.log("\n=== ensureGsdSymlink refreshes repo-meta gitRoot after repo move with fixed project id ===");
-    {
+test('ensureGsdSymlink refreshes repo-meta gitRoot after repo move with fixed project id', () => {
       const moveRepo = realpathSync(mkdtempSync(join(tmpdir(), "gsd-repo-identity-move-")));
       run("git init -b main", moveRepo);
       run('git config user.name "Pi Test"', moveRepo);
@@ -100,26 +114,25 @@ async function main(): Promise<void> {
       process.env.GSD_PROJECT_ID = "fixed-project";
       const fixedExternal = ensureGsdSymlink(moveRepo);
       const before = readRepoMeta(fixedExternal);
-      assertTrue(before !== null, "repo metadata exists before repo move");
-      assertEq(normalizePath(before!.gitRoot), normalizePath(moveRepo), "repo metadata tracks current git root before move");
+      assert.ok(before !== null, "repo metadata exists before repo move");
+      assert.deepStrictEqual(normalizePath(before!.gitRoot), normalizePath(moveRepo), "repo metadata tracks current git root before move");
 
       const movedBaseRaw = join(tmpdir(), `gsd-repo-identity-moved-${Date.now()}-${Math.random().toString(36).slice(2)}`);
       renameSync(moveRepo, movedBaseRaw);
       const movedBase = realpathSync(movedBaseRaw);
       const movedExternal = ensureGsdSymlink(movedBase);
-      assertEq(realpathSync(movedExternal), realpathSync(fixedExternal), "fixed project id keeps the same external state dir");
+      assert.deepStrictEqual(realpathSync(movedExternal), realpathSync(fixedExternal), "fixed project id keeps the same external state dir");
 
       const after = readRepoMeta(movedExternal);
-      assertTrue(after !== null, "repo metadata exists after repo move");
-      assertEq(normalizePath(after!.gitRoot), normalizePath(movedBase), "repo metadata gitRoot is refreshed to moved repo path");
-      assertEq(after!.createdAt, before!.createdAt, "repo metadata preserves createdAt on refresh");
+      assert.ok(after !== null, "repo metadata exists after repo move");
+      assert.deepStrictEqual(normalizePath(after!.gitRoot), normalizePath(movedBase), "repo metadata gitRoot is refreshed to moved repo path");
+      assert.deepStrictEqual(after!.createdAt, before!.createdAt, "repo metadata preserves createdAt on refresh");
 
       rmSync(movedBase, { recursive: true, force: true });
       delete process.env.GSD_PROJECT_ID;
-    }
+});
 
-    console.log("\n=== isInheritedRepo detects subdirectory of parent repo without .gsd (#1639) ===");
-    {
+test('isInheritedRepo detects subdirectory of parent repo without .gsd (#1639)', () => {
       const parentRepo = realpathSync(mkdtempSync(join(tmpdir(), "gsd-inherited-parent-")));
       run("git init -b main", parentRepo);
       run('git config user.name "Pi Test"', parentRepo);
@@ -128,31 +141,26 @@ async function main(): Promise<void> {
       run("git add README.md", parentRepo);
       run('git commit -m "init"', parentRepo);
 
-      // Create a subdirectory — no .gsd at parent
       const subdir = join(parentRepo, "newproject");
       mkdirSync(subdir, { recursive: true });
-      assertTrue(isInheritedRepo(subdir), "subdirectory of parent repo without .gsd is inherited");
+      assert.ok(isInheritedRepo(subdir), "subdirectory of parent repo without .gsd is inherited");
 
-      // After adding .gsd at parent, subdirectory is a legitimate child
       mkdirSync(join(parentRepo, ".gsd"), { recursive: true });
-      assertTrue(!isInheritedRepo(subdir), "subdirectory of parent repo WITH .gsd is NOT inherited");
+      assert.ok(!isInheritedRepo(subdir), "subdirectory of parent repo WITH .gsd is NOT inherited");
 
-      // The git root itself is never inherited
-      assertTrue(!isInheritedRepo(parentRepo), "git root is not inherited");
+      assert.ok(!isInheritedRepo(parentRepo), "git root is not inherited");
 
-      // A standalone repo (not a subdir) is not inherited
       const standaloneRepo = realpathSync(mkdtempSync(join(tmpdir(), "gsd-inherited-standalone-")));
       run("git init -b main", standaloneRepo);
       run('git config user.name "Pi Test"', standaloneRepo);
       run('git config user.email "pi@example.com"', standaloneRepo);
-      assertTrue(!isInheritedRepo(standaloneRepo), "standalone repo is not inherited");
+      assert.ok(!isInheritedRepo(standaloneRepo), "standalone repo is not inherited");
 
       rmSync(parentRepo, { recursive: true, force: true });
       rmSync(standaloneRepo, { recursive: true, force: true });
-    }
+});
 
-    console.log("\n=== subdirectory of parent repo gets unique identity after git init (#1639) ===");
-    {
+test('subdirectory of parent repo gets unique identity after git init (#1639)', () => {
       const parentRepo = realpathSync(mkdtempSync(join(tmpdir(), "gsd-identity-parent-")));
       run("git init -b main", parentRepo);
       run('git config user.name "Pi Test"', parentRepo);
@@ -165,38 +173,59 @@ async function main(): Promise<void> {
       const subdir = join(parentRepo, "childproject");
       mkdirSync(subdir, { recursive: true });
 
-      // Before git init, subdirectory shares parent's identity
       const parentIdentity = repoIdentity(parentRepo);
       const subdirIdentityBefore = repoIdentity(subdir);
-      assertEq(subdirIdentityBefore, parentIdentity, "subdirectory shares parent identity before its own git init");
+      assert.deepStrictEqual(subdirIdentityBefore, parentIdentity, "subdirectory shares parent identity before its own git init");
 
-      // After git init, subdirectory gets its own identity
       run("git init -b main", subdir);
       const subdirIdentityAfter = repoIdentity(subdir);
-      assertTrue(subdirIdentityAfter !== parentIdentity, "subdirectory gets unique identity after git init");
+      assert.ok(subdirIdentityAfter !== parentIdentity, "subdirectory gets unique identity after git init");
 
       rmSync(parentRepo, { recursive: true, force: true });
-    }
+});
 
-    console.log("\n=== validateProjectId rejects invalid values ===");
+test('ensureGsdSymlink from subdirectory does not create .gsd in subdir when git-root .gsd exists (#2380)', () => {
+    const repo = realpathSync(mkdtempSync(join(tmpdir(), "gsd-subdir-symlink-")));
+    run("git init -b main", repo);
+    run('git config user.name "Pi Test"', repo);
+    run('git config user.email "pi@example.com"', repo);
+    run('git remote add origin git@github.com:example/subdir-test.git', repo);
+    writeFileSync(join(repo, "README.md"), "# Subdir Test\n", "utf-8");
+    run("git add README.md", repo);
+    run('git commit -m "init"', repo);
+
+    // Set up .gsd symlink at the git root (normal project initialisation)
+    ensureGsdSymlink(repo);
+    assert.ok(existsSync(join(repo, ".gsd")), "root .gsd exists after ensureGsdSymlink");
+    assert.ok(lstatSync(join(repo, ".gsd")).isSymbolicLink(), "root .gsd is a symlink");
+
+    // Create a subdirectory and call ensureGsdSymlink from there
+    const subdir = join(repo, "src", "lib");
+    mkdirSync(subdir, { recursive: true });
+    ensureGsdSymlink(subdir);
+
+    // ensureGsdSymlink should NOT create a .gsd in the subdirectory
+    // because the git root already has a valid .gsd symlink.
+    assert.ok(!existsSync(join(subdir, ".gsd")), "no .gsd created in subdirectory when git-root .gsd exists (#2380)");
+    assert.ok(!existsSync(join(repo, "src", ".gsd")), "no .gsd created in intermediate directory");
+
+    // The root .gsd should still be intact
+    assert.ok(existsSync(join(repo, ".gsd")), "root .gsd still exists");
+    assert.ok(lstatSync(join(repo, ".gsd")).isSymbolicLink(), "root .gsd is still a symlink");
+
+    rmSync(repo, { recursive: true, force: true });
+});
+
+test('validateProjectId rejects invalid values', () => {
     for (const invalid of ["has spaces", "path/traversal", "dot..dot", "back\\slash"]) {
-      assertTrue(!validateProjectId(invalid), `validateProjectId rejects invalid value: "${invalid}"`);
+      assert.ok(!validateProjectId(invalid), `validateProjectId rejects invalid value: "${invalid}"`);
     }
+});
 
-    console.log("\n=== validateProjectId accepts valid values ===");
+test('validateProjectId accepts valid values', () => {
     for (const valid of ["my-project", "foo_bar", "abc123", "A-Z_0-9"]) {
-      assertTrue(validateProjectId(valid), `validateProjectId accepts valid value: "${valid}"`);
+      assert.ok(validateProjectId(valid), `validateProjectId accepts valid value: "${valid}"`);
     }
-  } finally {
-    delete process.env.GSD_PROJECT_ID;
-    delete process.env.GSD_STATE_DIR;
-    rmSync(base, { recursive: true, force: true });
-    rmSync(stateDir, { recursive: true, force: true });
-    report();
-  }
-}
+});
 
-main().catch((error) => {
-  console.error(error);
-  process.exit(1);
 });

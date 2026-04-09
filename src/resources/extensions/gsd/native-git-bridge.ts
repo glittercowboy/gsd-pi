@@ -58,6 +58,8 @@ interface GitBatchInfo {
 interface GitMergeResult {
   success: boolean;
   conflicts: string[];
+  /** Filenames extracted from git stderr when a dirty working tree blocks the merge (#2151). */
+  dirtyFiles?: string[];
 }
 
 // ─── Native Module Loading ──────────────────────────────────────────────────
@@ -679,6 +681,16 @@ export function nativeAddAll(basePath: string): void {
 }
 
 /**
+ * Stage only already-tracked files (git add -u).
+ * Does NOT add new untracked files — only updates modifications and deletions
+ * for files git already knows about. Safe for automated snapshots where
+ * pulling in unknown untracked files (secrets, binaries) would be dangerous.
+ */
+export function nativeAddTracked(basePath: string): void {
+  gitFileExec(basePath, ["add", "-u"]);
+}
+
+/**
  * Stage all files with pathspec exclusions (git add -A -- ':!pattern' ...).
  * Excluded paths are never hashed by git, preventing hangs on large
  * untracked artifact trees (57GB+, 11K+ files). See #1605.
@@ -712,10 +724,12 @@ export function nativeAddAllWithExclusions(basePath: string, exclusions: readonl
       return;
     }
     // When .gsd is a symlink, git rejects `:!.gsd/...` pathspecs with
-    // "beyond a symbolic link". Fall back to plain `git add -A` which
-    // respects .gitignore (where .gsd/ is listed by default).
+    // "beyond a symbolic link". Fall back to `git add -u` which only
+    // stages changes to already-tracked files — O(tracked) not O(filesystem).
+    // Using `git add -A` here would traverse the entire working tree,
+    // hanging indefinitely on repos with large untracked data dirs. (#1977)
     if (stderr.includes("beyond a symbolic link")) {
-      nativeAddAll(basePath);
+      gitFileExec(basePath, ["add", "-u"]);
       return;
     }
     throw new GSDError(GSD_GIT_ERROR, `git add -A with exclusions failed in ${basePath}: ${getErrorMessage(err)}`);
@@ -847,6 +861,7 @@ export function nativeMergeSquash(basePath: string, branch: string): GitMergeRes
       cwd: basePath,
       stdio: ["ignore", "pipe", "pipe"],
       encoding: "utf-8",
+      env: GIT_NO_PROMPT_ENV,
     });
     return { success: true, conflicts: [] };
   } catch (err: unknown) {
@@ -862,7 +877,16 @@ export function nativeMergeSquash(basePath: string, branch: string): GitMergeRes
       stderr.includes("not possible because you have unmerged files") ||
       stderr.includes("overwritten by merge")
     ) {
-      return { success: false, conflicts: ["__dirty_working_tree__"] };
+      // Extract filenames from git stderr so callers can report which files
+      // are dirty instead of generically blaming .gsd/ (#2151).
+      // Git lists them as tab-indented lines between the "would be overwritten"
+      // header and the "Please commit" footer.
+      const dirtyFiles = stderr
+        .split("\n")
+        .filter((line) => line.startsWith("\t"))
+        .map((line) => line.trim())
+        .filter(Boolean);
+      return { success: false, conflicts: ["__dirty_working_tree__"], dirtyFiles };
     }
 
     // Check for real content conflicts
@@ -917,6 +941,37 @@ export function nativeResetHard(basePath: string): void {
     return;
   }
   execSync("git reset --hard HEAD", { cwd: basePath, stdio: "pipe" });
+}
+
+/**
+ * Soft reset to a target ref (git reset --soft <ref>).
+ * Moves HEAD to `target` while keeping all changes staged in the index.
+ * Used to squash snapshot commits back into a single real commit.
+ */
+export function nativeResetSoft(basePath: string, target: string): void {
+  execFileSync("git", ["reset", "--soft", target], {
+    cwd: basePath,
+    stdio: ["ignore", "pipe", "pipe"],
+    encoding: "utf-8",
+    env: GIT_NO_PROMPT_ENV,
+  });
+}
+
+/**
+ * Get the subject line of a commit (git log -1 --format=%s <ref>).
+ * Returns empty string if the ref doesn't exist.
+ */
+export function nativeCommitSubject(basePath: string, ref: string): string {
+  try {
+    return execFileSync("git", ["log", "-1", "--format=%s", ref], {
+      cwd: basePath,
+      stdio: ["ignore", "pipe", "pipe"],
+      encoding: "utf-8",
+      env: GIT_NO_PROMPT_ENV,
+    }).trim();
+  } catch {
+    return "";
+  }
 }
 
 /**

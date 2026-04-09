@@ -102,7 +102,7 @@ test("pauseAuto calls resolveAgentEndCancelled to unblock the loop", () => {
   const fnBlock = source.slice(fnIdx, source.indexOf("\n/**\n * Build", fnIdx + 100));
 
   assert.ok(
-    fnBlock.includes("resolveAgentEndCancelled()"),
+    fnBlock.includes("resolveAgentEndCancelled("),
     "pauseAuto must call resolveAgentEndCancelled to unblock the auto-loop promise",
   );
 });
@@ -116,7 +116,7 @@ test("auto-timers.ts idle watchdog catch calls resolveAgentEndCancelled", () => 
   // Check that resolveAgentEndCancelled is called near this catch
   const catchRegion = source.slice(Math.max(0, idleCatchIdx - 200), idleCatchIdx + 200);
   assert.ok(
-    catchRegion.includes("resolveAgentEndCancelled()"),
+    catchRegion.includes("resolveAgentEndCancelled("),
     "idle watchdog catch block must call resolveAgentEndCancelled",
   );
 });
@@ -129,7 +129,7 @@ test("auto-timers.ts hard timeout catch calls resolveAgentEndCancelled", () => {
   assert.ok(hardCatchIdx > -1, "hard timeout catch block must exist");
   const catchRegion = source.slice(Math.max(0, hardCatchIdx - 200), hardCatchIdx + 200);
   assert.ok(
-    catchRegion.includes("resolveAgentEndCancelled()"),
+    catchRegion.includes("resolveAgentEndCancelled("),
     "hard timeout catch block must call resolveAgentEndCancelled",
   );
 });

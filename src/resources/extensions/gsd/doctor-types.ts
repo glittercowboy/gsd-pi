@@ -3,13 +3,6 @@ export type DoctorIssueCode =
   | "invalid_preferences"
   | "missing_tasks_dir"
   | "missing_slice_plan"
-  | "task_done_missing_summary"
-  | "task_summary_without_done_checkbox"
-  | "all_tasks_done_missing_slice_summary"
-  | "all_tasks_done_missing_slice_uat"
-  | "all_tasks_done_roadmap_not_checked"
-  | "slice_checked_missing_summary"
-  | "slice_checked_missing_uat"
   | "all_slices_done_missing_milestone_validation"
   | "all_slices_done_missing_milestone_summary"
   | "task_done_must_haves_not_verified"
@@ -33,6 +26,7 @@ export type DoctorIssueCode =
   | "unresolvable_dependency"
   | "failed_migration"
   | "broken_symlink"
+  | "numbered_gsd_variant"
   // Environment health checks (#1221)
   | "env_node_version"
   | "env_dependencies"
@@ -67,6 +61,8 @@ export type DoctorIssueCode =
   | "worktree_stale"
   | "worktree_dirty"
   | "worktree_unpushed"
+  // Stale commit safety check
+  | "stale_uncommitted_changes"
   // Snapshot ref bloat
   | "snapshot_ref_bloat"
   // Runtime data integrity
@@ -76,23 +72,13 @@ export type DoctorIssueCode =
   | "large_planning_file"
   // Slow environment checks (opt-in via --build / --test flags)
   | "env_build"
-  | "env_test";
-
-/**
- * Issue codes that represent expected completion-transition states.
- * These are detected by the doctor but should NOT be auto-fixed at task level —
- * they are resolved by the complete-slice/complete-milestone dispatch units.
- * Consumers (e.g. auto-post-unit health tracking) should exclude these from
- * error counts when running at task fixLevel to avoid false escalation.
- *
- * Only the slice summary is deferred here because it requires LLM-generated
- * content.  Roadmap checkbox and UAT stub are mechanical bookkeeping and are
- * fixed immediately to avoid inconsistent state if the session stops before
- * complete-slice runs (#1808).
- */
-export const COMPLETION_TRANSITION_CODES = new Set<DoctorIssueCode>([
-  "all_tasks_done_missing_slice_summary",
-]);
+  | "env_test"
+  // Engine health checks (Phase 4)
+  | "db_orphaned_task"
+  | "db_orphaned_slice"
+  | "db_done_task_no_summary"
+  | "db_duplicate_id"
+  | "projection_drift";
 
 /**
  * Issue codes that represent global or completion-critical state.

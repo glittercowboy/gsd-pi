@@ -19,6 +19,10 @@ export interface McpToolDef {
 // MCP SDK subpath imports use wildcard exports (./*) that NodeNext resolves
 // at runtime but TypeScript cannot statically type-check. We construct the
 // specifiers dynamically so tsc treats them as `any`.
+// Use createRequire to resolve wildcard subpaths — CJS resolver auto-appends
+// .js, which the ESM wildcard export map does not (#3603).
+import { createRequire } from 'node:module'
+const _require = createRequire(import.meta.url)
 const MCP_PKG = '@modelcontextprotocol/sdk'
 
 /**
@@ -42,8 +46,8 @@ export async function startMcpServer(options: {
   const { tools, version = '0.0.0' } = options
 
   const serverMod = await import(`${MCP_PKG}/server`)
-  const stdioMod = await import(`${MCP_PKG}/server/stdio`)
-  const typesMod = await import(`${MCP_PKG}/types`)
+  const stdioMod = await import(_require.resolve(`${MCP_PKG}/server/stdio`))
+  const typesMod = await import(_require.resolve(`${MCP_PKG}/types`))
 
   const Server = serverMod.Server
   const StdioServerTransport = stdioMod.StdioServerTransport

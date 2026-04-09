@@ -54,6 +54,25 @@ test("plan-slice prompt: all variables substituted", () => {
   assert.ok(result.includes("S01"));
 });
 
+test("plan-slice prompt: DB-backed tool names survive template substitution", () => {
+  const result = loadPrompt("plan-slice", { ...BASE_VARS, commitInstruction: "Do not commit." });
+  assert.ok(result.includes("gsd_plan_slice"), "gsd_plan_slice should appear in rendered prompt");
+  assert.ok(result.includes("gsd_plan_task"), "gsd_plan_task should appear in rendered prompt");
+  assert.ok(result.includes("canonical write path"), "canonical write path language should survive substitution");
+});
+
+test("plan-slice prompt: footer references gsd_plan_slice tool, not direct write", () => {
+  const result = loadPrompt("plan-slice", { ...BASE_VARS, commitInstruction: "Do not commit." });
+  assert.ok(
+    result.includes("MUST call `gsd_plan_slice`"),
+    "footer should instruct calling gsd_plan_slice tool",
+  );
+  assert.ok(
+    !result.includes("MUST write the file"),
+    "footer should not instruct direct file write",
+  );
+});
+
 test("domain-work prompts use skillActivation placeholder", () => {
   const prompts = [
     "research-milestone",
@@ -165,6 +184,34 @@ test("research-milestone prompt substitutes skillActivation", () => {
 
   assert.ok(result.includes("Load research skills first."));
   assert.ok(!result.includes("{{skillActivation}}"));
+});
+
+test("research-milestone prompt references gsd_summary_save, not direct write", () => {
+  const result = loadPrompt("research-milestone", {
+    workingDirectory: "/tmp/test-project",
+    milestoneId: "M001",
+    milestoneTitle: "Test Milestone",
+    milestonePath: ".gsd/milestones/M001",
+    contextPath: ".gsd/milestones/M001/M001-CONTEXT.md",
+    outputPath: "/tmp/test-project/.gsd/milestones/M001/M001-RESEARCH.md",
+    inlinedContext: "Context",
+    skillDiscoveryMode: "manual",
+    skillDiscoveryInstructions: " Discover skills manually.",
+    skillActivation: "Load research skills first.",
+  });
+
+  assert.ok(
+    result.includes("gsd_summary_save"),
+    "research-milestone should reference gsd_summary_save tool",
+  );
+  assert.ok(
+    result.includes('artifact_type: "RESEARCH"'),
+    "research-milestone should specify RESEARCH artifact type",
+  );
+  assert.ok(
+    !result.includes("MUST write the file"),
+    "research-milestone should not instruct direct file write",
+  );
 });
 
 test("research-slice prompt substitutes skillActivation", () => {

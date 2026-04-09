@@ -8,6 +8,7 @@ import { validateImageFile } from "@/lib/image-utils"
 import { filterInitialGsdHeader } from "@/lib/initial-gsd-header-filter"
 import { buildProjectAbsoluteUrl, buildProjectPath } from "@/lib/project-url"
 import { authFetch, appendAuthParam } from "@/lib/auth"
+import { getXtermOptions, getXtermTheme } from "@/lib/xterm-theme"
 import "@xterm/xterm/css/xterm.css"
 
 type XTerminal = import("@xterm/xterm").Terminal
@@ -35,78 +36,6 @@ interface ShellTerminalProps {
   fontSize?: number
   hideInitialGsdHeader?: boolean
   projectCwd?: string
-}
-
-// ─── xterm themes ─────────────────────────────────────────────────────────────
-
-const XTERM_DARK_THEME = {
-  background: "#0a0a0a",
-  foreground: "#e4e4e7",
-  cursor: "#e4e4e7",
-  cursorAccent: "#0a0a0a",
-  selectionBackground: "#27272a",
-  selectionForeground: "#e4e4e7",
-  black: "#18181b",
-  red: "#ef4444",
-  green: "#22c55e",
-  yellow: "#eab308",
-  blue: "#3b82f6",
-  magenta: "#a855f7",
-  cyan: "#06b6d4",
-  white: "#e4e4e7",
-  brightBlack: "#52525b",
-  brightRed: "#f87171",
-  brightGreen: "#4ade80",
-  brightYellow: "#facc15",
-  brightBlue: "#60a5fa",
-  brightMagenta: "#c084fc",
-  brightCyan: "#22d3ee",
-  brightWhite: "#fafafa",
-} as const
-
-const XTERM_LIGHT_THEME = {
-  background: "#f5f5f5",
-  foreground: "#1a1a1a",
-  cursor: "#1a1a1a",
-  cursorAccent: "#f5f5f5",
-  selectionBackground: "#d4d4d8",
-  selectionForeground: "#1a1a1a",
-  black: "#1a1a1a",
-  red: "#dc2626",
-  green: "#16a34a",
-  yellow: "#ca8a04",
-  blue: "#2563eb",
-  magenta: "#9333ea",
-  cyan: "#0891b2",
-  white: "#e4e4e7",
-  brightBlack: "#71717a",
-  brightRed: "#ef4444",
-  brightGreen: "#22c55e",
-  brightYellow: "#eab308",
-  brightBlue: "#3b82f6",
-  brightMagenta: "#a855f7",
-  brightCyan: "#06b6d4",
-  brightWhite: "#fafafa",
-} as const
-
-function getXtermTheme(isDark: boolean) {
-  return isDark ? XTERM_DARK_THEME : XTERM_LIGHT_THEME
-}
-
-function getXtermOptions(isDark: boolean, fontSize?: number) {
-  return {
-    cursorBlink: true,
-    cursorStyle: "bar" as const,
-    fontSize: fontSize ?? 13,
-    fontFamily:
-      "'SF Mono', 'Cascadia Code', 'Fira Code', Menlo, Monaco, 'Courier New', monospace",
-    lineHeight: 1.35,
-    letterSpacing: 0,
-    theme: getXtermTheme(isDark),
-    allowProposedApi: true,
-    scrollback: 10000,
-    convertEol: false,
-  }
 }
 
 function getRenderableTerminalSize(container: HTMLDivElement | null, terminal: XTerminal | null): { cols: number; rows: number } | null {
@@ -536,6 +465,23 @@ async function uploadAndInjectImage(file: File, sessionId: string, projectCwd?: 
 
 // ─── Multi-instance terminal panel ────────────────────────────────────────────
 
+/**
+ * Derive a session ID that is scoped to the project path.  This ensures
+ * that switching projects creates a separate PTY session per project, and
+ * switching back reconnects to the *same* server-side PTY instead of
+ * spawning a new one (the server's getOrCreateSession returns the existing
+ * live session when the ID matches).
+ */
+function deriveProjectScopedSessionId(
+  projectCwd: string | undefined,
+  sessionPrefix?: string,
+  command?: string,
+): string {
+  const base = sessionPrefix ?? (command ? "gsd-default" : "default")
+  if (!projectCwd) return base
+  return `${base}:${projectCwd}`
+}
+
 export function ShellTerminal({
   className,
   command,
@@ -548,7 +494,7 @@ export function ShellTerminal({
 }: ShellTerminalProps) {
   const { resolvedTheme } = useTheme()
   const isDark = resolvedTheme !== "light"
-  const defaultId = sessionPrefix ?? (command ? "gsd-default" : "default")
+  const defaultId = deriveProjectScopedSessionId(projectCwd, sessionPrefix, command)
   const commandLabel = deriveCommandLabel(command)
   const [tabs, setTabs] = useState<TerminalTab[]>([
     { id: defaultId, label: commandLabel, connected: false },
@@ -556,6 +502,19 @@ export function ShellTerminal({
   const [activeTabId, setActiveTabId] = useState(defaultId)
   const [isDragOver, setIsDragOver] = useState(false)
   const terminalAreaRef = useRef<HTMLDivElement>(null)
+
+  // When the project changes, the defaultId changes.  Reset tabs so the
+  // terminal reconnects to the project-scoped PTY session on the server.
+  // The server's getOrCreateSession will return the existing live session
+  // when the session ID matches, preserving terminal state.
+  const prevDefaultIdRef = useRef(defaultId)
+  useEffect(() => {
+    if (prevDefaultIdRef.current !== defaultId) {
+      prevDefaultIdRef.current = defaultId
+      setTabs([{ id: defaultId, label: commandLabel, connected: false }])
+      setActiveTabId(defaultId)
+    }
+  }, [defaultId, commandLabel])
 
   // ── Drag-and-drop handlers (native DOM, capture phase) ──────────────────
   // React synthetic events don't reliably fire through xterm's internal DOM.
@@ -711,7 +670,7 @@ export function ShellTerminal({
 
         {/* Drop overlay */}
         {isDragOver && (
-          <div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-2 bg-background/80 backdrop-blur-sm border-2 border-dashed border-primary rounded-md pointer-events-none">
+          <div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-2 bg-background backdrop-blur-sm border-2 border-dashed border-primary rounded-md pointer-events-none">
             <ImagePlus className="h-8 w-8 text-primary" />
             <span className="text-sm font-medium text-primary">Drop image here</span>
           </div>
@@ -719,7 +678,7 @@ export function ShellTerminal({
       </div>
 
       {!hideSidebar && (
-        <div className="flex w-[34px] flex-shrink-0 flex-col border-l border-border/40 bg-terminal">
+        <div className="flex w-[34px] flex-shrink-0 flex-col border-l border-border/50 bg-terminal">
           {/* New terminal button */}
           <button
             onClick={createTab}
@@ -729,7 +688,7 @@ export function ShellTerminal({
             <Plus className="h-3 w-3" />
           </button>
 
-          <div className="h-px bg-border/40" />
+          <div className="h-px bg-border/50" />
 
           {/* Tab list */}
           <div className="flex-1 overflow-y-auto">

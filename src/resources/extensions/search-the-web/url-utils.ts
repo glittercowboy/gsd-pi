@@ -21,11 +21,30 @@ const PRIVATE_IP_PATTERNS = [
   /^fe80:/i,
 ];
 
+/**
+ * Hostnames exempted from SSRF blocking. Set via setFetchAllowedUrls()
+ * from global settings.json or GSD_FETCH_ALLOWED_URLS env var.
+ */
+let fetchAllowedHostnames: Set<string> = new Set();
+
+/**
+ * Replace the fetch URL allowlist (hostnames exempted from SSRF checks).
+ */
+export function setFetchAllowedUrls(hostnames: string[]): void {
+  fetchAllowedHostnames = new Set(hostnames.map((h) => h.toLowerCase()));
+}
+
+/** Get the currently active fetch URL allowlist. */
+export function getFetchAllowedUrls(): readonly string[] {
+  return [...fetchAllowedHostnames];
+}
+
 export function isBlockedUrl(url: string): boolean {
   try {
     const parsed = new URL(url);
     if (parsed.protocol !== "https:" && parsed.protocol !== "http:") return true;
     const hostname = parsed.hostname.toLowerCase();
+    if (fetchAllowedHostnames.has(hostname)) return false;
     if (BLOCKED_HOSTNAMES.has(hostname)) return true;
     for (const pattern of PRIVATE_IP_PATTERNS) {
       if (pattern.test(hostname)) return true;

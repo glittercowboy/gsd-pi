@@ -2,6 +2,10 @@
  * Extension system for lifecycle events and custom tools.
  */
 
+export type { ExtensionManifest } from "./extension-manifest.js";
+export { readManifest, readManifestFromEntryPath } from "./extension-manifest.js";
+export type { SortResult, SortWarning } from "./extension-sort.js";
+export { sortExtensionPaths } from "./extension-sort.js";
 export type { SlashCommandInfo, SlashCommandLocation, SlashCommandSource } from "../slash-commands.js";
 export {
 	createExtensionRuntime,
@@ -94,6 +98,11 @@ export type {
 	// Provider Registration
 	ProviderConfig,
 	ProviderModelConfig,
+	LifecycleHookContext,
+	LifecycleHookHandler,
+	LifecycleHookMap,
+	LifecycleHookPhase,
+	LifecycleHookScope,
 	ReadToolCallEvent,
 	ReadToolResultEvent,
 	// Commands
@@ -141,6 +150,8 @@ export type {
 	// Events - User Bash
 	UserBashEvent,
 	UserBashEventResult,
+	BashTransformEvent,
+	BashTransformEventResult,
 	WidgetPlacement,
 	WriteToolCallEvent,
 	WriteToolResultEvent,

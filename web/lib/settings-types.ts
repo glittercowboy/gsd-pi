@@ -87,6 +87,7 @@ export interface SettingsProjectTotals {
 
 export interface SettingsPreferencesData {
   mode?: SettingsWorkflowMode
+  models?: Record<string, string>
   budgetCeiling?: number
   budgetEnforcement?: SettingsBudgetEnforcement
   tokenProfile?: SettingsTokenProfile
@@ -106,6 +107,9 @@ export interface SettingsPreferencesData {
     channelId?: string
     timeoutMinutes?: number
     pollIntervalSeconds?: number
+  }
+  experimental?: {
+    rtk?: boolean
   }
   scope: "global" | "project"
   path: string

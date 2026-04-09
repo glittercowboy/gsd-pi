@@ -1562,6 +1562,26 @@ export class DefaultPackageManager implements PackageManager {
 		}
 	}
 
+	/**
+	 * Batch-discover which resource subdirectories exist under a parent dir.
+	 * A single readdirSync replaces 4 separate existsSync probes, reducing
+	 * syscalls during startup.
+	 */
+	private discoverResourceSubdirs(baseDir: string): Set<string> {
+		try {
+			const entries = readdirSync(baseDir, { withFileTypes: true });
+			const names = new Set<string>();
+			for (const e of entries) {
+				if (e.isDirectory() || e.isSymbolicLink()) {
+					names.add(e.name);
+				}
+			}
+			return names;
+		} catch {
+			return new Set();
+		}
+	}
+
 	private addAutoDiscoveredResources(
 		accumulator: ResourceAccumulator,
 		globalSettings: ReturnType<SettingsManager["getGlobalSettings"]>,
@@ -1595,6 +1615,11 @@ export class DefaultPackageManager implements PackageManager {
 			themes: (projectSettings.themes ?? []) as string[],
 		};
 
+		// Batch directory discovery: one readdir of each parent replaces up to
+		// 4 separate existsSync calls per base directory, cutting syscalls.
+		const projectSubdirs = this.discoverResourceSubdirs(projectBaseDir);
+		const userSubdirs = this.discoverResourceSubdirs(globalBaseDir);
+
 		const userDirs = {
 			extensions: join(globalBaseDir, "extensions"),
 			skills: join(globalBaseDir, "skills"),
@@ -1626,66 +1651,91 @@ export class DefaultPackageManager implements PackageManager {
 			}
 		};
 
-		addResources(
-			"extensions",
-			collectAutoExtensionEntries(projectDirs.extensions),
-			projectMetadata,
-			projectOverrides.extensions,
-			projectBaseDir,
-		);
-		addResources(
-			"skills",
-			[
-				...collectAutoSkillEntries(projectDirs.skills),
+		// Project resources — skip collect calls when the parent readdir shows
+		// the subdirectory doesn't exist (avoids redundant existsSync + readdirSync).
+		if (projectSubdirs.has("extensions")) {
+			addResources(
+				"extensions",
+				collectAutoExtensionEntries(projectDirs.extensions),
+				projectMetadata,
+				projectOverrides.extensions,
+				projectBaseDir,
+			);
+		}
+		{
+			const skillEntries = [
+				...(projectSubdirs.has("skills") ? collectAutoSkillEntries(projectDirs.skills) : []),
 				...projectAgentsSkillDirs.flatMap((dir) => collectAutoSkillEntries(dir)),
-			],
-			projectMetadata,
-			projectOverrides.skills,
-			projectBaseDir,
-		);
-		addResources(
-			"prompts",
-			collectAutoPromptEntries(projectDirs.prompts),
-			projectMetadata,
-			projectOverrides.prompts,
-			projectBaseDir,
-		);
-		addResources(
-			"themes",
-			collectAutoThemeEntries(projectDirs.themes),
-			projectMetadata,
-			projectOverrides.themes,
-			projectBaseDir,
-		);
+			];
+			if (skillEntries.length > 0) {
+				addResources("skills", skillEntries, projectMetadata, projectOverrides.skills, projectBaseDir);
+			}
+		}
+		if (projectSubdirs.has("prompts")) {
+			addResources(
+				"prompts",
+				collectAutoPromptEntries(projectDirs.prompts),
+				projectMetadata,
+				projectOverrides.prompts,
+				projectBaseDir,
+			);
+		}
+		if (projectSubdirs.has("themes")) {
+			addResources(
+				"themes",
+				collectAutoThemeEntries(projectDirs.themes),
+				projectMetadata,
+				projectOverrides.themes,
+				projectBaseDir,
+			);
+		}
 
-		addResources(
-			"extensions",
-			collectAutoExtensionEntries(userDirs.extensions),
-			userMetadata,
-			userOverrides.extensions,
-			globalBaseDir,
-		);
-		addResources(
-			"skills",
-			[...collectAutoSkillEntries(userDirs.skills), ...collectAutoSkillEntries(userAgentsSkillsDir)],
-			userMetadata,
-			userOverrides.skills,
-			globalBaseDir,
-		);
-		addResources(
-			"prompts",
-			collectAutoPromptEntries(userDirs.prompts),
-			userMetadata,
-			userOverrides.prompts,
-			globalBaseDir,
-		);
-		addResources(
-			"themes",
-			collectAutoThemeEntries(userDirs.themes),
-			userMetadata,
-			userOverrides.themes,
-			globalBaseDir,
-		);
+		// User (global) resources
+		if (userSubdirs.has("extensions")) {
+			addResources(
+				"extensions",
+				collectAutoExtensionEntries(userDirs.extensions),
+				userMetadata,
+				userOverrides.extensions,
+				globalBaseDir,
+			);
+		}
+		{
+			// Ecosystem skills (~/.agents/skills/) take priority over legacy config-dir skills.
+			// Skip legacy dir entirely when migration has completed (marker file present).
+			const legacySkillsMigrated =
+				resolve(userDirs.skills) !== resolve(userAgentsSkillsDir) &&
+				existsSync(join(userDirs.skills, ".migrated-to-agents"));
+			const legacyUserSkillEntries =
+				!legacySkillsMigrated && userSubdirs.has("skills")
+					? collectAutoSkillEntries(userDirs.skills)
+					: [];
+			const skillEntries = [
+				...collectAutoSkillEntries(userAgentsSkillsDir),
+				...legacyUserSkillEntries,
+			];
+			if (skillEntries.length > 0) {
+				addResources("skills", skillEntries, userMetadata, userOverrides.skills, globalBaseDir);
+			}
+		}
+		if (userSubdirs.has("prompts")) {
+			addResources(
+				"prompts",
+				collectAutoPromptEntries(userDirs.prompts),
+				userMetadata,
+				userOverrides.prompts,
+				globalBaseDir,
+			);
+		}
+		if (userSubdirs.has("themes")) {
+			addResources(
+				"themes",
+				collectAutoThemeEntries(userDirs.themes),
+				userMetadata,
+				userOverrides.themes,
+				globalBaseDir,
+			);
+		}
 	}
 
 	private collectFilesFromPaths(paths: string[], resourceType: ResourceType): string[] {

@@ -7,6 +7,6 @@
   "requires": { "platform": ">=2.29.0" },
   "provides": {
     "tools": ["resolve_library", "get_library_docs"],
-    "hooks": ["session_start"]
+    "hooks": ["session_start", "session_shutdown"]
   }
 }

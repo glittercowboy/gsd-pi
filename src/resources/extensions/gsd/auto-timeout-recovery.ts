@@ -14,7 +14,6 @@ import {
 import {
   resolveExpectedArtifactPath,
   diagnoseExpectedArtifact,
-  skipExecuteTask,
   writeBlockerPlaceholder,
 } from "./auto-recovery.js";
 import { existsSync } from "node:fs";
@@ -127,14 +126,14 @@ export async function recoverTimedOutUnit(
       return "recovered";
     }
 
-    // Retries exhausted — write missing durable artifacts and advance.
+    // Retries exhausted — write a blocker placeholder and advance.
     const diagnostic = formatExecuteTaskRecoveryStatus(status);
-    const [mid, sid, tid] = unitId.split("/");
-    const skipped = mid && sid && tid
-      ? skipExecuteTask(basePath, mid, sid, tid, status, reason, maxRecoveryAttempts)
-      : false;
+    const placeholder = writeBlockerPlaceholder(
+      unitType, unitId, basePath,
+      `${reason} recovery exhausted ${maxRecoveryAttempts} attempts. Status: ${diagnostic}`,
+    );
 
-    if (skipped) {
+    if (placeholder) {
       writeUnitRuntimeRecord(basePath, unitType, unitId, currentUnitStartedAt, {
         phase: "skipped",
         recovery: status,

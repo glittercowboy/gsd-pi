@@ -19,7 +19,7 @@ const StatusIcon = ({
   if (status === "in-progress") {
     return <Play className={cn(sizeClass, "text-warning")} />
   }
-  return <Circle className={cn(sizeClass, "text-muted-foreground/40")} />
+  return <Circle className={cn(sizeClass, "text-muted-foreground")} />
 }
 
 const RiskBadge = ({ risk }: { risk: RiskLevel }) => {
@@ -113,7 +113,7 @@ export function Roadmap() {
                         className={cn(
                           "flex items-center gap-3 px-4 py-2.5",
                           sliceStatus === "in-progress" && "bg-accent/20",
-                          sliceStatus === "pending" && "opacity-60",
+                          sliceStatus === "pending" && "opacity-70",
                         )}
                       >
                         <div className="w-4" />

@@ -159,6 +159,7 @@ export class CombinedAutocompleteProvider implements AutocompleteProvider {
 	): { items: AutocompleteItem[]; prefix: string } | null {
 		const currentLine = lines[cursorLine] || "";
 		const textBeforeCursor = currentLine.slice(0, cursorCol);
+		const trimmedBeforeCursor = textBeforeCursor.trimStart();
 
 		// Check for @ file reference (fuzzy search) - must be after a delimiter or at start
 		const atPrefix = this.extractAtPrefix(textBeforeCursor);
@@ -174,12 +175,12 @@ export class CombinedAutocompleteProvider implements AutocompleteProvider {
 		}
 
 		// Check for slash commands
-		if (textBeforeCursor.startsWith("/")) {
-			const spaceIndex = textBeforeCursor.indexOf(" ");
+		if (trimmedBeforeCursor.startsWith("/")) {
+			const spaceIndex = trimmedBeforeCursor.indexOf(" ");
 
 			if (spaceIndex === -1) {
 				// No space yet - complete command names with fuzzy matching
-				const prefix = textBeforeCursor.slice(1); // Remove the "/"
+				const prefix = trimmedBeforeCursor.slice(1); // Remove the "/"
 				const commandItems = this.commands.map((cmd) => ({
 					name: "name" in cmd ? cmd.name : cmd.value,
 					label: "name" in cmd ? cmd.name : cmd.label,
@@ -196,12 +197,12 @@ export class CombinedAutocompleteProvider implements AutocompleteProvider {
 
 				return {
 					items: filtered,
-					prefix: textBeforeCursor,
+					prefix: `/${prefix}`,
 				};
 			} else {
 				// Space found - complete command arguments
-				const commandName = textBeforeCursor.slice(1, spaceIndex); // Command without "/"
-				const argumentText = textBeforeCursor.slice(spaceIndex + 1); // Text after space
+				const commandName = trimmedBeforeCursor.slice(1, spaceIndex); // Command without "/"
+				const argumentText = trimmedBeforeCursor.slice(spaceIndex + 1); // Text after space
 
 				const command = this.commands.find((cmd) => {
 					const name = "name" in cmd ? cmd.name : cmd.value;
@@ -269,7 +270,8 @@ export class CombinedAutocompleteProvider implements AutocompleteProvider {
 
 		// Check if we're completing a slash command (prefix starts with "/" but NOT a file path)
 		// Slash commands are at the start of the line and don't contain path separators after the first /
-		const isSlashCommand = prefix.startsWith("/") && beforePrefix.trim() === "" && !prefix.slice(1).includes("/");
+		const trimmedPrefix = prefix.trimStart();
+		const isSlashCommand = trimmedPrefix.startsWith("/") && beforePrefix.trim() === "" && !trimmedPrefix.slice(1).includes("/");
 		if (isSlashCommand) {
 			// This is a command name completion
 			const newLine = `${beforePrefix}/${item.value} ${adjustedAfterCursor}`;

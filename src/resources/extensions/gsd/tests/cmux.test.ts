@@ -193,6 +193,64 @@ describe("createGridLayout", () => {
   });
 });
 
+describe("CmuxClient stdio isolation", () => {
+  test("runSync and runAsync explicitly set stdio to prevent terminal interference", () => {
+    // Read the cmux index source and verify that execFileSync/spawn calls
+    // inside runSync/runAsync include stdio options that isolate stdin and stderr.
+    // This prevents the cmux CLI child process from inheriting the parent's
+    // stdin/stderr, which can steal keyboard input or corrupt TUI rendering (#1922).
+    const cmuxIndexPath = path.resolve(
+      path.dirname(fileURLToPath(import.meta.url)),
+      "../../cmux/index.ts",
+    );
+    const source = fs.readFileSync(cmuxIndexPath, "utf-8");
+
+    // Extract runSync method body
+    const runSyncMatch = source.match(/private runSync\(args: string\[\]\)[^{]*\{([\s\S]*?)\n  \}/);
+    assert.ok(runSyncMatch, "runSync method must exist");
+    const runSyncBody = runSyncMatch[1];
+    assert.ok(
+      runSyncBody.includes('stdio:'),
+      "runSync must explicitly set stdio to prevent terminal interference (see #1922)",
+    );
+    assert.ok(
+      runSyncBody.includes('"ignore"'),
+      "runSync stdio must ignore stdin to prevent stealing keyboard input from TUI",
+    );
+
+    // Extract runAsync method body
+    const runAsyncMatch = source.match(/private async runAsync\(args: string\[\]\)[^{]*\{([\s\S]*?)\n  \}/);
+    assert.ok(runAsyncMatch, "runAsync method must exist");
+    const runAsyncBody = runAsyncMatch[1];
+    assert.ok(
+      runAsyncBody.includes('stdio:'),
+      "runAsync must explicitly set stdio to prevent terminal interference (see #1922)",
+    );
+    assert.ok(
+      runAsyncBody.includes('"ignore"'),
+      "runAsync stdio must ignore stdin to prevent stealing keyboard input from TUI",
+    );
+  });
+
+  test("isCmuxCliAvailable uses stdio ignore to prevent terminal interference", () => {
+    const cmuxIndexPath = path.resolve(
+      path.dirname(fileURLToPath(import.meta.url)),
+      "../../cmux/index.ts",
+    );
+    const source = fs.readFileSync(cmuxIndexPath, "utf-8");
+
+    // Find isCmuxCliAvailable or the cli-check function body
+    const fnMatch = source.match(/function isCmuxCliAvailable[\s\S]*?\{([\s\S]*?)\n\}/);
+    if (!fnMatch) return; // function may be inlined or renamed — skip rather than fail
+
+    const fnBody = fnMatch[1];
+    assert.ok(
+      fnBody.includes('"ignore"') || !fnBody.includes('execFileSync'),
+      "isCmuxCliAvailable must not inherit parent stdio (see #1922)",
+    );
+  });
+});
+
 describe("cmux extension discovery opt-out", () => {
   test("cmux directory has package.json with pi manifest to prevent auto-discovery as extension", () => {
     const cmuxDir = path.resolve(

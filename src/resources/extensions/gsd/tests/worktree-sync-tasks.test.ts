@@ -47,7 +47,8 @@ function writeFile(dir: string, relativePath: string, content: string): void {
 test("syncWorktreeStateBack copies task summaries from tasks/ subdirectory (#1678)", () => {
   const mainBase = makeTempDir("main");
   const wtBase = makeTempDir("wt");
-  const mid = "M001";
+  const currentMid = "M000"; // milestone being merged (skipped by sync)
+  const mid = "M001";        // other milestone that should be synced
 
   try {
     // Set up worktree with milestone, slice, and task files
@@ -64,8 +65,8 @@ test("syncWorktreeStateBack copies task summaries from tasks/ subdirectory (#167
     // Set up main with empty .gsd
     mkdirSync(join(mainBase, ".gsd"), { recursive: true });
 
-    // Run sync
-    const result = syncWorktreeStateBack(mainBase, wtBase, mid);
+    // Run sync — currentMid is skipped, mid (M001) should be synced
+    const result = syncWorktreeStateBack(mainBase, wtBase, currentMid);
 
     // Verify milestone-level files synced
     assert.ok(
@@ -126,7 +127,8 @@ test("syncWorktreeStateBack copies task summaries from tasks/ subdirectory (#167
 test("syncWorktreeStateBack handles multiple slices with tasks (#1678)", () => {
   const mainBase = makeTempDir("main");
   const wtBase = makeTempDir("wt");
-  const mid = "M002";
+  const currentMid = "M000"; // milestone being merged (skipped)
+  const mid = "M002";        // other milestone that should be synced
 
   try {
     // Set up two slices with tasks
@@ -139,7 +141,7 @@ test("syncWorktreeStateBack handles multiple slices with tasks (#1678)", () => {
 
     mkdirSync(join(mainBase, ".gsd"), { recursive: true });
 
-    const result = syncWorktreeStateBack(mainBase, wtBase, mid);
+    const result = syncWorktreeStateBack(mainBase, wtBase, currentMid);
 
     // All task summaries from both slices should be synced
     assert.ok(existsSync(join(mainBase, `.gsd/milestones/${mid}/slices/S01/tasks/T01-SUMMARY.md`)));
@@ -160,7 +162,8 @@ test("syncWorktreeStateBack handles multiple slices with tasks (#1678)", () => {
 test("syncWorktreeStateBack handles slices without tasks/ directory", () => {
   const mainBase = makeTempDir("main");
   const wtBase = makeTempDir("wt");
-  const mid = "M003";
+  const currentMid = "M000"; // milestone being merged (skipped)
+  const mid = "M003";        // other milestone that should be synced
 
   try {
     // Slice with no tasks/ subdirectory (legitimate case: pre-planning)
@@ -168,7 +171,7 @@ test("syncWorktreeStateBack handles slices without tasks/ directory", () => {
 
     mkdirSync(join(mainBase, ".gsd"), { recursive: true });
 
-    const result = syncWorktreeStateBack(mainBase, wtBase, mid);
+    const result = syncWorktreeStateBack(mainBase, wtBase, currentMid);
 
     // Should sync the slice file without errors
     assert.ok(existsSync(join(mainBase, `.gsd/milestones/${mid}/slices/S01/S01-RESEARCH.md`)));
@@ -183,7 +186,8 @@ test("syncWorktreeStateBack handles slices without tasks/ directory", () => {
 test("syncWorktreeStateBack ignores non-md files in tasks/", () => {
   const mainBase = makeTempDir("main");
   const wtBase = makeTempDir("wt");
-  const mid = "M004";
+  const currentMid = "M000"; // milestone being merged (skipped)
+  const mid = "M004";        // other milestone that should be synced
 
   try {
     writeFile(wtBase, `.gsd/milestones/${mid}/slices/S01/S01-PLAN.md`, "# Plan\n");
@@ -194,7 +198,7 @@ test("syncWorktreeStateBack ignores non-md files in tasks/", () => {
 
     mkdirSync(join(mainBase, ".gsd"), { recursive: true });
 
-    const result = syncWorktreeStateBack(mainBase, wtBase, mid);
+    const result = syncWorktreeStateBack(mainBase, wtBase, currentMid);
 
     // Only .md files should be synced
     assert.ok(existsSync(join(mainBase, `.gsd/milestones/${mid}/slices/S01/tasks/T01-SUMMARY.md`)));

@@ -4,113 +4,101 @@ import { existsSync, lstatSync, mkdirSync, mkdtempSync, readlinkSync, rmSync, sy
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
-test("initResources creates node_modules symlink in agent dir", async () => {
+test("initResources creates node_modules symlink in agent dir", async (t) => {
   const { initResources } = await import("../resource-loader.ts");
   const tmp = mkdtempSync(join(tmpdir(), "gsd-symlink-"));
   const fakeAgentDir = join(tmp, "agent");
 
-  try {
-    initResources(fakeAgentDir);
+  t.after(() => rmSync(tmp, { recursive: true, force: true }));
+  initResources(fakeAgentDir);
 
-    const nodeModulesPath = join(fakeAgentDir, "node_modules");
-    // Use lstatSync instead of existsSync — existsSync follows the symlink and
-    // returns false for dangling symlinks (e.g. in worktrees without node_modules)
-    let stat;
-    try {
-      stat = lstatSync(nodeModulesPath);
-    } catch {
-      assert.fail("node_modules symlink should exist after initResources");
-    }
-    assert.equal(stat.isSymbolicLink(), true, "node_modules should be a symlink, not a real directory");
-  } finally {
-    rmSync(tmp, { recursive: true, force: true });
+  const nodeModulesPath = join(fakeAgentDir, "node_modules");
+  // Use lstatSync instead of existsSync — existsSync follows the symlink and
+  // returns false for dangling symlinks (e.g. in worktrees without node_modules)
+  let stat;
+  try {
+    stat = lstatSync(nodeModulesPath);
+  } catch {
+    assert.fail("node_modules symlink should exist after initResources");
   }
+  assert.equal(stat.isSymbolicLink(), true, "node_modules should be a symlink, not a real directory");
 });
 
-test("initResources replaces a real directory blocking node_modules with a symlink", async () => {
+test("initResources replaces a real directory blocking node_modules with a symlink", async (t) => {
   const { initResources } = await import("../resource-loader.ts");
   const tmp = mkdtempSync(join(tmpdir(), "gsd-symlink-realdir-"));
   const fakeAgentDir = join(tmp, "agent");
 
-  try {
-    // First call to set up agent dir structure
-    initResources(fakeAgentDir);
+  t.after(() => rmSync(tmp, { recursive: true, force: true }));
+  // First call to set up agent dir structure
+  initResources(fakeAgentDir);
 
-    const nodeModulesPath = join(fakeAgentDir, "node_modules");
+  const nodeModulesPath = join(fakeAgentDir, "node_modules");
 
-    // Remove the symlink and replace with a real directory
-    rmSync(nodeModulesPath, { recursive: true, force: true });
-    mkdirSync(nodeModulesPath, { recursive: true });
+  // Remove the symlink and replace with a real directory
+  rmSync(nodeModulesPath, { recursive: true, force: true });
+  mkdirSync(nodeModulesPath, { recursive: true });
 
-    const statBefore = lstatSync(nodeModulesPath);
-    assert.equal(statBefore.isSymbolicLink(), false, "should be a real directory before fix");
-    assert.equal(statBefore.isDirectory(), true, "should be a real directory before fix");
+  const statBefore = lstatSync(nodeModulesPath);
+  assert.equal(statBefore.isSymbolicLink(), false, "should be a real directory before fix");
+  assert.equal(statBefore.isDirectory(), true, "should be a real directory before fix");
 
-    // Second call should replace the real directory with a symlink
-    initResources(fakeAgentDir);
+  // Second call should replace the real directory with a symlink
+  initResources(fakeAgentDir);
 
-    const statAfter = lstatSync(nodeModulesPath);
-    assert.equal(statAfter.isSymbolicLink(), true, "real directory should be replaced with symlink");
-  } finally {
-    rmSync(tmp, { recursive: true, force: true });
-  }
+  const statAfter = lstatSync(nodeModulesPath);
+  assert.equal(statAfter.isSymbolicLink(), true, "real directory should be replaced with symlink");
 });
 
-test("initResources replaces a stale symlink with a correct one", async () => {
+test("initResources replaces a stale symlink with a correct one", async (t) => {
   const { initResources } = await import("../resource-loader.ts");
   const tmp = mkdtempSync(join(tmpdir(), "gsd-symlink-stale-"));
   const fakeAgentDir = join(tmp, "agent");
 
-  try {
-    // First call to set up agent dir structure
-    initResources(fakeAgentDir);
+  t.after(() => rmSync(tmp, { recursive: true, force: true }));
+  // First call to set up agent dir structure
+  initResources(fakeAgentDir);
 
-    const nodeModulesPath = join(fakeAgentDir, "node_modules");
-    const correctTarget = readlinkSync(nodeModulesPath);
+  const nodeModulesPath = join(fakeAgentDir, "node_modules");
+  const correctTarget = readlinkSync(nodeModulesPath);
 
-    // Remove and replace with a stale symlink pointing to a non-existent path
-    unlinkSync(nodeModulesPath);
-    symlinkSync("/tmp/nonexistent-gsd-node-modules-" + Date.now(), nodeModulesPath);
+  // Remove and replace with a stale symlink pointing to a non-existent path
+  unlinkSync(nodeModulesPath);
+  symlinkSync("/tmp/nonexistent-gsd-node-modules-" + Date.now(), nodeModulesPath);
 
-    const staleTarget = readlinkSync(nodeModulesPath);
-    assert.notEqual(staleTarget, correctTarget, "stale symlink should point elsewhere");
+  const staleTarget = readlinkSync(nodeModulesPath);
+  assert.notEqual(staleTarget, correctTarget, "stale symlink should point elsewhere");
 
-    // Second call should fix the stale symlink
-    initResources(fakeAgentDir);
+  // Second call should fix the stale symlink
+  initResources(fakeAgentDir);
 
-    const fixedTarget = readlinkSync(nodeModulesPath);
-    assert.equal(fixedTarget, correctTarget, "stale symlink should be replaced with correct target");
-  } finally {
-    rmSync(tmp, { recursive: true, force: true });
-  }
+  const fixedTarget = readlinkSync(nodeModulesPath);
+  assert.equal(fixedTarget, correctTarget, "stale symlink should be replaced with correct target");
 });
 
-test("initResources replaces symlink whose target was deleted", async () => {
+test("initResources replaces symlink whose target was deleted", async (t) => {
   const { initResources } = await import("../resource-loader.ts");
   const tmp = mkdtempSync(join(tmpdir(), "gsd-symlink-missing-"));
   const fakeAgentDir = join(tmp, "agent");
 
-  try {
-    initResources(fakeAgentDir);
+  t.after(() => rmSync(tmp, { recursive: true, force: true }));
+  initResources(fakeAgentDir);
 
-    const nodeModulesPath = join(fakeAgentDir, "node_modules");
-    const correctTarget = readlinkSync(nodeModulesPath);
+  const nodeModulesPath = join(fakeAgentDir, "node_modules");
+  const correctTarget = readlinkSync(nodeModulesPath);
 
-    // Create a symlink that points to a path that doesn't exist
-    // (simulates the case where npm upgrade moved the package location)
-    unlinkSync(nodeModulesPath);
-    const deadTarget = join(tmp, "old-install", "node_modules");
-    symlinkSync(deadTarget, nodeModulesPath);
+  // Create a symlink that points to a path that doesn't exist
+  // (simulates the case where npm upgrade moved the package location)
+  unlinkSync(nodeModulesPath);
+  const deadTarget = join(tmp, "old-install", "node_modules");
+  symlinkSync(deadTarget, nodeModulesPath);
 
-    // The symlink itself exists but its target doesn't
-    assert.equal(lstatSync(nodeModulesPath).isSymbolicLink(), true);
-    assert.equal(existsSync(deadTarget), false, "dead target should not exist");
+  // The symlink itself exists but its target doesn't
+  assert.equal(lstatSync(nodeModulesPath).isSymbolicLink(), true);
+  assert.equal(existsSync(deadTarget), false, "dead target should not exist");
 
-    initResources(fakeAgentDir);
+  initResources(fakeAgentDir);
 
-    const fixedTarget = readlinkSync(nodeModulesPath);
-    assert.equal(fixedTarget, correctTarget, "broken symlink should be replaced with correct target");
-  } finally {
-    rmSync(tmp, { recursive: true, force: true });
-  }
+  const fixedTarget = readlinkSync(nodeModulesPath);
+  assert.equal(fixedTarget, correctTarget, "broken symlink should be replaced with correct target");
 });

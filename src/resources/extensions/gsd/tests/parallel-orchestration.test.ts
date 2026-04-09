@@ -297,7 +297,6 @@ describe("parallel-orchestrator: lifecycle", () => {
             worktreePath: "/tmp/wt-M001",
             startedAt: Date.now(),
             state: "running",
-            completedUnits: 2,
             cost: 0.25,
           },
         ],
@@ -309,7 +308,6 @@ describe("parallel-orchestrator: lifecycle", () => {
       const workers = getWorkerStatuses(base);
       assert.equal(workers.length, 1);
       assert.equal(workers[0].milestoneId, "M001");
-      assert.equal(workers[0].completedUnits, 2);
       assert.equal(isParallelActive(), true);
     } finally {
       resetOrchestrator();
@@ -416,7 +414,6 @@ describe("parallel-orchestrator: lifecycle", () => {
       const workers = getWorkerStatuses();
       assert.equal(workers.length, 1);
       assert.equal(workers[0].state, "running");
-      assert.equal(workers[0].completedUnits, 4);
     } finally {
       resetOrchestrator();
       rmSync(base, { recursive: true, force: true });
@@ -552,7 +549,6 @@ function makeWorker(overrides: Partial<WorkerInfo> = {}): WorkerInfo {
     worktreePath: "/tmp/test-worktree",
     startedAt: Date.now() - 60_000,
     state: "stopped",
-    completedUnits: 5,
     cost: 2.50,
     ...overrides,
   };
@@ -563,9 +559,9 @@ function makeWorker(overrides: Partial<WorkerInfo> = {}): WorkerInfo {
 describe("parallel-merge: determineMergeOrder sequential", () => {
   it("returns milestone IDs sorted alphabetically by default", () => {
     const workers = [
-      makeWorker({ milestoneId: "M003", state: "stopped", completedUnits: 1 }),
-      makeWorker({ milestoneId: "M001", state: "stopped", completedUnits: 2 }),
-      makeWorker({ milestoneId: "M002", state: "stopped", completedUnits: 3 }),
+      makeWorker({ milestoneId: "M003", state: "stopped" }),
+      makeWorker({ milestoneId: "M001", state: "stopped" }),
+      makeWorker({ milestoneId: "M002", state: "stopped" }),
     ];
     const order = determineMergeOrder(workers, "sequential");
     assert.deepEqual(order, ["M001", "M002", "M003"]);
@@ -573,27 +569,27 @@ describe("parallel-merge: determineMergeOrder sequential", () => {
 
   it("excludes workers that are still running", () => {
     const workers = [
-      makeWorker({ milestoneId: "M001", state: "stopped", completedUnits: 5 }),
-      makeWorker({ milestoneId: "M002", state: "running", completedUnits: 0 }),
-      makeWorker({ milestoneId: "M003", state: "stopped", completedUnits: 2 }),
+      makeWorker({ milestoneId: "M001", state: "stopped" }),
+      makeWorker({ milestoneId: "M002", state: "running" }),
+      makeWorker({ milestoneId: "M003", state: "stopped" }),
     ];
     const order = determineMergeOrder(workers, "sequential");
     assert.deepEqual(order, ["M001", "M003"]);
   });
 
-  it("excludes workers with zero completedUnits even if stopped", () => {
+  it("includes all stopped workers", () => {
     const workers = [
-      makeWorker({ milestoneId: "M001", state: "stopped", completedUnits: 0 }),
-      makeWorker({ milestoneId: "M002", state: "stopped", completedUnits: 3 }),
+      makeWorker({ milestoneId: "M001", state: "stopped" }),
+      makeWorker({ milestoneId: "M002", state: "stopped" }),
     ];
     const order = determineMergeOrder(workers, "sequential");
-    assert.deepEqual(order, ["M002"]);
+    assert.deepEqual(order, ["M001", "M002"]);
   });
 
   it("returns empty array when no workers are completed", () => {
     const workers = [
-      makeWorker({ milestoneId: "M001", state: "running", completedUnits: 0 }),
-      makeWorker({ milestoneId: "M002", state: "paused", completedUnits: 0 }),
+      makeWorker({ milestoneId: "M001", state: "running" }),
+      makeWorker({ milestoneId: "M002", state: "paused" }),
     ];
     const order = determineMergeOrder(workers);
     assert.deepEqual(order, []);
@@ -601,8 +597,8 @@ describe("parallel-merge: determineMergeOrder sequential", () => {
 
   it("uses sequential order as the default when no order arg provided", () => {
     const workers = [
-      makeWorker({ milestoneId: "M002", state: "stopped", completedUnits: 1 }),
-      makeWorker({ milestoneId: "M001", state: "stopped", completedUnits: 1 }),
+      makeWorker({ milestoneId: "M002", state: "stopped" }),
+      makeWorker({ milestoneId: "M001", state: "stopped" }),
     ];
     // Call with no second argument — should default to "sequential"
     const order = determineMergeOrder(workers);
@@ -614,9 +610,9 @@ describe("parallel-merge: determineMergeOrder by-completion", () => {
   it("returns milestones sorted by startedAt (earliest first)", () => {
     const now = Date.now();
     const workers = [
-      makeWorker({ milestoneId: "M003", state: "stopped", completedUnits: 1, startedAt: now - 30_000 }),
-      makeWorker({ milestoneId: "M001", state: "stopped", completedUnits: 1, startedAt: now - 90_000 }),
-      makeWorker({ milestoneId: "M002", state: "stopped", completedUnits: 1, startedAt: now - 60_000 }),
+      makeWorker({ milestoneId: "M003", state: "stopped", startedAt: now - 30_000 }),
+      makeWorker({ milestoneId: "M001", state: "stopped", startedAt: now - 90_000 }),
+      makeWorker({ milestoneId: "M002", state: "stopped", startedAt: now - 60_000 }),
     ];
     const order = determineMergeOrder(workers, "by-completion");
     assert.deepEqual(order, ["M001", "M002", "M003"]);
@@ -625,9 +621,9 @@ describe("parallel-merge: determineMergeOrder by-completion", () => {
   it("excludes paused workers from by-completion order", () => {
     const now = Date.now();
     const workers = [
-      makeWorker({ milestoneId: "M001", state: "stopped", completedUnits: 2, startedAt: now - 90_000 }),
-      makeWorker({ milestoneId: "M002", state: "paused",  completedUnits: 1, startedAt: now - 60_000 }),
-      makeWorker({ milestoneId: "M003", state: "stopped", completedUnits: 3, startedAt: now - 30_000 }),
+      makeWorker({ milestoneId: "M001", state: "stopped", startedAt: now - 90_000 }),
+      makeWorker({ milestoneId: "M002", state: "paused",  startedAt: now - 60_000 }),
+      makeWorker({ milestoneId: "M003", state: "stopped", startedAt: now - 30_000 }),
     ];
     const order = determineMergeOrder(workers, "by-completion");
     assert.deepEqual(order, ["M001", "M003"]);

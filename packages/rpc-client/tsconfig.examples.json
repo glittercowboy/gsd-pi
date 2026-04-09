@@ -1,0 +1,17 @@
+{
+  "compilerOptions": {
+    "target": "ES2024",
+    "module": "Node16",
+    "lib": ["ES2024"],
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "moduleResolution": "Node16",
+    "noEmit": true,
+    "types": ["node"],
+    "paths": {
+      "@gsd-build/rpc-client": ["./src/index.ts"]
+    }
+  },
+  "include": ["examples/**/*.ts"]
+}

@@ -570,13 +570,13 @@ class SessionList implements Component, Focusable {
 			return;
 		}
 
-		// Up arrow
+		// Up arrow (wrap)
 		if (kb.matches(keyData, "selectUp")) {
-			this.selectedIndex = Math.max(0, this.selectedIndex - 1);
+			this.selectedIndex = this.selectedIndex === 0 ? this.filteredSessions.length - 1 : this.selectedIndex - 1;
 		}
-		// Down arrow
+		// Down arrow (wrap)
 		else if (kb.matches(keyData, "selectDown")) {
-			this.selectedIndex = Math.min(this.filteredSessions.length - 1, this.selectedIndex + 1);
+			this.selectedIndex = this.selectedIndex === this.filteredSessions.length - 1 ? 0 : this.selectedIndex + 1;
 		}
 		// Page up - jump up by maxVisible items
 		else if (kb.matches(keyData, "selectPageUp")) {

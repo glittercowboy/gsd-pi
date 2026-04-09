@@ -29,9 +29,9 @@ import {
   isDbAvailable,
 } from "../gsd-db.ts";
 
-import { createTestContext } from "./test-helpers.ts";
+import { describe, test } from 'node:test';
+import assert from 'node:assert/strict';
 
-const { assertEq, assertTrue, report } = createTestContext();
 
 function run(command: string, cwd: string): string {
   return execSync(command, { cwd, stdio: ["ignore", "pipe", "pipe"], encoding: "utf-8" }).trim();
@@ -49,7 +49,7 @@ function createTempRepo(): string {
   return dir;
 }
 
-async function main(): Promise<void> {
+describe('worktree-db-integration', async () => {
   const savedCwd = process.cwd();
   const tempDirs: string[] = [];
 
@@ -82,7 +82,7 @@ async function main(): Promise<void> {
       const wtPath = createAutoWorktree(tempDir, "M004");
 
       const worktreeDbPath = join(worktreePath(tempDir, "M004"), ".gsd", "gsd.db");
-      assertTrue(
+      assert.ok(
         existsSync(worktreeDbPath),
         "gsd.db exists in worktree .gsd after createAutoWorktree",
       );
@@ -107,10 +107,10 @@ async function main(): Promise<void> {
         console.error("  Unexpected throw:", err);
       }
 
-      assertTrue(!threw, "createAutoWorktree does not throw when no source DB");
+      assert.ok(!threw, "createAutoWorktree does not throw when no source DB");
 
       const worktreeDbPath = join(worktreePath(tempDir, "M004"), ".gsd", "gsd.db");
-      assertTrue(
+      assert.ok(
         !existsSync(worktreeDbPath),
         "gsd.db is absent in worktree when source had none",
       );
@@ -145,7 +145,7 @@ async function main(): Promise<void> {
 
       // Reconcile worktree → main
       const result = reconcileWorktreeDb(mainDbPath, worktreeDbPath);
-      assertTrue(result.decisions >= 1, "reconcile reports at least 1 decision merged");
+      assert.ok(result.decisions >= 1, "reconcile reports at least 1 decision merged");
 
       // Open main DB and verify the row is present
       openDatabase(mainDbPath);
@@ -153,7 +153,7 @@ async function main(): Promise<void> {
       closeDatabase();
 
       const found = decisions.some((d) => d.id === "D-WT-001");
-      assertTrue(found, "worktree decision D-WT-001 present in main DB after reconcile");
+      assert.ok(found, "worktree decision D-WT-001 present in main DB after reconcile");
     }
 
     // ─── Test 4: reconcile non-fatal when both paths nonexistent ─────
@@ -165,7 +165,7 @@ async function main(): Promise<void> {
       } catch {
         threw = true;
       }
-      assertTrue(!threw, "reconcileWorktreeDb does not throw when worktree DB is absent");
+      assert.ok(!threw, "reconcileWorktreeDb does not throw when worktree DB is absent");
     }
 
     // ─── Test 5: failure path observable via stderr (diagnostic) ─────
@@ -181,10 +181,10 @@ async function main(): Promise<void> {
       closeDatabase();
 
       const result = reconcileWorktreeDb(mainDbPath, "/definitely/does/not/exist.db");
-      assertEq(result.decisions, 0, "decisions is 0 when worktree DB absent");
-      assertEq(result.requirements, 0, "requirements is 0 when worktree DB absent");
-      assertEq(result.artifacts, 0, "artifacts is 0 when worktree DB absent");
-      assertEq(result.conflicts.length, 0, "conflicts is empty when worktree DB absent");
+      assert.deepStrictEqual(result.decisions, 0, "decisions is 0 when worktree DB absent");
+      assert.deepStrictEqual(result.requirements, 0, "requirements is 0 when worktree DB absent");
+      assert.deepStrictEqual(result.artifacts, 0, "artifacts is 0 when worktree DB absent");
+      assert.deepStrictEqual(result.conflicts.length, 0, "conflicts is empty when worktree DB absent");
     }
 
   } finally {
@@ -199,8 +199,4 @@ async function main(): Promise<void> {
       }
     }
   }
-
-  report();
-}
-
-main();
+});

@@ -6,6 +6,1009 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [2.67.0] - 2026-04-09
+
+### Added
+- **context**: implement R005 decision scope cascade and derive scope from slice metadata
+- **M005**: Tiered Context Injection - relevance-scoped context with 65%+ reduction
+
+### Fixed
+- **test**: align auto-loop test timers with updated session timeout
+- **gsd**: repair CI after branch split
+- **gsd**: repair CI after branch split
+- **gsd**: repair CI after branch split
+- **gsd**: fail closed for discussion gate enforcement
+- **gsd**: harden auto merge recovery and session safety
+- **gsd**: repair overlay, shortcut, and widget surfaces
+- **gsd**: prevent stale workflow reconcile state writes
+- **gsd**: align prompt contracts and validation flow
+- **pi-tui**: harden input parsing and editor focus behavior
+- **remote-questions**: cancel local TUI when remote answer wins the race
+- **auto**: increase session timeout to 120s and treat timeout as recoverable pause (#3767)
+- **ui**: apply anthropic-api display name to all model/provider UI surfaces
+- **ui**: display 'anthropic-api' in GSD preferences wizard provider list
+- **remote-questions**: race local TUI against remote channel instead of remote-only routing
+- **ui**: display 'anthropic-api' in model selector to distinguish from claude-code
+- **gates**: add mechanical enforcement for discussion question gates
+- **prompts**: harden non-bypassable gates and exclude dot-folders from scanning
+- **gsd**: ignore filename headings in parsePlan
+- **providers**: match 'out of extra usage' error and respect claude-code provider in model resolution (#3772)
+- **pi-ai**: recover XML parameters trapped in JSON strings
+- **retry**: guard claude-code fallback to anthropic provider only
+- **providers**: route Anthropic subscription users through Claude Code CLI (#3772)
+- **claude-code**: use native Windows claude lookup
+- **gsd**: suppress repeated preferences section warnings
+- **gsd**: normalize described expected output paths
+- **auto**: resilient transient error recovery — defer to Core RetryHandler and fix cmdCtx race
+
+## [2.66.1] - 2026-04-08
+
+### Fixed
+- **pi-tui**: revert contentCursorRow, use hardwareCursorRow as movement baseline
+- **pi-tui**: use contentCursorRow for render movement baseline instead of cursorRow
+- **gsd**: add logWarning to empty catch block in orphaned worktree cleanup
+- **gsd**: add consecutiveFinalizeTimeouts to LoopState in journal tests
+- **gsd**: add escalation and unit-detach guards to finalize timeout handlers
+- **gsd**: add timeout guard around postUnitPreVerification to prevent auto-loop hang
+- **gsd**: OS-specific keyboard shortcut hints via formatShortcut helper
+- **subagent**: support list-style tools frontmatter
+- clear autocomplete rows from content bottom
+- parse annotated pre-exec file paths
+- **gsd**: add orphaned milestone branch audit at auto-mode bootstrap
+
+## [2.66.0] - 2026-04-08
+
+### Added
+- **gsd**: add fast path for queued milestone discussion
+- **gsd**: add /gsd show-config command
+- **reactive**: graph diagnostics and subagent_model config
+- **dispatch**: parallel research slices and parallel milestone validation
+- **parallel**: worker model override for parallel milestone workers
+
+### Fixed
+- **gsd**: validate depth verification answer before unlocking write-gate
+- **gsd**: revert unknown artifact check to warn-and-proceed
+- **gsd**: add missing cmd field to test base WorkflowEvent
+- **gsd**: address remaining adversarial review findings for wave 3
+- **gsd**: detect concurrent event log growth during reconcile
+- **gsd**: address adversarial review findings for wave 3
+- **gsd**: address adversarial review findings for wave 2
+- **gsd**: address adversarial review findings for wave 1
+- **gsd**: WAL-safe migration backup + stronger regression tests
+- **gsd**: consistency and cleanup (wave 5/5)
+- **gsd**: write safety — atomic writes and randomized tmp paths (wave 4/5)
+- **gsd**: session and recovery robustness (wave 3/5)
+- **gsd**: event log and reconciliation robustness (wave 2/5)
+- **gsd**: critical state machine data integrity fixes (wave 1/5)
+- **gsd**: critical state machine data integrity fixes (wave 1/5)
+- **gsd**: remove ecosystem research stub and address adversarial review
+- **gsd**: suppress model change notification in auto-mode unless verbose
+- **gsd**: exclude task.files from checkTaskOrdering to prevent false positives
+- **state**: skip ghost check for queued milestones in registry build
+- **ci**: replace empty catch blocks and raw stderr with logWarning
+- **logging**: add debugLog to empty catch in reopen-milestone
+- **state-machine**: 9 resilience fixes + 86 regression tests (#3161)
+- **gsd**: add incremental persistence to discuss prompts
+- replace empty catch with logWarning for silent-catch-diagnostics test
+- **test**: escape regex metacharacters in skip-by-preference pattern test
+- **test**: search for numbered step definitions in prompt ordering test
+- **test**: update notes loop test for notesVisible guard behavior
+- **test**: update action count for note captures now included in results
+- **test**: remove extraneous test file from wrong branch
+- **test**: update worktree sync tests to use separate milestone IDs
+- **gsd**: use valid LogComponent type for stale branch guard warning
+- **test**: update rogue detection test for auto-remediation behavior
+- **test**: update stuck-planning test to expect executing after reconciliation
+- **test**: update file path consistency tests for inputs-only checking
+- **test**: add CONTEXT file to queued milestone ghost detection test
+- **test**: update needs-remediation test to expect validating-milestone phase
+- **gsd**: import all-done milestones as complete during DB migration
+- **gsd**: allow milestone completion when validation skipped by preference
+- **gsd**: set slice sequence at all three insertion sites
+- **gsd**: four prompt/runtime fixes for completion and session stability
+- **gsd**: default insertMilestone status to queued instead of active
+- **gsd**: suppress repeated frontmatter YAML parse warnings
+- **gsd**: normalize list inputs in complete-task + fix roadmap dep parsing
+- **gsd**: open DB before status derivation + respect isolation:none in quick
+- **gsd**: add .bg-shell/ to baseline gitignore patterns
+- **tui**: prevent Enter key infinite loop in interview notes mode
+- **provider**: handle Enter key to initiate auth setup in provider manager
+- **gsd**: cap run-uat dispatch attempts to prevent infinite replay loop
+- **mcp**: use createRequire to resolve SDK wildcard subpath imports
+- **gsd**: mark note captures as executed in executeTriageResolutions
+- **gsd**: validate main_branch preference exists before using in merge
+- **gsd**: handle deleted cwd in projectRoot to prevent ENOENT crash
+- **gsd**: skip current milestone in syncWorktreeStateBack to prevent merge conflicts
+- **gsd**: add structuredQuestionsAvailable conditional to slice discuss
+- **gsd**: restore full tool set after discuss flow scoping
+- **gsd**: tighten verifyExpectedArtifact to prevent rogue-write false positives
+- **gsd**: add verification gate to complete-slice tool
+- **gsd**: fix pre-execution-checks false positives from backticks and task.files
+- **gsd**: stop renderAllProjections from overwriting authoritative PLAN.md
+- **gsd**: auto-checkout to main when isolation:none finds stale milestone branch
+- **gsd**: auto-remediate stale slice DB status when SUMMARY exists on disk
+- **gsd**: open DB on demand in gsd_milestone_status for non-auto sessions
+- **gsd**: detect phantom milestones from abandoned gsd_milestone_generate_id
+- **gsd**: force re-validation when verdict is needs-remediation
+- **gsd**: exclude closed slices from findMissingSummaries check
+- **gsd**: recover from stale lockfile after crash or SIGKILL
+- **gsd**: add createdAt timestamp and 30s age guard to staleness check
+- **gsd**: clear stale pendingAutoStart after /clear interrupts discussion
+- **gsd**: suppress misleading warnings for expected ENOENT/EISDIR conditions
+- **gsd**: extract real error from message content when errorMessage is useless
+- **gsd**: extract real error from message content when errorMessage is useless
+- **gsd**: show accurate pause message for queued-user-message skip
+- **gsd**: treat queued-user-message skip as non-retryable interruption
+- **gsd**: recognize "Not provided." default in isVerificationNotApplicable
+- **gsd**: discoverManifests skips symlinked extension directories
+- **gsd**: recognize "Not provided." default in isVerificationNotApplicable
+- **gsd**: reconcile plan-file tasks into DB when planner skips persistence (#3600)
+- **gsd**: use isClosedStatus() in dispatch guard instead of raw complete check
+- **browser-tools**: make sharp an optional lazy dependency
+- **gsd**: pass required arguments in defer-milestone-stamp test
+- **gsd**: replace remaining empty catch with logWarning
+- **gsd**: use logWarning instead of raw stderr in catch blocks
+- **gsd**: log error instead of empty catch in STATE.md rebuild
+- **gsd**: log error instead of empty catch in skip_slice
+- **gsd**: cast milestone classification to string for type safety
+- **gsd**: treat zero-slice roadmap as pre-planning in guided flow
+- **gsd**: rebuild STATE.md after skip-slice and strengthen rethink prompt
+- **gsd**: use main_branch preference in worktree creation
+- **gsd**: stamp defer and milestone captures as executed after triage
+- **tui**: treat absolute file paths as plain text, not commands
+- **tui**: break infinite re-render loop for images in cmux
+- **gsd**: rebuild STATE.md before guided-flow dispatch
+- **gsd**: defer queued shells in active milestone selection
+- **retry**: prevent 429 quota cascade and 30-min lockout
+- **gsd**: add fastPathInstruction to buildDiscussMilestonePrompt loadPrompt call
+
+### Changed
+- auto-commit after quick-task
+- auto-commit after quick-task
+- auto-commit after quick-task
+- auto-commit after quick-task
+- auto-commit after quick-task
+- auto-commit after quick-task
+- auto-commit after quick-task
+
+## [2.65.0] - 2026-04-07
+
+### Added
+- **gsd**: persistent notification panel with TUI overlay, widget, and web API
+- **gsd**: wire blocking behavior and strict mode for enhanced verification
+- **gsd**: add post-execution cross-task consistency checks
+- **gsd**: add pre-execution plan verification checks
+
+### Fixed
+- **gsd**: wrap long notification messages and fit overlay to content
+- **gsd**: remove background color from backdrop, fix message truncation
+- **gsd**: restore consistent overlay height to prevent ghost artifacts
+- **gsd**: improve notification overlay backdrop and content-fit sizing
+- **gsd**: only unlink notification lock when owned, prevent foreign lock deletion
+- **gsd**: add backdrop dimming and viewport padding to notification overlay
+- **gsd**: add intent + phase guards to resume context fallback (#3615)
+- **gsd**: inject task context for unstructured resume prompts (#3615)
+- **pi-coding-agent**: restore extension tools after session switch (#3616)
+- **agent-loop**: schema overload cap ignores bash execution errors (#3618)
+- **bg-shell**: prevent signal handler accumulation + cap alert queue
+- **gsd**: coerce plain-string provides field to array in complete-slice (#3585)
+- address PR #3468 review findings
+- **gsd**: persist autoStartTime across session resume so elapsed timer survives /exit
+- **gsd**: add enhanced_verification preferences to mergePreferences
+- **headless**: treat discuss and plan as multi-turn commands
+
+### Changed
+- **interactive**: cap rendered chat components + kill orphan descendants
+- **tui**: render-skip, frame isolation, Text cache guard, dispose
+
+## [2.64.0] - 2026-04-06
+
+### Added
+- **gsd**: add LLM safety harness for auto-mode damage control
+- **ollama**: native /api/chat provider with full option exposure
+- **parallel**: slice-level parallelism with dependency-aware dispatch (#3315)
+- **mcp-client**: add OAuth auth provider for HTTP transport (#3295)
+
+### Fixed
+- **ui**: remove 200-column cap on welcome screen width
+- address adversarial review findings for #3576
+- **gsd**: replace hardcoded agent skill paths with dynamic resolution (#3575)
+- **headless**: sync resources and use agent dir for query
+- **cli**: show latest version and bypass npm cache in update check
+- **gsd**: follow CONTRIBUTING standards for #3565
+- **gsd**: address Codex adversarial review findings for #3565
+- **gsd**: coerce string arrays to objects in complete-slice/task tools (#3565)
+- **gsd**: harden flat-rate routing guard against alias/resolution gaps
+- **pi-coding-agent**: register models.json providers and await Ollama probe in headless mode
+- **ollama**: use apiKey auth mode to avoid streamSimple crash
+- **gsd**: disable dynamic model routing for flat-rate providers
+- **gsd**: address Codex adversarial review findings
+- **gsd**: prevent LLM from querying gsd.db directly via bash (#3541)
+- **gsd**: seed requirements table from REQUIREMENTS.md on first update
+- **gsd**: inject S##-CONTEXT.md from slice discussion into all prompt builders
+- **cli**: guard model re-apply against session restore and async rejection
+- **pi-coding-agent**: resolve model fallback race that ignores configured provider (#3534)
+- **detection**: add xcodegen and Xcode bundle support to project detection (#1882)
+- **perf**: share jiti module cache across extension loads (#3308)
+- **resource-sync**: prune removed bundled subdirectory extensions on upgrade (#1972)
+- recognize U+2705 checkmark emoji as completion marker in prose roadmaps (#1897)
+- **web**: use safePackageRootFromImportUrl for cross-platform package root (#1881) (#1893)
+- isolate CmuxClient stdio to prevent TUI hangs in CMUX (#3306)
+- worktree health check walks parent dirs for monorepo support (#3313)
+- **gsd**: promote milestone status from queued to active in plan-milestone (#3317)
+- **worktree**: correct merge failure notification command from /complete-milestone to /gsd dispatch complete-milestone (#1901)
+- detect and block Gemini CLI OAuth tokens used as API keys (#3296)
+- **auto**: break retry loop on tool invocation errors (malformed JSON) (#3298)
+- **git**: use git add -u in symlink .gsd fallback to prevent hang (#3299)
+- handle complete-slice context exhaustion to unblock downstream slices (#3300)
+- cap consecutive tool validation failures to prevent stuck-loop (#3301)
+- make enrichment tool params optional for limited-toolcall models (#3302)
+- add filesystem safety guard to complete-slice.md (#3304)
+- **extensions**: use bundledExtensionKeys for conflict detection instead of broken path heuristic (#3305)
+- scope tools during discuss flows to prevent grammar overflow (#3307)
+- **preferences**: warn on silent parse failure for non-frontmatter files (#3310)
+- track remote-questions in managed-resources manifest (#3312)
+- **auto**: add timeout guard for postUnitPostVerification in runFinalize (#3314)
+- **gsd**: handle large markdown parameters in complete-milestone JSON parsing (#3316)
+- **metrics**: deduplicate idle-watchdog entries and fix forensics false-positives (#1973)
+- prevent milestone/slice artifact rendering corruption (#3293)
+- **doctor**: strip --fix flag before positional parse (#1919) (#1926)
+- resolve external-state worktree DB path (#2952) (#3303)
+- **gsd**: worktree teardown path validation prevents data loss (#3311)
+- prevent auto-mode from dispatching deferred slices (#3309)
+- preserve completed slice status on plan-milestone re-plan (#3318)
+- reopen DB on cold resume, recognize heavy check mark (#3319)
+- dashboard model label shows dispatched model, not stale previous unit (#3320)
+
+### Changed
+- **gsd**: remove copyright line from test file
+- **gsd**: trim promptGuidelines to 1 line to reduce per-turn token cost
+- **web**: consolidate subprocess boilerplate into shared runner (#1899)
+
+## [2.63.0] - 2026-04-05
+
+### Added
+- **mcp-server**: add 6 read-only tools for project state queries (#3515)
+
+### Fixed
+- **gsd**: enrich vague diagnostic messages with root-cause context
+- **test**: reset dedup cache between ask-user-freetext tests
+- **db**: delete orphaned WAL/SHM files alongside empty gsd.db (#2478)
+- **gsd**: prevent auto-wrapup from interrupting in-flight tool calls (#3512)
+- **gsd**: handle bare model IDs in resolveDefaultSessionModel (#3517)
+- **gsd**: wrap decision and requirement saves in transaction to prevent ID races
+- **gsd**: prefer PREFERENCES.md over settings.json for session bootstrap model (#3517)
+- **gsd**: add Claude Code official skill directories to skill resolution
+- **dedup**: hash full question payload, not just IDs
+- **gsd**: prevent duplicate ask_user_questions dispatches with per-turn dedup cache
+- **pi-ai**: extend repairToolJson to handle XML tags and truncated numbers
+- **pi-coding-agent**: cancel stale retries after model switch
+
+### Changed
+- untrack .repowise/ and add to .gitignore
+
+## [2.62.1] - 2026-04-05
+
+### Fixed
+- **gsd**: gate steer worktree routing on active session, fix messaging
+- **gsd**: resolve steer overrides to worktree path when worktree is active
+
+## [2.62.0] - 2026-04-04
+
+### Added
+- **gsd**: enhance /gsd codebase with preferences, --collapse-threshold, and auto-init
+- **01-05**: fire before_model_select hook, add verbose scoring output, load capability overrides
+- **01-04**: register before_model_select placeholder handler in GSD hooks
+- **01-04**: add BeforeModelSelectEvent to extension API and wire emission
+- **01-03**: wire taskMetadata from selectAndApplyModel to resolveModelForComplexity
+- **01-03**: insert STEP 2 capability scoring into resolveModelForComplexity
+- **01-01**: add taskMetadata to ClassificationResult and export extractTaskMetadata
+- **01-01**: add capability types, data tables, and scoring functions to model-router
+
+### Fixed
+- **gsd**: add codebase validation in validatePreferences so preferences are not silently dropped
+- **test**: update db-path-worktree-symlink test for simplified diagnostic logging
+- **gsd**: update tests for errors-only audit persistence, fix empty catch blocks
+- **gsd**: harden audit log persistence — errors-only, sanitized, demote probe warnings
+- **gsd**: address adversarial review findings on workflow-logger migration
+- **gsd**: fail-closed stop guard, harden backtrack parsing, fix prompt params
+- **gsd**: add diagnostic logging to empty catch blocks in auto-mode
+- **lsp**: add legacy alias for renamed kotlin-language-server key
+- break infinite notes loop when selecting "None of the above"
+- align defaultRoutingConfig capability_routing to true
+- **pi-coding-agent**: upgrade Kotlin LSP to official Kotlin/kotlin-lsp
+- **test**: use correct RequirementCounts type fields in edge case tests
+- **remote-questions**: fire configured channels in interactive mode
+
+### Changed
+- **gsd**: migrate all catch blocks to centralized workflow-logger
+- init gsd
+
+## [2.61.0] - 2026-04-04
+
+### Added
+- stop/backtrack capture classifications for milestone regression (#3488)
+- GSD context optimization with model routing and context masking
+
+## [2.60.0] - 2026-04-04
+
+### Added
+- add /btw skill — ephemeral side questions from conversation context
+
+### Fixed
+- **btw**: remove LLM-specific references from skill description
+
+## [2.59.0] - 2026-04-03
+
+### Added
+- **extensions**: add Ollama extension for first-class local LLM support (#3371)
+- **doctor**: stale commit safety check with gsd snapshot and auto-cleanup
+- **extensions**: wire up topological sort and unified registry filtering (#3152)
+- **widget**: add last commit display and dashboard layout improvements (#3226)
+- **model-routing**: enable dynamic routing by default (#3120)
+- **vscode**: sidebar redesign, SCM provider, checkpoints, diagnostics [3/3]
+- **splash**: add remote channel indicator to welcome screen tools row
+- stream full text and thinking output in headless verbose mode (#2934)
+- **gsd**: add codebase map — structural orientation for fresh agent contexts
+
+### Fixed
+- **worktree**: resolve merge conflict for PR #3322 — adopt comprehensive pre-merge cleanup
+- **merge**: clean stale MERGE_HEAD before squash merge (#2912)
+- **state**: always run disk→DB reconciliation when DB is available (#2631)
+- **git-service**: fix merge-base ancestry check and .gsd/ leakage in snapshot absorption
+- **extensions**: update provides.hooks in 7 extension manifests to match actual registrations (#3157)
+- surface nativeCommit errors in reconcileMergeState instead of silently swallowing (#3052)
+- **parallel**: scope commits to milestone boundaries in parallel mode (#3047)
+- add windowsHide to all web-mode subprocess spawns (#2628) (#3046)
+- skip auto-mode pause on empty-content aborted messages (#2695) (#3045)
+- detect and remove nested .git dirs in worktree cleanup to prevent data loss (#3044)
+- prevent data loss when git isolation default changes (#2625) (#3043)
+- **read-tool**: clamp offset to file bounds instead of throwing (#3007) (#3042)
+- **gsd**: preserve queued milestones with worktrees in ghost detection (#3041)
+- **compaction**: add chunked fallback when messages exceed model context window (#3038)
+- preserve interactive terminal across tab switches and project changes (#3055)
+- call cleanupQuickBranch on turn_end to squash-merge quick branch back (#3054)
+- align run-uat artifact path to ASSESSMENT, preventing false stuck retries (#3053)
+- replace invalid Discord invite links with canonical URL (#3056)
+- add Windows shell guard to remaining spawn sites (#3058)
+- route `gsd auto` to headless runner to prevent hang on piped stdin/stdout (#3057)
+- respect .gitignore for .gsd/ in rethink prompt (#3059)
+- migrate unit ownership from JSON to SQLite to eliminate read-modify-write race (#3061)
+- **roadmap**: handle numbered, bracketed, and indented prose H3 headers in slice parser (#3063)
+- add worktree-merge to resolveModelWithFallbacksForUnit switch and update KNOWN_UNIT_TYPES (#3066)
+- clean up MERGE_HEAD on all error paths in mergeMilestoneToMain (#2912) (#3068)
+- prevent LLM from confusing background task output with user input (#3069)
+- add openai-codex provider and modern OpenAI models to MODEL_CAPABILITY_TIER and cost tables (#3070)
+- preserve active tab when switching projects (#3071)
+- include project name in desktop notifications (#3072)
+- recover from many-image dimension overflow by stripping older images (#3075)
+- resolve bare model IDs to anthropic over claude-code provider (#3076)
+- **auto**: move selectAndApplyModel before updateProgressWidget (#3079)
+- detect project relocation and recover state without data loss (#3080)
+- add free-text input to ask-user-questions when "None of the above" is selected (#3081)
+- block work execution during /gsd queue mode (#2545) (#3082)
+- detect worktree basePath in gsdRoot() to prevent escaping to project root (#3083)
+- invalidate stale quick-task captures across milestone boundaries (#3084)
+- defer model validation until after extensions register (#3089)
+- repair YAML bullet lists in malformed tool-call JSON (#3090)
+- unify SUMMARY.md render paths for projection fidelity (#3091)
+- chat mode misrepresents terminal output, looks stuck, omits user messages (#3092)
+- resolve 4 state corruption bugs in milestone/slice completion (#2945) (#3093)
+- isolate guided-flow session state and key discussion milestone queries (#2985) (#3094)
+- **guided-flow**: route dispatchWorkflow through dynamic routing pipeline (#3153)
+- skip external state migration inside git worktrees (#2970) (#3227)
+- coerce non-numeric strings in DB columns during manifest serialization (#2962) (#3229)
+- route allDiscussed and zero-slices paths to queued milestone discussion (#3150) (#3230)
+- use loose equality for null checks in secure_env_collect (#2997) (#3231)
+- prevent prompt explosion from $' in template replacement values (#2968) (#3232)
+- resolve OAuth API key in buildMemoryLLMCall via modelRegistry (#2959) (#3233)
+- **forensics**: read completion status from DB instead of legacy file (#3129) (#3234)
+- use camelCase parameter names in execute-task and complete-slice prompts (#2933) (#3236)
+- check bootstrap completeness in init wizard gate, not just .gsd/ existence (#2942) (#3237)
+- specify write tool for PROJECT.md in milestone/slice prompts (#3238)
+- widen completing-milestone gate to accept "None required" and similar phrasings (#2931) (#3239)
+- prevent ask_user_questions from poisoning auto-mode dispatch (#2936) (#3240)
+- guard null s.currentUnit in runUnitPhase closeout after stopAuto race (#2939) (#3241)
+- replace `web_search` with `search-the-web` in prompts and agent frontmatter (#2920) (#3245)
+- preserve milestone title in upsertMilestonePlanning when DB row pre-exists (#2879) (#3247)
+- invalidate stale milestone validation on roadmap reassessment (#2957) (#3242)
+- **discuss**: add roadmap fallback when DB is open but empty (#2892) (#3244)
+- integrate Codex & Gemini CLI into provider routes and rate-limit handling (#2922) (#3246)
+- **error-classifier**: widen STREAM_RE to cover all 7 V8 JSON parse error variants (#2916) (#3243)
+- prevent git stash from destroying queued milestone CONTEXT files (#2505) (#3273)
+- skip staleness rebuild in npm tarball installs (#2877) (#3250)
+- **parallel**: check worktree DB for milestone completion in merge (#2812) (#3256)
+- make claude-code provider stateful with full context and sidechain events (#2859) (#3254)
+- **worktree**: preserve non-empty gsd.db during sync to prevent truncation (#2815) (#3255)
+- align @gsd/native module type with compiled output (#3253)
+- parse hook/* completed-unit keys correctly in forensics + doctor (#2826) (#3252)
+- copy mcp.json into auto-mode worktrees (#2791) (#3251)
+- add gsd_requirement_save and upsert path for requirement updates (#3249)
+- handle pause_turn stop reason to prevent 400 errors with native web search (#2869) (#3248)
+- use authoritative milestone status in web roadmap (#2807) (#3258)
+- classify long-context entitlement 429 as quota_exhausted, not rate_limit (#2803) (#3257)
+- **docs**: use ~/.pi/agent/extensions/ for community extension install path (#3131) (#3259)
+- add disk→DB slice reconciliation in deriveStateFromDb (#2533) (#3262)
+- run forensics duplicate detection before investigation (#2704) (#3260)
+- skip TUI render loop on non-TTY stdout to prevent CPU burn (#3095) (#3263)
+- persist forensics report context across follow-up turns (#2941) (#3261)
+- invalidate workspace state on turn_end so milestones list stays current (#2706) (#3266)
+- eliminate 3 recurring doctor audit false positives (#3105) (#3264)
+- **web**: reconcile auto-mode state with on-disk lock in dashboard (#2705) (#3265)
+- treat ghost milestones as ineligible for parallel execution (#2501) (#3268)
+- redirect auto-mode to headless when stdout is piped (#2732) (#3269)
+- attempt VACUUM recovery when initSchema fails with corrupt freelist (#2519) (#3270)
+- resolve db_unavailable loop in worktree/symlink layouts (#2517) (#3271)
+- correct OAuth fallback request shape for google_search (#2963) (#3272)
+- prevent UAT stuck-loop and orphaned worktree after milestone completion (#3065)
+- **mcp**: handle server names with spaces in mcp_discover (#3037)
+- **gsd**: detect markdown body verdicts and guard plan-milestone against completed slices (#2960) (#3035)
+- **error-classifier**: replace STREAM_RE whack-a-mole with catch-all V8 JSON.parse pattern
+- type _borderColorKey as 'dim' | 'bashMode' to match ThemeColor
+- **tui**: comprehensive TUI review — layout, flow, rendering, and state fixes
+- **gsd**: harden codebase-map — bug fixes, UX polish, and expanded tests
+
+### Changed
+- **state**: centralize pipeline logging through workflow logger (#3282)
+- **gitignore**: exclude src/ build artifacts, scratch files, and .plans/
+- **complexity**: reclassify planning phases from standard to heavy tier
+
+## [2.58.0] - 2026-03-28
+
+### Added
+- Added 6 discord.js shard/error/warn event listeners for reconnect…
+
+### Fixed
+- **auto**: guard startAuto() against concurrent invocation (#2923)
+- **auto-dispatch**: widen operational verification gate regex (fixes #2866) (#2898)
+- **parallel**: three bugs preventing reliable parallel worker execution (#2801)
+- **web**: fall back to project totals when dashboard metrics are zero (#2847)
+- **gsd**: parse raw YAML under preference headings (#2794)
+- **gsd**: persist verification classes in milestone validation (#2820)
+- **gsd**: guard reconcileWorktreeDb against same-file ATTACH corruption (#2825)
+- **web**: skip shutdown in daemon mode so server survives tab close (#2842)
+- **headless**: skip execution_complete for multi-turn commands (auto/next)
+- Fixed 3 bugs (launchd JSON parsing, login race condition, interact…
+
+## [2.57.0] - 2026-03-28
+
+### Added
+- Extended DaemonConfig with control_channel_id and orchestrator se…
+- Created pure-function event formatters (10 functions) mapping RPC…
+- **models**: add GLM-5.1 to Z.AI provider in custom models
+- Added discord.js v14, DiscordBot class with auth guard and lifecy…
+- Created packages/daemon workspace package with DaemonConfig/LogLe…
+- headless text mode shows tool calls + skip UAT pause in headless
+- Wire --resume flag to resolve session IDs via prefix matching and…
+- Migrated headless orchestrator to use execution_complete events,…
+
+### Fixed
+- **headless**: match "completed" status from RPC v2 in exit code mapper
+- show external drives in directory browser on Linux
+- Regenerate package-lock.json after merge
+- **gsd**: resume cold auto bootstrap from db
+- **gsd**: preserve first auto unit model after session reset
+- Accept flags after positional command in headless arg parser
+- **gsd**: discover project subagents in .gsd
+- **model-routing**: use honest unitTypes for discuss dispatches and map all auto-dispatch phases
+- revert jsonl.ts to inline implementation — @gsd-build/rpc-client not available at source-level test time in CI
+
+### Changed
+- auto-commit after complete-milestone
+
+## [2.56.0] - 2026-03-27
+
+### Added
+- **parallel**: /gsd parallel watch — native TUI overlay for worker monitoring (#2806)
+
+### Fixed
+- **ci**: copy web/components to dist-test for xterm-theme test (#2891)
+- **gsd**: prefer PREFERENCES.md in worktrees (#2796)
+- **gsd**: resume auto-mode after transient provider pause (#2822)
+- **parallel**: resolve session lock contention and 3 related parallel-mode bugs (#2184) (#2800)
+- **web**: improve light theme terminal contrast (#2819)
+- **gsd**: preserve auto start model through discuss (#2837)
+
+### Changed
+- **test**: compile unit tests with esbuild, reclassify integration tests, fix node_modules symlink (#2809)
+
+## [2.55.0] - 2026-03-27
+
+### Added
+- colorized headless verbose output with thinking, phases, cost, and durations (#2886)
+- headless text mode observability + skip UAT pause (#2867)
+
+### Fixed
+- **cli**: let gsd update bypass version mismatch gate (#2845)
+- **contracts**: add isWorkspaceEvent guard + close routeLiveInteractionEvent exhaustiveness gap (#2878)
+- **gsd**: use project root for prior-slice dispatch guard (#2863)
+- **gsd**: include queue context in milestone planning prompts (#2846)
+- detect monorepo roots in project discovery to prevent workspace fragmentation (#2849)
+- **bg-shell**: recover from deleted cwd in timers (#2850)
+- **gsd**: enable dynamic routing without models section (#2851)
+- **interactive**: fully remove providers from /providers (#2852)
+
+## [2.54.0] - 2026-03-27
+
+### Added
+- Headless Integration Hardening & Release (M002) (#2811)
+- **parallel**: add real-time TUI monitor dashboard with self-healing (#2799)
+
+## [2.53.0] - 2026-03-27
+
+### Added
+- **vscode**: activity feed, workflow controls, session forking, enhanced code lens [2/3] (#2656)
+- **gsd**: enable safety mechanisms by default (snapshots, pre-merge checks) (#2678)
+
+### Fixed
+- hydrate collected secrets for current session (#2788)
+- resolve stash pop conflicts and stop swallowing merge errors (#2780)
+- treat any extracted verdict as terminal in isValidationTerminal (#2774)
+- use localStorage for auth token to enable multi-tab usage (#2785)
+- guard activeMilestone.id access in discuss and headless paths (#2776)
+- clean up zombie parallel workers stuck in error state (#2782)
+- relax milestone validation gate to accept prose evidence (#2779)
+- write milestone reports to project root instead of worktree (#2778)
+- auto-resolve build artifact conflicts in milestone merge (#2777)
+- let rate-limit errors attempt model fallback before pausing (#2775)
+- prevent gsd next from self-killing via stale crash lock (#2784)
+- add shell flag for Windows spawn in VSCode extension (#2781)
+
+### Changed
+- **gsd**: extract duplicated status guards and validation helpers (#2767)
+
+## [2.52.0] - 2026-03-27
+
+### Added
+- **vscode**: status bar, file decorations, bash terminal, session tree, conversation history, code lens [1/2] (#2651)
+- **web**: Dark mode contrast — raise token floor and flatten opacity tier system (#2734)
+- Wire --bare mode across headless → pi-coding-agent → resource-loa…
+- Added runId generation on prompt/steer/follow_up commands, event…
+- Added RPC protocol v2 types, init handshake with version detectio…
+
+### Fixed
+- auto-mode stops after provider errors (#2762) (#2764)
+- add missing runtime stage name to Dockerfile (#2765)
+- make transaction() re-entrant and add slice_dependencies to initSchema
+- remove preferences.md from ROOT_STATE_FILES to prevent back-sync overwrite
+- wire tool handlers through DB port layer, remove _getAdapter from all tools
+- **gsd**: move state machine guards inside transaction in 5 tool handlers (#2752)
+- reconcile disk milestones into empty DB before deriveStateFromDb guard (#2686)
+- **gsd**: seed preferences.md into auto-mode worktrees (#2693)
+- **claude-import**: discover marketplace plugins nested inside container directories (#2718)
+- exempt interactive tools from idle watchdog stall detection (#2676)
+- guard allSlicesDone against vacuous truth on empty slice array (#2679)
+- block complete-milestone dispatch when VALIDATION is needs-remediation (#2682)
+- **gsd**: sync milestone DB status in parkMilestone and unparkMilestone (#2696)
+- **web**: auth token gate — synthetic 401 on missing token, unauthenticated boot state, and recovery screen (#2740)
+- **remote-questions**: empty-key entry in auth.json shadows valid Discord bot token (#2737)
+- idle watchdog stalled-tool detection overridden by filesystem activity (#2697)
+- surface exhausted Claude SDK streams as errors (#2719)
+- **docker**: overhaul fragile setup, adopt proven container patterns (#2716)
+- **gsd**: write DB before disk in validate-milestone to match engine pattern (#2742)
+- **gsd**: extract and honor milestone argument in /gsd auto and /gsd next (#2729)
+- **windows**: prevent EINVAL by disabling detached process groups on Win32 (#2744)
+- **gsd**: delete orphaned verification_evidence rows on complete-task rollback (#2746)
+- **gsd**: wire setLogBasePath into engine init to resurrect audit log (#2745)
+- Remove premature pendingTools.delete in webSearchResult handler (#2743)
+- **gsd**: remove redundant assertions that fail TS2367 typecheck
+- include preferences.md in worktree sync and initial seed
+
+### Changed
+- **pi-ai**: replace model-ID pattern matching with capability metadata (#2548)
+- **gsd-db**: comprehensive SQLite audit fixes — indexes, caching, safety, reconciliation
+- rename preferences.md to PREFERENCES.md for consistency (#2700) (#2738)
+- **gsd**: unify three overlapping error classifiers into single classify→decide→act pipeline
+
+## [2.51.0] - 2026-03-26
+
+### Added
+- add /terminal slash command for direct shell execution (#2349)
+- **auto**: check verification class compliance before milestone completion (#2623)
+- **validate**: extract followUps and knownLimitations in parseSummary (#2622)
+- managed RTK integration with opt-in preference and web UI toggle (#2620)
+- **validate**: inject verification classes into milestone validation prompt (#2621)
+- **skills**: add 19 wshobson/agents packs with 40 curated skills
+- **skills**: add 11 new skill packs covering major frameworks and languages
+- **skills**: add SQLite/SQL detection, SQL optimization pack, and Redis pack
+- **skills**: add Prisma and Supabase/Postgres database packs
+- **skills**: add cloud platform packs (Firebase, Azure, AWS) and improve detection
+- **skills**: curate catalog — add top ecosystem skills, drop low-quality bundled ones
+- **skills**: parse SDKROOT from pbxproj for platform-aware iOS skill matching
+- **skills**: use ~/.agents/skills/ as primary skills directory with curated catalog
+
+### Fixed
+- improve light theme warning contrast (#2674)
+- honor explicit model config when model is not in known tier map (#2643)
+- exclude lastReasoning from retry diagnostic to prevent hallucination loops (#2663)
+- persist rewrite-docs attempt counter to disk for session restart survival (#2671)
+- add non-null assertions for parseUnitId optional fields in tests
+- update triage-dispatch static analysis tests for enqueueSidecar helper
+- **notifications**: prefer terminal-notifier over osascript on macOS (#2633)
+- classify stream-truncation JSON parse errors as transient (#2636)
+- call ensureDbOpen() before slice queries in /gsd discuss (#2640)
+- **prompts**: use --body-file for forensics issue creation (#2641)
+- isLockProcessAlive should return true for own PID (#2642)
+- check ASSESSMENT file for UAT verdict in checkNeedsRunUat (#2646)
+- use pauseAuto instead of stopAuto for warning-level dispatch stops (#2666)
+- signal malformed tool arguments in toolcall_end event (#2647)
+- prevent double mergeAndExit on milestone completion (#2648)
+- respect queue-order.json in DB-backed state derivation (#2649)
+- **vscode**: support Remote SSH by adding extensionKind and error handler (#2650)
+- update DB task status in writeBlockerPlaceholder for execute-task (#2657)
+- normalize path separators in matchesProjectFileMarker for Windows
+- **tests**: remove obsolete doctor filesystem test
+- **tests**: update doctor issue code to db_done_task_no_summary
+- restore PR files lost during merge conflict resolution
+- **skills**: address QA round 3
+- **skills**: address QA round 2
+- **skills**: address QA round 1
+- **skills**: prioritize ecosystem dir and skip legacy after migration
+- **skills**: address QA round 23
+- **skills**: address QA round 22
+- **skills**: address QA round 21
+- **skills**: address QA round 20
+- **skills**: address QA round 19
+- **skills**: address QA round 18
+- **skills**: address QA round 17
+- **skills**: address QA round 16
+- **skills**: address QA round 15
+- **skills**: address QA round 14
+- **skills**: address QA round 13
+- **skills**: address QA round 12
+- **skills**: address QA round 11
+- **skills**: address QA round 10
+- **skills**: address QA round 8
+- **skills**: detect FastAPI via dependency scanning
+- **skills**: address QA round 6
+- **skills**: address QA round 5
+- **skills**: address QA round 4
+- **skills**: address QA round 3
+- **skills**: address QA round 2
+- **skills**: defer greenfield skill selection to post-design phase
+- **skills**: add migration from ~/.gsd/agent/skills/ to ~/.agents/skills/
+- **gsd extension**: detect initialized projects in health widget
+- **gsd extension**: detect initialized projects in health widget
+
+### Changed
+- consolidate docs, remove stale artifacts, and repo hygiene (#2665)
+- extract runSafely helper for try-catch-debug-continue pattern (#2611)
+
+## [2.50.0] - 2026-03-26
+
+### Added
+- **gsd**: wire structured error propagation through UnitResult
+- add parallel quality gate evaluation with evaluating-gates phase
+- add 8-question quality gates to planning and completion templates
+
+### Fixed
+- reconcile stale task status in filesystem-based state derivation (#2514)
+- merge duplicate extractUatType imports in auto-dispatch
+- use Record<string, any> for hasNonEmptyFields to accept typed DB rows
+- **tests**: replace undefined assertTrue/assertEq with assert.ok/assert.equal
+- **tests**: replace undefined assertTrue/assertEq with assert.ok/deepStrictEqual
+- **gsd**: handle session_switch event so /resume restores GSD state (#2587)
+- use GitHub Issue Types via GraphQL instead of classification labels
+- **headless**: disable overall timeout for auto-mode, fix lock-guard auto-select (#2586)
+- **auto**: align UAT artifact suffix with gsd_slice_complete output (#2592)
+- **retry-handler**: stop treating 5xx server errors as credential-level failures
+- **test**: replace stale completedUnits with sessionFile in session-lock test
+- **session-lock**: retry lock file reads before declaring compromise
+- **gsd**: prevent ensureGsdSymlink from creating subdirectory .gsd when git-root .gsd exists
+- **auto**: add EAGAIN to INFRA_ERROR_CODES to stop budget-burning retries
+- **search**: enforce hard search budget and survive context compaction
+- **remote-questions**: use static ESM import for AuthStorage hydration
+- add SAFE_SKILL_NAME guard to reject prompt-injection via crafted skill names
+- **gsd**: use explicit parameter syntax in skill activation prompts
+- guard writeIntegrationBranch against workflow-template branches
+- preserve doctor missing-dir checks for active legacy slices
+- **gsd**: downgrade isolation mode when worktree creation fails
+- **gsd**: skip loading files for completed milestones in queue context builder
+- resolve race conditions in blob-store, discovery-cache, and agent-loop
+- **ai**: resolve WebSocket listener leaks and bound session cache
+- **rpc**: resolve double-set race, missing error ID, and stream handler
+- **pi-coding-agent**: prevent crash when login is cancelled
+- **doctor**: compare lockfile mtime against install marker, not directory mtime (#1974)
+- **doctor**: chdir out of orphaned worktree before removal (#1946)
+- **roadmap**: recognize '## Slice Roadmap' header in extractSlicesSection
+- prevent worktree sync from overwriting state and forward-sync completed-units.json
+- **web**: lazily compute default package root to avoid Windows standalone crash
+
+### Changed
+- adopt parseUnitId utility across all auto-* modules
+- flatten syncMilestoneDir nesting with shared helper
+- extract merge-state cleanup helper in reconcileMergeState
+- extract planning-state validation helpers in detectRogueFileWrites
+- split doctor-checks into focused modules
+- merge auto-worktree-sync into auto-worktree
+- deduplicate artifact path functions into single module
+- remove dead selfHealRuntimeRecords function from auto-recovery
+- decouple session-forensics from auto-worktree
+- remove dead worktree code and unused methods
+- consolidate branch name patterns into single module
+- deduplicate session-lock compromise handler and state assignment
+
+## [2.49.0] - 2026-03-25
+
+### Added
+- add --yolo flag to /gsd auto for non-interactive project init
+
+### Fixed
+- use full git log in merge tests to match trailer-based milestone IDs
+- update parallel-merge test assertion for new trailer format
+- clarify regex alternation in test assertion
+- verdict gate accepts PARTIAL for mixed/human-experience/live-runtime UATs
+
+### Changed
+- move GSD metadata from commit subject scopes to git trailers
+
+## [2.48.0] - 2026-03-25
+
+### Added
+- **discuss**: allow /gsd discuss to target queued milestones
+- enhance /gsd forensics with journal and activity log awareness
+
+### Fixed
+- make journal scanning intelligent — limit parsed files, line-count older ones
+- **model-registry**: scope custom provider stream handlers to prevent clobbering built-in API handlers
+- **forensics**: filter benign bash exit-code-1 and user skips from error traces
+- **gsd**: clear stale milestone ID reservations at session start
+- render tool calls above text response for external providers
+- **auto**: skip CONTEXT-DRAFT warning for completed/parked milestones
+
+### Changed
+- address review - extract RAPID_ITERATION_THRESHOLD_MS, simplify data access
+
+### Removed
+- remove insertChildBefore usage in chat-controller
+
+## [2.47.0] - 2026-03-25
+
+### Added
+- **agent-core**: add externalToolExecution mode for external providers
+- **provider**: add Claude Code CLI provider extension
+
+### Fixed
+- **claude-code-cli**: render tool calls above text response
+- **ci**: update FILE-SYSTEM-MAP.md path after docs→docs-internal move
+- isInheritedRepo false negative when parent has stale .gsd; defense-in-depth local .git check in bootstrap
+- **claude-code-cli**: resolve SDK executable path and update model IDs
+- make planning doctrine demoable definition audience-appropriate
+- **prompts**: migrate remaining 4 prompts to use DB-backed tool API instead of direct write
+- make workflow event hash platform-deterministic
+- reconcile stale task DB status from disk artifacts (#2514)
+
+## [2.46.1] - 2026-03-25
+
+### Fixed
+- **ci**: prevent windows-portability from blocking pipeline
+- **ci**: prevent pipeline race condition on release push
+- **gsd**: create empty DB for fresh projects with empty .gsd/ (#2510)
+- **remote-questions**: hydrate remote channel tokens from auth.json on startup
+
+### Changed
+- trigger CI to pick up pipeline race condition fix
+- trigger pipeline with race condition fix
+
+## [2.46.0] - 2026-03-25
+
+### Added
+- **gsd**: single-writer engine v3 — state machine guards, actor identity, reversibility
+- **gsd**: single-writer state engine v2 — discipline layer on DB architecture
+- **gsd**: add workflow-logger and wire into engine, tool, manifest, reconcile paths (#2494)
+
+### Fixed
+- **gsd**: align prompts with single-writer tool API
+- **gsd**: integration-proof — check DB state not roadmap projection after reset
+- **gsd**: block milestone completion when verification fails (#2500)
+- **ci**: add typecheck:extensions to pretest to prevent silent type drift
+- **gsd**: relax integration-proof cross-validation for table-format roadmap
+- **gsd**: update integration-proof tests for table-format roadmap projections
+- **gsd**: update test assertions for schema v11, prompt changes, and removed completedUnits
+- **gsd**: update test files for removed completedUnits, writeLock signature, and type changes
+- **gsd**: remove stale completedUnits refs, fix writeLock callers, add missing imports
+- **gsd**: harden single-writer engine — close TOCTOU, intercept bypasses, status inconsistencies
+- **write-intercept**: close bare-relative-path bypass in STATE.md regex
+- **voice**: fix misleading portaudio error on PEP 668 Linux systems (#2403) (#2407)
+- **core**: address PR review feedback for non-apikey provider support (#2452)
+- **ci**: retry npm install in pipeline to handle registry propagation delay (#2462)
+- **gsd**: change default isolation mode from worktree to none (#2481)
+- **loader**: add startup checks for Node version and git availability (#2463)
+- **gsd**: add worktree lifecycle events to journal (#2486)
+
+## [2.45.0] - 2026-03-25
+
+### Added
+- **web**: make web UI mobile responsive (#2354)
+- **gsd**: add `/gsd rethink` command for conversational project reorganization (#2459)
+- **gsd**: add renderCall/renderResult previews to DB tools (#2273)
+- add timestamps on user and assistant messages (#2368)
+- **gsd**: add `/gsd mcp` command for MCP server status and connectivity (#2362)
+- complete offline mode support (#2429)
+- **system-context**: inject global ~/.gsd/agent/KNOWLEDGE.md into system prompt (#2331)
+
+### Fixed
+- **gsd**: handle retentionDays=0 on Windows + run windows-portability on PRs (#2460)
+- use Array.from instead of Buffer.from for native processStreamChunk state (#2348)
+- **gsd**: isInheritedRepo conflates ~/.gsd with project .gsd when git root is $HOME (#2398)
+- reconcile disk milestones missing from DB in deriveStateFromDb (#2416) (#2422)
+- **auto**: reset recoveryAttempts on unit re-dispatch (#2322) (#2424)
+- detect and preserve submodule state during worktree teardown (#2337) (#2425)
+- **auto-start**: handle survivor branch recovery in phase=complete (#2358) (#2427)
+- **gsd**: widen test search window for CRLF portability on Windows (#2458)
+- **gsd**: preserve rich task plans on DB roundtrip (#2450) (#2453)
+- merge worktree back to main when stopAuto is called after milestone completion (#2317) (#2430)
+- **gsd**: skip doctor directory checks for pending slices (#2446)
+- **gsd**: migrate completion/validation prompts to DB-backed tools (#2449)
+- **gsd**: prevent saveArtifactToDb from overwriting larger files with truncated content (#2442) (#2447)
+- stop auto loop on real code merge conflicts (#2330) (#2428)
+- classify terminated/connection errors as transient in provider error handler (#2309) (#2432)
+- archive completed-units.json on milestone transition and sync metrics.json (#2313) (#2431)
+- supervision timeouts now respect task est: annotations (#2243) (#2434)
+- auto_pr: true now actually creates PRs — fix 3 interacting bugs (#2302) (#2433)
+- **gsd**: insert DB row when generating milestone ID (#2416)
+- **gsd**: reconcile disk-only milestones into DB in deriveStateFromDb (#2416)
+- **preferences**: deduplicate unrecognized format warning on repeated loads (#2375)
+- gate auto-mode bootstrap on SQLite availability (#2419) (#2421)
+- block /gsd quick when auto-mode is active (#2420)
+- **ci**: add Rust target for all platforms, not just cross-compilation
+- **ci**: restore Rust target triple and separate cross-compilation setup
+- **ci**: separate cross-compilation target from toolchain install
+
+### Changed
+- migrate D-G test files from createTestContext to node:test (#2418)
+- **test**: replace try/finally with beforeEach/afterEach in packages tests (#2390)
+- **test**: migrate gsd/tests s-z from custom harness to node:test (#2397)
+- **test**: migrate gsd/tests o-r from custom harness to node:test (#2401)
+- **test**: migrate gsd/tests i-n from custom harness to node:test (#2399)
+- **test**: migrate gsd/tests a-c from custom harness to node:test (#2400)
+- **test**: replace try/finally with t.after() in gsd/tests (e-i) (#2396)
+- **test**: replace try/finally with t.after() in gsd/tests (a-d) (#2395)
+- **test**: replace try/finally with t.after() in src/tests (o-z) (#2392)
+- **test**: replace try/finally with t.after() in src/tests (a-n) (#2394)
+
+## [2.44.0] - 2026-03-24
+
+### Added
+- **core**: support for 'non-api-key' provider extensions like Claude Code CLI (#2382)
+- **docker**: add official Docker sandbox template for isolated GSD auto mode (#2360)
+- **gsd**: show per-prompt token cost in footer behind show_token_cost preference (#2357)
+- **web**: add "Change project root" button to web UI (#2355)
+- **gsd**: Tool-driven write-side state transitions — replace markdown mutation with atomic SQLite tool calls (#2141)
+- **S06/T02**: Strip all 16 lazy createRequire fallback paths from migr…
+- **S05/T04**: Migrate remaining 6 callers (auto-prompts, auto-recovery…
+- **S05/T03**: Migrate 7 warm/cold callers (doctor, doctor-checks, visu…
+- **S05/T02**: Extend migrateHierarchyToDb to populate v8 planning colu…
+- **S05/T01**: Schema v10 adds replan_triggered_at column; deriveStateF…
+- **S04/T03**: Migrate auto-dispatch.ts (3 rules), auto-verification.ts…
+- **S04/T02**: Migrate dispatch-guard.ts to DB queries with isDbAvailab…
+- **S01/T03**: Migrate planning prompts to DB-backed tool guidance and…
+- **S01/T01**: Partially advanced schema v8 groundwork and documented t…
+- **gsd**: tool-driven write-side state transitions (M001)
+
+### Fixed
+- post-migration cleanup — pragmas, rollbacks, tool gaps, stale code (#2410)
+- **test**: normalize CRLF in auto-stash-merge assertion for Windows
+- **test**: swallow EPERM on Windows temp dir cleanup in auto-stash-merge test
+- **gsd**: add file-based fallbacks for DB-dependent code paths and fix CI test failures
+- **gsd**: remove stale observabilityIssues reference in journal-integration test
+- **extensions**: detect TypeScript syntax in .js extension files and suggest renaming to .ts (#2386)
+- **gsd**: prevent planning data loss from destructive upsert and post-unit re-import (#2370)
+- **gsd**: use correct notify severity type ("warning" not "warn")
+- **web**: resolve compiled .js modules for all subprocess calls under node_modules (#2320)
+- **test**: increase perf assertion threshold to prevent CI flake (#2327)
+- add missing SQLite WAL sidecars and journal to runtime exclusion lists (#2299)
+- **gsd**: remove stale observability validator + fix greenfield worktree check
+- **memory**: fix memory and resource leaks across TUI, LSP, DB, and automation (#2314)
+- **gsd**: preserve freeform DECISIONS.md content on decision save (#2319)
+- **pi-ai**: restore alibaba-coding-plan provider via models.custom.ts (#2350)
+- **doctor**: skip false env_dependencies error in auto-worktrees (#2318)
+- **gsd**: auto-stash dirty files before squash merge and surface dirty filenames in error (#2298)
+- **gsd**: keep params as any in db-tools executors (CI tsconfig is stricter)
+- **gsd**: replace any types in db-tools executor signatures
+- **gsd**: resolve 4 TS compilation errors from parser migration
+- **gsd**: wrap plan-task DB writes in transaction + untrack .gsd/ artifacts
+- **S04/T04**: Add planning-crossval tests proving DB↔rendered↔parsed pa…
+- **S04/T01**: Add schema v9 migration with sequence column on slices/ta…
+- remove .gsd/ milestone artifacts from git index
+- **tests**: update remediation step assertions and crossval fixture
+- **gsd**: address all 7 review findings from PR #2141
+- **tests**: remove invalid `seq` property from insertMilestone calls
+
+### Changed
+- **contrib**: add CODEOWNERS and team workflow docs (#2286)
+- **M001**: auto-commit after complete-milestone
+- **M001**: auto-commit after validate-milestone
+- **M001/S06**: auto-commit after complete-slice
+- **M001/S06**: auto-commit after plan-slice
+- **M001/S06**: auto-commit after research-slice
+- **M001/S05**: auto-commit after complete-slice
+- **M001/S05**: auto-commit after plan-slice
+- **M001/S05**: auto-commit after research-slice
+- **M001/S04**: auto-commit after complete-slice
+- **M001/S04**: auto-commit after research-slice
+- **M001/S03**: auto-commit after complete-slice
+- **M001/S03**: auto-commit after plan-slice
+- **M001/S03**: auto-commit after research-slice
+- **M001/S02**: auto-commit after complete-slice
+- **M001/S02**: auto-commit after plan-slice
+- **M001/S02**: auto-commit after research-slice
+- **M001/S01**: auto-commit after complete-slice
+
+## [2.43.0] - 2026-03-23
+
+### Added
+- **forensics**: opt-in duplicate detection before issue creation (#2105)
+
+### Fixed
+- prevent banner from printing twice on first run (#2251)
+- **test**: Windows CI — use double quotes in git commit message (#2252)
+- **async-jobs**: suppress duplicate follow-up for awaited job results (#2248) (#2250)
+- **gsd**: remove force-staging of .gsd/milestones/ through symlinks (#2247) (#2249)
+- **gsd**: remove over-broad skill activation heuristic (#2239) (#2244)
+- **auth**: fall through to env/fallback when OAuth credential has no registered provider (#2097)
+- **lsp**: bound message buffer and clean up stale client state (#2171)
+- clean up macOS numbered .gsd collision variants (#2205) (#2210)
+- **search**: keep duplicate-search loop guard armed (#2117)
+- clean up extension error listener on session dispose (#2165)
+- **web**: resolve 4 pre-existing onboarding contract test failures (#2209)
+- async bash job timeout hangs indefinitely instead of erroring out (#2214)
+- **gsd**: apply fast service tier outside auto-mode (#2126)
+- **interactive**: clean up leaked SIGINT and extension selector listeners (#2172)
+- **ci**: standardize GitHub Actions and Node.js versions (#2169)
+- **native**: resolve memory leaks in glob, ttsr, and image overflow (#2170)
+- extension resource management — prune stale dirs, fix isBuiltIn, gate skills on Skill tool, suppress search warnings (#2235)
+- batch isolated fixes — error messages, preferences, web auth, MCP vars, detection, gitignore (#2232)
+- document iTerm2 Ctrl+Alt+G keybinding conflict and add helpful hint (#2231)
+- **footer**: display active inference model during execution (#1982)
+- **web**: kill stale server process before launch to prevent EADDRINUSE (#1934) (#2034)
+- **git**: force LC_ALL=C in GIT_NO_PROMPT_ENV to support non-English locales (#2035)
+- **forensics**: force gh CLI for issue creation to prevent misrouting (#2067) (#2094)
+- force-stage .gsd/milestones/ artifacts when .gsd is a symlink (#2104) (#2112)
+- **pi-ai**: correct Copilot context window and output token limits (#2118)
+
+### Changed
+- startup optimizations — pre-compiled extensions, compile cache, batch discovery (#2125)
+
+## [2.42.0] - 2026-03-22
+
+### Added
+- **gsd**: declarative workflow engine — YAML-defined workflows through the auto-loop (#2024)
+- **gsd**: unified rule registry, event journal, journal query tool, and tool naming convention (#1928)
+- **ci**: PR risk checker — classify changed files by system and surface risk level (#1930)
+- ADR attribution — distinguish human vs agent vs collaborative decisions (#1830)
+- add /gsd fast command and gate service tier icon to supported models (#1848) (#1862)
+- add --host, --port, --allowed-origins flags for web mode (#1847) (#1873)
+
+### Fixed
+- **tests**: wrap rmSync cleanup in try/catch for Windows EPERM
+- **tests**: add maxRetries to rmSync cleanup for Windows EPERM compatibility
+- recursive key sorting in tool-call loop guard hash function (#1962)
+- use path.sep for cross-platform path traversal guards and test assertions
+- **tests**: use cross-platform path split in run-manager timestamp test
+- prevent SIGTSTP crash on Windows (#2018)
+- add missing codeFilesChanged to journal integration test mock
+- **repo-identity**: use native realpath on Windows to resolve 8.3 short paths (#1960)
+- **doctor**: gate roadmap checkbox on summary existing on disk, not issue detection (#1915)
+- warn when milestone merge contains only metadata and no code (#1906) (#1927)
+- **worktree**: resolve 8.3 short paths and use shell mode for .bat hooks on Windows (#1956)
+- **web**: persist auth token in sessionStorage to survive page refreshes (#1877)
+- clean up SQUASH_MSG after squash-merge and guard worktree teardown against uncommitted changes (#1868)
+- populate RecoveryContext in hook unit supervision to prevent crash on stalled tool recovery (#1867)
+- resolve worktree path from git registry when .gsd/ symlink is shadowed (#1866)
+- resolve Node v24 web boot failure — ERR_UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING (#1864)
+- **auto**: broaden worktree health check to all ecosystems (#1860)
+- **doctor**: cascade slice uncheck when task_done_missing_summary unchecks tasks (#1850) (#1858)
+- defend exit path against ESM module cache mismatch (#1854)
+- escape parentheses in paths before bash shell-out, fix __extensionDir fallback (#1872)
+- use PowerShell Start-Process for Windows browser launch, prevent URL wrapping (#1870)
+- clear stale unit state and restore CWD when step-wizard exits auto-loop (#1869)
+- prevent cross-project state leak in brand-new directories (#1639) (#1861)
+- reconcile worktree HEAD with milestone branch ref before squash merge (#1846) (#1859)
+- normalize Windows backslash paths in bash command strings (#1436) (#1863)
+- parsePlan and verifyExpectedArtifact recognize heading-style task entries (#1691) (#1857)
+- sync all milestone dirs regardless of naming convention (#1547) (#1845)
+
 ## [2.41.0] - 2026-03-21
 
 ### Added
@@ -1598,7 +2601,36 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Changed
 - License updated to MIT
 
-[Unreleased]: https://github.com/gsd-build/gsd-2/compare/v2.41.0...HEAD
+[Unreleased]: https://github.com/gsd-build/gsd-2/compare/v2.67.0...HEAD
+[2.67.0]: https://github.com/gsd-build/gsd-2/compare/v2.66.1...v2.67.0
+[2.66.1]: https://github.com/gsd-build/gsd-2/compare/v2.66.0...v2.66.1
+[2.66.0]: https://github.com/gsd-build/gsd-2/compare/v2.65.0...v2.66.0
+[2.65.0]: https://github.com/gsd-build/gsd-2/compare/v2.64.0...v2.65.0
+[2.64.0]: https://github.com/gsd-build/gsd-2/compare/v2.63.0...v2.64.0
+[2.63.0]: https://github.com/gsd-build/gsd-2/compare/v2.62.1...v2.63.0
+[2.62.1]: https://github.com/gsd-build/gsd-2/compare/v2.62.0...v2.62.1
+[2.62.0]: https://github.com/gsd-build/gsd-2/compare/v2.61.0...v2.62.0
+[2.61.0]: https://github.com/gsd-build/gsd-2/compare/v2.60.0...v2.61.0
+[2.60.0]: https://github.com/gsd-build/gsd-2/compare/v2.59.0...v2.60.0
+[2.59.0]: https://github.com/gsd-build/gsd-2/compare/v2.58.0...v2.59.0
+[2.58.0]: https://github.com/gsd-build/gsd-2/compare/v2.57.0...v2.58.0
+[2.57.0]: https://github.com/gsd-build/gsd-2/compare/v2.56.0...v2.57.0
+[2.56.0]: https://github.com/gsd-build/gsd-2/compare/v2.55.0...v2.56.0
+[2.55.0]: https://github.com/gsd-build/gsd-2/compare/v2.54.0...v2.55.0
+[2.54.0]: https://github.com/gsd-build/gsd-2/compare/v2.53.0...v2.54.0
+[2.53.0]: https://github.com/gsd-build/gsd-2/compare/v2.52.0...v2.53.0
+[2.52.0]: https://github.com/gsd-build/gsd-2/compare/v2.51.0...v2.52.0
+[2.51.0]: https://github.com/gsd-build/gsd-2/compare/v2.50.0...v2.51.0
+[2.50.0]: https://github.com/gsd-build/gsd-2/compare/v2.49.0...v2.50.0
+[2.49.0]: https://github.com/gsd-build/gsd-2/compare/v2.48.0...v2.49.0
+[2.48.0]: https://github.com/gsd-build/gsd-2/compare/v2.47.0...v2.48.0
+[2.47.0]: https://github.com/gsd-build/gsd-2/compare/v2.46.1...v2.47.0
+[2.46.1]: https://github.com/gsd-build/gsd-2/compare/v2.46.0...v2.46.1
+[2.46.0]: https://github.com/gsd-build/gsd-2/compare/v2.45.0...v2.46.0
+[2.45.0]: https://github.com/gsd-build/gsd-2/compare/v2.44.0...v2.45.0
+[2.44.0]: https://github.com/gsd-build/gsd-2/compare/v2.43.0...v2.44.0
+[2.43.0]: https://github.com/gsd-build/gsd-2/compare/v2.42.0...v2.43.0
+[2.42.0]: https://github.com/gsd-build/gsd-2/compare/v2.41.0...v2.42.0
 [2.41.0]: https://github.com/gsd-build/gsd-2/compare/v2.40.0...v2.41.0
 [2.40.0]: https://github.com/gsd-build/gsd-2/compare/v2.39.0...v2.40.0
 [2.39.0]: https://github.com/gsd-build/gsd-2/compare/v2.38.0...v2.39.0

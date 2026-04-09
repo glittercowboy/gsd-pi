@@ -32,7 +32,7 @@ export class BranchSummaryMessageComponent extends Box {
 	private updateDisplay(): void {
 		this.clear();
 
-		const label = theme.fg("customMessageLabel", `\x1b[1m[branch]\x1b[22m`);
+		const label = theme.fg("customMessageLabel", theme.bold("[branch]"));
 		this.addChild(new Text(label, 0, 0));
 		this.addChild(new Spacer(1));
 

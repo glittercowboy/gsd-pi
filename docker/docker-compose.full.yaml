@@ -1,0 +1,61 @@
+services:
+  gsd:
+    build:
+      context: .                        # Build context is the docker/ directory
+      dockerfile: Dockerfile.sandbox    # Runtime sandbox image with entrypoint
+      args:
+        GSD_VERSION: latest             # Pin a specific version: GSD_VERSION=2.51.0
+
+    container_name: gsd-sandbox
+
+    ports:
+      - "3000:3000"                     # GSD web UI
+
+    volumes:
+      - ../:/workspace                  # Project root mounted into the container
+      - gsd-state:/home/gsd/.gsd        # Persistent GSD state across restarts
+      # - ~/.ssh:/home/gsd/.ssh:ro      # SSH keys for git operations (read-only)
+      # - ~/.gitconfig:/home/gsd/.gitconfig:ro  # Host git config
+
+    env_file:
+      - .env                            # API keys and secrets (see .env.example)
+
+    environment:
+      - NODE_ENV=development
+      # UID/GID remapping — match your host user to avoid permission issues
+      # on bind-mounted volumes. The entrypoint remaps the container's gsd
+      # user to these IDs at startup. Run `id -u` / `id -g` to find yours.
+      - PUID=1000
+      - PGID=1000
+      # Git identity inside the container (overrides .env if set here)
+      # - GIT_AUTHOR_NAME=Your Name
+      # - GIT_AUTHOR_EMAIL=you@example.com
+
+    stdin_open: true                    # Keep stdin open for interactive use
+    tty: true                           # Allocate a pseudo-TTY
+
+    # Health check — verify GSD is installed and responsive
+    healthcheck:
+      test: ["CMD", "gsd", "--version"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+    # Resource limits — uncomment to constrain container resources
+    # deploy:
+    #   resources:
+    #     limits:
+    #       cpus: "4.0"
+    #       memory: 8G
+    #     reservations:
+    #       cpus: "1.0"
+    #       memory: 2G
+
+    # Network mode — uncomment ONE if you need host networking
+    # network_mode: host               # Full host network access (no port mapping needed)
+    # network_mode: bridge             # Default Docker bridge (already the default)
+
+volumes:
+  gsd-state:
+    driver: local

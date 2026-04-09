@@ -1,7 +1,7 @@
-import { DefaultResourceLoader } from '@gsd/pi-coding-agent'
+import { DefaultResourceLoader, sortExtensionPaths } from '@gsd/pi-coding-agent'
 import { createHash } from 'node:crypto'
 import { homedir } from 'node:os'
-import { chmodSync, copyFileSync, cpSync, existsSync, lstatSync, mkdirSync, readFileSync, readlinkSync, readdirSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs'
+import { chmodSync, copyFileSync, cpSync, existsSync, lstatSync, mkdirSync, openSync, closeSync, readFileSync, readlinkSync, readdirSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs'
 import { dirname, join, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { compareSemver } from './update-check.js'
@@ -40,6 +40,12 @@ interface ManagedResourceManifest {
    * causing extension load errors.
    */
   installedExtensionRootFiles?: string[]
+  /**
+   * Subdirectory extension names installed in extensions/ by this GSD version.
+   * Used on the next upgrade to detect and prune subdirectory extensions that
+   * were removed from the bundle.
+   */
+  installedExtensionDirs?: string[]
 }
 
 export { discoverExtensionEntryPaths } from './extension-discovery.js'
@@ -67,13 +73,28 @@ function getBundledGsdVersion(): string {
 }
 
 function writeManagedResourceManifest(agentDir: string): void {
-  // Record root-level files currently in the bundled extensions source so that
-  // future upgrades can detect and prune any that get removed or moved.
+  // Record root-level files and subdirectory extension names currently in the
+  // bundled extensions source so that future upgrades can detect and prune any
+  // that get removed or moved.
   let installedExtensionRootFiles: string[] = []
+  let installedExtensionDirs: string[] = []
   try {
     if (existsSync(bundledExtensionsDir)) {
-      installedExtensionRootFiles = readdirSync(bundledExtensionsDir, { withFileTypes: true })
+      const entries = readdirSync(bundledExtensionsDir, { withFileTypes: true })
+      installedExtensionRootFiles = entries
         .filter(e => e.isFile())
+        .map(e => e.name)
+      installedExtensionDirs = entries
+        .filter(e => e.isDirectory())
+        .filter(e => {
+          // Track directories that are actual extensions — identified by an
+          // index.js/index.ts entry point OR an extension-manifest.json (e.g.
+          // remote-questions which uses mod.ts instead of index.ts).
+          const dirPath = join(bundledExtensionsDir, e.name)
+          return existsSync(join(dirPath, 'index.js'))
+            || existsSync(join(dirPath, 'index.ts'))
+            || existsSync(join(dirPath, 'extension-manifest.json'))
+        })
         .map(e => e.name)
     }
   } catch { /* non-fatal */ }
@@ -83,6 +104,7 @@ function writeManagedResourceManifest(agentDir: string): void {
     syncedAt: Date.now(),
     contentHash: computeResourceFingerprint(),
     installedExtensionRootFiles,
+    installedExtensionDirs,
   }
   writeFileSync(getManagedResourceManifestPath(agentDir), JSON.stringify(manifest))
 }
@@ -314,32 +336,58 @@ function pruneRemovedBundledExtensions(
 
   // Current bundled root-level files (what the new version provides)
   const currentSourceFiles = new Set<string>()
+  // Current bundled subdirectory extensions
+  const currentSourceDirs = new Set<string>()
   try {
     if (existsSync(bundledExtensionsDir)) {
       for (const e of readdirSync(bundledExtensionsDir, { withFileTypes: true })) {
         if (e.isFile()) currentSourceFiles.add(e.name)
+        if (e.isDirectory()) currentSourceDirs.add(e.name)
       }
     }
   } catch { /* non-fatal */ }
 
-  const removeIfStale = (fileName: string) => {
+  const removeFileIfStale = (fileName: string) => {
     if (currentSourceFiles.has(fileName)) return  // still in bundle, not stale
     const stale = join(extensionsDir, fileName)
     try { if (existsSync(stale)) rmSync(stale, { force: true }) } catch { /* non-fatal */ }
   }
 
+  const removeDirIfStale = (dirName: string) => {
+    if (currentSourceDirs.has(dirName)) return  // still in bundle, not stale
+    const stale = join(extensionsDir, dirName)
+    try { if (existsSync(stale)) rmSync(stale, { recursive: true, force: true }) } catch { /* non-fatal */ }
+  }
+
   if (manifest?.installedExtensionRootFiles) {
     // Manifest-based: remove previously-installed root files that are no longer bundled
     for (const prevFile of manifest.installedExtensionRootFiles) {
-      removeIfStale(prevFile)
+      removeFileIfStale(prevFile)
     }
   }
+
+  if (manifest?.installedExtensionDirs) {
+    // Manifest-based: remove previously-installed subdirectory extensions that are no longer bundled
+    for (const prevDir of manifest.installedExtensionDirs) {
+      removeDirIfStale(prevDir)
+    }
+  }
+
+  // Sweep-based: also remove any installed extension subdirectory not in the current bundle,
+  // even if it was never tracked in the manifest (e.g. installed by a pre-manifest version).
+  try {
+    if (existsSync(extensionsDir)) {
+      for (const e of readdirSync(extensionsDir, { withFileTypes: true })) {
+        if (e.isDirectory()) removeDirIfStale(e.name)
+      }
+    }
+  } catch { /* non-fatal */ }
 
   // Always remove known stale files regardless of manifest state.
   // These were installed by pre-manifest versions so they may not appear in
   // installedExtensionRootFiles even when a manifest exists.
   // env-utils.js was moved from extensions/ root → gsd/ in v2.39.x (#1634)
-  removeIfStale('env-utils.js')
+  removeFileIfStale('env-utils.js')
 }
 
 /**
@@ -347,8 +395,11 @@ function pruneRemovedBundledExtensions(
  *
  * - extensions/ → ~/.gsd/agent/extensions/   (overwrite when version changes)
  * - agents/     → ~/.gsd/agent/agents/        (overwrite when version changes)
- * - skills/     → ~/.gsd/agent/skills/        (overwrite when version changes)
  * - GSD-WORKFLOW.md → ~/.gsd/agent/GSD-WORKFLOW.md (fallback for env var miss)
+ *
+ * Skills are NOT synced here. They are installed by the user via the
+ * skills.sh CLI (`npx skills add <repo>`) into ~/.agents/skills/ — the
+ * industry-standard Agent Skills ecosystem directory.
  *
  * Skips the copy when the managed-resources.json version matches the current
  * GSD version, avoiding ~128ms of synchronous cpSync on every startup.
@@ -362,17 +413,23 @@ export function initResources(agentDir: string): void {
 
   const currentVersion = getBundledGsdVersion()
   const manifest = readManagedResourceManifest(agentDir)
+  const extensionsDir = join(agentDir, 'extensions')
 
   // Always prune root-level extension files that were removed from the bundle.
   // This is cheap (a few existence checks + at most one rmSync) and must run
   // unconditionally so that stale files left by a previous version are cleaned
   // up even when the version/hash match causes the full sync to be skipped.
   pruneRemovedBundledExtensions(manifest, agentDir)
+  pruneStaleSiblingFiles(bundledExtensionsDir, extensionsDir)
 
   // Ensure ~/.gsd/agent/node_modules symlinks to GSD's node_modules on EVERY
   // launch, not just during resource syncs. A stale/broken symlink makes ALL
   // extensions fail to resolve @gsd/* packages, rendering GSD non-functional.
   ensureNodeModulesSymlink(agentDir)
+
+  // Migrate legacy skills on every launch (not gated by manifest) so that
+  // partial-failure retries don't wait for a version bump.
+  migrateSkillsToEcosystemDir(agentDir)
 
   // Skip the full copy when both version AND content fingerprint match.
   // Version-only checks miss same-version content changes (npm link dev workflow,
@@ -380,7 +437,7 @@ export function initResources(agentDir: string): void {
   if (manifest && manifest.gsdVersion === currentVersion) {
     // Version matches — check content fingerprint for same-version staleness.
     const currentHash = computeResourceFingerprint()
-    const hasStaleExtensionFiles = hasStaleCompiledExtensionSiblings(join(agentDir, 'extensions'))
+    const hasStaleExtensionFiles = hasStaleCompiledExtensionSiblings(extensionsDir, bundledExtensionsDir)
     if (manifest.contentHash && manifest.contentHash === currentHash && !hasStaleExtensionFiles) {
       return
     }
@@ -390,7 +447,13 @@ export function initResources(agentDir: string): void {
 
   syncResourceDir(bundledExtensionsDir, join(agentDir, 'extensions'))
   syncResourceDir(join(resourcesDir, 'agents'), join(agentDir, 'agents'))
-  syncResourceDir(join(resourcesDir, 'skills'), join(agentDir, 'skills'))
+  // Skills are no longer force-synced here. Users install skills via the
+  // skills.sh CLI (`npx skills add <repo>`) into ~/.agents/skills/ which
+  // is the industry-standard Agent Skills ecosystem directory.
+  //
+  // Migration from the legacy ~/.gsd/agent/skills/ directory is handled
+  // above the manifest check so it runs on every launch (including retries
+  // after partial copy failures).
 
   // Sync GSD-WORKFLOW.md to agentDir as a fallback for when GSD_WORKFLOW_PATH
   // env var is not set (e.g. fork/dev builds, alternative entry points).
@@ -407,12 +470,129 @@ export function initResources(agentDir: string): void {
   ensureRegistryEntries(join(agentDir, 'extensions'))
 }
 
-export function hasStaleCompiledExtensionSiblings(extensionsDir: string): boolean {
+// ─── Legacy Skill Migration ──────────────────────────────────────────────────────
+
+/**
+ * One-time migration: copy user-customized skills from the old
+ * ~/.gsd/agent/skills/ directory into ~/.agents/skills/.
+ *
+ * The migration is conservative:
+ *  - Only skill directories containing a SKILL.md are considered.
+ *  - Copies, does not move — the old directory stays intact so downgrading
+ *    to a pre-migration GSD version still works.
+ *  - Collision-safe — if a skill name already exists in the target, the
+ *    existing ecosystem skill wins (user may have already installed a newer
+ *    version via skills.sh).
+ *  - Writes a `.migrated-to-agents` marker inside the legacy directory so
+ *    the migration runs at most once.
+ */
+function migrateSkillsToEcosystemDir(agentDir: string): void {
+  const legacyDir = join(agentDir, 'skills')
+  const markerPath = join(legacyDir, '.migrated-to-agents')
+
+  // Already migrated or no legacy dir — nothing to do
+  if (!existsSync(legacyDir)) return
+
+  // Atomic marker check — 'wx' fails if file already exists, preventing races
+  // when two GSD processes start simultaneously.
+  let markerFd: number
+  try {
+    markerFd = openSync(markerPath, 'wx')
+  } catch {
+    return // marker already exists (another process won the race, or already migrated)
+  }
+
+  try {
+    const ecosystemDir = join(homedir(), '.agents', 'skills')
+    mkdirSync(ecosystemDir, { recursive: true })
+
+    const entries = readdirSync(legacyDir, { withFileTypes: true })
+    let migrated = 0
+    let candidates = 0
+    for (const entry of entries) {
+      // Handle both real directories and symlinks pointing to directories
+      const isDir = entry.isDirectory()
+      const isSymlink = entry.isSymbolicLink()
+      if (!isDir && !isSymlink) continue
+
+      const sourcePath = join(legacyDir, entry.name)
+
+      // For symlinks, verify the target is a directory
+      if (isSymlink) {
+        try {
+          const stat = statSync(sourcePath)
+          if (!stat.isDirectory()) continue
+        } catch {
+          continue // broken symlink — skip
+        }
+      }
+
+      const skillMd = join(sourcePath, 'SKILL.md')
+      if (!existsSync(skillMd)) continue
+
+      const target = join(ecosystemDir, entry.name)
+      if (existsSync(target)) continue // ecosystem version wins
+
+      candidates++
+      try {
+        if (isSymlink) {
+          // Recreate the symlink in the ecosystem directory using an absolute
+          // target. Relative symlinks would resolve from the new parent dir
+          // (~/.agents/skills/) instead of the original (~/.gsd/agent/skills/),
+          // pointing to the wrong location.
+          const rawTarget = readlinkSync(sourcePath)
+          const absTarget = resolve(dirname(sourcePath), rawTarget)
+          symlinkSync(absTarget, target)
+        } else {
+          cpSync(sourcePath, target, { recursive: true })
+        }
+        migrated++
+      } catch {
+        // non-fatal — skip this skill
+      }
+    }
+
+    // If any skills failed to copy, remove the marker so migration retries
+    // on the next launch.  This keeps the legacy dir as fallback until every
+    // skill has been successfully migrated.
+    if (migrated < candidates) {
+      try { closeSync(markerFd); markerFd = -1 } catch { /* non-fatal */ }
+      try { unlinkSync(markerPath) } catch { /* non-fatal */ }
+      return
+    }
+
+    // Write migration info to the marker
+    try { writeFileSync(markerFd, `Migrated ${migrated} skill(s) to ${ecosystemDir} on ${new Date().toISOString()}\n`) } catch { /* non-fatal */ }
+  } catch {
+    // can't create ecosystem dir or read legacy dir — close fd first (required on Windows
+    // where unlinkSync fails on open handles), then remove marker so we retry next launch
+    try { closeSync(markerFd); markerFd = -1 } catch { /* non-fatal */ }
+    try { unlinkSync(markerPath) } catch { /* non-fatal */ }
+  } finally {
+    if (markerFd !== -1) { try { closeSync(markerFd) } catch { /* non-fatal */ } }
+  }
+}
+
+export function hasStaleCompiledExtensionSiblings(extensionsDir: string, sourceDir: string = bundledExtensionsDir): boolean {
   if (!existsSync(extensionsDir)) return false
+  const sourceFiles = existsSync(sourceDir)
+    ? new Set(
+        readdirSync(sourceDir, { withFileTypes: true })
+          .filter((entry) => entry.isFile())
+          .map((entry) => entry.name),
+      )
+    : new Set<string>()
   for (const entry of readdirSync(extensionsDir, { withFileTypes: true })) {
-    if (!entry.isFile() || !entry.name.endsWith('.ts')) continue
-    const jsName = entry.name.replace(/\.ts$/, '.js')
-    if (existsSync(join(extensionsDir, jsName))) {
+    if (!entry.isFile()) continue
+    if (!entry.name.endsWith('.ts') && !entry.name.endsWith('.js')) continue
+
+    const siblingName = entry.name.endsWith('.ts')
+      ? entry.name.replace(/\.ts$/, '.js')
+      : entry.name.replace(/\.js$/, '.ts')
+
+    if (!existsSync(join(extensionsDir, siblingName))) continue
+    if (sourceFiles.has(entry.name) && sourceFiles.has(siblingName)) continue
+    if (sourceFiles.has(entry.name) || sourceFiles.has(siblingName)) {
       return true
     }
   }
@@ -452,5 +632,22 @@ export function buildResourceLoader(agentDir: string): DefaultResourceLoader {
   return new DefaultResourceLoader({
     agentDir,
     additionalExtensionPaths: piExtensionPaths,
-  })
+    bundledExtensionKeys: bundledKeys,
+    extensionPathsTransform: (paths: string[]) => {
+      // 1. Filter community extensions through the GSD registry
+      const filteredPaths = paths.filter((entryPath) => {
+        const manifest = readManifestFromEntryPath(entryPath)
+        if (!manifest) return true // no manifest = always load
+        return isExtensionEnabled(registry, manifest.id)
+      })
+
+      // 2. Sort in topological dependency order
+      const { sortedPaths, warnings } = sortExtensionPaths(filteredPaths)
+
+      return {
+        paths: sortedPaths,
+        diagnostics: warnings.map((w) => w.message),
+      }
+    },
+  } as ConstructorParameters<typeof DefaultResourceLoader>[0])
 }

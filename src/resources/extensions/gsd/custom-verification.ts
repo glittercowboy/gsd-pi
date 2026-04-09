@@ -17,11 +17,13 @@
  * - The frozen DEFINITION.yaml on disk is the single source of truth for step policies.
  */
 
+import { logWarning } from "./workflow-logger.js";
 import { readFileSync, existsSync, statSync } from "node:fs";
 import { join, resolve, sep } from "node:path";
 import { spawnSync } from "node:child_process";
 import type { StepDefinition, VerifyPolicy } from "./definition-loader.js";
 import { readFrozenDefinition } from "./custom-workflow-engine.js";
+import { rewriteCommandWithRtk } from "../shared/rtk.js";
 
 /** Verification outcome type — matches ExecutionPolicy.verify() return type. */
 export type VerificationOutcome = "continue" | "retry" | "pause";
@@ -129,8 +131,8 @@ function handleContentHeuristic(
         if (!new RegExp(verify.pattern).test(content)) {
           return "pause";
         }
-      } catch {
-        // Invalid regex at runtime — treat as verification failure
+      } catch (e) {
+        logWarning("engine", `content-heuristic regex failed: ${(e as Error).message}`);
         return "pause";
       }
     }
@@ -164,7 +166,8 @@ function handleShellCommand(
     return "pause";
   }
 
-  const result = spawnSync("sh", ["-c", verify.command], {
+  const rewrittenCommand = rewriteCommandWithRtk(verify.command);
+  const result = spawnSync("sh", ["-c", rewrittenCommand], {
     cwd: runDir,
     timeout: 30_000,
     encoding: "utf-8",

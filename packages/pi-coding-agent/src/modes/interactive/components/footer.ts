@@ -2,6 +2,7 @@ import { type Component, truncateToWidth, visibleWidth } from "@gsd/pi-tui";
 import type { AgentSession } from "../../../core/agent-session.js";
 import type { ReadonlyFooterDataProvider } from "../../../core/footer-data-provider.js";
 import { theme } from "../theme/theme.js";
+import { providerDisplayName } from "./model-selector.js";
 
 /**
  * Sanitize text for display in a single-line status.
@@ -24,6 +25,18 @@ function formatTokens(count: number): string {
 	if (count < 1000000) return `${Math.round(count / 1000)}k`;
 	if (count < 10000000) return `${(count / 1000000).toFixed(1)}M`;
 	return `${Math.round(count / 1000000)}M`;
+}
+
+/**
+ * Format a cost value for compact display.
+ * Uses fewer decimal places for larger amounts.
+ * @internal Exported for testing only.
+ */
+export function formatPromptCost(cost: number): string {
+	if (cost < 0.001) return `$${cost.toFixed(4)}`;
+	if (cost < 0.01) return `$${cost.toFixed(3)}`;
+	if (cost < 1) return `$${cost.toFixed(3)}`;
+	return `$${cost.toFixed(2)}`;
 }
 
 /**
@@ -68,10 +81,14 @@ export class FooterComponent implements Component {
 		const totalCacheWrite = usageTotals.cacheWrite;
 		const totalCost = usageTotals.cost;
 
+		// Use activeInferenceModel during streaming to show the model actually
+		// being used, not the configured model which may have been switched mid-turn.
+		const displayModel = state.activeInferenceModel ?? state.model;
+
 		// Calculate context usage from session (handles compaction correctly).
 		// After compaction, tokens are unknown until the next LLM response.
 		const contextUsage = this.session.getContextUsage();
-		const contextWindow = contextUsage?.contextWindow ?? state.model?.contextWindow ?? 0;
+		const contextWindow = contextUsage?.contextWindow ?? displayModel?.contextWindow ?? 0;
 		const contextPercentValue = contextUsage?.percent ?? 0;
 		const contextPercent = contextUsage?.percent !== null ? contextPercentValue.toFixed(1) : "?";
 
@@ -94,21 +111,36 @@ export class FooterComponent implements Component {
 			pwd = `${pwd} • ${sessionName}`;
 		}
 
-		// Build stats line
-		const statsParts = [];
-		if (totalInput) statsParts.push(`↑${formatTokens(totalInput)}`);
-		if (totalOutput) statsParts.push(`↓${formatTokens(totalOutput)}`);
-		if (totalCacheRead) statsParts.push(`R${formatTokens(totalCacheRead)}`);
-		if (totalCacheWrite) statsParts.push(`W${formatTokens(totalCacheWrite)}`);
+		// Build stats line as separate groups joined by a dim middle-dot separator
+		const sep = ` ${theme.fg("dim", "\u00B7")} `;
 
-		// Show cost with "(sub)" indicator if using OAuth subscription
-		const usingSubscription = state.model ? this.session.modelRegistry.isUsingOAuth(state.model) : false;
+		// Group 1: token I/O
+		const tokenGroup: string[] = [];
+		if (totalInput) tokenGroup.push(`↑${formatTokens(totalInput)}`);
+		if (totalOutput) tokenGroup.push(`↓${formatTokens(totalOutput)}`);
+
+		// Group 2: cache metrics
+		const cacheGroup: string[] = [];
+		if (totalCacheRead) cacheGroup.push(`cr:${formatTokens(totalCacheRead)}`);
+		if (totalCacheWrite) cacheGroup.push(`cw:${formatTokens(totalCacheWrite)}`);
+
+		// Group 3: cost
+		const costGroup: string[] = [];
+		const usingSubscription = displayModel ? this.session.modelRegistry.isUsingOAuth(displayModel) : false;
 		if (totalCost || usingSubscription) {
 			const costStr = `$${totalCost.toFixed(3)}${usingSubscription ? " (sub)" : ""}`;
-			statsParts.push(costStr);
+			costGroup.push(costStr);
 		}
 
-		// Colorize context percentage based on usage
+		// Per-prompt cost annotation (opt-in via show_token_cost preference, #1515)
+		if (process.env.GSD_SHOW_TOKEN_COST === "1") {
+			const lastTurnCost = this.session.getLastTurnCost();
+			if (lastTurnCost > 0) {
+				costGroup.push(`(last: ${formatPromptCost(lastTurnCost)})`);
+			}
+		}
+
+		// Group 4: context percentage (colorized)
 		let contextPercentStr: string;
 		const autoIndicator = this.autoCompactEnabled ? " (auto)" : "";
 		const contextPercentDisplay =
@@ -122,12 +154,19 @@ export class FooterComponent implements Component {
 		} else {
 			contextPercentStr = contextPercentDisplay;
 		}
-		statsParts.push(contextPercentStr);
 
-		let statsLeft = statsParts.join(" ");
+		// Assemble groups: items within a group are space-separated,
+		// groups are separated by a dim middle-dot
+		const groups: string[] = [];
+		if (tokenGroup.length > 0) groups.push(tokenGroup.join(" "));
+		if (cacheGroup.length > 0) groups.push(cacheGroup.join(" "));
+		if (costGroup.length > 0) groups.push(costGroup.join(" "));
+		groups.push(contextPercentStr);
+
+		let statsLeft = groups.join(sep);
 
 		// Add model name on the right side, plus thinking level if model supports it
-		const modelName = state.model?.id || "no-model";
+		const modelName = displayModel?.id || "no-model";
 
 		let statsLeftWidth = visibleWidth(statsLeft);
 
@@ -142,7 +181,7 @@ export class FooterComponent implements Component {
 
 		// Add thinking level indicator if model supports reasoning
 		let rightSideWithoutProvider = modelName;
-		if (state.model?.reasoning) {
+		if (displayModel?.reasoning) {
 			const thinkingLevel = state.thinkingLevel || "off";
 			rightSideWithoutProvider =
 				thinkingLevel === "off" ? `${modelName} • thinking off` : `${modelName} • ${thinkingLevel}`;
@@ -150,8 +189,8 @@ export class FooterComponent implements Component {
 
 		// Prepend the provider in parentheses if there are multiple providers and there's enough room
 		let rightSide = rightSideWithoutProvider;
-		if (this.footerData.getAvailableProviderCount() > 1 && state.model) {
-			rightSide = `(${state.model!.provider}) ${rightSideWithoutProvider}`;
+		if (this.footerData.getAvailableProviderCount() > 1 && displayModel) {
+			rightSide = `(${providerDisplayName(displayModel.provider)}) ${rightSideWithoutProvider}`;
 			if (statsLeftWidth + minPadding + visibleWidth(rightSide) > width) {
 				// Too wide, fall back
 				rightSide = rightSideWithoutProvider;
@@ -197,8 +236,9 @@ export class FooterComponent implements Component {
 				.sort(([a], [b]) => a.localeCompare(b))
 				.map(([, text]) => sanitizeStatusText(text));
 			const statusLine = sortedStatuses.join(" ");
-			// Truncate to terminal width with dim ellipsis for consistency with footer style
-			lines.push(truncateToWidth(statusLine, width, theme.fg("dim", "...")));
+			// Match the rest of the footer styling: extension statuses should render
+			// in the same dim color as pwd/stats, with a dim ellipsis on truncation.
+			lines.push(truncateToWidth(theme.fg("dim", statusLine), width, theme.fg("dim", "...")));
 		}
 
 		return lines;

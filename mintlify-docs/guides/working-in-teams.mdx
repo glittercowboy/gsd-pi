@@ -1,0 +1,72 @@
+---
+title: "Working in teams"
+description: "Multi-user workflows with unique milestone IDs, push branches, and shared planning artifacts."
+---
+
+GSD supports multi-user workflows where several developers work on the same repository concurrently.
+
+## Setup
+
+### 1. Set team mode
+
+```yaml
+# .gsd/PREFERENCES.md (project-level, committed to git)
+---
+version: 1
+mode: team
+---
+```
+
+This enables unique milestone IDs, push branches, and pre-merge checks in one setting. Override individual settings on top of `mode: team` as needed.
+
+### 2. Configure `.gitignore`
+
+Share planning artifacts while keeping runtime files local:
+
+```bash
+# Runtime / ephemeral (per-developer)
+.gsd/auto.lock
+.gsd/completed-units.json
+.gsd/STATE.md
+.gsd/metrics.json
+.gsd/activity/
+.gsd/runtime/
+.gsd/worktrees/
+.gsd/milestones/**/continue.md
+.gsd/milestones/**/*-CONTINUE.md
+```
+
+**Shared** (committed): preferences, PROJECT.md, REQUIREMENTS.md, DECISIONS.md, milestones.
+
+**Local** (gitignored): lock files, metrics, state cache, worktrees, activity logs.
+
+### 3. Commit
+
+```bash
+git add .gsd/PREFERENCES.md
+git commit -m "chore: enable GSD team workflow"
+```
+
+## `commit_docs: false`
+
+For teams where only some members use GSD:
+
+```yaml
+git:
+  commit_docs: false
+```
+
+Adds `.gsd/` to `.gitignore` entirely. The developer gets structured planning without affecting teammates.
+
+## Parallel development
+
+Multiple developers run auto mode simultaneously on different milestones. Each developer gets their own worktree and unique `milestone/<MID>` branch. Milestone dependencies can be declared:
+
+```yaml
+# M00X-CONTEXT.md frontmatter
+---
+depends_on: [M001-eh88as]
+---
+```
+
+GSD enforces that dependent milestones complete before starting downstream work.

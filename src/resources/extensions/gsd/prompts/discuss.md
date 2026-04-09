@@ -37,7 +37,7 @@ Before asking your first question, do a mandatory investigation pass. This is no
 3. **Web search** — `search-the-web` if the domain is unfamiliar, if you need current best practices, or if the user referenced external services/APIs you need facts about. Use `fetch_page` for full content when snippets aren't enough.
 
 **Web search budget:** You have a limited number of web searches per turn (typically 3-5). The discuss phase spans many turns (investigation, question rounds, focused research, requirements), so budget carefully:
-- Prefer `resolve_library` / `get_library_docs` over `web_search` for library documentation — they don't consume the web search budget.
+- Prefer `resolve_library` / `get_library_docs` over `search-the-web` for library documentation — they don't consume the web search budget.
 - Prefer `search_and_read` for one-shot topic research — it combines search + page fetch in a single call.
 - Target 2-3 web searches in the investigation pass. Save remaining budget for the focused research pass before roadmap creation.
 - Do NOT repeat the same or similar queries. If a search didn't find what you need, rephrase once or move on.
@@ -114,6 +114,8 @@ If they clarify, absorb the correction and re-verify.
 
 The depth verification is the required write-gate. Do **not** add another meta "ready to proceed?" checkpoint immediately after it unless there is still material ambiguity.
 
+**CRITICAL — Non-bypassable gate:** The system mechanically blocks CONTEXT.md writes until the user selects the "(Recommended)" option. If the user declines, cancels, or the tool fails, you MUST re-ask — never rationalize past the block ("tool not responding, I'll proceed" is forbidden). The gate exists to protect the user's work; treat a block as an instruction, not an obstacle to work around.
+
 ## Wrap-up Gate
 
 Once the depth checklist is fully satisfied, move directly into requirements and roadmap preview. Do not insert a separate "are you ready to continue?" gate unless the user explicitly wants to keep brainstorming or you still see material ambiguity.
@@ -171,7 +173,7 @@ For multi-milestone projects, requirements should span the full vision. Requirem
 
 If the project is new or has no `REQUIREMENTS.md`, surface candidate requirements in chat before writing the roadmap. Ask for correction only on material omissions, wrong ownership, or wrong scope. If the user has already been specific and raises no substantive objection, treat the requirement set as confirmed and continue.
 
-**Print the requirements in chat before writing the roadmap.** Do not say "here are the requirements" and then only write them to a file. The user must see them in the terminal. Print a markdown table with columns: ID, Title, Status, Owner, Source. Group by status (Active, Deferred, Out of Scope). After the table, ask: "Confirm, adjust, or add?"
+**Print the requirements in chat before writing the roadmap.** Do not say "here are the requirements" and then only write them to a file. The user must see them in the terminal. Print a markdown table with columns: ID, Title, Status, Owner, Source. Group by status (Active, Deferred, Out of Scope). After the table, ask: "Confirm, adjust, or add?" **Non-bypassable:** If the user does not respond or gives an ambiguous answer, you MUST re-ask — never proceed to roadmap creation without explicit requirement confirmation.
 
 ## Scope Assessment
 
@@ -183,7 +185,7 @@ Before moving to output, confirm the size estimate from your reflection still ho
 
 Before writing any files, **print the planned roadmap in chat** so the user can see and approve it. Print a markdown table with columns: Slice, Title, Risk, Depends, Demo. One row per slice. Below the table, print the milestone definition of done as a bullet list.
 
-If the user raises a substantive objection, adjust the roadmap. Otherwise, present the roadmap and ask: "Ready to write, or want to adjust?" — one gate, not two.
+If the user raises a substantive objection, adjust the roadmap. Otherwise, present the roadmap and ask: "Ready to write, or want to adjust?" — one gate, not two. **Non-bypassable:** If the user does not respond or gives an ambiguous answer, you MUST re-ask — never write files without explicit approval. A missing response is not a "yes."
 
 ### Naming Convention
 
@@ -202,8 +204,8 @@ Once the user is satisfied, in a single pass:
 When writing context.md, preserve the user's exact terminology, emphasis, and specific framing from the discussion. Do not paraphrase user nuance into generic summaries. If the user said "craft feel," write "craft feel" — not "high-quality user experience." If they emphasized a specific constraint or negative requirement, carry that emphasis through verbatim. The context file is downstream agents' only window into this conversation — flattening specifics into generics loses the signal that shaped every decision.
 
 4. Write `{{contextPath}}` — use the **Context** output template below. Preserve key risks, unknowns, existing codebase constraints, integration points, and relevant requirements surfaced during discussion.
-5. Write `{{roadmapPath}}` — use the **Roadmap** output template below. Decompose into demoable vertical slices with checkboxes, risk, depends, demo sentences, proof strategy, verification classes, milestone definition of done, requirement coverage, and a boundary map. If the milestone crosses multiple runtime boundaries, include an explicit final integration slice that proves the assembled system works end-to-end in a real environment.
-6. Seed `.gsd/DECISIONS.md` — use the **Decisions** output template below. Append rows for any architectural or pattern decisions made during discussion.
+5. Call `gsd_plan_milestone` to create the roadmap. Decompose into demoable vertical slices with risk, depends, demo sentences, proof strategy, verification classes, milestone definition of done, requirement coverage, and a boundary map. If the milestone crosses multiple runtime boundaries, include an explicit final integration slice that proves the assembled system works end-to-end in a real environment. Use the **Roadmap** output template below to structure the tool call parameters.
+6. For each architectural or pattern decision made during discussion, call `gsd_decision_save` — the tool auto-assigns IDs and regenerates `.gsd/DECISIONS.md` automatically.
 7. {{commitInstruction}}
 
 After writing the files, say exactly: "Milestone {{milestoneId}} ready." — nothing else. Auto-mode will start automatically.
@@ -217,12 +219,12 @@ Once the user confirms the milestone split:
 1. For each milestone, call `gsd_milestone_generate_id` to get its ID — never invent milestone IDs manually. Then `mkdir -p .gsd/milestones/<ID>/slices`.
 2. Write `.gsd/PROJECT.md` — use the **Project** output template below.
 3. Write `.gsd/REQUIREMENTS.md` — use the **Requirements** output template below. Capture Active, Deferred, Out of Scope, and any already Validated requirements. Later milestones may have provisional ownership where slice plans do not exist yet.
-4. Seed `.gsd/DECISIONS.md` — use the **Decisions** output template below.
+4. For any architectural or pattern decisions made during discussion, call `gsd_decision_save` — the tool auto-assigns IDs and regenerates `.gsd/DECISIONS.md` automatically.
 
 #### Phase 2: Primary milestone
 
 5. Write a full `CONTEXT.md` for the primary milestone (the one discussed in depth).
-6. Write a `ROADMAP.md` for **only the primary milestone** — detail-planning later milestones now is waste because the codebase will change. Include requirement coverage and a milestone definition of done.
+6. Call `gsd_plan_milestone` for **only the primary milestone** — detail-planning later milestones now is waste because the codebase will change. Include requirement coverage and a milestone definition of done.
 
 #### MANDATORY: depends_on Frontmatter in CONTEXT.md
 
@@ -240,7 +242,7 @@ If a milestone has no dependencies, omit the frontmatter. The dependency chain f
 
 #### Phase 3: Sequential readiness gate for remaining milestones
 
-For each remaining milestone **one at a time, in sequence**, decide the most likely readiness mode from the evidence you already have, then use `ask_user_questions` to let the user correct that recommendation. Present three options:
+For each remaining milestone **one at a time, in sequence**, decide the most likely readiness mode from the evidence you already have, then use `ask_user_questions` to let the user correct that recommendation. **Non-bypassable:** If `ask_user_questions` fails, errors, returns no response, or the user's response does not match a provided option, you MUST re-ask — never rationalize past the block or auto-select a readiness mode. Present three options:
 
 - **"Discuss now"** — The user wants to conduct a focused discussion for this milestone in the current session, while the context from the broader discussion is still fresh. Proceed with a focused discussion for this milestone (reflection → investigation → questioning → depth verification). When the discussion concludes, write a full `CONTEXT.md`. Then move to the gate for the next milestone.
 - **"Write draft for later"** — This milestone has seed material from the current conversation but needs its own dedicated discussion in a future session. Write a `CONTEXT-DRAFT.md` capturing the seed material (what was discussed, key ideas, provisional scope, open questions). Mark it clearly as a draft, not a finalized context. **What happens downstream:** When auto-mode reaches this milestone, it pauses and notifies the user: "M00x has draft context — needs discussion. Run /gsd." The `/gsd` wizard shows a "Discuss from draft" option that seeds the new discussion with this draft, so nothing from the current conversation is lost. After the dedicated discussion produces a full CONTEXT.md, the draft file is automatically deleted.

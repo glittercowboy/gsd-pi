@@ -71,62 +71,56 @@ function scaffoldTaskPlan(basePath: string, mid: string, sid: string, tid: strin
 
 // ─── Tests ─────────────────────────────────────────────────────────────────
 
-test("dispatch: missing task plan triggers plan-slice (not stop) — issue #909", async () => {
+test("dispatch: missing task plan triggers plan-slice (not stop) — issue #909", async (t) => {
   const tmp = mkdtempSync(join(tmpdir(), "gsd-909-"));
-  try {
-    // Slice plan exists with tasks, but tasks/ directory is empty
-    scaffoldSlicePlan(tmp, "M002", "S03");
+  t.after(() => rmSync(tmp, { recursive: true, force: true }));
 
-    const ctx = makeContext(tmp);
-    const result = await resolveDispatch(ctx);
+  // Slice plan exists with tasks, but tasks/ directory is empty
+  scaffoldSlicePlan(tmp, "M002", "S03");
 
-    assert.equal(result.action, "dispatch", "should dispatch, not stop");
-    assert.ok(result.action === "dispatch" && result.unitType === "plan-slice",
-      `unitType should be plan-slice, got: ${result.action === "dispatch" ? result.unitType : "(stop)"}`);
-    assert.ok(result.action === "dispatch" && result.unitId === "M002/S03",
-      `unitId should be M002/S03, got: ${result.action === "dispatch" ? result.unitId : "(stop)"}`);
-  } finally {
-    rmSync(tmp, { recursive: true, force: true });
-  }
+  const ctx = makeContext(tmp);
+  const result = await resolveDispatch(ctx);
+
+  assert.equal(result.action, "dispatch", "should dispatch, not stop");
+  assert.ok(result.action === "dispatch" && result.unitType === "plan-slice",
+    `unitType should be plan-slice, got: ${result.action === "dispatch" ? result.unitType : "(stop)"}`);
+  assert.ok(result.action === "dispatch" && result.unitId === "M002/S03",
+    `unitId should be M002/S03, got: ${result.action === "dispatch" ? result.unitId : "(stop)"}`);
 });
 
-test("dispatch: present task plan proceeds to execute-task normally", async () => {
+test("dispatch: present task plan proceeds to execute-task normally", async (t) => {
   const tmp = mkdtempSync(join(tmpdir(), "gsd-909-ok-"));
-  try {
-    scaffoldSlicePlan(tmp, "M002", "S03");
-    scaffoldTaskPlan(tmp, "M002", "S03", "T01");
+  t.after(() => rmSync(tmp, { recursive: true, force: true }));
 
-    const ctx = makeContext(tmp);
-    const result = await resolveDispatch(ctx);
+  scaffoldSlicePlan(tmp, "M002", "S03");
+  scaffoldTaskPlan(tmp, "M002", "S03", "T01");
 
-    assert.equal(result.action, "dispatch");
-    assert.ok(result.action === "dispatch" && result.unitType === "execute-task",
-      `unitType should be execute-task, got: ${result.action === "dispatch" ? result.unitType : "(stop)"}`);
-    assert.ok(result.action === "dispatch" && result.unitId === "M002/S03/T01",
-      `unitId should be M002/S03/T01, got: ${result.action === "dispatch" ? result.unitId : "(stop)"}`);
-  } finally {
-    rmSync(tmp, { recursive: true, force: true });
-  }
+  const ctx = makeContext(tmp);
+  const result = await resolveDispatch(ctx);
+
+  assert.equal(result.action, "dispatch");
+  assert.ok(result.action === "dispatch" && result.unitType === "execute-task",
+    `unitType should be execute-task, got: ${result.action === "dispatch" ? result.unitType : "(stop)"}`);
+  assert.ok(result.action === "dispatch" && result.unitId === "M002/S03/T01",
+    `unitId should be M002/S03/T01, got: ${result.action === "dispatch" ? result.unitId : "(stop)"}`);
 });
 
-test("dispatch: plan-slice recovery loop — second call after plan-slice still recovers cleanly", async () => {
+test("dispatch: plan-slice recovery loop — second call after plan-slice still recovers cleanly", async (t) => {
   // Simulate: plan-slice ran but T01-PLAN.md is still missing (e.g. agent crashed mid-write).
   // Dispatch should still re-dispatch plan-slice, not hard-stop.
   const tmp = mkdtempSync(join(tmpdir(), "gsd-909-loop-"));
-  try {
-    scaffoldSlicePlan(tmp, "M002", "S03");
+  t.after(() => rmSync(tmp, { recursive: true, force: true }));
 
-    const ctx = makeContext(tmp);
-    const r1 = await resolveDispatch(ctx);
-    assert.equal(r1.action, "dispatch");
-    assert.ok(r1.action === "dispatch" && r1.unitType === "plan-slice");
+  scaffoldSlicePlan(tmp, "M002", "S03");
 
-    // Still no task plan written — dispatch again
-    const r2 = await resolveDispatch(ctx);
-    assert.equal(r2.action, "dispatch");
-    assert.ok(r2.action === "dispatch" && r2.unitType === "plan-slice",
-      "should keep dispatching plan-slice until task plans appear");
-  } finally {
-    rmSync(tmp, { recursive: true, force: true });
-  }
+  const ctx = makeContext(tmp);
+  const r1 = await resolveDispatch(ctx);
+  assert.equal(r1.action, "dispatch");
+  assert.ok(r1.action === "dispatch" && r1.unitType === "plan-slice");
+
+  // Still no task plan written — dispatch again
+  const r2 = await resolveDispatch(ctx);
+  assert.equal(r2.action, "dispatch");
+  assert.ok(r2.action === "dispatch" && r2.unitType === "plan-slice",
+    "should keep dispatching plan-slice until task plans appear");
 });

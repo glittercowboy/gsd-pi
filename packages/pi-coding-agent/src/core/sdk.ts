@@ -75,6 +75,10 @@ export interface CreateAgentSessionOptions {
 
 	/** Settings manager. Default: SettingsManager.create(cwd, agentDir) */
 	settingsManager?: SettingsManager;
+
+	/** Optional: check if the claude-code CLI provider is ready (installed + authed).
+	 * Passed to RetryHandler for third-party block recovery (#3772). */
+	isClaudeCodeReady?: () => boolean;
 }
 
 /** Result from createAgentSession */
@@ -214,6 +218,16 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		}
 	}
 
+	// Flush extension provider registrations so extension-provided models (e.g. claude-code/*)
+	// are available in the registry before model resolution. Without this, findInitialModel()
+	// cannot find extension models and falls back to built-in providers (#3534).
+	const extensionsForModelResolution = resourceLoader.getExtensions();
+	for (const { name, config } of extensionsForModelResolution.runtime.pendingProviderRegistrations) {
+		modelRegistry.registerProvider(name, config);
+	}
+	// Clear the queue so bindCore() doesn't re-register the same providers.
+	extensionsForModelResolution.runtime.pendingProviderRegistrations = [];
+
 	// If still no model, use findInitialModel (checks settings default, then provider defaults)
 	if (!model) {
 		const result = await findInitialModel({
@@ -326,12 +340,17 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		transport: settingsManager.getTransport(),
 		thinkingBudgets: settingsManager.getThinkingBudgets(),
 		maxRetryDelayMs: settingsManager.getRetrySettings().maxDelayMs,
+		externalToolExecution: (m) => modelRegistry.getProviderAuthMode(m.provider) === "externalCli",
 		getApiKey: async (provider) => {
 			// Use the provider argument from the in-flight request;
 			// agent.state.model may already be switched mid-turn.
 			const resolvedProvider = provider || agent.state.model?.provider;
 			if (!resolvedProvider) {
 				throw new Error("No model selected");
+			}
+			const authMode = modelRegistry.getProviderAuthMode(resolvedProvider);
+			if (authMode === "externalCli" || authMode === "none") {
+				return undefined;
 			}
 
 			// Retry key resolution with backoff to handle transient network failures
@@ -356,16 +375,16 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 				await new Promise(resolve => setTimeout(resolve, baseDelayMs * attempt));
 			}
 
-			// All retries exhausted — throw descriptive error
-			// Check if credentials exist but are temporarily backed off
-			// (e.g., after a 429 quota exhaustion). Provide a specific error
-			// so the retry handler knows this is transient, not a permanent
-			// auth failure.
+			// All retries exhausted — throw descriptive error.
+			// Check if credentials exist but are temporarily in a backoff window
+			// (e.g., after a 429). This message intentionally avoids phrases like
+			// "rate limit" / "429" to prevent isRetryableError() from re-entering
+			// the retry handler and creating cascading error entries (#3429).
 			const hasAuth = modelRegistry.authStorage.hasAuth(resolvedProvider);
 			if (hasAuth) {
 				throw new Error(
-					`All credentials for "${resolvedProvider}" are temporarily backed off due to rate limiting. ` +
-						`The request will be retried automatically when backoff expires.`,
+					`All credentials for "${resolvedProvider}" are in a cooldown window. ` +
+						`Please wait a moment and try again, or switch to a different provider.`,
 				);
 			}
 			const model = agent.state.model;
@@ -375,8 +394,8 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 				// surface a specific message instead of the misleading "Authentication failed".
 				if (modelRegistry.authStorage.areAllCredentialsBackedOff(resolvedProvider)) {
 					throw new Error(
-						`Rate limit in effect for "${resolvedProvider}". ` +
-							`Please wait before retrying or switch to a different model.`,
+						`All credentials for "${resolvedProvider}" are in a cooldown window. ` +
+							`Please wait a moment and try again, or switch to a different provider.`,
 					);
 				}
 				throw new Error(
@@ -417,6 +436,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		modelRegistry,
 		initialActiveToolNames,
 		extensionRunnerRef,
+		isClaudeCodeReady: options.isClaudeCodeReady,
 	});
 	const extensionsResult = resourceLoader.getExtensions();
 

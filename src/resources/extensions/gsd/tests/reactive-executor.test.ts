@@ -15,6 +15,7 @@ import {
 } from "../reactive-graph.ts";
 import { validatePreferences } from "../preferences-validation.ts";
 import type { ReactiveExecutionState } from "../types.ts";
+import { parseUnitId } from "../unit-id.ts";
 
 // ─── Preference Validation ────────────────────────────────────────────────
 
@@ -441,13 +442,12 @@ test("unitId batch encoding round-trips correctly", () => {
   const unitId = `${mid}/${sid}/reactive+${selected.join(",")}`;
 
   // Parse it back
-  const parts = unitId.split("/");
-  assert.equal(parts[0], "M001");
-  assert.equal(parts[1], "S01");
-  const batchPart = parts[2];
-  const plusIdx = batchPart.indexOf("+");
+  const { milestone, slice, task: batchPart } = parseUnitId(unitId);
+  assert.equal(milestone, "M001");
+  assert.equal(slice, "S01");
+  const plusIdx = batchPart!.indexOf("+");
   assert.ok(plusIdx > 0, "Should have + separator");
-  const batchIds = batchPart.slice(plusIdx + 1).split(",");
+  const batchIds = batchPart!.slice(plusIdx + 1).split(",");
   assert.deepEqual(batchIds, ["T02", "T03", "T05"]);
 });
 

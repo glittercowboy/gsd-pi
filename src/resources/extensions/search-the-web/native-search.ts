@@ -28,7 +28,7 @@ export const MAX_NATIVE_SEARCHES_PER_SESSION = 15;
 
 /** When true, skip native web search injection and keep Brave/custom tools active on Anthropic. */
 export function preferBraveSearch(): boolean {
-  // preferences.md takes priority over env var
+  // PREFERENCES.md takes priority over env var
   const prefsPref = resolveSearchProviderFromPreferences();
   if (prefsPref === "brave" || prefsPref === "tavily" || prefsPref === "ollama") return true;
   if (prefsPref === "native") return false;
@@ -176,11 +176,15 @@ export function registerNativeSearchHooks(pi: NativeSearchPI): { getIsAnthropic:
     );
     payload.tools = tools;
 
-    // ── Session-level search budget (#1309) ──────────────────────────────
+    // ── Session-level search budget (#1309, #compaction-safe) ─────────────
     // Count web_search_tool_result blocks in the conversation history to
     // determine how many native searches have already been used this session.
     // The Anthropic API's max_uses resets per request, so without this guard,
     // pause_turn → resubmit cycles allow unlimited total searches.
+    //
+    // Use the monotonic high-water mark: take the max of the history count
+    // and the running counter. This prevents budget resets when context
+    // compaction removes web_search_tool_result blocks from history.
     if (Array.isArray(messages)) {
       let historySearchCount = 0;
       for (const msg of messages) {
@@ -192,8 +196,9 @@ export function registerNativeSearchHooks(pi: NativeSearchPI): { getIsAnthropic:
           }
         }
       }
-      // Sync counter from history (handles session restore / context replay)
-      sessionSearchCount = historySearchCount;
+      // High-water mark: never decrease the counter, even if compaction
+      // removes web_search_tool_result blocks from the visible history.
+      sessionSearchCount = Math.max(sessionSearchCount, historySearchCount);
     }
 
     const remaining = Math.max(0, MAX_NATIVE_SEARCHES_PER_SESSION - sessionSearchCount);

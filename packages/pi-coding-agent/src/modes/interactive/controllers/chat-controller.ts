@@ -6,6 +6,9 @@ import { AssistantMessageComponent } from "../components/assistant-message.js";
 import { ToolExecutionComponent } from "../components/tool-execution.js";
 import { appKey } from "../components/keybinding-hints.js";
 
+// Tracks the last processed content index to avoid re-scanning all blocks on every message_update
+let lastProcessedContentIndex = 0;
+
 export async function handleAgentEvent(host: InteractiveModeStateHost & {
 	init: () => Promise<void>;
 	getMarkdownThemeWithSettings: () => any;
@@ -27,6 +30,11 @@ export async function handleAgentEvent(host: InteractiveModeStateHost & {
 	}
 
 	host.footer.invalidate();
+
+	// Reset content index tracker when a new assistant message starts
+	if (event.type === "message_start" && event.message.role === "assistant") {
+		lastProcessedContentIndex = 0;
+	}
 
 	switch (event.type) {
 		case "session_state_changed":
@@ -100,6 +108,7 @@ export async function handleAgentEvent(host: InteractiveModeStateHost & {
 					undefined,
 					host.hideThinkingBlock,
 					host.getMarkdownThemeWithSettings(),
+					host.settingsManager.getTimestampFormat(),
 				);
 				host.streamingMessage = event.message;
 				host.chatContainer.addChild(host.streamingComponent);
@@ -112,7 +121,9 @@ export async function handleAgentEvent(host: InteractiveModeStateHost & {
 			if (host.streamingComponent && event.message.role === "assistant") {
 				host.streamingMessage = event.message;
 				host.streamingComponent.updateContent(host.streamingMessage);
-				for (const content of host.streamingMessage.content) {
+				const contentBlocks = host.streamingMessage.content;
+				for (let i = lastProcessedContentIndex; i < contentBlocks.length; i++) {
+					const content = contentBlocks[i];
 					if (content.type === "toolCall") {
 						if (!host.pendingTools.has(content.id)) {
 							const component = new ToolExecutionComponent(
@@ -144,15 +155,27 @@ export async function handleAgentEvent(host: InteractiveModeStateHost & {
 					} else if (content.type === "webSearchResult") {
 						const component = host.pendingTools.get(content.toolUseId);
 						if (component) {
-							const searchContent = content.content;
-							const isError = searchContent && typeof searchContent === "object" && "type" in (searchContent as any) && (searchContent as any).type === "web_search_tool_result_error";
-							component.updateResult({
-								content: [{ type: "text", text: host.formatWebSearchResult(searchContent) }],
-								isError: !!isError,
-							});
-							host.pendingTools.delete(content.toolUseId);
+							if (process.env.PI_OFFLINE === "1") {
+								component.updateResult({
+									content: [{ type: "text", text: "Web search disabled (offline mode)" }],
+									isError: false,
+								});
+							} else {
+								const searchContent = content.content;
+								const isError = searchContent && typeof searchContent === "object" && "type" in (searchContent as any) && (searchContent as any).type === "web_search_tool_result_error";
+								component.updateResult({
+									content: [{ type: "text", text: host.formatWebSearchResult(searchContent) }],
+									isError: !!isError,
+								});
+							}
 						}
 					}
+				}
+				// Update index: fully processed blocks won't need re-scanning.
+				// Keep the last block's index (it may still be accumulating data),
+				// so we re-check it next time but skip all earlier ones.
+				if (contentBlocks.length > 0) {
+					lastProcessedContentIndex = Math.max(0, contentBlocks.length - 1);
 				}
 				host.ui.requestRender();
 			}
@@ -328,6 +351,13 @@ export async function handleAgentEvent(host: InteractiveModeStateHost & {
 
 		case "fallback_chain_exhausted":
 			host.showError(event.reason);
+			host.ui.requestRender();
+			break;
+
+		case "image_overflow_recovery":
+			host.showStatus(
+				`Removed ${event.strippedCount} older image(s) to comply with API limits. Retrying...`,
+			);
 			host.ui.requestRender();
 			break;
 	}

@@ -13,6 +13,10 @@ export type ForensicAnomalyType =
   | "crash"
   | "doctor-issue"
   | "error-trace"
+  | "journal-stuck"
+  | "journal-guard-block"
+  | "journal-rapid-iterations"
+  | "journal-worktree-failure"
 
 export interface ForensicAnomaly {
   type: ForensicAnomalyType
@@ -56,6 +60,23 @@ export interface ForensicRecentUnit {
   finishedAt: number
 }
 
+export interface ForensicActivityLogMeta {
+  fileCount: number
+  totalSizeBytes: number
+  oldestFile: string | null
+  newestFile: string | null
+}
+
+export interface ForensicJournalSummary {
+  totalEntries: number
+  flowCount: number
+  eventCounts: Record<string, number>
+  recentEvents: { ts: string; flowId: string; eventType: string; rule?: string; unitId?: string }[]
+  oldestEntry: string | null
+  newestEntry: string | null
+  fileCount: number
+}
+
 export interface ForensicReport {
   gsdVersion: string
   timestamp: string
@@ -70,6 +91,8 @@ export interface ForensicReport {
   unitTraces: ForensicUnitTrace[]
   completedKeyCount: number
   metrics: ForensicMetricsSummary | null
+  journalSummary: ForensicJournalSummary | null
+  activityLogMeta: ForensicActivityLogMeta | null
 }
 
 // ─── Doctor ───────────────────────────────────────────────────────────────────

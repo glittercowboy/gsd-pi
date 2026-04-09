@@ -125,6 +125,9 @@ export function getActiveMemoriesRanked(limit = 30): Memory[] {
 /**
  * Generate the next memory ID: MEM + zero-padded 3-digit from MAX(seq).
  * Returns MEM001 if no memories exist.
+ *
+ * NOTE: For race-safe creation, prefer createMemory() which inserts with a
+ * placeholder ID then updates to the seq-derived ID atomically.
  */
 export function nextMemoryId(): string {
   if (!isDbAvailable()) return 'MEM001';
@@ -147,7 +150,9 @@ export function nextMemoryId(): string {
 // ─── Mutation Functions ─────────────────────────────────────────────────────
 
 /**
- * Insert a new memory with auto-assigned ID.
+ * Insert a new memory with a race-safe auto-assigned ID.
+ * Uses AUTOINCREMENT seq to derive the ID after insert, avoiding
+ * the read-then-write race in concurrent scenarios (e.g. worktrees).
  * Returns the assigned ID, or null on failure.
  */
 export function createMemory(fields: {
@@ -162,13 +167,14 @@ export function createMemory(fields: {
   if (!adapter) return null;
 
   try {
-    const id = nextMemoryId();
     const now = new Date().toISOString();
+    // Insert with a temporary placeholder ID — seq is auto-assigned
+    const placeholder = `_TMP_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
     adapter.prepare(
       `INSERT INTO memories (id, category, content, confidence, source_unit_type, source_unit_id, created_at, updated_at)
        VALUES (:id, :category, :content, :confidence, :source_unit_type, :source_unit_id, :created_at, :updated_at)`,
     ).run({
-      ':id': id,
+      ':id': placeholder,
       ':category': fields.category,
       ':content': fields.content,
       ':confidence': fields.confidence ?? 0.8,
@@ -177,7 +183,16 @@ export function createMemory(fields: {
       ':created_at': now,
       ':updated_at': now,
     });
-    return id;
+    // Derive the real ID from the assigned seq
+    const row = adapter.prepare('SELECT seq FROM memories WHERE id = :id').get({ ':id': placeholder });
+    if (!row) return placeholder; // fallback — should not happen
+    const seq = row['seq'] as number;
+    const realId = `MEM${String(seq).padStart(3, '0')}`;
+    adapter.prepare('UPDATE memories SET id = :real_id WHERE id = :placeholder').run({
+      ':real_id': realId,
+      ':placeholder': placeholder,
+    });
+    return realId;
   } catch {
     return null;
   }
@@ -331,20 +346,16 @@ export function enforceMemoryCap(max = 50): void {
     if (count <= max) return;
 
     const excess = count - max;
-    // Find the IDs of the lowest-ranked active memories
-    const rows = adapter.prepare(
-      `SELECT id FROM memories
-       WHERE superseded_by IS NULL
-       ORDER BY (confidence * (1.0 + hit_count * 0.1)) ASC
-       LIMIT :limit`,
-    ).all({ ':limit': excess });
-
-    const now = new Date().toISOString();
-    for (const row of rows) {
-      adapter.prepare(
-        'UPDATE memories SET superseded_by = :reason, updated_at = :now WHERE id = :id',
-      ).run({ ':reason': 'CAP_EXCEEDED', ':now': now, ':id': row['id'] as string });
-    }
+    // Batch update: supersede lowest-ranked active memories in a single statement
+    adapter.prepare(
+      `UPDATE memories SET superseded_by = 'CAP_EXCEEDED', updated_at = :now
+       WHERE id IN (
+         SELECT id FROM memories
+         WHERE superseded_by IS NULL
+         ORDER BY (confidence * (1.0 + hit_count * 0.1)) ASC
+         LIMIT :limit
+       )`,
+    ).run({ ':now': new Date().toISOString(), ':limit': excess });
   } catch {
     // non-fatal
   }

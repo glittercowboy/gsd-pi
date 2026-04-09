@@ -14,19 +14,19 @@ permissions:
 jobs:
   risk-check:
     name: Classify changed files and assess risk
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
 
     steps:
       # Checkout the BASE branch — our trusted script and map, not fork code.
       - name: Checkout base
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           ref: ${{ github.base_ref }}
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
-          node-version: '20'
+          node-version: '24'
 
       # Use the GitHub API to get changed files — no fork code is executed.
       - name: Get changed files
@@ -44,14 +44,14 @@ jobs:
         id: risk
         run: |
           REPORT=$(cat /tmp/changed-files.txt | node scripts/pr-risk-check.mjs --github || true)
-          echo "report<<EOF" >> $GITHUB_OUTPUT
-          echo "$REPORT" >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
+          echo "report<<EOF" >> "$GITHUB_OUTPUT"
+          echo "$REPORT" >> "$GITHUB_OUTPUT"
+          echo "EOF" >> "$GITHUB_OUTPUT"
 
           RISK_LEVEL=$(cat /tmp/changed-files.txt | node scripts/pr-risk-check.mjs --json 2>/dev/null \
             | node -e "let d=''; process.stdin.on('data',c=>d+=c); process.stdin.on('end',()=>{ try { console.log(JSON.parse(d).risk) } catch { console.log('low') } })" \
             || echo "low")
-          echo "level=$RISK_LEVEL" >> $GITHUB_OUTPUT
+          echo "level=$RISK_LEVEL" >> "$GITHUB_OUTPUT"
 
       - name: Write step summary
         run: echo "${{ steps.risk.outputs.report }}" >> $GITHUB_STEP_SUMMARY

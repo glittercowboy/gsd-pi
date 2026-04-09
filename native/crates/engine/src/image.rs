@@ -103,31 +103,42 @@ fn decode_image_from_bytes(bytes: &[u8]) -> Result<DynamicImage> {
         .map_err(|e| Error::from_reason(format!("Failed to decode image: {e}")))
 }
 
+/// Compute a capacity hint for the encode buffer using checked arithmetic.
+///
+/// Returns an error instead of panicking when `w * h * bytes_per_pixel`
+/// overflows `usize`.
+fn encode_capacity(w: u32, h: u32, bytes_per_pixel: usize) -> Result<usize> {
+    (w as usize)
+        .checked_mul(h as usize)
+        .and_then(|wh| wh.checked_mul(bytes_per_pixel))
+        .ok_or_else(|| Error::from_reason("Image dimensions too large for encode buffer"))
+}
+
 fn encode_image(img: &DynamicImage, format: u8, quality: u8) -> Result<Vec<u8>> {
     let (w, h) = (img.width(), img.height());
     match format {
         0 => {
-            let mut buffer = Vec::with_capacity((w * h * 4) as usize);
+            let mut buffer = Vec::with_capacity(encode_capacity(w, h, 4)?);
             img.write_to(&mut Cursor::new(&mut buffer), ImageFormat::Png)
                 .map_err(|e| Error::from_reason(format!("Failed to encode PNG: {e}")))?;
             Ok(buffer)
         },
         1 => {
-            let mut buffer = Vec::with_capacity((w * h * 3) as usize);
+            let mut buffer = Vec::with_capacity(encode_capacity(w, h, 3)?);
             let encoder = JpegEncoder::new_with_quality(&mut buffer, quality);
             img.write_with_encoder(encoder)
                 .map_err(|e| Error::from_reason(format!("Failed to encode JPEG: {e}")))?;
             Ok(buffer)
         },
         2 => {
-            let mut buffer = Vec::with_capacity((w * h * 4) as usize);
+            let mut buffer = Vec::with_capacity(encode_capacity(w, h, 4)?);
             let encoder = WebPEncoder::new_lossless(&mut buffer);
             img.write_with_encoder(encoder)
                 .map_err(|e| Error::from_reason(format!("Failed to encode WebP: {e}")))?;
             Ok(buffer)
         },
         3 => {
-            let mut buffer = Vec::with_capacity((w * h) as usize);
+            let mut buffer = Vec::with_capacity(encode_capacity(w, h, 1)?);
             img.write_to(&mut Cursor::new(&mut buffer), ImageFormat::Gif)
                 .map_err(|e| Error::from_reason(format!("Failed to encode GIF: {e}")))?;
             Ok(buffer)

@@ -1,6 +1,6 @@
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { resolve, dirname, join } from "node:path";
-import { homedir } from "node:os";
+import { homedir, platform } from "node:os";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -25,6 +25,42 @@ function getDevRoot(): string {
 }
 
 /**
+ * Get available mount points on Linux (external drives, removable media)
+ * Returns paths like /media, /mnt, /run/media/<user>
+ */
+function getLinuxMountPoints(): string[] {
+  const mountPoints: string[] = [];
+  const home = homedir();
+
+  const standardMounts = ["/media", "/mnt", "/run/media"];
+
+  for (const mp of standardMounts) {
+    if (existsSync(mp)) {
+      mountPoints.push(mp);
+    }
+  }
+
+  const runMediaUser = `/run/media/${home.split("/").pop()}`;
+  if (existsSync(runMediaUser)) {
+    mountPoints.push(runMediaUser);
+  }
+
+  return mountPoints;
+}
+
+/**
+ * Get additional root-level directories to show as shortcuts on Linux
+ * (for accessing external drives and mounted filesystems)
+ */
+function getAdditionalRoots(): string[] {
+  const os = platform();
+  if (os === "linux") {
+    return getLinuxMountPoints();
+  }
+  return [];
+}
+
+/**
  * GET /api/browse-directories?path=/some/path
  *
  * Returns the directory listing for the given path.
@@ -46,8 +82,15 @@ export async function GET(request: Request): Promise<Response> {
     // if no devRoot is configured. Navigating to the parent of devRoot is
     // allowed (one level up) so the UI can show the devRoot in context,
     // but nothing further.
+    // Also allow navigation to common mount points (/media, /mnt, /run/media) on Linux
     const devRootParent = dirname(devRoot);
-    if (!targetPath.startsWith(devRoot) && targetPath !== devRootParent) {
+    const additionalRoots = getAdditionalRoots();
+    const isAllowedPath =
+      targetPath.startsWith(devRoot) ||
+      targetPath === devRootParent ||
+      additionalRoots.some((root) => targetPath.startsWith(root));
+
+    if (!isAllowedPath) {
       return Response.json(
         { error: "Path outside allowed scope" },
         { status: 403 },
@@ -74,6 +117,9 @@ export async function GET(request: Request): Promise<Response> {
     const parentAllowed = parentPath.startsWith(devRootParent) && parentPath !== targetPath;
     const entries: Array<{ name: string; path: string }> = [];
 
+    // On Linux, show mount points as quick-access when browsing from home directory
+    const showMountPoints = platform() === "linux" && (targetPath === homedir() || targetPath === devRoot);
+
     try {
       const items = readdirSync(targetPath, { withFileTypes: true });
       for (const item of items) {
@@ -86,6 +132,19 @@ export async function GET(request: Request): Promise<Response> {
           name: item.name,
           path: resolve(targetPath, item.name),
         });
+      }
+
+      // Add mount points as quick-access entries on Linux
+      if (showMountPoints) {
+        for (const mp of additionalRoots) {
+          if (existsSync(mp)) {
+            const mpName = mp.split("/").pop() || mp;
+            entries.push({
+              name: mpName,
+              path: mp,
+            });
+          }
+        }
       }
     } catch {
       // Permission denied or other read error — return empty entries

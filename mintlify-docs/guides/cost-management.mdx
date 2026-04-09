@@ -1,0 +1,80 @@
+---
+title: "Cost management"
+description: "Budget ceilings, cost tracking, projections, and enforcement modes."
+---
+
+GSD tracks token usage and cost for every unit of work dispatched during auto mode. This data powers the dashboard, budget enforcement, and cost projections.
+
+## Cost tracking
+
+Every unit's metrics are captured automatically:
+
+- **Token counts** — input, output, cache read, cache write, total
+- **Cost** — USD cost per unit
+- **Duration** — wall-clock time
+- **Tool calls** — number of tool invocations
+- **Message counts** — assistant and user messages
+
+Data is stored in `.gsd/metrics.json` and survives across sessions.
+
+### Viewing costs
+
+`Ctrl+Alt+G` or `/gsd status` shows real-time cost breakdown by:
+
+- Phase (research, planning, execution, completion, reassessment)
+- Slice (M001/S01, M001/S02, ...)
+- Model (which models consumed the most budget)
+- Project totals
+
+## Budget ceiling
+
+```yaml
+budget_ceiling: 50.00
+```
+
+### Enforcement modes
+
+| Mode | Behavior |
+|------|----------|
+| `warn` | Log a warning, continue |
+| `pause` | Pause auto mode (default when ceiling is set) |
+| `halt` | Stop auto mode entirely |
+
+## Cost projections
+
+After two or more slices complete, GSD projects the remaining cost:
+
+```
+Projected remaining: $12.40 ($6.20/slice avg × 2 remaining)
+```
+
+## Budget pressure and model downgrading
+
+When approaching the budget ceiling, the [complexity router](/guides/token-optimization) automatically downgrades model assignments:
+
+| Budget used | Effect |
+|------------|--------|
+| < 50% | No adjustment |
+| 50-75% | Standard tasks → Light |
+| 75-90% | More aggressive |
+| > 90% | Nearly everything downgrades |
+
+## Token profiles and cost
+
+| Profile | Typical savings | How |
+|---------|----------------|-----|
+| `budget` | 40-60% | Cheaper models, phase skipping, minimal context |
+| `balanced` | 10-20% | Default models, skip slice research |
+| `quality` | 0% (baseline) | Full models, all phases |
+
+See [token optimization](/guides/token-optimization) for details.
+
+## Tips
+
+- Start with `balanced` and a generous `budget_ceiling` to establish baseline costs
+- Check `/gsd status` after a few slices to see per-slice averages
+- Switch to `budget` for well-understood, repetitive work
+- Use `quality` only for architectural decisions
+- Per-phase model selection lets you use Opus for planning while keeping execution on Sonnet
+- Enable [dynamic routing](/guides/dynamic-model-routing) for automatic downgrading on simple tasks
+- Use `/gsd visualize` → Metrics tab to see where your budget is going

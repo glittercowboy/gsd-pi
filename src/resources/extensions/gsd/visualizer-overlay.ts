@@ -14,7 +14,10 @@ import {
   renderHealthView,
   type ProgressFilter,
 } from "./visualizer-views.js";
+import { writeFileSync, mkdirSync } from "node:fs";
+import { join } from "node:path";
 import { writeExportFile } from "./export.js";
+import { gsdRoot } from "./paths.js";
 import { stripAnsi } from "../shared/mod.js";
 
 const TAB_COUNT = 10;
@@ -30,6 +33,24 @@ const TAB_LABELS = [
   "9 Captures",
   "0 Export",
 ];
+
+type TabBarEntry = { label: string; width: number };
+
+function buildTabBarEntries(activeTab: number, filterText: string, capturesPendingCount?: number): TabBarEntry[] {
+  return TAB_LABELS.map((label, i) => {
+    let displayLabel = label;
+    if (i === activeTab && filterText) {
+      displayLabel += " \u2731";
+    }
+    if (i === 8 && capturesPendingCount) {
+      displayLabel += ` (${capturesPendingCount})`;
+    }
+    return {
+      label: displayLabel,
+      width: visibleWidth(displayLabel) + 2,
+    };
+  });
+}
 
 export class GSDVisualizerOverlay {
   private tui: { requestRender: () => void };
@@ -113,15 +134,14 @@ export class GSDVisualizerOverlay {
   }
 
   handleInput(data: string): void {
+    if (matchesKey(data, Key.escape) || matchesKey(data, Key.ctrl("c"))) {
+      this.dispose();
+      this.onClose();
+      return;
+    }
+
     // Filter mode input routing
     if (this.filterMode) {
-      if (matchesKey(data, Key.escape)) {
-        this.filterMode = false;
-        this.filterText = "";
-        this.invalidate();
-        this.tui.requestRender();
-        return;
-      }
       if (matchesKey(data, Key.enter)) {
         this.filterMode = false;
         this.invalidate();
@@ -176,8 +196,9 @@ export class GSDVisualizerOverlay {
         // Left click — check if on tab bar row
         if (mouse.y === 2) {
           let xPos = 3;
-          for (let i = 0; i < TAB_LABELS.length; i++) {
-            const tabWidth = TAB_LABELS[i].length + 2;
+          const tabs = buildTabBarEntries(this.activeTab, this.filterText, this.data?.captures?.pendingCount);
+          for (let i = 0; i < tabs.length; i++) {
+            const tabWidth = tabs[i]!.width;
             if (mouse.x >= xPos && mouse.x < xPos + tabWidth) {
               this.activeTab = i;
               this.invalidate();
@@ -188,12 +209,6 @@ export class GSDVisualizerOverlay {
           }
         }
       }
-      return;
-    }
-
-    if (matchesKey(data, Key.escape) || matchesKey(data, Key.ctrl("c"))) {
-      this.dispose();
-      this.onClose();
       return;
     }
 
@@ -350,9 +365,6 @@ export class GSDVisualizerOverlay {
       // Capture current active tab's rendered lines as snapshot
       const snapshotLines = this.renderTabContent(this.activeTab, 80);
       const timestamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
-      const { writeFileSync, mkdirSync } = require("node:fs");
-      const { join } = require("node:path");
-      const { gsdRoot } = require("./paths.js");
       const exportDir = gsdRoot(this.basePath);
       mkdirSync(exportDir, { recursive: true });
       const outPath = join(exportDir, `snapshot-${timestamp}.txt`);
@@ -442,20 +454,12 @@ export class GSDVisualizerOverlay {
     const content: string[] = [];
 
     // Tab bar
-    const tabs = TAB_LABELS.map((label, i) => {
-      let displayLabel = label;
-      // Show filter indicator on active tab with filter
-      if (i === this.activeTab && this.filterText) {
-        displayLabel += " \u2731";
-      }
-      // Show captures badge
-      if (i === 8 && this.data?.captures?.pendingCount) {
-        displayLabel += ` (${this.data.captures.pendingCount})`;
-      }
+    const tabEntries = buildTabBarEntries(this.activeTab, this.filterText, this.data?.captures?.pendingCount);
+    const tabs = tabEntries.map((entry, i) => {
       if (i === this.activeTab) {
-        return th.fg("accent", `[${displayLabel}]`);
+        return th.fg("accent", `[${entry.label}]`);
       }
-      return th.fg("dim", `[${displayLabel}]`);
+      return th.fg("dim", `[${entry.label}]`);
     });
     content.push(" " + tabs.join(" "));
     content.push("");

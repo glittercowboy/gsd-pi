@@ -13,9 +13,9 @@
  * research identified as critical for skill quality.
  */
 
-import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { getAgentDir } from "@gsd/pi-coding-agent";
+import { homedir } from "node:os";
 import type { UnitMetrics, MetricsLedger } from "./metrics.js";
 import { formatCost, formatTokenCount, loadLedgerFromDisk } from "./metrics.js";
 import { getSkillLastUsed, detectStaleSkills } from "./skill-telemetry.js";
@@ -207,10 +207,14 @@ export function formatSkillDetail(basePath: string, skillName: string): string {
     lines.push(`  ${date}  ${u.id.padEnd(20)}  ${formatTokenCount(u.tokens.total).padStart(8)} tokens  ${formatCost(u.cost)}`);
   }
 
-  // Check for SKILL.md existence
-  const skillPath = join(getAgentDir(), "skills", skillName, "SKILL.md");
-  if (existsSync(skillPath)) {
-    const stat = require("node:fs").statSync(skillPath);
+  // Check for SKILL.md existence — search both ecosystem and Claude Code directories
+  const candidatePaths = [
+    join(homedir(), ".agents", "skills", skillName, "SKILL.md"),
+    join(homedir(), ".claude", "skills", skillName, "SKILL.md"),
+  ];
+  const skillPath = candidatePaths.find(p => existsSync(p));
+  if (skillPath) {
+    const stat = statSync(skillPath);
     lines.push("");
     lines.push(`SKILL.md: ${skillPath}`);
     lines.push(`Last modified: ${stat.mtime.toISOString().slice(0, 10)}`);
@@ -283,7 +287,8 @@ export function computeStaleAvoidList(
   staleDays?: number,
 ): string[] {
   const ledger = loadLedgerFromDisk(basePath);
-  const units = (ledger?.units ?? []).filter(u => u.skills && u.skills.length > 0);
+  if (!ledger) return [];
+  const units = ledger.units.filter(u => u.skills && u.skills.length > 0);
   const stale = detectStaleSkills(units, staleDays ?? DEFAULT_STALE_DAYS);
   const avoidSet = new Set(currentAvoidList);
 

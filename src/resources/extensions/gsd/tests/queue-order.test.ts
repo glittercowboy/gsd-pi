@@ -1,3 +1,5 @@
+import { describe, test } from 'node:test';
+import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync, existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -9,10 +11,6 @@ import {
   pruneQueueOrder,
   validateQueueOrder,
 } from '../queue-order.ts';
-import { createTestContext } from './test-helpers.ts';
-
-const { assertEq, assertTrue, report } = createTestContext();
-
 // ─── Fixture Helpers ───────────────────────────────────────────────────────
 
 function createFixtureBase(): string {
@@ -29,176 +27,166 @@ function cleanup(base: string): void {
 // sortByQueueOrder
 // ═══════════════════════════════════════════════════════════════════════════
 
-console.log('\n=== sortByQueueOrder ===');
 
+describe('queue-order', () => {
+test('sortByQueueOrder', () => {
 // Null order → default milestoneIdSort
-{
   const result = sortByQueueOrder(['M003', 'M001', 'M002'], null);
-  assertEq(result, ['M001', 'M002', 'M003'], 'null order falls back to numeric sort');
-}
+  assert.deepStrictEqual(result, ['M001', 'M002', 'M003'], 'null order falls back to numeric sort');
+});
 
 // Custom order → exact sequence
-{
+test('test block at line 39', () => {
   const result = sortByQueueOrder(['M001', 'M002', 'M003'], ['M003', 'M001', 'M002']);
-  assertEq(result, ['M003', 'M001', 'M002'], 'custom order produces exact sequence');
-}
+  assert.deepStrictEqual(result, ['M003', 'M001', 'M002'], 'custom order produces exact sequence');
+});
 
 // Custom order with new IDs → appended at end in numeric order
-{
+test('test block at line 45', () => {
   const result = sortByQueueOrder(['M001', 'M002', 'M003', 'M004'], ['M003', 'M001']);
-  assertEq(result, ['M003', 'M001', 'M002', 'M004'], 'new IDs appended in numeric order');
-}
+  assert.deepStrictEqual(result, ['M003', 'M001', 'M002', 'M004'], 'new IDs appended in numeric order');
+});
 
 // Custom order with deleted IDs → silently skipped
-{
+test('test block at line 51', () => {
   const result = sortByQueueOrder(['M001', 'M003'], ['M003', 'M002', 'M001']);
-  assertEq(result, ['M003', 'M001'], 'deleted IDs in order are skipped');
-}
+  assert.deepStrictEqual(result, ['M003', 'M001'], 'deleted IDs in order are skipped');
+});
 
 // Empty custom order → all IDs in numeric order
-{
+test('test block at line 57', () => {
   const result = sortByQueueOrder(['M002', 'M001'], []);
-  assertEq(result, ['M001', 'M002'], 'empty custom order falls back to numeric sort');
-}
+  assert.deepStrictEqual(result, ['M001', 'M002'], 'empty custom order falls back to numeric sort');
+});
 
 // ═══════════════════════════════════════════════════════════════════════════
 // loadQueueOrder / saveQueueOrder
 // ═══════════════════════════════════════════════════════════════════════════
-
-console.log('\n=== loadQueueOrder / saveQueueOrder ===');
-
+test('loadQueueOrder / saveQueueOrder', () => {
 // Load returns null when file doesn't exist
-{
   const base = createFixtureBase();
-  assertEq(loadQueueOrder(base), null, 'returns null when file missing');
+  assert.deepStrictEqual(loadQueueOrder(base), null, 'returns null when file missing');
   cleanup(base);
-}
+});
 
 // Save then load round-trip
-{
+test('test block at line 76', () => {
   const base = createFixtureBase();
   saveQueueOrder(base, ['M003', 'M001', 'M002']);
   const loaded = loadQueueOrder(base);
-  assertEq(loaded, ['M003', 'M001', 'M002'], 'round-trip preserves order');
+  assert.deepStrictEqual(loaded, ['M003', 'M001', 'M002'], 'round-trip preserves order');
 
   // Verify file contains updatedAt
   const raw = JSON.parse(readFileSync(join(base, '.gsd', 'QUEUE-ORDER.json'), 'utf-8'));
-  assertTrue(typeof raw.updatedAt === 'string' && raw.updatedAt.length > 0, 'file contains updatedAt');
+  assert.ok(typeof raw.updatedAt === 'string' && raw.updatedAt.length > 0, 'file contains updatedAt');
 
   cleanup(base);
-}
+});
 
 // Load returns null on corrupt JSON
-{
+test('test block at line 90', () => {
   const base = createFixtureBase();
   writeFileSync(join(base, '.gsd', 'QUEUE-ORDER.json'), 'not json');
-  assertEq(loadQueueOrder(base), null, 'returns null on corrupt JSON');
+  assert.deepStrictEqual(loadQueueOrder(base), null, 'returns null on corrupt JSON');
   cleanup(base);
-}
+});
 
 // Load returns null when order field is not an array
-{
+test('test block at line 98', () => {
   const base = createFixtureBase();
   writeFileSync(join(base, '.gsd', 'QUEUE-ORDER.json'), '{"order": "invalid"}');
-  assertEq(loadQueueOrder(base), null, 'returns null when order is not array');
+  assert.deepStrictEqual(loadQueueOrder(base), null, 'returns null when order is not array');
   cleanup(base);
-}
+});
 
 // ═══════════════════════════════════════════════════════════════════════════
 // pruneQueueOrder
 // ═══════════════════════════════════════════════════════════════════════════
-
-console.log('\n=== pruneQueueOrder ===');
-
+test('pruneQueueOrder', () => {
 // Prune removes invalid IDs
-{
   const base = createFixtureBase();
   saveQueueOrder(base, ['M001', 'M002', 'M003']);
   pruneQueueOrder(base, ['M001', 'M003']);
-  assertEq(loadQueueOrder(base), ['M001', 'M003'], 'prune removes invalid IDs');
+  assert.deepStrictEqual(loadQueueOrder(base), ['M001', 'M003'], 'prune removes invalid IDs');
   cleanup(base);
-}
+});
 
 // Prune no-ops when file doesn't exist
-{
+test('test block at line 121', () => {
   const base = createFixtureBase();
   pruneQueueOrder(base, ['M001']); // should not throw
-  assertTrue(!existsSync(join(base, '.gsd', 'QUEUE-ORDER.json')), 'prune does not create file');
+  assert.ok(!existsSync(join(base, '.gsd', 'QUEUE-ORDER.json')), 'prune does not create file');
   cleanup(base);
-}
+});
 
 // Prune no-ops when all IDs are valid
-{
+test('test block at line 129', () => {
   const base = createFixtureBase();
   saveQueueOrder(base, ['M001', 'M002']);
   pruneQueueOrder(base, ['M001', 'M002', 'M003']);
-  assertEq(loadQueueOrder(base), ['M001', 'M002'], 'prune is no-op when all valid');
+  assert.deepStrictEqual(loadQueueOrder(base), ['M001', 'M002'], 'prune is no-op when all valid');
   cleanup(base);
-}
+});
 
 // ═══════════════════════════════════════════════════════════════════════════
 // validateQueueOrder
 // ═══════════════════════════════════════════════════════════════════════════
-
-console.log('\n=== validateQueueOrder ===');
-
+test('validateQueueOrder', () => {
 // Valid order with no dependencies
-{
   const depsMap = new Map<string, string[]>();
   const result = validateQueueOrder(['M001', 'M002'], depsMap, new Set());
-  assertTrue(result.valid, 'valid when no dependencies');
-  assertEq(result.violations.length, 0, 'no violations');
-  assertEq(result.redundant.length, 0, 'no redundancies');
-}
+  assert.ok(result.valid, 'valid when no dependencies');
+  assert.deepStrictEqual(result.violations.length, 0, 'no violations');
+  assert.deepStrictEqual(result.redundant.length, 0, 'no redundancies');
+});
 
 // Dependency violation: M002 before M001, but M002 depends on M001
-{
+test('test block at line 153', () => {
   const depsMap = new Map<string, string[]>([['M002', ['M001']]]);
   const result = validateQueueOrder(['M002', 'M001'], depsMap, new Set());
-  assertTrue(!result.valid, 'invalid when dep violated');
-  assertEq(result.violations.length, 1, 'one violation');
-  assertEq(result.violations[0].type, 'would_block', 'violation type is would_block');
-  assertEq(result.violations[0].milestone, 'M002', 'violation milestone is M002');
-  assertEq(result.violations[0].dependsOn, 'M001', 'violation dep is M001');
-}
+  assert.ok(!result.valid, 'invalid when dep violated');
+  assert.deepStrictEqual(result.violations.length, 1, 'one violation');
+  assert.deepStrictEqual(result.violations[0].type, 'would_block', 'violation type is would_block');
+  assert.deepStrictEqual(result.violations[0].milestone, 'M002', 'violation milestone is M002');
+  assert.deepStrictEqual(result.violations[0].dependsOn, 'M001', 'violation dep is M001');
+});
 
 // Redundant dependency: M002 depends on M001, M001 comes first in order
-{
+test('test block at line 164', () => {
   const depsMap = new Map<string, string[]>([['M002', ['M001']]]);
   const result = validateQueueOrder(['M001', 'M002'], depsMap, new Set());
-  assertTrue(result.valid, 'valid when dep satisfied by position');
-  assertEq(result.redundant.length, 1, 'one redundancy');
-  assertEq(result.redundant[0].milestone, 'M002', 'redundant milestone is M002');
-}
+  assert.ok(result.valid, 'valid when dep satisfied by position');
+  assert.deepStrictEqual(result.redundant.length, 1, 'one redundancy');
+  assert.deepStrictEqual(result.redundant[0].milestone, 'M002', 'redundant milestone is M002');
+});
 
 // Completed dep is always satisfied
-{
+test('test block at line 173', () => {
   const depsMap = new Map<string, string[]>([['M002', ['M001']]]);
   const result = validateQueueOrder(['M002'], depsMap, new Set(['M001']));
-  assertTrue(result.valid, 'valid when dep is already completed');
-  assertEq(result.violations.length, 0, 'no violations for completed dep');
-}
+  assert.ok(result.valid, 'valid when dep is already completed');
+  assert.deepStrictEqual(result.violations.length, 0, 'no violations for completed dep');
+});
 
 // Missing dependency
-{
+test('test block at line 181', () => {
   const depsMap = new Map<string, string[]>([['M002', ['M099']]]);
   const result = validateQueueOrder(['M001', 'M002'], depsMap, new Set());
-  assertTrue(!result.valid, 'invalid when dep does not exist');
-  assertEq(result.violations[0].type, 'missing_dep', 'violation type is missing_dep');
-}
+  assert.ok(!result.valid, 'invalid when dep does not exist');
+  assert.deepStrictEqual(result.violations[0].type, 'missing_dep', 'violation type is missing_dep');
+});
 
 // Circular dependency
-{
+test('test block at line 189', () => {
   const depsMap = new Map<string, string[]>([
     ['M001', ['M002']],
     ['M002', ['M001']],
   ]);
   const result = validateQueueOrder(['M001', 'M002'], depsMap, new Set());
-  assertTrue(!result.valid, 'invalid on circular dependency');
+  assert.ok(!result.valid, 'invalid on circular dependency');
   const circularViolation = result.violations.find(v => v.type === 'circular');
-  assertTrue(!!circularViolation, 'circular violation detected');
-}
+  assert.ok(!!circularViolation, 'circular violation detected');
+});
 
 // ═══════════════════════════════════════════════════════════════════════════
-
-report();
+});

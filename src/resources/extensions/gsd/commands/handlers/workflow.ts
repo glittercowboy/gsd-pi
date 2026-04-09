@@ -188,6 +188,14 @@ export async function handleWorkflowCommand(trimmed: string, ctx: ExtensionComma
     return true;
   }
   if (trimmed === "quick" || trimmed.startsWith("quick ")) {
+    if (isAutoActive()) {
+      ctx.ui.notify(
+        "/gsd quick cannot run while auto-mode is active.\n" +
+        "Stop auto-mode first with /gsd stop, then run /gsd quick.",
+        "error",
+      );
+      return true;
+    }
     await handleQuick(trimmed.replace(/^quick\s*/, "").trim(), ctx, pi);
     return true;
   }

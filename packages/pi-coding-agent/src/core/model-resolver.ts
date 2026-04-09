@@ -13,7 +13,7 @@ import type { ModelRegistry } from "./model-registry.js";
 /** Default model IDs for each known provider */
 const defaultModelPerProvider: Record<KnownProvider, string> = {
 	"amazon-bedrock": "us.anthropic.claude-opus-4-6-v1",
-	anthropic: "claude-opus-4-6[1m]",
+	anthropic: "claude-opus-4-6",
 	"anthropic-vertex": "claude-sonnet-4-6",
 	openai: "gpt-5.4",
 	"azure-openai-responses": "gpt-5.2",
@@ -24,7 +24,7 @@ const defaultModelPerProvider: Record<KnownProvider, string> = {
 	"google-vertex": "gemini-3-pro-preview",
 	"github-copilot": "gpt-4o",
 	openrouter: "openai/gpt-5.1-codex",
-	"vercel-ai-gateway": "anthropic/claude-opus-4-6[1m]",
+	"vercel-ai-gateway": "anthropic/claude-opus-4-6",
 	xai: "grok-4-fast-non-reasoning",
 	groq: "openai/gpt-oss-120b",
 	cerebras: "zai-glm-4.6",
@@ -37,6 +37,7 @@ const defaultModelPerProvider: Record<KnownProvider, string> = {
 	"opencode-go": "kimi-k2.5",
 	"kimi-coding": "kimi-k2-thinking",
 	"alibaba-coding-plan": "qwen3.5-plus",
+	ollama: "llama3.1:8b",
 	"ollama-cloud": "qwen3:32b",
 };
 
@@ -506,7 +507,7 @@ export async function findInitialModel(options: {
 		const found = modelRegistry.find(defaultProvider, defaultModelId);
 		if (found) {
 			// Check if the provider's recommended default is a higher-capability variant
-			// of the saved model (e.g. saved "claude-opus-4-6" vs recommended "claude-opus-4-6[1m]").
+			// of the saved model (e.g. saved "claude-opus-4-6" vs recommended "claude-opus-4-6-extended").
 			// If so, prefer the recommended variant to avoid using a smaller context window (#1125).
 			const recommendedId = defaultModelPerProvider[defaultProvider as KnownProvider];
 			if (recommendedId && recommendedId !== defaultModelId && recommendedId.startsWith(defaultModelId)) {

@@ -7,22 +7,27 @@
  * keeping the token local to the machine.
  *
  * On first load this module extracts the token from the fragment, persists
- * it to sessionStorage (so it survives page refreshes), and clears the
- * fragment from the address bar. All subsequent API calls attach the token
- * via the `Authorization: Bearer` header.
+ * it to localStorage (so it survives page refreshes and is accessible from
+ * all tabs on the same origin), and clears the fragment from the address bar.
+ * All subsequent API calls attach the token via the `Authorization: Bearer`
+ * header.
+ *
+ * localStorage is shared across all tabs on the same origin. Because each
+ * GSD instance binds to a unique random port, the origin already scopes
+ * the token to that instance — no additional namespacing is needed.
  *
  * For EventSource (SSE), which cannot send custom headers, the token is
  * appended as a `?_token=` query parameter instead.
  */
 
-const SESSION_STORAGE_KEY = "gsd-auth-token"
+const AUTH_STORAGE_KEY = "gsd-auth-token"
 
 let cachedToken: string | null = null
 
 /**
  * Extract the auth token from the URL fragment on first call, then return
- * the cached value. Falls back to sessionStorage so the token survives
- * page refreshes (which clear the in-memory cache and the URL fragment).
+ * the cached value. Falls back to localStorage so the token survives
+ * page refreshes and is available to all tabs on the same origin.
  * Clears the fragment from the address bar after extraction.
  */
 export function getAuthToken(): string | null {
@@ -36,11 +41,10 @@ export function getAuthToken(): string | null {
     const match = hash.match(/token=([a-fA-F0-9]+)/)
     if (match) {
       cachedToken = match[1]
-      // Persist to sessionStorage so the token survives page refreshes.
-      // sessionStorage is scoped to this browser tab — it does not leak
-      // to other tabs or persist after the tab is closed.
+      // Persist to localStorage so the token survives page refreshes and
+      // is available to other tabs on the same origin (same GSD instance).
       try {
-        sessionStorage.setItem(SESSION_STORAGE_KEY, cachedToken)
+        localStorage.setItem(AUTH_STORAGE_KEY, cachedToken)
       } catch {
         // Storage unavailable (e.g. private browsing quota exceeded) — the
         // in-memory cache still works for the current page lifecycle.
@@ -52,9 +56,9 @@ export function getAuthToken(): string | null {
     }
   }
 
-  // 2. Fall back to sessionStorage (page refresh, bookmark without hash)
+  // 2. Fall back to localStorage (page refresh, second tab, bookmark without hash)
   try {
-    const stored = sessionStorage.getItem(SESSION_STORAGE_KEY)
+    const stored = localStorage.getItem(AUTH_STORAGE_KEY)
     if (stored) {
       cachedToken = stored
       return cachedToken
@@ -64,6 +68,19 @@ export function getAuthToken(): string | null {
   }
 
   return null
+}
+
+/**
+ * Listen for token changes from other tabs via the `storage` event.
+ * When another tab writes a new token to localStorage, this tab picks
+ * it up immediately without requiring a page refresh.
+ */
+if (typeof window !== "undefined") {
+  window.addEventListener("storage", (event) => {
+    if (event.key === AUTH_STORAGE_KEY && event.newValue) {
+      cachedToken = event.newValue
+    }
+  })
 }
 
 /**
@@ -81,10 +98,20 @@ export function authHeaders(extra?: Record<string, string>): Record<string, stri
 
 /**
  * Wrapper around `fetch()` that automatically injects the auth token.
+ *
+ * When no token is available (missing `#token=` fragment and no localStorage
+ * entry), returns a synthetic 401 Response instead of making an unauthenticated
+ * request that will fail server-side anyway. This lets callers handle the
+ * missing-token case uniformly rather than silently cascading 401s.
  */
 export async function authFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
   const token = getAuthToken()
-  if (!token) return fetch(input, init)
+  if (!token) {
+    return new Response(JSON.stringify({ error: "No auth token available" }), {
+      status: 401,
+      headers: { "Content-Type": "application/json" },
+    })
+  }
 
   const headers = new Headers(init?.headers)
   if (!headers.has("Authorization")) {

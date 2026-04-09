@@ -118,3 +118,50 @@ test("await_job returns not-found message for invalid job IDs", async () => {
 
 	manager.shutdown();
 });
+
+test("await_job marks jobs as awaited to suppress follow-up delivery (#2248)", async () => {
+	const followUps: string[] = [];
+	const manager = new AsyncJobManager({
+		onJobComplete: (job) => {
+			if (!job.awaited) followUps.push(job.id);
+		},
+	});
+	const tool = createAwaitTool(() => manager);
+
+	// Register a job that completes in 50ms
+	const jobId = manager.register("bash", "awaited-job", async () => {
+		return new Promise<string>((resolve) => setTimeout(() => resolve("result"), 50));
+	});
+
+	// await_job consumes the result — should mark as awaited before promise resolves
+	await tool.execute("tc7", { jobs: [jobId] }, noopSignal, () => {}, undefined as never);
+
+	// Give the onJobComplete callback a tick to fire
+	await new Promise((r) => setTimeout(r, 50));
+
+	assert.equal(followUps.length, 0, "onJobComplete should not deliver follow-up for awaited jobs");
+
+	manager.shutdown();
+});
+
+test("unawaited jobs still get follow-up delivery (#2248)", async () => {
+	const followUps: string[] = [];
+	const manager = new AsyncJobManager({
+		onJobComplete: (job) => {
+			if (!job.awaited) followUps.push(job.id);
+		},
+	});
+
+	// Register a fire-and-forget job
+	const jobId = manager.register("bash", "fire-and-forget", async () => "done");
+	const job = manager.getJob(jobId)!;
+	await job.promise;
+
+	// Give the callback a tick
+	await new Promise((r) => setTimeout(r, 50));
+
+	assert.equal(followUps.length, 1, "onJobComplete should deliver follow-up for unawaited jobs");
+	assert.equal(followUps[0], jobId);
+
+	manager.shutdown();
+});

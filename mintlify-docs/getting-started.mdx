@@ -1,0 +1,187 @@
+---
+title: "Getting started"
+description: "Install GSD, configure your LLM provider, and run your first autonomous session."
+---
+
+## Install
+
+```bash
+npm install -g gsd-pi
+```
+
+Requires Node.js 22+ and Git.
+
+<Note>
+**`command not found: gsd`?** Your shell may not have npm's global bin directory in `$PATH`. Run `npm prefix -g` to find it, then add `$(npm prefix -g)/bin` to your PATH. See [troubleshooting](/guides/troubleshooting) for details.
+</Note>
+
+GSD checks for updates every 24 hours. Update in-session with `/gsd update`.
+
+## First launch
+
+```bash
+gsd
+```
+
+On first launch, a setup wizard walks you through:
+
+1. **LLM provider** — 20+ providers (Anthropic, OpenAI, Google, OpenRouter, GitHub Copilot, Amazon Bedrock, Azure, and more). OAuth handles Claude Max and Copilot subscriptions automatically; otherwise paste an API key.
+2. **Tool API keys** (optional) — Brave Search, Context7, Jina, Slack, Discord. Press Enter to skip any.
+
+Re-run the wizard anytime:
+
+```bash
+gsd config
+```
+
+### Set up API keys
+
+For non-Anthropic models, you may need a search API key. Run `/gsd config` to set keys globally — they're saved to `~/.gsd/agent/auth.json` and apply to all projects.
+
+### Set up MCP servers
+
+To connect GSD to local or external MCP servers, add project-local config in `.mcp.json` or `.gsd/mcp.json`. See [configuration](/guides/configuration) for examples. Use `/gsd mcp` to verify connectivity.
+
+### Offline mode
+
+GSD works fully offline with local models (Ollama, vLLM, LM Studio). Configure a [custom model](/guides/custom-models) and GSD handles the rest — no internet connection required.
+
+## Choose a model
+
+GSD auto-selects a default model after login. Switch anytime:
+
+```
+/model
+```
+
+Or configure per-phase models in [preferences](/guides/configuration).
+
+## Two ways to work
+
+<Tabs>
+  <Tab title="Step mode">
+    Type `/gsd` inside a session. GSD executes one unit at a time, pausing between each with a wizard showing what completed and what's next.
+
+    - **No `.gsd/` directory** → starts a discussion to capture your project vision
+    - **Milestone exists, no roadmap** → discuss or research the milestone
+    - **Roadmap exists, slices pending** → plan the next slice or execute a task
+    - **Mid-task** → resume where you left off
+  </Tab>
+  <Tab title="Auto mode">
+    Type `/gsd auto` and walk away. GSD autonomously researches, plans, executes, verifies, commits, and advances through every slice until the milestone is complete.
+
+    ```
+    /gsd auto
+    ```
+
+    See [auto mode](/guides/auto-mode) for the full details.
+  </Tab>
+</Tabs>
+
+## Two terminals, one project
+
+The recommended workflow: auto mode in one terminal, steering from another.
+
+**Terminal 1 — let it build:**
+
+```bash
+gsd
+/gsd auto
+```
+
+**Terminal 2 — steer while it works:**
+
+```bash
+gsd
+/gsd discuss    # talk through architecture decisions
+/gsd status     # check progress
+/gsd queue      # queue the next milestone
+```
+
+Both terminals read and write the same `.gsd/` files. Decisions in terminal 2 are picked up at the next phase boundary automatically.
+
+## Project structure
+
+GSD organizes work into a hierarchy:
+
+```
+Milestone  →  a shippable version (4-10 slices)
+  Slice    →  one demoable vertical capability (1-7 tasks)
+    Task   →  one context-window-sized unit of work
+```
+
+All state lives on disk in `.gsd/`:
+
+<Accordion title="Directory structure">
+```
+.gsd/
+  PROJECT.md          — what the project is right now
+  REQUIREMENTS.md     — requirement contract (active/validated/deferred)
+  DECISIONS.md        — append-only architectural decisions
+  KNOWLEDGE.md        — cross-session rules, patterns, and lessons
+  RUNTIME.md          — runtime context: API endpoints, env vars, services
+  STATE.md            — quick-glance status
+  milestones/
+    M001/
+      M001-ROADMAP.md — slice plan with risk levels and dependencies
+      M001-CONTEXT.md — scope and goals from discussion
+      slices/
+        S01/
+          S01-PLAN.md     — task decomposition
+          S01-SUMMARY.md  — what happened
+          S01-UAT.md      — human test script
+          tasks/
+            T01-PLAN.md
+            T01-SUMMARY.md
+```
+</Accordion>
+
+## Resume a session
+
+```bash
+gsd --continue    # or gsd -c
+```
+
+Resumes the most recent session. To pick from all saved sessions:
+
+```bash
+gsd sessions
+```
+
+## VS Code extension
+
+GSD is also available as a VS Code extension (publisher: FluxLabs). It provides:
+
+- **`@gsd` chat participant** — talk to the agent in VS Code Chat
+- **Sidebar dashboard** — connection status, model info, token usage, quick actions
+- **Full command palette** — start/stop agent, switch models, export sessions
+
+The CLI (`gsd-pi`) must be installed first — the extension connects to it via RPC.
+
+## Web interface
+
+```bash
+gsd --web
+```
+
+A browser-based dashboard with real-time progress and multi-project support. See [web interface](/guides/web-interface) for details.
+
+## Troubleshooting
+
+### `gsd` runs `git svn dcommit` instead of GSD
+
+The [oh-my-zsh git plugin](https://github.com/ohmyzsh/ohmyzsh/tree/master/plugins/git) defines `alias gsd='git svn dcommit'`.
+
+**Option 1** — Remove the alias in `~/.zshrc` (after the `source $ZSH/oh-my-zsh.sh` line):
+
+```bash
+unalias gsd 2>/dev/null
+```
+
+**Option 2** — Use the alternative binary name:
+
+```bash
+gsd-cli
+```
+
+Both `gsd` and `gsd-cli` point to the same binary.

@@ -104,6 +104,9 @@ export interface SlashCommandContext {
 
 	// For compaction
 	executeCompaction(customInstructions?: string, isAuto?: boolean): Promise<unknown>;
+
+	// Bash execution
+	handleBashCommand(command: string, options?: { excludeFromContext?: boolean; displayCommand?: string; loginShell?: boolean }): Promise<void>;
 }
 
 // ---------------------------------------------------------------------------
@@ -133,7 +136,7 @@ export async function dispatchSlashCommand(
 		await ctx.handleModelCommand(searchTerm);
 		return true;
 	}
-	if (text.startsWith("/export")) {
+	if (text === "/export" || text.startsWith("/export ")) {
 		await handleExportCommand(text, ctx);
 		return true;
 	}
@@ -218,6 +221,18 @@ export async function dispatchSlashCommand(
 	}
 	if (text === "/quit") {
 		await ctx.shutdown();
+		return true;
+	}
+	if (text === "/terminal" || text.startsWith("/terminal ")) {
+		const command = text.startsWith("/terminal ") ? text.slice(10).trim() : "";
+		if (!command) {
+			ctx.showWarning("Usage: /terminal <command>  (e.g. /terminal ping -c3 1.1.1.1)");
+			return true;
+		}
+		// Run in the user's login shell ($SHELL -l -c) so PATH additions
+		// and env vars from shell profiles (.zprofile/.profile) are available.
+		// Note: shell aliases are not loaded (requires -i which has side effects).
+		await ctx.handleBashCommand(command, { loginShell: true });
 		return true;
 	}
 

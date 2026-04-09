@@ -91,142 +91,179 @@ async function loadGuidanceExport(): Promise<{ collectOneSecretWithGuidance: Fun
 
 // ─── collectSecretsFromManifest: categorization ───────────────────────────────
 
-test("collectSecretsFromManifest: categorizes entries — pending keys need collection, existing keys are skipped", async () => {
+test("collectSecretsFromManifest: categorizes entries — pending keys need collection, existing keys are skipped", async (t) => {
 	const { collectSecretsFromManifest } = await loadOrchestrator();
 
 	const tmp = makeTempDir("manifest-collect");
 	const savedA = process.env.EXISTING_KEY_A;
-	try {
-		process.env.EXISTING_KEY_A = "already-set";
-
-		const manifest = makeManifest([
-			{ key: "EXISTING_KEY_A", status: "pending" },
-			{ key: "PENDING_KEY_B", status: "pending", guidance: ["Step 1: Go to dashboard", "Step 2: Click create key"] },
-			{ key: "SKIPPED_KEY_C", status: "skipped" },
-		]);
-		await writeManifestFile(tmp, manifest);
-
-		let callIndex = 0;
-		const mockCtx = {
-			cwd: tmp,
-			hasUI: true,
-			ui: {
-				custom: async (_factory: any) => {
-					callIndex++;
-					if (callIndex <= 1) return null; // summary screen dismiss
-					return "mock-secret-value"; // collect pending key
-				},
-			},
-		};
-
-		const result = await collectSecretsFromManifest(tmp, "M001", mockCtx as any);
-
-		// EXISTING_KEY_A should be in existingSkipped (it's in process.env)
-		assert.ok(result.existingSkipped?.includes("EXISTING_KEY_A"),
-			"EXISTING_KEY_A should be in existingSkipped");
-
-		// PENDING_KEY_B should have been collected (applied)
-		assert.ok(result.applied.includes("PENDING_KEY_B"),
-			"PENDING_KEY_B should be in applied");
-
-		// SKIPPED_KEY_C should remain skipped
-		assert.ok(result.skipped.includes("SKIPPED_KEY_C"),
-			"SKIPPED_KEY_C should be in skipped");
-	} finally {
+	t.after(() => {
 		delete process.env.EXISTING_KEY_A;
 		if (savedA !== undefined) process.env.EXISTING_KEY_A = savedA;
 		rmSync(tmp, { recursive: true, force: true });
-	}
+	});
+
+	process.env.EXISTING_KEY_A = "already-set";
+
+	const manifest = makeManifest([
+		{ key: "EXISTING_KEY_A", status: "pending" },
+		{ key: "PENDING_KEY_B", status: "pending", guidance: ["Step 1: Go to dashboard", "Step 2: Click create key"] },
+		{ key: "SKIPPED_KEY_C", status: "skipped" },
+	]);
+	await writeManifestFile(tmp, manifest);
+
+	let callIndex = 0;
+	const mockCtx = {
+		cwd: tmp,
+		hasUI: true,
+		ui: {
+			custom: async (_factory: any) => {
+				callIndex++;
+				if (callIndex <= 1) return null; // summary screen dismiss
+				return "mock-secret-value"; // collect pending key
+			},
+		},
+	};
+
+	const result = await collectSecretsFromManifest(tmp, "M001", mockCtx as any);
+
+	// EXISTING_KEY_A should be in existingSkipped (it's in process.env)
+	assert.ok(result.existingSkipped?.includes("EXISTING_KEY_A"),
+		"EXISTING_KEY_A should be in existingSkipped");
+
+	// PENDING_KEY_B should have been collected (applied)
+	assert.ok(result.applied.includes("PENDING_KEY_B"),
+		"PENDING_KEY_B should be in applied");
+
+	// SKIPPED_KEY_C should remain skipped
+	assert.ok(result.skipped.includes("SKIPPED_KEY_C"),
+		"SKIPPED_KEY_C should be in skipped");
 });
 
-test("collectSecretsFromManifest: existing keys are excluded from the collection list — not prompted", async () => {
+test("collectSecretsFromManifest: existing keys are excluded from the collection list — not prompted", async (t) => {
 	const { collectSecretsFromManifest } = await loadOrchestrator();
 
 	const tmp = makeTempDir("manifest-collect-skip");
 	const savedA = process.env.ALREADY_SET_KEY;
-	try {
-		process.env.ALREADY_SET_KEY = "present";
-
-		const manifest = makeManifest([
-			{ key: "ALREADY_SET_KEY", status: "pending" },
-			{ key: "NEEDS_COLLECTION", status: "pending" },
-		]);
-		await writeManifestFile(tmp, manifest);
-
-		const collectedKeyNames: string[] = [];
-		let summaryShown = false;
-		const mockCtx = {
-			cwd: tmp,
-			hasUI: true,
-			ui: {
-				custom: async (factory: any) => {
-					// Intercept the factory to check what key is being collected
-					if (!summaryShown) {
-						summaryShown = true;
-						return null; // dismiss summary
-					}
-					collectedKeyNames.push("prompted");
-					return "mock-value";
-				},
-			},
-		};
-
-		const result = await collectSecretsFromManifest(tmp, "M001", mockCtx as any);
-
-		// ALREADY_SET_KEY should not have been prompted — only NEEDS_COLLECTION should
-		assert.ok(!result.applied.includes("ALREADY_SET_KEY"),
-			"ALREADY_SET_KEY should not be in applied (it was auto-skipped)");
-		assert.ok(result.existingSkipped?.includes("ALREADY_SET_KEY"),
-			"ALREADY_SET_KEY should be in existingSkipped");
-	} finally {
+	t.after(() => {
 		delete process.env.ALREADY_SET_KEY;
 		if (savedA !== undefined) process.env.ALREADY_SET_KEY = savedA;
 		rmSync(tmp, { recursive: true, force: true });
-	}
+	});
+
+	process.env.ALREADY_SET_KEY = "present";
+
+	const manifest = makeManifest([
+		{ key: "ALREADY_SET_KEY", status: "pending" },
+		{ key: "NEEDS_COLLECTION", status: "pending" },
+	]);
+	await writeManifestFile(tmp, manifest);
+
+	const collectedKeyNames: string[] = [];
+	let summaryShown = false;
+	const mockCtx = {
+		cwd: tmp,
+		hasUI: true,
+		ui: {
+			custom: async (factory: any) => {
+				// Intercept the factory to check what key is being collected
+				if (!summaryShown) {
+					summaryShown = true;
+					return null; // dismiss summary
+				}
+				collectedKeyNames.push("prompted");
+				return "mock-value";
+			},
+		},
+	};
+
+	const result = await collectSecretsFromManifest(tmp, "M001", mockCtx as any);
+
+	// ALREADY_SET_KEY should not have been prompted — only NEEDS_COLLECTION should
+	assert.ok(!result.applied.includes("ALREADY_SET_KEY"),
+		"ALREADY_SET_KEY should not be in applied (it was auto-skipped)");
+	assert.ok(result.existingSkipped?.includes("ALREADY_SET_KEY"),
+		"ALREADY_SET_KEY should be in existingSkipped");
 });
 
-test("collectSecretsFromManifest: manifest statuses are updated after collection", async () => {
+test("collectSecretsFromManifest: manifest statuses are updated after collection", async (t) => {
 	const { collectSecretsFromManifest } = await loadOrchestrator();
 
 	const tmp = makeTempDir("manifest-update");
-	try {
-		const manifest = makeManifest([
-			{ key: "KEY_TO_COLLECT", status: "pending" },
-			{ key: "KEY_TO_SKIP", status: "pending" },
-		]);
-		const manifestPath = await writeManifestFile(tmp, manifest);
+	t.after(() => rmSync(tmp, { recursive: true, force: true }));
 
-		let callIndex = 0;
-		const mockCtx = {
-			cwd: tmp,
-			hasUI: true,
-			ui: {
-				custom: async (_factory: any) => {
-					callIndex++;
-					if (callIndex <= 1) return null; // summary screen dismiss
-					if (callIndex === 2) return "secret-value"; // KEY_TO_COLLECT
-					return null; // KEY_TO_SKIP — user skips
-				},
+	const manifest = makeManifest([
+		{ key: "KEY_TO_COLLECT", status: "pending" },
+		{ key: "KEY_TO_SKIP", status: "pending" },
+	]);
+	const manifestPath = await writeManifestFile(tmp, manifest);
+
+	let callIndex = 0;
+	const mockCtx = {
+		cwd: tmp,
+		hasUI: true,
+		ui: {
+			custom: async (_factory: any) => {
+				callIndex++;
+				if (callIndex <= 1) return null; // summary screen dismiss
+				if (callIndex === 2) return "secret-value"; // KEY_TO_COLLECT
+				return null; // KEY_TO_SKIP — user skips
 			},
-		};
+		},
+	};
 
-		await collectSecretsFromManifest(tmp, "M001", mockCtx as any);
+	await collectSecretsFromManifest(tmp, "M001", mockCtx as any);
 
-		// Read back the manifest file and verify statuses were updated
-		const { parseSecretsManifest } = await loadFilesExports();
-		const updatedContent = readFileSync(manifestPath, "utf8");
-		const updatedManifest = parseSecretsManifest(updatedContent);
+	// Read back the manifest file and verify statuses were updated
+	const { parseSecretsManifest } = await loadFilesExports();
+	const updatedContent = readFileSync(manifestPath, "utf8");
+	const updatedManifest = parseSecretsManifest(updatedContent);
 
-		const keyToCollect = updatedManifest.entries.find(e => e.key === "KEY_TO_COLLECT");
-		const keyToSkip = updatedManifest.entries.find(e => e.key === "KEY_TO_SKIP");
+	const keyToCollect = updatedManifest.entries.find(e => e.key === "KEY_TO_COLLECT");
+	const keyToSkip = updatedManifest.entries.find(e => e.key === "KEY_TO_SKIP");
 
-		assert.equal(keyToCollect?.status, "collected",
-			"KEY_TO_COLLECT should have status 'collected' after providing a value");
-		assert.equal(keyToSkip?.status, "skipped",
-			"KEY_TO_SKIP should have status 'skipped' after user skipped it");
-	} finally {
+	assert.equal(keyToCollect?.status, "collected",
+		"KEY_TO_COLLECT should have status 'collected' after providing a value");
+	assert.equal(keyToSkip?.status, "skipped",
+		"KEY_TO_SKIP should have status 'skipped' after user skipped it");
+});
+
+test("collectSecretsFromManifest: applied keys hydrate process.env for the running session", async (t) => {
+	const { collectSecretsFromManifest } = await loadOrchestrator();
+
+	const tmp = makeTempDir("manifest-live-env");
+	const envKey = "CONTEXT7_API_KEY";
+	const saved = process.env[envKey];
+	t.after(() => {
+		if (saved === undefined) delete process.env[envKey];
+		else process.env[envKey] = saved;
 		rmSync(tmp, { recursive: true, force: true });
-	}
+	});
+
+	delete process.env[envKey];
+
+	const manifest = makeManifest([
+		{ key: envKey, status: "pending" },
+	]);
+	await writeManifestFile(tmp, manifest);
+
+	let callIndex = 0;
+	const mockCtx = {
+		cwd: tmp,
+		hasUI: true,
+		ui: {
+			custom: async (_factory: any) => {
+				callIndex++;
+				if (callIndex <= 1) return null; // summary screen dismiss
+				return "c7_live_test_key";
+			},
+		},
+	};
+
+	const result = await collectSecretsFromManifest(tmp, "M001", mockCtx as any);
+
+	assert.ok(result.applied.includes(envKey), "CONTEXT7_API_KEY should be applied");
+	assert.equal(process.env[envKey], "c7_live_test_key",
+		"applied keys should be available through process.env without restarting");
 });
 
 // ─── showSecretsSummary: render output ────────────────────────────────────────
@@ -423,47 +460,47 @@ test("collectOneSecret: no guidance provided — render output has no guidance s
 
 // ─── collectSecretsFromManifest: returns structured result ────────────────────
 
-test("collectSecretsFromManifest: returns result with applied, skipped, and existingSkipped arrays", async () => {
+test("collectSecretsFromManifest: returns result with applied, skipped, and existingSkipped arrays", async (t) => {
 	const { collectSecretsFromManifest } = await loadOrchestrator();
 
 	const tmp = makeTempDir("manifest-result");
 	const savedKey = process.env.RESULT_TEST_EXISTING;
-	try {
-		process.env.RESULT_TEST_EXISTING = "already-here";
-
-		const manifest = makeManifest([
-			{ key: "RESULT_TEST_EXISTING", status: "pending" },
-			{ key: "RESULT_TEST_NEW", status: "pending" },
-		]);
-		await writeManifestFile(tmp, manifest);
-
-		let callIndex = 0;
-		const mockCtx = {
-			cwd: tmp,
-			hasUI: true,
-			ui: {
-				custom: async (_factory: any) => {
-					callIndex++;
-					if (callIndex <= 1) return null; // summary dismiss
-					return "secret-value"; // collect the pending key
-				},
-			},
-		};
-
-		const result = await collectSecretsFromManifest(tmp, "M001", mockCtx as any);
-
-		// Verify result shape
-		assert.ok(Array.isArray(result.applied), "result should have applied array");
-		assert.ok(Array.isArray(result.skipped), "result should have skipped array");
-		assert.ok(Array.isArray(result.existingSkipped), "result should have existingSkipped array");
-
-		assert.ok(result.existingSkipped.includes("RESULT_TEST_EXISTING"),
-			"existing key should be in existingSkipped");
-		assert.ok(result.applied.includes("RESULT_TEST_NEW"),
-			"collected key should be in applied");
-	} finally {
+	t.after(() => {
 		delete process.env.RESULT_TEST_EXISTING;
 		if (savedKey !== undefined) process.env.RESULT_TEST_EXISTING = savedKey;
 		rmSync(tmp, { recursive: true, force: true });
-	}
+	});
+
+	process.env.RESULT_TEST_EXISTING = "already-here";
+
+	const manifest = makeManifest([
+		{ key: "RESULT_TEST_EXISTING", status: "pending" },
+		{ key: "RESULT_TEST_NEW", status: "pending" },
+	]);
+	await writeManifestFile(tmp, manifest);
+
+	let callIndex = 0;
+	const mockCtx = {
+		cwd: tmp,
+		hasUI: true,
+		ui: {
+			custom: async (_factory: any) => {
+				callIndex++;
+				if (callIndex <= 1) return null; // summary dismiss
+				return "secret-value"; // collect the pending key
+			},
+		},
+	};
+
+	const result = await collectSecretsFromManifest(tmp, "M001", mockCtx as any);
+
+	// Verify result shape
+	assert.ok(Array.isArray(result.applied), "result should have applied array");
+	assert.ok(Array.isArray(result.skipped), "result should have skipped array");
+	assert.ok(Array.isArray(result.existingSkipped), "result should have existingSkipped array");
+
+	assert.ok(result.existingSkipped.includes("RESULT_TEST_EXISTING"),
+		"existing key should be in existingSkipped");
+	assert.ok(result.applied.includes("RESULT_TEST_NEW"),
+		"collected key should be in applied");
 });

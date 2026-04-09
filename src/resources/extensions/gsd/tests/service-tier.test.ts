@@ -4,8 +4,8 @@ import assert from "node:assert/strict";
 import {
   supportsServiceTier,
   formatServiceTierStatus,
+  formatServiceTierFooterStatus,
   resolveServiceTierIcon,
-  type ServiceTierSetting,
 } from "../service-tier.ts";
 
 // ─── supportsServiceTier ─────────────────────────────────────────────────────
@@ -25,6 +25,14 @@ describe("supportsServiceTier", () => {
 
   test("returns true for openai/gpt-5.4 (provider-prefixed)", () => {
     assert.equal(supportsServiceTier("openai/gpt-5.4"), true);
+  });
+
+  test("returns true for vibeproxy-openai/gpt-5.4 (proxy provider-prefixed)", () => {
+    assert.equal(supportsServiceTier("vibeproxy-openai/gpt-5.4"), true);
+  });
+
+  test("returns false for provider-only identifier without gpt-5.4 model suffix", () => {
+    assert.equal(supportsServiceTier("vibeproxy-openai"), false);
   });
 
   test("returns false for claude-opus-4-6", () => {
@@ -52,6 +60,11 @@ describe("formatServiceTierStatus", () => {
     assert.ok(output.includes("disabled"), `Expected 'disabled' in: ${output}`);
   });
 
+  test("mentions provider-agnostic model gating", () => {
+    const output = formatServiceTierStatus("priority");
+    assert.ok(output.includes("regardless of provider"), `Expected provider note in: ${output}`);
+  });
+
   test("shows priority when set to priority", () => {
     const output = formatServiceTierStatus("priority");
     assert.ok(output.includes("priority"), `Expected 'priority' in: ${output}`);
@@ -60,6 +73,22 @@ describe("formatServiceTierStatus", () => {
   test("shows flex when set to flex", () => {
     const output = formatServiceTierStatus("flex");
     assert.ok(output.includes("flex"), `Expected 'flex' in: ${output}`);
+  });
+});
+
+// ─── formatServiceTierFooterStatus ───────────────────────────────────────────
+
+describe("formatServiceTierFooterStatus", () => {
+  test("returns priority footer status for supported model", () => {
+    assert.equal(formatServiceTierFooterStatus("priority", "vibeproxy-openai/gpt-5.4"), "fast: ⚡ priority");
+  });
+
+  test("returns undefined for unsupported model", () => {
+    assert.equal(formatServiceTierFooterStatus("priority", "claude-opus-4-6"), undefined);
+  });
+
+  test("returns undefined when tier is disabled", () => {
+    assert.equal(formatServiceTierFooterStatus(undefined, "gpt-5.4"), undefined);
   });
 });
 

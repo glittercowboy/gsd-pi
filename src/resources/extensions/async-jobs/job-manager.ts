@@ -22,6 +22,8 @@ export interface Job {
 	promise: Promise<void>;
 	resultText?: string;
 	errorText?: string;
+	/** Set by await_job when results are consumed. Suppresses follow-up delivery. */
+	awaited?: boolean;
 }
 
 export interface JobManagerOptions {
@@ -170,7 +172,10 @@ export class AsyncJobManager {
 
 	private deliverResult(job: Job): void {
 		if (!this.onJobComplete) return;
-		this.onJobComplete(job);
+		// Defer delivery by one microtask so await_job's .then() chain runs first
+		// and can set job.awaited = true before onJobComplete checks it (#2762).
+		const cb = this.onJobComplete;
+		queueMicrotask(() => cb(job));
 	}
 
 	private scheduleEviction(id: string): void {

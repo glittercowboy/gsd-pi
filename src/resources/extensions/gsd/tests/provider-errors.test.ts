@@ -1,6 +1,6 @@
 /**
  * Provider error handling tests — consolidated from:
- *   - provider-error-classify.test.ts (classifyProviderError)
+ *   - provider-error-classify.test.ts (classifyError)
  *   - network-error-fallback.test.ts (isTransientNetworkError, getNextFallbackModel)
  *   - agent-end-provider-error.test.ts (pauseAutoForProviderError)
  */
@@ -10,102 +10,150 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { classifyProviderError, pauseAutoForProviderError } from "../provider-error-pause.ts";
-import { getNextFallbackModel, isTransientNetworkError } from "../preferences.ts";
+import { classifyError, isTransient, isTransientNetworkError } from "../error-classifier.ts";
+import { pauseAutoForProviderError } from "../provider-error-pause.ts";
+import { resumeAutoAfterProviderDelay } from "../bootstrap/provider-error-resume.ts";
+import { getNextFallbackModel } from "../preferences.ts";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
-// ── classifyProviderError ────────────────────────────────────────────────────
+// ── classifyError ────────────────────────────────────────────────────────────
 
-test("classifyProviderError detects rate limit from 429", () => {
-  const result = classifyProviderError("HTTP 429 Too Many Requests");
-  assert.ok(result.isTransient);
-  assert.ok(result.isRateLimit);
-  assert.ok(result.suggestedDelayMs > 0);
+test("classifyError detects rate limit from 429", () => {
+  const result = classifyError("HTTP 429 Too Many Requests");
+  assert.ok(isTransient(result));
+  assert.equal(result.kind, "rate-limit");
+  assert.ok("retryAfterMs" in result && result.retryAfterMs > 0);
 });
 
-test("classifyProviderError detects rate limit from message", () => {
-  const result = classifyProviderError("rate limit exceeded");
-  assert.ok(result.isTransient);
-  assert.ok(result.isRateLimit);
+test("classifyError detects rate limit from message", () => {
+  const result = classifyError("rate limit exceeded");
+  assert.ok(isTransient(result));
+  assert.equal(result.kind, "rate-limit");
 });
 
-test("classifyProviderError extracts reset delay from message", () => {
-  const result = classifyProviderError("rate limit exceeded, reset in 45s");
-  assert.ok(result.isRateLimit);
-  assert.equal(result.suggestedDelayMs, 45000);
+test("classifyError extracts reset delay from message", () => {
+  const result = classifyError("rate limit exceeded, reset in 45s");
+  assert.equal(result.kind, "rate-limit");
+  assert.ok("retryAfterMs" in result && result.retryAfterMs === 45000);
 });
 
-test("classifyProviderError defaults to 60s for rate limit without reset", () => {
-  const result = classifyProviderError("429 too many requests");
-  assert.ok(result.isRateLimit);
-  assert.equal(result.suggestedDelayMs, 60_000);
+test("classifyError defaults to 60s for rate limit without reset", () => {
+  const result = classifyError("429 too many requests");
+  assert.equal(result.kind, "rate-limit");
+  assert.ok("retryAfterMs" in result && result.retryAfterMs === 60_000);
 });
 
-test("classifyProviderError detects Anthropic internal server error", () => {
+test("classifyError treats stream_exhausted_without_result as transient connection failure", () => {
+  const result = classifyError("stream_exhausted_without_result");
+  assert.ok(isTransient(result));
+  assert.equal(result.kind, "connection");
+  assert.ok("retryAfterMs" in result && result.retryAfterMs === 15_000);
+});
+
+test("classifyError detects Anthropic internal server error", () => {
   const msg = '{"type":"error","error":{"details":null,"type":"api_error","message":"Internal server error"}}';
-  const result = classifyProviderError(msg);
-  assert.ok(result.isTransient);
-  assert.ok(!result.isRateLimit);
-  assert.equal(result.suggestedDelayMs, 30_000);
+  const result = classifyError(msg);
+  assert.ok(isTransient(result));
+  assert.equal(result.kind, "server");
+  assert.ok("retryAfterMs" in result && result.retryAfterMs === 30_000);
 });
 
-test("classifyProviderError detects Codex server_error from extracted message", () => {
+test("classifyError detects Codex server_error from extracted message", () => {
   // After fix, mapCodexEvents extracts the nested error type and produces
   // "Codex server_error: <message>" instead of raw JSON.
   const msg = "Codex server_error: An error occurred while processing your request.";
-  const result = classifyProviderError(msg);
-  assert.ok(result.isTransient);
-  assert.ok(!result.isRateLimit);
-  assert.equal(result.suggestedDelayMs, 30_000);
+  const result = classifyError(msg);
+  assert.ok(isTransient(result));
+  assert.equal(result.kind, "server");
+  assert.ok("retryAfterMs" in result && result.retryAfterMs === 30_000);
 });
 
-test("classifyProviderError detects overloaded error", () => {
-  const result = classifyProviderError("overloaded_error: Overloaded");
-  assert.ok(result.isTransient);
-  assert.equal(result.suggestedDelayMs, 30_000);
+test("classifyError detects overloaded error", () => {
+  const result = classifyError("overloaded_error: Overloaded");
+  assert.ok(isTransient(result));
+  assert.ok("retryAfterMs" in result && result.retryAfterMs === 30_000);
 });
 
-test("classifyProviderError detects 503 service unavailable", () => {
-  const result = classifyProviderError("HTTP 503 Service Unavailable");
-  assert.ok(result.isTransient);
+test("classifyError detects 503 service unavailable", () => {
+  const result = classifyError("HTTP 503 Service Unavailable");
+  assert.ok(isTransient(result));
 });
 
-test("classifyProviderError detects 502 bad gateway", () => {
-  const result = classifyProviderError("HTTP 502 Bad Gateway");
-  assert.ok(result.isTransient);
+test("classifyError detects 502 bad gateway", () => {
+  const result = classifyError("HTTP 502 Bad Gateway");
+  assert.ok(isTransient(result));
 });
 
-test("classifyProviderError detects auth error as permanent", () => {
-  const result = classifyProviderError("unauthorized: invalid API key");
-  assert.ok(!result.isTransient);
-  assert.ok(!result.isRateLimit);
+test("classifyError detects auth error as permanent", () => {
+  const result = classifyError("unauthorized: invalid API key");
+  assert.ok(!isTransient(result));
+  assert.equal(result.kind, "permanent");
 });
 
-test("classifyProviderError detects billing error as permanent", () => {
-  const result = classifyProviderError("billing issue: payment required");
-  assert.ok(!result.isTransient);
+test("classifyError detects billing error as permanent", () => {
+  const result = classifyError("billing issue: payment required");
+  assert.ok(!isTransient(result));
 });
 
-test("classifyProviderError detects quota exceeded as permanent", () => {
-  const result = classifyProviderError("quota exceeded for this month");
-  assert.ok(!result.isTransient);
+test("classifyError detects quota exceeded as permanent", () => {
+  const result = classifyError("quota exceeded for this month");
+  assert.ok(!isTransient(result));
 });
 
-test("classifyProviderError treats unknown error as permanent", () => {
-  const result = classifyProviderError("something went wrong");
-  assert.ok(!result.isTransient);
+test("classifyError treats unknown error as not transient", () => {
+  const result = classifyError("something went wrong");
+  assert.ok(!isTransient(result));
+  assert.equal(result.kind, "unknown");
 });
 
-test("classifyProviderError treats empty string as permanent", () => {
-  const result = classifyProviderError("");
-  assert.ok(!result.isTransient);
+test("classifyError treats empty string as not transient", () => {
+  const result = classifyError("");
+  assert.ok(!isTransient(result));
 });
 
-test("classifyProviderError: rate limit takes precedence over auth keywords", () => {
-  const result = classifyProviderError("429 unauthorized rate limit");
-  assert.ok(result.isRateLimit);
-  assert.ok(result.isTransient);
+test("classifyError: rate limit takes precedence over auth keywords", () => {
+  const result = classifyError("429 unauthorized rate limit");
+  assert.equal(result.kind, "rate-limit");
+  assert.ok(isTransient(result));
+});
+
+// ── STREAM_RE: V8 JSON parse error variants (#2916) ────────────────────────
+
+test("classifyError: 'Expected comma/brace after property value in JSON' is transient stream", () => {
+  const result = classifyError(
+    "Expected ',' or '}' after property value in JSON at position 2056 (line 1 column 2057)"
+  );
+  assert.equal(result.kind, "stream");
+  assert.ok(isTransient(result));
+  assert.ok("retryAfterMs" in result && result.retryAfterMs === 15_000);
+});
+
+test("classifyError: 'Expected colon after property name in JSON' is transient stream", () => {
+  const result = classifyError(
+    "Expected ':' after property name in JSON at position 500 (line 1 column 501)"
+  );
+  assert.equal(result.kind, "stream");
+  assert.ok(isTransient(result));
+  assert.ok("retryAfterMs" in result && result.retryAfterMs === 15_000);
+});
+
+test("classifyError: 'Expected property name or brace in JSON' is transient stream", () => {
+  const result = classifyError(
+    "Expected property name or '}' in JSON at position 42 (line 1 column 43)"
+  );
+  assert.equal(result.kind, "stream");
+  assert.ok(isTransient(result));
+  assert.ok("retryAfterMs" in result && result.retryAfterMs === 15_000);
+});
+
+test("classifyError: 'Unterminated string in JSON' is transient stream", () => {
+  const result = classifyError(
+    "Unterminated string in JSON at position 100 (line 1 column 101)"
+  );
+  assert.equal(result.kind, "stream");
+  assert.ok(isTransient(result));
+  assert.ok("retryAfterMs" in result && result.retryAfterMs === 15_000);
 });
 
 // ── isTransientNetworkError ──────────────────────────────────────────────────
@@ -259,14 +307,98 @@ test("pauseAutoForProviderError falls back to indefinite pause when not rate lim
   ]);
 });
 
+// ── resumeAutoAfterProviderDelay ────────────────────────────────────────────
+
+test("resumeAutoAfterProviderDelay restarts paused auto-mode from the recorded base path", async () => {
+  const startCalls: Array<{ base: string; verboseMode: boolean; step?: boolean }> = [];
+  const result = await resumeAutoAfterProviderDelay(
+    {} as any,
+    { ui: { notify() {} } } as any,
+    {
+      getSnapshot: () => ({
+        active: false,
+        paused: true,
+        stepMode: true,
+        basePath: "/tmp/project",
+      }),
+      startAuto: async (_ctx, _pi, base, verboseMode, options) => {
+        startCalls.push({ base, verboseMode, step: options?.step });
+      },
+    },
+  );
+
+  assert.equal(result, "resumed");
+  assert.deepEqual(startCalls, [
+    { base: "/tmp/project", verboseMode: false, step: true },
+  ]);
+});
+
+test("resumeAutoAfterProviderDelay does not double-start when auto-mode is already active", async () => {
+  let startCalls = 0;
+  const result = await resumeAutoAfterProviderDelay(
+    {} as any,
+    { ui: { notify() {} } } as any,
+    {
+      getSnapshot: () => ({
+        active: true,
+        paused: false,
+        stepMode: false,
+        basePath: "/tmp/project",
+      }),
+      startAuto: async () => {
+        startCalls += 1;
+      },
+    },
+  );
+
+  assert.equal(result, "already-active");
+  assert.equal(startCalls, 0);
+});
+
+test("resumeAutoAfterProviderDelay leaves auto paused when no base path is available", async () => {
+  const notifications: Array<{ message: string; level: string }> = [];
+  let startCalls = 0;
+
+  const result = await resumeAutoAfterProviderDelay(
+    {} as any,
+    {
+      ui: {
+        notify(message: string, level?: string) {
+          notifications.push({ message, level: level ?? "info" });
+        },
+      },
+    } as any,
+    {
+      getSnapshot: () => ({
+        active: false,
+        paused: true,
+        stepMode: false,
+        basePath: "",
+      }),
+      startAuto: async () => {
+        startCalls += 1;
+      },
+    },
+  );
+
+  assert.equal(result, "missing-base");
+  assert.equal(startCalls, 0);
+  assert.deepEqual(notifications, [
+    {
+      message: "Provider error recovery delay elapsed, but no paused auto-mode base path was available. Leaving auto-mode paused.",
+      level: "warning",
+    },
+  ]);
+});
+
 // ── Escalating backoff for transient errors (#1166) ─────────────────────────
 
 test("agent-end-recovery.ts tracks consecutive transient errors for escalating backoff", () => {
   const src = readFileSync(join(__dirname, "..", "bootstrap", "agent-end-recovery.ts"), "utf-8");
 
   assert.ok(
-    src.includes("consecutiveTransientErrors"),
-    "agent-end-recovery.ts must track consecutiveTransientErrors for escalating backoff (#1166)",
+    src.includes("consecutiveTransientCount"),
+    "agent-end-recovery.ts must track consecutiveTransientCount for escalating backoff (#1166)",
   );
   assert.ok(
     src.includes("MAX_TRANSIENT_AUTO_RESUMES"),
@@ -274,15 +406,13 @@ test("agent-end-recovery.ts tracks consecutive transient errors for escalating b
   );
 });
 
-test("agent-end-recovery.ts resets consecutive transient error counter on success", () => {
+test("agent-end-recovery.ts resets retry state before resolveAgentEnd on success", () => {
   const src = readFileSync(join(__dirname, "..", "bootstrap", "agent-end-recovery.ts"), "utf-8");
 
-  // After successful agent_end (before resolveAgentEnd), the counter must be reset.
-  // Use a regex across the success block so CRLF checkouts on Windows do not
-  // push the reset line outside a fixed substring window.
+  // After successful agent_end, resetRetryState must be called before resolveAgentEnd.
   assert.ok(
-    /consecutiveTransientErrors\s*=\s*0\s*;[\s\S]{0,250}resolveAgentEnd/.test(src),
-    "consecutive transient error counter must be reset before resolveAgentEnd on the success path (#1166)",
+    /resetRetryState[\s\S]{0,250}resolveAgentEnd/.test(src),
+    "resetRetryState must be called before resolveAgentEnd on the success path (#1166)",
   );
 });
 
@@ -291,8 +421,21 @@ test("agent-end-recovery.ts applies escalating delay for repeated transient erro
 
   // Must contain the exponential backoff formula (may span multiple lines)
   assert.ok(
-    src.includes("2 ** Math.max(0, consecutiveTransientErrors"),
+    src.includes("2 ** Math.max(0, retryState.consecutiveTransientCount"),
     "agent-end-recovery.ts must escalate retryAfterMs exponentially for consecutive transient errors (#1166)",
+  );
+});
+
+test("agent-end-recovery.ts resumes transient provider pauses through startAuto instead of a hidden prompt", () => {
+  const src = readFileSync(join(__dirname, "..", "bootstrap", "agent-end-recovery.ts"), "utf-8");
+
+  assert.ok(
+    src.includes("resumeAutoAfterProviderDelay"),
+    "agent-end-recovery.ts must resume paused auto-mode through resumeAutoAfterProviderDelay (#2813)",
+  );
+  assert.ok(
+    !src.includes('Continue execution — provider error recovery delay elapsed.'),
+    "transient provider resume must not rely on a hidden continue prompt (#2813)",
   );
 });
 
@@ -315,13 +458,74 @@ test("openai-codex-responses.ts extracts nested error fields", () => {
   );
 });
 
+// ── Fix 1: resetTransientRetryState resets module-level singleton ────────────
+
+test("resetTransientRetryState is exported from agent-end-recovery.ts", () => {
+  const src = readFileSync(join(__dirname, "..", "bootstrap", "agent-end-recovery.ts"), "utf-8");
+  assert.ok(
+    src.includes("export function resetTransientRetryState"),
+    "agent-end-recovery.ts must export resetTransientRetryState for provider-error-resume.ts",
+  );
+});
+
+test("provider-error-resume.ts calls resetTransientRetryState before startAuto", () => {
+  const src = readFileSync(join(__dirname, "..", "bootstrap", "provider-error-resume.ts"), "utf-8");
+  assert.ok(
+    src.includes("resetTransientRetryState"),
+    "provider-error-resume.ts must import and call resetTransientRetryState",
+  );
+  // Ensure reset is called BEFORE startAuto — order matters
+  const resetIdx = src.indexOf("resetTransientRetryState()");
+  const startIdx = src.indexOf("await deps.startAuto(");
+  assert.ok(
+    resetIdx !== -1 && startIdx !== -1 && resetIdx < startIdx,
+    "resetTransientRetryState() must be called before deps.startAuto()",
+  );
+});
+
+// ── Fix 2: Session creation timeout treated as transient in phases.ts ───────
+
+test("phases.ts handles timeout session-creation failures with pause instead of stopAuto", () => {
+  const src = readFileSync(join(__dirname, "..", "auto", "phases.ts"), "utf-8");
+
+  // The cancelled + isTransient + category=timeout path must pause, not hard-stop
+  assert.ok(
+    src.includes('category === "timeout"'),
+    "phases.ts must check category === 'timeout' on transient cancelled unitResults",
+  );
+  // Must call pauseAuto (not stopAuto) for timeout cancellations
+  assert.ok(
+    /category === "timeout"[\s\S]{0,300}pauseAuto/.test(src),
+    "phases.ts must call pauseAuto for session-timeout failures (not stopAuto or continue)",
+  );
+  // Must NOT use action: "continue" for transient cancellations (causes infinite loops)
+  assert.ok(
+    !/isTransient[\s\S]{0,500}action:\s*"continue"/.test(src),
+    "phases.ts must NOT return action:continue for cancelled units — use break+pause instead",
+  );
+});
+
+// ── Fix 3: MAX_TRANSIENT_AUTO_RESUMES raised to 8 ───────────────────────────
+
+test("MAX_TRANSIENT_AUTO_RESUMES is at least 8 for sustained overload resilience", () => {
+  const src = readFileSync(join(__dirname, "..", "bootstrap", "agent-end-recovery.ts"), "utf-8");
+  const match = src.match(/MAX_TRANSIENT_AUTO_RESUMES\s*=\s*(\d+)/);
+  assert.ok(match, "MAX_TRANSIENT_AUTO_RESUMES must be defined");
+  const value = Number(match![1]);
+  assert.ok(
+    value >= 8,
+    `MAX_TRANSIENT_AUTO_RESUMES must be >= 8 for sustained overload resilience, got ${value}`,
+  );
+});
+
 // ── agent-session retryable regex handles server_error (#1166) ──────────────
 
 test("agent-session retryable error regex matches server_error (underscore)", () => {
   // This regex is extracted from _isRetryableError in agent-session.ts.
   // It must match both "server error" (space) and "server_error" (underscore)
   // to properly classify Codex streaming errors as retryable.
-  const retryableRegex = /overloaded|rate.?limit|too many requests|429|500|502|503|504|service.?unavailable|server.?error|internal.?error|connection.?error|connection.?refused|other side closed|fetch failed|upstream.?connect|reset before headers|terminated|retry delay|network.?(?:is\s+)?unavailable|credentials.*expired|temporarily backed off/i;
+  // "temporarily backed off" intentionally excluded — see #3429
+  const retryableRegex = /overloaded|rate.?limit|too many requests|429|500|502|503|504|service.?unavailable|server.?error|internal.?error|connection.?error|connection.?refused|other side closed|fetch failed|upstream.?connect|reset before headers|terminated|retry delay|network.?(?:is\s+)?unavailable|credentials.*expired|extra usage is required/i;
 
   // server_error (with underscore — Codex streaming error format)
   assert.ok(retryableRegex.test("Codex server_error: An error occurred"));

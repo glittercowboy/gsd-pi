@@ -72,6 +72,100 @@ const AskUserQuestionsParams = Type.Object({
 	}),
 });
 
+// ─── Per-turn deduplication ──────────────────────────────────────────────────
+// Prevents duplicate question dispatches (especially to remote channels like
+// Discord) when the LLM calls ask_user_questions multiple times with the same
+// questions in a single turn. Keyed by full canonicalized payload (id, header,
+// question, options, allowMultiple) — not just IDs — so that calls with the
+// same IDs but different text/options are treated as distinct.
+
+import { createHash } from "node:crypto";
+
+interface CachedResult {
+	content: { type: "text"; text: string }[];
+	details: AskUserQuestionsDetails;
+}
+
+const turnCache = new Map<string, CachedResult>();
+
+/** @internal Exported for testing only. */
+export function questionSignature(questions: Question[]): string {
+	const canonical = questions
+		.map((q) => ({
+			id: q.id,
+			header: q.header,
+			question: q.question,
+			options: (q.options || []).map((o) => ({ label: o.label, description: o.description })),
+			allowMultiple: !!q.allowMultiple,
+		}))
+		.sort((a, b) => a.id.localeCompare(b.id));
+	return createHash("sha256").update(JSON.stringify(canonical)).digest("hex").slice(0, 16);
+}
+
+/** Reset the dedup cache. Called on session boundaries. */
+export function resetAskUserQuestionsCache(): void {
+	turnCache.clear();
+}
+
+// ─── Race helper ─────────────────────────────────────────────────────────────
+
+interface RaceableResult {
+	content: { type: "text"; text: string }[];
+	details?: unknown;
+}
+
+/**
+ * Race a remote channel dispatch against the local TUI. The first to produce
+ * a valid (non-error, non-timeout) result wins. The loser is cancelled via
+ * the shared AbortController.
+ *
+ * If the local TUI responds first, the remote poll is aborted (the message
+ * stays in Discord/Slack but polling stops). If remote responds first, the
+ * local TUI prompt is cancelled.
+ *
+ * Returns null only when both sides fail or are cancelled.
+ */
+async function raceRemoteAndLocal(
+	startRemote: () => Promise<RaceableResult | null>,
+	startLocal: () => Promise<RoundResult | null | undefined>,
+	controller: AbortController,
+	questions: Question[],
+): Promise<RaceableResult | null> {
+	// Wrap local TUI result into the same shape as remote results
+	const localPromise = startLocal().then((result): RaceableResult | null => {
+		if (!result || Object.keys(result.answers).length === 0) return null;
+		return {
+			content: [{ type: "text" as const, text: formatForLLM(result) }],
+			details: { questions, response: result, cancelled: false } satisfies LocalResultDetails,
+		};
+	}).catch(() => null);
+
+	const remotePromise = startRemote().then((result): RaceableResult | null => {
+		if (!result) return null;
+		const details = result.details as Record<string, unknown> | undefined;
+		// Treat timeouts and errors as non-wins — let the local TUI win instead
+		if (details?.timed_out || details?.error) return null;
+		return result;
+	}).catch(() => null);
+
+	// Race: first non-null result wins
+	const winner = await Promise.race([
+		localPromise.then((r) => r ? { source: "local" as const, result: r } : null),
+		remotePromise.then((r) => r ? { source: "remote" as const, result: r } : null),
+	]);
+
+	if (winner) {
+		// Cancel the loser
+		controller.abort();
+		return winner.result;
+	}
+
+	// First to resolve was null — wait for the other
+	const [localResult, remoteResult] = await Promise.all([localPromise, remotePromise]);
+	controller.abort();
+	return localResult ?? remoteResult;
+}
+
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 const OTHER_OPTION_LABEL = "None of the above";
@@ -121,6 +215,16 @@ export default function AskUserQuestions(pi: ExtensionAPI) {
 		parameters: AskUserQuestionsParams,
 
 		async execute(_toolCallId, params, signal, _onUpdate, ctx) {
+			// ── Per-turn dedup: return cached result for identical question sets ──
+			const sig = questionSignature(params.questions);
+			const cached = turnCache.get(sig);
+			if (cached) {
+				return {
+					content: [{ type: "text" as const, text: cached.content[0].text + "\n(Returned cached answer — this question set was already asked this turn.)" }],
+					details: cached.details,
+				};
+			}
+
 			// Validation
 			if (params.questions.length === 0 || params.questions.length > 3) {
 				return errorResult("Error: questions must contain 1-3 items", params.questions);
@@ -135,10 +239,54 @@ export default function AskUserQuestions(pi: ExtensionAPI) {
 				}
 			}
 
-			if (!ctx.hasUI) {
-				const { tryRemoteQuestions } = await import("./remote-questions/manager.js");
+			// ── Routing: race remote + local, remote-only, or local-only ────────
+			const { tryRemoteQuestions, isRemoteConfigured } = await import("./remote-questions/manager.js");
+			const hasRemote = isRemoteConfigured();
+
+			// Case 1: Both remote and local UI available — race them.
+			// The first response wins; the loser is cancelled via AbortController.
+			if (hasRemote && ctx.hasUI) {
+				const raceController = new AbortController();
+				// Merge the parent signal so external cancellation propagates.
+				const onParentAbort = () => raceController.abort();
+				signal?.addEventListener("abort", onParentAbort, { once: true });
+				const raceSignal = raceController.signal;
+
+				const raceResult = await raceRemoteAndLocal(
+					() => tryRemoteQuestions(params.questions, raceSignal),
+					() => showInterviewRound(params.questions, { signal: raceSignal }, ctx as any),
+					raceController,
+					params.questions,
+				);
+
+				signal?.removeEventListener("abort", onParentAbort);
+
+				if (raceResult) {
+					const details = raceResult.details as Record<string, unknown> | undefined;
+					if (details && !details.timed_out && !details.error && !details.cancelled) {
+						turnCache.set(sig, raceResult as unknown as CachedResult);
+					}
+					return { ...raceResult, details: raceResult.details as unknown };
+				}
+				// Both sides failed/cancelled — fall through to error
+				return errorResult("ask_user_questions: no response received from local UI or remote channel", params.questions);
+			}
+
+			// Case 2: Remote configured but no local UI (headless) — remote only.
+			if (hasRemote && !ctx.hasUI) {
 				const remoteResult = await tryRemoteQuestions(params.questions, signal);
-				if (remoteResult) return { ...remoteResult, details: remoteResult.details as unknown };
+				if (remoteResult) {
+					const remoteDetails = remoteResult.details as Record<string, unknown> | undefined;
+					if (remoteDetails && !remoteDetails.timed_out && !remoteDetails.error) {
+						turnCache.set(sig, remoteResult as unknown as CachedResult);
+					}
+					return { ...remoteResult, details: remoteResult.details as unknown };
+				}
+				return errorResult("Error: remote channel configured but returned no result", params.questions);
+			}
+
+			// Case 3: No remote — local UI only.
+			if (!ctx.hasUI) {
 				return errorResult("Error: UI not available (non-interactive mode)", params.questions);
 			}
 
@@ -162,9 +310,27 @@ export default function AskUserQuestions(pi: ExtensionAPI) {
 					if (selected === undefined) {
 						return errorResult("ask_user_questions was cancelled", params.questions);
 					}
-					answers[q.id] = {
-						answers: Array.isArray(selected) ? selected : [selected],
-					};
+
+					// When the user picks "None of the above" on a single-select
+					// question, prompt for a free-text explanation so they are not
+					// trapped in a re-asking loop (bug #2715).
+					let freeTextNote = "";
+					const selectedStr = Array.isArray(selected) ? selected[0] : selected;
+					if (!q.allowMultiple && selectedStr === OTHER_OPTION_LABEL) {
+						const note = await ctx.ui.input(
+							`${q.header}: Please explain in your own words`,
+							"Type your answer here…",
+						);
+						if (note) {
+							freeTextNote = note;
+						}
+					}
+
+					const answerList = Array.isArray(selected) ? selected : [selected];
+					if (freeTextNote) {
+						answerList.push(`user_note: ${freeTextNote}`);
+					}
+					answers[q.id] = { answers: answerList };
 				}
 				const roundResult: RoundResult = {
 					endInterview: false,
@@ -175,7 +341,7 @@ export default function AskUserQuestions(pi: ExtensionAPI) {
 						]),
 					),
 				};
-				return {
+				const fallbackResult = {
 					content: [{ type: "text" as const, text: JSON.stringify({ answers }) }],
 					details: {
 						questions: params.questions,
@@ -183,6 +349,8 @@ export default function AskUserQuestions(pi: ExtensionAPI) {
 						cancelled: false,
 					} satisfies LocalResultDetails,
 				};
+				turnCache.set(sig, fallbackResult);
+				return fallbackResult;
 			}
 
 			// Check if cancelled (empty answers = user exited)
@@ -194,10 +362,12 @@ export default function AskUserQuestions(pi: ExtensionAPI) {
 				};
 			}
 
-			return {
-				content: [{ type: "text", text: formatForLLM(result) }],
+			const successResult = {
+				content: [{ type: "text" as const, text: formatForLLM(result) }],
 				details: { questions: params.questions, response: result, cancelled: false } satisfies LocalResultDetails,
 			};
+			turnCache.set(sig, successResult);
+			return successResult;
 		},
 
 		// ─── Rendering ────────────────────────────────────────────────────────

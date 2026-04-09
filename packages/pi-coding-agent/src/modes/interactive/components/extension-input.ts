@@ -74,6 +74,7 @@ export class ExtensionInputComponent extends Container implements Focusable {
 	handleInput(keyData: string): void {
 		const kb = getEditorKeybindings();
 		if (kb.matches(keyData, "selectConfirm") || keyData === "\n") {
+			if (this.input.getValue().trim() === "") return;
 			this.onSubmitCallback(this.input.getValue());
 		} else if (kb.matches(keyData, "selectCancel")) {
 			this.onCancelCallback();

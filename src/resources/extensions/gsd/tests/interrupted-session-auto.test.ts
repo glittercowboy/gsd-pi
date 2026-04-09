@@ -57,7 +57,7 @@ function writeCompleteArtifacts(base: string): void {
   writeFileSync(join(milestoneDir, "M001-SUMMARY.md"), "# Milestone Summary\nDone.\n", "utf-8");
 }
 
-function writeLock(base: string, unitType: string, unitId: string, completedUnits = 1): void {
+function writeLock(base: string, unitType: string, unitId: string): void {
   writeFileSync(
     join(base, ".gsd", "auto.lock"),
     JSON.stringify({
@@ -66,7 +66,6 @@ function writeLock(base: string, unitType: string, unitId: string, completedUnit
       unitType,
       unitId,
       unitStartedAt: new Date().toISOString(),
-      completedUnits,
     }, null, 2),
     "utf-8",
   );
@@ -87,7 +86,7 @@ test("direct /gsd auto stale complete repo yields stale classification with no r
   try {
     writeRoadmap(base, true);
     writeCompleteArtifacts(base);
-    writeLock(base, "execute-task", "M001/S01/T01", 1);
+    writeLock(base, "execute-task", "M001/S01/T01");
 
     const assessment = await assessInterruptedSession(base);
     assert.equal(assessment.classification, "stale");
@@ -103,7 +102,7 @@ test("direct /gsd auto paused-session metadata remains recoverable when work is 
   try {
     writeRoadmap(base, false);
     writePausedSession(base, "M001", false);
-    writeLock(base, "execute-task", "M001/S01/T01", 1);
+    writeLock(base, "execute-task", "M001/S01/T01");
 
     const assessment = await assessInterruptedSession(base);
     assert.equal(assessment.classification, "recoverable");

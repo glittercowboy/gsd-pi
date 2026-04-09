@@ -73,7 +73,7 @@ describe("DevWorkflowEngine", () => {
     assert.equal(engine.engineId, "dev");
   });
 
-  test("deriveState returns EngineState with expected fields", async () => {
+  test("deriveState returns EngineState with expected fields", async (t) => {
     const { DevWorkflowEngine } = await import("../dev-workflow-engine.ts");
     const engine = new DevWorkflowEngine();
 
@@ -81,31 +81,29 @@ describe("DevWorkflowEngine", () => {
     const tempDir = mkdtempSync(join(tmpdir(), "gsd-engine-test-"));
     mkdirSync(join(tempDir, ".gsd", "milestones"), { recursive: true });
 
-    try {
-      const state = await engine.deriveState(tempDir);
+    t.after(() => rmSync(tempDir, { recursive: true, force: true }));
 
-      assert.equal(typeof state.phase, "string", "phase should be a string");
-      assert.ok(
-        "currentMilestoneId" in state,
-        "state should have currentMilestoneId",
-      );
-      assert.ok(
-        "activeSliceId" in state,
-        "state should have activeSliceId",
-      );
-      assert.ok(
-        "activeTaskId" in state,
-        "state should have activeTaskId",
-      );
-      assert.equal(
-        typeof state.isComplete,
-        "boolean",
-        "isComplete should be boolean",
-      );
-      assert.ok("raw" in state, "state should have raw field");
-    } finally {
-      rmSync(tempDir, { recursive: true, force: true });
-    }
+    const state = await engine.deriveState(tempDir);
+
+    assert.equal(typeof state.phase, "string", "phase should be a string");
+    assert.ok(
+      "currentMilestoneId" in state,
+      "state should have currentMilestoneId",
+    );
+    assert.ok(
+      "activeSliceId" in state,
+      "state should have activeSliceId",
+    );
+    assert.ok(
+      "activeTaskId" in state,
+      "state should have activeTaskId",
+    );
+    assert.equal(
+      typeof state.isComplete,
+      "boolean",
+      "isComplete should be boolean",
+    );
+    assert.ok("raw" in state, "state should have raw field");
   });
 
   test("reconcile returns continue for non-complete state", async () => {
@@ -280,16 +278,14 @@ describe("Kill switch (GSD_ENGINE_BYPASS)", () => {
     }
   });
 
-  test("GSD_ENGINE_BYPASS=1 does not affect resolveEngine (bypass checked in autoLoop)", async () => {
+  test("GSD_ENGINE_BYPASS=1 does not affect resolveEngine (bypass checked in autoLoop)", async (t) => {
     const { resolveEngine } = await import("../engine-resolver.ts");
     process.env.GSD_ENGINE_BYPASS = "1";
-    try {
-      // resolveEngine should still resolve normally — bypass is checked in autoLoop
-      const { engine } = resolveEngine({ activeEngineId: null });
-      assert.ok(engine, "should return an engine even with bypass set");
-    } finally {
-      delete process.env.GSD_ENGINE_BYPASS;
-    }
+    t.after(() => delete process.env.GSD_ENGINE_BYPASS);
+
+    // resolveEngine should still resolve normally — bypass is checked in autoLoop
+    const { engine } = resolveEngine({ activeEngineId: null });
+    assert.ok(engine, "should return an engine even with bypass set");
   });
 });
 

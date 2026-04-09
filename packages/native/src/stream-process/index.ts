@@ -33,8 +33,8 @@ export function processStreamChunk(
   // Convert StreamState arrays to the format napi expects (Vec<u8>)
   const napiState = state
     ? {
-        utf8Pending: Buffer.from(state.utf8Pending),
-        ansiPending: Buffer.from(state.ansiPending),
+        utf8Pending: Array.from(state.utf8Pending),
+        ansiPending: Array.from(state.ansiPending),
       }
     : undefined;
 

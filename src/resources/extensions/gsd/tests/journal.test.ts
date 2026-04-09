@@ -1,4 +1,4 @@
-import test from "node:test";
+import { describe, test, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import {
   mkdirSync,
@@ -46,9 +46,12 @@ function makeEntry(overrides: Partial<JournalEntry> = {}): JournalEntry {
 
 // ─── emitJournalEvent ─────────────────────────────────────────────────────────
 
-test("emitJournalEvent creates journal directory and JSONL file", () => {
-  const base = makeTmpBase();
-  try {
+describe("emitJournalEvent", () => {
+  let base: string;
+  beforeEach(() => { base = makeTmpBase(); });
+  afterEach(() => { cleanup(base); });
+
+  test("creates journal directory and JSONL file", () => {
     const entry = makeEntry();
     emitJournalEvent(base, entry);
 
@@ -61,14 +64,9 @@ test("emitJournalEvent creates journal directory and JSONL file", () => {
     assert.equal(parsed.flowId, entry.flowId);
     assert.equal(parsed.seq, entry.seq);
     assert.equal(parsed.eventType, entry.eventType);
-  } finally {
-    cleanup(base);
-  }
-});
+  });
 
-test("emitJournalEvent appends multiple lines to the same file", () => {
-  const base = makeTmpBase();
-  try {
+  test("appends multiple lines to the same file", () => {
     emitJournalEvent(base, makeEntry({ seq: 0 }));
     emitJournalEvent(base, makeEntry({ seq: 1, eventType: "dispatch-match" }));
     emitJournalEvent(base, makeEntry({ seq: 2, eventType: "unit-start" }));
@@ -82,26 +80,9 @@ test("emitJournalEvent appends multiple lines to the same file", () => {
     assert.equal(parsed[1].seq, 1);
     assert.equal(parsed[2].seq, 2);
     assert.equal(parsed[1].eventType, "dispatch-match");
-  } finally {
-    cleanup(base);
-  }
-});
+  });
 
-test("emitJournalEvent auto-creates nonexistent parent directory", () => {
-  const base = join(tmpdir(), `gsd-journal-test-${randomUUID()}`);
-  // Don't create .gsd/ — emitJournalEvent should handle it via mkdirSync recursive
-  try {
-    emitJournalEvent(base, makeEntry());
-    const filePath = join(base, ".gsd", "journal", "2025-03-21.jsonl");
-    assert.ok(existsSync(filePath), "File should exist even when parent dirs did not");
-  } finally {
-    cleanup(base);
-  }
-});
-
-test("emitJournalEvent preserves optional fields (rule, causedBy, data)", () => {
-  const base = makeTmpBase();
-  try {
+  test("preserves optional fields (rule, causedBy, data)", () => {
     const entry = makeEntry({
       rule: "my-dispatch-rule",
       causedBy: { flowId: "flow-prior", seq: 3 },
@@ -115,9 +96,42 @@ test("emitJournalEvent preserves optional fields (rule, causedBy, data)", () => 
     assert.deepEqual(parsed.causedBy, { flowId: "flow-prior", seq: 3 });
     assert.equal(parsed.data.unitId, "M001/S01/T01");
     assert.equal(parsed.data.status, "ok");
-  } finally {
-    cleanup(base);
-  }
+  });
+
+  test("silently catches read-only directory errors", () => {
+    const journalDir = join(base, ".gsd", "journal");
+    mkdirSync(journalDir, { recursive: true });
+
+    // Make the journal directory read-only
+    chmodSync(journalDir, 0o444);
+
+    // Should not throw
+    assert.doesNotThrow(() => {
+      emitJournalEvent(base, makeEntry());
+    });
+
+    // Restore permissions for cleanup
+    try {
+      chmodSync(journalDir, 0o755);
+    } catch {
+      /* */
+    }
+  });
+});
+
+describe("emitJournalEvent — auto-creates parent directory", () => {
+  let base: string;
+  beforeEach(() => {
+    base = join(tmpdir(), `gsd-journal-test-${randomUUID()}`);
+    // Don't create .gsd/ — emitJournalEvent should handle it via mkdirSync recursive
+  });
+  afterEach(() => { cleanup(base); });
+
+  test("auto-creates nonexistent parent directory", () => {
+    emitJournalEvent(base, makeEntry());
+    const filePath = join(base, ".gsd", "journal", "2025-03-21.jsonl");
+    assert.ok(existsSync(filePath), "File should exist even when parent dirs did not");
+  });
 });
 
 test("emitJournalEvent silently catches write errors (no throw)", () => {
@@ -127,35 +141,14 @@ test("emitJournalEvent silently catches write errors (no throw)", () => {
   });
 });
 
-test("emitJournalEvent silently catches read-only directory errors", () => {
-  const base = makeTmpBase();
-  const journalDir = join(base, ".gsd", "journal");
-  mkdirSync(journalDir, { recursive: true });
-
-  try {
-    // Make the journal directory read-only
-    chmodSync(journalDir, 0o444);
-
-    // Should not throw
-    assert.doesNotThrow(() => {
-      emitJournalEvent(base, makeEntry());
-    });
-  } finally {
-    // Restore permissions for cleanup
-    try {
-      chmodSync(journalDir, 0o755);
-    } catch {
-      /* */
-    }
-    cleanup(base);
-  }
-});
-
 // ─── Daily Rotation ───────────────────────────────────────────────────────────
 
-test("daily rotation: events with different dates go to different files", () => {
-  const base = makeTmpBase();
-  try {
+describe("daily rotation", () => {
+  let base: string;
+  beforeEach(() => { base = makeTmpBase(); });
+  afterEach(() => { cleanup(base); });
+
+  test("events with different dates go to different files", () => {
     emitJournalEvent(base, makeEntry({ ts: "2025-03-20T23:59:59.000Z" }));
     emitJournalEvent(base, makeEntry({ ts: "2025-03-21T00:00:01.000Z" }));
     emitJournalEvent(base, makeEntry({ ts: "2025-03-22T12:00:00.000Z" }));
@@ -172,16 +165,17 @@ test("daily rotation: events with different dates go to different files", () => 
         .split("\n");
       assert.equal(lines.length, 1, `${date}.jsonl should have 1 line`);
     }
-  } finally {
-    cleanup(base);
-  }
+  });
 });
 
 // ─── queryJournal ─────────────────────────────────────────────────────────────
 
-test("queryJournal returns all entries when no filters provided", () => {
-  const base = makeTmpBase();
-  try {
+describe("queryJournal", () => {
+  let base: string;
+  beforeEach(() => { base = makeTmpBase(); });
+  afterEach(() => { cleanup(base); });
+
+  test("returns all entries when no filters provided", () => {
     emitJournalEvent(base, makeEntry({ seq: 0 }));
     emitJournalEvent(base, makeEntry({ seq: 1, eventType: "dispatch-match" }));
 
@@ -189,14 +183,9 @@ test("queryJournal returns all entries when no filters provided", () => {
     assert.equal(results.length, 2);
     assert.equal(results[0].seq, 0);
     assert.equal(results[1].seq, 1);
-  } finally {
-    cleanup(base);
-  }
-});
+  });
 
-test("queryJournal filters by flowId", () => {
-  const base = makeTmpBase();
-  try {
+  test("filters by flowId", () => {
     emitJournalEvent(base, makeEntry({ flowId: "flow-aaa", seq: 0 }));
     emitJournalEvent(base, makeEntry({ flowId: "flow-bbb", seq: 1 }));
     emitJournalEvent(base, makeEntry({ flowId: "flow-aaa", seq: 2 }));
@@ -204,14 +193,9 @@ test("queryJournal filters by flowId", () => {
     const results = queryJournal(base, { flowId: "flow-aaa" });
     assert.equal(results.length, 2);
     assert.ok(results.every(e => e.flowId === "flow-aaa"));
-  } finally {
-    cleanup(base);
-  }
-});
+  });
 
-test("queryJournal filters by eventType", () => {
-  const base = makeTmpBase();
-  try {
+  test("filters by eventType", () => {
     emitJournalEvent(base, makeEntry({ eventType: "iteration-start", seq: 0 }));
     emitJournalEvent(base, makeEntry({ eventType: "dispatch-match", seq: 1 }));
     emitJournalEvent(base, makeEntry({ eventType: "unit-start", seq: 2 }));
@@ -220,14 +204,9 @@ test("queryJournal filters by eventType", () => {
     const results = queryJournal(base, { eventType: "dispatch-match" });
     assert.equal(results.length, 2);
     assert.ok(results.every(e => e.eventType === "dispatch-match"));
-  } finally {
-    cleanup(base);
-  }
-});
+  });
 
-test("queryJournal filters by unitId (from data.unitId)", () => {
-  const base = makeTmpBase();
-  try {
+  test("filters by unitId (from data.unitId)", () => {
     emitJournalEvent(
       base,
       makeEntry({ seq: 0, data: { unitId: "M001/S01/T01" } }),
@@ -249,14 +228,9 @@ test("queryJournal filters by unitId (from data.unitId)", () => {
         e => (e.data as Record<string, unknown>)?.unitId === "M001/S01/T01",
       ),
     );
-  } finally {
-    cleanup(base);
-  }
-});
+  });
 
-test("queryJournal filters by time range (after/before)", () => {
-  const base = makeTmpBase();
-  try {
+  test("filters by time range (after/before)", () => {
     emitJournalEvent(base, makeEntry({ ts: "2025-03-20T08:00:00.000Z", seq: 0 }));
     emitJournalEvent(base, makeEntry({ ts: "2025-03-21T10:00:00.000Z", seq: 1 }));
     emitJournalEvent(base, makeEntry({ ts: "2025-03-21T15:00:00.000Z", seq: 2 }));
@@ -276,14 +250,9 @@ test("queryJournal filters by time range (after/before)", () => {
       before: "2025-03-21T23:59:59.000Z",
     });
     assert.equal(rangeResults.length, 2, "2 entries within 2025-03-21");
-  } finally {
-    cleanup(base);
-  }
-});
+  });
 
-test("queryJournal combines multiple filters", () => {
-  const base = makeTmpBase();
-  try {
+  test("combines multiple filters", () => {
     emitJournalEvent(
       base,
       makeEntry({ flowId: "flow-aaa", eventType: "unit-start", seq: 0 }),
@@ -304,25 +273,9 @@ test("queryJournal combines multiple filters", () => {
     assert.equal(results.length, 1);
     assert.equal(results[0].flowId, "flow-aaa");
     assert.equal(results[0].eventType, "unit-start");
-  } finally {
-    cleanup(base);
-  }
-});
+  });
 
-test("queryJournal on nonexistent directory returns empty array", () => {
-  const base = join(tmpdir(), `gsd-journal-test-${randomUUID()}`);
-  // Don't create anything
-  try {
-    const results = queryJournal(base);
-    assert.deepEqual(results, []);
-  } finally {
-    cleanup(base);
-  }
-});
-
-test("queryJournal skips malformed JSON lines gracefully", () => {
-  const base = makeTmpBase();
-  try {
+  test("skips malformed JSON lines gracefully", () => {
     const journalDir = join(base, ".gsd", "journal");
     mkdirSync(journalDir, { recursive: true });
 
@@ -335,14 +288,9 @@ test("queryJournal skips malformed JSON lines gracefully", () => {
     assert.equal(results.length, 2, "Should skip the malformed line");
     assert.equal(results[0].seq, 0);
     assert.equal(results[1].seq, 1);
-  } finally {
-    cleanup(base);
-  }
-});
+  });
 
-test("queryJournal reads across multiple daily files", () => {
-  const base = makeTmpBase();
-  try {
+  test("reads across multiple daily files", () => {
     emitJournalEvent(base, makeEntry({ ts: "2025-03-20T12:00:00.000Z", seq: 0 }));
     emitJournalEvent(base, makeEntry({ ts: "2025-03-21T12:00:00.000Z", seq: 1 }));
     emitJournalEvent(base, makeEntry({ ts: "2025-03-22T12:00:00.000Z", seq: 2 }));
@@ -353,14 +301,9 @@ test("queryJournal reads across multiple daily files", () => {
     assert.equal(results[0].ts, "2025-03-20T12:00:00.000Z");
     assert.equal(results[1].ts, "2025-03-21T12:00:00.000Z");
     assert.equal(results[2].ts, "2025-03-22T12:00:00.000Z");
-  } finally {
-    cleanup(base);
-  }
-});
+  });
 
-test("queryJournal filters by rule", () => {
-  const base = makeTmpBase();
-  try {
+  test("filters by rule", () => {
     emitJournalEvent(
       base,
       makeEntry({ seq: 0, eventType: "dispatch-match", rule: "dispatch-task" }),
@@ -380,7 +323,19 @@ test("queryJournal filters by rule", () => {
       results.every(e => e.rule === "dispatch-task"),
       "All results should have rule === 'dispatch-task'",
     );
-  } finally {
-    cleanup(base);
-  }
+  });
+});
+
+describe("queryJournal — nonexistent directory", () => {
+  let base: string;
+  beforeEach(() => {
+    base = join(tmpdir(), `gsd-journal-test-${randomUUID()}`);
+    // Don't create anything
+  });
+  afterEach(() => { cleanup(base); });
+
+  test("on nonexistent directory returns empty array", () => {
+    const results = queryJournal(base);
+    assert.deepEqual(results, []);
+  });
 });

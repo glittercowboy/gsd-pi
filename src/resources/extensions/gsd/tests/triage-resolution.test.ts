@@ -212,6 +212,14 @@ test("resolution: buildQuickTaskPrompt includes capture text and ID", () => {
   assert.ok(prompt.includes("add retry logic to OAuth"), "should include capture text");
   assert.ok(prompt.includes("Quick Task"), "should have Quick Task header");
   assert.ok(prompt.includes("Do NOT modify"), "should warn about plan files");
+  assert.ok(
+    prompt.includes("Verify the issue still exists"),
+    "should instruct agent to verify issue still exists (#2872)",
+  );
+  assert.ok(
+    prompt.includes("Already resolved"),
+    "should instruct agent to report already resolved if fixed (#2872)",
+  );
 });
 
 // ─── markCaptureExecuted ─────────────────────────────────────────────────────
@@ -379,7 +387,8 @@ test("resolution: executeTriageResolutions handles mixed classifications", () =>
     assert.strictEqual(result.injected, 1, "should inject 1 task");
     assert.strictEqual(result.replanned, 0);
     assert.strictEqual(result.quickTasks.length, 1, "should queue 1 quick-task");
-    assert.strictEqual(result.actions.length, 2, "should have 2 action entries (note/defer excluded)");
+    // inject + quick-task + note acknowledged = 3 actions (defer still excluded)
+    assert.strictEqual(result.actions.length, 3, "should have 3 action entries (defer excluded, note now included)");
   } finally {
     rmSync(tmp, { recursive: true, force: true });
   }

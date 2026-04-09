@@ -84,9 +84,9 @@ export function buildSystemPrompt(options: BuildSystemPromptOptions = {}): strin
 			}
 		}
 
-		// Append skills section (only if read tool is available)
-		const customPromptHasRead = !selectedTools || selectedTools.includes("read");
-		if (customPromptHasRead && skills.length > 0) {
+		// Append skills section (if read or Skill tool is available)
+		const customPromptHasSkillAccess = !selectedTools || selectedTools.includes("read") || selectedTools.includes("Skill");
+		if (customPromptHasSkillAccess && skills.length > 0) {
 			prompt += formatSkillsForPrompt(skills);
 		}
 
@@ -232,8 +232,9 @@ Pi documentation (read only when the user asks about pi itself, its SDK, extensi
 		}
 	}
 
-	// Append skills section (only if read tool is available)
-	if (hasRead && skills.length > 0) {
+	// Append skills section (if read or Skill tool is available)
+	const hasSkill = tools.includes("Skill");
+	if ((hasRead || hasSkill) && skills.length > 0) {
 		prompt += formatSkillsForPrompt(skills);
 	}
 

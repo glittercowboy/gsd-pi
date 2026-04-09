@@ -42,7 +42,7 @@ The `/gsd prefs wizard` currently only configures 6 of 18+ preference fields. Us
 - Added missing keys to `orderedKeys` in `serializePreferencesToFrontmatter()`
 
 ### Group 6: Update Template & Docs ✓
-- Updated `templates/preferences.md` with new fields
+- Updated `templates/PREFERENCES.md` with new fields
 - Updated `docs/preferences-reference.md` with budget, notifications, git, hooks
 
 ### Group 7: Tests ✓

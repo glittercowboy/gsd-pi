@@ -231,7 +231,9 @@ function resolveOnboardingLockReason(
 
 function hasStoredCredentialValue(authStorage: AuthStorageInstance, providerId: string): boolean {
   return authStorage.getCredentialsForProvider(providerId).some((credential) => {
-    if (credential.type === "oauth") return true;
+    if (credential.type === "oauth") {
+      return typeof credential.access === "string" && credential.access.trim().length > 0;
+    }
     return typeof credential.key === "string" && credential.key.trim().length > 0;
   });
 }
@@ -246,9 +248,6 @@ function resolveCredentialSource(
   }
   if (getEnvApiKeyFn(providerId)) {
     return "environment";
-  }
-  if (authStorage.hasAuth(providerId)) {
-    return "runtime";
   }
   return null;
 }

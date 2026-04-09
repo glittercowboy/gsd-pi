@@ -2,7 +2,7 @@
 // Maps complexity tiers to models, enforcing downgrade-only semantics.
 // The user's configured model is always the ceiling.
 
-import type { ComplexityTier, ClassificationResult } from "./complexity-classifier.js";
+import type { ComplexityTier, ClassificationResult, TaskMetadata } from "./complexity-classifier.js";
 import { tierOrdinal } from "./complexity-classifier.js";
 import type { ResolvedModelConfig } from "./preferences.js";
 
@@ -10,6 +10,7 @@ import type { ResolvedModelConfig } from "./preferences.js";
 
 export interface DynamicRoutingConfig {
   enabled?: boolean;
+  capability_routing?: boolean;    // default: false — enable capability profile scoring
   tier_models?: {
     light?: string;
     standard?: string;
@@ -32,6 +33,25 @@ export interface RoutingDecision {
   wasDowngraded: boolean;
   /** Human-readable reason for this decision */
   reason: string;
+  /** How the model was selected */
+  selectionMethod: "tier-only" | "capability-scored";
+  /** Capability scores per eligible model (capability-scored path only) */
+  capabilityScores?: Record<string, number>;
+  /** Task requirement vector used for scoring */
+  taskRequirements?: Partial<Record<string, number>>;
+}
+
+// ─── Capability Profiles ─────────────────────────────────────────────────────
+
+/** Seven-dimension capability profile for a model. All values in 0–100 range. */
+export interface ModelCapabilities {
+  coding: number;
+  debugging: number;
+  research: number;
+  reasoning: number;
+  speed: number;
+  longContext: number;
+  instruction: number;
 }
 
 // ─── Known Model Tiers ───────────────────────────────────────────────────────
@@ -44,6 +64,12 @@ const MODEL_CAPABILITY_TIER: Record<string, ComplexityTier> = {
   "claude-3-5-haiku-latest": "light",
   "claude-3-haiku-20240307": "light",
   "gpt-4o-mini": "light",
+  "gpt-4.1-mini": "light",
+  "gpt-4.1-nano": "light",
+  "gpt-5-mini": "light",
+  "gpt-5-nano": "light",
+  "gpt-5.1-codex-mini": "light",
+  "gpt-5.3-codex-spark": "light",
   "gemini-2.0-flash": "light",
   "gemini-flash-2.0": "light",
 
@@ -52,6 +78,8 @@ const MODEL_CAPABILITY_TIER: Record<string, ComplexityTier> = {
   "claude-sonnet-4-5-20250514": "standard",
   "claude-3-5-sonnet-latest": "standard",
   "gpt-4o": "standard",
+  "gpt-4.1": "standard",
+  "gpt-5.1-codex-max": "standard",
   "gemini-2.5-pro": "standard",
   "deepseek-chat": "standard",
 
@@ -59,8 +87,17 @@ const MODEL_CAPABILITY_TIER: Record<string, ComplexityTier> = {
   "claude-opus-4-6": "heavy",
   "claude-3-opus-latest": "heavy",
   "gpt-4-turbo": "heavy",
+  "gpt-5": "heavy",
+  "gpt-5-pro": "heavy",
+  "gpt-5.1": "heavy",
+  "gpt-5.2": "heavy",
+  "gpt-5.2-codex": "heavy",
+  "gpt-5.3-codex": "heavy",
+  "gpt-5.4": "heavy",
   "o1": "heavy",
   "o3": "heavy",
+  "o4-mini": "heavy",
+  "o4-mini-deep-research": "heavy",
 };
 
 // ─── Cost Table (per 1K input tokens, approximate USD) ───────────────────────
@@ -75,12 +112,201 @@ const MODEL_COST_PER_1K_INPUT: Record<string, number> = {
   "claude-opus-4-6": 0.015,
   "gpt-4o-mini": 0.00015,
   "gpt-4o": 0.0025,
+  "gpt-4.1": 0.002,
+  "gpt-4.1-mini": 0.0004,
+  "gpt-4.1-nano": 0.0001,
+  "gpt-5": 0.01,
+  "gpt-5-mini": 0.0003,
+  "gpt-5-nano": 0.0001,
+  "gpt-5-pro": 0.015,
+  "gpt-5.1": 0.005,
+  "gpt-5.1-codex-max": 0.003,
+  "gpt-5.1-codex-mini": 0.0003,
+  "gpt-5.2": 0.005,
+  "gpt-5.2-codex": 0.005,
+  "gpt-5.3-codex": 0.005,
+  "gpt-5.3-codex-spark": 0.0003,
+  "gpt-5.4": 0.005,
+  "o4-mini": 0.005,
+  "o4-mini-deep-research": 0.005,
   "gemini-2.0-flash": 0.0001,
   "gemini-2.5-pro": 0.00125,
   "deepseek-chat": 0.00014,
 };
 
+// ─── Capability Profiles Data Table ──────────────────────────────────────────
+// Per-model capability profiles (0–100 scale). Used for capability-aware
+// model selection within an eligible tier set.
+
+export const MODEL_CAPABILITY_PROFILES: Record<string, ModelCapabilities> = {
+  "claude-opus-4-6":   { coding: 95, debugging: 90, research: 85, reasoning: 95, speed: 30, longContext: 80, instruction: 90 },
+  "claude-sonnet-4-6": { coding: 85, debugging: 80, research: 75, reasoning: 80, speed: 60, longContext: 75, instruction: 85 },
+  "claude-haiku-4-5":  { coding: 60, debugging: 50, research: 45, reasoning: 50, speed: 95, longContext: 50, instruction: 75 },
+  "gpt-4o":            { coding: 80, debugging: 75, research: 70, reasoning: 75, speed: 65, longContext: 70, instruction: 80 },
+  "gpt-4o-mini":       { coding: 55, debugging: 45, research: 40, reasoning: 45, speed: 90, longContext: 45, instruction: 70 },
+  "gemini-2.5-pro":    { coding: 75, debugging: 70, research: 85, reasoning: 75, speed: 55, longContext: 90, instruction: 75 },
+  "gemini-2.0-flash":  { coding: 50, debugging: 40, research: 50, reasoning: 40, speed: 95, longContext: 60, instruction: 65 },
+  "deepseek-chat":     { coding: 75, debugging: 65, research: 55, reasoning: 70, speed: 70, longContext: 55, instruction: 65 },
+  "o3":                { coding: 80, debugging: 85, research: 80, reasoning: 92, speed: 25, longContext: 70, instruction: 85 },
+};
+
+// ─── Base Task Requirements Data Table ───────────────────────────────────────
+// Per-unit-type base requirement vectors. Weights indicate how important each
+// capability dimension is for this unit type.
+
+export const BASE_REQUIREMENTS: Record<string, Partial<Record<keyof ModelCapabilities, number>>> = {
+  "execute-task":       { coding: 0.9, instruction: 0.7, speed: 0.3 },
+  "research-milestone": { research: 0.9, longContext: 0.7, reasoning: 0.5 },
+  "research-slice":     { research: 0.9, longContext: 0.7, reasoning: 0.5 },
+  "plan-milestone":     { reasoning: 0.9, coding: 0.5 },
+  "plan-slice":         { reasoning: 0.9, coding: 0.5 },
+  "replan-slice":       { reasoning: 0.9, debugging: 0.6, coding: 0.5 },
+  "reassess-roadmap":   { reasoning: 0.9, research: 0.5 },
+  "complete-slice":     { instruction: 0.8, speed: 0.7 },
+  "run-uat":            { instruction: 0.7, speed: 0.8 },
+  "discuss-milestone":  { reasoning: 0.6, instruction: 0.7 },
+  "complete-milestone": { instruction: 0.8, reasoning: 0.5 },
+};
+
 // ─── Public API ──────────────────────────────────────────────────────────────
+
+/**
+ * Score a model's suitability for a task given a requirement vector.
+ * Returns a weighted average of capability dimensions (0–100).
+ * Returns 50 if requirements are empty (neutral score).
+ */
+export function scoreModel(
+  model: ModelCapabilities,
+  requirements: Partial<Record<keyof ModelCapabilities, number>>,
+): number {
+  let weightedSum = 0;
+  let weightSum = 0;
+  for (const [dim, weight] of Object.entries(requirements)) {
+    const capability = model[dim as keyof ModelCapabilities] ?? 50;
+    weightedSum += weight * capability;
+    weightSum += weight;
+  }
+  return weightSum > 0 ? weightedSum / weightSum : 50;
+}
+
+/**
+ * Compute dynamic task requirements from unit type and optional task metadata.
+ * Returns a requirement vector refined by task-specific signals.
+ */
+export function computeTaskRequirements(
+  unitType: string,
+  metadata?: TaskMetadata,
+): Partial<Record<keyof ModelCapabilities, number>> {
+  const base = BASE_REQUIREMENTS[unitType] ?? { reasoning: 0.5 };
+  if (unitType === "execute-task" && metadata) {
+    if (metadata.tags?.some(t => /^(docs?|readme|comment|config|typo|rename)$/i.test(t))) {
+      return { ...base, instruction: 0.9, coding: 0.3, speed: 0.7 };
+    }
+    if (metadata.complexityKeywords?.some(k => k === "concurrency" || k === "compatibility")) {
+      return { ...base, debugging: 0.9, reasoning: 0.8 };
+    }
+    if (metadata.complexityKeywords?.some(k => k === "migration" || k === "architecture")) {
+      return { ...base, reasoning: 0.9, coding: 0.8 };
+    }
+    if ((metadata.fileCount ?? 0) >= 6 || (metadata.estimatedLines ?? 0) >= 500) {
+      return { ...base, coding: 0.9, reasoning: 0.7 };
+    }
+  }
+  return base;
+}
+
+/**
+ * Score all eligible models against a requirement vector and return them
+ * sorted by score descending. Within 2 points: prefer cheaper; equal cost:
+ * lexicographic tie-break by model ID.
+ */
+export function scoreEligibleModels(
+  eligibleModelIds: string[],
+  requirements: Partial<Record<keyof ModelCapabilities, number>>,
+  capabilityOverrides?: Record<string, Partial<ModelCapabilities>>,
+): Array<{ modelId: string; score: number }> {
+  const scored = eligibleModelIds.map(modelId => {
+    const builtin = MODEL_CAPABILITY_PROFILES[modelId];
+    const override = capabilityOverrides?.[modelId];
+    const profile: ModelCapabilities = builtin
+      ? override ? { ...builtin, ...override } : builtin
+      : { coding: 50, debugging: 50, research: 50, reasoning: 50, speed: 50, longContext: 50, instruction: 50 };
+    return { modelId, score: scoreModel(profile, requirements) };
+  });
+  scored.sort((a, b) => {
+    const scoreDiff = b.score - a.score;
+    if (Math.abs(scoreDiff) > 2) return scoreDiff;
+    const costA = MODEL_COST_PER_1K_INPUT[a.modelId] ?? Infinity;
+    const costB = MODEL_COST_PER_1K_INPUT[b.modelId] ?? Infinity;
+    if (costA !== costB) return costA - costB;
+    return a.modelId.localeCompare(b.modelId);
+  });
+  return scored;
+}
+
+/**
+ * Return all models eligible for a given tier, sorted cheapest first.
+ * If routingConfig.tier_models[tier] is set and available, returns only that
+ * model. Otherwise filters availableModelIds by tier from MODEL_CAPABILITY_TIER.
+ */
+export function getEligibleModels(
+  tier: ComplexityTier,
+  availableModelIds: string[],
+  routingConfig: DynamicRoutingConfig,
+): string[] {
+  // 1. Check explicit tier_models config
+  const explicitModel = routingConfig.tier_models?.[tier];
+  if (explicitModel) {
+    // Exact match
+    if (availableModelIds.includes(explicitModel)) return [explicitModel];
+    // Provider-prefix-stripped match
+    const match = availableModelIds.find(id => {
+      const bareAvail = id.includes("/") ? id.split("/").pop()! : id;
+      const bareExplicit = explicitModel.includes("/") ? explicitModel.split("/").pop()! : explicitModel;
+      return bareAvail === bareExplicit;
+    });
+    if (match) return [match];
+  }
+
+  // 2. Auto-detect: filter by tier, sort cheapest first
+  return availableModelIds
+    .filter(id => getModelTier(id) === tier)
+    .sort((a, b) => {
+      const costA = getModelCost(a);
+      const costB = getModelCost(b);
+      return costA - costB;
+    });
+}
+
+/**
+ * Build a fallback chain for a selected model: [selectedModel, ...configuredFallbacks, configuredPrimary]
+ * Deduplicates entries while preserving order.
+ */
+function buildFallbackChain(selectedModelId: string, phaseConfig: ResolvedModelConfig): string[] {
+  return [
+    ...phaseConfig.fallbacks.filter(f => f !== selectedModelId),
+    phaseConfig.primary,
+  ].filter(f => f !== selectedModelId);
+}
+
+/**
+ * Load capability overrides from user preferences' modelOverrides section.
+ * Returns a map of model ID → partial capability overrides to deep-merge with built-in profiles.
+ *
+ * Per D-17: partial capability overrides via models.json modelOverrides, deep-merged with defaults.
+ */
+export function loadCapabilityOverrides(
+  prefs: { modelOverrides?: Record<string, { capabilities?: Partial<ModelCapabilities> }> },
+): Record<string, Partial<ModelCapabilities>> {
+  const result: Record<string, Partial<ModelCapabilities>> = {};
+  if (!prefs.modelOverrides) return result;
+  for (const [modelId, overrideEntry] of Object.entries(prefs.modelOverrides)) {
+    if (overrideEntry.capabilities) {
+      result[modelId] = overrideEntry.capabilities;
+    }
+  }
+  return result;
+}
 
 /**
  * Resolve the model to use for a given complexity tier.
@@ -88,16 +314,27 @@ const MODEL_COST_PER_1K_INPUT: Record<string, number> = {
  * Downgrade-only: the returned model is always equal to or cheaper than
  * the user's configured primary model. Never upgrades beyond configuration.
  *
- * @param classification  The complexity classification result
- * @param phaseConfig     The user's configured model for this phase (ceiling)
- * @param routingConfig   Dynamic routing configuration
- * @param availableModelIds  List of available model IDs (from registry)
+ * STEP 1: Filter to eligible models for the requested tier.
+ * STEP 2: Capability scoring — ranks eligible models by task-capability match
+ *         when capability_routing is enabled and multiple eligible models exist.
+ * STEP 3: Fallback chain assembly.
+ *
+ * @param classification      The complexity classification result
+ * @param phaseConfig         The user's configured model for this phase (ceiling)
+ * @param routingConfig       Dynamic routing configuration
+ * @param availableModelIds   List of available model IDs (from registry)
+ * @param unitType            The unit type for capability requirement computation (optional)
+ * @param taskMetadata        Task metadata for refined requirement vectors (optional)
+ * @param capabilityOverrides User-provided capability overrides (deep-merged with built-in profiles, optional)
  */
 export function resolveModelForComplexity(
   classification: ClassificationResult,
   phaseConfig: ResolvedModelConfig | undefined,
   routingConfig: DynamicRoutingConfig,
   availableModelIds: string[],
+  unitType?: string,
+  taskMetadata?: TaskMetadata,
+  capabilityOverrides?: Record<string, Partial<ModelCapabilities>>,
 ): RoutingDecision {
   // If no phase config or routing disabled, pass through
   if (!phaseConfig || !routingConfig.enabled) {
@@ -107,12 +344,29 @@ export function resolveModelForComplexity(
       tier: classification.tier,
       wasDowngraded: false,
       reason: "dynamic routing disabled or no phase config",
+      selectionMethod: "tier-only",
     };
   }
 
   const configuredPrimary = phaseConfig.primary;
   const configuredTier = getModelTier(configuredPrimary);
   const requestedTier = classification.tier;
+
+  // If the configured model is unknown (not in MODEL_CAPABILITY_TIER),
+  // honor the user's explicit choice — don't downgrade based on a guess.
+  // Unknown models default to "heavy" in getModelTier, which makes every
+  // standard/light unit get downgraded to tier_models, silently ignoring
+  // the user's configuration. (#2192)
+  if (!isKnownModel(configuredPrimary)) {
+    return {
+      modelId: configuredPrimary,
+      fallbacks: phaseConfig.fallbacks,
+      tier: requestedTier,
+      wasDowngraded: false,
+      reason: `configured model "${configuredPrimary}" is not in the known tier map — honoring explicit config`,
+      selectionMethod: "tier-only",
+    };
+  }
 
   // Downgrade-only: if requested tier >= configured tier, no change
   if (tierOrdinal(requestedTier) >= tierOrdinal(configuredTier)) {
@@ -122,18 +376,14 @@ export function resolveModelForComplexity(
       tier: requestedTier,
       wasDowngraded: false,
       reason: `tier ${requestedTier} >= configured ${configuredTier}`,
+      selectionMethod: "tier-only",
     };
   }
 
-  // Find the best model for the requested tier
-  const targetModelId = findModelForTier(
-    requestedTier,
-    routingConfig,
-    availableModelIds,
-    routingConfig.cross_provider !== false,
-  );
+  // STEP 1: Get all eligible models for the requested tier
+  const eligible = getEligibleModels(requestedTier, availableModelIds, routingConfig);
 
-  if (!targetModelId) {
+  if (eligible.length === 0) {
     // No suitable model found — use configured primary
     return {
       modelId: configuredPrimary,
@@ -141,14 +391,37 @@ export function resolveModelForComplexity(
       tier: requestedTier,
       wasDowngraded: false,
       reason: `no ${requestedTier}-tier model available`,
+      selectionMethod: "tier-only",
     };
   }
 
+  // STEP 2: Capability scoring (when enabled and multiple eligible models exist)
+  if (routingConfig.capability_routing !== false && eligible.length > 1 && unitType) {
+    const requirements = computeTaskRequirements(unitType, taskMetadata);
+    const scored = scoreEligibleModels(eligible, requirements, capabilityOverrides);
+    const winner = scored[0];
+    if (winner) {
+      const capScores: Record<string, number> = {};
+      for (const s of scored) capScores[s.modelId] = s.score;
+      const fallbacks = buildFallbackChain(winner.modelId, phaseConfig);
+      return {
+        modelId: winner.modelId,
+        fallbacks,
+        tier: requestedTier,
+        wasDowngraded: true,
+        reason: `capability-scored: ${winner.modelId} (${winner.score.toFixed(1)}) for ${unitType}`,
+        capabilityScores: capScores,
+        taskRequirements: requirements,
+        selectionMethod: "capability-scored",
+      };
+    }
+  }
+
+  // STEP 3: Fallback — use first eligible model (cheapest in tier, or single eligible)
+  const targetModelId = eligible[0];
+
   // Build fallback chain: [downgraded_model, ...configured_fallbacks, configured_primary]
-  const fallbacks = [
-    ...phaseConfig.fallbacks.filter(f => f !== targetModelId),
-    configuredPrimary,
-  ].filter(f => f !== targetModelId);
+  const fallbacks = buildFallbackChain(targetModelId, phaseConfig);
 
   return {
     modelId: targetModelId,
@@ -156,6 +429,7 @@ export function resolveModelForComplexity(
     tier: requestedTier,
     wasDowngraded: true,
     reason: classification.reason,
+    selectionMethod: "tier-only",
   };
 }
 
@@ -176,7 +450,8 @@ export function escalateTier(currentTier: ComplexityTier): ComplexityTier | null
  */
 export function defaultRoutingConfig(): DynamicRoutingConfig {
   return {
-    enabled: false,
+    enabled: true,
+    capability_routing: true,
     escalate_on_failure: true,
     budget_pressure: true,
     cross_provider: true,
@@ -198,45 +473,18 @@ function getModelTier(modelId: string): ComplexityTier {
     if (bareId.includes(knownId) || knownId.includes(bareId)) return tier;
   }
 
-  // Unknown models are assumed heavy (safest assumption)
-  return "heavy";
+  // Unknown models are assumed standard (per D-15: avoids silently ignoring user config)
+  return "standard";
 }
 
-function findModelForTier(
-  tier: ComplexityTier,
-  config: DynamicRoutingConfig,
-  availableModelIds: string[],
-  crossProvider: boolean,
-): string | null {
-  // 1. Check explicit tier_models config
-  const explicitModel = config.tier_models?.[tier];
-  if (explicitModel && availableModelIds.includes(explicitModel)) {
-    return explicitModel;
+/** Check if a model ID has a known capability tier mapping. (#2192) */
+function isKnownModel(modelId: string): boolean {
+  const bareId = modelId.includes("/") ? modelId.split("/").pop()! : modelId;
+  if (MODEL_CAPABILITY_TIER[bareId]) return true;
+  for (const knownId of Object.keys(MODEL_CAPABILITY_TIER)) {
+    if (bareId.includes(knownId) || knownId.includes(bareId)) return true;
   }
-  // Also check with provider prefix stripped
-  if (explicitModel) {
-    const match = availableModelIds.find(id => {
-      const bareAvail = id.includes("/") ? id.split("/").pop()! : id;
-      const bareExplicit = explicitModel.includes("/") ? explicitModel.split("/").pop()! : explicitModel;
-      return bareAvail === bareExplicit;
-    });
-    if (match) return match;
-  }
-
-  // 2. Auto-detect: find the cheapest available model in the requested tier
-  const candidates = availableModelIds
-    .filter(id => {
-      const modelTier = getModelTier(id);
-      return modelTier === tier;
-    })
-    .sort((a, b) => {
-      if (!crossProvider) return 0;
-      const costA = getModelCost(a);
-      const costB = getModelCost(b);
-      return costA - costB;
-    });
-
-  return candidates[0] ?? null;
+  return false;
 }
 
 function getModelCost(modelId: string): number {

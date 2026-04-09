@@ -15,6 +15,7 @@ import type { PostUnitContext, PreVerificationOpts } from "../auto-post-unit.js"
 import {
   MAX_RECOVERY_CHARS,
   BUDGET_THRESHOLDS,
+  MAX_FINALIZE_TIMEOUTS,
   type PhaseResult,
   type IterationContext,
   type LoopState,
@@ -24,12 +25,44 @@ import {
 import { detectStuck } from "./detect-stuck.js";
 import { runUnit } from "./run-unit.js";
 import { debugLog } from "../debug-logger.js";
+import { PROJECT_FILES } from "../detection.js";
+import { MergeConflictError } from "../git-service.js";
+import { join, basename, dirname, parse as parsePath } from "node:path";
+import { existsSync, cpSync, readdirSync } from "node:fs";
+import { logWarning, logError } from "../workflow-logger.js";
 import { gsdRoot } from "../paths.js";
 import { atomicWriteSync } from "../atomic-write.js";
-import { PROJECT_FILES } from "../detection.js";
-import { join } from "node:path";
+import { verifyExpectedArtifact, diagnoseExpectedArtifact, buildLoopRemediationSteps } from "../auto-recovery.js";
+import { writeUnitRuntimeRecord } from "../unit-runtime.js";
+import { withTimeout, FINALIZE_PRE_TIMEOUT_MS, FINALIZE_POST_TIMEOUT_MS } from "./finalize-timeout.js";
+import { getEligibleSlices } from "../slice-parallel-eligibility.js";
+import { startSliceParallel } from "../slice-parallel-orchestrator.js";
+import { isDbAvailable, getMilestoneSlices } from "../gsd-db.js";
+import { resetEvidence } from "../safety/evidence-collector.js";
+import { createCheckpoint, cleanupCheckpoint, rollbackToCheckpoint } from "../safety/git-checkpoint.js";
+import { resolveSafetyHarnessConfig } from "../safety/safety-harness.js";
 
 // ─── generateMilestoneReport ──────────────────────────────────────────────────
+
+/**
+ * Resolve the base path for milestone reports.
+ * Prefers originalBasePath (project root) over basePath (which may be a worktree).
+ * Exported for testing as _resolveReportBasePath.
+ */
+export function _resolveReportBasePath(s: Pick<AutoSession, "originalBasePath" | "basePath">): string {
+  return s.originalBasePath || s.basePath;
+}
+
+/**
+ * Resolve the authoritative project base for dispatch guards.
+ * Prior-milestone completion lives at the project root, even when the active
+ * unit is running inside an auto worktree.
+ */
+export function _resolveDispatchGuardBasePath(
+  s: Pick<AutoSession, "originalBasePath" | "basePath">,
+): string {
+  return s.originalBasePath || s.basePath;
+}
 
 /**
  * Generate and write an HTML milestone report snapshot.
@@ -45,13 +78,15 @@ async function generateMilestoneReport(
   const { writeReportSnapshot } = await importExtensionModule<typeof import("../reports.js")>(import.meta.url, "../reports.js");
   const { basename } = await import("node:path");
 
-  const snapData = await loadVisualizerData(s.basePath);
+  const reportBasePath = _resolveReportBasePath(s);
+
+  const snapData = await loadVisualizerData(reportBasePath);
   const completedMs = snapData.milestones.find(
     (m: { id: string }) => m.id === milestoneId,
   );
   const msTitle = completedMs?.title ?? milestoneId;
   const gsdVersion = process.env.GSD_VERSION ?? "0.0.0";
-  const projName = basename(s.basePath);
+  const projName = basename(reportBasePath);
   const doneSlices = snapData.milestones.reduce(
     (acc: number, m: { slices: { done: boolean }[] }) =>
       acc + m.slices.filter((sl: { done: boolean }) => sl.done).length,
@@ -62,10 +97,10 @@ async function generateMilestoneReport(
     0,
   );
   const outPath = writeReportSnapshot({
-    basePath: s.basePath,
+    basePath: reportBasePath,
     html: generateHtmlReport(snapData, {
       projectName: projName,
-      projectPath: s.basePath,
+      projectPath: reportBasePath,
       gsdVersion,
       milestoneId,
       indexRelPath: "index.html",
@@ -74,7 +109,7 @@ async function generateMilestoneReport(
     milestoneTitle: msTitle,
     kind: "milestone",
     projectName: projName,
-    projectPath: s.basePath,
+    projectPath: reportBasePath,
     gsdVersion,
     totalCost: snapData.totals?.cost ?? 0,
     totalTokens: snapData.totals?.tokens.total ?? 0,
@@ -155,15 +190,15 @@ export async function runPreDispatch(
     }
     if (!healthGate.proceed) {
       ctx.ui.notify(
-        healthGate.reason ?? "Pre-dispatch health check failed.",
+        healthGate.reason || "Pre-dispatch health check failed — run /gsd doctor for details.",
         "error",
       );
       await deps.pauseAuto(ctx, pi);
       debugLog("autoLoop", { phase: "exit", reason: "health-gate-failed" });
       return { action: "break", reason: "health-gate-failed" };
     }
-  } catch {
-    // Non-fatal
+  } catch (e) {
+    logWarning("engine", "Pre-dispatch health gate threw unexpectedly", { error: String(e) });
   }
 
   // Sync project root artifacts into worktree
@@ -191,6 +226,63 @@ export async function runPreDispatch(
     statePhase: state.phase,
   });
 
+  // ── Slice-level parallelism gate (#2340) ─────────────────────────────
+  // When slice_parallel is enabled, check if multiple slices are eligible
+  // for parallel execution. If so, dispatch them in parallel and stop the
+  // sequential loop. Workers are spawned via slice-parallel-orchestrator.ts.
+  if (
+    prefs?.slice_parallel?.enabled &&
+    mid &&
+    !process.env.GSD_PARALLEL_WORKER &&
+    isDbAvailable()
+  ) {
+    try {
+      const dbSlices = getMilestoneSlices(mid);
+      if (dbSlices.length > 0) {
+        const doneIds = new Set(dbSlices.filter(sl => sl.status === "complete" || sl.status === "done").map(sl => sl.id));
+        const sliceInputs = dbSlices.map(sl => ({
+          id: sl.id,
+          done: doneIds.has(sl.id),
+          depends: sl.depends ?? [],
+        }));
+        const eligible = getEligibleSlices(sliceInputs, doneIds);
+        if (eligible.length > 1) {
+          debugLog("autoLoop", {
+            phase: "slice-parallel-dispatch",
+            iteration: ic.iteration,
+            mid,
+            eligibleSlices: eligible.map(e => e.id),
+          });
+          ctx.ui.notify(
+            `Slice-parallel: dispatching ${eligible.length} eligible slices for ${mid}.`,
+            "info",
+          );
+          const result = await startSliceParallel(
+            s.basePath,
+            mid,
+            eligible,
+            { maxWorkers: prefs.slice_parallel.max_workers ?? 2 },
+          );
+          if (result.started.length > 0) {
+            ctx.ui.notify(
+              `Slice-parallel: started ${result.started.length} worker(s): ${result.started.join(", ")}.`,
+              "info",
+            );
+            await deps.stopAuto(ctx, pi, `Slice-parallel dispatched for ${mid}`);
+            return { action: "break", reason: "slice-parallel-dispatched" };
+          }
+          // Fall through to sequential if no workers started
+        }
+      }
+    } catch (err) {
+      debugLog("autoLoop", {
+        phase: "slice-parallel-check-error",
+        error: err instanceof Error ? err.message : String(err),
+      });
+      // Non-fatal — fall through to sequential dispatch
+    }
+  }
+
   // ── Milestone transition ────────────────────────────────────────────
   if (mid && s.currentMilestoneId && mid !== s.currentMilestoneId) {
     deps.emitJournalEvent({ ts: new Date().toISOString(), flowId: ic.flowId, seq: ic.nextSeq(), eventType: "milestone-transition", data: { from: s.currentMilestoneId, to: mid } });
@@ -203,6 +295,7 @@ export async function runPreDispatch(
       `Milestone ${s.currentMilestoneId} complete!`,
       "success",
       "milestone",
+      basename(s.originalBasePath || s.basePath),
     );
     deps.logCmuxEvent(
       prefs,
@@ -233,25 +326,29 @@ export async function runPreDispatch(
     loopState.stuckRecoveryAttempts = 0;
 
     // Worktree lifecycle on milestone transition — merge current, enter next
-    deps.resolver.mergeAndExit(s.currentMilestoneId!, ctx.ui);
-
-    // Opt-in: create draft PR on milestone completion
-    if (prefs?.git?.auto_pr) {
-      try {
-        const { createDraftPR } = await import("../git-service.js");
-        const prUrl = createDraftPR(
-          s.basePath,
-          s.currentMilestoneId!,
-          `[GSD] ${s.currentMilestoneId} complete`,
-          `Milestone ${s.currentMilestoneId} completed by GSD auto-mode.\n\nSee .gsd/${s.currentMilestoneId}/ for details.`,
+    try {
+      deps.resolver.mergeAndExit(s.currentMilestoneId!, ctx.ui);
+    } catch (mergeErr) {
+      if (mergeErr instanceof MergeConflictError) {
+        // Real code conflicts — stop the loop instead of retrying forever (#2330)
+        ctx.ui.notify(
+          `Merge conflict: ${mergeErr.conflictedFiles.join(", ")}. Resolve conflicts manually and run /gsd auto to resume.`,
+          "error",
         );
-        if (prUrl) {
-          ctx.ui.notify(`Draft PR created: ${prUrl}`, "info");
-        }
-      } catch {
-        // Non-fatal — PR creation is best-effort
+        await deps.stopAuto(ctx, pi, `Merge conflict on milestone ${s.currentMilestoneId}`);
+        return { action: "break", reason: "merge-conflict" };
       }
+      // Non-conflict merge errors — stop auto to avoid advancing with unmerged work
+      logError("engine", "Milestone merge failed with non-conflict error", { milestone: s.currentMilestoneId!, error: String(mergeErr) });
+      ctx.ui.notify(
+        `Merge failed: ${mergeErr instanceof Error ? mergeErr.message : String(mergeErr)}. Resolve and run /gsd auto to resume.`,
+        "error",
+      );
+      await deps.stopAuto(ctx, pi, `Merge error on milestone ${s.currentMilestoneId}: ${String(mergeErr)}`);
+      return { action: "break", reason: "merge-failed" };
     }
+
+    // PR creation (auto_pr) is handled inside mergeMilestoneToMain (#2302)
 
     deps.invalidateAllCaches();
 
@@ -261,9 +358,7 @@ export async function runPreDispatch(
 
     if (mid) {
       if (deps.getIsolationMode() !== "none") {
-        deps.captureIntegrationBranch(s.basePath, mid, {
-          commitDocs: prefs?.git?.commit_docs,
-        });
+        deps.captureIntegrationBranch(s.basePath, mid);
       }
       deps.resolver.enterMilestone(mid, ctx.ui);
     } else {
@@ -278,14 +373,20 @@ export async function runPreDispatch(
       .map((m: { id: string }) => m.id);
     deps.pruneQueueOrder(s.basePath, pendingIds);
 
-    // Reset completed-units tracking for the new milestone — stale entries
-    // from the previous milestone cause the dispatch loop to skip units
-    // that haven't actually been completed in the new milestone's context.
-    s.completedUnits = [];
+    // Archive the old completed-units.json instead of wiping it (#2313).
     try {
       const completedKeysPath = join(gsdRoot(s.basePath), "completed-units.json");
+      if (existsSync(completedKeysPath) && s.currentMilestoneId) {
+        const archivePath = join(
+          gsdRoot(s.basePath),
+          `completed-units-${s.currentMilestoneId}.json`,
+        );
+        cpSync(completedKeysPath, archivePath);
+      }
       atomicWriteSync(completedKeysPath, JSON.stringify([], null, 2));
-    } catch { /* non-fatal */ }
+    } catch (e) {
+      logWarning("engine", "Failed to archive completed-units on milestone transition", { error: String(e) });
+    }
 
     // Rebuild STATE.md immediately so it reflects the new active milestone.
     // This bypasses the 30-second throttle in the normal rebuild path —
@@ -293,8 +394,8 @@ export async function runPreDispatch(
     // immediate write.
     try {
       await deps.rebuildState(s.basePath);
-    } catch {
-      // Non-fatal — STATE.md will be rebuilt on the next regular cycle
+    } catch (e) {
+      logWarning("engine", "STATE.md rebuild failed after milestone transition", { error: String(e) });
     }
   }
 
@@ -324,31 +425,36 @@ export async function runPreDispatch(
     if (incomplete.length === 0 && state.registry.length > 0) {
       // All milestones complete — merge milestone branch before stopping
       if (s.currentMilestoneId) {
-        deps.resolver.mergeAndExit(s.currentMilestoneId, ctx.ui);
-
-        // Opt-in: create draft PR on milestone completion
-        if (prefs?.git?.auto_pr) {
-          try {
-            const { createDraftPR } = await import("../git-service.js");
-            const prUrl = createDraftPR(
-              s.basePath,
-              s.currentMilestoneId,
-              `[GSD] ${s.currentMilestoneId} complete`,
-              `Milestone ${s.currentMilestoneId} completed by GSD auto-mode.\n\nSee .gsd/${s.currentMilestoneId}/ for details.`,
+        try {
+          deps.resolver.mergeAndExit(s.currentMilestoneId, ctx.ui);
+          // Prevent stopAuto from attempting the same merge (#2645)
+          s.milestoneMergedInPhases = true;
+        } catch (mergeErr) {
+          if (mergeErr instanceof MergeConflictError) {
+            ctx.ui.notify(
+              `Merge conflict: ${mergeErr.conflictedFiles.join(", ")}. Resolve conflicts manually and run /gsd auto to resume.`,
+              "error",
             );
-            if (prUrl) {
-              ctx.ui.notify(`Draft PR created: ${prUrl}`, "info");
-            }
-          } catch {
-            // Non-fatal — PR creation is best-effort
+            await deps.stopAuto(ctx, pi, `Merge conflict on milestone ${s.currentMilestoneId}`);
+            return { action: "break", reason: "merge-conflict" };
           }
+          logError("engine", "Milestone merge failed with non-conflict error", { milestone: s.currentMilestoneId!, error: String(mergeErr) });
+          ctx.ui.notify(
+            `Merge failed: ${mergeErr instanceof Error ? mergeErr.message : String(mergeErr)}. Resolve and run /gsd auto to resume.`,
+            "error",
+          );
+          await deps.stopAuto(ctx, pi, `Merge error on milestone ${s.currentMilestoneId}: ${String(mergeErr)}`);
+          return { action: "break", reason: "merge-failed" };
         }
+
+        // PR creation (auto_pr) is handled inside mergeMilestoneToMain (#2302)
       }
       deps.sendDesktopNotification(
         "GSD",
         "All milestones complete!",
         "success",
         "milestone",
+        basename(s.originalBasePath || s.basePath),
       );
       deps.logCmuxEvent(
         prefs,
@@ -372,7 +478,7 @@ export async function runPreDispatch(
       const blockerMsg = `Blocked: ${state.blockers.join(", ")}`;
       await deps.stopAuto(ctx, pi, blockerMsg);
       ctx.ui.notify(`${blockerMsg}. Fix and run /gsd auto.`, "warning");
-      deps.sendDesktopNotification("GSD", blockerMsg, "error", "attention");
+      deps.sendDesktopNotification("GSD", blockerMsg, "error", "attention", basename(s.originalBasePath || s.basePath));
       deps.logCmuxEvent(prefs, blockerMsg, "error");
     } else {
       const ids = incomplete.map((m: { id: string }) => m.id).join(", ");
@@ -401,7 +507,13 @@ export async function runPreDispatch(
   }
 
   // Mid-merge safety check
-  if (deps.reconcileMergeState(s.basePath, ctx)) {
+  const mergeReconcileResult = deps.reconcileMergeState(s.basePath, ctx);
+  if (mergeReconcileResult === "blocked") {
+    await deps.pauseAuto(ctx, pi);
+    debugLog("autoLoop", { phase: "exit", reason: "merge-reconciliation-blocked" });
+    return { action: "break", reason: "merge-reconciliation-blocked" };
+  }
+  if (mergeReconcileResult === "reconciled") {
     deps.invalidateAllCaches();
     state = await deps.deriveState(s.basePath);
     mid = state.activeMilestone?.id;
@@ -424,31 +536,36 @@ export async function runPreDispatch(
   if (state.phase === "complete") {
     // Milestone merge on complete (before closeout so branch state is clean)
     if (s.currentMilestoneId) {
-      deps.resolver.mergeAndExit(s.currentMilestoneId, ctx.ui);
-
-      // Opt-in: create draft PR on milestone completion
-      if (prefs?.git?.auto_pr) {
-        try {
-          const { createDraftPR } = await import("../git-service.js");
-          const prUrl = createDraftPR(
-            s.basePath,
-            s.currentMilestoneId,
-            `[GSD] ${s.currentMilestoneId} complete`,
-            `Milestone ${s.currentMilestoneId} completed by GSD auto-mode.\n\nSee .gsd/${s.currentMilestoneId}/ for details.`,
+      try {
+        deps.resolver.mergeAndExit(s.currentMilestoneId, ctx.ui);
+        // Prevent stopAuto from attempting the same merge (#2645)
+        s.milestoneMergedInPhases = true;
+      } catch (mergeErr) {
+        if (mergeErr instanceof MergeConflictError) {
+          ctx.ui.notify(
+            `Merge conflict: ${mergeErr.conflictedFiles.join(", ")}. Resolve conflicts manually and run /gsd auto to resume.`,
+            "error",
           );
-          if (prUrl) {
-            ctx.ui.notify(`Draft PR created: ${prUrl}`, "info");
-          }
-        } catch {
-          // Non-fatal — PR creation is best-effort
+          await deps.stopAuto(ctx, pi, `Merge conflict on milestone ${s.currentMilestoneId}`);
+          return { action: "break", reason: "merge-conflict" };
         }
+        logError("engine", "Milestone merge failed with non-conflict error", { milestone: s.currentMilestoneId!, error: String(mergeErr) });
+        ctx.ui.notify(
+          `Merge failed: ${mergeErr instanceof Error ? mergeErr.message : String(mergeErr)}. Resolve and run /gsd auto to resume.`,
+          "error",
+        );
+        await deps.stopAuto(ctx, pi, `Merge error on milestone ${s.currentMilestoneId}: ${String(mergeErr)}`);
+        return { action: "break", reason: "merge-failed" };
       }
+
+      // PR creation (auto_pr) is handled inside mergeMilestoneToMain (#2302)
     }
     deps.sendDesktopNotification(
       "GSD",
       `Milestone ${mid} complete!`,
       "success",
       "milestone",
+      basename(s.originalBasePath || s.basePath),
     );
     deps.logCmuxEvent(
       prefs,
@@ -466,7 +583,7 @@ export async function runPreDispatch(
     const blockerMsg = `Blocked: ${state.blockers.join(", ")}`;
     await closeoutAndStop(ctx, pi, s, deps, blockerMsg);
     ctx.ui.notify(`${blockerMsg}. Fix and run /gsd auto.`, "warning");
-    deps.sendDesktopNotification("GSD", blockerMsg, "error", "attention");
+    deps.sendDesktopNotification("GSD", blockerMsg, "error", "attention", basename(s.originalBasePath || s.basePath));
     deps.logCmuxEvent(prefs, blockerMsg, "error");
     debugLog("autoLoop", { phase: "exit", reason: "blocked" });
     deps.emitJournalEvent({ ts: new Date().toISOString(), flowId: ic.flowId, seq: ic.nextSeq(), eventType: "terminal", data: { reason: "blocked", blockers: state.blockers } });
@@ -503,7 +620,17 @@ export async function runDispatch(
 
   if (dispatchResult.action === "stop") {
     deps.emitJournalEvent({ ts: new Date().toISOString(), flowId: ic.flowId, seq: ic.nextSeq(), eventType: "dispatch-stop", rule: dispatchResult.matchedRule, data: { reason: dispatchResult.reason } });
-    await closeoutAndStop(ctx, pi, s, deps, dispatchResult.reason);
+    // Warning-level stops are recoverable human checkpoints (e.g. UAT verdict
+    // gate) — pause instead of hard-stopping so the session is resumable with
+    // `/gsd auto`. Error/info-level stops remain hard stops for infrastructure
+    // failures and terminal conditions respectively.
+    // See: https://github.com/gsd-build/gsd-2/issues/2474
+    if (dispatchResult.level === "warning") {
+      ctx.ui.notify(dispatchResult.reason, "warning");
+      await deps.pauseAuto(ctx, pi);
+    } else {
+      await closeoutAndStop(ctx, pi, s, deps, dispatchResult.reason);
+    }
     debugLog("autoLoop", { phase: "exit", reason: "dispatch-stop" });
     return { action: "break", reason: "dispatch-stop" };
   }
@@ -541,7 +668,7 @@ export async function runDispatch(
       if (loopState.stuckRecoveryAttempts === 0) {
         // Level 1: try verifying the artifact, then cache invalidation + retry
         loopState.stuckRecoveryAttempts++;
-        const artifactExists = deps.verifyExpectedArtifact(
+        const artifactExists = verifyExpectedArtifact(
           unitType,
           unitId,
           s.basePath,
@@ -572,14 +699,16 @@ export async function runDispatch(
           unitId,
           reason: stuckSignal.reason,
         });
+        const stuckDiag = diagnoseExpectedArtifact(unitType, unitId, s.basePath);
+        const stuckRemediation = buildLoopRemediationSteps(unitType, unitId, s.basePath);
+        const stuckParts = [`Stuck on ${unitType} ${unitId} — ${stuckSignal.reason}.`];
+        if (stuckDiag) stuckParts.push(`Expected: ${stuckDiag}`);
+        if (stuckRemediation) stuckParts.push(`To recover:\n${stuckRemediation}`);
+        ctx.ui.notify(stuckParts.join(" "), "error");
         await deps.stopAuto(
           ctx,
           pi,
           `Stuck: ${stuckSignal.reason}`,
-        );
-        ctx.ui.notify(
-          `Stuck on ${unitType} ${unitId} — ${stuckSignal.reason}. The expected artifact was not written.`,
-          "error",
         );
         return { action: "break", reason: "stuck-detected" };
       }
@@ -625,9 +754,10 @@ export async function runDispatch(
     prompt = preDispatchResult.prompt;
   }
 
+  const guardBasePath = _resolveDispatchGuardBasePath(s);
   const priorSliceBlocker = deps.getPriorSliceCompletionBlocker(
-    s.basePath,
-    deps.getMainBranch(s.basePath),
+    guardBasePath,
+    deps.getMainBranch(guardBasePath),
     unitType,
     unitId,
   );
@@ -637,18 +767,11 @@ export async function runDispatch(
     return { action: "break", reason: "prior-slice-blocker" };
   }
 
-  const observabilityIssues = await deps.collectObservabilityWarnings(
-    ctx,
-    s.basePath,
-    unitType,
-    unitId,
-  );
-
   return {
     action: "next",
     data: {
       unitType, unitId, prompt, finalPrompt: prompt,
-      pauseAfterUatDispatch, observabilityIssues,
+      pauseAfterUatDispatch,
       state, mid, midTitle,
       isRetry: false, previousTier: undefined,
       hookModelOverride: preDispatchResult.model,
@@ -659,7 +782,7 @@ export async function runDispatch(
 // ─── runGuards ────────────────────────────────────────────────────────────────
 
 /**
- * Phase 2: Guards — budget ceiling, context window, secrets re-check.
+ * Phase 2: Guards — stop directives, budget ceiling, context window, secrets re-check.
  * Returns break to exit the loop, or next to proceed to dispatch.
  */
 export async function runGuards(
@@ -668,12 +791,70 @@ export async function runGuards(
 ): Promise<PhaseResult> {
   const { ctx, pi, s, deps, prefs } = ic;
 
+  // ── Stop/Backtrack directive guard (#3487) ──
+  // Check for unexecuted stop or backtrack captures BEFORE dispatching any unit.
+  // This ensures user "halt" directives are honored immediately.
+  // IMPORTANT: Fail-closed — any exception during stop handling still breaks the loop
+  // to ensure user halt intent is never silently dropped.
+  try {
+    const { loadStopCaptures, markCaptureExecuted } = await import("../captures.js");
+    const stopCaptures = loadStopCaptures(s.basePath);
+    if (stopCaptures.length > 0) {
+      const first = stopCaptures[0];
+      const isBacktrack = first.classification === "backtrack";
+      const label = isBacktrack
+        ? `Backtrack directive: ${first.text}`
+        : `Stop directive: ${first.text}`;
+
+      ctx.ui.notify(label, "warning");
+      deps.sendDesktopNotification(
+        "GSD", label, "warning", "stop-directive",
+        basename(s.originalBasePath || s.basePath),
+      );
+
+      // Pause first — ensures auto-mode stops even if later steps fail
+      await deps.pauseAuto(ctx, pi);
+
+      // For backtrack captures, write the backtrack trigger after pausing
+      if (isBacktrack) {
+        try {
+          const { executeBacktrack } = await import("../triage-resolution.js");
+          executeBacktrack(s.basePath, mid, first);
+        } catch (e) {
+          debugLog("guards", { phase: "backtrack-execution-error", error: String(e) });
+        }
+      }
+
+      // Mark captures as executed only after successful pause/transition
+      for (const cap of stopCaptures) {
+        markCaptureExecuted(s.basePath, cap.id);
+      }
+
+      debugLog("autoLoop", { phase: "exit", reason: isBacktrack ? "user-backtrack" : "user-stop" });
+      return { action: "break", reason: isBacktrack ? "user-backtrack" : "user-stop" };
+    }
+  } catch (e) {
+    // Fail-closed: if anything in the stop guard throws, break the loop
+    // rather than silently continuing and dropping user halt intent
+    debugLog("guards", { phase: "stop-guard-error", error: String(e) });
+    return { action: "break", reason: "stop-guard-error" };
+  }
+
   // Budget ceiling guard
   const budgetCeiling = prefs?.budget_ceiling;
   if (budgetCeiling !== undefined && budgetCeiling > 0) {
     const currentLedger = deps.getLedger() as { units: unknown } | null;
-    const totalCost = currentLedger
-      ? deps.getProjectTotals(currentLedger.units).cost
+    // In parallel worker mode, only count cost from the current auto-mode session
+    // to avoid hitting the ceiling due to historical project-wide spend (#2184).
+    let costUnits = currentLedger?.units;
+    if (process.env.GSD_PARALLEL_WORKER && s.autoStartTime && Array.isArray(costUnits)) {
+      const sessionStartISO = new Date(s.autoStartTime).toISOString();
+      costUnits = costUnits.filter(
+        (u: { startedAt?: string }) => u.startedAt != null && u.startedAt >= sessionStartISO,
+      );
+    }
+    const totalCost = costUnits
+      ? deps.getProjectTotals(costUnits).cost
       : 0;
     const budgetPct = totalCost / budgetCeiling;
     const budgetAlertLevel = deps.getBudgetAlertLevel(budgetPct);
@@ -699,7 +880,7 @@ export async function runGuards(
         // 100% — special enforcement logic (halt/pause/warn)
         const msg = `Budget ceiling ${deps.formatCost(budgetCeiling)} reached (spent ${deps.formatCost(totalCost)}).`;
         if (budgetEnforcementAction === "halt") {
-          deps.sendDesktopNotification("GSD", msg, "error", "budget");
+          deps.sendDesktopNotification("GSD", msg, "error", "budget", basename(s.originalBasePath || s.basePath));
           await deps.stopAuto(ctx, pi, "Budget ceiling reached");
           debugLog("autoLoop", { phase: "exit", reason: "budget-halt" });
           return { action: "break", reason: "budget-halt" };
@@ -709,14 +890,14 @@ export async function runGuards(
             `${msg} Pausing auto-mode — /gsd auto to override and continue.`,
             "warning",
           );
-          deps.sendDesktopNotification("GSD", msg, "warning", "budget");
+          deps.sendDesktopNotification("GSD", msg, "warning", "budget", basename(s.originalBasePath || s.basePath));
           deps.logCmuxEvent(prefs, msg, "warning");
           await deps.pauseAuto(ctx, pi);
           debugLog("autoLoop", { phase: "exit", reason: "budget-pause" });
           return { action: "break", reason: "budget-pause" };
         }
         ctx.ui.notify(`${msg} Continuing (enforcement: warn).`, "warning");
-        deps.sendDesktopNotification("GSD", msg, "warning", "budget");
+        deps.sendDesktopNotification("GSD", msg, "warning", "budget", basename(s.originalBasePath || s.basePath));
         deps.logCmuxEvent(prefs, msg, "warning");
       } else if (threshold.pct < 100) {
         // Sub-100% — simple notification
@@ -727,6 +908,7 @@ export async function runGuards(
           msg,
           threshold.notifyLevel,
           "budget",
+          basename(s.originalBasePath || s.basePath),
         );
         deps.logCmuxEvent(prefs, msg, threshold.cmuxLevel);
       }
@@ -756,6 +938,7 @@ export async function runGuards(
         `Context ${contextUsage.percent}% — paused`,
         "warning",
         "attention",
+        basename(s.originalBasePath || s.basePath),
       );
       await deps.pauseAuto(ctx, pi);
       debugLog("autoLoop", { phase: "exit", reason: "context-window" });
@@ -809,7 +992,7 @@ export async function runUnitPhase(
   sidecarItem?: SidecarItem,
 ): Promise<PhaseResult<{ unitStartedAt: number }>> {
   const { ctx, pi, s, deps, prefs } = ic;
-  const { unitType, unitId, prompt, observabilityIssues, state, mid } = iterData;
+  const { unitType, unitId, prompt, state, mid } = iterData;
 
   debugLog("autoLoop", {
     phase: "unit-execution",
@@ -836,12 +1019,39 @@ export async function runUnitPhase(
     }
     const hasProjectFile = PROJECT_FILES.some((f) => deps.existsSync(join(s.basePath, f)));
     const hasSrcDir = deps.existsSync(join(s.basePath, "src"));
-    if (!hasProjectFile && !hasSrcDir) {
-      const msg = `Worktree health check failed: ${s.basePath} has no recognized project files — refusing to dispatch ${unitType} ${unitId}`;
-      debugLog("runUnitPhase", { phase: "worktree-health-fail", basePath: s.basePath, hasProjectFile, hasSrcDir });
-      ctx.ui.notify(msg, "error");
-      await deps.stopAuto(ctx, pi, msg);
-      return { action: "break", reason: "worktree-invalid" };
+    // Xcode bundles have project-specific names (*.xcodeproj, *.xcworkspace)
+    // that cannot be matched by exact filename — scan the directory by suffix.
+    let hasXcodeBundle = false;
+    try {
+      const entries = deps.existsSync(s.basePath) ? readdirSync(s.basePath) : [];
+      hasXcodeBundle = entries.some((e: string) => e.endsWith(".xcodeproj") || e.endsWith(".xcworkspace"));
+    } catch (err) {
+      debugLog("runUnitPhase", { phase: "xcode-bundle-scan-failed", basePath: s.basePath, error: String(err) });
+    }
+    // Monorepo support (#2347): if no project files in the worktree directory,
+    // walk parent directories up to the filesystem root. In monorepos,
+    // package.json / Cargo.toml etc. live in a parent directory.
+    let hasProjectFileInParent = false;
+    if (!hasProjectFile && !hasSrcDir && !hasXcodeBundle) {
+      let checkDir = dirname(s.basePath);
+      const { root } = parsePath(checkDir);
+      while (checkDir !== root) {
+        // Stop at git repository boundary — ancestors above the repo root
+        // (e.g. ~ or /usr/local) may contain unrelated project files.
+        if (deps.existsSync(join(checkDir, ".git"))) break;
+        if (PROJECT_FILES.some((f) => deps.existsSync(join(checkDir, f)))) {
+          hasProjectFileInParent = true;
+          break;
+        }
+        checkDir = dirname(checkDir);
+      }
+    }
+    if (!hasProjectFile && !hasSrcDir && !hasXcodeBundle && !hasProjectFileInParent) {
+      // Greenfield projects won't have project files yet — the first task creates them.
+      // Log a warning but allow execution to proceed. The .git check above is sufficient
+      // to ensure we're in a valid working directory.
+      debugLog("runUnitPhase", { phase: "worktree-health-warn-greenfield", basePath: s.basePath, hasProjectFile, hasSrcDir, hasXcodeBundle });
+      ctx.ui.notify(`Warning: ${s.basePath} has no recognized project files — proceeding as greenfield project`, "warning");
     }
   }
 
@@ -854,10 +1064,11 @@ export async function runUnitPhase(
   const previousTier = s.currentUnitRouting?.tier;
 
   s.currentUnit = { type: unitType, id: unitId, startedAt: Date.now() };
+  s.lastToolInvocationError = null; // #2883: clear stale error from previous unit
   const unitStartSeq = ic.nextSeq();
   deps.emitJournalEvent({ ts: new Date().toISOString(), flowId: ic.flowId, seq: unitStartSeq, eventType: "unit-start", data: { unitType, unitId } });
   deps.captureAvailableSkills();
-  deps.writeUnitRuntimeRecord(
+  writeUnitRuntimeRecord(
     s.basePath,
     unitType,
     unitId,
@@ -869,16 +1080,29 @@ export async function runUnitPhase(
       lastProgressAt: s.currentUnit.startedAt,
       progressCount: 0,
       lastProgressKind: "dispatch",
+      recoveryAttempts: 0, // Reset so re-dispatched units get full recovery budget (#2322)
     },
   );
 
-  // Status bar + progress widget
+  // Status bar (widget + preconditions deferred until after model selection — see #2899)
   ctx.ui.setStatus("gsd-auto", "auto");
   if (mid)
     deps.updateSliceProgressCache(s.basePath, mid, state.activeSlice?.id);
-  deps.updateProgressWidget(ctx, unitType, unitId, state);
 
-  deps.ensurePreconditions(unitType, unitId, s.basePath, state);
+  // ── Safety harness: reset evidence + create checkpoint ──
+  const safetyConfig = resolveSafetyHarnessConfig(
+    prefs?.safety_harness as Record<string, unknown> | undefined,
+  );
+  if (safetyConfig.enabled && safetyConfig.evidence_collection) {
+    resetEvidence();
+  }
+  // Only checkpoint code-executing units (not lifecycle/planning units)
+  if (safetyConfig.enabled && safetyConfig.checkpoints && unitType === "execute-task") {
+    s.checkpointSha = createCheckpoint(s.basePath, unitId);
+    if (s.checkpointSha) {
+      debugLog("runUnitPhase", { phase: "checkpoint-created", unitId, sha: s.checkpointSha.slice(0, 8) });
+    }
+  }
 
   // Prompt injection
   let finalPrompt = prompt;
@@ -914,12 +1138,6 @@ export async function runUnitPhase(
     }
   }
 
-  const repairBlock =
-    deps.buildObservabilityRepairBlock(observabilityIssues);
-  if (repairBlock) {
-    finalPrompt = `${finalPrompt}${repairBlock}`;
-  }
-
   // Prompt char measurement
   s.lastPromptCharCount = finalPrompt.length;
   s.lastBaselineCharCount = undefined;
@@ -936,8 +1154,8 @@ export async function runUnitPhase(
         (decisionsContent?.length ?? 0) +
         (requirementsContent?.length ?? 0) +
         (projectContent?.length ?? 0);
-    } catch {
-      // Non-fatal
+    } catch (e) {
+      logWarning("engine", "Baseline char count measurement failed", { error: String(e) });
     }
   }
 
@@ -947,9 +1165,7 @@ export async function runUnitPhase(
   } catch (reorderErr) {
     const msg =
       reorderErr instanceof Error ? reorderErr.message : String(reorderErr);
-    process.stderr.write(
-      `[gsd] prompt reorder failed (non-fatal): ${msg}\n`,
-    );
+    logWarning("engine", "Prompt reorder failed", { error: msg });
   }
 
   // Select and apply model (with tier escalation on retry — normal units only)
@@ -966,6 +1182,8 @@ export async function runUnitPhase(
   );
   s.currentUnitRouting =
     modelResult.routing as AutoSession["currentUnitRouting"];
+  s.currentUnitModel =
+    modelResult.appliedModel as AutoSession["currentUnitModel"];
 
   // Apply sidecar/pre-dispatch hook model override (takes priority over standard model selection)
   const hookModelOverride = sidecarItem?.model ?? iterData.hookModelOverride;
@@ -975,6 +1193,7 @@ export async function runUnitPhase(
     if (match) {
       const ok = await pi.setModel(match, { persist: false });
       if (ok) {
+        s.currentUnitModel = match as AutoSession["currentUnitModel"];
         ctx.ui.notify(`Hook model override: ${match.provider}/${match.id}`, "info");
       } else {
         ctx.ui.notify(
@@ -990,6 +1209,17 @@ export async function runUnitPhase(
       );
     }
   }
+
+  // Store the final dispatched model ID so the dashboard can read it (#2899).
+  // This accounts for hook model overrides applied after selectAndApplyModel.
+  s.currentDispatchedModelId = s.currentUnitModel
+    ? `${(s.currentUnitModel as any).provider ?? ""}/${(s.currentUnitModel as any).id ?? ""}`
+    : null;
+
+  // Progress widget + preconditions — deferred to after model selection so the
+  // widget's first render tick shows the correct model (#2899).
+  deps.updateProgressWidget(ctx, unitType, unitId, state);
+  deps.ensurePreconditions(unitType, unitId, s.basePath, state);
 
   // Start unit supervision
   deps.clearUnitTimeout();
@@ -1016,7 +1246,6 @@ export async function runUnitPhase(
     deps.lockBase(),
     unitType,
     unitId,
-    s.completedUnits.length,
   );
 
   debugLog("autoLoop", {
@@ -1047,40 +1276,61 @@ export async function runUnitPhase(
     deps.lockBase(),
     unitType,
     unitId,
-    s.completedUnits.length,
     sessionFile,
   );
   deps.writeLock(
     deps.lockBase(),
     unitType,
     unitId,
-    s.completedUnits.length,
     sessionFile,
   );
 
   // Tag the most recent window entry with error info for stuck detection
-  if (unitResult.status === "error" || unitResult.status === "cancelled") {
-    const lastEntry = loopState.recentUnits[loopState.recentUnits.length - 1];
-    if (lastEntry) {
+  const lastEntry = loopState.recentUnits[loopState.recentUnits.length - 1];
+  if (lastEntry) {
+    if (unitResult.errorContext) {
+      lastEntry.error = `${unitResult.errorContext.category}:${unitResult.errorContext.message}`.slice(0, 200);
+    } else if (unitResult.status === "error" || unitResult.status === "cancelled") {
       lastEntry.error = `${unitResult.status}:${unitType}/${unitId}`;
-    }
-  } else if (unitResult.event?.messages?.length) {
-    const lastMsg = unitResult.event.messages[unitResult.event.messages.length - 1];
-    const msgStr = typeof lastMsg === "string" ? lastMsg : JSON.stringify(lastMsg);
-    if (/error|fail|exception/i.test(msgStr)) {
-      const lastEntry = loopState.recentUnits[loopState.recentUnits.length - 1];
-      if (lastEntry) {
+    } else if (unitResult.event?.messages?.length) {
+      const lastMsg = unitResult.event.messages[unitResult.event.messages.length - 1];
+      const msgStr = typeof lastMsg === "string" ? lastMsg : JSON.stringify(lastMsg);
+      if (/error|fail|exception/i.test(msgStr)) {
         lastEntry.error = msgStr.slice(0, 200);
       }
     }
   }
 
   if (unitResult.status === "cancelled") {
+    // Provider-error pause: pauseAuto already handled cleanup and scheduled
+    // recovery. Don't hard-stop — just break out of the loop (#2762).
+    if (unitResult.errorContext?.category === "provider") {
+      debugLog("autoLoop", { phase: "exit", reason: "provider-pause", isTransient: unitResult.errorContext.isTransient });
+      return { action: "break", reason: "provider-pause" };
+    }
+    // Session creation timeout (not a structural error): pause auto-mode
+    // and let the provider-error-resume timer handle recovery (#3767). This
+    // matches the provider-pause path — break out cleanly, don't hard-stop.
+    // Structural errors (TypeError, is not a function) are NOT transient
+    // and must hard-stop to avoid infinite retry loops.
+    if (
+      unitResult.errorContext?.isTransient &&
+      unitResult.errorContext?.category === "timeout"
+    ) {
+      ctx.ui.notify(
+        `Session creation timed out for ${unitType} ${unitId}. Pausing auto-mode (recoverable).`,
+        "warning",
+      );
+      debugLog("autoLoop", { phase: "session-timeout-pause", unitType, unitId });
+      await deps.pauseAuto(ctx, pi);
+      return { action: "break", reason: "session-timeout" };
+    }
+    // All other cancelled states (structural errors, non-transient failures): hard stop
     ctx.ui.notify(
-      `Session creation timed out or was cancelled for ${unitType} ${unitId}. Will retry.`,
+      `Session creation failed for ${unitType} ${unitId}: ${unitResult.errorContext?.message ?? "unknown"}. Stopping auto-mode.`,
       "warning",
     );
-    await deps.stopAuto(ctx, pi, "Session creation failed");
+    await deps.stopAuto(ctx, pi, `Session creation failed: ${unitResult.errorContext?.message ?? "unknown"}`);
     debugLog("autoLoop", { phase: "exit", reason: "session-failed" });
     return { action: "break", reason: "session-failed" };
   }
@@ -1088,39 +1338,45 @@ export async function runUnitPhase(
   // ── Immediate unit closeout (metrics, activity log, memory) ────────
   // Run right after runUnit() returns so telemetry is never lost to a
   // crash between iterations.
-  await deps.closeoutUnit(
-    ctx,
-    s.basePath,
-    unitType,
-    unitId,
-    s.currentUnit.startedAt,
-    deps.buildSnapshotOpts(unitType, unitId),
-  );
+  // Guard: stopAuto() may have nulled s.currentUnit via s.reset() while
+  // this coroutine was suspended at `await runUnit(...)` (#2939).
+  if (s.currentUnit) {
+    await deps.closeoutUnit(
+      ctx,
+      s.basePath,
+      unitType,
+      unitId,
+      s.currentUnit.startedAt,
+      deps.buildSnapshotOpts(unitType, unitId),
+    );
+  }
 
-  // ── Zero tool-call guard (#1833) ──────────────────────────────────
-  // An execute-task agent that completes with 0 tool calls made no
-  // real changes — its summary is hallucinated. Treat as failed so
-  // the task is retried instead of silently marked complete.
-  if (unitType === "execute-task") {
+  // ── Zero tool-call guard (#1833, #2653) ──────────────────────────
+  // Any unit that completes with 0 tool calls made no real progress —
+  // likely context exhaustion where all tool calls errored out. Treat
+  // as failed so the unit is retried in a fresh context instead of
+  // silently passing through to artifact verification (which loops
+  // forever when the unit never produced its artifact).
+  {
     const currentLedger = deps.getLedger() as { units: Array<{ type: string; id: string; startedAt: number; toolCalls: number }> } | null;
     if (currentLedger?.units) {
       const lastUnit = [...currentLedger.units].reverse().find(
-        (u: { type: string; id: string; startedAt: number; toolCalls: number }) => u.type === unitType && u.id === unitId && u.startedAt === s.currentUnit!.startedAt,
+        (u: { type: string; id: string; startedAt: number; toolCalls: number }) => u.type === unitType && u.id === unitId && u.startedAt === s.currentUnit?.startedAt,
       );
       if (lastUnit && lastUnit.toolCalls === 0) {
         debugLog("runUnitPhase", {
           phase: "zero-tool-calls",
           unitType,
           unitId,
-          warning: "Task completed with 0 tool calls — likely hallucinated, marking as failed",
+          warning: "Unit completed with 0 tool calls — likely context exhaustion, marking as failed",
         });
         ctx.ui.notify(
-          `${unitType} ${unitId} completed with 0 tool calls — hallucinated summary, will retry`,
+          `${unitType} ${unitId} completed with 0 tool calls — context exhaustion, will retry`,
           "warning",
         );
-        // Do NOT add to completedUnits — fall through to next iteration
-        // where dispatch will re-derive and re-dispatch this task.
-        return { action: "next", data: { unitStartedAt: s.currentUnit.startedAt } };
+        // Fall through to next iteration where dispatch will re-derive
+        // and re-dispatch this unit.
+        return { action: "next", data: { unitStartedAt: s.currentUnit?.startedAt } };
       }
     }
   }
@@ -1136,32 +1392,55 @@ export async function runUnitPhase(
   const skipArtifactVerification = unitType.startsWith("hook/") || unitType === "custom-step";
   const artifactVerified =
     skipArtifactVerification ||
-    deps.verifyExpectedArtifact(unitType, unitId, s.basePath);
+    verifyExpectedArtifact(unitType, unitId, s.basePath);
   if (artifactVerified) {
-    s.completedUnits.push({
-      type: unitType,
-      id: unitId,
-      startedAt: s.currentUnit.startedAt,
-      finishedAt: Date.now(),
-    });
-    if (s.completedUnits.length > 200) {
-      s.completedUnits = s.completedUnits.slice(-200);
-    }
-    // Flush completed-units to disk so the record survives crashes
-    try {
-      const completedKeysPath = join(gsdRoot(s.basePath), "completed-units.json");
-      const keys = s.completedUnits.map((u) => `${u.type}/${u.id}`);
-      atomicWriteSync(completedKeysPath, JSON.stringify(keys, null, 2));
-    } catch { /* non-fatal: disk flush failure */ }
-
-    deps.clearUnitRuntimeRecord(s.basePath, unitType, unitId);
     s.unitDispatchCount.delete(`${unitType}/${unitId}`);
     s.unitRecoveryCount.delete(`${unitType}/${unitId}`);
   }
 
-  deps.emitJournalEvent({ ts: new Date().toISOString(), flowId: ic.flowId, seq: ic.nextSeq(), eventType: "unit-end", data: { unitType, unitId, status: unitResult.status, artifactVerified }, causedBy: { flowId: ic.flowId, seq: unitStartSeq } });
+  // Write phase handoff anchor after successful research/planning completion
+  const anchorPhases = new Set(["research-milestone", "research-slice", "plan-milestone", "plan-slice"]);
+  if (artifactVerified && mid && anchorPhases.has(unitType)) {
+    try {
+      const { writePhaseAnchor } = await import("../phase-anchor.js");
+      writePhaseAnchor(s.basePath, mid, {
+        phase: unitType,
+        milestoneId: mid,
+        generatedAt: new Date().toISOString(),
+        intent: `Completed ${unitType} for ${unitId}`,
+        decisions: [],
+        blockers: [],
+        nextSteps: [],
+      });
+    } catch (err) { /* non-fatal — anchor is advisory */
+      logWarning("engine", `phase anchor failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
 
-  return { action: "next", data: { unitStartedAt: s.currentUnit.startedAt } };
+  deps.emitJournalEvent({ ts: new Date().toISOString(), flowId: ic.flowId, seq: ic.nextSeq(), eventType: "unit-end", data: { unitType, unitId, status: unitResult.status, artifactVerified, ...(unitResult.errorContext ? { errorContext: unitResult.errorContext } : {}) }, causedBy: { flowId: ic.flowId, seq: unitStartSeq } });
+
+  // ── Safety harness: checkpoint cleanup or rollback ──
+  if (s.checkpointSha) {
+    if (unitResult.status === "error" && safetyConfig.auto_rollback) {
+      const rolled = rollbackToCheckpoint(s.basePath, unitId, s.checkpointSha);
+      if (rolled) {
+        ctx.ui.notify(`Rolled back to pre-unit checkpoint for ${unitId}`, "info");
+        debugLog("runUnitPhase", { phase: "checkpoint-rollback", unitId });
+      }
+    } else if (unitResult.status === "error") {
+      ctx.ui.notify(
+        `Unit ${unitId} failed. Pre-unit checkpoint available at ${s.checkpointSha.slice(0, 8)}`,
+        "warning",
+      );
+    } else {
+      // Success — clean up checkpoint ref
+      cleanupCheckpoint(s.basePath, unitId);
+      debugLog("runUnitPhase", { phase: "checkpoint-cleaned", unitId });
+    }
+    s.checkpointSha = null;
+  }
+
+  return { action: "next", data: { unitStartedAt: s.currentUnit?.startedAt } };
 }
 
 // ─── runFinalize ──────────────────────────────────────────────────────────────
@@ -1173,6 +1452,7 @@ export async function runUnitPhase(
 export async function runFinalize(
   ic: IterationContext,
   iterData: IterationData,
+  loopState: LoopState,
   sidecarItem?: SidecarItem,
 ): Promise<PhaseResult> {
   const { ctx, pi, s, deps } = ic;
@@ -1196,13 +1476,58 @@ export async function runFinalize(
   };
 
   // Pre-verification processing (commit, doctor, state rebuild, etc.)
+  // Timeout guard: if postUnitPreVerification hangs (e.g., safety harness
+  // deadlock, browser teardown hang, worktree sync stall), force-continue
+  // after timeout so the auto-loop is not permanently frozen (#3757).
+  //
+  // On timeout, null out s.currentUnit so the timed-out task's late async
+  // mutations are harmless — postUnitPreVerification guards all side effects
+  // behind `if (s.currentUnit)`. The next iteration sets a fresh currentUnit.
   // Sidecar items use lightweight pre-verification opts
   const preVerificationOpts: PreVerificationOpts | undefined = sidecarItem
     ? sidecarItem.kind === "hook"
-      ? { skipSettleDelay: true, skipDoctor: true, skipStateRebuild: true, skipWorktreeSync: true }
-      : { skipSettleDelay: true, skipStateRebuild: true }
+      ? { skipSettleDelay: true, skipWorktreeSync: true }
+      : { skipSettleDelay: true }
     : undefined;
-  const preResult = await deps.postUnitPreVerification(postUnitCtx, preVerificationOpts);
+  const preUnitSnapshot = s.currentUnit
+    ? { type: s.currentUnit.type, id: s.currentUnit.id, startedAt: s.currentUnit.startedAt }
+    : null;
+  const preResultGuard = await withTimeout(
+    deps.postUnitPreVerification(postUnitCtx, preVerificationOpts),
+    FINALIZE_PRE_TIMEOUT_MS,
+    "postUnitPreVerification",
+  );
+
+  if (preResultGuard.timedOut) {
+    // Detach session from the timed-out unit so late async completions
+    // cannot mutate state for the next unit (#3757).
+    s.currentUnit = null;
+    loopState.consecutiveFinalizeTimeouts++;
+    debugLog("autoLoop", {
+      phase: "pre-verification-timeout",
+      iteration: ic.iteration,
+      unitType: iterData.unitType,
+      unitId: iterData.unitId,
+      consecutiveTimeouts: loopState.consecutiveFinalizeTimeouts,
+    });
+
+    if (loopState.consecutiveFinalizeTimeouts >= MAX_FINALIZE_TIMEOUTS) {
+      ctx.ui.notify(
+        `postUnitPreVerification timed out ${loopState.consecutiveFinalizeTimeouts} consecutive times — stopping auto-mode to prevent budget waste`,
+        "error",
+      );
+      await deps.stopAuto(ctx, pi, `${loopState.consecutiveFinalizeTimeouts} consecutive finalize timeouts`);
+      return { action: "break", reason: "finalize-timeout-escalation" };
+    }
+
+    ctx.ui.notify(
+      `postUnitPreVerification timed out after ${FINALIZE_PRE_TIMEOUT_MS / 1000}s for ${iterData.unitType} ${iterData.unitId} (${loopState.consecutiveFinalizeTimeouts}/${MAX_FINALIZE_TIMEOUTS}) — continuing to next iteration`,
+      "warning",
+    );
+    return { action: "next", data: undefined as void };
+  }
+
+  const preResult = preResultGuard.value;
   if (preResult === "dispatched") {
     debugLog("autoLoop", {
       phase: "exit",
@@ -1261,7 +1586,45 @@ export async function runFinalize(
   }
 
   // Post-verification processing (DB dual-write, hooks, triage, quick-tasks)
-  const postResult = await deps.postUnitPostVerification(postUnitCtx);
+  // Timeout guard: if postUnitPostVerification hangs (e.g., module import
+  // deadlock, SQLite transaction hang), force-continue after timeout so the
+  // auto-loop is not permanently frozen (#2344).
+  const postResultGuard = await withTimeout(
+    deps.postUnitPostVerification(postUnitCtx),
+    FINALIZE_POST_TIMEOUT_MS,
+    "postUnitPostVerification",
+  );
+
+  if (postResultGuard.timedOut) {
+    // Detach session from the timed-out unit so late async completions
+    // cannot mutate state for the next unit (#3757).
+    s.currentUnit = null;
+    loopState.consecutiveFinalizeTimeouts++;
+    debugLog("autoLoop", {
+      phase: "post-verification-timeout",
+      iteration: ic.iteration,
+      unitType: iterData.unitType,
+      unitId: iterData.unitId,
+      consecutiveTimeouts: loopState.consecutiveFinalizeTimeouts,
+    });
+
+    if (loopState.consecutiveFinalizeTimeouts >= MAX_FINALIZE_TIMEOUTS) {
+      ctx.ui.notify(
+        `postUnitPostVerification timed out ${loopState.consecutiveFinalizeTimeouts} consecutive times — stopping auto-mode to prevent budget waste`,
+        "error",
+      );
+      await deps.stopAuto(ctx, pi, `${loopState.consecutiveFinalizeTimeouts} consecutive finalize timeouts`);
+      return { action: "break", reason: "finalize-timeout-escalation" };
+    }
+
+    ctx.ui.notify(
+      `postUnitPostVerification timed out after ${FINALIZE_POST_TIMEOUT_MS / 1000}s for ${iterData.unitType} ${iterData.unitId} (${loopState.consecutiveFinalizeTimeouts}/${MAX_FINALIZE_TIMEOUTS}) — continuing to next iteration`,
+      "warning",
+    );
+    return { action: "next", data: undefined as void };
+  }
+
+  const postResult = postResultGuard.value;
 
   if (postResult === "stopped") {
     debugLog("autoLoop", {
@@ -1276,6 +1639,9 @@ export async function runFinalize(
     debugLog("autoLoop", { phase: "exit", reason: "step-wizard" });
     return { action: "break", reason: "step-wizard" };
   }
+
+  // Both pre and post verification completed without timeout — reset counter
+  loopState.consecutiveFinalizeTimeouts = 0;
 
   return { action: "next", data: undefined as void };
 }

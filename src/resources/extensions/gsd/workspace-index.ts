@@ -1,6 +1,8 @@
 import { join } from "node:path";
 
-import { loadFile, parsePlan, parseRoadmap } from "./files.js";
+import { loadFile } from "./files.js";
+import { isDbAvailable, getMilestoneSlices, getSliceTasks } from "./gsd-db.js";
+import { parseRoadmap, parsePlan } from "./parsers-legacy.js";
 import {
   resolveMilestoneFile,
   resolveSliceFile,
@@ -9,9 +11,9 @@ import {
   resolveTasksDir,
 } from "./paths.js";
 import { deriveState } from "./state.js";
+import { extractVerdict } from "./verdict-parser.js";
 import { milestoneIdSort, findMilestoneIds } from "./guided-flow.js";
 import type { RiskLevel } from "./types.js";
-import { type ValidationIssue, validateCompleteBoundary, validatePlanBoundary } from "./observability-validator.js";
 import { getSliceBranchName, detectWorktreeName } from "./worktree.js";
 
 export interface WorkspaceTaskTarget {
@@ -41,6 +43,10 @@ export interface WorkspaceMilestoneTarget {
   id: string;
   title: string;
   roadmapPath?: string;
+  /** Authoritative milestone lifecycle status from the GSD state registry. */
+  status?: "complete" | "active" | "pending" | "parked";
+  /** Milestone validation verdict, when validation has been performed. */
+  validationVerdict?: "pass" | "needs-attention" | "needs-remediation";
   slices: WorkspaceSliceTarget[];
 }
 
@@ -59,13 +65,15 @@ export interface GSDWorkspaceIndex {
     phase: string;
   };
   scopes: WorkspaceScopeTarget[];
-  validationIssues: ValidationIssue[];
+  validationIssues: Array<Record<string, unknown>>;
 }
 
-
+// Extract milestone title from roadmap header without using parsers.
+// Falls back to the milestone ID if no title line found.
 function titleFromRoadmapHeader(content: string, fallbackId: string): string {
-  const roadmap = parseRoadmap(content);
-  return roadmap.title.replace(/^M\d+(?:-[a-z0-9]{6})?[^:]*:\s*/, "") || fallbackId;
+  // Parse the "# M001: Title" header directly
+  const match = content.match(/^#\s+M\d+(?:-[a-z0-9]{6})?[^:]*:\s*(.+)/m);
+  return match?.[1]?.trim() || fallbackId;
 }
 
 async function indexSlice(basePath: string, milestoneId: string, sliceId: string, fallbackTitle: string, done: boolean, roadmapMeta?: { risk?: RiskLevel; depends?: string[]; demo?: string }): Promise<WorkspaceSliceTarget> {
@@ -77,12 +85,30 @@ async function indexSlice(basePath: string, milestoneId: string, sliceId: string
   const tasks: WorkspaceTaskTarget[] = [];
   let title = fallbackTitle;
 
-  if (planPath) {
-    const content = await loadFile(planPath);
-    if (content) {
-      const plan = parsePlan(content);
-      title = plan.title || fallbackTitle;
-      for (const task of plan.tasks) {
+  // Prefer DB for task data, fall back to file parsing when DB has no data
+  let usedDb = false;
+  if (isDbAvailable()) {
+    const dbTasks = getSliceTasks(milestoneId, sliceId);
+    if (dbTasks.length > 0) {
+      usedDb = true;
+      for (const task of dbTasks) {
+        title = fallbackTitle; // title comes from slice-level data, not plan
+        tasks.push({
+          id: task.id,
+          title: task.title,
+          done: task.status === "complete" || task.status === "done",
+          planPath: resolveTaskFile(basePath, milestoneId, sliceId, task.id, "PLAN") ?? undefined,
+          summaryPath: resolveTaskFile(basePath, milestoneId, sliceId, task.id, "SUMMARY") ?? undefined,
+        });
+      }
+    }
+  }
+  if (!usedDb && planPath) {
+    // File-based fallback: parse slice plan for task entries
+    const planContent = await loadFile(planPath);
+    if (planContent) {
+      const parsed = parsePlan(planContent);
+      for (const task of parsed.tasks) {
         tasks.push({
           id: task.id,
           title: task.title,
@@ -111,53 +137,52 @@ async function indexSlice(basePath: string, milestoneId: string, sliceId: string
 }
 
 export interface IndexWorkspaceOptions {
-  /**
-   * When true, run validatePlanBoundary and validateCompleteBoundary for each slice.
-   * Skipped by default — validation is expensive (content analysis) and only needed
-   * for explicit doctor/audit flows. The /gsd status dashboard and scope pickers
-   * don't need the full issue list.
-   */
   validate?: boolean;
 }
 
 export async function indexWorkspace(basePath: string, opts: IndexWorkspaceOptions = {}): Promise<GSDWorkspaceIndex> {
   const milestoneIds = findMilestoneIds(basePath);
   const milestones: WorkspaceMilestoneTarget[] = [];
-  const validationIssues: ValidationIssue[] = [];
-  const runValidation = opts.validate === true;
 
   for (const milestoneId of milestoneIds) {
     const roadmapPath = resolveMilestoneFile(basePath, milestoneId, "ROADMAP") ?? undefined;
     let title = milestoneId;
     const slices: WorkspaceSliceTarget[] = [];
 
-    if (roadmapPath) {
-      const roadmapContent = await loadFile(roadmapPath);
-      if (roadmapContent) {
-        const roadmap = parseRoadmap(roadmapContent);
-        title = titleFromRoadmapHeader(roadmapContent, milestoneId);
+    if (roadmapPath || isDbAvailable()) {
+      // Normalize slices from DB, fall back to file-based parsing when DB has no data
+      type NormSlice = { id: string; done: boolean; title: string; risk: string; depends: string[]; demo: string };
+      let normSlices: NormSlice[] | null = null;
+      if (isDbAvailable()) {
+        const dbSlices = getMilestoneSlices(milestoneId);
+        if (dbSlices.length > 0) {
+          normSlices = dbSlices.map(s => ({ id: s.id, done: s.status === "complete", title: s.title, risk: s.risk || "medium", depends: s.depends, demo: s.demo }));
+        }
+        // Get title from roadmap header
+        if (roadmapPath) {
+          const roadmapContent = await loadFile(roadmapPath);
+          if (roadmapContent) title = titleFromRoadmapHeader(roadmapContent, milestoneId);
+        }
+      }
+      if (!normSlices && roadmapPath) {
+        // File-based fallback: parse roadmap for slice entries
+        const roadmapContent = await loadFile(roadmapPath);
+        if (roadmapContent) {
+          title = titleFromRoadmapHeader(roadmapContent, milestoneId);
+          const parsed = parseRoadmap(roadmapContent);
+          normSlices = parsed.slices.map(s => ({ id: s.id, done: s.done, title: s.title, risk: s.risk || "medium", depends: s.depends, demo: s.demo || "" }));
+        }
+      }
+      if (!normSlices) normSlices = [];
 
-        // Parallelise all per-slice I/O: indexSlice + (optional) validation calls run concurrently.
-        // Order is preserved via Promise.all on an array built from roadmap.slices.
+      if (normSlices.length > 0) {
         const sliceResults = await Promise.all(
-          roadmap.slices.map(async (slice) => {
-            if (runValidation) {
-              const [indexedSlice, planIssues, completeIssues] = await Promise.all([
-                indexSlice(basePath, milestoneId, slice.id, slice.title, slice.done, { risk: slice.risk, depends: slice.depends, demo: slice.demo }),
-                validatePlanBoundary(basePath, milestoneId, slice.id),
-                validateCompleteBoundary(basePath, milestoneId, slice.id),
-              ]);
-              return { indexedSlice, issues: [...planIssues, ...completeIssues] };
-            }
-            const indexedSlice = await indexSlice(basePath, milestoneId, slice.id, slice.title, slice.done, { risk: slice.risk, depends: slice.depends, demo: slice.demo });
-            return { indexedSlice, issues: [] as ValidationIssue[] };
+          normSlices.map(async (slice) => {
+            return indexSlice(basePath, milestoneId, slice.id, slice.title, slice.done, { risk: slice.risk as RiskLevel, depends: slice.depends, demo: slice.demo });
           }),
         );
 
-        for (const { indexedSlice, issues } of sliceResults) {
-          slices.push(indexedSlice);
-          validationIssues.push(...issues);
-        }
+        slices.push(...sliceResults);
       }
     }
 
@@ -171,6 +196,31 @@ export async function indexWorkspace(basePath: string, opts: IndexWorkspaceOptio
     taskId: state.activeTask?.id,
     phase: state.phase,
   };
+
+  // Enrich milestones with authoritative status from state registry (#2807)
+  if (state.registry) {
+    const registryMap = new Map(state.registry.map(e => [e.id, e]));
+    for (const milestone of milestones) {
+      const entry = registryMap.get(milestone.id);
+      if (entry) {
+        milestone.status = entry.status;
+      }
+    }
+  }
+
+  // Populate validationVerdict from VALIDATION files (#2807)
+  for (const milestone of milestones) {
+    const validationPath = resolveMilestoneFile(basePath, milestone.id, "VALIDATION");
+    if (validationPath) {
+      const validationContent = await loadFile(validationPath);
+      if (validationContent) {
+        const verdict = extractVerdict(validationContent);
+        if (verdict === "pass" || verdict === "needs-attention" || verdict === "needs-remediation") {
+          milestone.validationVerdict = verdict;
+        }
+      }
+    }
+  }
 
   const scopes: WorkspaceScopeTarget[] = [{ scope: "project", label: "project", kind: "project" }];
   for (const milestone of milestones) {
@@ -187,7 +237,7 @@ export async function indexWorkspace(basePath: string, opts: IndexWorkspaceOptio
     }
   }
 
-  return { milestones, active, scopes, validationIssues };
+  return { milestones, active, scopes, validationIssues: [] };
 }
 
 export async function listDoctorScopeSuggestions(basePath: string): Promise<Array<{ value: string; label: string }>> {
@@ -207,8 +257,7 @@ export async function listDoctorScopeSuggestions(basePath: string): Promise<Arra
 }
 
 export async function getSuggestedNextCommands(basePath: string): Promise<string[]> {
-  // Run validation here since we surface a /gsd doctor audit hint when issues exist.
-  const index = await indexWorkspace(basePath, { validate: true });
+  const index = await indexWorkspace(basePath);
   const scope = index.active.milestoneId && index.active.sliceId
     ? `${index.active.milestoneId}/${index.active.sliceId}`
     : index.active.milestoneId;
@@ -218,7 +267,6 @@ export async function getSuggestedNextCommands(basePath: string): Promise<string
   if (index.active.phase === "executing" || index.active.phase === "summarizing") commands.add("/gsd auto");
   if (scope) commands.add(`/gsd doctor ${scope}`);
   if (scope) commands.add(`/gsd doctor fix ${scope}`);
-  if (index.validationIssues.length > 0 && scope) commands.add(`/gsd doctor audit ${scope}`);
   commands.add("/gsd status");
   return [...commands];
 }

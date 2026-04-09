@@ -264,6 +264,7 @@ export const GSD_ROOT_FILES = {
   REQUIREMENTS: "REQUIREMENTS.md",
   OVERRIDES: "OVERRIDES.md",
   KNOWLEDGE: "KNOWLEDGE.md",
+  CODEBASE: "CODEBASE.md",
 } as const;
 
 export type GSDRootFileKey = keyof typeof GSD_ROOT_FILES;
@@ -276,6 +277,7 @@ const LEGACY_GSD_ROOT_FILES: Record<GSDRootFileKey, string> = {
   REQUIREMENTS: "requirements.md",
   OVERRIDES: "overrides.md",
   KNOWLEDGE: "knowledge.md",
+  CODEBASE: "codebase.md",
 };
 
 // ─── GSD Root Discovery ───────────────────────────────────────────────────────
@@ -307,15 +309,57 @@ export function gsdRoot(basePath: string): string {
   return result;
 }
 
+/**
+ * Detect if a path is inside a .gsd/worktrees/<name>/ structure.
+ *
+ * GSD auto-worktrees live at <project>/.gsd/worktrees/<milestoneId>/.
+ * When gsdRoot() is called with such a path, we must NOT walk up to the
+ * project root's .gsd — each worktree manages its own .gsd state (#2594).
+ *
+ * Matches both forward-slash and platform-native separators to handle
+ * Windows paths (path.sep = '\\') and normalized Unix paths.
+ */
+function isInsideGsdWorktree(p: string): boolean {
+  // Match /.gsd/worktrees/<name> where <name> is the final segment or
+  // followed by a separator. The <name> segment must be non-empty.
+  const sepFwd = "/";
+  const sepNative = "\\";
+  const markers = [
+    `${sepFwd}.gsd${sepFwd}worktrees${sepFwd}`,
+    `${sepNative}.gsd${sepNative}worktrees${sepNative}`,
+  ];
+  for (const marker of markers) {
+    const idx = p.indexOf(marker);
+    if (idx === -1) continue;
+    // Verify there's a non-empty worktree name after the marker
+    const afterMarker = p.slice(idx + marker.length);
+    // The name is everything up to the next separator (or end of string)
+    const nameEnd = afterMarker.search(/[/\\]/);
+    const name = nameEnd === -1 ? afterMarker : afterMarker.slice(0, nameEnd);
+    if (name.length > 0) return true;
+  }
+  return false;
+}
+
 function probeGsdRoot(rawBasePath: string): string {
   // 1. Fast path — check the input path directly
   const local = join(rawBasePath, ".gsd");
   if (existsSync(local)) return local;
 
+  // 1b. Worktree guard (#2594) — if basePath is inside a .gsd/worktrees/<name>/
+  //     structure, return the worktree-local .gsd path immediately. Without this,
+  //     the git-root probe (step 2) or walk-up (step 3) escapes to the project
+  //     root's .gsd, causing ensurePreconditions() and deriveState() to read/write
+  //     state in the wrong location.
+  if (isInsideGsdWorktree(rawBasePath)) return local;
+
   // Resolve symlinks so path comparisons work correctly across platforms
   // (e.g. macOS /var → /private/var). Use rawBasePath as fallback if not resolvable.
   let basePath: string;
   try { basePath = realpathSync.native(rawBasePath); } catch { basePath = rawBasePath; }
+
+  // Also check the resolved path for the worktree pattern (macOS /tmp → /private/tmp)
+  if (basePath !== rawBasePath && isInsideGsdWorktree(basePath)) return local;
 
   // 2. Git root anchor — used as both probe target and walk-up boundary
   //    Only walk if we're inside a git project — prevents escaping into

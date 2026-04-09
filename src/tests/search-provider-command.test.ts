@@ -118,79 +118,73 @@ async function loadCommand(): Promise<CapturedCommand> {
 // 1. Direct arg — tavily
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('direct arg "tavily" sets preference and notifies', async () => {
+test('direct arg "tavily" sets preference and notifies', async (t) => {
   const { setSearchProviderPreference, getSearchProviderPreference } = await import(
     '../resources/extensions/search-the-web/provider.ts'
   )
   const cmd = await loadCommand()
   const { authPath, cleanup } = makeTmpAuth()
 
-  try {
-    await withEnv({ TAVILY_API_KEY: 'tvly-test', BRAVE_API_KEY: undefined }, async () => {
-      // Pre-set to auto so we can verify the change
-      setSearchProviderPreference('auto', authPath)
+  t.after(() => { cleanup() });
 
-      const ctx = makeMockCtx()
-      await cmd.handler('tavily', ctx)
+  await withEnv({ TAVILY_API_KEY: 'tvly-test', BRAVE_API_KEY: undefined }, async () => {
+    // Pre-set to auto so we can verify the change
+    setSearchProviderPreference('auto', authPath)
 
-      // No select UI shown
-      assert.equal(ctx.ui.selectCalls.length, 0, 'should not show select UI for direct arg')
+    const ctx = makeMockCtx()
+    await cmd.handler('tavily', ctx)
 
-      // Notification sent
-      assert.equal(ctx.ui.notifyCalls.length, 1, 'should notify once')
-      assert.match(ctx.ui.notifyCalls[0].message, /Search provider set to tavily/, 'notification should confirm provider set')
-      assert.match(ctx.ui.notifyCalls[0].message, /Effective provider: tavily/, 'notification should show effective provider')
-    })
-  } finally {
-    cleanup()
-  }
+    // No select UI shown
+    assert.equal(ctx.ui.selectCalls.length, 0, 'should not show select UI for direct arg')
+
+    // Notification sent
+    assert.equal(ctx.ui.notifyCalls.length, 1, 'should notify once')
+    assert.match(ctx.ui.notifyCalls[0].message, /Search provider set to tavily/, 'notification should confirm provider set')
+    assert.match(ctx.ui.notifyCalls[0].message, /Effective provider: tavily/, 'notification should show effective provider')
+  })
 })
 
 // ═══════════════════════════════════════════════════════════════════════════
 // 2. Direct arg — brave
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('direct arg "brave" sets preference and notifies', async () => {
+test('direct arg "brave" sets preference and notifies', async (t) => {
   const cmd = await loadCommand()
   const { authPath, cleanup } = makeTmpAuth()
 
-  try {
-    await withEnv({ TAVILY_API_KEY: undefined, BRAVE_API_KEY: 'BSA-test' }, async () => {
-      const ctx = makeMockCtx()
-      await cmd.handler('brave', ctx)
+  t.after(() => { cleanup() });
 
-      assert.equal(ctx.ui.selectCalls.length, 0)
-      assert.equal(ctx.ui.notifyCalls.length, 1)
-      assert.match(ctx.ui.notifyCalls[0].message, /Search provider set to brave/)
-      assert.match(ctx.ui.notifyCalls[0].message, /Effective provider: brave/)
-    })
-  } finally {
-    cleanup()
-  }
+  await withEnv({ TAVILY_API_KEY: undefined, BRAVE_API_KEY: 'BSA-test' }, async () => {
+    const ctx = makeMockCtx()
+    await cmd.handler('brave', ctx)
+
+    assert.equal(ctx.ui.selectCalls.length, 0)
+    assert.equal(ctx.ui.notifyCalls.length, 1)
+    assert.match(ctx.ui.notifyCalls[0].message, /Search provider set to brave/)
+    assert.match(ctx.ui.notifyCalls[0].message, /Effective provider: brave/)
+  })
 })
 
 // ═══════════════════════════════════════════════════════════════════════════
 // 3. Direct arg — auto
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('direct arg "auto" sets preference and notifies', async () => {
+test('direct arg "auto" sets preference and notifies', async (t) => {
   const cmd = await loadCommand()
   const { authPath, cleanup } = makeTmpAuth()
 
-  try {
-    await withEnv({ TAVILY_API_KEY: 'tvly-test', BRAVE_API_KEY: 'BSA-test' }, async () => {
-      const ctx = makeMockCtx()
-      await cmd.handler('auto', ctx)
+  t.after(() => { cleanup() });
 
-      assert.equal(ctx.ui.selectCalls.length, 0)
-      assert.equal(ctx.ui.notifyCalls.length, 1)
-      assert.match(ctx.ui.notifyCalls[0].message, /Search provider set to auto/)
-      // auto with both keys → tavily
-      assert.match(ctx.ui.notifyCalls[0].message, /Effective provider: tavily/)
-    })
-  } finally {
-    cleanup()
-  }
+  await withEnv({ TAVILY_API_KEY: 'tvly-test', BRAVE_API_KEY: 'BSA-test' }, async () => {
+    const ctx = makeMockCtx()
+    await cmd.handler('auto', ctx)
+
+    assert.equal(ctx.ui.selectCalls.length, 0)
+    assert.equal(ctx.ui.notifyCalls.length, 1)
+    assert.match(ctx.ui.notifyCalls[0].message, /Search provider set to auto/)
+    // auto with both keys → tavily
+    assert.match(ctx.ui.notifyCalls[0].message, /Effective provider: tavily/)
+  })
 })
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -227,29 +221,27 @@ test('no arg shows select UI with 3 options, user picks brave', async () => {
 // 5. Cancel (select returns undefined) — no side effects
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('cancel (select returns undefined) produces no side effects', async () => {
+test('cancel (select returns undefined) produces no side effects', async (t) => {
   const { getSearchProviderPreference, setSearchProviderPreference } = await import(
     '../resources/extensions/search-the-web/provider.ts'
   )
   const cmd = await loadCommand()
   const { authPath, cleanup } = makeTmpAuth()
 
-  try {
-    await withEnv({ TAVILY_API_KEY: 'tvly-test', BRAVE_API_KEY: undefined }, async () => {
-      setSearchProviderPreference('tavily', authPath)
+  t.after(() => { cleanup() });
 
-      // selectReturn = undefined simulates Esc
-      const ctx = makeMockCtx(undefined)
-      await cmd.handler('', ctx)
+  await withEnv({ TAVILY_API_KEY: 'tvly-test', BRAVE_API_KEY: undefined }, async () => {
+    setSearchProviderPreference('tavily', authPath)
 
-      // Select was called
-      assert.equal(ctx.ui.selectCalls.length, 1)
-      // No notification (no side effects)
-      assert.equal(ctx.ui.notifyCalls.length, 0, 'cancel should produce no notification')
-    })
-  } finally {
-    cleanup()
-  }
+    // selectReturn = undefined simulates Esc
+    const ctx = makeMockCtx(undefined)
+    await cmd.handler('', ctx)
+
+    // Select was called
+    assert.equal(ctx.ui.selectCalls.length, 1)
+    // No notification (no side effects)
+    assert.equal(ctx.ui.notifyCalls.length, 0, 'cancel should produce no notification')
+  })
 })
 
 // ═══════════════════════════════════════════════════════════════════════════

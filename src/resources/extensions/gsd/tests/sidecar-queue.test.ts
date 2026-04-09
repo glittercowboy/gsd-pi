@@ -113,12 +113,12 @@ test("postUnitPostVerification pushes to sidecarQueue for hooks", () => {
   assert.ok(triageSectionStart > -1, "auto-post-unit.ts must have a triage check section");
   const hookSection = source.slice(hookSectionStart, triageSectionStart);
   assert.ok(
-    hookSection.includes("s.sidecarQueue.push("),
-    "hook section must push to s.sidecarQueue",
+    hookSection.includes("enqueueSidecar(") || hookSection.includes("s.sidecarQueue.push("),
+    "hook section must enqueue to sidecarQueue (via enqueueSidecar or direct push)",
   );
   assert.ok(
-    hookSection.includes('kind: "hook"'),
-    "hook sidecar item must have kind: 'hook'",
+    hookSection.includes('"hook"'),
+    "hook sidecar item must reference kind 'hook'",
   );
 });
 
@@ -132,12 +132,12 @@ test("postUnitPostVerification pushes to sidecarQueue for triage", () => {
   assert.ok(quickTaskSectionStart > -1, "auto-post-unit.ts must have a quick-task dispatch section");
   const triageSection = source.slice(triageSectionStart, quickTaskSectionStart);
   assert.ok(
-    triageSection.includes("s.sidecarQueue.push("),
-    "triage section must push to s.sidecarQueue",
+    triageSection.includes("enqueueSidecar(") || triageSection.includes("s.sidecarQueue.push("),
+    "triage section must enqueue to sidecarQueue (via enqueueSidecar or direct push)",
   );
   assert.ok(
-    triageSection.includes('kind: "triage"'),
-    "triage sidecar item must have kind: 'triage'",
+    triageSection.includes('"triage"'),
+    "triage sidecar item must reference kind 'triage'",
   );
 });
 
@@ -149,12 +149,12 @@ test("postUnitPostVerification pushes to sidecarQueue for quick-tasks", () => {
   assert.ok(quickTaskSectionStart > -1, "auto-post-unit.ts must have a quick-task dispatch section");
   const quickTaskSection = source.slice(quickTaskSectionStart);
   assert.ok(
-    quickTaskSection.includes("s.sidecarQueue.push("),
-    "quick-task section must push to s.sidecarQueue",
+    quickTaskSection.includes("enqueueSidecar(") || quickTaskSection.includes("s.sidecarQueue.push("),
+    "quick-task section must enqueue to sidecarQueue (via enqueueSidecar or direct push)",
   );
   assert.ok(
-    quickTaskSection.includes('kind: "quick-task"'),
-    "quick-task sidecar item must have kind: 'quick-task'",
+    quickTaskSection.includes('"quick-task"'),
+    "quick-task sidecar item must reference kind 'quick-task'",
   );
 });
 

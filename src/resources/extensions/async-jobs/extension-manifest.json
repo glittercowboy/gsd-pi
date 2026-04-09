@@ -8,6 +8,6 @@
   "provides": {
     "tools": ["async_bash", "await_job", "cancel_job"],
     "commands": ["jobs"],
-    "hooks": ["session_start"]
+    "hooks": ["session_start", "session_before_switch", "session_shutdown"]
   }
 }

@@ -24,6 +24,15 @@ interface QuestionInput {
   allowMultiple?: boolean;
 }
 
+/**
+ * Check whether a remote channel is configured without triggering any
+ * side effects (no HTTP requests, no prompt records). Used by the race
+ * logic to decide routing before committing to a remote dispatch.
+ */
+export function isRemoteConfigured(): boolean {
+  return resolveRemoteConfig() !== null;
+}
+
 export async function tryRemoteQuestions(
   questions: QuestionInput[],
   signal?: AbortSignal,

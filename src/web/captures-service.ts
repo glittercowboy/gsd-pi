@@ -4,15 +4,11 @@ import { join } from "node:path"
 import { pathToFileURL } from "node:url"
 
 import { resolveBridgeRuntimeConfig } from "./bridge-service.ts"
-import { resolveTypeStrippingFlag } from "./ts-subprocess-flags.ts"
+import { resolveTypeStrippingFlag, resolveSubprocessModule, buildSubprocessPrefixArgs } from "./ts-subprocess-flags.ts"
 import type { CapturesData, CaptureResolveRequest, CaptureResolveResult } from "../../web/lib/knowledge-captures-types.ts"
 
 const CAPTURES_MAX_BUFFER = 2 * 1024 * 1024
 const CAPTURES_MODULE_ENV = "GSD_CAPTURES_MODULE"
-
-function resolveCapturesModulePath(packageRoot: string): string {
-  return join(packageRoot, "src", "resources", "extensions", "gsd", "captures.ts")
-}
 
 function resolveTsLoaderPath(packageRoot: string): string {
   return join(packageRoot, "src", "resources", "extensions", "gsd", "tests", "resolve-ts.mjs")
@@ -28,12 +24,16 @@ export async function collectCapturesData(projectCwdOverride?: string): Promise<
   const { packageRoot, projectCwd } = config
 
   const resolveTsLoader = resolveTsLoaderPath(packageRoot)
-  const capturesModulePath = resolveCapturesModulePath(packageRoot)
+  const moduleResolution = resolveSubprocessModule(packageRoot, "resources/extensions/gsd/captures.ts")
+  const capturesModulePath = moduleResolution.modulePath
 
-  if (!existsSync(resolveTsLoader) || !existsSync(capturesModulePath)) {
+  if (!moduleResolution.useCompiledJs && (!existsSync(resolveTsLoader) || !existsSync(capturesModulePath))) {
     throw new Error(
       `captures data provider not found; checked=${resolveTsLoader},${capturesModulePath}`,
     )
+  }
+  if (moduleResolution.useCompiledJs && !existsSync(capturesModulePath)) {
+    throw new Error(`captures data provider not found; checked=${capturesModulePath}`)
   }
 
   const script = [
@@ -46,14 +46,13 @@ export async function collectCapturesData(projectCwdOverride?: string): Promise<
     'process.stdout.write(JSON.stringify(result));',
   ].join(" ")
 
+  const prefixArgs = buildSubprocessPrefixArgs(packageRoot, moduleResolution, pathToFileURL(resolveTsLoader).href)
+
   return await new Promise<CapturesData>((resolveResult, reject) => {
     execFile(
       process.execPath,
       [
-        "--import",
-        pathToFileURL(resolveTsLoader).href,
-        resolveTypeStrippingFlag(packageRoot),
-        "--input-type=module",
+        ...prefixArgs,
         "--eval",
         script,
       ],
@@ -65,6 +64,7 @@ export async function collectCapturesData(projectCwdOverride?: string): Promise<
           GSD_CAPTURES_BASE: projectCwd,
         },
         maxBuffer: CAPTURES_MAX_BUFFER,
+        windowsHide: true,
       },
       (error, stdout, stderr) => {
         if (error) {
@@ -95,12 +95,16 @@ export async function resolveCaptureAction(request: CaptureResolveRequest, proje
   const { packageRoot, projectCwd } = config
 
   const resolveTsLoader = resolveTsLoaderPath(packageRoot)
-  const capturesModulePath = resolveCapturesModulePath(packageRoot)
+  const moduleResolution = resolveSubprocessModule(packageRoot, "resources/extensions/gsd/captures.ts")
+  const capturesModulePath = moduleResolution.modulePath
 
-  if (!existsSync(resolveTsLoader) || !existsSync(capturesModulePath)) {
+  if (!moduleResolution.useCompiledJs && (!existsSync(resolveTsLoader) || !existsSync(capturesModulePath))) {
     throw new Error(
       `captures data provider not found; checked=${resolveTsLoader},${capturesModulePath}`,
     )
+  }
+  if (moduleResolution.useCompiledJs && !existsSync(capturesModulePath)) {
+    throw new Error(`captures data provider not found; checked=${capturesModulePath}`)
   }
 
   const safeId = JSON.stringify(request.captureId)
@@ -115,14 +119,13 @@ export async function resolveCaptureAction(request: CaptureResolveRequest, proje
     `process.stdout.write(JSON.stringify({ ok: true, captureId: ${safeId} }));`,
   ].join(" ")
 
+  const prefixArgs = buildSubprocessPrefixArgs(packageRoot, moduleResolution, pathToFileURL(resolveTsLoader).href)
+
   return await new Promise<CaptureResolveResult>((resolveResult, reject) => {
     execFile(
       process.execPath,
       [
-        "--import",
-        pathToFileURL(resolveTsLoader).href,
-        resolveTypeStrippingFlag(packageRoot),
-        "--input-type=module",
+        ...prefixArgs,
         "--eval",
         script,
       ],
@@ -134,6 +137,7 @@ export async function resolveCaptureAction(request: CaptureResolveRequest, proje
           GSD_CAPTURES_BASE: projectCwd,
         },
         maxBuffer: CAPTURES_MAX_BUFFER,
+        windowsHide: true,
       },
       (error, stdout, stderr) => {
         if (error) {

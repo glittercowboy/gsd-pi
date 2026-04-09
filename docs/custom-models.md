@@ -131,6 +131,36 @@ The `apiKey` and `headers` fields support three formats:
   "apiKey": "sk-..."
   ```
 
+#### Command Allowlist
+
+Shell commands (`!command`) are restricted to a set of known credential tools. Only commands starting with one of these are allowed to execute:
+
+`pass`, `op`, `aws`, `gcloud`, `vault`, `security`, `gpg`, `bw`, `gopass`, `lpass`
+
+Commands not on this list are blocked and the value resolves to `undefined`. A warning is written to stderr.
+
+Shell operators (`;`, `|`, `&`, `` ` ``, `$`, `>`, `<`) are also blocked in command arguments to prevent injection.
+
+**Customizing the allowlist:**
+
+If you use a credential tool not on the default list, override it in global settings (`~/.gsd/agent/settings.json`):
+
+```json
+{
+  "allowedCommandPrefixes": ["pass", "op", "sops", "doppler", "mycli"]
+}
+```
+
+This replaces the default list entirely — include any defaults you still want.
+
+Alternatively, set the `GSD_ALLOWED_COMMAND_PREFIXES` environment variable (comma-separated). The env var takes precedence over settings.json:
+
+```bash
+export GSD_ALLOWED_COMMAND_PREFIXES="pass,op,sops,doppler"
+```
+
+> **Note:** This setting is global-only. Project-level settings.json (`<project>/.gsd/settings.json`) cannot override the command allowlist — this prevents a cloned repo from escalating command execution privileges.
+
 ### Custom Headers
 
 ```json

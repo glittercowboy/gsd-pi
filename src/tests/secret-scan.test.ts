@@ -26,24 +26,24 @@ function scanContent(
   const dir = mkdtempSync(join(tmpdir(), "secret-scan-test-"));
   try {
     // Initialize a git repo so `git diff --cached` works
-    spawnSync("git", ["init"], { cwd: dir });
-    spawnSync("git", ["config", "user.email", "test@test.com"], { cwd: dir });
-    spawnSync("git", ["config", "user.name", "Test"], { cwd: dir });
+  spawnSync("git", ["init"], { cwd: dir });
+  spawnSync("git", ["config", "user.email", "test@test.com"], { cwd: dir });
+  spawnSync("git", ["config", "user.name", "Test"], { cwd: dir });
 
-    // Write and stage the file
-    const filePath = join(dir, filename);
-    const parentDir = join(dir, ...filename.split("/").slice(0, -1));
-    if (filename.includes("/")) {
-      mkdirSync(parentDir, { recursive: true });
-    }
-    writeFileSync(filePath, content);
-    spawnSync("git", ["add", filename], { cwd: dir });
+  // Write and stage the file
+  const filePath = join(dir, filename);
+  const parentDir = join(dir, ...filename.split("/").slice(0, -1));
+  if (filename.includes("/")) {
+    mkdirSync(parentDir, { recursive: true });
+  }
+  writeFileSync(filePath, content);
+  spawnSync("git", ["add", filename], { cwd: dir });
 
-    const result = spawnSync("bash", [scanScript], {
-      cwd: dir,
-      encoding: "utf-8",
-      env: { ...process.env, TERM: "dumb" },
-    });
+  const result = spawnSync("bash", [scanScript], {
+    cwd: dir,
+    encoding: "utf-8",
+    env: { ...process.env, TERM: "dumb" },
+  });
 
     return {
       status: result.status ?? 1,
@@ -153,19 +153,17 @@ test("skips package-lock.json", { skip: isWindows }, () => {
   assert.equal(result.status, 0, `should pass (lockfile skip): ${result.stdout}`);
 });
 
-test("reports no files cleanly", { skip: isWindows }, () => {
+test("reports no files cleanly", { skip: isWindows }, (t) => {
   const dir = mkdtempSync(join(tmpdir(), "secret-scan-empty-"));
-  try {
-    spawnSync("git", ["init"], { cwd: dir });
-    const result = spawnSync("bash", [scanScript], {
-      cwd: dir,
-      encoding: "utf-8",
-    });
-    assert.equal(result.status, 0);
-    assert.match(result.stdout, /no files to scan/);
-  } finally {
-    rmSync(dir, { recursive: true, force: true });
-  }
+  t.after(() => { rmSync(dir, { recursive: true, force: true }); });
+
+  spawnSync("git", ["init"], { cwd: dir });
+  const result = spawnSync("bash", [scanScript], {
+    cwd: dir,
+    encoding: "utf-8",
+  });
+  assert.equal(result.status, 0);
+  assert.match(result.stdout, /no files to scan/);
 });
 
 // ── Multiple findings ────────────────────────────────────────────────
@@ -186,34 +184,32 @@ test("reports multiple secrets in one file", { skip: isWindows }, () => {
 
 // ── CI mode (--diff) ─────────────────────────────────────────────────
 
-test("CI mode scans diff against ref", { skip: isWindows }, () => {
+test("CI mode scans diff against ref", { skip: isWindows }, (t) => {
   const dir = mkdtempSync(join(tmpdir(), "secret-scan-ci-"));
-  try {
-    spawnSync("git", ["init"], { cwd: dir });
-    spawnSync("git", ["config", "user.email", "test@test.com"], { cwd: dir });
-    spawnSync("git", ["config", "user.name", "Test"], { cwd: dir });
+  t.after(() => { rmSync(dir, { recursive: true, force: true }); });
 
-    // Create initial commit
-    writeFileSync(join(dir, "clean.ts"), "const x = 1;");
-    spawnSync("git", ["add", "."], { cwd: dir });
-    spawnSync("git", ["commit", "-m", "init"], { cwd: dir });
+  spawnSync("git", ["init"], { cwd: dir });
+  spawnSync("git", ["config", "user.email", "test@test.com"], { cwd: dir });
+  spawnSync("git", ["config", "user.name", "Test"], { cwd: dir });
 
-    // Add a file with a secret on a new commit
-    writeFileSync(
-      join(dir, "leaked.ts"),
-      'const key = "AKIAIOSFODNN7EXAMPLE";',
-    );
-    spawnSync("git", ["add", "."], { cwd: dir });
-    spawnSync("git", ["commit", "-m", "add leak"], { cwd: dir });
+  // Create initial commit
+  writeFileSync(join(dir, "clean.ts"), "const x = 1;");
+  spawnSync("git", ["add", "."], { cwd: dir });
+  spawnSync("git", ["commit", "-m", "init"], { cwd: dir });
 
-    const result = spawnSync("bash", [scanScript, "--diff", "HEAD~1"], {
-      cwd: dir,
-      encoding: "utf-8",
-    });
+  // Add a file with a secret on a new commit
+  writeFileSync(
+    join(dir, "leaked.ts"),
+    'const key = "AKIAIOSFODNN7EXAMPLE";',
+  );
+  spawnSync("git", ["add", "."], { cwd: dir });
+  spawnSync("git", ["commit", "-m", "add leak"], { cwd: dir });
 
-    assert.equal(result.status, 1, `CI mode should detect: ${result.stdout}`);
-    assert.match(result.stdout, /AWS Access Key/);
-  } finally {
-    rmSync(dir, { recursive: true, force: true });
-  }
+  const result = spawnSync("bash", [scanScript, "--diff", "HEAD~1"], {
+    cwd: dir,
+    encoding: "utf-8",
+  });
+
+  assert.equal(result.status, 1, `CI mode should detect: ${result.stdout}`);
+  assert.match(result.stdout, /AWS Access Key/);
 });

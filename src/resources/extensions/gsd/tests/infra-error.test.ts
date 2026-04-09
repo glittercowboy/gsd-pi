@@ -7,10 +7,13 @@ import { isInfrastructureError, INFRA_ERROR_CODES } from "../auto/infra-errors.j
 // ── INFRA_ERROR_CODES constant ───────────────────────────────────────────────
 
 test("INFRA_ERROR_CODES contains the expected codes", () => {
-  for (const code of ["ENOSPC", "ENOMEM", "EROFS", "EDQUOT", "EMFILE", "ENFILE"]) {
+  for (const code of [
+    "ENOSPC", "ENOMEM", "EROFS", "EDQUOT", "EMFILE", "ENFILE",
+    "EAGAIN", "ECONNREFUSED", "ENOTFOUND", "ENETUNREACH",
+  ]) {
     assert.ok(INFRA_ERROR_CODES.has(code), `missing ${code}`);
   }
-  assert.equal(INFRA_ERROR_CODES.size, 6, "unexpected extra codes");
+  assert.equal(INFRA_ERROR_CODES.size, 10, "unexpected extra codes");
 });
 
 // ── isInfrastructureError: code property detection ───────────────────────────
@@ -43,6 +46,31 @@ test("detects EMFILE via code property", () => {
 test("detects ENFILE via code property", () => {
   const err = Object.assign(new Error("file table overflow"), { code: "ENFILE" });
   assert.equal(isInfrastructureError(err), "ENFILE");
+});
+
+test("detects EAGAIN via code property", () => {
+  const err = Object.assign(new Error("resource temporarily unavailable"), { code: "EAGAIN" });
+  assert.equal(isInfrastructureError(err), "EAGAIN");
+});
+
+test("detects EAGAIN in error message fallback", () => {
+  const err = new Error("spawn failed: EAGAIN resource temporarily unavailable");
+  assert.equal(isInfrastructureError(err), "EAGAIN");
+});
+
+test("detects ECONNREFUSED via code property", () => {
+  const err = Object.assign(new Error("connect ECONNREFUSED 127.0.0.1:3000"), { code: "ECONNREFUSED" });
+  assert.equal(isInfrastructureError(err), "ECONNREFUSED");
+});
+
+test("detects ENOTFOUND via code property", () => {
+  const err = Object.assign(new Error("getaddrinfo ENOTFOUND api.example.com"), { code: "ENOTFOUND" });
+  assert.equal(isInfrastructureError(err), "ENOTFOUND");
+});
+
+test("detects ENETUNREACH via code property", () => {
+  const err = Object.assign(new Error("connect ENETUNREACH 2607:f8b0:4004::"), { code: "ENETUNREACH" });
+  assert.equal(isInfrastructureError(err), "ENETUNREACH");
 });
 
 // ── isInfrastructureError: message fallback ──────────────────────────────────

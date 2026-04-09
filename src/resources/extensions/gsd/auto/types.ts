@@ -48,11 +48,24 @@ export interface AgentEndEvent {
 }
 
 /**
+ * Structured error context attached to a UnitResult when the unit ends
+ * due to an infrastructure or timeout error (not user-driven cancellation).
+ */
+export interface ErrorContext {
+  message: string;
+  category: "provider" | "timeout" | "idle" | "network" | "aborted" | "session-failed" | "unknown";
+  stopReason?: string;
+  isTransient?: boolean;
+  retryAfterMs?: number;
+}
+
+/**
  * Result of a single unit execution (one iteration of the loop).
  */
 export interface UnitResult {
   status: "completed" | "cancelled" | "error";
   event?: AgentEndEvent;
+  errorContext?: ErrorContext;
 }
 
 // ─── Phase pipeline types ────────────────────────────────────────────────────
@@ -78,7 +91,12 @@ export interface IterationContext {
 export interface LoopState {
   recentUnits: Array<{ key: string; error?: string }>;
   stuckRecoveryAttempts: number;
+  /** Consecutive finalize timeout count — stops auto-mode after threshold. */
+  consecutiveFinalizeTimeouts: number;
 }
+
+/** Max consecutive finalize timeouts before hard-stopping auto-mode. */
+export const MAX_FINALIZE_TIMEOUTS = 3;
 
 export interface PreDispatchData {
   state: GSDState;
@@ -92,7 +110,6 @@ export interface IterationData {
   prompt: string;
   finalPrompt: string;
   pauseAfterUatDispatch: boolean;
-  observabilityIssues: unknown[];
   state: GSDState;
   mid: string | undefined;
   midTitle: string | undefined;

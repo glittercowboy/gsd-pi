@@ -23,7 +23,13 @@ export function sendDesktopNotification(
   message: string,
   level: NotifyLevel = "info",
   kind: NotificationKind = "complete",
+  projectName?: string,
 ): void {
+  // When a projectName is provided and the title is the default "GSD",
+  // replace it with a project-qualified title for multi-project clarity.
+  if (projectName && title === "GSD") {
+    title = formatNotificationTitle(projectName);
+  }
   const loaded = loadEffectiveGSDPreferences()?.preferences;
   if (!shouldSendDesktopNotification(kind, loaded?.notifications)) return;
 
@@ -64,6 +70,16 @@ export function shouldSendDesktopNotification(
   }
 }
 
+/**
+ * Format a notification title that includes the project name for context.
+ * Returns "GSD — projectName" when a project name is available, otherwise "GSD".
+ */
+export function formatNotificationTitle(projectName?: string): string {
+  const trimmed = projectName?.trim();
+  if (trimmed) return `GSD — ${trimmed}`;
+  return "GSD";
+}
+
 export function buildDesktopNotificationCommand(
   platform: NodeJS.Platform,
   title: string,
@@ -74,6 +90,17 @@ export function buildDesktopNotificationCommand(
   const normalizedMessage = normalizeNotificationText(message);
 
   if (platform === "darwin") {
+    // Prefer terminal-notifier: registers as its own Notification Center app,
+    // so it gets a proper permission entry in System Settings → Notifications.
+    // osascript notifications are silently swallowed when the calling terminal
+    // (Ghostty, iTerm2, etc.) lacks notification permissions — exits 0, no error.
+    // See: https://github.com/gsd-build/gsd-2/issues/2632
+    const tnPath = findExecutable("terminal-notifier");
+    if (tnPath) {
+      const sound = level === "error" ? "Basso" : "Glass";
+      return { file: tnPath, args: ["-title", normalizedTitle, "-message", normalizedMessage, "-sound", sound] };
+    }
+    // Fallback: osascript (works if terminal app has notification permissions)
     const sound = level === "error" ? 'sound name "Basso"' : 'sound name "Glass"';
     const script = `display notification "${escapeAppleScript(normalizedMessage)}" with title "${escapeAppleScript(normalizedTitle)}" ${sound}`;
     return { file: "osascript", args: ["-e", script] };
@@ -93,4 +120,16 @@ function normalizeNotificationText(s: string): string {
 
 function escapeAppleScript(s: string): string {
   return s.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+}
+
+/**
+ * Locate an executable on PATH. Returns absolute path or null.
+ * Non-fatal — returns null on any error.
+ */
+function findExecutable(name: string): string | null {
+  try {
+    return execFileSync("which", [name], { timeout: 2000, stdio: ["ignore", "pipe", "ignore"] }).toString().trim() || null;
+  } catch {
+    return null;
+  }
 }

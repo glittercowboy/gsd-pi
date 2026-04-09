@@ -34,6 +34,15 @@ pub struct NapiTtsrRuleInput {
     pub conditions: Vec<String>,
 }
 
+/// Maximum number of live handles allowed before we refuse to allocate more.
+/// Prevents unbounded memory growth if JS callers forget to free handles.
+const MAX_LIVE_HANDLES: usize = 10_000;
+
+/// Lock the global STORE, recovering gracefully from mutex poisoning.
+fn lock_store() -> std::sync::MutexGuard<'static, HashMap<u64, CompiledRuleSet>> {
+    STORE.lock().unwrap_or_else(|e| e.into_inner())
+}
+
 /// Compile a set of TTSR rules into an optimized regex engine.
 ///
 /// Returns an opaque numeric handle. Each rule has one or more regex condition
@@ -69,10 +78,13 @@ pub fn ttsr_compile_rules(rules: Vec<NapiTtsrRuleInput>) -> Result<f64> {
         mappings,
     };
 
-    STORE
-        .lock()
-        .map_err(|e| Error::from_reason(format!("Lock poisoned: {e}")))?
-        .insert(handle, compiled);
+    let mut store = lock_store();
+    if store.len() >= MAX_LIVE_HANDLES {
+        return Err(Error::from_reason(format!(
+            "TTSR handle limit reached ({MAX_LIVE_HANDLES}). Free unused handles before compiling more rules."
+        )));
+    }
+    store.insert(handle, compiled);
 
     // Return as f64 since napi BigInt interop is awkward; handles won't exceed 2^53.
     Ok(handle as f64)
@@ -86,9 +98,13 @@ pub fn ttsr_compile_rules(rules: Vec<NapiTtsrRuleInput>) -> Result<f64> {
 pub fn ttsr_check_buffer(handle: f64, buffer: String) -> Result<Vec<String>> {
     let handle_key = handle as u64;
 
-    let store = STORE
-        .lock()
-        .map_err(|e| Error::from_reason(format!("Lock poisoned: {e}")))?;
+    // Bounds-check: reject handles that were never allocated.
+    let upper_bound = NEXT_HANDLE.load(Ordering::Relaxed);
+    if handle_key == 0 || handle_key >= upper_bound {
+        return Err(Error::from_reason(format!("Invalid TTSR handle: {handle}")));
+    }
+
+    let store = lock_store();
 
     let compiled = store
         .get(&handle_key)
@@ -114,11 +130,14 @@ pub fn ttsr_check_buffer(handle: f64, buffer: String) -> Result<Vec<String>> {
 #[napi(js_name = "ttsrFreeRules")]
 pub fn ttsr_free_rules(handle: f64) -> Result<()> {
     let handle_key = handle as u64;
-
-    STORE
-        .lock()
-        .map_err(|e| Error::from_reason(format!("Lock poisoned: {e}")))?
-        .remove(&handle_key);
-
+    lock_store().remove(&handle_key);
     Ok(())
+}
+
+/// Free all compiled TTSR rule sets, releasing all memory.
+///
+/// Useful for process cleanup or tests that need a fresh state.
+#[napi(js_name = "ttsrClearAll")]
+pub fn ttsr_clear_all() {
+    lock_store().clear();
 }

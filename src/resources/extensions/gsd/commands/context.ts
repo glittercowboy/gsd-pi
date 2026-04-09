@@ -13,7 +13,13 @@ export interface GsdDispatchContext {
 }
 
 export function projectRoot(): string {
-  const cwd = process.cwd();
+  let cwd: string;
+  try {
+    cwd = process.cwd();
+  } catch {
+    // cwd directory was deleted (e.g. worktree teardown) — fall back to HOME (#3598)
+    cwd = process.env.HOME ?? "/";
+  }
   const root = resolveProjectRoot(cwd);
   if (root !== cwd) {
     assertSafeDirectory(cwd);
@@ -47,15 +53,10 @@ export async function guardRemoteSession(
     return false;
   }
 
-  const unitsMsg = remote.completedUnits != null
-    ? `${remote.completedUnits} units completed`
-    : "";
-
   const choice = await showNextAction(ctx, {
     title: `Auto-mode is running in another terminal (PID ${remote.pid})`,
     summary: [
       `Currently executing: ${unitLabel}`,
-      ...(unitsMsg ? [unitsMsg] : []),
       ...(remote.startedAt ? [`Started: ${remote.startedAt}`] : []),
     ],
     actions: [

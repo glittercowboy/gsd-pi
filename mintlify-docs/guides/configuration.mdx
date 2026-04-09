@@ -1,0 +1,306 @@
+---
+title: "Configuration"
+description: "Preferences, model selection, MCP servers, hooks, and all settings."
+---
+
+GSD preferences live in `~/.gsd/PREFERENCES.md` (global) or `.gsd/PREFERENCES.md` (project-local). Manage interactively with `/gsd prefs`.
+
+## Preferences commands
+
+| Command | Description |
+|---------|-------------|
+| `/gsd prefs` | Open the global preferences wizard |
+| `/gsd prefs global` | Global preferences wizard |
+| `/gsd prefs project` | Project preferences wizard |
+| `/gsd prefs status` | Show current files, merged values, and skill status |
+
+## Preferences file format
+
+Preferences use YAML frontmatter in a markdown file:
+
+```yaml
+---
+version: 1
+models:
+  research: claude-sonnet-4-6
+  planning: claude-opus-4-6
+  execution: claude-sonnet-4-6
+  completion: claude-sonnet-4-6
+skill_discovery: suggest
+auto_supervisor:
+  soft_timeout_minutes: 20
+  idle_timeout_minutes: 10
+  hard_timeout_minutes: 30
+budget_ceiling: 50.00
+token_profile: balanced
+---
+```
+
+## Global vs project preferences
+
+| Scope | Path | Applies to |
+|-------|------|-----------|
+| Global | `~/.gsd/PREFERENCES.md` | All projects |
+| Project | `.gsd/PREFERENCES.md` | Current project only |
+
+**Merge behavior:**
+- **Scalar fields** — project wins if defined
+- **Array fields** — concatenated (global first, then project)
+- **Object fields** — shallow-merged, project overrides per-key
+
+## Global API keys
+
+Tool API keys are stored globally in `~/.gsd/agent/auth.json`. Set them once with `/gsd config`.
+
+| Tool | Environment variable | Purpose |
+|------|---------------------|---------|
+| Tavily Search | `TAVILY_API_KEY` | Web search for non-Anthropic models |
+| Brave Search | `BRAVE_API_KEY` | Web search for non-Anthropic models |
+| Context7 Docs | `CONTEXT7_API_KEY` | Library documentation lookup |
+
+Anthropic models have built-in web search — no extra keys needed.
+
+## MCP servers
+
+GSD connects to external MCP servers configured in project files:
+
+- `.mcp.json` — repo-shared config
+- `.gsd/mcp.json` — local-only config
+
+<Tabs>
+  <Tab title="stdio server">
+    ```json
+    {
+      "mcpServers": {
+        "my-server": {
+          "type": "stdio",
+          "command": "/absolute/path/to/python3",
+          "args": ["/absolute/path/to/server.py"],
+          "env": {
+            "API_URL": "http://localhost:8000"
+          }
+        }
+      }
+    }
+    ```
+  </Tab>
+  <Tab title="HTTP server">
+    ```json
+    {
+      "mcpServers": {
+        "my-http-server": {
+          "url": "http://localhost:8080/mcp"
+        }
+      }
+    }
+    ```
+  </Tab>
+</Tabs>
+
+Verify from a GSD session: `mcp_servers` → `mcp_discover` → `mcp_call`.
+
+## Models
+
+Per-phase model selection:
+
+```yaml
+models:
+  research: claude-sonnet-4-6
+  planning:
+    model: claude-opus-4-6
+    fallbacks:
+      - openrouter/z-ai/glm-5
+  execution: claude-sonnet-4-6
+  execution_simple: claude-haiku-4-5-20250414
+  completion: claude-sonnet-4-6
+  subagent: claude-sonnet-4-6
+```
+
+**Phases:** `research`, `planning`, `execution`, `execution_simple`, `completion`, `subagent`
+
+When a model fails to switch, GSD automatically tries the next model in the `fallbacks` list.
+
+For custom providers (Ollama, vLLM, LM Studio), see [custom models](/guides/custom-models).
+
+## All settings
+
+### `token_profile`
+
+Coordinates model selection, phase skipping, and context compression. Values: `budget`, `balanced` (default), `quality`. See [token optimization](/guides/token-optimization).
+
+### `budget_ceiling`
+
+Maximum USD spend during auto mode:
+
+```yaml
+budget_ceiling: 50.00
+budget_enforcement: pause    # warn, pause (default), or halt
+```
+
+### `auto_supervisor`
+
+Timeout thresholds:
+
+```yaml
+auto_supervisor:
+  soft_timeout_minutes: 20
+  idle_timeout_minutes: 10
+  hard_timeout_minutes: 30
+```
+
+### `skill_discovery`
+
+| Value | Behavior |
+|-------|----------|
+| `auto` | Skills found and applied automatically |
+| `suggest` | Skills identified but not auto-installed (default) |
+| `off` | Disabled |
+
+### Verification
+
+```yaml
+verification_commands:
+  - npm run lint
+  - npm run test
+verification_auto_fix: true
+verification_max_retries: 2
+```
+
+### Git
+
+See [git strategy](/guides/git-strategy) for full git configuration.
+
+### Notifications
+
+```yaml
+notifications:
+  enabled: true
+  on_complete: true
+  on_error: true
+  on_budget: true
+  on_milestone: true
+  on_attention: true
+```
+
+### Post-unit hooks
+
+```yaml
+post_unit_hooks:
+  - name: code-review
+    after: [execute-task]
+    prompt: "Review the code changes for quality and security."
+    model: claude-opus-4-6
+    max_cycles: 1
+    artifact: REVIEW.md
+```
+
+### Pre-dispatch hooks
+
+```yaml
+pre_dispatch_hooks:
+  - name: add-standards
+    before: [execute-task]
+    action: modify          # modify, skip, or replace
+    prepend: "Follow our coding standards."
+```
+
+### Skill routing
+
+```yaml
+always_use_skills:
+  - debug-like-expert
+prefer_skills:
+  - frontend-design
+skill_rules:
+  - when: task involves authentication
+    use: [clerk]
+```
+
+### Custom instructions
+
+```yaml
+custom_instructions:
+  - "Always use TypeScript strict mode"
+  - "Prefer functional patterns over classes"
+```
+
+### Dynamic routing
+
+See [dynamic model routing](/guides/dynamic-model-routing).
+
+### Parallel execution
+
+See [parallel orchestration](/guides/parallel-orchestration).
+
+## Environment variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `GSD_HOME` | `~/.gsd` | Global GSD directory |
+| `GSD_PROJECT_ID` | (auto-hash) | Override project identity hash |
+| `GSD_STATE_DIR` | `$GSD_HOME` | Per-project state root |
+| `GSD_CODING_AGENT_DIR` | `$GSD_HOME/agent` | Agent directory |
+
+## Full example
+
+<Accordion title="Complete preferences file">
+```yaml
+---
+version: 1
+
+models:
+  research: openrouter/deepseek/deepseek-r1
+  planning:
+    model: claude-opus-4-6
+    fallbacks:
+      - openrouter/z-ai/glm-5
+  execution: claude-sonnet-4-6
+  execution_simple: claude-haiku-4-5-20250414
+  completion: claude-sonnet-4-6
+
+token_profile: balanced
+
+dynamic_routing:
+  enabled: true
+  escalate_on_failure: true
+  budget_pressure: true
+
+budget_ceiling: 25.00
+budget_enforcement: pause
+context_pause_threshold: 80
+
+auto_supervisor:
+  soft_timeout_minutes: 15
+  hard_timeout_minutes: 25
+
+git:
+  auto_push: true
+  merge_strategy: squash
+  isolation: none
+  commit_docs: true
+
+skill_discovery: suggest
+always_use_skills:
+  - debug-like-expert
+skill_rules:
+  - when: task involves authentication
+    use: [clerk]
+
+notifications:
+  on_complete: false
+  on_milestone: true
+  on_attention: true
+
+auto_visualize: true
+service_tier: priority
+forensics_dedup: true
+show_token_cost: true
+
+post_unit_hooks:
+  - name: code-review
+    after: [execute-task]
+    prompt: "Review {sliceId}/{taskId} for quality and security."
+    artifact: REVIEW.md
+---
+```
+</Accordion>

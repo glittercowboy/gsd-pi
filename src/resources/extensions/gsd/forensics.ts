@@ -28,13 +28,18 @@ import { deriveState } from "./state.js";
 import { isAutoActive } from "./auto.js";
 import { loadPrompt } from "./prompt-loader.js";
 import { gsdRoot } from "./paths.js";
+import { isDbAvailable, getAllMilestones, getMilestoneSlices, getSliceTasks } from "./gsd-db.js";
+import { isClosedStatus } from "./status-guards.js";
 import { formatDuration } from "../shared/format-utils.js";
 import { getAutoWorktreePath } from "./auto-worktree.js";
+import { loadEffectiveGSDPreferences, loadGlobalGSDPreferences, getGlobalGSDPreferencesPath } from "./preferences.js";
+import { showNextAction } from "../shared/tui.js";
+import { ensurePreferencesFile, serializePreferencesToFrontmatter } from "./commands-prefs-wizard.js";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-interface ForensicAnomaly {
-  type: "stuck-loop" | "cost-spike" | "timeout" | "missing-artifact" | "crash" | "doctor-issue" | "error-trace";
+export interface ForensicAnomaly {
+  type: "stuck-loop" | "cost-spike" | "timeout" | "missing-artifact" | "crash" | "doctor-issue" | "error-trace" | "journal-stuck" | "journal-guard-block" | "journal-rapid-iterations" | "journal-worktree-failure";
   severity: "info" | "warning" | "error";
   unitType?: string;
   unitId?: string;
@@ -51,6 +56,46 @@ interface UnitTrace {
   mtime: number;
 }
 
+/** Summary of .gsd/activity/ directory metadata. */
+interface ActivityLogMeta {
+  fileCount: number;
+  totalSizeBytes: number;
+  oldestFile: string | null;
+  newestFile: string | null;
+}
+
+/**
+ * Summary of .gsd/journal/ data for forensic investigation.
+ *
+ * To avoid loading huge journal histories into memory, only the most recent
+ * daily files are fully parsed. Older files are line-counted for totals.
+ * Event counts and flow IDs reflect only recent files.
+ */
+interface JournalSummary {
+  /** Total journal entries across all files (recent parsed + older line-counted) */
+  totalEntries: number;
+  /** Distinct flow IDs from recent files (each = one auto-mode iteration) */
+  flowCount: number;
+  /** Event counts by type (from recent files only) */
+  eventCounts: Record<string, number>;
+  /** Most recent journal entries (last 20) for context */
+  recentEvents: { ts: string; flowId: string; eventType: string; rule?: string; unitId?: string }[];
+  /** Date range of journal data */
+  oldestEntry: string | null;
+  newestEntry: string | null;
+  /** Daily file count */
+  fileCount: number;
+}
+
+interface DbCompletionCounts {
+  milestones: number;
+  milestonesTotal: number;
+  slices: number;
+  slicesTotal: number;
+  tasks: number;
+  tasksTotal: number;
+}
+
 interface ForensicReport {
   gsdVersion: string;
   timestamp: string;
@@ -61,10 +106,76 @@ interface ForensicReport {
   unitTraces: UnitTrace[];
   metrics: MetricsLedger | null;
   completedKeys: string[];
+  dbCompletionCounts: DbCompletionCounts | null;
   crashLock: LockData | null;
   doctorIssues: DoctorIssue[];
   anomalies: ForensicAnomaly[];
   recentUnits: { type: string; id: string; cost: number; duration: number; model: string; finishedAt: number }[];
+  journalSummary: JournalSummary | null;
+  activityLogMeta: ActivityLogMeta | null;
+}
+
+// ─── Duplicate Detection ──────────────────────────────────────────────────────
+
+const DEDUP_PROMPT_SECTION = `
+## Pre-Investigation: Duplicate Check (REQUIRED)
+
+Before reading GSD source code or performing deep analysis, you MUST search for existing issues and PRs that may already address this bug. This avoids wasting tokens on already-fixed bugs.
+
+### Search Steps
+
+Use keywords from the user's problem description and the anomaly summaries in the forensic report above.
+
+1. **Search closed issues** for similar keywords:
+   \`\`\`
+   gh issue list --repo gsd-build/gsd-2 --state closed --search "<keywords from root cause>" --limit 20
+   \`\`\`
+
+2. **Search open PRs** that might contain the fix:
+   \`\`\`
+   gh pr list --repo gsd-build/gsd-2 --state open --search "<keywords>" --limit 10
+   \`\`\`
+
+3. **Search merged PRs** that may have already fixed this:
+   \`\`\`
+   gh pr list --repo gsd-build/gsd-2 --state merged --search "<keywords>" --limit 10
+   \`\`\`
+
+### Analysis
+
+For each result, compare it against the user's reported symptoms and the forensic anomalies:
+- Does the issue describe the same code path or file?
+- Does the PR modify the area related to the reported symptoms?
+- Is the symptom description semantically similar even if keywords differ?
+
+### Decision Gate
+
+- **Merged PR clearly fixes the described symptom** → Report "Already fixed by PR #X" with brief explanation. Skip full investigation.
+- **Open issue matches** → Report "Existing issue #Y covers this." Offer to add forensic evidence. Skip full investigation unless user asks for deeper analysis.
+- **No matches** → Proceed to full investigation below.
+`;
+
+async function writeForensicsDedupPref(ctx: ExtensionCommandContext, enabled: boolean): Promise<void> {
+  const prefsPath = getGlobalGSDPreferencesPath();
+  await ensurePreferencesFile(prefsPath, ctx, "global");
+  const existing = loadGlobalGSDPreferences();
+  const prefs: Record<string, unknown> = existing?.preferences ? { ...existing.preferences } : {};
+  prefs.version = prefs.version || 1;
+  prefs.forensics_dedup = enabled;
+
+  const frontmatter = serializePreferencesToFrontmatter(prefs);
+  const raw = existsSync(prefsPath) ? readFileSync(prefsPath, "utf-8") : "";
+  let body = "\n# GSD Skill Preferences\n\nSee `~/.gsd/agent/extensions/gsd/docs/preferences-reference.md` for full field documentation and examples.\n";
+  const start = raw.startsWith("---\n") ? 4 : raw.startsWith("---\r\n") ? 5 : -1;
+  if (start !== -1) {
+    const closingIdx = raw.indexOf("\n---", start);
+    if (closingIdx !== -1) {
+      const after = raw.slice(closingIdx + 4);
+      if (after.trim()) body = after;
+    }
+  }
+
+  writeFileSync(prefsPath, `---\n${frontmatter}---${body}`, "utf-8");
 }
 
 // ─── Entry Point ──────────────────────────────────────────────────────────────
@@ -98,6 +209,29 @@ export async function handleForensics(
     return;
   }
 
+  // ─── Duplicate detection opt-in ─────────────────────────────────────────────
+  const effectivePrefs = loadEffectiveGSDPreferences()?.preferences;
+  let dedupEnabled = effectivePrefs?.forensics_dedup === true;
+
+  if (effectivePrefs?.forensics_dedup === undefined) {
+    const choice = await showNextAction(ctx, {
+      title: "Duplicate detection available",
+      summary: ["Before filing a GitHub issue, forensics can search existing issues and PRs to avoid duplicates.", "This uses additional AI tokens for analysis."],
+      actions: [
+        { id: "enable", label: "Enable duplicate detection", description: "Search issues/PRs before filing (recommended)", recommended: true },
+        { id: "skip", label: "Skip for now", description: "File without checking for duplicates" },
+      ],
+      notYetMessage: "You can enable this later via preferences (forensics_dedup: true).",
+    });
+
+    if (choice === "enable") {
+      await writeForensicsDedupPref(ctx, true);
+      dedupEnabled = true;
+    }
+  }
+
+  const dedupSection = dedupEnabled ? DEDUP_PROMPT_SECTION : "";
+
   ctx.ui.notify("Building forensic report...", "info");
 
   const report = await buildForensicReport(basePath);
@@ -117,6 +251,7 @@ export async function handleForensics(
     problemDescription,
     forensicData,
     gsdSourceDir,
+    dedupSection,
   });
 
   ctx.ui.notify(`Forensic report saved: ${relative(basePath, savedPath)}`, "info");
@@ -125,6 +260,9 @@ export async function handleForensics(
     { customType: "gsd-forensics", content, display: false },
     { triggerTurn: true },
   );
+
+  // Persist forensics context so follow-up turns can re-inject it (#2941)
+  writeForensicsMarker(basePath, savedPath, content);
 }
 
 // ─── Report Builder ───────────────────────────────────────────────────────────
@@ -150,8 +288,9 @@ export async function buildForensicReport(basePath: string): Promise<ForensicRep
   // 3. Load metrics
   const metrics = loadLedgerFromDisk(basePath);
 
-  // 4. Load completed keys
+  // 4. Load completed keys (legacy) and DB completion counts
   const completedKeys = loadCompletedKeys(basePath);
+  const dbCompletionCounts = getDbCompletionCounts();
 
   // 5. Check crash lock
   const crashLock = readCrashLock(basePath);
@@ -184,7 +323,13 @@ export async function buildForensicReport(basePath: string): Promise<ForensicRep
   // from import.meta.url would resolve to ~/package.json (wrong on every system).
   const gsdVersion = process.env.GSD_VERSION || "unknown";
 
-  // 9. Run anomaly detectors
+  // 9. Scan journal for flow timeline and structured events
+  const journalSummary = scanJournalForForensics(basePath);
+
+  // 10. Gather activity log directory metadata
+  const activityLogMeta = gatherActivityLogMeta(basePath, activeMilestone);
+
+  // 11. Run anomaly detectors
   if (metrics?.units) detectStuckLoops(metrics.units, anomalies);
   if (metrics?.units) detectCostSpikes(metrics.units, anomalies);
   detectTimeouts(unitTraces, anomalies);
@@ -192,6 +337,7 @@ export async function buildForensicReport(basePath: string): Promise<ForensicRep
   detectCrash(crashLock, anomalies);
   detectDoctorIssues(doctorIssues, anomalies);
   detectErrorTraces(unitTraces, anomalies);
+  detectJournalAnomalies(journalSummary, anomalies);
 
   return {
     gsdVersion,
@@ -203,16 +349,22 @@ export async function buildForensicReport(basePath: string): Promise<ForensicRep
     unitTraces,
     metrics,
     completedKeys,
+    dbCompletionCounts,
     crashLock,
     doctorIssues,
     anomalies,
     recentUnits,
+    journalSummary,
+    activityLogMeta,
   };
 }
 
 // ─── Activity Log Scanner ─────────────────────────────────────────────────────
 
 const ACTIVITY_FILENAME_RE = /^(\d+)-(.+?)-(.+)\.jsonl$/;
+
+/** Threshold below which iteration cadence is considered rapid (thrashing). */
+const RAPID_ITERATION_THRESHOLD_MS = 5000;
 
 function scanActivityLogs(basePath: string, activeMilestone?: string | null): UnitTrace[] {
   const activityDirs = resolveActivityDirs(basePath, activeMilestone);
@@ -288,6 +440,154 @@ function resolveActivityDirs(basePath: string, activeMilestone?: string | null):
   return dirs;
 }
 
+// ─── Journal Scanner ──────────────────────────────────────────────────────────
+
+/**
+ * Max recent journal files to fully parse for event counts and recent events.
+ * Older files are line-counted only to avoid loading huge amounts of data.
+ */
+const MAX_JOURNAL_RECENT_FILES = 3;
+
+/** Max recent events to extract for the forensic report timeline. */
+const MAX_JOURNAL_RECENT_EVENTS = 20;
+
+/**
+ * Intelligently scan journal files for forensic summary.
+ *
+ * Journal files can be huge (thousands of JSONL entries over weeks of auto-mode).
+ * Instead of loading all entries into memory:
+ * - Only fully parse the most recent N daily files (event counts, flow tracking)
+ * - Line-count older files for approximate totals (no JSON parsing)
+ * - Extract only the last 20 events for the timeline
+ */
+function scanJournalForForensics(basePath: string): JournalSummary | null {
+  try {
+    const journalDir = join(gsdRoot(basePath), "journal");
+    if (!existsSync(journalDir)) return null;
+
+    const files = readdirSync(journalDir).filter(f => f.endsWith(".jsonl")).sort();
+    if (files.length === 0) return null;
+
+    // Split into recent (fully parsed) and older (line-counted only)
+    const recentFiles = files.slice(-MAX_JOURNAL_RECENT_FILES);
+    const olderFiles = files.slice(0, -MAX_JOURNAL_RECENT_FILES);
+
+    // Line-count older files without parsing — avoids loading megabytes of JSON
+    let olderEntryCount = 0;
+    let oldestEntry: string | null = null;
+    for (const file of olderFiles) {
+      try {
+        const raw = readFileSync(join(journalDir, file), "utf-8");
+        const lines = raw.split("\n");
+        for (const line of lines) {
+          if (!line.trim()) continue;
+          olderEntryCount++;
+          // Extract only the timestamp from the first non-empty line of the oldest file
+          if (!oldestEntry) {
+            try {
+              const parsed = JSON.parse(line) as { ts?: string };
+              if (parsed.ts) oldestEntry = parsed.ts;
+            } catch { /* skip malformed */ }
+          }
+        }
+      } catch { /* skip unreadable files */ }
+    }
+
+    // Fully parse recent files for event counts and timeline
+    const eventCounts: Record<string, number> = {};
+    const flowIds = new Set<string>();
+    const recentParsedEntries: { ts: string; flowId: string; eventType: string; rule?: string; unitId?: string }[] = [];
+    let recentEntryCount = 0;
+
+    for (const file of recentFiles) {
+      try {
+        const raw = readFileSync(join(journalDir, file), "utf-8");
+        for (const line of raw.split("\n")) {
+          if (!line.trim()) continue;
+          try {
+            const entry = JSON.parse(line) as { ts: string; flowId: string; eventType: string; rule?: string; data?: Record<string, unknown> };
+            recentEntryCount++;
+            eventCounts[entry.eventType] = (eventCounts[entry.eventType] ?? 0) + 1;
+            flowIds.add(entry.flowId);
+
+            if (!oldestEntry) oldestEntry = entry.ts;
+
+            // Keep a rolling window of last N events — avoids accumulating unbounded arrays
+            recentParsedEntries.push({
+              ts: entry.ts,
+              flowId: entry.flowId,
+              eventType: entry.eventType,
+              rule: entry.rule,
+              unitId: entry.data?.unitId as string | undefined,
+            });
+            if (recentParsedEntries.length > MAX_JOURNAL_RECENT_EVENTS) {
+              recentParsedEntries.shift();
+            }
+          } catch { /* skip malformed lines */ }
+        }
+      } catch { /* skip unreadable files */ }
+    }
+
+    const totalEntries = olderEntryCount + recentEntryCount;
+    if (totalEntries === 0) return null;
+
+    const newestEntry = recentParsedEntries.length > 0
+      ? recentParsedEntries[recentParsedEntries.length - 1]!.ts
+      : null;
+
+    return {
+      totalEntries,
+      flowCount: flowIds.size,
+      eventCounts,
+      recentEvents: recentParsedEntries,
+      oldestEntry,
+      newestEntry,
+      fileCount: files.length,
+    };
+  } catch {
+    return null;
+  }
+}
+
+// ─── Activity Log Metadata ────────────────────────────────────────────────────
+
+function gatherActivityLogMeta(basePath: string, activeMilestone?: string | null): ActivityLogMeta | null {
+  try {
+    const activityDirs = resolveActivityDirs(basePath, activeMilestone);
+    let fileCount = 0;
+    let totalSizeBytes = 0;
+    let oldestFile: string | null = null;
+    let newestFile: string | null = null;
+    let oldestMtime = Infinity;
+    let newestMtime = 0;
+
+    for (const activityDir of activityDirs) {
+      if (!existsSync(activityDir)) continue;
+      const files = readdirSync(activityDir).filter(f => f.endsWith(".jsonl"));
+      for (const file of files) {
+        const filePath = join(activityDir, file);
+        const stat = statSync(filePath, { throwIfNoEntry: false });
+        if (!stat) continue;
+        fileCount++;
+        totalSizeBytes += stat.size;
+        if (stat.mtimeMs < oldestMtime) {
+          oldestMtime = stat.mtimeMs;
+          oldestFile = file;
+        }
+        if (stat.mtimeMs > newestMtime) {
+          newestMtime = stat.mtimeMs;
+          newestFile = file;
+        }
+      }
+    }
+
+    if (fileCount === 0) return null;
+    return { fileCount, totalSizeBytes, oldestFile, newestFile };
+  } catch {
+    return null;
+  }
+}
+
 // ─── Completed Keys Loader ────────────────────────────────────────────────────
 
 function loadCompletedKeys(basePath: string): string[] {
@@ -300,15 +600,69 @@ function loadCompletedKeys(basePath: string): string[] {
   return [];
 }
 
+// ─── DB Completion Counts ────────────────────────────────────────────────────
+
+function getDbCompletionCounts(): DbCompletionCounts | null {
+  if (!isDbAvailable()) return null;
+
+  const milestones = getAllMilestones();
+  let completedMilestones = 0;
+  let totalSlices = 0;
+  let completedSlices = 0;
+  let totalTasks = 0;
+  let completedTasks = 0;
+
+  for (const m of milestones) {
+    if (isClosedStatus(m.status)) completedMilestones++;
+
+    const slices = getMilestoneSlices(m.id);
+    for (const s of slices) {
+      totalSlices++;
+      if (isClosedStatus(s.status)) completedSlices++;
+
+      const tasks = getSliceTasks(m.id, s.id);
+      for (const t of tasks) {
+        totalTasks++;
+        if (isClosedStatus(t.status)) completedTasks++;
+      }
+    }
+  }
+
+  return {
+    milestones: completedMilestones,
+    milestonesTotal: milestones.length,
+    slices: completedSlices,
+    slicesTotal: totalSlices,
+    tasks: completedTasks,
+    tasksTotal: totalTasks,
+  };
+}
+
 // ─── Anomaly Detectors ───────────────────────────────────────────────────────
 
-function detectStuckLoops(units: UnitMetrics[], anomalies: ForensicAnomaly[]): void {
-  const counts = new Map<string, number>();
+/**
+ * Detect units that were dispatched multiple times (stuck in a loop).
+ *
+ * Counts distinct dispatches by grouping on (type, id, startedAt) first to
+ * collapse idle-watchdog duplicate snapshots (#1943), then counts unique
+ * startedAt values per type/id to determine actual dispatch count.
+ *
+ * Exported for testability.
+ */
+export function detectStuckLoops(units: UnitMetrics[], anomalies: ForensicAnomaly[]): void {
+  // First, collect unique startedAt values per type/id key
+  const dispatchMap = new Map<string, Set<number>>();
   for (const u of units) {
     const key = `${u.type}/${u.id}`;
-    counts.set(key, (counts.get(key) ?? 0) + 1);
+    let starts = dispatchMap.get(key);
+    if (!starts) {
+      starts = new Set();
+      dispatchMap.set(key, starts);
+    }
+    starts.add(u.startedAt);
   }
-  for (const [key, count] of counts) {
+  for (const [key, starts] of dispatchMap) {
+    const count = starts.size;
     if (count > 1) {
       const [unitType, ...idParts] = key.split("/");
       anomalies.push({
@@ -364,15 +718,42 @@ function detectTimeouts(traces: UnitTrace[], anomalies: ForensicAnomaly[]): void
   }
 }
 
+/**
+ * Parse a completed-unit key into its unitType and unitId.
+ *
+ * Hook units use a compound slash-delimited type ("hook/<hookName>"), so a
+ * naive `key.indexOf("/")` would split "hook/telegram-progress/M007/S01" into
+ * unitType="hook" (wrong) instead of "hook/telegram-progress".
+ *
+ * Returns `null` for malformed keys that cannot be split.
+ */
+export function splitCompletedKey(key: string): { unitType: string; unitId: string } | null {
+  if (key.startsWith("hook/")) {
+    // Hook unit types are two segments: "hook/<hookName>/<unitId...>"
+    const secondSlash = key.indexOf("/", 5); // skip past "hook/"
+    if (secondSlash === -1) return null;     // malformed — no unitId after hook name
+    return {
+      unitType: key.slice(0, secondSlash),
+      unitId: key.slice(secondSlash + 1),
+    };
+  }
+
+  const slashIdx = key.indexOf("/");
+  if (slashIdx === -1) return null;
+  return {
+    unitType: key.slice(0, slashIdx),
+    unitId: key.slice(slashIdx + 1),
+  };
+}
+
 function detectMissingArtifacts(completedKeys: string[], basePath: string, activeMilestone: string | null, anomalies: ForensicAnomaly[]): void {
   // Also check the worktree path for artifacts — they may exist there but not at root
   const wtBasePath = activeMilestone ? getAutoWorktreePath(basePath, activeMilestone) : null;
 
   for (const key of completedKeys) {
-    const slashIdx = key.indexOf("/");
-    if (slashIdx === -1) continue;
-    const unitType = key.slice(0, slashIdx);
-    const unitId = key.slice(slashIdx + 1);
+    const parsed = splitCompletedKey(key);
+    if (!parsed) continue;
+    const { unitType, unitId } = parsed;
 
     const rootHasArtifact = verifyExpectedArtifact(unitType, unitId, basePath);
     const wtHasArtifact = wtBasePath ? verifyExpectedArtifact(unitType, unitId, wtBasePath) : false;
@@ -429,6 +810,66 @@ function detectErrorTraces(traces: UnitTrace[], anomalies: ForensicAnomaly[]): v
         details: ut.trace.errors.slice(0, 3).join("\n"),
       });
     }
+  }
+}
+
+function detectJournalAnomalies(journal: JournalSummary | null, anomalies: ForensicAnomaly[]): void {
+  if (!journal) return;
+
+  // Detect stuck-detected events from the journal
+  const stuckCount = journal.eventCounts["stuck-detected"] ?? 0;
+  if (stuckCount > 0) {
+    anomalies.push({
+      type: "journal-stuck",
+      severity: stuckCount >= 3 ? "error" : "warning",
+      summary: `Journal recorded ${stuckCount} stuck-detected event(s)`,
+      details: `The auto-mode loop detected it was stuck ${stuckCount} time(s). Check journal events for flow IDs and causal chains to trace the root cause.`,
+    });
+  }
+
+  // Detect guard-block events (dispatch was blocked by a guard)
+  const guardCount = journal.eventCounts["guard-block"] ?? 0;
+  if (guardCount > 0) {
+    anomalies.push({
+      type: "journal-guard-block",
+      severity: guardCount >= 5 ? "warning" : "info",
+      summary: `Journal recorded ${guardCount} guard-block event(s)`,
+      details: `Dispatch was blocked by a guard condition ${guardCount} time(s). This may indicate a persistent blocking condition preventing progress.`,
+    });
+  }
+
+  // Detect rapid iterations (many flows in short time = likely thrashing)
+  if (journal.flowCount > 0 && journal.oldestEntry && journal.newestEntry) {
+    const oldest = new Date(journal.oldestEntry).getTime();
+    const newest = new Date(journal.newestEntry).getTime();
+    const spanMs = newest - oldest;
+    if (spanMs > 0 && journal.flowCount > 10) {
+      const avgMs = spanMs / journal.flowCount;
+      if (avgMs < RAPID_ITERATION_THRESHOLD_MS) {
+        anomalies.push({
+          type: "journal-rapid-iterations",
+          severity: "warning",
+          summary: `${journal.flowCount} iterations in ${formatDuration(spanMs)} (avg ${formatDuration(avgMs)}/iteration)`,
+          details: `Unusually rapid iteration cadence suggests the loop may be thrashing without making progress. Review recent journal events for dispatch-stop or terminal events.`,
+        });
+      }
+    }
+  }
+
+  // Detect worktree failures from journal events
+  const wtCreateFailed = journal.eventCounts["worktree-create-failed"] ?? 0;
+  const wtMergeFailed = journal.eventCounts["worktree-merge-failed"] ?? 0;
+  const wtFailures = wtCreateFailed + wtMergeFailed;
+  if (wtFailures > 0) {
+    const parts: string[] = [];
+    if (wtCreateFailed > 0) parts.push(`${wtCreateFailed} create failure(s)`);
+    if (wtMergeFailed > 0) parts.push(`${wtMergeFailed} merge failure(s)`);
+    anomalies.push({
+      type: "journal-worktree-failure",
+      severity: "warning",
+      summary: `Worktree failures: ${parts.join(", ")}`,
+      details: `Journal recorded worktree operation failures. These may indicate git state corruption or conflicting branches.`,
+    });
   }
 }
 
@@ -508,8 +949,83 @@ function saveForensicReport(basePath: string, report: ForensicReport, problemDes
     sections.push(redact(formatCrashInfo(report.crashLock)), ``);
   }
 
+  // Activity log metadata
+  if (report.activityLogMeta) {
+    const meta = report.activityLogMeta;
+    sections.push(`## Activity Log Metadata`, ``);
+    sections.push(`- Files: ${meta.fileCount}`);
+    sections.push(`- Total size: ${(meta.totalSizeBytes / 1024).toFixed(1)} KB`);
+    if (meta.oldestFile) sections.push(`- Oldest: ${meta.oldestFile}`);
+    if (meta.newestFile) sections.push(`- Newest: ${meta.newestFile}`);
+    sections.push(``);
+  }
+
+  // Journal summary
+  if (report.journalSummary) {
+    const js = report.journalSummary;
+    sections.push(`## Journal Summary`, ``);
+    sections.push(`- Total entries: ${js.totalEntries}`);
+    sections.push(`- Distinct flows (iterations): ${js.flowCount}`);
+    sections.push(`- Daily files: ${js.fileCount}`);
+    if (js.oldestEntry) sections.push(`- Date range: ${js.oldestEntry} — ${js.newestEntry}`);
+    sections.push(``);
+    sections.push(`### Event Type Distribution`, ``);
+    sections.push(`| Event Type | Count |`);
+    sections.push(`|------------|-------|`);
+    for (const [evType, count] of Object.entries(js.eventCounts).sort((a, b) => b[1] - a[1])) {
+      sections.push(`| ${evType} | ${count} |`);
+    }
+    sections.push(``);
+    if (js.recentEvents.length > 0) {
+      sections.push(`### Recent Journal Events (last ${js.recentEvents.length})`, ``);
+      for (const ev of js.recentEvents) {
+        const parts = [`${ev.ts} [${ev.eventType}] flow=${ev.flowId.slice(0, 8)}`];
+        if (ev.rule) parts.push(`rule=${ev.rule}`);
+        if (ev.unitId) parts.push(`unit=${ev.unitId}`);
+        sections.push(`- ${parts.join(" ")}`);
+      }
+      sections.push(``);
+    }
+  }
+
   writeFileSync(filePath, sections.join("\n"), "utf-8");
   return filePath;
+}
+
+// ─── Forensics Session Marker ────────────────────────────────────────────────
+
+export interface ForensicsMarker {
+  reportPath: string;
+  promptContent: string;
+  createdAt: string;
+}
+
+/**
+ * Write a marker file so that buildBeforeAgentStartResult() can re-inject
+ * the forensics prompt on follow-up turns.  (#2941)
+ */
+export function writeForensicsMarker(basePath: string, reportPath: string, promptContent: string): void {
+  const dir = join(gsdRoot(basePath), "runtime");
+  mkdirSync(dir, { recursive: true });
+  const marker: ForensicsMarker = {
+    reportPath,
+    promptContent,
+    createdAt: new Date().toISOString(),
+  };
+  writeFileSync(join(dir, "active-forensics.json"), JSON.stringify(marker), "utf-8");
+}
+
+/**
+ * Read the active forensics marker, or null if none exists.
+ */
+export function readForensicsMarker(basePath: string): ForensicsMarker | null {
+  const markerPath = join(gsdRoot(basePath), "runtime", "active-forensics.json");
+  if (!existsSync(markerPath)) return null;
+  try {
+    return JSON.parse(readFileSync(markerPath, "utf-8")) as ForensicsMarker;
+  } catch {
+    return null;
+  }
 }
 
 // ─── Prompt Formatter ─────────────────────────────────────────────────────────
@@ -589,8 +1105,51 @@ function formatReportForPrompt(report: ForensicReport): string {
     sections.push("");
   }
 
-  // Completed keys count
-  sections.push(`### Completed Keys: ${report.completedKeys.length}`);
+  // Activity log metadata
+  if (report.activityLogMeta) {
+    const meta = report.activityLogMeta;
+    sections.push("### Activity Log Overview");
+    sections.push(`- Files: ${meta.fileCount}, Total size: ${(meta.totalSizeBytes / 1024).toFixed(1)} KB`);
+    if (meta.oldestFile) sections.push(`- Oldest: ${meta.oldestFile}`);
+    if (meta.newestFile) sections.push(`- Newest: ${meta.newestFile}`);
+    sections.push("");
+  }
+
+  // Journal summary — structured event timeline
+  if (report.journalSummary) {
+    const js = report.journalSummary;
+    sections.push("### Journal Summary (Iteration Event Log)");
+    sections.push(`- Total entries: ${js.totalEntries}, Distinct flows: ${js.flowCount}, Daily files: ${js.fileCount}`);
+    if (js.oldestEntry) sections.push(`- Date range: ${js.oldestEntry} — ${js.newestEntry}`);
+
+    // Event type distribution (compact)
+    const eventPairs = Object.entries(js.eventCounts).sort((a, b) => b[1] - a[1]);
+    sections.push(`- Events: ${eventPairs.map(([t, c]) => `${t}(${c})`).join(", ")}`);
+
+    // Recent events timeline (for tracing what just happened)
+    if (js.recentEvents.length > 0) {
+      sections.push("");
+      sections.push(`**Recent Journal Events (last ${js.recentEvents.length}):**`);
+      for (const ev of js.recentEvents) {
+        const parts = [`${ev.ts} [${ev.eventType}] flow=${ev.flowId.slice(0, 8)}`];
+        if (ev.rule) parts.push(`rule=${ev.rule}`);
+        if (ev.unitId) parts.push(`unit=${ev.unitId}`);
+        sections.push(`- ${parts.join(" ")}`);
+      }
+    }
+    sections.push("");
+  }
+
+  // Completion status — prefer DB counts, fall back to legacy completed-units.json
+  if (report.dbCompletionCounts) {
+    const c = report.dbCompletionCounts;
+    sections.push(`### Completion Status (from DB)`);
+    sections.push(`- ${c.milestones}/${c.milestonesTotal} milestones complete`);
+    sections.push(`- ${c.slices}/${c.slicesTotal} slices complete`);
+    sections.push(`- ${c.tasks}/${c.tasksTotal} tasks complete`);
+  } else {
+    sections.push(`### Completed Keys: ${report.completedKeys.length}`);
+  }
   sections.push(`### GSD Version: ${report.gsdVersion}`);
   sections.push(`### Active Milestone: ${report.activeMilestone ?? "none"}`);
   sections.push(`### Active Slice: ${report.activeSlice ?? "none"}`);

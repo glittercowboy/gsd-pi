@@ -83,120 +83,120 @@ function mockFetch(responseBody: unknown, status = 200) {
 // Test: executeTavilySearch produces correct CachedSearchResult shape
 // =============================================================================
 
-test("executeTavilySearch sends POST to Tavily API and produces CachedSearchResult", async () => {
+test("executeTavilySearch sends POST to Tavily API and produces CachedSearchResult", async (t) => {
   // Set TAVILY_API_KEY for this test
   const origKey = process.env.TAVILY_API_KEY;
   process.env.TAVILY_API_KEY = "tvly-test-key-12345";
 
   const { captured, restore } = mockFetch(makeTavilyResponse());
 
-  try {
-    // Dynamic import to get the module-level function
-    // We need to call it through the module — but executeTavilySearch is not exported.
-    // Instead, we test through the tool's execute path by importing the module fresh.
-    // Since executeTavilySearch is a private function, we test it indirectly through
-    // the request captured by our mock fetch.
-
-    // Import the normalization helpers to verify the mapping
-    const { normalizeTavilyResult } = await import("../resources/extensions/search-the-web/tavily.ts");
-
-    // Simulate what executeTavilySearch does: build request, call fetch, map response
-    const requestBody: Record<string, unknown> = {
-      query: "test query",
-      max_results: 10,
-      search_depth: "basic",
-    };
-
-    const response = await globalThis.fetch("https://api.tavily.com/search", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": "Bearer tvly-test-key-12345",
-      },
-      body: JSON.stringify(requestBody),
-    });
-
-    const data = await response.json() as { results: Array<{ title: string; url: string; content: string; score: number; published_date?: string }> };
-
-    // Verify request shape
-    assert.equal(captured.url, "https://api.tavily.com/search", "request URL");
-    assert.equal(captured.method, "POST", "HTTP method");
-    assert.equal(captured.headers?.["Content-Type"], "application/json", "Content-Type header");
-    assert.equal(captured.headers?.["Authorization"], "Bearer tvly-test-key-12345", "Authorization header");
-    assert.deepEqual(captured.body, requestBody, "request body");
-
-    // Verify response mapping
-    const mapped = data.results.map(normalizeTavilyResult);
-    assert.equal(mapped.length, 2);
-    assert.equal(mapped[0].title, "First Result");
-    assert.equal(mapped[0].url, "https://example.com/first");
-    assert.equal(mapped[0].description, "Description of first result.");
-    assert.ok(mapped[0].age, "Published date should produce an age string");
-    assert.equal(mapped[1].title, "Second Result");
-    assert.equal(mapped[1].age, undefined, "No published_date → no age");
-  } finally {
+  t.after(() => {
     restore();
     if (origKey !== undefined) process.env.TAVILY_API_KEY = origKey;
     else delete process.env.TAVILY_API_KEY;
-  }
+  });
+
+  // Dynamic import to get the module-level function
+  // We need to call it through the module — but executeTavilySearch is not exported.
+  // Instead, we test through the tool's execute path by importing the module fresh.
+  // Since executeTavilySearch is a private function, we test it indirectly through
+  // the request captured by our mock fetch.
+
+  // Import the normalization helpers to verify the mapping
+  const { normalizeTavilyResult } = await import("../resources/extensions/search-the-web/tavily.ts");
+
+  // Simulate what executeTavilySearch does: build request, call fetch, map response
+  const requestBody: Record<string, unknown> = {
+    query: "test query",
+    max_results: 10,
+    search_depth: "basic",
+  };
+
+  const response = await globalThis.fetch("https://api.tavily.com/search", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": "Bearer tvly-test-key-12345",
+    },
+    body: JSON.stringify(requestBody),
+  });
+
+  const data = await response.json() as { results: Array<{ title: string; url: string; content: string; score: number; published_date?: string }> };
+
+  // Verify request shape
+  assert.equal(captured.url, "https://api.tavily.com/search", "request URL");
+  assert.equal(captured.method, "POST", "HTTP method");
+  assert.equal(captured.headers?.["Content-Type"], "application/json", "Content-Type header");
+  assert.equal(captured.headers?.["Authorization"], "Bearer tvly-test-key-12345", "Authorization header");
+  assert.deepEqual(captured.body, requestBody, "request body");
+
+  // Verify response mapping
+  const mapped = data.results.map(normalizeTavilyResult);
+  assert.equal(mapped.length, 2);
+  assert.equal(mapped[0].title, "First Result");
+  assert.equal(mapped[0].url, "https://example.com/first");
+  assert.equal(mapped[0].description, "Description of first result.");
+  assert.ok(mapped[0].age, "Published date should produce an age string");
+  assert.equal(mapped[1].title, "Second Result");
+  assert.equal(mapped[1].age, undefined, "No published_date → no age");
 });
 
 // =============================================================================
 // Test: Provider branching — resolveSearchProvider returns correct provider
 // =============================================================================
 
-test("resolveSearchProvider returns 'tavily' when TAVILY_API_KEY is set and BRAVE_API_KEY is not", () => {
+test("resolveSearchProvider returns 'tavily' when TAVILY_API_KEY is set and BRAVE_API_KEY is not", (t) => {
   const origTavily = process.env.TAVILY_API_KEY;
   const origBrave = process.env.BRAVE_API_KEY;
 
   process.env.TAVILY_API_KEY = "tvly-test-key";
   delete process.env.BRAVE_API_KEY;
 
-  try {
-    const provider = resolveSearchProvider();
-    assert.equal(provider, "tavily");
-  } finally {
+  t.after(() => {
     if (origTavily !== undefined) process.env.TAVILY_API_KEY = origTavily;
     else delete process.env.TAVILY_API_KEY;
     if (origBrave !== undefined) process.env.BRAVE_API_KEY = origBrave;
     else delete process.env.BRAVE_API_KEY;
-  }
+  });
+
+  const provider = resolveSearchProvider();
+  assert.equal(provider, "tavily");
 });
 
-test("resolveSearchProvider returns 'brave' when only BRAVE_API_KEY is set", () => {
+test("resolveSearchProvider returns 'brave' when only BRAVE_API_KEY is set", (t) => {
   const origTavily = process.env.TAVILY_API_KEY;
   const origBrave = process.env.BRAVE_API_KEY;
 
   delete process.env.TAVILY_API_KEY;
   process.env.BRAVE_API_KEY = "BSA-test-key";
 
-  try {
-    const provider = resolveSearchProvider();
-    assert.equal(provider, "brave");
-  } finally {
+  t.after(() => {
     if (origTavily !== undefined) process.env.TAVILY_API_KEY = origTavily;
     else delete process.env.TAVILY_API_KEY;
     if (origBrave !== undefined) process.env.BRAVE_API_KEY = origBrave;
     else delete process.env.BRAVE_API_KEY;
-  }
+  });
+
+  const provider = resolveSearchProvider();
+  assert.equal(provider, "brave");
 });
 
-test("resolveSearchProvider returns null when neither key is set", () => {
+test("resolveSearchProvider returns null when neither key is set", (t) => {
   const origTavily = process.env.TAVILY_API_KEY;
   const origBrave = process.env.BRAVE_API_KEY;
 
   delete process.env.TAVILY_API_KEY;
   delete process.env.BRAVE_API_KEY;
 
-  try {
-    const provider = resolveSearchProvider();
-    assert.equal(provider, null);
-  } finally {
+  t.after(() => {
     if (origTavily !== undefined) process.env.TAVILY_API_KEY = origTavily;
     else delete process.env.BRAVE_API_KEY;
     if (origBrave !== undefined) process.env.BRAVE_API_KEY = origBrave;
     else delete process.env.BRAVE_API_KEY;
-  }
+  });
+
+  const provider = resolveSearchProvider();
+  assert.equal(provider, null);
 });
 
 // =============================================================================
@@ -245,7 +245,7 @@ test("no-key error message contains both TAVILY_API_KEY and BRAVE_API_KEY", () =
 // Test: Tavily answer mapping — answer field flows through as summary text
 // =============================================================================
 
-test("Tavily answer field maps to summaryText in CachedSearchResult", async () => {
+test("Tavily answer field maps to summaryText in CachedSearchResult", async (t) => {
   const origKey = process.env.TAVILY_API_KEY;
   process.env.TAVILY_API_KEY = "tvly-test-key";
 
@@ -255,29 +255,29 @@ test("Tavily answer field maps to summaryText in CachedSearchResult", async () =
 
   const { captured, restore } = mockFetch(responseWithAnswer);
 
-  try {
-    const response = await globalThis.fetch("https://api.tavily.com/search", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "Authorization": "Bearer tvly-test-key" },
-      body: JSON.stringify({ query: "what is typescript", max_results: 10, search_depth: "basic", include_answer: true }),
-    });
-
-    const data = await response.json() as { answer?: string };
-
-    // Verify the answer is present
-    assert.equal(data.answer, "TypeScript is a typed superset of JavaScript that compiles to plain JavaScript.");
-
-    // Verify the request included include_answer
-    assert.equal(captured.body?.include_answer, true);
-
-    // The answer should flow to summaryText (not summarizerKey)
-    const summaryText = data.answer || undefined;
-    assert.ok(summaryText, "Answer should be truthy and used as summaryText");
-  } finally {
+  t.after(() => {
     restore();
     if (origKey !== undefined) process.env.TAVILY_API_KEY = origKey;
     else delete process.env.TAVILY_API_KEY;
-  }
+  });
+
+  const response = await globalThis.fetch("https://api.tavily.com/search", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "Authorization": "Bearer tvly-test-key" },
+    body: JSON.stringify({ query: "what is typescript", max_results: 10, search_depth: "basic", include_answer: true }),
+  });
+
+  const data = await response.json() as { answer?: string };
+
+  // Verify the answer is present
+  assert.equal(data.answer, "TypeScript is a typed superset of JavaScript that compiles to plain JavaScript.");
+
+  // Verify the request included include_answer
+  assert.equal(captured.body?.include_answer, true);
+
+  // The answer should flow to summaryText (not summarizerKey)
+  const summaryText = data.answer || undefined;
+  assert.ok(summaryText, "Answer should be truthy and used as summaryText");
 });
 
 // =============================================================================
@@ -305,40 +305,40 @@ test("freshness='week' maps to time_range='week' in Tavily request body", () => 
 // Test: Domain mapping — include_domains, not site: prefix
 // =============================================================================
 
-test("Tavily domain filter uses include_domains, not site: prefix in query", async () => {
+test("Tavily domain filter uses include_domains, not site: prefix in query", async (t) => {
   const origKey = process.env.TAVILY_API_KEY;
   process.env.TAVILY_API_KEY = "tvly-test-key";
 
   const { captured, restore } = mockFetch(makeTavilyResponse());
 
-  try {
-    // Simulate what executeTavilySearch builds for domain filtering
-    const domain = "example.com";
-    const query = "typescript tutorial";
-
-    const requestBody: Record<string, unknown> = {
-      query, // Note: NO site: prefix
-      max_results: 10,
-      search_depth: "basic",
-      include_domains: [domain],
-    };
-
-    await globalThis.fetch("https://api.tavily.com/search", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "Authorization": "Bearer tvly-test-key" },
-      body: JSON.stringify(requestBody),
-    });
-
-    // Verify domain passed as include_domains, not in query
-    assert.deepEqual(captured.body?.include_domains, ["example.com"]);
-    assert.equal(captured.body?.query, "typescript tutorial", "Query must NOT contain site: prefix for Tavily");
-    assert.ok(
-      !(captured.body?.query as string).includes("site:"),
-      "Query must not include site: prefix for Tavily path"
-    );
-  } finally {
+  t.after(() => {
     restore();
     if (origKey !== undefined) process.env.TAVILY_API_KEY = origKey;
     else delete process.env.TAVILY_API_KEY;
-  }
+  });
+
+  // Simulate what executeTavilySearch builds for domain filtering
+  const domain = "example.com";
+  const query = "typescript tutorial";
+
+  const requestBody: Record<string, unknown> = {
+    query, // Note: NO site: prefix
+    max_results: 10,
+    search_depth: "basic",
+    include_domains: [domain],
+  };
+
+  await globalThis.fetch("https://api.tavily.com/search", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "Authorization": "Bearer tvly-test-key" },
+    body: JSON.stringify(requestBody),
+  });
+
+  // Verify domain passed as include_domains, not in query
+  assert.deepEqual(captured.body?.include_domains, ["example.com"]);
+  assert.equal(captured.body?.query, "typescript tutorial", "Query must NOT contain site: prefix for Tavily");
+  assert.ok(
+    !(captured.body?.query as string).includes("site:"),
+    "Query must not include site: prefix for Tavily path"
+  );
 });

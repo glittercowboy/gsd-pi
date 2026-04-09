@@ -1,4 +1,3 @@
-import { createTestContext } from './test-helpers.ts';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
@@ -17,8 +16,8 @@ import {
   parseRequirementsSections,
   migrateFromMarkdown,
 } from '../md-importer.ts';
-
-const { assertEq, assertTrue, report } = createTestContext();
+import { describe, test, beforeEach, afterEach } from 'node:test';
+import assert from 'node:assert/strict';
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Fixtures
@@ -135,43 +134,37 @@ function cleanupDir(dir: string): void {
 // md-importer: parseDecisionsTable
 // ═══════════════════════════════════════════════════════════════════════════
 
-console.log('\n=== md-importer: parseDecisionsTable ===');
-
-{
+test('md-importer: parseDecisionsTable', () => {
   const decisions = parseDecisionsTable(DECISIONS_MD);
-  assertEq(decisions.length, 4, 'should parse 4 decisions');
-  assertEq(decisions[0].id, 'D001', 'first decision should be D001');
-  assertEq(decisions[0].decision, 'SQLite library', 'D001 decision text');
-  assertEq(decisions[0].choice, 'better-sqlite3', 'D001 choice');
-  assertEq(decisions[0].scope, 'library', 'D001 scope');
-  assertEq(decisions[0].revisable, 'No', 'D001 revisable');
-}
+  assert.deepStrictEqual(decisions.length, 4, 'should parse 4 decisions');
+  assert.deepStrictEqual(decisions[0].id, 'D001', 'first decision should be D001');
+  assert.deepStrictEqual(decisions[0].decision, 'SQLite library', 'D001 decision text');
+  assert.deepStrictEqual(decisions[0].choice, 'better-sqlite3', 'D001 choice');
+  assert.deepStrictEqual(decisions[0].scope, 'library', 'D001 scope');
+  assert.deepStrictEqual(decisions[0].revisable, 'No', 'D001 revisable');
+});
 
-console.log('=== md-importer: supersession detection ===');
-
-{
+test('md-importer: supersession detection', () => {
   const decisions = parseDecisionsTable(DECISIONS_MD);
 
   // D010 amends D001 → D001.superseded_by = D010
   const d001 = decisions.find(d => d.id === 'D001');
-  assertEq(d001?.superseded_by, 'D010', 'D001 should be superseded by D010');
+  assert.deepStrictEqual(d001?.superseded_by, 'D010', 'D001 should be superseded by D010');
 
   // D020 amends D010 → D010.superseded_by = D020
   const d010 = decisions.find(d => d.id === 'D010');
-  assertEq(d010?.superseded_by, 'D020', 'D010 should be superseded by D020');
+  assert.deepStrictEqual(d010?.superseded_by, 'D020', 'D010 should be superseded by D020');
 
   // D002 is not amended
   const d002 = decisions.find(d => d.id === 'D002');
-  assertEq(d002?.superseded_by, null, 'D002 should not be superseded');
+  assert.deepStrictEqual(d002?.superseded_by, null, 'D002 should not be superseded');
 
   // D020 is the latest in chain, not superseded
   const d020 = decisions.find(d => d.id === 'D020');
-  assertEq(d020?.superseded_by, null, 'D020 should not be superseded');
-}
+  assert.deepStrictEqual(d020?.superseded_by, null, 'D020 should not be superseded');
+});
 
-console.log('=== md-importer: malformed/empty rows skipped ===');
-
-{
+test('md-importer: malformed/empty rows skipped', () => {
   const malformedInput = `# Decisions
 
 | # | When | Scope | Decision | Choice | Rationale | Revisable? |
@@ -182,24 +175,20 @@ console.log('=== md-importer: malformed/empty rows skipped ===');
 | D003 | M001 | arch | Config | JSON | Simple | Yes |
 `;
   const decisions = parseDecisionsTable(malformedInput);
-  assertEq(decisions.length, 2, 'should skip rows without D-prefix IDs');
-  assertEq(decisions[0].id, 'D001', 'first valid row');
-  assertEq(decisions[1].id, 'D003', 'second valid row (skipping malformed)');
-}
+  assert.deepStrictEqual(decisions.length, 2, 'should skip rows without D-prefix IDs');
+  assert.deepStrictEqual(decisions[0].id, 'D001', 'first valid row');
+  assert.deepStrictEqual(decisions[1].id, 'D003', 'second valid row (skipping malformed)');
+});
 
-console.log('=== md-importer: made_by backward compatibility (old 7-column format) ===');
-
-{
+test('md-importer: made_by backward compatibility (old 7-column format)', () => {
   const decisions = parseDecisionsTable(DECISIONS_MD);
   // Old format has no Made By column — should default to 'agent'
   for (const d of decisions) {
-    assertEq(d.made_by, 'agent', `${d.id} made_by defaults to agent for legacy format`);
+    assert.deepStrictEqual(d.made_by, 'agent', `${d.id} made_by defaults to agent for legacy format`);
   }
-}
+});
 
-console.log('=== md-importer: made_by column parsing (new 8-column format) ===');
-
-{
+test('md-importer: made_by column parsing (new 8-column format)', () => {
   const newFormatMd = `# Decisions Register
 
 | # | When | Scope | Decision | Choice | Rationale | Revisable? | Made By |
@@ -210,62 +199,58 @@ console.log('=== md-importer: made_by column parsing (new 8-column format) ===')
 | D004 | M002 | impl | Cache strategy | LRU | Predictable | No | bogus |
 `;
   const decisions = parseDecisionsTable(newFormatMd);
-  assertEq(decisions.length, 4, 'should parse 4 decisions with new format');
-  assertEq(decisions[0].made_by, 'human', 'D001 made_by = human');
-  assertEq(decisions[1].made_by, 'agent', 'D002 made_by = agent');
-  assertEq(decisions[2].made_by, 'collaborative', 'D003 made_by = collaborative');
-  assertEq(decisions[3].made_by, 'agent', 'D004 invalid made_by defaults to agent');
-}
+  assert.deepStrictEqual(decisions.length, 4, 'should parse 4 decisions with new format');
+  assert.deepStrictEqual(decisions[0].made_by, 'human', 'D001 made_by = human');
+  assert.deepStrictEqual(decisions[1].made_by, 'agent', 'D002 made_by = agent');
+  assert.deepStrictEqual(decisions[2].made_by, 'collaborative', 'D003 made_by = collaborative');
+  assert.deepStrictEqual(decisions[3].made_by, 'agent', 'D004 invalid made_by defaults to agent');
+});
 
 // ═══════════════════════════════════════════════════════════════════════════
 // md-importer: parseRequirementsSections
 // ═══════════════════════════════════════════════════════════════════════════
 
-console.log('=== md-importer: parseRequirementsSections ===');
-
-{
+test('md-importer: parseRequirementsSections', () => {
   const reqs = parseRequirementsSections(REQUIREMENTS_MD);
-  assertEq(reqs.length, 5, 'should parse 5 unique requirements');
+  assert.deepStrictEqual(reqs.length, 5, 'should parse 5 unique requirements');
 
   const r001 = reqs.find(r => r.id === 'R001');
-  assertTrue(!!r001, 'R001 should exist');
-  assertEq(r001?.class, 'core-capability', 'R001 class');
-  assertEq(r001?.status, 'active', 'R001 status');
-  assertEq(r001?.description, 'A SQLite database with typed wrappers', 'R001 description');
-  assertEq(r001?.why, 'Foundation for storage', 'R001 why');
-  assertEq(r001?.source, 'user', 'R001 source');
-  assertEq(r001?.primary_owner, 'M001/S01', 'R001 primary_owner');
-  assertEq(r001?.supporting_slices, 'none', 'R001 supporting_slices');
-  assertEq(r001?.validation, 'unmapped', 'R001 validation');
-  assertEq(r001?.notes, 'WAL mode enabled', 'R001 notes');
-  assertTrue(r001?.full_content?.includes('### R001') ?? false, 'R001 full_content should have heading');
+  assert.ok(!!r001, 'R001 should exist');
+  assert.deepStrictEqual(r001?.class, 'core-capability', 'R001 class');
+  assert.deepStrictEqual(r001?.status, 'active', 'R001 status');
+  assert.deepStrictEqual(r001?.description, 'A SQLite database with typed wrappers', 'R001 description');
+  assert.deepStrictEqual(r001?.why, 'Foundation for storage', 'R001 why');
+  assert.deepStrictEqual(r001?.source, 'user', 'R001 source');
+  assert.deepStrictEqual(r001?.primary_owner, 'M001/S01', 'R001 primary_owner');
+  assert.deepStrictEqual(r001?.supporting_slices, 'none', 'R001 supporting_slices');
+  assert.deepStrictEqual(r001?.validation, 'unmapped', 'R001 validation');
+  assert.deepStrictEqual(r001?.notes, 'WAL mode enabled', 'R001 notes');
+  assert.ok(r001?.full_content?.includes('### R001') ?? false, 'R001 full_content should have heading');
 
   // Validated section — R017 (abbreviated format with "Validated by" / "Proof" bullets)
   const r017 = reqs.find(r => r.id === 'R017');
-  assertTrue(!!r017, 'R017 should exist');
-  assertEq(r017?.status, 'validated', 'R017 status from validated section');
-  assertEq(r017?.validation, 'M001/S01', 'R017 validation (from "Validated by" bullet)');
-  assertEq(r017?.notes, '50 decisions queried in 0.62ms', 'R017 notes (from "Proof" bullet)');
+  assert.ok(!!r017, 'R017 should exist');
+  assert.deepStrictEqual(r017?.status, 'validated', 'R017 status from validated section');
+  assert.deepStrictEqual(r017?.validation, 'M001/S01', 'R017 validation (from "Validated by" bullet)');
+  assert.deepStrictEqual(r017?.notes, '50 decisions queried in 0.62ms', 'R017 notes (from "Proof" bullet)');
 
   // Deferred requirement
   const r030 = reqs.find(r => r.id === 'R030');
-  assertEq(r030?.status, 'deferred', 'R030 status should be deferred');
-  assertEq(r030?.class, 'differentiator', 'R030 class');
-  assertEq(r030?.description, 'Rust crate for embeddings', 'R030 description');
+  assert.deepStrictEqual(r030?.status, 'deferred', 'R030 status should be deferred');
+  assert.deepStrictEqual(r030?.class, 'differentiator', 'R030 class');
+  assert.deepStrictEqual(r030?.description, 'Rust crate for embeddings', 'R030 description');
 
   // Out of scope
   const r040 = reqs.find(r => r.id === 'R040');
-  assertEq(r040?.status, 'out-of-scope', 'R040 status should be out-of-scope');
-  assertEq(r040?.class, 'anti-feature', 'R040 class');
-}
+  assert.deepStrictEqual(r040?.status, 'out-of-scope', 'R040 status should be out-of-scope');
+  assert.deepStrictEqual(r040?.class, 'anti-feature', 'R040 class');
+});
 
 // ═══════════════════════════════════════════════════════════════════════════
 // md-importer: migrateFromMarkdown orchestrator
 // ═══════════════════════════════════════════════════════════════════════════
 
-console.log('=== md-importer: migrateFromMarkdown orchestrator ===');
-
-{
+test('md-importer: migrateFromMarkdown orchestrator', () => {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gsd-import-test-'));
   createFixtureTree(tmpDir);
 
@@ -273,53 +258,51 @@ console.log('=== md-importer: migrateFromMarkdown orchestrator ===');
     openDatabase(':memory:');
     const result = migrateFromMarkdown(tmpDir);
 
-    assertEq(result.decisions, 4, 'should import 4 decisions');
-    assertEq(result.requirements, 5, 'should import 5 requirements');
-    assertTrue(result.artifacts > 0, 'should import some artifacts');
+    assert.deepStrictEqual(result.decisions, 4, 'should import 4 decisions');
+    assert.deepStrictEqual(result.requirements, 5, 'should import 5 requirements');
+    assert.ok(result.artifacts > 0, 'should import some artifacts');
 
     // Verify decisions queryable
     const d001 = getDecisionById('D001');
-    assertTrue(!!d001, 'D001 should be queryable');
-    assertEq(d001?.superseded_by, 'D010', 'D001 superseded_by should be D010');
+    assert.ok(!!d001, 'D001 should be queryable');
+    assert.deepStrictEqual(d001?.superseded_by, 'D010', 'D001 superseded_by should be D010');
 
     // Verify requirements queryable
     const r001 = getRequirementById('R001');
-    assertTrue(!!r001, 'R001 should be queryable');
-    assertEq(r001?.status, 'active', 'R001 status from DB');
+    assert.ok(!!r001, 'R001 should be queryable');
+    assert.deepStrictEqual(r001?.status, 'active', 'R001 status from DB');
 
     // Verify active views
     const activeD = getActiveDecisions();
-    assertEq(activeD.length, 2, 'should have 2 active decisions (D002, D020)');
+    assert.deepStrictEqual(activeD.length, 2, 'should have 2 active decisions (D002, D020)');
 
     // Verify artifacts table
     const adapter = _getAdapter();
     const artifacts = adapter?.prepare('SELECT count(*) as c FROM artifacts').get();
-    assertTrue((artifacts?.c as number) > 0, 'artifacts table should have rows');
+    assert.ok((artifacts?.c as number) > 0, 'artifacts table should have rows');
 
     // Verify hierarchy correctness
     const roadmap = adapter?.prepare('SELECT * FROM artifacts WHERE artifact_type = :type').get({ ':type': 'ROADMAP' });
-    assertTrue(!!roadmap, 'ROADMAP artifact should exist');
-    assertEq(roadmap?.milestone_id, 'M001', 'ROADMAP should be in M001');
+    assert.ok(!!roadmap, 'ROADMAP artifact should exist');
+    assert.deepStrictEqual(roadmap?.milestone_id, 'M001', 'ROADMAP should be in M001');
 
     const taskPlan = adapter?.prepare('SELECT * FROM artifacts WHERE task_id = :taskId AND artifact_type = :type').get({
       ':taskId': 'T01',
       ':type': 'PLAN',
     });
-    assertTrue(!!taskPlan, 'T01-PLAN artifact should exist');
+    assert.ok(!!taskPlan, 'T01-PLAN artifact should exist');
 
     closeDatabase();
   } finally {
     cleanupDir(tmpDir);
   }
-}
+});
 
 // ═══════════════════════════════════════════════════════════════════════════
 // md-importer: idempotent re-import
 // ═══════════════════════════════════════════════════════════════════════════
 
-console.log('=== md-importer: idempotent re-import ===');
-
-{
+test('md-importer: idempotent re-import', () => {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gsd-idemp-test-'));
   createFixtureTree(tmpDir);
 
@@ -328,9 +311,9 @@ console.log('=== md-importer: idempotent re-import ===');
     const r1 = migrateFromMarkdown(tmpDir);
     const r2 = migrateFromMarkdown(tmpDir);
 
-    assertEq(r1.decisions, r2.decisions, 'double import should produce same decision count');
-    assertEq(r1.requirements, r2.requirements, 'double import should produce same requirement count');
-    assertEq(r1.artifacts, r2.artifacts, 'double import should produce same artifact count');
+    assert.deepStrictEqual(r1.decisions, r2.decisions, 'double import should produce same decision count');
+    assert.deepStrictEqual(r1.requirements, r2.requirements, 'double import should produce same requirement count');
+    assert.deepStrictEqual(r1.artifacts, r2.artifacts, 'double import should produce same artifact count');
 
     // Verify no duplicates
     const adapter = _getAdapter();
@@ -338,23 +321,21 @@ console.log('=== md-importer: idempotent re-import ===');
     const rc = adapter?.prepare('SELECT count(*) as c FROM requirements').get()?.c as number;
     const ac = adapter?.prepare('SELECT count(*) as c FROM artifacts').get()?.c as number;
 
-    assertEq(dc, r1.decisions, 'DB decision count matches import count');
-    assertEq(rc, r1.requirements, 'DB requirement count matches import count');
-    assertEq(ac, r1.artifacts, 'DB artifact count matches import count');
+    assert.deepStrictEqual(dc, r1.decisions, 'DB decision count matches import count');
+    assert.deepStrictEqual(rc, r1.requirements, 'DB requirement count matches import count');
+    assert.deepStrictEqual(ac, r1.artifacts, 'DB artifact count matches import count');
 
     closeDatabase();
   } finally {
     cleanupDir(tmpDir);
   }
-}
+});
 
 // ═══════════════════════════════════════════════════════════════════════════
 // md-importer: missing file graceful handling
 // ═══════════════════════════════════════════════════════════════════════════
 
-console.log('=== md-importer: missing file handling ===');
-
-{
+test('md-importer: missing file handling', () => {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gsd-empty-test-'));
   // Create empty .gsd/ with no files
   fs.mkdirSync(path.join(tmpDir, '.gsd'), { recursive: true });
@@ -363,43 +344,39 @@ console.log('=== md-importer: missing file handling ===');
     openDatabase(':memory:');
     const result = migrateFromMarkdown(tmpDir);
 
-    assertEq(result.decisions, 0, 'missing DECISIONS.md → 0 decisions');
-    assertEq(result.requirements, 0, 'missing REQUIREMENTS.md → 0 requirements');
-    assertEq(result.artifacts, 0, 'empty tree → 0 artifacts');
+    assert.deepStrictEqual(result.decisions, 0, 'missing DECISIONS.md → 0 decisions');
+    assert.deepStrictEqual(result.requirements, 0, 'missing REQUIREMENTS.md → 0 requirements');
+    assert.deepStrictEqual(result.artifacts, 0, 'empty tree → 0 artifacts');
 
     closeDatabase();
   } finally {
     cleanupDir(tmpDir);
   }
-}
+});
 
 // ═══════════════════════════════════════════════════════════════════════════
 // md-importer: schema v1→v2 migration on existing DBs
 // ═══════════════════════════════════════════════════════════════════════════
 
-console.log('=== md-importer: schema v1→v2 migration ===');
-
-{
+test('md-importer: schema v1→v2 migration', () => {
   // This test verifies that opening a fresh DB auto-migrates to current schema version
   openDatabase(':memory:');
   const adapter = _getAdapter();
   const version = adapter?.prepare('SELECT MAX(version) as v FROM schema_version').get();
-  assertEq(version?.v, 4, 'new DB should be at schema version 4');
+  assert.deepStrictEqual(version?.v, 14, 'new DB should be at schema version 14');
 
   // Artifacts table should exist
   const tableCheck = adapter?.prepare("SELECT count(*) as c FROM sqlite_master WHERE type='table' AND name='artifacts'").get();
-  assertEq(tableCheck?.c, 1, 'artifacts table should exist');
+  assert.deepStrictEqual(tableCheck?.c, 1, 'artifacts table should exist');
 
   closeDatabase();
-}
+});
 
 // ═══════════════════════════════════════════════════════════════════════════
 // md-importer: round-trip fidelity
 // ═══════════════════════════════════════════════════════════════════════════
 
-console.log('=== md-importer: round-trip fidelity ===');
-
-{
+test('md-importer: round-trip fidelity', () => {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gsd-roundtrip-test-'));
   createFixtureTree(tmpDir);
 
@@ -409,32 +386,31 @@ console.log('=== md-importer: round-trip fidelity ===');
 
     // Round-trip: verify imported field values match source
     const d002 = getDecisionById('D002');
-    assertEq(d002?.when_context, 'M001', 'D002 when_context round-trip');
-    assertEq(d002?.scope, 'arch', 'D002 scope round-trip');
-    assertEq(d002?.decision, 'DB location', 'D002 decision round-trip');
-    assertEq(d002?.choice, '.gsd/gsd.db', 'D002 choice round-trip');
-    assertEq(d002?.rationale, 'Derived state', 'D002 rationale round-trip');
+    assert.deepStrictEqual(d002?.when_context, 'M001', 'D002 when_context round-trip');
+    assert.deepStrictEqual(d002?.scope, 'arch', 'D002 scope round-trip');
+    assert.deepStrictEqual(d002?.decision, 'DB location', 'D002 decision round-trip');
+    assert.deepStrictEqual(d002?.choice, '.gsd/gsd.db', 'D002 choice round-trip');
+    assert.deepStrictEqual(d002?.rationale, 'Derived state', 'D002 rationale round-trip');
 
     const r002 = getRequirementById('R002');
-    assertEq(r002?.class, 'failure-visibility', 'R002 class round-trip');
-    assertEq(r002?.description, 'Falls back to markdown if SQLite unavailable', 'R002 description round-trip');
-    assertEq(r002?.why, 'Must not break on exotic platforms', 'R002 why round-trip');
-    assertEq(r002?.primary_owner, 'M001/S01', 'R002 primary_owner round-trip');
-    assertEq(r002?.supporting_slices, 'M001/S03', 'R002 supporting_slices round-trip');
-    assertEq(r002?.notes, 'Transparent fallback', 'R002 notes round-trip');
-    assertEq(r002?.validation, 'unmapped', 'R002 validation round-trip');
+    assert.deepStrictEqual(r002?.class, 'failure-visibility', 'R002 class round-trip');
+    assert.deepStrictEqual(r002?.description, 'Falls back to markdown if SQLite unavailable', 'R002 description round-trip');
+    assert.deepStrictEqual(r002?.why, 'Must not break on exotic platforms', 'R002 why round-trip');
+    assert.deepStrictEqual(r002?.primary_owner, 'M001/S01', 'R002 primary_owner round-trip');
+    assert.deepStrictEqual(r002?.supporting_slices, 'M001/S03', 'R002 supporting_slices round-trip');
+    assert.deepStrictEqual(r002?.notes, 'Transparent fallback', 'R002 notes round-trip');
+    assert.deepStrictEqual(r002?.validation, 'unmapped', 'R002 validation round-trip');
 
     // Verify artifact content is stored
     const adapter = _getAdapter();
     const project = adapter?.prepare("SELECT * FROM artifacts WHERE path = :path").get({ ':path': 'PROJECT.md' });
-    assertTrue((project?.full_content as string)?.includes('Test Project'), 'PROJECT.md content round-trip');
+    assert.ok((project?.full_content as string)?.includes('Test Project'), 'PROJECT.md content round-trip');
 
     closeDatabase();
   } finally {
     cleanupDir(tmpDir);
   }
-}
+});
 
 // ═══════════════════════════════════════════════════════════════════════════
 
-report();

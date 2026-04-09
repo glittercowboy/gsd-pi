@@ -4,10 +4,10 @@
 import { readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { createTestContext } from "./test-helpers.ts";
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const { assertTrue, report } = createTestContext();
 
 const dataPath = join(__dirname, "..", "visualizer-data.ts");
 const dataSrc = readFileSync(dataPath, "utf-8");
@@ -15,293 +15,293 @@ const dataSrc = readFileSync(dataPath, "utf-8");
 console.log("\n=== visualizer-data.ts source contracts ===");
 
 // Interface exports
-assertTrue(
+assert.ok(
   dataSrc.includes("export interface VisualizerData"),
   "exports VisualizerData interface",
 );
 
-assertTrue(
+assert.ok(
   dataSrc.includes("export interface VisualizerMilestone"),
   "exports VisualizerMilestone interface",
 );
 
-assertTrue(
+assert.ok(
   dataSrc.includes("export interface VisualizerSlice"),
   "exports VisualizerSlice interface",
 );
 
-assertTrue(
+assert.ok(
   dataSrc.includes("export interface VisualizerTask"),
   "exports VisualizerTask interface",
 );
 
 // New interfaces
-assertTrue(
+assert.ok(
   dataSrc.includes("export interface CriticalPathInfo"),
   "exports CriticalPathInfo interface",
 );
 
-assertTrue(
+assert.ok(
   dataSrc.includes("export interface AgentActivityInfo"),
   "exports AgentActivityInfo interface",
 );
 
-assertTrue(
+assert.ok(
   dataSrc.includes("export interface ChangelogEntry"),
   "exports ChangelogEntry interface",
 );
 
-assertTrue(
+assert.ok(
   dataSrc.includes("export interface ChangelogInfo"),
   "exports ChangelogInfo interface",
 );
 
-assertTrue(
+assert.ok(
   dataSrc.includes("export interface SliceVerification"),
   "exports SliceVerification interface",
 );
 
-assertTrue(
+assert.ok(
   dataSrc.includes("export interface KnowledgeInfo"),
   "exports KnowledgeInfo interface",
 );
 
-assertTrue(
+assert.ok(
   dataSrc.includes("export interface CapturesInfo"),
   "exports CapturesInfo interface",
 );
 
-assertTrue(
+assert.ok(
   dataSrc.includes("export interface HealthInfo"),
   "exports HealthInfo interface",
 );
 
-assertTrue(
+assert.ok(
   dataSrc.includes("export interface VisualizerDiscussionState"),
   "exports VisualizerDiscussionState interface",
 );
 
-assertTrue(
+assert.ok(
   dataSrc.includes("export type DiscussionState"),
   "exports DiscussionState type",
 );
 
-assertTrue(
+assert.ok(
   dataSrc.includes("export interface VisualizerSliceRef"),
   "exports VisualizerSliceRef interface",
 );
 
-assertTrue(
+assert.ok(
   dataSrc.includes("export interface VisualizerSliceActivity"),
   "exports VisualizerSliceActivity interface",
 );
 
-assertTrue(
+assert.ok(
   dataSrc.includes("export interface VisualizerStats"),
   "exports VisualizerStats interface",
 );
 
 // Function export
-assertTrue(
+assert.ok(
   dataSrc.includes("export async function loadVisualizerData"),
   "exports loadVisualizerData function",
 );
 
-assertTrue(
+assert.ok(
   dataSrc.includes("export function computeCriticalPath"),
   "exports computeCriticalPath function",
 );
 
 // Data source usage
-assertTrue(
+assert.ok(
   dataSrc.includes("deriveState"),
   "uses deriveState for state derivation",
 );
 
-assertTrue(
+assert.ok(
   dataSrc.includes("findMilestoneIds"),
   "uses findMilestoneIds to enumerate milestones",
 );
 
-assertTrue(
+assert.ok(
   dataSrc.includes("parseRoadmap"),
   "uses parseRoadmap for roadmap parsing",
 );
 
-assertTrue(
+assert.ok(
   dataSrc.includes("parsePlan"),
   "uses parsePlan for plan parsing",
 );
 
-assertTrue(
+assert.ok(
   dataSrc.includes("parseSummary"),
   "uses parseSummary for changelog parsing",
 );
 
-assertTrue(
+assert.ok(
   dataSrc.includes("getLedger"),
   "uses getLedger for in-memory metrics",
 );
 
-assertTrue(
+assert.ok(
   dataSrc.includes("loadLedgerFromDisk"),
   "uses loadLedgerFromDisk as fallback",
 );
 
-assertTrue(
+assert.ok(
   dataSrc.includes("getProjectTotals"),
   "uses getProjectTotals for aggregation",
 );
 
-assertTrue(
+assert.ok(
   dataSrc.includes("aggregateByPhase"),
   "uses aggregateByPhase",
 );
 
-assertTrue(
+assert.ok(
   dataSrc.includes("aggregateBySlice"),
   "uses aggregateBySlice",
 );
 
-assertTrue(
+assert.ok(
   dataSrc.includes("aggregateByModel"),
   "uses aggregateByModel",
 );
 
-assertTrue(
+assert.ok(
   dataSrc.includes("aggregateByTier"),
   "uses aggregateByTier",
 );
 
-assertTrue(
+assert.ok(
   dataSrc.includes("formatTierSavings"),
   "uses formatTierSavings",
 );
 
-assertTrue(
+assert.ok(
   dataSrc.includes("loadAllCaptures"),
   "uses loadAllCaptures",
 );
 
-assertTrue(
+assert.ok(
   dataSrc.includes("countPendingCaptures"),
   "uses countPendingCaptures",
 );
 
-assertTrue(
+assert.ok(
   dataSrc.includes("loadEffectiveGSDPreferences"),
   "uses loadEffectiveGSDPreferences",
 );
 
-assertTrue(
+assert.ok(
   dataSrc.includes("resolveGsdRootFile"),
   "uses resolveGsdRootFile for KNOWLEDGE path",
 );
 
 // Interface fields
-assertTrue(
+assert.ok(
   dataSrc.includes("dependsOn: string[]"),
   "VisualizerMilestone has dependsOn field",
 );
 
-assertTrue(
+assert.ok(
   dataSrc.includes("depends: string[]"),
   "VisualizerSlice has depends field",
 );
 
-assertTrue(
+assert.ok(
   dataSrc.includes("totals: ProjectTotals | null"),
   "VisualizerData has nullable totals",
 );
 
-assertTrue(
+assert.ok(
   dataSrc.includes("units: UnitMetrics[]"),
   "VisualizerData has units array",
 );
 
-assertTrue(
+assert.ok(
   dataSrc.includes("estimate?: string"),
   "VisualizerTask has optional estimate field",
 );
 
 // New data model fields
-assertTrue(
+assert.ok(
   dataSrc.includes("criticalPath: CriticalPathInfo"),
   "VisualizerData has criticalPath field",
 );
 
-assertTrue(
+assert.ok(
   dataSrc.includes("remainingSliceCount: number"),
   "VisualizerData has remainingSliceCount field",
 );
 
-assertTrue(
+assert.ok(
   dataSrc.includes("agentActivity: AgentActivityInfo | null"),
   "VisualizerData has agentActivity field",
 );
 
-assertTrue(
+assert.ok(
   dataSrc.includes("changelog: ChangelogInfo"),
   "VisualizerData has changelog field",
 );
 
-assertTrue(
+assert.ok(
   dataSrc.includes("sliceVerifications: SliceVerification[]"),
   "VisualizerData has sliceVerifications field",
 );
 
-assertTrue(
+assert.ok(
   dataSrc.includes("knowledge: KnowledgeInfo"),
   "VisualizerData has knowledge field",
 );
 
-assertTrue(
+assert.ok(
   dataSrc.includes("captures: CapturesInfo"),
   "VisualizerData has captures field",
 );
 
-assertTrue(
+assert.ok(
   dataSrc.includes("health: HealthInfo"),
   "VisualizerData has health field",
 );
 
-assertTrue(
+assert.ok(
   dataSrc.includes("stats: VisualizerStats"),
   "VisualizerData has stats field",
 );
 
-assertTrue(
+assert.ok(
   dataSrc.includes("discussion: VisualizerDiscussionState[]"),
   "VisualizerData has discussion field",
 );
 
-assertTrue(
+assert.ok(
   dataSrc.includes("loadDiscussionState"),
   "uses loadDiscussionState helper",
 );
 
-assertTrue(
+assert.ok(
   dataSrc.includes("buildVisualizerStats"),
   "uses buildVisualizerStats helper",
 );
 
-assertTrue(
+assert.ok(
   dataSrc.includes("byTier: TierAggregate[]"),
   "VisualizerData has byTier field",
 );
 
-assertTrue(
+assert.ok(
   dataSrc.includes("tierSavingsLine: string"),
   "VisualizerData has tierSavingsLine field",
 );
 
 // completedAt must be coerced to String() to handle YAML Date objects (issue #644)
-assertTrue(
+assert.ok(
   dataSrc.includes("String(summary.frontmatter.completed_at"),
   "completedAt assignment coerces to String() for YAML Date safety",
 );
 
-assertTrue(
+assert.ok(
   dataSrc.includes("String(b.completedAt") && dataSrc.includes("String(a.completedAt"),
   "changelog sort coerces completedAt to String() for YAML Date safety",
 );
@@ -312,112 +312,112 @@ const overlaySrc = readFileSync(overlayPath, "utf-8");
 
 console.log("\n=== visualizer-overlay.ts source contracts ===");
 
-assertTrue(
+assert.ok(
   overlaySrc.includes("export class GSDVisualizerOverlay"),
   "exports GSDVisualizerOverlay class",
 );
 
-assertTrue(
+assert.ok(
   overlaySrc.includes("loadVisualizerData"),
   "overlay uses loadVisualizerData",
 );
 
-assertTrue(
+assert.ok(
   overlaySrc.includes("renderProgressView"),
   "overlay delegates to renderProgressView",
 );
 
-assertTrue(
+assert.ok(
   overlaySrc.includes("renderDepsView"),
   "overlay delegates to renderDepsView",
 );
 
-assertTrue(
+assert.ok(
   overlaySrc.includes("renderMetricsView"),
   "overlay delegates to renderMetricsView",
 );
 
-assertTrue(
+assert.ok(
   overlaySrc.includes("renderTimelineView"),
   "overlay delegates to renderTimelineView",
 );
 
-assertTrue(
+assert.ok(
   overlaySrc.includes("renderAgentView"),
   "overlay delegates to renderAgentView",
 );
 
-assertTrue(
+assert.ok(
   overlaySrc.includes("renderChangelogView"),
   "overlay delegates to renderChangelogView",
 );
 
-assertTrue(
+assert.ok(
   overlaySrc.includes("renderExportView"),
   "overlay delegates to renderExportView",
 );
 
-assertTrue(
+assert.ok(
   overlaySrc.includes("renderKnowledgeView"),
   "overlay delegates to renderKnowledgeView",
 );
 
-assertTrue(
+assert.ok(
   overlaySrc.includes("renderCapturesView"),
   "overlay delegates to renderCapturesView",
 );
 
-assertTrue(
+assert.ok(
   overlaySrc.includes("renderHealthView"),
   "overlay delegates to renderHealthView",
 );
 
-assertTrue(
+assert.ok(
   overlaySrc.includes("handleInput"),
   "overlay has handleInput method",
 );
 
-assertTrue(
+assert.ok(
   overlaySrc.includes("dispose"),
   "overlay has dispose method",
 );
 
-assertTrue(
+assert.ok(
   overlaySrc.includes("wrapInBox"),
   "overlay has wrapInBox helper",
 );
 
-assertTrue(
+assert.ok(
   overlaySrc.includes("activeTab"),
   "overlay tracks active tab",
 );
 
-assertTrue(
+assert.ok(
   overlaySrc.includes("scrollOffsets"),
   "overlay tracks per-tab scroll offsets",
 );
 
-assertTrue(
+assert.ok(
   overlaySrc.includes("filterMode"),
   "overlay has filterMode state",
 );
 
-assertTrue(
+assert.ok(
   overlaySrc.includes("filterText"),
   "overlay has filterText state",
 );
 
-assertTrue(
+assert.ok(
   overlaySrc.includes("filterField"),
   "overlay has filterField state",
 );
 
-assertTrue(
+assert.ok(
   overlaySrc.includes("TAB_COUNT"),
   "overlay defines TAB_COUNT",
 );
 
-assertTrue(
+assert.ok(
   overlaySrc.includes("0 Export"),
   "overlay has 10 tab labels",
 );
@@ -428,19 +428,17 @@ const coreHandlerSrc = readFileSync(coreHandlerPath, "utf-8");
 
 console.log("\n=== commands/handlers/core.ts integration ===");
 
-assertTrue(
+assert.ok(
   coreHandlerSrc.includes('"visualize"'),
   "core.ts has visualize in subcommands array",
 );
 
-assertTrue(
+assert.ok(
   coreHandlerSrc.includes("GSDVisualizerOverlay"),
   "core.ts imports GSDVisualizerOverlay",
 );
 
-assertTrue(
+assert.ok(
   coreHandlerSrc.includes("handleVisualize"),
   "core.ts has handleVisualize handler",
 );
-
-report();

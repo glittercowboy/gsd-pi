@@ -3,7 +3,9 @@
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { deriveState } from './state.js';
-import { parseRoadmap, parsePlan, parseSummary, loadFile } from './files.js';
+import { parseSummary, loadFile } from './files.js';
+import { isDbAvailable, getMilestoneSlices, getSliceTasks } from './gsd-db.js';
+import { parseRoadmap, parsePlan } from './parsers-legacy.js';
 import { findMilestoneIds } from './milestone-ids.js';
 import { resolveMilestoneFile, resolveSliceFile, resolveGsdRootFile, gsdRoot } from './paths.js';
 import {
@@ -796,10 +798,24 @@ export async function loadVisualizerData(basePath: string): Promise<VisualizerDa
     const roadmapFile = resolveMilestoneFile(basePath, mid, 'ROADMAP');
     const roadmapContent = roadmapFile ? readFileCached(roadmapFile) : null;
 
-    if (roadmapContent) {
-      const roadmap = parseRoadmap(roadmapContent);
+    if (roadmapContent || isDbAvailable()) {
+      // Normalize slices from DB, fall back to file-based parsing when DB has no data
+      type NormSlice = { id: string; done: boolean; title: string; risk: string; depends: string[]; demo: string };
+      let normSlices: NormSlice[] | null = null;
+      if (isDbAvailable()) {
+        const dbSlices = getMilestoneSlices(mid);
+        if (dbSlices.length > 0) {
+          normSlices = dbSlices.map(s => ({ id: s.id, done: s.status === 'complete', title: s.title, risk: s.risk || 'medium', depends: s.depends, demo: s.demo }));
+        }
+      }
+      if (!normSlices && roadmapContent) {
+        // File-based fallback: parse roadmap for slice entries
+        const parsed = parseRoadmap(roadmapContent);
+        normSlices = parsed.slices.map(s => ({ id: s.id, done: s.done, title: s.title, risk: s.risk || 'medium', depends: s.depends, demo: '' }));
+      }
+      if (!normSlices) normSlices = [];
 
-      for (const s of roadmap.slices) {
+      for (const s of normSlices) {
         const isActiveSlice =
           state.activeMilestone?.id === mid &&
           state.activeSlice?.id === s.id;
@@ -807,19 +823,40 @@ export async function loadVisualizerData(basePath: string): Promise<VisualizerDa
         const tasks: VisualizerTask[] = [];
 
         if (isActiveSlice) {
-          const planFile = resolveSliceFile(basePath, mid, s.id, 'PLAN');
-          const planContent = planFile ? readFileCached(planFile) : null;
-
-          if (planContent) {
-            const plan = parsePlan(planContent);
-            for (const t of plan.tasks) {
-              tasks.push({
-                id: t.id,
-                title: t.title,
-                done: t.done,
-                active: state.activeTask?.id === t.id,
-                estimate: t.estimate || undefined,
-              });
+          // Normalize tasks from DB, fall back to file parsing when DB has no data
+          let usedDbTasks = false;
+          if (isDbAvailable()) {
+            const dbTasks = getSliceTasks(mid, s.id);
+            if (dbTasks.length > 0) {
+              usedDbTasks = true;
+              for (const t of dbTasks) {
+                tasks.push({
+                  id: t.id,
+                  title: t.title,
+                  done: t.status === 'complete' || t.status === 'done',
+                  active: state.activeTask?.id === t.id,
+                  estimate: t.estimate || undefined,
+                });
+              }
+            }
+          }
+          if (!usedDbTasks) {
+            // File-based fallback: parse slice plan for task entries
+            const slicePlanFile = resolveSliceFile(basePath, mid, s.id, 'PLAN');
+            if (slicePlanFile) {
+              const planContent = readFileCached(slicePlanFile);
+              if (planContent) {
+                const parsed = parsePlan(planContent);
+                for (const t of parsed.tasks) {
+                  tasks.push({
+                    id: t.id,
+                    title: t.title,
+                    done: t.done,
+                    active: state.activeTask?.id === t.id,
+                    estimate: t.estimate || undefined,
+                  });
+                }
+              }
             }
           }
         }

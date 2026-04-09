@@ -20,6 +20,7 @@ import type { LoadExtensionsResult } from "./core/extensions/index.js";
 import { KeybindingsManager } from "./core/keybindings.js";
 import { ModelRegistry } from "./core/model-registry.js";
 import { resolveCliModel, resolveModelScope, type ScopedModel } from "./core/model-resolver.js";
+import { runPackageCommand } from "./core/package-commands.js";
 import { DefaultPackageManager } from "./core/package-manager.js";
 import { DefaultResourceLoader } from "./core/resource-loader.js";
 import { type CreateAgentSessionOptions, createAgentSession } from "./core/sdk.js";
@@ -67,237 +68,6 @@ function reportSettingsErrors(settingsManager: SettingsManager, context: string)
 function isTruthyEnvFlag(value: string | undefined): boolean {
 	if (!value) return false;
 	return value === "1" || value.toLowerCase() === "true" || value.toLowerCase() === "yes";
-}
-
-type PackageCommand = "install" | "remove" | "update" | "list";
-
-interface PackageCommandOptions {
-	command: PackageCommand;
-	source?: string;
-	local: boolean;
-	help: boolean;
-	invalidOption?: string;
-}
-
-function getPackageCommandUsage(command: PackageCommand): string {
-	switch (command) {
-		case "install":
-			return `${APP_NAME} install <source> [-l]`;
-		case "remove":
-			return `${APP_NAME} remove <source> [-l]`;
-		case "update":
-			return `${APP_NAME} update [source]`;
-		case "list":
-			return `${APP_NAME} list`;
-	}
-}
-
-function printPackageCommandHelp(command: PackageCommand): void {
-	switch (command) {
-		case "install":
-			console.log(`${chalk.bold("Usage:")}
-  ${getPackageCommandUsage("install")}
-
-Install a package and add it to settings.
-
-Options:
-  -l, --local    Install project-locally (.pi/settings.json)
-
-Examples:
-  ${APP_NAME} install npm:@foo/bar
-  ${APP_NAME} install git:github.com/user/repo
-  ${APP_NAME} install git:git@github.com:user/repo
-  ${APP_NAME} install https://github.com/user/repo
-  ${APP_NAME} install ssh://git@github.com/user/repo
-  ${APP_NAME} install ./local/path
-`);
-			return;
-
-		case "remove":
-			console.log(`${chalk.bold("Usage:")}
-  ${getPackageCommandUsage("remove")}
-
-Remove a package and its source from settings.
-
-Options:
-  -l, --local    Remove from project settings (.pi/settings.json)
-
-Example:
-  ${APP_NAME} remove npm:@foo/bar
-`);
-			return;
-
-		case "update":
-			console.log(`${chalk.bold("Usage:")}
-  ${getPackageCommandUsage("update")}
-
-Update installed packages.
-If <source> is provided, only that package is updated.
-`);
-			return;
-
-		case "list":
-			console.log(`${chalk.bold("Usage:")}
-  ${getPackageCommandUsage("list")}
-
-List installed packages from user and project settings.
-`);
-			return;
-	}
-}
-
-function parsePackageCommand(args: string[]): PackageCommandOptions | undefined {
-	const [command, ...rest] = args;
-	if (command !== "install" && command !== "remove" && command !== "update" && command !== "list") {
-		return undefined;
-	}
-
-	let local = false;
-	let help = false;
-	let invalidOption: string | undefined;
-	let source: string | undefined;
-
-	for (const arg of rest) {
-		if (arg === "-h" || arg === "--help") {
-			help = true;
-			continue;
-		}
-
-		if (arg === "-l" || arg === "--local") {
-			if (command === "install" || command === "remove") {
-				local = true;
-			} else {
-				invalidOption = invalidOption ?? arg;
-			}
-			continue;
-		}
-
-		if (arg.startsWith("-")) {
-			invalidOption = invalidOption ?? arg;
-			continue;
-		}
-
-		if (!source) {
-			source = arg;
-		}
-	}
-
-	return { command, source, local, help, invalidOption };
-}
-
-async function handlePackageCommand(args: string[]): Promise<boolean> {
-	const options = parsePackageCommand(args);
-	if (!options) {
-		return false;
-	}
-
-	if (options.help) {
-		printPackageCommandHelp(options.command);
-		return true;
-	}
-
-	if (options.invalidOption) {
-		console.error(chalk.red(`Unknown option ${options.invalidOption} for "${options.command}".`));
-		console.error(chalk.dim(`Use "${APP_NAME} --help" or "${getPackageCommandUsage(options.command)}".`));
-		process.exitCode = 1;
-		return true;
-	}
-
-	const source = options.source;
-	if ((options.command === "install" || options.command === "remove") && !source) {
-		console.error(chalk.red(`Missing ${options.command} source.`));
-		console.error(chalk.dim(`Usage: ${getPackageCommandUsage(options.command)}`));
-		process.exitCode = 1;
-		return true;
-	}
-
-	const cwd = process.cwd();
-	const agentDir = getAgentDir();
-	const settingsManager = SettingsManager.create(cwd, agentDir);
-	reportSettingsErrors(settingsManager, "package command");
-	const packageManager = new DefaultPackageManager({ cwd, agentDir, settingsManager });
-
-	packageManager.setProgressCallback((event) => {
-		if (event.type === "start") {
-			process.stdout.write(chalk.dim(`${event.message}\n`));
-		}
-	});
-
-	try {
-		switch (options.command) {
-			case "install":
-				await packageManager.install(source!, { local: options.local });
-				packageManager.addSourceToSettings(source!, { local: options.local });
-				console.log(chalk.green(`Installed ${source}`));
-				return true;
-
-			case "remove": {
-				await packageManager.remove(source!, { local: options.local });
-				const removed = packageManager.removeSourceFromSettings(source!, { local: options.local });
-				if (!removed) {
-					console.error(chalk.red(`No matching package found for ${source}`));
-					process.exitCode = 1;
-					return true;
-				}
-				console.log(chalk.green(`Removed ${source}`));
-				return true;
-			}
-
-			case "list": {
-				const globalSettings = settingsManager.getGlobalSettings();
-				const projectSettings = settingsManager.getProjectSettings();
-				const globalPackages = globalSettings.packages ?? [];
-				const projectPackages = projectSettings.packages ?? [];
-
-				if (globalPackages.length === 0 && projectPackages.length === 0) {
-					console.log(chalk.dim("No packages installed."));
-					return true;
-				}
-
-				const formatPackage = (pkg: (typeof globalPackages)[number], scope: "user" | "project") => {
-					const source = typeof pkg === "string" ? pkg : pkg.source;
-					const filtered = typeof pkg === "object";
-					const display = filtered ? `${source} (filtered)` : source;
-					console.log(`  ${display}`);
-					const path = packageManager.getInstalledPath(source, scope);
-					if (path) {
-						console.log(chalk.dim(`    ${path}`));
-					}
-				};
-
-				if (globalPackages.length > 0) {
-					console.log(chalk.bold("User packages:"));
-					for (const pkg of globalPackages) {
-						formatPackage(pkg, "user");
-					}
-				}
-
-				if (projectPackages.length > 0) {
-					if (globalPackages.length > 0) console.log();
-					console.log(chalk.bold("Project packages:"));
-					for (const pkg of projectPackages) {
-						formatPackage(pkg, "project");
-					}
-				}
-
-				return true;
-			}
-
-			case "update":
-				await packageManager.update(source);
-				if (source) {
-					console.log(chalk.green(`Updated ${source}`));
-				} else {
-					console.log(chalk.green("Updated packages"));
-				}
-				return true;
-		}
-	} catch (error: unknown) {
-		const message = error instanceof Error ? error.message : "Unknown package command error";
-		console.error(chalk.red(`Error: ${message}`));
-		process.exitCode = 1;
-		return true;
-	}
 }
 
 async function prepareInitialMessage(
@@ -590,7 +360,16 @@ export async function main(args: string[]) {
 		process.env.PI_SKIP_VERSION_CHECK = "1";
 	}
 
-	if (await handlePackageCommand(args)) {
+	const packageCommand = await runPackageCommand({
+		appName: APP_NAME,
+		args,
+		cwd: process.cwd(),
+		agentDir: getAgentDir(),
+		stdout: process.stdout,
+		stderr: process.stderr,
+	});
+	if (packageCommand.handled) {
+		process.exitCode = packageCommand.exitCode;
 		return;
 	}
 
@@ -612,6 +391,25 @@ export async function main(args: string[]) {
 	const authStorage = AuthStorage.create();
 	const modelRegistry = new ModelRegistry(authStorage, getModelsPath());
 
+	// Offline mode validation / auto-detection
+	if (offlineMode) {
+		// --offline flag: validate all models are local
+		if (!modelRegistry.isAllLocalChain()) {
+			const remoteModel = modelRegistry.getAll().find((m) => !ModelRegistry.isLocalModel(m));
+			if (remoteModel) {
+				console.error(
+					`Error: --offline requires all configured models to be local. Found remote model: ${remoteModel.name} (${remoteModel.baseUrl || "cloud API"})`,
+				);
+				process.exit(1);
+			}
+		}
+	} else if (modelRegistry.isAllLocalChain() && modelRegistry.getAll().length > 0) {
+		// Auto-detect: all models are local, enable offline mode
+		process.env.PI_OFFLINE = "1";
+		process.env.PI_SKIP_VERSION_CHECK = "1";
+		console.log("[gsd] All configured models are local \u2014 enabling offline mode automatically.");
+	}
+
 	const resourceLoader = new DefaultResourceLoader({
 		cwd,
 		agentDir,
@@ -621,11 +419,13 @@ export async function main(args: string[]) {
 		additionalPromptTemplatePaths: firstPass.promptTemplates,
 		additionalThemePaths: firstPass.themes,
 		noExtensions: firstPass.noExtensions,
-		noSkills: firstPass.noSkills,
-		noPromptTemplates: firstPass.noPromptTemplates,
-		noThemes: firstPass.noThemes,
+		noSkills: firstPass.noSkills || firstPass.bare,
+		noPromptTemplates: firstPass.noPromptTemplates || firstPass.bare,
+		noThemes: firstPass.noThemes || firstPass.bare,
 		systemPrompt: firstPass.systemPrompt,
 		appendSystemPrompt: firstPass.appendSystemPrompt,
+		// --bare: suppress CLAUDE.md/AGENTS.md ancestor walk
+		...(firstPass.bare ? { agentsFilesOverride: () => ({ agentsFiles: [] }) } : {}),
 	});
 	await resourceLoader.reload();
 	time("resourceLoader.reload");

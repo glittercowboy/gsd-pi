@@ -3,6 +3,7 @@ import {
 	Container,
 	getCapabilities,
 	Image,
+	type ImageDimensions,
 	imageFallback,
 	Spacer,
 	Text,
@@ -32,7 +33,7 @@ const WRITE_PARTIAL_FULL_HIGHLIGHT_LINES = 50;
  * Replace tabs with spaces for consistent rendering
  */
 function replaceTabs(text: string): string {
-	return text.replace(/\t/g, "   ");
+	return text.replace(/\t/g, "    ");
 }
 
 /**
@@ -88,6 +89,9 @@ export class ToolExecutionComponent extends Container {
 	private editDiffArgsKey?: string; // Track which args the preview is for
 	// Cached converted images for Kitty protocol (which requires PNG), keyed by index
 	private convertedImages: Map<number, { data: string; mimeType: string }> = new Map();
+	// Cached resolved image dimensions to avoid re-triggering async parsing
+	// when updateDisplay() recreates Image components (#3455).
+	private resolvedImageDimensions: Map<number, ImageDimensions> = new Map();
 	// Incremental syntax highlighting cache for write tool call args
 	private writeHighlightCache?: WriteHighlightCache;
 	// When true, this component intentionally renders no lines
@@ -135,6 +139,15 @@ export class ToolExecutionComponent extends Container {
 		const isBuiltInName = this.toolName in allTools;
 		const hasCustomRenderers = this.toolDefinition?.renderCall || this.toolDefinition?.renderResult;
 		return isBuiltInName && !hasCustomRenderers;
+	}
+
+	dispose(): void {
+		this.convertedImages.clear();
+		this.imageComponents = [];
+		this.imageSpacers = [];
+		this.editDiffPreview = undefined;
+		this.writeHighlightCache = undefined;
+		this.result = undefined;
 	}
 
 	updateArgs(args: any): void {
@@ -472,16 +485,28 @@ export class ToolExecutionComponent extends Container {
 					const spacer = new Spacer(1);
 					this.addChild(spacer);
 					this.imageSpacers.push(spacer);
+					// Pass cached dimensions to avoid re-triggering async parsing
+					// when updateDisplay() recreates Image components (#3455).
+					const cachedDims = this.resolvedImageDimensions.get(i);
 					const imageComponent = new Image(
 						imageData,
 						imageMimeType,
 						{ fallbackColor: (s: string) => theme.fg("toolOutput", s) },
 						{ maxWidthCells: 60 },
+						cachedDims,
 					);
-					imageComponent.setOnDimensionsResolved(() => {
-						this.updateDisplay();
-						this.ui.requestRender();
-					});
+					if (!cachedDims) {
+						const imgIdx = i;
+						imageComponent.setOnDimensionsResolved(() => {
+							// Cache resolved dimensions so future updateDisplay() calls
+							// don't re-trigger async parsing → infinite loop (#3455).
+							const dims = imageComponent.getDimensions?.();
+							if (dims) this.resolvedImageDimensions.set(imgIdx, dims);
+							// Just re-render — don't call updateDisplay() which would
+							// destroy and recreate all Image components.
+							this.ui.requestRender();
+						});
+					}
 					this.imageComponents.push(imageComponent);
 					this.addChild(imageComponent);
 				}
@@ -895,7 +920,9 @@ export class ToolExecutionComponent extends Container {
 			// Server-side Anthropic web search
 			text = theme.fg("toolTitle", theme.bold("web search"));
 
-			if (this.result) {
+			if (process.env.PI_OFFLINE === "1") {
+				text += "\n\n" + theme.fg("muted", "\u{1F50C} Offline \u{2014} web search unavailable");
+			} else if (this.result) {
 				const output = this.getTextOutput().trim();
 				if (output) {
 					const lines = output.split("\n");
@@ -913,8 +940,13 @@ export class ToolExecutionComponent extends Container {
 			// Generic tool (shouldn't reach here for custom tools)
 			text = theme.fg("toolTitle", theme.bold(this.toolName));
 
-			const content = JSON.stringify(this.args, null, 2);
-			text += `\n\n${content}`;
+			const contentLines = JSON.stringify(this.args, null, 2).split("\n");
+			const maxContentLines = 20;
+			const truncatedContent = contentLines.slice(0, maxContentLines);
+			if (contentLines.length > maxContentLines) {
+				truncatedContent.push("...");
+			}
+			text += `\n\n${truncatedContent.join("\n")}`;
 			const output = this.getTextOutput();
 			if (output) {
 				text += `\n${output}`;

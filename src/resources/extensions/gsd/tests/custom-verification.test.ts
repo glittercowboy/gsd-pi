@@ -15,6 +15,7 @@ import { tmpdir } from "node:os";
 import { stringify } from "yaml";
 import { runCustomVerification } from "../custom-verification.ts";
 import type { WorkflowDefinition } from "../definition-loader.ts";
+import { createFakeRtk } from "../../../../tests/rtk-test-utils.ts";
 
 /** Create a temp run directory with the given definition and optional files. */
 function makeTempRun(
@@ -224,6 +225,38 @@ describe("shell-command policy", () => {
 
     const result = runCustomVerification(runDir, "step-1");
     assert.equal(result, "retry");
+  });
+
+  it("rewrites shell-command verification through RTK when available", () => {
+    const fake = createFakeRtk({
+      "echo raw": "echo rewritten",
+    });
+    const previous = process.env.GSD_RTK_PATH;
+    process.env.GSD_RTK_PATH = fake.path;
+
+    try {
+      const def = makeDef([
+        {
+          id: "step-1",
+          name: "Build artifact",
+          prompt: "Build the artifact",
+          requires: [],
+          produces: ["artifact.txt"],
+          verify: {
+            policy: "shell-command",
+            command: "echo raw",
+          },
+        },
+      ]);
+
+      const runDir = makeTempRun(def);
+      const result = runCustomVerification(runDir, "step-1");
+      assert.equal(result, "continue");
+    } finally {
+      if (previous === undefined) delete process.env.GSD_RTK_PATH;
+      else process.env.GSD_RTK_PATH = previous;
+      fake.cleanup();
+    }
   });
 });
 

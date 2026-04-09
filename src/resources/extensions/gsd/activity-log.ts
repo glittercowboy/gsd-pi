@@ -153,6 +153,7 @@ export function pruneActivityLogs(activityDir: string, retentionDays: number): v
     const cutoff = Date.now() - retentionDays * 86_400_000;
     for (const entry of entries) {
       if (entry.seq === maxSeq) continue;  // always preserve highest-seq
+      if (retentionDays === 0) { try { unlinkSync(entry.filePath); } catch { /* skip */ } continue; }
       try {
         const mtime = statSync(entry.filePath).mtimeMs;
         if (Math.floor(mtime) <= cutoff) unlinkSync(entry.filePath);

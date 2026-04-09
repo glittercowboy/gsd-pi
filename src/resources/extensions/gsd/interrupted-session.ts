@@ -65,8 +65,7 @@ export function isBootstrapCrashLock(lock: LockData | null): boolean {
   return !!(
     lock &&
     lock.unitType === "starting" &&
-    lock.unitId === "bootstrap" &&
-    lock.completedUnits === 0
+    lock.unitId === "bootstrap"
   );
 }
 

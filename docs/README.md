@@ -11,7 +11,8 @@ Welcome to the GSD documentation. This covers everything from getting started to
 | [Commands Reference](./commands.md) | All commands, keyboard shortcuts, and CLI flags |
 | [Remote Questions](./remote-questions.md) | Discord and Slack integration for headless auto-mode |
 | [Configuration](./configuration.md) | Preferences, model selection, git settings, and token profiles |
-| [Custom Models](./custom-models.md) | Add custom providers (Ollama, vLLM, LM Studio, proxies) via models.json |
+| [Provider Setup](./providers.md) | Step-by-step setup for OpenRouter, Ollama, LM Studio, vLLM, and all supported providers |
+| [Custom Models](./custom-models.md) | Advanced model configuration — models.json schema, compat flags, overrides |
 | [Token Optimization](./token-optimization.md) | Token profiles, context compression, complexity routing, and adaptive learning (v2.17) |
 | [Dynamic Model Routing](./dynamic-model-routing.md) | Complexity-based model selection, cost tables, escalation, and budget pressure (v2.19) |
 | [Captures & Triage](./captures-triage.md) | Fire-and-forget thought capture during auto-mode with automated triage (v2.19) |
@@ -23,7 +24,7 @@ Welcome to the GSD documentation. This covers everything from getting started to
 | [Skills](./skills.md) | Bundled skills, skill discovery, and custom skill authoring |
 | [Migration from v1](./migration.md) | Migrating `.planning` directories from the original GSD |
 | [Troubleshooting](./troubleshooting.md) | Common issues, `/gsd doctor` (real-time visibility v2.40), `/gsd forensics` (full debugger v2.40), and recovery procedures |
-| [Web Interface](./web-interface.md) | Browser-based project management with `pi --web` (v2.41) |
+| [Web Interface](./web-interface.md) | Browser-based project management with `gsd --web` (v2.41) |
 | [VS Code Extension](../vscode-extension/README.md) | Chat participant, sidebar dashboard, and RPC integration for VS Code |
 
 ## Architecture & Internals
@@ -34,6 +35,9 @@ Welcome to the GSD documentation. This covers everything from getting started to
 | [Native Engine](../native/README.md) | Rust N-API modules for performance-critical operations |
 | [ADR-001: Branchless Worktree Architecture](./ADR-001-branchless-worktree-architecture.md) | Decision record for the v2.14 git architecture |
 | [ADR-003: Pipeline Simplification](./ADR-003-pipeline-simplification.md) | Research merged into planning, mechanical completion (v2.30) |
+| [ADR-004: Capability-Aware Model Routing](./ADR-004-capability-aware-model-routing.md) | Extend routing from tier/cost selection to task-capability matching |
+| [ADR-007: Model Catalog Split](./ADR-007-model-catalog-split.md) | Separate model metadata from routing logic for extensibility |
+| [Context Optimization Opportunities](./pi-context-optimization-opportunities.md) | Analysis of context window usage and optimization strategies |
 
 ## Pi SDK Documentation
 

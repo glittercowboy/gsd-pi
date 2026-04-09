@@ -14,9 +14,12 @@
  */
 
 import { existsSync, unlinkSync } from "node:fs";
+import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import type { AutoSession } from "./auto/session.js";
 import { debugLog } from "./debug-logger.js";
+import { MergeConflictError } from "./git-service.js";
+import { emitJournalEvent } from "./journal.js";
 
 // ─── Dependency Interface ──────────────────────────────────────────────────
 
@@ -63,7 +66,6 @@ export interface WorktreeResolverDeps {
   captureIntegrationBranch: (
     basePath: string,
     mid: string,
-    opts?: { commitDocs?: boolean },
   ) => void;
 }
 
@@ -148,12 +150,31 @@ export class WorktreeResolver {
    */
   enterMilestone(milestoneId: string, ctx: NotifyCtx): void {
     this.validateMilestoneId(milestoneId);
+
+    // If worktree creation failed earlier this session, skip all future attempts
+    if (this.s.isolationDegraded) {
+      debugLog("WorktreeResolver", {
+        action: "enterMilestone",
+        milestoneId,
+        skipped: true,
+        reason: "isolation-degraded",
+      });
+      return;
+    }
+
     if (!this.deps.shouldUseWorktreeIsolation()) {
       debugLog("WorktreeResolver", {
         action: "enterMilestone",
         milestoneId,
         skipped: true,
         reason: "isolation-disabled",
+      });
+      emitJournalEvent(this.s.originalBasePath || this.s.basePath, {
+        ts: new Date().toISOString(),
+        flowId: randomUUID(),
+        seq: 0,
+        eventType: "worktree-skip",
+        data: { milestoneId, reason: "isolation-disabled" },
       });
       return;
     }
@@ -184,6 +205,13 @@ export class WorktreeResolver {
         result: "success",
         wtPath,
       });
+      emitJournalEvent(this.s.originalBasePath || this.s.basePath, {
+        ts: new Date().toISOString(),
+        flowId: randomUUID(),
+        seq: 0,
+        eventType: "worktree-enter",
+        data: { milestoneId, wtPath, created: !existingPath },
+      });
       ctx.notify(`Entered worktree for ${milestoneId} at ${wtPath}`, "info");
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -193,10 +221,20 @@ export class WorktreeResolver {
         result: "error",
         error: msg,
       });
+      emitJournalEvent(this.s.originalBasePath || this.s.basePath, {
+        ts: new Date().toISOString(),
+        flowId: randomUUID(),
+        seq: 0,
+        eventType: "worktree-create-failed",
+        data: { milestoneId, error: msg, fallback: "project-root" },
+      });
       ctx.notify(
         `Auto-worktree creation for ${milestoneId} failed: ${msg}. Continuing in project root.`,
         "warning",
       );
+      // Degrade isolation for the rest of this session so mergeAndExit
+      // doesn't try to merge a nonexistent worktree branch (#2483)
+      this.s.isolationDegraded = true;
       // Do NOT update s.basePath — stay in project root
     }
   }
@@ -281,6 +319,22 @@ export class WorktreeResolver {
    */
   mergeAndExit(milestoneId: string, ctx: NotifyCtx): void {
     this.validateMilestoneId(milestoneId);
+
+    // If worktree creation failed earlier, skip merge — work is on current branch (#2483)
+    if (this.s.isolationDegraded) {
+      debugLog("WorktreeResolver", {
+        action: "mergeAndExit",
+        milestoneId,
+        skipped: true,
+        reason: "isolation-degraded",
+      });
+      ctx.notify(
+        `Skipping worktree merge for ${milestoneId} — isolation was degraded (worktree creation failed earlier). Work is on the current branch.`,
+        "info",
+      );
+      return;
+    }
+
     const mode = this.deps.getIsolationMode();
     debugLog("WorktreeResolver", {
       action: "mergeAndExit",
@@ -288,8 +342,21 @@ export class WorktreeResolver {
       mode,
       basePath: this.s.basePath,
     });
+    emitJournalEvent(this.s.originalBasePath || this.s.basePath, {
+      ts: new Date().toISOString(),
+      flowId: randomUUID(),
+      seq: 0,
+      eventType: "worktree-merge-start",
+      data: { milestoneId, mode },
+    });
 
-    if (mode === "none") {
+    // #2625: If we are physically inside an auto-worktree, we MUST merge
+    // regardless of the current isolation config. This prevents data loss when
+    // the default isolation mode changes between versions (e.g., "worktree" ->
+    // "none"): the worktree branch still holds real commits that need merging.
+    const inWorktree = this.deps.isInAutoWorktree(this.s.basePath) && this.s.originalBasePath;
+
+    if (mode === "none" && !inWorktree) {
       debugLog("WorktreeResolver", {
         action: "mergeAndExit",
         milestoneId,
@@ -300,8 +367,7 @@ export class WorktreeResolver {
     }
 
     if (
-      mode === "worktree" ||
-      (this.deps.isInAutoWorktree(this.s.basePath) && this.s.originalBasePath)
+      mode === "worktree" || inWorktree
     ) {
       this._mergeWorktreeMode(milestoneId, ctx);
     } else if (mode === "branch") {
@@ -371,6 +437,20 @@ export class WorktreeResolver {
           milestoneId,
           roadmapContent,
         );
+
+        // #2945 Bug 3: mergeMilestoneToMain performs best-effort worktree
+        // cleanup internally (step 12), but it can silently fail on Windows
+        // or when the worktree directory is locked. Perform a secondary
+        // teardown here to ensure the worktree is properly cleaned up.
+        // This is idempotent — if the worktree was already removed,
+        // teardownAutoWorktree handles the no-op case gracefully.
+        try {
+          this.deps.teardownAutoWorktree(originalBase, milestoneId);
+        } catch {
+          // Best-effort — the primary cleanup in mergeMilestoneToMain may
+          // have already removed the worktree.
+        }
+
         if (mergeResult.codeFilesChanged) {
           ctx.notify(
             `Milestone ${milestoneId} merged to main.${mergeResult.pushed ? " Pushed to remote." : ""}`,
@@ -408,12 +488,20 @@ export class WorktreeResolver {
         error: msg,
         fallback: "chdir-to-project-root",
       });
+      emitJournalEvent(this.s.originalBasePath || this.s.basePath, {
+        ts: new Date().toISOString(),
+        flowId: randomUUID(),
+        seq: 0,
+        eventType: "worktree-merge-failed",
+        data: { milestoneId, error: msg },
+      });
       // Surface a clear, actionable error. The worktree and milestone branch are
       // intentionally preserved — nothing has been deleted. The user can retry
-      // /complete-milestone or merge manually once the underlying issue is fixed
-      // (e.g. checkout to wrong branch, unresolved conflicts). (#1668)
+      // /gsd dispatch complete-milestone or merge manually once the underlying
+      // issue is fixed (e.g. checkout to wrong branch, unresolved conflicts).
+      // (#1668, #1891)
       ctx.notify(
-        `Milestone merge failed: ${msg}. Your worktree and milestone branch are preserved — retry /complete-milestone or merge manually.`,
+        `Milestone merge failed: ${msg}. Your worktree and milestone branch are preserved — retry with \`/gsd dispatch complete-milestone\` or merge manually.`,
         "warning",
       );
 
@@ -433,6 +521,12 @@ export class WorktreeResolver {
         } catch {
           /* best-effort */
         }
+      }
+
+      // Re-throw MergeConflictError so the auto loop can detect real code
+      // conflicts and stop instead of retrying forever (#2330).
+      if (err instanceof MergeConflictError) {
+        throw err;
       }
     }
 

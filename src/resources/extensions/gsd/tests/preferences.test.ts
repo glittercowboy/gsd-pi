@@ -15,7 +15,10 @@ import {
   applyModeDefaults,
   getIsolationMode,
   parsePreferencesMarkdown,
+  _resetParseWarningFlag,
 } from "../preferences.ts";
+import { formatConfiguredModel, toPersistedModelId } from "../commands-prefs-wizard.ts";
+import { _resetLogs, peekLogs } from "../workflow-logger.ts";
 import type { GSDPreferences, GSDModelConfigV2, GSDPhaseModelConfig } from "../preferences.ts";
 
 // ── Git preferences ──────────────────────────────────────────────────────────
@@ -40,18 +43,16 @@ test("git.merge_to_main produces deprecation warning", () => {
 });
 
 
-test("getIsolationMode defaults to worktree when preferences have no isolation setting", () => {
+test("getIsolationMode defaults to none when preferences have no isolation setting", () => {
   // Validate the default via validatePreferences: when no isolation is set,
-  // preferences.git.isolation is undefined, and getIsolationMode returns "worktree".
-  // We test the function's logic by verifying its documented default.
+  // preferences.git.isolation is undefined, and getIsolationMode returns "none".
+  // Default changed from "worktree" to "none" so GSD works out of the box
+  // without PREFERENCES.md (#2480).
   const { preferences } = validatePreferences({});
   assert.equal(preferences.git?.isolation, undefined, "no isolation in empty prefs");
-  // The function returns "worktree" when prefs?.git?.isolation is not "none" or "branch"
-  // This is a compile-time-verifiable truth from the function body — test it directly
-  // by constructing the same conditions getIsolationMode checks.
   const isolation = preferences.git?.isolation;
-  const expected = isolation === "none" ? "none" : isolation === "branch" ? "branch" : "worktree";
-  assert.equal(expected, "worktree", "default isolation mode is worktree");
+  const expected = isolation === "worktree" ? "worktree" : isolation === "branch" ? "branch" : "none";
+  assert.equal(expected, "none", "default isolation mode is none");
 });
 
 // ── Mode defaults ────────────────────────────────────────────────────────────
@@ -60,9 +61,9 @@ test("solo mode applies correct defaults", () => {
   const result = applyModeDefaults("solo", { mode: "solo" });
   assert.equal(result.git?.auto_push, true);
   assert.equal(result.git?.push_branches, false);
-  assert.equal(result.git?.pre_merge_check, false);
+  assert.equal(result.git?.pre_merge_check, "auto");
   assert.equal(result.git?.merge_strategy, "squash");
-  assert.equal(result.git?.isolation, "worktree");
+  assert.equal(result.git?.isolation, "none");
   assert.equal(result.unique_milestone_ids, false);
 });
 
@@ -347,8 +348,225 @@ test("handles model config with explicit provider field", () => {
   assert.equal(execution.provider, "bedrock");
 });
 
+test("formatConfiguredModel renders provider-qualified object config", () => {
+  assert.equal(
+    formatConfiguredModel({ model: "claude-opus-4-6", provider: "bedrock" }),
+    "bedrock/claude-opus-4-6",
+  );
+});
+
+test("toPersistedModelId prefixes provider chosen in prefs wizard", () => {
+  assert.equal(toPersistedModelId("openai", "gpt-5.4"), "openai/gpt-5.4");
+  assert.equal(
+    toPersistedModelId("openai", "openai/gpt-5.4"),
+    "openai/gpt-5.4",
+    "already-qualified IDs should be preserved",
+  );
+});
+
 test("handles empty models config", () => {
   const prefs = parsePreferencesMarkdown("---\nversion: 1\n---\n");
   assert.notEqual(prefs, null);
   assert.equal(prefs!.models, undefined);
+});
+
+test("parses raw YAML blocks under headings", () => {
+  const content = `## Parallel
+enabled: true
+max_workers: 3
+`;
+  const prefs = parsePreferencesMarkdown(content);
+  assert.notEqual(prefs, null);
+  assert.equal(prefs!.parallel?.enabled, true);
+  assert.equal(prefs!.parallel?.max_workers, 3);
+});
+
+test("unwraps nested top-level preference key under descriptive headings", () => {
+  const content = `## Parallel Orchestration
+parallel:
+  enabled: true
+  max_workers: 3
+`;
+  const prefs = parsePreferencesMarkdown(content);
+  assert.notEqual(prefs, null);
+  assert.equal(prefs!.parallel?.enabled, true);
+  assert.equal(prefs!.parallel?.max_workers, 3);
+});
+
+test("preserves legacy heading list format", () => {
+  const content = `## Git
+- isolation: branch
+- auto_push: true
+`;
+  const prefs = parsePreferencesMarkdown(content);
+  assert.notEqual(prefs, null);
+  assert.equal(prefs!.git?.isolation, "branch");
+  assert.equal(prefs!.git?.auto_push, true);
+});
+
+// ── Warn-once for unrecognized format (#2373) ────────────────────────────────
+
+test("unrecognized format warning is emitted at most once (#2373)", () => {
+  const warnings: string[] = [];
+  const origWarn = console.warn;
+  console.warn = (...args: unknown[]) => warnings.push(args.join(" "));
+  try {
+    // Reset internal warned flag so the test starts clean
+    _resetParseWarningFlag();
+
+    const unrecognized = "This is just plain text with no frontmatter or headings.";
+
+    // Call multiple times — simulates repeated preference loads
+    parsePreferencesMarkdown(unrecognized);
+    parsePreferencesMarkdown(unrecognized);
+    parsePreferencesMarkdown(unrecognized);
+
+    const relevant = warnings.filter(w => w.includes("unrecognized format"));
+    assert.equal(relevant.length, 1, `expected exactly 1 warning, got ${relevant.length}: ${JSON.stringify(relevant)}`);
+  } finally {
+    console.warn = origWarn;
+    // Reset so other tests aren't affected by the flag state
+    _resetParseWarningFlag();
+  }
+});
+
+test("parsePreferencesMarkdown parses heading+list format without frontmatter (#2036)", () => {
+  // A GSD agent recovery session wrote preferences in markdown heading+list
+  // format instead of YAML frontmatter. Since the heading+list fallback parser
+  // was added, this format is now handled gracefully.
+  const content = "## Git\n\n- isolation: none\n";
+  const result = parsePreferencesMarkdown(content);
+  assert.notEqual(result, null, "heading+list content should be parsed");
+  assert.deepStrictEqual(result!.git, { isolation: "none" });
+});
+
+test("section parse warning is emitted at most once for heading+list YAML failures (#3759)", () => {
+  _resetParseWarningFlag();
+  _resetLogs();
+
+  const content = `## Git
+bad: [
+`;
+
+  parsePreferencesMarkdown(content);
+  parsePreferencesMarkdown(content);
+  parsePreferencesMarkdown(content);
+
+  const warnings = peekLogs().filter((entry) => entry.component === "guided" && entry.message.includes("preferences section parse failed"));
+  assert.equal(warnings.length, 1, `expected exactly 1 guided warning, got ${warnings.length}`);
+
+  _resetParseWarningFlag();
+  _resetLogs();
+});
+
+// ── Experimental preferences ─────────────────────────────────────────────────
+
+test("experimental.rtk: true is accepted and stored", () => {
+  const result = validatePreferences({ experimental: { rtk: true } });
+  assert.deepEqual(result.errors, []);
+  assert.equal(result.preferences.experimental?.rtk, true);
+});
+
+test("experimental.rtk: false is accepted and stored", () => {
+  const result = validatePreferences({ experimental: { rtk: false } });
+  assert.deepEqual(result.errors, []);
+  assert.equal(result.preferences.experimental?.rtk, false);
+});
+
+test("experimental.rtk: non-boolean produces error", () => {
+  const result = validatePreferences({ experimental: { rtk: "yes" } } as unknown as GSDPreferences);
+  assert.ok(result.errors.some(e => e.includes("experimental.rtk")), `expected rtk error in: ${JSON.stringify(result.errors)}`);
+});
+
+test("experimental: non-object produces error", () => {
+  const result = validatePreferences({ experimental: true } as unknown as GSDPreferences);
+  assert.ok(result.errors.some(e => e.includes("experimental must be an object")));
+});
+
+test("experimental: unknown key produces warning", () => {
+  const result = validatePreferences({ experimental: { rtk: true, future_flag: true } } as unknown as GSDPreferences);
+  assert.ok(result.warnings.some(w => w.includes("future_flag")), `expected unknown-key warning in: ${JSON.stringify(result.warnings)}`);
+  assert.equal(result.preferences.experimental?.rtk, true);
+});
+
+test("experimental: omitting rtk defaults to undefined (opt-in)", () => {
+  const result = validatePreferences({ version: 1 });
+  assert.equal(result.preferences.experimental, undefined);
+});
+
+test("experimental.rtk parses correctly from preferences markdown", () => {
+  const content = "---\nversion: 1\nexperimental:\n  rtk: true\n---\n";
+  const prefs = parsePreferencesMarkdown(content);
+  assert.notEqual(prefs, null);
+  assert.equal(prefs!.experimental?.rtk, true);
+});
+
+test("experimental.rtk defaults to off in new project preferences", () => {
+  // No experimental key → feature is disabled
+  const content = "---\nversion: 1\n---\n";
+  const prefs = parsePreferencesMarkdown(content);
+  assert.notEqual(prefs, null);
+  assert.equal(prefs!.experimental?.rtk, undefined);
+});
+
+// ── Codebase Map Preferences ─────────────────────────────────────────────────
+
+test("codebase preferences validate and pass through correctly", () => {
+  const result = validatePreferences({
+    codebase: {
+      exclude_patterns: ["docs/", "fixtures/"],
+      max_files: 1000,
+      collapse_threshold: 15,
+    },
+  });
+  assert.equal(result.errors.length, 0);
+  assert.deepEqual(result.preferences.codebase?.exclude_patterns, ["docs/", "fixtures/"]);
+  assert.equal(result.preferences.codebase?.max_files, 1000);
+  assert.equal(result.preferences.codebase?.collapse_threshold, 15);
+});
+
+test("codebase preferences reject invalid types", () => {
+  const result = validatePreferences({
+    codebase: {
+      exclude_patterns: "not-an-array" as any,
+      max_files: -5,
+      collapse_threshold: 0,
+    },
+  });
+  assert.ok(result.errors.some(e => e.includes("exclude_patterns must be an array")));
+  assert.ok(result.errors.some(e => e.includes("max_files must be a positive")));
+  assert.ok(result.errors.some(e => e.includes("collapse_threshold must be a positive")));
+});
+
+test("codebase preferences warn on unknown keys", () => {
+  const result = validatePreferences({
+    codebase: {
+      exclude_patterns: ["docs/"],
+      unknown_key: true,
+    } as any,
+  });
+  assert.equal(result.errors.length, 0);
+  assert.ok(result.warnings.some(w => w.includes('unknown codebase key "unknown_key"')));
+  assert.deepEqual(result.preferences.codebase?.exclude_patterns, ["docs/"]);
+});
+
+test("codebase preferences parse from markdown frontmatter", () => {
+  const content = [
+    "---",
+    "version: 1",
+    "codebase:",
+    "  exclude_patterns:",
+    '    - "docs/"',
+    '    - ".cache/"',
+    "  max_files: 800",
+    "  collapse_threshold: 10",
+    "---",
+  ].join("\n");
+  const prefs = parsePreferencesMarkdown(content);
+  assert.notEqual(prefs, null);
+  const result = validatePreferences(prefs!);
+  assert.equal(result.errors.length, 0);
+  assert.deepEqual(result.preferences.codebase?.exclude_patterns, ["docs/", ".cache/"]);
+  assert.equal(result.preferences.codebase?.max_files, 800);
+  assert.equal(result.preferences.codebase?.collapse_threshold, 10);
 });

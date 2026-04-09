@@ -22,6 +22,7 @@ import { GSDError, GSD_PARSE_ERROR } from "./errors.js";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { homedir } from "node:os";
+import { logWarning } from "./workflow-logger.js";
 
 /**
  * Resolve the GSD extension directory.
@@ -50,6 +51,14 @@ const __extensionDir = resolveExtensionDir();
 const promptsDir = join(__extensionDir, "prompts");
 const templatesDir = join(__extensionDir, "templates");
 
+/**
+ * Return the resolved templates directory path for use in prompts.
+ * Avoids hardcoding `~/.gsd/agent/extensions/gsd/templates/` in templates. (#3575)
+ */
+export function getTemplatesDir(): string {
+  return templatesDir;
+}
+
 // Cache all templates eagerly at module load — a running session uses the
 // template versions that were on disk at startup, immune to later overwrites.
 const templateCache = new Map<string, string>();
@@ -72,7 +81,7 @@ function warmCache(): void {
     // prompts/ may not exist in test environments — lazy loading still works.
     // Emit a diagnostic when running outside tests so wrong-path bugs are visible.
     if (!process.env.VITEST && !process.env.NODE_TEST) {
-      process.stderr.write(`[gsd:prompt-loader] warmCache: prompts dir not found: ${promptsDir}\n`);
+      logWarning("prompt", `warmCache: prompts dir not found: ${promptsDir}`);
     }
   }
 
@@ -87,7 +96,7 @@ function warmCache(): void {
   } catch {
     // templates/ may not exist in test environments — lazy loading still works.
     if (!process.env.VITEST && !process.env.NODE_TEST) {
-      process.stderr.write(`[gsd:prompt-loader] warmCache: templates dir not found: ${templatesDir}\n`);
+      logWarning("prompt", `warmCache: templates dir not found: ${templatesDir}`);
     }
   }
 }
@@ -134,7 +143,10 @@ export function loadPrompt(name: string, vars: Record<string, string> = {}): str
   }
 
   for (const [key, value] of Object.entries(effectiveVars)) {
-    content = content.replaceAll(`{{${key}}}`, value);
+    // Use split/join instead of replaceAll to avoid JavaScript's special
+    // replacement patterns ($', $`, $&) being interpreted in the value.
+    // See: https://github.com/gsd-build/gsd-2/issues/2968
+    content = content.split(`{{${key}}}`).join(value);
   }
 
   return content.trim();

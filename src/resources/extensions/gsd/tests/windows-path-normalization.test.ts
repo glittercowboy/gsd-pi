@@ -6,9 +6,9 @@
  * strips backslashes (escape characters), producing `C:Usersuserproject`.
  */
 
-import { createTestContext } from "./test-helpers.ts";
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
 
-const { assertEq, assertTrue, report } = createTestContext();
 
 // ─── shellEscape + path normalization ──────────────────────────────────────
 
@@ -25,42 +25,42 @@ function bashPath(p: string): string {
 console.log("\n=== Windows backslash path normalization (#1436) ===");
 
 // Backslash paths are converted to forward slashes
-assertEq(
+assert.deepStrictEqual(
   bashPath("C:\\Users\\user\\project"),
   "'C:/Users/user/project'",
   "backslash path normalised to forward slashes in shell-escaped string",
 );
 
 // Unix paths pass through unchanged
-assertEq(
+assert.deepStrictEqual(
   bashPath("/home/user/project"),
   "'/home/user/project'",
   "Unix path unchanged",
 );
 
 // Mixed separators are normalised
-assertEq(
+assert.deepStrictEqual(
   bashPath("C:\\Users/user\\project/src"),
   "'C:/Users/user/project/src'",
   "mixed separators normalised",
 );
 
 // Paths with single quotes are still properly escaped
-assertEq(
+assert.deepStrictEqual(
   bashPath("C:\\Users\\o'brien\\project"),
   "'C:/Users/o'\\''brien/project'",
   "single quote in path is escaped after normalisation",
 );
 
 // UNC paths
-assertEq(
+assert.deepStrictEqual(
   bashPath("\\\\server\\share\\dir"),
   "'//server/share/dir'",
   "UNC path normalised",
 );
 
 // Empty string
-assertEq(
+assert.deepStrictEqual(
   bashPath(""),
   "''",
   "empty string handled",
@@ -72,14 +72,14 @@ console.log("\n=== cd command construction with normalised paths ===");
 
 const windowsCwd = "C:\\Users\\user\\project\\.gsd\\worktrees\\M001";
 const cdCommand = `cd ${bashPath(windowsCwd)}`;
-assertEq(
+assert.deepStrictEqual(
   cdCommand,
   "cd 'C:/Users/user/project/.gsd/worktrees/M001'",
   "cd command uses forward slashes for Windows worktree path",
 );
 
 // Verify the mangled form from #1436 is NOT produced
-assertTrue(
+assert.ok(
   !cdCommand.includes("C:Users"),
   "mangled path C:Usersuserproject must not appear",
 );
@@ -90,10 +90,8 @@ console.log("\n=== teardown orphan warning path formatting ===");
 
 const windowsWtDir = "C:\\Users\\user\\project\\.gsd\\worktrees\\M001";
 const helpCommand = `rm -rf "${windowsWtDir.replaceAll("\\", "/")}"`;
-assertEq(
+assert.deepStrictEqual(
   helpCommand,
   'rm -rf "C:/Users/user/project/.gsd/worktrees/M001"',
   "orphan cleanup help command uses forward slashes",
 );
-
-report();

@@ -40,6 +40,8 @@
 | Alt+Enter (during streaming) | Queue follow-up message |
 | Alt+Up | Retrieve queued messages |
 
+> **iTerm2 users:** Ctrl+Alt shortcuts (e.g., Ctrl+Alt+G for the GSD dashboard) require Left Option Key set to "Esc+" in Profiles → Keys → General. The default "Normal" setting swallows the Alt modifier.
+
 ### CLI
 
 ```bash

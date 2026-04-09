@@ -1,14 +1,14 @@
 # Configuration
 
-GSD preferences live in `~/.gsd/preferences.md` (global) or `.gsd/preferences.md` (project-local). Manage interactively with `/gsd prefs`.
+GSD preferences live in `~/.gsd/PREFERENCES.md` (global) or `.gsd/PREFERENCES.md` (project-local). Manage interactively with `/gsd prefs`.
 
 ## `/gsd prefs` Commands
 
 | Command | Description |
 |---------|-------------|
 | `/gsd prefs` | Open the global preferences wizard (default) |
-| `/gsd prefs global` | Interactive wizard for global preferences (`~/.gsd/preferences.md`) |
-| `/gsd prefs project` | Interactive wizard for project preferences (`.gsd/preferences.md`) |
+| `/gsd prefs global` | Interactive wizard for global preferences (`~/.gsd/PREFERENCES.md`) |
+| `/gsd prefs project` | Interactive wizard for project preferences (`.gsd/PREFERENCES.md`) |
 | `/gsd prefs status` | Show current preference files, merged values, and skill resolution status |
 | `/gsd prefs wizard` | Alias for `/gsd prefs global` |
 | `/gsd prefs setup` | Alias for `/gsd prefs wizard` — creates preferences file if missing |
@@ -42,8 +42,8 @@ token_profile: balanced
 
 | Scope | Path | Applies to |
 |-------|------|-----------|
-| Global | `~/.gsd/preferences.md` | All projects |
-| Project | `.gsd/preferences.md` | Current project only |
+| Global | `~/.gsd/PREFERENCES.md` | All projects |
+| Project | `.gsd/PREFERENCES.md` | Current project only |
 
 **Merge behavior:**
 - **Scalar fields** (`skill_discovery`, `budget_ceiling`): project wins if defined
@@ -159,6 +159,8 @@ Recommended verification order:
 | `GSD_PROJECT_ID` | (auto-hash) | Override the automatic project identity hash. Per-project state goes to `$GSD_HOME/projects/<GSD_PROJECT_ID>/` instead of the computed hash. Useful for CI/CD or sharing state across clones of the same repo. (v2.39) |
 | `GSD_STATE_DIR` | `$GSD_HOME` | Per-project state root. Controls where `projects/<repo-hash>/` directories are created. Takes precedence over `GSD_HOME` for project state. |
 | `GSD_CODING_AGENT_DIR` | `$GSD_HOME/agent` | Agent directory containing managed resources, extensions, and auth. Takes precedence over `GSD_HOME` for agent paths. |
+| `GSD_ALLOWED_COMMAND_PREFIXES` | (built-in list) | Comma-separated command prefixes allowed for `!command` value resolution. Overrides `allowedCommandPrefixes` in settings.json. See [Custom Models — Command Allowlist](custom-models.md#command-allowlist). |
+| `GSD_FETCH_ALLOWED_URLS` | (none) | Comma-separated hostnames exempted from `fetch_page` URL blocking. Overrides `fetchAllowedUrls` in settings.json. See [URL Blocking](#url-blocking-fetch_page). |
 
 ## All Settings
 
@@ -346,6 +348,43 @@ verification_max_retries: 2       # max retry attempts (default: 2)
 | `verification_auto_fix` | boolean | `true` | Auto-retry when verification fails |
 | `verification_max_retries` | number | `2` | Maximum auto-fix retry attempts |
 
+### URL Blocking (`fetch_page`)
+
+The `fetch_page` tool blocks requests to private and internal network addresses to prevent server-side request forgery (SSRF). This protects against the agent being tricked into accessing internal services, cloud metadata endpoints, or local files.
+
+**Blocked by default:**
+
+| Category | Examples |
+|----------|----------|
+| Private IP ranges | `10.x.x.x`, `172.16-31.x.x`, `192.168.x.x`, `127.x.x.x` |
+| Link-local / cloud metadata | `169.254.x.x` (AWS/GCP instance metadata) |
+| Cloud metadata hostnames | `metadata.google.internal`, `instance-data` |
+| Localhost | `localhost` (any port) |
+| Non-HTTP protocols | `file://`, `ftp://` |
+| IPv6 private ranges | `::1`, `fc00:`, `fd`, `fe80:` |
+
+Public URLs (`https://example.com`, `http://8.8.8.8`) are not affected.
+
+**Allowing specific internal hosts:**
+
+If you need the agent to fetch from internal URLs (self-hosted docs, internal APIs behind a VPN), add their hostnames to `fetchAllowedUrls` in global settings (`~/.gsd/agent/settings.json`):
+
+```json
+{
+  "fetchAllowedUrls": ["internal-docs.company.com", "192.168.1.50"]
+}
+```
+
+Alternatively, set the `GSD_FETCH_ALLOWED_URLS` environment variable (comma-separated). The env var takes precedence over settings.json:
+
+```bash
+export GSD_FETCH_ALLOWED_URLS="internal-docs.company.com,192.168.1.50"
+```
+
+Allowed hostnames bypass the blocklist checks. The protocol restriction (HTTP/HTTPS only) still applies — `file://` and `ftp://` cannot be allowlisted.
+
+> **Note:** This setting is global-only. Project-level settings.json cannot override the URL allowlist — this prevents a cloned repo from directing `fetch_page` at internal infrastructure.
+
 ### `auto_report` (v2.26)
 
 Auto-generate HTML reports after milestone completion:
@@ -374,8 +413,8 @@ git:
   auto_push: false            # push commits to remote after committing
   push_branches: false        # push milestone branch to remote
   remote: origin              # git remote name
-  snapshots: false            # WIP snapshot commits during long tasks
-  pre_merge_check: false      # run checks before worktree merge (true/false/"auto")
+  snapshots: true             # WIP snapshot commits during long tasks
+  pre_merge_check: auto       # run checks before worktree merge (true/false/"auto")
   commit_type: feat           # override conventional commit prefix
   main_branch: main           # primary branch name
   merge_strategy: squash      # how worktree branches merge: "squash" or "merge"
@@ -392,8 +431,8 @@ git:
 | `auto_push` | boolean | `false` | Push commits to remote after committing |
 | `push_branches` | boolean | `false` | Push milestone branch to remote |
 | `remote` | string | `"origin"` | Git remote name |
-| `snapshots` | boolean | `false` | WIP snapshot commits during long tasks |
-| `pre_merge_check` | bool/string | `false` | Run checks before merge (`true`/`false`/`"auto"`) |
+| `snapshots` | boolean | `true` | WIP snapshot commits during long tasks |
+| `pre_merge_check` | bool/string | `"auto"` | Run checks before merge (`true`/`false`/`"auto"`) |
 | `commit_type` | string | (inferred) | Override conventional commit prefix (`feat`, `fix`, `refactor`, `docs`, `test`, `chore`, `perf`, `ci`, `build`, `style`) |
 | `main_branch` | string | `"main"` | Primary branch name |
 | `merge_strategy` | string | `"squash"` | How worktree branches merge: `"squash"` (combine all commits) or `"merge"` (preserve individual commits) |
@@ -494,6 +533,14 @@ notifications:
   on_attention: true          # notify when manual attention needed
 ```
 
+**macOS delivery:** GSD uses [`terminal-notifier`](https://github.com/julienXX/terminal-notifier) when available, falling back to `osascript`. We recommend installing `terminal-notifier` for reliable notification delivery:
+
+```bash
+brew install terminal-notifier
+```
+
+Why: `osascript display notification` is attributed to your terminal app (Ghostty, iTerm2, etc.), which may not have notification permissions in System Settings → Notifications. `terminal-notifier` registers as its own app and prompts for permission on first use. See [Troubleshooting: Notifications not appearing on macOS](troubleshooting.md#notifications-not-appearing-on-macos) if notifications aren't working.
+
 ### `remote_questions`
 
 Route interactive questions to Slack or Discord for headless auto mode:
@@ -578,7 +625,7 @@ prefer_skills:
 avoid_skills: []
 ```
 
-Skills can be bare names (looked up in `~/.gsd/agent/skills/`) or absolute paths.
+Skills can be bare names (looked up in `~/.agents/skills/` and `.agents/skills/`) or absolute paths.
 
 ### `skill_rules`
 
@@ -639,6 +686,7 @@ Complexity-based model routing. See [Dynamic Model Routing](./dynamic-model-rout
 ```yaml
 dynamic_routing:
   enabled: true
+  capability_routing: true          # score models by task capability (v2.59)
   tier_models:
     light: claude-haiku-4-5
     standard: claude-sonnet-4-6
@@ -646,6 +694,48 @@ dynamic_routing:
   escalate_on_failure: true
   budget_pressure: true
   cross_provider: true
+```
+
+### `context_management` (v2.59)
+
+Controls observation masking and tool result truncation during auto-mode sessions. Reduces context bloat between compactions with zero LLM overhead.
+
+```yaml
+context_management:
+  observation_masking: true          # replace old tool results with placeholders (default: true)
+  observation_mask_turns: 8          # keep results from last N user turns (1-50, default: 8)
+  compaction_threshold_percent: 0.70 # target compaction at 70% context usage (0.5-0.95, default: 0.70)
+  tool_result_max_chars: 800         # cap individual tool result content (200-10000, default: 800)
+```
+
+### `service_tier` (v2.42)
+
+OpenAI service tier preference for supported models. Toggle with `/gsd fast`.
+
+| Value | Behavior |
+|-------|----------|
+| `"priority"` | Priority tier — 2x cost, faster responses |
+| `"flex"` | Flex tier — 0.5x cost, slower responses |
+| (unset) | Default tier |
+
+```yaml
+service_tier: priority
+```
+
+### `forensics_dedup` (v2.43)
+
+Opt-in: search existing issues and PRs before filing from `/gsd forensics`. Uses additional AI tokens.
+
+```yaml
+forensics_dedup: true    # default: false
+```
+
+### `show_token_cost` (v2.44)
+
+Opt-in: show per-prompt and cumulative session token cost in the footer.
+
+```yaml
+show_token_cost: true    # default: false
 ```
 
 ### `auto_visualize`
@@ -733,6 +823,13 @@ notifications:
 
 # Visualizer
 auto_visualize: true
+
+# Service tier
+service_tier: priority         # "priority" or "flex" (for /gsd fast)
+
+# Diagnostics
+forensics_dedup: true          # deduplicate before filing forensics issues
+show_token_cost: true          # show per-prompt cost in footer
 
 # Hooks
 post_unit_hooks:

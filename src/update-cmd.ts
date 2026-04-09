@@ -14,17 +14,20 @@ export async function runUpdate(): Promise<void> {
   process.stdout.write(`${dim}Current version:${reset} v${current}\n`)
   process.stdout.write(`${dim}Checking npm registry...${reset}\n`)
 
-  // Fetch latest version
+  // Fetch latest version — bypass npm client cache to avoid stale results (#3445)
   let latest: string
   try {
-    latest = execSync(`npm view ${NPM_PACKAGE} version`, {
+    latest = execSync(`npm view ${NPM_PACKAGE} version --fetch-retry-mintimeout=3000`, {
       encoding: 'utf-8',
       stdio: ['ignore', 'pipe', 'ignore'],
+      env: { ...process.env, npm_config_cache: '' },
     }).trim()
   } catch {
     process.stderr.write(`${yellow}Failed to reach npm registry.${reset}\n`)
     process.exit(1)
   }
+
+  process.stdout.write(`${dim}Latest version:${reset}  v${latest}\n`)
 
   if (compareSemver(latest, current) <= 0) {
     process.stdout.write(`${green}Already up to date.${reset}\n`)

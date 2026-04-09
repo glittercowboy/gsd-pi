@@ -18,6 +18,10 @@ export const INFRA_ERROR_CODES: ReadonlySet<string> = new Set([
   "EDQUOT",   // disk quota exceeded
   "EMFILE",   // too many open files (process)
   "ENFILE",   // too many open files (system)
+  "EAGAIN",       // resource temporarily unavailable (resource exhaustion)
+  "ECONNREFUSED", // connection refused (offline / local server down)
+  "ENOTFOUND",    // DNS lookup failed (offline / no network)
+  "ENETUNREACH",  // network unreachable (offline / no route)
 ]);
 
 /**
@@ -37,5 +41,8 @@ export function isInfrastructureError(err: unknown): string | null {
   for (const code of INFRA_ERROR_CODES) {
     if (msg.includes(code)) return code;
   }
+  // SQLite WAL corruption is not transient — retrying burns LLM budget
+  // for guaranteed failures (#2823).
+  if (msg.includes("database disk image is malformed")) return "SQLITE_CORRUPT";
   return null;
 }

@@ -35,6 +35,18 @@ validated_at: {{date}}
 
 - **{{requirementId}}**: {{status}} — {{disposition: covered by remediation slice / acceptable gap / needs attention}}
 
+## Verification Class Compliance
+
+<!-- If verification classes were defined during planning, document whether each
+     was addressed. Use N/A for classes that were empty or "none" in planning. -->
+
+| Class | Planned | Evidence | Status |
+|-------|---------|----------|--------|
+| Contract | {{planned_or_none}} | {{evidence_or_none}} | {{MET / NOT MET / N/A}} |
+| Integration | {{planned_or_none}} | {{evidence_or_none}} | {{MET / NOT MET / N/A}} |
+| Operational | {{planned_or_none}} | {{evidence_or_none}} | {{MET / NOT MET / N/A}} |
+| UAT | {{planned_or_none}} | {{evidence_or_none}} | {{MET / NOT MET / N/A}} |
+
 ## Remediation Slices
 
 <!-- New slices appended to the roadmap to address auto-remediable gaps.

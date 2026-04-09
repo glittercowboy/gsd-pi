@@ -19,9 +19,11 @@ import { parse as parseYaml } from "yaml";
 import type { PostUnitHookConfig, PreDispatchHookConfig, TokenProfile } from "./types.js";
 import type { DynamicRoutingConfig } from "./model-router.js";
 import { normalizeStringArray } from "../shared/format-utils.js";
+import { logWarning } from "./workflow-logger.js";
 import { resolveProfileDefaults as _resolveProfileDefaults } from "./preferences-models.js";
 
 import {
+  KNOWN_PREFERENCE_KEYS,
   MODE_DEFAULTS,
   type WorkflowMode,
   type GSDPreferences,
@@ -47,6 +49,7 @@ export type {
   AutoSupervisorConfig,
   RemoteQuestionsConfig,
   CmuxPreferences,
+  CodebaseMapPreferences,
   GSDPreferences,
   LoadedGSDPreferences,
   SkillResolution,
@@ -196,18 +199,46 @@ function loadPreferencesFile(path: string, scope: "global" | "project"): LoadedG
   };
 }
 
+let _warnedUnrecognizedFormat = false;
+let _warnedSectionParse = false;
+
+/** @internal Reset the warn-once flags — exported for testing only. */
+export function _resetParseWarningFlag(): void {
+  _warnedUnrecognizedFormat = false;
+  _warnedFrontmatterParse = false;
+  _warnedSectionParse = false;
+}
+
 /** @internal Exported for testing only */
 export function parsePreferencesMarkdown(content: string): GSDPreferences | null {
   // Use indexOf instead of [\s\S]*? regex to avoid backtracking (#468)
   const startMarker = content.startsWith('---\r\n') ? '---\r\n' : '---\n';
-  if (!content.startsWith(startMarker)) return null;
-  const searchStart = startMarker.length;
-  const endIdx = content.indexOf('\n---', searchStart);
-  if (endIdx === -1) return null;
-  const block = content.slice(searchStart, endIdx);
-  return parseFrontmatterBlock(block.replace(/\r/g, ''));
+  if (content.startsWith(startMarker)) {
+    const searchStart = startMarker.length;
+    const endIdx = content.indexOf('\n---', searchStart);
+    if (endIdx === -1) return null;
+    const block = content.slice(searchStart, endIdx);
+    return parseFrontmatterBlock(block.replace(/\r/g, ''));
+  }
+
+  // Fallback: heading+list format (e.g. "## Git\n- isolation: none") (#2036)
+  // GSD agents may write preferences files without frontmatter delimiters.
+  if (/^##\s+\w/m.test(content)) {
+    return parseHeadingListFormat(content);
+  }
+
+  // Warn when a non-empty file exists but lacks frontmatter delimiters (#2036).
+  if (content.trim().length > 0 && !_warnedUnrecognizedFormat) {
+    _warnedUnrecognizedFormat = true;
+    console.warn(
+      "[GSD] Warning: preferences file has unrecognized format — content does not use YAML frontmatter delimiters (---). " +
+      "Wrap your preferences in --- fences. See https://github.com/gsd-build/gsd-2/issues/2036",
+    );
+  }
+  return null;
 }
 
+let _warnedFrontmatterParse = false;
 function parseFrontmatterBlock(frontmatter: string): GSDPreferences {
   try {
     const parsed = parseYaml(frontmatter);
@@ -216,9 +247,78 @@ function parseFrontmatterBlock(frontmatter: string): GSDPreferences {
     }
     return parsed as GSDPreferences;
   } catch (e) {
-    console.error("[parseFrontmatterBlock] YAML parse error:", e);
+    // Warn at most once per session to avoid flooding TUI (#3376)
+    if (!_warnedFrontmatterParse) {
+      _warnedFrontmatterParse = true;
+      logWarning("guided", `YAML parse error in preferences frontmatter (suppressing further): ${(e as Error).message}`);
+    }
     return {} as GSDPreferences;
   }
+}
+
+/**
+ * Parse heading+list format into a nested object, then cast to GSDPreferences.
+ * Handles markdown like:
+ *   ## Git
+ *   - isolation: none
+ *   - commit_docs: true
+ *   ## Models
+ *   - planner: sonnet
+ */
+function parseHeadingListFormat(content: string): GSDPreferences {
+  const result: Record<string, string[]> = {};
+  let currentSection: string | null = null;
+
+  for (const rawLine of content.split('\n')) {
+    const line = rawLine.replace(/\r$/, '');
+    const headingMatch = line.match(/^##\s+(.+)$/);
+    if (headingMatch) {
+      currentSection = headingMatch[1].trim().toLowerCase().replace(/\s+/g, '_');
+      if (!result[currentSection]) result[currentSection] = [];
+      continue;
+    }
+    if (currentSection && line.trim() && !line.trimStart().startsWith('#')) {
+      result[currentSection].push(line);
+    }
+  }
+
+  const typed: Record<string, unknown> = {};
+  for (const [section, lines] of Object.entries(result)) {
+    if (lines.length === 0) continue;
+
+    const usesLegacyListItems = lines.every((line) => /^\s*-\s+[^:]+:\s*.*$/.test(line));
+    const yamlBlock = usesLegacyListItems
+      ? lines.map((line) => line.replace(/^\s*-\s+/, '')).join('\n')
+      : lines.join('\n');
+
+    try {
+      const parsed = parseYaml(yamlBlock);
+      if (typeof parsed !== 'object' || parsed === null) continue;
+
+      let targetSection = section;
+      let value: unknown = parsed;
+
+      if (!Array.isArray(parsed)) {
+        const keys = Object.keys(parsed);
+        if (keys.length === 1) {
+          const [onlyKey] = keys;
+          if (onlyKey === section || (!KNOWN_PREFERENCE_KEYS.has(section) && KNOWN_PREFERENCE_KEYS.has(onlyKey))) {
+            targetSection = onlyKey;
+            value = (parsed as Record<string, unknown>)[onlyKey];
+          }
+        }
+      }
+
+      typed[targetSection] = value;
+    } catch (e) {
+      if (!_warnedSectionParse) {
+        _warnedSectionParse = true;
+        logWarning("guided", `preferences section parse failed: ${(e as Error).message}`);
+      }
+    }
+  }
+
+  return typed as GSDPreferences;
 }
 
 // ─── Merging ────────────────────────────────────────────────────────────────
@@ -278,6 +378,10 @@ function mergePreferences(base: GSDPreferences, override: GSDPreferences): GSDPr
     verification_commands: mergeStringLists(base.verification_commands, override.verification_commands),
     verification_auto_fix: override.verification_auto_fix ?? base.verification_auto_fix,
     verification_max_retries: override.verification_max_retries ?? base.verification_max_retries,
+    enhanced_verification: override.enhanced_verification ?? base.enhanced_verification,
+    enhanced_verification_pre: override.enhanced_verification_pre ?? base.enhanced_verification_pre,
+    enhanced_verification_post: override.enhanced_verification_post ?? base.enhanced_verification_post,
+    enhanced_verification_strict: override.enhanced_verification_strict ?? base.enhanced_verification_strict,
     search_provider: override.search_provider ?? base.search_provider,
     context_selection: override.context_selection ?? base.context_selection,
     auto_visualize: override.auto_visualize ?? base.auto_visualize,
@@ -286,6 +390,22 @@ function mergePreferences(base: GSDPreferences, override: GSDPreferences): GSDPr
       ? { ...(base.github ?? {}), ...(override.github ?? {}) } as import("../github-sync/types.js").GitHubSyncConfig
       : undefined,
     service_tier: override.service_tier ?? base.service_tier,
+    forensics_dedup: override.forensics_dedup ?? base.forensics_dedup,
+    show_token_cost: override.show_token_cost ?? base.show_token_cost,
+    codebase: (base.codebase || override.codebase)
+      ? {
+          ...(base.codebase ?? {}),
+          ...(override.codebase ?? {}),
+          // Merge exclude_patterns arrays rather than overriding
+          exclude_patterns: [
+            ...((base.codebase?.exclude_patterns) ?? []),
+            ...((override.codebase?.exclude_patterns) ?? []),
+          ].filter(Boolean),
+        }
+      : undefined,
+    slice_parallel: (base.slice_parallel || override.slice_parallel)
+      ? { ...(base.slice_parallel ?? {}), ...(override.slice_parallel ?? {}) }
+      : undefined,
   };
 }
 
@@ -430,13 +550,17 @@ export function resolvePreDispatchHooks(): PreDispatchHookConfig[] {
 
 /**
  * Resolve the effective git isolation mode from preferences.
- * Returns "worktree" (default), "branch", or "none".
+ * Returns "none" (default), "worktree", or "branch".
+ *
+ * Default is "none" so GSD works out of the box without preferences.md.
+ * Worktree isolation requires explicit opt-in because it depends on git
+ * branch infrastructure that must be set up before use.
  */
 export function getIsolationMode(): "none" | "worktree" | "branch" {
   const prefs = loadEffectiveGSDPreferences()?.preferences?.git;
-  if (prefs?.isolation === "none") return "none";
+  if (prefs?.isolation === "worktree") return "worktree";
   if (prefs?.isolation === "branch") return "branch";
-  return "worktree"; // default
+  return "none"; // default — no isolation, work on current branch
 }
 
 export function resolveParallelConfig(prefs: GSDPreferences | undefined): import("./types.js").ParallelConfig {
@@ -446,5 +570,6 @@ export function resolveParallelConfig(prefs: GSDPreferences | undefined): import
     budget_ceiling: prefs?.parallel?.budget_ceiling,
     merge_strategy: prefs?.parallel?.merge_strategy ?? "per-milestone",
     auto_merge: prefs?.parallel?.auto_merge ?? "confirm",
+    worker_model: prefs?.parallel?.worker_model,
   };
 }

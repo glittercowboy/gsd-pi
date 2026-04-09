@@ -30,7 +30,48 @@ if (firstArg === '--help' || firstArg === '-h') {
   process.exit(0)
 }
 
+// ---------------------------------------------------------------------------
+// Runtime dependency checks — fail fast with clear diagnostics before any
+// heavy imports. Reads minimum Node version from the engines field in
+// package.json (already parsed above) and verifies git is available.
+// ---------------------------------------------------------------------------
+{
+  const MIN_NODE_MAJOR = 22
+  const red = '\x1b[31m'
+  const bold = '\x1b[1m'
+  const dim = '\x1b[2m'
+  const reset = '\x1b[0m'
+
+  // -- Node version --
+  const nodeMajor = parseInt(process.versions.node.split('.')[0], 10)
+  if (nodeMajor < MIN_NODE_MAJOR) {
+    process.stderr.write(
+      `\n${red}${bold}Error:${reset} GSD requires Node.js >= ${MIN_NODE_MAJOR}.0.0\n` +
+      `       You are running Node.js ${process.versions.node}\n\n` +
+      `${dim}Install a supported version:${reset}\n` +
+      `  nvm install ${MIN_NODE_MAJOR}   ${dim}# if using nvm${reset}\n` +
+      `  fnm install ${MIN_NODE_MAJOR}   ${dim}# if using fnm${reset}\n` +
+      `  brew install node@${MIN_NODE_MAJOR} ${dim}# macOS Homebrew${reset}\n\n`
+    )
+    process.exit(1)
+  }
+
+  // -- git --
+  try {
+    const { execFileSync } = await import('child_process')
+    execFileSync('git', ['--version'], { stdio: 'ignore' })
+  } catch {
+    process.stderr.write(
+      `\n${red}${bold}Error:${reset} GSD requires git but it was not found on PATH.\n\n` +
+      `${dim}Install git:${reset}\n` +
+      `  https://git-scm.com/downloads\n\n`
+    )
+    process.exit(1)
+  }
+}
+
 import { agentDir, appRoot } from './app-paths.js'
+import { applyRtkProcessEnv } from './rtk.js'
 import { serializeBundledExtensionPaths } from './bundled-extension-paths.js'
 import { discoverExtensionEntryPaths } from './extension-discovery.js'
 import { loadRegistry, readManifestFromEntryPath, isExtensionEnabled } from './extension-registry.js'
@@ -49,7 +90,8 @@ process.env.PI_PACKAGE_DIR = pkgDir
 process.env.PI_SKIP_VERSION_CHECK = '1'  // GSD runs its own update check in cli.ts — suppress pi's
 process.title = 'gsd'
 
-// Print branded banner on first launch (before ~/.gsd/ exists)
+// Print branded banner on first launch (before ~/.gsd/ exists).
+// Set GSD_FIRST_RUN_BANNER so cli.ts skips the duplicate welcome screen.
 if (!existsSync(appRoot)) {
   const cyan  = '\x1b[36m'
   const green = '\x1b[32m'
@@ -62,10 +104,15 @@ if (!existsSync(appRoot)) {
     `  Get Shit Done ${dim}v${gsdVersion}${reset}\n` +
     `  ${green}Welcome.${reset} Setting up your environment...\n\n`
   )
+  process.env.GSD_FIRST_RUN_BANNER = '1'
 }
 
 // GSD_CODING_AGENT_DIR — tells pi's getAgentDir() to return ~/.gsd/agent/ instead of ~/.gsd/agent/
 process.env.GSD_CODING_AGENT_DIR = agentDir
+
+// RTK environment — make ~/.gsd/agent/bin visible to all child-process paths,
+// not just the bash tool, and force-disable RTK telemetry for GSD-managed use.
+applyRtkProcessEnv(process.env)
 
 // NODE_PATH — make gsd's own node_modules available to extensions loaded via jiti.
 // Without this, extensions (e.g. browser-tools) can't resolve dependencies like

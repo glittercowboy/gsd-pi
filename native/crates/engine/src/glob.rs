@@ -254,7 +254,7 @@ pub fn glob(
     let ct = task::CancelToken::new(timeout_ms);
 
     task::blocking("glob", ct, move |ct| {
-        run_glob(
+        let result = run_glob(
             GlobConfig {
                 root: fs_cache::resolve_search_path(&path)?,
                 include_hidden: hidden.unwrap_or(false),
@@ -270,6 +270,10 @@ pub fn glob(
             },
             on_match.as_ref(),
             ct,
-        )
+        );
+        // Explicitly drop the ThreadsafeFunction to release the N-API reference
+        // immediately rather than relying on implicit drop ordering.
+        drop(on_match);
+        result
     })
 }

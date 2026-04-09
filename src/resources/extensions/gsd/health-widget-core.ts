@@ -18,6 +18,10 @@ export interface HealthWidgetData {
   providerIssue: string | null;
   environmentErrorCount: number;
   environmentWarningCount: number;
+  /** Unix epoch (seconds) of the last commit, or null if unavailable. */
+  lastCommitEpoch: number | null;
+  /** Subject line of the last commit, or null if unavailable. */
+  lastCommitMessage: string | null;
   lastRefreshed: number;
 }
 
@@ -30,6 +34,29 @@ export function detectHealthWidgetProjectState(basePath: string): HealthWidgetPr
 
 function formatCost(n: number): string {
   return n >= 1 ? `$${n.toFixed(2)}` : `${(n * 100).toFixed(1)}¢`;
+}
+
+/**
+ * Format a Unix epoch (seconds) as a human-readable relative time string.
+ * Returns "just now" for <1m, "Xm ago" for <1h, "Xh ago" for <24h, "Xd ago" otherwise.
+ */
+export function formatRelativeTime(epochSeconds: number): string {
+  const diffSeconds = Math.floor(Date.now() / 1000) - epochSeconds;
+  if (diffSeconds < 60) return "just now";
+  const minutes = Math.floor(diffSeconds / 60);
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  return `${days}d ago`;
+}
+
+/**
+ * Truncate a commit message to fit the widget, appending "…" if needed.
+ */
+function truncateMessage(msg: string, maxLen: number): string {
+  if (msg.length <= maxLen) return msg;
+  return msg.slice(0, maxLen - 1) + "…";
 }
 
 /**
@@ -71,6 +98,13 @@ export function buildHealthLines(data: HealthWidgetData): string[] {
     parts.push(`Env: ${data.environmentErrorCount} error${data.environmentErrorCount > 1 ? "s" : ""}`);
   } else if (data.environmentWarningCount > 0) {
     parts.push(`Env: ${data.environmentWarningCount} warning${data.environmentWarningCount > 1 ? "s" : ""}`);
+  }
+
+  // Always-on last commit display — shows relative time + truncated message
+  if (data.lastCommitEpoch !== null && data.lastCommitEpoch > 0) {
+    const relTime = formatRelativeTime(data.lastCommitEpoch);
+    const msg = data.lastCommitMessage ? ` — ${truncateMessage(data.lastCommitMessage, 50)}` : "";
+    parts.push(`Last commit: ${relTime}${msg}`);
   }
 
   return [`  ${parts.join("  │  ")}`];

@@ -7,6 +7,6 @@
   "requires": { "platform": ">=2.29.0" },
   "provides": {
     "tools": ["google_search"],
-    "hooks": ["session_start"]
+    "hooks": ["session_start", "session_shutdown"]
   }
 }

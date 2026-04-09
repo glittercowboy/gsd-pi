@@ -84,7 +84,7 @@ function maskToken(token: string): string {
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function getPreferencesPath(): string {
-  return join(homedir(), ".gsd", "preferences.md")
+  return join(homedir(), ".gsd", "PREFERENCES.md")
 }
 
 function clamp(value: number | undefined, defaultVal: number, min: number, max: number): number {

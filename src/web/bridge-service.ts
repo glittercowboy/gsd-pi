@@ -2,9 +2,10 @@ import { execFile, spawn, type ChildProcess, type SpawnOptions } from "node:chil
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { StringDecoder } from "node:string_decoder";
 import type { Readable } from "node:stream";
-import { join, resolve, dirname } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
-import { resolveTypeStrippingFlag } from "./ts-subprocess-flags.ts";
+import { join, resolve } from "node:path";
+import { pathToFileURL } from "node:url";
+import { resolveTypeStrippingFlag, resolveSubprocessModule, buildSubprocessPrefixArgs } from "./ts-subprocess-flags.ts";
+import { safePackageRootFromImportUrl } from "./safe-import-meta-resolve.ts";
 
 import type { AgentSessionEvent, SessionStateChangeReason } from "../../packages/pi-coding-agent/src/core/agent-session.ts";
 import type {
@@ -39,7 +40,22 @@ import {
 } from "./auto-dashboard-service.ts";
 import { resolveGsdCliEntry } from "./cli-entry.ts";
 
-const DEFAULT_PACKAGE_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
+// The standalone Next.js bundle bakes import.meta.url at build time with the
+// CI runner's absolute path.  On Windows, fileURLToPath() rejects a Linux
+// file:// URL at module load time.  Use a lazy getter so the derivation is
+// deferred to first use (not module load) and falls back to cwd on failure.
+let _defaultPackageRoot: string | undefined;
+function getDefaultPackageRoot(): string {
+  if (_defaultPackageRoot !== undefined) return _defaultPackageRoot;
+  _defaultPackageRoot = safePackageRootFromImportUrl(import.meta.url) ?? process.cwd();
+  return _defaultPackageRoot;
+}
+
+/** @internal — test-only: reset the memoized default package root */
+export function resetDefaultPackageRootForTests(): void {
+  _defaultPackageRoot = undefined;
+}
+
 const RESPONSE_TIMEOUT_MS = 30_000;
 const START_TIMEOUT_MS = 150_000;
 const MAX_STDERR_BUFFER = 8_000;
@@ -374,6 +390,17 @@ function filterAndSortSessions(
   return scored.map((entry) => entry.session);
 }
 
+export interface RtkSessionSavings {
+  commands: number;
+  inputTokens: number;
+  outputTokens: number;
+  savedTokens: number;
+  savingsPct: number;
+  totalTimeMs: number;
+  avgTimeMs: number;
+  updatedAt: string;
+}
+
 export interface AutoDashboardData {
   active: boolean;
   paused: boolean;
@@ -385,6 +412,9 @@ export interface AutoDashboardData {
   basePath: string;
   totalCost: number;
   totalTokens: number;
+  rtkSavings?: RtkSessionSavings | null;
+  /** Whether RTK is enabled via experimental.rtk preference. False when not opted in. */
+  rtkEnabled?: boolean;
 }
 
 export interface BridgeLastError {
@@ -489,12 +519,54 @@ export interface ProjectDetectionSignals {
   hasCargo?: boolean;
   hasGoMod?: boolean;
   hasPyproject?: boolean;
+  /** True when the directory looks like a monorepo root (workspaces, lerna, pnpm-workspace, etc.) */
+  isMonorepo?: boolean;
   fileCount: number;
 }
 
 export interface ProjectDetection {
   kind: ProjectDetectionKind;
   signals: ProjectDetectionSignals;
+}
+
+/**
+ * Detect whether a directory looks like a monorepo root.
+ *
+ * Checks for common monorepo indicators:
+ * - `pnpm-workspace.yaml` (pnpm workspaces)
+ * - `lerna.json` (Lerna)
+ * - `package.json` with a `workspaces` field (npm/yarn workspaces)
+ * - `rush.json` (Rush)
+ * - `nx.json` (Nx)
+ * - `turbo.json` (Turborepo)
+ *
+ * This is intentionally cheap — file existence checks only, with a single
+ * JSON parse for `package.json` workspaces (which we're already reading
+ * in many code paths). No deep directory scanning.
+ */
+export function detectMonorepo(dirPath: string, checkExists?: (path: string) => boolean): boolean {
+  const exists = checkExists ?? (getBridgeDeps().existsSync ?? existsSync);
+
+  // Fast checks — file existence only
+  if (exists(join(dirPath, "pnpm-workspace.yaml"))) return true;
+  if (exists(join(dirPath, "lerna.json"))) return true;
+  if (exists(join(dirPath, "rush.json"))) return true;
+  if (exists(join(dirPath, "nx.json"))) return true;
+  if (exists(join(dirPath, "turbo.json"))) return true;
+
+  // Check package.json for workspaces field (npm/yarn workspaces)
+  const packageJsonPath = join(dirPath, "package.json");
+  if (exists(packageJsonPath)) {
+    try {
+      const raw = readFileSync(packageJsonPath, "utf-8");
+      const pkg = JSON.parse(raw) as Record<string, unknown>;
+      if (pkg.workspaces != null) return true;
+    } catch {
+      // Malformed JSON or unreadable — not a monorepo indicator
+    }
+  }
+
+  return false;
 }
 
 export function detectProjectKind(projectCwd: string): ProjectDetection {
@@ -507,6 +579,7 @@ export function detectProjectKind(projectCwd: string): ProjectDetection {
   const hasCargo = checkExists(join(projectCwd, "Cargo.toml"));
   const hasGoMod = checkExists(join(projectCwd, "go.mod"));
   const hasPyproject = checkExists(join(projectCwd, "pyproject.toml"));
+  const isMonorepo = detectMonorepo(projectCwd, checkExists);
 
   // Count top-level non-dot entries (cheap heuristic for "has code")
   let fileCount = 0;
@@ -525,6 +598,7 @@ export function detectProjectKind(projectCwd: string): ProjectDetection {
     hasCargo,
     hasGoMod,
     hasPyproject,
+    isMonorepo,
     fileCount,
   };
 
@@ -578,6 +652,7 @@ export type BridgeLiveStateDomain = "auto" | "workspace" | "recovery" | "resumab
 export type BridgeLiveStateInvalidationSource = "bridge_event" | "rpc_command" | "session_manage";
 export type BridgeLiveStateInvalidationReason =
   | "agent_end"
+  | "turn_end"
   | "auto_retry_start"
   | "auto_retry_end"
   | "auto_compaction_start"
@@ -690,6 +765,7 @@ async function loadSessionBrowserSessionsViaChildProcess(config: BridgeRuntimeCo
           GSD_SESSION_BROWSER_DIR: config.projectSessionsDir,
         },
         maxBuffer: 1024 * 1024,
+        windowsHide: true,
       },
       (error, stdout, stderr) => {
         if (error) {
@@ -751,6 +827,7 @@ async function appendSessionInfoViaChildProcess(
           GSD_TARGET_SESSION_NAME: name,
         },
         maxBuffer: 1024 * 1024,
+        windowsHide: true,
       },
       (error, _stdout, stderr) => {
         if (error) {
@@ -905,11 +982,19 @@ async function loadCachedWorkspaceIndex(
 
 async function loadWorkspaceIndexViaChildProcess(basePath: string, packageRoot: string): Promise<GSDWorkspaceIndex> {
   const deps = getBridgeDeps();
-  const resolveTsLoader = join(packageRoot, "src", "resources", "extensions", "gsd", "tests", "resolve-ts.mjs");
-  const workspaceModulePath = join(packageRoot, "src", "resources", "extensions", "gsd", "workspace-index.ts");
   const checkExists = deps.existsSync ?? existsSync;
-  if (!checkExists(resolveTsLoader) || !checkExists(workspaceModulePath)) {
+  const resolveTsLoader = join(packageRoot, "src", "resources", "extensions", "gsd", "tests", "resolve-ts.mjs");
+  const moduleResolution = resolveSubprocessModule(
+    packageRoot,
+    "resources/extensions/gsd/workspace-index.ts",
+    checkExists,
+  );
+  const workspaceModulePath = moduleResolution.modulePath;
+  if (!moduleResolution.useCompiledJs && (!checkExists(resolveTsLoader) || !checkExists(workspaceModulePath))) {
     throw new Error(`workspace index loader not found; checked=${resolveTsLoader},${workspaceModulePath}`);
+  }
+  if (moduleResolution.useCompiledJs && !checkExists(workspaceModulePath)) {
+    throw new Error(`workspace index module not found; checked=${workspaceModulePath}`);
   }
 
   const script = [
@@ -919,14 +1004,17 @@ async function loadWorkspaceIndexViaChildProcess(basePath: string, packageRoot: 
     'process.stdout.write(JSON.stringify(result));',
   ].join(' ');
 
+  const prefixArgs = buildSubprocessPrefixArgs(
+    packageRoot,
+    moduleResolution,
+    pathToFileURL(resolveTsLoader).href,
+  );
+
   return await new Promise<GSDWorkspaceIndex>((resolveResult, reject) => {
     execFile(
       deps.execPath ?? process.execPath,
       [
-        "--import",
-        pathToFileURL(resolveTsLoader).href,
-        resolveTypeStrippingFlag(packageRoot),
-        "--input-type=module",
+        ...prefixArgs,
         "--eval",
         script,
       ],
@@ -938,6 +1026,7 @@ async function loadWorkspaceIndexViaChildProcess(basePath: string, packageRoot: 
           GSD_WORKSPACE_BASE: basePath,
         },
         maxBuffer: 1024 * 1024,
+        windowsHide: true,
       },
       (error, stdout, stderr) => {
         if (error) {
@@ -1047,7 +1136,7 @@ async function fallbackWorkspaceIndex(basePath: string): Promise<GSDWorkspaceInd
 export function resolveBridgeRuntimeConfig(env: NodeJS.ProcessEnv = getBridgeDeps().env ?? process.env, projectCwdOverride?: string): BridgeRuntimeConfig {
   const projectCwd = projectCwdOverride || env.GSD_WEB_PROJECT_CWD || process.cwd();
   const projectSessionsDir = env.GSD_WEB_PROJECT_SESSIONS_DIR || getProjectSessionsDir(projectCwd);
-  const packageRoot = env.GSD_WEB_PACKAGE_ROOT || DEFAULT_PACKAGE_ROOT;
+  const packageRoot = env.GSD_WEB_PACKAGE_ROOT || getDefaultPackageRoot();
   return { projectCwd, projectSessionsDir, packageRoot };
 }
 
@@ -1157,6 +1246,13 @@ function createLiveStateInvalidationFromBridgeEvent(
         reason: "agent_end",
         source: "bridge_event",
         domains: ["auto", "workspace", "recovery"],
+        workspaceIndexCacheInvalidated: true,
+      };
+    case "turn_end":
+      return {
+        reason: "turn_end",
+        source: "bridge_event",
+        domains: ["workspace"],
         workspaceIndexCacheInvalidated: true,
       };
     case "auto_retry_start":
@@ -1524,6 +1620,7 @@ export class BridgeService {
       cwd: cliEntry.cwd,
       env: childEnv,
       stdio: ["pipe", "pipe", "pipe"],
+      windowsHide: true,
     }) as SpawnedRpcChild;
 
     this.process = child;
@@ -1679,6 +1776,7 @@ export class BridgeService {
       const eventType = (event as { type?: string }).type;
       if (
         eventType === "agent_end" ||
+        eventType === "turn_end" ||
         eventType === "auto_retry_start" ||
         eventType === "auto_retry_end" ||
         eventType === "auto_compaction_start" ||

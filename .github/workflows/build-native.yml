@@ -46,8 +46,9 @@ jobs:
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: ${{ matrix.target }}
+
+      - name: Add Rust compilation target
+        run: rustup target add ${{ matrix.target }}
 
       - name: Cache Rust build artifacts
         uses: Swatinem/rust-cache@v2
@@ -97,7 +98,7 @@ jobs:
   publish:
     needs: build
     if: startsWith(github.ref, 'refs/tags/v') || github.event.inputs.publish == 'true'
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     name: Publish platform packages
 
     steps:

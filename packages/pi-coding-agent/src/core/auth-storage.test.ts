@@ -263,6 +263,152 @@ describe("AuthStorage — areAllCredentialsBackedOff", () => {
 	});
 });
 
+// ─── mismatched oauth credential for non-OAuth provider (#2083) ───────────────
+
+describe("AuthStorage — oauth credential for non-OAuth provider (#2083)", () => {
+	it("returns undefined when openrouter has type:oauth (no registered OAuth provider)", async (t) => {
+		// Simulates the bug: OpenRouter credential stored as type:"oauth"
+		// but OpenRouter is not a registered OAuth provider.
+		const storage = inMemory({
+			openrouter: {
+				type: "oauth",
+				access_token: "sk-or-v1-fake",
+				refresh_token: "rt-fake",
+				expires: Date.now() + 3_600_000,
+			},
+		});
+
+		// Isolate from any real OPENROUTER_API_KEY in the environment so the
+		// fall-through to env / fallback finds nothing and returns undefined.
+		const origEnv = process.env.OPENROUTER_API_KEY;
+		delete process.env.OPENROUTER_API_KEY;
+		t.after(() => {
+			if (origEnv === undefined) {
+				delete process.env.OPENROUTER_API_KEY;
+			} else {
+				process.env.OPENROUTER_API_KEY = origEnv;
+			}
+		});
+
+		// Before the fix, getApiKey returns undefined because
+		// resolveCredentialApiKey calls getOAuthProvider("openrouter") → null → undefined.
+		// The key in the oauth credential is never extracted.
+		const key = await storage.getApiKey("openrouter");
+		// After the fix, the oauth credential with an unrecognised provider
+		// should be skipped, and getApiKey should fall through to env / fallback.
+		// With no env var and no fallback resolver configured, the result is undefined.
+		assert.equal(key, undefined);
+	});
+
+	it("falls through to env var when openrouter has type:oauth credential", async (t) => {
+		const storage = inMemory({
+			openrouter: {
+				type: "oauth",
+				access_token: "sk-or-v1-fake",
+				refresh_token: "rt-fake",
+				expires: Date.now() + 3_600_000,
+			},
+		});
+
+		// Simulate OPENROUTER_API_KEY being set via env
+		const origEnv = process.env.OPENROUTER_API_KEY;
+		t.after(() => {
+			if (origEnv === undefined) {
+				delete process.env.OPENROUTER_API_KEY;
+			} else {
+				process.env.OPENROUTER_API_KEY = origEnv;
+			}
+		});
+
+		process.env.OPENROUTER_API_KEY = "sk-or-v1-env-key";
+		const key = await storage.getApiKey("openrouter");
+		assert.equal(key, "sk-or-v1-env-key");
+	});
+
+	it("falls through to fallback resolver when openrouter has type:oauth credential", async (t) => {
+		const storage = inMemory({
+			openrouter: {
+				type: "oauth",
+				access_token: "sk-or-v1-fake",
+				refresh_token: "rt-fake",
+				expires: Date.now() + 3_600_000,
+			},
+		});
+
+		// Isolate from any real OPENROUTER_API_KEY so env fallback is skipped
+		// and the fallback resolver is reached.
+		const origEnv = process.env.OPENROUTER_API_KEY;
+		delete process.env.OPENROUTER_API_KEY;
+		t.after(() => {
+			if (origEnv === undefined) {
+				delete process.env.OPENROUTER_API_KEY;
+			} else {
+				process.env.OPENROUTER_API_KEY = origEnv;
+			}
+		});
+
+		storage.setFallbackResolver((provider) =>
+			provider === "openrouter" ? "sk-or-v1-fallback" : undefined,
+		);
+
+		const key = await storage.getApiKey("openrouter");
+		assert.equal(key, "sk-or-v1-fallback");
+	});
+});
+
+// ─── Gemini CLI OAuth token detection ─────────────────────────────────────────
+
+describe("AuthStorage — Gemini CLI OAuth token detection", () => {
+	it("rejects Google OAuth access token (ya29. prefix) stored as api_key for google provider", () => {
+		const storage = inMemory({});
+		assert.throws(
+			() => storage.set("google", makeKey("ya29.a0ARrdaM_fake_oauth_token_from_gemini_cli")),
+			(err: Error) => {
+				assert.ok(err.message.includes("OAuth access token"), `Expected message about OAuth token, got: ${err.message}`);
+				assert.ok(
+					err.message.includes("GEMINI_API_KEY") || err.message.includes("google-gemini-cli"),
+					`Expected guidance about GEMINI_API_KEY or google-gemini-cli, got: ${err.message}`,
+				);
+				return true;
+			},
+		);
+	});
+
+	it("rejects Google OAuth access token for google provider via getApiKey when set as env var", async () => {
+		const storage = inMemory({});
+		// Simulate runtime override with OAuth token
+		storage.setRuntimeApiKey("google", "ya29.c.b0AXv0zTPQ_fake_oauth_token");
+		const key = await storage.getApiKey("google");
+		// Should return undefined (blocked) or throw
+		assert.equal(key, undefined, "OAuth token should be blocked for google provider");
+	});
+
+	it("allows legitimate Google API keys (AIza prefix) for google provider", () => {
+		const storage = inMemory({});
+		storage.set("google", makeKey("AIzaSyD_fake_legitimate_api_key_here"));
+		const creds = storage.getCredentialsForProvider("google");
+		assert.equal(creds.length, 1);
+	});
+
+	it("allows ya29 tokens for google-gemini-cli provider (OAuth is expected there)", () => {
+		// google-gemini-cli stores OAuth credentials with type: "oauth", not "api_key"
+		// But if someone somehow stored an api_key, it shouldn't be blocked for OAuth providers
+		const storage = inMemory({});
+		storage.set("google-gemini-cli", makeKey("ya29.a0ARrdaM_token_for_gemini_cli"));
+		const creds = storage.getCredentialsForProvider("google-gemini-cli");
+		assert.equal(creds.length, 1);
+	});
+
+	it("rejects Google OAuth token (ya29. prefix) for openai provider that uses GEMINI_API_KEY indirectly", () => {
+		// Only google provider should be blocked, not others
+		const storage = inMemory({});
+		// This should NOT throw - other providers can have whatever keys they want
+		storage.set("openai", makeKey("ya29.some_value"));
+		const creds = storage.getCredentialsForProvider("openai");
+		assert.equal(creds.length, 1);
+	});
+});
+
 // ─── getAll truncation ────────────────────────────────────────────────────────
 
 describe("AuthStorage — getAll()", () => {

@@ -31,6 +31,7 @@ import type {
 export type AnthropicApi = "anthropic-messages" | "anthropic-vertex";
 import type { AssistantMessageEventStream } from "../utils/event-stream.js";
 import { parseStreamingJson } from "../utils/json-parse.js";
+import { hasXmlParameterTags, repairToolJson } from "../utils/repair-tool-json.js";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.js";
 import { transformMessages } from "./transform-messages.js";
 
@@ -502,7 +503,7 @@ export function mapStopReason(reason: string): StopReason {
 		case "refusal":
 			return "error";
 		case "pause_turn":
-			return "stop";
+			return "pauseTurn";
 		case "stop_sequence":
 			return "stop";
 		case "sensitive":
@@ -696,7 +697,22 @@ export function processAnthropicStream(
 								partial: output,
 							});
 						} else if (block.type === "toolCall") {
-							block.arguments = parseStreamingJson(block.partialJson);
+							// Try strict parse first; if it fails, attempt YAML bullet
+							// repair (#2660) before falling back to the lenient streaming
+							// parser which silently swallows errors.
+							const raw = block.partialJson ?? "";
+							const rawForParse = hasXmlParameterTags(raw) ? repairToolJson(raw) : raw;
+							let parsed: Record<string, any> | undefined;
+							try {
+								parsed = JSON.parse(rawForParse);
+							} catch {
+								try {
+									parsed = JSON.parse(repairToolJson(rawForParse));
+								} catch {
+									// Fall through to streaming parser
+								}
+							}
+							block.arguments = parsed ?? parseStreamingJson(block.partialJson);
 							delete (block as any).partialJson;
 							stream.push({
 								type: "toolcall_end",

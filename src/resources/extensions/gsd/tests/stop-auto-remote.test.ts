@@ -64,7 +64,7 @@ test("stopAutoRemote cleans up stale lock (dead PID) and returns found:false", (
   const base = makeTmpBase();
   try {
     // Write a lock with a PID that doesn't exist
-    writeLock(base, "execute-task", "M001/S01/T01", 3);
+    writeLock(base, "execute-task", "M001/S01/T01");
     // Overwrite PID to a dead one
     const lock = readCrashLock(base)!;
     const staleData = { ...lock, pid: 999999999 };
@@ -111,7 +111,6 @@ test("stopAutoRemote sends SIGTERM to a live process and returns found:true", { 
       unitType: "execute-task",
       unitId: "M001/S01/T01",
       unitStartedAt: new Date().toISOString(),
-      completedUnits: 0,
     };
     writeFileSync(join(base, ".gsd", "auto.lock"), JSON.stringify(lockData, null, 2), "utf-8");
 
@@ -143,7 +142,7 @@ test("lock file should be discoverable at project root, not worktree path", () =
 
   try {
     // Simulate: auto-mode writes lock to project root (the fix)
-    writeLock(projectRoot, "execute-task", "M001/S01/T01", 0);
+    writeLock(projectRoot, "execute-task", "M001/S01/T01");
 
     // Second terminal checks project root — should find the lock
     const lock = readCrashLock(projectRoot);

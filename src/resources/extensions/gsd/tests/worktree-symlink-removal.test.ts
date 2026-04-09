@@ -20,9 +20,9 @@ import {
   listWorktrees,
   worktreePath,
 } from "../worktree-manager.ts";
-import { createTestContext } from './test-helpers.ts';
+import { describe, test } from 'node:test';
+import assert from 'node:assert/strict';
 
-const { assertEq, assertTrue, report } = createTestContext();
 
 function run(command: string, cwd: string): string {
   return execSync(command, { cwd, stdio: ["ignore", "pipe", "pipe"], encoding: "utf-8" }).trim();
@@ -46,8 +46,8 @@ mkdirSync(join(externalState, "worktrees"), { recursive: true });
 symlinkSync(externalState, join(base, ".gsd"));
 
 // Verify the symlink is in place
-assertTrue(existsSync(join(base, ".gsd")), ".gsd symlink exists");
-assertTrue(
+assert.ok(existsSync(join(base, ".gsd")), ".gsd symlink exists");
+assert.ok(
   realpathSync(join(base, ".gsd")) === externalState,
   ".gsd resolves to external state dir",
 );
@@ -57,28 +57,28 @@ writeFileSync(join(base, "README.md"), "# Test\n", "utf-8");
 run("git add .", base);
 run('git commit -m "init"', base);
 
-async function main(): Promise<void> {
+describe('worktree-symlink-removal', async () => {
   console.log("\n=== #1852: removeWorktree with symlinked .gsd/ ===");
 
   // Create a worktree — git will resolve the symlink and register
   // the worktree at the external path
   const info = createWorktree(base, "M002", { branch: "milestone/M002" });
-  assertTrue(info.exists, "worktree created");
+  assert.ok(info.exists, "worktree created");
 
   // Verify worktree was created at the resolved (external) path
   const realWtPath = realpathSync(info.path);
-  assertTrue(
+  assert.ok(
     realWtPath.startsWith(externalState),
     `worktree real path (${realWtPath}) is under external state dir`,
   );
 
   // Verify git registered the worktree
   const gitList = run("git worktree list", base);
-  assertTrue(gitList.includes("M002"), "git worktree list shows M002");
+  assert.ok(gitList.includes("M002"), "git worktree list shows M002");
 
   // The computed path via worktreePath uses the symlink path
   const computedPath = worktreePath(base, "M002");
-  assertTrue(existsSync(computedPath), "computed path exists (via symlink)");
+  assert.ok(existsSync(computedPath), "computed path exists (via symlink)");
 
   // Simulate what syncStateToProjectRoot does: replace the .gsd symlink with
   // a real directory containing stale worktree data. This causes worktreePath()
@@ -93,8 +93,8 @@ async function main(): Promise<void> {
   // Now worktreePath(base, "M002") points to the LOCAL stale dir, not the
   // external path where git actually registered the worktree.
   const stalePath = worktreePath(base, "M002");
-  assertTrue(existsSync(stalePath), "stale local worktree dir exists");
-  assertTrue(
+  assert.ok(existsSync(stalePath), "stale local worktree dir exists");
+  assert.ok(
     stalePath !== realWtPath,
     `computed path (${stalePath}) differs from git-registered path (${realWtPath})`,
   );
@@ -105,36 +105,29 @@ async function main(): Promise<void> {
 
   // After removal, the worktree should be gone from git's list
   const gitListAfter = run("git worktree list", base);
-  assertTrue(
+  assert.ok(
     !gitListAfter.includes("M002"),
     "worktree removed from git worktree list after removeWorktree",
   );
 
   // The branch should be deleted
   const branches = run("git branch", base);
-  assertTrue(
+  assert.ok(
     !branches.includes("milestone/M002"),
     "milestone/M002 branch deleted after removeWorktree",
   );
 
   // The worktree directory should be gone
-  assertTrue(
+  assert.ok(
     !existsSync(realWtPath),
     "worktree directory removed from disk",
   );
 
   // List should be empty
   const listed = listWorktrees(base);
-  assertEq(listed.length, 0, "no worktrees listed after removal");
+  assert.deepStrictEqual(listed.length, 0, "no worktrees listed after removal");
 
   // Cleanup
   rmSync(base, { recursive: true, force: true });
   rmSync(externalState, { recursive: true, force: true });
-
-  report();
-}
-
-main().catch((error) => {
-  console.error(error);
-  process.exit(1);
 });

@@ -8,14 +8,15 @@
  *   3. native/addon/gsd_engine.dev.node (local debug build)
  */
 
-import { createRequire } from "node:module";
 import * as path from "node:path";
-import { fileURLToPath } from "node:url";
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const require = createRequire(import.meta.url);
+// __dirname and require are available in both execution contexts:
+//   - CJS (production build via tsc): provided natively by Node
+//   - ESM (CI test loader): injected by the dist-redirect.mjs preamble
+const _dirname = __dirname;
+const _require = require;
 
-const addonDir = path.resolve(__dirname, "..", "..", "..", "native", "addon");
+const addonDir = path.resolve(_dirname, "..", "..", "..", "native", "addon");
 const platformTag = `${process.platform}-${process.arch}`;
 
 /** Map Node.js platform/arch to the npm package suffix */
@@ -36,7 +37,7 @@ function loadNative(): Record<string, unknown> {
   const packageSuffix = platformPackageMap[platformTag];
   if (packageSuffix) {
     try {
-      _loadedSuccessfully = true; return require(`@gsd-build/engine-${packageSuffix}`) as Record<string, unknown>;
+      _loadedSuccessfully = true; return _require(`@gsd-build/engine-${packageSuffix}`) as Record<string, unknown>;
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       errors.push(`@gsd-build/engine-${packageSuffix}: ${message}`);
@@ -46,7 +47,7 @@ function loadNative(): Record<string, unknown> {
   // 2. Try local release build (native/addon/gsd_engine.{platform}.node)
   const releasePath = path.join(addonDir, `gsd_engine.${platformTag}.node`);
   try {
-    _loadedSuccessfully = true; return require(releasePath) as Record<string, unknown>;
+    _loadedSuccessfully = true; return _require(releasePath) as Record<string, unknown>;
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     errors.push(`${releasePath}: ${message}`);
@@ -55,7 +56,7 @@ function loadNative(): Record<string, unknown> {
   // 3. Try local dev build (native/addon/gsd_engine.dev.node)
   const devPath = path.join(addonDir, "gsd_engine.dev.node");
   try {
-    _loadedSuccessfully = true; return require(devPath) as Record<string, unknown>;
+    _loadedSuccessfully = true; return _require(devPath) as Record<string, unknown>;
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     errors.push(`${devPath}: ${message}`);

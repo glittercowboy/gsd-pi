@@ -66,6 +66,11 @@ export function createAwaitTool(getManager: () => AsyncJobManager): ToolDefiniti
 				}
 			}
 
+			// Mark all watched jobs as awaited upfront so the onJobComplete
+			// callback (which fires synchronously in the promise .then()) knows
+			// to suppress the follow-up message.
+			for (const j of watched) j.awaited = true;
+
 			// If all watched jobs are already done, return immediately
 			const running = watched.filter((j) => j.status === "running");
 			if (running.length === 0) {

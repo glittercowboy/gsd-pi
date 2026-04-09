@@ -119,6 +119,19 @@ interface TerminalSpawnSpec {
   label: string;
 }
 
+const ALLOWED_TERMINAL_COMMANDS = new Set([
+  "gsd",
+  process.env.SHELL || "/bin/zsh",
+  "/bin/bash",
+  "/bin/zsh",
+  "/bin/sh",
+]);
+
+export function isAllowedTerminalCommand(command?: string): boolean {
+  if (!command) return true;
+  return ALLOWED_TERMINAL_COMMANDS.has(command);
+}
+
 function resolveTerminalSpawnSpec(cwd: string, command?: string, commandArgs: string[] = []): TerminalSpawnSpec {
   if (!command) {
     const shell = getDefaultShell();
@@ -235,6 +248,9 @@ function loadNodePty(): LoadedNodePty {
 
 export function getOrCreateSession(sessionId: string, projectCwd?: string, command?: string, commandArgs: string[] = []): PtySession {
   ensureProcessCleanupHandlers();
+  if (!isAllowedTerminalCommand(command)) {
+    throw new Error(`Command not allowed: ${command}`);
+  }
   const map = getSessions();
   const existing = map.get(sessionId);
   if (existing?.alive) return existing;

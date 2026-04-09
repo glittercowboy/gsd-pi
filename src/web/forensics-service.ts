@@ -4,15 +4,11 @@ import { join } from "node:path"
 import { pathToFileURL } from "node:url"
 
 import { resolveBridgeRuntimeConfig } from "./bridge-service.ts"
-import { resolveTypeStrippingFlag } from "./ts-subprocess-flags.ts"
+import { resolveTypeStrippingFlag, resolveSubprocessModule, buildSubprocessPrefixArgs } from "./ts-subprocess-flags.ts"
 import type { ForensicReport } from "../../web/lib/diagnostics-types.ts"
 
 const FORENSICS_MAX_BUFFER = 2 * 1024 * 1024
 const FORENSICS_MODULE_ENV = "GSD_FORENSICS_MODULE"
-
-function resolveForensicsModulePath(packageRoot: string): string {
-  return join(packageRoot, "src", "resources", "extensions", "gsd", "forensics.ts")
-}
 
 function resolveTsLoaderPath(packageRoot: string): string {
   return join(packageRoot, "src", "resources", "extensions", "gsd", "tests", "resolve-ts.mjs")
@@ -30,12 +26,16 @@ export async function collectForensicsData(projectCwdOverride?: string): Promise
   const { packageRoot, projectCwd } = config
 
   const resolveTsLoader = resolveTsLoaderPath(packageRoot)
-  const forensicsModulePath = resolveForensicsModulePath(packageRoot)
+  const moduleResolution = resolveSubprocessModule(packageRoot, "resources/extensions/gsd/forensics.ts")
+  const forensicsModulePath = moduleResolution.modulePath
 
-  if (!existsSync(resolveTsLoader) || !existsSync(forensicsModulePath)) {
+  if (!moduleResolution.useCompiledJs && (!existsSync(resolveTsLoader) || !existsSync(forensicsModulePath))) {
     throw new Error(
       `forensics data provider not found; checked=${resolveTsLoader},${forensicsModulePath}`,
     )
+  }
+  if (moduleResolution.useCompiledJs && !existsSync(forensicsModulePath)) {
+    throw new Error(`forensics data provider not found; checked=${forensicsModulePath}`)
   }
 
   // The child script loads the upstream module, calls buildForensicReport(),
@@ -70,18 +70,19 @@ export async function collectForensicsData(projectCwdOverride?: string): Promise
     '  unitTraces,',
     '  completedKeyCount: (report.completedKeys || []).length,',
     '  metrics,',
+    '  journalSummary: report.journalSummary || null,',
+    '  activityLogMeta: report.activityLogMeta || null,',
     '};',
     'process.stdout.write(JSON.stringify(result));',
   ].join(" ")
+
+  const prefixArgs = buildSubprocessPrefixArgs(packageRoot, moduleResolution, pathToFileURL(resolveTsLoader).href)
 
   return await new Promise<ForensicReport>((resolveResult, reject) => {
     execFile(
       process.execPath,
       [
-        "--import",
-        pathToFileURL(resolveTsLoader).href,
-        resolveTypeStrippingFlag(packageRoot),
-        "--input-type=module",
+        ...prefixArgs,
         "--eval",
         script,
       ],
@@ -93,6 +94,7 @@ export async function collectForensicsData(projectCwdOverride?: string): Promise
           GSD_FORENSICS_BASE: projectCwd,
         },
         maxBuffer: FORENSICS_MAX_BUFFER,
+        windowsHide: true,
       },
       (error, stdout, stderr) => {
         if (error) {

@@ -1,0 +1,455 @@
+/**
+ * Stream adapter: bridges the Claude Agent SDK into GSD's streamSimple contract.
+ *
+ * The SDK runs the full agentic loop (multi-turn, tool execution, compaction)
+ * in one call. This adapter translates the SDK's streaming output into
+ * AssistantMessageEvents for TUI rendering, then strips tool-call blocks from
+ * the final AssistantMessage so GSD's agent loop doesn't try to dispatch them.
+ */
+
+import type {
+	AssistantMessage,
+	AssistantMessageEvent,
+	AssistantMessageEventStream,
+	Context,
+	Model,
+	SimpleStreamOptions,
+} from "@gsd/pi-ai";
+import { EventStream } from "@gsd/pi-ai";
+import { execSync } from "node:child_process";
+import { PartialMessageBuilder, ZERO_USAGE, mapUsage } from "./partial-builder.js";
+import type {
+	SDKAssistantMessage,
+	SDKMessage,
+	SDKPartialAssistantMessage,
+	SDKResultMessage,
+} from "./sdk-types.js";
+
+// ---------------------------------------------------------------------------
+// Stream factory
+// ---------------------------------------------------------------------------
+
+/**
+ * Construct an AssistantMessageEventStream using EventStream directly.
+ * (The class itself is only re-exported as a type from the @gsd/pi-ai barrel.)
+ */
+function createAssistantStream(): AssistantMessageEventStream {
+	return new EventStream<AssistantMessageEvent, AssistantMessage>(
+		(event) => event.type === "done" || event.type === "error",
+		(event) => {
+			if (event.type === "done") return event.message;
+			if (event.type === "error") return event.error;
+			throw new Error("Unexpected event type for final result");
+		},
+	) as AssistantMessageEventStream;
+}
+
+// ---------------------------------------------------------------------------
+// Claude binary resolution
+// ---------------------------------------------------------------------------
+
+let cachedClaudePath: string | null = null;
+
+export function getClaudeLookupCommand(platform: NodeJS.Platform = process.platform): string {
+	return platform === "win32" ? "where claude" : "which claude";
+}
+
+export function parseClaudeLookupOutput(output: Buffer | string): string {
+	return output
+		.toString()
+		.trim()
+		.split(/\r?\n/)[0] ?? "";
+}
+
+/**
+ * Resolve the path to the system-installed `claude` binary.
+ * The SDK defaults to a bundled cli.js which doesn't exist when
+ * installed as a library — we need to point it at the real CLI.
+ */
+function getClaudePath(): string {
+	if (cachedClaudePath) return cachedClaudePath;
+	try {
+		cachedClaudePath = parseClaudeLookupOutput(execSync(getClaudeLookupCommand(), { timeout: 5_000, stdio: "pipe" }));
+	} catch {
+		cachedClaudePath = "claude"; // fall back to PATH resolution
+	}
+	return cachedClaudePath;
+}
+
+// ---------------------------------------------------------------------------
+// Prompt construction
+// ---------------------------------------------------------------------------
+
+/**
+ * Extract text content from a single message regardless of content shape.
+ */
+function extractMessageText(msg: { role: string; content: unknown }): string {
+	if (typeof msg.content === "string") return msg.content;
+	if (Array.isArray(msg.content)) {
+		const textParts = msg.content
+			.filter((part: any) => part.type === "text")
+			.map((part: any) => part.text ?? part.thinking ?? "");
+		if (textParts.length > 0) return textParts.join("\n");
+	}
+	return "";
+}
+
+/**
+ * Build a full conversational prompt from GSD's context messages.
+ *
+ * Previous behaviour sent only the last user message, making every SDK
+ * call effectively stateless. This version serialises the complete
+ * conversation history (system prompt + all user/assistant turns) so
+ * Claude Code has full context for multi-turn continuity.
+ */
+export function buildPromptFromContext(context: Context): string {
+	const parts: string[] = [];
+
+	if (context.systemPrompt) {
+		parts.push(`[System]\n${context.systemPrompt}`);
+	}
+
+	for (const msg of context.messages) {
+		const text = extractMessageText(msg);
+		if (!text) continue;
+
+		const label = msg.role === "user" ? "User" : msg.role === "assistant" ? "Assistant" : "System";
+		parts.push(`[${label}]\n${text}`);
+	}
+
+	return parts.join("\n\n");
+}
+
+// ---------------------------------------------------------------------------
+// Error helper
+// ---------------------------------------------------------------------------
+
+function makeErrorMessage(model: string, errorMsg: string): AssistantMessage {
+	return {
+		role: "assistant",
+		content: [{ type: "text", text: `Claude Code error: ${errorMsg}` }],
+		api: "anthropic-messages",
+		provider: "claude-code",
+		model,
+		usage: { ...ZERO_USAGE },
+		stopReason: "error",
+		errorMessage: errorMsg,
+		timestamp: Date.now(),
+	};
+}
+
+/**
+ * Generator exhaustion without a terminal result means the SDK stream was
+ * interrupted mid-turn. Surface it as an error so downstream recovery logic
+ * can classify and retry it instead of treating it as a clean completion.
+ */
+export function makeStreamExhaustedErrorMessage(model: string, lastTextContent: string): AssistantMessage {
+	const errorMsg = "stream_exhausted_without_result";
+	const message = makeErrorMessage(model, errorMsg);
+	if (lastTextContent) {
+		message.content = [{ type: "text", text: lastTextContent }];
+	}
+	return message;
+}
+
+/**
+ * Claude Code executes its own internal tool loop inside the SDK call. The
+ * streamed and final assistant messages should therefore contain only
+ * user-facing content (text/thinking), not replayable tool blocks that GSD
+ * would render again.
+ */
+function isUserFacingClaudeCodeBlock(block: AssistantMessage["content"][number]): boolean {
+	return block.type === "text" || block.type === "thinking";
+}
+
+function filterUserFacingClaudeCodeContent(
+	blocks: AssistantMessage["content"],
+): AssistantMessage["content"] {
+	return blocks.filter(isUserFacingClaudeCodeBlock);
+}
+
+function remapClaudeCodeContentIndex(
+	blocks: AssistantMessage["content"],
+	contentIndex: number,
+): number {
+	let visibleCount = 0;
+	for (let i = 0; i <= contentIndex && i < blocks.length; i++) {
+		if (isUserFacingClaudeCodeBlock(blocks[i]!)) visibleCount++;
+	}
+	return Math.max(0, visibleCount - 1);
+}
+
+function sanitizeClaudeCodePartial(
+	partial: AssistantMessage,
+): AssistantMessage {
+	return {
+		...partial,
+		content: filterUserFacingClaudeCodeContent(partial.content),
+	};
+}
+
+export function sanitizeClaudeCodeStreamingEvent(
+	event: AssistantMessageEvent,
+): AssistantMessageEvent | null {
+	switch (event.type) {
+		case "toolcall_start":
+		case "toolcall_delta":
+		case "toolcall_end":
+		case "server_tool_use":
+		case "web_search_result":
+			return null;
+		case "text_start":
+		case "text_delta":
+		case "text_end":
+		case "thinking_start":
+		case "thinking_delta":
+		case "thinking_end":
+			return {
+				...event,
+				contentIndex: remapClaudeCodeContentIndex(event.partial.content, event.contentIndex),
+				partial: sanitizeClaudeCodePartial(event.partial),
+			};
+		default:
+			return event;
+	}
+}
+
+export function buildFinalClaudeCodeContent(
+	blocks: AssistantMessage["content"],
+	lastThinkingContent: string,
+	lastTextContent: string,
+	resultText?: string,
+): AssistantMessage["content"] {
+	const finalContent = filterUserFacingClaudeCodeContent(blocks);
+	if (finalContent.length > 0) return finalContent;
+
+	if (lastThinkingContent) {
+		finalContent.push({ type: "thinking", thinking: lastThinkingContent });
+	}
+	if (lastTextContent) {
+		finalContent.push({ type: "text", text: lastTextContent });
+	}
+	if (finalContent.length === 0 && resultText) {
+		finalContent.push({ type: "text", text: resultText });
+	}
+	return finalContent;
+}
+
+// ---------------------------------------------------------------------------
+// SDK options builder
+// ---------------------------------------------------------------------------
+
+/**
+ * Build the options object passed to the Claude Agent SDK's `query()` call.
+ *
+ * Extracted for testability — callers can verify session persistence,
+ * beta flags, and other configuration without mocking the full SDK.
+ */
+export function buildSdkOptions(modelId: string, prompt: string): Record<string, unknown> {
+	return {
+		pathToClaudeCodeExecutable: getClaudePath(),
+		model: modelId,
+		includePartialMessages: true,
+		persistSession: true,
+		cwd: process.cwd(),
+		permissionMode: "bypassPermissions",
+		allowDangerouslySkipPermissions: true,
+		settingSources: ["project"],
+		systemPrompt: { type: "preset", preset: "claude_code" },
+		betas: modelId.includes("sonnet") ? ["context-1m-2025-08-07"] : [],
+	};
+}
+
+// ---------------------------------------------------------------------------
+// streamSimple implementation
+// ---------------------------------------------------------------------------
+
+/**
+ * GSD streamSimple function that delegates to the Claude Agent SDK.
+ *
+ * Emits AssistantMessageEvent deltas for real-time TUI rendering
+ * (thinking, text, tool calls). The final AssistantMessage has tool-call
+ * blocks stripped so the agent loop ends the turn without local dispatch.
+ */
+export function streamViaClaudeCode(
+	model: Model<any>,
+	context: Context,
+	options?: SimpleStreamOptions,
+): AssistantMessageEventStream {
+	const stream = createAssistantStream();
+
+	void pumpSdkMessages(model, context, options, stream);
+
+	return stream;
+}
+
+async function pumpSdkMessages(
+	model: Model<any>,
+	context: Context,
+	options: SimpleStreamOptions | undefined,
+	stream: AssistantMessageEventStream,
+): Promise<void> {
+	const modelId = model.id;
+	let builder: PartialMessageBuilder | null = null;
+	/** Track the last text content seen across all assistant turns for the final message. */
+	let lastTextContent = "";
+	let lastThinkingContent = "";
+
+	try {
+		// Dynamic import — the SDK is an optional dependency.
+		const sdkModule = "@anthropic-ai/claude-agent-sdk";
+		const sdk = (await import(/* webpackIgnore: true */ sdkModule)) as {
+			query: (args: {
+				prompt: string | AsyncIterable<unknown>;
+				options?: Record<string, unknown>;
+			}) => AsyncIterable<SDKMessage>;
+		};
+
+		// Bridge GSD's AbortSignal to SDK's AbortController
+		const controller = new AbortController();
+		if (options?.signal) {
+			options.signal.addEventListener("abort", () => controller.abort(), { once: true });
+		}
+
+		const prompt = buildPromptFromContext(context);
+		const sdkOpts = buildSdkOptions(modelId, prompt);
+
+		const queryResult = sdk.query({
+			prompt,
+			options: {
+				...sdkOpts,
+				abortController: controller,
+			},
+		});
+
+		// Emit start with an empty partial
+		const initialPartial: AssistantMessage = {
+			role: "assistant",
+			content: [],
+			api: "anthropic-messages",
+			provider: "claude-code",
+			model: modelId,
+			usage: { ...ZERO_USAGE },
+			stopReason: "stop",
+			timestamp: Date.now(),
+		};
+		stream.push({ type: "start", partial: initialPartial });
+
+		for await (const msg of queryResult as AsyncIterable<SDKMessage>) {
+			if (options?.signal?.aborted) break;
+
+			switch (msg.type) {
+				// -- Init --
+				case "system": {
+					// Nothing to emit — the stream is already started.
+					break;
+				}
+
+				// -- Streaming partial messages --
+				case "stream_event": {
+					const partial = msg as SDKPartialAssistantMessage;
+
+					const event = partial.event;
+
+					// New assistant turn starts with message_start
+					if (event.type === "message_start") {
+						builder = new PartialMessageBuilder(
+							(event as any).message?.model ?? modelId,
+						);
+						break;
+					}
+
+					if (!builder) break;
+
+					const assistantEvent = builder.handleEvent(event);
+					const sanitizedEvent = assistantEvent
+						? sanitizeClaudeCodeStreamingEvent(assistantEvent)
+						: null;
+					if (sanitizedEvent) stream.push(sanitizedEvent);
+					break;
+				}
+
+				// -- Complete assistant message (non-streaming fallback) --
+				case "assistant": {
+					const sdkAssistant = msg as SDKAssistantMessage;
+
+					// Capture text content from complete messages
+					for (const block of sdkAssistant.message.content) {
+						if (block.type === "text") {
+							lastTextContent = block.text;
+						} else if (block.type === "thinking") {
+							lastThinkingContent = block.thinking;
+						}
+					}
+					break;
+				}
+
+				// -- User message (synthetic tool result — signals turn boundary) --
+				case "user": {
+					// Capture content from the completed turn before resetting
+					if (builder) {
+						for (const block of builder.message.content) {
+							if (block.type === "text" && block.text) {
+								lastTextContent = block.text;
+							} else if (block.type === "thinking" && block.thinking) {
+								lastThinkingContent = block.thinking;
+							}
+						}
+					}
+					builder = null;
+					break;
+				}
+
+				// -- Result (terminal) --
+				case "result": {
+					const result = msg as SDKResultMessage;
+					const finalContent = buildFinalClaudeCodeContent(
+						builder?.message.content ?? [],
+						lastThinkingContent,
+						lastTextContent,
+						result.subtype === "success" ? result.result : undefined,
+					);
+
+					const finalMessage: AssistantMessage = {
+						role: "assistant",
+						content: finalContent,
+						api: "anthropic-messages",
+						provider: "claude-code",
+						model: modelId,
+						usage: mapUsage(result.usage, result.total_cost_usd),
+						stopReason: result.is_error ? "error" : "stop",
+						timestamp: Date.now(),
+					};
+
+					if (result.is_error) {
+						const errText =
+							"errors" in result
+								? (result as any).errors?.join("; ")
+								: result.subtype;
+						finalMessage.errorMessage = errText;
+						stream.push({ type: "error", reason: "error", error: finalMessage });
+					} else {
+						stream.push({ type: "done", reason: "stop", message: finalMessage });
+					}
+					return;
+				}
+
+				default:
+					break;
+			}
+		}
+
+		// Generator exhaustion without a terminal result is a stream interruption,
+		// not a successful completion. Emitting an error lets GSD classify it as a
+		// transient provider failure instead of advancing auto-mode state.
+		const fallback = makeStreamExhaustedErrorMessage(modelId, lastTextContent);
+		stream.push({ type: "error", reason: "error", error: fallback });
+	} catch (err) {
+		const errorMsg = err instanceof Error ? err.message : String(err);
+		stream.push({
+			type: "error",
+			reason: "error",
+			error: makeErrorMessage(modelId, errorMsg),
+		});
+	}
+}

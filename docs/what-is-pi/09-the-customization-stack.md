@@ -48,8 +48,8 @@ On-demand capability packages following the [Agent Skills standard](https://agen
 ```
 
 **Placement:**
-- `~/.gsd/agent/skills/` or `~/.agents/skills/` (global)
-- `.gsd/skills/` or `.agents/skills/` (project, searched up to git root)
+- `~/.agents/skills/` (global — shared across all agents)
+- `.agents/skills/` (project, searched up to git root)
 
 **Skill structure:**
 ```

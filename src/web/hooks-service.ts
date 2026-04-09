@@ -4,15 +4,11 @@ import { join } from "node:path"
 import { pathToFileURL } from "node:url"
 
 import { resolveBridgeRuntimeConfig } from "./bridge-service.ts"
-import { resolveTypeStrippingFlag } from "./ts-subprocess-flags.ts"
+import { resolveTypeStrippingFlag, resolveSubprocessModule, buildSubprocessPrefixArgs } from "./ts-subprocess-flags.ts"
 import type { HooksData } from "../../web/lib/remaining-command-types.ts"
 
 const HOOKS_MAX_BUFFER = 512 * 1024
 const HOOKS_MODULE_ENV = "GSD_HOOKS_MODULE"
-
-function resolveHooksModulePath(packageRoot: string): string {
-  return join(packageRoot, "src", "resources", "extensions", "gsd", "post-unit-hooks.ts")
-}
 
 function resolveTsLoaderPath(packageRoot: string): string {
   return join(packageRoot, "src", "resources", "extensions", "gsd", "tests", "resolve-ts.mjs")
@@ -29,16 +25,20 @@ export async function collectHooksData(projectCwdOverride?: string): Promise<Hoo
   const { packageRoot, projectCwd } = config
 
   const resolveTsLoader = resolveTsLoaderPath(packageRoot)
-  const hooksModulePath = resolveHooksModulePath(packageRoot)
+  const moduleResolution = resolveSubprocessModule(packageRoot, "resources/extensions/gsd/post-unit-hooks.ts")
+  const hooksModulePath = moduleResolution.modulePath
 
-  if (!existsSync(resolveTsLoader) || !existsSync(hooksModulePath)) {
+  if (!moduleResolution.useCompiledJs && (!existsSync(resolveTsLoader) || !existsSync(hooksModulePath))) {
     throw new Error(
       `hooks data provider not found; checked=${resolveTsLoader},${hooksModulePath}`,
     )
   }
+  if (moduleResolution.useCompiledJs && !existsSync(hooksModulePath)) {
+    throw new Error(`hooks data provider not found; checked=${hooksModulePath}`)
+  }
 
   // getHookStatus() internally calls resolvePostUnitHooks() and resolvePreDispatchHooks()
-  // from preferences.ts, which read from process.cwd()/.gsd/preferences.md.
+  // from preferences.ts, which read from process.cwd()/.gsd/PREFERENCES.md.
   // We set cwd to projectCwd so preferences resolution finds the right files.
   // In a cold child process, cycleCounts is empty, so activeCycles will be {}.
   const script = [
@@ -49,14 +49,13 @@ export async function collectHooksData(projectCwdOverride?: string): Promise<Hoo
     'process.stdout.write(JSON.stringify({ entries, formattedStatus }));',
   ].join(" ")
 
+  const prefixArgs = buildSubprocessPrefixArgs(packageRoot, moduleResolution, pathToFileURL(resolveTsLoader).href)
+
   return await new Promise<HooksData>((resolveResult, reject) => {
     execFile(
       process.execPath,
       [
-        "--import",
-        pathToFileURL(resolveTsLoader).href,
-        resolveTypeStrippingFlag(packageRoot),
-        "--input-type=module",
+        ...prefixArgs,
         "--eval",
         script,
       ],
@@ -67,6 +66,7 @@ export async function collectHooksData(projectCwdOverride?: string): Promise<Hoo
           [HOOKS_MODULE_ENV]: hooksModulePath,
         },
         maxBuffer: HOOKS_MAX_BUFFER,
+        windowsHide: true,
       },
       (error, stdout, stderr) => {
         if (error) {

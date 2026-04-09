@@ -165,10 +165,10 @@ export function buildCategorySummaries(prefs: Record<string, unknown>): Record<s
   const modeSummary = mode ?? "(not set)";
 
   // Models
-  const models = prefs.models as Record<string, string> | undefined;
+  const models = prefs.models as Record<string, unknown> | undefined;
   let modelsSummary = "(not configured)";
   if (models && Object.keys(models).length > 0) {
-    const parts = Object.entries(models).map(([phase, model]) => `${phase}: ${model}`);
+    const parts = Object.entries(models).map(([phase, model]) => `${phase}: ${formatConfiguredModel(model)}`);
     modelsSummary = parts.join(", ");
   }
 
@@ -184,11 +184,23 @@ export function buildCategorySummaries(prefs: Record<string, unknown>): Record<s
 
   // Git
   const git = prefs.git as Record<string, unknown> | undefined;
+  const staleThreshold = prefs.stale_commit_threshold_minutes;
+  const absorbSnapshots = git?.absorb_snapshot_commits;
   let gitSummary = "(defaults)";
-  if (git && Object.keys(git).length > 0) {
-    const branch = git.main_branch ?? "main";
-    const push = git.auto_push ? "on" : "off";
-    gitSummary = `main: ${branch}, push: ${push}`;
+  {
+    const parts: string[] = [];
+    if (git && Object.keys(git).length > 0) {
+      const branch = git.main_branch ?? "main";
+      const push = git.auto_push ? "on" : "off";
+      parts.push(`main: ${branch}, push: ${push}`);
+    }
+    if (staleThreshold !== undefined) {
+      parts.push(`stale: ${staleThreshold === 0 ? "off" : `${staleThreshold}m`}`);
+    }
+    if (absorbSnapshots !== undefined) {
+      parts.push(`absorb: ${absorbSnapshots ? "on" : "off"}`);
+    }
+    if (parts.length > 0) gitSummary = parts.join(", ");
   }
 
   // Skills
@@ -243,9 +255,38 @@ export function buildCategorySummaries(prefs: Record<string, unknown>): Record<s
 
 // ─── Category configuration functions ────────────────────────────────────────
 
+export function formatConfiguredModel(config: unknown): string {
+  if (typeof config === "string") return config;
+  if (!config || typeof config !== "object") return "(invalid)";
+  const maybeConfig = config as { model?: unknown; provider?: unknown };
+  if (typeof maybeConfig.model !== "string" || maybeConfig.model.trim() === "") return "(invalid)";
+  if (typeof maybeConfig.provider === "string" && maybeConfig.provider && !maybeConfig.model.includes("/")) {
+    return `${maybeConfig.provider}/${maybeConfig.model}`;
+  }
+  return maybeConfig.model;
+}
+
+export function toPersistedModelId(provider: string, modelId: string): string {
+  if (!provider.trim()) return modelId;
+  const normalizedProvider = provider.trim();
+  const normalizedModelId = modelId.trim();
+  return normalizedModelId.startsWith(`${normalizedProvider}/`)
+    ? normalizedModelId
+    : `${normalizedProvider}/${normalizedModelId}`;
+}
+
 async function configureModels(ctx: ExtensionCommandContext, prefs: Record<string, unknown>): Promise<void> {
-  const modelPhases = ["research", "planning", "execution", "completion"] as const;
-  const models: Record<string, string> = (prefs.models as Record<string, string>) ?? {};
+  const modelPhases = [
+    "research",
+    "planning",
+    "discuss",
+    "execution",
+    "execution_simple",
+    "completion",
+    "validation",
+    "subagent",
+  ] as const;
+  const models: Record<string, unknown> = (prefs.models as Record<string, unknown>) ?? {};
 
   const availableModels = ctx.modelRegistry.getAvailable();
   if (availableModels.length > 0) {
@@ -265,15 +306,22 @@ async function configureModels(ctx: ExtensionCommandContext, prefs: Record<strin
       group.sort((a, b) => a.id.localeCompare(b.id));
     }
 
-    // Build provider menu with model counts
+    // Display names for providers in the preferences wizard UI.
+    const PROVIDER_DISPLAY_NAMES: Record<string, string> = { anthropic: "anthropic-api" };
+    const displayName = (p: string) => PROVIDER_DISPLAY_NAMES[p] ?? p;
+
+    // Build provider menu with model counts (display name → real name lookup)
+    const displayToReal = new Map<string, string>();
     const providerOptions = providers.map(p => {
       const count = byProvider.get(p)!.length;
-      return `${p} (${count} models)`;
+      const label = `${displayName(p)} (${count} models)`;
+      displayToReal.set(label, p);
+      return label;
     });
     providerOptions.push("(keep current)", "(clear)", "(type manually)");
 
     for (const phase of modelPhases) {
-      const current = models[phase] ?? "";
+      const current = formatConfiguredModel(models[phase]);
       const phaseLabel = `Model for ${phase} phase${current ? ` (current: ${current})` : ""}`;
 
       // Step 1: pick provider
@@ -298,25 +346,25 @@ async function configureModels(ctx: ExtensionCommandContext, prefs: Record<strin
       }
 
       // Step 2: pick model within provider
-      const providerName = providerChoice.replace(/ \(\d+ models?\)$/, "");
+      const providerName = displayToReal.get(providerChoice) ?? providerChoice.replace(/ \(\d+ models?\)$/, "");
       const group = byProvider.get(providerName);
       if (!group) continue;
 
       const modelOptions = group.map(m => m.id);
       modelOptions.push("(keep current)", "(clear)");
 
-      const modelChoice = await ctx.ui.select(`${phaseLabel} — ${providerName}:`, modelOptions);
+      const modelChoice = await ctx.ui.select(`${phaseLabel} — ${displayName(providerName)}:`, modelOptions);
       if (modelChoice && typeof modelChoice === "string" && modelChoice !== "(keep current)") {
         if (modelChoice === "(clear)") {
           delete models[phase];
         } else {
-          models[phase] = modelChoice;
+          models[phase] = toPersistedModelId(providerName, modelChoice);
         }
       }
     }
   } else {
     for (const phase of modelPhases) {
-      const current = models[phase] ?? "";
+      const current = formatConfiguredModel(models[phase]);
       const input = await ctx.ui.input(
         `Model for ${phase} phase${current ? ` (current: ${current})` : ""}:`,
         current || "e.g. claude-sonnet-4-20250514",
@@ -333,6 +381,8 @@ async function configureModels(ctx: ExtensionCommandContext, prefs: Record<strin
   }
   if (Object.keys(models).length > 0) {
     prefs.models = models;
+  } else {
+    delete prefs.models;
   }
 }
 
@@ -390,7 +440,7 @@ async function configureGit(ctx: ExtensionCommandContext, prefs: Record<string, 
   const gitBooleanFields = [
     { key: "auto_push", label: "Auto-push commits after committing", defaultVal: false },
     { key: "push_branches", label: "Push milestone branches to remote", defaultVal: false },
-    { key: "snapshots", label: "Create WIP snapshot commits during long tasks", defaultVal: false },
+    { key: "snapshots", label: "Create WIP snapshot commits during long tasks", defaultVal: true },
   ] as const;
 
   for (const field of gitBooleanFields) {
@@ -423,7 +473,7 @@ async function configureGit(ctx: ExtensionCommandContext, prefs: Record<string, 
   // pre_merge_check
   const currentPreMerge = git.pre_merge_check !== undefined ? String(git.pre_merge_check) : "";
   const preMergeChoice = await ctx.ui.select(
-    `Pre-merge check${currentPreMerge ? ` (current: ${currentPreMerge})` : " (default: false)"}:`,
+    `Pre-merge check${currentPreMerge ? ` (current: ${currentPreMerge})` : " (default: auto)"}:`,
     ["true", "false", "auto", "(keep current)"],
   );
   if (preMergeChoice && preMergeChoice !== "(keep current)") {
@@ -469,8 +519,38 @@ async function configureGit(ctx: ExtensionCommandContext, prefs: Record<string, 
     git.isolation = isolationChoice;
   }
 
+  // absorb_snapshot_commits (git sub-key)
+  const currentAbsorb = git.absorb_snapshot_commits;
+  const absorbStr = currentAbsorb !== undefined ? String(currentAbsorb) : "";
+  const absorbChoice = await ctx.ui.select(
+    `Absorb snapshot commits into real commits${absorbStr ? ` (current: ${absorbStr})` : " (default: true)"}:`,
+    ["true", "false", "(keep current)"],
+  );
+  if (absorbChoice && absorbChoice !== "(keep current)") {
+    git.absorb_snapshot_commits = absorbChoice === "true";
+  }
+
   if (Object.keys(git).length > 0) {
     prefs.git = git;
+  }
+
+  // stale_commit_threshold_minutes (top-level pref, shown in Git section)
+  const currentThreshold = prefs.stale_commit_threshold_minutes;
+  const thresholdStr = currentThreshold !== undefined ? String(currentThreshold) : "";
+  const thresholdInput = await ctx.ui.input(
+    `Stale commit threshold (minutes, 0 to disable)${thresholdStr ? ` (current: ${thresholdStr})` : " (default: 30)"}:`,
+    thresholdStr || "30",
+  );
+  if (thresholdInput !== null && thresholdInput !== undefined) {
+    const val = thresholdInput.trim();
+    const parsed = tryParseInteger(val);
+    if (val && parsed !== null && parsed >= 0) {
+      prefs.stale_commit_threshold_minutes = parsed;
+    } else if (val && parsed === null) {
+      ctx.ui.notify(`Invalid value "${val}" — must be a whole number. Keeping previous value.`, "warning");
+    } else if (!val && currentThreshold !== undefined) {
+      delete prefs.stale_commit_threshold_minutes;
+    }
   }
 }
 
@@ -588,7 +668,7 @@ export async function configureMode(ctx: ExtensionCommandContext, prefs: Record<
     if (modeStr.startsWith("solo")) {
       prefs.mode = "solo";
       ctx.ui.notify(
-        "Mode: solo — defaults: auto_push=true, push_branches=false, pre_merge_check=false, merge_strategy=squash, isolation=worktree, unique_milestone_ids=false",
+        "Mode: solo — defaults: auto_push=true, push_branches=false, pre_merge_check=auto, merge_strategy=squash, isolation=worktree, unique_milestone_ids=false",
         "info",
       );
     } else if (modeStr.startsWith("team")) {
@@ -771,7 +851,7 @@ export async function ensurePreferencesFile(
   scope: "global" | "project",
 ): Promise<void> {
   if (!existsSync(path)) {
-    const template = await loadFile(join(dirname(fileURLToPath(import.meta.url)), "templates", "preferences.md"));
+    const template = await loadFile(join(dirname(fileURLToPath(import.meta.url)), "templates", "PREFERENCES.md"));
     if (!template) {
       ctx.ui.notify("Could not load GSD preferences template.", "error");
       return;

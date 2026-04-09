@@ -42,6 +42,7 @@ export default function AsyncJobs(pi: ExtensionAPI) {
 
 		manager = new AsyncJobManager({
 			onJobComplete: (job) => {
+				if (job.awaited) return;
 				const statusEmoji = job.status === "completed" ? "done" : "error";
 				const elapsed = ((Date.now() - job.startTime) / 1000).toFixed(1);
 				const output = job.status === "completed"

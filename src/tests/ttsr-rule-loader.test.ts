@@ -33,23 +33,22 @@ function writeRule(dir: string, name: string, frontmatter: string, body: string)
 // Project-local rule loading
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('loads rule from project .gsd/rules/', () => {
+test('loads rule from project .gsd/rules/', (t) => {
 	const { cwd, projectDir, cleanup } = makeTmpProject()
-	try {
+ t.after(() => { cleanup() });
+
 		writeRule(projectDir, 'no-console', 'condition:\n  - "console\\.log"', 'Do not use console.log.')
 		const rules = loadRules(cwd)
 		const projectRule = rules.find(r => r.name === 'no-console')
 		assert.ok(projectRule)
 		assert.deepEqual(projectRule.condition, ['console\\.log'])
 		assert.equal(projectRule.content, 'Do not use console.log.')
-	} finally {
-		cleanup()
-	}
 })
 
-test('parses scope and globs from frontmatter', () => {
+test('parses scope and globs from frontmatter', (t) => {
 	const { cwd, projectDir, cleanup } = makeTmpProject()
-	try {
+ t.after(() => { cleanup() });
+
 		writeRule(
 			projectDir,
 			'scoped-rule',
@@ -61,69 +60,56 @@ test('parses scope and globs from frontmatter', () => {
 		assert.ok(rule)
 		assert.deepEqual(rule.scope, ['tool:edit', 'text'])
 		assert.deepEqual(rule.globs, ['*.ts'])
-	} finally {
-		cleanup()
-	}
 })
 
-test('skips files without valid frontmatter', () => {
+test('skips files without valid frontmatter', (t) => {
 	const { cwd, projectDir, cleanup } = makeTmpProject()
-	try {
+ t.after(() => { cleanup() });
+
 		mkdirSync(projectDir, { recursive: true })
 		writeFileSync(join(projectDir, 'broken.md'), 'No frontmatter here.')
 		const rules = loadRules(cwd)
 		assert.equal(rules.filter(r => r.name === 'broken').length, 0)
-	} finally {
-		cleanup()
-	}
 })
 
-test('skips rules with no condition', () => {
+test('skips rules with no condition', (t) => {
 	const { cwd, projectDir, cleanup } = makeTmpProject()
-	try {
+ t.after(() => { cleanup() });
+
 		writeRule(projectDir, 'no-condition', 'scope:\n  - "text"', 'Missing condition field.')
 		const rules = loadRules(cwd)
 		assert.equal(rules.filter(r => r.name === 'no-condition').length, 0)
-	} finally {
-		cleanup()
-	}
 })
 
-test('returns empty array when .gsd/rules/ does not exist', () => {
+test('returns empty array when .gsd/rules/ does not exist', (t) => {
 	const { cwd, cleanup } = makeTmpProject()
-	try {
+ t.after(() => { cleanup() });
+
 		// cwd exists but no .gsd/rules/ dir
 		const rules = loadRules(cwd)
 		// May include global rules from homedir — just verify no crash
 		assert.ok(Array.isArray(rules))
-	} finally {
-		cleanup()
-	}
 })
 
-test('loads multiple rules from same directory', () => {
+test('loads multiple rules from same directory', (t) => {
 	const { cwd, projectDir, cleanup } = makeTmpProject()
-	try {
+ t.after(() => { cleanup() });
+
 		writeRule(projectDir, 'rule-a', 'condition:\n  - "alpha"', 'Alpha rule.')
 		writeRule(projectDir, 'rule-b', 'condition:\n  - "beta"', 'Beta rule.')
 		const rules = loadRules(cwd)
 		const names = rules.map(r => r.name)
 		assert.ok(names.includes('rule-a'))
 		assert.ok(names.includes('rule-b'))
-	} finally {
-		cleanup()
-	}
 })
 
-test('handles quoted values in frontmatter', () => {
+test('handles quoted values in frontmatter', (t) => {
 	const { cwd, projectDir, cleanup } = makeTmpProject()
-	try {
+ t.after(() => { cleanup() });
+
 		writeRule(projectDir, 'quoted', 'condition:\n  - "console\\.log"\n  - \'debugger\'', 'Quoted values.')
 		const rules = loadRules(cwd)
 		const rule = rules.find(r => r.name === 'quoted')
 		assert.ok(rule)
 		assert.deepEqual(rule.condition, ['console\\.log', 'debugger'])
-	} finally {
-		cleanup()
-	}
 })

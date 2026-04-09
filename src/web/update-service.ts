@@ -73,6 +73,7 @@ export function triggerUpdate(targetVersion?: string): boolean {
     stdio: ["ignore", "ignore", "pipe"],
     // Detach so the child process is not killed if the parent exits
     detached: false,
+    windowsHide: true,
   })
 
   let stderr = ""

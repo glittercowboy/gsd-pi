@@ -68,6 +68,7 @@ export type {
 	Extension,
 	ExtensionActions,
 	ExtensionAPI,
+	ExtensionManifest,
 	ExtensionCommandContext,
 	ExtensionCommandContextActions,
 	ExtensionContext,
@@ -94,6 +95,11 @@ export type {
 	MessageRenderOptions,
 	ProviderConfig,
 	ProviderModelConfig,
+	LifecycleHookContext,
+	LifecycleHookHandler,
+	LifecycleHookMap,
+	LifecycleHookPhase,
+	LifecycleHookScope,
 	ReadToolCallEvent,
 	RegisteredCommand,
 	RegisteredTool,
@@ -114,12 +120,16 @@ export type {
 	ToolCallEvent,
 	ToolDefinition,
 	ToolInfo,
+	SortResult,
+	SortWarning,
 	ToolRenderResultOptions,
 	ToolResultEvent,
 	TurnEndEvent,
 	TurnStartEvent,
 	UserBashEvent,
 	UserBashEventResult,
+	BashTransformEvent,
+	BashTransformEventResult,
 	WidgetPlacement,
 	WriteToolCallEvent,
 } from "./core/extensions/index.js";
@@ -130,6 +140,9 @@ export {
 	importExtensionModule,
 	isToolCallEventType,
 	isToolResultEventType,
+	readManifest,
+	readManifestFromEntryPath,
+	sortExtensionPaths,
 	wrapRegisteredTool,
 	wrapRegisteredTools,
 	wrapToolsWithExtensions,
@@ -152,6 +165,8 @@ export type {
 	ResolvedResource,
 } from "./core/package-manager.js";
 export { DefaultPackageManager } from "./core/package-manager.js";
+export type { PackageCommand, PackageCommandOptions, PackageCommandRunnerOptions, PackageCommandRunnerResult } from "./core/package-commands.js";
+export { getPackageCommandUsage, parsePackageCommand, runPackageCommand } from "./core/package-commands.js";
 export type { ResourceCollision, ResourceDiagnostic, ResourceLoader } from "./core/resource-loader.js";
 export { DefaultResourceLoader } from "./core/resource-loader.js";
 // SDK for programmatic usage
@@ -210,8 +225,15 @@ export {
 	SettingsManager,
 	type TaskIsolationSettings,
 } from "./core/settings-manager.js";
+export {
+	SAFE_COMMAND_PREFIXES,
+	setAllowedCommandPrefixes,
+	getAllowedCommandPrefixes,
+} from "./core/resolve-config-value.js";
 // Skills
 export {
+	ECOSYSTEM_SKILLS_DIR,
+	ECOSYSTEM_PROJECT_SKILLS_DIR,
 	formatSkillsForPrompt,
 	getLoadedSkills,
 	type LoadSkillsFromDirOptions,
@@ -303,8 +325,11 @@ export {
 	type RpcClientOptions,
 	type RpcEventListener,
 	type RpcCommand,
+	type RpcInitResult,
+	type RpcProtocolVersion,
 	type RpcResponse,
 	type RpcSessionState,
+	type RpcV2Event,
 } from "./modes/index.js";
 // RPC JSONL utilities
 export { attachJsonlLineReader, serializeJsonLine } from "./modes/rpc/jsonl.js";

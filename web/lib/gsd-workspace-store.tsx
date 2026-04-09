@@ -66,7 +66,7 @@ import type {
 } from "./session-browser-contract"
 import { authFetch, appendAuthParam } from "./auth"
 
-export type WorkspaceStatus = "idle" | "loading" | "ready" | "error"
+export type WorkspaceStatus = "idle" | "loading" | "ready" | "error" | "unauthenticated"
 export type WorkspaceConnectionState =
   | "idle"
   | "connecting"
@@ -125,37 +125,7 @@ export interface BridgeRuntimeSnapshot {
   lastError: BridgeLastError | null
 }
 
-export interface WorkspaceTaskTarget {
-  id: string
-  title: string
-  done: boolean
-  planPath?: string
-  summaryPath?: string
-}
-
-export type RiskLevel = "low" | "medium" | "high"
-
-export interface WorkspaceSliceTarget {
-  id: string
-  title: string
-  done: boolean
-  planPath?: string
-  summaryPath?: string
-  uatPath?: string
-  tasksDir?: string
-  branch?: string
-  risk?: RiskLevel
-  depends?: string[]
-  demo?: string
-  tasks: WorkspaceTaskTarget[]
-}
-
-export interface WorkspaceMilestoneTarget {
-  id: string
-  title: string
-  roadmapPath?: string
-  slices: WorkspaceSliceTarget[]
-}
+export type { WorkspaceTaskTarget, RiskLevel, WorkspaceSliceTarget, WorkspaceMilestoneTarget } from "./workspace-types.js"
 
 export interface WorkspaceScopeTarget {
   scope: string
@@ -180,6 +150,17 @@ export interface WorkspaceIndex {
   validationIssues: WorkspaceValidationIssue[]
 }
 
+export interface RtkSessionSavings {
+  commands: number
+  inputTokens: number
+  outputTokens: number
+  savedTokens: number
+  savingsPct: number
+  totalTimeMs: number
+  avgTimeMs: number
+  updatedAt: string
+}
+
 export interface AutoDashboardData {
   active: boolean
   paused: boolean
@@ -191,6 +172,9 @@ export interface AutoDashboardData {
   basePath: string
   totalCost: number
   totalTokens: number
+  rtkSavings?: RtkSessionSavings | null
+  /** Whether RTK is enabled via experimental.rtk preference. False when not opted in. */
+  rtkEnabled?: boolean
 }
 
 export interface BootResumableSession {
@@ -300,6 +284,7 @@ export interface ProjectDetectionSignals {
   hasPlanningFolder: boolean
   hasGitRepo: boolean
   hasPackageJson: boolean
+  isMonorepo?: boolean
   fileCount: number
 }
 
@@ -334,6 +319,7 @@ export type LiveStateInvalidationDomain = "auto" | "workspace" | "recovery" | "r
 export type LiveStateInvalidationSource = "bridge_event" | "rpc_command" | "session_manage"
 export type LiveStateInvalidationReason =
   | "agent_end"
+  | "turn_end"
   | "auto_retry_start"
   | "auto_retry_end"
   | "auto_compaction_start"
@@ -454,6 +440,10 @@ export type WorkspaceEvent =
   | AgentEndEvent
   | TurnEndEvent
   | ({ type: Exclude<string, "bridge_status" | "live_state_invalidation" | "extension_ui_request" | "extension_error" | "message_update" | "tool_execution_start" | "tool_execution_end" | "agent_end" | "turn_end">; [key: string]: unknown } & Record<string, unknown>)
+
+export function isWorkspaceEvent(value: unknown): value is WorkspaceEvent {
+  return value !== null && typeof value === "object" && typeof (value as Record<string, unknown>).type === "string"
+}
 
 export interface WorkspaceCommandResponse {
   type: "response"
@@ -4121,6 +4111,13 @@ export class GSDWorkspaceStore {
         })
 
         if (!response.ok) {
+          if (response.status === 401) {
+            this.patchState({
+              bootStatus: "unauthenticated",
+              connectionState: "error",
+            })
+            return
+          }
           throw new Error(`Boot request failed with ${response.status}`)
         }
 
@@ -4844,8 +4841,15 @@ export class GSDWorkspaceStore {
 
     stream.onmessage = (message) => {
       try {
-        const payload = JSON.parse(message.data) as WorkspaceEvent
-        this.handleEvent(payload)
+        const parsed: unknown = JSON.parse(message.data)
+        if (!isWorkspaceEvent(parsed)) {
+          this.patchState({
+            lastClientError: "Malformed event received from stream",
+            terminalLines: withTerminalLine(this.state.terminalLines, createTerminalLine("error", "Malformed event received from stream")),
+          })
+          return
+        }
+        this.handleEvent(parsed)
       } catch (error) {
         const text = normalizeClientError(error)
         this.patchState({
@@ -4922,6 +4926,15 @@ export class GSDWorkspaceStore {
         break
       case "tool_execution_end":
         this.handleToolExecutionEnd(event as ToolExecutionEndEvent)
+        break
+      case "bridge_status":
+        // Handled upstream in handleEvent with early return — never reaches here
+        break
+      case "live_state_invalidation":
+        // Handled upstream in handleEvent via handleLiveStateInvalidation — no live interaction state update needed
+        break
+      case "extension_error":
+        // Terminal line produced by summarizeEvent — no live interaction state update needed
         break
     }
   }
@@ -5039,10 +5052,16 @@ export class GSDWorkspaceStore {
       const nextThinking = [...this.state.liveThinkingTranscript, ""]
       const nextSegments = [...this.state.completedTurnSegments, finalSegments]
       const overflow = nextTranscript.length > MAX_TRANSCRIPT_BLOCKS ? nextTranscript.length - MAX_TRANSCRIPT_BLOCKS : 0
+      // When overflow trims the front of parallel arrays, also trim
+      // chatUserMessages to keep index-based interleaving aligned (#2707).
+      const trimmedUserMsgs = overflow > 0
+        ? this.state.chatUserMessages.slice(overflow)
+        : undefined
       this.patchState({
         liveTranscript: overflow > 0 ? nextTranscript.slice(overflow) : nextTranscript,
         liveThinkingTranscript: overflow > 0 ? nextThinking.slice(overflow) : nextThinking,
         completedTurnSegments: overflow > 0 ? nextSegments.slice(overflow) : nextSegments,
+        ...(trimmedUserMsgs !== undefined ? { chatUserMessages: trimmedUserMsgs } : {}),
         streamingAssistantText: "",
         streamingThinkingText: "",
         currentTurnSegments: [],

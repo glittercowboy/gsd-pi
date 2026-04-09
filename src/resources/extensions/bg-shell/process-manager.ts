@@ -8,6 +8,7 @@ import { randomUUID } from "node:crypto";
 import { writeFileSync, readFileSync, existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { getShellConfig, sanitizeCommand } from "@gsd/pi-coding-agent";
+import { rewriteCommandWithRtk } from "../shared/rtk.js";
 import type {
 	BgProcess,
 	BgProcessInfo,
@@ -31,6 +32,8 @@ export const processes = new Map<string, BgProcess>();
 
 /** Pending alerts to inject into the next agent context */
 export let pendingAlerts: string[] = [];
+
+const MAX_PENDING_ALERTS = 50;
 
 /** Replace the pendingAlerts array (used by the extension entry point) */
 export function setPendingAlerts(alerts: string[]): void {
@@ -57,8 +60,12 @@ export function addEvent(bg: BgProcess, event: Omit<ProcessEvent, "timestamp">):
 	}
 }
 
-export function pushAlert(bg: BgProcess, message: string): void {
-	pendingAlerts.push(`[bg:${bg.id} ${bg.label}] ${message}`);
+export function pushAlert(bg: BgProcess | null, message: string): void {
+	const prefix = bg ? `[bg:${bg.id} ${bg.label}] ` : "";
+	pendingAlerts.push(`${prefix}${message}`);
+	if (pendingAlerts.length > MAX_PENDING_ALERTS) {
+		pendingAlerts.splice(0, pendingAlerts.length - MAX_PENDING_ALERTS);
+	}
 }
 
 export function getInfo(p: BgProcess): BgProcessInfo {
@@ -127,7 +134,9 @@ export function startProcess(opts: StartOptions): BgProcess {
 
 	const { shell, args: shellArgs } = getShellConfig();
 	// Shell sessions default to the user's shell if no command specified
-	const command = processType === "shell" && !opts.command ? shell : opts.command;
+	const command = processType === "shell" && !opts.command
+		? shell
+		: rewriteCommandWithRtk(opts.command);
 	const proc = spawn(shell, [...shellArgs, sanitizeCommand(command)], {
 		cwd: opts.cwd,
 		stdio: ["pipe", "pipe", "pipe"],

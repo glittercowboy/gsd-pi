@@ -7,6 +7,7 @@ import { cn } from "@/lib/utils"
 import { validateImageFile } from "@/lib/image-utils"
 import { buildProjectAbsoluteUrl, buildProjectPath } from "@/lib/project-url"
 import { authFetch, appendAuthParam } from "@/lib/auth"
+import { getXtermOptions, getXtermTheme } from "@/lib/xterm-theme"
 import "@xterm/xterm/css/xterm.css"
 
 type XTerminal = import("@xterm/xterm").Terminal
@@ -22,75 +23,6 @@ const MIN_INITIAL_ATTACH_WIDTH = 180
 const MIN_INITIAL_ATTACH_HEIGHT = 120
 const MIN_INITIAL_ATTACH_COLS = 20
 const MIN_INITIAL_ATTACH_ROWS = 8
-
-const XTERM_DARK_THEME = {
-  background: "#0a0a0a",
-  foreground: "#e4e4e7",
-  cursor: "#e4e4e7",
-  cursorAccent: "#0a0a0a",
-  selectionBackground: "#27272a",
-  selectionForeground: "#e4e4e7",
-  black: "#18181b",
-  red: "#ef4444",
-  green: "#22c55e",
-  yellow: "#eab308",
-  blue: "#3b82f6",
-  magenta: "#a855f7",
-  cyan: "#06b6d4",
-  white: "#e4e4e7",
-  brightBlack: "#52525b",
-  brightRed: "#f87171",
-  brightGreen: "#4ade80",
-  brightYellow: "#facc15",
-  brightBlue: "#60a5fa",
-  brightMagenta: "#c084fc",
-  brightCyan: "#22d3ee",
-  brightWhite: "#fafafa",
-} as const
-
-const XTERM_LIGHT_THEME = {
-  background: "#f5f5f5",
-  foreground: "#1a1a1a",
-  cursor: "#1a1a1a",
-  cursorAccent: "#f5f5f5",
-  selectionBackground: "#d4d4d8",
-  selectionForeground: "#1a1a1a",
-  black: "#1a1a1a",
-  red: "#dc2626",
-  green: "#16a34a",
-  yellow: "#ca8a04",
-  blue: "#2563eb",
-  magenta: "#9333ea",
-  cyan: "#0891b2",
-  white: "#e4e4e7",
-  brightBlack: "#71717a",
-  brightRed: "#ef4444",
-  brightGreen: "#22c55e",
-  brightYellow: "#eab308",
-  brightBlue: "#3b82f6",
-  brightMagenta: "#a855f7",
-  brightCyan: "#06b6d4",
-  brightWhite: "#fafafa",
-} as const
-
-function getXtermTheme(isDark: boolean) {
-  return isDark ? XTERM_DARK_THEME : XTERM_LIGHT_THEME
-}
-
-function getXtermOptions(isDark: boolean, fontSize?: number) {
-  return {
-    cursorBlink: true,
-    cursorStyle: "bar" as const,
-    fontSize: fontSize ?? 13,
-    fontFamily: "'SF Mono', 'Cascadia Code', 'Fira Code', Menlo, Monaco, 'Courier New', monospace",
-    lineHeight: 1.35,
-    letterSpacing: 0,
-    theme: getXtermTheme(isDark),
-    allowProposedApi: true,
-    scrollback: 10000,
-    convertEol: false,
-  }
-}
 
 function getAttachableTerminalSize(container: HTMLDivElement | null, terminal: XTerminal | null): { cols: number; rows: number } | null {
   if (!container || !terminal) return null
@@ -451,7 +383,7 @@ export function MainSessionTerminal({ className, fontSize, projectCwd }: MainSes
       )}
       {/* Drop overlay */}
       {isDragOver && (
-        <div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-2 bg-background/80 backdrop-blur-sm border-2 border-dashed border-primary rounded-md pointer-events-none">
+        <div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-2 bg-background backdrop-blur-sm border-2 border-dashed border-primary rounded-md pointer-events-none">
           <ImagePlus className="h-8 w-8 text-primary" />
           <span className="text-sm font-medium text-primary">Drop image here</span>
         </div>

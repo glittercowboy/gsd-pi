@@ -72,7 +72,7 @@ function makeMockDeps(
     getCurrentBranch: () => "main",
     autoWorktreeBranch: () => "auto/M001",
     resolveMilestoneFile: () => null,
-    reconcileMergeState: () => false,
+    reconcileMergeState: () => "clean",
     getLedger: () => ({ units: [] }),
     getProjectTotals: () => ({ cost: 0 }),
     formatCost: (c: number) => `$${c.toFixed(2)}`,
@@ -91,18 +91,13 @@ function makeMockDeps(
     runPreDispatchHooks: () => ({ firedHooks: [], action: "proceed" }),
     getPriorSliceCompletionBlocker: () => null,
     getMainBranch: () => "main",
-    collectObservabilityWarnings: async () => [],
-    buildObservabilityRepairBlock: () => null,
     closeoutUnit: async () => {},
-    verifyExpectedArtifact: () => true,
-    clearUnitRuntimeRecord: () => {},
-    writeUnitRuntimeRecord: () => {},
     recordOutcome: () => {},
     writeLock: () => {},
     captureAvailableSkills: () => {},
     ensurePreconditions: () => {},
     updateSliceProgressCache: () => {},
-    selectAndApplyModel: async () => ({ routing: null }),
+    selectAndApplyModel: async () => ({ routing: null, appliedModel: null }),
     startUnitSupervision: () => {},
     getDeepDiagnostic: () => null,
     isDbAvailable: () => false,
@@ -221,7 +216,7 @@ test("runDispatch emits dispatch-match with correct rule and flowId", async () =
     mid: "M001",
     midTitle: "Test Milestone",
   };
-  const loopState: LoopState = { recentUnits: [], stuckRecoveryAttempts: 0 };
+  const loopState: LoopState = { recentUnits: [], stuckRecoveryAttempts: 0, consecutiveFinalizeTimeouts: 0 };
 
   const result = await runDispatch(ic, preData, loopState);
 
@@ -253,7 +248,7 @@ test("runDispatch emits dispatch-stop when dispatch returns stop action", async 
     mid: "M001",
     midTitle: "Test",
   };
-  const loopState: LoopState = { recentUnits: [], stuckRecoveryAttempts: 0 };
+  const loopState: LoopState = { recentUnits: [], stuckRecoveryAttempts: 0, consecutiveFinalizeTimeouts: 0 };
 
   const result = await runDispatch(ic, preData, loopState);
   assert.equal(result.action, "break");
@@ -263,6 +258,62 @@ test("runDispatch emits dispatch-stop when dispatch returns stop action", async 
   assert.equal(stopEvents[0].rule, "<no-match>");
   assert.equal((stopEvents[0].data as any).reason, "no eligible units");
   assert.equal(stopEvents[0].flowId, ic.flowId);
+});
+
+test("runDispatch checks prior-slice completion against the project root in worktree mode", async () => {
+  const capture = createEventCapture();
+  const guardCalls: Array<{ fn: string; args: unknown[] }> = [];
+  const deps = makeMockDeps(capture, {
+    getMainBranch: (basePath: string) => {
+      guardCalls.push({ fn: "getMainBranch", args: [basePath] });
+      return "main";
+    },
+    getPriorSliceCompletionBlocker: (
+      basePath: string,
+      mainBranch: string,
+      unitType: string,
+      unitId: string,
+    ) => {
+      guardCalls.push({
+        fn: "getPriorSliceCompletionBlocker",
+        args: [basePath, mainBranch, unitType, unitId],
+      });
+      return null;
+    },
+  });
+  const ic = makeIC(deps, {
+    s: {
+      ...makeSession(),
+      basePath: "/tmp/project/.gsd/worktrees/M029-xoklo9",
+      originalBasePath: "/tmp/project",
+    } as any,
+  });
+  const preData: PreDispatchData = {
+    state: {
+      phase: "executing",
+      activeMilestone: { id: "M029-xoklo9", title: "Test", status: "active" },
+      activeSlice: { id: "S01", title: "Slice 1" },
+      registry: [{ id: "M029-xoklo9", status: "active" }],
+      blockers: [],
+    } as any,
+    mid: "M029-xoklo9",
+    midTitle: "Test Milestone",
+  };
+
+  const result = await runDispatch(ic, preData, {
+    recentUnits: [],
+    stuckRecoveryAttempts: 0,
+    consecutiveFinalizeTimeouts: 0,
+  });
+
+  assert.equal(result.action, "next");
+  assert.deepEqual(guardCalls, [
+    { fn: "getMainBranch", args: ["/tmp/project"] },
+    {
+      fn: "getPriorSliceCompletionBlocker",
+      args: ["/tmp/project", "main", "execute-task", "M001/S01/T01"],
+    },
+  ]);
 });
 
 test("runUnitPhase emits unit-start and unit-end with causedBy reference", async () => {
@@ -287,14 +338,13 @@ test("runUnitPhase emits unit-start and unit-end with causedBy reference", async
     prompt: "do stuff",
     finalPrompt: "do stuff",
     pauseAfterUatDispatch: false,
-    observabilityIssues: [],
     state: { phase: "executing", activeMilestone: { id: "M001" }, activeSlice: { id: "S01" }, registry: [], blockers: [] } as any,
     mid: "M001",
     midTitle: "Test",
     isRetry: false,
     previousTier: undefined,
   };
-  const loopState: LoopState = { recentUnits: [{ key: "execute-task/M001/S01/T01" }], stuckRecoveryAttempts: 0 };
+  const loopState: LoopState = { recentUnits: [{ key: "execute-task/M001/S01/T01" }], stuckRecoveryAttempts: 0, consecutiveFinalizeTimeouts: 0 };
 
   // Start runUnitPhase (it will block on runUnit internally)
   const unitPromise = runUnitPhase(ic, iterData, loopState);
@@ -351,7 +401,7 @@ test("all events from a mock iteration have monotonically increasing seq and sam
     mid: "M001",
     midTitle: "Test",
   };
-  const loopState: LoopState = { recentUnits: [], stuckRecoveryAttempts: 0 };
+  const loopState: LoopState = { recentUnits: [], stuckRecoveryAttempts: 0, consecutiveFinalizeTimeouts: 0 };
   const dispatchResult = await runDispatch(ic, preData, loopState);
   assert.equal(dispatchResult.action, "next");
 
@@ -397,7 +447,7 @@ test("dispatch-match events include matchedRule field matching the rule name", a
     midTitle: "Test",
   };
 
-  await runDispatch(ic, preData, { recentUnits: [], stuckRecoveryAttempts: 0 });
+  await runDispatch(ic, preData, { recentUnits: [], stuckRecoveryAttempts: 0, consecutiveFinalizeTimeouts: 0 });
 
   const matchEvents = capture.events.filter(e => e.eventType === "dispatch-match");
   assert.equal(matchEvents.length, 1);
@@ -426,7 +476,7 @@ test("pre-dispatch-hook event is emitted when hooks fire", async () => {
     midTitle: "Test",
   };
 
-  await runDispatch(ic, preData, { recentUnits: [], stuckRecoveryAttempts: 0 });
+  await runDispatch(ic, preData, { recentUnits: [], stuckRecoveryAttempts: 0, consecutiveFinalizeTimeouts: 0 });
 
   const hookEvents = capture.events.filter(e => e.eventType === "pre-dispatch-hook");
   assert.equal(hookEvents.length, 1, "should emit one pre-dispatch-hook event");
@@ -448,7 +498,7 @@ test("terminal event is emitted on milestone-complete", async () => {
     }) as any,
   });
   const ic = makeIC(deps);
-  const loopState: LoopState = { recentUnits: [], stuckRecoveryAttempts: 0 };
+  const loopState: LoopState = { recentUnits: [], stuckRecoveryAttempts: 0, consecutiveFinalizeTimeouts: 0 };
 
   const result = await runPreDispatch(ic, loopState);
   assert.equal(result.action, "break");
@@ -472,7 +522,7 @@ test("terminal event is emitted on blocked state", async () => {
     }) as any,
   });
   const ic = makeIC(deps);
-  const loopState: LoopState = { recentUnits: [], stuckRecoveryAttempts: 0 };
+  const loopState: LoopState = { recentUnits: [], stuckRecoveryAttempts: 0, consecutiveFinalizeTimeouts: 0 };
 
   const result = await runPreDispatch(ic, loopState);
   assert.equal(result.action, "break");
@@ -501,7 +551,7 @@ test("milestone-transition event is emitted when milestone changes", async () =>
   const ic = makeIC(deps);
   // Session says current milestone is M001, but state will return M002
   ic.s.currentMilestoneId = "M001";
-  const loopState: LoopState = { recentUnits: [], stuckRecoveryAttempts: 0 };
+  const loopState: LoopState = { recentUnits: [], stuckRecoveryAttempts: 0, consecutiveFinalizeTimeouts: 0 };
 
   await runPreDispatch(ic, loopState);
 
@@ -510,4 +560,43 @@ test("milestone-transition event is emitted when milestone changes", async () =>
   assert.equal((transitionEvents[0].data as any).from, "M001");
   assert.equal((transitionEvents[0].data as any).to, "M002");
   assert.equal(transitionEvents[0].flowId, ic.flowId);
+});
+
+test("unit-end event contains errorContext when unit is cancelled with structured error", async () => {
+  const capture = createEventCapture();
+  const { resolveAgentEndCancelled, _resetPendingResolve } = await import("../auto-loop.js");
+  _resetPendingResolve();
+
+  const deps = makeMockDeps(capture);
+  const ic = makeIC(deps);
+  const iterData: IterationData = {
+    unitType: "execute-task",
+    unitId: "M001/S01/T01",
+    prompt: "do stuff",
+    finalPrompt: "do stuff",
+    pauseAfterUatDispatch: false,
+    state: { phase: "executing", activeMilestone: { id: "M001" }, activeSlice: { id: "S01" }, registry: [], blockers: [] } as any,
+    mid: "M001",
+    midTitle: "Test",
+    isRetry: false,
+    previousTier: undefined,
+  };
+  const loopState: LoopState = { recentUnits: [{ key: "execute-task/M001/S01/T01" }], stuckRecoveryAttempts: 0, consecutiveFinalizeTimeouts: 0 };
+
+  const unitPromise = runUnitPhase(ic, iterData, loopState);
+  await new Promise(r => setTimeout(r, 50));
+
+  // Resolve with errorContext (simulates a timeout cancel)
+  resolveAgentEndCancelled({ message: "Hard timeout error: exceeded limit", category: "timeout", isTransient: true });
+
+  const result = await unitPromise;
+  // Transient timeout cancellations pause (recoverable) instead of hard-stopping
+  assert.equal(result.action, "break");
+  assert.equal((result as any).reason, "session-timeout");
+
+  // Verify error classification used structured errorContext on the window entry
+  const entry = loopState.recentUnits[loopState.recentUnits.length - 1];
+  assert.ok(entry.error, "window entry must have error set");
+  assert.ok(entry.error!.startsWith("timeout:"), "error must start with category from errorContext");
+  assert.ok(entry.error!.includes("Hard timeout error"), "error must include the errorContext message");
 });

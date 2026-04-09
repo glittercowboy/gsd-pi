@@ -181,7 +181,8 @@ function resolveKey(providerId: string): KeyLookup {
  */
 const PROVIDER_ROUTES: Record<string, string[]> = {
   anthropic: ["github-copilot"],
-  openai: ["github-copilot"],
+  openai: ["github-copilot", "openai-codex"],
+  google: ["google-gemini-cli"],
 };
 
 function checkLlmProviders(): ProviderCheckResult[] {
@@ -305,11 +306,24 @@ function checkOptionalProviders(): ProviderCheckResult[] {
   const optional = ["brave", "tavily", "jina", "context7"] as const;
   const results: ProviderCheckResult[] = [];
 
+  // Determine which search providers are configured so we can suppress
+  // "not configured" noise for alternative search providers when at least
+  // one is already active (e.g. don't warn about missing BRAVE_API_KEY
+  // when Tavily is configured).
+  const searchProviderIds = ["brave", "tavily"] as const;
+  const hasAnySearchProvider = searchProviderIds.some(id => resolveKey(id).found);
+
   for (const providerId of optional) {
     const info = PROVIDER_REGISTRY.find(p => p.id === providerId);
     if (!info) continue;
 
     const lookup = resolveKey(providerId);
+
+    // Skip unconfigured search providers when another search provider is active
+    if (!lookup.found && hasAnySearchProvider && info.category === "search") {
+      continue;
+    }
+
     results.push({
       name: providerId,
       label: info.label,

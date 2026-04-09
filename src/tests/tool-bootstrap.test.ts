@@ -16,18 +16,16 @@ function makeExecutable(dir: string, name: string, content = "#!/bin/sh\nexit 0\
   return file;
 }
 
-test("resolveToolFromPath finds fd via fdfind fallback", () => {
+test("resolveToolFromPath finds fd via fdfind fallback", (t) => {
   const tmp = mkdtempSync(join(tmpdir(), "gsd-tool-bootstrap-resolve-"));
-  try {
-    makeExecutable(tmp, "fdfind");
-    const resolved = resolveToolFromPath("fd", tmp);
-    assert.equal(resolved, join(tmp, "fdfind"));
-  } finally {
-    rmSync(tmp, { recursive: true, force: true });
-  }
+  t.after(() => { rmSync(tmp, { recursive: true, force: true }); });
+
+  makeExecutable(tmp, "fdfind");
+  const resolved = resolveToolFromPath("fd", tmp);
+  assert.equal(resolved, join(tmp, "fdfind"));
 });
 
-test("ensureManagedTools provisions fd and rg into managed bin dir", () => {
+test("ensureManagedTools provisions fd and rg into managed bin dir", (t) => {
   const tmp = mkdtempSync(join(tmpdir(), "gsd-tool-bootstrap-provision-"));
   const sourceBin = join(tmp, "source-bin");
   const targetBin = join(tmp, "target-bin");
@@ -35,23 +33,21 @@ test("ensureManagedTools provisions fd and rg into managed bin dir", () => {
   mkdirSync(sourceBin, { recursive: true });
   mkdirSync(targetBin, { recursive: true });
 
-  try {
-    makeExecutable(sourceBin, "fdfind");
-    makeExecutable(sourceBin, "rg");
+  t.after(() => { rmSync(tmp, { recursive: true, force: true }); });
 
-    const provisioned = ensureManagedTools(targetBin, sourceBin);
+  makeExecutable(sourceBin, "fdfind");
+  makeExecutable(sourceBin, "rg");
 
-    assert.equal(provisioned.length, 2);
-    assert.ok(existsSync(join(targetBin, FD_TARGET)));
-    assert.ok(existsSync(join(targetBin, RG_TARGET)));
-    assert.ok(lstatSync(join(targetBin, FD_TARGET)).isSymbolicLink() || lstatSync(join(targetBin, FD_TARGET)).isFile());
-    assert.ok(lstatSync(join(targetBin, RG_TARGET)).isSymbolicLink() || lstatSync(join(targetBin, RG_TARGET)).isFile());
-  } finally {
-    rmSync(tmp, { recursive: true, force: true });
-  }
+  const provisioned = ensureManagedTools(targetBin, sourceBin);
+
+  assert.equal(provisioned.length, 2);
+  assert.ok(existsSync(join(targetBin, FD_TARGET)));
+  assert.ok(existsSync(join(targetBin, RG_TARGET)));
+  assert.ok(lstatSync(join(targetBin, FD_TARGET)).isSymbolicLink() || lstatSync(join(targetBin, FD_TARGET)).isFile());
+  assert.ok(lstatSync(join(targetBin, RG_TARGET)).isSymbolicLink() || lstatSync(join(targetBin, RG_TARGET)).isFile());
 });
 
-test("ensureManagedTools copies executable when symlink target already exists as a broken link", () => {
+test("ensureManagedTools copies executable when symlink target already exists as a broken link", (t) => {
   const tmp = mkdtempSync(join(tmpdir(), "gsd-tool-bootstrap-copy-"));
   const sourceBin = join(tmp, "source-bin");
   const targetBin = join(tmp, "target-bin");
@@ -60,17 +56,15 @@ test("ensureManagedTools copies executable when symlink target already exists as
   mkdirSync(sourceBin, { recursive: true });
   mkdirSync(targetBin, { recursive: true });
 
-  try {
-    makeExecutable(sourceBin, "fdfind", "#!/bin/sh\necho fd\n");
-    makeExecutable(sourceBin, "rg", "#!/bin/sh\necho rg\n");
-    symlinkSync(join(tmp, "missing-target"), targetFd);
+  t.after(() => { rmSync(tmp, { recursive: true, force: true }); });
 
-    const provisioned = ensureManagedTools(targetBin, sourceBin);
+  makeExecutable(sourceBin, "fdfind", "#!/bin/sh\necho fd\n");
+  makeExecutable(sourceBin, "rg", "#!/bin/sh\necho rg\n");
+  symlinkSync(join(tmp, "missing-target"), targetFd);
 
-    assert.equal(provisioned.length, 2);
-    assert.ok(lstatSync(targetFd).isFile(), "fd fallback should replace broken symlink with a copied file");
-    assert.match(readFileSync(targetFd, "utf8"), /echo fd/);
-  } finally {
-    rmSync(tmp, { recursive: true, force: true });
-  }
+  const provisioned = ensureManagedTools(targetBin, sourceBin);
+
+  assert.equal(provisioned.length, 2);
+  assert.ok(lstatSync(targetFd).isFile(), "fd fallback should replace broken symlink with a copied file");
+  assert.match(readFileSync(targetFd, "utf8"), /echo fd/);
 });

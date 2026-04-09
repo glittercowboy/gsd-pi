@@ -36,7 +36,6 @@ function writeTestLock(
   base: string,
   unitType: string,
   unitId: string,
-  completedUnits: number,
   sessionFile?: string,
 ): void {
   writeFileSync(
@@ -47,7 +46,6 @@ function writeTestLock(
       unitType,
       unitId,
       unitStartedAt: new Date().toISOString(),
-      completedUnits,
       sessionFile,
     }, null, 2),
     "utf-8",
@@ -146,17 +144,16 @@ test("hasResumableDerivedState treats only unfinished active work as resumable",
   assert.equal(hasResumableDerivedState(makeState("pre-planning", false)), false);
 });
 
-test("isBootstrapCrashLock detects starting/bootstrap zero-completed special case", () => {
+test("isBootstrapCrashLock detects starting/bootstrap special case", () => {
   const bootstrap: LockData = {
     pid: 999999999,
     startedAt: new Date().toISOString(),
     unitType: "starting",
     unitId: "bootstrap",
     unitStartedAt: new Date().toISOString(),
-    completedUnits: 0,
   };
   assert.equal(isBootstrapCrashLock(bootstrap), true);
-  assert.equal(isBootstrapCrashLock({ ...bootstrap, completedUnits: 1 }), false);
+  assert.equal(isBootstrapCrashLock({ ...bootstrap, unitType: "execute-task" }), false);
 });
 
 test("readPausedSessionMetadata reads paused-session metadata when present", () => {
@@ -227,7 +224,7 @@ test("assessInterruptedSession classifies stale complete repo as stale and suppr
     writeRoadmap(base, true);
     writeCompleteSliceArtifacts(base);
     writeCompleteMilestoneSummary(base);
-    writeTestLock(base, "execute-task", "M001/S01/T01", 1);
+    writeTestLock(base, "execute-task", "M001/S01/T01");
 
     const assessment = await assessInterruptedSession(base);
     assert.equal(assessment.classification, "stale");
@@ -244,7 +241,7 @@ test("assessInterruptedSession suppresses prompt when expected artifact already 
     writeRoadmap(base, true);
     writeCompleteSliceArtifacts(base);
     writeCompleteMilestoneSummary(base);
-    writeTestLock(base, "complete-slice", "M001/S01", 1);
+    writeTestLock(base, "complete-slice", "M001/S01");
 
     const assessment = await assessInterruptedSession(base);
     assert.equal(assessment.classification, "stale");
@@ -259,7 +256,7 @@ test("assessInterruptedSession keeps paused-session resume recoverable when disk
   try {
     writeRoadmap(base, false);
     writePausedSession(base);
-    writeTestLock(base, "execute-task", "M001/S01/T01", 1);
+    writeTestLock(base, "execute-task", "M001/S01/T01");
 
     const assessment = await assessInterruptedSession(base);
     assert.equal(assessment.classification, "recoverable");
@@ -340,7 +337,7 @@ test("assessInterruptedSession keeps unfinished derived state recoverable withou
   const base = makeTmpBase();
   try {
     writeRoadmap(base, false);
-    writeTestLock(base, "plan-slice", "M001/S01", 1);
+    writeTestLock(base, "plan-slice", "M001/S01");
 
     const assessment = await assessInterruptedSession(base);
     assert.equal(assessment.classification, "recoverable");
@@ -355,7 +352,7 @@ test("assessInterruptedSession preserves crash trace when activity log has tool 
   const base = makeTmpBase();
   try {
     writeRoadmap(base, false);
-    writeTestLock(base, "execute-task", "M001/S01/T01", 1);
+    writeTestLock(base, "execute-task", "M001/S01/T01");
     writeActivityLog(base, [
       {
         type: "message",
@@ -395,7 +392,7 @@ test("assessInterruptedSession preserves crash trace when activity log has tool 
 test("assessInterruptedSession treats bootstrap crash as stale without paused metadata", async () => {
   const base = makeTmpBase();
   try {
-    writeTestLock(base, "starting", "bootstrap", 0);
+    writeTestLock(base, "starting", "bootstrap");
 
     const assessment = await assessInterruptedSession(base);
     assert.equal(assessment.classification, "stale");
@@ -407,67 +404,60 @@ test("assessInterruptedSession treats bootstrap crash as stale without paused me
 
 // ─── writeLock / readCrashLock ────────────────────────────────────────────
 
-test("writeLock creates lock file and readCrashLock reads it", () => {
+test("writeLock creates lock file and readCrashLock reads it", (t) => {
   const base = makeTmpBase();
-  try {
-    writeLock(base, "execute-task", "M001/S01/T01", 3, "/tmp/session.jsonl");
-    const lock = readCrashLock(base);
-    assert.ok(lock, "lock should exist");
-    assert.equal(lock!.unitType, "execute-task");
-    assert.equal(lock!.unitId, "M001/S01/T01");
-    assert.equal(lock!.completedUnits, 3);
-    assert.equal(lock!.sessionFile, "/tmp/session.jsonl");
-    assert.equal(lock!.pid, process.pid);
-  } finally {
-    cleanup(base);
-  }
+  t.after(() => cleanup(base));
+
+  writeLock(base, "execute-task", "M001/S01/T01", "/tmp/session.jsonl");
+  const lock = readCrashLock(base);
+  assert.ok(lock, "lock should exist");
+  assert.equal(lock!.unitType, "execute-task");
+  assert.equal(lock!.unitId, "M001/S01/T01");
+  assert.equal(lock!.sessionFile, "/tmp/session.jsonl");
+  assert.equal(lock!.pid, process.pid);
 });
 
-test("readCrashLock returns null when no lock exists", () => {
+test("readCrashLock returns null when no lock exists", (t) => {
   const base = makeTmpBase();
-  try {
-    const lock = readCrashLock(base);
-    assert.equal(lock, null);
-  } finally {
-    cleanup(base);
-  }
+  t.after(() => cleanup(base));
+
+  const lock = readCrashLock(base);
+  assert.equal(lock, null);
 });
 
 // ─── clearLock ────────────────────────────────────────────────────────────
 
-test("clearLock removes existing lock file", () => {
+test("clearLock removes existing lock file", (t) => {
   const base = makeTmpBase();
-  try {
-    writeLock(base, "plan-slice", "M001/S01", 0);
-    assert.ok(readCrashLock(base), "lock should exist before clear");
-    clearLock(base);
-    assert.equal(readCrashLock(base), null, "lock should be gone after clear");
-  } finally {
-    cleanup(base);
-  }
+  t.after(() => cleanup(base));
+
+  writeLock(base, "plan-slice", "M001/S01");
+  assert.ok(readCrashLock(base), "lock should exist before clear");
+  clearLock(base);
+  assert.equal(readCrashLock(base), null, "lock should be gone after clear");
 });
 
-test("clearLock is safe when no lock exists", () => {
+test("clearLock is safe when no lock exists", (t) => {
   const base = makeTmpBase();
-  try {
-    assert.doesNotThrow(() => clearLock(base));
-  } finally {
-    cleanup(base);
-  }
+  t.after(() => cleanup(base));
+
+  assert.doesNotThrow(() => clearLock(base));
 });
 
 // ─── isLockProcessAlive ──────────────────────────────────────────────────
 
-test("isLockProcessAlive returns false for own PID", () => {
+test("#2470: isLockProcessAlive returns true for own PID (we hold the lock)", () => {
+  // Own PID means we ARE the lock holder — alive, not stale. (#2470)
+  // Callers that need recycled-PID detection (e.g. startAuto) already
+  // guard with `crashLock.pid !== process.pid` before calling us.
   const lock: LockData = {
     pid: process.pid,
     startedAt: new Date().toISOString(),
     unitType: "execute-task",
     unitId: "M001/S01/T01",
     unitStartedAt: new Date().toISOString(),
-    completedUnits: 0,
   };
-  assert.equal(isLockProcessAlive(lock), false, "own PID should return false");
+  assert.equal(isLockProcessAlive(lock), true, "own PID should return true — we are alive");
 });
 
 test("isLockProcessAlive returns false for dead PID", () => {
@@ -477,7 +467,6 @@ test("isLockProcessAlive returns false for dead PID", () => {
     unitType: "execute-task",
     unitId: "M001/S01/T01",
     unitStartedAt: new Date().toISOString(),
-    completedUnits: 0,
   };
   assert.equal(isLockProcessAlive(lock), false);
 });
@@ -488,7 +477,6 @@ test("isLockProcessAlive returns false for invalid PIDs", () => {
     unitType: "x",
     unitId: "x",
     unitStartedAt: new Date().toISOString(),
-    completedUnits: 0,
   };
   assert.equal(isLockProcessAlive({ ...base, pid: 0 } as LockData), false);
   assert.equal(isLockProcessAlive({ ...base, pid: -1 } as LockData), false);
@@ -504,11 +492,9 @@ test("formatCrashInfo includes unit type, id, and PID", () => {
     unitType: "complete-slice",
     unitId: "M002/S03",
     unitStartedAt: "2025-01-01T00:01:00.000Z",
-    completedUnits: 7,
   };
   const info = formatCrashInfo(lock);
   assert.ok(info.includes("complete-slice"));
   assert.ok(info.includes("M002/S03"));
   assert.ok(info.includes("12345"));
-  assert.ok(info.includes("7"));
 });

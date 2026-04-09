@@ -33,131 +33,101 @@ function sha256(data: Buffer): string {
 // BlobStore.put / get / has
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('put stores data and returns correct hash', () => {
+test('put stores data and returns correct hash', (t) => {
 	const { dir, cleanup } = makeTmpDir()
-	try {
-		const store = new BlobStore(join(dir, 'blobs'))
-		const data = Buffer.from('hello world')
-		const result = store.put(data)
+	t.after(cleanup);
+	const store = new BlobStore(join(dir, 'blobs'))
+	const data = Buffer.from('hello world')
+	const result = store.put(data)
 
-		assert.equal(result.hash, sha256(data))
-		assert.ok(existsSync(result.path))
-		assert.deepEqual(readFileSync(result.path), data)
-	} finally {
-		cleanup()
-	}
+	assert.equal(result.hash, sha256(data))
+	assert.ok(existsSync(result.path))
+	assert.deepEqual(readFileSync(result.path), data)
 })
 
-test('put is idempotent — same data returns same hash, no duplicate write', () => {
+test('put is idempotent — same data returns same hash, no duplicate write', (t) => {
 	const { dir, cleanup } = makeTmpDir()
-	try {
-		const store = new BlobStore(join(dir, 'blobs'))
-		const data = Buffer.from('duplicate test')
-		const r1 = store.put(data)
-		const r2 = store.put(data)
+	t.after(cleanup);
+	const store = new BlobStore(join(dir, 'blobs'))
+	const data = Buffer.from('duplicate test')
+	const r1 = store.put(data)
+	const r2 = store.put(data)
 
-		assert.equal(r1.hash, r2.hash)
-		assert.equal(r1.path, r2.path)
-	} finally {
-		cleanup()
-	}
+	assert.equal(r1.hash, r2.hash)
+	assert.equal(r1.path, r2.path)
 })
 
-test('get retrieves stored data', () => {
+test('get retrieves stored data', (t) => {
 	const { dir, cleanup } = makeTmpDir()
-	try {
-		const store = new BlobStore(join(dir, 'blobs'))
-		const data = Buffer.from('retrieve me')
-		const { hash } = store.put(data)
-		const retrieved = store.get(hash)
+	t.after(cleanup);
+	const store = new BlobStore(join(dir, 'blobs'))
+	const data = Buffer.from('retrieve me')
+	const { hash } = store.put(data)
+	const retrieved = store.get(hash)
 
-		assert.deepEqual(retrieved, data)
-	} finally {
-		cleanup()
-	}
+	assert.deepEqual(retrieved, data)
 })
 
-test('get returns null for nonexistent hash', () => {
+test('get returns null for nonexistent hash', (t) => {
 	const { dir, cleanup } = makeTmpDir()
-	try {
-		const store = new BlobStore(join(dir, 'blobs'))
-		const fakeHash = 'a'.repeat(64)
-		assert.equal(store.get(fakeHash), null)
-	} finally {
-		cleanup()
-	}
+	t.after(cleanup);
+	const store = new BlobStore(join(dir, 'blobs'))
+	const fakeHash = 'a'.repeat(64)
+	assert.equal(store.get(fakeHash), null)
 })
 
-test('has returns true for stored blob', () => {
+test('has returns true for stored blob', (t) => {
 	const { dir, cleanup } = makeTmpDir()
-	try {
-		const store = new BlobStore(join(dir, 'blobs'))
-		const { hash } = store.put(Buffer.from('exists'))
-		assert.ok(store.has(hash))
-	} finally {
-		cleanup()
-	}
+	t.after(cleanup);
+	const store = new BlobStore(join(dir, 'blobs'))
+	const { hash } = store.put(Buffer.from('exists'))
+	assert.ok(store.has(hash))
 })
 
-test('has returns false for missing blob', () => {
+test('has returns false for missing blob', (t) => {
 	const { dir, cleanup } = makeTmpDir()
-	try {
-		const store = new BlobStore(join(dir, 'blobs'))
-		assert.equal(store.has('b'.repeat(64)), false)
-	} finally {
-		cleanup()
-	}
+	t.after(cleanup);
+	const store = new BlobStore(join(dir, 'blobs'))
+	assert.equal(store.has('b'.repeat(64)), false)
 })
 
-test('ref property returns correct blob: URI', () => {
+test('ref property returns correct blob: URI', (t) => {
 	const { dir, cleanup } = makeTmpDir()
-	try {
-		const store = new BlobStore(join(dir, 'blobs'))
-		const data = Buffer.from('ref test')
-		const result = store.put(data)
-		assert.equal(result.ref, `blob:sha256:${result.hash}`)
-	} finally {
-		cleanup()
-	}
+	t.after(cleanup);
+	const store = new BlobStore(join(dir, 'blobs'))
+	const data = Buffer.from('ref test')
+	const result = store.put(data)
+	assert.equal(result.ref, `blob:sha256:${result.hash}`)
 })
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Path traversal protection
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('get rejects non-hex hash (path traversal attempt)', () => {
+test('get rejects non-hex hash (path traversal attempt)', (t) => {
 	const { dir, cleanup } = makeTmpDir()
-	try {
-		const store = new BlobStore(join(dir, 'blobs'))
-		assert.equal(store.get('../../etc/passwd'), null)
-		assert.equal(store.get('../../../foo'), null)
-		assert.equal(store.get('not-a-valid-hash'), null)
-	} finally {
-		cleanup()
-	}
+	t.after(cleanup);
+	const store = new BlobStore(join(dir, 'blobs'))
+	assert.equal(store.get('../../etc/passwd'), null)
+	assert.equal(store.get('../../../foo'), null)
+	assert.equal(store.get('not-a-valid-hash'), null)
 })
 
-test('has rejects non-hex hash', () => {
+test('has rejects non-hex hash', (t) => {
 	const { dir, cleanup } = makeTmpDir()
-	try {
-		const store = new BlobStore(join(dir, 'blobs'))
-		assert.equal(store.has('../../etc/passwd'), false)
-		assert.equal(store.has('short'), false)
-		assert.equal(store.has('Z'.repeat(64)), false) // uppercase not valid
-	} finally {
-		cleanup()
-	}
+	t.after(cleanup);
+	const store = new BlobStore(join(dir, 'blobs'))
+	assert.equal(store.has('../../etc/passwd'), false)
+	assert.equal(store.has('short'), false)
+	assert.equal(store.has('Z'.repeat(64)), false) // uppercase not valid
 })
 
-test('get rejects hash with wrong length', () => {
+test('get rejects hash with wrong length', (t) => {
 	const { dir, cleanup } = makeTmpDir()
-	try {
-		const store = new BlobStore(join(dir, 'blobs'))
-		assert.equal(store.get('a'.repeat(63)), null) // too short
-		assert.equal(store.get('a'.repeat(65)), null) // too long
-	} finally {
-		cleanup()
-	}
+	t.after(cleanup);
+	const store = new BlobStore(join(dir, 'blobs'))
+	assert.equal(store.get('a'.repeat(63)), null) // too short
+	assert.equal(store.get('a'.repeat(65)), null) // too long
 })
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -190,62 +160,47 @@ test('parseBlobRef rejects invalid hash format', () => {
 // externalizeImageData / resolveImageData
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('externalizeImageData stores base64 and returns blob ref', () => {
+test('externalizeImageData stores base64 and returns blob ref', (t) => {
 	const { dir, cleanup } = makeTmpDir()
-	try {
-		const store = new BlobStore(join(dir, 'blobs'))
-		const base64 = Buffer.from('image bytes').toString('base64')
-		const ref = externalizeImageData(store, base64)
+	t.after(cleanup);
+	const store = new BlobStore(join(dir, 'blobs'))
+	const base64 = Buffer.from('image bytes').toString('base64')
+	const ref = externalizeImageData(store, base64)
 
-		assert.ok(ref.startsWith('blob:sha256:'))
-		assert.ok(store.has(parseBlobRef(ref)!))
-	} finally {
-		cleanup()
-	}
+	assert.ok(ref.startsWith('blob:sha256:'))
+	assert.ok(store.has(parseBlobRef(ref)!))
 })
 
-test('externalizeImageData passes through existing blob refs', () => {
+test('externalizeImageData passes through existing blob refs', (t) => {
 	const { dir, cleanup } = makeTmpDir()
-	try {
-		const store = new BlobStore(join(dir, 'blobs'))
-		const existingRef = `blob:sha256:${'c'.repeat(64)}`
-		assert.equal(externalizeImageData(store, existingRef), existingRef)
-	} finally {
-		cleanup()
-	}
+	t.after(cleanup);
+	const store = new BlobStore(join(dir, 'blobs'))
+	const existingRef = `blob:sha256:${'c'.repeat(64)}`
+	assert.equal(externalizeImageData(store, existingRef), existingRef)
 })
 
-test('resolveImageData round-trips with externalizeImageData', () => {
+test('resolveImageData round-trips with externalizeImageData', (t) => {
 	const { dir, cleanup } = makeTmpDir()
-	try {
-		const store = new BlobStore(join(dir, 'blobs'))
-		const base64 = Buffer.from('round trip test').toString('base64')
-		const ref = externalizeImageData(store, base64)
-		const resolved = resolveImageData(store, ref)
+	t.after(cleanup);
+	const store = new BlobStore(join(dir, 'blobs'))
+	const base64 = Buffer.from('round trip test').toString('base64')
+	const ref = externalizeImageData(store, base64)
+	const resolved = resolveImageData(store, ref)
 
-		assert.equal(resolved, base64)
-	} finally {
-		cleanup()
-	}
+	assert.equal(resolved, base64)
 })
 
-test('resolveImageData returns non-ref strings unchanged', () => {
+test('resolveImageData returns non-ref strings unchanged', (t) => {
 	const { dir, cleanup } = makeTmpDir()
-	try {
-		const store = new BlobStore(join(dir, 'blobs'))
-		assert.equal(resolveImageData(store, 'plain text'), 'plain text')
-	} finally {
-		cleanup()
-	}
+	t.after(cleanup);
+	const store = new BlobStore(join(dir, 'blobs'))
+	assert.equal(resolveImageData(store, 'plain text'), 'plain text')
 })
 
-test('resolveImageData returns ref unchanged when blob is missing', () => {
+test('resolveImageData returns ref unchanged when blob is missing', (t) => {
 	const { dir, cleanup } = makeTmpDir()
-	try {
-		const store = new BlobStore(join(dir, 'blobs'))
-		const missingRef = `blob:sha256:${'d'.repeat(64)}`
-		assert.equal(resolveImageData(store, missingRef), missingRef)
-	} finally {
-		cleanup()
-	}
+	t.after(cleanup);
+	const store = new BlobStore(join(dir, 'blobs'))
+	const missingRef = `blob:sha256:${'d'.repeat(64)}`
+	assert.equal(resolveImageData(store, missingRef), missingRef)
 })

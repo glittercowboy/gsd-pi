@@ -1,0 +1,158 @@
+---
+title: "Troubleshooting"
+description: "Common issues, /gsd doctor, /gsd forensics, and recovery procedures."
+---
+
+## `/gsd doctor`
+
+The built-in diagnostic tool validates `.gsd/` integrity:
+
+```
+/gsd doctor
+```
+
+It checks file structure, referential integrity, completion state consistency, git worktree health, and stale lock files.
+
+## Common issues
+
+<AccordionGroup>
+  <Accordion title="Auto mode loops on the same unit">
+    **Cause:** Stale cache after a crash, or the LLM didn't produce the expected artifact.
+
+    **Fix:** Run `/gsd doctor` to repair state, then `/gsd auto`.
+  </Accordion>
+
+  <Accordion title="Auto mode stops with 'Loop detected'">
+    **Cause:** A unit failed to produce its expected artifact twice in a row.
+
+    **Fix:** Check the task plan for clarity. Refine it manually, then `/gsd auto`.
+  </Accordion>
+
+  <Accordion title="command not found: gsd">
+    **Cause:** npm's global bin directory isn't in `$PATH`.
+
+    **Fix:**
+    ```bash
+    npm prefix -g
+    echo 'export PATH="$(npm prefix -g)/bin:$PATH"' >> ~/.zshrc
+    source ~/.zshrc
+    ```
+
+    **Workaround:** `npx gsd-pi` or `$(npm prefix -g)/bin/gsd`
+  </Accordion>
+
+  <Accordion title="Provider errors during auto mode">
+    | Error type | Auto-resume? | Delay |
+    |-----------|-------------|-------|
+    | Rate limit (429) | Yes | retry-after or 60s |
+    | Server error (500, 502, 503) | Yes | 30s |
+    | Auth/billing | No | Manual resume |
+
+    For transient errors, configure fallback models:
+    ```yaml
+    models:
+      execution:
+        model: claude-sonnet-4-6
+        fallbacks:
+          - openrouter/minimax/minimax-m2.5
+    ```
+  </Accordion>
+
+  <Accordion title="Budget ceiling reached">
+    Increase `budget_ceiling` in preferences, or switch to `budget` token profile. Resume with `/gsd auto`.
+  </Accordion>
+
+  <Accordion title="Stale lock file">
+    GSD auto-detects stale locks. If automatic recovery fails:
+    ```bash
+    rm -f .gsd/auto.lock
+    rm -rf "$(dirname .gsd)/.gsd.lock"
+    ```
+  </Accordion>
+
+  <Accordion title="Git merge conflicts on .gsd/ files">
+    GSD auto-resolves conflicts on `.gsd/` runtime files. For code conflicts, the LLM attempts resolution. If that fails, resolve manually.
+  </Accordion>
+
+  <Accordion title="EBUSY / EPERM / EACCES on Windows">
+    **Cause:** Antivirus, indexers, or editors briefly locking files during atomic rename.
+
+    **Fix:** Re-run the operation. Close tools holding files open if the error persists. Run `/gsd doctor` to verify repo health.
+  </Accordion>
+
+  <Accordion title="Worktree isolation stopped working after upgrade to v2.45+">
+    **Cause:** The default `git.isolation` mode changed from `worktree` to `none` in v2.45.0.
+
+    **Fix:** Set `git.isolation: worktree` explicitly in your preferences:
+    ```yaml
+    git:
+      isolation: worktree
+    ```
+  </Accordion>
+
+  <Accordion title="Node.js version or git not found at startup">
+    **Cause:** GSD v2.45+ checks for Node.js >= 22 and git availability at startup.
+
+    **Fix:** Install Node.js 22+ (24 LTS recommended) and ensure `git` is in your PATH.
+  </Accordion>
+</AccordionGroup>
+
+## `/gsd forensics`
+
+Full-access debugger for post-mortem analysis:
+
+```
+/gsd forensics [optional problem description]
+```
+
+Provides anomaly detection, unit traces, metrics analysis, doctor integration, and LLM-guided investigation.
+
+## MCP client issues
+
+Use `/gsd mcp` to check MCP server status and connectivity at a glance.
+
+<AccordionGroup>
+  <Accordion title="No configured servers">
+    Verify `.mcp.json` or `.gsd/mcp.json` exists and parses as valid JSON.
+  </Accordion>
+
+  <Accordion title="mcp_discover times out">
+    Run the configured command outside GSD to confirm the server starts. Check backend URLs and dependencies.
+  </Accordion>
+
+  <Accordion title="Local server works manually but not in GSD">
+    Use absolute paths. Set required environment variables in the MCP config's `env` block.
+  </Accordion>
+</AccordionGroup>
+
+## Recovery procedures
+
+### Reset auto mode state
+
+```bash
+rm .gsd/auto.lock
+rm .gsd/completed-units.json
+```
+
+Then `/gsd auto` to restart from current disk state.
+
+### Reset routing history
+
+```bash
+rm .gsd/routing-history.json
+```
+
+### Full state rebuild
+
+```
+/gsd doctor
+```
+
+Rebuilds `STATE.md` from plan and roadmap files on disk.
+
+## Getting help
+
+- **GitHub Issues:** [github.com/gsd-build/GSD-2/issues](https://github.com/gsd-build/gsd-2/issues)
+- **Dashboard:** `Ctrl+Alt+G` or `/gsd status`
+- **Forensics:** `/gsd forensics`
+- **Session logs:** `.gsd/activity/`

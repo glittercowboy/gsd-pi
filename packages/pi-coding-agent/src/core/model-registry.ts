@@ -4,8 +4,10 @@
 
 import {
 	type Api,
+	applyCapabilityPatches,
 	type AssistantMessageEventStream,
 	type Context,
+	getApiProvider,
 	getModels,
 	getProviders,
 	type KnownProvider,
@@ -28,6 +30,7 @@ import { ModelDiscoveryCache } from "./discovery-cache.js";
 import type { DiscoveredModel, DiscoveryResult } from "./model-discovery.js";
 import { getDefaultTTL, getDiscoverableProviders, getDiscoveryAdapter } from "./model-discovery.js";
 import { clearConfigValueCache, resolveConfigValue, resolveHeaders } from "./resolve-config-value.js";
+import { isLocalModel } from "./local-model-check.js";
 
 const Ajv = (AjvModule as any).default || AjvModule;
 const ajv = new Ajv();
@@ -127,6 +130,8 @@ const ModelsConfigSchema = Type.Object({
 ajv.addSchema(ModelsConfigSchema, "ModelsConfig");
 
 type ModelsConfig = Static<typeof ModelsConfigSchema>;
+
+export type ProviderAuthMode = "apiKey" | "oauth" | "externalCli" | "none";
 
 /** Provider override config (baseUrl, headers, apiKey) without custom models */
 interface ProviderOverride {
@@ -230,7 +235,7 @@ export class ModelRegistry {
 
 	constructor(
 		readonly authStorage: AuthStorage,
-		private modelsJsonPath: string | undefined = join(getAgentDir(), "models.json"),
+		readonly modelsJsonPath: string | undefined = join(getAgentDir(), "models.json"),
 	) {
 		this.discoveryCache = new ModelDiscoveryCache();
 
@@ -242,6 +247,9 @@ export class ModelRegistry {
 			}
 			return undefined;
 		});
+
+		// Refresh models when credentials change (e.g., OAuth token refresh with new model limits)
+		this.authStorage.onCredentialChange(() => this.refresh());
 
 		// Load models
 		this.loadModels();
@@ -297,7 +305,10 @@ export class ModelRegistry {
 			}
 		}
 
-		this.models = combined;
+		// Apply capability patches so custom/discovered/extension models get
+		// capabilities (supportsXhigh, supportsServiceTier, etc.) that the
+		// static pi-ai registry applies at module load for built-in models.
+		this.models = applyCapabilityPatches(combined);
 	}
 
 	/** Load built-in models and apply provider/model overrides */
@@ -456,6 +467,18 @@ export class ModelRegistry {
 				this.customProviderApiKeys.set(providerName, providerConfig.apiKey);
 			}
 
+			// Register custom providers so isProviderRequestReady() can find
+			// them (#3531). Without this, models.json providers with apiKey
+			// fail the auth check and are invisible to the fallback resolver.
+			if (!this.registeredProviders.has(providerName)) {
+				this.registeredProviders.set(providerName, {
+					authMode: providerConfig.apiKey ? "apiKey" : "none",
+					apiKey: providerConfig.apiKey,
+					baseUrl: providerConfig.baseUrl,
+					isReady: providerConfig.apiKey ? () => true : undefined,
+				} as any);
+			}
+
 			for (const modelDef of modelDefs) {
 				const api = modelDef.api || providerConfig.api;
 				if (!api) continue;
@@ -510,7 +533,31 @@ export class ModelRegistry {
 	 * This is a fast check that doesn't refresh OAuth tokens.
 	 */
 	getAvailable(): Model<Api>[] {
-		return this.models.filter((m) => this.authStorage.hasAuth(m.provider));
+		return this.models.filter((m) => this.isProviderRequestReady(m.provider));
+	}
+
+	/**
+	 * Get auth mode for a provider.
+	 * Defaults to "apiKey" for built-ins and providers without explicit mode.
+	 */
+	getProviderAuthMode(provider: string): ProviderAuthMode {
+		const config = this.registeredProviders.get(provider);
+		if (!config) return "apiKey";
+		if (config.authMode) return config.authMode;
+		if (config.oauth) return "oauth";
+		if (config.apiKey) return "apiKey";
+		return "apiKey";
+	}
+
+	/**
+	 * Whether a provider can be used for requests/fallback without hard auth gating.
+	 */
+	isProviderRequestReady(provider: string): boolean {
+		const config = this.registeredProviders.get(provider);
+		if (config?.isReady) return config.isReady();
+		const authMode = this.getProviderAuthMode(provider);
+		if (authMode === "externalCli" || authMode === "none") return true;
+		return this.authStorage.hasAuth(provider);
 	}
 
 	/**
@@ -522,17 +569,23 @@ export class ModelRegistry {
 
 	/**
 	 * Get API key for a model.
+	 * Returns undefined for externalCli/none providers (no key needed).
 	 * @param sessionId - Optional session ID for sticky credential selection
 	 */
 	async getApiKey(model: Model<Api>, sessionId?: string): Promise<string | undefined> {
-		return this.authStorage.getApiKey(model.provider, sessionId);
+		const authMode = this.getProviderAuthMode(model.provider);
+		if (authMode === "externalCli" || authMode === "none") return undefined;
+		return this.authStorage.getApiKey(model.provider, sessionId, { baseUrl: model.baseUrl });
 	}
 
 	/**
 	 * Get API key for a provider.
+	 * Returns undefined for externalCli/none providers (no key needed).
 	 * @param sessionId - Optional session ID for sticky credential selection
 	 */
 	async getApiKeyForProvider(provider: string, sessionId?: string): Promise<string | undefined> {
+		const authMode = this.getProviderAuthMode(provider);
+		if (authMode === "externalCli" || authMode === "none") return undefined;
 		return this.authStorage.getApiKey(provider, sessionId);
 	}
 
@@ -587,12 +640,49 @@ export class ModelRegistry {
 			if (!config.api) {
 				throw new Error(`Provider ${providerName}: "api" is required when registering streamSimple.`);
 			}
-			const streamSimple = config.streamSimple;
+			const rawStreamSimple = config.streamSimple;
+			const authMode = config.authMode ?? "apiKey";
+
+			// Keyless providers never see apiKey in options — enforced at registration,
+			// not by convention. Prevents undefined from reaching any handler.
+			const streamSimple = (authMode === "externalCli" || authMode === "none")
+				? ((model: Model<Api>, context: Context, options?: SimpleStreamOptions) => {
+						const { apiKey: _, ...opts } = options ?? {};
+						return rawStreamSimple(model, context, opts as SimpleStreamOptions);
+					})
+				: rawStreamSimple;
+
+			// Guard: if there's already a handler registered for this API, wrap
+			// the new one so it only fires for models from this provider and
+			// delegates to the previous handler for all other providers. Without
+			// this, a custom provider using api:"anthropic-messages" would clobber
+			// the built-in Anthropic stream handler (#2536).
+			const existingProvider = getApiProvider(config.api as Api);
+			const scopedStream = existingProvider
+				? (model: Model<Api>, context: Context, options?: SimpleStreamOptions): AssistantMessageEventStream => {
+						if (model.provider === providerName) {
+							return streamSimple(model, context, options);
+						}
+						return existingProvider.streamSimple(model, context, options);
+					}
+				: streamSimple;
+
+			const newFullStream = (model: Model<Api>, context: Context, options?: SimpleStreamOptions) =>
+				scopedStream(model, context, options as SimpleStreamOptions);
+			const scopedFullStream = existingProvider
+				? (model: Model<Api>, context: Context, options?: Record<string, unknown>) => {
+						if (model.provider === providerName) {
+							return newFullStream(model, context, options as SimpleStreamOptions);
+						}
+						return existingProvider.stream(model, context, options);
+					}
+				: newFullStream;
+
 			registerApiProvider(
 				{
 					api: config.api,
-					stream: (model, context, options) => streamSimple(model, context, options as SimpleStreamOptions),
-					streamSimple,
+					stream: scopedFullStream as any,
+					streamSimple: scopedStream,
 				},
 				`provider:${providerName}`,
 			);
@@ -611,8 +701,24 @@ export class ModelRegistry {
 			if (!config.baseUrl) {
 				throw new Error(`Provider ${providerName}: "baseUrl" is required when defining models.`);
 			}
-			if (!config.apiKey && !config.oauth) {
-				throw new Error(`Provider ${providerName}: "apiKey" or "oauth" is required when defining models.`);
+			const authMode = config.authMode ?? (config.oauth ? "oauth" : config.apiKey ? "apiKey" : "apiKey");
+			if (authMode === "apiKey" && !config.apiKey && !config.oauth) {
+				throw new Error(
+					`Provider ${providerName}: "apiKey" or "oauth" is required when authMode is "apiKey" (the default). ` +
+					`Set authMode to "externalCli" or "none" for keyless providers.`,
+				);
+			}
+			if ((authMode === "externalCli" || authMode === "none") && !config.streamSimple) {
+				throw new Error(
+					`Provider ${providerName}: "streamSimple" is required when authMode is "${authMode}". ` +
+					`Keyless providers must supply their own stream handler.`,
+				);
+			}
+			if ((authMode === "externalCli" || authMode === "none") && config.apiKey) {
+				throw new Error(
+					`Provider ${providerName}: "apiKey" cannot be set when authMode is "${authMode}". ` +
+					`Keyless providers should not provide API key credentials.`,
+				);
 			}
 
 			// Parse and add new models
@@ -648,6 +754,7 @@ export class ModelRegistry {
 					maxTokens: modelDef.maxTokens,
 					headers,
 					compat: modelDef.compat,
+					providerOptions: modelDef.providerOptions,
 				} as Model<Api>);
 			}
 
@@ -658,6 +765,9 @@ export class ModelRegistry {
 					this.models = config.oauth.modifyModels(this.models, cred);
 				}
 			}
+
+			// Ensure newly added extension models get capability patches
+			this.models = applyCapabilityPatches(this.models);
 		} else if (config.baseUrl) {
 			// Override-only: update baseUrl/headers for existing models
 			const resolvedHeaders = resolveHeaders(config.headers);
@@ -699,7 +809,7 @@ export class ModelRegistry {
 
 			try {
 				const apiKey = await this.authStorage.getApiKey(providerName);
-				if (!apiKey && providerName !== "ollama") continue;
+				if (!apiKey && !this.isProviderRequestReady(providerName)) continue;
 
 				const models = await adapter.fetchModels(apiKey ?? "", undefined);
 				this.discoveryCache.set(providerName, models);
@@ -718,8 +828,8 @@ export class ModelRegistry {
 			}
 		}
 
-		// Convert and merge discovered models
-		this.discoveredModels = this.convertDiscoveredModels(results);
+		// Convert and merge discovered models, then apply capability patches
+		this.discoveredModels = applyCapabilityPatches(this.convertDiscoveredModels(results));
 		return results;
 	}
 
@@ -771,12 +881,35 @@ export class ModelRegistry {
 		}
 		return converted;
 	}
+
+	/**
+	 * Check if a model's baseUrl points to a local endpoint.
+	 * Delegates to standalone isLocalModel() function.
+	 */
+	static isLocalModel(model: Model<Api>): boolean {
+		return isLocalModel(model);
+	}
+
+	/**
+	 * Check if all models in the registry are local.
+	 * Returns true only if every model passes isLocalModel().
+	 * Returns false if there are no models.
+	 */
+	isAllLocalChain(): boolean {
+		const models = this.getAll();
+		if (models.length === 0) return false;
+		return models.every((m) => isLocalModel(m));
+	}
 }
 
 /**
  * Input type for registerProvider API.
  */
 export interface ProviderConfigInput {
+	authMode?: ProviderAuthMode;
+	/** Optional readiness check. Called by isProviderRequestReady() before default auth checks.
+	 * Trusted at the same level as extension code — extensions already have arbitrary code execution. */
+	isReady?: () => boolean;
 	baseUrl?: string;
 	apiKey?: string;
 	api?: Api;
@@ -797,5 +930,6 @@ export interface ProviderConfigInput {
 		maxTokens: number;
 		headers?: Record<string, string>;
 		compat?: Model<Api>["compat"];
+		providerOptions?: Record<string, unknown>;
 	}>;
 }

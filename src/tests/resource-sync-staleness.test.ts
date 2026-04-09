@@ -12,7 +12,7 @@ import { tmpdir } from "node:os";
  * with a broken import to persist at ~/.gsd/agent/extensions/).
  */
 
-test("resource manifest includes contentHash", async () => {
+test("resource manifest includes contentHash", async (t) => {
   // We can't easily call initResources directly because it depends on
   // module-level resolved paths. Instead, verify the manifest schema
   // by simulating what writeManagedResourceManifest produces.
@@ -25,15 +25,13 @@ test("resource manifest includes contentHash", async () => {
   const tmpDir = mkdtempSync(join(tmpdir(), "gsd-resource-test-"));
   const manifestPath = join(tmpDir, "managed-resources.json");
 
-  try {
-    writeFileSync(manifestPath, JSON.stringify(manifest));
-    const read = JSON.parse(readFileSync(manifestPath, "utf-8"));
-    assert.equal(read.gsdVersion, "2.28.0");
-    assert.equal(read.contentHash, "abc123def456");
-    assert.equal(typeof read.syncedAt, "number");
-  } finally {
-    rmSync(tmpDir, { recursive: true, force: true });
-  }
+  t.after(() => { rmSync(tmpDir, { recursive: true, force: true }); });
+
+  writeFileSync(manifestPath, JSON.stringify(manifest));
+  const read = JSON.parse(readFileSync(manifestPath, "utf-8"));
+  assert.equal(read.gsdVersion, "2.28.0");
+  assert.equal(read.contentHash, "abc123def456");
+  assert.equal(typeof read.syncedAt, "number");
 });
 
 test("missing contentHash in manifest triggers re-sync (upgrade path)", () => {

@@ -83,13 +83,13 @@ export function StatusBar() {
   }, [fetchProjectTotals])
 
   return (
-    <div className="flex h-7 items-center justify-between border-t border-border bg-card px-3 text-xs">
-      <div className="flex min-w-0 items-center gap-4">
+    <div className="flex h-7 items-center justify-between border-t border-border bg-card px-2 md:px-3 text-[10px] md:text-xs">
+      <div className="flex min-w-0 items-center gap-2 md:gap-4">
         <div className={`flex items-center gap-1.5 ${toneClass(status.tone)}`}>
           <Wifi className="h-3 w-3" />
           <span>{status.label}</span>
         </div>
-        <div className="flex items-center gap-1.5 text-muted-foreground">
+        <div className="hidden sm:flex items-center gap-1.5 text-muted-foreground">
           <GitBranch className="h-3 w-3" />
           {isConnecting ? (
             <Skeleton className="h-3 w-20" />
@@ -97,7 +97,7 @@ export function StatusBar() {
             <span className="font-mono">{branch}</span>
           )}
         </div>
-        <div className="flex items-center gap-1.5 text-muted-foreground">
+        <div className="hidden lg:flex items-center gap-1.5 text-muted-foreground">
           <Cpu className="h-3 w-3" />
           {isConnecting ? (
             <Skeleton className="h-3 w-24" />
@@ -141,12 +141,12 @@ export function StatusBar() {
           </div>
         )}
       </div>
-      <div className="flex min-w-0 items-center gap-4">
-        <div className="flex items-center gap-1.5 text-muted-foreground">
+      <div className="flex min-w-0 items-center gap-2 md:gap-4">
+        <div className="hidden sm:flex items-center gap-1.5 text-muted-foreground">
           <Clock className="h-3 w-3" />
           {isConnecting ? <Skeleton className="h-3 w-8" /> : <span>{formatProjectDuration(projectTotals?.duration ?? auto?.elapsed ?? 0)}</span>}
         </div>
-        <div className="flex items-center gap-1.5 text-muted-foreground">
+        <div className="hidden sm:flex items-center gap-1.5 text-muted-foreground">
           <Zap className="h-3 w-3" />
           {isConnecting ? <Skeleton className="h-3 w-6" /> : <span>{formatTokenCount(projectTotals?.tokens.total ?? auto?.totalTokens ?? 0)}</span>}
         </div>
@@ -154,7 +154,7 @@ export function StatusBar() {
           <DollarSign className="h-3 w-3" />
           {isConnecting ? <Skeleton className="h-3 w-10" /> : <span>{formatProjectCost(projectTotals?.cost ?? auto?.totalCost ?? 0)}</span>}
         </div>
-        <span className="max-w-[20rem] truncate text-muted-foreground" data-testid="status-bar-unit">
+        <span className="hidden sm:inline max-w-[20rem] truncate text-muted-foreground" data-testid="status-bar-unit">
           {isConnecting ? <Skeleton className="inline-block h-3 w-28 align-middle" /> : <ScopeBadgeInline label={unitLabel} />}
         </span>
       </div>

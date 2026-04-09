@@ -1,6 +1,7 @@
 import type { AssistantMessage } from "@gsd/pi-ai";
 import { Container, Markdown, type MarkdownTheme, Spacer, Text } from "@gsd/pi-tui";
 import { getMarkdownTheme, theme } from "../theme/theme.js";
+import { formatTimestamp, type TimestampFormat } from "./timestamp.js";
 
 /**
  * Component that renders a complete assistant message
@@ -10,16 +11,19 @@ export class AssistantMessageComponent extends Container {
 	private hideThinkingBlock: boolean;
 	private markdownTheme: MarkdownTheme;
 	private lastMessage?: AssistantMessage;
+	private timestampFormat: TimestampFormat;
 
 	constructor(
 		message?: AssistantMessage,
 		hideThinkingBlock = false,
 		markdownTheme: MarkdownTheme = getMarkdownTheme(),
+		timestampFormat: TimestampFormat = "date-time-iso",
 	) {
 		super();
 
 		this.hideThinkingBlock = hideThinkingBlock;
 		this.markdownTheme = markdownTheme;
+		this.timestampFormat = timestampFormat;
 
 		// Container for text/thinking content
 		this.contentContainer = new Container();
@@ -101,8 +105,6 @@ export class AssistantMessageComponent extends Container {
 						: "Operation aborted";
 				if (hasVisibleContent) {
 					this.contentContainer.addChild(new Spacer(1));
-				} else {
-					this.contentContainer.addChild(new Spacer(1));
 				}
 				this.contentContainer.addChild(new Text(theme.fg("error", abortMessage), 1, 0));
 			} else if (message.stopReason === "error") {
@@ -110,6 +112,12 @@ export class AssistantMessageComponent extends Container {
 				this.contentContainer.addChild(new Spacer(1));
 				this.contentContainer.addChild(new Text(theme.fg("error", `Error: ${errorMsg}`), 1, 0));
 			}
+		}
+
+		// Show timestamp when the message is complete (has a stop reason)
+		if (message.stopReason && message.timestamp) {
+			const timeStr = formatTimestamp(message.timestamp, this.timestampFormat);
+			this.contentContainer.addChild(new Text(theme.fg("dim", timeStr), 1, 0));
 		}
 	}
 }

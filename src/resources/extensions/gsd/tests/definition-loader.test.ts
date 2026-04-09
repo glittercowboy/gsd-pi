@@ -63,35 +63,33 @@ steps:
 
 // ─── loadDefinition: valid YAML ──────────────────────────────────────────
 
-test("loadDefinition: valid 3-step YAML returns correct structure", () => {
+test("loadDefinition: valid 3-step YAML returns correct structure", (t) => {
   const dir = writeDefYaml(VALID_3STEP_YAML);
-  try {
-    const def = loadDefinition(dir, "test-workflow");
+  t.after(() => { try { rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 }); } catch { /* Windows EPERM */ } });
 
-    assert.equal(def.version, 1);
-    assert.equal(def.name, "test-workflow");
-    assert.equal(def.description, "A test workflow");
-    assert.deepEqual(def.params, { topic: "AI" });
-    assert.equal(def.steps.length, 3);
+  const def = loadDefinition(dir, "test-workflow");
 
-    // Step 1: research
-    assert.equal(def.steps[0].id, "research");
-    assert.equal(def.steps[0].name, "Research the topic");
-    assert.equal(def.steps[0].prompt, "Research {{topic}} and write findings to research.md");
-    assert.deepEqual(def.steps[0].requires, []);
-    assert.deepEqual(def.steps[0].produces, ["research.md"]);
+  assert.equal(def.version, 1);
+  assert.equal(def.name, "test-workflow");
+  assert.equal(def.description, "A test workflow");
+  assert.deepEqual(def.params, { topic: "AI" });
+  assert.equal(def.steps.length, 3);
 
-    // Step 2: outline — depends on research
-    assert.equal(def.steps[1].id, "outline");
-    assert.deepEqual(def.steps[1].requires, ["research"]);
+  // Step 1: research
+  assert.equal(def.steps[0].id, "research");
+  assert.equal(def.steps[0].name, "Research the topic");
+  assert.equal(def.steps[0].prompt, "Research {{topic}} and write findings to research.md");
+  assert.deepEqual(def.steps[0].requires, []);
+  assert.deepEqual(def.steps[0].produces, ["research.md"]);
 
-    // Step 3: draft — depends on outline
-    assert.equal(def.steps[2].id, "draft");
-    assert.deepEqual(def.steps[2].requires, ["outline"]);
-    assert.deepEqual(def.steps[2].produces, ["draft.md"]);
-  } finally {
-    try { rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 }); } catch { /* Windows EPERM */ }
-  }
+  // Step 2: outline — depends on research
+  assert.equal(def.steps[1].id, "outline");
+  assert.deepEqual(def.steps[1].requires, ["research"]);
+
+  // Step 3: draft — depends on outline
+  assert.equal(def.steps[2].id, "draft");
+  assert.deepEqual(def.steps[2].requires, ["outline"]);
+  assert.deepEqual(def.steps[2].produces, ["draft.md"]);
 });
 
 // ─── validateDefinition: rejection cases ─────────────────────────────────
@@ -223,23 +221,21 @@ test("validateDefinition: missing step name → error", () => {
 
 // ─── loadDefinition: error cases ─────────────────────────────────────────
 
-test("loadDefinition: missing file → descriptive error", () => {
+test("loadDefinition: missing file → descriptive error", (t) => {
   const dir = makeTmpDir();
-  try {
-    assert.throws(
-      () => loadDefinition(dir, "nonexistent"),
-      (err: Error) => {
-        assert.ok(err.message.includes("not found"));
-        assert.ok(err.message.includes("nonexistent.yaml"));
-        return true;
-      },
-    );
-  } finally {
-    try { rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 }); } catch { /* Windows EPERM */ }
-  }
+  t.after(() => { try { rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 }); } catch { /* Windows EPERM */ } });
+
+  assert.throws(
+    () => loadDefinition(dir, "nonexistent"),
+    (err: Error) => {
+      assert.ok(err.message.includes("not found"));
+      assert.ok(err.message.includes("nonexistent.yaml"));
+      return true;
+    },
+  );
 });
 
-test("loadDefinition: invalid YAML schema → descriptive error", () => {
+test("loadDefinition: invalid YAML schema → descriptive error", (t) => {
   const dir = writeDefYaml(`
 version: 2
 name: "bad"
@@ -248,23 +244,21 @@ steps:
     name: "A"
     prompt: "do A"
 `);
-  try {
-    assert.throws(
-      () => loadDefinition(dir, "test-workflow"),
-      (err: Error) => {
-        assert.ok(err.message.includes("Invalid workflow definition"));
-        assert.ok(err.message.includes("Unsupported version"));
-        return true;
-      },
-    );
-  } finally {
-    try { rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 }); } catch { /* Windows EPERM */ }
-  }
+  t.after(() => { try { rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 }); } catch { /* Windows EPERM */ } });
+
+  assert.throws(
+    () => loadDefinition(dir, "test-workflow"),
+    (err: Error) => {
+      assert.ok(err.message.includes("Invalid workflow definition"));
+      assert.ok(err.message.includes("Unsupported version"));
+      return true;
+    },
+  );
 });
 
 // ─── loadDefinition: snake_case → camelCase conversion ───────────────────
 
-test("loadDefinition: depends_on in YAML maps to requires in TypeScript", () => {
+test("loadDefinition: depends_on in YAML maps to requires in TypeScript", (t) => {
   const dir = writeDefYaml(`
 version: 1
 name: "dep-test"
@@ -277,15 +271,13 @@ steps:
     prompt: "do second"
     depends_on: [first]
 `);
-  try {
-    const def = loadDefinition(dir, "test-workflow");
-    assert.deepEqual(def.steps[1].requires, ["first"]);
-  } finally {
-    try { rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 }); } catch { /* Windows EPERM */ }
-  }
+  t.after(() => { try { rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 }); } catch { /* Windows EPERM */ } });
+
+  const def = loadDefinition(dir, "test-workflow");
+  assert.deepEqual(def.steps[1].requires, ["first"]);
 });
 
-test("loadDefinition: context_from in YAML maps to contextFrom in TypeScript", () => {
+test("loadDefinition: context_from in YAML maps to contextFrom in TypeScript", (t) => {
   const dir = writeDefYaml(`
 version: 1
 name: "ctx-test"
@@ -298,12 +290,10 @@ steps:
     prompt: "do second"
     context_from: [first]
 `);
-  try {
-    const def = loadDefinition(dir, "test-workflow");
-    assert.deepEqual(def.steps[1].contextFrom, ["first"]);
-  } finally {
-    try { rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 }); } catch { /* Windows EPERM */ }
-  }
+  t.after(() => { try { rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 }); } catch { /* Windows EPERM */ } });
+
+  const def = loadDefinition(dir, "test-workflow");
+  assert.deepEqual(def.steps[1].contextFrom, ["first"]);
 });
 
 // ─── validateDefinition: iterate field validation ────────────────────────
@@ -725,7 +715,7 @@ test("validateDefinition: valid minimal step (no requires/produces) → accepted
   assert.equal(result.errors.length, 0);
 });
 
-test("loadDefinition: loads without params field → params is undefined", () => {
+test("loadDefinition: loads without params field → params is undefined", (t) => {
   const dir = writeDefYaml(`
 version: 1
 name: "no-params"
@@ -734,15 +724,13 @@ steps:
     name: "A"
     prompt: "do A"
 `);
-  try {
-    const def = loadDefinition(dir, "test-workflow");
-    assert.equal(def.params, undefined);
-  } finally {
-    try { rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 }); } catch { /* Windows EPERM */ }
-  }
+  t.after(() => { try { rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 }); } catch { /* Windows EPERM */ } });
+
+  const def = loadDefinition(dir, "test-workflow");
+  assert.equal(def.params, undefined);
 });
 
-test("loadDefinition: loads without description → description is undefined", () => {
+test("loadDefinition: loads without description → description is undefined", (t) => {
   const dir = writeDefYaml(`
 version: 1
 name: "no-desc"
@@ -751,15 +739,13 @@ steps:
     name: "A"
     prompt: "do A"
 `);
-  try {
-    const def = loadDefinition(dir, "test-workflow");
-    assert.equal(def.description, undefined);
-  } finally {
-    try { rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 }); } catch { /* Windows EPERM */ }
-  }
+  t.after(() => { try { rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 }); } catch { /* Windows EPERM */ } });
+
+  const def = loadDefinition(dir, "test-workflow");
+  assert.equal(def.description, undefined);
 });
 
-test("loadDefinition: step with no requires/produces defaults to empty arrays", () => {
+test("loadDefinition: step with no requires/produces defaults to empty arrays", (t) => {
   const dir = writeDefYaml(`
 version: 1
 name: "defaults"
@@ -768,11 +754,9 @@ steps:
     name: "A"
     prompt: "do A"
 `);
-  try {
-    const def = loadDefinition(dir, "test-workflow");
-    assert.deepEqual(def.steps[0].requires, []);
-    assert.deepEqual(def.steps[0].produces, []);
-  } finally {
-    try { rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 }); } catch { /* Windows EPERM */ }
-  }
+  t.after(() => { try { rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 }); } catch { /* Windows EPERM */ } });
+
+  const def = loadDefinition(dir, "test-workflow");
+  assert.deepEqual(def.steps[0].requires, []);
+  assert.deepEqual(def.steps[0].produces, []);
 });

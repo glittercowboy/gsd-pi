@@ -48,37 +48,37 @@ function makeThrowingExtension(eventType: string, error: Error): Extension {
 }
 
 describe("ExtensionRunner.emitToolCall", () => {
-	it("catches throwing extension handler and routes to emitError", async () => {
+	it("catches throwing extension handler and routes to emitError", async (t) => {
 		const dir = mkdtempSync(join(tmpdir(), "runner-test-"));
-		try {
-			const sessionManager = SessionManager.create(dir, dir);
-			const authStorage = AuthStorage.create();
-			const modelRegistry = new ModelRegistry(authStorage, join(dir, "models.json"));
-
-			const throwingExt = makeThrowingExtension("tool_call", new Error("handler crashed"));
-			const runtime = makeMinimalRuntime();
-			const runner = new ExtensionRunner([throwingExt], runtime, dir, sessionManager, modelRegistry);
-
-			const errors: any[] = [];
-			runner.onError((err) => errors.push(err));
-
-			const event: ToolCallEvent = {
-				type: "tool_call",
-				toolCallId: "test-123",
-				toolName: "test_tool",
-				input: {},
-			} as ToolCallEvent;
-
-			const result = await runner.emitToolCall(event);
-
-			// Should not throw — error is caught and routed to emitError
-			assert.equal(result, undefined);
-			assert.equal(errors.length, 1);
-			assert.equal(errors[0].error, "handler crashed");
-			assert.equal(errors[0].event, "tool_call");
-			assert.equal(errors[0].extensionPath, "/test/throwing-ext");
-		} finally {
+		t.after(() => {
 			rmSync(dir, { recursive: true, force: true });
-		}
+		});
+
+		const sessionManager = SessionManager.create(dir, dir);
+		const authStorage = AuthStorage.create();
+		const modelRegistry = new ModelRegistry(authStorage, join(dir, "models.json"));
+
+		const throwingExt = makeThrowingExtension("tool_call", new Error("handler crashed"));
+		const runtime = makeMinimalRuntime();
+		const runner = new ExtensionRunner([throwingExt], runtime, dir, sessionManager, modelRegistry);
+
+		const errors: any[] = [];
+		runner.onError((err) => errors.push(err));
+
+		const event: ToolCallEvent = {
+			type: "tool_call",
+			toolCallId: "test-123",
+			toolName: "test_tool",
+			input: {},
+		} as ToolCallEvent;
+
+		const result = await runner.emitToolCall(event);
+
+		// Should not throw — error is caught and routed to emitError
+		assert.equal(result, undefined);
+		assert.equal(errors.length, 1);
+		assert.equal(errors[0].error, "handler crashed");
+		assert.equal(errors[0].event, "tool_call");
+		assert.equal(errors[0].extensionPath, "/test/throwing-ext");
 	});
 });

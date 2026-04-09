@@ -18,8 +18,16 @@ import type {
   ParallelConfig,
   ContextSelectionMode,
   ReactiveExecutionConfig,
+  GateEvaluationConfig,
 } from "./types.js";
 import type { DynamicRoutingConfig } from "./model-router.js";
+
+export interface ContextManagementConfig {
+  observation_masking?: boolean;          // default: true
+  observation_mask_turns?: number;        // default: 8, range: 1-50
+  compaction_threshold_percent?: number;  // default: 0.70, range: 0.5-0.95
+  tool_result_max_chars?: number;         // default: 800, range: 200-10000
+}
 import type { GitHubSyncConfig } from "../github-sync/types.js";
 
 // ─── Workflow Modes ──────────────────────────────────────────────────────────
@@ -32,9 +40,9 @@ export const MODE_DEFAULTS: Record<WorkflowMode, Partial<GSDPreferences>> = {
     git: {
       auto_push: true,
       push_branches: false,
-      pre_merge_check: false,
+      pre_merge_check: "auto",
       merge_strategy: "squash",
-      isolation: "worktree",
+      isolation: "none",
     },
     unique_milestone_ids: false,
   },
@@ -44,7 +52,7 @@ export const MODE_DEFAULTS: Record<WorkflowMode, Partial<GSDPreferences>> = {
       push_branches: true,
       pre_merge_check: true,
       merge_strategy: "squash",
-      isolation: "worktree",
+      isolation: "none",
     },
     unique_milestone_ids: true,
   },
@@ -87,15 +95,32 @@ export const KNOWN_PREFERENCE_KEYS = new Set<string>([
   "context_selection",
   "widget_mode",
   "reactive_execution",
+  "gate_evaluation",
   "github",
   "service_tier",
+  "forensics_dedup",
+  "show_token_cost",
+  "stale_commit_threshold_minutes",
+  "context_management",
+  "experimental",
+  "codebase",
+  "slice_parallel",
+  "safety_harness",
+  "enhanced_verification",
+  "enhanced_verification_pre",
+  "enhanced_verification_post",
+  "enhanced_verification_strict",
+  "discuss_preparation",
+  "discuss_web_research",
+  "discuss_depth",
 ]);
 
 /** Canonical list of all dispatch unit types. */
 export const KNOWN_UNIT_TYPES = [
   "research-milestone", "plan-milestone", "research-slice", "plan-slice",
-  "execute-task", "reactive-execute", "complete-slice", "replan-slice", "reassess-roadmap",
-  "run-uat", "complete-milestone",
+  "execute-task", "reactive-execute", "gate-evaluate", "complete-slice", "replan-slice", "reassess-roadmap",
+  "run-uat", "complete-milestone", "validate-milestone", "rewrite-docs",
+  "discuss-milestone", "discuss-slice", "worktree-merge",
 ] as const;
 export type UnitType = (typeof KNOWN_UNIT_TYPES)[number];
 
@@ -129,9 +154,11 @@ export interface GSDPhaseModelConfig {
 export interface GSDModelConfig {
   research?: string;
   planning?: string;
+  discuss?: string;
   execution?: string;
   execution_simple?: string;
   completion?: string;
+  validation?: string;
   subagent?: string;
 }
 
@@ -142,9 +169,11 @@ export interface GSDModelConfig {
 export interface GSDModelConfigV2 {
   research?: string | GSDPhaseModelConfig;
   planning?: string | GSDPhaseModelConfig;
+  discuss?: string | GSDPhaseModelConfig;
   execution?: string | GSDPhaseModelConfig;
   execution_simple?: string | GSDPhaseModelConfig;
   completion?: string | GSDPhaseModelConfig;
+  validation?: string | GSDPhaseModelConfig;
   subagent?: string | GSDPhaseModelConfig;
 }
 
@@ -178,6 +207,30 @@ export interface CmuxPreferences {
   browser?: boolean;
 }
 
+/**
+ * Opt-in experimental features. All features in this block are disabled by
+ * default and must be explicitly enabled. They may change or be removed without
+ * a deprecation cycle while in experimental status.
+ */
+export interface ExperimentalPreferences {
+  /**
+   * Enable RTK (Real-Time Kompression) shell-command compression.
+   * RTK wraps shell commands to reduce token usage during command execution.
+   * Default: false (opt-in required).
+   */
+  rtk?: boolean;
+}
+
+/** Configuration for the codebase map generator (/gsd codebase). */
+export interface CodebaseMapPreferences {
+  /** Additional directory/file patterns to exclude (e.g. ["docs/", "fixtures/"]). Merged with built-in defaults. */
+  exclude_patterns?: string[];
+  /** Max files to include in the map. Default: 500. */
+  max_files?: number;
+  /** Files-per-directory threshold before collapsing to a summary line. Default: 20. */
+  collapse_threshold?: number;
+}
+
 export interface GSDPreferences {
   version?: number;
   mode?: WorkflowMode;
@@ -202,6 +255,7 @@ export interface GSDPreferences {
   post_unit_hooks?: PostUnitHookConfig[];
   pre_dispatch_hooks?: PreDispatchHookConfig[];
   dynamic_routing?: DynamicRoutingConfig;
+  context_management?: ContextManagementConfig;
   token_profile?: TokenProfile;
   phases?: PhaseSkipPreferences;
   auto_visualize?: boolean;
@@ -219,10 +273,90 @@ export interface GSDPreferences {
   widget_mode?: "full" | "small" | "min" | "off";
   /** Reactive (graph-derived parallel) task execution within slices. Disabled by default. */
   reactive_execution?: ReactiveExecutionConfig;
+  /** Parallel quality gate evaluation during slice planning. Disabled by default. */
+  gate_evaluation?: GateEvaluationConfig;
   /** GitHub sync configuration. Opt-in: syncs GSD events to GitHub Issues, Milestones, and PRs. */
   github?: GitHubSyncConfig;
   /** OpenAI service tier preference. "priority" = 2x cost, faster. "flex" = 0.5x cost, slower. Only affects gpt-5.4 models. */
   service_tier?: "priority" | "flex";
+  /** Opt-in: search existing issues and PRs before filing from /gsd forensics. Uses additional AI tokens. */
+  forensics_dedup?: boolean;
+  /** Opt-in: show per-prompt and cumulative session token cost in the footer. Default: false. */
+  show_token_cost?: boolean;
+  /**
+   * Minutes without a commit before flagging uncommitted changes as stale.
+   * When the threshold is exceeded and the working tree is dirty, doctor will
+   * auto-commit a safety snapshot tagged with `[gsd safety]`. Default: 30.
+   * Set to 0 to disable.
+   */
+  stale_commit_threshold_minutes?: number;
+  /**
+   * Opt-in experimental features. All features here are disabled by default.
+   * See the preferences reference for details on each feature.
+   */
+  experimental?: ExperimentalPreferences;
+  /** Configuration for the codebase map generator (/gsd codebase). */
+  codebase?: CodebaseMapPreferences;
+  /** Slice-level parallelism within a milestone. Disabled by default. */
+  slice_parallel?: { enabled?: boolean; max_workers?: number };
+  /** LLM safety harness configuration. Monitors, validates, and constrains LLM behavior during auto-mode. Enabled by default with warn-and-continue policy. */
+  safety_harness?: {
+    enabled?: boolean;
+    evidence_collection?: boolean;
+    file_change_validation?: boolean;
+    evidence_cross_reference?: boolean;
+    destructive_command_warnings?: boolean;
+    content_validation?: boolean;
+    checkpoints?: boolean;
+    auto_rollback?: boolean;
+    timeout_scale_cap?: number;
+  };
+
+
+  // ─── Enhanced Verification ──────────────────────────────────────────────────
+  /**
+   * Enable enhanced verification (both pre-execution and post-execution checks).
+   * Default: true (opt-out, not opt-in). Set false to disable all enhanced verification.
+   */
+  enhanced_verification?: boolean;
+  /**
+   * Enable pre-execution checks (package existence, file references, etc.).
+   * Only applies when enhanced_verification is true.
+   * Default: true.
+   */
+  enhanced_verification_pre?: boolean;
+  /**
+   * Enable post-execution checks (runtime error detection, audit warnings, etc.).
+   * Only applies when enhanced_verification is true.
+   * Default: true.
+   */
+  enhanced_verification_post?: boolean;
+  /**
+   * Strict mode: treat any pre-execution check failure as blocking.
+   * Default: false (warnings only for non-critical failures).
+   */
+  enhanced_verification_strict?: boolean;
+  /**
+   * Enable the preparation phase before discussion sessions.
+   * Preparation analyzes the codebase, reviews prior context, and optionally researches the ecosystem.
+   * Default: true.
+   */
+  discuss_preparation?: boolean;
+  /**
+   * Enable web research during preparation phase.
+   * When enabled, searches for best practices and known issues for the detected tech stack.
+   * Requires a search API key (TAVILY_API_KEY or BRAVE_API_KEY).
+   * Default: true.
+   */
+  discuss_web_research?: boolean;
+  /**
+   * Depth of preparation analysis.
+   * - "quick": Minimal analysis, fastest (~10s)
+   * - "standard": Balanced analysis (~30s)
+   * - "thorough": Deep analysis with more file sampling (~60s)
+   * Default: "standard".
+   */
+  discuss_depth?: "quick" | "standard" | "thorough";
 }
 
 export interface LoadedGSDPreferences {
