@@ -235,6 +235,17 @@ export async function showProjectInit(
   // ── Step 9: Bootstrap .gsd/ ────────────────────────────────────────────────
   bootstrapGsdDirectory(basePath, prefs, signals);
 
+  // ── Step 10: Create database ──────────────────────────────────────────────
+  // Open (and create if needed) gsd.db immediately after .gsd/ is bootstrapped
+  // so the project starts with full DB-backed state instead of degraded mode.
+  // See: https://github.com/gsd-build/gsd-2/issues/3880
+  try {
+    const { ensureDbOpen } = await import("./bootstrap/dynamic-tools.js");
+    await ensureDbOpen();
+  } catch {
+    // Non-fatal — DB creation failure should not block project init
+  }
+
   // Ensure .gitignore
   ensureGitignore(basePath);
   untrackRuntimeFiles(basePath);
