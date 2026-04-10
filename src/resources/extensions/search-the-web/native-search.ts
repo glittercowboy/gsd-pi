@@ -123,8 +123,8 @@ export function registerNativeSearchHooks(pi: NativeSearchPI): { getIsAnthropic:
       ctx.ui.notify("Brave search active (PREFER_BRAVE_SEARCH)", "info");
     } else if (!isAnthropicProvider && !hasBrave) {
       ctx.ui.notify(
-        "Web search: Set BRAVE_API_KEY or use an Anthropic model for built-in search",
-        "warning"
+        "Web search: Using Exa (no API key needed). Set BRAVE_API_KEY for Brave search.",
+        "info"
       );
     }
   });

@@ -1,0 +1,12 @@
+{
+  "id": "exa-search",
+  "name": "Exa Search",
+  "version": "1.0.0",
+  "description": "Code context search and web search via Exa API — no API key required",
+  "tier": "bundled",
+  "requires": { "platform": ">=2.29.0" },
+  "provides": {
+    "tools": ["codesearch", "websearch"],
+    "hooks": ["session_start", "session_shutdown"]
+  }
+}

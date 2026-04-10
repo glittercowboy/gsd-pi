@@ -14,6 +14,7 @@ import {
 	truncateHead,
 	truncateLine,
 } from "./truncate.js";
+import { FileIgnore } from "./file-ignore.js";
 
 const grepSchema = Type.Object({
 	pattern: Type.String({ description: "Search pattern (regex or literal string)" }),
@@ -150,6 +151,11 @@ export function createGrepTool(cwd: string, options?: GrepToolOptions): AgentToo
 						};
 
 						const args: string[] = ["--json", "--line-number", "--color=never", "--hidden"];
+
+						// Add built-in ignore rules to filter common noise directories
+						for (const negGlob of FileIgnore.ripgrepNegateGlobs()) {
+							args.push("--glob", negGlob);
+						}
 
 						if (ignoreCase) {
 							args.push("--ignore-case");

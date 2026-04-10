@@ -4,6 +4,7 @@ import { existsSync, readdirSync, statSync } from "fs";
 import nodePath from "path";
 import { resolveToCwd } from "./path-utils.js";
 import { DEFAULT_MAX_BYTES, formatSize, type TruncationResult, truncateHead } from "./truncate.js";
+import { FileIgnore } from "./file-ignore.js";
 
 const lsSchema = Type.Object({
 	path: Type.Optional(Type.String({ description: "Directory to list (default: current directory)" })),
@@ -92,8 +93,11 @@ export function createLsTool(cwd: string, options?: LsToolOptions): AgentTool<ty
 							return;
 						}
 
-						// Sort alphabetically (case-insensitive)
-						entries.sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase()));
+							// Filter out ignored directories and files
+							entries = entries.filter((entry) => !FileIgnore.match(entry));
+
+							// Sort alphabetically (case-insensitive)
+							entries.sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase()));
 
 						// Format entries with directory indicators
 						const results: string[] = [];

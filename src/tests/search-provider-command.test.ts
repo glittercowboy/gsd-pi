@@ -191,7 +191,7 @@ test('direct arg "auto" sets preference and notifies', async (t) => {
 // 4. No arg — shows select UI, user picks one
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('no arg shows select UI with 3 options, user picks brave', async () => {
+test('no arg shows select UI with options including exa, user picks brave', async () => {
   const cmd = await loadCommand()
 
   await withEnv({ TAVILY_API_KEY: 'tvly-test', BRAVE_API_KEY: 'BSA-test' }, async () => {
@@ -200,13 +200,14 @@ test('no arg shows select UI with 3 options, user picks brave', async () => {
 
     // Select UI shown
     assert.equal(ctx.ui.selectCalls.length, 1, 'should show select UI')
-    assert.equal(ctx.ui.selectCalls[0].options.length, 4)
+    assert.equal(ctx.ui.selectCalls[0].options.length, 5)
 
     // Options show key status
     assert.match(ctx.ui.selectCalls[0].options[0], /tavily \(key: ✓\)/)
     assert.match(ctx.ui.selectCalls[0].options[1], /brave \(key: ✓\)/)
     assert.match(ctx.ui.selectCalls[0].options[2], /ollama \(key:/)
-    assert.equal(ctx.ui.selectCalls[0].options[3], 'auto')
+    assert.match(ctx.ui.selectCalls[0].options[3], /exa/)
+    assert.equal(ctx.ui.selectCalls[0].options[4], 'auto')
 
     // Title shows current preference
     assert.match(ctx.ui.selectCalls[0].title, /current:/)
@@ -263,19 +264,19 @@ test('invalid arg "google" falls back to interactive select', async () => {
 })
 
 // ═══════════════════════════════════════════════════════════════════════════
-// 7. Tab completion — all 3 options when prefix is empty
+// 7. Tab completion — all options when prefix is empty
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('tab completion returns all 4 options when prefix is empty', async () => {
+test('tab completion returns all 5 options when prefix is empty', async () => {
   const cmd = await loadCommand()
 
   withEnv({ TAVILY_API_KEY: 'tvly-test', BRAVE_API_KEY: 'BSA-test' }, () => {
     const items = cmd.getArgumentCompletions!('')
     assert.ok(items, 'completions should not be null')
-    assert.equal(items!.length, 4)
+    assert.equal(items!.length, 5)
 
     const values = items!.map((i: any) => i.value)
-    assert.deepEqual(values, ['tavily', 'brave', 'ollama', 'auto'])
+    assert.deepEqual(values, ['tavily', 'brave', 'ollama', 'exa', 'auto'])
 
     // Each item has label and description
     assert.ok(items!.every((i: any) => i.label), 'every item should have a label')
@@ -318,10 +319,10 @@ test('notify message shows effective provider (fallback case)', async () => {
 })
 
 // ═══════════════════════════════════════════════════════════════════════════
-// 10. Notify message shows "none" when no keys available
+// 10. Notify message shows "exa" when no keys available (Exa is always fallback)
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('notify message shows "none" when no API keys available', async () => {
+test('notify message shows "exa" when no API keys available', async () => {
   const cmd = await loadCommand()
 
   await withEnv({ TAVILY_API_KEY: undefined, BRAVE_API_KEY: undefined }, async () => {
@@ -329,7 +330,7 @@ test('notify message shows "none" when no API keys available', async () => {
     await cmd.handler('auto', ctx)
 
     assert.equal(ctx.ui.notifyCalls.length, 1)
-    assert.match(ctx.ui.notifyCalls[0].message, /Effective provider: none/)
+    assert.match(ctx.ui.notifyCalls[0].message, /Effective provider: exa/)
   })
 })
 

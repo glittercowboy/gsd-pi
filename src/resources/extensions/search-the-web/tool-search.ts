@@ -20,8 +20,9 @@ import { LRUTTLCache } from "./cache.js";
 import { fetchWithRetryTimed, fetchWithRetry, classifyError, type RateLimitInfo } from "./http.js";
 import { normalizeQuery, toDedupeKey, detectFreshness } from "./url-utils.js";
 import { formatSearchResults, type SearchResultFormatted, type FormatSearchOptions } from "./format.js";
-import { getTavilyApiKey, getOllamaApiKey, getBraveApiKey, braveHeaders, resolveSearchProvider } from "./provider.js";
+import { getTavilyApiKey, getOllamaApiKey, getBraveApiKey, braveHeaders, resolveSearchProvider, type SearchProvider } from "./provider.js";
 import { normalizeTavilyResult, mapFreshnessToTavily, type TavilySearchResponse } from "./tavily.js";
+import { callExaWebSearch } from "./exa.js";
 
 // =============================================================================
 // Types
@@ -93,7 +94,7 @@ interface SearchDetails {
   errorKind?: string;
   error?: string;
   retryAfterMs?: number;
-  provider?: 'tavily' | 'brave' | 'ollama';
+  provider?: SearchProvider;
 }
 
 // =============================================================================
@@ -355,11 +356,13 @@ export function registerSearchTool(pi: ExtensionAPI) {
       // Resolve search provider
       // ------------------------------------------------------------------
       const provider = resolveSearchProvider();
+      // Exa is always available as fallback, so provider should never be null.
+      // Keep null check as defensive guard for unexpected edge cases.
       if (!provider) {
         return {
-          content: [{ type: "text", text: "Web search unavailable: No search API key is set. Use secure_env_collect to set TAVILY_API_KEY, BRAVE_API_KEY, or OLLAMA_API_KEY." }],
+          content: [{ type: "text", text: "Web search unavailable: No search provider could be resolved. Please check your configuration." }],
           isError: true,
-          details: { errorKind: "auth_error", error: "No search API key set" } satisfies Partial<SearchDetails>,
+          details: { errorKind: "auth_error", error: "No search provider resolved" } satisfies Partial<SearchDetails>,
         };
       }
 
@@ -490,7 +493,44 @@ export function registerSearchTool(pi: ExtensionAPI) {
         let latencyMs: number | undefined;
         let rateLimit: RateLimitInfo | undefined;
 
-        if (provider === "tavily") {
+        if (provider === "exa") {
+          // Exa path — no API key needed
+          const exaResult = await callExaWebSearch(params.query, {
+            numResults: count,
+          }, signal);
+
+          // Exa returns pre-formatted text, use it directly
+          const exaResults: SearchResultFormatted[] = exaResult
+            ? [{ title: "Exa Search Result", url: "", description: exaResult.slice(0, 500) }]
+            : [];
+
+          searchResult = {
+            results: exaResults,
+          };
+
+          // For Exa, bypass the normal formatting and return the raw text
+          const output = exaResult || "No search results found. Try a different query.";
+          const truncation = truncateHead(output, { maxLines: DEFAULT_MAX_LINES, maxBytes: DEFAULT_MAX_BYTES });
+          let content = truncation.content;
+          if (truncation.truncated) {
+            content += `\n\n[Truncated: ${truncation.outputLines}/${truncation.totalLines} lines (${formatSize(truncation.outputBytes)}/${formatSize(truncation.totalBytes)})]`;
+          }
+
+          searchCache.set(cacheKey, searchResult);
+
+          const details: SearchDetails = {
+            query: params.query,
+            effectiveQuery,
+            results: exaResults,
+            count: exaResults.length,
+            cached: false,
+            freshness: freshness || "none",
+            hasSummary: false,
+            provider,
+          };
+
+          return { content: [{ type: "text", text: content }], details };
+        } else if (provider === "tavily") {
           const tavilyResult = await executeTavilySearch(
             { query: params.query, freshness, domain: params.domain, wantSummary },
             signal

@@ -106,13 +106,13 @@ test('resolveSearchProvider returns brave when both keys set and preference is b
   })
 })
 
-test('resolveSearchProvider returns null when neither key is set', async () => {
+test('resolveSearchProvider returns exa when neither key is set', async () => {
   const { resolveSearchProvider } = await import(
     '../resources/extensions/search-the-web/provider.ts'
   )
   withEnv({ TAVILY_API_KEY: undefined, BRAVE_API_KEY: undefined, OLLAMA_API_KEY: undefined }, () => {
     const result = resolveSearchProvider('auto')
-    assert.equal(result, null)
+    assert.equal(result, 'exa')
   })
 })
 

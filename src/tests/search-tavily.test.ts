@@ -181,7 +181,7 @@ test("resolveSearchProvider returns 'brave' when only BRAVE_API_KEY is set", (t)
   assert.equal(provider, "brave");
 });
 
-test("resolveSearchProvider returns null when neither key is set", (t) => {
+test("resolveSearchProvider returns exa when neither key is set", (t) => {
   const origTavily = process.env.TAVILY_API_KEY;
   const origBrave = process.env.BRAVE_API_KEY;
 
@@ -196,7 +196,7 @@ test("resolveSearchProvider returns null when neither key is set", (t) => {
   });
 
   const provider = resolveSearchProvider();
-  assert.equal(provider, null);
+  assert.equal(provider, "exa");
 });
 
 // =============================================================================

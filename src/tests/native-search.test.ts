@@ -403,7 +403,7 @@ test("model_select shows 'Native Anthropic web search active' for Anthropic prov
   );
 });
 
-test("model_select shows warning for non-Anthropic without Brave key", async (t) => {
+test("model_select shows info for non-Anthropic without Brave key (Exa fallback)", async (t) => {
   const originalKey = process.env.BRAVE_API_KEY;
   delete process.env.BRAVE_API_KEY;
 
@@ -421,11 +421,11 @@ test("model_select shows warning for non-Anthropic without Brave key", async (t)
     source: "set",
   });
 
-  const warning = pi.notifications.find((n) => n.level === "warning");
-  assert.ok(warning, "Should show warning for non-Anthropic without Brave key");
+  const info = pi.notifications.find((n) => n.level === "info" && n.message.includes("Exa"));
+  assert.ok(info, "Should show info about Exa fallback for non-Anthropic without Brave key");
   assert.ok(
-    warning!.message.includes("Anthropic"),
-    `Warning should mention Anthropic — got: ${warning!.message}`
+    info!.message.includes("Exa"),
+    `Info should mention Exa — got: ${info!.message}`
   );
 });
 

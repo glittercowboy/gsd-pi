@@ -27,7 +27,8 @@ import { normalizeQuery, extractDomain } from "./url-utils.js";
 import { formatLLMContext, type LLMContextSnippet, type LLMContextSource } from "./format.js";
 import type { TavilyResult, TavilySearchResponse } from "./tavily.js";
 import { publishedDateToAge } from "./tavily.js";
-import { getTavilyApiKey, getOllamaApiKey, getBraveApiKey, braveHeaders, resolveSearchProvider } from "./provider.js";
+import { getTavilyApiKey, getOllamaApiKey, getBraveApiKey, braveHeaders, resolveSearchProvider, type SearchProvider } from "./provider.js";
+import { callExaWebSearch } from "./exa.js";
 
 // =============================================================================
 // Types
@@ -79,7 +80,7 @@ interface LLMContextDetails {
   errorKind?: string;
   error?: string;
   retryAfterMs?: number;
-  provider?: 'tavily' | 'brave' | 'ollama';
+  provider?: SearchProvider;
 }
 
 // =============================================================================
@@ -405,6 +406,21 @@ export function registerLLMContextTool(pi: ExtensionAPI) {
           result = ollamaResult.cached;
           latencyMs = ollamaResult.latencyMs;
           rateLimit = ollamaResult.rateLimit;
+        } else if (provider === "exa") {
+          // Exa path — no API key needed, returns pre-formatted text
+          const exaResult = await callExaWebSearch(params.query, {
+            numResults: count,
+          }, signal);
+
+          // Wrap Exa text result into the LLM context format
+          const grounding: LLMContextSnippet[] = exaResult
+            ? [{ url: "", title: "Exa Search", snippets: [exaResult.slice(0, 2000)] }]
+            : [];
+          result = {
+            grounding,
+            sources: {},
+            estimatedTokens: Math.ceil((exaResult?.length ?? 0) / 4),
+          };
         } else {
           // ================================================================
           // BRAVE PATH (unchanged API logic)

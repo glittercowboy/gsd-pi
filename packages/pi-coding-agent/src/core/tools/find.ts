@@ -6,6 +6,7 @@ import path from "path";
 import { FIND_DEFAULT_LIMIT } from "../constants.js";
 import { resolveToCwd } from "./path-utils.js";
 import { DEFAULT_MAX_BYTES, formatSize, type TruncationResult, truncateHead } from "./truncate.js";
+import { FileIgnore } from "./file-ignore.js";
 
 const findSchema = Type.Object({
 	pattern: Type.String({
@@ -84,7 +85,7 @@ export function createFindTool(cwd: string, options?: FindToolOptions): AgentToo
 							}
 
 							const results = await ops.glob(pattern, searchPath, {
-								ignore: ["**/node_modules/**", "**/.git/**"],
+								ignore: FileIgnore.nativeGlobPatterns(),
 								limit: effectiveLimit,
 							});
 

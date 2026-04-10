@@ -1,9 +1,9 @@
 /**
  * /search-provider slash command.
  *
- * Lets users switch between tavily, brave, and auto search backends.
+ * Lets users switch between tavily, brave, ollama, exa, and auto search backends.
  * Supports direct arg (`/search-provider tavily`) or interactive select UI.
- * Tab completion provides the three valid options with key status.
+ * Tab completion provides the valid options with key status.
  *
  * All provider logic lives in provider.ts (S01) — this is pure UI wiring.
  */
@@ -20,9 +20,10 @@ import {
   type SearchProviderPreference,
 } from './provider.js'
 
-const VALID_PREFERENCES: SearchProviderPreference[] = ['tavily', 'brave', 'ollama', 'auto']
+const VALID_PREFERENCES: SearchProviderPreference[] = ['tavily', 'brave', 'ollama', 'exa', 'auto']
 
-function keyStatus(provider: 'tavily' | 'brave' | 'ollama'): string {
+function keyStatus(provider: 'tavily' | 'brave' | 'ollama' | 'exa'): string {
+  if (provider === 'exa') return 'no key needed'
   if (provider === 'tavily') return getTavilyApiKey() ? '✓' : '✗'
   if (provider === 'ollama') return getOllamaApiKey() ? '✓' : '✗'
   return getBraveApiKey() ? '✓' : '✗'
@@ -33,6 +34,7 @@ function buildSelectOptions(): string[] {
     `tavily (key: ${keyStatus('tavily')})`,
     `brave (key: ${keyStatus('brave')})`,
     `ollama (key: ${keyStatus('ollama')})`,
+    `exa (no key required)`,
     `auto`,
   ]
 }
@@ -41,12 +43,13 @@ function parseSelectChoice(choice: string): SearchProviderPreference {
   if (choice.startsWith('tavily')) return 'tavily'
   if (choice.startsWith('brave')) return 'brave'
   if (choice.startsWith('ollama')) return 'ollama'
+  if (choice.startsWith('exa')) return 'exa'
   return 'auto'
 }
 
 export function registerSearchProviderCommand(pi: ExtensionAPI): void {
   pi.registerCommand('search-provider', {
-    description: 'Switch search provider (tavily, brave, ollama, auto)',
+    description: 'Switch search provider (tavily, brave, ollama, exa, auto)',
 
     getArgumentCompletions(prefix: string): AutocompleteItem[] | null {
       const trimmed = prefix.trim().toLowerCase()
@@ -55,7 +58,9 @@ export function registerSearchProviderCommand(pi: ExtensionAPI): void {
         .map((p) => {
           let description: string
           if (p === 'auto') {
-            description = `Auto-select (tavily: ${keyStatus('tavily')}, brave: ${keyStatus('brave')}, ollama: ${keyStatus('ollama')})`
+            description = `Auto-select (tavily: ${keyStatus('tavily')}, brave: ${keyStatus('brave')}, ollama: ${keyStatus('ollama')}, exa: no key needed)`
+          } else if (p === 'exa') {
+            description = 'no API key required'
           } else {
             description = `key: ${keyStatus(p)}`
           }
@@ -93,7 +98,7 @@ export function registerSearchProviderCommand(pi: ExtensionAPI): void {
       const isAnthropic = ctx.model?.provider === 'anthropic'
       const nativeNote = isAnthropic ? '\nNote: Native Anthropic web search is also active (automatic, no API key needed).' : ''
       ctx.ui.notify(
-        `Search provider set to ${chosen}. Effective provider: ${effective ?? 'none (no API keys)'}${nativeNote}`,
+        `Search provider set to ${chosen}. Effective provider: ${effective ?? 'none'}${nativeNote}`,
         'info',
       )
     },

@@ -20,10 +20,10 @@ import { resolveSearchProviderFromPreferences } from '../gsd/preferences.js'
 const gsdHome = process.env.GSD_HOME || join(homedir(), '.gsd')
 const authFilePath = join(gsdHome, 'agent', 'auth.json')
 
-export type SearchProvider = 'tavily' | 'brave' | 'ollama'
+export type SearchProvider = 'tavily' | 'brave' | 'ollama' | 'exa'
 export type SearchProviderPreference = SearchProvider | 'auto'
 
-const VALID_PREFERENCES = new Set<string>(['tavily', 'brave', 'ollama', 'auto'])
+const VALID_PREFERENCES = new Set<string>(['tavily', 'brave', 'ollama', 'exa', 'auto'])
 const PREFERENCE_KEY = 'search_provider'
 
 /** Returns the Tavily API key from the environment, or empty string if not set. */
@@ -117,33 +117,37 @@ export function resolveSearchProvider(overridePreference?: string): SearchProvid
   }
 
   // Resolve based on preference
+  if (pref === 'exa') {
+    return 'exa' // Exa never needs an API key
+  }
+
   if (pref === 'auto') {
     if (hasTavily) return 'tavily'
     if (hasBrave) return 'brave'
     if (hasOllama) return 'ollama'
-    return null
+    return 'exa' // Fallback to Exa (no API key needed)
   }
 
   if (pref === 'tavily') {
     if (hasTavily) return 'tavily'
     if (hasBrave) return 'brave'
     if (hasOllama) return 'ollama'
-    return null
+    return 'exa'
   }
 
   if (pref === 'brave') {
     if (hasBrave) return 'brave'
     if (hasTavily) return 'tavily'
     if (hasOllama) return 'ollama'
-    return null
+    return 'exa'
   }
 
   if (pref === 'ollama') {
     if (hasOllama) return 'ollama'
     if (hasTavily) return 'tavily'
     if (hasBrave) return 'brave'
-    return null
+    return 'exa'
   }
 
-  return null
+  return 'exa'
 }
