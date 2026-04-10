@@ -215,17 +215,9 @@ export function checkAutoStartAfterDiscuss(): boolean {
 
   // Gate 4: Discussion manifest process verification (multi-milestone only)
   // The LLM writes DISCUSSION-MANIFEST.json after each Phase 3 gate decision.
-  // If the project is multi-milestone, the manifest is required. When it is
-  // missing, fail closed instead of assuming the discussion finished.
+  // When it exists, validate it before auto-starting. Project history alone is
+  // not a reliable signal for the current discussion mode.
   const manifestPath = join(gsdRoot(basePath), "DISCUSSION-MANIFEST.json");
-  const requiresManifest = projectIds.length > 1 || findMilestoneIds(basePath).length > 1;
-  if (requiresManifest && !existsSync(manifestPath)) {
-    ctx.ui.notify(
-      "Multi-milestone discussion manifest is missing. Auto-start will remain paused until the manifest is written.",
-      "warning",
-    );
-    return false;
-  }
   if (existsSync(manifestPath)) {
     try {
       const manifest = JSON.parse(readFileSync(manifestPath, "utf-8"));

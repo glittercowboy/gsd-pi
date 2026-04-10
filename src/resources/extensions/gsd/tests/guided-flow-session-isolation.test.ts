@@ -100,7 +100,7 @@ describe("#2985 Bug 4 — getDiscussionMilestoneId must be keyed by basePath", (
   });
 });
 
-test("checkAutoStartAfterDiscuss fails closed when a multi-milestone manifest is missing", () => {
+test("checkAutoStartAfterDiscuss ignores missing manifest for single-milestone discuss on established project", () => {
   const base = mkdtempSync(join(tmpdir(), "gsd-auto-start-manifest-"));
   try {
     const gsdDir = join(base, ".gsd");
@@ -123,7 +123,7 @@ test("checkAutoStartAfterDiscuss fails closed when a multi-milestone manifest is
     });
 
     const started = checkAutoStartAfterDiscuss();
-    assert.equal(started, false, "auto-start should fail closed without the manifest");
+    assert.equal(started, true, "project history alone should not require a manifest");
   } finally {
     clearPendingAutoStart();
     rmSync(base, { recursive: true, force: true });
