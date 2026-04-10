@@ -16,7 +16,11 @@ import { resolve } from 'node:path';
 import { EventEmitter } from 'node:events';
 
 import { SessionManager } from './session-manager.js';
-import { createMcpServer } from './server.js';
+import {
+  buildAskUserQuestionsElicitRequest,
+  createMcpServer,
+  formatAskUserQuestionsElicitResult,
+} from './server.js';
 import { MAX_EVENTS } from './types.js';
 import type { ManagedSession, CostAccumulator, PendingBlocker } from './types.js';
 
@@ -574,6 +578,8 @@ describe('createMcpServer tool registration', () => {
   it('creates server successfully with all required methods', async () => {
     const { server } = await createMcpServer(sm);
     assert.ok(server);
+    assert.ok(server.server);
+    assert.equal(typeof server.server.elicitInput, 'function');
     assert.ok(typeof server.connect === 'function');
     assert.ok(typeof server.close === 'function');
   });
@@ -624,5 +630,83 @@ describe('createMcpServer tool registration', () => {
     await sm.cancelSession(sessionId);
     const session = sm.getSession(sessionId)!;
     assert.equal(session.status, 'cancelled');
+  });
+
+  it('buildAskUserQuestionsElicitRequest adds None of the above note field for single-select questions', () => {
+    const request = buildAskUserQuestionsElicitRequest([
+      {
+        id: 'depth_verification_M001',
+        header: 'Depth Check',
+        question: 'Did I capture the depth right?',
+        options: [
+          { label: 'Yes, you got it (Recommended)', description: 'Continue with the current summary.' },
+          { label: 'Not quite', description: 'I need to clarify the depth further.' },
+        ],
+      },
+      {
+        id: 'focus_areas',
+        header: 'Focus',
+        question: 'Which areas matter most?',
+        allowMultiple: true,
+        options: [
+          { label: 'Frontend', description: 'Prioritize the UI.' },
+          { label: 'Backend', description: 'Prioritize server logic.' },
+        ],
+      },
+    ]);
+
+    assert.equal(request.mode, 'form');
+    assert.deepEqual(request.requestedSchema.required, ['depth_verification_M001', 'focus_areas']);
+    assert.ok(request.requestedSchema.properties['depth_verification_M001']);
+    assert.ok(request.requestedSchema.properties['depth_verification_M001__note']);
+    assert.ok(!request.requestedSchema.properties['focus_areas__note']);
+  });
+
+  it('formatAskUserQuestionsElicitResult preserves the existing answers JSON shape', () => {
+    const result = formatAskUserQuestionsElicitResult(
+      [
+        {
+          id: 'depth_verification_M001',
+          header: 'Depth Check',
+          question: 'Did I capture the depth right?',
+          options: [
+            { label: 'Yes, you got it (Recommended)', description: 'Continue with the current summary.' },
+            { label: 'Not quite', description: 'I need to clarify the depth further.' },
+          ],
+        },
+        {
+          id: 'focus_areas',
+          header: 'Focus',
+          question: 'Which areas matter most?',
+          allowMultiple: true,
+          options: [
+            { label: 'Frontend', description: 'Prioritize the UI.' },
+            { label: 'Backend', description: 'Prioritize server logic.' },
+          ],
+        },
+      ],
+      {
+        action: 'accept',
+        content: {
+          depth_verification_M001: 'None of the above',
+          depth_verification_M001__note: 'Need more implementation detail.',
+          focus_areas: ['Frontend', 'Backend'],
+        },
+      },
+    );
+
+    assert.equal(
+      result,
+      JSON.stringify({
+        answers: {
+          depth_verification_M001: {
+            answers: ['None of the above', 'user_note: Need more implementation detail.'],
+          },
+          focus_areas: {
+            answers: ['Frontend', 'Backend'],
+          },
+        },
+      }),
+    );
   });
 });

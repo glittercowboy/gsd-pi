@@ -141,7 +141,11 @@ test("detectWorkflowMcpLaunchConfig resolves the bundled server relative to the 
   assert.match(launch?.env?.GSD_WORKFLOW_EXECUTORS_MODULE ?? "", /workflow-tool-executors\.(js|ts)$/);
   assert.match(launch?.env?.GSD_WORKFLOW_WRITE_GATE_MODULE ?? "", /write-gate\.(js|ts)$/);
   assert.equal(typeof launch?.args?.[0], "string");
-  assert.match(launch?.args?.[0] ?? "", /packages[\/\\]mcp-server[\/\\]dist[\/\\]cli\.js$/);
+  assert.match(launch?.args?.[0] ?? "", /packages[\/\\]mcp-server[\/\\](dist[\/\\]cli\.js|src[\/\\]cli\.ts)$/);
+  if ((launch?.args?.[0] ?? "").endsWith(".ts")) {
+    assert.match(launch?.env?.NODE_OPTIONS ?? "", /--experimental-strip-types/);
+    assert.match(launch?.env?.NODE_OPTIONS ?? "", /resolve-ts\.mjs/);
+  }
 });
 
 test("detectWorkflowMcpLaunchConfig resolves the bundled server relative to the package without env hints", () => {
@@ -154,7 +158,11 @@ test("detectWorkflowMcpLaunchConfig resolves the bundled server relative to the 
   assert.match(launch?.env?.GSD_WORKFLOW_EXECUTORS_MODULE ?? "", /workflow-tool-executors\.(js|ts)$/);
   assert.match(launch?.env?.GSD_WORKFLOW_WRITE_GATE_MODULE ?? "", /write-gate\.(js|ts)$/);
   assert.equal(typeof launch?.args?.[0], "string");
-  assert.match(launch?.args?.[0] ?? "", /packages[\/\\]mcp-server[\/\\]dist[\/\\]cli\.js$/);
+  assert.match(launch?.args?.[0] ?? "", /packages[\/\\]mcp-server[\/\\](dist[\/\\]cli\.js|src[\/\\]cli\.ts)$/);
+  if ((launch?.args?.[0] ?? "").endsWith(".ts")) {
+    assert.match(launch?.env?.NODE_OPTIONS ?? "", /--experimental-strip-types/);
+    assert.match(launch?.env?.NODE_OPTIONS ?? "", /resolve-ts\.mjs/);
+  }
 });
 
 test("workflow MCP launch config reaches mutation tools over stdio", async () => {
@@ -165,12 +173,16 @@ test("workflow MCP launch config reaches mutation tools over stdio", async () =>
   assert.ok(launch, "expected a workflow MCP launch config");
   assert.match(
     launch.env?.GSD_WORKFLOW_EXECUTORS_MODULE ?? "",
-    /dist[\/\\]resources[\/\\]extensions[\/\\]gsd[\/\\]tools[\/\\]workflow-tool-executors\.js$/,
+    /(dist[\/\\]resources[\/\\]extensions[\/\\]gsd[\/\\]tools[\/\\]workflow-tool-executors\.js|src[\/\\]resources[\/\\]extensions[\/\\]gsd[\/\\]tools[\/\\]workflow-tool-executors\.(js|ts))$/,
   );
   assert.match(
     launch.env?.GSD_WORKFLOW_WRITE_GATE_MODULE ?? "",
-    /dist[\/\\]resources[\/\\]extensions[\/\\]gsd[\/\\]bootstrap[\/\\]write-gate\.js$/,
+    /(dist[\/\\]resources[\/\\]extensions[\/\\]gsd[\/\\]bootstrap[\/\\]write-gate\.js|src[\/\\]resources[\/\\]extensions[\/\\]gsd[\/\\]bootstrap[\/\\]write-gate\.(js|ts))$/,
   );
+  if ((launch.env?.GSD_WORKFLOW_EXECUTORS_MODULE ?? "").endsWith(".ts")) {
+    assert.match(launch.env?.NODE_OPTIONS ?? "", /--experimental-strip-types/);
+    assert.match(launch.env?.NODE_OPTIONS ?? "", /resolve-ts\.mjs/);
+  }
 
   const client = new Client({ name: "workflow-mcp-transport-test", version: "1.0.0" });
   const transport = new StdioClientTransport({
@@ -188,6 +200,10 @@ test("workflow MCP launch config reaches mutation tools over stdio", async () =>
     assert.ok(
       (tools.tools ?? []).some((tool) => tool.name === "gsd_plan_slice"),
       "expected workflow MCP surface to expose gsd_plan_slice",
+    );
+    assert.ok(
+      (tools.tools ?? []).some((tool) => tool.name === "ask_user_questions"),
+      "expected workflow MCP surface to expose ask_user_questions",
     );
 
     const milestoneResult = await client.callTool(
@@ -465,18 +481,18 @@ test("transport compatibility now allows replan-slice over workflow MCP surface"
 test("transport compatibility still blocks units whose MCP tools are not exposed", () => {
   const error = getWorkflowTransportSupportError(
     "claude-code",
-    ["gsd_skip_slice"],
+    ["secure_env_collect"],
     {
       projectRoot: "/tmp/project",
       env: { GSD_WORKFLOW_MCP_COMMAND: "node" },
       surface: "auto-mode",
-      unitType: "skip-slice",
+      unitType: "guided-discussion",
       authMode: "externalCli",
       baseUrl: "local://claude-code",
     },
   );
 
-  assert.match(error ?? "", /requires gsd_skip_slice/);
+  assert.match(error ?? "", /requires secure_env_collect/);
   assert.match(error ?? "", /currently exposes only/);
 });
 

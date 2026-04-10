@@ -336,6 +336,10 @@ function toFileUrl(modulePath: string): string {
   return pathToFileURL(resolve(modulePath)).href;
 }
 
+async function importLocalModule<T>(relativePath: string): Promise<T> {
+  return import(new URL(relativePath, import.meta.url).href) as Promise<T>;
+}
+
 function getWorkflowExecutorModuleCandidates(env: NodeJS.ProcessEnv = process.env): string[] {
   const candidates: string[] = [];
   const explicitModule = env.GSD_WORKFLOW_EXECUTORS_MODULE?.trim();
@@ -419,6 +423,38 @@ interface McpToolServer {
     handler: (args: Record<string, unknown>) => Promise<unknown>,
   ): unknown;
 }
+
+export const WORKFLOW_TOOL_NAMES = [
+  "gsd_decision_save",
+  "gsd_save_decision",
+  "gsd_requirement_update",
+  "gsd_update_requirement",
+  "gsd_requirement_save",
+  "gsd_save_requirement",
+  "gsd_milestone_generate_id",
+  "gsd_generate_milestone_id",
+  "gsd_plan_milestone",
+  "gsd_plan_slice",
+  "gsd_plan_task",
+  "gsd_task_plan",
+  "gsd_replan_slice",
+  "gsd_slice_replan",
+  "gsd_slice_complete",
+  "gsd_complete_slice",
+  "gsd_skip_slice",
+  "gsd_complete_milestone",
+  "gsd_milestone_complete",
+  "gsd_validate_milestone",
+  "gsd_milestone_validate",
+  "gsd_reassess_roadmap",
+  "gsd_roadmap_reassess",
+  "gsd_save_gate_result",
+  "gsd_summary_save",
+  "gsd_task_complete",
+  "gsd_complete_task",
+  "gsd_milestone_status",
+  "gsd_journal_query",
+] as const;
 
 async function runSerializedWorkflowOperation<T>(fn: () => Promise<T>): Promise<T> {
   // The shared DB adapter and workflow log base path are process-global, so
@@ -564,6 +600,15 @@ async function handleSaveGateResult(
   const { executeSaveGateResult } = await getWorkflowToolExecutors();
   const { projectDir: _projectDir, ...params } = args;
   return runSerializedWorkflowOperation(() => executeSaveGateResult(params, projectDir));
+}
+
+async function ensureMilestoneDbRow(milestoneId: string): Promise<void> {
+  try {
+    const { insertMilestone } = await importLocalModule<any>("../../../src/resources/extensions/gsd/gsd-db.js");
+    insertMilestone({ id: milestoneId, status: "queued" });
+  } catch {
+    // Ignore pre-existing rows or transient DB availability issues.
+  }
 }
 
 const projectDirParam = z.string().describe("Absolute path to the project directory within the configured workflow root");
@@ -772,6 +817,73 @@ const summarySaveParams = {
 };
 const summarySaveSchema = z.object(summarySaveParams);
 
+const decisionSaveParams = {
+  projectDir: projectDirParam,
+  scope: z.string().describe("Scope of the decision (e.g. architecture, library, observability)"),
+  decision: z.string().describe("What is being decided"),
+  choice: z.string().describe("The choice made"),
+  rationale: z.string().describe("Why this choice was made"),
+  revisable: z.string().optional().describe("Whether this can be revisited"),
+  when_context: z.string().optional().describe("When/context for the decision"),
+  made_by: z.enum(["human", "agent", "collaborative"]).optional().describe("Who made the decision"),
+};
+const decisionSaveSchema = z.object(decisionSaveParams);
+
+const requirementUpdateParams = {
+  projectDir: projectDirParam,
+  id: z.string().describe("Requirement ID (e.g. R001)"),
+  status: z.string().optional().describe("New status"),
+  validation: z.string().optional().describe("Validation criteria or proof"),
+  notes: z.string().optional().describe("Additional notes"),
+  description: z.string().optional().describe("Updated description"),
+  primary_owner: z.string().optional().describe("Primary owning slice"),
+  supporting_slices: z.string().optional().describe("Supporting slices"),
+};
+const requirementUpdateSchema = z.object(requirementUpdateParams);
+
+const requirementSaveParams = {
+  projectDir: projectDirParam,
+  class: z.string().describe("Requirement class"),
+  description: z.string().describe("Short description of the requirement"),
+  why: z.string().describe("Why this requirement matters"),
+  source: z.string().describe("Origin of the requirement"),
+  status: z.string().optional().describe("Requirement status"),
+  primary_owner: z.string().optional().describe("Primary owning slice"),
+  supporting_slices: z.string().optional().describe("Supporting slices"),
+  validation: z.string().optional().describe("Validation criteria"),
+  notes: z.string().optional().describe("Additional notes"),
+};
+const requirementSaveSchema = z.object(requirementSaveParams);
+
+const milestoneGenerateIdParams = {
+  projectDir: projectDirParam,
+};
+const milestoneGenerateIdSchema = z.object(milestoneGenerateIdParams);
+
+const planTaskParams = {
+  projectDir: projectDirParam,
+  milestoneId: z.string().describe("Milestone ID (e.g. M001)"),
+  sliceId: z.string().describe("Slice ID (e.g. S01)"),
+  taskId: z.string().describe("Task ID (e.g. T01)"),
+  title: z.string().describe("Task title"),
+  description: z.string().describe("Task description / steps block"),
+  estimate: z.string().describe("Task estimate"),
+  files: z.array(z.string()).describe("Files likely touched"),
+  verify: z.string().describe("Verification command or block"),
+  inputs: z.array(z.string()).describe("Input files or references"),
+  expectedOutput: z.array(z.string()).describe("Expected output files or artifacts"),
+  observabilityImpact: z.string().optional().describe("Task observability impact"),
+};
+const planTaskSchema = z.object(planTaskParams);
+
+const skipSliceParams = {
+  projectDir: projectDirParam,
+  sliceId: z.string().describe("Slice ID (e.g. S02)"),
+  milestoneId: z.string().describe("Milestone ID (e.g. M003)"),
+  reason: z.string().optional().describe("Reason for skipping this slice"),
+};
+const skipSliceSchema = z.object(skipSliceParams);
+
 const taskCompleteParams = {
   projectDir: projectDirParam,
   taskId: z.string().describe("Task ID (e.g. T01)"),
@@ -803,7 +915,171 @@ const milestoneStatusParams = {
 };
 const milestoneStatusSchema = z.object(milestoneStatusParams);
 
+const journalQueryParams = {
+  projectDir: projectDirParam,
+  flowId: z.string().optional().describe("Filter by flow ID"),
+  unitId: z.string().optional().describe("Filter by unit ID"),
+  rule: z.string().optional().describe("Filter by rule name"),
+  eventType: z.string().optional().describe("Filter by event type"),
+  after: z.string().optional().describe("ISO-8601 lower bound (inclusive)"),
+  before: z.string().optional().describe("ISO-8601 upper bound (inclusive)"),
+  limit: z.number().optional().describe("Maximum entries to return"),
+};
+const journalQuerySchema = z.object(journalQueryParams);
+
 export function registerWorkflowTools(server: McpToolServer): void {
+  server.tool(
+    "gsd_decision_save",
+    "Record a project decision to the GSD database and regenerate DECISIONS.md.",
+    decisionSaveParams,
+    async (args: Record<string, unknown>) => {
+      const parsed = parseWorkflowArgs(decisionSaveSchema, args);
+      const { projectDir, ...params } = parsed;
+      await enforceWorkflowWriteGate("gsd_decision_save", projectDir);
+      const result = await runSerializedWorkflowOperation(async () => {
+        const { saveDecisionToDb } = await importLocalModule<any>("../../../src/resources/extensions/gsd/db-writer.js");
+        return saveDecisionToDb(params, projectDir);
+      });
+      return { content: [{ type: "text" as const, text: `Saved decision ${result.id}` }] };
+    },
+  );
+
+  server.tool(
+    "gsd_save_decision",
+    "Alias for gsd_decision_save. Record a project decision to the GSD database and regenerate DECISIONS.md.",
+    decisionSaveParams,
+    async (args: Record<string, unknown>) => {
+      const parsed = parseWorkflowArgs(decisionSaveSchema, args);
+      const { projectDir, ...params } = parsed;
+      await enforceWorkflowWriteGate("gsd_decision_save", projectDir);
+      const result = await runSerializedWorkflowOperation(async () => {
+        const { saveDecisionToDb } = await importLocalModule<any>("../../../src/resources/extensions/gsd/db-writer.js");
+        return saveDecisionToDb(params, projectDir);
+      });
+      return { content: [{ type: "text" as const, text: `Saved decision ${result.id}` }] };
+    },
+  );
+
+  server.tool(
+    "gsd_requirement_update",
+    "Update an existing requirement in the GSD database and regenerate REQUIREMENTS.md.",
+    requirementUpdateParams,
+    async (args: Record<string, unknown>) => {
+      const parsed = parseWorkflowArgs(requirementUpdateSchema, args);
+      const { projectDir, id, ...updates } = parsed;
+      await enforceWorkflowWriteGate("gsd_requirement_update", projectDir);
+      await runSerializedWorkflowOperation(async () => {
+        const { updateRequirementInDb } = await importLocalModule<any>("../../../src/resources/extensions/gsd/db-writer.js");
+        return updateRequirementInDb(id, updates, projectDir);
+      });
+      return { content: [{ type: "text" as const, text: `Updated requirement ${id}` }] };
+    },
+  );
+
+  server.tool(
+    "gsd_update_requirement",
+    "Alias for gsd_requirement_update. Update an existing requirement in the GSD database and regenerate REQUIREMENTS.md.",
+    requirementUpdateParams,
+    async (args: Record<string, unknown>) => {
+      const parsed = parseWorkflowArgs(requirementUpdateSchema, args);
+      const { projectDir, id, ...updates } = parsed;
+      await enforceWorkflowWriteGate("gsd_requirement_update", projectDir);
+      await runSerializedWorkflowOperation(async () => {
+        const { updateRequirementInDb } = await importLocalModule<any>("../../../src/resources/extensions/gsd/db-writer.js");
+        return updateRequirementInDb(id, updates, projectDir);
+      });
+      return { content: [{ type: "text" as const, text: `Updated requirement ${id}` }] };
+    },
+  );
+
+  server.tool(
+    "gsd_requirement_save",
+    "Record a new requirement to the GSD database and regenerate REQUIREMENTS.md.",
+    requirementSaveParams,
+    async (args: Record<string, unknown>) => {
+      const parsed = parseWorkflowArgs(requirementSaveSchema, args);
+      const { projectDir, ...params } = parsed;
+      await enforceWorkflowWriteGate("gsd_requirement_save", projectDir);
+      const result = await runSerializedWorkflowOperation(async () => {
+        const { saveRequirementToDb } = await importLocalModule<any>("../../../src/resources/extensions/gsd/db-writer.js");
+        return saveRequirementToDb(params, projectDir);
+      });
+      return { content: [{ type: "text" as const, text: `Saved requirement ${result.id}` }] };
+    },
+  );
+
+  server.tool(
+    "gsd_save_requirement",
+    "Alias for gsd_requirement_save. Record a new requirement to the GSD database and regenerate REQUIREMENTS.md.",
+    requirementSaveParams,
+    async (args: Record<string, unknown>) => {
+      const parsed = parseWorkflowArgs(requirementSaveSchema, args);
+      const { projectDir, ...params } = parsed;
+      await enforceWorkflowWriteGate("gsd_requirement_save", projectDir);
+      const result = await runSerializedWorkflowOperation(async () => {
+        const { saveRequirementToDb } = await importLocalModule<any>("../../../src/resources/extensions/gsd/db-writer.js");
+        return saveRequirementToDb(params, projectDir);
+      });
+      return { content: [{ type: "text" as const, text: `Saved requirement ${result.id}` }] };
+    },
+  );
+
+  server.tool(
+    "gsd_milestone_generate_id",
+    "Generate the next milestone ID for a new GSD milestone.",
+    milestoneGenerateIdParams,
+    async (args: Record<string, unknown>) => {
+      const { projectDir } = parseWorkflowArgs(milestoneGenerateIdSchema, args);
+      await enforceWorkflowWriteGate("gsd_milestone_generate_id", projectDir);
+      const id = await runSerializedWorkflowOperation(async () => {
+        const {
+          claimReservedId,
+          findMilestoneIds,
+          getReservedMilestoneIds,
+          nextMilestoneId,
+        } = await importLocalModule<any>("../../../src/resources/extensions/gsd/milestone-ids.js");
+        const reserved = claimReservedId();
+        if (reserved) {
+          await ensureMilestoneDbRow(reserved);
+          return reserved;
+        }
+        const allIds = [...new Set([...findMilestoneIds(projectDir), ...getReservedMilestoneIds()])];
+        const nextId = nextMilestoneId(allIds);
+        await ensureMilestoneDbRow(nextId);
+        return nextId;
+      });
+      return { content: [{ type: "text" as const, text: id }] };
+    },
+  );
+
+  server.tool(
+    "gsd_generate_milestone_id",
+    "Alias for gsd_milestone_generate_id. Generate the next milestone ID for a new GSD milestone.",
+    milestoneGenerateIdParams,
+    async (args: Record<string, unknown>) => {
+      const { projectDir } = parseWorkflowArgs(milestoneGenerateIdSchema, args);
+      await enforceWorkflowWriteGate("gsd_milestone_generate_id", projectDir);
+      const id = await runSerializedWorkflowOperation(async () => {
+        const {
+          claimReservedId,
+          findMilestoneIds,
+          getReservedMilestoneIds,
+          nextMilestoneId,
+        } = await importLocalModule<any>("../../../src/resources/extensions/gsd/milestone-ids.js");
+        const reserved = claimReservedId();
+        if (reserved) {
+          await ensureMilestoneDbRow(reserved);
+          return reserved;
+        }
+        const allIds = [...new Set([...findMilestoneIds(projectDir), ...getReservedMilestoneIds()])];
+        const nextId = nextMilestoneId(allIds);
+        await ensureMilestoneDbRow(nextId);
+        return nextId;
+      });
+      return { content: [{ type: "text" as const, text: id }] };
+    },
+  );
+
   server.tool(
     "gsd_plan_milestone",
     "Write milestone planning state to the GSD database and render ROADMAP.md from DB.",
@@ -827,6 +1103,48 @@ export function registerWorkflowTools(server: McpToolServer): void {
       await enforceWorkflowWriteGate("gsd_plan_slice", projectDir, params.milestoneId);
       const { executePlanSlice } = await getWorkflowToolExecutors();
       return runSerializedWorkflowOperation(() => executePlanSlice(params, projectDir));
+    },
+  );
+
+  server.tool(
+    "gsd_plan_task",
+    "Write task planning state to the GSD database and render tasks/T##-PLAN.md from DB.",
+    planTaskParams,
+    async (args: Record<string, unknown>) => {
+      const parsed = parseWorkflowArgs(planTaskSchema, args);
+      const { projectDir, ...params } = parsed;
+      await enforceWorkflowWriteGate("gsd_plan_task", projectDir, params.milestoneId);
+      const result = await runSerializedWorkflowOperation(async () => {
+        const { handlePlanTask } = await importLocalModule<any>("../../../src/resources/extensions/gsd/tools/plan-task.js");
+        return handlePlanTask(params, projectDir);
+      });
+      if ("error" in result) {
+        throw new Error(result.error);
+      }
+      return {
+        content: [{ type: "text" as const, text: `Planned task ${result.taskId} (${result.sliceId}/${result.milestoneId})` }],
+      };
+    },
+  );
+
+  server.tool(
+    "gsd_task_plan",
+    "Alias for gsd_plan_task. Write task planning state to the GSD database and render tasks/T##-PLAN.md from DB.",
+    planTaskParams,
+    async (args: Record<string, unknown>) => {
+      const parsed = parseWorkflowArgs(planTaskSchema, args);
+      const { projectDir, ...params } = parsed;
+      await enforceWorkflowWriteGate("gsd_plan_task", projectDir, params.milestoneId);
+      const result = await runSerializedWorkflowOperation(async () => {
+        const { handlePlanTask } = await importLocalModule<any>("../../../src/resources/extensions/gsd/tools/plan-task.js");
+        return handlePlanTask(params, projectDir);
+      });
+      if ("error" in result) {
+        throw new Error(result.error);
+      }
+      return {
+        content: [{ type: "text" as const, text: `Planned task ${result.taskId} (${result.sliceId}/${result.milestoneId})` }],
+      };
     },
   );
 
@@ -867,6 +1185,36 @@ export function registerWorkflowTools(server: McpToolServer): void {
     async (args: Record<string, unknown>) => {
       const parsed = parseWorkflowArgs(sliceCompleteSchema, args);
       return handleSliceComplete(parsed.projectDir, parsed);
+    },
+  );
+
+  server.tool(
+    "gsd_skip_slice",
+    "Mark a slice as skipped so auto-mode advances past it without executing.",
+    skipSliceParams,
+    async (args: Record<string, unknown>) => {
+      const { projectDir, milestoneId, sliceId, reason } = parseWorkflowArgs(skipSliceSchema, args);
+      await enforceWorkflowWriteGate("gsd_skip_slice", projectDir, milestoneId);
+      await runSerializedWorkflowOperation(async () => {
+        const { getSlice, updateSliceStatus } = await importLocalModule<any>("../../../src/resources/extensions/gsd/gsd-db.js");
+        const { invalidateStateCache } = await importLocalModule<any>("../../../src/resources/extensions/gsd/state.js");
+        const { rebuildState } = await importLocalModule<any>("../../../src/resources/extensions/gsd/doctor.js");
+        const slice = getSlice(milestoneId, sliceId);
+        if (!slice) {
+          throw new Error(`Slice ${sliceId} not found in milestone ${milestoneId}`);
+        }
+        if (slice.status === "complete" || slice.status === "done") {
+          throw new Error(`Slice ${sliceId} is already complete and cannot be skipped`);
+        }
+        if (slice.status !== "skipped") {
+          updateSliceStatus(milestoneId, sliceId, "skipped");
+          invalidateStateCache();
+          await rebuildState(projectDir);
+        }
+      });
+      return {
+        content: [{ type: "text" as const, text: `Skipped slice ${sliceId} (${milestoneId}). Reason: ${reason ?? "User-directed skip"}.` }],
+      };
     },
   );
 
@@ -992,6 +1340,21 @@ export function registerWorkflowTools(server: McpToolServer): void {
       await enforceWorkflowWriteGate("gsd_milestone_status", projectDir, milestoneId);
       const { executeMilestoneStatus } = await getWorkflowToolExecutors();
       return runSerializedWorkflowOperation(() => executeMilestoneStatus({ milestoneId }, projectDir));
+    },
+  );
+
+  server.tool(
+    "gsd_journal_query",
+    "Query the structured event journal for auto-mode iterations.",
+    journalQueryParams,
+    async (args: Record<string, unknown>) => {
+      const { projectDir, limit, ...filters } = parseWorkflowArgs(journalQuerySchema, args);
+      const { queryJournal } = await importLocalModule<any>("../../../src/resources/extensions/gsd/journal.js");
+      const entries = queryJournal(projectDir, filters).slice(0, limit ?? 100);
+      if (entries.length === 0) {
+        return { content: [{ type: "text" as const, text: "No matching journal entries found." }] };
+      }
+      return { content: [{ type: "text" as const, text: JSON.stringify(entries, null, 2) }] };
     },
   );
 }

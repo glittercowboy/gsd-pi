@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
 
 import { _getAdapter, closeDatabase } from "../../../src/resources/extensions/gsd/gsd-db.ts";
-import { registerWorkflowTools } from "./workflow-tools.ts";
+import { registerWorkflowTools, WORKFLOW_TOOL_NAMES } from "./workflow-tools.ts";
 
 function makeTmpBase(): string {
   const base = join(tmpdir(), `gsd-mcp-workflow-${randomUUID()}`);
@@ -68,33 +68,12 @@ function makeMockServer() {
 }
 
 describe("workflow MCP tools", () => {
-  it("registers the seventeen workflow tools", () => {
+  it("registers the full headless-safe workflow tool surface", () => {
     const server = makeMockServer();
     registerWorkflowTools(server as any);
 
-    assert.equal(server.tools.length, 17);
-    assert.deepEqual(
-      server.tools.map((t) => t.name),
-      [
-        "gsd_plan_milestone",
-        "gsd_plan_slice",
-        "gsd_replan_slice",
-        "gsd_slice_replan",
-        "gsd_slice_complete",
-        "gsd_complete_slice",
-        "gsd_complete_milestone",
-        "gsd_milestone_complete",
-        "gsd_validate_milestone",
-        "gsd_milestone_validate",
-        "gsd_reassess_roadmap",
-        "gsd_roadmap_reassess",
-        "gsd_save_gate_result",
-        "gsd_summary_save",
-        "gsd_task_complete",
-        "gsd_complete_task",
-        "gsd_milestone_status",
-      ],
-    );
+    assert.equal(server.tools.length, WORKFLOW_TOOL_NAMES.length);
+    assert.deepEqual(server.tools.map((t) => t.name), [...WORKFLOW_TOOL_NAMES]);
   });
 
   it("gsd_summary_save writes artifact through the shared executor", async () => {

@@ -26,8 +26,12 @@ test("ensureProjectWorkflowMcpConfig creates .mcp.json with the workflow server"
     assert.equal(typeof server?.command, "string");
     assert.equal(Array.isArray(server?.args), true);
     assert.equal(server?.env?.GSD_WORKFLOW_PROJECT_ROOT, projectRoot);
-    assert.match(server?.env?.GSD_WORKFLOW_EXECUTORS_MODULE ?? "", /workflow-tool-executors\.js$/);
-    assert.match(server?.env?.GSD_WORKFLOW_WRITE_GATE_MODULE ?? "", /write-gate\.js$/);
+    assert.match(server?.env?.GSD_WORKFLOW_EXECUTORS_MODULE ?? "", /workflow-tool-executors\.(js|ts)$/);
+    assert.match(server?.env?.GSD_WORKFLOW_WRITE_GATE_MODULE ?? "", /write-gate\.(js|ts)$/);
+    if ((server?.env?.GSD_WORKFLOW_EXECUTORS_MODULE ?? "").endsWith(".ts")) {
+      assert.match(server?.env?.NODE_OPTIONS ?? "", /--experimental-strip-types/);
+      assert.match(server?.env?.NODE_OPTIONS ?? "", /resolve-ts\.mjs/);
+    }
   } finally {
     rmSync(projectRoot, { recursive: true, force: true });
   }
