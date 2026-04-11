@@ -49,6 +49,26 @@ This happens ONCE, before the first round. The goal: your first questions should
 
 For subsequent rounds, continue investigating between rounds — check docs, search, or scout as needed to make each round's questions smarter. But the first-round investigation is mandatory and explicit. Distribute searches across turns rather than clustering them in one turn.
 
+## Question Rounds
+
+Ask **1–3 questions per round**. Keep each round tightly focused on one or two of the depth checklist dimensions — do not try to cover all six in one round.
+
+**If `{{structuredQuestionsAvailable}}` is `true`:** use `ask_user_questions` for each round. 1–3 questions per call, each as a separate question object. Keep option labels short (3–5 words). Always include a freeform "Other / let me explain" option. When the user picks that option or writes a long freeform answer, switch to plain text follow-up for that thread before resuming structured questions. **IMPORTANT: Call `ask_user_questions` exactly once per turn. Never make multiple calls with the same or overlapping questions — wait for the user's response before asking the next round.**
+
+**If `{{structuredQuestionsAvailable}}` is `false`:** ask questions in plain text. Keep each round to 1–3 focused questions. Wait for answers before asking the next round.
+
+After each answer set, investigate further if any answer opens a new unknown, then ask the next round.
+
+### Round cadence
+
+After each round of answers, decide whether you already have enough depth to write strong output.
+
+- **Incremental persistence:** After every 2 question rounds, silently save a `{{milestoneId}}-CONTEXT-DRAFT.md` using `gsd_summary_save` with `artifact_type: "CONTEXT-DRAFT"` and `milestone_id: "{{milestoneId}}"`. This protects confirmed work against session crashes. Do NOT mention this save to the user.
+- If not ready, continue to the next round immediately. Do **not** ask a meta "ready to wrap up?" question after every round.
+- **Depth-matching rule:** Simple, well-defined work needs fewer rounds — maybe 1–2. Large, ambiguous visions need more — maybe 4+. Do not pad rounds to hit a number. Stop when the Depth Enforcement checklist below is fully satisfied.
+- Do not count the reflection step as a question round. Rounds start after reflection is confirmed.
+- When you genuinely believe the depth checklist is satisfied, move to the Depth Verification step below. Do not ask a separate "ready to wrap up?" gate — the depth verification IS the gate.
+
 ## Questioning Philosophy
 
 You are a thinking partner, not an interviewer.
@@ -94,29 +114,27 @@ Do NOT offer to proceed until ALL of the following are satisfied. Track these in
 
 Before offering to proceed, demonstrate absorption: reference specific things the user emphasized, specific terminology they used, specific nuance they sharpened — and show how those shaped your understanding. Synthesize, don't recite. "Your emphasis on X led me to prioritize Y over Z" is good. "You said X, you said Y, you said Z" is not. The user should feel heard in the specifics, not just acknowledged in the abstract.
 
-**Questioning depth should match scope.** Simple, well-defined work needs fewer rounds — maybe 1-2. Large, ambiguous visions need more — maybe 4+. Don't pad rounds to hit a number. Stop when the depth checklist is satisfied and you genuinely understand the work.
-
-Do not count the reflection step as a question round. Rounds start after reflection is confirmed.
-
 ## Depth Verification
 
 Before moving to the wrap-up gate, present a structured depth summary as a checkpoint.
 
 **Print the summary as normal chat text first** — this is where the formatting renders properly. Structure the summary across the depth checklist dimensions using the user's own terminology and framing. Cover: what you understood them to be building, what shaped your understanding most (their emphasis, constraints, concerns), and any areas where you're least confident in your understanding.
 
-**Then** use `ask_user_questions` with a short confirmation question — NOT the summary itself. The question field is designed for single sentences, not multi-paragraph summaries.
+**Then confirm:**
 
-**Convention:** The question ID must contain `depth_verification` (e.g., `depth_verification_confirm`). This naming convention enables downstream mechanical detection of this step.
+**If `{{structuredQuestionsAvailable}}` is `true`:** use `ask_user_questions` with:
+- header: "Depth Check"
+- question: "Did I capture the depth right?"
+- options: "Yes, you got it (Recommended)", "Not quite — let me clarify"
+- **The question ID must contain `depth_verification`** (e.g., `depth_verification_confirm`) — this naming convention enables downstream mechanical detection and the write-gate.
 
-Example flow:
-1. Print in chat: the full depth summary with markdown formatting (headers, bold, bullets)
-2. Call `ask_user_questions` with: header "Depth Check", question "Did I capture the depth right?", options "Yes, you got it (Recommended)" and "Not quite — let me clarify"
+**If `{{structuredQuestionsAvailable}}` is `false`:** ask in plain text: "Did I capture that correctly? If not, tell me what I missed." Wait for explicit confirmation before proceeding. **The same non-bypassable gate applies to the plain-text path** — if the user does not respond, gives an ambiguous answer, or does not explicitly confirm, you MUST re-ask. Never rationalize past a missing confirmation.
 
 If they clarify, absorb the correction and re-verify.
 
 The depth verification is the required write-gate. Do **not** add another meta "ready to proceed?" checkpoint immediately after it unless there is still material ambiguity.
 
-**CRITICAL — Non-bypassable gate:** The system mechanically blocks CONTEXT.md writes until the user selects the "(Recommended)" option. If the user declines, cancels, or the tool fails, you MUST re-ask — never rationalize past the block ("tool not responding, I'll proceed" is forbidden). The gate exists to protect the user's work; treat a block as an instruction, not an obstacle to work around.
+**CRITICAL — Non-bypassable gate:** The system mechanically blocks CONTEXT.md writes until the user selects the "(Recommended)" option (structured path) or explicitly confirms (plain-text path). If the user declines, cancels, does not respond, or the tool fails, you MUST re-ask — never rationalize past the block ("tool not responding, I'll proceed" is forbidden). The gate exists to protect the user's work; treat a block as an instruction, not an obstacle to work around.
 
 ## Wrap-up Gate
 
@@ -244,7 +262,7 @@ If a milestone has no dependencies, omit the frontmatter. The dependency chain f
 
 #### Phase 3: Sequential readiness gate for remaining milestones
 
-For each remaining milestone **one at a time, in sequence**, decide the most likely readiness mode from the evidence you already have, then use `ask_user_questions` to let the user correct that recommendation. **Non-bypassable:** If `ask_user_questions` fails, errors, returns no response, or the user's response does not match a provided option, you MUST re-ask — never rationalize past the block or auto-select a readiness mode. Present three options:
+For each remaining milestone **one at a time, in sequence**, decide the most likely readiness mode from the evidence you already have, then present the three options below to the user. **If `{{structuredQuestionsAvailable}}` is `true`:** use `ask_user_questions`. **If `{{structuredQuestionsAvailable}}` is `false`:** present the options as a plain-text numbered list and ask the user to type their choice. **Non-bypassable:** If the user does not respond, gives an ambiguous answer, or the tool fails, you MUST re-ask — never rationalize past the block or auto-select a readiness mode. Present three options:
 
 - **"Discuss now"** — The user wants to conduct a focused discussion for this milestone in the current session, while the context from the broader discussion is still fresh. Proceed with a focused discussion for this milestone (reflection → investigation → questioning → depth verification). When the discussion concludes, write a full `CONTEXT.md`. Then move to the gate for the next milestone.
 - **"Write draft for later"** — This milestone has seed material from the current conversation but needs its own dedicated discussion in a future session. Write a `CONTEXT-DRAFT.md` capturing the seed material (what was discussed, key ideas, provisional scope, open questions). Mark it clearly as a draft, not a finalized context. **What happens downstream:** When auto-mode reaches this milestone, it pauses and notifies the user: "M00x has draft context — needs discussion. Run /gsd." The `/gsd` wizard shows a "Discuss from draft" option that seeds the new discussion with this draft, so nothing from the current conversation is lost. After the dedicated discussion produces a full CONTEXT.md, the draft file is automatically deleted.
@@ -256,9 +274,9 @@ Before writing each milestone's CONTEXT.md (whether primary or secondary), you M
 
 1. **Read the actual code** for every file or module you reference. Confirm APIs exist, check what functions actually do, identify phantom capabilities (code that exists but isn't wired up).
 2. **Check for stale assumptions** — the codebase changes. Verify referenced modules still work as described.
-3. **Present findings** — use `ask_user_questions` with a question ID containing BOTH `depth_verification` AND the milestone ID (e.g., `depth_verification_M002`). Present: what you're about to write, key technical findings from investigation, risks the code review surfaced.
+3. **Present findings** — **If `{{structuredQuestionsAvailable}}` is `true`:** use `ask_user_questions` with a question ID containing BOTH `depth_verification` AND the milestone ID (e.g., `depth_verification_M002`). Present: what you're about to write, key technical findings from investigation, risks the code review surfaced. **If `{{structuredQuestionsAvailable}}` is `false`:** present the same findings in plain text and ask for explicit confirmation before proceeding.
 
-**The system mechanically blocks CONTEXT.md writes until the per-milestone depth verification passes.** Each milestone needs its own verification — one global verification does not unlock all milestones.
+**The system mechanically blocks CONTEXT.md writes until the per-milestone depth verification passes** (structured path: user selects "(Recommended)" option; plain-text path: user explicitly confirms). Each milestone needs its own verification — one global verification does not unlock all milestones.
 
 **Why sequential, not batch:** After writing the primary milestone's context and roadmap, the agent still has context window capacity. Asking one milestone at a time lets the user decide per-milestone whether to invest that remaining capacity in a focused discussion now, or defer to a future session. A batch question ("Ready/Draft/Queue for M002, M003, M004?") forces the user to decide everything upfront without knowing how much session capacity remains.
 
